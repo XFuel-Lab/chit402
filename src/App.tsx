@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
+import { ethers } from 'ethers'
 
 type SwapStatus = 'idle' | 'approving' | 'swapping' | 'success' | 'error'
 
 interface WalletInfo {
   address: string | null
+  fullAddress: string | null // Store full address for contract calls
   balance: string
   isConnected: boolean
 }
@@ -11,6 +13,7 @@ interface WalletInfo {
 function App() {
   const [wallet, setWallet] = useState<WalletInfo>({
     address: null,
+    fullAddress: null,
     balance: '0.00',
     isConnected: false,
   })
@@ -33,14 +36,17 @@ function App() {
           const balance = '1,234.56'
           setWallet({
             address: `${address.slice(0, 6)}...${address.slice(-4)}`,
+            fullAddress: address,
             balance,
             isConnected: true,
           })
         }
       } else {
         // Fallback for demo: simulate wallet connection
+        const demoAddress = '0x1234567890123456789012345678901234567890'
         setWallet({
           address: '0x1234...5678',
+          fullAddress: demoAddress,
           balance: '1,234.56',
           isConnected: true,
         })
@@ -84,28 +90,80 @@ function App() {
     setSwapStatus('idle')
   }
 
-  const handleSwap = async () => {
-    if (!wallet.isConnected || !tfuelAmount) {
-      setStatusMessage('Please connect wallet and enter amount')
+  const handleSwap = async (percentage?: number, lst?: string) => {
+    if (!wallet.isConnected || !wallet.fullAddress) {
+      alert('Connect wallet first')
+      setStatusMessage('Please connect wallet first')
       setSwapStatus('error')
       return
     }
 
-    setSwapStatus('swapping')
-    setStatusMessage('Swapping TFUEL...')
+    // Determine amount and LST target
+    let amount: number
+    let targetLST: string
 
-    // Simulate swap
-    await new Promise(resolve => setTimeout(resolve, 3000))
-    
-    setStatusMessage('Swap successful!')
-    setSwapStatus('success')
-    setTfuelAmount('')
-    
-    // Reset after 3 seconds
-    setTimeout(() => {
-      setSwapStatus('idle')
-      setStatusMessage('')
-    }, 3000)
+    if (percentage !== undefined && lst) {
+      // Called from preset button
+      const balanceNum = parseFloat(wallet.balance.replace(/,/g, ''))
+      amount = (balanceNum * percentage) / 100
+      targetLST = lst
+      setTfuelAmount(amount.toFixed(2))
+    } else {
+      // Called from manual swap button
+      if (!tfuelAmount) {
+        setStatusMessage('Please enter amount')
+        setSwapStatus('error')
+        return
+      }
+      amount = parseFloat(tfuelAmount)
+      targetLST = 'stkATOM' // Default LST for manual swaps
+    }
+
+    setSwapStatus('swapping')
+    setStatusMessage('Getting test TFUEL from faucet...')
+
+    try {
+      // Auto-faucet for demo (real users will have TFUEL)
+      await fetch(`https://faucet.testnet.theta.org/request?address=${wallet.fullAddress}`)
+
+      const amountWei = ethers.utils.parseEther(amount.toString())
+
+      setStatusMessage(`Swapping ${amount} TFUEL → ${targetLST}...`)
+
+      const provider = new ethers.providers.Web3Provider(
+        (window as any).ethereum || (window as any).theta
+      )
+      const signer = provider.getSigner()
+
+      // This is the real testnet router we'll deploy next week
+      const routerAddress = '0xYourRealRouterWillGoHere_AfterDeploy'
+
+      const abi = ['function swapAndStake(uint256 amount, string targetLST)']
+      const contract = new ethers.Contract(routerAddress, abi, signer)
+
+      const tx = await contract.swapAndStake(amountWei, targetLST)
+      setStatusMessage(`Transaction sent! ${tx.hash.substring(0, 10)}...`)
+
+      await tx.wait()
+      setStatusMessage(`Done! You now hold yield-bearing ${targetLST} on Theta`)
+      setSwapStatus('success')
+      setTfuelAmount('')
+
+      // Reset after 5 seconds
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+      }, 5000)
+    } catch (e: any) {
+      setStatusMessage(`Failed: ${e.message}`)
+      setSwapStatus('error')
+      
+      // Reset after 5 seconds
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+      }, 5000)
+    }
   }
 
   // Auto-connect on mount (demo mode)
@@ -207,22 +265,22 @@ function App() {
               <label className="block text-sm text-gray-400 mb-2">Quick Swap</label>
               <div className="grid grid-cols-3 gap-2">
                 <button
-                  onClick={() => handlePresetClick(25)}
-                  disabled={!wallet.isConnected}
+                  onClick={() => handleSwap(25, 'stkXPRT')}
+                  disabled={!wallet.isConnected || swapStatus !== 'idle'}
                   className="py-2.5 px-3 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 rounded-lg text-sm font-medium text-blue-300 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
                 >
                   25% → stkXPRT
                 </button>
                 <button
-                  onClick={() => handlePresetClick(50)}
-                  disabled={!wallet.isConnected}
+                  onClick={() => handleSwap(50, 'stkATOM')}
+                  disabled={!wallet.isConnected || swapStatus !== 'idle'}
                   className="py-2.5 px-3 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 rounded-lg text-sm font-medium text-purple-300 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
                 >
                   50% → stkATOM
                 </button>
                 <button
-                  onClick={() => handlePresetClick(100)}
-                  disabled={!wallet.isConnected}
+                  onClick={() => handleSwap(100, 'pSTAKE BTC')}
+                  disabled={!wallet.isConnected || swapStatus !== 'idle'}
                   className="py-2.5 px-3 bg-pink-600/20 hover:bg-pink-600/30 border border-pink-500/30 rounded-lg text-sm font-medium text-pink-300 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
                 >
                   100% → pSTAKE BTC
