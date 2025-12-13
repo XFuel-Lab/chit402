@@ -5,6 +5,7 @@ import { NeonCard } from '../components/NeonCard'
 import { NeonButton } from '../components/NeonButton'
 import { ScreenBackground } from '../components/ScreenBackground'
 import { TipSuccessOverlay } from '../components/TipSuccessOverlay'
+import { getAppExtra } from '../lib/appConfig'
 import { neon } from '../theme/neon'
 
 type EventRow = {
@@ -18,6 +19,8 @@ type EventRow = {
 export function PoolsScreen() {
   const [successVisible, setSuccessVisible] = useState(false)
   const [successMsg, setSuccessMsg] = useState('')
+  const { lotteryJackpot, globalLotteryCutBps } = getAppExtra()
+  const globalLotteryPct = (globalLotteryCutBps / 100).toFixed(0)
 
   const events: EventRow[] = useMemo(
     () => [
@@ -48,7 +51,11 @@ export function PoolsScreen() {
 
   const tip = (side: 'winner' | 'loser', eventTitle: string) => {
     const entered = side === 'loser'
-    setSuccessMsg(entered ? `You entered $50k lottery (10% global pot)\nEvent: ${eventTitle}` : `Tip placed on Winner\nEvent: ${eventTitle}`)
+    setSuccessMsg(
+      entered
+        ? `You entered ${lotteryJackpot} lottery (${globalLotteryPct}% global pot)\nEvent: ${eventTitle}`
+        : `Tip placed on Winner\nEvent: ${eventTitle}`
+    )
     setSuccessVisible(true)
   }
 
@@ -62,7 +69,7 @@ export function PoolsScreen() {
             style={{ borderColor: 'rgba(251, 113, 133, 0.35)', backgroundColor: 'rgba(251, 113, 133, 0.10)' }}
           >
             <Text className="text-sm font-semibold" style={{ color: neon.pink }}>
-              10% of every tip feeds the global lottery
+              {globalLotteryPct}% of every tip feeds the global lottery
             </Text>
             <Text className="mt-1 text-xs" style={{ color: neon.muted }}>
               Tip Loser to enter. Winners still earn the main pot.
