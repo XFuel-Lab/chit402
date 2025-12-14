@@ -9,6 +9,7 @@ import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-goog
 import { Orbitron_600SemiBold, Orbitron_700Bold } from '@expo-google-fonts/orbitron'
 import { neon } from './src/theme/neon'
 import { HomeScreen } from './src/screens/HomeScreen'
+import { MiningScreen } from './src/screens/MiningScreen'
 import { PoolsScreen } from './src/screens/PoolsScreen'
 import { SwapScreen } from './src/screens/SwapScreen'
 import { ProfileScreen } from './src/screens/ProfileScreen'
@@ -18,6 +19,7 @@ import { type } from './src/theme/typography'
 
 type TabParamList = {
   Home: undefined
+  Mining: undefined
   Pools: undefined
   Swap: undefined
   Profile: undefined
@@ -110,6 +112,8 @@ function MainTabs() {
             switch (route.name) {
               case 'Home':
                 return 'home'
+              case 'Mining':
+                return 'hardware-chip'
               case 'Pools':
                 return 'trophy'
               case 'Swap':
@@ -125,6 +129,7 @@ function MainTabs() {
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="Mining" component={MiningScreen} />
       <Tab.Screen name="Pools" component={PoolsScreen} />
       <Tab.Screen name="Swap" component={SwapScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
