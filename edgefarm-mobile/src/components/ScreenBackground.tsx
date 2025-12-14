@@ -40,7 +40,13 @@ function GridOverlay() {
   )
 }
 
-export function ScreenBackground({ children }: { children: React.ReactNode }) {
+export function ScreenBackground({
+  children,
+  grid = true,
+}: {
+  children: React.ReactNode
+  grid?: boolean
+}) {
   return (
     <View style={{ flex: 1, backgroundColor: neon.bg0 }}>
       <LinearGradient
@@ -57,7 +63,7 @@ export function ScreenBackground({ children }: { children: React.ReactNode }) {
         style={{ position: 'absolute', inset: 0 }}
       />
 
-      <GridOverlay />
+      {grid ? <GridOverlay /> : null}
       <ParticleField />
       <ThetaWatermark />
 
