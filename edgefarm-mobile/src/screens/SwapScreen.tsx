@@ -9,6 +9,7 @@ import { connectThetaWalletMock, createDisconnectedWallet } from '../lib/mockWal
 import { NeonPill } from '../components/NeonPill'
 import { type } from '../theme/typography'
 import * as Haptics from 'expo-haptics'
+import { TipSuccessOverlay } from '../components/TipSuccessOverlay'
 
 const LSTS = ['stkXPRT', 'stkATOM', 'pSTAKE BTC'] as const
 
@@ -19,6 +20,8 @@ export function SwapScreen() {
 
   const [finalityMs, setFinalityMs] = useState(3200)
   const [status, setStatus] = useState<string>('')
+  const [successVisible, setSuccessVisible] = useState(false)
+  const [successMsg, setSuccessMsg] = useState('')
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -66,10 +69,13 @@ export function SwapScreen() {
       setStatus('Connect wallet and enter amount')
       return
     }
+    const amount = tfuelAmount
     setStatus(`Swapping ${tfuelAmount} TFUEL → ${selectedLST}… (demo)`)
     setTimeout(() => {
       setStatus(`Done! You now hold yield-bearing ${selectedLST}`)
       setTfuelAmount('')
+      setSuccessMsg(`Swap complete: ${amount} TFUEL → ${selectedLST}`)
+      setSuccessVisible(true)
     }, 1200)
     setTimeout(() => setStatus(''), 4200)
   }
@@ -221,6 +227,12 @@ export function SwapScreen() {
           </View>
         </View>
       </SafeAreaView>
+
+      <TipSuccessOverlay
+        visible={successVisible}
+        message={successMsg}
+        onClose={() => setSuccessVisible(false)}
+      />
     </ScreenBackground>
   )
 }

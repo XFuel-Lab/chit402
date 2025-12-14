@@ -5,6 +5,41 @@ import { neon } from '../theme/neon'
 import { ParticleField } from './ParticleField'
 import { ThetaWatermark } from './ThetaWatermark'
 
+function GridOverlay() {
+  // Lightweight “HUD grid” (kept subtle to avoid visual noise)
+  const lines = 9
+  return (
+    <View pointerEvents="none" style={{ position: 'absolute', inset: 0, opacity: 0.10 }}>
+      {Array.from({ length: lines }).map((_, i) => (
+        <View
+          key={`h-${i}`}
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            top: `${(i + 1) * (100 / (lines + 1))}%`,
+            height: 1,
+            backgroundColor: i % 2 === 0 ? 'rgba(56,189,248,0.22)' : 'rgba(168,85,247,0.18)',
+          }}
+        />
+      ))}
+      {Array.from({ length: lines }).map((_, i) => (
+        <View
+          key={`v-${i}`}
+          style={{
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            left: `${(i + 1) * (100 / (lines + 1))}%`,
+            width: 1,
+            backgroundColor: i % 2 === 0 ? 'rgba(168,85,247,0.18)' : 'rgba(56,189,248,0.22)',
+          }}
+        />
+      ))}
+    </View>
+  )
+}
+
 export function ScreenBackground({ children }: { children: React.ReactNode }) {
   return (
     <View style={{ flex: 1, backgroundColor: neon.bg0 }}>
@@ -22,6 +57,7 @@ export function ScreenBackground({ children }: { children: React.ReactNode }) {
         style={{ position: 'absolute', inset: 0 }}
       />
 
+      <GridOverlay />
       <ParticleField />
       <ThetaWatermark />
 
