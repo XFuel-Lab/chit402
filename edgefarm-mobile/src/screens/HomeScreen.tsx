@@ -2,11 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
+import { LinearGradient } from 'expo-linear-gradient'
+import { BlurView } from 'expo-blur'
 import { ScreenBackground } from '../components/ScreenBackground'
 import { NeonCard } from '../components/NeonCard'
 import { neon } from '../theme/neon'
 import Animated, {
   Easing,
+  interpolate,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -18,15 +21,16 @@ import * as Haptics from 'expo-haptics'
 
 type LST = { key: string; name: string; apy: number }
 
-const TOP4: LST[] = [
-  { key: 'stkXPRT', name: 'stkXPRT', apy: 25.4 },
-  { key: 'stkTIA', name: 'stkTIA', apy: 38.2 },
-  { key: 'pSTAKE BTC', name: 'pSTAKE BTC', apy: 21.1 },
-  { key: 'stkATOM', name: 'stkATOM', apy: 18.6 },
+const TOP_BUBBLES: Array<LST & { tone: 'pink' | 'purple' | 'blue' | 'cyan' | 'rainbow' }> = [
+  { key: 'stkTIA', name: 'stkTIA', apy: 48.2, tone: 'pink' },
+  { key: 'mock-high-yield', name: 'mock high-yield', apy: 45.9, tone: 'rainbow' },
+  { key: 'stkXPRT', name: 'stkXPRT', apy: 38.7, tone: 'purple' },
+  { key: 'pSTAKE BTC', name: 'pSTAKE BTC', apy: 32.1, tone: 'blue' },
+  { key: 'stkATOM', name: 'stkATOM', apy: 25.4, tone: 'cyan' },
 ]
 
 const ALL_LSTS: LST[] = [
-  ...TOP4,
+  ...TOP_BUBBLES.map(({ key, name, apy }) => ({ key, name, apy })),
   { key: 'stDYDX', name: 'stDYDX', apy: 16.4 },
   { key: 'stkOSMO', name: 'stkOSMO', apy: 14.2 },
   { key: 'stINJ', name: 'stINJ', apy: 19.9 },
@@ -60,7 +64,10 @@ export function HomeScreen() {
     return () => clearInterval(t)
   }, [])
 
-  const selected = useMemo(() => ALL_LSTS.find((x) => x.key === selectedKey) ?? TOP4[1]!, [selectedKey])
+  const selected = useMemo(
+    () => ALL_LSTS.find((x) => x.key === selectedKey) ?? ALL_LSTS[0]!,
+    [selectedKey]
+  )
 
   const apyText = useMemo(() => {
     const v = selected.apy
@@ -171,64 +178,53 @@ export function HomeScreen() {
             </Text>
           </NeonCard>
 
-          <View style={{ flexDirection: 'row', gap: 12 }}>
-            <View style={{ flex: 1 }}>
-              <NeonCard>
-                <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.58)' }}>STREAK</Text>
-                <Text style={{ ...type.h1, marginTop: 10, color: 'rgba(255,255,255,0.96)' }}>12</Text>
-                <Text style={{ ...type.caption, marginTop: 6, color: 'rgba(255,255,255,0.48)' }}>days</Text>
-              </NeonCard>
-            </View>
-            <View style={{ flex: 1 }}>
-              <NeonCard>
-                <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.58)' }}>RANK</Text>
-                <Text style={{ ...type.h1, marginTop: 10, color: 'rgba(255,255,255,0.96)' }}>#184</Text>
-                <Text style={{ ...type.caption, marginTop: 6, color: 'rgba(255,255,255,0.48)' }}>leaderboard</Text>
-              </NeonCard>
-            </View>
-          </View>
+          <NeonCard className="mb-6">
+            <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.58)' }}>STREAK</Text>
+            <Text style={{ ...type.h1, marginTop: 10, color: 'rgba(255,255,255,0.96)' }}>12</Text>
+            <Text style={{ ...type.caption, marginTop: 6, color: 'rgba(255,255,255,0.48)' }}>days</Text>
+          </NeonCard>
 
-          <View style={{ marginTop: 18 }}>
-            <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.95)' }}>Change Your Yield</Text>
-
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingTop: 12, paddingBottom: 4, gap: 10 }}
+          {/* Yield backdrop + gem bubbles */}
+          <View style={{ marginTop: 6 }}>
+            <LinearGradient
+              colors={[
+                'rgba(30,0,10,0.85)', // black-cherry edge
+                'rgba(88,12,66,0.55)',
+                'rgba(216,180,254,0.35)', // light purple center
+                'rgba(88,12,66,0.55)',
+                'rgba(30,0,10,0.85)',
+              ]}
+              start={{ x: 0, y: 0.5 }}
+              end={{ x: 1, y: 0.5 }}
+              style={{ borderRadius: 26, padding: 14, overflow: 'hidden' }}
             >
-              {TOP4.map((lst) => {
-                const active = lst.key === selectedKey
-                return (
-                  <YieldBubble
+              <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.95)' }}>Your Yield Options</Text>
+              <Text style={{ ...type.caption, marginTop: 6, color: 'rgba(255,255,255,0.55)' }}>
+                Tap a bubble to switch. Sorted by APY.
+              </Text>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingTop: 12, paddingBottom: 4, gap: 12 }}
+              >
+                {TOP_BUBBLES.sort((a, b) => b.apy - a.apy).map((lst) => (
+                  <YieldGemBubble
                     key={lst.key}
-                    name={lst.name}
-                    apy={lst.apy}
-                    active={active}
+                    lst={lst}
+                    active={lst.key === selectedKey}
                     onPress={() => onSelect(lst.key)}
                   />
-                )
-              })}
+                ))}
 
-              <Pressable onPress={() => setMoreOpen(true)} hitSlop={12}>
-                <View
-                  style={{
-                    width: 132,
-                    borderRadius: 22,
-                    borderWidth: 1,
-                    borderColor: 'rgba(255,255,255,0.12)',
-                    backgroundColor: 'rgba(255,255,255,0.03)',
-                    paddingHorizontal: 14,
-                    paddingVertical: 14,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 8,
-                  }}
-                >
-                  <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.90)' }}>More →</Text>
-                  <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.48)' }}>Full list</Text>
-                </View>
-              </Pressable>
-            </ScrollView>
+                <Pressable onPress={() => setMoreOpen(true)} hitSlop={12}>
+                  <View style={{ width: 86, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.92)' }}>More →</Text>
+                    <Text style={{ ...type.caption, marginTop: 6, color: 'rgba(255,255,255,0.55)' }}>Full list</Text>
+                  </View>
+                </Pressable>
+              </ScrollView>
+            </LinearGradient>
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -350,6 +346,146 @@ function YieldBubble({
           </View>
           <Text style={{ ...type.caption, marginTop: 8, color: 'rgba(255,255,255,0.55)' }}>{apy.toFixed(1)}% APY</Text>
         </View>
+      </View>
+    </Pressable>
+  )
+}
+
+function YieldGemBubble({
+  lst,
+  active,
+  onPress,
+}: {
+  lst: LST & { tone: 'pink' | 'purple' | 'blue' | 'cyan' | 'rainbow' }
+  active: boolean
+  onPress: () => void
+}) {
+  const press = useSharedValue(0)
+  const pulse = useSharedValue(0)
+
+  useEffect(() => {
+    pulse.value = withRepeat(withTiming(1, { duration: 1600, easing: Easing.inOut(Easing.quad) }), -1, true)
+  }, [pulse])
+
+  const palette = useMemo(() => {
+    switch (lst.tone) {
+      case 'pink':
+        return { glow: neon.pink, gradA: ['rgba(251,113,133,0.90)', 'rgba(168,85,247,0.35)'] as const }
+      case 'purple':
+        return { glow: neon.purple, gradA: ['rgba(168,85,247,0.92)', 'rgba(56,189,248,0.30)'] as const }
+      case 'blue':
+        return { glow: neon.blue, gradA: ['rgba(56,189,248,0.92)', 'rgba(168,85,247,0.25)'] as const }
+      case 'cyan':
+        return { glow: '#67e8f9', gradA: ['rgba(103,232,249,0.90)', 'rgba(56,189,248,0.25)'] as const }
+      case 'rainbow':
+      default:
+        return {
+          glow: '#fbbf24',
+          gradA: ['rgba(251,113,133,0.80)', 'rgba(56,189,248,0.60)'] as const,
+          gradB: ['rgba(52,211,153,0.75)', 'rgba(251,191,36,0.65)'] as const,
+        }
+    }
+  }, [lst.tone])
+
+  const icon = (() => {
+    switch (lst.key) {
+      case 'stkTIA':
+        return 'planet'
+      case 'stkXPRT':
+        return 'flash'
+      case 'pSTAKE BTC':
+        return 'logo-bitcoin'
+      case 'stkATOM':
+        return 'nuclear'
+      default:
+        return 'sparkles'
+    }
+  })()
+
+  const glowStyle = useAnimatedStyle(() => {
+    const base = active ? 0.22 : 0.10
+    const add = active ? pulse.value * 0.26 : pulse.value * 0.10
+    const s = 1 - press.value * 0.02
+    return { opacity: base + add, transform: [{ scale: s }] }
+  })
+
+  const rainbowA = useAnimatedStyle(() => ({
+    opacity: lst.tone === 'rainbow' ? 0.35 + pulse.value * 0.45 : 0,
+  }))
+  const rainbowB = useAnimatedStyle(() => ({
+    opacity: lst.tone === 'rainbow' ? 0.65 - pulse.value * 0.45 : 0,
+  }))
+
+  return (
+    <Pressable
+      onPress={() => {
+        Haptics.selectionAsync().catch(() => {})
+        onPress()
+      }}
+      onPressIn={() => {
+        press.value = withTiming(1, { duration: 80 })
+      }}
+      onPressOut={() => {
+        press.value = withTiming(0, { duration: 140 })
+      }}
+      hitSlop={10}
+    >
+      <View style={{ width: 172, height: 122, borderRadius: 26, overflow: 'hidden' }}>
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            glowStyle,
+            {
+              position: 'absolute',
+              inset: -10,
+              borderRadius: 30,
+              backgroundColor: 'rgba(0,0,0,0.25)',
+              shadowColor: palette.glow,
+              shadowOpacity: 1,
+              shadowRadius: active ? 22 : 14,
+            },
+          ]}
+        />
+
+        {lst.tone === 'rainbow' ? (
+          <>
+            <Animated.View style={[{ position: 'absolute', inset: 0 }, rainbowA]}>
+              <LinearGradient colors={palette.gradA as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ flex: 1 }} />
+            </Animated.View>
+            <Animated.View style={[{ position: 'absolute', inset: 0 }, rainbowB]}>
+              <LinearGradient colors={(palette as any).gradB} start={{ x: 1, y: 0 }} end={{ x: 0, y: 1 }} style={{ flex: 1 }} />
+            </Animated.View>
+          </>
+        ) : (
+          <LinearGradient colors={palette.gradA as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ position: 'absolute', inset: 0 }} />
+        )}
+
+        <BlurView intensity={22} tint="dark" style={{ flex: 1 }}>
+          <View
+            style={{
+              flex: 1,
+              borderWidth: 1,
+              borderColor: active ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.14)',
+              backgroundColor: 'rgba(10,10,20,0.28)',
+              paddingHorizontal: 12,
+              paddingVertical: 12,
+              justifyContent: 'space-between',
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons name={icon as any} size={18} color="rgba(255,255,255,0.92)" />
+                <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.95)' }}>{lst.name}</Text>
+              </View>
+              {active ? <Ionicons name="star" size={16} color="rgba(255,255,255,0.95)" /> : null}
+            </View>
+
+            <View>
+              <Text style={{ ...type.h1, fontSize: 30, color: 'rgba(255,255,255,0.98)' }}>{lst.apy.toFixed(1)}%</Text>
+              <Text style={{ ...type.caption, marginTop: 2, color: 'rgba(255,255,255,0.70)' }}>APY</Text>
+            </View>
+          </View>
+        </BlurView>
       </View>
     </Pressable>
   )
