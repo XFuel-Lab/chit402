@@ -1,13 +1,20 @@
-import React from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { StatusBar } from 'expo-status-bar'
 import { DarkTheme, NavigationContainer } from '@react-navigation/native'
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
 import { Ionicons } from '@expo/vector-icons'
+import { BlurView } from 'expo-blur'
+import { useFonts } from 'expo-font'
+import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-google-fonts/inter'
+import { Orbitron_600SemiBold, Orbitron_700Bold } from '@expo-google-fonts/orbitron'
 import { neon } from './src/theme/neon'
 import { HomeScreen } from './src/screens/HomeScreen'
 import { PoolsScreen } from './src/screens/PoolsScreen'
 import { SwapScreen } from './src/screens/SwapScreen'
 import { ProfileScreen } from './src/screens/ProfileScreen'
+import { OnboardingScreen } from './src/screens/OnboardingScreen'
+import { getHasSeenOnboarding, setHasSeenOnboarding } from './src/lib/onboarding'
+import { type } from './src/theme/typography'
 
 type TabParamList = {
   Home: undefined
@@ -19,59 +26,108 @@ type TabParamList = {
 const Tab = createBottomTabNavigator<TabParamList>()
 
 export default function App() {
+  const [hasSeen, setHasSeen] = useState<boolean | null>(null)
+
+  const [fontsLoaded] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Orbitron_600SemiBold,
+    Orbitron_700Bold,
+  })
+
+  useEffect(() => {
+    getHasSeenOnboarding().then(setHasSeen)
+  }, [])
+
+  const theme = useMemo(
+    () => ({
+      ...DarkTheme,
+      colors: {
+        ...DarkTheme.colors,
+        primary: neon.purple,
+        background: neon.bg0,
+        card: neon.bg1,
+        text: neon.text,
+        border: 'rgba(168, 85, 247, 0.20)',
+        notification: neon.pink,
+      },
+    }),
+    []
+  )
+
+  if (!fontsLoaded || hasSeen === null) return null
+
   return (
-    <NavigationContainer
-      theme={{
-        ...DarkTheme,
-        colors: {
-          ...DarkTheme.colors,
-          primary: neon.purple,
-          background: neon.bg0,
-          card: neon.bg1,
-          text: neon.text,
-          border: 'rgba(168, 85, 247, 0.20)',
-          notification: neon.pink,
-        },
-      }}
-    >
+    <NavigationContainer theme={theme}>
       <StatusBar style="light" />
-      <Tab.Navigator
-        screenOptions={({ route }) => ({
-          headerShown: false,
-          tabBarActiveTintColor: neon.blue,
-          tabBarInactiveTintColor: 'rgba(255,255,255,0.50)',
-          tabBarStyle: {
-            backgroundColor: 'rgba(10, 10, 20, 0.92)',
-            borderTopColor: 'rgba(168, 85, 247, 0.18)',
-            height: 66,
-            paddingTop: 8,
-            paddingBottom: 10,
-          },
-          tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-          tabBarIcon: ({ color, size }) => {
-            const icon = (() => {
-              switch (route.name) {
-                case 'Home':
-                  return 'home'
-                case 'Pools':
-                  return 'trophy'
-                case 'Swap':
-                  return 'swap-horizontal'
-                case 'Profile':
-                  return 'person'
-                default:
-                  return 'ellipse'
-              }
-            })()
-            return <Ionicons name={icon as any} size={size} color={color} />
-          },
-        })}
-      >
-        <Tab.Screen name="Home" component={HomeScreen} />
-        <Tab.Screen name="Pools" component={PoolsScreen} />
-        <Tab.Screen name="Swap" component={SwapScreen} />
-        <Tab.Screen name="Profile" component={ProfileScreen} />
-      </Tab.Navigator>
+      {hasSeen ? (
+        <MainTabs />
+      ) : (
+        <OnboardingScreen
+          onDone={async () => {
+            await setHasSeenOnboarding()
+            setHasSeen(true)
+          }}
+        />
+      )}
     </NavigationContainer>
+  )
+}
+
+function MainTabs() {
+  return (
+    <Tab.Navigator
+      screenOptions={({ route }) => ({
+        headerShown: false,
+        tabBarActiveTintColor: neon.blue,
+        tabBarInactiveTintColor: 'rgba(255,255,255,0.45)',
+        tabBarBackground: () => (
+          <BlurView
+            intensity={22}
+            tint="dark"
+            style={{
+              flex: 1,
+              backgroundColor: 'rgba(10,10,20,0.78)',
+            }}
+          />
+        ),
+        tabBarStyle: {
+          position: 'absolute',
+          left: 14,
+          right: 14,
+          bottom: 12,
+          height: 68,
+          paddingTop: 8,
+          paddingBottom: 10,
+          borderTopWidth: 0,
+          borderRadius: 22,
+          overflow: 'hidden',
+        },
+        tabBarLabelStyle: { ...type.caption, fontSize: 11, color: 'white' } as any,
+        tabBarIcon: ({ color, size }) => {
+          const icon = (() => {
+            switch (route.name) {
+              case 'Home':
+                return 'home'
+              case 'Pools':
+                return 'trophy'
+              case 'Swap':
+                return 'swap-horizontal'
+              case 'Profile':
+                return 'person'
+              default:
+                return 'ellipse'
+            }
+          })()
+          return <Ionicons name={icon as any} size={size} color={color} />
+        },
+      })}
+    >
+      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="Pools" component={PoolsScreen} />
+      <Tab.Screen name="Swap" component={SwapScreen} />
+      <Tab.Screen name="Profile" component={ProfileScreen} />
+    </Tab.Navigator>
   )
 }

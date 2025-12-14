@@ -1,5 +1,7 @@
 import React, { useEffect } from 'react'
 import { Pressable, Text, View } from 'react-native'
+import ConfettiCannon from 'react-native-confetti-cannon'
+import * as Haptics from 'expo-haptics'
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -8,6 +10,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated'
+import { type } from '../theme/typography'
 
 export function TipSuccessOverlay({
   visible,
@@ -30,6 +33,8 @@ export function TipSuccessOverlay({
       return
     }
 
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {})
+
     opacity.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.quad) })
     scale.value = withSpring(1, { damping: 12, stiffness: 140 })
     glow.value = withDelay(120, withTiming(1, { duration: 420 }))
@@ -50,6 +55,10 @@ export function TipSuccessOverlay({
       style={[backdropStyle, { backgroundColor: 'rgba(0,0,0,0.72)' }]}
     >
       <Pressable className="absolute inset-0" onPress={onClose} />
+
+      <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 240 }}>
+        <ConfettiCannon count={60} origin={{ x: 20, y: 0 }} fadeOut={true} fallSpeed={2700} />
+      </View>
 
       <Animated.View
         className="w-[88%] rounded-2xl border px-5 py-5"
@@ -76,8 +85,8 @@ export function TipSuccessOverlay({
             ]}
           />
 
-          <Text className="mt-4 text-center text-base font-semibold text-white">Success</Text>
-          <Text className="mt-1 text-center text-sm text-gray-300">{message}</Text>
+          <Text style={{ ...type.h3, marginTop: 14, color: 'rgba(255,255,255,0.95)' }}>Success</Text>
+          <Text style={{ ...type.body, marginTop: 6, textAlign: 'center', color: 'rgba(255,255,255,0.72)' }}>{message}</Text>
         </View>
       </Animated.View>
     </Animated.View>

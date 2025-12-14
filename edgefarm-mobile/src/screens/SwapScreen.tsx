@@ -6,6 +6,9 @@ import { NeonCard } from '../components/NeonCard'
 import { NeonButton } from '../components/NeonButton'
 import { neon } from '../theme/neon'
 import { connectThetaWalletMock, createDisconnectedWallet } from '../lib/mockWallet'
+import { NeonPill } from '../components/NeonPill'
+import { type } from '../theme/typography'
+import * as Haptics from 'expo-haptics'
 
 const LSTS = ['stkXPRT', 'stkATOM', 'pSTAKE BTC'] as const
 
@@ -74,30 +77,33 @@ export function SwapScreen() {
   return (
     <ScreenBackground>
       <SafeAreaView className="flex-1">
-        <View className="px-4 pt-3">
-          <Text className="text-2xl font-bold text-white">Swap & Stake</Text>
-          <Text className="mt-1 text-sm" style={{ color: neon.muted }}>
-            Mobile-optimized XFUEL swap UI
+        <View className="px-5 pt-3">
+          <View className="flex-row items-center justify-between">
+            <Text style={{ ...type.h2, color: 'rgba(255,255,255,0.95)' }}>Swap & Stake</Text>
+            <NeonPill label="Gas-free" tone="blue" />
+          </View>
+          <Text style={{ ...type.caption, marginTop: 6, color: 'rgba(255,255,255,0.55)' }}>
+            Mobile-optimized XFUEL swap flow
           </Text>
         </View>
 
-        <View className="p-4">
-          <NeonCard className="mb-4">
+        <View className="px-5 pt-5">
+          <NeonCard className="mb-5">
             {!wallet.isConnected ? (
-              <NeonButton label="Connect Theta Wallet" onPress={connect} />
+              <NeonButton label="Connect Theta Wallet" onPress={connect} rightHint="secure" />
             ) : (
               <View>
                 <View className="flex-row items-center justify-between">
-                  <Text className="text-xs" style={{ color: neon.muted }}>
+                  <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.55)' }}>
                     Connected
                   </Text>
-                  <Text className="text-xs font-semibold" style={{ color: neon.green }}>
+                  <Text style={{ ...type.caption, color: neon.green }}>
                     {wallet.addressShort}
                   </Text>
                 </View>
                 <View className="mt-2 flex-row items-baseline gap-2">
-                  <Text className="text-2xl font-bold text-white">{wallet.balanceTfuel.toLocaleString()}</Text>
-                  <Text className="text-sm" style={{ color: neon.muted }}>
+                  <Text style={{ ...type.h1, color: 'rgba(255,255,255,0.95)' }}>{wallet.balanceTfuel.toLocaleString()}</Text>
+                  <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.55)' }}>
                     TFUEL
                   </Text>
                 </View>
@@ -105,8 +111,11 @@ export function SwapScreen() {
             )}
           </NeonCard>
 
-          <NeonCard className="mb-4">
-            <Text className="text-sm font-semibold text-white">TFUEL input</Text>
+          <NeonCard className="mb-5">
+            <View className="flex-row items-center justify-between">
+              <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.95)' }}>TFUEL input</Text>
+              <NeonPill label={`Finality ${finalityText}`} tone="green" />
+            </View>
 
             <View className="mt-3 flex-row gap-2">
               <View
@@ -120,8 +129,9 @@ export function SwapScreen() {
                   placeholder="0.00"
                   placeholderTextColor={'rgba(255,255,255,0.35)'}
                   keyboardType="decimal-pad"
-                  className="text-base font-semibold text-white"
+                  style={{ ...type.h3, color: 'rgba(255,255,255,0.95)' }}
                 />
+                <Text style={{ ...type.caption, marginTop: 6, color: 'rgba(255,255,255,0.45)' }}>TFUEL</Text>
               </View>
 
               <Pressable
@@ -130,9 +140,8 @@ export function SwapScreen() {
                 className="rounded-xl border px-4 py-3"
                 style={{ borderColor: 'rgba(56,189,248,0.30)', backgroundColor: 'rgba(56,189,248,0.10)' }}
               >
-                <Text className="text-sm font-semibold" style={{ color: neon.blue }}>
-                  MAX
-                </Text>
+                <Text style={{ ...type.bodyM, color: neon.blue }}>MAX</Text>
+                <Text style={{ ...type.caption, marginTop: 6, color: 'rgba(255,255,255,0.55)' }}>balance</Text>
               </Pressable>
             </View>
 
@@ -140,77 +149,75 @@ export function SwapScreen() {
               {[25, 50, 100].map((pct) => (
                 <Pressable
                   key={pct}
-                  onPress={() => setPresetPct(pct as 25 | 50 | 100)}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => {})
+                    setPresetPct(pct as 25 | 50 | 100)
+                  }}
                   disabled={!wallet.isConnected}
                   className="flex-1 rounded-xl border px-3 py-3"
                   style={{ borderColor: 'rgba(168,85,247,0.22)', backgroundColor: 'rgba(168,85,247,0.08)' }}
                 >
-                  <Text className="text-center text-sm font-semibold" style={{ color: neon.purple }}>
-                    {pct}%
+                  <Text style={{ ...type.bodyM, textAlign: 'center', color: 'rgba(255,255,255,0.88)' }}>{pct}%</Text>
+                  <Text style={{ ...type.caption, marginTop: 4, textAlign: 'center', color: 'rgba(255,255,255,0.45)' }}>
+                    preset
                   </Text>
                 </Pressable>
               ))}
             </View>
 
-            <Text className="mt-4 text-xs uppercase tracking-widest" style={{ color: neon.muted }}>
-              Chosen LST
-            </Text>
+            <Text style={{ ...type.caption, marginTop: 16, color: 'rgba(255,255,255,0.55)' }}>CHOSEN LST</Text>
             <View className="mt-2 flex-row gap-2">
               {LSTS.map((lst) => {
                 const active = lst === selectedLST
                 return (
                   <Pressable
                     key={lst}
-                    onPress={() => setSelectedLST(lst)}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {})
+                      setSelectedLST(lst)
+                    }}
                     className="flex-1 rounded-xl border px-3 py-3"
                     style={{
                       borderColor: active ? 'rgba(56,189,248,0.55)' : 'rgba(168,85,247,0.22)',
                       backgroundColor: active ? 'rgba(56,189,248,0.10)' : 'rgba(255,255,255,0.03)',
                     }}
                   >
-                    <Text className="text-center text-xs font-semibold" style={{ color: active ? neon.blue : neon.muted }}>
-                      {lst}
+                    <Text style={{ ...type.bodyM, textAlign: 'center', color: active ? neon.blue : 'rgba(255,255,255,0.60)' }}>{lst}</Text>
+                    <Text style={{ ...type.caption, marginTop: 4, textAlign: 'center', color: 'rgba(255,255,255,0.45)' }}>
+                      tap to select
                     </Text>
                   </Pressable>
                 )
               })}
             </View>
 
-            <View className="mt-4 flex-row items-center justify-between">
-              <Text className="text-xs" style={{ color: neon.muted }}>
-                Live finality countdown
-              </Text>
-              <Text className="text-xs font-semibold" style={{ color: neon.green }}>
-                {finalityText}
-              </Text>
-            </View>
-
-            <View className="mt-2 flex-row items-center justify-between">
-              <View
-                className="rounded-full border px-3 py-1"
-                style={{ borderColor: 'rgba(56,189,248,0.35)', backgroundColor: 'rgba(56,189,248,0.08)' }}
-              >
-                <Text className="text-xs font-semibold" style={{ color: neon.blue }}>
-                  Gas-free
-                </Text>
-              </View>
-              <Text className="text-xs" style={{ color: neon.muted }}>
-                paid by treasury
-              </Text>
+            <View className="mt-4 flex-row flex-wrap gap-2">
+              <NeonPill label="Paid by treasury" tone="purple" />
+              <NeonPill label="Instant settlement" tone="blue" />
             </View>
           </NeonCard>
 
           {status ? (
-            <View className="mb-4 rounded-2xl border px-4 py-3" style={{ borderColor: 'rgba(56,189,248,0.25)', backgroundColor: 'rgba(56,189,248,0.08)' }}>
-              <Text className="text-sm" style={{ color: neon.text }}>
+            <View className="mb-5 rounded-2xl border px-4 py-3" style={{ borderColor: 'rgba(56,189,248,0.25)', backgroundColor: 'rgba(56,189,248,0.08)' }}>
+              <Text style={{ ...type.bodyM, color: neon.text }}>
                 {status}
               </Text>
             </View>
           ) : null}
 
-          <View className="gap-3">
-            <NeonButton label="Approve TFUEL" onPress={approve} disabled={!wallet.isConnected || !tfuelAmount} />
-            <NeonButton label="Swap & Stake" onPress={swapAndStake} disabled={!wallet.isConnected || !tfuelAmount} />
+          <View className="gap-3" style={{ paddingBottom: 92 }}>
+            <NeonButton
+              label="Approve TFUEL"
+              onPress={approve}
+              disabled={!wallet.isConnected || !tfuelAmount}
+              rightHint="1/2"
+            />
+            <NeonButton
+              label={`Swap & Stake → ${selectedLST}`}
+              onPress={swapAndStake}
+              disabled={!wallet.isConnected || !tfuelAmount}
+              rightHint="2/2"
+            />
           </View>
         </View>
       </SafeAreaView>

@@ -16,6 +16,7 @@
     "@react-native-community/slider": "5.0.1",
     "@react-navigation/bottom-tabs": "^7.8.12",
     "@react-navigation/native": "^7.1.25",
+    "@react-navigation/native-stack": "^7.8.6",
     "@thetalabs/theta-js": "^0.0.86",
     "@thetalabs/theta-wallet-connect": "^0.0.18",
     "babel-preset-expo": "~54.0.0",

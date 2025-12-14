@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { FlatList, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { NeonCard } from '../components/NeonCard'
@@ -7,6 +7,8 @@ import { ScreenBackground } from '../components/ScreenBackground'
 import { TipSuccessOverlay } from '../components/TipSuccessOverlay'
 import { getAppExtra } from '../lib/appConfig'
 import { neon } from '../theme/neon'
+import { type } from '../theme/typography'
+import { NeonPill } from '../components/NeonPill'
 
 type EventRow = {
   id: string
@@ -14,6 +16,7 @@ type EventRow = {
   winnerPot: number
   loserPot: number
   lotteryPot: number
+  endsAtMs: number
 }
 
 export function PoolsScreen() {
@@ -21,6 +24,12 @@ export function PoolsScreen() {
   const [successMsg, setSuccessMsg] = useState('')
   const { lotteryJackpot, globalLotteryCutBps } = getAppExtra()
   const globalLotteryPct = (globalLotteryCutBps / 100).toFixed(0)
+  const [tick, setTick] = useState(0)
+
+  useEffect(() => {
+    const t = setInterval(() => setTick((v) => v + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
 
   const events: EventRow[] = useMemo(
     () => [
@@ -30,6 +39,7 @@ export function PoolsScreen() {
         winnerPot: 124_800,
         loserPot: 78_300,
         lotteryPot: 22_340,
+        endsAtMs: Date.now() + 1000 * 60 * 38,
       },
       {
         id: 'e2',
@@ -37,6 +47,7 @@ export function PoolsScreen() {
         winnerPot: 64_250,
         loserPot: 41_900,
         lotteryPot: 11_750,
+        endsAtMs: Date.now() + 1000 * 60 * 12,
       },
       {
         id: 'e3',
@@ -44,6 +55,7 @@ export function PoolsScreen() {
         winnerPot: 92_110,
         loserPot: 58_420,
         lotteryPot: 15_980,
+        endsAtMs: Date.now() + 1000 * 60 * 22,
       },
     ],
     []
@@ -63,16 +75,19 @@ export function PoolsScreen() {
     <ScreenBackground>
       <SafeAreaView className="flex-1">
         <View className="px-4 pt-3">
-          <Text className="text-2xl font-bold text-white">Tip Pools</Text>
+          <View className="flex-row items-center justify-between">
+            <Text style={{ ...type.h2, color: 'rgba(255,255,255,0.95)' }}>Tip Pools</Text>
+            <NeonPill label={`Jackpot ${lotteryJackpot}`} tone="pink" />
+          </View>
           <View
             className="mt-3 rounded-2xl border px-4 py-3"
             style={{ borderColor: 'rgba(251, 113, 133, 0.35)', backgroundColor: 'rgba(251, 113, 133, 0.10)' }}
           >
-            <Text className="text-sm font-semibold" style={{ color: neon.pink }}>
+            <Text style={{ ...type.bodyM, color: neon.pink }}>
               {globalLotteryPct}% of every tip feeds the global lottery
             </Text>
-            <Text className="mt-1 text-xs" style={{ color: neon.muted }}>
-              Tip Loser to enter. Winners still earn the main pot.
+            <Text style={{ ...type.caption, marginTop: 6, color: 'rgba(255,255,255,0.58)' }}>
+              Tip Loser to enter the global draw. Tip Winner for pure pot exposure.
             </Text>
           </View>
         </View>
@@ -83,32 +98,29 @@ export function PoolsScreen() {
           contentContainerStyle={{ padding: 16, paddingBottom: 28, gap: 12 }}
           renderItem={({ item }) => (
             <NeonCard>
-              <Text className="text-base font-semibold text-white">{item.title}</Text>
+              <View className="flex-row items-start justify-between">
+                <View style={{ flex: 1, paddingRight: 12 }}>
+                  <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.96)' }}>{item.title}</Text>
+                  <Text style={{ ...type.caption, marginTop: 6, color: 'rgba(255,255,255,0.52)' }}>
+                    Live event · viral tipping · instant settlement
+                  </Text>
+                </View>
 
-              <View className="mt-3 flex-row justify-between">
-                <View>
-                  <Text className="text-xs" style={{ color: neon.muted }}>
-                    Winner pot
-                  </Text>
-                  <Text className="mt-1 text-lg font-bold" style={{ color: neon.blue }}>
-                    ${item.winnerPot.toLocaleString()}
-                  </Text>
-                </View>
-                <View>
-                  <Text className="text-xs" style={{ color: neon.muted }}>
-                    Loser pot
-                  </Text>
-                  <Text className="mt-1 text-lg font-bold" style={{ color: neon.purple }}>
-                    ${item.loserPot.toLocaleString()}
-                  </Text>
-                </View>
-                <View>
-                  <Text className="text-xs" style={{ color: neon.muted }}>
-                    10% lottery
-                  </Text>
-                  <Text className="mt-1 text-lg font-bold" style={{ color: neon.pink }}>
-                    ${item.lotteryPot.toLocaleString()}
-                  </Text>
+                <CountdownPill endsAtMs={item.endsAtMs} tick={tick} />
+              </View>
+
+              <View style={{ marginTop: 14 }}>
+                <PotRow label="Winner pot" value={item.winnerPot} tone="blue" />
+                <View style={{ height: 10 }} />
+                <PotRow label="Loser pot" value={item.loserPot} tone="purple" />
+                <View style={{ height: 10 }} />
+                <PotRow label={`${globalLotteryPct}% Lottery pot`} value={item.lotteryPot} tone="pink" />
+              </View>
+
+              <View style={{ marginTop: 14 }}>
+                <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.58)' }}>Momentum gauge</Text>
+                <View style={{ marginTop: 10 }}>
+                  <WinnerLoserGauge winner={item.winnerPot} loser={item.loserPot} />
                 </View>
               </View>
 
@@ -121,12 +133,13 @@ export function PoolsScreen() {
                     label="Tip Loser (enter lottery)"
                     variant="secondary"
                     onPress={() => tip('loser', item.title)}
+                    rightHint={`${globalLotteryPct}% → lottery`}
                   />
                 </View>
               </View>
 
-              <Text className="mt-3 text-xs" style={{ color: neon.muted }}>
-                After tip: success animation + lottery entry confirmation
+              <Text style={{ ...type.caption, marginTop: 12, color: 'rgba(255,255,255,0.46)' }}>
+                Tip Loser = lottery ticket. Tip Winner = pure pot exposure.
               </Text>
             </NeonCard>
           )}
@@ -140,4 +153,36 @@ export function PoolsScreen() {
       </SafeAreaView>
     </ScreenBackground>
   )
+}
+
+function PotRow({ label, value, tone }: { label: string; value: number; tone: 'blue' | 'purple' | 'pink' }) {
+  const c =
+    tone === 'blue' ? neon.blue : tone === 'pink' ? neon.pink : neon.purple
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+      <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.70)' }}>{label}</Text>
+      <Text style={{ ...type.bodyM, color: c }}>${value.toLocaleString()}</Text>
+    </View>
+  )
+}
+
+function WinnerLoserGauge({ winner, loser }: { winner: number; loser: number }) {
+  const total = Math.max(1, winner + loser)
+  const w = winner / total
+  const l = loser / total
+  return (
+    <View style={{ flexDirection: 'row', height: 12, borderRadius: 999, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.08)' }}>
+      <View style={{ flex: w, backgroundColor: 'rgba(56,189,248,0.70)' }} />
+      <View style={{ flex: l, backgroundColor: 'rgba(168,85,247,0.70)' }} />
+    </View>
+  )
+}
+
+function CountdownPill({ endsAtMs, tick }: { endsAtMs: number; tick: number }) {
+  void tick
+  const remaining = Math.max(0, endsAtMs - Date.now())
+  const mm = Math.floor(remaining / 60000)
+  const ss = Math.floor((remaining % 60000) / 1000)
+  const text = `${mm}:${ss.toString().padStart(2, '0')}`
+  return <NeonPill label={`Lottery in ${text}`} tone="blue" />
 }
