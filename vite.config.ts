@@ -8,6 +8,9 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: false,
     minify: 'esbuild', // Use esbuild instead of terser for better Vercel compatibility
+    esbuild: {
+      drop: ['console', 'debugger'], // Remove console and debugger statements in production
+    },
     rollupOptions: {
       output: {
         manualChunks: {
@@ -24,4 +27,3 @@ export default defineConfig({
     port: 3000,
   },
 })
-
