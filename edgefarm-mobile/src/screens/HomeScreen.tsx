@@ -144,7 +144,17 @@ export function HomeScreen() {
                   },
                 ]}
               />
-              <Text style={{ ...type.h0, color: 'rgba(255,255,255,0.98)' }}>{apyText}</Text>
+              <Text
+                style={{
+                  ...type.h0,
+                  color: 'rgba(255,255,255,0.98)',
+                  textShadowColor: 'rgba(168,85,247,0.95)',
+                  textShadowRadius: 22,
+                  textShadowOffset: { width: 0, height: 0 },
+                }}
+              >
+                {apyText}
+              </Text>
               <Text
                 style={{
                   ...type.bodyM,
