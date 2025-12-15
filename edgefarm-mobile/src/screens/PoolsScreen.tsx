@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { FlatList, Text, View } from 'react-native'
+import { Modal, ScrollView, Text, TouchableOpacity, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { NeonCard } from '../components/NeonCard'
 import { NeonButton } from '../components/NeonButton'
@@ -25,6 +25,8 @@ export function PoolsScreen() {
   const { lotteryJackpot, globalLotteryCutBps } = getAppExtra()
   const globalLotteryPct = (globalLotteryCutBps / 100).toFixed(0)
   const [tick, setTick] = useState(0)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [createVisible, setCreateVisible] = useState(false)
 
   useEffect(() => {
     const t = setInterval(() => setTick((v) => v + 1), 1000)
@@ -61,6 +63,17 @@ export function PoolsScreen() {
     []
   )
 
+  useEffect(() => {
+    if (!selectedId && events.length > 0) {
+      setSelectedId(events[0].id)
+    }
+  }, [events, selectedId])
+
+  const selectedEvent = useMemo(
+    () => events.find((e) => e.id === selectedId) ?? events[0],
+    [events, selectedId]
+  )
+
   const tip = (side: 'winner' | 'loser', eventTitle: string) => {
     const entered = side === 'loser'
     setSuccessMsg(
@@ -74,11 +87,19 @@ export function PoolsScreen() {
   return (
     <ScreenBackground>
       <SafeAreaView className="flex-1">
-        <View className="px-4 pt-3">
+        <ScrollView
+          contentContainerStyle={{
+            paddingHorizontal: 16,
+            paddingTop: 12,
+            paddingBottom: 28,
+          }}
+          showsVerticalScrollIndicator={false}
+        >
           <View className="flex-row items-center justify-between">
             <Text style={{ ...type.h2, color: 'rgba(255,255,255,0.95)' }}>Tip Pools</Text>
             <NeonPill label={`Jackpot ${lotteryJackpot}`} tone="pink" />
           </View>
+
           <View
             className="mt-3 rounded-2xl border px-4 py-3"
             style={{ borderColor: 'rgba(251, 113, 133, 0.35)', backgroundColor: 'rgba(251, 113, 133, 0.10)' }}
@@ -90,65 +111,126 @@ export function PoolsScreen() {
               Tip Loser to enter the global draw. Tip Winner for pure pot exposure.
             </Text>
           </View>
-        </View>
 
-        <FlatList
-          data={events}
-          keyExtractor={(e) => e.id}
-          contentContainerStyle={{ padding: 16, paddingBottom: 28, gap: 12 }}
-          renderItem={({ item }) => (
-            <NeonCard>
-              <View className="flex-row items-start justify-between">
-                <View style={{ flex: 1, paddingRight: 12 }}>
-                  <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.96)' }}>{item.title}</Text>
-                  <Text style={{ ...type.caption, marginTop: 6, color: 'rgba(255,255,255,0.52)' }}>
-                    Live event · viral tipping · instant settlement
-                  </Text>
+          <View style={{ marginTop: 18 }}>
+            <Text style={{ ...type.caption, marginBottom: 8, color: 'rgba(255,255,255,0.70)' }}>
+              Popular pools right now
+            </Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ columnGap: 10, paddingVertical: 4 }}
+            >
+              {events.map((e) => {
+                const selected = e.id === selectedEvent?.id
+                const tone: 'blue' | 'purple' | 'pink' =
+                  e.id === 'e1' ? 'blue' : e.id === 'e2' ? 'purple' : 'pink'
+                return (
+                  <TouchableOpacity
+                    key={e.id}
+                    activeOpacity={0.9}
+                    onPress={() => setSelectedId(e.id)}
+                  >
+                    <NeonPill
+                      label={e.title.replace('Grand Final', 'GF')}
+                      tone={tone}
+                    />
+                    {selected && (
+                      <Text
+                        style={{
+                          ...type.caption,
+                          marginTop: 4,
+                          textAlign: 'center',
+                          color: 'rgba(248,250,252,0.80)',
+                        }}
+                      >
+                        details ↓
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                )
+              })}
+            </ScrollView>
+          </View>
+
+          {selectedEvent && (
+            <View style={{ marginTop: 18 }}>
+              <NeonCard>
+                <View className="flex-row items-start justify-between">
+                  <View style={{ flex: 1, paddingRight: 12 }}>
+                    <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.96)' }}>{selectedEvent.title}</Text>
+                    <Text style={{ ...type.caption, marginTop: 6, color: 'rgba(255,255,255,0.52)' }}>
+                      Slide-up pool details · viral tipping · instant settlement
+                    </Text>
+                  </View>
+
+                  <CountdownPill endsAtMs={selectedEvent.endsAtMs} tick={tick} />
                 </View>
 
-                <CountdownPill endsAtMs={item.endsAtMs} tick={tick} />
-              </View>
-
-              <View style={{ marginTop: 14 }}>
-                <PotRow label="Winner pot" value={item.winnerPot} tone="blue" />
-                <View style={{ height: 10 }} />
-                <PotRow label="Loser pot" value={item.loserPot} tone="purple" />
-                <View style={{ height: 10 }} />
-                <PotRow label={`${globalLotteryPct}% Lottery pot`} value={item.lotteryPot} tone="pink" />
-              </View>
-
-              <View style={{ marginTop: 14 }}>
-                <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.58)' }}>Momentum gauge</Text>
-                <View style={{ marginTop: 10 }}>
-                  <WinnerLoserGauge winner={item.winnerPot} loser={item.loserPot} />
-                </View>
-              </View>
-
-              <View className="mt-4 flex-row gap-3">
-                <View className="flex-1">
-                  <NeonButton label="Tip Winner" onPress={() => tip('winner', item.title)} />
-                </View>
-                <View className="flex-1">
-                  <NeonButton
-                    label="Tip Loser (enter lottery)"
-                    variant="secondary"
-                    onPress={() => tip('loser', item.title)}
-                    rightHint={`${globalLotteryPct}% → lottery`}
+                <View style={{ marginTop: 14 }}>
+                  <PotRow label="Winner pot" value={selectedEvent.winnerPot} tone="blue" />
+                  <View style={{ height: 10 }} />
+                  <PotRow label="Loser pot" value={selectedEvent.loserPot} tone="purple" />
+                  <View style={{ height: 10 }} />
+                  <PotRow
+                    label={`${globalLotteryPct}% Lottery pot`}
+                    value={selectedEvent.lotteryPot}
+                    tone="pink"
                   />
                 </View>
-              </View>
 
-              <Text style={{ ...type.caption, marginTop: 12, color: 'rgba(255,255,255,0.46)' }}>
-                Tip Loser = lottery ticket. Tip Winner = pure pot exposure.
-              </Text>
-            </NeonCard>
+                <View style={{ marginTop: 14 }}>
+                  <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.58)' }}>Momentum gauge</Text>
+                  <View style={{ marginTop: 10 }}>
+                    <WinnerLoserGauge
+                      winner={selectedEvent.winnerPot}
+                      loser={selectedEvent.loserPot}
+                    />
+                  </View>
+                </View>
+
+                <View className="mt-4 flex-row gap-3">
+                  <View className="flex-1">
+                    <NeonButton
+                      label="Tip Winner"
+                      onPress={() => tip('winner', selectedEvent.title)}
+                    />
+                  </View>
+                  <View className="flex-1">
+                    <NeonButton
+                      label="Tip Loser (enter lottery)"
+                      variant="secondary"
+                      onPress={() => tip('loser', selectedEvent.title)}
+                      rightHint={`${globalLotteryPct}% → lottery`}
+                    />
+                  </View>
+                </View>
+
+                <Text style={{ ...type.caption, marginTop: 12, color: 'rgba(255,255,255,0.46)' }}>
+                  Tip Loser = lottery ticket. Tip Winner = pure pot exposure.
+                </Text>
+              </NeonCard>
+            </View>
           )}
-        />
+
+          <View style={{ marginTop: 20, alignItems: 'flex-end' }}>
+            <NeonButton
+              label="Create Pool"
+              variant="secondary"
+              onPress={() => setCreateVisible(true)}
+            />
+          </View>
+        </ScrollView>
 
         <TipSuccessOverlay
           visible={successVisible}
           message={successMsg}
           onClose={() => setSuccessVisible(false)}
+        />
+
+        <CreatePoolModal
+          visible={createVisible}
+          onClose={() => setCreateVisible(false)}
         />
       </SafeAreaView>
     </ScreenBackground>
@@ -185,4 +267,71 @@ function CountdownPill({ endsAtMs, tick }: { endsAtMs: number; tick: number }) {
   const ss = Math.floor((remaining % 60000) / 1000)
   const text = `${mm}:${ss.toString().padStart(2, '0')}`
   return <NeonPill label={`Lottery in ${text}`} tone="blue" />
+}
+
+function CreatePoolModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: 'rgba(5,5,15,0.85)',
+          justifyContent: 'flex-end',
+        }}
+      >
+        <View
+          style={{
+            paddingHorizontal: 20,
+            paddingTop: 18,
+            paddingBottom: 26,
+            borderTopLeftRadius: 24,
+            borderTopRightRadius: 24,
+            backgroundColor: '#020617',
+            borderTopWidth: 1,
+            borderColor: 'rgba(148,163,184,0.35)',
+          }}
+        >
+          <Text style={{ ...type.h3, color: 'rgba(248,250,252,0.96)' }}>Create pool (preview)</Text>
+          <Text style={{ ...type.caption, marginTop: 8, color: 'rgba(148,163,184,0.95)' }}>
+            Soon you&apos;ll be able to spin up custom events, set winner / loser cuts, and route tips to
+            on-chain contracts.
+          </Text>
+
+          <View style={{ marginTop: 16 }}>
+            <View
+              style={{
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: 'rgba(148,163,184,0.45)',
+                paddingHorizontal: 14,
+                paddingVertical: 10,
+                marginBottom: 10,
+              }}
+            >
+              <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>Event name</Text>
+              <Text style={{ ...type.bodyM, marginTop: 4, color: 'rgba(248,250,252,0.92)' }}>
+                e.g. &quot;Worlds Finals Game 5&quot;
+              </Text>
+            </View>
+            <View
+              style={{
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: 'rgba(148,163,184,0.45)',
+                paddingHorizontal: 14,
+                paddingVertical: 10,
+              }}
+            >
+              <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>Loser lottery cut</Text>
+              <Text style={{ ...type.bodyM, marginTop: 4, color: neon.pink }}>10% · global compatible</Text>
+            </View>
+          </View>
+
+          <View style={{ marginTop: 18 }}>
+            <NeonButton label="Close" variant="secondary" onPress={onClose} />
+          </View>
+        </View>
+      </View>
+    </Modal>
+  )
 }
