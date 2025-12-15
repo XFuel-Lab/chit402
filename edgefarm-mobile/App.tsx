@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { Pressable, Text, View } from 'react-native'
 import { StatusBar } from 'expo-status-bar'
 import { DarkTheme, NavigationContainer } from '@react-navigation/native'
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
+import { createMaterialTopTabNavigator, MaterialTopTabBarProps } from '@react-navigation/material-top-tabs'
 import { Ionicons } from '@expo/vector-icons'
 import { BlurView } from 'expo-blur'
 import { useFonts } from 'expo-font'
@@ -26,7 +27,7 @@ type TabParamList = {
   Profile: undefined
 }
 
-const Tab = createBottomTabNavigator<TabParamList>()
+const Tab = createMaterialTopTabNavigator<TabParamList>()
 
 export default function App() {
   const [hasSeen, setHasSeen] = useState<boolean | null>(null)
@@ -83,52 +84,13 @@ export default function App() {
 function MainTabs() {
   return (
     <Tab.Navigator
+      tabBar={(props) => <BottomSwipeTabBar {...props} />}
+      tabBarPosition="bottom"
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: neon.blue,
-        tabBarInactiveTintColor: 'rgba(255,255,255,0.45)',
-        tabBarBackground: () => (
-          <BlurView
-            intensity={22}
-            tint="dark"
-            style={{
-              flex: 1,
-              backgroundColor: 'rgba(10,10,20,0.78)',
-            }}
-          />
-        ),
-        tabBarStyle: {
-          position: 'absolute',
-          left: 14,
-          right: 14,
-          bottom: 12,
-          height: 68,
-          paddingTop: 8,
-          paddingBottom: 10,
-          borderTopWidth: 0,
-          borderRadius: 22,
-          overflow: 'hidden',
-        },
-        tabBarLabelStyle: { ...type.caption, fontSize: 11, color: 'white' } as any,
-        tabBarIcon: ({ color, size }) => {
-          const icon = (() => {
-            switch (route.name) {
-              case 'Home':
-                return 'home'
-              case 'Mining':
-                return 'hardware-chip'
-              case 'Pools':
-                return 'trophy'
-              case 'Swap':
-                return 'swap-horizontal'
-              case 'Profile':
-                return 'person'
-              default:
-                return 'ellipse'
-            }
-          })()
-          return <Ionicons name={icon as any} size={size} color={color} />
-        },
+        swipeEnabled: true,
+        animationEnabled: true,
+        lazy: true,
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
@@ -137,5 +99,60 @@ function MainTabs() {
       <Tab.Screen name="Swap" component={SwapScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
+  )
+}
+
+function BottomSwipeTabBar({ state, navigation }: MaterialTopTabBarProps) {
+  const routes = state.routes
+  const activeIndex = state.index
+
+  return (
+    <View
+      style={{
+        position: 'absolute',
+        left: 14,
+        right: 14,
+        bottom: 12,
+        height: 68,
+        borderRadius: 22,
+        overflow: 'hidden',
+      }}
+    >
+      <BlurView intensity={22} tint="dark" style={{ flex: 1, backgroundColor: 'rgba(10,10,20,0.78)' }}>
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around' }}>
+          {routes.map((route, idx) => {
+            const focused = idx === activeIndex
+            const color = focused ? neon.blue : 'rgba(255,255,255,0.45)'
+            const icon = (() => {
+              switch (route.name) {
+                case 'Home':
+                  return 'home'
+                case 'Mining':
+                  return 'hardware-chip'
+                case 'Pools':
+                  return 'trophy'
+                case 'Swap':
+                  return 'swap-horizontal'
+                case 'Profile':
+                  return 'person'
+                default:
+                  return 'ellipse'
+              }
+            })()
+
+            return (
+              <Pressable
+                key={route.key}
+                onPress={() => navigation.navigate(route.name as never)}
+                style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4 }}
+              >
+                <Ionicons name={icon as any} size={20} color={color} />
+                <Text style={{ ...type.caption, fontSize: 11, color }}>{route.name}</Text>
+              </Pressable>
+            )
+          })}
+        </View>
+      </BlurView>
+    </View>
   )
 }
