@@ -1,6 +1,11 @@
 import React, { useMemo } from 'react'
 import { View, useWindowDimensions } from 'react-native'
-import Animated, { useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated'
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from 'react-native-reanimated'
 
 type Particle = {
   x: number
@@ -38,16 +43,32 @@ export function ParticleField({ count = 26 }: { count?: number }) {
     })
   }, [count])
 
+  // Slow global drift to make the glow field feel alive but ultra-subtle
+  const drift = useSharedValue(0)
+  React.useEffect(() => {
+    drift.value = withRepeat(withTiming(1, { duration: 28000 }), -1, true)
+  }, [drift])
+
   return (
     <View pointerEvents="none" style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
       {particles.map((p, idx) => (
-        <ParticleDot key={idx} p={p} w={width} h={height} />
+        <ParticleDot key={idx} p={p} w={width} h={height} drift={drift} />
       ))}
     </View>
   )
 }
 
-function ParticleDot({ p, w, h }: { p: Particle; w: number; h: number }) {
+function ParticleDot({
+  p,
+  w,
+  h,
+  drift,
+}: {
+  p: Particle
+  w: number
+  h: number
+  drift: Animated.SharedValue<number>
+}) {
   const glow = useSharedValue(0)
   React.useEffect(() => {
     glow.value = withRepeat(withTiming(1, { duration: 1800 + Math.floor(p.phase * 1600) }), -1, true)
@@ -62,7 +83,13 @@ function ParticleDot({ p, w, h }: { p: Particle; w: number; h: number }) {
 
   const style = useAnimatedStyle(() => {
     const o = 0.12 + glow.value * 0.38
-    return { opacity: o }
+    // Gentle orbital drift with very small amplitude
+    const dx = Math.sin((p.phase + drift.value) * Math.PI * 2) * 10
+    const dy = Math.cos((p.phase + drift.value) * Math.PI * 2) * 14
+    return {
+      opacity: o,
+      transform: [{ translateX: dx }, { translateY: dy }],
+    }
   })
 
   return (

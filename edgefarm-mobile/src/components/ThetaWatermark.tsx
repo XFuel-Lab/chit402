@@ -1,25 +1,39 @@
 import React from 'react'
-import { Image, View } from 'react-native'
+import { Image, View, useWindowDimensions } from 'react-native'
 import { neon } from '../theme/neon'
 import { type } from '../theme/typography'
 
-const XFUEL_LOGO = require('../assets/icon.png')
+// From src/components → ../ (src) → ../assets
+const XFUEL_LOGO = require('../../assets/icon.png')
 
 export function ThetaWatermark() {
   // Acts as a subtle, repeated XFUEL “X” + gas pump wallpaper
+  const { width, height } = useWindowDimensions()
+
+  const tileSize = Math.min(width, height) / 5
+
+  const columns = 4
+  const rows = 7
+
   const tiles: Array<{
-    top?: number
-    bottom?: number
-    left?: number
-    right?: number
+    top: number
+    left: number
     size: number
     opacity: number
-  }> = [
-    { top: 40, left: 24, size: 80, opacity: 0.08 },
-    { top: 140, right: -20, size: 140, opacity: 0.1 },
-    { bottom: 32, left: -24, size: 120, opacity: 0.06 },
-    { bottom: 120, right: 32, size: 90, opacity: 0.08 },
-  ]
+  }> = []
+
+  for (let y = 0; y < rows; y += 1) {
+    for (let x = 0; x < columns; x += 1) {
+      const offsetX = (x + (y % 2 === 0 ? 0.15 : -0.15)) * (width / columns)
+      const offsetY = y * (height / rows)
+      tiles.push({
+        top: offsetY - tileSize * 0.2,
+        left: offsetX - tileSize * 0.2,
+        size: tileSize * (0.9 + (x + y) * 0.03),
+        opacity: 0.14 + ((x + y) % 3) * 0.02,
+      })
+    }
+  }
 
   return (
     <View pointerEvents="none" style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
@@ -30,9 +44,7 @@ export function ThetaWatermark() {
           style={{
             position: 'absolute',
             top: t.top,
-            bottom: t.bottom,
             left: t.left,
-            right: t.right,
           }}
         >
           <Image
@@ -66,7 +78,9 @@ export function ThetaWatermark() {
             borderRadius: 999,
             justifyContent: 'center',
             alignItems: 'center',
-            backgroundColor: 'rgba(10,10,25,0.35)',
+            backgroundColor: 'rgba(10,10,25,0.32)',
+            borderWidth: 1,
+            borderColor: 'rgba(168,85,247,0.35)',
           }}
         >
           <Image
@@ -74,13 +88,23 @@ export function ThetaWatermark() {
             style={{
               width: 180,
               height: 180,
-              opacity: 0.12,
+              opacity: 0.14,
               tintColor: neon.purple,
             }}
             resizeMode="contain"
           />
         </View>
-        <View style={{ marginTop: 8, paddingHorizontal: 16, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(168,85,247,0.35)', backgroundColor: 'rgba(10,10,30,0.4)' }}>
+        <View
+          style={{
+            marginTop: 8,
+            paddingHorizontal: 16,
+            paddingVertical: 4,
+            borderRadius: 999,
+            borderWidth: 1,
+            borderColor: 'rgba(168,85,247,0.45)',
+            backgroundColor: 'rgba(10,10,30,0.55)',
+          }}
+        >
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <Image
               source={XFUEL_LOGO}

@@ -160,13 +160,50 @@ export function SwapScreen() {
                     setPresetPct(pct as 25 | 50 | 100)
                   }}
                   disabled={!wallet.isConnected}
-                  className="flex-1 rounded-xl border px-3 py-3"
-                  style={{ borderColor: 'rgba(168,85,247,0.22)', backgroundColor: 'rgba(168,85,247,0.08)' }}
+                  className="flex-1"
+                  style={{ borderRadius: 999 }}
                 >
-                  <Text style={{ ...type.bodyM, textAlign: 'center', color: 'rgba(255,255,255,0.88)' }}>{pct}%</Text>
-                  <Text style={{ ...type.caption, marginTop: 4, textAlign: 'center', color: 'rgba(255,255,255,0.45)' }}>
-                    preset
-                  </Text>
+                  <View
+                    style={{
+                      borderRadius: 999,
+                      overflow: 'hidden',
+                      shadowColor: 'rgba(168,85,247,1)',
+                      shadowOpacity: 0.45,
+                      shadowRadius: 18,
+                      shadowOffset: { width: 0, height: 10 },
+                    }}
+                  >
+                    <View
+                      style={{
+                        borderRadius: 999,
+                        paddingHorizontal: 12,
+                        paddingVertical: 10,
+                        borderWidth: 1,
+                        borderColor: 'rgba(168,85,247,0.40)',
+                        backgroundColor: 'rgba(15,23,42,0.70)',
+                      }}
+                    >
+                      <Text
+                        style={{
+                          ...type.bodyM,
+                          textAlign: 'center',
+                          color: 'rgba(255,255,255,0.92)',
+                        }}
+                      >
+                        {pct}%
+                      </Text>
+                      <Text
+                        style={{
+                          ...type.caption,
+                          marginTop: 4,
+                          textAlign: 'center',
+                          color: 'rgba(255,255,255,0.45)',
+                        }}
+                      >
+                        preset
+                      </Text>
+                    </View>
+                  </View>
                 </Pressable>
               ))}
             </View>
@@ -182,16 +219,50 @@ export function SwapScreen() {
                       Haptics.selectionAsync().catch(() => {})
                       setSelectedLST(lst)
                     }}
-                    className="flex-1 rounded-xl border px-3 py-3"
-                    style={{
-                      borderColor: active ? 'rgba(56,189,248,0.55)' : 'rgba(168,85,247,0.22)',
-                      backgroundColor: active ? 'rgba(56,189,248,0.10)' : 'rgba(255,255,255,0.03)',
-                    }}
+                    className="flex-1"
+                    style={{ borderRadius: 999 }}
                   >
-                    <Text style={{ ...type.bodyM, textAlign: 'center', color: active ? neon.blue : 'rgba(255,255,255,0.60)' }}>{lst}</Text>
-                    <Text style={{ ...type.caption, marginTop: 4, textAlign: 'center', color: 'rgba(255,255,255,0.45)' }}>
-                      tap to select
-                    </Text>
+                    <View
+                      style={{
+                        borderRadius: 999,
+                        overflow: 'hidden',
+                        shadowColor: active ? neon.blue : 'rgba(15,23,42,1)',
+                        shadowOpacity: active ? 0.85 : 0.6,
+                        shadowRadius: active ? 24 : 14,
+                        shadowOffset: { width: 0, height: 14 },
+                      }}
+                    >
+                      <View
+                        style={{
+                          borderRadius: 999,
+                          paddingHorizontal: 14,
+                          paddingVertical: 10,
+                          borderWidth: 1,
+                          borderColor: active ? 'rgba(56,189,248,0.65)' : 'rgba(168,85,247,0.35)',
+                          backgroundColor: active ? 'rgba(15,23,42,0.80)' : 'rgba(15,23,42,0.65)',
+                        }}
+                      >
+                        <Text
+                          style={{
+                            ...type.bodyM,
+                            textAlign: 'center',
+                            color: active ? neon.blue : 'rgba(255,255,255,0.78)',
+                          }}
+                        >
+                          {lst}
+                        </Text>
+                        <Text
+                          style={{
+                            ...type.caption,
+                            marginTop: 4,
+                            textAlign: 'center',
+                            color: 'rgba(255,255,255,0.50)',
+                          }}
+                        >
+                          tap to select
+                        </Text>
+                      </View>
+                    </View>
                   </Pressable>
                 )
               })}

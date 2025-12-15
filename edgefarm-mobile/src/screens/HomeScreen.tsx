@@ -206,7 +206,7 @@ export function HomeScreen() {
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingVertical: 4, columnGap: 12 }}
+              contentContainerStyle={{ paddingVertical: 4, columnGap: 16 }}
             >
               {LSTS.map((lst) => {
                 const isSelected = lst.id === selectedLSTId
@@ -216,54 +216,70 @@ export function HomeScreen() {
                     activeOpacity={0.9}
                     onPress={() => setSelectedLSTId(lst.id)}
                   >
-                    <LinearGradient
-                      colors={
-                        isSelected
-                          ? [lst.accentSoft, 'rgba(15,23,42,0.9)']
-                          : ['rgba(15,23,42,0.9)', 'rgba(15,23,42,0.9)']
-                      }
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
+                    <View
                       style={{
-                        width: 160,
-                        paddingHorizontal: 14,
-                        paddingVertical: 12,
-                        borderRadius: 18,
-                        borderWidth: 1,
-                        borderColor: isSelected ? lst.accentSoft : 'rgba(148,163,184,0.45)',
-                        shadowColor: isSelected ? lst.accent : 'transparent',
-                        shadowOpacity: isSelected ? 0.8 : 0,
-                        shadowRadius: isSelected ? 14 : 0,
+                        width: 190,
+                        borderRadius: 999,
+                        overflow: 'hidden',
+                        shadowColor: isSelected ? lst.accent : 'rgba(15,23,42,1)',
+                        shadowOpacity: isSelected ? 0.9 : 0.55,
+                        shadowRadius: isSelected ? 26 : 16,
+                        shadowOffset: { width: 0, height: 16 },
                       }}
                     >
-                      <Text
+                      <LinearGradient
+                        colors={
+                          isSelected
+                            ? [lst.accentSoft, 'rgba(15,23,42,0.95)']
+                            : ['rgba(15,23,42,0.85)', 'rgba(15,23,42,0.9)']
+                        }
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
                         style={{
-                          ...type.chip,
-                          color: 'rgba(248,250,252,0.96)',
+                          borderRadius: 999,
+                          padding: 1.3,
                         }}
                       >
-                        {lst.label}
-                      </Text>
-                      <Text
-                        style={{
-                          ...type.bodyM,
-                          marginTop: 6,
-                          color: lst.accent,
-                        }}
-                      >
-                        ~{lst.apy.toFixed(1)}% APY
-                      </Text>
-                      <Text
-                        numberOfLines={2}
-                        style={{
-                          ...type.caption,
-                          marginTop: 6,
-                          color: 'rgba(148,163,184,0.95)',
-                        }}
-                      >
-                        {lst.subtitle}
-                      </Text>
-                    </LinearGradient>
+                        <View
+                          style={{
+                            borderRadius: 999,
+                            paddingHorizontal: 18,
+                            paddingVertical: 14,
+                            borderWidth: 1,
+                            borderColor: isSelected ? lst.accentSoft : 'rgba(148,163,184,0.40)',
+                            backgroundColor: 'rgba(15,23,42,0.62)',
+                          }}
+                        >
+                          <Text
+                            style={{
+                              ...type.chip,
+                              color: 'rgba(248,250,252,0.98)',
+                            }}
+                          >
+                            {lst.label}
+                          </Text>
+                          <Text
+                            style={{
+                              ...type.bodyM,
+                              marginTop: 6,
+                              color: lst.accent,
+                            }}
+                          >
+                            ~{lst.apy.toFixed(1)}% APY
+                          </Text>
+                          <Text
+                            numberOfLines={2}
+                            style={{
+                              ...type.caption,
+                              marginTop: 6,
+                              color: 'rgba(148,163,184,0.95)',
+                            }}
+                          >
+                            {lst.subtitle}
+                          </Text>
+                        </View>
+                      </LinearGradient>
+                    </View>
                   </TouchableOpacity>
                 )
               })}
