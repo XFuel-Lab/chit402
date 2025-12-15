@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "EdgeFarm",
+    "slug": "edgefarm-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "edgefarm",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "description": "EdgeFarm mobile app for XFUEL: farming dashboard, tip pools + lottery, and swap & stake.",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#05050a"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.edgefarm.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#05050a"
+      },
+      "package": "com.edgefarm.mobile",
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "lotteryJackpot": "$50k",
+      "globalLotteryCutBps": 1000,
+      "routerAddress": "0xYourRealRouterWillGoHere_AfterDeploy"
+    },
+    "plugins": [
+      "expo-font"
+    ]
+  }
+}
