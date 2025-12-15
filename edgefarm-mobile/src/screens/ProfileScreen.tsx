@@ -33,6 +33,13 @@ type NftItem = {
   value: string
 }
 
+type Winning = {
+  id: string
+  event: string
+  amount: string
+  source: string
+}
+
 const ACHIEVEMENTS: Achievement[] = [
   {
     id: 'first-swap',
@@ -92,6 +99,27 @@ const NFT_SHOWCASE: NftItem[] = [
     source: 'Creator Loyalty',
     tag: 'Rare',
     value: '+280 TFUEL',
+  },
+]
+
+const MY_WINNINGS: Winning[] = [
+  {
+    id: 'w1',
+    event: 'Cloud9 vs Dignitas Finals',
+    amount: '$8,421 loser pot',
+    source: 'Tip Pools lottery (mock)',
+  },
+  {
+    id: 'w2',
+    event: 'Creator Clash Tip Pool',
+    amount: '$2,140 fan cut',
+    source: 'Loser star share (mock)',
+  },
+  {
+    id: 'w3',
+    event: 'Fan Lottery W #27',
+    amount: '$640 booster',
+    source: 'Global lottery (mock)',
   },
 ]
 
@@ -332,6 +360,11 @@ function LevelOrb() {
 export function ProfileScreen() {
   const [isFarming, setIsFarming] = React.useState(false)
 
+  const fanPassLevel = 3
+  const fanPassProgress = 0.64 // 64% to next fan tier
+  const fanTierLabel = 'Gold Fan'
+  const nextTierHint = 'Join 3 more pools & keep a 7-day streak to reach Ultra (mock)'
+
   const farmingLabel = isFarming ? 'Stop farming' : 'Start farming'
   const farmingHint = isFarming ? 'live · TFUEL streaming' : 'boost APY now'
 
@@ -465,8 +498,87 @@ export function ProfileScreen() {
             </View>
           </View>
 
-          {/* Stats + actions */}
+          {/* Fan Pass card */}
           <NeonCard className="mt-6">
+            <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.96)' }}>Fan Pass</Text>
+            <Text style={{ ...type.caption, marginTop: 4, color: 'rgba(148,163,184,0.9)' }}>
+              Level up by tipping stars, joining pools, and hitting streaks
+            </Text>
+
+            <View className="mt-4 flex-row items-center gap-4">
+              <View
+                style={{
+                  width: 80,
+                  height: 80,
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: 'rgba(251,191,36,0.9)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: 'rgba(24,24,48,0.96)',
+                }}
+              >
+                <Text style={{ ...type.caption, color: 'rgba(252,211,77,0.96)' }}>{fanTierLabel}</Text>
+                <Text style={{ ...type.h1, fontSize: 24, color: 'rgba(248,250,252,0.98)' }}>{fanPassLevel}</Text>
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>Progress to next tier</Text>
+                <View
+                  style={{
+                    marginTop: 6,
+                    height: 10,
+                    borderRadius: 999,
+                    overflow: 'hidden',
+                    backgroundColor: 'rgba(15,23,42,0.95)',
+                  }}
+                >
+                  <View
+                    style={{
+                      width: `${fanPassProgress * 100}%`,
+                      height: '100%',
+                      borderRadius: 999,
+                      backgroundColor: 'rgba(251,191,36,0.9)',
+                    }}
+                  />
+                </View>
+                <Text
+                  style={{
+                    ...type.caption,
+                    marginTop: 4,
+                    color: 'rgba(250,250,250,0.96)',
+                  }}
+                >
+                  +10% chance multiplier (mock) · unlocks Fan-only drops
+                </Text>
+              </View>
+            </View>
+
+            <View className="mt-4 flex-row gap-3">
+              <View style={{ flex: 1 }}>
+                <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>Fan streak</Text>
+                <Text style={{ ...type.h1, fontSize: 20, color: 'rgba(248,250,252,0.98)' }}>23 nights</Text>
+                <Text style={{ ...type.caption, marginTop: 2, color: 'rgba(248,113,113,0.9)' }}>
+                  Cloud9 & Creator Clash pools
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>Lottery luck meter</Text>
+                <Text style={{ ...type.h1, fontSize: 20, color: neon.green }}>you&apos;re due</Text>
+                <Text style={{ ...type.caption, marginTop: 2, color: 'rgba(148,163,184,0.9)' }}>
+                  based on last 12 draws (mock)
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ marginTop: 10 }}>
+              <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>Next tier quest</Text>
+              <Text style={{ ...type.caption, marginTop: 4, color: 'rgba(248,250,252,0.92)' }}>{nextTierHint}</Text>
+            </View>
+          </NeonCard>
+
+          {/* Stats + actions */}
+          <NeonCard className="mt-4">
             <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.96)' }}>Your EdgeFarm stats</Text>
 
             {/* 2026-tier stat row: ultra-clean, pill-based metrics */}
@@ -702,6 +814,91 @@ export function ProfileScreen() {
               ))}
             </View>
           </View>
+
+          {/* My Winnings history (mock) + Star Console preview */}
+          <NeonCard className="mt-6 mb-4">
+            <View className="mb-3 flex-row items-center justify-between">
+              <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.96)' }}>My Winnings</Text>
+              <NeonPill label="Fan history (mock)" tone="blue" />
+            </View>
+
+            <View style={{ gap: 10 }}>
+              {MY_WINNINGS.map((w) => (
+                <View
+                  key={w.id}
+                  style={{
+                    borderRadius: 14,
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    borderWidth: 1,
+                    borderColor: 'rgba(56,189,248,0.35)',
+                    backgroundColor: 'rgba(15,23,42,0.80)',
+                  }}
+                >
+                  <Text
+                    style={{
+                      ...type.bodyM,
+                      color: 'rgba(248,250,252,0.96)',
+                    }}
+                  >
+                    {w.event}
+                  </Text>
+                  <Text
+                    style={{
+                      ...type.caption,
+                      marginTop: 4,
+                      color: neon.green,
+                    }}
+                  >
+                    {w.amount}
+                  </Text>
+                  <Text
+                    style={{
+                      ...type.caption,
+                      marginTop: 2,
+                      color: 'rgba(148,163,184,0.9)',
+                    }}
+                  >
+                    {w.source}
+                  </Text>
+                </View>
+              ))}
+            </View>
+
+            {/* Star-side console preview (mock) */}
+            <View
+              style={{
+                marginTop: 16,
+                borderTopWidth: 1,
+                borderColor: 'rgba(30,64,175,0.6)',
+                paddingTop: 12,
+                gap: 8,
+              }}
+            >
+              <View className="flex-row items-center justify-between">
+                <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>Star Console preview</Text>
+                <NeonPill label="creator mode (mock)" tone="purple" />
+              </View>
+              <View
+                style={{
+                  borderRadius: 14,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  borderWidth: 1,
+                  borderColor: 'rgba(168,85,247,0.65)',
+                  backgroundColor: 'rgba(15,23,42,0.90)',
+                }}
+              >
+                <Text style={{ ...type.caption, color: 'rgba(248,250,252,0.96)' }}>
+                  Tonight&apos;s fans tipped <Text style={{ color: neon.green }}>$4,200</Text> — your cut{' '}
+                  <Text style={{ color: neon.green }}>$420</Text>.
+                </Text>
+                <Text style={{ ...type.caption, marginTop: 4, color: 'rgba(148,163,184,0.9)' }}>
+                  You donated 50% to fans · +12 new fan NFTs minted (mock).
+                </Text>
+              </View>
+            </View>
+          </NeonCard>
         </ScrollView>
       </SafeAreaView>
     </ScreenBackground>
