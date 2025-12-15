@@ -85,7 +85,7 @@ export function PoolsScreen() {
   }
 
   return (
-    <ScreenBackground>
+    <ScreenBackground wallpaperVariant="image">
       <SafeAreaView className="flex-1">
         <ScrollView
           contentContainerStyle={{

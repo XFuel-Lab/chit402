@@ -13,6 +13,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated'
 import { type } from '../theme/typography'
+import { ApyOrb } from '../components/ApyOrb'
 
 const LSTS = [
   {
@@ -72,6 +73,11 @@ export function HomeScreen() {
     [selectedLSTId]
   )
 
+  const topLST = useMemo(
+    () => LSTS.reduce((max, curr) => (curr.apy > max.apy ? curr : max), LSTS[0]),
+    []
+  )
+
   const baseApy = selectedLST.apy
 
   const apyText = useMemo(() => {
@@ -102,74 +108,148 @@ export function HomeScreen() {
           </View>
 
           <NeonCard className="mb-6">
-            <View className="flex-row items-center justify-between">
-              <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.58)' }}>LIVE BLENDED APY</Text>
-              <View className="flex-row items-center gap-2">
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.70)' }}>LIVE BLENDED APY</Text>
+                  <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.55)' }}>
+                    {new Date().toLocaleTimeString([], { minute: '2-digit', second: '2-digit' })}
+                  </Text>
+                </View>
+                <Text
+                  style={{
+                    ...type.bodyM,
+                    marginTop: 10,
+                    color: 'rgba(255,255,255,0.82)',
+                  }}
+                >
+                  You&apos;re earning {apyText} on{' '}
+                  <Text style={{ color: selectedLST.accent }}>{selectedLST.label}</Text>
+                </Text>
+                <Text style={{ ...type.caption, marginTop: 4, color: 'rgba(255,255,255,0.55)' }}>
+                  Blended, simulated yields · ticks in real time (demo)
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={() => setSelectedLSTId(topLST.id)}
+                style={{ width: 130, alignItems: 'flex-end' }}
+              >
                 <Animated.View
+                  pointerEvents="none"
                   style={[
                     glowStyle,
                     {
-                      width: 8,
-                      height: 8,
-                      borderRadius: 99,
-                      backgroundColor: neon.blue,
-                      shadowColor: neon.blue,
+                      position: 'absolute',
+                      right: -12,
+                      top: -6,
+                      width: 120,
+                      height: 120,
+                      borderRadius: 60,
+                      backgroundColor: 'rgba(30,64,175,0.55)',
+                      shadowColor: '#a855f7',
                       shadowOpacity: 1,
-                      shadowRadius: 10,
+                      shadowRadius: 32,
                     },
                   ]}
                 />
-                <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.55)' }}>
-                  {new Date().toLocaleTimeString([], { minute: '2-digit', second: '2-digit' })}
-                </Text>
-              </View>
-            </View>
-
-            <View style={{ marginTop: 14 }}>
-              <Animated.View
-                pointerEvents="none"
-                style={[
-                  glowStyle,
-                  {
-                    position: 'absolute',
-                    left: -8,
-                    right: -8,
-                    top: 6,
-                    height: 78,
-                    borderRadius: 24,
-                    backgroundColor: 'rgba(168,85,247,0.10)',
-                    shadowColor: '#a855f7',
-                    shadowOpacity: 1,
-                    shadowRadius: 18,
-                  },
-                ]}
-              />
-              <Text
-                style={{
-                  ...type.h0,
-                  color: 'rgba(255,255,255,0.98)',
-                  textShadowColor: 'rgba(168,85,247,0.95)',
-                  textShadowRadius: 22,
-                  textShadowOffset: { width: 0, height: 0 },
-                }}
-              >
-                {apyText}
-              </Text>
-              <Text
-                style={{
-                  ...type.bodyM,
-                  marginTop: 6,
-                  color: 'rgba(255,255,255,0.78)',
-                }}
-              >
-                You&apos;re currently earning {apyText} on{' '}
-                <Text style={{ color: selectedLST.accent }}>{selectedLST.label}</Text>
-              </Text>
-              <Text style={{ ...type.caption, marginTop: 4, color: 'rgba(255,255,255,0.55)' }}>
-                Blended, simulated yields · ticks in real time (demo)
-              </Text>
+                <ApyOrb apyText={`${topLST.apy.toFixed(1)}%`} label="top yield" />
+              </TouchableOpacity>
             </View>
           </NeonCard>
+
+          {/* Move LST carousel directly under live APY card */}
+          <View style={{ marginBottom: 22 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+              <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.70)' }}>
+                Top LST yields right now
+              </Text>
+              <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>More →</Text>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingVertical: 4, columnGap: 16 }}
+            >
+              {LSTS.map((lst) => {
+                const isSelected = lst.id === selectedLSTId
+                return (
+                  <TouchableOpacity
+                    key={lst.id}
+                    activeOpacity={0.9}
+                    onPress={() => setSelectedLSTId(lst.id)}
+                  >
+                    <View
+                      style={{
+                        width: 190,
+                        borderRadius: 999,
+                        overflow: 'hidden',
+                        shadowColor: isSelected ? lst.accent : 'rgba(15,23,42,1)',
+                        shadowOpacity: isSelected ? 0.9 : 0.55,
+                        shadowRadius: isSelected ? 26 : 16,
+                        shadowOffset: { width: 0, height: 16 },
+                      }}
+                    >
+                      <LinearGradient
+                        colors={
+                          isSelected
+                            ? [lst.accentSoft, 'rgba(15,23,42,0.65)']
+                            : ['rgba(15,23,42,0.40)', 'rgba(15,23,42,0.55)']
+                        }
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={{
+                          borderRadius: 999,
+                          padding: 1,
+                        }}
+                      >
+                        <View
+                          style={{
+                            borderRadius: 999,
+                            paddingHorizontal: 18,
+                            paddingVertical: 14,
+                            borderWidth: 1,
+                            borderColor: isSelected ? lst.accentSoft : 'rgba(148,163,184,0.30)',
+                            // Extremely light tint so wallpaper shows through; rely on bright lettering for contrast
+                            backgroundColor: 'rgba(15,23,42,0.16)',
+                          }}
+                        >
+                          <Text
+                            style={{
+                              ...type.chip,
+                              color: 'rgba(248,250,252,0.98)',
+                            }}
+                          >
+                            {lst.label}
+                          </Text>
+                          <Text
+                            style={{
+                              ...type.bodyM,
+                              marginTop: 6,
+                              color: lst.accent,
+                            }}
+                          >
+                            ~{lst.apy.toFixed(1)}% APY
+                          </Text>
+                          <Text
+                            numberOfLines={2}
+                            style={{
+                              ...type.caption,
+                              marginTop: 6,
+                              color: 'rgba(148,163,184,0.95)',
+                            }}
+                          >
+                            {lst.subtitle}
+                          </Text>
+                        </View>
+                      </LinearGradient>
+                    </View>
+                  </TouchableOpacity>
+                )
+              })}
+            </ScrollView>
+          </View>
 
           <NeonCard className="mb-6">
             <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.58)' }}>EARNINGS TODAY</Text>
@@ -230,14 +310,14 @@ export function HomeScreen() {
                       <LinearGradient
                         colors={
                           isSelected
-                            ? [lst.accentSoft, 'rgba(15,23,42,0.95)']
-                            : ['rgba(15,23,42,0.85)', 'rgba(15,23,42,0.9)']
+                            ? [lst.accentSoft, 'rgba(15,23,42,0.65)']
+                            : ['rgba(15,23,42,0.40)', 'rgba(15,23,42,0.55)']
                         }
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 1 }}
                         style={{
                           borderRadius: 999,
-                          padding: 1.3,
+                          padding: 1,
                         }}
                       >
                         <View
@@ -246,8 +326,9 @@ export function HomeScreen() {
                             paddingHorizontal: 18,
                             paddingVertical: 14,
                             borderWidth: 1,
-                            borderColor: isSelected ? lst.accentSoft : 'rgba(148,163,184,0.40)',
-                            backgroundColor: 'rgba(15,23,42,0.62)',
+                            borderColor: isSelected ? lst.accentSoft : 'rgba(148,163,184,0.30)',
+                            // Extremely light tint so wallpaper shows through; rely on bright lettering for contrast
+                            backgroundColor: 'rgba(15,23,42,0.16)',
                           }}
                         >
                           <Text

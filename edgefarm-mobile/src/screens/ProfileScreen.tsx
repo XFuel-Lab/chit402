@@ -236,6 +236,8 @@ function LevelOrb() {
         borderRadius: 999,
         alignItems: 'center',
         justifyContent: 'center',
+        // ensure glow is never clipped (same fix as home orb)
+        overflow: 'visible',
       }}
     >
       <Animated.View
@@ -294,11 +296,19 @@ function LevelOrb() {
           borderColor: 'rgba(148,163,184,0.85)',
         }}
       >
-        <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)', marginBottom: -2 }}>Farmer Lv</Text>
+        <Text
+          style={{
+            ...type.caption,
+            color: 'rgba(148,163,184,0.95)',
+            marginBottom: -1,
+          }}
+        >
+          Farmer Lv
+        </Text>
         <Text
           style={{
             ...type.h1,
-            fontSize: 26,
+            fontSize: 22,
             color: 'rgba(248,250,252,0.98)',
           }}
         >
@@ -307,7 +317,8 @@ function LevelOrb() {
         <Text
           style={{
             ...type.caption,
-            marginTop: -1,
+            fontSize: 10,
+            marginTop: 0,
             color: 'rgba(56,189,248,0.9)',
           }}
         >
@@ -325,7 +336,7 @@ export function ProfileScreen() {
   const farmingHint = isFarming ? 'live · TFUEL streaming' : 'boost APY now'
 
   return (
-    <ScreenBackground>
+    <ScreenBackground grid={false}>
       <SafeAreaView className="flex-1">
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
           <View className="mb-2 flex-row items-center justify-between">
@@ -335,12 +346,23 @@ export function ProfileScreen() {
                 Tune your EdgeFarm identity, streaks & rewards
               </Text>
             </View>
-            <NeonPill label="EdgeFarm ID" tone="purple" />
+            <View style={{ alignItems: 'flex-end' }}>
+              <NeonPill label="EdgeFarm ID #12345" tone="purple" />
+              <Text
+                style={{
+                  ...type.caption,
+                  marginTop: 4,
+                  color: 'rgba(148,163,184,0.8)',
+                }}
+              >
+                mock · not yet on-chain
+              </Text>
+            </View>
           </View>
 
           {/* Top hero: avatar + ENS + level ring */}
-          <View className="mt-4 flex-row items-center justify-between gap-4">
-            <View className="flex-row items-center gap-4">
+          <View className="mt-4 flex-row items-center gap-4">
+            <View className="flex-1 flex-row items-center gap-4">
               <LinearGradient
                 colors={['rgba(56,189,248,0.55)', 'rgba(168,85,247,0.9)']}
                 start={{ x: 0, y: 0 }}
@@ -433,70 +455,96 @@ export function ProfileScreen() {
               </View>
             </View>
 
-            <LevelOrb />
+            {/* Pin level orb top-right, floating above text */}
+            <View
+              style={{
+                alignItems: 'flex-end',
+              }}
+            >
+              <LevelOrb />
+            </View>
           </View>
 
           {/* Stats + actions */}
           <NeonCard className="mt-6">
             <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.96)' }}>Your EdgeFarm stats</Text>
 
-            <View className="mt-4 flex-row gap-3">
-              <View
-                className="flex-1 rounded-2xl border px-4 py-3"
-                style={{
-                  borderColor: 'rgba(56,189,248,0.26)',
-                  backgroundColor: 'rgba(15,23,42,0.96)',
-                }}
-              >
-                <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>Total TFUEL farmed</Text>
-                <Text style={{ ...type.h1, marginTop: 6, color: 'rgba(248,250,252,0.98)' }}>18,420.73</Text>
-                <Text style={{ ...type.caption, marginTop: 2, color: 'rgba(148,163,184,0.9)' }}>
-                  across all LSTs
-                </Text>
+            {/* 2026-tier stat row: ultra-clean, pill-based metrics */}
+            <View className="mt-4 gap-3">
+              <View className="flex-row gap-3">
+                <View
+                  style={{
+                    flex: 1,
+                    borderRadius: 999,
+                    paddingHorizontal: 16,
+                    paddingVertical: 10,
+                    borderWidth: 1,
+                    borderColor: 'rgba(56,189,248,0.45)',
+                    backgroundColor: 'rgba(15,23,42,0.55)',
+                  }}
+                >
+                  <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>Total TFUEL farmed</Text>
+                  <Text style={{ ...type.h1, marginTop: 4, fontSize: 22, color: 'rgba(248,250,252,0.98)' }}>
+                    18,420.73
+                  </Text>
+                  <Text style={{ ...type.caption, marginTop: 2, color: 'rgba(148,163,184,0.9)' }}>all LSTs</Text>
+                </View>
+
+                <View
+                  style={{
+                    flex: 1,
+                    borderRadius: 999,
+                    paddingHorizontal: 16,
+                    paddingVertical: 10,
+                    borderWidth: 1,
+                    borderColor: 'rgba(168,85,247,0.55)',
+                    backgroundColor: 'rgba(15,23,42,0.55)',
+                  }}
+                >
+                  <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>Blended APY</Text>
+                  <Text style={{ ...type.h1, marginTop: 4, fontSize: 22, color: neon.green }}>18.7%</Text>
+                  <Text style={{ ...type.caption, marginTop: 2, color: 'rgba(148,163,184,0.9)' }}>stTFUEL selected</Text>
+                </View>
               </View>
 
-              <View
-                className="flex-1 rounded-2xl border px-4 py-3"
-                style={{
-                  borderColor: 'rgba(168,85,247,0.26)',
-                  backgroundColor: 'rgba(15,23,42,0.96)',
-                }}
-              >
-                <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>Current blended APY</Text>
-                <Text style={{ ...type.h1, marginTop: 6, color: neon.green }}>18.7%</Text>
-                <Text style={{ ...type.caption, marginTop: 2, color: 'rgba(148,163,184,0.9)' }}>
-                  stTFUEL · auto-compounding
-                </Text>
-              </View>
-            </View>
+              <View className="flex-row gap-3">
+                <View
+                  style={{
+                    flex: 1,
+                    borderRadius: 999,
+                    paddingHorizontal: 16,
+                    paddingVertical: 10,
+                    borderWidth: 1,
+                    borderColor: 'rgba(168,85,247,0.65)',
+                    backgroundColor: 'rgba(22,10,40,0.88)',
+                  }}
+                >
+                  <Text style={{ ...type.caption, color: 'rgba(196,181,253,0.96)' }}>Tips / Lottery</Text>
+                  <Text style={{ ...type.h1, marginTop: 4, fontSize: 22, color: 'rgba(248,250,252,0.98)' }}>
+                    143 / 32
+                  </Text>
+                  <Text style={{ ...type.caption, marginTop: 2, color: 'rgba(248,113,113,0.85)' }}>
+                    3 wins · 1 mega pot
+                  </Text>
+                </View>
 
-            <View className="mt-3 flex-row gap-3">
-              <View
-                className="flex-1 rounded-2xl border px-4 py-3"
-                style={{
-                  borderColor: 'rgba(251,113,133,0.3)',
-                  backgroundColor: 'rgba(15,23,42,0.96)',
-                }}
-              >
-                <Text style={{ ...type.caption, color: 'rgba(248,113,113,0.96)' }}>Tips sent / Lottery</Text>
-                <Text style={{ ...type.h1, marginTop: 6, color: 'rgba(248,250,252,0.98)' }}>143 / 32</Text>
-                <Text style={{ ...type.caption, marginTop: 2, color: 'rgba(248,113,113,0.85)' }}>
-                  3 wins · 1 mega pot
-                </Text>
-              </View>
-
-              <View
-                className="flex-1 rounded-2xl border px-4 py-3"
-                style={{
-                  borderColor: 'rgba(56,189,248,0.3)',
-                  backgroundColor: 'rgba(15,23,42,0.96)',
-                }}
-              >
-                <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>Streak & rank</Text>
-                <Text style={{ ...type.h1, marginTop: 6, color: 'rgba(248,250,252,0.98)' }}>126 days</Text>
-                <Text style={{ ...type.caption, marginTop: 2, color: 'rgba(56,189,248,0.9)' }}>
-                  Top 4% of farmers
-                </Text>
+                <View
+                  style={{
+                    flex: 1,
+                    borderRadius: 999,
+                    paddingHorizontal: 16,
+                    paddingVertical: 10,
+                    borderWidth: 1,
+                    borderColor: 'rgba(56,189,248,0.6)',
+                    backgroundColor: 'rgba(7,16,29,0.9)',
+                  }}
+                >
+                  <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>Streak & rank</Text>
+                  <Text style={{ ...type.h1, marginTop: 4, fontSize: 22, color: 'rgba(248,250,252,0.98)' }}>
+                    126 days
+                  </Text>
+                  <Text style={{ ...type.caption, marginTop: 2, color: 'rgba(56,189,248,0.9)' }}>Top 4% of farmers</Text>
+                </View>
               </View>
             </View>
 
@@ -565,7 +613,8 @@ export function ProfileScreen() {
                 <View
                   key={nft.id}
                   style={{
-                    width: '48%',
+                    flexBasis: '48%',
+                    maxWidth: '48%',
                     marginBottom: 14,
                     borderRadius: 18,
                     overflow: 'hidden',

@@ -1,8 +1,12 @@
 import React from 'react'
-import { View } from 'react-native'
+import { ImageBackground, View } from 'react-native'
 import { LinearGradient } from 'expo-linear-gradient'
 import { ParticleField } from './ParticleField'
 import { ThetaWatermark } from './ThetaWatermark'
+
+// From src/components → ../ (src) → ../assets
+// High-res XFUEL wallpaper provided by you
+const XFUEL_WALLPAPER = require('../../assets/xfuel-wallpaper.png')
 
 function GridOverlay() {
   // Ultra-soft holographic grid to give a HUD / cyberpunk feel without clutter
@@ -51,10 +55,36 @@ function GridOverlay() {
 export function ScreenBackground({
   children,
   grid = true,
+  wallpaperVariant = 'image',
 }: {
   children: React.ReactNode
   grid?: boolean
+  wallpaperVariant?: 'default' | 'hero' | 'image'
 }) {
+  // Pure image-based wallpaper variant for hero / marketing-style screens
+  if (wallpaperVariant === 'image') {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#020014' }}>
+        <ImageBackground
+          source={XFUEL_WALLPAPER}
+          resizeMode="cover"
+          style={{ flex: 1 }}
+          imageStyle={{ opacity: 0.95 }}
+        >
+          {/* Soft dark overlay so UI stays readable on bright images */}
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: 'rgba(2,0,20,0.55)',
+            }}
+          >
+            {children}
+          </View>
+        </ImageBackground>
+      </View>
+    )
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: '#020014' }}>
       {/* Deep space base layer */}
@@ -86,7 +116,7 @@ export function ScreenBackground({
 
       {grid ? <GridOverlay /> : null}
       <ParticleField />
-      <ThetaWatermark />
+      <ThetaWatermark variant={wallpaperVariant === 'hero' ? 'hero' : 'default'} />
 
       {children}
     </View>

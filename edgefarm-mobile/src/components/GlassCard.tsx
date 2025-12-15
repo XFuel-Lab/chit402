@@ -25,22 +25,22 @@ export function GlassCard({
     >
       <LinearGradient
         colors={[
-          'rgba(168, 85, 247, 0.90)',
-          'rgba(56, 189, 248, 0.60)',
-          'rgba(15, 23, 42, 0.95)',
+          'rgba(168, 85, 247, 0.55)',
+          'rgba(56, 189, 248, 0.38)',
+          'rgba(15, 23, 42, 0.60)',
         ]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={{ padding: 1.3, borderRadius: 24 }}
+        style={{ padding: 1, borderRadius: 24 }}
       >
         <BlurView
-          intensity={52}
+          // Keep blur very light so wallpaper stays crystal sharp (sub‑10% vibe)
+          intensity={8}
           tint="dark"
           style={{
             borderRadius: 22,
             overflow: 'hidden',
-            // High-translucency glass so XFUEL wallpaper is clearly visible
-            backgroundColor: 'rgba(2,6,23,0.55)',
+            backgroundColor: 'transparent',
           }}
         >
           <View
@@ -49,13 +49,13 @@ export function GlassCard({
               paddingVertical: 16,
               borderRadius: 22,
               borderWidth: 1,
-              // Soft neon border + inner shadow
-              borderColor: 'rgba(168,85,247,0.55)',
-              backgroundColor: 'rgba(15,23,42,0.65)',
+              // Soft neon border, content floating directly on blurred wallpaper
+              borderColor: 'rgba(168,85,247,0.36)',
+              backgroundColor: 'transparent',
               shadowColor: 'rgba(15,23,42,1)',
-              shadowOpacity: 0.9,
-              shadowRadius: 24,
-              shadowOffset: { width: 0, height: 12 },
+              shadowOpacity: 0.6,
+              shadowRadius: 18,
+              shadowOffset: { width: 0, height: 10 },
             }}
           >
             {/* Glossy highlight strip */}

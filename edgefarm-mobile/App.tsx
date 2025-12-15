@@ -16,6 +16,7 @@ import { ProfileScreen } from './src/screens/ProfileScreen'
 import { OnboardingScreen } from './src/screens/OnboardingScreen'
 import { getHasSeenOnboarding, setHasSeenOnboarding } from './src/lib/onboarding'
 import { type } from './src/theme/typography'
+import { UiModeProvider } from './src/lib/uiMode'
 
 type TabParamList = {
   Home: undefined
@@ -61,19 +62,21 @@ export default function App() {
   if (!fontsLoaded || hasSeen === null) return null
 
   return (
-    <NavigationContainer theme={theme}>
-      <StatusBar style="light" />
-      {hasSeen ? (
-        <MainTabs />
-      ) : (
-        <OnboardingScreen
-          onDone={async () => {
-            await setHasSeenOnboarding()
-            setHasSeen(true)
-          }}
-        />
-      )}
-    </NavigationContainer>
+    <UiModeProvider>
+      <NavigationContainer theme={theme}>
+        <StatusBar style="light" />
+        {hasSeen ? (
+          <MainTabs />
+        ) : (
+          <OnboardingScreen
+            onDone={async () => {
+              await setHasSeenOnboarding()
+              setHasSeen(true)
+            }}
+          />
+        )}
+      </NavigationContainer>
+    </UiModeProvider>
   )
 }
 
