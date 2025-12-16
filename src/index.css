@@ -12,6 +12,56 @@
   }
 }
 
+@layer components {
+  /* Hide scrollbars for horizontal carousels without killing scroll */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* Star field / particle field subtly moving in the background */
+  .xfuel-particles {
+    position: absolute;
+    inset: -20%;
+    background-image:
+      radial-gradient(circle at 10% 20%, rgba(248, 250, 252, 0.18) 0, transparent 40%),
+      radial-gradient(circle at 80% 10%, rgba(129, 140, 248, 0.3) 0, transparent 55%),
+      radial-gradient(circle at 90% 80%, rgba(56, 189, 248, 0.35) 0, transparent 55%),
+      radial-gradient(circle at 0% 100%, rgba(236, 72, 153, 0.25) 0, transparent 55%);
+    opacity: 0.5;
+    filter: blur(1px);
+    animation: xfuel-parallax 28s linear infinite alternate;
+  }
+
+  /* Tap / click glow echo around buttons & bubbles */
+  .xfuel-tap-glow {
+    position: relative;
+  }
+  .xfuel-tap-glow::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.75);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .xfuel-tap-glow:active::after {
+    animation: xfuel-tap 420ms ease-out;
+  }
+
+  /* APY orb motion */
+  .apy-orb-ring {
+    animation: xfuel-orb-spin 9.2s linear infinite;
+  }
+  .apy-orb-inner {
+    animation: xfuel-orb-pulse 2.2s ease-in-out infinite alternate;
+  }
+}
+
 @layer utilities {
   .text-neon-purple {
     text-shadow: 0 0 10px rgba(139, 92, 246, 0.8), 0 0 20px rgba(139, 92, 246, 0.6);
@@ -34,4 +84,48 @@
     box-shadow: 0 0 20px rgba(59, 130, 246, 0.5), 0 0 40px rgba(59, 130, 246, 0.3);
   }
 }
+
+@keyframes xfuel-parallax {
+  0% {
+    transform: translate3d(-10px, -6px, 0) scale(1.02);
+  }
+  50% {
+    transform: translate3d(6px, 12px, 0) scale(1.03);
+  }
+  100% {
+    transform: translate3d(14px, -10px, 0) scale(1.04);
+  }
+}
+
+@keyframes xfuel-tap {
+  0% {
+    opacity: 0.7;
+    box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.85);
+  }
+  100% {
+    opacity: 0;
+    box-shadow: 0 0 0 24px rgba(168, 85, 247, 0);
+  }
+}
+
+@keyframes xfuel-orb-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes xfuel-orb-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.36;
+  }
+  100% {
+    transform: scale(1.04);
+    opacity: 0.72;
+  }
+}
+
 

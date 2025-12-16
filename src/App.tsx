@@ -1,5 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ethers } from 'ethers'
+import ScreenBackground from './components/ScreenBackground'
+import GlassCard from './components/GlassCard'
+import NeonButton from './components/NeonButton'
+import ApyOrb from './components/ApyOrb'
+import YieldBubbleSelector, { type LSTOption } from './components/YieldBubbleSelector'
 
 type SwapStatus = 'idle' | 'approving' | 'swapping' | 'success' | 'error'
 
@@ -9,6 +14,14 @@ interface WalletInfo {
   balance: string
   isConnected: boolean
 }
+
+const LST_OPTIONS: LSTOption[] = [
+  { name: 'stkTIA', apy: 38.2 },
+  { name: 'stkATOM', apy: 32.5 },
+  { name: 'stkXPRT', apy: 28.7 },
+  { name: 'pSTAKE BTC', apy: 25.4 },
+  { name: 'stkOSMO', apy: 22.1 },
+]
 
 function App() {
   const [wallet, setWallet] = useState<WalletInfo>({
@@ -20,11 +33,18 @@ function App() {
   const [tfuelAmount, setTfuelAmount] = useState('')
   const [swapStatus, setSwapStatus] = useState<SwapStatus>('idle')
   const [statusMessage, setStatusMessage] = useState('')
+  const [selectedLST, setSelectedLST] = useState<LSTOption>(LST_OPTIONS[0])
+
+  const numericBalance = useMemo(
+    () => parseFloat(wallet.balance.replace(/,/g, '')) || 0,
+    [wallet.balance],
+  )
+
+  const liveApyText = useMemo(() => `${selectedLST.apy.toFixed(1)}%`, [selectedLST.apy])
 
   // Mock Theta Wallet connection
   const connectWallet = async () => {
     try {
-      // Check if Theta Wallet or Ethereum provider is available
       const provider = (window as any).theta || (window as any).ethereum
       if (typeof window !== 'undefined' && provider) {
         const accounts = await provider.request({
@@ -32,7 +52,6 @@ function App() {
         })
         if (accounts && accounts.length > 0) {
           const address = accounts[0]
-          // Mock balance fetch
           const balance = '1,234.56'
           setWallet({
             address: `${address.slice(0, 6)}...${address.slice(-4)}`,
@@ -42,7 +61,6 @@ function App() {
           })
         }
       } else {
-        // Fallback for demo: simulate wallet connection
         const demoAddress = '0x1234567890123456789012345678901234567890'
         setWallet({
           address: '0x1234...5678',
@@ -59,106 +77,72 @@ function App() {
   }
 
   const handleMaxClick = () => {
-    if (wallet.isConnected && wallet.balance) {
-      const balanceNum = parseFloat(wallet.balance.replace(/,/g, ''))
-      setTfuelAmount(balanceNum.toFixed(2))
+    if (wallet.isConnected && numericBalance > 0) {
+      setTfuelAmount(numericBalance.toFixed(2))
     }
   }
 
-  const _handlePresetClick = (percentage: number) => {
-    if (wallet.isConnected && wallet.balance) {
-      const balanceNum = parseFloat(wallet.balance.replace(/,/g, ''))
-      const amount = (balanceNum * percentage / 100).toFixed(2)
-      setTfuelAmount(amount)
-    }
-  }
-
-  const handleApprove = async () => {
-    if (!wallet.isConnected || !tfuelAmount) {
-      setStatusMessage('Please connect wallet and enter amount')
+  const handleSwapFlow = async () => {
+    if (!wallet.isConnected || !wallet.fullAddress || !tfuelAmount) {
+      setStatusMessage('Connect wallet and enter TFUEL amount')
       setSwapStatus('error')
       return
     }
 
-    setSwapStatus('approving')
-    setStatusMessage('Approving TFUEL...')
-
-    // Simulate approval
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    
-    setStatusMessage('Approval successful! Ready to swap.')
-    setSwapStatus('idle')
-  }
-
-  const handleSwap = async (percentage?: number, lst?: string) => {
-    if (!wallet.isConnected || !wallet.fullAddress) {
-      alert('Connect wallet first')
-      setStatusMessage('Please connect wallet first')
+    const amount = parseFloat(tfuelAmount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setStatusMessage('Enter a valid TFUEL amount')
       setSwapStatus('error')
       return
     }
 
-    // Determine amount and LST target
-    let amount: number
-    let targetLST: string
-
-    if (percentage !== undefined && lst) {
-      // Called from preset button
-      const balanceNum = parseFloat(wallet.balance.replace(/,/g, ''))
-      amount = (balanceNum * percentage) / 100
-      targetLST = lst
-      setTfuelAmount(amount.toFixed(2))
-    } else {
-      // Called from manual swap button
-      if (!tfuelAmount) {
-        setStatusMessage('Please enter amount')
-        setSwapStatus('error')
-        return
-      }
-      amount = parseFloat(tfuelAmount)
-      targetLST = 'stkATOM' // Default LST for manual swaps
-    }
-
-    setSwapStatus('swapping')
-    setStatusMessage('Getting test TFUEL from faucet...')
-
+    // Combined "Approve → Swap & Stake" flow to match mobile single-button UX
     try {
+      setSwapStatus('approving')
+      setStatusMessage('Approving TFUEL…')
+
+      await new Promise((resolve) => setTimeout(resolve, 1400))
+
+      setSwapStatus('swapping')
+      setStatusMessage('Getting test TFUEL from faucet…')
+
       // Auto-faucet for demo (real users will have TFUEL)
       await fetch(`https://faucet.testnet.theta.org/request?address=${wallet.fullAddress}`)
 
       const amountWei = ethers.utils.parseEther(amount.toString())
 
-      setStatusMessage(`Swapping ${amount} TFUEL → ${targetLST}...`)
+      setStatusMessage(`Swapping ${amount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
 
       const provider = new ethers.providers.Web3Provider(
-        (window as any).ethereum || (window as any).theta
+        (window as any).ethereum || (window as any).theta,
       )
       const signer = provider.getSigner()
 
-      // This is the real testnet router we'll deploy next week
       const routerAddress = '0xYourRealRouterWillGoHere_AfterDeploy'
 
       const abi = ['function swapAndStake(uint256 amount, string targetLST)']
       const contract = new ethers.Contract(routerAddress, abi, signer)
 
-      const tx = await contract.swapAndStake(amountWei, targetLST)
-      setStatusMessage(`Transaction sent! ${tx.hash.substring(0, 10)}...`)
+      const tx = await contract.swapAndStake(amountWei, selectedLST.name)
+      setStatusMessage(`Transaction sent! ${tx.hash.substring(0, 10)}…`)
 
       await tx.wait()
-      setStatusMessage(`Done! You now hold yield-bearing ${targetLST} on Theta`)
+      setStatusMessage(
+        `Done! You now hold yield-bearing ${selectedLST.name} on Theta with ~${selectedLST.apy.toFixed(
+          1,
+        )}% APY`,
+      )
       setSwapStatus('success')
       setTfuelAmount('')
 
-      // Reset after 5 seconds
       setTimeout(() => {
         setSwapStatus('idle')
         setStatusMessage('')
       }, 5000)
     } catch (e: any) {
-      setStatusMessage(`Failed: ${e.message}`)
+      setStatusMessage(`Failed: ${e?.message ?? 'Unexpected error'}`)
       setSwapStatus('error')
-      
-      // Reset after 5 seconds
+
       setTimeout(() => {
         setSwapStatus('idle')
         setStatusMessage('')
@@ -168,217 +152,202 @@ function App() {
 
   // Auto-connect on mount (demo mode)
   useEffect(() => {
-    // Uncomment to auto-connect in production
     // connectWallet()
   }, [])
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      {/* Background gradient overlay */}
-      <div className="fixed inset-0 bg-gradient-to-br from-purple-900/20 via-blue-900/20 to-pink-900/20 pointer-events-none" />
-      
-      {/* Animated grid background */}
-      <div className="fixed inset-0 opacity-10">
-        <div className="absolute inset-0" style={{
-          backgroundImage: `
-            linear-gradient(rgba(139, 92, 246, 0.1) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(139, 92, 246, 0.1) 1px, transparent 1px)
-          `,
-          backgroundSize: '50px 50px'
-        }} />
-      </div>
-
-      <div className="relative z-10 container mx-auto px-4 py-8 sm:py-12">
-        {/* Header */}
-        <header className="mb-8 sm:mb-12 text-center">
-          <div className="inline-flex items-center gap-3 mb-4">
-            {/* XFUEL Logo Placeholder */}
-            <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gradient-neon rounded-lg flex items-center justify-center glow-purple">
-              <span className="text-2xl sm:text-3xl font-bold text-white">X</span>
+    <ScreenBackground>
+      <div className="relative z-10 mx-auto flex min-h-screen max-w-5xl flex-col px-4 py-6 sm:px-6 sm:py-10 lg:px-8">
+        {/* Top chrome: logo + live orb */}
+        <header className="mb-6 flex flex-col items-center justify-between gap-4 sm:mb-10 sm:flex-row">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-purple-500 via-cyan-400 to-pink-500 shadow-[0_0_40px_rgba(168,85,247,0.9)] sm:h-14 sm:w-14">
+              <span className="text-2xl font-black tracking-tight text-white sm:text-3xl">X</span>
             </div>
-            <h1 className="text-3xl sm:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-blue-400 to-pink-400 text-neon-purple">
-              XFUEL Protocol
-            </h1>
+            <div className="flex flex-col gap-1">
+              <h1 className="bg-gradient-to-r from-purple-300 via-purple-100 to-cyan-300 bg-clip-text text-lg font-semibold uppercase tracking-[0.32em] text-transparent sm:text-xl">
+                XFUEL
+              </h1>
+              <p className="text-xs text-slate-300/80 sm:text-sm">
+                Sub-4s settlement rail for auto-compounding Cosmos LSTs
+              </p>
+            </div>
           </div>
-          <p className="text-sm sm:text-base text-gray-400">
-            Sub-4s institutional-grade settlement rail
-          </p>
+
+          <div className="w-full max-w-[180px] sm:max-w-none">
+            <ApyOrb apyText={liveApyText} label="live blended APY" />
+          </div>
         </header>
 
-        {/* Main Card */}
-        <div className="max-w-md mx-auto">
-          <div className="bg-gray-900/80 backdrop-blur-xl rounded-2xl border border-purple-500/30 p-6 sm:p-8 shadow-2xl glow-purple">
-            {/* Wallet Connect Section */}
-            <div className="mb-6">
-              {!wallet.isConnected ? (
-                <button
-                  onClick={connectWallet}
-                  className="w-full py-3 px-6 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 rounded-lg font-semibold text-white transition-all duration-300 glow-blue hover:scale-105 active:scale-95"
-                >
-                  Connect Theta Wallet
-                </button>
-              ) : (
-                <div className="bg-gray-800/50 rounded-lg p-4 border border-purple-500/20">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm text-gray-400">Connected</span>
-                    <span className="text-xs text-green-400 font-mono">{wallet.address}</span>
-                  </div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400">
-                      {wallet.balance}
-                    </span>
-                    <span className="text-gray-500">TFUEL</span>
-                  </div>
+        {/* Main layout: glass swap panel centered */}
+        <main className="flex flex-1 flex-col items-center justify-center pb-10">
+          <div className="w-full max-w-xl space-y-6 sm:space-y-7">
+            <GlassCard>
+              {/* Wallet row */}
+              <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-1">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
+                    Theta wallet
+                  </p>
+                  {wallet.isConnected ? (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs font-mono text-emerald-300">
+                        {wallet.address}
+                      </span>
+                      <span className="text-sm text-slate-200">
+                        {wallet.balance}{' '}
+                        <span className="text-xs text-slate-400">TFUEL</span>
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400">
+                      Connect to simulate Theta EdgeCloud revenue streaming into Cosmos yield.
+                    </p>
+                  )}
                 </div>
-              )}
-            </div>
 
-            {/* TFUEL Input Section */}
-            <div className="mb-6">
-              <label className="block text-sm text-gray-400 mb-2">Swap Amount</label>
-              <div className="flex gap-2">
-                <div className="flex-1 relative">
-                  <input
-                    type="text"
-                    value={tfuelAmount}
-                    onChange={(e) => setTfuelAmount(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full py-3 px-4 bg-gray-800/50 border border-purple-500/30 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/50 transition-all"
-                    disabled={!wallet.isConnected}
-                  />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
-                    TFUEL
+                {!wallet.isConnected && (
+                  <div className="w-full min-w-[180px] sm:w-auto sm:min-w-[200px]">
+                    <NeonButton
+                      label="Connect Theta Wallet"
+                      onClick={connectWallet}
+                      rightHint="mock"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Divider glow */}
+              <div className="mb-5 h-px w-full bg-gradient-to-r from-transparent via-purple-400/50 to-transparent opacity-70" />
+
+              {/* Swap input */}
+              <div className="mb-5 space-y-2 sm:mb-6">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
+                    Amount
                   </span>
+                  {wallet.isConnected && (
+                    <button
+                      type="button"
+                      onClick={handleMaxClick}
+                      className="text-[11px] font-medium uppercase tracking-[0.18em] text-purple-300/90 hover:text-purple-200"
+                    >
+                      Use max
+                    </button>
+                  )}
                 </div>
-                <button
-                  onClick={handleMaxClick}
-                  disabled={!wallet.isConnected}
-                  className="px-4 py-3 bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/50 rounded-lg font-semibold text-purple-300 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
-                >
-                  MAX
-                </button>
+                <div className="relative flex items-center gap-3">
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      value={tfuelAmount}
+                      onChange={(e) => setTfuelAmount(e.target.value)}
+                      placeholder="0.00"
+                      disabled={!wallet.isConnected}
+                      className="w-full rounded-2xl border border-white/10 bg-[rgba(15,23,42,0.82)] px-4 py-3 pr-16 text-base text-slate-50 shadow-[0_0_24px_rgba(15,23,42,0.9)] outline-none transition-[border,box-shadow,background] duration-200 placeholder:text-slate-500 focus:border-purple-400/80 focus:bg-[rgba(15,23,42,0.96)] focus:shadow-[0_0_32px_rgba(168,85,247,0.75)] disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                    <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
+                      TFUEL
+                    </span>
+                  </div>
+                </div>
               </div>
-            </div>
 
-            {/* Preset Buttons */}
-            <div className="mb-6">
-              <label className="block text-sm text-gray-400 mb-2">Quick Swap</label>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  onClick={() => handleSwap(25, 'stkXPRT')}
-                  disabled={!wallet.isConnected || swapStatus !== 'idle'}
-                  className="py-2.5 px-3 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 rounded-lg text-sm font-medium text-blue-300 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
-                >
-                  25% → stkXPRT
-                </button>
-                <button
-                  onClick={() => handleSwap(50, 'stkATOM')}
-                  disabled={!wallet.isConnected || swapStatus !== 'idle'}
-                  className="py-2.5 px-3 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 rounded-lg text-sm font-medium text-purple-300 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
-                >
-                  50% → stkATOM
-                </button>
-                <button
-                  onClick={() => handleSwap(100, 'pSTAKE BTC')}
-                  disabled={!wallet.isConnected || swapStatus !== 'idle'}
-                  className="py-2.5 px-3 bg-pink-600/20 hover:bg-pink-600/30 border border-pink-500/30 rounded-lg text-sm font-medium text-pink-300 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
-                >
-                  100% → pSTAKE BTC
-                </button>
+              {/* Live indicators */}
+              <div className="mb-4 grid grid-cols-2 gap-3 text-[11px] sm:grid-cols-4 sm:text-xs">
+                <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">
+                    Finality
+                  </p>
+                  <p className="mt-1 font-mono text-emerald-300">2.8 s</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">
+                    Gas
+                  </p>
+                  <p className="mt-1 text-[11px] text-cyan-300">Paid by treasury</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">
+                    Price impact
+                  </p>
+                  <p className="mt-1 text-[11px] text-emerald-300">&lt;0.01%</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">
+                    Chainalysis
+                  </p>
+                  <p className="mt-1 text-[11px] text-emerald-300">100/100 safe</p>
+                </div>
               </div>
-            </div>
 
-            {/* Live Indicators */}
-            <div className="mb-6 space-y-2">
-              <div className="flex items-center justify-between text-xs sm:text-sm">
-                <span className="text-gray-400">Live finality:</span>
-                <span className="text-green-400 font-mono">2.8 s</span>
-              </div>
-              <div className="flex items-center justify-between text-xs sm:text-sm">
-                <span className="text-gray-400">Gas paid by:</span>
-                <span className="text-blue-400">treasury</span>
-              </div>
-              <div className="flex items-center justify-between text-xs sm:text-sm">
-                <span className="text-gray-400">Price impact:</span>
-                <span className="text-green-400">&lt;0.01%</span>
-              </div>
-              <div className="flex items-center justify-between text-xs sm:text-sm">
-                <span className="text-gray-400">Chainalysis:</span>
-                <span className="text-green-400">100/100 safe</span>
-              </div>
-            </div>
+              {/* Status pill */}
+              {statusMessage && (
+                <div
+                  className={[
+                    'mb-4 rounded-2xl border px-3 py-2 text-xs text-center',
+                    swapStatus === 'success'
+                      ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
+                      : swapStatus === 'error'
+                      ? 'border-rose-400/40 bg-rose-500/10 text-rose-200'
+                      : 'border-sky-400/40 bg-sky-500/10 text-sky-200',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                >
+                  {swapStatus === 'approving' && '⏳ '}
+                  {swapStatus === 'swapping' && '🔄 '}
+                  {swapStatus === 'success' && '✅ '}
+                  {swapStatus === 'error' && '❌ '}
+                  {statusMessage}
+                </div>
+              )}
 
-            {/* Status Message */}
-            {statusMessage && (
-              <div className={`mb-4 p-3 rounded-lg text-sm text-center ${
-                swapStatus === 'success' 
-                  ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                  : swapStatus === 'error'
-                  ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                  : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-              }`}>
-                {swapStatus === 'approving' && '⏳ '}
-                {swapStatus === 'swapping' && '🔄 '}
-                {swapStatus === 'success' && '✅ '}
-                {swapStatus === 'error' && '❌ '}
-                {statusMessage}
+              {/* Single Swap & Stake button */}
+              <div className="pt-1">
+                <NeonButton
+                  label={
+                    swapStatus === 'approving'
+                      ? 'Approving…'
+                      : swapStatus === 'swapping'
+                      ? 'Swapping…'
+                      : swapStatus === 'success'
+                      ? 'Swap complete'
+                      : 'Swap & Stake'
+                  }
+                  rightHint={
+                    swapStatus === 'idle'
+                      ? '2 steps'
+                      : swapStatus === 'success'
+                      ? undefined
+                      : 'live'
+                  }
+                  disabled={
+                    !wallet.isConnected ||
+                    !tfuelAmount ||
+                    swapStatus === 'approving' ||
+                    swapStatus === 'swapping'
+                  }
+                  onClick={handleSwapFlow}
+                />
               </div>
-            )}
+            </GlassCard>
 
-            {/* Action Buttons */}
-            <div className="space-y-3">
-              {swapStatus === 'idle' && (
-                <>
-                  <button
-                    onClick={handleApprove}
-                    disabled={!wallet.isConnected || !tfuelAmount}
-                    className="w-full py-3 px-6 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-lg font-semibold text-white transition-all duration-300 glow-blue disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
-                  >
-                    Approve TFUEL
-                  </button>
-                  <button
-                    onClick={handleSwap}
-                    disabled={!wallet.isConnected || !tfuelAmount}
-                    className="w-full py-3 px-6 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 rounded-lg font-semibold text-white transition-all duration-300 glow-purple disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
-                  >
-                    Swap
-                  </button>
-                </>
-              )}
-              {swapStatus === 'approving' && (
-                <button
-                  disabled
-                  className="w-full py-3 px-6 bg-blue-600/50 rounded-lg font-semibold text-white cursor-not-allowed"
-                >
-                  Approving...
-                </button>
-              )}
-              {swapStatus === 'swapping' && (
-                <button
-                  disabled
-                  className="w-full py-3 px-6 bg-purple-600/50 rounded-lg font-semibold text-white cursor-not-allowed"
-                >
-                  Swapping...
-                </button>
-              )}
-              {swapStatus === 'success' && (
-                <button
-                  disabled
-                  className="w-full py-3 px-6 bg-green-600/50 rounded-lg font-semibold text-white cursor-not-allowed"
-                >
-                  Success!
-                </button>
-              )}
-            </div>
+            {/* Yield bubble selector */}
+            <YieldBubbleSelector
+              options={LST_OPTIONS}
+              selected={selectedLST}
+              onSelect={setSelectedLST}
+            />
+
+            {/* Footer tagline */}
+            <p className="pt-2 text-center text-[11px] text-slate-400/80 sm:text-xs">
+              Theta EdgeCloud GPU / video revenue → auto-compounding Cosmos LSTs in one tap.
+            </p>
           </div>
-
-          {/* Footer Info */}
-          <div className="mt-6 text-center text-xs text-gray-500">
-            <p>Theta EdgeCloud GPU/video revenue → auto-compounding Cosmos LSTs</p>
-          </div>
-        </div>
+        </main>
       </div>
-    </div>
+    </ScreenBackground>
   )
 }
 
