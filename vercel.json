@@ -3,6 +3,7 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "installCommand": "npm install --legacy-peer-deps",
-  "devCommand": "npm run dev"
+  "devCommand": "npm run dev",
+  "cleanUrls": true
 }
 
