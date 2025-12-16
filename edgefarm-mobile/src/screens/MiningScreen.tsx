@@ -55,7 +55,7 @@ export function MiningScreen() {
   )
 
   return (
-    <ScreenBackground>
+    <ScreenBackground wallpaperVariant="image">
       <SafeAreaView style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 120 }}>
           <View style={{ marginBottom: 18 }}>
@@ -66,7 +66,82 @@ export function MiningScreen() {
             </Text>
           </View>
 
+          {/* Mining portfolio first, at top of tab */}
           <NeonCard className="mb-6">
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.95)' }}>Mining portfolio</Text>
+              <NeonPill label="Live" tone="blue" />
+            </View>
+
+            <View style={{ marginTop: 16, flexDirection: 'row', gap: 14 }}>
+              <View
+                style={{
+                  flex: 1,
+                  borderRadius: 18,
+                  paddingVertical: 12,
+                  paddingHorizontal: 14,
+                  borderWidth: 1,
+                  borderColor: 'rgba(168,85,247,0.65)',
+                }}
+              >
+                <Text style={{ ...type.caption, color: 'rgba(209,213,219,0.95)' }}>Total TFUEL farmed</Text>
+                <Text
+                  style={{
+                    ...type.h2,
+                    marginTop: 6,
+                    color: 'rgba(249,250,251,0.98)',
+                  }}
+                >
+                  {portfolio.tfuelFarmed.toLocaleString()}
+                </Text>
+                <Text style={{ ...type.caption, marginTop: 2, color: 'rgba(148,163,184,0.90)' }}>TFUEL</Text>
+              </View>
+
+              <View
+                style={{
+                  width: 120,
+                  borderRadius: 999,
+                  paddingVertical: 10,
+                  paddingHorizontal: 10,
+                  borderWidth: 1,
+                  borderColor: 'rgba(168,85,247,0.65)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Text style={{ ...type.caption, color: 'rgba(209,213,219,0.95)' }}>Uptime</Text>
+                <Text
+                  style={{
+                    ...type.h2,
+                    marginTop: 4,
+                    color: 'rgba(249,250,251,0.98)',
+                  }}
+                >
+                  {portfolio.uptimePct.toFixed(1)}%
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ marginTop: 16, gap: 10 }}>
+              <PortfolioRow
+                label="Nodes connected"
+                value={`${portfolio.nodesConnected}`}
+                tone="purple"
+              />
+              <PortfolioRow
+                label="Estimated daily TFUEL"
+                value={`~${portfolio.estDailyTfuel.toFixed(1)} TFUEL`}
+                tone="blue"
+              />
+            </View>
+
+            <Text style={{ ...type.caption, marginTop: 12, color: 'rgba(255,255,255,0.45)' }}>
+              This is mock data for now — wire it to Theta edge node telemetry next.
+            </Text>
+          </NeonCard>
+
+          {/* Status moved below portfolio */}
+          <NeonCard>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.95)' }}>Status</Text>
               <NeonPill label={allGreen ? 'All systems green' : 'Attention'} tone={allGreen ? 'green' : 'pink'} />
@@ -175,24 +250,6 @@ export function MiningScreen() {
               </View>
             </View>
           </NeonCard>
-
-          <NeonCard>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.95)' }}>Mining portfolio</Text>
-              <NeonPill label="Live" tone="blue" />
-            </View>
-
-            <View style={{ marginTop: 14, gap: 12 }}>
-              <PortfolioRow label="Total TFUEL farmed" value={`${portfolio.tfuelFarmed.toLocaleString()} TFUEL`} tone="blue" />
-              <PortfolioRow label="Uptime" value={`${portfolio.uptimePct.toFixed(1)}%`} tone="green" />
-              <PortfolioRow label="Nodes connected" value={`${portfolio.nodesConnected}`} tone="purple" />
-              <PortfolioRow label="Estimated daily TFUEL" value={`~${portfolio.estDailyTfuel.toFixed(1)} TFUEL`} tone="pink" />
-            </View>
-
-            <Text style={{ ...type.caption, marginTop: 12, color: 'rgba(255,255,255,0.45)' }}>
-              This is mock data for now — wire it to Theta edge node telemetry next.
-            </Text>
-          </NeonCard>
         </ScrollView>
       </SafeAreaView>
     </ScreenBackground>
@@ -270,17 +327,15 @@ function MeterRow({
 function PortfolioRow({
   label,
   value,
-  tone,
 }: {
   label: string
   value: string
   tone: 'blue' | 'green' | 'purple' | 'pink'
 }) {
-  const color = tone === 'green' ? neon.green : tone === 'pink' ? neon.pink : tone === 'purple' ? neon.purple : neon.blue
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-      <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.70)' }}>{label}</Text>
-      <Text style={{ ...type.bodyM, color }}>{value}</Text>
+      <Text style={{ ...type.bodyM, color: 'rgba(229,231,235,0.86)' }}>{label}</Text>
+      <Text style={{ ...type.bodyM, color: 'rgba(249,250,251,0.98)' }}>{value}</Text>
     </View>
   )
 }

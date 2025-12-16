@@ -16,10 +16,12 @@ export function TipSuccessOverlay({
   visible,
   message,
   onClose,
+  finalityTime,
 }: {
   visible: boolean
   message: string
   onClose: () => void
+  finalityTime?: string
 }) {
   const opacity = useSharedValue(0)
   const scale = useSharedValue(0.9)
@@ -87,6 +89,20 @@ export function TipSuccessOverlay({
 
           <Text style={{ ...type.h3, marginTop: 14, color: 'rgba(255,255,255,0.95)' }}>Success</Text>
           <Text style={{ ...type.body, marginTop: 6, textAlign: 'center', color: 'rgba(255,255,255,0.72)' }}>{message}</Text>
+          
+          {/* Gas sponsored & finality info */}
+          <View className="mt-5 w-full" style={{ gap: 8 }}>
+            <View className="flex-row items-center justify-between px-3 py-2 rounded-lg" style={{ backgroundColor: 'rgba(56,189,248,0.12)' }}>
+              <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.72)' }}>Gas sponsored</Text>
+              <Text style={{ ...type.bodyM, color: '#34d399', fontWeight: '600' }}>✓ Paid by treasury</Text>
+            </View>
+            {finalityTime && (
+              <View className="flex-row items-center justify-between px-3 py-2 rounded-lg" style={{ backgroundColor: 'rgba(168,85,247,0.12)' }}>
+                <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.72)' }}>Finality time</Text>
+                <Text style={{ ...type.bodyM, color: '#38bdf8', fontWeight: '600' }}>{finalityTime}</Text>
+              </View>
+            )}
+          </View>
         </View>
       </Animated.View>
     </Animated.View>
