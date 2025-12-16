@@ -58,6 +58,17 @@ This repo contains both the **web app** (investor site) and the **Expo mobile ap
     npm run eas:update:preview
     ```
 
+## Investor Demo Links
+
+These are the links you can share with investors to explore the current mock:
+
+- **Mobile app (Expo Go, hosted via EAS Update)**  
+  Open this link on a device with **Expo Go** installed, or scan the QR on the page:  
+  `https://expo.dev/accounts/xfuel/projects/edgefarm-mobile/updates/227ac41f-0628-40f7-bb60-c29d615be007`
+
+- **Web app (Vercel)**  
+  After deploying from this repo to Vercel, share the latest `https://…vercel.app` URL shown in your Vercel dashboard.
+
 ### Investor demo checklist
 
 - **Web URL (browser)**: deploy the latest `dist` to Vercel from this repo. Share the resulting `https://...vercel.app` link.
