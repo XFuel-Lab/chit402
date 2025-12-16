@@ -6,24 +6,42 @@ type Props = {
 }
 
 /**
- * Pulsing APY orb at the top of the experience.
- * Uses CSS animations to approximate the Reanimated-style sweep + glow.
+ * Giant pulsing APY orb matching EdgeFarm mobile premium style.
+ * Rotating outer ring, pulsing inner glow, vibrant purple/cyan gradients.
  */
 export function ApyOrb({ apyText, label = 'blended APY' }: Props) {
   return (
-    <div className="relative mx-auto mb-8 mt-2 flex items-center justify-center">
-      {/* Outer rotating ring */}
-      <div className="apy-orb-ring pointer-events-none absolute h-32 w-32 rounded-full border border-slate-200/25 bg-[conic-gradient(from_0deg,_rgba(168,85,247,0.7),rgba(56,189,248,0.85),rgba(16,185,129,0.7),rgba(168,85,247,0.7))] opacity-90" />
+    <div className="relative mx-auto flex items-center justify-center">
+      {/* Outer rotating ring with gradient */}
+      <div 
+        className="apy-orb-ring pointer-events-none absolute h-[132px] w-[132px] rounded-full opacity-95"
+        style={{
+          background: 'conic-gradient(from 0deg, rgba(168,85,247,0.65), rgba(56,189,248,0.55), rgba(16,185,110,0.35), rgba(168,85,247,0.65))',
+          border: '1px solid rgba(248,250,252,0.22)',
+        }}
+      />
 
-      {/* Inner glow */}
-      <div className="apy-orb-inner pointer-events-none absolute h-24 w-24 rounded-full bg-[radial-gradient(circle_at_top,_rgba(148,163,184,0.55),transparent_55%),radial-gradient(circle_at_bottom,_rgba(56,189,248,0.35),transparent_60%),rgba(15,23,42,0.9)] shadow-[0_0_40px_rgba(168,85,247,0.95)]" />
+      {/* Pulsing inner glow */}
+      <div 
+        className="apy-orb-inner pointer-events-none absolute h-[104px] w-[104px] rounded-full"
+        style={{
+          backgroundColor: 'rgba(15,23,42,0.85)',
+          boxShadow: '0 0 32px rgba(168,85,247,0.9)',
+        }}
+      />
 
-      {/* Core content */}
-      <div className="relative z-10 flex h-24 w-24 flex-col items-center justify-center rounded-full border border-slate-300/40 bg-[radial-gradient(circle_at_top,_rgba(248,250,252,0.12),transparent_60%),rgba(15,23,42,0.92)] backdrop-blur-xl">
-        <span className="text-lg font-semibold text-slate-50 drop-shadow-[0_0_12px_rgba(248,250,252,0.8)]">
+      {/* Core content with gradient border */}
+      <div 
+        className="relative z-10 flex h-24 w-24 flex-col items-center justify-center rounded-full backdrop-blur-xl"
+        style={{
+          background: 'linear-gradient(135deg, rgba(79,70,229,0.28) 0%, rgba(15,23,42,0.96) 100%)',
+          border: '1px solid rgba(148,163,184,0.65)',
+        }}
+      >
+        <span className="text-[22px] font-semibold leading-[24px] text-[rgba(248,250,252,0.98)]">
           {apyText}
         </span>
-        <span className="mt-1 text-[11px] uppercase tracking-[0.16em] text-slate-300/80">
+        <span className="mt-[2px] text-[10px] uppercase tracking-[0.14em] text-[rgba(148,163,184,0.95)]">
           {label}
         </span>
       </div>

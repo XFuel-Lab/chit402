@@ -67,7 +67,8 @@ These are the links you can share with investors to explore the current mock:
   `https://expo.dev/accounts/xfuel/projects/edgefarm-mobile/updates/227ac41f-0628-40f7-bb60-c29d615be007`
 
 - **Web app (Vercel)**  
-  After deploying from this repo to Vercel, share the latest `https://…vercel.app` URL shown in your Vercel dashboard.
+  Production preview for the current mock (served from the `main` branch):  
+  `https://xfuel-protocol-v2-m1v9p0laq-chris-hayes-projects-ffe91919.vercel.app/`
 
 ### Investor demo checklist
 
@@ -97,3 +98,9 @@ xfuel-protocol/
 - **React 18** - UI library
 - **TypeScript** - Type safety
 - **Tailwind CSS** - Utility-first CSS framework
+
+## White Paper
+
+You can download the XFuel protocol white paper here:
+
+- `https://github.com/XFuel-Lab/xfuel-protocol/raw/main/XFuel%20White%20Paper.pdf`

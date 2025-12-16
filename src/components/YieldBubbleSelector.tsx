@@ -37,20 +37,20 @@ export function YieldBubbleSelector({ options, selected, onSelect }: Props) {
               type="button"
               onClick={() => onSelect(opt)}
               className={[
-                'group relative flex min-w-[150px] flex-col items-start gap-1 rounded-full border px-4 py-2.5 text-left',
-                'transition-all duration-300 ease-out',
+                'group relative flex min-w-[160px] flex-col items-start gap-1 rounded-full border px-5 py-3 text-left',
+                'transition-all duration-300 ease-out backdrop-blur-xl',
                 isActive
-                  ? 'border-purple-400/90 bg-[radial-gradient(circle_at_top,_rgba(129,140,248,0.45),transparent_55%),rgba(15,23,42,0.9)] shadow-[0_0_32px_rgba(168,85,247,0.9)]'
-                  : 'border-white/10 bg-[rgba(15,23,42,0.75)] hover:border-purple-400/70 hover:bg-[radial-gradient(circle_at_top,_rgba(129,140,248,0.35),transparent_55%),rgba(15,23,42,0.9)] hover:shadow-[0_0_22px_rgba(168,85,247,0.8)]',
-                'backdrop-blur-2xl xfuel-tap-glow',
+                  ? 'border-purple-400/90 bg-[radial-gradient(circle_at_top,_rgba(129,140,248,0.45),transparent_55%),rgba(15,23,42,0.9)] shadow-[0_0_40px_rgba(168,85,247,0.9)] hover:scale-105'
+                  : 'border-purple-400/40 bg-[rgba(15,23,42,0.75)] hover:border-purple-400/70 hover:bg-[radial-gradient(circle_at_top,_rgba(129,140,248,0.35),transparent_55%),rgba(15,23,42,0.9)] hover:shadow-[0_0_28px_rgba(168,85,247,0.8)] hover:scale-105',
+                'xfuel-tap-glow',
               ]
                 .filter(Boolean)
                 .join(' ')}
             >
-              <span className="text-[11px] uppercase tracking-[0.18em] text-slate-300/85">
+              <span className="text-[11px] uppercase tracking-[0.18em] text-slate-300/90">
                 {opt.name}
               </span>
-              <span className="flex items-baseline gap-1 text-sm font-semibold text-emerald-300 drop-shadow-[0_0_12px_rgba(16,185,129,0.9)]">
+              <span className="flex items-baseline gap-1 text-base font-bold text-emerald-300 drop-shadow-[0_0_16px_rgba(16,185,129,0.9)]">
                 {opt.apy.toFixed(1)}%
                 <span className="text-[11px] font-normal uppercase tracking-[0.14em] text-slate-300/80">
                   APY
