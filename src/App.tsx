@@ -65,7 +65,7 @@ function App() {
     }
   }
 
-  const handlePresetClick = (percentage: number) => {
+  const _handlePresetClick = (percentage: number) => {
     if (wallet.isConnected && wallet.balance) {
       const balanceNum = parseFloat(wallet.balance.replace(/,/g, ''))
       const amount = (balanceNum * percentage / 100).toFixed(2)
