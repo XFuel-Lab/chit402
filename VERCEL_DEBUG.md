@@ -52,3 +52,6 @@ This suggests Vercel's `npm install` isn't installing terser. Try:
 - npm ci ignores devDependencies in some cases
 - Make sure installCommand uses `npm install` not `npm ci`
 
+
+
+

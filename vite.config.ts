@@ -7,12 +7,9 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
-    minify: 'terser',
-    terserOptions: {
-      compress: {
-        drop_console: true,
-        drop_debugger: true,
-      },
+    // Use Vite's default esbuild minifier and configure it to drop console/debugger
+    esbuild: {
+      drop: ['console', 'debugger'],
     },
     rollupOptions: {
       output: {
