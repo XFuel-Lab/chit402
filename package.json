@@ -25,7 +25,11 @@
     "test:e2e": "cypress open",
     "test:e2e:headless": "cypress run",
     "test:contracts": "hardhat test",
-    "health": "node server/health.js"
+    "health": "node server/health.js",
+    "dev:web": "npm run dev",
+    "dev:mobile": "cd edgefarm-mobile && npm run start",
+    "build:web": "npm run build",
+    "eas:update:preview": "cd edgefarm-mobile && npx eas-cli update --branch preview --message \"Investor demo\""
   },
   "dependencies": {
     "ethers": "^5.7.2",
