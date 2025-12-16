@@ -2,7 +2,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
-  "installCommand": "npm install --legacy-peer-deps",
+  "installCommand": "npm install --legacy-peer-deps && npm list terser || npm install terser --save-dev",
   "devCommand": "npm run dev",
   "cleanUrls": true
 }
