@@ -259,8 +259,8 @@ function LevelOrb() {
   return (
     <View
       style={{
-        width: 104,
-        height: 104,
+        width: 110,
+        height: 110,
         borderRadius: 999,
         alignItems: 'center',
         justifyContent: 'center',
@@ -299,8 +299,8 @@ function LevelOrb() {
           innerGlowStyle,
           {
             position: 'absolute',
-            width: 76,
-            height: 76,
+            width: 82,
+            height: 82,
             borderRadius: 999,
             backgroundColor: 'rgba(15,23,42,0.95)',
             shadowColor: neon.purple,
@@ -315,20 +315,23 @@ function LevelOrb() {
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={{
-          width: 72,
-          height: 72,
+          width: 78,
+          height: 78,
           borderRadius: 999,
           alignItems: 'center',
           justifyContent: 'center',
           borderWidth: 1,
           borderColor: 'rgba(148,163,184,0.85)',
+          paddingVertical: 4,
         }}
       >
         <Text
           style={{
             ...type.caption,
             color: 'rgba(148,163,184,0.95)',
-            marginBottom: -1,
+            fontSize: 10,
+            marginBottom: 0,
+            textAlign: 'center',
           }}
         >
           Farmer Lv
@@ -336,8 +339,9 @@ function LevelOrb() {
         <Text
           style={{
             ...type.h1,
-            fontSize: 22,
+            fontSize: 20,
             color: 'rgba(248,250,252,0.98)',
+            textAlign: 'center',
           }}
         >
           12
@@ -345,9 +349,10 @@ function LevelOrb() {
         <Text
           style={{
             ...type.caption,
-            fontSize: 10,
+            fontSize: 9,
             marginTop: 0,
             color: 'rgba(56,189,248,0.9)',
+            textAlign: 'center',
           }}
         >
           {Math.round(progress * 100)}%

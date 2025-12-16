@@ -34,6 +34,48 @@ npm run build
 npm run preview
 ```
 
+## Unified Web + Mobile Product
+
+This repo contains both the **web app** (investor site) and the **Expo mobile app** (investor demo) in one place.
+
+- **Web app (Vite, deployed on Vercel)**
+  - Run locally:
+    ```bash
+    npm run dev:web
+    ```
+  - Build for production / Vercel:
+    ```bash
+    npm run build:web
+    ```
+
+- **Mobile app (Expo + EAS Update, in `edgefarm-mobile/`)**
+  - Run in Expo Go (local dev):
+    ```bash
+    npm run dev:mobile
+    ```
+  - Publish / refresh the investor demo build (EAS Update on `preview` branch):
+    ```bash
+    npm run eas:update:preview
+    ```
+
+## Investor Demo Links
+
+These are the links you can share with investors to explore the current mock:
+
+- **Mobile app (Expo Go, hosted via EAS Update)**  
+  Open this link on a device with **Expo Go** installed, or scan the QR on the page:  
+  `https://expo.dev/accounts/xfuel/projects/edgefarm-mobile/updates/227ac41f-0628-40f7-bb60-c29d615be007`
+
+- **Web app (Vercel)**  
+  After deploying from this repo to Vercel, share the latest `https://…vercel.app` URL shown in your Vercel dashboard.
+
+### Investor demo checklist
+
+- **Web URL (browser)**: deploy the latest `dist` to Vercel from this repo. Share the resulting `https://...vercel.app` link.
+- **Mobile app (Expo Go)**: run `npm run eas:update:preview` and share the URL / QR code that the command prints.
+
+Use these two links as the **single source of truth** for external demos so the app and site always match.
+
 ## Project Structure
 
 ```
