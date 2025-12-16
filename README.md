@@ -98,3 +98,9 @@ xfuel-protocol/
 - **React 18** - UI library
 - **TypeScript** - Type safety
 - **Tailwind CSS** - Utility-first CSS framework
+
+## White Paper
+
+You can download the XFuel protocol white paper here:
+
+- `https://github.com/XFuel-Lab/xfuel-protocol/raw/main/XFuel%20White%20Paper.pdf`
