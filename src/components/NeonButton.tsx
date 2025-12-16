@@ -29,9 +29,9 @@ export function NeonButton({
   }
 
   const glow: Record<Variant, string> = {
-    primary: 'shadow-[0_0_32px_rgba(168,85,247,0.8)]',
-    secondary: 'shadow-[0_0_22px_rgba(148,163,184,0.45)]',
-    danger: 'shadow-[0_0_32px_rgba(248,113,113,0.8)]',
+    primary: 'shadow-[0_0_40px_rgba(168,85,247,0.85),0_0_80px_rgba(168,85,247,0.4)]',
+    secondary: 'shadow-[0_0_28px_rgba(148,163,184,0.5)]',
+    danger: 'shadow-[0_0_40px_rgba(248,113,113,0.85)]',
   }
 
   return (
@@ -41,7 +41,7 @@ export function NeonButton({
         'bg-gradient-to-r',
         palette[variant],
         glow[variant],
-        'transition-transform duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[0_0_42px_rgba(168,85,247,1)] active:translate-y-0 active:scale-[0.98]',
+        'transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-[0_0_50px_rgba(168,85,247,1),0_0_100px_rgba(168,85,247,0.5)] active:translate-y-0 active:scale-[0.97]',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-black',
         'disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-none',
         'before:pointer-events-none before:absolute before:-inset-10 before:-translate-x-full before:bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.45),transparent_55%)] before:opacity-70 before:transition-transform before:duration-[900ms] before:ease-out hover:before:translate-x-0',

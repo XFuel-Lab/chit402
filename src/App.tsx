@@ -32,12 +32,15 @@ function App() {
     isConnected: false,
   })
   const [tfuelAmount, setTfuelAmount] = useState('')
+  const [selectedPercentage, setSelectedPercentage] = useState<number | null>(null)
   const [swapStatus, setSwapStatus] = useState<SwapStatus>('idle')
   const [statusMessage, setStatusMessage] = useState('')
   const [selectedLST, setSelectedLST] = useState<LSTOption>(LST_OPTIONS[0])
   const [activeTab, setActiveTab] = useState<NeonTabId>('swap')
   const [isSignedIn, setIsSignedIn] = useState(false)
   const [userAlias, setUserAlias] = useState<string | null>(null)
+  const [showPercentageDropdown, setShowPercentageDropdown] = useState(false)
+  const [showLSTDropdown, setShowLSTDropdown] = useState(false)
 
   const numericBalance = useMemo(
     () => parseFloat(wallet.balance.replace(/,/g, '')) || 0,
@@ -80,22 +83,45 @@ function App() {
     }
   }
 
-  const handleMaxClick = () => {
+  const handlePercentageSelect = (pct: number) => {
+    setSelectedPercentage(pct)
     if (wallet.isConnected && numericBalance > 0) {
-      setTfuelAmount(numericBalance.toFixed(2))
+      const amount = (numericBalance * pct) / 100
+      setTfuelAmount(amount.toFixed(2))
     }
+    setShowPercentageDropdown(false)
   }
 
+  const handleLSTSelect = (lst: LSTOption) => {
+    setSelectedLST(lst)
+    setShowLSTDropdown(false)
+  }
+
+  const computedTfuelAmount = useMemo(() => {
+    if (selectedPercentage !== null && wallet.isConnected && numericBalance > 0) {
+      return (numericBalance * selectedPercentage) / 100
+    }
+    return parseFloat(tfuelAmount) || 0
+  }, [selectedPercentage, numericBalance, wallet.isConnected, tfuelAmount])
+
+  const estimatedLSTAmount = useMemo(() => {
+    return computedTfuelAmount * 0.95 // Mock: 5% fee
+  }, [computedTfuelAmount])
+
+  const estimatedDailyYield = useMemo(() => {
+    return (estimatedLSTAmount * selectedLST.apy) / 100 / 365
+  }, [estimatedLSTAmount, selectedLST.apy])
+
   const handleSwapFlow = async () => {
-    if (!wallet.isConnected || !wallet.fullAddress || !tfuelAmount) {
-      setStatusMessage('Connect wallet and enter TFUEL amount')
+    if (!wallet.isConnected || !wallet.fullAddress) {
+      setStatusMessage('Connect wallet first')
       setSwapStatus('error')
       return
     }
 
-    const amount = parseFloat(tfuelAmount)
+    const amount = computedTfuelAmount
     if (!Number.isFinite(amount) || amount <= 0) {
-      setStatusMessage('Enter a valid TFUEL amount')
+      setStatusMessage('Select balance percentage and valid amount')
       setSwapStatus('error')
       return
     }
@@ -260,111 +286,149 @@ function App() {
             />
 
             <GlassCard>
-              {activeTab === 'swap' && (
+                  {activeTab === 'swap' && (
                 <>
-                  {/* Wallet row */}
-                  <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="space-y-1">
-                      <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
-                        Theta wallet
-                      </p>
-                      {wallet.isConnected ? (
-                        <div className="flex flex-col gap-1">
-                          <span className="text-xs font-mono text-emerald-300">
-                            {wallet.address}
-                          </span>
-                          <span className="text-sm text-slate-200">
-                            {wallet.balance}{' '}
-                            <span className="text-xs text-slate-400">TFUEL</span>
-                          </span>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-slate-400">
-                          Connect to simulate Theta EdgeCloud revenue streaming into Cosmos yield.
-                        </p>
-                      )}
+                  {/* Wallet connection */}
+                  {!wallet.isConnected ? (
+                    <div className="mb-6">
+                      <NeonButton
+                        label="Connect Theta Wallet"
+                        onClick={connectWallet}
+                        rightHint="mock"
+                      />
                     </div>
-
-                    {!wallet.isConnected && (
-                      <div className="w-full min-w-[180px] sm:w-auto sm:min-w-[200px]">
-                        <NeonButton
-                          label="Connect Theta Wallet"
-                          onClick={connectWallet}
-                          rightHint="mock"
-                        />
+                  ) : (
+                    <div className="mb-6 space-y-4">
+                      {/* Wallet info */}
+                      <div className="flex items-center justify-between rounded-2xl border border-purple-400/30 bg-black/20 px-4 py-3 backdrop-blur-sm">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
+                            Connected
+                          </p>
+                          <p className="mt-1 text-sm font-mono text-emerald-300">{wallet.address}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-semibold text-white">{wallet.balance}</p>
+                          <p className="text-xs text-slate-400">TFUEL</p>
+                        </div>
                       </div>
-                    )}
-                  </div>
 
-                  {/* Divider glow */}
-                  <div className="mb-5 h-px w-full bg-gradient-to-r from-transparent via-purple-400/50 to-transparent opacity-70" />
-
-                  {/* Swap input */}
-                  <div className="mb-5 space-y-2 sm:mb-6">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
-                        Amount
-                      </span>
-                      {wallet.isConnected && (
+                      {/* Big percentage dropdown */}
+                      <div className="relative">
                         <button
                           type="button"
-                          onClick={handleMaxClick}
-                          className="text-[11px] font-medium uppercase tracking-[0.18em] text-purple-300/90 hover:text-purple-200"
+                          onClick={() => setShowPercentageDropdown(!showPercentageDropdown)}
+                          disabled={!wallet.isConnected}
+                          className="w-full rounded-3xl border border-purple-400/60 bg-gradient-to-br from-[rgba(168,85,247,0.25)] via-[rgba(56,189,248,0.20)] to-[rgba(15,23,42,0.30)] px-8 py-6 text-left backdrop-blur-xl transition-all hover:border-purple-400/80 hover:shadow-[0_0_40px_rgba(168,85,247,0.6)] disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          Use max
+                          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
+                            Balance to swap
+                          </p>
+                          <p className="mt-2 text-3xl font-bold text-white">
+                            {selectedPercentage !== null ? `${selectedPercentage}%` : 'Select %'}
+                          </p>
+                          {selectedPercentage !== null && numericBalance > 0 && (
+                            <p className="mt-1 text-sm text-purple-300">
+                              {((numericBalance * selectedPercentage) / 100).toFixed(2)} TFUEL
+                            </p>
+                          )}
                         </button>
+                        {showPercentageDropdown && wallet.isConnected && (
+                          <div className="absolute top-full z-50 mt-2 w-full rounded-2xl border border-purple-400/40 bg-[rgba(15,23,42,0.98)] backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.8)]">
+                            {[25, 50, 75, 100].map((pct) => (
+                              <button
+                                key={pct}
+                                type="button"
+                                onClick={() => handlePercentageSelect(pct)}
+                                className="w-full px-6 py-4 text-left transition-colors hover:bg-purple-500/10 first:rounded-t-2xl last:rounded-b-2xl"
+                              >
+                                <p className="text-lg font-semibold text-white">{pct}%</p>
+                                <p className="text-sm text-purple-300">
+                                  {((numericBalance * pct) / 100).toFixed(2)} TFUEL
+                                </p>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Big LST dropdown */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setShowLSTDropdown(!showLSTDropdown)}
+                          className="w-full rounded-3xl border border-purple-400/60 bg-gradient-to-br from-[rgba(168,85,247,0.25)] via-[rgba(56,189,248,0.20)] to-[rgba(15,23,42,0.30)] px-8 py-6 text-left backdrop-blur-xl transition-all hover:border-purple-400/80 hover:shadow-[0_0_40px_rgba(168,85,247,0.6)]"
+                        >
+                          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
+                            Liquid staking token
+                          </p>
+                          <div className="mt-2 flex items-baseline gap-3">
+                            <p className="text-2xl font-bold text-white">{selectedLST.name}</p>
+                            <p className="text-lg font-semibold text-emerald-300">
+                              {selectedLST.apy.toFixed(1)}% APY
+                            </p>
+                          </div>
+                        </button>
+                        {showLSTDropdown && (
+                          <div className="absolute top-full z-50 mt-2 w-full rounded-2xl border border-purple-400/40 bg-[rgba(15,23,42,0.98)] backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.8)]">
+                            {LST_OPTIONS.map((lst) => (
+                              <button
+                                key={lst.name}
+                                type="button"
+                                onClick={() => handleLSTSelect(lst)}
+                                className="w-full px-6 py-4 text-left transition-colors hover:bg-purple-500/10 first:rounded-t-2xl last:rounded-b-2xl"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <p className="text-lg font-semibold text-white">{lst.name}</p>
+                                  <p className="text-sm font-semibold text-emerald-300">
+                                    {lst.apy.toFixed(1)}% APY
+                                  </p>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Live preview */}
+                      {computedTfuelAmount > 0 && (
+                        <GlassCard className="mt-4">
+                          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
+                            You'll receive
+                          </p>
+                          <div className="mt-3 flex items-baseline gap-3">
+                            <p className="text-3xl font-bold text-cyan-300">
+                              ~{estimatedLSTAmount.toFixed(2)}
+                            </p>
+                            <p className="text-xl font-semibold text-white">{selectedLST.name}</p>
+                          </div>
+                          <p className="mt-2 text-sm text-emerald-300">
+                            ~${estimatedDailyYield.toFixed(2)}/day yield
+                          </p>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-1.5">
+                              <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">
+                                Finality
+                              </p>
+                              <p className="mt-1 text-xs font-mono text-emerald-300">2.8s</p>
+                            </div>
+                            <div className="rounded-xl border border-purple-400/30 bg-purple-500/10 px-3 py-1.5">
+                              <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">
+                                Gas
+                              </p>
+                              <p className="mt-1 text-xs text-cyan-300">Paid by treasury</p>
+                            </div>
+                          </div>
+                        </GlassCard>
                       )}
                     </div>
-                    <div className="relative flex items-center gap-3">
-                      <div className="relative flex-1">
-                        <input
-                          type="text"
-                          value={tfuelAmount}
-                          onChange={(e) => setTfuelAmount(e.target.value)}
-                          placeholder="0.00"
-                          disabled={!wallet.isConnected}
-                          className="w-full rounded-2xl border border-white/10 bg-[rgba(15,23,42,0.82)] px-4 py-3 pr-16 text-base text-slate-50 shadow-[0_0_24px_rgba(15,23,42,0.9)] outline-none transition-[border,box-shadow,background] duration-200 placeholder:text-slate-500 focus:border-purple-400/80 focus:bg-[rgba(15,23,42,0.96)] focus:shadow-[0_0_32px_rgba(168,85,247,0.75)] disabled:cursor-not-allowed disabled:opacity-60"
-                        />
-                        <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
-                          TFUEL
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                  )}
 
-                  {/* Live indicators */}
-                  <div className="mb-4 grid grid-cols-2 gap-3 text-[11px] sm:grid-cols-4 sm:text-xs">
-                    <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">
-                        Finality
-                      </p>
-                      <p className="mt-1 font-mono text-emerald-300">2.8 s</p>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">
-                        Gas
-                      </p>
-                      <p className="mt-1 text-[11px] text-cyan-300">Paid by treasury</p>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">
-                        Price impact
-                      </p>
-                      <p className="mt-1 text-[11px] text-emerald-300">&lt;0.01%</p>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">
-                        Chainalysis
-                      </p>
-                      <p className="mt-1 text-[11px] text-emerald-300">100/100 safe</p>
-                    </div>
-                  </div>
-
-                  {/* Status pill */}
+                  {/* Status message */}
                   {statusMessage && (
                     <div
                       className={[
-                        'mb-4 rounded-2xl border px-3 py-2 text-xs text-center',
+                        'mb-4 rounded-2xl border px-4 py-3 text-sm text-center',
                         swapStatus === 'success'
                           ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
                           : swapStatus === 'error'
@@ -383,33 +447,31 @@ function App() {
                   )}
 
                   {/* Single Swap & Stake button */}
-                  <div className="pt-1">
-                    <NeonButton
-                      label={
-                        swapStatus === 'approving'
-                          ? 'Approving…'
-                          : swapStatus === 'swapping'
-                          ? 'Swapping…'
-                          : swapStatus === 'success'
-                          ? 'Swap complete'
-                          : 'Swap & Stake'
-                      }
-                      rightHint={
-                        swapStatus === 'idle'
-                          ? '2 steps'
-                          : swapStatus === 'success'
-                          ? undefined
-                          : 'live'
-                      }
-                      disabled={
-                        !wallet.isConnected ||
-                        !tfuelAmount ||
-                        swapStatus === 'approving' ||
-                        swapStatus === 'swapping'
-                      }
-                      onClick={handleSwapFlow}
-                    />
-                  </div>
+                  <NeonButton
+                    label={
+                      swapStatus === 'approving'
+                        ? 'Approving…'
+                        : swapStatus === 'swapping'
+                        ? 'Swapping…'
+                        : swapStatus === 'success'
+                        ? 'Swap complete'
+                        : 'Swap & Stake'
+                    }
+                    rightHint={
+                      swapStatus === 'idle'
+                        ? '2 steps'
+                        : swapStatus === 'success'
+                        ? undefined
+                        : 'live'
+                    }
+                    disabled={
+                      !wallet.isConnected ||
+                      computedTfuelAmount <= 0 ||
+                      swapStatus === 'approving' ||
+                      swapStatus === 'swapping'
+                    }
+                    onClick={handleSwapFlow}
+                  />
                 </>
               )}
 
@@ -424,22 +486,19 @@ function App() {
                   </p>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {LST_OPTIONS.map((opt) => (
-                      <div
-                        key={opt.name}
-                        className="rounded-2xl border border-purple-400/40 bg-black/40 px-4 py-3 shadow-[0_0_22px_rgba(15,23,42,0.9)]"
-                      >
+                      <GlassCard key={opt.name} className="p-4">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-200">
                             {opt.name}
                           </span>
-                          <span className="text-xs text-emerald-300">
+                          <span className="text-xs font-semibold text-emerald-300">
                             {opt.apy.toFixed(1)}% APY
                           </span>
                         </div>
                         <p className="mt-2 text-[11px] text-slate-400">
                           Liquidity‑aware routing with gas abstracted by treasury.
                         </p>
-                      </div>
+                      </GlassCard>
                     ))}
                   </div>
                 </div>
@@ -455,12 +514,14 @@ function App() {
                     tap once, stars feel it forever.
                   </p>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <div className="rounded-2xl border border-purple-400/40 bg-black/40 px-4 py-3 shadow-[0_0_22px_rgba(15,23,42,0.9)]">
+                    <GlassCard className="p-4">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-200">
                           Arena: Main Stage
                         </span>
-                        <span className="text-[11px] text-emerald-300">LIVE</span>
+                        <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-300">
+                          LIVE
+                        </span>
                       </div>
                       <p className="mt-2 text-[11px] text-slate-400">
                         Real‑time tip stream flowing into {selectedLST.name} for the headliner.
@@ -476,14 +537,14 @@ function App() {
                       <div className="mt-3">
                         <NeonButton label="Enter arena" rightHint="tip & stake" />
                       </div>
-                    </div>
+                    </GlassCard>
 
-                    <div className="rounded-2xl border border-purple-400/30 bg-black/40 px-4 py-3 shadow-[0_0_18px_rgba(15,23,42,0.9)]">
+                    <GlassCard className="p-4">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-200">
                           Creator pools
                         </span>
-                        <span className="text-[11px] text-purple-300">{selectedLST.apy.toFixed(1)}% APY</span>
+                        <span className="text-[11px] font-semibold text-purple-300">{selectedLST.apy.toFixed(1)}% APY</span>
                       </div>
                       <p className="mt-2 text-[11px] text-slate-400">
                         Group tips per creator into shared pools that compound yield between drops,
@@ -500,7 +561,7 @@ function App() {
                       <div className="mt-3">
                         <NeonButton label="Preview fan map" rightHint="2026" variant="secondary" />
                       </div>
-                    </div>
+                    </GlassCard>
                   </div>
                   <p className="text-[11px] text-slate-400">
                     This tab is your sticky arena UX — we&apos;ll wire in live arenas, creator
@@ -602,55 +663,86 @@ function App() {
 
             {/* Bottom-row bubbles: APY selector for core tabs, tip bubbles only for Tip Pools */}
             {activeTab === 'tip-pools' ? (
-              <div className="mt-4 flex flex-col gap-3">
+              <div className="mt-6 flex flex-col gap-3">
                 <div className="flex items-center justify-between text-xs text-slate-300/80">
                   <span className="uppercase tracking-[0.18em] text-slate-400/90">Tip pools</span>
                   <span className="text-[11px] text-purple-200/80">Fans → shared yield</span>
                 </div>
-                <div className="no-scrollbar flex gap-3 overflow-x-auto pb-1 pt-1">
+                <div className="no-scrollbar flex gap-4 overflow-x-auto pb-2 pt-2">
                   <button
                     type="button"
-                    className="xfuel-tap-glow group relative flex min-w-[170px] flex-col items-start gap-1 rounded-full border border-purple-400/80 bg-[radial-gradient(circle_at_top,_rgba(129,140,248,0.45),transparent_55%),rgba(15,23,42,0.9)] px-4 py-2.5 text-left shadow-[0_0_28px_rgba(168,85,247,0.9)]"
+                    className="bubble-glow xfuel-tap-glow group relative flex min-w-[180px] flex-col items-start gap-1 rounded-full border border-purple-400/80 bg-[radial-gradient(circle_at_top,_rgba(129,140,248,0.45),transparent_55%),rgba(15,23,42,0.9)] px-5 py-3 text-left backdrop-blur-xl transition-all hover:scale-105"
                   >
                     <span className="text-[11px] uppercase tracking-[0.18em] text-slate-50">
                       Main Stage
                     </span>
-                    <span className="flex items-baseline gap-1 text-xs text-emerald-300">
+                    <span className="flex items-baseline gap-1 text-sm font-semibold text-emerald-300 drop-shadow-[0_0_12px_rgba(16,185,129,0.9)]">
                       12,430 XFUEL
-                      <span className="text-[10px] uppercase tracking-[0.14em] text-slate-300/80">
+                      <span className="text-[10px] font-normal uppercase tracking-[0.14em] text-slate-300/80">
                         24h tips
                       </span>
                     </span>
                   </button>
                   <button
                     type="button"
-                    className="xfuel-tap-glow group relative flex min-w-[170px] flex-col items-start gap-1 rounded-full border border-purple-400/60 bg-[radial-gradient(circle_at_top,_rgba(236,72,153,0.4),transparent_55%),rgba(15,23,42,0.9)] px-4 py-2.5 text-left shadow-[0_0_24px_rgba(236,72,153,0.8)]"
+                    className="bubble-glow xfuel-tap-glow group relative flex min-w-[180px] flex-col items-start gap-1 rounded-full border border-pink-400/70 bg-[radial-gradient(circle_at_top,_rgba(236,72,153,0.4),transparent_55%),rgba(15,23,42,0.9)] px-5 py-3 text-left backdrop-blur-xl transition-all hover:scale-105"
+                    style={{
+                      boxShadow: '0 0 32px rgba(236,72,153,0.8), 0 0 64px rgba(236,72,153,0.4)',
+                    }}
                   >
                     <span className="text-[11px] uppercase tracking-[0.18em] text-slate-50">
                       Creator Pools
                     </span>
-                    <span className="flex items-baseline gap-1 text-xs text-cyan-300">
+                    <span className="flex items-baseline gap-1 text-sm font-semibold text-cyan-300 drop-shadow-[0_0_12px_rgba(56,189,248,0.9)]">
                       87 active
-                      <span className="text-[10px] uppercase tracking-[0.14em] text-slate-300/80">
+                      <span className="text-[10px] font-normal uppercase tracking-[0.14em] text-slate-300/80">
                         stars
                       </span>
                     </span>
                   </button>
                   <button
                     type="button"
-                    className="xfuel-tap-glow group relative flex min-w-[170px] flex-col items-start gap-1 rounded-full border border-purple-400/60 bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.4),transparent_55%),rgba(15,23,42,0.9)] px-4 py-2.5 text-left shadow-[0_0_24px_rgba(56,189,248,0.85)]"
+                    className="bubble-glow xfuel-tap-glow group relative flex min-w-[180px] flex-col items-start gap-1 rounded-full border border-cyan-400/70 bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.4),transparent_55%),rgba(15,23,42,0.9)] px-5 py-3 text-left backdrop-blur-xl transition-all hover:scale-105"
+                    style={{
+                      boxShadow: '0 0 32px rgba(56,189,248,0.85), 0 0 64px rgba(56,189,248,0.4)',
+                    }}
                   >
                     <span className="text-[11px] uppercase tracking-[0.18em] text-slate-50">
                       Fan Badges
                     </span>
-                    <span className="flex items-baseline gap-1 text-xs text-emerald-300">
+                    <span className="flex items-baseline gap-1 text-sm font-semibold text-emerald-300 drop-shadow-[0_0_12px_rgba(16,185,129,0.9)]">
                       LVL 03
-                      <span className="text-[10px] uppercase tracking-[0.14em] text-slate-300/80">
+                      <span className="text-[10px] font-normal uppercase tracking-[0.14em] text-slate-300/80">
                         early
                       </span>
                     </span>
                   </button>
                 </div>
+              </div>
+            ) : activeTab === 'swap' && wallet.isConnected && computedTfuelAmount > 0 ? (
+              // Dashboard elements for swap tab when connected
+              <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {/* Earnings card */}
+                <GlassCard className="p-5">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
+                    Earnings today
+                  </p>
+                  <p className="mt-3 text-4xl font-bold text-white">
+                    ${(estimatedDailyYield * 0.8).toFixed(2)}
+                  </p>
+                  <p className="mt-2 text-xs text-slate-400">
+                    Approx. based on blended APY (mock)
+                  </p>
+                </GlassCard>
+
+                {/* Streak badge */}
+                <GlassCard className="p-5">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
+                    Streak
+                  </p>
+                  <p className="mt-3 text-4xl font-bold text-purple-300">12</p>
+                  <p className="mt-2 text-xs text-slate-400">days</p>
+                </GlassCard>
               </div>
             ) : (
               <YieldBubbleSelector
