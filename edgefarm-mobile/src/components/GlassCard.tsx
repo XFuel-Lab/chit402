@@ -17,25 +17,21 @@ export function GlassCard({
         borderRadius: 24,
         overflow: 'visible',
         // Strong floating elevation / holographic glow
-        shadowColor: '#a855f7',
-        shadowOpacity: 0.55,
-        shadowRadius: 32,
-        shadowOffset: { width: 0, height: 22 },
+        shadowColor: '#0b0b1f',
+        shadowOpacity: 0.85,
+        shadowRadius: 36,
+        shadowOffset: { width: 0, height: 24 },
       }}
     >
       <LinearGradient
-        colors={[
-          'rgba(168, 85, 247, 0.55)',
-          'rgba(56, 189, 248, 0.38)',
-          'rgba(15, 23, 42, 0.60)',
-        ]}
+        colors={['rgba(168, 85, 247, 0.42)', 'rgba(56, 189, 248, 0.26)', 'rgba(15, 23, 42, 0.45)']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={{ padding: 1, borderRadius: 24 }}
       >
         <BlurView
-          // Keep blur very light so wallpaper stays crystal sharp (sub‑10% vibe)
-          intensity={8}
+          // Very light blur so wallpaper stays crystal sharp (sub‑10% vibe)
+          intensity={6}
           tint="dark"
           style={{
             borderRadius: 22,
@@ -49,9 +45,9 @@ export function GlassCard({
               paddingVertical: 16,
               borderRadius: 22,
               borderWidth: 1,
-              // Soft neon border, content floating directly on blurred wallpaper
-              borderColor: 'rgba(168,85,247,0.36)',
-              backgroundColor: 'transparent',
+              // Softer neon border, more wallpaper coming through the card
+              borderColor: 'rgba(191,219,254,0.32)',
+              backgroundColor: 'rgba(2,6,23,0.18)',
               shadowColor: 'rgba(15,23,42,1)',
               shadowOpacity: 0.6,
               shadowRadius: 18,
@@ -68,8 +64,8 @@ export function GlassCard({
                 top: 0,
                 left: 0,
                 right: 0,
-                height: 42,
-                opacity: 0.85,
+                height: 40,
+                opacity: 0.6,
               }}
             />
             {children}
