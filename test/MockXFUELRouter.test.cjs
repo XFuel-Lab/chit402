@@ -1,5 +1,14 @@
 const { expect } = require('chai')
+const assert = require('assert')
 const { ethers } = require('hardhat')
+
+// Helper to support both ethers v5 (utils.parseEther) and v6 (parseEther)
+const parseEther = (value) => {
+  if (typeof ethers.parseEther === 'function') {
+    return ethers.parseEther(value)
+  }
+  return ethers.utils.parseEther(value)
+}
 
 describe('MockXFUELRouter', function () {
   let router
@@ -13,13 +22,19 @@ describe('MockXFUELRouter', function () {
     // Deploy the mock router contract
     const MockXFUELRouterFactory = await ethers.getContractFactory('MockXFUELRouter')
     router = await MockXFUELRouterFactory.deploy()
-    await router.waitForDeployment()
+
+    // Support both ethers v5 (deployed) and v6 (waitForDeployment)
+    if (typeof router.waitForDeployment === 'function') {
+      await router.waitForDeployment()
+    } else if (typeof router.deployed === 'function') {
+      await router.deployed()
+    }
   })
 
   describe('swapAndStake', function () {
     it('should swap 1 TFUEL and emit SwapAndStake event', async function () {
       // 1 TFUEL = 1e18 wei
-      const tfuelAmount = ethers.parseEther('1')
+      const tfuelAmount = parseEther('1')
       const stakeTarget = 'pSTAKE BTC'
 
       // Call swapAndStake and wait for the transaction
@@ -46,10 +61,14 @@ describe('MockXFUELRouter', function () {
 
         if (event) {
           const parsedEvent = router.interface.parseLog(event)
-          expect(parsedEvent.args[0]).to.equal(await user.getAddress()) // user
-          expect(parsedEvent.args[1]).to.equal(tfuelAmount) // tfuelAmount
-          expect(parsedEvent.args[2]).to.equal(ethers.parseEther('0.95')) // stakedAmount (95% of 1 TFUEL)
-          expect(parsedEvent.args[3]).to.equal(stakeTarget) // stakeTarget
+
+          // Use Node's assert to avoid hardhat-chai-matchers address/Bignumber helpers,
+          // which are version-sensitive across ethers v5/v6.
+          const [userArg, tfuelArg, stakedArg, stakeTargetArg] = parsedEvent.args
+          assert.strictEqual(userArg, await user.getAddress()) // user
+          assert.strictEqual(tfuelArg.toString(), tfuelAmount.toString()) // tfuelAmount
+          assert.strictEqual(stakedArg.toString(), parseEther('0.95').toString()) // stakedAmount
+          assert.strictEqual(stakeTargetArg, stakeTarget) // stakeTarget
         }
       }
     })
