@@ -22,6 +22,8 @@ type ActivePool = {
   tipVelocity: number // tips per minute
   isLoserPool: boolean
   loserPot?: number
+  hasNftRaffle?: boolean
+  nftName?: string
 }
 
 type TipFeedItem = {
@@ -43,6 +45,8 @@ export function CreatorScreen() {
       currentPot: 124_800,
       tipVelocity: 12.5,
       isLoserPool: false,
+      hasNftRaffle: true,
+      nftName: 'Signed Cloud9 Jersey',
     },
     {
       id: 'p2',
@@ -52,6 +56,7 @@ export function CreatorScreen() {
       tipVelocity: 8.3,
       isLoserPool: true,
       loserPot: 41_900,
+      hasNftRaffle: false,
     },
   ])
   const [tipFeed, setTipFeed] = useState<TipFeedItem[]>([
@@ -365,6 +370,29 @@ function PoolCard({
           </View>
         </View>
       </View>
+
+      {pool.hasNftRaffle && pool.nftName && (
+        <View
+          style={{
+            marginTop: 12,
+            padding: 12,
+            borderRadius: 12,
+            borderWidth: 2,
+            borderColor: 'rgba(168,85,247,0.7)',
+            backgroundColor: 'rgba(168,85,247,0.15)',
+          }}
+        >
+          <Text style={{ ...type.caption, color: neon.purple, marginBottom: 4, fontWeight: '600' }}>
+            ✨ NFT Raffle Active
+          </Text>
+          <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.95)' }}>
+            Your pool has NFT raffle — promote for bigger tips
+          </Text>
+          <Text style={{ ...type.caption, marginTop: 4, color: 'rgba(248,250,252,0.85)' }}>
+            Fans who tip $100+ automatically enter raffle for {pool.nftName}
+          </Text>
+        </View>
+      )}
 
       {pool.isLoserPool && pool.loserPot && (
         <View

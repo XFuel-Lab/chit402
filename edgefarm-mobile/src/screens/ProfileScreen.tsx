@@ -718,6 +718,24 @@ export function ProfileScreen() {
             </View>
           </NeonCard>
 
+          {/* My NFTs & Raffles */}
+          <View className="mt-6">
+            <View className="mb-3 flex-row items-center justify-between">
+              <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.96)' }}>My NFTs & Raffles</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={{ ...type.caption, color: neon.purple, fontWeight: '600' }}>
+                  Entries: 3 active raffles
+                </Text>
+              </View>
+            </View>
+
+            <View className="flex-row flex-wrap justify-between">
+              {NFT_SHOWCASE.map((nft) => (
+                <NftCardWithGlow key={nft.id} nft={nft} />
+              ))}
+            </View>
+          </View>
+
           {/* NFT showcase */}
           <View className="mt-6">
             <View className="mb-3 flex-row items-center justify-between">
@@ -907,5 +925,117 @@ export function ProfileScreen() {
         </ScrollView>
       </SafeAreaView>
     </ScreenBackground>
+  )
+}
+
+function NftCardWithGlow({ nft }: { nft: NftItem }) {
+  const glowValue = useSharedValue(0)
+
+  React.useEffect(() => {
+    glowValue.value = withRepeat(
+      withTiming(1, { duration: 3000, easing: Easing.inOut(Easing.quad) }),
+      -1,
+      true
+    )
+  }, [glowValue])
+
+  const glowStyle = useAnimatedStyle(() => {
+    const opacity = 0.4 + glowValue.value * 0.4
+    return {
+      shadowColor: neon.purple,
+      shadowOpacity: opacity,
+      shadowRadius: 20 + glowValue.value * 12,
+      shadowOffset: { width: 0, height: 0 },
+      borderColor: `rgba(168,85,247,${0.6 + glowValue.value * 0.3})`,
+    }
+  })
+
+  return (
+    <Animated.View
+      style={[
+        {
+          flexBasis: '48%',
+          maxWidth: '48%',
+          marginBottom: 14,
+          borderRadius: 18,
+          overflow: 'visible',
+          backgroundColor: 'rgba(15,23,42,0.96)',
+          borderWidth: 2,
+        },
+        glowStyle,
+      ]}
+    >
+      <LinearGradient
+        colors={['rgba(56,189,248,0.55)', 'rgba(168,85,247,0.7)', 'rgba(15,23,42,0.96)']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={{ height: 86, justifyContent: 'flex-end', padding: 8 }}
+      >
+        <View
+          style={{
+            position: 'absolute',
+            inset: 0,
+            opacity: 0.16,
+            transform: [{ rotate: '-12deg' }],
+          }}
+        >
+          <Image
+            source={require('../../assets/icon.png')}
+            style={{
+              width: '120%',
+              height: '120%',
+              tintColor: neon.pink,
+            }}
+            resizeMode="cover"
+          />
+        </View>
+        <View
+          style={{
+            alignSelf: 'flex-start',
+            paddingHorizontal: 8,
+            paddingVertical: 3,
+            borderRadius: 999,
+            borderWidth: 1,
+            borderColor: 'rgba(248,250,252,0.7)',
+            backgroundColor: 'rgba(15,23,42,0.9)',
+          }}
+        >
+          <Text style={{ ...type.caption, fontSize: 10, color: 'rgba(248,250,252,0.96)' }}>
+            {nft.tag}
+          </Text>
+        </View>
+      </LinearGradient>
+
+      <View style={{ paddingHorizontal: 10, paddingVertical: 8 }}>
+        <Text
+          numberOfLines={2}
+          style={{
+            ...type.caption,
+            fontSize: 12,
+            color: 'rgba(248,250,252,0.96)',
+          }}
+        >
+          {nft.label}
+        </Text>
+        <Text
+          style={{
+            ...type.caption,
+            marginTop: 2,
+            color: 'rgba(148,163,184,0.9)',
+          }}
+        >
+          {nft.source}
+        </Text>
+        <Text
+          style={{
+            ...type.caption,
+            marginTop: 4,
+            color: neon.green,
+          }}
+        >
+          {nft.value}
+        </Text>
+      </View>
+    </Animated.View>
   )
 }

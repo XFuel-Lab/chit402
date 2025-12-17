@@ -12,7 +12,6 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated'
 import { LinearGradient } from 'expo-linear-gradient'
-import { Image } from 'expo-image'
 import { type } from '../theme/typography'
 import { neon } from '../theme/neon'
 

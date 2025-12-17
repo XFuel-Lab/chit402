@@ -12,6 +12,7 @@ import { NeonCard } from '../components/NeonCard'
 import { NeonButton } from '../components/NeonButton'
 import { ScreenBackground } from '../components/ScreenBackground'
 import { TipSuccessOverlay } from '../components/TipSuccessOverlay'
+import { LotteryWinExplosion } from '../components/LotteryWinExplosion'
 import { getAppExtra } from '../lib/appConfig'
 import { neon } from '../theme/neon'
 import { type } from '../theme/typography'
@@ -26,6 +27,8 @@ type EventRow = {
   loserPot: number
   lotteryPot: number
   endsAtMs: number
+  hasNftRaffle?: boolean
+  nftName?: string
 }
 
 type ActivityItem = {
@@ -55,6 +58,10 @@ export function PoolsScreen() {
   const [starNftBountyOn, setStarNftBountyOn] = useState(true)
   const [selectedSide, setSelectedSide] = useState<'star' | 'lottery'>('star')
   const [tipAmount, setTipAmount] = useState<number>(10)
+  const [lotteryWinVisible, setLotteryWinVisible] = useState(false)
+  const [lotteryWinAmount, setLotteryWinAmount] = useState(0)
+  const [lotteryWinNft, setLotteryWinNft] = useState<{ id: string; name: string; rarity: 'Mythic' | 'Legendary' | 'Epic' | 'Rare' } | undefined>(undefined)
+  const [raffleEntryGlow, setRaffleEntryGlow] = useState(false)
 
   useEffect(() => {
     const t = setInterval(() => setTick((v) => v + 1), 1000)
@@ -93,6 +100,8 @@ export function PoolsScreen() {
         loserPot: 78_300,
         lotteryPot: 22_340,
         endsAtMs: Date.now() + 1000 * 60 * 38,
+        hasNftRaffle: true,
+        nftName: 'Signed Cloud9 Jersey',
       },
       {
         id: 'e2',
@@ -103,6 +112,7 @@ export function PoolsScreen() {
         loserPot: 41_900,
         lotteryPot: 11_750,
         endsAtMs: Date.now() + 1000 * 60 * 12,
+        hasNftRaffle: false,
       },
       {
         id: 'e3',
@@ -113,6 +123,8 @@ export function PoolsScreen() {
         loserPot: 58_420,
         lotteryPot: 15_980,
         endsAtMs: Date.now() + 1000 * 60 * 22,
+        hasNftRaffle: true,
+        nftName: 'T1 Champions Trophy',
       },
     ],
     []
@@ -144,17 +156,26 @@ export function PoolsScreen() {
       const fanWins = Math.random() < 0.5
       if (fanWins) {
         const fanPrize = Math.round(e.loserPot * 0.35)
-        setSuccessMsg(
-          `You won $${fanPrize.toLocaleString()} from the loser pot!\nAuto-staking to stTFUEL vault (mock).`
-        )
+        // Use cinematic lottery win explosion for big wins
+        setLotteryWinAmount(fanPrize)
+        if (e.hasNftRaffle && e.nftName) {
+          setLotteryWinNft({
+            id: `nft-${e.id}`,
+            name: e.nftName,
+            rarity: 'Legendary',
+          })
+        } else {
+          setLotteryWinNft(undefined)
+        }
+        setLotteryWinVisible(true)
       } else {
         const starCut = Math.round(e.loserPot * 0.1)
         setSuccessMsg(
           `Your fans tipped $${e.loserPot.toLocaleString()} — your cut $${starCut.toLocaleString()}.`
         )
+        setSuccessVisible(true)
       }
       setResolvedEventIds((prev) => [...prev, e.id])
-      setSuccessVisible(true)
     })
   }, [tick, events, resolvedEventIds])
 
@@ -162,14 +183,23 @@ export function PoolsScreen() {
     const entered = side === 'loser'
     const activeEvent = selectedEvent
     const ticketId = `#${(tickets.length + 1).toString().padStart(4, '0')}`
+    const isNftRaffleEntry = tipAmount >= 100 && activeEvent?.hasNftRaffle
 
     if (isSpinning) return
     setIsSpinning(true)
 
+    // Show raffle entry glow for $100+ tips on NFT raffle pools
+    if (isNftRaffleEntry) {
+      setRaffleEntryGlow(true)
+      setTimeout(() => setRaffleEntryGlow(false), 2000)
+    }
+
     // Update arena feed
     setActivity((prev) => {
       const label = entered
-        ? `You tipped Star ${activeEvent?.starB} on loser side – ticket ${ticketId} minted`
+        ? isNftRaffleEntry
+          ? `You tipped $${tipAmount} on Star ${activeEvent?.starB} — entered NFT raffle for ${activeEvent?.nftName}!`
+          : `You tipped Star ${activeEvent?.starB} on loser side – ticket ${ticketId} minted`
         : `You tipped Star ${activeEvent?.starA} – winner pot boosted`
       const next: ActivityItem = {
         id: `a-${Date.now()}`,
@@ -192,7 +222,9 @@ export function PoolsScreen() {
     }
 
     const spinLabel = entered
-      ? `Spinning loser-side lottery for ${eventTitle}…`
+      ? isNftRaffleEntry
+        ? `You're entered! NFT raffle ticket for ${activeEvent?.nftName} minted.`
+        : `Spinning loser-side lottery for ${eventTitle}…`
       : `Slotting your Star tip into ${eventTitle} winner pot…`
 
     setSuccessMsg(spinLabel)
@@ -202,7 +234,9 @@ export function PoolsScreen() {
     setTimeout(() => {
       setSuccessMsg(
         entered
-          ? `Ticket minted for ${eventTitle}\nYou tipped ${tipAmount} TFUEL on Star ${activeEvent?.starB} loser side.\nYou entered ${lotteryJackpot} lottery (${globalLotteryPct}% global pot).`
+          ? isNftRaffleEntry
+            ? `You're entered in the NFT raffle for ${activeEvent?.nftName}!\nTip $${tipAmount} TFUEL on Star ${activeEvent?.starB} loser side.\nPlus you entered ${lotteryJackpot} lottery (${globalLotteryPct}% global pot).`
+            : `Ticket minted for ${eventTitle}\nYou tipped ${tipAmount} TFUEL on Star ${activeEvent?.starB} loser side.\nYou entered ${lotteryJackpot} lottery (${globalLotteryPct}% global pot).`
           : `Tip placed on Star ${activeEvent?.starA}\nYou tipped ${tipAmount} TFUEL into the winner pot for ${eventTitle}.`
       )
       setIsSpinning(false)
@@ -550,6 +584,15 @@ export function PoolsScreen() {
                   />
                 </View>
 
+                {/* NFT Raffle Banner */}
+                {selectedEvent.hasNftRaffle && selectedEvent.nftName && (
+                  <RaffleEntryBanner
+                    nftName={selectedEvent.nftName}
+                    tipAmount={tipAmount}
+                    showGlow={raffleEntryGlow}
+                  />
+                )}
+
                 <View style={{ marginTop: 14 }}>
                   <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.58)' }}>Momentum gauge</Text>
                   <View style={{ marginTop: 10 }}>
@@ -565,25 +608,36 @@ export function PoolsScreen() {
                   <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.95)' }}>
                     How spicy is this tip?
                   </Text>
-                  <View className="mt-2 flex-row gap-2">
-                    {[5, 10, 25, 50].map((amt) => {
+                  <View className="mt-2 flex-row gap-2 flex-wrap">
+                    {[5, 10, 25, 50, 100].map((amt) => {
                       const active = tipAmount === amt
+                      const isNftEntry = amt >= 100 && selectedEvent?.hasNftRaffle
                       return (
                         <TouchableOpacity
                           key={amt}
                           activeOpacity={0.9}
                           onPress={() => setTipAmount(amt)}
                           style={{
-                            flex: 1,
+                            flex: amt === 100 ? 1 : undefined,
+                            minWidth: amt === 100 ? '100%' : undefined,
                             borderRadius: 999,
                             paddingHorizontal: 10,
                             paddingVertical: 6,
+                            marginBottom: amt === 100 ? 0 : 0,
                             borderWidth: 1,
                             borderColor: active
-                              ? 'rgba(168,85,247,0.9)'
+                              ? isNftEntry
+                                ? 'rgba(168,85,247,0.95)'
+                                : 'rgba(168,85,247,0.9)'
+                              : isNftEntry
+                              ? 'rgba(168,85,247,0.6)'
                               : 'rgba(148,163,184,0.6)',
                             backgroundColor: active
-                              ? 'rgba(30,64,175,0.95)'
+                              ? isNftEntry
+                                ? 'rgba(168,85,247,0.25)'
+                                : 'rgba(30,64,175,0.95)'
+                              : isNftEntry
+                              ? 'rgba(168,85,247,0.15)'
                               : 'rgba(15,23,42,0.9)',
                           }}
                         >
@@ -591,10 +645,11 @@ export function PoolsScreen() {
                             style={{
                               ...type.caption,
                               textAlign: 'center',
-                              color: 'rgba(248,250,252,0.98)',
+                              color: isNftEntry ? 'rgba(248,250,252,0.98)' : 'rgba(248,250,252,0.98)',
+                              fontWeight: isNftEntry ? '600' : 'normal',
                             }}
                           >
-                            {amt} TFUEL
+                            {amt} TFUEL {isNftEntry ? '✨' : ''}
                           </Text>
                         </TouchableOpacity>
                       )
@@ -730,12 +785,91 @@ export function PoolsScreen() {
           onClose={() => setSuccessVisible(false)}
         />
 
+        <LotteryWinExplosion
+          visible={lotteryWinVisible}
+          winAmount={lotteryWinAmount}
+          nft={lotteryWinNft}
+          onClose={() => setLotteryWinVisible(false)}
+          apy={38}
+        />
+
         <CreatePoolModal
           visible={createVisible}
           onClose={() => setCreateVisible(false)}
         />
       </SafeAreaView>
     </ScreenBackground>
+  )
+}
+
+function RaffleEntryBanner({
+  nftName,
+  tipAmount,
+  showGlow,
+}: {
+  nftName: string
+  tipAmount: number
+  showGlow: boolean
+}) {
+  const glow = useSharedValue(0)
+
+  useEffect(() => {
+    if (showGlow) {
+      glow.value = withRepeat(
+        withTiming(1, { duration: 1000, easing: Easing.inOut(Easing.quad) }),
+        2,
+        true
+      )
+    } else {
+      glow.value = 0
+    }
+  }, [showGlow, glow])
+
+  const glowStyle = useAnimatedStyle(() => {
+    const opacity = showGlow ? 0.6 + glow.value * 0.4 : 0
+    return {
+      shadowColor: neon.purple,
+      shadowOpacity: opacity,
+      shadowRadius: 20 + glow.value * 16,
+      shadowOffset: { width: 0, height: 0 },
+      borderColor: showGlow
+        ? `rgba(168,85,247,${0.8 + glow.value * 0.2})`
+        : 'rgba(168,85,247,0.6)',
+    }
+  })
+
+  const isEligible = tipAmount >= 100
+
+  return (
+    <Animated.View
+      style={[
+        {
+          marginTop: 14,
+          borderRadius: 16,
+          padding: 14,
+          borderWidth: 2,
+          backgroundColor: isEligible ? 'rgba(168,85,247,0.15)' : 'rgba(15,23,42,0.85)',
+        },
+        glowStyle,
+      ]}
+    >
+      {isEligible ? (
+        <View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+            <Text style={{ ...type.bodyM, color: neon.purple, fontWeight: '600' }}>
+              ✨ You're entered!
+            </Text>
+          </View>
+          <Text style={{ ...type.caption, color: 'rgba(248,250,252,0.95)' }}>
+            Tip ${tipAmount}+ to enter raffle for {nftName}
+          </Text>
+        </View>
+      ) : (
+        <Text style={{ ...type.bodyM, color: neon.purple }}>
+          Tip $100+ to enter raffle for {nftName}
+        </Text>
+      )}
+    </Animated.View>
   )
 }
 
