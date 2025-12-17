@@ -4,7 +4,15 @@
   "installCommand": "npm install --legacy-peer-deps && npm list terser || npm install terser --save-dev",
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/institutions",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/institutions/",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/((?!assets|.*\\..*).*)",
       "destination": "/index.html"
     }
   ]
