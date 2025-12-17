@@ -197,6 +197,11 @@ function App() {
     } catch {
       // ignore
     }
+
+    // Set active tab based on current path
+    if (window.location.pathname === '/liquidity' || window.location.pathname === '/liquidity/') {
+      setActiveTab('liquidity')
+    }
   }, [])
 
   const handleWalletSignIn = async () => {
@@ -287,9 +292,16 @@ function App() {
           <div className="w-full max-w-xl space-y-4 sm:space-y-6">
             <NeonTabs
               activeId={activeTab}
-              onChange={setActiveTab}
+              onChange={(id) => {
+                if (id === 'liquidity') {
+                  window.location.href = '/liquidity'
+                } else {
+                  setActiveTab(id)
+                }
+              }}
               tabs={[
                 { id: 'swap', label: 'Swap', pill: 'live' },
+                { id: 'liquidity', label: 'Liquidity', pill: 'pool' },
                 { id: 'staking', label: 'Staking', pill: 'apy lanes' },
                 { id: 'tip-pools', label: 'Tip Pools', pill: 'fans' },
                 { id: 'mining', label: 'Mining', pill: 'edge' },

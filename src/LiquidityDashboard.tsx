@@ -212,7 +212,7 @@ function LiquidityDashboard() {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-slate-400">IL Protection</span>
-                    <span className="text-sm font-medium text-green-400">>8% Backstop Active</span>
+                    <span className="text-sm font-medium text-green-400">&gt;8% Backstop Active</span>
                   </div>
                 </div>
               </div>
