@@ -1,0 +1,21 @@
+# <type>: <subject>
+
+# <body>
+
+# <footer>
+
+# Types:
+# feat:     A new feature
+# fix:      A bug fix
+# refactor: Code refactoring
+# docs:     Documentation changes
+# test:     Adding/updating tests
+# chore:    Maintenance tasks
+
+# Example:
+# feat: add liquidity pool dashboard
+#
+# - Created XFUELPool contract with 0.05-0.08% fee tiers
+# - Added liquidity dashboard page with live metrics
+# - Implemented fee splitting (60% burn, 25% veXF, 15% treasury)
+

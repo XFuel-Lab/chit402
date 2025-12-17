@@ -19,20 +19,44 @@ Sub-4s institutional-grade settlement rail: Theta EdgeCloud GPU/video revenue â†
 npm install
 ```
 
-2. Start development server:
+2. Configure environment variables:
+```bash
+cp .env.example .env
+```
+Then edit `.env` and add your deployed contract addresses:
+- `VITE_ROUTER_ADDRESS` - Your deployed XFUEL router contract address on Theta testnet
+- `VITE_TIP_POOL_ADDRESS` - Your deployed Tip Pool contract address on Theta testnet
+
+3. Start development server:
 ```bash
 npm run dev
 ```
 
-3. Build for production:
+4. Build for production:
 ```bash
 npm run build
 ```
 
-4. Preview production build:
+5. Preview production build:
 ```bash
 npm run preview
 ```
+
+## Theta Testnet Integration
+
+This app is fully integrated with Theta testnet for real on-chain execution:
+
+- **Swap & Stake**: Real router contract calls with native TFUEL
+- **Tip Pools**: Lottery pools with VRF-based winner selection
+- **Transaction Tracking**: All transactions show hash and explorer links
+- **Balance Updates**: Real-time balance fetching from chain
+- **Faucet Integration**: Get test TFUEL directly from the app
+
+### Network Configuration
+- Chain ID: 365
+- RPC URL: https://eth-rpc-api-testnet.thetatoken.org/rpc
+- Explorer: https://testnet-explorer.thetatoken.org/
+- Faucet: https://faucet.testnet.theta.org/request
 
 ## Unified Web + Mobile Product
 

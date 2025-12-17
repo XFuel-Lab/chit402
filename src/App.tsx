@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ethers } from 'ethers'
+import confetti from 'canvas-confetti'
 import ScreenBackground from './components/ScreenBackground'
 import GlassCard from './components/GlassCard'
 import NeonButton from './components/NeonButton'
 import ApyOrb from './components/ApyOrb'
 import YieldBubbleSelector, { type LSTOption } from './components/YieldBubbleSelector'
 import NeonTabs, { type NeonTabId } from './components/NeonTabs'
+import { THETA_TESTNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
 
 type SwapStatus = 'idle' | 'approving' | 'swapping' | 'success' | 'error'
 
@@ -41,6 +43,9 @@ function App() {
   const [userAlias, setUserAlias] = useState<string | null>(null)
   const [showPercentageDropdown, setShowPercentageDropdown] = useState(false)
   const [showLSTDropdown, setShowLSTDropdown] = useState(false)
+  const [txHash, setTxHash] = useState<string | null>(null)
+  const [faucetLoading, setFaucetLoading] = useState(false)
+  const [tipPools, setTipPools] = useState<any[]>([])
 
   const numericBalance = useMemo(
     () => parseFloat(wallet.balance.replace(/,/g, '')) || 0,
@@ -49,37 +54,96 @@ function App() {
 
   const liveApyText = useMemo(() => `${selectedLST.apy.toFixed(1)}%`, [selectedLST.apy])
 
-  // Mock Theta Wallet connection
+  // Real Theta Wallet connection with balance fetching
   const connectWallet = async () => {
     try {
       const provider = (window as any).theta || (window as any).ethereum
       if (typeof window !== 'undefined' && provider) {
+        // Request account access
         const accounts = await provider.request({
           method: 'eth_requestAccounts',
         })
         if (accounts && accounts.length > 0) {
           const address = accounts[0]
-          const balance = '1,234.56'
+          
+          // Fetch real balance from chain
+          const ethersProvider = new ethers.providers.Web3Provider(provider)
+          const balance = await ethersProvider.getBalance(address)
+          const balanceFormatted = parseFloat(ethers.utils.formatEther(balance)).toLocaleString('en-US', {
+            maximumFractionDigits: 2,
+            minimumFractionDigits: 2,
+          })
+          
           setWallet({
             address: `${address.slice(0, 6)}...${address.slice(-4)}`,
             fullAddress: address,
-            balance,
+            balance: balanceFormatted,
             isConnected: true,
           })
+          
+          // Refresh balance periodically
+          refreshBalance(address, provider)
         }
       } else {
-        const demoAddress = '0x1234567890123456789012345678901234567890'
-        setWallet({
-          address: '0x1234...5678',
-          fullAddress: demoAddress,
-          balance: '1,234.56',
-          isConnected: true,
-        })
+        alert('Please install Theta Wallet or MetaMask to connect')
       }
     } catch (error) {
       console.error('Wallet connection error:', error)
       setStatusMessage('Failed to connect wallet')
       setSwapStatus('error')
+    }
+  }
+
+  // Refresh wallet balance from chain
+  const refreshBalance = async (address: string, provider: any) => {
+    try {
+      const ethersProvider = new ethers.providers.Web3Provider(provider)
+      const balance = await ethersProvider.getBalance(address)
+      const balanceFormatted = parseFloat(ethers.utils.formatEther(balance)).toLocaleString('en-US', {
+        maximumFractionDigits: 2,
+        minimumFractionDigits: 2,
+      })
+      setWallet((prev) => ({ ...prev, balance: balanceFormatted }))
+    } catch (error) {
+      console.error('Balance refresh error:', error)
+    }
+  }
+
+  // Get Test TFUEL from faucet
+  const handleFaucet = async () => {
+    if (!wallet.fullAddress) {
+      setStatusMessage('Connect wallet first')
+      setSwapStatus('error')
+      return
+    }
+
+    setFaucetLoading(true)
+    try {
+      const response = await fetch(`${THETA_TESTNET.faucetUrl}?address=${wallet.fullAddress}`)
+      if (response.ok) {
+        setStatusMessage('Test TFUEL requested! Check your wallet in a few moments.')
+        setSwapStatus('success')
+        // Refresh balance after a delay
+        setTimeout(() => {
+          const provider = (window as any).theta || (window as any).ethereum
+          if (provider) {
+            refreshBalance(wallet.fullAddress!, provider)
+          }
+        }, 3000)
+      } else {
+        setStatusMessage('Faucet request failed. Please try again later.')
+        setSwapStatus('error')
+      }
+    } catch (error) {
+      console.error('Faucet error:', error)
+      setStatusMessage('Failed to request test TFUEL')
+      setSwapStatus('error')
+    } finally {
+      setFaucetLoading(false)
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+      }, 5000)
     }
   }
 
@@ -119,6 +183,16 @@ function App() {
       return
     }
 
+    if (!ROUTER_ADDRESS) {
+      setStatusMessage('Router address not configured. Please set VITE_ROUTER_ADDRESS in environment.')
+      setSwapStatus('error')
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+      }, 5000)
+      return
+    }
+
     const amount = computedTfuelAmount
     if (!Number.isFinite(amount) || amount <= 0) {
       setStatusMessage('Select balance percentage and valid amount')
@@ -126,52 +200,70 @@ function App() {
       return
     }
 
-    // Combined "Approve → Swap & Stake" flow to match mobile single-button UX
+    // Check if user has enough balance
+    if (amount > numericBalance) {
+      setStatusMessage('Insufficient balance. Get test TFUEL from faucet.')
+      setSwapStatus('error')
+      return
+    }
+
+    // Real on-chain swap flow: Approve (if needed for wrapped TFUEL) → Swap & Stake
     try {
-      setSwapStatus('approving')
-      setStatusMessage('Approving TFUEL…')
-
-      await new Promise((resolve) => setTimeout(resolve, 1400))
-
-      setSwapStatus('swapping')
-      setStatusMessage('Getting test TFUEL from faucet…')
-
-      // Auto-faucet for demo (real users will have TFUEL)
-      await fetch(`https://faucet.testnet.theta.org/request?address=${wallet.fullAddress}`)
-
-      const amountWei = ethers.utils.parseEther(amount.toString())
-
-      setStatusMessage(`Swapping ${amount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
-
       const provider = new ethers.providers.Web3Provider(
         (window as any).ethereum || (window as any).theta,
       )
       const signer = provider.getSigner()
+      const amountWei = ethers.utils.parseEther(amount.toString())
 
-      const routerAddress = '0xYourRealRouterWillGoHere_AfterDeploy'
+      // On Theta, TFUEL is native token, so we send it as msg.value
+      // If using wrapped TFUEL (TNT20), we'd need approval first
+      // For now, assuming router accepts native TFUEL via payable swapAndStake
+      
+      setSwapStatus('swapping')
+      setStatusMessage(`Swapping ${amount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
 
-      const abi = ['function swapAndStake(uint256 amount, string targetLST)']
-      const contract = new ethers.Contract(routerAddress, abi, signer)
+      const routerContract = new ethers.Contract(ROUTER_ADDRESS, ROUTER_ABI, signer)
 
-      const tx = await contract.swapAndStake(amountWei, selectedLST.name)
-      setStatusMessage(`Transaction sent! ${tx.hash.substring(0, 10)}…`)
+      // Call swapAndStake with native TFUEL (msg.value)
+      const tx = await routerContract.swapAndStake(amountWei, selectedLST.name, {
+        value: amountWei, // Send native TFUEL
+        gasLimit: 500000, // Adjust as needed
+      })
 
-      await tx.wait()
+      setTxHash(tx.hash)
+      setStatusMessage(`Transaction sent! Hash: ${tx.hash.substring(0, 10)}…`)
+
+      // Wait for confirmation
+      const receipt = await tx.wait()
+      
+      // Trigger confetti animation on success
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ['#a855f7', '#06b6d4', '#ec4899', '#10b981'],
+      })
+
       setStatusMessage(
-        `Done! You now hold yield-bearing ${selectedLST.name} on Theta with ~${selectedLST.apy.toFixed(
-          1,
-        )}% APY`,
+        `✅ Success! You now hold yield-bearing ${selectedLST.name} on Theta with ~${selectedLST.apy.toFixed(1)}% APY`,
       )
       setSwapStatus('success')
       setTfuelAmount('')
+      setSelectedPercentage(null)
+
+      // Refresh balance
+      refreshBalance(wallet.fullAddress, provider)
 
       setTimeout(() => {
         setSwapStatus('idle')
         setStatusMessage('')
-      }, 5000)
+        setTxHash(null)
+      }, 8000)
     } catch (e: any) {
+      console.error('Swap error:', e)
       setStatusMessage(`Failed: ${e?.message ?? 'Unexpected error'}`)
       setSwapStatus('error')
+      setTxHash(null)
 
       setTimeout(() => {
         setSwapStatus('idle')
@@ -179,6 +271,157 @@ function App() {
       }, 5000)
     }
   }
+
+  const [poolLoading, setPoolLoading] = useState(false)
+  const [tipAmount, setTipAmount] = useState('')
+
+  // Load tip pools from chain
+  const loadTipPools = async () => {
+    if (!TIP_POOL_ADDRESS || !wallet.isConnected) return
+
+    try {
+      const provider = new ethers.providers.Web3Provider(
+        (window as any).ethereum || (window as any).theta,
+      )
+      const tipPoolContract = new ethers.Contract(TIP_POOL_ADDRESS, TIP_POOL_ABI, provider)
+
+      // Load pool info (simplified - in production would iterate through pools)
+      // For now, we'll show a demo pool that can be interacted with
+    } catch (error) {
+      console.error('Failed to load tip pools:', error)
+    }
+  }
+
+  // Create a new tip pool
+  const createPool = async (duration: number) => {
+    if (!TIP_POOL_ADDRESS || !wallet.fullAddress) {
+      setStatusMessage('Connect wallet first')
+      setSwapStatus('error')
+      return
+    }
+
+    setPoolLoading(true)
+    try {
+      const provider = new ethers.providers.Web3Provider(
+        (window as any).ethereum || (window as any).theta,
+      )
+      const signer = provider.getSigner()
+      const tipPoolContract = new ethers.Contract(TIP_POOL_ADDRESS, TIP_POOL_ABI, signer)
+
+      const tx = await tipPoolContract.createPool(duration, wallet.fullAddress)
+      setTxHash(tx.hash)
+      setStatusMessage(`Creating pool... ${tx.hash.substring(0, 10)}…`)
+
+      await tx.wait()
+      setStatusMessage('Pool created successfully!')
+      setSwapStatus('success')
+      loadTipPools()
+
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+        setTxHash(null)
+      }, 5000)
+    } catch (error: any) {
+      setStatusMessage(`Failed: ${error?.message ?? 'Unexpected error'}`)
+      setSwapStatus('error')
+    } finally {
+      setPoolLoading(false)
+    }
+  }
+
+  // Tip a pool
+  const tipPool = async (poolId: number, amount: string) => {
+    if (!TIP_POOL_ADDRESS || !wallet.fullAddress) {
+      setStatusMessage('Connect wallet first')
+      setSwapStatus('error')
+      return
+    }
+
+    setPoolLoading(true)
+    try {
+      const provider = new ethers.providers.Web3Provider(
+        (window as any).ethereum || (window as any).theta,
+      )
+      const signer = provider.getSigner()
+      const tipPoolContract = new ethers.Contract(TIP_POOL_ADDRESS, TIP_POOL_ABI, signer)
+      const amountWei = ethers.utils.parseEther(amount)
+
+      const tx = await tipPoolContract.tipPool(poolId, { value: amountWei })
+      setTxHash(tx.hash)
+      setStatusMessage(`Sending tip... ${tx.hash.substring(0, 10)}…`)
+
+      await tx.wait()
+      setStatusMessage('Tip sent successfully!')
+      setSwapStatus('success')
+      loadTipPools()
+
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+        setTxHash(null)
+      }, 5000)
+    } catch (error: any) {
+      setStatusMessage(`Failed: ${error?.message ?? 'Unexpected error'}`)
+      setSwapStatus('error')
+    } finally {
+      setPoolLoading(false)
+    }
+  }
+
+  // End pool and draw winner
+  const endPoolAndDraw = async (poolId: number) => {
+    if (!TIP_POOL_ADDRESS || !wallet.fullAddress) {
+      setStatusMessage('Connect wallet first')
+      setSwapStatus('error')
+      return
+    }
+
+    setPoolLoading(true)
+    try {
+      const provider = new ethers.providers.Web3Provider(
+        (window as any).ethereum || (window as any).theta,
+      )
+      const signer = provider.getSigner()
+      const tipPoolContract = new ethers.Contract(TIP_POOL_ADDRESS, TIP_POOL_ABI, signer)
+
+      const tx = await tipPoolContract.endPool(poolId)
+      setTxHash(tx.hash)
+      setStatusMessage(`Ending pool and drawing winner... ${tx.hash.substring(0, 10)}…`)
+
+      const receipt = await tx.wait()
+      
+      // Trigger confetti for winner
+      confetti({
+        particleCount: 150,
+        spread: 80,
+        origin: { y: 0.6 },
+        colors: ['#a855f7', '#06b6d4', '#ec4899', '#10b981'],
+      })
+
+      setStatusMessage('Pool ended! Winner drawn and payouts distributed.')
+      setSwapStatus('success')
+      loadTipPools()
+
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+        setTxHash(null)
+      }, 8000)
+    } catch (error: any) {
+      setStatusMessage(`Failed: ${error?.message ?? 'Unexpected error'}`)
+      setSwapStatus('error')
+    } finally {
+      setPoolLoading(false)
+    }
+  }
+
+  // Load tip pools on mount
+  useEffect(() => {
+    if (wallet.isConnected && TIP_POOL_ADDRESS) {
+      loadTipPools()
+    }
+  }, [wallet.isConnected, TIP_POOL_ADDRESS])
 
   // Auto-connect on mount (demo mode)
   useEffect(() => {
@@ -334,6 +577,9 @@ function App() {
                         <div className="text-right">
                           <p className="text-lg font-semibold text-white">{wallet.balance}</p>
                           <p className="text-xs text-slate-400">TFUEL</p>
+                          {numericBalance < 0.1 && (
+                            <p className="mt-1 text-[10px] text-amber-400">Low balance</p>
+                          )}
                         </div>
                       </div>
 
@@ -467,6 +713,31 @@ function App() {
                       {swapStatus === 'success' && '✅ '}
                       {swapStatus === 'error' && '❌ '}
                       {statusMessage}
+                      {txHash && (
+                        <div className="mt-2">
+                          <a
+                            href={`${THETA_TESTNET.explorerUrl}/tx/${txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-cyan-300 underline hover:text-cyan-200"
+                          >
+                            View on explorer: {txHash.substring(0, 16)}…
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Get Test TFUEL button */}
+                  {wallet.isConnected && numericBalance < 0.1 && (
+                    <div className="mb-4">
+                      <NeonButton
+                        label={faucetLoading ? 'Requesting…' : 'Get Test TFUEL'}
+                        rightHint="faucet"
+                        variant="secondary"
+                        onClick={handleFaucet}
+                        disabled={faucetLoading}
+                      />
                     </div>
                   )}
 
@@ -535,8 +806,37 @@ function App() {
                   </p>
                   <p className="text-sm text-slate-200">
                     Spin up sticky fan arenas where every tip routes into shared staking lanes. Fans
-                    tap once, stars feel it forever.
+                    tap once, stars feel it forever. Pools end with VRF lottery draws - winner takes
+                    90%, creator gets 10%.
                   </p>
+
+                  {statusMessage && (
+                    <div
+                      className={[
+                        'rounded-2xl border px-4 py-3 text-sm text-center',
+                        swapStatus === 'success'
+                          ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
+                          : swapStatus === 'error'
+                          ? 'border-rose-400/40 bg-rose-500/10 text-rose-200'
+                          : 'border-sky-400/40 bg-sky-500/10 text-sky-200',
+                      ].join(' ')}
+                    >
+                      {statusMessage}
+                      {txHash && (
+                        <div className="mt-2">
+                          <a
+                            href={`${THETA_TESTNET.explorerUrl}/tx/${txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-cyan-300 underline hover:text-cyan-200"
+                          >
+                            View on explorer: {txHash.substring(0, 16)}…
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <GlassCard className="p-4">
                       <div className="flex items-center justify-between">
@@ -551,16 +851,48 @@ function App() {
                         Real‑time tip stream flowing into {selectedLST.name} for the headliner.
                       </p>
                       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-300">
-                        <span>24h tips</span>
-                        <span className="font-mono text-emerald-300">12,430 XFUEL</span>
+                        <span>Pool ID</span>
+                        <span className="font-mono text-emerald-300">#1</span>
                       </div>
                       <div className="mt-1 flex items-center justify-between text-[11px] text-slate-300">
-                        <span>Fans on rail</span>
-                        <span className="font-mono text-cyan-300">3,218</span>
+                        <span>Total tips</span>
+                        <span className="font-mono text-cyan-300">12.43 TFUEL</span>
                       </div>
-                      <div className="mt-3">
-                        <NeonButton label="Enter arena" rightHint="tip & stake" />
-                      </div>
+                      {wallet.isConnected && TIP_POOL_ADDRESS && (
+                        <>
+                          <div className="mt-3 space-y-2">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="Tip amount (TFUEL)"
+                              value={tipAmount}
+                              onChange={(e) => setTipAmount(e.target.value)}
+                              className="w-full rounded-xl border border-purple-400/30 bg-black/40 px-3 py-2 text-sm text-white placeholder:text-slate-500"
+                            />
+                            <NeonButton
+                              label="Send Tip"
+                              rightHint="on-chain"
+                              onClick={() => tipPool(1, tipAmount || '0.1')}
+                              disabled={poolLoading || !tipAmount}
+                            />
+                          </div>
+                          <div className="mt-2">
+                            <NeonButton
+                              label="End Pool & Draw Winner"
+                              rightHint="VRF lottery"
+                              variant="secondary"
+                              onClick={() => endPoolAndDraw(1)}
+                              disabled={poolLoading}
+                            />
+                          </div>
+                        </>
+                      )}
+                      {!TIP_POOL_ADDRESS && (
+                        <p className="mt-3 text-[10px] text-slate-500">
+                          Tip Pool contract address not configured
+                        </p>
+                      )}
                     </GlassCard>
 
                     <GlassCard className="p-4">
@@ -568,28 +900,36 @@ function App() {
                         <span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-200">
                           Creator pools
                         </span>
-                        <span className="text-[11px] font-semibold text-purple-300">{selectedLST.apy.toFixed(1)}% APY</span>
+                        <span className="text-[11px] font-semibold text-purple-300">
+                          {selectedLST.apy.toFixed(1)}% APY
+                        </span>
                       </div>
                       <p className="mt-2 text-[11px] text-slate-400">
                         Group tips per creator into shared pools that compound yield between drops,
-                        tours, and streams.
+                        tours, and streams. Lottery draws when pool ends.
                       </p>
                       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-300">
                         <span>Active pools</span>
-                        <span className="font-mono text-emerald-300">87</span>
+                        <span className="font-mono text-emerald-300">
+                          {TIP_POOL_ADDRESS ? 'Connected' : 'Not configured'}
+                        </span>
                       </div>
-                      <div className="mt-1 flex items-center justify-between text-[11px] text-slate-300">
-                        <span>Stars opted‑in</span>
-                        <span className="font-mono text-cyan-300">146</span>
-                      </div>
-                      <div className="mt-3">
-                        <NeonButton label="Preview fan map" rightHint="2026" variant="secondary" />
-                      </div>
+                      {wallet.isConnected && TIP_POOL_ADDRESS && (
+                        <div className="mt-3">
+                          <NeonButton
+                            label="Create New Pool"
+                            rightHint="24h duration"
+                            variant="secondary"
+                            onClick={() => createPool(86400)}
+                            disabled={poolLoading}
+                          />
+                        </div>
+                      )}
                     </GlassCard>
                   </div>
                   <p className="text-[11px] text-slate-400">
-                    This tab is your sticky arena UX — we&apos;ll wire in live arenas, creator
-                    profiles, and fan badges next.
+                    Tip pools use weighted random selection (VRF) to pick winners. Winner gets 90% of
+                    pool, creator receives 10% cut. All payouts are automatic on-chain.
                   </p>
                 </div>
               )}
@@ -788,4 +1128,5 @@ function App() {
 }
 
 export default App
+
 

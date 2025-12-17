@@ -31,6 +31,8 @@
     "eas:update:preview": "cd edgefarm-mobile && npx eas-cli update --branch preview --message \"Investor demo\""
   },
   "dependencies": {
+    "@types/canvas-confetti": "^1.9.0",
+    "canvas-confetti": "^1.9.4",
     "ethers": "^5.7.2",
     "express": "^4.18.2",
     "react": "^18.2.0",
