@@ -14,6 +14,7 @@ import { MiningScreen } from './src/screens/MiningScreen'
 import { PoolsScreen } from './src/screens/PoolsScreen'
 import { SwapScreen } from './src/screens/SwapScreen'
 import { ProfileScreen } from './src/screens/ProfileScreen'
+import { CreatorScreen } from './src/screens/CreatorScreen'
 import { OnboardingScreen } from './src/screens/OnboardingScreen'
 import { getHasSeenOnboarding, setHasSeenOnboarding } from './src/lib/onboarding'
 import { type } from './src/theme/typography'
@@ -24,6 +25,7 @@ type TabParamList = {
   Mining: undefined
   Pools: undefined
   Swap: undefined
+  Creator: undefined
   Profile: undefined
 }
 
@@ -97,6 +99,7 @@ function MainTabs() {
       <Tab.Screen name="Mining" component={MiningScreen} />
       <Tab.Screen name="Pools" component={PoolsScreen} />
       <Tab.Screen name="Swap" component={SwapScreen} />
+      <Tab.Screen name="Creator" component={CreatorScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   )
@@ -133,6 +136,8 @@ function BottomSwipeTabBar({ state, navigation }: MaterialTopTabBarProps) {
                   return 'trophy'
                 case 'Swap':
                   return 'swap-horizontal'
+                case 'Creator':
+                  return 'star'
                 case 'Profile':
                   return 'person'
                 default:
