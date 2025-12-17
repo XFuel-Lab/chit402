@@ -259,13 +259,25 @@ function App() {
             <div className="w-full max-w-[180px] sm:max-w-[200px]">
               <ApyOrb apyText={liveApyText} label="live blended APY" />
             </div>
-            <div className="w-full max-w-[170px] sm:w-auto">
-              <NeonButton
-                label={isSignedIn ? 'Logged in' : 'Log in'}
-                rightHint={isSignedIn ? undefined : 'wallet'}
-                variant={isSignedIn ? 'secondary' : 'primary'}
-                onClick={handleWalletSignIn}
-              />
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <div className="w-full sm:w-auto">
+                <NeonButton
+                  label={isSignedIn ? 'Logged in' : 'Log in'}
+                  rightHint={isSignedIn ? undefined : 'wallet'}
+                  variant={isSignedIn ? 'secondary' : 'primary'}
+                  onClick={handleWalletSignIn}
+                />
+              </div>
+              <div className="w-full sm:w-auto">
+                <NeonButton
+                  label="Private Client"
+                  rightHint="institutional"
+                  variant="secondary"
+                  onClick={() => {
+                    window.location.href = '/institutions'
+                  }}
+                />
+              </div>
             </div>
           </div>
         </header>
