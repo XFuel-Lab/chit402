@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View, Linking } from 'react-native'
 import ConfettiCannon from 'react-native-confetti-cannon'
 import * as Haptics from 'expo-haptics'
 import Animated, {
@@ -17,11 +17,15 @@ export function TipSuccessOverlay({
   message,
   onClose,
   finalityTime,
+  txHash,
+  explorerUrl,
 }: {
   visible: boolean
   message: string
   onClose: () => void
   finalityTime?: string
+  txHash?: string | null
+  explorerUrl?: string
 }) {
   const opacity = useSharedValue(0)
   const scale = useSharedValue(0.9)
@@ -101,6 +105,20 @@ export function TipSuccessOverlay({
                 <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.72)' }}>Finality time</Text>
                 <Text style={{ ...type.bodyM, color: '#38bdf8', fontWeight: '600' }}>{finalityTime}</Text>
               </View>
+            )}
+            {txHash && explorerUrl && (
+              <Pressable
+                onPress={() => Linking.openURL(explorerUrl)}
+                className="px-3 py-2 rounded-lg"
+                style={{ backgroundColor: 'rgba(56,189,248,0.12)' }}
+              >
+                <Text style={{ ...type.caption, color: '#38bdf8', textAlign: 'center', textDecorationLine: 'underline' }}>
+                  View on Theta Explorer
+                </Text>
+                <Text style={{ ...type.caption, marginTop: 4, color: 'rgba(255,255,255,0.5)', fontFamily: 'monospace', textAlign: 'center', fontSize: 10 }}>
+                  {txHash.substring(0, 10)}…{txHash.substring(txHash.length - 8)}
+                </Text>
+              </Pressable>
             )}
           </View>
         </View>

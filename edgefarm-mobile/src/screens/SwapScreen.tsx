@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Pressable, Text, TextInput, View, ScrollView } from 'react-native'
+import { Pressable, Text, TextInput, View, ScrollView, Linking } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import Slider from '@react-native-community/slider'
 import { ScreenBackground } from '../components/ScreenBackground'
 import { NeonCard } from '../components/NeonCard'
 import { NeonButton } from '../components/NeonButton'
 import { neon } from '../theme/neon'
-import { connectThetaWalletMock, createDisconnectedWallet } from '../lib/mockWallet'
+import { connectThetaWallet, createDisconnectedWallet, refreshBalance, getSigner, getRouterAddress, getExplorerUrl, type WalletInfo } from '../lib/thetaWallet'
+import { ethers } from '@thetalabs/theta-js'
 import { NeonPill } from '../components/NeonPill'
 import { type } from '../theme/typography'
 import * as Haptics from 'expo-haptics'
@@ -47,6 +48,9 @@ export function SwapScreen() {
   const [status, setStatus] = useState<string>('')
   const [successVisible, setSuccessVisible] = useState(false)
   const [successMsg, setSuccessMsg] = useState('')
+  const [txHash, setTxHash] = useState<string | null>(null)
+  const [faucetLoading, setFaucetLoading] = useState(false)
+  const [swapStatus, setSwapStatus] = useState<'idle' | 'swapping' | 'success' | 'error'>('idle')
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -62,10 +66,26 @@ export function SwapScreen() {
   const finalityText = useMemo(() => `${(finalityMs / 1000).toFixed(1)}s`, [finalityMs])
 
   const connect = async () => {
-    const w = await connectThetaWalletMock()
-    setWallet(w)
-    setStatus('Connected (mock)')
-    setTimeout(() => setStatus(''), 1200)
+    try {
+      setStatus('Connecting wallet…')
+      const w = await connectThetaWallet()
+      setWallet(w)
+      setStatus('Connected ✓')
+      setTimeout(() => setStatus(''), 2000)
+      
+      // Set up periodic balance refresh
+      const interval = setInterval(async () => {
+        if (w.addressFull) {
+          const newBalance = await refreshBalance(w.addressFull)
+          setWallet((prev) => ({ ...prev, balanceTfuel: newBalance }))
+        }
+      }, 10000)
+      
+      return () => clearInterval(interval)
+    } catch (error: any) {
+      setStatus(`Connection failed: ${error?.message || 'Unknown error'}`)
+      setTimeout(() => setStatus(''), 3000)
+    }
   }
 
   const tfuelAmount = useMemo(() => {
@@ -115,21 +135,156 @@ export function SwapScreen() {
   }
 
   const swapAndStake = async () => {
-    if (!wallet.isConnected || tfuelAmount === 0) {
+    if (!wallet.isConnected || !wallet.addressFull || tfuelAmount === 0) {
       setStatus('Connect wallet and select amount')
+      setSwapStatus('error')
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatus('')
+      }, 3000)
       return
     }
-    setIsSwapping(true)
-    setStatus(`Swapping ${tfuelAmount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
-    
-    setTimeout(() => {
+
+    // Check balance
+    const minRequired = tfuelAmount + 0.01 // Buffer for gas
+    if (wallet.balanceTfuel < minRequired) {
+      setStatus(`Insufficient balance. Need ${minRequired.toFixed(2)} TFUEL (including gas).`)
+      setSwapStatus('error')
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatus('')
+      }, 5000)
+      return
+    }
+
+    const routerAddress = getRouterAddress()
+    if (!routerAddress) {
+      setStatus('Router contract address not configured')
+      setSwapStatus('error')
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatus('')
+      }, 3000)
+      return
+    }
+
+    // Router ABI for swapAndStake
+    const ROUTER_ABI = [
+      'function swapAndStake(uint256 amount, string calldata targetLST) external payable returns (uint256)',
+      'event SwapAndStake(address indexed user, uint256 tfuelAmount, uint256 stakedAmount, string stakeTarget)',
+    ]
+
+    try {
+      setIsSwapping(true)
+      setSwapStatus('swapping')
+      setStatus(`Swapping ${tfuelAmount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
+
+      const signer = await getSigner()
+      if (!signer) {
+        throw new Error('Failed to get wallet signer')
+      }
+
+      const amountWei = ethers.utils.parseEther(tfuelAmount.toString())
+      const routerContract = new ethers.Contract(routerAddress, ROUTER_ABI, signer)
+
+      // Call swapAndStake with native TFUEL (msg.value)
+      // TFUEL is native token, so no approval needed
+      const tx = await routerContract.swapAndStake(amountWei, selectedLST.name, {
+        value: amountWei,
+        gasLimit: 500000,
+      })
+
+      setTxHash(tx.hash)
+      setStatus(`Transaction sent! Waiting for confirmation…`)
+
+      // Wait for confirmation
+      const receipt = await tx.wait()
+
+      // Success!
       setIsSwapping(false)
+      setSwapStatus('success')
       setStatus('')
-      setSuccessMsg(`Swap complete: ${tfuelAmount.toFixed(2)} TFUEL → ${estimatedLSTAmount.toFixed(2)} ${selectedLST.name}`)
+      setSuccessMsg(`✅ Staked into ${selectedLST.name} — earning ${selectedLST.apy.toFixed(1)}% APY`)
       setSuccessVisible(true)
       setSelectedPercentage(100)
       setCustomPercentage(100)
-    }, 2000)
+
+      // Refresh balance after transaction
+      setTimeout(async () => {
+        if (wallet.addressFull) {
+          const newBalance = await refreshBalance(wallet.addressFull)
+          setWallet((prev) => ({ ...prev, balanceTfuel: newBalance }))
+        }
+      }, 2000)
+
+      // Clear tx hash after showing success
+      setTimeout(() => {
+        setTxHash(null)
+        setSwapStatus('idle')
+      }, 8000)
+    } catch (error: any) {
+      console.error('Swap error:', error)
+      setIsSwapping(false)
+      setSwapStatus('error')
+      
+      let errorMessage = error?.message || 'Unexpected error'
+      if (errorMessage.includes('insufficient funds') || errorMessage.includes('insufficient balance')) {
+        errorMessage = 'Insufficient TFUEL balance. Get test TFUEL from faucet.'
+      } else if (errorMessage.includes('user rejected') || errorMessage.includes('User denied')) {
+        errorMessage = 'Transaction rejected by user'
+      } else if (errorMessage.includes('network')) {
+        errorMessage = 'Network error. Please check your connection.'
+      }
+      
+      setStatus(`Failed: ${errorMessage}`)
+      setTxHash(null)
+
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatus('')
+      }, 5000)
+    }
+  }
+
+  const handleFaucet = async () => {
+    if (!wallet.addressFull) {
+      setStatus('Connect wallet first')
+      setSwapStatus('error')
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatus('')
+      }, 3000)
+      return
+    }
+
+    setFaucetLoading(true)
+    try {
+      const response = await fetch(`https://faucet.testnet.theta.org/request?address=${wallet.addressFull}`)
+      if (response.ok) {
+        setStatus('Test TFUEL requested! Check your wallet in a few moments.')
+        setSwapStatus('success')
+        // Refresh balance after a delay
+        setTimeout(async () => {
+          if (wallet.addressFull) {
+            const newBalance = await refreshBalance(wallet.addressFull)
+            setWallet((prev) => ({ ...prev, balanceTfuel: newBalance }))
+          }
+        }, 3000)
+      } else {
+        setStatus('Faucet request failed. Please try again later.')
+        setSwapStatus('error')
+      }
+    } catch (error) {
+      console.error('Faucet error:', error)
+      setStatus('Failed to request test TFUEL')
+      setSwapStatus('error')
+    } finally {
+      setFaucetLoading(false)
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatus('')
+      }, 5000)
+    }
   }
 
   return (
@@ -222,21 +377,88 @@ export function SwapScreen() {
               <View
                 className="mb-5 rounded-2xl border px-4 py-3"
                 style={{
-                  borderColor: 'rgba(56,189,248,0.25)',
-                  backgroundColor: 'rgba(56,189,248,0.08)',
+                  borderColor: 
+                    swapStatus === 'success' 
+                      ? 'rgba(16,185,129,0.4)' 
+                      : swapStatus === 'error'
+                      ? 'rgba(239,68,68,0.4)'
+                      : 'rgba(56,189,248,0.25)',
+                  backgroundColor: 
+                    swapStatus === 'success'
+                      ? 'rgba(16,185,129,0.1)'
+                      : swapStatus === 'error'
+                      ? 'rgba(239,68,68,0.1)'
+                      : 'rgba(56,189,248,0.08)',
                 }}
               >
                 <Text style={{ ...type.bodyM, color: neon.text }}>{status}</Text>
+                {txHash && (
+                  <View className="mt-2">
+                    <Pressable
+                      onPress={() => {
+                        const explorerUrl = getExplorerUrl()
+                        if (txHash) {
+                          Linking.openURL(`${explorerUrl}/tx/${txHash}`)
+                        }
+                      }}
+                    >
+                      <Text style={{ ...type.caption, color: neon.blue, textDecorationLine: 'underline' }}>
+                        View on Theta Explorer: {txHash.substring(0, 10)}…{txHash.substring(txHash.length - 8)}
+                      </Text>
+                    </Pressable>
+                    <Text style={{ ...type.caption, marginTop: 4, color: 'rgba(255,255,255,0.5)', fontFamily: 'monospace' }}>
+                      {txHash}
+                    </Text>
+                  </View>
+                )}
               </View>
             ) : null}
+
+            {/* Get Test TFUEL button - show when balance is low */}
+            {wallet.isConnected && wallet.balanceTfuel < 0.1 && (
+              <View className="mb-4">
+                <NeonButton
+                  label={faucetLoading ? 'Requesting…' : 'Get Test TFUEL'}
+                  rightHint="faucet"
+                  variant="secondary"
+                  onPress={handleFaucet}
+                  disabled={faucetLoading}
+                />
+              </View>
+            )}
+
+            {/* Also show faucet button if swap fails due to low balance */}
+            {wallet.isConnected && swapStatus === 'error' && status.includes('Insufficient') && (
+              <View className="mb-4">
+                <NeonButton
+                  label={faucetLoading ? 'Requesting…' : 'Get Test TFUEL'}
+                  rightHint="faucet"
+                  variant="secondary"
+                  onPress={handleFaucet}
+                  disabled={faucetLoading}
+                />
+              </View>
+            )}
 
             {/* Single Swap & Stake Button */}
             <View className="gap-3" style={{ paddingBottom: 92 }}>
               <NeonButton
-                label={isSwapping ? 'Swapping...' : 'Swap & Stake'}
+                label={
+                  swapStatus === 'swapping' || isSwapping
+                    ? 'Swapping…'
+                    : swapStatus === 'success'
+                    ? 'Swap complete'
+                    : 'Swap & Stake'
+                }
                 onPress={swapAndStake}
-                disabled={!wallet.isConnected || tfuelAmount === 0 || isSwapping}
-                rightHint={isSwapping ? undefined : '2 steps'}
+                disabled={!wallet.isConnected || tfuelAmount === 0 || isSwapping || swapStatus === 'swapping'}
+                rightHint={
+                  swapStatus === 'swapping' || isSwapping
+                    ? undefined
+                    : swapStatus === 'success'
+                    ? undefined
+                    : '2 steps'
+                }
               />
             </View>
           </View>
@@ -409,8 +631,13 @@ export function SwapScreen() {
       <TipSuccessOverlay
         visible={successVisible}
         message={successMsg}
-        onClose={() => setSuccessVisible(false)}
+        onClose={() => {
+          setSuccessVisible(false)
+          setTxHash(null)
+        }}
         finalityTime={finalityText}
+        txHash={txHash}
+        explorerUrl={txHash ? `${getExplorerUrl()}/tx/${txHash}` : undefined}
       />
     </ScreenBackground>
   )

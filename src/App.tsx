@@ -234,8 +234,8 @@ function App() {
       return
     }
 
-    // Determine if we should use mock mode or real contract
-    const useMock = mockMode || !ROUTER_ADDRESS
+    // Use real router if address is set, otherwise use mock
+    const useMock = !ROUTER_ADDRESS || mockMode
     const routerAddress = useMock ? MOCK_ROUTER_ADDRESS : ROUTER_ADDRESS
 
     if (useMock) {
@@ -273,13 +273,27 @@ function App() {
       return
     }
 
-    // Real on-chain swap flow
+    // Real on-chain swap flow on Theta testnet
     try {
       const provider = new ethers.providers.Web3Provider(
-        (window as any).ethereum || (window as any).theta,
+        (window as any).theta || (window as any).ethereum,
       )
       const signer = provider.getSigner()
       const amountWei = ethers.utils.parseEther(amount.toString())
+
+      // Check balance one more time before sending
+      const balanceWei = await provider.getBalance(wallet.fullAddress)
+      const balanceEth = parseFloat(ethers.utils.formatEther(balanceWei))
+      
+      if (balanceEth < minRequired) {
+        setStatusMessage(`Insufficient balance. Need ${minRequired.toFixed(2)} TFUEL (including gas).`)
+        setSwapStatus('error')
+        setTimeout(() => {
+          setSwapStatus('idle')
+          setStatusMessage('')
+        }, 5000)
+        return
+      }
 
       setSwapStatus('swapping')
       setStatusMessage(`Swapping ${amount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
@@ -287,13 +301,14 @@ function App() {
       const routerContract = new ethers.Contract(routerAddress, ROUTER_ABI, signer)
 
       // Call swapAndStake with native TFUEL (msg.value)
+      // TFUEL is native token, so no approval needed - just send via msg.value
       const tx = await routerContract.swapAndStake(amountWei, selectedLST.name, {
         value: amountWei, // Send native TFUEL
         gasLimit: 500000, // Adjust as needed
       })
 
       setTxHash(tx.hash)
-      setStatusMessage(`Transaction sent! Hash: ${tx.hash.substring(0, 10)}…`)
+      setStatusMessage(`Transaction sent! Waiting for confirmation…`)
 
       // Wait for confirmation
       const receipt = await tx.wait()
@@ -314,10 +329,12 @@ function App() {
       setSelectedPercentage(null)
 
       // Refresh balance after transaction
-      const providerForRefresh = (window as any).theta || (window as any).ethereum
-      if (providerForRefresh) {
-        refreshBalance(wallet.fullAddress, providerForRefresh)
-      }
+      setTimeout(() => {
+        const providerForRefresh = (window as any).theta || (window as any).ethereum
+        if (providerForRefresh) {
+          refreshBalance(wallet.fullAddress!, providerForRefresh)
+        }
+      }, 2000)
 
       setTimeout(() => {
         setSwapStatus('idle')
@@ -329,11 +346,11 @@ function App() {
       
       // Handle specific error cases
       let errorMessage = e?.message ?? 'Unexpected error'
-      if (errorMessage.includes('insufficient funds') || errorMessage.includes('insufficient balance')) {
+      if (errorMessage.includes('insufficient funds') || errorMessage.includes('insufficient balance') || errorMessage.includes('insufficient funds for gas')) {
         errorMessage = 'Insufficient TFUEL balance. Get test TFUEL from faucet.'
-      } else if (errorMessage.includes('user rejected')) {
+      } else if (errorMessage.includes('user rejected') || errorMessage.includes('User denied') || errorMessage.includes('rejected')) {
         errorMessage = 'Transaction rejected by user'
-      } else if (errorMessage.includes('network')) {
+      } else if (errorMessage.includes('network') || errorMessage.includes('Network')) {
         errorMessage = 'Network error. Please check your connection.'
       }
       
@@ -809,7 +826,7 @@ function App() {
                             rel="noopener noreferrer"
                             className="text-xs text-cyan-300 underline hover:text-cyan-200 transition-colors"
                           >
-                            View on explorer: {txHash.substring(0, 10)}…{txHash.substring(txHash.length - 8)}
+                            View on Theta Explorer: {txHash.substring(0, 10)}…{txHash.substring(txHash.length - 8)}
                           </a>
                           <span className="text-[10px] text-slate-400 font-mono break-all">
                             {txHash}
@@ -821,6 +838,19 @@ function App() {
 
                   {/* Get Test TFUEL button - show when balance is low */}
                   {wallet.isConnected && numericBalance < 0.1 && (
+                    <div className="mb-4">
+                      <NeonButton
+                        label={faucetLoading ? 'Requesting…' : 'Get Test TFUEL'}
+                        rightHint="faucet"
+                        variant="secondary"
+                        onClick={handleFaucet}
+                        disabled={faucetLoading}
+                      />
+                    </div>
+                  )}
+                  
+                  {/* Also show faucet button if swap fails due to low balance */}
+                  {wallet.isConnected && swapStatus === 'error' && statusMessage.includes('Insufficient') && (
                     <div className="mb-4">
                       <NeonButton
                         label={faucetLoading ? 'Requesting…' : 'Get Test TFUEL'}
@@ -921,7 +951,7 @@ function App() {
                             rel="noopener noreferrer"
                             className="text-xs text-cyan-300 underline hover:text-cyan-200 transition-colors"
                           >
-                            View on explorer: {txHash.substring(0, 10)}…{txHash.substring(txHash.length - 8)}
+                            View on Theta Explorer: {txHash.substring(0, 10)}…{txHash.substring(txHash.length - 8)}
                           </a>
                           <span className="text-[10px] text-slate-400 font-mono break-all">
                             {txHash}

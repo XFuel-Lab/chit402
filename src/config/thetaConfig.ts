@@ -9,8 +9,8 @@ export const THETA_TESTNET = {
   faucetUrl: 'https://faucet.testnet.theta.org/request',
 }
 
-// Router contract address - will be updated when deployed
-// TODO: Replace with actual deployed router address
+// Router contract address - set via VITE_ROUTER_ADDRESS environment variable
+// For Theta testnet, this should be the deployed XFUELRouter contract address
 export const ROUTER_ADDRESS = process.env.VITE_ROUTER_ADDRESS || ''
 
 // Tip Pool contract address - will be updated when deployed
