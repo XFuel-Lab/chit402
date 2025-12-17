@@ -7,6 +7,8 @@ import NeonButton from './components/NeonButton'
 import ApyOrb from './components/ApyOrb'
 import YieldBubbleSelector, { type LSTOption } from './components/YieldBubbleSelector'
 import NeonTabs, { type NeonTabId } from './components/NeonTabs'
+import LotteryWinExplosion from './components/LotteryWinExplosion'
+import CreatePoolModal from './components/CreatePoolModal'
 import { THETA_TESTNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
 import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 
@@ -49,6 +51,12 @@ function App() {
   const [tipPools, setTipPools] = useState<any[]>([])
   const [mockMode, setMockMode] = useState(APP_CONFIG.USE_MOCK_MODE)
   const [balanceRefreshInterval, setBalanceRefreshInterval] = useState<NodeJS.Timeout | null>(null)
+  const [showCreatePoolModal, setShowCreatePoolModal] = useState(false)
+  const [showWinExplosion, setShowWinExplosion] = useState(false)
+  const [winAmount, setWinAmount] = useState(0)
+  const [winNFT, setWinNFT] = useState<{ id: string; name: string; rarity: 'Mythic' | 'Legendary' | 'Epic' | 'Rare' } | undefined>(undefined)
+  const [enteredRaffles, setEnteredRaffles] = useState<Set<number>>(new Set())
+  const [myNFTs, setMyNFTs] = useState<Array<{ id: string; name: string; rarity: 'Mythic' | 'Legendary' | 'Epic' | 'Rare'; poolId: number; winAmount: number }>>([])
 
   const numericBalance = useMemo(
     () => parseFloat(wallet.balance.replace(/,/g, '')) || 0,
@@ -431,6 +439,9 @@ function App() {
       return
     }
 
+    const amountNum = parseFloat(amount)
+    const isHighValue = amountNum >= 100
+
     setPoolLoading(true)
     try {
       const provider = new ethers.providers.Web3Provider(
@@ -445,7 +456,23 @@ function App() {
       setStatusMessage(`Sending tip... ${tx.hash.substring(0, 10)}…`)
 
       await tx.wait()
-      setStatusMessage('Tip sent successfully!')
+      
+      // Auto-entry into raffle for $100+ tips
+      if (isHighValue) {
+        setEnteredRaffles((prev) => new Set([...prev, poolId]))
+        setStatusMessage(`Tip sent! 🎟️ Entered raffle for Pool #${poolId}`)
+        
+        // Trigger confetti for raffle entry
+        confetti({
+          particleCount: 80,
+          spread: 60,
+          origin: { y: 0.6 },
+          colors: ['#a855f7', '#ec4899', '#fbbf24'],
+        })
+      } else {
+        setStatusMessage('Tip sent successfully!')
+      }
+      
       setSwapStatus('success')
       loadTipPools()
 
@@ -484,13 +511,30 @@ function App() {
 
       const receipt = await tx.wait()
       
-      // Trigger confetti for winner
-      confetti({
-        particleCount: 150,
-        spread: 80,
-        origin: { y: 0.6 },
-        colors: ['#a855f7', '#06b6d4', '#ec4899', '#10b981'],
-      })
+      // Check if current user won (mock check - in production would check event logs)
+      const mockWin = Math.random() > 0.7 // 30% chance for demo
+      if (mockWin && wallet.fullAddress) {
+        const mockWinAmount = Math.floor(Math.random() * 50000) + 1000
+        setWinAmount(mockWinAmount)
+        // Random chance for NFT
+        if (Math.random() > 0.5) {
+          const rarities: Array<'Mythic' | 'Legendary' | 'Epic' | 'Rare'> = ['Mythic', 'Legendary', 'Epic', 'Rare']
+          setWinNFT({
+            id: `nft-${Date.now()}`,
+            name: `Pool #${poolId} Winner NFT`,
+            rarity: rarities[Math.floor(Math.random() * rarities.length)],
+          })
+        }
+        setShowWinExplosion(true)
+      } else {
+        // Regular confetti for non-winners
+        confetti({
+          particleCount: 150,
+          spread: 80,
+          origin: { y: 0.6 },
+          colors: ['#a855f7', '#06b6d4', '#ec4899', '#10b981'],
+        })
+      }
 
       setStatusMessage('Pool ended! Winner drawn and payouts distributed.')
       setSwapStatus('success')
@@ -652,6 +696,7 @@ function App() {
                 { id: 'liquidity', label: 'Liquidity', pill: 'pool' },
                 { id: 'staking', label: 'Staking', pill: 'apy lanes' },
                 { id: 'tip-pools', label: 'Tip Pools', pill: 'fans' },
+                { id: 'creator', label: 'Creator', pill: 'dashboard' },
                 { id: 'mining', label: 'Mining', pill: 'edge' },
                 { id: 'profile', label: 'Profile', pill: 'wallet' },
               ]}
@@ -928,7 +973,7 @@ function App() {
                   <p className="text-sm text-slate-200">
                     Spin up sticky fan arenas where every tip routes into shared staking lanes. Fans
                     tap once, stars feel it forever. Pools end with VRF lottery draws - winner takes
-                    90%, creator gets 10%.
+                    90%, creator gets 10%. <span className="font-semibold text-amber-300">Tip $100+ to auto-enter NFT raffles!</span>
                   </p>
 
                   {statusMessage && (
@@ -962,18 +1007,30 @@ function App() {
                   )}
 
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <GlassCard className="p-4">
+                    <GlassCard className={`p-4 transition-all ${enteredRaffles.has(1) ? 'ring-2 ring-amber-400/60 shadow-[0_0_40px_rgba(251,191,36,0.6)]' : ''}`}>
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-200">
                           Arena: Main Stage
                         </span>
-                        <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-300">
-                          LIVE
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded-full border border-amber-400/60 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-300">
+                            🎟️ Raffle
+                          </span>
+                          <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-300">
+                            LIVE
+                          </span>
+                        </div>
                       </div>
                       <p className="mt-2 text-[11px] text-slate-400">
                         Real‑time tip stream flowing into {selectedLST.name} for the headliner.
                       </p>
+                      {enteredRaffles.has(1) && (
+                        <div className="mt-2 rounded-lg border border-amber-400/40 bg-amber-500/10 px-2 py-1.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-300">
+                            ✨ Entered Raffle
+                          </p>
+                        </div>
+                      )}
                       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-300">
                         <span>Pool ID</span>
                         <span className="font-mono text-emerald-300">#1</span>
@@ -1044,7 +1101,7 @@ function App() {
                             label="Create New Pool"
                             rightHint="24h duration"
                             variant="secondary"
-                            onClick={() => createPool(86400)}
+                            onClick={() => setShowCreatePoolModal(true)}
                             disabled={poolLoading}
                           />
                         </div>
@@ -1085,6 +1142,91 @@ function App() {
                     Full mining controls are coming next — this is a live preview of routing
                     telemetry.
                   </p>
+                </div>
+              )}
+
+              {activeTab === 'creator' && (
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
+                        Creator Dashboard
+                      </p>
+                      <h2 className="mt-1 text-2xl font-bold text-white">My Active Pools</h2>
+                    </div>
+                    <NeonButton
+                      label="Create New Pool"
+                      rightHint="24h default"
+                      onClick={() => setShowCreatePoolModal(true)}
+                    />
+                  </div>
+
+                  {/* My Active Pools List */}
+                  <div className="space-y-3">
+                    {/* Mock active pools */}
+                    {[
+                      { id: 1, name: 'Main Stage Arena', pot: 12430, tips: 47, endsAt: Date.now() + 86400000, hasRaffle: true },
+                      { id: 2, name: 'Creator Pool #42', pot: 5420, tips: 23, endsAt: Date.now() + 172800000, hasRaffle: false },
+                    ].map((pool) => {
+                      const hoursLeft = Math.max(0, Math.floor((pool.endsAt - Date.now()) / 3600000))
+                      const minutesLeft = Math.max(0, Math.floor(((pool.endsAt - Date.now()) % 3600000) / 60000))
+                      return (
+                        <GlassCard key={pool.id} className="p-5">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-2">
+                                <h3 className="text-lg font-semibold text-white">{pool.name}</h3>
+                                {pool.hasRaffle && (
+                                  <span className="rounded-full border border-amber-400/60 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-300">
+                                    🎟️ Raffle
+                                  </span>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-2 gap-4 mt-3">
+                                <div>
+                                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Pot Size</p>
+                                  <p className="mt-1 text-xl font-bold text-cyan-300">{pool.pot.toLocaleString()} TFUEL</p>
+                                </div>
+                                <div>
+                                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Tips</p>
+                                  <p className="mt-1 text-xl font-bold text-purple-300">{pool.tips}</p>
+                                </div>
+                              </div>
+                              <div className="mt-3">
+                                <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Ends In</p>
+                                <p className="mt-1 text-sm font-mono text-emerald-300">
+                                  {hoursLeft}h {minutesLeft}m
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </GlassCard>
+                      )
+                    })}
+                  </div>
+
+                  {/* Earnings Card */}
+                  <GlassCard className="p-5">
+                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70 mb-4">
+                      Earnings & Your Cut
+                    </p>
+                    <div className="space-y-4">
+                      <div>
+                        <p className="text-3xl font-bold text-white">$1,247.50</p>
+                        <p className="text-sm text-slate-400 mt-1">Total earnings (all time)</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-purple-400/20">
+                        <div>
+                          <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Your Cut (10%)</p>
+                          <p className="mt-1 text-lg font-semibold text-purple-300">$124.75</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Winners (90%)</p>
+                          <p className="mt-1 text-lg font-semibold text-cyan-300">$1,122.75</p>
+                        </div>
+                      </div>
+                    </div>
+                  </GlassCard>
                 </div>
               )}
 
@@ -1142,6 +1284,36 @@ function App() {
                           <p className="text-slate-400">Risk guard</p>
                           <p className="mt-1 text-base text-emerald-300">Chainalysis 100/100</p>
                         </div>
+                      </div>
+
+                      {/* My NFTs & Raffles */}
+                      <div className="mt-6">
+                        <h3 className="mb-4 text-lg font-semibold text-white">My NFTs & Raffles</h3>
+                        {myNFTs.length === 0 ? (
+                          <GlassCard className="p-6 text-center">
+                            <p className="text-sm text-slate-300/80 mb-2">No NFT wins yet</p>
+                            <p className="text-xs text-slate-400">
+                              Tip $100+ in pools with raffle flags to enter NFT raffles!
+                            </p>
+                          </GlassCard>
+                        ) : (
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            {myNFTs.map((nft) => (
+                              <GlassCard key={nft.id} className="p-4">
+                                <div className="flex items-center gap-3">
+                                  <div className="flex h-16 w-16 items-center justify-center rounded-xl border-2 border-purple-400/60 bg-gradient-to-br from-purple-500/40 to-cyan-500/30">
+                                    <span className="text-3xl">🏆</span>
+                                  </div>
+                                  <div className="flex-1">
+                                    <h4 className="font-semibold text-white">{nft.name}</h4>
+                                    <p className="text-xs text-purple-300 mt-1">{nft.rarity}</p>
+                                    <p className="text-xs text-slate-400 mt-1">Won ${nft.winAmount.toLocaleString()}</p>
+                                  </div>
+                                </div>
+                              </GlassCard>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </>
                   )}
@@ -1247,6 +1419,34 @@ function App() {
           </div>
         </main>
       </div>
+
+      {/* Create Pool Modal */}
+      <CreatePoolModal
+        visible={showCreatePoolModal}
+        onClose={() => setShowCreatePoolModal(false)}
+        onCreate={async (duration) => {
+          await createPool(duration)
+        }}
+        loading={poolLoading}
+      />
+
+      {/* Lottery Win Explosion */}
+      <LotteryWinExplosion
+        visible={showWinExplosion}
+        winAmount={winAmount}
+        nft={winNFT}
+        onClose={() => {
+          setShowWinExplosion(false)
+          if (winNFT) {
+            setMyNFTs((prev) => [...prev, {
+              ...winNFT,
+              poolId: 1,
+              winAmount: winAmount,
+            }])
+          }
+        }}
+        apy={selectedLST.apy}
+      />
     </ScreenBackground>
   )
 }
