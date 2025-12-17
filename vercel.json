@@ -1,9 +1,20 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "framework": "vite",
   "installCommand": "npm install --legacy-peer-deps && npm list terser || npm install terser --save-dev",
-  "devCommand": "npm run dev",
-  "cleanUrls": true
+  "rewrites": [
+    {
+      "source": "/institutions",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/institutions/",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
 }
 
