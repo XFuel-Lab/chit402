@@ -143,7 +143,7 @@ contract XFUELPool {
     
     function _tickFromSqrtPrice(uint160 sqrtPriceX96) internal pure returns (int24) {
         // Simplified tick calculation
-        return int24(int256(sqrtPriceX96) / 2**96);
+        return int24(int256(uint256(sqrtPriceX96)) / 2**96);
     }
     
     function collectProtocolFees() external returns (uint128 amount0, uint128 amount1) {

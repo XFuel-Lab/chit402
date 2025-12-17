@@ -8,6 +8,7 @@ import ApyOrb from './components/ApyOrb'
 import YieldBubbleSelector, { type LSTOption } from './components/YieldBubbleSelector'
 import NeonTabs, { type NeonTabId } from './components/NeonTabs'
 import { THETA_TESTNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
+import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 
 type SwapStatus = 'idle' | 'approving' | 'swapping' | 'success' | 'error'
 
@@ -46,6 +47,8 @@ function App() {
   const [txHash, setTxHash] = useState<string | null>(null)
   const [faucetLoading, setFaucetLoading] = useState(false)
   const [tipPools, setTipPools] = useState<any[]>([])
+  const [mockMode, setMockMode] = useState(APP_CONFIG.USE_MOCK_MODE)
+  const [balanceRefreshInterval, setBalanceRefreshInterval] = useState<NodeJS.Timeout | null>(null)
 
   const numericBalance = useMemo(
     () => parseFloat(wallet.balance.replace(/,/g, '')) || 0,
@@ -108,6 +111,34 @@ function App() {
       console.error('Balance refresh error:', error)
     }
   }
+
+  // Set up periodic balance refresh when wallet is connected
+  useEffect(() => {
+    if (wallet.isConnected && wallet.fullAddress) {
+      const provider = (window as any).theta || (window as any).ethereum
+      if (provider) {
+        // Refresh immediately
+        refreshBalance(wallet.fullAddress, provider)
+        
+        // Set up interval to refresh every 10 seconds
+        const interval = setInterval(() => {
+          refreshBalance(wallet.fullAddress!, provider)
+        }, 10000)
+        
+        setBalanceRefreshInterval(interval)
+        
+        return () => {
+          if (interval) clearInterval(interval)
+        }
+      }
+    } else {
+      // Clear interval when wallet disconnects
+      if (balanceRefreshInterval) {
+        clearInterval(balanceRefreshInterval)
+        setBalanceRefreshInterval(null)
+      }
+    }
+  }, [wallet.isConnected, wallet.fullAddress])
 
   // Get Test TFUEL from faucet
   const handleFaucet = async () => {
@@ -183,16 +214,6 @@ function App() {
       return
     }
 
-    if (!ROUTER_ADDRESS) {
-      setStatusMessage('Router address not configured. Please set VITE_ROUTER_ADDRESS in environment.')
-      setSwapStatus('error')
-      setTimeout(() => {
-        setSwapStatus('idle')
-        setStatusMessage('')
-      }, 5000)
-      return
-    }
-
     const amount = computedTfuelAmount
     if (!Number.isFinite(amount) || amount <= 0) {
       setStatusMessage('Select balance percentage and valid amount')
@@ -200,14 +221,59 @@ function App() {
       return
     }
 
-    // Check if user has enough balance
-    if (amount > numericBalance) {
-      setStatusMessage('Insufficient balance. Get test TFUEL from faucet.')
+    // Check if user has enough balance (with small buffer for gas)
+    const minRequired = amount + 0.01 // Add small buffer for gas
+    if (numericBalance < minRequired) {
+      setStatusMessage(`Insufficient balance. Need ${minRequired.toFixed(2)} TFUEL (including gas).`)
       setSwapStatus('error')
+      // Show faucet button suggestion
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+      }, 5000)
       return
     }
 
-    // Real on-chain swap flow: Approve (if needed for wrapped TFUEL) → Swap & Stake
+    // Determine if we should use mock mode or real contract
+    const useMock = mockMode || !ROUTER_ADDRESS
+    const routerAddress = useMock ? MOCK_ROUTER_ADDRESS : ROUTER_ADDRESS
+
+    if (useMock) {
+      // Mock mode: simulate swap without on-chain transaction
+      setSwapStatus('swapping')
+      setStatusMessage(`Simulating swap: ${amount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
+      
+      // Simulate transaction delay
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      
+      // Generate mock tx hash
+      const mockTxHash = `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`
+      setTxHash(mockTxHash)
+      
+      // Trigger confetti
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ['#a855f7', '#06b6d4', '#ec4899', '#10b981'],
+      })
+
+      setStatusMessage(
+        `✅ Staked into ${selectedLST.name} — earning ${selectedLST.apy.toFixed(1)}% APY (Mock Mode)`,
+      )
+      setSwapStatus('success')
+      setTfuelAmount('')
+      setSelectedPercentage(null)
+
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+        setTxHash(null)
+      }, 8000)
+      return
+    }
+
+    // Real on-chain swap flow
     try {
       const provider = new ethers.providers.Web3Provider(
         (window as any).ethereum || (window as any).theta,
@@ -215,14 +281,10 @@ function App() {
       const signer = provider.getSigner()
       const amountWei = ethers.utils.parseEther(amount.toString())
 
-      // On Theta, TFUEL is native token, so we send it as msg.value
-      // If using wrapped TFUEL (TNT20), we'd need approval first
-      // For now, assuming router accepts native TFUEL via payable swapAndStake
-      
       setSwapStatus('swapping')
       setStatusMessage(`Swapping ${amount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
 
-      const routerContract = new ethers.Contract(ROUTER_ADDRESS, ROUTER_ABI, signer)
+      const routerContract = new ethers.Contract(routerAddress, ROUTER_ABI, signer)
 
       // Call swapAndStake with native TFUEL (msg.value)
       const tx = await routerContract.swapAndStake(amountWei, selectedLST.name, {
@@ -245,14 +307,17 @@ function App() {
       })
 
       setStatusMessage(
-        `✅ Success! You now hold yield-bearing ${selectedLST.name} on Theta with ~${selectedLST.apy.toFixed(1)}% APY`,
+        `✅ Staked into ${selectedLST.name} — earning ${selectedLST.apy.toFixed(1)}% APY`,
       )
       setSwapStatus('success')
       setTfuelAmount('')
       setSelectedPercentage(null)
 
-      // Refresh balance
-      refreshBalance(wallet.fullAddress, provider)
+      // Refresh balance after transaction
+      const providerForRefresh = (window as any).theta || (window as any).ethereum
+      if (providerForRefresh) {
+        refreshBalance(wallet.fullAddress, providerForRefresh)
+      }
 
       setTimeout(() => {
         setSwapStatus('idle')
@@ -261,7 +326,18 @@ function App() {
       }, 8000)
     } catch (e: any) {
       console.error('Swap error:', e)
-      setStatusMessage(`Failed: ${e?.message ?? 'Unexpected error'}`)
+      
+      // Handle specific error cases
+      let errorMessage = e?.message ?? 'Unexpected error'
+      if (errorMessage.includes('insufficient funds') || errorMessage.includes('insufficient balance')) {
+        errorMessage = 'Insufficient TFUEL balance. Get test TFUEL from faucet.'
+      } else if (errorMessage.includes('user rejected')) {
+        errorMessage = 'Transaction rejected by user'
+      } else if (errorMessage.includes('network')) {
+        errorMessage = 'Network error. Please check your connection.'
+      }
+      
+      setStatusMessage(`Failed: ${errorMessage}`)
       setSwapStatus('error')
       setTxHash(null)
 
@@ -508,6 +584,18 @@ function App() {
               <ApyOrb apyText={liveApyText} label="live blended APY" />
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              {/* Mock Mode Toggle */}
+              {(!ROUTER_ADDRESS || mockMode) && (
+                <div className="w-full sm:w-auto">
+                  <button
+                    onClick={() => setMockMode(!mockMode)}
+                    className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-300 transition-colors hover:bg-amber-500/20"
+                    title={mockMode ? 'Using mock mode (no real transactions)' : 'Switch to mock mode'}
+                  >
+                    {mockMode ? 'Mock Mode' : 'Real Mode'}
+                  </button>
+                </div>
+              )}
               <div className="w-full sm:w-auto">
                 <NeonButton
                   label={isSignedIn ? 'Logged in' : 'Log in'}
@@ -714,21 +802,24 @@ function App() {
                       {swapStatus === 'error' && '❌ '}
                       {statusMessage}
                       {txHash && (
-                        <div className="mt-2">
+                        <div className="mt-2 flex flex-col gap-1">
                           <a
                             href={`${THETA_TESTNET.explorerUrl}/tx/${txHash}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-xs text-cyan-300 underline hover:text-cyan-200"
+                            className="text-xs text-cyan-300 underline hover:text-cyan-200 transition-colors"
                           >
-                            View on explorer: {txHash.substring(0, 16)}…
+                            View on explorer: {txHash.substring(0, 10)}…{txHash.substring(txHash.length - 8)}
                           </a>
+                          <span className="text-[10px] text-slate-400 font-mono break-all">
+                            {txHash}
+                          </span>
                         </div>
                       )}
                     </div>
                   )}
 
-                  {/* Get Test TFUEL button */}
+                  {/* Get Test TFUEL button - show when balance is low */}
                   {wallet.isConnected && numericBalance < 0.1 && (
                     <div className="mb-4">
                       <NeonButton
@@ -823,15 +914,18 @@ function App() {
                     >
                       {statusMessage}
                       {txHash && (
-                        <div className="mt-2">
+                        <div className="mt-2 flex flex-col gap-1">
                           <a
                             href={`${THETA_TESTNET.explorerUrl}/tx/${txHash}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-xs text-cyan-300 underline hover:text-cyan-200"
+                            className="text-xs text-cyan-300 underline hover:text-cyan-200 transition-colors"
                           >
-                            View on explorer: {txHash.substring(0, 16)}…
+                            View on explorer: {txHash.substring(0, 10)}…{txHash.substring(txHash.length - 8)}
                           </a>
+                          <span className="text-[10px] text-slate-400 font-mono break-all">
+                            {txHash}
+                          </span>
                         </div>
                       )}
                     </div>

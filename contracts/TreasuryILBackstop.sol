@@ -88,7 +88,7 @@ contract TreasuryILBackstop is Ownable {
      * @dev Emergency withdrawal (owner only)
      */
     function emergencyWithdraw(uint256 amount) external onlyOwner {
-        treasuryToken.transfer(owner(), amount);
+        treasuryToken.transfer(owner, amount);
     }
 }
 
