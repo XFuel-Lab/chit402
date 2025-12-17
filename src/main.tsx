@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
 import InstitutionsPortal from './InstitutionsPortal.tsx'
+import LiquidityDashboard from './LiquidityDashboard.tsx'
 import './index.css'
 
 function Router() {
@@ -32,8 +33,11 @@ function Router() {
   }, [path])
 
   const isInstitutionsRoute = path === '/institutions' || path === '/institutions/'
+  const isLiquidityRoute = path === '/liquidity' || path === '/liquidity/'
 
-  return isInstitutionsRoute ? <InstitutionsPortal /> : <App />
+  if (isInstitutionsRoute) return <InstitutionsPortal />
+  if (isLiquidityRoute) return <LiquidityDashboard />
+  return <App />
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
