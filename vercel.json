@@ -4,6 +4,12 @@
   "framework": "vite",
   "installCommand": "npm install --legacy-peer-deps && npm list terser || npm install terser --save-dev",
   "devCommand": "npm run dev",
-  "cleanUrls": true
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
 }
 

@@ -274,7 +274,7 @@ function App() {
                   rightHint="institutional"
                   variant="secondary"
                   onClick={() => {
-                    window.location.href = '/institutions'
+                    window.location.pathname = '/institutions'
                   }}
                 />
               </div>
