@@ -138,6 +138,43 @@ contract XFUELRouter is Ownable {
     }
     
     /**
+     * @dev Swap TFUEL (native) and stake the result
+     * @param amount Amount of TFUEL to swap (in wei)
+     * @param targetLST Target staking token (e.g., "stkXPRT", "stkATOM", "pSTAKE BTC")
+     * @return stakedAmount Amount of tokens staked
+     */
+    function swapAndStake(
+        uint256 amount,
+        string calldata targetLST
+    ) external payable returns (uint256 stakedAmount) {
+        require(amount > 0, "Amount must be greater than 0");
+        require(msg.value == amount, "TFUEL amount must match msg.value");
+        require(bytes(targetLST).length > 0, "Stake target cannot be empty");
+        
+        // For now, implement a simplified version that emits the event
+        // In production, this would:
+        // 1. Swap TFUEL for the target LST token via pool
+        // 2. Stake the LST token
+        // 3. Return the staked amount
+        
+        // Simplified calculation: assume 1 TFUEL = 0.95 staked tokens (5% fee)
+        // This is a placeholder until full swap/stake logic is implemented
+        stakedAmount = (amount * 95) / 100;
+        
+        // Emit event
+        emit SwapAndStake(msg.sender, amount, stakedAmount, targetLST);
+        
+        return stakedAmount;
+    }
+    
+    event SwapAndStake(
+        address indexed user,
+        uint256 tfuelAmount,
+        uint256 stakedAmount,
+        string stakeTarget
+    );
+    
+    /**
      * @dev Update addresses
      */
     function setVeXFContract(address _veXFContract) external onlyOwner {
