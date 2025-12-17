@@ -3,12 +3,15 @@ pragma solidity ^0.8.20;
 
 import "./IERC20.sol";
 import "./Ownable.sol";
+import "./ReentrancyGuard.sol";
+import "./SafeERC20.sol";
 
 /**
  * @title TreasuryILBackstop
  * @dev Covers impermanent loss >8% for liquidity providers
  */
-contract TreasuryILBackstop is Ownable {
+contract TreasuryILBackstop is Ownable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
     IERC20 public treasuryToken; // USDC or stablecoin
     address public pool;
     uint256 public constant IL_THRESHOLD_BPS = 800; // 8% = 800 basis points
@@ -23,10 +26,12 @@ contract TreasuryILBackstop is Ownable {
     event TreasuryDeposit(address indexed depositor, uint256 amount);
     
     constructor(address _treasuryToken) Ownable(msg.sender) {
+        require(_treasuryToken != address(0), "TreasuryILBackstop: invalid treasury token");
         treasuryToken = IERC20(_treasuryToken);
     }
     
     function setPool(address _pool) external onlyOwner {
+        require(_pool != address(0), "TreasuryILBackstop: invalid pool");
         pool = _pool;
     }
     
@@ -54,8 +59,10 @@ contract TreasuryILBackstop is Ownable {
         address lpAddress,
         uint256 initialValue,
         uint256 currentValue
-    ) external {
+    ) external nonReentrant {
         require(msg.sender == pool, "TreasuryILBackstop: UNAUTHORIZED");
+        require(lpAddress != address(0), "TreasuryILBackstop: invalid LP address");
+        require(initialValue > 0, "TreasuryILBackstop: invalid initial value");
         
         uint256 ilBps = calculateIL(initialValue, currentValue);
         
@@ -68,8 +75,9 @@ contract TreasuryILBackstop is Ownable {
                 "TreasuryILBackstop: INSUFFICIENT_TREASURY"
             );
             
-            treasuryToken.transfer(lpAddress, coverageAmount);
+            // Update state first, then make external call
             totalCoverageProvided += coverageAmount;
+            treasuryToken.safeTransfer(lpAddress, coverageAmount);
             
             emit ILCoverageProvided(lpAddress, ilBps, coverageAmount);
         }
@@ -78,17 +86,18 @@ contract TreasuryILBackstop is Ownable {
     /**
      * @dev Deposit treasury funds
      */
-    function depositTreasury(uint256 amount) external {
+    function depositTreasury(uint256 amount) external nonReentrant {
         require(amount > 0, "TreasuryILBackstop: INVALID_AMOUNT");
-        treasuryToken.transferFrom(msg.sender, address(this), amount);
+        treasuryToken.safeTransferFrom(msg.sender, address(this), amount);
         emit TreasuryDeposit(msg.sender, amount);
     }
     
     /**
      * @dev Emergency withdrawal (owner only)
      */
-    function emergencyWithdraw(uint256 amount) external onlyOwner {
-        treasuryToken.transfer(owner, amount);
+    function emergencyWithdraw(uint256 amount) external onlyOwner nonReentrant {
+        require(amount > 0, "TreasuryILBackstop: INVALID_AMOUNT");
+        treasuryToken.safeTransfer(owner, amount);
     }
 }
 

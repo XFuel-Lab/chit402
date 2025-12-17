@@ -1,0 +1,239 @@
+XFUEL Protocol Architecture Diagram
+====================================
+
+System Flow: Theta EdgeCloud → Router → Vaults → IBC → Cosmos LSTs
+====================================================================
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Theta EdgeCloud                                 │
+│                    (GPU/Video Revenue)                                   │
+└────────────────────────────┬────────────────────────────────────────────┘
+                             │
+                             │ TFUEL Native Tokens
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         XFUELRouter                                      │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ swapAndStake()                                                   │   │
+│  │  - Receives TFUEL (msg.value)                                    │   │
+│  │  - Routes to XFUELPool for swap                                  │   │
+│  │  - Initiates IBC transfer to Cosmos                              │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ collectAndDistributeFees()                                       │   │
+│  │  Fee Split:                                                      │   │
+│  │  • 60% → Buyback & Burn XF Token                                 │   │
+│  │  • 25% → USDC Yield to veXF Contract                             │   │
+│  │  • 15% → Treasury                                                │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  Dependencies:                                                           │
+│  • XFUELPoolFactory (creates/manages pools)                             │
+│  • TreasuryILBackstop (IL coverage)                                     │
+│  • IERC20: xfuelToken, usdcToken                                        │
+└────────────┬────────────────────────────────────────────────────────────┘
+             │
+             │ Creates & Manages
+             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    XFUELPoolFactory                                      │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ createPool(tokenA, tokenB, fee, sqrtPriceX96)                   │   │
+│  │  - Uses CREATE2 for deterministic addresses                     │   │
+│  │  - Supports fee tiers: 500 (0.05%) or 800 (0.08%)              │   │
+│  │  - Returns pool address                                         │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  Pool Registry:                                                          │
+│  getPool[token0][token1][fee] → address                                 │
+│  allPools[] → array of all pools                                        │
+└────────────┬────────────────────────────────────────────────────────────┘
+             │
+             │ Instantiates
+             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        XFUELPool                                         │
+│  (Concentrated Liquidity - Uniswap-v3 style)                            │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ Token Pair: TFUEL ↔ XPRT                                        │   │
+│  │ Fee Tiers: 0.05% or 0.08%                                       │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ swap(recipient, zeroForOne, amountSpecified, sqrtPriceLimitX96) │   │
+│  │  - Constant product formula (x * y = k)                         │   │
+│  │  - Executes TFUEL ↔ XPRT swap                                   │   │
+│  │  - Updates sqrtPriceX96, tick, liquidity                        │   │
+│  │  - Collects protocol fees                                       │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ collectProtocolFees() → feeRecipient (Router)                   │   │
+│  │  - Returns (amount0, amount1)                                   │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  State:                                                                  │
+│  • liquidity (uint128)                                                  │
+│  • sqrtPriceX96 (uint160)                                               │
+│  • tick (int24)                                                         │
+│  • protocolFees0, protocolFees1                                         │
+│  • feeRecipient (address) ← Router address                              │
+└────────────┬────────────────────────────────────────────────────────────┘
+             │
+             │ Calls for IL Coverage
+             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                   TreasuryILBackstop                                     │
+│  (Impermanent Loss Insurance >8%)                                       │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ provideCoverage(lpAddress, initialValue, currentValue)          │   │
+│  │  - Calculates IL: (initialValue - currentValue) / initialValue  │   │
+│  │  - If IL > 8%: covers excess loss                               │   │
+│  │  - Transfers treasuryToken (USDC) to LP                         │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  Authorization: Only pool address can call                              │
+│  Treasury: USDC stablecoin reserves                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           IBC Bridge                                     │
+│                    (Inter-Blockchain Communication)                      │
+│                                                                          │
+│  • Theta Chain → Cosmos Chain                                           │
+│  • Transfers XPRT to Cosmos                                             │
+│  • Routes to Liquid Staking Token (LST) contracts                       │
+└────────────┬────────────────────────────────────────────────────────────┘
+             │
+             │ XPRT → LST
+             ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Cosmos Liquid Staking                                 │
+│                                                                          │
+│  • stkXPRT (Persistence)                                                │
+│  • stkATOM (Cosmos Hub)                                                 │
+│  • stkOSMO (Osmosis)                                                    │
+│  • stkTIA (Celestia)                                                    │
+│  • pSTAKE BTC (Bitcoin)                                                 │
+│                                                                          │
+│  → Auto-compounding yield for users                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           TipPool                                        │
+│                    (Lottery-Style Tips)                                  │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ createPool(duration, creator)                                    │   │
+│  │  - Creator sets pool duration                                    │   │
+│  │  - Pool starts accepting tips                                    │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ tipPool(poolId) [payable]                                        │   │
+│  │  - Users send native tokens                                      │   │
+│  │  - Weighted entry (larger tips = higher chance)                  │   │
+│  │  - Tracks all tippers and amounts                                │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ endPool(poolId)                                                  │   │
+│  │  - Called when duration expires                                  │   │
+│  │  - Draws weighted random winner                                  │   │
+│  │  - Distribution:                                                 │   │
+│  │    • 10% to creator                                              │   │
+│  │    • 90% to winner                                               │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  Randomness: block.timestamp + block.difficulty + block.number          │
+│  ⚠️  VULNERABILITY: Pseudorandom, miner-influenceable                   │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+Mermaid Diagram (for Markdown rendering):
+==========================================
+
+```mermaid
+graph TB
+    subgraph "Theta Network"
+        EdgeCloud[Theta EdgeCloud<br/>GPU/Video Revenue]
+        Router[XFUELRouter<br/>Fee Split & Routing]
+        Factory[XFUELPoolFactory<br/>Pool Creation]
+        Pool[XFUELPool<br/>TFUEL ↔ XPRT<br/>Concentrated Liquidity]
+        Backstop[TreasuryILBackstop<br/>IL Coverage >8%]
+        TipPool[TipPool<br/>Lottery Pools]
+    end
+    
+    subgraph "IBC Bridge"
+        IBC[Inter-Blockchain<br/>Communication]
+    end
+    
+    subgraph "Cosmos Ecosystem"
+        LST1[stkXPRT<br/>28.7% APY]
+        LST2[stkATOM<br/>32.5% APY]
+        LST3[stkTIA<br/>38.2% APY]
+        LST4[pSTAKE BTC<br/>25.4% APY]
+        LST5[stkOSMO<br/>22.1% APY]
+    end
+    
+    EdgeCloud -->|TFUEL| Router
+    Router -->|Creates| Factory
+    Factory -->|Instantiates| Pool
+    Router -->|Swaps| Pool
+    Pool -->|IL Claims| Backstop
+    Router -->|IBC Transfer| IBC
+    IBC -->|XPRT| LST1
+    IBC -->|XPRT| LST2
+    IBC -->|XPRT| LST3
+    IBC -->|XPRT| LST4
+    IBC -->|XPRT| LST5
+    
+    Router -->|Fee Collection| Router
+    Router -->|60% Buyback| XFToken[XF Token<br/>Burn]
+    Router -->|25% Yield| veXF[veXF Contract]
+    Router -->|15%| Treasury[Treasury]
+    
+    Users -->|Tips| TipPool
+    TipPool -->|90%| Winner[Winner]
+    TipPool -->|10%| Creator[Creator]
+```
+
+Key Data Flows:
+===============
+
+1. SWAP & STAKE FLOW:
+   User → Router.swapAndStake(TFUEL, LST) → Pool.swap() → IBC → Cosmos LST
+
+2. FEE DISTRIBUTION FLOW:
+   Pool.collectProtocolFees() → Router.collectAndDistributeFees() → 
+   [60% buyback-burn, 25% veXF, 15% treasury]
+
+3. IL COVERAGE FLOW:
+   LP experiences IL >8% → Pool calls Backstop.provideCoverage() → 
+   USDC transferred to LP
+
+4. TIP POOL FLOW:
+   Creator creates pool → Users tip → Pool ends → Winner drawn → 
+   Distribution (10% creator, 90% winner)
+
+Security Boundaries:
+====================
+
+• Router: Central fee distribution hub (owner-controlled)
+• Factory: Pool creation only (no funds custody)
+• Pool: Holds liquidity (factory-controlled initialization)
+• Backstop: Treasury custody (owner-controlled emergency)
+• TipPool: Holds tip funds (time-locked until endPool)
+
+Access Control:
+===============
+
+• Ownable: Router, Backstop (owner functions)
+• Factory-only: Pool initialization, feeRecipient setting
+• Pool-only: Backstop.provideCoverage()
+• Public: TipPool tipping, pool creation
+

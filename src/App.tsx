@@ -1081,13 +1081,18 @@ function App() {
                         <span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-200">
                           Creator pools
                         </span>
-                        <span className="text-[11px] font-semibold text-purple-300">
-                          {selectedLST.apy.toFixed(1)}% APY
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded-full border border-amber-400/60 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-300">
+                            🎟️ Raffle
+                          </span>
+                          <span className="text-[11px] font-semibold text-purple-300">
+                            {selectedLST.apy.toFixed(1)}% APY
+                          </span>
+                        </div>
                       </div>
                       <p className="mt-2 text-[11px] text-slate-400">
                         Group tips per creator into shared pools that compound yield between drops,
-                        tours, and streams. Lottery draws when pool ends.
+                        tours, and streams. Lottery draws when pool ends. <span className="text-amber-300/80">High-value pools include NFT raffles!</span>
                       </p>
                       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-300">
                         <span>Active pools</span>

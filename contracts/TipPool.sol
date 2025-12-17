@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "./ReentrancyGuard.sol";
+import "./Ownable.sol";
+
 /**
  * @title TipPool
  * @dev Tip pools with lottery functionality - winner takes most, creator gets cut
  */
-contract TipPool {
+contract TipPool is ReentrancyGuard, Ownable {
     struct Pool {
         address creator;
         uint256 totalTips;
@@ -25,9 +28,18 @@ contract TipPool {
     uint256 public constant CREATOR_CUT_BPS = 1000; // 10%
     uint256 public constant WINNER_CUT_BPS = 9000; // 90%
     
+    // Commit-reveal scheme for secure randomness
+    mapping(uint256 => bytes32) public poolCommits; // poolId => commit hash
+    mapping(uint256 => uint256) public poolReveals; // poolId => reveal value
+    mapping(uint256 => bool) public poolRevealed; // poolId => whether revealed
+    
     event PoolCreated(uint256 indexed poolId, address indexed creator, uint256 duration);
     event TipAdded(uint256 indexed poolId, address indexed tipper, uint256 amount);
     event PoolEnded(uint256 indexed poolId, address indexed winner, uint256 prizeAmount, uint256 creatorCut);
+    event RandomnessCommitted(uint256 indexed poolId, bytes32 commit);
+    event RandomnessRevealed(uint256 indexed poolId, uint256 reveal);
+    
+    constructor() Ownable(msg.sender) {}
     
     /**
      * @dev Create a new tip pool
@@ -35,6 +47,9 @@ contract TipPool {
      * @param creator Address of the pool creator
      */
     function createPool(uint256 duration, address creator) external payable {
+        require(duration > 0 && duration <= 365 days, "TipPool: invalid duration");
+        require(creator != address(0), "TipPool: invalid creator");
+        
         uint256 poolId = nextPoolId++;
         Pool storage pool = pools[poolId];
         
@@ -44,6 +59,21 @@ contract TipPool {
         pool.ended = false;
         
         emit PoolCreated(poolId, creator, duration);
+    }
+    
+    /**
+     * @dev Commit randomness for a pool (must be called before pool ends)
+     * @param poolId The pool ID
+     * @param commit Hash of the reveal value (keccak256(reveal))
+     */
+    function commitRandomness(uint256 poolId, bytes32 commit) external {
+        Pool storage pool = pools[poolId];
+        require(!pool.ended, "TipPool: pool has ended");
+        require(block.timestamp < pool.endTime, "TipPool: pool has ended");
+        require(poolCommits[poolId] == bytes32(0), "TipPool: randomness already committed");
+        
+        poolCommits[poolId] = commit;
+        emit RandomnessCommitted(poolId, commit);
     }
     
     /**
@@ -67,18 +97,29 @@ contract TipPool {
     }
     
     /**
-     * @dev End a pool and distribute winnings (called when pool duration ends)
+     * @dev Reveal randomness and end a pool (called when pool duration ends)
      * @param poolId The pool ID to end
+     * @param reveal The reveal value that was committed
      */
-    function endPool(uint256 poolId) external {
+    function revealAndEndPool(uint256 poolId, uint256 reveal) external nonReentrant {
         Pool storage pool = pools[poolId];
         require(!pool.ended, "TipPool: pool already ended");
         require(block.timestamp >= pool.endTime, "TipPool: pool has not ended yet");
         require(pool.totalTips > 0, "TipPool: no tips to distribute");
         
+        // Verify commit-reveal
+        bytes32 commit = poolCommits[poolId];
+        require(commit != bytes32(0), "TipPool: randomness not committed");
+        require(keccak256(abi.encodePacked(reveal)) == commit, "TipPool: invalid reveal");
+        require(!poolRevealed[poolId], "TipPool: randomness already revealed");
+        
+        poolRevealed[poolId] = true;
+        poolReveals[poolId] = reveal;
         pool.ended = true;
         
-        // Draw winner (mock VRF for now - uses block.timestamp + block.difficulty as seed)
+        emit RandomnessRevealed(poolId, reveal);
+        
+        // Draw winner using secure randomness
         address winner = drawWinner(poolId);
         pool.winner = winner;
         
@@ -86,13 +127,60 @@ contract TipPool {
         uint256 creatorCut = (pool.totalTips * CREATOR_CUT_BPS) / 10000;
         uint256 winnerPrize = pool.totalTips - creatorCut;
         
-        // Transfer winnings
+        // Transfer winnings (state updated first, then external calls)
         if (creatorCut > 0 && pool.creator != address(0)) {
-            payable(pool.creator).transfer(creatorCut);
+            (bool success, ) = payable(pool.creator).call{value: creatorCut}("");
+            require(success, "TipPool: creator transfer failed");
         }
         
         if (winnerPrize > 0 && winner != address(0)) {
-            payable(winner).transfer(winnerPrize);
+            (bool success, ) = payable(winner).call{value: winnerPrize}("");
+            require(success, "TipPool: winner transfer failed");
+        }
+        
+        emit PoolEnded(poolId, winner, winnerPrize, creatorCut);
+    }
+    
+    /**
+     * @dev End a pool without commit-reveal (fallback for backwards compatibility)
+     * @param poolId The pool ID to end
+     * @notice This uses block.prevrandao for randomness (less secure, but available if commit-reveal not used)
+     */
+    function endPool(uint256 poolId) external nonReentrant {
+        Pool storage pool = pools[poolId];
+        require(!pool.ended, "TipPool: pool already ended");
+        require(block.timestamp >= pool.endTime, "TipPool: pool has not ended yet");
+        require(pool.totalTips > 0, "TipPool: no tips to distribute");
+        
+        pool.ended = true;
+        
+        // Use block.prevrandao if available (Solidity 0.8.18+), otherwise fallback
+        uint256 randomSeed;
+        if (block.prevrandao != 0) {
+            randomSeed = uint256(keccak256(abi.encodePacked(block.prevrandao, block.timestamp, poolId)));
+        } else {
+            // Fallback for older chains
+            randomSeed = uint256(keccak256(abi.encodePacked(block.timestamp, block.difficulty, block.number, poolId)));
+        }
+        pool.randomSeed = randomSeed;
+        
+        // Draw winner
+        address winner = drawWinner(poolId);
+        pool.winner = winner;
+        
+        // Calculate cuts
+        uint256 creatorCut = (pool.totalTips * CREATOR_CUT_BPS) / 10000;
+        uint256 winnerPrize = pool.totalTips - creatorCut;
+        
+        // Transfer winnings (state updated first, then external calls)
+        if (creatorCut > 0 && pool.creator != address(0)) {
+            (bool success, ) = payable(pool.creator).call{value: creatorCut}("");
+            require(success, "TipPool: creator transfer failed");
+        }
+        
+        if (winnerPrize > 0 && winner != address(0)) {
+            (bool success, ) = payable(winner).call{value: winnerPrize}("");
+            require(success, "TipPool: winner transfer failed");
         }
         
         emit PoolEnded(poolId, winner, winnerPrize, creatorCut);
@@ -111,9 +199,24 @@ contract TipPool {
             return pool.tippers[0];
         }
         
-        // Mock VRF: use block data as seed (in production, use real VRF)
-        // Note: block.prevrandao is available in Solidity 0.8.18+, using block.difficulty for compatibility
-        uint256 random = uint256(keccak256(abi.encodePacked(block.timestamp, block.difficulty, block.number, poolId)));
+        uint256 random;
+        
+        // Use commit-reveal randomness if available
+        if (poolRevealed[poolId] && poolReveals[poolId] != 0) {
+            random = uint256(keccak256(abi.encodePacked(poolReveals[poolId], block.timestamp, poolId)));
+        } else if (pool.randomSeed != 0) {
+            // Use stored random seed from endPool
+            random = pool.randomSeed;
+        } else {
+            // Fallback: use block.prevrandao if available
+            if (block.prevrandao != 0) {
+                random = uint256(keccak256(abi.encodePacked(block.prevrandao, block.timestamp, poolId)));
+            } else {
+                // Last resort fallback (less secure)
+                random = uint256(keccak256(abi.encodePacked(block.timestamp, block.difficulty, block.number, poolId)));
+            }
+        }
+        
         uint256 totalWeight = pool.totalTips;
         uint256 winningNumber = random % totalWeight;
         

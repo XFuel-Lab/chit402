@@ -2,13 +2,16 @@
 pragma solidity ^0.8.20;
 
 import "./IERC20.sol";
+import "./ReentrancyGuard.sol";
+import "./SafeERC20.sol";
 
 /**
  * @title XFUELPool
  * @dev Concentrated liquidity pool for TFUEL↔XPRT (forked from Theta's Uniswap-v3 style pool)
  * Supports 0.05% and 0.08% fee tiers
  */
-contract XFUELPool {
+contract XFUELPool is ReentrancyGuard {
+    using SafeERC20 for IERC20;
     IERC20 public token0; // TFUEL
     IERC20 public token1; // XPRT
     uint24 public fee; // Fee tier: 500 (0.05%) or 800 (0.08%)
@@ -78,6 +81,9 @@ contract XFUELPool {
         require(msg.sender == factory, "XFUELPool: FORBIDDEN");
         require(_fee == 500 || _fee == 800, "XFUELPool: INVALID_FEE");
         require(token0 == IERC20(address(0)), "XFUELPool: ALREADY_INITIALIZED");
+        require(_token0 != address(0), "XFUELPool: ZERO_ADDRESS");
+        require(_token1 != address(0), "XFUELPool: ZERO_ADDRESS");
+        require(_sqrtPriceX96 > 0, "XFUELPool: INVALID_PRICE");
         
         token0 = IERC20(_token0);
         token1 = IERC20(_token1);
@@ -94,9 +100,11 @@ contract XFUELPool {
         address recipient,
         bool zeroForOne,
         int256 amountSpecified,
-        uint160 sqrtPriceLimitX96
-    ) external returns (int256 amount0, int256 amount1) {
+        uint160 sqrtPriceLimitX96,
+        uint256 minAmountOut
+    ) external nonReentrant returns (int256 amount0, int256 amount1) {
         require(amountSpecified != 0, "XFUELPool: INVALID_AMOUNT");
+        require(recipient != address(0), "XFUELPool: INVALID_RECIPIENT");
         
         uint160 sqrtPriceX96Next = sqrtPriceX96;
         uint128 liquidityCurrent = liquidity;
@@ -107,8 +115,13 @@ contract XFUELPool {
             uint256 amountIn = uint256(amountSpecified);
             uint256 amountOut = _getAmountOut(amountIn, true);
             
-            token0.transferFrom(msg.sender, address(this), amountIn);
-            token1.transfer(recipient, amountOut);
+            // Slippage protection
+            require(amountOut >= minAmountOut, "XFUELPool: SLIPPAGE_TOO_HIGH");
+            
+            // Update state first (simplified - in full implementation would update price/liquidity)
+            // Then make external calls
+            token0.safeTransferFrom(msg.sender, address(this), amountIn);
+            token1.safeTransfer(recipient, amountOut);
             
             amount0 = amountSpecified;
             amount1 = -int256(amountOut);
@@ -117,8 +130,12 @@ contract XFUELPool {
             uint256 amountIn = uint256(amountSpecified);
             uint256 amountOut = _getAmountOut(amountIn, false);
             
-            token1.transferFrom(msg.sender, address(this), amountOut);
-            token0.transfer(recipient, amountIn);
+            // Slippage protection
+            require(amountOut >= minAmountOut, "XFUELPool: SLIPPAGE_TOO_HIGH");
+            
+            // FIXED: Transfer amountIn (not amountOut) from sender, transfer amountOut to recipient
+            token1.safeTransferFrom(msg.sender, address(this), amountIn);
+            token0.safeTransfer(recipient, amountOut);
             
             amount0 = int256(amountOut);
             amount1 = -amountSpecified;
@@ -141,22 +158,25 @@ contract XFUELPool {
         }
     }
     
-    function _tickFromSqrtPrice(uint160 sqrtPriceX96) internal pure returns (int24) {
+    function _tickFromSqrtPrice(uint160 _sqrtPriceX96) internal pure returns (int24) {
         // Simplified tick calculation
-        return int24(int256(uint256(sqrtPriceX96)) / 2**96);
+        return int24(int256(uint256(_sqrtPriceX96)) / 2**96);
     }
     
-    function collectProtocolFees() external returns (uint128 amount0, uint128 amount1) {
+    function collectProtocolFees() external nonReentrant returns (uint128 amount0, uint128 amount1) {
+        require(feeRecipient != address(0), "XFUELPool: NO_FEE_RECIPIENT");
+        
         amount0 = uint128(protocolFees0);
         amount1 = uint128(protocolFees1);
         
+        // Update state first, then make external calls
         if (amount0 > 0) {
             protocolFees0 = 0;
-            token0.transfer(feeRecipient, amount0);
+            token0.safeTransfer(feeRecipient, amount0);
         }
         if (amount1 > 0) {
             protocolFees1 = 0;
-            token1.transfer(feeRecipient, amount1);
+            token1.safeTransfer(feeRecipient, amount1);
         }
     }
 }
