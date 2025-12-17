@@ -92,6 +92,36 @@ xfuel-protocol/
 └── package.json         # Dependencies and scripts
 ```
 
+## Professional Workflow (XFUEL)
+
+To keep this codebase production-grade, follow this workflow for **all changes**:
+
+1. **Never work directly on `main`**
+   - Create a new branch for every change:
+     - Features: `feature/[short-name]`
+     - Fixes: `fix/[short-name]`
+2. **Run tests after any code change**
+   - Unit/integration tests:
+     ```bash
+     npm test
+     ```
+   - E2E tests (local dev, interactive Cypress runner):
+     ```bash
+     npm run test:e2e
+     ```
+   - For automation/CI, prefer the headless variant:
+     ```bash
+     npm run test:e2e:headless
+     ```
+3. **Only commit if all tests pass**
+   - Fix failing tests before committing.
+4. **Push branches and use PRs**
+   - Push your branch and open a Pull Request against `main`.
+   - When work is ready, communicate it as:  
+     `Ready on branch feature/[name] — open PR to merge when good`
+5. **No direct merges to `main` without explicit approval**
+   - `main` is protected; only merge via reviewed/approved PRs.
+
 ## Tech Stack
 
 - **Vite 5.0.0** - Next-generation frontend tooling
