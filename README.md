@@ -153,6 +153,14 @@ To keep this codebase production-grade, follow this workflow for **all changes**
 - **TypeScript** - Type safety
 - **Tailwind CSS** - Utility-first CSS framework
 
+## Bug Bounty Program
+
+XFUEL runs a bug bounty program to encourage security researchers to help identify and fix vulnerabilities. Rewards range from $100 to $50,000 USD based on severity.
+
+For details on scope, reward tiers, submission guidelines, and rules, see [docs/bug-bounty.md](docs/bug-bounty.md).
+
+**Report vulnerabilities to:** security@xfuel.io
+
 ## White Paper
 
 You can download the XFuel protocol white paper here:
