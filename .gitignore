@@ -22,6 +22,11 @@ dist
 dist-ssr
 *.local
 
+# Coverage
+coverage
+coverage.json
+*.lcov
+
 # Environment variables
 .env
 .env.local

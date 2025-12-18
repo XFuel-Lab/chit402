@@ -26,6 +26,8 @@ cp .env.example .env
 Then edit `.env` and add your deployed contract addresses:
 - `VITE_ROUTER_ADDRESS` - Your deployed XFUEL router contract address on Theta testnet
 - `VITE_TIP_POOL_ADDRESS` - Your deployed Tip Pool contract address on Theta testnet
+- `VITE_API_URL` - Backend API URL (default: `http://localhost:3001`)
+- `SIMULATION_MODE` - Enable simulation mode on backend (default: `false`)
 
 3. Start development server:
 ```bash
@@ -57,6 +59,86 @@ This app is fully integrated with Theta testnet for real on-chain execution:
 - RPC URL: https://eth-rpc-api-testnet.thetatoken.org/rpc
 - Explorer: https://testnet-explorer.thetatoken.org/
 - Faucet: https://faucet.testnet.theta.org/request
+
+## Simulation Mode
+
+XFUEL includes a fallback simulation mode for testing and demos when real testnet TFUEL is unavailable.
+
+### How It Works
+
+Simulation mode is automatically enabled when:
+- `SIMULATION_MODE=true` environment variable is set on the backend, OR
+- User's TFUEL balance is insufficient to cover the swap amount + gas buffer
+
+### Enabling Simulation Mode
+
+**Backend (Server-side):**
+```bash
+# Set environment variable
+export SIMULATION_MODE=true
+
+# Or in .env file
+SIMULATION_MODE=true
+
+# Start backend server
+npm run health
+```
+
+**Frontend (Client-side - Dev Settings):**
+- Use the "Sim On/Sim Off" toggle button in the web app header to force simulation mode
+- This allows testing simulation UI without requiring low balance
+
+### Features
+
+- **Mock Transactions**: Simulated swaps return fake transaction hashes with realistic delays (3-5 seconds)
+- **Simulated Output**: Output amounts calculated using current rates (5% fee simulation)
+- **Transaction History**: All simulated transactions appear in history with "Simulated" tag
+- **Explorer Links**: Fake transaction hashes are clickable (will show 404 on explorer, but UI remains functional)
+- **UI Indicators**: Clear banner shows "Simulation Mode – Real swaps pending testnet TFUEL"
+- **Settlement Events**: Mock events are logged for dashboard updates (farming yields, Tip Pools)
+
+### Backend API
+
+The backend swap endpoint (`POST /api/swap`) handles simulation:
+
+```bash
+# Example request
+curl -X POST http://localhost:3001/api/swap \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userAddress": "0x...",
+    "amount": 10,
+    "targetLST": "stkATOM",
+    "userBalance": 5
+  }'
+
+# Response (simulation mode)
+{
+  "success": true,
+  "txHash": "0x...",
+  "outputAmount": 9.5,
+  "simulated": true,
+  "message": "Swap simulated successfully"
+}
+```
+
+### Testing
+
+Run simulation mode tests:
+```bash
+# Unit tests
+npm test -- swap-simulation.test.cjs
+
+# Integration tests (requires backend running)
+npm test -- swap-api.integration.test.cjs
+```
+
+### Notes
+
+- Real mode is unchanged and fully functional when TFUEL is available
+- Simulation mode does not execute on-chain transactions
+- Transaction history distinguishes between simulated and real transactions
+- All simulation logic is isolated and does not affect core swap functionality
 
 ## Unified Web + Mobile Product
 
@@ -109,6 +191,14 @@ xfuel-protocol/
 │   ├── App.tsx          # Main application component
 │   ├── main.tsx         # React entry point
 │   └── index.css        # Tailwind CSS styles
+├── server/
+│   ├── health.js        # Backend API server
+│   └── api/
+│       └── swap.js      # Swap API endpoint with simulation mode
+├── edgefarm-mobile/     # Expo mobile app
+├── test/
+│   ├── swap-simulation.test.cjs      # Simulation mode unit tests
+│   └── swap-api.integration.test.cjs # API integration tests
 ├── index.html           # HTML entry point
 ├── vite.config.ts       # Vite configuration
 ├── tsconfig.json        # TypeScript configuration
