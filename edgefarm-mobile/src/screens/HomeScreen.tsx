@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import { Pressable, ScrollView, Text, View, RefreshControl } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
 import { LinearGradient } from 'expo-linear-gradient'
@@ -14,6 +14,7 @@ const DEMO_TVL_USD = 5920
 
 export function HomeScreen() {
   const [tick, setTick] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
     const t = setInterval(() => setTick((v) => v + 1), 1000)
@@ -61,10 +62,28 @@ export function HomeScreen() {
     Haptics.selectionAsync().catch(() => {})
   }
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true)
+    // Simulate refresh - in production, fetch latest data
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    setRefreshing(false)
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {})
+  }, [])
+
   return (
     <ScreenBackground wallpaperVariant="image">
       <SafeAreaView className="flex-1">
-        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 110 }}>
+        <ScrollView 
+          contentContainerStyle={{ padding: 20, paddingBottom: 110 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={neon.blue}
+              colors={[neon.blue]}
+            />
+          }
+        >
           <View style={{ marginBottom: 18 }}>
             <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.65)' }}>EdgeFarm</Text>
             <Text style={{ ...type.h2, color: 'rgba(255,255,255,0.98)' }}>Dashboard</Text>

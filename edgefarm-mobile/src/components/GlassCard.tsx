@@ -30,8 +30,8 @@ export function GlassCard({
         style={{ padding: 1, borderRadius: 24 }}
       >
         <BlurView
-          // Very light blur so wallpaper stays crystal sharp (sub‑10% vibe)
-          intensity={6}
+          // Enhanced blur for proper glassmorphism effect while keeping wallpaper visible
+          intensity={20}
           tint="dark"
           style={{
             borderRadius: 22,
@@ -45,9 +45,9 @@ export function GlassCard({
               paddingVertical: 16,
               borderRadius: 22,
               borderWidth: 1,
-              // Softer neon border, more wallpaper coming through the card
-              borderColor: 'rgba(191,219,254,0.32)',
-              backgroundColor: 'rgba(2,6,23,0.18)',
+              // Enhanced glassmorphism with proper backdrop visibility
+              borderColor: 'rgba(191,219,254,0.45)',
+              backgroundColor: 'rgba(2,6,23,0.25)',
               shadowColor: 'rgba(15,23,42,1)',
               shadowOpacity: 0.6,
               shadowRadius: 18,

@@ -16,6 +16,7 @@ import { type } from '../theme/typography'
 import { NeonPill } from '../components/NeonPill'
 import { NeonButton } from '../components/NeonButton'
 import * as Haptics from 'expo-haptics'
+import { useNavigation } from '@react-navigation/native'
 
 type Achievement = {
   id: string
@@ -364,6 +365,7 @@ function LevelOrb() {
 
 export function ProfileScreen() {
   const [isFarming, setIsFarming] = React.useState(false)
+  const navigation = useNavigation()
 
   const fanPassLevel = 3
   const fanPassProgress = 0.64 // 64% to next fan tier
@@ -837,6 +839,39 @@ export function ProfileScreen() {
               ))}
             </View>
           </View>
+
+          {/* Settings & Legal */}
+          <NeonCard className="mt-6">
+            <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.96)', marginBottom: 12 }}>
+              Settings & Legal
+            </Text>
+            <View style={{ gap: 10 }}>
+              <NeonButton
+                label="Transaction History"
+                variant="secondary"
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {})
+                  // Navigate to transaction history - requires navigation setup
+                }}
+              />
+              <NeonButton
+                label="Privacy Policy"
+                variant="secondary"
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {})
+                  // Navigate to privacy policy - requires navigation setup
+                }}
+              />
+              <NeonButton
+                label="Terms of Service"
+                variant="secondary"
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {})
+                  // Navigate to terms - requires navigation setup
+                }}
+              />
+            </View>
+          </NeonCard>
 
           {/* My Winnings history (mock) + Star Console preview */}
           <NeonCard className="mt-6 mb-4">

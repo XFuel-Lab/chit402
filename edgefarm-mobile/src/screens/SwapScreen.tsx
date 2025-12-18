@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { Pressable, Text, TextInput, View, ScrollView, Linking } from 'react-native'
+import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import { Pressable, Text, TextInput, View, ScrollView, Linking, RefreshControl } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import Slider from '@react-native-community/slider'
 import { ScreenBackground } from '../components/ScreenBackground'
@@ -8,6 +8,7 @@ import { NeonButton } from '../components/NeonButton'
 import { neon } from '../theme/neon'
 import { connectThetaWallet, createDisconnectedWallet, refreshBalance, getSigner, getRouterAddress, getExplorerUrl, type WalletInfo } from '../lib/thetaWallet'
 import { ethers } from '@thetalabs/theta-js'
+import { API_URL } from '../lib/appConfig'
 import { NeonPill } from '../components/NeonPill'
 import { type } from '../theme/typography'
 import * as Haptics from 'expo-haptics'
@@ -26,6 +27,16 @@ import { LinearGradient } from 'expo-linear-gradient'
 interface LSTOption {
   name: string
   apy: number
+}
+
+interface SwapTransaction {
+  id: string
+  txHash: string
+  amount: number
+  outputAmount: number
+  targetLST: string
+  timestamp: number
+  simulated: boolean
 }
 
 const LST_OPTIONS: LSTOption[] = [
@@ -51,6 +62,10 @@ export function SwapScreen() {
   const [txHash, setTxHash] = useState<string | null>(null)
   const [faucetLoading, setFaucetLoading] = useState(false)
   const [swapStatus, setSwapStatus] = useState<'idle' | 'swapping' | 'success' | 'error'>('idle')
+  const [refreshing, setRefreshing] = useState(false)
+  const [swapHistory, setSwapHistory] = useState<SwapTransaction[]>([])
+  const [forceSimulation, setForceSimulation] = useState(false)
+  const [simulationMode, setSimulationMode] = useState(false)
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -64,6 +79,23 @@ export function SwapScreen() {
   }, [])
 
   const finalityText = useMemo(() => `${(finalityMs / 1000).toFixed(1)}s`, [finalityMs])
+
+  const refreshWalletBalance = useCallback(async () => {
+    if (!wallet.isConnected || !wallet.addressFull) return
+    try {
+      const newBalance = await refreshBalance(wallet.addressFull)
+      setWallet((prev) => ({ ...prev, balanceTfuel: newBalance }))
+    } catch (error) {
+      console.error('Balance refresh failed:', error)
+    }
+  }, [wallet.isConnected, wallet.addressFull])
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true)
+    await refreshWalletBalance()
+    setRefreshing(false)
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {})
+  }, [refreshWalletBalance])
 
   const connect = async () => {
     try {
@@ -102,6 +134,12 @@ export function SwapScreen() {
   const estimatedDailyYield = useMemo(() => {
     return (estimatedLSTAmount * selectedLST.apy) / 100 / 365
   }, [estimatedLSTAmount, selectedLST.apy])
+
+  // Check if we should use simulation mode
+  useEffect(() => {
+    const minRequired = tfuelAmount + 0.01
+    setSimulationMode(wallet.balanceTfuel < minRequired || forceSimulation)
+  }, [wallet.balanceTfuel, tfuelAmount, forceSimulation])
 
   const currentPercentage = useMemo(() => {
     return selectedPercentage === -1 ? customPercentage : selectedPercentage
@@ -145,16 +183,78 @@ export function SwapScreen() {
       return
     }
 
-    // Check balance
+    // Check if we should use simulation mode (backend API)
     const minRequired = tfuelAmount + 0.01 // Buffer for gas
-    if (wallet.balanceTfuel < minRequired) {
-      setStatus(`Insufficient balance. Need ${minRequired.toFixed(2)} TFUEL (including gas).`)
-      setSwapStatus('error')
-      setTimeout(() => {
-        setSwapStatus('idle')
-        setStatus('')
-      }, 5000)
-      return
+    const useSimulation = forceSimulation || wallet.balanceTfuel < minRequired
+
+    if (useSimulation) {
+      // Use backend API for simulation
+      try {
+        setIsSwapping(true)
+        setSwapStatus('swapping')
+        setStatus(`Simulating swap: ${tfuelAmount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
+
+        const response = await fetch(`${API_URL}/api/swap`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            userAddress: wallet.addressFull,
+            amount: tfuelAmount,
+            targetLST: selectedLST.name,
+            userBalance: wallet.balanceTfuel,
+          }),
+        })
+
+        if (!response.ok) {
+          throw new Error('Simulation request failed')
+        }
+
+        const data = await response.json()
+
+        if (data.success) {
+          setTxHash(data.txHash)
+          
+          // Add to transaction history
+          const newTx: SwapTransaction = {
+            id: `tx-${Date.now()}`,
+            txHash: data.txHash,
+            amount: tfuelAmount,
+            outputAmount: data.outputAmount,
+            targetLST: selectedLST.name,
+            timestamp: Date.now(),
+            simulated: true,
+          }
+          setSwapHistory(prev => [newTx, ...prev])
+
+          setIsSwapping(false)
+          setSwapStatus('success')
+          setStatus('')
+          setSuccessMsg(`✅ Staked into ${selectedLST.name} — earning ${selectedLST.apy.toFixed(1)}% APY (Simulated)`)
+          setSuccessVisible(true)
+          setSelectedPercentage(100)
+          setCustomPercentage(100)
+
+          setTimeout(() => {
+            setTxHash(null)
+            setSwapStatus('idle')
+          }, 8000)
+          return
+        } else {
+          throw new Error(data.message || 'Simulation failed')
+        }
+      } catch (error: any) {
+        console.error('Simulation error:', error)
+        setIsSwapping(false)
+        setSwapStatus('error')
+        setStatus(`Simulation failed: ${error.message || 'Unknown error'}`)
+        setTimeout(() => {
+          setSwapStatus('idle')
+          setStatus('')
+        }, 5000)
+        return
+      }
     }
 
     const routerAddress = getRouterAddress()
@@ -199,6 +299,19 @@ export function SwapScreen() {
 
       // Wait for confirmation
       const receipt = await tx.wait()
+
+      // Add to transaction history (real transaction)
+      const outputAmount = tfuelAmount * 0.95 // 5% fee
+      const newTx: SwapTransaction = {
+        id: `tx-${Date.now()}`,
+        txHash: tx.hash,
+        amount: tfuelAmount,
+        outputAmount: outputAmount,
+        targetLST: selectedLST.name,
+        timestamp: Date.now(),
+        simulated: false,
+      }
+      setSwapHistory(prev => [newTx, ...prev])
 
       // Success!
       setIsSwapping(false)
@@ -290,7 +403,20 @@ export function SwapScreen() {
   return (
     <ScreenBackground wallpaperVariant="image">
       <SafeAreaView className="flex-1">
-        <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+        <ScrollView 
+          className="flex-1" 
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            wallet.isConnected ? (
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={neon.blue}
+                colors={[neon.blue]}
+              />
+            ) : undefined
+          }
+        >
           <View className="px-5 pt-3">
             <View className="flex-row items-center justify-between">
               <Text style={{ ...type.h2, color: 'rgba(255,255,255,0.95)' }}>Swap & Stake</Text>
@@ -320,6 +446,36 @@ export function SwapScreen() {
                 </View>
               )}
             </NeonCard>
+
+            {/* Simulation Mode Banner */}
+            {simulationMode && (
+              <View
+                style={{
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: 'rgba(251,191,36,0.4)',
+                  backgroundColor: 'rgba(251,191,36,0.1)',
+                  padding: 12,
+                  marginBottom: 20,
+                }}
+              >
+                <View className="flex-row items-center justify-between">
+                  <View className="flex-row items-center gap-2">
+                    <Text style={{ color: '#fbbf24' }}>⚠️</Text>
+                    <Text style={{ ...type.bodyM, color: '#fde68a', fontWeight: '600' }}>
+                      Simulation Mode – Real swaps pending testnet TFUEL
+                    </Text>
+                  </View>
+                  {forceSimulation && (
+                    <Pressable onPress={() => setForceSimulation(false)}>
+                      <Text style={{ ...type.caption, color: '#fbbf24', textDecorationLine: 'underline' }}>
+                        Disable
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+              </View>
+            )}
 
             {/* Balance Bubble */}
             <Pressable
@@ -437,6 +593,69 @@ export function SwapScreen() {
                   onPress={handleFaucet}
                   disabled={faucetLoading}
                 />
+              </View>
+            )}
+
+            {/* Transaction History */}
+            {swapHistory.length > 0 && (
+              <View className="mb-4">
+                <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.55)', marginBottom: 12 }}>
+                  Recent Swaps
+                </Text>
+                <ScrollView className="max-h-64">
+                  {swapHistory.slice(0, 10).map((tx) => (
+                    <View
+                      key={tx.id}
+                      style={{
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor: 'rgba(168,85,247,0.2)',
+                        backgroundColor: 'rgba(0,0,0,0.2)',
+                        padding: 12,
+                        marginBottom: 8,
+                      }}
+                    >
+                      <View className="flex-row items-center justify-between">
+                        <View className="flex-1">
+                          <View className="flex-row items-center gap-2">
+                            <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.95)', fontWeight: '600' }}>
+                              {tx.amount.toFixed(2)} TFUEL → {tx.outputAmount.toFixed(2)} {tx.targetLST}
+                            </Text>
+                            {tx.simulated && (
+                              <View
+                                style={{
+                                  borderRadius: 8,
+                                  borderWidth: 1,
+                                  borderColor: 'rgba(251,191,36,0.6)',
+                                  backgroundColor: 'rgba(251,191,36,0.1)',
+                                  paddingHorizontal: 6,
+                                  paddingVertical: 2,
+                                }}
+                              >
+                                <Text style={{ ...type.caption, color: '#fbbf24', fontWeight: '600', fontSize: 10 }}>
+                                  Simulated
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={{ ...type.caption, marginTop: 4, color: 'rgba(255,255,255,0.5)' }}>
+                            {new Date(tx.timestamp).toLocaleString()}
+                          </Text>
+                        </View>
+                        <Pressable
+                          onPress={() => {
+                            const explorerUrl = getExplorerUrl()
+                            Linking.openURL(`${explorerUrl}/tx/${tx.txHash}`)
+                          }}
+                        >
+                          <Text style={{ ...type.caption, color: neon.blue, textDecorationLine: 'underline' }}>
+                            View
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ))}
+                </ScrollView>
               </View>
             )}
 
