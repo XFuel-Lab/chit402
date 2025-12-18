@@ -1,12 +1,6 @@
 const { expect } = require('chai')
 const { ethers } = require('hardhat')
-
-const parseUnits = (value, decimals) => {
-  if (typeof ethers.parseUnits === 'function') {
-    return ethers.parseUnits(value, decimals)
-  }
-  return ethers.utils.parseUnits(value, decimals)
-}
+const { getAddress, parseUnits } = require('./helpers.cjs')
 
 describe('TreasuryILBackstop', function () {
   let backstop, treasuryToken
@@ -22,16 +16,17 @@ describe('TreasuryILBackstop', function () {
 
     // Deploy backstop
     const TreasuryILBackstop = await ethers.getContractFactory('TreasuryILBackstop')
-    backstop = await TreasuryILBackstop.deploy(await treasuryToken.getAddress())
+    backstop = await TreasuryILBackstop.deploy(await getAddress(treasuryToken))
     await backstop.waitForDeployment?.() || await backstop.deployed?.()
 
     // Set pool address
-    await backstop.connect(owner).setPool(await pool.getAddress())
+    await backstop.connect(owner).setPool(await getAddress(pool))
   })
 
   describe('Deployment', function () {
     it('Should set correct treasury token', async function () {
-      expect(await backstop.treasuryToken()).to.equal(await treasuryToken.getAddress())
+      const tokenAddr = await getAddress(treasuryToken)
+      expect((await backstop.treasuryToken()).toLowerCase()).to.equal(tokenAddr.toLowerCase())
     })
 
     it('Should set correct IL threshold', async function () {
@@ -87,8 +82,10 @@ describe('TreasuryILBackstop', function () {
     beforeEach(async function () {
       // Deposit treasury funds
       const depositAmount = parseUnits('10000', 6)
-      await treasuryToken.mint(await depositor.getAddress(), depositAmount)
-      await treasuryToken.connect(depositor).approve(await backstop.getAddress(), depositAmount)
+      const depositorAddr = await getAddress(depositor)
+      const backstopAddr = await getAddress(backstop)
+      await treasuryToken.mint(depositorAddr, depositAmount)
+      await treasuryToken.connect(depositor).approve(backstopAddr, depositAmount)
       await backstop.connect(depositor).depositTreasury(depositAmount)
     })
 
@@ -96,13 +93,14 @@ describe('TreasuryILBackstop', function () {
       const initialValue = parseUnits('1000', 6)
       const currentValue = parseUnits('930', 6) // 7% loss
       
-      const balanceBefore = await treasuryToken.balanceOf(await lp.getAddress())
+      const lpAddr = await getAddress(lp)
+      const balanceBefore = await treasuryToken.balanceOf(lpAddr)
       await backstop.connect(pool).provideCoverage(
-        await lp.getAddress(),
+        lpAddr,
         initialValue,
         currentValue
       )
-      const balanceAfter = await treasuryToken.balanceOf(await lp.getAddress())
+      const balanceAfter = await treasuryToken.balanceOf(lpAddr)
       
       expect(balanceAfter).to.equal(balanceBefore)
       expect(await backstop.totalCoverageProvided()).to.equal(0)
@@ -114,22 +112,22 @@ describe('TreasuryILBackstop', function () {
       // Excess loss = 10% - 8% = 2%
       // Coverage = 1000 * 2% = 20 USDC
       
-      const coverageAmount = initialValue * 200n / 10000n // 2% excess
+      const coverageAmount = initialValue.mul(200).div(10000) // 2% excess
       
       await expect(
         backstop.connect(pool).provideCoverage(
-          await lp.getAddress(),
+          await getAddress(lp),
           initialValue,
           currentValue
         )
       ).to.emit(backstop, 'ILCoverageProvided')
         .withArgs(
-          await lp.getAddress(),
+          await getAddress(lp),
           1000, // 10% IL in BPS
           coverageAmount
         )
       
-      expect(await treasuryToken.balanceOf(await lp.getAddress())).to.equal(coverageAmount)
+      expect(await treasuryToken.balanceOf(await getAddress(lp))).to.equal(coverageAmount)
       expect(await backstop.totalCoverageProvided()).to.equal(coverageAmount)
     })
 
@@ -139,21 +137,22 @@ describe('TreasuryILBackstop', function () {
       // Excess loss = 15% - 8% = 7%
       // Coverage = 1000 * 7% = 70 USDC
       
-      const coverageAmount = initialValue * 700n / 10000n
+      const coverageAmount = initialValue.mul(700).div(10000)
       
+      const lpAddr = await getAddress(lp)
       await backstop.connect(pool).provideCoverage(
-        await lp.getAddress(),
+        lpAddr,
         initialValue,
         currentValue
       )
       
-      expect(await treasuryToken.balanceOf(await lp.getAddress())).to.equal(coverageAmount)
+      expect(await treasuryToken.balanceOf(lpAddr)).to.equal(coverageAmount)
     })
 
     it('Should revert if called by non-pool address', async function () {
       await expect(
         backstop.connect(lp).provideCoverage(
-          await lp.getAddress(),
+          await getAddress(lp),
           parseUnits('1000', 6),
           parseUnits('900', 6)
         )
@@ -161,13 +160,16 @@ describe('TreasuryILBackstop', function () {
     })
 
     it('Should revert if insufficient treasury balance', async function () {
-      const initialValue = parseUnits('100000', 6) // Large initial value
-      const currentValue = parseUnits('90000', 6) // 10% loss
-      // Would require large coverage, but treasury only has 10000
+      // Treasury has 10000 USDC, but we need more than that
+      // For 10% loss on 1000000, excess is 2% = 20000 USDC (exceeds treasury)
+      const initialValue = parseUnits('1000000', 6) // Very large initial value
+      const currentValue = parseUnits('900000', 6) // 10% loss
+      // Excess loss = 10% - 8% = 2%
+      // Coverage = 1000000 * 2% = 20000 USDC (exceeds treasury of 10000)
       
       await expect(
         backstop.connect(pool).provideCoverage(
-          await lp.getAddress(),
+          await getAddress(lp),
           initialValue,
           currentValue
         )
@@ -178,8 +180,9 @@ describe('TreasuryILBackstop', function () {
       const initialValue = parseUnits('1000', 6)
       const currentValue = parseUnits('900', 6)
       
+      const lpAddr = await getAddress(lp)
       await backstop.connect(pool).provideCoverage(
-        await lp.getAddress(),
+        lpAddr,
         initialValue,
         currentValue
       )
@@ -188,28 +191,30 @@ describe('TreasuryILBackstop', function () {
       
       // Provide coverage again
       await backstop.connect(pool).provideCoverage(
-        await lp.getAddress(),
+        lpAddr,
         initialValue,
         currentValue
       )
       
       const secondCoverage = await backstop.totalCoverageProvided()
-      expect(secondCoverage).to.equal(firstCoverage * 2n)
+      expect(secondCoverage).to.equal(firstCoverage.mul(2))
     })
   })
 
   describe('depositTreasury', function () {
     it('Should allow depositing treasury funds', async function () {
       const amount = parseUnits('1000', 6)
-      await treasuryToken.mint(await depositor.getAddress(), amount)
-      await treasuryToken.connect(depositor).approve(await backstop.getAddress(), amount)
+      const depositorAddr = await getAddress(depositor)
+      const backstopAddr = await getAddress(backstop)
+      await treasuryToken.mint(depositorAddr, amount)
+      await treasuryToken.connect(depositor).approve(backstopAddr, amount)
       
       await expect(
         backstop.connect(depositor).depositTreasury(amount)
       ).to.emit(backstop, 'TreasuryDeposit')
-        .withArgs(await depositor.getAddress(), amount)
+        .withArgs(depositorAddr, amount)
       
-      expect(await treasuryToken.balanceOf(await backstop.getAddress())).to.equal(amount)
+      expect(await treasuryToken.balanceOf(backstopAddr)).to.equal(amount)
     })
 
     it('Should revert if amount is zero', async function () {
@@ -237,18 +242,21 @@ describe('TreasuryILBackstop', function () {
   describe('emergencyWithdraw', function () {
     beforeEach(async function () {
       const amount = parseUnits('1000', 6)
-      await treasuryToken.mint(await depositor.getAddress(), amount)
-      await treasuryToken.connect(depositor).approve(await backstop.getAddress(), amount)
+      const depositorAddr = await getAddress(depositor)
+      const backstopAddr = await getAddress(backstop)
+      await treasuryToken.mint(depositorAddr, amount)
+      await treasuryToken.connect(depositor).approve(backstopAddr, amount)
       await backstop.connect(depositor).depositTreasury(amount)
     })
 
     it('Should allow owner to withdraw funds', async function () {
       const amount = parseUnits('500', 6)
-      const ownerBalanceBefore = await treasuryToken.balanceOf(await owner.getAddress())
+      const ownerAddr = await getAddress(owner)
+      const ownerBalanceBefore = await treasuryToken.balanceOf(ownerAddr)
       
       await backstop.connect(owner).emergencyWithdraw(amount)
       
-      const ownerBalanceAfter = await treasuryToken.balanceOf(await owner.getAddress())
+      const ownerBalanceAfter = await treasuryToken.balanceOf(ownerAddr)
       expect(ownerBalanceAfter - ownerBalanceBefore).to.equal(amount)
     })
 

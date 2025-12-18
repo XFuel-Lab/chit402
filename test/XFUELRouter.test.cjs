@@ -1,13 +1,7 @@
 const { expect } = require('chai')
 const { ethers } = require('hardhat')
-
-// Helper to support both ethers v5 and v6
-const parseEther = (value) => {
-  if (typeof ethers.parseEther === 'function') {
-    return ethers.parseEther(value)
-  }
-  return ethers.utils.parseEther(value)
-}
+const hre = require('hardhat')
+const { getAddress, parseEther, getZeroAddress } = require('./helpers.cjs')
 
 describe('XFUELRouter', function () {
   let router, factory, backstop, xfuelToken, usdcToken
@@ -15,6 +9,12 @@ describe('XFUELRouter', function () {
   let mockPool
 
   beforeEach(async function () {
+    // Reset network state to prevent pollution between tests
+    await hre.network.provider.request({
+      method: 'hardhat_reset',
+      params: []
+    })
+    
     [owner, treasury, veXFContract, user] = await ethers.getSigners()
 
     // Deploy mock ERC20 tokens
@@ -30,18 +30,18 @@ describe('XFUELRouter', function () {
     await factory.waitForDeployment?.() || await factory.deployed?.()
 
     const TreasuryILBackstop = await ethers.getContractFactory('TreasuryILBackstop')
-    backstop = await TreasuryILBackstop.deploy(await usdcToken.getAddress())
+    backstop = await TreasuryILBackstop.deploy(await getAddress(usdcToken))
     await backstop.waitForDeployment?.() || await backstop.deployed?.()
 
     // Deploy router
     const XFUELRouter = await ethers.getContractFactory('XFUELRouter')
     router = await XFUELRouter.deploy(
-      await factory.getAddress(),
-      await backstop.getAddress(),
-      await xfuelToken.getAddress(),
-      await usdcToken.getAddress(),
-      await treasury.getAddress(),
-      await veXFContract.getAddress()
+      await getAddress(factory),
+      await getAddress(backstop),
+      await getAddress(xfuelToken),
+      await getAddress(usdcToken),
+      await getAddress(treasury),
+      await getAddress(veXFContract)
     )
     await router.waitForDeployment?.() || await router.deployed?.()
 
@@ -51,23 +51,37 @@ describe('XFUELRouter', function () {
     await mockPool.waitForDeployment?.() || await mockPool.deployed?.()
   })
 
+  afterEach(async function () {
+    // Reset network state after each test
+    await hre.network.provider.request({
+      method: 'hardhat_reset',
+      params: []
+    })
+  })
+
   describe('Deployment', function () {
     it('Should set the correct factory address', async function () {
-      expect(await router.factory()).to.equal(await factory.getAddress())
+      const factoryAddr = await getAddress(factory)
+      expect((await router.factory()).toLowerCase()).to.equal(factoryAddr.toLowerCase())
     })
 
     it('Should set the correct backstop address', async function () {
-      expect(await router.backstop()).to.equal(await backstop.getAddress())
+      const backstopAddr = await getAddress(backstop)
+      expect((await router.backstop()).toLowerCase()).to.equal(backstopAddr.toLowerCase())
     })
 
     it('Should set the correct token addresses', async function () {
-      expect(await router.xfuelToken()).to.equal(await xfuelToken.getAddress())
-      expect(await router.usdcToken()).to.equal(await usdcToken.getAddress())
+      const xfuelAddr = await getAddress(xfuelToken)
+      const usdcAddr = await getAddress(usdcToken)
+      expect((await router.xfuelToken()).toLowerCase()).to.equal(xfuelAddr.toLowerCase())
+      expect((await router.usdcToken()).toLowerCase()).to.equal(usdcAddr.toLowerCase())
     })
 
     it('Should set the correct treasury and veXF addresses', async function () {
-      expect(await router.treasury()).to.equal(await treasury.getAddress())
-      expect(await router.veXFContract()).to.equal(await veXFContract.getAddress())
+      const treasuryAddr = await getAddress(treasury)
+      const veXFAddr = await getAddress(veXFContract)
+      expect((await router.treasury()).toLowerCase()).to.equal(treasuryAddr.toLowerCase())
+      expect((await router.veXFContract()).toLowerCase()).to.equal(veXFAddr.toLowerCase())
     })
 
     it('Should initialize with zero fee totals', async function () {
@@ -83,13 +97,15 @@ describe('XFUELRouter', function () {
       const targetLST = 'stkXPRT'
       const minAmountOut = parseEther('0.9') // 90% minimum
 
+      const userAddr = await getAddress(user)
+      const expectedStaked = amount.mul(95).div(100) // 95% of input (5% fee)
       await expect(
         router.connect(user).swapAndStake(amount, targetLST, minAmountOut, { value: amount })
       ).to.emit(router, 'SwapAndStake')
         .withArgs(
-          await user.getAddress(),
+          userAddr,
           amount,
-          amount * 95n / 100n, // 95% of input (5% fee)
+          expectedStaked,
           targetLST
         )
     })
@@ -125,7 +141,7 @@ describe('XFUELRouter', function () {
     it('Should return correct staked amount (95% of input)', async function () {
       const amount = parseEther('1')
       const minAmountOut = parseEther('0.9')
-      const expectedStaked = amount * 95n / 100n
+      const expectedStaked = amount.mul(95).div(100)
       
       const tx = await router.connect(user).swapAndStake(amount, 'stkXPRT', minAmountOut, { value: amount })
       const receipt = await tx.wait()
@@ -146,13 +162,13 @@ describe('XFUELRouter', function () {
     it('Should allow owner to set veXF contract', async function () {
       const newVeXF = ethers.Wallet.createRandom().address
       await router.connect(owner).setVeXFContract(newVeXF)
-      expect(await router.veXFContract()).to.equal(newVeXF)
+      expect((await router.veXFContract()).toLowerCase()).to.equal(newVeXF.toLowerCase())
     })
 
     it('Should allow owner to set treasury', async function () {
       const newTreasury = ethers.Wallet.createRandom().address
       await router.connect(owner).setTreasury(newTreasury)
-      expect(await router.treasury()).to.equal(newTreasury)
+      expect((await router.treasury()).toLowerCase()).to.equal(newTreasury.toLowerCase())
     })
 
     it('Should revert if non-owner tries to set veXF contract', async function () {
@@ -181,18 +197,188 @@ describe('XFUELRouter', function () {
       const buyback = await router.BUYBACK_BPS()
       const vexf = await router.VEXF_YIELD_BPS()
       const treasury = await router.TREASURY_BPS()
-      expect(buyback + vexf + treasury).to.equal(10000)
+      expect(buyback.add(vexf).add(treasury)).to.equal(10000)
     })
   })
 
-  // Note: collectAndDistributeFees() requires a fully deployed and initialized pool
-  // This would be better tested in integration tests with actual pool instances
   describe('collectAndDistributeFees', function () {
-    // This test would require a mock pool that implements collectProtocolFees()
-    // For now, we note this needs integration testing
+    let pool, token0, token1
+
+    beforeEach(async function () {
+      // Deploy tokens
+      const MockERC20 = await ethers.getContractFactory('MockERC20')
+      token0 = await MockERC20.deploy('Token 0', 'TK0', 18)
+      token1 = await MockERC20.deploy('Token 1', 'TK1', 18)
+      await token0.waitForDeployment?.() || await token0.deployed?.()
+      await token1.waitForDeployment?.() || await token1.deployed?.()
+
+      // Deploy factory and create pool
+      const XFUELPoolFactory = await ethers.getContractFactory('XFUELPoolFactory')
+      const factoryContract = await XFUELPoolFactory.deploy()
+      await factoryContract.waitForDeployment?.() || await factoryContract.deployed?.()
+
+      const sqrtPriceX96 = '79228162514264337593543950336'
+      await factoryContract.createPool(
+        await getAddress(token0),
+        await getAddress(token1),
+        500,
+        sqrtPriceX96
+      )
+
+      const poolAddress = await factoryContract.getPool(
+        await getAddress(token0),
+        await getAddress(token1),
+        500
+      )
+      pool = await ethers.getContractAt('XFUELPool', poolAddress)
+
+      // Set router as fee recipient
+      const factoryAddr = await getAddress(factoryContract)
+      await ethers.provider.send('hardhat_impersonateAccount', [factoryAddr])
+      await ethers.provider.send('hardhat_setBalance', [factoryAddr, '0x1000000000000000000'])
+      const factorySigner = await ethers.getSigner(factoryAddr)
+      await pool.connect(factorySigner).setFeeRecipient(await getAddress(router))
+    })
+
     it('Should handle zero fees gracefully', async function () {
-      // This would need a pool contract that returns (0, 0) from collectProtocolFees
-      // Placeholder for integration test
+      // No fees accumulated yet
+      await router.collectAndDistributeFees(await getAddress(pool))
+      
+      expect(await router.totalFeesCollected()).to.equal(0)
+      expect(await router.totalXFuelBurned()).to.equal(0)
+      expect(await router.totalUSDCToVeXF()).to.equal(0)
+    })
+
+    it('Should revert if pool is zero address', async function () {
+      await expect(
+        router.collectAndDistributeFees(getZeroAddress())
+      ).to.be.reverted
+    })
+  })
+
+  describe('swap', function () {
+    let pool, token0, token1
+
+    beforeEach(async function () {
+      // Deploy tokens
+      const MockERC20 = await ethers.getContractFactory('MockERC20')
+      token0 = await MockERC20.deploy('Token 0', 'TK0', 18)
+      token1 = await MockERC20.deploy('Token 1', 'TK1', 18)
+      await token0.waitForDeployment?.() || await token0.deployed?.()
+      await token1.waitForDeployment?.() || await token1.deployed?.()
+
+      // Deploy factory and create pool
+      const XFUELPoolFactory = await ethers.getContractFactory('XFUELPoolFactory')
+      const factoryContract = await XFUELPoolFactory.deploy()
+      await factoryContract.waitForDeployment?.() || await factoryContract.deployed?.()
+
+      const sqrtPriceX96 = '79228162514264337593543950336'
+      await factoryContract.createPool(
+        await getAddress(token0),
+        await getAddress(token1),
+        500,
+        sqrtPriceX96
+      )
+
+      const poolAddress = await factoryContract.getPool(
+        await getAddress(token0),
+        await getAddress(token1),
+        500
+      )
+      pool = await ethers.getContractAt('XFUELPool', poolAddress)
+
+      // Add liquidity to pool
+      const liquidityAmount = parseEther('1000')
+      const poolAddr = await getAddress(pool)
+      await token0.mint(poolAddr, liquidityAmount)
+      await token1.mint(poolAddr, liquidityAmount)
+    })
+
+    it('Should execute swap through router', async function () {
+      const swapAmount = parseEther('1')
+      const poolAddr = await getAddress(pool)
+      const recipientAddr = await getAddress(user)
+      const routerAddr = await getAddress(router)
+      const userAddr = await getAddress(user)
+      
+      // Mint tokens to user with extra for gas/rounding
+      await token0.mint(userAddr, swapAmount.mul(2))
+      // Approve router to transfer tokens from user
+      const approveTx = await token0.connect(user).approve(routerAddr, swapAmount.mul(2))
+      await approveTx.wait()
+      
+      // Mine block to ensure approval is processed
+      await ethers.provider.send('evm_mine', [])
+      
+      // Increase time and mine again to ensure state is fully settled
+      await hre.network.provider.request({
+        method: 'evm_increaseTime',
+        params: [1]
+      })
+      await ethers.provider.send('evm_mine', [])
+      
+      // Verify approval with explicit logging
+      const allowance = await token0.allowance(userAddr, routerAddr)
+      console.log(`[DEBUG] Router swap test - Allowance: ${allowance.toString()}, swapAmount: ${swapAmount.toString()}`)
+      expect(allowance.gte(swapAmount)).to.equal(true)
+
+      const recipientBalance1Before = await token1.balanceOf(recipientAddr)
+
+      await router.connect(user).swap(
+        poolAddr,
+        true, // zeroForOne
+        swapAmount,
+        recipientAddr,
+        0 // minAmountOut
+      )
+
+      const recipientBalance1After = await token1.balanceOf(recipientAddr)
+      expect(recipientBalance1After.gt(recipientBalance1Before)).to.equal(true)
+    })
+
+    it('Should revert if pool is zero address', async function () {
+      await expect(
+        router.connect(user).swap(
+          getZeroAddress(),
+          true,
+          parseEther('1'),
+          await getAddress(user),
+          0
+        )
+      ).to.be.reverted
+    })
+
+    it('Should revert if recipient is zero address', async function () {
+      const swapAmount = parseEther('1')
+      const poolAddr = await getAddress(pool)
+      const routerAddr = await getAddress(router)
+      const userAddr = await getAddress(user)
+      await token0.mint(userAddr, swapAmount)
+      const approveTx = await token0.connect(user).approve(routerAddr, swapAmount)
+      await approveTx.wait()
+      await ethers.provider.send('evm_mine', [])
+      
+      // Increase time and mine again to ensure state is fully settled
+      await hre.network.provider.request({
+        method: 'evm_increaseTime',
+        params: [1]
+      })
+      await ethers.provider.send('evm_mine', [])
+      
+      // Verify approval
+      const allowance = await token0.allowance(userAddr, routerAddr)
+      console.log(`[DEBUG] Router zero address test - Allowance: ${allowance.toString()}, swapAmount: ${swapAmount.toString()}`)
+      expect(allowance.gte(swapAmount)).to.equal(true)
+
+      await expect(
+        router.connect(user).swap(
+          poolAddr,
+          true,
+          swapAmount,
+          getZeroAddress(),
+          0
+        )
+      ).to.be.reverted
     })
   })
 })

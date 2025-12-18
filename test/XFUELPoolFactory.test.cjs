@@ -1,5 +1,6 @@
 const { expect } = require('chai')
 const { ethers } = require('hardhat')
+const { getAddress, getZeroAddress } = require('./helpers.cjs')
 
 describe('XFUELPoolFactory', function () {
   let factory
@@ -28,12 +29,14 @@ describe('XFUELPoolFactory', function () {
     })
 
     it('Should return zero address for non-existent pool', async function () {
+      const tokenAAddr = await getAddress(tokenA)
+      const tokenBAddr = await getAddress(tokenB)
       const pool = await factory.getPool(
-        await tokenA.getAddress(),
-        await tokenB.getAddress(),
+        tokenAAddr,
+        tokenBAddr,
         500
       )
-      expect(pool).to.equal(ethers.ZeroAddress)
+      expect(pool.toLowerCase()).to.equal(getZeroAddress().toLowerCase())
     })
   })
 
@@ -43,9 +46,11 @@ describe('XFUELPoolFactory', function () {
     const sqrtPriceX96 = '79228162514264337593543950336' // Initial price: 1.0
 
     it('Should create a pool with correct parameters', async function () {
+      const tokenAAddr = await getAddress(tokenA)
+      const tokenBAddr = await getAddress(tokenB)
       const tx = await factory.createPool(
-        await tokenA.getAddress(),
-        await tokenB.getAddress(),
+        tokenAAddr,
+        tokenBAddr,
         fee500,
         sqrtPriceX96
       )
@@ -64,42 +69,42 @@ describe('XFUELPoolFactory', function () {
 
       // Get pool address
       const poolAddress = await factory.getPool(
-        await tokenA.getAddress(),
-        await tokenB.getAddress(),
+        tokenAAddr,
+        tokenBAddr,
         fee500
       )
-      expect(poolAddress).to.not.equal(ethers.ZeroAddress)
+      expect(poolAddress.toLowerCase()).to.not.equal(getZeroAddress().toLowerCase())
     })
 
     it('Should sort tokens correctly (tokenA < tokenB)', async function () {
       await factory.createPool(
-        await tokenA.getAddress(),
-        await tokenB.getAddress(),
+        await getAddress(tokenA),
+        await getAddress(tokenB),
         fee500,
         sqrtPriceX96
       )
 
       // Pool should exist in both directions
       const pool1 = await factory.getPool(
-        await tokenA.getAddress(),
-        await tokenB.getAddress(),
+        await getAddress(tokenA),
+        await getAddress(tokenB),
         fee500
       )
       const pool2 = await factory.getPool(
-        await tokenB.getAddress(),
-        await tokenA.getAddress(),
+        await getAddress(tokenB),
+        await getAddress(tokenA),
         fee500
       )
       expect(pool1).to.equal(pool2)
-      expect(pool1).to.not.equal(ethers.ZeroAddress)
+      expect(pool1.toLowerCase()).to.not.equal(getZeroAddress().toLowerCase())
     })
 
     it('Should increment allPoolsLength', async function () {
       expect(await factory.allPoolsLength()).to.equal(0)
       
       await factory.createPool(
-        await tokenA.getAddress(),
-        await tokenB.getAddress(),
+        await getAddress(tokenA),
+        await getAddress(tokenB),
         fee500,
         sqrtPriceX96
       )
@@ -109,32 +114,32 @@ describe('XFUELPoolFactory', function () {
 
     it('Should allow creating pools with different fee tiers', async function () {
       await factory.createPool(
-        await tokenA.getAddress(),
-        await tokenB.getAddress(),
+        await getAddress(tokenA),
+        await getAddress(tokenB),
         fee500,
         sqrtPriceX96
       )
 
       await factory.createPool(
-        await tokenA.getAddress(),
-        await tokenB.getAddress(),
+        await getAddress(tokenA),
+        await getAddress(tokenB),
         fee800,
         sqrtPriceX96
       )
 
       const pool500 = await factory.getPool(
-        await tokenA.getAddress(),
-        await tokenB.getAddress(),
+        await getAddress(tokenA),
+        await getAddress(tokenB),
         fee500
       )
       const pool800 = await factory.getPool(
-        await tokenA.getAddress(),
-        await tokenB.getAddress(),
+        await getAddress(tokenA),
+        await getAddress(tokenB),
         fee800
       )
 
-      expect(pool500).to.not.equal(ethers.ZeroAddress)
-      expect(pool800).to.not.equal(ethers.ZeroAddress)
+      expect(pool500.toLowerCase()).to.not.equal(getZeroAddress().toLowerCase())
+      expect(pool800.toLowerCase()).to.not.equal(getZeroAddress().toLowerCase())
       expect(pool500).to.not.equal(pool800)
       expect(await factory.allPoolsLength()).to.equal(2)
     })
@@ -142,8 +147,8 @@ describe('XFUELPoolFactory', function () {
     it('Should revert if token addresses are identical', async function () {
       await expect(
         factory.createPool(
-          await tokenA.getAddress(),
-          await tokenA.getAddress(),
+          await getAddress(tokenA),
+          await getAddress(tokenA),
           fee500,
           sqrtPriceX96
         )
@@ -153,8 +158,8 @@ describe('XFUELPoolFactory', function () {
     it('Should revert if fee is invalid (not 500 or 800)', async function () {
       await expect(
         factory.createPool(
-          await tokenA.getAddress(),
-          await tokenB.getAddress(),
+          await getAddress(tokenA),
+          await getAddress(tokenB),
           1000, // Invalid fee
           sqrtPriceX96
         )
@@ -164,8 +169,8 @@ describe('XFUELPoolFactory', function () {
     it('Should revert if token is zero address', async function () {
       await expect(
         factory.createPool(
-          ethers.ZeroAddress,
-          await tokenB.getAddress(),
+          getZeroAddress(),
+          await getAddress(tokenB),
           fee500,
           sqrtPriceX96
         )
@@ -174,16 +179,16 @@ describe('XFUELPoolFactory', function () {
 
     it('Should revert if pool already exists', async function () {
       await factory.createPool(
-        await tokenA.getAddress(),
-        await tokenB.getAddress(),
+        await getAddress(tokenA),
+        await getAddress(tokenB),
         fee500,
         sqrtPriceX96
       )
 
       await expect(
         factory.createPool(
-          await tokenA.getAddress(),
-          await tokenB.getAddress(),
+          await getAddress(tokenA),
+          await getAddress(tokenB),
           fee500,
           sqrtPriceX96
         )
@@ -191,19 +196,25 @@ describe('XFUELPoolFactory', function () {
     })
 
     it('Should emit PoolCreated event', async function () {
+      const tokenAAddr = await getAddress(tokenA)
+      const tokenBAddr = await getAddress(tokenB)
+      // Tokens are sorted, so token0 is the smaller address
+      const token0Addr = tokenAAddr.toLowerCase() < tokenBAddr.toLowerCase() ? tokenAAddr : tokenBAddr
+      const token1Addr = tokenAAddr.toLowerCase() < tokenBAddr.toLowerCase() ? tokenBAddr : tokenAAddr
+      
       await expect(
         factory.createPool(
-          await tokenA.getAddress(),
-          await tokenB.getAddress(),
+          tokenAAddr,
+          tokenBAddr,
           fee500,
           sqrtPriceX96
         )
       ).to.emit(factory, 'PoolCreated')
         .withArgs(
-          await tokenA.getAddress(), // token0 (sorted)
-          await tokenB.getAddress(), // token1 (sorted)
+          token0Addr, // token0 (sorted)
+          token1Addr, // token1 (sorted)
           fee500,
-          (address) => address !== ethers.ZeroAddress, // pool address
+          (address) => address.toLowerCase() !== getZeroAddress().toLowerCase(), // pool address
           1 // pool number
         )
     })
@@ -211,8 +222,8 @@ describe('XFUELPoolFactory', function () {
     it('Should create pool with deterministic address (CREATE2)', async function () {
       // CREATE2 should produce same address for same salt
       const tx1 = await factory.createPool(
-        await tokenA.getAddress(),
-        await tokenB.getAddress(),
+        await getAddress(tokenA),
+        await getAddress(tokenB),
         fee500,
         sqrtPriceX96
       )
@@ -220,15 +231,15 @@ describe('XFUELPoolFactory', function () {
       
       // Get the pool address
       const poolAddress1 = await factory.getPool(
-        await tokenA.getAddress(),
-        await tokenB.getAddress(),
+        await getAddress(tokenA),
+        await getAddress(tokenB),
         fee500
       )
 
       // Deploy new factory (to test CREATE2 determinism)
       // In practice, CREATE2 ensures same inputs = same address
       // This is a simplified check
-      expect(poolAddress1).to.not.equal(ethers.ZeroAddress)
+      expect(poolAddress1.toLowerCase()).to.not.equal(getZeroAddress().toLowerCase())
     })
   })
 })

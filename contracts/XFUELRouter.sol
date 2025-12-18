@@ -154,7 +154,22 @@ contract XFUELRouter is Ownable, ReentrancyGuard {
         require(recipient != address(0), "XFUELRouter: invalid recipient");
         
         XFUELPool poolContract = XFUELPool(pool);
+        
+        // Get the token that needs to be transferred
+        IERC20 inputToken = zeroForOne ? poolContract.token0() : poolContract.token1();
+        uint256 amountIn = uint256(amountSpecified);
+        
+        // Transfer tokens from user to router
+        inputToken.safeTransferFrom(msg.sender, address(this), amountIn);
+        
+        // Approve pool to spend router's tokens
+        SafeERC20.safeApprove(inputToken, pool, amountIn);
+        
+        // Execute swap
         (amount0, amount1) = poolContract.swap(recipient, zeroForOne, amountSpecified, 0, minAmountOut);
+        
+        // Reset approval for gas efficiency (optional, but good practice)
+        SafeERC20.safeApprove(inputToken, pool, 0);
         
         return (amount0, amount1);
     }
