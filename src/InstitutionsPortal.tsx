@@ -355,8 +355,8 @@ const InstitutionsPortal = () => {
     const maxVolume = Math.max(...volumeData.map((d) => d.value))
 
     return (
-      <div className="min-h-screen bg-gradient-to-b from-[#f5f5f5] to-[#e0e0e0] px-4 py-8 text-gray-900">
-        <div className="mx-auto flex max-w-7xl flex-col gap-8">
+      <div className="min-h-screen bg-gradient-to-b from-[#f5f5f5] to-[#e0e0e0] px-4 py-4 sm:py-8 text-gray-900">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 sm:gap-8">
           {/* Hero Section */}
           <header className="flex flex-col items-start justify-between gap-6 sm:flex-row sm:items-center">
             <div>
@@ -443,7 +443,7 @@ const InstitutionsPortal = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2">
               {/* Animated Flow Map */}
               <div className="space-y-4">
                 <p className="text-xs font-medium text-gray-700">Flow Map (Volume-weighted)</p>
@@ -611,7 +611,7 @@ const InstitutionsPortal = () => {
           </section>
 
           {/* Section 2: Compliance & Risk */}
-          <section className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <section className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2">
             <div className="space-y-4 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
               <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-400">
                 Compliance & Risk
@@ -746,30 +746,32 @@ const InstitutionsPortal = () => {
 
             <div className="overflow-hidden rounded-xl border border-gray-100">
               <div className="max-h-72 overflow-auto text-xs">
-                <table className="min-w-full border-collapse bg-white text-left">
-                  <thead className="sticky top-0 bg-gray-50 text-[11px] uppercase tracking-[0.16em] text-gray-500">
-                    <tr>
-                      <th className="px-4 py-3">Time (UTC)</th>
-                      <th className="px-4 py-3">Asset</th>
-                      <th className="px-4 py-3">Direction</th>
-                      <th className="px-4 py-3 text-right">Amount</th>
-                      <th className="px-4 py-3">Status</th>
-                      <th className="px-4 py-3">Policy</th>
-                      <th className="px-4 py-3">Tx hash</th>
-                    </tr>
-                  </thead>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full border-collapse bg-white text-left">
+                    <thead className="sticky top-0 bg-gray-50 text-[11px] uppercase tracking-[0.16em] text-gray-500">
+                      <tr>
+                        <th className="px-2 sm:px-4 py-3">Time (UTC)</th>
+                        <th className="px-2 sm:px-4 py-3">Asset</th>
+                        <th className="px-2 sm:px-4 py-3 hidden sm:table-cell">Direction</th>
+                        <th className="px-2 sm:px-4 py-3 text-right">Amount</th>
+                        <th className="px-2 sm:px-4 py-3">Status</th>
+                        <th className="px-2 sm:px-4 py-3 hidden lg:table-cell">Policy</th>
+                        <th className="px-2 sm:px-4 py-3 hidden lg:table-cell">Tx hash</th>
+                      </tr>
+                    </thead>
                   <tbody>
                     {txHistory.map((tx) => (
                       <tr key={tx.id} className="border-t border-gray-100 text-xs text-gray-700 hover:bg-gray-50">
-                        <td className="px-4 py-3 align-top">
-                          {new Date(tx.timestamp).toISOString().replace('T', ' ').replace('Z', '')}
+                        <td className="px-2 sm:px-4 py-3 align-top">
+                          <span className="block sm:hidden">{new Date(tx.timestamp).toLocaleTimeString()}</span>
+                          <span className="hidden sm:block">{new Date(tx.timestamp).toISOString().replace('T', ' ').replace('Z', '')}</span>
                         </td>
-                        <td className="px-4 py-3 align-top font-medium">{tx.asset}</td>
-                        <td className="px-4 py-3 align-top">{tx.direction}</td>
-                        <td className="px-4 py-3 align-top text-right font-mono">
+                        <td className="px-2 sm:px-4 py-3 align-top font-medium">{tx.asset}</td>
+                        <td className="px-2 sm:px-4 py-3 align-top hidden sm:table-cell">{tx.direction}</td>
+                        <td className="px-2 sm:px-4 py-3 align-top text-right font-mono">
                           {formatNumber(tx.amount)} {tx.currency}
                         </td>
-                        <td className="px-4 py-3 align-top">
+                        <td className="px-2 sm:px-4 py-3 align-top">
                           <span
                             className={
                               tx.status === 'Settled'
@@ -780,7 +782,7 @@ const InstitutionsPortal = () => {
                             {tx.status}
                           </span>
                         </td>
-                        <td className="px-4 py-3 align-top">
+                        <td className="px-2 sm:px-4 py-3 align-top hidden lg:table-cell">
                           <span
                             className={
                               tx.policyFlag === 'OK'
@@ -791,13 +793,14 @@ const InstitutionsPortal = () => {
                             {tx.policyFlag}
                           </span>
                         </td>
-                        <td className="px-4 py-3 align-top font-mono text-[10px] text-gray-500">
+                        <td className="px-2 sm:px-4 py-3 align-top font-mono text-[10px] text-gray-500 hidden lg:table-cell">
                           {tx.txHash}
                         </td>
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                  </table>
+                </div>
               </div>
             </div>
           </section>

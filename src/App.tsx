@@ -21,6 +21,16 @@ interface WalletInfo {
   isConnected: boolean
 }
 
+interface SwapTransaction {
+  id: string
+  txHash: string
+  amount: number
+  outputAmount: number
+  targetLST: string
+  timestamp: number
+  simulated: boolean
+}
+
 const LST_OPTIONS: LSTOption[] = [
   { name: 'stkTIA', apy: 38.2 },
   { name: 'stkATOM', apy: 32.5 },
@@ -57,6 +67,9 @@ function App() {
   const [winNFT, setWinNFT] = useState<{ id: string; name: string; rarity: 'Mythic' | 'Legendary' | 'Epic' | 'Rare' } | undefined>(undefined)
   const [enteredRaffles, setEnteredRaffles] = useState<Set<number>>(new Set())
   const [myNFTs, setMyNFTs] = useState<Array<{ id: string; name: string; rarity: 'Mythic' | 'Legendary' | 'Epic' | 'Rare'; poolId: number; winAmount: number }>>([])
+  const [swapHistory, setSwapHistory] = useState<SwapTransaction[]>([])
+  const [forceSimulation, setForceSimulation] = useState(false)
+  const [simulationMode, setSimulationMode] = useState(false)
 
   const numericBalance = useMemo(
     () => parseFloat(wallet.balance.replace(/,/g, '')) || 0,
@@ -229,56 +242,84 @@ function App() {
       return
     }
 
-    // Check if user has enough balance (with small buffer for gas)
+    // Check if we should use simulation mode (backend API)
     const minRequired = amount + 0.01 // Add small buffer for gas
-    if (numericBalance < minRequired) {
-      setStatusMessage(`Insufficient balance. Need ${minRequired.toFixed(2)} TFUEL (including gas).`)
-      setSwapStatus('error')
-      // Show faucet button suggestion
-      setTimeout(() => {
-        setSwapStatus('idle')
-        setStatusMessage('')
-      }, 5000)
-      return
-    }
+    const useSimulation = forceSimulation || numericBalance < minRequired
 
-    // Use real router if address is set, otherwise use mock
-    const useMock = !ROUTER_ADDRESS || mockMode
-    const routerAddress = useMock ? MOCK_ROUTER_ADDRESS : ROUTER_ADDRESS
+    if (useSimulation) {
+      // Use backend API for simulation
+      try {
+        setSwapStatus('swapping')
+        setStatusMessage(`Simulating swap: ${amount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
 
-    if (useMock) {
-      // Mock mode: simulate swap without on-chain transaction
-      setSwapStatus('swapping')
-      setStatusMessage(`Simulating swap: ${amount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
-      
-      // Simulate transaction delay
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      
-      // Generate mock tx hash
-      const mockTxHash = `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`
-      setTxHash(mockTxHash)
-      
-      // Trigger confetti
-      confetti({
-        particleCount: 100,
-        spread: 70,
-        origin: { y: 0.6 },
-        colors: ['#a855f7', '#06b6d4', '#ec4899', '#10b981'],
-      })
+        const response = await fetch(`${APP_CONFIG.API_URL}/api/swap`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            userAddress: wallet.fullAddress,
+            amount: amount,
+            targetLST: selectedLST.name,
+            userBalance: numericBalance,
+          }),
+        })
 
-      setStatusMessage(
-        `✅ Staked into ${selectedLST.name} — earning ${selectedLST.apy.toFixed(1)}% APY (Mock Mode)`,
-      )
-      setSwapStatus('success')
-      setTfuelAmount('')
-      setSelectedPercentage(null)
+        if (!response.ok) {
+          throw new Error('Simulation request failed')
+        }
 
-      setTimeout(() => {
-        setSwapStatus('idle')
-        setStatusMessage('')
-        setTxHash(null)
-      }, 8000)
-      return
+        const data = await response.json()
+
+        if (data.success) {
+          setTxHash(data.txHash)
+          
+          // Add to transaction history
+          const newTx: SwapTransaction = {
+            id: `tx-${Date.now()}`,
+            txHash: data.txHash,
+            amount: amount,
+            outputAmount: data.outputAmount,
+            targetLST: selectedLST.name,
+            timestamp: Date.now(),
+            simulated: true,
+          }
+          setSwapHistory(prev => [newTx, ...prev])
+
+          // Trigger confetti
+          confetti({
+            particleCount: 100,
+            spread: 70,
+            origin: { y: 0.6 },
+            colors: ['#a855f7', '#06b6d4', '#ec4899', '#10b981'],
+          })
+
+          setStatusMessage(
+            `✅ Staked into ${selectedLST.name} — earning ${selectedLST.apy.toFixed(1)}% APY (Simulated)`,
+          )
+          setSwapStatus('success')
+          setTfuelAmount('')
+          setSelectedPercentage(null)
+
+          setTimeout(() => {
+            setSwapStatus('idle')
+            setStatusMessage('')
+            setTxHash(null)
+          }, 8000)
+          return
+        } else {
+          throw new Error(data.message || 'Simulation failed')
+        }
+      } catch (error: any) {
+        console.error('Simulation error:', error)
+        setStatusMessage(`Simulation failed: ${error.message || 'Unknown error'}`)
+        setSwapStatus('error')
+        setTimeout(() => {
+          setSwapStatus('idle')
+          setStatusMessage('')
+        }, 5000)
+        return
+      }
     }
 
     // Real on-chain swap flow on Theta testnet
@@ -306,6 +347,9 @@ function App() {
       setSwapStatus('swapping')
       setStatusMessage(`Swapping ${amount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
 
+      // Use real router if address is set, otherwise use mock
+      const useMock = !ROUTER_ADDRESS || mockMode
+      const routerAddress = useMock ? MOCK_ROUTER_ADDRESS : ROUTER_ADDRESS
       const routerContract = new ethers.Contract(routerAddress, ROUTER_ABI, signer)
 
       // Call swapAndStake with native TFUEL (msg.value)
@@ -320,6 +364,19 @@ function App() {
 
       // Wait for confirmation
       const receipt = await tx.wait()
+      
+      // Add to transaction history (real transaction)
+      const outputAmount = amount * 0.95 // 5% fee
+      const newTx: SwapTransaction = {
+        id: `tx-${Date.now()}`,
+        txHash: tx.hash,
+        amount: amount,
+        outputAmount: outputAmount,
+        targetLST: selectedLST.name,
+        timestamp: Date.now(),
+        simulated: false,
+      }
+      setSwapHistory(prev => [newTx, ...prev])
       
       // Trigger confetti animation on success
       confetti({
@@ -645,6 +702,16 @@ function App() {
               <ApyOrb apyText={liveApyText} label="live blended APY" />
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              {/* Dev Settings */}
+              <div className="w-full sm:w-auto">
+                <button
+                  onClick={() => setForceSimulation(!forceSimulation)}
+                  className="rounded-xl border border-purple-400/40 bg-purple-500/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-purple-300 transition-colors hover:bg-purple-500/20"
+                  title={forceSimulation ? 'Simulation mode forced on' : 'Force simulation mode'}
+                >
+                  {forceSimulation ? 'Sim On' : 'Sim Off'}
+                </button>
+              </div>
               {/* Mock Mode Toggle */}
               {(!ROUTER_ADDRESS || mockMode) && (
                 <div className="w-full sm:w-auto">
@@ -732,6 +799,28 @@ function App() {
                           )}
                         </div>
                       </div>
+
+                      {/* Simulation Mode Banner */}
+                      {simulationMode && (
+                        <div className="rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 backdrop-blur-sm">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="text-amber-300">⚠️</span>
+                              <p className="text-sm font-semibold text-amber-200">
+                                Simulation Mode – Real swaps pending testnet TFUEL
+                              </p>
+                            </div>
+                            {forceSimulation && (
+                              <button
+                                onClick={() => setForceSimulation(false)}
+                                className="text-xs text-amber-300 hover:text-amber-200 underline"
+                              >
+                                Disable
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Big percentage dropdown */}
                       <div className="relative">
@@ -904,6 +993,47 @@ function App() {
                         onClick={handleFaucet}
                         disabled={faucetLoading}
                       />
+                    </div>
+                  )}
+
+                  {/* Transaction History */}
+                  {swapHistory.length > 0 && (
+                    <div className="mb-4">
+                      <p className="mb-3 text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
+                        Recent Swaps
+                      </p>
+                      <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {swapHistory.slice(0, 10).map((tx) => (
+                          <div
+                            key={tx.id}
+                            className="flex items-center justify-between rounded-xl border border-purple-400/20 bg-black/20 px-4 py-2 backdrop-blur-sm"
+                          >
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-semibold text-white">
+                                  {tx.amount.toFixed(2)} TFUEL → {tx.outputAmount.toFixed(2)} {tx.targetLST}
+                                </p>
+                                {tx.simulated && (
+                                  <span className="rounded-full border border-amber-400/60 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-300">
+                                    Simulated
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-1 text-xs text-slate-400">
+                                {new Date(tx.timestamp).toLocaleString()}
+                              </p>
+                            </div>
+                            <a
+                              href={`${THETA_TESTNET.explorerUrl}/tx/${tx.txHash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="ml-4 text-xs text-cyan-300 hover:text-cyan-200 underline transition-colors"
+                            >
+                              View
+                            </a>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
 
