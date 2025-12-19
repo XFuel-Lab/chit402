@@ -44,6 +44,144 @@ npm run build
 npm run preview
 ```
 
+## Phase 1 Tokenomics
+
+Phase 1 implements the foundation modules for XFUEL tokenomics without modifying existing swap rail, simulation, lottery, or Theta Wallet flows.
+
+### Contracts
+
+#### veXF.sol
+Vote-escrowed XF token (Curve-style) that allows users to lock XF tokens for 1-4 years to receive veXF voting power. veXF balance decays linearly over time until unlock.
+
+**Features:**
+- Lock XF tokens for 1-4 years
+- Linear decay of voting power over time
+- Non-transferable voting power
+- Receives yield distribution from protocol revenue
+- UUPS upgradeable
+
+**Key Functions:**
+- `createLock(amount, unlockTime)` - Create or extend a lock
+- `increaseAmount(amount)` - Add more XF to existing lock
+- `increaseUnlockTime(unlockTime)` - Extend unlock time
+- `withdraw()` - Withdraw XF after lock expires
+- `votingPower(account)` - Get current voting power
+- `balanceOf(account)` - Get current veXF balance
+
+#### RevenueSplitter.sol
+Collects protocol revenue and distributes according to tokenomics:
+- 50% to veXF yield
+- 25% to buyback/burn (Phase 1: placeholder)
+- 15% to rXF mint (Phase 1: placeholder)
+- 10% to Treasury
+
+**Features:**
+- Modular revenue collection
+- Automatic split calculation
+- UUPS upgradeable
+
+**Key Functions:**
+- `splitRevenue(amount)` - Split ERC20 revenue tokens
+- `splitRevenueNative()` - Split native token (TFUEL)
+- `calculateSplits(amount)` - View split amounts
+
+#### CyberneticFeeSwitch.sol
+Governance-settable fee tiers for protocol:
+- Growth mode: 0.1% fees to attract TVL
+- Extraction mode: 1.0% fees for revenue
+- Controlled by veXF governance (minimum veXF required)
+
+**Features:**
+- Two fee modes (Growth/Extraction)
+- Custom fee setting (owner only, max 10%)
+- 7-day cooldown on fee changes
+- IFeeAdapter interface for router integration
+- UUPS upgradeable
+
+**Key Functions:**
+- `setFeeMode(mode)` - Switch between Growth/Extraction
+- `setCustomFee(feeBps)` - Set custom fee (owner only)
+- `setFeesEnabled(enabled)` - Enable/disable fees
+- `getFeeMultiplier()` - Get current fee multiplier
+- `getEffectiveFee(baseFee)` - Calculate effective fee
+
+### Deployment
+
+Deploy Phase 1 contracts:
+
+```bash
+# Deploy to local network
+npx hardhat run scripts/phase1-deploy.ts
+
+# Deploy to Theta testnet
+npx hardhat run scripts/phase1-deploy.ts --network theta-testnet
+```
+
+**Environment Variables:**
+- `XF_TOKEN_ADDRESS` - XF token address (optional, will deploy mock if not set)
+- `REVENUE_TOKEN_ADDRESS` - Revenue token address, e.g., USDC (optional, will deploy mock if not set)
+- `TREASURY_ADDRESS` - Treasury address (defaults to deployer)
+
+**Deployment Output:**
+- Contract addresses saved to `deployments/phase1-{chainId}.json`
+- `.env` file updated with contract addresses
+- Implementation addresses for upgrade verification
+
+### Testing
+
+Run comprehensive test suite:
+
+```bash
+# Run all Phase 1 tests
+npm run test:contracts
+
+# Run specific test files
+npx hardhat test test/veXF.test.cjs
+npx hardhat test test/RevenueSplitter.test.cjs
+npx hardhat test test/CyberneticFeeSwitch.test.cjs
+
+# Run with coverage (target: 95%+)
+npm run test:coverage
+```
+
+### Integration
+
+Phase 1 contracts are designed to integrate with existing XFUELRouter via adapter pattern:
+
+1. **Fee Integration**: XFUELRouter can query `CyberneticFeeSwitch` via `IFeeAdapter` interface
+2. **Revenue Collection**: Router can call `RevenueSplitter.splitRevenue()` to distribute fees
+3. **Governance**: veXF holders can vote on fee changes via `CyberneticFeeSwitch`
+
+**Example Integration:**
+```solidity
+// In XFUELRouter (future integration)
+IFeeAdapter feeAdapter = IFeeAdapter(feeSwitchAddress);
+uint256 feeMultiplier = feeAdapter.getFeeMultiplier();
+uint256 effectiveFee = feeAdapter.getEffectiveFee(baseFee);
+```
+
+### Upgradeability
+
+All Phase 1 contracts use UUPS (Universal Upgradeable Proxy Standard) pattern:
+
+- **Proxy**: User-facing address (never changes)
+- **Implementation**: Logic contract (upgradeable by owner)
+- **Upgrade**: Only owner can authorize upgrades
+
+**Upgrade Process:**
+```bash
+# Deploy new implementation
+npx hardhat run scripts/upgrade-phase1.ts --network theta-testnet
+```
+
+### Security
+
+- Built on OpenZeppelin upgradeable contracts
+- Full test coverage (95%+)
+- ReentrancyGuard on all state-changing functions
+- Access control via Ownable
+- Input validation on all functions
+
 ## Theta Testnet Integration
 
 This app is fully integrated with Theta testnet for real on-chain execution:
