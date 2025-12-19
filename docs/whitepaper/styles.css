@@ -1,0 +1,374 @@
+/* XFUEL Whitepaper - Cyberpunk Neon Design System */
+
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --neon-pink: #ff00ff;
+  --neon-cyan: #00ffff;
+  --neon-green: #00ff41;
+  --neon-purple: #b026ff;
+  --dark-bg: #0a0a0a;
+  --darker-bg: #050505;
+  --glass-bg: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --text-primary: #ffffff;
+  --text-secondary: #b0b0b0;
+  --grid-color: rgba(0, 255, 255, 0.1);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Rajdhani', 'Share Tech Mono', sans-serif;
+  background: var(--dark-bg);
+  color: var(--text-primary);
+  line-height: 1.8;
+  font-size: 11pt;
+  overflow-x: hidden;
+}
+
+/* Grid/Hologram Background Effect */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: 
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: 50px 50px;
+  opacity: 0.3;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* Cover Page */
+.cover-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 4rem 2rem;
+  position: relative;
+  background: linear-gradient(135deg, var(--darker-bg) 0%, var(--dark-bg) 100%);
+}
+
+.cover-page::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(circle at 50% 50%, rgba(255, 0, 255, 0.1) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.logo-placeholder {
+  width: 200px;
+  height: 200px;
+  margin: 2rem auto;
+  border: 3px solid var(--neon-pink);
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px);
+  box-shadow: 
+    0 0 30px rgba(255, 0, 255, 0.5),
+    inset 0 0 30px rgba(255, 0, 255, 0.1);
+  font-family: 'Orbitron', sans-serif;
+  font-size: 2rem;
+  color: var(--neon-pink);
+  text-shadow: 0 0 20px var(--neon-pink);
+}
+
+h1 {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 3.5rem;
+  font-weight: 900;
+  margin: 2rem 0 1rem;
+  background: linear-gradient(135deg, var(--neon-pink), var(--neon-cyan), var(--neon-green));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: 0 0 40px rgba(255, 0, 255, 0.8);
+  letter-spacing: 0.1em;
+  line-height: 1.2;
+}
+
+.cover-subtitle {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 1.2rem;
+  color: var(--neon-cyan);
+  text-shadow: 0 0 15px var(--neon-cyan);
+  margin-top: 1rem;
+  letter-spacing: 0.2em;
+}
+
+.cover-date {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  margin-top: 3rem;
+  letter-spacing: 0.15em;
+}
+
+/* Typography */
+h2 {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--neon-cyan);
+  margin: 3rem 0 1.5rem;
+  text-shadow: 0 0 20px rgba(0, 255, 255, 0.6);
+  border-bottom: 2px solid var(--neon-cyan);
+  padding-bottom: 0.5rem;
+  display: inline-block;
+}
+
+h3 {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--neon-green);
+  margin: 2rem 0 1rem;
+  text-shadow: 0 0 15px rgba(0, 255, 65, 0.5);
+}
+
+h4 {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 1.2rem;
+  font-weight: 500;
+  color: var(--neon-purple);
+  margin: 1.5rem 0 0.8rem;
+}
+
+p {
+  margin: 1rem 0;
+  color: var(--text-primary);
+  text-align: justify;
+}
+
+/* Glassmorphism Panels */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 2rem;
+  margin: 2rem 0;
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    inset 0 0 20px rgba(255, 255, 255, 0.05);
+}
+
+.glass-panel h3 {
+  margin-top: 0;
+}
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 2rem 0;
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px);
+  border: 2px solid var(--neon-cyan);
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+}
+
+th {
+  font-family: 'Orbitron', sans-serif;
+  background: rgba(0, 255, 255, 0.1);
+  color: var(--neon-cyan);
+  padding: 1rem;
+  text-align: left;
+  border-bottom: 2px solid var(--neon-cyan);
+  text-shadow: 0 0 10px var(--neon-cyan);
+  font-weight: 600;
+}
+
+td {
+  padding: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
+tr:hover {
+  background: rgba(0, 255, 255, 0.05);
+}
+
+/* Diagrams */
+.diagram-container {
+  margin: 3rem 0;
+  padding: 2rem;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  border: 2px solid var(--neon-pink);
+  border-radius: 12px;
+  box-shadow: 
+    0 0 30px rgba(255, 0, 255, 0.4),
+    inset 0 0 30px rgba(255, 0, 255, 0.1);
+}
+
+.diagram-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 1.5rem;
+  color: var(--neon-pink);
+  text-align: center;
+  margin-bottom: 2rem;
+  text-shadow: 0 0 20px var(--neon-pink);
+}
+
+.diagram-placeholder {
+  min-height: 400px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--darker-bg);
+  border: 2px dashed var(--neon-cyan);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-family: 'Share Tech Mono', monospace;
+}
+
+/* Screenshot Placeholders */
+.screenshot-placeholder {
+  width: 100%;
+  margin: 2rem 0;
+  padding: 2rem;
+  background: var(--glass-bg);
+  border: 2px solid var(--neon-green);
+  border-radius: 12px;
+  text-align: center;
+  box-shadow: 0 0 25px rgba(0, 255, 65, 0.3);
+}
+
+.screenshot-placeholder::before {
+  content: '📱';
+  font-size: 4rem;
+  display: block;
+  margin-bottom: 1rem;
+}
+
+.screenshot-label {
+  font-family: 'Orbitron', sans-serif;
+  color: var(--neon-green);
+  font-size: 1rem;
+  text-shadow: 0 0 10px var(--neon-green);
+}
+
+/* Lists */
+ul, ol {
+  margin: 1rem 0 1rem 2rem;
+  color: var(--text-primary);
+}
+
+li {
+  margin: 0.5rem 0;
+}
+
+li::marker {
+  color: var(--neon-cyan);
+}
+
+/* Code Blocks */
+code {
+  font-family: 'Share Tech Mono', monospace;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  color: var(--neon-green);
+  border: 1px solid rgba(0, 255, 65, 0.3);
+}
+
+pre {
+  background: rgba(0, 0, 0, 0.7);
+  padding: 1.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--neon-green);
+  overflow-x: auto;
+  margin: 1.5rem 0;
+  box-shadow: 0 0 20px rgba(0, 255, 65, 0.2);
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+/* Page Breaks */
+.page-break {
+  page-break-after: always;
+  break-after: page;
+}
+
+/* Footer */
+.footer {
+  margin-top: 4rem;
+  padding: 2rem;
+  text-align: center;
+  border-top: 2px solid var(--neon-cyan);
+  color: var(--text-secondary);
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.9rem;
+}
+
+/* Print Styles */
+@media print {
+  body {
+    background: var(--dark-bg);
+  }
+  
+  .page-break {
+    page-break-after: always;
+  }
+  
+  @page {
+    size: A4;
+    margin: 2cm;
+  }
+}
+
+/* Neon Glow Animations */
+@keyframes neon-pulse {
+  0%, 100% {
+    opacity: 1;
+    text-shadow: 0 0 20px currentColor;
+  }
+  50% {
+    opacity: 0.8;
+    text-shadow: 0 0 30px currentColor, 0 0 40px currentColor;
+  }
+}
+
+.neon-glow {
+  animation: neon-pulse 2s ease-in-out infinite;
+}
+
+/* Utility Classes */
+.text-neon-pink { color: var(--neon-pink); text-shadow: 0 0 15px var(--neon-pink); }
+.text-neon-cyan { color: var(--neon-cyan); text-shadow: 0 0 15px var(--neon-cyan); }
+.text-neon-green { color: var(--neon-green); text-shadow: 0 0 15px var(--neon-green); }
+.text-neon-purple { color: var(--neon-purple); text-shadow: 0 0 15px var(--neon-purple); }
+
+.highlight-box {
+  border-left: 4px solid var(--neon-cyan);
+  padding-left: 1.5rem;
+  margin: 1.5rem 0;
+  background: rgba(0, 255, 255, 0.05);
+  padding: 1rem 1.5rem;
+  border-radius: 4px;
+}
+
