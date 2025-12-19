@@ -13,8 +13,8 @@ async function main() {
   const signers = await ethers.getSigners();
   if (signers.length === 0) {
     throw new Error(
-      '❌ No signers available. Please set THETA_TESTNET_PRIVATE_KEY in your .env file.\n' +
-      '   Example: THETA_TESTNET_PRIVATE_KEY=0xYourPrivateKeyHere'
+      '❌ No signers available. Please set THETA_MAINNET_PRIVATE_KEY in your .env file.\n' +
+      '   Example: THETA_MAINNET_PRIVATE_KEY=0xYourPrivateKeyHere'
     );
   }
 
@@ -34,11 +34,21 @@ async function main() {
   const chainId = network.chainId.toString();
 
   // Load Phase 1 deployment info
-  const phase1Path = path.join(__dirname, '..', 'deployments', `phase1-${chainId}.json`);
+  // Try phase1-mainnet.json first, then phase1-${chainId}.json
+  const phase1MainnetPath = path.join(__dirname, '..', 'deployments', 'phase1-mainnet.json');
+  const phase1ChainIdPath = path.join(__dirname, '..', 'deployments', `phase1-${chainId}.json`);
   let phase1Deployment: any = null;
+  let phase1Path: string | null = null;
 
-  if (fs.existsSync(phase1Path)) {
-    phase1Deployment = JSON.parse(fs.readFileSync(phase1Path, 'utf8'));
+  if (fs.existsSync(phase1MainnetPath)) {
+    phase1Path = phase1MainnetPath;
+    phase1Deployment = JSON.parse(fs.readFileSync(phase1MainnetPath, 'utf8'));
+  } else if (fs.existsSync(phase1ChainIdPath)) {
+    phase1Path = phase1ChainIdPath;
+    phase1Deployment = JSON.parse(fs.readFileSync(phase1ChainIdPath, 'utf8'));
+  }
+
+  if (phase1Deployment) {
     console.log('📋 Loaded Phase 1 deployment info from:', phase1Path);
     console.log('   veXF:', phase1Deployment.contracts.veXF);
     console.log('   RevenueSplitter:', phase1Deployment.contracts.revenueSplitter);
@@ -97,7 +107,13 @@ async function main() {
   const rXF = await upgrades.deployProxy(
     RXF,
     [XF_TOKEN, VEXF_ADDRESS, REVENUE_SPLITTER_ADDRESS, deployer.address],
-    { initializer: 'initialize' }
+    { 
+      initializer: 'initialize',
+      kind: 'uups',
+      txOverrides: {
+        gasLimit: 5000000,
+      }
+    }
   );
   await rXF.waitForDeployment();
   const rXFAddress = await rXF.getAddress();
@@ -110,7 +126,13 @@ async function main() {
   const buybackBurner = await upgrades.deployProxy(
     BuybackBurner,
     [REVENUE_TOKEN, XF_TOKEN, SWAP_ROUTER, deployer.address],
-    { initializer: 'initialize' }
+    { 
+      initializer: 'initialize',
+      kind: 'uups',
+      txOverrides: {
+        gasLimit: 5000000,
+      }
+    }
   );
   await buybackBurner.waitForDeployment();
   const buybackBurnerAddress = await buybackBurner.getAddress();
@@ -123,20 +145,25 @@ async function main() {
   const revenueSplitter = RevenueSplitter.attach(REVENUE_SPLITTER_ADDRESS);
 
   // Set rXF address
-  const setRXFTx = await revenueSplitter.setRXF(rXFAddress);
+  const setRXFTx = await revenueSplitter.setRXF(rXFAddress, { gasLimit: 500000 });
   await setRXFTx.wait();
   console.log('✅ RevenueSplitter.rXFContract set to:', rXFAddress);
 
   // Set BuybackBurner address
-  const setBuybackTx = await revenueSplitter.setBuybackBurner(buybackBurnerAddress);
+  const setBuybackTx = await revenueSplitter.setBuybackBurner(buybackBurnerAddress, { gasLimit: 500000 });
   await setBuybackTx.wait();
   console.log('✅ RevenueSplitter.buybackBurner set to:', buybackBurnerAddress);
 
   // Set RevenueSplitter address in BuybackBurner
-  const setSplitterTx = await buybackBurner.setRevenueSplitter(REVENUE_SPLITTER_ADDRESS);
+  const setSplitterTx = await buybackBurner.setRevenueSplitter(REVENUE_SPLITTER_ADDRESS, { gasLimit: 500000 });
   await setSplitterTx.wait();
   console.log('✅ BuybackBurner.revenueSplitter set to:', REVENUE_SPLITTER_ADDRESS);
   console.log('');
+
+  // Get implementation addresses for explorer links
+  const rXFImpl = await upgrades.erc1967.getImplementationAddress(rXFAddress);
+  const buybackBurnerImpl = await upgrades.erc1967.getImplementationAddress(buybackBurnerAddress);
+  const explorerBase = 'https://explorer.thetatoken.org';
 
   // Print summary
   console.log('='.repeat(60));
@@ -144,16 +171,28 @@ async function main() {
   console.log('='.repeat(60));
   console.log('🌐 Network:', network.name, '(Chain ID:', chainId + ')');
   console.log('👤 Deployer:', deployer.address);
+  console.log('   Explorer:', `${explorerBase}/address/${deployer.address}`);
   console.log('');
   console.log('📝 Phase 2 Contract Addresses:');
-  console.log('   rXF:                  ', rXFAddress);
-  console.log('   BuybackBurner:        ', buybackBurnerAddress);
+  console.log('   rXF (Proxy):         ', rXFAddress);
+  console.log('   Explorer:            ', `${explorerBase}/address/${rXFAddress}`);
+  console.log('   rXF (Implementation):', rXFImpl);
+  console.log('   Explorer:            ', `${explorerBase}/address/${rXFImpl}`);
+  console.log('');
+  console.log('   BuybackBurner (Proxy):', buybackBurnerAddress);
+  console.log('   Explorer:              ', `${explorerBase}/address/${buybackBurnerAddress}`);
+  console.log('   BuybackBurner (Impl):  ', buybackBurnerImpl);
+  console.log('   Explorer:              ', `${explorerBase}/address/${buybackBurnerImpl}`);
   console.log('');
   console.log('📝 Phase 1 Contract Addresses (for reference):');
   console.log('   XF Token:             ', XF_TOKEN);
-  console.log('   Revenue Token:       ', REVENUE_TOKEN);
-  console.log('   veXF:                ', VEXF_ADDRESS);
-  console.log('   RevenueSplitter:     ', REVENUE_SPLITTER_ADDRESS);
+  console.log('   Explorer:             ', `${explorerBase}/address/${XF_TOKEN}`);
+  console.log('   Revenue Token:        ', REVENUE_TOKEN);
+  console.log('   Explorer:             ', `${explorerBase}/address/${REVENUE_TOKEN}`);
+  console.log('   veXF:                 ', VEXF_ADDRESS);
+  console.log('   Explorer:             ', `${explorerBase}/address/${VEXF_ADDRESS}`);
+  console.log('   RevenueSplitter:      ', REVENUE_SPLITTER_ADDRESS);
+  console.log('   Explorer:             ', `${explorerBase}/address/${REVENUE_SPLITTER_ADDRESS}`);
   console.log('='.repeat(60));
   console.log('');
   console.log('📌 Next Steps:');
@@ -185,12 +224,24 @@ async function main() {
       buybackBurner: buybackBurnerAddress,
     },
     implementationAddresses: {
-      rXF: await upgrades.erc1967.getImplementationAddress(rXFAddress),
-      buybackBurner: await upgrades.erc1967.getImplementationAddress(buybackBurnerAddress),
+      rXF: rXFImpl,
+      buybackBurner: buybackBurnerImpl,
+    },
+    explorerLinks: {
+      deployer: `${explorerBase}/address/${deployer.address}`,
+      rXF: `${explorerBase}/address/${rXFAddress}`,
+      rXFImpl: `${explorerBase}/address/${rXFImpl}`,
+      buybackBurner: `${explorerBase}/address/${buybackBurnerAddress}`,
+      buybackBurnerImpl: `${explorerBase}/address/${buybackBurnerImpl}`,
+      xfToken: `${explorerBase}/address/${XF_TOKEN}`,
+      revenueToken: `${explorerBase}/address/${REVENUE_TOKEN}`,
+      veXF: `${explorerBase}/address/${VEXF_ADDRESS}`,
+      revenueSplitter: `${explorerBase}/address/${REVENUE_SPLITTER_ADDRESS}`,
     },
   };
 
-  const deploymentPath = path.join(__dirname, '..', 'deployments', `phase2-${chainId}.json`);
+  // Save to phase2-mainnet.json for Theta Mainnet
+  const deploymentPath = path.join(__dirname, '..', 'deployments', 'phase2-mainnet.json');
   const deploymentsDir = path.dirname(deploymentPath);
   if (!fs.existsSync(deploymentsDir)) {
     fs.mkdirSync(deploymentsDir, { recursive: true });
