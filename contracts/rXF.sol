@@ -123,6 +123,22 @@ contract rXF is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable 
         bool priorityFlag
     ) external {
         require(minters[msg.sender] || msg.sender == owner(), "rXF: not authorized to mint");
+        _mint(to, amount, redemptionPeriod, priorityFlag);
+    }
+
+    /**
+     * @dev Internal mint function
+     * @param to Address to mint to
+     * @param amount Amount of rXF to mint
+     * @param redemptionPeriod Custom redemption period (0 = default 365 days)
+     * @param priorityFlag Whether recipient has priority flag
+     */
+    function _mint(
+        address to,
+        uint256 amount,
+        uint256 redemptionPeriod,
+        bool priorityFlag
+    ) internal {
         require(to != address(0), "rXF: mint to zero address");
         require(amount > 0, "rXF: amount must be greater than 0");
 
@@ -181,7 +197,7 @@ contract rXF is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable 
         );
 
         for (uint256 i = 0; i < recipients.length; i++) {
-            this.mint(recipients[i], amounts[i], redemptionPeriods[i], priorityFlags[i]);
+            _mint(recipients[i], amounts[i], redemptionPeriods[i], priorityFlags[i]);
         }
     }
 
@@ -191,11 +207,11 @@ contract rXF is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable 
      */
     function redeem(uint256 amount) external nonReentrant {
         require(amount > 0, "rXF: amount must be greater than 0");
-        require(_balances[msg.sender] >= amount, "rXF: insufficient balance");
 
         Receipt storage receipt = receipts[msg.sender];
         require(receipt.amount > 0, "rXF: no receipt");
         require(amount <= receipt.amount, "rXF: amount exceeds receipt");
+        require(_balances[msg.sender] >= amount, "rXF: insufficient balance");
 
         // Check if redemption period has passed
         uint256 redemptionTime = receipt.mintTime + receipt.redemptionPeriod;
