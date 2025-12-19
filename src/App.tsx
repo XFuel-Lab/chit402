@@ -91,9 +91,9 @@ function App() {
           const address = accounts[0]
           
           // Fetch real balance from chain
-          const ethersProvider = new ethers.providers.Web3Provider(provider)
+          const ethersProvider = new ethers.BrowserProvider(provider)
           const balance = await ethersProvider.getBalance(address)
-          const balanceFormatted = parseFloat(ethers.utils.formatEther(balance)).toLocaleString('en-US', {
+          const balanceFormatted = parseFloat(ethers.formatEther(balance)).toLocaleString('en-US', {
             maximumFractionDigits: 2,
             minimumFractionDigits: 2,
           })
@@ -121,9 +121,9 @@ function App() {
   // Refresh wallet balance from chain
   const refreshBalance = async (address: string, provider: any) => {
     try {
-      const ethersProvider = new ethers.providers.Web3Provider(provider)
+      const ethersProvider = new ethers.BrowserProvider(provider)
       const balance = await ethersProvider.getBalance(address)
-      const balanceFormatted = parseFloat(ethers.utils.formatEther(balance)).toLocaleString('en-US', {
+      const balanceFormatted = parseFloat(ethers.formatEther(balance)).toLocaleString('en-US', {
         maximumFractionDigits: 2,
         minimumFractionDigits: 2,
       })
@@ -324,15 +324,15 @@ function App() {
 
     // Real on-chain swap flow on Theta testnet
     try {
-      const provider = new ethers.providers.Web3Provider(
+      const provider = new ethers.BrowserProvider(
         (window as any).theta || (window as any).ethereum,
       )
       const signer = provider.getSigner()
-      const amountWei = ethers.utils.parseEther(amount.toString())
+      const amountWei = ethers.parseEther(amount.toString())
 
       // Check balance one more time before sending
       const balanceWei = await provider.getBalance(wallet.fullAddress)
-      const balanceEth = parseFloat(ethers.utils.formatEther(balanceWei))
+      const balanceEth = parseFloat(ethers.formatEther(balanceWei))
       
       if (balanceEth < minRequired) {
         setStatusMessage(`Insufficient balance. Need ${minRequired.toFixed(2)} TFUEL (including gas).`)
@@ -438,7 +438,7 @@ function App() {
     if (!TIP_POOL_ADDRESS || !wallet.isConnected) return
 
     try {
-      const provider = new ethers.providers.Web3Provider(
+      const provider = new ethers.BrowserProvider(
         (window as any).ethereum || (window as any).theta,
       )
       const tipPoolContract = new ethers.Contract(TIP_POOL_ADDRESS, TIP_POOL_ABI, provider)
@@ -460,7 +460,7 @@ function App() {
 
     setPoolLoading(true)
     try {
-      const provider = new ethers.providers.Web3Provider(
+      const provider = new ethers.BrowserProvider(
         (window as any).ethereum || (window as any).theta,
       )
       const signer = provider.getSigner()
@@ -501,12 +501,12 @@ function App() {
 
     setPoolLoading(true)
     try {
-      const provider = new ethers.providers.Web3Provider(
+      const provider = new ethers.BrowserProvider(
         (window as any).ethereum || (window as any).theta,
       )
       const signer = provider.getSigner()
       const tipPoolContract = new ethers.Contract(TIP_POOL_ADDRESS, TIP_POOL_ABI, signer)
-      const amountWei = ethers.utils.parseEther(amount)
+      const amountWei = ethers.parseEther(amount)
 
       const tx = await tipPoolContract.tipPool(poolId, { value: amountWei })
       setTxHash(tx.hash)
@@ -556,7 +556,7 @@ function App() {
 
     setPoolLoading(true)
     try {
-      const provider = new ethers.providers.Web3Provider(
+      const provider = new ethers.BrowserProvider(
         (window as any).ethereum || (window as any).theta,
       )
       const signer = provider.getSigner()
@@ -651,7 +651,7 @@ function App() {
 
     try {
       // In a full 2026 setup this would be a SIWE-style message validated by a backend.
-      const provider = new ethers.providers.Web3Provider(
+      const provider = new ethers.BrowserProvider(
         (window as any).ethereum || (window as any).theta,
       )
       const signer = provider.getSigner()

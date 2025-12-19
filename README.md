@@ -44,7 +44,9 @@ npm run build
 npm run preview
 ```
 
-## Phase 1 Tokenomics
+## Tokenomics
+
+### Phase 1 Tokenomics
 
 Phase 1 implements the foundation modules for XFUEL tokenomics without modifying existing swap rail, simulation, lottery, or Theta Wallet flows.
 
@@ -181,6 +183,116 @@ npx hardhat run scripts/upgrade-phase1.ts --network theta-testnet
 - ReentrancyGuard on all state-changing functions
 - Access control via Ownable
 - Input validation on all functions
+
+### Phase 2 Tokenomics
+
+Phase 2 extends Phase 1 with revenue-backed receipts and automated buyback/burn mechanisms.
+
+#### Contracts
+
+##### rXF.sol
+Soulbound revenue-backed receipt token that provides voting boosts and redemption rights.
+
+**Features:**
+- Minted by RevenueSplitter (15% revenue slice)
+- Soulbound (non-transferable)
+- 4× veXF voting boost
+- Priority flag for future spin-outs
+- Redeem 1:1 XF after 365 days (or custom 12-month for investors)
+- Admin mint for Early Strategic Believers at TGE
+- UUPS upgradeable
+
+**Key Functions:**
+- `mint(to, amount, redemptionPeriod, hasPriorityFlag)` - Mint rXF tokens (minter only)
+- `redeem(amount)` - Redeem rXF for XF tokens (1:1 ratio after redemption period)
+- `getBoostedVotingPower(account)` - Get veXF power + 4× rXF balance
+- `getVotingBoost(account)` - Get 4× rXF voting boost amount
+- `canRedeem(account)` - Check if user can redeem
+- `adminMintBatch(recipients, amounts, periods, flags)` - Batch mint for TGE
+
+##### BuybackBurner.sol
+Receives 25% revenue slice from RevenueSplitter, swaps for XF tokens, and burns them.
+
+**Features:**
+- Receives revenue from RevenueSplitter
+- Swaps revenue tokens (e.g., USDC) for XF tokens
+- Burns XF tokens to reduce supply
+- Supports manual buyback if automatic swap fails
+- UUPS upgradeable
+
+**Key Functions:**
+- `receiveRevenue(amount)` - Receive revenue from RevenueSplitter
+- `manualBuybackAndBurn(amount)` - Manual buyback (owner only)
+- `recordBuyback(xfAmount)` - Record buyback amount (owner only)
+- `setSwapRouter(router)` - Set swap router for automatic swaps
+
+#### Phase 2 Deployment
+
+Deploy Phase 2 contracts (requires Phase 1 to be deployed first):
+
+```bash
+# Deploy to local network
+npx hardhat run scripts/phase2-deploy.ts
+
+# Deploy to Theta testnet
+npx hardhat run scripts/phase2-deploy.ts --network theta-testnet
+```
+
+**Prerequisites:**
+- Phase 1 contracts must be deployed
+- Phase 1 deployment file at `deployments/phase1-{chainId}.json` OR
+- Environment variables set:
+  - `XF_TOKEN_ADDRESS`
+  - `REVENUE_TOKEN_ADDRESS`
+  - `VEXF_ADDRESS`
+  - `REVENUE_SPLITTER_ADDRESS`
+
+**Optional Environment Variables:**
+- `SWAP_ROUTER_ADDRESS` - Swap router for automatic buyback (optional, manual mode if not set)
+
+**Deployment Output:**
+- Contract addresses saved to `deployments/phase2-{chainId}.json`
+- `.env` file updated with Phase 2 contract addresses
+- RevenueSplitter automatically configured with rXF and BuybackBurner
+
+#### Phase 2 Testing
+
+Run comprehensive test suite:
+
+```bash
+# Run all Phase 2 tests
+npx hardhat test test/rXF.test.cjs
+npx hardhat test test/BuybackBurner.test.cjs
+
+# Run with coverage (target: 95%+)
+npm run test:coverage
+```
+
+#### Phase 2 Integration
+
+Phase 2 contracts integrate seamlessly with Phase 1:
+
+1. **RevenueSplitter Integration**: Automatically mints rXF and sends revenue to BuybackBurner
+2. **Voting Boost**: rXF holders get 4× voting boost on top of veXF power
+3. **Redemption**: rXF can be redeemed 1:1 for XF after 365 days
+4. **Buyback**: 25% of revenue automatically buys and burns XF tokens
+
+**Example Usage:**
+```solidity
+// RevenueSplitter automatically handles Phase 2 integration
+revenueSplitter.splitRevenue(amount);
+// - 15% mints rXF to caller
+// - 25% sent to BuybackBurner for buyback/burn
+// - 50% to veXF yield
+// - 10% to treasury
+
+// Check boosted voting power
+uint256 boosted = rXF.getBoostedVotingPower(user);
+// Returns: veXF.votingPower(user) + (rXF.balanceOf(user) * 4)
+
+// Redeem rXF after 365 days
+rXF.redeem(amount); // 1:1 XF redemption
+```
 
 ## Theta Testnet Integration
 

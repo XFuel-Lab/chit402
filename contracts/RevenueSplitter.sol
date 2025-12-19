@@ -7,6 +7,8 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./veXF.sol";
+import "./rXF.sol";
+import "./BuybackBurner.sol";
 
 /**
  * @title RevenueSplitter
@@ -28,8 +30,8 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     // Contract addresses
     veXF public veXFContract;
     address public treasury;
-    address public buybackBurner;  // Phase 1: placeholder
-    address public rXFContract;    // Phase 1: placeholder
+    BuybackBurner public buybackBurner;  // Phase 2: BuybackBurner contract
+    rXF public rXFContract;              // Phase 2: rXF contract
 
     // Revenue token (e.g., USDC)
     IERC20 public revenueToken;
@@ -129,23 +131,27 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
             totalYieldDistributed += veXFYieldAmount;
         }
 
-        // Phase 1: Buyback/burn placeholder (25%)
-        // In Phase 2, this will call buybackBurner contract
-        if (buybackBurnAmount > 0 && buybackBurner != address(0)) {
-            revenueToken.safeTransfer(buybackBurner, buybackBurnAmount);
+        // Phase 2: Buyback/burn (25%)
+        // Transfer revenue to BuybackBurner and trigger buyback
+        if (buybackBurnAmount > 0 && address(buybackBurner) != address(0)) {
+            revenueToken.safeIncreaseAllowance(address(buybackBurner), buybackBurnAmount);
+            buybackBurner.receiveRevenue(buybackBurnAmount);
             totalBuybackBurned += buybackBurnAmount;
         } else if (buybackBurnAmount > 0) {
-            // Phase 1: Hold in contract until buyback burner is deployed
+            // Phase 1 fallback: Hold in contract until buyback burner is deployed
             totalBuybackBurned += buybackBurnAmount;
         }
 
-        // Phase 1: rXF mint placeholder (15%)
-        // In Phase 2, this will mint rXF tokens
-        if (rXFMintAmount > 0 && rXFContract != address(0)) {
-            revenueToken.safeTransfer(rXFContract, rXFMintAmount);
+        // Phase 2: rXF mint (15%)
+        // Mint rXF tokens 1:1 with revenue amount (same decimals assumed)
+        // Mint to the caller who triggered the revenue split
+        if (rXFMintAmount > 0 && address(rXFContract) != address(0)) {
+            // Mint rXF 1:1 with revenue amount (in same token units)
+            // Using default redemption period (365 days) and no priority flag
+            rXFContract.mint(msg.sender, rXFMintAmount, 0, false);
             totalRXFMinted += rXFMintAmount;
         } else if (rXFMintAmount > 0) {
-            // Phase 1: Hold in contract until rXF is deployed
+            // Phase 1 fallback: Hold in contract until rXF is deployed
             totalRXFMinted += rXFMintAmount;
         }
 
@@ -198,7 +204,8 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
      * @dev Set BuybackBurner address (Phase 2)
      */
     function setBuybackBurner(address _buybackBurner) external onlyOwner {
-        buybackBurner = _buybackBurner;
+        require(_buybackBurner != address(0), "RevenueSplitter: invalid buyback burner");
+        buybackBurner = BuybackBurner(_buybackBurner);
         emit BuybackBurnerSet(_buybackBurner);
     }
 
@@ -206,7 +213,8 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
      * @dev Set rXF contract address (Phase 2)
      */
     function setRXF(address _rXF) external onlyOwner {
-        rXFContract = _rXF;
+        require(_rXF != address(0), "RevenueSplitter: invalid rXF");
+        rXFContract = rXF(_rXF);
         emit RXFSet(_rXF);
     }
 

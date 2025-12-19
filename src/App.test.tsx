@@ -17,13 +17,29 @@ describe('App', () => {
 
   it('shows address and TFUEL balance after mock connection', async () => {
     const user = userEvent.setup()
+    
+    // Mock wallet connection - address that will format to "0x1234...5678"
+    const mockAddress = '0x1234567890123456789012345678901234565678'
+    ;(window as any).theta = {
+      request: jest.fn().mockResolvedValue([mockAddress]),
+    }
+
+    const mockProvider = {
+      getBalance: jest.fn().mockResolvedValue(ethers.parseEther('1234.56')),
+      getSigner: jest.fn().mockReturnValue({
+        signMessage: jest.fn().mockResolvedValue('0xsignature'),
+      }),
+    }
+
+    jest.spyOn(ethers, 'BrowserProvider').mockReturnValue(mockProvider as any)
+    
     render(<App />)
     
     const connectButton = screen.getByRole('button', { name: /connect theta wallet/i })
     await user.click(connectButton)
 
     await waitFor(() => {
-      // Check for connected address
+      // Check for connected address (first 6 chars + ... + last 4 chars)
       const address = screen.getByText(/0x1234\.\.\.5678/i)
       expect(address).toBeInTheDocument()
       
@@ -83,13 +99,13 @@ describe('Allowance timing and state issues', () => {
     }
 
     const mockProvider = {
-      getBalance: jest.fn().mockResolvedValue(ethers.utils.parseEther('1000')),
+      getBalance: jest.fn().mockResolvedValue(ethers.parseEther('1000')),
       getSigner: jest.fn().mockReturnValue({
         signMessage: jest.fn().mockResolvedValue('0xsignature'),
       }),
     }
 
-    jest.spyOn(ethers.providers, 'Web3Provider').mockReturnValue(mockProvider as any)
+    jest.spyOn(ethers, 'BrowserProvider').mockReturnValue(mockProvider as any)
 
     render(<App />)
     
@@ -117,13 +133,13 @@ describe('Allowance timing and state issues', () => {
     }
 
     const mockProvider = {
-      getBalance: jest.fn().mockResolvedValue(ethers.utils.parseEther('1000')),
+      getBalance: jest.fn().mockResolvedValue(ethers.parseEther('1000')),
       getSigner: jest.fn().mockReturnValue({
         signMessage: jest.fn().mockResolvedValue('0xsignature'),
       }),
     }
 
-    jest.spyOn(ethers.providers, 'Web3Provider').mockReturnValue(mockProvider as any)
+    jest.spyOn(ethers, 'BrowserProvider').mockReturnValue(mockProvider as any)
 
     render(<App />)
     
@@ -189,13 +205,13 @@ describe('Allowance timing and state issues', () => {
     }
 
     const mockProvider = {
-      getBalance: jest.fn().mockResolvedValue(ethers.utils.parseEther('1000')),
+      getBalance: jest.fn().mockResolvedValue(ethers.parseEther('1000')),
       getSigner: jest.fn().mockReturnValue({
         signMessage: jest.fn().mockResolvedValue('0xsignature'),
       }),
     }
 
-    jest.spyOn(ethers.providers, 'Web3Provider').mockReturnValue(mockProvider as any)
+    jest.spyOn(ethers, 'BrowserProvider').mockReturnValue(mockProvider as any)
 
     render(<App />)
     
@@ -259,13 +275,13 @@ describe('Allowance timing and state issues', () => {
     }
 
     const mockProvider = {
-      getBalance: jest.fn().mockResolvedValue(ethers.utils.parseEther('1000')),
+      getBalance: jest.fn().mockResolvedValue(ethers.parseEther('1000')),
       getSigner: jest.fn().mockReturnValue({
         signMessage: jest.fn().mockResolvedValue('0xsignature'),
       }),
     }
 
-    jest.spyOn(ethers.providers, 'Web3Provider').mockReturnValue(mockProvider as any)
+    jest.spyOn(ethers, 'BrowserProvider').mockReturnValue(mockProvider as any)
 
     render(<App />)
     
@@ -325,13 +341,13 @@ describe('Allowance timing and state issues', () => {
     }
 
     const mockProvider = {
-      getBalance: jest.fn().mockResolvedValue(ethers.utils.parseEther('1000')),
+      getBalance: jest.fn().mockResolvedValue(ethers.parseEther('1000')),
       getSigner: jest.fn().mockReturnValue({
         signMessage: jest.fn().mockResolvedValue('0xsignature'),
       }),
     }
 
-    jest.spyOn(ethers.providers, 'Web3Provider').mockReturnValue(mockProvider as any)
+    jest.spyOn(ethers, 'BrowserProvider').mockReturnValue(mockProvider as any)
 
     render(<App />)
     
@@ -394,8 +410,8 @@ describe('Allowance timing and state issues', () => {
         balanceCallCount++
         // Simulate balance decreasing as swap happens
         const balances = [
-          ethers.utils.parseEther('1000'), // Initial
-          ethers.utils.parseEther('500'),  // After swap
+          ethers.parseEther('1000'), // Initial
+          ethers.parseEther('500'),  // After swap
         ]
         return Promise.resolve(balances[Math.min(balanceCallCount - 1, balances.length - 1)])
       }),
@@ -404,7 +420,7 @@ describe('Allowance timing and state issues', () => {
       }),
     }
 
-    jest.spyOn(ethers.providers, 'Web3Provider').mockReturnValue(mockProvider as any)
+    jest.spyOn(ethers, 'BrowserProvider').mockReturnValue(mockProvider as any)
 
     render(<App />)
     
