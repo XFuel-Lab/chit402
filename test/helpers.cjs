@@ -28,30 +28,24 @@ async function getAddress(signerOrContract) {
 }
 
 /**
- * Parse ether value (works with both ethers v5 and v6)
+ * Parse ether value (ethers v6)
  */
 function parseEther(value) {
-  if (typeof ethers.parseEther === 'function') {
-    return ethers.parseEther(value)
-  }
-  return ethers.utils.parseEther(value)
+  return ethers.parseEther(value)
 }
 
 /**
- * Parse units (works with both ethers v5 and v6)
+ * Parse units (ethers v6)
  */
 function parseUnits(value, decimals) {
-  if (typeof ethers.parseUnits === 'function') {
-    return ethers.parseUnits(value, decimals)
-  }
-  return ethers.utils.parseUnits(value, decimals)
+  return ethers.parseUnits(value, decimals)
 }
 
 /**
- * Get zero address (works with both ethers v5 and v6)
+ * Get zero address (ethers v6)
  */
 function getZeroAddress() {
-  return ethers.ZeroAddress || '0x0000000000000000000000000000000000000000'
+  return ethers.ZeroAddress
 }
 
 module.exports = {

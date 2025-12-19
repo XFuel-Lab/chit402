@@ -1,5 +1,5 @@
 const hre = require('hardhat');
-const { upgrades } = require('@openzeppelin/hardhat-upgrades');
+const { upgrades } = hre;
 const fs = require('fs');
 const path = require('path');
 
@@ -16,11 +16,12 @@ async function main() {
   }
 
   const [deployer] = signers;
-  console.log('📝 Deploying contracts with account:', deployer.address);
-  const balance = await deployer.getBalance();
-  console.log('💰 Account balance:', hre.ethers.utils.formatEther(balance), 'TFUEL\n');
+  const deployerAddress = await deployer.getAddress();
+  console.log('📝 Deploying contracts with account:', deployerAddress);
+  const balance = await hre.ethers.provider.getBalance(deployerAddress);
+  console.log('💰 Account balance:', hre.ethers.formatEther(balance), 'TFUEL\n');
 
-  if (balance.lt(hre.ethers.utils.parseEther('0.1'))) {
+  if (balance < hre.ethers.parseEther('0.1')) {
     console.warn('⚠️  Warning: Low balance. You may need more TFUEL for deployment.\n');
   }
 
@@ -28,7 +29,7 @@ async function main() {
   const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
   const XF_TOKEN = process.env.XF_TOKEN_ADDRESS || ZERO_ADDRESS;
   const REVENUE_TOKEN = process.env.REVENUE_TOKEN_ADDRESS || ZERO_ADDRESS; // USDC
-  const TREASURY = process.env.TREASURY_ADDRESS || (deployer.address || await deployer.getAddress()); // Use deployer as default
+  const TREASURY = process.env.TREASURY_ADDRESS || deployerAddress; // Use deployer as default
 
   console.log('📋 Configuration:');
   console.log('   XF Token:', XF_TOKEN || '(will deploy mock)');
@@ -44,22 +45,28 @@ async function main() {
     console.log('📦 Deploying Mock XF Token...');
     const MockERC20 = await hre.ethers.getContractFactory('MockERC20');
     const xfToken = await MockERC20.deploy('XFuel Token', 'XF', 18);
-    await xfToken.deployed();
-    xfTokenAddress = xfToken.address;
+    await xfToken.waitForDeployment();
+    xfTokenAddress = await xfToken.getAddress();
+    const xfTokenTx = xfToken.deploymentTransaction();
     console.log('✅ Mock XF Token deployed to:', xfTokenAddress);
-    console.log('   Transaction hash:', xfToken.deployTransaction.hash);
-    console.log('   Block number:', xfToken.deployTransaction.blockNumber || 'pending\n');
+    if (xfTokenTx) {
+      console.log('   Transaction hash:', xfTokenTx.hash);
+      console.log('   Block number:', xfTokenTx.blockNumber || 'pending\n');
+    }
   }
 
   if (REVENUE_TOKEN === ZERO_ADDRESS) {
     console.log('📦 Deploying Mock Revenue Token (USDC)...');
     const MockERC20 = await hre.ethers.getContractFactory('MockERC20');
     const revenueToken = await MockERC20.deploy('USD Coin', 'USDC', 6);
-    await revenueToken.deployed();
-    revenueTokenAddress = revenueToken.address;
+    await revenueToken.waitForDeployment();
+    revenueTokenAddress = await revenueToken.getAddress();
+    const revenueTokenTx = revenueToken.deploymentTransaction();
     console.log('✅ Mock Revenue Token deployed to:', revenueTokenAddress);
-    console.log('   Transaction hash:', revenueToken.deployTransaction.hash);
-    console.log('   Block number:', revenueToken.deployTransaction.blockNumber || 'pending\n');
+    if (revenueTokenTx) {
+      console.log('   Transaction hash:', revenueTokenTx.hash);
+      console.log('   Block number:', revenueTokenTx.blockNumber || 'pending\n');
+    }
   }
 
   // Deploy veXF
@@ -67,39 +74,51 @@ async function main() {
   const VeXF = await hre.ethers.getContractFactory('veXF');
   const veXF = await upgrades.deployProxy(
     VeXF,
-    [xfTokenAddress, deployer.address],
+    [xfTokenAddress, deployerAddress],
     { initializer: 'initialize' }
   );
-  await veXF.deployed();
-  console.log('✅ veXF deployed to:', veXF.address);
-  console.log('   Transaction hash:', veXF.deployTransaction.hash);
-  console.log('   Block number:', veXF.deployTransaction.blockNumber || 'pending\n');
+  await veXF.waitForDeployment();
+  const veXFAddress = await veXF.getAddress();
+  const veXFTx = veXF.deploymentTransaction();
+  console.log('✅ veXF deployed to:', veXFAddress);
+  if (veXFTx) {
+    console.log('   Transaction hash:', veXFTx.hash);
+    console.log('   Block number:', veXFTx.blockNumber || 'pending\n');
+  }
 
   // Deploy RevenueSplitter
   console.log('📦 Deploying RevenueSplitter...');
   const RevenueSplitter = await hre.ethers.getContractFactory('RevenueSplitter');
   const revenueSplitter = await upgrades.deployProxy(
     RevenueSplitter,
-    [revenueTokenAddress, veXF.address, TREASURY, deployer.address],
+    [revenueTokenAddress, veXFAddress, TREASURY, deployerAddress],
     { initializer: 'initialize' }
   );
-  await revenueSplitter.deployed();
-  console.log('✅ RevenueSplitter deployed to:', revenueSplitter.address);
-  console.log('   Transaction hash:', revenueSplitter.deployTransaction.hash);
-  console.log('   Block number:', revenueSplitter.deployTransaction.blockNumber || 'pending\n');
+  await revenueSplitter.waitForDeployment();
+  const revenueSplitterAddress = await revenueSplitter.getAddress();
+  const revenueSplitterTx = revenueSplitter.deploymentTransaction();
+  console.log('✅ RevenueSplitter deployed to:', revenueSplitterAddress);
+  if (revenueSplitterTx) {
+    console.log('   Transaction hash:', revenueSplitterTx.hash);
+    console.log('   Block number:', revenueSplitterTx.blockNumber || 'pending\n');
+  }
 
   // Deploy CyberneticFeeSwitch
   console.log('📦 Deploying CyberneticFeeSwitch...');
   const CyberneticFeeSwitch = await hre.ethers.getContractFactory('CyberneticFeeSwitch');
   const feeSwitch = await upgrades.deployProxy(
     CyberneticFeeSwitch,
-    [veXF.address, deployer.address],
+    [veXFAddress, deployerAddress],
     { initializer: 'initialize' }
   );
-  await feeSwitch.deployed();
-  console.log('✅ CyberneticFeeSwitch deployed to:', feeSwitch.address);
-  console.log('   Transaction hash:', feeSwitch.deployTransaction.hash);
-  console.log('   Block number:', feeSwitch.deployTransaction.blockNumber || 'pending\n');
+  await feeSwitch.waitForDeployment();
+  const feeSwitchAddress = await feeSwitch.getAddress();
+  const feeSwitchTx = feeSwitch.deploymentTransaction();
+  console.log('✅ CyberneticFeeSwitch deployed to:', feeSwitchAddress);
+  if (feeSwitchTx) {
+    console.log('   Transaction hash:', feeSwitchTx.hash);
+    console.log('   Block number:', feeSwitchTx.blockNumber || 'pending\n');
+  }
 
   // Print summary
   console.log('='.repeat(60));
@@ -107,15 +126,15 @@ async function main() {
   console.log('='.repeat(60));
   const network = await hre.ethers.provider.getNetwork();
   console.log('🌐 Network:', network.name, '(Chain ID:', network.chainId.toString() + ')');
-  console.log('👤 Deployer:', deployer.address);
+  console.log('👤 Deployer:', deployerAddress);
   console.log('');
   console.log('📝 Contract Addresses:');
   console.log('   XF Token:            ', xfTokenAddress);
   console.log('   Revenue Token:       ', revenueTokenAddress);
   console.log('   Treasury:            ', TREASURY);
-  console.log('   veXF:                ', veXF.address);
-  console.log('   RevenueSplitter:     ', revenueSplitter.address);
-  console.log('   CyberneticFeeSwitch:  ', feeSwitch.address);
+  console.log('   veXF:                ', veXFAddress);
+  console.log('   RevenueSplitter:     ', revenueSplitterAddress);
+  console.log('   CyberneticFeeSwitch:  ', feeSwitchAddress);
   console.log('='.repeat(60));
   console.log('');
   console.log('📌 Next Steps:');
@@ -131,24 +150,24 @@ async function main() {
   const deploymentInfo = {
     network: network.name,
     chainId: network.chainId.toString(),
-    deployer: deployer.address,
+    deployer: deployerAddress,
     timestamp: new Date().toISOString(),
     contracts: {
       xfToken: xfTokenAddress,
       revenueToken: revenueTokenAddress,
       treasury: TREASURY,
-      veXF: veXF.address,
-      revenueSplitter: revenueSplitter.address,
-      feeSwitch: feeSwitch.address,
+      veXF: veXFAddress,
+      revenueSplitter: revenueSplitterAddress,
+      feeSwitch: feeSwitchAddress,
     },
   };
 
   // Get implementation addresses
   try {
     deploymentInfo.implementationAddresses = {
-      veXF: await upgrades.erc1967.getImplementationAddress(veXF.address),
-      revenueSplitter: await upgrades.erc1967.getImplementationAddress(revenueSplitter.address),
-      feeSwitch: await upgrades.erc1967.getImplementationAddress(feeSwitch.address),
+      veXF: await upgrades.erc1967.getImplementationAddress(veXFAddress),
+      revenueSplitter: await upgrades.erc1967.getImplementationAddress(revenueSplitterAddress),
+      feeSwitch: await upgrades.erc1967.getImplementationAddress(feeSwitchAddress),
     };
   } catch (error) {
     console.warn('⚠️  Could not fetch implementation addresses:', error.message);
@@ -180,9 +199,9 @@ async function main() {
     }
   };
 
-  updateEnvVar('VITE_VEXF_ADDRESS', veXF.address);
-  updateEnvVar('VITE_REVENUE_SPLITTER_ADDRESS', revenueSplitter.address);
-  updateEnvVar('VITE_FEE_SWITCH_ADDRESS', feeSwitch.address);
+  updateEnvVar('VITE_VEXF_ADDRESS', veXFAddress);
+  updateEnvVar('VITE_REVENUE_SPLITTER_ADDRESS', revenueSplitterAddress);
+  updateEnvVar('VITE_FEE_SWITCH_ADDRESS', feeSwitchAddress);
   if (XF_TOKEN === ZERO_ADDRESS) {
     updateEnvVar('XF_TOKEN_ADDRESS', xfTokenAddress);
   }

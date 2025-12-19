@@ -1,5 +1,5 @@
 require('@nomicfoundation/hardhat-toolbox')
-require('@nomiclabs/hardhat-ethers')
+require('@nomicfoundation/hardhat-ethers')
 require('@openzeppelin/hardhat-upgrades')
 require('solidity-coverage')
 require('dotenv').config()
