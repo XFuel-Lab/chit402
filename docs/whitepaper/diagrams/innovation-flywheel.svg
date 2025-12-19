@@ -1,0 +1,152 @@
+<svg width="1000" height="1000" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Grid pattern -->
+    <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
+      <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#00ffff" stroke-width="1" opacity="0.1"/>
+    </pattern>
+    
+    <!-- Neon glow filters -->
+    <filter id="neon-pink" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <filter id="neon-cyan" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <filter id="neon-green" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <filter id="neon-purple" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <marker id="arrow-cyan" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#00ffff"/>
+    </marker>
+    <marker id="arrow-pink" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#ff00ff"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#00ff41"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#b026ff"/>
+    </marker>
+    
+    <!-- Glassmorphism gradient -->
+    <linearGradient id="glass-bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:rgba(255,255,255,0.05);stop-opacity:1" />
+      <stop offset="100%" style="stop-color:rgba(255,255,255,0.01);stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="1000" height="1000" fill="#0a0a0a"/>
+  <rect width="1000" height="1000" fill="url(#grid)"/>
+  
+  <!-- Title -->
+  <text x="500" y="50" font-family="Orbitron, sans-serif" font-size="36" font-weight="bold" 
+        fill="#00ff41" text-anchor="middle" filter="url(#neon-green)">
+    Perpetual Pumping Flywheel
+  </text>
+  
+  <!-- Circular flow - center point (reference circle) -->
+  <circle cx="500" cy="500" r="300" fill="none" stroke="rgba(0, 255, 255, 0.1)" stroke-width="2" stroke-dasharray="5,5"/>
+  
+  <!-- Circular flow arrows (drawn first, behind boxes) -->
+  <!-- Revenue → Treasury (0° to 90°) -->
+  <path d="M 800 500 A 300 300 0 0 1 500 200" 
+        fill="none" stroke="#00ffff" stroke-width="5" 
+        filter="url(#neon-cyan)" marker-end="url(#arrow-cyan)"/>
+  
+  <!-- Treasury → Vaults (90° to 180°) -->
+  <path d="M 500 200 A 300 300 0 0 1 200 500" 
+        fill="none" stroke="#ff00ff" stroke-width="5" 
+        filter="url(#neon-pink)" marker-end="url(#arrow-pink)"/>
+  
+  <!-- Vaults → Tools/Spin-outs (180° to 225°) -->
+  <path d="M 200 500 A 300 300 0 0 1 300 800" 
+        fill="none" stroke="#00ff41" stroke-width="5" 
+        filter="url(#neon-green)" marker-end="url(#arrow-green)"/>
+  
+  <!-- Tools/Spin-outs → TVL Growth (225° to 315°) -->
+  <path d="M 300 800 A 300 300 0 0 1 700 800" 
+        fill="none" stroke="#b026ff" stroke-width="5" 
+        filter="url(#neon-purple)" marker-end="url(#arrow-purple)"/>
+  
+  <!-- TVL Growth → Revenue (315° to 360°/0°) -->
+  <path d="M 700 800 A 300 300 0 0 1 800 500" 
+        fill="none" stroke="#00ffff" stroke-width="5" 
+        filter="url(#neon-cyan)" marker-end="url(#arrow-cyan)"/>
+  
+  <!-- Node boxes (drawn after arrows, so they appear on top) -->
+  <!-- Revenue (right, 0°) -->
+  <g id="revenue-box">
+    <rect x="720" y="460" width="160" height="80" rx="12" 
+          fill="url(#glass-bg)" stroke="#00ffff" stroke-width="3" 
+          filter="url(#neon-cyan)" opacity="0.9"/>
+    <text x="800" y="505" font-family="Orbitron, sans-serif" font-size="18" font-weight="bold" 
+          fill="#00ffff" text-anchor="middle" filter="url(#neon-cyan)">Revenue</text>
+  </g>
+  
+  <!-- Treasury (top, 90°) -->
+  <g id="treasury-box">
+    <rect x="420" y="140" width="160" height="80" rx="12" 
+          fill="url(#glass-bg)" stroke="#ff00ff" stroke-width="3" 
+          filter="url(#neon-pink)" opacity="0.9"/>
+    <text x="500" y="185" font-family="Orbitron, sans-serif" font-size="18" font-weight="bold" 
+          fill="#ff00ff" text-anchor="middle" filter="url(#neon-pink)">Treasury</text>
+  </g>
+  
+  <!-- Vaults (left, 180°) -->
+  <g id="vaults-box">
+    <rect x="120" y="460" width="160" height="80" rx="12" 
+          fill="url(#glass-bg)" stroke="#00ff41" stroke-width="3" 
+          filter="url(#neon-green)" opacity="0.9"/>
+    <text x="200" y="505" font-family="Orbitron, sans-serif" font-size="18" font-weight="bold" 
+          fill="#00ff41" text-anchor="middle" filter="url(#neon-green)">Vaults</text>
+  </g>
+  
+  <!-- Tools/Spin-outs (bottom-left, 225°) -->
+  <g id="spin-outs-box">
+    <rect x="220" y="760" width="160" height="80" rx="12" 
+          fill="url(#glass-bg)" stroke="#b026ff" stroke-width="3" 
+          filter="url(#neon-purple)" opacity="0.9"/>
+    <text x="300" y="805" font-family="Orbitron, sans-serif" font-size="18" font-weight="bold" 
+          fill="#b026ff" text-anchor="middle" filter="url(#neon-purple)">Tools &amp;</text>
+    <text x="300" y="825" font-family="Orbitron, sans-serif" font-size="18" font-weight="bold" 
+          fill="#b026ff" text-anchor="middle" filter="url(#neon-purple)">Spin-outs</text>
+  </g>
+  
+  <!-- TVL Growth (bottom-right, 315°) -->
+  <g id="tvl-growth-box">
+    <rect x="620" y="760" width="160" height="80" rx="12" 
+          fill="url(#glass-bg)" stroke="#00ffff" stroke-width="3" 
+          filter="url(#neon-cyan)" opacity="0.9"/>
+    <text x="700" y="805" font-family="Orbitron, sans-serif" font-size="18" font-weight="bold" 
+          fill="#00ffff" text-anchor="middle" filter="url(#neon-cyan)">TVL Growth</text>
+  </g>
+  
+  <!-- Center hub (drawn last, on top of everything) -->
+  <circle cx="500" cy="500" r="40" fill="url(#glass-bg)" stroke="#00ff41" stroke-width="3" filter="url(#neon-green)"/>
+  <text x="500" y="510" font-family="Orbitron, sans-serif" font-size="16" font-weight="bold" 
+        fill="#00ff41" text-anchor="middle" filter="url(#neon-green)">XFUEL</text>
+</svg>
