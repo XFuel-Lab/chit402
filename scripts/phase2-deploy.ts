@@ -1,6 +1,11 @@
-import { ethers, upgrades } from 'hardhat';
+import hre from 'hardhat';
+const { ethers, upgrades } = hre;
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 async function main() {
   console.log('🚀 Starting Phase 2 XFUEL Tokenomics deployment...\n');
@@ -15,12 +20,12 @@ async function main() {
 
   const [deployer] = signers;
   console.log('📝 Deploying contracts with account:', deployer.address);
-  const balance = await deployer.getBalance();
-  const formatEther = ethers.utils?.formatEther || ((b: any) => ethers.formatEther(b));
-  const parseEther = ethers.utils?.parseEther || ((v: string) => ethers.parseEther(v));
+  const balance = await ethers.provider.getBalance(deployer.address);
+  const formatEther = ethers.formatEther;
+  const parseEther = ethers.parseEther;
   console.log('💰 Account balance:', formatEther(balance), 'TFUEL\n');
 
-  if (balance.lt(parseEther('0.1'))) {
+  if (balance < parseEther('0.1')) {
     console.warn('⚠️  Warning: Low balance. You may need more TFUEL for deployment.\n');
   }
 
@@ -49,32 +54,32 @@ async function main() {
   const XF_TOKEN = 
     phase1Deployment?.contracts?.xfToken || 
     process.env.XF_TOKEN_ADDRESS || 
-    ethers.constants.AddressZero;
+    ethers.ZeroAddress;
   const REVENUE_TOKEN = 
     phase1Deployment?.contracts?.revenueToken || 
     process.env.REVENUE_TOKEN_ADDRESS || 
-    ethers.constants.AddressZero;
+    ethers.ZeroAddress;
   const VEXF_ADDRESS = 
     phase1Deployment?.contracts?.veXF || 
     process.env.VEXF_ADDRESS || 
-    ethers.constants.AddressZero;
+    ethers.ZeroAddress;
   const REVENUE_SPLITTER_ADDRESS = 
     phase1Deployment?.contracts?.revenueSplitter || 
     process.env.REVENUE_SPLITTER_ADDRESS || 
-    ethers.constants.AddressZero;
-  const SWAP_ROUTER = process.env.SWAP_ROUTER_ADDRESS || ethers.constants.AddressZero; // Optional
+    ethers.ZeroAddress;
+  const SWAP_ROUTER = process.env.SWAP_ROUTER_ADDRESS || ethers.ZeroAddress; // Optional
 
   // Validate Phase 1 addresses
-  if (XF_TOKEN === ethers.constants.AddressZero) {
+  if (XF_TOKEN === ethers.ZeroAddress) {
     throw new Error('❌ XF_TOKEN_ADDRESS is required. Please set it in .env or deploy Phase 1 first.');
   }
-  if (REVENUE_TOKEN === ethers.constants.AddressZero) {
+  if (REVENUE_TOKEN === ethers.ZeroAddress) {
     throw new Error('❌ REVENUE_TOKEN_ADDRESS is required. Please set it in .env or deploy Phase 1 first.');
   }
-  if (VEXF_ADDRESS === ethers.constants.AddressZero) {
+  if (VEXF_ADDRESS === ethers.ZeroAddress) {
     throw new Error('❌ VEXF_ADDRESS is required. Please set it in .env or deploy Phase 1 first.');
   }
-  if (REVENUE_SPLITTER_ADDRESS === ethers.constants.AddressZero) {
+  if (REVENUE_SPLITTER_ADDRESS === ethers.ZeroAddress) {
     throw new Error('❌ REVENUE_SPLITTER_ADDRESS is required. Please set it in .env or deploy Phase 1 first.');
   }
 
@@ -94,10 +99,10 @@ async function main() {
     [XF_TOKEN, VEXF_ADDRESS, REVENUE_SPLITTER_ADDRESS, deployer.address],
     { initializer: 'initialize' }
   );
-  await rXF.deployed();
-  console.log('✅ rXF deployed to:', rXF.address);
-  console.log('   Transaction hash:', rXF.deployTransaction.hash);
-  console.log('   Block number:', rXF.deployTransaction.blockNumber || 'pending\n');
+  await rXF.waitForDeployment();
+  const rXFAddress = await rXF.getAddress();
+  console.log('✅ rXF deployed to:', rXFAddress);
+  console.log('');
 
   // Deploy BuybackBurner
   console.log('📦 Deploying BuybackBurner...');
@@ -107,10 +112,10 @@ async function main() {
     [REVENUE_TOKEN, XF_TOKEN, SWAP_ROUTER, deployer.address],
     { initializer: 'initialize' }
   );
-  await buybackBurner.deployed();
-  console.log('✅ BuybackBurner deployed to:', buybackBurner.address);
-  console.log('   Transaction hash:', buybackBurner.deployTransaction.hash);
-  console.log('   Block number:', buybackBurner.deployTransaction.blockNumber || 'pending\n');
+  await buybackBurner.waitForDeployment();
+  const buybackBurnerAddress = await buybackBurner.getAddress();
+  console.log('✅ BuybackBurner deployed to:', buybackBurnerAddress);
+  console.log('');
 
   // Connect to existing RevenueSplitter and update addresses
   console.log('🔗 Configuring RevenueSplitter with Phase 2 contracts...');
@@ -118,14 +123,14 @@ async function main() {
   const revenueSplitter = RevenueSplitter.attach(REVENUE_SPLITTER_ADDRESS);
 
   // Set rXF address
-  const setRXFTx = await revenueSplitter.setRXF(rXF.address);
+  const setRXFTx = await revenueSplitter.setRXF(rXFAddress);
   await setRXFTx.wait();
-  console.log('✅ RevenueSplitter.rXFContract set to:', rXF.address);
+  console.log('✅ RevenueSplitter.rXFContract set to:', rXFAddress);
 
   // Set BuybackBurner address
-  const setBuybackTx = await revenueSplitter.setBuybackBurner(buybackBurner.address);
+  const setBuybackTx = await revenueSplitter.setBuybackBurner(buybackBurnerAddress);
   await setBuybackTx.wait();
-  console.log('✅ RevenueSplitter.buybackBurner set to:', buybackBurner.address);
+  console.log('✅ RevenueSplitter.buybackBurner set to:', buybackBurnerAddress);
 
   // Set RevenueSplitter address in BuybackBurner
   const setSplitterTx = await buybackBurner.setRevenueSplitter(REVENUE_SPLITTER_ADDRESS);
@@ -141,8 +146,8 @@ async function main() {
   console.log('👤 Deployer:', deployer.address);
   console.log('');
   console.log('📝 Phase 2 Contract Addresses:');
-  console.log('   rXF:                  ', rXF.address);
-  console.log('   BuybackBurner:        ', buybackBurner.address);
+  console.log('   rXF:                  ', rXFAddress);
+  console.log('   BuybackBurner:        ', buybackBurnerAddress);
   console.log('');
   console.log('📝 Phase 1 Contract Addresses (for reference):');
   console.log('   XF Token:             ', XF_TOKEN);
@@ -176,12 +181,12 @@ async function main() {
       },
     },
     contracts: {
-      rXF: rXF.address,
-      buybackBurner: buybackBurner.address,
+      rXF: rXFAddress,
+      buybackBurner: buybackBurnerAddress,
     },
     implementationAddresses: {
-      rXF: await upgrades.erc1967.getImplementationAddress(rXF.address),
-      buybackBurner: await upgrades.erc1967.getImplementationAddress(buybackBurner.address),
+      rXF: await upgrades.erc1967.getImplementationAddress(rXFAddress),
+      buybackBurner: await upgrades.erc1967.getImplementationAddress(buybackBurnerAddress),
     },
   };
 
@@ -211,9 +216,9 @@ async function main() {
     }
   };
 
-  updateEnvVar('VITE_RXF_ADDRESS', rXF.address);
-  updateEnvVar('VITE_BUYBACK_BURNER_ADDRESS', buybackBurner.address);
-  if (SWAP_ROUTER !== ethers.constants.AddressZero) {
+  updateEnvVar('VITE_RXF_ADDRESS', rXFAddress);
+  updateEnvVar('VITE_BUYBACK_BURNER_ADDRESS', buybackBurnerAddress);
+  if (SWAP_ROUTER !== ethers.ZeroAddress) {
     updateEnvVar('SWAP_ROUTER_ADDRESS', SWAP_ROUTER);
   }
 
