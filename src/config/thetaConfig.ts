@@ -9,12 +9,22 @@ export const THETA_TESTNET = {
   faucetUrl: 'https://faucet.testnet.theta.org/request',
 }
 
+// Theta mainnet configuration
+export const THETA_MAINNET = {
+  chainId: 361,
+  chainIdHex: '0x169',
+  name: 'Theta Mainnet',
+  rpcUrl: 'https://eth-rpc-api.thetatoken.org/rpc',
+  explorerUrl: 'https://explorer.thetatoken.org',
+  currencySymbol: 'TFUEL',
+}
+
 // Router contract address - set via VITE_ROUTER_ADDRESS environment variable
 // For Theta testnet, this should be the deployed XFUELRouter contract address
-export const ROUTER_ADDRESS = process.env.VITE_ROUTER_ADDRESS || ''
+export const ROUTER_ADDRESS = import.meta.env.VITE_ROUTER_ADDRESS || ''
 
 // Tip Pool contract address - will be updated when deployed
-export const TIP_POOL_ADDRESS = process.env.VITE_TIP_POOL_ADDRESS || ''
+export const TIP_POOL_ADDRESS = import.meta.env.VITE_TIP_POOL_ADDRESS || ''
 
 // ERC20 ABI for token approvals
 export const ERC20_ABI = [
