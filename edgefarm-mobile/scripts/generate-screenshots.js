@@ -153,3 +153,4 @@ fs.writeFileSync(
 console.log('\n✅ Helper script created: scripts/simulator-screenshots.sh')
 console.log('   (Requires Xcode and iOS Simulator)\n')
 
+

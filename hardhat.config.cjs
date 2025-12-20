@@ -24,6 +24,14 @@ module.exports = {
       chainId: 365,
       accounts: process.env.THETA_TESTNET_PRIVATE_KEY ? [process.env.THETA_TESTNET_PRIVATE_KEY] : [],
     },
+    'theta-mainnet': {
+      url: 'https://eth-rpc-api.thetatoken.org/rpc',
+      chainId: 361,
+      accounts: process.env.THETA_MAINNET_PRIVATE_KEY ? [process.env.THETA_MAINNET_PRIVATE_KEY] : [],
+      gasPrice: 4000000000000, // 4000 Gwei (minimum required by Theta mainnet)
+      timeout: 120000,
+      httpHeaders: {},
+    },
   },
   paths: {
     sources: './contracts',

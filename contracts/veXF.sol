@@ -47,6 +47,12 @@ contract veXF is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable
     mapping(address => uint256) public yieldEarned;
     uint256 public totalYieldDistributed;
 
+    // Permanent multipliers (from ThetaPulseProof, in basis points, default 10000 = 1x)
+    mapping(address => uint256) public permanentMultipliers;
+    
+    // Authorized address that can set permanent multipliers (ThetaPulseProof contract)
+    address public multiplierSetter;
+
     // Events
     event LockCreated(
         address indexed user,
@@ -71,6 +77,13 @@ contract veXF is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable
     event YieldDistributed(
         address indexed yieldToken,
         uint256 amount
+    );
+    event PermanentMultiplierSet(
+        address indexed user,
+        uint256 multiplier
+    );
+    event MultiplierSetterSet(
+        address indexed setter
     );
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -210,6 +223,36 @@ contract veXF is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable
     }
 
     /**
+     * @dev Set permanent multiplier for a user (called by ThetaPulseProof)
+     * @param user Address of the user
+     * @param multiplier Multiplier in basis points (10000 = 1x, 15000 = 1.5x, etc.)
+     */
+    function setPermanentMultiplier(address user, uint256 multiplier) external {
+        require(msg.sender == multiplierSetter, "veXF: unauthorized");
+        require(user != address(0), "veXF: invalid user");
+        require(multiplier >= 10000, "veXF: multiplier must be >= 1x");
+        
+        permanentMultipliers[user] = multiplier;
+        
+        // Update balance if user has a lock
+        if (locks[user].amount > 0) {
+            _updateBalance(user);
+        }
+        
+        emit PermanentMultiplierSet(user, multiplier);
+    }
+
+    /**
+     * @dev Set the authorized address that can set permanent multipliers
+     * @param _setter Address of the authorized setter (ThetaPulseProof contract)
+     */
+    function setMultiplierSetter(address _setter) external onlyOwner {
+        require(_setter != address(0), "veXF: invalid setter");
+        multiplierSetter = _setter;
+        emit MultiplierSetterSet(_setter);
+    }
+
+    /**
      * @dev Distribute yield to veXF holders (called by RevenueSplitter)
      * @param yieldToken Address of yield token (e.g., USDC)
      * @param amount Amount of yield tokens to distribute
@@ -285,10 +328,19 @@ contract veXF is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable
         // Calculate multiplier based on lock duration (linear from 1x to 4x)
         // multiplier = 1 + (3 * timeRemaining / lockDuration)
         // This gives 4x at max lock, decaying to 1x at unlock
-        uint256 multiplier = 1e18 + (3e18 * timeRemaining) / lockDuration;
+        uint256 timeBasedMultiplier = 1e18 + (3e18 * timeRemaining) / lockDuration;
 
-        // veXF = XF * multiplier / 1e18
-        return (userLock.amount * multiplier) / 1e18;
+        // Apply permanent multiplier from ThetaPulseProof (in basis points, default 10000 = 1x)
+        uint256 permanentMultiplier = permanentMultipliers[account];
+        if (permanentMultiplier == 0) {
+            permanentMultiplier = 10000; // Default 1x if not set
+        }
+        
+        // Combine multipliers: timeBasedMultiplier (in 1e18) * permanentMultiplier (in basis points) / 10000
+        uint256 combinedMultiplier = (timeBasedMultiplier * permanentMultiplier) / 10000;
+
+        // veXF = XF * combinedMultiplier / 1e18
+        return (userLock.amount * combinedMultiplier) / 1e18;
     }
 
     /**

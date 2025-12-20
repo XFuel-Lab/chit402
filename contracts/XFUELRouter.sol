@@ -8,10 +8,12 @@ import "./TreasuryILBackstop.sol";
 import "./Ownable.sol";
 import "./ReentrancyGuard.sol";
 import "./SafeERC20.sol";
+import "./IFeeAdapter.sol";
 
 /**
  * @title XFUELRouter
  * @dev Router with fee splitting: 60% buyback-burn XF, 25% USDC yield to veXF, 15% treasury
+ * Integrated with IFeeAdapter for dynamic fee control via CyberneticFeeSwitch
  */
 contract XFUELRouter is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -22,6 +24,7 @@ contract XFUELRouter is Ownable, ReentrancyGuard {
     IERC20 public usdcToken; // USDC for veXF yield
     address public treasury;
     address public veXFContract; // veXF contract address
+    IFeeAdapter public feeAdapter; // Fee adapter for dynamic fee control
     
     // Fee split: 60% buyback-burn, 25% veXF yield, 15% treasury
     uint256 public constant BUYBACK_BPS = 6000; // 60%
@@ -39,6 +42,14 @@ contract XFUELRouter is Ownable, ReentrancyGuard {
     );
     
     event XFuelBurned(address indexed burner, uint256 amount);
+    
+    // Base fee in basis points (e.g., 30 = 0.3%)
+    uint256 public baseFeeBps;
+    
+    // Events
+    event FeeAdapterSet(address indexed feeAdapter);
+    event BaseFeeSet(uint256 oldBaseFee, uint256 newBaseFee);
+    event SwapFeeApplied(uint256 amountIn, uint256 feeAmount, uint256 effectiveFeeBps);
     
     constructor(
         address _factory,
@@ -61,6 +72,7 @@ contract XFUELRouter is Ownable, ReentrancyGuard {
         usdcToken = IERC20(_usdcToken);
         treasury = _treasury;
         veXFContract = _veXFContract;
+        baseFeeBps = 30; // Default 0.3% base fee
     }
     
     /**
@@ -136,7 +148,7 @@ contract XFUELRouter is Ownable, ReentrancyGuard {
     }
     
     /**
-     * @dev Swap tokens through the pool
+     * @dev Swap tokens through the pool with dynamic fee from IFeeAdapter
      * @param pool Pool address
      * @param zeroForOne Direction of swap
      * @param amountSpecified Amount to swap
@@ -159,14 +171,41 @@ contract XFUELRouter is Ownable, ReentrancyGuard {
         IERC20 inputToken = zeroForOne ? poolContract.token0() : poolContract.token1();
         uint256 amountIn = uint256(amountSpecified);
         
+        // Calculate fee using IFeeAdapter if set, otherwise use base fee
+        uint256 effectiveFeeBps = baseFeeBps;
+        uint256 feeAmount = 0;
+        
+        if (address(feeAdapter) != address(0)) {
+            // Check if fees are enabled
+            if (feeAdapter.isFeesEnabled()) {
+                // Get effective fee from adapter
+                effectiveFeeBps = feeAdapter.getEffectiveFee(baseFeeBps);
+                if (effectiveFeeBps > 0) {
+                    feeAmount = (amountIn * effectiveFeeBps) / 10000;
+                }
+            }
+        } else {
+            // Use base fee if no adapter is set
+            feeAmount = (amountIn * baseFeeBps) / 10000;
+        }
+        
         // Transfer tokens from user to router
         inputToken.safeTransferFrom(msg.sender, address(this), amountIn);
         
-        // Approve pool to spend router's tokens
-        SafeERC20.safeApprove(inputToken, pool, amountIn);
+        // If fee is applied, deduct it from amount going to pool
+        uint256 amountToSwap = amountIn;
+        if (feeAmount > 0) {
+            amountToSwap = amountIn - feeAmount;
+            // Fee will be collected and distributed via collectAndDistributeFees
+            // For now, we keep it in router to be collected later
+            emit SwapFeeApplied(amountIn, feeAmount, effectiveFeeBps);
+        }
         
-        // Execute swap
-        (amount0, amount1) = poolContract.swap(recipient, zeroForOne, amountSpecified, 0, minAmountOut);
+        // Approve pool to spend router's tokens (amount after fee)
+        SafeERC20.safeApprove(inputToken, pool, amountToSwap);
+        
+        // Execute swap with adjusted amount
+        (amount0, amount1) = poolContract.swap(recipient, zeroForOne, int256(amountToSwap), 0, minAmountOut);
         
         // Reset approval for gas efficiency (optional, but good practice)
         SafeERC20.safeApprove(inputToken, pool, 0);
@@ -215,6 +254,59 @@ contract XFUELRouter is Ownable, ReentrancyGuard {
         uint256 stakedAmount,
         string stakeTarget
     );
+    
+    /**
+     * @dev Set fee adapter (IFeeAdapter interface)
+     * @param _feeAdapter Address of fee adapter contract (e.g., CyberneticFeeSwitch)
+     */
+    function setFeeAdapter(address _feeAdapter) external onlyOwner {
+        // Allow setting to zero address to disable fee adapter
+        if (_feeAdapter != address(0)) {
+            // Verify it implements IFeeAdapter by checking interface
+            try IFeeAdapter(_feeAdapter).isFeesEnabled() returns (bool) {
+                feeAdapter = IFeeAdapter(_feeAdapter);
+                emit FeeAdapterSet(_feeAdapter);
+            } catch {
+                revert("XFUELRouter: invalid fee adapter");
+            }
+        } else {
+            feeAdapter = IFeeAdapter(address(0));
+            emit FeeAdapterSet(address(0));
+        }
+    }
+    
+    /**
+     * @dev Set base fee in basis points
+     * @param _baseFeeBps Base fee in basis points (e.g., 30 = 0.3%)
+     */
+    function setBaseFee(uint256 _baseFeeBps) external onlyOwner {
+        require(_baseFeeBps <= 1000, "XFUELRouter: base fee too high"); // Max 10%
+        uint256 oldBaseFee = baseFeeBps;
+        baseFeeBps = _baseFeeBps;
+        emit BaseFeeSet(oldBaseFee, _baseFeeBps);
+    }
+    
+    /**
+     * @dev Get current effective fee in basis points
+     * @return effectiveFeeBps Effective fee in basis points
+     */
+    function getEffectiveFee() external view returns (uint256 effectiveFeeBps) {
+        if (address(feeAdapter) != address(0) && feeAdapter.isFeesEnabled()) {
+            return feeAdapter.getEffectiveFee(baseFeeBps);
+        }
+        return baseFeeBps;
+    }
+    
+    /**
+     * @dev Check if fees are enabled
+     * @return enabled True if fees are enabled
+     */
+    function isFeesEnabled() external view returns (bool enabled) {
+        if (address(feeAdapter) != address(0)) {
+            return feeAdapter.isFeesEnabled();
+        }
+        return baseFeeBps > 0;
+    }
     
     /**
      * @dev Update addresses

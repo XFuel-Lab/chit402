@@ -65,3 +65,4 @@ After deployment, update `edgefarm-mobile/app.json`:
 
 The contract is ready to deploy once you have testnet TFUEL!
 
+

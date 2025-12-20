@@ -27,3 +27,4 @@ interface IFeeAdapter {
     function getEffectiveFee(uint256 baseFee) external view returns (uint256 effectiveFee);
 }
 
+

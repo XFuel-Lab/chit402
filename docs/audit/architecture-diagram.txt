@@ -237,3 +237,4 @@ Access Control:
 • Pool-only: Backstop.provideCoverage()
 • Public: TipPool tipping, pool creation
 
+

@@ -1,6 +1,11 @@
-import { ethers, upgrades } from 'hardhat';
+import hre from 'hardhat';
+const { ethers, upgrades } = hre;
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 async function main() {
   console.log('🚀 Starting Phase 1 XFUEL Tokenomics deployment...\n');
@@ -8,25 +13,26 @@ async function main() {
   const signers = await ethers.getSigners();
   if (signers.length === 0) {
     throw new Error(
-      '❌ No signers available. Please set THETA_TESTNET_PRIVATE_KEY in your .env file.\n' +
-      '   Example: THETA_TESTNET_PRIVATE_KEY=0xYourPrivateKeyHere'
+      '❌ No signers available. Please set THETA_MAINNET_PRIVATE_KEY in your .env file.\n' +
+      '   Example: THETA_MAINNET_PRIVATE_KEY=0xYourPrivateKeyHere'
     );
   }
 
   const [deployer] = signers;
   console.log('📝 Deploying contracts with account:', deployer.address);
-  const balance = await deployer.getBalance();
-  const formatEther = ethers.utils?.formatEther || ((b: any) => ethers.formatEther(b));
-  const parseEther = ethers.utils?.parseEther || ((v: string) => ethers.parseEther(v));
+  const balance = await ethers.provider.getBalance(deployer.address);
+  const formatEther = ethers.formatEther;
+  const parseEther = ethers.parseEther;
   console.log('💰 Account balance:', formatEther(balance), 'TFUEL\n');
 
-  if (balance.lt(parseEther('0.1'))) {
+  if (balance < parseEther('0.1')) {
     console.warn('⚠️  Warning: Low balance. You may need more TFUEL for deployment.\n');
   }
 
   // Get addresses from environment or use placeholders
-  const XF_TOKEN = process.env.XF_TOKEN_ADDRESS || ethers.constants.AddressZero;
-  const REVENUE_TOKEN = process.env.REVENUE_TOKEN_ADDRESS || ethers.constants.AddressZero; // USDC
+  const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+  const XF_TOKEN = process.env.XF_TOKEN_ADDRESS || ZERO_ADDRESS;
+  const REVENUE_TOKEN = process.env.REVENUE_TOKEN_ADDRESS || ZERO_ADDRESS; // USDC
   const TREASURY = process.env.TREASURY_ADDRESS || deployer.address; // Use deployer as default
 
   console.log('📋 Configuration:');
@@ -39,26 +45,38 @@ async function main() {
   let xfTokenAddress = XF_TOKEN;
   let revenueTokenAddress = REVENUE_TOKEN;
 
-  if (XF_TOKEN === ethers.constants.AddressZero) {
+  if (XF_TOKEN === ZERO_ADDRESS) {
     console.log('📦 Deploying Mock XF Token...');
     const MockERC20 = await ethers.getContractFactory('MockERC20');
     const xfToken = await MockERC20.deploy('XFuel Token', 'XF', 18);
-    await xfToken.deployed();
-    xfTokenAddress = xfToken.address;
+    await xfToken.waitForDeployment();
+    xfTokenAddress = await xfToken.getAddress();
+    const xfTokenDeployTx = xfToken.deploymentTransaction();
     console.log('✅ Mock XF Token deployed to:', xfTokenAddress);
-    console.log('   Transaction hash:', xfToken.deployTransaction.hash);
-    console.log('   Block number:', xfToken.deployTransaction.blockNumber || 'pending\n');
+    if (xfTokenDeployTx) {
+      console.log('   Transaction hash:', xfTokenDeployTx.hash);
+      const receipt = await xfTokenDeployTx.wait();
+      console.log('   Block number:', receipt?.blockNumber || 'pending\n');
+    } else {
+      console.log('   (deployment transaction info not available)\n');
+    }
   }
 
-  if (REVENUE_TOKEN === ethers.constants.AddressZero) {
+  if (REVENUE_TOKEN === ZERO_ADDRESS) {
     console.log('📦 Deploying Mock Revenue Token (USDC)...');
     const MockERC20 = await ethers.getContractFactory('MockERC20');
     const revenueToken = await MockERC20.deploy('USD Coin', 'USDC', 6);
-    await revenueToken.deployed();
-    revenueTokenAddress = revenueToken.address;
+    await revenueToken.waitForDeployment();
+    revenueTokenAddress = await revenueToken.getAddress();
+    const revenueTokenDeployTx = revenueToken.deploymentTransaction();
     console.log('✅ Mock Revenue Token deployed to:', revenueTokenAddress);
-    console.log('   Transaction hash:', revenueToken.deployTransaction.hash);
-    console.log('   Block number:', revenueToken.deployTransaction.blockNumber || 'pending\n');
+    if (revenueTokenDeployTx) {
+      console.log('   Transaction hash:', revenueTokenDeployTx.hash);
+      const receipt = await revenueTokenDeployTx.wait();
+      console.log('   Block number:', receipt?.blockNumber || 'pending\n');
+    } else {
+      console.log('   (deployment transaction info not available)\n');
+    }
   }
 
   // Deploy veXF
@@ -67,38 +85,77 @@ async function main() {
   const veXF = await upgrades.deployProxy(
     VeXF,
     [xfTokenAddress, deployer.address],
-    { initializer: 'initialize' }
+    { 
+      initializer: 'initialize',
+      kind: 'uups',
+      txOverrides: {
+        gasLimit: 5000000,
+      }
+    }
   );
-  await veXF.deployed();
-  console.log('✅ veXF deployed to:', veXF.address);
-  console.log('   Transaction hash:', veXF.deployTransaction.hash);
-  console.log('   Block number:', veXF.deployTransaction.blockNumber || 'pending\n');
+  await veXF.waitForDeployment();
+  const veXFAddress = await veXF.getAddress();
+  console.log('✅ veXF deployed to:', veXFAddress);
+  const veXFDeployTx = veXF.deploymentTransaction();
+  if (veXFDeployTx) {
+    console.log('   Transaction hash:', veXFDeployTx.hash);
+    const receipt = await veXFDeployTx.wait();
+    console.log('   Block number:', receipt?.blockNumber || 'pending\n');
+  } else {
+    console.log('   (deployment transaction info not available)\n');
+  }
 
   // Deploy RevenueSplitter
   console.log('📦 Deploying RevenueSplitter...');
   const RevenueSplitter = await ethers.getContractFactory('RevenueSplitter');
   const revenueSplitter = await upgrades.deployProxy(
     RevenueSplitter,
-    [revenueTokenAddress, veXF.address, TREASURY, deployer.address],
-    { initializer: 'initialize' }
+    [revenueTokenAddress, veXFAddress, TREASURY, deployer.address],
+    { 
+      initializer: 'initialize',
+      kind: 'uups',
+      txOverrides: {
+        gasLimit: 5000000,
+      }
+    }
   );
-  await revenueSplitter.deployed();
-  console.log('✅ RevenueSplitter deployed to:', revenueSplitter.address);
-  console.log('   Transaction hash:', revenueSplitter.deployTransaction.hash);
-  console.log('   Block number:', revenueSplitter.deployTransaction.blockNumber || 'pending\n');
+  await revenueSplitter.waitForDeployment();
+  const revenueSplitterAddress = await revenueSplitter.getAddress();
+  console.log('✅ RevenueSplitter deployed to:', revenueSplitterAddress);
+  const revenueSplitterDeployTx = revenueSplitter.deploymentTransaction();
+  if (revenueSplitterDeployTx) {
+    console.log('   Transaction hash:', revenueSplitterDeployTx.hash);
+    const receipt = await revenueSplitterDeployTx.wait();
+    console.log('   Block number:', receipt?.blockNumber || 'pending\n');
+  } else {
+    console.log('   (deployment transaction info not available)\n');
+  }
 
   // Deploy CyberneticFeeSwitch
   console.log('📦 Deploying CyberneticFeeSwitch...');
   const CyberneticFeeSwitch = await ethers.getContractFactory('CyberneticFeeSwitch');
   const feeSwitch = await upgrades.deployProxy(
     CyberneticFeeSwitch,
-    [veXF.address, deployer.address],
-    { initializer: 'initialize' }
+    [veXFAddress, deployer.address],
+    { 
+      initializer: 'initialize',
+      kind: 'uups',
+      txOverrides: {
+        gasLimit: 5000000,
+      }
+    }
   );
-  await feeSwitch.deployed();
-  console.log('✅ CyberneticFeeSwitch deployed to:', feeSwitch.address);
-  console.log('   Transaction hash:', feeSwitch.deployTransaction.hash);
-  console.log('   Block number:', feeSwitch.deployTransaction.blockNumber || 'pending\n');
+  await feeSwitch.waitForDeployment();
+  const feeSwitchAddress = await feeSwitch.getAddress();
+  console.log('✅ CyberneticFeeSwitch deployed to:', feeSwitchAddress);
+  const feeSwitchDeployTx = feeSwitch.deploymentTransaction();
+  if (feeSwitchDeployTx) {
+    console.log('   Transaction hash:', feeSwitchDeployTx.hash);
+    const receipt = await feeSwitchDeployTx.wait();
+    console.log('   Block number:', receipt?.blockNumber || 'pending\n');
+  } else {
+    console.log('   (deployment transaction info not available)\n');
+  }
 
   // Print summary
   console.log('='.repeat(60));
@@ -112,9 +169,9 @@ async function main() {
   console.log('   XF Token:            ', xfTokenAddress);
   console.log('   Revenue Token:       ', revenueTokenAddress);
   console.log('   Treasury:            ', TREASURY);
-  console.log('   veXF:                ', veXF.address);
-  console.log('   RevenueSplitter:     ', revenueSplitter.address);
-  console.log('   CyberneticFeeSwitch:  ', feeSwitch.address);
+  console.log('   veXF:                ', veXFAddress);
+  console.log('   RevenueSplitter:     ', revenueSplitterAddress);
+  console.log('   CyberneticFeeSwitch:  ', feeSwitchAddress);
   console.log('='.repeat(60));
   console.log('');
   console.log('📌 Next Steps:');
@@ -136,18 +193,20 @@ async function main() {
       xfToken: xfTokenAddress,
       revenueToken: revenueTokenAddress,
       treasury: TREASURY,
-      veXF: veXF.address,
-      revenueSplitter: revenueSplitter.address,
-      feeSwitch: feeSwitch.address,
+      veXF: veXFAddress,
+      revenueSplitter: revenueSplitterAddress,
+      feeSwitch: feeSwitchAddress,
     },
     implementationAddresses: {
-      veXF: await upgrades.erc1967.getImplementationAddress(veXF.address),
-      revenueSplitter: await upgrades.erc1967.getImplementationAddress(revenueSplitter.address),
-      feeSwitch: await upgrades.erc1967.getImplementationAddress(feeSwitch.address),
+      veXF: await upgrades.erc1967.getImplementationAddress(veXFAddress),
+      revenueSplitter: await upgrades.erc1967.getImplementationAddress(revenueSplitterAddress),
+      feeSwitch: await upgrades.erc1967.getImplementationAddress(feeSwitchAddress),
     },
   };
 
-  const deploymentPath = path.join(__dirname, '..', 'deployments', `phase1-${network.chainId}.json`);
+  // Use 'mainnet' for Theta mainnet (chainId 361), otherwise use chainId
+  const deploymentFileName = network.chainId === 361n ? 'phase1-mainnet.json' : `phase1-${network.chainId}.json`;
+  const deploymentPath = path.join(__dirname, '..', 'deployments', deploymentFileName);
   const deploymentsDir = path.dirname(deploymentPath);
   if (!fs.existsSync(deploymentsDir)) {
     fs.mkdirSync(deploymentsDir, { recursive: true });
@@ -173,13 +232,13 @@ async function main() {
     }
   };
 
-  updateEnvVar('VITE_VEXF_ADDRESS', veXF.address);
-  updateEnvVar('VITE_REVENUE_SPLITTER_ADDRESS', revenueSplitter.address);
-  updateEnvVar('VITE_FEE_SWITCH_ADDRESS', feeSwitch.address);
-  if (XF_TOKEN === ethers.constants.AddressZero) {
+  updateEnvVar('VITE_VEXF_ADDRESS', veXFAddress);
+  updateEnvVar('VITE_REVENUE_SPLITTER_ADDRESS', revenueSplitterAddress);
+  updateEnvVar('VITE_FEE_SWITCH_ADDRESS', feeSwitchAddress);
+  if (XF_TOKEN === ZERO_ADDRESS) {
     updateEnvVar('XF_TOKEN_ADDRESS', xfTokenAddress);
   }
-  if (REVENUE_TOKEN === ethers.constants.AddressZero) {
+  if (REVENUE_TOKEN === ZERO_ADDRESS) {
     updateEnvVar('REVENUE_TOKEN_ADDRESS', revenueTokenAddress);
   }
 
