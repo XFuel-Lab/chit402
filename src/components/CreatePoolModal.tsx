@@ -39,11 +39,14 @@ export function CreatePoolModal({ visible, onClose, onCreate, loading = false }:
       >
         <GlassCard>
           <div className="space-y-6">
-            <div>
-              <h2 className="mb-2 text-xl font-bold text-white">Create New Pool</h2>
-              <p className="text-sm text-slate-300/80">
-                Set up a new tip pool. Fans can tip into it, and when it ends, a winner is drawn via VRF lottery.
-              </p>
+            <div className="flex items-center gap-3">
+              <img src="/logo.png" alt="XFUEL" className="h-10 w-10 object-contain xfuel-logo-glow" />
+              <div>
+                <h2 className="mb-2 text-xl font-bold text-white">Create New Pool</h2>
+                <p className="text-sm text-slate-300/80">
+                  Set up a new tip pool. Fans can tip into it, and when it ends, a winner is drawn via VRF lottery.
+                </p>
+              </div>
             </div>
 
             <div>
@@ -90,4 +93,5 @@ export function CreatePoolModal({ visible, onClose, onCreate, loading = false }:
 }
 
 export default CreatePoolModal
+
 

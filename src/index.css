@@ -177,4 +177,36 @@
   }
 }
 
+/* Logo neon glow animation */
+@keyframes xfuel-logo-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 10px rgba(139, 92, 246, 0.6)) 
+            drop-shadow(0 0 20px rgba(139, 92, 246, 0.4))
+            drop-shadow(0 0 30px rgba(139, 92, 246, 0.2));
+  }
+  50% {
+    filter: drop-shadow(0 0 15px rgba(139, 92, 246, 0.8)) 
+            drop-shadow(0 0 30px rgba(139, 92, 246, 0.6))
+            drop-shadow(0 0 45px rgba(139, 92, 246, 0.3));
+  }
+}
+
+.xfuel-logo-glow {
+  animation: xfuel-logo-glow 3s ease-in-out infinite;
+}
+
+/* Subtle pulse for logo */
+@keyframes xfuel-logo-pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+.xfuel-logo-pulse {
+  animation: xfuel-logo-pulse 4s ease-in-out infinite;
+}
+
 

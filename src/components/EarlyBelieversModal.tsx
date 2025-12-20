@@ -631,13 +631,16 @@ export function EarlyBelieversModal({
         <GlassCard className="border-cyan-400/70 bg-gradient-to-br from-[rgba(56,189,248,0.35)] via-[rgba(168,85,247,0.28)] to-[rgba(236,72,153,0.25)] shadow-[0_0_80px_rgba(56,189,248,0.7),0_8px_32px_rgba(15,23,42,0.95)]">
           <div className="space-y-6">
             {/* Header */}
-            <div>
-              <h2 className="mb-2 text-3xl font-bold text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.5)]">
-                Early Believers Round — Mainnet Live
-              </h2>
-              <p className="text-sm text-slate-300/80">
-                Contribute to receive rXF tokens with tier bonuses. Your contribution supports the XFUEL protocol launch.
-              </p>
+            <div className="flex items-start gap-3">
+              <img src="/logo.png" alt="XFUEL" className="h-12 w-12 flex-shrink-0 object-contain xfuel-logo-glow" />
+              <div>
+                <h2 className="mb-2 text-3xl font-bold text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.5)]">
+                  Early Believers Round — Mainnet Live
+                </h2>
+                <p className="text-sm text-slate-300/80">
+                  Contribute to receive rXF tokens with tier bonuses. Your contribution supports the XFUEL protocol launch.
+                </p>
+              </div>
             </div>
 
             {/* Network Error */}

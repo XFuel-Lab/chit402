@@ -21,11 +21,14 @@ export function EarlyBelieversCard({ onClick }: Props) {
         
         {/* Content */}
         <div className="relative z-10 flex flex-col items-start gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold uppercase tracking-[0.2em] text-cyan-300 drop-shadow-[0_0_8px_rgba(56,189,248,0.9)]">
-              Early Believers Round — Mainnet Live
-            </span>
-            <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_8px_rgba(56,189,248,1)]" />
+          <div className="flex w-full items-center gap-3">
+            <img src="/logo.png" alt="XFUEL" className="h-10 w-10 flex-shrink-0 object-contain xfuel-logo-glow" />
+            <div className="flex flex-1 items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-[0.2em] text-cyan-300 drop-shadow-[0_0_8px_rgba(56,189,248,0.9)]">
+                Early Believers Round — Mainnet Live
+              </span>
+              <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_8px_rgba(56,189,248,1)]" />
+            </div>
           </div>
           
           <h3 className="text-2xl font-bold text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.5)]">

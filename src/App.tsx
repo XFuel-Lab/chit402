@@ -687,8 +687,12 @@ function App() {
         {/* Top chrome: logo + live orb */}
         <header className="mb-6 flex flex-col items-center justify-between gap-4 sm:mb-10 sm:flex-row">
           <div className="flex items-center gap-3 sm:gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-purple-500 via-cyan-400 to-pink-500 shadow-[0_0_40px_rgba(168,85,247,0.9)] sm:h-14 sm:w-14">
-              <span className="text-2xl font-black tracking-tight text-white sm:text-3xl">X</span>
+            <div className="flex h-12 w-12 items-center justify-center sm:h-14 sm:w-14">
+              <img 
+                src="/logo.png" 
+                alt="XFUEL Logo" 
+                className="h-full w-full object-contain xfuel-logo-glow xfuel-logo-pulse"
+              />
             </div>
             <div className="flex flex-col gap-1">
               <h1 className="bg-gradient-to-r from-purple-300 via-purple-100 to-cyan-300 bg-clip-text text-lg font-semibold uppercase tracking-[0.32em] text-transparent sm:text-xl">
@@ -798,12 +802,17 @@ function App() {
                           </p>
                           <p className="mt-1 text-sm font-mono text-emerald-300">{wallet.address}</p>
                         </div>
-                        <div className="text-right">
-                          <p className="text-lg font-semibold text-white">{wallet.balance}</p>
-                          <p className="text-xs text-slate-400">TFUEL</p>
-                          {numericBalance < 0.1 && (
-                            <p className="mt-1 text-[10px] text-amber-400">Low balance</p>
-                          )}
+                        <div className="flex items-center gap-2 text-right">
+                          <div>
+                            <p className="text-lg font-semibold text-white">{wallet.balance}</p>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <img src="/logo.png" alt="TFUEL" className="h-4 w-4 object-contain" />
+                              <p className="text-xs text-slate-400">TFUEL</p>
+                            </div>
+                            {numericBalance < 0.1 && (
+                              <p className="mt-1 text-[10px] text-amber-400">Low balance</p>
+                            )}
+                          </div>
                         </div>
                       </div>
 
