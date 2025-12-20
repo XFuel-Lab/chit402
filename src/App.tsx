@@ -9,6 +9,8 @@ import YieldBubbleSelector, { type LSTOption } from './components/YieldBubbleSel
 import NeonTabs, { type NeonTabId } from './components/NeonTabs'
 import LotteryWinExplosion from './components/LotteryWinExplosion'
 import CreatePoolModal from './components/CreatePoolModal'
+import EarlyBelieversCard from './components/EarlyBelieversCard'
+import EarlyBelieversModal from './components/EarlyBelieversModal'
 import { THETA_TESTNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
 import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 
@@ -70,6 +72,7 @@ function App() {
   const [swapHistory, setSwapHistory] = useState<SwapTransaction[]>([])
   const [forceSimulation, setForceSimulation] = useState(false)
   const [simulationMode, setSimulationMode] = useState(false)
+  const [showEarlyBelieversModal, setShowEarlyBelieversModal] = useState(false)
 
   const numericBalance = useMemo(
     () => parseFloat(wallet.balance.replace(/,/g, '')) || 0,
@@ -768,6 +771,10 @@ function App() {
                 { id: 'profile', label: 'Profile', pill: 'wallet' },
               ]}
             />
+
+            {/* Early Believers Card */}
+            <EarlyBelieversCard onClick={() => setShowEarlyBelieversModal(true)} />
+            {/* Debug: Card should be visible above */}
 
             <GlassCard>
                   {activeTab === 'swap' && (
@@ -1581,6 +1588,15 @@ function App() {
           }
         }}
         apy={selectedLST.apy}
+      />
+
+      {/* Early Believers Modal */}
+      <EarlyBelieversModal
+        visible={showEarlyBelieversModal}
+        onClose={() => setShowEarlyBelieversModal(false)}
+        walletAddress={wallet.fullAddress}
+        onConnectWallet={connectWallet}
+        isMainnet={true}
       />
     </ScreenBackground>
   )
