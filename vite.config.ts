@@ -16,8 +16,12 @@ export default defineConfig({
         manualChunks: {
           'react-vendor': ['react', 'react-dom'],
         },
+        // Ensure no eval is used in production build
+        format: 'es',
       },
     },
+    // Ensure production build doesn't use eval
+    minify: 'esbuild',
   },
   server: {
     port: 3000,
