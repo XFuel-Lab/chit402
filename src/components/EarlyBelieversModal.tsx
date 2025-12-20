@@ -422,6 +422,14 @@ export function EarlyBelieversModal({
       return
     }
 
+    // Check minimum contribution: $100 USD
+    const MINIMUM_CONTRIBUTION_USD = 100
+    if (usdValue < MINIMUM_CONTRIBUTION_USD) {
+      setStatusMessage(`Minimum contribution is $${MINIMUM_CONTRIBUTION_USD} USD. Your contribution of $${usdValue.toFixed(2)} USD is below the minimum.`)
+      setStatus('error')
+      return
+    }
+
     if (MULTISIG_ADDRESS === '[INSERT YOUR MULTISIG OR OWNER ADDRESS HERE]' || MULTISIG_ADDRESS === '0x0000000000000000000000000000000000000000') {
       setStatusMessage('Multisig address not configured')
       setStatus('error')
@@ -685,6 +693,7 @@ export function EarlyBelieversModal({
                 <div>
                   <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-300/70">
                     Contribution Amount (USD equivalent)
+                    <span className="ml-2 text-xs normal-case text-slate-400">(Minimum: $100)</span>
                   </label>
                   <input
                     type="number"
@@ -698,6 +707,11 @@ export function EarlyBelieversModal({
                   {paymentMethod === 'TFUEL' && numericAmount > 0 && tfuelPrice && (
                     <p className="mt-2 text-xs text-cyan-300/80">
                       ≈ ${(numericAmount * tfuelPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                    </p>
+                  )}
+                  {numericAmount > 0 && usdValue < 100 && (
+                    <p className="mt-2 text-xs text-yellow-400">
+                      ⚠ Minimum contribution is $100 USD. Current: ${usdValue.toFixed(2)} USD
                     </p>
                   )}
                 </div>
@@ -851,7 +865,7 @@ export function EarlyBelieversModal({
                       }
                       onClick={handleContribute}
                       className="flex-1"
-                      disabled={isProcessing || !!networkError || numericAmount <= 0}
+                      disabled={isProcessing || !!networkError || numericAmount <= 0 || usdValue < 100}
                     />
                   </div>
                 )}

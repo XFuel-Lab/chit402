@@ -143,7 +143,30 @@ npm test -- --coverage
 
 ---
 
-### Test 4: Amount Input and Tier Calculation
+### Test 4: Minimum Contribution ($100)
+
+**Steps:**
+1. Connect wallet
+2. Enter amount: `50` (USDC)
+3. Observe validation
+
+**Expected Result:**
+- Warning message: "Minimum contribution is $100 USD. Your contribution of $50.00 USD is below the minimum."
+- "Contribute Now" button is disabled
+- Label shows "(Minimum: $100)"
+
+**Steps:**
+1. Enter amount: `100` (USDC)
+2. Verify button becomes enabled
+
+**Expected Result:**
+- No warning message
+- "Contribute Now" button is enabled
+- Can proceed with contribution
+
+---
+
+### Test 5: Amount Input and Tier Calculation
 
 #### 4a. Standard Tier (< $50k)
 
@@ -200,7 +223,7 @@ npm test -- --coverage
 
 ---
 
-### Test 5: Payment Method Toggle
+### Test 6: Payment Method Toggle
 
 #### 5a. USDC (Default)
 
@@ -244,7 +267,7 @@ npm test -- --coverage
 
 ---
 
-### Test 6: Payment Transaction - TFUEL
+### Test 7: Payment Transaction - TFUEL
 
 #### 6a. Successful TFUEL Transaction
 
@@ -296,7 +319,7 @@ npm test -- --coverage
 
 ---
 
-### Test 7: Payment Transaction - USDC
+### Test 8: Payment Transaction - USDC
 
 #### 7a. Successful USDC Transaction
 
@@ -335,7 +358,7 @@ npm test -- --coverage
 
 ---
 
-### Test 8: Webhook Logging
+### Test 9: Webhook Logging
 
 #### 8a. Console Logging
 
@@ -389,7 +412,7 @@ npm test -- --coverage
 
 ---
 
-### Test 9: Error Handling
+### Test 10: Error Handling
 
 #### 9a. Network Errors
 
@@ -426,7 +449,7 @@ npm test -- --coverage
 
 ---
 
-### Test 10: Disclaimer and Safety
+### Test 11: Disclaimer and Safety
 
 **Steps:**
 1. Open modal
