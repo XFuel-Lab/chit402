@@ -180,8 +180,15 @@ export function EarlyBelieversModal({
 
   const tier = getTier()
   const tierBonus = tier === 'Plus25' ? 0.25 : tier === 'Plus10' ? 0.1 : 0
-  const bonusAmount = usdValue * tierBonus
-  const totalRXF = usdValue + bonusAmount
+  
+  // rXF conversion rate: 1 USD = ~5,555 rXF (based on example: $110 = 611,111 rXF)
+  const RXF_PER_USD = 5555.555555555556 // ~5,555.56 rXF per USD
+  const baseRXF = usdValue * RXF_PER_USD
+  const bonusRXF = baseRXF * tierBonus
+  const totalRXF = baseRXF + bonusRXF
+  
+  // Calculate USD equivalent of total rXF (for secondary display)
+  const totalRXFUSD = totalRXF / RXF_PER_USD
 
   const tierLabel = tier === 'Plus25' ? '+25% bonus rXF' : tier === 'Plus10' ? '+10% bonus rXF' : 'Standard'
 
@@ -756,6 +763,33 @@ export function EarlyBelieversModal({
                     <p className="mb-3 text-xs uppercase tracking-[0.18em] text-slate-300/70">
                       Tier Calculation
                     </p>
+                    
+                    {/* Primary: rXF Amount - Big Neon Display */}
+                    <div className="mb-4 rounded-xl border border-cyan-400/40 bg-gradient-to-br from-cyan-500/10 to-purple-500/10 p-4 backdrop-blur-sm">
+                      <p className="mb-1 text-xs uppercase tracking-[0.18em] text-slate-400/80">
+                        You Receive
+                      </p>
+                      <div className="flex items-baseline gap-2">
+                        <span 
+                          className="text-4xl font-bold text-cyan-300"
+                          style={{
+                            textShadow: '0 0 20px rgba(56, 189, 248, 0.8), 0 0 40px rgba(56, 189, 248, 0.6), 0 0 60px rgba(56, 189, 248, 0.4)',
+                          }}
+                        >
+                          ~{totalRXF.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        </span>
+                        <span className="text-xl font-semibold text-cyan-200">rXF</span>
+                      </div>
+                      <p className="mt-2 text-sm text-slate-400">
+                        (≈ ${totalRXFUSD.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD at current rate)
+                      </p>
+                      {tierBonus > 0 && (
+                        <p className="mt-2 text-sm font-semibold text-cyan-300">
+                          {tier === 'Plus25' ? '+25%' : '+10%'} bonus → ~{totalRXF.toLocaleString(undefined, { maximumFractionDigits: 0 })} rXF total
+                        </p>
+                      )}
+                    </div>
+
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
                         <span className="text-slate-300">Contribution ({paymentMethod}):</span>
@@ -782,16 +816,18 @@ export function EarlyBelieversModal({
                       {tierBonus > 0 && (
                         <div className="flex justify-between text-cyan-300">
                           <span>Bonus ({tierBonus * 100}%):</span>
-                          <span className="font-semibold">+${bonusAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          <span className="font-semibold">+{bonusRXF.toLocaleString(undefined, { maximumFractionDigits: 0 })} rXF</span>
                         </div>
                       )}
-                      <div className="border-t border-purple-400/20 pt-2">
-                        <div className="flex justify-between text-lg font-bold text-white">
-                          <span>Total rXF (USD):</span>
-                          <span className="text-cyan-300">${totalRXF.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        </div>
-                      </div>
                     </div>
+                    
+                    {/* rXF Utility Reminder */}
+                    <div className="mt-4 rounded-lg border border-purple-400/20 bg-purple-500/5 p-2">
+                      <p className="text-xs text-slate-400/90">
+                        💎 rXF provides governance, yield, and utility within XFUEL
+                      </p>
+                    </div>
+                    
                     {tier === 'Standard' && (
                       <p className="mt-3 text-xs text-slate-400">
                         💡 $50k-$99k: +10% bonus rXF | $100k+: +25% bonus rXF
