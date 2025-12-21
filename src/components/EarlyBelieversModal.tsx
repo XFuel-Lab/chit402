@@ -11,6 +11,20 @@ const MULTISIG_ADDRESS = import.meta.env.VITE_MULTISIG_ADDRESS || '[INSERT YOUR 
 // Webhook URL for logging (optional - set via env var)
 const WEBHOOK_URL = import.meta.env.VITE_CONTRIBUTION_WEBHOOK_URL || ''
 
+// Hard cap configuration
+const HARD_CAP_USD = 750000 // 750,000 USD equivalent (for 5M rXF at $18M FDV with bonuses)
+const TOTAL_RAISED_USD_ENV = import.meta.env.VITE_TOTAL_RAISED_USD || ''
+const TOTAL_RAISED_API_URL = import.meta.env.VITE_TOTAL_RAISED_API_URL || ''
+
+// Debug: Log env var at build time (will show in production console)
+if (typeof window !== 'undefined') {
+  console.log('[Early Believers] Env check:', {
+    raw: import.meta.env.VITE_TOTAL_RAISED_USD,
+    parsed: TOTAL_RAISED_USD_ENV,
+    type: typeof TOTAL_RAISED_USD_ENV,
+  })
+}
+
 // ERC20 ABI for USDC
 const ERC20_ABI = [
   'function balanceOf(address account) external view returns (uint256)',
@@ -64,6 +78,10 @@ export function EarlyBelieversModal({
   const [priceLoading, setPriceLoading] = useState(false)
   const [currentNetwork, setCurrentNetwork] = useState<number | null>(null)
   const [networkError, setNetworkError] = useState<string | null>(null)
+  const [totalRaised, setTotalRaised] = useState<number>(0)
+  const [totalRaisedLoading, setTotalRaisedLoading] = useState(false)
+  const [waitlistEmail, setWaitlistEmail] = useState('')
+  const [waitlistSubmitted, setWaitlistSubmitted] = useState(false)
 
   // Check network only after wallet is connected
   useEffect(() => {
@@ -138,6 +156,59 @@ export function EarlyBelieversModal({
     }
   }, [visible, walletAddress, isMainnet])
 
+  // Fetch total raised from env variable or API
+  useEffect(() => {
+    const fetchTotalRaised = async () => {
+      setTotalRaisedLoading(true)
+      try {
+        // First, try environment variable
+        // Check if env var exists (even if it's "0", it should be a string)
+        if (TOTAL_RAISED_USD_ENV !== undefined && TOTAL_RAISED_USD_ENV !== null && TOTAL_RAISED_USD_ENV !== '') {
+          const envValue = parseFloat(TOTAL_RAISED_USD_ENV)
+          // Allow 0 as a valid value (means no contributions yet)
+          if (!isNaN(envValue) && envValue >= 0) {
+            setTotalRaised(envValue)
+            setTotalRaisedLoading(false)
+            return
+          }
+        }
+
+        // If no env var or invalid, try API endpoint
+        if (TOTAL_RAISED_API_URL) {
+          try {
+            const response = await fetch(TOTAL_RAISED_API_URL)
+            if (response.ok) {
+              const data = await response.json()
+              const apiValue = parseFloat(data.totalRaised || data.total_raised || 0)
+              if (!isNaN(apiValue) && apiValue >= 0) {
+                setTotalRaised(apiValue)
+                setTotalRaisedLoading(false)
+                return
+              }
+            }
+          } catch (apiError) {
+            console.warn('Error fetching total raised from API:', apiError)
+          }
+        }
+
+        // Default to 0 if neither source is available
+        setTotalRaised(0)
+      } catch (error) {
+        console.error('Error fetching total raised:', error)
+        setTotalRaised(0)
+      } finally {
+        setTotalRaisedLoading(false)
+      }
+    }
+
+    if (visible) {
+      fetchTotalRaised()
+      // Refresh every 30 seconds
+      const interval = setInterval(fetchTotalRaised, 30000)
+      return () => clearInterval(interval)
+    }
+  }, [visible])
+
   // Fetch TFUEL price from CoinGecko
   useEffect(() => {
     const fetchTfuelPrice = async () => {
@@ -170,6 +241,11 @@ export function EarlyBelieversModal({
   const usdValue = paymentMethod === 'TFUEL' 
     ? (tfuelPrice ? numericAmount * tfuelPrice : 0)
     : numericAmount
+
+  // Calculate progress and cap status
+  const progressPercentage = Math.min((totalRaised / HARD_CAP_USD) * 100, 100)
+  const isCapReached = totalRaised >= HARD_CAP_USD
+  const remainingCap = Math.max(0, HARD_CAP_USD - totalRaised)
   
   // Tier calculation
   const getTier = (): Tier => {
@@ -240,8 +316,48 @@ export function EarlyBelieversModal({
       setTxHash(null)
       setIsProcessing(false)
       setNetworkError(null)
+      setWaitlistEmail('')
+      setWaitlistSubmitted(false)
     }
   }, [visible])
+
+  // Handle waitlist submission
+  const handleWaitlistSubmit = async () => {
+    if (!waitlistEmail || !waitlistEmail.includes('@')) {
+      setStatusMessage('Please enter a valid email address')
+      setStatus('error')
+      return
+    }
+
+    try {
+      // Log waitlist signup (can be extended to send to webhook/API)
+      console.log('📧 Waitlist signup:', { email: waitlistEmail, timestamp: new Date().toISOString() })
+      
+      if (WEBHOOK_URL) {
+        try {
+          await fetch(WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'waitlist',
+              email: waitlistEmail,
+              timestamp: new Date().toISOString(),
+            }),
+          })
+        } catch (webhookError) {
+          console.error('Webhook error (non-critical):', webhookError)
+        }
+      }
+
+      setWaitlistSubmitted(true)
+      setStatusMessage('Thank you! You have been added to the waitlist for future rounds.')
+      setStatus('success')
+    } catch (error) {
+      console.error('Error submitting waitlist:', error)
+      setStatusMessage('Error submitting waitlist. Please try again.')
+      setStatus('error')
+    }
+  }
 
   // Helper function to wait for transaction receipt with retry logic
   const waitForTransactionReceipt = async (
@@ -416,6 +532,13 @@ export function EarlyBelieversModal({
       return
     }
 
+    // Check if cap is reached
+    if (isCapReached) {
+      setStatusMessage('Early Believers Round is complete. Thank you to all contributors!')
+      setStatus('error')
+      return
+    }
+
     // Check network
     if (isMainnet && currentNetwork !== THETA_MAINNET.chainId) {
       setStatusMessage('Please switch to Theta Mainnet')
@@ -433,6 +556,14 @@ export function EarlyBelieversModal({
     const MINIMUM_CONTRIBUTION_USD = 100
     if (usdValue < MINIMUM_CONTRIBUTION_USD) {
       setStatusMessage(`Minimum contribution is $${MINIMUM_CONTRIBUTION_USD} USD. Your contribution of $${usdValue.toFixed(2)} USD is below the minimum.`)
+      setStatus('error')
+      return
+    }
+
+    // Check if contribution would exceed cap
+    if (totalRaised + usdValue > HARD_CAP_USD) {
+      const maxContribution = Math.max(0, remainingCap)
+      setStatusMessage(`This contribution would exceed the round cap. Maximum remaining: $${maxContribution.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD.`)
       setStatus('error')
       return
     }
@@ -640,15 +771,54 @@ export function EarlyBelieversModal({
             {/* Header */}
             <div className="flex items-start gap-3">
               <img src="/logo.png" alt="XFUEL" className="h-12 w-12 flex-shrink-0 object-contain xfuel-logo-glow" />
-              <div>
+              <div className="flex-1">
                 <h2 className="mb-2 text-3xl font-bold text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.5)]">
-                  Early Believers Round — Mainnet Live
+                  {isCapReached ? 'Early Believers Round Complete' : 'Early Believers Round — Mainnet Live'}
                 </h2>
                 <p className="text-sm text-slate-300/80">
-                  Contribute to receive rXF tokens with tier bonuses. Your contribution supports the XFUEL protocol launch.
+                  {isCapReached 
+                    ? 'Thank you to all contributors! The Early Believers Round has reached its cap.'
+                    : 'Contribute to receive rXF tokens with tier bonuses. Your contribution supports the XFUEL protocol launch.'}
                 </p>
               </div>
             </div>
+
+            {/* Progress Bar */}
+            {!isCapReached && (
+              <div className="rounded-xl border border-cyan-400/30 bg-black/20 p-4">
+                <div className="mb-2 flex items-center justify-between text-xs">
+                  <span className="uppercase tracking-[0.18em] text-slate-300/70">Round Progress</span>
+                  <span className="font-semibold text-cyan-300">
+                    {progressPercentage.toFixed(1)}% filled
+                  </span>
+                </div>
+                <div className="relative h-3 w-full overflow-hidden rounded-full bg-slate-800/50">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-purple-500 transition-all duration-500"
+                    style={{ width: `${progressPercentage}%` }}
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="text-[10px] font-semibold text-white drop-shadow-[0_0_4px_rgba(0,0,0,0.8)]">
+                      ${totalRaised.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} / ${HARD_CAP_USD.toLocaleString()} USD
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Cap Reached Message */}
+            {isCapReached && (
+              <div className="rounded-xl border border-emerald-400/60 bg-gradient-to-br from-emerald-500/15 to-cyan-500/10 p-6 text-center">
+                <div className="mb-4 text-5xl">🎉</div>
+                <h3 className="mb-3 text-xl font-bold text-emerald-300">
+                  Early Believers Round Complete — Thank you to all contributors!
+                </h3>
+                <p className="text-sm leading-relaxed text-slate-300">
+                  The Early Believers Round has reached its cap of ${HARD_CAP_USD.toLocaleString()} USD. 
+                  All contributors will receive their rXF tokens at TGE with immediate yield, 4× governance votes, and priority spin-outs.
+                </p>
+              </div>
+            )}
 
             {/* Network Error */}
             {networkError && (
@@ -886,8 +1056,33 @@ export function EarlyBelieversModal({
                   </div>
                 )}
 
+                {/* Waitlist Email Capture (when cap is reached) */}
+                {isCapReached && !waitlistSubmitted && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-300/70">
+                        Join Waitlist for Future Rounds
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="email"
+                          value={waitlistEmail}
+                          onChange={(e) => setWaitlistEmail(e.target.value)}
+                          placeholder="your@email.com"
+                          className="flex-1 rounded-xl border border-cyan-400/40 bg-black/30 px-4 py-3 font-mono text-sm text-white placeholder:text-slate-500 focus:border-cyan-400/80 focus:outline-none focus:ring-2 focus:ring-cyan-400/50"
+                        />
+                        <NeonButton
+                          label="Join Waitlist"
+                          onClick={handleWaitlistSubmit}
+                          disabled={!waitlistEmail || waitlistEmail.length === 0}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Action Buttons */}
-                {status !== 'success' && (
+                {status !== 'success' && !isCapReached && (
                   <div className="flex gap-3">
                     <NeonButton
                       label="Cancel"
@@ -904,9 +1099,19 @@ export function EarlyBelieversModal({
                       }
                       onClick={handleContribute}
                       className="flex-1"
-                      disabled={isProcessing || !!networkError || numericAmount <= 0 || usdValue < 100}
+                      disabled={isProcessing || !!networkError || numericAmount <= 0 || usdValue < 100 || totalRaised + usdValue > HARD_CAP_USD}
                     />
                   </div>
+                )}
+
+                {/* Close button when cap is reached */}
+                {isCapReached && (
+                  <NeonButton
+                    label="Close"
+                    variant="secondary"
+                    onClick={onClose}
+                    className="w-full"
+                  />
                 )}
 
                 {/* Disclaimer Footer */}
