@@ -838,6 +838,24 @@ function App() {
                         </div>
                       )}
 
+                      {/* Support Email Card */}
+                      <div className="mb-4 flex justify-center">
+                        <div className="relative overflow-hidden rounded-2xl border border-purple-400/40 bg-gradient-to-br from-[rgba(168,85,247,0.15)] via-[rgba(56,189,248,0.1)] to-[rgba(15,23,42,0.3)] px-5 py-3 backdrop-blur-xl shadow-[0_0_30px_rgba(168,85,247,0.4)]">
+                          <p className="text-sm text-slate-300/90">
+                            <span className="text-slate-400/80">Questions? </span>
+                            <a
+                              href="mailto:xfuel.support@xfuel.app"
+                              className="text-purple-300 transition-all hover:text-purple-200"
+                              style={{
+                                textShadow: '0 0 10px rgba(139, 92, 246, 0.8), 0 0 20px rgba(139, 92, 246, 0.6)',
+                              }}
+                            >
+                              xfuel.support@xfuel.app
+                            </a>
+                          </p>
+                        </div>
+                      </div>
+
                       {/* Big percentage dropdown */}
                       <div className="relative">
                         <button
@@ -1567,6 +1585,22 @@ function App() {
             <p className="pt-2 text-center text-[11px] text-slate-400/80 sm:text-xs">
               Theta EdgeCloud GPU / video revenue → auto-compounding Cosmos LSTs in one tap.
             </p>
+            
+            {/* Footer Support Email */}
+            <div className="pt-4 text-center">
+              <p className="text-xs text-slate-400/70 sm:text-sm">
+                <span className="text-slate-500/80">Support: </span>
+                <a
+                  href="mailto:xfuel.support@xfuel.app"
+                  className="text-purple-300 transition-all hover:text-purple-200"
+                  style={{
+                    textShadow: '0 0 10px rgba(139, 92, 246, 0.8), 0 0 20px rgba(139, 92, 246, 0.6)',
+                  }}
+                >
+                  xfuel.support@xfuel.app
+                </a>
+              </p>
+            </div>
           </div>
         </main>
       </div>
