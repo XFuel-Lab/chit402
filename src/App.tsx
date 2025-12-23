@@ -1349,7 +1349,6 @@ function App() {
                               <div className="h-6 w-20 rounded-lg bg-slate-500/30" />
                             </div>
                             <div className="h-4 w-40 rounded bg-slate-500/30" />
-                            <div className="h-4 w-52 rounded bg-slate-500/20" />
                           </div>
                         ) : computedTfuelAmount > 0 && estimatedLSTAmount !== null ? (
                           <>
@@ -1368,15 +1367,10 @@ function App() {
                               )}
                             </div>
                             {exchangeRate !== null && (
-                              <p className="mt-2 text-sm font-semibold text-slate-300/80">
+                              <p className="mt-3 text-sm font-semibold text-slate-300/80">
                                 1 TFUEL ≈ {exchangeRate.toFixed(6)} {selectedLST.name}
                               </p>
                             )}
-                            <p className="mt-3 text-lg font-bold text-emerald-300 drop-shadow-[0_0_20px_rgba(16,185,129,0.8)]">
-                              {tfuelPrice 
-                                ? `~$${estimatedDailyYieldUSD.toFixed(2)}/day yield`
-                                : `~${estimatedDailyYield.toFixed(6)} ${selectedLST.name}/day yield`}
-                            </p>
                           </>
                         ) : computedTfuelAmount === 0 ? (
                           <>
@@ -1387,13 +1381,10 @@ function App() {
                               <p className="text-2xl font-bold text-slate-500/50">{selectedLST.name}</p>
                             </div>
                             {exchangeRate !== null && (
-                              <p className="mt-2 text-sm font-semibold text-slate-400/60">
+                              <p className="mt-3 text-sm font-semibold text-slate-400/60">
                                 1 TFUEL ≈ {exchangeRate.toFixed(6)} {selectedLST.name}
                               </p>
                             )}
-                            <p className="mt-3 text-lg font-bold text-slate-500/50">
-                              Enter amount to see estimated yield
-                            </p>
                           </>
                         ) : !prices || (Object.values(prices).every(p => p === null)) ? (
                           // Only show if absolutely no prices available (shouldn't happen with fallbacks)
