@@ -1888,20 +1888,166 @@ function App() {
                         . This panel will surface cross‑chain positions, yield history, and arena
                         stats.
                       </p>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-[11px]">
-                        <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-3">
-                          <p className="text-slate-400">Net APY target</p>
-                          <p className="mt-1 text-base text-emerald-300">
-                            {currentApy.toFixed(1)}%
-                          </p>
+
+                      {/* My Activity / Earnings Summary Section */}
+                      <div className="mt-6">
+                        <h3 className="mb-4 text-lg font-semibold text-white uppercase tracking-[0.18em] text-purple-300/90" style={{
+                          textShadow: '0 0 20px rgba(168, 85, 247, 0.8), 0 0 40px rgba(168, 85, 247, 0.4)',
+                        }}>
+                          ⚡ Earnings Summary
+                        </h3>
+                        
+                        {/* Streak & Daily Earnings Cards */}
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-6">
+                          {/* Day Streak Badge */}
+                          <div className="relative overflow-hidden rounded-3xl border-2 border-purple-400/70 bg-gradient-to-br from-[rgba(168,85,247,0.35)] via-[rgba(139,92,246,0.25)] to-[rgba(15,23,42,0.40)] p-6 backdrop-blur-xl shadow-[0_0_60px_rgba(168,85,247,0.8),inset_0_0_40px_rgba(168,85,247,0.2)] transition-all hover:shadow-[0_0_80px_rgba(168,85,247,1),inset_0_0_50px_rgba(168,85,247,0.3)]">
+                            <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-purple-500/20 blur-3xl" />
+                            <p className="relative text-[11px] uppercase tracking-[0.22em] text-purple-200/80">
+                              🔥 Streak
+                            </p>
+                            <div className="relative mt-3 flex items-baseline gap-3">
+                              <p className="text-6xl font-bold text-purple-300 drop-shadow-[0_0_30px_rgba(168,85,247,1),0_0_60px_rgba(168,85,247,0.6)]">
+                                12
+                              </p>
+                              <div>
+                                <p className="text-lg font-bold text-purple-200">days</p>
+                                <p className="text-xs text-slate-300/70">Keep it going!</p>
+                              </div>
+                            </div>
+                            <div className="relative mt-4 flex items-center gap-2">
+                              <div className="h-2 flex-1 overflow-hidden rounded-full bg-purple-900/50">
+                                <div 
+                                  className="h-full bg-gradient-to-r from-purple-400 to-pink-500 shadow-[0_0_15px_rgba(168,85,247,0.8)]"
+                                  style={{ width: '80%' }}
+                                />
+                              </div>
+                              <span className="text-xs font-semibold text-purple-300">80%</span>
+                            </div>
+                            <p className="relative mt-2 text-xs text-slate-400">to 🏆 15-day milestone</p>
+                          </div>
+
+                          {/* Daily Earnings */}
+                          <div className="relative overflow-hidden rounded-3xl border-2 border-cyan-400/70 bg-gradient-to-br from-[rgba(56,189,248,0.35)] via-[rgba(34,211,238,0.25)] to-[rgba(15,23,42,0.40)] p-6 backdrop-blur-xl shadow-[0_0_60px_rgba(56,189,248,0.8),inset_0_0_40px_rgba(56,189,248,0.2)] transition-all hover:shadow-[0_0_80px_rgba(56,189,248,1),inset_0_0_50px_rgba(56,189,248,0.3)]">
+                            <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-cyan-500/20 blur-3xl" />
+                            <p className="relative text-[11px] uppercase tracking-[0.22em] text-cyan-200/80">
+                              💰 Daily Earnings
+                            </p>
+                            <div className="relative mt-3">
+                              <p className="text-5xl font-bold text-cyan-300 drop-shadow-[0_0_30px_rgba(56,189,248,1),0_0_60px_rgba(56,189,248,0.6)]">
+                                {tfuelPrice && numericBalance > 0
+                                  ? `$${((numericBalance * tfuelPrice * currentApy) / 100 / 365).toFixed(2)}`
+                                  : '$0.00'}
+                              </p>
+                              <p className="mt-2 text-sm font-semibold text-cyan-200">
+                                ~{((numericBalance * currentApy) / 100 / 365).toFixed(4)} TFUEL
+                              </p>
+                            </div>
+                            <div className="relative mt-4 rounded-xl border border-emerald-400/40 bg-emerald-500/10 px-3 py-2">
+                              <p className="text-xs text-emerald-300">
+                                <span className="font-semibold">{currentApy.toFixed(1)}% APY</span>
+                                <span className="text-slate-300/70"> on {selectedLST.name}</span>
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                        <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-3">
-                          <p className="text-slate-400">Preferred lane</p>
-                          <p className="mt-1 text-base text-cyan-300">{selectedLST.name}</p>
+
+                        {/* Activity History */}
+                        <div className="relative overflow-hidden rounded-3xl border-2 border-purple-400/50 bg-gradient-to-br from-[rgba(15,23,42,0.95)] via-[rgba(30,41,59,0.9)] to-[rgba(15,23,42,0.95)] p-6 backdrop-blur-xl shadow-[0_0_40px_rgba(168,85,247,0.4)]">
+                          <h4 className="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-[0.18em] text-purple-300">
+                            <span>📊</span>
+                            Activity History
+                          </h4>
+                          
+                          {swapHistory.length === 0 ? (
+                            <div className="py-8 text-center">
+                              <p className="text-sm text-slate-400">No activity yet</p>
+                              <p className="mt-2 text-xs text-slate-500">
+                                Your swap history will appear here
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="space-y-3 max-h-80 overflow-y-auto">
+                              {swapHistory.slice(0, 7).map((tx, idx) => {
+                                const dailyYield = (tx.outputAmount * currentApy) / 100 / 365
+                                const dailyYieldUSD = tfuelPrice ? dailyYield * tfuelPrice : 0
+                                return (
+                                  <div
+                                    key={tx.id}
+                                    className="group relative overflow-hidden rounded-2xl border border-purple-400/30 bg-gradient-to-r from-[rgba(15,23,42,0.8)] to-[rgba(30,41,59,0.6)] p-4 backdrop-blur-sm transition-all hover:border-purple-400/60 hover:shadow-[0_0_25px_rgba(168,85,247,0.4)]"
+                                  >
+                                    <div className="flex items-start justify-between gap-4">
+                                      <div className="flex-1">
+                                        <div className="flex items-center gap-2 mb-2">
+                                          <span className="text-xl">{idx === 0 ? '🔥' : '✅'}</span>
+                                          <p className="text-sm font-semibold text-white">
+                                            {tx.amount.toFixed(2)} TFUEL → {tx.outputAmount.toFixed(4)} {tx.targetLST}
+                                          </p>
+                                          {tx.simulated && (
+                                            <span className="rounded-full border border-amber-400/60 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-300">
+                                              Test
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="flex flex-col gap-1 text-xs">
+                                          <p className="text-slate-400">
+                                            {new Date(tx.timestamp).toLocaleDateString('en-US', {
+                                              month: 'short',
+                                              day: 'numeric',
+                                              year: 'numeric',
+                                              hour: '2-digit',
+                                              minute: '2-digit',
+                                            })}
+                                          </p>
+                                          <p className="text-emerald-300 font-semibold">
+                                            +{tfuelPrice ? `$${dailyYieldUSD.toFixed(2)}` : `${dailyYield.toFixed(4)} TFUEL`}/day
+                                          </p>
+                                        </div>
+                                      </div>
+                                      <a
+                                        href={`${THETA_MAINNET.explorerUrl}/tx/${tx.txHash}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex-shrink-0 rounded-lg border border-cyan-400/40 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-300 transition-all hover:border-cyan-400/70 hover:bg-cyan-500/20 hover:shadow-[0_0_15px_rgba(56,189,248,0.4)]"
+                                      >
+                                        View
+                                      </a>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                          
+                          {swapHistory.length > 7 && (
+                            <div className="mt-4 text-center">
+                              <p className="text-xs text-slate-500">
+                                Showing last 7 transactions
+                              </p>
+                            </div>
+                          )}
                         </div>
-                        <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-3">
-                          <p className="text-slate-400">Risk guard</p>
-                          <p className="mt-1 text-base text-emerald-300">Chainalysis 100/100</p>
+                      </div>
+
+                      {/* Stats Grid */}
+                      <div className="mt-6">
+                        <h4 className="mb-3 text-sm font-semibold text-slate-300/80 uppercase tracking-[0.14em]">
+                          Stats
+                        </h4>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-[11px]">
+                          <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-3">
+                            <p className="text-slate-400">Net APY target</p>
+                            <p className="mt-1 text-base text-emerald-300">
+                              {currentApy.toFixed(1)}%
+                            </p>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-3">
+                            <p className="text-slate-400">Preferred lane</p>
+                            <p className="mt-1 text-base text-cyan-300">{selectedLST.name}</p>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-black/40 px-3 py-3">
+                            <p className="text-slate-400">Risk guard</p>
+                            <p className="mt-1 text-base text-emerald-300">Chainalysis 100/100</p>
+                          </div>
                         </div>
                       </div>
 
@@ -1997,33 +2143,6 @@ function App() {
                     </span>
                   </button>
                 </div>
-              </div>
-            ) : activeTab === 'swap' && wallet.isConnected && computedTfuelAmount > 0 ? (
-              // Dashboard elements for swap tab when connected
-              <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {/* Earnings card */}
-                <GlassCard className="p-5">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
-                    Earnings today
-                  </p>
-                  <p className="mt-3 text-4xl font-bold text-white">
-                    {tfuelPrice ? `$${estimatedDailyYieldUSD.toFixed(2)}` : '--'}
-                  </p>
-                  <p className="mt-2 text-xs text-slate-400">
-                    {tfuelPrice 
-                      ? `Approx. daily yield (${currentApy.toFixed(1)}% APY)`
-                      : 'Loading price...'}
-                  </p>
-                </GlassCard>
-
-                {/* Streak badge */}
-                <GlassCard className="p-5">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
-                    Streak
-                  </p>
-                  <p className="mt-3 text-4xl font-bold text-purple-300">12</p>
-                  <p className="mt-2 text-xs text-slate-400">days</p>
-                </GlassCard>
               </div>
             ) : (
               <YieldBubbleSelector
