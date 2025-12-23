@@ -4,9 +4,18 @@ import App from './App.tsx'
 import InstitutionsPortal from './InstitutionsPortal.tsx'
 import LiquidityDashboard from './LiquidityDashboard.tsx'
 import './index.css'
+import { usePriceStore } from './stores/priceStore'
 
 function Router() {
   const [path, setPath] = useState(window.location.pathname)
+
+  // Pre-fetch global LST + TFUEL prices/APYs on app init.
+  // This runs once when the router mounts (homepage, swap, institutions, etc.)
+  const initializePrices = usePriceStore((state) => state.initialize)
+
+  useEffect(() => {
+    void initializePrices()
+  }, [initializePrices])
 
   useEffect(() => {
     const handleLocationChange = () => {

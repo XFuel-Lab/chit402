@@ -20,10 +20,15 @@ export interface LSTPriceData {
   TFUEL: TokenPrice | null
 }
 
-// Cache prices for 30 seconds to avoid rate limiting
+export interface LSTPriceAndAPYData {
+  prices: LSTPriceData
+  apys: Partial<Record<keyof Omit<LSTPriceData, 'TFUEL'>, number>>
+}
+
+// Cache prices + APYs for 30 seconds to avoid rate limiting
 const PRICE_CACHE_TTL = 30 * 1000
 let priceCache: {
-  data: LSTPriceData | null
+  data: LSTPriceAndAPYData | null
   timestamp: number
 } = {
   data: null,
@@ -454,13 +459,21 @@ const DEFILLAMA_LST_MAP: Record<
 }
 
 /**
+ * DeFiLlama yields data (both price and APY from same response)
+ */
+export interface DefiLlamaYieldData {
+  prices: Partial<Record<keyof LSTPriceData, number>>
+  apys: Partial<Record<keyof LSTPriceData, number>>
+}
+
+/**
  * Primary DeFiLlama yields API fetch.
- * Returns a map of LST symbol → inferred USD price (if available).
+ * Returns both prices and APYs from the same endpoint for efficiency.
  *
  * NOTE: The DeFiLlama pools schema may evolve; we defensively probe
- * common fields and fall back gracefully if price fields are missing.
+ * common fields and fall back gracefully if price/apy fields are missing.
  */
-async function fetchDefiLlamaLSTPrices(): Promise<Partial<Record<keyof LSTPriceData, number>>> {
+async function fetchDefiLlamaLSTData(): Promise<DefiLlamaYieldData> {
   try {
     const response = await fetch('https://yields.llama.fi/pools', {
       method: 'GET',
@@ -475,6 +488,7 @@ async function fetchDefiLlamaLSTPrices(): Promise<Partial<Record<keyof LSTPriceD
     const pools: any[] = Array.isArray(data?.data) ? data.data : []
 
     const prices: Partial<Record<keyof LSTPriceData, number>> = {}
+    const apys: Partial<Record<keyof LSTPriceData, number>> = {}
 
     ;(Object.entries(DEFILLAMA_LST_MAP) as [keyof typeof DEFILLAMA_LST_MAP, (typeof DEFILLAMA_LST_MAP)[keyof typeof DEFILLAMA_LST_MAP]][])
       .forEach(([lstKey, cfg]) => {
@@ -488,7 +502,7 @@ async function fetchDefiLlamaLSTPrices(): Promise<Partial<Record<keyof LSTPriceD
 
         if (!pool) return
 
-        // Probe a few potential price fields, fall back to a simple tvl/supply ratio if present
+        // Extract price - probe a few potential price fields
         const possiblePriceFields = ['price', 'priceUsd', 'underlyingPrice', 'underlyingPriceUsd']
         let price: number | null = null
 
@@ -507,12 +521,33 @@ async function fetchDefiLlamaLSTPrices(): Promise<Partial<Record<keyof LSTPriceD
           prices[lstKey as keyof LSTPriceData] = price
           console.log(`✅ DeFiLlama price for ${lstKey}: $${price.toFixed(4)}`)
         }
+
+        // Extract APY - DeFiLlama provides 'apy' or 'apyBase' fields
+        const possibleApyFields = ['apy', 'apyBase', 'apyReward', 'apyMean7d', 'apyPct1D']
+        let apy: number | null = null
+
+        for (const field of possibleApyFields) {
+          if (typeof pool[field] === 'number' && pool[field] > 0) {
+            apy = pool[field]
+            break
+          }
+        }
+
+        // If we have both apyBase and apyReward, sum them for total APY
+        if (typeof pool.apyBase === 'number' && typeof pool.apyReward === 'number') {
+          apy = pool.apyBase + pool.apyReward
+        }
+
+        if (apy && apy > 0) {
+          apys[lstKey as keyof LSTPriceData] = apy
+          console.log(`✅ DeFiLlama APY for ${lstKey}: ${apy.toFixed(2)}%`)
+        }
       })
 
-    return prices
+    return { prices, apys }
   } catch (error) {
-    console.error('❌ Error fetching prices from DeFiLlama yields API:', error)
-    return {}
+    console.error('❌ Error fetching data from DeFiLlama yields API:', error)
+    return { prices: {}, apys: {} }
   }
 }
 
@@ -546,8 +581,8 @@ async function fetchUnderlyingDiscountedPrice(underlyingId: string): Promise<num
 }
 
 /**
- * Get all LST prices from multiple sources with precise fallbacks:
- *   1. Primary: DeFiLlama yields API (LST prices)
+ * Get all LST prices + APYs from multiple sources with precise fallbacks:
+ *   1. Primary: DeFiLlama yields API (LST prices + APYs)
  *   2. Fallback: Osmosis DEX pool prices
  *   3. Final: CoinGecko underlying × 0.98 (realistic LST ratio)
  *
@@ -555,7 +590,7 @@ async function fetchUnderlyingDiscountedPrice(underlyingId: string): Promise<num
  * DeBridge-style: Returns cached prices instantly, then updates in background.
  * @param bypassCache If true, forces fresh price fetch.
  */
-export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPriceData> {
+export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPriceAndAPYData> {
   const now = Date.now()
   
   // INSTANT: Return cached prices immediately if available (unless bypassing)
@@ -578,7 +613,7 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
   // PARALLEL FETCH ALL SOURCES: DeFiLlama + TFUEL + Osmosis + underlying fallbacks
   // All 12 sources fetch simultaneously for maximum speed and reliability
   const [
-    defiLlamaPrices,
+    defiLlamaData,
     tfuelPrice,
     osmoStkTia,
     osmoStkAtom,
@@ -591,7 +626,7 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
     underlyingStkOsmo,
     underlyingPstakeBtc,
   ] = await Promise.all([
-    fetchDefiLlamaLSTPrices(),
+    fetchDefiLlamaLSTData(),
     fetchTfuelPrice(),
     fetchOsmosisPrice('stktia'),
     fetchOsmosisPrice('stkatom'),
@@ -604,6 +639,9 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
     fetchUnderlyingDiscountedPrice(DEFILLAMA_LST_MAP.stkOSMO.underlyingCoinGeckoId),
     fetchUnderlyingDiscountedPrice(DEFILLAMA_LST_MAP.pSTAKEBTC.underlyingCoinGeckoId),
   ])
+
+  const defiLlamaPrices = defiLlamaData.prices
+  const defiLlamaApys = defiLlamaData.apys
 
   const fetchTime = Date.now() - startTime
   console.log(`✅ Parallel fetch complete in ${fetchTime}ms (12 sources simultaneously)`)
@@ -757,14 +795,25 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
       : null,
   }
 
+  // Compile APY data from DeFiLlama (already fetched in parallel)
+  const apys: Partial<Record<keyof Omit<LSTPriceData, 'TFUEL'>, number>> = {
+    ...(defiLlamaApys.stkTIA && { stkTIA: defiLlamaApys.stkTIA }),
+    ...(defiLlamaApys.stkATOM && { stkATOM: defiLlamaApys.stkATOM }),
+    ...(defiLlamaApys.stkXPRT && { stkXPRT: defiLlamaApys.stkXPRT }),
+    ...(defiLlamaApys.stkOSMO && { stkOSMO: defiLlamaApys.stkOSMO }),
+    ...(defiLlamaApys.pSTAKEBTC && { pSTAKEBTC: defiLlamaApys.pSTAKEBTC }),
+  }
+
+  const result: LSTPriceAndAPYData = { prices, apys }
+
   // Update cache
   priceCache = {
-    data: prices,
+    data: result,
     timestamp: now,
   }
   
   // Final validation log
-  console.log('📦 Final price data being returned:', {
+  console.log('📦 Final price + APY data being returned:', {
     TFUEL: prices.TFUEL?.price,
     stkTIA: prices.stkTIA?.price,
     stkATOM: prices.stkATOM?.price,
@@ -776,9 +825,14 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
     stkXPRT_source: prices.stkXPRT?.source,
     stkOSMO_source: prices.stkOSMO?.source,
     pSTAKEBTC_source: prices.pSTAKEBTC?.source,
+    stkTIA_apy: apys.stkTIA,
+    stkATOM_apy: apys.stkATOM,
+    stkXPRT_apy: apys.stkXPRT,
+    stkOSMO_apy: apys.stkOSMO,
+    pSTAKEBTC_apy: apys.pSTAKEBTC,
   })
 
-  return prices
+  return result
 }
 
 /**
@@ -796,7 +850,8 @@ export async function calculateSwapOutput(
   try {
     // FORCE fresh price fetch - don't use cache for swap calculations
     console.log(`🧮 Calculating swap output: ${tfuelAmount} TFUEL → ${targetLST} (forcing fresh prices)`)
-    const prices = await getLSTPrices(true) // bypassCache = true
+    const data = await getLSTPrices(true) // bypassCache = true
+    const prices = data.prices
     
     const tfuelPrice = prices.TFUEL?.price
     const lstPrice = targetLST === 'stkTIA' 
@@ -852,7 +907,8 @@ export async function getExchangeRate(
 ): Promise<string> {
   try {
     // Force fresh price fetch (bypass cache)
-    const prices = await getLSTPrices(true)
+    const data = await getLSTPrices(true)
+    const prices = data.prices
     
     console.log(`📊 Exchange rate calculation for ${targetLST}:`, {
       tfuelPrice: prices.TFUEL?.price,

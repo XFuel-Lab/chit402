@@ -36,7 +36,8 @@ export const ERC20_ABI = [
 
 // Router ABI - swapAndStake accepts native TFUEL via msg.value
 export const ROUTER_ABI = [
-  'function swapAndStake(uint256 amount, string calldata targetLST) external payable returns (uint256)',
+  'function swapAndStake(uint256 amount, string calldata targetLST, uint256 minAmountOut) external payable returns (uint256)',
+  'function getEffectiveFee() external view returns (uint256)',
   'event SwapAndStake(address indexed user, uint256 tfuelAmount, uint256 stakedAmount, string stakeTarget)',
 ]
 

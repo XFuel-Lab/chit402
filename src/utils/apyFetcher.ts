@@ -1,6 +1,7 @@
 /**
  * APY Fetcher for LST Tokens
- * Fetches real-time APY from Stride, Quicksilver, and other sources
+ * Fetches real-time APY from Stride API as fallback (DeFiLlama is primary in oracle.ts)
+ * This serves as a secondary source when DeFiLlama APYs are unavailable
  */
 
 export interface LSTAPY {
@@ -84,14 +85,19 @@ async function fetchStrideStkATOMAPY(): Promise<number | null> {
 }
 
 /**
- * Get all LST APYs with fallbacks
+ * Get all LST APYs with fallbacks (secondary source)
+ * Note: DeFiLlama yields API (primary) is fetched in oracle.ts
+ * This provides Stride API as additional fallback + hardcoded values
  */
 export async function getLSTAPYs(): Promise<Record<string, LSTAPY>> {
   // Check cache first
   const now = Date.now()
   if (apyCache.data && (now - apyCache.timestamp) < APY_CACHE_TTL) {
+    console.log('⚡ Using cached APYs (apyFetcher fallback source)')
     return apyCache.data
   }
+
+  console.log('🔄 Fetching APYs from Stride API (secondary source)...')
 
   // Fetch APYs in parallel
   const [stkTIAAPY, stkATOMAPY] = await Promise.all([
@@ -99,7 +105,7 @@ export async function getLSTAPYs(): Promise<Record<string, LSTAPY>> {
     fetchStrideStkATOMAPY(),
   ])
 
-  // Hardcoded fallback APYs (used if API fails)
+  // Hardcoded fallback APYs (used if all APIs fail)
   const hardcodedAPYs: Record<string, number> = {
     stkTIA: 38.2,
     stkATOM: 32.5,
@@ -107,6 +113,11 @@ export async function getLSTAPYs(): Promise<Record<string, LSTAPY>> {
     'pSTAKE BTC': 25.4,
     stkOSMO: 22.1,
   }
+
+  console.log('✅ APY fetch complete (Stride API):', {
+    stkTIA: stkTIAAPY || hardcodedAPYs.stkTIA,
+    stkATOM: stkATOMAPY || hardcodedAPYs.stkATOM,
+  })
 
   const apys: Record<string, LSTAPY> = {
     stkTIA: {

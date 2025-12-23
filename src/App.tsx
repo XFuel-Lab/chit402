@@ -12,6 +12,8 @@ import CreatePoolModal from './components/CreatePoolModal'
 import EarlyBelieversCard from './components/EarlyBelieversCard'
 import EarlyBelieversModal from './components/EarlyBelieversModal'
 import EdgeNodeDashboard from './components/EdgeNodeDashboard'
+import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
+import YieldPumpCard from './components/YieldPumpCard'
 import { THETA_TESTNET, THETA_MAINNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
 import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 import { usePriceStore } from './stores/priceStore'
@@ -1092,9 +1094,16 @@ function App() {
             {/* Early Believers Card */}
             <EarlyBelieversCard onClick={() => setShowEarlyBelieversModal(true)} />
 
-            <GlassCard>
-              {activeTab === 'swap' && (
-                <>
+            {/* Swap Tab: Full Cross-Chain Swap */}
+            {activeTab === 'swap' && (
+              <>
+                {/* Bi-Directional Cross-Chain Swap Card */}
+                <BiDirectionalSwapCard
+                  thetaWallet={wallet}
+                  onConnectTheta={connectWallet}
+                />
+
+                <GlassCard>
                   {/* Wallet connection - show at top but don't block UI */}
                   <div className="mb-6">
                     {!wallet.isConnected ? (
@@ -1560,39 +1569,22 @@ function App() {
                     }
                     onClick={handleSwapFlow}
                   />
-                </>
-              )}
+                </GlassCard>
+              </>
+            )}
 
-              {activeTab === 'staking' && (
-                <div className="space-y-4">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
-                    Staking lanes
-                  </p>
-                  <p className="text-sm text-slate-200">
-                    Discover where XFUEL stakes across Cosmos LSTs. Higher left, calmer right — all
-                    auto‑rebalanced behind the scenes.
-                  </p>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    {LST_OPTIONS.map((opt) => (
-                      <GlassCard key={opt.name} className="p-4">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-200">
-                            {opt.name}
-                          </span>
-                          <span className="text-xs font-semibold text-emerald-300">
-                            {opt.apy.toFixed(1)}% APY
-                          </span>
-                        </div>
-                        <p className="mt-2 text-[11px] text-slate-400">
-                          Liquidity‑aware routing with optimized gas usage.
-                        </p>
-                      </GlassCard>
-                    ))}
-                  </div>
-                </div>
-              )}
+            {/* Yield Pump Tab: Single-Sided TFUEL Deposit */}
+            {activeTab === 'staking' && (
+              <YieldPumpCard
+                wallet={wallet}
+                lstOptions={LST_OPTIONS}
+                onConnectWallet={connectWallet}
+              />
+            )}
 
-              {activeTab === 'tip-pools' && (
+            {/* Tip Pools Tab */}
+            {activeTab === 'tip-pools' && (
+              <GlassCard>
                 <div className="space-y-4">
                   <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
                     Tip arenas
@@ -1745,102 +1737,105 @@ function App() {
                     pool, creator receives 10% cut. All payouts are automatic on-chain.
                   </p>
                 </div>
-              )}
+              </GlassCard>
+            )}
 
-              {activeTab === 'mining' && (
-                <EdgeNodeDashboard
-                  walletAddress={wallet.fullAddress}
-                  walletBalance={wallet.balance}
-                  onPumpEarnings={handlePumpEarnings}
-                />
-              )}
+            {activeTab === 'mining' && (
+              <EdgeNodeDashboard
+                walletAddress={wallet.fullAddress}
+                walletBalance={wallet.balance}
+                onPumpEarnings={handlePumpEarnings}
+              />
+            )}
 
-              {activeTab === 'creator' && (
-                <div className="space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
-                        Creator Dashboard
-                      </p>
-                      <h2 className="mt-1 text-2xl font-bold text-white">My Active Pools</h2>
-                    </div>
-                    <NeonButton
-                      label="Create New Pool"
-                      rightHint="24h default"
-                      onClick={() => setShowCreatePoolModal(true)}
-                    />
+            {activeTab === 'creator' && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
+                      Creator Dashboard
+                    </p>
+                    <h2 className="mt-1 text-2xl font-bold text-white">My Active Pools</h2>
                   </div>
+                  <NeonButton
+                    label="Create New Pool"
+                    rightHint="24h default"
+                    onClick={() => setShowCreatePoolModal(true)}
+                  />
+                </div>
 
-                  {/* My Active Pools List */}
-                  <div className="space-y-3">
-                    {/* Mock active pools */}
-                    {[
-                      { id: 1, name: 'Main Stage Arena', pot: 12430, tips: 47, endsAt: Date.now() + 86400000, hasRaffle: true },
-                      { id: 2, name: 'Creator Pool #42', pot: 5420, tips: 23, endsAt: Date.now() + 172800000, hasRaffle: false },
-                    ].map((pool) => {
-                      const hoursLeft = Math.max(0, Math.floor((pool.endsAt - Date.now()) / 3600000))
-                      const minutesLeft = Math.max(0, Math.floor(((pool.endsAt - Date.now()) % 3600000) / 60000))
-                      return (
-                        <GlassCard key={pool.id} className="p-5">
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-2">
-                                <h3 className="text-lg font-semibold text-white">{pool.name}</h3>
-                                {pool.hasRaffle && (
-                                  <span className="rounded-full border border-amber-400/60 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-300">
-                                    🎟️ Raffle
-                                  </span>
-                                )}
+                {/* My Active Pools List */}
+                <div className="space-y-3">
+                  {/* Mock active pools */}
+                  {[
+                    { id: 1, name: 'Main Stage Arena', pot: 12430, tips: 47, endsAt: Date.now() + 86400000, hasRaffle: true },
+                    { id: 2, name: 'Creator Pool #42', pot: 5420, tips: 23, endsAt: Date.now() + 172800000, hasRaffle: false },
+                  ].map((pool) => {
+                    const hoursLeft = Math.max(0, Math.floor((pool.endsAt - Date.now()) / 3600000))
+                    const minutesLeft = Math.max(0, Math.floor(((pool.endsAt - Date.now()) % 3600000) / 60000))
+                    return (
+                      <GlassCard key={pool.id} className="p-5">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <h3 className="text-lg font-semibold text-white">{pool.name}</h3>
+                              {pool.hasRaffle && (
+                                <span className="rounded-full border border-amber-400/60 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-300">
+                                  🎟️ Raffle
+                                </span>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-2 gap-4 mt-3">
+                              <div>
+                                <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Pot Size</p>
+                                <p className="mt-1 text-xl font-bold text-cyan-300">{pool.pot.toLocaleString()} TFUEL</p>
                               </div>
-                              <div className="grid grid-cols-2 gap-4 mt-3">
-                                <div>
-                                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Pot Size</p>
-                                  <p className="mt-1 text-xl font-bold text-cyan-300">{pool.pot.toLocaleString()} TFUEL</p>
-                                </div>
-                                <div>
-                                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Tips</p>
-                                  <p className="mt-1 text-xl font-bold text-purple-300">{pool.tips}</p>
-                                </div>
-                              </div>
-                              <div className="mt-3">
-                                <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Ends In</p>
-                                <p className="mt-1 text-sm font-mono text-emerald-300">
-                                  {hoursLeft}h {minutesLeft}m
-                                </p>
+                              <div>
+                                <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Tips</p>
+                                <p className="mt-1 text-xl font-bold text-purple-300">{pool.tips}</p>
                               </div>
                             </div>
+                            <div className="mt-3">
+                              <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Ends In</p>
+                              <p className="mt-1 text-sm font-mono text-emerald-300">
+                                {hoursLeft}h {minutesLeft}m
+                              </p>
+                            </div>
                           </div>
-                        </GlassCard>
-                      )
-                    })}
-                  </div>
+                        </div>
+                      </GlassCard>
+                    )
+                  })}
+                </div>
 
-                  {/* Earnings Card */}
-                  <GlassCard className="p-5">
-                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70 mb-4">
-                      Earnings & Your Cut
-                    </p>
-                    <div className="space-y-4">
+                {/* Earnings Card */}
+                <GlassCard className="p-5">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70 mb-4">
+                    Earnings & Your Cut
+                  </p>
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-3xl font-bold text-white">$1,247.50</p>
+                      <p className="text-sm text-slate-400 mt-1">Total earnings (all time)</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 pt-4 border-t border-purple-400/20">
                       <div>
-                        <p className="text-3xl font-bold text-white">$1,247.50</p>
-                        <p className="text-sm text-slate-400 mt-1">Total earnings (all time)</p>
+                        <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Your Cut (10%)</p>
+                        <p className="mt-1 text-lg font-semibold text-purple-300">$124.75</p>
                       </div>
-                      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-purple-400/20">
-                        <div>
-                          <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Your Cut (10%)</p>
-                          <p className="mt-1 text-lg font-semibold text-purple-300">$124.75</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Winners (90%)</p>
-                          <p className="mt-1 text-lg font-semibold text-cyan-300">$1,122.75</p>
-                        </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">Winners (90%)</p>
+                        <p className="mt-1 text-lg font-semibold text-cyan-300">$1,122.75</p>
                       </div>
                     </div>
-                  </GlassCard>
-                </div>
-              )}
+                  </div>
+                </GlassCard>
+              </div>
+            )}
 
-              {activeTab === 'profile' && (
+            {/* Profile Tab */}
+            {activeTab === 'profile' && (
+              <GlassCard>
                 <div className="space-y-4">
                   <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
                     Session profile
@@ -2272,8 +2267,8 @@ function App() {
                     </>
                   )}
                 </div>
-              )}
-            </GlassCard>
+              </GlassCard>
+            )}
 
             {/* Bottom-row bubbles: APY selector for core tabs, tip bubbles only for Tip Pools */}
             {activeTab === 'tip-pools' ? (
@@ -2406,5 +2401,6 @@ function App() {
 }
 
 export default App
+
 
 

@@ -211,19 +211,47 @@ export function EarlyBelieversModal({
     }
   }, [visible])
 
-  // Fetch TFUEL price from CoinGecko
+  // Fetch TFUEL price from CoinGecko with better error handling
   useEffect(() => {
     const fetchTfuelPrice = async () => {
       setPriceLoading(true)
       try {
-        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=theta-fuel&vs_currencies=usd')
+        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=theta-fuel&vs_currencies=usd', {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+          },
+          // Add cache control to prevent stale data
+          cache: 'no-cache',
+        })
+        
+        if (!response.ok) {
+          throw new Error(`CoinGecko API error: ${response.status} ${response.statusText}`)
+        }
+        
         const data = await response.json()
-        if (data['theta-fuel']?.usd) {
-          setTfuelPrice(data['theta-fuel'].usd)
+        
+        if (data && data['theta-fuel'] && typeof data['theta-fuel'].usd === 'number') {
+          const price = data['theta-fuel'].usd
+          if (price > 0) {
+            console.log('✅ TFUEL price fetched:', price)
+            setTfuelPrice(price)
+          } else {
+            console.warn('⚠️ Invalid TFUEL price from CoinGecko:', price)
+            // Don't set invalid price, keep previous or null
+          }
+        } else {
+          console.warn('⚠️ Unexpected CoinGecko response format:', data)
+          // Don't set fallback, keep previous price
         }
       } catch (error) {
-        console.error('Error fetching TFUEL price:', error)
-        setTfuelPrice(0.05) // Default fallback: $0.05 per TFUEL
+        console.error('❌ Error fetching TFUEL price:', error)
+        // Only set fallback if we don't have a price yet
+        if (tfuelPrice === null) {
+          console.warn('⚠️ Using fallback price: $0.05')
+          setTfuelPrice(0.05) // Default fallback: $0.05 per TFUEL
+        }
+        // Otherwise keep the last known good price
       } finally {
         setPriceLoading(false)
       }
@@ -231,10 +259,10 @@ export function EarlyBelieversModal({
 
     if (visible) {
       fetchTfuelPrice()
-      const interval = setInterval(fetchTfuelPrice, 60000)
+      const interval = setInterval(fetchTfuelPrice, 60000) // Refresh every 60 seconds
       return () => clearInterval(interval)
     }
-  }, [visible])
+  }, [visible, tfuelPrice]) // Add tfuelPrice to dependencies to check if we have a price
 
   // Calculate USD value and tier
   const numericAmount = parseFloat(amount) || 0
