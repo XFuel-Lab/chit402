@@ -1846,39 +1846,226 @@ function App() {
                     Session profile
                   </p>
                   {!wallet.isConnected && (
-                    <p className="text-sm text-slate-200">
-                      Connect a wallet in the <span className="font-semibold">Swap</span> tab to see
-                      a live profile of your XFUEL routes and yield history.
-                    </p>
+                    <div className="space-y-6">
+                      {/* Hero section with connect button */}
+                      <div className="relative overflow-hidden rounded-3xl border-2 border-purple-400/60 bg-gradient-to-br from-[rgba(168,85,247,0.25)] via-[rgba(56,189,248,0.15)] to-[rgba(15,23,42,0.40)] p-8 backdrop-blur-xl shadow-[0_0_60px_rgba(168,85,247,0.7),inset_0_0_40px_rgba(168,85,247,0.15)]">
+                        <div className="absolute -right-12 -top-12 h-48 w-48 rounded-full bg-purple-500/20 blur-3xl" />
+                        <div className="absolute -left-8 -bottom-8 h-40 w-40 rounded-full bg-cyan-500/20 blur-3xl" />
+                        
+                        <div className="relative text-center">
+                          <div className="mb-4 flex justify-center">
+                            <div className="rounded-full border-2 border-purple-400/50 bg-gradient-to-br from-purple-500/30 to-cyan-500/20 p-6 shadow-[0_0_40px_rgba(168,85,247,0.6)]">
+                              <span className="text-6xl">👤</span>
+                            </div>
+                          </div>
+                          
+                          <h2 className="mb-3 text-3xl font-bold text-white uppercase tracking-[0.12em]" style={{
+                            textShadow: '0 0 30px rgba(168, 85, 247, 0.8), 0 0 50px rgba(168, 85, 247, 0.4)',
+                          }}>
+                            Connect Your Wallet
+                          </h2>
+                          
+                          <p className="mb-6 text-sm text-slate-300/90 max-w-md mx-auto">
+                            View your live balances, yield history, swap activity, and track your earning streak across the Theta and Cosmos ecosystems.
+                          </p>
+                          
+                          <div className="flex justify-center">
+                            <div className="w-full max-w-xs">
+                              <NeonButton
+                                label="Connect Theta Wallet"
+                                onClick={connectWallet}
+                                rightHint="secure"
+                                variant="primary"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Feature cards preview */}
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                        <div className="rounded-2xl border border-purple-400/30 bg-gradient-to-br from-[rgba(15,23,42,0.9)] to-[rgba(30,41,59,0.7)] p-5 backdrop-blur-sm">
+                          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-purple-400/40 bg-purple-500/20">
+                            <span className="text-2xl">💰</span>
+                          </div>
+                          <h3 className="mb-2 text-sm font-bold text-purple-300 uppercase tracking-wider">Live Balances</h3>
+                          <p className="text-xs text-slate-400">TFUEL, USDC, rXF, and LST positions</p>
+                        </div>
+
+                        <div className="rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-[rgba(15,23,42,0.9)] to-[rgba(30,41,59,0.7)] p-5 backdrop-blur-sm">
+                          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-cyan-400/40 bg-cyan-500/20">
+                            <span className="text-2xl">📊</span>
+                          </div>
+                          <h3 className="mb-2 text-sm font-bold text-cyan-300 uppercase tracking-wider">Yield History</h3>
+                          <p className="text-xs text-slate-400">Track daily earnings and APY performance</p>
+                        </div>
+
+                        <div className="rounded-2xl border border-emerald-400/30 bg-gradient-to-br from-[rgba(15,23,42,0.9)] to-[rgba(30,41,59,0.7)] p-5 backdrop-blur-sm">
+                          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-emerald-400/40 bg-emerald-500/20">
+                            <span className="text-2xl">🔥</span>
+                          </div>
+                          <h3 className="mb-2 text-sm font-bold text-emerald-300 uppercase tracking-wider">Streak Counter</h3>
+                          <p className="text-xs text-slate-400">Build your daily activity streak</p>
+                        </div>
+                      </div>
+                    </div>
                   )}
 
                   {wallet.isConnected && !isSignedIn && (
-                    <div className="space-y-3">
-                      <p className="text-sm text-slate-200">
-                        You&apos;re connected with{' '}
-                        <span className="font-mono text-emerald-300">{wallet.address}</span>. Sign a
-                        short message to unlock arenas, creator dashboards, and fan badges.
-                      </p>
-                      <div className="max-w-xs">
-                        <NeonButton
-                          label="Sign in with wallet"
-                          rightHint="non-custodial"
-                          onClick={handleWalletSignIn}
-                        />
+                    <div className="space-y-6">
+                      <div className="mb-6 flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-slate-400/80 uppercase tracking-wider">Connected</p>
+                          <p className="mt-1 text-lg font-mono text-emerald-300">{wallet.address}</p>
+                        </div>
+                        <div className="rounded-full border border-emerald-400/50 bg-emerald-500/10 px-4 py-2">
+                          <p className="text-xs font-semibold text-emerald-300">● Live</p>
+                        </div>
+                      </div>
+
+                      {/* Live Balances Section */}
+                      <div className="mb-6">
+                        <h3 className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-slate-300/80">
+                          💰 Live Balances
+                        </h3>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          {/* TFUEL Balance */}
+                          <div className="relative overflow-hidden rounded-2xl border border-purple-400/40 bg-gradient-to-br from-[rgba(168,85,247,0.15)] to-[rgba(15,23,42,0.8)] p-4 backdrop-blur-sm">
+                            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">TFUEL</p>
+                            <p className="mt-2 text-2xl font-bold text-white">{wallet.balance}</p>
+                            <p className="mt-1 text-xs text-slate-400">
+                              {tfuelPrice ? `~$${(numericBalance * tfuelPrice).toFixed(2)}` : '—'}
+                            </p>
+                          </div>
+
+                          {/* USDC Balance (placeholder) */}
+                          <div className="relative overflow-hidden rounded-2xl border border-cyan-400/40 bg-gradient-to-br from-[rgba(56,189,248,0.15)] to-[rgba(15,23,42,0.8)] p-4 backdrop-blur-sm">
+                            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">USDC</p>
+                            <p className="mt-2 text-2xl font-bold text-white">0.00</p>
+                            <p className="mt-1 text-xs text-slate-400">$0.00</p>
+                          </div>
+
+                          {/* rXF Balance (placeholder) */}
+                          <div className="relative overflow-hidden rounded-2xl border border-pink-400/40 bg-gradient-to-br from-[rgba(236,72,153,0.15)] to-[rgba(15,23,42,0.8)] p-4 backdrop-blur-sm">
+                            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">rXF</p>
+                            <p className="mt-2 text-2xl font-bold text-white">0.00</p>
+                            <p className="mt-1 text-xs text-slate-400">Reward XF</p>
+                          </div>
+
+                          {/* LST Balance (placeholder - Keplr) */}
+                          <div className="relative overflow-hidden rounded-2xl border border-emerald-400/40 bg-gradient-to-br from-[rgba(16,185,129,0.15)] to-[rgba(15,23,42,0.8)] p-4 backdrop-blur-sm">
+                            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">LSTs</p>
+                            <p className="mt-2 text-2xl font-bold text-white">—</p>
+                            <p className="mt-1 text-xs text-slate-400">Connect Keplr</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Sign in prompt */}
+                      <div className="rounded-2xl border border-purple-400/40 bg-gradient-to-br from-[rgba(168,85,247,0.1)] to-[rgba(15,23,42,0.6)] p-6 backdrop-blur-sm">
+                        <p className="mb-4 text-sm text-slate-200">
+                          Sign a message to unlock full features: arenas, creator dashboards, and fan badges.
+                        </p>
+                        <div className="max-w-xs">
+                          <NeonButton
+                            label="Sign in with wallet"
+                            rightHint="non-custodial"
+                            onClick={handleWalletSignIn}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Basic Activity Preview */}
+                      <div className="mt-6">
+                        <h3 className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-slate-300/80">
+                          📊 Recent Activity
+                        </h3>
+                        {swapHistory.length === 0 ? (
+                          <div className="rounded-2xl border border-purple-400/30 bg-gradient-to-br from-[rgba(15,23,42,0.9)] to-[rgba(30,41,59,0.7)] p-8 text-center backdrop-blur-sm">
+                            <p className="text-sm text-slate-400">No swap activity yet</p>
+                            <p className="mt-2 text-xs text-slate-500">
+                              Make your first swap to start tracking earnings
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {swapHistory.slice(0, 3).map((tx) => (
+                              <div
+                                key={tx.id}
+                                className="rounded-2xl border border-purple-400/30 bg-gradient-to-r from-[rgba(15,23,42,0.8)] to-[rgba(30,41,59,0.6)] p-4 backdrop-blur-sm"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <p className="text-sm font-semibold text-white">
+                                      {tx.amount.toFixed(2)} TFUEL → {tx.outputAmount.toFixed(4)} {tx.targetLST}
+                                    </p>
+                                    <p className="mt-1 text-xs text-slate-400">
+                                      {new Date(tx.timestamp).toLocaleDateString()}
+                                    </p>
+                                  </div>
+                                  <span className="text-xl">✅</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
 
                   {wallet.isConnected && isSignedIn && (
                     <>
-                      <p className="text-sm text-slate-200">
-                        Welcome back{' '}
-                        <span className="font-semibold text-purple-200">
-                          {userAlias ?? wallet.address}
-                        </span>
-                        . This panel will surface cross‑chain positions, yield history, and arena
-                        stats.
-                      </p>
+                      <div className="mb-6 flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-slate-400/80 uppercase tracking-wider">Welcome back</p>
+                          <p className="mt-1 text-2xl font-bold text-white">
+                            <span className="text-purple-300">
+                              {userAlias ?? wallet.address}
+                            </span>
+                          </p>
+                        </div>
+                        <div className="rounded-full border border-emerald-400/50 bg-emerald-500/10 px-4 py-2">
+                          <p className="text-xs font-semibold text-emerald-300">● Connected</p>
+                        </div>
+                      </div>
+
+                      {/* Live Balances Section */}
+                      <div className="mb-6">
+                        <h3 className="mb-4 text-sm font-bold uppercase tracking-[0.18em] text-slate-300/80">
+                          💰 Live Balances
+                        </h3>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          {/* TFUEL Balance */}
+                          <div className="relative overflow-hidden rounded-2xl border border-purple-400/40 bg-gradient-to-br from-[rgba(168,85,247,0.15)] to-[rgba(15,23,42,0.8)] p-4 backdrop-blur-sm">
+                            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">TFUEL</p>
+                            <p className="mt-2 text-2xl font-bold text-white">{wallet.balance}</p>
+                            <p className="mt-1 text-xs text-slate-400">
+                              {tfuelPrice ? `~$${(numericBalance * tfuelPrice).toFixed(2)}` : '—'}
+                            </p>
+                          </div>
+
+                          {/* USDC Balance (placeholder) */}
+                          <div className="relative overflow-hidden rounded-2xl border border-cyan-400/40 bg-gradient-to-br from-[rgba(56,189,248,0.15)] to-[rgba(15,23,42,0.8)] p-4 backdrop-blur-sm">
+                            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">USDC</p>
+                            <p className="mt-2 text-2xl font-bold text-white">0.00</p>
+                            <p className="mt-1 text-xs text-slate-400">$0.00</p>
+                          </div>
+
+                          {/* rXF Balance (placeholder) */}
+                          <div className="relative overflow-hidden rounded-2xl border border-pink-400/40 bg-gradient-to-br from-[rgba(236,72,153,0.15)] to-[rgba(15,23,42,0.8)] p-4 backdrop-blur-sm">
+                            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">rXF</p>
+                            <p className="mt-2 text-2xl font-bold text-white">0.00</p>
+                            <p className="mt-1 text-xs text-slate-400">Reward XF</p>
+                          </div>
+
+                          {/* LST Balance (placeholder - Keplr) */}
+                          <div className="relative overflow-hidden rounded-2xl border border-emerald-400/40 bg-gradient-to-br from-[rgba(16,185,129,0.15)] to-[rgba(15,23,42,0.8)] p-4 backdrop-blur-sm">
+                            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">LSTs</p>
+                            <p className="mt-2 text-2xl font-bold text-white">—</p>
+                            <p className="mt-1 text-xs text-slate-400">Connect Keplr</p>
+                          </div>
+                        </div>
+                      </div>
 
                       {/* My Activity / Earnings Summary Section */}
                       <div className="mt-6">
