@@ -77,6 +77,9 @@ interface PriceStoreState {
   apysError: string | null
   apysLastUpdated: number | null
 
+  // Helpers
+  isPriceStale: (maxAgeMs?: number) => boolean // Check if prices are getting old
+
   // Actions
   fetchPrices: (force?: boolean, background?: boolean) => Promise<void>
   fetchAPYs: (force?: boolean) => Promise<void>
@@ -99,6 +102,13 @@ export const usePriceStore = create<PriceStoreState>((set, get) => {
     apysLoading: false,
     apysError: null,
     apysLastUpdated: Date.now(),
+
+    // Helper to check if prices are stale (default: 2 minutes)
+    isPriceStale: (maxAgeMs = 120000) => {
+      const state = get()
+      if (!state.pricesLastUpdated) return false
+      return Date.now() - state.pricesLastUpdated > maxAgeMs
+    },
 
     // Fetch prices + APYs (instant from cache, refresh in background)
     fetchPrices: async (force = false, background = false) => {
@@ -175,8 +185,21 @@ export const usePriceStore = create<PriceStoreState>((set, get) => {
           }
         }
         
+        // MERGE prices: Keep last known good prices for any failed fetches
+        // This prevents UI from showing "unavailable" during background refresh
+        // Top swaps (Uniswap, 1inch) use this pattern
+        const currentPrices = get().prices
+        const mergedPrices: LSTPriceData = {
+          TFUEL: prices.TFUEL || currentPrices?.TFUEL || INSTANT_FALLBACK_PRICES.TFUEL,
+          stkTIA: prices.stkTIA || currentPrices?.stkTIA || INSTANT_FALLBACK_PRICES.stkTIA,
+          stkATOM: prices.stkATOM || currentPrices?.stkATOM || INSTANT_FALLBACK_PRICES.stkATOM,
+          stkXPRT: prices.stkXPRT || currentPrices?.stkXPRT || INSTANT_FALLBACK_PRICES.stkXPRT,
+          pSTAKEBTC: prices.pSTAKEBTC || currentPrices?.pSTAKEBTC || INSTANT_FALLBACK_PRICES.pSTAKEBTC,
+          stkOSMO: prices.stkOSMO || currentPrices?.stkOSMO || INSTANT_FALLBACK_PRICES.stkOSMO,
+        }
+        
         set({
-          prices,
+          prices: mergedPrices, // Use merged prices (never null)
           apys: mergedApys,
           pricesLoading: false,
           pricesError: null,
@@ -195,8 +218,8 @@ export const usePriceStore = create<PriceStoreState>((set, get) => {
             isInitialLoad: false,
           })
         } else {
-          // Background refresh failed - just log, don't update UI state
-          console.warn('⚠️ Background price refresh failed, using cached data')
+          // Background refresh failed - keep existing prices, don't touch UI
+          console.warn('⚠️ Background price refresh failed, keeping last known good prices visible')
         }
       }
     },
