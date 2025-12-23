@@ -14,6 +14,7 @@ import EarlyBelieversModal from './components/EarlyBelieversModal'
 import EdgeNodeDashboard from './components/EdgeNodeDashboard'
 import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
 import YieldPumpCard from './components/YieldPumpCard'
+import WalletConnectModal from './components/WalletConnectModal'
 import { THETA_TESTNET, THETA_MAINNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
 import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 import { usePriceStore } from './stores/priceStore'
@@ -63,7 +64,7 @@ function App() {
     isConnected: false,
   })
   const [walletProvider, setWalletProvider] = useState<WalletProvider | null>(null)
-  const [showWalletOptions, setShowWalletOptions] = useState(false)
+  const [showWalletConnectModal, setShowWalletConnectModal] = useState(false)
   const [tfuelAmount, setTfuelAmount] = useState('')
   const [selectedPercentage, setSelectedPercentage] = useState<number | null>(null)
   const [swapStatus, setSwapStatus] = useState<SwapStatus>('idle')
@@ -146,28 +147,59 @@ function App() {
 
   const liveApyText = useMemo(() => `${currentApy.toFixed(1)}%`, [currentApy])
 
+  // Show wallet connect modal
+  const showConnectModal = () => {
+    setShowWalletConnectModal(true)
+  }
+
   // Real Theta Wallet connection with balance fetching
-  const connectWallet = async (providerType?: WalletProvider) => {
+  const connectWallet = async (providerType?: WalletProvider, skipModal: boolean = false) => {
     try {
       let provider: any = null
       let selectedProvider: WalletProvider = providerType || walletProvider || 'theta'
+      
+      // Auto-detect and prioritize Theta Wallet if no provider specified
+      if (!providerType && !skipModal) {
+        const hasThetaWallet = !!(window as any).theta
+        const hasMetaMask = !!(window as any).ethereum?.isMetaMask
+        
+        // If Theta Wallet is detected, use it automatically
+        if (hasThetaWallet) {
+          selectedProvider = 'theta'
+        } else if (hasMetaMask) {
+          // If only MetaMask is available, show modal to inform user about Theta Wallet
+          setShowWalletConnectModal(true)
+          return
+        } else {
+          // No wallet detected, show modal with install instructions
+          setShowWalletConnectModal(true)
+          return
+        }
+      }
       
       // Select provider based on type
       if (selectedProvider === 'theta') {
         provider = (window as any).theta
         if (!provider) {
-          alert('Please install Theta Wallet to connect')
+          // Show modal instead of alert
+          setShowWalletConnectModal(true)
           return
         }
       } else if (selectedProvider === 'metamask') {
         provider = (window as any).ethereum
         if (!provider || !provider.isMetaMask) {
-          alert('Please install MetaMask to connect')
+          // Show modal instead of alert
+          setShowWalletConnectModal(true)
           return
         }
       } else if (selectedProvider === 'walletconnect') {
         // WalletConnect integration would go here
-        alert('WalletConnect support coming soon!')
+        setStatusMessage('WalletConnect support coming soon!')
+        setSwapStatus('error')
+        setTimeout(() => {
+          setSwapStatus('idle')
+          setStatusMessage('')
+        }, 3000)
         return
       }
       
@@ -195,7 +227,7 @@ function App() {
           })
           
           setWalletProvider(selectedProvider)
-          setShowWalletOptions(false)
+          setShowWalletConnectModal(false)
           
           // Store provider preference
           try {
@@ -207,14 +239,27 @@ function App() {
           // Refresh balance periodically
           refreshBalance(address, provider)
         }
-      } else {
-        alert('Please install Theta Wallet or MetaMask to connect')
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Wallet connection error:', error)
-      setStatusMessage('Failed to connect wallet')
+      
+      // Handle user rejection gracefully
+      if (error?.code === 4001 || error?.message?.includes('User rejected')) {
+        setStatusMessage('Connection cancelled')
+      } else {
+        setStatusMessage('Failed to connect wallet')
+      }
       setSwapStatus('error')
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+      }, 3000)
     }
+  }
+
+  // Handle wallet connect from modal
+  const handleWalletConnectFromModal = (provider: 'theta' | 'metamask') => {
+    connectWallet(provider, true)
   }
 
   // Disconnect wallet
@@ -1027,7 +1072,7 @@ function App() {
       if (savedProvider) {
         // Delay auto-connect slightly to allow wallet extensions to initialize
         setTimeout(() => {
-          connectWallet(savedProvider)
+          connectWallet(savedProvider, true) // Skip modal on auto-connect
         }, 500)
       }
     } catch (e) {
@@ -2003,6 +2048,13 @@ function App() {
         walletAddress={wallet.fullAddress}
         onConnectWallet={connectWallet}
         isMainnet={true}
+      />
+
+      {/* Wallet Connect Modal */}
+      <WalletConnectModal
+        isOpen={showWalletConnectModal}
+        onClose={() => setShowWalletConnectModal(false)}
+        onConnect={handleWalletConnectFromModal}
       />
     </ScreenBackground>
   )
