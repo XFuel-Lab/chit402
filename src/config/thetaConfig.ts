@@ -19,9 +19,15 @@ export const THETA_MAINNET = {
   currencySymbol: 'TFUEL',
 }
 
-// Router contract address - set via VITE_ROUTER_ADDRESS environment variable
-// For Theta testnet, this should be the deployed XFUELRouter contract address
+// Router contract address - loaded from VITE_ROUTER_ADDRESS environment variable
+// This MUST be set for production deployment
 export const ROUTER_ADDRESS = import.meta.env.VITE_ROUTER_ADDRESS || ''
+
+// Log router configuration for debugging (production-safe)
+if (typeof window !== 'undefined') {
+  console.log('[XFUEL Config] Router address loaded:', ROUTER_ADDRESS || '(not configured)')
+  console.log('[XFUEL Config] Mode:', ROUTER_ADDRESS ? 'REAL' : 'NO ROUTER')
+}
 
 // Tip Pool contract address - will be updated when deployed
 export const TIP_POOL_ADDRESS = import.meta.env.VITE_TIP_POOL_ADDRESS || ''

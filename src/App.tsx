@@ -87,8 +87,7 @@ function App() {
   const [txHash, setTxHash] = useState<string | null>(null)
   const [faucetLoading, setFaucetLoading] = useState(false)
   const [tipPools, setTipPools] = useState<any[]>([])
-  // Force real mode for production - disable mock mode
-  const [mockMode, setMockMode] = useState(false)
+  // Remove mockMode state - always use real mode in production
   const [balanceRefreshInterval, setBalanceRefreshInterval] = useState<NodeJS.Timeout | null>(null)
   const [showCreatePoolModal, setShowCreatePoolModal] = useState(false)
   const [showWinExplosion, setShowWinExplosion] = useState(false)
@@ -646,87 +645,24 @@ function App() {
       return
     }
 
-    // Real swap execution - no simulation mode for production
-    const minRequired = amount + 0.01 // Add small buffer for gas
-    
-    // Skip simulation mode in production - always use real swaps
-    const useSimulation = false // Disabled for production
-
-    if (useSimulation && false) { // Force false for production
-      // Use backend API for simulation
-      try {
-        setSwapStatus('swapping')
-        setStatusMessage(`Simulating swap: ${amount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
-
-        const response = await fetch(`${APP_CONFIG.API_URL}/api/swap`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            userAddress: wallet.fullAddress,
-            amount: amount,
-            targetLST: selectedLST.name,
-            userBalance: numericBalance,
-          }),
-        })
-
-        if (!response.ok) {
-          throw new Error('Simulation request failed')
-        }
-
-        const data = await response.json()
-
-        if (data.success) {
-          setTxHash(data.txHash)
-          
-          // Add to transaction history
-          const newTx: SwapTransaction = {
-            id: `tx-${Date.now()}`,
-            txHash: data.txHash,
-            amount: amount,
-            outputAmount: data.outputAmount,
-            targetLST: selectedLST.name,
-            timestamp: Date.now(),
-            simulated: true,
-          }
-          setSwapHistory(prev => [newTx, ...prev])
-
-          // Trigger confetti
-          confetti({
-            particleCount: 100,
-            spread: 70,
-            origin: { y: 0.6 },
-            colors: ['#a855f7', '#06b6d4', '#ec4899', '#10b981'],
-          })
-
-          setStatusMessage(
-            `✅ Staked into ${selectedLST.name} — earning ${currentApy.toFixed(1)}% APY (Simulated)`,
-          )
-          setSwapStatus('success')
-          setTfuelAmount('')
-          setSelectedPercentage(null)
-
-          setTimeout(() => {
-            setSwapStatus('idle')
-            setStatusMessage('')
-            setTxHash(null)
-          }, 8000)
-          return
-        } else {
-          throw new Error(data.message || 'Simulation failed')
-        }
-      } catch (error: any) {
-        console.error('Simulation error:', error)
-        setStatusMessage(`Simulation failed: ${error.message || 'Unknown error'}`)
-        setSwapStatus('error')
-        setTimeout(() => {
-          setSwapStatus('idle')
-          setStatusMessage('')
-        }, 5000)
-        return
-      }
+    // Validate router address is configured
+    if (!ROUTER_ADDRESS) {
+      console.error('[XFUEL Swap] Router address not configured')
+      setStatusMessage('❌ Real router not configured — contact support')
+      setSwapStatus('error')
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+      }, 5000)
+      return
     }
+
+    // Log router configuration for debugging
+    console.log('[XFUEL Swap] Using router:', ROUTER_ADDRESS)
+    console.log('[XFUEL Swap] Mode: REAL (production)')
+
+    // Real swap execution - always use real contracts in production
+    const minRequired = amount + 0.01 // Add small buffer for gas
 
     // Real on-chain swap flow on Theta mainnet (production)
     try {
@@ -753,17 +689,6 @@ function App() {
       setSwapStatus('swapping')
       setStatusMessage(`Swapping ${amount.toFixed(2)} TFUEL → ${selectedLST.name}…`)
 
-      // Use real router address from environment - production only
-      if (!ROUTER_ADDRESS) {
-        setStatusMessage('Router address not configured. Please set VITE_ROUTER_ADDRESS.')
-        setSwapStatus('error')
-        setTimeout(() => {
-          setSwapStatus('idle')
-          setStatusMessage('')
-        }, 5000)
-        return
-      }
-      
       const routerContract = new ethers.Contract(ROUTER_ADDRESS, ROUTER_ABI, signer)
 
       // Estimate gas first for better UX
