@@ -15,6 +15,7 @@ import EdgeNodeDashboard from './components/EdgeNodeDashboard'
 import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
 import YieldPumpCard from './components/YieldPumpCard'
 import WalletConnectModal from './components/WalletConnectModal'
+import SignInModal from './components/SignInModal'
 import { THETA_TESTNET, THETA_MAINNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
 import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 import { usePriceStore } from './stores/priceStore'
@@ -66,6 +67,7 @@ function App() {
   })
   const [walletProvider, setWalletProvider] = useState<WalletProvider | null>(null)
   const [showWalletConnectModal, setShowWalletConnectModal] = useState(false)
+  const [showSignInModal, setShowSignInModal] = useState(false)
   const [tfuelAmount, setTfuelAmount] = useState('')
   const [selectedPercentage, setSelectedPercentage] = useState<number | null>(null)
   const [swapStatus, setSwapStatus] = useState<SwapStatus>('idle')
@@ -1128,41 +1130,20 @@ function App() {
     }
   }, [])
 
-  const handleWalletSignIn = async () => {
-    if (!wallet.isConnected || !wallet.fullAddress) {
-      setStatusMessage('Connect wallet in Swap first to sign in')
-      setSwapStatus('error')
-      setActiveTab('swap')
-      return
-    }
+  const handleWalletSignIn = () => {
+    // Open sign-in modal
+    setShowSignInModal(true)
+  }
 
-    try {
-      // In a full 2026 setup this would be a SIWE-style message validated by a backend.
-      const provider = new ethers.BrowserProvider(
-        (window as any).ethereum || (window as any).theta,
-      )
-      const signer = provider.getSigner()
-      const message = `Sign in to XFUEL arenas as ${wallet.fullAddress} @ ${new Date().toISOString()}`
-
-      await signer.signMessage(message)
-
-      const alias = `fan-${wallet.address?.slice(2, 6) ?? '0000'}`
-      setIsSignedIn(true)
-      setUserAlias(alias)
-
-      try {
-        window.localStorage.setItem(
-          'xfuel-session',
-          JSON.stringify({ address: wallet.fullAddress, alias }),
-        )
-      } catch {
-        // ignore
-      }
-    } catch (e: any) {
-      console.error('Sign-in failed', e)
-      setIsSignedIn(false)
-      setUserAlias(null)
-    }
+  const handleSignInSuccess = (alias: string, email?: string) => {
+    setIsSignedIn(true)
+    setUserAlias(alias)
+    setStatusMessage('✨ Signed in — personalized features unlocked')
+    setSwapStatus('success')
+    setTimeout(() => {
+      setSwapStatus('idle')
+      setStatusMessage('')
+    }, 4000)
   }
 
   return (
@@ -2085,6 +2066,18 @@ function App() {
         isOpen={showWalletConnectModal}
         onClose={() => setShowWalletConnectModal(false)}
         onConnect={handleWalletConnectFromModal}
+      />
+
+      {/* Sign In Modal */}
+      <SignInModal
+        isOpen={showSignInModal}
+        onClose={() => setShowSignInModal(false)}
+        walletAddress={wallet.fullAddress}
+        onConnectWallet={() => {
+          setShowSignInModal(false)
+          setShowWalletConnectModal(true)
+        }}
+        onSignInSuccess={handleSignInSuccess}
       />
     </ScreenBackground>
   )

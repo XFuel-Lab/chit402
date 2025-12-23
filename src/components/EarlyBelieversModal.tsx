@@ -3,6 +3,7 @@ import { ethers } from 'ethers'
 import GlassCard from './GlassCard'
 import NeonButton from './NeonButton'
 import { THETA_MAINNET } from '../config/thetaConfig'
+import { fetchCoinGecko } from '../utils/rateLimiter'
 
 // Theta Mainnet USDC address (update with actual address)
 const USDC_ADDRESS_MAINNET = import.meta.env.VITE_USDC_ADDRESS_MAINNET || '0x0000000000000000000000000000000000000000'
@@ -211,21 +212,25 @@ export function EarlyBelieversModal({
     }
   }, [visible])
 
-  // Fetch TFUEL price from CoinGecko with better error handling
+  // Fetch TFUEL price from CoinGecko with better error handling and rate limiting
   useEffect(() => {
     const fetchTfuelPrice = async () => {
       setPriceLoading(true)
       try {
-        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=theta-fuel&vs_currencies=usd', {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-          },
-          // Add cache control to prevent stale data
-          cache: 'no-cache',
-        })
+        const response = await fetchCoinGecko(
+          'https://api.coingecko.com/api/v3/simple/price?ids=theta-fuel&vs_currencies=usd'
+        )
         
         if (!response.ok) {
+          // If rate limited, keep existing price or use fallback
+          if (response.status === 429) {
+            console.warn('⚠️ CoinGecko rate limit exceeded, keeping existing price')
+            if (tfuelPrice === null) {
+              console.warn('⚠️ Using fallback price: $0.05')
+              setTfuelPrice(0.05) // Default fallback: $0.05 per TFUEL
+            }
+            return
+          }
           throw new Error(`CoinGecko API error: ${response.status} ${response.statusText}`)
         }
         
@@ -259,7 +264,8 @@ export function EarlyBelieversModal({
 
     if (visible) {
       fetchTfuelPrice()
-      const interval = setInterval(fetchTfuelPrice, 60000) // Refresh every 60 seconds
+      // Increase interval to 120 seconds to reduce API calls
+      const interval = setInterval(fetchTfuelPrice, 120000) // Refresh every 120 seconds
       return () => clearInterval(interval)
     }
   }, [visible, tfuelPrice]) // Add tfuelPrice to dependencies to check if we have a price

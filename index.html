@@ -34,6 +34,83 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Initialize error suppression early, before MetaMask injects -->
+    <script>
+      (function() {
+        'use strict';
+        // Suppress MetaMask and Theta Wallet console errors early
+        const originalError = console.error;
+        const originalWarn = console.warn;
+        
+        const shouldSuppress = function(args) {
+          const msg = Array.from(args).map(a => {
+            if (typeof a === 'string') return a;
+            if (a instanceof Error) return a.message + ' ' + (a.stack || '');
+            return String(a);
+          }).join(' ').toLowerCase();
+          
+          return (
+            msg.includes('window.web3.currentprovider') ||
+            msg.includes('metamask window.web3') ||
+            msg.includes('you are accessing the metamask') ||
+            msg.includes('inpage.js') ||
+            msg.includes('cors policy') ||
+            msg.includes('access-control-allow-origin') ||
+            msg.includes('api.thetatoken.org') ||
+            msg.includes('guardian/delegated-nodes') ||
+            msg.includes('wallet.thetatoken.org') ||
+            msg.includes('please update your theta client') ||
+            (msg.includes('network error - attempt') && msg.includes('retrying')) ||
+            (msg.includes('rate limit') && msg.includes('retrying')) ||
+            (msg.includes('{"error":') && msg.includes('theta')) ||
+            (msg.includes('failed to load resource') && msg.includes('thetatoken.org')) ||
+            (msg.includes('net::err_failed') && msg.includes('thetatoken.org'))
+          );
+        };
+        
+        console.error = function() {
+          if (!shouldSuppress(arguments)) {
+            originalError.apply(console, arguments);
+          }
+        };
+        
+        console.warn = function() {
+          if (!shouldSuppress(arguments)) {
+            originalWarn.apply(console, arguments);
+          }
+        };
+        
+        // Also suppress unhandled errors
+        window.addEventListener('error', function(e) {
+          const msg = (e.message || '').toLowerCase();
+          const src = (e.filename || '').toLowerCase();
+          if (
+            msg.includes('cors policy') ||
+            msg.includes('api.thetatoken.org') ||
+            msg.includes('window.web3.currentprovider') ||
+            msg.includes('please update your theta client') ||
+            src.includes('inpage.js') ||
+            src.includes('thetatoken.org')
+          ) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          }
+        }, true);
+        
+        window.addEventListener('unhandledrejection', function(e) {
+          const reason = String(e.reason || '').toLowerCase();
+          if (
+            reason.includes('cors policy') ||
+            reason.includes('api.thetatoken.org') ||
+            reason.includes('guardian/delegated-nodes')
+          ) {
+            e.preventDefault();
+            return false;
+          }
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

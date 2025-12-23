@@ -4,6 +4,8 @@
  * Similar to how DeBridge and other top swap rails handle pricing
  */
 
+import { fetchCoinGecko } from './rateLimiter'
+
 export interface TokenPrice {
   price: number // Price in USD
   source: 'defillama' | 'osmosis' | 'coingecko' | 'persistence' | 'stride' | 'fallback'
@@ -25,8 +27,8 @@ export interface LSTPriceAndAPYData {
   apys: Partial<Record<keyof Omit<LSTPriceData, 'TFUEL'>, number>>
 }
 
-// Cache prices + APYs for 30 seconds to avoid rate limiting
-const PRICE_CACHE_TTL = 30 * 1000
+// Cache prices + APYs for 60 seconds to reduce API calls and avoid rate limiting
+const PRICE_CACHE_TTL = 60 * 1000
 let priceCache: {
   data: LSTPriceAndAPYData | null
   timestamp: number
@@ -44,16 +46,16 @@ let forceRefresh = false
 async function fetchTfuelPrice(): Promise<number | null> {
   try {
     console.log('🔍 Fetching TFUEL price from CoinGecko...')
-    const response = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=theta-fuel&vs_currencies=usd',
-      {
-        headers: {
-          'Accept': 'application/json',
-        },
-      }
+    const response = await fetchCoinGecko(
+      'https://api.coingecko.com/api/v3/simple/price?ids=theta-fuel&vs_currencies=usd'
     )
     
     if (!response.ok) {
+      // If still rate limited after retries, return null gracefully
+      if (response.status === 429) {
+        console.warn('⚠️ CoinGecko rate limit exceeded for TFUEL price, using cached value if available')
+        return null
+      }
       throw new Error(`CoinGecko API error: ${response.status}`)
     }
     
@@ -109,16 +111,15 @@ async function fetchStrideRedemptionRate(chainId: string): Promise<number | null
 async function _fetchStkTiaPrice(): Promise<number | null> {
   try {
     // Try direct stkTIA price first
-    const response = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=stride-staked-tia,celestia&vs_currencies=usd',
-      {
-        headers: {
-          'Accept': 'application/json',
-        },
-      }
+    const response = await fetchCoinGecko(
+      'https://api.coingecko.com/api/v3/simple/price?ids=stride-staked-tia,celestia&vs_currencies=usd'
     )
     
     if (!response.ok) {
+      if (response.status === 429) {
+        console.warn('⚠️ CoinGecko rate limit exceeded for stkTIA price')
+        return null
+      }
       throw new Error(`CoinGecko API error: ${response.status}`)
     }
     
@@ -161,16 +162,15 @@ async function _fetchStkTiaPrice(): Promise<number | null> {
 async function _fetchStkAtomPrice(): Promise<number | null> {
   try {
     // Try direct stkATOM price first
-    const response = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=stride-staked-atom,cosmos&vs_currencies=usd',
-      {
-        headers: {
-          'Accept': 'application/json',
-        },
-      }
+    const response = await fetchCoinGecko(
+      'https://api.coingecko.com/api/v3/simple/price?ids=stride-staked-atom,cosmos&vs_currencies=usd'
     )
     
     if (!response.ok) {
+      if (response.status === 429) {
+        console.warn('⚠️ CoinGecko rate limit exceeded for stkATOM price')
+        return null
+      }
       throw new Error(`CoinGecko API error: ${response.status}`)
     }
     
@@ -226,13 +226,8 @@ async function _fetchStkXprtPrice(): Promise<number | null> {
     }
     
     // Try CoinGecko
-    const response = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=persistence-staked-xprt,persistence&vs_currencies=usd',
-      {
-        headers: {
-          'Accept': 'application/json',
-        },
-      }
+    const response = await fetchCoinGecko(
+      'https://api.coingecko.com/api/v3/simple/price?ids=persistence-staked-xprt,persistence&vs_currencies=usd'
     )
     
     if (response.ok) {
@@ -557,15 +552,16 @@ async function fetchDefiLlamaLSTData(): Promise<DefiLlamaYieldData> {
  */
 async function fetchUnderlyingDiscountedPrice(underlyingId: string): Promise<number | null> {
   try {
-    const response = await fetch(
-      `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(underlyingId)}&vs_currencies=usd`,
-      {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      },
+    const response = await fetchCoinGecko(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(underlyingId)}&vs_currencies=usd`
     )
 
     if (!response.ok) {
+      // Handle rate limiting gracefully - don't log as error for 429
+      if (response.status === 429) {
+        console.warn(`⚠️ CoinGecko rate limit (429) for ${underlyingId}, using fallback`)
+        return null
+      }
       throw new Error(`CoinGecko underlying API error: ${response.status}`)
     }
 
@@ -575,6 +571,11 @@ async function fetchUnderlyingDiscountedPrice(underlyingId: string): Promise<num
 
     return price * 0.98
   } catch (error) {
+    // Only log non-rate-limit errors
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      // Network errors - silently fail and use fallback
+      return null
+    }
     console.error('❌ Error fetching underlying discounted price from CoinGecko:', error)
     return null
   }
@@ -596,8 +597,8 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
   // INSTANT: Return cached prices immediately if available (unless bypassing)
   if (!bypassCache && !forceRefresh && priceCache.data && (now - priceCache.timestamp) < PRICE_CACHE_TTL) {
     console.log('⚡ Using cached prices (instant)')
-    // Background refresh if cache is getting stale (>10s old)
-    if ((now - priceCache.timestamp) > 10000) {
+    // Background refresh if cache is getting stale (>30s old, but before TTL expires)
+    if ((now - priceCache.timestamp) > 30000) {
       // Fire and forget - refresh in background, don't wait
       getLSTPrices(true).catch(() => {})
     }

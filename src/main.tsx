@@ -5,6 +5,17 @@ import InstitutionsPortal from './InstitutionsPortal.tsx'
 import LiquidityDashboard from './LiquidityDashboard.tsx'
 import './index.css'
 import { usePriceStore } from './stores/priceStore'
+import { suppressCrossOriginErrors } from './utils/consoleErrorSuppression'
+import { logProductionCheck } from './utils/productionCheck'
+
+// Suppress console errors from cross-origin windows and MetaMask deprecation warnings
+// This prevents CORS errors from Theta Wallet website and MetaMask warnings from cluttering the console
+suppressCrossOriginErrors()
+
+// Run production readiness check (only in development)
+if (import.meta.env.DEV) {
+  logProductionCheck()
+}
 
 function Router() {
   const [path, setPath] = useState(window.location.pathname)

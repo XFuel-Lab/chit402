@@ -276,7 +276,14 @@ export default function BiDirectionalSwapCard({
               </div>
             ) : (
               <button
-                onClick={onConnectTheta}
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  console.log('BiDirectionalSwapCard: Connect Theta Wallet button clicked')
+                  onConnectTheta().catch(err => {
+                    console.error('BiDirectionalSwapCard: Error in onConnectTheta:', err)
+                  })
+                }}
                 className="text-sm text-purple-400 hover:text-purple-300 underline"
               >
                 Connect Theta Wallet
