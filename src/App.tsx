@@ -18,6 +18,7 @@ import WalletConnectModal from './components/WalletConnectModal'
 import { THETA_TESTNET, THETA_MAINNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
 import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 import { usePriceStore } from './stores/priceStore'
+import { createWalletConnectProvider, getWalletConnectProvider, disconnectWalletConnect } from './utils/walletConnect'
 
 type SwapStatus = 'idle' | 'approving' | 'swapping' | 'success' | 'error'
 
@@ -149,8 +150,11 @@ function App() {
 
   // Simplified wallet connection (no extension dependency)
   const connectWallet = async (providerType?: WalletProvider) => {
+    // Guard: if providerType is not a valid WalletProvider (e.g., it's an event object), treat as undefined
+    const validProvider = providerType === 'walletconnect' || providerType === 'metamask' ? providerType : undefined
+    
     // Always show modal for wallet selection (QR/Web approach)
-    if (!providerType) {
+    if (!validProvider) {
       setShowWalletConnectModal(true)
       return
     }
@@ -158,20 +162,38 @@ function App() {
     try {
       let provider: any = null
       
-      if (providerType === 'walletconnect') {
-        // WalletConnect for Theta Wallet mobile app
-        setStatusMessage('Opening WalletConnect...')
-        setSwapStatus('idle')
-        
-        // TODO: Implement actual WalletConnect integration
-        // For now, redirect to Theta Wallet web
-        window.open('https://wallet.thetatoken.org/connect', '_blank')
-        setStatusMessage('Please connect via Theta Wallet app')
-        setTimeout(() => {
-          setStatusMessage('')
-        }, 5000)
-        return
-      } else if (providerType === 'metamask') {
+      if (validProvider === 'walletconnect') {
+        // Theta Wallet connection via WalletConnect protocol
+        // Official method - no extension detection
+        try {
+          const walletConnectProvider = await createWalletConnectProvider()
+          
+          // Check if already connected
+          if (walletConnectProvider.session) {
+            provider = walletConnectProvider
+          } else {
+            // Connect to get accounts
+            await walletConnectProvider.connect()
+            provider = walletConnectProvider
+          }
+        } catch (error: any) {
+          console.error('WalletConnect error:', error)
+          if (error?.message?.includes('User rejected') || error?.code === 4001) {
+            setStatusMessage('Connection cancelled')
+          } else {
+            setStatusMessage('Failed to connect via WalletConnect. Please try again.')
+          }
+          setSwapStatus('error')
+          setTimeout(() => {
+            setStatusMessage('')
+            setSwapStatus('idle')
+          }, 5000)
+          return
+        }
+      } else if (validProvider === 'metamask') {
+        // Note: MetaMask may show a deprecation warning about window.web3.currentProvider.
+        // This is expected - MetaMask injects a deprecated shim for backwards compatibility.
+        // Our code correctly uses window.ethereum. The warning is suppressed by our error suppression utility.
         provider = (window as any).ethereum
         if (!provider || !provider.isMetaMask) {
           setStatusMessage('MetaMask not detected')
@@ -206,31 +228,47 @@ function App() {
             isConnected: true,
           })
           
-          setWalletProvider(providerType)
+          setWalletProvider(validProvider)
           setShowWalletConnectModal(false)
           
           try {
-            localStorage.setItem('xfuel-wallet-provider', providerType)
+            localStorage.setItem('xfuel-wallet-provider', validProvider)
           } catch (e) {
             console.warn('Could not save wallet provider preference:', e)
           }
           
           refreshBalance(address, provider)
+        } else {
+          setStatusMessage('No accounts available')
+          setSwapStatus('error')
+          setTimeout(() => {
+            setSwapStatus('idle')
+            setStatusMessage('')
+          }, 3000)
         }
+      } else {
+        setStatusMessage('Wallet provider not available')
+        setSwapStatus('error')
+        setTimeout(() => {
+          setSwapStatus('idle')
+          setStatusMessage('')
+        }, 3000)
       }
     } catch (error: any) {
       console.error('Wallet connection error:', error)
       
       if (error?.code === 4001 || error?.message?.includes('User rejected')) {
         setStatusMessage('Connection cancelled')
+      } else if (error?.code === -32002) {
+        setStatusMessage('Connection request already pending. Please check your wallet.')
       } else {
-        setStatusMessage('Failed to connect wallet')
+        setStatusMessage(`Failed to connect wallet: ${error?.message || 'Unknown error'}`)
       }
       setSwapStatus('error')
       setTimeout(() => {
         setSwapStatus('idle')
         setStatusMessage('')
-      }, 3000)
+      }, 5000)
     }
   }
 
@@ -245,6 +283,11 @@ function App() {
 
   // Disconnect wallet
   const disconnectWallet = () => {
+    // Disconnect WalletConnect if it was used
+    if (walletProvider === 'walletconnect') {
+      disconnectWalletConnect()
+    }
+    
     setWallet({
       address: null,
       fullAddress: null,
@@ -1202,7 +1245,7 @@ function App() {
             {activeTab === 'swap' && (
               <BiDirectionalSwapCard
                 thetaWallet={wallet}
-                onConnectTheta={connectWallet}
+                onConnectTheta={() => connectWallet()}
                 onDisconnectTheta={disconnectWallet}
               />
             )}
@@ -1503,7 +1546,12 @@ function App() {
                             <div className="w-full max-w-xs">
                               <NeonButton
                                 label="Connect Theta Wallet"
-                                onClick={connectWallet}
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  // Open wallet connect modal (QR + web wallet options)
+                                  setShowWalletConnectModal(true)
+                                }}
                                 rightHint="secure"
                                 variant="primary"
                               />

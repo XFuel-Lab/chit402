@@ -1,4 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
+import { createWalletConnectProvider, getWalletConnectUri } from '../utils/walletConnect'
 
 interface WalletConnectModalProps {
   isOpen: boolean
@@ -12,10 +14,60 @@ export default function WalletConnectModal({
   onConnect,
 }: WalletConnectModalProps) {
   const [isConnecting, setIsConnecting] = useState(false)
-  const [showQR, setShowQR] = useState(false)
+  const [showThetaQR, setShowThetaQR] = useState(false) // Show QR modal for Theta Wallet
+  const [walletConnectUri, setWalletConnectUri] = useState<string | undefined>(undefined)
 
-  // WalletConnect URI for Theta Wallet connection
-  const walletConnectURI = 'https://wallet.thetatoken.org/connect'
+  // Initialize WalletConnect and get QR URI when showing QR modal
+  useEffect(() => {
+    if (showThetaQR && isOpen) {
+      let provider: any = null
+      
+      const initWalletConnect = async () => {
+        try {
+          provider = await createWalletConnectProvider()
+          
+          // Check if already connected
+          if (provider.session) {
+            // Already connected, close modal and trigger connection handler
+            setShowThetaQR(false)
+            onConnect('walletconnect')
+            return
+          }
+          
+          // Listen for URI display
+          provider.on('display_uri', (uri: string) => {
+            setWalletConnectUri(uri)
+          })
+          
+          // Listen for session establishment
+          provider.on('connect', () => {
+            setShowThetaQR(false)
+            onConnect('walletconnect')
+          })
+          
+          // Connect to get the URI (this will trigger display_uri event)
+          // This will show QR code that user can scan
+          await provider.connect()
+        } catch (error: any) {
+          console.error('Failed to initialize WalletConnect:', error)
+          if (error?.message?.includes('User rejected') || error?.code === 4001) {
+            // User cancelled, just close QR modal
+            setShowThetaQR(false)
+          }
+        }
+      }
+      
+      initWalletConnect()
+      
+      // Cleanup
+      return () => {
+        if (provider) {
+          provider.removeAllListeners()
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showThetaQR, isOpen])
 
   if (!isOpen) return null
 
@@ -69,9 +121,9 @@ export default function WalletConnectModal({
                 <div className="h-px flex-1 bg-gradient-to-r from-purple-500/50 to-transparent" />
               </div>
 
-              {/* Theta Wallet via WalletConnect/Web */}
+              {/* Theta Wallet - Button to show QR modal */}
               <button
-                onClick={() => setShowQR(!showQR)}
+                onClick={() => setShowThetaQR(true)}
                 className="group relative w-full rounded-2xl border-2 border-purple-400/70 bg-gradient-to-br from-purple-500/25 via-purple-600/20 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-purple-400 hover:shadow-[0_0_40px_rgba(168,85,247,0.8),inset_0_0_30px_rgba(168,85,247,0.3)] active:scale-[0.98]"
               >
                 <div className="flex items-center gap-4">
@@ -80,10 +132,10 @@ export default function WalletConnectModal({
                   </div>
                   <div className="flex-1">
                     <p className="text-xl font-bold text-white group-hover:text-purple-200 transition-colors">
-                      Theta Wallet
+                      Connect Theta Wallet
                     </p>
                     <p className="text-xs text-slate-400 mt-1 group-hover:text-slate-300 transition-colors">
-                      Use official Theta Wallet app for best experience
+                      WalletConnect - Official Theta Wallet
                     </p>
                   </div>
                   <svg
@@ -92,31 +144,58 @@ export default function WalletConnectModal({
                     stroke="currentColor"
                     viewBox="0 0 24 24"
                   >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </div>
               </button>
 
-              {/* QR Code / Connection Instructions */}
-              {showQR && (
-                <div className="p-6 rounded-2xl border-2 border-purple-400/60 bg-gradient-to-br from-purple-500/20 via-purple-600/15 to-slate-900/60 backdrop-blur-xl shadow-[0_0_40px_rgba(168,85,247,0.5),inset_0_0_30px_rgba(168,85,247,0.2)]">
+              {/* QR Code Modal for Theta Wallet */}
+              {showThetaQR && (
+                <div className="relative p-6 rounded-2xl border-2 border-purple-400/60 bg-gradient-to-br from-purple-500/20 via-purple-600/15 to-slate-900/60 backdrop-blur-xl shadow-[0_0_50px_rgba(168,85,247,0.7),0_0_80px_rgba(168,85,247,0.4),inset_0_0_40px_rgba(168,85,247,0.2)]">
+                  <button
+                    onClick={() => setShowThetaQR(false)}
+                    className="absolute right-3 top-3 flex h-6 w-6 items-center justify-center rounded-full border border-purple-400/50 bg-purple-500/20 text-purple-300 transition-all hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-300"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                  
                   <div className="text-center space-y-4">
-                    {/* QR Code Placeholder */}
-                    <div className="mx-auto w-48 h-48 rounded-2xl border-2 border-purple-400/50 bg-white p-4 shadow-[0_0_30px_rgba(168,85,247,0.6)]">
-                      <div className="w-full h-full bg-gradient-to-br from-purple-500/20 to-cyan-500/20 rounded-xl flex items-center justify-center">
-                        <div className="text-center">
-                          <svg className="w-32 h-32 mx-auto text-purple-600" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M3 11h8V3H3v8zm2-6h4v4H5V5zm-2 14h8v-8H3v8zm2-6h4v4H5v-4zm8-10v8h8V3h-8zm6 6h-4V5h4v4zm-6 4h2v2h-2v-2zm2 2h2v2h-2v-2zm-2 2h2v2h-2v-2zm4-4h2v2h-2v-2zm2 2h2v2h-2v-2zm-2 2h2v2h-2v-2zm2-6h2v2h-2V9zm-4 0h2v2h-2V9z"/>
-                          </svg>
-                          <p className="text-xs text-purple-600 font-bold mt-2">QR CODE</p>
-                        </div>
+                    {/* Neon QR Code Card */}
+                    <div className="mx-auto w-64 h-64 rounded-3xl border-4 border-purple-400/80 bg-white p-6 shadow-[0_0_60px_rgba(168,85,247,0.8),0_0_100px_rgba(168,85,247,0.4),inset_0_0_30px_rgba(168,85,247,0.1)] relative overflow-hidden">
+                      {/* Glow effect */}
+                      <div className="absolute inset-0 bg-gradient-to-br from-purple-400/20 via-transparent to-cyan-400/20 pointer-events-none" />
+                      <div className="relative w-full h-full flex items-center justify-center bg-white rounded-2xl">
+                        {walletConnectUri ? (
+                          <QRCodeSVG
+                            value={walletConnectUri}
+                            size={200}
+                            level="H"
+                            includeMargin={false}
+                            fgColor="#000000"
+                            bgColor="#ffffff"
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center justify-center space-y-2">
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500"></div>
+                            <p className="text-xs text-purple-600 font-semibold">Loading QR...</p>
+                          </div>
+                        )}
                       </div>
                     </div>
 
                     {/* Instructions */}
-                    <div className="space-y-2">
-                      <p className="text-sm font-bold text-white">Scan with Theta Wallet App</p>
-                      <ol className="text-xs text-slate-300 space-y-1 text-left max-w-xs mx-auto">
+                    <div className="space-y-3">
+                      <p className="text-base font-bold text-white">
+                        Scan with Theta Wallet app for best experience
+                      </p>
+                      {!walletConnectUri && (
+                        <p className="text-xs text-slate-400 animate-pulse">
+                          Initializing WalletConnect...
+                        </p>
+                      )}
+                      <ol className="text-xs text-slate-300 space-y-2 text-left max-w-sm mx-auto">
                         <li className="flex items-start gap-2">
                           <span className="text-purple-400 font-bold">1.</span>
                           <span>Open Theta Wallet app on your phone</span>
@@ -131,52 +210,9 @@ export default function WalletConnectModal({
                         </li>
                       </ol>
                     </div>
-
-                    {/* Download Links */}
-                    <div className="pt-4 border-t border-purple-400/30">
-                      <p className="text-[10px] text-slate-400 mb-2">Don't have the app?</p>
-                      <div className="flex gap-2 justify-center">
-                        <a
-                          href="https://wallet.thetatoken.org"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-purple-400/50 bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 hover:border-purple-400 transition-all"
-                        >
-                          📱 Download App
-                        </a>
-                        <button
-                          onClick={async () => {
-                            setIsConnecting(true)
-                            try {
-                              await onConnect('walletconnect')
-                            } finally {
-                              setIsConnecting(false)
-                            }
-                          }}
-                          disabled={isConnecting}
-                          className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-cyan-400/50 bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 hover:border-cyan-400 transition-all disabled:opacity-50"
-                        >
-                          {isConnecting ? '⏳ Connecting...' : '🔗 WalletConnect'}
-                        </button>
-                      </div>
-                    </div>
                   </div>
                 </div>
               )}
-
-              {/* Info Message */}
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/30">
-                <div className="flex-shrink-0">
-                  <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div className="flex-1">
-                  <p className="text-xs text-cyan-300 font-semibold">
-                    Use official Theta Wallet app for best TFUEL staking experience
-                  </p>
-                </div>
-              </div>
             </div>
 
             {/* Divider */}
