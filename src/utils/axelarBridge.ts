@@ -178,8 +178,10 @@ export async function bridgeThetaToCosmos(
     )
 
     // Encode payload for staking on destination
+    // Note: destinationAddress is a Cosmos Bech32 address (not Ethereum 0x format)
+    // Must encode as 'string' type instead of 'address' type
     const payload = ethers.AbiCoder.defaultAbiCoder().encode(
-      ['address', 'string', 'uint256'],
+      ['string', 'string', 'uint256'],
       [destinationAddress, destinationToken.symbol, ethers.parseUnits(amount, destinationToken.decimals)]
     )
 
@@ -373,8 +375,9 @@ export async function sendToCosmos(
   stakeMsg: Record<string, any>
 ): Promise<{ txHash: string; relayFee: string }> {
   // Encode stake message as payload
+  // Note: destinationAddress can be Cosmos Bech32 format, encode as string
   const payload = ethers.AbiCoder.defaultAbiCoder().encode(
-    ['address', 'string', 'string'],
+    ['string', 'string', 'string'],
     [destinationAddress, destinationChain, JSON.stringify(stakeMsg)]
   )
 
