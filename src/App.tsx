@@ -16,6 +16,7 @@ import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
 import YieldPumpCard from './components/YieldPumpCard'
 import WalletConnectModal from './components/WalletConnectModal'
 import SignInModal from './components/SignInModal'
+import TransactionSuccessModal from './components/TransactionSuccessModal'
 import { THETA_TESTNET, THETA_MAINNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
 import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 import { usePriceStore } from './stores/priceStore'
@@ -107,6 +108,16 @@ function App() {
   const [keplrAddress, setKeplrAddress] = useState<string | null>(null)
   const [keplrLSTBalance, setKeplrLSTBalance] = useState<number>(0)
   const [isStakingToKeplr, setIsStakingToKeplr] = useState(false)
+  
+  // Transaction success modal state
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [successModalData, setSuccessModalData] = useState<{
+    txHash: string
+    lstSymbol: string
+    amount: number
+    apy: number
+    chain: 'theta' | 'cosmos'
+  } | null>(null)
 
   // Global oracle data (prefetched + cached via Zustand)
   const {
@@ -773,6 +784,16 @@ function App() {
       setSwapStatus('success')
       setTfuelAmount('')
       setSelectedPercentage(null)
+      
+      // Show transaction success modal
+      setSuccessModalData({
+        txHash: tx.hash,
+        lstSymbol: selectedLST.name,
+        amount: outputAmount,
+        apy: currentApy,
+        chain: 'theta',
+      })
+      setShowSuccessModal(true)
 
       // Refresh Theta balance after transaction
       setTimeout(() => {
@@ -2102,6 +2123,22 @@ function App() {
         }}
         onSignInSuccess={handleSignInSuccess}
       />
+
+      {/* Transaction Success Modal */}
+      {successModalData && (
+        <TransactionSuccessModal
+          isOpen={showSuccessModal}
+          onClose={() => {
+            setShowSuccessModal(false)
+            setSuccessModalData(null)
+          }}
+          txHash={successModalData.txHash}
+          lstSymbol={successModalData.lstSymbol}
+          amount={successModalData.amount}
+          apy={successModalData.apy}
+          chain={successModalData.chain}
+        />
+      )}
     </ScreenBackground>
   )
 }
