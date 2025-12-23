@@ -1961,17 +1961,28 @@ function App() {
                         </div>
                       </div>
 
-                      {/* Sign in prompt */}
-                      <div className="rounded-2xl border border-purple-400/40 bg-gradient-to-br from-[rgba(168,85,247,0.1)] to-[rgba(15,23,42,0.6)] p-6 backdrop-blur-sm">
-                        <p className="mb-4 text-sm text-slate-200">
-                          Sign a message to unlock full features: arenas, creator dashboards, and fan badges.
-                        </p>
-                        <div className="max-w-xs">
-                          <NeonButton
-                            label="Sign in with wallet"
-                            rightHint="non-custodial"
-                            onClick={handleWalletSignIn}
-                          />
+                      {/* Sign in prompt - Optional extras */}
+                      <div 
+                        className="rounded-xl border border-purple-400/20 bg-gradient-to-br from-[rgba(168,85,247,0.05)] to-[rgba(15,23,42,0.4)] p-5 backdrop-blur-sm"
+                        title="Free signature (no gas) — unlocks personalized features"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="flex-shrink-0 rounded-lg border border-purple-400/30 bg-purple-500/10 p-2">
+                            <span className="text-xl">✨</span>
+                          </div>
+                          <div className="flex-1">
+                            <p className="mb-3 text-xs text-slate-300/80">
+                              <span className="font-semibold text-purple-300">Optional:</span> Sign to unlock creator tools, badges, and personalized features
+                            </p>
+                            <button
+                              onClick={handleWalletSignIn}
+                              className="group relative inline-flex items-center gap-2 rounded-xl border border-purple-400/40 bg-purple-500/10 px-4 py-2 text-xs font-semibold text-purple-300 transition-all hover:border-purple-400/70 hover:bg-purple-500/20 hover:shadow-[0_0_20px_rgba(168,85,247,0.4)]"
+                              title="Free signature (no gas) — unlocks personalized features"
+                            >
+                              <span>Sign to Unlock Extras</span>
+                              <span className="text-[10px] font-normal text-slate-400">(Creator Tools, Badges)</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
 
