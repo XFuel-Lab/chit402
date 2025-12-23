@@ -258,8 +258,12 @@ function App() {
   }
 
   // Handle wallet connect from modal
-  const handleWalletConnectFromModal = (provider: 'theta' | 'metamask') => {
-    connectWallet(provider, true)
+  const handleWalletConnectFromModal = async (provider: 'theta' | 'metamask') => {
+    try {
+      await connectWallet(provider, true)
+    } catch (error) {
+      console.error('Modal connection error:', error)
+    }
   }
 
   // Disconnect wallet

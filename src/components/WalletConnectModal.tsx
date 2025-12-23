@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 interface WalletConnectModalProps {
   isOpen: boolean
   onClose: () => void
-  onConnect: (provider: 'theta' | 'metamask') => void
+  onConnect: (provider: 'theta' | 'metamask') => Promise<void> | void
 }
 
 export default function WalletConnectModal({
@@ -13,6 +13,7 @@ export default function WalletConnectModal({
 }: WalletConnectModalProps) {
   const [thetaDetected, setThetaDetected] = useState(false)
   const [metamaskDetected, setMetamaskDetected] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
 
   // Detect installed wallets
   useEffect(() => {
@@ -86,14 +87,26 @@ export default function WalletConnectModal({
               </div>
 
               <button
-                onClick={() => {
+                onClick={async () => {
+                  console.log('Theta button clicked, detected:', thetaDetected)
                   if (thetaDetected) {
-                    onConnect('theta')
+                    setIsConnecting(true)
+                    try {
+                      console.log('Calling onConnect for Theta Wallet...')
+                      await onConnect('theta')
+                      console.log('Theta connection completed')
+                    } catch (error) {
+                      console.error('Theta connection error:', error)
+                    } finally {
+                      setIsConnecting(false)
+                    }
                   } else {
+                    console.log('Theta not detected, opening install page')
                     window.open('https://www.thetatoken.org/wallet', '_blank')
                   }
                 }}
-                className="group relative w-full rounded-2xl border-2 border-purple-400/70 bg-gradient-to-br from-purple-500/25 via-purple-600/20 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-purple-400 hover:shadow-[0_0_40px_rgba(168,85,247,0.8),inset_0_0_30px_rgba(168,85,247,0.3)] active:scale-[0.98]"
+                disabled={isConnecting}
+                className="group relative w-full rounded-2xl border-2 border-purple-400/70 bg-gradient-to-br from-purple-500/25 via-purple-600/20 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-purple-400 hover:shadow-[0_0_40px_rgba(168,85,247,0.8),inset_0_0_30px_rgba(168,85,247,0.3)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <div className="flex items-center gap-4">
                   <div className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-purple-400/50 bg-gradient-to-br from-purple-500/40 to-purple-600/30 shadow-[0_0_25px_rgba(168,85,247,0.6)]">
@@ -101,9 +114,9 @@ export default function WalletConnectModal({
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <p className="text-xl font-bold text-white group-hover:text-purple-200 transition-colors">
-                        Theta Wallet
-                      </p>
+                    <p className="text-xl font-bold text-white group-hover:text-purple-200 transition-colors">
+                      {isConnecting && thetaDetected ? 'Connecting...' : 'Theta Wallet'}
+                    </p>
                       {thetaDetected && (
                         <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/50">
                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -172,14 +185,26 @@ export default function WalletConnectModal({
 
             {/* MetaMask Option */}
             <button
-              onClick={() => {
+              onClick={async () => {
+                console.log('MetaMask button clicked, detected:', metamaskDetected)
                 if (metamaskDetected) {
-                  onConnect('metamask')
+                  setIsConnecting(true)
+                  try {
+                    console.log('Calling onConnect for MetaMask...')
+                    await onConnect('metamask')
+                    console.log('MetaMask connection completed')
+                  } catch (error) {
+                    console.error('MetaMask connection error:', error)
+                  } finally {
+                    setIsConnecting(false)
+                  }
                 } else {
+                  console.log('MetaMask not detected, opening install page')
                   window.open('https://metamask.io/download/', '_blank')
                 }
               }}
-              className="group relative w-full rounded-2xl border-2 border-cyan-400/60 bg-gradient-to-br from-cyan-500/20 via-cyan-600/15 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-cyan-400 hover:shadow-[0_0_40px_rgba(6,182,212,0.7),inset_0_0_30px_rgba(6,182,212,0.2)] active:scale-[0.98]"
+              disabled={isConnecting}
+              className="group relative w-full rounded-2xl border-2 border-cyan-400/60 bg-gradient-to-br from-cyan-500/20 via-cyan-600/15 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-cyan-400 hover:shadow-[0_0_40px_rgba(6,182,212,0.7),inset_0_0_30px_rgba(6,182,212,0.2)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <div className="flex items-center gap-4">
                 <div className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-cyan-400/50 bg-gradient-to-br from-cyan-500/40 to-cyan-600/30 shadow-[0_0_25px_rgba(6,182,212,0.6)]">
@@ -188,7 +213,7 @@ export default function WalletConnectModal({
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <p className="text-xl font-bold text-white group-hover:text-cyan-200 transition-colors">
-                      MetaMask
+                      {isConnecting && metamaskDetected ? 'Connecting...' : 'MetaMask'}
                     </p>
                     {metamaskDetected && (
                       <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/50">
