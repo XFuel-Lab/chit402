@@ -69,23 +69,37 @@ Vote-escrowed XF token (Curve-style) that allows users to lock XF tokens for 1-4
 - `withdraw()` - Withdraw XF after lock expires
 - `votingPower(account)` - Get current voting power
 - `balanceOf(account)` - Get current veXF balance
+- `distributeYield(yieldToken, amount)` - Distribute yield to veXF holders (called by RevenueSplitter)
+
+**Events:**
+- `LockCreated` - Emitted when a lock is created
+- `LockIncreased` - Emitted when lock amount is increased
+- `LockExtended` - Emitted when unlock time is extended
+- `Withdrawn` - Emitted when XF is withdrawn after unlock
+- `YieldDistributed` - Emitted when yield is distributed
+- `PermanentMultiplierSet` - Emitted when permanent multiplier is set
+- `MultiplierSetterSet` - Emitted when multiplier setter is configured
 
 #### RevenueSplitter.sol
-Collects protocol revenue and distributes according to tokenomics:
-- 50% to veXF yield
-- 25% to buyback/burn (Phase 1: placeholder)
-- 15% to rXF mint (Phase 1: placeholder)
+Collects protocol revenue and distributes according to Phase 1 tokenomics:
+- 90% to veXF holders (yield distribution)
 - 10% to Treasury
 
 **Features:**
-- Modular revenue collection
-- Automatic split calculation
+- Modular revenue collection (no changes to existing router/pool)
+- Automatic split calculation with rounding handling
 - UUPS upgradeable
+- Phase 2 ready (buyback/burn and rXF mint infrastructure prepared)
 
 **Key Functions:**
-- `splitRevenue(amount)` - Split ERC20 revenue tokens
-- `splitRevenueNative()` - Split native token (TFUEL)
-- `calculateSplits(amount)` - View split amounts
+- `splitRevenue(amount)` - Split ERC20 revenue tokens (90% veXF yield, 10% treasury)
+- `splitRevenueNative()` - Split native token (TFUEL) - Phase 1 sends to treasury (swap mechanism TBD)
+- `calculateSplits(amount)` - View split amounts without executing
+
+**Events:**
+- `RevenueCollected` - Emitted when revenue is collected
+- `RevenueSplit` - Emitted when revenue is split
+- `VeXFSet`, `TreasurySet`, `RevenueTokenSet`, etc. - Configuration events
 
 #### CyberneticFeeSwitch.sol
 Governance-settable fee tiers for protocol:
@@ -104,30 +118,47 @@ Governance-settable fee tiers for protocol:
 - `setFeeMode(mode)` - Switch between Growth/Extraction
 - `setCustomFee(feeBps)` - Set custom fee (owner only)
 - `setFeesEnabled(enabled)` - Enable/disable fees
-- `getFeeMultiplier()` - Get current fee multiplier
-- `getEffectiveFee(baseFee)` - Calculate effective fee
+- `getFeeMultiplier()` - Get current fee multiplier (IFeeAdapter interface)
+- `getEffectiveFee(baseFee)` - Calculate effective fee (IFeeAdapter interface)
+- `isFeesEnabled()` - Check if fees are enabled (IFeeAdapter interface)
+
+**Events:**
+- `FeesEnabled` - Emitted when fees are enabled/disabled
+- `FeeModeChanged` - Emitted when fee mode changes
+- `FeeChanged` - Emitted when fee amount changes
+- `VeXFSet` - Emitted when veXF contract address is set
+- `MinVeXFChanged` - Emitted when minimum veXF requirement changes
 
 ### Deployment
 
-Deploy Phase 1 contracts:
+Deploy Phase 1 contracts to Theta Mainnet:
 
 ```bash
-# Deploy to local network
-npx hardhat run scripts/phase1-deploy.ts
-
-# Deploy to Theta testnet
-npx hardhat run scripts/phase1-deploy.ts --network theta-testnet
+# Deploy to Theta Mainnet
+npx hardhat run scripts/phase1-deploy.ts --network theta-mainnet
 ```
 
-**Environment Variables:**
-- `XF_TOKEN_ADDRESS` - XF token address (optional, will deploy mock if not set)
-- `REVENUE_TOKEN_ADDRESS` - Revenue token address, e.g., USDC (optional, will deploy mock if not set)
-- `TREASURY_ADDRESS` - Treasury address (defaults to deployer)
+**Environment Variables (required for mainnet):**
+- `THETA_MAINNET_PRIVATE_KEY` - Private key of deployer account
+- `XF_TOKEN_ADDRESS` - XF token address on mainnet (required)
+- `REVENUE_TOKEN_ADDRESS` - Revenue token address (e.g., USDC on Theta mainnet) (required)
+- `TREASURY_ADDRESS` - Treasury address (defaults to deployer if not set)
 
 **Deployment Output:**
-- Contract addresses saved to `deployments/phase1-{chainId}.json`
+- Contract addresses saved to `deployments/phase1-mainnet.json`
 - `.env` file updated with contract addresses
 - Implementation addresses for upgrade verification
+- Proxy addresses for interaction
+
+**Deployment Steps:**
+1. Set environment variables in `.env`
+2. Verify sufficient TFUEL balance (minimum 0.1 TFUEL recommended)
+3. Run deployment script
+4. Verify contracts on block explorer
+5. (Optional) Transfer ownership to multisig/governance
+
+**Contract Verification:**
+After deployment, verify contracts on Theta block explorer using implementation addresses.
 
 ### Testing
 
@@ -142,9 +173,21 @@ npx hardhat test test/veXF.test.cjs
 npx hardhat test test/RevenueSplitter.test.cjs
 npx hardhat test test/CyberneticFeeSwitch.test.cjs
 
+# Run all Phase 1 tests together
+npx hardhat test test/veXF.test.cjs test/RevenueSplitter.test.cjs test/CyberneticFeeSwitch.test.cjs
+
 # Run with coverage (target: 95%+)
 npm run test:coverage
 ```
+
+**Test Coverage:**
+- ✅ 84 tests passing for Phase 1 contracts
+- ✅ All critical functions tested
+- ✅ Edge cases and error conditions covered
+- ✅ Upgradeability tested
+- ✅ Events verified
+- ✅ Access control tested
+- ✅ Uses ethers v6
 
 ### Integration
 

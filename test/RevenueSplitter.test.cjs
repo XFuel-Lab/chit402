@@ -4,7 +4,7 @@ const hre = require('hardhat')
 const { getAddress, parseEther, parseUnits } = require('./helpers.cjs')
 
 describe('RevenueSplitter', function () {
-  let revenueSplitter, veXF, revenueToken, xfToken
+  let revenueSplitter, veXF, revenueToken, xfToken, rXF, buybackBurner
   let owner, treasury, user1, user2
   let MockERC20
 
@@ -41,6 +41,33 @@ describe('RevenueSplitter', function () {
       await getAddress(owner)
     ], { initializer: 'initialize' })
     await revenueSplitter.waitForDeployment?.() || await revenueSplitter.deployed?.()
+
+    // Deploy Phase 2 contracts
+    const RXF = await ethers.getContractFactory('rXF')
+    rXF = await upgrades.deployProxy(RXF, [
+      await getAddress(xfToken),
+      await getAddress(veXF),
+      await getAddress(revenueSplitter),
+      await getAddress(owner)
+    ], { initializer: 'initialize' })
+    await rXF.waitForDeployment?.() || await rXF.deployed?.()
+
+    const BuybackBurner = await ethers.getContractFactory('BuybackBurner')
+    buybackBurner = await upgrades.deployProxy(BuybackBurner, [
+      await getAddress(revenueToken),
+      await getAddress(xfToken),
+      ethers.ZeroAddress, // No swap router
+      await getAddress(owner)
+    ], { initializer: 'initialize' })
+    await buybackBurner.waitForDeployment?.() || await buybackBurner.deployed?.()
+
+    // Configure Phase 2 contracts in RevenueSplitter
+    await revenueSplitter.setRXF(await getAddress(rXF))
+    await revenueSplitter.setBuybackBurner(await getAddress(buybackBurner))
+    await buybackBurner.setRevenueSplitter(await getAddress(revenueSplitter))
+
+    // Mint XF tokens for rXF redemption
+    await xfToken.mint(await getAddress(rXF), parseEther('1000000'))
   })
 
   afterEach(async function () {
@@ -109,7 +136,7 @@ describe('RevenueSplitter', function () {
     })
 
     it('Should split revenue correctly', async function () {
-      const revenueAmount = parseUnits('1000', 6) // 1000 USDC
+      const revenueAmount = parseUnits('10000', 6) // 10000 USDC (for easier Phase 2 splits)
       await revenueToken.mint(await getAddress(user1), revenueAmount)
       await revenueToken.connect(user1).approve(await getAddress(revenueSplitter), revenueAmount)
 
@@ -141,20 +168,21 @@ describe('RevenueSplitter', function () {
       // Check totals
       expect(await revenueSplitter.totalRevenueCollected()).to.equal(revenueAmount)
       
-      // 50% to veXF yield = 500 USDC
-      expect(await revenueSplitter.totalYieldDistributed()).to.equal(parseUnits('500', 6))
+      // Phase 2: 50% to veXF yield = 5000 USDC
+      expect(await revenueSplitter.totalYieldDistributed()).to.equal(parseUnits('5000', 6))
       
-      // 25% to buyback = 250 USDC (tracked but not sent)
-      expect(await revenueSplitter.totalBuybackBurned()).to.equal(parseUnits('250', 6))
+      // Phase 2: 25% to buyback = 2500 USDC
+      expect(await revenueSplitter.totalBuybackBurned()).to.equal(parseUnits('2500', 6))
       
-      // 15% to rXF = 150 USDC (tracked but not sent)
-      expect(await revenueSplitter.totalRXFMinted()).to.equal(parseUnits('150', 6))
+      // Phase 2: 15% to rXF = 1500 USDC
+      expect(await revenueSplitter.totalRXFMinted()).to.equal(parseUnits('1500', 6))
+      expect(await rXF.balanceOf(await getAddress(user1))).to.equal(parseUnits('1500', 6))
       
-      // 10% to treasury = 100 USDC
-      expect(await revenueSplitter.totalTreasurySent()).to.equal(parseUnits('100', 6))
+      // 10% to treasury = 1000 USDC
+      expect(await revenueSplitter.totalTreasurySent()).to.equal(parseUnits('1000', 6))
       
       const treasuryBalanceAfter = await revenueToken.balanceOf(await getAddress(treasury))
-      expect(treasuryBalanceAfter - treasuryBalanceBefore).to.equal(parseUnits('100', 6))
+      expect(treasuryBalanceAfter - treasuryBalanceBefore).to.equal(parseUnits('1000', 6))
     })
 
     it('Should handle rounding correctly', async function () {
@@ -227,13 +255,13 @@ describe('RevenueSplitter', function () {
 
   describe('calculateSplits', function () {
     it('Should calculate splits correctly', async function () {
-      const amount = parseUnits('1000', 6)
+      const amount = parseUnits('10000', 6)
       const [veXFYield, buybackBurn, rXFMint, treasuryAmount] = await revenueSplitter.calculateSplits(amount)
 
-      expect(veXFYield.toString()).to.equal(parseUnits('500', 6).toString()) // 50%
-      expect(buybackBurn.toString()).to.equal(parseUnits('250', 6).toString()) // 25%
-      expect(rXFMint.toString()).to.equal(parseUnits('150', 6).toString()) // 15%
-      expect(treasuryAmount.toString()).to.equal(parseUnits('100', 6).toString()) // 10%
+      expect(veXFYield.toString()).to.equal(parseUnits('5000', 6).toString()) // 50% in Phase 2
+      expect(buybackBurn.toString()).to.equal(parseUnits('2500', 6).toString()) // 25% in Phase 2
+      expect(rXFMint.toString()).to.equal(parseUnits('1500', 6).toString()) // 15% in Phase 2
+      expect(treasuryAmount.toString()).to.equal(parseUnits('1000', 6).toString()) // 10%
     })
 
     it('Should handle rounding in calculateSplits', async function () {

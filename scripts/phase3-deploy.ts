@@ -10,11 +10,18 @@ const __dirname = path.dirname(__filename);
 async function main() {
   console.log('🚀 Starting Phase 3 XFUEL Tokenomics deployment...\n');
 
+  // Get network info first to determine correct private key name
+  const network = await ethers.provider.getNetwork();
+  const chainId = network.chainId.toString();
+  const networkName = network.name === 'theta-mainnet' ? 'mainnet' : chainId;
+  const isMainnet = network.name === 'theta-mainnet' || chainId === '361';
+  const privateKeyEnvVar = isMainnet ? 'THETA_MAINNET_PRIVATE_KEY' : 'THETA_TESTNET_PRIVATE_KEY';
+
   const signers = await ethers.getSigners();
   if (signers.length === 0) {
     throw new Error(
-      '❌ No signers available. Please set THETA_TESTNET_PRIVATE_KEY in your .env file.\n' +
-      '   Example: THETA_TESTNET_PRIVATE_KEY=0xYourPrivateKeyHere'
+      `❌ No signers available. Please set ${privateKeyEnvVar} in your .env file.\n` +
+      `   Example: ${privateKeyEnvVar}=0xYourPrivateKeyHere`
     );
   }
 
@@ -28,11 +35,6 @@ async function main() {
   if (balance < parseEther('0.1')) {
     console.warn('⚠️  Warning: Low balance. You may need more TFUEL for deployment.\n');
   }
-
-  // Get network info
-  const network = await ethers.provider.getNetwork();
-  const chainId = network.chainId.toString();
-  const networkName = network.name === 'theta-mainnet' ? 'mainnet' : chainId;
 
   // Load Phase 1 & 2 deployment info
   const phase1Path = path.join(__dirname, '..', 'deployments', `phase1-${networkName}.json`);

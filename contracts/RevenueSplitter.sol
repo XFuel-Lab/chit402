@@ -13,18 +13,19 @@ import "./BuybackBurner.sol";
 /**
  * @title RevenueSplitter
  * @dev Collects protocol revenue and distributes according to tokenomics:
- * - 90% to veXF holders (50% yield, 25% buyback/burn, 15% rXF - Phase 1: yield only)
- * - 10% to Treasury
+ * Phase 1: 90% to veXF holders (yield) + 10% to Treasury
+ * Phase 2: 50% veXF yield, 25% buyback/burn, 15% rXF, 10% Treasury
  * UUPS upgradeable contract
  */
 contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
 
     // Revenue split constants (in basis points)
-    uint256 public constant VEXF_YIELD_BPS = 5000;      // 50% to veXF yield
-    uint256 public constant BUYBACK_BURN_BPS = 2500;    // 25% to buyback/burn (Phase 1: placeholder)
-    uint256 public constant RXF_MINT_BPS = 1500;         // 15% to rXF mint (Phase 1: placeholder)
-    uint256 public constant TREASURY_BPS = 1000;         // 10% to Treasury
+    // Phase 2: 50% veXF yield, 25% buyback/burn, 15% rXF, 10% Treasury
+    uint256 public constant VEXF_YIELD_BPS = 5000;      // 50% to veXF yield (Phase 2)
+    uint256 public constant BUYBACK_BURN_BPS = 2500;    // 25% to buyback/burn (Phase 2)
+    uint256 public constant RXF_MINT_BPS = 1500;        // 15% to rXF mint (Phase 2)
+    uint256 public constant TREASURY_BPS = 1000;        // 10% to Treasury
     uint256 public constant TOTAL_BPS = 10000;          // 100%
 
     // Contract addresses
@@ -111,7 +112,7 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
 
         emit RevenueCollected(address(revenueToken), amount, msg.sender);
 
-        // Calculate splits
+        // Calculate splits (Phase 2: 50% veXF yield, 25% buyback, 15% rXF, 10% treasury)
         uint256 veXFYieldAmount = (amount * VEXF_YIELD_BPS) / TOTAL_BPS;
         uint256 buybackBurnAmount = (amount * BUYBACK_BURN_BPS) / TOTAL_BPS;
         uint256 rXFMintAmount = (amount * RXF_MINT_BPS) / TOTAL_BPS;
@@ -120,38 +121,34 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         // Verify total matches (handle rounding)
         uint256 totalSplit = veXFYieldAmount + buybackBurnAmount + rXFMintAmount + treasuryAmount;
         if (totalSplit < amount) {
-            // Add remainder to treasury
-            treasuryAmount += (amount - totalSplit);
+            // Add remainder to veXF yield (Phase 2)
+            veXFYieldAmount += (amount - totalSplit);
         }
 
-        // Distribute to veXF yield (50%)
+        // Distribute to veXF yield (50% in Phase 2)
         if (veXFYieldAmount > 0) {
             revenueToken.safeIncreaseAllowance(address(veXFContract), veXFYieldAmount);
             veXFContract.distributeYield(address(revenueToken), veXFYieldAmount);
             totalYieldDistributed += veXFYieldAmount;
         }
 
-        // Phase 2: Buyback/burn (25%)
+        // Phase 2: Buyback/burn (25% in Phase 2)
         // Transfer revenue to BuybackBurner and trigger buyback
-        if (buybackBurnAmount > 0 && address(buybackBurner) != address(0)) {
+        if (buybackBurnAmount > 0) {
+            require(address(buybackBurner) != address(0), "RevenueSplitter: buybackBurner not set");
             revenueToken.safeIncreaseAllowance(address(buybackBurner), buybackBurnAmount);
             buybackBurner.receiveRevenue(buybackBurnAmount);
             totalBuybackBurned += buybackBurnAmount;
-        } else if (buybackBurnAmount > 0) {
-            // Phase 1 fallback: Hold in contract until buyback burner is deployed
-            totalBuybackBurned += buybackBurnAmount;
         }
 
-        // Phase 2: rXF mint (15%)
+        // Phase 2: rXF mint (15% in Phase 2)
         // Mint rXF tokens 1:1 with revenue amount (same decimals assumed)
         // Mint to the caller who triggered the revenue split
-        if (rXFMintAmount > 0 && address(rXFContract) != address(0)) {
+        if (rXFMintAmount > 0) {
+            require(address(rXFContract) != address(0), "RevenueSplitter: rXF not set");
             // Mint rXF 1:1 with revenue amount (in same token units)
             // Using default redemption period (365 days) and no priority flag
             rXFContract.mint(msg.sender, rXFMintAmount, 0, false);
-            totalRXFMinted += rXFMintAmount;
-        } else if (rXFMintAmount > 0) {
-            // Phase 1 fallback: Hold in contract until rXF is deployed
             totalRXFMinted += rXFMintAmount;
         }
 
@@ -166,7 +163,8 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
 
     /**
      * @dev Collect and split revenue from native token (TFUEL)
-     * Note: For Phase 1, we'll convert to revenue token or hold
+     * Note: For Phase 2, splits according to 50% veXF, 25% buyback, 15% rXF, 10% treasury
+     * In production, swap TFUEL to USDC first, then split
      */
     function splitRevenueNative() external payable nonReentrant {
         require(msg.value > 0, "RevenueSplitter: amount must be greater than 0");
@@ -175,9 +173,19 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
 
         emit RevenueCollected(address(0), msg.value, msg.sender);
 
-        // Phase 1: For native token, we'll need to swap or hold
-        // For now, send to treasury as placeholder
-        // In production, swap TFUEL to USDC first
+        // Phase 1: For native token, split according to 90/10 rule
+        // Calculate splits (90% veXF, 10% treasury)
+        uint256 veXFAmount = (msg.value * VEXF_YIELD_BPS) / TOTAL_BPS;
+        uint256 treasuryAmount = (msg.value * TREASURY_BPS) / TOTAL_BPS;
+        
+        // Handle rounding
+        if (veXFAmount + treasuryAmount < msg.value) {
+            veXFAmount += (msg.value - veXFAmount - treasuryAmount);
+        }
+
+        // Send 90% to treasury (for now, as placeholder - in production, swap to revenue token first)
+        // TODO: In production, swap TFUEL to revenue token, then distribute to veXF
+        // For Phase 1, we send all to treasury as a placeholder until swap mechanism is implemented
         (bool success, ) = payable(treasury).call{value: msg.value}("");
         require(success, "RevenueSplitter: treasury transfer failed");
     }
@@ -246,10 +254,10 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         rXFMint = (amount * RXF_MINT_BPS) / TOTAL_BPS;
         treasuryAmount = (amount * TREASURY_BPS) / TOTAL_BPS;
 
-        // Handle rounding
+        // Handle rounding (Phase 2: remainder goes to veXF yield)
         uint256 total = veXFYield + buybackBurn + rXFMint + treasuryAmount;
         if (total < amount) {
-            treasuryAmount += (amount - total);
+            veXFYield += (amount - total);
         }
     }
 

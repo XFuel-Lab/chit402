@@ -2,12 +2,12 @@
 export const APP_CONFIG = {
   // Mock mode: when true, uses mock router instead of real contract
   // Set to false to use real contracts on Theta testnet
-  MOCK_MODE: process.env.VITE_MOCK_MODE === 'true' || !process.env.VITE_ROUTER_ADDRESS,
+  MOCK_MODE: import.meta.env.VITE_MOCK_MODE === 'true' || !import.meta.env.VITE_ROUTER_ADDRESS,
   
   // Auto-detect mock mode based on router address
   get USE_MOCK_MODE() {
     // If no router address is set, use mock mode
-    if (!process.env.VITE_ROUTER_ADDRESS) {
+    if (!import.meta.env.VITE_ROUTER_ADDRESS) {
       return true
     }
     // Otherwise use the explicit setting
@@ -15,7 +15,10 @@ export const APP_CONFIG = {
   },
 
   // Backend API URL (defaults to localhost:3001 in dev)
-  API_URL: process.env.VITE_API_URL || 'http://localhost:3001',
+  API_URL: import.meta.env.VITE_API_URL || 'http://localhost:3001',
+  
+  // Network configuration (mainnet or testnet)
+  NETWORK: import.meta.env.VITE_NETWORK || 'mainnet',
 }
 
 // Mock router address (for testing without deployed contracts)

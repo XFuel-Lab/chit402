@@ -6,6 +6,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./ISwapRouter.sol";
 
 /**
  * @title BuybackBurner
@@ -21,6 +22,7 @@ contract BuybackBurner is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUp
     address public revenueSplitter; // RevenueSplitter that sends revenue
 
     // Swap router interface (can be DEX router or custom swap contract)
+    // When set, automatically executes swaps. When zero, manual mode via recordBuyback()
     address public swapRouter;
     
     // Tracking
@@ -94,24 +96,26 @@ contract BuybackBurner is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUp
      */
     function _executeBuybackAndBurn(uint256 revenueAmount) internal {
         if (swapRouter == address(0)) {
-            // No swap router set - hold revenue until manual swap
-            // In production, this should revert or use a default swap mechanism
+            // No swap router set - hold revenue until manual swap via recordBuyback()
+            // Revenue tokens are held in this contract until owner executes manual swap
             return;
         }
 
         // Approve swap router to spend revenue tokens
-        // Note: Using forceApprove for new approvals (safeApprove is deprecated)
-        revenueToken.forceApprove(swapRouter, revenueAmount);
+        // Using safeIncreaseAllowance for compatibility (forceApprove requires zero allowance first)
+        revenueToken.safeIncreaseAllowance(swapRouter, revenueAmount);
 
         // Execute swap via router
-        // Note: This is a placeholder - actual implementation depends on swap router interface
-        // For now, we'll use a simple interface that expects:
-        // swapRouter.swap(revenueToken, xfToken, revenueAmount, minAmountOut)
-        // The actual swap logic will be implemented based on the DEX being used
-        
-        // For testing purposes, we'll simulate the swap by minting/burning
-        // In production, replace this with actual swap call
-        uint256 xfAmount = _simulateSwap(revenueAmount);
+        // Note: This uses ISwapRouter interface - actual router must implement this interface
+        // Minimum output is set to 0 for now - in production, calculate from price oracle
+        uint256 amountOutMin = 0; // TODO: Add slippage protection based on price oracle
+        uint256 xfAmount = ISwapRouter(swapRouter).swap(
+            address(revenueToken),
+            address(xfToken),
+            revenueAmount,
+            amountOutMin,
+            address(this) // Receive XF tokens to this contract for burning
+        );
 
         // Update tracking
         totalRevenueSwapped += revenueAmount;
@@ -121,27 +125,6 @@ contract BuybackBurner is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUp
 
         // Burn XF tokens
         _burnXF(xfAmount);
-    }
-
-    /**
-     * @dev Simulate swap (for testing - replace with actual swap in production)
-     * @param revenueAmount Amount of revenue tokens
-     * @return xfAmount Amount of XF tokens received
-     */
-    function _simulateSwap(uint256 revenueAmount) internal pure returns (uint256) {
-        // Simplified: assume 1:1 ratio for testing
-        // In production, this would query price oracle or execute actual swap
-        // For USDC (6 decimals) to XF (18 decimals): need proper conversion
-        uint8 revenueDecimals = 6; // USDC typically has 6 decimals
-        uint8 xfDecimals = 18;
-        
-        if (revenueDecimals == xfDecimals) {
-            return revenueAmount;
-        } else if (revenueDecimals < xfDecimals) {
-            return revenueAmount * (10 ** (xfDecimals - revenueDecimals));
-        } else {
-            return revenueAmount / (10 ** (revenueDecimals - xfDecimals));
-        }
     }
 
     /**
@@ -184,9 +167,10 @@ contract BuybackBurner is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUp
 
     /**
      * @dev Set swap router address
-     * @param _swapRouter Address of swap router
+     * @param _swapRouter Address of swap router (must implement ISwapRouter interface, can be zero for manual mode)
      */
     function setSwapRouter(address _swapRouter) external onlyOwner {
+        // Can be zero address to disable automatic swaps (manual mode)
         swapRouter = _swapRouter;
         emit SwapRouterSet(_swapRouter);
     }

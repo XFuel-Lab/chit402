@@ -82,6 +82,8 @@ export function EarlyBelieversModal({
   const [totalRaisedLoading, setTotalRaisedLoading] = useState(false)
   const [waitlistEmail, setWaitlistEmail] = useState('')
   const [waitlistSubmitted, setWaitlistSubmitted] = useState(false)
+  const [selectedPercentage, setSelectedPercentage] = useState<number | null>(null)
+  const [estimatedGas, setEstimatedGas] = useState<string>('0')
 
   // Check network only after wallet is connected
   useEffect(() => {
@@ -237,6 +239,68 @@ export function EarlyBelieversModal({
   // Calculate USD value and tier
   const numericAmount = parseFloat(amount) || 0
   
+  // Handle percentage preset selection
+  const handlePercentageSelect = (pct: number) => {
+    setSelectedPercentage(pct)
+    if (paymentMethod === 'TFUEL' && parseFloat(tfuelBalance) > 0) {
+      const balance = parseFloat(tfuelBalance)
+      if (pct === 100) {
+        // MAX: Use 99% to leave room for gas
+        const maxAmount = balance * 0.99
+        setAmount(maxAmount.toFixed(4))
+      } else {
+        const amount = (balance * pct) / 100
+        setAmount(amount.toFixed(4))
+      }
+    } else if (paymentMethod === 'USDC' && parseFloat(usdcBalance) > 0) {
+      const balance = parseFloat(usdcBalance)
+      if (pct === 100) {
+        // MAX: Use full balance for USDC (gas is separate in TFUEL)
+        setAmount(balance.toFixed(2))
+      } else {
+        const amount = (balance * pct) / 100
+        setAmount(amount.toFixed(2))
+      }
+    }
+  }
+
+  // Estimate gas cost
+  useEffect(() => {
+    if (!walletAddress || !visible) return
+
+    const estimateGas = async () => {
+      try {
+        const provider = (window as any).theta || (window as any).ethereum
+        if (!provider) return
+
+        const ethersProvider = new ethers.BrowserProvider(provider)
+        
+        // Estimate gas for a simple transfer (21000 gas units for native TFUEL)
+        // For USDC transfer, it's typically around 65000 gas units
+        const gasLimit = paymentMethod === 'TFUEL' ? BigInt(21000) : BigInt(65000)
+        
+        // Get current gas price
+        const feeData = await ethersProvider.getFeeData()
+        const gasPrice = feeData.gasPrice || ethers.parseUnits('20', 'gwei') // Default fallback: 20 gwei
+        
+        // Calculate gas cost in TFUEL
+        const gasCost = gasLimit * gasPrice
+        const gasCostEth = parseFloat(ethers.formatEther(gasCost))
+        
+        setEstimatedGas(gasCostEth.toFixed(6))
+      } catch (error) {
+        console.error('Error estimating gas:', error)
+        // Default estimate: ~0.01 TFUEL
+        setEstimatedGas('0.01')
+      }
+    }
+
+    estimateGas()
+    // Refresh gas estimate every 30 seconds
+    const interval = setInterval(estimateGas, 30000)
+    return () => clearInterval(interval)
+  }, [walletAddress, visible, paymentMethod])
+  
   // Convert to USD: if TFUEL, multiply by price; if USDC, it's already in USD
   const usdValue = paymentMethod === 'TFUEL' 
     ? (tfuelPrice ? numericAmount * tfuelPrice : 0)
@@ -318,6 +382,7 @@ export function EarlyBelieversModal({
       setNetworkError(null)
       setWaitlistEmail('')
       setWaitlistSubmitted(false)
+      setSelectedPercentage(null)
     }
   }, [visible])
 
@@ -870,7 +935,7 @@ export function EarlyBelieversModal({
                 </div>
 
                 {/* Amount Input */}
-                <div>
+                <div className="space-y-3">
                   <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-300/70">
                     Contribution Amount (USD equivalent)
                     <span className="ml-2 text-xs normal-case text-slate-400">(Minimum: $100)</span>
@@ -878,21 +943,73 @@ export function EarlyBelieversModal({
                   <input
                     type="number"
                     value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
+                    onChange={(e) => {
+                      setAmount(e.target.value)
+                      setSelectedPercentage(null) // Clear preset when manually typing
+                    }}
                     placeholder="0.00"
                     min="0"
                     step={paymentMethod === 'TFUEL' ? '0.0001' : '0.01'}
                     className="w-full rounded-xl border border-cyan-400/40 bg-black/30 px-4 py-3 font-mono text-lg text-white placeholder:text-slate-500 focus:border-cyan-400/80 focus:outline-none focus:ring-2 focus:ring-cyan-400/50"
                   />
+                  
+                  {/* Preset Buttons */}
+                  <div className="flex gap-2">
+                    {[25, 50].map((pct) => (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() => handlePercentageSelect(pct)}
+                        className={[
+                          'flex-1 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-all',
+                          selectedPercentage === pct
+                            ? 'border-cyan-400/80 bg-cyan-500/20 text-cyan-200 shadow-[0_0_20px_rgba(56,189,248,0.5)]'
+                            : 'border-cyan-400/30 bg-black/20 text-cyan-300 hover:border-cyan-400/60 hover:bg-cyan-500/15',
+                        ].join(' ')}
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => handlePercentageSelect(100)}
+                      className={[
+                        'flex-1 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-all',
+                        selectedPercentage === 100
+                          ? 'border-purple-400/80 bg-purple-500/20 text-purple-200 shadow-[0_0_20px_rgba(168,85,247,0.5)]'
+                          : 'border-purple-400/30 bg-black/20 text-purple-300 hover:border-purple-400/60 hover:bg-purple-500/15',
+                      ].join(' ')}
+                    >
+                      MAX
+                    </button>
+                  </div>
+
                   {paymentMethod === 'TFUEL' && numericAmount > 0 && tfuelPrice && (
-                    <p className="mt-2 text-xs text-cyan-300/80">
+                    <p className="text-xs text-cyan-300/80">
                       ≈ ${(numericAmount * tfuelPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
                     </p>
                   )}
                   {numericAmount > 0 && usdValue < 100 && (
-                    <p className="mt-2 text-xs text-yellow-400">
+                    <p className="text-xs text-yellow-400">
                       ⚠ Minimum contribution is $100 USD. Current: ${usdValue.toFixed(2)} USD
                     </p>
+                  )}
+                  
+                  {/* Gas Cost Preview */}
+                  {walletAddress && (
+                    <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs uppercase tracking-[0.18em] text-amber-300/80">
+                          Estimated Gas Cost
+                        </span>
+                        <span className="font-mono text-sm font-semibold text-amber-200">
+                          ~{estimatedGas} TFUEL
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs text-amber-300/70">
+                        ⚡ You pay gas from wallet
+                      </p>
+                    </div>
                   )}
                 </div>
 
