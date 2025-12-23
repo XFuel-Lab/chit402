@@ -2,8 +2,15 @@ import { EthereumProvider } from '@walletconnect/ethereum-provider'
 import { THETA_MAINNET } from '../config/thetaConfig'
 
 // WalletConnect Project ID - get from https://cloud.walletconnect.com
-// For now using a placeholder - user should replace with their own Project ID
-const WALLETCONNECT_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || 'YOUR_PROJECT_ID'
+// Set in Vercel environment variables: VITE_WALLETCONNECT_PROJECT_ID
+// For local dev, create .env.local with: VITE_WALLETCONNECT_PROJECT_ID=your_project_id
+// Fallback to production Project ID if env var not set
+const WALLETCONNECT_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || 'd132d658c164146b2546d5cd1ede0595'
+
+// Warn if using fallback (should use env var in production)
+if (!import.meta.env.VITE_WALLETCONNECT_PROJECT_ID && import.meta.env.DEV) {
+  console.warn('WalletConnect: Using fallback Project ID. Set VITE_WALLETCONNECT_PROJECT_ID in .env.local for local development.')
+}
 
 let walletConnectProvider: EthereumProvider | null = null
 
