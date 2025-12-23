@@ -299,3 +299,131 @@ export async function getBridgeStatus(txHash: string, sourceChain: string): Prom
   }
 }
 
+/**
+ * Cross-chain swap via Axelar GMP
+ * Swaps tokens from Theta to Cosmos chains and stakes them
+ * 
+ * @param provider - Ethereum provider (Theta wallet)
+ * @param amount - Amount to swap (in source token units)
+ * @param destinationChain - Destination chain identifier (e.g., "stride", "cosmoshub-4")
+ * @param destinationAddress - Destination wallet/contract address
+ * @param payload - Encoded payload with staking instructions
+ * @param estimatedRelayFee - Estimated relay fee in TFUEL
+ * @returns Transaction hash
+ */
+export async function crossChainSwap(
+  provider: ethers.BrowserProvider,
+  amount: string,
+  destinationChain: string,
+  destinationAddress: string,
+  payload: string,
+  estimatedRelayFee: string = '0.1'
+): Promise<string> {
+  try {
+    const signer = await provider.getSigner()
+    const gatewayAddress = AXELAR_GMP_ADDRESSES.theta
+
+    if (!gatewayAddress) {
+      throw new Error('Axelar gateway address not configured for Theta')
+    }
+
+    const gateway = new ethers.Contract(
+      gatewayAddress,
+      AXELAR_GATEWAY_ABI,
+      signer
+    )
+
+    // Get Axelar chain name
+    const axelarDestChain = AXELAR_CHAIN_NAMES[destinationChain] || destinationChain
+
+    // Call Axelar GMP callContract
+    const tx = await gateway.callContract(
+      axelarDestChain,
+      destinationAddress,
+      payload,
+      {
+        value: ethers.parseEther(estimatedRelayFee), // Pay relay fee
+      }
+    )
+
+    await tx.wait()
+    return tx.hash
+  } catch (error) {
+    console.error('Cross-chain swap error:', error)
+    throw error
+  }
+}
+
+/**
+ * Send tokens to Cosmos via Axelar GMP with staking
+ * Alternative name for crossChainSwap
+ * 
+ * @param provider - Ethereum provider (Theta wallet)
+ * @param amount - Amount to send (in TFUEL)
+ * @param destinationChain - Destination chain (e.g., "stride")
+ * @param destinationAddress - Destination address
+ * @param stakeMsg - Staking message payload
+ * @returns Transaction hash and estimated relay fee
+ */
+export async function sendToCosmos(
+  provider: ethers.BrowserProvider,
+  amount: string,
+  destinationChain: string,
+  destinationAddress: string,
+  stakeMsg: Record<string, any>
+): Promise<{ txHash: string; relayFee: string }> {
+  // Encode stake message as payload
+  const payload = ethers.AbiCoder.defaultAbiCoder().encode(
+    ['address', 'string', 'string'],
+    [destinationAddress, destinationChain, JSON.stringify(stakeMsg)]
+  )
+
+  // Estimate relay fee (0.1 TFUEL base + 0.05 per additional chain hop)
+  const estimatedRelayFee = '0.15'
+
+  const txHash = await crossChainSwap(
+    provider,
+    amount,
+    destinationChain,
+    destinationAddress,
+    payload,
+    estimatedRelayFee
+  )
+
+  return {
+    txHash,
+    relayFee: estimatedRelayFee,
+  }
+}
+
+/**
+ * Estimate relay fee for cross-chain swap
+ * 
+ * @param destinationChain - Destination chain identifier
+ * @param payloadSize - Size of payload in bytes
+ * @returns Estimated relay fee in TFUEL
+ */
+export function estimateAxelarRelayFee(
+  destinationChain: string,
+  payloadSize: number = 256
+): string {
+  // Base fee: 0.1 TFUEL
+  let baseFee = 0.1
+
+  // Add fee based on destination chain complexity
+  const chainComplexity: Record<string, number> = {
+    'stride': 0.05,
+    'cosmoshub-4': 0.08,
+    'osmosis-1': 0.06,
+    'celestia': 0.07,
+    'persistence': 0.05,
+  }
+
+  const complexityFee = chainComplexity[destinationChain] || 0.1
+
+  // Add fee based on payload size (0.0001 TFUEL per byte over 128 bytes)
+  const payloadFee = Math.max(0, (payloadSize - 128) * 0.0001)
+
+  return (baseFee + complexityFee + payloadFee).toFixed(4)
+}
+

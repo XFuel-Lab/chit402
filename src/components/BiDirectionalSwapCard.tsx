@@ -15,6 +15,9 @@ import {
   estimateBridgeFee,
   bridgeThetaToCosmos,
   bridgeCosmosToTheta,
+  crossChainSwap,
+  sendToCosmos,
+  estimateAxelarRelayFee,
   BridgeRoute,
 } from '../utils/axelarBridge'
 import { usePriceStore } from '../stores/priceStore'
@@ -208,15 +211,24 @@ export default function BiDirectionalSwapCard({
       // Success
       setSwapStatus('success')
       setStatusMessage(
-        `✅ Swap successful! You will receive ~${estimatedOutput?.toFixed(4)} ${toToken.symbol}`
+        `✅ Transaction submitted! Cross-chain transfer in progress via Axelar GMP. You will receive ~${estimatedOutput?.toFixed(4)} ${toToken.symbol} in ~1-2 minutes.`
       )
       setInputAmount('')
+
+      // Show tx hash with explorer link
+      if (txHash) {
+        setTimeout(() => {
+          setStatusMessage(
+            `🔄 Cross-chain in progress • TX: ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)} • Track on Axelarscan`
+          )
+        }, 2000)
+      }
 
       // Reset after delay
       setTimeout(() => {
         setSwapStatus('idle')
         setStatusMessage('')
-      }, 5000)
+      }, 10000)
     } catch (error: any) {
       console.error('Swap error:', error)
       setSwapStatus('error')
@@ -388,7 +400,15 @@ export default function BiDirectionalSwapCard({
         {/* Route Preview */}
         {route && (
           <div className="space-y-3 p-4 rounded-lg bg-gradient-to-br from-purple-900/20 to-cyan-900/20 border border-purple-500/30">
-            <div className="text-sm font-semibold text-purple-300">Best Route</div>
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold text-purple-300">Best Route</div>
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30">
+                <svg className="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span className="text-[10px] font-semibold text-cyan-300 uppercase tracking-wider">via Axelar</span>
+              </div>
+            </div>
             
             {/* Steps */}
             <div className="space-y-2">
@@ -410,7 +430,7 @@ export default function BiDirectionalSwapCard({
                 <span className="text-white">{route.estimatedGas} {fromToken.symbol}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Bridge Fee</span>
+                <span className="text-slate-400">Axelar Relay Fee</span>
                 <span className="text-white">${route.bridgeFee}</span>
               </div>
               <div className="flex justify-between">
@@ -438,6 +458,14 @@ export default function BiDirectionalSwapCard({
 
         {/* Swap Button */}
         <NeonButton
+          label={
+            swapStatus === 'loading'
+              ? 'Processing...'
+              : !walletsConnected
+              ? 'Connect Wallets'
+              : 'Swap & Stake'
+          }
+          rightHint={swapStatus === 'idle' && walletsConnected ? 'cross-chain' : undefined}
           onClick={handleSwap}
           disabled={
             !walletsConnected ||
@@ -446,13 +474,7 @@ export default function BiDirectionalSwapCard({
             swapStatus === 'loading'
           }
           className="w-full"
-        >
-          {swapStatus === 'loading'
-            ? 'Processing...'
-            : !walletsConnected
-            ? 'Connect Wallets'
-            : 'Execute Cross-Chain Swap'}
-        </NeonButton>
+        />
 
         {/* Info Footer */}
         <div className="text-center text-xs text-slate-500">

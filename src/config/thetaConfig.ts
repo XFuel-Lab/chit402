@@ -52,3 +52,17 @@ export const TIP_POOL_ABI = [
   'event TipAdded(uint256 indexed poolId, address indexed tipper, uint256 amount)',
   'event PoolEnded(uint256 indexed poolId, address indexed winner, uint256 prizeAmount, uint256 creatorCut)',
 ]
+
+// Axelar Gateway ABI for GMP cross-chain calls
+export const AXELAR_GATEWAY_ABI = [
+  'function callContract(string calldata destinationChain, string calldata contractAddress, bytes calldata payload) external',
+  'function callContractWithToken(string calldata destinationChain, string calldata contractAddress, bytes calldata payload, string calldata symbol, uint256 amount) external',
+  'event ContractCall(address indexed sender, string destinationChain, string destinationContractAddress, bytes32 indexed payloadHash, bytes payload)',
+  'event ContractCallWithToken(address indexed sender, string destinationChain, string destinationContractAddress, bytes32 indexed payloadHash, bytes payload, string symbol, uint256 amount)',
+]
+
+// Axelar Gas Service ABI for paying relayer fees
+export const AXELAR_GAS_SERVICE_ABI = [
+  'function payNativeGasForContractCall(address sender, string calldata destinationChain, string calldata destinationAddress, bytes calldata payload, address refundAddress) external payable',
+  'function payNativeGasForContractCallWithToken(address sender, string calldata destinationChain, string calldata destinationAddress, bytes calldata payload, string calldata symbol, uint256 amount, address refundAddress) external payable',
+]

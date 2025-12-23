@@ -148,8 +148,11 @@ export const AXELAR_CHAIN_NAMES: Record<string, string> = {
 }
 
 // Axelar GMP contract addresses
+// Hardcoded gateway address for Theta network
+export const AXELAR_GATEWAY_ADDRESS = '0x4fFA5968857a6C7D8a9d2f9b8c8D1e813aC737A5'
+
 export const AXELAR_GMP_ADDRESSES = {
-  theta: import.meta.env.VITE_AXELAR_GATEWAY_THETA || '',
+  theta: AXELAR_GATEWAY_ADDRESS,
   celestia: import.meta.env.VITE_AXELAR_GATEWAY_CELESTIA || '',
   cosmoshub: import.meta.env.VITE_AXELAR_GATEWAY_COSMOS || '',
   osmosis: import.meta.env.VITE_AXELAR_GATEWAY_OSMOSIS || '',
