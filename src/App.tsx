@@ -48,20 +48,17 @@ interface SwapTransaction {
   simulated: boolean
 }
 
-// TODO: Replace hardcoded APY values with verified on-chain or API-sourced data
-// APY sources could be:
-// - On-chain protocol queries (e.g., Persistence, pSTAKE)
-// - Aggregator APIs (DeFiLlama, CoinGecko, etc.)
-// - Protocol-specific APIs
-// For now using placeholder values - need verification from user
+// LST Options - APY values fetched live from DeFiLlama yields API (primary)
+// with fallbacks to Osmosis API and CoinGecko underlying tokens.
+// Hardcoded values are ONLY used as instant display before APIs load
+// USDC added as an output option (simple swap, no yield)
 const LST_OPTIONS: LSTOption[] = [
-  { name: 'stkTIA', apy: 38.2 }, // TODO: Verify source
-  { name: 'stkATOM', apy: 32.5 }, // TODO: Verify source
-  { name: 'stkXPRT', apy: 28.7 }, // TODO: Verify source
-  { name: 'stkOSMO', apy: 22.1 }, // TODO: Verify source
-  { name: 'milkTIA', apy: 20.5 }, // TODO: Verify source
-  { name: 'qTIA', apy: 19.8 }, // TODO: Verify source
-  { name: 'pSTAKE BTC', apy: 25.4 }, // TODO: Verify source
+  { name: 'stkTIA', apy: 0 }, // Real APY from DeFiLlama
+  { name: 'stkATOM', apy: 0 }, // Real APY from DeFiLlama
+  { name: 'stkXPRT', apy: 0 }, // Real APY from DeFiLlama
+  { name: 'stkOSMO', apy: 0 }, // Real APY from DeFiLlama
+  { name: 'pSTAKE BTC', apy: 0 }, // Real APY from DeFiLlama
+  { name: 'USDC', apy: 0, isStablecoin: true }, // Simple swap output, no yield
 ]
 
 type WalletProvider = 'walletconnect' | 'metamask'
@@ -164,11 +161,26 @@ function App() {
 
   const isUsingFallbackPrice = priceSourceInfo.isUsingFallback
 
-  // Use oracle APY if available, otherwise fallback to hardcoded
+  // Use oracle APY from DeFiLlama/Osmosis/CoinGecko (no hardcoded fallback)
   const currentApy = useMemo(() => {
     const fromOracle = apys[selectedLST.name]?.apy
-    return (fromOracle && fromOracle > 0) ? fromOracle : selectedLST.apy
-  }, [selectedLST.name, selectedLST.apy, apys])
+    return (fromOracle && fromOracle > 0) ? fromOracle : 0 // 0 if API unavailable
+  }, [selectedLST.name, apys])
+  
+  // Check if APY is from fallback source (show "Estimated" badge)
+  const apySourceInfo = useMemo(() => {
+    const apyData = apys[selectedLST.name]
+    if (!apyData) return { source: null, isEstimated: false }
+    
+    // Consider anything other than DeFiLlama as "Estimated"
+    const isEstimated = apyData.source !== 'stride' // stride from DeFiLlama yields API
+    return {
+      source: apyData.source,
+      isEstimated,
+    }
+  }, [apys, selectedLST.name])
+  
+  const isUsingEstimatedApy = apySourceInfo.isEstimated
 
   const liveApyText = useMemo(() => `${currentApy.toFixed(1)}%`, [currentApy])
 
@@ -514,7 +526,19 @@ function App() {
       return routerQuote
     }
     
-    // Priority 2: Calculate using real prices for selected LST: inputAmount * TFUEL_price / LST_price * (1 - fee)
+    // Priority 2: Calculate using real prices for selected output token
+    // Handle USDC: TFUEL -> USDC swap (simple conversion)
+    if (selectedLST.name === 'USDC') {
+      if (tfuelPrice && prices?.USDC?.price) {
+        const tfuelUSD = computedTfuelAmount * tfuelPrice
+        const usdcPrice = prices.USDC.price // Should always be ~1.0
+        const feeMultiplier = 0.997 // 0.3% fee
+        return (tfuelUSD / usdcPrice) * feeMultiplier
+      }
+      return null
+    }
+    
+    // Handle LSTs: Calculate using real prices for selected LST: inputAmount * TFUEL_price / LST_price * (1 - fee)
     if (tfuelPrice && lstPrices[selectedLST.name] && lstPrices[selectedLST.name] > 0) {
       const tfuelUSD = computedTfuelAmount * tfuelPrice
       const lstPriceUSD = lstPrices[selectedLST.name]
@@ -525,7 +549,7 @@ function App() {
     
     // No fallback - return null to show "Price unavailable"
     return null
-  }, [computedTfuelAmount, routerQuote, tfuelPrice, lstPrices, selectedLST.name])
+  }, [computedTfuelAmount, routerQuote, tfuelPrice, lstPrices, selectedLST.name, prices])
 
   // Calculate exchange rate: 1 TFUEL ≈ X LST
   const exchangeRate = useMemo(() => {
@@ -1193,7 +1217,7 @@ function App() {
 
           <div className="flex w-full max-w-xs flex-col items-end gap-2 sm:max-w-none sm:flex-row sm:items-center sm:justify-end sm:gap-4">
             <div className="w-full max-w-[180px] sm:max-w-[200px]">
-              <ApyOrb apyText={liveApyText} label="live blended APY" />
+              <ApyOrb apyText={liveApyText} label="live blended APY" isEstimated={isUsingEstimatedApy || isUsingFallbackPrice} />
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
               {/* Production mode - no dev toggles */}

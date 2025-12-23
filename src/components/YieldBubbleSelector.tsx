@@ -3,6 +3,7 @@ import React, { useRef, useState, useEffect } from 'react'
 export type LSTOption = {
   name: string
   apy: number
+  isStablecoin?: boolean // Add flag for non-LST outputs like USDC
 }
 
 type Props = {
@@ -12,11 +13,16 @@ type Props = {
 }
 
 /**
- * Horizontal bubble selector for yield options (highest APY → lowest).
+ * Horizontal bubble selector for yield options (highest APY → lowest, USDC last).
  * 2026's best swap page - smooth horizontal scroll, no vertical scroll, fade indicators.
  */
 export function YieldBubbleSelector({ options, selected, onSelect }: Props) {
-  const sorted = [...options].sort((a, b) => b.apy - a.apy)
+  // Sort: LSTs by APY (highest first), then stablecoins at the end
+  const sorted = [...options].sort((a, b) => {
+    if (a.isStablecoin && !b.isStablecoin) return 1
+    if (!a.isStablecoin && b.isStablecoin) return -1
+    return b.apy - a.apy
+  })
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [showLeftFade, setShowLeftFade] = useState(false)
   const [showRightFade, setShowRightFade] = useState(true)
@@ -133,12 +139,21 @@ export function YieldBubbleSelector({ options, selected, onSelect }: Props) {
                 <span className="text-[11px] uppercase tracking-[0.18em] text-slate-200/90 font-semibold">
                   {opt.name}
                 </span>
-                <span className="flex items-baseline gap-1.5 text-lg font-bold text-emerald-300 drop-shadow-[0_0_20px_rgba(16,185,129,1),0_0_35px_rgba(16,185,129,0.6)]">
-                  {opt.apy.toFixed(1)}%
-                  <span className="text-[11px] font-normal uppercase tracking-[0.14em] text-slate-300/80">
-                    APY
+                {opt.isStablecoin ? (
+                  <span className="flex items-baseline gap-1.5 text-lg font-bold text-cyan-300 drop-shadow-[0_0_20px_rgba(56,189,248,1),0_0_35px_rgba(56,189,248,0.6)]">
+                    Swap
+                    <span className="text-[11px] font-normal uppercase tracking-[0.14em] text-slate-300/80">
+                      No Yield
+                    </span>
                   </span>
-                </span>
+                ) : (
+                  <span className="flex items-baseline gap-1.5 text-lg font-bold text-emerald-300 drop-shadow-[0_0_20px_rgba(16,185,129,1),0_0_35px_rgba(16,185,129,0.6)]">
+                    {opt.apy.toFixed(1)}%
+                    <span className="text-[11px] font-normal uppercase tracking-[0.14em] text-slate-300/80">
+                      APY
+                    </span>
+                  </span>
+                )}
                 {isActive && (
                   <div className="absolute -inset-1 rounded-full bg-purple-400/10 blur-xl -z-10" />
                 )}

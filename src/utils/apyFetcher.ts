@@ -105,13 +105,14 @@ export async function getLSTAPYs(): Promise<Record<string, LSTAPY>> {
     fetchStrideStkATOMAPY(),
   ])
 
-  // Hardcoded fallback APYs (used if all APIs fail)
+  // No hardcoded fallback APYs - only use real API data
+  // If APIs fail, return empty/zero APYs and let UI show "Estimated" badge
   const hardcodedAPYs: Record<string, number> = {
-    stkTIA: 38.2,
-    stkATOM: 32.5,
-    stkXPRT: 28.7,
-    'pSTAKE BTC': 25.4,
-    stkOSMO: 22.1,
+    stkTIA: 0,
+    stkATOM: 0,
+    stkXPRT: 0,
+    'pSTAKE BTC': 0,
+    stkOSMO: 0,
   }
 
   console.log('✅ APY fetch complete (Stride API):', {

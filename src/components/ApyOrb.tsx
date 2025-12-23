@@ -3,15 +3,23 @@ import React from 'react'
 type Props = {
   apyText: string
   label?: string
+  isEstimated?: boolean // Show "Estimated" badge when using fallback data
 }
 
 /**
  * Giant pulsing APY orb matching EdgeFarm mobile premium style.
  * Rotating outer ring, pulsing inner glow, vibrant purple/cyan gradients.
  */
-export function ApyOrb({ apyText, label = 'blended APY' }: Props) {
+export function ApyOrb({ apyText, label = 'blended APY', isEstimated = false }: Props) {
   return (
     <div className="relative mx-auto flex items-center justify-center">
+      {/* "Estimated" badge */}
+      {isEstimated && (
+        <div className="absolute -top-2 -right-2 z-20 rounded-full border border-amber-400/60 bg-amber-500/20 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300 shadow-[0_0_15px_rgba(251,191,36,0.5)] backdrop-blur-sm">
+          Estimated
+        </div>
+      )}
+      
       {/* Outer rotating ring with gradient */}
       <div 
         className="apy-orb-ring pointer-events-none absolute h-[132px] w-[132px] rounded-full opacity-95"

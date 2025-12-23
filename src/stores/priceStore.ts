@@ -60,12 +60,13 @@ const INSTANT_FALLBACK_PRICES: LSTPriceData = {
   },
 }
 
+// INSTANT FALLBACK APYs - Only for immediate display, replaced by real data from DeFiLlama
 const INSTANT_FALLBACK_APYS: Record<string, LSTAPY> = {
-  stkTIA: { name: 'stkTIA', apy: 38.2, source: 'hardcoded', timestamp: Date.now() },
-  stkATOM: { name: 'stkATOM', apy: 32.5, source: 'hardcoded', timestamp: Date.now() },
-  stkXPRT: { name: 'stkXPRT', apy: 28.7, source: 'hardcoded', timestamp: Date.now() },
-  'pSTAKE BTC': { name: 'pSTAKE BTC', apy: 25.4, source: 'hardcoded', timestamp: Date.now() },
-  stkOSMO: { name: 'stkOSMO', apy: 22.1, source: 'hardcoded', timestamp: Date.now() },
+  stkTIA: { name: 'stkTIA', apy: 0, source: 'hardcoded', timestamp: Date.now() },
+  stkATOM: { name: 'stkATOM', apy: 0, source: 'hardcoded', timestamp: Date.now() },
+  stkXPRT: { name: 'stkXPRT', apy: 0, source: 'hardcoded', timestamp: Date.now() },
+  'pSTAKE BTC': { name: 'pSTAKE BTC', apy: 0, source: 'hardcoded', timestamp: Date.now() },
+  stkOSMO: { name: 'stkOSMO', apy: 0, source: 'hardcoded', timestamp: Date.now() },
 }
 
 interface PriceStoreState {
