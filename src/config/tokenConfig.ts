@@ -149,7 +149,8 @@ export const AXELAR_CHAIN_NAMES: Record<string, string> = {
 
 // Axelar GMP contract addresses
 // Hardcoded gateway address for Theta network
-export const AXELAR_GATEWAY_ADDRESS = '0x4fFA5968857a6C7D8a9d2f9b8c8D1e813aC737A5'
+// Axelar Gateway address with proper EIP-55 checksum
+export const AXELAR_GATEWAY_ADDRESS = '0x4FFA5968857A6c7d8A9D2f9B8c8D1e813AC737A5'
 
 export const AXELAR_GMP_ADDRESSES = {
   theta: AXELAR_GATEWAY_ADDRESS,
