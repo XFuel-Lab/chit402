@@ -71,18 +71,42 @@ export default function BiDirectionalSwapCard({
     if (!amount || amount <= 0) return null
 
     // Get prices from store
-    const fromPrice = prices?.[fromToken.symbol]?.price || null
-    const toPrice = prices?.[toToken.symbol]?.price || null
+    // Special case: USDC is a stablecoin, always $1.00
+    let fromPrice: number | null = null
+    if (fromToken.symbol === 'USDC') {
+      fromPrice = 1.0
+    } else {
+      fromPrice = prices?.[fromToken.symbol]?.price || null
+    }
 
-    if (!fromPrice || !toPrice) return null
+    let toPrice: number | null = null
+    if (toToken.symbol === 'USDC') {
+      toPrice = 1.0
+    } else {
+      toPrice = prices?.[toToken.symbol]?.price || null
+    }
 
-    // Calculate with 0.5% slippage + bridge fee
+    // If we can't get prices, return null (don't show 0)
+    if (!fromPrice || !toPrice) {
+      console.warn('Missing price data:', { 
+        fromToken: fromToken.symbol, 
+        fromPrice, 
+        toToken: toToken.symbol, 
+        toPrice,
+        availablePrices: prices ? Object.keys(prices) : []
+      })
+      return null
+    }
+
+    // Calculate: inputAmount * inputPrice / outputPrice * (1 - fee)
     const fromUSD = amount * fromPrice
     const slippage = 0.005 // 0.5%
     const bridgeFee = parseFloat(route?.bridgeFee || '2.0')
     const netUSD = fromUSD * (1 - slippage) - bridgeFee
 
-    return Math.max(0, netUSD / toPrice)
+    // Return 0 only if calculation is truly 0 or negative
+    const output = netUSD / toPrice
+    return output > 0 ? output : 0
   }, [inputAmount, fromToken, toToken, prices, route])
 
   // Check if both wallets are connected for cross-chain swaps
@@ -420,7 +444,13 @@ export default function BiDirectionalSwapCard({
 
           {/* Output Amount */}
           <div className="w-full p-4 text-2xl font-bold bg-slate-800/50 border border-purple-500/20 rounded-lg text-emerald-400">
-            {estimatedOutput ? `~${estimatedOutput.toFixed(4)}` : '0.00'}
+            {estimatedOutput === null ? (
+              <span className="text-slate-500 text-base">Enter amount</span>
+            ) : estimatedOutput === 0 ? (
+              <span className="text-amber-400">0.00</span>
+            ) : (
+              `~${estimatedOutput.toFixed(4)}`
+            )}
           </div>
         </div>
 
