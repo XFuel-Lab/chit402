@@ -190,6 +190,15 @@ export default function BiDirectionalSwapCard({
 
   // Execute swap
   const handleSwap = async () => {
+    // Temporarily disabled until Axelar infrastructure is deployed
+    setStatusMessage('⚠️ Cross-chain bridging is not yet available. Use the simple "Swap & Stake" flow above instead!')
+    setSwapStatus('error')
+    setTimeout(() => {
+      setSwapStatus('idle')
+      setStatusMessage('')
+    }, 5000)
+    return
+
     if (!walletsConnected) {
       setStatusMessage('Please connect both wallets')
       setSwapStatus('error')
@@ -290,12 +299,27 @@ export default function BiDirectionalSwapCard({
   return (
     <GlassCard className="max-w-2xl mx-auto">
       <div className="space-y-6">
+        {/* COMING SOON BANNER */}
+        <div className="p-4 rounded-xl bg-gradient-to-r from-yellow-500/20 via-orange-500/20 to-red-500/20 border-2 border-yellow-400/50">
+          <div className="flex items-center gap-3">
+            <span className="text-3xl">🚧</span>
+            <div>
+              <h3 className="text-lg font-bold text-yellow-300">Cross-Chain Bridging Coming Soon</h3>
+              <p className="text-sm text-slate-300">
+                Direct Theta ↔ Cosmos bridging via Axelar requires infrastructure deployment.
+                <br />
+                <span className="text-cyan-300 font-semibold">For now: Use the simple "Swap & Stake" above to stake LSTs via Keplr after Theta swap!</span>
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* Header */}
         <div className="text-center">
-          <h2 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-cyan-400">
+          <h2 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-cyan-400 opacity-50">
             Cross-Chain Swap
           </h2>
-          <p className="text-sm text-slate-400 mt-2">
+          <p className="text-sm text-slate-400 mt-2 opacity-50">
             Theta ↔ Cosmos LSTs • Powered by Axelar
           </p>
         </div>
