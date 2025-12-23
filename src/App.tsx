@@ -1395,15 +1395,15 @@ function App() {
                               Enter amount to see estimated yield
                             </p>
                           </>
-                        ) : isInitialLoad && !prices ? (
-                          // Only show loading spinner on first load (when cache is empty)
+                        ) : !prices || (Object.values(prices).every(p => p === null)) ? (
+                          // Only show if absolutely no prices available (shouldn't happen with fallbacks)
                           <div className="mt-4 flex flex-col items-center justify-center py-8">
                             <div className="mb-3 h-8 w-8 animate-spin rounded-full border-2 border-cyan-400/30 border-t-cyan-400"></div>
                             <p className="text-sm font-semibold text-cyan-400 drop-shadow-[0_0_15px_rgba(56,189,248,0.6)]">
                               Loading prices…
                             </p>
                             <p className="mt-1 text-xs text-slate-400">
-                              Parallel fetch: DeFiLlama + Osmosis + CoinGecko
+                              Connecting to oracles...
                             </p>
                           </div>
                         ) : (
