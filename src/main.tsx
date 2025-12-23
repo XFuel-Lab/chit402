@@ -3,10 +3,12 @@ import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
 import InstitutionsPortal from './InstitutionsPortal.tsx'
 import LiquidityDashboard from './LiquidityDashboard.tsx'
+import MainnetBanner from './components/MainnetBanner.tsx'
 import './index.css'
 import { usePriceStore } from './stores/priceStore'
 import { suppressCrossOriginErrors } from './utils/consoleErrorSuppression'
 import { logProductionCheck } from './utils/productionCheck'
+import { initWebVitals, logWebVitals } from './utils/webVitals'
 
 // Suppress console errors from cross-origin windows and MetaMask deprecation warnings
 // This prevents CORS errors from Theta Wallet website and MetaMask warnings from cluttering the console
@@ -15,6 +17,19 @@ suppressCrossOriginErrors()
 // Run production readiness check (only in development)
 if (import.meta.env.DEV) {
   logProductionCheck()
+}
+
+// Initialize Web Vitals tracking
+initWebVitals((metric) => {
+  // Custom callback for analytics integration
+  console.log('Web Vital:', metric.name, metric.value, metric.rating)
+})
+
+// Log Web Vitals summary on page unload (development only)
+if (import.meta.env.DEV) {
+  window.addEventListener('beforeunload', () => {
+    logWebVitals()
+  })
 }
 
 function Router() {
@@ -55,9 +70,20 @@ function Router() {
   const isInstitutionsRoute = path === '/institutions' || path === '/institutions/'
   const isLiquidityRoute = path === '/liquidity' || path === '/liquidity/'
 
-  if (isInstitutionsRoute) return <InstitutionsPortal />
-  if (isLiquidityRoute) return <LiquidityDashboard />
-  return <App />
+  return (
+    <>
+      <MainnetBanner />
+      <div className="pt-[52px] sm:pt-[56px]">
+        {isInstitutionsRoute ? (
+          <InstitutionsPortal />
+        ) : isLiquidityRoute ? (
+          <LiquidityDashboard />
+        ) : (
+          <App />
+        )}
+      </div>
+    </>
+  )
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
