@@ -30,7 +30,9 @@
     "extract-logo-simple": "ts-node --esm scripts/extract-logo-simple.ts",
     "extract-xf-logo": "ts-node --esm scripts/extract-xf-logo.ts",
     "generate-favicons": "ts-node --esm scripts/generate-favicons.ts",
-    "eas:update:preview": "cd edgefarm-mobile && npx eas-cli update --branch preview --message \"Investor demo\""
+    "eas:update:preview": "cd edgefarm-mobile && npx eas-cli update --branch preview --message \"Investor demo\"",
+    "test:performance": "ts-node --esm scripts/test-performance.ts",
+    "perf:monitor": "echo \"Performance monitoring enabled in dev mode. Check console for metrics.\""
   },
   "dependencies": {
     "@types/canvas-confetti": "^1.9.0",
@@ -81,6 +83,7 @@
     "jest": "^29.7.0",
     "jest-environment-jsdom": "^29.7.0",
     "node-fetch": "^2.7.0",
+    "playwright": "^1.40.0",
     "postcss": "^8.4.32",
     "sharp": "^0.34.5",
     "solidity-coverage": "^0.8.17",

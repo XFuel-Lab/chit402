@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { ethers } from 'ethers'
 import GlassCard from './GlassCard'
 import NeonButton from './NeonButton'
@@ -59,7 +59,7 @@ export default function SingleSidedLPDeposit({ walletAddress, walletBalance, onS
   const [lpBalance, setLpBalance] = useState<string>('0')
   const [estimatedAPY, setEstimatedAPY] = useState<number>(selectedPool.apy)
 
-  // Calculate preview: split 50/50
+  // Calculate preview: split 50/50 (optimized dependencies)
   const preview = useMemo(() => {
     if (!inputAmount || parseFloat(inputAmount) <= 0) {
       return null
@@ -76,7 +76,7 @@ export default function SingleSidedLPDeposit({ walletAddress, walletBalance, onS
       keptSymbol: token0Symbol,
       swappedSymbol: token1Symbol,
     }
-  }, [inputAmount, inputToken, selectedPool])
+  }, [inputAmount, inputToken, selectedPool.token0Symbol, selectedPool.token1Symbol])
 
   // Calculate estimated LP tokens (simplified)
   const estimatedLP = useMemo(() => {

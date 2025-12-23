@@ -20,6 +20,7 @@ export interface LSTPriceData {
   pSTAKEBTC: TokenPrice | null
   stkOSMO: TokenPrice | null
   TFUEL: TokenPrice | null
+  USDC: TokenPrice | null
 }
 
 export interface LSTPriceAndAPYData {
@@ -754,6 +755,12 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
           confidence: 'high',
         }
       : null,
+    USDC: {
+      price: 1.0,
+      source: 'coingecko',
+      timestamp: now,
+      confidence: 'high', // USDC is a stablecoin, always $1.00
+    },
     stkTIA: stkTiaPriceFinal && stkTiaPriceFinal > 0
       ? {
           price: stkTiaPriceFinal,

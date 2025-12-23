@@ -22,6 +22,12 @@ const INSTANT_FALLBACK_PRICES: LSTPriceData = {
     timestamp: Date.now(),
     confidence: 'low',
   },
+  USDC: {
+    price: 1.0,
+    source: 'fallback',
+    timestamp: Date.now(),
+    confidence: 'high', // USDC is always $1.00
+  },
   stkTIA: {
     price: 4.85,
     source: 'fallback',
@@ -191,6 +197,7 @@ export const usePriceStore = create<PriceStoreState>((set, get) => {
         const currentPrices = get().prices
         const mergedPrices: LSTPriceData = {
           TFUEL: prices.TFUEL || currentPrices?.TFUEL || INSTANT_FALLBACK_PRICES.TFUEL,
+          USDC: prices.USDC || currentPrices?.USDC || INSTANT_FALLBACK_PRICES.USDC,
           stkTIA: prices.stkTIA || currentPrices?.stkTIA || INSTANT_FALLBACK_PRICES.stkTIA,
           stkATOM: prices.stkATOM || currentPrices?.stkATOM || INSTANT_FALLBACK_PRICES.stkATOM,
           stkXPRT: prices.stkXPRT || currentPrices?.stkXPRT || INSTANT_FALLBACK_PRICES.stkXPRT,

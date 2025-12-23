@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { ethers } from 'ethers'
 import GlassCard from './GlassCard'
 import NeonButton from './NeonButton'
@@ -18,6 +18,8 @@ interface YieldPumpCardProps {
   onDisconnectWallet?: () => void
 }
 
+type InputToken = 'TFUEL' | 'USDC'
+
 export default function YieldPumpCard({
   wallet,
   lstOptions,
@@ -29,6 +31,7 @@ export default function YieldPumpCard({
   const [statusMessage, setStatusMessage] = useState('')
   const [txHash, setTxHash] = useState<string | null>(null)
   const [showLSTDropdown, setShowLSTDropdown] = useState(false)
+  const [inputToken, setInputToken] = useState<InputToken>('USDC')
 
   const { prices, apys } = usePriceStore()
 
@@ -50,22 +53,44 @@ export default function YieldPumpCard({
     return (fromOracle && fromOracle > 0) ? fromOracle : selectedLST.apy
   }, [selectedLST.name, selectedLST.apy, apys])
 
-  // Calculate output preview
+  // Calculate output preview (optimized dependencies)
   const estimatedOutput = useMemo(() => {
     const amount = parseFloat(inputAmount)
     if (!amount || amount <= 0) return null
 
-    const tfuelPrice = prices?.TFUEL?.price
+    // Get input token price based on selection
+    const inputPrice = inputToken === 'USDC' ? prices?.USDC?.price : prices?.TFUEL?.price
     const lstKey = selectedLST.name === 'pSTAKE BTC' ? 'pSTAKEBTC' : selectedLST.name
     const lstPrice = prices?.[lstKey as keyof typeof prices]?.price
 
-    if (!tfuelPrice || !lstPrice) return null
+    console.log('💰 Swap preview calculation:', {
+      inputToken,
+      amount,
+      inputPrice,
+      lstKey,
+      lstPrice,
+      availablePrices: prices ? Object.keys(prices) : []
+    })
 
-    // Calculate: TFUEL value in USD / LST price * (1 - 0.3% fee)
-    const tfuelUSD = amount * tfuelPrice
+    if (!inputPrice || !lstPrice) {
+      console.warn('⚠️ Missing price data for calculation')
+      return null
+    }
+
+    // Calculate: inputAmount * inputTokenPrice / outputLSTPrice * (1 - fee)
+    const inputUSD = amount * inputPrice
     const feeMultiplier = 0.997 // 0.3% fee
-    return (tfuelUSD / lstPrice) * feeMultiplier
-  }, [inputAmount, prices, selectedLST])
+    const output = (inputUSD / lstPrice) * feeMultiplier
+    
+    console.log('✅ Calculated output:', {
+      inputUSD: `$${inputUSD.toFixed(2)}`,
+      output: `${output.toFixed(6)} ${selectedLST.name}`,
+      outputUSD: `$${(output * lstPrice).toFixed(2)}`,
+      exchangeRate: `1 ${inputToken} = ${(inputPrice / lstPrice * feeMultiplier).toFixed(6)} ${selectedLST.name}`
+    })
+    
+    return output
+  }, [inputAmount, inputToken, prices?.TFUEL?.price, prices?.USDC?.price, selectedLST.name, prices])
 
   // Calculate daily yield
   const estimatedDailyYield = useMemo(() => {
@@ -78,14 +103,14 @@ export default function YieldPumpCard({
     [wallet.balance]
   )
 
-  const handleMaxClick = () => {
+  const handleMaxClick = useCallback(() => {
     if (wallet.isConnected && numericBalance > 0) {
       const maxAmount = numericBalance * 0.99 // Leave 1% for gas
       setInputAmount(maxAmount.toFixed(2))
     }
-  }
+  }, [wallet.isConnected, numericBalance])
 
-  const handleDeposit = async () => {
+  const handleDeposit = useCallback(async () => {
     if (!wallet.isConnected || !wallet.fullAddress) {
       await onConnectWallet()
       return
@@ -94,6 +119,15 @@ export default function YieldPumpCard({
     const amount = parseFloat(inputAmount)
     if (!amount || amount <= 0) {
       setStatusMessage('Please enter a valid amount')
+      return
+    }
+
+    // Check if USDC deposit (not yet fully implemented)
+    if (inputToken === 'USDC') {
+      setStatusMessage('⚠️ USDC deposits coming soon! For now, use the cross-chain swap tab or deposit TFUEL.')
+      setTimeout(() => {
+        setStatusMessage('')
+      }, 5000)
       return
     }
 
@@ -119,7 +153,7 @@ export default function YieldPumpCard({
       const router = new ethers.Contract(ROUTER_ADDRESS, ROUTER_ABI, signer)
       const amountWei = ethers.parseEther(amount.toString())
 
-      setStatusMessage('Swapping TFUEL to best yield LST...')
+      setStatusMessage(`Swapping ${inputToken} to best yield LST...`)
 
       // Call swapAndStake with TFUEL sent as value
       const tx = await router.swapAndStake(
@@ -136,7 +170,7 @@ export default function YieldPumpCard({
       
       setTxHash(tx.hash)
       setStatusMessage(
-        `✅ Successfully deposited ${amount} TFUEL to ${selectedLST.name}! Earning ${currentApy.toFixed(1)}% APY`
+        `✅ Successfully deposited ${amount} ${inputToken} to ${selectedLST.name}! Earning ${currentApy.toFixed(1)}% APY`
       )
       setInputAmount('')
 
@@ -155,7 +189,7 @@ export default function YieldPumpCard({
     } finally {
       setIsProcessing(false)
     }
-  }
+  }, [wallet.isConnected, wallet.fullAddress, inputAmount, inputToken, numericBalance, selectedLST.name, currentApy, onConnectWallet])
 
   const isValidAmount = useMemo(() => {
     if (!inputAmount || inputAmount === '') return true
@@ -165,15 +199,30 @@ export default function YieldPumpCard({
     return true
   }, [inputAmount, wallet.isConnected, numericBalance])
 
+  // Dropdown toggle handlers (optimized for performance)
+  const toggleLSTDropdown = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setShowLSTDropdown(prev => !prev)
+  }, [])
+
+  const closeLSTDropdown = useCallback(() => {
+    setShowLSTDropdown(false)
+  }, [])
+
+  const selectLST = useCallback((lst: LSTOption) => {
+    setSelectedLST(lst)
+    setShowLSTDropdown(false)
+  }, [])
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="text-center">
         <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-cyan-400">
-          Yield Pump: One-Tap TFUEL → LST
+          Yield Pump: USDC/TFUEL → LST
         </h2>
         <p className="text-sm text-slate-400 mt-2">
-          Single-sided deposit • Auto-highlight best yield
+          Multi-token swap • Real-time oracle pricing • Auto-highlight best yield
         </p>
       </div>
 
@@ -271,10 +320,7 @@ export default function YieldPumpCard({
         </label>
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            setShowLSTDropdown(!showLSTDropdown)
-          }}
+          onClick={toggleLSTDropdown}
           className="w-full rounded-3xl border-2 border-purple-400/70 bg-gradient-to-br from-[rgba(168,85,247,0.30)] via-[rgba(56,189,248,0.25)] to-[rgba(15,23,42,0.40)] px-8 py-6 text-left backdrop-blur-xl transition-all hover:border-purple-400 shadow-[0_0_50px_rgba(168,85,247,0.7),inset_0_0_30px_rgba(168,85,247,0.2)] hover:shadow-[0_0_70px_rgba(168,85,247,0.9),inset_0_0_40px_rgba(168,85,247,0.3)]"
         >
           <div className="flex items-center gap-4">
@@ -313,7 +359,7 @@ export default function YieldPumpCard({
             {/* Backdrop */}
             <div
               className="fixed inset-0 z-40"
-              onClick={() => setShowLSTDropdown(false)}
+              onClick={closeLSTDropdown}
             />
             {/* Dropdown Menu with Cyberpunk Glow */}
             <div className="absolute top-full z-50 mt-3 w-full overflow-hidden rounded-2xl border-2 border-purple-400/60 bg-[rgba(15,23,42,0.98)] backdrop-blur-2xl shadow-[0_8px_60px_rgba(0,0,0,0.95),0_0_40px_rgba(168,85,247,0.5)]">
@@ -324,11 +370,7 @@ export default function YieldPumpCard({
                   <button
                     key={lst.name}
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setSelectedLST(lst)
-                      setShowLSTDropdown(false)
-                    }}
+                    onClick={() => selectLST(lst)}
                     className={[
                       'w-full px-6 py-5 text-left transition-all first:rounded-t-2xl last:rounded-b-2xl',
                       'hover:bg-purple-500/25 hover:shadow-[inset_0_0_25px_rgba(168,85,247,0.4)]',
@@ -364,14 +406,49 @@ export default function YieldPumpCard({
         )}
       </div>
 
+      {/* Input Token Selector */}
+      <GlassCard>
+        <div className="space-y-4">
+          <label className="block text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
+            Input Token
+          </label>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setInputToken('USDC')}
+              className={[
+                'flex-1 rounded-xl px-4 py-3 text-sm font-bold uppercase tracking-wider transition-all',
+                inputToken === 'USDC'
+                  ? 'border-2 border-cyan-400/80 bg-gradient-to-br from-cyan-500/30 to-cyan-600/20 text-cyan-200 shadow-[0_0_25px_rgba(6,182,212,0.7),inset_0_0_15px_rgba(6,182,212,0.2)]'
+                  : 'border-2 border-slate-500/30 bg-slate-800/40 text-slate-400 hover:border-slate-400/50 hover:text-slate-300',
+              ].join(' ')}
+            >
+              💵 USDC
+            </button>
+            <button
+              type="button"
+              onClick={() => setInputToken('TFUEL')}
+              className={[
+                'flex-1 rounded-xl px-4 py-3 text-sm font-bold uppercase tracking-wider transition-all',
+                inputToken === 'TFUEL'
+                  ? 'border-2 border-purple-400/80 bg-gradient-to-br from-purple-500/30 to-purple-600/20 text-purple-200 shadow-[0_0_25px_rgba(168,85,247,0.7),inset_0_0_15px_rgba(168,85,247,0.2)]'
+                  : 'border-2 border-slate-500/30 bg-slate-800/40 text-slate-400 hover:border-slate-400/50 hover:text-slate-300',
+              ].join(' ')}
+            >
+              ⚡ TFUEL
+            </button>
+          </div>
+        </div>
+      </GlassCard>
+
       {/* Amount Input */}
       <GlassCard>
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <label className="text-xs uppercase tracking-wider text-slate-400">
-              TFUEL Amount
+              {inputToken} Amount
             </label>
-            {wallet.isConnected && (
+            {wallet.isConnected && inputToken === 'TFUEL' && (
               <button
                 onClick={handleMaxClick}
                 className="text-xs text-cyan-300 hover:text-cyan-200 underline transition-colors"

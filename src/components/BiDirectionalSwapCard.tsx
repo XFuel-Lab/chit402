@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { ethers } from 'ethers'
 import GlassCard from './GlassCard'
 import NeonButton from './NeonButton'
@@ -63,7 +63,7 @@ export default function BiDirectionalSwapCard({
     } else {
       return getThetaTokens()
     }
-  }, [fromToken])
+  }, [fromToken.chain])
 
   // Calculate output amount estimate
   const estimatedOutput = useMemo(() => {
@@ -107,7 +107,7 @@ export default function BiDirectionalSwapCard({
     // Return 0 only if calculation is truly 0 or negative
     const output = netUSD / toPrice
     return output > 0 ? output : 0
-  }, [inputAmount, fromToken, toToken, prices, route])
+  }, [inputAmount, fromToken.symbol, toToken.symbol, prices, route?.bridgeFee])
 
   // Check if both wallets are connected for cross-chain swaps
   const needsBothWallets = fromToken.chain !== toToken.chain
@@ -161,12 +161,32 @@ export default function BiDirectionalSwapCard({
     }
   }
 
+  // Toggle dropdown handlers (optimized for performance)
+  const toggleFromDropdown = useCallback(() => {
+    setShowFromDropdown(prev => !prev)
+  }, [])
+
+  const toggleToDropdown = useCallback(() => {
+    setShowToDropdown(prev => !prev)
+  }, [])
+
+  // Token selection handlers (optimized to reduce re-renders)
+  const selectFromToken = useCallback((token: Token) => {
+    setFromToken(token)
+    setShowFromDropdown(false)
+  }, [])
+
+  const selectToToken = useCallback((token: Token) => {
+    setToToken(token)
+    setShowToDropdown(false)
+  }, [])
+
   // Swap tokens (reverse direction)
-  const handleSwapDirection = () => {
+  const handleSwapDirection = useCallback(() => {
     setFromToken(toToken)
     setToToken(fromToken)
     setInputAmount('')
-  }
+  }, [toToken, fromToken])
 
   // Execute swap
   const handleSwap = async () => {
@@ -347,7 +367,7 @@ export default function BiDirectionalSwapCard({
           </label>
           <div className="relative">
             <button
-              onClick={() => setShowFromDropdown(!showFromDropdown)}
+              onClick={toggleFromDropdown}
               className="w-full flex items-center justify-between p-4 rounded-lg bg-slate-800/70 border border-purple-500/30 hover:border-purple-500/50 transition-colors"
             >
               <span className="text-lg font-semibold text-white">
@@ -361,10 +381,7 @@ export default function BiDirectionalSwapCard({
                 {availableFromTokens.map((token) => (
                   <button
                     key={token.symbol}
-                    onClick={() => {
-                      setFromToken(token)
-                      setShowFromDropdown(false)
-                    }}
+                    onClick={() => selectFromToken(token)}
                     className="w-full flex items-center justify-between p-3 rounded hover:bg-purple-500/20 transition-colors"
                   >
                     <span className="text-white font-semibold">{token.symbol}</span>
@@ -414,7 +431,7 @@ export default function BiDirectionalSwapCard({
           </label>
           <div className="relative">
             <button
-              onClick={() => setShowToDropdown(!showToDropdown)}
+              onClick={toggleToDropdown}
               className="w-full flex items-center justify-between p-4 rounded-lg bg-slate-800/70 border border-purple-500/30 hover:border-purple-500/50 transition-colors"
             >
               <span className="text-lg font-semibold text-white">
@@ -428,10 +445,7 @@ export default function BiDirectionalSwapCard({
                 {availableToTokens.map((token) => (
                   <button
                     key={token.symbol}
-                    onClick={() => {
-                      setToToken(token)
-                      setShowToDropdown(false)
-                    }}
+                    onClick={() => selectToToken(token)}
                     className="w-full flex items-center justify-between p-3 rounded hover:bg-purple-500/20 transition-colors"
                   >
                     <span className="text-white font-semibold">{token.symbol}</span>
