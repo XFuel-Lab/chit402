@@ -20,6 +20,13 @@ import { THETA_TESTNET, THETA_MAINNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_
 import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 import { usePriceStore } from './stores/priceStore'
 import { createWalletConnectProvider, getWalletConnectProvider, disconnectWalletConnect } from './utils/walletConnect'
+import { 
+  stakeLSTOnStride, 
+  refreshKeplrBalance, 
+  formatStakingSuccessMessage,
+  getStrideExplorerUrl,
+  isKeplrInstalled 
+} from './utils/cosmosLSTStaking'
 
 type SwapStatus = 'idle' | 'approving' | 'swapping' | 'success' | 'error'
 
@@ -96,6 +103,11 @@ function App() {
   const [routerQuote, setRouterQuote] = useState<number | null>(null) // Quote from router if available
   const [isPending, startTransition] = useTransition()
   const [debouncedTfuelAmount, setDebouncedTfuelAmount] = useState<string>('') // Debounced amount for heavy calcs
+  
+  // Keplr wallet state for Cosmos LST staking
+  const [keplrAddress, setKeplrAddress] = useState<string | null>(null)
+  const [keplrLSTBalance, setKeplrLSTBalance] = useState<number>(0)
+  const [isStakingToKeplr, setIsStakingToKeplr] = useState(false)
 
   // Global oracle data (prefetched + cached via Zustand)
   const {
@@ -837,7 +849,7 @@ function App() {
       setTfuelAmount('')
       setSelectedPercentage(null)
 
-      // Refresh balance after transaction
+      // Refresh Theta balance after transaction
       setTimeout(() => {
         const providerForRefresh = (window as any).theta || (window as any).ethereum
         if (providerForRefresh) {
@@ -845,11 +857,75 @@ function App() {
         }
       }, 2000)
 
+      // ====== REAL COSMOS LST STAKING ======
+      // After successful Theta swap, trigger Keplr signing for delegate msg
+      // Only stake tokens that are supported on Stride (stkTIA, stkATOM, stkXPRT, stkOSMO)
+      const supportedForStaking = ['stkTIA', 'stkATOM', 'stkXPRT', 'stkOSMO']
+      
+      if (supportedForStaking.includes(selectedLST.name)) {
+        // Check if Keplr is installed
+        if (!isKeplrInstalled()) {
+          setStatusMessage(
+            `✅ Swap successful! Install Keplr wallet to receive ${selectedLST.name} and start earning ${currentApy.toFixed(1)}% APY`
+          )
+        } else {
+          // Trigger Cosmos LST staking flow
+          setTimeout(async () => {
+            try {
+              setIsStakingToKeplr(true)
+              setStatusMessage(`Preparing ${selectedLST.name} staking on Stride... Please sign with Keplr`)
+
+              // Execute staking on Stride via Keplr
+              const stakingResult = await stakeLSTOnStride(selectedLST.name, outputAmount)
+
+              if (stakingResult.success) {
+                // Success - LST tokens are now in Keplr wallet
+                const successMsg = formatStakingSuccessMessage(selectedLST.name, outputAmount, currentApy)
+                setStatusMessage(successMsg)
+                
+                // Show Stride explorer link if available
+                if (stakingResult.txHash) {
+                  console.log('Stride TX:', getStrideExplorerUrl(stakingResult.txHash))
+                }
+
+                // Auto-refresh Keplr balance
+                if (keplrAddress) {
+                  refreshKeplrBalance(selectedLST.name, keplrAddress, (balance) => {
+                    setKeplrLSTBalance(balance)
+                  })
+                }
+
+                // Extra confetti for successful staking
+                confetti({
+                  particleCount: 150,
+                  spread: 100,
+                  origin: { y: 0.5 },
+                  colors: ['#a855f7', '#06b6d4', '#ec4899', '#10b981', '#fbbf24'],
+                })
+              } else {
+                // Staking failed or was rejected
+                setStatusMessage(
+                  `Swap successful, but staking failed: ${stakingResult.error || 'Unknown error'}. Your ${selectedLST.name} is ready to claim.`
+                )
+              }
+            } catch (error: any) {
+              console.error('LST staking error:', error)
+              setStatusMessage(
+                `Swap successful! Manual staking required: ${error.message || 'Please stake manually via Keplr'}`
+              )
+            } finally {
+              setIsStakingToKeplr(false)
+            }
+          }, 2000) // Wait 2s for Theta transaction to settle
+        }
+      }
+      // ====== END COSMOS LST STAKING ======
+
       setTimeout(() => {
         setSwapStatus('idle')
         setStatusMessage('')
         setTxHash(null)
-      }, 8000)
+      }, 12000) // Extended timeout to show staking message
     } catch (e: any) {
       console.error('Swap error:', e)
       
@@ -1611,11 +1687,22 @@ function App() {
                             <p className="mt-1 text-xs text-slate-400">Reward XF</p>
                           </div>
 
-                          {/* LST Balance (placeholder - Keplr) */}
+                          {/* LST Balance (Keplr) */}
                           <div className="relative overflow-hidden rounded-2xl border border-emerald-400/40 bg-gradient-to-br from-[rgba(16,185,129,0.15)] to-[rgba(15,23,42,0.8)] p-4 backdrop-blur-sm">
-                            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">LSTs</p>
-                            <p className="mt-2 text-2xl font-bold text-white">—</p>
-                            <p className="mt-1 text-xs text-slate-400">Connect Keplr</p>
+                            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">{selectedLST.name}</p>
+                            <p className="mt-2 text-2xl font-bold text-white">
+                              {keplrAddress && keplrLSTBalance > 0 
+                                ? keplrLSTBalance.toFixed(4) 
+                                : '—'}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-400">
+                              {keplrAddress ? 'In Keplr' : 'Connect Keplr'}
+                            </p>
+                            {isStakingToKeplr && (
+                              <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                                <div className="animate-spin h-5 w-5 border-2 border-emerald-400 border-t-transparent rounded-full"></div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1728,11 +1815,22 @@ function App() {
                             <p className="mt-1 text-xs text-slate-400">Reward XF</p>
                           </div>
 
-                          {/* LST Balance (placeholder - Keplr) */}
+                          {/* LST Balance (Keplr) */}
                           <div className="relative overflow-hidden rounded-2xl border border-emerald-400/40 bg-gradient-to-br from-[rgba(16,185,129,0.15)] to-[rgba(15,23,42,0.8)] p-4 backdrop-blur-sm">
-                            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">LSTs</p>
-                            <p className="mt-2 text-2xl font-bold text-white">—</p>
-                            <p className="mt-1 text-xs text-slate-400">Connect Keplr</p>
+                            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400/80">{selectedLST.name}</p>
+                            <p className="mt-2 text-2xl font-bold text-white">
+                              {keplrAddress && keplrLSTBalance > 0 
+                                ? keplrLSTBalance.toFixed(4) 
+                                : '—'}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-400">
+                              {keplrAddress ? 'In Keplr' : 'Connect Keplr'}
+                            </p>
+                            {isStakingToKeplr && (
+                              <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                                <div className="animate-spin h-5 w-5 border-2 border-emerald-400 border-t-transparent rounded-full"></div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>

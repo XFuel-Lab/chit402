@@ -35,6 +35,8 @@
     "perf:monitor": "echo \"Performance monitoring enabled in dev mode. Check console for metrics.\""
   },
   "dependencies": {
+    "@cosmjs/stargate": "^0.37.0",
+    "@keplr-wallet/types": "^0.12.306",
     "@types/canvas-confetti": "^1.9.0",
     "@walletconnect/ethereum-provider": "^2.23.1",
     "canvas-confetti": "^1.9.4",
