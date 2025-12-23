@@ -171,8 +171,11 @@ export async function bridgeThetaToCosmos(
       throw new Error('Axelar gateway address not configured for Theta')
     }
 
+    // Normalize address to proper checksum format (EIP-55)
+    const checksummedAddress = ethers.getAddress(gatewayAddress)
+
     const gateway = new ethers.Contract(
-      gatewayAddress,
+      checksummedAddress,
       AXELAR_GATEWAY_ABI,
       signer
     )
@@ -329,8 +332,11 @@ export async function crossChainSwap(
       throw new Error('Axelar gateway address not configured for Theta')
     }
 
+    // Normalize address to proper checksum format (EIP-55)
+    const checksummedAddress = ethers.getAddress(gatewayAddress)
+
     const gateway = new ethers.Contract(
-      gatewayAddress,
+      checksummedAddress,
       AXELAR_GATEWAY_ABI,
       signer
     )
