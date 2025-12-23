@@ -154,46 +154,68 @@ function App() {
 
   // Real Theta Wallet connection with balance fetching
   const connectWallet = async (providerType?: WalletProvider, skipModal: boolean = false) => {
+    console.log('=== connectWallet called ===')
+    console.log('providerType:', providerType)
+    console.log('skipModal:', skipModal)
+    console.log('window.theta:', !!(window as any).theta)
+    console.log('window.ethereum:', !!(window as any).ethereum)
+    
     try {
       let provider: any = null
       let selectedProvider: WalletProvider = providerType || walletProvider || 'theta'
+      console.log('Initial selectedProvider:', selectedProvider)
       
       // Auto-detect and prioritize Theta Wallet if no provider specified
       if (!providerType && !skipModal) {
+        console.log('Entering auto-detect logic')
         const hasThetaWallet = !!(window as any).theta
         const hasMetaMask = !!(window as any).ethereum?.isMetaMask
+        console.log('hasThetaWallet:', hasThetaWallet)
+        console.log('hasMetaMask:', hasMetaMask)
         
         // If Theta Wallet is detected, use it automatically
         if (hasThetaWallet) {
+          console.log('Theta detected, setting selectedProvider to theta')
           selectedProvider = 'theta'
         } else if (hasMetaMask) {
           // If only MetaMask is available, show modal to inform user about Theta Wallet
+          console.log('Only MetaMask detected, showing modal')
           setShowWalletConnectModal(true)
           return
         } else {
           // No wallet detected, show modal with install instructions
+          console.log('No wallet detected, showing modal')
           setShowWalletConnectModal(true)
           return
         }
       }
       
+      console.log('After auto-detect, selectedProvider:', selectedProvider)
+      
       // Select provider based on type
       if (selectedProvider === 'theta') {
+        console.log('Getting Theta Wallet provider')
         provider = (window as any).theta
+        console.log('Theta provider found:', !!provider)
         if (!provider) {
           // Show modal instead of alert
+          console.log('Theta provider not found, showing modal')
           setShowWalletConnectModal(true)
           return
         }
       } else if (selectedProvider === 'metamask') {
+        console.log('Getting MetaMask provider')
         provider = (window as any).ethereum
+        console.log('MetaMask provider found:', !!provider, 'isMetaMask:', provider?.isMetaMask)
         if (!provider || !provider.isMetaMask) {
           // Show modal instead of alert
+          console.log('MetaMask provider not found, showing modal')
           setShowWalletConnectModal(true)
           return
         }
       } else if (selectedProvider === 'walletconnect') {
         // WalletConnect integration would go here
+        console.log('WalletConnect requested (not yet supported)')
         setStatusMessage('WalletConnect support coming soon!')
         setSwapStatus('error')
         setTimeout(() => {
@@ -203,21 +225,29 @@ function App() {
         return
       }
       
+      console.log('About to request accounts from provider')
+      
       if (typeof window !== 'undefined' && provider) {
+        console.log('Requesting account access...')
         // Request account access
         const accounts = await provider.request({
           method: 'eth_requestAccounts',
         })
+        console.log('Accounts received:', accounts?.length || 0)
+        
         if (accounts && accounts.length > 0) {
           const address = accounts[0]
+          console.log('Connected to address:', address)
           
           // Fetch real balance from chain
+          console.log('Fetching balance...')
           const ethersProvider = new ethers.BrowserProvider(provider)
           const balance = await ethersProvider.getBalance(address)
           const balanceFormatted = parseFloat(ethers.formatEther(balance)).toLocaleString('en-US', {
             maximumFractionDigits: 2,
             minimumFractionDigits: 2,
           })
+          console.log('Balance:', balanceFormatted, 'TFUEL')
           
           setWallet({
             address: `${address.slice(0, 6)}...${address.slice(-4)}`,
@@ -236,9 +266,14 @@ function App() {
             console.warn('Could not save wallet provider preference:', e)
           }
           
+          console.log('Wallet connected successfully!')
           // Refresh balance periodically
           refreshBalance(address, provider)
+        } else {
+          console.log('No accounts returned from provider')
         }
+      } else {
+        console.log('Provider check failed. window:', typeof window, 'provider:', !!provider)
       }
     } catch (error: any) {
       console.error('Wallet connection error:', error)
