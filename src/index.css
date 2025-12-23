@@ -71,6 +71,18 @@
     }
   }
 
+  /* Fade in down animation for success toasts */
+  @keyframes fadeInDown {
+    from {
+      transform: translate(-50%, -20px);
+      opacity: 0;
+    }
+    to {
+      transform: translate(-50%, 0);
+      opacity: 1;
+    }
+  }
+
   /* Tap / click glow echo around buttons & bubbles */
   .xfuel-tap-glow {
     position: relative;

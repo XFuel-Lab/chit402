@@ -16,6 +16,7 @@ export default function WalletConnectModal({
   const [isConnecting, setIsConnecting] = useState(false)
   const [showThetaQR, setShowThetaQR] = useState(false) // Show QR modal for Theta Wallet
   const [walletConnectUri, setWalletConnectUri] = useState<string | undefined>(undefined)
+  const [showCopyToast, setShowCopyToast] = useState(false)
 
   // Initialize WalletConnect and get QR URI when showing QR modal
   useEffect(() => {
@@ -73,6 +74,32 @@ export default function WalletConnectModal({
 
   return (
     <>
+      {/* Success Toast */}
+      {showCopyToast && (
+        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-[60] animate-[fadeInDown_0.3s_ease-out]">
+          <div className="px-6 py-4 rounded-xl border-2 border-cyan-400/80 bg-gradient-to-br from-cyan-500/30 via-cyan-600/25 to-slate-900/80 backdrop-blur-xl shadow-[0_0_40px_rgba(6,182,212,0.8),inset_0_0_20px_rgba(6,182,212,0.3)]">
+            <div className="flex items-center gap-3">
+              <svg
+                className="w-5 h-5 text-cyan-300"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M5 13l4 4L19 7"
+                />
+              </svg>
+              <p className="text-sm font-bold text-white">
+                Link copied — paste in Theta Wallet app
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Backdrop */}
       <div
         className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm"
@@ -184,6 +211,62 @@ export default function WalletConnectModal({
                         )}
                       </div>
                     </div>
+
+                    {/* Copy Link Button */}
+                    {walletConnectUri && (
+                      <div className="flex justify-center">
+                        <button
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(walletConnectUri)
+                              setShowCopyToast(true)
+                              setTimeout(() => {
+                                setShowCopyToast(false)
+                              }, 3000)
+                            } catch (error) {
+                              console.error('Failed to copy link:', error)
+                              // Fallback for older browsers
+                              const textArea = document.createElement('textarea')
+                              textArea.value = walletConnectUri
+                              textArea.style.position = 'fixed'
+                              textArea.style.opacity = '0'
+                              document.body.appendChild(textArea)
+                              textArea.select()
+                              try {
+                                document.execCommand('copy')
+                                setShowCopyToast(true)
+                                setTimeout(() => {
+                                  setShowCopyToast(false)
+                                }, 3000)
+                              } catch (err) {
+                                console.error('Fallback copy failed:', err)
+                              }
+                              document.body.removeChild(textArea)
+                            }
+                          }}
+                          className="group relative px-6 py-3 rounded-xl border-2 border-purple-400/70 bg-gradient-to-br from-purple-500/30 via-purple-600/25 to-slate-900/50 backdrop-blur-xl transition-all hover:border-purple-400 hover:shadow-[0_0_30px_rgba(168,85,247,0.8),inset_0_0_20px_rgba(168,85,247,0.3)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <div className="flex items-center gap-2">
+                            <svg
+                              className="w-5 h-5 text-purple-300 group-hover:text-purple-200 transition-colors"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                              />
+                            </svg>
+                            <span className="text-sm font-bold text-white group-hover:text-purple-200 transition-colors">
+                              Copy Link
+                            </span>
+                          </div>
+                        </button>
+                      </div>
+                    )}
 
                     {/* Instructions */}
                     <div className="space-y-3">
