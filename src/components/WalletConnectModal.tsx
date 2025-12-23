@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 
 interface WalletConnectModalProps {
   isOpen: boolean
   onClose: () => void
-  onConnect: (provider: 'theta' | 'metamask') => Promise<void> | void
+  onConnect: (provider: 'walletconnect' | 'metamask') => Promise<void> | void
 }
 
 export default function WalletConnectModal({
@@ -11,28 +11,11 @@ export default function WalletConnectModal({
   onClose,
   onConnect,
 }: WalletConnectModalProps) {
-  const [thetaDetected, setThetaDetected] = useState(false)
-  const [metamaskDetected, setMetamaskDetected] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
+  const [showQR, setShowQR] = useState(false)
 
-  // Detect installed wallets
-  useEffect(() => {
-    if (isOpen) {
-      const checkWallets = () => {
-        const hasThetaWallet = !!(window as any).theta
-        const hasMetaMask = !!(window as any).ethereum?.isMetaMask
-        
-        setThetaDetected(hasThetaWallet)
-        setMetamaskDetected(hasMetaMask)
-      }
-
-      // Check immediately and after a short delay (wallets might initialize late)
-      checkWallets()
-      const timer = setTimeout(checkWallets, 500)
-      
-      return () => clearTimeout(timer)
-    }
-  }, [isOpen])
+  // WalletConnect URI for Theta Wallet connection
+  const walletConnectURI = 'https://wallet.thetatoken.org/connect'
 
   if (!isOpen) return null
 
@@ -86,94 +69,114 @@ export default function WalletConnectModal({
                 <div className="h-px flex-1 bg-gradient-to-r from-purple-500/50 to-transparent" />
               </div>
 
+              {/* Theta Wallet via WalletConnect/Web */}
               <button
-                onClick={async () => {
-                  console.log('Theta button clicked, detected:', thetaDetected)
-                  if (thetaDetected) {
-                    setIsConnecting(true)
-                    try {
-                      console.log('Calling onConnect for Theta Wallet...')
-                      await onConnect('theta')
-                      console.log('Theta connection completed')
-                    } catch (error) {
-                      console.error('Theta connection error:', error)
-                    } finally {
-                      setIsConnecting(false)
-                    }
-                  } else {
-                    console.log('Theta not detected, opening install page')
-                    window.open('https://www.thetatoken.org/wallet', '_blank')
-                  }
-                }}
-                disabled={isConnecting}
-                className="group relative w-full rounded-2xl border-2 border-purple-400/70 bg-gradient-to-br from-purple-500/25 via-purple-600/20 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-purple-400 hover:shadow-[0_0_40px_rgba(168,85,247,0.8),inset_0_0_30px_rgba(168,85,247,0.3)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => setShowQR(!showQR)}
+                className="group relative w-full rounded-2xl border-2 border-purple-400/70 bg-gradient-to-br from-purple-500/25 via-purple-600/20 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-purple-400 hover:shadow-[0_0_40px_rgba(168,85,247,0.8),inset_0_0_30px_rgba(168,85,247,0.3)] active:scale-[0.98]"
               >
                 <div className="flex items-center gap-4">
                   <div className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-purple-400/50 bg-gradient-to-br from-purple-500/40 to-purple-600/30 shadow-[0_0_25px_rgba(168,85,247,0.6)]">
                     <span className="text-3xl">⚡</span>
                   </div>
                   <div className="flex-1">
-                    <div className="flex items-center gap-2">
                     <p className="text-xl font-bold text-white group-hover:text-purple-200 transition-colors">
-                      {isConnecting && thetaDetected ? 'Connecting...' : 'Theta Wallet'}
+                      Theta Wallet
                     </p>
-                      {thetaDetected && (
-                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/50">
-                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                          <span className="text-[10px] font-semibold text-emerald-300 uppercase tracking-wider">
-                            Detected
-                          </span>
-                        </div>
-                      )}
-                    </div>
                     <p className="text-xs text-slate-400 mt-1 group-hover:text-slate-300 transition-colors">
-                      {thetaDetected 
-                        ? 'Best experience for TFUEL • Native Theta Network support'
-                        : 'Install Theta Wallet for the best TFUEL experience'
-                      }
+                      Use official Theta Wallet app for best experience
                     </p>
                   </div>
                   <svg
-                    className={`w-6 h-6 transition-all ${
-                      thetaDetected 
-                        ? 'text-purple-400 opacity-100' 
-                        : 'text-cyan-400 opacity-60 group-hover:opacity-100'
-                    }`}
+                    className="w-6 h-6 text-purple-400 transition-all"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
                   >
-                    {thetaDetected ? (
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    ) : (
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    )}
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
                   </svg>
                 </div>
               </button>
 
-              {!thetaDetected && (
-                <div className="flex items-center gap-3 p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/30">
-                  <div className="flex-shrink-0">
-                    <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-xs text-cyan-300 font-semibold">
-                      Theta Wallet gives you the best experience for TFUEL staking and swaps
-                    </p>
-                    <a
-                      href="https://www.thetatoken.org/wallet"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-cyan-400 underline hover:text-cyan-300 transition-colors"
-                    >
-                      Download for Chrome, Firefox, or Mobile →
-                    </a>
+              {/* QR Code / Connection Instructions */}
+              {showQR && (
+                <div className="p-6 rounded-2xl border-2 border-purple-400/60 bg-gradient-to-br from-purple-500/20 via-purple-600/15 to-slate-900/60 backdrop-blur-xl shadow-[0_0_40px_rgba(168,85,247,0.5),inset_0_0_30px_rgba(168,85,247,0.2)]">
+                  <div className="text-center space-y-4">
+                    {/* QR Code Placeholder */}
+                    <div className="mx-auto w-48 h-48 rounded-2xl border-2 border-purple-400/50 bg-white p-4 shadow-[0_0_30px_rgba(168,85,247,0.6)]">
+                      <div className="w-full h-full bg-gradient-to-br from-purple-500/20 to-cyan-500/20 rounded-xl flex items-center justify-center">
+                        <div className="text-center">
+                          <svg className="w-32 h-32 mx-auto text-purple-600" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M3 11h8V3H3v8zm2-6h4v4H5V5zm-2 14h8v-8H3v8zm2-6h4v4H5v-4zm8-10v8h8V3h-8zm6 6h-4V5h4v4zm-6 4h2v2h-2v-2zm2 2h2v2h-2v-2zm-2 2h2v2h-2v-2zm4-4h2v2h-2v-2zm2 2h2v2h-2v-2zm-2 2h2v2h-2v-2zm2-6h2v2h-2V9zm-4 0h2v2h-2V9z"/>
+                          </svg>
+                          <p className="text-xs text-purple-600 font-bold mt-2">QR CODE</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Instructions */}
+                    <div className="space-y-2">
+                      <p className="text-sm font-bold text-white">Scan with Theta Wallet App</p>
+                      <ol className="text-xs text-slate-300 space-y-1 text-left max-w-xs mx-auto">
+                        <li className="flex items-start gap-2">
+                          <span className="text-purple-400 font-bold">1.</span>
+                          <span>Open Theta Wallet app on your phone</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="text-purple-400 font-bold">2.</span>
+                          <span>Tap "Scan QR" or "WalletConnect"</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                          <span className="text-purple-400 font-bold">3.</span>
+                          <span>Scan this QR code to connect</span>
+                        </li>
+                      </ol>
+                    </div>
+
+                    {/* Download Links */}
+                    <div className="pt-4 border-t border-purple-400/30">
+                      <p className="text-[10px] text-slate-400 mb-2">Don't have the app?</p>
+                      <div className="flex gap-2 justify-center">
+                        <a
+                          href="https://wallet.thetatoken.org"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-purple-400/50 bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 hover:border-purple-400 transition-all"
+                        >
+                          📱 Download App
+                        </a>
+                        <button
+                          onClick={async () => {
+                            setIsConnecting(true)
+                            try {
+                              await onConnect('walletconnect')
+                            } finally {
+                              setIsConnecting(false)
+                            }
+                          }}
+                          disabled={isConnecting}
+                          className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-cyan-400/50 bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 hover:border-cyan-400 transition-all disabled:opacity-50"
+                        >
+                          {isConnecting ? '⏳ Connecting...' : '🔗 WalletConnect'}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
+
+              {/* Info Message */}
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/30">
+                <div className="flex-shrink-0">
+                  <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <p className="text-xs text-cyan-300 font-semibold">
+                    Use official Theta Wallet app for best TFUEL staking experience
+                  </p>
+                </div>
+              </div>
             </div>
 
             {/* Divider */}
@@ -183,23 +186,20 @@ export default function WalletConnectModal({
               <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
             </div>
 
-            {/* MetaMask Option */}
+            {/* MetaMask Option (Fallback) */}
             <button
               onClick={async () => {
-                console.log('MetaMask button clicked, detected:', metamaskDetected)
-                if (metamaskDetected) {
+                const hasMetaMask = !!(window as any).ethereum?.isMetaMask
+                if (hasMetaMask) {
                   setIsConnecting(true)
                   try {
-                    console.log('Calling onConnect for MetaMask...')
                     await onConnect('metamask')
-                    console.log('MetaMask connection completed')
                   } catch (error) {
                     console.error('MetaMask connection error:', error)
                   } finally {
                     setIsConnecting(false)
                   }
                 } else {
-                  console.log('MetaMask not detected, opening install page')
                   window.open('https://metamask.io/download/', '_blank')
                 }
               }}
@@ -211,41 +211,20 @@ export default function WalletConnectModal({
                   <span className="text-3xl">🦊</span>
                 </div>
                 <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="text-xl font-bold text-white group-hover:text-cyan-200 transition-colors">
-                      {isConnecting && metamaskDetected ? 'Connecting...' : 'MetaMask'}
-                    </p>
-                    {metamaskDetected && (
-                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/50">
-                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        <span className="text-[10px] font-semibold text-emerald-300 uppercase tracking-wider">
-                          Detected
-                        </span>
-                      </div>
-                    )}
-                  </div>
+                  <p className="text-xl font-bold text-white group-hover:text-cyan-200 transition-colors">
+                    {isConnecting ? 'Connecting...' : 'MetaMask'}
+                  </p>
                   <p className="text-xs text-slate-400 mt-1 group-hover:text-slate-300 transition-colors">
-                    {metamaskDetected
-                      ? 'Popular Ethereum wallet • Works with Theta Network'
-                      : 'Install MetaMask as an alternative option'
-                    }
+                    Alternative browser extension wallet
                   </p>
                 </div>
                 <svg
-                  className={`w-6 h-6 transition-all ${
-                    metamaskDetected 
-                      ? 'text-cyan-400 opacity-100' 
-                      : 'text-cyan-400 opacity-60 group-hover:opacity-100'
-                  }`}
+                  className="w-6 h-6 text-cyan-400 transition-all"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
                 >
-                  {metamaskDetected ? (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  ) : (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                  )}
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </div>
             </button>
