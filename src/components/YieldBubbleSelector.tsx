@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useRef } from 'react'
 
 export type LSTOption = {
   name: string
@@ -13,9 +13,25 @@ type Props = {
 
 /**
  * Horizontal bubble selector for yield options (highest APY → lowest).
+ * Supports mouse wheel, touch, and keyboard scrolling.
  */
 export function YieldBubbleSelector({ options, selected, onSelect }: Props) {
   const sorted = [...options].sort((a, b) => b.apy - a.apy)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+
+  // Handle horizontal scroll with mouse wheel
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (!scrollContainerRef.current) return
+    
+    // Prevent vertical page scroll when scrolling horizontally
+    if (Math.abs(e.deltaX) > 0 || Math.abs(e.deltaY) > 0) {
+      e.preventDefault()
+      
+      // Scroll horizontally (use deltaY for vertical wheel, deltaX for horizontal trackpad)
+      const scrollAmount = e.deltaX || e.deltaY
+      scrollContainerRef.current.scrollLeft += scrollAmount
+    }
+  }
 
   return (
     <div className="mt-8 flex flex-col gap-3">
@@ -28,7 +44,16 @@ export function YieldBubbleSelector({ options, selected, onSelect }: Props) {
         </span>
       </div>
 
-      <div className="no-scrollbar flex gap-3 overflow-x-auto pb-1 pt-1">
+      <div 
+        ref={scrollContainerRef}
+        onWheel={handleWheel}
+        className="no-scrollbar flex gap-3 overflow-x-auto scroll-smooth pb-1 pt-1 snap-x snap-mandatory"
+        style={{
+          scrollbarWidth: 'none', // Firefox
+          msOverflowStyle: 'none', // IE/Edge
+          WebkitOverflowScrolling: 'touch', // iOS momentum scrolling
+        }}
+      >
         {sorted.map((opt) => {
           const isActive = opt.name === selected.name
           return (
@@ -37,7 +62,7 @@ export function YieldBubbleSelector({ options, selected, onSelect }: Props) {
               type="button"
               onClick={() => onSelect(opt)}
               className={[
-                'group relative flex min-w-[160px] flex-col items-start gap-1 rounded-full border px-5 py-3 text-left',
+                'group relative flex min-w-[160px] flex-shrink-0 flex-col items-start gap-1 rounded-full border px-5 py-3 text-left snap-center',
                 'transition-all duration-300 ease-out backdrop-blur-xl',
                 isActive
                   ? 'border-purple-400/90 bg-[radial-gradient(circle_at_top,_rgba(129,140,248,0.45),transparent_55%),rgba(15,23,42,0.9)] shadow-[0_0_40px_rgba(168,85,247,0.9)] hover:scale-105'
