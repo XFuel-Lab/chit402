@@ -53,6 +53,8 @@ const LST_OPTIONS: LSTOption[] = [
   { name: 'pSTAKE BTC', apy: 25.4 }, // TODO: Verify source
 ]
 
+type WalletProvider = 'theta' | 'metamask' | 'walletconnect'
+
 function App() {
   const [wallet, setWallet] = useState<WalletInfo>({
     address: null,
@@ -60,6 +62,8 @@ function App() {
     balance: '0.00',
     isConnected: false,
   })
+  const [walletProvider, setWalletProvider] = useState<WalletProvider | null>(null)
+  const [showWalletOptions, setShowWalletOptions] = useState(false)
   const [tfuelAmount, setTfuelAmount] = useState('')
   const [selectedPercentage, setSelectedPercentage] = useState<number | null>(null)
   const [swapStatus, setSwapStatus] = useState<SwapStatus>('idle')
@@ -143,9 +147,30 @@ function App() {
   const liveApyText = useMemo(() => `${currentApy.toFixed(1)}%`, [currentApy])
 
   // Real Theta Wallet connection with balance fetching
-  const connectWallet = async () => {
+  const connectWallet = async (providerType?: WalletProvider) => {
     try {
-      const provider = (window as any).theta || (window as any).ethereum
+      let provider: any = null
+      let selectedProvider: WalletProvider = providerType || walletProvider || 'theta'
+      
+      // Select provider based on type
+      if (selectedProvider === 'theta') {
+        provider = (window as any).theta
+        if (!provider) {
+          alert('Please install Theta Wallet to connect')
+          return
+        }
+      } else if (selectedProvider === 'metamask') {
+        provider = (window as any).ethereum
+        if (!provider || !provider.isMetaMask) {
+          alert('Please install MetaMask to connect')
+          return
+        }
+      } else if (selectedProvider === 'walletconnect') {
+        // WalletConnect integration would go here
+        alert('WalletConnect support coming soon!')
+        return
+      }
+      
       if (typeof window !== 'undefined' && provider) {
         // Request account access
         const accounts = await provider.request({
@@ -169,6 +194,16 @@ function App() {
             isConnected: true,
           })
           
+          setWalletProvider(selectedProvider)
+          setShowWalletOptions(false)
+          
+          // Store provider preference
+          try {
+            localStorage.setItem('xfuel-wallet-provider', selectedProvider)
+          } catch (e) {
+            console.warn('Could not save wallet provider preference:', e)
+          }
+          
           // Refresh balance periodically
           refreshBalance(address, provider)
         }
@@ -180,6 +215,35 @@ function App() {
       setStatusMessage('Failed to connect wallet')
       setSwapStatus('error')
     }
+  }
+
+  // Disconnect wallet
+  const disconnectWallet = () => {
+    setWallet({
+      address: null,
+      fullAddress: null,
+      balance: '0.00',
+      isConnected: false,
+    })
+    
+    setWalletProvider(null)
+    
+    // Clear balance refresh interval
+    if (balanceRefreshInterval) {
+      clearInterval(balanceRefreshInterval)
+      setBalanceRefreshInterval(null)
+    }
+    
+    // Clear saved provider preference
+    try {
+      localStorage.removeItem('xfuel-wallet-provider')
+    } catch (e) {
+      console.warn('Could not clear wallet provider preference:', e)
+    }
+    
+    // Clear any status messages
+    setStatusMessage('')
+    setSwapStatus('idle')
   }
 
   // Refresh wallet balance from chain
@@ -957,7 +1021,18 @@ function App() {
 
   // Auto-connect on mount (demo mode)
   useEffect(() => {
-    // connectWallet()
+    // Auto-connect last used wallet on load
+    try {
+      const savedProvider = localStorage.getItem('xfuel-wallet-provider') as WalletProvider | null
+      if (savedProvider) {
+        // Delay auto-connect slightly to allow wallet extensions to initialize
+        setTimeout(() => {
+          connectWallet(savedProvider)
+        }, 500)
+      }
+    } catch (e) {
+      console.warn('Could not auto-connect wallet:', e)
+    }
 
     // Restore lightweight session (mock 2026-style wallet login)
     try {
@@ -1101,6 +1176,7 @@ function App() {
               <BiDirectionalSwapCard
                 thetaWallet={wallet}
                 onConnectTheta={connectWallet}
+                onDisconnectTheta={disconnectWallet}
               />
             )}
 
@@ -1110,6 +1186,7 @@ function App() {
                 wallet={wallet}
                 lstOptions={LST_OPTIONS}
                 onConnectWallet={connectWallet}
+                onDisconnectWallet={disconnectWallet}
               />
             )}
 

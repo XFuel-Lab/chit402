@@ -30,11 +30,13 @@ interface BiDirectionalSwapCardProps {
     isConnected: boolean
   }
   onConnectTheta: () => Promise<void>
+  onDisconnectTheta?: () => void
 }
 
 export default function BiDirectionalSwapCard({
   thetaWallet,
   onConnectTheta,
+  onDisconnectTheta,
 }: BiDirectionalSwapCardProps) {
   // State
   const [fromToken, setFromToken] = useState<Token>(getThetaTokens()[0])
@@ -259,8 +261,18 @@ export default function BiDirectionalSwapCard({
           <div className="flex-1">
             <div className="text-xs text-slate-400 mb-1">Theta Wallet</div>
             {thetaWallet.isConnected ? (
-              <div className="text-sm text-emerald-400 font-mono">
-                {thetaWallet.address}
+              <div className="flex items-center gap-2">
+                <div className="text-sm text-emerald-400 font-mono">
+                  {thetaWallet.address}
+                </div>
+                {onDisconnectTheta && (
+                  <button
+                    onClick={onDisconnectTheta}
+                    className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider rounded-md border border-red-500/50 bg-red-500/10 text-red-300 transition-all hover:border-red-400 hover:bg-red-500/20 hover:text-red-200 hover:shadow-[0_0_15px_rgba(239,68,68,0.6)]"
+                  >
+                    Disconnect
+                  </button>
+                )}
               </div>
             ) : (
               <button
@@ -275,8 +287,16 @@ export default function BiDirectionalSwapCard({
           <div className="flex-1">
             <div className="text-xs text-slate-400 mb-1">Keplr Wallet</div>
             {keplrWallet ? (
-              <div className="text-sm text-emerald-400 font-mono">
-                {keplrWallet.address.slice(0, 12)}...
+              <div className="flex items-center gap-2">
+                <div className="text-sm text-emerald-400 font-mono">
+                  {keplrWallet.address.slice(0, 12)}...
+                </div>
+                <button
+                  onClick={() => setKeplrWallet(null)}
+                  className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider rounded-md border border-red-500/50 bg-red-500/10 text-red-300 transition-all hover:border-red-400 hover:bg-red-500/20 hover:text-red-200 hover:shadow-[0_0_15px_rgba(239,68,68,0.6)]"
+                >
+                  Disconnect
+                </button>
               </div>
             ) : (
               <button
