@@ -15,6 +15,7 @@ import EdgeNodeDashboard from './components/EdgeNodeDashboard'
 import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
 import YieldPumpCard from './components/YieldPumpCard'
 import WalletConnectModal from './components/WalletConnectModal'
+import ThetaWalletQRModal from './components/ThetaWalletQRModal'
 import SignInModal from './components/SignInModal'
 import TransactionSuccessModal from './components/TransactionSuccessModal'
 import { THETA_TESTNET, THETA_MAINNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
@@ -77,6 +78,7 @@ function App() {
   })
   const [walletProvider, setWalletProvider] = useState<WalletProvider | null>(null)
   const [showWalletConnectModal, setShowWalletConnectModal] = useState(false)
+  const [showThetaQRModal, setShowThetaQRModal] = useState(false)
   const [showSignInModal, setShowSignInModal] = useState(false)
   const [tfuelAmount, setTfuelAmount] = useState('')
   const [selectedPercentage, setSelectedPercentage] = useState<number | null>(null)
@@ -361,6 +363,40 @@ function App() {
       await connectWallet(provider)
     } catch (error) {
       console.error('Modal connection error:', error)
+    }
+  }
+
+  // Handle Theta Wallet QR modal connection
+  const handleThetaQRConnect = async (provider: any) => {
+    try {
+      // Provider is already connected via WalletConnect
+      const ethersProvider = new ethers.BrowserProvider(provider)
+      const signer = await ethersProvider.getSigner()
+      const address = await signer.getAddress()
+      const balance = await ethersProvider.getBalance(address)
+      const balanceFormatted = parseFloat(ethers.formatEther(balance)).toFixed(2)
+
+      setWallet({
+        address: `${address.slice(0, 6)}...${address.slice(-4)}`,
+        fullAddress: address,
+        balance: balanceFormatted,
+        isConnected: true,
+      })
+      
+      setWalletProvider('walletconnect')
+      setShowThetaQRModal(false)
+      
+      try {
+        localStorage.setItem('xfuel-wallet-provider', 'walletconnect')
+      } catch (e) {
+        console.warn('Could not save wallet provider preference:', e)
+      }
+
+      // Start balance refresh
+      startBalanceRefresh(ethersProvider, address)
+    } catch (error) {
+      console.error('Theta QR connection error:', error)
+      setStatusMessage('Failed to connect wallet')
     }
   }
 
@@ -1654,8 +1690,8 @@ function App() {
                                 onClick={(e) => {
                                   e.preventDefault()
                                   e.stopPropagation()
-                                  // Open wallet connect modal (QR + web wallet options)
-                                  setShowWalletConnectModal(true)
+                                  // Open Theta QR modal with mobile-friendly QR code
+                                  setShowThetaQRModal(true)
                                 }}
                                 rightHint="secure"
                                 variant="primary"
@@ -2212,6 +2248,13 @@ function App() {
         isOpen={showWalletConnectModal}
         onClose={() => setShowWalletConnectModal(false)}
         onConnect={handleWalletConnectFromModal}
+      />
+
+      {/* Theta Wallet QR Modal */}
+      <ThetaWalletQRModal
+        isOpen={showThetaQRModal}
+        onClose={() => setShowThetaQRModal(false)}
+        onConnect={handleThetaQRConnect}
       />
 
       {/* Sign In Modal */}
