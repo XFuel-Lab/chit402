@@ -17,6 +17,7 @@ export default function WalletConnectModal({
   const [showThetaQR, setShowThetaQR] = useState(false) // Show QR modal for Theta Wallet
   const [walletConnectUri, setWalletConnectUri] = useState<string | undefined>(undefined)
   const [showCopyToast, setShowCopyToast] = useState(false)
+  const [currentProvider, setCurrentProvider] = useState<any>(null) // Track active provider for cleanup
 
   // Initialize WalletConnect and get QR URI when showing QR modal
   useEffect(() => {
@@ -26,6 +27,7 @@ export default function WalletConnectModal({
       const initWalletConnect = async () => {
         try {
           provider = await createWalletConnectProvider()
+          setCurrentProvider(provider) // Store for cleanup
           
           // Check if already connected
           if (provider.session) {
@@ -60,7 +62,7 @@ export default function WalletConnectModal({
       
       initWalletConnect()
       
-      // Cleanup
+      // Cleanup when closing QR modal
       return () => {
         if (provider) {
           provider.removeAllListeners()
@@ -69,6 +71,21 @@ export default function WalletConnectModal({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showThetaQR, isOpen])
+
+  // Cleanup provider when modal closes
+  useEffect(() => {
+    if (!isOpen && currentProvider) {
+      // Clean up any pending connections
+      try {
+        currentProvider.removeAllListeners()
+        setCurrentProvider(null)
+        setWalletConnectUri(undefined)
+        setShowThetaQR(false)
+      } catch (error) {
+        console.error('Error cleaning up provider:', error)
+      }
+    }
+  }, [isOpen, currentProvider])
 
   if (!isOpen) return null
 
@@ -180,7 +197,10 @@ export default function WalletConnectModal({
               {showThetaQR && (
                 <div className="relative p-6 rounded-2xl border-2 border-purple-400/60 bg-gradient-to-br from-purple-500/20 via-purple-600/15 to-slate-900/60 backdrop-blur-xl shadow-[0_0_50px_rgba(168,85,247,0.7),0_0_80px_rgba(168,85,247,0.4),inset_0_0_40px_rgba(168,85,247,0.2)]">
                   <button
-                    onClick={() => setShowThetaQR(false)}
+                    onClick={() => {
+                      setShowThetaQR(false)
+                      onClose() // Also close the parent modal to prevent black screen
+                    }}
                     className="absolute right-3 top-3 flex h-6 w-6 items-center justify-center rounded-full border border-purple-400/50 bg-purple-500/20 text-purple-300 transition-all hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-300"
                   >
                     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
