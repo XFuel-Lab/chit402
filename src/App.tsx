@@ -13,7 +13,6 @@ import EarlyBelieversCard from './components/EarlyBelieversCard'
 import EarlyBelieversModal from './components/EarlyBelieversModal'
 import EdgeNodeDashboard from './components/EdgeNodeDashboard'
 import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
-import XPRTPlaybookCard from './components/XPRTPlaybookCard'
 import YieldPumpCard from './components/YieldPumpCard'
 import WalletConnectModal from './components/WalletConnectModal'
 import SignInModal from './components/SignInModal'
@@ -1298,22 +1297,13 @@ function App() {
             {/* Early Believers Card */}
             <EarlyBelieversCard onClick={() => setShowEarlyBelieversModal(true)} />
 
-            {/* Swap Tab: Cross-Chain Swap Only */}
+            {/* Swap Tab: Cross-Chain Swap */}
             {activeTab === 'swap' && (
-              <>
-                {/* XPRT Playbook - Featured */}
-                <XPRTPlaybookCard
-                  thetaWallet={wallet}
-                  onConnectTheta={() => connectWallet()}
-                />
-
-                {/* Bi-Directional Cross-Chain Swap */}
-                <BiDirectionalSwapCard
-                  thetaWallet={wallet}
-                  onConnectTheta={() => connectWallet()}
-                  onDisconnectTheta={disconnectWallet}
-                />
-              </>
+              <BiDirectionalSwapCard
+                thetaWallet={wallet}
+                onConnectTheta={() => connectWallet()}
+                onDisconnectTheta={disconnectWallet}
+              />
             )}
 
             {/* Yield Pump Tab: Single-Sided TFUEL Deposit */}
