@@ -25,8 +25,25 @@ export const ROUTER_ADDRESS = import.meta.env.VITE_ROUTER_ADDRESS || ''
 
 // Log router configuration for debugging (production-safe)
 if (typeof window !== 'undefined') {
-  console.log('[XFUEL Config] Router address loaded:', ROUTER_ADDRESS || '(not configured)')
-  console.log('[XFUEL Config] Mode:', ROUTER_ADDRESS ? 'REAL' : 'NO ROUTER')
+  console.log('🔧 [XFUEL Config] Router address loaded:', ROUTER_ADDRESS || '(not configured)')
+  console.log('🔧 [XFUEL Config] Mode:', ROUTER_ADDRESS ? 'REAL' : 'NO ROUTER')
+  console.log('🔧 [XFUEL Config] Expected mainnet router: 0x6256D8A728aA102Aa06B6B239ba1247Bd835d816')
+  
+  // Validate router address format and network
+  if (ROUTER_ADDRESS) {
+    const isValidAddress = /^0x[a-fA-F0-9]{40}$/.test(ROUTER_ADDRESS)
+    const isMockAddress = ROUTER_ADDRESS === '0x0000000000000000000000000000000000000001'
+    
+    if (!isValidAddress) {
+      console.error('❌ [XFUEL Config] Invalid router address format!')
+    } else if (isMockAddress) {
+      console.error('❌ [XFUEL Config] Mock router address detected in production!')
+    } else if (ROUTER_ADDRESS === '0x6256D8A728aA102Aa06B6B239ba1247Bd835d816') {
+      console.log('✅ [XFUEL Config] Mainnet router correctly configured')
+    } else {
+      console.warn('⚠️  [XFUEL Config] Router address does not match expected mainnet address')
+    }
+  }
 }
 
 // Tip Pool contract address - will be updated when deployed

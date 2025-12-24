@@ -682,7 +682,7 @@ function App() {
 
     // Validate router address is configured
     if (!ROUTER_ADDRESS) {
-      console.error('[XFUEL Swap] Router address not configured')
+      console.error('❌ [XFUEL Swap] Router address not configured')
       setStatusMessage('❌ Real router not configured — contact support')
       setSwapStatus('error')
       setTimeout(() => {
@@ -692,9 +692,24 @@ function App() {
       return
     }
 
+    // Validate not using mock/test addresses
+    if (ROUTER_ADDRESS === MOCK_ROUTER_ADDRESS || ROUTER_ADDRESS === '0x0000000000000000000000000000000000000001') {
+      console.error('❌ [XFUEL Swap] Mock router address detected - refusing to execute swap')
+      setStatusMessage('❌ Mock router detected — production requires real router address')
+      setSwapStatus('error')
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+      }, 5000)
+      return
+    }
+
     // Log router configuration for debugging
-    console.log('[XFUEL Swap] Using router:', ROUTER_ADDRESS)
-    console.log('[XFUEL Swap] Mode: REAL (production)')
+    console.log('🚀 [XFUEL Swap] Starting real swap execution')
+    console.log('🚀 [XFUEL Swap] Using router:', ROUTER_ADDRESS)
+    console.log('🚀 [XFUEL Swap] Mode: REAL (production)')
+    console.log('🚀 [XFUEL Swap] Network: Theta Mainnet (Chain ID: 361)')
+    console.log('🚀 [XFUEL Swap] Amount:', amount, 'TFUEL →', selectedLST.name)
 
     // Real swap execution - always use real contracts in production
     const minRequired = amount + 0.01 // Add small buffer for gas
@@ -726,6 +741,8 @@ function App() {
 
       const routerContract = new ethers.Contract(ROUTER_ADDRESS, ROUTER_ABI, signer)
 
+      console.log('⛽ [XFUEL Swap] Estimating gas for real transaction...')
+      
       // Estimate gas first for better UX
       let gasEstimate = BigInt(200000) // Default estimate
       try {
@@ -733,10 +750,13 @@ function App() {
           value: amountWei,
         })
         gasEstimate = gasEst
+        console.log('⛽ [XFUEL Swap] Gas estimate:', gasEstimate.toString())
       } catch (e) {
-        console.warn('Gas estimation failed, using default:', e)
+        console.warn('⚠️  [XFUEL Swap] Gas estimation failed, using default:', e)
       }
 
+      console.log('📤 [XFUEL Swap] Sending real transaction to router contract...')
+      
       // Call swapAndStake with native TFUEL (msg.value)
       // TFUEL is native token, so no approval needed - just send via msg.value
       // minAmountOut: 0 for now (could add slippage protection later)
@@ -745,17 +765,26 @@ function App() {
         gasLimit: gasEstimate + (gasEstimate / BigInt(10)), // Add 10% buffer
       })
 
+      console.log('✅ [XFUEL Swap] Transaction sent! Hash:', tx.hash)
+      console.log('🔗 [XFUEL Swap] View on explorer:', `https://explorer.thetatoken.org/tx/${tx.hash}`)
+      
       setTxHash(tx.hash)
       setStatusMessage(`Transaction sent! Waiting for confirmation…`)
 
+      console.log('⏳ [XFUEL Swap] Waiting for transaction confirmation...')
+      
       // Wait for confirmation
       const receipt = await tx.wait()
+      
+      console.log('✅ [XFUEL Swap] Transaction confirmed! Block:', receipt.blockNumber)
+      console.log('⛽ [XFUEL Swap] Gas used:', receipt.gasUsed?.toString())
       
       // Extract real gas cost from receipt
       if (receipt.gasUsed && receipt.gasPrice) {
         const realGasCostWei = receipt.gasUsed * receipt.gasPrice
         const realGasCostTfuel = parseFloat(ethers.formatEther(realGasCostWei))
         setEstimatedGasCost(realGasCostTfuel)
+        console.log('💰 [XFUEL Swap] Real gas cost:', realGasCostTfuel.toFixed(6), 'TFUEL')
       }
       
       // Get real output amount from receipt/events if available, otherwise estimate

@@ -7,9 +7,9 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
-    // Use Vite's default esbuild minifier and configure it to drop console/debugger
+    // Keep console.log for router debugging, only drop debugger
     esbuild: {
-      drop: ['console', 'debugger'],
+      drop: ['debugger'],
     },
     rollupOptions: {
       output: {
