@@ -22,6 +22,11 @@ import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 import { usePriceStore } from './stores/priceStore'
 import { createWalletConnectProvider, getWalletConnectProvider, disconnectWalletConnect } from './utils/walletConnect'
 import { 
+  connectThetaWallet,
+  disconnectThetaWallet,
+  isMobileDevice,
+} from './utils/thetaWallet'
+import { 
   stakeLSTOnStride, 
   refreshKeplrBalance, 
   formatStakingSuccessMessage,
@@ -61,7 +66,7 @@ const LST_OPTIONS: LSTOption[] = [
   { name: 'USDC', apy: 0, isStablecoin: true }, // Simple swap output, no yield
 ]
 
-type WalletProvider = 'walletconnect' | 'metamask'
+type WalletProvider = 'theta' | 'walletconnect' | 'metamask'
 
 function App() {
   const [wallet, setWallet] = useState<WalletInfo>({
@@ -187,7 +192,7 @@ function App() {
   // Simplified wallet connection (no extension dependency)
   const connectWallet = async (providerType?: WalletProvider) => {
     // Guard: if providerType is not a valid WalletProvider (e.g., it's an event object), treat as undefined
-    const validProvider = providerType === 'walletconnect' || providerType === 'metamask' ? providerType : undefined
+    const validProvider = (providerType === 'theta' || providerType === 'walletconnect' || providerType === 'metamask') ? providerType : undefined
     
     // Always show modal for wallet selection (QR/Web approach)
     if (!validProvider) {
@@ -198,7 +203,48 @@ function App() {
     try {
       let provider: any = null
       
-      if (validProvider === 'walletconnect') {
+      if (validProvider === 'theta') {
+        // Direct Theta Wallet connection (new native approach)
+        try {
+          setStatusMessage('Connecting to Theta Wallet...')
+          const result = await connectThetaWallet()
+          
+          if (!result.success) {
+            // If deep link failed on mobile, fall back to WalletConnect QR
+            if (result.error === 'deep_link_failed') {
+              setStatusMessage('Opening WalletConnect QR...')
+              // Fall back to WalletConnect
+              const walletConnectProvider = await createWalletConnectProvider()
+              
+              if (walletConnectProvider.session) {
+                provider = walletConnectProvider
+              } else {
+                await walletConnectProvider.connect()
+                provider = walletConnectProvider
+              }
+            } else {
+              throw new Error(result.error || 'Failed to connect')
+            }
+          } else {
+            provider = result.provider
+          }
+        } catch (error: any) {
+          console.error('Theta Wallet connection error:', error)
+          if (error?.message?.includes('User rejected') || error?.code === 4001 || error?.message?.includes('closed')) {
+            setStatusMessage('Connection cancelled')
+          } else if (error?.message?.includes('pop-up')) {
+            setStatusMessage('Please allow pop-ups to connect with Theta Wallet')
+          } else {
+            setStatusMessage('Failed to connect Theta Wallet. Please try again.')
+          }
+          setSwapStatus('error')
+          setTimeout(() => {
+            setStatusMessage('')
+            setSwapStatus('idle')
+          }, 5000)
+          return
+        }
+      } else if (validProvider === 'walletconnect') {
         // Theta Wallet connection via WalletConnect protocol
         // Official method - no extension detection
         try {
@@ -273,6 +319,7 @@ function App() {
             console.warn('Could not save wallet provider preference:', e)
           }
           
+          setStatusMessage('')
           refreshBalance(address, provider)
         } else {
           setStatusMessage('No accounts available')
@@ -309,7 +356,7 @@ function App() {
   }
 
   // Handle wallet connect from modal
-  const handleWalletConnectFromModal = async (provider: 'walletconnect' | 'metamask') => {
+  const handleWalletConnectFromModal = async (provider: 'theta' | 'walletconnect' | 'metamask') => {
     try {
       await connectWallet(provider)
     } catch (error) {
@@ -319,9 +366,11 @@ function App() {
 
   // Disconnect wallet
   const disconnectWallet = () => {
-    // Disconnect WalletConnect if it was used
+    // Disconnect based on provider type
     if (walletProvider === 'walletconnect') {
       disconnectWalletConnect()
+    } else if (walletProvider === 'theta') {
+      disconnectThetaWallet()
     }
     
     setWallet({

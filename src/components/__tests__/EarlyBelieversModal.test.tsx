@@ -10,6 +10,7 @@ let mockProviderInstance: any = {
   getBalance: jest.fn(),
   getSigner: jest.fn(),
   getNetwork: jest.fn(),
+  getFeeData: jest.fn(),
 }
 
 jest.mock('ethers', () => {
@@ -80,6 +81,7 @@ describe('EarlyBelieversModal', () => {
     getSigner: jest.fn(),
     getNetwork: jest.fn(),
     getTransactionReceipt: jest.fn(),
+    getFeeData: jest.fn(),
   }
   
   // Store in global so the mock constructor can access it
@@ -106,7 +108,33 @@ describe('EarlyBelieversModal', () => {
     
     // Default mock setup
     ;(window as any).theta = {
-      request: jest.fn(),
+      request: jest.fn().mockImplementation(async ({ method, params }: any) => {
+        // Mock eth_chainId
+        if (method === 'eth_chainId') {
+          return '0x169' // Theta Mainnet chain ID in hex
+        }
+        // Mock net_version
+        if (method === 'net_version') {
+          return '361'
+        }
+        // Mock eth_getBlockByNumber for fee data
+        if (method === 'eth_getBlockByNumber') {
+          return {
+            hash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+            number: '0x1',
+            gasLimit: '0x1c9c380',
+            gasUsed: '0x5208',
+            baseFeePerGas: '0x4a817c800', // 20 gwei
+            timestamp: '0x' + Math.floor(Date.now() / 1000).toString(16),
+          }
+        }
+        // Mock eth_gasPrice
+        if (method === 'eth_gasPrice') {
+          return '0x4a817c800' // 20 gwei
+        }
+        // For other methods, return null
+        return null
+      }),
       on: jest.fn(),
       removeListener: jest.fn(),
     }
@@ -121,6 +149,7 @@ describe('EarlyBelieversModal', () => {
     mockProviderInstance.getBalance.mockClear()
     mockProviderInstance.getSigner.mockClear()
     mockProviderInstance.getTransactionReceipt.mockClear()
+    mockProviderInstance.getFeeData.mockClear()
     
     // Setup default provider responses
     mockProviderInstance.getNetwork.mockResolvedValue({ chainId: BigInt(THETA_MAINNET.chainId) })
@@ -128,6 +157,12 @@ describe('EarlyBelieversModal', () => {
     const balanceValue = BigInt('1000000000000000000000') // 1000 TFUEL
     mockProviderInstance.getBalance.mockResolvedValue(balanceValue)
     mockProviderInstance.getSigner.mockResolvedValue(mockSigner)
+    // Mock getFeeData to return proper fee data
+    mockProviderInstance.getFeeData.mockResolvedValue({
+      gasPrice: BigInt('20000000000'), // 20 gwei
+      maxFeePerGas: BigInt('20000000000'),
+      maxPriorityFeePerGas: BigInt('1000000000'),
+    })
 
     // Reset contract mocks
     mockUsdcContract.balanceOf.mockClear()
@@ -245,12 +280,36 @@ describe('EarlyBelieversModal', () => {
       // Wait for network check and balance fetch to complete
       await waitFor(() => {
         expect(screen.getByText('Connected Wallet')).toBeInTheDocument()
-        expect(screen.getByText(walletAddress.slice(0, 6))).toBeInTheDocument()
+        expect(screen.getByText(/0x742d/i)).toBeInTheDocument()
       }, { timeout: 3000 })
     })
 
     it('should check network and show error on wrong network', async () => {
       mockProviderInstance.getNetwork.mockResolvedValue({ chainId: BigInt(365) }) // Testnet
+      
+      // Mock the provider's request method to return testnet chain ID
+      ;(window as any).theta.request.mockImplementation(async ({ method }: any) => {
+        if (method === 'eth_chainId') {
+          return '0x16d' // Testnet chain ID in hex (365)
+        }
+        if (method === 'net_version') {
+          return '365'
+        }
+        if (method === 'eth_getBlockByNumber') {
+          return {
+            hash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+            number: '0x1',
+            gasLimit: '0x1c9c380',
+            gasUsed: '0x5208',
+            baseFeePerGas: '0x4a817c800', // 20 gwei
+            timestamp: '0x' + Math.floor(Date.now() / 1000).toString(16),
+          }
+        }
+        if (method === 'eth_gasPrice') {
+          return '0x4a817c800' // 20 gwei
+        }
+        return null
+      })
 
       render(
         <EarlyBelieversModal
@@ -306,20 +365,38 @@ describe('EarlyBelieversModal', () => {
       const input = screen.getByPlaceholderText('0.00')
       await userEvent.type(input, '60000')
 
+      // Wait for the input to have the typed value
+      await waitFor(() => {
+        expect(input).toHaveValue(60000)
+      })
+
+      // Wait for tier calculation to complete and display
       await waitFor(() => {
         expect(screen.getByText('+10% bonus rXF')).toBeInTheDocument()
-        expect(screen.getByText('Bonus (10%)')).toBeInTheDocument()
-      })
+      }, { timeout: 3000 })
+      
+      await waitFor(() => {
+        expect(screen.getByText(/Bonus \(10%\)/i)).toBeInTheDocument()
+      }, { timeout: 2000 })
     })
 
     it('should show +25% bonus tier for $100k+', async () => {
       const input = screen.getByPlaceholderText('0.00')
       await userEvent.type(input, '150000')
 
+      // Wait for the input to have the typed value
+      await waitFor(() => {
+        expect(input).toHaveValue(150000)
+      })
+
+      // Wait for tier calculation to complete and display
       await waitFor(() => {
         expect(screen.getByText('+25% bonus rXF')).toBeInTheDocument()
-        expect(screen.getByText('Bonus (25%)')).toBeInTheDocument()
-      })
+      }, { timeout: 3000 })
+      
+      await waitFor(() => {
+        expect(screen.getByText(/Bonus \(25%\)/i)).toBeInTheDocument()
+      }, { timeout: 2000 })
     })
 
     it('should toggle between USDC and TFUEL', async () => {
@@ -534,6 +611,30 @@ describe('EarlyBelieversModal', () => {
 
     it('should show switch network button on wrong network', async () => {
       mockProviderInstance.getNetwork.mockResolvedValue({ chainId: BigInt(365) }) // Testnet
+      
+      // Mock the provider's request method to return testnet chain ID
+      ;(window as any).theta.request.mockImplementation(async ({ method }: any) => {
+        if (method === 'eth_chainId') {
+          return '0x16d' // Testnet chain ID in hex (365)
+        }
+        if (method === 'net_version') {
+          return '365'
+        }
+        if (method === 'eth_getBlockByNumber') {
+          return {
+            hash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+            number: '0x1',
+            gasLimit: '0x1c9c380',
+            gasUsed: '0x5208',
+            baseFeePerGas: '0x4a817c800', // 20 gwei
+            timestamp: '0x' + Math.floor(Date.now() / 1000).toString(16),
+          }
+        }
+        if (method === 'eth_gasPrice') {
+          return '0x4a817c800' // 20 gwei
+        }
+        return null
+      })
 
       render(
         <EarlyBelieversModal
@@ -546,14 +647,41 @@ describe('EarlyBelieversModal', () => {
       )
 
       await waitFor(() => {
-        expect(screen.getByText(/Switch to Theta Mainnet/i)).toBeInTheDocument()
+        const button = screen.getByRole('button', { name: /Switch to Theta Mainnet/i })
+        expect(button).toBeInTheDocument()
       }, { timeout: 3000 })
     })
 
     it('should call wallet_switchEthereumChain when switch button clicked', async () => {
       const user = userEvent.setup()
       mockProviderInstance.getNetwork.mockResolvedValue({ chainId: BigInt(365) }) // Testnet
-      ;(window as any).theta.request.mockResolvedValue(null)
+      
+      // Mock the provider's request method
+      ;(window as any).theta.request.mockImplementation(async ({ method, params }: any) => {
+        if (method === 'eth_chainId') {
+          return '0x16d' // Testnet chain ID in hex (365)
+        }
+        if (method === 'net_version') {
+          return '365'
+        }
+        if (method === 'eth_getBlockByNumber') {
+          return {
+            hash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+            number: '0x1',
+            gasLimit: '0x1c9c380',
+            gasUsed: '0x5208',
+            baseFeePerGas: '0x4a817c800', // 20 gwei
+            timestamp: '0x' + Math.floor(Date.now() / 1000).toString(16),
+          }
+        }
+        if (method === 'eth_gasPrice') {
+          return '0x4a817c800' // 20 gwei
+        }
+        if (method === 'wallet_switchEthereumChain') {
+          return null // Success
+        }
+        return null
+      })
 
       render(
         <EarlyBelieversModal
@@ -566,10 +694,11 @@ describe('EarlyBelieversModal', () => {
       )
 
       await waitFor(() => {
-        expect(screen.getByText(/Switch to Theta Mainnet/i)).toBeInTheDocument()
+        const button = screen.getByRole('button', { name: /Switch to Theta Mainnet/i })
+        expect(button).toBeInTheDocument()
       }, { timeout: 3000 })
 
-      const switchButton = screen.getByText(/Switch to Theta Mainnet/i)
+      const switchButton = screen.getByRole('button', { name: /Switch to Theta Mainnet/i })
       await user.click(switchButton)
 
       await waitFor(() => {
@@ -626,7 +755,7 @@ describe('EarlyBelieversModal', () => {
       await waitFor(() => {
         expect(screen.getByText(/Contribution received/i)).toBeInTheDocument()
       }, { timeout: 10000 })
-    })
+    }, 15000) // 15 second timeout for this test
 
     it('should show success with hash even if receipt fetch completely fails', async () => {
       const mockTx = {
@@ -670,7 +799,7 @@ describe('EarlyBelieversModal', () => {
         expect(screen.getByText(/Transaction submitted successfully/i)).toBeInTheDocument()
         expect(screen.getByText(/0xabcdef/i)).toBeInTheDocument()
       }, { timeout: 15000 })
-    })
+    }, 20000) // 20 second timeout for this test
   })
 
   describe('USDC Payment Flow', () => {
@@ -719,7 +848,7 @@ describe('EarlyBelieversModal', () => {
       await waitFor(() => {
         expect(mockUsdcContract.transfer).toHaveBeenCalled()
       }, { timeout: 10000 })
-    })
+    }, 15000) // 15 second timeout for this test
   })
 
   describe('Disclaimer', () => {

@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { createWalletConnectProvider, getWalletConnectUri } from '../utils/walletConnect'
+import { isMobileDevice } from '../utils/thetaWallet'
 
 interface WalletConnectModalProps {
   isOpen: boolean
   onClose: () => void
-  onConnect: (provider: 'walletconnect' | 'metamask') => Promise<void> | void
+  onConnect: (provider: 'theta' | 'walletconnect' | 'metamask') => Promise<void> | void
 }
 
 export default function WalletConnectModal({
@@ -165,10 +166,20 @@ export default function WalletConnectModal({
                 <div className="h-px flex-1 bg-gradient-to-r from-purple-500/50 to-transparent" />
               </div>
 
-              {/* Theta Wallet - Button to show QR modal */}
+              {/* Direct Theta Wallet - Native Connection */}
               <button
-                onClick={() => setShowThetaQR(true)}
-                className="group relative w-full rounded-2xl border-2 border-purple-400/70 bg-gradient-to-br from-purple-500/25 via-purple-600/20 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-purple-400 hover:shadow-[0_0_40px_rgba(168,85,247,0.8),inset_0_0_30px_rgba(168,85,247,0.3)] active:scale-[0.98]"
+                onClick={async () => {
+                  setIsConnecting(true)
+                  try {
+                    await onConnect('theta')
+                  } catch (error) {
+                    console.error('Theta Wallet connection error:', error)
+                  } finally {
+                    setIsConnecting(false)
+                  }
+                }}
+                disabled={isConnecting}
+                className="group relative w-full rounded-2xl border-2 border-purple-400/70 bg-gradient-to-br from-purple-500/25 via-purple-600/20 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-purple-400 hover:shadow-[0_0_40px_rgba(168,85,247,0.8),inset_0_0_30px_rgba(168,85,247,0.3)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <div className="flex items-center gap-4">
                   <div className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-purple-400/50 bg-gradient-to-br from-purple-500/40 to-purple-600/30 shadow-[0_0_25px_rgba(168,85,247,0.6)]">
@@ -176,14 +187,42 @@ export default function WalletConnectModal({
                   </div>
                   <div className="flex-1">
                     <p className="text-xl font-bold text-white group-hover:text-purple-200 transition-colors">
-                      Connect Theta Wallet
+                      {isConnecting ? 'Connecting...' : 'Connect Theta Wallet'}
                     </p>
                     <p className="text-xs text-slate-400 mt-1 group-hover:text-slate-300 transition-colors">
-                      WalletConnect - Official Theta Wallet
+                      {isMobileDevice() ? 'Deep link or QR code' : 'Desktop wallet connection'}
                     </p>
                   </div>
                   <svg
                     className="w-6 h-6 text-purple-400 transition-all"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </div>
+              </button>
+
+              {/* WalletConnect QR Fallback - Button to show QR modal */}
+              <button
+                onClick={() => setShowThetaQR(true)}
+                className="group relative w-full rounded-2xl border-2 border-cyan-400/60 bg-gradient-to-br from-cyan-500/20 via-cyan-600/15 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-cyan-400 hover:shadow-[0_0_40px_rgba(6,182,212,0.7),inset_0_0_30px_rgba(6,182,212,0.2)] active:scale-[0.98]"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-cyan-400/50 bg-gradient-to-br from-cyan-500/40 to-cyan-600/30 shadow-[0_0_25px_rgba(6,182,212,0.6)]">
+                    <span className="text-3xl">📱</span>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-xl font-bold text-white group-hover:text-cyan-200 transition-colors">
+                      WalletConnect (Fallback)
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1 group-hover:text-slate-300 transition-colors">
+                      QR code for mobile wallet apps
+                    </p>
+                  </div>
+                  <svg
+                    className="w-6 h-6 text-cyan-400 transition-all"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
