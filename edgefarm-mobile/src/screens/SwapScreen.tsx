@@ -5,6 +5,8 @@ import Slider from '@react-native-community/slider'
 import { ScreenBackground } from '../components/ScreenBackground'
 import { NeonCard } from '../components/NeonCard'
 import { NeonButton } from '../components/NeonButton'
+import { ThetaWalletQRModal } from '../components/ThetaWalletQRModal'
+import { EarlyBelieversModal } from '../components/EarlyBelieversModal'
 import { neon } from '../theme/neon'
 import { connectThetaWallet, createDisconnectedWallet, refreshBalance, getSigner, getRouterAddress, getExplorerUrl, type WalletInfo } from '../lib/thetaWallet'
 import { ethers } from '@thetalabs/theta-js'
@@ -66,6 +68,8 @@ export function SwapScreen() {
   const [swapHistory, setSwapHistory] = useState<SwapTransaction[]>([])
   const [forceSimulation, setForceSimulation] = useState(false)
   const [simulationMode, setSimulationMode] = useState(false)
+  const [qrModalVisible, setQrModalVisible] = useState(false)
+  const [believersModalVisible, setBelieversModalVisible] = useState(false)
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -100,8 +104,10 @@ export function SwapScreen() {
   const connect = async () => {
     try {
       setStatus('Connecting wallet…')
+      setQrModalVisible(true)
       const w = await connectThetaWallet()
       setWallet(w)
+      setQrModalVisible(false)
       setStatus('Connected ✓')
       setTimeout(() => setStatus(''), 2000)
       
@@ -115,6 +121,7 @@ export function SwapScreen() {
       
       return () => clearInterval(interval)
     } catch (error: any) {
+      setQrModalVisible(false)
       setStatus(`Connection failed: ${error?.message || 'Unknown error'}`)
       setTimeout(() => setStatus(''), 3000)
     }
@@ -430,7 +437,26 @@ export function SwapScreen() {
           <View className="px-5 pt-5">
             <NeonCard className="mb-5">
               {!wallet.isConnected ? (
-                <NeonButton label="Connect Theta Wallet" onPress={connect} rightHint="secure" />
+                <View style={{ gap: 12 }}>
+                  <NeonButton label="Connect Theta Wallet" onPress={connect} rightHint="secure" />
+                  <View
+                    style={{
+                      borderTopWidth: 1,
+                      borderTopColor: 'rgba(148,163,184,0.2)',
+                      paddingTop: 12,
+                    }}
+                  >
+                    <NeonButton
+                      label="Join Early Believers"
+                      variant="secondary"
+                      rightHint="special round"
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {})
+                        setBelieversModalVisible(true)
+                      }}
+                    />
+                  </View>
+                </View>
               ) : (
                 <View>
                   <View className="flex-row items-center justify-between">
@@ -442,6 +468,26 @@ export function SwapScreen() {
                       {wallet.balanceTfuel.toLocaleString()}
                     </Text>
                     <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.55)' }}>TFUEL</Text>
+                  </View>
+                  
+                  {/* Early Believers Button for Connected Users */}
+                  <View
+                    style={{
+                      marginTop: 12,
+                      borderTopWidth: 1,
+                      borderTopColor: 'rgba(148,163,184,0.2)',
+                      paddingTop: 12,
+                    }}
+                  >
+                    <NeonButton
+                      label="Join Early Believers"
+                      variant="secondary"
+                      rightHint="rXF + bonuses"
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {})
+                        setBelieversModalVisible(true)
+                      }}
+                    />
                   </View>
                 </View>
               )}
@@ -857,6 +903,24 @@ export function SwapScreen() {
         finalityTime={finalityText}
         txHash={txHash}
         explorerUrl={txHash ? `${getExplorerUrl()}/tx/${txHash}` : undefined}
+      />
+
+      {/* Theta Wallet QR Modal */}
+      <ThetaWalletQRModal
+        visible={qrModalVisible}
+        onClose={() => setQrModalVisible(false)}
+        onConnecting={(uri) => {
+          console.log('WalletConnect URI ready:', uri)
+        }}
+      />
+
+      {/* Early Believers Modal */}
+      <EarlyBelieversModal
+        visible={believersModalVisible}
+        onClose={() => setBelieversModalVisible(false)}
+        walletAddress={wallet.addressFull}
+        walletBalance={wallet.balanceTfuel}
+        onConnect={connect}
       />
     </ScreenBackground>
   )

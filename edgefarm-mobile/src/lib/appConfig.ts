@@ -1,21 +1,26 @@
 import Constants from 'expo-constants'
 
 type Extra = {
-  lotteryJackpot?: string
-  globalLotteryCutBps?: number
   routerAddress?: string
   apiUrl?: string
+  thetaMainnetRpc?: string
+  thetaMainnetChainId?: number
+  thetaExplorerUrl?: string
 }
 
-export function getAppExtra(): Required<Pick<Extra, 'lotteryJackpot' | 'globalLotteryCutBps'>> & Extra {
+export function getAppExtra(): Extra {
   const extra = (Constants.expoConfig?.extra ?? {}) as Extra
 
   return {
-    lotteryJackpot: extra.lotteryJackpot ?? '$50k',
-    globalLotteryCutBps: typeof extra.globalLotteryCutBps === 'number' ? extra.globalLotteryCutBps : 1000,
     routerAddress: extra.routerAddress,
-    apiUrl: extra.apiUrl || 'http://localhost:3001',
+    apiUrl: extra.apiUrl || 'https://api.xfuel.app',
+    thetaMainnetRpc: extra.thetaMainnetRpc || 'https://eth-rpc-api.thetatoken.org/rpc',
+    thetaMainnetChainId: extra.thetaMainnetChainId || 361,
+    thetaExplorerUrl: extra.thetaExplorerUrl || 'https://explorer.thetatoken.org',
   }
 }
 
-export const API_URL = getAppExtra().apiUrl || 'http://localhost:3001'
+export const API_URL = getAppExtra().apiUrl || 'https://api.xfuel.app'
+export const THETA_MAINNET_RPC = getAppExtra().thetaMainnetRpc || 'https://eth-rpc-api.thetatoken.org/rpc'
+export const THETA_MAINNET_CHAIN_ID = getAppExtra().thetaMainnetChainId || 361
+export const THETA_EXPLORER_URL = getAppExtra().thetaExplorerUrl || 'https://explorer.thetatoken.org'

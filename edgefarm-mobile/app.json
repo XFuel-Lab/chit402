@@ -1,15 +1,15 @@
 {
   "expo": {
-    "name": "EdgeFarm",
-    "slug": "edgefarm-mobile",
+    "name": "XFUEL Mobile",
+    "slug": "xfuel-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "scheme": "edgefarm",
+    "scheme": "xfuel",
     "userInterfaceStyle": "dark",
     "platforms": ["ios", "android"],
     "newArchEnabled": true,
-    "description": "EdgeFarm mobile app for XFUEL: farming dashboard, tip pools + lottery, and swap & stake.",
+    "description": "XFUEL Protocol mobile: Swap TFUEL to LSTs, track balances, and join Early Believers.",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -17,24 +17,43 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.edgefarm.mobile"
+      "bundleIdentifier": "app.xfuel.mobile"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#05050a"
       },
-      "package": "com.edgefarm.mobile",
+      "package": "app.xfuel.mobile",
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "xfuel.app",
+              "pathPrefix": "/"
+            },
+            {
+              "scheme": "xfuel"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "lotteryJackpot": "$50k",
-      "globalLotteryCutBps": 1000,
       "routerAddress": "0xYourRealRouterWillGoHere_AfterDeploy",
+      "thetaMainnetRpc": "https://eth-rpc-api.thetatoken.org/rpc",
+      "thetaMainnetChainId": 361,
+      "thetaExplorerUrl": "https://explorer.thetatoken.org",
+      "apiUrl": "https://api.xfuel.app",
       "eas": {
         "projectId": "4d7c789a-9ec5-482c-b119-34ce6dad1bab"
       }
