@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { createWalletConnectProvider, getWalletConnectUri } from '../utils/walletConnect'
+import { isMobileDevice } from '../utils/thetaWallet'
 
 interface WalletConnectModalProps {
   isOpen: boolean
   onClose: () => void
-  onConnect: (provider: 'walletconnect' | 'metamask') => Promise<void> | void
+  onConnect: (provider: 'theta' | 'walletconnect' | 'metamask') => Promise<void> | void
 }
 
 export default function WalletConnectModal({
@@ -17,6 +18,7 @@ export default function WalletConnectModal({
   const [showThetaQR, setShowThetaQR] = useState(false) // Show QR modal for Theta Wallet
   const [walletConnectUri, setWalletConnectUri] = useState<string | undefined>(undefined)
   const [showCopyToast, setShowCopyToast] = useState(false)
+  const [currentProvider, setCurrentProvider] = useState<any>(null) // Track active provider for cleanup
 
   // Initialize WalletConnect and get QR URI when showing QR modal
   useEffect(() => {
@@ -26,6 +28,7 @@ export default function WalletConnectModal({
       const initWalletConnect = async () => {
         try {
           provider = await createWalletConnectProvider()
+          setCurrentProvider(provider) // Store for cleanup
           
           // Check if already connected
           if (provider.session) {
@@ -60,7 +63,7 @@ export default function WalletConnectModal({
       
       initWalletConnect()
       
-      // Cleanup
+      // Cleanup when closing QR modal
       return () => {
         if (provider) {
           provider.removeAllListeners()
@@ -69,6 +72,21 @@ export default function WalletConnectModal({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showThetaQR, isOpen])
+
+  // Cleanup provider when modal closes
+  useEffect(() => {
+    if (!isOpen && currentProvider) {
+      // Clean up any pending connections
+      try {
+        currentProvider.removeAllListeners()
+        setCurrentProvider(null)
+        setWalletConnectUri(undefined)
+        setShowThetaQR(false)
+      } catch (error) {
+        console.error('Error cleaning up provider:', error)
+      }
+    }
+  }, [isOpen, currentProvider])
 
   if (!isOpen) return null
 
@@ -127,42 +145,141 @@ export default function WalletConnectModal({
             {/* Header */}
             <div className="text-center space-y-2">
               <div className="flex justify-center mb-4">
-                <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-purple-400/50 bg-gradient-to-br from-purple-500/30 to-cyan-500/20 shadow-[0_0_40px_rgba(168,85,247,0.6)]">
-                  <span className="text-4xl">🔗</span>
+                <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-cyan-400/50 bg-gradient-to-br from-cyan-500/30 to-purple-500/20 shadow-[0_0_40px_rgba(6,182,212,0.6)]">
+                  <span className="text-4xl">🚀</span>
                 </div>
               </div>
-              <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-cyan-400">
+              <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400">
                 Connect Your Wallet
               </h2>
               <p className="text-sm text-slate-400">
-                Choose your preferred wallet to start earning with XFUEL
+                MetaMask recommended for instant connection
               </p>
             </div>
 
-            {/* Theta Wallet Option (Recommended) */}
+            {/* MetaMask Option (PRIORITY - Instant Connect) */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+                  ⚡ Instant Connect — Recommended
+                </span>
+                <div className="h-px flex-1 bg-gradient-to-r from-cyan-500/50 to-transparent" />
+              </div>
+
+              {/* MetaMask - PRIORITY (70%+ adoption) */}
+              <button
+                onClick={async () => {
+                  const hasMetaMask = !!(window as any).ethereum?.isMetaMask
+                  if (hasMetaMask) {
+                    setIsConnecting(true)
+                    try {
+                      await onConnect('metamask')
+                    } catch (error) {
+                      console.error('MetaMask connection error:', error)
+                    } finally {
+                      setIsConnecting(false)
+                    }
+                  } else {
+                    window.open('https://metamask.io/download/', '_blank')
+                  }
+                }}
+                disabled={isConnecting}
+                className="group relative w-full rounded-2xl border-2 border-cyan-400/70 bg-gradient-to-br from-cyan-500/30 via-cyan-600/25 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-cyan-400 hover:shadow-[0_0_40px_rgba(6,182,212,0.9),inset_0_0_30px_rgba(6,182,212,0.3)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-cyan-400/50 bg-gradient-to-br from-cyan-500/40 to-cyan-600/30 shadow-[0_0_25px_rgba(6,182,212,0.6)]">
+                    <span className="text-3xl">🦊</span>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-xl font-bold text-white group-hover:text-cyan-200 transition-colors">
+                      {isConnecting ? 'Connecting...' : 'MetaMask (Instant)'}
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1 group-hover:text-slate-300 transition-colors">
+                      One-click • Works with Theta Network RPC
+                    </p>
+                  </div>
+                  <svg
+                    className="w-6 h-6 text-cyan-400 transition-all"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                  </svg>
+                </div>
+              </button>
+
+            </div>
+
+            {/* Divider */}
+            <div className="flex items-center gap-3">
+              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
+              <span className="text-xs text-slate-500 uppercase tracking-wider">or</span>
+              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
+            </div>
+
+            {/* Theta Wallet Option (Alternative) */}
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-purple-300">
-                  ⭐ Recommended
+                  Theta Wallet (QR/Deep Link)
                 </span>
                 <div className="h-px flex-1 bg-gradient-to-r from-purple-500/50 to-transparent" />
               </div>
 
-              {/* Theta Wallet - Button to show QR modal */}
+              {/* Direct Theta Wallet - Native Connection */}
               <button
-                onClick={() => setShowThetaQR(true)}
-                className="group relative w-full rounded-2xl border-2 border-purple-400/70 bg-gradient-to-br from-purple-500/25 via-purple-600/20 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-purple-400 hover:shadow-[0_0_40px_rgba(168,85,247,0.8),inset_0_0_30px_rgba(168,85,247,0.3)] active:scale-[0.98]"
+                onClick={async () => {
+                  setIsConnecting(true)
+                  try {
+                    await onConnect('theta')
+                  } catch (error) {
+                    console.error('Theta Wallet connection error:', error)
+                  } finally {
+                    setIsConnecting(false)
+                  }
+                }}
+                disabled={isConnecting}
+                className="group relative w-full rounded-2xl border-2 border-purple-400/60 bg-gradient-to-br from-purple-500/20 via-purple-600/15 to-slate-900/40 px-6 py-4 text-left backdrop-blur-xl transition-all hover:border-purple-400 hover:shadow-[0_0_40px_rgba(168,85,247,0.7),inset_0_0_30px_rgba(168,85,247,0.2)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <div className="flex items-center gap-4">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-purple-400/50 bg-gradient-to-br from-purple-500/40 to-purple-600/30 shadow-[0_0_25px_rgba(168,85,247,0.6)]">
-                    <span className="text-3xl">⚡</span>
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl border-2 border-purple-400/50 bg-gradient-to-br from-purple-500/40 to-purple-600/30 shadow-[0_0_20px_rgba(168,85,247,0.5)]">
+                    <span className="text-2xl">⚡</span>
                   </div>
                   <div className="flex-1">
-                    <p className="text-xl font-bold text-white group-hover:text-purple-200 transition-colors">
-                      Connect Theta Wallet
+                    <p className="text-lg font-bold text-white group-hover:text-purple-200 transition-colors">
+                      {isConnecting ? 'Connecting...' : 'Connect Theta Wallet'}
                     </p>
                     <p className="text-xs text-slate-400 mt-1 group-hover:text-slate-300 transition-colors">
-                      WalletConnect - Official Theta Wallet
+                      {isMobileDevice() ? 'Deep link or QR code' : 'Desktop wallet connection'}
+                    </p>
+                  </div>
+                  <svg
+                    className="w-6 h-6 text-purple-400 transition-all"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </div>
+              </button>
+
+              {/* WalletConnect QR Fallback - Button to show QR modal */}
+              <button
+                onClick={() => setShowThetaQR(true)}
+                className="group relative w-full rounded-2xl border-2 border-purple-400/50 bg-gradient-to-br from-purple-500/15 via-purple-600/10 to-slate-900/40 px-6 py-4 text-left backdrop-blur-xl transition-all hover:border-purple-400/70 hover:shadow-[0_0_30px_rgba(168,85,247,0.5),inset_0_0_20px_rgba(168,85,247,0.2)] active:scale-[0.98]"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl border-2 border-purple-400/40 bg-gradient-to-br from-purple-500/30 to-purple-600/25 shadow-[0_0_20px_rgba(168,85,247,0.4)]">
+                    <span className="text-2xl">📱</span>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-lg font-bold text-white group-hover:text-purple-200 transition-colors">
+                      WalletConnect QR Code
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1 group-hover:text-slate-300 transition-colors">
+                      Scan with Theta Wallet mobile app
                     </p>
                   </div>
                   <svg
@@ -180,7 +297,10 @@ export default function WalletConnectModal({
               {showThetaQR && (
                 <div className="relative p-6 rounded-2xl border-2 border-purple-400/60 bg-gradient-to-br from-purple-500/20 via-purple-600/15 to-slate-900/60 backdrop-blur-xl shadow-[0_0_50px_rgba(168,85,247,0.7),0_0_80px_rgba(168,85,247,0.4),inset_0_0_40px_rgba(168,85,247,0.2)]">
                   <button
-                    onClick={() => setShowThetaQR(false)}
+                    onClick={() => {
+                      setShowThetaQR(false)
+                      onClose() // Also close the parent modal to prevent black screen
+                    }}
                     className="absolute right-3 top-3 flex h-6 w-6 items-center justify-center rounded-full border border-purple-400/50 bg-purple-500/20 text-purple-300 transition-all hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-300"
                   >
                     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -307,56 +427,6 @@ export default function WalletConnectModal({
                 </div>
               )}
             </div>
-
-            {/* Divider */}
-            <div className="flex items-center gap-3">
-              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
-              <span className="text-xs text-slate-500 uppercase tracking-wider">or</span>
-              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
-            </div>
-
-            {/* MetaMask Option (Fallback) */}
-            <button
-              onClick={async () => {
-                const hasMetaMask = !!(window as any).ethereum?.isMetaMask
-                if (hasMetaMask) {
-                  setIsConnecting(true)
-                  try {
-                    await onConnect('metamask')
-                  } catch (error) {
-                    console.error('MetaMask connection error:', error)
-                  } finally {
-                    setIsConnecting(false)
-                  }
-                } else {
-                  window.open('https://metamask.io/download/', '_blank')
-                }
-              }}
-              disabled={isConnecting}
-              className="group relative w-full rounded-2xl border-2 border-cyan-400/60 bg-gradient-to-br from-cyan-500/20 via-cyan-600/15 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-cyan-400 hover:shadow-[0_0_40px_rgba(6,182,212,0.7),inset_0_0_30px_rgba(6,182,212,0.2)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <div className="flex items-center gap-4">
-                <div className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-cyan-400/50 bg-gradient-to-br from-cyan-500/40 to-cyan-600/30 shadow-[0_0_25px_rgba(6,182,212,0.6)]">
-                  <span className="text-3xl">🦊</span>
-                </div>
-                <div className="flex-1">
-                  <p className="text-xl font-bold text-white group-hover:text-cyan-200 transition-colors">
-                    {isConnecting ? 'Connecting...' : 'MetaMask'}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-1 group-hover:text-slate-300 transition-colors">
-                    Alternative browser extension wallet
-                  </p>
-                </div>
-                <svg
-                  className="w-6 h-6 text-cyan-400 transition-all"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              </div>
-            </button>
 
             {/* Footer note */}
             <div className="text-center pt-2">

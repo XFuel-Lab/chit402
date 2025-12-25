@@ -15,6 +15,8 @@ import EdgeNodeDashboard from './components/EdgeNodeDashboard'
 import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
 import YieldPumpCard from './components/YieldPumpCard'
 import WalletConnectModal from './components/WalletConnectModal'
+import WalletConnectBugBanner from './components/WalletConnectBugBanner'
+import ThetaWalletQRModal from './components/ThetaWalletQRModal'
 import SignInModal from './components/SignInModal'
 import TransactionSuccessModal from './components/TransactionSuccessModal'
 import { THETA_TESTNET, THETA_MAINNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
@@ -22,12 +24,18 @@ import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 import { usePriceStore } from './stores/priceStore'
 import { createWalletConnectProvider, getWalletConnectProvider, disconnectWalletConnect } from './utils/walletConnect'
 import { 
+  connectThetaWallet,
+  disconnectThetaWallet,
+  isMobileDevice,
+} from './utils/thetaWallet'
+import { 
   stakeLSTOnStride, 
   refreshKeplrBalance, 
   formatStakingSuccessMessage,
   getStrideExplorerUrl,
   isKeplrInstalled 
 } from './utils/cosmosLSTStaking'
+import { switchToThetaNetwork, isConnectedToTheta } from './utils/metamaskThetaRPC'
 
 type SwapStatus = 'idle' | 'approving' | 'swapping' | 'success' | 'error'
 
@@ -57,11 +65,16 @@ const LST_OPTIONS: LSTOption[] = [
   { name: 'stkATOM', apy: 19.5 }, // Real APY from DeFiLlama (instant fallback)
   { name: 'stkXPRT', apy: 25.7 }, // Real APY from DeFiLlama (instant fallback)
   { name: 'stkOSMO', apy: 18.1 }, // Real APY from DeFiLlama (instant fallback)
+  { name: 'stTIA (Stride)', apy: 16.5 }, // Stride liquid staking
+  { name: 'stATOM (Stride)', apy: 20.2 }, // Stride liquid staking
+  { name: 'stOSMO (Stride)', apy: 19.3 }, // Stride liquid staking
+  { name: 'qATOM (Quasar)', apy: 21.8 }, // Quasar vaults
+  { name: 'qOSMO (Quasar)', apy: 19.7 }, // Quasar vaults
   { name: 'pSTAKE BTC', apy: 3.2 }, // Real APY from DeFiLlama (instant fallback)
   { name: 'USDC', apy: 0, isStablecoin: true }, // Simple swap output, no yield
 ]
 
-type WalletProvider = 'walletconnect' | 'metamask'
+type WalletProvider = 'theta' | 'walletconnect' | 'metamask'
 
 function App() {
   const [wallet, setWallet] = useState<WalletInfo>({
@@ -72,6 +85,7 @@ function App() {
   })
   const [walletProvider, setWalletProvider] = useState<WalletProvider | null>(null)
   const [showWalletConnectModal, setShowWalletConnectModal] = useState(false)
+  const [showThetaQRModal, setShowThetaQRModal] = useState(false)
   const [showSignInModal, setShowSignInModal] = useState(false)
   const [tfuelAmount, setTfuelAmount] = useState('')
   const [selectedPercentage, setSelectedPercentage] = useState<number | null>(null)
@@ -187,7 +201,7 @@ function App() {
   // Simplified wallet connection (no extension dependency)
   const connectWallet = async (providerType?: WalletProvider) => {
     // Guard: if providerType is not a valid WalletProvider (e.g., it's an event object), treat as undefined
-    const validProvider = providerType === 'walletconnect' || providerType === 'metamask' ? providerType : undefined
+    const validProvider = (providerType === 'theta' || providerType === 'walletconnect' || providerType === 'metamask') ? providerType : undefined
     
     // Always show modal for wallet selection (QR/Web approach)
     if (!validProvider) {
@@ -198,7 +212,12 @@ function App() {
     try {
       let provider: any = null
       
-      if (validProvider === 'walletconnect') {
+      if (validProvider === 'theta') {
+        // QR code only - no redirect/deep link
+        // Open QR modal for Theta Wallet connection
+        setShowThetaQRModal(true)
+        return
+      } else if (validProvider === 'walletconnect') {
         // Theta Wallet connection via WalletConnect protocol
         // Official method - no extension detection
         try {
@@ -227,18 +246,32 @@ function App() {
           return
         }
       } else if (validProvider === 'metamask') {
-        // Note: MetaMask may show a deprecation warning about window.web3.currentProvider.
-        // This is expected - MetaMask injects a deprecated shim for backwards compatibility.
-        // Our code correctly uses window.ethereum. The warning is suppressed by our error suppression utility.
+        // MetaMask: Auto-switch to Theta Network RPC (instant, no QR bugs)
         provider = (window as any).ethereum
         if (!provider || !provider.isMetaMask) {
-          setStatusMessage('MetaMask not detected')
+          setStatusMessage('MetaMask not detected. Install from metamask.io')
           setSwapStatus('error')
           setTimeout(() => {
             setSwapStatus('idle')
             setStatusMessage('')
           }, 3000)
           return
+        }
+
+        // Auto-switch to Theta Network if not already connected
+        const thetaConnected = await isConnectedToTheta()
+        if (!thetaConnected) {
+          setStatusMessage('Switching to Theta Network...')
+          const switchResult = await switchToThetaNetwork()
+          if (!switchResult.success) {
+            setStatusMessage(`Failed to switch network: ${switchResult.error}`)
+            setSwapStatus('error')
+            setTimeout(() => {
+              setSwapStatus('idle')
+              setStatusMessage('')
+            }, 5000)
+            return
+          }
         }
       }
       
@@ -273,6 +306,7 @@ function App() {
             console.warn('Could not save wallet provider preference:', e)
           }
           
+          setStatusMessage('')
           refreshBalance(address, provider)
         } else {
           setStatusMessage('No accounts available')
@@ -309,7 +343,7 @@ function App() {
   }
 
   // Handle wallet connect from modal
-  const handleWalletConnectFromModal = async (provider: 'walletconnect' | 'metamask') => {
+  const handleWalletConnectFromModal = async (provider: 'theta' | 'walletconnect' | 'metamask') => {
     try {
       await connectWallet(provider)
     } catch (error) {
@@ -317,11 +351,47 @@ function App() {
     }
   }
 
+  // Handle Theta Wallet QR modal connection
+  const handleThetaQRConnect = async (provider: any) => {
+    try {
+      // Provider is already connected via WalletConnect
+      const ethersProvider = new ethers.BrowserProvider(provider)
+      const signer = await ethersProvider.getSigner()
+      const address = await signer.getAddress()
+      const balance = await ethersProvider.getBalance(address)
+      const balanceFormatted = parseFloat(ethers.formatEther(balance)).toFixed(2)
+
+      setWallet({
+        address: `${address.slice(0, 6)}...${address.slice(-4)}`,
+        fullAddress: address,
+        balance: balanceFormatted,
+        isConnected: true,
+      })
+      
+      setWalletProvider('walletconnect')
+      setShowThetaQRModal(false)
+      
+      try {
+        localStorage.setItem('xfuel-wallet-provider', 'walletconnect')
+      } catch (e) {
+        console.warn('Could not save wallet provider preference:', e)
+      }
+
+      // Start balance refresh
+      startBalanceRefresh(ethersProvider, address)
+    } catch (error) {
+      console.error('Theta QR connection error:', error)
+      setStatusMessage('Failed to connect wallet')
+    }
+  }
+
   // Disconnect wallet
   const disconnectWallet = () => {
-    // Disconnect WalletConnect if it was used
+    // Disconnect based on provider type
     if (walletProvider === 'walletconnect') {
       disconnectWalletConnect()
+    } else if (walletProvider === 'theta') {
+      disconnectThetaWallet()
     }
     
     setWallet({
@@ -682,7 +752,7 @@ function App() {
 
     // Validate router address is configured
     if (!ROUTER_ADDRESS) {
-      console.error('[XFUEL Swap] Router address not configured')
+      console.error('❌ [XFUEL Swap] Router address not configured')
       setStatusMessage('❌ Real router not configured — contact support')
       setSwapStatus('error')
       setTimeout(() => {
@@ -692,9 +762,24 @@ function App() {
       return
     }
 
+    // Validate not using mock/test addresses
+    if (ROUTER_ADDRESS === MOCK_ROUTER_ADDRESS || ROUTER_ADDRESS === '0x0000000000000000000000000000000000000001') {
+      console.error('❌ [XFUEL Swap] Mock router address detected - refusing to execute swap')
+      setStatusMessage('❌ Mock router detected — production requires real router address')
+      setSwapStatus('error')
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+      }, 5000)
+      return
+    }
+
     // Log router configuration for debugging
-    console.log('[XFUEL Swap] Using router:', ROUTER_ADDRESS)
-    console.log('[XFUEL Swap] Mode: REAL (production)')
+    console.log('🚀 [XFUEL Swap] Starting real swap execution')
+    console.log('🚀 [XFUEL Swap] Using router:', ROUTER_ADDRESS)
+    console.log('🚀 [XFUEL Swap] Mode: REAL (production)')
+    console.log('🚀 [XFUEL Swap] Network: Theta Mainnet (Chain ID: 361)')
+    console.log('🚀 [XFUEL Swap] Amount:', amount, 'TFUEL →', selectedLST.name)
 
     // Real swap execution - always use real contracts in production
     const minRequired = amount + 0.01 // Add small buffer for gas
@@ -726,6 +811,8 @@ function App() {
 
       const routerContract = new ethers.Contract(ROUTER_ADDRESS, ROUTER_ABI, signer)
 
+      console.log('⛽ [XFUEL Swap] Estimating gas for real transaction...')
+      
       // Estimate gas first for better UX
       let gasEstimate = BigInt(200000) // Default estimate
       try {
@@ -733,10 +820,13 @@ function App() {
           value: amountWei,
         })
         gasEstimate = gasEst
+        console.log('⛽ [XFUEL Swap] Gas estimate:', gasEstimate.toString())
       } catch (e) {
-        console.warn('Gas estimation failed, using default:', e)
+        console.warn('⚠️  [XFUEL Swap] Gas estimation failed, using default:', e)
       }
 
+      console.log('📤 [XFUEL Swap] Sending real transaction to router contract...')
+      
       // Call swapAndStake with native TFUEL (msg.value)
       // TFUEL is native token, so no approval needed - just send via msg.value
       // minAmountOut: 0 for now (could add slippage protection later)
@@ -745,17 +835,26 @@ function App() {
         gasLimit: gasEstimate + (gasEstimate / BigInt(10)), // Add 10% buffer
       })
 
+      console.log('✅ [XFUEL Swap] Transaction sent! Hash:', tx.hash)
+      console.log('🔗 [XFUEL Swap] View on explorer:', `https://explorer.thetatoken.org/tx/${tx.hash}`)
+      
       setTxHash(tx.hash)
       setStatusMessage(`Transaction sent! Waiting for confirmation…`)
 
+      console.log('⏳ [XFUEL Swap] Waiting for transaction confirmation...')
+      
       // Wait for confirmation
       const receipt = await tx.wait()
+      
+      console.log('✅ [XFUEL Swap] Transaction confirmed! Block:', receipt.blockNumber)
+      console.log('⛽ [XFUEL Swap] Gas used:', receipt.gasUsed?.toString())
       
       // Extract real gas cost from receipt
       if (receipt.gasUsed && receipt.gasPrice) {
         const realGasCostWei = receipt.gasUsed * receipt.gasPrice
         const realGasCostTfuel = parseFloat(ethers.formatEther(realGasCostWei))
         setEstimatedGasCost(realGasCostTfuel)
+        console.log('💰 [XFUEL Swap] Real gas cost:', realGasCostTfuel.toFixed(6), 'TFUEL')
       }
       
       // Get real output amount from receipt/events if available, otherwise estimate
@@ -1268,7 +1367,7 @@ function App() {
             {/* Early Believers Card */}
             <EarlyBelieversCard onClick={() => setShowEarlyBelieversModal(true)} />
 
-            {/* Swap Tab: Cross-Chain Swap Only */}
+            {/* Swap Tab: Cross-Chain Swap */}
             {activeTab === 'swap' && (
               <BiDirectionalSwapCard
                 thetaWallet={wallet}
@@ -1547,6 +1646,14 @@ function App() {
                   </p>
                   {!wallet.isConnected && (
                     <div className="space-y-6">
+                      {/* WalletConnect Bug Warning Banner */}
+                      <WalletConnectBugBanner
+                        onMetaMaskClick={() => {
+                          setShowWalletConnectModal(true)
+                          // Auto-select MetaMask on modal open (handled by modal reordering)
+                        }}
+                      />
+
                       {/* Hero section with connect button */}
                       <div className="relative overflow-hidden rounded-3xl border-2 border-purple-400/60 bg-gradient-to-br from-[rgba(168,85,247,0.25)] via-[rgba(56,189,248,0.15)] to-[rgba(15,23,42,0.40)] p-8 backdrop-blur-xl shadow-[0_0_60px_rgba(168,85,247,0.7),inset_0_0_40px_rgba(168,85,247,0.15)]">
                         <div className="absolute -right-12 -top-12 h-48 w-48 rounded-full bg-purple-500/20 blur-3xl" />
@@ -1569,20 +1676,29 @@ function App() {
                             View your live balances, yield history, swap activity, and track your earning streak across the Theta and Cosmos ecosystems.
                           </p>
                           
-                          <div className="flex justify-center">
-                            <div className="w-full max-w-xs">
-                              <NeonButton
-                                label="Connect Theta Wallet"
-                                onClick={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  // Open wallet connect modal (QR + web wallet options)
-                                  setShowWalletConnectModal(true)
-                                }}
-                                rightHint="secure"
-                                variant="primary"
-                              />
-                            </div>
+                          <div className="flex flex-col gap-3 max-w-xs mx-auto">
+                            <NeonButton
+                              label="Connect with MetaMask (Instant)"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                // Open wallet modal with MetaMask as priority
+                                setShowWalletConnectModal(true)
+                              }}
+                              rightHint="⚡ fast"
+                              variant="primary"
+                            />
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                // Open Theta QR modal
+                                setShowThetaQRModal(true)
+                              }}
+                              className="text-sm text-slate-400 hover:text-purple-300 transition-colors underline"
+                            >
+                              Or use Theta Wallet QR
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -2134,6 +2250,13 @@ function App() {
         isOpen={showWalletConnectModal}
         onClose={() => setShowWalletConnectModal(false)}
         onConnect={handleWalletConnectFromModal}
+      />
+
+      {/* Theta Wallet QR Modal */}
+      <ThetaWalletQRModal
+        isOpen={showThetaQRModal}
+        onClose={() => setShowThetaQRModal(false)}
+        onConnect={handleThetaQRConnect}
       />
 
       {/* Sign In Modal */}
