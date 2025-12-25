@@ -337,12 +337,8 @@ export default function ThetaWalletQRModal({
                           onClick={() => {
                             setInitError(null)
                             setWalletConnectUri(undefined)
-                            setThetaDeepLink('')
                             // Trigger re-initialization by toggling the modal
                             onClose()
-                            setTimeout(() => {
-                              // This will be handled by the parent component
-                            }, 100)
                           }}
                           className="px-4 py-2 text-xs bg-purple-500 text-white rounded-lg hover:bg-purple-600"
                         >

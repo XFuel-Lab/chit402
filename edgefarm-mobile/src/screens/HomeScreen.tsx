@@ -6,6 +6,8 @@ import { LinearGradient } from 'expo-linear-gradient'
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated'
 import { ScreenBackground } from '../components/ScreenBackground'
 import { NeonCard } from '../components/NeonCard'
+import { EdgeNodePulseTracker } from '../components/EdgeNodePulseTracker'
+import { MaxYieldNowButton } from '../components/MaxYieldNowButton'
 import { neon } from '../theme/neon'
 import { type } from '../theme/typography'
 import * as Haptics from 'expo-haptics'
@@ -21,6 +23,7 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
   const [tick, setTick] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [priceData, setPriceData] = useState<LSTPriceAndAPYData | null>(null)
+  const [demoTfuelBalance] = useState(42.5) // Demo balance for testing
 
   useEffect(() => {
     const t = setInterval(() => setTick((v) => v + 1), 1000)
@@ -126,6 +129,36 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
           <View style={{ marginBottom: 18 }}>
             <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.65)' }}>EdgeFarm</Text>
             <Text style={{ ...type.h2, color: 'rgba(255,255,255,0.98)' }}>Dashboard</Text>
+          </View>
+
+          {/* Edge Node Pulse Tracker - Real-time earnings */}
+          <NeonCard className="mb-6">
+            <EdgeNodePulseTracker
+              nodeAddress={null} // TODO: Connect to user's Edge Node address
+              isDemo={true} // Using demo mode for now
+              onEarningPulse={(earning) => {
+                console.log('New earning pulse:', earning)
+                // TODO: Trigger push notification
+              }}
+            />
+          </NeonCard>
+
+          {/* Max Yield Now - One-tap auto-routing */}
+          <View style={{ marginBottom: 18 }}>
+            <MaxYieldNowButton
+              tfuelBalance={demoTfuelBalance}
+              onPress={async (targetLST, amount, estimatedApy) => {
+                console.log('Max Yield Now:', { targetLST, amount, estimatedApy })
+                // TODO: Integrate with actual swap flow
+                // For now, navigate to swap screen with pre-filled values
+                if (navigation) {
+                  navigation.navigate('Mining', {
+                    preselectedLST: targetLST,
+                    prefilledAmount: amount,
+                  })
+                }
+              }}
+            />
           </View>
 
           {/* Top hero: LIVE BLENDED APY with circular meter (glass, wallpaper visible) */}

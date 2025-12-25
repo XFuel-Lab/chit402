@@ -15,6 +15,7 @@ import EdgeNodeDashboard from './components/EdgeNodeDashboard'
 import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
 import YieldPumpCard from './components/YieldPumpCard'
 import WalletConnectModal from './components/WalletConnectModal'
+import WalletConnectBugBanner from './components/WalletConnectBugBanner'
 import ThetaWalletQRModal from './components/ThetaWalletQRModal'
 import SignInModal from './components/SignInModal'
 import TransactionSuccessModal from './components/TransactionSuccessModal'
@@ -34,6 +35,7 @@ import {
   getStrideExplorerUrl,
   isKeplrInstalled 
 } from './utils/cosmosLSTStaking'
+import { switchToThetaNetwork, isConnectedToTheta } from './utils/metamaskThetaRPC'
 
 type SwapStatus = 'idle' | 'approving' | 'swapping' | 'success' | 'error'
 
@@ -63,6 +65,11 @@ const LST_OPTIONS: LSTOption[] = [
   { name: 'stkATOM', apy: 19.5 }, // Real APY from DeFiLlama (instant fallback)
   { name: 'stkXPRT', apy: 25.7 }, // Real APY from DeFiLlama (instant fallback)
   { name: 'stkOSMO', apy: 18.1 }, // Real APY from DeFiLlama (instant fallback)
+  { name: 'stTIA (Stride)', apy: 16.5 }, // Stride liquid staking
+  { name: 'stATOM (Stride)', apy: 20.2 }, // Stride liquid staking
+  { name: 'stOSMO (Stride)', apy: 19.3 }, // Stride liquid staking
+  { name: 'qATOM (Quasar)', apy: 21.8 }, // Quasar vaults
+  { name: 'qOSMO (Quasar)', apy: 19.7 }, // Quasar vaults
   { name: 'pSTAKE BTC', apy: 3.2 }, // Real APY from DeFiLlama (instant fallback)
   { name: 'USDC', apy: 0, isStablecoin: true }, // Simple swap output, no yield
 ]
@@ -239,18 +246,32 @@ function App() {
           return
         }
       } else if (validProvider === 'metamask') {
-        // Note: MetaMask may show a deprecation warning about window.web3.currentProvider.
-        // This is expected - MetaMask injects a deprecated shim for backwards compatibility.
-        // Our code correctly uses window.ethereum. The warning is suppressed by our error suppression utility.
+        // MetaMask: Auto-switch to Theta Network RPC (instant, no QR bugs)
         provider = (window as any).ethereum
         if (!provider || !provider.isMetaMask) {
-          setStatusMessage('MetaMask not detected')
+          setStatusMessage('MetaMask not detected. Install from metamask.io')
           setSwapStatus('error')
           setTimeout(() => {
             setSwapStatus('idle')
             setStatusMessage('')
           }, 3000)
           return
+        }
+
+        // Auto-switch to Theta Network if not already connected
+        const thetaConnected = await isConnectedToTheta()
+        if (!thetaConnected) {
+          setStatusMessage('Switching to Theta Network...')
+          const switchResult = await switchToThetaNetwork()
+          if (!switchResult.success) {
+            setStatusMessage(`Failed to switch network: ${switchResult.error}`)
+            setSwapStatus('error')
+            setTimeout(() => {
+              setSwapStatus('idle')
+              setStatusMessage('')
+            }, 5000)
+            return
+          }
         }
       }
       
@@ -1625,6 +1646,14 @@ function App() {
                   </p>
                   {!wallet.isConnected && (
                     <div className="space-y-6">
+                      {/* WalletConnect Bug Warning Banner */}
+                      <WalletConnectBugBanner
+                        onMetaMaskClick={() => {
+                          setShowWalletConnectModal(true)
+                          // Auto-select MetaMask on modal open (handled by modal reordering)
+                        }}
+                      />
+
                       {/* Hero section with connect button */}
                       <div className="relative overflow-hidden rounded-3xl border-2 border-purple-400/60 bg-gradient-to-br from-[rgba(168,85,247,0.25)] via-[rgba(56,189,248,0.15)] to-[rgba(15,23,42,0.40)] p-8 backdrop-blur-xl shadow-[0_0_60px_rgba(168,85,247,0.7),inset_0_0_40px_rgba(168,85,247,0.15)]">
                         <div className="absolute -right-12 -top-12 h-48 w-48 rounded-full bg-purple-500/20 blur-3xl" />
@@ -1647,20 +1676,29 @@ function App() {
                             View your live balances, yield history, swap activity, and track your earning streak across the Theta and Cosmos ecosystems.
                           </p>
                           
-                          <div className="flex justify-center">
-                            <div className="w-full max-w-xs">
-                              <NeonButton
-                                label="Connect Theta Wallet"
-                                onClick={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  // Open Theta QR modal with mobile-friendly QR code
-                                  setShowThetaQRModal(true)
-                                }}
-                                rightHint="secure"
-                                variant="primary"
-                              />
-                            </div>
+                          <div className="flex flex-col gap-3 max-w-xs mx-auto">
+                            <NeonButton
+                              label="Connect with MetaMask (Instant)"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                // Open wallet modal with MetaMask as priority
+                                setShowWalletConnectModal(true)
+                              }}
+                              rightHint="⚡ fast"
+                              variant="primary"
+                            />
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                // Open Theta QR modal
+                                setShowThetaQRModal(true)
+                              }}
+                              className="text-sm text-slate-400 hover:text-purple-300 transition-colors underline"
+                            >
+                              Or use Theta Wallet QR
+                            </button>
                           </div>
                         </div>
                       </div>
