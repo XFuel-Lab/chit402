@@ -122,7 +122,7 @@ export async function connectThetaWallet(): Promise<WalletInfo> {
 export async function refreshBalance(address: string): Promise<number> {
   try {
     if (!provider) {
-      provider = new ethers.providers.JsonRpcProvider(THETA_TESTNET_RPC)
+      provider = new ethers.providers.JsonRpcProvider(THETA_MAINNET_RPC)
     }
     const balance = await provider.getBalance(address)
     return parseFloat(ethers.utils.formatEther(balance))

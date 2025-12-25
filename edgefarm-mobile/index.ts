@@ -1,3 +1,8 @@
+// CRITICAL: Import polyfills FIRST before any other imports
+import 'react-native-get-random-values'
+import '@ethersproject/shims'
+import 'text-encoding-polyfill'
+
 import 'react-native-gesture-handler'
 import { registerRootComponent } from 'expo';
 
