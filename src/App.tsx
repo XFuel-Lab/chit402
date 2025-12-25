@@ -206,46 +206,10 @@ function App() {
       let provider: any = null
       
       if (validProvider === 'theta') {
-        // Direct Theta Wallet connection (new native approach)
-        try {
-          setStatusMessage('Connecting to Theta Wallet...')
-          const result = await connectThetaWallet()
-          
-          if (!result.success) {
-            // If deep link failed on mobile, fall back to WalletConnect QR
-            if (result.error === 'deep_link_failed') {
-              setStatusMessage('Opening WalletConnect QR...')
-              // Fall back to WalletConnect
-              const walletConnectProvider = await createWalletConnectProvider()
-              
-              if (walletConnectProvider.session) {
-                provider = walletConnectProvider
-              } else {
-                await walletConnectProvider.connect()
-                provider = walletConnectProvider
-              }
-            } else {
-              throw new Error(result.error || 'Failed to connect')
-            }
-          } else {
-            provider = result.provider
-          }
-        } catch (error: any) {
-          console.error('Theta Wallet connection error:', error)
-          if (error?.message?.includes('User rejected') || error?.code === 4001 || error?.message?.includes('closed')) {
-            setStatusMessage('Connection cancelled')
-          } else if (error?.message?.includes('pop-up')) {
-            setStatusMessage('Please allow pop-ups to connect with Theta Wallet')
-          } else {
-            setStatusMessage('Failed to connect Theta Wallet. Please try again.')
-          }
-          setSwapStatus('error')
-          setTimeout(() => {
-            setStatusMessage('')
-            setSwapStatus('idle')
-          }, 5000)
-          return
-        }
+        // QR code only - no redirect/deep link
+        // Open QR modal for Theta Wallet connection
+        setShowThetaQRModal(true)
+        return
       } else if (validProvider === 'walletconnect') {
         // Theta Wallet connection via WalletConnect protocol
         // Official method - no extension detection

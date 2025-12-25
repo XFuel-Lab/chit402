@@ -14,12 +14,32 @@ if (!import.meta.env.VITE_WALLETCONNECT_PROJECT_ID && import.meta.env.DEV) {
 
 let walletConnectProvider: EthereumProvider | null = null
 
-export async function createWalletConnectProvider(): Promise<EthereumProvider> {
-  if (walletConnectProvider) {
+export async function createWalletConnectProvider(forceNew: boolean = false): Promise<EthereumProvider> {
+  // If we have an existing provider with an active session, return it
+  if (walletConnectProvider && !forceNew) {
     return walletConnectProvider
   }
 
+  // If forcing new or provider doesn't exist, create a new one
+  // First disconnect existing provider if it exists
+  if (forceNew && walletConnectProvider) {
+    try {
+      walletConnectProvider.disconnect()
+    } catch (error) {
+      console.warn('Error disconnecting existing provider:', error)
+    }
+    walletConnectProvider = null
+  }
+
   try {
+    console.log('WalletConnect: Initializing with Project ID:', WALLETCONNECT_PROJECT_ID ? `${WALLETCONNECT_PROJECT_ID.substring(0, 8)}...` : 'NOT SET')
+    console.log('WalletConnect: Chain ID:', THETA_MAINNET.chainId)
+    console.log('WalletConnect: RPC URL:', THETA_MAINNET.rpcUrl)
+    
+    if (!WALLETCONNECT_PROJECT_ID) {
+      throw new Error('WalletConnect Project ID is not configured. Set VITE_WALLETCONNECT_PROJECT_ID in .env.local')
+    }
+    
     walletConnectProvider = await EthereumProvider.init({
       projectId: WALLETCONNECT_PROJECT_ID,
       chains: [THETA_MAINNET.chainId],
@@ -36,6 +56,7 @@ export async function createWalletConnectProvider(): Promise<EthereumProvider> {
       showQrModal: false, // We'll show our own custom modal
     })
 
+    console.log('WalletConnect: Provider initialized successfully')
     return walletConnectProvider
   } catch (error) {
     console.error('Failed to initialize WalletConnect:', error)

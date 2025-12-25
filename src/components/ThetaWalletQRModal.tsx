@@ -1,7 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { createWalletConnectProvider } from '../utils/walletConnect'
-import { connectThetaWallet } from '../utils/thetaWallet'
 
 interface ThetaWalletQRModalProps {
   isOpen: boolean
@@ -15,10 +14,47 @@ export default function ThetaWalletQRModal({
   onConnect,
 }: ThetaWalletQRModalProps) {
   const [walletConnectUri, setWalletConnectUri] = useState<string | undefined>(undefined)
-  const [thetaDeepLink, setThetaDeepLink] = useState<string>('')
   const [showCopyToast, setShowCopyToast] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
+  const [isPolling, setIsPolling] = useState(false)
   const [currentProvider, setCurrentProvider] = useState<any>(null)
+  const [initError, setInitError] = useState<string | null>(null)
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Stop polling function
+  const stopPolling = () => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current)
+      pollingIntervalRef.current = null
+      setIsPolling(false)
+    }
+  }
+
+  // Poll for connection after QR is displayed
+  useEffect(() => {
+    if (isOpen && walletConnectUri && currentProvider && !isPolling) {
+      setIsPolling(true)
+      
+      // Start polling for connection
+      pollingIntervalRef.current = setInterval(async () => {
+        try {
+          // Check if provider has an active session
+          if (currentProvider?.session) {
+            console.log('WalletConnect session detected, connecting...')
+            stopPolling()
+            await onConnect(currentProvider)
+            onClose()
+          }
+        } catch (error) {
+          console.error('Error checking connection:', error)
+        }
+      }, 1000) // Poll every second
+    }
+    
+    return () => {
+      stopPolling()
+    }
+  }, [isOpen, walletConnectUri, currentProvider, isPolling, onConnect, onClose])
 
   // Initialize WalletConnect and generate URIs when modal opens
   useEffect(() => {
@@ -27,37 +63,109 @@ export default function ThetaWalletQRModal({
       
       const initWalletConnect = async () => {
         try {
-          provider = await createWalletConnectProvider()
-          setCurrentProvider(provider)
+          console.log('ThetaWalletQRModal: Initializing WalletConnect...')
+          setInitError(null)
+          setIsConnecting(true)
+          setWalletConnectUri(undefined)
           
-          // Check if already connected
+          // Create a fresh provider for new connection attempts
+          // This ensures we get a new URI even if a previous connection attempt failed
+          console.log('ThetaWalletQRModal: Creating WalletConnect provider...')
+          provider = await createWalletConnectProvider(true)
+          setCurrentProvider(provider)
+          console.log('ThetaWalletQRModal: Provider created successfully', { hasProvider: !!provider })
+          
+          // Check if already connected (shouldn't happen with forceNew=true, but check anyway)
           if (provider.session) {
             onConnect(provider)
             onClose()
             return
           }
           
-          // Listen for URI display
-          provider.on('display_uri', (uri: string) => {
+          // Set up event listeners BEFORE calling connect
+          // Listen for URI display - this event fires when URI is ready
+          const handleDisplayUri = (uri: string) => {
+            console.log('WalletConnect display_uri event:', uri)
             setWalletConnectUri(uri)
-            // Generate Theta Wallet deep link
-            const deepLink = `theta://wc?uri=${encodeURIComponent(uri)}`
-            setThetaDeepLink(deepLink)
-          })
+          }
           
           // Listen for session establishment
-          provider.on('connect', () => {
+          const handleConnect = () => {
+            console.log('WalletConnect connected')
+            stopPolling()
             onConnect(provider)
             onClose()
-          })
+          }
+          
+          provider.on('display_uri', handleDisplayUri)
+          provider.on('connect', handleConnect)
           
           // Connect to get the URI
-          await provider.connect()
+          // The URI should be available after connect() is called
+          try {
+            await provider.connect()
+          } catch (connectError: any) {
+            // If connect() throws, it might be because URI generation failed
+            console.error('WalletConnect connect() error:', connectError)
+            // Still try to get URI if available
+          }
+          
+          // Check if URI is available directly (fallback if event didn't fire)
+          // Use a local variable to track if we've set the URI
+          let uriSet = false
+          
+          // Check if URI is available on the provider
+          if (provider.uri) {
+            console.log('WalletConnect URI found on provider.uri:', provider.uri)
+            setWalletConnectUri(provider.uri)
+            uriSet = true
+          } else {
+            console.log('WalletConnect URI not immediately available, waiting for display_uri event or delayed check...')
+          }
+          
+          // Also check after a short delay in case URI is set asynchronously
+          const timeoutId = setTimeout(() => {
+            if (!uriSet) {
+              // Try multiple ways to get the URI
+              const possibleUri = provider?.uri || 
+                                 (provider as any)?.signClient?.pairingTopic ||
+                                 (provider as any)?.signClient?.session?.topic ||
+                                 (provider as any)?._uri
+              
+              if (possibleUri && possibleUri.startsWith('wc:')) {
+                console.log('WalletConnect URI (delayed check):', possibleUri)
+                setWalletConnectUri(possibleUri)
+              } else {
+                console.warn('WalletConnect URI not available after connect(). Provider state:', {
+                  hasUri: !!provider?.uri,
+                  hasSession: !!provider?.session,
+                  providerType: typeof provider,
+                  providerKeys: provider ? Object.keys(provider).slice(0, 10) : [],
+                  signClient: !!(provider as any)?.signClient,
+                })
+                console.warn('This might indicate a WalletConnect configuration issue. Check:')
+                console.warn('1. VITE_WALLETCONNECT_PROJECT_ID is set correctly')
+                console.warn('2. Network connectivity is working')
+                console.warn('3. WalletConnect service is accessible')
+                console.warn('4. Check browser console for CORS or network errors')
+              }
+            }
+          }, 1000)
+          
+          // Store timeout ID for cleanup
+          ;(provider as any)._uriTimeoutId = timeoutId
+          
         } catch (error: any) {
           console.error('Failed to initialize WalletConnect:', error)
+          const errorMessage = error?.message || error?.toString() || 'Unknown error'
+          setInitError(`Failed to initialize WalletConnect: ${errorMessage}`)
+          setIsConnecting(false)
+          
           if (error?.message?.includes('User rejected') || error?.code === 4001) {
             onClose()
           }
+        } finally {
+          setIsConnecting(false)
         }
       }
       
@@ -65,7 +173,12 @@ export default function ThetaWalletQRModal({
       
       // Cleanup when closing modal
       return () => {
+        stopPolling()
         if (provider) {
+          // Clear any pending timeouts
+          if ((provider as any)._uriTimeoutId) {
+            clearTimeout((provider as any)._uriTimeoutId)
+          }
           provider.removeAllListeners()
         }
       }
@@ -77,30 +190,30 @@ export default function ThetaWalletQRModal({
   useEffect(() => {
     if (!isOpen && currentProvider) {
       try {
+        stopPolling()
         currentProvider.removeAllListeners()
         setCurrentProvider(null)
         setWalletConnectUri(undefined)
-        setThetaDeepLink('')
+        setIsPolling(false)
       } catch (error) {
         console.error('Error cleaning up provider:', error)
       }
     }
   }, [isOpen, currentProvider])
 
-  // Handle copy link
+  // Handle copy link - copy WalletConnect URI directly
   const handleCopyLink = async () => {
-    const linkToCopy = thetaDeepLink || walletConnectUri
-    if (!linkToCopy) return
+    if (!walletConnectUri) return
     
     try {
-      await navigator.clipboard.writeText(linkToCopy)
+      await navigator.clipboard.writeText(walletConnectUri)
       setShowCopyToast(true)
       setTimeout(() => setShowCopyToast(false), 3000)
     } catch (error) {
       console.error('Failed to copy link:', error)
       // Fallback for older browsers
       const textArea = document.createElement('textarea')
-      textArea.value = linkToCopy
+      textArea.value = walletConnectUri
       textArea.style.position = 'fixed'
       textArea.style.opacity = '0'
       document.body.appendChild(textArea)
@@ -201,23 +314,44 @@ export default function ThetaWalletQRModal({
                 Connect Theta Wallet
               </h2>
               <p className="text-sm text-slate-400">
-                Scan with Theta Wallet mobile app
+                Scan with Theta Wallet mobile app (recommended)
               </p>
             </div>
 
             {/* Neon QR Code Card */}
-            <div className="relative p-6 rounded-2xl border-2 border-purple-400/60 bg-gradient-to-br from-purple-500/20 via-purple-600/15 to-slate-900/60 backdrop-blur-xl shadow-[0_0_50px_rgba(168,85,247,0.7),0_0_80px_rgba(168,85,247,0.4),inset_0_0_40px_rgba(168,85,247,0.2)]">
+            <div className="relative p-6 rounded-2xl border-2 border-purple-400/60 bg-gradient-to-br from-purple-500/20 via-purple-600/15 to-slate-900/60 backdrop-blur-xl shadow-[0_0_50px_rgba(168,85,247,0.7),0_0_80px_rgba(168,85,247,0.4),0_0_120px_rgba(168,85,247,0.3),inset_0_0_40px_rgba(168,85,247,0.2)]">
               <div className="text-center space-y-4">
                 {/* QR Code with intense neon glow */}
-                <div className="mx-auto w-64 h-64 rounded-3xl border-4 border-purple-400/80 bg-white p-6 shadow-[0_0_60px_rgba(168,85,247,0.9),0_0_100px_rgba(168,85,247,0.6),0_0_140px_rgba(168,85,247,0.4),inset_0_0_30px_rgba(168,85,247,0.1)] relative overflow-hidden">
+                <div className="mx-auto w-64 h-64 rounded-3xl border-4 border-purple-400/80 bg-white p-6 shadow-[0_0_60px_rgba(168,85,247,0.9),0_0_100px_rgba(168,85,247,0.6),0_0_140px_rgba(168,85,247,0.4),0_0_180px_rgba(168,85,247,0.2),inset_0_0_30px_rgba(168,85,247,0.1)] relative overflow-hidden">
                   {/* Enhanced glow effect */}
                   <div className="absolute inset-0 bg-gradient-to-br from-purple-400/20 via-transparent to-cyan-400/20 pointer-events-none" />
                   <div className="absolute -inset-4 bg-purple-400/20 blur-3xl pointer-events-none" />
+                  <div className="absolute -inset-8 bg-purple-400/10 blur-[60px] pointer-events-none animate-pulse" />
                   
                   <div className="relative w-full h-full flex items-center justify-center bg-white rounded-2xl">
-                    {walletConnectUri ? (
+                    {initError ? (
+                      <div className="flex flex-col items-center justify-center space-y-3 p-4">
+                        <div className="text-red-500 text-4xl">⚠️</div>
+                        <p className="text-xs text-red-600 font-semibold text-center">{initError}</p>
+                        <button
+                          onClick={() => {
+                            setInitError(null)
+                            setWalletConnectUri(undefined)
+                            setThetaDeepLink('')
+                            // Trigger re-initialization by toggling the modal
+                            onClose()
+                            setTimeout(() => {
+                              // This will be handled by the parent component
+                            }, 100)
+                          }}
+                          className="px-4 py-2 text-xs bg-purple-500 text-white rounded-lg hover:bg-purple-600"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    ) : walletConnectUri ? (
                       <QRCodeSVG
-                        value={thetaDeepLink || walletConnectUri}
+                        value={walletConnectUri}
                         size={200}
                         level="H"
                         includeMargin={false}
@@ -228,6 +362,9 @@ export default function ThetaWalletQRModal({
                       <div className="flex flex-col items-center justify-center space-y-2">
                         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500"></div>
                         <p className="text-xs text-purple-600 font-semibold">Loading QR...</p>
+                        {isConnecting && (
+                          <p className="text-xs text-purple-400">Connecting to WalletConnect...</p>
+                        )}
                       </div>
                     )}
                   </div>
@@ -236,11 +373,16 @@ export default function ThetaWalletQRModal({
                 {/* Instructions */}
                 <div className="space-y-3">
                   <p className="text-base font-bold text-white">
-                    Scan with Theta Wallet mobile app
+                    Scan with Theta Wallet mobile app (recommended)
                   </p>
                   {!walletConnectUri && (
                     <p className="text-xs text-slate-400 animate-pulse">
                       Generating secure connection...
+                    </p>
+                  )}
+                  {isPolling && walletConnectUri && (
+                    <p className="text-xs text-purple-400 animate-pulse">
+                      Waiting for connection...
                     </p>
                   )}
                 </div>
@@ -276,6 +418,13 @@ export default function ThetaWalletQRModal({
                     <div className="rounded-lg border border-cyan-400/30 bg-cyan-500/5 px-3 py-2">
                       <p className="text-xs text-cyan-300/90 text-center">
                         💡 Can't scan? Copy link and paste in Theta Wallet app
+                      </p>
+                    </div>
+                    
+                    {/* Having issues note */}
+                    <div className="rounded-lg border border-purple-400/20 bg-purple-500/5 px-3 py-2 mt-2">
+                      <p className="text-xs text-purple-300/80 text-center">
+                        Having issues? Try MetaMask below
                       </p>
                     </div>
                   </div>

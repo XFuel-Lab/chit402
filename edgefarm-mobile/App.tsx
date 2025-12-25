@@ -11,10 +11,8 @@ import { Orbitron_600SemiBold, Orbitron_700Bold } from '@expo-google-fonts/orbit
 import { neon } from './src/theme/neon'
 import { HomeScreen } from './src/screens/HomeScreen'
 import { MiningScreen } from './src/screens/MiningScreen'
-import { PoolsScreen } from './src/screens/PoolsScreen'
 import { SwapScreen } from './src/screens/SwapScreen'
 import { ProfileScreen } from './src/screens/ProfileScreen'
-import { CreatorScreen } from './src/screens/CreatorScreen'
 import { OnboardingScreen } from './src/screens/OnboardingScreen'
 import { getHasSeenOnboarding, setHasSeenOnboarding } from './src/lib/onboarding'
 import { type } from './src/theme/typography'
@@ -22,10 +20,8 @@ import { UiModeProvider } from './src/lib/uiMode'
 
 type TabParamList = {
   Home: undefined
-  Mining: undefined
-  Pools: undefined
   Swap: undefined
-  Creator: undefined
+  Mining: undefined
   Profile: undefined
 }
 
@@ -96,10 +92,8 @@ function MainTabs() {
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Mining" component={MiningScreen} />
-      <Tab.Screen name="Pools" component={PoolsScreen} />
       <Tab.Screen name="Swap" component={SwapScreen} />
-      <Tab.Screen name="Creator" component={CreatorScreen} />
+      <Tab.Screen name="Mining" component={MiningScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   )
@@ -130,14 +124,10 @@ function BottomSwipeTabBar({ state, navigation }: MaterialTopTabBarProps) {
               switch (route.name) {
                 case 'Home':
                   return 'home'
-                case 'Mining':
-                  return 'hardware-chip'
-                case 'Pools':
-                  return 'trophy'
                 case 'Swap':
                   return 'swap-horizontal'
-                case 'Creator':
-                  return 'star'
+                case 'Mining':
+                  return 'trending-up'
                 case 'Profile':
                   return 'person'
                 default:
@@ -152,7 +142,9 @@ function BottomSwipeTabBar({ state, navigation }: MaterialTopTabBarProps) {
                 style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4 }}
               >
                 <Ionicons name={icon as any} size={20} color={color} />
-                <Text style={{ ...type.caption, fontSize: 11, color }}>{route.name}</Text>
+                <Text style={{ ...type.caption, fontSize: 11, color }}>
+                  {route.name === 'Mining' ? 'Yield Pump' : route.name}
+                </Text>
               </Pressable>
             )
           })}

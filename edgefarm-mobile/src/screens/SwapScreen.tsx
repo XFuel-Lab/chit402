@@ -25,6 +25,7 @@ import Animated, {
 } from 'react-native-reanimated'
 import { BlurView } from 'expo-blur'
 import { LinearGradient } from 'expo-linear-gradient'
+import { getLSTPrices, calculateSwapOutput, type LSTPriceAndAPYData } from '../lib/oracle'
 
 interface LSTOption {
   name: string
@@ -41,12 +42,14 @@ interface SwapTransaction {
   simulated: boolean
 }
 
+// LST Options - APY values fetched live from DeFiLlama (no more mocks!)
+// Initial fallback values shown instantly, then replaced by real API data
 const LST_OPTIONS: LSTOption[] = [
-  { name: 'stkTIA', apy: 38.2 },
-  { name: 'stkATOM', apy: 32.5 },
-  { name: 'stkXPRT', apy: 28.7 },
-  { name: 'pSTAKE BTC', apy: 25.4 },
-  { name: 'stkOSMO', apy: 22.1 },
+  { name: 'stkTIA', apy: 15.2 },
+  { name: 'stkATOM', apy: 19.5 },
+  { name: 'stkXPRT', apy: 25.7 },
+  { name: 'pSTAKE BTC', apy: 3.2 },
+  { name: 'stkOSMO', apy: 18.1 },
 ]
 
 export function SwapScreen() {
@@ -70,6 +73,34 @@ export function SwapScreen() {
   const [simulationMode, setSimulationMode] = useState(false)
   const [qrModalVisible, setQrModalVisible] = useState(false)
   const [believersModalVisible, setBelieversModalVisible] = useState(false)
+  const [priceData, setPriceData] = useState<LSTPriceAndAPYData | null>(null)
+  const [lstOptions, setLstOptions] = useState<LSTOption[]>(LST_OPTIONS)
+
+  // Fetch real prices and APYs on mount
+  useEffect(() => {
+    const fetchPrices = async () => {
+      try {
+        const data = await getLSTPrices()
+        setPriceData(data)
+        
+        // Update LST options with real APYs from DeFiLlama
+        setLstOptions(prev => prev.map(lst => {
+          const apyKey = lst.name === 'pSTAKE BTC' ? 'pSTAKEBTC' : lst.name
+          const realApy = data.apys[apyKey as keyof typeof data.apys]
+          return realApy ? { ...lst, apy: realApy } : lst
+        }))
+      } catch (error) {
+        console.error('Failed to fetch prices:', error)
+      }
+    }
+    
+    fetchPrices()
+    
+    // Refresh every 60 seconds
+    const priceInterval = setInterval(fetchPrices, 60000)
+    
+    return () => clearInterval(priceInterval)
+  }, [])
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -134,9 +165,27 @@ export function SwapScreen() {
   }, [wallet.balanceTfuel, wallet.isConnected, selectedPercentage, customPercentage])
 
   const estimatedLSTAmount = useMemo(() => {
-    // Mock calculation: 1 TFUEL = 0.95 LST (5% fee)
-    return tfuelAmount * 0.95
-  }, [tfuelAmount])
+    if (!priceData || !priceData.prices.TFUEL || tfuelAmount === 0) {
+      return 0
+    }
+    
+    // Real calculation based on oracle prices
+    try {
+      const tfuelPrice = priceData.prices.TFUEL.price
+      const lstKey = selectedLST.name === 'pSTAKE BTC' ? 'pSTAKEBTC' : selectedLST.name
+      const lstPrice = priceData.prices[lstKey as keyof typeof priceData.prices]?.price
+      
+      if (!lstPrice || lstPrice <= 0) {
+        return tfuelAmount * 0.95 // Fallback
+      }
+      
+      // Real swap: (TFUEL amount * TFUEL price) / LST price * (1 - 5% fee)
+      const usdValue = tfuelAmount * tfuelPrice
+      return (usdValue / lstPrice) * 0.95
+    } catch (error) {
+      return tfuelAmount * 0.95 // Fallback
+    }
+  }, [tfuelAmount, priceData, selectedLST])
 
   const estimatedDailyYield = useMemo(() => {
     return (estimatedLSTAmount * selectedLST.apy) / 100 / 365
@@ -165,7 +214,9 @@ export function SwapScreen() {
 
   const handleLSTSelect = (lst: LSTOption) => {
     Haptics.selectionAsync().catch(() => {})
-    setSelectedLST(lst)
+    // Find the LST with real APY from lstOptions
+    const lstWithRealApy = lstOptions.find(o => o.name === lst.name) || lst
+    setSelectedLST(lstWithRealApy)
     setLstPanelVisible(false)
   }
 
@@ -829,7 +880,7 @@ export function SwapScreen() {
       {/* LST Selection SubPanel */}
       <SubPanel visible={lstPanelVisible} onClose={() => setLstPanelVisible(false)} title="Select LST">
         <View style={{ gap: 12 }}>
-          {LST_OPTIONS.map((lst) => (
+          {lstOptions.map((lst) => (
             <Pressable
               key={lst.name}
               onPress={() => handleLSTSelect(lst)}
