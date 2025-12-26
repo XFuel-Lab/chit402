@@ -198,7 +198,7 @@ describe('Theta Wallet QR Modal E2E', () => {
 
       // Clear error
       cy.window().then((win) => {
-        delete ;(win as any).mockWalletConnectError
+        delete (win as any).mockWalletConnectError
       })
 
       // Click retry
@@ -258,7 +258,7 @@ describe('Theta Wallet QR Modal E2E', () => {
     it('should open MetaMask download page if not installed', () => {
       // No MetaMask installed
       cy.window().then((win) => {
-        delete ;(win as any).ethereum
+        delete (win as any).ethereum
       })
 
       cy.contains('button', /connect.*wallet/i).click()
