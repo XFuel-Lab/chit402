@@ -1,4 +1,9 @@
 import '@testing-library/jest-dom'
+import { TextEncoder, TextDecoder } from 'util'
+
+// Polyfill TextEncoder/TextDecoder for jsdom (required by WalletConnect)
+global.TextEncoder = TextEncoder
+global.TextDecoder = TextDecoder as any
 
 // Mock Vite's import.meta.env for Jest
 // Set up global mock that components can access
@@ -20,4 +25,40 @@ if (typeof globalThis.import === 'undefined') {
     configurable: true,
   })
 }
+
+// Mock @walletconnect/ethereum-provider to avoid ESM issues
+jest.mock('@walletconnect/ethereum-provider', () => {
+  class MockEthereumProvider {
+    connected = false
+    accounts = []
+    chainId = 1
+    uri = ''
+    
+    async connect() {
+      this.connected = true
+      return { chainId: this.chainId }
+    }
+    
+    async disconnect() {
+      this.connected = false
+    }
+    
+    async request({ method }: { method: string }) {
+      if (method === 'eth_requestAccounts') return this.accounts
+      if (method === 'eth_accounts') return this.accounts
+      if (method === 'eth_chainId') return `0x${this.chainId.toString(16)}`
+      return null
+    }
+    
+    on() {}
+    off() {}
+    removeAllListeners() {}
+  }
+  
+  return {
+    EthereumProvider: {
+      init: async () => new MockEthereumProvider(),
+    },
+  }
+})
 

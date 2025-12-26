@@ -23,15 +23,23 @@ import {
 // Mock WalletConnect
 jest.mock('@walletconnect/ethereum-provider', () => ({
   EthereumProvider: {
-    init: jest.fn().mockResolvedValue({
-      on: jest.fn(),
-      enable: jest.fn().mockResolvedValue(['0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb']),
-      disconnect: jest.fn(),
-      request: jest.fn(),
-      removeAllListeners: jest.fn(),
-      session: { topic: 'mock-session' },
-      chainId: 361,
-      uri: 'wc:mock-uri@2',
+    init: jest.fn().mockImplementation(() => {
+      const mockProvider = {
+        on: jest.fn((event, handler) => {
+          // Immediately call display_uri handler with mock URI
+          if (event === 'display_uri') {
+            setTimeout(() => handler('wc:mock-uri@2'), 0)
+          }
+        }),
+        enable: jest.fn().mockResolvedValue(['0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb']),
+        disconnect: jest.fn(),
+        request: jest.fn(),
+        removeAllListeners: jest.fn(),
+        session: { topic: 'mock-session' },
+        chainId: 361,
+        uri: 'wc:mock-uri@2',
+      }
+      return Promise.resolve(mockProvider)
     }),
   },
 }))
@@ -43,6 +51,9 @@ describe('WalletConnect v2 Integration', () => {
     
     // Reset mocks
     jest.clearAllMocks()
+    
+    // Clear any existing provider
+    disconnectWalletConnect()
   })
 
   describe('Platform Detection', () => {
@@ -95,6 +106,9 @@ describe('WalletConnect v2 Integration', () => {
           capturedUri = uri
         },
       })
+
+      // Wait for async handler to be called
+      await new Promise(resolve => setTimeout(resolve, 10))
 
       // URI should be generated (mocked as 'wc:mock-uri@2')
       expect(capturedUri).toBeTruthy()
