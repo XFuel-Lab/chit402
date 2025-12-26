@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View, Linking } from 'react-native'
 import { StatusBar } from 'expo-status-bar'
 import { DarkTheme, NavigationContainer } from '@react-navigation/native'
 import { createMaterialTopTabNavigator, MaterialTopTabBarProps } from '@react-navigation/material-top-tabs'
@@ -8,20 +8,26 @@ import { BlurView } from 'expo-blur'
 import { useFonts } from 'expo-font'
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-google-fonts/inter'
 import { Orbitron_600SemiBold, Orbitron_700Bold } from '@expo-google-fonts/orbitron'
+import Toast from 'react-native-toast-message'
+import * as Haptics from 'expo-haptics'
 import { neon } from './src/theme/neon'
-import { HomeScreen } from './src/screens/HomeScreen'
-import { MiningScreen } from './src/screens/MiningScreen'
-import { SwapScreen } from './src/screens/SwapScreen'
+import { HomeScreenPro } from './src/screens/HomeScreenPro'
+import { SwapScreenPro } from './src/screens/SwapScreenPro'
+import { StakeScreen } from './src/screens/StakeScreen'
 import { ProfileScreen } from './src/screens/ProfileScreen'
 import { OnboardingScreen } from './src/screens/OnboardingScreen'
+import BetaBanner from './src/components/BetaBanner'
 import { getHasSeenOnboarding, setHasSeenOnboarding } from './src/lib/onboarding'
 import { type } from './src/theme/typography'
 import { UiModeProvider } from './src/lib/uiMode'
 
+// Network configuration - read from environment or default to mainnet
+const NETWORK = (process.env.EXPO_PUBLIC_NETWORK || 'mainnet') as 'mainnet' | 'testnet'
+
 type TabParamList = {
   Home: undefined
   Swap: undefined
-  Mining: undefined
+  Stake: undefined
   Profile: undefined
 }
 
@@ -37,6 +43,50 @@ export default function App() {
     Orbitron_600SemiBold,
     Orbitron_700Bold,
   })
+
+  // Handle deep links for WalletConnect and Theta Wallet
+  useEffect(() => {
+    // Handle incoming deep links
+    const handleDeepLink = ({ url }: { url: string }) => {
+      console.log('🔗 Deep link received:', url)
+      
+      // Check if it's a WalletConnect or Theta Wallet deep link
+      if (url.includes('wc:') || url.includes('thetawallet://') || url.includes('theta://')) {
+        console.log('✅ Wallet connection deep link detected')
+        
+        // Haptic feedback
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {})
+        
+        // Show toast
+        Toast.show({
+          type: 'info',
+          text1: 'Wallet Connection',
+          text2: 'Processing connection...',
+          position: 'top',
+          visibilityTime: 2000,
+        })
+        
+        // The actual connection is handled by the WalletConnect library
+        // This just provides visual feedback
+      }
+    }
+    
+    // Listen for URL events
+    const subscription = Linking.addEventListener('url', handleDeepLink)
+    
+    // Check if app was opened via deep link
+    Linking.getInitialURL().then(url => {
+      if (url) {
+        handleDeepLink({ url })
+      }
+    }).catch(err => {
+      console.error('Error getting initial URL:', err)
+    })
+    
+    return () => {
+      subscription.remove()
+    }
+  }, [])
 
   useEffect(() => {
     getHasSeenOnboarding().then(setHasSeen)
@@ -64,6 +114,9 @@ export default function App() {
     <UiModeProvider>
       <NavigationContainer theme={theme}>
         <StatusBar style="light" />
+        {/* Beta Testing Banner - Only on mainnet */}
+        <BetaBanner network={NETWORK} />
+        
         {hasSeen ? (
           <MainTabs />
         ) : (
@@ -74,6 +127,8 @@ export default function App() {
             }}
           />
         )}
+        {/* Global Toast Container */}
+        <Toast />
       </NavigationContainer>
     </UiModeProvider>
   )
@@ -91,9 +146,9 @@ function MainTabs() {
         lazy: true,
       })}
     >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Swap" component={SwapScreen} />
-      <Tab.Screen name="Mining" component={MiningScreen} />
+      <Tab.Screen name="Home" component={HomeScreenPro} />
+      <Tab.Screen name="Swap" component={SwapScreenPro} />
+      <Tab.Screen name="Stake" component={StakeScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   )
@@ -126,8 +181,8 @@ function BottomSwipeTabBar({ state, navigation }: MaterialTopTabBarProps) {
                   return 'home'
                 case 'Swap':
                   return 'swap-horizontal'
-                case 'Mining':
-                  return 'trending-up'
+                case 'Stake':
+                  return 'lock-closed'
                 case 'Profile':
                   return 'person'
                 default:
@@ -143,7 +198,7 @@ function BottomSwipeTabBar({ state, navigation }: MaterialTopTabBarProps) {
               >
                 <Ionicons name={icon as any} size={20} color={color} />
                 <Text style={{ ...type.caption, fontSize: 11, color }}>
-                  {route.name === 'Mining' ? 'Yield Pump' : route.name}
+                  {route.name}
                 </Text>
               </Pressable>
             )

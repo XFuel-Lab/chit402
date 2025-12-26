@@ -30,6 +30,12 @@ contract BuybackBurner is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUp
     uint256 public totalXFBurned;
     uint256 public totalRevenueSwapped;
 
+    // Mainnet Beta Testing Safety Limits
+    uint256 public maxSwapAmount;            // Max per swap (default: 1,000 TFUEL equivalent)
+    uint256 public totalUserLimit;           // Max total per user (default: 5,000 TFUEL equivalent)
+    mapping(address => uint256) public userTotalSwapped;
+    bool public paused;                      // Emergency pause switch
+
     // Events
     event RevenueReceived(address indexed token, uint256 amount);
     event BuybackExecuted(uint256 revenueAmount, uint256 xfAmount);
@@ -38,6 +44,9 @@ contract BuybackBurner is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUp
     event RevenueTokenSet(address indexed token);
     event XFTokenSet(address indexed token);
     event RevenueSplitterSet(address indexed splitter);
+    event SwapLimitUpdated(uint256 maxSwapAmount, uint256 totalUserLimit);
+    event PauseToggled(bool paused);
+    event UserSwapRecorded(address indexed user, uint256 amount, uint256 totalSwapped);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -68,6 +77,11 @@ contract BuybackBurner is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUp
         revenueToken = IERC20(_revenueToken);
         xfToken = IERC20(_xfToken);
         swapRouter = _swapRouter;
+
+        // Initialize mainnet beta testing limits
+        maxSwapAmount = 1000 * 1e18;      // 1,000 TFUEL equivalent per swap
+        totalUserLimit = 5000 * 1e18;     // 5,000 TFUEL equivalent total per user
+        paused = false;
     }
 
     /**
@@ -76,8 +90,18 @@ contract BuybackBurner is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUp
      * @param amount Amount of revenue tokens to receive
      */
     function receiveRevenue(uint256 amount) external nonReentrant {
+        require(!paused, "BuybackBurner: contract is paused");
         require(amount > 0, "BuybackBurner: amount must be greater than 0");
         require(msg.sender == revenueSplitter || msg.sender == owner(), "BuybackBurner: unauthorized");
+        require(amount <= maxSwapAmount, "BuybackBurner: amount exceeds max swap limit");
+
+        // Track by tx.origin to prevent splitting across multiple contracts
+        address user = tx.origin;
+        require(userTotalSwapped[user] + amount <= totalUserLimit, "BuybackBurner: user total limit exceeded");
+
+        // Update user's total swapped amount
+        userTotalSwapped[user] += amount;
+        emit UserSwapRecorded(user, amount, userTotalSwapped[user]);
 
         // Transfer revenue tokens from caller (RevenueSplitter has approved)
         revenueToken.safeTransferFrom(msg.sender, address(this), amount);
@@ -202,6 +226,38 @@ contract BuybackBurner is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUp
     function setRevenueSplitter(address _revenueSplitter) external onlyOwner {
         revenueSplitter = _revenueSplitter;
         emit RevenueSplitterSet(_revenueSplitter);
+    }
+
+    /**
+     * @dev Update swap limits (owner only)
+     * @param _maxSwapAmount New max per swap (in wei)
+     * @param _totalUserLimit New total limit per user (in wei)
+     */
+    function updateSwapLimits(uint256 _maxSwapAmount, uint256 _totalUserLimit) external onlyOwner {
+        require(_maxSwapAmount > 0, "BuybackBurner: max swap amount must be greater than 0");
+        require(_totalUserLimit >= _maxSwapAmount, "BuybackBurner: total limit must be >= max swap");
+        
+        maxSwapAmount = _maxSwapAmount;
+        totalUserLimit = _totalUserLimit;
+        
+        emit SwapLimitUpdated(_maxSwapAmount, _totalUserLimit);
+    }
+
+    /**
+     * @dev Toggle pause state (owner only) - emergency kill switch
+     * @param _paused New pause state
+     */
+    function setPaused(bool _paused) external onlyOwner {
+        paused = _paused;
+        emit PauseToggled(_paused);
+    }
+
+    /**
+     * @dev Reset user's swap total (owner only) - for exceptions
+     * @param user Address of user to reset
+     */
+    function resetUserSwapTotal(address user) external onlyOwner {
+        userTotalSwapped[user] = 0;
     }
 
     /**

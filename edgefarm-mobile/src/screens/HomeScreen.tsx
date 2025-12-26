@@ -1,3 +1,9 @@
+/**
+ * HOME SCREEN - Ruthlessly Simple Dashboard
+ * 
+ * One blended APY. Live pulse. Quick actions. That's it.
+ */
+
 import React, { useEffect, useMemo, useState, useCallback } from 'react'
 import { Pressable, ScrollView, Text, View, RefreshControl } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -6,8 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient'
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated'
 import { ScreenBackground } from '../components/ScreenBackground'
 import { NeonCard } from '../components/NeonCard'
-import { EdgeNodePulseTracker } from '../components/EdgeNodePulseTracker'
-import { MaxYieldNowButton } from '../components/MaxYieldNowButton'
+import { NeonButton } from '../components/NeonButton'
 import { neon } from '../theme/neon'
 import { type } from '../theme/typography'
 import * as Haptics from 'expo-haptics'
@@ -23,7 +28,6 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
   const [tick, setTick] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [priceData, setPriceData] = useState<LSTPriceAndAPYData | null>(null)
-  const [demoTfuelBalance] = useState(42.5) // Demo balance for testing
 
   useEffect(() => {
     const t = setInterval(() => setTick((v) => v + 1), 1000)
@@ -55,13 +59,13 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
     const v = blendedApy
     const jitter = (Math.sin((tick % 3600) / 14) + 1) * 0.03
     return `${(v + jitter).toFixed(1)}%`
-  }, [tick])
+  }, [tick, blendedApy])
 
   const earningsToday = useMemo(() => {
     const daily = (DEMO_TVL_USD * (blendedApy / 100)) / 365
     const drift = (Math.sin((tick % 3600) / 13) + 1) * 0.02
     return daily + drift
-  }, [tick])
+  }, [tick, blendedApy])
 
   const ringPulse = useSharedValue(0)
   useEffect(() => {
@@ -84,19 +88,10 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
     }
   })
 
-  const handleMorePress = () => {
-    Haptics.selectionAsync().catch(() => {})
-    // Navigate to Mining screen (Yield Pump equivalent)
-    if (navigation) {
-      navigation.navigate('Mining')
-    }
-  }
-
   const handleApyBubblePress = (lstName: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {})
-    // Navigate to Mining screen with pre-selected LST
     if (navigation) {
-      navigation.navigate('Mining', { preselectedLST: lstName })
+      navigation.navigate('Stake', { preselectedLST: lstName })
     }
   }
 
@@ -131,40 +126,9 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
             <Text style={{ ...type.h2, color: 'rgba(255,255,255,0.98)' }}>Dashboard</Text>
           </View>
 
-          {/* Edge Node Pulse Tracker - Real-time earnings */}
-          <NeonCard className="mb-6">
-            <EdgeNodePulseTracker
-              nodeAddress={null} // TODO: Connect to user's Edge Node address
-              isDemo={true} // Using demo mode for now
-              onEarningPulse={(earning) => {
-                console.log('New earning pulse:', earning)
-                // TODO: Trigger push notification
-              }}
-            />
-          </NeonCard>
-
-          {/* Max Yield Now - One-tap auto-routing */}
-          <View style={{ marginBottom: 18 }}>
-            <MaxYieldNowButton
-              tfuelBalance={demoTfuelBalance}
-              onPress={async (targetLST, amount, estimatedApy) => {
-                console.log('Max Yield Now:', { targetLST, amount, estimatedApy })
-                // TODO: Integrate with actual swap flow
-                // For now, navigate to swap screen with pre-filled values
-                if (navigation) {
-                  navigation.navigate('Mining', {
-                    preselectedLST: targetLST,
-                    prefilledAmount: amount,
-                  })
-                }
-              }}
-            />
-          </View>
-
-          {/* Top hero: LIVE BLENDED APY with circular meter (glass, wallpaper visible) */}
+          {/* Hero: LIVE BLENDED APY with pulsing ring */}
           <NeonCard className="mb-6">
             <View>
-              {/* Soft internal gradient wash but keep card mostly transparent */}
               <LinearGradient
                 colors={[
                   'rgba(59,130,246,0.22)',
@@ -204,7 +168,7 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
                       height: 96,
                       borderRadius: 999,
                       borderWidth: 3,
-                      borderColor: 'rgba(250,204,21,0.92)', // golden ring
+                      borderColor: 'rgba(250,204,21,0.92)',
                       justifyContent: 'center',
                       alignItems: 'center',
                       backgroundColor: 'rgba(15,23,42,0.9)',
@@ -240,7 +204,7 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
 
               <View style={{ marginTop: 18, maxWidth: '76%' }}>
                 <Text style={{ ...type.h3, color: 'rgba(248,250,252,0.98)' }}>
-                  You’re earning {apyText} on <Text style={{ ...type.h3, color: neon.purple }}>stkXPRT</Text>
+                  Swap Theta to <Text style={{ ...type.h3, color: neon.purple }}>stkXPRT</Text> for {apyText}
                 </Text>
                 <Text
                   style={{
@@ -250,35 +214,22 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
                     lineHeight: 22,
                   }}
                 >
-                  Blended, simulated yields · ticks in real time (demo).
+                  Highest APY Cosmos LST. Live rates. One tap.
                 </Text>
               </View>
             </View>
           </NeonCard>
 
-          {/* Top LST yields row */}
-          <View
-            style={{
-              marginBottom: 8,
-              flexDirection: 'row',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}
-          >
-            <Text style={{ ...type.bodyM, color: 'rgba(248,250,252,0.96)' }}>Top LST yields right now</Text>
-            <Pressable onPress={handleMorePress} hitSlop={12}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Text style={{ ...type.bodyM, color: 'rgba(191,219,254,0.96)' }}>More</Text>
-                <Ionicons name="chevron-forward" size={16} color="rgba(191,219,254,0.96)" />
-              </View>
-            </Pressable>
+          {/* Top 2 LST cards - tap to navigate to Stake */}
+          <View style={{ marginBottom: 8 }}>
+            <Text style={{ ...type.bodyM, color: 'rgba(248,250,252,0.96)' }}>Top yields right now</Text>
           </View>
 
           <View style={{ flexDirection: 'row', gap: 12, marginBottom: 18 }}>
             <Pressable style={{ flex: 1 }} onPress={() => handleApyBubblePress('stkXPRT')}>
               <NeonCard style={{ flex: 1 }}>
                 <Text style={{ ...type.caption, color: 'rgba(248,250,252,0.95)' }}>stkXPRT</Text>
-                <Text style={{ ...type.h2, marginTop: 4, color: neon.purple }}>{`~${stkXprtApy.toFixed(1)}% APY`}</Text>
+                <Text style={{ ...type.h2, marginTop: 4, color: neon.purple }}>{`${stkXprtApy.toFixed(1)}%`}</Text>
                 <Text
                   style={{
                     ...type.caption,
@@ -287,7 +238,7 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
                     lineHeight: 18,
                   }}
                 >
-                  Cosmos LST · boosted vaults
+                  Persistence LST
                 </Text>
                 <Text
                   style={{
@@ -305,7 +256,7 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
             <Pressable style={{ flex: 1 }} onPress={() => handleApyBubblePress('stkTIA')}>
               <NeonCard style={{ flex: 1 }}>
                 <Text style={{ ...type.caption, color: 'rgba(191,219,254,0.98)' }}>stkTIA</Text>
-                <Text style={{ ...type.h2, marginTop: 4, color: neon.blue }}>{`~${stkTiaApy.toFixed(1)}% APY`}</Text>
+                <Text style={{ ...type.h2, marginTop: 4, color: neon.blue }}>{`${stkTiaApy.toFixed(1)}%`}</Text>
                 <Text
                   style={{
                     ...type.caption,
@@ -314,7 +265,7 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
                     lineHeight: 18,
                   }}
                 >
-                  TIA restaked · auto-compounding
+                  Celestia LST
                 </Text>
                 <Text
                   style={{
@@ -330,7 +281,7 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
             </Pressable>
           </View>
 
-          {/* Earnings + streak + rank glassmorphism section (also glass, wallpaper visible) */}
+          {/* Earnings Today simplified */}
           <NeonCard className="mb-6">
             <View>
               <LinearGradient
@@ -361,111 +312,34 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
                   color: 'rgba(148,163,184,0.96)',
                 }}
               >
-                Approx. based on blended APY (mock)
+                Based on blended APY (demo)
               </Text>
-
-              <View style={{ flexDirection: 'row', marginTop: 16, gap: 12 }}>
-                <NeonCard style={{ flex: 1 }}>
-                  <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.96)' }}>STREAK</Text>
-                  <Text style={{ ...type.h2, marginTop: 8, color: 'rgba(248,250,252,0.98)' }}>12</Text>
-                  <Text
-                    style={{
-                      ...type.caption,
-                      marginTop: 2,
-                      color: 'rgba(148,163,184,0.96)',
-                    }}
-                  >
-                    days
-                  </Text>
-                </NeonCard>
-
-                <NeonCard style={{ flex: 1 }}>
-                  <Text style={{ ...type.caption, color: 'rgba(148,163,184,0.96)' }}>RANK</Text>
-                  <Text style={{ ...type.h2, marginTop: 8, color: 'rgba(248,250,252,0.98)' }}>#184</Text>
-                  <Text
-                    style={{
-                      ...type.caption,
-                      marginTop: 2,
-                      color: 'rgba(148,163,184,0.96)',
-                    }}
-                  >
-                    leaderboard
-                  </Text>
-                </NeonCard>
-              </View>
             </View>
           </NeonCard>
 
-          {/* Second Top LST row at bottom */}
-          <View
-            style={{
-              marginBottom: 8,
-              flexDirection: 'row',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}
-          >
-            <Text style={{ ...type.bodyM, color: 'rgba(248,250,252,0.96)' }}>Top LST yields right now</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={{ ...type.bodyM, color: 'rgba(191,219,254,0.96)' }}>More</Text>
-              <Ionicons name="chevron-forward" size={16} color="rgba(191,219,254,0.96)" />
-            </View>
-          </View>
-
-          <View style={{ flexDirection: 'row', gap: 12 }}>
-            <Pressable style={{ flex: 1 }} onPress={() => handleApyBubblePress('stkXPRT')}>
-              <NeonCard style={{ flex: 1 }}>
-                <Text style={{ ...type.caption, color: 'rgba(248,250,252,0.95)' }}>stkXPRT</Text>
-                <Text style={{ ...type.h2, marginTop: 4, color: neon.purple }}>{`~${stkXprtApy.toFixed(1)}% APY`}</Text>
-                <Text
-                  style={{
-                    ...type.caption,
-                    marginTop: 8,
-                    color: 'rgba(226,232,240,0.9)',
-                    lineHeight: 18,
-                  }}
-                >
-                  Cosmos LST · boosted vaults
-                </Text>
-                <Text
-                  style={{
-                    ...type.caption,
-                    marginTop: 4,
-                    color: neon.purple,
-                    fontWeight: '600',
-                  }}
-                >
-                  Tap to stake →
-                </Text>
-              </NeonCard>
-            </Pressable>
-
-            <Pressable style={{ flex: 1 }} onPress={() => handleApyBubblePress('stkTIA')}>
-              <NeonCard style={{ flex: 1 }}>
-                <Text style={{ ...type.caption, color: 'rgba(191,219,254,0.98)' }}>stkTIA</Text>
-                <Text style={{ ...type.h2, marginTop: 4, color: neon.blue }}>{`~${stkTiaApy.toFixed(1)}% APY`}</Text>
-                <Text
-                  style={{
-                    ...type.caption,
-                    marginTop: 8,
-                    color: 'rgba(226,232,240,0.9)',
-                    lineHeight: 18,
-                  }}
-                >
-                  TIA restaked · auto-compounding
-                </Text>
-                <Text
-                  style={{
-                    ...type.caption,
-                    marginTop: 4,
-                    color: neon.blue,
-                    fontWeight: '600',
-                  }}
-                >
-                  Tap to stake →
-                </Text>
-              </NeonCard>
-            </Pressable>
+          {/* Quick Actions */}
+          <View style={{ gap: 12, paddingBottom: 20 }}>
+            <NeonButton
+              label="Swap Now"
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {})
+                if (navigation) {
+                  navigation.navigate('Swap')
+                }
+              }}
+              rightHint="TFUEL → LST"
+            />
+            <NeonButton
+              label="Lock XF for Boost"
+              variant="secondary"
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {})
+                if (navigation) {
+                  navigation.navigate('Stake')
+                }
+              }}
+              rightHint="up to 4x"
+            />
           </View>
         </ScrollView>
       </SafeAreaView>
