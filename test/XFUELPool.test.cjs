@@ -20,18 +20,18 @@ describe('XFUELPool', function () {
     const MockERC20 = await ethers.getContractFactory('MockERC20')
     token0 = await MockERC20.deploy('Token 0', 'TK0', 18)
     token1 = await MockERC20.deploy('Token 1', 'TK1', 18)
-    await token0.waitForDeployment?.() || await token0.deployed?.()
-    await token1.waitForDeployment?.() || await token1.deployed?.()
+    await (token0.waitForDeployment?.() || token0.deployed?.())
+    await (token1.waitForDeployment?.() || token1.deployed?.())
 
     // Deploy factory
     const XFUELPoolFactory = await ethers.getContractFactory('XFUELPoolFactory')
     factory = await XFUELPoolFactory.deploy()
-    await factory.waitForDeployment?.() || await factory.deployed?.()
+    await (factory.waitForDeployment?.() || factory.deployed?.())
 
     // Deploy pool (factory will deploy, but we'll test direct deployment for some tests)
     const XFUELPool = await ethers.getContractFactory('XFUELPool')
     pool = await XFUELPool.deploy()
-    await pool.waitForDeployment?.() || await pool.deployed?.()
+    await (pool.waitForDeployment?.() || pool.deployed?.())
   })
 
   afterEach(async function () {
@@ -97,7 +97,7 @@ describe('XFUELPool', function () {
       // Direct initialization should fail
       const XFUELPool = await ethers.getContractFactory('XFUELPool')
       const newPool = await XFUELPool.deploy()
-      await newPool.waitForDeployment?.() || await newPool.deployed?.()
+      await (newPool.waitForDeployment?.() || newPool.deployed?.())
 
       const token0Addr = await getAddress(token0)
       const token1Addr = await getAddress(token1)
@@ -490,7 +490,7 @@ describe('XFUELPool', function () {
     it('Should revert if zero address token0', async function () {
       const XFUELPool = await ethers.getContractFactory('XFUELPool')
       const newPool = await XFUELPool.deploy()
-      await newPool.waitForDeployment?.() || await newPool.deployed?.()
+      await (newPool.waitForDeployment?.() || newPool.deployed?.())
       
       // The pool's factory is set to the deployer, so we need to impersonate the deployer
       const [deployer] = await ethers.getSigners()
@@ -510,7 +510,7 @@ describe('XFUELPool', function () {
     it('Should revert if zero address token1', async function () {
       const XFUELPool = await ethers.getContractFactory('XFUELPool')
       const newPool = await XFUELPool.deploy()
-      await newPool.waitForDeployment?.() || await newPool.deployed?.()
+      await (newPool.waitForDeployment?.() || newPool.deployed?.())
       
       // The pool's factory is set to the deployer, so we need to impersonate the deployer
       const [deployer] = await ethers.getSigners()
@@ -530,7 +530,7 @@ describe('XFUELPool', function () {
     it('Should revert if sqrtPriceX96 is zero', async function () {
       const XFUELPool = await ethers.getContractFactory('XFUELPool')
       const newPool = await XFUELPool.deploy()
-      await newPool.waitForDeployment?.() || await newPool.deployed?.()
+      await (newPool.waitForDeployment?.() || newPool.deployed?.())
       
       // The pool's factory is set to the deployer, so we need to impersonate the deployer
       const [deployer] = await ethers.getSigners()

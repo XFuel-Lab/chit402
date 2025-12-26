@@ -1,5 +1,6 @@
-// CRITICAL: Import polyfills FIRST before any other imports
-import 'react-native-get-random-values'
+// CRITICAL: Import polyfills in correct order
+import 'react-native-get-random-values' // Must be FIRST for crypto entropy
+import './crypto-polyfill'
 import '@ethersproject/shims'
 import 'text-encoding-polyfill'
 

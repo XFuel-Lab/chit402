@@ -1,6 +1,15 @@
+/**
+ * ONBOARDING SCREEN - 15s Flow (2 Slides Max)
+ * 
+ * Slide 1: Swap Theta → Cosmos LSTs in one tap
+ * Slide 2: Connect MetaMask Mobile or Theta Wallet
+ * 
+ * No bullshit about tip pools or lottery. Just: Swap. Stake. Win.
+ */
+
 import React, { useMemo, useRef, useState } from 'react'
 import { FlatList, Pressable, Text, View, useWindowDimensions } from 'react-native'
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated'
+import Animated, { useAnimatedStyle } from 'react-native-reanimated'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { ScreenBackground } from '../components/ScreenBackground'
 import { GlassCard } from '../components/GlassCard'
@@ -26,33 +35,21 @@ export function OnboardingScreen({ onDone }: { onDone: () => void }) {
     () => [
       {
         key: 's1',
-        eyebrow: 'PASSIVE FARMING',
-        title: 'Farm while charging',
-        body: 'EdgeFarm runs battery-safe and prioritizes charging sessions so you earn without feeling it.',
-        badge: 'Battery-safe',
-      },
-      {
-        key: 's2',
-        eyebrow: 'AUTO-STAKE',
-        title: 'Swap → stake automatically',
-        body: 'One flow turns TFUEL into yield-bearing LSTs. You keep composable exposure and clean UX.',
+        eyebrow: 'ONE-TAP SWAPS',
+        title: 'Theta → Cosmos LSTs',
+        body: 'Swap TFUEL to the highest-APY Cosmos liquid staking tokens. No gas fees. Faster than Uniswap.',
         badge: 'Gas-free',
       },
       {
-        key: 's3',
-        eyebrow: 'VIRAL TIPPING',
-        title: 'Tip pools. Win lotteries.',
-        body: 'Tip Winners or enter the global lottery by tipping Losers. Share screenshots, climb leaderboards.',
-        badge: '10% lottery',
+        key: 's2',
+        eyebrow: 'CONNECT WALLET',
+        title: 'MetaMask or Theta',
+        body: 'Deep link MetaMask Mobile or scan QR with Theta Wallet. 10-second setup. Your keys, your crypto.',
+        badge: 'Secure',
       },
     ],
     []
   )
-
-  const progress = useSharedValue(0)
-  React.useEffect(() => {
-    progress.value = withTiming(index, { duration: 220 })
-  }, [index, progress])
 
   const goNext = () => {
     if (index >= slides.length - 1) {
@@ -96,7 +93,7 @@ export function OnboardingScreen({ onDone }: { onDone: () => void }) {
                   </Text>
 
                   <View style={{ marginTop: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <NeonPill label={item.badge} tone={item.key === 's1' ? 'green' : item.key === 's2' ? 'blue' : 'pink'} />
+                    <NeonPill label={item.badge} tone={item.key === 's1' ? 'blue' : 'green'} />
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       {slides.map((_, i) => (
                         <Dot key={i} active={i === index} />
@@ -113,7 +110,7 @@ export function OnboardingScreen({ onDone }: { onDone: () => void }) {
                   </View>
 
                   <Text style={{ ...type.caption, marginTop: 12, color: 'rgba(255,255,255,0.45)' }}>
-                    Design vibe: deBridge × Apex × Cyberpunk.
+                    Smooth, fast, addictive. Like the Tesla app.
                   </Text>
                 </GlassCard>
               </View>
@@ -122,7 +119,7 @@ export function OnboardingScreen({ onDone }: { onDone: () => void }) {
 
           <Animated.View style={[useAnimatedStyle(() => ({ opacity: 0.9 })), { paddingBottom: 18 }]}>
             <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.40)', textAlign: 'center' }}>
-              Tap “Next” to learn, then connect your wallet.
+              Tap "Next" then connect to start swapping
             </Text>
           </Animated.View>
         </View>

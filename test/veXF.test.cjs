@@ -20,7 +20,7 @@ describe('veXF', function () {
     // Deploy mock XF token
     MockERC20 = await ethers.getContractFactory('MockERC20')
     xfToken = await MockERC20.deploy('XFuel Token', 'XF', 18)
-    await xfToken.waitForDeployment?.() || await xfToken.deployed?.()
+    await (xfToken.waitForDeployment?.() || xfToken.deployed?.())
 
     // Deploy veXF as upgradeable
     const VeXF = await ethers.getContractFactory('veXF')
@@ -28,7 +28,7 @@ describe('veXF', function () {
       await getAddress(xfToken),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await veXF.waitForDeployment?.() || await veXF.deployed?.()
+    await (veXF.waitForDeployment?.() || veXF.deployed?.())
 
     // Mint tokens to users
     const mintAmount = parseEther('10000')
@@ -399,7 +399,7 @@ describe('veXF', function () {
     it('Should distribute yield successfully', async function () {
       const yieldToken = await ethers.getContractFactory('MockERC20')
       const usdc = await yieldToken.deploy('USD Coin', 'USDC', 6)
-      await usdc.waitForDeployment?.() || await usdc.deployed?.()
+      await (usdc.waitForDeployment?.() || usdc.deployed?.())
       
       const yieldAmount = parseEther('100')
       await usdc.mint(await getAddress(revenueSplitter), yieldAmount)
@@ -431,7 +431,7 @@ describe('veXF', function () {
     it('Should revert if amount is zero', async function () {
       const yieldToken = await ethers.getContractFactory('MockERC20')
       const usdc = await yieldToken.deploy('USD Coin', 'USDC', 6)
-      await usdc.waitForDeployment?.() || await usdc.deployed?.()
+      await (usdc.waitForDeployment?.() || usdc.deployed?.())
       
       await expect(
         veXF.connect(revenueSplitter).distributeYield(await getAddress(usdc), 0)
@@ -445,11 +445,11 @@ describe('veXF', function () {
         await getAddress(xfToken),
         await getAddress(owner)
       ], { initializer: 'initialize' })
-      await newVeXF.waitForDeployment?.() || await newVeXF.deployed?.()
+      await (newVeXF.waitForDeployment?.() || newVeXF.deployed?.())
       
       const yieldToken = await ethers.getContractFactory('MockERC20')
       const usdc = await yieldToken.deploy('USD Coin', 'USDC', 6)
-      await usdc.waitForDeployment?.() || await usdc.deployed?.()
+      await (usdc.waitForDeployment?.() || usdc.deployed?.())
       
       const yieldAmount = parseEther('100')
       await usdc.mint(await getAddress(revenueSplitter), yieldAmount)

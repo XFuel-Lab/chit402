@@ -19,7 +19,7 @@ describe('CyberneticFeeSwitch', function () {
     // Deploy mock XF token
     MockERC20 = await ethers.getContractFactory('MockERC20')
     xfToken = await MockERC20.deploy('XFuel Token', 'XF', 18)
-    await xfToken.waitForDeployment?.() || await xfToken.deployed?.()
+    await (xfToken.waitForDeployment?.() || xfToken.deployed?.())
 
     // Deploy veXF
     const VeXF = await ethers.getContractFactory('veXF')
@@ -27,7 +27,7 @@ describe('CyberneticFeeSwitch', function () {
       await getAddress(xfToken),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await veXF.waitForDeployment?.() || await veXF.deployed?.()
+    await (veXF.waitForDeployment?.() || veXF.deployed?.())
 
     // Deploy CyberneticFeeSwitch
     const CyberneticFeeSwitch = await ethers.getContractFactory('CyberneticFeeSwitch')
@@ -35,7 +35,7 @@ describe('CyberneticFeeSwitch', function () {
       await getAddress(veXF),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await feeSwitch.waitForDeployment?.() || await feeSwitch.deployed?.()
+    await (feeSwitch.waitForDeployment?.() || feeSwitch.deployed?.())
   })
 
   afterEach(async function () {
@@ -312,7 +312,7 @@ describe('CyberneticFeeSwitch', function () {
         [await getAddress(xfToken), await getAddress(owner)],
         { initializer: 'initialize' }
       )
-      await newVeXF.waitForDeployment?.() || await newVeXF.deployed?.()
+      await (newVeXF.waitForDeployment?.() || newVeXF.deployed?.())
 
       const tx = await feeSwitch.setVeXF(await getAddress(newVeXF))
       const receipt = await tx.wait()

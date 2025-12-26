@@ -11,7 +11,17 @@
       "distribution": "internal"
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_NETWORK": "testnet"
+      }
+    },
+    "mainnet": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_NETWORK": "mainnet"
+      },
+      "channel": "mainnet-beta"
     }
   }
 }

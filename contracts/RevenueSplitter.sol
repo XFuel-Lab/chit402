@@ -44,6 +44,12 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     uint256 public totalRXFMinted;
     uint256 public totalTreasurySent;
 
+    // Mainnet Beta Testing Safety Limits
+    uint256 public maxSwapAmount;            // Max per swap (default: 1,000 TFUEL)
+    uint256 public totalUserLimit;           // Max total per user (default: 5,000 TFUEL)
+    mapping(address => uint256) public userTotalSwapped;
+    bool public paused;                      // Emergency pause switch
+
     // Events
     event RevenueCollected(
         address indexed token,
@@ -61,6 +67,9 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     event BuybackBurnerSet(address indexed buybackBurner);
     event RXFSet(address indexed rXF);
     event RevenueTokenSet(address indexed token);
+    event SwapLimitUpdated(uint256 maxSwapAmount, uint256 totalUserLimit);
+    event PauseToggled(bool paused);
+    event UserSwapRecorded(address indexed user, uint256 amount, uint256 totalSwapped);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -93,6 +102,11 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         veXFContract = veXF(_veXF);
         treasury = _treasury;
 
+        // Initialize mainnet beta testing limits
+        maxSwapAmount = 1000 * 1e18;      // 1,000 TFUEL per swap
+        totalUserLimit = 5000 * 1e18;     // 5,000 TFUEL total per user
+        paused = false;
+
         emit RevenueTokenSet(_revenueToken);
         emit VeXFSet(_veXF);
         emit TreasurySet(_treasury);
@@ -103,7 +117,17 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
      * @param amount Amount of revenue tokens to split
      */
     function splitRevenue(uint256 amount) external nonReentrant {
+        require(!paused, "RevenueSplitter: contract is paused");
         require(amount > 0, "RevenueSplitter: amount must be greater than 0");
+        require(amount <= maxSwapAmount, "RevenueSplitter: amount exceeds max swap limit");
+        
+        // Track by tx.origin to prevent proxy contract bypass (same as BuybackBurner)
+        address user = tx.origin;
+        require(userTotalSwapped[user] + amount <= totalUserLimit, "RevenueSplitter: user total limit exceeded");
+
+        // Update user's total swapped amount
+        userTotalSwapped[user] += amount;
+        emit UserSwapRecorded(user, amount, userTotalSwapped[user]);
 
         // Transfer revenue from caller
         revenueToken.safeTransferFrom(msg.sender, address(this), amount);
@@ -167,7 +191,17 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
      * In production, swap TFUEL to USDC first, then split
      */
     function splitRevenueNative() external payable nonReentrant {
+        require(!paused, "RevenueSplitter: contract is paused");
         require(msg.value > 0, "RevenueSplitter: amount must be greater than 0");
+        require(msg.value <= maxSwapAmount, "RevenueSplitter: amount exceeds max swap limit");
+        
+        // Track by tx.origin to prevent proxy contract bypass (same as BuybackBurner)
+        address user = tx.origin;
+        require(userTotalSwapped[user] + msg.value <= totalUserLimit, "RevenueSplitter: user total limit exceeded");
+
+        // Update user's total swapped amount
+        userTotalSwapped[user] += msg.value;
+        emit UserSwapRecorded(user, msg.value, userTotalSwapped[user]);
 
         totalRevenueCollected += msg.value;
 
@@ -233,6 +267,52 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         require(_revenueToken != address(0), "RevenueSplitter: invalid revenue token");
         revenueToken = IERC20(_revenueToken);
         emit RevenueTokenSet(_revenueToken);
+    }
+
+    /**
+     * @dev Update swap limits (owner only)
+     * @param _maxSwapAmount New max per swap (in wei)
+     * @param _totalUserLimit New total limit per user (in wei)
+     */
+    function updateSwapLimits(uint256 _maxSwapAmount, uint256 _totalUserLimit) external onlyOwner {
+        require(_maxSwapAmount > 0, "RevenueSplitter: max swap amount must be greater than 0");
+        require(_totalUserLimit >= _maxSwapAmount, "RevenueSplitter: total limit must be >= max swap");
+        
+        maxSwapAmount = _maxSwapAmount;
+        totalUserLimit = _totalUserLimit;
+        
+        emit SwapLimitUpdated(_maxSwapAmount, _totalUserLimit);
+    }
+
+    /**
+     * @dev Toggle pause state (owner only) - emergency kill switch
+     * @param _paused New pause state
+     */
+    function setPaused(bool _paused) external onlyOwner {
+        paused = _paused;
+        emit PauseToggled(_paused);
+    }
+
+    /**
+     * @dev Reset user's swap total (owner only) - for exceptions
+     * @param user Address of user to reset
+     */
+    function resetUserSwapTotal(address user) external onlyOwner {
+        userTotalSwapped[user] = 0;
+    }
+
+    /**
+     * @dev Initialize beta limits (for upgrades - only if not already set)
+     * Can be called by owner after upgrade to set initial limits
+     */
+    function initializeBetaLimits() external onlyOwner {
+        // Only initialize if not already set (allows safe re-initialization on upgrade)
+        if (maxSwapAmount == 0) {
+            maxSwapAmount = 1000 * 1e18;      // 1,000 TFUEL per swap
+            totalUserLimit = 5000 * 1e18;     // 5,000 TFUEL total per user
+            paused = false;
+            emit SwapLimitUpdated(maxSwapAmount, totalUserLimit);
+        }
     }
 
     /**

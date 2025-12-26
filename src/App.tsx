@@ -19,6 +19,7 @@ import WalletConnectBugBanner from './components/WalletConnectBugBanner'
 import ThetaWalletQRModal from './components/ThetaWalletQRModal'
 import SignInModal from './components/SignInModal'
 import TransactionSuccessModal from './components/TransactionSuccessModal'
+import BetaBanner from './components/BetaBanner'
 import { THETA_TESTNET, THETA_MAINNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
 import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 import { usePriceStore } from './stores/priceStore'
@@ -36,6 +37,7 @@ import {
   isKeplrInstalled 
 } from './utils/cosmosLSTStaking'
 import { switchToThetaNetwork, isConnectedToTheta } from './utils/metamaskThetaRPC'
+import { validateSwapLimits, updateUserSwapTotal, getRemainingSwapAllowance } from './utils/swapLimits'
 
 type SwapStatus = 'idle' | 'approving' | 'swapping' | 'success' | 'error'
 
@@ -750,6 +752,24 @@ function App() {
       return
     }
 
+    // ⚠️ MAINNET BETA: Validate swap limits
+    if (APP_CONFIG.NETWORK === 'mainnet' && wallet.fullAddress) {
+      const validation = validateSwapLimits(wallet.fullAddress, amount)
+      if (!validation.valid) {
+        setStatusMessage(`❌ ${validation.error}`)
+        setSwapStatus('error')
+        setTimeout(() => {
+          setSwapStatus('idle')
+          setStatusMessage('')
+        }, 5000)
+        return
+      }
+      
+      // Show remaining allowance
+      const remaining = validation.remaining || 0
+      console.log(`✅ [BETA] Swap limit check passed. Remaining allowance: ${remaining.toFixed(2)} TFUEL`)
+    }
+
     // Validate router address is configured
     if (!ROUTER_ADDRESS) {
       console.error('❌ [XFUEL Swap] Router address not configured')
@@ -907,6 +927,13 @@ function App() {
       setSwapStatus('success')
       setTfuelAmount('')
       setSelectedPercentage(null)
+      
+      // ⚠️ MAINNET BETA: Update user's swap total after successful swap
+      if (APP_CONFIG.NETWORK === 'mainnet' && wallet.fullAddress) {
+        updateUserSwapTotal(wallet.fullAddress, amount)
+        const remaining = getRemainingSwapAllowance(wallet.fullAddress)
+        console.log(`✅ [BETA] Swap total updated. Remaining allowance: ${remaining.toFixed(2)} TFUEL`)
+      }
       
       // Show transaction success modal
       setSuccessModalData({
@@ -1293,6 +1320,9 @@ function App() {
 
   return (
     <ScreenBackground>
+      {/* Beta Testing Banner - Only on mainnet */}
+      <BetaBanner network={APP_CONFIG.NETWORK as 'mainnet' | 'testnet'} />
+      
       <div className="relative z-10 mx-auto flex min-h-screen max-w-5xl flex-col px-4 py-6 sm:px-6 sm:py-10 lg:px-8">
         {/* Top chrome: logo + live orb */}
         <header className="mb-6 flex flex-col items-center justify-between gap-4 sm:mb-10 sm:flex-row">

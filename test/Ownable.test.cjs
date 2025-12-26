@@ -12,7 +12,7 @@ describe('Ownable', function () {
     // Deploy a contract that uses Ownable (using TipPool as example)
     const TipPool = await ethers.getContractFactory('TipPool')
     ownable = await TipPool.deploy()
-    await ownable.waitForDeployment?.() || await ownable.deployed?.()
+    await (ownable.waitForDeployment?.() || ownable.deployed?.())
   })
 
   describe('Deployment', function () {

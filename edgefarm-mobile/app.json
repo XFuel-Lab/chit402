@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "xfuel",
+    "schemes": ["xfuel", "thetawallet", "theta", "wc"],
     "userInterfaceStyle": "dark",
     "platforms": ["ios", "android"],
     "newArchEnabled": true,
@@ -17,7 +18,25 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.xfuel.mobile"
+      "bundleIdentifier": "app.xfuel.mobile",
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": [
+          "theta",
+          "thetawallet",
+          "wc",
+          "metamask",
+          "keplr"
+        ],
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": ["xfuel", "thetawallet", "theta", "wc"],
+            "CFBundleURLName": "app.xfuel.mobile"
+          }
+        ],
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -27,6 +46,10 @@
       "package": "app.xfuel.mobile",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "INTERNET",
+        "CAMERA"
+      ],
       "intentFilters": [
         {
           "action": "VIEW",
@@ -39,9 +62,33 @@
             },
             {
               "scheme": "xfuel"
+            },
+            {
+              "scheme": "theta"
+            },
+            {
+              "scheme": "thetawallet"
+            },
+            {
+              "scheme": "wc"
             }
           ],
           "category": ["BROWSABLE", "DEFAULT"]
+        },
+        {
+          "action": "VIEW",
+          "category": ["DEFAULT", "BROWSABLE"],
+          "data": {
+            "scheme": "thetawallet",
+            "host": "wc"
+          }
+        },
+        {
+          "action": "VIEW",
+          "category": ["DEFAULT", "BROWSABLE"],
+          "data": {
+            "scheme": "wc"
+          }
         }
       ]
     },
@@ -51,9 +98,14 @@
     "extra": {
       "routerAddress": "0xYourRealRouterWillGoHere_AfterDeploy",
       "thetaMainnetRpc": "https://eth-rpc-api.thetatoken.org/rpc",
+      "thetaTestnetRpc": "https://eth-rpc-api-testnet.thetatoken.org/rpc",
       "thetaMainnetChainId": 361,
+      "thetaTestnetChainId": 365,
       "thetaExplorerUrl": "https://explorer.thetatoken.org",
-      "apiUrl": "https://api.xfuel.app",
+      "thetaTestnetExplorerUrl": "https://testnet-explorer.thetatoken.org",
+      "apiUrl": "http://localhost:3001",
+      "useTestnet": true,
+      "simulationMode": true,
       "eas": {
         "projectId": "4d7c789a-9ec5-482c-b119-34ce6dad1bab"
       }

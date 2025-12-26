@@ -13,10 +13,23 @@ module.exports = {
       },
       isolatedModules: true,
     }],
+    '^.+\\.jsx?$': ['./jest-import-meta-transform.cjs', {
+      tsconfig: {
+        jsx: 'react-jsx',
+        target: 'es2020',
+        module: 'commonjs',
+        allowJs: true,
+      },
+    }],
   },
+  transformIgnorePatterns: [
+    'node_modules/(?!(@walletconnect|uint8arrays|multiformats|lucide-react|@cosmjs|@scure)/)',
+  ],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
+    '^lucide-react$': '<rootDir>/__mocks__/lucide-react.js',
+    '^@walletconnect/ethereum-provider$': '<rootDir>/__mocks__/@walletconnect/ethereum-provider.js',
   },
   setupFilesAfterEnv: ['<rootDir>/setupTests.ts'],
   globals: {

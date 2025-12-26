@@ -2,49 +2,208 @@
 
 Sub-4s institutional-grade settlement rail: Theta EdgeCloud GPU/video revenue → auto-compounding Cosmos LSTs
 
+## 🚨 MAINNET BETA TESTING - Live Now
+
+**XFuel Protocol is live on Theta Mainnet in beta testing mode.**
+
+⚠️ **SWAP AT YOUR OWN RISK** - Contracts are unaudited. Use for testing only.
+
+### Safety Limits
+- **Max per swap:** 1,000 TFUEL
+- **Total per user:** 5,000 TFUEL
+- **Emergency controls:** Pause/kill switches active
+
+**[→ Read Full Mainnet Beta Guide](./docs/MAINNET_BETA_TESTING.md)**
+
+---
+
+## ✨ Recent Updates (December 2025)
+
+### WalletConnect v2 Integration
+- 🔌 **Unified Wallet Provider** - Seamless connection across Theta Wallet, MetaMask, and WalletConnect
+- 📱 **Mobile Deep Linking** - One-tap wallet connection on iOS/Android
+- 🔒 **Enhanced Security** - Nonce-based replay attack prevention
+- ⚡ **Auto-Reconnection** - Session persistence across page refreshes
+
+### Mobile UI Improvements
+- 🎯 **Hierarchical Single-Button Flows** - Streamlined UX with clear CTAs
+- 🎨 **Haptic Feedback** - Tactile response for all interactions
+- 🔄 **Pull-to-Refresh** - Instant balance and APY updates
+- 🎉 **Confetti Animations** - Celebrate successful swaps
+
+See [WalletConnect v2 Guide](./docs/WALLETCONNECT_V2_GUIDE.md) for implementation details.
+
 ## Features
 
 - 🚀 Built with Vite 5.0.0, React 18, TypeScript, and Tailwind CSS
-- 🔌 Theta Wallet integration with balance display
-- 💱 TFUEL swap interface with MAX button
+- 🔌 **Multi-Wallet Support**: Theta Wallet, MetaMask, WalletConnect v2
+- 💱 TFUEL swap interface with intelligent defaults
 - ⚡ Quick swap presets: 25% → stkXPRT, 50% → stkATOM, 100% → pSTAKE BTC
 - 📊 Live indicators: finality, gas, price impact, Chainalysis safety
 - 🎨 Dark cyberpunk theme with purple/blue neon gradients
-- 📱 Fully responsive mobile design
+- 📱 Native mobile app (Expo) with optimized UX
+- 🔒 **Security**: Input validation, nonce-based signatures, reentrancy guards
 
 ## Setup
 
-1. Install dependencies:
+### Web Application
+
+1. **Install dependencies:**
 ```bash
 npm install
 ```
 
-2. Configure environment variables:
+2. **Configure environment variables:**
 ```bash
-cp .env.example .env
+cp .env.example .env.local
 ```
-Then edit `.env` and add your deployed contract addresses:
-- `VITE_ROUTER_ADDRESS` - Your deployed XFUEL router contract address on Theta testnet
-- `VITE_TIP_POOL_ADDRESS` - Your deployed Tip Pool contract address on Theta testnet
-- `VITE_API_URL` - Backend API URL (default: `http://localhost:3001`)
-- `SIMULATION_MODE` - Enable simulation mode on backend (default: `false`)
 
-3. Start development server:
+Edit `.env.local` with your configuration:
+
+```bash
+# WalletConnect v2 (get from https://cloud.walletconnect.com)
+VITE_WALLETCONNECT_PROJECT_ID=your_project_id_here
+
+# Theta Network Contracts (Mainnet)
+VITE_ROUTER_ADDRESS=0x...  # Your deployed XFUEL router
+VITE_TIP_POOL_ADDRESS=0x...  # Your deployed Tip Pool
+
+# Backend API
+VITE_API_URL=http://localhost:3001  # or production URL
+
+# Optional: Simulation mode for testing
+SIMULATION_MODE=true
+```
+
+3. **Start development server:**
 ```bash
 npm run dev
 ```
 
-4. Build for production:
+4. **Build for production:**
 ```bash
 npm run build
+npm run preview  # Preview production build
 ```
 
-5. Preview production build:
+### Mobile Application
+
+1. **Navigate to mobile directory:**
 ```bash
-npm run preview
+cd edgefarm-mobile
+npm install
 ```
 
-## Tokenomics
+2. **Start Expo development server:**
+```bash
+npm run start
+```
+
+3. **Run on device:**
+```bash
+# iOS Simulator
+npm run ios
+
+# Android Emulator
+npm run android
+
+# Physical device: Scan QR code with Expo Go app
+```
+
+4. **Build for production:**
+```bash
+# iOS
+npx eas-cli build --platform ios --profile production
+
+# Android
+npx eas-cli build --platform android --profile production
+```
+
+See [Deployment Checklist](./docs/DEPLOYMENT_CHECKLIST_V2.md) for full production deployment guide.
+
+## Architecture
+
+### Web Stack
+- **Frontend**: Vite + React 18 + TypeScript + Tailwind CSS
+- **Wallet Integration**: WalletConnect v2 + Ethers.js v6
+- **State Management**: Zustand (price oracle) + React Context (wallet)
+- **Testing**: Jest + Cypress E2E
+- **Deployment**: Vercel
+
+### Mobile Stack
+- **Framework**: Expo (React Native)
+- **Navigation**: React Navigation (Material Top Tabs + Stack)
+- **Wallet**: Theta WalletConnect + Deep Linking
+- **UI**: NativeWind (Tailwind for RN) + Custom Neon Components
+- **Deployment**: Expo Application Services (EAS)
+
+### Smart Contracts
+- **Router**: XFUELRouter (swap orchestration)
+- **Revenue Split**: RevenueSplitter (tokenomics)
+- **Governance**: veXF (vote-escrowed XF)
+- **Security**: ReentrancyGuard, input validation, nonce-based signatures
+
+## Testing
+
+### Unit Tests
+```bash
+npm test                 # Run Jest tests
+npm run test:coverage   # With coverage report
+```
+
+### E2E Tests
+```bash
+npm run test:e2e             # Open Cypress UI
+npm run test:e2e:headless   # Run headless
+```
+
+### Contract Tests
+```bash
+npm run test:contracts      # Run Hardhat tests
+npm run test:coverage       # With coverage
+```
+
+### Mobile Tests
+```bash
+cd edgefarm-mobile
+npm run start  # Manual testing on device
+```
+
+## Documentation
+
+- **[🚨 Mainnet Beta Testing Guide](./docs/MAINNET_BETA_TESTING.md)** - Live testing, safety limits, deployment
+- [WalletConnect v2 Integration Guide](./docs/WALLETCONNECT_V2_GUIDE.md) - Comprehensive implementation details
+- [Cursor Implementation Guide](./docs/CURSOR_IMPLEMENTATION_GUIDE.md) - AI assistant reference
+- [Deployment Checklist](./docs/DEPLOYMENT_CHECKLIST_V2.md) - Production deployment steps
+- [Security Audit Report](./SECURITY_AUDIT_REPORT.md) - Contract security analysis
+- [Cosmos LST Staking Guide](./COSMOS_LST_STAKING_GUIDE.md) - Cross-chain staking integration
+
+## Security
+
+### Implemented Protections
+
+- ✅ **Input Validation**: All user inputs sanitized and validated
+- ✅ **Nonce-Based Signatures**: Replay attack prevention
+- ✅ **Reentrancy Guards**: OpenZeppelin ReentrancyGuard on all state-changing functions
+- ✅ **Address Validation**: Strict Ethereum address format checks
+- ✅ **Balance Verification**: Pre-transaction balance validation
+- ✅ **Timestamp Validation**: 5-minute request window
+- ✅ **LST Whitelist**: Only approved LSTs allowed
+- ✅ **Rate Limiting**: (Recommended: implement Redis-based)
+
+### Audit Status
+
+Last audited: [Date TBD]  
+Auditor: [TBD - recommend OpenZeppelin, Trail of Bits, or Consensys Diligence]
+
+Report: [./SECURITY_AUDIT_REPORT.md](./SECURITY_AUDIT_REPORT.md)
+
+### Responsible Disclosure
+
+Found a security issue? Email: security@xfuel.app  
+PGP Key: [Link to public key]
+
+We follow a 90-day disclosure timeline and offer bounties for valid reports.
 
 ### Phase 1 Tokenomics
 

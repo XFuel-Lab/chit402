@@ -2,6 +2,9 @@ require('@nomicfoundation/hardhat-toolbox')
 require('@nomicfoundation/hardhat-ethers')
 require('@openzeppelin/hardhat-upgrades')
 require('solidity-coverage')
+
+// Load .env.local first (for secrets), then .env (for public config)
+require('dotenv').config({ path: '.env.local' })
 require('dotenv').config()
 
 /** @type {import('hardhat/config').HardhatUserConfig} */

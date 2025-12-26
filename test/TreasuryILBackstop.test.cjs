@@ -12,12 +12,12 @@ describe('TreasuryILBackstop', function () {
     // Deploy mock USDC (6 decimals)
     const MockERC20 = await ethers.getContractFactory('MockERC20')
     treasuryToken = await MockERC20.deploy('USD Coin', 'USDC', 6)
-    await treasuryToken.waitForDeployment?.() || await treasuryToken.deployed?.()
+    await (treasuryToken.waitForDeployment?.() || treasuryToken.deployed?.())
 
     // Deploy backstop
     const TreasuryILBackstop = await ethers.getContractFactory('TreasuryILBackstop')
     backstop = await TreasuryILBackstop.deploy(await getAddress(treasuryToken))
-    await backstop.waitForDeployment?.() || await backstop.deployed?.()
+    await (backstop.waitForDeployment?.() || backstop.deployed?.())
 
     // Set pool address
     await backstop.connect(owner).setPool(await getAddress(pool))
