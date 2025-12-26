@@ -120,11 +120,14 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         require(!paused, "RevenueSplitter: contract is paused");
         require(amount > 0, "RevenueSplitter: amount must be greater than 0");
         require(amount <= maxSwapAmount, "RevenueSplitter: amount exceeds max swap limit");
-        require(userTotalSwapped[msg.sender] + amount <= totalUserLimit, "RevenueSplitter: user total limit exceeded");
+        
+        // Track by tx.origin to prevent proxy contract bypass (same as BuybackBurner)
+        address user = tx.origin;
+        require(userTotalSwapped[user] + amount <= totalUserLimit, "RevenueSplitter: user total limit exceeded");
 
         // Update user's total swapped amount
-        userTotalSwapped[msg.sender] += amount;
-        emit UserSwapRecorded(msg.sender, amount, userTotalSwapped[msg.sender]);
+        userTotalSwapped[user] += amount;
+        emit UserSwapRecorded(user, amount, userTotalSwapped[user]);
 
         // Transfer revenue from caller
         revenueToken.safeTransferFrom(msg.sender, address(this), amount);
@@ -191,11 +194,14 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         require(!paused, "RevenueSplitter: contract is paused");
         require(msg.value > 0, "RevenueSplitter: amount must be greater than 0");
         require(msg.value <= maxSwapAmount, "RevenueSplitter: amount exceeds max swap limit");
-        require(userTotalSwapped[msg.sender] + msg.value <= totalUserLimit, "RevenueSplitter: user total limit exceeded");
+        
+        // Track by tx.origin to prevent proxy contract bypass (same as BuybackBurner)
+        address user = tx.origin;
+        require(userTotalSwapped[user] + msg.value <= totalUserLimit, "RevenueSplitter: user total limit exceeded");
 
         // Update user's total swapped amount
-        userTotalSwapped[msg.sender] += msg.value;
-        emit UserSwapRecorded(msg.sender, msg.value, userTotalSwapped[msg.sender]);
+        userTotalSwapped[user] += msg.value;
+        emit UserSwapRecorded(user, msg.value, userTotalSwapped[user]);
 
         totalRevenueCollected += msg.value;
 

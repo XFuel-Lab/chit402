@@ -21,7 +21,7 @@ describe('rXF', function () {
     // Deploy mock XF token
     MockERC20 = await ethers.getContractFactory('MockERC20')
     xfToken = await MockERC20.deploy('XFuel Token', 'XF', 18)
-    await xfToken.waitForDeployment?.() || await xfToken.deployed?.()
+    await (xfToken.waitForDeployment?.() || xfToken.deployed?.())
 
     // Deploy veXF
     const VeXF = await ethers.getContractFactory('veXF')
@@ -29,7 +29,7 @@ describe('rXF', function () {
       await getAddress(xfToken),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await veXF.waitForDeployment?.() || await veXF.deployed?.()
+    await (veXF.waitForDeployment?.() || veXF.deployed?.())
 
     // Deploy rXF
     const RXF = await ethers.getContractFactory('rXF')
@@ -39,7 +39,7 @@ describe('rXF', function () {
       await getAddress(revenueSplitter),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await rXF.waitForDeployment?.() || await rXF.deployed?.()
+    await (rXF.waitForDeployment?.() || rXF.deployed?.())
 
     // Mint XF tokens for redemption testing
     await xfToken.mint(await getAddress(rXF), parseEther('1000000'))
@@ -562,7 +562,7 @@ describe('rXF', function () {
         [await getAddress(xfToken), await getAddress(owner)],
         { initializer: 'initialize' }
       )
-      await newVeXF.waitForDeployment?.() || await newVeXF.deployed?.()
+      await (newVeXF.waitForDeployment?.() || newVeXF.deployed?.())
 
       await rXF.connect(owner).setVeXF(await getAddress(newVeXF))
       expect(await rXF.veXFContract()).to.equal(await getAddress(newVeXF))
@@ -590,7 +590,7 @@ describe('rXF', function () {
         await getAddress(rXF),
         RXF
       )
-      await rXF2.waitForDeployment?.() || await rXF2.deployed?.()
+      await (rXF2.waitForDeployment?.() || rXF2.deployed?.())
 
       // Verify state is preserved
       expect(await rXF2.name()).to.equal('Revenue XF')

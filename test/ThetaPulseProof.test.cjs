@@ -20,7 +20,7 @@ describe('ThetaPulseProof', function () {
     // Deploy mock XF token
     MockERC20 = await ethers.getContractFactory('MockERC20')
     xfToken = await MockERC20.deploy('XFuel Token', 'XF', 18)
-    await xfToken.waitForDeployment?.() || await xfToken.deployed?.()
+    await (xfToken.waitForDeployment?.() || xfToken.deployed?.())
 
     // Deploy veXF
     const VeXF = await ethers.getContractFactory('veXF')
@@ -28,7 +28,7 @@ describe('ThetaPulseProof', function () {
       await getAddress(xfToken),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await veXF.waitForDeployment?.() || await veXF.deployed?.()
+    await (veXF.waitForDeployment?.() || veXF.deployed?.())
 
     // Deploy ThetaPulseProof
     const ThetaPulseProof = await ethers.getContractFactory('ThetaPulseProof')
@@ -36,7 +36,7 @@ describe('ThetaPulseProof', function () {
       await getAddress(veXF),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await pulseProof.waitForDeployment?.() || await pulseProof.deployed?.()
+    await (pulseProof.waitForDeployment?.() || pulseProof.deployed?.())
 
     // Set ThetaPulseProof in veXF
     await veXF.setPulseProofContract(await getAddress(pulseProof))

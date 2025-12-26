@@ -11,7 +11,7 @@ describe('TipPool', function () {
 
     const TipPool = await ethers.getContractFactory('TipPool')
     tipPool = await TipPool.deploy()
-    await tipPool.waitForDeployment?.() || await tipPool.deployed?.()
+    await (tipPool.waitForDeployment?.() || tipPool.deployed?.())
     // Note: TipPool now has constructor that takes owner, but deploy() handles it
   })
 

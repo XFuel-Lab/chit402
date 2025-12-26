@@ -20,10 +20,10 @@ describe('Phase 2 Integration', function () {
     // Deploy mock tokens
     MockERC20 = await ethers.getContractFactory('MockERC20')
     xfToken = await MockERC20.deploy('XFuel Token', 'XF', 18)
-    await xfToken.waitForDeployment?.() || await xfToken.deployed?.()
+    await (xfToken.waitForDeployment?.() || xfToken.deployed?.())
 
     revenueToken = await MockERC20.deploy('USD Coin', 'USDC', 6)
-    await revenueToken.waitForDeployment?.() || await revenueToken.deployed?.()
+    await (revenueToken.waitForDeployment?.() || revenueToken.deployed?.())
 
     // Deploy Phase 1 contracts
     const VeXF = await ethers.getContractFactory('veXF')
@@ -31,7 +31,7 @@ describe('Phase 2 Integration', function () {
       await getAddress(xfToken),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await veXF.waitForDeployment?.() || await veXF.deployed?.()
+    await (veXF.waitForDeployment?.() || veXF.deployed?.())
 
     const RevenueSplitter = await ethers.getContractFactory('RevenueSplitter')
     revenueSplitter = await upgrades.deployProxy(RevenueSplitter, [
@@ -40,7 +40,7 @@ describe('Phase 2 Integration', function () {
       await getAddress(treasury),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await revenueSplitter.waitForDeployment?.() || await revenueSplitter.deployed?.()
+    await (revenueSplitter.waitForDeployment?.() || revenueSplitter.deployed?.())
 
     // Deploy Phase 2 contracts
     const RXF = await ethers.getContractFactory('rXF')
@@ -50,7 +50,7 @@ describe('Phase 2 Integration', function () {
       await getAddress(revenueSplitter),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await rXF.waitForDeployment?.() || await rXF.deployed?.()
+    await (rXF.waitForDeployment?.() || rXF.deployed?.())
 
     const BuybackBurner = await ethers.getContractFactory('BuybackBurner')
     buybackBurner = await upgrades.deployProxy(BuybackBurner, [
@@ -59,7 +59,7 @@ describe('Phase 2 Integration', function () {
       ethers.ZeroAddress, // No swap router
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await buybackBurner.waitForDeployment?.() || await buybackBurner.deployed?.()
+    await (buybackBurner.waitForDeployment?.() || buybackBurner.deployed?.())
 
     // Configure Phase 2 in RevenueSplitter
     await revenueSplitter.setRXF(await getAddress(rXF))
@@ -276,7 +276,7 @@ describe('Phase 2 Integration', function () {
         await getAddress(revenueSplitter),
         await getAddress(owner)
       ], { initializer: 'initialize' })
-      await newRXF.waitForDeployment?.() || await newRXF.deployed?.()
+      await (newRXF.waitForDeployment?.() || newRXF.deployed?.())
 
       await revenueSplitter.setRXF(await getAddress(newRXF))
       expect(await revenueSplitter.rXFContract()).to.equal(await getAddress(newRXF))
@@ -290,7 +290,7 @@ describe('Phase 2 Integration', function () {
         ethers.ZeroAddress,
         await getAddress(owner)
       ], { initializer: 'initialize' })
-      await newBuybackBurner.waitForDeployment?.() || await newBuybackBurner.deployed?.()
+      await (newBuybackBurner.waitForDeployment?.() || newBuybackBurner.deployed?.())
 
       await revenueSplitter.setBuybackBurner(await getAddress(newBuybackBurner))
       expect(await revenueSplitter.buybackBurner()).to.equal(await getAddress(newBuybackBurner))

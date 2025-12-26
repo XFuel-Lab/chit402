@@ -20,10 +20,10 @@ describe('BuybackBurner', function () {
     // Deploy mock tokens
     MockERC20 = await ethers.getContractFactory('MockERC20')
     revenueToken = await MockERC20.deploy('USD Coin', 'USDC', 6)
-    await revenueToken.waitForDeployment?.() || await revenueToken.deployed?.()
+    await (revenueToken.waitForDeployment?.() || revenueToken.deployed?.())
 
     xfToken = await MockERC20.deploy('XFuel Token', 'XF', 18)
-    await xfToken.waitForDeployment?.() || await xfToken.deployed?.()
+    await (xfToken.waitForDeployment?.() || xfToken.deployed?.())
 
     // Deploy BuybackBurner
     const BuybackBurner = await ethers.getContractFactory('BuybackBurner')
@@ -33,7 +33,7 @@ describe('BuybackBurner', function () {
       ethers.ZeroAddress, // No swap router for now
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await buybackBurner.waitForDeployment?.() || await buybackBurner.deployed?.()
+    await (buybackBurner.waitForDeployment?.() || buybackBurner.deployed?.())
 
     // Set revenue splitter
     await buybackBurner.connect(owner).setRevenueSplitter(await getAddress(revenueSplitter))
@@ -233,7 +233,7 @@ describe('BuybackBurner', function () {
 
     it('Should set revenue token', async function () {
       const newToken = await MockERC20.deploy('New Token', 'NEW', 18)
-      await newToken.waitForDeployment?.() || await newToken.deployed?.()
+      await (newToken.waitForDeployment?.() || newToken.deployed?.())
 
       await buybackBurner.connect(owner).setRevenueToken(await getAddress(newToken))
       expect(await buybackBurner.revenueToken()).to.equal(await getAddress(newToken))
@@ -241,7 +241,7 @@ describe('BuybackBurner', function () {
 
     it('Should set XF token', async function () {
       const newToken = await MockERC20.deploy('New XF', 'NXF', 18)
-      await newToken.waitForDeployment?.() || await newToken.deployed?.()
+      await (newToken.waitForDeployment?.() || newToken.deployed?.())
 
       await buybackBurner.connect(owner).setXFToken(await getAddress(newToken))
       expect(await buybackBurner.xfToken()).to.equal(await getAddress(newToken))
@@ -309,7 +309,7 @@ describe('BuybackBurner', function () {
         await getAddress(buybackBurner),
         BuybackBurner
       )
-      await buybackBurner2.waitForDeployment?.() || await buybackBurner2.deployed?.()
+      await (buybackBurner2.waitForDeployment?.() || buybackBurner2.deployed?.())
 
       // Verify state is preserved
       expect(await buybackBurner2.revenueToken()).to.equal(await getAddress(revenueToken))

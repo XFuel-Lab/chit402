@@ -21,17 +21,17 @@ describe('XFUELRouter', function () {
     const MockERC20 = await ethers.getContractFactory('MockERC20')
     xfuelToken = await MockERC20.deploy('XFuel Token', 'XF', 18)
     usdcToken = await MockERC20.deploy('USD Coin', 'USDC', 6)
-    await xfuelToken.waitForDeployment?.() || await xfuelToken.deployed?.()
-    await usdcToken.waitForDeployment?.() || await usdcToken.deployed?.()
+    await (xfuelToken.waitForDeployment?.() || xfuelToken.deployed?.())
+    await (usdcToken.waitForDeployment?.() || usdcToken.deployed?.())
 
     // Deploy dependencies
     const XFUELPoolFactory = await ethers.getContractFactory('XFUELPoolFactory')
     factory = await XFUELPoolFactory.deploy()
-    await factory.waitForDeployment?.() || await factory.deployed?.()
+    await (factory.waitForDeployment?.() || factory.deployed?.())
 
     const TreasuryILBackstop = await ethers.getContractFactory('TreasuryILBackstop')
     backstop = await TreasuryILBackstop.deploy(await getAddress(usdcToken))
-    await backstop.waitForDeployment?.() || await backstop.deployed?.()
+    await (backstop.waitForDeployment?.() || backstop.deployed?.())
 
     // Deploy router
     const XFUELRouter = await ethers.getContractFactory('XFUELRouter')
@@ -43,12 +43,12 @@ describe('XFUELRouter', function () {
       await getAddress(treasury),
       await getAddress(veXFContract)
     )
-    await router.waitForDeployment?.() || await router.deployed?.()
+    await (router.waitForDeployment?.() || router.deployed?.())
 
     // Create a mock pool for testing
     const MockPool = await ethers.getContractFactory('XFUELPool')
     mockPool = await MockPool.deploy()
-    await mockPool.waitForDeployment?.() || await mockPool.deployed?.()
+    await (mockPool.waitForDeployment?.() || mockPool.deployed?.())
   })
 
   afterEach(async function () {
@@ -209,13 +209,13 @@ describe('XFUELRouter', function () {
       const MockERC20 = await ethers.getContractFactory('MockERC20')
       token0 = await MockERC20.deploy('Token 0', 'TK0', 18)
       token1 = await MockERC20.deploy('Token 1', 'TK1', 18)
-      await token0.waitForDeployment?.() || await token0.deployed?.()
-      await token1.waitForDeployment?.() || await token1.deployed?.()
+      await (token0.waitForDeployment?.() || token0.deployed?.())
+      await (token1.waitForDeployment?.() || token1.deployed?.())
 
       // Deploy factory and create pool
       const XFUELPoolFactory = await ethers.getContractFactory('XFUELPoolFactory')
       const factoryContract = await XFUELPoolFactory.deploy()
-      await factoryContract.waitForDeployment?.() || await factoryContract.deployed?.()
+      await (factoryContract.waitForDeployment?.() || factoryContract.deployed?.())
 
       const sqrtPriceX96 = '79228162514264337593543950336'
       await factoryContract.createPool(
@@ -264,13 +264,13 @@ describe('XFUELRouter', function () {
       const MockERC20 = await ethers.getContractFactory('MockERC20')
       token0 = await MockERC20.deploy('Token 0', 'TK0', 18)
       token1 = await MockERC20.deploy('Token 1', 'TK1', 18)
-      await token0.waitForDeployment?.() || await token0.deployed?.()
-      await token1.waitForDeployment?.() || await token1.deployed?.()
+      await (token0.waitForDeployment?.() || token0.deployed?.())
+      await (token1.waitForDeployment?.() || token1.deployed?.())
 
       // Deploy factory and create pool
       const XFUELPoolFactory = await ethers.getContractFactory('XFUELPoolFactory')
       const factoryContract = await XFUELPoolFactory.deploy()
-      await factoryContract.waitForDeployment?.() || await factoryContract.deployed?.()
+      await (factoryContract.waitForDeployment?.() || factoryContract.deployed?.())
 
       const sqrtPriceX96 = '79228162514264337593543950336'
       await factoryContract.createPool(

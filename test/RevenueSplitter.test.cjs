@@ -19,10 +19,10 @@ describe('RevenueSplitter', function () {
     // Deploy mock tokens
     MockERC20 = await ethers.getContractFactory('MockERC20')
     xfToken = await MockERC20.deploy('XFuel Token', 'XF', 18)
-    await xfToken.waitForDeployment?.() || await xfToken.deployed?.()
+    await (xfToken.waitForDeployment?.() || xfToken.deployed?.())
     
     revenueToken = await MockERC20.deploy('USD Coin', 'USDC', 6)
-    await revenueToken.waitForDeployment?.() || await revenueToken.deployed?.()
+    await (revenueToken.waitForDeployment?.() || revenueToken.deployed?.())
 
     // Deploy veXF
     const VeXF = await ethers.getContractFactory('veXF')
@@ -30,7 +30,7 @@ describe('RevenueSplitter', function () {
       await getAddress(xfToken),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await veXF.waitForDeployment?.() || await veXF.deployed?.()
+    await (veXF.waitForDeployment?.() || veXF.deployed?.())
 
     // Deploy RevenueSplitter
     const RevenueSplitter = await ethers.getContractFactory('RevenueSplitter')
@@ -40,7 +40,7 @@ describe('RevenueSplitter', function () {
       await getAddress(treasury),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await revenueSplitter.waitForDeployment?.() || await revenueSplitter.deployed?.()
+    await (revenueSplitter.waitForDeployment?.() || revenueSplitter.deployed?.())
 
     // Deploy Phase 2 contracts
     const RXF = await ethers.getContractFactory('rXF')
@@ -50,7 +50,7 @@ describe('RevenueSplitter', function () {
       await getAddress(revenueSplitter),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await rXF.waitForDeployment?.() || await rXF.deployed?.()
+    await (rXF.waitForDeployment?.() || rXF.deployed?.())
 
     const BuybackBurner = await ethers.getContractFactory('BuybackBurner')
     buybackBurner = await upgrades.deployProxy(BuybackBurner, [
@@ -59,7 +59,7 @@ describe('RevenueSplitter', function () {
       ethers.ZeroAddress, // No swap router
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await buybackBurner.waitForDeployment?.() || await buybackBurner.deployed?.()
+    await (buybackBurner.waitForDeployment?.() || buybackBurner.deployed?.())
 
     // Configure Phase 2 contracts in RevenueSplitter
     await revenueSplitter.setRXF(await getAddress(rXF))
@@ -281,7 +281,7 @@ describe('RevenueSplitter', function () {
         [await getAddress(xfToken), await getAddress(owner)],
         { initializer: 'initialize' }
       )
-      await newVeXF.waitForDeployment?.() || await newVeXF.deployed?.()
+      await (newVeXF.waitForDeployment?.() || newVeXF.deployed?.())
 
       const tx = await revenueSplitter.setVeXF(await getAddress(newVeXF))
       const receipt = await tx.wait()
@@ -356,7 +356,7 @@ describe('RevenueSplitter', function () {
 
     it('Should allow owner to set revenue token', async function () {
       const newToken = await MockERC20.deploy('New Token', 'NEW', 18)
-      await newToken.waitForDeployment?.() || await newToken.deployed?.()
+      await (newToken.waitForDeployment?.() || newToken.deployed?.())
 
       const tx = await revenueSplitter.setRevenueToken(await getAddress(newToken))
       const receipt = await tx.wait()

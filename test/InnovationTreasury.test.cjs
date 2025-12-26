@@ -20,10 +20,10 @@ describe('InnovationTreasury', function () {
     // Deploy mock tokens
     MockERC20 = await ethers.getContractFactory('MockERC20')
     xfToken = await MockERC20.deploy('XFuel Token', 'XF', 18)
-    await xfToken.waitForDeployment?.() || await xfToken.deployed?.()
+    await (xfToken.waitForDeployment?.() || xfToken.deployed?.())
 
     treasuryToken = await MockERC20.deploy('USD Coin', 'USDC', 6)
-    await treasuryToken.waitForDeployment?.() || await treasuryToken.deployed?.()
+    await (treasuryToken.waitForDeployment?.() || treasuryToken.deployed?.())
 
     // Deploy veXF
     const VeXF = await ethers.getContractFactory('veXF')
@@ -31,7 +31,7 @@ describe('InnovationTreasury', function () {
       await getAddress(xfToken),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await veXF.waitForDeployment?.() || await veXF.deployed?.()
+    await (veXF.waitForDeployment?.() || veXF.deployed?.())
 
     // Deploy InnovationTreasury
     const InnovationTreasury = await ethers.getContractFactory('InnovationTreasury')
@@ -40,7 +40,7 @@ describe('InnovationTreasury', function () {
       await getAddress(treasuryToken),
       await getAddress(owner)
     ], { initializer: 'initialize' })
-    await treasury.waitForDeployment?.() || await treasury.deployed?.()
+    await (treasury.waitForDeployment?.() || treasury.deployed?.())
 
     // Mint treasury tokens
     const treasuryAmount = parseUnits('1000000', 6) // 1M USDC

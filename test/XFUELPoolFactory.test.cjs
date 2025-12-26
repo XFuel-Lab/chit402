@@ -14,13 +14,13 @@ describe('XFUELPoolFactory', function () {
     const MockERC20 = await ethers.getContractFactory('MockERC20')
     tokenA = await MockERC20.deploy('Token A', 'TKA', 18)
     tokenB = await MockERC20.deploy('Token B', 'TKB', 18)
-    await tokenA.waitForDeployment?.() || await tokenA.deployed?.()
-    await tokenB.waitForDeployment?.() || await tokenB.deployed?.()
+    await (tokenA.waitForDeployment?.() || tokenA.deployed?.())
+    await (tokenB.waitForDeployment?.() || tokenB.deployed?.())
 
     // Deploy factory
     const XFUELPoolFactory = await ethers.getContractFactory('XFUELPoolFactory')
     factory = await XFUELPoolFactory.deploy()
-    await factory.waitForDeployment?.() || await factory.deployed?.()
+    await (factory.waitForDeployment?.() || factory.deployed?.())
   })
 
   describe('Deployment', function () {
