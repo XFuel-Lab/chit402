@@ -213,6 +213,15 @@ export async function stakeLSTOnStride(
       }
     }
 
+    // Handle account not existing on chain
+    if (error.message?.includes('does not exist on chain') || 
+        error.message?.includes('account not found')) {
+      return {
+        success: false,
+        error: `Your Stride wallet address (${userAddress.substring(0, 20)}...) needs to be initialized first. Please send a small amount of STRD tokens to your Stride address using Keplr, then try again. You can get STRD from the Stride faucet or an exchange.`,
+      }
+    }
+
     return {
       success: false,
       error: error.message || 'Failed to stake LST tokens',

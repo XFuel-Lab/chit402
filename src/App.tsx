@@ -11,6 +11,7 @@ import LotteryWinExplosion from './components/LotteryWinExplosion'
 import CreatePoolModal from './components/CreatePoolModal'
 import EarlyBelieversCard from './components/EarlyBelieversCard'
 import EarlyBelieversModal from './components/EarlyBelieversModal'
+import StrideInitModal from './components/StrideInitModal'
 import EdgeNodeDashboard from './components/EdgeNodeDashboard'
 import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
 import YieldPumpCard from './components/YieldPumpCard'
@@ -130,6 +131,14 @@ function App() {
     amount: number
     apy: number
     chain: 'theta' | 'cosmos'
+  } | null>(null)
+  
+  // Stride initialization modal state
+  const [showStrideInitModal, setShowStrideInitModal] = useState(false)
+  const [strideInitPending, setStrideInitPending] = useState<{
+    lstSymbol: string
+    amount: number
+    apy: number
   } | null>(null)
 
   // Global oracle data (prefetched + cached via Zustand)
@@ -953,7 +962,7 @@ function App() {
         }
       }, 2000)
 
-      // ====== REAL COSMOS LST STAKING ======
+      // ====== REAL COSMOS LST STAKING WITH AUTO-INIT ======
       // After successful Theta swap, trigger Keplr signing for delegate msg
       // Only stake tokens that are supported on Stride (stkTIA, stkATOM, stkXPRT, stkOSMO)
       const supportedForStaking = ['stkTIA', 'stkATOM', 'stkXPRT', 'stkOSMO']
@@ -965,7 +974,7 @@ function App() {
             `✅ Swap successful! Install Keplr wallet to receive ${selectedLST.name} and start earning ${currentApy.toFixed(1)}% APY`
           )
         } else {
-          // Trigger Cosmos LST staking flow
+          // Trigger Cosmos LST staking flow with auto-detection
           setTimeout(async () => {
             try {
               setIsStakingToKeplr(true)
@@ -999,7 +1008,37 @@ function App() {
                   colors: ['#a855f7', '#06b6d4', '#ec4899', '#10b981', '#fbbf24'],
                 })
               } else {
-                // Staking failed or was rejected
+                // Check if error is due to uninitialized account
+                if (stakingResult.error?.includes('does not exist on chain') || 
+                    stakingResult.error?.includes('account not found') ||
+                    stakingResult.error?.includes('needs to be initialized')) {
+                  // Get Stride address for modal
+                  try {
+                    const keplr = (window as any).keplr
+                    if (keplr) {
+                      await keplr.enable('stride-1')
+                      const offlineSigner = keplr.getOfflineSigner('stride-1')
+                      const accounts = await offlineSigner.getAccounts()
+                      const strideAddr = accounts[0]?.address
+                      
+                      if (strideAddr) {
+                        // Show guided initialization modal (Tesla-style seamless)
+                        setStrideInitPending({
+                          lstSymbol: selectedLST.name,
+                          amount: outputAmount,
+                          apy: currentApy,
+                        })
+                        setShowStrideInitModal(true)
+                        setKeplrAddress(strideAddr)
+                        return // Exit early, modal will handle retry
+                      }
+                    }
+                  } catch (err) {
+                    console.error('Failed to get Stride address:', err)
+                  }
+                }
+                
+                // Other staking errors
                 setStatusMessage(
                   `Swap successful, but staking failed: ${stakingResult.error || 'Unknown error'}. Your ${selectedLST.name} is ready to claim.`
                 )
@@ -1316,6 +1355,56 @@ function App() {
       setSwapStatus('idle')
       setStatusMessage('')
     }, 4000)
+  }
+
+  // Handle Stride initialization complete - retry staking
+  const handleStrideInitComplete = async () => {
+    if (!strideInitPending) return
+
+    setShowStrideInitModal(false)
+    
+    try {
+      setIsStakingToKeplr(true)
+      setStatusMessage(`Retrying ${strideInitPending.lstSymbol} staking on Stride... Please sign with Keplr`)
+
+      const stakingResult = await stakeLSTOnStride(strideInitPending.lstSymbol, strideInitPending.amount)
+
+      if (stakingResult.success) {
+        const successMsg = formatStakingSuccessMessage(
+          strideInitPending.lstSymbol,
+          strideInitPending.amount,
+          strideInitPending.apy
+        )
+        setStatusMessage(successMsg)
+        
+        if (stakingResult.txHash) {
+          console.log('Stride TX:', getStrideExplorerUrl(stakingResult.txHash))
+        }
+
+        if (keplrAddress) {
+          refreshKeplrBalance(strideInitPending.lstSymbol, keplrAddress, (balance) => {
+            setKeplrLSTBalance(balance)
+          })
+        }
+
+        confetti({
+          particleCount: 150,
+          spread: 100,
+          origin: { y: 0.5 },
+          colors: ['#a855f7', '#06b6d4', '#ec4899', '#10b981', '#fbbf24'],
+        })
+      } else {
+        setStatusMessage(
+          `Staking failed: ${stakingResult.error || 'Unknown error'}. Please try again.`
+        )
+      }
+    } catch (error: any) {
+      console.error('Retry staking error:', error)
+      setStatusMessage(`Staking failed: ${error.message}`)
+    } finally {
+      setIsStakingToKeplr(false)
+      setStrideInitPending(null)
+    }
   }
 
   return (
@@ -2274,6 +2363,19 @@ function App() {
         onConnectWallet={connectWallet}
         isMainnet={true}
       />
+
+      {/* Stride Initialization Modal - Tesla-Style Seamless Setup */}
+      {keplrAddress && (
+        <StrideInitModal
+          isOpen={showStrideInitModal}
+          onClose={() => {
+            setShowStrideInitModal(false)
+            setStrideInitPending(null)
+          }}
+          strideAddress={keplrAddress}
+          onInitComplete={handleStrideInitComplete}
+        />
+      )}
 
       {/* Wallet Connect Modal */}
       <WalletConnectModal

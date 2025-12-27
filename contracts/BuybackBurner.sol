@@ -95,8 +95,9 @@ contract BuybackBurner is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUp
         require(msg.sender == revenueSplitter || msg.sender == owner(), "BuybackBurner: unauthorized");
         require(amount <= maxSwapAmount, "BuybackBurner: amount exceeds max swap limit");
 
-        // Track by tx.origin to prevent splitting across multiple contracts
-        address user = tx.origin;
+        // Track by msg.sender for proper per-caller limits (beta safety)
+        // Note: This tracks RevenueSplitter contract, not end user - limits apply to contract calls
+        address user = msg.sender;
         require(userTotalSwapped[user] + amount <= totalUserLimit, "BuybackBurner: user total limit exceeded");
 
         // Update user's total swapped amount

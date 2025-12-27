@@ -117,11 +117,6 @@
       "kind": "uups"
     },
     {
-      "address": "0x03973A67449557b14228541Df339Ae041567628B",
-      "txHash": "0x43d83594f8973f816ba75c73bca2c7b8d57a2eeb7bdfc5dfa0acffb89fabab34",
-      "kind": "uups"
-    },
-    {
       "address": "0xf044aF27d10F6Ed8a79fD6475dA43C6041636eDB",
       "txHash": "0xc9d3f0c0ba0996f902e181bbf3325bb389db65d3289ad66cfc13c67b5c11f68f",
       "kind": "uups"
@@ -149,6 +144,10 @@
     {
       "address": "0x18F4d72375Da223b44ccB670b465002C369D242f",
       "txHash": "0x12aa27b9f7ada7fb55fd8a36adf4f20c11dcde3e7f0f56f3e2234d465f6a0ff2",
+      "kind": "uups"
+    },
+    {
+      "address": "0x03973A67449557b14228541Df339Ae041567628B",
       "kind": "uups"
     }
   ],
@@ -1531,6 +1530,246 @@
               }
             ],
             "numberOfBytes": "352"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.ReentrancyGuard": [
+            {
+              "contract": "ReentrancyGuardUpgradeable",
+              "label": "_status",
+              "type": "t_uint256",
+              "src": "@openzeppelin\\contracts-upgradeable\\utils\\ReentrancyGuardUpgradeable.sol:43",
+              "offset": 0,
+              "slot": "0"
+            }
+          ],
+          "erc7201:openzeppelin.storage.Ownable": [
+            {
+              "contract": "OwnableUpgradeable",
+              "label": "_owner",
+              "type": "t_address",
+              "src": "@openzeppelin\\contracts-upgradeable\\access\\OwnableUpgradeable.sol:24",
+              "offset": 0,
+              "slot": "0"
+            }
+          ],
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin\\contracts-upgradeable\\proxy\\utils\\Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin\\contracts-upgradeable\\proxy\\utils\\Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "50c523e54997ceb418165def50f08bd0c288a9c42e8b89b2c338d66e666019ba": {
+      "address": "0x8812D4443D0EE7f998FDF2e91D20654F6bec733E",
+      "layout": {
+        "solcVersion": "0.8.22",
+        "storage": [
+          {
+            "label": "veXFContract",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_contract(veXF)17390",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:32"
+          },
+          {
+            "label": "treasury",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_address",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:33"
+          },
+          {
+            "label": "buybackBurner",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_contract(BuybackBurner)8286",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:34"
+          },
+          {
+            "label": "rXFContract",
+            "offset": 0,
+            "slot": "3",
+            "type": "t_contract(rXF)16487",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:35"
+          },
+          {
+            "label": "revenueToken",
+            "offset": 0,
+            "slot": "4",
+            "type": "t_contract(IERC20)1322",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:38"
+          },
+          {
+            "label": "totalRevenueCollected",
+            "offset": 0,
+            "slot": "5",
+            "type": "t_uint256",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:41"
+          },
+          {
+            "label": "totalYieldDistributed",
+            "offset": 0,
+            "slot": "6",
+            "type": "t_uint256",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:42"
+          },
+          {
+            "label": "totalBuybackBurned",
+            "offset": 0,
+            "slot": "7",
+            "type": "t_uint256",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:43"
+          },
+          {
+            "label": "totalRXFMinted",
+            "offset": 0,
+            "slot": "8",
+            "type": "t_uint256",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:44"
+          },
+          {
+            "label": "totalTreasurySent",
+            "offset": 0,
+            "slot": "9",
+            "type": "t_uint256",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:45"
+          },
+          {
+            "label": "maxSwapAmount",
+            "offset": 0,
+            "slot": "10",
+            "type": "t_uint256",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:48"
+          },
+          {
+            "label": "totalUserLimit",
+            "offset": 0,
+            "slot": "11",
+            "type": "t_uint256",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:49"
+          },
+          {
+            "label": "userTotalSwapped",
+            "offset": 0,
+            "slot": "12",
+            "type": "t_mapping(t_address,t_uint256)",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:50"
+          },
+          {
+            "label": "paused",
+            "offset": 0,
+            "slot": "13",
+            "type": "t_bool",
+            "contract": "RevenueSplitter",
+            "src": "contracts\\RevenueSplitter.sol:51"
+          }
+        ],
+        "types": {
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)73_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(OwnableStorage)13_storage": {
+            "label": "struct OwnableUpgradeable.OwnableStorage",
+            "members": [
+              {
+                "label": "_owner",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_struct(ReentrancyGuardStorage)226_storage": {
+            "label": "struct ReentrancyGuardUpgradeable.ReentrancyGuardStorage",
+            "members": [
+              {
+                "label": "_status",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_contract(BuybackBurner)8286": {
+            "label": "contract BuybackBurner",
+            "numberOfBytes": "20"
+          },
+          "t_contract(IERC20)1322": {
+            "label": "contract IERC20",
+            "numberOfBytes": "20"
+          },
+          "t_contract(rXF)16487": {
+            "label": "contract rXF",
+            "numberOfBytes": "20"
+          },
+          "t_contract(veXF)17390": {
+            "label": "contract veXF",
+            "numberOfBytes": "20"
+          },
+          "t_mapping(t_address,t_uint256)": {
+            "label": "mapping(address => uint256)",
+            "numberOfBytes": "32"
           }
         },
         "namespaces": {
