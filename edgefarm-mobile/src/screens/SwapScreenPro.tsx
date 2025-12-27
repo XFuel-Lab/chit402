@@ -276,14 +276,25 @@ export function SwapScreenPro() {
         showInfo('Transaction cancelled by user')
       } else if (errorMessage.includes('nonce') || errorMessage.includes('sequence')) {
         swapToasts.error('🔄 Sequence error. Please retry in a moment.')
-        // Auto-retry after 2 seconds
-        setTimeout(async () => {
-          try {
-            await handleSwap()
-          } catch (retryError) {
-            console.error('Retry failed:', retryError)
-          }
-        }, 2000)
+        // Auto-retry once after 2 seconds to prevent infinite loops
+        // Check if this is already a retry attempt
+        const isRetryAttempt = (error as any).__isRetryAttempt
+        if (!isRetryAttempt) {
+          setTimeout(async () => {
+            console.log('🔄 Auto-retrying swap after nonce error (1 attempt only)...')
+            try {
+              await handleSwap()
+            } catch (retryError: any) {
+              console.error('❌ Retry failed, stopping further attempts:', retryError)
+              // Mark as retry to prevent recursion
+              retryError.__isRetryAttempt = true
+              swapToasts.error('Transaction failed. Please try again manually.')
+            }
+          }, 2000)
+        } else {
+          console.warn('⚠️ Already attempted retry, stopping to prevent infinite loop')
+          swapToasts.error('Sequence error persists. Please try again manually.')
+        }
       } else {
         swapToasts.error(errorMessage)
       }

@@ -17,7 +17,6 @@ import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
 import YieldPumpCard from './components/YieldPumpCard'
 import WalletConnectModal from './components/WalletConnectModal'
 import WalletConnectBugBanner from './components/WalletConnectBugBanner'
-import ThetaWalletQRModal from './components/ThetaWalletQRModal'
 import SignInModal from './components/SignInModal'
 import TransactionSuccessModal from './components/TransactionSuccessModal'
 import BetaBanner from './components/BetaBanner'
@@ -88,7 +87,6 @@ function App() {
   })
   const [walletProvider, setWalletProvider] = useState<WalletProvider | null>(null)
   const [showWalletConnectModal, setShowWalletConnectModal] = useState(false)
-  const [showThetaQRModal, setShowThetaQRModal] = useState(false)
   const [showSignInModal, setShowSignInModal] = useState(false)
   const [tfuelAmount, setTfuelAmount] = useState('')
   const [selectedPercentage, setSelectedPercentage] = useState<number | null>(null)
@@ -223,14 +221,9 @@ function App() {
     try {
       let provider: any = null
       
-      if (validProvider === 'theta') {
-        // QR code only - no redirect/deep link
-        // Open QR modal for Theta Wallet connection
-        setShowThetaQRModal(true)
-        return
-      } else if (validProvider === 'walletconnect') {
-        // Theta Wallet connection via WalletConnect protocol
-        // Official method - no extension detection
+      if (validProvider === 'walletconnect' || validProvider === 'theta') {
+        // Unified WalletConnect flow for all mobile wallets (Theta, Trust, Rainbow, etc.)
+        // Both 'theta' and 'walletconnect' now use the same code path
         try {
           const walletConnectProvider = await createWalletConnectProvider()
           
@@ -362,47 +355,12 @@ function App() {
     }
   }
 
-  // Handle Theta Wallet QR modal connection
-  const handleThetaQRConnect = async (provider: any) => {
-    try {
-      // Provider is already connected via WalletConnect
-      const ethersProvider = new ethers.BrowserProvider(provider)
-      const signer = await ethersProvider.getSigner()
-      const address = await signer.getAddress()
-      const balance = await ethersProvider.getBalance(address)
-      const balanceFormatted = parseFloat(ethers.formatEther(balance)).toFixed(2)
-
-      setWallet({
-        address: `${address.slice(0, 6)}...${address.slice(-4)}`,
-        fullAddress: address,
-        balance: balanceFormatted,
-        isConnected: true,
-      })
-      
-      setWalletProvider('walletconnect')
-      setShowThetaQRModal(false)
-      
-      try {
-        localStorage.setItem('xfuel-wallet-provider', 'walletconnect')
-      } catch (e) {
-        console.warn('Could not save wallet provider preference:', e)
-      }
-
-      // Start balance refresh
-      startBalanceRefresh(ethersProvider, address)
-    } catch (error) {
-      console.error('Theta QR connection error:', error)
-      setStatusMessage('Failed to connect wallet')
-    }
-  }
-
   // Disconnect wallet
   const disconnectWallet = () => {
     // Disconnect based on provider type
-    if (walletProvider === 'walletconnect') {
+    if (walletProvider === 'walletconnect' || walletProvider === 'theta') {
+      // Both 'theta' and 'walletconnect' use the same provider now
       disconnectWalletConnect()
-    } else if (walletProvider === 'theta') {
-      disconnectThetaWallet()
     }
     
     setWallet({
@@ -1136,14 +1094,26 @@ function App() {
       } else if (errorMessage.includes('nonce') || errorMessage.includes('sequence mismatch')) {
         errorMessage = '🔄 Transaction sequence error. Refreshing and retrying...'
         // Auto-retry once for nonce errors after a short delay
-        setTimeout(async () => {
-          console.log('🔄 Auto-retrying after nonce error...')
-          try {
-            await handleSwapFlow()
-          } catch (retryError) {
-            console.error('Retry failed:', retryError)
-          }
-        }, 2000)
+        // Check if this is already a retry attempt to prevent infinite loops
+        const isRetryAttempt = (error as any).__isRetryAttempt
+        if (!isRetryAttempt) {
+          setTimeout(async () => {
+            console.log('🔄 Auto-retrying after nonce error (1 attempt only)...')
+            try {
+              // Mark this as a retry attempt to prevent infinite recursion
+              const retryError = new Error('Retry attempt')
+              ;(retryError as any).__isRetryAttempt = true
+              await handleSwapFlow()
+            } catch (retryError) {
+              console.error('❌ Retry failed, stopping further attempts:', retryError)
+              setStatusMessage('❌ Transaction failed. Please try again manually.')
+              setSwapStatus('error')
+            }
+          }, 2000)
+        } else {
+          console.warn('⚠️ Already attempted retry, stopping to prevent infinite loop')
+          errorMessage = '❌ Transaction sequence error persists. Please try again manually.'
+        }
       }
       
       setStatusMessage(`❌ ${errorMessage}`)
@@ -2434,13 +2404,6 @@ function App() {
         isOpen={showWalletConnectModal}
         onClose={() => setShowWalletConnectModal(false)}
         onConnect={handleWalletConnectFromModal}
-      />
-
-      {/* Theta Wallet QR Modal */}
-      <ThetaWalletQRModal
-        isOpen={showThetaQRModal}
-        onClose={() => setShowThetaQRModal(false)}
-        onConnect={handleThetaQRConnect}
       />
 
       {/* Sign In Modal */}
