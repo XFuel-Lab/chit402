@@ -41,84 +41,39 @@ export const THETA_TOKENS: Token[] = [
   },
 ]
 
-// Cosmos LST Tokens
-export const COSMOS_LST_TOKENS: Token[] = [
+// Cosmos Native Tokens (for yield opportunities)
+export const COSMOS_TOKENS: Token[] = [
   {
-    symbol: 'stkTIA',
-    name: 'Staked TIA',
+    symbol: 'TIA',
+    name: 'Celestia',
     decimals: 6,
-    type: 'ibc',
+    type: 'native',
     chain: 'cosmos',
     chainId: 'celestia',
-    ibcDenom: 'ibc/...', // TODO: Add actual IBC denom
-    isLST: true,
-    underlyingAsset: 'TIA',
     coingeckoId: 'celestia',
   },
   {
-    symbol: 'stkATOM',
-    name: 'Staked ATOM',
+    symbol: 'ATOM',
+    name: 'Cosmos Hub',
     decimals: 6,
-    type: 'ibc',
+    type: 'native',
     chain: 'cosmos',
     chainId: 'cosmoshub-4',
-    ibcDenom: 'ibc/...', // TODO: Add actual IBC denom
-    isLST: true,
-    underlyingAsset: 'ATOM',
     coingeckoId: 'cosmos',
   },
   {
-    symbol: 'stkOSMO',
-    name: 'Staked OSMO',
+    symbol: 'OSMO',
+    name: 'Osmosis',
     decimals: 6,
-    type: 'ibc',
+    type: 'native',
     chain: 'cosmos',
     chainId: 'osmosis-1',
-    ibcDenom: 'ibc/...', // TODO: Add actual IBC denom
-    isLST: true,
-    underlyingAsset: 'OSMO',
     coingeckoId: 'osmosis',
-  },
-  {
-    symbol: 'milkTIA',
-    name: 'MilkTIA',
-    decimals: 6,
-    type: 'ibc',
-    chain: 'cosmos',
-    chainId: 'celestia',
-    ibcDenom: 'ibc/...', // TODO: Add actual IBC denom
-    isLST: true,
-    underlyingAsset: 'TIA',
-    coingeckoId: 'celestia',
-  },
-  {
-    symbol: 'qTIA',
-    name: 'qTIA',
-    decimals: 6,
-    type: 'ibc',
-    chain: 'cosmos',
-    chainId: 'celestia',
-    ibcDenom: 'ibc/...', // TODO: Add actual IBC denom
-    isLST: true,
-    underlyingAsset: 'TIA',
-    coingeckoId: 'celestia',
-  },
-  {
-    symbol: 'stkXPRT',
-    name: 'Staked XPRT',
-    decimals: 6,
-    type: 'ibc',
-    chain: 'cosmos',
-    chainId: 'core-1',
-    ibcDenom: 'ibc/...', // TODO: Add actual IBC denom
-    isLST: true,
-    underlyingAsset: 'XPRT',
-    coingeckoId: 'persistence',
   },
 ]
 
 // All tokens combined
-export const ALL_TOKENS = [...THETA_TOKENS, ...COSMOS_LST_TOKENS]
+export const ALL_TOKENS = [...THETA_TOKENS, ...COSMOS_TOKENS]
 
 // Helper functions
 export function getTokenBySymbol(symbol: string): Token | undefined {
@@ -130,7 +85,7 @@ export function getThetaTokens(): Token[] {
 }
 
 export function getCosmosTokens(): Token[] {
-  return COSMOS_LST_TOKENS
+  return COSMOS_TOKENS
 }
 
 export function isValidSwapPair(fromToken: Token, toToken: Token): boolean {

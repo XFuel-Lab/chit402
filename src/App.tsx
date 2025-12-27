@@ -1509,7 +1509,7 @@ function App() {
             {/* Early Believers Card */}
             <EarlyBelieversCard onClick={() => setShowEarlyBelieversModal(true)} />
 
-            {/* Swap Tab: Cross-Chain Swap */}
+            {/* Swap Tab: Tfuel to Cosmos Yield Pumps */}
             {activeTab === 'swap' && (
               <BiDirectionalSwapCard
                 thetaWallet={wallet}
