@@ -14,13 +14,20 @@ export interface TokenPrice {
 }
 
 export interface LSTPriceData {
+  // Theta tokens
+  TFUEL: TokenPrice | null
+  USDC: TokenPrice | null
+  // Cosmos native tokens
+  TIA: TokenPrice | null
+  ATOM: TokenPrice | null
+  OSMO: TokenPrice | null
+  XPRT: TokenPrice | null
+  // LST tokens (deprecated, kept for backward compatibility)
   stkTIA: TokenPrice | null
   stkATOM: TokenPrice | null
   stkXPRT: TokenPrice | null
   pSTAKEBTC: TokenPrice | null
   stkOSMO: TokenPrice | null
-  TFUEL: TokenPrice | null
-  USDC: TokenPrice | null
 }
 
 export interface LSTPriceAndAPYData {
@@ -583,6 +590,38 @@ async function fetchUnderlyingDiscountedPrice(underlyingId: string): Promise<num
 }
 
 /**
+ * Fetch native token price from CoinGecko (no discount - full price)
+ * Used for TIA, ATOM, OSMO, XPRT
+ */
+async function fetchNativeTokenPrice(coingeckoId: string): Promise<number | null> {
+  try {
+    const response = await fetchCoinGecko(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(coingeckoId)}&vs_currencies=usd`
+    )
+
+    if (!response.ok) {
+      if (response.status === 429) {
+        console.warn(`⚠️ CoinGecko rate limit (429) for ${coingeckoId}`)
+        return null
+      }
+      throw new Error(`CoinGecko API error: ${response.status}`)
+    }
+
+    const data = await response.json()
+    const price = data?.[coingeckoId]?.usd as number | undefined
+    if (!price || price <= 0) return null
+
+    return price // Full price, no discount
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      return null
+    }
+    console.error(`❌ Error fetching ${coingeckoId} price from CoinGecko:`, error)
+    return null
+  }
+}
+
+/**
  * Get all LST prices + APYs from multiple sources with precise fallbacks:
  *   1. Primary: DeFiLlama yields API (LST prices + APYs)
  *   2. Fallback: Osmosis DEX pool prices
@@ -612,16 +651,23 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
   const startTime = Date.now()
   console.log('🔄 Fetching fresh prices from ALL oracles in PARALLEL (DeFiLlama + Osmosis + CoinGecko)...')
 
-  // PARALLEL FETCH ALL SOURCES: DeFiLlama + TFUEL + Osmosis + underlying fallbacks
-  // All 12 sources fetch simultaneously for maximum speed and reliability
+  // PARALLEL FETCH ALL SOURCES: DeFiLlama + TFUEL + Osmosis + underlying fallbacks + NATIVE TOKENS
+  // All sources fetch simultaneously for maximum speed and reliability
   const [
     defiLlamaData,
     tfuelPrice,
+    // Native Cosmos tokens (full price, no discount)
+    nativeTiaPrice,
+    nativeAtomPrice,
+    nativeOsmoPrice,
+    nativeXprtPrice,
+    // LST tokens from Osmosis
     osmoStkTia,
     osmoStkAtom,
     osmoStkXprt,
     osmoStkOsmo,
     osmoPstakeBtc,
+    // LST fallbacks (underlying with discount)
     underlyingStkTia,
     underlyingStkAtom,
     underlyingStkXprt,
@@ -630,11 +676,18 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
   ] = await Promise.all([
     fetchDefiLlamaLSTData(),
     fetchTfuelPrice(),
+    // Native tokens
+    fetchNativeTokenPrice('celestia'),
+    fetchNativeTokenPrice('cosmos'),
+    fetchNativeTokenPrice('osmosis'),
+    fetchNativeTokenPrice('persistence'),
+    // LST from Osmosis
     fetchOsmosisPrice('stktia'),
     fetchOsmosisPrice('stkatom'),
     fetchOsmosisPrice('stkxprt'),
-    fetchOsmosisPrice('stkosmo'), // stkOSMO (Stride staked OSMO, also on Osmosis)
+    fetchOsmosisPrice('stkosmo'),
     fetchOsmosisPrice('pstakebtc'),
+    // LST fallbacks
     fetchUnderlyingDiscountedPrice(DEFILLAMA_LST_MAP.stkTIA.underlyingCoinGeckoId),
     fetchUnderlyingDiscountedPrice(DEFILLAMA_LST_MAP.stkATOM.underlyingCoinGeckoId),
     fetchUnderlyingDiscountedPrice(DEFILLAMA_LST_MAP.stkXPRT.underlyingCoinGeckoId),
@@ -646,7 +699,36 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
   const defiLlamaApys = defiLlamaData.apys
 
   const fetchTime = Date.now() - startTime
-  console.log(`✅ Parallel fetch complete in ${fetchTime}ms (12 sources simultaneously)`)
+  console.log(`✅ Parallel fetch complete in ${fetchTime}ms (20 sources simultaneously)`)
+
+  // Native token price objects (full price, CoinGecko source)
+  const tiaPriceObj: TokenPrice | null = nativeTiaPrice ? {
+    price: nativeTiaPrice,
+    source: 'coingecko',
+    timestamp: Date.now(),
+    confidence: 'high',
+  } : null
+
+  const atomPriceObj: TokenPrice | null = nativeAtomPrice ? {
+    price: nativeAtomPrice,
+    source: 'coingecko',
+    timestamp: Date.now(),
+    confidence: 'high',
+  } : null
+
+  const osmoPriceObj: TokenPrice | null = nativeOsmoPrice ? {
+    price: nativeOsmoPrice,
+    source: 'coingecko',
+    timestamp: Date.now(),
+    confidence: 'high',
+  } : null
+
+  const xprtPriceObj: TokenPrice | null = nativeXprtPrice ? {
+    price: nativeXprtPrice,
+    source: 'coingecko',
+    timestamp: Date.now(),
+    confidence: 'high',
+  } : null
 
   // stkTIA resolution (prioritize DeFiLlama → Osmosis → CoinGecko underlying)
   let stkTiaPriceFinal: number | null = null
@@ -725,6 +807,10 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
   
   // Log prices for debugging
   console.log('✅ Price fetch results:', {
+    TIA: { price: nativeTiaPrice },
+    ATOM: { price: nativeAtomPrice },
+    OSMO: { price: nativeOsmoPrice },
+    XPRT: { price: nativeXprtPrice },
     stkTIA: { price: stkTiaPriceFinal, source: stkTiaSource },
     stkATOM: { price: stkAtomPriceFinal, source: stkAtomSource },
     stkXPRT: { price: stkXprtPriceFinal, source: stkXprtSource },
@@ -747,6 +833,7 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
   }
 
   const prices: LSTPriceData = {
+    // Theta tokens
     TFUEL: tfuelPrice && tfuelPrice > 0
       ? {
           price: tfuelPrice,
@@ -761,6 +848,12 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
       timestamp: now,
       confidence: 'high', // USDC is a stablecoin, always $1.00
     },
+    // Native Cosmos tokens
+    TIA: tiaPriceObj,
+    ATOM: atomPriceObj,
+    OSMO: osmoPriceObj,
+    XPRT: xprtPriceObj,
+    // LST tokens
     stkTIA: stkTiaPriceFinal && stkTiaPriceFinal > 0
       ? {
           price: stkTiaPriceFinal,
@@ -823,6 +916,10 @@ export async function getLSTPrices(bypassCache: boolean = false): Promise<LSTPri
   // Final validation log
   console.log('📦 Final price + APY data being returned:', {
     TFUEL: prices.TFUEL?.price,
+    TIA: prices.TIA?.price,
+    ATOM: prices.ATOM?.price,
+    OSMO: prices.OSMO?.price,
+    XPRT: prices.XPRT?.price,
     stkTIA: prices.stkTIA?.price,
     stkATOM: prices.stkATOM?.price,
     stkXPRT: prices.stkXPRT?.price,

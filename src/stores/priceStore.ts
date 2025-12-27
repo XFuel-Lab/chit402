@@ -13,9 +13,10 @@ import { getLSTAPYs, getBestYieldLST, type LSTAPY } from '../utils/apyFetcher'
  * INSTANT FALLBACK PRICES
  * Used for immediate UI display while real prices load in background
  * Updated periodically to reflect recent market prices
- * Last updated: 2024-01-20
+ * Last updated: 2024-12-27
  */
 const INSTANT_FALLBACK_PRICES: LSTPriceData = {
+  // Theta tokens
   TFUEL: {
     price: 0.062,
     source: 'fallback',
@@ -28,6 +29,32 @@ const INSTANT_FALLBACK_PRICES: LSTPriceData = {
     timestamp: Date.now(),
     confidence: 'high', // USDC is always $1.00
   },
+  // Cosmos native tokens
+  TIA: {
+    price: 4.85,
+    source: 'fallback',
+    timestamp: Date.now(),
+    confidence: 'low',
+  },
+  ATOM: {
+    price: 6.42,
+    source: 'fallback',
+    timestamp: Date.now(),
+    confidence: 'low',
+  },
+  OSMO: {
+    price: 0.52,
+    source: 'fallback',
+    timestamp: Date.now(),
+    confidence: 'low',
+  },
+  XPRT: {
+    price: 0.28,
+    source: 'fallback',
+    timestamp: Date.now(),
+    confidence: 'low',
+  },
+  // LST tokens (deprecated, kept for backward compatibility)
   stkTIA: {
     price: 4.85,
     source: 'fallback',
@@ -199,8 +226,15 @@ export const usePriceStore = create<PriceStoreState>((set, get) => {
         // Top swaps (Uniswap, 1inch) use this pattern
         const currentPrices = get().prices
         const mergedPrices: LSTPriceData = {
+          // Theta tokens
           TFUEL: prices.TFUEL || currentPrices?.TFUEL || INSTANT_FALLBACK_PRICES.TFUEL,
           USDC: prices.USDC || currentPrices?.USDC || INSTANT_FALLBACK_PRICES.USDC,
+          // Cosmos native tokens
+          TIA: prices.TIA || currentPrices?.TIA || INSTANT_FALLBACK_PRICES.TIA,
+          ATOM: prices.ATOM || currentPrices?.ATOM || INSTANT_FALLBACK_PRICES.ATOM,
+          OSMO: prices.OSMO || currentPrices?.OSMO || INSTANT_FALLBACK_PRICES.OSMO,
+          XPRT: prices.XPRT || currentPrices?.XPRT || INSTANT_FALLBACK_PRICES.XPRT,
+          // LST tokens (deprecated, kept for backward compatibility)
           stkTIA: prices.stkTIA || currentPrices?.stkTIA || INSTANT_FALLBACK_PRICES.stkTIA,
           stkATOM: prices.stkATOM || currentPrices?.stkATOM || INSTANT_FALLBACK_PRICES.stkATOM,
           stkXPRT: prices.stkXPRT || currentPrices?.stkXPRT || INSTANT_FALLBACK_PRICES.stkXPRT,
