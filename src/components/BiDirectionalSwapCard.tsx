@@ -227,8 +227,8 @@ export default function BiDirectionalSwapCard({
 
       // Theta → Cosmos swap
       if (fromToken.chain === 'theta' && toToken.chain === 'cosmos') {
-        if (!thetaWallet.fullAddress || !keplrWallet) {
-          throw new Error('Wallets not connected')
+        if (!thetaWallet.fullAddress) {
+          throw new Error('Theta wallet not connected')
         }
 
         // Get Theta provider
@@ -248,8 +248,8 @@ export default function BiDirectionalSwapCard({
           bridgeAmount = inputAmount // Amount after swap
         }
 
-        // PRE-WARM KEPLR: Enable and suggest chain during Step 1
-        console.log('🔥 Pre-warming Keplr connection for', toToken.symbol)
+        // CONNECT KEPLR: Always connect to the correct chain for selected token
+        console.log('🔌 Connecting Keplr for', toToken.symbol)
         
         // Map native token to chain info
         const chainIdMap: Record<string, string> = {
@@ -275,7 +275,7 @@ export default function BiDirectionalSwapCard({
         }
         
         const keplrAddress = accounts[0].address
-        console.log('✅ Keplr connected:', keplrAddress)
+        console.log('✅ Keplr connected to', toToken.symbol, 'chain:', keplrAddress)
 
         // Step 2: Bridge via Axelar GMP
         setStatusMessage('Step 2/3: Confirming Axelar bridge transaction...')
@@ -440,26 +440,9 @@ export default function BiDirectionalSwapCard({
 
           <div className="flex-1">
             <div className="text-xs text-slate-400 mb-1">Keplr Wallet</div>
-            {keplrWallet ? (
-              <div className="flex items-center gap-2">
-                <div className="text-sm text-emerald-400 font-mono">
-                  {keplrWallet.address.slice(0, 12)}...
-                </div>
-                <button
-                  onClick={() => setKeplrWallet(null)}
-                  className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider rounded-md border border-red-500/50 bg-red-500/10 text-red-300 transition-all hover:border-red-400 hover:bg-red-500/20 hover:text-red-200 hover:shadow-[0_0_15px_rgba(239,68,68,0.6)]"
-                >
-                  Disconnect
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={handleConnectKeplr}
-                className="text-sm text-purple-400 hover:text-purple-300 underline"
-              >
-                Connect Keplr
-              </button>
-            )}
+            <div className="text-sm text-slate-500">
+              Connects automatically on swap
+            </div>
           </div>
         </div>
 
@@ -640,14 +623,14 @@ export default function BiDirectionalSwapCard({
           label={
             swapStatus === 'loading'
               ? 'Processing...'
-              : !walletsConnected
-              ? 'Connect Wallets'
-              : 'Swap & Stake'
+              : !thetaWallet.isConnected
+              ? 'Connect Theta Wallet'
+              : `Swap to ${toToken.symbol}`
           }
-          rightHint={swapStatus === 'idle' && walletsConnected ? 'cross-chain' : undefined}
+          rightHint={swapStatus === 'idle' && thetaWallet.isConnected ? 'cross-chain' : undefined}
           onClick={handleSwap}
           disabled={
-            !walletsConnected ||
+            !thetaWallet.isConnected ||
             !inputAmount ||
             parseFloat(inputAmount) <= 0 ||
             swapStatus === 'loading'
