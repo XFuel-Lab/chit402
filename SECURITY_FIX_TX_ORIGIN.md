@@ -2,9 +2,10 @@
 ## tx.origin Vulnerability in Beta Limit Tracking
 
 **Severity:** 🔴 **CRITICAL**  
-**Status:** ✅ **FIXED**  
+**Status:** ✅ **FIXED & DEPLOYED TO MAINNET**  
 **Affected Contracts:** RevenueSplitter, BuybackBurner  
-**Fix Commit:** TBD
+**Fix Commit:** wallet-interface-upgrade branch  
+**Deployment Date:** December 27, 2025
 
 ---
 
@@ -212,10 +213,34 @@ npx hardhat test
 
 ---
 
-**Status:** ✅ **FIXED AND VERIFIED**  
-**Next Steps:** Deploy upgrade to mainnet, add comprehensive tests, external audit
+## ✅ MAINNET DEPLOYMENT COMPLETE
+
+### Deployment Summary
+- **Date:** December 27, 2025
+- **Status:** ✅ Successfully Deployed
+- **Total Cost:** 21.47 TFUEL
+
+### RevenueSplitter
+- **Proxy:** `0x03973A67449557b14228541Df339Ae041567628B`
+- **New Implementation:** `0x44C751c4e8Da4C312Eab63e8932Baa9f1835716D`
+- **Upgrade TX:** `0x15daf0c33f88c822b343d51cea1e8ab00de0bf2e039b0e35db7da6d31d42eec2`
+- **Explorer:** https://explorer.thetatoken.org/account/0x03973A67449557b14228541Df339Ae041567628B
+
+### BuybackBurner
+- **Proxy:** `0x3b0C862A3376A3751d7bcEa88b29e2e595560e4E`
+- **New Implementation:** `0xbBdFD2cc8f39ceA2529D32E85A44753bAe90aD31`
+- **Upgrade TX:** `0xd143d796b7392eb4d1e3c0816639d3cd3c2cb4179399ad99b804269b656bdca9`
+- **Explorer:** https://explorer.thetatoken.org/account/0x3b0C862A3376A3751d7bcEa88b29e2e595560e4E
+
+**For full deployment details, see `MAINNET_SECURITY_UPGRADE_SUCCESS.md`**
+
+---
+
+**Status:** ✅ **FIXED, DEPLOYED & VERIFIED**  
+**Next Steps:** Monitor for 24 hours, add proxy bypass tests, external audit
 
 **Reporter:** Internal code review  
 **Fixed By:** XFuel Security Team  
+**Deployed By:** 0x627082bFAdffb16B979d99A8eFc8F1874c0990C4  
 **Reviewed By:** Awaiting external audit
 

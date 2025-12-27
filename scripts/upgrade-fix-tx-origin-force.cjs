@@ -1,7 +1,7 @@
 const { ethers, upgrades } = require('hardhat')
 
 /**
- * CRITICAL SECURITY UPGRADE
+ * CRITICAL SECURITY UPGRADE with forceImport
  * Fix tx.origin → msg.sender vulnerability in limit tracking
  * CVE-XF-2024-001
  */
@@ -28,13 +28,17 @@ async function main() {
   console.log('   BuybackBurner:', BUYBACK_BURNER_PROXY)
   console.log('')
 
-  // Step 1: Upgrade RevenueSplitter
+  // Step 1: Force import and upgrade RevenueSplitter
   console.log('Step 1: Upgrading RevenueSplitter...')
   console.log('   ⚠️  This fixes tx.origin → msg.sender in splitRevenue() and splitRevenueNative()')
   console.log('')
 
   try {
     const RevenueSplitter = await ethers.getContractFactory('RevenueSplitter')
+    
+    console.log('   Registering existing proxy...')
+    await upgrades.forceImport(REVENUE_SPLITTER_PROXY, RevenueSplitter, { kind: 'uups' })
+    console.log('   ✅ Proxy registered')
     
     console.log('   Deploying new implementation...')
     const upgraded = await upgrades.upgradeProxy(REVENUE_SPLITTER_PROXY, RevenueSplitter)
@@ -63,13 +67,17 @@ async function main() {
     throw error
   }
 
-  // Step 2: Upgrade BuybackBurner
+  // Step 2: Force import and upgrade BuybackBurner
   console.log('Step 2: Upgrading BuybackBurner...')
   console.log('   ⚠️  This fixes tx.origin → msg.sender in receiveRevenue()')
   console.log('')
 
   try {
     const BuybackBurner = await ethers.getContractFactory('BuybackBurner')
+    
+    console.log('   Registering existing proxy...')
+    await upgrades.forceImport(BUYBACK_BURNER_PROXY, BuybackBurner, { kind: 'uups' })
+    console.log('   ✅ Proxy registered')
     
     console.log('   Deploying new implementation...')
     const upgraded = await upgrades.upgradeProxy(BUYBACK_BURNER_PROXY, BuybackBurner)

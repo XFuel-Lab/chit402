@@ -1,7 +1,7 @@
 const { ethers, upgrades } = require('hardhat')
 
 /**
- * CRITICAL SECURITY UPGRADE
+ * CRITICAL SECURITY UPGRADE - Manual approach
  * Fix tx.origin → msg.sender vulnerability in limit tracking
  * CVE-XF-2024-001
  */
@@ -28,8 +28,8 @@ async function main() {
   console.log('   BuybackBurner:', BUYBACK_BURNER_PROXY)
   console.log('')
 
-  // Step 1: Upgrade RevenueSplitter
-  console.log('Step 1: Upgrading RevenueSplitter...')
+  // Step 1: Deploy new RevenueSplitter implementation
+  console.log('Step 1: Deploying new RevenueSplitter implementation...')
   console.log('   ⚠️  This fixes tx.origin → msg.sender in splitRevenue() and splitRevenueNative()')
   console.log('')
 
@@ -37,16 +37,28 @@ async function main() {
     const RevenueSplitter = await ethers.getContractFactory('RevenueSplitter')
     
     console.log('   Deploying new implementation...')
-    const upgraded = await upgrades.upgradeProxy(REVENUE_SPLITTER_PROXY, RevenueSplitter)
-    await upgraded.waitForDeployment()
+    const newImpl = await RevenueSplitter.deploy()
+    await newImpl.waitForDeployment()
+    const newImplAddress = await newImpl.getAddress()
     
-    const newImplAddress = await upgrades.erc1967.getImplementationAddress(REVENUE_SPLITTER_PROXY)
-    console.log('   ✅ New implementation:', newImplAddress)
+    console.log('   ✅ New implementation deployed:', newImplAddress)
+    console.log('')
+    
+    // Get proxy instance
+    const proxy = await ethers.getContractAt('RevenueSplitter', REVENUE_SPLITTER_PROXY)
+    
+    // Upgrade to new implementation
+    console.log('   Upgrading proxy to new implementation...')
+    const upgradeTx = await proxy.upgradeToAndCall(newImplAddress, '0x')
+    await upgradeTx.wait()
+    
+    console.log('   ✅ Proxy upgraded! TX:', upgradeTx.hash)
     console.log('')
 
     // Verify upgrade
     console.log('   Verifying upgrade...')
-    const proxy = await ethers.getContractAt('RevenueSplitter', REVENUE_SPLITTER_PROXY)
+    const currentImpl = await upgrades.erc1967.getImplementationAddress(REVENUE_SPLITTER_PROXY)
+    console.log('   Current implementation:', currentImpl)
     
     const maxSwap = await proxy.maxSwapAmount()
     const totalLimit = await proxy.totalUserLimit()
@@ -63,8 +75,8 @@ async function main() {
     throw error
   }
 
-  // Step 2: Upgrade BuybackBurner
-  console.log('Step 2: Upgrading BuybackBurner...')
+  // Step 2: Deploy new BuybackBurner implementation
+  console.log('Step 2: Deploying new BuybackBurner implementation...')
   console.log('   ⚠️  This fixes tx.origin → msg.sender in receiveRevenue()')
   console.log('')
 
@@ -72,16 +84,28 @@ async function main() {
     const BuybackBurner = await ethers.getContractFactory('BuybackBurner')
     
     console.log('   Deploying new implementation...')
-    const upgraded = await upgrades.upgradeProxy(BUYBACK_BURNER_PROXY, BuybackBurner)
-    await upgraded.waitForDeployment()
+    const newImpl = await BuybackBurner.deploy()
+    await newImpl.waitForDeployment()
+    const newImplAddress = await newImpl.getAddress()
     
-    const newImplAddress = await upgrades.erc1967.getImplementationAddress(BUYBACK_BURNER_PROXY)
-    console.log('   ✅ New implementation:', newImplAddress)
+    console.log('   ✅ New implementation deployed:', newImplAddress)
+    console.log('')
+    
+    // Get proxy instance
+    const proxy = await ethers.getContractAt('BuybackBurner', BUYBACK_BURNER_PROXY)
+    
+    // Upgrade to new implementation
+    console.log('   Upgrading proxy to new implementation...')
+    const upgradeTx = await proxy.upgradeToAndCall(newImplAddress, '0x')
+    await upgradeTx.wait()
+    
+    console.log('   ✅ Proxy upgraded! TX:', upgradeTx.hash)
     console.log('')
 
     // Verify upgrade
     console.log('   Verifying upgrade...')
-    const proxy = await ethers.getContractAt('BuybackBurner', BUYBACK_BURNER_PROXY)
+    const currentImpl = await upgrades.erc1967.getImplementationAddress(BUYBACK_BURNER_PROXY)
+    console.log('   Current implementation:', currentImpl)
     
     const maxSwap = await proxy.maxSwapAmount()
     const totalLimit = await proxy.totalUserLimit()

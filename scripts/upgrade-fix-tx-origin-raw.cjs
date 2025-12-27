@@ -1,7 +1,7 @@
-const { ethers, upgrades } = require('hardhat')
+const { ethers } = require('hardhat')
 
 /**
- * CRITICAL SECURITY UPGRADE
+ * CRITICAL SECURITY UPGRADE - Deploy only (no upgrades library)
  * Fix tx.origin → msg.sender vulnerability in limit tracking
  * CVE-XF-2024-001
  */
@@ -13,9 +13,10 @@ async function main() {
   console.log('')
 
   const [deployer] = await ethers.getSigners()
-  console.log('Deployer:', await deployer.getAddress())
+  const deployerAddress = await deployer.getAddress()
+  console.log('Deployer:', deployerAddress)
   
-  const balance = await ethers.provider.getBalance(await deployer.getAddress())
+  const balance = await ethers.provider.getBalance(deployerAddress)
   console.log('Balance:', ethers.formatEther(balance), 'TFUEL')
   console.log('')
 
@@ -28,25 +29,53 @@ async function main() {
   console.log('   BuybackBurner:', BUYBACK_BURNER_PROXY)
   console.log('')
 
-  // Step 1: Upgrade RevenueSplitter
-  console.log('Step 1: Upgrading RevenueSplitter...')
+  // Gas settings for Theta mainnet
+  const gasSettings = {
+    gasLimit: 10000000,
+    gasPrice: 4000000000000, // 4000 Gwei
+  }
+
+  // Step 1: Deploy new RevenueSplitter implementation
+  console.log('Step 1: Deploying new RevenueSplitter implementation...')
   console.log('   ⚠️  This fixes tx.origin → msg.sender in splitRevenue() and splitRevenueNative()')
   console.log('')
 
   try {
     const RevenueSplitter = await ethers.getContractFactory('RevenueSplitter')
     
-    console.log('   Deploying new implementation...')
-    const upgraded = await upgrades.upgradeProxy(REVENUE_SPLITTER_PROXY, RevenueSplitter)
-    await upgraded.waitForDeployment()
+    console.log('   Deploying new implementation with gas settings...')
+    console.log('   Gas limit:', gasSettings.gasLimit)
+    console.log('   Gas price:', gasSettings.gasPrice, 'wei (4000 Gwei)')
     
-    const newImplAddress = await upgrades.erc1967.getImplementationAddress(REVENUE_SPLITTER_PROXY)
-    console.log('   ✅ New implementation:', newImplAddress)
+    const deployTx = await RevenueSplitter.getDeployTransaction()
+    const tx = await deployer.sendTransaction({
+      ...deployTx,
+      ...gasSettings,
+    })
+    
+    console.log('   Transaction sent:', tx.hash)
+    console.log('   Waiting for confirmation...')
+    
+    const receipt = await tx.wait()
+    const newImplAddress = receipt.contractAddress
+    
+    console.log('   ✅ New implementation deployed:', newImplAddress)
+    console.log('   Gas used:', receipt.gasUsed.toString())
+    console.log('')
+    
+    // Get proxy instance
+    const proxy = await ethers.getContractAt('RevenueSplitter', REVENUE_SPLITTER_PROXY)
+    
+    // Upgrade to new implementation
+    console.log('   Upgrading proxy to new implementation...')
+    const upgradeTx = await proxy.upgradeToAndCall(newImplAddress, '0x', gasSettings)
+    await upgradeTx.wait()
+    
+    console.log('   ✅ Proxy upgraded! TX:', upgradeTx.hash)
     console.log('')
 
     // Verify upgrade
     console.log('   Verifying upgrade...')
-    const proxy = await ethers.getContractAt('RevenueSplitter', REVENUE_SPLITTER_PROXY)
     
     const maxSwap = await proxy.maxSwapAmount()
     const totalLimit = await proxy.totalUserLimit()
@@ -60,28 +89,49 @@ async function main() {
     console.log('')
   } catch (error) {
     console.error('   ❌ RevenueSplitter upgrade failed:', error.message)
+    if (error.data) console.error('   Error data:', error.data)
     throw error
   }
 
-  // Step 2: Upgrade BuybackBurner
-  console.log('Step 2: Upgrading BuybackBurner...')
+  // Step 2: Deploy new BuybackBurner implementation
+  console.log('Step 2: Deploying new BuybackBurner implementation...')
   console.log('   ⚠️  This fixes tx.origin → msg.sender in receiveRevenue()')
   console.log('')
 
   try {
     const BuybackBurner = await ethers.getContractFactory('BuybackBurner')
     
-    console.log('   Deploying new implementation...')
-    const upgraded = await upgrades.upgradeProxy(BUYBACK_BURNER_PROXY, BuybackBurner)
-    await upgraded.waitForDeployment()
+    console.log('   Deploying new implementation with gas settings...')
     
-    const newImplAddress = await upgrades.erc1967.getImplementationAddress(BUYBACK_BURNER_PROXY)
-    console.log('   ✅ New implementation:', newImplAddress)
+    const deployTx = await BuybackBurner.getDeployTransaction()
+    const tx = await deployer.sendTransaction({
+      ...deployTx,
+      ...gasSettings,
+    })
+    
+    console.log('   Transaction sent:', tx.hash)
+    console.log('   Waiting for confirmation...')
+    
+    const receipt = await tx.wait()
+    const newImplAddress = receipt.contractAddress
+    
+    console.log('   ✅ New implementation deployed:', newImplAddress)
+    console.log('   Gas used:', receipt.gasUsed.toString())
+    console.log('')
+    
+    // Get proxy instance
+    const proxy = await ethers.getContractAt('BuybackBurner', BUYBACK_BURNER_PROXY)
+    
+    // Upgrade to new implementation
+    console.log('   Upgrading proxy to new implementation...')
+    const upgradeTx = await proxy.upgradeToAndCall(newImplAddress, '0x', gasSettings)
+    await upgradeTx.wait()
+    
+    console.log('   ✅ Proxy upgraded! TX:', upgradeTx.hash)
     console.log('')
 
     // Verify upgrade
     console.log('   Verifying upgrade...')
-    const proxy = await ethers.getContractAt('BuybackBurner', BUYBACK_BURNER_PROXY)
     
     const maxSwap = await proxy.maxSwapAmount()
     const totalLimit = await proxy.totalUserLimit()
@@ -95,6 +145,7 @@ async function main() {
     console.log('')
   } catch (error) {
     console.error('   ❌ BuybackBurner upgrade failed:', error.message)
+    if (error.data) console.error('   Error data:', error.data)
     throw error
   }
 
@@ -107,6 +158,10 @@ async function main() {
   console.log('   - BuybackBurner now uses msg.sender for limit tracking')
   console.log('   - tx.origin vulnerability eliminated')
   console.log('   - Beta limits properly enforced per-caller')
+  console.log('')
+  console.log('Deployment Details:')
+  console.log('   - RevenueSplitter proxy: ', REVENUE_SPLITTER_PROXY)
+  console.log('   - BuybackBurner proxy: ', BUYBACK_BURNER_PROXY)
   console.log('')
   console.log('Next Steps:')
   console.log('   1. Verify on Theta Explorer')
