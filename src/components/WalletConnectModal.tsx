@@ -21,6 +21,55 @@ export default function WalletConnectModal({
   const [showCopyToast, setShowCopyToast] = useState(false)
   const [currentProvider, setCurrentProvider] = useState<any>(null) // Track active provider for cleanup
   const [hasStaleSession, setHasStaleSession] = useState(false)
+  const [connectionTimeout, setConnectionTimeout] = useState<NodeJS.Timeout | null>(null)
+
+  // Helper function to clean up WalletConnect provider properly
+  const cleanupProvider = async (provider: any) => {
+    if (!provider) return
+    
+    try {
+      console.log('🧹 Cleaning up WalletConnect provider...')
+      
+      // Remove all event listeners first (check if method exists)
+      if (typeof provider.removeAllListeners === 'function') {
+        provider.removeAllListeners()
+      } else {
+        console.warn('⚠️ Provider does not have removeAllListeners method')
+      }
+      
+      // If provider is still connecting (no active session), disconnect it
+      if (!provider.session && typeof provider.disconnect === 'function') {
+        console.log('⚠️ Provider has no session, disconnecting...')
+        await provider.disconnect()
+      }
+      
+      console.log('✅ Provider cleanup complete')
+    } catch (error) {
+      console.warn('⚠️ Error during provider cleanup:', error)
+      // Don't throw - cleanup is best-effort
+    }
+  }
+
+  // Handle closing the QR modal with proper cleanup
+  const handleCloseQRModal = async () => {
+    console.log('🚪 Closing QR modal...')
+    
+    // Clear connection timeout if exists
+    if (connectionTimeout) {
+      clearTimeout(connectionTimeout)
+      setConnectionTimeout(null)
+    }
+    
+    // Clean up provider
+    await cleanupProvider(currentProvider)
+    
+    // Reset all state
+    setCurrentProvider(null)
+    setWalletConnectUri(undefined)
+    setShowThetaQR(false)
+    
+    console.log('✅ QR modal closed and cleaned up')
+  }
 
   // Initialize WalletConnect and get QR URI when showing QR modal
   useEffect(() => {
@@ -29,11 +78,13 @@ export default function WalletConnectModal({
       
       const initWalletConnect = async () => {
         try {
+          console.log('🔌 Initializing WalletConnect provider...')
           provider = await createWalletConnectProvider()
           setCurrentProvider(provider) // Store for cleanup
           
           // Check if already connected
           if (provider.session) {
+            console.log('✅ Provider already has active session')
             // Already connected, close modal and trigger connection handler
             setShowThetaQR(false)
             onConnect('walletconnect')
@@ -42,23 +93,52 @@ export default function WalletConnectModal({
           
           // Listen for URI display
           provider.on('display_uri', (uri: string) => {
+            console.log('📱 WalletConnect URI received')
             setWalletConnectUri(uri)
           })
           
           // Listen for session establishment
           provider.on('connect', () => {
+            console.log('✅ WalletConnect session established!')
             setShowThetaQR(false)
             onConnect('walletconnect')
+            
+            // Clear timeout on successful connection
+            if (connectionTimeout) {
+              clearTimeout(connectionTimeout)
+              setConnectionTimeout(null)
+            }
           })
+          
+          // Set connection timeout (30 seconds)
+          const timeout = setTimeout(async () => {
+            console.warn('⏱️ Connection timeout - no response after 30 seconds')
+            await handleCloseQRModal()
+            alert('Connection timed out. Please try again.')
+          }, 30000)
+          setConnectionTimeout(timeout)
           
           // Connect to get the URI (this will trigger display_uri event)
           // This will show QR code that user can scan
+          console.log('🔄 Connecting to WalletConnect...')
           await provider.connect()
         } catch (error: any) {
-          console.error('Failed to initialize WalletConnect:', error)
+          console.error('❌ Failed to initialize WalletConnect:', error)
+          
+          // Clear timeout on error
+          if (connectionTimeout) {
+            clearTimeout(connectionTimeout)
+            setConnectionTimeout(null)
+          }
+          
           if (error?.message?.includes('User rejected') || error?.code === 4001) {
             // User cancelled, just close QR modal
-            setShowThetaQR(false)
+            console.log('🚫 User cancelled connection')
+            await handleCloseQRModal()
+          } else {
+            // Other errors - show message and close
+            alert(`Failed to connect: ${error?.message || 'Unknown error'}`)
+            await handleCloseQRModal()
           }
         }
       }
@@ -67,8 +147,11 @@ export default function WalletConnectModal({
       
       // Cleanup when closing QR modal
       return () => {
+        if (connectionTimeout) {
+          clearTimeout(connectionTimeout)
+        }
         if (provider) {
-          provider.removeAllListeners()
+          cleanupProvider(provider)
         }
       }
     }
@@ -84,16 +167,19 @@ export default function WalletConnectModal({
   useEffect(() => {
     if (!isOpen && currentProvider) {
       // Clean up any pending connections
-      try {
-        currentProvider.removeAllListeners()
+      cleanupProvider(currentProvider).then(() => {
         setCurrentProvider(null)
         setWalletConnectUri(undefined)
         setShowThetaQR(false)
-      } catch (error) {
-        console.error('Error cleaning up provider:', error)
+      })
+      
+      // Clear timeout if exists
+      if (connectionTimeout) {
+        clearTimeout(connectionTimeout)
+        setConnectionTimeout(null)
       }
     }
-  }, [isOpen, currentProvider])
+  }, [isOpen, currentProvider, connectionTimeout])
 
   if (!isOpen) return null
 
@@ -127,12 +213,13 @@ export default function WalletConnectModal({
 
       {/* Backdrop */}
       <div
-        className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm"
+        className="fixed inset-0 z-[9990] bg-black/80 backdrop-blur-sm"
         onClick={onClose}
       />
 
       {/* Modal */}
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 z-[9991] flex items-center justify-center p-4 pointer-events-none">
+        <div className="pointer-events-auto">
         <div
           className="relative w-full max-w-lg rounded-3xl border-2 border-purple-400/60 bg-gradient-to-br from-[rgba(15,23,42,0.98)] via-[rgba(30,41,59,0.95)] to-[rgba(15,23,42,0.98)] backdrop-blur-2xl shadow-[0_0_80px_rgba(168,85,247,0.6),inset_0_0_60px_rgba(168,85,247,0.1)]"
           onClick={(e) => e.stopPropagation()}
@@ -225,68 +312,30 @@ export default function WalletConnectModal({
               <div className="h-px flex-1 bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
             </div>
 
-            {/* Theta Wallet Option (Alternative) */}
+            {/* Mobile Wallets (WalletConnect) */}
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-purple-300">
-                  Theta Wallet (QR/Deep Link)
+                  Mobile Wallets
                 </span>
                 <div className="h-px flex-1 bg-gradient-to-r from-purple-500/50 to-transparent" />
               </div>
 
-              {/* Direct Theta Wallet - Native Connection */}
-              <button
-                onClick={async () => {
-                  setIsConnecting(true)
-                  try {
-                    await onConnect('theta')
-                  } catch (error) {
-                    console.error('Theta Wallet connection error:', error)
-                  } finally {
-                    setIsConnecting(false)
-                  }
-                }}
-                disabled={isConnecting}
-                className="group relative w-full rounded-2xl border-2 border-purple-400/60 bg-gradient-to-br from-purple-500/20 via-purple-600/15 to-slate-900/40 px-6 py-4 text-left backdrop-blur-xl transition-all hover:border-purple-400 hover:shadow-[0_0_40px_rgba(168,85,247,0.7),inset_0_0_30px_rgba(168,85,247,0.2)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl border-2 border-purple-400/50 bg-gradient-to-br from-purple-500/40 to-purple-600/30 shadow-[0_0_20px_rgba(168,85,247,0.5)]">
-                    <span className="text-2xl">⚡</span>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-lg font-bold text-white group-hover:text-purple-200 transition-colors">
-                      {isConnecting ? 'Connecting...' : 'Connect Theta Wallet'}
-                    </p>
-                    <p className="text-xs text-slate-400 mt-1 group-hover:text-slate-300 transition-colors">
-                      {isMobileDevice() ? 'Deep link or QR code' : 'Desktop wallet connection'}
-                    </p>
-                  </div>
-                  <svg
-                    className="w-6 h-6 text-purple-400 transition-all"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </div>
-              </button>
-
-              {/* WalletConnect QR Fallback - Button to show QR modal */}
+              {/* WalletConnect - All Mobile Wallets (Theta, Trust, Rainbow, etc.) */}
               <button
                 onClick={() => setShowThetaQR(true)}
-                className="group relative w-full rounded-2xl border-2 border-purple-400/50 bg-gradient-to-br from-purple-500/15 via-purple-600/10 to-slate-900/40 px-6 py-4 text-left backdrop-blur-xl transition-all hover:border-purple-400/70 hover:shadow-[0_0_30px_rgba(168,85,247,0.5),inset_0_0_20px_rgba(168,85,247,0.2)] active:scale-[0.98]"
+                className="group relative w-full rounded-2xl border-2 border-purple-400/60 bg-gradient-to-br from-purple-500/20 via-purple-600/15 to-slate-900/40 px-6 py-5 text-left backdrop-blur-xl transition-all hover:border-purple-400 hover:shadow-[0_0_40px_rgba(168,85,247,0.7),inset_0_0_30px_rgba(168,85,247,0.2)] active:scale-[0.98]"
               >
                 <div className="flex items-center gap-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl border-2 border-purple-400/40 bg-gradient-to-br from-purple-500/30 to-purple-600/25 shadow-[0_0_20px_rgba(168,85,247,0.4)]">
-                    <span className="text-2xl">📱</span>
+                  <div className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-purple-400/50 bg-gradient-to-br from-purple-500/40 to-purple-600/30 shadow-[0_0_25px_rgba(168,85,247,0.6)]">
+                    <span className="text-3xl">📱</span>
                   </div>
                   <div className="flex-1">
-                    <p className="text-lg font-bold text-white group-hover:text-purple-200 transition-colors">
-                      WalletConnect QR Code
+                    <p className="text-xl font-bold text-white group-hover:text-purple-200 transition-colors">
+                      Mobile Wallet (QR Code)
                     </p>
                     <p className="text-xs text-slate-400 mt-1 group-hover:text-slate-300 transition-colors">
-                      Scan with Theta Wallet mobile app
+                      Theta, Trust, Rainbow, etc. • Scan to connect
                     </p>
                   </div>
                   <svg
@@ -304,9 +353,8 @@ export default function WalletConnectModal({
               {showThetaQR && (
                 <div className="relative p-6 rounded-2xl border-2 border-purple-400/60 bg-gradient-to-br from-purple-500/20 via-purple-600/15 to-slate-900/60 backdrop-blur-xl shadow-[0_0_50px_rgba(168,85,247,0.7),0_0_80px_rgba(168,85,247,0.4),inset_0_0_40px_rgba(168,85,247,0.2)]">
                   <button
-                    onClick={() => {
-                      setShowThetaQR(false)
-                      onClose() // Also close the parent modal to prevent black screen
+                    onClick={async () => {
+                      await handleCloseQRModal()
                     }}
                     className="absolute right-3 top-3 flex h-6 w-6 items-center justify-center rounded-full border border-purple-400/50 bg-purple-500/20 text-purple-300 transition-all hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-300"
                   >
@@ -461,6 +509,7 @@ export default function WalletConnectModal({
               </p>
             </div>
           </div>
+        </div>
         </div>
       </div>
     </>

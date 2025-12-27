@@ -191,7 +191,13 @@ export async function bridgeThetaToCosmos(
     // Get Axelar chain name
     const axelarDestChain = AXELAR_CHAIN_NAMES[destinationChain] || destinationChain
 
+    console.log('🌉 [Axelar Bridge] Initiating bridge transaction...')
+    console.log('🌉 [Axelar Bridge] Destination:', axelarDestChain)
+    console.log('🌉 [Axelar Bridge] Amount:', amount, 'USDC')
+
     // Call Axelar GMP with token transfer
+    // CRITICAL FIX: Don't await tx.wait() here - return hash immediately after user confirms
+    // The calling code will handle waiting for confirmation if needed
     const tx = await gateway.callContractWithToken(
       axelarDestChain,
       destinationAddress, // Destination contract that will stake
@@ -203,10 +209,22 @@ export async function bridgeThetaToCosmos(
       }
     )
 
-    await tx.wait()
+    console.log('✅ [Axelar Bridge] Transaction sent! Hash:', tx.hash)
+    
+    // Return hash immediately - caller can wait if needed
+    // This fixes the MetaMask stuck-in-loop issue at Phase 2/4
     return tx.hash
-  } catch (error) {
-    console.error('Theta → Cosmos bridge error:', error)
+  } catch (error: any) {
+    console.error('❌ [Axelar Bridge] Error:', error)
+    
+    // Handle user rejection gracefully
+    if (error.message?.includes('user rejected') || 
+        error.message?.includes('User denied') ||
+        error.code === 'ACTION_REJECTED' ||
+        error.code === 4001) {
+      throw new Error('Transaction cancelled by user')
+    }
+    
     throw error
   }
 }
@@ -344,7 +362,11 @@ export async function crossChainSwap(
     // Get Axelar chain name
     const axelarDestChain = AXELAR_CHAIN_NAMES[destinationChain] || destinationChain
 
+    console.log('🌉 [Axelar GMP] Initiating cross-chain swap...')
+    console.log('🌉 [Axelar GMP] Destination:', axelarDestChain)
+
     // Call Axelar GMP callContract
+    // CRITICAL FIX: Return hash immediately after user confirms (don't wait for mining)
     const tx = await gateway.callContract(
       axelarDestChain,
       destinationAddress,
@@ -354,10 +376,21 @@ export async function crossChainSwap(
       }
     )
 
-    await tx.wait()
+    console.log('✅ [Axelar GMP] Transaction sent! Hash:', tx.hash)
+    
+    // Return hash immediately - caller will handle waiting if needed
     return tx.hash
-  } catch (error) {
-    console.error('Cross-chain swap error:', error)
+  } catch (error: any) {
+    console.error('❌ [Axelar GMP] Error:', error)
+    
+    // Handle user rejection gracefully
+    if (error.message?.includes('user rejected') || 
+        error.message?.includes('User denied') ||
+        error.code === 'ACTION_REJECTED' ||
+        error.code === 4001) {
+      throw new Error('Transaction cancelled by user')
+    }
+    
     throw error
   }
 }

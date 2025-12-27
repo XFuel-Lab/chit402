@@ -184,6 +184,47 @@ export function isKeplrInstalled(): boolean {
   return typeof window !== 'undefined' && !!window.keplr
 }
 
+// Cache for enabled chains to avoid redundant enable() calls
+const enabledChainsCache = new Set<string>()
+
+// Cache for connected addresses per chain
+const addressCache = new Map<string, { address: string; timestamp: number }>()
+const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+/**
+ * Check if chain is already enabled and cached
+ */
+function isChainEnabled(chainId: string): boolean {
+  return enabledChainsCache.has(chainId)
+}
+
+/**
+ * Get cached address if available and fresh
+ */
+function getCachedAddress(chainId: string): string | null {
+  const cached = addressCache.get(chainId)
+  if (!cached) return null
+  
+  const age = Date.now() - cached.timestamp
+  if (age > CACHE_TTL) {
+    // Cache expired
+    addressCache.delete(chainId)
+    return null
+  }
+  
+  return cached.address
+}
+
+/**
+ * Cache an address for a chain
+ */
+function cacheAddress(chainId: string, address: string): void {
+  addressCache.set(chainId, {
+    address,
+    timestamp: Date.now(),
+  })
+}
+
 /**
  * Get user-friendly error message
  */
@@ -231,6 +272,7 @@ async function suggestChainToKeplr(chainId: string): Promise<void> {
 /**
  * Connect to Keplr wallet and enable chain
  * This will show the Keplr UI popup!
+ * Uses caching to avoid redundant enable() calls
  */
 export async function connectKeplrForChain(chainId: string): Promise<string> {
   if (!isKeplrInstalled()) {
@@ -238,17 +280,32 @@ export async function connectKeplrForChain(chainId: string): Promise<string> {
   }
 
   try {
+    // Check cache first
+    const cachedAddress = getCachedAddress(chainId)
+    if (cachedAddress && isChainEnabled(chainId)) {
+      console.log(`🎯 Using cached Keplr address for ${chainId}:`, cachedAddress)
+      return cachedAddress
+    }
+
     console.log(`🔌 Connecting Keplr for chain: ${chainId}`)
     
     // First, suggest the chain (will add if not present)
-    await suggestChainToKeplr(chainId)
-    
-    // Wait a moment for chain addition
-    await new Promise(resolve => setTimeout(resolve, 500))
-    
-    // Enable the chain - THIS TRIGGERS KEPLR UI
-    console.log(`🔓 Enabling chain ${chainId} in Keplr...`)
-    await window.keplr!.enable(chainId)
+    // Only suggest if not already enabled to reduce UI popups
+    if (!isChainEnabled(chainId)) {
+      await suggestChainToKeplr(chainId)
+      
+      // Wait a moment for chain addition
+      await new Promise(resolve => setTimeout(resolve, 300))
+      
+      // Enable the chain - THIS TRIGGERS KEPLR UI
+      console.log(`🔓 Enabling chain ${chainId} in Keplr...`)
+      await window.keplr!.enable(chainId)
+      
+      // Mark as enabled
+      enabledChainsCache.add(chainId)
+    } else {
+      console.log(`✓ Chain ${chainId} already enabled, skipping suggest/enable`)
+    }
     
     // Get the offline signer
     const offlineSigner = window.keplr!.getOfflineSigner(chainId)
@@ -265,6 +322,9 @@ export async function connectKeplrForChain(chainId: string): Promise<string> {
     if (cosmosAddress.startsWith('0x')) {
       throw new Error('Invalid address format - got ETH address instead of Cosmos address. Please reconnect Keplr.')
     }
+
+    // Cache the address
+    cacheAddress(chainId, cosmosAddress)
 
     return cosmosAddress
   } catch (error: any) {
@@ -322,6 +382,18 @@ export async function getKeplrLSTBalance(
     console.error('Error fetching Keplr balance:', error)
     return 0
   }
+}
+
+/**
+ * Execute LST staking on Cosmos chain via Keplr (Pro version)
+ * This triggers the Keplr signing popup for the delegate transaction
+ * Uses experimentalSuggestChain for better UX and chain support
+ */
+export async function stakeLSTOnStridePro(
+  lstSymbol: string,
+  amount: number
+): Promise<{ success: boolean; txHash?: string; error?: string }> {
+  return stakeLSTOnStride(lstSymbol, amount)
 }
 
 /**
@@ -480,6 +552,7 @@ export function getStrideExplorerUrl(txHash: string): string {
 
 /**
  * Check if user has Keplr and guide them through setup
+ * Uses caching to minimize UI popups
  */
 export async function ensureKeplrSetup(lstSymbol: string): Promise<{
   ready: boolean
@@ -504,13 +577,28 @@ export async function ensureKeplrSetup(lstSymbol: string): Promise<{
       }
     }
 
-    // 3. Suggest chain (adds if not present, triggers UI)
-    await suggestChainToKeplr(config.chainId)
+    // 3. Check cache first for fast path
+    const cachedAddress = getCachedAddress(config.chainId)
+    if (cachedAddress && isChainEnabled(config.chainId)) {
+      console.log(`⚡ Fast path: Using cached Keplr setup for ${lstSymbol}`)
+      return {
+        ready: true,
+        address: cachedAddress,
+      }
+    }
 
-    // 4. Enable chain (triggers UI)
-    await window.keplr!.enable(config.chainId)
+    // 4. Suggest chain (adds if not present, triggers UI once)
+    if (!isChainEnabled(config.chainId)) {
+      await suggestChainToKeplr(config.chainId)
+    }
 
-    // 5. Get address
+    // 5. Enable chain (triggers UI if not cached)
+    if (!isChainEnabled(config.chainId)) {
+      await window.keplr!.enable(config.chainId)
+      enabledChainsCache.add(config.chainId)
+    }
+
+    // 6. Get address
     const offlineSigner = window.keplr!.getOfflineSigner(config.chainId)
     const accounts = await offlineSigner.getAccounts()
 
@@ -523,13 +611,16 @@ export async function ensureKeplrSetup(lstSymbol: string): Promise<{
 
     const address = accounts[0].address
 
-    // 6. Verify it's a Cosmos address
+    // 7. Verify it's a Cosmos address
     if (address.startsWith('0x')) {
       return {
         ready: false,
         error: 'Invalid address format - reconnect Keplr and approve chain',
       }
     }
+
+    // 8. Cache for next time
+    cacheAddress(config.chainId, address)
 
     return {
       ready: true,

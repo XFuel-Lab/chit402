@@ -3,7 +3,6 @@ import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
 import InstitutionsPortal from './InstitutionsPortal.tsx'
 import LiquidityDashboard from './LiquidityDashboard.tsx'
-import MainnetBanner from './components/MainnetBanner.tsx'
 import './index.css'
 import { usePriceStore } from './stores/priceStore'
 import { suppressCrossOriginErrors } from './utils/consoleErrorSuppression'
@@ -72,8 +71,7 @@ function Router() {
 
   return (
     <>
-      <MainnetBanner />
-      <div className="pt-[52px] sm:pt-[56px]">
+      <div>
         {isInstitutionsRoute ? (
           <InstitutionsPortal />
         ) : isLiquidityRoute ? (

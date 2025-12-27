@@ -45,6 +45,7 @@ export async function createWalletConnectProvider(forceNew: boolean = false): Pr
     }
     
     // Initialize WalletConnect v2 with Theta Network configuration
+    // Explicit configuration for Theta Wallet compatibility
     walletConnectProvider = await EthereumProvider.init({
       projectId: WALLETCONNECT_PROJECT_ID,
       chains: [THETA_MAINNET.chainId],
@@ -52,20 +53,47 @@ export async function createWalletConnectProvider(forceNew: boolean = false): Pr
       rpcMap: {
         [THETA_MAINNET.chainId]: THETA_MAINNET.rpcUrl,
       },
+      // Explicitly define required RPC methods for Theta Wallet
+      methods: [
+        'eth_sendTransaction',
+        'eth_signTransaction',
+        'eth_sign',
+        'personal_sign',
+        'eth_signTypedData',
+        'eth_signTypedData_v4',
+        'eth_accounts',
+        'eth_requestAccounts',
+        'eth_call',
+        'eth_getBalance',
+        'eth_sendRawTransaction',
+        'eth_blockNumber',
+        'eth_chainId',
+        'eth_getTransactionByHash',
+        'eth_getTransactionReceipt',
+        'eth_estimateGas',
+        'eth_gasPrice',
+      ],
+      // Explicitly define required events for Theta Wallet
+      events: [
+        'chainChanged',
+        'accountsChanged',
+        'disconnect',
+        'connect',
+      ],
       metadata: {
         name: 'XFUEL Protocol',
         description: 'Convert Theta EdgeCloud revenue to auto-compounding Cosmos LSTs',
         url: typeof window !== 'undefined' ? window.location.origin : 'https://xfuel.app',
         icons: [typeof window !== 'undefined' ? `${window.location.origin}/logo.png` : 'https://xfuel.app/logo.png'],
       },
-      showQrModal: true, // Use WalletConnect's built-in modal for better UX
+      showQrModal: false, // Use custom modal to avoid conflicts
       qrModalOptions: {
         themeMode: 'dark',
         themeVariables: {
           '--wcm-z-index': '9999',
         },
         explorerRecommendedWalletIds: [
-          // Add Theta Wallet ID when available
+          '43832260665ea0d076f9af1ee157d580bb0eb44ca0415117fef65666460a2652', // Theta Wallet official ID
         ],
         mobileWallets: [
           {

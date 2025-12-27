@@ -248,28 +248,60 @@ export default function BiDirectionalSwapCard({
           bridgeAmount = inputAmount // Amount after swap
         }
 
+        // PRE-WARM KEPLR: Enable and suggest chain during Step 1
+        // This moves Keplr UI interaction to early phase, reducing lag at Phase 4
+        console.log('🔥 Pre-warming Keplr connection for', toToken.symbol)
+        const { ensureKeplrSetup } = await import('../utils/cosmosLSTStakingPro')
+        const keplrSetup = await ensureKeplrSetup(toToken.symbol)
+        
+        if (!keplrSetup.ready) {
+          throw new Error(keplrSetup.error || 'Failed to setup Keplr wallet')
+        }
+        
+        console.log('✅ Keplr pre-warmed and ready:', keplrSetup.address)
+
         // Step 2: Bridge via Axelar GMP
-        setStatusMessage('Step 2/4: Bridging via Axelar GMP...')
-        txHash = await bridgeThetaToCosmos(
+        setStatusMessage('Step 2/4: Confirming Axelar bridge transaction...')
+        
+        // CRITICAL FIX: bridgeThetaToCosmos now returns hash immediately after user confirms
+        // We need to properly wait for transaction to be mined
+        const bridgeTxHash = await bridgeThetaToCosmos(
           provider,
           bridgeAmount,
           toToken.chainId,
           keplrWallet.address,
           toToken
         )
+        
+        // Now wait for the bridge transaction to be confirmed on-chain
+        setStatusMessage('Step 2/4: Bridging via Axelar GMP (waiting for confirmation)...')
+        console.log('🌉 Waiting for bridge TX confirmation:', bridgeTxHash)
+        
+        try {
+          const receipt = await provider.waitForTransaction(bridgeTxHash, 1, 180000) // 3 min timeout
+          if (!receipt) {
+            throw new Error('Bridge transaction not confirmed')
+          }
+          console.log('✅ Bridge transaction confirmed at block:', receipt.blockNumber)
+        } catch (waitError: any) {
+          console.warn('⚠️ Could not confirm bridge transaction, proceeding anyway:', waitError)
+          // Continue - Axelar may still process it
+        }
+        
+        txHash = bridgeTxHash
 
         // Step 3: Wait for bridge (in production, poll Axelar API)
-        setStatusMessage('Step 3/4: Waiting for bridge confirmation (~1 min)...')
+        setStatusMessage('Step 3/4: Waiting for Axelar relay (~1 min)...')
         await new Promise(resolve => setTimeout(resolve, 2000)) // Simulate wait
 
         // Step 4: Stake on destination chain via Keplr
         setStatusMessage('Step 4/4: Staking to LST via Keplr...')
         
-        // Import staking function
-        const { stakeLSTOnStride } = await import('../utils/cosmosLSTStaking')
+        // Import enhanced staking function with chain suggestion support
+        const { stakeLSTOnStridePro } = await import('../utils/cosmosLSTStakingPro')
         
         const stakeAmount = parseFloat(bridgeAmount)
-        const stakeResult = await stakeLSTOnStride(toToken.symbol, stakeAmount)
+        const stakeResult = await stakeLSTOnStridePro(toToken.symbol, stakeAmount)
         
         if (!stakeResult.success) {
           throw new Error(stakeResult.error || 'Failed to stake LST')
