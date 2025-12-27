@@ -121,8 +121,8 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         require(amount > 0, "RevenueSplitter: amount must be greater than 0");
         require(amount <= maxSwapAmount, "RevenueSplitter: amount exceeds max swap limit");
         
-        // Track by tx.origin to prevent proxy contract bypass (same as BuybackBurner)
-        address user = tx.origin;
+        // Track by msg.sender for proper per-caller limits (beta safety)
+        address user = msg.sender;
         require(userTotalSwapped[user] + amount <= totalUserLimit, "RevenueSplitter: user total limit exceeded");
 
         // Update user's total swapped amount
@@ -195,8 +195,8 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         require(msg.value > 0, "RevenueSplitter: amount must be greater than 0");
         require(msg.value <= maxSwapAmount, "RevenueSplitter: amount exceeds max swap limit");
         
-        // Track by tx.origin to prevent proxy contract bypass (same as BuybackBurner)
-        address user = tx.origin;
+        // Track by msg.sender for proper per-caller limits (beta safety)
+        address user = msg.sender;
         require(userTotalSwapped[user] + msg.value <= totalUserLimit, "RevenueSplitter: user total limit exceeded");
 
         // Update user's total swapped amount
