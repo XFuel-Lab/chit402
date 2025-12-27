@@ -963,8 +963,9 @@ function App() {
 
       // ====== REAL COSMOS LST STAKING WITH AUTO-INIT ======
       // After successful Theta swap, trigger Keplr signing for delegate msg
-      // Only stake tokens that are supported on Stride (stkTIA, stkATOM, stkXPRT, stkOSMO)
-      const supportedForStaking = ['stkTIA', 'stkATOM', 'stkXPRT', 'stkOSMO']
+      // Only stake tokens that are supported on Stride (stkTIA, stkATOM, stkOSMO)
+      // NOTE: stkXPRT disabled - requires different flow (stake XPRT first, then liquid stake)
+      const supportedForStaking = ['stkTIA', 'stkATOM', 'stkOSMO']
       
       if (supportedForStaking.includes(selectedLST.name)) {
         // Check if Keplr is installed
