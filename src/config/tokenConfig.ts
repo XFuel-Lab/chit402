@@ -70,6 +70,15 @@ export const COSMOS_TOKENS: Token[] = [
     chainId: 'osmosis-1',
     coingeckoId: 'osmosis',
   },
+  {
+    symbol: 'XPRT',
+    name: 'Persistence',
+    decimals: 6,
+    type: 'native',
+    chain: 'cosmos',
+    chainId: 'core-1',
+    coingeckoId: 'persistence',
+  },
 ]
 
 // All tokens combined
