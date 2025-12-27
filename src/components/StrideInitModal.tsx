@@ -86,23 +86,44 @@ export default function StrideInitModal({
     
     const checkInterval = setInterval(async () => {
       attempts++
-      setEstimatedTime(Math.max(10, 60 - attempts * 5))
+      setEstimatedTime(Math.max(5, 60 - attempts * 5))
       
-      const response = await fetch(
-        `https://stride-api.polkachu.com/cosmos/auth/v1beta1/accounts/${strideAddress}`
-      )
-      
-      if (response.ok) {
-        clearInterval(checkInterval)
-        setCurrentStep('success')
-        setTimeout(() => {
-          onInitComplete()
-          onClose()
-        }, 2000)
-      } else if (attempts >= maxAttempts) {
-        clearInterval(checkInterval)
-        setError('Verification timeout. Please ensure STRD was sent to your address.')
-        setCurrentStep('manual')
+      try {
+        const response = await fetch(
+          `https://stride-api.polkachu.com/cosmos/auth/v1beta1/accounts/${strideAddress}`
+        )
+        
+        if (response.ok) {
+          clearInterval(checkInterval)
+          setCurrentStep('success')
+          
+          // Trigger success confetti
+          if (typeof confetti !== 'undefined') {
+            confetti({
+              particleCount: 100,
+              spread: 70,
+              origin: { y: 0.5 },
+              colors: ['#a855f7', '#06b6d4', '#10b981'],
+            })
+          }
+          
+          setTimeout(() => {
+            onInitComplete()
+            onClose()
+          }, 2000)
+        } else if (attempts >= maxAttempts) {
+          clearInterval(checkInterval)
+          setError('⏱️ Verification timeout. Please ensure STRD was sent to your address.')
+          setCurrentStep('manual')
+        }
+      } catch (err: any) {
+        console.error('Verification poll error:', err)
+        // Continue polling despite errors
+        if (attempts >= maxAttempts) {
+          clearInterval(checkInterval)
+          setError('❌ Network error during verification. Please verify manually.')
+          setCurrentStep('manual')
+        }
       }
     }, 5000) // Check every 5 seconds
   }

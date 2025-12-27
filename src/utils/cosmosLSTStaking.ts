@@ -135,6 +135,8 @@ export async function stakeLSTOnStride(
   lstSymbol: string,
   amount: number
 ): Promise<{ success: boolean; txHash?: string; error?: string }> {
+  let userAddress: string | undefined
+
   try {
     // Validate LST configuration
     const config = STRIDE_LST_CONFIGS[lstSymbol]
@@ -145,8 +147,20 @@ export async function stakeLSTOnStride(
       }
     }
 
-    // Connect Keplr
-    const userAddress = await connectKeplrForStride()
+    // Connect Keplr - CRITICAL: Null check
+    try {
+      userAddress = await connectKeplrForStride()
+      
+      if (!userAddress) {
+        throw new Error('Failed to get Stride address from Keplr')
+      }
+    } catch (keplrError: any) {
+      console.error('Keplr connection error:', keplrError)
+      return {
+        success: false,
+        error: `❌ Keplr connection failed: ${keplrError.message || 'Please ensure Keplr is installed and unlocked'}`,
+      }
+    }
 
     // Get the offline signer for signing transactions
     const offlineSigner = window.keplr!.getOfflineSigner(STRIDE_CHAIN_ID)
@@ -213,12 +227,30 @@ export async function stakeLSTOnStride(
       }
     }
 
-    // Handle account not existing on chain
+    // Handle account not existing on chain - provide actionable guidance
     if (error.message?.includes('does not exist on chain') || 
-        error.message?.includes('account not found')) {
+        error.message?.includes('account not found') ||
+        error.message?.includes('account does not exist')) {
+      
+      // Try to get address for error message (use cached userAddress if available)
+      let shortAddr = 'your Stride address'
+      if (userAddress) {
+        shortAddr = `${userAddress.substring(0, 12)}...${userAddress.substring(userAddress.length - 6)}`
+      } else {
+        // Try one more time to get address for display
+        try {
+          const addr = await connectKeplrForStride()
+          if (addr) {
+            shortAddr = `${addr.substring(0, 12)}...${addr.substring(addr.length - 6)}`
+          }
+        } catch {
+          // Use generic message if we can't get address
+        }
+      }
+      
       return {
         success: false,
-        error: `Your Stride wallet address (${userAddress.substring(0, 20)}...) needs to be initialized first. Please send a small amount of STRD tokens to your Stride address using Keplr, then try again. You can get STRD from the Stride faucet or an exchange.`,
+        error: `🚀 Stride Account Setup Required: Your Stride wallet (${shortAddr}) needs a one-time activation. Get 0.5 STRD (~$0.50) from Osmosis DEX to activate and cover ~50 future transactions. The guided setup modal will help you do this in <60 seconds.`,
       }
     }
 
