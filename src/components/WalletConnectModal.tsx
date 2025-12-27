@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { createWalletConnectProvider, getWalletConnectUri } from '../utils/walletConnect'
 import { isMobileDevice } from '../utils/thetaWallet'
+import { clearWalletConnectStorage, hasStaleWalletConnectSession } from '../utils/walletConnectStorage'
 
 interface WalletConnectModalProps {
   isOpen: boolean
@@ -19,6 +20,7 @@ export default function WalletConnectModal({
   const [walletConnectUri, setWalletConnectUri] = useState<string | undefined>(undefined)
   const [showCopyToast, setShowCopyToast] = useState(false)
   const [currentProvider, setCurrentProvider] = useState<any>(null) // Track active provider for cleanup
+  const [hasStaleSession, setHasStaleSession] = useState(false)
 
   // Initialize WalletConnect and get QR URI when showing QR modal
   useEffect(() => {
@@ -69,6 +71,11 @@ export default function WalletConnectModal({
           provider.removeAllListeners()
         }
       }
+    }
+    
+    // Check for stale session when modal opens
+    if (isOpen) {
+      setHasStaleSession(hasStaleWalletConnectSession())
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showThetaQR, isOpen])
@@ -429,7 +436,26 @@ export default function WalletConnectModal({
             </div>
 
             {/* Footer note */}
-            <div className="text-center pt-2">
+            <div className="text-center pt-2 space-y-3">
+              {/* Reset button - show if there's a stale session */}
+              {hasStaleSession && (
+                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                  <p className="text-xs text-yellow-300 mb-2">
+                    ⚠️ Having trouble connecting? Try resetting WalletConnect.
+                  </p>
+                  <button
+                    onClick={() => {
+                      clearWalletConnectStorage()
+                      setHasStaleSession(false)
+                      alert('WalletConnect storage cleared! Please try connecting again.')
+                    }}
+                    className="px-4 py-2 text-xs font-semibold uppercase tracking-wider rounded-md border border-yellow-500/50 bg-yellow-500/10 text-yellow-300 transition-all hover:border-yellow-400 hover:bg-yellow-500/20 hover:text-yellow-200"
+                  >
+                    Reset WalletConnect
+                  </button>
+                </div>
+              )}
+              
               <p className="text-[10px] text-slate-500 uppercase tracking-wider">
                 🔒 Your wallet, your keys • We never store your private information
               </p>

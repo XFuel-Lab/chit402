@@ -21,6 +21,7 @@ import {
   BridgeRoute,
 } from '../utils/axelarBridge'
 import { usePriceStore } from '../stores/priceStore'
+import StrideAccountHelp from './StrideAccountHelp'
 
 interface BiDirectionalSwapCardProps {
   thetaWallet: {
@@ -48,6 +49,7 @@ export default function BiDirectionalSwapCard({
   const [swapStatus, setSwapStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [statusMessage, setStatusMessage] = useState('')
   const [route, setRoute] = useState<BridgeRoute | null>(null)
+  const [strideAccountError, setStrideAccountError] = useState<string | null>(null)
 
   const { prices } = usePriceStore()
 
@@ -103,6 +105,20 @@ export default function BiDirectionalSwapCard({
     const slippage = 0.005 // 0.5%
     const bridgeFee = parseFloat(route?.bridgeFee || '2.0')
     const netUSD = fromUSD * (1 - slippage) - bridgeFee
+
+    // Log calculation for debugging ratio issues
+    console.log('💱 Swap Calculation:', {
+      inputAmount: amount,
+      fromToken: fromToken.symbol,
+      fromPrice: `$${fromPrice.toFixed(4)}`,
+      toToken: toToken.symbol,
+      toPrice: `$${toPrice.toFixed(4)}`,
+      fromUSD: `$${fromUSD.toFixed(2)}`,
+      slippage: '0.5%',
+      bridgeFee: `$${bridgeFee}`,
+      netUSD: `$${netUSD.toFixed(2)}`,
+      outputAmount: (netUSD / toPrice).toFixed(4),
+    })
 
     // Return 0 only if calculation is truly 0 or negative
     const output = netUSD / toPrice
@@ -320,12 +336,22 @@ export default function BiDirectionalSwapCard({
     } catch (error: any) {
       console.error('Swap error:', error)
       setSwapStatus('error')
+      
+      // Check if it's a Stride account error
+      if (error.message?.includes('does not exist on chain')) {
+        const addressMatch = error.message.match(/Account '([^']+)'/)
+        setStrideAccountError(addressMatch ? addressMatch[1] : null)
+      } else {
+        setStrideAccountError(null)
+      }
+      
       setStatusMessage(`❌ Swap failed: ${error.message || 'Unknown error'}`)
 
       setTimeout(() => {
         setSwapStatus('idle')
         setStatusMessage('')
-      }, 5000)
+        setStrideAccountError(null)
+      }, 15000) // Give users more time to read the help message
     }
   }
 
@@ -556,16 +582,21 @@ export default function BiDirectionalSwapCard({
 
         {/* Status Message */}
         {statusMessage && (
-          <div
-            className={`p-3 rounded-lg text-sm text-center ${
-              swapStatus === 'error'
-                ? 'bg-red-900/20 border border-red-500/50 text-red-300'
-                : swapStatus === 'success'
-                ? 'bg-emerald-900/20 border border-emerald-500/50 text-emerald-300'
-                : 'bg-purple-900/20 border border-purple-500/50 text-purple-300'
-            }`}
-          >
-            {statusMessage}
+          <div>
+            <div
+              className={`p-3 rounded-lg text-sm text-center ${
+                swapStatus === 'error'
+                  ? 'bg-red-900/20 border border-red-500/50 text-red-300'
+                  : swapStatus === 'success'
+                  ? 'bg-emerald-900/20 border border-emerald-500/50 text-emerald-300'
+                  : 'bg-purple-900/20 border border-purple-500/50 text-purple-300'
+              }`}
+            >
+              {statusMessage}
+            </div>
+            
+            {/* Show Stride account help if it's that error */}
+            {strideAccountError && <StrideAccountHelp strideAddress={strideAccountError} />}
           </div>
         )}
 
