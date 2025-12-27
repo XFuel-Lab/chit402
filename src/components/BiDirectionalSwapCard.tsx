@@ -128,9 +128,17 @@ export default function BiDirectionalSwapCard({
   // Check if both wallets are connected for cross-chain swaps
   const needsBothWallets = fromToken.chain !== toToken.chain
   const walletsConnected = useMemo(() => {
-    if (!needsBothWallets) return true
-    return thetaWallet.isConnected && keplrWallet !== null
-  }, [needsBothWallets, thetaWallet.isConnected, keplrWallet])
+    // For Theta → Cosmos: Only need Theta (Keplr connects on swap)
+    if (fromToken.chain === 'theta' && toToken.chain === 'cosmos') {
+      return thetaWallet.isConnected
+    }
+    // For Cosmos → Theta: Need both pre-connected
+    if (fromToken.chain === 'cosmos' && toToken.chain === 'theta') {
+      return thetaWallet.isConnected && keplrWallet !== null
+    }
+    // Same chain swaps: just need the chain wallet
+    return thetaWallet.isConnected || keplrWallet !== null
+  }, [fromToken.chain, toToken.chain, thetaWallet.isConnected, keplrWallet])
 
   // Calculate route when tokens change
   useEffect(() => {
@@ -207,7 +215,13 @@ export default function BiDirectionalSwapCard({
   // Execute swap
   const handleSwap = async () => {
     if (!walletsConnected) {
-      setStatusMessage('Please connect both wallets')
+      if (fromToken.chain === 'theta' && !thetaWallet.isConnected) {
+        setStatusMessage('Please connect Theta wallet')
+      } else if (fromToken.chain === 'cosmos' && !keplrWallet) {
+        setStatusMessage('Please connect Keplr wallet')
+      } else {
+        setStatusMessage('Please connect your wallet')
+      }
       setSwapStatus('error')
       return
     }
