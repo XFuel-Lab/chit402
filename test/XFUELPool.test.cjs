@@ -14,7 +14,7 @@ describe('XFUELPool', function () {
       params: []
     })
     
-    [owner, user, recipient] = await ethers.getSigners()
+    ;[owner, user, recipient] = await ethers.getSigners()
 
     // Deploy mock ERC20 tokens
     const MockERC20 = await ethers.getContractFactory('MockERC20')

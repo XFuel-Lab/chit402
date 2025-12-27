@@ -15,7 +15,7 @@ describe('XFUELRouter', function () {
       params: []
     })
     
-    [owner, treasury, veXFContract, user] = await ethers.getSigners()
+    ;[owner, treasury, veXFContract, user] = await ethers.getSigners()
 
     // Deploy mock ERC20 tokens
     const MockERC20 = await ethers.getContractFactory('MockERC20')
