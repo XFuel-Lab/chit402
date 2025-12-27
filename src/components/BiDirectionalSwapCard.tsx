@@ -238,7 +238,7 @@ export default function BiDirectionalSwapCard({
         const signer = await provider.getSigner()
 
         // Step 1: Swap on Theta if needed (TFUEL → bridgeable token)
-        setStatusMessage('Step 1/4: Swapping on Theta...')
+        setStatusMessage('Step 1/3: Swapping on Theta...')
         let bridgeAmount = inputAmount
         
         if (fromToken.symbol === 'TFUEL') {
@@ -249,7 +249,7 @@ export default function BiDirectionalSwapCard({
         }
 
         // PRE-WARM KEPLR: Enable and suggest chain during Step 1
-        // This moves Keplr UI interaction to early phase, reducing lag at Phase 4
+        // This moves Keplr UI interaction to early phase
         console.log('🔥 Pre-warming Keplr connection for', toToken.symbol)
         const { ensureKeplrSetup } = await import('../utils/cosmosLSTStakingPro')
         const keplrSetup = await ensureKeplrSetup(toToken.symbol)
@@ -261,7 +261,7 @@ export default function BiDirectionalSwapCard({
         console.log('✅ Keplr pre-warmed and ready:', keplrSetup.address)
 
         // Step 2: Bridge via Axelar GMP
-        setStatusMessage('Step 2/4: Confirming Axelar bridge transaction...')
+        setStatusMessage('Step 2/3: Confirming Axelar bridge transaction...')
         
         // CRITICAL FIX: bridgeThetaToCosmos now returns hash immediately after user confirms
         // We need to properly wait for transaction to be mined
@@ -274,7 +274,7 @@ export default function BiDirectionalSwapCard({
         )
         
         // Now wait for the bridge transaction to be confirmed on-chain
-        setStatusMessage('Step 2/4: Bridging via Axelar GMP (waiting for confirmation)...')
+        setStatusMessage('Step 2/3: Bridging via Axelar GMP (waiting for confirmation)...')
         console.log('🌉 Waiting for bridge TX confirmation:', bridgeTxHash)
         
         try {
@@ -290,26 +290,12 @@ export default function BiDirectionalSwapCard({
         
         txHash = bridgeTxHash
 
-        // Step 3: Wait for bridge (in production, poll Axelar API)
-        setStatusMessage('Step 3/4: Waiting for Axelar relay (~1 min)...')
+        // Step 3: Wait for Axelar relay
+        setStatusMessage('Step 3/3: Waiting for Axelar relay (~1-2 min)...')
         await new Promise(resolve => setTimeout(resolve, 2000)) // Simulate wait
 
-        // Step 4: Stake on destination chain via Keplr
-        setStatusMessage('Step 4/4: Staking to LST via Keplr...')
-        
-        // Import enhanced staking function with chain suggestion support
-        const { stakeLSTOnStridePro } = await import('../utils/cosmosLSTStakingPro')
-        
-        const stakeAmount = parseFloat(bridgeAmount)
-        const stakeResult = await stakeLSTOnStridePro(toToken.symbol, stakeAmount)
-        
-        if (!stakeResult.success) {
-          throw new Error(stakeResult.error || 'Failed to stake LST')
-        }
-        
-        if (stakeResult.txHash) {
-          txHash = stakeResult.txHash
-        }
+        // Done! Tokens will arrive in Keplr wallet
+        setStatusMessage(`✅ Success! ${toToken.symbol} will arrive in your Keplr wallet shortly`)
       }
       // Cosmos → Theta swap
       else if (fromToken.chain === 'cosmos' && toToken.chain === 'theta') {
@@ -393,10 +379,10 @@ export default function BiDirectionalSwapCard({
         {/* Header */}
         <div className="text-center">
           <h2 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-cyan-400 opacity-50">
-            Cross-Chain Swap
+            Swap
           </h2>
           <p className="text-sm text-slate-400 mt-2 opacity-50">
-            Theta ↔ Cosmos LSTs • Powered by Axelar
+            Tfuel to Cosmos Yield Pumps
           </p>
         </div>
 
