@@ -249,16 +249,33 @@ export default function BiDirectionalSwapCard({
         }
 
         // PRE-WARM KEPLR: Enable and suggest chain during Step 1
-        // This moves Keplr UI interaction to early phase
         console.log('🔥 Pre-warming Keplr connection for', toToken.symbol)
-        const { ensureKeplrSetup } = await import('../utils/cosmosLSTStakingPro')
-        const keplrSetup = await ensureKeplrSetup(toToken.symbol)
         
-        if (!keplrSetup.ready) {
-          throw new Error(keplrSetup.error || 'Failed to setup Keplr wallet')
+        // Map native token to chain info
+        const chainIdMap: Record<string, string> = {
+          'TIA': 'celestia',
+          'ATOM': 'cosmoshub-4', 
+          'OSMO': 'osmosis-1',
+          'XPRT': 'core-1',
         }
         
-        console.log('✅ Keplr pre-warmed and ready:', keplrSetup.address)
+        const targetChainId = chainIdMap[toToken.symbol] || toToken.chainId
+        
+        // Connect Keplr to target chain
+        if (!isKeplrInstalled()) {
+          throw new Error('Please install Keplr wallet to receive Cosmos tokens')
+        }
+        
+        await window.keplr!.enable(targetChainId)
+        const offlineSigner = window.keplr!.getOfflineSigner(targetChainId)
+        const accounts = await offlineSigner.getAccounts()
+        
+        if (!accounts || accounts.length === 0) {
+          throw new Error('Failed to get Keplr account')
+        }
+        
+        const keplrAddress = accounts[0].address
+        console.log('✅ Keplr connected:', keplrAddress)
 
         // Step 2: Bridge via Axelar GMP
         setStatusMessage('Step 2/3: Confirming Axelar bridge transaction...')
@@ -269,7 +286,7 @@ export default function BiDirectionalSwapCard({
           provider,
           bridgeAmount,
           toToken.chainId,
-          keplrWallet.address,
+          keplrAddress,
           toToken
         )
         
