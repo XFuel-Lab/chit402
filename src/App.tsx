@@ -730,19 +730,46 @@ function App() {
   }, [estimatedDailyYield, tfuelPrice])
 
   const handleSwapFlow = async () => {
-    // Connect wallet if not connected
+    // CRITICAL: Null check for wallet connection
     if (!wallet.isConnected || !wallet.fullAddress) {
-      await connectWallet()
-      // Give user a moment to connect
-      if (!wallet.isConnected) {
-        setStatusMessage('Please connect your wallet to continue')
+      console.log('🔌 Wallet not connected, initiating connection...')
+      try {
+        await connectWallet()
+        // Wait for state to update
+        await new Promise(resolve => setTimeout(resolve, 500))
+        
+        // Re-check after connection attempt
+        if (!wallet.isConnected || !wallet.fullAddress) {
+          setStatusMessage('⚠️ Please connect your wallet to continue')
+          setSwapStatus('error')
+          setTimeout(() => {
+            setSwapStatus('idle')
+            setStatusMessage('')
+          }, 3000)
+          return
+        }
+      } catch (error: any) {
+        console.error('❌ Wallet connection failed:', error)
+        setStatusMessage(`❌ Connection failed: ${error.message || 'Please try again'}`)
         setSwapStatus('error')
         setTimeout(() => {
           setSwapStatus('idle')
           setStatusMessage('')
-        }, 3000)
+        }, 5000)
         return
       }
+    }
+
+    // SAFETY: Final null check before proceeding
+    if (!wallet.fullAddress) {
+      console.error('❌ Critical: wallet.fullAddress is null after connection')
+      setStatusMessage('❌ Wallet address unavailable. Please reconnect.')
+      setSwapStatus('error')
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+      }, 3000)
+      return
     }
 
     // Re-fetch prices for final rate before swap execution
@@ -758,6 +785,10 @@ function App() {
     if (!Number.isFinite(amount) || amount <= 0) {
       setStatusMessage('Select balance percentage and valid amount')
       setSwapStatus('error')
+      setTimeout(() => {
+        setSwapStatus('idle')
+        setStatusMessage('')
+      }, 3000)
       return
     }
 
@@ -818,7 +849,17 @@ function App() {
       const provider = new ethers.BrowserProvider(
         (window as any).theta || (window as any).ethereum,
       )
-      const signer = provider.getSigner()
+      
+      if (!provider) {
+        throw new Error('Wallet provider not found. Please check your wallet connection.')
+      }
+
+      // SAFETY: Null check before getting signer
+      if (!wallet.fullAddress) {
+        throw new Error('Wallet address is undefined. Please reconnect your wallet.')
+      }
+
+      const signer = await provider.getSigner()
       const amountWei = ethers.parseEther(amount.toString())
 
       // Check balance one more time before sending
@@ -826,7 +867,7 @@ function App() {
       const balanceEth = parseFloat(ethers.formatEther(balanceWei))
       
       if (balanceEth < minRequired) {
-        setStatusMessage(`Insufficient balance. Need ${minRequired.toFixed(2)} TFUEL (including gas).`)
+        setStatusMessage(`❌ Insufficient balance. Need ${minRequired.toFixed(2)} TFUEL (including gas).`)
         setSwapStatus('error')
         setTimeout(() => {
           setSwapStatus('idle')
@@ -1089,20 +1130,31 @@ function App() {
         errorMessage = 'Transaction rejected by user'
       } else if (errorMessage.includes('network') || 
                  errorMessage.includes('Network') ||
+                 errorMessage.includes('RPC') ||
                  errorMessage.includes('fetch')) {
-        errorMessage = 'Network error. Please check your connection and try again.'
-      } else if (errorMessage.includes('nonce')) {
-        errorMessage = 'Transaction nonce error. Please try again.'
+        errorMessage = '🌐 Network error. Please check your connection and try again.'
+      } else if (errorMessage.includes('nonce') || errorMessage.includes('sequence mismatch')) {
+        errorMessage = '🔄 Transaction sequence error. Refreshing and retrying...'
+        // Auto-retry once for nonce errors after a short delay
+        setTimeout(async () => {
+          console.log('🔄 Auto-retrying after nonce error...')
+          try {
+            await handleSwapFlow()
+          } catch (retryError) {
+            console.error('Retry failed:', retryError)
+          }
+        }, 2000)
       }
       
       setStatusMessage(`❌ ${errorMessage}`)
       setSwapStatus('error')
       setTxHash(null)
 
+      // Extended timeout for error messages so users can read them
       setTimeout(() => {
         setSwapStatus('idle')
         setStatusMessage('')
-      }, 8000)
+      }, 10000)
     }
   }
 

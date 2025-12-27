@@ -198,8 +198,21 @@ export function SwapScreenPro() {
   }, [wallet])
 
   const handleSwap = async () => {
-    if (!wallet.isConnected || !wallet.addressFull || tfuelAmount === 0 || !selectedLST) {
-      showError('Please connect wallet and select amount')
+    // CRITICAL: Null safety checks
+    if (!wallet.isConnected) {
+      showError('Please connect wallet first')
+      await handleConnect()
+      return
+    }
+
+    if (!wallet.addressFull) {
+      showError('❌ Wallet address unavailable. Please reconnect.')
+      await handleConnect()
+      return
+    }
+
+    if (tfuelAmount === 0 || !selectedLST) {
+      showError('Select amount and LST target')
       return
     }
 
@@ -210,7 +223,7 @@ export function SwapScreenPro() {
       // Hypercar rev haptic sequence
       await hapticHypercarRev()
 
-      // Call swap API
+      // Call swap API with guaranteed non-null address
       const response = await fetch(`${API_URL}/api/swap`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -223,7 +236,8 @@ export function SwapScreenPro() {
       })
 
       if (!response.ok) {
-        throw new Error('Swap request failed')
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.message || `Network error: ${response.status}`)
       }
 
       const data = await response.json()
@@ -251,9 +265,25 @@ export function SwapScreenPro() {
       console.error('Swap error:', error)
       setIsSwapping(false)
 
+      // Enhanced error handling
       let errorMessage = error?.message || 'Unexpected error'
+      
       if (errorMessage.includes('insufficient')) {
         swapToasts.insufficientFunds()
+      } else if (errorMessage.includes('network') || errorMessage.includes('Network') || errorMessage.includes('fetch')) {
+        swapToasts.error('🌐 Network error. Check connection and retry.')
+      } else if (errorMessage.includes('rejected') || errorMessage.includes('denied')) {
+        showInfo('Transaction cancelled by user')
+      } else if (errorMessage.includes('nonce') || errorMessage.includes('sequence')) {
+        swapToasts.error('🔄 Sequence error. Please retry in a moment.')
+        // Auto-retry after 2 seconds
+        setTimeout(async () => {
+          try {
+            await handleSwap()
+          } catch (retryError) {
+            console.error('Retry failed:', retryError)
+          }
+        }, 2000)
       } else {
         swapToasts.error(errorMessage)
       }
