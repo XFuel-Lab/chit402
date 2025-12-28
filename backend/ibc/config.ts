@@ -39,7 +39,8 @@ export const IBC_CONFIG = {
     
     // TFUEL IBC denomination on Persistence chain
     // Format: ibc/[hash of transfer/channel-190/tfuel]
-    tfuelIbcDenom: process.env.TFUEL_IBC_DENOM || 'ibc/...',
+    // Must be a real IBC denom hash, not a placeholder
+    tfuelIbcDenom: process.env.TFUEL_IBC_DENOM || '',
     
     // Gas settings for IBC transfers
     gasPrice: '0.025uxprt',
@@ -122,8 +123,20 @@ export function validateIbcConfig(): { valid: boolean; errors: string[] } {
     errors.push('Invalid PSTAKE_STAKING_ADDRESS (must start with persistence1)')
   }
 
-  if (!IBC_CONFIG.ibc.tfuelIbcDenom.startsWith('ibc/')) {
+  // Bug fix: Validate tfuelIbcDenom is not empty and not a placeholder
+  if (!IBC_CONFIG.ibc.tfuelIbcDenom) {
+    errors.push('TFUEL_IBC_DENOM not configured')
+  } else if (!IBC_CONFIG.ibc.tfuelIbcDenom.startsWith('ibc/')) {
     errors.push('Invalid TFUEL_IBC_DENOM (must start with ibc/)')
+  } else if (IBC_CONFIG.ibc.tfuelIbcDenom === 'ibc/...' || IBC_CONFIG.ibc.tfuelIbcDenom.includes('...')) {
+    errors.push('TFUEL_IBC_DENOM contains placeholder value - must be a real IBC denom hash')
+  }
+
+  // Bug fix: Validate tfuelXprtPoolAddress is configured
+  if (!IBC_CONFIG.dexter.tfuelXprtPoolAddress) {
+    errors.push('DEXTER_TFUEL_XPRT_POOL not configured')
+  } else if (!IBC_CONFIG.dexter.tfuelXprtPoolAddress.startsWith('persistence1')) {
+    errors.push('Invalid DEXTER_TFUEL_XPRT_POOL (must start with persistence1)')
   }
 
   return {

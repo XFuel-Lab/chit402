@@ -358,38 +358,36 @@ export function SwapScreenPro() {
               </View>
             </NeonCard>
 
-            {/* Amount Slider */}
-            {wallet.isConnected && (
-              <NeonCard className="mb-5">
-                <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.95)', marginBottom: 12 }}>
-                  Swap Amount
+            {/* Amount Slider - Manual deposit flow (no wallet connect required) */}
+            <NeonCard className="mb-5">
+              <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.95)', marginBottom: 12 }}>
+                Swap Amount
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, marginBottom: 12 }}>
+                <Text style={{ ...type.h1, color: neon.blue }}>{tfuelAmount.toFixed(2)}</Text>
+                <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.65)' }}>TFUEL</Text>
+              </View>
+              <Slider
+                value={swapPercentage}
+                onValueChange={(val) => {
+                  setSwapPercentage(val)
+                  Haptics.selectionAsync().catch(() => {})
+                }}
+                minimumValue={1}
+                maximumValue={100}
+                step={1}
+                minimumTrackTintColor={neon.blue}
+                maximumTrackTintColor="rgba(255,255,255,0.15)"
+                thumbTintColor={neon.blue}
+              />
+              <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.55)' }}>1%</Text>
+                <Text style={{ ...type.bodyM, color: neon.blue, fontWeight: '600' }}>
+                  {swapPercentage.toFixed(0)}%
                 </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, marginBottom: 12 }}>
-                  <Text style={{ ...type.h1, color: neon.blue }}>{tfuelAmount.toFixed(2)}</Text>
-                  <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.65)' }}>TFUEL</Text>
-                </View>
-                <Slider
-                  value={swapPercentage}
-                  onValueChange={(val) => {
-                    setSwapPercentage(val)
-                    Haptics.selectionAsync().catch(() => {})
-                  }}
-                  minimumValue={1}
-                  maximumValue={100}
-                  step={1}
-                  minimumTrackTintColor={neon.blue}
-                  maximumTrackTintColor="rgba(255,255,255,0.15)"
-                  thumbTintColor={neon.blue}
-                />
-                <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.55)' }}>1%</Text>
-                  <Text style={{ ...type.bodyM, color: neon.blue, fontWeight: '600' }}>
-                    {swapPercentage.toFixed(0)}%
-                  </Text>
-                  <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.55)' }}>100%</Text>
-                </View>
-              </NeonCard>
-            )}
+                <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.55)' }}>100%</Text>
+              </View>
+            </NeonCard>
 
             {/* LST Carousel */}
             {wallet.isConnected && (
