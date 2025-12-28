@@ -81,10 +81,10 @@ export function ProfileScreen() {
                     marginBottom: 16,
                   }}
                 >
-                  ⚡
+                  📱
                 </Text>
                 <Text style={{ ...type.h3, color: 'rgba(255,255,255,0.95)', marginBottom: 8, textAlign: 'center' }}>
-                  Connect Theta Wallet
+                  Manual Send Flow
                 </Text>
                 <Text
                   style={{
@@ -94,10 +94,12 @@ export function ProfileScreen() {
                     marginBottom: 20,
                   }}
                 >
-                  View your balances, transaction history, and more
+                  No wallet connect needed — send TFUEL directly via QR code or address
                 </Text>
                 <View style={{ width: '100%' }}>
-                  <NeonButton label="Connect Wallet" onPress={connect} rightHint="secure" />
+                  <NeonButton label="Show Deposit Address" onPress={() => {
+                    console.log('Show manual deposit address')
+                  }} rightHint="📱 QR" />
                 </View>
               </View>
             </NeonCard>

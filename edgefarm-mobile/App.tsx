@@ -44,49 +44,17 @@ export default function App() {
     Orbitron_700Bold,
   })
 
-  // Handle deep links for WalletConnect and Theta Wallet
+  // ===== WALLET CONNECT DEEP LINKS REMOVED =====
+  // Manual deposit flow - no deep link handling needed
+  /* Deep link handler removed
   useEffect(() => {
     // Handle incoming deep links
     const handleDeepLink = ({ url }: { url: string }) => {
-      console.log('🔗 Deep link received:', url)
-      
-      // Check if it's a WalletConnect or Theta Wallet deep link
-      if (url.includes('wc:') || url.includes('thetawallet://') || url.includes('theta://')) {
-        console.log('✅ Wallet connection deep link detected')
-        
-        // Haptic feedback
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {})
-        
-        // Show toast
-        Toast.show({
-          type: 'info',
-          text1: 'Wallet Connection',
-          text2: 'Processing connection...',
-          position: 'top',
-          visibilityTime: 2000,
-        })
-        
-        // The actual connection is handled by the WalletConnect library
-        // This just provides visual feedback
-      }
+      ...wallet connect deep link handling...
     }
-    
-    // Listen for URL events
-    const subscription = Linking.addEventListener('url', handleDeepLink)
-    
-    // Check if app was opened via deep link
-    Linking.getInitialURL().then(url => {
-      if (url) {
-        handleDeepLink({ url })
-      }
-    }).catch(err => {
-      console.error('Error getting initial URL:', err)
-    })
-    
-    return () => {
-      subscription.remove()
-    }
+    ...
   }, [])
+  */
 
   useEffect(() => {
     getHasSeenOnboarding().then(setHasSeen)

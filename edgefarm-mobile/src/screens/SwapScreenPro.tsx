@@ -341,29 +341,21 @@ export function SwapScreenPro() {
               <NeonPill label="Gas-free" tone="blue" />
             </View>
 
-            {/* Wallet Connection */}
+            {/* Manual Deposit Info - No Wallet Connect */}
             <NeonCard className="mt-5 mb-5">
-              {!wallet.isConnected ? (
-                <View style={{ gap: 12 }}>
-                  <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.85)' }}>
-                    Connect your Theta Wallet to start swapping
-                  </Text>
-                  <NeonButton label="🔌 Smart Connect" onPress={handleConnect} rightHint="AI-powered" />
-                </View>
-              ) : (
-                <View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Text style={{ ...type.caption, color: 'rgba(255,255,255,0.55)' }}>Connected</Text>
-                    <Text style={{ ...type.caption, color: neon.green }}>{wallet.addressShort}</Text>
-                  </View>
-                  <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-                    <Text style={{ ...type.h1, color: 'rgba(255,255,255,0.95)' }}>
-                      {wallet.balanceTfuel.toLocaleString()}
-                    </Text>
-                    <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.55)' }}>TFUEL</Text>
-                  </View>
-                </View>
-              )}
+              <View style={{ gap: 12 }}>
+                <Text style={{ ...type.bodyM, color: 'rgba(255,255,255,0.85)' }}>
+                  Manual deposit via QR code — no wallet connect needed
+                </Text>
+                <NeonButton 
+                  label="📱 Show Deposit Address" 
+                  onPress={() => {
+                    // Show manual deposit instructions
+                    console.log('Show manual deposit address')
+                  }} 
+                  rightHint="QR code" 
+                />
+              </View>
             </NeonCard>
 
             {/* Amount Slider */}

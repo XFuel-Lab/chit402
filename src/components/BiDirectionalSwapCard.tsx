@@ -443,14 +443,14 @@ export default function BiDirectionalSwapCard({
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
-                  console.log('BiDirectionalSwapCard: Connect Theta Wallet button clicked')
+                  console.log('BiDirectionalSwapCard: Manual deposit flow clicked')
                   onConnectTheta().catch(err => {
-                    console.error('BiDirectionalSwapCard: Error in onConnectTheta:', err)
+                    console.error('BiDirectionalSwapCard: Error showing manual deposit:', err)
                   })
                 }}
                 className="text-sm text-purple-400 hover:text-purple-300 underline"
               >
-                Connect Theta Wallet
+                Show Deposit Address
               </button>
             )}
           </div>
@@ -642,7 +642,7 @@ export default function BiDirectionalSwapCard({
               swapStatus === 'loading'
                 ? 'Processing...'
                 : !thetaWallet.isConnected
-                ? 'Connect Theta Wallet'
+                ? 'Show Deposit Address'
                 : `Swap to ${toToken.symbol}`
             }
             rightHint={swapStatus === 'idle' && thetaWallet.isConnected ? 'cross-chain' : undefined}
