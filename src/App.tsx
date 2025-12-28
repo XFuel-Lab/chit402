@@ -2028,7 +2028,10 @@ function App() {
         visible={showEarlyBelieversModal}
         onClose={() => setShowEarlyBelieversModal(false)}
         walletAddress={wallet.fullAddress}
-        onConnectWallet={connectWallet}
+        onConnectWallet={() => {
+          // Manual deposit flow - no wallet connect needed
+          console.log('Use manual deposit flow')
+        }}
         isMainnet={true}
       />
 
