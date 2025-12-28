@@ -15,6 +15,7 @@ jest.mock('@walletconnect/ethereum-provider', () => ({
 }))
 
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import App from './App'
 
 describe('App', () => {
@@ -23,9 +24,22 @@ describe('App', () => {
     ;(window as any).theta = undefined
   })
 
-  it('renders manual deposit flow UI', () => {
+  it('renders app header and navigation', () => {
     render(<App />)
-    // Manual deposit flow - no wallet connect buttons
+    // Check for app elements that appear on default swap tab
+    expect(screen.getByText(/XFUEL/i)).toBeInTheDocument()
+    expect(screen.getByText(/Sub-4s settlement rail/i)).toBeInTheDocument()
+  })
+
+  it('renders manual deposit flow UI on profile tab', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    
+    // Click on Profile tab to see manual deposit flow
+    const profileTab = screen.getByText('Profile')
+    await user.click(profileTab)
+    
+    // Now check for manual deposit flow text
     const depositElement = screen.getByText(/Manual Send Flow/i)
     expect(depositElement).toBeInTheDocument()
   })

@@ -75,7 +75,11 @@ const LST_OPTIONS: LSTOption[] = [
 type WalletProvider = 'theta' | 'walletconnect' | 'metamask'
 
 // Manual deposit address for TFUEL (no wallet connect needed)
-const MANUAL_DEPOSIT_ADDRESS = ROUTER_ADDRESS || '0x0000000000000000000000000000000000000000'
+// Validate that ROUTER_ADDRESS is configured, otherwise show error
+const MANUAL_DEPOSIT_ADDRESS = ROUTER_ADDRESS || ''
+if (!MANUAL_DEPOSIT_ADDRESS) {
+  console.error('⚠️ VITE_ROUTER_ADDRESS not configured - manual deposit flow will not work')
+}
 
 function App() {
   const [wallet, setWallet] = useState<WalletInfo>({
