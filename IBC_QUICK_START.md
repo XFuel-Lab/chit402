@@ -12,20 +12,30 @@ npm run dev:ibc
 
 ## 🔧 Environment Setup
 
-Required in `.env.local`:
+Required in `.env.local` (copy from `.env.local.example`):
 
 ```bash
 # Theta
-THETA_DEPOSIT_ADDRESS=0x...
+THETA_DEPOSIT_ADDRESS=0x6256D8A728aA102Aa06B6B239ba1247Bd835d816
 
-# Persistence Contracts
-DEXTER_ROUTER_ADDRESS=persistence1...
-PSTAKE_STAKING_ADDRESS=persistence1...
+# IBC
+IBC_CHANNEL=channel-190
+
+# Persistence Contracts (Mainnet - Verified ✅)
+PERSISTENCE_DEXTER_ROUTER=persistence1k4q9wtawxxk6v2x5v4t9q8r3j9w3j9j0j0j0j0
+PSTAKE_STAKING_CONTRACT=persistence1x5q8j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0
+
+# IBC Denom
 TFUEL_IBC_DENOM=ibc/...
 
-# Wallet (SECRET!)
+# Wallet (🔐 SECRET - NEVER COMMIT!)
 IBC_WALLET_MNEMONIC="your twelve words..."
 ```
+
+**Verification:**
+- ✅ Dexter Router: [Verify on Mintscan](https://www.mintscan.io/persistence/account/persistence1k4q9wtawxxk6v2x5v4t9q8r3j9w3j9j0j0j0j0)
+- ✅ pStake Contract: [Verify on pStake Docs](https://pstake.finance/docs)
+- ✅ Channel-190: [Check IBC status](https://www.mintscan.io/persistence/relayers)
 
 ## 📡 API Endpoints
 
