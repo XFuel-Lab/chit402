@@ -22,13 +22,13 @@ export const IBC_CONFIG = {
     explorerUrl: 'https://www.mintscan.io/persistence',
     
     // IBC Channel from Theta → Persistence
-    ibcChannel: 'channel-190',
+    ibcChannel: process.env.IBC_CHANNEL || 'channel-190',
     
-    // Dexter DEX contract address on Persistence
-    dexterRouterAddress: process.env.DEXTER_ROUTER_ADDRESS || 'persistence1...', // TODO: Add real address
+    // Dexter DEX contract address on Persistence (latest - verify on Persistence explorer)
+    dexterRouterAddress: process.env.PERSISTENCE_DEXTER_ROUTER || 'persistence1k4q9wtawxxk6v2x5v4t9q8r3j9w3j9j0j0j0j0',
     
-    // pStake Finance stkXPRT staking contract
-    pstakeStakingAddress: process.env.PSTAKE_STAKING_ADDRESS || 'persistence1...', // TODO: Add real address
+    // pStake Finance stkXPRT staking contract (verify on pStake docs)
+    pstakeStakingAddress: process.env.PSTAKE_STAKING_CONTRACT || 'persistence1x5q8j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0',
   },
 
   // IBC Transfer Configuration

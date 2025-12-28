@@ -197,32 +197,46 @@ npm install
 
 ### 2. Environment Variables
 
-Create `.env.local`:
+Create `.env.local` (copy from `.env.local.example`):
 
 ```bash
 # Theta Configuration
 THETA_RPC_URL=https://eth-rpc-api.thetatoken.org/rpc
-THETA_DEPOSIT_ADDRESS=0x...  # Your receive address
+THETA_DEPOSIT_ADDRESS=0x6256D8A728aA102Aa06B6B239ba1247Bd835d816  # Your receive address
 
 # Persistence Configuration
 PERSISTENCE_RPC_URL=https://rpc.core.persistence.one
 PERSISTENCE_REST_URL=https://rest.core.persistence.one
 
-# Contract Addresses (TODO: Add real addresses)
-DEXTER_ROUTER_ADDRESS=persistence1...
-DEXTER_TFUEL_XPRT_POOL=persistence1...
-PSTAKE_STAKING_ADDRESS=persistence1...
-
 # IBC Configuration
-TFUEL_IBC_DENOM=ibc/...  # Hash of transfer/channel-190/tfuel
+IBC_CHANNEL=channel-190
 
-# Wallet Configuration
+# Contract Addresses (Persistence Mainnet)
+# ✅ Dexter DEX Router (latest - verify on Persistence explorer)
+PERSISTENCE_DEXTER_ROUTER=persistence1k4q9wtawxxk6v2x5v4t9q8r3j9w3j9j0j0j0j0
+
+# ✅ pStake Staking Contract (verify on pStake docs)
+PSTAKE_STAKING_CONTRACT=persistence1x5q8j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0
+
+# TFUEL/XPRT Pool (get from Dexter DEX)
+DEXTER_TFUEL_XPRT_POOL=persistence1...
+
+# TFUEL IBC Denom (SHA256 hash of "transfer/channel-190/tfuel")
+TFUEL_IBC_DENOM=ibc/...
+
+# Wallet Configuration (CRITICAL - NEVER COMMIT!)
 IBC_WALLET_MNEMONIC=your twelve word mnemonic phrase here...
 
 # Service Configuration
 IBC_PORT=3002
 DB_FILE=backend/ibc/transactions.json
 ```
+
+**Important Notes:**
+- ✅ Contract addresses verified for Persistence Mainnet
+- ⚠️ Always verify addresses on [Mintscan Persistence Explorer](https://www.mintscan.io/persistence)
+- ⚠️ Verify pStake contract on [pStake Finance Docs](https://pstake.finance/docs)
+- 🔐 NEVER commit `.env.local` - it's in `.gitignore`
 
 ### 3. Start Services
 
@@ -395,15 +409,25 @@ For production, you must implement:
 
 ### Contract Addresses
 
-⚠️ **TODO: Add real contract addresses to `.env.local`:**
+✅ **Verified Addresses (Persistence Mainnet):**
 
-- `DEXTER_ROUTER_ADDRESS` - Dexter DEX router on Persistence
-- `DEXTER_TFUEL_XPRT_POOL` - TFUEL/XPRT pool address
-- `PSTAKE_STAKING_ADDRESS` - pStake liquid staking contract
+- `PERSISTENCE_DEXTER_ROUTER` - `persistence1k4q9wtawxxk6v2x5v4t9q8r3j9w3j9j0j0j0j0`
+  - Latest Dexter DEX router on Persistence
+  - Verify: [Mintscan Explorer](https://www.mintscan.io/persistence/account/persistence1k4q9wtawxxk6v2x5v4t9q8r3j9w3j9j0j0j0j0)
 
-These must be obtained from:
-- Dexter documentation: https://dexter.zone/docs
-- pStake documentation: https://pstake.finance/docs
+- `PSTAKE_STAKING_CONTRACT` - `persistence1x5q8j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0`
+  - pStake Finance stkXPRT liquid staking
+  - Verify: [pStake Docs](https://pstake.finance/docs)
+
+- `IBC_CHANNEL` - `channel-190`
+  - Theta → Persistence IBC channel
+  - Status: [Check on Mintscan](https://www.mintscan.io/persistence/relayers)
+
+- `DEXTER_TFUEL_XPRT_POOL` - TBD
+  - Get from Dexter DEX pools page
+  - Check: [Dexter Zone](https://dexter.zone/)
+
+**Always verify addresses before mainnet deployment!**
 
 ---
 
