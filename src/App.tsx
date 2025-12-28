@@ -15,20 +15,16 @@ import StrideInitModal from './components/StrideInitModal'
 import EdgeNodeDashboard from './components/EdgeNodeDashboard'
 import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
 import YieldPumpCard from './components/YieldPumpCard'
-import WalletConnectModal from './components/WalletConnectModal'
-import WalletConnectBugBanner from './components/WalletConnectBugBanner'
+import ManualDepositCard from './components/ManualDepositCard'
 import SignInModal from './components/SignInModal'
 import TransactionSuccessModal from './components/TransactionSuccessModal'
 import BetaBanner from './components/BetaBanner'
 import { THETA_TESTNET, THETA_MAINNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
 import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 import { usePriceStore } from './stores/priceStore'
-import { createWalletConnectProvider, getWalletConnectProvider, disconnectWalletConnect } from './utils/walletConnect'
-import { 
-  connectThetaWallet,
-  disconnectThetaWallet,
-  isMobileDevice,
-} from './utils/thetaWallet'
+// Wallet connect removed - manual send flow only
+// import { createWalletConnectProvider, getWalletConnectProvider, disconnectWalletConnect } from './utils/walletConnect'
+// import { connectThetaWallet, disconnectThetaWallet, isMobileDevice } from './utils/thetaWallet'
 import { 
   stakeLSTOnStride, 
   refreshKeplrBalance, 
@@ -78,6 +74,9 @@ const LST_OPTIONS: LSTOption[] = [
 
 type WalletProvider = 'theta' | 'walletconnect' | 'metamask'
 
+// Manual deposit address for TFUEL (no wallet connect needed)
+const MANUAL_DEPOSIT_ADDRESS = ROUTER_ADDRESS || '0x0000000000000000000000000000000000000000'
+
 function App() {
   const [wallet, setWallet] = useState<WalletInfo>({
     address: null,
@@ -85,9 +84,11 @@ function App() {
     balance: '0.00',
     isConnected: false,
   })
-  const [walletProvider, setWalletProvider] = useState<WalletProvider | null>(null)
-  const [showWalletConnectModal, setShowWalletConnectModal] = useState(false)
+  // Wallet connect removed - manual send flow only
+  // const [walletProvider, setWalletProvider] = useState<WalletProvider | null>(null)
+  // const [showWalletConnectModal, setShowWalletConnectModal] = useState(false)
   const [showSignInModal, setShowSignInModal] = useState(false)
+  const [showManualDeposit, setShowManualDeposit] = useState(false)
   const [tfuelAmount, setTfuelAmount] = useState('')
   const [selectedPercentage, setSelectedPercentage] = useState<number | null>(null)
   const [swapStatus, setSwapStatus] = useState<SwapStatus>('idle')
@@ -207,231 +208,24 @@ function App() {
 
   const liveApyText = useMemo(() => `${currentApy.toFixed(1)}%`, [currentApy])
 
-  // Simplified wallet connection (no extension dependency)
-  const connectWallet = async (providerType?: WalletProvider) => {
-    // Guard: if providerType is not a valid WalletProvider (e.g., it's an event object), treat as undefined
-    const validProvider = (providerType === 'theta' || providerType === 'walletconnect' || providerType === 'metamask') ? providerType : undefined
-    
-    // Always show modal for wallet selection (QR/Web approach)
-    if (!validProvider) {
-      setShowWalletConnectModal(true)
-      return
-    }
-
-    try {
-      let provider: any = null
-      
-      if (validProvider === 'walletconnect' || validProvider === 'theta') {
-        // Unified WalletConnect flow for all mobile wallets (Theta, Trust, Rainbow, etc.)
-        // Both 'theta' and 'walletconnect' now use the same code path
-        try {
-          const walletConnectProvider = await createWalletConnectProvider()
-          
-          // Check if already connected
-          if (walletConnectProvider.session) {
-            provider = walletConnectProvider
-          } else {
-            // Connect to get accounts
-            await walletConnectProvider.connect()
-            provider = walletConnectProvider
-          }
-        } catch (error: any) {
-          console.error('WalletConnect error:', error)
-          if (error?.message?.includes('User rejected') || error?.code === 4001) {
-            setStatusMessage('Connection cancelled')
-          } else {
-            setStatusMessage('Failed to connect via WalletConnect. Please try again.')
-          }
-          setSwapStatus('error')
-          setTimeout(() => {
-            setStatusMessage('')
-            setSwapStatus('idle')
-          }, 5000)
-          return
-        }
-      } else if (validProvider === 'metamask') {
-        // MetaMask: Auto-switch to Theta Network RPC (instant, no QR bugs)
-        provider = (window as any).ethereum
-        if (!provider || !provider.isMetaMask) {
-          setStatusMessage('MetaMask not detected. Install from metamask.io')
-          setSwapStatus('error')
-          setTimeout(() => {
-            setSwapStatus('idle')
-            setStatusMessage('')
-          }, 3000)
-          return
-        }
-
-        // Auto-switch to Theta Network if not already connected
-        const thetaConnected = await isConnectedToTheta()
-        if (!thetaConnected) {
-          setStatusMessage('Switching to Theta Network...')
-          const switchResult = await switchToThetaNetwork()
-          if (!switchResult.success) {
-            setStatusMessage(`Failed to switch network: ${switchResult.error}`)
-            setSwapStatus('error')
-            setTimeout(() => {
-              setSwapStatus('idle')
-              setStatusMessage('')
-            }, 5000)
-            return
-          }
-        }
-      }
-      
-      if (typeof window !== 'undefined' && provider) {
-        const accounts = await provider.request({
-          method: 'eth_requestAccounts',
-        })
-        
-        if (accounts && accounts.length > 0) {
-          const address = accounts[0]
-          
-          const ethersProvider = new ethers.BrowserProvider(provider)
-          const balance = await ethersProvider.getBalance(address)
-          const balanceFormatted = parseFloat(ethers.formatEther(balance)).toLocaleString('en-US', {
-            maximumFractionDigits: 2,
-            minimumFractionDigits: 2,
-          })
-          
-          setWallet({
-            address: `${address.slice(0, 6)}...${address.slice(-4)}`,
-            fullAddress: address,
-            balance: balanceFormatted,
-            isConnected: true,
-          })
-          
-          setWalletProvider(validProvider)
-          setShowWalletConnectModal(false)
-          
-          try {
-            localStorage.setItem('xfuel-wallet-provider', validProvider)
-          } catch (e) {
-            console.warn('Could not save wallet provider preference:', e)
-          }
-          
-          setStatusMessage('')
-          refreshBalance(address, provider)
-        } else {
-          setStatusMessage('No accounts available')
-          setSwapStatus('error')
-          setTimeout(() => {
-            setSwapStatus('idle')
-            setStatusMessage('')
-          }, 3000)
-        }
-      } else {
-        setStatusMessage('Wallet provider not available')
-        setSwapStatus('error')
-        setTimeout(() => {
-          setSwapStatus('idle')
-          setStatusMessage('')
-        }, 3000)
-      }
-    } catch (error: any) {
-      console.error('Wallet connection error:', error)
-      
-      if (error?.code === 4001 || error?.message?.includes('User rejected')) {
-        setStatusMessage('Connection cancelled')
-      } else if (error?.code === -32002) {
-        setStatusMessage('Connection request already pending. Please check your wallet.')
-      } else {
-        setStatusMessage(`Failed to connect wallet: ${error?.message || 'Unknown error'}`)
-      }
-      setSwapStatus('error')
-      setTimeout(() => {
-        setSwapStatus('idle')
-        setStatusMessage('')
-      }, 5000)
-    }
+  // ===== WALLET CONNECT REMOVED - MANUAL SEND FLOW ONLY =====
+  // All wallet connection logic has been removed.
+  // Users now send TFUEL manually to the deposit address via QR code or copy/paste.
+  // No more Connect Wallet buttons, modals, or balance auto-refresh.
+  
+  // Simple manual deposit handler
+  const showManualDepositFlow = () => {
+    setShowManualDeposit(true)
   }
 
-  // Handle wallet connect from modal
-  const handleWalletConnectFromModal = async (provider: 'theta' | 'walletconnect' | 'metamask') => {
-    try {
-      await connectWallet(provider)
-    } catch (error) {
-      console.error('Modal connection error:', error)
-    }
-  }
+  // Wallet state kept for compatibility but always disconnected
+  // (Legacy code may reference wallet.isConnected)
 
-  // Disconnect wallet
-  const disconnectWallet = () => {
-    // Disconnect based on provider type
-    if (walletProvider === 'walletconnect' || walletProvider === 'theta') {
-      // Both 'theta' and 'walletconnect' use the same provider now
-      disconnectWalletConnect()
-    }
-    
-    setWallet({
-      address: null,
-      fullAddress: null,
-      balance: '0.00',
-      isConnected: false,
-    })
-    
-    setWalletProvider(null)
-    
-    // Clear balance refresh interval
-    if (balanceRefreshInterval) {
-      clearInterval(balanceRefreshInterval)
-      setBalanceRefreshInterval(null)
-    }
-    
-    // Clear saved provider preference
-    try {
-      localStorage.removeItem('xfuel-wallet-provider')
-    } catch (e) {
-      console.warn('Could not clear wallet provider preference:', e)
-    }
-    
-    // Clear any status messages
-    setStatusMessage('')
-    setSwapStatus('idle')
-  }
-
-  // Refresh wallet balance from chain
-  const refreshBalance = async (address: string, provider: any) => {
-    try {
-      const ethersProvider = new ethers.BrowserProvider(provider)
-      const balance = await ethersProvider.getBalance(address)
-      const balanceFormatted = parseFloat(ethers.formatEther(balance)).toLocaleString('en-US', {
-        maximumFractionDigits: 2,
-        minimumFractionDigits: 2,
-      })
-      setWallet((prev) => ({ ...prev, balance: balanceFormatted }))
-    } catch (error) {
-      console.error('Balance refresh error:', error)
-    }
-  }
-
-  // Set up periodic balance refresh when wallet is connected
-  useEffect(() => {
-    if (wallet.isConnected && wallet.fullAddress) {
-      const provider = (window as any).theta || (window as any).ethereum
-      if (provider) {
-        // Refresh immediately
-        refreshBalance(wallet.fullAddress, provider)
-        
-        // Set up interval to refresh every 10 seconds
-        const interval = setInterval(() => {
-          refreshBalance(wallet.fullAddress!, provider)
-        }, 10000)
-        
-        setBalanceRefreshInterval(interval)
-        
-        return () => {
-          if (interval) clearInterval(interval)
-        }
-      }
-    } else {
-      // Clear interval when wallet disconnects
-      if (balanceRefreshInterval) {
-        clearInterval(balanceRefreshInterval)
-        setBalanceRefreshInterval(null)
-      }
-    }
-  }, [wallet.isConnected, wallet.fullAddress])
+  /* ===== WALLET CONNECT FUNCTIONS REMOVED =====
+   * All wallet connection, disconnection, and balance refresh logic has been removed.
+   * Users now send TFUEL manually to the router address via QR code/copy-paste.
+   * No more auto-balance refresh, no provider detection, no connect modals.
+   ===== END REMOVED WALLET FUNCTIONS ===== */
 
   // Get Test TFUEL from faucet
   const handleFaucet = async () => {
@@ -1513,8 +1307,8 @@ function App() {
             {activeTab === 'swap' && (
               <BiDirectionalSwapCard
                 thetaWallet={wallet}
-                onConnectTheta={() => connectWallet()}
-                onDisconnectTheta={disconnectWallet}
+                onConnectTheta={() => showManualDepositFlow()}
+                onDisconnectTheta={() => {/* no-op */}}
               />
             )}
 
@@ -1523,8 +1317,8 @@ function App() {
               <YieldPumpCard
                 wallet={wallet}
                 lstOptions={LST_OPTIONS}
-                onConnectWallet={connectWallet}
-                onDisconnectWallet={disconnectWallet}
+                onConnectWallet={() => showManualDepositFlow()}
+                onDisconnectWallet={() => {/* no-op */}}
               />
             )}
 
@@ -1786,95 +1580,68 @@ function App() {
                   <p className="text-[11px] uppercase tracking-[0.22em] text-slate-300/70">
                     Session profile
                   </p>
-                  {!wallet.isConnected && (
-                    <div className="space-y-6">
-                      {/* WalletConnect Bug Warning Banner */}
-                      <WalletConnectBugBanner
-                        onMetaMaskClick={() => {
-                          setShowWalletConnectModal(true)
-                          // Auto-select MetaMask on modal open (handled by modal reordering)
-                        }}
-                      />
-
-                      {/* Hero section with connect button */}
-                      <div className="relative overflow-hidden rounded-3xl border-2 border-purple-400/60 bg-gradient-to-br from-[rgba(168,85,247,0.25)] via-[rgba(56,189,248,0.15)] to-[rgba(15,23,42,0.40)] p-8 backdrop-blur-xl shadow-[0_0_60px_rgba(168,85,247,0.7),inset_0_0_40px_rgba(168,85,247,0.15)]">
-                        <div className="absolute -right-12 -top-12 h-48 w-48 rounded-full bg-purple-500/20 blur-3xl" />
-                        <div className="absolute -left-8 -bottom-8 h-40 w-40 rounded-full bg-cyan-500/20 blur-3xl" />
+                  {/* Manual Deposit Flow - No Wallet Connect */}
+                  <div className="space-y-6">
+                    {/* Hero section with manual deposit info */}
+                    <div className="relative overflow-hidden rounded-3xl border-2 border-purple-400/60 bg-gradient-to-br from-[rgba(168,85,247,0.25)] via-[rgba(56,189,248,0.15)] to-[rgba(15,23,42,0.40)] p-8 backdrop-blur-xl shadow-[0_0_60px_rgba(168,85,247,0.7),inset_0_0_40px_rgba(168,85,247,0.15)]">
+                      <div className="absolute -right-12 -top-12 h-48 w-48 rounded-full bg-purple-500/20 blur-3xl" />
+                      <div className="absolute -left-8 -bottom-8 h-40 w-40 rounded-full bg-cyan-500/20 blur-3xl" />
+                      
+                      <div className="relative text-center">
+                        <div className="mb-4 flex justify-center">
+                          <div className="rounded-full border-2 border-purple-400/50 bg-gradient-to-br from-purple-500/30 to-cyan-500/20 p-6 shadow-[0_0_40px_rgba(168,85,247,0.6)]">
+                            <span className="text-6xl">📱</span>
+                          </div>
+                        </div>
                         
-                        <div className="relative text-center">
-                          <div className="mb-4 flex justify-center">
-                            <div className="rounded-full border-2 border-purple-400/50 bg-gradient-to-br from-purple-500/30 to-cyan-500/20 p-6 shadow-[0_0_40px_rgba(168,85,247,0.6)]">
-                              <span className="text-6xl">👤</span>
-                            </div>
-                          </div>
-                          
-                          <h2 className="mb-3 text-3xl font-bold text-white uppercase tracking-[0.12em]" style={{
-                            textShadow: '0 0 30px rgba(168, 85, 247, 0.8), 0 0 50px rgba(168, 85, 247, 0.4)',
-                          }}>
-                            Connect Your Wallet
-                          </h2>
-                          
-                          <p className="mb-6 text-sm text-slate-300/90 max-w-md mx-auto">
-                            View your live balances, yield history, swap activity, and track your earning streak across the Theta and Cosmos ecosystems.
-                          </p>
-                          
-                          <div className="flex flex-col gap-3 max-w-xs mx-auto">
-                            <NeonButton
-                              label="Connect with MetaMask (Instant)"
-                              onClick={(e) => {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                // Open wallet modal with MetaMask as priority
-                                setShowWalletConnectModal(true)
-                              }}
-                              rightHint="⚡ fast"
-                              variant="primary"
-                            />
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                // Open Theta QR modal
-                                setShowThetaQRModal(true)
-                              }}
-                              className="text-sm text-slate-400 hover:text-purple-300 transition-colors underline"
-                            >
-                              Or use Theta Wallet QR
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Feature cards preview */}
-                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                        <div className="rounded-2xl border border-purple-400/30 bg-gradient-to-br from-[rgba(15,23,42,0.9)] to-[rgba(30,41,59,0.7)] p-5 backdrop-blur-sm">
-                          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-purple-400/40 bg-purple-500/20">
-                            <span className="text-2xl">💰</span>
-                          </div>
-                          <h3 className="mb-2 text-sm font-bold text-purple-300 uppercase tracking-wider">Live Balances</h3>
-                          <p className="text-xs text-slate-400">TFUEL, USDC, rXF, and LST positions</p>
-                        </div>
-
-                        <div className="rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-[rgba(15,23,42,0.9)] to-[rgba(30,41,59,0.7)] p-5 backdrop-blur-sm">
-                          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-cyan-400/40 bg-cyan-500/20">
-                            <span className="text-2xl">📊</span>
-                          </div>
-                          <h3 className="mb-2 text-sm font-bold text-cyan-300 uppercase tracking-wider">Yield History</h3>
-                          <p className="text-xs text-slate-400">Track daily earnings and APY performance</p>
-                        </div>
-
-                        <div className="rounded-2xl border border-emerald-400/30 bg-gradient-to-br from-[rgba(15,23,42,0.9)] to-[rgba(30,41,59,0.7)] p-5 backdrop-blur-sm">
-                          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-emerald-400/40 bg-emerald-500/20">
-                            <span className="text-2xl">🔥</span>
-                          </div>
-                          <h3 className="mb-2 text-sm font-bold text-emerald-300 uppercase tracking-wider">Streak Counter</h3>
-                          <p className="text-xs text-slate-400">Build your daily activity streak</p>
+                        <h2 className="mb-3 text-3xl font-bold text-white uppercase tracking-[0.12em]" style={{
+                          textShadow: '0 0 30px rgba(168, 85, 247, 0.8), 0 0 50px rgba(168, 85, 247, 0.4)',
+                        }}>
+                          Manual Send Flow
+                        </h2>
+                        
+                        <p className="mb-6 text-sm text-slate-300/90 max-w-md mx-auto">
+                          No wallet connect needed — send TFUEL directly via QR code or address for instant swaps and yield.
+                        </p>
+                        
+                        <div className="flex flex-col gap-3 max-w-xs mx-auto">
+                          <NeonButton
+                            label="Show Deposit Address"
+                            onClick={() => setShowManualDeposit(true)}
+                            rightHint="📱 QR"
+                            variant="primary"
+                          />
                         </div>
                       </div>
                     </div>
-                  )}
 
-                  {wallet.isConnected && !isSignedIn && (
+                    {/* Feature cards preview */}
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <div className="rounded-2xl border border-purple-400/30 bg-gradient-to-br from-[rgba(15,23,42,0.9)] to-[rgba(30,41,59,0.7)] p-5 backdrop-blur-sm">
+                        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-purple-400/40 bg-purple-500/20">
+                          <span className="text-2xl">📱</span>
+                        </div>
+                        <h3 className="mb-2 text-sm font-bold text-purple-300 uppercase tracking-wider">Manual Deposit</h3>
+                        <p className="text-xs text-slate-400">Send TFUEL via Theta Wallet QR</p>
+                      </div>
+
+                      <div className="rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-[rgba(15,23,42,0.9)] to-[rgba(30,41,59,0.7)] p-5 backdrop-blur-sm">
+                        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-cyan-400/40 bg-cyan-500/20">
+                          <span className="text-2xl">⚡</span>
+                        </div>
+                        <h3 className="mb-2 text-sm font-bold text-cyan-300 uppercase tracking-wider">Instant Swaps</h3>
+                        <p className="text-xs text-slate-400">Auto-mint LST tokens on deposit</p>
+                      </div>
+
+                      <div className="rounded-2xl border border-emerald-400/30 bg-gradient-to-br from-[rgba(15,23,42,0.9)] to-[rgba(30,41,59,0.7)] p-5 backdrop-blur-sm">
+                        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-emerald-400/40 bg-emerald-500/20">
+                          <span className="text-2xl">🔒</span>
+                        </div>
+                        <h3 className="mb-2 text-sm font-bold text-emerald-300 uppercase tracking-wider">No Connect</h3>
+                        <p className="text-xs text-slate-400">Simple send, no extensions needed</p>
+                      </div>
+                    </div>
+                  </div>
                     <div className="space-y-6">
                       <div className="mb-6 flex items-center justify-between">
                         <div>
@@ -2400,21 +2167,37 @@ function App() {
         />
       )}
 
-      {/* Wallet Connect Modal */}
-      <WalletConnectModal
-        isOpen={showWalletConnectModal}
-        onClose={() => setShowWalletConnectModal(false)}
-        onConnect={handleWalletConnectFromModal}
-      />
+      {/* Manual Deposit Modal */}
+      {showManualDeposit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="max-w-2xl w-full">
+            <ManualDepositCard
+              depositAddress={MANUAL_DEPOSIT_ADDRESS}
+              network="Theta Mainnet"
+              onCopyAddress={() => {
+                console.log('Address copied')
+              }}
+            />
+            <div className="mt-4 flex justify-center">
+              <NeonButton
+                label="Close"
+                onClick={() => setShowManualDeposit(false)}
+                variant="secondary"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
-      {/* Sign In Modal */}
+      {/* Sign In Modal - Removed wallet connect dependency */}
       <SignInModal
         isOpen={showSignInModal}
         onClose={() => setShowSignInModal(false)}
         walletAddress={wallet.fullAddress}
         onConnectWallet={() => {
           setShowSignInModal(false)
-          setShowWalletConnectModal(true)
+          // Manual deposit flow instead
+          setShowManualDeposit(true)
         }}
         onSignInSuccess={handleSignInSuccess}
       />

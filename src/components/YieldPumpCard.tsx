@@ -241,20 +241,13 @@ export default function YieldPumpCard({
               <p className="text-xs text-slate-400 mt-0.5">{wallet.balance} TFUEL</p>
             </div>
           </div>
-          {onDisconnectWallet && (
-            <button
-              onClick={onDisconnectWallet}
-              className="px-3 py-2 text-xs font-bold uppercase tracking-wider rounded-lg border-2 border-red-500/60 bg-gradient-to-br from-red-500/20 via-red-600/15 to-slate-900/40 text-red-300 transition-all hover:border-red-400 hover:bg-red-500/30 hover:text-red-200 hover:shadow-[0_0_20px_rgba(239,68,68,0.7),inset_0_0_15px_rgba(239,68,68,0.2)] active:scale-95"
-            >
-              Disconnect
-            </button>
-          )}
+          {/* Disconnect button removed - manual deposit flow only */}
         </div>
       ) : (
         <GlassCard>
           <div className="text-center space-y-4">
             <p className="text-sm text-slate-300 mb-4">
-              Connect your wallet to start earning
+              Manual deposit via QR code — no wallet connect needed
             </p>
             <div className="flex flex-col gap-3 max-w-md mx-auto">
               <button
@@ -263,45 +256,18 @@ export default function YieldPumpCard({
               >
                 <div className="flex items-center gap-4">
                   <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-purple-400/40 bg-gradient-to-br from-purple-500/30 to-purple-600/20 shadow-[0_0_20px_rgba(168,85,247,0.5)]">
-                    <span className="text-2xl">⚡</span>
+                    <span className="text-2xl">📱</span>
                   </div>
                   <div className="flex-1">
                     <p className="text-lg font-bold text-white group-hover:text-purple-200 transition-colors">
-                      Theta Wallet
+                      Show Deposit Address
                     </p>
                     <p className="text-xs text-slate-400 group-hover:text-slate-300 transition-colors">
-                      Recommended for Theta Network
+                      Send TFUEL via QR code
                     </p>
                   </div>
                   <svg
                     className="w-6 h-6 text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </div>
-              </button>
-              
-              <button
-                onClick={onConnectWallet}
-                className="group relative w-full rounded-xl border-2 border-cyan-400/60 bg-gradient-to-br from-cyan-500/20 via-cyan-600/15 to-slate-900/40 px-6 py-4 text-left backdrop-blur-xl transition-all hover:border-cyan-400 hover:shadow-[0_0_30px_rgba(6,182,212,0.7),inset_0_0_20px_rgba(6,182,212,0.2)]"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-cyan-400/40 bg-gradient-to-br from-cyan-500/30 to-cyan-600/20 shadow-[0_0_20px_rgba(6,182,212,0.5)]">
-                    <span className="text-2xl">🦊</span>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-lg font-bold text-white group-hover:text-cyan-200 transition-colors">
-                      MetaMask
-                    </p>
-                    <p className="text-xs text-slate-400 group-hover:text-slate-300 transition-colors">
-                      Popular Ethereum wallet
-                    </p>
-                  </div>
-                  <svg
-                    className="w-6 h-6 text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
