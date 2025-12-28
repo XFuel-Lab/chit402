@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback } from 'react'
 import { ethers } from 'ethers'
 import GlassCard from './GlassCard'
 import NeonButton from './NeonButton'
+import QRDepositModal from './QRDepositModal'
 import { ROUTER_ADDRESS, ROUTER_ABI } from '../config/thetaConfig'
 import { usePriceStore } from '../stores/priceStore'
 import type { LSTOption } from './YieldBubbleSelector'
@@ -32,6 +33,7 @@ export default function YieldPumpCard({
   const [txHash, setTxHash] = useState<string | null>(null)
   const [showLSTDropdown, setShowLSTDropdown] = useState(false)
   const [inputToken, setInputToken] = useState<InputToken>('USDC')
+  const [showQRModal, setShowQRModal] = useState(false)
 
   const { prices, apys } = usePriceStore()
 
@@ -553,24 +555,47 @@ export default function YieldPumpCard({
         </div>
       )}
 
-      {/* Deposit Button */}
-      <NeonButton
-        label={isProcessing ? 'Processing...' : 'Deposit & Stake'}
-        rightHint="best yield"
-        onClick={handleDeposit}
-        disabled={
-          !wallet.isConnected ||
-          !inputAmount ||
-          !isValidAmount ||
-          parseFloat(inputAmount) <= 0 ||
-          isProcessing
-        }
-      />
+      {/* Deposit Buttons */}
+      <div className="space-y-3">
+        <NeonButton
+          label={isProcessing ? 'Processing...' : 'Deposit & Stake'}
+          rightHint="best yield"
+          onClick={handleDeposit}
+          disabled={
+            !wallet.isConnected ||
+            !inputAmount ||
+            !isValidAmount ||
+            parseFloat(inputAmount) <= 0 ||
+            isProcessing
+          }
+        />
+        
+        {/* Manual Deposit via QR */}
+        <button
+          onClick={() => setShowQRModal(true)}
+          disabled={!inputAmount || parseFloat(inputAmount) <= 0}
+          className="w-full px-6 py-3 text-sm font-bold uppercase tracking-wider rounded-xl border-2 border-cyan-400/60 bg-gradient-to-br from-cyan-500/20 via-cyan-600/15 to-slate-900/40 text-cyan-200 transition-all hover:border-cyan-400 hover:shadow-[0_0_25px_rgba(6,182,212,0.7),inset_0_0_15px_rgba(6,182,212,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          📱 Deposit TFUEL via QR
+        </button>
+      </div>
 
       {/* Info Footer */}
       <div className="text-center text-xs text-slate-500">
         <p>Auto-routed to highest yield • Single transaction • Instant execution</p>
       </div>
+
+      {/* QR Deposit Modal */}
+      {ROUTER_ADDRESS && (
+        <QRDepositModal
+          isOpen={showQRModal}
+          onClose={() => setShowQRModal(false)}
+          depositAddress={ROUTER_ADDRESS}
+          amount={inputAmount}
+          network="Theta Mainnet"
+          memo="XPRT Pool Deposit"
+        />
+      )}
     </div>
   )
 }

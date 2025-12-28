@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react'
 import { ethers } from 'ethers'
 import GlassCard from './GlassCard'
 import NeonButton from './NeonButton'
+import QRDepositModal from './QRDepositModal'
 import {
   Token,
   getThetaTokens,
@@ -21,6 +22,7 @@ import {
   BridgeRoute,
 } from '../utils/axelarBridge'
 import { usePriceStore } from '../stores/priceStore'
+import { ROUTER_ADDRESS } from '../config/thetaConfig'
 import StrideAccountHelp from './StrideAccountHelp'
 
 interface BiDirectionalSwapCardProps {
@@ -50,6 +52,7 @@ export default function BiDirectionalSwapCard({
   const [statusMessage, setStatusMessage] = useState('')
   const [route, setRoute] = useState<BridgeRoute | null>(null)
   const [strideAccountError, setStrideAccountError] = useState<string | null>(null)
+  const [showQRModal, setShowQRModal] = useState(false)
 
   const { prices } = usePriceStore()
 
@@ -632,30 +635,55 @@ export default function BiDirectionalSwapCard({
           </div>
         )}
 
-        {/* Swap Button */}
-        <NeonButton
-          label={
-            swapStatus === 'loading'
-              ? 'Processing...'
-              : !thetaWallet.isConnected
-              ? 'Connect Theta Wallet'
-              : `Swap to ${toToken.symbol}`
-          }
-          rightHint={swapStatus === 'idle' && thetaWallet.isConnected ? 'cross-chain' : undefined}
-          onClick={handleSwap}
-          disabled={
-            !thetaWallet.isConnected ||
-            !inputAmount ||
-            parseFloat(inputAmount) <= 0 ||
-            swapStatus === 'loading'
-          }
-          className="w-full"
-        />
+        {/* Swap Buttons */}
+        <div className="space-y-3">
+          <NeonButton
+            label={
+              swapStatus === 'loading'
+                ? 'Processing...'
+                : !thetaWallet.isConnected
+                ? 'Connect Theta Wallet'
+                : `Swap to ${toToken.symbol}`
+            }
+            rightHint={swapStatus === 'idle' && thetaWallet.isConnected ? 'cross-chain' : undefined}
+            onClick={handleSwap}
+            disabled={
+              !thetaWallet.isConnected ||
+              !inputAmount ||
+              parseFloat(inputAmount) <= 0 ||
+              swapStatus === 'loading'
+            }
+            className="w-full"
+          />
+          
+          {/* Manual Deposit via QR - Only show for TFUEL → Cosmos swaps */}
+          {fromToken.symbol === 'TFUEL' && toToken.chain === 'cosmos' && (
+            <button
+              onClick={() => setShowQRModal(true)}
+              disabled={!inputAmount || parseFloat(inputAmount) <= 0}
+              className="w-full px-6 py-3 text-sm font-bold uppercase tracking-wider rounded-xl border-2 border-cyan-400/60 bg-gradient-to-br from-cyan-500/20 via-cyan-600/15 to-slate-900/40 text-cyan-200 transition-all hover:border-cyan-400 hover:shadow-[0_0_25px_rgba(6,182,212,0.7),inset_0_0_15px_rgba(6,182,212,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              📱 Deposit TFUEL via QR
+            </button>
+          )}
+        </div>
 
         {/* Info Footer */}
         <div className="text-center text-xs text-slate-500">
           Powered by Axelar GMP • Secure cross-chain messaging
         </div>
+
+        {/* QR Deposit Modal */}
+        {ROUTER_ADDRESS && (
+          <QRDepositModal
+            isOpen={showQRModal}
+            onClose={() => setShowQRModal(false)}
+            depositAddress={ROUTER_ADDRESS}
+            amount={inputAmount}
+            network="Theta Mainnet"
+            memo={`Swap to ${toToken.symbol}`}
+          />
+        )}
       </div>
     </GlassCard>
   )
