@@ -14,11 +14,13 @@ import EarlyBelieversModal from './components/EarlyBelieversModal'
 import StrideInitModal from './components/StrideInitModal'
 import EdgeNodeDashboard from './components/EdgeNodeDashboard'
 import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
+import SimpleSwapCard from './components/SimpleSwapCard'
 import YieldPumpCard from './components/YieldPumpCard'
 import ManualDepositCard from './components/ManualDepositCard'
 import SignInModal from './components/SignInModal'
 import TransactionSuccessModal from './components/TransactionSuccessModal'
 import BetaBanner from './components/BetaBanner'
+import MaintenanceOverlay from './components/MaintenanceOverlay'
 import { THETA_TESTNET, THETA_MAINNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
 import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 import { usePriceStore } from './stores/priceStore'
@@ -82,6 +84,16 @@ if (!MANUAL_DEPOSIT_ADDRESS) {
 }
 
 function App() {
+  // Check maintenance mode from environment variable
+  const isMaintenanceMode = import.meta.env.VITE_MAINTENANCE === 'true'
+  
+  // Debug: Log maintenance mode status
+  console.log('🔧 Maintenance Mode Debug:', {
+    envValue: import.meta.env.VITE_MAINTENANCE,
+    isEnabled: isMaintenanceMode,
+    type: typeof import.meta.env.VITE_MAINTENANCE
+  })
+  
   const [wallet, setWallet] = useState<WalletInfo>({
     address: null,
     fullAddress: null,
@@ -1229,9 +1241,13 @@ function App() {
   }
 
   return (
-    <ScreenBackground>
-      {/* Beta Testing Banner - Only on mainnet */}
-      <BetaBanner network={APP_CONFIG.NETWORK as 'mainnet' | 'testnet'} />
+    <>
+      {/* Maintenance Mode Overlay - Renders at root level, outside all containers */}
+      <MaintenanceOverlay isEnabled={isMaintenanceMode} />
+      
+      <ScreenBackground>
+        {/* Beta Testing Banner - Only on mainnet */}
+        <BetaBanner network={APP_CONFIG.NETWORK as 'mainnet' | 'testnet'} />
       
       <div className="relative z-10 mx-auto flex min-h-screen max-w-5xl flex-col px-4 py-6 sm:px-6 sm:py-10 lg:px-8">
         {/* Top chrome: logo + live orb */}
@@ -1307,12 +1323,13 @@ function App() {
             {/* Early Believers Card */}
             <EarlyBelieversCard onClick={() => setShowEarlyBelieversModal(true)} />
 
-            {/* Swap Tab: Tfuel to Cosmos Yield Pumps */}
+            {/* Swap Tab: SimpleSwap-style estimator + manual QR send */}
             {activeTab === 'swap' && (
-              <BiDirectionalSwapCard
-                thetaWallet={wallet}
-                onConnectTheta={() => showManualDepositFlow()}
-                onDisconnectTheta={() => {/* no-op */}}
+              <SimpleSwapCard
+                onSwapComplete={() => {
+                  // Optional: Refresh balance or show success message
+                  console.log('Swap initiated via QR')
+                }}
               />
             )}
 
@@ -2103,6 +2120,7 @@ function App() {
         />
       )}
     </ScreenBackground>
+    </>
   )
 }
 
