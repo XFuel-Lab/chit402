@@ -2,6 +2,9 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install --legacy-peer-deps && npm list terser || npm install terser --save-dev",
+  "env": {
+    "VITE_MAINTENANCE": "true"
+  },
   "rewrites": [
     {
       "source": "/institutions",
