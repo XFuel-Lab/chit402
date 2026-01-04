@@ -44,7 +44,7 @@ Theta Deposit → ZK Proof → Verification → ibcTFUEL Mint → IBC Transfer �
 ```
 
 **Read the whitepapers:**
-- **Ferrari Hybrid Tokenomics (v3.0)**: [docs/XFUEL-Hybrid-Tokenomics-Whitepaper-v3.md](docs/XFUEL-Hybrid-Tokenomics-Whitepaper-v3.md) 🏎️ **NEW**
+- **Ferrari Hybrid Tokenomics (v3.0)**: [docs/WHITEPAPER.md](docs/WHITEPAPER.md) 🏎️ **CANONICAL**
 - **ZK Bridge Technical (v2.0)**: [docs/whitepaper/XFUEL-ZK-Bridge-Whitepaper.md](docs/whitepaper/XFUEL-ZK-Bridge-Whitepaper.md)
 - **Quick Reference**: [docs/XFUEL-FERRARI-QUICK-REF.md](docs/XFUEL-FERRARI-QUICK-REF.md)
 
@@ -150,7 +150,7 @@ IBC Channel:       channel-190      (Theta ↔ Persistence)
 ### Technical Documentation
 
 **Whitepapers**:
-- **Ferrari Hybrid Tokenomics (v3.0)**: [docs/XFUEL-Hybrid-Tokenomics-Whitepaper-v3.md](docs/XFUEL-Hybrid-Tokenomics-Whitepaper-v3.md) 🏎️
+- **Ferrari Hybrid Tokenomics (v3.0)**: [docs/WHITEPAPER.md](docs/WHITEPAPER.md) 🏎️ **CANONICAL**
   - Complete ZK-SNARK architecture
   - Hybrid revenue splits (30/30/25/15)
   - Governance extras & veXF mechanics
@@ -165,6 +165,59 @@ IBC Channel:       channel-190      (Theta ↔ Persistence)
 - [ZK_BRIDGE_DELIVERY_SUMMARY.md](ZK_BRIDGE_DELIVERY_SUMMARY.md) - Complete implementation overview
 - [ZK_BRIDGE_QUICK_REFERENCE.md](ZK_BRIDGE_QUICK_REFERENCE.md) - Quick start guide
 - [cosmwasm/README.md](cosmwasm/README.md) - CosmWasm contract details
+
+---
+
+## 📄 Latest Whitepaper v3.0
+
+**XFUEL Protocol: Ferrari Hybrid Tokenomics Edition**
+
+Read the complete technical whitepaper: **[docs/WHITEPAPER.md](docs/WHITEPAPER.md)**
+
+### What's Inside
+
+**Ferrari Hybrid Tokenomics**
+- **30/70 Recycle Loop**: 30% of veXF yields reverse-burn back to RevenueSplitter, 70% reinvested in LP for sustainability
+- **30/30/25/15 Revenue Splits**: 
+  - 30% BBB (Buyback-Burn-Boost) - Deflationary pressure
+  - 30% LP Funding - Governance-voted liquidity provisioning
+  - 25% veXF Yields - Direct returns to locked token holders (USDC stable + TFUEL options)
+  - 15% Treasury - Innovation experiments, audits, strategic partnerships
+
+**veXF Governance Extras**
+- **Quarterly Opt-In Votes**: 5-10% of LP revenue for community initiatives
+- **rXF Bonuses**: 0.5-2x multipliers for active voters
+- **NFT Rewards**: Exclusive governance NFTs for participation milestones
+- **Airdrop Pools**: Community incentive programs
+
+**ZK-SNARK Bridge**
+- Sub-4 second settlement (deposit 2-6s → proof 1.5s → verify 0.5s → IBC 0.5s → swap 1s)
+- Groth16 proof system with BN254 elliptic curve
+- Cryptographic security without trust assumptions
+- IBC channel-190 for native Cosmos interoperability
+
+### Why Ferrari?
+
+Named for its **precision engineering** and **performance optimization**, the Ferrari model creates a self-sustaining economic flywheel:
+
+```
+Protocol Usage → Revenue Generation
+       ↓                    ↓
+   Innovation ← Treasury ← Distribution
+       ↓                    ↓
+ New Features → Buybacks + LP + Yields
+       ↓                    ↓
+   Growth → 30% Recycle Loop → Sustainability
+```
+
+### Community & Updates
+
+- **Website**: [xfuel.app](https://xfuel.app) - Live mainnet deployment
+- **Discord**: [Join for updates] - Early access and community testing
+- **Twitter**: [@xfuel_protocol] - Follow for launch announcements
+- **GitHub**: [github.com/XFuel-Lab/xfuel-protocol] - Contribute and review code
+
+**Security Note**: We welcome security researchers! Report vulnerabilities to security@xfuel.app
 
 ---
 
