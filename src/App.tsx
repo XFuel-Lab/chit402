@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { ethers } from 'ethers'
 import confetti from 'canvas-confetti'
 import ScreenBackground from './components/ScreenBackground'
@@ -21,6 +22,8 @@ import SignInModal from './components/SignInModal'
 import TransactionSuccessModal from './components/TransactionSuccessModal'
 import BetaBanner from './components/BetaBanner'
 import MaintenanceOverlay from './components/MaintenanceOverlay'
+import GovernanceTab from './components/GovernanceTab'
+import LPFlywheelCard from './components/LPFlywheelCard'
 import { THETA_TESTNET, THETA_MAINNET, ROUTER_ADDRESS, TIP_POOL_ADDRESS, ROUTER_ABI, TIP_POOL_ABI, ERC20_ABI } from './config/thetaConfig'
 import { APP_CONFIG, MOCK_ROUTER_ADDRESS } from './config/appConfig'
 import { usePriceStore } from './stores/priceStore'
@@ -83,7 +86,14 @@ if (!MANUAL_DEPOSIT_ADDRESS) {
   console.error('⚠️ VITE_ROUTER_ADDRESS not configured - manual deposit flow will not work')
 }
 
-function App() {
+interface AppProps {
+  initialTab?: NeonTabId
+}
+
+function App({ initialTab = 'swap' }: AppProps) {
+  const navigate = useNavigate()
+  const location = useLocation()
+  
   // Check maintenance mode from environment variable
   const isMaintenanceMode = import.meta.env.VITE_MAINTENANCE === 'true'
   
@@ -110,7 +120,7 @@ function App() {
   const [swapStatus, setSwapStatus] = useState<SwapStatus>('idle')
   const [statusMessage, setStatusMessage] = useState('')
   const [selectedLST, setSelectedLST] = useState<LSTOption>(LST_OPTIONS[0])
-  const [activeTab, setActiveTab] = useState<NeonTabId>('swap')
+  const [activeTab, setActiveTab] = useState<NeonTabId>(initialTab)
   const [isSignedIn, setIsSignedIn] = useState(false)
   const [userAlias, setUserAlias] = useState<string | null>(null)
   const [showLSTDropdown, setShowLSTDropdown] = useState(false)
@@ -137,6 +147,10 @@ function App() {
   const [keplrAddress, setKeplrAddress] = useState<string | null>(null)
   const [keplrLSTBalance, setKeplrLSTBalance] = useState<number>(0)
   const [isStakingToKeplr, setIsStakingToKeplr] = useState(false)
+  
+  // Governance & veXF state
+  const [veXFBalance, setVeXFBalance] = useState<number>(0)
+  const [rXFBalance, setRXFBalance] = useState<number>(0)
   
   // Transaction success modal state
   const [showSuccessModal, setShowSuccessModal] = useState(false)
@@ -233,6 +247,32 @@ function App() {
   const showManualDepositFlow = () => {
     setShowManualDeposit(true)
   }
+
+  // Load governance token balances when wallet is connected
+  useEffect(() => {
+    const loadGovernanceBalances = async () => {
+      if (!wallet.fullAddress) {
+        setVeXFBalance(0)
+        setRXFBalance(0)
+        return
+      }
+
+      // In production, fetch from veXF and rXF contracts
+      // For demo, simulate balances
+      try {
+        // Simulate API call
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        
+        // Mock balances for demonstration
+        setVeXFBalance(15000) // 15,000 veXF
+        setRXFBalance(5000)   // 5,000 rXF (20,000 voting power with 4× boost)
+      } catch (error) {
+        console.error('Failed to load governance balances:', error)
+      }
+    }
+
+    loadGovernanceBalances()
+  }, [wallet.fullAddress])
 
   // Wallet state kept for compatibility but always disconnected
   // (Legacy code may reference wallet.isConnected)
@@ -1126,13 +1166,16 @@ function App() {
     }
   }, [wallet.isConnected, TIP_POOL_ADDRESS])
 
-  // Ensure only visible tabs can be active
+  // Sync activeTab with current route
   useEffect(() => {
-    const validTabs: NeonTabId[] = ['swap', 'staking', 'profile']
-    if (!validTabs.includes(activeTab)) {
+    const path = location.pathname.slice(1) || 'swap'
+    const validTabs: NeonTabId[] = ['swap', 'staking', 'governance', 'liquidity', 'profile']
+    if (validTabs.includes(path as NeonTabId)) {
+      setActiveTab(path as NeonTabId)
+    } else {
       setActiveTab('swap')
     }
-  }, [activeTab])
+  }, [location.pathname])
 
   // Auto-connect on mount (only for MetaMask)
   useEffect(() => {
@@ -1162,15 +1205,6 @@ function App() {
       }
     } catch {
       // ignore
-    }
-
-    // Set active tab based on current path (only for visible tabs)
-    // Hidden tabs are not accessible, default to swap
-    const validTabs: NeonTabId[] = ['swap', 'staking', 'profile']
-    if (window.location.pathname === '/liquidity' || window.location.pathname === '/liquidity/') {
-      // Redirect hidden liquidity tab to swap
-      window.history.replaceState({}, '', '/')
-      setActiveTab('swap')
     }
   }, [])
 
@@ -1304,18 +1338,22 @@ function App() {
             <NeonTabs
               activeId={activeTab}
               onChange={(id) => {
-                // Only allow navigation to visible tabs
-                const validTabs: NeonTabId[] = ['swap', 'staking', 'profile']
+                // Navigate using React Router
+                const validTabs: NeonTabId[] = ['swap', 'staking', 'governance', 'liquidity', 'profile']
                 if (validTabs.includes(id)) {
                   setActiveTab(id)
+                  navigate(id === 'swap' ? '/' : `/${id}`)
                 } else {
                   // Default to swap if trying to access hidden tab
                   setActiveTab('swap')
+                  navigate('/')
                 }
               }}
               tabs={[
                 { id: 'swap', label: 'Swap', pill: 'live' },
                 { id: 'staking', label: 'Yield Pump', pill: 'apy lanes' },
+                { id: 'governance', label: 'Governance', pill: 'veXF' },
+                { id: 'liquidity', label: 'LP Pools', pill: 'flywheel' },
                 { id: 'profile', label: 'Profile', pill: 'wallet' },
               ]}
             />
@@ -1340,6 +1378,45 @@ function App() {
                 lstOptions={LST_OPTIONS}
                 onConnectWallet={() => showManualDepositFlow()}
                 onDisconnectWallet={() => {/* no-op */}}
+              />
+            )}
+
+            {/* Governance Tab */}
+            {activeTab === 'governance' && (
+              <GovernanceTab
+                userAddress={wallet.fullAddress}
+                veXFBalance={veXFBalance}
+                rXFBalance={rXFBalance}
+                onVote={async (pollId, optionId) => {
+                  // In production, call governance contract
+                  console.log('Vote submitted:', { pollId, optionId })
+                  // Simulate transaction
+                  await new Promise((resolve) => setTimeout(resolve, 2000))
+                }}
+                onToggleMaintenance={() => {
+                  // In production, call admin function on contract
+                  console.log('Maintenance mode toggled')
+                }}
+                isMaintenanceMode={isMaintenanceMode}
+              />
+            )}
+
+            {/* LP Flywheel Tab */}
+            {activeTab === 'liquidity' && (
+              <LPFlywheelCard
+                userAddress={wallet.fullAddress}
+                onAddLiquidity={async (poolId, amount) => {
+                  // In production, call LP deposit contract
+                  console.log('Add liquidity:', { poolId, amount })
+                  // Simulate transaction
+                  await new Promise((resolve) => setTimeout(resolve, 2000))
+                }}
+                onClaimRewards={async (poolId) => {
+                  // In production, call LP rewards claim contract
+                  console.log('Claim rewards:', { poolId })
+                  // Simulate transaction
+                  await new Promise((resolve) => setTimeout(resolve, 2000))
+                }}
               />
             )}
 

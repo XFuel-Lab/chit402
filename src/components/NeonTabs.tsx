@@ -1,6 +1,6 @@
 import React from 'react'
 
-type TabId = 'swap' | 'staking' | 'tip-pools' | 'mining' | 'profile' | 'liquidity' | 'creator'
+type TabId = 'swap' | 'staking' | 'tip-pools' | 'mining' | 'profile' | 'liquidity' | 'creator' | 'governance'
 
 export type Tab = {
   id: TabId

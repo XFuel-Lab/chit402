@@ -66,7 +66,7 @@ https://explorer.thetatoken.org/address/0x38D0E8f0e11b29D87EF68F319de5c0471D0aDB
 ## Current Status
 
 - **ThetaPulseProof Contract**: `0x38D0E8f0e11b29D87EF68F319de5c0471D0aDBfB`
-- **Deployer (for testing)**: `0x627082bFAdffb16B979d99A8eFc8F1874c0990C4` ✅ Already authorized
+- **Deployer (for testing)**: `0xDC17Cbd201E7347555e428690f702bbFcAF2d33c` ✅ Already authorized
 - **Production Edge Node Signers**: ⚠️ Not yet configured
 
 ## Notes

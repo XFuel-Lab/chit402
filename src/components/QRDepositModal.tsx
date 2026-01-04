@@ -184,57 +184,73 @@ export default function QRDepositModal({
                 <span className="text-xl">📱</span>
                 How to deposit
               </p>
-              <ol className="text-sm text-slate-300 space-y-2">
+              <div className="space-y-3">
                 {isMobile ? (
                   <>
-                    <li className="flex gap-2">
-                      <span className="text-cyan-400 font-bold">1.</span>
-                      <span>Tap "Open Theta Wallet" or copy the payment URI</span>
-                    </li>
-                    <li className="flex gap-2">
-                      <span className="text-cyan-400 font-bold">2.</span>
-                      <span>Confirm the transaction in your wallet</span>
-                    </li>
-                    <li className="flex gap-2">
-                      <span className="text-cyan-400 font-bold">3.</span>
-                      <span>Your LST tokens will be minted automatically</span>
-                    </li>
+                    <div className="flex gap-2">
+                      <span className="text-cyan-400 font-bold text-sm">1.</span>
+                      <p className="text-sm text-slate-300">Tap "Open Theta Wallet" to launch the app</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <span className="text-cyan-400 font-bold text-sm">2.</span>
+                      <p className="text-sm text-slate-300">Verify the amount and confirm the transaction</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <span className="text-cyan-400 font-bold text-sm">3.</span>
+                      <p className="text-sm text-slate-300">Your LST tokens will be minted automatically within 1-2 minutes</p>
+                    </div>
                   </>
                 ) : (
                   <>
-                    <li className="flex gap-2">
-                      <span className="text-cyan-400 font-bold">1.</span>
-                      <span>Open your Theta Wallet app on mobile</span>
-                    </li>
-                    <li className="flex gap-2">
-                      <span className="text-cyan-400 font-bold">2.</span>
-                      <span>Scan this QR code with the wallet scanner</span>
-                    </li>
-                    <li className="flex gap-2">
-                      <span className="text-cyan-400 font-bold">3.</span>
-                      <span>Verify the amount and memo, then confirm</span>
-                    </li>
-                    <li className="flex gap-2">
-                      <span className="text-cyan-400 font-bold">4.</span>
-                      <span>Your LST tokens will be minted automatically</span>
-                    </li>
+                    <div className="flex gap-2">
+                      <span className="text-cyan-400 font-bold text-sm">1.</span>
+                      <p className="text-sm text-slate-300">
+                        Open <span className="font-semibold text-white">Theta Wallet mobile app</span>
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <span className="text-cyan-400 font-bold text-sm">2.</span>
+                      <p className="text-sm text-slate-300">Tap "Send" and scan this QR code</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <span className="text-cyan-400 font-bold text-sm">3.</span>
+                      <p className="text-sm text-slate-300">
+                        <span className="font-semibold text-emerald-400">Amount: {amountWithFee} TFUEL</span> (includes 0.3% fee)
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <span className="text-cyan-400 font-bold text-sm">4.</span>
+                      <p className="text-sm text-slate-300">Confirm transaction — receive your LST tokens in ~1-2 minutes</p>
+                    </div>
                   </>
                 )}
-              </ol>
+              </div>
             </div>
 
             {/* Success Note */}
             <div className="bg-emerald-500/10 border border-emerald-400/30 rounded-2xl p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300 mb-2 flex items-center gap-2">
                 <span className="text-lg">✨</span>
-                After deposit
+                What happens next
               </p>
-              <p className="text-sm text-slate-300">
-                <span className="text-emerald-400 font-bold">TFUEL received</span> — stkXPRT minting soon
-              </p>
-              <p className="text-xs text-slate-400 mt-1">
-                Your staked tokens will appear in your wallet within 1-2 minutes
-              </p>
+              <ul className="space-y-2 text-sm text-slate-300">
+                <li className="flex items-start gap-2">
+                  <span className="text-emerald-400 mt-0.5">•</span>
+                  <span>Your TFUEL is received by the router contract</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-emerald-400 mt-0.5">•</span>
+                  <span>Automatic swap executes via Axelar GMP bridge</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-emerald-400 mt-0.5">•</span>
+                  <span>LST tokens are minted and sent to your address</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-emerald-400 mt-0.5">•</span>
+                  <span className="font-semibold text-emerald-300">Total time: ~1-2 minutes</span>
+                </li>
+              </ul>
             </div>
 
             {/* Network Badge */}

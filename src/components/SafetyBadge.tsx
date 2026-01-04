@@ -58,3 +58,5 @@ export function SafetyBadgeGroup({ className = '' }: { className?: string }) {
   )
 }
 
+
+
