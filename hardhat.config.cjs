@@ -34,16 +34,23 @@ module.exports = {
   networks: {
     hardhat: {
       chainId: 1337,
+      // Optional: Fork Theta mainnet for hybrid flow simulation
+      // Uncomment the forking block below to enable forking
+      // forking: {
+      //   url: 'https://eth-rpc-api.thetatoken.org/rpc',
+      //   enabled: true,
+      // },
     },
     'theta-testnet': {
       url: 'https://eth-rpc-api-testnet.thetatoken.org/rpc',
       chainId: 365,
-      accounts: process.env.THETA_TESTNET_PRIVATE_KEY ? [process.env.THETA_TESTNET_PRIVATE_KEY] : [],
+      // Use ledgerAccounts for hardware wallet support or
+      // accounts will be set programmatically in deployment scripts via keystore
     },
     'theta-mainnet': {
       url: 'https://eth-rpc-api.thetatoken.org/rpc',
       chainId: 361,
-      accounts: process.env.THETA_MAINNET_PRIVATE_KEY ? [process.env.THETA_MAINNET_PRIVATE_KEY] : [],
+      // Accounts set programmatically in deployment scripts via keystore
       gasPrice: 4000000000000, // 4000 Gwei (minimum required by Theta mainnet)
       timeout: 120000,
       httpHeaders: {},

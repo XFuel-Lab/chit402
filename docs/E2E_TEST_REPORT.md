@@ -82,7 +82,7 @@
 | New Implementation | `0x8812D4443D0EE7f998FDF2e91D20654F6bec733E` | ✅ Deployed |
 | Revenue Token | `0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512` | ✅ Configured |
 | veXF Contract | `0xA339c07A398D44Db3C5525A70a4ce77D8Fa53EdD` | ✅ Configured |
-| Treasury | `0x627082bFAdffb16B979d99A8eFc8F1874c0990C4` | ✅ Configured |
+| Treasury | `0xDC17Cbd201E7347555e428690f702bbFcAF2d33c` | ✅ Configured |
 
 ### Transactions
 
@@ -98,7 +98,7 @@
 | **Max Per Swap** | 1,000 TFUEL | ✅ Active |
 | **Total Per User** | 5,000 TFUEL | ✅ Active |
 | **Paused** | false | ✅ Contract Active |
-| **Owner** | 0x627082bFAdffb16B979d99A8eFc8F1874c0990C4 | ✅ Verified |
+| **Owner** | 0xDC17Cbd201E7347555e428690f702bbFcAF2d33c | ✅ Verified |
 
 ---
 

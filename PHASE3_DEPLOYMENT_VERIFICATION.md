@@ -2,7 +2,9 @@
 
 **Deployment Date**: 2025-12-19  
 **Network**: Theta Mainnet (Chain ID: 361)  
-**Deployer**: `0x627082bFAdffb16B979d99A8eFc8F1874c0990C4`
+**Deployer**: `0xDC17Cbd201E7347555e428690f702bbFcAF2d33c`  
+**Relayer**: `0x627082bFAdffb16B979d99A8eFc8F1874c0990C4` (former deployer)  
+**Treasury**: `0x043d5231651379970d52a13CEfB4e80733DDb989`
 
 ## ✅ Deployment Status
 
@@ -13,7 +15,7 @@ Phase 3 contracts have been successfully deployed to Theta Mainnet.
 | Contract | Proxy Address | Implementation Address | Explorer Link |
 |----------|--------------|----------------------|---------------|
 | **ThetaPulseProof** | `0x38D0E8f0e11b29D87EF68F319de5c0471D0aDBfB` | `0xef0E481dC24Cf38B4F14C0f707d5c6AC304831cD` | [View](https://explorer.thetatoken.org/address/0x38D0E8f0e11b29D87EF68F319de5c0471D0aDBfB) |
-| **InnovationTreasury** | `0x18F4d72375Da223b44ccB670b465002C369D242f` | `0x7cE127B73cF127C7f9a525c37D3e008d736Fe07a` | [View](https://explorer.thetatoken.org/address/0x18F4d72375Da223b44ccB670b465002C369D242f) |
+| **InnovationTreasury** | `0x043d5231651379970d52a13CEfB4e80733DDb989` | `0x7cE127B73cF127C7f9a525c37D3e008d736Fe07a` | [View](https://explorer.thetatoken.org/address/0x043d5231651379970d52a13CEfB4e80733DDb989) |
 
 ### Dependencies (Phase 1 & 2)
 

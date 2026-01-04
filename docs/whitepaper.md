@@ -1,10 +1,13 @@
-# XFUEL: The Perpetual Yield Pumping Station  
-**Whitepaper v1.0 — December 18, 2025**
+# XFUEL: Zero-Knowledge Bridge for Cross-Chain Yield Automation
+
+**Technical Whitepaper v2.0 — December 29, 2025**
+
+> **🚨 NEW VERSION:** This is the updated ZK bridge-focused whitepaper. For the comprehensive technical documentation, see [XFUEL-ZK-Bridge-Whitepaper.md](whitepaper/XFUEL-ZK-Bridge-Whitepaper.md)
 
 ## Abstract  
-XFUEL is a decentralized yield rail that routes Theta EdgeCloud revenue—amplified by the TDROP 2.0 AI agent economy—into auto-compounding Cosmos liquid staked tokens (LSTs). Live at v1.0.0 with simulation swaps, farming dashboard, Tip Pools lottery, creator tools, and institutional portal.
+XFUEL is a zero-knowledge bridge protocol that enables trustless, non-custodial cross-chain asset transfers between Theta Network and Cosmos ecosystem, with automated yield optimization powered by liquid staking tokens (LSTs). By leveraging ZK-SNARK proofs for transaction validation and IBC (Inter-Blockchain Communication) protocol for cross-chain messaging, XFUEL achieves sub-4-second finality for TFUEL → ibcTFUEL → LST swaps while maintaining cryptographic security guarantees.
 
-This whitepaper presents the architecture and tokenomics of the world's first perpetual yield pumping station — a self-evolving economy where protocol revenue drives deflation, real yield, governance alignment, and holder-owned innovation.
+This whitepaper presents the technical architecture, cryptographic primitives, tokenomics, risk analysis, and mitigation strategies for the world's first ZK-enabled perpetual yield bridge — a self-evolving cross-chain economy where protocol revenue drives deflation, real yield distribution, and decentralized governance.
 
 ## 1. Introduction & Vision  
 Theta EdgeCloud, fueled by TDROP 2.0's AI compute incentives, generates growing TFUEL earnings for node operators. Cosmos LSTs deliver 30-38%+ APY but remain isolated.
@@ -54,13 +57,36 @@ Early Strategic Believers receive rXF equivalents from day 1, participating full
 ## 5. Governance & Sustainability  
 veXF controls fees, treasury, emissions. Dynamic triggers balance growth.
 
-## 6. Risks & Disclaimer  
-Experimental software. Market, contract, regulatory risks. Use at own risk.
+## 6. Risks & Mitigations
 
-## 7. Conclusion  
-XFUEL is the perpetual yield pumping station powering Theta's AI future. Holders earn today and own tomorrow.
+### Technical Risks
+- **ZK proof forgery:** Mitigated by audited circuits, Merkle root verification, nonce tracking
+- **IBC relayer failure:** Mitigated by multiple relayers, automatic retry, timeout refunds
+- **Smart contract exploits:** Mitigated by multi-firm audits, $500K bug bounty, emergency pause
+- **Oracle manipulation:** Mitigated by multiple oracles (Chainlink, Band, Pyth), TWAP, sanity checks
+
+### Economic Risks
+- **ibcTFUEL depeg:** Circuit breaker at >5% deviation, incentivized arbitrage, 1:1 redemption guarantee
+- **LST smart contract failure:** Only audited LSTs, diversification, 8% insurance fund (TreasuryILBackstop)
+- **TFUEL price crash:** Diversify to stablecoins, veXF receives USDC yield, no liquidations
+- **Whale governance attack:** Quadratic voting, 48h timelock, emergency multisig veto (first 6 months)
+
+### Regulatory Risks
+- **Securities classification:** Decentralized governance, legal opinion, geofencing if needed
+- **AML/KYC requirements:** Optional KYC for large deposits, Chainalysis monitoring
+- **Sanctions compliance:** Smart contract blacklist, backend screening
+
+**Full risk analysis:** See Section 7 of [ZK Bridge Whitepaper](whitepaper/XFUEL-ZK-Bridge-Whitepaper.md#7-risks--mitigations)
+
+## 7. Disclaimer  
+This whitepaper is for informational purposes only and does not constitute financial, legal, or investment advice. XFUEL is experimental software with inherent risks including smart contract vulnerabilities, market volatility, regulatory uncertainty, and potential loss of funds. Users assume all risks. The core team makes no guarantees of returns, security, or protocol performance. Always do your own research and never invest more than you can afford to lose.
+
+## 8. Conclusion  
+XFUEL is the perpetual yield pumping station powering Theta's AI future through zero-knowledge bridge technology. By combining ZK-SNARKs, IBC protocol, and automated yield optimization, XFUEL delivers sub-4-second cross-chain finality with cryptographic security guarantees. Holders earn today through LST yields (30-38% APY) and own tomorrow through veXF governance and Innovation Treasury experiments.
 
 Live now. The pumps are primed.
+
+**For complete technical specifications, risk analysis, and implementation details, see the full [ZK Bridge Whitepaper](whitepaper/XFUEL-ZK-Bridge-Whitepaper.md).**
 
 **Links**  
 https://xfuel.app | GitHub | X @XFUEL

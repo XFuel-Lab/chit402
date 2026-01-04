@@ -1,5 +1,8 @@
-# XFUEL: The Perpetual Yield Pumping Station  
-**Whitepaper v1.0 — December 18, 2025**
+# XFUEL: Zero-Knowledge Bridge for Cross-Chain Yield Automation
+
+**Technical Whitepaper v2.0 — December 29, 2025**
+
+> **🚨 UPDATED VERSION:** This whitepaper has been overhauled to focus on ZK bridge technology, non-connect deposits, and comprehensive risk analysis. See [XFUEL-ZK-Bridge-Whitepaper.md](XFUEL-ZK-Bridge-Whitepaper.md) for the full 11-section technical documentation.
 
 ## Abstract  
 XFUEL is a decentralized yield rail that routes Theta EdgeCloud revenue—amplified by the TDROP 2.0 AI agent economy—into auto-compounding Cosmos liquid staked tokens (LSTs). Live at v1.0.0 with simulation swaps, farming dashboard, Tip Pools lottery, creator tools, and institutional portal.

@@ -1,0 +1,32 @@
+# Build artifacts
+target/
+artifacts/
+*.wasm
+
+# Cargo lock file (for libraries, usually not committed)
+# Cargo.lock
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+*.profraw
+
+# Schema output
+schema/
+
+# Local development
+.env
+.env.local
+
+
+

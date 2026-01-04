@@ -640,3 +640,5 @@ export function isWalletConnected(): boolean {
 
 **Questions or need clarification on any part?** Let me know! 🚀
 
+
+

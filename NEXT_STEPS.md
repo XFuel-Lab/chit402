@@ -7,14 +7,14 @@
 
 ## Your Deployment Wallet Address
 ```
-0x627082bFAdffb16B979d99A8eFc8F1874c0990C4
+0xDC17Cbd201E7347555e428690f702bbFcAF2d33c
 ```
 
 ## Step 1: Get Testnet TFUEL
 
 1. **Visit Theta Testnet Faucet:**
    - URL: https://faucet.testnet.theta.org/
-   - Paste your wallet address: `0x627082bFAdffb16B979d99A8eFc8F1874c0990C4`
+   - Paste your wallet address: `0xDC17Cbd201E7347555e428690f702bbFcAF2d33c`
    - Request testnet TFUEL
 
 2. **Wait 1-2 minutes** for the faucet to process
@@ -23,7 +23,7 @@
    ```bash
    npx hardhat run scripts/check-balance.cjs --network theta-testnet
    ```
-   Or check on explorer: https://testnet-explorer.thetatoken.org/address/0x627082bFAdffb16B979d99A8eFc8F1874c0990C4
+   Or check on explorer: https://testnet-explorer.thetatoken.org/address/0xDC17Cbd201E7347555e428690f702bbFcAF2d33c
 
 ## Step 2: Deploy Contracts
 

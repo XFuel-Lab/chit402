@@ -398,3 +398,5 @@ if (!receipt) {
 
 *This fix follows industry best practices for Web3 wallet integration and demonstrates senior-level understanding of Ethereum transaction lifecycle, async patterns, and UX design.*
 
+
+
