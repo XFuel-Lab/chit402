@@ -16,7 +16,13 @@ jest.mock('@walletconnect/ethereum-provider', () => ({
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { BrowserRouter } from 'react-router-dom'
 import App from './App'
+
+// Helper to render with Router context
+const renderWithRouter = (ui: React.ReactElement) => {
+  return render(<BrowserRouter>{ui}</BrowserRouter>)
+}
 
 describe('App', () => {
   beforeEach(() => {
@@ -25,15 +31,15 @@ describe('App', () => {
   })
 
   it('renders app header and navigation', () => {
-    render(<App />)
+    renderWithRouter(<App />)
     // Check for app elements that appear on default swap tab
-    expect(screen.getByText(/XFUEL/i)).toBeInTheDocument()
-    expect(screen.getByText(/Sub-4s settlement rail/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/XFUEL/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/Sub-4s settlement rail for auto-compounding Cosmos LSTs/i)).toBeInTheDocument()
   })
 
   it('renders manual deposit flow UI on profile tab', async () => {
     const user = userEvent.setup()
-    render(<App />)
+    renderWithRouter(<App />)
     
     // Click on Profile tab to see manual deposit flow
     const profileTab = screen.getByText('Profile')
