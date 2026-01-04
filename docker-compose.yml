@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  xfuel-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: xfuel-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    env_file:
+      - .env.local
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./backend:/app/backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - xfuel-network
+
+networks:
+  xfuel-network:
+    driver: bridge
+
