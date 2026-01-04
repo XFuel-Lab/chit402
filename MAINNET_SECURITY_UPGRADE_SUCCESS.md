@@ -235,7 +235,7 @@ The contract owner can:
 
 ## Approval & Sign-off
 
-**Deployed by:** 0x627082bFAdffb16B979d99A8eFc8F1874c0990C4  
+**Deployed by:** 0xDC17Cbd201E7347555e428690f702bbFcAF2d33c  
 **Deployment Date:** December 27, 2025  
 **Verification Status:** ✅ Confirmed on-chain  
 **Production Status:** ✅ Live on Mainnet

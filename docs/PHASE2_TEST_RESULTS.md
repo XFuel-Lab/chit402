@@ -2,7 +2,7 @@
 
 **Date:** 2025-12-19  
 **Network:** Theta Mainnet (Chain ID: 361)  
-**Deployer:** `0x627082bFAdffb16B979d99A8eFc8F1874c0990C4`
+**Deployer:** `0xDC17Cbd201E7347555e428690f702bbFcAF2d33c`
 
 ## Contract Addresses
 

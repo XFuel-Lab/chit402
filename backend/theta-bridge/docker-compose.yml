@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  theta-bridge:
+    build: .
+    container_name: theta-bridge
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      # Reverse-burn loop enabled by default
+      - YIELD_UNWRAP_PERCENTAGE=30
+      - YIELD_REINVEST_PERCENTAGE=70
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    volumes:
+      - ./logs:/app/logs
+      - ./circuits:/app/circuits:ro
+      - ./abis:/app/abis:ro
+    networks:
+      - bridge-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Health check for reverse-burn components
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  redis:
+    image: redis:7-alpine
+    container_name: theta-bridge-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - bridge-network
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+networks:
+  bridge-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+

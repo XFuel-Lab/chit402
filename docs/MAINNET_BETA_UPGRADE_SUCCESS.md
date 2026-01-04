@@ -134,5 +134,5 @@ await revenueSplitter.resetUserSwapTotal(userAddress)
 
 **Status**: ✅ LIVE ON MAINNET  
 **Date**: December 26, 2025  
-**Deployer**: 0x627082bFAdffb16B979d99A8eFc8F1874c0990C4
+**Deployer**: 0xDC17Cbd201E7347555e428690f702bbFcAF2d33c
 
