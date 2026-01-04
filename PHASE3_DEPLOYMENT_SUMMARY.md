@@ -17,7 +17,7 @@
   - 100,000 TFUEL → 3x (30,000 basis points)
 
 ### InnovationTreasury
-- **Proxy**: `0x18F4d72375Da223b44ccB670b465002C369D242f`
+- **Proxy**: `0x043d5231651379970d52a13CEfB4e80733DDb989`
 - **Implementation**: `0x7cE127B73cF127C7f9a525c37D3e008d736Fe07a`
 - **Purpose**: 3-vault system (Builder, Acquisition, Moonshot) with veXF governance
 - **Voting Parameters**:
@@ -59,7 +59,7 @@
 ```bash
 # Check contracts on Theta Explorer
 https://explorer.thetatoken.org/address/0x38D0E8f0e11b29D87EF68F319de5c0471D0aDBfB
-https://explorer.thetatoken.org/address/0x18F4d72375Da223b44ccB670b465002C369D242f
+https://explorer.thetatoken.org/address/0x043d5231651379970d52a13CEfB4e80733DDb989
 ```
 
 ### 2. Authorize Edge Node Signers
@@ -93,7 +93,7 @@ await treasury.transferOwnership('0xMultisigAddress');
 
 - [ThetaPulseProof Proxy](https://explorer.thetatoken.org/address/0x38D0E8f0e11b29D87EF68F319de5c0471D0aDBfB)
 - [ThetaPulseProof Implementation](https://explorer.thetatoken.org/address/0xef0E481dC24Cf38B4F14C0f707d5c6AC304831cD)
-- [InnovationTreasury Proxy](https://explorer.thetatoken.org/address/0x18F4d72375Da223b44ccB670b465002C369D242f)
+- [InnovationTreasury Proxy](https://explorer.thetatoken.org/address/0x043d5231651379970d52a13CEfB4e80733DDb989)
 - [InnovationTreasury Implementation](https://explorer.thetatoken.org/address/0x7cE127B73cF127C7f9a525c37D3e008d736Fe07a)
 - [veXF](https://explorer.thetatoken.org/address/0xA339c07A398D44Db3C5525A70a4ce77D8Fa53EdD)
 

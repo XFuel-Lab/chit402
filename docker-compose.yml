@@ -33,6 +33,62 @@ services:
     networks:
       - xfuel-network
 
+  # Persistence Deployment Service (Multi-platform: ARM64/AMD64)
+  persistence-deployer:
+    build:
+      context: .
+      dockerfile: Dockerfile.persistence
+      platforms:
+        - linux/arm64
+        - linux/amd64
+      args:
+        TARGETARCH: arm64  # Default to ARM64 (modern VPS/EC2)
+    container_name: persistence-deployer
+    platform: linux/arm64  # Set default platform
+    restart: unless-stopped
+    volumes:
+      - .:/app
+      - ./artifacts:/app/artifacts
+      - ./scripts:/app/scripts
+      - persistence-data:/home/xfuel/.persistenceCore
+    env_file:
+      - .env.docker
+    environment:
+      - PERSISTENCE_CHAIN_ID=core-1
+      - PERSISTENCE_NODE=https://rpc.core.persistence.one:443
+    networks:
+      - xfuel-network
+    profiles:
+      - deploy
+    healthcheck:
+      test: ["CMD", "persistenceCore", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    command: tail -f /dev/null
+
+  # Deploy Persistence contracts
+  deploy-persistence:
+    extends:
+      service: persistence-deployer
+    container_name: deploy-persistence
+    command: /app/scripts/docker-deploy-persistence.sh
+    profiles:
+      - deploy
+
+  # Test Persistence mint
+  test-persistence-mint:
+    extends:
+      service: persistence-deployer
+    container_name: test-persistence-mint
+    command: /app/scripts/docker-test-mint.sh
+    profiles:
+      - test
+
+volumes:
+  persistence-data:
+
 networks:
   xfuel-network:
     driver: bridge

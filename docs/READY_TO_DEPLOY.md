@@ -19,7 +19,7 @@
 - **Max per swap**: 1,000 TFUEL
 - **Total per user**: 5,000 TFUEL
 - **Paused**: false (contract active)
-- **Owner**: 0x627082bFAdffb16B979d99A8eFc8F1874c0990C4
+- **Owner**: 0xDC17Cbd201E7347555e428690f702bbFcAF2d33c
 
 ### Web UI ✅
 - **BetaBanner**: ✅ Integrated in `src/App.tsx`

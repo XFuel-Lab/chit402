@@ -38,3 +38,5 @@ Write-Host "  2. Try: git commit -m 'test'" -ForegroundColor White
 Write-Host "  3. You should be prompted to type YES" -ForegroundColor White
 Write-Host ""
 
+
+

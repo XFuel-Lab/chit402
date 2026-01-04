@@ -28,6 +28,12 @@
     "dev:mobile": "cd edgefarm-mobile && npm run start",
     "build:web": "npm run build",
     "build:ibc": "tsc backend/ibc/*.ts --outDir dist/ibc --module esnext --target es2020",
+    "bridge:dev": "cd backend/theta-bridge && npm run dev",
+    "bridge:start": "cd backend/theta-bridge && npm start",
+    "bridge:pm2": "cd backend/theta-bridge && pm2 start ecosystem.config.cjs",
+    "bridge:docker": "cd backend/theta-bridge && docker-compose up -d",
+    "bridge:logs": "cd backend/theta-bridge && docker-compose logs -f theta-bridge",
+    "bridge:stop": "cd backend/theta-bridge && docker-compose down",
     "extract-logos": "ts-node --esm scripts/extract-logos.ts",
     "extract-logo-bubble": "ts-node --esm scripts/extract-logo-bubble.ts",
     "extract-logo-simple": "ts-node --esm scripts/extract-logo-simple.ts",
@@ -41,6 +47,7 @@
     "test:wallet:e2e": "cypress run --spec 'cypress/e2e/theta-wallet-qr.cy.ts'"
   },
   "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.958.0",
     "@cosmjs/cosmwasm-stargate": "^0.32.4",
     "@cosmjs/proto-signing": "^0.32.4",
     "@cosmjs/stargate": "^0.37.0",
@@ -51,13 +58,16 @@
     "@walletconnect/modal": "^2.7.0",
     "canvas-confetti": "^1.9.4",
     "cors": "^2.8.5",
-    "ethers": "^6.13.0",
+    "ethers": "^6.16.0",
     "express": "^4.18.2",
     "framer-motion": "^12.23.26",
     "lucide-react": "^0.562.0",
+    "marked": "^17.0.1",
+    "puppeteer": "^24.34.0",
     "qrcode.react": "^4.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-router-dom": "^7.11.0",
     "zustand": "^5.0.9"
   },
   "devDependencies": {

@@ -11,13 +11,13 @@ This guide explains how to complete the Phase 3 integration tasks after deployme
 ## Contract Addresses (Theta Mainnet)
 
 - **ThetaPulseProof**: `0x38D0E8f0e11b29D87EF68F319de5c0471D0aDBfB`
-- **InnovationTreasury**: `0x18F4d72375Da223b44ccB670b465002C369D242f`
+- **InnovationTreasury**: `0x043d5231651379970d52a13CEfB4e80733DDb989`
 - **veXF**: `0xA339c07A398D44Db3C5525A70a4ce77D8Fa53EdD`
 - **Revenue Token**: `0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512`
 
 Explorer Links:
 - [ThetaPulseProof](https://explorer.thetatoken.org/address/0x38D0E8f0e11b29D87EF68F319de5c0471D0aDBfB)
-- [InnovationTreasury](https://explorer.thetatoken.org/address/0x18F4d72375Da223b44ccB670b465002C369D242f)
+- [InnovationTreasury](https://explorer.thetatoken.org/address/0x043d5231651379970d52a13CEfB4e80733DDb989)
 - [veXF](https://explorer.thetatoken.org/address/0xA339c07A398D44Db3C5525A70a4ce77D8Fa53EdD)
 
 ## Task 1: Authorize Edge Node Signers
@@ -134,7 +134,7 @@ The script automatically deposits revenue tokens into all 3 vaults if the deploy
 ### Manual Deposit
 
 ```typescript
-const treasury = await ethers.getContractAt('InnovationTreasury', '0x18F4d72375Da223b44ccB670b465002C369D242f', signer);
+const treasury = await ethers.getContractAt('InnovationTreasury', '0x043d5231651379970d52a13CEfB4e80733DDb989', signer);
 const revenueToken = new ethers.Contract(revenueTokenAddress, ['function approve(address,uint256)'], signer);
 
 // Approve treasury to spend tokens
@@ -174,7 +174,7 @@ The script automatically:
 ### Manual Proposal Creation
 
 ```typescript
-const treasury = await ethers.getContractAt('InnovationTreasury', '0x18F4d72375Da223b44ccB670b465002C369D242f', signer);
+const treasury = await ethers.getContractAt('InnovationTreasury', '0x043d5231651379970d52a13CEfB4e80733DDb989', signer);
 
 // Create proposal
 const proposalId = await treasury.createProposal(

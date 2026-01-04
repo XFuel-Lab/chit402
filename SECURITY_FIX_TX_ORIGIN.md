@@ -241,6 +241,6 @@ npx hardhat test
 
 **Reporter:** Internal code review  
 **Fixed By:** XFuel Security Team  
-**Deployed By:** 0x627082bFAdffb16B979d99A8eFc8F1874c0990C4  
+**Deployed By:** 0xDC17Cbd201E7347555e428690f702bbFcAF2d33c  
 **Reviewed By:** Awaiting external audit
 

@@ -1,0 +1,62 @@
+# RevSplitterHybrid Deployment Configuration Example
+# Copy this file to .env and fill in your values
+
+# ============================================
+# Keystore Authentication (Required)
+# ============================================
+# Path to your encrypted keystore JSON file
+KEYSTORE_PATH=./keystore/deployer.json
+
+# Password to decrypt the keystore
+KEYSTORE_PASSWORD=your_secure_password_here
+
+# ============================================
+# Network Configuration
+# ============================================
+# RPC URL for deployment (defaults to Theta Mainnet)
+RPC_URL=https://eth-rpc-api.thetatoken.org/rpc
+
+# For Theta Testnet:
+# RPC_URL=https://eth-rpc-api-testnet.thetatoken.org/rpc
+
+# ============================================
+# Contract Addresses (Required)
+# ============================================
+# Revenue token (USDC or stablecoin) address
+REVENUE_TOKEN=0x...
+
+# BBB (Buyback & Burn) contract address
+# If not provided, deployer address will be used as placeholder
+BBB_CONTRACT=0x...
+
+# veXF yields distributor address
+# If not provided, deployer address will be used as placeholder
+VEXF_DISTRIBUTOR=0x...
+
+# ============================================
+# Optional: Axelar Bridge
+# ============================================
+# Axelar bridge adapter for Theta -> Persistence bridging
+# If not set, LP funding will remain in contract until manually bridged
+AXELAR_BRIDGE_ADAPTER=0x...
+
+# ============================================
+# Hardcoded Treasury Addresses (Info Only)
+# ============================================
+# These are hardcoded in the contract and cannot be changed via .env
+# Innovation Treasury (Theta): 0x043d5231651379970d52a13CEfB4e80733DDb989
+# LP Treasury (Persistence): persistence1q50x9h4nchk2uhhj5jre0jsqxrs9qmhvjwf8yj
+
+# ============================================
+# Revenue Splits (Info Only)
+# ============================================
+# These are hardcoded in the contract
+# BBB (Buyback & Burn): 30%
+# LP Funding: 30%
+# veXF Yields: 25%
+# Innovation Treasury: 15%
+
+# Governance Hook: 5-10% can be diverted from LP slice (configurable post-deployment)
+
+
+
