@@ -261,7 +261,8 @@ Named after precision engineering, the Ferrari model balances **four competing f
 ---
 
 **For more details, see:**
-- Full Whitepaper: [XFUEL-Hybrid-Tokenomics-Whitepaper-v3.md](./XFUEL-Hybrid-Tokenomics-Whitepaper-v3.md)
+- Full Whitepaper: [WHITEPAPER.md](./WHITEPAPER.md) *(coming soon - consolidation in progress)*
+- ZK Overhaul Summary: [ZK_OVERHAUL_SUMMARY.md](./overhaul/ZK_OVERHAUL_SUMMARY.md) ⚡
 - Quick Reference: [XFUEL-FERRARI-QUICK-REF.md](./XFUEL-FERRARI-QUICK-REF.md)
 
 ---

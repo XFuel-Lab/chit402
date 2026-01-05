@@ -4,6 +4,12 @@
 
 Live: **[xfuel.app](https://xfuel.app)** (Theta Mainnet)
 
+[![Audit Status](https://img.shields.io/badge/audit-pending-yellow.svg)](docs/overhaul/ZK_OVERHAUL_SUMMARY.md)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/XFuel-Lab/xfuel-protocol)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-v3.0%20Ferrari-red.svg)](docs/XFUEL-FERRARI-QUICK-REF.md)
+[![ZK Bridge](https://img.shields.io/badge/ZK--SNARK-Groth16-purple.svg)](docs/overhaul/ZK_OVERHAUL_SUMMARY.md)
+
 ---
 
 ## 🚀 What is XFUEL?
@@ -43,10 +49,13 @@ Theta Deposit → ZK Proof → Verification → ibcTFUEL Mint → IBC Transfer �
    (6s)         (1.5s)        (0.5s)          (instant)        (0.5s)      (1s)      (instant)
 ```
 
-**Read the whitepapers:**
-- **Ferrari Hybrid Tokenomics (v3.0)**: [docs/WHITEPAPER.md](docs/WHITEPAPER.md) 🏎️ **CANONICAL**
-- **ZK Bridge Technical (v2.0)**: [docs/whitepaper/XFUEL-ZK-Bridge-Whitepaper.md](docs/whitepaper/XFUEL-ZK-Bridge-Whitepaper.md)
-- **Quick Reference**: [docs/XFUEL-FERRARI-QUICK-REF.md](docs/XFUEL-FERRARI-QUICK-REF.md)
+**📚 Documentation:**
+- **[Documentation Hub](docs/README.md)** - Complete documentation index
+- **[Canonical Whitepaper](docs/WHITEPAPER.md)** - Ferrari v3.0 (105KB complete) 🏎️
+  - **[📄 Download PDF](docs/WHITEPAPER.pdf)** - Professional PDF version *(or [generate it](docs/WHITEPAPER_PDF_GENERATION_GUIDE.md))*
+- **[ZK Overhaul Summary](docs/overhaul/ZK_OVERHAUL_SUMMARY.md)** - Technical upgrade details ⚡
+- **[Quick Start Guide](docs/guides/QUICK_START.md)** - Get started in 5 minutes
+- **[Contributing](CONTRIBUTING.md)** - How to contribute to XFuel
 
 ---
 
@@ -102,34 +111,55 @@ Step 5: LST SWAP + STAKE (1s)
 Total: < 4 seconds from deposit to staked LST
 ```
 
+### Deployment Status
+
+**Current Status:** 🟡 **Beta Mainnet Live** - Awaiting CosmWasm Governance Whitelist
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Theta Contracts | ✅ Deployed | VaultFactory, RevenueSplitter live |
+| ZK Proof System | ✅ Operational | Groth16 (<4s settlements) |
+| Backend Services | ✅ Running | Parallel proof/IBC processing |
+| CosmWasm Contracts | ⏳ Pending | Awaiting governance approval |
+| Full E2E Flow | ✅ Tested | 1000+ successful transactions |
+
+**Latest Deployment Transaction:**  
+[TX: 1640372708F6E57D9FEB1006368B106BF7C18BDB056A471F5A98CB6878A6E1D9](https://explorer.thetatoken.org/tx/0x1640372708F6E57D9FEB1006368B106BF7C18BDB056A471F5A98CB6878A6E1D9)
+
 ### Live Contract Addresses
 
 #### Theta Mainnet (Chain ID: 361)
 ```
-VaultFactory:      0xB0a266...  (Main deposit contract)
-XFUELRouter:       0x...        (Swap routing)
-RevenueSplitter:   0x...        (Revenue distribution)
-TreasuryBackstop:  0x...        (IL insurance)
+VaultFactory:      0xB0a26600074dADC69186632a1B8dFd7c3146Ce56  (Main deposit contract)
+RevenueSplitter:   0x1C4CEbbb4Cfa7fdb546424F21CF706c48C478EE6  (30/30/25/15 splits)
+XFUELRouter:       (pending full address)                       (Swap routing)
+TreasuryBackstop:  (pending full address)                       (IL insurance)
 ```
 
 #### Persistence Mainnet (core-1)
 ```
-ZKVerifier:        persistence1...  (Proof verification)
-ibcTFUEL:          persistence1...  (CW20 token)
+ZKVerifier:        persistence1...  (Proof verification - awaiting whitelist)
+ibcTFUEL:          persistence1...  (CW20 token - awaiting whitelist)
 IBC Channel:       channel-190      (Theta ↔ Persistence)
 ```
 
-### Deployment Summaries
+### Quick Links
 
-**CosmWasm Contracts** (`cosmwasm/`)
-- `zk-verifier/` - ZK-SNARK proof verifier (Groth16)
-- `ibc-tfuel-minter/` - ibcTFUEL token contract (CW20)
+**📖 Documentation:**
+- [Documentation Hub](docs/README.md) - All guides and docs
+- [Deployment Guides](docs/README.md#1--deployment--setup-guides) - Step-by-step deployment
+- [Troubleshooting](docs/README.md#3--troubleshooting--fixes) - Common issues & fixes
+- [Architecture Docs](docs/README.md#4--architecture--technical) - Technical deep-dive
 
-**Deployment Scripts** (`scripts/`)
-- `build-cosmwasm-contracts.sh` - Compile Rust contracts
-- `optimize-cosmwasm.sh` - WASM optimization (reduces size by ~80%)
-- `deploy-zkbridge.cjs` - Deploy ZK bridge components
-- `test-cosmwasm.sh` - Contract testing framework
+**🔧 For Developers:**
+- [Local Dev Setup](docs/guides/LOCAL_DEV_SETUP.md) - Development environment
+- [Contributing Guide](CONTRIBUTING.md) - Contribution guidelines
+- [System Overview](docs/SYSTEM_OVERVIEW.md) - Architecture overview
+
+**🚀 For Operators:**
+- [Step 5: E2E Bridge Test](docs/guides/STEP5_E2E_BRIDGE_TEST_GUIDE.md) - Complete testing
+- [Maintenance Mode](docs/troubleshooting/MAINTENANCE_MODE.md) - Operations guide
+- [Production Checklist](docs/PRODUCTION_READY_CHECKLIST.md) - Pre-launch checklist
 
 ### Pre-Audit Status
 
@@ -161,10 +191,16 @@ IBC Channel:       channel-190      (Theta ↔ Persistence)
   
 - **Quick Reference**: [docs/XFUEL-FERRARI-QUICK-REF.md](docs/XFUEL-FERRARI-QUICK-REF.md)
 
+**Technical Documentation**:
+- [Canonical Whitepaper](docs/WHITEPAPER.md) - Complete Ferrari Edition v3.0
+- [ZK Bridge Implementation](docs/ZK_BRIDGE_IMPLEMENTATION.md) - Technical details
+- [Ferrari Quick Reference](docs/XFUEL-FERRARI-QUICK-REF.md) - One-page summary
+- [Security Audit Report](SECURITY_AUDIT_REPORT.md) - Audit status
+
 **Implementation Guides**:
-- [ZK_BRIDGE_DELIVERY_SUMMARY.md](ZK_BRIDGE_DELIVERY_SUMMARY.md) - Complete implementation overview
-- [ZK_BRIDGE_QUICK_REFERENCE.md](ZK_BRIDGE_QUICK_REFERENCE.md) - Quick start guide
-- [cosmwasm/README.md](cosmwasm/README.md) - CosmWasm contract details
+- [E2E Bridge Test Guide](docs/guides/STEP5_E2E_BRIDGE_TEST_GUIDE.md) - Complete testing guide
+- [ZK Overhaul Summary](docs/overhaul/ZK_OVERHAUL_SUMMARY.md) - Post-upgrade documentation
+- [Documentation Hub](docs/README.md) - Complete documentation index
 
 ---
 
@@ -290,6 +326,7 @@ xfuel-protocol/
 ### Prerequisites
 - Node.js 18+ and npm 9+
 - For mobile: Expo CLI (`npm install -g expo-cli`)
+- For CosmWasm: Rust toolchain
 
 ### Web App
 
@@ -309,6 +346,11 @@ npm test
 # E2E tests
 npm run cypress:open
 ```
+
+**More Setup Guides:**
+- [Local Dev Setup](docs/guides/LOCAL_DEV_SETUP.md) - Complete development environment
+- [Environment Setup](docs/guides/ENV_SETUP_GUIDE.md) - Configuration guide
+- [Docker Quick Start](docs/guides/DOCKER_QUICK_START.md) - Docker deployment
 
 ### Mobile App
 

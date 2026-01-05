@@ -246,8 +246,9 @@ $18K  │ ●
 ```
 ┌───────────────────────────────────────────────────────────┐
 │  🌐 APP:         xfuel.app                                │
-│  📄 WHITEPAPER:  docs/XFUEL-Hybrid-Tokenomics-v3.md      │
+│  📄 WHITEPAPER:  docs/WHITEPAPER.md (coming soon)        │
 │  ⚡ QUICK REF:   docs/XFUEL-FERRARI-QUICK-REF.md         │
+│  🚀 ZK OVERHAUL: docs/overhaul/ZK_OVERHAUL_SUMMARY.md    │
 │  🐙 GITHUB:      github.com/XFuel-Lab/xfuel-protocol     │
 │  🐦 TWITTER:     @XFuelLab                                │
 │  🐛 BOUNTY:      immunefi.com/bounty/xfuel               │

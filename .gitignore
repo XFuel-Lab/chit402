@@ -35,6 +35,12 @@ coverage.json
 .env
 .env.local
 .env.production
+.env.docker
+.env.test
+*.env
+!.env.example
+!env.example
+!env.docker.example
 
 # Editor directories and files
 .vscode/*
@@ -48,3 +54,63 @@ coverage.json
 *.sw?
 .vercel
 .env*.local
+
+# Temporary files (ZK Overhaul additions)
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+.cache/
+temp/
+tmp/
+
+# Build artifacts
+*.wasm.gz
+*.wasm
+target/
+**/target/
+*.o
+*.so
+*.dylib
+*.exe
+*.out
+
+# ZK Proof files (generated)
+proof_*.json
+witness_*.json
+*.zkey.old
+*.ptau.old
+
+# CosmWasm artifacts
+cosmwasm-contracts/artifacts/
+cosmwasm-contracts/target/
+cosmwasm/target/
+
+# Docker
+.docker/
+*.log.txt
+docker-compose.override.yml
+
+# OS files
+Thumbs.db
+desktop.ini
+.Spotlight-V100
+.Trashes
+._*
+
+# Test output
+test-output.log
+test-output.txt
+optimization-results.txt
+
+# Deployment artifacts
+deployment-*.json
+!deployment-example.json
+
+# IDE
+*.code-workspace
+.history/
+*.sublime-project
+*.sublime-workspace
+

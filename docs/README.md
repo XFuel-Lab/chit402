@@ -1,419 +1,204 @@
-# XFuel Protocol - Documentation Index
+# XFuel Protocol Documentation Hub
 
-## 📚 Complete Documentation Suite
-
-Welcome to the XFuel Protocol documentation. This index helps you find the right guide for your needs.
+Welcome to the XFuel Protocol documentation! This is your central hub for all guides, technical documentation, and resources.
 
 ---
 
-## 🎯 Quick Navigation
+## 📚 Quick Navigation
 
-### For First-Time Users
-→ Start with [Quick Reference Guide](./QUICK_REFERENCE.md) - 5 minute overview
-
-### For Developers Implementing WalletConnect v2
-→ Read [WalletConnect v2 Guide](./WALLETCONNECT_V2_GUIDE.md) - Complete implementation details
-
-### For AI Assistants (Cursor, GitHub Copilot)
-→ Use [Cursor Implementation Guide](./CURSOR_IMPLEMENTATION_GUIDE.md) - Structured reference
-
-### For DevOps/Deployment
-→ Follow [Deployment Checklist](./DEPLOYMENT_CHECKLIST_V2.md) - Production deployment steps
-
-### For Project Overview
-→ See [Implementation Summary](./IMPLEMENTATION_SUMMARY.md) - What was built and why
+### 🏎️ **Start Here**
+- **[Main README](../README.md)** - Project overview and quick start
+- **[Canonical Whitepaper](./WHITEPAPER.md)** - Ferrari Hybrid Tokenomics v3.0
+- **[Contributing Guide](../CONTRIBUTING.md)** - How to contribute to XFuel
+- **[Ferrari Quick Reference](./XFUEL-FERRARI-QUICK-REF.md)** - One-page tokenomics summary
 
 ---
 
-## 📖 Document Descriptions
+## 📖 Documentation Sections
 
-### 1. Quick Reference Guide
-**File:** `QUICK_REFERENCE.md`  
-**Length:** ~1,500 words  
-**Purpose:** Fast lookup for commands, troubleshooting, and key concepts
+### 1. 🚀 Deployment & Setup Guides
 
-**Contents:**
-- Connection flow diagrams
-- Security architecture overview
-- Mobile UI flow
-- Quick commands
-- Environment variables
-- Testing checklist
-- Troubleshooting tips
+**Quick Starts:**
+- [Quick Start Guide](../QUICK_START.md) - Get started in 5 minutes
+- [Docker Quick Start](../DOCKER_QUICK_START.md) - Docker deployment
+- [Cypress Quick Start](../CYPRESS_QUICK_START.md) - E2E testing setup
+- [Local Dev Setup](../LOCAL_DEV_SETUP.md) - Development environment
 
-**Best For:**
-- Developers needing quick answers
-- During debugging sessions
-- Before deployments
+**Step-by-Step Deployment:**
+- [Step 2: Theta Deploy Guide](../STEP2_THETA_DEPLOY_GUIDE.md) - Deploy Theta contracts
+- [Step 3: Backend Integration](../STEP3_BACKEND_INTEGRATION_GUIDE.md) - Backend setup
+- [Step 4: Persistence Deploy](../STEP4_PERSISTENCE_DEPLOY_GUIDE.md) - CosmWasm contracts
+- [Step 5: E2E Bridge Test](./guides/STEP5_E2E_BRIDGE_TEST_GUIDE.md) - Complete bridge testing ✅
 
----
+**Specialized Guides:**
+- [CosmWasm Optimization](../COSMWASM_OPTIMIZATION_INDEX.md) - Contract optimization
+- [Cosmos LST Staking](../COSMOS_LST_STAKING_GUIDE.md) - LST integration
+- [Manual QR Flow](../MANUAL_QR_FLOW_IMPLEMENTATION.md) - QR code deposits
+- [Environment Setup](../ENV_SETUP_GUIDE.md) - Configuration guide
 
-### 2. WalletConnect v2 Implementation Guide
-**File:** `WALLETCONNECT_V2_GUIDE.md`  
-**Length:** ~8,000 words  
-**Purpose:** Comprehensive implementation reference
+### 2. ⚡ ZK Overhaul & Completion
 
-**Contents:**
-- WalletConnect v2 integration (web + mobile)
-- Unified wallet provider architecture
-- Nonce-based security implementation
-- Mobile UI architecture
-- Security enhancements
-- Testing strategies
-- Deployment procedures
-- Troubleshooting guide
-- Learning path for first-time devs
+**Post-Overhaul Documentation:**
+- **[ZK Overhaul Summary](./overhaul/ZK_OVERHAUL_SUMMARY.md)** - Complete technical overhaul details ✅
+- [ZK Bridge Delivery Summary](../ZK_BRIDGE_DELIVERY_SUMMARY.md) - Implementation summary
+- [ZK Pivot Deployment](../ZK_PIVOT_DEPLOYMENT_SUMMARY.md) - Pivot details
 
-**Best For:**
-- First-time implementation
-- Understanding architecture decisions
-- Security best practices
-- Complete feature overview
+**Completion & Integration:**
+- [Project Completion Summary](../PROJECT_COMPLETION_SUMMARY.md) - Overall completion
+- [Implementation Summary](../IMPLEMENTATION_SUMMARY.md) - Technical implementation
+- [Integration Summary](../INTEGRATION_SUMMARY.md) - Cross-chain integration
+- [IBC Implementation](../IBC_IMPLEMENTATION_SUMMARY.md) - IBC channel-190 details
 
----
+**Component Summaries:**
+- [VaultFactory Implementation](../VAULTFACTORY_IMPLEMENTATION_SUMMARY.md)
+- [RevenueSplitter V2](../REVSPLITTER_V2_SUMMARY.md)
+- [Persistence Minter](../PERSISTENCE_MINTER_INDEX.md)
+- [Governance Update](../GOVERNANCE_UPDATE_SUMMARY.md)
 
-### 3. Cursor AI Implementation Guide
-**File:** `CURSOR_IMPLEMENTATION_GUIDE.md`  
-**Length:** ~3,000 words  
-**Purpose:** AI assistant reference for continuing development
+### 3. 🔧 Troubleshooting & Fixes
 
-**Contents:**
-- Completed implementations checklist
-- Remaining tasks with code examples
-- Testing checklist
-- Environment setup
-- Common issues and fixes
-- Success criteria
-- AI prompt template
+**Maintenance:**
+- [Maintenance Mode](../MAINTENANCE_MODE.md) - Enable/disable maintenance
+- [Maintenance Troubleshooting](../MAINTENANCE_TROUBLESHOOT.md) - Common issues
+- [Maintenance Visual Guide](../MAINTENANCE_VISUAL_GUIDE.md) - UI guide
 
-**Best For:**
-- AI assistants (Cursor, Copilot)
-- Quick task list
-- Integration steps
-- Handoff documentation
+**Bug Fixes:**
+- [Black Screen Fix](../BLACK_SCREEN_BUG_FIX.md) - UI rendering issues
+- [Cache Fix](../CACHE_FIX.md) - Cache clearing
+- [Theta Wallet Fixes](../THETA_WALLET_FIX_v5.3.0.md) - Wallet connection issues
+- [TX Status Troubleshooting](../TX_STATUS_TROUBLESHOOTING.md) - Transaction debugging
 
----
+**Configuration Fixes:**
+- [Router Config Fix](../ROUTER_CONFIG_FIX.md) - Router configuration
+- [Security Fix (tx.origin)](../SECURITY_FIX_TX_ORIGIN.md) - Security patch
+- [Vercel Debug](../VERCEL_DEBUG.md) - Deployment issues
 
-### 4. Deployment Checklist v2
-**File:** `DEPLOYMENT_CHECKLIST_V2.md`  
-**Length:** ~4,000 words  
-**Purpose:** Production deployment procedures
+### 4. 📊 Architecture & Technical
 
-**Contents:**
-- Pre-deployment checklist
-- Environment configuration
-- Testing requirements (web + mobile)
-- Security testing checklist
-- Deployment steps (Vercel + EAS)
-- Post-deployment monitoring
-- Rollback procedures
+**System Architecture:**
+- [System Overview](../SYSTEM_OVERVIEW.md) - High-level architecture
+- [Visual Overview](../VISUAL_OVERVIEW.md) - Diagrams and flows
+- [Component Reference](../COMPONENT_REFERENCE.md) - Component details
+- [ZK Bridge Architecture](./ZK_BRIDGE_ARCHITECTURE.md) - ZK system design
+- [ZK Bridge Implementation](./ZK_BRIDGE_IMPLEMENTATION.md) - Implementation details
 
-**Best For:**
-- Production deployments
-- QA testing
-- DevOps workflows
-- Release management
+**Smart Contracts:**
+- [Theta Bridge Vault System](./THETA_BRIDGE_VAULT_SYSTEM.md) - Vault architecture
+- [CosmWasm Contracts Complete](../COSMWASM_CONTRACTS_COMPLETE.md) - All contracts
+- [Persistence Contracts](../PERSISTENCE_CONTRACTS.md) - Persistence chain
 
----
+**Performance & Testing:**
+- [Performance Tools](./PERFORMANCE_TOOLS_README.md) - Optimization tools
+- [Performance README](../PERFORMANCE_README.md) - Performance guide
+- [Testing Summary](../TESTING_SUMMARY.md) - Test results
+- [E2E Test Report](./E2E_TEST_REPORT.md) - End-to-end testing
 
-### 5. Implementation Summary
-**File:** `IMPLEMENTATION_SUMMARY.md`  
-**Length:** ~3,500 words  
-**Purpose:** High-level overview of what was built
+### 5. 🎨 Ferrari Tokenomics
 
-**Contents:**
-- Project goals
-- Completed implementations
-- Code statistics
-- Deployment readiness
-- Testing status
-- Remaining integration tasks
-- Key architectural decisions
-- Success metrics
+**Core Documentation:**
+- **[Canonical Whitepaper](./WHITEPAPER.md)** - Complete Ferrari Edition v3.0 ✅
+  - **[📄 Download PDF Version](./WHITEPAPER.pdf)** - Professional PDF *(or [generate it](./WHITEPAPER_PDF_GENERATION_GUIDE.md))*
+- [Ferrari Quick Reference](./XFUEL-FERRARI-QUICK-REF.md) - One-page summary
+- [Ferrari Infographic](./XFUEL-FERRARI-INFOGRAPHIC.md) - Visual guide
+- [Ferrari Comparison](./XFUEL-FERRARI-COMPARISON.md) - vs Traditional models
 
-**Best For:**
-- Project managers
-- Stakeholders
-- Code reviews
-- Handoff documentation
+**Implementation:**
+- [Tokenomics Integration Summary](./TOKENOMICS_INTEGRATION_SUMMARY.md)
+- [RevenueSplitter Hybrid](../REVSPLITTER_HYBRID_README.md)
+- [Governance LP Visual](../GOVERNANCE_LP_VISUAL_SUMMARY.md)
 
----
+### 6. 🔐 Security & Audits
 
-## 🔄 Reading Path by Role
+**Security Documentation:**
+- [Security Audit Report](../SECURITY_AUDIT_REPORT.md) - Current audit status
+- [Security Deployment Checklist](./SECURITY_DEPLOYMENT_CHECKLIST.md)
+- [Bug Bounty Program](./bug-bounty.md) - Report vulnerabilities
 
-### Frontend Developer (New to Project)
+**Best Practices:**
+- [Safeguards](./SAFEGUARDS.md) - Security measures
+- [Production Ready Checklist](../PRODUCTION_READY_CHECKLIST.md)
+- [Validation Checklist](../VALIDATION_CHECKLIST.md)
 
-1. Start: [Quick Reference](./QUICK_REFERENCE.md) - Get oriented
-2. Read: [WalletConnect v2 Guide](./WALLETCONNECT_V2_GUIDE.md) - Understand architecture
-3. Follow: [Cursor Implementation Guide](./CURSOR_IMPLEMENTATION_GUIDE.md) - Integration steps
-4. Reference: [Quick Reference](./QUICK_REFERENCE.md) - During development
+### 7. 📱 Mobile & Frontend
 
-**Estimated Time:** 2-3 hours to full understanding
+**Mobile App:**
+- [Mobile App Review](./MOBILE_APP_REVIEW.md) - App overview
+- [Early Believers Modal Test](./EARLY_BELIEVERS_MODAL_TEST.md)
+- [Wallet Connection](../WALLET_CONNECTION_CONSOLIDATION.md)
 
-### Mobile Developer
+**Frontend:**
+- [Console Warnings](./CONSOLE_WARNINGS.md) - Debug console issues
+- [Performance Hook Examples](./PERFORMANCE_HOOK_EXAMPLES.md)
+- [Performance Optimization](./PERFORMANCE_OPTIMIZATION.md)
 
-1. Start: [Quick Reference](./QUICK_REFERENCE.md) - Mobile UI section
-2. Read: [WalletConnect v2 Guide](./WALLETCONNECT_V2_GUIDE.md) - Mobile implementation
-3. Focus: Deep linking, haptics, wallet integration
-4. Test: Follow mobile testing checklist
+### 8. 🌐 Deployment & Operations
 
-**Estimated Time:** 1-2 hours to implementation
+**Production Deployment:**
+- [Mainnet Rollout Plan](../MAINNET_ROLLOUT_PLAN.md)
+- [Production Deployment (Early Believers)](../PRODUCTION_DEPLOYMENT_EARLY_BELIEVERS.md)
+- [Deployment Status](../DEPLOYMENT_STATUS.md)
 
-### DevOps/SRE Engineer
+**Testing & Validation:**
+- [Mainnet Beta Testing](./MAINNET_BETA_TESTING.md)
+- [Swap Flow Testing](./SWAP_FLOW_MAINNET_TESTING.md)
+- [Fresh Install Verification](../FRESH_INSTALL_VERIFICATION.md)
 
-1. Start: [Deployment Checklist](./DEPLOYMENT_CHECKLIST_V2.md) - Deployment steps
-2. Read: [Implementation Summary](./IMPLEMENTATION_SUMMARY.md) - Architecture overview
-3. Setup: Environment variables, monitoring, rollback procedures
-4. Reference: [Quick Reference](./QUICK_REFERENCE.md) - Commands
-
-**Estimated Time:** 1 hour to first deployment
-
-### Security Auditor
-
-1. Start: [Implementation Summary](./IMPLEMENTATION_SUMMARY.md) - Security section
-2. Read: [WalletConnect v2 Guide](./WALLETCONNECT_V2_GUIDE.md) - Security enhancements
-3. Review: Input validation, nonce implementation, reentrancy guards
-4. Test: Security testing checklist in [Deployment Checklist](./DEPLOYMENT_CHECKLIST_V2.md)
-
-**Estimated Time:** 2-3 hours for comprehensive review
-
-### Product Manager / Stakeholder
-
-1. Read: [Implementation Summary](./IMPLEMENTATION_SUMMARY.md) - Complete overview
-2. Skim: [Quick Reference](./QUICK_REFERENCE.md) - User flows
-3. Review: Success metrics, deployment readiness
-4. Monitor: KPIs from summary
-
-**Estimated Time:** 30 minutes for full context
+**Windows Specific:**
+- [Windows Deployment Guide](./WINDOWS_DEPLOYMENT_GUIDE.md)
 
 ---
 
-## 📦 What's Included in This Implementation
+## 🗂️ Archive
 
-### Code Components
-
-#### Web Application
-- `src/providers/WalletProvider.tsx` - Unified wallet context (NEW)
-- `src/utils/walletConnect.ts` - WalletConnect v2 setup (ENHANCED)
-- Updated connection flow with multi-provider support
-
-#### Mobile Application
-- `edgefarm-mobile/src/lib/thetaWallet.ts` - Mobile wallet integration (ENHANCED)
-- Deep linking with App Store fallback
-- Enhanced logging and error handling
-
-#### Backend
-- `server/validation/swapValidation.js` - Input validation (NEW)
-- `server/api/swap.js` - Enhanced swap endpoint (UPDATED)
-- Security validation and sanitization
-
-#### Documentation
-- 5 comprehensive guides (20,000+ words total)
-- Code examples and diagrams
-- Testing checklists
-- Deployment procedures
+Older/deprecated documentation has been moved to [docs/archive/](./archive/) for reference.
 
 ---
 
-## 🚀 Getting Started
+## 🔗 External Resources
 
-### If You're New Here
-
-**1. Read this in order:**
-   1. [Quick Reference](./QUICK_REFERENCE.md) - 10 minutes
-   2. [Implementation Summary](./IMPLEMENTATION_SUMMARY.md) - 15 minutes
-   3. [WalletConnect v2 Guide](./WALLETCONNECT_V2_GUIDE.md) - 45 minutes
-
-**2. Set up your environment:**
-   ```bash
-   # Clone repo
-   git clone https://github.com/XFuel-Lab/xfuel-protocol
-   cd xfuel-protocol
-   
-   # Install dependencies
-   npm install
-   
-   # Configure environment
-   cp .env.example .env.local
-   # Edit .env.local with your WalletConnect Project ID
-   
-   # Start dev server
-   npm run dev
-   ```
-
-**3. Follow integration guide:**
-   - [Cursor Implementation Guide](./CURSOR_IMPLEMENTATION_GUIDE.md)
-   - Complete remaining tasks (~3-4 hours)
-
-**4. Test and deploy:**
-   - [Deployment Checklist](./DEPLOYMENT_CHECKLIST_V2.md)
-
-### If You're Deploying to Production
-
-**Go directly to:**
-- [Deployment Checklist v2](./DEPLOYMENT_CHECKLIST_V2.md)
-
-**Prerequisites:**
-- ✅ Code integrated and tested
-- ✅ Environment variables configured
-- ✅ WalletConnect Project ID obtained
-- ✅ Testing checklist completed
-
-**Estimated Time:** 2-3 hours for full deployment
+- **Live App:** [xfuel.app](https://xfuel.app)
+- **GitHub:** [github.com/XFuel-Lab/xfuel-protocol](https://github.com/XFuel-Lab/xfuel-protocol)
+- **Bug Bounty:** [immunefi.com/bounty/xfuel](https://immunefi.com/bounty/xfuel)
+- **Security:** security@xfuel.app
 
 ---
 
-## 🔍 Finding What You Need
+## 📝 Contributing
 
-### Search by Topic
+Found an issue with the docs? Want to improve them?
 
-**Wallet Connection:**
-- [WC v2 Guide - WalletConnect Section](./WALLETCONNECT_V2_GUIDE.md#walletconnect-v2-integration)
-- [Quick Reference - Connection Flow](./QUICK_REFERENCE.md#connection-flow)
-
-**Security:**
-- [WC v2 Guide - Security Section](./WALLETCONNECT_V2_GUIDE.md#security-enhancements)
-- [Quick Reference - Security Architecture](./QUICK_REFERENCE.md#security-architecture)
-- [Implementation Summary - Security Status](./IMPLEMENTATION_SUMMARY.md#security-testing)
-
-**Mobile Development:**
-- [WC v2 Guide - Mobile Section](./WALLETCONNECT_V2_GUIDE.md#mobile-ui-architecture)
-- [Quick Reference - Mobile UI Flow](./QUICK_REFERENCE.md#mobile-ui-flow)
-
-**Testing:**
-- [Deployment Checklist - Testing Section](./DEPLOYMENT_CHECKLIST_V2.md#testing-requirements)
-- [Quick Reference - Testing Checklist](./QUICK_REFERENCE.md#testing-checklist)
-
-**Deployment:**
-- [Deployment Checklist v2](./DEPLOYMENT_CHECKLIST_V2.md) - Full guide
-- [Quick Reference - Quick Commands](./QUICK_REFERENCE.md#quick-commands)
-
-**Troubleshooting:**
-- [WC v2 Guide - Troubleshooting](./WALLETCONNECT_V2_GUIDE.md#troubleshooting)
-- [Quick Reference - Troubleshooting](./QUICK_REFERENCE.md#troubleshooting)
+1. Check [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines
+2. Submit a PR with your improvements
+3. Update this index if adding new docs
 
 ---
 
-## 📊 Documentation Statistics
+## 🎯 Quick Links by Role
 
-| Document | Words | Purpose | Audience |
-|----------|-------|---------|----------|
-| Quick Reference | 1,500 | Fast lookup | All developers |
-| WC v2 Guide | 8,000 | Complete reference | Frontend devs |
-| Cursor Guide | 3,000 | AI assistant ref | AI tools |
-| Deployment Checklist | 4,000 | Production deploy | DevOps |
-| Implementation Summary | 3,500 | Project overview | Stakeholders |
-| **TOTAL** | **20,000+** | Comprehensive suite | All roles |
+**For Developers:**
+- [Local Dev Setup](../LOCAL_DEV_SETUP.md)
+- [System Overview](../SYSTEM_OVERVIEW.md)
+- [Component Reference](../COMPONENT_REFERENCE.md)
+- [Contributing Guide](../CONTRIBUTING.md)
 
----
+**For Operators:**
+- [Deployment Guides](#1--deployment--setup-guides)
+- [Troubleshooting](#3--troubleshooting--fixes)
+- [Maintenance Mode](../MAINTENANCE_MODE.md)
 
-## 🆘 Getting Help
+**For Users:**
+- [Main README](../README.md)
+- [Quick Start](../QUICK_START.md)
+- [Manual QR Flow](../MANUAL_QR_FLOW_IMPLEMENTATION.md)
 
-### Within Documentation
-1. Check [Quick Reference](./QUICK_REFERENCE.md) first
-2. Search for your topic in relevant guide
-3. Follow troubleshooting steps
-
-### External Resources
-- [WalletConnect Docs](https://docs.walletconnect.com/)
-- [Theta Network Docs](https://docs.thetatoken.org/)
-- [Expo Docs](https://docs.expo.dev/)
-- [React Navigation](https://reactnavigation.org/)
-
-### Community Support
-- GitHub Issues: [xfuel-protocol/issues](https://github.com/XFuel-Lab/xfuel-protocol/issues)
-- Discord: [Link TBD]
-- Twitter: @XFuelProtocol
-
-### Security Issues
-- Email: security@xfuel.app
-- PGP Key: [Link to public key]
+**For Researchers:**
+- [Canonical Whitepaper](./WHITEPAPER.md)
+- [ZK Overhaul Summary](./overhaul/ZK_OVERHAUL_SUMMARY.md)
+- [Ferrari Tokenomics](./XFUEL-FERRARI-QUICK-REF.md)
 
 ---
 
-## ✅ Document Status
+**Last Updated:** January 5, 2026  
+**Documentation Version:** 3.0 (Post-Overhaul)
 
-| Document | Status | Last Updated | Version |
-|----------|--------|--------------|---------|
-| Quick Reference | ✅ Complete | Dec 25, 2025 | 1.0.0 |
-| WC v2 Guide | ✅ Complete | Dec 25, 2025 | 1.0.0 |
-| Cursor Guide | ✅ Complete | Dec 25, 2025 | 1.0.0 |
-| Deployment Checklist | ✅ Complete | Dec 25, 2025 | 2.0.0 |
-| Implementation Summary | ✅ Complete | Dec 25, 2025 | 1.0.0 |
-| This Index | ✅ Complete | Dec 25, 2025 | 1.0.0 |
-
----
-
-## 🔄 Document Maintenance
-
-### Update Schedule
-- **Weekly:** Quick Reference (commands, troubleshooting)
-- **Monthly:** WC v2 Guide (new features)
-- **Per Release:** Deployment Checklist
-- **As Needed:** Implementation Summary
-
-### Contribution Guidelines
-1. Keep existing structure
-2. Add examples for complex topics
-3. Update version numbers
-4. Test all code examples
-5. Submit PR with description
-
----
-
-## 🎓 Learning Resources
-
-### Recommended Reading Order (Complete Path)
-
-**Day 1: Orientation (2-3 hours)**
-1. Quick Reference Guide
-2. Implementation Summary
-3. Set up local environment
-
-**Day 2: Deep Dive (4-5 hours)**
-1. WalletConnect v2 Guide (full read)
-2. Implement wallet connection locally
-3. Test on Theta Testnet
-
-**Day 3: Integration (4-6 hours)**
-1. Follow Cursor Implementation Guide
-2. Integrate WalletProvider into app
-3. Update tests
-
-**Day 4: Testing & Deployment (3-4 hours)**
-1. Complete testing checklist
-2. Follow Deployment Checklist
-3. Deploy to staging
-4. Test on staging
-
-**Day 5: Production (2-3 hours)**
-1. Deploy to production
-2. Monitor metrics
-3. Document any issues
-
-**Total Time:** ~20-25 hours from zero to production
-
----
-
-## 🎉 Next Steps
-
-1. **Choose your role** from Reading Path section above
-2. **Follow recommended docs** in order
-3. **Set up environment** using Quick Reference
-4. **Implement and test** following relevant guide
-5. **Deploy** using Deployment Checklist
-6. **Monitor** using metrics from Implementation Summary
-
----
-
-**Welcome to XFuel Protocol! 🚀**
-
-*These docs were created with ❤️ using AI-assisted development.*  
-*Demonstrating the power of human-AI collaboration in building production-grade blockchain applications.*
-
----
-
-**Generated:** December 25, 2025  
-**By:** Claude Sonnet 4.5 via Cursor  
-**For:** XFuel Labs & the blockchain developer community
-
+*The Ferrari is engineered for precision - so is our documentation.* 🏎️

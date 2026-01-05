@@ -207,7 +207,8 @@ Protocol Revenue (100%)
 ## 📞 Quick Links
 
 - **Website**: https://xfuel.app
-- **Full Whitepaper**: [XFUEL-Hybrid-Tokenomics-Whitepaper-v3.md](./XFUEL-Hybrid-Tokenomics-Whitepaper-v3.md)
+- **Full Whitepaper**: [WHITEPAPER.md](./WHITEPAPER.md) *(coming soon - run polish script)*
+- **ZK Overhaul**: [ZK_OVERHAUL_SUMMARY.md](./overhaul/ZK_OVERHAUL_SUMMARY.md) ⚡
 - **GitHub**: https://github.com/XFuel-Lab/xfuel-protocol
 - **Bug Bounty**: https://immunefi.com/bounty/xfuel
 - **Twitter**: [@XFuelLab](https://twitter.com/XFuelLab)
