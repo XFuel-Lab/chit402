@@ -12,6 +12,28 @@ Live: **[xfuel.app](https://xfuel.app)** (Theta Mainnet)
 
 ---
 
+## 📄 Whitepaper v3.1 🏎️
+
+**XFuel Protocol: Ferrari Hybrid Tokenomics Edition**  
+**ZK Bridge + Persistence LP Focus**
+
+Read the complete technical whitepaper: **[docs/WHITEPAPER.md](docs/WHITEPAPER.md)**
+
+**PDF Version:** Print the whitepaper page (Ctrl+P / Cmd+P) or use Pandoc:
+```bash
+pandoc docs/WHITEPAPER.md -o xfuel-whitepaper.pdf --pdf-engine=xelatex
+```
+
+**What's Inside:**
+- Zero-Knowledge bridge architecture (Groth16 ZK-SNARKs)
+- Ferrari Hybrid Tokenomics (30/30/25/15 revenue splits)
+- Persistence LSTfi integration (Dexter Superfluid pools: stkXPRT, milkTIA)
+- veXF governance & multipliers (up to 11.5×)
+- Post-pSTAKE ecosystem alignment
+- Complete technical specifications & roadmap
+
+---
+
 ## 🚀 What is XFUEL?
 
 XFUEL is a **zero-knowledge bridge protocol** that enables trustless cross-chain TFUEL → Cosmos LST swaps with automated yield optimization — **no wallet connect required**.
@@ -57,10 +79,10 @@ Theta Deposit → ZK Proof → Verification → ibcTFUEL Mint → IBC Transfer �
 
 Read the complete technical whitepaper: **[docs/WHITEPAPER.md](docs/WHITEPAPER.md)** 🏎️
 
-**PDF Version:**
-- **[📄 Generate PDF Now](GENERATE_PDF_NOW.md)** - 5-minute guide (3 methods)
-- Professional PDF ready in under 5 minutes (no installation required)
-- Perfect for grants, investors, and sharing on social media
+**PDF Version:** Print this page or use Pandoc:
+```bash
+pandoc docs/WHITEPAPER.md -o xfuel-whitepaper.pdf --pdf-engine=xelatex
+```
 
 **What's Inside:**
 - Zero-Knowledge bridge architecture (Groth16 ZK-SNARKs)
@@ -77,10 +99,12 @@ Read the complete technical whitepaper: **[docs/WHITEPAPER.md](docs/WHITEPAPER.m
 
 ---
 
-**📚 Documentation:**
-- **[Documentation Hub](docs/README.md)** - Complete documentation index (8 sections, 100+ links)
-- **[Quick Start Guide](docs/guides/QUICK_START.md)** - Get started in 5 minutes
-- **[Contributing](CONTRIBUTING.md)** - How to contribute to XFuel
+**📚 Additional Resources:**
+- [Ferrari Quick Reference](docs/XFUEL-FERRARI-QUICK-REF.md) - One-page summary
+- [ZK Overhaul Summary](docs/overhaul/ZK_OVERHAUL_SUMMARY.md) - Technical upgrade details
+- [Documentation Hub](docs/README.md) - Complete documentation index
+- [Quick Start Guide](docs/guides/QUICK_START.md) - Get started in 5 minutes
+- [Contributing](CONTRIBUTING.md) - How to contribute to XFuel
 
 ---
 
@@ -204,24 +228,20 @@ IBC Channel:       channel-190      (Theta ↔ Persistence)
 
 ### Technical Documentation
 
-**Whitepapers**:
-- **Ferrari Hybrid Tokenomics (v3.1)**: [docs/WHITEPAPER.md](docs/WHITEPAPER.md) 🏎️ **CANONICAL**
-  - Complete ZK-SNARK architecture
-  - Hybrid revenue splits (30/30/25/15)
-  - Governance extras & veXF mechanics
-  
-- **Quick Reference**: [docs/XFUEL-FERRARI-QUICK-REF.md](docs/XFUEL-FERRARI-QUICK-REF.md)
-
 **Technical Documentation**:
-- [Canonical Whitepaper](docs/WHITEPAPER.md) - Complete Ferrari Edition v3.1
 - [ZK Bridge Implementation](docs/ZK_BRIDGE_IMPLEMENTATION.md) - Technical details
-- [Ferrari Quick Reference](docs/XFUEL-FERRARI-QUICK-REF.md) - One-page summary
 - [Security Audit Report](SECURITY_AUDIT_REPORT.md) - Audit status
 
 **Implementation Guides**:
 - [E2E Bridge Test Guide](docs/guides/STEP5_E2E_BRIDGE_TEST_GUIDE.md) - Complete testing guide
 - [ZK Overhaul Summary](docs/overhaul/ZK_OVERHAUL_SUMMARY.md) - Post-upgrade documentation
 - [Documentation Hub](docs/README.md) - Complete documentation index
+
+**Community & Updates**:
+- **Website**: [xfuel.app](https://xfuel.app) - Live mainnet deployment
+- **Discord**: [Join for updates] - Early access and community testing
+- **Twitter**: [@xfuel_protocol] - Follow for launch announcements
+- **Security**: Report vulnerabilities to security@xfuel.app
 
 ---
 
