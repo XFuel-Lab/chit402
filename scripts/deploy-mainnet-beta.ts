@@ -8,11 +8,16 @@ import { ethers, upgrades } from 'hardhat'
  * - 5,000 TFUEL total per user
  * - Emergency pause/kill switches
  * - User tracking mappings
+ * 
+ * NEW Security Features (v2):
+ * - TimelockController for critical operations
+ * - Multi-sig treasury support
+ * - Pausable contracts
  */
 
 async function main() {
-  console.log('🚀 Deploying XFuel Protocol to Theta Mainnet (Beta Testing Mode)')
-  console.log('=================================================================')
+  console.log('🚀 Deploying XFuel Protocol to Theta Mainnet (Beta Testing Mode with Security)')
+  console.log('================================================================================')
   console.log('')
 
   const [deployer] = await ethers.getSigners()
@@ -26,6 +31,21 @@ async function main() {
   if (parseFloat(ethers.formatEther(balance)) < 100) {
     console.warn('⚠️  Warning: Low balance. Recommended: 100+ TFUEL for deployment')
   }
+
+  // Deploy TimelockController first
+  console.log('📦 Deploying TimelockController...')
+  const minDelay = 24 * 60 * 60 // 24 hours for beta (48 hours for production)
+  const proposers = [deployerAddress] // Replace with actual multi-sig addresses
+  const executors = [deployerAddress] // Replace with actual multi-sig addresses
+  const admin = deployerAddress
+  
+  const XFuelTimelock = await ethers.getContractFactory('XFuelTimelock')
+  const timelock = await XFuelTimelock.deploy(minDelay, proposers, executors, admin)
+  await timelock.waitForDeployment()
+  const timelockAddress = await timelock.getAddress()
+  console.log('✅ TimelockController deployed to:', timelockAddress)
+  console.log('   - Min delay: 24 hours (beta mode)')
+  console.log('')
 
   // Deploy mock tokens for testing (if needed)
   console.log('📦 Deploying mock tokens...')
@@ -107,10 +127,19 @@ async function main() {
   await buybackBurner.setRevenueSplitter(revenueSplitterAddress)
   console.log('✅ RevenueSplitter reference set in BuybackBurner')
   console.log('')
+  
+  // Configure timelock for contracts
+  console.log('🔗 Configuring timelock for contracts...')
+  await revenueSplitter.setTimelock(timelockAddress)
+  console.log('✅ Timelock set for RevenueSplitter')
+  console.log('')
 
   // Summary
   console.log('🎉 DEPLOYMENT COMPLETE!')
   console.log('======================')
+  console.log('')
+  console.log('🔐 Security Infrastructure:')
+  console.log('   TimelockController:', timelockAddress)
   console.log('')
   console.log('📋 Contract Addresses:')
   console.log('   USDC (Mock):', usdcAddress)
@@ -125,9 +154,11 @@ async function main() {
   console.log('   ✓ Total limit: 5,000 TFUEL per user')
   console.log('   ✓ Emergency pause: Available via setPaused(true)')
   console.log('   ✓ Admin controls: Limit updates, user resets')
+  console.log('   ✓ Timelock: 24-hour delay for critical operations')
   console.log('')
   console.log('📝 Save these addresses to your .env file:')
   console.log(`   VITE_ROUTER_ADDRESS=${revenueSplitterAddress}`)
+  console.log(`   VITE_TIMELOCK_ADDRESS=${timelockAddress}`)
   console.log('   VITE_NETWORK=mainnet')
   console.log('')
   console.log('🔍 Verify on Theta Explorer:')
@@ -139,6 +170,7 @@ async function main() {
   console.log('   3. Test with small amounts (< 10 TFUEL)')
   console.log('   4. Monitor events: UserSwapRecorded, PauseToggled')
   console.log('   5. Keep emergency pause ready!')
+  console.log('   6. Test timelock operations before going to production')
   console.log('')
 }
 

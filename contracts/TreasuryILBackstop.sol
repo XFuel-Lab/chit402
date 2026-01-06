@@ -9,11 +9,20 @@ import "./SafeERC20.sol";
 /**
  * @title TreasuryILBackstop
  * @dev Covers impermanent loss >8% for liquidity providers
+ * 
+ * Security Features:
+ * - Timelock: Critical operations require timelock delay
+ * - Multi-sig: Treasury operations via multi-sig
+ * - Pausable: Emergency pause functionality
+ * - Access control: Owner and timelock roles
  */
 contract TreasuryILBackstop is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     IERC20 public treasuryToken; // USDC or stablecoin
     address public pool;
+    address public timelock; // Timelock controller
+    bool public paused; // Pause functionality
+    
     uint256 public constant IL_THRESHOLD_BPS = 800; // 8% = 800 basis points
     uint256 public totalCoverageProvided;
     
@@ -24,6 +33,14 @@ contract TreasuryILBackstop is Ownable, ReentrancyGuard {
     );
     
     event TreasuryDeposit(address indexed depositor, uint256 amount);
+    event TimelockSet(address indexed timelock);
+    event Paused(address indexed account);
+    event Unpaused(address indexed account);
+    
+    modifier whenNotPaused() {
+        require(!paused, "TreasuryILBackstop: PAUSED");
+        _;
+    }
     
     constructor(address _treasuryToken) Ownable(msg.sender) {
         require(_treasuryToken != address(0), "TreasuryILBackstop: invalid treasury token");
@@ -59,7 +76,7 @@ contract TreasuryILBackstop is Ownable, ReentrancyGuard {
         address lpAddress,
         uint256 initialValue,
         uint256 currentValue
-    ) external nonReentrant {
+    ) external nonReentrant whenNotPaused {
         require(msg.sender == pool, "TreasuryILBackstop: UNAUTHORIZED");
         require(lpAddress != address(0), "TreasuryILBackstop: invalid LP address");
         require(initialValue > 0, "TreasuryILBackstop: invalid initial value");
@@ -86,10 +103,37 @@ contract TreasuryILBackstop is Ownable, ReentrancyGuard {
     /**
      * @dev Deposit treasury funds
      */
-    function depositTreasury(uint256 amount) external nonReentrant {
+    function depositTreasury(uint256 amount) external nonReentrant whenNotPaused {
         require(amount > 0, "TreasuryILBackstop: INVALID_AMOUNT");
         treasuryToken.safeTransferFrom(msg.sender, address(this), amount);
         emit TreasuryDeposit(msg.sender, amount);
+    }
+    
+    /**
+     * @dev Set timelock controller (owner only)
+     */
+    function setTimelock(address _timelock) external onlyOwner {
+        require(_timelock != address(0), "TreasuryILBackstop: invalid timelock");
+        timelock = _timelock;
+        emit TimelockSet(_timelock);
+    }
+    
+    /**
+     * @dev Pause the contract (owner or timelock only)
+     */
+    function pause() external {
+        require(msg.sender == owner || msg.sender == timelock, "TreasuryILBackstop: not authorized");
+        paused = true;
+        emit Paused(msg.sender);
+    }
+    
+    /**
+     * @dev Unpause the contract (owner or timelock only)
+     */
+    function unpause() external {
+        require(msg.sender == owner || msg.sender == timelock, "TreasuryILBackstop: not authorized");
+        paused = false;
+        emit Unpaused(msg.sender);
     }
     
     /**

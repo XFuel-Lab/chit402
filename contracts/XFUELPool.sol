@@ -9,6 +9,11 @@ import "./SafeERC20.sol";
  * @title XFUELPool
  * @dev Concentrated liquidity pool for TFUEL↔XPRT (forked from Theta's Uniswap-v3 style pool)
  * Supports 0.05% and 0.08% fee tiers
+ * 
+ * Security Features:
+ * - Pausable: Emergency pause for swaps
+ * - Factory-only initialization
+ * - Reentrancy protection
  */
 contract XFUELPool is ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -39,6 +44,9 @@ contract XFUELPool is ReentrancyGuard {
     address public factory;
     address public feeRecipient; // Router for fee distribution
     
+    // Pause functionality
+    bool public paused;
+    
     event Swap(
         address indexed sender,
         address indexed recipient,
@@ -68,8 +76,16 @@ contract XFUELPool is ReentrancyGuard {
         uint128 amount1
     );
     
+    event Paused(address indexed account);
+    event Unpaused(address indexed account);
+    
     modifier onlyFactory() {
         require(msg.sender == factory, "XFUELPool: FORBIDDEN");
+        _;
+    }
+    
+    modifier whenNotPaused() {
+        require(!paused, "XFUELPool: PAUSED");
         _;
     }
     
@@ -102,7 +118,7 @@ contract XFUELPool is ReentrancyGuard {
         int256 amountSpecified,
         uint160 sqrtPriceLimitX96,
         uint256 minAmountOut
-    ) external nonReentrant returns (int256 amount0, int256 amount1) {
+    ) external nonReentrant whenNotPaused returns (int256 amount0, int256 amount1) {
         require(amountSpecified != 0, "XFUELPool: INVALID_AMOUNT");
         require(recipient != address(0), "XFUELPool: INVALID_RECIPIENT");
         
@@ -178,6 +194,22 @@ contract XFUELPool is ReentrancyGuard {
             protocolFees1 = 0;
             token1.safeTransfer(feeRecipient, amount1);
         }
+    }
+    
+    /**
+     * @dev Pause the pool (factory only)
+     */
+    function pause() external onlyFactory {
+        paused = true;
+        emit Paused(msg.sender);
+    }
+    
+    /**
+     * @dev Unpause the pool (factory only)
+     */
+    function unpause() external onlyFactory {
+        paused = false;
+        emit Unpaused(msg.sender);
     }
 }
 

@@ -1,0 +1,155 @@
+{
+  "timestamp": "2026-01-06T20:25:52.387331",
+  "results": [
+    {
+      "scenario": "Bear Market",
+      "baseline": {
+        "final_price": 0.10354889373022456,
+        "final_mcap": 9655402.170704477,
+        "final_tvl": 1186610.8902590754,
+        "total_burned": 6755139.307816756,
+        "burn_rate": 6.755139307816756,
+        "holder_rewards": 572223.3896790801,
+        "avg_revenue": 143081.35156528634,
+        "revenue_growth": 514.371696217686
+      },
+      "stress": {
+        "final_price": 0.005279948402621473,
+        "final_mcap": 492517.5867447791,
+        "final_tvl": 237986.52208237743,
+        "total_burned": 6719242.464519901,
+        "burn_rate": 6.7192424645199,
+        "holder_rewards": 81538.13956638507,
+        "avg_revenue": 22067.266806398104,
+        "revenue_growth": -67.51175847630424
+      },
+      "resilience": {
+        "price": 5.0989906433740355,
+        "mcap": 5.100953621995469,
+        "tvl": 20.055986679038256,
+        "revenue": 15.42288115466191
+      },
+      "avg_resilience": 11.419703024767418
+    },
+    {
+      "scenario": "Whale Dump",
+      "baseline": {
+        "final_price": 0.10354889373022456,
+        "final_mcap": 9655402.170704477,
+        "final_tvl": 1186610.8902590754,
+        "total_burned": 6755139.307816756,
+        "burn_rate": 6.755139307816756,
+        "holder_rewards": 572223.3896790801,
+        "avg_revenue": 143081.35156528634,
+        "revenue_growth": 514.371696217686
+      },
+      "stress": {
+        "final_price": 0.09848548915031141,
+        "final_mcap": 9153737.402421819,
+        "final_tvl": 1186610.8902590754,
+        "total_burned": 7054963.31087802,
+        "burn_rate": 7.054963310878019,
+        "holder_rewards": 572223.3896790801,
+        "avg_revenue": 143081.35156528634,
+        "revenue_growth": 514.371696217686
+      },
+      "resilience": {
+        "price": 95.11013165132907,
+        "mcap": 94.80430996644799,
+        "tvl": 100.0,
+        "revenue": 100.0
+      },
+      "avg_resilience": 97.47861040444427
+    },
+    {
+      "scenario": "Flash Crash",
+      "baseline": {
+        "final_price": 0.10354889373022456,
+        "final_mcap": 9655402.170704477,
+        "final_tvl": 1186610.8902590754,
+        "total_burned": 6755139.307816756,
+        "burn_rate": 6.755139307816756,
+        "holder_rewards": 572223.3896790801,
+        "avg_revenue": 143081.35156528634,
+        "revenue_growth": 514.371696217686
+      },
+      "stress": {
+        "final_price": 0.028383501273786572,
+        "final_mcap": 2683498.3701310228,
+        "final_tvl": 655773.4260964725,
+        "total_burned": 5455696.101546375,
+        "burn_rate": 5.4556961015463745,
+        "holder_rewards": 162239.70804109843,
+        "avg_revenue": 41938.207352740035,
+        "revenue_growth": 27.21956213985407
+      },
+      "resilience": {
+        "price": 27.41072381491006,
+        "mcap": 27.792714613929228,
+        "tvl": 55.26440314004669,
+        "revenue": 29.310743080033124
+      },
+      "avg_resilience": 34.94464616222977
+    },
+    {
+      "scenario": "Low Yield Environment",
+      "baseline": {
+        "final_price": 0.10354889373022456,
+        "final_mcap": 9655402.170704477,
+        "final_tvl": 1186610.8902590754,
+        "total_burned": 6755139.307816756,
+        "burn_rate": 6.755139307816756,
+        "holder_rewards": 572223.3896790801,
+        "avg_revenue": 143081.35156528634,
+        "revenue_growth": 514.371696217686
+      },
+      "stress": {
+        "final_price": 0.10008896647209578,
+        "final_mcap": 9991106.154828664,
+        "final_tvl": 4772.463698177603,
+        "total_burned": 177746.78876193517,
+        "burn_rate": 0.17774678876193517,
+        "holder_rewards": 14817.398922538861,
+        "avg_revenue": 5644.777424226909,
+        "revenue_growth": -99.99729874177575
+      },
+      "resilience": {
+        "price": 96.65865357563074,
+        "mcap": 103.47685138525611,
+        "tvl": 0.4021928112538745,
+        "revenue": 3.9451524342438593
+      },
+      "avg_resilience": 51.12071255159614
+    },
+    {
+      "scenario": "Death Spiral",
+      "baseline": {
+        "final_price": 0.10354889373022456,
+        "final_mcap": 9655402.170704477,
+        "final_tvl": 1186610.8902590754,
+        "total_burned": 6755139.307816756,
+        "burn_rate": 6.755139307816756,
+        "holder_rewards": 572223.3896790801,
+        "avg_revenue": 143081.35156528634,
+        "revenue_growth": 514.371696217686
+      },
+      "stress": {
+        "final_price": 0.02717107499121681,
+        "final_mcap": 2714909.661060061,
+        "final_tvl": 80126.16486677897,
+        "total_burned": 80888.88872927772,
+        "burn_rate": 0.08088888872927773,
+        "holder_rewards": 6144.25012054806,
+        "avg_revenue": 3511.000072084843,
+        "revenue_growth": -99.99999983998809
+      },
+      "resilience": {
+        "price": 26.239850579191586,
+        "mcap": 28.118038099929045,
+        "tvl": 6.752522290545036,
+        "revenue": 2.4538488305254895
+      },
+      "avg_resilience": 15.89106495004779
+    }
+  ]
+}

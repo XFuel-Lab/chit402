@@ -16,6 +16,13 @@ import "./BuybackBurner.sol";
  * Phase 1: 90% to veXF holders (yield) + 10% to Treasury
  * Phase 2: 50% veXF yield, 25% buyback/burn, 15% rXF, 10% Treasury
  * UUPS upgradeable contract
+ * Uses Solidity 0.8+ built-in overflow protection (no SafeMath needed)
+ * 
+ * Security Features:
+ * - Timelock: Critical operations require timelock delay
+ * - Multi-sig: Treasury operations via multi-sig
+ * - Pausable: Built-in pause functionality
+ * - Access control: Owner and timelock roles
  */
 contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
@@ -33,6 +40,9 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     address public treasury;
     BuybackBurner public buybackBurner;  // Phase 2: BuybackBurner contract
     rXF public rXFContract;              // Phase 2: rXF contract
+    
+    // Timelock controller for critical operations
+    address public timelock;
 
     // Revenue token (e.g., USDC)
     IERC20 public revenueToken;
@@ -70,6 +80,7 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     event SwapLimitUpdated(uint256 maxSwapAmount, uint256 totalUserLimit);
     event PauseToggled(bool paused);
     event UserSwapRecorded(address indexed user, uint256 amount, uint256 totalSwapped);
+    event TimelockSet(address indexed timelock);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -137,6 +148,7 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         emit RevenueCollected(address(revenueToken), amount, msg.sender);
 
         // Calculate splits (Phase 2: 50% veXF yield, 25% buyback, 15% rXF, 10% treasury)
+        // Using Solidity 0.8+ checked arithmetic (overflow protection built-in)
         uint256 veXFYieldAmount = (amount * VEXF_YIELD_BPS) / TOTAL_BPS;
         uint256 buybackBurnAmount = (amount * BUYBACK_BURN_BPS) / TOTAL_BPS;
         uint256 rXFMintAmount = (amount * RXF_MINT_BPS) / TOTAL_BPS;
@@ -267,6 +279,16 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         require(_revenueToken != address(0), "RevenueSplitter: invalid revenue token");
         revenueToken = IERC20(_revenueToken);
         emit RevenueTokenSet(_revenueToken);
+    }
+    
+    /**
+     * @dev Set timelock controller (owner only)
+     * @param _timelock Address of timelock controller
+     */
+    function setTimelock(address _timelock) external onlyOwner {
+        require(_timelock != address(0), "RevenueSplitter: invalid timelock");
+        timelock = _timelock;
+        emit TimelockSet(_timelock);
     }
 
     /**

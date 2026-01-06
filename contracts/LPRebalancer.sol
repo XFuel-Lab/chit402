@@ -239,7 +239,8 @@ contract LPRebalancer is Ownable, ReentrancyGuard {
             zeroForOne,
             int256(swapAmount),
             address(this), // Recipient receives the swapped tokens
-            0 // minAmountOut - set to 0 for simplicity, adjust in production
+            0, // minAmountOut - set to 0 for simplicity, adjust in production
+            block.timestamp + 300 // 5 minute deadline
         ) returns (int256, int256) {
             // Swap succeeded
             uint256 ratioAfter = getPoolRatio(pool);

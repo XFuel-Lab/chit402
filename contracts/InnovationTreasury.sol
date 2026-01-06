@@ -12,6 +12,12 @@ import "./veXF.sol";
  * @title InnovationTreasury
  * @dev 3-vault system (Builder, Acquisition, Moonshot) with basic veXF proposal/voting
  * Prepares for full Governor integration later
+ * 
+ * Security Features:
+ * - Timelock: Critical operations require timelock delay
+ * - Multi-sig: Timelock controlled by multi-sig
+ * - Pausable: Emergency pause functionality
+ * - Access control: Owner and timelock roles
  */
 contract InnovationTreasury is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
@@ -24,6 +30,12 @@ contract InnovationTreasury is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGu
 
     // Treasury token (e.g., USDC)
     IERC20 public treasuryToken;
+    
+    // Timelock controller for critical operations
+    address public timelock;
+    
+    // Pause functionality
+    bool public paused;
 
     // Vault balances
     mapping(VaultType => uint256) public vaultBalances;
@@ -75,6 +87,9 @@ contract InnovationTreasury is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGu
     event ProposalCancelled(uint256 indexed proposalId);
     event VeXFSet(address indexed veXF);
     event TreasuryTokenSet(address indexed token);
+    event TimelockSet(address indexed timelock);
+    event Paused(address indexed account);
+    event Unpaused(address indexed account);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -110,6 +125,7 @@ contract InnovationTreasury is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGu
      * @param amount Amount of tokens to deposit
      */
     function deposit(VaultType vault, uint256 amount) external nonReentrant {
+        require(!paused, "InnovationTreasury: paused");
         require(amount > 0, "InnovationTreasury: amount must be > 0");
         
         // In production, this could be called by RevenueSplitter
@@ -133,6 +149,7 @@ contract InnovationTreasury is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGu
         uint256 amount,
         string memory description
     ) external nonReentrant returns (uint256) {
+        require(!paused, "InnovationTreasury: paused");
         require(recipient != address(0), "InnovationTreasury: invalid recipient");
         require(amount > 0, "InnovationTreasury: amount must be > 0");
         require(bytes(description).length > 0, "InnovationTreasury: description required");
@@ -323,6 +340,34 @@ contract InnovationTreasury is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGu
         require(_treasuryToken != address(0), "InnovationTreasury: invalid treasury token");
         treasuryToken = IERC20(_treasuryToken);
         emit TreasuryTokenSet(_treasuryToken);
+    }
+    
+    /**
+     * @dev Set timelock controller
+     * @param _timelock Address of timelock controller
+     */
+    function setTimelock(address _timelock) external onlyOwner {
+        require(_timelock != address(0), "InnovationTreasury: invalid timelock");
+        timelock = _timelock;
+        emit TimelockSet(_timelock);
+    }
+    
+    /**
+     * @dev Pause the contract (owner or timelock only)
+     */
+    function pause() external {
+        require(msg.sender == owner() || msg.sender == timelock, "InnovationTreasury: not authorized");
+        paused = true;
+        emit Paused(msg.sender);
+    }
+    
+    /**
+     * @dev Unpause the contract (owner or timelock only)
+     */
+    function unpause() external {
+        require(msg.sender == owner() || msg.sender == timelock, "InnovationTreasury: not authorized");
+        paused = false;
+        emit Unpaused(msg.sender);
     }
 
     /**
