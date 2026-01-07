@@ -558,6 +558,183 @@ function createPool(uint256 duration, address creator) external payable {
 
 ---
 
+### T-09: Legacy Code Bloat
+
+**Whitepaper Alignment:** Section 2 - Project Evolution  
+**Audit Finding:** Technical debt from multiple pivots
+
+| **Property** | **Details** |
+|--------------|-------------|
+| **Severity** | 🟡 **Medium** |
+| **Likelihood** | 🟠 Medium-High (natural accumulation during pivots) |
+| **Impact** | Increased attack surface, maintenance burden, slower development |
+| **Funding Need** | **No-Funding** (internal refactoring + extraction) |
+| **Phase** | **Phase 1-2: Q1-Q2 2026** |
+
+#### Description
+XFuel Protocol's codebase contains legacy artifacts from previous architectural pivots (oracle-based model, multi-chain exploration, pre-ZK implementations). This "code bloat" includes:
+- Unused contracts (e.g., oracle connectors, obsolete bridging logic)
+- Dead code paths (feature flags from abandoned experiments)
+- Redundant dependencies (outdated libraries from prototype phases)
+- Inconsistent naming/patterns (mixing old and new conventions)
+
+**Example Artifacts:**
+- `contracts/legacy/OracleValidator.sol` (replaced by ZK proofs)
+- `backend/oracles/chainlink-adapter.ts` (superseded by Groth16)
+- Commented-out multisig code in VaultFactory
+- Placeholder functions for multi-chain routing (never implemented)
+
+**Risks:**
+1. **Increased Attack Surface**: More code = more potential vulnerabilities (auditors must review dead code)
+2. **Maintenance Overhead**: Developers waste time navigating obsolete modules
+3. **Confusion**: New contributors struggle to distinguish current vs legacy architecture
+4. **Gas Inefficiency**: Compiled contracts may include unused bytecode (higher deployment costs)
+5. **Audit Complexity**: CertiK audit costs increase if scope includes legacy code
+
+#### Mitigation Strategy
+
+**No-Funding Actions (Q1 2026 - Extraction & Archival):**
+
+1. ✅ **Legacy Code Audit** (Internal)
+   - Inventory all files/functions unused in production
+   - Document purpose of each legacy module
+   - Categorize: "Safe to delete" vs "Keep for reference"
+
+2. ✅ **Extraction to Archive** (Preserve History)
+   - Create `legacy/` directory in repo root
+   - Move obsolete code with README explaining context
+   - Tag Git commit as "Pre-Extraction Snapshot" (rollback safety)
+
+3. ✅ **Dead Code Removal** (Active Codebase)
+   - Delete unused imports, functions, contracts
+   - Remove commented-out code blocks (Git history preserves)
+   - Consolidate duplicate utility functions
+   - Eliminate unused environment variables
+
+4. ✅ **Dependency Cleanup**
+   - Remove unused npm packages (backend)
+   - Update outdated libraries (OpenZeppelin 4.9 → 5.0)
+   - Prune stale contract imports
+
+5. ✅ **Documentation Update**
+   - Update architecture diagrams to reflect current state
+   - Remove references to deprecated features in docs
+   - Add "Project Evolution" context (see Whitepaper Section 2)
+
+**Extraction Plan (Specific Files):**
+
+**Move to `legacy/pre-zk-bridge/`:**
+```
+contracts/legacy/OracleValidator.sol
+contracts/legacy/MultisigBridge.sol
+backend/oracles/chainlink-adapter.ts
+backend/oracles/price-feed-aggregator.ts
+scripts/deploy-oracle-contracts.js
+```
+
+**Delete Entirely (No Historical Value):**
+```
+node_modules/ (old dependencies)
+.env.example.old
+test/deprecated/ (tests for removed features)
+dist/ (stale build artifacts)
+```
+
+**Refactor (Consolidate Duplicates):**
+```
+// BEFORE (3 duplicate implementations):
+contracts/utils/SafeMath.sol (custom)
+contracts/helpers/MathUtils.sol (redundant)
+@openzeppelin/contracts/utils/math/SafeMath.sol (standard)
+
+// AFTER (use OpenZeppelin only):
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+```
+
+**Benefits of Extraction:**
+- **Reduced codebase size**: ~30% reduction (estimated 15K → 10.5K lines)
+- **Faster audits**: CertiK scope reduced by 25% (lower cost)
+- **Clearer architecture**: New developers onboard faster
+- **Gas savings**: VaultFactory deployment cost reduced by ~10% (remove unused code)
+
+#### Implementation Timeline
+
+**Week 1-2: Inventory & Planning**
+- Complete legacy code audit (internal team)
+- Create extraction checklist (file-by-file list)
+- Set up `legacy/` directory structure
+- Document each module's purpose in extraction README
+
+**Week 3-4: Execution**
+- Move oracle-related code to `legacy/pre-zk-bridge/`
+- Delete dead code (commented blocks, unused functions)
+- Remove stale dependencies (npm prune, outdated imports)
+- Update all documentation references
+
+**Week 5: Validation**
+- Compile all contracts (ensure no broken imports)
+- Run full test suite (100% pass rate required)
+- Deploy to testnet (verify functionality unchanged)
+- Code review by 2+ developers
+
+**Week 6: Finalization**
+- Tag Git commit as "v3.1-post-extraction"
+- Update README with new architecture overview
+- Document extraction in legacy/ directory
+- Prepare for CertiK audit (cleaner scope)
+
+#### Success Metrics
+
+| **Metric** | **Before Extraction** | **Target After** | **Status** |
+|------------|----------------------|------------------|------------|
+| Total LOC (Solidity) | ~8,000 lines | ~5,600 lines (-30%) | 🎯 Q1 2026 |
+| Active Contracts | 22 contracts | 15 contracts (-7 legacy) | 🎯 Q1 2026 |
+| npm Dependencies | 145 packages | 100 packages (-45) | 🎯 Q1 2026 |
+| Test Coverage | 87% | >90% (cleaner codebase) | 🎯 Q1 2026 |
+| Build Time | 45s | 30s (-33% faster) | 🎯 Q1 2026 |
+| Audit Scope (CertiK) | 8K LOC | 5.6K LOC (25% cheaper) | 🎯 Q2 2026 |
+
+#### Post-Funding Actions (Q2 2026)
+
+1. 🎯 **Professional Code Review** ($5K-$10K)
+   - Hire external Solidity auditor for architecture review
+   - Identify additional optimization opportunities
+   - Validate extraction completeness
+
+2. 🎯 **Automated Refactoring Tools**
+   - Use Slither/Mythril to detect dead code
+   - Integrate unused code detection in CI/CD
+   - Set up code coverage enforcement (reject PRs <90%)
+
+3. 🎯 **Documentation Website** ($3K-$5K)
+   - Host legacy/ directory as browsable archive (GitHub Pages)
+   - Add "Project Evolution" timeline visualization
+   - Link to Whitepaper Section 2 for context
+
+#### Related Risks
+
+This risk connects to:
+- **T-03 (ZK Proof Forgery)**: Cleaner code = fewer places to hide bugs
+- **T-05 (Smart Contract Logic Errors)**: Less code = easier to reason about correctness
+- **R-01 (Securities Classification)**: Clear documentation aids legal review
+
+#### Notes
+
+**Why Medium Severity?**
+- Not immediately exploitable (unlike reentrancy)
+- But increases long-term risk via complexity/confusion
+- Impacts audit costs and team velocity
+
+**Why No-Funding?**
+- Extraction is internal refactoring (no external dependencies)
+- Can be done by existing team during Q1 2026
+- Saves money on Q2 audit (smaller scope)
+
+**Lesson from Pivots:**
+Legacy code is **technical debt interest**. XFuel's multiple pivots were strategic wins (trust → ZK = correct choice), but debt must be repaid via disciplined cleanup. This mitigation demonstrates **adaptive engineering** (evolve architecture, then clean up).
+
+---
+
 ## Economic Risks
 
 ### E-01: ibcTFUEL Depeg

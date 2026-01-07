@@ -44,7 +44,7 @@ contract XFuelTimelock is TimelockController {
     /**
      * @dev Get minimum delay
      */
-    function getMinDelay() public view override returns (uint256) {
+    function getMinDelay() external view returns (uint256) {
         return super.getMinDelay();
     }
 }

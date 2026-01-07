@@ -18,7 +18,6 @@ module.exports = {
             enabled: true,
             runs: 200,
           },
-          viaIR: true,
         },
       },
       {
@@ -28,7 +27,6 @@ module.exports = {
             enabled: true,
             runs: 200,
           },
-          viaIR: true,
         },
       },
     ],
@@ -36,12 +34,6 @@ module.exports = {
   networks: {
     hardhat: {
       chainId: 1337,
-      // Optional: Fork Theta mainnet for hybrid flow simulation
-      // Uncomment the forking block below to enable forking
-      // forking: {
-      //   url: 'https://eth-rpc-api.thetatoken.org/rpc',
-      //   enabled: true,
-      // },
     },
     'theta-testnet': {
       url: 'https://eth-rpc-api-testnet.thetatoken.org/rpc',

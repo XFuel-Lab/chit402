@@ -8,7 +8,8 @@ import "./SafeERC20.sol";
 /**
  * @title XFUELPool
  * @dev Concentrated liquidity pool for TFUEL↔XPRT (forked from Theta's Uniswap-v3 style pool)
- * Supports 0.05% and 0.08% fee tiers
+ * // DROPPED: Dynamic fee tiers - Unnecessary complexity - fixed at 0.5%
+ * Static 0.5% fee (50 basis points)
  * 
  * Security Features:
  * - Pausable: Emergency pause for swaps
@@ -19,7 +20,7 @@ contract XFUELPool is ReentrancyGuard {
     using SafeERC20 for IERC20;
     IERC20 public token0; // TFUEL
     IERC20 public token1; // XPRT
-    uint24 public fee; // Fee tier: 500 (0.05%) or 800 (0.08%)
+    uint24 public constant FEE_BASIS_POINTS = 50; // Static 0.5% fee
     
     uint128 public liquidity;
     uint256 public feeGrowthGlobal0X128;
@@ -93,9 +94,9 @@ contract XFUELPool is ReentrancyGuard {
         factory = msg.sender;
     }
     
-    function initialize(address _token0, address _token1, uint24 _fee, uint160 _sqrtPriceX96) external {
+    function initialize(address _token0, address _token1, uint160 _sqrtPriceX96) external {
         require(msg.sender == factory, "XFUELPool: FORBIDDEN");
-        require(_fee == 500 || _fee == 800, "XFUELPool: INVALID_FEE");
+        // DROPPED: Dynamic fee validation - Unnecessary complexity - fixed at 0.5%
         require(token0 == IERC20(address(0)), "XFUELPool: ALREADY_INITIALIZED");
         require(_token0 != address(0), "XFUELPool: ZERO_ADDRESS");
         require(_token1 != address(0), "XFUELPool: ZERO_ADDRESS");
@@ -103,7 +104,7 @@ contract XFUELPool is ReentrancyGuard {
         
         token0 = IERC20(_token0);
         token1 = IERC20(_token1);
-        fee = _fee;
+        // fee = _fee; // DROPPED: Dynamic fees - fixed at 0.5% (FEE_BASIS_POINTS=50)
         sqrtPriceX96 = _sqrtPriceX96;
         tick = _tickFromSqrtPrice(_sqrtPriceX96);
     }
@@ -162,14 +163,15 @@ contract XFUELPool is ReentrancyGuard {
     
     function _getAmountOut(uint256 amountIn, bool zeroForOne) internal view returns (uint256) {
         // Simplified constant product formula: x * y = k
+        // Static 0.5% fee (50 basis points)
         uint256 reserve0 = token0.balanceOf(address(this));
         uint256 reserve1 = token1.balanceOf(address(this));
         
         if (zeroForOne) {
-            uint256 amountInWithFee = amountIn * (10000 - fee) / 10000;
+            uint256 amountInWithFee = amountIn * (10000 - FEE_BASIS_POINTS) / 10000;
             return (amountInWithFee * reserve1) / (reserve0 + amountInWithFee);
         } else {
-            uint256 amountInWithFee = amountIn * (10000 - fee) / 10000;
+            uint256 amountInWithFee = amountIn * (10000 - FEE_BASIS_POINTS) / 10000;
             return (amountInWithFee * reserve0) / (reserve1 + amountInWithFee);
         }
     }

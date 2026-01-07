@@ -8,13 +8,14 @@ import "./TreasuryILBackstop.sol";
 import "./Ownable.sol";
 import "./ReentrancyGuard.sol";
 import "./SafeERC20.sol";
-import "./IFeeAdapter.sol";
+// DROPPED: IFeeAdapter - Unnecessary complexity - fixed at 0.5%
 import "./YieldOptimizer.sol";
 
 /**
  * @title XFUELRouter
  * @dev Router with fee splitting: 60% buyback-burn XF, 25% USDC yield to veXF, 15% treasury
- * Integrated with IFeeAdapter for dynamic fee control via CyberneticFeeSwitch
+ * // DROPPED: Dynamic fee control via CyberneticFeeSwitch - Unnecessary complexity - fixed at 0.5%
+ * Static 0.5% fee (50 basis points)
  * 
  * Security Features:
  * - Pausable: Emergency pause for all operations
@@ -31,7 +32,7 @@ contract XFUELRouter is Ownable, ReentrancyGuard {
     IERC20 public usdcToken; // USDC for veXF yield
     address public treasury;
     address public veXFContract; // veXF contract address
-    IFeeAdapter public feeAdapter; // Fee adapter for dynamic fee control
+    // DROPPED: IFeeAdapter feeAdapter - Unnecessary complexity - fixed at 0.5%
     
     // Pause functionality
     bool public paused;
@@ -56,12 +57,11 @@ contract XFUELRouter is Ownable, ReentrancyGuard {
     event Paused(address indexed account);
     event Unpaused(address indexed account);
     
-    // Base fee in basis points (e.g., 30 = 0.3%)
-    uint256 public baseFeeBps;
+    // DROPPED: Dynamic base fee - Unnecessary complexity - fixed at 0.5%
+    uint256 public constant FEE_BASIS_POINTS = 50; // Static 0.5% fee
     
     // Events
-    event FeeAdapterSet(address indexed feeAdapter);
-    event BaseFeeSet(uint256 oldBaseFee, uint256 newBaseFee);
+    // DROPPED: FeeAdapterSet, BaseFeeSet - Unnecessary complexity - fixed at 0.5%
     event SwapFeeApplied(uint256 amountIn, uint256 feeAmount, uint256 effectiveFeeBps);
     
     modifier whenNotPaused() {
@@ -90,7 +90,7 @@ contract XFUELRouter is Ownable, ReentrancyGuard {
         usdcToken = IERC20(_usdcToken);
         treasury = _treasury;
         veXFContract = _veXFContract;
-        baseFeeBps = 30; // Default 0.3% base fee
+        // DROPPED: baseFeeBps = 30 - Unnecessary complexity - fixed at 0.5% (FEE_BASIS_POINTS=50)
     }
     
     // Time-weighted average fee collection to prevent front-running
@@ -249,7 +249,8 @@ contract XFUELRouter is Ownable, ReentrancyGuard {
     }
     
     /**
-     * @dev Swap tokens through the pool with dynamic fee from IFeeAdapter
+     * @dev Swap tokens through the pool with static 0.5% fee
+     * // DROPPED: Dynamic fee from IFeeAdapter - Unnecessary complexity - fixed at 0.5%
      * @param pool Pool address
      * @param zeroForOne Direction of swap
      * @param amountSpecified Amount to swap
@@ -276,35 +277,18 @@ contract XFUELRouter is Ownable, ReentrancyGuard {
         IERC20 inputToken = zeroForOne ? poolContract.token0() : poolContract.token1();
         uint256 amountIn = uint256(amountSpecified);
         
-        // Calculate fee using IFeeAdapter if set, otherwise use base fee
-        uint256 effectiveFeeBps = baseFeeBps;
-        uint256 feeAmount = 0;
-        
-        if (address(feeAdapter) != address(0)) {
-            // Check if fees are enabled
-            if (feeAdapter.isFeesEnabled()) {
-                // Get effective fee from adapter
-                effectiveFeeBps = feeAdapter.getEffectiveFee(baseFeeBps);
-                if (effectiveFeeBps > 0) {
-                    feeAmount = (amountIn * effectiveFeeBps) / 10000;
-                }
-            }
-        } else {
-            // Use base fee if no adapter is set
-            feeAmount = (amountIn * baseFeeBps) / 10000;
-        }
+        // DROPPED: Dynamic fee calculation - Unnecessary complexity - fixed at 0.5%
+        // Calculate static 0.5% fee
+        uint256 feeAmount = (amountIn * FEE_BASIS_POINTS) / 10000;
         
         // Transfer tokens from user to router
         inputToken.safeTransferFrom(msg.sender, address(this), amountIn);
         
-        // If fee is applied, deduct it from amount going to pool
-        uint256 amountToSwap = amountIn;
-        if (feeAmount > 0) {
-            amountToSwap = amountIn - feeAmount;
-            // Fee will be collected and distributed via collectAndDistributeFees
-            // For now, we keep it in router to be collected later
-            emit SwapFeeApplied(amountIn, feeAmount, effectiveFeeBps);
-        }
+        // Deduct static 0.5% fee from amount going to pool
+        uint256 amountToSwap = amountIn - feeAmount;
+        // Fee will be collected and distributed via collectAndDistributeFees
+        // We keep it in router to be collected later
+        emit SwapFeeApplied(amountIn, feeAmount, FEE_BASIS_POINTS);
         
         // Approve pool to spend router's tokens (amount after fee)
         SafeERC20.safeApprove(inputToken, pool, amountToSwap);
@@ -383,57 +367,22 @@ contract XFUELRouter is Ownable, ReentrancyGuard {
         string stakeTarget
     );
     
+    // DROPPED: setFeeAdapter, setBaseFee, dynamic fee methods - Unnecessary complexity - fixed at 0.5%
+    
     /**
-     * @dev Set fee adapter (IFeeAdapter interface)
-     * @param _feeAdapter Address of fee adapter contract (e.g., CyberneticFeeSwitch)
+     * @dev Get current effective fee in basis points (always 50 = 0.5%)
+     * @return effectiveFeeBps Effective fee in basis points (50 = 0.5%)
      */
-    function setFeeAdapter(address _feeAdapter) external onlyOwner {
-        // Allow setting to zero address to disable fee adapter
-        if (_feeAdapter != address(0)) {
-            // Verify it implements IFeeAdapter by checking interface
-            try IFeeAdapter(_feeAdapter).isFeesEnabled() returns (bool) {
-                feeAdapter = IFeeAdapter(_feeAdapter);
-                emit FeeAdapterSet(_feeAdapter);
-            } catch {
-                revert("XFUELRouter: invalid fee adapter");
-            }
-        } else {
-            feeAdapter = IFeeAdapter(address(0));
-            emit FeeAdapterSet(address(0));
-        }
+    function getEffectiveFee() external pure returns (uint256 effectiveFeeBps) {
+        return FEE_BASIS_POINTS; // Always 0.5%
     }
     
     /**
-     * @dev Set base fee in basis points
-     * @param _baseFeeBps Base fee in basis points (e.g., 30 = 0.3%)
+     * @dev Check if fees are enabled (always true for static 0.5% fee)
+     * @return enabled True (fees always enabled at 0.5%)
      */
-    function setBaseFee(uint256 _baseFeeBps) external onlyOwner {
-        require(_baseFeeBps <= 1000, "XFUELRouter: base fee too high"); // Max 10%
-        uint256 oldBaseFee = baseFeeBps;
-        baseFeeBps = _baseFeeBps;
-        emit BaseFeeSet(oldBaseFee, _baseFeeBps);
-    }
-    
-    /**
-     * @dev Get current effective fee in basis points
-     * @return effectiveFeeBps Effective fee in basis points
-     */
-    function getEffectiveFee() external view returns (uint256 effectiveFeeBps) {
-        if (address(feeAdapter) != address(0) && feeAdapter.isFeesEnabled()) {
-            return feeAdapter.getEffectiveFee(baseFeeBps);
-        }
-        return baseFeeBps;
-    }
-    
-    /**
-     * @dev Check if fees are enabled
-     * @return enabled True if fees are enabled
-     */
-    function isFeesEnabled() external view returns (bool enabled) {
-        if (address(feeAdapter) != address(0)) {
-            return feeAdapter.isFeesEnabled();
-        }
-        return baseFeeBps > 0;
+    function isFeesEnabled() external pure returns (bool enabled) {
+        return true; // Always enabled at 0.5%
     }
     
     /**
