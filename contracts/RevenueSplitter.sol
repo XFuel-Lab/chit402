@@ -15,6 +15,13 @@ import "./BuybackBurner.sol";
  * @dev Collects protocol revenue and distributes according to tokenomics:
  * Phase 1: 90% to veXF holders (yield) + 10% to Treasury
  * Phase 2: 50% veXF yield, 25% buyback/burn, 15% rXF, 10% Treasury
+ * 
+ * Monthly Batch Processing:
+ * - Accumulates LP fees in USDC from IBC operations
+ * - Monthly: 25% converted to TFUEL for veXF holders (USDC → ibcTFUEL burn → unwrap)
+ * - Monthly: 30% recycled via burn/unwrap to bonus revenue pool
+ * - Remaining 45% stays as USDC for protocol operations
+ * 
  * UUPS upgradeable contract
  * Uses Solidity 0.8+ built-in overflow protection (no SafeMath needed)
  * 
@@ -53,6 +60,13 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     uint256 public totalBuybackBurned;
     uint256 public totalRXFMinted;
     uint256 public totalTreasurySent;
+    
+    // Monthly batch processing tracking
+    uint256 public accumulatedLPFeesUSDC;        // Accumulated LP fees in USDC for monthly processing
+    uint256 public lastMonthlyBatchTime;         // Timestamp of last monthly batch
+    uint256 public constant MONTHLY_INTERVAL = 30 days;
+    uint256 public totalVeXFTFUELDistributed;    // Total TFUEL distributed to veXF holders
+    uint256 public totalRecycledToBonus;         // Total recycled to bonus revenue
 
     // Mainnet Beta Testing Safety Limits
     uint256 public maxSwapAmount;            // Max per swap (default: 1,000 TFUEL)
@@ -81,6 +95,18 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     event PauseToggled(bool paused);
     event UserSwapRecorded(address indexed user, uint256 amount, uint256 totalSwapped);
     event TimelockSet(address indexed timelock);
+    
+    // Monthly batch processing events
+    event LPFeesAccumulated(uint256 amount, uint256 totalAccumulated);
+    event MonthlyBatchProcessed(
+        uint256 indexed batchId,
+        uint256 totalProcessed,
+        uint256 veXFAmount,
+        uint256 recycleAmount,
+        uint256 timestamp
+    );
+    event VeXFTFUELDistributed(uint256 amount, address indexed recipient);
+    event BonusRevenueRecycled(uint256 amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -117,6 +143,9 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         maxSwapAmount = 1000 * 1e18;      // 1,000 TFUEL per swap
         totalUserLimit = 5000 * 1e18;     // 5,000 TFUEL total per user
         paused = false;
+        
+        // Initialize monthly batch timestamp
+        lastMonthlyBatchTime = block.timestamp;
 
         emit RevenueTokenSet(_revenueToken);
         emit VeXFSet(_veXF);
@@ -361,6 +390,124 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         if (total < amount) {
             veXFYield += (amount - total);
         }
+    }
+
+    /**
+     * @dev Accumulate LP fees in USDC for monthly processing
+     * @param amount Amount of USDC LP fees to accumulate
+     */
+    function accumulateLPFees(uint256 amount) external nonReentrant {
+        require(!paused, "RevenueSplitter: contract is paused");
+        require(amount > 0, "RevenueSplitter: amount must be greater than 0");
+        
+        // Transfer USDC from caller
+        revenueToken.safeTransferFrom(msg.sender, address(this), amount);
+        
+        accumulatedLPFeesUSDC += amount;
+        
+        emit LPFeesAccumulated(amount, accumulatedLPFeesUSDC);
+    }
+    
+    /**
+     * @dev Process monthly batch: Convert 25% of accumulated LP fees to TFUEL for veXF holders,
+     *      30% recycle via burn/unwrap to bonus revenue
+     *      Note: In production, this involves:
+     *      1. USDC → ibcTFUEL burn → unwrap to TFUEL (via IBC bridge)
+     *      2. 25% distributed to veXF holders as TFUEL
+     *      3. 30% recycled back to bonus revenue pool
+     *      4. Remaining 45% stays as USDC for other protocol needs
+     * @return batchId Unique identifier for this batch
+     */
+    function processMonthlyBatch() external onlyOwner nonReentrant returns (uint256 batchId) {
+        require(!paused, "RevenueSplitter: contract is paused");
+        require(block.timestamp >= lastMonthlyBatchTime + MONTHLY_INTERVAL, "RevenueSplitter: monthly interval not reached");
+        require(accumulatedLPFeesUSDC > 0, "RevenueSplitter: no LP fees to process");
+        
+        uint256 totalToProcess = accumulatedLPFeesUSDC;
+        batchId = block.timestamp;
+        
+        // Calculate splits: 25% veXF, 30% recycle, 45% stays as USDC
+        uint256 veXFAmount = (totalToProcess * 2500) / 10000;      // 25%
+        uint256 recycleAmount = (totalToProcess * 3000) / 10000;   // 30%
+        // Remaining 45% stays in contract as USDC for other protocol operations
+        
+        // Reset accumulated fees
+        accumulatedLPFeesUSDC = 0;
+        lastMonthlyBatchTime = block.timestamp;
+        
+        // Update tracking
+        totalVeXFTFUELDistributed += veXFAmount;
+        totalRecycledToBonus += recycleAmount;
+        
+        // Note: In production implementation:
+        // 1. veXFAmount (USDC) → Swap to ibcTFUEL on Persistence
+        // 2. Burn ibcTFUEL on Persistence chain
+        // 3. ZK bridge triggers unwrap on Theta to get TFUEL
+        // 4. Distribute TFUEL to veXF holders via veXFContract
+        //
+        // 5. recycleAmount (USDC) → Same process as above
+        // 6. Resulting TFUEL sent back to this contract as bonus revenue
+        // 7. Can be distributed in next revenue split cycle
+        //
+        // For testnet/development, these amounts are tracked but actual
+        // IBC bridge integration and TFUEL distribution happen off-chain
+        
+        emit MonthlyBatchProcessed(
+            batchId,
+            totalToProcess,
+            veXFAmount,
+            recycleAmount,
+            block.timestamp
+        );
+        
+        return batchId;
+    }
+    
+    /**
+     * @dev Distribute TFUEL to veXF holders (called after unwrap completes)
+     *      This is called by authorized bot/operator after the burn→unwrap cycle completes
+     * @param recipient Address to receive TFUEL (typically veXF contract or treasury for distribution)
+     */
+    function distributeVeXFTFUEL(address payable recipient) external payable onlyOwner {
+        require(msg.value > 0, "RevenueSplitter: no TFUEL to distribute");
+        require(recipient != address(0), "RevenueSplitter: invalid recipient");
+        
+        (bool success, ) = recipient.call{value: msg.value}("");
+        require(success, "RevenueSplitter: TFUEL transfer failed");
+        
+        emit VeXFTFUELDistributed(msg.value, recipient);
+    }
+    
+    /**
+     * @dev Receive recycled TFUEL as bonus revenue (called after unwrap completes for recycle amount)
+     *      This TFUEL can then be split in regular revenue cycles
+     */
+    function receiveBonusRevenue() external payable {
+        require(msg.value > 0, "RevenueSplitter: no bonus revenue");
+        
+        emit BonusRevenueRecycled(msg.value);
+        
+        // Bonus revenue stays in contract and can be distributed via splitRevenueNative
+    }
+    
+    /**
+     * @dev Get time until next monthly batch can be processed
+     * @return Time in seconds until next batch, 0 if ready
+     */
+    function timeUntilNextMonthlyBatch() external view returns (uint256) {
+        uint256 nextBatchTime = lastMonthlyBatchTime + MONTHLY_INTERVAL;
+        if (block.timestamp >= nextBatchTime) {
+            return 0;
+        }
+        return nextBatchTime - block.timestamp;
+    }
+    
+    /**
+     * @dev Check if monthly batch is ready to process
+     * @return True if ready, false otherwise
+     */
+    function isMonthlyBatchReady() external view returns (bool) {
+        return block.timestamp >= lastMonthlyBatchTime + MONTHLY_INTERVAL && accumulatedLPFeesUSDC > 0;
     }
 
     /**
