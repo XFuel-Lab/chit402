@@ -5,8 +5,8 @@ pragma solidity ^0.8.20;
  * @title SubVault
  * @author xFuel Protocol (@XFuelLab)
  * @notice Vault contract for ZK bridge hybrid: receives TFUEL deposits (0.5% fee to RevSplitter),
- *         handles UnwrapFromBurn (burns signal from Persistence → unlocks TFUEL to original sender),
- *         and integrates with yield loop (30% recycle placeholder).
+ *         handles UnwrapFromBurn (burns signal from Persistence → unlocks 100% TFUEL to original sender).
+ *         Yields now managed on Persistence side via IBCTreasury.
  * @dev Deployed deterministically via Create2 from VaultFactory.
  *      Each user gets a unique SubVault based on their persistence address and nonce.
  */
@@ -23,8 +23,6 @@ contract SubVault {
     /// @notice Basis points denominator (10000 = 100%)
     uint256 public constant BASIS_POINTS_DENOMINATOR = 10000;
     
-    /// @notice Yield loop recycle percentage (30% placeholder)
-    uint256 public constant YIELD_RECYCLE_BPS = 3000; // 30%
 
     /// @notice Mapping to track original senders for unwrap operations
     /// @dev burnTxHash => original sender address
@@ -40,15 +38,13 @@ contract SubVault {
      * @param grossAmount The total amount deposited before fees
      * @param feeAmount The fee amount deducted (0.5%)
      * @param netAmount The net amount remaining in vault after fees
-     * @param yieldRecycleAmount Amount allocated for yield loop (30% of net)
      */
     event DepositReceived(
         address indexed vault,
         address indexed sender,
         uint256 grossAmount,
         uint256 feeAmount,
-        uint256 netAmount,
-        uint256 yieldRecycleAmount
+        uint256 netAmount
     );
 
     /**
@@ -62,16 +58,12 @@ contract SubVault {
      * @notice Emitted when UnwrapFromBurn is executed (ZK bridge unlock)
      * @param burnTxHash The transaction hash from Persistence chain burn
      * @param recipient The original sender receiving unlocked TFUEL
-     * @param amount The amount of TFUEL unlocked
-     * @param netAmount The net amount sent to recipient (after yield recycle)
-     * @param yieldRecycleAmount Amount recycled back to yield loop (30%)
+     * @param amount The amount of TFUEL unlocked and sent to recipient
      */
     event UnwrapFromBurn(
         bytes32 indexed burnTxHash,
         address indexed recipient,
-        uint256 amount,
-        uint256 netAmount,
-        uint256 yieldRecycleAmount
+        uint256 amount
     );
 
     /**
@@ -131,7 +123,6 @@ contract SubVault {
     /**
      * @notice Receive function handles incoming TFUEL deposits
      * @dev Calculates 0.5% fee, sends to RevSplitter, keeps net amount in vault
-     *      30% of net amount earmarked for yield loop recycling
      *      Emits DepositReceived event with all relevant amounts
      */
     receive() external payable {
@@ -140,9 +131,6 @@ contract SubVault {
         // Calculate fee (0.5% = 50 basis points)
         uint256 feeAmount = (msg.value * FEE_BASIS_POINTS) / BASIS_POINTS_DENOMINATOR;
         uint256 netAmount = msg.value - feeAmount;
-        
-        // Calculate yield loop recycle amount (30% of net)
-        uint256 yieldRecycleAmount = (netAmount * YIELD_RECYCLE_BPS) / BASIS_POINTS_DENOMINATOR;
 
         // Transfer fee to RevenueSplitter
         if (feeAmount > 0) {
@@ -151,15 +139,13 @@ contract SubVault {
         }
 
         // Net amount stays in this contract (backed reserves for ibcTFUEL)
-        // Yield recycle portion tracked but stays in vault for future yield operations
         // Emit event for indexer/bridge to pick up
         emit DepositReceived(
             address(this),
             msg.sender,
             msg.value,
             feeAmount,
-            netAmount,
-            yieldRecycleAmount
+            netAmount
         );
     }
 
@@ -169,7 +155,7 @@ contract SubVault {
      * @param recipient The original sender who should receive unlocked TFUEL
      * @param amount The amount of TFUEL to unlock and send
      * @dev Called by factory (admin/ZK-triggered) upon burn signal from Persistence
-     *      Sends 70% to recipient, recycles 30% back to yield loop
+     *      No split on reverse burns for peg integrity—full unlock post-burn
      *      Prevents double-processing of same burn transaction
      */
     function unwrapFromBurn(
@@ -187,23 +173,15 @@ contract SubVault {
         processedBurns[burnTxHash] = true;
         unwrapRecipients[burnTxHash] = recipient;
         
-        // Calculate yield recycle amount (30% stays in protocol for yield loop)
-        uint256 yieldRecycleAmount = (amount * YIELD_RECYCLE_BPS) / BASIS_POINTS_DENOMINATOR;
-        uint256 netToRecipient = amount - yieldRecycleAmount;
-        
-        // Transfer net amount to recipient
-        (bool success, ) = recipient.call{value: netToRecipient}("");
+        // No split on reverse burns for peg integrity—full unlock post-burn
+        // Transfer 100% of amount to recipient (fee-free, no retention)
+        (bool success, ) = recipient.call{value: amount}("");
         if (!success) revert TransferFailed();
-        
-        // Yield recycle portion stays in vault for future yield operations
-        // Could be forwarded to a yield strategy contract in production
         
         emit UnwrapFromBurn(
             burnTxHash,
             recipient,
-            amount,
-            netToRecipient,
-            yieldRecycleAmount
+            amount
         );
     }
 

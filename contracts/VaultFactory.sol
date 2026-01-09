@@ -14,6 +14,8 @@ import "./SubVault.sol";
  *         UnwrapFromBurn (admin/ZK-triggered to unlock TFUEL when ibcTFUEL is burned on Persistence).
  * @dev Uses OpenZeppelin's AccessControl for role-based permissions and Pausable for
  *      emergency stops. The factory triggers unwrap operations on vaults via ZK bridge signals.
+ *      Backend bots monitor events (UnwrapFromBurnTriggered) to verify unwraps and coordinate
+ *      with IBCTreasury on Persistence side for yield management.
  */
 contract VaultFactory is AccessControl, Pausable {
     /// @notice Role identifier for accounts that can pause deposits
