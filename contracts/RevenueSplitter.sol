@@ -7,20 +7,18 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./veXF.sol";
-import "./rXF.sol";
 import "./BuybackBurner.sol";
 
 /**
  * @title RevenueSplitter
  * @dev Collects protocol revenue and distributes according to tokenomics:
- * Phase 1: 90% to veXF holders (yield) + 10% to Treasury
- * Phase 2: 50% veXF yield, 25% buyback/burn, 15% rXF, 10% Treasury
+ * Current Split: 30% BBB (buyback-burn), 30% LP funding, 25% veXF payout, 15% treasury
  * 
  * Monthly Batch Processing:
  * - Accumulates LP fees in USDC from IBC operations
- * - Monthly: 25% converted to TFUEL for veXF holders (USDC → ibcTFUEL burn → unwrap)
- * - Monthly: 30% recycled via burn/unwrap to bonus revenue pool
- * - Remaining 45% stays as USDC for protocol operations
+ * - Monthly: 30% converted to TFUEL via (USDC → ibcTFUEL burn → unwrap)
+ * - Unwrapped TFUEL sent to this contract and distributed via standard split above
+ * - Remaining 70% stays as USDC for protocol operations
  * 
  * UUPS upgradeable contract
  * Uses Solidity 0.8+ built-in overflow protection (no SafeMath needed)
@@ -35,18 +33,18 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     using SafeERC20 for IERC20;
 
     // Revenue split constants (in basis points)
-    // Phase 2: 50% veXF yield, 25% buyback/burn, 15% rXF, 10% Treasury
-    uint256 public constant VEXF_YIELD_BPS = 5000;      // 50% to veXF yield (Phase 2)
-    uint256 public constant BUYBACK_BURN_BPS = 2500;    // 25% to buyback/burn (Phase 2)
-    uint256 public constant RXF_MINT_BPS = 1500;        // 15% to rXF mint (Phase 2)
-    uint256 public constant TREASURY_BPS = 1000;        // 10% to Treasury
-    uint256 public constant TOTAL_BPS = 10000;          // 100%
+    // Current Split: 30% BBB, 30% LP funding, 25% veXF, 15% treasury
+    uint256 public constant BBB_BPS = 3000;              // 30% to buyback-burn-bond
+    uint256 public constant LP_FUNDING_BPS = 3000;       // 30% to LP funding
+    uint256 public constant VEXF_PAYOUT_BPS = 2500;      // 25% to veXF payout
+    uint256 public constant TREASURY_BPS = 1500;         // 15% to Treasury
+    uint256 public constant TOTAL_BPS = 10000;           // 100%
 
     // Contract addresses
     veXF public veXFContract;
     address public treasury;
-    BuybackBurner public buybackBurner;  // Phase 2: BuybackBurner contract
-    rXF public rXFContract;              // Phase 2: rXF contract
+    BuybackBurner public buybackBurner;
+    address public lpFundingPool;  // LP funding pool address
     
     // Timelock controller for critical operations
     address public timelock;
@@ -56,17 +54,16 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
 
     // Tracking
     uint256 public totalRevenueCollected;
-    uint256 public totalYieldDistributed;
-    uint256 public totalBuybackBurned;
-    uint256 public totalRXFMinted;
+    uint256 public totalBBBSent;              // Total sent to buyback-burn-bond
+    uint256 public totalLPFundingSent;        // Total sent to LP funding
+    uint256 public totalVeXFPayout;           // Total paid out to veXF
     uint256 public totalTreasurySent;
     
     // Monthly batch processing tracking
     uint256 public accumulatedLPFeesUSDC;        // Accumulated LP fees in USDC for monthly processing
     uint256 public lastMonthlyBatchTime;         // Timestamp of last monthly batch
     uint256 public constant MONTHLY_INTERVAL = 30 days;
-    uint256 public totalVeXFTFUELDistributed;    // Total TFUEL distributed to veXF holders
-    uint256 public totalRecycledToBonus;         // Total recycled to bonus revenue
+    uint256 public totalRecycledToBonus;         // Total recycled to bonus revenue (30% as TFUEL)
 
     // Mainnet Beta Testing Safety Limits
     uint256 public maxSwapAmount;            // Max per swap (default: 1,000 TFUEL)
@@ -81,15 +78,15 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         address indexed source
     );
     event RevenueSplit(
-        uint256 veXFYield,
-        uint256 buybackBurn,
-        uint256 rXFMint,
-        uint256 treasury
+        uint256 bbbAmount,
+        uint256 lpFundingAmount,
+        uint256 veXFAmount,
+        uint256 treasuryAmount
     );
     event VeXFSet(address indexed veXF);
     event TreasurySet(address indexed treasury);
     event BuybackBurnerSet(address indexed buybackBurner);
-    event RXFSet(address indexed rXF);
+    event LPFundingPoolSet(address indexed lpFundingPool);
     event RevenueTokenSet(address indexed token);
     event SwapLimitUpdated(uint256 maxSwapAmount, uint256 totalUserLimit);
     event PauseToggled(bool paused);
@@ -101,11 +98,9 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     event MonthlyBatchProcessed(
         uint256 indexed batchId,
         uint256 totalProcessed,
-        uint256 veXFAmount,
         uint256 recycleAmount,
         uint256 timestamp
     );
-    event VeXFTFUELDistributed(uint256 amount, address indexed recipient);
     event BonusRevenueRecycled(uint256 amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -176,60 +171,53 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
 
         emit RevenueCollected(address(revenueToken), amount, msg.sender);
 
-        // Calculate splits (Phase 2: 50% veXF yield, 25% buyback, 15% rXF, 10% treasury)
-        // Using Solidity 0.8+ checked arithmetic (overflow protection built-in)
-        uint256 veXFYieldAmount = (amount * VEXF_YIELD_BPS) / TOTAL_BPS;
-        uint256 buybackBurnAmount = (amount * BUYBACK_BURN_BPS) / TOTAL_BPS;
-        uint256 rXFMintAmount = (amount * RXF_MINT_BPS) / TOTAL_BPS;
+        // Calculate splits: 30% BBB, 30% LP funding, 25% veXF, 15% treasury
+        uint256 bbbAmount = (amount * BBB_BPS) / TOTAL_BPS;
+        uint256 lpFundingAmount = (amount * LP_FUNDING_BPS) / TOTAL_BPS;
+        uint256 veXFAmount = (amount * VEXF_PAYOUT_BPS) / TOTAL_BPS;
         uint256 treasuryAmount = (amount * TREASURY_BPS) / TOTAL_BPS;
 
         // Verify total matches (handle rounding)
-        uint256 totalSplit = veXFYieldAmount + buybackBurnAmount + rXFMintAmount + treasuryAmount;
+        uint256 totalSplit = bbbAmount + lpFundingAmount + veXFAmount + treasuryAmount;
         if (totalSplit < amount) {
-            // Add remainder to veXF yield (Phase 2)
-            veXFYieldAmount += (amount - totalSplit);
+            // Add remainder to veXF payout
+            veXFAmount += (amount - totalSplit);
         }
 
-        // Distribute to veXF yield (50% in Phase 2)
-        if (veXFYieldAmount > 0) {
-            revenueToken.safeIncreaseAllowance(address(veXFContract), veXFYieldAmount);
-            veXFContract.distributeYield(address(revenueToken), veXFYieldAmount);
-            totalYieldDistributed += veXFYieldAmount;
-        }
-
-        // Phase 2: Buyback/burn (25% in Phase 2)
-        // Transfer revenue to BuybackBurner and trigger buyback
-        if (buybackBurnAmount > 0) {
+        // Distribute to buyback-burn-bond (30%)
+        if (bbbAmount > 0) {
             require(address(buybackBurner) != address(0), "RevenueSplitter: buybackBurner not set");
-            revenueToken.safeIncreaseAllowance(address(buybackBurner), buybackBurnAmount);
-            buybackBurner.receiveRevenue(buybackBurnAmount);
-            totalBuybackBurned += buybackBurnAmount;
+            revenueToken.safeIncreaseAllowance(address(buybackBurner), bbbAmount);
+            buybackBurner.receiveRevenue(bbbAmount);
+            totalBBBSent += bbbAmount;
         }
 
-        // Phase 2: rXF mint (15% in Phase 2)
-        // Mint rXF tokens 1:1 with revenue amount (same decimals assumed)
-        // Mint to the caller who triggered the revenue split
-        if (rXFMintAmount > 0) {
-            require(address(rXFContract) != address(0), "RevenueSplitter: rXF not set");
-            // Mint rXF 1:1 with revenue amount (in same token units)
-            // Using default redemption period (365 days) and no priority flag
-            rXFContract.mint(msg.sender, rXFMintAmount, 0, false);
-            totalRXFMinted += rXFMintAmount;
+        // Send to LP funding pool (30%)
+        if (lpFundingAmount > 0) {
+            require(lpFundingPool != address(0), "RevenueSplitter: LP funding pool not set");
+            revenueToken.safeTransfer(lpFundingPool, lpFundingAmount);
+            totalLPFundingSent += lpFundingAmount;
         }
 
-        // Send to Treasury (10%)
+        // Distribute to veXF holders (25%)
+        if (veXFAmount > 0) {
+            revenueToken.safeIncreaseAllowance(address(veXFContract), veXFAmount);
+            veXFContract.distributeYield(address(revenueToken), veXFAmount);
+            totalVeXFPayout += veXFAmount;
+        }
+
+        // Send to Treasury (15%)
         if (treasuryAmount > 0) {
             revenueToken.safeTransfer(treasury, treasuryAmount);
             totalTreasurySent += treasuryAmount;
         }
 
-        emit RevenueSplit(veXFYieldAmount, buybackBurnAmount, rXFMintAmount, treasuryAmount);
+        emit RevenueSplit(bbbAmount, lpFundingAmount, veXFAmount, treasuryAmount);
     }
 
     /**
      * @dev Collect and split revenue from native token (TFUEL)
-     * Note: For Phase 2, splits according to 50% veXF, 25% buyback, 15% rXF, 10% treasury
-     * In production, swap TFUEL to USDC first, then split
+     * Splits according to: 30% BBB, 30% LP funding, 25% veXF, 15% treasury
      */
     function splitRevenueNative() external payable nonReentrant {
         require(!paused, "RevenueSplitter: contract is paused");
@@ -248,21 +236,47 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
 
         emit RevenueCollected(address(0), msg.value, msg.sender);
 
-        // Phase 1: For native token, split according to 90/10 rule
-        // Calculate splits (90% veXF, 10% treasury)
-        uint256 veXFAmount = (msg.value * VEXF_YIELD_BPS) / TOTAL_BPS;
+        // Calculate splits: 30% BBB, 30% LP funding, 25% veXF, 15% treasury
+        uint256 bbbAmount = (msg.value * BBB_BPS) / TOTAL_BPS;
+        uint256 lpFundingAmount = (msg.value * LP_FUNDING_BPS) / TOTAL_BPS;
+        uint256 veXFAmount = (msg.value * VEXF_PAYOUT_BPS) / TOTAL_BPS;
         uint256 treasuryAmount = (msg.value * TREASURY_BPS) / TOTAL_BPS;
         
         // Handle rounding
-        if (veXFAmount + treasuryAmount < msg.value) {
-            veXFAmount += (msg.value - veXFAmount - treasuryAmount);
+        uint256 totalSplit = bbbAmount + lpFundingAmount + veXFAmount + treasuryAmount;
+        if (totalSplit < msg.value) {
+            veXFAmount += (msg.value - totalSplit);
         }
 
-        // Send 90% to treasury (for now, as placeholder - in production, swap to revenue token first)
-        // TODO: In production, swap TFUEL to revenue token, then distribute to veXF
-        // For Phase 1, we send all to treasury as a placeholder until swap mechanism is implemented
-        (bool success, ) = payable(treasury).call{value: msg.value}("");
-        require(success, "RevenueSplitter: treasury transfer failed");
+        // Send BBB amount (30%)
+        if (bbbAmount > 0 && address(buybackBurner) != address(0)) {
+            (bool success, ) = address(buybackBurner).call{value: bbbAmount}("");
+            require(success, "RevenueSplitter: BBB transfer failed");
+            totalBBBSent += bbbAmount;
+        }
+
+        // Send LP funding amount (30%)
+        if (lpFundingAmount > 0 && lpFundingPool != address(0)) {
+            (bool success, ) = lpFundingPool.call{value: lpFundingAmount}("");
+            require(success, "RevenueSplitter: LP funding transfer failed");
+            totalLPFundingSent += lpFundingAmount;
+        }
+
+        // Send veXF amount (25%)
+        if (veXFAmount > 0) {
+            (bool success, ) = address(veXFContract).call{value: veXFAmount}("");
+            require(success, "RevenueSplitter: veXF transfer failed");
+            totalVeXFPayout += veXFAmount;
+        }
+
+        // Send treasury amount (15%)
+        if (treasuryAmount > 0) {
+            (bool success, ) = payable(treasury).call{value: treasuryAmount}("");
+            require(success, "RevenueSplitter: treasury transfer failed");
+            totalTreasurySent += treasuryAmount;
+        }
+
+        emit RevenueSplit(bbbAmount, lpFundingAmount, veXFAmount, treasuryAmount);
     }
 
     /**
@@ -284,7 +298,7 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     }
 
     /**
-     * @dev Set BuybackBurner address (Phase 2)
+     * @dev Set BuybackBurner address
      */
     function setBuybackBurner(address _buybackBurner) external onlyOwner {
         require(_buybackBurner != address(0), "RevenueSplitter: invalid buyback burner");
@@ -293,12 +307,12 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     }
 
     /**
-     * @dev Set rXF contract address (Phase 2)
+     * @dev Set LP funding pool address
      */
-    function setRXF(address _rXF) external onlyOwner {
-        require(_rXF != address(0), "RevenueSplitter: invalid rXF");
-        rXFContract = rXF(_rXF);
-        emit RXFSet(_rXF);
+    function setLPFundingPool(address _lpFundingPool) external onlyOwner {
+        require(_lpFundingPool != address(0), "RevenueSplitter: invalid LP funding pool");
+        lpFundingPool = _lpFundingPool;
+        emit LPFundingPoolSet(_lpFundingPool);
     }
 
     /**
@@ -369,26 +383,26 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     /**
      * @dev Get current split amounts for a given revenue amount
      * @param amount Revenue amount to calculate splits for
-     * @return veXFYield Yield amount for veXF
-     * @return buybackBurn Buyback/burn amount
-     * @return rXFMint rXF mint amount
-     * @return treasuryAmount Treasury amount
+     * @return bbbAmount BBB amount (30%)
+     * @return lpFundingAmount LP funding amount (30%)
+     * @return veXFAmount veXF payout amount (25%)
+     * @return treasuryAmount Treasury amount (15%)
      */
     function calculateSplits(uint256 amount) external pure returns (
-        uint256 veXFYield,
-        uint256 buybackBurn,
-        uint256 rXFMint,
+        uint256 bbbAmount,
+        uint256 lpFundingAmount,
+        uint256 veXFAmount,
         uint256 treasuryAmount
     ) {
-        veXFYield = (amount * VEXF_YIELD_BPS) / TOTAL_BPS;
-        buybackBurn = (amount * BUYBACK_BURN_BPS) / TOTAL_BPS;
-        rXFMint = (amount * RXF_MINT_BPS) / TOTAL_BPS;
+        bbbAmount = (amount * BBB_BPS) / TOTAL_BPS;
+        lpFundingAmount = (amount * LP_FUNDING_BPS) / TOTAL_BPS;
+        veXFAmount = (amount * VEXF_PAYOUT_BPS) / TOTAL_BPS;
         treasuryAmount = (amount * TREASURY_BPS) / TOTAL_BPS;
 
-        // Handle rounding (Phase 2: remainder goes to veXF yield)
-        uint256 total = veXFYield + buybackBurn + rXFMint + treasuryAmount;
+        // Handle rounding (remainder goes to veXF)
+        uint256 total = bbbAmount + lpFundingAmount + veXFAmount + treasuryAmount;
         if (total < amount) {
-            veXFYield += (amount - total);
+            veXFAmount += (amount - total);
         }
     }
 
@@ -409,13 +423,14 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     }
     
     /**
-     * @dev Process monthly batch: Convert 25% of accumulated LP fees to TFUEL for veXF holders,
-     *      30% recycle via burn/unwrap to bonus revenue
+     * @dev Process monthly batch: Convert 30% of accumulated LP fees to TFUEL via burn/unwrap,
+     *      send to RevSplitter for standard distribution (30% BBB, 30% LP funding, 25% veXF, 15% treasury)
      *      Note: In production, this involves:
-     *      1. USDC → ibcTFUEL burn → unwrap to TFUEL (via IBC bridge)
-     *      2. 25% distributed to veXF holders as TFUEL
-     *      3. 30% recycled back to bonus revenue pool
-     *      4. Remaining 45% stays as USDC for other protocol needs
+     *      1. Take 30% of accumulated USDC LP fees
+     *      2. USDC → ibcTFUEL on Persistence → burn → ZK bridge unwrap → TFUEL on Theta
+     *      3. Unwrapped TFUEL sent to this contract via receiveBonusRevenue()
+     *      4. Then distributed via splitRevenueNative() with standard splits
+     *      5. Remaining 70% stays as USDC in contract for other protocol operations
      * @return batchId Unique identifier for this batch
      */
     function processMonthlyBatch() external onlyOwner nonReentrant returns (uint256 batchId) {
@@ -426,36 +441,34 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
         uint256 totalToProcess = accumulatedLPFeesUSDC;
         batchId = block.timestamp;
         
-        // Calculate splits: 25% veXF, 30% recycle, 45% stays as USDC
-        uint256 veXFAmount = (totalToProcess * 2500) / 10000;      // 25%
+        // Calculate split: 30% recycle to TFUEL for RevSplitter distribution, 70% stays as USDC
         uint256 recycleAmount = (totalToProcess * 3000) / 10000;   // 30%
-        // Remaining 45% stays in contract as USDC for other protocol operations
+        // Remaining 70% stays in contract as USDC for other protocol operations
         
         // Reset accumulated fees
         accumulatedLPFeesUSDC = 0;
         lastMonthlyBatchTime = block.timestamp;
         
         // Update tracking
-        totalVeXFTFUELDistributed += veXFAmount;
         totalRecycledToBonus += recycleAmount;
         
         // Note: In production implementation:
-        // 1. veXFAmount (USDC) → Swap to ibcTFUEL on Persistence
+        // 1. recycleAmount (USDC) → Swap to ibcTFUEL on Persistence chain
         // 2. Burn ibcTFUEL on Persistence chain
         // 3. ZK bridge triggers unwrap on Theta to get TFUEL
-        // 4. Distribute TFUEL to veXF holders via veXFContract
+        // 4. Unwrapped TFUEL sent to this contract via receiveBonusRevenue()
+        // 5. Then distributed via splitRevenueNative() with standard splits:
+        //    - 30% to BBB (buyback-burn-bond)
+        //    - 30% to LP funding
+        //    - 25% to veXF payout (this is where veXF gets TFUEL)
+        //    - 15% to treasury
         //
-        // 5. recycleAmount (USDC) → Same process as above
-        // 6. Resulting TFUEL sent back to this contract as bonus revenue
-        // 7. Can be distributed in next revenue split cycle
-        //
-        // For testnet/development, these amounts are tracked but actual
+        // For testnet/development, the recycleAmount is tracked but actual
         // IBC bridge integration and TFUEL distribution happen off-chain
         
         emit MonthlyBatchProcessed(
             batchId,
             totalToProcess,
-            veXFAmount,
             recycleAmount,
             block.timestamp
         );
@@ -464,23 +477,9 @@ contract RevenueSplitter is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuard
     }
     
     /**
-     * @dev Distribute TFUEL to veXF holders (called after unwrap completes)
-     *      This is called by authorized bot/operator after the burn→unwrap cycle completes
-     * @param recipient Address to receive TFUEL (typically veXF contract or treasury for distribution)
-     */
-    function distributeVeXFTFUEL(address payable recipient) external payable onlyOwner {
-        require(msg.value > 0, "RevenueSplitter: no TFUEL to distribute");
-        require(recipient != address(0), "RevenueSplitter: invalid recipient");
-        
-        (bool success, ) = recipient.call{value: msg.value}("");
-        require(success, "RevenueSplitter: TFUEL transfer failed");
-        
-        emit VeXFTFUELDistributed(msg.value, recipient);
-    }
-    
-    /**
      * @dev Receive recycled TFUEL as bonus revenue (called after unwrap completes for recycle amount)
-     *      This TFUEL can then be split in regular revenue cycles
+     *      This TFUEL then goes through standard RevSplitter distribution via splitRevenueNative()
+     *      which gives veXF holders their 50% share
      */
     function receiveBonusRevenue() external payable {
         require(msg.value > 0, "RevenueSplitter: no bonus revenue");
