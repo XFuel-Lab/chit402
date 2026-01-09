@@ -765,3 +765,398 @@ docs/
 *Cross-referenced with: docs/WHITEPAPER.md v3.1, V3.1_QUICK_REF.md*  
 *Methodology: grep pattern matching + manual whitepaper alignment verification*
 
+---
+
+## 15. 🔴 CRITICAL: Unwrap Ghost Analysis & Peg Symmetry Risk
+
+**Analysis Date:** January 9, 2026  
+**Scope:** UnwrapFromBurn, yieldRecycleAmount, 70/30 split mechanics, IBC treasury, RevSplitter, depeg risks
+
+### 15.1 Executive Summary: Asymmetric Peg Risk 🚨
+
+**CRITICAL FINDING:** The current unwrap mechanism creates a **fundamental peg asymmetry** that violates the 1:1 backing promise of ibcTFUEL.
+
+**The Problem:**
+- **Deposit:** User deposits 100 TFUEL → 0.5% fee = 99.5 TFUEL locked → 99.5 ibcTFUEL minted ✅ **Symmetric**
+- **Unwrap:** User burns 99.5 ibcTFUEL → Only receives 70% (69.65 TFUEL) ❌ **ASYMMETRIC**
+
+**Peg Violation:**
+```
+Expected: 1 ibcTFUEL = 1 TFUEL (minus 0.5% fee)
+Actual:   1 ibcTFUEL = 0.70 TFUEL on redemption
+Loss:     -30% permanent haircut on unwrap
+```
+
+This is **NOT a sustainable peg mechanism**. Users will lose confidence when they realize burning ibcTFUEL only returns 70% of backing.
+
+### 15.2 Detailed Findings
+
+#### Finding 1: UnwrapFromBurn References (184 matches)
+
+**Contract Implementation:**
+```solidity
+// contracts/SubVault.sol:190-192
+uint256 yieldRecycleAmount = (amount * YIELD_RECYCLE_BPS) / BASIS_POINTS_DENOMINATOR;
+uint256 netToRecipient = amount - yieldRecycleAmount;
+// YIELD_RECYCLE_BPS = 3000 (30%)
+```
+
+**Critical Files:**
+| File | Lines | Context | Risk Level |
+|------|-------|---------|------------|
+| `contracts/SubVault.sol` | 27, 145, 191 | **PRODUCTION CODE** - 30% recycle on unwrap | 🔴 **CRITICAL** |
+| `contracts/VaultFactory.sol` | Calls SubVault.unwrapFromBurn() | Factory triggers asymmetric unwrap | 🔴 **CRITICAL** |
+| `test/VaultFactory.Comprehensive.test.cjs` | 8, 417-661 | Tests **validate** 70/30 split as correct | 🟡 **HIGH** |
+| `docs/ZK_BRIDGE_IMPLEMENTATION.md` | 56, 75, 122 | Docs explicitly state "70% to user, 30% recycle" | 🟡 **HIGH** |
+
+**Test Evidence of Intentional Design:**
+```javascript
+// test/VaultFactory.Comprehensive.test.cjs:266-273
+const yieldRecycleAmount = (netAmount * 3000n) / 10000n;
+expect(parsedEvent.args.yieldRecycleAmount).to.equal(yieldRecycleAmount);
+```
+
+#### Finding 2: yieldRecycleAmount Tracking (56 matches)
+
+**Purpose:** Track 30% retention for "yield loop" on both deposit and unwrap events.
+
+**Issues:**
+1. **On Deposit:** 30% flag is informational - all TFUEL stays in vault ✅ **Not harmful**
+2. **On Unwrap:** 30% is **physically retained**, user gets 70% ❌ **PEG BREAKING**
+
+**Event Evidence:**
+```solidity
+// contracts/SubVault.sol:69-75
+event UnwrapFromBurn(
+    bytes32 indexed burnTxHash,
+    address indexed recipient,
+    uint256 amount,              // 100 TFUEL
+    uint256 netAmount,           // 70 TFUEL (sent to user)
+    uint256 yieldRecycleAmount   // 30 TFUEL (kept in protocol)
+);
+```
+
+#### Finding 3: 70% / 30% Split Documentation (656 matches total)
+
+**Legitimate Uses (Ferrari Tokenomics - NOT related to unwrap):**
+- ✅ BBB allocation: 30% revenue, 70% burned, 30% to LP (docs/WHITEPAPER.md:577)
+- ✅ LP funding: 30% revenue allocation (docs/WHITEPAPER.md:617)
+- ✅ veXF yields: 70% to holders, 30% reverse-burn (tokenomics model)
+
+**Problematic Uses (Unwrap mechanism):**
+- ❌ STEP5_E2E_BRIDGE_TEST_GUIDE.md:59 - "70% (0.035 TF) to user"
+- ❌ scripts/deploy-keystore.cjs:322 - "verify 70% to recipient"
+- ❌ run-hybrid-deploy.sh:283 - "Unwrap: netAmount (70%), yieldRecycleAmount (30%)"
+- ❌ docs/ZK_BRIDGE_IMPLEMENTATION.md:73 - "70% sent to recipient, 30% stays for yield"
+
+**Whitepaper Contradiction:**
+```markdown
+// docs/WHITEPAPER.html:991
+Q: Can I unwrap ibcTFUEL back to TFUEL?
+A: Yes, burn your ibcTFUEL on Persistence to unwrap TFUEL on Theta. 
+   You receive 70% directly, 30% is recycled to the protocol.
+```
+
+**This answer is WRONG.** A 30% haircut on unwrap will cause:
+- Mass exodus when users realize they lose 30%
+- Arbitrage attacks (mint on L1, never unwrap)
+- Depeg spiral (ibcTFUEL trades at 0.70× TFUEL)
+
+#### Finding 4: IBC Treasury - NO MATCHES ✅
+
+**Result:** Zero references to "IBC treasury" - this is not a real component.
+
+**Actual Revenue Flow:**
+```
+Deposit Fees (0.5%) → RevSplitter → Ferrari Split (30/30/25/15)
+                                     ├─ 30% BBB
+                                     ├─ 30% LP Funding
+                                     ├─ 25% veXF Yields
+                                     └─ 15% Treasury
+```
+
+No "IBC treasury" exists - unwrap 30% recycle is **not sent to treasury**, it stays in SubVault.
+
+#### Finding 5: RevSplitter References (1,105 matches)
+
+**Valid Architecture (NOT related to unwrap issue):**
+- ✅ RevenueSplitter receives 0.5% deposit fees
+- ✅ Splits revenue via Ferrari tokenomics (30/30/25/15)
+- ✅ 30% reverse-burn loop (veXF yields → RevSplitter)
+
+**No Connection to Unwrap Issue:**
+The 30% unwrap retention is **separate** from RevSplitter. Unwrap funds stay in SubVault, not routed anywhere.
+
+**Code Evidence:**
+```solidity
+// contracts/SubVault.sol:198-199
+// Yield recycle portion stays in vault for future yield operations
+// Could be forwarded to a yield strategy contract in production
+```
+
+**Status:** 🟡 **Vague** - No production strategy exists for using retained 30%.
+
+#### Finding 6: Depeg References (25 matches)
+
+**Existing Depeg Protections:**
+| Protection | Status | Effectiveness vs 30% Haircut |
+|------------|--------|------------------------------|
+| Arbitrage incentives | 📝 Documented | ❌ **Useless** - arbitrage can't fix 30% loss |
+| Circuit breaker (0.5% deviation) | 📝 Planned | ❌ **Triggers immediately** - 30% is 60× threshold |
+| Treasury buyback (0.98:1 floor) | 📝 Planned | ❌ **Insufficient** - 0.70:1 is the real floor |
+| 30% LP funding grows depth | ✅ Valid | ⚠️ **Irrelevant** - no LP depth saves 30% haircut |
+
+**Whitepaper Depeg Claims:**
+```markdown
+// risk-mitigation-roadmap.md:740
+### E-01: ibcTFUEL Depeg
+- If ibcTFUEL < 1 TFUEL: Arbitrageurs buy ibcTFUEL, burn for TFUEL (profit = depeg %)
+```
+
+**Reality Check:**
+- Current mechanism: Buy ibcTFUEL at 0.90, burn, receive 0.70 TFUEL = **22% LOSS** (not profit)
+- Arbitrage is **backwards** - incentivizes never unwrapping
+
+### 15.3 Root Cause Analysis
+
+**Misaligned Design Goals:**
+
+1. **Yield Loop Concept (Good):** Protocol wants to retain some funds for yield generation
+2. **Implementation (Bad):** Applied retention to **unwrap** instead of **yield performance fees**
+
+**What Should Happen:**
+```
+User Flow:
+1. Deposit 100 TFUEL → 0.5% fee → 99.5 TFUEL locked
+2. Mint 99.5 ibcTFUEL on Persistence
+3. Burn 99.5 ibcTFUEL → Unlock 99.5 TFUEL (1:1 symmetry) ✅
+4. Yield generated → 30% performance fee to protocol ✅
+
+Current (Broken) Flow:
+1. Deposit 100 TFUEL → 0.5% fee → 99.5 TFUEL locked
+2. Mint 99.5 ibcTFUEL on Persistence
+3. Burn 99.5 ibcTFUEL → Unlock 69.65 TFUEL (0.70:1 asymmetry) ❌
+4. No yield performance fee - already took 30% on unwrap ❌
+```
+
+**The 30% recycle should come from YIELD, not PRINCIPAL.**
+
+### 15.4 Impact Assessment
+
+#### Risk 1: Immediate Depeg Spiral 🔴 CRITICAL
+**Likelihood:** 100% (on first unwrap)  
+**Impact:** Total confidence loss
+
+**Scenario:**
+```
+Day 1: Launch, 100 users deposit 1000 TFUEL each = 100K TVL
+Day 7: First user tries unwrap: Burns 995 ibcTFUEL, receives 696.5 TFUEL
+Day 8: Reddit post: "XFuel is a scam - only got 70% back"
+Day 9: Bank run: All users try to unwrap
+Day 10: ibcTFUEL trades at 0.65× TFUEL (below even 70% floor due to panic)
+```
+
+#### Risk 2: Arbitrage Deadlock 🟡 HIGH
+**Attack Vector:**
+
+```python
+# Profitable strategy: Never unwrap
+1. Mint 1000 ibcTFUEL (costs 1005 TFUEL)
+2. Stake in Dexter LP, earn yield
+3. Never burn ibcTFUEL (burning = 30% loss)
+4. Sell ibcTFUEL on secondary market instead
+
+Result: SubVault has 995 TFUEL locked forever, no unwrap demand
+```
+
+#### Risk 3: Regulatory Classification 🟡 MEDIUM
+**Issue:** 30% unwrap penalty may classify ibcTFUEL as:
+- **Not a stablecoin** (1:1 peg broken)
+- **Security** (yield-bearing asset with lockup penalty)
+- **Ponzi** (early users get 1:1, late users subsidize)
+
+### 15.5 Recommended Resolutions 🔧
+
+#### Option A: Remove 30% Split Entirely (RECOMMENDED) ✅
+
+**Changes:**
+```solidity
+// contracts/SubVault.sol - BEFORE
+uint256 yieldRecycleAmount = (amount * YIELD_RECYCLE_BPS) / BASIS_POINTS_DENOMINATOR;
+uint256 netToRecipient = amount - yieldRecycleAmount;
+
+// contracts/SubVault.sol - AFTER
+uint256 netToRecipient = amount; // 100% returned
+// Remove YIELD_RECYCLE_BPS from unwrap logic
+```
+
+**Impacts:**
+- ✅ Restores 1:1 peg symmetry
+- ✅ Eliminates depeg risk
+- ✅ Aligns with stablecoin best practices
+- ⚠️ Need alternate yield revenue source
+
+**Yield Revenue Alternative:**
+```solidity
+// Charge performance fee on YIELD, not principal
+function distributeYieldFees(uint256 yieldGenerated) external {
+    uint256 protocolFee = (yieldGenerated * 3000) / 10000; // 30% of yield
+    uint256 userYield = yieldGenerated - protocolFee;
+    // Send userYield to ibcTFUEL holders via IBC
+    // Send protocolFee to RevSplitter
+}
+```
+
+#### Option B: Make 30% Split Optional (Time-Lock Model)
+
+**Concept:** Users choose between:
+- **Instant Unwrap:** 70% immediate (30% penalty)
+- **Delayed Unwrap:** 100% after 7 days (no penalty)
+
+**Issues:**
+- 🟡 Complex UX (users confused by two unwrap types)
+- 🟡 Still has depeg risk (instant unwrap floor at 0.70)
+- 🔴 Game theory: Everyone uses delayed, 30% recycle = 0
+
+#### Option C: Shift 30% to IBC Yields (BEST LONG-TERM) ✅
+
+**Architecture:**
+```
+┌─────────────┐
+│ User Deposit│ → 100 TFUEL
+└──────┬──────┘
+       │
+       ├─→ 0.5% fee to RevSplitter (0.5 TFUEL)
+       ├─→ 99.5 TFUEL locked in SubVault
+       └─→ Mint 99.5 ibcTFUEL on Persistence
+       
+┌─────────────────┐
+│ ibcTFUEL in LP  │ → Earns 8% APY on Dexter
+└──────┬──────────┘
+       │
+       ├─→ 5.6% APY to user (70% of yield)
+       ├─→ 2.4% APY to protocol (30% of yield)
+       └─→ Principal untouched (1:1 unwrap preserved)
+
+┌─────────────┐
+│ User Unwrap │ → Burns 99.5 ibcTFUEL
+└──────┬──────┘
+       │
+       └─→ Unlocks 99.5 TFUEL (1:1 symmetry) ✅
+```
+
+**Benefits:**
+- ✅ 1:1 peg maintained
+- ✅ 30% revenue still collected (from yield, not principal)
+- ✅ Aligns with Cosmos LSTfi best practices (Stride, pSTAKE model)
+- ✅ Sustainable long-term
+
+**Implementation:**
+```rust
+// cosmwasm-contracts/persistence-minter/src/contract.rs
+pub fn distribute_yield(deps: DepsMut, yield_amount: Uint128) -> Result<Response> {
+    let protocol_share = yield_amount.multiply_ratio(30u128, 100u128);
+    let user_share = yield_amount - protocol_share;
+    
+    // Send protocol_share to RevSplitter via IBC
+    // Distribute user_share to ibcTFUEL holders proportionally
+}
+```
+
+### 15.6 Files Requiring Updates
+
+#### High Priority (Production Code) 🔴
+
+| File | Lines | Change Required |
+|------|-------|-----------------|
+| `contracts/SubVault.sol` | 27, 191-192 | Remove YIELD_RECYCLE_BPS from unwrap (set to 0) |
+| `contracts/VaultFactory.sol` | unwrapFromBurn call | Update event expectations |
+| `test/VaultFactory.Comprehensive.test.cjs` | 266-273 | Update test to expect 100% unwrap |
+| `test/VaultFactory.ZKBridge.test.cjs` | 267, 342 | Update test to expect 100% unwrap |
+| `test/ZKBridge.Integration.test.cjs` | 127-133 | Update test to expect 100% unwrap |
+
+#### Medium Priority (Documentation) 🟡
+
+| File | Lines | Change Required |
+|------|-------|-----------------|
+| `docs/ZK_BRIDGE_IMPLEMENTATION.md` | 56, 73, 122 | Update to "100% unwrap (no recycle on principal)" |
+| `docs/ZK_BRIDGE_ARCHITECTURE.md` | 160, 227, 239 | Update flow diagrams |
+| `docs/WHITEPAPER.html` | 991 | Correct FAQ answer |
+| `STEP5_E2E_BRIDGE_TEST_GUIDE.md` | 59, 133 | Update expected values |
+| `scripts/deploy-keystore.cjs` | 322 | Update test instructions |
+
+#### Low Priority (Simulation Scripts) 🟢
+
+| File | Lines | Change Required |
+|------|-------|-----------------|
+| `scripts/simulate-hybrid-flow.cjs` | 317, 324 | Update console.log outputs |
+| `run-hybrid-deploy.sh` | 283 | Update echo statements |
+| `run-hybrid-deploy.bat` | 267 | Update echo statements |
+
+### 15.7 Migration Path
+
+#### Phase 1: Emergency Fix (Pre-Mainnet) - 1 day
+1. ✅ Set `YIELD_RECYCLE_BPS = 0` for unwrap (keep for deposit tracking)
+2. ✅ Update tests to expect 100% unwrap
+3. ✅ Deploy to testnet, verify peg symmetry
+
+#### Phase 2: Documentation Cleanup - 2 days
+4. ✅ Update all docs to remove "70% unwrap" language
+5. ✅ Add explainer: "30% comes from yield, not principal"
+6. ✅ Update whitepaper FAQ
+
+#### Phase 3: Yield Strategy Implementation - 2 weeks
+7. ✅ Build Cosmos-side yield distribution contract
+8. ✅ Implement 30% performance fee on Dexter LP yields
+9. ✅ Test end-to-end: deposit → yield → fee collection → unwrap
+
+### 15.8 Success Metrics
+
+**Before (Current - Broken):**
+- ibcTFUEL:TFUEL peg: 0.70:1 (30% haircut)
+- Unwrap incentive: NEGATIVE (lose 30%)
+- Confidence: 0% (exit scam optics)
+
+**After (Fixed):**
+- ibcTFUEL:TFUEL peg: 0.995:1 (0.5% fee only)
+- Unwrap incentive: NEUTRAL (minimal loss)
+- Confidence: 95%+ (standard bridge behavior)
+
+### 15.9 Isolated Files Moved to Legacy Archive ✅
+
+**Completed:**
+- ✅ `VAULTFACTORY_IMPLEMENTATION_SUMMARY.md` → `legacy-archive/VAULTFACTORY_IMPLEMENTATION_SUMMARY.md`
+
+**Rationale:** This file documents the 70/30 split as a "feature" rather than recognizing it as a peg risk. Archiving to prevent confusion during refactor.
+
+### 15.10 Alignment with Whitepaper v3.1
+
+**Current Whitepaper Claims:**
+```markdown
+Section 1.2: "Trustless ZK Bridge + Persistence LSTfi"
+Section 3.2: "2^-128 soundness eliminates trust assumptions"
+```
+
+**Contradiction:**
+A 30% unwrap penalty **undermines trustlessness** by making redemption economically irrational. Users must "trust" they'll never need to unwrap, which defeats ZK bridge trustlessness.
+
+**Corrected Architecture:**
+```
+ZK Bridge Trustlessness:
+├─ Cryptographic: Groth16 proofs (2^-128 soundness) ✅
+├─ Economic: 1:1 redemption symmetry ❌ BROKEN
+└─ Operational: Instant <4s settlements ✅
+```
+
+**Fix Required:** Economic trustlessness = 1:1 unwrap (0.5% fee acceptable, 30% is not).
+
+---
+
+**Report Addendum Status:** ✅ Complete  
+**Critical Findings:** 1 (peg asymmetry)  
+**High Priority Fixes:** 5 files (contracts + tests)  
+**Recommended Action:** **IMMEDIATE** - Do not deploy to mainnet until unwrap symmetry restored  
+**Estimated Fix Time:** 1 day (code) + 2 days (docs) + 2 weeks (yield strategy)
+
+**Risk Level if Unfixed:** 🔴 **CATASTROPHIC** - Guaranteed depeg spiral on first unwrap
+
