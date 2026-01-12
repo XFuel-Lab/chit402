@@ -551,24 +551,36 @@ XFuel leverages Cosmos IBC (Inter-Blockchain Communication) for native interoper
 
 ## 5. Ferrari Hybrid Tokenomics
 
-### 5.1 The Ferrari Model
+### 5.1 The Ferrari Model — Final Dial-In
 
-Named for **precision engineering**, the Ferrari model balances four forces like pistons in a high-performance engine:
+Named for **precision engineering**, the Ferrari model balances five forces like a finely-tuned V8 engine. After extensive comparison with alternative models, this configuration emerged as **simpler, more ZK-integrated, and more sustainable** than competing approaches:
 
 1. **Deflation (BBB - 30%)**: Buyback-Burn-Boost reduces XF supply → scarcity → price appreciation
-2. **Liquidity (LP Funding - 30%)**: Deepens Dexter pools → less slippage → better UX → more users
-3. **Yields (veXF - 25%)**: Direct USDC rewards → incentivizes locks → reduces sell pressure
-4. **Innovation (Treasury - 15%)**: Funds R&D, integrations → new features → more revenue
+2. **Liquidity (LP Funding - 27.5%)**: Deepens Dexter pools → less slippage → better UX → more users  
+3. **Yields (veXF - 25%)**: Direct TFUEL/USDC rewards → incentivizes locks → reduces sell pressure
+4. **Innovation (Treasury - 12.5%)**: Funds R&D, integrations → new features → more revenue
+5. **Incentives (rXF - 5% capped)**: Limited strategic allocations for growth
 
-Unlike single-purpose models (100% to treasury or 100% to LPs), Ferrari **compounds value** by reinvesting in all four growth levers simultaneously.
+**Why This Configuration Wins:**
+
+| Criteria | Old Phase System | Alternative Models | **Ferrari Final** |
+|----------|------------------|--------------------|--------------------|
+| **Simplicity** | Complex phase transitions | Too many allocations | ✅ **5 clean categories** |
+| **ZK Integration** | Added later | Not considered | ✅ **Built-in (reverse-burn loop)** |
+| **LP Growth Speed** | Slow | Medium | ✅ **Fast (27.5% + reverse-burn)** |
+| **Sustainability** | Manual adjustments | One-time treasuries | ✅ **Self-compounding** |
+| **Flexibility** | Rigid | Overly complex | ✅ **rXF for strategic needs** |
+
+Unlike single-purpose models (100% to treasury or 100% to LPs), Ferrari **compounds value** by reinvesting in all five growth levers simultaneously while maintaining simplicity.
 
 ### 5.2 Revenue Distribution (30/30/25/15)
 
 **Protocol Revenue Sources:**
 
 - Bridge fees (0.5% on TFUEL deposits)
-- Swap fees (0.3% on LP routing)
+- Swap fees (0.3% on LP routing)  
 - Yield performance fees (3-5% on LP profits)
+- Monthly LP fee recycling (30% of Persistence-side yields → TFUEL)
 
 **Distribution:**
 
@@ -576,41 +588,71 @@ Unlike single-purpose models (100% to treasury or 100% to LPs), Ferrari **compou
 |------------|---|----------|---------------------------|
 | **BBB** | 30% | 70% burned, 30% paired with TFUEL to LP | $30K: Burn $21K XF, Add $9K to XF/TFUEL LP |
 | **LP Funding** | 30% | Add to Dexter pools (stkXPRT, milkTIA) | $30K: Deepen ibcTFUEL/stkXPRT Superfluid pool |
-| **veXF Yields** | 25% | Distribute USDC to veXF holders | $25K: 70% to holders ($17.5K), 30% reverse-burn ($7.5K) |
+| **veXF Yields** | 25% | Distribute TFUEL/USDC to veXF holders | $25K: Direct payout to locked veXF holders |
 | **Treasury** | 15% | Grants, audits, integrations | $15K: 3 vaults (Builder/Acquisition/Moonshot) |
 
-### 5.3 The 30% Reverse-Burn Loop
+**Total:** 100% | **All flows auditable via ZK bridge events**
 
-**Key Innovation**: 30% of veXF yields **recirculate back to the RevenueSplitter**, creating a compounding flywheel.
+**Note:** rXF (5% of total supply) is a **separate treasury-minted allocation**, not deducted from revenue. See §5.5 for details.
 
-**Mechanics:**
+### 5.3 The 30% Reverse-Burn Loop (ZK Integration)
+
+**Key Innovation**: 30% of monthly LP fees collected on Persistence **reverse-burn back to Theta RevenueSplitter** via the ZK bridge, creating a compounding flywheel that reinforces peg integrity.
+
+**Mechanics (Full ZK Cycle):**
 
 ```
-Month 1: $100K revenue
-├─ veXF allocation: $25K (25%)
-├─ Distributed to holders: $17.5K (70%)
-└─ Reverse-burn: $7.5K (30%) → back to RevenueSplitter
+1. Monthly LP Fee Collection (Persistence Side):
+   ├─ IBCTreasury.sol accumulates USDC LP fees from Dexter pools
+   ├─ processMonthlyBatch(): 30% marked for reverse-burn
+   └─ 70% retained for Persistence-side rebalancing/growth
 
-Month 2: $107.5K effective revenue (+7.5%)
-├─ veXF allocation: $26.875K
-├─ Distributed: $18.8K
-└─ Reverse-burn: $8.06K → back to RevenueSplitter
+2. Reverse-Burn Cycle (Cross-Chain):
+   ├─ 30% USDC → Swap to ibcTFUEL on Persistence
+   ├─ Burn ibcTFUEL (reduces supply, strengthens peg)
+   ├─ ZK bridge triggers SubVault.unwrapFromBurn()
+   └─ 100% TFUEL unlocked to RevenueSplitter (fee-free for peg integrity)
 
-Month 3: $115.56K effective revenue (+15.56%)
-...
+3. RevenueSplitter Distribution (Theta Side):
+   ├─ Receives unwrapped TFUEL via receiveBonusRevenue()
+   └─ Distributes via standard 30/27.5/25/12.5/5 split
+       ├─ 30% → BBB (buyback/burn more XF)
+       ├─ 27.5% → LP Funding (deeper Dexter pools)
+       ├─ 25% → veXF holders (TFUEL yields)
+       ├─ 12.5% → Treasury
+       └─ 5% → rXF allocations (capped)
 ```
 
-**Effect:**
+**Compound Effect:**
 
-- Revenue compounds ~7.5% per cycle
-- After 12 months: **~138% of base revenue**
-- After 24 months: **~290% of base revenue** (before organic growth)
+```
+Month 1: $100K base revenue
+├─ Persistence LP fees: $30K collected
+├─ Reverse-burn (30%): $9K → $9K TFUEL to RevenueSplitter
+└─ Effective revenue: $109K (+9%)
 
-**Why This Works:**
+Month 2: $109K effective revenue
+├─ Persistence LP fees: $32.7K collected  
+├─ Reverse-burn: $9.81K → TFUEL
+└─ Effective revenue: $118.81K (+18.81%)
 
-- veXF holders earn USDC (no XF sell pressure)
-- 30% recirculation funds more BBB, LP, Treasury
-- More LP depth → more volume → more revenue → repeat
+Month 12: ~$230K effective revenue (+130% from compounding)
+├─ Deep Dexter pools (low slippage)
+├─ Strong TFUEL peg (regular burn cycles)
+└─ Growing veXF yields (attracts more lockers)
+```
+
+**Why This Works (vs Traditional Bridges):**
+
+| Feature | Traditional Bridge | **Ferrari ZK Reverse-Burn** |
+|---------|-------------------|----------------------------|
+| **Peg Integrity** | Relies on arbitrage bots | ✅ **Built-in burn mechanism** |
+| **Fee Recycling** | Fees lost to bridge operators | ✅ **30% returns to protocol** |
+| **LP Compounding** | External incentives needed | ✅ **Self-funding (27.5% + reverse)** |
+| **veXF Yield Source** | Separate treasury/emissions | ✅ **Real yield from reverse-burn** |
+| **Simplicity** | Complex multi-party coordination | ✅ **Automated ZK triggers** |
+
+**Security Note:** Reverse-burn unwraps are **100% unlocked** (no 70/30 split) to maintain 1:1 peg integrity. Backend bots monitor `UnwrapFromBurnTriggered` events for verification.
 
 ### 5.4 LP Compounding Focus
 
@@ -630,30 +672,100 @@ Month 1: $30K LP funding → Deepen ibcTFUEL/stkXPRT pool
 ├─ More volume routed through XFuel
 └─ More swap fees collected
 
-Month 2: $30K + $7.5K reverse-burn = $37.5K LP funding
+Month 2: $30K + $9K reverse-burn = $39K LP funding
 ├─ Even deeper liquidity
 └─ More users onboarded (less slippage)
 
-Month 12: ~$138K cumulative LP funding
+Month 12: ~$350K cumulative LP funding (with compounding)
 ├─ Deep, stable pools
 └─ XFuel becomes primary Theta → Persistence gateway
 ```
 
-### 5.5 Comparison to Traditional Models
+### 5.5 Limited rXF (5% Cap) - Treasury-Minted Strategic Allocation
+
+**Purpose**: Unlike old rXF (15% ongoing from revenue), new rXF is **treasury-minted with hard 5M cap** for strategic growth.
+
+**Allocation (5M total, assuming 100M XF supply):**
+
+| Category | Amount | % of Supply | Use Case |
+|----------|--------|-------------|----------|
+| **Early Believers** | 2.5M rXF | 2.5% | Reward community members, testnet participants |
+| **Governance Incentives** | 2.5M rXF | 2.5% | Voter rewards, active governance participation |
+| **Total** | 5M rXF | 5% | **HARD CAP** - no ongoing mints |
+
+**Mechanics (Same as Old rXF - Simplified):**
+
+- **Soulbound NFT**: Non-transferable (prevents speculation)
+- **+4x veXF Boost**: When locked for 365 days
+- **12-Month Redemption**: Redeemable 1:1 for XF after 12 months
+- **Minting Authority**: InnovationTreasury.sol only (not RevenueSplitter)
+
+**Comparison to Old rXF.sol:**
+
+| Feature | Old rXF (15% Revenue) | **New Limited rXF (5% Cap)** |
+|---------|----------------------|---------------------------|
+| **Minting Source** | RevenueSplitter (ongoing) | ✅ **Treasury (one-time)** |
+| **Total Supply** | Unlimited (grows with revenue) | ✅ **5M hard cap** |
+| **Complexity** | Ongoing tracking, fee splits | ✅ **Simple: mint & done** |
+| **veXF Boost** | +4x on lock | ✅ **Same +4x boost** |
+| **Redemption** | 12 months | ✅ **Same 12-month period** |
+| **Use Case** | Broad distribution | ✅ **Strategic growth only** |
+
+**Why This Works:**
+
+- **Simplicity**: No ongoing minting from revenue (keeps 30/30/25/15 clean)
+- **Strategic**: Reserved for early believers and governance participation
+- **Limited**: 5% cap prevents dilution
+- **Incentive-Aligned**: +4x boost encourages long-term locking
+
+**Risk Mitigation:**
+
+- **Incentive Complexity**: Mitigated by hard 5M cap - if rXF underperforms, only affects strategic allocation
+- **Distribution Transparency**: All mints via InnovationTreasury with governance oversight
+- **No Revenue Impact**: Treasury-funded, not revenue-funded (veXF yields unchanged at 25%)
+
+### 5.6 Comparison to Traditional Models
 
 | Feature | 100% Treasury | 100% LPs (Uniswap) | 50/50 (Curve) | **Ferrari 30/30/25/15** |
 |---------|---------------|---------------------|---------------|------------------------|
 | **LP Depth Growth** | None | Slow | Medium | **Fast (30% + reverse-burn)** |
 | **Deflation** | None/Manual | None | None | **Automated (70% BBB burned)** |
-| **Holder Yields** | Emissions (inflationary) | None | Vote bribes | **USDC direct (25%)** |
+| **Holder Yields** | Emissions (inflationary) | None | Vote bribes | **TFUEL direct (25%)** |
 | **Sustainability** | Depletes over time | Fee-dependent | Self-sustaining | **Compounding (30% loop)** |
 | **Treasury** | 100% (often misspent) | None | None | **15% (focused R&D)** |
+| **Strategic Incentives** | Ad-hoc | None | Complex bribes | **5% rXF cap (treasury-minted, clean)** |
 
 ---
 
 ## 6. Governance & veXF
 
-### 6.1 veXF Token
+### 6.1 XF Token
+
+**XF** is the native utility and governance token of XFuel Protocol.
+
+**Total Supply**: 100,000,000 XF
+
+**Distribution:**
+
+| Allocation | Amount | Vesting | Notes |
+|------------|--------|---------|-------|
+| **Community & Users** | 60M (60%) | None | Liquidity mining, airdrops, ecosystem rewards |
+| **Team & Advisors** | 20M (20%) | **1yr cliff, 4yr linear** | Long-term alignment, prevents dumps |
+| **Early Investors** | 10M (10%) | **1yr cliff, 4yr linear** | Seed/strategic rounds, aligned incentives |
+| **Treasury Reserve** | 10M (10%) | None | Protocol-controlled for partnerships, emergencies |
+
+**Vesting Schedule Detail:**
+- **1-year cliff**: No tokens vest until 12 months post-launch
+- **4-year linear**: After cliff, tokens vest linearly over 48 months (monthly unlocks)
+- **Example**: 1M allocation → 0 at month 0-12, then ~20,833 XF/month for months 13-60
+
+**Use Cases:**
+
+1. **Lock for veXF**: Earn governance power + yield share (25% of revenue)
+2. **LP Provision**: Provide liquidity on Theta/Persistence DEXs
+3. **BBB Target**: 30% of revenue buybacks/burns XF (deflationary pressure)
+
+### 6.2 veXF Token
 
 **veXF** (vote-escrowed XF) is the non-transferable governance token earned by locking XF for 1-4 years.
 
@@ -667,7 +779,7 @@ Month 12: ~$138K cumulative LP funding
 **Bonus Multipliers (stackable):**
 
 - **Theta Pulse Proof**: +1× to +3× (prove Edge Node earnings via Theta Guardian status)
-- **rXF Lock**: +4× (lock revenue receipts for 365 days)
+- **rXF Holdings**: +4× (hold limited rXF from treasury, soulbound NFT)
 - **LP Provider**: +0.5× (provide >$10K liquidity to Dexter ibcTFUEL pools)
 
 **Maximum Multiplier: 11.5×**
@@ -677,13 +789,13 @@ Month 12: ~$138K cumulative LP funding
 ```
 10,000 XF locked 4 years           = 40,000 veXF (base)
 + Tier 3 Theta Pulse Proof         = +30,000 veXF
-+ rXF lock (past yields)           = +40,000 veXF
++ rXF holdings (treasury-minted)   = +40,000 veXF
 + LP Provider (>$10K in pool)      = +5,000 veXF
 ───────────────────────────────────
 TOTAL                              = 115,000 veXF (11.5× multiplier)
 ```
 
-### 6.2 Governance Powers
+### 6.3 Governance Powers
 
 veXF holders vote on (1 veXF = 1 vote):
 
@@ -701,44 +813,98 @@ veXF holders vote on (1 veXF = 1 vote):
    - Grant approvals ($5K-$50K per grant)
    - Partnership/acquisition proposals
    - Audit and security budget
+   - **rXF minting decisions** (within 5M cap, requires governance approval for large allocations)
 
 4. **Governance Extras** (Monthly Opt-In):
    - Vote on bonus reward structures
    - Participate in milestone NFT raffles
    - Early access to new features
+   - **Earn rXF incentives** (from 2.5M governance allocation pool)
 
-### 6.3 Governance Extras (Monthly Opt-In)
-
-**Budget**: 5-10% of LP funding revenue per month
-
-**Reward Options** (voted by community):
-
-1. **NFT Lottery**: 10-15 limited-edition governance NFTs raffled to active voters
-2. **Bonus Airdrops**: Extra 10% veXF yield for voters
-3. **Milestone Tokens**: XF bonuses when TVL hits targets ($5M, $10M, $25M)
-4. **Early Access**: Beta test new LST integrations, advanced charts
-
-**Eligibility**: Must vote on ≥1 proposal per month
+**Eligibility for rXF Incentives**: Must vote on ≥1 proposal per month
 
 **Target Participation**: 50-60% (vs 10-15% industry average)
 
-### 6.4 rXF Revenue Receipts
+### 6.4 rXF Limited Allocation (5% Cap) - Treasury-Minted
 
-**rXF tokens** represent claims on past protocol revenue, minted 1:1 when veXF yields are distributed.
+**rXF tokens** are **treasury-minted soulbound NFTs** with a hard 5M cap (5% of 100M supply), allocated for strategic growth.
+
+**Critical Note**: rXF is **NOT deducted from revenue**. The 30/30/25/15 split remains unchanged. This is a separate one-time treasury allocation.
+
+**Key Differences from Old rXF:**
+
+| Feature | Old rXF (Deprecated) | **New Limited rXF** |
+|---------|---------------------|---------------------|
+| **Source** | 15% of revenue (ongoing) | ✅ **Treasury mint (one-time)** |
+| **Cap** | Unlimited | ✅ **5M hard cap** |
+| **Transferable** | Yes (tradeable) | ✅ **No (soulbound NFT)** |
+| **Minting** | RevenueSplitter auto-mints | ✅ **InnovationTreasury only** |
+| **Revenue Impact** | Reduced veXF yields by 15% | ✅ **ZERO (treasury-funded)** |
+| **veXF Boost** | +4x on 365-day lock | ✅ **+4x automatic (when held)** |
+| **Redemption** | 1:1 for XF after 12 months | ✅ **Same 1:1 redemption** |
+
+**Allocation (5M Total):**
+
+1. **Early Believers (2.5M)**:
+   - Testnet participants who helped validate the ZK bridge
+   - Community builders and content creators
+   - Long-term supporters from pre-launch phase
+   - Governance-approved distributions (large allocations >10K require vote)
+
+2. **Governance Incentives (2.5M)**:
+   - Active voters (participate in ≥1 proposal/month)
+   - Quality proposal creators (community-voted)
+   - Security researchers (bug bounty rewards)
+   - Ecosystem contributors (integrations, partnerships)
 
 **Mechanics:**
 
-- User earns $100 veXF yield → Receives 100 rXF tokens + $100 USDC
-- rXF can be:
-  - **Locked 365 days** → +4× veXF multiplier
-  - **Traded** on Dexter (creates revenue futures market)
-  - **Redeemed** for USDC (if unlocked, burns rXF)
+- **Soulbound NFT**: Cannot be transferred or sold (prevents secondary market speculation)
+- **+4x veXF Boost**: Automatically applied when held (no lock required)
+- **12-Month Hold Period**: Must hold 365 days before redemption eligibility
+- **1:1 Redemption**: After 12 months, redeem rXF for XF (burns rXF, mints XF)
+- **Governance Oversight**: Large allocations (>10K rXF) require veXF holder approval
 
 **Use Cases:**
 
-- **Compounding**: Lock rXF to maximize veXF power (11.5× multiplier path)
-- **Liquidity**: Sell rXF to realize profits without unlocking XF
-- **Speculation**: Buy discounted rXF if market undervalues future revenue
+- **Early Believer Rewards**: Recognize testnet/community contributions without revenue impact
+- **Voter Incentives**: Boost governance participation from 10-15% to target 50-60%
+- **Bug Bounties**: Security-focused rXF rewards for responsible disclosures
+- **Partnership Alignment**: Strategic partners earn rXF for ecosystem growth
+
+**Minting Authority (InnovationTreasury.sol):**
+
+```solidity
+// Early believers allocation
+function mintRXFEarlyBeliever(address recipient, uint256 amount) 
+    external onlyOwner
+    // Enforces 2.5M cap, mints soulbound NFT with 12-month redemption
+
+// Governance incentives allocation  
+function mintRXFIncentive(address recipient, uint256 amount)
+    external onlyOwner
+    // Enforces 2.5M cap, mints soulbound NFT with 12-month redemption
+
+// Batch minting for efficiency
+function batchMintRXFEarlyBeliever(address[] recipients, uint256[] amounts)
+    // Gas-efficient distribution to multiple recipients
+```
+
+**On-Chain Tracking:**
+
+All rXF mints emit `RXFMinted` events with:
+- Recipient address
+- Amount minted
+- Category (early believer or incentive)
+- Running total for transparency
+
+**Risk Mitigation:**
+
+- Hard 5M cap limits dilution to 5% of total supply
+- Soulbound prevents speculative trading and MEV exploitation
+- Governance oversight on large mints ensures community alignment
+- Transparent on-chain tracking via InnovationTreasury events
+- No revenue impact ensures veXF holders receive full 25% yield share
 
 ---
 
