@@ -7,10 +7,13 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./veXF.sol";
+import "./rXF.sol";
 
 /**
  * @title InnovationTreasury
  * @dev 3-vault system (Builder, Acquisition, Moonshot) with basic veXF proposal/voting
+ * Also mints limited rXF (5M cap: 2.5% early believers + 2.5% incentives)
+ * rXF as soulbound NFTs with +4x veXF boost on 365-day lock, redeemable 1:1 XF after 12mo
  * Prepares for full Governor integration later
  * 
  * Security Features:
@@ -18,6 +21,7 @@ import "./veXF.sol";
  * - Multi-sig: Timelock controlled by multi-sig
  * - Pausable: Emergency pause functionality
  * - Access control: Owner and timelock roles
+ * - rXF cap: Hard limit prevents ongoing mints beyond strategic allocation
  */
 contract InnovationTreasury is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
@@ -27,6 +31,9 @@ contract InnovationTreasury is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGu
 
     // veXF contract for voting
     veXF public veXFContract;
+    
+    // rXF contract for limited strategic minting
+    rXF public rXFContract;
 
     // Treasury token (e.g., USDC)
     IERC20 public treasuryToken;
@@ -36,6 +43,14 @@ contract InnovationTreasury is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGu
     
     // Pause functionality
     bool public paused;
+    
+    // rXF allocation tracking (5% cap = 5M tokens assuming 100M total supply)
+    uint256 public constant RXF_TOTAL_CAP = 5_000_000 * 1e18;        // 5M rXF total cap
+    uint256 public constant RXF_EARLY_BELIEVERS_CAP = 2_500_000 * 1e18; // 2.5M for early believers
+    uint256 public constant RXF_INCENTIVES_CAP = 2_500_000 * 1e18;   // 2.5M for incentives
+    
+    uint256 public rXFEarlyBelieversMinted;  // Track early believer mints
+    uint256 public rXFIncentivesMinted;      // Track incentive mints
 
     // Vault balances
     mapping(VaultType => uint256) public vaultBalances;
@@ -90,6 +105,13 @@ contract InnovationTreasury is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGu
     event TimelockSet(address indexed timelock);
     event Paused(address indexed account);
     event Unpaused(address indexed account);
+    event RXFSet(address indexed rXF);
+    event RXFMinted(
+        address indexed recipient,
+        uint256 amount,
+        bool isEarlyBeliever,
+        uint256 totalMinted
+    );
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -263,6 +285,118 @@ contract InnovationTreasury is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGu
     }
 
     /**
+     * @dev Mint limited rXF for early believers (2.5M cap)
+     * @param recipient Address to receive rXF
+     * @param amount Amount of rXF to mint
+     * @dev Minted rXF is soulbound NFT with 12-month redemption period
+     *      Provides +4x veXF boost when locked for 365 days
+     *      Can be redeemed 1:1 for XF after 12 months
+     */
+    function mintRXFEarlyBeliever(address recipient, uint256 amount) external onlyOwner nonReentrant {
+        require(!paused, "InnovationTreasury: paused");
+        require(address(rXFContract) != address(0), "InnovationTreasury: rXF not set");
+        require(recipient != address(0), "InnovationTreasury: invalid recipient");
+        require(amount > 0, "InnovationTreasury: amount must be > 0");
+        require(
+            rXFEarlyBelieversMinted + amount <= RXF_EARLY_BELIEVERS_CAP,
+            "InnovationTreasury: early believers cap exceeded"
+        );
+        
+        rXFEarlyBelieversMinted += amount;
+        
+        // Mint with 365-day redemption period (12 months), no priority flag
+        rXFContract.mint(recipient, amount, 365 days, false);
+        
+        emit RXFMinted(recipient, amount, true, rXFEarlyBelieversMinted);
+    }
+    
+    /**
+     * @dev Mint limited rXF for governance incentives (2.5M cap)
+     * @param recipient Address to receive rXF
+     * @param amount Amount of rXF to mint
+     * @dev Used for voter rewards and governance participation incentives
+     *      Same mechanics as early believer rXF (soulbound, +4x boost, 12mo redemption)
+     */
+    function mintRXFIncentive(address recipient, uint256 amount) external onlyOwner nonReentrant {
+        require(!paused, "InnovationTreasury: paused");
+        require(address(rXFContract) != address(0), "InnovationTreasury: rXF not set");
+        require(recipient != address(0), "InnovationTreasury: invalid recipient");
+        require(amount > 0, "InnovationTreasury: amount must be > 0");
+        require(
+            rXFIncentivesMinted + amount <= RXF_INCENTIVES_CAP,
+            "InnovationTreasury: incentives cap exceeded"
+        );
+        
+        rXFIncentivesMinted += amount;
+        
+        // Mint with 365-day redemption period (12 months), no priority flag
+        rXFContract.mint(recipient, amount, 365 days, false);
+        
+        emit RXFMinted(recipient, amount, false, rXFIncentivesMinted);
+    }
+    
+    /**
+     * @dev Batch mint rXF for early believers
+     * @param recipients Array of recipient addresses
+     * @param amounts Array of amounts to mint
+     * @dev Efficiently distribute rXF to multiple early believers
+     */
+    function batchMintRXFEarlyBeliever(
+        address[] calldata recipients,
+        uint256[] calldata amounts
+    ) external onlyOwner nonReentrant {
+        require(!paused, "InnovationTreasury: paused");
+        require(address(rXFContract) != address(0), "InnovationTreasury: rXF not set");
+        require(recipients.length == amounts.length, "InnovationTreasury: array length mismatch");
+        require(recipients.length > 0, "InnovationTreasury: empty arrays");
+        
+        uint256 totalAmount = 0;
+        for (uint256 i = 0; i < amounts.length; i++) {
+            totalAmount += amounts[i];
+        }
+        
+        require(
+            rXFEarlyBelieversMinted + totalAmount <= RXF_EARLY_BELIEVERS_CAP,
+            "InnovationTreasury: early believers cap exceeded"
+        );
+        
+        rXFEarlyBelieversMinted += totalAmount;
+        
+        for (uint256 i = 0; i < recipients.length; i++) {
+            require(recipients[i] != address(0), "InnovationTreasury: invalid recipient");
+            require(amounts[i] > 0, "InnovationTreasury: amount must be > 0");
+            
+            rXFContract.mint(recipients[i], amounts[i], 365 days, false);
+            emit RXFMinted(recipients[i], amounts[i], true, rXFEarlyBelieversMinted);
+        }
+    }
+    
+    /**
+     * @dev Get rXF allocation statistics
+     * @return earlyBelieversMinted Amount minted for early believers
+     * @return earlyBelieversRemaining Amount remaining for early believers
+     * @return incentivesMinted Amount minted for incentives
+     * @return incentivesRemaining Amount remaining for incentives
+     * @return totalMinted Total rXF minted
+     * @return totalRemaining Total rXF remaining
+     */
+    function getRXFAllocationStats() external view returns (
+        uint256 earlyBelieversMinted,
+        uint256 earlyBelieversRemaining,
+        uint256 incentivesMinted,
+        uint256 incentivesRemaining,
+        uint256 totalMinted,
+        uint256 totalRemaining
+    ) {
+        earlyBelieversMinted = rXFEarlyBelieversMinted;
+        earlyBelieversRemaining = RXF_EARLY_BELIEVERS_CAP - rXFEarlyBelieversMinted;
+        incentivesMinted = rXFIncentivesMinted;
+        incentivesRemaining = RXF_INCENTIVES_CAP - rXFIncentivesMinted;
+        totalMinted = rXFEarlyBelieversMinted + rXFIncentivesMinted;
+        totalRemaining = RXF_TOTAL_CAP - totalMinted;
+    }
+
+    /**
      * @dev Get proposal details (excluding hasVoted mapping)
      * @param proposalId ID of the proposal
      * @return id Proposal ID
@@ -330,6 +464,16 @@ contract InnovationTreasury is UUPSUpgradeable, OwnableUpgradeable, ReentrancyGu
         require(_veXF != address(0), "InnovationTreasury: invalid veXF");
         veXFContract = veXF(_veXF);
         emit VeXFSet(_veXF);
+    }
+    
+    /**
+     * @dev Set rXF contract address
+     * @param _rXF Address of rXF contract
+     */
+    function setRXF(address _rXF) external onlyOwner {
+        require(_rXF != address(0), "InnovationTreasury: invalid rXF");
+        rXFContract = rXF(_rXF);
+        emit RXFSet(_rXF);
     }
 
     /**
