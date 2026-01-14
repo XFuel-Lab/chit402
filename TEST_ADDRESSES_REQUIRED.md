@@ -40,7 +40,7 @@ IBC_WALLET_MNEMONIC="your twelve words..."       # Required for IBC operations
 # Production Addresses
 DEPLOYER_ADDRESS=persistence1hpnpvg7ltnd9dht9kuu9qw9m0gp6ghdw3asrmx
 MULTISIG_ADDRESS=persistence1039mvtpfxzznrush4hpxdwcjm7fs7ph93j2x5e
-LP_TREASURY=persistence1q50x9h4nchk2uhhj5jre0jsqxrs9qmhvjwf8yj  # Hardcoded in contracts
+LP_TREASURY=persistence1039mvtpfxzznrush4hpxdwcjm7fs7ph93j2x5e  # Same as multisig - hardcoded in contracts
 ```
 
 ---

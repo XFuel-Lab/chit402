@@ -34,7 +34,8 @@ VEXF_DISTRIBUTOR_ADDRESS=0x...                   # REQUIRED (RevSplitter)
 INNOVATION_TREASURY=0x043d5231651379970d52a13CEfB4e80733DDb989
 
 # LP Treasury (Persistence) - Hardcoded in contracts
-LP_TREASURY=persistence1q50x9h4nchk2uhhj5jre0jsqxrs9qmhvjwf8yj
+# This is the multisig address for LP treasury funds
+LP_TREASURY=persistence1039mvtpfxzznrush4hpxdwcjm7fs7ph93j2x5e
 ```
 
 ---
@@ -58,13 +59,15 @@ PERSISTENCE_DEXTER_ROUTER=persistence132xmxm33vwjlur2pszl4hu9r32lqmqagvunnuc5hq4
 PSTAKE_STAKING_CONTRACT=                         # Optional/Empty
 ```
 
-#### Deployment Addresses
+### Deployment Addresses
 ```bash
 # Your deployer wallet
 DEPLOYER_ADDRESS=persistence1hpnpvg7ltnd9dht9kuu9qw9m0gp6ghdw3asrmx
 
-# Multisig for governance
+# Multisig for governance AND LP Treasury
+# This address serves dual purpose: governance multisig + LP treasury (hardcoded in contracts)
 MULTISIG_ADDRESS=persistence1039mvtpfxzznrush4hpxdwcjm7fs7ph93j2x5e
+LP_TREASURY=persistence1039mvtpfxzznrush4hpxdwcjm7fs7ph93j2x5e  # Same as multisig
 ```
 
 ---

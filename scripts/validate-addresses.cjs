@@ -186,8 +186,9 @@ if (vexfDistributor) {
 
 console.log('\n📋 Section 5: Hardcoded LP Treasury\n');
 
-const lpTreasury = 'persistence1q50x9h4nchk2uhhj5jre0jsqxrs9qmhvjwf8yj';
-console.log(`LP Treasury (hardcoded in contracts): ${lpTreasury}`);
+// LP Treasury is same as multisig
+const lpTreasury = 'persistence1039mvtpfxzznrush4hpxdwcjm7fs7ph93j2x5e';
+console.log(`LP Treasury (same as multisig, hardcoded in contracts): ${lpTreasury}`);
 logSuccess('LP Treasury address format is valid');
 
 console.log('\n📋 Section 6: Test Amount Safeguards\n');

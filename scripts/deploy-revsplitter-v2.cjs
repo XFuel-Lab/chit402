@@ -12,7 +12,8 @@ const { ethers } = require('hardhat')
 const CONFIG = {
   'theta-mainnet': {
     treasuryAddr: '0x043d5231651379970d52a13CEfB4e80733DDb989',
-    lpTreasuryAddr: 'persistence1q50x9h4nchk2uhhj5jre0jsqxrs9qmhvjwf8yj',
+    // LP Treasury is the multisig address (updated Jan 2026)
+    lpTreasuryAddr: 'persistence1039mvtpfxzznrush4hpxdwcjm7fs7ph93j2x5e',
     // Replace these with actual deployed contract addresses on mainnet
     bbbContract: '0x0000000000000000000000000000000000000000',  // TODO: Set BBB contract address
     veXFYieldsDistributor: '0x0000000000000000000000000000000000000000',  // TODO: Set veXF distributor
@@ -20,7 +21,8 @@ const CONFIG = {
   },
   'theta-testnet': {
     treasuryAddr: '0x043d5231651379970d52a13CEfB4e80733DDb989',
-    lpTreasuryAddr: 'persistence1q50x9h4nchk2uhhj5jre0jsqxrs9qmhvjwf8yj',
+    // LP Treasury is the multisig address (updated Jan 2026)
+    lpTreasuryAddr: 'persistence1039mvtpfxzznrush4hpxdwcjm7fs7ph93j2x5e',
     // Test addresses - replace with actual testnet deployments
     bbbContract: '0x0000000000000000000000000000000000000000',
     veXFYieldsDistributor: '0x0000000000000000000000000000000000000000',
@@ -29,7 +31,8 @@ const CONFIG = {
   'hardhat': {
     // For local testing
     treasuryAddr: '0x043d5231651379970d52a13CEfB4e80733DDb989',
-    lpTreasuryAddr: 'persistence1q50x9h4nchk2uhhj5jre0jsqxrs9qmhvjwf8yj',
+    // LP Treasury is the multisig address
+    lpTreasuryAddr: 'persistence1039mvtpfxzznrush4hpxdwcjm7fs7ph93j2x5e',
     bbbContract: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',  // Hardhat test account
     veXFYieldsDistributor: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',  // Hardhat test account
     axelarBridgeAdapter: '0x0000000000000000000000000000000000000000',
