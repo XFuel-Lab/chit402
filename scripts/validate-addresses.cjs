@@ -135,6 +135,24 @@ if (!tfuelIbcDenom) {
   logSuccess(`TFUEL_IBC_DENOM: ${tfuelIbcDenom}`);
 }
 
+// NEW: Validate ZK Verifier Address
+console.log('\n📋 Section 2b: ZK Contract Addresses\n');
+
+const zkVerifierAddr = process.env.ZK_VERIFIER_ADDRESS;
+if (zkVerifierAddr) {
+  validatePersistenceAddress(zkVerifierAddr, 'ZK_VERIFIER_ADDRESS');
+} else {
+  logWarning('ZK_VERIFIER_ADDRESS not set (required for ZK proof verification)');
+}
+
+// Validate Persistence Minter (moved from Section 3)
+const persistenceMinter = process.env.PERSISTENCE_MINTER_CONTRACT;
+if (persistenceMinter) {
+  validatePersistenceAddress(persistenceMinter, 'PERSISTENCE_MINTER_CONTRACT');
+} else {
+  logError('PERSISTENCE_MINTER_CONTRACT not set (required for minting operations)');
+}
+
 console.log('\n📋 Section 3: Theta Bridge Configuration\n');
 
 // Validate Vault Factory
@@ -148,10 +166,6 @@ validateEthereumAddress(revenueSplitter, 'REVENUE_SPLITTER_ADDRESS', false);
 // Validate Swap Router
 const swapRouter = process.env.SWAP_ROUTER_ADDRESS;
 validateEthereumAddress(swapRouter, 'SWAP_ROUTER_ADDRESS', false);
-
-// Validate Persistence Minter
-const persistenceMinter = process.env.PERSISTENCE_MINTER_CONTRACT;
-validatePersistenceAddress(persistenceMinter, 'PERSISTENCE_MINTER_CONTRACT');
 
 console.log('\n📋 Section 4: RevSplitter Configuration\n');
 
@@ -175,6 +189,41 @@ console.log('\n📋 Section 5: Hardcoded LP Treasury\n');
 const lpTreasury = 'persistence1q50x9h4nchk2uhhj5jre0jsqxrs9qmhvjwf8yj';
 console.log(`LP Treasury (hardcoded in contracts): ${lpTreasury}`);
 logSuccess('LP Treasury address format is valid');
+
+console.log('\n📋 Section 6: Test Amount Safeguards\n');
+
+// Check for mainnet deployment mode
+const isMainnet = process.env.NETWORK === 'mainnet' || process.env.THETA_NETWORK === 'mainnet';
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (isMainnet || isProduction) {
+  console.log('🚨 MAINNET/PRODUCTION MODE DETECTED\n');
+  
+  // Validate test amount limits
+  const maxTestTfuel = 0.1; // 0.1 TFUEL max for mainnet testing
+  const maxTestXprt = 1.0;  // 1 XPRT max for mainnet testing
+  
+  logSuccess(`TFUEL Test Limit: ${maxTestTfuel} TFUEL max`);
+  logSuccess(`XPRT Test Limit: ${maxTestXprt} XPRT max`);
+  
+  // Check MIN_YIELD_AMOUNT (should be small for testing)
+  const minYieldAmount = process.env.MIN_YIELD_AMOUNT || '1000000';
+  const minYieldUsdc = parseInt(minYieldAmount) / 1e6;
+  
+  if (minYieldUsdc > 1.0) {
+    logWarning(`MIN_YIELD_AMOUNT is ${minYieldUsdc} USDC (high for testing)`);
+    console.log(`   Consider lowering to 1 USDC (1000000) for test mode`);
+  } else {
+    logSuccess(`MIN_YIELD_AMOUNT: ${minYieldUsdc} USDC (safe for testing)`);
+  }
+  
+  console.log('\n⚠️  IMPORTANT: Mainnet test transactions should be limited to:');
+  console.log(`   - Maximum 0.1 TFUEL per test deposit`);
+  console.log(`   - Maximum 1 XPRT per reverse-burn test`);
+  console.log(`   - Use TEST_MODE=true flag in deployment scripts`);
+} else {
+  logSuccess('Development/Testnet mode - no amount restrictions');
+}
 
 console.log('\n' + '='.repeat(60));
 console.log('📊 Validation Summary');
