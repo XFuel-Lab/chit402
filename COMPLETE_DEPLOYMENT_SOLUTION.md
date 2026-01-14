@@ -132,13 +132,13 @@ docker buildx build \
 ### 3. Instantiation
 ```
 🔐 Instantiating ZK Verifier...
-  Admin: persistence1cgzppukxwdzmhmm342mgrf00atkk8nvg4azpfy
+  Admin: persistence1hpnpvg7ltnd9dht9kuu9qw9m0gp6ghdw3asrmx
   Gas: 500,000
 
 ✅ ZK Verifier: persistence1xyz...
 
 🪙 Instantiating ibcTFUEL Minter...
-  Admin: persistence1cgzppukxwdzmhmm342mgrf00atkk8nvg4azpfy
+  Admin: persistence1hpnpvg7ltnd9dht9kuu9qw9m0gp6ghdw3asrmx
   ZK Verifier: persistence1xyz...
   Max Supply: 0.1 TFUEL
 
@@ -152,7 +152,7 @@ docker buildx build \
 ========================================================================
 
 Deployed to: Persistence Mainnet (core-1)
-Deployer: persistence1cgzppukxwdzmhmm342mgrf00atkk8nvg4azpfy
+Deployer: persistence1hpnpvg7ltnd9dht9kuu9qw9m0gp6ghdw3asrmx
 
 📋 Addresses:
   ZK Verifier:    persistence1xyz...
@@ -304,7 +304,7 @@ sed -i 's/rpc.core.persistence.one/rpc.testnet.persistence.one/g' scripts/docker
 ### 2. Get Testnet Tokens
 
 - Faucet: https://faucet.persistence.one/
-- Request tokens for your address: `persistence1cgzppukxwdzmhmm342mgrf00atkk8nvg4azpfy`
+- Request tokens for your address: `persistence1hpnpvg7ltnd9dht9kuu9qw9m0gp6ghdw3asrmx`
 
 ### 3. Deploy to Testnet
 

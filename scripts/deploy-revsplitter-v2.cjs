@@ -91,7 +91,7 @@ async function main() {
   console.log('')
 
   // Set Axelar bridge adapter if configured
-  if (config.axelarBridgeAdapter && config.axelarBridgeAdapter !== '0x0000000000000000000000000000000000000000') {
+  if (config.axelarBridgeAdapter && config.axelarBridgeAdapter.startsWith('0x')) {
     console.log('🔗 Setting Axelar bridge adapter...')
     const tx = await revSplitter.setAxelarBridgeAdapter(config.axelarBridgeAdapter)
     await tx.wait()
@@ -175,6 +175,7 @@ main()
     console.error(error)
     process.exit(1)
   })
+
 
 
 

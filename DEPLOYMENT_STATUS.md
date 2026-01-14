@@ -32,7 +32,7 @@ artifacts/
 ## 📤 Deployment Attempts
 
 ### Wallet Info
-- **Address**: `persistence1cgzppukxwdzmhmm342mgrf00atkk8nvg4azpfy`
+- **Address**: `persistence1hpnpvg7ltnd9dht9kuu9qw9m0gp6ghdw3asrmx`
 - **Balance**: 244.847 XPRT (sufficient ✅)
 - **Chain**: core-1 (Persistence mainnet)
 
@@ -69,7 +69,7 @@ If you get the Code IDs from Mintscan, you can continue with instantiation:
 # Set variables
 export ZK_CODE_ID=<your_code_id>
 export MINTER_CODE_ID=<minter_code_id>
-export DEPLOYER_ADDR=persistence1cgzppukxwdzmhmm342mgrf00atkk8nvg4azpfy
+export DEPLOYER_ADDR=persistence1hpnpvg7ltnd9dht9kuu9qw9m0gp6ghdw3asrmx
 
 # Instantiate ZK Verifier
 docker-compose run --rm persistence-deployer persistenceCore tx wasm instantiate $ZK_CODE_ID \
@@ -147,7 +147,7 @@ Your balance (244.847 XPRT) is more than sufficient.
 
 Current deployment targets:
 - **Max Supply**: 100000000000000000000 (0.1 TFUEL in wei)
-- **Admin**: persistence1cgzppukxwdzmhmm342mgrf00atkk8nvg4azpfy
+- **Admin**: persistence1hpnpvg7ltnd9dht9kuu9qw9m0gp6ghdw3asrmx
 - **Pause**: Enabled (admin-only)
 - **ZK Verification**: Mock Groth16 (for testing)
 

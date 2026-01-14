@@ -24,11 +24,15 @@ export const IBC_CONFIG = {
     // IBC Channel from Theta → Persistence
     ibcChannel: process.env.IBC_CHANNEL || 'channel-190',
     
-    // Dexter DEX contract address on Persistence (latest - verify on Persistence explorer)
-    dexterRouterAddress: process.env.PERSISTENCE_DEXTER_ROUTER || 'persistence1k4q9wtawxxk6v2x5v4t9q8r3j9w3j9j0j0j0j0',
+    // Dexter DEX (Persistence DEX) Router contract address on Persistence mainnet
+    // Real address: persistence132xmxm33vwjlur2pszl4hu9r32lqmqagvunnuc5hq4htps7rr3kqsf4dsk
+    // Ref: https://docs.persistence.one/products/persistence-dex-v1/technical-architecture
+    dexterRouterAddress: process.env.PERSISTENCE_DEXTER_ROUTER || 'persistence132xmxm33vwjlur2pszl4hu9r32lqmqagvunnuc5hq4htps7rr3kqsf4dsk',
     
-    // pStake Finance stkXPRT staking contract (verify on pStake docs)
-    pstakeStakingAddress: process.env.PSTAKE_STAKING_CONTRACT || 'persistence1x5q8j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0j0',
+    // pStake Finance stkXPRT staking contract
+    // Note: ERC-20 stkXPRT deprecated Dec 2025. Native XPRT staking on Persistence only.
+    // This field is kept for backward compatibility but may not be actively used.
+    pstakeStakingAddress: process.env.PSTAKE_STAKING_CONTRACT || '',
   },
 
   // IBC Transfer Configuration
@@ -119,7 +123,9 @@ export function validateIbcConfig(): { valid: boolean; errors: string[] } {
     errors.push('Invalid DEXTER_ROUTER_ADDRESS (must start with persistence1)')
   }
 
-  if (!IBC_CONFIG.persistence.pstakeStakingAddress.startsWith('persistence1')) {
+  // pStake validation relaxed - stkXPRT deprecated, field optional
+  if (IBC_CONFIG.persistence.pstakeStakingAddress && 
+      !IBC_CONFIG.persistence.pstakeStakingAddress.startsWith('persistence1')) {
     errors.push('Invalid PSTAKE_STAKING_ADDRESS (must start with persistence1)')
   }
 

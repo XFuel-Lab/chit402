@@ -152,7 +152,7 @@ docker exec -it persistence-deployer bash -c '
 
 ### Configuration
 - **Max Supply**: 100000000000000000000 (0.1 TFUEL)
-- **Admin**: persistence1cgzppukxwdzmhmm342mgrf00atkk8nvg4azpfy
+- **Admin**: persistence1hpnpvg7ltnd9dht9kuu9qw9m0gp6ghdw3asrmx
 - **Gas Limit**: 1,500,000 per transaction
 - **Gas Adjustment**: 1.8x
 - **Gas Price**: 0.025 uxprt
@@ -186,7 +186,7 @@ curl -s "https://lcd.core.persistence.one/cosmos/tx/v1beta1/txs/<TX_HASH>" | jq 
 
 ### Explorer Links
 
-- **Account**: https://www.mintscan.io/persistence/account/persistence1cgzppukxwdzmhmm342mgrf00atkk8nvg4azpfy
+- **Account**: https://www.mintscan.io/persistence/account/persistence1hpnpvg7ltnd9dht9kuu9qw9m0gp6ghdw3asrmx
 - **TX Template**: https://www.mintscan.io/persistence/tx/[TX_HASH]
 
 ---
@@ -273,7 +273,7 @@ Visit: https://faucet.persistence.one/
   persistenceCore: v11.14.0
 
 🔐 Importing wallet...
-✅ Wallet loaded: persistence1cgzppukxwdzmhmm342mgrf00atkk8nvg4azpfy
+✅ Wallet loaded: persistence1hpnpvg7ltnd9dht9kuu9qw9m0gp6ghdw3asrmx
 
 💰 Checking balance...
 Balance: 244.847 XPRT (244847431 uxprt)
