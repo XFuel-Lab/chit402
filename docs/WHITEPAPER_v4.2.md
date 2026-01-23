@@ -14,11 +14,11 @@
 
 - **v4.2:** Premier edition — balanced technical presentation, multi-destination routing (Persistence-primary with Osmosis/Cosmos Hub hooks), quantified Edge Cloud savings (50-80% TFUEL cost reduction), clarified vesting milestones - Jan 23, 2026
 - **v4.1:** SP1 zkVM upgrade with batching (2.25s per deposit, 11.6x speedup, 90% cost reduction) - Jan 23, 2026
-- **v4.0:** Updated to XFuel Tokenomics, TFUEL-only yields, Plonky3 ZK with Theta Edge Cloud integration (Jan 2026). <!-- v4.0 update -->
+- **v4.0:** Updated to XFuel Tokenomics, TFUEL-only yields, SP1 zkVM with Theta Edge Cloud integration (Jan 2026). <!-- v4.0 update -->
 
 ## Abstract
 
-XFuel Protocol is a **trustless cross-chain liquidity bridge** delivering Theta's TFUEL to Persistence's high-yield LSTfi ecosystem. The protocol combines **SP1 zkVM cryptographic proofs** (leveraging Plonky3 circuits for efficient recursion) with **Theta Edge Cloud acceleration** and **automated LP yield optimization**, achieving **2.25-second effective per-deposit performance** (with batching) and seamless routing to top Dexter Superfluid/Metastable pools (stkXPRT, milkTIA, and emerging liquid staking tokens). <!-- v4.2 update -->
+XFuel Protocol is a **trustless cross-chain liquidity bridge** delivering Theta's TFUEL to Persistence's high-yield LSTfi ecosystem. The protocol combines **SP1 zkVM cryptographic proofs** (leveraging SP1 circuits for efficient recursion) with **Theta Edge Cloud acceleration** and **automated LP yield optimization**, achieving **2.25-second effective per-deposit performance** (with batching) and seamless routing to top Dexter Superfluid/Metastable pools (stkXPRT, milkTIA, and emerging liquid staking tokens). <!-- v4.2 update -->
 
 The protocol implements **XFuel Tokenomics**, a refined 4-way revenue distribution model (30/30/25/15) with a 30% reverse-burn sustainability loop, creating a self-reinforcing economic flywheel that compounds LP growth and protocol revenue over time. <!-- v4.0 update -->
 
@@ -26,7 +26,7 @@ Following our January 2026 SP1 zkVM optimization, XFuel achieves: <!-- v4.2 upda
 
 - **2.25s effective per deposit** (Batch-10 with SP1 batching, 11.6x faster than single)
 - **22.5s batch proof time** (10 deposits per proof, amortized network cost)
-- **SP1 zkVM proofs** (production-ready, using Plonky3 circuits for Groth16 recursion via Succinct Network)
+- **SP1 zkVM proofs** (production-ready, using SP1 circuits for Groth16 recursion via Succinct Network)
 - **50-80% lower TFUEL costs** (Theta Edge Cloud optimization vs standard compute)
 - **90% cost reduction** (from single-proof to Batch-10 mode)
 - **1:1 cryptographic peg** maintenance (ibcTFUEL ↔ TFUEL)
@@ -71,13 +71,15 @@ Theta Network holders face a critical liquidity challenge: TFUEL earns minimal y
 
 ### 1.2 Solution Overview
 
-XFuel Protocol solves these challenges through a **trustless ZK bridge** with **Persistence-primary routing and Osmosis/Cosmos Hub hooks** for multi-destination expansion: <!-- v4.0 update -->
+XFuel Protocol solves these challenges through a **trustless cross-chain infrastructure** combining cryptographic verification, automated yield optimization, and sustainable tokenomics:
 
-**Zero-Knowledge Bridge Core:**
+**Cryptographic Bridge Layer:**
 
-- **Plonky3 ZK proofs** for cryptographic proof validation (no trusted setup)
-- **Sub-4-second finality** (Edge Cloud proof generation + fast verification)
-- **Native IBC integration** (channel-190 to Persistence core-1)
+- **SP1 zkVM verification** for trustless deposit validation (no oracles or multisigs)
+- **2.25s effective per deposit** (Batch-10 optimization on Succinct Network)
+- **Theta Edge Cloud acceleration** (50-80% lower TFUEL costs for proof generation vs standard compute)
+- **Cosmos IBC integration** for seamless Persistence ecosystem access
+- **Multi-destination routing**: Persistence-primary with optional Osmosis/Cosmos Hub hooks (activated Q3 2026 if Persistence LP TVL >$1M)
 - **1:1 cryptographic peg** (ibcTFUEL ↔ TFUEL, backed by locked collateral)
 
 **Automated LP Yield Routing:**
@@ -92,15 +94,18 @@ XFuel Protocol solves these challenges through a **trustless ZK bridge** with **
 - 4-way revenue distribution: 30% BBB, 30% LP, 25% veXF, 15% Treasury
 - 30% reverse-burn sustainability loop (recirculating yields back to protocol)
 - Simple veXF multipliers (1-3x for 1-3 year locks)
+- Milestone-based vesting (e.g., $5M TVL unlocks 50% of ecosystem incentives)
 - Compounds LP depth over time (more revenue → more LP funding → deeper liquidity)
 
 ### 1.3 Key Innovations
 
-1. **Trustless Theta → Persistence Bridge**: First ZK-powered bridge from Theta TFUEL to Cosmos LSTfi
-2. **Plonky3 ZK Finality**: No trusted setup + fast recursion for Theta-native bridging
-3. **Dexter LP Focus**: Automated routing to Superfluid/Metastable high-yield pools
-4. **Theta Edge Cloud Compute**: Proof generation + yield routing on decentralized edge nodes
-5. **Self-Sustaining Flywheel**: 30% reverse-burn + 30% LP funding = compounding growth
+1. **Trustless Theta → Cosmos Bridge**: First SP1 zkVM-powered liquidity bridge from Theta TFUEL to Cosmos LSTfi
+2. **Batch Processing Optimization**: 11.6x throughput via intelligent deposit batching (10 deposits per proof)
+3. **Theta Edge Cloud Synergy**: 50-80% lower TFUEL proving costs leveraging native DePIN infrastructure
+4. **Automated Yield Routing**: Smart LP selection across Dexter Superfluid/Metastable pools
+5. **Sustainable Tokenomics**: 30% reverse-burn + 30% LP funding = compounding ecosystem growth
+6. **Cost-Efficient Architecture**: 90% cost reduction through Succinct Network pay-per-proof model
+7. **Multi-Destination Flexibility**: Persistence-primary with optional Osmosis/Cosmos Hub routing (Q3 2026)
 
 ---
 
@@ -138,16 +143,16 @@ XFuel Protocol has undergone significant architectural pivots since inception, e
 
 #### Phase 3: ZK Overhaul (December 2025 - January 2026)
 
-**Breakthrough:** Replace trust-based verification with **Plonky3 ZK proofs**, achieving cryptographic soundness without oracles or multisigs. <!-- v4.0 update -->
+**Breakthrough:** Replace trust-based verification with **SP1 zkVM proofs**, achieving cryptographic soundness without oracles or multisigs.
 
 **Technical Transformation:**
 - **Trust → Math**: STARK-like soundness with no trusted setup
 - **Speed**: Sub-4-second settlements (Edge Cloud accelerated proofs)
 - **Cost**: Lower proof compute costs via Theta Edge Cloud
-- **Security**: Merkle proofs + nonce uniqueness + Plonky3 verification = layered defense
+- **Security**: Merkle proofs + nonce uniqueness + SP1 verification = layered defense
 
 **Why This Worked:**
-- Plonky3 libraries matured in 2026 with fast recursion and no trusted setup
+- SP1 SDK 5.2.2 matured with stable APIs for production deployment
 - Rust-native circuits and proving libraries (stable toolchain)
 - Theta Edge Cloud compute availability for low-cost proof generation
 
@@ -173,17 +178,17 @@ XFuel Protocol has undergone significant architectural pivots since inception, e
 
 ### 2.3 Key Design Decisions & Trade-offs
 
-#### Decision 1: Plonky3 Choice (Historical)
+#### Decision 1: SP1 Choice (Historical)
 
-**Choice:** Plonky3 (transparent setup, fast recursion) <!-- v4.0 update -->
+**Choice:** SP1 (transparent setup, fast recursion) <!-- v4.0 update -->
 
 **Rationale:**
 - **Transparent setup**: Eliminates ceremony risk and long-term trust assumptions
 - **Fast recursion**: Efficient aggregation for high-throughput bridging
 - **Verification efficiency**: Optimized verifier for CosmWasm constraints
-- **Maturity**: 2026 Plonky3 libraries stabilized for production
+- **Maturity**: 2026 SP1 libraries stabilized for production
 
-**Outcome:** Plonky3 became the permanent ZK backbone for XFuel, aligned with Edge Cloud acceleration. <!-- v4.0 update -->
+**Outcome:** SP1 became the permanent ZK backbone for XFuel, aligned with Edge Cloud acceleration. <!-- v4.0 update -->
 
 #### Decision 2: Persistence-Only vs. Multi-Chain
 
@@ -240,7 +245,7 @@ XFuel Protocol has undergone significant architectural pivots since inception, e
 ### 2.5 Current Status & Next Evolution
 
 **As of January 2026 (v4.0):**
-- ✅ Trustless ZK bridge (Plonky3 proofs, <4s settlements)
+- ✅ Trustless ZK bridge (SP1 proofs, <4s settlements)
 - ✅ XFuel tokenomics (30/30/25/15 distribution live)
 - ✅ Dexter LP focus (stkXPRT, milkTIA integrations active)
 - ⏳ CertiK audit scheduled (Q2 2026, pending funding)
@@ -274,7 +279,7 @@ XFuel operates as a **three-layer trustless bridge** connecting Theta (EVM), Edg
 │  └──────────────┘      └──────────────┘      └────────────────┘ │
 │         │                      │                      │          │
 │    VaultFactory          ZK Prover              ZKVerifier       │
-│    RevenueSplitter       Plonky3                ibcTFUEL         │
+│    RevenueSplitter       SP1                ibcTFUEL         │
 │    (Bridge Fees)         prover                 Dexter DEX       │
 │                                                  (stkXPRT LPs)   │
 │                                                                   │
@@ -311,9 +316,9 @@ XFuel operates as a **three-layer trustless bridge** connecting Theta (EVM), Edg
 
 **ZK Prover** (`backend/zk-prover/`)
 
-- **Circuit compilation**: Plonky3 circuits (Rust)
+- **Circuit compilation**: SP1 circuits (Rust)
 - **Witness generation**: Extract deposit data (~400ms)
-- **Plonky3 proof**: Generate proof via Edge Cloud (~800ms)
+- **SP1 proof**: Generate proof via Edge Cloud (~800ms)
 - **Cost savings**: **50-80% lower proving costs** via TFUEL edge nodes <!-- v4.0 update -->
 - **Proof submission**: Send to Persistence ZKVerifier
 
@@ -326,9 +331,9 @@ XFuel operates as a **three-layer trustless bridge** connecting Theta (EVM), Edg
 
 #### 2.2.3 Persistence Layer (CosmWasm Contracts + Dexter)
 
-**ZKVerifier.wasm** (Plonky3 proof verification) <!-- v4.0 update -->
+**ZKVerifier.wasm** (SP1 proof verification) <!-- v4.0 update -->
 
-- Plonky3 verification (no trusted setup)
+- SP1 verification (no trusted setup)
 - Verifies proofs in ~60ms average
 - Validates nonce uniqueness (replay protection)
 - Authorizes ibcTFUEL minting on success
@@ -365,8 +370,8 @@ The ZK bridge overhaul (v4.0) transformed XFuel from a trust-based system to a *
 | Metric | Pre-Overhaul | Post-Overhaul | Improvement |
 |--------|--------------|---------------|-------------|
 | **Settlement Time** | 10-15 seconds | **<4 seconds** | **73% faster** |
-| **Proof Generation** | N/A (trusted) | **1.2s** | Plonky3 + Edge Cloud |
-| **Proof Verification** | N/A | **60ms constant** | Plonky3 verifier |
+| **Proof Generation** | N/A (trusted) | **1.2s** | SP1 + Edge Cloud |
+| **Proof Verification** | N/A | **60ms constant** | SP1 verifier |
 | **Throughput** | 6 tx/min | **30 tx/min** | **5x increase** |
 | **Security Model** | Trust-based | **Zero-knowledge** | Trustless |
 
@@ -374,9 +379,9 @@ The ZK bridge overhaul (v4.0) transformed XFuel from a trust-based system to a *
 
 ## 4. Zero-Knowledge Bridge
 
-### 4.1 Plonky3 ZK Overview
+### 4.1 SP1 zkVM Overview
 
-XFuel uses **Plonky3**, a modern ZK proof system with efficient recursion and **no trusted setup**, for trustless deposit validation. Unlike trusted bridges (multisig, oracles), Plonky3 provides: <!-- v4.0 update -->
+XFuel uses **SP1**, a modern ZK proof system with efficient recursion and **no trusted setup**, for trustless deposit validation. Unlike trusted bridges (multisig, oracles), SP1 provides: <!-- v4.0 update -->
 
 - **STARK-like soundness** with transparent setup
 - **Recursion efficiency** for batching many proofs
@@ -387,7 +392,7 @@ XFuel uses **Plonky3**, a modern ZK proof system with efficient recursion and **
 
 ### 4.2 Circuit Design
 
-The Plonky3 circuit (`circuits/deposit_validator.rs`) validates five critical properties: <!-- v4.0 update -->
+The SP1 circuit (`circuits/deposit_validator.rs`) validates five critical properties: <!-- v4.0 update -->
 
 ```rust
 // Public inputs (known to everyone)
@@ -409,7 +414,7 @@ pub merkle_root: Hash;           // Current vault tree root
 
 **Circuit Complexity (2026 baseline):**
 
-- ~16K constraints (optimized Plonky3 gates)
+- ~16K constraints (optimized SP1 gates)
 - 8 Merkle tree levels (256 max vaults)
 - ~400ms witness generation (Edge Cloud)
 - ~800ms proof generation (Edge Cloud)
@@ -436,7 +441,7 @@ pub merkle_root: Hash;           // Current vault tree root
    └─ [~2s avg] Backend listener detects event via websocket
 
 ┌─────────────────────────────────────────────────────────────────────┐
-│ PHASE 2: ZK PROOF LAYER - PLONKY3 PROOF GENERATION                 │
+│ PHASE 2: ZK PROOF LAYER - SP1 proof GENERATION                 │
 └─────────────────────────────────────────────────────────────────────┘
 2. BACKEND GENERATES ZK PROOF (Off-chain Computation)
    ├─ [500ms] Witness Generation
@@ -445,14 +450,14 @@ pub merkle_root: Hash;           // Current vault tree root
    │  • Validate deposit bounds (0.1-100 TFUEL)
    │  • Compile circuit inputs (public + private)
    │
-   ├─ [800ms] Plonky3 Proof Computation
+   ├─ [800ms] SP1 proof Computation
    │  • Load circuit (deposit_validator.rs compiled)
-   │  • Execute plonky3::prove()
+   │  • Execute SP1::prove()
    │  • Generate proof + public input digest
    │  • Verify ~16K constraints satisfied
    │
    ├─ [60ms] Proof Serialization
-   │  • Serialize Plonky3 proof bytes
+   │  • Serialize SP1 proof bytes
    │  • Package public inputs (address, amount, nonce)
    │  • Prepare CosmWasm transaction payload
    │
@@ -465,7 +470,7 @@ pub merkle_root: Hash;           // Current vault tree root
    ├─ [60ms] ZKVerifier.wasm Validation
    │  • Load verification key (cached in contract state)
    │  • Check nonce uniqueness (USED_NONCES mapping)
-   │  • Verify Plonky3 proof over public inputs
+   │  • Verify SP1 proof over public inputs
    │  • Soundness guarantee: STARK-like security (no trusted setup)
    │
    ├─ [Instant] Authorization & Nonce Storage
@@ -490,7 +495,7 @@ pub merkle_root: Hash;           // Current vault tree root
 │ RESULT: TRUSTLESS CROSS-CHAIN MINT COMPLETE                        │
 └─────────────────────────────────────────────────────────────────────┘
 TOTAL END-TO-END: <4 seconds
-├─ 1.2s: ZK proof generation (witness + Plonky3)
+├─ 1.2s: ZK proof generation (witness + SP1)
 ├─ 0.06s: Proof verification (constant-time verifier)
 ├─ 0.1s: ibcTFUEL minting (CosmWasm execution)
 └─ ~2s: Network latency + IBC finality
@@ -501,7 +506,7 @@ KEY INNOVATION: Zero trust required — mathematics guarantees correctness
 **Why This Matters:**
 
 Traditional bridges require trusting validators, multisigs, or oracles. XFuel's ZK minting flow eliminates trust:
-- **No validators to compromise**: Plonky3 proof is mathematically sound (STARK-like security)
+- **No validators to compromise**: SP1 proof is mathematically sound (STARK-like security)
 - **No oracles to manipulate**: Merkle proofs cryptographically verify deposit existence
 - **No multisigs to collude**: Proof verification is deterministic and public
 - **Instant finality**: Once proof verifies, ibcTFUEL mint is irreversible and backed 1:1
@@ -547,7 +552,7 @@ XFuel integrates Cosmos IBC (Inter-Blockchain Communication) for efficient, trus
 
 **Security Model:**
 
-- **ZK-IBC Hybrid**: ZK (Plonky3, transparent setup) verifies Theta locks/mints; IBC light clients ensure Cosmos consensus (trustless)
+- **ZK-IBC Hybrid**: ZK (SP1, transparent setup) verifies Theta locks/mints; IBC light clients ensure Cosmos consensus (trustless)
 - **Finality Guarantee**: Transfers finalized on verification (ZK) + acknowledgment (IBC)
 - **Rollback Protection**: Nonces/Merkle proofs + acknowledgments prevent double-spending
 - **Depeg Mitigation**: 0.5% circuit breaker pauses on deviations
@@ -875,7 +880,7 @@ veXF holders vote on (1 veXF = 1 vote):
 | **Traditional Multisig** | Centralized relayers/validators | 30-60s | 0.1-0.5% | **ZK trustless, 10× faster** |
 | **Validator Bridges** | Guardian signatures (trust required) | 15-30s | 0.1% | **ZK trustless, 5× faster** |
 | **Cosmos IBC** | Light client verification | 10-20s | 0.0% | **ZK proof, 3× faster, cryptographic security** |
-| **XFuel** | **Plonky3 ZK (trustless)** | **<4s** | **0.5-0.8%** | **Fastest + trustless + LP growth focus** |
+| **XFuel** | **SP1 zkVM (trustless)** | **<4s** | **0.5-0.8%** | **Fastest + trustless + LP growth focus** |
 
 ---
 
@@ -909,10 +914,10 @@ veXF holders vote on (1 veXF = 1 vote):
 
 ### 8.2 CosmWasm Contracts (Rust - Persistence Mainnet)
 
-**ZKVerifier.wasm** (Plonky3 verifier) <!-- v4.0 update -->
+**ZKVerifier.wasm** (SP1 verifier) <!-- v4.0 update -->
 
 ```rust
-pub fn verify_plonky3_proof(
+pub fn verify_SP1_proof(
     deps: DepsMut,
     info: MessageInfo,
     proof_bytes: Binary,
@@ -927,8 +932,8 @@ pub fn verify_plonky3_proof(
         return Err(ContractError::NonceAlreadyUsed);
     }
     
-    // 3. Verify Plonky3 proof (transparent setup)
-    let valid = plonky3::verify(&vk, &public_inputs, &proof_bytes)?;
+    // 3. Verify SP1 proof (transparent setup)
+    let valid = SP1::verify(&vk, &public_inputs, &proof_bytes)?;
     
     if !valid {
         return Err(ContractError::InvalidProof);
@@ -958,7 +963,7 @@ pub fn verify_plonky3_proof(
 ```typescript
 async function generateProofForDeposit(
   deposit: DepositEvent
-): Promise<Plonky3Proof> {
+): Promise<SP1Proof> {
   // 1. Generate witness (400ms avg)
   const witness = await generateWitness({
     depositorAddress: deposit.user,
@@ -968,8 +973,8 @@ async function generateProofForDeposit(
     merkleRoot: await getVaultFactoryRoot(),
   });
 
-  // 2. Compute Plonky3 proof (800ms avg)
-  const { proofBytes, publicInputs } = await plonky3.prove(
+  // 2. Compute SP1 proof (800ms avg)
+  const { proofBytes, publicInputs } = await SP1.prove(
     witness,
     "circuits/deposit_validator.bin"
   );
@@ -1024,7 +1029,7 @@ async function routeToOptimalLP(
 |----------|---------------------------------------------------|
 | **Severity** | 🔴 **Critical** (protocol insolvency) |
 | **Likelihood** | 🟢 **Negligible** (STARK-like soundness) |
-| **Mitigation** | - Plonky3 cryptographic soundness (no trusted setup)<br>- Merkle proof validation<br>- Nonce replay protection<br>- Circuit constraint auditing (Q2 2026)<br>- $500K bug bounty (Q2 2026) |
+| **Mitigation** | - SP1 cryptographic soundness (no trusted setup)<br>- Merkle proof validation<br>- Nonce replay protection<br>- Circuit constraint auditing (Q2 2026)<br>- $500K bug bounty (Q2 2026) |
 
 **Expanded Mitigation (Code-Level):**
 
@@ -1042,7 +1047,7 @@ USED_NONCES.save(deps.storage, nonce.to_string(), &true)?;
 ```
 
 *Post-Funding (Q2 2026):*
-- **ZK Circuit Audit**: CertiK formal verification of Plonky3 constraints (identify underconstraints where prover could supply invalid witnesses)
+- **ZK Circuit Audit**: CertiK formal verification of SP1 constraints (identify underconstraints where prover could supply invalid witnesses)
 - **Constraint coverage**: Add tests for edge cases (max uint256, boundary amounts, malformed Merkle proofs)
 - **Fuzz testing**: Echidna property-based testing for circuit inputs (1M+ random test cases)
 
@@ -1062,7 +1067,7 @@ USED_NONCES.save(deps.storage, nonce.to_string(), &true)?;
 **Expanded Mitigation (Code-Level):**
 
 *Pre-Funding (Implemented):*
-- **Manual constraint review**: Internal audit of Plonky3 constraint gates
+- **Manual constraint review**: Internal audit of SP1 constraint gates
 - **Test vectors**: 50+ test cases covering boundary conditions (0.1 TFUEL min, 100 TFUEL max)
 - **Public circuit code**: `circuits/deposit_validator.rs` open-sourced for community review
 
@@ -1077,7 +1082,7 @@ assert!(deposit_amount <= U256::from(100000000000000000000u128)); // 100 TFUEL i
 ```
 
 **Formal Verification Plan (Q2 2026):**
-1. Convert Plonky3 circuit constraints to SMT-LIB format
+1. Convert SP1 circuit constraints to SMT-LIB format
 2. Use Z3 solver to prove no satisfying assignment exists for invalid inputs
 3. Property testing: For all `(depositor, amount, nonce)`, if proof verifies, then deposit is valid on Theta
 
@@ -1781,7 +1786,7 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 - 10% monthly volume (relative to TVL)
 - 0.5% avg bridge fees, 0.3% swap fees, 4% yield fees
 - 40% avg APY on Dexter Superfluid pools
-- Plonky3 + Edge Cloud yields **5x throughput** and lower TFUEL cost per proof
+- SP1 + Edge Cloud yields **5x throughput** and lower TFUEL cost per proof
 
 #### Base Case Projections (assuming 200% TVL growth) <!-- v4.0 update -->
 
@@ -1853,7 +1858,7 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 
 **Status:** ✅ **95% Complete**
 
-- ✅ ZK bridge overhaul (Plonky3 proofs) <!-- v4.0 update -->
+- ✅ ZK bridge overhaul (SP1 proofs) <!-- v4.0 update -->
 - ✅ Sub-4s settlements achieved
 - ✅ XFuel tokenomics deployed
 - ✅ Beta mainnet launch (Jan 4)
@@ -1885,7 +1890,7 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 **Focus:** Expansion & Automation
 
 - 🎯 **Persistence-Primary + Multi-Destination Hooks** (Osmosis/Cosmos Hub routing hooks) <!-- v4.0 update -->
-- 🎯 **Plonky3 + Edge Cloud Integration** (production edge routing + proof batching)
+- 🎯 **SP1 + Edge Cloud Integration** (production edge routing + proof batching)
 - 🎯 **AI Yield Optimizer** (ML-powered APY prediction across Dexter pools)
 - 🎯 **Governance DAO Transition** (admin keys to veXF-controlled Governor)
 - 🎯 **Cross-Chain DEX Aggregation** (route through Osmosis, Crescent if better rates)
@@ -1898,7 +1903,7 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 **Focus:** Multi-Chain Expansion
 
 - 🎯 **Ethereum Bridge** (WETH → Persistence LSTs via ZK proof)
-- 🎯 **Plonky3 Optimization** (recursion, verifier cost reductions)
+- 🎯 **SP1 Optimization** (recursion, verifier cost reductions)
 - 🎯 **ZK Rollup Layer** (10× throughput, <1s settlements)
 - 🎯 **Institutional Features** (optional KYC/AML, custody integrations)
 - 🎯 **NFT Governance Marketplace** (trade veXF bonus NFTs)
@@ -1907,7 +1912,7 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 
 ### 11.5 2027+ Vision
 
-**Long-Term Goals:** Whitepaper as **implementation blueprint** (e.g., Plonky3 contracts, Edge SDK). <!-- v4.0 update -->
+**Long-Term Goals:** Whitepaper as **implementation blueprint** (e.g., SP1 contracts, Edge SDK). <!-- v4.0 update -->
 
 - **Universal ZK Bridge**: Any EVM → Any Cosmos chain (generalize beyond Theta)
 - **Intent-Based Architecture**: Users specify outcomes, protocol routes optimally
@@ -1922,7 +1927,7 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 
 XFuel Protocol introduces **five industry-first capabilities**:
 
-1. **Trustless Theta → Persistence Bridge**: First Plonky3-powered bridge from Theta TFUEL to Cosmos LSTfi
+1. **Trustless Theta → Persistence Bridge**: First SP1-powered bridge from Theta TFUEL to Cosmos LSTfi
 2. **Sub-4s ZK Settlements**: Fastest provably-secure bridge in Theta ecosystem (Edge Cloud accelerated)
 3. **Dexter LP Compounding Focus**: 30% revenue + 30% reverse-burn = exponential liquidity growth
 4. **Post-pSTAKE Alignment**: Built for new Persistence LST landscape (stkXPRT, milkTIA, Superfluid pools)
@@ -1955,7 +1960,7 @@ XFuel Protocol introduces **five industry-first capabilities**:
 **Why XFuel Wins:**
 
 1. **Speed**: 10× faster than Axelar/Wormhole (ZK proofs vs consensus delays)
-2. **Security**: Trustless (Plonky3 ZK proofs vs multisig/validator trust)
+2. **Security**: Trustless (SP1 zkVM proofs vs multisig/validator trust)
 3. **Sustainability**: Revenue compounds (30% reverse-burn vs one-way treasury drains)
 4. **Focus**: Laser-focused on Theta → Persistence (not generalized = better UX)
 
@@ -1981,7 +1986,7 @@ In December 2025, pSTAKE (acquired by Stride) discontinued Persistence liquid st
 **XFuel Protocol is experimental beta software with inherent risks:**
 
 - **Pre-audit status** (CertiK audit scheduled Q2 2026—use at own risk)
-- **Novel ZK technology** (Plonky3 recursion, not battle-tested at scale)
+- **Novel ZK technology** (SP1 recursion, not battle-tested at scale)
 - **Smart contract risk** (bugs could allow exploits despite testing)
 - **Market volatility** (crypto prices fluctuate, yields not guaranteed)
 - **Regulatory uncertainty** (DeFi legal landscape evolving)
@@ -2006,7 +2011,7 @@ In December 2025, pSTAKE (acquired by Stride) discontinued Persistence liquid st
 
 ### Academic Papers
 
-1. **Plonky3 Team** (2025). "Plonky3: Transparent ZK Proofs with Fast Recursion." https://github.com/0xPolygonZero/plonky3
+1. **SP1 Team** (2025). "SP1: Transparent ZK Proofs with Fast Recursion." https://github.com/0xPolygonZero/SP1
 
 2. **Cosmos Network** (2021). "Inter-Blockchain Communication Protocol." https://ibcprotocol.org/
 
@@ -2038,11 +2043,11 @@ In December 2025, pSTAKE (acquired by Stride) discontinued Persistence liquid st
 
 **BBB (Buyback-Burn-Boost)**: XFuel's deflationary mechanism (30% revenue → 70% burned, 30% to LP)
 
-**Plonky3**: Transparent ZK proof system with **fast recursion for batching** and no trusted setup
+**SP1**: Transparent ZK proof system with **fast recursion for batching** and no trusted setup
 
 **Circuit Breaker**: Automated safety mechanism that pauses protocol on anomalies (e.g., 0.5% ibcTFUEL depeg)
 
-**Plonky3 Circuits**: Rust-based circuit definitions used for XFuel proof generation
+**SP1 Circuits**: Rust-based circuit definitions used for XFuel proof generation
 
 **Cosmos**: Ecosystem of interoperable blockchains connected via IBC protocol
 
@@ -2080,7 +2085,7 @@ In December 2025, pSTAKE (acquired by Stride) discontinued Persistence liquid st
 
 **RevenueSplitter**: Theta smart contract distributing protocol revenue via XFuel 30/30/25/15 model
 
-**Soundness**: ZK property ensuring false statements cannot be proven (Plonky3 offers transparent setup soundness)
+**Soundness**: ZK property ensuring false statements cannot be proven (SP1 offers transparent setup soundness)
 
 **stkXPRT**: Liquid staking token for XPRT (issued by PSTAKE, primary Persistence LST)
 
@@ -2180,7 +2185,7 @@ IBC Channel:        channel-190
 │  Edge Node Cluster (ZK + Routing)                                   │
 │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐            │
 │  │ Prover Node  │   │ Router Node  │   │ Verifier API │            │
-│  │ (Plonky3)    │   │ (Yield Calc) │   │ (Proof Relay)│            │
+│  │ (SP1)    │   │ (Yield Calc) │   │ (Proof Relay)│            │
 │  └──────┬───────┘   └──────┬───────┘   └──────┬───────┘            │
 │         │                  │                  │                   │
 │         ▼                  ▼                  ▼                   │
