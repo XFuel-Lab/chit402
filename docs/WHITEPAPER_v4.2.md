@@ -352,13 +352,6 @@ XFuel operates as a **three-layer trustless bridge** connecting Theta (EVM), Edg
 - **Current Focus**: stkXPRT (PSTAKE), milkTIA (Milkyway)
 - **LP Depth Growth**: 30% of protocol revenue reinvested monthly
 
-**IBC Channel-190** (Theta ↔ Persistence)
-
-- Standard ICS-20 token transfers
-- 10-minute timeout with auto-refund
-- Acknowledgment-based finality
-- Multi-hop routing support
-
 ### 2.3 Post-Overhaul Performance
 
 **Completed:** January 4, 2026
