@@ -1,0 +1,350 @@
+﻿{
+    "results":  [
+                    {
+                        "nullifier":  "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                        "type":  "single",
+                        "proving_time_ms":  25721,
+                        "batch_size":  1,
+                        "test":  1,
+                        "e2e_time_ms":  27900,
+                        "effective_time_ms":  25721,
+                        "status":  "success",
+                        "file":  "test-data\\deposit-small.json"
+                    },
+                    {
+                        "nullifier":  "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                        "type":  "single",
+                        "proving_time_ms":  23203,
+                        "batch_size":  1,
+                        "test":  2,
+                        "e2e_time_ms":  24662,
+                        "effective_time_ms":  23203,
+                        "status":  "success",
+                        "file":  "test-data\\deposit-medium.json"
+                    },
+                    {
+                        "nullifier":  "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                        "type":  "single",
+                        "proving_time_ms":  33530,
+                        "batch_size":  1,
+                        "test":  3,
+                        "e2e_time_ms":  34969,
+                        "effective_time_ms":  33530,
+                        "status":  "success",
+                        "file":  "test-data\\deposit-large.json"
+                    },
+                    {
+                        "nullifier":  "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                        "type":  "single",
+                        "proving_time_ms":  24566,
+                        "batch_size":  1,
+                        "test":  4,
+                        "e2e_time_ms":  26047,
+                        "effective_time_ms":  24566,
+                        "status":  "success",
+                        "file":  "test-data\\deposit-1tfuel.json"
+                    },
+                    {
+                        "nullifier":  "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                        "type":  "single",
+                        "proving_time_ms":  26431,
+                        "batch_size":  1,
+                        "test":  5,
+                        "e2e_time_ms":  27955,
+                        "effective_time_ms":  26431,
+                        "status":  "success",
+                        "file":  "test-data\\deposit-small.json"
+                    },
+                    {
+                        "e2e_time_ms":  23750,
+                        "type":  "batch",
+                        "proving_time_ms":  22404,
+                        "batch_size":  3,
+                        "test":  6,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json",
+                        "effective_time_ms":  7468,
+                        "batch_commitment":  "0xb4c48494a4647424ad44041424e4b62688c48494a4254a2894a46474b465b024",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  24480,
+                        "type":  "batch",
+                        "proving_time_ms":  23107,
+                        "batch_size":  3,
+                        "test":  7,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json",
+                        "effective_time_ms":  7702,
+                        "batch_commitment":  "0xb4c48494a4647424ad44041424e4b62688c48494a4254a2894a46474b465b024",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  24083,
+                        "type":  "batch",
+                        "proving_time_ms":  22657,
+                        "batch_size":  3,
+                        "test":  8,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json",
+                        "effective_time_ms":  7552,
+                        "batch_commitment":  "0xb4c48494a4647424ad44041424e4b62688c48494a4254a2894a46474b465b024",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  30229,
+                        "type":  "batch",
+                        "proving_time_ms":  28824,
+                        "batch_size":  3,
+                        "test":  9,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json",
+                        "effective_time_ms":  9608,
+                        "batch_commitment":  "0xb4c48494a4647424ad44041424e4b62688c48494a4254a2894a46474b465b024",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  26084,
+                        "type":  "batch",
+                        "proving_time_ms":  24709,
+                        "batch_size":  3,
+                        "test":  10,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json",
+                        "effective_time_ms":  8236,
+                        "batch_commitment":  "0xb4c48494a4647424ad44041424e4b62688c48494a4254a2894a46474b465b024",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  48714,
+                        "type":  "batch",
+                        "proving_time_ms":  47353,
+                        "batch_size":  5,
+                        "test":  11,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json",
+                        "effective_time_ms":  9470,
+                        "batch_commitment":  "0xd7ab0709217747bb2a2bc99273cbd9f9abab476b672abdbfb72b274bd7a1835b",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  25931,
+                        "type":  "batch",
+                        "proving_time_ms":  24574,
+                        "batch_size":  5,
+                        "test":  12,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json",
+                        "effective_time_ms":  4914,
+                        "batch_commitment":  "0xd7ab0709217747bb2a2bc99273cbd9f9abab476b672abdbfb72b274bd7a1835b",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  21862,
+                        "type":  "batch",
+                        "proving_time_ms":  20490,
+                        "batch_size":  5,
+                        "test":  13,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json",
+                        "effective_time_ms":  4098,
+                        "batch_commitment":  "0xd7ab0709217747bb2a2bc99273cbd9f9abab476b672abdbfb72b274bd7a1835b",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  23823,
+                        "type":  "batch",
+                        "proving_time_ms":  22469,
+                        "batch_size":  5,
+                        "test":  14,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json",
+                        "effective_time_ms":  4493,
+                        "batch_commitment":  "0xd7ab0709217747bb2a2bc99273cbd9f9abab476b672abdbfb72b274bd7a1835b",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  21812,
+                        "type":  "batch",
+                        "proving_time_ms":  20431,
+                        "batch_size":  5,
+                        "test":  15,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json",
+                        "effective_time_ms":  4086,
+                        "batch_commitment":  "0xd7ab0709217747bb2a2bc99273cbd9f9abab476b672abdbfb72b274bd7a1835b",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  23949,
+                        "type":  "batch",
+                        "proving_time_ms":  22554,
+                        "batch_size":  10,
+                        "test":  16,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json, test-data\\deposit-medium.json",
+                        "effective_time_ms":  2255,
+                        "batch_commitment":  "0xa1fec1627db20b4ebefa773a6717b44a034b1b545b5ff78077a06d1893945946",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  24066,
+                        "type":  "batch",
+                        "proving_time_ms":  22732,
+                        "batch_size":  10,
+                        "test":  17,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json, test-data\\deposit-medium.json",
+                        "effective_time_ms":  2273,
+                        "batch_commitment":  "0xa1fec1627db20b4ebefa773a6717b44a034b1b545b5ff78077a06d1893945946",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  25941,
+                        "type":  "batch",
+                        "proving_time_ms":  24570,
+                        "batch_size":  10,
+                        "test":  18,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json, test-data\\deposit-medium.json",
+                        "effective_time_ms":  2457,
+                        "batch_commitment":  "0xa1fec1627db20b4ebefa773a6717b44a034b1b545b5ff78077a06d1893945946",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  23873,
+                        "type":  "batch",
+                        "proving_time_ms":  22516,
+                        "batch_size":  10,
+                        "test":  19,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json, test-data\\deposit-medium.json",
+                        "effective_time_ms":  2251,
+                        "batch_commitment":  "0xa1fec1627db20b4ebefa773a6717b44a034b1b545b5ff78077a06d1893945946",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324"
+                                       ]
+                    },
+                    {
+                        "e2e_time_ms":  23930,
+                        "type":  "batch",
+                        "proving_time_ms":  22503,
+                        "batch_size":  10,
+                        "test":  20,
+                        "files":  "test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json, test-data\\deposit-medium.json, test-data\\deposit-large.json, test-data\\deposit-1tfuel.json, test-data\\deposit-small.json, test-data\\deposit-medium.json",
+                        "effective_time_ms":  2250,
+                        "batch_commitment":  "0xa1fec1627db20b4ebefa773a6717b44a034b1b545b5ff78077a06d1893945946",
+                        "status":  "success",
+                        "nullifiers":  [
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324",
+                                           "0xafb0b1b2b3b4b5b6bcb8b9babbbc4d632bc0c1c2c3c4c5c6c7c8c9cacbcccdce",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x030405060708090a100c0d0e0f10db37571415161718191a1b1c1d1e1f202122",
+                                           "0x05060708090a0b0c120e0f1011129ef9c1161718191a1b1c1d1e1f2021222324"
+                                       ]
+                    }
+                ],
+    "successful":  20,
+    "timestamp":  "2026-01-23 18:49:16",
+    "failed":  0,
+    "total_tests":  20,
+    "phase":  "1",
+    "total_time_seconds":  575.2
+}

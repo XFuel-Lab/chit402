@@ -1,0 +1,19 @@
+# Environment files with secrets
+.env
+
+# Build artifacts
+target/
+output/
+
+# Docker files
+*.log
+logs.json
+logs-recent.json
+recent-logs.txt
+
+# Test data
+proof-output.json
+
+# Deployment configs
+task-def-*.json
+service-ip.txt

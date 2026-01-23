@@ -1,0 +1,19 @@
+{
+  "vault_address": "0x0000000000000000000000000000000000000001",
+  "sender_address": "0x0000000000000000000000000000000000000004",
+  "gross_amount": "0x056BC75E2D63100000",
+  "fee_amount": "0x0006F05B59D3B20000",
+  "net_amount": "0x0564D702D38F5E0000",
+  "block_number": 12345680,
+  "block_timestamp": 1737331320,
+  "block_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
+  "tx_hash": "0x6666666666666666666666666666666666666666666666666666666666666666",
+  "tx_index": 42,
+  "merkle_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "merkle_proof": [],
+  "merkle_path_indices": [],
+  "identity_secret": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "identity_nullifier": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "identity_trapdoor": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "identity_commitment": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+}

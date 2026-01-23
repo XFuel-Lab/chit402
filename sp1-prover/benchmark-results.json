@@ -1,0 +1,23 @@
+﻿[
+    {
+        "TestFile":  "deposit-small.json",
+        "AvgTime":  22744.67,
+        "MinTime":  22725,
+        "MaxTime":  22763,
+        "SuccessRate":  "3/3"
+    },
+    {
+        "TestFile":  "deposit-medium.json",
+        "AvgTime":  22280.33,
+        "MinTime":  20236,
+        "MaxTime":  24403,
+        "SuccessRate":  "3/3"
+    },
+    {
+        "TestFile":  "deposit-large.json",
+        "AvgTime":  24490.67,
+        "MinTime":  20853,
+        "MaxTime":  26310,
+        "SuccessRate":  "3/3"
+    }
+]

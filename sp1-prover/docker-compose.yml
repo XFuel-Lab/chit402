@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  sp1-prover:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sp1-prover
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount test data for proof generation
+      - ./test-data:/app/test-data:ro
+      # Mount output directory for proofs
+      - ./output:/app/output
+    environment:
+      - RUST_LOG=info
+      # =====================================================
+      # SP1 Network Proving Configuration
+      # =====================================================
+      # Option 1: Direct key (for local/simple deployments)
+      # Get your key at: https://app.succinct.xyz
+      - SP1_PRIVATE_KEY=${SP1_PRIVATE_KEY:-}
+      
+      # Option 2: AWS Secrets Manager ARN (for production)
+      # Set this to ARN instead of direct key
+      - SP1_PRIVATE_KEY_ARN=${SP1_PRIVATE_KEY_ARN:-}
+      
+      # =====================================================
+      # AWS Configuration (for Secrets Manager)
+      # =====================================================
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      # For ECS/EKS, use IAM roles instead of keys
+      - AWS_CONTAINER_CREDENTIALS_RELATIVE_URI=${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI:-}
+      
+      # =====================================================
+      # Proving Mode Configuration
+      # =====================================================
+      # Options: local, network, cuda
+      # local: CPU-based mock proving (~170s, default if no key)
+      # network: SP1 distributed network (<1s, requires key)
+      # cuda: Local GPU proving (~10-30s, requires nvidia-docker)
+      - SP1_PROVER=${SP1_PROVER:-local}
+      
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Uncomment for GPU support on Theta EdgeCloud
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]

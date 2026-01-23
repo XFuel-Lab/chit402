@@ -1,0 +1,67 @@
+# SP1 Network Mode Dockerfile (Simpler, Faster!)
+# No GPU needed - uses SP1's distributed proving network
+# Sub-second proving times!
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    libssl-dev \
+    pkg-config \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust nightly
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly-2026-01-19
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Clone SP1 repository and build cargo-prove from source
+RUN git clone https://github.com/succinctlabs/sp1.git /tmp/sp1 && \
+    cd /tmp/sp1/crates/cli && \
+    cargo install --locked --path . && \
+    rm -rf /tmp/sp1
+
+# Install SP1 toolchain
+RUN cargo prove install-toolchain
+
+# Verify installation
+RUN cargo prove --version && \
+    rustup toolchain list
+
+WORKDIR /app
+
+# Copy source
+COPY program /app/program
+COPY host /app/host
+COPY Cargo.toml /app/Cargo.toml
+COPY rust-toolchain.toml /app/rust-toolchain.toml
+
+# Build guest program
+RUN rustup default nightly && \
+    rustup component add rust-src --toolchain nightly && \
+    cd /app/program && \
+    cargo +nightly prove build
+
+# Build host
+RUN cd /app/host && \
+    cargo +nightly build --release
+
+# Copy test data
+COPY test-data /app/test-data
+
+EXPOSE 8080
+
+# Environment for network mode
+ENV RUST_LOG=info
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Start server
+CMD ["/app/target/release/prove", "serve", "--port", "8080"]

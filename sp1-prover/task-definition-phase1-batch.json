@@ -1,0 +1,52 @@
+{
+  "family": "sp1-prover-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "4096",
+  "memory": "8192",
+  "executionRoleArn": "arn:aws:iam::187510174358:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::187510174358:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "sp1-prover",
+      "image": "187510174358.dkr.ecr.us-east-1.amazonaws.com/sp1-prover:phase1-batch",
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "SP1_PROVER",
+          "value": "network"
+        },
+        {
+          "name": "RUST_LOG",
+          "value": "info"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "NETWORK_PRIVATE_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:187510174358:secret:SP1_PRIVATE_KEY-NFV6WS"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/sp1-prover",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    }
+  ]
+}

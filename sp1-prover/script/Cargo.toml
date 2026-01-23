@@ -1,0 +1,11 @@
+[package]
+name = "deposit-prover-benchmark"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sp1-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+hex = "0.4"

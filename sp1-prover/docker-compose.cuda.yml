@@ -1,0 +1,43 @@
+# ============================================================
+# SP1 ZK PROVER - CUDA GPU DEPLOYMENT
+# For Theta EdgeCloud GPU nodes
+# ============================================================
+#
+# Deploy: docker-compose -f docker-compose.cuda.yml up -d
+#
+# ============================================================
+
+services:
+  sp1-prover-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+    container_name: sp1-prover-gpu
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./test-data:/app/test-data:ro
+      - ./output:/app/output
+    environment:
+      - RUST_LOG=info
+      # CUDA GPU mode - no SP1 API key needed!
+      - SP1_PROVER=cuda
+      - CUDA_VISIBLE_DEVICES=0
+    
+    # NVIDIA GPU access - required for Theta EdgeCloud GPU nodes
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

@@ -1,0 +1,173 @@
+﻿{
+    "improvement_percent":  100,
+    "results":  [
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  25639,
+                        "proving_time_ms":  23393,
+                        "test":  1,
+                        "category":  "small",
+                        "file":  "deposit-small.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  22490,
+                        "proving_time_ms":  20810,
+                        "test":  2,
+                        "category":  "small",
+                        "file":  "deposit-small.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  22629,
+                        "proving_time_ms":  20858,
+                        "test":  3,
+                        "category":  "small",
+                        "file":  "deposit-small.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  26844,
+                        "proving_time_ms":  24929,
+                        "test":  4,
+                        "category":  "small",
+                        "file":  "deposit-small.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  21845,
+                        "proving_time_ms":  20242,
+                        "test":  5,
+                        "category":  "small",
+                        "file":  "deposit-small.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  22410,
+                        "proving_time_ms":  20810,
+                        "test":  6,
+                        "category":  "medium",
+                        "file":  "deposit-medium.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  23936,
+                        "proving_time_ms":  22325,
+                        "test":  7,
+                        "category":  "medium",
+                        "file":  "deposit-medium.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  24013,
+                        "proving_time_ms":  22295,
+                        "test":  8,
+                        "category":  "medium",
+                        "file":  "deposit-medium.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  24128,
+                        "proving_time_ms":  22261,
+                        "test":  9,
+                        "category":  "medium",
+                        "file":  "deposit-medium.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  31034,
+                        "proving_time_ms":  28474,
+                        "test":  10,
+                        "category":  "medium",
+                        "file":  "deposit-medium.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  22408,
+                        "proving_time_ms":  20137,
+                        "test":  11,
+                        "category":  "large",
+                        "file":  "deposit-large.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  23989,
+                        "proving_time_ms":  22305,
+                        "test":  12,
+                        "category":  "large",
+                        "file":  "deposit-large.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  23916,
+                        "proving_time_ms":  22319,
+                        "test":  13,
+                        "category":  "large",
+                        "file":  "deposit-large.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  25990,
+                        "proving_time_ms":  24380,
+                        "test":  14,
+                        "category":  "large",
+                        "file":  "deposit-large.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  21921,
+                        "proving_time_ms":  20294,
+                        "test":  15,
+                        "category":  "large",
+                        "file":  "deposit-large.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  23846,
+                        "proving_time_ms":  22223,
+                        "test":  16,
+                        "category":  "mixed",
+                        "file":  "deposit-1tfuel.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  23877,
+                        "proving_time_ms":  22268,
+                        "test":  17,
+                        "category":  "mixed",
+                        "file":  "deposit-1tfuel.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  25904,
+                        "proving_time_ms":  24274,
+                        "test":  18,
+                        "category":  "mixed",
+                        "file":  "deposit-1tfuel.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  36240,
+                        "proving_time_ms":  34641,
+                        "test":  19,
+                        "category":  "mixed",
+                        "file":  "deposit-1tfuel.json"
+                    },
+                    {
+                        "status":  "success",
+                        "e2e_time_ms":  25979,
+                        "proving_time_ms":  24367,
+                        "test":  20,
+                        "category":  "mixed",
+                        "file":  "deposit-1tfuel.json"
+                    }
+                ],
+    "max_proving_time_ms":  null,
+    "min_proving_time_ms":  null,
+    "avg_proving_time_ms":  0,
+    "total_tests":  20,
+    "phase":  "0.5",
+    "timestamp":  "2026-01-23 17:15:48",
+    "successful":  20,
+    "failed":  0
+}

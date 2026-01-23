@@ -1,0 +1,82 @@
+# ============================================================
+# SP1 ZK PROVER - CUDA GPU VERSION
+# For deployment on Theta EdgeCloud GPU nodes
+# ============================================================
+# 
+# This image runs SP1 proofs on NVIDIA GPUs (10-30s per proof)
+# No SP1 API key needed - fully self-hosted!
+#
+# Build: docker build -f Dockerfile.cuda -t sp1-prover-cuda .
+# ============================================================
+
+FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    libssl-dev \
+    pkg-config \
+    git \
+    clang \
+    jq \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust (nightly with CUDA support)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly-2026-01-19
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Clone SP1 repository and build cargo-prove from source
+RUN git clone https://github.com/succinctlabs/sp1.git /tmp/sp1 && \
+    cd /tmp/sp1/crates/cli && \
+    cargo install --locked --path . && \
+    rm -rf /tmp/sp1
+
+# Install SP1 toolchain
+RUN cargo prove install-toolchain
+
+# Verify installation
+RUN cargo prove --version && \
+    rustup toolchain list && \
+    nvcc --version
+
+# Set working directory
+WORKDIR /app
+
+# Copy the prover code
+COPY program /app/program
+COPY host /app/host
+COPY Cargo.toml /app/Cargo.toml
+COPY rust-toolchain.toml /app/rust-toolchain.toml
+
+# Build the guest program (zkVM circuit)
+RUN rustup default nightly && \
+    rustup component add rust-src --toolchain nightly && \
+    cd /app/program && \
+    cargo +nightly prove build
+
+# Build the host program (CUDA auto-detected by SP1 at runtime)
+RUN cd /app/host && \
+    cargo +nightly build --release
+
+# Copy test data
+COPY test-data /app/test-data
+
+# Expose port for HTTP API
+EXPOSE 80
+
+# Environment variables for GPU proving
+ENV SP1_PROVER=cuda
+ENV RUST_LOG=info
+ENV CUDA_VISIBLE_DEVICES=0
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:80/health || exit 1
+
+# Start the prover server on port 80 (Theta EdgeCloud expects this)
+CMD ["/app/target/release/prove", "serve", "--port", "80"]
