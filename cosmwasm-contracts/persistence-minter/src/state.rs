@@ -42,3 +42,4 @@ pub const FUNDED_USERS: Map<&Addr, bool> = Map::new("funded_users");
 
 
 
+

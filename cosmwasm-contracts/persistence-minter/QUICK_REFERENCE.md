@@ -174,3 +174,4 @@ persistenceCore tx wasm execute $CONTRACT '{"unpause":{}}' --from admin -y
 
 
 
+

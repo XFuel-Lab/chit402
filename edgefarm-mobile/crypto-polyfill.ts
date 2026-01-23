@@ -43,4 +43,3 @@ if (typeof global.EventEmitter === 'undefined') {
 if (typeof global.stream === 'undefined') {
   global.stream = require('stream-browserify');
 }
-

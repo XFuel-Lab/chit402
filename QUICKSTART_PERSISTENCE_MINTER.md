@@ -132,3 +132,4 @@ persistenceCore query wasm contract-state smart <CONTRACT> \
 
 
 
+

@@ -2,6 +2,8 @@
 members = [
     "cosmwasm/zk-verifier",
     "cosmwasm/ibc-tfuel-minter",
+    "sp1-prover/program",
+    "sp1-prover/host",
 ]
 
 resolver = "2"

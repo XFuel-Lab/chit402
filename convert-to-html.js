@@ -246,3 +246,4 @@ fs.writeFileSync('docs/WHITEPAPER_FULL.html', htmlContent);
 console.log('✅ Complete HTML generated: docs/WHITEPAPER_FULL.html');
 console.log('Open in browser and press Ctrl+P to generate PDF');
 
+

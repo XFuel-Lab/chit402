@@ -31,3 +31,4 @@ echo "3. Deploy: persistenceCore tx wasm store artifacts/persistence_minter.wasm
 
 
 
+

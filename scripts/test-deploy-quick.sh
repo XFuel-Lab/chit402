@@ -25,3 +25,4 @@ persistenceCore tx wasm store /app/target/wasm32-unknown-unknown/release/zk_veri
 echo ""
 echo "✅ Done! Check output above for tx hash"
 
+

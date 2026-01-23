@@ -16,3 +16,4 @@ echo ""
 echo "Code ID:"
 echo "$RESULT" | jq -r '.logs[0].events[] | select(.type=="store_code") | .attributes[] | select(.key=="code_id") | .value'
 
+
