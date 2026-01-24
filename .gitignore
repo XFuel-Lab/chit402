@@ -42,6 +42,16 @@ coverage.json
 !env.example
 !env.docker.example
 
+# SECURITY: Never commit files with real credentials
+ENV_LOCAL_REFERENCE.md
+ENV_*_REFERENCE.md
+**/*SECRET*
+**/*PASSWORD*
+**/*KEY*.json
+**/keystore/*.json
+**/*credentials*
+**/*CREDENTIALS*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
