@@ -6,6 +6,7 @@ import { getProver } from './prover.js';
 import { getRefundManager } from './refund-manager.js';
 import config from './config.js';
 import logger, { logDepositEvent, logProofGenerated } from './logger.js';
+import { getSP1Prover } from './sp1-prover-client.js';
 
 /**
  * Event Listener for DepositReceived events
@@ -261,6 +262,20 @@ class DepositListener {
     try {
       logger.info({ vault: depositData.vault }, 'Processing deposit');
 
+      // Step 0: Enforce 1 TFUEL max transaction limit (Phase B E2E testing)
+      const maxTxLimit = ethers.parseEther('1.0'); // 1 TFUEL limit
+      if (depositData.grossAmount > maxTxLimit) {
+        logger.warn({
+          vault: depositData.vault,
+          grossAmount: ethers.formatEther(depositData.grossAmount),
+          maxLimit: '1.0 TFUEL'
+        }, 'Transaction exceeds 1 TFUEL limit - initiating refund');
+
+        const refundManager = getRefundManager();
+        await refundManager.checkAndRefund(depositData.vault);
+        return;
+      }
+
       // Step 1: Check if we have a mapping for this vault
       const mapping = await getVaultMapping(depositData.vault);
 
@@ -365,29 +380,324 @@ class DepositListener {
 
   /**
    * Queue proof for Persistence minter contract (Phase 3 integration)
+   * Now integrated with SP1 prover for ZK proof generation
    * @param {Object} depositData - Deposit data
    * @param {Object} mapping - Vault mapping
-   * @param {Object} proof - ZK proof
+   * @param {Object} proof - ZK proof (Groth16)
    * @returns {Promise<void>}
    */
   async queueForPersistence(depositData, mapping, proof) {
-    // This is a placeholder for Phase 3 integration
-    // In production, this would submit the proof to the Persistence chain
-    // to mint ibcTFUEL tokens to the user's Keplr address
+    try {
+      // Step 1: Get SP1 prover client
+      const sp1Prover = getSP1Prover();
+      
+      // Step 2: Prepare SP1 proof request from deposit data
+      const provider = getProvider();
+      const blockData = await provider.getBlock(depositData.blockNumber);
+      
+      const sp1Request = sp1Prover.prepareProofRequest(depositData, {
+        number: blockData.number,
+        hash: blockData.hash,
+        timestamp: blockData.timestamp
+      });
+      
+      logger.info({
+        vault: depositData.vault,
+        blockNumber: depositData.blockNumber,
+        netAmount: ethers.formatEther(depositData.netAmount)
+      }, 'Generating SP1 proof for deposit');
+      
+      // Step 3: Generate SP1 proof (batching enabled by default, urgent=false for normal flow)
+      const sp1ProofResult = await sp1Prover.generateProof(sp1Request, false);
+      
+      logger.info({
+        vault: depositData.vault,
+        isBatch: sp1ProofResult.isBatch,
+        batchSize: sp1ProofResult.batchSize,
+        provingTimeMs: sp1ProofResult.provingTimeMs,
+        effectiveTimeMs: sp1ProofResult.effectiveTimeMs
+      }, 'SP1 proof generated successfully');
+      
+      // Step 4: Relay proof to Persistence ZKVerifier
+      await this.relayProofToPersistence(depositData, mapping, proof, sp1ProofResult);
+      
+    } catch (error) {
+      logger.error({
+        err: error,
+        vault: depositData.vault
+      }, 'Failed to generate/relay SP1 proof');
+      throw error;
+    }
+  }
 
-    logger.info({
-      vault: depositData.vault,
-      keplrAddr: mapping.keplrAddr,
-      netAmount: ethers.formatEther(depositData.netAmount),
-      persistenceRpc: config.persistence.rpcUrl,
-      minterContract: config.persistence.minterContract
-    }, 'Proof queued for Persistence minter (Phase 3 placeholder)');
+  /**
+   * Relay proof to Persistence chain ZKVerifier contract
+   * Phase C Update: Handle successful mints post-governance approval
+   * @param {Object} depositData - Deposit data
+   * @param {Object} mapping - Vault mapping
+   * @param {Object} groth16Proof - Groth16 ZK proof
+   * @param {Object} sp1Proof - SP1 proof result
+   * @returns {Promise<void>}
+   */
+  async relayProofToPersistence(depositData, mapping, groth16Proof, sp1Proof) {
+    try {
+      logger.info({
+        vault: depositData.vault,
+        keplrAddr: mapping.keplrAddr,
+        netAmount: ethers.formatEther(depositData.netAmount),
+        persistenceRpc: config.persistence.rpcUrl,
+        minterContract: config.persistence.minterContract
+      }, 'Relaying proof to Persistence ZKVerifier');
 
-    // TODO: Phase 3 - Implement Persistence chain submission
-    // - Connect to Persistence RPC
-    // - Submit proof to minter contract
-    // - Mint ibcTFUEL to user's Keplr address
-    // - Store submission transaction hash
+      // Prepare transaction payload for Persistence minter
+      const mintPayload = {
+        recipient: mapping.keplrAddr,
+        amount: depositData.netAmount.toString(),
+        vault: depositData.vault,
+        blockNumber: depositData.blockNumber,
+        txHash: depositData.transactionHash,
+        groth16Proof: {
+          proof: groth16Proof.proof,
+          publicInputs: groth16Proof.publicInputs
+        },
+        sp1Proof: {
+          proof: sp1Proof.proof,
+          publicInputs: sp1Proof.publicInputs,
+          nullifier: sp1Proof.nullifier,
+          isBatch: sp1Proof.isBatch,
+          batchSize: sp1Proof.batchSize || 1
+        },
+        timestamp: Date.now()
+      };
+
+      // Phase C: Check if we're in whitelisted mode (post-governance approval)
+      const isWhitelisted = config.persistence.whitelistApproved === true;
+      
+      if (!isWhitelisted) {
+        // Pre-approval mode: Store as receipt (Phase A/B behavior)
+        logger.info({
+          vault: depositData.vault,
+          phase: 'pre-approval'
+        }, 'Whitelisting not yet approved - storing as receipt');
+        
+        await this.storeProcessingReceipt(depositData, mapping, mintPayload, 'pending_whitelist');
+        return;
+      }
+      
+      // Phase C: Whitelisting approved - attempt real mint
+      logger.info({
+        vault: depositData.vault,
+        phase: 'post-approval'
+      }, 'Attempting live mint on Persistence (whitelisting approved)');
+
+      try {
+        // Dynamic import of CosmWasm client (only load if needed)
+        const { SigningCosmWasmClient } = await import('@cosmjs/cosmwasm-stargate');
+        const { DirectSecp256k1HdWallet } = await import('@cosmjs/proto-signing');
+        const { GasPrice } = await import('@cosmjs/stargate');
+        
+        // Initialize wallet from mnemonic
+        const wallet = await DirectSecp256k1HdWallet.fromMnemonic(
+          config.persistence.mnemonic,
+          { prefix: 'persistence' }
+        );
+        
+        const [account] = await wallet.getAccounts();
+        
+        // Connect to Persistence RPC
+        const persistenceClient = await SigningCosmWasmClient.connectWithSigner(
+          config.persistence.rpcUrl,
+          wallet,
+          {
+            gasPrice: GasPrice.fromString('0.025uxprt')
+          }
+        );
+        
+        // Prepare VerifyAndMint message for ZKVerifier contract
+        const executeMsg = {
+          verify_and_mint: {
+            zk_proof: {
+              proof: sp1Proof.proof,
+              public_inputs: sp1Proof.publicInputs,
+              nullifier: sp1Proof.nullifier
+            },
+            amount: depositData.netAmount.toString(),
+            recipient: mapping.keplrAddr
+          }
+        };
+        
+        logger.info({
+          contract: config.persistence.zkVerifierContract,
+          sender: account.address,
+          msg: executeMsg
+        }, 'Executing VerifyAndMint on ZKVerifier');
+        
+        // Execute mint transaction
+        const result = await persistenceClient.execute(
+          account.address,
+          config.persistence.zkVerifierContract,
+          executeMsg,
+          'auto', // Auto gas estimation
+          'XFuel Bridge: Mint ibcTFUEL from Theta deposit' // Memo
+        );
+        
+        logger.info({
+          vault: depositData.vault,
+          keplrAddr: mapping.keplrAddr,
+          txHash: result.transactionHash,
+          gasUsed: result.gasUsed,
+          height: result.height
+        }, '✅ Mint successful on Persistence!');
+        
+        // Store success receipt
+        await this.storeProcessingReceipt(depositData, mapping, {
+          ...mintPayload,
+          persistenceTxHash: result.transactionHash,
+          persistenceHeight: result.height,
+          gasUsed: result.gasUsed
+        }, 'mint_success');
+        
+        return;
+        
+      } catch (mintError) {
+        // Handle mint errors
+        const errorMsg = mintError.message || mintError.toString();
+        
+        // Check if it's a whitelisting issue (shouldn't happen post-approval, but handle gracefully)
+        if (errorMsg.includes('not whitelisted') || 
+            errorMsg.includes('unauthorized') ||
+            errorMsg.includes('whitelist')) {
+          
+          logger.warn({
+            vault: depositData.vault,
+            error: errorMsg,
+            phase: 'unexpected_whitelist_error'
+          }, '⚠️  Whitelist error despite approval flag - storing as receipt');
+          
+          await this.storeProcessingReceipt(depositData, mapping, mintPayload, 'whitelist_error');
+          return;
+        }
+        
+        // Check for proof validation errors
+        if (errorMsg.includes('invalid proof') || 
+            errorMsg.includes('proof verification failed')) {
+          
+          logger.error({
+            vault: depositData.vault,
+            error: errorMsg
+          }, '❌ Proof validation failed on Persistence');
+          
+          await this.storeProcessingReceipt(depositData, mapping, mintPayload, 'proof_invalid');
+          throw new Error(`Proof validation failed: ${errorMsg}`);
+        }
+        
+        // Check for mint cap exceeded
+        if (errorMsg.includes('mint cap exceeded') || 
+            errorMsg.includes('cap exceeded')) {
+          
+          logger.error({
+            vault: depositData.vault,
+            error: errorMsg
+          }, '❌ Mint cap exceeded on Persistence');
+          
+          await this.storeProcessingReceipt(depositData, mapping, mintPayload, 'cap_exceeded');
+          
+          // Trigger refund for user
+          const refundManager = getRefundManager();
+          await refundManager.checkAndRefund(depositData.vault);
+          return;
+        }
+        
+        // Check for paused contract
+        if (errorMsg.includes('paused') || errorMsg.includes('contract paused')) {
+          
+          logger.warn({
+            vault: depositData.vault,
+            error: errorMsg
+          }, '⚠️  Persistence contract is paused');
+          
+          await this.storeProcessingReceipt(depositData, mapping, mintPayload, 'contract_paused');
+          
+          // Store for retry when contract is unpaused
+          return;
+        }
+        
+        // Unexpected error - rethrow
+        logger.error({
+          err: mintError,
+          vault: depositData.vault,
+          errorMessage: errorMsg
+        }, 'Unexpected error during Persistence mint');
+        
+        await this.storeProcessingReceipt(depositData, mapping, mintPayload, 'mint_error');
+        throw mintError;
+      }
+      
+    } catch (error) {
+      logger.error({
+        err: error,
+        vault: depositData.vault
+      }, 'Failed to relay proof to Persistence');
+      throw error;
+    }
+  }
+
+  /**
+   * Store processing receipt for all deposit processing phases
+   * Phase C Update: Enhanced status tracking for successful mints
+   * @param {Object} depositData - Deposit data
+   * @param {Object} mapping - Vault mapping
+   * @param {Object} mintPayload - Mint payload (with optional Persistence tx data)
+   * @param {string} status - Receipt status (pending_whitelist, mint_success, mint_error, etc.)
+   * @returns {Promise<void>}
+   */
+  async storeProcessingReceipt(depositData, mapping, mintPayload, status) {
+    try {
+      const receipt = {
+        vault: depositData.vault,
+        recipient: mapping.keplrAddr,
+        amount: depositData.netAmount.toString(),
+        blockNumber: depositData.blockNumber,
+        txHash: depositData.transactionHash,
+        status,
+        mintPayload,
+        timestamp: Date.now(),
+        phase: status === 'mint_success' ? 'C' : (status === 'pending_whitelist' ? 'A' : 'B')
+      };
+
+      // Store in Redis with prefix for easy querying
+      const { createClient } = await import('redis');
+      const redisClient = createClient({ url: config.redis.url });
+      await redisClient.connect();
+      
+      const receiptKey = `receipt:${depositData.vault}:${depositData.transactionHash}`;
+      const ttl = status === 'mint_success' ? 86400 * 30 : 86400 * 7; // Keep success receipts for 30 days
+      
+      await redisClient.set(
+        receiptKey,
+        JSON.stringify(receipt),
+        { EX: ttl }
+      );
+      
+      // Also add to status-based index for easier querying
+      await redisClient.sAdd(`receipts:${status}`, receiptKey);
+      
+      await redisClient.quit();
+      
+      logger.info({
+        vault: depositData.vault,
+        receiptId: receiptKey,
+        status,
+        ttlDays: ttl / 86400
+      }, 'Processing receipt stored successfully');
+      
+    } catch (error) {
+      logger.error({
+        err: error,
+        vault: depositData.vault
+      }, 'Failed to store processing receipt');
+      // Don't throw - receipt storage failure shouldn't break the flow
+    }
   }
 
   /**

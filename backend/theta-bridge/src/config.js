@@ -60,15 +60,29 @@ const config = {
     verificationKey: process.env.ZK_VERIFICATION_KEY || join(__dirname, '../circuits/verification_key.json')
   },
 
-  // Persistence Configuration (Phase 3)
+  // Persistence Configuration (Phase C Update)
   persistence: {
-    rpcUrl: process.env.PERSISTENCE_RPC_URL || 'https://rpc.persistence.one',
-    minterContract: process.env.PERSISTENCE_MINTER_CONTRACT,
+    rpcUrl: process.env.PERSISTENCE_RPC_URL || 'https://rpc.core.persistence.one:443',
+    chainId: process.env.PERSISTENCE_CHAIN_ID || 'core-1',
+    wsUrl: process.env.PERSISTENCE_WS_URL || 'wss://rpc.core.persistence.one/websocket',
+    pollInterval: parseInt(process.env.PERSISTENCE_POLL_INTERVAL_MS) || 10000,
+    
+    // Phase C: Governance whitelisting status
+    whitelistApproved: process.env.PERSISTENCE_WHITELIST_APPROVED === 'true',
+    
+    // Contract addresses (deployed in Phase C)
+    zkVerifierContract: process.env.PERSISTENCE_ZK_VERIFIER_ADDRESS,
+    minterContract: process.env.PERSISTENCE_MINTER_ADDRESS,
+    
+    // Backend relayer wallet (for signing Persistence transactions)
+    mnemonic: process.env.PERSISTENCE_RELAYER_MNEMONIC,
+    
     // Reverse-burn loop configuration
     burnEventTopic: process.env.PERSISTENCE_BURN_EVENT_TOPIC || 'burn_ibcTFUEL',
-    chainId: process.env.PERSISTENCE_CHAIN_ID || 'core-1',
-    wsUrl: process.env.PERSISTENCE_WS_URL || 'wss://rpc.persistence.one/websocket',
-    pollInterval: parseInt(process.env.PERSISTENCE_POLL_INTERVAL_MS) || 10000
+    
+    // Gas configuration
+    gasPrice: process.env.PERSISTENCE_GAS_PRICE || '0.025uxprt',
+    gasAdjustment: parseFloat(process.env.PERSISTENCE_GAS_ADJUSTMENT) || 1.8
   },
 
   // Yield Configuration (Reverse-burn)
@@ -116,6 +130,19 @@ export function validateConfig() {
 
   if (config.theta.rpcUrls.length === 0) {
     errors.push('At least one THETA_RPC_URL is required');
+  }
+
+  // Phase C: Validate Persistence configuration if whitelisting is approved
+  if (config.persistence.whitelistApproved) {
+    if (!config.persistence.zkVerifierContract) {
+      errors.push('PERSISTENCE_ZK_VERIFIER_ADDRESS is required when whitelisting is approved');
+    }
+    if (!config.persistence.minterContract) {
+      errors.push('PERSISTENCE_MINTER_ADDRESS is required when whitelisting is approved');
+    }
+    if (!config.persistence.mnemonic) {
+      errors.push('PERSISTENCE_RELAYER_MNEMONIC is required when whitelisting is approved');
+    }
   }
 
   // Validate yield configuration if reverse-burn is enabled
