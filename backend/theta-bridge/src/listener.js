@@ -383,8 +383,12 @@ class DepositListener {
    * Now integrated with SP1 prover for ZK proof generation
    * @param {Object} depositData - Deposit data
    * @param {Object} mapping - Vault mapping
-   * @param {Object} proof - ZK proof (Groth16)
+   * @param {Object} proof - Legacy proof object (unused, kept for backward compatibility)
    * @returns {Promise<void>}
+   * 
+   * NOTE: Despite the parameter name, production uses SP1 zkVM proofs (not Groth16).
+   * The 'proof' parameter is a legacy artifact from Phase 0 and is not used in production.
+   * SP1 proof generation happens within this function via sp1Prover.generateProof().
    */
   async queueForPersistence(depositData, mapping, proof) {
     try {
@@ -435,9 +439,13 @@ class DepositListener {
    * Phase C Update: Handle successful mints post-governance approval
    * @param {Object} depositData - Deposit data
    * @param {Object} mapping - Vault mapping
-   * @param {Object} groth16Proof - Groth16 ZK proof
-   * @param {Object} sp1Proof - SP1 proof result
+   * @param {Object} groth16Proof - MISNOMER: Legacy parameter name from Phase 0 (unused in production)
+   * @param {Object} sp1Proof - SP1 proof result (ACTUAL PRODUCTION PROOF USED)
    * @returns {Promise<void>}
+   * 
+   * IMPORTANT: Despite parameter naming, production exclusively uses sp1Proof.
+   * The 'groth16Proof' parameter is kept for backward compatibility but is not used.
+   * Phase 0 used Groth16/Circom, Phase B+ uses SP1 zkVM (RISC-V → STARK → Groth16 wrapper).
    */
   async relayProofToPersistence(depositData, mapping, groth16Proof, sp1Proof) {
     try {
