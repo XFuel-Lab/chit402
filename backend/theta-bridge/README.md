@@ -13,7 +13,7 @@ This backend service orchestrates the XFuelLab hybrid ZK bridge, enabling trustl
 #### **Forward Flow (Theta → Persistence)**
 - Multi-RPC provider with automatic failover
 - DepositReceived event monitoring on Theta
-- Mock ZK proof generation (production: real ZK-SNARKs)
+- SP1 zkVM proof generation (RISC-V → STARK → Groth16 wrapper)
 - Redis-based vault mapping (address → Keplr)
 - Automated refund handling for expired/invalid deposits
 
@@ -106,7 +106,7 @@ docker-compose logs -f theta-bridge
 ┌─────────────────▼───────────────────────────────────┐
 │ 3. ZK proof generated for transaction              │
 │    - Mock mode: instant placeholder proofs          │
-│    - Production: snarkjs Groth16 proofs (~1.5s)    │
+│    - Production: SP1 zkVM proofs (~9s, batched)    │
 └─────────────────┬───────────────────────────────────┘
                   │
 ┌─────────────────▼───────────────────────────────────┐
@@ -249,7 +249,7 @@ Multi-RPC provider with automatic failover. Retries failed calls across endpoint
 Theta DepositReceived event listener. Monitors SubVault deposits via WebSocket + periodic scans.
 
 ### `src/prover.js`
-ZK proof generator. Mock mode by default; loads snarkjs in production.
+ZK proof generator. Uses SP1 zkVM in production (~9s proving, ~100ms verification). Phase B batching achieves 11.6x speedup.
 
 ### `src/refund-manager.js`
 Automated refund handler for expired/invalid vault mappings.

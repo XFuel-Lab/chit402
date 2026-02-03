@@ -37,7 +37,7 @@ The XFuelLab Hybrid ZK Bridge is a production-ready backend service that enables
 │  │ ZK Prover        │                │ Yield Unwrapper  │                   │
 │  │ (prover.js)      │                │ (yield-          │                   │
 │  │                  │                │  unwrapper.js)   │                   │
-│  │ • SnarkJS        │                │                  │                   │
+│  │ • SP1 zkVM      │                │                  │                   │
 │  │ • Mock proofs    │                │ • 30% → TFUEL    │                   │
 │  │ • Proof hashing  │                │ • 70% → Reinvest │                   │
 │  └────────┬─────────┘                │ • Swap logic     │                   │
@@ -411,7 +411,7 @@ BLOCK_POLL_INTERVAL_MS=5000
 
 **Production Integration:**
 Place circuit files in `circuits/`:
-- `circuit.wasm` - Circuit WebAssembly
+- [circuits/ archived] - Legacy Groth16/Circom files moved to legacy-archive/ (Phase 0)
 - `circuit_final.zkey` - Proving key
 - `verification_key.json` - Verification key
 

@@ -32,10 +32,10 @@ Visual diagrams and architecture documentation for the extended backend.
                   │                                             │
                   ▼                                             ▼
 ┌───────────────────────────────────────┐   ┌───────────────────────────────────────┐
-│  2. prover.js                         │   │  2. yield-unwrapper.js                │
-│     - Generates ZK proofs (mock)      │   │     - Splits yield (30%/70%)          │
-│     - snarkjs Groth16 (production)    │   │     - Swaps ibcUSDC → TFUEL           │
-│     - Proof verification              │   │     - Routes to RevenueSplitter       │
+│  2. sp1-prover-client.js              │   │  2. yield-unwrapper.js                │
+│     - Generates SP1 zkVM proofs       │   │     - Splits yield (30%/70%)          │
+│     - RISC-V → STARK → Groth16        │   │     - Swaps ibcUSDC → TFUEL           │
+│     - ~9s proving, ~100ms verify      │   │     - Routes to RevenueSplitter       │
 └─────────────────┬─────────────────────┘   └─────────────────┬─────────────────────┘
                   │                                             │
                   ▼                                             ▼
@@ -193,7 +193,7 @@ index.js
 │   └── logger.js
 │
 ├── prover.js
-│   ├── snarkjs (ZK proofs)
+│   ├── SP1 zkVM (ZK proofs - production)
 │   ├── config.js
 │   └── logger.js
 │

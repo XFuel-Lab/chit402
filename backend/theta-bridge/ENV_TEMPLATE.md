@@ -69,7 +69,7 @@ EXPIRY_MINUTES=30
 # ===================================================================
 
 # ZK circuit WASM file path
-ZK_CIRCUIT_WASM=./circuits/circuit.wasm
+# ZK_CIRCUIT_WASM=./circuits/circuit.wasm  # Legacy Groth16 (Phase 0, archived)
 
 # ZK circuit ZKEY file path
 ZK_CIRCUIT_ZKEY=./circuits/circuit_final.zkey
