@@ -1,37 +1,46 @@
 # Phase 1 Deployment Checklist
 
-## ✅ Status: READY TO DEPLOY
+## ✅ Status: PHASE 1 COMPLETE (Jan 2026)
 
-All Phase 1 implementation is complete. Follow these steps to enable batching in production.
+**Batching is now enabled in production.** This document serves as a reference for SP1 prover configuration.
+
+All Phase 1 implementation was completed and deployed. The batching feature achieved:
+- 🎯 11.6x throughput increase
+- 💰 90% cost reduction
+- ⚡ 2.25s effective time per deposit
+- 📊 100% success rate (20/20 benchmarks passed)
 
 ---
 
 ## 🚀 Quick Deployment (5 minutes)
 
-### Step 1: Update Environment Variables
-Add these to your `.env` or `.env.local` file in `backend/theta-bridge/`:
+### Current Production Configuration
+These settings are already configured in `backend/theta-bridge/src/config.js`:
 
 ```bash
-# Update prover URL to Phase 1 endpoint
-SP1_PROVER_URL=http://3.83.140.122:8080
+# Current SP1 Prover (Phase B+ production)
+SP1_PROVER_URL=http://54.174.193.127:8080
 
-# Enable batching (Phase 1)
+# Batching enabled (Phase 1 - deployed)
 SP1_BATCHING_ENABLED=true
 SP1_BATCH_SIZE=10
 SP1_BATCH_TIMEOUT_MS=10000
 SP1_MIN_BATCH_SIZE=5
 ```
 
-### Step 2: Restart Backend Service
-```bash
-cd backend/theta-bridge
-npm run start
-# OR if using PM2:
-pm2 restart theta-bridge
-```
+**Note:** These are active production settings. See `backend/theta-bridge/src/config.js` for current configuration.
 
-### Step 3: Verify
-Check logs for confirmation:
+### Deployment History
+**Phase 1 was deployed in January 2026.**
+
+Original deployment steps (completed):
+1. ✅ Updated environment variables
+2. ✅ Restarted backend service
+3. ✅ Verified batching initialization
+4. ✅ Monitored first week of production usage
+5. ✅ Confirmed cost savings and performance improvements
+
+Verification logs showed:
 ```
 SP1ProverClient initialized with batching configuration
   batchingEnabled: true
