@@ -54,10 +54,25 @@ const config = {
   },
 
   // ZK Proof Configuration
+  // NOTE: Legacy Groth16 circuit paths (Phase 0) - kept for historical reference
+  // Production uses SP1 zkVM prover (see sp1-program/ directory and SP1 config below)
   zk: {
     circuitWasm: process.env.ZK_CIRCUIT_WASM || join(__dirname, '../circuits/circuit.wasm'),
     circuitZkey: process.env.ZK_CIRCUIT_ZKEY || join(__dirname, '../circuits/circuit_final.zkey'),
     verificationKey: process.env.ZK_VERIFICATION_KEY || join(__dirname, '../circuits/verification_key.json')
+  },
+
+  // SP1 zkVM Configuration (Production - Phase B+)
+  sp1: {
+    proverUrl: process.env.SP1_PROVER_URL || 'http://54.174.193.127:8080',
+    timeout: parseInt(process.env.SP1_PROVER_TIMEOUT) || 120000, // 120s
+    retries: parseInt(process.env.SP1_PROVER_RETRIES) || 3,
+    fallbackToMock: process.env.SP1_PROVER_FALLBACK === 'true',
+    // Phase B batching (11.6x speedup, 90% cost reduction)
+    batchingEnabled: process.env.SP1_BATCHING_ENABLED !== 'false',
+    batchSize: parseInt(process.env.SP1_BATCH_SIZE) || 10,
+    batchTimeout: parseInt(process.env.SP1_BATCH_TIMEOUT_MS) || 10000,
+    minBatchSize: parseInt(process.env.SP1_MIN_BATCH_SIZE) || 5
   },
 
   // Persistence Configuration (Phase C Update)

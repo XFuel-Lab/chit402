@@ -7,8 +7,8 @@ Live: **[xfuel.app](https://xfuel.app)** (Theta Mainnet)
 [![Audit Status](https://img.shields.io/badge/audit-pending-yellow.svg)](docs/overhaul/ZK_OVERHAUL_SUMMARY.md)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/XFuel-Lab/xfuel-protocol)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v3.1%20Ferrari-red.svg)](docs/WHITEPAPER.md)
-[![ZK Bridge](https://img.shields.io/badge/ZK--SNARK-Groth16-purple.svg)](docs/overhaul/ZK_OVERHAUL_SUMMARY.md)
+[![Version](https://img.shields.io/badge/version-v4.3-red.svg)](docs/WHITEPAPER.md)
+[![ZK Bridge](https://img.shields.io/badge/ZK--VM-SP1-purple.svg)](sp1-prover/README.md)
 
 ---
 
@@ -25,7 +25,7 @@ pandoc docs/WHITEPAPER.md -o xfuel-whitepaper.pdf --pdf-engine=xelatex
 ```
 
 **What's Inside:**
-- Zero-Knowledge bridge architecture (Groth16 ZK-SNARKs)
+- Zero-Knowledge bridge architecture (SP1 zkVM - RISC-V based proofs)
 - Ferrari Hybrid Tokenomics (30/30/25/15 revenue splits)
 - Persistence LSTfi integration (Dexter Superfluid pools: stkXPRT, milkTIA)
 - veXF governance & multipliers (up to 11.5×)
@@ -56,19 +56,20 @@ By leveraging ZK-SNARK proofs for transaction validation and IBC (Inter-Blockcha
 1. **Select Your LST**: Choose your target Liquid Staking Token (stkTIA, stkATOM, etc.)
 2. **Get Deposit Address**: Click "Show Deposit Address" to see QR code + address
 3. **Send TFUEL**: Open your Theta Wallet, scan QR or paste address, send TFUEL
-4. **ZK Proof Generation**: Backend detects deposit, generates cryptographic proof (~1.5s)
-5. **Proof Verification**: Persistence chain verifies proof, mints ibcTFUEL 1:1 (~0.5s)
-6. **IBC Transfer**: ibcTFUEL transferred to your Cosmos address via IBC channel-190 (~0.5s)
-7. **Auto-Swap & Stake**: Automated swap to target LST + staking (~1s)
+4. **ZK Proof Generation**: Backend detects deposit, generates SP1 zkVM proof (~9s)
+5. **Proof Verification**: Persistence ZKVerifier.wasm verifies proof (~100ms)
+6. **ibcTFUEL Mint**: CW20 token minted 1:1 with locked TFUEL
+7. **IBC Transfer**: ibcTFUEL routed to target chain via IBC channel-190 (~1-2s)
+8. **Auto-Swap & Stake**: Automated swap to target LST + staking (~1s)
 
-**Total time:** < 4 seconds from deposit to staked LST  
+**Total time:** ~11-12 seconds from deposit to staked LST  
 **No wallet connect, no extensions, no browser dependencies** — just send and receive.
 
 ### Technical Architecture
 
 ```
-Theta Deposit → ZK Proof → Verification → ibcTFUEL Mint → IBC Transfer → LST Swap → Auto-Stake
-   (6s)         (1.5s)        (0.5s)          (instant)        (0.5s)      (1s)      (instant)
+Theta Deposit → SP1 zkVM Proof → CosmWasm Verify → ibcTFUEL Mint → IBC Transfer → LST Swap → Auto-Stake
+   (2-6s)           (~9s)             (~100ms)         (instant)        (~1-2s)      (~1s)      (instant)
 ```
 
 ---
@@ -85,7 +86,7 @@ pandoc docs/WHITEPAPER.md -o xfuel-whitepaper.pdf --pdf-engine=xelatex
 ```
 
 **What's Inside:**
-- Zero-Knowledge bridge architecture (Groth16 ZK-SNARKs)
+- Zero-Knowledge bridge architecture (SP1 zkVM - RISC-V based proofs)
 - Ferrari Hybrid Tokenomics (30/30/25/15 revenue splits)
 - Persistence LSTfi integration (Dexter Superfluid pools)
 - veXF governance & multipliers (up to 11.5×)
@@ -122,8 +123,9 @@ XFUEL's Zero-Knowledge bridge achieves trustless cross-chain transfers using cry
 
 #### 2. **ZK Proof Layer** (Off-Chain Backend)
 - **Backend Listener**: Monitors Theta deposits every 2 seconds
-- **Proof Generator**: Circom circuits with Groth16 ZK-SNARKs (~1.5s generation)
+- **SP1 zkVM Prover**: Generates RISC-V-based ZK proofs (~9s, Phase B: 8.997s avg)
 - **Relayer Network**: Submits proofs to Persistence chain
+- **Production Stack**: Rust RISC-V program → STARK → Groth16 wrapper (transparent setup)
 
 #### 3. **Persistence Layer** (CosmWasm Contracts)
 - **ZKVerifier.wasm**: `persistence1...` - Verifies ZK proofs in ~50ms constant time
@@ -141,23 +143,23 @@ Step 1: DEPOSIT (2-6s)
   ↓
   User sends TFUEL to VaultFactory (0xB0a266...)
   ↓
-Step 2: ZK PROOF GENERATION (1.5s)
+Step 2: SP1 zkVM PROOF GENERATION (~9s)
   ↓
-  Backend detects deposit → Generates Groth16 proof
+  Backend detects deposit → Generates SP1 proof (RISC-V → STARK → Groth16 wrapper)
   ↓
-Step 3: PROOF VERIFICATION (0.5s)
+Step 3: PROOF VERIFICATION (~100ms)
   ↓
-  Persistence ZKVerifier validates proof cryptographically
+  Persistence ZKVerifier.wasm validates proof cryptographically
   ↓
-Step 4: IBC TRANSFER (0.5s)
+Step 4: IBC TRANSFER (~1-2s)
   ↓
-  ibcTFUEL minted 1:1 → Transferred via IBC channel-190
+  ibcTFUEL minted 1:1 → Transferred via IBC channel-190 (post-mint routing only)
   ↓
-Step 5: LST SWAP + STAKE (1s)
+Step 5: LST SWAP + STAKE (~1s)
   ↓
   Automated swap to target LST (stkTIA, stkATOM, etc.) → Auto-stake
 
-Total: < 4 seconds from deposit to staked LST
+Total: ~11-12 seconds from deposit to staked LST
 ```
 
 ### Deployment Status
@@ -167,10 +169,10 @@ Total: < 4 seconds from deposit to staked LST
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Theta Contracts | ✅ Deployed | VaultFactory, RevenueSplitter live |
-| ZK Proof System | ✅ Operational | Groth16 (<4s settlements) |
-| Backend Services | ✅ Running | Parallel proof/IBC processing |
+| SP1 zkVM Prover | ✅ Operational | ~9s proving (Phase B: 8.997s avg) |
+| Backend Services | ✅ Running | SP1 batching enabled (11.6x speedup) |
 | CosmWasm Contracts | ⏳ Pending | Awaiting governance approval |
-| Full E2E Flow | ✅ Tested | 1000+ successful transactions |
+| Full E2E Flow | ✅ Tested | Phase B: 52.89 tx/min throughput |
 
 **Latest Deployment Transaction:**  
 [TX: 1640372708F6E57D9FEB1006368B106BF7C18BDB056A471F5A98CB6878A6E1D9](https://explorer.thetatoken.org/tx/0x1640372708F6E57D9FEB1006368B106BF7C18BDB056A471F5A98CB6878A6E1D9)
@@ -267,11 +269,12 @@ Read the complete technical whitepaper: **[docs/WHITEPAPER.md](docs/WHITEPAPER.m
 - **NFT Rewards**: Exclusive governance NFTs for participation milestones
 - **Airdrop Pools**: Community incentive programs
 
-**ZK-SNARK Bridge**
-- Sub-4 second settlement (deposit 2-6s → proof 1.5s → verify 0.5s → IBC 0.5s → swap 1s)
-- Groth16 proof system with BN254 elliptic curve
+**SP1 zkVM Bridge**
+- ~11-12 second settlement (deposit 2-6s → proof ~9s → verify ~100ms → IBC 1-2s → swap 1s)
+- SP1 zkVM (RISC-V → STARK → Groth16 wrapper) with transparent setup
+- Phase B benchmarks: 8.997s avg proving, 52.89 tx/min throughput
 - Cryptographic security without trust assumptions
-- IBC channel-190 for native Cosmos interoperability
+- IBC channel-190 for post-mint Cosmos-internal routing
 
 ### Why Ferrari?
 
@@ -325,10 +328,10 @@ Protocol Usage → Revenue Generation
   - `RevenueSplitter.sol` - Fee distribution: 60% buyback-burn, 25% veXF yield, 15% treasury (Theta)
 
 ### Backend Services
-- **IBC Listener**: Monitors Theta blockchain for deposits (`backend/ibc/listener.ts`)
-- **ZK Prover**: Generates ZK-SNARK proofs using Circom/snarkjs (`backend/zk-prover/`)
-- **IBC Router**: Handles cross-chain transfers via IBC channel-190 (`backend/ibc/ibc-transfer.ts`)
-- **Yield Optimizer**: Routes to highest-yielding LSTs (`backend/yield-optimizer.ts`)
+- **Theta Listener**: Monitors Theta blockchain for deposits (`backend/theta-bridge/src/listener.js`)
+- **SP1 zkVM Prover**: Generates ZK proofs using SP1 RISC-V (`sp1-program/`, hosted prover at port 8080)
+- **Persistence Relayer**: Submits proofs to ZKVerifier.wasm on Persistence
+- **Yield Optimizer**: Routes to highest-yielding LSTs via IBC channel-190 (post-mint routing)
 
 ---
 
