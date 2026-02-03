@@ -8,9 +8,12 @@ import NeonButton from './components/NeonButton'
 import ApyOrb from './components/ApyOrb'
 import YieldBubbleSelector, { type LSTOption } from './components/YieldBubbleSelector'
 import NeonTabs, { type NeonTabId } from './components/NeonTabs'
+// @ts-expect-error - Legacy component archived, keeping import for potential future re-enable
 import LotteryWinExplosion from './components/LotteryWinExplosion'
 import CreatePoolModal from './components/CreatePoolModal'
+// @ts-expect-error - Legacy component archived, keeping import for potential future re-enable
 import EarlyBelieversCard from './components/EarlyBelieversCard'
+// @ts-expect-error - Legacy component archived, keeping import for potential future re-enable
 import EarlyBelieversModal from './components/EarlyBelieversModal'
 import StrideInitModal from './components/StrideInitModal'
 import EdgeNodeDashboard from './components/EdgeNodeDashboard'
@@ -20,6 +23,7 @@ import YieldPumpCard from './components/YieldPumpCard'
 import ManualDepositCard from './components/ManualDepositCard'
 import SignInModal from './components/SignInModal'
 import TransactionSuccessModal from './components/TransactionSuccessModal'
+// @ts-expect-error - Legacy component archived, keeping import for potential future re-enable
 import BetaBanner from './components/BetaBanner'
 import MaintenanceOverlay from './components/MaintenanceOverlay'
 import GovernanceTab from './components/GovernanceTab'
@@ -1280,8 +1284,8 @@ function App({ initialTab = 'swap' }: AppProps) {
       <MaintenanceOverlay isEnabled={isMaintenanceMode} />
       
       <ScreenBackground>
-        {/* Beta Testing Banner - Only on mainnet */}
-        <BetaBanner network={APP_CONFIG.NETWORK as 'mainnet' | 'testnet'} />
+        {/* Beta Testing Banner - Legacy feature disabled (archived component) */}
+        {/* <BetaBanner network={APP_CONFIG.NETWORK as 'mainnet' | 'testnet'} /> */}
       
       <div className="relative z-10 mx-auto flex min-h-screen max-w-5xl flex-col px-4 py-6 sm:px-6 sm:py-10 lg:px-8">
         {/* Top chrome: logo + live orb */}
@@ -2103,8 +2107,8 @@ function App({ initialTab = 'swap' }: AppProps) {
         loading={poolLoading}
       />
 
-      {/* Lottery Win Explosion */}
-      <LotteryWinExplosion
+      {/* Lottery Win Explosion - Legacy feature disabled (archived component) */}
+      {/* <LotteryWinExplosion
         visible={showWinExplosion}
         winAmount={winAmount}
         nft={winNFT}
@@ -2119,10 +2123,10 @@ function App({ initialTab = 'swap' }: AppProps) {
           }
         }}
         apy={currentApy}
-      />
+      /> */}
 
-      {/* Early Believers Modal */}
-      <EarlyBelieversModal
+      {/* Early Believers Modal - Legacy feature disabled (archived component) */}
+      {/* <EarlyBelieversModal
         visible={showEarlyBelieversModal}
         onClose={() => setShowEarlyBelieversModal(false)}
         walletAddress={wallet.fullAddress}
@@ -2131,7 +2135,7 @@ function App({ initialTab = 'swap' }: AppProps) {
           console.log('Use manual deposit flow')
         }}
         isMainnet={true}
-      />
+      /> */}
 
       {/* Stride Initialization Modal - Tesla-Style Seamless Setup */}
       {keplrAddress && (
