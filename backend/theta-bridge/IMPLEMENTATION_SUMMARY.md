@@ -339,7 +339,7 @@ describe('Reverse-Burn Loop', () => {
 
 ### Phase 3 Enhancements
 
-1. **Real ZK Proofs**: Replace mock prover with snarkjs integration
+1. **Real ZK Proofs**: ✅ COMPLETE - Using SP1 zkVM in production (Phase B, ~9s proving)
 2. **Persistence Minter**: Implement actual ibcTFUEL minting on Persistence
 3. **LP Reinvestment**: Implement 70% yield reinvestment logic
 4. **CosmJS Integration**: Use `@cosmjs/stargate` for Persistence queries

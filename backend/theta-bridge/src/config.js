@@ -54,21 +54,50 @@ const config = {
   },
 
   // ZK Proof Configuration
+  // NOTE: Legacy Groth16 circuit paths (Phase 0) - kept for historical reference
+  // Production uses SP1 zkVM prover (see sp1-program/ directory and SP1 config below)
   zk: {
     circuitWasm: process.env.ZK_CIRCUIT_WASM || join(__dirname, '../circuits/circuit.wasm'),
     circuitZkey: process.env.ZK_CIRCUIT_ZKEY || join(__dirname, '../circuits/circuit_final.zkey'),
     verificationKey: process.env.ZK_VERIFICATION_KEY || join(__dirname, '../circuits/verification_key.json')
   },
 
-  // Persistence Configuration (Phase 3)
+  // SP1 zkVM Configuration (Production - Phase B+)
+  sp1: {
+    proverUrl: process.env.SP1_PROVER_URL || 'http://54.174.193.127:8080',
+    timeout: parseInt(process.env.SP1_PROVER_TIMEOUT) || 120000, // 120s
+    retries: parseInt(process.env.SP1_PROVER_RETRIES) || 3,
+    fallbackToMock: process.env.SP1_PROVER_FALLBACK === 'true',
+    // Phase B batching (11.6x speedup, 90% cost reduction)
+    batchingEnabled: process.env.SP1_BATCHING_ENABLED !== 'false',
+    batchSize: parseInt(process.env.SP1_BATCH_SIZE) || 10,
+    batchTimeout: parseInt(process.env.SP1_BATCH_TIMEOUT_MS) || 10000,
+    minBatchSize: parseInt(process.env.SP1_MIN_BATCH_SIZE) || 5
+  },
+
+  // Persistence Configuration (Phase C Update)
   persistence: {
-    rpcUrl: process.env.PERSISTENCE_RPC_URL || 'https://rpc.persistence.one',
-    minterContract: process.env.PERSISTENCE_MINTER_CONTRACT,
+    rpcUrl: process.env.PERSISTENCE_RPC_URL || 'https://rpc.core.persistence.one:443',
+    chainId: process.env.PERSISTENCE_CHAIN_ID || 'core-1',
+    wsUrl: process.env.PERSISTENCE_WS_URL || 'wss://rpc.core.persistence.one/websocket',
+    pollInterval: parseInt(process.env.PERSISTENCE_POLL_INTERVAL_MS) || 10000,
+    
+    // Phase C: Governance whitelisting status
+    whitelistApproved: process.env.PERSISTENCE_WHITELIST_APPROVED === 'true',
+    
+    // Contract addresses (deployed in Phase C)
+    zkVerifierContract: process.env.PERSISTENCE_ZK_VERIFIER_ADDRESS,
+    minterContract: process.env.PERSISTENCE_MINTER_ADDRESS,
+    
+    // Backend relayer wallet (for signing Persistence transactions)
+    mnemonic: process.env.PERSISTENCE_RELAYER_MNEMONIC,
+    
     // Reverse-burn loop configuration
     burnEventTopic: process.env.PERSISTENCE_BURN_EVENT_TOPIC || 'burn_ibcTFUEL',
-    chainId: process.env.PERSISTENCE_CHAIN_ID || 'core-1',
-    wsUrl: process.env.PERSISTENCE_WS_URL || 'wss://rpc.persistence.one/websocket',
-    pollInterval: parseInt(process.env.PERSISTENCE_POLL_INTERVAL_MS) || 10000
+    
+    // Gas configuration
+    gasPrice: process.env.PERSISTENCE_GAS_PRICE || '0.025uxprt',
+    gasAdjustment: parseFloat(process.env.PERSISTENCE_GAS_ADJUSTMENT) || 1.8
   },
 
   // Yield Configuration (Reverse-burn)
@@ -116,6 +145,19 @@ export function validateConfig() {
 
   if (config.theta.rpcUrls.length === 0) {
     errors.push('At least one THETA_RPC_URL is required');
+  }
+
+  // Phase C: Validate Persistence configuration if whitelisting is approved
+  if (config.persistence.whitelistApproved) {
+    if (!config.persistence.zkVerifierContract) {
+      errors.push('PERSISTENCE_ZK_VERIFIER_ADDRESS is required when whitelisting is approved');
+    }
+    if (!config.persistence.minterContract) {
+      errors.push('PERSISTENCE_MINTER_ADDRESS is required when whitelisting is approved');
+    }
+    if (!config.persistence.mnemonic) {
+      errors.push('PERSISTENCE_RELAYER_MNEMONIC is required when whitelisting is approved');
+    }
   }
 
   // Validate yield configuration if reverse-burn is enabled

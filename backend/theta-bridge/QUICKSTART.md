@@ -243,7 +243,7 @@ curl -X POST http://localhost:3001/api/refund/0xVAULT_ADDRESS
 - [Redis Node Client](https://github.com/redis/node-redis)
 - [Pino Logger](https://getpino.io/)
 - [PM2 Documentation](https://pm2.keymetrics.io/)
-- [snarkjs Guide](https://github.com/iden3/snarkjs)
+- [SP1 zkVM Documentation](https://docs.succinct.xyz/)
 
 ## 📈 Next Steps
 

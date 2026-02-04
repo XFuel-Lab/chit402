@@ -21,7 +21,7 @@ backend/theta-bridge/
 │
 ├── circuits/                      # ZK Circuit files
 │   ├── README.md                  # Circuit setup guide
-│   ├── circuit.wasm               # (Production: Compiled circuit)
+│   ├── [circuits/ archived]       # (Legacy Groth16 circuits moved to legacy-archive/)
 │   ├── circuit_final.zkey         # (Production: Proving key)
 │   └── verification_key.json      # (Production: Verification key)
 │
@@ -152,7 +152,7 @@ TTL: 30 minutes (configurable)
 7. Mark completed
 
 #### 7. **prover.js** - ZK Proof Generator
-- ZK proof generation using snarkjs
+- ZK proof generation using SP1 zkVM (production) or mock mode (development)
 - Mock mode for development
 - Proof verification
 - Solidity-compatible formatting

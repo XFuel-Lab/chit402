@@ -471,7 +471,7 @@ docker-compose run --rm persistence-deployer /app/scripts/docker-deploy-persiste
 - [ ] Using **testnet** mnemonic (NEVER mainnet private keys in `.env`)
 - [ ] Max supply set to conservative limit (0.1 TFUEL = 100000000000000000 wei)
 - [ ] Pause function restricted to admin only
-- [ ] ZK verifier uses mock Groth16 (understand limitations)
+- [ ] ZK verifier uses SP1 zkVM (STARK → Groth16 wrapper for efficient verification)
 - [ ] Nonce tracking enabled (replay protection)
 - [ ] Contract admin set correctly (`DEPLOYER_ADDR`)
 - [ ] Sufficient testnet tokens (1+ XPRT)

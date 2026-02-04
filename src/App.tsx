@@ -8,10 +8,7 @@ import NeonButton from './components/NeonButton'
 import ApyOrb from './components/ApyOrb'
 import YieldBubbleSelector, { type LSTOption } from './components/YieldBubbleSelector'
 import NeonTabs, { type NeonTabId } from './components/NeonTabs'
-import LotteryWinExplosion from './components/LotteryWinExplosion'
 import CreatePoolModal from './components/CreatePoolModal'
-import EarlyBelieversCard from './components/EarlyBelieversCard'
-import EarlyBelieversModal from './components/EarlyBelieversModal'
 import StrideInitModal from './components/StrideInitModal'
 import EdgeNodeDashboard from './components/EdgeNodeDashboard'
 import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
@@ -20,7 +17,6 @@ import YieldPumpCard from './components/YieldPumpCard'
 import ManualDepositCard from './components/ManualDepositCard'
 import SignInModal from './components/SignInModal'
 import TransactionSuccessModal from './components/TransactionSuccessModal'
-import BetaBanner from './components/BetaBanner'
 import MaintenanceOverlay from './components/MaintenanceOverlay'
 import GovernanceTab from './components/GovernanceTab'
 import LPFlywheelCard from './components/LPFlywheelCard'
@@ -136,7 +132,6 @@ function App({ initialTab = 'swap' }: AppProps) {
   const [enteredRaffles, setEnteredRaffles] = useState<Set<number>>(new Set())
   const [myNFTs, setMyNFTs] = useState<Array<{ id: string; name: string; rarity: 'Mythic' | 'Legendary' | 'Epic' | 'Rare'; poolId: number; winAmount: number }>>([])
   const [swapHistory, setSwapHistory] = useState<SwapTransaction[]>([])
-  const [showEarlyBelieversModal, setShowEarlyBelieversModal] = useState(false)
   const [gasPrice, setGasPrice] = useState<bigint | null>(null) // Gas price in wei
   const [estimatedGasCost, setEstimatedGasCost] = useState<number | null>(null) // Estimated gas cost in TFUEL
   const [routerQuote, setRouterQuote] = useState<number | null>(null) // Quote from router if available
@@ -1280,8 +1275,8 @@ function App({ initialTab = 'swap' }: AppProps) {
       <MaintenanceOverlay isEnabled={isMaintenanceMode} />
       
       <ScreenBackground>
-        {/* Beta Testing Banner - Only on mainnet */}
-        <BetaBanner network={APP_CONFIG.NETWORK as 'mainnet' | 'testnet'} />
+        {/* Beta Testing Banner - Legacy feature disabled (archived component) */}
+        {/* <BetaBanner network={APP_CONFIG.NETWORK as 'mainnet' | 'testnet'} /> */}
       
       <div className="relative z-10 mx-auto flex min-h-screen max-w-5xl flex-col px-4 py-6 sm:px-6 sm:py-10 lg:px-8">
         {/* Top chrome: logo + live orb */}
@@ -1358,8 +1353,8 @@ function App({ initialTab = 'swap' }: AppProps) {
               ]}
             />
 
-            {/* Early Believers Card */}
-            <EarlyBelieversCard onClick={() => setShowEarlyBelieversModal(true)} />
+            {/* Early Believers Card - Legacy feature disabled (archived component) */}
+            {/* <EarlyBelieversCard onClick={() => setShowEarlyBelieversModal(true)} /> */}
 
             {/* Swap Tab: SimpleSwap-style estimator + manual QR send */}
             {activeTab === 'swap' && (
@@ -2103,8 +2098,8 @@ function App({ initialTab = 'swap' }: AppProps) {
         loading={poolLoading}
       />
 
-      {/* Lottery Win Explosion */}
-      <LotteryWinExplosion
+      {/* Lottery Win Explosion - Legacy feature disabled (archived component) */}
+      {/* <LotteryWinExplosion
         visible={showWinExplosion}
         winAmount={winAmount}
         nft={winNFT}
@@ -2119,10 +2114,10 @@ function App({ initialTab = 'swap' }: AppProps) {
           }
         }}
         apy={currentApy}
-      />
+      /> */}
 
-      {/* Early Believers Modal */}
-      <EarlyBelieversModal
+      {/* Early Believers Modal - Legacy feature disabled (archived component) */}
+      {/* <EarlyBelieversModal
         visible={showEarlyBelieversModal}
         onClose={() => setShowEarlyBelieversModal(false)}
         walletAddress={wallet.fullAddress}
@@ -2131,7 +2126,7 @@ function App({ initialTab = 'swap' }: AppProps) {
           console.log('Use manual deposit flow')
         }}
         isMainnet={true}
-      />
+      /> */}
 
       {/* Stride Initialization Modal - Tesla-Style Seamless Setup */}
       {keplrAddress && (

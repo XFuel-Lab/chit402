@@ -185,11 +185,11 @@ xfuel-protocol/
 // Add JSDoc comments for complex functions
 
 /**
- * Generates ZK-SNARK proof for deposit validation
+ * Generates SP1 zkVM proof for deposit validation
  * @param deposit - Deposit transaction details
- * @returns Groth16 proof object
+ * @returns SP1 proof object (RISC-V → STARK → Groth16 wrapper)
  */
-async function generateProof(deposit: Deposit): Promise<Proof> {
+async function generateProof(deposit: Deposit): Promise<SP1Proof> {
   // Implementation
 }
 ```
@@ -220,10 +220,10 @@ function deposit(uint256 amount, string calldata cosmosRecipient) external payab
 // Prefer explicit error handling
 // Add doc comments
 
-/// Verifies Groth16 ZK-SNARK proof
+/// Verifies SP1 zkVM proof (STARK → Groth16 wrapper)
 /// 
 /// # Arguments
-/// * `proof` - The ZK proof to verify
+/// * `proof` - The SP1 proof to verify (compressed Groth16 format)
 /// * `public_inputs` - Public inputs for verification
 ///
 /// # Returns
@@ -241,15 +241,16 @@ pub fn verify_proof(proof: Proof, public_inputs: Vec<String>) -> Result<Response
 
 ```typescript
 describe('ZKProofGenerator', () => {
-  it('should generate valid Groth16 proof in <2s', async () => {
+  it('should generate valid SP1 zkVM proof in <10s', async () => {
     const deposit = createMockDeposit();
     const start = Date.now();
     const proof = await generateProof(deposit);
     const duration = Date.now() - start;
     
     expect(proof).toBeDefined();
-    expect(proof.pi_a).toHaveLength(3);
-    expect(duration).toBeLessThan(2000);
+    expect(proof.proof).toBeDefined(); // SP1 proof bytes
+    expect(proof.publicInputs).toBeDefined();
+    expect(duration).toBeLessThan(10000); // ~9s avg (Phase B: 8.997s)
   });
 });
 ```
@@ -258,10 +259,14 @@ describe('ZKProofGenerator', () => {
 
 ```typescript
 describe('E2E Bridge Flow', () => {
-  it('should complete deposit to LST in <4s', async () => {
+  it('should complete deposit to LST in <12s', async () => {
     // Test full bridge flow
     // Verify all steps complete
-    // Check settlement time
+    // Check settlement time (Phase B: ~11-12s avg)
+    // - Deposit: 2-6s
+    // - SP1 proof: ~9s
+    // - CosmWasm verify: ~100ms
+    // - IBC transfer: ~1-2s
   });
 });
 ```

@@ -548,7 +548,7 @@ Built with:
 - **ethers.js** - Ethereum connectivity
 - **Redis** - Fast event storage
 - **Pino** - Structured logging
-- **SnarkJS** - ZK proof generation
+- **SP1 zkVM** - ZK proof generation (production, ~9s proving time)
 - **Express** - HTTP server
 - **PM2** - Process management
 - **Docker** - Containerization
