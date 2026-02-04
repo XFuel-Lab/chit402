@@ -8,13 +8,7 @@ import NeonButton from './components/NeonButton'
 import ApyOrb from './components/ApyOrb'
 import YieldBubbleSelector, { type LSTOption } from './components/YieldBubbleSelector'
 import NeonTabs, { type NeonTabId } from './components/NeonTabs'
-// @ts-expect-error - Legacy component archived, keeping import for potential future re-enable
-import LotteryWinExplosion from './components/LotteryWinExplosion'
 import CreatePoolModal from './components/CreatePoolModal'
-// @ts-expect-error - Legacy component archived, keeping import for potential future re-enable
-import EarlyBelieversCard from './components/EarlyBelieversCard'
-// @ts-expect-error - Legacy component archived, keeping import for potential future re-enable
-import EarlyBelieversModal from './components/EarlyBelieversModal'
 import StrideInitModal from './components/StrideInitModal'
 import EdgeNodeDashboard from './components/EdgeNodeDashboard'
 import BiDirectionalSwapCard from './components/BiDirectionalSwapCard'
@@ -23,8 +17,6 @@ import YieldPumpCard from './components/YieldPumpCard'
 import ManualDepositCard from './components/ManualDepositCard'
 import SignInModal from './components/SignInModal'
 import TransactionSuccessModal from './components/TransactionSuccessModal'
-// @ts-expect-error - Legacy component archived, keeping import for potential future re-enable
-import BetaBanner from './components/BetaBanner'
 import MaintenanceOverlay from './components/MaintenanceOverlay'
 import GovernanceTab from './components/GovernanceTab'
 import LPFlywheelCard from './components/LPFlywheelCard'
@@ -140,7 +132,6 @@ function App({ initialTab = 'swap' }: AppProps) {
   const [enteredRaffles, setEnteredRaffles] = useState<Set<number>>(new Set())
   const [myNFTs, setMyNFTs] = useState<Array<{ id: string; name: string; rarity: 'Mythic' | 'Legendary' | 'Epic' | 'Rare'; poolId: number; winAmount: number }>>([])
   const [swapHistory, setSwapHistory] = useState<SwapTransaction[]>([])
-  const [showEarlyBelieversModal, setShowEarlyBelieversModal] = useState(false)
   const [gasPrice, setGasPrice] = useState<bigint | null>(null) // Gas price in wei
   const [estimatedGasCost, setEstimatedGasCost] = useState<number | null>(null) // Estimated gas cost in TFUEL
   const [routerQuote, setRouterQuote] = useState<number | null>(null) // Quote from router if available
@@ -1362,8 +1353,8 @@ function App({ initialTab = 'swap' }: AppProps) {
               ]}
             />
 
-            {/* Early Believers Card */}
-            <EarlyBelieversCard onClick={() => setShowEarlyBelieversModal(true)} />
+            {/* Early Believers Card - Legacy feature disabled (archived component) */}
+            {/* <EarlyBelieversCard onClick={() => setShowEarlyBelieversModal(true)} /> */}
 
             {/* Swap Tab: SimpleSwap-style estimator + manual QR send */}
             {activeTab === 'swap' && (
