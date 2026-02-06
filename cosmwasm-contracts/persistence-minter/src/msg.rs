@@ -1,6 +1,6 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Uint128};
-use cw20::{Cw20Coin, MinterResponse};
+use cw20::Cw20Coin;
 
 #[cw_serde]
 pub struct InstantiateMsg {
@@ -12,6 +12,8 @@ pub struct InstantiateMsg {
     pub marketing: Option<cw20_base::msg::InstantiateMarketingInfo>,
     pub verifier_address: String,
     pub rev_splitter_address: String,
+    pub fee_collector_address: String,
+    pub mock_mode: Option<bool>, // NEW: Enable mock mode for governance testing (default: false)
 }
 
 #[cw_serde]
@@ -59,6 +61,13 @@ pub enum ExecuteMsg {
         amount: Uint128,
     },
     
+    // Reverse bridge: Burn ibcTFUEL to unwrap TFUEL on Theta
+    // 0.5% fee goes to FeeCollector, 99.5% burned
+    BurnForUnwrap {
+        amount: Uint128,
+        theta_recipient: String, // Theta address to receive unwrapped TFUEL
+    },
+    
     // Admin messages
     SetVerifier {
         verifier_address: String,
@@ -66,14 +75,20 @@ pub enum ExecuteMsg {
     SetRevSplitter {
         rev_splitter_address: String,
     },
+    SetFeeCollector {
+        fee_collector_address: String,
+    },
+    SetMinter {
+        minter_address: String,
+    },
     Pause {},
     Unpause {},
     
-    // LST Staking integration
-    DelegateToValidator {
-        validator: String,
-        amount: Uint128,
-    },
+    // LST Staking integration (requires staking feature)
+    // DelegateToValidator {
+    //     validator: String,
+    //     amount: Uint128,
+    // },
 }
 
 #[cw_serde]
@@ -118,8 +133,10 @@ pub enum QueryMsg {
 pub struct ConfigResponse {
     pub verifier_address: Addr,
     pub rev_splitter_address: Addr,
+    pub fee_collector_address: Addr,
     pub paused: bool,
     pub admin: Addr,
+    pub mock_mode: bool, // NEW: Indicate if contract is in mock mode
 }
 
 #[cw_serde]
@@ -128,6 +145,8 @@ pub struct StateResponse {
     pub total_burned: Uint128,
     pub total_recycled: Uint128,
     pub total_lp_reinvest: Uint128,
+    pub total_reverse_burned: Uint128,
+    pub total_reverse_fees: Uint128,
 }
 
 // Event structures for emitting

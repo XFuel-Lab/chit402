@@ -1,19 +1,23 @@
 use cosmwasm_std::{
-    entry_point, to_json_binary, Addr, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo,
-    Response, StdResult, Uint128, CosmosMsg, WasmMsg, StakingMsg,
+    entry_point, to_json_binary, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo,
+    Response, StdResult, Uint128,
 };
 use cw2::set_contract_version;
 use cw20_base::ContractError as Cw20Error;
 use cw20_base::contract::{
-    execute_burn, execute_mint, execute_send, execute_transfer, execute_increase_allowance,
-    execute_decrease_allowance, execute_transfer_from, execute_burn_from,
-    query_balance, query_token_info, query_minter, query_allowance, query_all_accounts,
+    execute_burn, execute_send, execute_transfer,
+    query_balance, query_token_info, query_minter,
 };
+use cw20_base::allowances::{
+    execute_burn_from, execute_decrease_allowance, execute_increase_allowance, execute_transfer_from,
+    query_allowance,
+};
+use cw20_base::enumerable::query_all_accounts;
 use cw20_base::state::{TokenInfo, MinterData, TOKEN_INFO, BALANCES};
 
 use crate::error::ContractError;
 use crate::msg::{ConfigResponse, ExecuteMsg, InstantiateMsg, QueryMsg, StateResponse, ZkProof};
-use crate::state::{Config, State, CONFIG, STATE, PROCESSED_PROOFS, FUNDED_USERS};
+use crate::state::{Config, State, CONFIG, STATE, PROCESSED_PROOFS, FUNDED_USERS, REVERSE_BURN_NONCES};
 use crate::zk_verifier::{verify_zk_proof, generate_proof_hash};
 
 const CONTRACT_NAME: &str = "crates.io:persistence-minter";
@@ -26,9 +30,23 @@ const MIN_XPRT_FUNDING: u128 = 1_000_000_000_000_000; // 0.001 XPRT with 18 deci
 const RECYCLE_PERCENTAGE: u128 = 30;
 const LP_REINVEST_PERCENTAGE: u128 = 70;
 
+/// Helper function to detect dummy addresses (all zeros, all ones, or placeholder patterns)
+fn is_dummy_address(address: &str) -> bool {
+    // Check for common dummy patterns
+    if address.contains("000000000000") || address.contains("111111111111") {
+        return true;
+    }
+    // Check for placeholder names (case-insensitive)
+    let lower = address.to_lowercase();
+    if lower.contains("dummy") || lower.contains("placeholder") || lower.contains("temp") {
+        return true;
+    }
+    false
+}
+
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
-    mut deps: DepsMut,
+    deps: DepsMut,
     env: Env,
     info: MessageInfo,
     msg: InstantiateMsg,
@@ -71,13 +89,16 @@ pub fn instantiate(
     // Initialize XFuel-specific config
     let verifier_addr = deps.api.addr_validate(&msg.verifier_address)?;
     let rev_splitter_addr = deps.api.addr_validate(&msg.rev_splitter_address)?;
+    let fee_collector_addr = deps.api.addr_validate(&msg.fee_collector_address)?;
 
     let config = Config {
         admin: info.sender.clone(),
         verifier_address: verifier_addr,
         rev_splitter_address: rev_splitter_addr,
+        fee_collector_address: fee_collector_addr,
         paused: false,
         mint_cap: msg.mint_cap,
+        mock_mode: msg.mock_mode.unwrap_or(false), // Default to production mode
     };
     CONFIG.save(deps.storage, &config)?;
 
@@ -85,11 +106,25 @@ pub fn instantiate(
     let state = State::default();
     STATE.save(deps.storage, &state)?;
 
-    Ok(Response::new()
+    let mut response = Response::new()
         .add_attribute("method", "instantiate")
         .add_attribute("admin", info.sender)
         .add_attribute("token_name", token_info.name)
-        .add_attribute("token_symbol", token_info.symbol))
+        .add_attribute("token_symbol", token_info.symbol)
+        .add_attribute("mock_mode", config.mock_mode.to_string());
+
+    // Warn if using dummy addresses (governance prep)
+    if is_dummy_address(&msg.verifier_address) {
+        response = response.add_attribute("warning", "USING_DUMMY_VERIFIER_ADDRESS");
+    }
+    if is_dummy_address(&msg.rev_splitter_address) {
+        response = response.add_attribute("warning", "USING_DUMMY_REV_SPLITTER_ADDRESS");
+    }
+    if is_dummy_address(&msg.fee_collector_address) {
+        response = response.add_attribute("warning", "USING_DUMMY_FEE_COLLECTOR_ADDRESS");
+    }
+
+    Ok(response)
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -130,17 +165,29 @@ pub fn execute(
         ExecuteMsg::BurnAndUnwrap { amount } => {
             execute_burn_and_unwrap(deps, env, info, amount)
         }
+        ExecuteMsg::BurnForUnwrap { amount, theta_recipient } => {
+            execute_burn_for_unwrap(deps, env, info, amount, theta_recipient)
+        }
         ExecuteMsg::SetVerifier { verifier_address } => {
             execute_set_verifier(deps, info, verifier_address)
         }
         ExecuteMsg::SetRevSplitter { rev_splitter_address } => {
             execute_set_rev_splitter(deps, info, rev_splitter_address)
         }
+        ExecuteMsg::SetFeeCollector { fee_collector_address } => {
+            execute_set_fee_collector(deps, info, fee_collector_address)
+        }
+        ExecuteMsg::SetMinter { minter_address } => {
+            execute_set_minter(deps, info, minter_address)
+        }
         ExecuteMsg::Pause {} => execute_pause(deps, info),
         ExecuteMsg::Unpause {} => execute_unpause(deps, info),
+        // DelegateToValidator temporarily disabled - requires staking feature
+        /*
         ExecuteMsg::DelegateToValidator { validator, amount } => {
             execute_delegate(deps, env, info, validator, amount)
         }
+        */
     }
 }
 
@@ -185,10 +232,16 @@ pub fn execute_verify_and_mint(
         });
     }
 
-    // Verify ZK proof
-    let is_valid = verify_zk_proof(&zk_proof, amount, &recipient)?;
-    if !is_valid {
-        return Err(ContractError::InvalidProof {});
+    // Verify ZK proof (skip if mock_mode enabled)
+    if config.mock_mode {
+        // MOCK MODE: Skip ZK verification for governance testing
+        deps.api.debug("⚠️ MOCK MODE: Skipping ZK proof verification");
+    } else {
+        // PRODUCTION MODE: Full ZK verification
+        let is_valid = verify_zk_proof(&zk_proof, amount, &recipient)?;
+        if !is_valid {
+            return Err(ContractError::InvalidProof {});
+        }
     }
 
     // Mark proof as processed
@@ -213,6 +266,12 @@ pub fn execute_verify_and_mint(
         .add_attribute("proof_hash", &proof_hash)
         .add_attribute("contract", env.contract.address.to_string())
         .add_attribute("timestamp", env.block.time.to_string());
+
+    // Add mock mode indicator if active
+    if config.mock_mode {
+        response = response.add_attribute("mock_mode", "true")
+            .add_attribute("warning", "ZK_VERIFICATION_SKIPPED");
+    }
 
     // Check if user needs initial XPRT funding (for new Keplr users)
     let is_funded = FUNDED_USERS.may_load(deps.storage, &recipient_addr)?.unwrap_or(false);
@@ -298,6 +357,106 @@ pub fn execute_burn_and_unwrap(
     Ok(response)
 }
 
+/// User-initiated reverse bridge: Burns ibcTFUEL to unwrap TFUEL on Theta chain
+/// Calculates 0.5% fee, sends to FeeCollector via CW20 Send hook, burns remaining 99.5%
+/// Emits BurnForUnwrap event with theta_recipient and nonce for SP1 proof
+pub fn execute_burn_for_unwrap(
+    mut deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    amount: Uint128,
+    theta_recipient: String,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    let mut state = STATE.load(deps.storage)?;
+
+    // 1. Validate: paused, amount, theta_recipient, balance
+    if config.paused {
+        return Err(ContractError::Paused {});
+    }
+
+    if amount.is_zero() {
+        return Err(ContractError::InvalidAmount {});
+    }
+
+    // Validate theta_recipient (Ethereum address: 0x + 40 hex chars)
+    if theta_recipient.len() != 42 || !theta_recipient.starts_with("0x") {
+        return Err(ContractError::CustomError {
+            val: "Invalid Theta address format (must be 0x + 40 hex chars)".to_string(),
+        });
+    }
+
+    // Check user has sufficient balance
+    let balance = BALANCES.may_load(deps.storage, &info.sender)?.unwrap_or_default();
+    if balance < amount {
+        return Err(ContractError::InsufficientBalance {});
+    }
+
+    // 2. Calculate fee (0.5%) and burn amount (99.5%)
+    let fee_amount = amount.multiply_ratio(50u128, 10000u128);
+    let burn_amount = amount.checked_sub(fee_amount)?;
+
+    // 3. Get/update nonce for replay protection
+    let nonce = REVERSE_BURN_NONCES
+        .may_load(deps.storage, &info.sender)?
+        .unwrap_or(0);
+    let next_nonce = nonce + 1;
+    REVERSE_BURN_NONCES.save(deps.storage, &info.sender, &next_nonce)?;
+
+    // 4. Update state tracking
+    state.total_reverse_burned = state.total_reverse_burned.checked_add(burn_amount)?;
+    state.total_reverse_fees = state.total_reverse_fees.checked_add(fee_amount)?;
+    STATE.save(deps.storage, &state)?;
+
+    // 5. Send fee from USER → FeeCollector using CW20 Send (triggers Receive hook)
+    // Use execute_send which handles the CW20 Send pattern correctly
+    let send_response = execute_send(
+        deps.branch(),
+        env.clone(),
+        info.clone(),
+        config.fee_collector_address.to_string(),
+        fee_amount,
+        Binary::default(),
+    )?;
+
+    // 6. Burn from USER using execute_burn
+    // This correctly burns from info.sender (the user)
+    let burn_response = execute_burn(
+        deps.branch(),
+        env.clone(),
+        info.clone(),
+        burn_amount,
+    )?;
+
+    // 7. Build response combining both operations plus custom attributes
+    let mut response = Response::new()
+        .add_submessages(send_response.messages)
+        .add_submessages(burn_response.messages)
+        .add_attributes(send_response.attributes)
+        .add_attributes(burn_response.attributes)
+        .add_attribute("action", "burn_for_unwrap")
+        .add_attribute("user", info.sender.to_string())
+        .add_attribute("amount_burned", burn_amount.to_string())
+        .add_attribute("fee_amount", fee_amount.to_string())
+        .add_attribute("theta_recipient", theta_recipient)
+        .add_attribute("nonce", next_nonce.to_string())
+        .add_attribute("block_height", env.block.height.to_string())
+        .add_attribute("timestamp", env.block.time.seconds().to_string())
+        .add_attribute("chain_id", "core-1") // Persistence mainnet
+        // Critical attribute for SP1 proof generation
+        .add_attribute("for_sp1_proof", "burn_for_unwrap");
+
+    // Add mock mode indicator if active
+    if config.mock_mode {
+        response = response
+            .add_attribute("mock_mode", "true")
+            .add_attribute("mock_sp1_event", "burn_for_unwrap")
+            .add_attribute("warning", "SP1_PROOF_NOT_REQUIRED_IN_MOCK_MODE");
+    }
+
+    Ok(response)
+}
+
 pub fn execute_set_verifier(
     deps: DepsMut,
     info: MessageInfo,
@@ -340,6 +499,71 @@ pub fn execute_set_rev_splitter(
         .add_attribute("rev_splitter", rev_splitter_address))
 }
 
+pub fn execute_set_fee_collector(
+    deps: DepsMut,
+    info: MessageInfo,
+    fee_collector_address: String,
+) -> Result<Response, ContractError> {
+    let mut config = CONFIG.load(deps.storage)?;
+
+    // Only admin can set fee collector
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let fee_collector_addr = deps.api.addr_validate(&fee_collector_address)?;
+    config.fee_collector_address = fee_collector_addr;
+    CONFIG.save(deps.storage, &config)?;
+
+    let mut response = Response::new()
+        .add_attribute("action", "set_fee_collector")
+        .add_attribute("fee_collector", fee_collector_address);
+
+    // Warn if setting dummy address
+    if is_dummy_address(&fee_collector_address.to_string()) {
+        response = response.add_attribute("warning", "USING_DUMMY_FEE_COLLECTOR_ADDRESS");
+    }
+
+    Ok(response)
+}
+
+pub fn execute_set_minter(
+    deps: DepsMut,
+    info: MessageInfo,
+    minter_address: String,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+
+    // Only admin can set minter
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    // Update the minter in TOKEN_INFO
+    let mut token_info = TOKEN_INFO.load(deps.storage)?;
+    let minter_addr = deps.api.addr_validate(&minter_address)?;
+    
+    if let Some(ref mut minter_data) = token_info.mint {
+        minter_data.minter = minter_addr;
+        TOKEN_INFO.save(deps.storage, &token_info)?;
+    } else {
+        return Err(ContractError::CustomError {
+            val: "Token has no minter configured".to_string(),
+        });
+    }
+
+    let mut response = Response::new()
+        .add_attribute("action", "set_minter")
+        .add_attribute("minter", minter_address);
+
+    // Warn if setting dummy address
+    if is_dummy_address(&minter_address) {
+        response = response.add_attribute("warning", "USING_DUMMY_MINTER_ADDRESS");
+    }
+
+    Ok(response)
+}
+
 pub fn execute_pause(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
     let mut config = CONFIG.load(deps.storage)?;
 
@@ -372,6 +596,9 @@ pub fn execute_unpause(deps: DepsMut, info: MessageInfo) -> Result<Response, Con
         .add_attribute("paused", "false"))
 }
 
+// NOTE: StakingMsg requires cosmwasm-std "staking" feature
+// Commented out until staking feature is enabled in dependencies
+/*
 pub fn execute_delegate(
     deps: DepsMut,
     _env: Env,
@@ -404,9 +631,10 @@ pub fn execute_delegate(
         .add_attribute("validator", validator)
         .add_attribute("amount", amount.to_string()))
 }
+*/
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         // CW20 standard queries
         QueryMsg::Balance { address } => {
@@ -436,8 +664,10 @@ pub fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
     Ok(ConfigResponse {
         verifier_address: config.verifier_address,
         rev_splitter_address: config.rev_splitter_address,
+        fee_collector_address: config.fee_collector_address,
         paused: config.paused,
         admin: config.admin,
+        mock_mode: config.mock_mode,
     })
 }
 
@@ -448,6 +678,8 @@ pub fn query_state(deps: Deps) -> StdResult<StateResponse> {
         total_burned: state.total_burned,
         total_recycled: state.total_recycled,
         total_lp_reinvest: state.total_lp_reinvest,
+        total_reverse_burned: state.total_reverse_burned,
+        total_reverse_fees: state.total_reverse_fees,
     })
 }
 

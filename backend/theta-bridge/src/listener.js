@@ -2,11 +2,10 @@ import { ethers } from 'ethers';
 import { readFile } from 'fs/promises';
 import { getProvider } from './provider.js';
 import { getVaultMapping, updateVaultStatus, markVaultCompleted } from './redis-client.js';
-import { getProver } from './prover.js';
+import { getSP1Prover } from './sp1-prover-client.js';
 import { getRefundManager } from './refund-manager.js';
 import config from './config.js';
 import logger, { logDepositEvent, logProofGenerated } from './logger.js';
-import { getSP1Prover } from './sp1-prover-client.js';
 
 /**
  * Event Listener for DepositReceived events
@@ -315,10 +314,10 @@ class DepositListener {
         provider.getTransaction(depositData.transactionHash)
       ]);
 
-      // Step 6: Generate ZK proof
-      logger.info({ vault: depositData.vault }, 'Generating ZK proof');
+      // Step 6: Generate ZK proof using SP1
+      logger.info({ vault: depositData.vault }, 'Generating SP1 ZK proof');
       
-      const prover = getProver();
+      const prover = getSP1Prover();
       const proof = await prover.generateProof(
         depositData,
         {
@@ -464,10 +463,10 @@ class DepositListener {
         vault: depositData.vault,
         blockNumber: depositData.blockNumber,
         txHash: depositData.transactionHash,
-        groth16Proof: {
-          proof: groth16Proof.proof,
-          publicInputs: groth16Proof.publicInputs
-        },
+        groth16Proof: groth16Proof ? {
+          proof: groth16Proof.proof || null,
+          publicInputs: groth16Proof.publicInputs || []
+        } : null,
         sp1Proof: {
           proof: sp1Proof.proof,
           publicInputs: sp1Proof.publicInputs,
@@ -517,7 +516,7 @@ class DepositListener {
           config.persistence.rpcUrl,
           wallet,
           {
-            gasPrice: GasPrice.fromString('0.025uxprt')
+            gasPrice: GasPrice.fromString(config.persistence.gasPrice || '0.025uxprt')
           }
         );
         
