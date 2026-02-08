@@ -1,479 +1,422 @@
 # Contributing to XFuel Protocol
 
-Thank you for your interest in contributing to XFuel Protocol! This document provides guidelines for contributions to help maintain code quality and project consistency.
+Welcome to XFuel Protocol! We're building the first trustless bidirectional ZK bridge between Theta and Persistence, and we'd love your help making it production-ready.
 
 ---
 
-## 🎯 Ways to Contribute
+## 🚀 About This Project
 
-### 1. **Bug Reports**
-- Search existing issues first
-- Use the bug report template
-- Include reproduction steps
-- Provide environment details (OS, Node version, etc.)
+XFuel Protocol is a **zero-knowledge bidirectional bridge** connecting Theta (TFUEL) with Persistence's LSTfi ecosystem. Using SP1 zkVM for cryptographic proofs, Theta Edge Cloud for acceleration, and CosmWasm smart contracts, we enable trustless cross-chain liquidity with automated yield optimization.
 
-### 2. **Feature Requests**
-- Check roadmap first ([docs/overhaul/ZK_OVERHAUL_SUMMARY.md](docs/overhaul/ZK_OVERHAUL_SUMMARY.md))
-- Explain the use case clearly
-- Consider backward compatibility
-- Propose implementation approach
+**Current Status:** Beta launch (Phase C complete), awaiting Persistence governance approval for mainnet.
 
-### 3. **Code Contributions**
-- Smart contract improvements
-- Frontend/backend optimizations
-- Documentation updates
-- Test coverage enhancements
+### Solo-Dev Context
 
-### 4. **Documentation**
-- Fix typos and clarifications
-- Add examples and tutorials
-- Improve setup guides
-- Translate documentation
+This project is currently developed by a solo founder with no prior dev experience, heavily leveraging AI tools:
+- **Cursor + Claude Sonnet 4.5**: Primary code generation and reviews
+- **Grok**: Architecture decisions and debugging
+- **AI-assisted workflow**: ~80% of code initially generated, then refined through testing
+
+We welcome contributors who can help validate, optimize, and expand this AI-generated codebase as we move toward production.
 
 ---
 
-## 🔧 Development Setup
+## 🎯 Why Contribute?
 
-### Prerequisites
+**For Web3 Developers:**
+- Work on cutting-edge ZK bridge technology (SP1 zkVM, ~9s proof generation)
+- Gain experience with CosmWasm, Solidity, and cross-chain systems
+- Build your reputation in the Theta and Cosmos ecosystems
 
-```bash
-# Node.js 18+ and npm 9+
-node --version
-npm --version
+**For Marketing & Community Builders:**
+- Shape the narrative of a groundbreaking cross-chain protocol
+- Grow your web3 marketing portfolio (social media, growth hacking, partnerships)
+- Engage with passionate Theta and Cosmos communities
 
-# For smart contracts
-npx hardhat --version
+**Post-Launch Rewards:**
+- Earn **veXF tokens** for contributions—**especially impactful for marketing/community work** (governance + yield boost)
+- Recognition in project credits, whitepaper, and X shoutouts
+- Priority access to governance roles and paid positions (if funding secured)
 
-# For CosmWasm (optional)
-cargo --version
-rustc --version
-```
-
-### Quick Start
-
-```bash
-# Clone the repository
-git clone https://github.com/XFuel-Lab/xfuel-protocol.git
-cd xfuel-protocol
-
-# Install dependencies
-npm install
-
-# Set up environment
-cp env.example .env.local
-# Edit .env.local with your configuration
-
-# Run tests
-npm test
-
-# Start development server
-npm run dev
-```
+**For the Ecosystem:**
+- Help secure $5M+ TVL in cross-chain liquidity
+- Enable 30-50% APY yields for TFUEL holders
+- Expand DeFi opportunities for Theta Network users
 
 ---
 
-## 📋 Contribution Workflow
+## 🏁 How to Get Started
 
-### 1. **Fork & Branch**
+### Quick Wins (Perfect First Contributions)
 
+Start with low-risk tasks to build familiarity—**no coding required** for many:
+
+1. **Marketing & Community (Non-Technical)**
+   - Draft X/Twitter posts about XFuel features ([live app](https://xfuel.app))
+   - Analyze beta user feedback from Discord/X (sentiment analysis)
+   - Suggest partnership outreach ideas (Theta/Cosmos communities)
+   - Create memes or graphics for social media campaigns
+
+2. **Documentation Improvements**
+   - Fix typos or clarify sections in [README.md](README.md) or [WHITEPAPER_v4.4.md](WHITEPAPER_v4.4.md)
+   - Add examples to deployment guides
+   - Update outdated links or references
+
+3. **Testing & Bug Reports**
+   - Test the [live app](https://xfuel.app) and report issues
+   - Review contract code and flag potential vulnerabilities
+   - Test edge cases in the reverse bridge flow
+
+4. **Code Review (Technical)**
+   - Review open PRs (use AI tools like Cursor to analyze changes)
+   - Suggest gas optimizations in [VaultFactory.sol](contracts/VaultFactory.sol)
+   - Validate SP1 proof logic in [sp1-prover/program/src/main.rs](sp1-prover/program/src/main.rs)
+
+### Setup Instructions
+
+**Prerequisites:**
+- Node.js 20+, npm 10+
+- Rust toolchain (for CosmWasm/SP1)
+- Hardhat (for Solidity contracts)
+
+**Clone and Install:**
 ```bash
 # Fork the repo on GitHub, then:
 git clone https://github.com/YOUR_USERNAME/xfuel-protocol.git
 cd xfuel-protocol
 
-# Add upstream remote
-git remote add upstream https://github.com/XFuel-Lab/xfuel-protocol.git
+# Install dependencies
+npm install
 
-# Create feature branch
-git checkout -b feature/your-feature-name
-```
-
-### 2. **Make Changes**
-
-- Follow existing code style
-- Write clear commit messages
-- Add tests for new features
-- Update documentation as needed
-
-### 3. **Test Your Changes**
-
-```bash
-# Run all tests
+# Run tests (no blockchain required)
 npm test
 
-# Run E2E tests
-npm run test:e2e
-
-# Check linting
-npm run lint
-
-# Type checking
-npm run type-check
+# Start frontend dev server
+npm run dev
 ```
 
-### 4. **Commit Guidelines**
+For detailed setup, see [README.md](README.md#-development-setup).
 
-Use conventional commit format:
+---
 
-```
-feat: add LST auto-routing optimization
-fix: resolve MetaMask connection issue
-docs: update deployment guide
-test: add coverage for ZK proof validation
-refactor: simplify bridge settlement logic
-```
+## 🎭 Roles and Opportunities
 
-**Types:**
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation changes
-- `test`: Test additions/changes
-- `refactor`: Code refactoring
-- `perf`: Performance improvements
-- `chore`: Build process or tooling changes
+We need diverse skills beyond just coding! Here's how you can help:
 
-### 5. **Create Pull Request**
+### 👨‍💻 Technical Contributors
+**Skills:** Solidity, Rust, TypeScript, ZK proofs
+- Smart contract development and optimization
+- SP1 zkVM circuit improvements
+- Backend automation (Node.js, Theta Edge Cloud)
+- Frontend UX enhancements (React, TailwindCSS)
+- Security audits and fuzz testing
 
+**Start with:** Code reviews, test additions, bug fixes
+
+### 📣 Marketing & Community
+**Skills:** Social media, content creation, community management
+- **Social Media**: Draft X/Twitter posts, create engagement campaigns, manage @xfuel_protocol
+- **Content Creation**: Write blog posts, create explainer videos, design memes/graphics
+- **Community Building**: Set up Discord server, host AMAs, onboard new users
+- **User Engagement**: Analyze feedback from beta users, improve chatbot prompts
+- **Partnership Outreach**: Identify and reach out to Theta/Cosmos projects for collaborations
+- **Growth Strategy**: Brainstorm hype tactics, plan launch campaigns
+
+**Start with:** Drafting 5 tweets about XFuel features, analyzing sentiment from X mentions, suggesting Discord channel structure
+
+### 📝 Documentation & Design
+**Skills:** Technical writing, UX/UI design
+- Write tutorials and guides (e.g., "How to bridge TFUEL in 60 seconds")
+- Improve whitepaper clarity
+- Design UI mockups for governance dashboard
+- Create infographics explaining ZK bridge architecture
+
+**Start with:** Fix typos, add examples to existing docs, suggest UI improvements
+
+### 🤝 Other Roles
+- **Governance Prep**: Help draft Persistence proposal, research tokenomics
+- **Testing**: Manual QA testing, edge case discovery
+- **Research**: Analyze competitors (LayerZero, Wormhole), suggest improvements
+
+**Open to all:** Check GitHub issues labeled `good first issue`, `marketing`, `community`, or `documentation`.
+
+---
+
+## 📋 Contribution Guidelines
+
+### 1. Use GitHub Issues
+
+- **Search first:** Check if your issue/idea already exists
+- **Label appropriately:** Use `bug`, `enhancement`, `documentation`, `marketing`, `community`, etc.
+- **Good first issue:** Look for labels like:
+  - `good first issue` (technical)
+  - `marketing` (social media, content)
+  - `community` (Discord, user engagement)
+  - `documentation` (writing, examples)
+
+### 2. Pull Request Process
+
+**Branch Naming:**
 ```bash
-# Push your branch
-git push origin feature/your-feature-name
+feature/add-reverse-bridge-ui    # New features
+fix/nonce-desync-bug             # Bug fixes
+docs/update-deployment-guide     # Documentation
+test/add-e2e-reverse-flow        # Tests
+marketing/x-campaign-q2          # Marketing content
+community/discord-setup          # Community initiatives
+```
 
-# Go to GitHub and create a PR
-# Fill out the PR template completely
+**Commit Standards (Conventional Commits):**
+```
+feat: add reverse bridge UI component
+fix: resolve nonce desync in unwrap flow
+docs: clarify SP1 proof generation steps
+test: add E2E test for burn_for_unwrap
+refactor: optimize gas usage in VaultFactory
+marketing: draft X campaign for Phase D launch
+community: create Discord welcome bot template
 ```
 
 **PR Checklist:**
-- [ ] Tests pass locally
-- [ ] Code follows project style
-- [ ] Documentation updated
-- [ ] Commit messages are clear
-- [ ] No merge conflicts
-- [ ] PR description explains changes
+- [ ] Tests pass locally (`npm test`)
+- [ ] Code follows project style (see below)
+- [ ] Documentation updated (if applicable)
+- [ ] No merge conflicts with `main` branch
+- [ ] PR description explains the "why" (not just "what")
+
+### 3. Code Style
+
+**TypeScript/JavaScript:**
+- Use Prettier (auto-format on save recommended)
+- Prefer functional components in React
+- Add JSDoc comments for complex functions
+
+**Solidity:**
+- Follow [Solidity Style Guide](https://docs.soliditylang.org/en/latest/style-guide.html)
+- Use NatSpec comments (`@notice`, `@param`, `@return`)
+- Run `npx hardhat compile` before committing
+
+**Rust (CosmWasm):**
+- Use `rustfmt` (run `cargo fmt` before committing)
+- Add doc comments (`///`) for public functions
+- Handle errors explicitly (no `.unwrap()` in production code)
+
+**Marketing/Community Content:**
+- Use clear, concise Markdown for docs (e.g., campaign plans, Discord guides)
+- Keep tone consistent with project branding (cyberpunk, trustless, accessible)
+- For social media drafts, include character counts for X/Twitter (280 limit)
+
+### 4. Testing Requirements
+
+**Before Submitting a PR:**
+```bash
+# Run unit tests
+npm test
+
+# Check TypeScript types
+npm run type-check
+
+# Lint code
+npm run lint
+
+# For contract changes, run Hardhat tests
+npx hardhat test
+```
+
+**For New Features:**
+- Add unit tests (target: 95%+ coverage)
+- Add integration tests if cross-component
+- Update E2E tests if user-facing
 
 ---
 
-## 🏗️ Project Structure
+## 🤖 Automation and AI Tools
 
-```
-xfuel-protocol/
-├── src/                    # Frontend (Next.js/React)
-│   ├── components/         # UI components
-│   ├── config/             # Configuration
-│   └── utils/              # Utilities
-├── contracts/              # Solidity contracts (Theta)
-├── cosmwasm/               # Rust contracts (Persistence)
-├── backend/                # Node.js backend services
-├── scripts/                # Deployment & utility scripts
-│   └── deploy/             # Deployment scripts
-├── test/                   # Test files
-├── docs/                   # Documentation
-│   ├── overhaul/           # ZK overhaul docs
-│   └── whitepaper/         # Technical whitepapers
-└── cypress/                # E2E tests
-```
+We embrace AI-assisted development and automation! Here's how contributors can leverage tools:
 
----
+### AI for Code & Content
+- **Cursor + Sonnet 4.5**: Use for code reviews, refactoring, content drafting (X posts, docs)
+- **GitHub Copilot**: Enable for faster boilerplate generation
+- **Grok**: Use for architectural questions or marketing strategy brainstorming
+- **ChatGPT/Claude**: Draft blog posts, explainer scripts, or community FAQs
 
-## 🎨 Code Style Guidelines
+### Theta RAG Bots (Coming Soon)
+- Query Theta documentation without leaving your IDE
+- Ask questions like "How does Theta's RPC differ from Ethereum?"
 
-### TypeScript/JavaScript
+### Automation Priorities (Phase 1: User Engagement)
+We're building bots on Theta Edge Cloud for:
+- **X/Twitter bot**: Auto-reply to @mentions, post updates, share metrics (TVL, proof times)
+- **User feedback analyzer**: Parse Discord/X sentiment for product insights (marketing impact metrics)
+- **Yield optimizer**: Auto-route liquidity to highest APY LSTs (Phase D technical)
+- **Community chatbot**: Answer FAQs on Discord, onboard new users
 
-```typescript
-// Use TypeScript strict mode
-// Prefer functional components
-// Use descriptive variable names
-// Add JSDoc comments for complex functions
+**Want to help?** Check issues labeled `automation`, `bot`, or `marketing-automation`.
 
-/**
- * Generates SP1 zkVM proof for deposit validation
- * @param deposit - Deposit transaction details
- * @returns SP1 proof object (RISC-V → STARK → Groth16 wrapper)
- */
-async function generateProof(deposit: Deposit): Promise<SP1Proof> {
-  // Implementation
-}
-```
-
-### Solidity
-
-```solidity
-// Follow Solidity style guide
-// Use NatSpec comments
-// Prefer explicit over implicit
-// Security first - check-effects-interactions
-
-/**
- * @notice Deposits TFUEL and initiates cross-chain transfer
- * @param amount Amount of TFUEL to deposit
- * @param cosmosRecipient Recipient address on Cosmos chain
- */
-function deposit(uint256 amount, string calldata cosmosRecipient) external payable {
-    // Implementation
-}
-```
-
-### Rust (CosmWasm)
-
-```rust
-// Follow Rust conventions
-// Use Result types
-// Prefer explicit error handling
-// Add doc comments
-
-/// Verifies SP1 zkVM proof (STARK → Groth16 wrapper)
-/// 
-/// # Arguments
-/// * `proof` - The SP1 proof to verify (compressed Groth16 format)
-/// * `public_inputs` - Public inputs for verification
-///
-/// # Returns
-/// * `Result<Response, ContractError>` - Success or error
-pub fn verify_proof(proof: Proof, public_inputs: Vec<String>) -> Result<Response, ContractError> {
-    // Implementation
-}
-```
+### Tools for Marketing Contributors
+- **Canva**: Design social media graphics (cyberpunk theme templates available)
+- **Buffer/Hootsuite**: Schedule X posts (founder can grant access)
+- **Google Analytics**: Track xfuel.app traffic (request access for growth analysis)
 
 ---
 
-## 🧪 Testing Standards
+## 🛤️ Building Trust and Onboarding
 
-### Unit Tests
+We understand you may be skeptical of a solo-dev project. Here's how we build trust:
 
-```typescript
-describe('ZKProofGenerator', () => {
-  it('should generate valid SP1 zkVM proof in <10s', async () => {
-    const deposit = createMockDeposit();
-    const start = Date.now();
-    const proof = await generateProof(deposit);
-    const duration = Date.now() - start;
-    
-    expect(proof).toBeDefined();
-    expect(proof.proof).toBeDefined(); // SP1 proof bytes
-    expect(proof.publicInputs).toBeDefined();
-    expect(duration).toBeLessThan(10000); // ~9s avg (Phase B: 8.997s)
-  });
-});
-```
+### Start Small, Prove Value
+1. **Technical:** Review existing code, comment on PRs, suggest improvements
+2. **Non-technical:** Draft 3-5 tweets, analyze user feedback, suggest Discord channels
+3. **Testing:** Use the [beta app](https://xfuel.app), report bugs or UX issues
+4. **Low-risk contributions:** Docs updates, test additions, marketing ideas
 
-### Integration Tests
+### Gradual Involvement
+- **Week 1-2:** Quick wins (docs, bug reports, social media drafts)
+- **Week 3-4:** Small contributions (bug fixes, tweet campaigns, Discord setup)
+- **Month 2+:** Larger projects (features, X bot automation, partnership outreach)
 
-```typescript
-describe('E2E Bridge Flow', () => {
-  it('should complete deposit to LST in <12s', async () => {
-    // Test full bridge flow
-    // Verify all steps complete
-    // Check settlement time (Phase B: ~11-12s avg)
-    // - Deposit: 2-6s
-    // - SP1 proof: ~9s
-    // - CosmWasm verify: ~100ms
-    // - IBC transfer: ~1-2s
-  });
-});
-```
+### Validation Resources
+- **Phase B benchmarks:** 8.997s avg proof time, 52.89 tx/min throughput ([Whitepaper v4.4](WHITEPAPER_v4.4.md))
+- **Live contracts:** [VaultFactory on Theta](https://explorer.thetatoken.org/account/0xB0a26600074dADC69186632a1B8dFd7c3146Ce56)
+- **Roadmap transparency:** See [ROADMAP](README.md#-roadmap) for priorities (governance approval, audits, community growth)
+
+### Open-Source, Not Hiring (Yet)
+This is a **bootstrapped project** with no immediate funding for hires. Contributions are:
+- **Voluntary** (open-source collaboration)
+- **Rewarded post-launch** (XF tokens, veXF governance roles—especially for marketing/community impact)
+- **Flexible commitment** (contribute as much or little as you like)
+
+If the project gains traction (e.g., $5M TVL, governance approval), active contributors will be first in line for paid roles (dev, marketing, community manager).
 
 ---
 
-## 🔒 Security Guidelines
+## 🔍 Focus Areas for Contributors
 
-### Smart Contracts
+### 1. Security & Auditing (Technical)
+**Priority:** High
+- Review [VaultFactory.sol](contracts/VaultFactory.sol) for vulnerabilities
+- Validate SP1 proof logic in [main.rs](sp1-prover/program/src/main.rs)
+- Add fuzz tests for edge cases (e.g., extreme nonce values)
+- Help prep for CertiK audit (Q2 2026)
 
-- Use OpenZeppelin libraries where possible
-- Follow checks-effects-interactions pattern
-- Add reentrancy guards
-- Implement emergency pause mechanisms
-- Write comprehensive tests
+### 2. Automation (Technical + Marketing)
+**Priority:** High (Phase 1 goal)
+- Build monitoring bots on Theta Edge Cloud
+- Create yield optimizer for automated LST routing
+- **Implement X/Twitter bot** for user engagement (auto-replies, metrics posts)
+- **Develop feedback analyzers** for sentiment tracking (Discord, X mentions)
+- **Chatbot for Discord**: Answer FAQs, onboard new users
 
-### Backend Services
+### 3. Marketing & Community Growth (Non-Technical)
+**Priority:** High (Phase 1: User Engagement)
+- **Social Media Campaigns**: Draft X posts, create memes, schedule content
+- **Content Creation**: Write blog posts (Medium, Mirror), create explainer videos
+- **Partnership Outreach**: Identify and contact Theta/Cosmos projects for collabs
+- **Community Building**: Set up Discord server, host weekly AMAs, manage user onboarding
+- **Growth Hacking**: Brainstorm viral tactics, analyze competitor strategies (LayerZero, Wormhole)
+- **User Feedback**: Analyze beta tester sentiment, improve chatbot prompts
 
-- Validate all inputs
-- Use environment variables for secrets
-- Implement rate limiting
-- Log security-relevant events
-- Handle errors gracefully
+### 4. UX & Frontend (Technical)
+**Priority:** Medium
+- Polish cyberpunk neon theme (Tailwind + glassmorphism)
+- Add reverse bridge UI (burn TFUEL flow)
+- Improve mobile responsiveness
+- Build governance dashboard (veXF voting)
 
-### Reporting Vulnerabilities
-
-**DO NOT** create public issues for security vulnerabilities.
-
-Instead, email: **security@xfuel.app**
-
-Include:
-- Description of the vulnerability
-- Steps to reproduce
-- Potential impact
-- Suggested fix (if any)
-
-We aim to respond within 48 hours and will keep you updated on the fix progress.
-
----
-
-## 📚 Documentation Standards
-
-### Code Comments
-
-```typescript
-// Good: Explains WHY, not WHAT
-// Use parallel proof generation to reduce latency by 50%
-const proof = await generateProofParallel(deposit);
-
-// Bad: States the obvious
-// Generate proof
-const proof = await generateProof(deposit);
-```
-
-### README Updates
-
-- Keep examples up to date
-- Test all code snippets
-- Update version numbers
-- Check all links work
-
-### Whitepaper Contributions
-
-Currently, whitepaper updates are managed by core team to ensure consistency. If you have suggestions:
-1. Open an issue with `[whitepaper]` prefix
-2. Provide detailed rationale
-3. Include supporting data/research
+### 5. Multi-Chain Expansion (Technical)
+**Priority:** Low (Post-mainnet)
+- Research bridges to Osmosis, Cosmos Hub
+- Prototype Solana integration (requires new ZK circuit)
+- Analyze gas costs for other L1s
 
 ---
 
-## 🌍 Community Guidelines
-
-### Be Respectful
-
-- Treat everyone with respect
-- Value diverse perspectives
-- Assume good intentions
-- Be constructive in feedback
-
-### Communication Channels
-
-- **GitHub Issues:** Bug reports, feature requests
-- **GitHub Discussions:** General questions, ideas
-- **Discord:** Real-time chat (coming soon)
-- **Twitter:** [@xfuel_protocol](https://twitter.com/xfuel_protocol)
-
-### Code of Conduct
+## 🤝 Code of Conduct
 
 We follow the [Contributor Covenant Code of Conduct](https://www.contributor-covenant.org/version/2/1/code_of_conduct/).
 
-Key points:
-- Be welcoming and inclusive
-- Respect differing viewpoints
-- Accept constructive criticism
-- Focus on what's best for the community
+**Key Principles:**
+- **Be respectful:** Value diverse perspectives, assume good intentions
+- **Be inclusive:** Welcome contributors of all skill levels
+- **Be constructive:** Provide actionable feedback, not just criticism
+- **Be collaborative:** Focus on what's best for the protocol
+
+**Unacceptable Behavior:**
+- Harassment, discrimination, or personal attacks
+- Spamming or promoting unrelated projects
+- Sharing vulnerabilities publicly before responsible disclosure
+
+**Reporting:** Email violations to **conduct@xfuel.app** (confidential).
 
 ---
 
-## 🏆 Recognition
+## 🏆 Rewards and Recognition
 
-Contributors are recognized in multiple ways:
+### Immediate Recognition
+- Listed in [README.md](README.md) contributor credits
+- Mentioned in release notes for significant contributions
+- Invited to governance discussions (Discord/Forum)
+- Shoutouts on X/Twitter for impactful marketing/community work
 
-### Documentation
+### Post-Launch Rewards (Mainnet)
+- **XF tokens:** Allocated based on contribution impact—**especially for marketing/community growth** (reviewed quarterly)
+- **veXF roles:** Active contributors eligible for governance positions (voting on LP allocation, fee structure)
+- **Revenue share:** Top contributors may receive protocol fee share (30/30/25/15 split to BBB/LP/veXF/Treasury)
+- **Marketing bonuses:** Contributors who drive measurable growth (e.g., +1K X followers, +$500K TVL) get bonus XF allocations
 
-- Contributors list in README
-- Release notes mention
-- Whitepaper acknowledgments (for significant contributions)
-
-### NFT Rewards (Future)
-
-- Special NFTs for significant contributors
-- Governance participation rights
-- Early access to new features
-
-### Bug Bounty Program (Coming Soon)
-
-- Up to $500K for critical vulnerabilities
-- Rewards for valid bug reports
-- Recognition in security hall of fame
+### Bug Bounty Program (Phase D)
+- Up to **$500K** for critical vulnerabilities (via Immunefi)
+- Rewards for valid bug reports (severity-based tiers)
+- Hall of fame for security researchers
 
 ---
 
-## 🚀 Getting Help
-
-### Resources
-
-- **Documentation:** [docs/](docs/)
-- **Quick Reference:** [docs/XFUEL-FERRARI-QUICK-REF.md](docs/XFUEL-FERRARI-QUICK-REF.md)
-- **ZK Overhaul:** [docs/overhaul/ZK_OVERHAUL_SUMMARY.md](docs/overhaul/ZK_OVERHAUL_SUMMARY.md)
-- **Deployment Guides:** [STEP5_E2E_BRIDGE_TEST_GUIDE.md](STEP5_E2E_BRIDGE_TEST_GUIDE.md)
+## 📞 Contact & Support
 
 ### Questions?
+- **GitHub Issues:** Bug reports, feature requests
+- **GitHub Discussions:** General questions, brainstorming
+- **Discord:** Real-time chat (link coming soon)
+- **X/Twitter:** [@xfuel_protocol](https://twitter.com/xfuel_protocol)
 
-1. Check existing documentation
-2. Search closed issues
-3. Ask in GitHub Discussions
-4. Join Discord (coming soon)
+### Technical Support
+- Review [WHITEPAPER_v4.4.md](WHITEPAPER_v4.4.md) for architecture details
+- Check [docs/](docs/) folder for guides
+- Ask in issues with `question` label
 
----
-
-## 📝 License
-
-By contributing to XFuel Protocol, you agree that your contributions will be licensed under the MIT License.
-
-See [LICENSE](LICENSE) for details.
-
----
-
-## 🎯 Priorities for Contributors
-
-### High Priority
-
-- [ ] Test coverage improvements (target: 95%+)
-- [ ] Mobile app optimization
-- [ ] Additional LST integrations (stkATOM, stkOSMO)
-- [ ] Gas optimization in smart contracts
-- [ ] Documentation improvements
-
-### Medium Priority
-
-- [ ] UI/UX enhancements
-- [ ] Performance monitoring
-- [ ] Error handling improvements
-- [ ] Internationalization (i18n)
-- [ ] Example implementations
-
-### Future Enhancements
-
-- [ ] Multi-chain bridge expansion
-- [ ] AI yield optimizer
-- [ ] ZK rollup integration
-- [ ] Cross-chain DEX aggregation
-- [ ] Mobile wallet support
+### Security
+**DO NOT** report vulnerabilities publicly. Email: **security@xfuel.app**
 
 ---
 
-## 📅 Release Process
+## 📚 Additional Resources
 
-### Versioning
+**For New Contributors:**
+- [README.md](README.md) - Project overview
+- [WHITEPAPER_v4.4.md](WHITEPAPER_v4.4.md) - Technical architecture
+- [docs/ZK_BRIDGE_IMPLEMENTATION.md](docs/ZK_BRIDGE_IMPLEMENTATION.md) - ZK proof details
 
-We follow [Semantic Versioning](https://semver.org/):
+**For Developers:**
+- [Backend Setup Guide](backend/theta-bridge/README.md)
+- [SP1 Prover Deployment](sp1-prover/DEPLOY_ON_EDGECLOUD.md)
+- [Mock Testing Plan](MOCK_TESTING_PLAN.md)
 
-- **MAJOR:** Breaking changes
-- **MINOR:** New features (backward compatible)
-- **PATCH:** Bug fixes
-
-Current version: **v3.0.0** (Ferrari Edition)
-
-### Release Cycle
-
-- **Patch releases:** As needed for critical bugs
-- **Minor releases:** Monthly
-- **Major releases:** Quarterly
+**For Governance:**
+- [Persistence Whitelist Proposal](docs/governance/PERSISTENCE_WHITELIST_PROPOSAL.md)
+- [Roadmap](README.md#-roadmap) - Phase C → D → E milestones
 
 ---
 
 ## ✨ Thank You!
 
-Your contributions make XFuel Protocol better for everyone. Whether it's code, documentation, bug reports, or community support—every contribution matters.
+Every contribution—code, marketing, docs, reviews, or bug reports—helps make XFuel Protocol more secure and accessible. Whether you're a ZK expert, a social media wizard, or a curious newcomer, your perspective is valuable.
 
-**Welcome to the XFuel community!** 🏎️⚡
+**No contribution is too small:** A single tweet, a typo fix, or a Discord suggestion can have massive impact.
+
+**Welcome to the future of trustless cross-chain liquidity.** 🚀⚡
 
 ---
 
-**Last Updated:** January 4, 2026  
-**Version:** 1.0  
-**Maintainers:** XFuel Core Team
+**Questions about contributing?** Email: **contribute@xfuel.app**
 
-For questions about contributing, email: **contribute@xfuel.app**
-
+**Last Updated:** February 8, 2026 (v4.4 - Bi-Directional Bridge Edition)
