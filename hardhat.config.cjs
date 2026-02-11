@@ -14,6 +14,7 @@ module.exports = {
       {
         version: '0.8.22',
         settings: {
+          viaIR: true,
           optimizer: {
             enabled: true,
             runs: 200,
@@ -23,6 +24,7 @@ module.exports = {
       {
         version: '0.8.20',
         settings: {
+          viaIR: true,
           optimizer: {
             enabled: true,
             runs: 200,

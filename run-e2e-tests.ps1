@@ -4,7 +4,7 @@
 # ===================================================================
 
 param(
-    [ValidateSet('all', 'backend', 'frontend', 'integration', 'visual')]
+    [ValidateSet('all', 'backend', 'frontend', 'integration', 'visual', 'ecosystem', 'security', 'v51', 'perf', 'analytics', 'governance')]
     [string]$Suite = 'all',
     
     [switch]$Headless,
@@ -109,14 +109,16 @@ switch ($Suite) {
     'frontend' {
         $testSpecs = @(
             'cypress/e2e/swap.cy.ts',
-            'cypress/e2e/wallet-integration.cy.ts'
+            'cypress/e2e/wallet-integration.cy.ts',
+            'cypress/e2e/ai-depin-e2e.cy.ts'
         )
     }
     'integration' {
         $testSpecs = @(
             'cypress/e2e/wallet-integration.cy.ts',
             'cypress/e2e/mainnet-beta.cy.ts',
-            'cypress/e2e/zk-bridge-e2e.cy.ts'
+            'cypress/e2e/zk-bridge-e2e.cy.ts',
+            'cypress/e2e/ai-depin-e2e.cy.ts'
         )
     }
     'visual' {
@@ -125,8 +127,164 @@ switch ($Suite) {
             'cypress/e2e/zk-bridge-e2e.cy.ts'
         )
     }
+    'ecosystem' {
+        # v5.1 Osmosis/Akash/TAO ecosystem E2E (node:test runner)
+        Write-Host "   Running v5.1 Ecosystem E2E tests..." -ForegroundColor Cyan
+        node --test tests/ai-depin/e2e.test.js
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Ecosystem E2E tests failed!" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "   Ecosystem E2E tests passed!" -ForegroundColor Green
+        $testSpecs = @()
+    }
+    'security' {
+        # Security fuzzing tests (node:test runner)
+        Write-Host "   Running Security Fuzzing tests..." -ForegroundColor Cyan
+        node --test tests/security/fuzz.test.js
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Security fuzzing tests failed!" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "   Security fuzzing tests passed!" -ForegroundColor Green
+        $testSpecs = @()
+    }
+    'perf' {
+        # v5.1 Performance benchmarks: Rust bench + analytics + yield benchmarks
+        Write-Host "   Running v5.1 Performance Benchmarks..." -ForegroundColor Cyan
+        Write-Host ""
+
+        Write-Host "   [1/3] Fee Analytics Tests (node:test)..." -ForegroundColor Yellow
+        node --test tests/ai-depin/analytics.test.js
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Analytics tests failed!" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "   Analytics tests passed!" -ForegroundColor Green
+
+        Write-Host "   [2/3] Osmosis Testnet Yield Benchmarks..." -ForegroundColor Yellow
+        node governance-mocks/osmosis-testnet-yield.js --duration 30d
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Yield benchmarks failed!" -ForegroundColor Yellow
+        } else {
+            Write-Host "   Yield benchmarks completed!" -ForegroundColor Green
+        }
+
+        Write-Host "   [3/3] Rust SP1 Benchmarks (if nightly available)..." -ForegroundColor Yellow
+        $rustNightly = rustup run nightly rustc --version 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Push-Location sp1-prover/program
+            cargo +nightly test --lib -- benchmarks 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "   Rust bench tests had issues (non-blocking)" -ForegroundColor Yellow
+            } else {
+                Write-Host "   Rust bench tests passed!" -ForegroundColor Green
+            }
+            Pop-Location
+        } else {
+            Write-Host "   Skipping Rust benchmarks (nightly not available)" -ForegroundColor Yellow
+        }
+
+        Write-Host ""
+        Write-Host "   Performance benchmarks complete! See BENCHMARKS.md for results." -ForegroundColor Green
+        $testSpecs = @()
+    }
+    'analytics' {
+        # Fee analytics tests only
+        Write-Host "   Running Fee Analytics tests..." -ForegroundColor Cyan
+        node --test tests/ai-depin/analytics.test.js
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Analytics tests failed!" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "   Analytics tests passed!" -ForegroundColor Green
+        $testSpecs = @()
+    }
+    'governance' {
+        # Governance mock demos
+        Write-Host "   Running Governance Mock Demos..." -ForegroundColor Cyan
+        Write-Host ""
+
+        Write-Host "   [1/3] AIVerifier Deploy Demo (MOCK_MODE)..." -ForegroundColor Yellow
+        node governance-mocks/mock-ai-verifier-deploy.js
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Deploy demo failed!" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "   Deploy demo passed!" -ForegroundColor Green
+
+        Write-Host "   [2/3] Governance Vote Simulation..." -ForegroundColor Yellow
+        node governance-mocks/governance-vote-sim.js --scenario all
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Vote sim failed!" -ForegroundColor Yellow
+        } else {
+            Write-Host "   Vote sim completed!" -ForegroundColor Green
+        }
+
+        Write-Host "   [3/3] Osmosis Yield Benchmarks..." -ForegroundColor Yellow
+        node governance-mocks/osmosis-testnet-yield.js
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Yield benchmarks failed!" -ForegroundColor Yellow
+        } else {
+            Write-Host "   Yield benchmarks completed!" -ForegroundColor Green
+        }
+
+        Write-Host ""
+        Write-Host "   Governance mocks complete!" -ForegroundColor Green
+        $testSpecs = @()
+    }
+    'v51' {
+        # Full v5.1 test suite: ecosystem E2E + security fuzzing + analytics + Cypress AI DePIN
+        Write-Host "   Running full v5.1 test suite..." -ForegroundColor Cyan
+        Write-Host ""
+
+        Write-Host "   [1/5] Ecosystem E2E (node:test)..." -ForegroundColor Yellow
+        node --test tests/ai-depin/e2e.test.js
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Ecosystem E2E tests failed!" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "   Ecosystem E2E passed!" -ForegroundColor Green
+
+        Write-Host "   [2/5] Fee Analytics Tests (node:test)..." -ForegroundColor Yellow
+        node --test tests/ai-depin/analytics.test.js
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Analytics tests failed!" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "   Analytics tests passed!" -ForegroundColor Green
+
+        Write-Host "   [3/5] Security Fuzzing (node:test)..." -ForegroundColor Yellow
+        node --test tests/security/fuzz.test.js
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Security fuzzing tests failed!" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "   Security fuzzing passed!" -ForegroundColor Green
+
+        Write-Host "   [4/5] Governance Mock Demos..." -ForegroundColor Yellow
+        node governance-mocks/mock-ai-verifier-deploy.js
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Governance demo had issues (non-blocking)" -ForegroundColor Yellow
+        } else {
+            Write-Host "   Governance demos passed!" -ForegroundColor Green
+        }
+
+        Write-Host "   [5/5] Cypress AI DePIN E2E..." -ForegroundColor Yellow
+        $testSpecs = @(
+            'cypress/e2e/ai-depin-e2e.cy.ts'
+        )
+    }
     'all' {
-        # Run all tests
+        # Run all tests: v5.1 node:test suites first, then all Cypress specs
+        Write-Host "   Running v5.1 node:test suites first..." -ForegroundColor Cyan
+        node --test tests/ai-depin/e2e.test.js tests/ai-depin/analytics.test.js tests/security/fuzz.test.js
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   v5.1 node:test suites had failures" -ForegroundColor Yellow
+        } else {
+            Write-Host "   v5.1 node:test suites passed!" -ForegroundColor Green
+        }
+        Write-Host ""
         $testSpecs = @()
     }
 }

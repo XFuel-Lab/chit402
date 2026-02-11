@@ -3,10 +3,11 @@ import config, { validateConfig } from './config.js';
 import logger, { logStartup, logShutdown } from './logger.js';
 import { initRedis, closeRedis, getPendingVaults, getReverseBurnStats } from './redis-client.js';
 import { initProvider, getProvider } from './provider.js';
-import { initProver } from './prover.js';
+import { initSP1Prover } from './sp1-prover-client.js';
 import { initRefundManager, getRefundManager } from './refund-manager.js';
 import { initListener, getListener } from './listener.js';
 import { initPersistenceListener, getPersistenceListener } from './persistence-listener.js';
+import { initAIListener, getAIListener } from './ai-listener.js';
 import { initYieldUnwrapper, getYieldUnwrapper } from './yield-unwrapper.js';
 
 /**
@@ -37,8 +38,8 @@ class BridgeService {
       // Initialize multi-RPC provider
       initProvider();
 
-      // Initialize ZK prover
-      await initProver();
+      // Initialize SP1 ZK prover client
+      await initSP1Prover();
 
       // Initialize refund manager
       await initRefundManager();
@@ -59,6 +60,15 @@ class BridgeService {
         logger.info('Reverse-burn loop components initialized');
       } else {
         logger.warn('Reverse-burn loop disabled: REVENUE_SPLITTER_ADDRESS not configured');
+      }
+
+      // Initialize AI Listener (Phase E: Osmosis/Akash AI DePIN Bridge)
+      if (config.aiListener?.enabled) {
+        logger.info('Initializing AI Listener (Osmosis/Akash IBC event monitoring)');
+        await initAIListener();
+        logger.info('AI Listener initialized');
+      } else {
+        logger.info('AI Listener disabled: AI_LISTENER_ENABLED not set to true');
       }
 
       // Set up HTTP server for health checks and monitoring
@@ -115,6 +125,17 @@ class BridgeService {
           }
         }
 
+        // Get AI Listener status (if enabled)
+        let aiListenerStatus = null;
+        if (config.aiListener?.enabled) {
+          try {
+            const aiListenerInstance = getAIListener();
+            aiListenerStatus = aiListenerInstance.getStatus();
+          } catch (error) {
+            logger.warn({ err: error }, 'Error getting AI Listener stats');
+          }
+        }
+
         res.json({
           status: 'healthy',
           timestamp: new Date().toISOString(),
@@ -137,6 +158,12 @@ class BridgeService {
               persistenceListener: persistenceListenerStatus,
               yieldUnwrapper: yieldUnwrapperStatus,
               stats: reverseBurnStats
+            } : {
+              enabled: false
+            },
+            aiListener: aiListenerStatus ? {
+              enabled: true,
+              ...aiListenerStatus
             } : {
               enabled: false
             }
@@ -272,6 +299,14 @@ class BridgeService {
         logger.info('Reverse-burn loop started');
       }
 
+      // Start AI Listener (if enabled)
+      if (config.aiListener?.enabled) {
+        logger.info('Starting AI Listener (Osmosis/Akash IBC)');
+        const aiListenerInstance = getAIListener();
+        await aiListenerInstance.startListening();
+        logger.info('AI Listener started');
+      }
+
       this.isRunning = true;
 
       logger.info('Theta-Persistence ZK Bridge service is running');
@@ -307,6 +342,17 @@ class BridgeService {
           logger.info('Reverse-burn loop stopped');
         } catch (error) {
           logger.warn({ err: error }, 'Error stopping reverse-burn components');
+        }
+      }
+
+      // Stop AI Listener (if enabled)
+      if (config.aiListener?.enabled) {
+        try {
+          const aiListenerInstance = getAIListener();
+          aiListenerInstance.stopListening();
+          logger.info('AI Listener stopped');
+        } catch (error) {
+          logger.warn({ err: error }, 'Error stopping AI Listener');
         }
       }
 

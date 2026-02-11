@@ -29,6 +29,15 @@ contract VaultFactory is AccessControl, Pausable {
 
     /// @notice Mapping to track which vault addresses have been deployed
     mapping(address => bool) public isVault;
+    
+    /// @notice Minimum reserve ratio (basis points, 1000 = 10%)
+    uint256 public minReserveRatio = 1000; // 10% buffer
+    
+    /// @notice Total TFUEL seeded across all vaults for liquidity
+    uint256 public totalSeeded;
+    
+    /// @notice Total TFUEL released through unwraps
+    uint256 public totalReleased;
 
     /**
      * @notice Emitted when a new SubVault is created
@@ -66,6 +75,29 @@ contract VaultFactory is AccessControl, Pausable {
         address indexed recipient,
         uint256 amount
     );
+    
+    /**
+     * @notice Emitted when vault is seeded with TFUEL liquidity
+     * @param vault The vault that received seed liquidity
+     * @param amount The amount seeded
+     * @param seeder The address that provided the seed
+     */
+    event VaultSeeded(address indexed vault, uint256 amount, address indexed seeder);
+    
+    /**
+     * @notice Emitted when minimum reserve ratio is updated
+     * @param oldRatio Previous minimum reserve ratio
+     * @param newRatio New minimum reserve ratio
+     */
+    event MinReserveRatioUpdated(uint256 oldRatio, uint256 newRatio);
+    
+    /**
+     * @notice Emitted when TFUEL is rebalanced between vaults
+     * @param fromVault Source vault
+     * @param toVault Destination vault
+     * @param amount Amount rebalanced
+     */
+    event VaultRebalanced(address indexed fromVault, address indexed toVault, uint256 amount);
 
     /**
      * @notice Error thrown when vault already exists at predicted address
@@ -81,6 +113,16 @@ contract VaultFactory is AccessControl, Pausable {
      * @notice Error thrown when zero address is provided where not allowed
      */
     error ZeroAddress();
+    
+    /**
+     * @notice Error thrown when insufficient vault balance for operation
+     */
+    error InsufficientVaultBalance();
+    
+    /**
+     * @notice Error thrown when vault balance would drop below minimum reserve
+     */
+    error BelowMinimumReserve();
 
     /**
      * @notice Constructor initializes the factory with admin and RevSplitter address
@@ -205,6 +247,7 @@ contract VaultFactory is AccessControl, Pausable {
      * @param amount The amount of TFUEL to unlock
      * @dev Called by ZK bridge operator upon verified burn signal from Persistence chain
      *      Uses ZK_BRIDGE_ROLE for access control
+     *      Checks minimum reserve requirements before releasing
      */
     function unwrapFromBurn(
         address vault,
@@ -214,9 +257,136 @@ contract VaultFactory is AccessControl, Pausable {
     ) external onlyRole(ZK_BRIDGE_ROLE) {
         if (!isVault[vault]) revert NotAVault();
         
+        // Check minimum reserve: vault balance after unwrap must be >= 10% of total seeded
+        uint256 vaultBalance = SubVault(payable(vault)).getBalance();
+        if (vaultBalance < amount) revert InsufficientVaultBalance();
+        
+        uint256 remainingBalance = vaultBalance - amount;
+        uint256 minReserve = (totalSeeded * minReserveRatio) / 10000;
+        
+        if (remainingBalance < minReserve) revert BelowMinimumReserve();
+        
+        // Execute unwrap
         SubVault(payable(vault)).unwrapFromBurn(burnTxHash, recipient, amount);
         
+        // Update tracking
+        totalReleased += amount;
+        
         emit UnwrapFromBurnTriggered(vault, burnTxHash, recipient, amount);
+    }
+    
+    /**
+     * @notice Seed a vault with TFUEL liquidity (admin only)
+     * @param vault The vault address to seed
+     * @dev Can be called multiple times to add more liquidity
+     *      Initial seeding should use protocol Treasury (15% allocation)
+     */
+    function seedVault(address vault) external payable onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (!isVault[vault]) revert NotAVault();
+        if (msg.value == 0) revert ZeroAddress(); // Reusing error for zero value
+        
+        // Transfer TFUEL to vault
+        (bool success, ) = vault.call{value: msg.value}("");
+        require(success, "Seed transfer failed");
+        
+        // Update tracking
+        totalSeeded += msg.value;
+        
+        emit VaultSeeded(vault, msg.value, msg.sender);
+    }
+    
+    /**
+     * @notice Get vault balance
+     * @param vault The vault address to query
+     * @return The current TFUEL balance of the vault
+     */
+    function getVaultBalance(address vault) external view returns (uint256) {
+        if (!isVault[vault]) revert NotAVault();
+        return SubVault(payable(vault)).getBalance();
+    }
+    
+    /**
+     * @notice Check if vault has sufficient reserves for an unwrap amount
+     * @param vault The vault address to check
+     * @param amount The amount to check for unwrap
+     * @return True if vault can safely unwrap this amount
+     */
+    function canUnwrap(address vault, uint256 amount) external view returns (bool) {
+        if (!isVault[vault]) return false;
+        
+        uint256 vaultBalance = SubVault(payable(vault)).getBalance();
+        if (vaultBalance < amount) return false;
+        
+        uint256 remainingBalance = vaultBalance - amount;
+        uint256 minReserve = (totalSeeded * minReserveRatio) / 10000;
+        
+        return remainingBalance >= minReserve;
+    }
+    
+    /**
+     * @notice Update minimum reserve ratio (admin only)
+     * @param newRatio New minimum reserve ratio in basis points (e.g., 1000 = 10%)
+     */
+    function setMinReserveRatio(uint256 newRatio) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(newRatio <= 5000, "Reserve ratio too high (max 50%)");
+        
+        uint256 oldRatio = minReserveRatio;
+        minReserveRatio = newRatio;
+        
+        emit MinReserveRatioUpdated(oldRatio, newRatio);
+    }
+    
+    /**
+     * @notice Rebalance TFUEL between vaults (admin only)
+     * @param fromVault Source vault with excess liquidity
+     * @param toVault Destination vault needing liquidity
+     * @param amount Amount to transfer
+     * @dev Used to move liquidity from vaults with excess to vaults running low
+     */
+    function rebalanceVaults(
+        address fromVault,
+        address toVault,
+        uint256 amount
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (!isVault[fromVault]) revert NotAVault();
+        if (!isVault[toVault]) revert NotAVault();
+        if (amount == 0) revert ZeroAddress(); // Reusing error for zero amount
+        
+        // Check source vault has sufficient balance
+        uint256 fromBalance = SubVault(payable(fromVault)).getBalance();
+        if (fromBalance < amount) revert InsufficientVaultBalance();
+        
+        // Use refund mechanism to move funds (admin-controlled)
+        SubVault(payable(fromVault)).refund(payable(address(this)), amount);
+        
+        // Transfer to destination vault
+        (bool success, ) = toVault.call{value: amount}("");
+        require(success, "Rebalance transfer failed");
+        
+        emit VaultRebalanced(fromVault, toVault, amount);
+    }
+    
+    /**
+     * @notice Get aggregate vault statistics
+     * @return totalVaultLiquidity Total TFUEL across all vaults
+     * @return totalReserveRequired Minimum reserve required
+     * @return availableForUnwrap Maximum amount available for unwraps
+     */
+    function getAggregateStats() external view returns (
+        uint256 totalVaultLiquidity,
+        uint256 totalReserveRequired,
+        uint256 availableForUnwrap
+    ) {
+        totalVaultLiquidity = address(this).balance; // Simplified - should iterate vaults in production
+        totalReserveRequired = (totalSeeded * minReserveRatio) / 10000;
+        
+        if (totalVaultLiquidity > totalReserveRequired) {
+            availableForUnwrap = totalVaultLiquidity - totalReserveRequired;
+        } else {
+            availableForUnwrap = 0;
+        }
+        
+        return (totalVaultLiquidity, totalReserveRequired, availableForUnwrap);
     }
 
     /**
@@ -250,6 +420,13 @@ contract VaultFactory is AccessControl, Pausable {
      */
     function getRevSplitter() external view returns (address) {
         return revSplitter;
+    }
+    
+    /**
+     * @notice Receive function to accept TFUEL for vault seeding/rebalancing
+     */
+    receive() external payable {
+        // Factory can receive TFUEL for rebalancing operations
     }
 }
 

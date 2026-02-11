@@ -2,11 +2,18 @@
 members = [
     "cosmwasm/zk-verifier",
     "cosmwasm/ibc-tfuel-minter",
-    "sp1-prover/program",
-    "sp1-prover/host",
+    "cosmwasm-contracts/persistence-minter",
+    "cosmwasm-contracts/fee-collector",
+    "cosmwasm-contracts/ai-verifier",
+    # "sp1-prover/program",  # temporarily disabled - causes edition 2024 conflict
+    # "sp1-prover/host",     # temporarily disabled - depends on sp1-prover/program
 ]
 
 resolver = "2"
+
+# Add workspace dependencies for sp1-prover compatibility (if re-enabled)
+[workspace.dependencies]
+serde = { version = "1.0", default-features = false, features = ["derive"] }
 
 [profile.release]
 opt-level = 3

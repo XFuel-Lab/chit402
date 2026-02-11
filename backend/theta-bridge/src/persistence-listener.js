@@ -5,11 +5,26 @@ import { storeReverseBurnEvent } from './redis-client.js';
 
 /**
  * Persistence Chain Burn Event Listener
- * Monitors Persistence chain for ibcTFUEL burn events (reverse-burn loop)
+ * Monitors Persistence chain for BurnForUnwrap events (reverse bridge)
  * 
- * NOTE: This is a PLACEHOLDER implementation using Cosmos SDK WebSocket pattern
- * In production, this would connect to Persistence chain's Tendermint WebSocket
- * and subscribe to burn events via the specific module (e.g., token factory)
+ * Event Flow:
+ * 1. User burns ibcTFUEL on Persistence → triggers BurnForUnwrap event
+ * 2. This listener detects the event
+ * 3. Event stored in Redis
+ * 4. Backend calls unwrapFromBurn() on Theta VaultFactory
+ * 5. User receives TFUEL on Theta
+ * 
+ * Event Structure (from persistence-minter contract):
+ * {
+ *   type: "wasm-BurnForUnwrap",
+ *   attributes: [
+ *     { key: "burner", value: "persistence1..." },
+ *     { key: "theta_recipient", value: "0x..." },
+ *     { key: "burn_amount", value: "100000000000000000" },
+ *     { key: "fee_amount", value: "500000000000000" },
+ *     { key: "nonce", value: "1" }
+ *   ]
+ * }
  */
 class PersistenceListener {
   constructor() {
@@ -75,19 +90,21 @@ class PersistenceListener {
         logger.info('Persistence WebSocket connected');
         this.reconnectAttempts = 0;
 
-        // Subscribe to burn events
+        // Subscribe to BurnForUnwrap events from persistence-minter
         // Cosmos SDK WebSocket subscription format
         const subscribeMessage = {
           jsonrpc: '2.0',
           method: 'subscribe',
           id: '1',
           params: {
-            query: `tm.event='Tx' AND burn_ibcTFUEL.action='burn'`
+            query: `tm.event='Tx' AND wasm._contract_address='${config.persistence.minterContract}' AND wasm.action='burn_for_unwrap'`
           }
         };
 
         this.ws.send(JSON.stringify(subscribeMessage));
-        logger.info('Subscribed to Persistence burn events');
+        logger.info({ 
+          minterContract: config.persistence.minterContract 
+        }, 'Subscribed to Persistence BurnForUnwrap events');
       });
 
       this.ws.on('message', async (data) => {
@@ -163,40 +180,48 @@ class PersistenceListener {
 
   /**
    * Poll for burn events via RPC (backup method)
+   * Uses CosmJS to query Persistence chain
    * @returns {Promise<void>}
    */
   async pollForBurnEvents() {
     try {
-      // NOTE: This is a PLACEHOLDER for actual Persistence RPC query
-      // In production, this would query the Persistence chain for burn events
-      // using CosmJS or direct RPC calls to the Tendermint node
-      
-      logger.debug('Polling for Persistence burn events (PLACEHOLDER)');
+      logger.debug({ 
+        minterContract: config.persistence.minterContract,
+        lastBlockHeight: this.lastBlockHeight 
+      }, 'Polling for BurnForUnwrap events');
 
-      // Example of what production code would look like:
-      /*
+      // TODO: Implement actual CosmJS polling when contracts are deployed
+      // For mock testing, this is just a placeholder
+      
+      /* Production implementation:
+      import { CosmWasmClient } from '@cosmjs/cosmwasm-stargate';
+      
       const client = await CosmWasmClient.connect(config.persistence.rpcUrl);
       const latestBlock = await client.getHeight();
       
-      // Query events from last processed block to current
+      // Query wasm events for BurnForUnwrap
       const events = await client.searchTx({
         tags: [
-          { key: 'message.action', value: 'burn_ibcTFUEL' }
+          { key: 'wasm._contract_address', value: config.persistence.minterContract },
+          { key: 'wasm.action', value: 'burn_for_unwrap' }
         ]
       }, {
         minHeight: this.lastBlockHeight + 1,
         maxHeight: latestBlock
       });
 
-      for (const event of events) {
-        await this.handleBurnEvent(event);
+      for (const tx of events) {
+        // Parse tx events
+        const burnEvent = parseTxEvents(tx);
+        if (burnEvent) {
+          await this.handleBurnEvent(burnEvent);
+        }
       }
 
       this.lastBlockHeight = latestBlock;
       */
 
-      // For now, just log that polling is active
-      logger.debug({ lastBlockHeight: this.lastBlockHeight }, 'Burn event poll completed');
+      logger.debug({ lastBlockHeight: this.lastBlockHeight }, 'Burn event poll completed (mock mode)');
     } catch (error) {
       logger.error({ err: error }, 'Failed to poll for burn events');
     }
@@ -229,10 +254,12 @@ class PersistenceListener {
       logger.info({
         eventId,
         burner: burnData.burner,
-        amount: burnData.amount,
+        thetaRecipient: burnData.thetaRecipient,
+        unwrapAmount: burnData.unwrapAmount,
+        nonce: burnData.nonce,
         txHash: burnData.txHash,
         blockHeight: burnData.blockHeight
-      }, 'Persistence burn event detected');
+      }, 'BurnForUnwrap event detected - queuing for Theta unwrap');
 
       // Mark as processed
       this.processedEvents.add(eventId);
@@ -240,8 +267,11 @@ class PersistenceListener {
       // Store event in Redis for processing
       await storeReverseBurnEvent(burnData);
 
-      // The yield-unwrapper will pick up this event and process it
-      logger.info({ eventId }, 'Burn event queued for yield unwrapping');
+      logger.info({ 
+        eventId,
+        thetaRecipient: burnData.thetaRecipient,
+        unwrapAmount: burnData.unwrapAmount 
+      }, 'BurnForUnwrap event queued - will call VaultFactory.unwrapFromBurn()');
     } catch (error) {
       logger.error({ err: error, eventData }, 'Error handling burn event');
     }
@@ -249,44 +279,72 @@ class PersistenceListener {
 
   /**
    * Parse burn event from Persistence chain format
-   * @param {Object} eventData - Raw event data
-   * @returns {Object|null} Parsed burn data
+   * @param {Object} eventData - Raw event data from Tendermint WebSocket
+   * @returns {Object|null} Parsed burn data for reverse bridge
    */
   parseBurnEvent(eventData) {
     try {
-      // NOTE: This is a PLACEHOLDER parser
-      // Actual format depends on Persistence chain's event structure
-      // Typically: { type, attributes: [{key, value}], tx_hash, height }
+      // Cosmos SDK WebSocket event structure:
+      // { value: { TxResult: { result: { events: [...] }, hash, height } } }
+      
+      const events = eventData.value?.TxResult?.result?.events || [];
+      const wasmEvent = events.find(e => 
+        e.type === 'wasm' && 
+        e.attributes.some(a => Buffer.from(a.key, 'base64').toString() === 'action' &&
+                               Buffer.from(a.value, 'base64').toString() === 'burn_for_unwrap')
+      );
 
-      // Example parsing for Cosmos SDK event format:
-      const attributes = eventData.value?.TxResult?.result?.events?.find(
-        e => e.type === 'burn_ibcTFUEL'
-      )?.attributes || [];
+      if (!wasmEvent) {
+        return null;
+      }
 
+      // Extract attributes from wasm event
       const getValue = (key) => {
-        const attr = attributes.find(a => a.key === key);
+        const attr = wasmEvent.attributes.find(a => 
+          Buffer.from(a.key, 'base64').toString() === key
+        );
         return attr ? Buffer.from(attr.value, 'base64').toString() : null;
       };
 
       const burner = getValue('burner');
-      const amount = getValue('amount');
-      const ibcUSDCYield = getValue('ibc_usdc_yield'); // Yield earned in ibcUSDC
+      const thetaRecipient = getValue('theta_recipient');
+      const burnAmount = getValue('burn_amount');
+      const feeAmount = getValue('fee_amount');
+      const nonce = getValue('nonce');
 
-      if (!burner || !amount || !ibcUSDCYield) {
-        logger.warn({ eventData }, 'Missing required burn event fields');
+      // Validate required fields
+      if (!burner || !thetaRecipient || !burnAmount || !feeAmount || !nonce) {
+        logger.warn({ 
+          burner, thetaRecipient, burnAmount, feeAmount, nonce 
+        }, 'Missing required BurnForUnwrap event fields');
         return null;
       }
 
+      // Calculate unwrap amount (burn - fee = 99.5%)
+      const unwrapAmount = (BigInt(burnAmount) - BigInt(feeAmount)).toString();
+
+      logger.info({
+        burner,
+        thetaRecipient,
+        burnAmount,
+        feeAmount,
+        unwrapAmount,
+        nonce
+      }, 'Parsed BurnForUnwrap event');
+
       return {
         burner,
-        amount, // Amount of ibcTFUEL burned
-        ibcUSDCYield, // ibcUSDC yield to unwrap
+        thetaRecipient,
+        burnAmount,
+        feeAmount,
+        unwrapAmount, // Amount to unwrap on Theta (after 0.5% fee)
+        nonce,
         txHash: eventData.value?.TxResult?.hash || eventData.tx_hash,
         blockHeight: eventData.value?.TxResult?.height || eventData.height,
         timestamp: Date.now()
       };
     } catch (error) {
-      logger.error({ err: error, eventData }, 'Error parsing burn event');
+      logger.error({ err: error, eventData }, 'Error parsing BurnForUnwrap event');
       return null;
     }
   }

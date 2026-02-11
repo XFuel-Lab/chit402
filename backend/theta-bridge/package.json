@@ -6,14 +6,23 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "NODE_ENV=development node src/index.js",
+    "dev": "cross-env NODE_ENV=development node src/index.js",
+    "ai-listener": "cross-env AI_LISTENER_ENABLED=true node src/index.js",
+    "m2m-server": "cross-env AI_LISTENER_ENABLED=true node src/server.js",
+    "fee-analytics": "node src/fee-analytics.js",
+    "fee-analytics:watch": "node src/fee-analytics.js --watch --interval 60",
+    "fee-analytics:prometheus": "node src/fee-analytics.js --format prometheus --watch --port 9100",
+    "fee-analytics:simulate": "node src/fee-analytics.js --simulate --volume 2000000 --ai-share 0.6",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "theta",
+    "osmosis",
+    "akash",
     "persistence",
     "bridge",
     "zk-proof",
+    "ai-depin",
     "blockchain"
   ],
   "author": "XFuelLab",
@@ -29,7 +38,8 @@
     "ws": "^8.17.0"
   },
   "devDependencies": {
-    "@types/node": "^20.10.6"
+    "@types/node": "^20.10.6",
+    "cross-env": "^10.1.0"
   },
   "engines": {
     "node": ">=20.0.0",

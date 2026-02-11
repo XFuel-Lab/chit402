@@ -100,6 +100,64 @@ const config = {
     gasAdjustment: parseFloat(process.env.PERSISTENCE_GAS_ADJUSTMENT) || 1.8
   },
 
+  // Osmosis Configuration (Phase D/E: Primary settlement + AI routing)
+  osmosis: {
+    rpcUrl: process.env.OSMOSIS_RPC_URL || 'https://rpc.osmosis.zone:443',
+    chainId: process.env.OSMOSIS_CHAIN_ID || 'osmosis-1',
+    wsUrl: process.env.OSMOSIS_WS_URL || 'wss://rpc.osmosis.zone/websocket',
+    pollInterval: parseInt(process.env.OSMOSIS_POLL_INTERVAL_MS) || 10000,
+
+    // ibcTFUEL token on Osmosis (CW20 or native IBC denom)
+    ibcTFUELDenom: process.env.OSMOSIS_IBC_TFUEL_DENOM || 'ibc/TFUEL',
+    ibcTFUELContract: process.env.OSMOSIS_IBC_TFUEL_CONTRACT,
+
+    // Pool contract for ibcTFUEL pairs (Osmosis DEX)
+    poolContract: process.env.OSMOSIS_POOL_CONTRACT,
+
+    // FeeCollector on Osmosis (receives 0.5% AI task fees)
+    feeCollectorContract: process.env.OSMOSIS_FEE_COLLECTOR_CONTRACT,
+
+    // Relayer wallet for signing Osmosis transactions
+    relayerMnemonic: process.env.OSMOSIS_RELAYER_MNEMONIC,
+
+    // Gas configuration
+    gasPrice: process.env.OSMOSIS_GAS_PRICE || '0.025uosmo',
+    gasAdjustment: parseFloat(process.env.OSMOSIS_GAS_ADJUSTMENT) || 1.5,
+  },
+
+  // Akash Configuration (Phase E: AI DePIN compute marketplace)
+  akash: {
+    rpcUrl: process.env.AKASH_RPC_URL || 'https://akash-rpc.polkachu.com:443',
+    chainId: process.env.AKASH_CHAIN_ID || 'akashnet-2',
+    wsUrl: process.env.AKASH_WS_URL || 'wss://akash-rpc.polkachu.com/websocket',
+    pollInterval: parseInt(process.env.AKASH_POLL_INTERVAL_MS) || 15000,
+
+    // Relay address for receiving AI task IBC transfers
+    relayAddress: process.env.AKASH_RELAY_ADDRESS,
+
+    // Gas configuration
+    gasPrice: process.env.AKASH_GAS_PRICE || '0.025uakt',
+  },
+
+  // AI Listener Configuration (Phase E: AI DePIN Bridge)
+  aiListener: {
+    enabled: process.env.AI_LISTENER_ENABLED === 'true',
+
+    // Theta Edge Cloud URL for inference routing
+    thetaEdgeUrl: process.env.THETA_EDGE_URL,
+
+    // Timeouts
+    routingTimeout: parseInt(process.env.AI_ROUTING_TIMEOUT_MS) || 30000,
+    inferenceTimeout: parseInt(process.env.AI_INFERENCE_TIMEOUT_MS) || 60000,
+    taskTimeoutMs: parseInt(process.env.AI_TASK_TIMEOUT_MS) || 300000, // 5 min
+
+    // Polling interval (backup to WebSocket)
+    pollInterval: parseInt(process.env.AI_POLL_INTERVAL_MS) || 15000,
+
+    // Fee configuration (basis points)
+    feeBps: parseInt(process.env.AI_TASK_FEE_BPS) || 50, // 0.5% = 50 bps
+  },
+
   // Yield Configuration (Reverse-burn)
   yield: {
     // 30% of ibcUSDC yields unwrapped to TFUEL and routed to RevenueSplitter

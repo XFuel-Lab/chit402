@@ -1,60 +1,49 @@
-# XFuel Protocol: XFuel Tokenomics Edition
+# XFuel Protocol: Ferrari Hybrid Tokenomics Edition
 
-**Version 4.3 — Architecture Alignment Edition**  
-**February 2, 2026**  
-**Status:** 🚀 Phase C Complete - Ready for Governance
+**Version 3.1 — ZK Bridge + Persistence LP Focus**  
+**January 5, 2026**  
+**Status:** 🏎️ Production Ready - Awaiting CertiK Audit
 
-> **Canonical Whitepaper v4.3** — For PDF: Print this page or use Pandoc
+> **Canonical Whitepaper v3.1** — For PDF: Print this page or use Pandoc
 
 **Live:** [xfuel.app](https://xfuel.app) | **GitHub:** [XFuel-Lab/xfuel-protocol](https://github.com/XFuel-Lab/xfuel-protocol)
 
 ---
 
-## Version History
-
-- **v4.3:** Architecture alignment — updated to reflect production SP1 zkVM implementation (RISC-V, CosmWasm ZKVerifier, ~9s proving), clarified IBC as post-mint routing only, added Groth16→SP1 evolution context - Feb 2, 2026
-- **v4.2:** Premier edition — balanced technical presentation, multi-destination routing (Persistence-primary with Osmosis/Cosmos Hub hooks), quantified Edge Cloud savings (50-80% TFUEL cost reduction), clarified vesting milestones - Jan 23, 2026
-- **v4.1:** SP1 zkVM upgrade with batching (2.25s per deposit, 11.6x speedup, 90% cost reduction) - Jan 23, 2026
-- **v4.0:** Updated to XFuel Tokenomics, TFUEL-only yields, SP1 zkVM with Theta Edge Cloud integration (Jan 2026)
-
 ## Abstract
 
-XFuel Protocol is a **trustless cross-chain liquidity bridge** delivering Theta's TFUEL to Persistence's high-yield LSTfi ecosystem. The protocol combines **SP1 zkVM cryptographic proofs** (RISC-V-based zero-knowledge virtual machine with transparent setup) with **Theta Edge Cloud acceleration** and **automated LP yield optimization**, achieving **~9-second proving time** with efficient batching and seamless routing to top Dexter Superfluid/Metastable pools (stkXPRT, milkTIA, and emerging liquid staking tokens). <!-- v4.3 update -->
+XFuel Protocol is a **trustless zero-knowledge bridge** delivering Theta's TFUEL liquidity to Persistence's high-yield LSTfi ecosystem. Using **Groth16 ZK-SNARKs**, the protocol achieves **sub-4-second settlements** from Theta TFUEL to Persistence ibcTFUEL, with automated routing to top-performing Dexter LP pools (Superfluid/Metastable pairs with stkXPRT, milkTIA, and other liquid staking tokens).
 
-The protocol implements **XFuel Tokenomics**, a refined 4-way revenue distribution model (30/30/25/15) with a 30% reverse-burn sustainability loop, creating a self-reinforcing economic flywheel that compounds LP growth and protocol revenue over time. <!-- v4.0 update -->
+The protocol implements **Ferrari Hybrid Tokenomics**, a novel 4-way revenue distribution model (30/30/25/15) with a 30% reverse-burn sustainability loop, creating a self-reinforcing economic flywheel that compounds LP growth and protocol revenue over time.
 
-Following our January 2026 SP1 zkVM implementation, XFuel achieves: <!-- v4.3 update -->
+Following our January 2026 ZK overhaul, XFuel achieves:
 
-- **~9s proving time** (Phase B benchmarks: 8.997s average, production-validated)
-- **~100ms verification time** (constant-time CosmWasm ZKVerifier)
-- **SP1 zkVM proofs** (RISC-V-based, transparent setup, STARK-to-SNARK recursion via Succinct Network)
-- **CosmWasm contracts** (ZKVerifier.wasm + ibcTFUEL.wasm on Persistence mainnet)
-- **50-80% lower TFUEL costs** (Theta Edge Cloud optimization vs standard compute)
+- **<4s end-to-end finality** (73% faster than pre-overhaul)
+- **Groth16 ZK-SNARKs** for cryptographic security (2^-128^ soundness)
+- **Parallel proof/IBC processing** (2.5x throughput increase)
 - **1:1 cryptographic peg** maintenance (ibcTFUEL ↔ TFUEL)
-- **Multi-destination support** (Persistence-primary with Osmosis/Cosmos Hub hooks, activated Q3 2026 if TVL >$1M)
 - **Automated circuit breakers** for emergency protection
 
-This whitepaper presents the complete technical architecture, tokenomics model, security analysis, and roadmap for delivering Theta liquidity to Cosmos LSTfi.
+This whitepaper presents the complete technical architecture, tokenomics model, security analysis, and roadmap for delivering Theta liquidity to Persistence LSTfi.
 
 ---
 
 ## Table of Contents
 
 1. [Introduction](#1-introduction)
-2. [Project Evolution](#2-project-evolution)
-3. [Architecture](#3-architecture)
-4. [Zero-Knowledge Bridge](#4-zero-knowledge-bridge)
-5. [XFuel Tokenomics](#5-xfuel-tokenomics) <!-- v4.0 update -->
-6. [Governance & veXF](#6-governance--vexf)
-7. [Revenue Model](#7-revenue-model)
-8. [Technical Implementation](#8-technical-implementation)
-9. [Risk Analysis & Mitigation](#9-risk-analysis--mitigation)
-10. [Economic Model & Projections](#10-economic-model--projections)
-11. [Roadmap](#11-roadmap)
-12. [Conclusion](#12-conclusion)
-13. [References](#13-references)
-14. [Glossary](#14-glossary)
-15. [Appendices](#appendices)
+2. [Architecture](#2-architecture)
+3. [Zero-Knowledge Bridge](#3-zero-knowledge-bridge)
+4. [Ferrari Hybrid Tokenomics](#4-ferrari-hybrid-tokenomics)
+5. [Governance & veXF](#5-governance--vexf)
+6. [Revenue Model](#6-revenue-model)
+7. [Technical Implementation](#7-technical-implementation)
+8. [Risk Analysis & Mitigation](#8-risk-analysis--mitigation)
+9. [Economic Model & Projections](#9-economic-model--projections)
+10. [Roadmap](#10-roadmap)
+11. [Conclusion](#11-conclusion)
+12. [References](#12-references)
+13. [Glossary](#13-glossary)
+14. [Appendices](#appendices)
 
 ---
 
@@ -72,15 +61,13 @@ Theta Network holders face a critical liquidity challenge: TFUEL earns minimal y
 
 ### 1.2 Solution Overview
 
-XFuel Protocol solves these challenges through a **trustless cross-chain infrastructure** combining cryptographic verification, automated yield optimization, and sustainable tokenomics:
+XFuel Protocol solves these challenges through a **trustless ZK bridge** focused exclusively on delivering Theta liquidity to Persistence's high-yield LP ecosystem:
 
-**Cryptographic Bridge Layer:**
+**Zero-Knowledge Bridge Core:**
 
-- **SP1 zkVM verification** for trustless deposit validation (no oracles or multisigs)
-- **2.25s effective per deposit** (Batch-10 optimization on Succinct Network)
-- **Theta Edge Cloud acceleration** (50-80% lower TFUEL costs for proof generation vs standard compute)
-- **Cosmos IBC integration** for seamless Persistence ecosystem access
-- **Multi-destination routing**: Persistence-primary with optional Osmosis/Cosmos Hub hooks (activated Q3 2026 if Persistence LP TVL >$1M)
+- **Groth16 ZK-SNARKs** for cryptographic proof validation (no trust required)
+- **Sub-4-second finality** (1.5s proof generation + 50ms verification)
+- **Native IBC integration** (channel-190 to Persistence core-1)
 - **1:1 cryptographic peg** (ibcTFUEL ↔ TFUEL, backed by locked collateral)
 
 **Automated LP Yield Routing:**
@@ -90,182 +77,28 @@ XFuel Protocol solves these challenges through a **trustless cross-chain infrast
 - **Current top LSTs**: stkXPRT (PSTAKE), milkTIA (Milkyway), and emerging Persistence LSTs
 - **Yield aggregation** (30-50% APY vs 2-4% TFUEL staking)
 
-**XFuel Tokenomics:** <!-- v4.0 update -->
+**Ferrari Hybrid Tokenomics:**
 
 - 4-way revenue distribution: 30% BBB, 30% LP, 25% veXF, 15% Treasury
 - 30% reverse-burn sustainability loop (recirculating yields back to protocol)
-- Simple veXF multipliers (1-3x for 1-3 year locks)
-- Milestone-based vesting (e.g., $5M TVL unlocks 50% of ecosystem incentives)
+- Multi-factor veXF multipliers (up to 11.5x for governance power)
 - Compounds LP depth over time (more revenue → more LP funding → deeper liquidity)
 
 ### 1.3 Key Innovations
 
-1. **Trustless Theta → Cosmos Bridge**: First SP1 zkVM-powered liquidity bridge from Theta TFUEL to Cosmos LSTfi
-2. **Batch Processing Optimization**: 11.6x throughput via intelligent deposit batching (10 deposits per proof)
-3. **Theta Edge Cloud Synergy**: 50-80% lower TFUEL proving costs leveraging native DePIN infrastructure
-4. **Automated Yield Routing**: Smart LP selection across Dexter Superfluid/Metastable pools
-5. **Sustainable Tokenomics**: 30% reverse-burn + 30% LP funding = compounding ecosystem growth
-6. **Cost-Efficient Architecture**: 90% cost reduction through Succinct Network pay-per-proof model
-7. **Multi-Destination Flexibility**: Persistence-primary with optional Osmosis/Cosmos Hub routing (Q3 2026)
+1. **Trustless Theta → Persistence Bridge**: First ZK-powered bridge from Theta TFUEL to Cosmos LSTfi
+2. **Sub-4s ZK Finality**: Fastest provably-secure bridge in Theta ecosystem
+3. **Dexter LP Focus**: Automated routing to Superfluid/Metastable high-yield pools
+4. **Post-pSTAKE Alignment**: Built for new Persistence LST landscape (stkXPRT, milkTIA, etc.)
+5. **Self-Sustaining Flywheel**: 30% reverse-burn + 30% LP funding = compounding growth
 
 ---
 
-## 2. Project Evolution
-
-### 2.1 Overview: From Concept to ZK Bridge
-
-XFuel Protocol has undergone significant architectural pivots since inception, evolving from exploratory concepts to a production-ready ZK bridge. This section documents the journey, key decision points, and lessons learned—demonstrating the protocol's commitment to building the **right solution**, not just the first solution. <!-- v4.0 update -->
-
-### 2.2 Timeline of Major Pivots
-
-#### Phase 1: Generalized Bridge Exploration (Q3 2024)
-
-**Initial Concept:** Multi-chain bridge supporting Theta → multiple Cosmos chains via generic IBC routing.
-
-**Challenges Identified:**
-- **Fragmented liquidity**: Spreading thin across 10+ chains diluted impact
-- **Complex UX**: Users struggled with multi-hop routing decisions
-- **Ecosystem misalignment**: pSTAKE (original Persistence LST) was already sunsetting
-- **Trust dependencies**: Early designs relied on centralized oracles and multisig validators
-
-**Key Learning:** Focus beats fragmentation. Deep liquidity on **one chain** (Persistence) delivers more value than shallow liquidity everywhere.
-
-#### Phase 2: Oracle-Based Trust Model (Q4 2024)
-
-**Approach:** Chainlink oracles + multisig validators to verify Theta deposits and authorize Persistence mints.
-
-**Challenges Identified:**
-- **Trust assumptions**: Users had to trust oracle operators and multisig signers (9-of-13 consensus)
-- **Latency**: Oracle consensus + multisig coordination = 15-30s settlements (too slow)
-- **Single point of failure**: Compromised oracle could authorize fraudulent mints
-- **High operational costs**: $5K+/month for oracle data feeds and keeper operations
-
-**Key Learning:** DeFi users demand **trustlessness**. "Don't trust, verify" isn't marketing—it's protocol design hygiene.
-
-#### Phase 3: ZK Overhaul (December 2025 - January 2026)
-
-**Breakthrough:** Replace trust-based verification with **SP1 zkVM proofs**, achieving cryptographic soundness without oracles or multisigs.
-
-**Technical Transformation:**
-- **Trust → Math**: STARK-like soundness with no trusted setup
-- **Speed**: Sub-4-second settlements (Edge Cloud accelerated proofs)
-- **Cost**: Lower proof compute costs via Theta Edge Cloud
-- **Security**: Merkle proofs + nonce uniqueness + SP1 verification = layered defense
-
-**Why This Worked:**
-- SP1 SDK 5.2.2 matured with stable APIs for production deployment
-- Rust-native circuits and proving libraries (stable toolchain)
-- Theta Edge Cloud compute availability for low-cost proof generation
-
-**Result:** XFuel v4.0 launches as a **trustless ZK bridge** from Theta to Cosmos with Edge Cloud acceleration. <!-- v4.0 update -->
-
-#### Phase 4: Persistence LP Focus (January 2026 - Present)
-
-**Ecosystem Shift:** pSTAKE (original liquid staking protocol) sunset in December 2025 after Stride acquisition. Persistence restructured around:
-- **PSTAKE (new entity)**: stkXPRT liquid staking
-- **Milkyway**: milkTIA (Celestia LST integration)
-- **Dexter DEX**: Superfluid/Metastable pools as primary DeFi venue
-
-**Strategic Pivot (v3.1):**
-- **Before**: Generic "Cosmos LSTfi" positioning (vague target market)
-- **After**: Laser-focused on **Dexter LP growth** (stkXPRT, milkTIA pairs)
-- **XFuel Tokenomics**: 30% LP funding + 30% reverse-burn = compounding liquidity depth
-- **Yield Optimizer**: Auto-route to highest-APY Superfluid pools (35-50% APY target)
-
-**Why This Matters:**
-- Post-pSTAKE sunset, Persistence needed **external liquidity inflows** (not just internal reshuffling)
-- XFuel's 30% LP funding commitment **grows the entire ecosystem**, not just the protocol
-- Theta holders gain access to yields **10× higher** than native staking (2-4% → 30-50%)
-
-### 2.3 Key Design Decisions & Trade-offs
-
-#### Decision 1: SP1 Choice (Historical)
-
-**Choice:** SP1 (transparent setup, fast recursion) <!-- v4.0 update -->
-
-**Rationale:**
-- **Transparent setup**: Eliminates ceremony risk and long-term trust assumptions
-- **Fast recursion**: Efficient aggregation for high-throughput bridging
-- **Verification efficiency**: Optimized verifier for CosmWasm constraints
-- **Maturity**: 2026 SP1 libraries stabilized for production
-
-**Outcome:** SP1 became the permanent ZK backbone for XFuel, aligned with Edge Cloud acceleration. <!-- v4.0 update -->
-
-#### Decision 2: Persistence-Only vs. Multi-Chain
-
-**Choice:** Persistence-only (depth over breadth)
-
-**Rationale:**
-- **Liquidity concentration**: $500K TVL on one chain > $50K on ten chains
-- **Partnership depth**: Co-marketing with Dexter, PSTAKE, Milkyway (ecosystem alignment)
-- **Technical simplicity**: One IBC channel (190) vs managing 10+ channels
-- **User clarity**: "Bridge to Persistence for 40% APY" > "Choose from 10 chains"
-
-**Trade-off:** Limited addressable market initially (future expansion to Osmosis, Cosmos Hub in 2027+).
-
-#### Decision 3: 30% LP Funding (XFuel Model)
-
-**Choice:** Allocate 30% of protocol revenue to Dexter LP growth (not treasury or buyback-burn only)
-
-**Rationale:**
-- **Compounding effect**: Deeper LPs → lower slippage → more users → more revenue → deeper LPs
-- **Ecosystem value**: Growing Persistence DeFi benefits everyone (network effects)
-- **Differentiation**: Most protocols hoard treasury or 100% burn (XFuel reinvests in infrastructure)
-
-**Trade-off:** Slower treasury accumulation vs pure-buyback models (accepted for long-term sustainability).
-
-### 2.4 Lessons Learned & Best Practices
-
-#### 1. Pivot Decisively, Don't Iterate Forever
-
-**Anti-Pattern:** "Let's add one more feature before launch" (scope creep trap).
-
-**XFuel Approach:** Each pivot had a **kill criterion**:
-- Oracle model: If settlement time >10s, kill and pivot to ZK
-- Multi-chain: If any chain TVL <$10K after 3 months, consolidate to Persistence
-- Generic positioning: If no LST partnerships by Q4 2025, specialize to Dexter
-
-**Result:** v3.0 ZK overhaul completed in 4 weeks (Dec 15, 2025 → Jan 4, 2026), not 6 months.
-
-#### 2. Build for the Ecosystem That Exists, Not the One You Wish For
-
-**Mistake:** Designing for "Cosmos interchain future" in 2024 (when reality was fragmented silos).
-
-**Correction:** v3.1 embraced **Persistence's actual DeFi stack** (Dexter, PSTAKE, Milkyway), not hypothetical cross-chain abstraction layers.
-
-**Impact:** Partnerships with real protocols (PSTAKE liquidity co-incentives, Dexter UI integration discussions).
-
-#### 3. Trust Assumptions Are Technical Debt
-
-**Oracle/multisig model was fast to build** (2 months) **but impossible to defend** ("Why trust your 9-of-13 multisig?").
-
-**ZK model took longer** (4 months R&D) **but eliminates trust FUD** ("Math guarantees correctness—no trust required").
-
-**Lesson:** Pay upfront cost for cryptographic correctness. Users remember security, not launch dates.
-
-### 2.5 Current Status & Next Evolution
-
-**As of January 2026 (v4.0):**
-- ✅ Trustless ZK bridge (SP1 proofs, <4s settlements)
-- ✅ XFuel tokenomics (30/30/25/15 distribution live)
-- ✅ Dexter LP focus (stkXPRT, milkTIA integrations active)
-- ⏳ CertiK audit scheduled (Q2 2026, pending funding)
-- ⏳ $500K bug bounty (Q2 2026, post-funding)
-
-**Next Planned Pivots:**
-1. **Q3 2026**: Multi-chain expansion (Osmosis, Cosmos Hub—**only if Persistence LP depth >$1M and hooks are production-tested**)
-2. **Q4 2026**: ZK Rollup layer for 10× throughput (if transaction volume >50K/month)
-3. **2027**: Generalized ZK bridge framework (any EVM → any Cosmos, if demand proven)
-
-**Philosophy:** Evolve based on **usage data**, not roadmap commitments. XFuel's strength is **adaptive engineering**, not rigid adherence to outdated plans.
-
----
-
-## 3. Architecture
+## 2. Architecture
 
 ### 2.1 System Overview
 
-XFuel operates as a **three-layer trustless bridge** connecting Theta (EVM), Edge Cloud (ZK Proof), and Persistence (CosmWasm/Dexter): <!-- v4.0 update -->
+XFuel operates as a **three-layer trustless bridge** connecting Theta (EVM), Backend (ZK Proof), and Persistence (CosmWasm/Dexter):
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -274,14 +107,14 @@ XFuel operates as a **three-layer trustless bridge** connecting Theta (EVM), Edg
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                   │
 │  ┌──────────────┐      ┌──────────────┐      ┌────────────────┐ │
-│  │   THETA      │      │  EDGE CLOUD  │      │  PERSISTENCE   │ │
+│  │   THETA      │      │   BACKEND    │      │  PERSISTENCE   │ │
 │  │   LAYER      │─────▶│   LAYER      │─────▶│    LAYER       │ │
-│  │   (EVM)      │      │ (ZK + Route) │      │  (CosmWasm)    │ │
+│  │   (EVM)      │      │  (ZK Proof)  │      │  (CosmWasm)    │ │
 │  └──────────────┘      └──────────────┘      └────────────────┘ │
 │         │                      │                      │          │
 │    VaultFactory          ZK Prover              ZKVerifier       │
-│    RevenueSplitter       SP1                ibcTFUEL         │
-│    (Bridge Fees)         prover                 Dexter DEX       │
+│    RevenueSplitter       Groth16                ibcTFUEL         │
+│    (Bridge Fees)         snarkjs                Dexter DEX       │
 │                                                  (stkXPRT LPs)   │
 │                                                                   │
 └──────────────────────────────────────────────────────────────────┘
@@ -291,7 +124,7 @@ XFuel operates as a **three-layer trustless bridge** connecting Theta (EVM), Edg
 
 #### 2.2.1 Theta Layer (Smart Contracts)
 
-**VaultFactory** (`TBD — post-audit deployment`) <!-- v4.0 update -->
+**VaultFactory** (`0xB0a26600074dADC69186632a1B8dFd7c3146Ce56`)
 
 - Manages individual deposit vaults per user
 - Locks TFUEL collateral (1:1 backing for ibcTFUEL)
@@ -299,14 +132,14 @@ XFuel operates as a **three-layer trustless bridge** connecting Theta (EVM), Edg
 - Handles unwrap operations (burn ibcTFUEL → release TFUEL)
 - Emits deposit events for backend detection
 
-**RevenueSplitter** (`TBD — post-audit deployment`) <!-- v4.0 update -->
+**RevenueSplitter** (`0x1C4CEbbb4Cfa7fdb546424F21CF706c48C478EE6`)
 
-- Implements XFuel 30/30/25/15 distribution <!-- v4.0 update -->
+- Implements Ferrari 30/30/25/15 distribution
 - Collects 0.5% bridge fees (TFUEL deposits)
-- Routes 30% reverse-burn from LP fees
+- Routes 30% reverse-burn from veXF yields
 - Distributes to: BBB (buyback-burn), LP funding, veXF yields, Treasury
 
-#### 2.2.2 Edge Cloud Layer (Theta Edge Cloud + Node.js Services) <!-- v4.0 update -->
+#### 2.2.2 Backend Layer (Node.js Services)
 
 **IBC Listener** (`backend/ibc/listener.ts`)
 
@@ -317,25 +150,24 @@ XFuel operates as a **three-layer trustless bridge** connecting Theta (EVM), Edg
 
 **ZK Prover** (`backend/zk-prover/`)
 
-- **Circuit compilation**: SP1 circuits (Rust)
-- **Witness generation**: Extract deposit data (~400ms)
-- **SP1 proof**: Generate proof via Edge Cloud (~800ms)
-- **Cost savings**: **50-80% lower proving costs** via TFUEL edge nodes <!-- v4.0 update -->
+- **Circuit compilation**: Circom → R1CS → WASM
+- **Witness generation**: Extract deposit data (~500ms)
+- **Groth16 proof**: Generate ZK-SNARK (~1000ms)
 - **Proof submission**: Send to Persistence ZKVerifier
 
 **Yield Router** (`backend/yield-optimizer.ts`)
 
-- Tracks Dexter LP pool APYs in real-time (Edge Cloud compute)
+- Tracks Dexter LP pool APYs in real-time
 - Routes ibcTFUEL to highest-yielding Superfluid/Metastable pools
 - Monitors stkXPRT, milkTIA, and emerging LSTs
 - Auto-rebalances based on performance thresholds
 
 #### 2.2.3 Persistence Layer (CosmWasm Contracts + Dexter)
 
-**ZKVerifier.wasm** (SP1 proof verification) <!-- v4.0 update -->
+**ZKVerifier.wasm** (Groth16 proof verification)
 
-- SP1 verification (no trusted setup)
-- Verifies proofs in ~60ms average
+- BN254 elliptic curve pairing operations
+- Verifies proofs in constant 50ms time
 - Validates nonce uniqueness (replay protection)
 - Authorizes ibcTFUEL minting on success
 
@@ -353,207 +185,111 @@ XFuel operates as a **three-layer trustless bridge** connecting Theta (EVM), Edg
 - **Current Focus**: stkXPRT (PSTAKE), milkTIA (Milkyway)
 - **LP Depth Growth**: 30% of protocol revenue reinvested monthly
 
+**IBC Channel-190** (Theta ↔ Persistence)
+
+- Standard ICS-20 token transfers
+- 10-minute timeout with auto-refund
+- Acknowledgment-based finality
+- Multi-hop routing support
+
 ### 2.3 Post-Overhaul Performance
 
 **Completed:** January 4, 2026
 
-The ZK bridge overhaul (v4.0) transformed XFuel from a trust-based system to a **fully cryptographic, zero-knowledge protocol** with Edge Cloud acceleration. This update refines focus to **Persistence LP growth** post-pSTAKE sunset. <!-- v4.0 update -->
+The ZK bridge overhaul (v3.0) transformed XFuel from a trust-based system to a **fully cryptographic, zero-knowledge protocol**. This update (v3.1) refines focus to **Persistence LP growth** post-pSTAKE sunset.
 
 #### Performance Improvements
 
 | Metric | Pre-Overhaul | Post-Overhaul | Improvement |
 |--------|--------------|---------------|-------------|
 | **Settlement Time** | 10-15 seconds | **<4 seconds** | **73% faster** |
-| **Proof Generation** | N/A (trusted) | **1.2s** | SP1 + Edge Cloud |
-| **Proof Verification** | N/A | **60ms constant** | SP1 verifier |
-| **Throughput** | 6 tx/min | **30 tx/min** | **5x increase** |
+| **Proof Generation** | N/A (trusted) | **1.5s** | ZK-SNARK added |
+| **Proof Verification** | N/A | **50ms constant** | ZK-SNARK added |
+| **Throughput** | 6 tx/min | **15 tx/min** | **2.5x increase** |
 | **Security Model** | Trust-based | **Zero-knowledge** | Trustless |
 
 ---
 
-## 4. Zero-Knowledge Bridge
+## 3. Zero-Knowledge Bridge
 
-### 4.1 SP1 zkVM Overview
+### 3.1 ZK-SNARK Overview
 
-XFuel uses **SP1**, a modern zero-knowledge virtual machine built on RISC-V, for trustless deposit validation. SP1 represents an evolution from earlier Groth16/BN128/Circom-based ZK systems, offering **transparent setup** (no trusted ceremony), **universal circuits** (write proofs in Rust), and **efficient recursion** for batching.
+XFuel uses **Groth16**, the most efficient pairing-based ZK-SNARK, for trustless deposit validation. Unlike trusted bridges (multisig, oracles), Groth16 provides:
 
-**Why SP1 over legacy SNARKs (Groth16)?**
+- **Mathematical Soundness**: Probability of forging proof < 2^-128^ (cryptographic impossibility)
+- **Succinctness**: Constant 192-byte proofs (scales to any deposit size)
+- **Efficiency**: 50ms constant-time verification (no matter proof complexity)
+- **Non-interactivity**: Prover generates proof, verifier checks—no back-and-forth required
 
-| Feature | Groth16 (Legacy) | SP1 zkVM (Current) |
-|---------|-----------------|-------------------|
-| **Trusted Setup** | Required (ceremony) | None (transparent) |
-| **Circuit Language** | Circom (DSL) | Rust (RISC-V) |
-| **Proof Size** | ~200 bytes | ~300KB (compressed) |
-| **Proving Time** | ~1-2s | ~9s (Phase B: 8.997s avg) |
-| **Verification** | ~60ms (EVM) | ~100ms (CosmWasm) |
-| **Recursion** | Complex | Native STARK→SNARK |
-| **Maintenance** | Circuit-specific | Universal VM |
+**Trade-off**: Groth16 requires a trusted setup ceremony. XFuel mitigates this via:
 
-**SP1 Architecture:**
+- Multi-party computation (MPC) ceremony with 100+ participants
+- Public audit of ceremony transcripts
+- Fallback to Plonk/STARKs if security concerns arise
 
-- **RISC-V execution trace** → **STARK proof** → **Groth16 wrapper** (for efficient verification)
-- **Transparent setup** → No trusted ceremony or parameter generation
-- **Succinct Network** → Cloud-based proving infrastructure (Phase B: 52.89 tx/min throughput)
-- **CosmWasm verifier** → ZKVerifier.wasm validates proofs on Persistence mainnet
+### 3.2 Circuit Design
 
-**Trade-off**: Larger proof sizes (~300KB vs 200 bytes) offset by:
-- No trusted setup risk
-- Easier development (Rust vs custom circuits)
-- Universal circuit reuse
-- Theta Edge Cloud cost optimization (50-80% cheaper proving)
+The Circom circuit (`circuits/deposit-validator.circom`) validates five critical properties:
 
-### 4.2 Circuit Design (RISC-V Program)
+```circom
+// Public inputs (known to everyone)
+signal input depositorAddress;  // Theta wallet (160 bits)
+signal input depositAmount;     // TFUEL wei (256 bits)
+signal input nonce;             // Unique ID (prevents replays)
 
-The SP1 zkVM program (`sp1-program/src/main.rs`) executes on RISC-V and generates a proof that validates five critical properties:
+// Private inputs (known only to prover)
+signal input merkleProof[8];    // Proof of vault inclusion
+signal input merkleRoot;        // Current vault tree root
 
-```rust
-// SP1 Program Entry Point (RISC-V execution)
-#![no_main]
-sp1_zkvm::entrypoint!(main);
-
-use sp1_zkvm::io;
-
-pub fn main() {
-    // Public inputs (committed to proof)
-    let depositor_address: [u8; 20] = io::read();  // Theta wallet
-    let deposit_amount: u128 = io::read();         // TFUEL wei
-    let nonce: u64 = io::read();                   // Replay protection
-    let persistence_address: String = io::read();  // Destination wallet
-    
-    // Private inputs (witness data, not revealed)
-    let theta_tx_hash: [u8; 32] = io::read();      // Deposit transaction
-    let block_number: u64 = io::read();            // Confirmation height
-    let merkle_proof: Vec<[u8; 32]> = io::read();  // Vault inclusion proof
-    
-    // Constraints validated by SP1 zkVM:
-    // 1. depositor_address is valid Theta address (20 bytes, checksum)
-    assert!(is_valid_theta_address(&depositor_address));
-    
-    // 2. deposit_amount within bounds [0.1 TFUEL, 1 TFUEL for Phase C]
-    assert!(deposit_amount >= 100_000_000_000_000_000);  // 0.1 TFUEL
-    assert!(deposit_amount <= 1_000_000_000_000_000_000); // 1 TFUEL
-    
-    // 3. nonce is unique (checked on-chain via ZKVerifier.wasm)
-    // 4. merkle_proof validates depositor owns vault
-    assert!(verify_merkle_proof(&merkle_proof, &depositor_address));
-    
-    // 5. block_number has sufficient confirmations (12 blocks)
-    assert!(block_number >= current_block() - 12);
-    
-    // Commit public outputs
-    io::commit(&depositor_address);
-    io::commit(&deposit_amount);
-    io::commit(&nonce);
-    io::commit(&persistence_address);
-}
+// Constraints (what circuit verifies)
+1. depositorAddress is valid Theta address (checksummed)
+2. depositAmount in bounds [0.1 TFUEL, 100 TFUEL]
+3. nonce is unique (not previously used)
+4. merkleProof validates depositor owns vault
+5. merkleRoot matches current VaultFactory state
 ```
 
-**Program Complexity (Phase B Production Metrics):**
+**Circuit Complexity:**
 
-- **Proving Time:** 8.997s average (10% faster than 10s baseline)
-- **Throughput:** 52.89 tx/min with 4 concurrent provers
-- **RISC-V Cycles:** ~10M instructions (optimized for SP1)
-- **Proof Size:** ~300KB (compressed STARK→Groth16 wrapper)
-- **Verification:** ~100ms (constant-time on CosmWasm)
+- 15,432 constraints (R1CS system)
+- 8 Merkle tree levels (256 max vaults)
+- ~500ms witness generation
+- ~1000ms proof generation (local hardware)
 
-### 4.3 ZK Minting Flow: Core Protocol Architecture
+### 3.3 Proof Generation Flow
 
-**The XFuel Protocol's ZK minting mechanism is its fundamental innovation**, enabling trustless cross-chain asset issuance through cryptographic proofs. This section details the complete pipeline from Theta TFUEL lock to Persistence ibcTFUEL mint.
-
-**Full Pipeline (Theta Lock → ZK Proof → Persistence Mint → IBC Transfer):**
+**Full Pipeline (Theta Deposit → Persistence Mint):**
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│ PHASE 1: THETA LAYER - TFUEL LOCK & COLLATERAL BACKING             │
-└─────────────────────────────────────────────────────────────────────┘
-1. USER DEPOSITS TFUEL (Theta Mainnet)
-   ├─ User calls VaultFactory.deposit(amount)
-   ├─ TFUEL locked in user-specific vault (1:1 collateral backing)
-   ├─ Merkle tree updated with deposit proof
-   ├─ DepositEvent emitted with:
-   │  • depositorAddress (Theta wallet)
-   │  • depositAmount (TFUEL wei)
-   │  • nonce (unique ID for replay protection)
-   │  • vaultRoot (current Merkle root)
-   └─ [~2s avg] Backend listener detects event via websocket
+1. USER DEPOSITS TFUEL
+   ├─ Call VaultFactory.deposit(amount)
+   ├─ TFUEL locked in user's vault
+   ├─ Deposit event emitted
+   └─ [2s avg] Backend detects event
 
-┌─────────────────────────────────────────────────────────────────────┐
-│ PHASE 2: ZK PROOF LAYER - SP1 zkVM PROOF GENERATION                │
-└─────────────────────────────────────────────────────────────────────┘
-2. BACKEND GENERATES SP1 PROOF (Off-chain Computation)
-   ├─ [~9s] SP1 zkVM Proving (Phase B benchmarks: 8.997s avg)
-   │  • Load SP1 program (RISC-V binary from sp1-program/)
-   │  • Execute RISC-V trace with deposit inputs
-   │  • Generate STARK proof of execution correctness
-   │  • Wrap STARK in Groth16 for efficient verification
-   │  • Succinct Network handles proving infrastructure
-   │
-   ├─ [100ms] Proof Serialization
-   │  • Serialize SP1 proof bytes (~300KB compressed)
-   │  • Package public inputs (address, amount, nonce, Persistence addr)
-   │  • Prepare CosmWasm transaction payload
-   │
-   └─ Submit to Persistence ZKVerifier.wasm contract
+2. BACKEND GENERATES ZK PROOF
+   ├─ [500ms] Extract deposit data (witness)
+   ├─ [1000ms] Compute Groth16 proof
+   ├─ [50ms] Serialize proof to JSON
+   └─ Submit to Persistence
 
-┌─────────────────────────────────────────────────────────────────────┐
-│ PHASE 3: PERSISTENCE LAYER - PROOF VERIFICATION & MINTING          │
-└─────────────────────────────────────────────────────────────────────┘
-3. PERSISTENCE VERIFIES & MINTS ibcTFUEL (core-1 Mainnet)
-   ├─ [~100ms] ZKVerifier.wasm Validation (CosmWasm contract)
-   │  • Load verification key (cached in contract state)
-   │  • Check nonce uniqueness (USED_NONCES mapping, prevent replay)
-   │  • Verify SP1 proof over public inputs (RISC-V trace validation)
-   │  • Security guarantee: Transparent setup, no trusted ceremony
-   │
-   ├─ [Instant] Authorization & Nonce Storage
-   │  • Mark nonce as used (prevents proof replay attacks)
-   │  • Emit ProofVerified event
-   │  • Authorize ibcTFUEL mint operation
-   │
-   ├─ [100ms] ibcTFUEL.wasm Minting (CW20 contract)
-   │  • Mint ibcTFUEL 1:1 with locked TFUEL
-   │  • Credit user's Persistence wallet
-   │  • Update total supply tracking
-   │  • Maintain cryptographic peg (backed by Theta collateral)
-   │
-   └─ [~1s] IBC Transfer (Optional, post-mint Cosmos routing)
-      • IBC Channel-190 used ONLY for Cosmos-internal transfers
-      • NOT a direct Theta↔Persistence link (SP1 handles cross-chain)
-      • If user specifies LP destination:
-        - Route ibcTFUEL to Dexter pool via IBC
-        - Auto-swap to stkXPRT/milkTIA if configured
-        - Stake in Superfluid pool for yield
-      • Otherwise: Direct ibcTFUEL to user wallet
+3. PERSISTENCE VERIFIES & MINTS
+   ├─ [50ms] ZKVerifier validates proof
+   ├─ Check nonce uniqueness
+   ├─ Verify pairing equation
+   ├─ Mint ibcTFUEL 1:1
+   └─ [~1s] IBC transfer to user wallet
 
-┌─────────────────────────────────────────────────────────────────────┐
-│ RESULT: TRUSTLESS CROSS-CHAIN MINT COMPLETE                        │
-└─────────────────────────────────────────────────────────────────────┘
-TOTAL END-TO-END: ~10-11 seconds (Phase B validated)
-├─ ~9s: SP1 zkVM proof generation (RISC-V execution + STARK→Groth16)
-├─ ~0.1s: Proof verification (ZKVerifier.wasm on Persistence)
-├─ ~0.1s: ibcTFUEL minting (CW20 execution)
-└─ ~1-2s: Network latency + IBC finality (post-mint routing only)
-
-KEY INNOVATION: Zero trust required — SP1 mathematics guarantees correctness
+TOTAL: <4s end-to-end
 ```
 
-**Why This Matters:**
-
-Traditional bridges require trusting validators, multisigs, or oracles. XFuel's SP1 zkVM minting flow eliminates trust:
-- **No validators to compromise**: SP1 proof is mathematically sound (transparent setup, RISC-V execution trace)
-- **No oracles to manipulate**: Merkle proofs cryptographically verify deposit existence on Theta
-- **No multisigs to collude**: Proof verification is deterministic and public on Persistence
-- **Instant finality**: Once SP1 proof verifies, ibcTFUEL mint is irreversible and backed 1:1
-
-This architecture enables XFuel to deliver **~10-second trustless settlements** (Phase B: 8.997s proving + 100ms verification) while maintaining superior security guarantees compared to trusted bridge models.
-
-### 4.4 Security Properties
+### 3.4 Security Properties
 
 **Soundness** (Cannot forge proofs):
 
 - **Adversary Goal**: Mint ibcTFUEL without locking TFUEL
-- **Attack Success**: Negligible (SP1 transparent setup, RISC-V execution soundness)
-- **Guarantee**: Only valid Theta deposits can produce accepted proofs (backed by STARK→Groth16 recursion)
+- **Attack Success**: < 2^-128^ probability (computationally infeasible)
+- **Guarantee**: Only valid Theta deposits can produce accepted proofs
 
 **Zero-Knowledge** (Privacy-preserving):
 
@@ -570,312 +306,170 @@ This architecture enables XFuel to deliver **~10-second trustless settlements** 
 **Non-Malleability** (Proofs cannot be modified):
 
 - **Adversary Goal**: Alter proof to change public inputs (e.g., amount)
-- **Attack Success**: Impossible (altering proof invalidates verification)
+- **Attack Success**: Impossible (altering proof invalidates pairing)
 - **Guarantee**: Each proof is cryptographically bound to specific deposit
 
-### 4.5 IBC Integration (Post-Mint Cosmos Routing)
+### 3.5 IBC Integration
 
-XFuel integrates Cosmos IBC (Inter-Blockchain Communication) **exclusively for post-mint transfers within the Cosmos ecosystem**. IBC does NOT handle the Theta↔Persistence cross-chain bridge — that's accomplished via SP1 zkVM proofs.
+**Channel-190 (Theta ↔ Persistence):**
 
-**Architecture Clarification:**
+XFuel leverages Cosmos IBC (Inter-Blockchain Communication) for native interoperability:
 
-```
-Theta Network (TFUEL lock)
-       ↓
-  SP1 zkVM Proof (cross-chain bridge)
-       ↓
-Persistence (ibcTFUEL mint via ZKVerifier.wasm)
-       ↓
-  IBC Channel-190 (Cosmos-internal routing ONLY)
-       ↓
-Cosmos Hub / Osmosis / Dexter LPs (optional auto-route)
-```
-
-**IBC Configuration:**
-
-- **Standard**: ICS-20 fungible token transfers for ibcTFUEL (post-mint only)
-- **Channel-190 (Persistence ↔ Cosmos Hub)**: Used for Cosmos-internal routing (e.g., ibcTFUEL → Dexter LPs, milkTIA swaps, Osmosis liquidity). **Not a direct Theta link** — SP1 proofs handle Theta→Persistence minting.
-- **Timeout**: 10 minutes (auto-refund on relayer failure)
-- **Relayers**: 5 redundant operators for decentralization
-- **Acknowledgments**: On-chain proofs for receipt/finality
-- **Multi-hop**: Routes through Cosmos Hub **and Osmosis hooks** for optional routing (e.g., milkTIA, deep liquidity pools)
+- **Standard**: ICS-20 fungible token transfers
+- **Timeout**: 10 minutes (auto-refund if relayer offline)
+- **Relayers**: 5 independent operators (decentralized)
+- **Acknowledgments**: On-chain proof of receipt
+- **Multi-hop**: Can route through Cosmos Hub if needed
 
 **Security Model:**
 
-- **SP1-IBC Hybrid**: SP1 zkVM (transparent setup, RISC-V) verifies Theta locks/mints; IBC light clients ensure Cosmos consensus (trustless post-mint routing)
-- **Finality Guarantee**: Transfers finalized on SP1 verification (ZKVerifier.wasm) + IBC acknowledgment (Cosmos routing)
-- **Rollback Protection**: SP1 nonces + Merkle proofs + IBC acknowledgments prevent double-spending
-- **Depeg Mitigation**: 0.5% circuit breaker pauses on ibcTFUEL:TFUEL deviations
-
-### 4.6 Evolution from Groth16 to SP1 zkVM
-
-**Historical Context:**
-
-XFuel Protocol originally designed its ZK bridge using **Groth16/BN128/Circom** (the legacy SNARK stack). During Phase A development (December 2025), the team evaluated trade-offs and **pivoted to SP1 zkVM** for superior long-term maintainability and security.
-
-**Migration Rationale:**
-
-| Concern | Groth16 Challenge | SP1 Solution |
-|---------|------------------|--------------|
-| **Trusted Setup** | Requires multi-party ceremony (MPC) for parameter generation. If ceremony compromised, proofs can be forged. | **Transparent setup** — No trusted parameters. Soundness relies on cryptographic hardness alone. |
-| **Circuit Development** | Circom DSL — Custom language, steep learning curve, limited tooling. | **Rust/RISC-V** — Familiar language, reusable code, standard compiler toolchain. |
-| **Circuit Updates** | Each circuit change requires new trusted setup ceremony (weeks of coordination). | **Universal circuit** — Update program logic without re-setup. |
-| **Audit Surface** | Circuit-specific constraints (thousands of custom gates) + trusted setup code. | **VM execution trace** — Auditors verify RISC-V program, not low-level circuits. |
-| **Recursion** | Complex aggregation (requires additional trusted setups for aggregation circuits). | **Native STARK→Groth16** — Efficient batching via Succinct Network. |
-
-**Why the Trade-off (Larger Proofs) is Worth It:**
-
-- **Proof Size**: SP1 proofs (~300KB) vs Groth16 (~200 bytes) → **1500× larger**
-- **Offset by**:
-  - Theta Edge Cloud (50-80% cheaper proving costs)
-  - Transparent setup (no MPC risk)
-  - Future-proof (easy circuit updates for Phase E withdrawals, Phase F multi-chain)
-  - Faster development velocity (Rust vs Circom)
-
-**Production Status (Phase B Results):**
-
-- ✅ **8.997s proving time** (10% faster than 10s baseline)
-- ✅ **52.89 tx/min throughput** (4 concurrent provers, batch optimization)
-- ✅ **100ms verification** (ZKVerifier.wasm on Persistence mainnet)
-- ✅ **25/25 E2E tests passed** (100% success rate)
-
-**Backward Compatibility:**
-
-- Legacy Groth16 references remain in codebase for historical context (`circuits/deposit.circom`, `verification_key.json` from Phase 0)
-- Production deployment (Phase C) uses **SP1 zkVM exclusively** (`sp1-program/`, ZKVerifier.wasm)
-- No migration path needed — SP1 deployed from genesis (Phase C governance proposal)
+- **IBC Light Clients**: Each chain verifies other's consensus (trustless)
+- **Finality Guarantee**: Transfers finalized when both chains confirm
+- **Rollback Protection**: Acknowledgments prevent double-spending
 
 ---
 
-## 5. XFuel Tokenomics
+## 4. Ferrari Hybrid Tokenomics
 
-### 5.1 The XFuel Model — Final Dial-In
+### 4.1 The Ferrari Model
 
-XFuel Tokenomics replaces the prior Ferrari branding with a **clean, governance-first split** that aligns Theta liquidity, LP depth, and long-term participation. <!-- v4.0 update -->
+Named for **precision engineering**, the Ferrari model balances four forces like pistons in a high-performance engine:
 
-1. **Deflation (BBB - 30%)**: Buyback-Burn-Boost reduces XF supply → scarcity → price support
-2. **Liquidity (LP Funding - 30%)**: Deepens Dexter pools → less slippage → better UX → more users  
-3. **Yields (veXF - 25%)**: **TFUEL-only** revenue share → incentivizes locks → reduces sell pressure
-4. **Treasury (15%)**: Funds audits, integrations, and ecosystem grants
+1. **Deflation (BBB - 30%)**: Buyback-Burn-Boost reduces XF supply → scarcity → price appreciation
+2. **Liquidity (LP Funding - 30%)**: Deepens Dexter pools → less slippage → better UX → more users
+3. **Yields (veXF - 25%)**: Direct USDC rewards → incentivizes locks → reduces sell pressure
+4. **Innovation (Treasury - 15%)**: Funds R&D, integrations → new features → more revenue
 
-**Future Option (Parked):** rXF is **parked** for potential future rollout via governance if needed. It is **not active** and has **no supply allocation** in v4.0. <!-- v4.0 update -->
+Unlike single-purpose models (100% to treasury or 100% to LPs), Ferrari **compounds value** by reinvesting in all four growth levers simultaneously.
 
-### 5.2 Revenue Distribution (30/30/25/15)
+### 4.2 Revenue Distribution (30/30/25/15)
 
 **Protocol Revenue Sources:**
 
 - Bridge fees (0.5% on TFUEL deposits)
-- Swap fees (0.3% on LP routing)  
+- Swap fees (0.3% on LP routing)
 - Yield performance fees (3-5% on LP profits)
-- Monthly LP fee recycling (30% of Persistence-side fees → TFUEL)
 
-**Distribution (TFUEL-only yields):**
+**Distribution:**
 
 | Allocation | % | Use Case | Example (on $100K revenue) |
 |------------|---|----------|---------------------------|
 | **BBB** | 30% | 70% burned, 30% paired with TFUEL to LP | $30K: Burn $21K XF, Add $9K to XF/TFUEL LP |
 | **LP Funding** | 30% | Add to Dexter pools (stkXPRT, milkTIA) | $30K: Deepen ibcTFUEL/stkXPRT Superfluid pool |
-| **veXF Yields** | 25% | Distribute **TFUEL** to veXF holders | $25K: Direct TFUEL payout to locked veXF holders |
-| **Treasury** | 15% | Audits, grants, integrations | $15K: Protocol ops + innovation |
+| **veXF Yields** | 25% | Distribute USDC to veXF holders | $25K: 70% to holders ($17.5K), 30% reverse-burn ($7.5K) |
+| **Treasury** | 15% | Grants, audits, integrations | $15K: 3 vaults (Builder/Acquisition/Moonshot) |
 
-**Total:** 100% | **All flows auditable via ZK bridge events**
+### 4.3 The 30% Reverse-Burn Loop
 
-### 5.3 XF Supply & Allocation (100M Hard Cap)
+**Key Innovation**: 30% of veXF yields **recirculate back to the RevenueSplitter**, creating a compounding flywheel.
 
-**Hard Cap:** 100,000,000 XF (fixed, no emissions)
-
-| Allocation | Amount | % | Notes |
-|------------|--------|---|-------|
-| **Ecosystem Incentives** | 50M | 50% | 25% launch airdrops (Theta holders/bridgers), 15% LP rewards, 10% governance boosts |
-| **Team & Advisors** | 15M | 15% | 10% core team, 5% advisors |
-| **Founder** | 10M | 10% | Long-term stewardship |
-| **Launch Contributors** | 15M | 15% | Seed investors/partners, **cap per entity: 2M XF** |
-| **Treasury Reserve** | 10M | 10% | 6% ops/grants, 4% innovation (gov-managed) |
-
-### 5.4 Vesting & Milestone Unlocks
-
-**Uniform Vesting:** 12-month cliff + **3-4 year linear** for all non-treasury allocations. <!-- v4.0 update -->
-
-**Milestone Gating (Example):**
-
-- 50% of any allocation unlocks only after **e.g., $5M TVL** is reached <!-- v4.0 update -->
-- Remaining 50% vests linearly once the milestone is met
-
-### 5.5 Locking Mechanics & veXF Multipliers
-
-**Mandatory Lock for veXF:** Minimum **1-year lock** to receive veXF, enabling **25% revenue share** and voting rights. <!-- v4.0 update -->
-
-| Lock Duration | veXF Multiplier | Notes |
-|--------------|-----------------|-------|
-| **1 Year** | **1×** | Minimum lock for participation |
-| **2 Years** | **2×** | Standard long-term option |
-| **3 Years** | **3×** | Maximum multiplier (simplified) |
-
-**Special Lock Requirements:**
-
-- **Team / Associates / Launch Contributors (>5% allocation):** Minimum **2-year lock** (option for 3-year)  
-- **Whiteglove via multisig** for **2-5 large holders** (governance oversight) <!-- v4.0 update -->
-- **Early Believers (TFUEL swaps):** Optional 1/2/3-year lock (1-year minimum)
-
-### 5.6 Swap-and-Lock (TFUEL → XF → veXF)
-
-Users can **swap TFUEL for XF, escrow it immediately, and receive veXF** without upfront XF distribution. This reduces sell pressure while aligning early believers with long-term governance. <!-- v4.0 update -->
-
-### 5.7 Yield Example (Simplified)
-
-**Scenario:** 10,000 XF locked for 3 years (3× veXF), **$100K/month** protocol revenue base. <!-- v4.0 update -->
-
-| Year | Estimated veXF APY (TFUEL) | Notes |
-|------|-----------------------------|-------|
-| **1** | **~5%** | Early revenue baseline |
-| **3** | **~10%** | Growth from LP depth + reverse-burn |
-| **5** | **~15%** | Mature revenue scale |
-
-### 5.8 Complete Tokenomics Flow Diagram
-
-**Full System Architecture with Connections:**
+**Mechanics:**
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         XFUEL TOKENOMICS FLOW                            │
-│                     (Confirmed: 30/30/25/15 Split)                       │
-└─────────────────────────────────────────────────────────────────────────┘
+Month 1: $100K revenue
+├─ veXF allocation: $25K (25%)
+├─ Distributed to holders: $17.5K (70%)
+└─ Reverse-burn: $7.5K (30%) → back to RevenueSplitter
 
-┌──────────────────────────────────────────────────────────────────────────┐
-│ REVENUE SOURCES (Theta Side)                                             │
-├──────────────────────────────────────────────────────────────────────────┤
-│ • Bridge Fees (0.5% on TFUEL deposits)                                   │
-│ • Swap Fees (0.3% on LP routing)                                         │
-│ • Yield Performance Fees (3-5% on LP profits)                            │
-│ • Monthly Reverse-Burn (30% of Persistence LP fees)                      │
-└───────────────────────────┬──────────────────────────────────────────────┘
-                            │
-                            ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                    REVENUESPLITTER.SOL (Theta)                           │
-│                        [30/30/25/15]                                    │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐        │
-│  │  30% BBB   │  │  30% LP    │  │  25% veXF  │  │ 15% Treas  │        │
-│  │  Buyback-  │  │  Funding   │  │  Payout    │  │            │        │
-│  │  Burn-Bond │  │            │  │ (TFUEL)   │  │            │        │
-│  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘        │
-│        │               │               │               │                │
-└────────┼───────────────┼───────────────┼───────────────┼────────────────┘
-         │               │               │               │
-         ▼               ▼               ▼               ▼
-┌────────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐
-│ BuybackBurner  │ │ LP Funding   │ │ veXF Contract│ │InnovationTreasury│
-│                │ │ Pool         │ │              │ │                  │
-│ • 70% burned   │ │ → Dexter     │ │ → Distribute │ │ • Ops/Grants     │
-│ • 30% to LP    │ │   Superfluid │ │   to holders │ │ • Innovation     │
-│   (XF/TFUEL)   │ │   pools      │ │              │ │ • Gov-managed    │
-│                │ │ • ibcTFUEL/  │ │              │ │                  │
-│ Deflation ↑    │ │   stkXPRT    │ │              │ │                  │
-└────────────────┘ │ • ibcTFUEL/  │ └──────────────┘ └──────────────────┘
-                   │   milkTIA    │
-                   │ Liquidity ↑  │
-                   └──────────────┘
+Month 2: $107.5K effective revenue (+7.5%)
+├─ veXF allocation: $26.875K
+├─ Distributed: $18.8K
+└─ Reverse-burn: $8.06K → back to RevenueSplitter
 
-┌─────────────────────────────────────────────────────────────────────────┐
-│            30% REVERSE-BURN LOOP (Cross-Chain ZK Cycle)                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  Persistence Side:                                                       │
-│  ┌──────────────────────┐                                               │
-│  │ IBCTreasury.sol      │                                               │
-│  │                      │                                               │
-│  │ • Collects LP fees   │                                               │
-│  │ • Monthly batch:     │                                               │
-│  │   - 70% retained     │                                               │
-│  │   - 30% reverse-burn │◄────────┐                                     │
-│  └──────┬───────────────┘         │                                     │
-│         │                         │                                     │
-│         │ 30% TFUEL               │                                     │
-│         ▼                         │                                     │
-│  ┌──────────────────────┐         │                                     │
-│  │ Swap to ibcTFUEL     │         │ Compounding                         │
-│  └──────┬───────────────┘         │ Effect                              │
-│         │                         │                                     │
-│         │ Burn ibcTFUEL           │                                     │
-│         ▼                         │                                     │
-│  ┌──────────────────────┐         │                                     │
-│  │ ZK Bridge Unwrap     │         │                                     │
-│  │ (100% no split)      │         │                                     │
-│  └──────┬───────────────┘         │                                     │
-│         │                         │                                     │
-│         │ TFUEL (unlocked)        │                                     │
-│         ▼                         │                                     │
-│  Theta Side:                      │                                     │
-│  ┌──────────────────────┐         │                                     │
-│  │ RevenueSplitter      │─────────┘                                     │
-│  │ receiveBonusRevenue()│                                               │
-│  │                      │                                               │
-│  │ → 30/30/25/15 split  │                                               │
-│  └──────────────────────┘                                               │
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
+Month 3: $115.56K effective revenue (+15.56%)
+...
 ```
 
-**Flow Summary:**
+**Effect:**
 
-- **Revenue flows** through RevenueSplitter at **30/30/25/15**
-- **Reverse-burn loop** compounds growth via monthly Persistence LP fee recycling
-- **All connections** maintain peg integrity and incentive alignment
-- **rXF** is **parked** and only considered via future governance action
+- Revenue compounds ~7.5% per cycle
+- After 12 months: **~138% of base revenue**
+- After 24 months: **~290% of base revenue** (before organic growth)
+
+**Why This Works:**
+
+- veXF holders earn USDC (no XF sell pressure)
+- 30% recirculation funds more BBB, LP, Treasury
+- More LP depth → more volume → more revenue → repeat
+
+### 4.4 LP Compounding Focus
+
+**Primary Use Case (v3.1)**: 30% LP funding grows **Dexter Superfluid pools** on Persistence.
+
+**Target Pools:**
+
+- **ibcTFUEL/stkXPRT Superfluid** (auto-compounding staking + swap fees)
+- **ibcTFUEL/milkTIA Metastable** (low-fee correlated asset swaps)
+- **Future**: ibcTFUEL/XPRT, ibcTFUEL/PSTAKE, emerging LSTs
+
+**Compound Effect:**
+
+```
+Month 1: $30K LP funding → Deepen ibcTFUEL/stkXPRT pool
+├─ Lower slippage for users
+├─ More volume routed through XFuel
+└─ More swap fees collected
+
+Month 2: $30K + $7.5K reverse-burn = $37.5K LP funding
+├─ Even deeper liquidity
+└─ More users onboarded (less slippage)
+
+Month 12: ~$138K cumulative LP funding
+├─ Deep, stable pools
+└─ XFuel becomes primary Theta → Persistence gateway
+```
+
+### 4.5 Comparison to Traditional Models
+
+| Feature | 100% Treasury | 100% LPs (Uniswap) | 50/50 (Curve) | **Ferrari 30/30/25/15** |
+|---------|---------------|---------------------|---------------|------------------------|
+| **LP Depth Growth** | None | Slow | Medium | **Fast (30% + reverse-burn)** |
+| **Deflation** | None/Manual | None | None | **Automated (70% BBB burned)** |
+| **Holder Yields** | Emissions (inflationary) | None | Vote bribes | **USDC direct (25%)** |
+| **Sustainability** | Depletes over time | Fee-dependent | Self-sustaining | **Compounding (30% loop)** |
+| **Treasury** | 100% (often misspent) | None | None | **15% (focused R&D)** |
 
 ---
 
-## 6. Governance & veXF
+## 5. Governance & veXF
 
-### 6.1 XF Token
+### 5.1 veXF Token
 
-**XF** is the native utility and governance token of XFuel Protocol.
+**veXF** (vote-escrowed XF) is the non-transferable governance token earned by locking XF for 1-4 years.
 
-**Total Supply**: 100,000,000 XF (fixed, no emissions)
+**Base Multipliers (lock duration):**
 
-**Distribution (aligned with §5.3):**
+- 1 year lock = 1× veXF
+- 2 year lock = 2× veXF
+- 3 year lock = 3× veXF
+- 4 year lock = 4× veXF
 
-| Allocation | Amount | Vesting | Notes |
-|------------|--------|---------|-------|
-| **Ecosystem Incentives** | 50M (50%) | None | Airdrops, LP rewards, governance boosts |
-| **Team & Advisors** | 15M (15%) | **12mo cliff, 3-4yr linear** | 10% core team, 5% advisors |
-| **Founder** | 10M (10%) | **12mo cliff, 3-4yr linear** | Long-term stewardship |
-| **Launch Contributors** | 15M (15%) | **12mo cliff, 3-4yr linear** | Seed investors/partners, cap 2M per entity |
-| **Treasury Reserve** | 10M (10%) | None | Ops/grants + innovation (gov-managed) |
+**Bonus Multipliers (stackable):**
 
-**Milestone Unlocking:** 50% of any vesting allocation requires **$5M TVL** to unlock. <!-- v4.0 update -->
+- **Theta Pulse Proof**: +1× to +3× (prove Edge Node earnings via Theta Guardian status)
+- **rXF Lock**: +4× (lock revenue receipts for 365 days)
+- **LP Provider**: +0.5× (provide >$10K liquidity to Dexter ibcTFUEL pools)
 
-**Use Cases:**
+**Maximum Multiplier: 11.5×**
 
-1. **Lock for veXF**: Earn governance power + TFUEL revenue share (25%)
-2. **LP Provision**: Provide liquidity on Theta/Persistence DEXs
-3. **BBB Target**: 30% of revenue buybacks/burns XF (deflationary pressure)
+*Example:*
 
-### 6.2 veXF Token (Escrow-Based)
+```
+10,000 XF locked 4 years           = 40,000 veXF (base)
++ Tier 3 Theta Pulse Proof         = +30,000 veXF
++ rXF lock (past yields)           = +40,000 veXF
++ LP Provider (>$10K in pool)      = +5,000 veXF
+───────────────────────────────────
+TOTAL                              = 115,000 veXF (11.5× multiplier)
+```
 
-**veXF** (vote-escrowed XF) is the non-transferable governance token earned by locking XF for **1-3 years**.
-
-| Lock Duration | veXF Multiplier | Effective veXF |
-|--------------|-----------------|----------------|
-| **1 Year** | **1×** | 10,000 XF → 10,000 veXF |
-| **2 Years** | **2×** | 10,000 XF → 20,000 veXF |
-| **3 Years** | **3×** | 10,000 XF → 30,000 veXF |
-
-### 6.3 Decentralization & Locking Discipline
-
-- **Insider locks lead by example**: team/founder allocations are locked 2-3 years
-- **Believer options**: community lockers choose 1/2/3-year durations
-- **Governance-first**: veXF is the only path to revenue share and voting
-
-### 6.4 Governance Powers
+### 5.2 Governance Powers
 
 veXF holders vote on (1 veXF = 1 vote):
 
 1. **Protocol Parameters**:
    - Bridge/swap fees (0.3-0.7% range)
-   - XFuel split ratios (adjust 30/30/25/15 if needed)
+   - Ferrari split ratios (e.g., adjust 30/30/25/15 if needed)
    - LST integrations (which Dexter pools to prioritize)
 
 2. **LP Funding Allocation**:
@@ -887,36 +481,59 @@ veXF holders vote on (1 veXF = 1 vote):
    - Grant approvals ($5K-$50K per grant)
    - Partnership/acquisition proposals
    - Audit and security budget
-   - **Lock adjustments** or **future rXF rollout** (if needed)
 
-**rXF Status:** rXF remains **parked** and can only be activated via **governance vote**. <!-- v4.0 update -->
+4. **Governance Extras** (Monthly Opt-In):
+   - Vote on bonus reward structures
+   - Participate in milestone NFT raffles
+   - Early access to new features
 
-### 6.5 Revenue Share Mechanics (TFUEL-Only)
+### 5.3 Governance Extras (Monthly Opt-In)
 
-**25% of protocol revenue** is distributed pro-rata to **effective veXF**. <!-- v4.0 update -->
+**Budget**: 5-10% of LP funding revenue per month
 
-| Holder | Locked XF | Lock Duration | Effective veXF | Share of Pool |
-|--------|-----------|---------------|----------------|---------------|
-| **User A** | 10,000 | 1 Year | 10,000 | 10% (if 100K total veXF) |
-| **User B** | 10,000 | 3 Years | 30,000 | 30% (if 100K total veXF) |
-| **User C** | 20,000 | 2 Years | 40,000 | 40% (if 100K total veXF) |
+**Reward Options** (voted by community):
 
-**Example:** If the monthly veXF pool is **$25K TFUEL**, a holder with **30,000 veXF** in a 100,000 veXF pool earns **$7.5K TFUEL** for that period.
+1. **NFT Lottery**: 10-15 limited-edition governance NFTs raffled to active voters
+2. **Bonus Airdrops**: Extra 10% veXF yield for voters
+3. **Milestone Tokens**: XF bonuses when TVL hits targets ($5M, $10M, $25M)
+4. **Early Access**: Beta test new LST integrations, advanced charts
+
+**Eligibility**: Must vote on ≥1 proposal per month
+
+**Target Participation**: 50-60% (vs 10-15% industry average)
+
+### 5.4 rXF Revenue Receipts
+
+**rXF tokens** represent claims on past protocol revenue, minted 1:1 when veXF yields are distributed.
+
+**Mechanics:**
+
+- User earns $100 veXF yield → Receives 100 rXF tokens + $100 USDC
+- rXF can be:
+  - **Locked 365 days** → +4× veXF multiplier
+  - **Traded** on Dexter (creates revenue futures market)
+  - **Redeemed** for USDC (if unlocked, burns rXF)
+
+**Use Cases:**
+
+- **Compounding**: Lock rXF to maximize veXF power (11.5× multiplier path)
+- **Liquidity**: Sell rXF to realize profits without unlocking XF
+- **Speculation**: Buy discounted rXF if market undervalues future revenue
 
 ---
 
-## 7. Revenue Model
+## 6. Revenue Model
 
-### 7.1 Revenue Sources
+### 6.1 Revenue Sources
 
-| Source | Rate | Mechanism | Estimated Year 3 Revenue (assuming 200% TVL growth) | <!-- v4.0 update -->
+| Source | Rate | Mechanism | Estimated Year 3 Revenue |
 |--------|------|-----------|--------------------------|
 | **Bridge Fees** | 0.5% | Charged on TFUEL deposits | $50K-$80K |
 | **Swap Fees** | 0.3% | LP routing (ibcTFUEL → LSTs) | $90K-$150K |
 | **Yield Performance Fees** | 3-5% | Cut of LP profits (e.g., Superfluid APY) | $120K-$200K |
 | **TOTAL** | - | - | **$260K-$430K annually** |
 
-### 7.2 Fee Breakdown
+### 6.2 Fee Breakdown
 
 **Bridge Fees (0.5%):**
 
@@ -939,7 +556,7 @@ veXF holders vote on (1 veXF = 1 vote):
 - Only charged on **positive returns** (no fees if loss)
 - Industry standard (Yearn charges 2%, Convex 16%)
 
-### 7.3 Revenue Flow
+### 6.3 Revenue Flow
 
 ```
 1. FEES COLLECTED
@@ -949,34 +566,34 @@ veXF holders vote on (1 veXF = 1 vote):
 
 2. SENT TO REVENUESPLITTER
    ├─ Daily batch transfers
-   └─ Aggregated as TFUEL (TFUEL-only yields)
+   └─ Aggregated as TFUEL/USDC
 
-3. XFUEL DISTRIBUTION (30/30/25/15)
+3. FERRARI DISTRIBUTION (30/30/25/15)
    ├─ 30% BBB → Buyback XF, burn 70%, LP 30%
    ├─ 30% LP Funding → Add to Dexter Superfluid pools
-   ├─ 25% veXF Yields → TFUEL-only to holders
-   └─ 15% Treasury → Ops/grants + innovation
+   ├─ 25% veXF Yields → 70% to holders, 30% reverse-burn
+   └─ 15% Treasury → 3 vaults (builder/acquisition/moonshot)
 
 4. REVERSE-BURN RECIRCULATION
-   └─ 30% of Persistence LP fees loop back to step 2 → compounds monthly
+   └─ 30% of veXF yields loop back to step 2 → compounds monthly
 ```
 
-### 7.4 Competitive Analysis
+### 6.4 Competitive Analysis
 
 | Bridge | Trust Model | Speed | Fees | XFuel Advantage |
 |--------|-------------|-------|------|-----------------|
-| **Traditional Multisig** | Centralized relayers/validators | 30-60s | 0.1-0.5% | **ZK trustless, 10× faster** |
-| **Validator Bridges** | Guardian signatures (trust required) | 15-30s | 0.1% | **ZK trustless, 5× faster** |
-| **Cosmos IBC** | Light client verification | 10-20s | 0.0% | **ZK proof, 3× faster, cryptographic security** |
-| **XFuel** | **SP1 zkVM (trustless)** | **<4s** | **0.5-0.8%** | **Fastest + trustless + LP growth focus** |
+| **Axelar** | Multisig (50+ validators) | 30-60s | 0.1-0.5% | **ZK trustless, 10× faster** |
+| **Wormhole** | 19-of-19 guardian signatures | 15-30s | 0.1% | **ZK trustless, 5× faster** |
+| **Gravity Bridge** | Cosmos validator set | 10-20s | 0.0% | **ZK proof, 3× faster, sustainable fees** |
+| **XFuel** | **ZK-SNARK (trustless)** | **<4s** | **0.5-0.8%** | **Fastest + trustless + LP growth focus** |
 
 ---
 
-## 8. Technical Implementation
+## 7. Technical Implementation
 
-### 8.1 Smart Contracts (Solidity - Theta Mainnet)
+### 7.1 Smart Contracts (Solidity - Theta Mainnet)
 
-**VaultFactory.sol** (`TBD — post-audit deployment`) <!-- v4.0 update -->
+**VaultFactory.sol** (`0xB0a26600074dADC69186632a1B8dFd7c3146Ce56`)
 
 - **Purpose**: Manage TFUEL deposit vaults (1 per user)
 - **Key Functions**:
@@ -988,27 +605,27 @@ veXF holders vote on (1 veXF = 1 vote):
   - 24h timelock on admin parameter changes
   - Emergency pause (multisig 3-of-5)
 
-**RevenueSplitter.sol** (`TBD — post-audit deployment`) <!-- v4.0 update -->
+**RevenueSplitter.sol** (`0x1C4CEbbb4Cfa7fdb546424F21CF706c48C478EE6`)
 
-- **Purpose**: Implement XFuel 30/30/25/15 distribution <!-- v4.0 update -->
+- **Purpose**: Implement Ferrari 30/30/25/15 distribution
 - **Key Functions**:
   - `splitRevenue()`: Execute monthly distribution
   - `updateSplitRatios(uint[4] newRatios)`: Governance-controlled
-  - `triggerReverseBurn(uint256 amount)`: Recirculate 30% LP fees
+  - `triggerReverseBurn(uint256 amount)`: Recirculate 30% veXF yields
 - **Security**:
   - Governor Bravo (Compound governance) integration
   - 7-day timelock on ratio changes
   - Slippage protection (1% max deviation)
 
-### 8.2 CosmWasm Contracts (Rust - Persistence Mainnet)
+### 7.2 CosmWasm Contracts (Rust - Persistence Mainnet)
 
-**ZKVerifier.wasm** (SP1 verifier) <!-- v4.0 update -->
+**ZKVerifier.wasm**
 
 ```rust
-pub fn verify_SP1_proof(
+pub fn verify_groth16_proof(
     deps: DepsMut,
     info: MessageInfo,
-    proof_bytes: Binary,
+    proof: Groth16Proof,
     public_inputs: Vec<Uint256>,
     nonce: Uint256,
 ) -> Result<Response, ContractError> {
@@ -1020,8 +637,11 @@ pub fn verify_SP1_proof(
         return Err(ContractError::NonceAlreadyUsed);
     }
     
-    // 3. Verify SP1 proof (transparent setup)
-    let valid = SP1::verify(&vk, &public_inputs, &proof_bytes)?;
+    // 3. Verify pairing equation (BN254 curve)
+    let valid = bn254::verify_pairing(
+        &proof.pi_a, &proof.pi_b, &proof.pi_c,
+        &vk, &public_inputs
+    )?;
     
     if !valid {
         return Err(ContractError::InvalidProof);
@@ -1044,15 +664,15 @@ pub fn verify_SP1_proof(
 - **Transfer**: Standard CW20 transfers
 - **IBC**: Implements ICS-20 for cross-chain compatibility
 
-### 8.3 Backend Services (TypeScript)
+### 7.3 Backend Services (TypeScript)
 
 **ZK Prover Pipeline** (`backend/zk-prover/prover.ts`)
 
 ```typescript
 async function generateProofForDeposit(
   deposit: DepositEvent
-): Promise<SP1Proof> {
-  // 1. Generate witness (400ms avg)
+): Promise<Groth16Proof> {
+  // 1. Generate witness (500ms avg)
   const witness = await generateWitness({
     depositorAddress: deposit.user,
     depositAmount: deposit.amount,
@@ -1061,16 +681,19 @@ async function generateProofForDeposit(
     merkleRoot: await getVaultFactoryRoot(),
   });
 
-  // 2. Compute SP1 proof (800ms avg)
-  const { proofBytes, publicInputs } = await SP1.prove(
+  // 2. Compute Groth16 proof (1000ms avg)
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
     witness,
-    "circuits/deposit_validator.bin"
+    "circuits/deposit-validator.wasm",
+    "circuits/deposit-validator_final.zkey"
   );
 
-  // 3. Serialize for CosmWasm (60ms)
+  // 3. Serialize for CosmWasm (50ms)
   return {
-    proof_bytes: proofBytes,
-    public_inputs: publicInputs,
+    pi_a: serializeG1Point(proof.pi_a),
+    pi_b: serializeG2Point(proof.pi_b),
+    pi_c: serializeG1Point(proof.pi_c),
+    public_inputs: publicSignals,
   };
 }
 ```
@@ -1103,21 +726,21 @@ async function routeToOptimalLP(
 
 ---
 
-## 9. Risk Analysis & Mitigation
+## 8. Risk Analysis & Mitigation
 
-**Pre-Funding Status Disclosure:** As of January 2026, XFuel Protocol is in **beta phase** with limited external funding. Our risk updates follow a **bootstrap-first approach**: prioritize no-cost internal fixes (code hardening, testing, documentation) **by Feb 2026**, then deploy external resources (audits, bug bounties, oracles) post-funding in Q2 2026. This section details both immediate mitigations (implemented) and post-funding enhancements (roadmap). <!-- v4.0 update -->
+**Pre-Funding Status Disclosure:** As of January 2026, XFuel Protocol is in **beta phase** with limited external funding. Our risk mitigation strategy follows a **bootstrap-first approach**: prioritize no-cost internal fixes (code hardening, testing, documentation) in Q1 2026, then deploy external resources (audits, bug bounties, oracles) post-funding in Q2 2026. This section details both immediate mitigations (implemented) and post-funding enhancements (roadmap).
 
 ---
 
-### 9.1 Technical Risks
+### 8.1 Technical Risks
 
 #### ZK Proof Forgery
 
 | **Risk** | Adversary generates valid proof without locking TFUEL |
 |----------|---------------------------------------------------|
 | **Severity** | 🔴 **Critical** (protocol insolvency) |
-| **Likelihood** | 🟢 **Negligible** (STARK-like soundness) |
-| **Mitigation** | - SP1 cryptographic soundness (no trusted setup)<br>- Merkle proof validation<br>- Nonce replay protection<br>- Circuit constraint auditing (Q2 2026)<br>- $500K bug bounty (Q2 2026) |
+| **Likelihood** | 🟢 **Negligible** (2^-128^ probability) |
+| **Mitigation** | - Groth16 cryptographic soundness<br>- Merkle proof validation<br>- Nonce replay protection<br>- Circuit constraint auditing (Q2 2026)<br>- $500K bug bounty (Q2 2026) |
 
 **Expanded Mitigation (Code-Level):**
 
@@ -1135,7 +758,7 @@ USED_NONCES.save(deps.storage, nonce.to_string(), &true)?;
 ```
 
 *Post-Funding (Q2 2026):*
-- **ZK Circuit Audit**: CertiK formal verification of SP1 constraints (identify underconstraints where prover could supply invalid witnesses)
+- **ZK Circuit Audit**: CertiK formal verification of Circom constraints (identify underconstraints where prover could supply invalid witnesses)
 - **Constraint coverage**: Add tests for edge cases (max uint256, boundary amounts, malformed Merkle proofs)
 - **Fuzz testing**: Echidna property-based testing for circuit inputs (1M+ random test cases)
 
@@ -1155,22 +778,33 @@ USED_NONCES.save(deps.storage, nonce.to_string(), &true)?;
 **Expanded Mitigation (Code-Level):**
 
 *Pre-Funding (Implemented):*
-- **Manual constraint review**: Internal audit of SP1 constraint gates
+- **Manual constraint review**: Internal audit of all 15,432 R1CS constraints
 - **Test vectors**: 50+ test cases covering boundary conditions (0.1 TFUEL min, 100 TFUEL max)
-- **Public circuit code**: `circuits/deposit_validator.rs` open-sourced for community review
+- **Public circuit code**: `circuits/deposit-validator.circom` open-sourced for community review
 
 *Post-Funding (Q2 2026):*
-```rust
-// Example: Ensure depositor_address is properly constrained
-assert!(depositor_address < U256::from(1u128) << 160);
+```circom
+// Example: Ensure depositorAddress is properly constrained
+signal input depositorAddress;
+component addressRangeCheck = LessThan(160); // 160-bit Ethereum address
+addressRangeCheck.in[0] <== depositorAddress;
+addressRangeCheck.in[1] <== 2**160; // Must be < 2^160
+addressRangeCheck.out === 1; // Enforce constraint
 
-// Ensure deposit_amount is within bounds
-assert!(deposit_amount >= U256::from(100000000000000000u128)); // 0.1 TFUEL in wei
-assert!(deposit_amount <= U256::from(100000000000000000000u128)); // 100 TFUEL in wei
+// Ensure depositAmount is within bounds
+component amountLowerBound = GreaterEqThan(256);
+amountLowerBound.in[0] <== depositAmount;
+amountLowerBound.in[1] <== 100000000000000000; // 0.1 TFUEL in wei
+amountLowerBound.out === 1;
+
+component amountUpperBound = LessEqThan(256);
+amountUpperBound.in[0] <== depositAmount;
+amountUpperBound.in[1] <== 100000000000000000000; // 100 TFUEL in wei
+amountUpperBound.out === 1;
 ```
 
 **Formal Verification Plan (Q2 2026):**
-1. Convert SP1 circuit constraints to SMT-LIB format
+1. Convert Circom to R1CS, then to SMT-LIB format
 2. Use Z3 solver to prove no satisfying assignment exists for invalid inputs
 3. Property testing: For all `(depositor, amount, nonce)`, if proof verifies, then deposit is valid on Theta
 
@@ -1270,16 +904,16 @@ it("should prevent reentrancy attack on endPool()", async function() {
 
 *Pre-Funding (Current Placeholder):*
 ```solidity
-// XFUELRouter._convertToTFUEL() - PLACEHOLDER
-function _convertToTFUEL(uint256 amount0, uint256 amount1) internal pure returns (uint256) {
+// XFUELRouter._convertToUSDC() - PLACEHOLDER
+function _convertToUSDC(uint256 amount0, uint256 amount1) internal pure returns (uint256) {
     // WARNING: 1:1 conversion for demo only
     return amount0 + amount1;
 }
 ```
 
-**Risk**: XFuel tokenomics fee splits (30% BBB, 25% veXF, 15% Treasury) use incorrect valuations, leading to:
+**Risk**: Ferrari tokenomics fee splits (60% BBB, 25% veXF, 15% Treasury) use incorrect valuations, leading to:
 - Over/under-allocation to buyback-burn
-- Incorrect TFUEL yields to veXF holders
+- Incorrect USDC yields to veXF holders
 - Treasury underfunding
 
 *Post-Funding (Q2 2026 - Chainlink Integration):*
@@ -1294,7 +928,7 @@ contract XFUELRouter {
     uint256 public constant STALENESS_THRESHOLD = 1 hours;
     uint256 public constant DEVIATION_THRESHOLD = 500; // 5% max deviation
     
-    function _convertToTFUEL(uint256 amount0, uint256 amount1) internal view returns (uint256) {
+    function _convertToUSDC(uint256 amount0, uint256 amount1) internal view returns (uint256) {
         // Get TFUEL/USD price from Chainlink
         (, int256 tfuelPrice, , uint256 tfuelUpdatedAt, ) = tfuelUsdOracle.latestRoundData();
         require(block.timestamp - tfuelUpdatedAt <= STALENESS_THRESHOLD, "Stale TFUEL price");
@@ -1311,12 +945,11 @@ contract XFUELRouter {
             return _fallbackTwapConversion(amount0, amount1);
         }
         
-        // Convert to TFUEL-equivalent value
+        // Convert to USDC (6 decimals)
         uint256 tfuelValueUSD = (amount0 * uint256(tfuelPrice)) / 1e8;
         uint256 xprtValueUSD = (amount1 * uint256(xprtPrice)) / 1e8;
-
-        // Convert USD value back to TFUEL units
-        return (tfuelValueUSD + xprtValueUSD) / uint256(tfuelPrice);
+        
+        return (tfuelValueUSD + xprtValueUSD) / 1e12; // Adjust to 6 decimals (USDC)
     }
     
     function _detectPriceAnomaly(int256 currentPrice, int256 historicalPrice) internal pure returns (bool) {
@@ -1412,22 +1045,6 @@ async function initiateRefund(packet: IBCPacket): Promise<void> {
 
 ---
 
-#### Theta Edge Cloud Dependency
-
-| **Risk** | Edge node outages delay ZK proof generation and yield routing |
-|----------|---------------------------------------------------|
-| **Severity** | 🟡 **Medium** (performance degradation, not fund loss) |
-| **Likelihood** | 🟡 **Medium** (edge node variability) |
-| **Mitigation** | - Multi-region Edge Cloud clusters<br>- Fallback to core cloud prover<br>- Proof batching to reduce load<br>- Circuit breaker to pause routing if latency spikes |
-
-**Fallback Strategy:**
-
-- **Primary**: Theta Edge Cloud proof generation + yield routing
-- **Secondary**: Core cloud prover (auto-failover)
-- **Tertiary**: Local prover queue for critical withdrawals
-
----
-
 #### Smart Contract Exploits
 
 | **Risk** | Bug in VaultFactory/ZKVerifier allows theft |
@@ -1466,9 +1083,9 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 contract XFUELRouter {
     using SafeERC20 for IERC20;
     
-    // Before: feeToken.transfer(recipient, amount);
+    // Before: usdcToken.transfer(recipient, amount);
     // After:
-    feeToken.safeTransfer(recipient, amount);
+    usdcToken.safeTransfer(recipient, amount);
     
     // Handles non-standard tokens (USDT) that don't return bool
 }
@@ -1480,14 +1097,14 @@ constructor(
     address _factory,
     address _backstop,
     address _xfuelToken,
-    address _feeToken,
+    address _usdcToken,
     address _treasury,
     address _veXFContract
 ) Ownable(msg.sender) {
     require(_factory != address(0), "Invalid factory");
     require(_backstop != address(0), "Invalid backstop");
     require(_xfuelToken != address(0), "Invalid xfuelToken");
-    require(_feeToken != address(0), "Invalid feeToken");
+    require(_usdcToken != address(0), "Invalid usdcToken");
     require(_treasury != address(0), "Invalid treasury");
     require(_veXFContract != address(0), "Invalid veXFContract");
     
@@ -1610,7 +1227,7 @@ contract XFUELRouterInvariantTest is Test {
     // Invariant: Total fees collected = sum of distributed fees
     function invariant_feeDistributionBalance() public {
         uint256 collected = router.totalFeesCollected();
-        uint256 distributed = router.totalTFUELToVeXF() + 
+        uint256 distributed = router.totalUSDCToVeXF() + 
                               router.totalTreasuryFees() + 
                               router.totalBuybackAmount();
         
@@ -1666,7 +1283,7 @@ jobs:
 
 ---
 
-### 9.2 Economic Risks
+### 8.2 Economic Risks
 
 #### ibcTFUEL Depeg
 
@@ -1740,8 +1357,8 @@ function getDexterSpotPrice() internal view returns (uint256) {
 ```
 
 *Post-Funding (Q2 2026):*
-- **LP Depth Growth**: 30% XFuel allocation ($30K-$40K/month) → $500K target by Q3
-- **Treasury Backstop**: $50K TFUEL reserve to buy ibcTFUEL at 0.98:1 floor
+- **LP Depth Growth**: 30% Ferrari allocation ($30K-$40K/month) → $500K target by Q3
+- **Treasury Backstop**: $50K USDC reserve to buy ibcTFUEL at 0.98:1 floor
 - **Arbitrage Bot**: Deploy automated arbitrage to maintain peg (profit incentivizes external arbs)
 
 ---
@@ -1751,27 +1368,27 @@ function getDexterSpotPrice() internal view returns (uint256) {
 | **Risk** | XF price crashes, triggering panic selling |
 |----------|---------------------------------------------------|
 | **Severity** | 🟡 **Medium** (tokenomics disruption) |
-| **Likelihood** | 🟡 **Low** (TFUEL yields reduce sell pressure) |
-| **Mitigation** | - veXF yields paid in **TFUEL** (not XF—no sell pressure)<br>- 70% BBB burned (creates buyback floor)<br>- Lock incentives (up to 3× multiplier)<br>- Treasury can buy back at discount (anti-spiral) |
+| **Likelihood** | 🟡 **Low** (USDC yields reduce sell pressure) |
+| **Mitigation** | - veXF yields paid in **USDC** (not XF—no sell pressure)<br>- 70% BBB burned (creates buyback floor)<br>- Lock incentives (up to 11.5× multiplier)<br>- Treasury can buy back at discount (anti-spiral) |
 
 **Expanded Mitigation (Code-Level):**
 
 *Pre-Funding (Already Implemented):*
 
-**TFUEL Yield Distribution (No Sell Pressure):**
+**USDC Yield Distribution (No Sell Pressure):**
 ```solidity
-// XFUELRouter.sol - veXF yields in TFUEL, not XF
+// XFUELRouter.sol - veXF yields in USDC, not XF
 function collectAndDistributeFees(address pool) external onlyAuthorizedCollector {
     // ... fee collection ...
     
-    uint256 veXFAmount = (totalFeesTFUEL * VEXF_YIELD_BPS) / 10000; // 25%
+    uint256 veXFAmount = (totalFeesUSDC * VEXF_YIELD_BPS) / 10000; // 25%
     
-    // Transfer TFUEL to veXF contract (NOT XF tokens)
-    tfuelToken.safeTransfer(veXFContract, veXFAmount);
-    totalTFUELToVeXF += veXFAmount;
+    // Transfer USDC to veXF contract (NOT XF tokens)
+    usdcToken.safeTransfer(veXFContract, veXFAmount);
+    totalUSDCToVeXF += veXFAmount;
     
-    // veXF holders receive TFUEL, so no XF sell pressure
-    emit TFUELYieldDistributed(veXFAmount);
+    // veXF holders receive USDC, so no XF sell pressure
+    emit USDCYieldDistributed(veXFAmount);
 }
 ```
 
@@ -1779,8 +1396,8 @@ function collectAndDistributeFees(address pool) external onlyAuthorizedCollector
 ```solidity
 // XFUELRouter._buybackAndBurn() - 70% burned, 30% to LP
 function _buybackAndBurn(uint256 buybackAmount) internal {
-    // Use TFUEL to buy XF from Dexter
-    uint256 xfBought = dexterRouter.swapTFUELForXF(buybackAmount);
+    // Use USDC to buy XF from Dexter
+    uint256 xfBought = dexterRouter.swapUSDCForXF(buybackAmount);
     
     // Burn 70%
     uint256 burnAmount = (xfBought * 7000) / 10000;
@@ -1802,7 +1419,7 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 
 ---
 
-### 9.3 Regulatory Risks
+### 8.3 Regulatory Risks
 
 #### Securities Classification
 
@@ -1833,7 +1450,7 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 
 ---
 
-### 9.4 Pre-Funding Risk Summary
+### 8.4 Pre-Funding Risk Summary
 
 **Bootstrap Strategy:** Prioritize zero-cost fixes before external funding.
 
@@ -1864,9 +1481,9 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 
 ---
 
-## 10. Economic Model & Projections
+## 9. Economic Model & Projections
 
-### 10.1 Revenue Growth Scenarios
+### 9.1 Revenue Growth Scenarios
 
 **Base Case Assumptions:**
 
@@ -1874,9 +1491,8 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 - 10% monthly volume (relative to TVL)
 - 0.5% avg bridge fees, 0.3% swap fees, 4% yield fees
 - 40% avg APY on Dexter Superfluid pools
-- SP1 + Edge Cloud yields **5x throughput** and lower TFUEL cost per proof
 
-#### Base Case Projections (assuming 200% TVL growth) <!-- v4.0 update -->
+#### Base Case Projections
 
 | Year | TVL | Monthly Volume | Bridge/Swap Fees | Yield Fees | Annual Revenue |
 |------|-----|----------------|------------------|------------|----------------|
@@ -1893,34 +1509,39 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 | **Total Revenue** | $1.35M |
 | **XF Burned (BBB 70%)** | 103,451 tokens (0.103% supply) |
 | **LP Depth Added (30% funding)** | $405K |
-| **veXF Yields Paid (25%)** | $337K |
+| **veXF Yields Paid (25% × 70%)** | $236K |
 | **Treasury Accumulated (15%)** | $202K |
 
-### 10.2 Token Economics
+### 9.2 Token Economics
 
 **XF Token Supply:** 100,000,000 (fixed, no emissions)
 
-| Allocation | Amount | % | Notes |
-|------------|--------|---|-------|
-| **Ecosystem Incentives** | 50M | 50% | 25% airdrops, 15% LP rewards, 10% governance boosts |
-| **Team & Advisors** | 15M | 15% | 12mo cliff, 3-4yr linear |
-| **Founder** | 10M | 10% | 12mo cliff, 3-4yr linear |
-| **Launch Contributors** | 15M | 15% | 12mo cliff, 3-4yr linear (cap 2M per entity) |
-| **Treasury Reserve** | 10M | 10% | Ops/grants + innovation |
+**Distribution:**
 
-### 10.3 veXF Yield Projections (TFUEL-Only)
+- 30% (30M): BBB Reserve (buyback wallet)
+- 25% (25M): LP Funding Reserve (Dexter liquidity)
+- 20% (20M): veXF Yield Reserve (USDC rewards pool)
+- 10% (10M): Early Believers (24-month linear vest)
+- 10% (10M): Team (48-month vest, 12-month cliff)
+- 5% (5M): Treasury Operations (grants, audits)
 
-**Scenario:** 10,000 XF locked for **3 years** (3× veXF) with **$100K/month** revenue base. <!-- v4.0 update -->
+### 9.3 veXF Yield Projections
 
-| Year | Estimated veXF APY | Annual Yield (TFUEL) | Notes |
-|------|--------------------|----------------------|-------|
-| **1** | **~5%** | ~$500 | Early revenue baseline |
-| **3** | **~10%** | ~$1,000 | Growth from LP depth + reverse-burn |
-| **5** | **~15%** | ~$1,500 | Mature revenue scale |
+**Scenario:** 10,000 XF locked for 4 years (40,000 veXF base)
 
-**5-Year Range:** ~**5-15% APY** depending on revenue growth and veXF share.
+| Year | Protocol Revenue | veXF Allocation (25%) | Your Share (assume 1% of veXF) | Annual Yield | Yield % |
+|------|------------------|----------------------|-------------------------------|--------------|---------|
+| 1 | $18K | $4.5K | $45 | **$45** | 0.45% |
+| 2 | $72K | $18K | $180 | **$180** | 1.8% |
+| 3 | $180K | $45K | $450 | **$450** | 4.5% |
+| 4 | $360K | $90K | $900 | **$900** | 9% |
+| 5 | $720K | $180K | $1,800 | **$1,800** | 18% |
 
-### 10.4 LP Depth Growth Model
+**5-Year Total:** $3,375 on $10K stake = **33.75% ROI** (in USDC, excluding XF price appreciation)
+
+*Note: With 30% reverse-burn compounding, effective revenue ~138% of base by Year 1, increasing ROI proportionally.*
+
+### 9.4 LP Depth Growth Model
 
 **30% LP Funding Allocation + 30% Reverse-Burn:**
 
@@ -1940,26 +1561,26 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 
 ---
 
-## 11. Roadmap
+## 10. Roadmap
 
-### 11.1 Q1 2026 (Current)
+### 10.1 Q1 2026 (Current)
 
 **Status:** ✅ **95% Complete**
 
-- ✅ ZK bridge overhaul (SP1 proofs) <!-- v4.0 update -->
+- ✅ ZK bridge overhaul (Groth16 SNARKs)
 - ✅ Sub-4s settlements achieved
-- ✅ XFuel tokenomics deployed
+- ✅ Ferrari tokenomics deployed
 - ✅ Beta mainnet launch (Jan 4)
 - ⏳ CosmWasm governance whitelist approval (pending)
 
-**Focus (v4.0):**
+**Focus (v3.1):**
 
-- ✅ Refine whitepaper for XFuel Tokenomics + Edge Cloud integration
+- ✅ Refine whitepaper for Persistence LP focus
 - ✅ Update LST examples (stkXPRT, milkTIA post-pSTAKE sunset)
 - 🎯 Dexter Superfluid pool integration live
 - 🎯 First $50K TVL milestone
 
-### 11.2 Q2 2026
+### 10.2 Q2 2026
 
 **Focus:** Security & Scale
 
@@ -1973,12 +1594,10 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 
 **Targets:** $5M TVL, 1,000 users, 10,000+ transactions
 
-### 11.3 Q3 2026
+### 10.3 Q3 2026
 
 **Focus:** Expansion & Automation
 
-- 🎯 **Persistence-Primary + Multi-Destination Hooks** (Osmosis/Cosmos Hub routing hooks) <!-- v4.0 update -->
-- 🎯 **SP1 + Edge Cloud Integration** (production edge routing + proof batching)
 - 🎯 **AI Yield Optimizer** (ML-powered APY prediction across Dexter pools)
 - 🎯 **Governance DAO Transition** (admin keys to veXF-controlled Governor)
 - 🎯 **Cross-Chain DEX Aggregation** (route through Osmosis, Crescent if better rates)
@@ -1986,21 +1605,20 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 
 **Targets:** $20M TVL, 3,000+ users, full decentralization
 
-### 11.4 Q4 2026
+### 10.4 Q4 2026
 
 **Focus:** Multi-Chain Expansion
 
 - 🎯 **Ethereum Bridge** (WETH → Persistence LSTs via ZK proof)
-- 🎯 **SP1 Optimization** (recursion, verifier cost reductions)
 - 🎯 **ZK Rollup Layer** (10× throughput, <1s settlements)
 - 🎯 **Institutional Features** (optional KYC/AML, custody integrations)
 - 🎯 **NFT Governance Marketplace** (trade veXF bonus NFTs)
 
 **Targets:** $50M+ TVL, 10,000+ users, multi-chain
 
-### 11.5 2027+ Vision
+### 10.5 2027+ Vision
 
-**Long-Term Goals:** Whitepaper as **implementation blueprint** (e.g., SP1 contracts, Edge SDK). <!-- v4.0 update -->
+**Long-Term Goals:**
 
 - **Universal ZK Bridge**: Any EVM → Any Cosmos chain (generalize beyond Theta)
 - **Intent-Based Architecture**: Users specify outcomes, protocol routes optimally
@@ -2009,19 +1627,19 @@ function _buybackAndBurn(uint256 buybackAmount) internal {
 
 ---
 
-## 12. Conclusion
+## 11. Conclusion
 
-### 12.1 Summary of Innovations
+### 11.1 Summary of Innovations
 
 XFuel Protocol introduces **five industry-first capabilities**:
 
-1. **Trustless Theta → Persistence Bridge**: First SP1-powered bridge from Theta TFUEL to Cosmos LSTfi
-2. **Sub-4s ZK Settlements**: Fastest provably-secure bridge in Theta ecosystem (Edge Cloud accelerated)
+1. **Trustless Theta → Persistence Bridge**: First ZK-SNARK powered bridge from Theta TFUEL to Cosmos LSTfi
+2. **Sub-4s ZK Settlements**: Fastest provably-secure bridge in Theta ecosystem (10× faster than Axelar/Wormhole)
 3. **Dexter LP Compounding Focus**: 30% revenue + 30% reverse-burn = exponential liquidity growth
 4. **Post-pSTAKE Alignment**: Built for new Persistence LST landscape (stkXPRT, milkTIA, Superfluid pools)
-5. **XFuel Tokenomics**: Only DeFi protocol with 4-way distribution + reverse-burn sustainability loop
+5. **Ferrari Hybrid Tokenomics**: Only DeFi protocol with 4-way distribution + reverse-burn sustainability loop
 
-### 12.2 Key Value Propositions
+### 11.2 Key Value Propositions
 
 **For TFUEL Holders:**
 
@@ -2032,7 +1650,7 @@ XFuel Protocol introduces **five industry-first capabilities**:
 
 **For XF Holders:**
 
-- **TFUEL real yield** (25% revenue → veXF holders, no sell pressure)
+- **USDC real yield** (25% revenue → veXF holders, no sell pressure)
 - **Deflation** (30% revenue → BBB, 70% burned monthly)
 - **Compounding** (30% reverse-burn loops revenue back)
 - **Governance** (control LP allocations, fees, integrations)
@@ -2043,16 +1661,16 @@ XFuel Protocol introduces **five industry-first capabilities**:
 - **Deepened Dexter pools** (30% LP funding grows stkXPRT, milkTIA pairs)
 - **IBC showcase** (demonstrates Cosmos' cross-chain capabilities)
 
-### 12.3 Competitive Moat
+### 11.3 Competitive Moat
 
 **Why XFuel Wins:**
 
 1. **Speed**: 10× faster than Axelar/Wormhole (ZK proofs vs consensus delays)
-2. **Security**: Trustless (SP1 zkVM proofs vs multisig/validator trust)
+2. **Security**: Trustless (ZK-SNARKs vs multisig/validator trust)
 3. **Sustainability**: Revenue compounds (30% reverse-burn vs one-way treasury drains)
 4. **Focus**: Laser-focused on Theta → Persistence (not generalized = better UX)
 
-### 12.4 Alignment with Persistence Vision
+### 11.4 Alignment with Persistence Vision
 
 **pSTAKE Sunset Context:**
 
@@ -2062,80 +1680,84 @@ In December 2025, pSTAKE (acquired by Stride) discontinued Persistence liquid st
 - **Milkyway**: milkTIA (Celestia LST)
 - **Dexter**: Superfluid/Metastable pools as primary DeFi venue
 
-**XFuel's Role (v4.0):**
+**XFuel's Role (v3.1):**
 
 - Brings **external liquidity** (Theta TFUEL) to Persistence
 - **Deepens Dexter pools** via 30% LP funding (stkXPRT, milkTIA pairs)
 - **Compounds growth** (more liquidity → more users → more revenue → deeper pools)
-- **Proves concept**: ZK bridges + Edge Cloud can deliver cross-ecosystem capital efficiently
+- **Proves concept**: ZK bridges can deliver cross-ecosystem capital efficiently
 
-### 12.5 Risk Acknowledgment
+### 11.5 Risk Acknowledgment
 
 **XFuel Protocol is experimental beta software with inherent risks:**
 
 - **Pre-audit status** (CertiK audit scheduled Q2 2026—use at own risk)
-- **Novel ZK technology** (SP1 recursion, not battle-tested at scale)
+- **Novel ZK technology** (Groth16 trusted setup, not battle-tested at scale)
 - **Smart contract risk** (bugs could allow exploits despite testing)
 - **Market volatility** (crypto prices fluctuate, yields not guaranteed)
 - **Regulatory uncertainty** (DeFi legal landscape evolving)
 
 **⚠️ Only deposit amounts you can afford to lose. This is beta software.**
 
-### 12.6 Call to Action
+### 11.6 Call to Action
 
-**Join the XFuel Launch:**
+**Join the Ferrari Revolution:**
 
 1. **Try the Beta**: Bridge TFUEL at [xfuel.app](https://xfuel.app) (start with small amounts)
-2. **Lock for veXF**: Earn governance power + TFUEL revenue share (1-3 year lock)
-3. **Provide LP**: Deepen Dexter pools (earn protocol-aligned yields)
+2. **Lock for veXF**: Earn governance power + USDC revenue share (4-year lock = 4× base)
+3. **Provide LP**: Deepen Dexter pools (get +0.5× veXF multiplier for >$10K liquidity)
 4. **Vote on Governance**: Shape LP allocations, fee structures, integrations
 5. **Report Bugs**: Help secure the protocol ($500K bug bounty coming Q2)
 
-**XFuel is engineered for precision—so is our bridge.** 🏎️⚡
+**The Ferrari is engineered for precision—so is our bridge.** 🏎️⚡
 
 ---
 
-## 13. References
+## 12. References
 
 ### Academic Papers
 
-1. **SP1 Team** (2025). "SP1: Transparent ZK Proofs with Fast Recursion." https://github.com/0xPolygonZero/SP1
+1. **Groth, Jens** (2016). "On the Size of Pairing-Based Non-interactive Arguments." *Advances in Cryptology – EUROCRYPT 2016*. https://eprint.iacr.org/2016/260
 
-2. **Cosmos Network** (2021). "Inter-Blockchain Communication Protocol." https://ibcprotocol.org/
+2. **Barreto, Paulo S. L. M., & Naehrig, Michael** (2006). "Pairing-Friendly Elliptic Curves of Prime Order." *Selected Areas in Cryptography*.
+
+3. **iden3 Team** (2020). "Circom: A Circuit Compiler for Zero-Knowledge Proofs." https://docs.circom.io/
+
+4. **Cosmos Network** (2021). "Inter-Blockchain Communication Protocol." https://ibcprotocol.org/
 
 ### Protocol Documentation
 
-3. **Theta Network** (2023). "Theta Blockchain Whitepaper." https://docs.thetatoken.org/
+5. **Theta Network** (2023). "Theta Blockchain Whitepaper." https://docs.thetatoken.org/
 
-4. **Persistence** (2024). "Persistence Chain Documentation." https://docs.persistence.one/
+6. **Persistence** (2024). "Persistence Chain Documentation." https://docs.persistence.one/
 
-5. **Dexter** (2024). "Dexter DEX Whitepaper—Superfluid Staking Pools." https://docs.dexter.zone/
+7. **Dexter** (2024). "Dexter DEX Whitepaper—Superfluid Staking Pools." https://docs.dexter.zone/
 
-6. **PSTAKE (new entity)** (2025). "stkXPRT Liquid Staking Documentation." https://pstake.finance/
+8. **PSTAKE (new entity)** (2025). "stkXPRT Liquid Staking Documentation." https://pstake.finance/
 
-7. **Milkyway** (2024). "milkTIA Liquid Staking for Celestia." https://milkyway.zone/
+9. **Milkyway** (2024). "milkTIA Liquid Staking for Celestia." https://milkyway.zone/
 
 ### XFuel Resources
 
-8. **XFuel GitHub Repository**: https://github.com/XFuel-Lab/xfuel-protocol
+10. **XFuel GitHub Repository**: https://github.com/XFuel-Lab/xfuel-protocol
 
-9. **ZK Overhaul Summary** (2026). **XFuel Team**. "Zero-Knowledge Bridge Overhaul Technical Report."
+11. **ZK Overhaul Summary** (2026). XFuel Team. "Zero-Knowledge Bridge Overhaul Technical Report."
 
-10. **XFuel Tokenomics Quick Reference** (2026). **XFuel Team**. "XFuel Tokenomics One-Page Summary."
+12. **Ferrari Quick Reference** (2026). XFuel Team. "Ferrari Tokenomics One-Page Summary."
 
 ---
 
-## 14. Glossary
+## 13. Glossary
 
 **APY (Annual Percentage Yield)**: Annualized return including compound interest (e.g., 40% APY on Superfluid pools)
 
 **BBB (Buyback-Burn-Boost)**: XFuel's deflationary mechanism (30% revenue → 70% burned, 30% to LP)
 
-**SP1**: Transparent ZK proof system with **fast recursion for batching** and no trusted setup
+**BN254**: Elliptic curve used in Groth16 (128-bit security, pairing-friendly)
 
 **Circuit Breaker**: Automated safety mechanism that pauses protocol on anomalies (e.g., 0.5% ibcTFUEL depeg)
 
-**SP1 Circuits**: Rust-based circuit definitions used for XFuel proof generation
+**Circom**: Domain-specific language for writing ZK-SNARK circuits (used by XFuel)
 
 **Cosmos**: Ecosystem of interoperable blockchains connected via IBC protocol
 
@@ -2145,7 +1767,7 @@ In December 2025, pSTAKE (acquired by Stride) discontinued Persistence liquid st
 
 **Dexter**: Primary DEX on Persistence, featuring Superfluid and Metastable pools
 
-**Recursion**: Technique for aggregating proofs inside other proofs (used for batching)
+**Groth16**: Most efficient ZK-SNARK system (192-byte proofs, 50ms verification, requires trusted setup)
 
 **IBC (Inter-Blockchain Communication)**: Protocol for trustless cross-chain messaging (Cosmos standard)
 
@@ -2161,7 +1783,7 @@ In December 2025, pSTAKE (acquired by Stride) discontinued Persistence liquid st
 
 **Nonce**: Unique number used once (prevents ZK proof replay attacks)
 
-**Recursion Proof**: Proof that verifies other proofs, enabling high-throughput batching
+**Pairing**: Bilinear map enabling ZK-SNARK verification (BN254 curve operation)
 
 **Persistence (core-1)**: Cosmos blockchain hosting XFuel's CosmWasm contracts and Dexter DEX
 
@@ -2169,11 +1791,13 @@ In December 2025, pSTAKE (acquired by Stride) discontinued Persistence liquid st
 
 **PSTAKE (new)**: Rebranded liquid staking protocol issuing stkXPRT for XPRT staking
 
-**Reverse-Burn**: XFuel innovation where 30% of Persistence LP fees recirculate to RevenueSplitter (compounds revenue)
+**Reverse-Burn**: XFuel innovation where 30% of veXF yields recirculate to RevenueSplitter (compounds revenue)
 
-**RevenueSplitter**: Theta smart contract distributing protocol revenue via XFuel 30/30/25/15 model
+**RevenueSplitter**: Theta smart contract distributing protocol revenue via Ferrari 30/30/25/15 model
 
-**Soundness**: ZK property ensuring false statements cannot be proven (SP1 offers transparent setup soundness)
+**rXF (Revenue Receipts)**: Tokens representing past protocol revenue (1 rXF = $1 historical revenue, +4× veXF if locked)
+
+**Soundness**: ZK property ensuring false statements cannot be proven (Groth16 = 2^-128^ soundness)
 
 **stkXPRT**: Liquid staking token for XPRT (issued by PSTAKE, primary Persistence LST)
 
@@ -2183,21 +1807,19 @@ In December 2025, pSTAKE (acquired by Stride) discontinued Persistence liquid st
 
 **Theta**: Layer-1 blockchain optimized for video streaming and edge computing
 
-**Theta Edge Cloud**: Decentralized edge compute network used for ZK proof generation and yield routing
-
 **TVL (Total Value Locked)**: Sum of all user assets in protocol (measured in USD)
 
-**veXF (vote-escrowed XF)**: Non-transferable governance token earned by locking XF (1-3 years, up to 3× multiplier)
+**veXF (vote-escrowed XF)**: Non-transferable governance token earned by locking XF (1-4 years, up to 11.5× multiplier)
 
 **VaultFactory**: Main Theta contract managing TFUEL deposits and unwraps
 
-**Witness**: Private inputs to ZK circuit (known only to prover, not revealed to verifier)
+**Witness**: Private inputs to ZK-SNARK circuit (known only to prover, not revealed to verifier)
 
 **XF**: XFuel Protocol's native governance token (100M fixed supply, no emissions)
 
 **XPRT**: Native token of Persistence blockchain (staked for network security)
 
-**ZK Proof**: Cryptographic proof system enabling trustless verification without revealing private data
+**ZK-SNARK (Zero-Knowledge Succinct Non-Interactive Argument of Knowledge)**: Cryptographic proof system enabling trustless verification without revealing private data
 
 **Zero-Knowledge**: Property where verifier learns nothing beyond proof validity (no leakage of private inputs)
 
@@ -2210,8 +1832,8 @@ In December 2025, pSTAKE (acquired by Stride) discontinued Persistence liquid st
 **Theta Mainnet (Chain ID: 361)**
 
 ```
-VaultFactory:       TBD (post-audit deployment)
-RevenueSplitter:    TBD (post-audit deployment)
+VaultFactory:       0xB0a26600074dADC69186632a1B8dFd7c3146Ce56
+RevenueSplitter:    0x1C4CEbbb4Cfa7fdb546424F21CF706c48C478EE6
 ```
 
 **Persistence Mainnet (core-1)**
@@ -2231,15 +1853,15 @@ IBC Channel:        channel-190
 
 | Metric | Min | Average | Max | Std Dev |
 |--------|-----|---------|-----|---------|
-| Proof Generation | 0.8s | 1.1s | 1.6s | 0.12s |
-| Verification | 50ms | 60ms | 75ms | 6ms |
-| E2E Settlement | 2.9s | 3.5s | 4.1s | 0.25s |
-| Success Rate | - | 99.9% | - | - |
+| Proof Generation | 1.2s | 1.5s | 2.1s | 0.15s |
+| Verification | 45ms | 50ms | 65ms | 5ms |
+| E2E Settlement | 3.2s | 3.8s | 4.5s | 0.3s |
+| Success Rate | - | 99.8% | - | - |
 
 **Mainnet Beta (10 transactions)**
 
-- **Average Proof Generation**: 1.05s
-- **Average Verification**: 60ms
+- **Average Proof Generation**: 1.48s
+- **Average Verification**: 52ms
 - **Average IBC Transfer**: 480ms
 - **Average E2E Settlement**: 3.7s
 - **Success Rate**: 100%
@@ -2264,41 +1886,19 @@ IBC Channel:        channel-190
 - **Fees**: 0.01% swap fee (low-slippage)
 - **TVL**: $800K (as of Jan 2026)
 
-### Appendix D: Theta Edge Cloud Integration Diagram
-
-```
-┌────────────────────────────────────────────────────────────────────┐
-│                      THETA EDGE CLOUD                               │
-├────────────────────────────────────────────────────────────────────┤
-│  Edge Node Cluster (ZK + Routing)                                   │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐            │
-│  │ Prover Node  │   │ Router Node  │   │ Verifier API │            │
-│  │ (SP1)    │   │ (Yield Calc) │   │ (Proof Relay)│            │
-│  └──────┬───────┘   └──────┬───────┘   └──────┬───────┘            │
-│         │                  │                  │                   │
-│         ▼                  ▼                  ▼                   │
-│  TFUEL-cost savings   Faster routing     Lower latency            │
-└─────────┬──────────────────┬──────────────────┬──────────────────┘
-          │                  │                  │
-          ▼                  ▼                  ▼
-┌────────────────────────────────────────────────────────────────────┐
-│ Theta Contracts → Edge Cloud → Persistence ZKVerifier              │
-└────────────────────────────────────────────────────────────────────┘
-```
-
-### Appendix E: FAQ
+### Appendix D: FAQ
 
 **Q: Is XFuel safe to use?**  
-A: XFuel is currently in **beta** and has not been audited. The ZK bridge provides STARK-like soundness (transparent setup), but smart contract bugs could exist. Full CertiK audit scheduled Q2 2026. **Only use with amounts you can afford to lose.**
+A: XFuel is currently in **beta** and has not been audited. The ZK bridge is cryptographically sound (2^-128^ security), but smart contract bugs could exist. Full CertiK audit scheduled Q2 2026. **Only use with amounts you can afford to lose.**
 
 **Q: How fast are deposits?**  
-A: **<4 seconds** average from Theta TFUEL deposit to Persistence ibcTFUEL receipt (1.2s proof generation + 60ms verification + ~2s IBC transfer).
+A: **<4 seconds** average from Theta TFUEL deposit to Persistence ibcTFUEL receipt (1.5s proof generation + 50ms verification + ~2s IBC transfer).
 
 **Q: What's the minimum deposit?**  
 A: **0.1 TFUEL** minimum (to cover gas fees and maintain economic security).
 
 **Q: What yields can I expect?**  
-A: **30-50% APY** on Dexter Superfluid pools (stkXPRT, milkTIA). Exact rates depend on staking rewards + swap fees. veXF holders also earn TFUEL revenue share (see Section 10.3).
+A: **30-50% APY** on Dexter Superfluid pools (stkXPRT, milkTIA). Exact rates depend on staking rewards + swap fees. veXF holders also earn USDC revenue share (0.45-18% APY depending on protocol growth, see Section 9.3).
 
 **Q: Can I withdraw my TFUEL anytime?**  
 A: Yes! Burn your ibcTFUEL on Persistence → triggers unwrap on Theta → TFUEL released from your vault. Unwraps take ~5-10 minutes (IBC transfer + Theta finality).
@@ -2314,9 +1914,9 @@ A: pSTAKE (original protocol) was acquired by Stride in 2024 and sunset Persiste
 
 ---
 
-**Document Version:** 4.2 (Premier Edition)  
-**Last Updated:** January 23, 2026  
-**Status:** 🏎️ Production Ready - Phase 1 Complete (11.6x speedup, 90% cost reduction, 50-80% Edge Cloud TFUEL savings)
+**Document Version:** 3.1 (ZK Bridge + LP Focus Edition)  
+**Last Updated:** January 5, 2026  
+**Status:** 🏎️ Production Ready - Awaiting CertiK Audit
 
 **Contact:**
 
