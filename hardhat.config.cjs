@@ -58,6 +58,78 @@ module.exports = {
     cache: './cache',
     artifacts: './artifacts',
   },
+  // Include core-layer and circuit contracts in compilation.
+  // Hardhat will discover Solidity files in these paths for overrides.
+  // Run: npx hardhat compile
+  // Tests (Priority):
+  //   npx hardhat test circuits/tao-evm/test/TAOCircuit.test.cjs
+  //   npx hardhat test circuits/a2a/test/A2ACircuit.test.cjs
+  //   npx hardhat test circuits/theta-gpu/test/ThetaGPUCircuit.test.cjs
+  // Tests (Expansion):
+  //   npx hardhat test circuits/zkml/test/ZKMLCircuit.test.cjs
+  //   npx hardhat test circuits/akash/test/AkashCircuit.test.cjs
+  //   npx hardhat test circuits/autonomous-vaults/test/AutonomousVaults.test.cjs
+  //   npx hardhat test circuits/agent-robotics/test/AgentRobotics.test.cjs
+  // Tests (Integration):
+  //   npx hardhat test test/integration/MultiCircuit.integration.test.cjs
+  overrides: {
+    'core-layer/contracts/**': {
+      version: '0.8.22',
+      settings: {
+        viaIR: true,
+        optimizer: { enabled: true, runs: 200 },
+      },
+    },
+    'circuits/tao-evm/**': {
+      version: '0.8.22',
+      settings: {
+        viaIR: true,
+        optimizer: { enabled: true, runs: 200 },
+      },
+    },
+    'circuits/a2a/**': {
+      version: '0.8.22',
+      settings: {
+        viaIR: true,
+        optimizer: { enabled: true, runs: 200 },
+      },
+    },
+    'circuits/theta-gpu/**': {
+      version: '0.8.22',
+      settings: {
+        viaIR: true,
+        optimizer: { enabled: true, runs: 200 },
+      },
+    },
+    'circuits/zkml/**': {
+      version: '0.8.22',
+      settings: {
+        viaIR: true,
+        optimizer: { enabled: true, runs: 200 },
+      },
+    },
+    'circuits/akash/**': {
+      version: '0.8.22',
+      settings: {
+        viaIR: true,
+        optimizer: { enabled: true, runs: 200 },
+      },
+    },
+    'circuits/autonomous-vaults/**': {
+      version: '0.8.22',
+      settings: {
+        viaIR: true,
+        optimizer: { enabled: true, runs: 200 },
+      },
+    },
+    'circuits/agent-robotics/**': {
+      version: '0.8.22',
+      settings: {
+        viaIR: true,
+        optimizer: { enabled: true, runs: 200 },
+      },
+    },
+  },
   mocha: {
     timeout: 40000,
   },

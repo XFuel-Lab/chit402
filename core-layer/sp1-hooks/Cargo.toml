@@ -1,0 +1,21 @@
+[package]
+name = "xfuel-sp1-hooks"
+version = "0.1.0"
+edition = "2021"
+description = "XFuel Core Layer — SP1 proof generation helpers and circuit interfaces"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+hex = "0.4"
+
+# SP1 dependencies (uncomment when sp1 crates are available)
+# sp1-zkvm = "6.0"
+# sp1-sdk = "6.0"
+
+[features]
+default = []
+# Enable SP1 zkVM guest features (for RISC-V compilation)
+sp1-guest = []
+# Enable SP1 SDK features (for host/prover)
+sp1-host = []

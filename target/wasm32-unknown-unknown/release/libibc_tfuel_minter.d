@@ -1,1 +1,0 @@
-/app/target/wasm32-unknown-unknown/release/libibc_tfuel_minter.rlib: /app/cosmwasm/ibc-tfuel-minter/src/contract.rs /app/cosmwasm/ibc-tfuel-minter/src/error.rs /app/cosmwasm/ibc-tfuel-minter/src/lib.rs /app/cosmwasm/ibc-tfuel-minter/src/msg.rs /app/cosmwasm/ibc-tfuel-minter/src/state.rs
