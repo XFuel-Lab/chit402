@@ -1,1 +1,0 @@
-/app/target/wasm32-unknown-unknown/release/libzk_verifier.rlib: /app/cosmwasm/zk-verifier/src/contract.rs /app/cosmwasm/zk-verifier/src/error.rs /app/cosmwasm/zk-verifier/src/lib.rs /app/cosmwasm/zk-verifier/src/msg.rs /app/cosmwasm/zk-verifier/src/state.rs

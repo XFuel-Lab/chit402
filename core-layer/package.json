@@ -1,0 +1,29 @@
+{
+  "name": "xfuel-core-layer",
+  "version": "0.1.0",
+  "description": "XFuel Protocol Core Layer — Modular ZK-secured DePIN hub",
+  "type": "module",
+  "main": "ai-listener.js",
+  "scripts": {
+    "test": "node --test test/ai-listener.test.js",
+    "test:contracts": "npx hardhat test core-layer/test/ZKVerifierSP1.test.cjs --config hardhat.config.cjs",
+    "lint": "eslint . --ext .js",
+    "start": "node ai-listener.js"
+  },
+  "dependencies": {
+    "ethers": "^6.16.0",
+    "@cosmjs/stargate": "^0.37.0",
+    "@cosmjs/cosmwasm-stargate": "^0.32.4",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^2.0.2",
+    "@openzeppelin/contracts": "^5.4.0",
+    "hardhat": "^2.19.4",
+    "chai": "^4.3.10"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}

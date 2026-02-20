@@ -1,0 +1,82 @@
+{
+  "metadata": {
+    "program": "Solana Foundation Grants",
+    "id": "solana-foundation",
+    "generatedAt": "2026-02-17T12:49:42.793Z",
+    "fromManifest": "deploy/manifests/testnet-1771329422112.json"
+  },
+  "application": {
+    "projectName": "XFuel Protocol — SolanaAIBridge",
+    "category": "Infrastructure / AI / Cross-Chain",
+    "teamSize": "3-5",
+    "timeline": "6 months",
+    "openSource": "Yes — MIT License",
+    "amount": "$150,000–$250,000",
+    "submitUrl": "https://solana.org/grants"
+  },
+  "traction": {
+    "contracts": 14,
+    "tests": 255,
+    "totalGas": "31,327,459",
+    "gasCostTFUEL": "0.125309836",
+    "circuits": 12,
+    "network": "hardhat",
+    "chainId": 1337,
+    "believerRound": "Deployed",
+    "filecoinStorage": "Ready",
+    "timestamp": "2026-02-17T11:57:01.243Z"
+  },
+  "evidence": {
+    "deploymentManifest": "Attached",
+    "contractAddresses": {
+      "CoreRevenueSplitter": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+      "ZKVerifierSP1": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+      "TAOCircuit": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+      "A2ACircuit": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+      "ThetaGPUCircuit": "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
+      "ZKMLCircuit": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
+      "AkashCircuit": "0x0165878A594ca255338adfa4d48449f69242Eb8F",
+      "AutonomousVaults": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+      "AgentRobotics": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
+      "DataHubs": "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
+      "YieldCircuit": "0x610178dA211FEF7D417bC0e6FeD39F05609AD788",
+      "NearAgents": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e",
+      "SolanaAIBridge": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
+      "BelieverRound": "0x0DCd1Bf9A1b36cE34237eEaFef220932846BCD82"
+    },
+    "gasMetrics": {
+      "CoreRevenueSplitter": 1435433,
+      "ZKVerifierSP1": 1497318,
+      "TAOCircuit": 2151151,
+      "A2ACircuit": 2703359,
+      "ThetaGPUCircuit": 2892735,
+      "ZKMLCircuit": 2255204,
+      "AkashCircuit": 2759515,
+      "AutonomousVaults": 2461619,
+      "AgentRobotics": 2829542,
+      "DataHubs": 2291180,
+      "YieldCircuit": 2177173,
+      "NearAgents": 2378288,
+      "SolanaAIBridge": 2104106,
+      "BelieverRound": 1390836
+    },
+    "smokeTests": {
+      "passed": 13,
+      "failed": 0
+    }
+  },
+  "attachments": [
+    "WHITEPAPER_v1.6_CORE.md",
+    "exec-summary.md",
+    "grant-templates/solana-grant.md",
+    "believer-guide.md"
+  ],
+  "checklist": {
+    "templateReady": true,
+    "manifestAvailable": true,
+    "tractionUpdated": true,
+    "teamSectionComplete": true,
+    "budgetDetailed": true,
+    "milestonesTimeline": true
+  }
+}

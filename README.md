@@ -494,7 +494,1019 @@ xfuel-protocol/
 
 ---
 
-## 🛠️ Development Setup
+## Core Layer Setup
+
+The **Core Layer** is the modular, ecosystem-agnostic hub for ZK settlements, task routing, fee distribution, and governance. It lives in the `core-layer/` directory and is designed for independent circuits to plug in via events.
+
+**Whitepaper:** [WHITEPAPER_v1.6_CORE.md](WHITEPAPER_v1.6_CORE.md) — Full Core Layer architecture and design rationale.
+
+### Quick Start
+
+```bash
+# 1. Install Node.js dependencies (ai-listener, tests)
+cd core-layer
+npm install
+
+# 2. Compile Solidity contracts (from project root)
+npx hardhat compile
+
+# 3. Run Solidity tests
+npx hardhat test core-layer/test/ZKVerifierSP1.test.cjs
+npx hardhat test core-layer/test/SP1ProofHooks.test.cjs
+
+# 4. Run JS tests (ai-listener)
+cd core-layer
+node --test test/ai-listener.test.js
+
+# 5. Build CosmWasm contracts
+cd core-layer/wasm/zk-verifier
+cargo build --release --target wasm32-unknown-unknown
+cd ../revenue-splitter
+cargo build --release --target wasm32-unknown-unknown
+
+# 6. Build SP1 hooks library
+cd core-layer/sp1-hooks
+cargo build --release
+cargo test
+```
+
+### Core Layer Components
+
+| Component | Path | Description |
+|-----------|------|-------------|
+| **ai-listener.js** | `core-layer/ai-listener.js` | Multi-RPC event poller for EVM + Cosmos chains; intent solver; proof coordinator |
+| **ZKVerifierSP1.sol** | `core-layer/contracts/ZKVerifierSP1.sol` | EVM SP1 proof verifier with circuit registry + nullifier tracking |
+| **CoreRevenueSplitter.sol** | `core-layer/contracts/CoreRevenueSplitter.sol` | Fee collection + 30/30/25/15 distribution (BBB/LP/Stakers/Treasury) |
+| **veXFGovernance.sol** | `core-layer/contracts/veXFGovernance.sol` | Vote-escrowed governance stubs for circuit priorities / LP params |
+| **SP1ProofHooks.sol** | `core-layer/contracts/SP1ProofHooks.sol` | Solidity library for nullifier computation, fee commitments |
+| **ISP1Verifier.sol** | `core-layer/contracts/interfaces/ISP1Verifier.sol` | SP1 Verifier Gateway interface |
+| **xfuel-zk-verifier** | `core-layer/wasm/zk-verifier/` | CosmWasm ZK verifier for Cosmos chains |
+| **xfuel-revenue-splitter** | `core-layer/wasm/revenue-splitter/` | CosmWasm revenue splitter for Cosmos chains |
+| **xfuel-sp1-hooks** | `core-layer/sp1-hooks/` | Rust library: shared types + proof helpers |
+
+### Running the AI Listener
+
+```bash
+cd core-layer
+
+# Start with default configuration (Theta + Bittensor + Osmosis + Akash)
+node ai-listener.js
+
+# Or import as a module in your circuit:
+import { CoreListener, AI_INTENT_TYPES, ChainType } from './ai-listener.js';
+
+const listener = new CoreListener({
+  chains: {
+    theta_mainnet: {
+      type: ChainType.EVM,
+      name: 'Theta Mainnet',
+      chainId: 361,
+      rpc: 'https://eth-rpc-api.thetatoken.org/rpc',
+    },
+  },
+});
+
+// Register your circuit
+listener.registerCircuit('my-circuit', {
+  onIntent: async (intent) => {
+    console.log('Received intent:', intent.type, intent.chain);
+  },
+  onProofReady: async (proof) => {
+    console.log('Proof verified:', proof.nullifier);
+  },
+});
+
+await listener.start();
+```
+
+### Integrating a Custom Circuit
+
+Circuits plug into the Core Layer via the event-driven interface:
+
+1. **Register** your circuit with the CoreListener (JS) or listen for `ProofVerified` events (on-chain)
+2. **Filter** by chain and/or intent type
+3. **Process** intents with your domain-specific logic
+4. **Submit** settlement requests back through the Core Layer
+5. **Receive** ZK-verified confirmations
+
+```javascript
+// Example: Compute marketplace circuit
+listener.registerCircuit(
+  'compute-marketplace',
+  {
+    onIntent: async (intent) => {
+      if (intent.type === AI_INTENT_TYPES.COMPUTE_BID) {
+        // Route to cheapest provider
+        const result = await routeToProvider(intent);
+        return result;
+      }
+    },
+  },
+  ['theta_mainnet', 'bittensor_evm'],     // Chains to listen on
+  [AI_INTENT_TYPES.COMPUTE_BID]           // Intent types to receive
+);
+```
+
+### Configuration
+
+Core Layer contracts support both **live mode** (with SP1 Verifier Gateway) and **mock mode** (gateway = `address(0)` or `mock_mode: true` for WASM):
+
+```bash
+# EVM: Deploy with mock mode (SP1 verifier = zero address)
+npx hardhat run scripts/deploy-core-layer.js --network hardhat
+
+# WASM: Instantiate with mock mode
+osmosisd tx wasm instantiate $CODE_ID \
+  '{"admin":"osmo1...","mock_mode":true}' \
+  --from deployer --gas auto
+```
+
+### Multi-Network RPCs
+
+Configure chains in the CoreListener or via environment variables:
+
+| Chain | Type | Chain ID | Default RPC |
+|-------|------|----------|-------------|
+| Theta Mainnet | EVM | 361 | `https://eth-rpc-api.thetatoken.org/rpc` |
+| Theta Testnet | EVM | 365 | `https://eth-rpc-api-testnet.thetatoken.org/rpc` |
+| Bittensor EVM | EVM | 964 | `https://lite.chain.opentensor.ai/evm` |
+| Osmosis | Cosmos | osmosis-1 | `https://rpc.osmosis.zone` |
+| Akash | Cosmos | akashnet-2 | `https://rpc.akash.forbole.com` |
+
+---
+
+## Circuit Prototypes
+
+Ten circuits demonstrate the Core Layer's modular, ecosystem-agnostic architecture. Each is fully isolated (own state, events, pause) and plugs into Core via standard interfaces.
+
+**Full spec:** [WHITEPAPER_v1.6_CORE.md — Sections 14-16](WHITEPAPER_v1.6_CORE.md#14-priority-circuits-step-2--v161)
+
+### Quick Start
+
+```bash
+# Compile all circuits (from project root)
+npx hardhat compile
+
+# Run all circuit tests (priority + expansion)
+npx hardhat test circuits/tao-evm/test/TAOCircuit.test.cjs
+npx hardhat test circuits/a2a/test/A2ACircuit.test.cjs
+npx hardhat test circuits/theta-gpu/test/ThetaGPUCircuit.test.cjs
+npx hardhat test circuits/zkml/test/ZKMLCircuit.test.cjs
+npx hardhat test circuits/akash/test/AkashCircuit.test.cjs
+npx hardhat test circuits/autonomous-vaults/test/AutonomousVaults.test.cjs
+npx hardhat test circuits/agent-robotics/test/AgentRobotics.test.cjs
+npx hardhat test circuits/data-hubs/test/DataHubs.test.cjs
+npx hardhat test circuits/yield-optimization/test/YieldCircuit.test.cjs
+npx hardhat test circuits/near-agents/test/NearAgents.test.cjs
+
+# Run multi-circuit integration tests (20 E2E tests)
+npx hardhat test test/integration/MultiCircuit.integration.test.cjs
+
+# Run system tests (20 tests: gas profiling + deployment validation)
+npx hardhat test test/optimizations/GasProfile.system.test.cjs
+npx hardhat test test/optimizations/Deploy.system.test.cjs
+```
+
+### Circuit Overview
+
+| Circuit | Contract | Purpose | Default Chains | Fee |
+|---------|----------|---------|---------------|-----|
+| **AI Marketplace** | `circuits/tao-evm/TAOCircuit.sol` | Cross-chain task routing, AMM fees, oracle pricing | Bittensor, Theta | 0.5% |
+| **Agent Comms** | `circuits/a2a/A2ACircuit.sol` | ZK agent discovery, bidding, x402 micropayments | All chains | 0.1% relay + 0.5% task |
+| **Edge Compute** | `circuits/theta-gpu/ThetaGPUCircuit.sol` | GPU inference routing, provider staking, model registry | Theta | 0.5% |
+| **zkML Inference** | `circuits/zkml/ZKMLCircuit.sol` | Private model inference, SP1 proofs, weight commitments | All chains | 0.75% |
+| **DePIN Compute** | `circuits/akash/AkashCircuit.sol` | GPU leasing, reverse auction, per-block lease payments | All chains | 0.5% |
+| **Autonomous Vaults** | `circuits/autonomous-vaults/AutonomousVaults.sol` | AI-driven yield strategies, ZK-verified rebalancing, tokenized vaults | All chains | 0.5% |
+| **Agent Robotics** | `circuits/agent-robotics/AgentRobotics.sol` | Sim-to-real trajectory verification, safety certs, task marketplace | All chains | 1% cert + 0.5% task |
+| **Data Hubs** | `circuits/data-hubs/DataHubs.sol` | Decentralized data contribution, ZK provenance, tokenized access | All chains | 0.5% |
+| **Yield Optimization** | `circuits/yield-optimization/YieldCircuit.sol` | Multi-pool ZK-verified yield rebalancing, concentrated-liquidity aware | All chains | 0.5% deposit + 1% harvest |
+| **NEAR Agents** | `circuits/near-agents/NearAgents.sol` | Autonomous AI agent marketplace with intent bidding and ZK settlement | All chains | 0.5% |
+| **Solana AI Bridge** | `circuits/solana-ai-bridge/SolanaAIBridge.sol` | EVM↔Solana bridge for Render/io.net/Grass/SendAI AI compute | All chains | 0.75% |
+| **Filecoin Storage** | `circuits/filecoin-storage/FilecoinStorage.sol` | ZK-verified decentralized storage deals, WindowPoSt proofs, provider registry | All chains | 0.5% |
+| **Energy Grid** | `circuits/energy-grid/EnergyGrid.sol` | DePIN energy attestation, P2P trading, carbon credits (Daylight/Glow) | All chains | 0.5% |
+| **Mapping Sensor** | `circuits/mapping-sensor/MappingSensor.sol` | DePIN geospatial mapping, sensor data marketplace, coverage tracking (Hivemapper/DIMO) | All chains | 0.5% |
+| **Wireless DePIN** | `circuits/wireless-depin/WirelessDePIN.sol` | DePIN wireless coverage (LoRaWAN/5G/WiFi), ZK coverage proofs, data credit settlement (Helium/XNET) | All chains | 0.5% |
+| **Uplink** | `circuits/uplink/UplinkCircuit.sol` | WiFi bandwidth sharing, ZK session proofs, router quality EMA, connectivity map (Uplink/Althea) | All chains | 0.5% |
+
+### Registering Circuits with CoreListener
+
+```javascript
+import { CoreListener } from './core-layer/ai-listener.js';
+import { registerAllCircuits } from './circuits/index.js';
+
+const listener = new CoreListener({
+  chains: {
+    theta_mainnet: { type: 'evm', chainId: 361, rpc: '...' },
+    bittensor:     { type: 'evm', chainId: 964, rpc: '...' },
+  },
+});
+
+// Register all 11 circuits (3 priority + 8 expansion)
+const {
+  taoHandler, a2aHandler, gpuHandler, zkmlHandler, akashHandler,
+  vaultsHandler, roboticsHandler, dataHubsHandler, yieldHandler, nearHandler, solanaHandler,
+} = registerAllCircuits(listener, {
+    tao: { contractAddress: '0x...' },
+    a2a: { contractAddress: '0x...' },
+    gpu: { contractAddress: '0x...', edgeCloudEndpoint: 'http://localhost:8090' },
+    zkml: { proverEndpoint: 'http://localhost:9090/prove' },
+    akash: { akashRpc: 'https://rpc.akash.network:443' },
+    vaults: { rebalanceInterval: 300000 },
+    robotics: { simEngineEndpoint: 'http://localhost:9100/simulate' },
+    dataHubs: {},
+    yield: { rebalanceInterval: 600000 },
+    near: {},
+    solana: { wormholeEndpoint: 'https://wormhole-v2-mainnet-api.certus.one' },
+  });
+
+await listener.start();
+```
+
+### Building a Custom Circuit
+
+Any project can build a circuit that plugs into XFuel's Core Layer:
+
+```javascript
+import { registerCustomCircuit } from './circuits/index.js';
+
+// 1. Define your handler
+const myHandler = {
+  async onIntent(intent, ctx) {
+    console.log('My circuit received:', intent.type);
+    // Your domain-specific logic here
+    // Call ctx.generateProof() when ready to settle
+  },
+  async onProofReady(proof, request) {
+    console.log('Settlement proof ready:', proof.nullifier);
+  },
+};
+
+// 2. Register with CoreListener
+registerCustomCircuit(listener, 'my-custom-circuit', myHandler,
+  ['theta_mainnet'],           // chains to listen on
+  ['inference_request']        // intent types to receive
+);
+```
+
+### File Structure
+
+```
+circuits/
+├── index.js                          # Central registry — registerAllCircuits()
+├── tao-evm/                          # Priority: AI Marketplace Circuit
+│   ├── TAOCircuit.sol                # Solidity: Hyperlane bridge, AMM, oracle
+│   ├── tao-handler.js                # Off-chain handler for ai-listener
+│   ├── interfaces/
+│   │   ├── IHyperlaneMailbox.sol      # Hyperlane messaging interface
+│   │   └── IChainlinkOracle.sol       # Chainlink price feed interface
+│   └── test/
+│       └── TAOCircuit.test.cjs        # 15 Hardhat tests
+├── a2a/                              # Priority: Agent Communication Circuit
+│   ├── A2ACircuit.sol                # Solidity: ZK agents, bids, channels
+│   ├── a2a-handler.js                # Off-chain handler for ai-listener
+│   └── test/
+│       └── A2ACircuit.test.cjs        # 15 Hardhat tests
+├── theta-gpu/                        # Priority: Edge Compute Circuit
+│   ├── ThetaGPUCircuit.sol           # Solidity: EdgeCloud, models, providers
+│   ├── gpu-handler.js                # Off-chain handler for ai-listener
+│   └── test/
+│       └── ThetaGPUCircuit.test.cjs   # 15 Hardhat tests
+├── zkml/                             # Expansion: Private ML Inference
+│   ├── ZKMLCircuit.sol               # Solidity: private models, SP1 proofs
+│   ├── zkml-handler.js               # Off-chain handler for ai-listener
+│   └── test/
+│       └── ZKMLCircuit.test.cjs       # 15 Hardhat tests
+├── akash/                            # Expansion: DePIN GPU Leasing
+│   ├── AkashCircuit.sol              # Solidity: reverse auction, leases
+│   ├── akash-handler.js              # Off-chain handler for ai-listener
+│   └── test/
+│       └── AkashCircuit.test.cjs      # 15 Hardhat tests
+├── autonomous-vaults/                # Further Expansion: AI Vaults
+│   ├── AutonomousVaults.sol          # Solidity: tokenized yield, ZK rebalance
+│   ├── vaults-handler.js             # Off-chain handler for ai-listener
+│   └── test/
+│       └── AutonomousVaults.test.cjs  # 15 Hardhat tests
+├── agent-robotics/                   # Further Expansion: Sim-to-Real Robotics
+│   ├── AgentRobotics.sol             # Solidity: trajectories, safety certs
+│   ├── robotics-handler.js           # Off-chain handler for ai-listener
+│   └── test/
+│       └── AgentRobotics.test.cjs     # 15 Hardhat tests
+├── data-hubs/                        # Final Expansion: Decentralized Data Ownership
+│   ├── DataHubs.sol                  # Solidity: data DAOs, ZK provenance, access grants
+│   ├── datahubs-handler.js           # Off-chain handler for ai-listener
+│   └── test/
+│       └── DataHubs.test.cjs          # 15 Hardhat tests
+├── yield-optimization/               # Final Expansion: Generalized Yield
+│   ├── YieldCircuit.sol              # Solidity: multi-pool rebalancing, CL-aware
+│   ├── yield-handler.js              # Off-chain handler for ai-listener
+│   └── test/
+│       └── YieldCircuit.test.cjs      # 15 Hardhat tests
+├── near-agents/                      # Expansion: Autonomous AI Agents (NEAR)
+│   ├── NearAgents.sol                # Solidity: intents, bidding, ZK settlement
+│   ├── near-handler.js               # Off-chain handler for ai-listener
+│   └── test/
+│       └── NearAgents.test.cjs        # 15+ Hardhat tests
+├── solana-ai-bridge/                 # Expansion: Solana AI Powerhouses Bridge
+│   ├── SolanaAIBridge.sol            # Solidity: Wormhole bridge, provider registry, ZK settlement
+│   ├── solana-handler.js             # Off-chain handler for ai-listener
+│   └── test/
+│       └── SolanaAIBridge.test.cjs    # 14 Hardhat tests
+├── filecoin-storage/                 # Expansion #12: Decentralized Storage
+│   ├── FilecoinStorage.sol           # Solidity: storage deals, ZK proofs, provider registry
+│   ├── filecoin-handler.js           # Off-chain handler for ai-listener
+│   └── test/
+│       └── FilecoinStorage.test.cjs   # 14 Hardhat tests
+├── energy-grid/                      # Expansion #13: DePIN Energy
+│   ├── EnergyGrid.sol                # Solidity: energy nodes, attestation, P2P trading, carbon credits
+│   ├── energy-handler.js             # Off-chain handler for ai-listener
+│   └── test/
+│       └── EnergyGrid.test.cjs        # 14 Hardhat tests
+├── mapping-sensor/                   # Expansion #14: DePIN Mapping
+│   ├── MappingSensor.sol             # Solidity: devices, data submission, marketplace, coverage
+│   ├── mapping-handler.js            # Off-chain handler for ai-listener
+│   └── test/
+│       └── MappingSensor.test.cjs     # 15 Hardhat tests
+├── wireless-depin/                   # Expansion #15: DePIN Wireless
+│   ├── WirelessDePIN.sol             # Solidity: hotspots, coverage proofs, data credits
+│   ├── wireless-handler.js           # Off-chain handler for ai-listener
+│   └── test/
+│       └── WirelessDePIN.test.cjs    # 14 Hardhat tests
+└── uplink/                           # Expansion #16: WiFi Bandwidth Sharing
+    ├── UplinkCircuit.sol             # Solidity: routers, sessions, bandwidth proofs, quality EMA
+    ├── uplink-handler.js             # Off-chain handler for ai-listener
+    └── test/
+        └── UplinkCircuit.test.cjs    # 15 Hardhat tests
+
+believer/
+├── BelieverRound.sol                 # Vesting contract: cliff + linear vest + refund
+├── activation-script.cjs             # End-to-end deploy + smoke test + campaign generator
+├── launch-round.cjs                  # Believer Round launch (manifest-aware + campaign copy)
+├── monitoring-script.cjs             # Believer Round monitor (contract health + grants + webhook)
+└── test/
+    └── BelieverRound.test.cjs        # 16 Hardhat tests (commitment, TGE, vesting, refund)
+
+deploy/
+├── deploy-core.cjs                   # Deploy Core Layer (RevenueSplitter + ZKVerifier)
+├── deploy-circuits.cjs               # Deploy all circuits + grant roles
+├── deploy-full.cjs                   # One-shot full stack deployment
+├── testnet.cjs                       # Testnet deployment v2 (12 circuits + BelieverRound + role verification)
+├── mainnet.cjs                       # Mainnet deployment v2 (15 contracts + monitoring)
+└── manifests/                        # Timestamped JSON deployment manifests
+
+launch/
+└── public-launch.cjs                 # Legacy orchestrated launch (7 phases, 15 contracts)
+
+activation/
+├── public-activation.cjs             # Public testnet activation (16 circuits)
+└── mainnet-activation.cjs            # Mainnet activation (9 phases, 20 contracts, 16 circuits)
+
+grant/
+├── submission-script.cjs             # Auto-fill grant apps from deployment manifests
+└── submissions/                      # Generated JSON + markdown per program
+
+polish/
+└── gas-opts.cjs                      # Gas optimization profiler (all 15 contracts)
+
+dashboard/
+└── index.html                        # Live dashboard: contracts, events, listener, gas profiles
+
+test/
+├── integration/
+│   └── MultiCircuit.integration.test.cjs  # 20 E2E integration tests
+├── optimizations/
+│   ├── GasProfile.system.test.cjs    # 10 gas profiling tests
+│   └── Deploy.system.test.cjs        # 10 deployment validation tests
+└── hardening/
+    └── LoadChaos.hardening.test.cjs  # 20 load/chaos stress tests
+
+community/
+├── bot.cjs                           # Discord bot: veXF simulator, circuit info, fee calc
+├── ama-script.cjs                    # X AMA + Discord event content generator
+├── x-campaign-template.md            # X/Twitter campaign templates (5 campaigns)
+└── testnet-live-announcement.md      # Testnet launch announcement copy
+
+iteration/
+├── add-circuit.cjs                   # Circuit onboarding + scaffold + validation (16/16)
+└── synergy-script.cjs                # Cross-circuit DePIN synergy analyzer + simulation
+
+funding/
+└── monitoring-bot.cjs                # Grant tracking + milestone management + webhooks
+
+governance/
+├── proposal-script.cjs               # veXF proposal creation + simulation + vote
+└── proposals/                        # Generated proposal JSON files
+
+grant-templates/
+├── solana-grant.md                   # Solana Foundation grant template ($150-250K)
+├── tao-grant.md                      # OpenTensor/Bittensor grant template ($150-200K)
+├── general-grant.md                  # General ecosystem grant template
+└── grant-tracker.cjs                 # Submission tracker + milestone reporting
+```
+
+### Testing Suite Guide
+
+XFuel Protocol has **315+ total tests** — 235 unit tests across 16 circuits (including 14 FilecoinStorage + 14 EnergyGrid + 15 MappingSensor + 14 WirelessDePIN + 14 UplinkCircuit tests) plus 16 BelieverRound vesting tests plus 20 multi-circuit end-to-end integration tests plus 20 system tests (10 gas profiling + 10 deployment validation) plus 20 load/chaos hardening tests. Tests cover deployment, lifecycle flows, edge cases, fee math, multi-user stress, cross-circuit isolation, access control, gas optimization, full-stack deployment, system hardening under 500+ concurrent operations, on-chain vesting with cliff/linear release/refund protection, decentralized storage deal lifecycle, DePIN energy attestation/trading/carbon credits, geospatial mapping/sensor data marketplace, wireless coverage proof/data credit settlement, and WiFi bandwidth session proofs with quality EMA.
+
+**Run all tests:**
+
+```bash
+# Compile everything first
+npx hardhat compile
+
+# ─── Individual Circuit Tests (15 each) ────────────────────────────
+npx hardhat test circuits/tao-evm/test/TAOCircuit.test.cjs              # AI Marketplace
+npx hardhat test circuits/a2a/test/A2ACircuit.test.cjs                   # Agent Comms
+npx hardhat test circuits/theta-gpu/test/ThetaGPUCircuit.test.cjs       # Edge Compute
+npx hardhat test circuits/zkml/test/ZKMLCircuit.test.cjs                 # zkML Inference
+npx hardhat test circuits/akash/test/AkashCircuit.test.cjs               # DePIN Compute
+npx hardhat test circuits/autonomous-vaults/test/AutonomousVaults.test.cjs  # AI Vaults
+npx hardhat test circuits/agent-robotics/test/AgentRobotics.test.cjs     # Agent Robotics
+npx hardhat test circuits/data-hubs/test/DataHubs.test.cjs               # Data Hubs
+npx hardhat test circuits/yield-optimization/test/YieldCircuit.test.cjs  # Yield Optimization
+npx hardhat test circuits/near-agents/test/NearAgents.test.cjs           # NEAR Agents
+npx hardhat test circuits/solana-ai-bridge/test/SolanaAIBridge.test.cjs # Solana AI Bridge
+npx hardhat test circuits/filecoin-storage/test/FilecoinStorage.test.cjs # Filecoin Storage (14 tests)
+npx hardhat test circuits/energy-grid/test/EnergyGrid.test.cjs         # Energy Grid (14 tests)
+npx hardhat test circuits/mapping-sensor/test/MappingSensor.test.cjs   # Mapping Sensor (15 tests)
+npx hardhat test circuits/wireless-depin/test/WirelessDePIN.test.cjs   # Wireless DePIN (14 tests)
+npx hardhat test circuits/uplink/test/UplinkCircuit.test.cjs           # Uplink (15 tests)
+
+# ─── Multi-Circuit Integration Tests (20 E2E) ──────────────────────
+npx hardhat test test/integration/MultiCircuit.integration.test.cjs
+
+# ─── System Tests (20 total) ────────────────────────────────────────
+npx hardhat test test/optimizations/GasProfile.system.test.cjs    # Gas profiling (10)
+npx hardhat test test/optimizations/Deploy.system.test.cjs        # Deployment (10)
+
+# ─── Hardening Tests (20 load/chaos) ────────────────────────────────
+npx hardhat test test/hardening/LoadChaos.hardening.test.cjs      # Load/chaos (20)
+
+# ─── Believer Round Tests (16) ─────────────────────────────────────
+npx hardhat test believer/test/BelieverRound.test.cjs             # Vesting + refund
+
+# ─── Core Layer Tests ───────────────────────────────────────────────
+npx hardhat test core-layer/test/ZKVerifierSP1.test.cjs
+npx hardhat test core-layer/test/SP1ProofHooks.test.cjs
+
+# ─── JS Listener Tests ─────────────────────────────────────────────
+cd core-layer && npm test
+
+# ─── Run ALL Hardhat tests at once ─────────────────────────────────
+npx hardhat test
+```
+
+**Unit test coverage matrix (11 circuits):**
+
+| Category | TAO | A2A | GPU | zkML | Akash | Vaults | Robotics | DataHubs | Yield | NEAR | Solana |
+|----------|-----|-----|-----|------|-------|--------|----------|----------|-------|------|--------|
+| Deployment/Identity | 2 | 2 | 1 | 2 | 2 | 2 | 2 | 1 | 1 | 2 | 2 |
+| Core Lifecycle | 4 | 4 | 6 | 4 | 3 | 4 | 4 | 5 | 5 | 4 | 3 |
+| Settlement/Proof | 3 | 2 | 4 | 4 | 4 | 4 | 4 | 3 | 3 | 4 | 4 |
+| Fee Math | 2 | 1 | 1 | 2 | 1 | 2 | 1 | 2 | 2 | 1 | 1 |
+| Edge Cases | 2 | 2 | 1 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
+| Stress/Multi-user | 2 | 4 | 2 | 1 | 3 | 1 | 2 | 2 | 2 | 2 | 2 |
+| **Total** | **15** | **15** | **15** | **15** | **15** | **15** | **15** | **15** | **15** | **15** | **14** |
+
+**Integration test coverage (20 E2E tests across all 11 circuits):**
+
+| # | Category | Tests | Description |
+|---|----------|-------|-------------|
+| 1-2 | Deployment verification | 2 | All 7 circuits deploy with unique IDs; all share CoreRevenueSplitter |
+| 3-5 | Fee aggregation | 3 | TAO+A2A, GPU+zkML+Akash, Vaults+Robotics fees all reach splitter |
+| 6-8 | Circuit isolation | 3 | State independence: task counts, agent counts, strategy counts |
+| 9 | Nullifier independence | 1 | Same nullifier valid across different circuits |
+| 10-13 | Cross-circuit pipelines | 4 | TAO→GPU, A2A→bid→GPU, Vault full lifecycle, Robotics full lifecycle |
+| 14-15 | Concurrent stress | 2 | 5 users across 3 circuits; 10 deposits across 2 vaults |
+| 16-17 | Pause isolation | 2 | Pausing one circuit does not affect others |
+| 18 | Global accounting | 1 | Splitter balance matches sum of all circuit fees |
+| 19-20 | Access control isolation | 2 | Roles on one circuit don't grant access to others |
+
+**System Optimization / Gas Profiling (10 tests):**
+
+| # | Category | Tests | Target | Description |
+|---|----------|-------|--------|-------------|
+| 01 | Settlement gas | 1 | <100K | TAO settleTask verified at ~68K gas |
+| 02-03 | Rebalance gas | 2 | <350K / <300K | Vault rebalance ~292K; Yield rebalance ~226K |
+| 04-06 | Deposit/submit gas | 3 | <350K each | TAO submit, Vault deposit, Yield openPosition |
+| 07 | Fee forwarding overhead | 1 | <300K total | Access + fee forwarding combined |
+| 08-09 | Linear scaling | 2 | <1.2x ratio | 5 consecutive ops scale linearly |
+| 10 | Deployment costs | 1 | <3M each | All 11 circuits deploy under 3M gas |
+
+**Load/Chaos Hardening Tests (20 tests):**
+
+| # | Category | Tests | Description |
+|---|----------|-------|-------------|
+| 01-02 | TAO high-volume | 2 | 50 tasks in rapid succession; gas stability across 10 settlements |
+| 03-04 | Yield load | 2 | 30 parallel positions; 20 rebalances with unique nullifiers |
+| 05-06 | NEAR Agents load | 2 | 20 agents in parallel; 15 intents submitted + cancelled |
+| 07 | Solana pipeline | 1 | 20 tasks through full submit→bridge→settle pipeline |
+| 08-09 | Cross-circuit concurrent | 2 | 10 ops each on TAO+Yield+NEAR; multi-circuit fee aggregation |
+| 10-12 | Chaos: pause/unpause | 3 | Mid-stream pause blocks; unpause resumes; isolation verified |
+| 13-14 | Nullifier collision | 2 | 100 unique nullifiers; duplicate rejection at scale |
+| 15-16 | Fee accounting | 2 | 20-op fee totals match; 25 DataHubs contributions validated |
+| 17-18 | Gas stability | 2 | TAO settleTask stays <100K; Solana settleTask <400K |
+| 19-20 | Full stress pipeline | 2 | 5 users × 5 circuits × 2 ops = 50 ops; splitter consistency |
+
+**Writing tests for custom circuits:**
+
+Tests follow a common pattern: deploy `CoreRevenueSplitter` as a shared fee sink, deploy the circuit with `zkVerifier = address(0)` (mock mode), grant roles, then test each lifecycle stage. See any existing test file for the template.
+
+---
+
+### Optimization Guide
+
+XFuel Protocol targets gas-efficient operations across all 11 circuits. The `test/optimizations/GasProfile.system.test.cjs` and `test/hardening/LoadChaos.hardening.test.cjs` test suites enforce measurable gas budgets.
+
+**Key gas targets and measured results (Hardhat, optimizer 200 runs, viaIR):**
+
+| Operation | Circuit | Gas Target | Measured Gas | Status |
+|-----------|---------|-----------|-------------|--------|
+| `settleTask` | TAO | <100K | ~68K | Pass |
+| `rebalance` | Vaults | <350K | ~292K | Pass |
+| `rebalancePosition` | Yield | <300K | ~226K | Pass |
+| `submitTask` | TAO | <350K | ~303K | Pass |
+| `deposit` | Vaults | <350K | ~296K | Pass |
+| `openPosition` | Yield | <350K | ~318K | Pass |
+| `purchaseAccess` | DataHubs | <300K | ~297K | Pass |
+| `settleTask` | Solana | <400K | ~327K | Pass |
+| `bridgeTask` | Solana | <150K | ~128K | Pass |
+| `registerProvider` | Solana | <200K | ~194K | Pass |
+| Deploy any circuit | All 11 | <3M | 2.1M–2.9M | Pass |
+
+**Optimization techniques applied:**
+- **Storage packing**: Structs use `uint64` for timestamps, `uint16` for fee BPS, `bytes32` for IDs
+- **Minimal storage writes**: Critical path operations minimize SSTORE count
+- **Fee forwarding**: Single `call` to `revenueSplitter.depositFee()` with fallback
+- **Optimizer + viaIR**: Solidity optimizer at 200 runs with IR pipeline enabled
+- **Independent storage**: Each circuit uses isolated mappings — no cross-circuit reads
+
+**Running gas profiling:**
+
+```bash
+# Run the full gas profiling suite
+npx hardhat test test/optimizations/GasProfile.system.test.cjs
+
+# Enable gas reporter for detailed method-level breakdown
+REPORT_GAS=true npx hardhat test
+```
+
+---
+
+### Deployment Guide
+
+XFuel Protocol includes Hardhat deployment scripts for testnet and mainnet deployments.
+
+**Prerequisites:**
+1. Configure `.env.local` with deployer keys and recipient addresses
+2. Ensure sufficient balance on target network
+
+**Quick deploy commands:**
+
+```bash
+# ─── Local test deployment ───────────────────────────────────────────
+npx hardhat run deploy/deploy-full.cjs --network hardhat
+
+# ─── Theta Testnet ───────────────────────────────────────────────────
+npx hardhat run deploy/deploy-core.cjs --network theta-testnet
+npx hardhat run deploy/deploy-circuits.cjs --network theta-testnet
+
+# ─── Testnet deployment (Theta + all 11 circuits) ───────────────────
+npx hardhat run deploy/testnet.cjs --network theta-testnet
+
+# ─── Theta Mainnet (PRODUCTION — full safety checks) ────────────────
+npx hardhat run deploy/mainnet.cjs --network theta-mainnet
+
+# ─── Theta Mainnet (simple — no admin transfer) ─────────────────────
+npx hardhat run deploy/deploy-full.cjs --network theta-mainnet
+```
+
+**Deployment scripts:**
+
+| Script | Description |
+|--------|------------|
+| `deploy/deploy-core.cjs` | Deploy Core Layer: CoreRevenueSplitter + ZKVerifierSP1 |
+| `deploy/deploy-circuits.cjs` | Deploy all 11 circuits + auto-grant CIRCUIT_ROLE |
+| `deploy/deploy-full.cjs` | One-shot: Core + all circuits + role configuration + manifest |
+| `deploy/testnet.cjs` | Testnet deployment: Core + 11 circuits + roles + smoke test |
+| `deploy/mainnet.cjs` | **Production mainnet**: Core + 11 circuits + admin transfer + smoke tests + manifest |
+
+**Required `.env.local` variables:**
+
+```bash
+DEPLOYER_PRIVATE_KEY=0x...
+ADMIN_ADDRESS=0x...
+BBB_ADDRESS=0x...
+LP_ADDRESS=0x...
+STAKER_ADDRESS=0x...
+TREASURY_ADDRESS=0x...
+STAKE_POOL_ADDRESS=0x...
+SP1_GATEWAY_ADDRESS=0x...    # Optional: SP1 Verifier Gateway
+XF_TOKEN_ADDRESS=0x...       # Optional: XF token for veXFGovernance
+```
+
+**Post-deployment verification:**
+
+```bash
+# Run deployment validation tests
+npx hardhat test test/optimizations/Deploy.system.test.cjs
+```
+
+**Mainnet deployment features:**
+- Pre-flight checks (50+ TFUEL balance, chain ID 361 verification)
+- veXFGovernance deployment alongside Core Layer
+- Admin transfer: deployer → multisig (DEFAULT_ADMIN_ROLE)
+- Automated smoke tests on all 11 circuits
+- JSON manifest saved to `deploy/manifests/mainnet-{timestamp}.json`
+
+**Post-deployment checklist:**
+1. Verify all contracts on [Theta Explorer](https://explorer.thetatoken.org)
+2. Confirm multisig admin has DEFAULT_ADMIN_ROLE
+3. Configure RELAYER_ROLE / SOLVER_ROLE on each circuit
+4. Set production SP1 Gateway address
+5. Announce deployment to community
+
+---
+
+### Community Tools
+
+XFuel Protocol includes community engagement tools in the `community/` folder.
+
+**Discord Bot (`community/bot.cjs`):**
+
+Interactive bot with veXF governance simulation, circuit info, and fee calculators:
+
+```bash
+# Run in simulation mode (no Discord token needed)
+node community/bot.cjs
+
+# Run live Discord bot
+DISCORD_TOKEN=your_token DISCORD_CLIENT_ID=your_id node community/bot.cjs
+```
+
+| Command | Description |
+|---------|-------------|
+| `/vexf simulate amount:10000 days:1095` | Lock simulation → 30,000 veXF, 3x multiplier |
+| `/vexf apy amount:50000 days:730 revenue:25000` | Estimated APY at $25K/day protocol revenue |
+| `/vexf tiers` | All lock tiers: 6mo (1x), 1yr (1x), 2yr (2x), 3yr (3x) |
+| `/circuit info name:solana-ai-bridge` | Circuit details, gas, fees |
+| `/circuit list` | All 11 circuits with ecosystems |
+| `/fee calculate amount:100000` | Fee split: $30K BBB, $30K LP, $25K stakers, $15K treasury |
+| `/protocol stats` | Protocol overview |
+
+**X Campaign Templates (`community/x-campaign-template.md`):**
+
+5 ready-to-use campaign templates: Mainnet Announcement (8-tweet thread), Grant Win, Community Milestone, Weekly Dev Update, veXF Governance Launch.
+
+---
+
+### Believer Round (On-Chain Vesting)
+
+The Believer Round is a community-first micro-commitment funding mechanism powered by `BelieverRound.sol` — a Solidity smart contract with cliff + linear vesting, anti-whale caps, and on-chain refund protection.
+
+**Key Features:**
+- **Commitment phase**: TFUEL/ETH micro-commitments with per-wallet caps
+- **TGE trigger**: Admin deposits XF tokens, vesting clock starts
+- **Cliff**: 90 days — no tokens claimable
+- **Linear vesting**: 365 days — ~8.33% unlocked per month
+- **Refund safety**: If TGE misses 180-day deadline, full refund guaranteed
+
+```bash
+# Run BelieverRound tests (16 tests)
+npx hardhat test believer/test/BelieverRound.test.cjs
+
+# Deploy (included in mainnet deploy script)
+npx hardhat run deploy/mainnet.cjs --network theta-mainnet
+```
+
+| Operation | Gas |
+|-----------|-----|
+| commit() | ~45K – 123K |
+| triggerTGE() | ~117K |
+| claim() | ~63K – 139K |
+| requestRefund() | ~44K |
+
+See full details: **[believer-guide.md](believer-guide.md)** (execution checklist, smart contract flow, tier structure)
+
+---
+
+### Mainnet Monitoring
+
+The enhanced mainnet script (`deploy/mainnet.cjs` v2) includes post-deploy health checks and optional continuous monitoring via ThetaScan.io API integration.
+
+```bash
+# Standard deployment (includes health checks)
+npx hardhat run deploy/mainnet.cjs --network theta-mainnet
+
+# Deployment with continuous monitoring
+ENABLE_MONITORING=true MONITOR_INTERVAL_MS=30000 npx hardhat run deploy/mainnet.cjs --network theta-mainnet
+```
+
+**Health check features:**
+- On-chain code verification for all 14 contracts
+- Balance reads for deployer and contract addresses
+- ThetaScan API cross-reference (contract + balance endpoints)
+- JSON manifest updated with health check results
+- Optional continuous monitoring loop at configurable intervals
+
+---
+
+### Public Activation Guide
+
+Deploy and monitor XFuel Protocol on Theta Testnet (chain ID 365).
+
+**Quick Start (3 commands):**
+
+```bash
+# 1. Full orchestrated activation (Core + 13 circuits + BelieverRound + smoke tests + campaign)
+#    Pre-flight: checks deployer balance, chain ID 365, compiler version
+#    Outputs: manifest JSON to deploy/manifests/activation-<timestamp>.json
+npx hardhat run activation/public-activation.cjs --network theta-testnet
+
+# Alternative: deploy-only (no campaign output)
+npx hardhat run deploy/testnet.cjs --network theta-testnet
+
+# 2. Open the live dashboard — load the manifest and start the event listener
+#    Dashboard URL: file:///path/to/xfuel-protocol/dashboard/index.html
+#    Or serve it: npx serve dashboard -l 3000
+start dashboard/index.html          # Windows
+# open dashboard/index.html         # macOS
+# xdg-open dashboard/index.html     # Linux
+
+# 3. Launch Believer Round on testnet
+npx hardhat run believer/launch-round.cjs --network theta-testnet
+```
+
+**Local simulation (no TFUEL required):**
+
+```bash
+# Deploy to Hardhat local network (instant, 10K ETH balance)
+npx hardhat run activation/public-activation.cjs
+# → Manifest saved to deploy/manifests/activation-*.json
+# → Load manifest into dashboard to verify all 16 contracts
+```
+
+**Theta Testnet config:**
+- **RPC**: `https://eth-rpc-api-testnet.thetatoken.org/rpc`
+- **Chain ID**: 365
+- **Faucet**: thirdweb (0.01 TFUEL / 24h)
+- **Explorer**: `https://testnet-explorer.thetatoken.org`
+- **Min Balance**: 0.5 TFUEL (checked by pre-flight)
+
+**Activation phases (public-activation.cjs):**
+1. **Pre-flight** — balance check, chain ID verification
+2. **Core Layer** — CoreRevenueSplitter + ZKVerifierSP1
+3. **Circuits (15)** — all circuits incl. EnergyGrid + MappingSensor + WirelessDePIN, with gas tracking
+4. **BelieverRound** — on-chain vesting contract
+5. **Role Grants** — CIRCUIT_ROLE assigned + verified (14/14)
+6. **Smoke Tests** — 17 tests: CIRCUIT_ID reads + splitter shares + BelieverRound + ZKVerifier
+7. **Dashboard Manifest** — JSON output for dashboard loading
+8. **Campaign Output** — ready-to-post X/Twitter + Discord announcement copy
+
+---
+
+### Mainnet Activation Guide (v2.1)
+
+Deploy XFuel Protocol to Theta Mainnet (chain ID 361) with production-grade safety.
+
+**Quick Start:**
+
+```bash
+# Full mainnet activation (9 phases, 20 contracts, admin transfer, health checks)
+npx hardhat run activation/mainnet-activation.cjs --network theta-mainnet
+
+# With continuous monitoring
+ENABLE_MONITORING=true npx hardhat run activation/mainnet-activation.cjs --network theta-mainnet
+
+# Local simulation
+npx hardhat run activation/mainnet-activation.cjs
+```
+
+**Required environment variables (.env.local):**
+- `DEPLOYER_PRIVATE_KEY` — funded with >= 50 TFUEL
+- `ADMIN_ADDRESS` — multisig admin (receives DEFAULT_ADMIN_ROLE)
+- `BBB_ADDRESS`, `LP_ADDRESS`, `STAKER_ADDRESS`, `TREASURY_ADDRESS` — fee recipients
+- `SP1_GATEWAY_ADDRESS` — SP1 Verifier Gateway (optional, address(0) for mock)
+- `XF_TOKEN_ADDRESS` — XF ERC-20 (optional, address(0) to skip veXFGovernance)
+
+**Mainnet activation phases:**
+1. **Pre-flight** — balance >= 50 TFUEL, chain ID 361, address validation
+2. **Core Layer** — Splitter + ZKVerifier + optional veXFGovernance
+3. **Circuits (16)** — all 16 modular circuits incl. UplinkCircuit with gas tracking
+4. **BelieverRound** — on-chain vesting contract
+5. **Role Grants** — 16/16 CIRCUIT_ROLE verified
+6. **Admin Transfer** — deployer -> multisig (renounces deployer admin)
+7. **Smoke Tests** — 19/19 (CIRCUIT_ID + splitter + BelieverRound + ZKVerifier)
+8. **Health Checks** — on-chain code verification + ThetaScan API (19/19)
+9. **Manifest** — JSON output + campaign summary
+
+**Believer Round Monitoring (v2.1):**
+
+```bash
+# One-shot status check
+node believer/monitoring-script.cjs
+
+# Continuous polling with rich Discord embeds
+node believer/monitoring-script.cjs --watch --webhook https://discord.com/api/webhooks/...
+
+# Export CSV for spreadsheet analysis
+node believer/monitoring-script.cjs --csv
+
+# From specific manifest
+node believer/monitoring-script.cjs --manifest deploy/manifests/mainnet-*.json
+```
+
+**New monitoring features:**
+- Circuit-level health breakdown (16 circuits individually checked)
+- Discord rich embed webhooks (color-coded: green = all healthy, amber = issues)
+- CSV export for external reporting
+- WirelessDePIN (Helium/XNET) coverage metrics
+- UplinkCircuit (Uplink/Althea) bandwidth session metrics
+
+---
+
+### Governance (veXF)
+
+Create and manage governance proposals:
+
+```bash
+# List all proposal templates
+node governance/proposal-script.cjs --list
+
+# Create circuit allocation vote (first proposal)
+node governance/proposal-script.cjs --create allocation
+
+# Create fee structure change
+node governance/proposal-script.cjs --create fee
+
+# Create treasury spend (audit)
+node governance/proposal-script.cjs --create treasury
+
+# Simulate full governance flow
+node governance/proposal-script.cjs --simulate
+```
+
+**Proposal types:** CircuitPriority (10% quorum), LPAllocation, FeeStructure, TreasurySpend, EmergencyPause (67% supermajority).
+
+**New:** `--create synergy` generates XFP-004: DePIN Synergy Incentive Activation (cross-circuit reward multipliers).
+
+---
+
+### Community Expansion
+
+```bash
+# Generate X AMA content package
+node community/ama-script.cjs --generate ama
+
+# Generate mainnet launch event content
+node community/ama-script.cjs --generate launch
+
+# Show community stats
+node community/ama-script.cjs --stats
+```
+
+---
+
+### Funding Monitor
+
+```bash
+# One-shot funding status
+node funding/monitoring-bot.cjs
+
+# Continuous polling with Discord webhook
+node funding/monitoring-bot.cjs --watch --webhook https://discord.com/api/webhooks/...
+
+# Show milestone tracker
+node funding/monitoring-bot.cjs --milestones
+
+# Generate JSON report
+node funding/monitoring-bot.cjs --report
+```
+
+---
+
+### Circuit Onboarding
+
+```bash
+# List all 16 registered circuits
+node iteration/add-circuit.cjs --list
+
+# Validate all circuits (contract + handler + test = 16/16 PASS)
+node iteration/add-circuit.cjs --validate
+
+# Generate scaffold for a new circuit
+node iteration/add-circuit.cjs --name NewCircuit --id new-circuit
+```
+
+---
+
+### DePIN Synergy
+
+Cross-circuit synergy analyzer for WirelessDePIN + MappingSensor + UplinkCircuit:
+
+```bash
+# Show regional coverage matrix (8 sample regions)
+node iteration/synergy-script.cjs
+
+# Simulate 100 cross-circuit events
+node iteration/synergy-script.cjs --simulate
+
+# Show incentive tier model (FULL/PARTIAL/FRONTIER/DEAD)
+node iteration/synergy-script.cjs --incentives
+
+# Generate JSON synergy report
+node iteration/synergy-script.cjs --report
+```
+
+**Synergy tiers:** FULL (3/3 circuits, 1.0x), PARTIAL (2/3, 1.5x), FRONTIER (1/3, 3.0x), DEAD (0/3, 5.0x).
+
+**Governance:** XFP-004 activates cross-circuit reward multipliers via veXF vote.
+
+---
+
+### Gas Optimization
+
+Run the gas profiler to measure and validate gas budgets:
+
+```bash
+# Run profiler (outputs JSON report)
+npx hardhat run polish/gas-opts.cjs
+
+# View latest report
+ls polish/gas-report-*.json
+```
+
+**Measured gas budgets:**
+
+| Operation | Gas | Target | Status |
+|-----------|-----|--------|--------|
+| TAO submitTask | ~287K | — | Profiled |
+| Solana registerProvider | ~194K | — | Profiled |
+| BelieverRound.commit | ~123K | 130K | PASS |
+| BelieverRound.closeRound | ~74K | — | Profiled |
+| Total deployment (14 contracts) | ~31M | — | Profiled |
+
+---
+
+### Testnet Dashboard
+
+A browser-based monitoring UI at `dashboard/index.html`.
+
+**URL:** `file:///path/to/xfuel-protocol/dashboard/index.html`
+or serve via `npx serve dashboard -l 3000` then visit `http://localhost:3000`.
+
+**Features:**
+- Load deployment manifests (JSON) to see all contract addresses and LIVE/NO CODE status
+- RPC connection with configurable endpoint (defaults to Theta Testnet)
+- **Live Activity feed** — polls `eth_getLogs` every 4s for TaskRouted, ProofVerified, FeeSent events
+- **Event Listener controls** — Start / Stop / one-click Restart button
+- Gas profile visualization with budget bars (deployment + operation)
+- Believer Round status tracking (Open / Closed / TGE)
+- Smoke test pass/fail summary from the deployment manifest
+- System log with timestamped entries (max 200 lines)
+
+**Dashboard workflow:**
+1. Open `dashboard/index.html` in any browser
+2. Set the RPC endpoint (or keep Theta Testnet default)
+3. Click "Manifest" file input and load `deploy/manifests/testnet-*.json`
+4. Click **Start Listener** to begin polling for live events
+5. Use **Restart** to reset the listener if the RPC endpoint changes
+
+---
+
+### Funding & Grant Materials
+
+All 3 grant templates are **submit-ready** with full traction data (315+ tests, 20 contracts, 16 circuits):
+
+| Document | Purpose | Location | Status |
+|----------|---------|----------|--------|
+| Exec Summary | 1-2 page investor overview | `exec-summary.md` | Ready |
+| Pitch Deck | 12-15 slide skeleton | `pitch-deck.md` | Ready |
+| Believer Guide | On-chain vesting + activation + grants | `believer-guide.md` | **Updated** |
+| Solana Grant | Solana Foundation template ($150-250K) | `grant-templates/solana-grant.md` | **Submit-ready** |
+| TAO Grant | OpenTensor template ($150-200K) | `grant-templates/tao-grant.md` | **Submit-ready** |
+| General Grant | Customizable ecosystem template ($50-300K) | `grant-templates/general-grant.md` | **Submit-ready** |
+| Grant Tracker | Submission status + next actions | `grant-templates/grant-tracker.cjs` | **Active** |
+| **Submission Script** | Auto-fill from deployment manifests | `grant/submission-script.cjs` | **NEW** |
+
+```bash
+# Track grant submission status
+node grant-templates/grant-tracker.cjs
+
+# Generate all grant submission packages (JSON + markdown)
+node grant/submission-script.cjs --all
+
+# Generate specific program submission
+node grant/submission-script.cjs --program solana
+node grant/submission-script.cjs --program tao
+node grant/submission-script.cjs --program general
+
+# Show submission status
+node grant/submission-script.cjs --status
+```
+
+---
+
+## Development Setup
 
 ### Prerequisites
 - Node.js 20+ and npm 10+

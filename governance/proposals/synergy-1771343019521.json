@@ -1,0 +1,10 @@
+{
+  "title": "XFP-004: DePIN Synergy Incentive Activation",
+  "type": 2,
+  "typeName": "FeeStructure",
+  "description": "Proposal to activate cross-circuit synergy incentives for the DePIN stack.\n\nThe XFuel DePIN stack consists of three complementary circuits:\n  - WirelessDePIN (#15): LoRaWAN/5G coverage proofs (Helium model)\n  - MappingSensor (#14): Geospatial data marketplace (Hivemapper model)\n  - UplinkCircuit (#16): WiFi bandwidth sharing (Uplink model)\n\nProposed synergy incentive tiers:\n  FULL (3/3 circuits in region):     1.0x base rewards\n  PARTIAL (2/3 circuits in region):  1.5x rewards (incentivize missing layer)\n  FRONTIER (1/3 circuits in region): 3.0x rewards (pioneer bonus)\n  DEAD (0/3 circuits in region):     5.0x rewards (first-mover advantage)\n\nCross-Circuit Bonuses:\n  - MappingSensor data from wireless-covered regions: +10% quality boost\n  - UplinkCircuit sessions in mapped regions: +5% quality EMA boost\n  - WirelessDePIN proofs with router density: +15% reward boost\n\nImplementation phases:\n  Phase 1: Off-chain synergy scoring (iteration/synergy-script.cjs)\n  Phase 2: CoreListener cross-circuit event correlation\n  Phase 3: On-chain SynergyOracle contract\n  Phase 4: Automated reward multiplier in CoreRevenueSplitter\n\nVote YES to activate synergy incentives.\nVote NO to keep circuits independent (no cross-circuit bonuses).",
+  "quorum": "10%",
+  "votingPeriod": "3 days",
+  "created": "2026-02-17T15:43:39.522Z",
+  "circuits": 16
+}

@@ -7,6 +7,11 @@ members = [
     "cosmwasm-contracts/ai-verifier",
     # "sp1-prover/program",  # temporarily disabled - causes edition 2024 conflict
     # "sp1-prover/host",     # temporarily disabled - depends on sp1-prover/program
+
+    # ── Core Layer (ecosystem-agnostic modules) ──────────────────────────
+    "core-layer/wasm/zk-verifier",
+    "core-layer/wasm/revenue-splitter",
+    "core-layer/sp1-hooks",
 ]
 
 resolver = "2"

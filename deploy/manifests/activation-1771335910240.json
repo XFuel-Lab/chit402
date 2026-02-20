@@ -1,0 +1,206 @@
+{
+  "protocol": "XFuel Protocol",
+  "version": "1.95",
+  "network": "hardhat",
+  "chainId": 1337,
+  "rpc": "http://127.0.0.1:8545",
+  "explorer": null,
+  "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "timestamp": "2026-02-17T13:45:09.714Z",
+  "contracts": {
+    "CoreRevenueSplitter": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+    "ZKVerifierSP1": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+    "TAOCircuit": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+    "A2ACircuit": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+    "ThetaGPUCircuit": "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
+    "ZKMLCircuit": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
+    "AkashCircuit": "0x0165878A594ca255338adfa4d48449f69242Eb8F",
+    "AutonomousVaults": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+    "AgentRobotics": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
+    "DataHubs": "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
+    "YieldCircuit": "0x610178dA211FEF7D417bC0e6FeD39F05609AD788",
+    "NearAgents": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e",
+    "SolanaAIBridge": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
+    "FilecoinStorage": "0x0DCd1Bf9A1b36cE34237eEaFef220932846BCD82",
+    "EnergyGrid": "0x9A676e781A523b5d0C0e43731313A708CB607508",
+    "BelieverRound": "0x0B306BF915C4d645ff596e518fAf3F9669b97016"
+  },
+  "gasUsed": {
+    "CoreRevenueSplitter": 1435433,
+    "ZKVerifierSP1": 1497318,
+    "TAOCircuit": 2151151,
+    "A2ACircuit": 2703359,
+    "ThetaGPUCircuit": 2892735,
+    "ZKMLCircuit": 2255204,
+    "AkashCircuit": 2759515,
+    "AutonomousVaults": 2461619,
+    "AgentRobotics": 2829542,
+    "DataHubs": 2291180,
+    "YieldCircuit": 2177173,
+    "NearAgents": 2378288,
+    "SolanaAIBridge": 2104106,
+    "FilecoinStorage": 2246193,
+    "EnergyGrid": 1945574,
+    "BelieverRound": 1390836
+  },
+  "roles": [
+    {
+      "contract": "TAOCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+    },
+    {
+      "contract": "A2ACircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+    },
+    {
+      "contract": "ThetaGPUCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
+    },
+    {
+      "contract": "ZKMLCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
+    },
+    {
+      "contract": "AkashCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x0165878A594ca255338adfa4d48449f69242Eb8F"
+    },
+    {
+      "contract": "AutonomousVaults",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
+    },
+    {
+      "contract": "AgentRobotics",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6"
+    },
+    {
+      "contract": "DataHubs",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318"
+    },
+    {
+      "contract": "YieldCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x610178dA211FEF7D417bC0e6FeD39F05609AD788"
+    },
+    {
+      "contract": "NearAgents",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e"
+    },
+    {
+      "contract": "SolanaAIBridge",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0"
+    },
+    {
+      "contract": "FilecoinStorage",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x0DCd1Bf9A1b36cE34237eEaFef220932846BCD82"
+    },
+    {
+      "contract": "EnergyGrid",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x9A676e781A523b5d0C0e43731313A708CB607508"
+    }
+  ],
+  "smokeTests": {
+    "passed": 15,
+    "failed": 0,
+    "details": [
+      {
+        "name": "TAOCircuit.CIRCUIT_ID",
+        "pass": true,
+        "detail": "0xc7101f45880dc4e8"
+      },
+      {
+        "name": "A2ACircuit.CIRCUIT_ID",
+        "pass": true,
+        "detail": "0x0ec7b782bdb9da01"
+      },
+      {
+        "name": "ThetaGPUCircuit.CIRCUIT_ID",
+        "pass": true,
+        "detail": "0xee4c1304b812936a"
+      },
+      {
+        "name": "ZKMLCircuit.CIRCUIT_ID",
+        "pass": true,
+        "detail": "0x53455e82e8e5774f"
+      },
+      {
+        "name": "AkashCircuit.CIRCUIT_ID",
+        "pass": true,
+        "detail": "0xb37964bd4979f678"
+      },
+      {
+        "name": "AutonomousVaults.CIRCUIT_ID",
+        "pass": true,
+        "detail": "0x3f72cfd98e7c2c35"
+      },
+      {
+        "name": "AgentRobotics.CIRCUIT_ID",
+        "pass": true,
+        "detail": "0x746d309cec11cbb3"
+      },
+      {
+        "name": "DataHubs.CIRCUIT_ID",
+        "pass": true,
+        "detail": "0x6b55e1f46a2fabf0"
+      },
+      {
+        "name": "YieldCircuit.CIRCUIT_ID",
+        "pass": true,
+        "detail": "0x7a87122d605aed7b"
+      },
+      {
+        "name": "NearAgents.CIRCUIT_ID",
+        "pass": true,
+        "detail": "0xcf9c9607b146a6ca"
+      },
+      {
+        "name": "SolanaAIBridge.CIRCUIT_ID",
+        "pass": true,
+        "detail": "0xcc7768b92dcc988f"
+      },
+      {
+        "name": "FilecoinStorage.CIRCUIT_ID",
+        "pass": true,
+        "detail": "0x646e8d9e2beb2f4b"
+      },
+      {
+        "name": "EnergyGrid.CIRCUIT_ID",
+        "pass": true,
+        "detail": "0xcb5614e63aac30da"
+      },
+      {
+        "name": "Splitter.getSplit()",
+        "pass": true,
+        "detail": "3000/3000/2500/1500"
+      },
+      {
+        "name": "BelieverRound.status",
+        "pass": true,
+        "detail": "Open"
+      }
+    ]
+  },
+  "believerRound": {
+    "address": "0x0B306BF915C4d645ff596e518fAf3F9669b97016",
+    "hardCap": "500.0",
+    "maxPerWallet": "5.0",
+    "price": "10000 XF/TFUEL",
+    "cliff": "90d",
+    "vesting": "365d"
+  },
+  "totalGas": 35519226,
+  "totalGasCostTFUEL": "0.142076904",
+  "elapsedMs": 1802
+}

@@ -1,0 +1,28 @@
+{
+  "protocol": "XFuel Protocol",
+  "version": "1.95",
+  "event": "Believer Round Launch",
+  "network": "hardhat",
+  "timestamp": "2026-02-17T13:45:28.295Z",
+  "contract": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+  "explorerUrl": null,
+  "parameters": {
+    "hardCap": "500.0",
+    "maxPerWallet": "5.0",
+    "priceXFPerTFUEL": "10000/1",
+    "cliffDays": 90,
+    "vestingDays": 365,
+    "refundDeadlineDays": 180
+  },
+  "smokeTests": {
+    "passed": 7,
+    "total": 7
+  },
+  "deploymentGas": 1390836,
+  "traction": {
+    "circuits": 13,
+    "contracts": 16,
+    "tests": "270+",
+    "newCircuit": "EnergyGrid (DePIN energy + carbon credits)"
+  }
+}

@@ -85,6 +85,10 @@ target/
 *.dylib
 *.exe
 *.out
+*.pdb
+
+# Embedded repos
+sp1-source/
 
 # ZK Proof files (generated)
 proof_*.json
