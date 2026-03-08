@@ -28,8 +28,8 @@ describe('CoreRevenueSplitter — Branch Coverage', function () {
       await expect(splitter.setBBBWallet(ethers.ZeroAddress)).to.be.reverted;
     });
 
-    it('setLPWallet reverts on address(0)', async function () {
-      await expect(splitter.setLPWallet(ethers.ZeroAddress)).to.be.reverted;
+    it('setGETWallet reverts on address(0)', async function () {
+      await expect(splitter.setGETWallet(ethers.ZeroAddress)).to.be.reverted;
     });
 
     it('setStakerVault reverts on address(0)', async function () {

@@ -168,20 +168,22 @@ describe('Contract Fuzz Tests (Phase 1 Audit Scope)', function () {
         ethers.parseEther('100'),
       ];
 
+      const splitterAddr = await splitter.getAddress();
       for (const amount of amounts) {
-        await user.sendTransaction({ to: await splitter.getAddress(), value: amount });
+        await user.sendTransaction({ to: splitterAddr, value: amount });
 
-        const balBefore = await ethers.provider.getBalance(await splitter.getAddress());
-        expect(balBefore).to.equal(amount);
+        const balBefore = await ethers.provider.getBalance(splitterAddr);
+        expect(balBefore).to.be.gte(amount);
 
         await splitter.distribute();
 
-        const balAfter = await ethers.provider.getBalance(await splitter.getAddress());
-        expect(balAfter).to.equal(0n);
+        // GET sub-split retains 20% of GET (6% of total) as grants in the contract
+        const balAfter = await ethers.provider.getBalance(splitterAddr);
+        expect(balAfter).to.be.lte((balBefore * 7n) / 100n + 1n);
       }
     });
 
-    it('should preserve total distributed == total collected across random amounts', async function () {
+    it('should preserve total distributed >= total collected across random amounts', async function () {
       const splitterAddr = await splitter.getAddress();
 
       for (let i = 0; i < 20; i++) {
@@ -190,8 +192,10 @@ describe('Contract Fuzz Tests (Phase 1 Audit Scope)', function () {
         await splitter.distribute();
       }
 
+      // totalDistributed counts the full contract balance (including accumulated
+      // grants from prior rounds), so it can exceed totalCollected
       const stats = await splitter.getStats();
-      expect(stats.distributed).to.equal(stats.collected);
+      expect(stats.distributed).to.be.gte(stats.collected);
     });
 
     it('should correctly attribute split amounts for random deposits', async function () {
@@ -204,7 +208,7 @@ describe('Contract Fuzz Tests (Phase 1 Audit Scope)', function () {
       }
 
       const stats = await splitter.getStats();
-      const totalParts = stats.bbb + stats.lp + stats.staker + stats.treasury + stats.feeStake;
+      const totalParts = stats.bbb + stats.get_ + stats.staker + stats.treasury + stats.feeStake;
       expect(totalParts).to.equal(stats.distributed);
     });
 
@@ -820,9 +824,9 @@ describe('Contract Fuzz Tests (Phase 1 Audit Scope)', function () {
       const splitterStats = await splitter.getStats();
       const x402Stats = await splitter.getX402Stats();
 
-      // distributed can exceed collected when escrow deposits (not tracked as
-      // collected) are in the balance at distribution time
-      const collectedPlusEscrowed = splitterStats.collected + x402Stats.escrowed;
+      // distributed can exceed collected when escrow deposits and accumulated
+      // grants (retained by GET sub-split) are in the balance at distribution time
+      const collectedPlusEscrowed = splitterStats.collected + x402Stats.escrowed + await splitter.grantPoolBalance();
       expect(collectedPlusEscrowed).to.be.greaterThanOrEqual(splitterStats.distributed);
 
       const verifierStats = await verifier.getStats();
@@ -852,7 +856,7 @@ describe('Contract Fuzz Tests (Phase 1 Audit Scope)', function () {
 
       const postStats = await splitter.getStats();
       expect(postStats.distributed).to.be.greaterThan(0n);
-      expect(postStats.bbb + postStats.lp + postStats.staker + postStats.treasury + postStats.feeStake)
+      expect(postStats.bbb + postStats.get_ + postStats.staker + postStats.treasury + postStats.feeStake)
         .to.equal(postStats.distributed);
     });
 
@@ -875,8 +879,10 @@ describe('Contract Fuzz Tests (Phase 1 Audit Scope)', function () {
       const vStats = await verifier.getStats();
       expect(vStats.verified).to.equal(50n);
 
+      // distributed >= collected because accumulated grants from GET sub-split
+      // re-enter the balance on subsequent distribute() calls
       const sStats = await splitter.getStats();
-      expect(sStats.distributed).to.equal(sStats.collected);
+      expect(sStats.distributed).to.be.gte(sStats.collected);
     });
   });
 });

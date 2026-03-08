@@ -55,7 +55,9 @@ describe('Security Audit Tests', function () {
 
       expect(await splitter.distributionCount()).to.equal(1n);
       expect(await attacker.attackCount()).to.be.gte(1n);
-      expect(await ethers.provider.getBalance(splitterAddr)).to.equal(0n);
+      // GET sub-split retains grants (6% of balance) in the contract
+      const remaining = await ethers.provider.getBalance(splitterAddr);
+      expect(remaining).to.be.lte(ethers.parseEther('0.7'));
     });
 
     it('claimEscrow() blocks reentrancy', async function () {
@@ -187,7 +189,7 @@ describe('Security Audit Tests', function () {
     it('non-admin cannot update recipient wallets', async function () {
       await expect(splitter.connect(user).setBBBWallet(user.address))
         .to.be.reverted;
-      await expect(splitter.connect(user).setLPWallet(user.address))
+      await expect(splitter.connect(user).setGETWallet(user.address))
         .to.be.reverted;
       await expect(splitter.connect(user).setStakerVault(user.address))
         .to.be.reverted;
@@ -310,9 +312,12 @@ describe('Security Audit Tests', function () {
       const stakerAfter = await ethers.provider.getBalance(staker.address);
 
       expect(bbbAfter - bbbBefore).to.equal(ethers.parseEther('300'));
-      expect(lpAfter - lpBefore).to.equal(ethers.parseEther('300'));
+      // GET wallet receives 80% of GET allocation (20% grants retained in contract)
+      expect(lpAfter - lpBefore).to.equal(ethers.parseEther('240'));
       expect(stakerAfter - stakerBefore).to.equal(ethers.parseEther('250'));
-      expect(await ethers.provider.getBalance(splitterAddr)).to.equal(0n);
+      // Grants retention: 20% of GET (30%) = 6% of 1000 = 60 ETH stays in contract
+      const retained = await ethers.provider.getBalance(splitterAddr);
+      expect(retained).to.equal(ethers.parseEther('60'));
     });
 
     it('setSplit rejects sums not equal to 10000', async function () {
@@ -389,20 +394,21 @@ describe('Security Audit Tests', function () {
         .to.be.reverted;
     });
 
-    it('odd distribution amounts leave no stuck dust', async function () {
+    it('odd distribution amounts leave only grants retention', async function () {
       const splitterAddr = await splitter.getAddress();
 
       await user.sendTransaction({ to: splitterAddr, value: 33n });
       await splitter.distribute();
-      expect(await ethers.provider.getBalance(splitterAddr)).to.equal(0n);
+      // GET sub-split retains grants in contract; remaining <= 7% of input + rounding
+      expect(await ethers.provider.getBalance(splitterAddr)).to.be.lte(5n);
 
       await user.sendTransaction({ to: splitterAddr, value: 7n });
       await splitter.distribute();
-      expect(await ethers.provider.getBalance(splitterAddr)).to.equal(0n);
+      expect(await ethers.provider.getBalance(splitterAddr)).to.be.lte(5n);
 
       await user.sendTransaction({ to: splitterAddr, value: 3n });
       await splitter.distribute();
-      expect(await ethers.provider.getBalance(splitterAddr)).to.equal(0n);
+      expect(await ethers.provider.getBalance(splitterAddr)).to.be.lte(5n);
     });
 
     it('zero-address constructor params revert', async function () {
@@ -417,7 +423,7 @@ describe('Security Audit Tests', function () {
 
       await expect(F.deploy(z, b, l, s, t, p)).to.be.revertedWith('ZeroAdmin');
       await expect(F.deploy(a, z, l, s, t, p)).to.be.revertedWith('ZeroBBB');
-      await expect(F.deploy(a, b, z, s, t, p)).to.be.revertedWith('ZeroLP');
+      await expect(F.deploy(a, b, z, s, t, p)).to.be.revertedWith('ZeroGET');
       await expect(F.deploy(a, b, l, z, t, p)).to.be.revertedWith('ZeroStaker');
       await expect(F.deploy(a, b, l, s, z, p)).to.be.revertedWith('ZeroTreasury');
     });
