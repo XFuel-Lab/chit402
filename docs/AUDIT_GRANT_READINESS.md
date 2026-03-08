@@ -37,7 +37,7 @@ The Jackpot contract (2% staker lottery via Chainlink VRF) has been **removed fr
 | Contract | Path | Lines | Risk |
 |----------|------|-------|------|
 | ZKVerifierSP1 | `contracts/core/ZKVerifierSP1.sol` | 620 | CRITICAL |
-| CoreRevenueSplitter | `contracts/core/CoreRevenueSplitter.sol` | 310 | HIGH |
+| CoreRevenueSplitter | `contracts/core/CoreRevenueSplitter.sol` | 1067 | HIGH |
 | veXFGovernance | `contracts/core/veXFGovernance.sol` | 320 | HIGH |
 | ThetaInferenceCircuit | `contracts/circuits/ThetaInferenceCircuit.sol` | 637 | HIGH |
 | SP1ProofHooks | `contracts/core/SP1ProofHooks.sol` | 181 | MEDIUM |
@@ -52,7 +52,7 @@ The Jackpot contract (2% staker lottery via Chainlink VRF) has been **removed fr
 ### 1.1 Critical Fixes
 
 - [x] **CoreRevenueSplitter: Remove Jackpot routing** — Removed `jackpotAddress` state, `setJackpotAddress()`, `totalJackpot`, and all jackpot logic from `distribute()`. Revenue now flows directly through the 30/30/25/15 split.
-- [x] **CoreRevenueSplitter: Zero-address validation** — Added `require` checks for `_bbbWallet`, `_lpWallet`, `_stakerVault`, `_treasuryWallet` in constructor.
+- [x] **CoreRevenueSplitter: Zero-address validation** — Added `require` checks for `_bbbWallet`, `_getWallet`, `_stakerVault`, `_treasuryWallet` in constructor.
 - [x] **BridgeCircuit: Replace payload length detection** — Replaced fragile `_isProofPayload(body.length >= 160)` with exact-length constant `PROOF_PAYLOAD_LENGTH = 160` and moved the check before `abi.decode` to prevent revert on mismatched layouts.
 - [x] **CosmWasm mock verifier: Mark dev-only** — Added prominent ASCII-box warning to `cosmwasm/zk-verifier/src/contract.rs` that it uses `verify_groth16_mock` (always returns true); production uses `core-layer/wasm/zk-verifier/`
 
@@ -115,13 +115,13 @@ The Jackpot contract (2% staker lottery via Chainlink VRF) has been **removed fr
 
 ### 2.2 Coverage Targets
 
-- [x] **Run `npx hardhat coverage`** — Full project restructure completed: all Solidity under `contracts/` (core/, circuits/, interfaces/, mocks/, legacy/). Coverage reports to `coverage/` (HTML/LCOV). Run: `npm run test:coverage`. 313 tests executing during coverage.
+- [x] **Run `npx hardhat coverage`** — Full project restructure completed: all Solidity under `contracts/` (core/, circuits/, interfaces/, mocks/, legacy/). Coverage reports to `coverage/` (HTML/LCOV). Run: `npm run test:coverage`. 449 tests executing during coverage.
 - [x] **ZKVerifierSP1** — **85.82% stmts, 83.94% line, 96.77% funcs, 71.21% branch**. Expanded tests cover settleRollupBatch, verifyRecursiveProof, setGateway, verifyComposedCall, configureDomain, setStakeCheck, and all view functions.
-- [x] **CoreRevenueSplitter** — **81.34% stmts, 82.11% line**, 63% branch, 72% functions. Exceeds audit threshold.
+- [x] **CoreRevenueSplitter** — **98.22% stmts, 97.59% line, 100% funcs, 86.11% branch**. GET sub-split, grant proposals, boost multiplier, and all view functions fully covered.
 - [x] **veXFGovernance** — **92.86% stmts, 93.22% line**, 67% branch, 79% functions. Exceeds audit threshold.
 - [x] **SP1ProofHooks** — **100% stmts, 100% line, 100% funcs, 100% branch**. Full harness tests via SP1ProofHooksHarness + MockSP1Gateway covering all library functions including verifySP1, verifySP1WithHash, encodeComposedCallPublicValues.
 - [x] **ThetaInferenceCircuit** — **84.72% stmts, 88.70% line**, 50% branch, 72% functions. 36 tests cover service catalog, intent lifecycle, fee mechanics, GPU tiers, presets, access control.
-- [x] **Core folder aggregate** — **86.22% stmts, 85.74% line, 84.04% funcs, 67.19% branch**. All Phase 1 contracts exceed audit thresholds.
+- [x] **Core folder aggregate** — **92.84% stmts, 92.12% line, 95.05% funcs, 77.98% branch**. All Phase 1 contracts exceed audit thresholds.
 
 ### 2.3 Test Infrastructure
 

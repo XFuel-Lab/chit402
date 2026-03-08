@@ -34,7 +34,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  *   Per Osmosis docs: Governance-whitelisted CosmWasm, OSMO native staking
  *
  * Gas targets:
- *   - distribute():    <80K (5 transfers + accounting + events)
+ *   - distribute():    <450K (4 main transfers + GET sub-split + stake routing + accounting + events)
  *   - depositFee():    <30K (receive + tag + event)
  *   - stakeRoute():    <60K (single chain routing)
  */
@@ -342,6 +342,9 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
 
     /**
      * @notice Distribute accumulated fees according to the configured BPS split.
+     *         GET allocation is further sub-split: incentives (with volume boost) and
+     *         LP boost are forwarded to the GET wallet; the grants portion is retained
+     *         in the contract for agent-driven grant proposals.
      *         Fee-to-Stake portion is routed to multi-chain stake pools if configured,
      *         otherwise falls back to the default stakePool address.
      * @dev Intentionally permissionless — anyone can trigger distribution when balance > 0.
@@ -1005,6 +1008,7 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
      * @notice Vote on a grant proposal (veXF-votable — restricted to GOVERNANCE_ROLE).
      * @param proposalIndex Index of the grant proposal.
      * @param support True to vote for, false to vote against.
+     * @dev Restricted to GOVERNANCE_ROLE. Reverts if already voted or proposal not found.
      */
     function voteGrant(uint256 proposalIndex, bool support) external onlyRole(GOVERNANCE_ROLE) {
         GrantProposal storage p = grantProposals[proposalIndex];
@@ -1024,8 +1028,8 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
     /**
      * @notice Execute an approved grant proposal (votesFor > votesAgainst).
      * @param proposalIndex Index of the grant proposal to execute.
-     * @dev Transfers funds from grant pool to recipient. Auto-burns unused grants
-     *      if pool has been idle for 6 months (GRANT_EXPIRY).
+     * @dev Transfers funds from grant pool to recipient. Auto-burns (cancels) the
+     *      proposal if it is older than 6 months (GRANT_EXPIRY) from its creation date.
      */
     function claimGrant(uint256 proposalIndex) external nonReentrant whenNotPaused {
         GrantProposal storage p = grantProposals[proposalIndex];
@@ -1052,6 +1056,8 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
 
     /**
      * @notice Return grant proposal details.
+     * @param proposalIndex Index of the grant proposal.
+     * @return GrantProposal struct with proposal data, votes, and execution status.
      */
     function getGrantProposal(uint256 proposalIndex) external view returns (GrantProposal memory) {
         return grantProposals[proposalIndex];
