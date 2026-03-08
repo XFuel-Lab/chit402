@@ -70,6 +70,55 @@ x402-Style Channel:
 - Per x402 protocol (x402.org): HTTP 402 "Payment Required" enables instant micropayments (~2s). XFuel adapts this for on-chain escrow with ZK proof of delivery.
 - Per SP1 docs: Agent identity commitments (Poseidon hash) can be verified in ZK for privacy-preserving authentication.
 
+#### 14.2.1 A2A Security Enhancements
+
+**Sybil Resistance, Slashing, Swarm Timeouts, and Reputation Priority Routing**
+
+These additive security hardening measures increase A2ACircuit's resilience against Sybil attacks, stuck escrow, and reputation gaming. No existing ABI, events, or nullifiers are modified.
+
+| Enhancement | Mechanism | Default | Gas Impact |
+|-------------|-----------|---------|------------|
+| **Stake-gated registration** | `registerAgent` requires `transferFrom(msg.sender, contract, minStake)` via IERC20 `_stakeToken` | 100 × 10¹⁸ tokens | ~30K gas increase on `registerAgent` |
+| **Agent slashing** | `slashAgent(agent, amount)` — admin/operator confiscates staked tokens → `revenueSplitter` | — | Negligible (ERC-20 transfer) |
+| **Swarm timeout** | `forceDissolveSwarm(swarmId)` — any member dissolves after `swarmTimeoutDuration` elapses | 7 days | Negligible |
+| **Reputation clamp** | All reputation increments clamped to `MAX_REPUTATION` (10 000) | 10 000 cap | None |
+| **Priority routing** | `priorityRouting(agent)` returns `true` if reputation ≥ 5 000 (lower fees / queue priority) | Threshold 5 000 | View (0 gas on-chain) |
+
+```
+Registration (with Sybil resistance):
+  Agent → approve(_stakeToken, minStake)
+  Agent → registerAgent(identity, endpoint, capabilities)
+       └── transferFrom(agent, contract, minStake)  ← NEW (~30K gas increase)
+       └── agentStakes[agent] = minStake
+
+Slashing Flow:
+  Admin/Operator → slashAgent(agent, slashAmount)
+       └── Require slashAmount ≤ agentStakes[agent]
+       └── agentStakes[agent] -= slashAmount
+       └── _stakeToken.transfer(revenueSplitter, slashAmount)
+       └── Emit AgentSlashed(agent, slashAmount, remainingStake)
+
+Swarm Timeout Flow:
+  Any swarm member → forceDissolveSwarm(swarmId)
+       └── Require block.timestamp > formedAt + swarmTimeoutDuration
+       └── phase = Dissolved; refund remaining escrow → coordinator
+       └── Emit SwarmForceDissolve(swarmId, dissolver, refund)
+
+Reputation Clamping:
+  settleBid / settleSwarmAgent → _addReputationClamped(agent, 1)
+       └── if (reputation + delta > 10 000) → reputation = 10 000
+  updateReputation(agent, value) [admin] → clamp to MAX_REPUTATION
+       └── Emit ReputationUpdated(agent, newReputation)
+```
+
+**Constructor change:** A 4th parameter `_stakeTokenAddr` (IERC20 address) is added after `_zkVerifier`. Pass `address(0)` to disable staking (backward-compatible for existing deployments).
+
+**Configurable parameters (admin-only):**
+- `setMinStake(uint256)` — adjust registration stake requirement
+- `setSwarmTimeout(uint256)` — adjust force-dissolve timeout duration
+
+**Security test coverage:** 12 adversarial tests in `test/security/AuditSecurity.test.cjs` Section 4 covering Sybil multi-registration without stake, escrow stuck recovery via timeout, slash edge cases (zero amount, over-stake, unauthorized caller), and reputation clamp/overflow/priority boundaries.
+
 ### 14.3 Edge Compute Circuit (ThetaGPUCircuit)
 
 **Purpose:** GPU inference routing via Theta EdgeCloud with provider staking, model registry, and subchain-ready architecture.
@@ -1846,6 +1895,30 @@ Three strategic partnerships are integrated via the `partner-hooks.js` module:
 | **Chainlink** (docs.chain.link) | CoreRevenueSplitter fee routing | AggregatorV3 price feeds for oracle-verified TVL/LP tracking with staleness protection |
 
 All partner hooks emit `PartnershipIntegrated(partner, circuitId, timestamp)` events and enforce a <50K gas budget per hook execution.
+
+### 29.1.1 Agent Framework Hooks
+
+In addition to the three strategic partner hooks, `partner-hooks.js` exposes pluggable hooks for popular AI-agent frameworks. Each implements the unified `executeHook(params)` interface and enforces reputation-gated priority execution (agent rep >= 5 000 via A2ACircuit `priorityRouting` view).
+
+| Hook Type | Class | Use Case | Input | Output | Compatibility |
+|-----------|-------|----------|-------|--------|---------------|
+| `autogpt` | `AutoGPTHook` | Goal-based autonomous agents that decompose high-level objectives into sub-tasks | `{ intent, agentId, agentReputation, maxIterations }` | Plan + step results with rep score & gas estimate | AutoGPT, BabyAGI, any goal-decomposition agent |
+| `crewai` | `CrewAIHook` | Multi-agent crew orchestration with role-based task delegation | `{ task, crew: [{ role, agentId, reputation }] }` | Role results + merged output hash with avg rep gating | CrewAI, MetaGPT, multi-role agent systems |
+| `langchain` | `LangChainHook` | Chainable LLM workflow pipelines with sequential step execution | `{ intent, chain: ['step1', ...], agentId, agentReputation }` | Sequential step outputs + final hash with rep score | LangChain, LlamaIndex, any chain-of-thought pipeline |
+
+**Reputation gating:** All agent-framework hooks inherit from `BaseAgentFrameworkHook`, which checks agent reputation against `REPUTATION_PRIORITY_THRESHOLD` (5 000). Agents below the threshold still execute but receive `priority: false` and trigger a low-rep warning log. This aligns with A2ACircuit's on-chain `priorityRouting(agent)` view for consistent off-chain / on-chain behavior.
+
+**Hook factory:** The `getHook(hookType, options)` function returns a configured hook instance for any supported type (`'almanak'`, `'succinct'`, `'chainlink'`, `'autogpt'`, `'crewai'`, `'langchain'`).
+
+```
+Agent → getHook('autogpt') → hook.executeHook({ intent, agentReputation })
+         ├── Rep check (>= 5000 → priority: true)
+         ├── Goal decomposition → sub-task plan
+         ├── Step execution → result hashes
+         └── PartnershipIntegrated event emitted
+```
+
+**Gas budget:** All framework hooks target <50K gas equivalent per execution, consistent with the existing partner hook gas budget. The `PartnerHookManager` tracks gas estimates and violations across all hook types.
 
 ### 29.2 Semantic Caching (50% Fee Savings)
 

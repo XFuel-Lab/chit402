@@ -29,7 +29,7 @@ describe('Autonomous Agent Swarms (Phase 5)', function () {
     await verifier.waitForDeployment();
 
     const A2AF = await ethers.getContractFactory('A2ACircuit');
-    a2a = await A2AF.deploy(admin.address, await splitter.getAddress(), ethers.ZeroAddress);
+    a2a = await A2AF.deploy(admin.address, await splitter.getAddress(), ethers.ZeroAddress, ethers.ZeroAddress);
     await a2a.waitForDeployment();
 
     const RELAYER_ROLE = await a2a.RELAYER_ROLE();

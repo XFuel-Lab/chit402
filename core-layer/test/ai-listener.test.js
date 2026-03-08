@@ -10,6 +10,11 @@
 
 import { strict as assert } from 'node:assert';
 import { describe, it, beforeEach } from 'node:test';
+import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import Module from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import {
   CoreListener,
   IntentSolver,
@@ -22,6 +27,27 @@ import {
   SOLANA_EVENT_TYPE,
   DEFAULT_CHAINS,
 } from '../ai-listener.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+function loadCJSModule(relPath) {
+  const absPath = resolve(__dirname, relPath);
+  const src = readFileSync(absPath, 'utf-8');
+  const m = new Module(absPath);
+  m.paths = Module._nodeModulePaths(resolve(__dirname, '../..'));
+  m._compile(src, absPath);
+  return m.exports;
+}
+
+const {
+  AutoGPTHook,
+  CrewAIHook,
+  LangChainHook,
+  getHook,
+  PartnerHookManager,
+  REPUTATION_PRIORITY_THRESHOLD,
+} = loadCJSModule('../../partner-hooks.js');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -958,5 +984,333 @@ describe('Enums', () => {
     assert.ok(Object.isFrozen(SOLANA_EVENT_TYPE));
     assert.equal(SOLANA_EVENT_TYPE.PROOF_VERIFIED, 0x01);
     assert.equal(SOLANA_EVENT_TYPE.BRIDGE_EVENT, 0x02);
+  });
+});
+
+// ─── Queue & Backpressure ─────────────────────────────────────────────────────
+
+describe('Queue & Backpressure', () => {
+  function makeListener(opts = {}) {
+    return new CoreListener({
+      chains: {
+        test_evm: {
+          type: ChainType.EVM,
+          prover: ProverType.EVM_GROTH16,
+          name: 'Test EVM',
+          chainId: 1337,
+          rpc: 'http://localhost:8545',
+          pollInterval: 999999,
+          gasTarget: 270000,
+        },
+      },
+      logger: silentLogger(),
+      ...opts,
+    });
+  }
+
+  it('should reject intents when queue overflows maxPending', async () => {
+    const listener = makeListener();
+    listener.queue.concurrency = 1;
+    listener.maxPending = 5;
+    listener.backpressureThreshold = 4;
+
+    listener.registerCircuit('slow', {
+      onIntent: async () => {
+        await new Promise(r => setTimeout(r, 100));
+      },
+    });
+
+    const results = [];
+    for (let i = 0; i < 20; i++) {
+      results.push(
+        listener._dispatchIntent(
+          { type: AI_INTENT_TYPES.INFERENCE_REQUEST, txHash: `overflow-${i}` },
+          'test_evm'
+        )
+      );
+    }
+    const settled = await Promise.all(results);
+
+    assert.ok(listener.metrics.queueOverflows > 0, 'Should have recorded queue overflows');
+
+    const rejections = settled.filter(
+      r => r && r.type === 'failed' && r.details?.reason?.includes('Queue overflow')
+    );
+    assert.ok(rejections.length > 0, 'At least one intent should be rejected due to overflow');
+  });
+
+  it('should respect concurrency limit', async () => {
+    const listener = makeListener();
+    listener.queue.concurrency = 3;
+
+    let peakConcurrent = 0;
+    let currentConcurrent = 0;
+
+    listener.registerCircuit('tracker', {
+      onIntent: async () => {
+        currentConcurrent++;
+        peakConcurrent = Math.max(peakConcurrent, currentConcurrent);
+        await new Promise(r => setTimeout(r, 50));
+        currentConcurrent--;
+      },
+    });
+
+    const promises = [];
+    for (let i = 0; i < 15; i++) {
+      promises.push(
+        listener._dispatchIntent(
+          { type: AI_INTENT_TYPES.INFERENCE_REQUEST, txHash: `conc-${i}` },
+          'test_evm'
+        )
+      );
+    }
+    await Promise.all(promises);
+
+    assert.ok(
+      peakConcurrent <= 3,
+      `Peak concurrency was ${peakConcurrent}, expected <=3`
+    );
+    assert.ok(peakConcurrent >= 2, `Peak concurrency was ${peakConcurrent}, expected >=2`);
+  });
+
+  it('should emit backpressure warnings when queue exceeds threshold', async () => {
+    const listener = makeListener();
+    listener.maxPending = 100;
+    listener.backpressureThreshold = 3;
+    listener.queue.concurrency = 1;
+
+    listener.registerCircuit('blocker', {
+      onIntent: async () => {
+        await new Promise(r => setTimeout(r, 200));
+      },
+    });
+
+    const warnings = [];
+    const origWarn = console.warn;
+    console.warn = (...args) => {
+      const msg = args.join(' ');
+      if (msg.includes('Backpressure')) warnings.push(msg);
+    };
+
+    const promises = [];
+    for (let i = 0; i < 10; i++) {
+      promises.push(
+        listener._dispatchIntent(
+          { type: AI_INTENT_TYPES.INFERENCE_REQUEST, txHash: `bp-${i}` },
+          'test_evm'
+        )
+      );
+    }
+    await Promise.all(promises);
+    console.warn = origWarn;
+
+    assert.ok(
+      listener.metrics.backpressureWarnings > 0,
+      `Expected backpressure warnings, got ${listener.metrics.backpressureWarnings}`
+    );
+  });
+
+  it('should handle high-volume simulation (500 events)', async () => {
+    const listener = makeListener();
+    listener.maxPending = 1000;
+    listener.queue.concurrency = 50;
+
+    let handledCount = 0;
+    listener.registerCircuit('counter', {
+      onIntent: async () => { handledCount++; },
+    });
+
+    const promises = [];
+    for (let i = 0; i < 500; i++) {
+      promises.push(
+        listener._dispatchIntent(
+          { type: AI_INTENT_TYPES.INFERENCE_REQUEST, txHash: `vol-${i}` },
+          'test_evm'
+        )
+      );
+    }
+    await Promise.all(promises);
+
+    assert.equal(handledCount, 500, `Expected 500 handled, got ${handledCount}`);
+    assert.equal(listener.metrics.queueOverflows, 0, 'No overflows expected with sufficient capacity');
+  });
+
+  it('should track queue stats in getStatus()', async () => {
+    const listener = makeListener();
+    const status = listener.getStatus();
+
+    assert.ok(status.queue, 'Status should include queue stats');
+    assert.equal(typeof status.queue.concurrency, 'number');
+    assert.equal(typeof status.queue.size, 'number');
+    assert.equal(typeof status.queue.pending, 'number');
+    assert.equal(status.queue.maxPending, listener.maxPending);
+    assert.equal(status.queue.backpressureThreshold, listener.backpressureThreshold);
+    assert.equal(status.queue.overflows, 0);
+  });
+});
+
+// ─── Agent Framework Hooks ────────────────────────────────────────────────────
+
+describe('Agent Framework Hooks', () => {
+  const silentOpts = {
+    logger: { info: () => {}, warn: () => {}, error: () => {}, log: () => {}, debug: () => {} },
+  };
+
+  describe('AutoGPTHook execution', () => {
+    it('should execute a goal-based intent and return plan + result with rep score', async () => {
+      const hook = new AutoGPTHook(silentOpts);
+      const result = await hook.executeHook({
+        intent: 'Deploy a smart contract on Theta',
+        agentId: 'agent-alpha',
+        agentReputation: 7500,
+      });
+
+      assert.equal(result.hookType, 'autogpt');
+      assert.equal(result.status, 'completed');
+      assert.equal(result.agentId, 'agent-alpha');
+      assert.ok(result.plan);
+      assert.ok(result.plan.steps.length >= 2);
+      assert.ok(Array.isArray(result.result));
+      assert.equal(result.priority, true, 'Rep 7500 should grant priority');
+      assert.equal(result.repScore, 7500);
+      assert.ok(typeof result.gasEstimate === 'number');
+    });
+  });
+
+  describe('CrewAIHook execution', () => {
+    it('should execute a multi-agent crew task and merge results', async () => {
+      const hook = new CrewAIHook(silentOpts);
+      const result = await hook.executeHook({
+        task: 'Analyze market data and generate report',
+        crew: [
+          { role: 'analyst', agentId: 'a1', reputation: 6000 },
+          { role: 'writer', agentId: 'a2', reputation: 8000 },
+          { role: 'reviewer', agentId: 'a3', reputation: 5500 },
+        ],
+      });
+
+      assert.equal(result.hookType, 'crewai');
+      assert.equal(result.status, 'completed');
+      assert.equal(result.crewSize, 3);
+      assert.equal(result.roleResults.length, 3);
+      assert.ok(result.mergedOutput);
+      assert.equal(result.priority, true, 'Avg rep ~6500 should grant priority');
+      assert.ok(result.avgReputation >= 5000);
+      assert.ok(typeof result.gasEstimate === 'number');
+    });
+  });
+
+  describe('LangChainHook execution', () => {
+    it('should execute a chained LLM workflow and return step results', async () => {
+      const hook = new LangChainHook(silentOpts);
+      const result = await hook.executeHook({
+        intent: 'Summarize governance proposals',
+        chain: ['fetch', 'parse', 'summarize', 'format'],
+        agentId: 'chain-agent',
+        agentReputation: 9000,
+      });
+
+      assert.equal(result.hookType, 'langchain');
+      assert.equal(result.status, 'completed');
+      assert.equal(result.chainLength, 4);
+      assert.equal(result.steps.length, 4);
+      assert.equal(result.steps[0].name, 'fetch');
+      assert.equal(result.steps[3].name, 'format');
+      assert.ok(result.finalOutput);
+      assert.equal(result.priority, true);
+      assert.equal(result.repScore, 9000);
+    });
+  });
+
+  describe('Reputation-gated revert for low-rep agents', () => {
+    it('should deny priority to agents below rep threshold and log warning', async () => {
+      const warnings = [];
+      const warnLogger = {
+        info: () => {},
+        warn: (...args) => { warnings.push(args.join(' ')); },
+        error: () => {},
+        log: () => {},
+        debug: () => {},
+      };
+
+      const autogpt = new AutoGPTHook({ logger: warnLogger });
+      const crewai = new CrewAIHook({ logger: warnLogger });
+      const langchain = new LangChainHook({ logger: warnLogger });
+
+      const r1 = await autogpt.executeHook({
+        intent: 'low rep goal',
+        agentReputation: 1000,
+      });
+      assert.equal(r1.priority, false, 'AutoGPT: rep 1000 should not get priority');
+      assert.equal(r1.repScore, 1000);
+
+      const r2 = await crewai.executeHook({
+        task: 'low rep crew task',
+        crew: [
+          { role: 'worker', agentId: 'w1', reputation: 2000 },
+          { role: 'worker', agentId: 'w2', reputation: 3000 },
+        ],
+      });
+      assert.equal(r2.priority, false, 'CrewAI: avg rep 2500 should not get priority');
+
+      const r3 = await langchain.executeHook({
+        intent: 'low rep chain',
+        agentReputation: 4999,
+      });
+      assert.equal(r3.priority, false, 'LangChain: rep 4999 should not get priority');
+      assert.equal(r3.repScore, 4999);
+
+      assert.ok(warnings.length >= 3, `Expected >=3 low-rep warnings, got ${warnings.length}`);
+      assert.ok(warnings.some(w => w.includes('Low reputation') || w.includes('below threshold')));
+    });
+  });
+
+  describe('Concurrent hook execution', () => {
+    it('should handle multiple hooks running concurrently without interference', async () => {
+      const manager = new PartnerHookManager(silentOpts);
+      const autogpt = new AutoGPTHook(silentOpts);
+      const crewai = new CrewAIHook(silentOpts);
+      const langchain = new LangChainHook(silentOpts);
+
+      manager.registerHook('autogpt', autogpt);
+      manager.registerHook('crewai', crewai);
+      manager.registerHook('langchain', langchain);
+
+      const [r1, r2, r3] = await Promise.all([
+        manager.executeHook('autogpt', 'executeHook', [{
+          intent: 'concurrent goal A',
+          agentReputation: 6000,
+        }]),
+        manager.executeHook('crewai', 'executeHook', [{
+          task: 'concurrent crew task B',
+          crew: [{ role: 'lead', agentId: 'c1', reputation: 7000 }],
+        }]),
+        manager.executeHook('langchain', 'executeHook', [{
+          intent: 'concurrent chain C',
+          chain: ['step1', 'step2'],
+          agentReputation: 8000,
+        }]),
+      ]);
+
+      assert.equal(r1.result.hookType, 'autogpt');
+      assert.equal(r1.result.status, 'completed');
+      assert.equal(r2.result.hookType, 'crewai');
+      assert.equal(r2.result.status, 'completed');
+      assert.equal(r3.result.hookType, 'langchain');
+      assert.equal(r3.result.status, 'completed');
+
+      const status = manager.getIntegrationStatus();
+      assert.equal(status.totalHooks, 3);
+      assert.equal(status.metrics.hookExecutions, 3);
+
+      const hookTypes = getHook('autogpt', silentOpts);
+      assert.ok(hookTypes instanceof AutoGPTHook);
+      const hookLC = getHook('langchain', silentOpts);
+      assert.ok(hookLC instanceof LangChainHook);
+      const hookCR = getHook('crewai', silentOpts);
+      assert.ok(hookCR instanceof CrewAIHook);
+
+      assert.throws(() => getHook('unknown'), /unknown hook type/);
+    });
   });
 });

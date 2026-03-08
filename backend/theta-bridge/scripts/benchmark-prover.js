@@ -42,6 +42,8 @@ const CONC_COUNT = parseInt(getArg('concurrent', '10'));
 const BATCH_SIZE = parseInt(getArg('batch', '1'));
 const ENDPOINT = getArg('endpoint', 'binary');
 const CSV_PATH = getArg('csv', resolve(__dirname, '..', 'benchmark-results.csv'));
+const HIGH_CONC_MODE = CONC_COUNT >= 500;
+const USE_EDGECLOUD = !!(process.env.THETA_EDGECLOUD_API_KEY || process.env.SP1_PROVER_URL?.includes('edgecloud'));
 
 const testDataPath = resolve(__dirname, '..', '..', '..', 'sp1-prover', 'test-data', 'deposit-1tfuel.json');
 const singleDeposit = JSON.parse(readFileSync(testDataPath, 'utf-8'));
@@ -157,6 +159,8 @@ async function runBenchmark() {
   console.log(`  Batch size:   ${BATCH_SIZE} deposit(s) per proof`);
   console.log(`  Sequential:   ${SEQ_COUNT} proofs (${SEQ_COUNT * BATCH_SIZE} deposits)`);
   console.log(`  Concurrent:   ${CONC_COUNT} proofs (${CONC_COUNT * BATCH_SIZE} deposits)`);
+  console.log(`  Stress mode:  ${HIGH_CONC_MODE ? 'YES (waves of 50)' : 'NO (use --concurrent 500+)'}`);
+  console.log(`  Runtime:      ${USE_EDGECLOUD ? 'Theta EdgeCloud' : 'Local prover'}`);
   console.log(`  CSV output:   ${CSV_PATH}\n`);
 
   try {
@@ -228,6 +232,58 @@ async function runBenchmark() {
     console.log(`  Wall-clock time: ${concWallTime}ms`);
     const totalDeps = validConc.reduce((s, r) => s + r.batchSize, 0);
     console.log(`  Effective throughput: ${(totalDeps / (concWallTime / 1000)).toFixed(2)} deposits/sec`);
+  }
+
+  // High-concurrency stress mode (--concurrent 500+)
+  if (HIGH_CONC_MODE) {
+    console.log(`\n--- High-concurrency stress test (${CONC_COUNT} in parallel, ${USE_EDGECLOUD ? 'EdgeCloud' : 'local'}) ---`);
+    const stressStartMs = Date.now();
+    const WAVE_SIZE = 50;
+    const waves = Math.ceil(CONC_COUNT / WAVE_SIZE);
+    const stressResults = [];
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let w = 0; w < waves; w++) {
+      const waveCount = Math.min(WAVE_SIZE, CONC_COUNT - w * WAVE_SIZE);
+      const wavePromises = [];
+      for (let i = 0; i < waveCount; i++) {
+        const idx = w * WAVE_SIZE + i;
+        wavePromises.push(
+          doProof(idx, 'stress').catch(e => ({
+            index: idx, tag: 'stress', gpuTimeMs: 0, roundTripMs: 0, responseBytes: 0,
+            batchSize: BATCH_SIZE, effectiveMsPerDeposit: 0, timestamp: new Date().toISOString(), error: e.message,
+          }))
+        );
+      }
+      const waveResults = await Promise.all(wavePromises);
+      for (const r of waveResults) {
+        stressResults.push(r);
+        allResults.push(r);
+        if (r.gpuTimeMs > 0) successCount++;
+        else failCount++;
+      }
+      const pct = Math.round(((w + 1) / waves) * 100);
+      process.stdout.write(`\r  [${pct}%] Wave ${w + 1}/${waves} complete (${successCount} ok, ${failCount} fail)`);
+    }
+    console.log('');
+
+    const stressWallTime = Date.now() - stressStartMs;
+    const validStress = stressResults.filter(r => r.gpuTimeMs > 0);
+    if (validStress.length > 0) {
+      printStats('HIGH-CONCURRENCY STRESS RESULTS', validStress);
+      console.log(`  Wall-clock time: ${stressWallTime}ms`);
+      const totalDeps = validStress.reduce((s, r) => s + r.batchSize, 0);
+      const throughput = (totalDeps / (stressWallTime / 1000)).toFixed(2);
+      console.log(`  Effective throughput: ${throughput} deposits/sec`);
+      const uptimePct = ((validStress.length / stressResults.length) * 100).toFixed(1);
+      const utilPct = validStress.length > 0
+        ? ((validStress.reduce((s, r) => s + r.gpuTimeMs, 0) / (stressWallTime * CONC_COUNT / WAVE_SIZE)) * 100).toFixed(1)
+        : '0.0';
+      console.log(`  Uptime:   ${uptimePct}% (target: 99%)`);
+      console.log(`  GPU util: ${utilPct}% (target: >50%)`);
+      console.log(`  Runtime:  ${USE_EDGECLOUD ? 'Theta EdgeCloud' : 'Local prover'}`);
+    }
   }
 
   // Combined

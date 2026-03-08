@@ -19,7 +19,7 @@
  *   DEPLOYER_PRIVATE_KEY     Deployer wallet (funded with ≥50 TFUEL)
  *   ADMIN_ADDRESS            Multisig admin (receives DEFAULT_ADMIN_ROLE)
  *   BBB_ADDRESS              Buyback-burn recipient (30%)
- *   LP_ADDRESS               Liquidity provision recipient (30%)
+ *   GET_ADDRESS              Growth & Expansion Treasury recipient (30%)
  *   STAKER_ADDRESS           Staker rewards recipient (25%)
  *   TREASURY_ADDRESS         Treasury recipient (15%)
  *   STAKE_POOL_ADDRESS       Default staking pool
@@ -129,7 +129,7 @@ async function main() {
 
   const ADMIN    = resolveAddr('ADMIN_ADDRESS', deployer.address);
   const BBB      = resolveAddr('BBB_ADDRESS', deployer.address);
-  const LP       = resolveAddr('LP_ADDRESS', deployer.address);
+  const GET      = resolveAddr('GET_ADDRESS', deployer.address);
   const STAKER   = resolveAddr('STAKER_ADDRESS', deployer.address);
   const TREASURY = resolveAddr('TREASURY_ADDRESS', deployer.address);
   const STAKE    = resolveAddr('STAKE_POOL_ADDRESS', deployer.address);
@@ -190,7 +190,7 @@ async function main() {
 
   console.log('  Deploying CoreRevenueSplitter...');
   const SplitterF = await ethers.getContractFactory('CoreRevenueSplitter');
-  const splitter = await SplitterF.deploy(ADMIN, BBB, LP, STAKER, TREASURY, STAKE);
+  const splitter = await SplitterF.deploy(ADMIN, BBB, GET, STAKER, TREASURY, STAKE);
   await splitter.waitForDeployment();
   const splAddr = await splitter.getAddress();
   const splReceipt = await splitter.deploymentTransaction().wait();
@@ -291,8 +291,8 @@ async function main() {
     },
     {
       name: 'A2ACircuit',
-      args: [ADMIN, splAddr, zkAddr],
-      prover: 'EVM (SP1 Groth16)',
+      args: [ADMIN, splAddr, zkAddr, XF_TOKEN],
+      prover: 'EVM (SP1 Groth16, stakeToken for Sybil resistance)',
     },
     {
       name: 'ThetaGPUCircuit',
@@ -423,8 +423,8 @@ async function main() {
 
   // 7: Splitter shares
   await smokeTest('Splitter split ratios (30/30/25/15)', async () => {
-    const [bbb, lp, staker, treasury] = await splitter.getSplit();
-    if (Number(bbb) !== 3000 || Number(lp) !== 3000) throw new Error(`Unexpected: ${bbb}/${lp}`);
+    const [bbb, get_, staker, treasury] = await splitter.getSplit();
+    if (Number(bbb) !== 3000 || Number(get_) !== 3000) throw new Error(`Unexpected: ${bbb}/${get_}`);
   });
 
   // 8: Splitter fee-to-stake

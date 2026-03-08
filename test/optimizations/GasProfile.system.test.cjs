@@ -41,7 +41,7 @@ describe('System Optimization: Gas Profiling', function () {
     await splitter.grantRole(CR, await taoCircuit.getAddress());
 
     const A2A = await ethers.getContractFactory('A2ACircuit');
-    a2aCircuit = await A2A.deploy(admin.address, splAddr, ethers.ZeroAddress);
+    a2aCircuit = await A2A.deploy(admin.address, splAddr, ethers.ZeroAddress, ethers.ZeroAddress);
     await a2aCircuit.waitForDeployment();
     await splitter.grantRole(CR, await a2aCircuit.getAddress());
 

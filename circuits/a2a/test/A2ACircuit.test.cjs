@@ -45,6 +45,7 @@ describe('A2ACircuit', function () {
     circuit = await CircuitFactory.deploy(
       admin.address,
       await splitter.getAddress(),
+      ethers.ZeroAddress,
       ethers.ZeroAddress
     );
     await circuit.waitForDeployment();
