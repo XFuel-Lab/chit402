@@ -1,0 +1,209 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "xfuel-prover-perf",
+    "title": "XFuel SP1 Prover Performance",
+    "tags": ["xfuel", "prover", "sp1", "performance"],
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "refresh": "30s",
+    "time": { "from": "now-6h", "to": "now" },
+    "panels": [
+      {
+        "id": 1,
+        "title": "AI Tasks Processed (Total)",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+        "targets": [
+          {
+            "expr": "xfuel_ai_tasks_processed",
+            "legendFormat": "Tasks",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "fixedColor": "cyan", "mode": "fixed" }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "AI Fees Collected (Total)",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+        "targets": [
+          {
+            "expr": "xfuel_ai_fees_collected",
+            "legendFormat": "Fees",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "fixedColor": "green", "mode": "fixed" }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "FeeCollector Burns",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+        "targets": [
+          {
+            "expr": "xfuel_fee_collector_burns_count",
+            "legendFormat": "Total Burns",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "fixedColor": "orange", "mode": "fixed" }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Proving Throughput (tasks/min)",
+        "description": "Rate of AI tasks processed — proxy for proving throughput. Each settled task includes an SP1 proof (proving_time_ms tracked per-task in ai-listener).",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+        "targets": [
+          {
+            "expr": "rate(xfuel_ai_tasks_processed[5m]) * 60",
+            "legendFormat": "proofs/min",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 20,
+              "gradientMode": "scheme",
+              "axisLabel": "proofs/min"
+            },
+            "color": { "fixedColor": "cyan", "mode": "fixed" }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Average Fee per Task",
+        "description": "Ratio of total fees collected to total tasks — indicates average task value and fee rate.",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+        "targets": [
+          {
+            "expr": "xfuel_ai_fees_collected / (xfuel_ai_tasks_processed > 0 or vector(1))",
+            "legendFormat": "avg fee/task",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 15
+            },
+            "color": { "fixedColor": "green", "mode": "fixed" }
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "GPU Utilization (Placeholder)",
+        "description": "Placeholder panel — wire to nvidia_smi_gpu_utilization or equivalent when CUDA prover (Dockerfile.cuda) exposes nvidia-smi metrics via node_exporter or dcgm-exporter.",
+        "type": "gauge",
+        "gridPos": { "h": 6, "w": 8, "x": 0, "y": 12 },
+        "targets": [
+          {
+            "expr": "vector(0)",
+            "legendFormat": "GPU %",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 60 },
+                { "color": "orange", "value": 80 },
+                { "color": "red", "value": 95 }
+              ]
+            },
+            "noValue": "N/A — wire nvidia_smi or dcgm-exporter"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "GPU Memory (Placeholder)",
+        "description": "Placeholder — wire to nvidia_smi_memory_used_bytes when CUDA prover metrics are available.",
+        "type": "gauge",
+        "gridPos": { "h": 6, "w": 8, "x": 8, "y": 12 },
+        "targets": [
+          {
+            "expr": "vector(0)",
+            "legendFormat": "VRAM",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "min": 0,
+            "max": 25769803776,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 17179869184 },
+                { "color": "red", "value": 21474836480 }
+              ]
+            },
+            "noValue": "N/A — wire nvidia_smi or dcgm-exporter"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "FeeCollector Accumulated vs Burned",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 8, "x": 16, "y": 12 },
+        "targets": [
+          {
+            "expr": "xfuel_fee_collector_accumulated",
+            "legendFormat": "Accumulated",
+            "refId": "A"
+          },
+          {
+            "expr": "xfuel_fee_collector_total_burned",
+            "legendFormat": "Burned",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            }
+          },
+          "overrides": [
+            { "matcher": { "id": "byName", "options": "Accumulated" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] },
+            { "matcher": { "id": "byName", "options": "Burned" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+          ]
+        }
+      }
+    ]
+  },
+  "overwrite": true
+}

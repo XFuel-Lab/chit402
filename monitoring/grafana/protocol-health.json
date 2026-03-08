@@ -1,0 +1,246 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "xfuel-protocol-health",
+    "title": "XFuel Protocol Health",
+    "tags": ["xfuel", "protocol", "health"],
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "refresh": "10s",
+    "time": { "from": "now-1h", "to": "now" },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Server Status",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+        "targets": [
+          {
+            "expr": "xfuel_server_up",
+            "legendFormat": "M2M API",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": null },
+                { "color": "green", "value": 1 }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Uptime",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+        "targets": [
+          {
+            "expr": "xfuel_server_uptime_seconds",
+            "legendFormat": "Uptime",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "color": { "mode": "thresholds" },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "orange", "value": null },
+                { "color": "green", "value": 3600 }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "AI Tasks Processed",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+        "targets": [
+          {
+            "expr": "xfuel_ai_tasks_processed",
+            "legendFormat": "Total Tasks",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "fixedColor": "cyan", "mode": "fixed" }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "A2A Messages",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+        "targets": [
+          {
+            "expr": "xfuel_a2a_messages_total",
+            "legendFormat": "Total A2A",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "fixedColor": "purple", "mode": "fixed" }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "TVL Estimate",
+        "type": "gauge",
+        "gridPos": { "h": 6, "w": 8, "x": 0, "y": 4 },
+        "targets": [
+          {
+            "expr": "xfuel_tvl_estimate",
+            "legendFormat": "TVL",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "min": 0,
+            "max": 20000000,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": null },
+                { "color": "orange", "value": 1000000 },
+                { "color": "yellow", "value": 3000000 },
+                { "color": "green", "value": 5000000 }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "TVL Unlock Threshold ($5M Phase D)",
+        "type": "stat",
+        "gridPos": { "h": 6, "w": 4, "x": 8, "y": 4 },
+        "targets": [
+          {
+            "expr": "xfuel_tvl_estimate >= xfuel_tvl_unlock_threshold",
+            "legendFormat": "Unlocked",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "LOCKED", "color": "orange" }, "1": { "text": "UNLOCKED", "color": "green" } } }
+            ]
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "AI Tasks Processed (Rate)",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 12, "x": 12, "y": 4 },
+        "targets": [
+          {
+            "expr": "rate(xfuel_ai_tasks_processed[5m])",
+            "legendFormat": "tasks/sec",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(xfuel_a2a_messages_total[5m])",
+            "legendFormat": "a2a/sec",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 15,
+              "gradientMode": "scheme"
+            }
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Server Uptime (Timeline)",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 24, "x": 0, "y": 10 },
+        "targets": [
+          {
+            "expr": "xfuel_server_up",
+            "legendFormat": "M2M API",
+            "refId": "A"
+          },
+          {
+            "expr": "xfuel_server_uptime_seconds / 3600",
+            "legendFormat": "Uptime (hours)",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            }
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "FeeCollector Ready to Burn",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 16 },
+        "targets": [
+          {
+            "expr": "xfuel_fee_collector_ready_to_burn",
+            "legendFormat": "Ready",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "Accumulating", "color": "yellow" }, "1": { "text": "Ready to Burn", "color": "green" } } }
+            ]
+          }
+        }
+      },
+      {
+        "id": 10,
+        "title": "Fee Configuration",
+        "type": "table",
+        "gridPos": { "h": 4, "w": 18, "x": 6, "y": 16 },
+        "targets": [
+          {
+            "expr": "xfuel_fee_default_bps",
+            "legendFormat": "Default BPS",
+            "refId": "A",
+            "instant": true
+          },
+          {
+            "expr": "xfuel_fee_a2a_relay_bps",
+            "legendFormat": "A2A Relay BPS",
+            "refId": "B",
+            "instant": true
+          }
+        ]
+      }
+    ]
+  },
+  "overwrite": true
+}

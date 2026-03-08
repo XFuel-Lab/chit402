@@ -1,0 +1,79 @@
+version: "3.8"
+
+# ─────────────────────────────────────────────────────────────
+# XFuel Protocol — Monitoring Stack (Prometheus + Grafana)
+#
+# Usage:
+#   docker-compose -f monitoring/docker-compose.yml up -d
+#
+# Prerequisites:
+#   1. Start fee-analytics Prometheus exporter on the host:
+#      cd backend/theta-bridge
+#      node src/fee-analytics.js --format prometheus --watch --port 9100
+#
+#   2. (Optional) Start the M2M API server:
+#      node src/server.js    # port 3002
+#
+# Access:
+#   Grafana:    http://localhost:3000  (admin / xfuel-admin)
+#   Prometheus: http://localhost:9090
+#
+# To join the main xfuel-network (from root docker-compose.yml),
+# uncomment the external network block at the bottom and change
+# prometheus.yml targets from host.docker.internal to container
+# hostnames (e.g., xfuel-backend:9100).
+# ─────────────────────────────────────────────────────────────
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: xfuel-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:10.4.1
+    container_name: xfuel-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=xfuel-admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/protocol-health.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/protocol-health.json:/var/lib/grafana/dashboards/protocol-health.json:ro
+      - ./grafana/prover-perf.json:/var/lib/grafana/dashboards/prover-perf.json:ro
+      - ./grafana/revenue.json:/var/lib/grafana/dashboards/revenue.json:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  monitoring:
+    driver: bridge
+
+  # ── Uncomment to connect to root docker-compose xfuel-network ──
+  # xfuel-network:
+  #   external: true
+  #   name: xfuel-protocol_xfuel-network

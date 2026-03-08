@@ -1,20 +1,25 @@
 # ============================================================
-# SP1 ZK PROVER - CUDA GPU VERSION
-# For deployment on Theta EdgeCloud GPU nodes
+# SP1 ZK PROVER - Native CUDA GPU (SP1 v6, no Docker-in-Docker)
+# For deployment on Theta EdgeCloud H100 / RTX 4090 nodes
 # ============================================================
-# 
-# This image runs SP1 proofs on NVIDIA GPUs (10-30s per proof)
-# No SP1 API key needed - fully self-hosted!
 #
-# Build: docker build -f Dockerfile.cuda -t sp1-prover-cuda .
+# SP1 v6 uses a native sp1-gpu-server binary (Unix socket IPC)
+# instead of the v5 Docker-in-Docker approach.
+#
+# Requirements: GPU with Compute Capability >= 8.6, >= 24GB VRAM
+#   H100  (CC 9.0, 80GB)  - ideal
+#   4090  (CC 8.9, 24GB)  - supported
+#   T4    (CC 7.5, 16GB)  - NOT supported
+#
+# Build:  docker build -f Dockerfile.cuda -t xfuel/sp1-prover-cuda:latest .
+# Push:   docker push xfuel/sp1-prover-cuda:latest
 # ============================================================
 
-FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
 
-# Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install dependencies
+# System dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     build-essential \
@@ -24,59 +29,71 @@ RUN apt-get update && apt-get install -y \
     clang \
     jq \
     ca-certificates \
+    protobuf-compiler \
+    golang-go \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust (nightly with CUDA support)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly-2026-01-19
+# Rust stable (SP1 v6 minimum: 1.91)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Clone SP1 repository and build cargo-prove from source
-RUN git clone https://github.com/succinctlabs/sp1.git /tmp/sp1 && \
-    cd /tmp/sp1/crates/cli && \
-    cargo install --locked --path . && \
-    rm -rf /tmp/sp1
+# Install SP1 CLI v6 from release tarball (much faster than building from source)
+RUN mkdir -p /tmp/sp1-cli && \
+    curl -L "https://github.com/succinctlabs/sp1/releases/download/v6.0.2/cargo_prove_v6.0.2_linux_amd64.tar.gz" \
+    -o /tmp/sp1-cli/cargo-prove.tar.gz && \
+    tar -xzf /tmp/sp1-cli/cargo-prove.tar.gz -C /tmp/sp1-cli/ && \
+    mv /tmp/sp1-cli/cargo-prove /root/.cargo/bin/cargo-prove && \
+    chmod +x /root/.cargo/bin/cargo-prove && \
+    rm -rf /tmp/sp1-cli
 
-# Install SP1 toolchain
+# Install SP1 RISC-V toolchain (required for guest program compilation)
 RUN cargo prove install-toolchain
 
-# Verify installation
+# Pre-download the sp1-gpu-server binary from GitHub releases.
+# In v6, the CUDA prover spawns this binary as a child process (Unix socket IPC).
+# Pre-downloading avoids runtime network dependency.
+RUN mkdir -p /root/.sp1/bin && \
+    curl -L "https://github.com/succinctlabs/sp1/releases/download/v6.0.2/sp1_gpu_server_v6.0.2_x86_64.tar.gz" \
+    -o /tmp/sp1-gpu-server.tar.gz && \
+    tar -xzf /tmp/sp1-gpu-server.tar.gz -C /root/.sp1/bin/ && \
+    chmod +x /root/.sp1/bin/sp1-gpu-server && \
+    rm /tmp/sp1-gpu-server.tar.gz
+
+# Verify installations
 RUN cargo prove --version && \
     rustup toolchain list && \
-    nvcc --version
+    nvcc --version && \
+    ls -la /root/.sp1/bin/sp1-gpu-server
 
-# Set working directory
 WORKDIR /app
 
-# Copy the prover code
-COPY program /app/program
-COPY host /app/host
+# Copy workspace files
 COPY Cargo.toml /app/Cargo.toml
 COPY rust-toolchain.toml /app/rust-toolchain.toml
+COPY program /app/program
+COPY host /app/host
 
-# Build the guest program (zkVM circuit)
-RUN rustup default nightly && \
-    rustup component add rust-src --toolchain nightly && \
-    cd /app/program && \
-    cargo +nightly prove build
-
-# Build the host program (CUDA auto-detected by SP1 at runtime)
+# Build the host binary (build.rs compiles the guest program automatically via sp1_build)
+# The cuda + network features are enabled in host/Cargo.toml
+# Use x86-64-v3 (AVX2) instead of native to ensure portability across EdgeCloud nodes
 RUN cd /app/host && \
-    cargo +nightly build --release
+    RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release
 
 # Copy test data
 COPY test-data /app/test-data
 
-# Expose port for HTTP API
+# Watchdog supervisor script
+COPY watchdog.sh /app/watchdog.sh
+RUN chmod +x /app/watchdog.sh
+
 EXPOSE 80
 
-# Environment variables for GPU proving
+# SP1 v6 native CUDA environment
 ENV SP1_PROVER=cuda
 ENV RUST_LOG=info
 ENV CUDA_VISIBLE_DEVICES=0
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:80/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:80/healthz || exit 1
 
-# Start the prover server on port 80 (Theta EdgeCloud expects this)
-CMD ["/app/target/release/prove", "serve", "--port", "80"]
+CMD ["/app/watchdog.sh"]

@@ -1,14 +1,14 @@
 # Contributing to XFuel Protocol
 
-Welcome to XFuel Protocol! We're building the first trustless bidirectional ZK bridge between Theta and Persistence, and we'd love your help making it production-ready.
+Welcome to XFuel Protocol! We're building a modular, ZK-secured DePIN hub for cross-ecosystem AI intelligence, and we'd love your help making it production-ready.
 
 ---
 
 ## 🚀 About This Project
 
-XFuel Protocol is a **zero-knowledge bidirectional bridge** connecting Theta (TFUEL) with Persistence's LSTfi ecosystem. Using SP1 zkVM for cryptographic proofs, Theta Edge Cloud for acceleration, and CosmWasm smart contracts, we enable trustless cross-chain liquidity with automated yield optimization.
+XFuel Protocol is a **modular, zero-knowledge-secured DePIN hub** that routes intelligence, compute, liquidity, and value across AI ecosystems. Built around a **hybrid Theta-centric architecture** with Theta EdgeCloud as the primary GPU backbone, XFuel's Core Layer handles ZK proof verification (SP1 zkVM), task routing, fee distribution (CoreRevenueSplitter), and governance (veXFGovernance). Independent circuits plug into the Core Layer for specific use cases — Theta AI inference, Bittensor dTAO staking, cross-chain bridging, and more.
 
-**Current Status:** Beta launch (Phase C complete), awaiting Persistence governance approval for mainnet.
+**Current Status:** All 6 development phases complete (755+ tests). Preparing for CertiK Phase 1 audit (Q2 2026) and grant submissions.
 
 ### Solo-Dev Context
 
@@ -24,9 +24,9 @@ We welcome contributors who can help validate, optimize, and expand this AI-gene
 ## 🎯 Why Contribute?
 
 **For Web3 Developers:**
-- Work on cutting-edge ZK bridge technology (SP1 zkVM, ~9s proof generation)
-- Gain experience with CosmWasm, Solidity, and cross-chain systems
-- Build your reputation in the Theta and Cosmos ecosystems
+- Work on cutting-edge ZK verification technology (SP1 zkVM, Groth16/PLONK proofs)
+- Gain experience with Solidity, CosmWasm, and cross-chain systems (Hyperlane, IBC)
+- Build your reputation in the Theta, Bittensor, and Cosmos ecosystems
 
 **For Marketing & Community Builders:**
 - Shape the narrative of a groundbreaking cross-chain protocol
@@ -58,7 +58,7 @@ Start with low-risk tasks to build familiarity—**no coding required** for many
    - Create memes or graphics for social media campaigns
 
 2. **Documentation Improvements**
-   - Fix typos or clarify sections in [README.md](README.md) or [WHITEPAPER_v4.4.md](WHITEPAPER_v4.4.md)
+   - Fix typos or clarify sections in [README.md](README.md) or [WHITEPAPER.md](WHITEPAPER.md)
    - Add examples to deployment guides
    - Update outdated links or references
 
@@ -69,8 +69,8 @@ Start with low-risk tasks to build familiarity—**no coding required** for many
 
 4. **Code Review (Technical)**
    - Review open PRs (use AI tools like Cursor to analyze changes)
-   - Suggest gas optimizations in [VaultFactory.sol](contracts/VaultFactory.sol)
-   - Validate SP1 proof logic in [sp1-prover/program/src/main.rs](sp1-prover/program/src/main.rs)
+   - Suggest gas optimizations in [ZKVerifierSP1.sol](contracts/core/ZKVerifierSP1.sol) or [CoreRevenueSplitter.sol](contracts/core/CoreRevenueSplitter.sol)
+   - Validate SP1 proof logic in [sp1-prover/host/src/main.rs](sp1-prover/host/src/main.rs)
 
 ### Setup Instructions
 
@@ -172,7 +172,7 @@ feat: add reverse bridge UI component
 fix: resolve nonce desync in unwrap flow
 docs: clarify SP1 proof generation steps
 test: add E2E test for burn_for_unwrap
-refactor: optimize gas usage in VaultFactory
+refactor: optimize gas usage in ZKVerifierSP1
 marketing: draft X campaign for Phase D launch
 community: create Discord welcome bot template
 ```
@@ -276,9 +276,9 @@ We understand you may be skeptical of a solo-dev project. Here's how we build tr
 - **Month 2+:** Larger projects (features, X bot automation, partnership outreach)
 
 ### Validation Resources
-- **Phase B benchmarks:** 8.997s avg proof time, 52.89 tx/min throughput ([Whitepaper v4.4](WHITEPAPER_v4.4.md))
-- **Live contracts:** [VaultFactory on Theta](https://explorer.thetatoken.org/account/0xB0a26600074dADC69186632a1B8dFd7c3146Ce56)
-- **Roadmap transparency:** See [ROADMAP](README.md#-roadmap) for priorities (governance approval, audits, community growth)
+- **SP1 Prover benchmarks:** 8.997s avg proof time, 52.89 tx/min throughput ([Whitepaper v2.4](WHITEPAPER.md))
+- **Test suite:** 755+ tests across Solidity, CosmWasm, and integration suites with 85%+ coverage on Phase 1 audit contracts
+- **Roadmap transparency:** See [WHITEPAPER.md Section 12](WHITEPAPER.md) for phase milestones and [Audit Readiness](docs/AUDIT_GRANT_READINESS.md) for current status
 
 ### Open-Source, Not Hiring (Yet)
 This is a **bootstrapped project** with no immediate funding for hires. Contributions are:
@@ -294,10 +294,10 @@ If the project gains traction (e.g., $5M TVL, governance approval), active contr
 
 ### 1. Security & Auditing (Technical)
 **Priority:** High
-- Review [VaultFactory.sol](contracts/VaultFactory.sol) for vulnerabilities
-- Validate SP1 proof logic in [main.rs](sp1-prover/program/src/main.rs)
-- Add fuzz tests for edge cases (e.g., extreme nonce values)
-- Help prep for CertiK audit (Q2 2026)
+- Review [ZKVerifierSP1.sol](contracts/core/ZKVerifierSP1.sol) and [CoreRevenueSplitter.sol](contracts/core/CoreRevenueSplitter.sol) for vulnerabilities
+- Validate SP1 proof logic in [sp1-prover/host/src/main.rs](sp1-prover/host/src/main.rs)
+- Add fuzz tests for edge cases (see `test/security/ContractFuzz.test.cjs` for examples)
+- Help prep for CertiK audit (Q2 2026) — see [Audit Readiness Checklist](docs/AUDIT_GRANT_READINESS.md)
 
 ### 2. Automation (Technical + Marketing)
 **Priority:** High (Phase 1 goal)
@@ -380,7 +380,7 @@ We follow the [Contributor Covenant Code of Conduct](https://www.contributor-cov
 - **X/Twitter:** [@xfuel_protocol](https://twitter.com/xfuel_protocol)
 
 ### Technical Support
-- Review [WHITEPAPER_v4.4.md](WHITEPAPER_v4.4.md) for architecture details
+- Review [WHITEPAPER.md](WHITEPAPER.md) for architecture details
 - Check [docs/](docs/) folder for guides
 - Ask in issues with `question` label
 
@@ -393,7 +393,7 @@ We follow the [Contributor Covenant Code of Conduct](https://www.contributor-cov
 
 **For New Contributors:**
 - [README.md](README.md) - Project overview
-- [WHITEPAPER_v4.4.md](WHITEPAPER_v4.4.md) - Technical architecture
+- [WHITEPAPER.md](WHITEPAPER.md) - Technical architecture
 - [docs/ZK_BRIDGE_IMPLEMENTATION.md](docs/ZK_BRIDGE_IMPLEMENTATION.md) - ZK proof details
 
 **For Developers:**
@@ -402,8 +402,8 @@ We follow the [Contributor Covenant Code of Conduct](https://www.contributor-cov
 - [Mock Testing Plan](MOCK_TESTING_PLAN.md)
 
 **For Governance:**
-- [Persistence Whitelist Proposal](docs/governance/PERSISTENCE_WHITELIST_PROPOSAL.md)
-- [Roadmap](README.md#-roadmap) - Phase C → D → E milestones
+- [Audit & Grant Readiness](docs/AUDIT_GRANT_READINESS.md) - CertiK Phase 1 preparation
+- [Roadmap](WHITEPAPER.md) - Phase 1–6 milestones (Section 12)
 
 ---
 
@@ -419,4 +419,4 @@ Every contribution—code, marketing, docs, reviews, or bug reports—helps make
 
 **Questions about contributing?** Email: **contribute@xfuel.app**
 
-**Last Updated:** February 8, 2026 (v4.4 - Bi-Directional Bridge Edition)
+**Last Updated:** March 2026 (v2.4 - Hybrid Theta-Centric Architecture)

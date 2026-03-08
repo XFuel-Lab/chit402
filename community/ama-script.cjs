@@ -9,17 +9,18 @@
  *   node community/ama-script.cjs --generate ama
  *   node community/ama-script.cjs --generate launch
  *   node community/ama-script.cjs --schedule
+ *   node community/ama-script.cjs --weekly
  *   node community/ama-script.cjs --stats
  */
 
 var STATS = {
-  circuits: 16, contracts: 20, tests: '315+',
-  settleGas: '<100K (most)', mainnet: 'Theta (361)',
-  grants: '$350K-$750K', believers: 'Round OPEN',
-  latest: 'UplinkCircuit (WiFi bandwidth sharing)',
-  wireless: 'WirelessDePIN + UplinkCircuit = full connectivity DePIN',
-  synergy: 'WirelessDePIN + MappingSensor + Uplink = cross-circuit DePIN stack',
-  governance: 'First veXF proposal: XFP-001 Circuit Allocation Vote',
+  circuits: 21, contracts: 25, tests: '700+',
+  settleGas: '<100K (most)', mainnet: 'Multi-Net (Theta/Bittensor/Osmosis/Aptos/Sui)',
+  grants: '$500K-$1M', believers: 'Round OPEN',
+  latest: 'Phase 6 Ecosystem Expansion (partners + oracles + website)',
+  wireless: 'Full DePIN stack + Almanak swarm integration',
+  synergy: 'Cross-circuit + Cross-chain + Partner ecosystem',
+  governance: 'veXF active with weekly proposals',
 };
 
 var EVENTS = [
@@ -40,6 +41,21 @@ var EVENTS = [
     date: 'TBD', duration: '60 min', platform: 'Discord Stage',
     topics: ['Register a LoRaWAN/5G hotspot (WirelessDePIN)', 'Share your WiFi router (UplinkCircuit)',
              'Connect a dashcam/sensor (MappingSensor)', 'Earning across all 3 circuits'] },
+  { type: 'X AMA', title: 'Partner Integration AMA: Almanak + Succinct + Chainlink',
+    date: 'TBD', duration: '60 min', platform: 'X Spaces',
+    topics: ['Almanak swarm agent integration', 'Succinct SP1 prover partnership',
+             'Chainlink oracle hooks for CoreRevenueSplitter', 'Cross-chain partner roadmap',
+             'Community Q&A on partner ecosystem'] },
+  { type: 'Discord', title: 'xfuel.app Launch Party',
+    date: 'TBD', duration: '90 min', platform: 'Discord Stage',
+    topics: ['Live walkthrough of xfuel.app', 'Dashboard features and TVL tracking',
+             'Circuit explorer demo', 'Governance portal walkthrough',
+             'Giveaways and community celebrations'] },
+  { type: 'X AMA', title: 'TVL Milestone Celebration ($500M target)',
+    date: 'TBD', duration: '45 min', platform: 'X Spaces',
+    topics: ['TVL growth journey and milestones', 'Protocol revenue and fee distribution',
+             'Circuit-level TVL breakdown', 'Upcoming targets and scaling plans',
+             'Community contributor recognition'] },
 ];
 
 function generateAMA() {
@@ -116,6 +132,61 @@ function showSchedule() {
   });
 }
 
+function generateWeeklySchedule() {
+  console.log('\n  ════════════════════════════════════════════════');
+  console.log('  XFuel Protocol — 4-Week Rolling Event Schedule');
+  console.log('  ════════════════════════════════════════════════\n');
+
+  var weekTemplates = [
+    { day: 'Tuesday', type: 'X AMA', focus: 'Protocol Updates & Community Q&A' },
+    { day: 'Thursday', type: 'Discord', focus: 'Technical Deep Dive / Workshop' },
+    { day: 'Saturday', type: 'X Spaces', focus: 'Casual Community Hangout' },
+  ];
+
+  var themes = [
+    'Partner Ecosystem & Integrations',
+    'Circuit Architecture & ZK Proofs',
+    'DePIN Stack & Wireless Coverage',
+    'Governance, Grants & Roadmap',
+  ];
+
+  var now = new Date();
+  for (var week = 0; week < 4; week++) {
+    var weekStart = new Date(now);
+    weekStart.setDate(weekStart.getDate() + (week * 7));
+    var weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+
+    var startStr = weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    var endStr = weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+    console.log('  Week ' + (week + 1) + ' (' + startStr + ' - ' + endStr + ')');
+    console.log('  Theme: ' + themes[week]);
+    console.log('  ─────────────────────────────────────');
+
+    weekTemplates.forEach(function(tmpl) {
+      var eventDate = new Date(weekStart);
+      var dayOffset = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].indexOf(tmpl.day);
+      var currentDay = eventDate.getDay();
+      var diff = dayOffset - currentDay;
+      if (diff < 0) diff += 7;
+      eventDate.setDate(eventDate.getDate() + diff);
+
+      var dateStr = eventDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+      console.log('    [' + tmpl.type + '] ' + tmpl.focus);
+      console.log('      ' + dateStr + ' | Theme: ' + themes[week]);
+    });
+
+    console.log('');
+  }
+
+  console.log('  Rotating event pool (' + EVENTS.length + ' events):');
+  EVENTS.forEach(function(e) {
+    console.log('    • ' + e.title + ' (' + e.type + ')');
+  });
+  console.log('');
+}
+
 function showStats() {
   console.log('\n  XFuel Protocol -- Community Stats\n');
   Object.keys(STATS).forEach(function(k) {
@@ -128,6 +199,7 @@ var args = process.argv.slice(2);
 var gi = args.indexOf('--generate');
 if (gi >= 0 && args[gi + 1] === 'ama') generateAMA();
 else if (gi >= 0 && args[gi + 1] === 'launch') generateLaunch();
+else if (args.includes('--weekly')) generateWeeklySchedule();
 else if (args.includes('--schedule')) showSchedule();
 else if (args.includes('--stats')) showStats();
 else { showSchedule(); }

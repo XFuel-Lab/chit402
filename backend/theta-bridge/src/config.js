@@ -62,13 +62,15 @@ const config = {
     verificationKey: process.env.ZK_VERIFICATION_KEY || join(__dirname, '../circuits/verification_key.json')
   },
 
-  // SP1 zkVM Configuration (Production - Phase B+)
+  // SP1 zkVM Configuration
+  // Primary: Theta EdgeCloud (CUDA GPU, paid in TFUEL)
+  // Fallback: Succinct Network (optional, set SP1_FALLBACK_URL)
   sp1: {
-    proverUrl: process.env.SP1_PROVER_URL || 'http://54.174.193.127:8080',
-    timeout: parseInt(process.env.SP1_PROVER_TIMEOUT) || 120000, // 120s
+    proverUrl: process.env.SP1_PROVER_URL || null,
+    fallbackUrl: process.env.SP1_FALLBACK_URL || null,
+    timeout: parseInt(process.env.SP1_PROVER_TIMEOUT) || 120000,
     retries: parseInt(process.env.SP1_PROVER_RETRIES) || 3,
-    fallbackToMock: process.env.SP1_PROVER_FALLBACK === 'true',
-    // Phase B batching (11.6x speedup, 90% cost reduction)
+    fallbackToMock: process.env.SP1_PROVER_FALLBACK_MOCK === 'true',
     batchingEnabled: process.env.SP1_BATCHING_ENABLED !== 'false',
     batchSize: parseInt(process.env.SP1_BATCH_SIZE) || 10,
     batchTimeout: parseInt(process.env.SP1_BATCH_TIMEOUT_MS) || 10000,
@@ -203,6 +205,10 @@ export function validateConfig() {
 
   if (config.theta.rpcUrls.length === 0) {
     errors.push('At least one THETA_RPC_URL is required');
+  }
+
+  if (!config.sp1.proverUrl) {
+    errors.push('SP1_PROVER_URL is required (Theta EdgeCloud endpoint)');
   }
 
   // Phase C: Validate Persistence configuration if whitelisting is approved

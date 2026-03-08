@@ -18,6 +18,11 @@ pub struct CircuitInfo {
     pub label: String,
 }
 
+/// Serialized arkworks VerifyingKey<Bn254> stored on-chain per circuit.
+/// Populated via RegisterCircuit when `vkey_data` is provided.
+/// Used by verify_sp1_proof_wasm for full Groth16 pairing checks.
+pub const CIRCUIT_VKEYS: Map<&str, Vec<u8>> = Map::new("circuit_vkeys");
+
 /// Verification statistics.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema, Default)]
 pub struct Stats {

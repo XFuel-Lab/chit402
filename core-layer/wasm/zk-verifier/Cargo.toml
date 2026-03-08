@@ -22,6 +22,13 @@ schemars = "0.8"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 thiserror = "1.0"
 hex = "0.4"
+ark-bn254 = { version = "0.4", default-features = false, features = ["curve"] }
+ark-groth16 = { version = "0.4", default-features = false }
+ark-snark = { version = "0.4", default-features = false }
+ark-ec = { version = "0.4", default-features = false }
+ark-ff = { version = "0.4", default-features = false }
+ark-serialize = { version = "0.4", default-features = false, features = ["derive"] }
+ark-std = { version = "0.4", default-features = false }
 
 [dev-dependencies]
 cosmwasm-schema = "1.5"

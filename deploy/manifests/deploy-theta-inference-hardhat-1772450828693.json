@@ -1,0 +1,86 @@
+{
+  "network": "hardhat",
+  "chainId": 1337,
+  "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "deployedAt": "2026-03-02T11:27:08.497Z",
+  "contracts": {
+    "ThetaInferenceCircuit": "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+  },
+  "gasUsed": {
+    "ThetaInferenceCircuit": "2936395"
+  },
+  "services": [
+    {
+      "model": "llama-3.1-70b",
+      "type": 0,
+      "price": "0.01"
+    },
+    {
+      "model": "llama-3.1-405b",
+      "type": 0,
+      "price": "0.05"
+    },
+    {
+      "model": "flux-schnell",
+      "type": 1,
+      "price": "0.05"
+    },
+    {
+      "model": "whisper-large-v3",
+      "type": 2,
+      "price": "0.005"
+    },
+    {
+      "model": "voice-clone-v1",
+      "type": 3,
+      "price": "0.02"
+    },
+    {
+      "model": "llama-rag-70b",
+      "type": 4,
+      "price": "0.008"
+    },
+    {
+      "model": "theta-transcode-v2",
+      "type": 5,
+      "price": "0.1"
+    },
+    {
+      "model": "yolov8-xlarge",
+      "type": 6,
+      "price": "0.003"
+    }
+  ],
+  "presets": [
+    {
+      "name": "Quick Llama 3.1",
+      "gpu": "RTX_4090",
+      "model": "llama-3.1-8b"
+    },
+    {
+      "name": "Need Bigger GPU",
+      "gpu": "H100",
+      "model": "llama-3.1-405b"
+    },
+    {
+      "name": "Voice Agent",
+      "gpu": "A100",
+      "model": "voice-clone-v1"
+    },
+    {
+      "name": "Enterprise RAG",
+      "gpu": "A100",
+      "model": "llama-rag-70b"
+    },
+    {
+      "name": "Quick Image Gen",
+      "gpu": "RTX_4090",
+      "model": "flux-schnell"
+    },
+    {
+      "name": "Medical Transcription",
+      "gpu": "A100",
+      "model": "whisper-large-v3"
+    }
+  ]
+}

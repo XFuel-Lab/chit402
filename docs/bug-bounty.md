@@ -16,7 +16,7 @@ We value the security of the XFUEL protocol and ecosystem. This bug bounty progr
 - Economic attacks and game theory exploits
 
 #### Web Application
-- xfuel.io and all subdomains
+- xfuel.app and all subdomains
 - Authentication and authorization flaws
 - Cross-site scripting (XSS)
 - Cross-site request forgery (CSRF)
@@ -128,7 +128,7 @@ Rewards are based on the severity of the vulnerability and its impact on the XFU
 
 ## Submission Format
 
-Please submit vulnerability reports via email to: **security@xfuel.io**
+Please submit vulnerability reports via email to: **security@xfuel.app**
 
 ### Required Information
 
@@ -213,7 +213,7 @@ XFUEL reserves the right to modify or cancel this bug bounty program at any time
 
 ## Questions
 
-If you have questions about this bug bounty program, please contact us at **security@xfuel.io**.
+If you have questions about this bug bounty program, please contact us at **security@xfuel.app**.
 
 ---
 

@@ -1,0 +1,245 @@
+{
+  "audit": {
+    "provider": "CertiK",
+    "phase": 1,
+    "title": "XFuel Protocol — Core Layer Security Audit",
+    "version": "5.0.0",
+    "date_prepared": "2026-03-06",
+    "target_start": "Q2 2026",
+    "estimated_duration": "4-6 weeks"
+  },
+  "phase_plan": {
+    "phase1": {
+      "name": "Theta Working Circuit",
+      "target": "Q2 2026",
+      "scope": "Core Layer + ThetaInferenceCircuit — complete Theta EdgeCloud inference pipeline",
+      "contracts": ["ZKVerifierSP1", "CoreRevenueSplitter", "veXFGovernance", "SP1ProofHooks", "ThetaInferenceCircuit"]
+    },
+    "phase2": {
+      "name": "Bittensor/TAO Expansion",
+      "target": "Q3 2026",
+      "scope": "InferenceRouter + TAOCircuit + BridgeCircuit — Bittensor EVM integration with dTAO staking",
+      "contracts": ["InferenceRouter", "TAOCircuit", "BridgeCircuit"]
+    },
+    "phase3": {
+      "name": "Cross-Chain & Compute",
+      "target": "Q4 2026",
+      "scope": "ComputeMarketplace + remaining circuits — Akash, ZKML, DataHubs",
+      "contracts": ["ComputeMarketplace", "ZKMLCircuit", "DataHubs", "A2ACircuit"]
+    }
+  },
+  "scope": {
+    "primary_contracts": [
+      {
+        "name": "ZKVerifierSP1",
+        "path": "contracts/core/ZKVerifierSP1.sol",
+        "lines": 620,
+        "language": "Solidity 0.8.22",
+        "risk_level": "CRITICAL",
+        "description": "SP1 Groth16/PLONK proof verification with nullifier tracking, circuit registry, batch verification, composed calls, cross-chain relay, and dTAO stake-gated verification",
+        "key_concerns": [
+          "Proof verification bypass via malformed inputs",
+          "Nullifier collision or replay attacks",
+          "Circuit breaker manipulation",
+          "Cross-chain relay message spoofing",
+          "Batch verification partial failure handling"
+        ]
+      },
+      {
+        "name": "CoreRevenueSplitter",
+        "path": "contracts/core/CoreRevenueSplitter.sol",
+        "lines": 310,
+        "language": "Solidity 0.8.22",
+        "risk_level": "HIGH",
+        "description": "Fee collection and distribution (30/30/25/15 split) with multi-chain Fee-to-Stake routing to Theta/Bittensor/Cosmos validator pools, x402 escrow, and deferred claims",
+        "key_concerns": [
+          "Rounding errors in split calculations",
+          "Reentrancy in distribute() with multiple external calls",
+          "Stake pool routing manipulation",
+          "Fee-to-stake BPS boundary enforcement",
+          "Governance role escalation via FEE_MANAGER_ROLE",
+          "Zero-address recipient validation",
+          "x402 escrow claim and refund edge cases"
+        ]
+      },
+      {
+        "name": "veXFGovernance",
+        "path": "contracts/core/veXFGovernance.sol",
+        "lines": 320,
+        "language": "Solidity 0.8.22",
+        "risk_level": "HIGH",
+        "description": "Curve-style vote-escrowed governance with linear decay, ZK nullifiers, per-type quorums, and on-chain execution hooks to CoreRevenueSplitter",
+        "key_concerns": [
+          "Voting power manipulation via flash loans",
+          "Double voting via ZK nullifier bypass",
+          "Quorum gaming with totalVotingPowerEstimate approximation",
+          "Execution hook reentrancy",
+          "Lock extension to bypass decay",
+          "Governance role escalation"
+        ]
+      },
+      {
+        "name": "SP1ProofHooks",
+        "path": "contracts/core/SP1ProofHooks.sol",
+        "lines": 181,
+        "language": "Solidity 0.8.22",
+        "risk_level": "MEDIUM",
+        "description": "Library for SP1 proof integration, nullifier computation, fee commitment hashing, and cross-chain payload encoding",
+        "key_concerns": [
+          "Nullifier computation collision resistance",
+          "Fee commitment hash manipulation",
+          "Cross-chain payload encoding/decoding mismatch"
+        ]
+      },
+      {
+        "name": "ThetaInferenceCircuit",
+        "path": "contracts/circuits/ThetaInferenceCircuit.sol",
+        "lines": 637,
+        "language": "Solidity 0.8.22",
+        "risk_level": "HIGH",
+        "description": "Theta EdgeCloud AI inference circuit with 7 service types, preset hooks, GPU tier pricing, and Core Layer fee integration",
+        "key_concerns": [
+          "Service catalog manipulation",
+          "Fee forwarding failures",
+          "Intent lifecycle state machine bypass",
+          "Nullifier replay in settlement",
+          "GPU price multiplier manipulation"
+        ]
+      }
+    ],
+    "phase2_candidates": [
+      {
+        "name": "BridgeCircuit",
+        "path": "contracts/circuits/BridgeCircuit.sol",
+        "lines": 569,
+        "language": "Solidity 0.8.22",
+        "risk_level": "HIGH",
+        "description": "Multi-prover cross-chain bridge using Hyperlane + IBC",
+        "note": "Phase 2 — Bittensor/TAO circuit expansion"
+      },
+      {
+        "name": "InferenceRouter",
+        "path": "contracts/circuits/InferenceRouter.sol",
+        "lines": 650,
+        "language": "Solidity 0.8.22",
+        "risk_level": "MEDIUM",
+        "description": "Bittensor EVM inference routing with dTAO stake-weighted selection",
+        "note": "Phase 2 — Bittensor/TAO circuit expansion"
+      },
+      {
+        "name": "ComputeMarketplace",
+        "path": "contracts/circuits/ComputeMarketplace.sol",
+        "lines": 637,
+        "language": "Solidity 0.8.22",
+        "risk_level": "MEDIUM",
+        "description": "GPU compute marketplace with reverse auction and SP1 proofs",
+        "note": "Phase 3 — Cross-chain & compute expansion"
+      }
+    ],
+    "cosmwasm_contracts": [
+      {
+        "name": "xfuel-zk-verifier",
+        "path": "cosmwasm/zk-verifier/src/contract.rs",
+        "language": "Rust (CosmWasm)",
+        "risk_level": "HIGH",
+        "description": "arkworks BN254 Groth16 verification for Cosmos chains"
+      },
+      {
+        "name": "xfuel-zk-verifier (core-layer)",
+        "path": "core-layer/wasm/zk-verifier/src/contract.rs",
+        "language": "Rust (CosmWasm)",
+        "risk_level": "HIGH",
+        "description": "Core Layer WASM verifier with IBC event emission"
+      }
+    ],
+    "interfaces": [
+      "contracts/interfaces/ISP1Verifier.sol",
+      "contracts/interfaces/IBittensorStaking.sol",
+      "contracts/interfaces/ICrossChainMailbox.sol"
+    ]
+  },
+  "testing": {
+    "framework": "Hardhat + Chai + ethers v6",
+    "total_tests": "755+",
+    "test_suites": [
+      { "suite": "ZKVerifierSP1", "tests": 40, "path": "core-layer/test/ZKVerifierSP1.test.cjs" },
+      { "suite": "CoreRevenueSplitter (Phase 3)", "tests": 15, "path": "test/phase3/CoreRevenueSplitter.test.cjs" },
+      { "suite": "veXFGovernance (Phase 3)", "tests": 25, "path": "test/phase3/veXFGovernance.test.cjs" },
+      { "suite": "E2E Governance (Phase 3)", "tests": 14, "path": "test/phase3/E2E.governance.test.cjs" },
+      { "suite": "Priority Circuits", "tests": 69, "path": "test/priority-circuits/" },
+      { "suite": "Multi-Prover (CoreListener)", "tests": 85, "path": "core-layer/test/" },
+      { "suite": "Other suites", "tests": "300+", "path": "test/" }
+    ],
+    "coverage_target": ">85% line coverage on primary contracts"
+  },
+  "security_properties": {
+    "access_control": "OpenZeppelin AccessControl with role hierarchy (DEFAULT_ADMIN → FEE_MANAGER → CIRCUIT → GOVERNANCE)",
+    "reentrancy": "ReentrancyGuard on all external-calling functions",
+    "pausability": "Pausable on CoreRevenueSplitter, ZKVerifierSP1",
+    "replay_protection": "Nullifier-based (keccak256(proofHash, chainId, nonce)) on both EVM and CosmWasm",
+    "circuit_breaker": "Auto-pause at >5% failure rate in ZKVerifierSP1",
+    "zk_integrity": "SP1 Groth16 verification via ISP1Verifier gateway"
+  },
+  "deployment_targets": {
+    "evm_chains": [
+      { "name": "Theta Mainnet", "chainId": 361, "gasPrice": "4000 Gwei", "gasToken": "TFUEL" },
+      { "name": "Bittensor EVM", "chainId": 964, "gasToken": "TAO" }
+    ],
+    "cosmos_chains": [
+      { "name": "Osmosis", "chainId": "osmosis-1", "gasToken": "OSMO" }
+    ]
+  },
+  "bug_bounty": {
+    "platform": "Immunefi",
+    "total_pool": "$500,000 USD",
+    "tiers": {
+      "critical": "$50,000 - $200,000",
+      "high": "$10,000 - $50,000",
+      "medium": "$2,000 - $10,000",
+      "low": "$500 - $2,000"
+    },
+    "scope": [
+      "ZKVerifierSP1.sol — proof verification bypass, nullifier replay",
+      "CoreRevenueSplitter.sol — fund theft, split manipulation",
+      "veXFGovernance.sol — voting power manipulation, governance takeover",
+      "SP1ProofHooks.sol — nullifier collision, payload encoding mismatch",
+      "ThetaInferenceCircuit.sol — service catalog manipulation, fee forwarding, state machine bypass",
+      "CosmWasm contracts — proof bypass, state corruption"
+    ],
+    "exclusions": [
+      "Mock mode behavior (gateway = address(0))",
+      "Frontend/UI issues",
+      "Gas optimization suggestions",
+      "Theoretical attacks requiring >51% of veXF supply",
+      "Phase 2/3 contracts (BridgeCircuit, InferenceRouter, ComputeMarketplace)"
+    ],
+    "launch_date": "Post CertiK Phase 1 completion",
+    "kyc_required": true,
+    "poc_required": true
+  },
+  "formal_verification_candidates": [
+    {
+      "contract": "ZKVerifierSP1",
+      "properties": [
+        "Nullifier uniqueness: no two valid proofs produce the same nullifier",
+        "Circuit breaker monotonicity: failure count never decreases",
+        "Batch verification completeness: all items processed or none"
+      ]
+    },
+    {
+      "contract": "CoreRevenueSplitter",
+      "properties": [
+        "Split conservation: sum of all transfers equals input balance",
+        "Fee-to-stake bounds: always within MIN/MAX_FEE_TO_STAKE_BPS"
+      ]
+    },
+    {
+      "contract": "veXFGovernance",
+      "properties": [
+        "Voting power monotonicity: VP never increases without lock action",
+        "Lock integrity: totalLocked = sum of all active lock amounts",
+        "Proposal finality: executed proposals cannot be re-executed"
+      ]
+    }
+  ]
+}

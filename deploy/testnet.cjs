@@ -18,7 +18,8 @@
  * Required environment variables (.env.local):
  *   DEPLOYER_PRIVATE_KEY
  */
-const { ethers, network } = require('hardhat');
+const hre = require('hardhat');
+const { ethers, network } = hre;
 const fs = require('fs');
 const path = require('path');
 
@@ -38,7 +39,16 @@ const TESTNET_CONFIG = {
 };
 
 async function main() {
-  const [deployer] = await ethers.getSigners();
+  const signers = await ethers.getSigners();
+  if (signers.length === 0) {
+    throw new Error(
+      'No deployer account configured.\n' +
+      '  Set DEPLOYER_PRIVATE_KEY (or PRIVATE_KEY) in .env.local:\n' +
+      '    DEPLOYER_PRIVATE_KEY=0xYourPrivateKeyHere\n' +
+      '  Fund it with testnet TFUEL: https://faucet.thetatoken.org'
+    );
+  }
+  const deployer = signers[0];
   const balance = await ethers.provider.getBalance(deployer.address);
   const netConfig = TESTNET_CONFIG[network.name] || {
     name: network.name, chainId: 'unknown', explorer: null,
@@ -75,13 +85,24 @@ async function main() {
     console.log('  ✓ Pre-flight: chain ID 365 confirmed');
   }
 
+  // Load partial manifest from a previous interrupted run (resumable deploys)
+  const manifestDir = path.join(__dirname, 'manifests');
+  const resumeFile = path.join(manifestDir, 'testnet-progress.json');
+  let prior = {};
+  if (fs.existsSync(resumeFile)) {
+    try {
+      prior = JSON.parse(fs.readFileSync(resumeFile, 'utf8'));
+      console.log(`\n  ↻ Resuming from prior run (${Object.keys(prior).length} contracts cached)`);
+    } catch { prior = {}; }
+  }
+
   const manifest = {
     network: network.name,
     chainId: netConfig.chainId,
     deployer: deployer.address,
     timestamp: new Date().toISOString(),
     explorer: netConfig.explorer,
-    contracts: {},
+    contracts: { ...prior },
     gasUsed: {},
     roles: [],
     smokeTests: { passed: 0, failed: 0 },
@@ -89,10 +110,26 @@ async function main() {
 
   let totalGas = 0n;
 
-  // helper: deploy + track gas
+  const TX = { gasLimit: 8000000, gasPrice: 4000000000000n };
+
+  function saveProgress() {
+    if (!fs.existsSync(manifestDir)) fs.mkdirSync(manifestDir, { recursive: true });
+    fs.writeFileSync(resumeFile, JSON.stringify(manifest.contracts, null, 2));
+  }
+
   async function deployContract(name, Factory, args) {
+    if (manifest.contracts[name]) {
+      const existingAddr = manifest.contracts[name];
+      try {
+        const code = await ethers.provider.getCode(existingAddr);
+        if (code && code !== '0x') {
+          console.log(`  ⏩ ${name.padEnd(24)} ${existingAddr}  (resumed)`);
+          return Factory.attach(existingAddr);
+        }
+      } catch {}
+    }
     console.log(`  Deploying ${name}...`);
-    const contract = await Factory.deploy(...args);
+    const contract = await Factory.deploy(...args, TX);
     await contract.waitForDeployment();
     const addr = await contract.getAddress();
     const receipt = await contract.deploymentTransaction().wait();
@@ -101,6 +138,7 @@ async function main() {
     manifest.gasUsed[name] = Number(gas);
     totalGas += gas;
     console.log(`  ✓ ${name.padEnd(24)} ${addr}  (${gas} gas)`);
+    saveProgress();
     return contract;
   }
 
@@ -123,9 +161,9 @@ async function main() {
   const zkAddr = manifest.contracts.ZKVerifierSP1;
 
   // ══════════════════════════════════════════════════════════════════
-  //  PHASE 2: CIRCUITS (11)
+  //  PHASE 2: CIRCUITS (16)
   // ══════════════════════════════════════════════════════════════════
-  console.log('\n══ Phase 2: Circuits (11) ══════════════════════════════');
+  console.log('\n══ Phase 2: Circuits (16) ══════════════════════════════');
 
   const circuitDefs = [
     { name: 'TAOCircuit',        args: [d, splAddr, zkAddr, ethers.ZeroAddress, ethers.ZeroAddress] },
@@ -170,7 +208,13 @@ async function main() {
   const CIRCUIT_ROLE = await splitter.CIRCUIT_ROLE();
   for (const c of circuitDefs) {
     const addr = manifest.contracts[c.name];
-    const tx = await splitter.grantRole(CIRCUIT_ROLE, addr);
+    const already = await splitter.hasRole(CIRCUIT_ROLE, addr);
+    if (already) {
+      manifest.roles.push({ contract: c.name, role: 'CIRCUIT_ROLE', address: addr });
+      console.log(`  ⏩ CIRCUIT_ROLE → ${c.name} (already granted)`);
+      continue;
+    }
+    const tx = await splitter.grantRole(CIRCUIT_ROLE, addr, TX);
     await tx.wait();
     manifest.roles.push({ contract: c.name, role: 'CIRCUIT_ROLE', address: addr });
     console.log(`  ✓ CIRCUIT_ROLE → ${c.name}`);
@@ -235,16 +279,14 @@ async function main() {
   //  PHASE 5: MANIFEST OUTPUT
   // ══════════════════════════════════════════════════════════════════
   manifest.totalGas = Number(totalGas);
-  manifest.totalGasCostTFUEL = ethers.formatEther(totalGas * 4000000000n);
+  manifest.totalGasCostTFUEL = ethers.formatEther(totalGas * TX.gasPrice);
 
   console.log('\n╔══════════════════════════════════════════════════════════════╗');
   console.log('║  TESTNET DEPLOYMENT MANIFEST                                ║');
   console.log('╚══════════════════════════════════════════════════════════════╝');
   console.log(JSON.stringify(manifest, null, 2));
 
-  // Write manifest file
-  const manifestDir = path.join(__dirname, 'manifests');
-  if (!fs.existsSync(manifestDir)) fs.mkdirSync(manifestDir, { recursive: true });
+  // Write final manifest file
   const manifestFile = path.join(manifestDir, `testnet-${Date.now()}.json`);
   fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
   console.log(`\n  Manifest saved: ${manifestFile}`);

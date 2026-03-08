@@ -1,4 +1,3 @@
-use cosmwasm_std::Uint128;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -36,10 +35,13 @@ pub enum ExecuteMsg {
     },
 
     /// Register a new circuit's program verification key.
+    /// Optional vkey_data: hex-encoded serialized arkworks VerifyingKey<Bn254>
+    /// for full BN254 Groth16 pairing verification in production mode.
     RegisterCircuit {
         circuit_id: String,
         program_vkey: String,
         label: String,
+        vkey_data: Option<String>,
     },
 
     /// Remove a circuit.
@@ -109,3 +111,7 @@ pub struct ConfigResponse {
     pub mock_mode: bool,
     pub paused: bool,
 }
+
+/// Migration message for contract upgrades.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct MigrateMsg {}

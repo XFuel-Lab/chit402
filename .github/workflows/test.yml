@@ -1,0 +1,53 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  solidity:
+    name: Solidity Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Compile contracts
+        run: npx hardhat compile
+
+      - name: Run core + circuit tests
+        run: npm run test:contracts:all
+
+      - name: Run coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solidity-coverage
+          path: coverage/
+
+  cosmwasm:
+    name: CosmWasm Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core-layer/wasm/zk-verifier
+
+      - name: Run CosmWasm verifier tests
+        working-directory: core-layer/wasm/zk-verifier
+        run: cargo test

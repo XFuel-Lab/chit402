@@ -122,6 +122,10 @@ optimization-results.txt
 deployment-*.json
 !deployment-example.json
 
+# Generated proof binaries
+*.bin
+!src/**/*.bin
+
 # IDE
 *.code-workspace
 .history/

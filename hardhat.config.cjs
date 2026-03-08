@@ -1,11 +1,27 @@
+require('dotenv').config({ path: '.env.local' })
+require('dotenv').config()
+
 require('@nomicfoundation/hardhat-toolbox')
 require('@nomicfoundation/hardhat-ethers')
 require('@openzeppelin/hardhat-upgrades')
-require('solidity-coverage')
 
-// Load .env.local first (for secrets), then .env (for public config)
-require('dotenv').config({ path: '.env.local' })
-require('dotenv').config()
+// Theta RPC compatibility: strip the block tag from eth_estimateGas calls.
+// Theta's RPC only accepts 1 argument but ethers v6 sends [tx, "latest"].
+const { extendEnvironment } = require('hardhat/config')
+extendEnvironment((hre) => {
+  const orig = hre.network.provider.request.bind(hre.network.provider)
+  hre.network.provider.request = async (args) => {
+    if (args.method === 'eth_estimateGas' && args.params && args.params.length > 1) {
+      return orig({ method: args.method, params: [args.params[0]] })
+    }
+    return orig(args)
+  }
+})
+
+const pk = process.env.PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY
+if (pk) {
+  console.log(`PRIVATE_KEY loaded: ${pk.slice(0, 6)}...`)
+}
 
 /** @type {import('hardhat/config').HardhatUserConfig} */
 module.exports = {
@@ -14,17 +30,18 @@ module.exports = {
       {
         version: '0.8.22',
         settings: {
-          viaIR: true,
+          viaIR: !process.env.HARDHAT_FAST,
           optimizer: {
             enabled: true,
             runs: 200,
           },
         },
       },
+      // 0.8.20 retained for legacy and non-audit circuit contracts
       {
         version: '0.8.20',
         settings: {
-          viaIR: true,
+          viaIR: !process.env.HARDHAT_FAST,
           optimizer: {
             enabled: true,
             runs: 200,
@@ -40,16 +57,28 @@ module.exports = {
     'theta-testnet': {
       url: 'https://eth-rpc-api-testnet.thetatoken.org/rpc',
       chainId: 365,
-      // Use ledgerAccounts for hardware wallet support or
-      // accounts will be set programmatically in deployment scripts via keystore
+      accounts: pk ? [pk] : [],
+      gas: 8000000,
+      gasPrice: 4000000000000,
+      timeout: 120000,
     },
     'theta-mainnet': {
       url: 'https://eth-rpc-api.thetatoken.org/rpc',
       chainId: 361,
-      // Accounts set programmatically in deployment scripts via keystore
-      gasPrice: 4000000000000, // 4000 Gwei (minimum required by Theta mainnet)
+      accounts: pk ? [pk] : [],
+      gas: 8000000,
+      gasPrice: 4000000000000,
       timeout: 120000,
-      httpHeaders: {},
+    },
+    'bittensor-testnet': {
+      url: process.env.BITTENSOR_TESTNET_RPC || 'https://test.chain.opentensor.ai',
+      chainId: 945,
+      timeout: 120000,
+    },
+    'bittensor-evm': {
+      url: process.env.BITTENSOR_RPC || 'https://lite.chain.opentensor.ai',
+      chainId: 964,
+      timeout: 120000,
     },
   },
   paths: {
@@ -57,78 +86,6 @@ module.exports = {
     tests: './test',
     cache: './cache',
     artifacts: './artifacts',
-  },
-  // Include core-layer and circuit contracts in compilation.
-  // Hardhat will discover Solidity files in these paths for overrides.
-  // Run: npx hardhat compile
-  // Tests (Priority):
-  //   npx hardhat test circuits/tao-evm/test/TAOCircuit.test.cjs
-  //   npx hardhat test circuits/a2a/test/A2ACircuit.test.cjs
-  //   npx hardhat test circuits/theta-gpu/test/ThetaGPUCircuit.test.cjs
-  // Tests (Expansion):
-  //   npx hardhat test circuits/zkml/test/ZKMLCircuit.test.cjs
-  //   npx hardhat test circuits/akash/test/AkashCircuit.test.cjs
-  //   npx hardhat test circuits/autonomous-vaults/test/AutonomousVaults.test.cjs
-  //   npx hardhat test circuits/agent-robotics/test/AgentRobotics.test.cjs
-  // Tests (Integration):
-  //   npx hardhat test test/integration/MultiCircuit.integration.test.cjs
-  overrides: {
-    'core-layer/contracts/**': {
-      version: '0.8.22',
-      settings: {
-        viaIR: true,
-        optimizer: { enabled: true, runs: 200 },
-      },
-    },
-    'circuits/tao-evm/**': {
-      version: '0.8.22',
-      settings: {
-        viaIR: true,
-        optimizer: { enabled: true, runs: 200 },
-      },
-    },
-    'circuits/a2a/**': {
-      version: '0.8.22',
-      settings: {
-        viaIR: true,
-        optimizer: { enabled: true, runs: 200 },
-      },
-    },
-    'circuits/theta-gpu/**': {
-      version: '0.8.22',
-      settings: {
-        viaIR: true,
-        optimizer: { enabled: true, runs: 200 },
-      },
-    },
-    'circuits/zkml/**': {
-      version: '0.8.22',
-      settings: {
-        viaIR: true,
-        optimizer: { enabled: true, runs: 200 },
-      },
-    },
-    'circuits/akash/**': {
-      version: '0.8.22',
-      settings: {
-        viaIR: true,
-        optimizer: { enabled: true, runs: 200 },
-      },
-    },
-    'circuits/autonomous-vaults/**': {
-      version: '0.8.22',
-      settings: {
-        viaIR: true,
-        optimizer: { enabled: true, runs: 200 },
-      },
-    },
-    'circuits/agent-robotics/**': {
-      version: '0.8.22',
-      settings: {
-        viaIR: true,
-        optimizer: { enabled: true, runs: 200 },
-      },
-    },
   },
   mocha: {
     timeout: 40000,
