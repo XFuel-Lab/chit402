@@ -5,16 +5,42 @@ require('@nomicfoundation/hardhat-toolbox')
 require('@nomicfoundation/hardhat-ethers')
 require('@openzeppelin/hardhat-upgrades')
 
+// ============================================================
+// HARDHAT 3 MIGRATION TRACKING
+// Blocked by two upstream issues (as of 2026-03-08):
+//   1. @openzeppelin/hardhat-upgrades has no HH3 support yet.
+//      Track: https://github.com/OpenZeppelin/openzeppelin-upgrades/issues/1191
+//   2. hardhat-gas-reporter has no HH3 release yet.
+//      Track: https://github.com/NomicFoundation/hardhat/discussions/5626
+// Additional migration requirements when unblocked:
+//   - Node.js 22.10+ (current engines: >=20.0.0 in package.json)
+//   - Config rewrite: CJS → ESM defineConfig()
+//   - ~60 test files: hre.network.connect() pattern
+//   - extendEnvironment removed — replace Theta RPC patch below with HH3 hooks
+//   - solidity-coverage replaced by built-in --coverage flag
+// ============================================================
+
 // Theta RPC compatibility: strip the block tag from eth_estimateGas calls.
 // Theta's RPC only accepts 1 argument but ethers v6 sends [tx, "latest"].
+// NOTE: This uses extendEnvironment which is removed in Hardhat 3 — needs hooks replacement.
+// Intercepts both hre.network.provider.request AND hre.network.provider.send
+// because @nomicfoundation/hardhat-ethers@3 uses the .send() path directly.
 const { extendEnvironment } = require('hardhat/config')
 extendEnvironment((hre) => {
-  const orig = hre.network.provider.request.bind(hre.network.provider)
+  const origRequest = hre.network.provider.request.bind(hre.network.provider)
   hre.network.provider.request = async (args) => {
     if (args.method === 'eth_estimateGas' && args.params && args.params.length > 1) {
-      return orig({ method: args.method, params: [args.params[0]] })
+      return origRequest({ method: args.method, params: [args.params[0]] })
     }
-    return orig(args)
+    return origRequest(args)
+  }
+
+  const origSend = hre.network.provider.send.bind(hre.network.provider)
+  hre.network.provider.send = async (method, params) => {
+    if (method === 'eth_estimateGas' && params && params.length > 1) {
+      return origSend(method, [params[0]])
+    }
+    return origSend(method, params)
   }
 })
 

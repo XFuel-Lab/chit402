@@ -1,6 +1,6 @@
 # Grant Submission: Solana Foundation Grants
 
-**Generated:** 2026-02-17T12:49:42.796Z
+**Generated:** 2026-03-08T17:16:47.928Z
 **Circuit:** SolanaAIBridge
 **Amount:** $150,000–$250,000
 **Submit URL:** https://solana.org/grants
@@ -19,13 +19,13 @@
 
 | Metric | Value |
 |--------|-------|
-| Deployed Contracts | 14 |
-| Test Coverage | 255+ tests |
-| Circuits | 12 modular circuits |
-| Total Deploy Gas | 31,327,459 (~0.125309836 TFUEL) |
-| Network | hardhat (chain 1337) |
-| BelieverRound | Deployed |
-| FilecoinStorage | Ready |
+| Deployed Contracts | 22 |
+| Test Coverage | 700++ tests |
+| Circuits | 21 modular circuits |
+| Total Deploy Gas | 69,433,999 (~277.735996 TFUEL) |
+| Network | theta-testnet (chain 365) |
+| BelieverRound | Ready |
+| FilecoinStorage | Deployed |
 
 ## Submission Checklist
 

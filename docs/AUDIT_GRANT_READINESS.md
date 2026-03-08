@@ -1,9 +1,28 @@
 # XFuel Protocol — Audit & Grant Readiness Checklist
 
-**Version:** 2.0  
-**Date:** March 6, 2026  
+**Version:** 2.1  
+**Date:** March 8, 2026  
 **Audit Provider:** CertiK (Phase 1 — Core Layer + Theta Working Circuit)  
 **Target:** Q2 2026
+
+---
+
+## Testnet Deployment Status — LIVE ✓
+
+**Deployed:** 2026-03-08T16:59:24.550Z  
+**Network:** Theta Testnet (Chain 365)  
+**Deployer:** `0xDC17Cbd201E7347555e428690f702bbFcAF2d33c`  
+**Smoke Tests:** 17/17 passed  
+**Manifest:** `deploy/manifests/phase6-1772989979356.json`
+
+| Contract | Testnet Address | Explorer |
+|----------|----------------|---------|
+| CoreRevenueSplitter | `0x56A3E4e2E47Ad1D1e9DB2DD9446479b3Be01d1F0` | [View](https://testnet-explorer.thetatoken.org/account/0x56A3E4e2E47Ad1D1e9DB2DD9446479b3Be01d1F0) |
+| ZKVerifierSP1 | `0x8E0789E95f0F18F49E1BBA765893C9dfbF09570f` | [View](https://testnet-explorer.thetatoken.org/account/0x8E0789E95f0F18F49E1BBA765893C9dfbF09570f) |
+| BridgeCircuit | `0xE4a9D5Cd8fCA9B6dba6DaCfc1A7A3B1b2a928F7d` | [View](https://testnet-explorer.thetatoken.org/account/0xE4a9D5Cd8fCA9B6dba6DaCfc1A7A3B1b2a928F7d) |
+| TAOCircuit | `0x1526CD125022c06dFda2Fc1c6563de0e72581E8e` | [View](https://testnet-explorer.thetatoken.org/account/0x1526CD125022c06dFda2Fc1c6563de0e72581E8e) |
+| A2ACircuit | `0x3eb4b410373413BfAcc48A3Cd872713F44EA8015` | [View](https://testnet-explorer.thetatoken.org/account/0x3eb4b410373413BfAcc48A3Cd872713F44EA8015) |
+| ThetaGPUCircuit | `0x8188cAc55607d61c8ECf1cB850B65b47e682ADAc` | [View](https://testnet-explorer.thetatoken.org/account/0x8188cAc55607d61c8ECf1cB850B65b47e682ADAc) |
 
 ---
 

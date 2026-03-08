@@ -1,0 +1,883 @@
+{
+  "version": "6.0.0",
+  "phase": "Phase 6: Ecosystem Expansion",
+  "network": "theta-testnet",
+  "chainId": 365,
+  "deployer": "0xDC17Cbd201E7347555e428690f702bbFcAF2d33c",
+  "admin": "0xDC17Cbd201E7347555e428690f702bbFcAF2d33c",
+  "timestamp": "2026-03-08T16:59:24.550Z",
+  "contracts": {
+    "CoreRevenueSplitter": "0x56A3E4e2E47Ad1D1e9DB2DD9446479b3Be01d1F0",
+    "ZKVerifierSP1": "0x8E0789E95f0F18F49E1BBA765893C9dfbF09570f",
+    "veXFGovernance": "SKIPPED",
+    "BridgeCircuit": "0xE4a9D5Cd8fCA9B6dba6DaCfc1A7A3B1b2a928F7d",
+    "ComputeMarketplace": "0x61C64cD702D94c6141007c5CaE4036E6F10d6a32",
+    "InferenceRouter": "0x32641f6717C3b52BC844fCAc6B9173b4A84c30a0",
+    "TAOCircuit": "0x1526CD125022c06dFda2Fc1c6563de0e72581E8e",
+    "A2ACircuit": "0x3eb4b410373413BfAcc48A3Cd872713F44EA8015",
+    "ThetaGPUCircuit": "0x8188cAc55607d61c8ECf1cB850B65b47e682ADAc",
+    "ZKMLCircuit": "0xaEAa9529f0ACfe667704B9B8926eAB1513A8b04D",
+    "DataHubs": "0x55B995836a5d68697f3A4c307Cf59A37343eb4d4",
+    "AkashCircuit": "0x30fda277F863175dfFAc6BaCc6c6c75Fa97C1cdA",
+    "AutonomousVaults": "0x1aAb9D847Cc532024f23Cb0b2D42085Db61222FC",
+    "AgentRobotics": "0x4dDdc3eb619c266085509C7669E22CcAe7bEAF71",
+    "YieldCircuit": "0xbEA6bB6abaAA63ba0B5E26A56e1Ba8bDE2136A52",
+    "NearAgents": "0x9278a2a5A7240ACAE896bB13E94c738749d2563E",
+    "SolanaAIBridge": "0x70266d590f0Cf5c69E03C0292aAF7a434Da3A74f",
+    "FilecoinStorage": "0xE16898FC2EEa314882d859CFD0Ed6990e2435dad",
+    "EnergyGrid": "0x3F30f087462D1C6e90960204F73D59fC7B15F11f",
+    "MappingSensor": "0x70079Be8B0B9e450C0C32d448E1223463C9f455b",
+    "WirelessDePIN": "0x3000974430e987e5F4bC81F486E2e814eE404708",
+    "UplinkCircuit": "0xd0BC3FB308572A22C5904ED1B3fc471E29b82bE3"
+  },
+  "proverAssignments": {
+    "BridgeCircuit": {
+      "prover": "MULTI",
+      "evm": "SP1_GROTH16",
+      "cosmos": "ARK_BN254",
+      "gasTarget": "<350K"
+    },
+    "ComputeMarketplace": {
+      "prover": "COSMWASM",
+      "backend": "ARK_BN254",
+      "gasTarget": "<250K"
+    },
+    "InferenceRouter": {
+      "prover": "EVM",
+      "backend": "SP1_GROTH16",
+      "gasTarget": "<270K"
+    },
+    "TAOCircuit": {
+      "prover": "EVM",
+      "backend": "SP1_GROTH16",
+      "gasTarget": "<270K"
+    },
+    "A2ACircuit": {
+      "prover": "EVM",
+      "backend": "SP1_GROTH16",
+      "gasTarget": "<270K"
+    },
+    "ThetaGPUCircuit": {
+      "prover": "EVM",
+      "backend": "SP1_GROTH16",
+      "gasTarget": "<270K"
+    }
+  },
+  "stakeRoutes": [],
+  "roles": [
+    {
+      "contract": "BridgeCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xE4a9D5Cd8fCA9B6dba6DaCfc1A7A3B1b2a928F7d"
+    },
+    {
+      "contract": "ComputeMarketplace",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x61C64cD702D94c6141007c5CaE4036E6F10d6a32"
+    },
+    {
+      "contract": "InferenceRouter",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x32641f6717C3b52BC844fCAc6B9173b4A84c30a0"
+    },
+    {
+      "contract": "TAOCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x1526CD125022c06dFda2Fc1c6563de0e72581E8e"
+    },
+    {
+      "contract": "A2ACircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x3eb4b410373413BfAcc48A3Cd872713F44EA8015"
+    },
+    {
+      "contract": "ThetaGPUCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x8188cAc55607d61c8ECf1cB850B65b47e682ADAc"
+    },
+    {
+      "contract": "ZKMLCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xaEAa9529f0ACfe667704B9B8926eAB1513A8b04D"
+    },
+    {
+      "contract": "DataHubs",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x55B995836a5d68697f3A4c307Cf59A37343eb4d4"
+    },
+    {
+      "contract": "AkashCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x30fda277F863175dfFAc6BaCc6c6c75Fa97C1cdA"
+    },
+    {
+      "contract": "AutonomousVaults",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x1aAb9D847Cc532024f23Cb0b2D42085Db61222FC"
+    },
+    {
+      "contract": "AgentRobotics",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x4dDdc3eb619c266085509C7669E22CcAe7bEAF71"
+    },
+    {
+      "contract": "YieldCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xbEA6bB6abaAA63ba0B5E26A56e1Ba8bDE2136A52"
+    },
+    {
+      "contract": "NearAgents",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x9278a2a5A7240ACAE896bB13E94c738749d2563E"
+    },
+    {
+      "contract": "SolanaAIBridge",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x70266d590f0Cf5c69E03C0292aAF7a434Da3A74f"
+    },
+    {
+      "contract": "FilecoinStorage",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xE16898FC2EEa314882d859CFD0Ed6990e2435dad"
+    },
+    {
+      "contract": "EnergyGrid",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x3F30f087462D1C6e90960204F73D59fC7B15F11f"
+    },
+    {
+      "contract": "MappingSensor",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x70079Be8B0B9e450C0C32d448E1223463C9f455b"
+    },
+    {
+      "contract": "WirelessDePIN",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x3000974430e987e5F4bC81F486E2e814eE404708"
+    },
+    {
+      "contract": "UplinkCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xd0BC3FB308572A22C5904ED1B3fc471E29b82bE3"
+    }
+  ],
+  "gasUsed": {
+    "CoreRevenueSplitter": 5281941,
+    "ZKVerifierSP1": 3697900,
+    "BridgeCircuit": 3694805,
+    "ComputeMarketplace": 3752959,
+    "InferenceRouter": 3828538,
+    "TAOCircuit": 2784408,
+    "A2ACircuit": 4817709,
+    "ThetaGPUCircuit": 3555473,
+    "ZKMLCircuit": 3672335,
+    "DataHubs": 3547419,
+    "AkashCircuit": 3391935,
+    "AutonomousVaults": 3023273,
+    "AgentRobotics": 3478722,
+    "YieldCircuit": 2673025,
+    "NearAgents": 2920634,
+    "SolanaAIBridge": 2574362,
+    "FilecoinStorage": 2756921,
+    "EnergyGrid": 2385992,
+    "MappingSensor": 2323451,
+    "WirelessDePIN": 2170721,
+    "UplinkCircuit": 2174993
+  },
+  "smokeTests": {
+    "passed": 33,
+    "failed": 0,
+    "total": 17,
+    "results": [
+      {
+        "test": "BridgeCircuit CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "ComputeMarketplace CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "InferenceRouter CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "TAOCircuit CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "A2ACircuit CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "ThetaGPUCircuit CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "Splitter split ratios (30/30/25/15)",
+        "status": "PASS"
+      },
+      {
+        "test": "Splitter fee-to-stake BPS (2000)",
+        "status": "PASS"
+      },
+      {
+        "test": "Splitter pendingBalance (0)",
+        "status": "PASS"
+      },
+      {
+        "test": "ZKVerifier mock mode",
+        "status": "PASS"
+      },
+      {
+        "test": "ZKVerifier zero stats",
+        "status": "PASS"
+      },
+      {
+        "test": "veXFGovernance MIN_LOCK (skipped)",
+        "status": "PASS"
+      },
+      {
+        "test": "veXFGovernance MAX_MULTIPLIER (skipped)",
+        "status": "PASS"
+      },
+      {
+        "test": "veXFGovernance linked (skipped)",
+        "status": "PASS"
+      },
+      {
+        "test": "Stake route count",
+        "status": "PASS"
+      },
+      {
+        "test": "CIRCUIT_ROLE granted to circuits",
+        "status": "PASS"
+      },
+      {
+        "test": "Distribution count = 0",
+        "status": "PASS"
+      },
+      {
+        "test": "ZKMLCircuit CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "DataHubs CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "AkashCircuit CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "AutonomousVaults CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "AgentRobotics CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "YieldCircuit CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "NearAgents CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "SolanaAIBridge CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "FilecoinStorage CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "EnergyGrid CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "MappingSensor CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "WirelessDePIN CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "UplinkCircuit CIRCUIT_ID",
+        "status": "PASS"
+      },
+      {
+        "test": "All 19+ circuits deployed",
+        "status": "PASS"
+      },
+      {
+        "test": "Partner hooks configured (3)",
+        "status": "PASS"
+      },
+      {
+        "test": "Health checks configured (19+ circuits)",
+        "status": "PASS"
+      }
+    ]
+  },
+  "osmosisInstructions": {
+    "chain": "osmosis-1",
+    "rpc": "https://rpc.osmosis.zone:443",
+    "lcd": "https://lcd.osmosis.zone",
+    "contracts": [
+      "xfuel-zk-verifier",
+      "xfuel-revenue-splitter"
+    ],
+    "steps": [
+      "1. Build optimized WASM: docker run --rm -v \"$(pwd)\":/code cosmwasm/rust-optimizer:0.12.6",
+      "2. Post proposal on gov.osmosis.zone (required by Proposal 438)",
+      "3. Submit governance proposal: osmosisd tx gov submit-proposal wasm-store artifacts/xfuel_zk_verifier.wasm --title \"XFuel ZK Verifier\" --deposit 400000000uosmo --chain-id osmosis-1",
+      "4. Wait for voting period (5 days) and quorum (20%)",
+      "5. After approval, instantiate: osmosisd tx wasm instantiate $CODE_ID '{\"admin\":\"osmo1...\"}' --label \"xfuel-zk-verifier\" --chain-id osmosis-1",
+      "6. Configure IBC channels for cross-chain proof relay"
+    ],
+    "governance": {
+      "minDeposit": "1600 OSMO",
+      "initialDeposit": "400 OSMO (25% minimum)",
+      "votingPeriod": "5 days",
+      "quorum": "20%",
+      "threshold": "50%"
+    },
+    "proverAssignment": "CosmWasm ark-bn254 Groth16 (~250K gas equivalent)"
+  },
+  "subchains": {
+    "BridgeCircuit": {
+      "subchainID": 361001,
+      "mainChainContract": "0xE4a9D5Cd8fCA9B6dba6DaCfc1A7A3B1b2a928F7d",
+      "collateral": {
+        "wTHETA": "1000",
+        "TFUEL": "20000",
+        "description": "Per docs.thetatoken.org: 1,000 wTHETA + 20,000 TFUEL per validator"
+      },
+      "validatorConfig": {
+        "minValidators": 1,
+        "maxValidators": 30,
+        "dynasty": 3
+      },
+      "finality": "<2s",
+      "blockTime": 1,
+      "isolation": {
+        "separateState": true,
+        "independentPause": true,
+        "circuitSpecificFees": true,
+        "dedicatedValidators": true
+      },
+      "status": "configured-not-deployed"
+    },
+    "ComputeMarketplace": {
+      "subchainID": 361002,
+      "mainChainContract": "0x61C64cD702D94c6141007c5CaE4036E6F10d6a32",
+      "collateral": {
+        "wTHETA": "1000",
+        "TFUEL": "20000",
+        "description": "Per docs.thetatoken.org: 1,000 wTHETA + 20,000 TFUEL per validator"
+      },
+      "validatorConfig": {
+        "minValidators": 1,
+        "maxValidators": 30,
+        "dynasty": 3
+      },
+      "finality": "<2s",
+      "blockTime": 1,
+      "isolation": {
+        "separateState": true,
+        "independentPause": true,
+        "circuitSpecificFees": true,
+        "dedicatedValidators": true
+      },
+      "status": "configured-not-deployed"
+    },
+    "InferenceRouter": {
+      "subchainID": 361003,
+      "mainChainContract": "0x32641f6717C3b52BC844fCAc6B9173b4A84c30a0",
+      "collateral": {
+        "wTHETA": "1000",
+        "TFUEL": "20000",
+        "description": "Per docs.thetatoken.org: 1,000 wTHETA + 20,000 TFUEL per validator"
+      },
+      "validatorConfig": {
+        "minValidators": 1,
+        "maxValidators": 30,
+        "dynasty": 3
+      },
+      "finality": "<2s",
+      "blockTime": 1,
+      "isolation": {
+        "separateState": true,
+        "independentPause": true,
+        "circuitSpecificFees": true,
+        "dedicatedValidators": true
+      },
+      "status": "configured-not-deployed"
+    },
+    "TAOCircuit": {
+      "subchainID": 361004,
+      "mainChainContract": "0x1526CD125022c06dFda2Fc1c6563de0e72581E8e",
+      "collateral": {
+        "wTHETA": "1000",
+        "TFUEL": "20000",
+        "description": "Per docs.thetatoken.org: 1,000 wTHETA + 20,000 TFUEL per validator"
+      },
+      "validatorConfig": {
+        "minValidators": 1,
+        "maxValidators": 30,
+        "dynasty": 3
+      },
+      "finality": "<2s",
+      "blockTime": 1,
+      "isolation": {
+        "separateState": true,
+        "independentPause": true,
+        "circuitSpecificFees": true,
+        "dedicatedValidators": true
+      },
+      "status": "configured-not-deployed"
+    },
+    "A2ACircuit": {
+      "subchainID": 361005,
+      "mainChainContract": "0x3eb4b410373413BfAcc48A3Cd872713F44EA8015",
+      "collateral": {
+        "wTHETA": "1000",
+        "TFUEL": "20000",
+        "description": "Per docs.thetatoken.org: 1,000 wTHETA + 20,000 TFUEL per validator"
+      },
+      "validatorConfig": {
+        "minValidators": 1,
+        "maxValidators": 30,
+        "dynasty": 3
+      },
+      "finality": "<2s",
+      "blockTime": 1,
+      "isolation": {
+        "separateState": true,
+        "independentPause": true,
+        "circuitSpecificFees": true,
+        "dedicatedValidators": true
+      },
+      "status": "configured-not-deployed"
+    },
+    "ThetaGPUCircuit": {
+      "subchainID": 361006,
+      "mainChainContract": "0x8188cAc55607d61c8ECf1cB850B65b47e682ADAc",
+      "collateral": {
+        "wTHETA": "1000",
+        "TFUEL": "20000",
+        "description": "Per docs.thetatoken.org: 1,000 wTHETA + 20,000 TFUEL per validator"
+      },
+      "validatorConfig": {
+        "minValidators": 1,
+        "maxValidators": 30,
+        "dynasty": 3
+      },
+      "finality": "<2s",
+      "blockTime": 1,
+      "isolation": {
+        "separateState": true,
+        "independentPause": true,
+        "circuitSpecificFees": true,
+        "dedicatedValidators": true
+      },
+      "status": "configured-not-deployed"
+    }
+  },
+  "resilience": {
+    "enabled": false,
+    "config": {
+      "healthCheckIntervalMs": 30000,
+      "maxConsecutiveFailures": 5,
+      "failoverNullifierWindow": 3600,
+      "circuitBreakerThreshold": 0.1,
+      "autoRecoveryEnabled": true,
+      "crossNetFailoverEnabled": true,
+      "perCircuit": {
+        "BridgeCircuit": {
+          "priority": "critical",
+          "maxRetries": 5,
+          "failoverChain": "bittensor",
+          "healthEndpoint": "/health"
+        },
+        "ComputeMarketplace": {
+          "priority": "high",
+          "maxRetries": 3,
+          "failoverChain": "theta",
+          "healthEndpoint": "/health"
+        },
+        "InferenceRouter": {
+          "priority": "high",
+          "maxRetries": 3,
+          "failoverChain": "theta",
+          "healthEndpoint": "/health"
+        },
+        "TAOCircuit": {
+          "priority": "medium",
+          "maxRetries": 3,
+          "failoverChain": "theta",
+          "healthEndpoint": "/health"
+        },
+        "A2ACircuit": {
+          "priority": "critical",
+          "maxRetries": 5,
+          "failoverChain": "bittensor",
+          "healthEndpoint": "/health"
+        },
+        "ThetaGPUCircuit": {
+          "priority": "medium",
+          "maxRetries": 3,
+          "failoverChain": "bittensor",
+          "healthEndpoint": "/health"
+        }
+      },
+      "nullifierFailover": {
+        "enabled": true,
+        "syncIntervalMs": 10000,
+        "crossChainReplication": true,
+        "maxPendingSync": 1000
+      }
+    },
+    "healthChecks": {
+      "BridgeCircuit": {
+        "status": "configured",
+        "priority": "critical",
+        "maxRetries": 5,
+        "failoverChain": "bittensor",
+        "consecutiveFailures": 0,
+        "lastHealthy": "2026-03-08T17:04:14.039Z"
+      },
+      "ComputeMarketplace": {
+        "status": "configured",
+        "priority": "high",
+        "maxRetries": 3,
+        "failoverChain": "theta",
+        "consecutiveFailures": 0,
+        "lastHealthy": "2026-03-08T17:04:14.039Z"
+      },
+      "InferenceRouter": {
+        "status": "configured",
+        "priority": "high",
+        "maxRetries": 3,
+        "failoverChain": "theta",
+        "consecutiveFailures": 0,
+        "lastHealthy": "2026-03-08T17:04:14.039Z"
+      },
+      "TAOCircuit": {
+        "status": "configured",
+        "priority": "medium",
+        "maxRetries": 3,
+        "failoverChain": "theta",
+        "consecutiveFailures": 0,
+        "lastHealthy": "2026-03-08T17:04:14.039Z"
+      },
+      "A2ACircuit": {
+        "status": "configured",
+        "priority": "critical",
+        "maxRetries": 5,
+        "failoverChain": "bittensor",
+        "consecutiveFailures": 0,
+        "lastHealthy": "2026-03-08T17:04:14.039Z"
+      },
+      "ThetaGPUCircuit": {
+        "status": "configured",
+        "priority": "medium",
+        "maxRetries": 3,
+        "failoverChain": "bittensor",
+        "consecutiveFailures": 0,
+        "lastHealthy": "2026-03-08T17:04:14.039Z"
+      }
+    },
+    "failoverMap": {
+      "BridgeCircuit": {
+        "primaryChain": "theta",
+        "failoverChain": "bittensor",
+        "nullifierSync": true,
+        "crossChainReplication": true
+      },
+      "ComputeMarketplace": {
+        "primaryChain": "theta",
+        "failoverChain": "theta",
+        "nullifierSync": true,
+        "crossChainReplication": true
+      },
+      "InferenceRouter": {
+        "primaryChain": "theta",
+        "failoverChain": "theta",
+        "nullifierSync": true,
+        "crossChainReplication": true
+      },
+      "TAOCircuit": {
+        "primaryChain": "theta",
+        "failoverChain": "theta",
+        "nullifierSync": true,
+        "crossChainReplication": true
+      },
+      "A2ACircuit": {
+        "primaryChain": "theta",
+        "failoverChain": "bittensor",
+        "nullifierSync": true,
+        "crossChainReplication": true
+      },
+      "ThetaGPUCircuit": {
+        "primaryChain": "theta",
+        "failoverChain": "bittensor",
+        "nullifierSync": true,
+        "crossChainReplication": true
+      }
+    },
+    "crossNetAdapters": {
+      "aptos": {
+        "type": "move",
+        "rpc": "https://fullnode.mainnet.aptoslabs.com/v1",
+        "zkAdapter": "aptos_groth16_native",
+        "gasTarget": "<50K APT gas units",
+        "proofFormat": "SP1 Groth16 → Move resource",
+        "status": "configured"
+      },
+      "sui": {
+        "type": "move",
+        "rpc": "https://fullnode.mainnet.sui.io:443",
+        "zkAdapter": "sui_groth16_native",
+        "gasTarget": "<50K SUI gas units",
+        "proofFormat": "SP1 Groth16 → Sui object",
+        "status": "configured"
+      }
+    }
+  },
+  "healthChecks": {
+    "BridgeCircuit": {
+      "endpoint": "/health/bridgecircuit",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0xE4a9D5Cd8fCA9B6dba6DaCfc1A7A3B1b2a928F7d",
+      "lastChecked": "2026-03-08T17:12:56.444Z"
+    },
+    "ComputeMarketplace": {
+      "endpoint": "/health/computemarketplace",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x61C64cD702D94c6141007c5CaE4036E6F10d6a32",
+      "lastChecked": "2026-03-08T17:12:56.444Z"
+    },
+    "InferenceRouter": {
+      "endpoint": "/health/inferencerouter",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x32641f6717C3b52BC844fCAc6B9173b4A84c30a0",
+      "lastChecked": "2026-03-08T17:12:56.444Z"
+    },
+    "TAOCircuit": {
+      "endpoint": "/health/taocircuit",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x1526CD125022c06dFda2Fc1c6563de0e72581E8e",
+      "lastChecked": "2026-03-08T17:12:56.444Z"
+    },
+    "A2ACircuit": {
+      "endpoint": "/health/a2acircuit",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x3eb4b410373413BfAcc48A3Cd872713F44EA8015",
+      "lastChecked": "2026-03-08T17:12:56.444Z"
+    },
+    "ThetaGPUCircuit": {
+      "endpoint": "/health/thetagpucircuit",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x8188cAc55607d61c8ECf1cB850B65b47e682ADAc",
+      "lastChecked": "2026-03-08T17:12:56.444Z"
+    },
+    "ZKMLCircuit": {
+      "endpoint": "/health/zkmlcircuit",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0xaEAa9529f0ACfe667704B9B8926eAB1513A8b04D",
+      "lastChecked": "2026-03-08T17:12:56.444Z"
+    },
+    "DataHubs": {
+      "endpoint": "/health/datahubs",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x55B995836a5d68697f3A4c307Cf59A37343eb4d4",
+      "lastChecked": "2026-03-08T17:12:56.444Z"
+    },
+    "AkashCircuit": {
+      "endpoint": "/health/akashcircuit",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x30fda277F863175dfFAc6BaCc6c6c75Fa97C1cdA",
+      "lastChecked": "2026-03-08T17:12:56.444Z"
+    },
+    "AutonomousVaults": {
+      "endpoint": "/health/autonomousvaults",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x1aAb9D847Cc532024f23Cb0b2D42085Db61222FC",
+      "lastChecked": "2026-03-08T17:12:56.444Z"
+    },
+    "AgentRobotics": {
+      "endpoint": "/health/agentrobotics",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x4dDdc3eb619c266085509C7669E22CcAe7bEAF71",
+      "lastChecked": "2026-03-08T17:12:56.444Z"
+    },
+    "YieldCircuit": {
+      "endpoint": "/health/yieldcircuit",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0xbEA6bB6abaAA63ba0B5E26A56e1Ba8bDE2136A52",
+      "lastChecked": "2026-03-08T17:12:56.444Z"
+    },
+    "NearAgents": {
+      "endpoint": "/health/nearagents",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x9278a2a5A7240ACAE896bB13E94c738749d2563E",
+      "lastChecked": "2026-03-08T17:12:56.445Z"
+    },
+    "SolanaAIBridge": {
+      "endpoint": "/health/solanaaibridge",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x70266d590f0Cf5c69E03C0292aAF7a434Da3A74f",
+      "lastChecked": "2026-03-08T17:12:56.445Z"
+    },
+    "FilecoinStorage": {
+      "endpoint": "/health/filecoinstorage",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0xE16898FC2EEa314882d859CFD0Ed6990e2435dad",
+      "lastChecked": "2026-03-08T17:12:56.445Z"
+    },
+    "EnergyGrid": {
+      "endpoint": "/health/energygrid",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x3F30f087462D1C6e90960204F73D59fC7B15F11f",
+      "lastChecked": "2026-03-08T17:12:56.445Z"
+    },
+    "MappingSensor": {
+      "endpoint": "/health/mappingsensor",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x70079Be8B0B9e450C0C32d448E1223463C9f455b",
+      "lastChecked": "2026-03-08T17:12:56.445Z"
+    },
+    "WirelessDePIN": {
+      "endpoint": "/health/wirelessdepin",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0x3000974430e987e5F4bC81F486E2e814eE404708",
+      "lastChecked": "2026-03-08T17:12:56.445Z"
+    },
+    "UplinkCircuit": {
+      "endpoint": "/health/uplinkcircuit",
+      "interval": 30000,
+      "timeout": 5000,
+      "expectedStatus": "healthy",
+      "contract": "0xd0BC3FB308572A22C5904ED1B3fc471E29b82bE3",
+      "lastChecked": "2026-03-08T17:12:56.445Z"
+    }
+  },
+  "partnerHooks": {
+    "almanak": {
+      "partner": "Almanak",
+      "integration": "Agent swarm orchestration",
+      "targetCircuit": "A2ACircuit",
+      "targetContract": "0x3eb4b410373413BfAcc48A3Cd872713F44EA8015",
+      "hookType": "swarm-lifecycle",
+      "config": {
+        "swarmMaxAgents": 100,
+        "settlementInterval": 3600,
+        "zkSettlement": true
+      },
+      "status": "configured"
+    },
+    "succinct": {
+      "partner": "Succinct SP1",
+      "integration": "Recursive proof generation",
+      "targetCircuit": "ZKVerifierSP1",
+      "targetContract": "0x8E0789E95f0F18F49E1BBA765893C9dfbF09570f",
+      "hookType": "proof-generation",
+      "config": {
+        "proverBackend": "SP1_GROTH16",
+        "recursiveProofs": true,
+        "gateway": "0x0000000000000000000000000000000000000000"
+      },
+      "status": "configured"
+    },
+    "chainlink": {
+      "partner": "Chainlink",
+      "integration": "Price feeds & automation",
+      "targetCircuit": "CoreRevenueSplitter",
+      "targetContract": "0x56A3E4e2E47Ad1D1e9DB2DD9446479b3Be01d1F0",
+      "hookType": "oracle-feed",
+      "config": {
+        "feedType": "price-feed",
+        "automationUpkeep": true,
+        "updateInterval": 3600
+      },
+      "status": "configured"
+    }
+  },
+  "totalGas": 69433999,
+  "totalGasCostTFUEL": "277.735996",
+  "chainConfig": {
+    "theta": {
+      "name": "Theta Mainnet",
+      "chainId": 361,
+      "rpc": "https://eth-rpc-api.thetatoken.org/rpc",
+      "gasToken": "TFUEL"
+    },
+    "osmosis": {
+      "name": "Osmosis Mainnet",
+      "chainId": "osmosis-1",
+      "rpc": "https://rpc.osmosis.zone:443",
+      "gasToken": "OSMO"
+    },
+    "bittensor": {
+      "name": "Bittensor EVM",
+      "chainId": 964,
+      "rpc": "https://lite.chain.opentensor.ai",
+      "gasToken": "TAO"
+    },
+    "aptos": {
+      "name": "Aptos Mainnet",
+      "chainId": 1,
+      "rpc": "https://fullnode.mainnet.aptoslabs.com/v1",
+      "gasToken": "APT",
+      "vmType": "move"
+    },
+    "sui": {
+      "name": "Sui Mainnet",
+      "chainId": 101,
+      "rpc": "https://fullnode.mainnet.sui.io:443",
+      "gasToken": "SUI",
+      "vmType": "move"
+    }
+  }
+}

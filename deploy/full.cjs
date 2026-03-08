@@ -25,10 +25,6 @@
  *   STAKE_POOL_ADDRESS       Default staking pool
  *   SP1_GATEWAY_ADDRESS      SP1 Verifier Gateway (0x0 for mock)
  *   XF_TOKEN_ADDRESS         XF ERC-20 token (0x0 to skip veXFGovernance)
- *   USDC_ADDRESS             USDC token for Jackpot payouts (0x0 for mock)
- *   VRF_COORDINATOR          Chainlink VRF coordinator (0x0 for mock)
- *   VRF_KEY_HASH             Chainlink VRF key hash
- *   VRF_SUB_ID               Chainlink VRF subscription ID
  *
  * Optional:
  *   THETA_STAKE_POOL         wTHETA/TFUEL staking pool for Theta chain
@@ -42,8 +38,7 @@
  *   SUI_RPC                  Sui fullnode RPC (default: mainnet)
  *
  * Deployment phases:
- *   Phase 1: Core Layer (CoreRevenueSplitter, ZKVerifierSP1, veXFGovernance)
- *   Phase 2: 6 PoC Circuits with prover assignments
+ *   Phase 1: Core Layer (CoreRevenueSplitter, ZKVerifierSP1, veXFGovernance) *   Phase 2: 6 PoC Circuits with prover assignments
  *   Phase 3: Role configuration (CIRCUIT_ROLE, GOVERNANCE_ROLE)
  *   Phase 4: Multi-chain Fee-to-Stake routing
  *   Phase 5: Admin transfer (deployer → multisig)
@@ -135,10 +130,7 @@ async function main() {
   const STAKE    = resolveAddr('STAKE_POOL_ADDRESS', deployer.address);
   const SP1GW    = resolveAddr('SP1_GATEWAY_ADDRESS', ethers.ZeroAddress);
   const XF_TOKEN = resolveAddr('XF_TOKEN_ADDRESS', ethers.ZeroAddress);
-  const USDC_ADDR = resolveAddr('USDC_ADDRESS', ethers.ZeroAddress);
-  const VRF_COORD = resolveAddr('VRF_COORDINATOR', ethers.ZeroAddress);
-  const VRF_KEY_HASH = process.env.VRF_KEY_HASH || ethers.ZeroHash;
-  const VRF_SUB_ID = parseInt(process.env.VRF_SUB_ID || '0', 10);
+  const USDC_ADDR = resolveAddr('USDC_ADDRESS', ethers.ZeroAddress);  // retained for future use
 
   const THETA_POOL    = resolveAddr('THETA_STAKE_POOL', ethers.ZeroAddress);
   const BITTENSOR_POOL = resolveAddr('BITTENSOR_STAKE_POOL', ethers.ZeroAddress);
@@ -156,8 +148,11 @@ async function main() {
   console.log(`║  XF Token:   ${(XF_TOKEN === ethers.ZeroAddress ? '(mock)' : XF_TOKEN).padEnd(52)}║`);
   console.log('╚═══════════════════════════════════════════════════════════════════╝');
 
-  if (network.name !== 'hardhat' && balance < ethers.parseEther('50')) {
-    throw new Error(`Insufficient balance: ${ethers.formatEther(balance)} < 50 TFUEL required`);
+  if (network.name !== 'hardhat' && network.name !== 'theta-testnet' && network.name !== 'bittensor-testnet' && balance < ethers.parseEther('50')) {
+    throw new Error(`Insufficient balance: ${ethers.formatEther(balance)} < 50 TFUEL required for mainnet deploy`);
+  }
+  if ((network.name === 'theta-testnet' || network.name === 'bittensor-testnet') && balance < ethers.parseEther('10')) {
+    throw new Error(`Insufficient balance: ${ethers.formatEther(balance)} < 10 required for testnet deploy (get testnet tokens from faucet)`);
   }
 
   const ENABLE_SUBCHAINS = process.env.ENABLE_SUBCHAINS === 'true';
@@ -176,7 +171,7 @@ async function main() {
     stakeRoutes: {},
     roles: [],
     gasUsed: {},
-    smokeTests: { passed: 0, failed: 0, total: 48, results: [] },
+    smokeTests: { passed: 0, failed: 0, total: 17, results: [] },
     osmosisInstructions: {},
     subchains: {},
   };
@@ -246,23 +241,6 @@ async function main() {
     manifest.contracts.veXFGovernance = 'SKIPPED';
   }
 
-  // 1d. Jackpot (veXF Staker Jackpot — 2% of all fees)
-  console.log('  Deploying Jackpot...');
-  const JackpotF = await ethers.getContractFactory('Jackpot');
-  const jackpot = await JackpotF.deploy(ADMIN, manifest.contracts.veXFGovernance && manifest.contracts.veXFGovernance !== 'SKIPPED' ? manifest.contracts.veXFGovernance : ethers.ZeroAddress, USDC_ADDR, VRF_COORD, VRF_KEY_HASH, VRF_SUB_ID);
-  await jackpot.waitForDeployment();
-  const jackpotAddr = await jackpot.getAddress();
-  const jackpotReceipt = await jackpot.deploymentTransaction().wait();
-  manifest.contracts.Jackpot = jackpotAddr;
-  manifest.gasUsed.Jackpot = Number(jackpotReceipt.gasUsed);
-  totalGas += jackpotReceipt.gasUsed;
-  console.log(`  ✓ Jackpot:             ${jackpotAddr} (${jackpotReceipt.gasUsed} gas)`);
-
-  // Link Jackpot → CoreRevenueSplitter
-  const linkJackpotTx = await splitter.setJackpotAddress(jackpotAddr);
-  await linkJackpotTx.wait();
-  console.log(`  ✓ CoreRevenueSplitter.jackpotAddress → Jackpot`);
-
   // ══════════════════════════════════════════════════════════════════════════
   //  PHASE 2: 6 PoC CIRCUITS (with prover assignments)
   // ══════════════════════════════════════════════════════════════════════════
@@ -276,12 +254,12 @@ async function main() {
     },
     {
       name: 'ComputeMarketplace',
-      args: [ADMIN, splAddr, zkAddr],
+      args: [ADMIN, splAddr, zkAddr, SP1GW],
       prover: 'CosmWasm (Akash ark-bn254)',
     },
     {
       name: 'InferenceRouter',
-      args: [ADMIN, splAddr, zkAddr],
+      args: [ADMIN, splAddr, zkAddr, SP1GW],
       prover: 'EVM (Bittensor SP1 Groth16)',
     },
     {
@@ -487,18 +465,6 @@ async function main() {
   // 17: Distribution count starts at 0
   await smokeTest('Distribution count = 0', async () => {
     const count = await splitter.distributionCount();
-    if (count !== 0n) throw new Error(`Expected 0, got ${count}`);
-  });
-
-  // 18: Jackpot linked to splitter
-  await smokeTest('Jackpot linked to splitter', async () => {
-    const linked = await splitter.jackpotAddress();
-    if (linked.toLowerCase() !== jackpotAddr.toLowerCase()) throw new Error('Jackpot not linked');
-  });
-
-  // 19: Jackpot draw count = 0
-  await smokeTest('Jackpot drawCount = 0', async () => {
-    const count = await jackpot.drawCount();
     if (count !== 0n) throw new Error(`Expected 0, got ${count}`);
   });
 
@@ -948,8 +914,6 @@ async function main() {
   console.log('   19. Enable selective disclosure on ZKMLCircuit');
   console.log('   20. Configure DataHubs provenance proofs with Poseidon commitments');
   console.log('   21. Submit CertiK Phase 4 scope (agents + privacy + cross-chain)');
-  console.log('   22. Fund Jackpot VRF subscription and verify USDC token address');
-  console.log('   23. Register initial veXF stakers on Jackpot via registerStaker()');
 
   return manifest;
 }

@@ -116,11 +116,23 @@ function findLatestManifest() {
   const dir = path.join(ROOT, 'deploy', 'manifests');
   if (!fs.existsSync(dir)) return null;
   const files = fs.readdirSync(dir)
-    .filter(f => f.endsWith('.json'))
-    .sort()
-    .reverse();
+    .filter(f => f.endsWith('.json') && !f.startsWith('theta-testnet-partial'))
+    .map(f => {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'));
+        // Prefer manifests with a proper version field and contracts object
+        const score = (data.version ? 100 : 0) +
+          (data.contracts && Object.keys(data.contracts).length > 5 ? 50 : 0) +
+          (data.totalGas ? 10 : 0);
+        return { file: f, data, score };
+      } catch {
+        return { file: f, data: null, score: -1 };
+      }
+    })
+    .filter(m => m.data !== null && m.score > 0)
+    .sort((a, b) => b.score - a.score || b.file.localeCompare(a.file));
   if (files.length === 0) return null;
-  return JSON.parse(fs.readFileSync(path.join(dir, files[0]), 'utf-8'));
+  return files[0].data;
 }
 
 function countTests() {
@@ -156,13 +168,13 @@ function countTests() {
 function buildTractionData(manifest) {
   const contractCount = manifest ? Object.keys(manifest.contracts).length : 15;
   const testCount = countTests();
-  const totalGas = manifest ? manifest.totalGas : 33000000;
-  const gasInTFUEL = manifest ? manifest.totalGasCostTFUEL : '0.13';
+  const totalGas = manifest ? (manifest.totalGas || 0) : 33000000;
+  const gasInTFUEL = manifest ? (manifest.totalGasCostTFUEL || '0.00') : '0.13';
 
   return {
     contracts: contractCount,
     tests: '700+',
-    totalGas: totalGas.toLocaleString(),
+    totalGas: Number(totalGas).toLocaleString(),
     gasCostTFUEL: gasInTFUEL,
     circuits: 21,
     network: manifest ? manifest.network : 'theta-testnet',

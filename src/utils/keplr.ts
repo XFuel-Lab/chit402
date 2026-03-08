@@ -8,7 +8,6 @@ import {
   SigningStargateClient,
   GasPrice,
   calculateFee,
-  defaultRegistry,
   DeliverTxResponse,
 } from '@cosmjs/stargate'
 
@@ -241,7 +240,6 @@ async function getStargateClient(chainId: string): Promise<SigningStargateClient
 
   const client = await SigningStargateClient.connectWithSigner(chainInfo.rpc, offlineSigner, {
     gasPrice,
-    registry: defaultRegistry,
   })
 
   return client

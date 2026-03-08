@@ -1,10 +1,26 @@
 # XFUEL Protocol — CertiK Phase 1 Audit Preparation Checklist
 
-**Last Updated:** March 6, 2026  
-**Status:** In Progress  
+**Last Updated:** March 8, 2026  
+**Status:** Testnet Deployed — Grant Application Ready  
 **Audit Provider:** CertiK  
 **Scope:** Core Layer + Theta Working Circuit  
-**Target Start:** Q2 2026
+**Target Start:** Q2 2026 (post-grant funding)
+
+---
+
+## Testnet Deployment — COMPLETE ✓
+
+| Contract | Testnet Address (Theta 365) |
+|----------|-----------------------------|
+| CoreRevenueSplitter | `0x56A3E4e2E47Ad1D1e9DB2DD9446479b3Be01d1F0` |
+| ZKVerifierSP1 | `0x8E0789E95f0F18F49E1BBA765893C9dfbF09570f` |
+| A2ACircuit | `0x3eb4b410373413BfAcc48A3Cd872713F44EA8015` |
+| ThetaGPUCircuit | `0x8188cAc55607d61c8ECf1cB850B65b47e682ADAc` |
+| TAOCircuit | `0x1526CD125022c06dFda2Fc1c6563de0e72581E8e` |
+| BridgeCircuit | `0xE4a9D5Cd8fCA9B6dba6DaCfc1A7A3B1b2a928F7d` |
+
+**Smoke tests:** 17/17 passed · **Manifest:** `deploy/manifests/phase6-1772989979356.json`  
+**Explorer:** https://testnet-explorer.thetatoken.org
 
 ---
 
@@ -103,6 +119,12 @@
 - [x] Generate coverage report and close gaps to >85% — Core aggregate at 92.84% stmts
 - [x] Create `.env.deploy.example`
 - [x] Run `npm audit` — 65 vulnerabilities remain, all in transitive dev deps requiring breaking changes; no deployed contract code affected
+- [x] npm audit full sweep (March 8, 2026) — Tier 1 fixes applied, reduced from 65 to 59 vulns:
+  - Vite 5 → 7.3.1 (`esbuild` moderate fixed)
+  - `@cosmjs/*` aligned to 0.33.1 (`@cosmjs/stargate` was mismatched 0.37.0 → 0.33.1)
+  - `jest-environment-jsdom` 29 → 30 (`@tootallnate/once` low fixed)
+  - `@nomicfoundation/hardhat-chai-matchers` 1 → 2 + `hardhat-toolbox` 2 → 3 (enables ethers v6 custom error matching; 138 tests pass)
+  - Remaining 59 vulns: all blocked by Hardhat 3 migration (`@openzeppelin/hardhat-upgrades` incompatibility, tracked in `hardhat.config.cjs`), `@thetalabs/theta-js` lodash (no upstream fix), or `@hyperlane-xyz/sdk` chain (SDK not imported; downgrade from 25.x → 19.x would be regression)
 - [x] Final review of all NatSpec for accuracy — distribute() docs updated for GET sub-split, claimGrant @dev fixed, voteGrant @dev added
 
 ---
