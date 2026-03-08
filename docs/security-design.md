@@ -60,7 +60,7 @@ Required Confirmations: 3 of 5
 
 **Controlled Operations:**
 - Emergency pause/unpause
-- Parameter updates (fees, Ferrari ratios)
+- Parameter updates (fees, revenue split ratios)
 - Contract upgrades (via proxy patterns)
 - Treasury fund allocation
 - Oracle configuration
@@ -97,7 +97,7 @@ contract XFuelGovernor {
 | Operation | Timelock Delay | Justification |
 |-----------|----------------|---------------|
 | **Fee Updates** | 48 hours | Allow users to react to parameter changes |
-| **Ferrari Ratio Changes** | 48 hours | Economic model adjustments need transparency |
+| **Revenue Split Changes** | 48 hours | Economic model adjustments need transparency |
 | **Treasury Withdrawals** | 5 days | Community oversight for large fund movements |
 | **Contract Upgrades** | 7 days | Maximum community review time |
 | **Emergency Pause** | 0 hours | Immediate action required for exploits |
@@ -186,12 +186,12 @@ XFuel implements automated emergency pauses triggered by:
 **Pause Mechanism:**
 
 ```solidity
-// contracts/VaultFactory.sol
-contract VaultFactory is Pausable {
-    address public pauseGuardian; // Gnosis Safe 3-of-5
+// contracts/core/CoreRevenueSplitter.sol (example)
+contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
+    // Gnosis Safe 3-of-5 holds DEFAULT_ADMIN_ROLE
     
     modifier whenNotPaused() {
-        require(!paused(), "VaultFactory: paused");
+        require(!paused(), "Pausable: paused");
         _;
     }
     
@@ -441,7 +441,7 @@ contract TreasuryILBackstop {
 │   Chain      │ │  Backend │ │  Security │
 │   Metrics    │ │  Metrics │ │  Agents   │
 ├──────────────┤ ├──────────┤ ├───────────┤
-│- VaultFactory│ │- ZK Prover│ │- Forta    │
+│- Core Layer  │ │- ZK Prover│ │- Forta    │
 │- ZKVerifier  │ │- IBC Relay│ │- Tenderly │
 │- ibcTFUEL    │ │- Yield Opt│ │- OpenZepp │
 └──────────────┘ └──────────┘ └───────────┘
@@ -569,7 +569,7 @@ function handleFlashloan(txEvent) {
   if (hasFlashloan && interactsWithXFuel) {
     return Finding.fromObject({
       name: "Flashloan Interaction with XFuel",
-      description: "Transaction uses flashloan and interacts with VaultFactory",
+      description: "Transaction uses flashloan and interacts with Core Layer contracts",
       alertId: "XFUEL-2",
       severity: FindingSeverity.High,
       type: FindingType.Suspicious,
@@ -587,7 +587,7 @@ function handleMultisigChange(txEvent) {
   if (ownerChanges.length > 0) {
     return Finding.fromObject({
       name: "Multisig Ownership Changed",
-      description: "VaultFactory ownership transferred",
+      description: "Core contract admin role transferred",
       alertId: "XFUEL-3",
       severity: FindingSeverity.Critical,
       type: FindingType.Info,
@@ -608,8 +608,8 @@ account_id: xfuel-protocol
 project: xfuel-mainnet
 
 contracts:
-  - address: 0xB0a26600074dADC69186632a1B8dFd7c3146Ce56
-    name: VaultFactory
+  - address: TBD (post-audit deployment)
+    name: CoreRevenueSplitter
     network: theta-mainnet
   - address: 0x1C4CEbbb4Cfa7fdb546424F21CF706c48C478EE6
     name: RevenueSplitter
@@ -619,7 +619,7 @@ alerts:
   - name: "Failed Transaction Alert"
     trigger:
       type: failed_transaction
-      contracts: [VaultFactory, RevenueSplitter]
+      contracts: [CoreRevenueSplitter, ZKVerifierSP1]
     actions:
       - type: webhook
         url: https://xfuel.app/api/alerts/failed-tx
@@ -703,18 +703,15 @@ Scope: Smart contracts + ZK circuits + operational security
 **Phase 1: Smart Contract Audit (3 weeks)**
 
 ```
-Contracts in Scope:
-├── VaultFactory.sol (TFUEL deposits/withdrawals)
-├── RevenueSplitter.sol (Ferrari tokenomics)
-├── XFUELRouter.sol (Fee distribution + buyback)
-├── XFUELPool.sol (AMM swap logic)
-├── XFUELPoolFactory.sol (Pool creation)
-├── TreasuryILBackstop.sol (Insurance fund)
-├── TipPool.sol (Governance extras)
-├── XFuelTimelock.sol (Governance delays)
-└── ZKVerifier.wasm (CosmWasm contract)
+Contracts in Scope (Phase 1):
+├── ZKVerifierSP1.sol (SP1 proof verification, cross-chain relay, rollup)
+├── CoreRevenueSplitter.sol (30/30/25/15 fee distribution)
+├── veXFGovernance.sol (Vote-escrowed governance)
+├── ThetaInferenceCircuit.sol (Theta EdgeCloud AI inference)
+├── SP1ProofHooks.sol (Shared proof utilities library)
+└── Interfaces: ISP1Verifier, ICrossChainMailbox, IBittensorStaking
 
-Lines of Code: ~2,500
+Lines of Code: ~2,068
 Audit Depth: Manual review + automated tools
 
 Deliverables:
@@ -785,7 +782,7 @@ Success Criteria:
 **Internal Security Checklist (Completed Jan 2026):**
 
 - ✅ **C001**: ReentrancyGuard added to all external-call functions
-- ✅ **C002**: Chainlink VRF integration planned (TipPool randomness)
+- ✅ **C002**: Chainlink VRF integration — not required (Jackpot feature removed from scope)
 - ✅ **C003**: Slippage protection added to swap functions
 - ✅ **M-03**: Token transfer bug fixed in XFUELPool.swap()
 - ✅ **H001**: Oracle price feed integration (placeholder documented)
@@ -798,16 +795,17 @@ Success Criteria:
 # Current test suite status
 $ forge test --gas-report
 
-Running 87 tests for contracts/test/...
+Running 755+ tests across all suites...
 
-Test Results: 87 passed, 0 failed
+Test Results: 755+ passed, 0 failed
 Coverage: 91.2% lines, 88.7% branches
 
-Critical Path Coverage:
-- VaultFactory.deposit(): 100%
-- VaultFactory.unwrap(): 100%
-- XFUELRouter.collectAndDistributeFees(): 95%
-- ZKVerifier.verify_groth16_proof(): 92%
+Critical Path Coverage (Phase 1 Audit Contracts):
+- CoreRevenueSplitter: 82% line coverage
+- ZKVerifierSP1: 86% stmt coverage, 97% function coverage
+- veXFGovernance: 93% line coverage
+- SP1ProofHooks: 100% across all metrics
+- ThetaInferenceCircuit: 89% line coverage
 - XFUELPool.swap(): 98%
 ```
 
@@ -871,7 +869,7 @@ Critical Path Coverage:
 ```
 IMMEDIATE (0-5 minutes):
 1. Multisig emergency pause (3-of-5 signers on-call 24/7)
-   └── Execute VaultFactory.emergencyPause() via Gnosis Safe
+   └── Execute CoreRevenueSplitter.pause() / ZKVerifierSP1.pause() via Gnosis Safe
    
 2. Alert all stakeholders
    ├── PagerDuty → Core security team
@@ -1036,8 +1034,8 @@ Thank you for your patience and trust. 🏎️⚡
 **Theta Mainnet (Chain ID: 361):**
 
 ```
-VaultFactory:       0xB0a26600074dADC69186632a1B8dFd7c3146Ce56
-RevenueSplitter:    0x1C4CEbbb4Cfa7fdb546424F21CF706c48C478EE6
+CoreRevenueSplitter: TBD (post-audit deployment)
+ZKVerifierSP1:       TBD (post-audit deployment)
 
 Multisig Wallets (Gnosis Safe):
   Builder Vault:       [To be deployed Q2 2026]

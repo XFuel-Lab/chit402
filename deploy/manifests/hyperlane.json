@@ -1,0 +1,66 @@
+{
+  "version": "1.0.0",
+  "protocol": "xfuel",
+  "createdAt": "2026-02-24T11:13:21.685Z",
+  "updatedAt": "2026-02-24T11:13:21.687Z",
+  "chains": {
+    "theta_testnet": {
+      "name": "theta_testnet",
+      "displayName": "Theta Testnet",
+      "chainId": 365,
+      "domainId": 365,
+      "rpc": "https://eth-rpc-api-testnet.thetatoken.org/rpc",
+      "nativeToken": {
+        "name": "TFUEL",
+        "symbol": "TFUEL",
+        "decimals": 18
+      },
+      "blockExplorers": [],
+      "protocol": "ethereum",
+      "hyperlane": {
+        "mailbox": null,
+        "ism": null,
+        "deployedAt": null
+      }
+    },
+    "bittensor_testnet": {
+      "name": "bittensor_testnet",
+      "displayName": "Bittensor EVM Testnet",
+      "chainId": 945,
+      "domainId": 945,
+      "rpc": "https://test.chain.opentensor.ai",
+      "nativeToken": {
+        "name": "TAO",
+        "symbol": "TAO",
+        "decimals": 18
+      },
+      "blockExplorers": [],
+      "protocol": "ethereum",
+      "hyperlane": {
+        "mailbox": null,
+        "ism": null,
+        "deployedAt": null
+      }
+    },
+    "bittensor_mainnet": {
+      "name": "bittensor_mainnet",
+      "displayName": "Bittensor EVM Mainnet",
+      "chainId": 964,
+      "domainId": 964,
+      "rpc": "https://lite.chain.opentensor.ai",
+      "nativeToken": {
+        "name": "TAO",
+        "symbol": "TAO",
+        "decimals": 18
+      },
+      "blockExplorers": [],
+      "protocol": "ethereum",
+      "hyperlane": {
+        "mailbox": null,
+        "ism": null,
+        "deployedAt": null
+      }
+    }
+  },
+  "deployments": []
+}

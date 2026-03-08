@@ -2,6 +2,13 @@ use cosmwasm_std::{
     entry_point, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult,
 };
 
+use ark_bn254::{Bn254, Fr};
+use ark_ff::PrimeField;
+use ark_groth16::{Groth16, PreparedVerifyingKey, Proof, VerifyingKey};
+use ark_snark::SNARK;
+use ark_serialize::CanonicalDeserialize;
+use ark_std::vec::Vec as ArkVec;
+
 use crate::error::ContractError;
 use crate::msg::*;
 use crate::state::*;
@@ -76,7 +83,8 @@ pub fn execute(
             circuit_id,
             program_vkey,
             label,
-        } => execute_register_circuit(deps, info, circuit_id, program_vkey, label),
+            vkey_data,
+        } => execute_register_circuit(deps, info, circuit_id, program_vkey, label, vkey_data),
         ExecuteMsg::RemoveCircuit { circuit_id } => {
             execute_remove_circuit(deps, info, circuit_id)
         }
@@ -145,16 +153,12 @@ fn execute_verify_proof(
 
     // Verify proof
     let is_valid = if config.mock_mode {
-        // Mock mode: accept all proofs
         true
     } else {
-        // Production mode: verify SP1 Groth16/PLONK proof cryptographically.
-        // Per SP1 docs: Groth16 verification uses BN254 pairing check.
-        // WASM implementation would use a Groth16 verifier library.
-        //
-        // For this skeleton, we validate the proof structure and return true.
-        // In production, integrate with a WASM-compatible BN254 pairing library.
-        verify_sp1_proof_wasm(&_vkey_bytes, &public_values, &proof_bytes)
+        let vkey_data = CIRCUIT_VKEYS
+            .may_load(deps.storage, &circuit_id)?
+            .unwrap_or_else(|| _vkey_bytes.clone());
+        verify_sp1_proof_wasm(&vkey_data, &public_values, &proof_bytes)
     };
 
     if is_valid {
@@ -167,7 +171,9 @@ fn execute_verify_proof(
             .add_attribute("nullifier", &nullifier)
             .add_attribute("result", "valid")
             .add_attribute("block_height", env.block.height.to_string())
-            .add_attribute("timestamp", env.block.time.seconds().to_string()))
+            .add_attribute("timestamp", env.block.time.seconds().to_string())
+            .add_attribute("total_verified", stats.total_verified.to_string())
+            .add_attribute("ibc_source", "xfuel-zk-verifier"))
     } else {
         stats.total_failed += 1;
         STATS.save(deps.storage, &stats)?;
@@ -176,35 +182,54 @@ fn execute_verify_proof(
     }
 }
 
-/// SP1 proof verification for WASM targets.
+/// SP1 Groth16 proof verification using arkworks BN254 pairings.
 ///
-/// Research ties:
-///   Per SP1 docs, the sp1-verifier crate supports no_std/wasm targets for
-///   off-chain verification. For on-chain CosmWasm, we need a lightweight
-///   BN254 pairing implementation compatible with wasm32-unknown-unknown.
+/// Per SP1 v6 Hypercube docs: Groth16 proofs on BN254 consist of three curve
+/// points (A: G1, B: G2, C: G1). Verification performs the bilinear pairing:
+///   e(A, B) == e(alpha_g1, beta_g2) * e(vk_x, gamma_g2) * e(C, delta_g2)
 ///
-/// TODO: Integrate bn254-wasm or arkworks-wasm for production BN254 pairings.
+/// The verification key must be stored on-chain when circuits are registered
+/// (serialized via ark-serialize CanonicalSerialize, stored in CIRCUIT_VKEYS).
+///
+/// Public inputs are deserialized as BN254 scalar field elements (Fr).
+/// Proof bytes are deserialized as three curve points in canonical format.
 fn verify_sp1_proof_wasm(
-    _vkey_bytes: &[u8],
-    _public_values: &str,
-    _proof_bytes: &str,
+    vkey_bytes: &[u8],
+    public_values: &str,
+    proof_bytes: &str,
 ) -> bool {
-    // Skeleton: structural validation only.
-    // In production, perform full Groth16 pairing check:
-    //   e(proof.a, proof.b) == e(vk.alpha, vk.beta) * e(vk_x, vk.gamma) * e(proof.c, vk.delta)
-
-    // Validate proof_bytes is non-empty hex
-    if _proof_bytes.is_empty() {
+    let proof_raw = match hex::decode(proof_bytes) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    if proof_raw.len() < 192 {
         return false;
     }
 
-    // Validate minimum proof size (Groth16 = 256 bytes minimum)
-    let proof_decoded = hex::decode(_proof_bytes).unwrap_or_default();
-    if proof_decoded.len() < 128 {
-        return false;
+    let public_raw = match hex::decode(public_values) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+
+    let proof: Proof<Bn254> = match Proof::deserialize_compressed(&proof_raw[..]) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+
+    let vk: VerifyingKey<Bn254> = match VerifyingKey::deserialize_compressed(vkey_bytes) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
+    let mut public_inputs: ArkVec<Fr> = ArkVec::new();
+    for chunk in public_raw.chunks(32) {
+        match Fr::from_le_bytes_mod_order(chunk).into() {
+            val => public_inputs.push(val),
+        }
     }
 
-    true // Skeleton: accept structurally valid proofs
+    let pvk = PreparedVerifyingKey::from(vk);
+    Groth16::<Bn254>::verify_with_processed_vk(&pvk, &public_inputs, &proof).is_ok()
 }
 
 fn execute_register_circuit(
@@ -213,6 +238,7 @@ fn execute_register_circuit(
     circuit_id: String,
     program_vkey: String,
     label: String,
+    vkey_data: Option<String>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.admin {
@@ -233,6 +259,13 @@ fn execute_register_circuit(
             label: label.clone(),
         },
     )?;
+
+    if let Some(vk_hex) = vkey_data {
+        let vk_bytes = hex::decode(&vk_hex).map_err(|_| ContractError::InvalidHex {
+            field: "vkey_data".into(),
+        })?;
+        CIRCUIT_VKEYS.save(deps.storage, &circuit_id, &vk_bytes)?;
+    }
 
     let mut stats = STATS.load(deps.storage)?;
     stats.circuit_count += 1;
@@ -322,6 +355,14 @@ fn execute_set_paused(
         .add_attribute("paused", paused.to_string()))
 }
 
+// ─── Migrate ──────────────────────────────────────────────────────────────────
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
+    cw2::set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+    Ok(Response::new().add_attribute("action", "migrate"))
+}
+
 // ─── Query ────────────────────────────────────────────────────────────────────
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -367,5 +408,345 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
                 paused: config.paused,
             })
         }
+    }
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
+    use cosmwasm_std::from_json;
+
+    const ADMIN: &str = "admin";
+    const USER: &str = "user";
+    const CIRCUIT_ID: &str = "ai_task";
+    const VKEY_HEX: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    const NULLIFIER: &str = "nullifier_001";
+
+    fn setup_contract(mock_mode: bool) -> cosmwasm_std::OwnedDeps<
+        cosmwasm_std::MemoryStorage,
+        cosmwasm_std::testing::MockApi,
+        cosmwasm_std::testing::MockQuerier,
+    > {
+        let mut deps = mock_dependencies();
+        let msg = InstantiateMsg {
+            admin: ADMIN.to_string(),
+            mock_mode,
+        };
+        let info = mock_info(ADMIN, &[]);
+        instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+        deps
+    }
+
+    fn register_circuit(deps: &mut cosmwasm_std::OwnedDeps<
+        cosmwasm_std::MemoryStorage,
+        cosmwasm_std::testing::MockApi,
+        cosmwasm_std::testing::MockQuerier,
+    >) {
+        let msg = ExecuteMsg::RegisterCircuit {
+            circuit_id: CIRCUIT_ID.to_string(),
+            program_vkey: VKEY_HEX.to_string(),
+            label: "AI Task Circuit".to_string(),
+            vkey_data: None,
+        };
+        let info = mock_info(ADMIN, &[]);
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+    }
+
+    // ─── Instantiate ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn instantiate_sets_config() {
+        let deps = setup_contract(true);
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.admin.as_str(), ADMIN);
+        assert!(config.mock_mode);
+        assert!(!config.paused);
+    }
+
+    #[test]
+    fn instantiate_sets_zero_stats() {
+        let deps = setup_contract(true);
+        let stats = STATS.load(&deps.storage).unwrap();
+        assert_eq!(stats.total_verified, 0);
+        assert_eq!(stats.total_failed, 0);
+        assert_eq!(stats.circuit_count, 0);
+    }
+
+    // ─── Circuit Management ───────────────────────────────────────────────────
+
+    #[test]
+    fn register_circuit_success() {
+        let mut deps = setup_contract(true);
+        register_circuit(&mut deps);
+
+        let circuit = CIRCUITS.load(&deps.storage, CIRCUIT_ID).unwrap();
+        assert_eq!(circuit.program_vkey, VKEY_HEX);
+        assert_eq!(circuit.label, "AI Task Circuit");
+
+        let stats = STATS.load(&deps.storage).unwrap();
+        assert_eq!(stats.circuit_count, 1);
+    }
+
+    #[test]
+    fn register_circuit_unauthorized() {
+        let mut deps = setup_contract(true);
+        let msg = ExecuteMsg::RegisterCircuit {
+            circuit_id: CIRCUIT_ID.to_string(),
+            program_vkey: VKEY_HEX.to_string(),
+            label: "Test".to_string(),
+            vkey_data: None,
+        };
+        let info = mock_info(USER, &[]);
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert!(matches!(err, ContractError::Unauthorized {}));
+    }
+
+    #[test]
+    fn register_circuit_duplicate_rejected() {
+        let mut deps = setup_contract(true);
+        register_circuit(&mut deps);
+
+        let msg = ExecuteMsg::RegisterCircuit {
+            circuit_id: CIRCUIT_ID.to_string(),
+            program_vkey: VKEY_HEX.to_string(),
+            label: "Duplicate".to_string(),
+            vkey_data: None,
+        };
+        let info = mock_info(ADMIN, &[]);
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert!(matches!(err, ContractError::CircuitAlreadyRegistered { .. }));
+    }
+
+    #[test]
+    fn remove_circuit_success() {
+        let mut deps = setup_contract(true);
+        register_circuit(&mut deps);
+
+        let msg = ExecuteMsg::RemoveCircuit {
+            circuit_id: CIRCUIT_ID.to_string(),
+        };
+        let info = mock_info(ADMIN, &[]);
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        let stats = STATS.load(&deps.storage).unwrap();
+        assert_eq!(stats.circuit_count, 0);
+        assert!(CIRCUITS.may_load(&deps.storage, CIRCUIT_ID).unwrap().is_none());
+    }
+
+    // ─── Proof Verification (Mock Mode) ───────────────────────────────────────
+
+    #[test]
+    fn verify_proof_mock_mode_success() {
+        let mut deps = setup_contract(true);
+        register_circuit(&mut deps);
+
+        let msg = ExecuteMsg::VerifyProof {
+            circuit_id: CIRCUIT_ID.to_string(),
+            program_vkey: VKEY_HEX.to_string(),
+            public_values: "00".repeat(32),
+            proof_bytes: "ab".repeat(130),
+            nullifier: NULLIFIER.to_string(),
+        };
+        let info = mock_info(USER, &[]);
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        assert!(res.attributes.iter().any(|a| a.key == "result" && a.value == "valid"));
+        assert!(res.attributes.iter().any(|a| a.key == "circuit_id" && a.value == CIRCUIT_ID));
+        assert!(res.attributes.iter().any(|a| a.key == "ibc_source" && a.value == "xfuel-zk-verifier"));
+
+        let stats = STATS.load(&deps.storage).unwrap();
+        assert_eq!(stats.total_verified, 1);
+    }
+
+    #[test]
+    fn verify_proof_nullifier_replay_rejected() {
+        let mut deps = setup_contract(true);
+        register_circuit(&mut deps);
+
+        let msg = ExecuteMsg::VerifyProof {
+            circuit_id: CIRCUIT_ID.to_string(),
+            program_vkey: VKEY_HEX.to_string(),
+            public_values: "00".repeat(32),
+            proof_bytes: "ab".repeat(130),
+            nullifier: NULLIFIER.to_string(),
+        };
+        let info = mock_info(USER, &[]);
+        execute(deps.as_mut(), mock_env(), info.clone(), msg.clone()).unwrap();
+
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert!(matches!(err, ContractError::NullifierAlreadyUsed { .. }));
+    }
+
+    #[test]
+    fn verify_proof_unregistered_circuit_rejected() {
+        let mut deps = setup_contract(true);
+
+        let msg = ExecuteMsg::VerifyProof {
+            circuit_id: "nonexistent".to_string(),
+            program_vkey: VKEY_HEX.to_string(),
+            public_values: "00".repeat(32),
+            proof_bytes: "ab".repeat(130),
+            nullifier: NULLIFIER.to_string(),
+        };
+        let info = mock_info(USER, &[]);
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert!(matches!(err, ContractError::CircuitNotRegistered { .. }));
+    }
+
+    #[test]
+    fn verify_proof_vkey_mismatch_rejected() {
+        let mut deps = setup_contract(true);
+        register_circuit(&mut deps);
+
+        let msg = ExecuteMsg::VerifyProof {
+            circuit_id: CIRCUIT_ID.to_string(),
+            program_vkey: "ff".repeat(32),
+            public_values: "00".repeat(32),
+            proof_bytes: "ab".repeat(130),
+            nullifier: NULLIFIER.to_string(),
+        };
+        let info = mock_info(USER, &[]);
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert!(matches!(err, ContractError::VKeyMismatch { .. }));
+    }
+
+    #[test]
+    fn verify_proof_paused_rejected() {
+        let mut deps = setup_contract(true);
+        register_circuit(&mut deps);
+
+        let pause_msg = ExecuteMsg::SetPaused { paused: true };
+        execute(deps.as_mut(), mock_env(), mock_info(ADMIN, &[]), pause_msg).unwrap();
+
+        let msg = ExecuteMsg::VerifyProof {
+            circuit_id: CIRCUIT_ID.to_string(),
+            program_vkey: VKEY_HEX.to_string(),
+            public_values: "00".repeat(32),
+            proof_bytes: "ab".repeat(130),
+            nullifier: NULLIFIER.to_string(),
+        };
+        let info = mock_info(USER, &[]);
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert!(matches!(err, ContractError::Paused {}));
+    }
+
+    // ─── Nullifier Query ──────────────────────────────────────────────────────
+
+    #[test]
+    fn query_nullifier_unused() {
+        let deps = setup_contract(true);
+        let res = query(
+            deps.as_ref(),
+            mock_env(),
+            QueryMsg::IsNullifierUsed { nullifier: NULLIFIER.to_string() },
+        ).unwrap();
+        let resp: NullifierResponse = from_json(&res).unwrap();
+        assert!(!resp.used);
+    }
+
+    #[test]
+    fn query_nullifier_used_after_verify() {
+        let mut deps = setup_contract(true);
+        register_circuit(&mut deps);
+
+        let msg = ExecuteMsg::VerifyProof {
+            circuit_id: CIRCUIT_ID.to_string(),
+            program_vkey: VKEY_HEX.to_string(),
+            public_values: "00".repeat(32),
+            proof_bytes: "ab".repeat(130),
+            nullifier: NULLIFIER.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), mock_info(USER, &[]), msg).unwrap();
+
+        let res = query(
+            deps.as_ref(),
+            mock_env(),
+            QueryMsg::IsNullifierUsed { nullifier: NULLIFIER.to_string() },
+        ).unwrap();
+        let resp: NullifierResponse = from_json(&res).unwrap();
+        assert!(resp.used);
+    }
+
+    // ─── Stats & Config Queries ───────────────────────────────────────────────
+
+    #[test]
+    fn query_stats_reflects_verifications() {
+        let mut deps = setup_contract(true);
+        register_circuit(&mut deps);
+
+        for i in 0..3 {
+            let msg = ExecuteMsg::VerifyProof {
+                circuit_id: CIRCUIT_ID.to_string(),
+                program_vkey: VKEY_HEX.to_string(),
+                public_values: "00".repeat(32),
+                proof_bytes: "ab".repeat(130),
+                nullifier: format!("nullifier_{}", i),
+            };
+            execute(deps.as_mut(), mock_env(), mock_info(USER, &[]), msg).unwrap();
+        }
+
+        let res = query(deps.as_ref(), mock_env(), QueryMsg::GetStats {}).unwrap();
+        let resp: StatsResponse = from_json(&res).unwrap();
+        assert_eq!(resp.total_verified, 3);
+        assert_eq!(resp.circuit_count, 1);
+        assert!(resp.mock_mode);
+    }
+
+    #[test]
+    fn query_config_returns_correct_values() {
+        let deps = setup_contract(false);
+        let res = query(deps.as_ref(), mock_env(), QueryMsg::GetConfig {}).unwrap();
+        let resp: ConfigResponse = from_json(&res).unwrap();
+        assert_eq!(resp.admin, ADMIN);
+        assert!(!resp.mock_mode);
+        assert!(!resp.paused);
+    }
+
+    // ─── Admin Operations ─────────────────────────────────────────────────────
+
+    #[test]
+    fn update_admin_success() {
+        let mut deps = setup_contract(true);
+        let msg = ExecuteMsg::UpdateAdmin { new_admin: USER.to_string() };
+        execute(deps.as_mut(), mock_env(), mock_info(ADMIN, &[]), msg).unwrap();
+
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.admin.as_str(), USER);
+    }
+
+    #[test]
+    fn toggle_mock_mode() {
+        let mut deps = setup_contract(true);
+        let msg = ExecuteMsg::SetMockMode { enabled: false };
+        execute(deps.as_mut(), mock_env(), mock_info(ADMIN, &[]), msg).unwrap();
+
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert!(!config.mock_mode);
+    }
+
+    // ─── Multiple Unique Nullifiers ───────────────────────────────────────────
+
+    #[test]
+    fn multiple_unique_nullifiers_accepted() {
+        let mut deps = setup_contract(true);
+        register_circuit(&mut deps);
+
+        for i in 0..5 {
+            let msg = ExecuteMsg::VerifyProof {
+                circuit_id: CIRCUIT_ID.to_string(),
+                program_vkey: VKEY_HEX.to_string(),
+                public_values: "00".repeat(32),
+                proof_bytes: "ab".repeat(130),
+                nullifier: format!("unique_{}", i),
+            };
+            let res = execute(deps.as_mut(), mock_env(), mock_info(USER, &[]), msg);
+            assert!(res.is_ok(), "Nullifier {} should be accepted", i);
+        }
+
+        let stats = STATS.load(&deps.storage).unwrap();
+        assert_eq!(stats.total_verified, 5);
     }
 }

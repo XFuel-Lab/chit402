@@ -8,6 +8,14 @@ use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg, ConfigResponse, ProofStat
 use crate::state::{Config, ProofRecord, CONFIG, PROOF_RECORDS};
 use crate::error::ContractError;
 
+// ╔══════════════════════════════════════════════════════════════════════╗
+// ║  WARNING: DEV-ONLY MOCK — DO NOT DEPLOY TO PRODUCTION             ║
+// ║                                                                    ║
+// ║  This contract uses verify_groth16_mock() which always returns     ║
+// ║  true. For production, use core-layer/wasm/zk-verifier/ which     ║
+// ║  implements real ark-groth16 BN254 pairing verification.           ║
+// ╚══════════════════════════════════════════════════════════════════════╝
+
 const CONTRACT_NAME: &str = "crates.io:zk-verifier";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -161,6 +169,12 @@ pub fn execute_set_minter(
     Ok(Response::new()
         .add_attribute("method", "set_minter")
         .add_attribute("minter", minter))
+}
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn migrate(deps: DepsMut, _env: Env, _msg: crate::msg::MigrateMsg) -> Result<Response, ContractError> {
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+    Ok(Response::new().add_attribute("action", "migrate"))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]

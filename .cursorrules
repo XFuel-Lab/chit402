@@ -1,0 +1,28 @@
+# XFuel Protocol – Cursor Rules
+# Based on Whitepaper v1.6 core with expansions to v2.4
+
+## Solidity
+- Use Solidity 0.8.20 for all contracts.
+- Follow OpenZeppelin patterns for access control, pausability, and safe transfers.
+
+## Architecture
+- Prioritize modularity per whitepaper Section 2: No shared state between circuits, event-driven interfaces.
+- Use SP1 hooks for zkML proofs per Section 7.
+
+## Gas Optimization
+- Target <300K gas per operation, <500K gas end-to-end per Section 3.5.
+
+## Code Comments
+- Comment code with whitepaper references (e.g., `// Per Section 3.2` for Hyperlane relay).
+
+## Hardhat / Testing
+- Use ethers.js v6+ for all RPC interactions.
+
+## Reference Networks (2026)
+- Bittensor EVM Mainnet: chain ID 964, RPC `https://lite.chain.opentensor.ai`
+- Bittensor EVM Testnet: chain ID 945, RPC `https://test.chain.opentensor.ai`
+
+## Hyperlane CLI
+- Install: `npm install -g @hyperlane-xyz/cli`
+- Init: `hyperlane core init`
+- Deploy: `hyperlane core deploy` (permissionless for custom chains like 361/964)

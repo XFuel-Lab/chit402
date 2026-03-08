@@ -1,0 +1,47 @@
+theta_testnet:
+  chainId: 365
+  domainId: 365
+  name: "theta_testnet"
+  protocol: "ethereum"
+  rpcUrls:
+    - http: "https://eth-rpc-api-testnet.thetatoken.org/rpc"
+  nativeToken:
+    name: "TFUEL"
+    symbol: "TFUEL"
+    decimals: 18
+
+bittensor_testnet:
+  chainId: 945
+  domainId: 945
+  name: "bittensor_testnet"
+  protocol: "ethereum"
+  rpcUrls:
+    - http: "https://test.chain.opentensor.ai"
+  nativeToken:
+    name: "TAO"
+    symbol: "TAO"
+    decimals: 18
+
+bittensor_mainnet:
+  chainId: 964
+  domainId: 964
+  name: "bittensor_mainnet"
+  protocol: "ethereum"
+  rpcUrls:
+    - http: "https://lite.chain.opentensor.ai"
+  nativeToken:
+    name: "TAO"
+    symbol: "TAO"
+    decimals: 18
+
+theta_mainnet:
+  chainId: 361
+  domainId: 361
+  name: "theta_mainnet"
+  protocol: "ethereum"
+  rpcUrls:
+    - http: "https://eth-rpc-api.thetatoken.org/rpc"
+  nativeToken:
+    name: "TFUEL"
+    symbol: "TFUEL"
+    decimals: 18

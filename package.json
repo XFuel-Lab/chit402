@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "engines": {
-    "node": ">=24.0.0",
+    "node": ">=20.0.0",
     "npm": ">=10.0.0"
   },
   "scripts": {
@@ -22,7 +22,11 @@
     "test:e2e:cypress:aidepin": "cypress run --spec cypress/e2e/ai-depin-e2e.cy.ts",
     "test:v51": "node --test tests/ai-depin/e2e.test.js tests/security/fuzz.test.js",
     "test:contracts": "hardhat test",
-    "test:coverage": "hardhat coverage",
+    "test:contracts:all": "hardhat test test/**/*.test.cjs core-layer/test/*.test.cjs circuits/*/test/*.test.cjs test/security/*.test.cjs",
+    "test:contracts:core": "hardhat test core-layer/test/*.test.cjs test/phase3/*.test.cjs test/security/*.test.cjs",
+    "test:contracts:circuits": "hardhat test circuits/*/test/*.test.cjs test/priority-circuits/*.test.cjs",
+    "test:contracts:theta": "hardhat test circuits/theta-inference/test/*.test.cjs test/phase1/*.test.cjs",
+    "test:coverage": "hardhat coverage --solcoverjs .solcover.cjs --testfiles 'test/coverage-runner.js'",
     "deploy:theta-testnet": "hardhat run scripts/deploy.cjs --network theta-testnet",
     "check-balance": "hardhat run scripts/check-balance.cjs --network theta-testnet",
     "health": "node server/health.js",
@@ -48,18 +52,22 @@
     "perf:monitor": "echo \"Performance monitoring enabled in dev mode. Check console for metrics.\"",
     "setup:theta-wallet": "node -e \"console.log('Run ./setup-theta-wallet.sh (Linux/Mac) or setup-theta-wallet.bat (Windows)')\"",
     "test:wallet": "jest --testPathPattern=walletConnect",
-    "test:wallet:e2e": "cypress run --spec 'cypress/e2e/theta-wallet-qr.cy.ts'"
+    "test:wallet:e2e": "cypress run --spec 'cypress/e2e/theta-wallet-qr.cy.ts'",
+    "postinstall": "node scripts/patch-solcover.cjs"
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.958.0",
     "@cosmjs/cosmwasm-stargate": "^0.32.4",
     "@cosmjs/proto-signing": "^0.32.4",
     "@cosmjs/stargate": "^0.37.0",
+    "@hyperlane-xyz/core": "^10.1.5",
+    "@hyperlane-xyz/sdk": "^25.1.0",
     "@keplr-wallet/types": "^0.12.306",
     "@thetalabs/theta-js": "^0.0.86",
     "@types/canvas-confetti": "^1.9.0",
     "@walletconnect/ethereum-provider": "^2.17.2",
     "@walletconnect/modal": "^2.7.0",
+    "axios": "^1.13.6",
     "canvas-confetti": "^1.9.4",
     "cors": "^2.8.5",
     "ethers": "^6.16.0",

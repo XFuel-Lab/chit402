@@ -28,13 +28,13 @@ The XFuel Protocol's yield optimizer (referenced in whitepaper Section 7.3) curr
 
 - **Chainlink price oracles** for accurate TFUEL/XPRT/LST valuations
 - **Multi-layer slippage protection** (user-specified + automatic circuit breakers)
-- **Daily fee collection automation** tied to Ferrari tokenomics distribution
+- **Daily fee collection automation** tied to CoreRevenueSplitter distribution
 
 ### 1.2 Design Goals
 
 1. **Price Accuracy**: Use Chainlink oracles with staleness checks and fallback TWAP
 2. **User Protection**: Enforce slippage limits to prevent sandwich attacks and MEV exploitation
-3. **Automation**: Daily fee collection triggers Ferrari 30/30/25/15 distribution
+3. **Automation**: Daily fee collection triggers CoreRevenueSplitter 30/30/25/15 distribution
 4. **Security**: Circuit breakers halt operations on anomalies (depeg, oracle failure, excessive slippage)
 
 ---
@@ -775,8 +775,8 @@ class DailyFeeCollector {
       // Step 2: Convert to USDC using Chainlink oracles
       const feesInUSDC = await this.convertFeesToUSDC(collectedFees);
 
-      // Step 3: Trigger Ferrari distribution
-      const distributionResult = await this.distributeViaFerrari(feesInUSDC);
+      // Step 3: Trigger revenue split distribution
+      const distributionResult = await this.distributeViaRevenueSplitter(feesInUSDC);
 
       // Step 4: Handle 30% reverse-burn from veXF yields
       const reverseBurnAmount = await this.processReverseBurn(distributionResult.veXFYield);
@@ -864,9 +864,9 @@ class DailyFeeCollector {
   }
 
   /**
-   * Step 3: Distribute fees via Ferrari 30/30/25/15 model
+   * Step 3: Distribute fees via CoreRevenueSplitter 30/30/25/15 model
    */
-  private async distributeViaFerrari(totalFeesUSDC: bigint): Promise<{
+  private async distributeViaRevenueSplitter(totalFeesUSDC: bigint): Promise<{
     bbb: bigint;
     lpFunding: bigint;
     veXFYield: bigint;
@@ -1052,11 +1052,11 @@ class DailyFeeCollector {
 📅 Date: ${new Date(report.timestamp * 1000).toISOString()}
 💰 Total Fees: $${ethers.utils.formatUnits(report.totalFeesUSDC, 6)} USDC
 
-**Ferrari Distribution:**
-🔥 BBB (30%): $${ethers.utils.formatUnits(report.ferrariDistribution.bbb, 6)}
-💧 LP Funding (30%): $${ethers.utils.formatUnits(report.ferrariDistribution.lpFunding, 6)}
-🎁 veXF Yield (25%): $${ethers.utils.formatUnits(report.ferrariDistribution.veXFYield, 6)}
-🏦 Treasury (15%): $${ethers.utils.formatUnits(report.ferrariDistribution.treasury, 6)}
+**Revenue Split Distribution:**
+BBB (30%): $${ethers.utils.formatUnits(report.ferrariDistribution.bbb, 6)}
+GET (30%): $${ethers.utils.formatUnits(report.ferrariDistribution.lpFunding, 6)}
+veXF Yield (25%): $${ethers.utils.formatUnits(report.ferrariDistribution.veXFYield, 6)}
+Treasury (15%): $${ethers.utils.formatUnits(report.ferrariDistribution.treasury, 6)}
 
 🔄 Reverse-Burn: $${ethers.utils.formatUnits(report.reverseBurn, 6)}
 
@@ -1369,12 +1369,12 @@ class CompleteOptimizerFlow {
     ├─> Bridge fee (0.5%) collected by VaultFactory
     ├─> Swap fee (0.3%) collected by XFUELRouter
     ├─> Yield fee (3-5%) collected from LP earnings
-    └─> Daily cron job aggregates and distributes via Ferrari
+    └─> Daily cron job aggregates and distributes via CoreRevenueSplitter
 
-11. FERRARI DISTRIBUTION (Daily 00:00 UTC)
+11. REVENUE SPLIT DISTRIBUTION (Daily 00:00 UTC)
     ├─> Convert all fees to USDC (Chainlink oracles)
     ├─> BBB (30%): Buyback XF, burn 70%, LP 30%
-    ├─> LP Funding (30%): Add to Dexter Superfluid pools
+    ├─> GET (30%): Growth & Expansion Treasury
     ├─> veXF Yield (25%): 70% to holders, 30% reverse-burn
     ├─> Treasury (15%): 3 vaults (builder/acquisition/moonshot)
     └─> Reverse-burn recirculates back to RevenueSplitter
@@ -1470,7 +1470,7 @@ setInterval(async () => {
 
 - [x] Basic yield optimizer (placeholder oracles)
 - [x] Slippage protection (smart contract level)
-- [x] Ferrari distribution logic
+- [x] Revenue split distribution logic
 - [x] Daily cron job skeleton
 - [ ] Testnet validation (in progress)
 

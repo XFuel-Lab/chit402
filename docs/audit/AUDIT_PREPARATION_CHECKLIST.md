@@ -1,208 +1,110 @@
-# XFUEL Protocol - Security Audit Preparation Checklist
+# XFUEL Protocol — CertiK Phase 1 Audit Preparation Checklist
 
-**Last Updated**: [Date]  
-**Status**: In Progress
+**Last Updated:** March 6, 2026  
+**Status:** In Progress  
+**Audit Provider:** CertiK  
+**Scope:** Core Layer + Theta Working Circuit  
+**Target Start:** Q2 2026
 
-## Overview
+---
 
-This checklist tracks the preparation work required before submitting the XFUEL Protocol contracts for a professional security audit.
+## Phase 1 Audit Scope
+
+| Contract | Path | Risk | Lines |
+|----------|------|------|-------|
+| ZKVerifierSP1 | `core-layer/contracts/ZKVerifierSP1.sol` | CRITICAL | 620 |
+| CoreRevenueSplitter | `core-layer/contracts/CoreRevenueSplitter.sol` | HIGH | 310 |
+| veXFGovernance | `core-layer/contracts/veXFGovernance.sol` | HIGH | 320 |
+| ThetaInferenceCircuit | `circuits/theta-inference/ThetaInferenceCircuit.sol` | HIGH | 637 |
+| SP1ProofHooks | `core-layer/contracts/SP1ProofHooks.sol` | MEDIUM | 181 |
+
+**CosmWasm (secondary):**
+- `core-layer/wasm/zk-verifier/src/contract.rs` — Production ark-groth16 verifier
+- `cosmwasm/zk-verifier/` — Dev-only mock (NOT for production)
+
+**Full scope definition:** `docs/certik-phase1-scope.json` (v5.0.0)
 
 ---
 
 ## Pre-Audit Requirements
 
-### ✅ Documentation
-- [x] Audit scope document (`audit-scope.md`)
-- [x] Risk assessment (`risk-assessment.md`)
-- [x] Known issues tracking (`known-issues.md`)
-- [x] Architecture diagram (`architecture-diagram.txt`)
-- [x] Bug bounty program (`../bug-bounty.md`)
-- [x] Audit preparation checklist (this document)
+### Documentation
+- [x] Audit scope document (`docs/certik-phase1-scope.json` v5.0.0)
+- [x] Phase plan (Phase 1: Theta, Phase 2: Bittensor, Phase 3: Cross-chain)
+- [x] Security design (`docs/security-design.md`)
+- [x] Architecture docs (WHITEPAPER.md v2.4, README.md)
+- [x] Bug bounty plan ($500K Immunefi, post-audit)
+- [x] Formal verification candidates (3 contracts, 8 properties)
+- [x] Audit & grant readiness tracker (`docs/AUDIT_GRANT_READINESS.md`)
 
-### ⚠️ Test Coverage (CRITICAL GAP)
+### Smart Contract Security
+- [x] Zero-address validation in CoreRevenueSplitter constructor
+- [x] ReentrancyGuard on all state-changing functions with external calls
+- [x] Pausable on critical contracts (CoreRevenueSplitter, ZKVerifierSP1)
+- [x] AccessControl role hierarchy (DEFAULT_ADMIN → FEE_MANAGER → CIRCUIT → GOVERNANCE)
+- [x] Nullifier-based replay protection (EVM + CosmWasm)
+- [x] Circuit breaker at >5% failure rate (ZKVerifierSP1)
+- [x] BridgeCircuit payload detection fixed (exact-length discriminator)
+- [x] Jackpot removed from scope (regulatory + implementation concerns)
+- [x] Placeholder TODOs annotated with phase scope (BuybackBurner, ZKVerifier, XFUELRouter)
+- [x] Solidity version standardized to ^0.8.22 across audit scope
+- [x] Magic numbers replaced with named constants (PROTOCOL_FEE_BPS)
+- [x] Access control decisions documented (distribute(), updateOraclePrice())
+- [x] updateStakeRoute emits totalStakeWeight in event
 
-**Current Status**: Only MockXFUELRouter has tests (1/6 contracts)
+### NatSpec Documentation
+- [x] ZKVerifierSP1 — All external/public functions documented
+- [x] CoreRevenueSplitter — All functions documented
+- [x] veXFGovernance — All functions documented
+- [x] SP1ProofHooks — All library functions documented
+- [x] BridgeCircuit — All functions documented
+- [x] ThetaInferenceCircuit — All functions documented (existing)
 
-- [ ] **XFUELRouter.sol** - Comprehensive test suite
-  - [ ] Constructor and initialization tests
-  - [ ] swapAndStake() tests
-  - [ ] collectAndDistributeFees() tests
-  - [ ] swap() tests
-  - [ ] Access control tests (onlyOwner)
-  - [ ] Fee distribution calculations
-  - [ ] Edge cases and error conditions
+### Test Coverage
+- [x] 755+ tests across all suites
+- [x] Reentrancy attack tests (5 tests with malicious callback contract)
+- [x] Access control tests (9 tests — role enforcement, revocation, pause)
+- [x] Boundary condition tests (12 tests — dust, rounding, BPS limits)
+- [x] Theta inference circuit tests (36 tests)
+- [x] Priority circuit tests (97 tests)
+- [x] Core ZKVerifier tests (40+ tests)
+- [x] Governance lifecycle tests (25+ tests)
+- [x] Skipped tests fixed with mock RPC fallback
+- [ ] Line coverage report generated (`npx hardhat coverage`)
+- [ ] >85% coverage on Phase 1 primary contracts
 
-- [ ] **XFUELPool.sol** - Comprehensive test suite
-  - [ ] Initialization tests
-  - [ ] Swap tests (both directions)
-  - [ ] Fee collection tests
-  - [ ] Access control tests (onlyFactory)
-  - [ ] Price calculation tests
-  - [ ] Edge cases (empty pools, large swaps, etc.)
+### Test Scripts
+- `npm run test:contracts` — Main test suite
+- `npm run test:contracts:all` — All tests including circuits
+- `npm run test:contracts:core` — Core Layer + security tests
+- `npm run test:contracts:theta` — Theta circuit tests
+- `npm run test:coverage` — Coverage report
 
-- [ ] **XFUELPoolFactory.sol** - Comprehensive test suite
-  - [ ] Pool creation tests
-  - [ ] CREATE2 determinism tests
-  - [ ] Fee tier validation
-  - [ ] Duplicate pool prevention
-  - [ ] allPools tracking
-
-- [ ] **TreasuryILBackstop.sol** - Comprehensive test suite
-  - [ ] IL calculation tests
-  - [ ] Coverage provision tests
-  - [ ] Threshold tests (>8%)
-  - [ ] Access control tests
-  - [ ] Emergency withdrawal tests
-  - [ ] Edge cases
-
-- [ ] **TipPool.sol** - Comprehensive test suite
-  - [ ] Pool creation tests
-  - [ ] Tipping tests
-  - [ ] Winner selection tests
-  - [ ] Distribution tests (10%/90% split)
-  - [ ] Randomness tests (note: current implementation vulnerable)
-  - [ ] Access control tests
-  - [ ] Edge cases
-
-- [ ] **Integration Tests**
-  - [ ] Router ↔ Pool interactions
-  - [ ] Pool → Backstop IL coverage flow
-  - [ ] Fee collection and distribution flow
-  - [ ] End-to-end swap and stake flow
-
-**Target Coverage**: >80% line coverage
+### Deployment
+- [x] Testnet deployment scripts (resumable, smoke-tested)
+- [x] Deployment manifests with contract addresses
+- [x] Admin transfer to multisig in deploy scripts
+- [ ] `.env.deploy.example` with all required env vars
 
 ---
 
-## Critical Security Fixes (MUST FIX BEFORE AUDIT)
+## Phase Plan
 
-### 🔴 High Priority
-
-1. **C001: Reentrancy Protection**
-   - [ ] Add ReentrancyGuard to XFUELRouter.collectAndDistributeFees()
-   - [ ] Add ReentrancyGuard to XFUELPool.swap()
-   - [ ] Add ReentrancyGuard to TreasuryILBackstop.provideCoverage()
-   - [ ] Add ReentrancyGuard to TipPool.endPool()
-   - [ ] Update tests to verify reentrancy protection
-
-2. **C002: Randomness Implementation**
-   - [ ] Replace block.timestamp/difficulty with Chainlink VRF
-   - [ ] OR implement commit-reveal scheme
-   - [ ] Update TipPool.drawWinner()
-   - [ ] Update tests
-
-3. **C003: Slippage Protection**
-   - [ ] Add amountOutMinimum parameter to XFUELPool.swap()
-   - [ ] Add amountOutMinimum parameter to XFUELRouter.swapAndStake()
-   - [ ] Add validation logic
-   - [ ] Update tests
-
-### 🟠 Medium Priority
-
-4. **H001: Price Oracle Integration**
-   - [ ] Replace _convertToUSDC() with Chainlink oracle
-   - [ ] Add oracle staleness checks
-   - [ ] Update tests
-
-5. **H004: Input Validation**
-   - [ ] Add zero address checks to constructors
-   - [ ] Add pool existence validation
-   - [ ] Add duration limits to TipPool.createPool()
-   - [ ] Add comprehensive require statements
-
-6. **M05: SafeERC20 Usage**
-   - [ ] Replace transfer() with SafeERC20.safeTransfer()
-   - [ ] Update all token transfers
-   - [ ] Update tests
+| Phase | Scope | Target | Status |
+|-------|-------|--------|--------|
+| Phase 1 | Core Layer + ThetaInferenceCircuit | Q2 2026 | In Progress |
+| Phase 2 | InferenceRouter + TAOCircuit + BridgeCircuit | Q3 2026 | Planned |
+| Phase 3 | ComputeMarketplace + ZKML + DataHubs + A2A | Q4 2026 | Planned |
 
 ---
 
-## Code Quality Improvements
+## Remaining Items
 
-### 🟡 Low Priority
-
-- [ ] Add missing events to state-changing functions
-- [ ] Complete NatSpec documentation
-- [ ] Standardize error messages
-- [ ] Extract magic numbers to named constants
-- [ ] Consider pause mechanism for emergency situations
-- [ ] Make fee splits configurable (future governance)
+- [ ] Generate coverage report and close gaps to >85%
+- [ ] Create `.env.deploy.example`
+- [ ] Run `npm audit` and fix high/critical vulnerabilities
+- [ ] Final review of all NatSpec for accuracy
 
 ---
 
-## External Dependencies Review
-
-- [ ] Document IBC bridge integration points
-- [ ] Document Cosmos LST contract dependencies
-- [ ] Review third-party contract security (if applicable)
-- [ ] Document oracle dependencies and risks
-
----
-
-## Deployment Preparation
-
-- [ ] Finalize constructor parameters
-- [ ] Prepare deployment scripts
-- [ ] Test deployment on testnet
-- [ ] Verify all contract addresses and configurations
-- [ ] Prepare upgrade/migration plan (if applicable)
-
----
-
-## Audit Firm Selection
-
-- [ ] Research audit firms (Trail of Bits, OpenZeppelin, Consensys Diligence, etc.)
-- [ ] Request quotes
-- [ ] Review audit firm credentials
-- [ ] Set audit timeline
-- [ ] Prepare contract handoff package
-
----
-
-## Audit Package Contents
-
-The final audit package should include:
-
-1. ✅ All source code (contracts/)
-2. ✅ Comprehensive test suite (test/)
-3. ✅ Test coverage report (>80% target)
-4. ✅ Documentation (docs/audit/)
-5. ✅ Deployment scripts
-6. ✅ Known issues and fixes log
-7. ✅ Architecture and design documents
-8. ⚠️ Formal verification (optional, but recommended for critical functions)
-
----
-
-## Timeline Estimate
-
-- **Test Suite Development**: 2-3 weeks
-- **Critical Fixes Implementation**: 1-2 weeks
-- **Code Quality Improvements**: 1 week
-- **Final Review & Preparation**: 1 week
-- **Total Estimated Time**: 5-7 weeks before audit-ready
-
----
-
-## Notes
-
-- Focus on test coverage first - it will reveal bugs and help verify fixes
-- Critical security fixes (reentrancy, randomness, slippage) are non-negotiable
-- All fixes should be thoroughly tested before audit submission
-- Maintain this checklist as work progresses
-- Update known-issues.md as issues are resolved
-
----
-
-**Status Legend**:
-- ✅ Completed
-- ⚠️ In Progress
-- [ ] Not Started
-- 🔴 Critical / Blocking
-- 🟠 High Priority
-- 🟡 Medium/Low Priority
-
-
-
-
-
+*This checklist aligns with `docs/certik-phase1-scope.json` v5.0.0 and `docs/AUDIT_GRANT_READINESS.md`.*

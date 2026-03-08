@@ -90,6 +90,10 @@ EVM Chain                          Bittensor Network
 - **Revenue capture**: 1% protocol fee funds ecosystem development
 - **Composability**: Bittensor becomes a ZK-verifiable AI backend for all of DeFi
 
+### Community Excitement Engine — veXF Staker Jackpot
+
+XFuel's **veXF Staker Jackpot** automatically routes 2% of every protocol fee into a continuously growing prize pool, paid out to one lucky veXF staker on a randomized 24–72 hour cycle via Chainlink VRF. A live countdown timer on the xfuel.app dashboard keeps the community glued to their screens every single day — building the kind of organic viral engagement that paid campaigns can't replicate. Winners are selected weighted by veXF voting power (minimum 1 veXF to participate), with a 30-day auto-reroll safeguard if any draw fails. This "lottery layer" transforms passive staking into an addictive daily ritual, driving both lock-up duration and daily active users across the XFuel ecosystem.
+
 ### Metrics
 - Target: 5,000+ cross-chain inference tasks in first quarter
 - Target: 3 subnet integrations (SN1, SN5, SN8)

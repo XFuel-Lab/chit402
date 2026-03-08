@@ -1,0 +1,145 @@
+{
+  "network": "hardhat",
+  "chainId": 1337,
+  "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "timestamp": "2026-03-04T13:49:43.839Z",
+  "explorer": null,
+  "contracts": {
+    "CoreRevenueSplitter": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+    "ZKVerifierSP1": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+    "MockVeXF": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+    "MockVRF": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+    "MockUSDC": "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
+    "Jackpot": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
+    "TAOCircuit": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+    "A2ACircuit": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
+    "ThetaGPUCircuit": "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
+    "ZKMLCircuit": "0x610178dA211FEF7D417bC0e6FeD39F05609AD788",
+    "AkashCircuit": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e",
+    "AutonomousVaults": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
+    "AgentRobotics": "0x0DCd1Bf9A1b36cE34237eEaFef220932846BCD82",
+    "DataHubs": "0x9A676e781A523b5d0C0e43731313A708CB607508",
+    "YieldCircuit": "0x0B306BF915C4d645ff596e518fAf3F9669b97016",
+    "NearAgents": "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1",
+    "SolanaAIBridge": "0x9A9f2CCfdE556A7E9Ff0848998Aa4a0CFD8863AE",
+    "FilecoinStorage": "0x68B1D87F95878fE05B998F19b66F4baba5De1aed",
+    "EnergyGrid": "0x3Aa5ebB10DC797CAC828524e59A333d0A371443c",
+    "MappingSensor": "0xc6e7DF5E7b4f2A278906862b61205850344D4e7d",
+    "WirelessDePIN": "0x59b670e9fA9D0A427751Af201D676719a970857b",
+    "UplinkCircuit": "0x4ed7c70F96B99c776995fB64377f0d4aB3B0e1C1",
+    "BelieverRound": "0x322813Fd9A801c5507c9de605d63CEA4f2CE6c44"
+  },
+  "gasUsed": {
+    "CoreRevenueSplitter": 3539133,
+    "ZKVerifierSP1": 3004666,
+    "MockVeXF": 140563,
+    "MockVRF": 147123,
+    "MockUSDC": 612509,
+    "Jackpot": 943995,
+    "TAOCircuit": 2276200,
+    "A2ACircuit": 3504991,
+    "ThetaGPUCircuit": 2892735,
+    "ZKMLCircuit": 3002987,
+    "AkashCircuit": 2759515,
+    "AutonomousVaults": 2461619,
+    "AgentRobotics": 2829542,
+    "DataHubs": 2895291,
+    "YieldCircuit": 2177173,
+    "NearAgents": 2378288,
+    "SolanaAIBridge": 2104106,
+    "FilecoinStorage": 2246193,
+    "EnergyGrid": 1945574,
+    "MappingSensor": 1894511,
+    "WirelessDePIN": 1770761,
+    "UplinkCircuit": 1774877,
+    "BelieverRound": 1390836
+  },
+  "roles": [
+    {
+      "contract": "TAOCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
+    },
+    {
+      "contract": "A2ACircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6"
+    },
+    {
+      "contract": "ThetaGPUCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318"
+    },
+    {
+      "contract": "ZKMLCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x610178dA211FEF7D417bC0e6FeD39F05609AD788"
+    },
+    {
+      "contract": "AkashCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e"
+    },
+    {
+      "contract": "AutonomousVaults",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0"
+    },
+    {
+      "contract": "AgentRobotics",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x0DCd1Bf9A1b36cE34237eEaFef220932846BCD82"
+    },
+    {
+      "contract": "DataHubs",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x9A676e781A523b5d0C0e43731313A708CB607508"
+    },
+    {
+      "contract": "YieldCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x0B306BF915C4d645ff596e518fAf3F9669b97016"
+    },
+    {
+      "contract": "NearAgents",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+    },
+    {
+      "contract": "SolanaAIBridge",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x9A9f2CCfdE556A7E9Ff0848998Aa4a0CFD8863AE"
+    },
+    {
+      "contract": "FilecoinStorage",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x68B1D87F95878fE05B998F19b66F4baba5De1aed"
+    },
+    {
+      "contract": "EnergyGrid",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x3Aa5ebB10DC797CAC828524e59A333d0A371443c"
+    },
+    {
+      "contract": "MappingSensor",
+      "role": "CIRCUIT_ROLE",
+      "address": "0xc6e7DF5E7b4f2A278906862b61205850344D4e7d"
+    },
+    {
+      "contract": "WirelessDePIN",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x59b670e9fA9D0A427751Af201D676719a970857b"
+    },
+    {
+      "contract": "UplinkCircuit",
+      "role": "CIRCUIT_ROLE",
+      "address": "0x4ed7c70F96B99c776995fB64377f0d4aB3B0e1C1"
+    }
+  ],
+  "smokeTests": {
+    "passed": 21,
+    "failed": 0
+  },
+  "totalGas": 48693188,
+  "totalGasCostTFUEL": "0.194772752"
+}

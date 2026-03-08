@@ -1,0 +1,300 @@
+{
+  "report": "XFuel Protocol — Priority Circuits Coverage Report",
+  "version": "2.4",
+  "phase": "Phase 2: Circuit PoCs (Q2 2026)",
+  "generatedAt": "2026-02-20T00:00:00.000Z",
+
+  "circuits": {
+    "compute_marketplace": {
+      "name": "Compute Marketplace Circuit",
+      "id": "COMPUTE_MARKETPLACE_CIRCUIT",
+      "prover": "COSMWASM_ARK_BN254",
+      "primaryChain": "Akash (Cosmos)",
+      "evmFallback": true,
+      "contracts": {
+        "solidity": "circuits/compute-marketplace/ComputeMarketplace.sol",
+        "cosmwasm": "circuits/compute-marketplace/cosmwasm/src/contract.rs"
+      },
+      "handler": "circuits/compute-marketplace/compute-handler.js",
+      "deployment": "deploy/priority-circuits.cjs",
+      "features": [
+        "GPU spec catalog (H100, A100, RTX-4090, MI300X)",
+        "Reverse auction bidding",
+        "Escrow-based task management",
+        "SP1 proof-verified settlement",
+        "Cross-chain relay via Hyperlane",
+        "IBC settlement for Cosmos chains",
+        "Nullifier replay protection",
+        "Circuit breaker (5% failure threshold)",
+        "0.5% fee → CoreRevenueSplitter"
+      ],
+      "gasTargets": {
+        "registerGPUSpec": "248,917 (target <350K)",
+        "submitTask": "322,179 (target <350K)",
+        "placeBid": "235,436 (target <350K)",
+        "settleTask": "288,254 (target <400K)",
+        "cancelTask": "48,836 (target <200K)"
+      },
+      "events": [
+        "TaskRouted",
+        "BidSubmitted",
+        "BidAccepted",
+        "TaskCompleted",
+        "SettlementRequested",
+        "IntentSubmitted",
+        "CrossChainSettlement",
+        "TaskCancelled"
+      ],
+      "researchReferences": [
+        "Akash Network SDL v2.0 (GPU specs, reverse auction)",
+        "AEP-78: CosmWasm support (wasmd v0.61.6+)",
+        "SP1 v6 Hypercube (Groth16 ~270K gas)",
+        "IBC channels for cross-chain settlement"
+      ]
+    },
+
+    "inference_router": {
+      "name": "Inference Router Circuit",
+      "id": "INFERENCE_ROUTER_CIRCUIT",
+      "prover": "EVM_GROTH16",
+      "primaryChain": "Bittensor EVM (Chain ID 964)",
+      "contracts": {
+        "solidity": "circuits/inference-router/InferenceRouter.sol"
+      },
+      "handler": "circuits/inference-router/inference-handler.js",
+      "deployment": "deploy/priority-circuits.cjs",
+      "features": [
+        "Subnet registry (text, image, code generation)",
+        "dTAO stake-weighted validator selection",
+        "Staking precompile V2 (0x805) integration",
+        "Subnet precompile (0x803) queries",
+        "Neuron precompile (0x804) support",
+        "SP1 proof-attested inference results",
+        "Cross-chain relay via Hyperlane",
+        "Validator reputation scoring (0-10000 BPS)",
+        "Nullifier replay protection",
+        "Circuit breaker (5% failure threshold)",
+        "0.5% fee → CoreRevenueSplitter"
+      ],
+      "gasTargets": {
+        "submitInference": "325,114 (target <350K)",
+        "assignInference": "43,183 (target <80K)",
+        "settleInference": "299,416 (target <350K)",
+        "failInference": "97,682 (target <150K)"
+      },
+      "precompiles": {
+        "stakingV2": "0x0000000000000000000000000000000000000805",
+        "subnet": "0x0000000000000000000000000000000000000803",
+        "neuron": "0x0000000000000000000000000000000000000804"
+      },
+      "events": [
+        "TaskRouted",
+        "InferenceAssigned",
+        "InferenceAttested",
+        "SettlementCompleted",
+        "IntentSubmitted",
+        "SubnetRegistered",
+        "ValidatorRegistered",
+        "StakeCheckUpdated"
+      ],
+      "researchReferences": [
+        "Bittensor EVM: Chain ID 964, Cancun/Solidity ≤0.8.24",
+        "Staking V2 precompile: addStake, getStake, getTotalHotkeyStake",
+        "Subnet precompile: registerNetwork, difficulty, weights",
+        "Hyperlane on Bittensor for cross-chain routing",
+        "SP1 v6 Hypercube verification"
+      ]
+    },
+
+    "bridge_circuit": {
+      "name": "Bridge Circuit",
+      "id": "BRIDGE_CIRCUIT",
+      "prover": "MULTI (EVM_GROTH16 + COSMWASM_ARK_BN254)",
+      "primaryChain": "Theta EVM (Chain ID 361/365)",
+      "secondaryChains": ["Bittensor EVM (964)", "Osmosis", "Akash"],
+      "contracts": {
+        "solidity": "circuits/bridge-circuit/BridgeCircuit.sol"
+      },
+      "handler": "circuits/bridge-circuit/bridge-handler.js",
+      "deployment": "deploy/priority-circuits.cjs",
+      "features": [
+        "Hyperlane dispatch/handle for EVM bridging",
+        "IBC channel routing for Cosmos chains",
+        "Multi-protocol bridge (Hyperlane, IBC, HyperlaneIBC)",
+        "Proof attestation cache (cross-chain ZK relay)",
+        "ZK-verified bridge completion",
+        "Domain registry with names",
+        "IBC route configuration (channel, port, timeout)",
+        "Nullifier replay protection",
+        "Circuit breaker (5% failure threshold)",
+        "0.3% bridge fee → CoreRevenueSplitter"
+      ],
+      "gasTargets": {
+        "configureDomain": "92,617 (target <150K)",
+        "configureIBCRoute": "159,143 (target <200K)",
+        "relayProof": "465,256 (target <550K)",
+        "completeBridgeWithProof": "<350K (estimate)"
+      },
+      "routingMatrix": {
+        "Theta→Cosmos": "Hyperlane dispatch (~20s, ~403K gas)",
+        "Cosmos→Theta": "IBC→Hyperlane (~25s, ~450K gas)",
+        "Theta→Bittensor": "Hyperlane dispatch (~12s, ~403K gas)",
+        "Bittensor→Theta": "Hyperlane dispatch (~12s, ~403K gas)",
+        "Cosmos→Cosmos": "IBC channel (~15s, ~250K gas)"
+      },
+      "events": [
+        "BridgeInitiated",
+        "BridgeCompleted",
+        "ProofRelayed",
+        "CrossChainProofReceived",
+        "IntentSubmitted",
+        "IBCRouteConfigured"
+      ],
+      "researchReferences": [
+        "Hyperlane: permissionless Warp Routes, ICAs, ISM",
+        "IBC: channel-based messaging, ICS-20 transfers",
+        "Theta Metachain: subchain interchain messaging",
+        "SP1 proof aggregation for batch verification"
+      ]
+    }
+  },
+
+  "testCoverage": {
+    "newTests": 69,
+    "existingTests": 451,
+    "targetTotal": 520,
+    "testFile": "test/priority-circuits/PriorityCircuits.test.cjs",
+    "testSections": {
+      "mockSetup": 2,
+      "computeMarketplace": {
+        "deployment": 4,
+        "gpuSpecRegistry": 4,
+        "taskSubmission": 5,
+        "reverseAuction": 5,
+        "taskCancellation": 2,
+        "zkSettlement": 2,
+        "adminControls": 3,
+        "subtotal": 25
+      },
+      "inferenceRouter": {
+        "deployment": 3,
+        "subnetRegistry": 3,
+        "validatorRegistration": 3,
+        "inferenceSubmission": 4,
+        "routingSettlement": 5,
+        "inferenceFailure": 1,
+        "stakeCheck": 1,
+        "subtotal": 20
+      },
+      "bridgeCircuit": {
+        "deployment": 3,
+        "ibcRoutes": 2,
+        "domainConfig": 2,
+        "proofRelay": 4,
+        "bridgeCompletion": 1,
+        "nullifierSecurity": 2,
+        "adminControls": 5,
+        "subtotal": 19
+      },
+      "crossCircuit": 3,
+      "gasBenchmarks": 1
+    },
+    "securityTests": [
+      "Nullifier replay rejection (all 3 circuits)",
+      "Fee range validation",
+      "Access control (role-based)",
+      "Circuit breaker trigger",
+      "Cross-circuit ID uniqueness"
+    ],
+    "gasBenchmarks": {
+      "target": "<350K submit, <400K settle, <550K cross-chain relay",
+      "allPassing": true,
+      "operations": [
+        "registerGPUSpec",
+        "submitTask",
+        "placeBid",
+        "settleTask",
+        "submitInference",
+        "settleInference",
+        "relayProof"
+      ]
+    }
+  },
+
+  "coreListenerIntegration": {
+    "newIntentTypes": [
+      "BRIDGE_REQUEST",
+      "BRIDGE_COMPLETION",
+      "SETTLEMENT_REQUEST"
+    ],
+    "newEventMappings": [
+      "IntentSubmitted → COMPUTE_BID",
+      "BidSubmitted → COMPUTE_BID",
+      "TaskCompleted → COMPUTE_RESULT",
+      "SettlementRequested → SETTLEMENT_REQUEST",
+      "InferenceAttested → COMPUTE_RESULT",
+      "SettlementCompleted → SETTLEMENT_REQUEST",
+      "BridgeInitiated → BRIDGE_REQUEST",
+      "BridgeCompleted → BRIDGE_COMPLETION",
+      "ProofRelayed → DATA_ATTESTATION",
+      "CrossChainProofReceived → DATA_ATTESTATION"
+    ],
+    "newMetricsTracking": {
+      "compute_marketplace": "events, intents, proofs, settlements",
+      "inference_router": "events, intents, proofs, settlements",
+      "bridge_circuit": "events, intents, proofs, relays"
+    },
+    "handlers": [
+      "circuits/compute-marketplace/compute-handler.js",
+      "circuits/inference-router/inference-handler.js",
+      "circuits/bridge-circuit/bridge-handler.js"
+    ]
+  },
+
+  "proverMapping": {
+    "COSMWASM_ARK_BN254": {
+      "circuits": ["compute_marketplace"],
+      "gasEquivalent": 250000,
+      "chains": ["Akash", "Osmosis"],
+      "verification": "arkworks BN254 Groth16 pairing"
+    },
+    "EVM_GROTH16": {
+      "circuits": ["inference_router"],
+      "gasEquivalent": 270000,
+      "chains": ["Bittensor EVM (964)", "Theta (361/365)"],
+      "verification": "ISP1Verifier.verifyProof via SP1VerifierGateway"
+    },
+    "MULTI": {
+      "circuits": ["bridge_circuit"],
+      "gasEquivalent": "varies by route (250K-450K)",
+      "chains": ["All supported chains"],
+      "verification": "Route-dependent: EVM Groth16 + CosmWasm ark-bn254"
+    }
+  },
+
+  "deploymentTargets": {
+    "computeMarketplace": {
+      "testnet": "Osmosis Testnet (via CosmWasm) + Hardhat local",
+      "mainnet": "Akash Mainnet (pending AEP-78)"
+    },
+    "inferenceRouter": {
+      "testnet": "Bittensor EVM (Chain ID 964)",
+      "mainnet": "Bittensor EVM Mainnet"
+    },
+    "bridgeCircuit": {
+      "testnet": "Theta Testnet (Chain ID 365)",
+      "mainnet": "Theta Mainnet (Chain ID 361)"
+    }
+  },
+
+  "nextSteps": [
+    "Mainnet deployment after testnet validation",
+    "Governance proposal (XFP-005) for circuit activation",
+    "SP1 v6 Hypercube integration (replace mock proofs)",
+    "Akash AEP-78 CosmWasm launch for on-chain compute marketplace",
+    "Hyperlane ISM configuration for production security",
+    "IBC channel establishment with Osmosis/Akash",
+    "dTAO precompile testing on Bittensor EVM mainnet",
+    "Proof aggregation for batch cross-chain settlement"
+  ]
+}

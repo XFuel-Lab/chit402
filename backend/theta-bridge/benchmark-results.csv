@@ -1,0 +1,4 @@
+index,tag,gpu_time_ms,roundtrip_ms,batch_size,effective_ms_per_deposit,response_bytes,timestamp,error
+0,sequential,1263,3174,10,126,1273866,2026-03-01T21:49:21.776Z,
+1,sequential,1272,2063,10,127,1273866,2026-03-01T21:49:23.839Z,
+2,sequential,1296,3170,10,130,1273866,2026-03-01T21:49:27.009Z,

@@ -123,35 +123,8 @@ System Flow: Theta EdgeCloud → Router → Vaults → IBC → Cosmos LSTs
 └─────────────────────────────────────────────────────────────────────────┘
 
 
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           TipPool                                        │
-│                    (Lottery-Style Tips)                                  │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │ createPool(duration, creator)                                    │   │
-│  │  - Creator sets pool duration                                    │   │
-│  │  - Pool starts accepting tips                                    │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │ tipPool(poolId) [payable]                                        │   │
-│  │  - Users send native tokens                                      │   │
-│  │  - Weighted entry (larger tips = higher chance)                  │   │
-│  │  - Tracks all tippers and amounts                                │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │ endPool(poolId)                                                  │   │
-│  │  - Called when duration expires                                  │   │
-│  │  - Draws weighted random winner                                  │   │
-│  │  - Distribution:                                                 │   │
-│  │    • 10% to creator                                              │   │
-│  │    • 90% to winner                                               │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-│                                                                          │
-│  Randomness: block.timestamp + block.difficulty + block.number          │
-│  ⚠️  VULNERABILITY: Pseudorandom, miner-influenceable                   │
-└─────────────────────────────────────────────────────────────────────────┘
+NOTE: TipPool / Lottery contracts have been removed from scope.
+See AUDIT_GRANT_READINESS.md for details.
 
 
 Mermaid Diagram (for Markdown rendering):
@@ -165,7 +138,7 @@ graph TB
         Factory[XFUELPoolFactory<br/>Pool Creation]
         Pool[XFUELPool<br/>TFUEL ↔ XPRT<br/>Concentrated Liquidity]
         Backstop[TreasuryILBackstop<br/>IL Coverage >8%]
-        TipPool[TipPool<br/>Lottery Pools]
+        %% TipPool removed from scope
     end
     
     subgraph "IBC Bridge"
@@ -197,9 +170,7 @@ graph TB
     Router -->|25% Yield| veXF[veXF Contract]
     Router -->|15%| Treasury[Treasury]
     
-    Users -->|Tips| TipPool
-    TipPool -->|90%| Winner[Winner]
-    TipPool -->|10%| Creator[Creator]
+    %% TipPool/Lottery removed from scope
 ```
 
 Key Data Flows:
@@ -227,7 +198,6 @@ Security Boundaries:
 • Factory: Pool creation only (no funds custody)
 • Pool: Holds liquidity (factory-controlled initialization)
 • Backstop: Treasury custody (owner-controlled emergency)
-• TipPool: Holds tip funds (time-locked until endPool)
 
 Access Control:
 ===============
@@ -235,7 +205,7 @@ Access Control:
 • Ownable: Router, Backstop (owner functions)
 • Factory-only: Pool initialization, feeRecipient setting
 • Pool-only: Backstop.provideCoverage()
-• Public: TipPool tipping, pool creation
+• Public: Fee deposits (permissionless distribute)
 
 
 

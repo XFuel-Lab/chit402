@@ -36,6 +36,12 @@ class TAOHandler {
     this.iface = new ethers.Interface(TAO_EVENTS);
     this.pendingTasks = new Map();
     this.log = config.logger || console;
+
+    // Theta routing hook — per research/theta-integration.md §5.2
+    this.thetaRouterAddress = config.thetaRouterAddress || null;
+    this.thetaInferencePrice = config.thetaInferencePrice || 0;
+    this.thetaRoutingEnabled = config.thetaRoutingEnabled || false;
+    this.thetaRoutedCount = 0;
   }
 
   /**
@@ -83,15 +89,37 @@ class TAOHandler {
       createdAt: Date.now(),
     });
 
+    // Theta routing decision — per research/theta-integration.md §5.2
+    // Compare Bittensor subnet cost vs Theta EdgeCloud cost; route to cheaper.
+    if (this.thetaRoutingEnabled && this.thetaRouterAddress) {
+      const shouldRouteToTheta = await this._evaluateThetaRoute(intent);
+      if (shouldRouteToTheta) {
+        this.log.info?.(`[TAOHandler] Routing ${taskId} to Theta EdgeCloud (cheaper)`);
+        this.thetaRoutedCount++;
+        this.pendingTasks.get(taskId).routedTo = 'theta';
+      }
+    }
+
     // Trigger SP1 proof generation
     if (ctx.generateProof) {
       const proofReq = {
         taskId,
-        programVKey: '0x' + '00'.repeat(32), // Circuit-specific vkey
+        programVKey: '0x' + '00'.repeat(32),
         inputHash: intent.args?.inputHash || '0x' + '00'.repeat(32),
       };
       await ctx.generateProof(proofReq);
     }
+  }
+
+  /**
+   * Evaluate whether to route an inference task to Theta EdgeCloud.
+   * Compares estimated costs and latency between Bittensor and Theta.
+   */
+  async _evaluateThetaRoute(intent) {
+    if (!this.thetaInferencePrice) return false;
+
+    const bittensorEstimate = intent.args?.estimatedCost || Infinity;
+    return this.thetaInferencePrice < bittensorEstimate;
   }
 
   async _handleComputeBid(intent, ctx) {

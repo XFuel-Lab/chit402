@@ -1,0 +1,36 @@
+{
+  "program": "solana",
+  "milestones": [
+    {
+      "id": "M1",
+      "name": "Circuit deployment",
+      "status": "complete",
+      "completedAt": null
+    },
+    {
+      "id": "M2",
+      "name": "ZK verification integration",
+      "status": "complete",
+      "completedAt": null
+    },
+    {
+      "id": "M3",
+      "name": "Audit & security review",
+      "status": "in-progress",
+      "completedAt": null
+    },
+    {
+      "id": "M4",
+      "name": "Mainnet launch",
+      "status": "pending",
+      "completedAt": null
+    },
+    {
+      "id": "M5",
+      "name": "Partner integrations",
+      "status": "pending",
+      "completedAt": null
+    }
+  ],
+  "lastUpdated": "2026-02-22T14:22:22.724Z"
+}

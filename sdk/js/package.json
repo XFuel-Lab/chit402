@@ -1,0 +1,40 @@
+{
+  "name": "xfuel-sdk",
+  "version": "0.1.0",
+  "description": "JavaScript/TypeScript SDK for the XFuel Protocol M2M API — submit AI tasks, retrieve ZK proofs, send A2A messages.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "xfuel",
+    "ai",
+    "depin",
+    "zk",
+    "sp1",
+    "m2m",
+    "sdk",
+    "theta",
+    "bittensor",
+    "akash"
+  ],
+  "author": "XFuel Protocol",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XFuelAI/xfuel-protocol.git",
+    "directory": "sdk/js"
+  },
+  "dependencies": {
+    "axios": "^1.7.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.2.2"
+  }
+}
