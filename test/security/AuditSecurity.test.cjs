@@ -55,7 +55,9 @@ describe('Security Audit Tests', function () {
 
       expect(await splitter.distributionCount()).to.equal(1n);
       expect(await attacker.attackCount()).to.be.gte(1n);
-      expect(await ethers.provider.getBalance(splitterAddr)).to.equal(0n);
+      // GET sub-split retains grants (6% of balance) in the contract
+      const remaining = await ethers.provider.getBalance(splitterAddr);
+      expect(remaining).to.be.lte(ethers.parseEther('0.7'));
     });
 
     it('claimEscrow() blocks reentrancy', async function () {
@@ -187,7 +189,7 @@ describe('Security Audit Tests', function () {
     it('non-admin cannot update recipient wallets', async function () {
       await expect(splitter.connect(user).setBBBWallet(user.address))
         .to.be.reverted;
-      await expect(splitter.connect(user).setLPWallet(user.address))
+      await expect(splitter.connect(user).setGETWallet(user.address))
         .to.be.reverted;
       await expect(splitter.connect(user).setStakerVault(user.address))
         .to.be.reverted;
@@ -310,9 +312,12 @@ describe('Security Audit Tests', function () {
       const stakerAfter = await ethers.provider.getBalance(staker.address);
 
       expect(bbbAfter - bbbBefore).to.equal(ethers.parseEther('300'));
-      expect(lpAfter - lpBefore).to.equal(ethers.parseEther('300'));
+      // GET wallet receives 80% of GET allocation (20% grants retained in contract)
+      expect(lpAfter - lpBefore).to.equal(ethers.parseEther('240'));
       expect(stakerAfter - stakerBefore).to.equal(ethers.parseEther('250'));
-      expect(await ethers.provider.getBalance(splitterAddr)).to.equal(0n);
+      // Grants retention: 20% of GET (30%) = 6% of 1000 = 60 ETH stays in contract
+      const retained = await ethers.provider.getBalance(splitterAddr);
+      expect(retained).to.equal(ethers.parseEther('60'));
     });
 
     it('setSplit rejects sums not equal to 10000', async function () {
@@ -389,20 +394,21 @@ describe('Security Audit Tests', function () {
         .to.be.reverted;
     });
 
-    it('odd distribution amounts leave no stuck dust', async function () {
+    it('odd distribution amounts leave only grants retention', async function () {
       const splitterAddr = await splitter.getAddress();
 
       await user.sendTransaction({ to: splitterAddr, value: 33n });
       await splitter.distribute();
-      expect(await ethers.provider.getBalance(splitterAddr)).to.equal(0n);
+      // GET sub-split retains grants in contract; remaining <= 7% of input + rounding
+      expect(await ethers.provider.getBalance(splitterAddr)).to.be.lte(5n);
 
       await user.sendTransaction({ to: splitterAddr, value: 7n });
       await splitter.distribute();
-      expect(await ethers.provider.getBalance(splitterAddr)).to.equal(0n);
+      expect(await ethers.provider.getBalance(splitterAddr)).to.be.lte(5n);
 
       await user.sendTransaction({ to: splitterAddr, value: 3n });
       await splitter.distribute();
-      expect(await ethers.provider.getBalance(splitterAddr)).to.equal(0n);
+      expect(await ethers.provider.getBalance(splitterAddr)).to.be.lte(5n);
     });
 
     it('zero-address constructor params revert', async function () {
@@ -417,7 +423,7 @@ describe('Security Audit Tests', function () {
 
       await expect(F.deploy(z, b, l, s, t, p)).to.be.revertedWith('ZeroAdmin');
       await expect(F.deploy(a, z, l, s, t, p)).to.be.revertedWith('ZeroBBB');
-      await expect(F.deploy(a, b, z, s, t, p)).to.be.revertedWith('ZeroLP');
+      await expect(F.deploy(a, b, z, s, t, p)).to.be.revertedWith('ZeroGET');
       await expect(F.deploy(a, b, l, z, t, p)).to.be.revertedWith('ZeroStaker');
       await expect(F.deploy(a, b, l, s, z, p)).to.be.revertedWith('ZeroTreasury');
     });
@@ -447,6 +453,232 @@ describe('Security Audit Tests', function () {
           payee.address, amount, taskId, OVER_THIRTY_DAYS, { value: amount }
         )
       ).to.be.revertedWith('InvalidDuration');
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  SECTION 4: A2A CIRCUIT SECURITY (Sybil / Slashing / Timeout / Reputation)
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('A2A Security', function () {
+    let a2a, stakeToken;
+    let admin, relayer, agentA, agentB, agentC, coordinator, outsider, extra9;
+
+    const STAKE = ethers.parseEther('100');
+
+    beforeEach(async function () {
+      [admin, relayer, agentA, agentB, agentC, coordinator, outsider, extra9] =
+        await ethers.getSigners();
+
+      const MockERC20F = await ethers.getContractFactory('MockERC20');
+      stakeToken = await MockERC20F.deploy('XFuel', 'XF', 0);
+      await stakeToken.waitForDeployment();
+
+      const SplitterF = await ethers.getContractFactory('CoreRevenueSplitter');
+      const splitter = await SplitterF.deploy(
+        admin.address, admin.address, admin.address,
+        admin.address, admin.address, admin.address
+      );
+      await splitter.waitForDeployment();
+
+      const A2AF = await ethers.getContractFactory('A2ACircuit');
+      a2a = await A2AF.deploy(
+        admin.address,
+        await splitter.getAddress(),
+        ethers.ZeroAddress,
+        await stakeToken.getAddress()
+      );
+      await a2a.waitForDeployment();
+
+      const RELAYER_ROLE = await a2a.RELAYER_ROLE();
+      await a2a.grantRole(RELAYER_ROLE, relayer.address);
+
+      for (const signer of [agentA, agentB, agentC, coordinator]) {
+        await stakeToken.mint(signer.address, ethers.parseEther('500'));
+        await stakeToken.connect(signer).approve(await a2a.getAddress(), ethers.MaxUint256);
+      }
+    });
+
+    // ── 4.1  Sybil: registration without stake reverts ──────────────────
+    it('registerAgent reverts when caller has no token balance', async function () {
+      await expect(
+        a2a.connect(outsider).registerAgent(
+          ethers.keccak256(ethers.toUtf8Bytes('sybil')),
+          'https://sybil.test',
+          []
+        )
+      ).to.be.reverted;
+    });
+
+    // ── 4.2  Sybil: duplicate registration reverts ──────────────────────
+    it('duplicate registerAgent reverts even with sufficient stake', async function () {
+      await stakeToken.mint(agentA.address, STAKE);
+      const id = ethers.keccak256(ethers.toUtf8Bytes('dup'));
+      await a2a.connect(agentA).registerAgent(id, 'https://a.test', []);
+
+      await expect(
+        a2a.connect(agentA).registerAgent(id, 'https://a.test', [])
+      ).to.be.reverted;
+    });
+
+    // ── 4.3  Sybil: successful registration deducts stake ───────────────
+    it('registerAgent transfers minStake to contract', async function () {
+      const a2aAddr = await a2a.getAddress();
+      const before = await stakeToken.balanceOf(a2aAddr);
+
+      await a2a.connect(agentA).registerAgent(
+        ethers.keccak256(ethers.toUtf8Bytes('staked')),
+        'https://agent-a.test',
+        []
+      );
+
+      const after = await stakeToken.balanceOf(a2aAddr);
+      expect(after - before).to.equal(STAKE);
+      expect(await a2a.agentStakes(agentA.address)).to.equal(STAKE);
+    });
+
+    // ── 4.4  Slash: zero slash amount reverts ───────────────────────────
+    it('slashAgent with zero amount reverts', async function () {
+      await a2a.connect(agentA).registerAgent(
+        ethers.keccak256(ethers.toUtf8Bytes('s4')), 'https://a.test', []
+      );
+
+      await expect(
+        a2a.connect(admin).slashAgent(agentA.address, 0)
+      ).to.be.reverted;
+    });
+
+    // ── 4.5  Slash: amount exceeding stake reverts ──────────────────────
+    it('slashAgent with amount > stake reverts', async function () {
+      await a2a.connect(agentA).registerAgent(
+        ethers.keccak256(ethers.toUtf8Bytes('s5')), 'https://a.test', []
+      );
+
+      await expect(
+        a2a.connect(admin).slashAgent(agentA.address, STAKE + 1n)
+      ).to.be.reverted;
+    });
+
+    // ── 4.6  Slash: non-admin caller reverts ────────────────────────────
+    it('slashAgent from non-admin reverts', async function () {
+      await a2a.connect(agentA).registerAgent(
+        ethers.keccak256(ethers.toUtf8Bytes('s6')), 'https://a.test', []
+      );
+
+      await expect(
+        a2a.connect(outsider).slashAgent(agentA.address, STAKE)
+      ).to.be.reverted;
+    });
+
+    // ── 4.7  Slash: valid slash transfers tokens to revenueSplitter ─────
+    it('slashAgent sends tokens to revenueSplitter', async function () {
+      await a2a.connect(agentA).registerAgent(
+        ethers.keccak256(ethers.toUtf8Bytes('s7')), 'https://a.test', []
+      );
+
+      const splitterAddr = await a2a.revenueSplitter();
+      const before = await stakeToken.balanceOf(splitterAddr);
+
+      await a2a.connect(admin).slashAgent(agentA.address, STAKE);
+
+      const after = await stakeToken.balanceOf(splitterAddr);
+      expect(after - before).to.equal(STAKE);
+      expect(await a2a.agentStakes(agentA.address)).to.equal(0n);
+    });
+
+    // ── 4.8  Swarm timeout: force-dissolve before timeout reverts ───────
+    it('forceDissolveSwarm before timeout reverts', async function () {
+      await a2a.connect(coordinator).registerAgent(
+        ethers.keccak256(ethers.toUtf8Bytes('t8')), 'https://c.test', []
+      );
+      const objHash = ethers.keccak256(ethers.toUtf8Bytes('swarm-obj'));
+      const tx = await a2a.connect(coordinator).formSwarm(objHash, 5, { value: ethers.parseEther('1') });
+      const receipt = await tx.wait();
+      const event = receipt.logs.find(l => {
+        try { return a2a.interface.parseLog(l)?.name === 'SwarmFormed'; } catch { return false; }
+      });
+      const swarmId = a2a.interface.parseLog(event).args.swarmId;
+
+      await expect(
+        a2a.connect(coordinator).forceDissolveSwarm(swarmId)
+      ).to.be.reverted;
+    });
+
+    // ── 4.9  Swarm timeout: force-dissolve after timeout succeeds ───────
+    it('forceDissolveSwarm after timeout releases escrow', async function () {
+      await a2a.connect(coordinator).registerAgent(
+        ethers.keccak256(ethers.toUtf8Bytes('t9')), 'https://c.test', []
+      );
+      const objHash = ethers.keccak256(ethers.toUtf8Bytes('swarm-obj2'));
+      const escrow = ethers.parseEther('2');
+      const tx = await a2a.connect(coordinator).formSwarm(objHash, 5, { value: escrow });
+      const receipt = await tx.wait();
+      const event = receipt.logs.find(l => {
+        try { return a2a.interface.parseLog(l)?.name === 'SwarmFormed'; } catch { return false; }
+      });
+      const swarmId = a2a.interface.parseLog(event).args.swarmId;
+
+      await ethers.provider.send('evm_increaseTime', [7 * 24 * 3600 + 1]);
+      await ethers.provider.send('evm_mine');
+
+      const balBefore = await ethers.provider.getBalance(coordinator.address);
+      await a2a.connect(coordinator).forceDissolveSwarm(swarmId);
+      const balAfter = await ethers.provider.getBalance(coordinator.address);
+
+      expect(balAfter).to.be.gt(balBefore);
+
+      const swarm = await a2a.getSwarm(swarmId);
+      expect(swarm.phase).to.equal(3n); // Dissolved
+    });
+
+    // ── 4.10 Swarm timeout: non-member cannot force-dissolve ────────────
+    it('forceDissolveSwarm from non-member reverts', async function () {
+      await a2a.connect(coordinator).registerAgent(
+        ethers.keccak256(ethers.toUtf8Bytes('t10')), 'https://c.test', []
+      );
+      const objHash = ethers.keccak256(ethers.toUtf8Bytes('swarm-nm'));
+      const tx = await a2a.connect(coordinator).formSwarm(objHash, 5, { value: ethers.parseEther('1') });
+      const receipt = await tx.wait();
+      const event = receipt.logs.find(l => {
+        try { return a2a.interface.parseLog(l)?.name === 'SwarmFormed'; } catch { return false; }
+      });
+      const swarmId = a2a.interface.parseLog(event).args.swarmId;
+
+      await ethers.provider.send('evm_increaseTime', [7 * 24 * 3600 + 1]);
+      await ethers.provider.send('evm_mine');
+
+      await expect(
+        a2a.connect(outsider).forceDissolveSwarm(swarmId)
+      ).to.be.reverted;
+    });
+
+    // ── 4.11 Reputation: clamped at MAX_REPUTATION (10 000) ─────────────
+    it('updateReputation clamps at MAX_REPUTATION', async function () {
+      await a2a.connect(agentA).registerAgent(
+        ethers.keccak256(ethers.toUtf8Bytes('rep')), 'https://a.test', []
+      );
+
+      await a2a.connect(admin).updateReputation(agentA.address, 15000);
+      const agent = await a2a.getAgent(agentA.address);
+      expect(agent.reputation).to.equal(10000n);
+    });
+
+    // ── 4.12 Reputation: priorityRouting threshold ──────────────────────
+    it('priorityRouting returns true at >= 5000, false below', async function () {
+      await a2a.connect(agentA).registerAgent(
+        ethers.keccak256(ethers.toUtf8Bytes('pri')), 'https://a.test', []
+      );
+
+      expect(await a2a.priorityRouting(agentA.address)).to.be.false;
+
+      await a2a.connect(admin).updateReputation(agentA.address, 4999);
+      expect(await a2a.priorityRouting(agentA.address)).to.be.false;
+
+      await a2a.connect(admin).updateReputation(agentA.address, 5000);
+      expect(await a2a.priorityRouting(agentA.address)).to.be.true;
+
+      await a2a.connect(admin).updateReputation(agentA.address, 10000);
+      expect(await a2a.priorityRouting(agentA.address)).to.be.true;
     });
   });
 });

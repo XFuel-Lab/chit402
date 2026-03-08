@@ -52,7 +52,7 @@ describe('Multi-Circuit Integration', function () {
     // ─── Deploy A2A Circuit ───────────────────────────────────────────────
     const A2AFactory = await ethers.getContractFactory('A2ACircuit');
     a2aCircuit = await A2AFactory.deploy(
-      admin.address, await splitter.getAddress(), ethers.ZeroAddress
+      admin.address, await splitter.getAddress(), ethers.ZeroAddress, ethers.ZeroAddress
     );
     await a2aCircuit.waitForDeployment();
 

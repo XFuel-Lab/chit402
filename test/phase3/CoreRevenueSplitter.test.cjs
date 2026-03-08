@@ -63,7 +63,9 @@ describe('CoreRevenueSplitter (Phase 3)', function () {
       const lpAfter = await ethers.provider.getBalance(lp.address);
 
       expect(bbbAfter - bbbBefore).to.equal(ethers.parseEther('3'));   // 30%
-      expect(lpAfter - lpBefore).to.equal(ethers.parseEther('3'));     // 30%
+      // GET wallet receives 80% of GET allocation (20% grants retained in contract)
+      // GET = 30% of 10 = 3 ETH; forwarded = 3 - (20% grants = 0.6) = 2.4 ETH
+      expect(lpAfter - lpBefore).to.equal(ethers.parseEther('2.4'));
     });
 
     it('should route fee-to-stake from treasury allocation', async function () {

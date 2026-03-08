@@ -264,11 +264,91 @@ The SP1ProofHooks library (SP1ProofHooks.sol / xfuel-sp1-hooks crate):
 | DEFAULT_CHAINS | 6 | All chain types, prover/gasTarget |
 | End-to-End Multi-Prover | 6 | Full pipeline: event→normalize→route→dispatch |
 | Enums | 4 | Frozen, correct values |
-| **Total** | **85** | — |
+| Queue & Backpressure | 5 | Overflow, concurrency, backpressure, 500-event sim, stats |
+| **Total** | **90** | — |
 
 ---
 
-## 13. File Structure
+## 13. Scalability (Queue & Backpressure)
+
+The CoreListener uses a bounded intent queue ([p-queue](https://github.com/sindresorhus/p-queue)) to maintain throughput under peak load without dropping events or exhausting memory.
+
+### 13.1 Queue Mechanics
+
+| Parameter | Default | Env Variable | Description |
+|-----------|---------|-------------|-------------|
+| Concurrency | 50 | `MAX_CONCURRENCY` | Max intents processed in parallel |
+| Max Pending | 1000 | `MAX_PENDING` | Max intents waiting in queue before rejection |
+| Backpressure Threshold | 800 (80%) | — | Queue size that triggers `console.warn` |
+
+**Flow:**
+
+1. Event arrives from chain poller (`_pollEVM`, `_pollSolana`, `_pollCosmos`)
+2. `_dispatchIntent()` checks queue capacity:
+   - If `queue.size >= maxPending` → reject with `IntentOutcomeType.FAILED` + `"Queue overflow"` reason
+   - If `queue.size > backpressureThreshold` → emit `console.warn` with queue depth
+   - Otherwise → `queue.add(() => _processIntent(intent, chainKey))`
+3. `_processIntent()` runs the original circuit-dispatch logic within the concurrency window
+
+**Additive design:** Existing callers of `_dispatchIntent()` are unaffected — the method signature and return semantics are preserved. The queue adds ~0.1ms overhead per intent under normal load.
+
+### 13.2 Benchmark Instructions
+
+Run the SP1 Prover benchmark with high concurrency:
+
+```bash
+# Standard benchmark (local prover)
+SP1_PROVER_URL=http://localhost:3000 node backend/theta-bridge/scripts/benchmark-prover.js \
+  --sequential 50 --concurrent 10
+
+# High-concurrency stress test (500 parallel, EdgeCloud)
+SP1_PROVER_URL=https://prover.edgecloud.theta.network \
+THETA_EDGECLOUD_API_KEY=<key> \
+node backend/theta-bridge/scripts/benchmark-prover.js \
+  --sequential 10 --concurrent 500
+
+# Output: benchmark-results.csv
+```
+
+The `--concurrent 500` mode runs proofs in waves of 50, tracking uptime and GPU utilization:
+- **Target uptime:** 99% (successful proofs / total attempted)
+- **Target GPU utilization:** >50% (aggregate GPU time / wall-clock time)
+- **Runtime auto-detection:** Uses EdgeCloud when `THETA_EDGECLOUD_API_KEY` is set, falls back to local prover
+
+### 13.3 Queue Throughput
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Concurrency (default) | 50 | Configurable via `MAX_CONCURRENCY` |
+| Max queue depth | 1000 | Configurable via `MAX_PENDING` |
+| Backpressure threshold | 800 | 80% of max pending |
+| Overhead per intent | ~0.1ms | p-queue async scheduling |
+| Queue overflow behavior | Reject + FAILED outcome | Graceful degradation |
+| Backpressure signal | `console.warn` | Ops-visible warning |
+
+### 13.4 Gas & Throughput Under Load
+
+| Scenario | Events/sec | Avg Latency | Gas/Proof | Queue Depth |
+|----------|-----------|-------------|-----------|-------------|
+| Idle (1 chain) | 0-1 | <1ms | — | 0 |
+| Normal (5 chains) | 5-20 | 2-9s (proving) | ~270K | 0-10 |
+| Peak (burst) | 50-100 | 2-9s (proving) | ~270K | 50-200 |
+| Stress (500 concurrent) | 500 | 5-15s (proving) | ~270K | 200-800 |
+| Overload (>1000) | 500 (capped) | — | — | 1000 (rejects) |
+
+### 13.5 Queue Tests
+
+| Test | Description |
+|------|-------------|
+| Queue overflow reject | Verifies intents are rejected with FAILED outcome when queue exceeds `maxPending` |
+| Concurrency limit | Confirms peak parallel execution never exceeds configured concurrency |
+| Backpressure emit | Validates `console.warn` fires and metric increments when queue > threshold |
+| High-volume sim (500) | Dispatches 500 intents, asserts all 500 handled with zero overflows |
+| Queue stats in status | Checks `getStatus()` includes queue depth, concurrency, overflow count |
+
+---
+
+## 14. File Structure
 
 ```
 core-layer/

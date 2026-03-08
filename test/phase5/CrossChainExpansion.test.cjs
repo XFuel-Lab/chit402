@@ -157,7 +157,7 @@ describe('Cross-Chain Expansion & Resilience (Phase 5)', function () {
       const circuits = ['A2ACircuit'];
       for (const name of circuits) {
         const F = await ethers.getContractFactory(name);
-        const c = await F.deploy(admin.address, await splitter.getAddress(), await verifier.getAddress());
+        const c = await F.deploy(admin.address, await splitter.getAddress(), await verifier.getAddress(), ethers.ZeroAddress);
         await c.waitForDeployment();
         const addr = await c.getAddress();
         expect(addr).to.not.equal(ethers.ZeroAddress);
@@ -166,7 +166,7 @@ describe('Cross-Chain Expansion & Resilience (Phase 5)', function () {
 
     it('should verify A2ACircuit has swarm functions', async function () {
       const F = await ethers.getContractFactory('A2ACircuit');
-      const a2a = await F.deploy(admin.address, await splitter.getAddress(), await verifier.getAddress());
+      const a2a = await F.deploy(admin.address, await splitter.getAddress(), await verifier.getAddress(), ethers.ZeroAddress);
       await a2a.waitForDeployment();
 
       const swarmCount = await a2a.swarmCount();

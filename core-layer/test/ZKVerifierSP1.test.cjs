@@ -587,7 +587,9 @@ describe('CoreRevenueSplitter', function () {
       const stakerAfter = await ethers.provider.getBalance(staker.address);
 
       expect(bbbAfter - bbbBefore).to.equal(ethers.parseEther('0.3'));
-      expect(lpAfter - lpBefore).to.equal(ethers.parseEther('0.3'));
+      // GET wallet receives 80% of GET allocation (20% grants retained in contract)
+      // GET = 30% of 1 = 0.3 ETH; forwarded = 0.3 - (20% grants = 0.06) = 0.24 ETH
+      expect(lpAfter - lpBefore).to.equal(ethers.parseEther('0.24'));
       expect(stakerAfter - stakerBefore).to.equal(ethers.parseEther('0.25'));
     });
 

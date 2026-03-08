@@ -13,9 +13,14 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  *
  * Default Split (30/30/25/15 — sums to 10000 BPS):
  *   30% → Buyback-Burn (BBB): Buy XF on open market and burn
- *   30% → Liquidity Provision (LP): Deepen AMM pools
+ *   30% → Growth & Expansion Treasury (GET): Machine incentives, LP boost, agent grants
  *   25% → Stakers (veXF holders): Yield distribution
- *   15% → Treasury: Operations, AI infra, grants, future incentives
+ *   15% → Treasury: Operations, AI infra, future incentives
+ *
+ * GET Sub-Splits (of the 30% GET allocation, sums to 10000 sub-BPS):
+ *   50% → Machine & Agent Incentives (compute subsidies, routing rewards, volume boosts)
+ *   30% → LP Boost (AMM pool deepening, concentrated liquidity)
+ *   20% → Agent-Driven Grant Proposals (community grants, auto-burn after 6 months)
  *
  * Fee-to-Stake (15-25% of treasury allocation):
  *   Routes to chain-specific validator staking pools:
@@ -41,10 +46,42 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
 
     // ─── Split Configuration (in BPS, must sum to 10000) ───────────────────────
     uint16 public bbbBps = 3000;
-    uint16 public lpBps = 3000;
+    uint16 public getBps = 3000;
     uint16 public stakerBps = 2500;
     uint16 public treasuryBps = 1500;
     uint16 public constant TOTAL_BPS = 10000;
+
+    // ─── GET Sub-Split Configuration (in BPS, must sum to 10000) ─────────────
+    uint16 public incentivesBps = 5000;   // 50% of GET → Machine & Agent Incentives
+    uint16 public lpBoostBps = 3000;      // 30% of GET → LP Boost
+    uint16 public grantsBps = 2000;       // 20% of GET → Agent-Driven Grant Proposals
+
+    // ─── Volume-Triggered Boost (applied to incentives distribution rate) ────
+    uint16 public boostMultiplier = 10000; // 10000 = 1.0x, 25000 = 2.5x
+    uint16 public constant MIN_BOOST = 10000;
+    uint16 public constant MAX_BOOST = 25000;
+    uint256 public monthlyVolume;
+    uint256 public lastVolumeReset;
+
+    // ─── Agent Grant Proposals ──────────────────────────────────────────────
+    struct GrantProposal {
+        bytes32 proposalId;
+        address recipient;
+        uint256 amount;
+        address submitter;
+        uint256 createdAt;
+        uint256 votesFor;
+        uint256 votesAgainst;
+        bool executed;
+        bool cancelled;
+    }
+
+    uint256 public grantProposalCount;
+    mapping(uint256 => GrantProposal) public grantProposals;
+    mapping(uint256 => mapping(address => bool)) public grantVotes;
+    uint256 public grantPoolBalance;
+    uint256 public lastGrantActivity;
+    uint256 public constant GRANT_EXPIRY = 180 days;
 
     // ─── Fee-to-Stake Configuration ────────────────────────────────────────────
     uint16 public feeToStakeBps = 2000;
@@ -56,7 +93,7 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
 
     // ─── Recipient Addresses ───────────────────────────────────────────────────
     address public bbbWallet;
-    address public lpWallet;
+    address public getWallet;
     address public stakerVault;
     address public treasuryWallet;
     address public stakePool;
@@ -116,11 +153,14 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
     uint256 public totalCollected;
     uint256 public totalDistributed;
     uint256 public totalBBB;
-    uint256 public totalLP;
+    uint256 public totalGET;
     uint256 public totalStaker;
     uint256 public totalTreasury;
     uint256 public totalFeeToStake;
     uint256 public distributionCount;
+    uint256 public totalIncentivesDistributed;
+    uint256 public totalLPBoostDistributed;
+    uint256 public totalGrantsDistributed;
 
     mapping(bytes32 => uint256) public circuitFees;
     mapping(uint256 => uint256) public chainStakeTotal; // chainId → total staked
@@ -155,7 +195,7 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
 
     event FeeDistributed(
         uint256 bbbAmount,
-        uint256 lpAmount,
+        uint256 getAmount,
         uint256 stakerAmount,
         uint256 treasuryAmount,
         uint256 feeToStakeAmount,
@@ -171,12 +211,19 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
         uint256 timestamp
     );
 
-    event SplitUpdated(uint16 bbb, uint16 lp, uint16 staker, uint16 treasury);
+    event SplitUpdated(uint16 bbb, uint16 get_, uint16 staker, uint16 treasury);
     event FeeToStakeUpdated(uint16 newBps);
     event RecipientUpdated(string role, address newAddress);
     event StakeRouteAdded(uint256 indexed chainId, address pool, string label, uint16 weight);
     event StakeRouteUpdated(uint256 indexed index, bool active, uint16 weight, uint256 newTotalWeight);
-    event GovernanceSplitExecuted(uint16 bbb, uint16 lp, uint16 staker, uint16 treasury, address executor);
+    event GovernanceSplitExecuted(uint16 bbb, uint16 get_, uint16 staker, uint16 treasury, address executor);
+
+    event SubSplitUpdated(uint16 incentivesBps, uint16 lpBoostBps, uint16 grantsBps);
+    event BoostMultiplierUpdated(uint16 oldMultiplier, uint16 newMultiplier, uint256 monthlyVolume);
+    event GrantProposalSubmitted(uint256 indexed proposalIndex, bytes32 proposalId, address recipient, uint256 amount, address submitter);
+    event GrantVoteCast(uint256 indexed proposalIndex, address indexed voter, bool support);
+    event GrantExecuted(uint256 indexed proposalIndex, address recipient, uint256 amount);
+    event GrantBurned(uint256 indexed proposalIndex, uint256 amount, uint256 timestamp);
 
     event EscrowCreated(
         uint256 indexed escrowId,
@@ -235,27 +282,36 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
     error ExceedsPayUpTo();
     error ClaimNotReady();
     error ClaimAlreadyClaimed();
+    error InvalidSubSplit();
+    error InvalidBoostMultiplier();
+    error GrantAlreadyVoted();
+    error GrantNotFound();
+    error GrantAlreadyExecuted();
+    error GrantExpired();
 
     // ─── Constructor ───────────────────────────────────────────────────────────
     constructor(
         address _admin,
         address _bbbWallet,
-        address _lpWallet,
+        address _getWallet,
         address _stakerVault,
         address _treasuryWallet,
         address _stakePool
     ) {
         require(_admin != address(0), "ZeroAdmin");
         require(_bbbWallet != address(0), "ZeroBBB");
-        require(_lpWallet != address(0), "ZeroLP");
+        require(_getWallet != address(0), "ZeroGET");
         require(_stakerVault != address(0), "ZeroStaker");
         require(_treasuryWallet != address(0), "ZeroTreasury");
 
         bbbWallet = _bbbWallet;
-        lpWallet = _lpWallet;
+        getWallet = _getWallet;
         stakerVault = _stakerVault;
         treasuryWallet = _treasuryWallet;
         stakePool = _stakePool;
+
+        lastVolumeReset = block.timestamp;
+        lastGrantActivity = block.timestamp;
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
         _grantRole(FEE_MANAGER_ROLE, _admin);
@@ -300,15 +356,25 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
         distributionCount++;
 
         uint256 bbbAmount = (balance * bbbBps) / TOTAL_BPS;
-        uint256 lpAmount = (balance * lpBps) / TOTAL_BPS;
+        uint256 getAmount = (balance * getBps) / TOTAL_BPS;
         uint256 stakerAmount = (balance * stakerBps) / TOTAL_BPS;
-        uint256 treasuryRaw = balance - bbbAmount - lpAmount - stakerAmount;
+        uint256 treasuryRaw = balance - bbbAmount - getAmount - stakerAmount;
 
         uint256 feeToStakeAmount = (treasuryRaw * feeToStakeBps) / TOTAL_BPS;
         uint256 treasuryAmount = treasuryRaw - feeToStakeAmount;
 
+        // GET sub-split: incentives (with boost), LP boost, grants pool
+        uint256 incentivesRaw = (getAmount * incentivesBps) / TOTAL_BPS;
+        uint256 incentivesAmount = (incentivesRaw * boostMultiplier) / TOTAL_BPS;
+        if (incentivesAmount > getAmount) incentivesAmount = getAmount;
+        uint256 lpBoostAmount = (getAmount * lpBoostBps) / TOTAL_BPS;
+        uint256 grantsAmount = getAmount - incentivesRaw - lpBoostAmount;
+
+        // Forward incentives + LP boost to GET wallet; grants portion stays in contract
+        uint256 getForwarded = getAmount - grantsAmount;
+
         _safeTransfer(bbbWallet, bbbAmount, "BBB");
-        _safeTransfer(lpWallet, lpAmount, "LP");
+        _safeTransfer(getWallet, getForwarded, "GET");
         _safeTransfer(stakerVault, stakerAmount, "Staker");
         _safeTransfer(treasuryWallet, treasuryAmount, "Treasury");
 
@@ -316,15 +382,23 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
             _routeStake(feeToStakeAmount);
         }
 
+        grantPoolBalance += grantsAmount;
+        lastGrantActivity = block.timestamp;
+
         totalDistributed += balance;
         totalBBB += bbbAmount;
-        totalLP += lpAmount;
+        totalGET += getAmount;
         totalStaker += stakerAmount;
         totalTreasury += treasuryAmount;
         totalFeeToStake += feeToStakeAmount;
+        totalIncentivesDistributed += incentivesAmount;
+        totalLPBoostDistributed += lpBoostAmount;
+        totalGrantsDistributed += grantsAmount;
+
+        monthlyVolume += balance;
 
         emit FeeDistributed(
-            bbbAmount, lpAmount, stakerAmount,
+            bbbAmount, getAmount, stakerAmount,
             treasuryAmount, feeToStakeAmount,
             distributionCount, block.timestamp
         );
@@ -438,21 +512,21 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
      * @notice Update fee split via governance vote execution.
      *         Called by veXFGovernance.executeProposal() for FeeStructure proposals.
      * @param _bbb BPS for Buyback-Burn (e.g., 3000 = 30%).
-     * @param _lp BPS for Liquidity Provision.
+     * @param _get BPS for Growth & Expansion Treasury.
      * @param _staker BPS for staker vault.
      * @param _treasury BPS for treasury.
      * @dev BPS must sum to 10000. Restricted to FEE_MANAGER_ROLE.
      */
     function setSplit(
-        uint16 _bbb, uint16 _lp, uint16 _staker, uint16 _treasury
+        uint16 _bbb, uint16 _get, uint16 _staker, uint16 _treasury
     ) external onlyRole(FEE_MANAGER_ROLE) {
-        if (_bbb + _lp + _staker + _treasury != TOTAL_BPS) revert InvalidSplit();
+        if (_bbb + _get + _staker + _treasury != TOTAL_BPS) revert InvalidSplit();
         bbbBps = _bbb;
-        lpBps = _lp;
+        getBps = _get;
         stakerBps = _staker;
         treasuryBps = _treasury;
-        emit SplitUpdated(_bbb, _lp, _staker, _treasury);
-        emit GovernanceSplitExecuted(_bbb, _lp, _staker, _treasury, msg.sender);
+        emit SplitUpdated(_bbb, _get, _staker, _treasury);
+        emit GovernanceSplitExecuted(_bbb, _get, _staker, _treasury, msg.sender);
     }
 
     /**
@@ -481,13 +555,13 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /**
-     * @notice Set Liquidity Provision wallet address.
-     * @param a New LP recipient address.
+     * @notice Set Growth & Expansion Treasury (GET) wallet address.
+     * @param a New GET recipient address.
      */
-    function setLPWallet(address a) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setGETWallet(address a) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (a == address(0)) revert ZeroAddress();
-        lpWallet = a;
-        emit RecipientUpdated("LP", a);
+        getWallet = a;
+        emit RecipientUpdated("GET", a);
     }
 
     /**
@@ -797,10 +871,18 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
 
     /**
      * @notice Return current fee split in BPS.
-     * @return bbbBps, lpBps, stakerBps, treasuryBps.
+     * @return bbbBps, getBps, stakerBps, treasuryBps.
      */
     function getSplit() external view returns (uint16, uint16, uint16, uint16) {
-        return (bbbBps, lpBps, stakerBps, treasuryBps);
+        return (bbbBps, getBps, stakerBps, treasuryBps);
+    }
+
+    /**
+     * @notice Return GET sub-split in BPS.
+     * @return incentives, lpBoost, grants sub-allocations.
+     */
+    function getSubSplit() external view returns (uint16, uint16, uint16) {
+        return (incentivesBps, lpBoostBps, grantsBps);
     }
 
     /**
@@ -808,17 +890,17 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
      * @return collected Total fees received.
      * @return distributed Total fees distributed.
      * @return bbb Total BBB amount.
-     * @return lp Total LP amount.
+     * @return get_ Total GET amount.
      * @return staker Total staker amount.
      * @return treasury Total treasury amount.
      * @return feeStake Total fee-to-stake amount.
      */
     function getStats() external view returns (
         uint256 collected, uint256 distributed,
-        uint256 bbb, uint256 lp, uint256 staker,
+        uint256 bbb, uint256 get_, uint256 staker,
         uint256 treasury, uint256 feeStake
     ) {
-        return (totalCollected, totalDistributed, totalBBB, totalLP,
+        return (totalCollected, totalDistributed, totalBBB, totalGET,
                 totalStaker, totalTreasury, totalFeeToStake);
     }
 
@@ -837,6 +919,142 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
      */
     function getChainStakeTotal(uint256 chainId) external view returns (uint256) {
         return chainStakeTotal[chainId];
+    }
+
+    // ─── GET Sub-Split Management ──────────────────────────────────────────────
+
+    /**
+     * @notice Set GET sub-allocations (incentives, LP boost, grants).
+     * @param _incentivesBps Machine & Agent Incentives share (default 5000 = 50%).
+     * @param _lpBoostBps LP Boost share (default 3000 = 30%).
+     * @param _grantsBps Agent-Driven Grants share (default 2000 = 20%).
+     * @dev Must sum to 10000. Callable by admin or GOVERNANCE_ROLE.
+     */
+    function setSubSplits(
+        uint16 _incentivesBps,
+        uint16 _lpBoostBps,
+        uint16 _grantsBps
+    ) external {
+        require(
+            hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || hasRole(GOVERNANCE_ROLE, msg.sender),
+            "NotAdminOrGovernance"
+        );
+        if (_incentivesBps + _lpBoostBps + _grantsBps != TOTAL_BPS) revert InvalidSubSplit();
+        incentivesBps = _incentivesBps;
+        lpBoostBps = _lpBoostBps;
+        grantsBps = _grantsBps;
+        emit SubSplitUpdated(_incentivesBps, _lpBoostBps, _grantsBps);
+    }
+
+    /**
+     * @notice Update boost multiplier based on monthly protocol volume.
+     *         Volume thresholds (in wei): >$10M equivalent ≈ 2.5x boost.
+     * @param _multiplier New multiplier in BPS (10000 = 1.0x, 25000 = 2.5x).
+     * @dev Callable by FEE_MANAGER_ROLE. Resets monthly volume counter if 30 days elapsed.
+     */
+    function volumeTriggeredBoost(uint16 _multiplier) external onlyRole(FEE_MANAGER_ROLE) {
+        if (_multiplier < MIN_BOOST || _multiplier > MAX_BOOST) revert InvalidBoostMultiplier();
+
+        if (block.timestamp >= lastVolumeReset + 30 days) {
+            monthlyVolume = 0;
+            lastVolumeReset = block.timestamp;
+        }
+
+        uint16 oldMultiplier = boostMultiplier;
+        boostMultiplier = _multiplier;
+        emit BoostMultiplierUpdated(oldMultiplier, _multiplier, monthlyVolume);
+    }
+
+    // ─── Agent Grant Proposals ──────────────────────────────────────────────
+
+    /**
+     * @notice Submit an agent-driven grant proposal.
+     * @param proposalId Unique off-chain proposal identifier.
+     * @param amount Requested grant amount (capped at 5% of grant pool).
+     * @param recipient Address to receive the grant if approved.
+     * @dev Callable by any address (agent-submittable). Emits GrantProposalSubmitted.
+     */
+    function agentGrantProposal(
+        bytes32 proposalId,
+        uint256 amount,
+        address recipient
+    ) external whenNotPaused returns (uint256 proposalIndex) {
+        require(recipient != address(0), "ZeroRecipient");
+        require(amount > 0, "ZeroAmount");
+        require(amount <= (grantPoolBalance * 500) / TOTAL_BPS, "ExceedsPoolCap");
+
+        grantProposalCount++;
+        proposalIndex = grantProposalCount;
+
+        grantProposals[proposalIndex] = GrantProposal({
+            proposalId: proposalId,
+            recipient: recipient,
+            amount: amount,
+            submitter: msg.sender,
+            createdAt: block.timestamp,
+            votesFor: 0,
+            votesAgainst: 0,
+            executed: false,
+            cancelled: false
+        });
+
+        emit GrantProposalSubmitted(proposalIndex, proposalId, recipient, amount, msg.sender);
+    }
+
+    /**
+     * @notice Vote on a grant proposal (veXF-votable — restricted to GOVERNANCE_ROLE).
+     * @param proposalIndex Index of the grant proposal.
+     * @param support True to vote for, false to vote against.
+     */
+    function voteGrant(uint256 proposalIndex, bool support) external onlyRole(GOVERNANCE_ROLE) {
+        GrantProposal storage p = grantProposals[proposalIndex];
+        if (p.createdAt == 0) revert GrantNotFound();
+        if (p.executed || p.cancelled) revert GrantAlreadyExecuted();
+        if (grantVotes[proposalIndex][msg.sender]) revert GrantAlreadyVoted();
+
+        grantVotes[proposalIndex][msg.sender] = true;
+        if (support) {
+            p.votesFor++;
+        } else {
+            p.votesAgainst++;
+        }
+        emit GrantVoteCast(proposalIndex, msg.sender, support);
+    }
+
+    /**
+     * @notice Execute an approved grant proposal (votesFor > votesAgainst).
+     * @param proposalIndex Index of the grant proposal to execute.
+     * @dev Transfers funds from grant pool to recipient. Auto-burns unused grants
+     *      if pool has been idle for 6 months (GRANT_EXPIRY).
+     */
+    function claimGrant(uint256 proposalIndex) external nonReentrant whenNotPaused {
+        GrantProposal storage p = grantProposals[proposalIndex];
+        if (p.createdAt == 0) revert GrantNotFound();
+        if (p.executed || p.cancelled) revert GrantAlreadyExecuted();
+
+        // Auto-burn: if grant pool has been idle for 6 months, burn the proposal
+        if (block.timestamp > p.createdAt + GRANT_EXPIRY) {
+            p.cancelled = true;
+            emit GrantBurned(proposalIndex, p.amount, block.timestamp);
+            return;
+        }
+
+        require(p.votesFor > p.votesAgainst, "NotApproved");
+        require(p.amount <= grantPoolBalance, "InsufficientGrantPool");
+
+        p.executed = true;
+        grantPoolBalance -= p.amount;
+        lastGrantActivity = block.timestamp;
+
+        _safeTransfer(p.recipient, p.amount, "Grant");
+        emit GrantExecuted(proposalIndex, p.recipient, p.amount);
+    }
+
+    /**
+     * @notice Return grant proposal details.
+     */
+    function getGrantProposal(uint256 proposalIndex) external view returns (GrantProposal memory) {
+        return grantProposals[proposalIndex];
     }
 
     // ─── Internal ──────────────────────────────────────────────────────────────

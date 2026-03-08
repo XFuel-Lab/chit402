@@ -1,7 +1,7 @@
 # Growth & Expansion Treasury (GET) — Full Mechanics
 
 > **Whitepaper reference:** [Section 5.3](../WHITEPAPER.md#53-growth--expansion-treasury-get--the-ai-depin-growth-engine)
-> **On-chain contract:** `CoreRevenueSplitter.sol` → `lpBps = 3000` (30% of distributed fees)
+> **On-chain contract:** `CoreRevenueSplitter.sol` → `getBps = 3000` (30% of distributed fees)
 
 ---
 
@@ -139,7 +139,74 @@ All Protocol Fees (100%) → CoreRevenueSplitter
        └─ 15-25% → Fee-to-Stake (validator staking)
 ```
 
-The on-chain `CoreRevenueSplitter.sol` handles the top-level 4-way split (`bbbBps=3000, lpBps=3000, stakerBps=2500, treasuryBps=1500`). GET sub-allocation is managed downstream by the GET multisig or governance contract, keeping the core splitter simple, gas-efficient, and battle-tested.
+The on-chain `CoreRevenueSplitter.sol` handles the top-level 4-way split (`bbbBps=3000, getBps=3000, stakerBps=2500, treasuryBps=1500`). GET sub-allocation is now managed directly by the splitter via `setSubSplits()`, `volumeTriggeredBoost()`, and `agentGrantProposal()` — providing full on-chain governance of the GET fund.
+
+---
+
+## Implementation Details
+
+> Added with the GET on-chain mechanics update. All functions live in `CoreRevenueSplitter.sol`.
+
+### Renamed State (LP → GET)
+
+| Old Name | New Name | Description |
+|----------|----------|-------------|
+| `lpBps` | `getBps` | Top-level BPS allocation (3000 = 30%) |
+| `lpWallet` | `getWallet` | Recipient address for GET funds |
+| `totalLP` | `totalGET` | Cumulative GET distributed |
+| `setLPWallet()` | `setGETWallet()` | Admin setter for GET wallet |
+| `SplitUpdated(…lp…)` | `SplitUpdated(…get_…)` | Event field renamed |
+
+### New Functions
+
+| Function | Access | Description |
+|----------|--------|-------------|
+| `setSubSplits(incentivesBps, lpBoostBps, grantsBps)` | Admin / GOVERNANCE_ROLE | Set GET sub-allocations (must sum to 10000) |
+| `volumeTriggeredBoost(multiplier)` | FEE_MANAGER_ROLE | Set incentives boost (10000–25000 = 1.0x–2.5x) |
+| `agentGrantProposal(proposalId, amount, recipient)` | Permissionless | Submit a grant proposal (capped at 5% of pool) |
+| `voteGrant(proposalIndex, support)` | GOVERNANCE_ROLE | Vote for/against a grant proposal |
+| `claimGrant(proposalIndex)` | Permissionless | Execute approved grant; auto-burns if >6 months old |
+| `getSubSplit()` | View | Returns (incentivesBps, lpBoostBps, grantsBps) |
+| `getGrantProposal(index)` | View | Returns GrantProposal struct |
+
+### Updated `distribute()` Flow
+
+```
+distribute() called:
+  ├─ 30% → BBB (bbbWallet)
+  ├─ 30% → GET (getWallet)  ◄── renamed from LP
+  │    ├─ Sub-split tracked: incentives (with boost), LP boost, grants
+  │    │    ├─ incentivesRaw = getAmount × incentivesBps / 10000
+  │    │    ├─ incentivesAmount = incentivesRaw × boostMultiplier / 10000
+  │    │    ├─ lpBoostAmount = getAmount × lpBoostBps / 10000
+  │    │    └─ grantsAmount = remainder → grantPoolBalance
+  │    └─ Full getAmount sent to getWallet (sub-split is accounting only)
+  ├─ 25% → Staker Vault
+  └─ 15% → Treasury
+       └─ 15-25% → Fee-to-Stake (validator staking)
+```
+
+### Grant Lifecycle
+
+```
+1. agentGrantProposal(id, amount, recipient)  → GrantProposalSubmitted
+2. voteGrant(index, true/false)               → GrantVoteCast  (GOVERNANCE_ROLE)
+3. claimGrant(index)
+     ├─ If >6 months old → auto-burn (GrantBurned), proposal cancelled
+     ├─ If votesFor > votesAgainst → transfer to recipient (GrantExecuted)
+     └─ Otherwise → revert "NotApproved"
+```
+
+### Boost Multiplier Thresholds
+
+| Monthly Volume | Recommended Multiplier | BPS Value |
+|---------------|----------------------|-----------|
+| < $50K | 1.0x (baseline) | 10000 |
+| $50K – $200K | 1.5x | 15000 |
+| $200K – $1M | 2.0x | 20000 |
+| > $1M | 2.5x (maximum) | 25000 |
+
+Set via `volumeTriggeredBoost(bpsValue)` — typically called by a keeper or oracle integration.
 
 ---
 

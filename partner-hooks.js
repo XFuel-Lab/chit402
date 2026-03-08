@@ -771,6 +771,349 @@ class ChainlinkOracleHook extends EventEmitter {
   }
 }
 
+// ─── Agent Reputation Threshold ───────────────────────────────────────────────
+
+const REPUTATION_PRIORITY_THRESHOLD = 5000;
+
+// ─── Base Agent Framework Hook ────────────────────────────────────────────────
+
+/**
+ * Shared base for agent-framework hooks. Enforces the executeHook(params)
+ * interface and reputation-gated priority execution via A2ACircuit's
+ * priorityRouting view (rep >= 5000).
+ */
+class BaseAgentFrameworkHook extends EventEmitter {
+  constructor(options = {}) {
+    super();
+    this.log = options.logger || console;
+    this.gasBudget = options.gasBudget || GAS_BUDGET;
+    this.repThreshold = options.repThreshold || REPUTATION_PRIORITY_THRESHOLD;
+  }
+
+  _checkReputation(agentRep) {
+    const rep = typeof agentRep === 'number' ? agentRep : 0;
+    if (rep < this.repThreshold) {
+      this.log.warn?.(
+        `[${this.constructor.name}] Low reputation (${rep} < ${this.repThreshold}): ` +
+        'agent will not receive priority execution'
+      ) || this.log.log?.(
+        `[${this.constructor.name}] Warning: agent reputation ${rep} below threshold ${this.repThreshold}`
+      );
+      return { priority: false, reputation: rep };
+    }
+    return { priority: true, reputation: rep };
+  }
+
+  _emitIntegrationEvent(partner, detail) {
+    this.emit('PartnershipIntegrated', {
+      partner,
+      circuitId: A2A_CIRCUIT_ID,
+      timestamp: Math.floor(Date.now() / 1000),
+      detail,
+    });
+  }
+}
+
+// ─── AutoGPT Hook (Goal-Based Agents) ────────────────────────────────────────
+
+/**
+ * Hook for AutoGPT-style goal-based autonomous agents.
+ *
+ * Accepts a high-level goal/intent, decomposes it into sub-tasks internally,
+ * simulates iterative planning, and returns a processed result with reputation
+ * score tie-in. Agents with rep >= 5000 receive priority execution.
+ *
+ * executeHook({ intent, agentId, agentReputation, maxIterations })
+ *   → { status, plan, result, iterations, priority, repScore, gasEstimate }
+ */
+class AutoGPTHook extends BaseAgentFrameworkHook {
+  constructor(options = {}) {
+    super(options);
+    this.maxDefaultIterations = options.maxIterations || 5;
+    this.executionLog = [];
+  }
+
+  async executeHook(params = {}) {
+    const { intent, agentId, agentReputation, maxIterations } = params;
+    if (!intent || typeof intent !== 'string') {
+      throw new Error('AutoGPTHook: intent string required');
+    }
+
+    const repCheck = this._checkReputation(agentReputation || 0);
+    const iterations = Math.min(maxIterations || this.maxDefaultIterations, 20);
+
+    const plan = this._decompose(intent, iterations);
+
+    const results = [];
+    for (let i = 0; i < plan.steps.length; i++) {
+      const step = plan.steps[i];
+      const stepResult = {
+        step: i + 1,
+        action: step,
+        status: 'completed',
+        outputHash: crypto.createHash('sha256')
+          .update(`${intent}-step${i}-${Date.now()}`)
+          .digest('hex')
+          .slice(0, 16),
+      };
+      results.push(stepResult);
+    }
+
+    const gasEstimate = 21_000 + (plan.steps.length * 4_000);
+
+    const output = {
+      hookType: 'autogpt',
+      status: 'completed',
+      agentId: agentId || 'anonymous',
+      intent,
+      plan,
+      result: results,
+      iterations: plan.steps.length,
+      priority: repCheck.priority,
+      repScore: repCheck.reputation,
+      gasEstimate,
+      withinGasBudget: gasEstimate <= this.gasBudget,
+      timestamp: Date.now(),
+    };
+
+    this.executionLog.push({ agentId: output.agentId, intent, at: Date.now() });
+    if (this.executionLog.length > 500) {
+      this.executionLog = this.executionLog.slice(-250);
+    }
+
+    this._emitIntegrationEvent('autogpt', `Goal executed: "${intent.slice(0, 40)}"`);
+
+    this.log.info?.(`[AutoGPTHook] Goal completed: agent=${output.agentId} steps=${plan.steps.length} priority=${repCheck.priority}`) ||
+      this.log.log?.(`[AutoGPTHook] Goal completed: agent=${output.agentId} steps=${plan.steps.length}`);
+
+    return output;
+  }
+
+  _decompose(intent, maxSteps) {
+    const words = intent.split(/\s+/);
+    const stepCount = Math.min(Math.max(2, Math.ceil(words.length / 3)), maxSteps);
+    const steps = [];
+    for (let i = 0; i < stepCount; i++) {
+      steps.push(`step_${i + 1}_${words[i % words.length] || 'process'}`);
+    }
+    return { goal: intent, steps, decomposedAt: Date.now() };
+  }
+}
+
+// ─── CrewAI Hook (Multi-Agent Crews) ──────────────────────────────────────────
+
+/**
+ * Hook for CrewAI-style multi-agent crew orchestration.
+ *
+ * Accepts a task definition with role assignments, coordinates simulated
+ * agent collaboration, and produces a merged crew result. Each crew
+ * member's reputation is checked; the crew receives priority only if
+ * the average reputation meets the threshold.
+ *
+ * executeHook({ task, crew: [{ role, agentId, reputation }], agentReputation })
+ *   → { status, crewSize, roleResults, mergedOutput, priority, repScore, gasEstimate }
+ */
+class CrewAIHook extends BaseAgentFrameworkHook {
+  constructor(options = {}) {
+    super(options);
+    this.executionLog = [];
+  }
+
+  async executeHook(params = {}) {
+    const { task, crew, agentReputation } = params;
+    if (!task || typeof task !== 'string') {
+      throw new Error('CrewAIHook: task string required');
+    }
+
+    const crewMembers = Array.isArray(crew) && crew.length > 0
+      ? crew
+      : [{ role: 'generalist', agentId: 'default-agent', reputation: agentReputation || 0 }];
+
+    const avgRep = crewMembers.reduce((s, m) => s + (m.reputation || 0), 0) / crewMembers.length;
+    const repCheck = this._checkReputation(Math.floor(avgRep));
+
+    const roleResults = crewMembers.map((member, idx) => {
+      const outputHash = crypto.createHash('sha256')
+        .update(`${task}-${member.role}-${idx}-${Date.now()}`)
+        .digest('hex')
+        .slice(0, 16);
+      return {
+        role: member.role,
+        agentId: member.agentId || `agent-${idx}`,
+        status: 'completed',
+        outputHash,
+        reputation: member.reputation || 0,
+      };
+    });
+
+    const mergedHash = crypto.createHash('sha256')
+      .update(roleResults.map(r => r.outputHash).join(''))
+      .digest('hex')
+      .slice(0, 32);
+
+    const gasEstimate = 21_000 + (crewMembers.length * 6_000);
+
+    const output = {
+      hookType: 'crewai',
+      status: 'completed',
+      task,
+      crewSize: crewMembers.length,
+      roleResults,
+      mergedOutput: mergedHash,
+      priority: repCheck.priority,
+      repScore: repCheck.reputation,
+      avgReputation: Math.floor(avgRep),
+      gasEstimate,
+      withinGasBudget: gasEstimate <= this.gasBudget,
+      timestamp: Date.now(),
+    };
+
+    this.executionLog.push({ task, crewSize: crewMembers.length, at: Date.now() });
+    if (this.executionLog.length > 500) {
+      this.executionLog = this.executionLog.slice(-250);
+    }
+
+    this._emitIntegrationEvent('crewai', `Crew task completed: ${crewMembers.length} agents`);
+
+    this.log.info?.(`[CrewAIHook] Crew completed: task="${task.slice(0, 30)}" crew=${crewMembers.length} priority=${repCheck.priority}`) ||
+      this.log.log?.(`[CrewAIHook] Crew completed: crew=${crewMembers.length}`);
+
+    return output;
+  }
+}
+
+// ─── LangChain Hook (Chainable LLM Workflows) ────────────────────────────────
+
+/**
+ * Hook for LangChain-style chainable LLM workflow integration.
+ *
+ * Accepts a workflow definition as a chain of processing steps, executes
+ * them sequentially with intermediate state passing, and returns the
+ * final output. Supports rep-gated priority for agents above the threshold.
+ *
+ * executeHook({ intent, chain: ['step1', 'step2', ...], agentId, agentReputation })
+ *   → { status, chainLength, steps, finalOutput, priority, repScore, gasEstimate }
+ */
+class LangChainHook extends BaseAgentFrameworkHook {
+  constructor(options = {}) {
+    super(options);
+    this.executionLog = [];
+  }
+
+  async executeHook(params = {}) {
+    const { intent, chain, agentId, agentReputation } = params;
+    if (!intent || typeof intent !== 'string') {
+      throw new Error('LangChainHook: intent string required');
+    }
+
+    const repCheck = this._checkReputation(agentReputation || 0);
+
+    const chainSteps = Array.isArray(chain) && chain.length > 0
+      ? chain
+      : ['parse', 'reason', 'respond'];
+
+    let intermediateState = intent;
+    const stepResults = [];
+
+    for (let i = 0; i < chainSteps.length; i++) {
+      const stepName = chainSteps[i];
+      const inputHash = crypto.createHash('sha256')
+        .update(intermediateState)
+        .digest('hex')
+        .slice(0, 16);
+
+      const outputHash = crypto.createHash('sha256')
+        .update(`${stepName}-${inputHash}-${Date.now()}`)
+        .digest('hex')
+        .slice(0, 16);
+
+      stepResults.push({
+        step: i + 1,
+        name: stepName,
+        inputHash,
+        outputHash,
+        status: 'completed',
+      });
+
+      intermediateState = outputHash;
+    }
+
+    const finalOutput = intermediateState;
+    const gasEstimate = 21_000 + (chainSteps.length * 3_500);
+
+    const output = {
+      hookType: 'langchain',
+      status: 'completed',
+      agentId: agentId || 'anonymous',
+      intent,
+      chainLength: chainSteps.length,
+      steps: stepResults,
+      finalOutput,
+      priority: repCheck.priority,
+      repScore: repCheck.reputation,
+      gasEstimate,
+      withinGasBudget: gasEstimate <= this.gasBudget,
+      timestamp: Date.now(),
+    };
+
+    this.executionLog.push({ agentId: output.agentId, intent, at: Date.now() });
+    if (this.executionLog.length > 500) {
+      this.executionLog = this.executionLog.slice(-250);
+    }
+
+    this._emitIntegrationEvent('langchain', `Chain workflow completed: ${chainSteps.length} steps`);
+
+    this.log.info?.(`[LangChainHook] Chain completed: agent=${output.agentId} steps=${chainSteps.length} priority=${repCheck.priority}`) ||
+      this.log.log?.(`[LangChainHook] Chain completed: agent=${output.agentId} steps=${chainSteps.length}`);
+
+    return output;
+  }
+}
+
+// ─── Hook Factory ─────────────────────────────────────────────────────────────
+
+/**
+ * Factory function to retrieve a hook instance by type string.
+ * Supports both the original partner hooks and the new agent framework hooks.
+ *
+ * @param {string} hookType - One of 'almanak', 'succinct', 'chainlink',
+ *                            'autogpt', 'crewai', 'langchain'
+ * @param {Object} options  - Constructor options forwarded to the hook
+ * @returns {Object} Hook instance
+ */
+function getHook(hookType, options = {}) {
+  const type = (hookType || '').toLowerCase().trim();
+  switch (type) {
+    case 'almanak':
+      return new AlmanakSwarmHook(
+        options.address || ethers.ZeroAddress,
+        options.provider || null,
+        options
+      );
+    case 'succinct':
+      return new SuccinctSP1Hook(
+        options.address || ethers.ZeroAddress,
+        options.provider || null,
+        options
+      );
+    case 'chainlink':
+      return new ChainlinkOracleHook(
+        options.address || ethers.ZeroAddress,
+        options.provider || null,
+        options
+      );
+    case 'autogpt':
+      return new AutoGPTHook(options);
+    case 'crewai':
+      return new CrewAIHook(options);
+    case 'langchain':
+      return new LangChainHook(options);
+    default:
+      throw new Error(`getHook: unknown hook type '${hookType}'. ` +
+        "Valid types: 'almanak', 'succinct', 'chainlink', 'autogpt', 'crewai', 'langchain'");
+  }
+}
+
 // ─── Partner Hook Manager ─────────────────────────────────────────────────────
 
 /**
@@ -902,6 +1245,9 @@ class PartnerHookManager extends EventEmitter {
         hookStatus[name].proofMetrics = hook.getProofMetrics();
       } else if (hook instanceof ChainlinkOracleHook) {
         hookStatus[name].registeredFeeds = hook.getRegisteredFeeds();
+      } else if (hook instanceof AutoGPTHook || hook instanceof CrewAIHook || hook instanceof LangChainHook) {
+        hookStatus[name].executionCount = hook.executionLog.length;
+        hookStatus[name].hookType = hook.constructor.name;
       }
     }
 
@@ -952,6 +1298,7 @@ class PartnerHookManager extends EventEmitter {
       getTVL: 10_000,
       getLPMetrics: 8_000,
       simulateTVLScaling: 3_000,
+      executeHook: 10_000,
     };
 
     return baseGas + (methodOverhead[method] || 5_000) + (args.length * perArgGas);
@@ -964,10 +1311,16 @@ module.exports = {
   AlmanakSwarmHook,
   SuccinctSP1Hook,
   ChainlinkOracleHook,
+  AutoGPTHook,
+  CrewAIHook,
+  LangChainHook,
+  BaseAgentFrameworkHook,
   PartnerHookManager,
+  getHook,
   GAS_BUDGET,
   MONTE_CARLO_ITERATIONS,
   PROOF_CACHE_TTL_MS,
   ORACLE_STALENESS_THRESHOLD,
   A2A_CIRCUIT_ID,
+  REPUTATION_PRIORITY_THRESHOLD,
 };

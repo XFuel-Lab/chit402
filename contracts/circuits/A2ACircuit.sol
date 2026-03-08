@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title A2ACircuit
@@ -47,6 +48,20 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
     // ─── Core Layer References ────────────────────────────────────────────────
     address public revenueSplitter;
     address public zkVerifier;
+    IERC20 public _stakeToken;
+
+    // ─── Sybil-Resistance Staking ──────────────────────────────────────────────
+    /// @notice Minimum stake required for agent registration (~30K gas increase on registerAgent)
+    uint256 public minStake = 100e18;
+    mapping(address => uint256) public agentStakes;
+
+    // ─── Swarm Timeout ─────────────────────────────────────────────────────────
+    /// @notice Duration after which a swarm can be force-dissolved by any member
+    uint256 public swarmTimeoutDuration = 7 days;
+
+    // ─── Reputation Bounds ─────────────────────────────────────────────────────
+    uint256 public constant MAX_REPUTATION = 10_000;
+    uint256 public constant PRIORITY_THRESHOLD = 5_000;
 
     // ─── Fee Configuration ────────────────────────────────────────────────────
     /// @notice Relay fee on escrowed amounts (default 0.1% = 10 BPS)
@@ -223,6 +238,10 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
 
     event SwarmDissolved(bytes32 indexed swarmId, uint256 totalSettled, uint256 fee);
 
+    event AgentSlashed(address indexed agent, uint256 slashAmount, uint256 remainingStake);
+    event SwarmForceDissolve(bytes32 indexed swarmId, address indexed dissolver, uint256 refund);
+    event ReputationUpdated(address indexed agent, uint256 newReputation);
+
     // ─── Errors ───────────────────────────────────────────────────────────────
     error AgentNotRegistered();
     error AgentAlreadyRegistered();
@@ -245,17 +264,24 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
     error AlreadySwarmMember();
     error NotSwarmCoordinator();
     error SwarmNotSettling();
+    error SlashAmountZero();
+    error SlashExceedsStake();
+    error SwarmNotTimedOut();
+    error NotSwarmMember();
+    error StakeTransferFailed();
 
     // ─── Constructor ──────────────────────────────────────────────────────────
     constructor(
         address _admin,
         address _revenueSplitter,
-        address _zkVerifier
+        address _zkVerifier,
+        address _stakeTokenAddr
     ) {
         require(_admin != address(0), "ZeroAdmin");
 
         revenueSplitter = _revenueSplitter;
         zkVerifier = _zkVerifier;
+        _stakeToken = IERC20(_stakeTokenAddr);
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
         _grantRole(OPERATOR_ROLE, _admin);
@@ -272,12 +298,19 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
      * @param endpoint Off-chain service URL.
      * @param capabilities Array of capability hashes (e.g., keccak256("inference:llama-3")).
      */
+    /// @dev Requires minStake ERC-20 transfer (~30K additional gas vs. unstaked registration)
     function registerAgent(
         bytes32 identityCommitment,
         string calldata endpoint,
         bytes32[] calldata capabilities
     ) external whenNotPaused {
         if (agents[msg.sender].registeredAt != 0) revert AgentAlreadyRegistered();
+
+        if (address(_stakeToken) != address(0) && minStake > 0) {
+            bool ok = _stakeToken.transferFrom(msg.sender, address(this), minStake);
+            if (!ok) revert StakeTransferFailed();
+            agentStakes[msg.sender] = minStake;
+        }
 
         agents[msg.sender] = Agent({
             addr: msg.sender,
@@ -312,6 +345,30 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
         if (agents[agent].registeredAt == 0) revert AgentNotRegistered();
         agents[agent].active = false;
         emit AgentDeactivated(agent);
+    }
+
+    /**
+     * @notice Slash an agent's stake for misbehaviour; slashed tokens forwarded to revenueSplitter.
+     * @param agent Address of the agent to slash.
+     * @param slashAmount Amount of staked tokens to confiscate.
+     */
+    function slashAgent(address agent, uint256 slashAmount) external {
+        require(
+            hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || hasRole(OPERATOR_ROLE, msg.sender),
+            "AdminOrOperator"
+        );
+        if (agents[agent].registeredAt == 0) revert AgentNotRegistered();
+        if (slashAmount == 0) revert SlashAmountZero();
+        if (slashAmount > agentStakes[agent]) revert SlashExceedsStake();
+
+        agentStakes[agent] -= slashAmount;
+
+        if (address(_stakeToken) != address(0) && revenueSplitter != address(0)) {
+            bool ok = _stakeToken.transfer(revenueSplitter, slashAmount);
+            if (!ok) revert StakeTransferFailed();
+        }
+
+        emit AgentSlashed(agent, slashAmount, agentStakes[agent]);
     }
 
     /**
@@ -463,9 +520,8 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
             _forwardFee(taskFee);
         }
 
-        // Update provider reputation
         agents[b.provider].tasksCompleted++;
-        agents[b.provider].reputation += 1;
+        _addReputationClamped(b.provider, 1);
 
         totalMessagesRelayed++;
 
@@ -762,7 +818,7 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
         }
 
         agents[agent].tasksCompleted++;
-        agents[agent].reputation += 1;
+        _addReputationClamped(agent, 1);
         totalSwarmSettlements++;
         totalSettled += amount;
 
@@ -803,6 +859,30 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
         emit SwarmDissolved(swarmId, s.settledAmount, dissolveFee);
     }
 
+    /**
+     * @notice Force-dissolve a timed-out swarm. Any member may call after
+     *         swarmTimeoutDuration has elapsed since formation.
+     *         Remaining escrow is returned to the coordinator.
+     */
+    function forceDissolveSwarm(bytes32 swarmId) external nonReentrant {
+        Swarm storage s = swarms[swarmId];
+        if (s.formedAt == 0) revert SwarmNotFound();
+        if (!swarmMembers[swarmId][msg.sender]) revert NotSwarmMember();
+        if (s.phase == SwarmPhase.Dissolved) revert SwarmNotActive();
+        if (block.timestamp <= s.formedAt + swarmTimeoutDuration) revert SwarmNotTimedOut();
+
+        s.phase = SwarmPhase.Dissolved;
+        s.settledAt = uint64(block.timestamp);
+
+        uint256 refund = s.escrowPool - s.settledAmount;
+        if (refund > 0) {
+            (bool ok, ) = payable(s.coordinator).call{value: refund}("");
+            require(ok, "RefundFailed");
+        }
+
+        emit SwarmForceDissolve(swarmId, msg.sender, refund);
+    }
+
     function getSwarm(bytes32 swarmId) external view returns (Swarm memory) {
         return swarms[swarmId];
     }
@@ -811,7 +891,31 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
         return swarmMembers[swarmId][agent];
     }
 
+    // ─── Reputation ──────────────────────────────────────────────────────────
+
+    /**
+     * @notice Admin-callable reputation setter with clamp to MAX_REPUTATION.
+     */
+    function updateReputation(address agent, uint256 newReputation) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (agents[agent].registeredAt == 0) revert AgentNotRegistered();
+        agents[agent].reputation = newReputation > MAX_REPUTATION ? MAX_REPUTATION : newReputation;
+        emit ReputationUpdated(agent, agents[agent].reputation);
+    }
+
+    /**
+     * @notice Returns true if agent reputation ≥ PRIORITY_THRESHOLD, qualifying
+     *         for lower fees or priority routing.
+     */
+    function priorityRouting(address agent) external view returns (bool) {
+        return agents[agent].reputation >= PRIORITY_THRESHOLD;
+    }
+
     // ─── Internal ─────────────────────────────────────────────────────────────
+
+    function _addReputationClamped(address agent, uint256 delta) internal {
+        uint256 next = agents[agent].reputation + delta;
+        agents[agent].reputation = next > MAX_REPUTATION ? MAX_REPUTATION : next;
+    }
 
     function _forwardFee(uint256 amount) internal {
         if (amount == 0 || revenueSplitter == address(0)) return;
@@ -842,6 +946,14 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
 
     function setZKVerifier(address _zk) external onlyRole(DEFAULT_ADMIN_ROLE) {
         zkVerifier = _zk;
+    }
+
+    function setMinStake(uint256 _min) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        minStake = _min;
+    }
+
+    function setSwarmTimeout(uint256 _duration) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        swarmTimeoutDuration = _duration;
     }
 
     function pause() external onlyRole(OPERATOR_ROLE) { _pause(); }

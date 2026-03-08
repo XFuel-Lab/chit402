@@ -29,6 +29,7 @@
  */
 
 import { ethers } from 'ethers';
+import PQueue from 'p-queue';
 
 // ─── Chain Type Enum ──────────────────────────────────────────────────────────
 
@@ -894,6 +895,12 @@ class CoreListener {
     this.pendingIntents = new Map();
     this.intentTimeoutMs = 60000;
 
+    // Bounded intent queue (backpressure + concurrency control)
+    const maxConcurrency = parseInt(process.env.MAX_CONCURRENCY, 10) || 50;
+    this.queue = new PQueue({ concurrency: maxConcurrency });
+    this.maxPending = parseInt(process.env.MAX_PENDING, 10) || 1000;
+    this.backpressureThreshold = Math.floor(this.maxPending * 0.8);
+
     // Metrics
     this.metrics = {
       eventsProcessed: 0,
@@ -906,6 +913,8 @@ class CoreListener {
       depinTasksRouted: 0,
       intentsOutcomed: 0,
       noPathSolved: 0,
+      queueOverflows: 0,
+      backpressureWarnings: 0,
       startedAt: null,
       perChain: {},
       perProver: {
@@ -1213,9 +1222,32 @@ class CoreListener {
     }
   }
 
-  // ─── Intent Dispatch ──────────────────────────────────────────────────────
+  // ─── Intent Dispatch (Queue-Wrapped) ──────────────────────────────────────
 
   async _dispatchIntent(intent, chainKey) {
+    if (this.queue.size >= this.maxPending) {
+      this.metrics.queueOverflows++;
+      console.warn(
+        `[CoreListener] Queue overflow: ${this.queue.size}/${this.maxPending} pending. Rejecting intent.`
+      );
+      const rejectId = intent.txHash ||
+        `intent-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      return this._resolveIntentOutcome(rejectId, IntentOutcomeType.FAILED, {
+        reason: 'Queue overflow — backpressure limit reached',
+      });
+    }
+
+    if (this.queue.size > this.backpressureThreshold) {
+      this.metrics.backpressureWarnings++;
+      console.warn(
+        `[CoreListener] Backpressure: queue ${this.queue.size}/${this.maxPending}`
+      );
+    }
+
+    return this.queue.add(() => this._processIntent(intent, chainKey));
+  }
+
+  async _processIntent(intent, chainKey) {
     const intentId = intent.txHash || `intent-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
     this.pendingIntents.set(intentId, {
@@ -1521,6 +1553,15 @@ class CoreListener {
       metrics: {
         ...this.metrics,
         uptimeMs: this.metrics.startedAt ? Date.now() - this.metrics.startedAt : 0,
+      },
+      queue: {
+        concurrency: this.queue.concurrency,
+        size: this.queue.size,
+        pending: this.queue.pending,
+        maxPending: this.maxPending,
+        backpressureThreshold: this.backpressureThreshold,
+        overflows: this.metrics.queueOverflows,
+        backpressureWarnings: this.metrics.backpressureWarnings,
       },
       intentOutcomes: this.getIntentOutcomeStats(),
       gasBenchmarks: GAS_BENCHMARKS,
