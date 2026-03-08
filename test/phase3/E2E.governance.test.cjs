@@ -328,7 +328,7 @@ describe('E2E Governance (Phase 3)', function () {
       expect(receipt.gasUsed).to.be.lt(150000n);
     });
 
-    it('distribute() should use <300K gas', async function () {
+    it('distribute() should use <450K gas', async function () {
       await feePayer.sendTransaction({
         to: await splitter.getAddress(),
         value: ethers.parseEther('10')
@@ -338,8 +338,8 @@ describe('E2E Governance (Phase 3)', function () {
       const receipt = await tx.wait();
 
       console.log(`    distribute() gas: ${receipt.gasUsed}`);
-      // 5 external transfers + accounting + events = ~262K
-      expect(receipt.gasUsed).to.be.lt(300000n);
+      // 5 external transfers + GET sub-split (incentives/LP boost/grants) + accounting + events ≈ ~395K
+      expect(receipt.gasUsed).to.be.lt(450000n);
     });
   });
 });
