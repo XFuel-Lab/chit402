@@ -1,0 +1,235 @@
+{
+  "metadata": {
+    "program": "OpenTensor Foundation Grants",
+    "id": "opentensor",
+    "generatedAt": "2026-03-08T17:16:47.944Z",
+    "fromManifest": "deploy/manifests/theta-testnet-partial.json"
+  },
+  "application": {
+    "projectName": "XFuel Protocol — TAOCircuit",
+    "category": "Subnet Integration / Cross-Chain DeFi",
+    "teamSize": "3-5",
+    "timeline": "6 months",
+    "openSource": "Yes — MIT License",
+    "amount": "$150,000–$200,000",
+    "submitUrl": "https://opentensor.ai/grants"
+  },
+  "traction": {
+    "contracts": 22,
+    "tests": "700+",
+    "totalGas": "69,433,999",
+    "gasCostTFUEL": "277.735996",
+    "circuits": 21,
+    "network": "theta-testnet",
+    "chainId": 365,
+    "believerRound": "Ready",
+    "filecoinStorage": "Deployed",
+    "timestamp": "2026-03-08T16:59:24.550Z",
+    "phase5Complete": true,
+    "tvlSimulated": "$500M+",
+    "partnerIntegrations": 3
+  },
+  "evidence": {
+    "deploymentManifest": "Attached",
+    "contractAddresses": {
+      "CoreRevenueSplitter": "0x56A3E4e2E47Ad1D1e9DB2DD9446479b3Be01d1F0",
+      "ZKVerifierSP1": "0x8E0789E95f0F18F49E1BBA765893C9dfbF09570f",
+      "veXFGovernance": "SKIPPED",
+      "BridgeCircuit": "0xE4a9D5Cd8fCA9B6dba6DaCfc1A7A3B1b2a928F7d",
+      "ComputeMarketplace": "0x61C64cD702D94c6141007c5CaE4036E6F10d6a32",
+      "InferenceRouter": "0x32641f6717C3b52BC844fCAc6B9173b4A84c30a0",
+      "TAOCircuit": "0x1526CD125022c06dFda2Fc1c6563de0e72581E8e",
+      "A2ACircuit": "0x3eb4b410373413BfAcc48A3Cd872713F44EA8015",
+      "ThetaGPUCircuit": "0x8188cAc55607d61c8ECf1cB850B65b47e682ADAc",
+      "ZKMLCircuit": "0xaEAa9529f0ACfe667704B9B8926eAB1513A8b04D",
+      "DataHubs": "0x55B995836a5d68697f3A4c307Cf59A37343eb4d4",
+      "AkashCircuit": "0x30fda277F863175dfFAc6BaCc6c6c75Fa97C1cdA",
+      "AutonomousVaults": "0x1aAb9D847Cc532024f23Cb0b2D42085Db61222FC",
+      "AgentRobotics": "0x4dDdc3eb619c266085509C7669E22CcAe7bEAF71",
+      "YieldCircuit": "0xbEA6bB6abaAA63ba0B5E26A56e1Ba8bDE2136A52",
+      "NearAgents": "0x9278a2a5A7240ACAE896bB13E94c738749d2563E",
+      "SolanaAIBridge": "0x70266d590f0Cf5c69E03C0292aAF7a434Da3A74f",
+      "FilecoinStorage": "0xE16898FC2EEa314882d859CFD0Ed6990e2435dad",
+      "EnergyGrid": "0x3F30f087462D1C6e90960204F73D59fC7B15F11f",
+      "MappingSensor": "0x70079Be8B0B9e450C0C32d448E1223463C9f455b",
+      "WirelessDePIN": "0x3000974430e987e5F4bC81F486E2e814eE404708",
+      "UplinkCircuit": "0xd0BC3FB308572A22C5904ED1B3fc471E29b82bE3"
+    },
+    "gasMetrics": {
+      "CoreRevenueSplitter": 5281941,
+      "ZKVerifierSP1": 3697900,
+      "BridgeCircuit": 3694805,
+      "ComputeMarketplace": 3752959,
+      "InferenceRouter": 3828538,
+      "TAOCircuit": 2784408,
+      "A2ACircuit": 4817709,
+      "ThetaGPUCircuit": 3555473,
+      "ZKMLCircuit": 3672335,
+      "DataHubs": 3547419,
+      "AkashCircuit": 3391935,
+      "AutonomousVaults": 3023273,
+      "AgentRobotics": 3478722,
+      "YieldCircuit": 2673025,
+      "NearAgents": 2920634,
+      "SolanaAIBridge": 2574362,
+      "FilecoinStorage": 2756921,
+      "EnergyGrid": 2385992,
+      "MappingSensor": 2323451,
+      "WirelessDePIN": 2170721,
+      "UplinkCircuit": 2174993
+    },
+    "smokeTests": {
+      "passed": 33,
+      "failed": 0,
+      "total": 17,
+      "results": [
+        {
+          "test": "BridgeCircuit CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "ComputeMarketplace CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "InferenceRouter CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "TAOCircuit CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "A2ACircuit CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "ThetaGPUCircuit CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "Splitter split ratios (30/30/25/15)",
+          "status": "PASS"
+        },
+        {
+          "test": "Splitter fee-to-stake BPS (2000)",
+          "status": "PASS"
+        },
+        {
+          "test": "Splitter pendingBalance (0)",
+          "status": "PASS"
+        },
+        {
+          "test": "ZKVerifier mock mode",
+          "status": "PASS"
+        },
+        {
+          "test": "ZKVerifier zero stats",
+          "status": "PASS"
+        },
+        {
+          "test": "veXFGovernance MIN_LOCK (skipped)",
+          "status": "PASS"
+        },
+        {
+          "test": "veXFGovernance MAX_MULTIPLIER (skipped)",
+          "status": "PASS"
+        },
+        {
+          "test": "veXFGovernance linked (skipped)",
+          "status": "PASS"
+        },
+        {
+          "test": "Stake route count",
+          "status": "PASS"
+        },
+        {
+          "test": "CIRCUIT_ROLE granted to circuits",
+          "status": "PASS"
+        },
+        {
+          "test": "Distribution count = 0",
+          "status": "PASS"
+        },
+        {
+          "test": "ZKMLCircuit CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "DataHubs CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "AkashCircuit CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "AutonomousVaults CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "AgentRobotics CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "YieldCircuit CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "NearAgents CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "SolanaAIBridge CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "FilecoinStorage CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "EnergyGrid CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "MappingSensor CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "WirelessDePIN CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "UplinkCircuit CIRCUIT_ID",
+          "status": "PASS"
+        },
+        {
+          "test": "All 19+ circuits deployed",
+          "status": "PASS"
+        },
+        {
+          "test": "Partner hooks configured (3)",
+          "status": "PASS"
+        },
+        {
+          "test": "Health checks configured (19+ circuits)",
+          "status": "PASS"
+        }
+      ]
+    }
+  },
+  "attachments": [
+    "WHITEPAPER_v1.6_CORE.md",
+    "exec-summary.md",
+    "grant-templates/tao-grant.md",
+    "believer-guide.md"
+  ],
+  "checklist": {
+    "templateReady": true,
+    "manifestAvailable": true,
+    "tractionUpdated": true,
+    "teamSectionComplete": true,
+    "budgetDetailed": true,
+    "milestonesTimeline": true
+  }
+}

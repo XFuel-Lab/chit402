@@ -27,6 +27,16 @@ const path = require('path');
 // ─── Chain Configurations ────────────────────────────────────────────────────
 
 const CHAINS = {
+  theta_mainnet: {
+    name: 'theta_mainnet',
+    displayName: 'Theta Mainnet',
+    chainId: 361,
+    domainId: 361,
+    rpc: 'https://eth-rpc-api.thetatoken.org/rpc',
+    nativeToken: { name: 'TFUEL', symbol: 'TFUEL', decimals: 18 },
+    blockExplorers: [{ name: 'Theta Explorer', url: 'https://explorer.thetatoken.org' }],
+    protocol: 'ethereum',
+  },
   theta_testnet: {
     name: 'theta_testnet',
     displayName: 'Theta Testnet',
@@ -217,12 +227,15 @@ function printDeploymentGuide() {
   console.log('');
   console.log('  Step 2: Deploy Hyperlane core contracts');
   console.log('    $ hyperlane core deploy');
-  console.log('    → Deploy to theta_testnet first');
-  console.log('    → Deploy to bittensor_testnet second');
-  console.log('    → You will need funded wallets on both networks');
+  console.log('    → Deploy to theta_testnet first (recommended before mainnet)');
+  console.log('    → Deploy to theta_mainnet for production (requires funded TFUEL wallet)');
+  console.log('    → Deploy to bittensor_testnet for TAOCircuit Phase 2');
+  console.log('    → You will need funded wallets on each network');
   console.log('');
   console.log('  Step 3: Record deployed addresses');
   console.log('    After deployment, run:');
+  console.log('    $ node scripts/hyperlane-init.cjs --record \\');
+  console.log('        theta_mainnet <MAILBOX_ADDR> <ISM_ADDR>');
   console.log('    $ node scripts/hyperlane-init.cjs --record \\');
   console.log('        theta_testnet <MAILBOX_ADDR> <ISM_ADDR>');
   console.log('    $ node scripts/hyperlane-init.cjs --record \\');
@@ -230,7 +243,8 @@ function printDeploymentGuide() {
   console.log('');
   console.log('  Step 4: Set environment variables');
   console.log('    Add to .env.local:');
-  console.log('      HYPERLANE_MAILBOX_THETA=<theta mailbox address>');
+  console.log('      HYPERLANE_MAILBOX_THETA_MAINNET=<theta mainnet mailbox address>');
+  console.log('      HYPERLANE_MAILBOX_THETA=<theta testnet mailbox address>');
   console.log('      HYPERLANE_MAILBOX_BITTENSOR=<bittensor mailbox address>');
   console.log('      DEPLOYER_PRIVATE_KEY=<your private key>');
   console.log('');

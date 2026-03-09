@@ -1,3 +1,15 @@
+theta_mainnet:
+  chainId: 361
+  domainId: 361
+  name: "theta_mainnet"
+  protocol: "ethereum"
+  rpcUrls:
+    - http: "https://eth-rpc-api.thetatoken.org/rpc"
+  nativeToken:
+    name: "TFUEL"
+    symbol: "TFUEL"
+    decimals: 18
+
 theta_testnet:
   chainId: 365
   domainId: 365
@@ -32,16 +44,4 @@ bittensor_mainnet:
   nativeToken:
     name: "TAO"
     symbol: "TAO"
-    decimals: 18
-
-theta_mainnet:
-  chainId: 361
-  domainId: 361
-  name: "theta_mainnet"
-  protocol: "ethereum"
-  rpcUrls:
-    - http: "https://eth-rpc-api.thetatoken.org/rpc"
-  nativeToken:
-    name: "TFUEL"
-    symbol: "TFUEL"
     decimals: 18

@@ -2,7 +2,7 @@
   "version": "1.0.0",
   "protocol": "xfuel",
   "createdAt": "2026-02-24T11:13:21.685Z",
-  "updatedAt": "2026-02-24T11:13:21.687Z",
+  "updatedAt": "2026-03-08T17:19:13.742Z",
   "chains": {
     "theta_testnet": {
       "name": "theta_testnet",
@@ -54,6 +54,30 @@
         "decimals": 18
       },
       "blockExplorers": [],
+      "protocol": "ethereum",
+      "hyperlane": {
+        "mailbox": null,
+        "ism": null,
+        "deployedAt": null
+      }
+    },
+    "theta_mainnet": {
+      "name": "theta_mainnet",
+      "displayName": "Theta Mainnet",
+      "chainId": 361,
+      "domainId": 361,
+      "rpc": "https://eth-rpc-api.thetatoken.org/rpc",
+      "nativeToken": {
+        "name": "TFUEL",
+        "symbol": "TFUEL",
+        "decimals": 18
+      },
+      "blockExplorers": [
+        {
+          "name": "Theta Explorer",
+          "url": "https://explorer.thetatoken.org"
+        }
+      ],
       "protocol": "ethereum",
       "hyperlane": {
         "mailbox": null,

@@ -6,6 +6,7 @@ require('./security/AuditSecurity.test.cjs');
 require('./security/SP1ProofHooksHarness.test.cjs');
 require('./security/ZKVerifierExpanded.test.cjs');
 require('./security/SplitterBranches.test.cjs');
+require('./security/SplitterCoverage.test.cjs');
 require('./security/InferenceBranches.test.cjs');
 require('./phase3/CoreRevenueSplitter.test.cjs');
 require('./phase3/veXFGovernance.test.cjs');

@@ -1,18 +1,18 @@
-# Grant Submission: Ecosystem Grants Program
+# Grant Submission: CertiK Phase 4 Audit
 
-**Generated:** 2026-03-08T17:16:47.961Z
-**Circuit:** Customizable
-**Amount:** $50,000–$300,000
-**Submit URL:** [ecosystem-specific URL]
+**Generated:** 2026-03-08T17:16:47.979Z
+**Circuit:** A2ACircuit + ZKMLCircuit + DataHubs + CoreRevenueSplitter
+**Amount:** $75,000-$150,000
+**Submit URL:** https://www.certik.com/services/smart-contract-audit
 
 ## Application Fields
 
 | Field | Value |
 |-------|-------|
-| Project | XFuel Protocol |
-| Category | AI Infrastructure / ZK Verification |
+| Project | XFuel Protocol — Phase 4 Audit Scope |
+| Category | Security Audit / Agents / Markets / Cross-Chain |
 | Team Size | 3-5 |
-| Timeline | 3-9 months |
+| Timeline | 3-6 months |
 | Open Source | Yes — MIT License |
 
 ## Live Traction Data
@@ -29,7 +29,7 @@
 
 ## Submission Checklist
 
-- [x] templateReady
+- [ ] templateReady
 - [x] manifestAvailable
 - [x] tractionUpdated
 - [x] teamSectionComplete
@@ -40,7 +40,7 @@
 
 - WHITEPAPER_v1.6_CORE.md
 - exec-summary.md
-- grant-templates/general-grant.md
+- grant-templates/certik-audit.md
 - believer-guide.md
 
 ---

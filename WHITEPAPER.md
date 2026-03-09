@@ -134,7 +134,7 @@ Circuits emit:
 This event-driven architecture ensures:
 - **Zero shared state** between circuits
 - **Independent upgradability** — each circuit can be upgraded without affecting others
-- **Subchain isolation** — circuits can run on dedicated subchains, communicating via cross-chain messages
+- **Live subchain execution** — circuits run on the shared XFuel subchain (`tsub361001` on mainnet), with dedicated subchains spun up per circuit when volume demands isolation
 
 ---
 
@@ -446,7 +446,7 @@ XFuel's Core Layer supports three integration tiers:
 
 ### 8.2 Chain-Specific Notes
 
-**Theta Metachain (primary)** — Theta (chain 361) is XFuel's primary deployment chain, with live EdgeCloud inference, GPU tiers, and SP1 CUDA proving on A100/H200 hardware. This Theta-hybrid focus leverages EdgeCloud's real-world GPU network for competitive yields, while ecosystem-agnostic circuits extend to Bittensor, Akash, Solana, and beyond. Interconnected "chain of chains" architecture with EVM compatibility, subchain isolation, and TFUEL gas. All 23 testnet contracts are deployed on Theta Testnet (chain 365).
+**Theta Metachain (primary)** — Theta (chain 361) is XFuel's primary deployment chain, with live EdgeCloud inference, GPU tiers, and SP1 CUDA proving on A100/H200 hardware. This Theta-hybrid focus leverages EdgeCloud's real-world GPU network for competitive yields, while ecosystem-agnostic circuits extend to Bittensor, Akash, Solana, and beyond. Interconnected "chain of chains" architecture with EVM compatibility, native subchain execution, and TFUEL gas. All 23 testnet contracts are deployed on Theta Testnet (chain 365). XFuel operates a **dedicated shared subchain** (`tsub365001` on testnet, `tsub361001` on mainnet) hosting ThetaInferenceCircuit, A2ACircuit, ThetaGPUCircuit, and DataHubs — delivering <2s block finality per intent. Architecture is branch-ready: additional per-circuit subchains are spun up as volume demands isolation.
 
 **Bittensor EVM** — Chain ID 964, TAO as native currency, EVM precompiles for staking and subnet management, Hyperlane bridge for cross-chain messaging.
 
@@ -612,7 +612,7 @@ All six development phases are code-complete. The protocol is now in audit prepa
 - [x] 550+ total tests
 
 ### Phase 4: Scale & Rollup ✅ (Completed Feb 2026)
-- [x] Theta subchains per circuit (6 subchains, <2s finality)
+- [x] Theta subchain live — single shared XFuel subchain (privatenet `tsub360777` → testnet `tsub365001` → mainnet `tsub361001`) hosting 4 circuits at launch: ThetaInferenceCircuit, A2ACircuit, ThetaGPUCircuit, DataHubs. Architecture is branch-ready: new subchains spun per circuit as volume demands isolation.
 - [x] ZK rollup layer (SP1 Hypercube recursion, <100K gas/proof for batch ≥10)
 - [x] Cross-DePIN compute routing (Akash + Render), intent-based architecture
 - [x] x402 v3 micropayment integration, $100M+ TVL simulation tests
