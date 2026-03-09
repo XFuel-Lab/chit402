@@ -509,131 +509,133 @@ async function main() {
   console.log('    See manifest.osmosisInstructions for full steps');
 
   // ══════════════════════════════════════════════════════════════════════════
-  //  PHASE 9: THETA SUBCHAIN DEPLOYMENT (1 per circuit, <2s finality)
+  //  PHASE 9: THETA SUBCHAIN DEPLOYMENT
+  //
+  //  Architecture: ONE shared XFuel subchain, multiple circuits.
+  //  Circuits on subchain: ThetaInferenceCircuit, A2ACircuit, ThetaGPUCircuit, DataHubs
+  //  Branch to additional subchains only if volume warrants circuit isolation.
+  //
+  //  Network IDs:
+  //    Privatenet: mainchain 366 / subchain 360777 (tsub360777)
+  //    Testnet:    mainchain 365 / subchain 365001  (tsub365001)
+  //    Mainnet:    mainchain 361 / subchain 361001  (tsub361001)
+  //
+  //  Collateral (Theta Metachain docs):
+  //    Registration:  10,000 wTHETA (one-time per subchain)
+  //    Per validator:  1,000 wTHETA + 20,000 TFUEL
+  //    Privatenet:    uses MockWrappedTheta — free minting, no real THETA required
+  //
+  //  Registration handled by: scripts/theta-subchain-init.cjs
+  //  Governance token:        contracts/governance/XFuelSubchainGovToken.sol
   // ══════════════════════════════════════════════════════════════════════════
   console.log('\n══ Phase 9: Theta Subchain Deployment ══════════════════');
 
-  const SUBCHAIN_CONFIG = {
-    collateral: {
-      wTHETA: '1000',
-      TFUEL: '20000',
-      description: 'Per docs.thetatoken.org: 1,000 wTHETA + 20,000 TFUEL per validator',
-    },
-    finality: '<2s',
-    blockTime: 1,
-    crossChainMessaging: 'theta-interchain',
-    governanceModel: 'validator-set',
+  // Single shared subchain config — one subchain ID per network
+  const SUBCHAIN_IDS = {
+    'theta-privatenet': 360777,
+    'theta-testnet':    365001,
+    'theta-mainnet':    361001,
+    'hardhat':          360777,  // used for local testing
   };
 
-  const subchainDefs = circuitDefs.map((c, i) => ({
-    circuitName: c.name,
-    subchainId: 361000 + i + 1,
-    dynasty: 3,
-    minValidators: 1,
-    maxValidators: 30,
-    gasTokenSymbol: 'TFUEL',
-    isolation: {
-      separateState: true,
-      independentPause: true,
-      circuitSpecificFees: true,
-      dedicatedValidators: true,
+  const SUBCHAIN_CONFIG = {
+    subchainId:    SUBCHAIN_IDS[network.name] || 361001,
+    subchainIdStr: `tsub${SUBCHAIN_IDS[network.name] || 361001}`,
+    // Circuits deployed on this subchain (not separate subchains)
+    circuits: [
+      'ThetaInferenceCircuit',
+      'A2ACircuit',
+      'ThetaGPUCircuit',
+      'DataHubs',
+    ],
+    collateral: {
+      registration_wTHETA: '10000',
+      per_validator_wTHETA: '1000',
+      per_validator_TFUEL:  '20000',
+      validators: 3,
+      note: network.name === 'theta-privatenet'
+        ? 'Privatenet: uses MockWrappedTheta at 0x7d73424a8256C0b2BA245e5d5a3De8820E45F390'
+        : 'Testnet/Mainnet: requires real wTHETA (wrap via Theta Web Wallet)',
     },
-  }));
+    finality:            '<2s',
+    blockTime:           1,
+    crossChainMessaging: 'theta-interchain',
+    governanceToken:     'contracts/governance/XFuelSubchainGovToken.sol',
+    registrationScript:  'scripts/theta-subchain-init.cjs',
+  };
+
+  // Record subchain config in manifest — actual registration is done via
+  // scripts/theta-subchain-init.cjs (requires Theta Metachain CLI + Go binaries)
+  manifest.subchain = {
+    subchainID:    SUBCHAIN_CONFIG.subchainId,
+    subchainIDStr: SUBCHAIN_CONFIG.subchainIdStr,
+    network:       network.name,
+    circuits:      SUBCHAIN_CONFIG.circuits,
+    circuitContracts: Object.fromEntries(
+      SUBCHAIN_CONFIG.circuits.map(c => [c, manifest.contracts[c] || 'pending'])
+    ),
+    collateral:       SUBCHAIN_CONFIG.collateral,
+    finality:         SUBCHAIN_CONFIG.finality,
+    blockTime:        SUBCHAIN_CONFIG.blockTime,
+    governanceToken:  process.env.THETA_GOV_TOKEN_ADDRESS || 'pending-deploy',
+    genesisHash:      process.env.THETA_GENESIS_HASH       || 'pending-genesis',
+    registeredAt:     process.env.THETA_SUBCHAIN_REGISTERED_AT || 'pending',
+    status:           process.env.THETA_GOV_TOKEN_ADDRESS ? 'ready-to-register' : 'pending-gov-token',
+    registrationScript: SUBCHAIN_CONFIG.registrationScript,
+    note: 'Run scripts/theta-subchain-init.cjs to register on-chain after gov token is deployed',
+  };
+
+  // Also keep manifest.subchains for backward compatibility with any tooling
+  manifest.subchains = { 'xfuel-core': manifest.subchain };
 
   if (ENABLE_SUBCHAINS && network.name !== 'hardhat') {
-    for (const sc of subchainDefs) {
-      console.log(`  Registering subchain for ${sc.circuitName} (ID: ${sc.subchainId})...`);
+    // Verify prerequisites before attempting registration
+    const govToken = process.env.THETA_GOV_TOKEN_ADDRESS;
+    const genesisHash = process.env.THETA_GENESIS_HASH;
 
-      const subchainRegistration = {
-        subchainID: sc.subchainId,
-        mainChainContract: manifest.contracts[sc.circuitName],
-        collateral: SUBCHAIN_CONFIG.collateral,
-        validatorConfig: {
-          minValidators: sc.minValidators,
-          maxValidators: sc.maxValidators,
-          dynasty: sc.dynasty,
-        },
-        finality: SUBCHAIN_CONFIG.finality,
-        blockTime: SUBCHAIN_CONFIG.blockTime,
-        crossChainRelay: manifest.contracts.ZKVerifierSP1,
-        isolation: sc.isolation,
-      };
+    if (!govToken || !genesisHash) {
+      console.log('  ⚠ Subchain registration skipped — missing env vars:');
+      if (!govToken)     console.log('    THETA_GOV_TOKEN_ADDRESS not set (deploy XFuelSubchainGovToken.sol first)');
+      if (!genesisHash)  console.log('    THETA_GENESIS_HASH not set (run subchain_generate_genesis first)');
+      console.log('    Then run: node scripts/theta-subchain-init.cjs --network', network.name.replace('theta-', ''));
+    } else {
+      console.log(`  Subchain ID:    ${SUBCHAIN_CONFIG.subchainId} (${SUBCHAIN_CONFIG.subchainIdStr})`);
+      console.log(`  Gov token:      ${govToken}`);
+      console.log(`  Genesis hash:   ${genesisHash}`);
+      console.log(`  Circuits:       ${SUBCHAIN_CONFIG.circuits.join(', ')}`);
+      console.log('');
+      console.log('  ⚠ On-chain registration delegated to scripts/theta-subchain-init.cjs');
+      console.log('    This script handles: mintmock → register → collateral → stake');
+      console.log(`    Run: node scripts/theta-subchain-init.cjs --network ${network.name.replace('theta-', '')}`);
 
-      manifest.subchains[sc.circuitName] = subchainRegistration;
-      console.log(`  ✓ ${sc.circuitName} subchain registered (ID: ${sc.subchainId})`);
-      console.log(`    Collateral: ${SUBCHAIN_CONFIG.collateral.wTHETA} wTHETA + ${SUBCHAIN_CONFIG.collateral.TFUEL} TFUEL`);
-      console.log(`    Finality: ${SUBCHAIN_CONFIG.finality}, Validators: ${sc.minValidators}-${sc.maxValidators}`);
+      await smokeTest('Subchain config complete', async () => {
+        if (!govToken.startsWith('0x')) throw new Error('THETA_GOV_TOKEN_ADDRESS invalid');
+        if (!genesisHash.startsWith('0x') || genesisHash.length !== 66) throw new Error('THETA_GENESIS_HASH invalid');
+      });
+
+      await smokeTest('Subchain circuits have deployed contracts', async () => {
+        for (const c of SUBCHAIN_CONFIG.circuits) {
+          const addr = manifest.contracts[c];
+          if (!addr || addr === 'pending') throw new Error(`${c} not deployed — run earlier phases first`);
+        }
+      });
+
+      await smokeTest('Subchain collateral requirements documented', async () => {
+        const col = SUBCHAIN_CONFIG.collateral;
+        if (!col.registration_wTHETA || !col.per_validator_wTHETA || !col.per_validator_TFUEL) {
+          throw new Error('Incomplete collateral config');
+        }
+      });
+
+      manifest.subchain.status = 'registration-delegated-to-script';
     }
-
-    await smokeTest('Subchain registrations (6 circuits)', async () => {
-      if (Object.keys(manifest.subchains).length !== 6) {
-        throw new Error(`Expected 6 subchains, got ${Object.keys(manifest.subchains).length}`);
-      }
-    });
-
-    await smokeTest('Subchain isolation configs', async () => {
-      for (const sc of Object.values(manifest.subchains)) {
-        if (!sc.isolation.separateState || !sc.isolation.independentPause) {
-          throw new Error('Missing isolation config');
-        }
-      }
-    });
-
-    await smokeTest('Subchain finality target (<2s)', async () => {
-      for (const sc of Object.values(manifest.subchains)) {
-        if (sc.finality !== '<2s') throw new Error(`Unexpected finality: ${sc.finality}`);
-      }
-    });
-
-    await smokeTest('Subchain cross-chain relay configured', async () => {
-      for (const sc of Object.values(manifest.subchains)) {
-        if (!sc.crossChainRelay || sc.crossChainRelay === ethers.ZeroAddress) {
-          throw new Error('No cross-chain relay');
-        }
-      }
-    });
-
-    await smokeTest('Subchain validator collateral (1000 wTHETA + 20000 TFUEL)', async () => {
-      for (const sc of Object.values(manifest.subchains)) {
-        if (sc.collateral.wTHETA !== '1000' || sc.collateral.TFUEL !== '20000') {
-          throw new Error('Invalid collateral');
-        }
-      }
-    });
-
-    await smokeTest('Subchain IDs unique', async () => {
-      const ids = Object.values(manifest.subchains).map(s => s.subchainID);
-      if (new Set(ids).size !== ids.length) throw new Error('Duplicate subchain IDs');
-    });
-
-    await smokeTest('Subchain main-chain contract links', async () => {
-      for (const [name, sc] of Object.entries(manifest.subchains)) {
-        if (!sc.mainChainContract || sc.mainChainContract === ethers.ZeroAddress) {
-          throw new Error(`${name}: no main-chain contract link`);
-        }
-      }
-    });
   } else {
-    console.log('  ⚠ Subchain deployment: Skipped (set ENABLE_SUBCHAINS=true for production)');
-    console.log('    Subchain configuration generated for manifest only:');
-
-    for (const sc of subchainDefs) {
-      manifest.subchains[sc.circuitName] = {
-        subchainID: sc.subchainId,
-        mainChainContract: manifest.contracts[sc.circuitName] || 'pending',
-        collateral: SUBCHAIN_CONFIG.collateral,
-        validatorConfig: {
-          minValidators: sc.minValidators,
-          maxValidators: sc.maxValidators,
-          dynasty: sc.dynasty,
-        },
-        finality: SUBCHAIN_CONFIG.finality,
-        blockTime: SUBCHAIN_CONFIG.blockTime,
-        isolation: sc.isolation,
-        status: 'configured-not-deployed',
-      };
-      console.log(`    ${sc.circuitName}: subchainID ${sc.subchainId} (configured)`);
+    console.log('  ⚠ Subchain deployment: Skipped (set ENABLE_SUBCHAINS=true to enable)');
+    console.log(`    Subchain ${SUBCHAIN_CONFIG.subchainId} (${SUBCHAIN_CONFIG.subchainIdStr}) configured for ${network.name}`);
+    for (const c of SUBCHAIN_CONFIG.circuits) {
+      console.log(`    Circuit: ${c} → ${manifest.contracts[c] || 'pending'}`);
     }
+    console.log(`    Registration: node scripts/theta-subchain-init.cjs --network ${network.name.replace('theta-', '') || 'privatenet'}`);
   }
 
   manifest.smokeTests.passed = smokePass;

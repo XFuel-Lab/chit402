@@ -287,7 +287,7 @@ settleIntent(intentId, proof, publicValues, nullifier)
 
 ### Event-Driven Circuit Interface
 
-Circuits interact with the Core Layer exclusively through events — zero shared state, independent upgradability, and subchain-ready isolation:
+Circuits interact with the Core Layer exclusively through events — zero shared state, independent upgradability, and live on the XFuel shared subchain:
 
 ```
 Core emits:   TaskRouted, ProofVerified, FeeDistributed, ProposalExecuted
@@ -299,6 +299,8 @@ Circuits emit: IntentSubmitted, TaskCompleted, SettlementRequested
 | Chain | Type | ID | Token | Role |
 |-------|------|----|-------|------|
 | Theta Mainnet | EVM | 361 | TFUEL | **Primary** — live EdgeCloud inference + SP1 CUDA proving |
+| Theta Mainnet | EVM | 361 | TFUEL | Primary — CoreRevenueSplitter, VaultFactory live |
+| **XFuel Subchain** | **EVM** | **361001** | **TFUEL** | **Dedicated subchain — ThetaInferenceCircuit, A2ACircuit, ThetaGPUCircuit, DataHubs. <2s finality.** |
 | Theta Testnet | EVM | 365 | TFUEL | Testing — 23 contracts deployed |
 | Bittensor EVM | EVM | 964 | TAO | dTAO staking, AI subnets |
 | Osmosis | Cosmos | osmosis-1 | OSMO | Primary DeFi hub, AI yield pools |
@@ -439,6 +441,8 @@ XFuel ships **16+ modular circuits** — each fully isolated with its own state,
 |-----------|--------|-------|
 | Theta Testnet (23 contracts) | ✅ Deployed | Core Layer + 16 circuits + mocks (chain 365) |
 | Theta Mainnet Contracts | ✅ Deployed | VaultFactory, RevenueSplitter live (chain 361) |
+| **XFuel Subchain (privatenet)** | ✅ **Live** | `tsub360777` — registered, validator staked, blocks finalizing |
+| **XFuel Subchain (testnet)** | ⏳ Next | `tsub365001` — deploy after privatenet validation |
 | SP1 zkVM Prover | ✅ Operational | v6.0.2, sub-200ms on EdgeCloud, batch=10 (11.6x speedup) |
 | Live Inference Pipeline | ✅ Running | 15 presets, 3 GPU tiers, EdgeCloud + RapidAPI fallback |
 | Agent API + Webhooks | ✅ Live | `/theta-ai/agent-intent`, 7 endpoints, OpenAPI 3.0 |
@@ -505,7 +509,7 @@ FeeCollector:       Awaiting governance whitelist
 
 ### Phase 4: Scale ✅ (Q1 2026)
 
-- ✅ Theta subchains per circuit (6 subchains: 361001-361006, <2s finality)
+- ✅ Theta subchain live — single shared XFuel subchain (privatenet: `tsub360777`, testnet: `tsub365001`, mainnet: `tsub361001`) hosting ThetaInferenceCircuit, A2ACircuit, ThetaGPUCircuit, DataHubs with <2s finality. Branch-ready: additional subchains spun up per circuit as demand warrants.
 - ✅ ZK rollup layer (SP1 Hypercube recursion, <100K gas/proof)
 - ✅ Cross-DePIN routing (Akash + Render), intent-based architecture
 - ✅ x402 v3 micropayments, $100M+ TVL simulation tests

@@ -4,6 +4,7 @@ export const THETA_TESTNET = {
   chainIdHex: '0x16d',
   name: 'Theta Testnet',
   rpcUrl: 'https://eth-rpc-api-testnet.thetatoken.org/rpc',
+  wsUrl:  'wss://eth-rpc-api-testnet.thetatoken.org/rpc',
   explorerUrl: 'https://testnet-explorer.thetatoken.org',
   currencySymbol: 'TFUEL',
   faucetUrl: 'https://faucet.testnet.theta.org/request',
@@ -15,9 +16,65 @@ export const THETA_MAINNET = {
   chainIdHex: '0x169',
   name: 'Theta Mainnet',
   rpcUrl: 'https://eth-rpc-api.thetatoken.org/rpc',
+  wsUrl:  'wss://eth-rpc-api.thetatoken.org/rpc',
   explorerUrl: 'https://explorer.thetatoken.org',
   currencySymbol: 'TFUEL',
 }
+
+// ─── XFuel Subchain Configurations ───────────────────────────────────────────
+// One shared subchain per network — multiple circuits deployed on each.
+// Circuits: ThetaInferenceCircuit, A2ACircuit, ThetaGPUCircuit, DataHubs
+// Registration: scripts/theta-subchain-init.cjs
+// Governance token: contracts/governance/XFuelSubchainGovToken.sol
+
+export const XFUEL_SUBCHAIN_PRIVATENET = {
+  chainId: 360777,
+  chainIdHex: '0x57F69',
+  subchainIdStr: 'tsub360777',
+  name: 'XFuel Subchain (Privatenet)',
+  rpcUrl: 'http://127.0.0.1:19888/rpc',
+  wsUrl:  'ws://127.0.0.1:19889/rpc',
+  mainchainRpcUrl: 'http://127.0.0.1:18888/rpc',
+  currencySymbol: 'TFUEL',
+  // Privatenet: auto-deployed by subchain_generate_genesis
+  tokenBanks: {
+    ChainRegistrar:  '0xBd770416a3345F91E4B34576cb804a576fa48EB1',
+    TFuelTokenBank:  '0x5a443704dd4B594B382c22a083e2BD3090A6feF3',
+    TNT20TokenBank:  '0x47e9Fbef8C83A1714F1951F142132E6e90F5fa5D',
+    TNT721TokenBank: '0x8Be503bcdEd90ED42Eff31f56199399B2b0154CA',
+  },
+}
+
+export const XFUEL_SUBCHAIN_TESTNET = {
+  chainId: 365001,
+  chainIdHex: '0x591E9',
+  subchainIdStr: 'tsub365001',
+  name: 'XFuel Subchain (Testnet)',
+  rpcUrl: import.meta.env.VITE_SUBCHAIN_TESTNET_RPC || '',
+  wsUrl:  import.meta.env.VITE_SUBCHAIN_TESTNET_WS  || '',
+  mainchainRpcUrl: 'https://eth-rpc-api-testnet.thetatoken.org/rpc',
+  currencySymbol: 'TFUEL',
+  tokenBanks: {}, // populated after testnet subchain deployment
+}
+
+export const XFUEL_SUBCHAIN_MAINNET = {
+  chainId: 361001,
+  chainIdHex: '0x581E9',
+  subchainIdStr: 'tsub361001',
+  name: 'XFuel Subchain (Mainnet)',
+  rpcUrl: import.meta.env.VITE_SUBCHAIN_MAINNET_RPC || '',
+  wsUrl:  import.meta.env.VITE_SUBCHAIN_MAINNET_WS  || '',
+  mainchainRpcUrl: 'https://eth-rpc-api.thetatoken.org/rpc',
+  currencySymbol: 'TFUEL',
+  tokenBanks: {}, // populated after mainnet subchain deployment
+}
+
+// Active subchain — switch via VITE_SUBCHAIN_NETWORK env var
+const _subchainNetwork = import.meta.env.VITE_SUBCHAIN_NETWORK || 'testnet'
+export const XFUEL_SUBCHAIN =
+  _subchainNetwork === 'mainnet'    ? XFUEL_SUBCHAIN_MAINNET :
+  _subchainNetwork === 'privatenet' ? XFUEL_SUBCHAIN_PRIVATENET :
+                                      XFUEL_SUBCHAIN_TESTNET
 
 // ─── Phase 6 Protocol Contract Addresses ─────────────────────────────────────
 // Set via environment variables. On Theta Testnet (365) these point to deployed

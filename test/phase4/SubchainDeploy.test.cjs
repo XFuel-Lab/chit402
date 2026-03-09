@@ -1,8 +1,13 @@
 /**
- * Phase 4 — Theta Subchain Deployment Tests (10 tests)
+ * Phase 4 — Theta Subchain Deployment Tests
  *
- * Tests the deploy/full.cjs Phase 9 subchain configuration, validator
- * requirements, isolation configs, and finality targets.
+ * Tests the single shared XFuel subchain architecture:
+ *   - One subchain, multiple circuits (ThetaInferenceCircuit, A2ACircuit,
+ *     ThetaGPUCircuit, DataHubs)
+ *   - Correct network IDs per environment
+ *   - XFuelSubchainGovToken interface compliance
+ *   - Circuit registration on shared subchain
+ *   - Collateral configuration accuracy
  *
  * Run: npx hardhat test test/phase4/SubchainDeploy.test.cjs
  */
@@ -12,22 +17,33 @@ const hre = require('hardhat');
 const { ethers } = hre;
 
 describe('Theta Subchain Deployment (Phase 4)', function () {
-  let splitter, verifier;
-  let admin;
+  let splitter, verifier, govToken;
+  let admin, minter, treasury;
 
-  const CIRCUIT_NAMES = [
-    'BridgeCircuit', 'ComputeMarketplace', 'InferenceRouter',
-    'TAOCircuit', 'A2ACircuit', 'ThetaGPUCircuit',
+  // ── Single shared subchain architecture ──────────────────────────────────
+  const SUBCHAIN_IDS = {
+    privatenet: 360777,
+    testnet:    365001,
+    mainnet:    361001,
+  };
+
+  // Circuits deployed on the shared subchain (not separate subchains)
+  const SUBCHAIN_CIRCUITS = [
+    'ThetaInferenceCircuit',
+    'A2ACircuit',
+    'ThetaGPUCircuit',
+    'DataHubs',
   ];
 
-  const SUBCHAIN_CONFIG = {
-    collateral: { wTHETA: '1000', TFUEL: '20000' },
-    finality: '<2s',
-    blockTime: 1,
+  const COLLATERAL = {
+    registration_wTHETA: '10000',
+    per_validator_wTHETA: '1000',
+    per_validator_TFUEL:  '20000',
+    validators: 3,
   };
 
   beforeEach(async function () {
-    [admin] = await ethers.getSigners();
+    [admin, minter, treasury] = await ethers.getSigners();
 
     const SplitterF = await ethers.getContractFactory('CoreRevenueSplitter');
     splitter = await SplitterF.deploy(
@@ -39,61 +55,144 @@ describe('Theta Subchain Deployment (Phase 4)', function () {
     const VerifierF = await ethers.getContractFactory('ZKVerifierSP1');
     verifier = await VerifierF.deploy(admin.address, ethers.ZeroAddress);
     await verifier.waitForDeployment();
+
+    // Deploy XFuelSubchainGovToken
+    // minter.address acts as ValidatorStakeManager in tests
+    const GovTokenF = await ethers.getContractFactory('XFuelSubchainGovToken');
+    govToken = await GovTokenF.deploy(
+      minter.address,   // minter = ValidatorStakeManager
+      admin.address,    // initDistrWallet
+      admin.address     // admin
+    );
+    await govToken.waitForDeployment();
   });
 
-  describe('Subchain Configuration', function () {
-    it('should define correct collateral requirements per validator', function () {
-      expect(SUBCHAIN_CONFIG.collateral.wTHETA).to.equal('1000');
-      expect(SUBCHAIN_CONFIG.collateral.TFUEL).to.equal('20000');
+  // ── Subchain ID Configuration ─────────────────────────────────────────────
+
+  describe('Single Subchain Architecture', function () {
+    it('should use a single shared subchain per network (not one per circuit)', function () {
+      // Old architecture: 6 subchains (one per circuit)
+      // New architecture: 1 subchain, multiple circuits
+      expect(Object.keys(SUBCHAIN_IDS).length).to.equal(3); // 3 networks, not 6+ subchains
     });
 
-    it('should target <2s finality', function () {
-      expect(SUBCHAIN_CONFIG.finality).to.equal('<2s');
-      expect(SUBCHAIN_CONFIG.blockTime).to.equal(1);
+    it('should define correct subchain IDs for each network', function () {
+      expect(SUBCHAIN_IDS.privatenet).to.equal(360777);
+      expect(SUBCHAIN_IDS.testnet).to.equal(365001);
+      expect(SUBCHAIN_IDS.mainnet).to.equal(361001);
     });
 
-    it('should define 6 subchain IDs (one per circuit)', function () {
-      const subchainIds = CIRCUIT_NAMES.map((_, i) => 361000 + i + 1);
-      expect(subchainIds.length).to.equal(6);
-      expect(new Set(subchainIds).size).to.equal(6);
-      expect(subchainIds[0]).to.equal(361001);
-      expect(subchainIds[5]).to.equal(361006);
+    it('should have unique subchain IDs across networks', function () {
+      const ids = Object.values(SUBCHAIN_IDS);
+      expect(new Set(ids).size).to.equal(ids.length);
     });
 
-    it('should generate unique subchain IDs for all circuits', function () {
-      const ids = CIRCUIT_NAMES.map((_, i) => 361000 + i + 1);
-      const uniqueIds = [...new Set(ids)];
-      expect(uniqueIds.length).to.equal(CIRCUIT_NAMES.length);
+    it('should target 4 circuits on shared subchain', function () {
+      expect(SUBCHAIN_CIRCUITS).to.include('ThetaInferenceCircuit');
+      expect(SUBCHAIN_CIRCUITS).to.include('A2ACircuit');
+      expect(SUBCHAIN_CIRCUITS).to.include('ThetaGPUCircuit');
+      expect(SUBCHAIN_CIRCUITS).to.include('DataHubs');
+      expect(SUBCHAIN_CIRCUITS.length).to.equal(4);
+    });
+  });
+
+  // ── Collateral Requirements ───────────────────────────────────────────────
+
+  describe('Collateral Configuration', function () {
+    it('should require 10,000 wTHETA for subchain registration', function () {
+      expect(COLLATERAL.registration_wTHETA).to.equal('10000');
+    });
+
+    it('should require 1,000 wTHETA per validator', function () {
+      expect(COLLATERAL.per_validator_wTHETA).to.equal('1000');
+    });
+
+    it('should require 20,000 TFUEL per validator', function () {
+      expect(COLLATERAL.per_validator_TFUEL).to.equal('20000');
+    });
+
+    it('should total 13,000 wTHETA for registration + 3 validators', function () {
+      const registrationWTheta = parseInt(COLLATERAL.registration_wTHETA);
+      const validatorWTheta    = parseInt(COLLATERAL.per_validator_wTHETA) * COLLATERAL.validators;
+      expect(registrationWTheta + validatorWTheta).to.equal(13000);
+    });
+
+    it('should total 60,000 TFUEL for 3 validators', function () {
+      const totalTFuel = parseInt(COLLATERAL.per_validator_TFUEL) * COLLATERAL.validators;
+      expect(totalTFuel).to.equal(60000);
     });
   });
 
-  describe('Subchain Isolation', function () {
-    it('should configure separate state per subchain', function () {
-      const isolation = {
-        separateState: true,
-        independentPause: true,
-        circuitSpecificFees: true,
-        dedicatedValidators: true,
-      };
+  // ── XFuelSubchainGovToken ─────────────────────────────────────────────────
 
-      expect(isolation.separateState).to.be.true;
-      expect(isolation.independentPause).to.be.true;
-      expect(isolation.circuitSpecificFees).to.be.true;
-      expect(isolation.dedicatedValidators).to.be.true;
+  describe('XFuelSubchainGovToken', function () {
+    it('should deploy with correct name and symbol', async function () {
+      expect(await govToken.name()).to.equal('XFuel Subchain Gov');
+      expect(await govToken.symbol()).to.equal('XFGOV');
+      expect(await govToken.decimals()).to.equal(18);
     });
 
-    it('should link each subchain to main chain contract', function () {
-      for (const name of CIRCUIT_NAMES) {
-        const subchainReg = {
-          subchainID: 361001,
-          mainChainContract: admin.address,
-          crossChainRelay: admin.address,
-        };
-        expect(subchainReg.mainChainContract).to.not.equal(ethers.ZeroAddress);
-        expect(subchainReg.crossChainRelay).to.not.equal(ethers.ZeroAddress);
-      }
+    it('should mint 500M XFGOV to initDistrWallet on deploy', async function () {
+      const balance = await govToken.balanceOf(admin.address);
+      expect(balance).to.equal(ethers.parseEther('500000000'));
+    });
+
+    it('should set maxSupply to 1B XFGOV', async function () {
+      expect(await govToken.maxSupply()).to.equal(ethers.parseEther('1000000000'));
+    });
+
+    it('should set correct minter (ValidatorStakeManager)', async function () {
+      expect(await govToken.minter()).to.equal(minter.address);
+    });
+
+    it('should report 2 XFGOV stakerRewardPerBlock', async function () {
+      const rate = await govToken.stakerRewardPerBlock();
+      expect(rate).to.equal(ethers.parseEther('2'));
+    });
+
+    it('should allow minter to call mintStakerReward', async function () {
+      const recipient = treasury.address;
+      const amount    = ethers.parseEther('100');
+      await govToken.connect(minter).mintStakerReward(recipient, amount);
+      expect(await govToken.balanceOf(recipient)).to.equal(amount);
+    });
+
+    it('should reject mintStakerReward from non-minter', async function () {
+      await expect(
+        govToken.connect(treasury).mintStakerReward(treasury.address, ethers.parseEther('1'))
+      ).to.be.revertedWith('XFuelSubchainGovToken: caller is not minter');
+    });
+
+    it('should not mint beyond maxSupply', async function () {
+      const maxSupply = await govToken.maxSupply();
+      const current   = await govToken.totalSupply();
+      const remaining = maxSupply - current;
+
+      // Try to mint more than remaining — should cap at maxSupply
+      await govToken.connect(minter).mintStakerReward(admin.address, remaining + ethers.parseEther('1'));
+      const finalSupply = await govToken.totalSupply();
+      expect(finalSupply).to.equal(maxSupply);
+    });
+
+    it('should allow admin to update minter (for VSM address post-deploy)', async function () {
+      await govToken.connect(admin).updateMinter(treasury.address);
+      expect(await govToken.minter()).to.equal(treasury.address);
+    });
+
+    it('should allow admin to update stakerRewardPerBlock', async function () {
+      const newRate = ethers.parseEther('1');
+      await govToken.connect(admin).updateStakerRewardPerBlock(newRate);
+      expect(await govToken.stakerRewardPerBlock()).to.equal(newRate);
+    });
+
+    it('should reject admin functions from non-admin', async function () {
+      await expect(
+        govToken.connect(minter).updateMinter(minter.address)
+      ).to.be.revertedWith('XFuelSubchainGovToken: caller is not admin');
     });
   });
+
+  // ── Core Contracts for Subchain Support ──────────────────────────────────
 
   describe('Core Contracts for Subchain Support', function () {
     it('should deploy CoreRevenueSplitter successfully', async function () {
@@ -110,20 +209,21 @@ describe('Theta Subchain Deployment (Phase 4)', function () {
       expect(bc).to.equal(0n);
     });
 
-    it('should support cross-chain relay between main chain and subchains', async function () {
+    it('should support cross-chain relay between main chain and subchain', async function () {
       const RELAYER_ROLE = await verifier.RELAYER_ROLE();
       expect(await verifier.hasRole(RELAYER_ROLE, admin.address)).to.be.true;
     });
 
-    it('should support per-subchain circuit registration', async function () {
-      for (let i = 0; i < CIRCUIT_NAMES.length; i++) {
-        const circuitId = ethers.keccak256(ethers.toUtf8Bytes(CIRCUIT_NAMES[i]));
-        const vkey = ethers.keccak256(ethers.toUtf8Bytes(`vkey-${CIRCUIT_NAMES[i]}`));
-        await verifier.registerCircuit(circuitId, vkey, `${CIRCUIT_NAMES[i]}-subchain-${361001 + i}`);
+    it('should register all 4 subchain circuits in ZKVerifierSP1', async function () {
+      for (const circuitName of SUBCHAIN_CIRCUITS) {
+        const circuitId = ethers.keccak256(ethers.toUtf8Bytes(circuitName));
+        const vkey      = ethers.keccak256(ethers.toUtf8Bytes(`vkey-${circuitName}`));
+        // All circuits share the same subchain ID
+        await verifier.registerCircuit(circuitId, vkey, `${circuitName}-subchain-${SUBCHAIN_IDS.mainnet}`);
       }
 
       const stats = await verifier.getStats();
-      expect(stats.registered).to.equal(BigInt(CIRCUIT_NAMES.length));
+      expect(stats.registered).to.equal(BigInt(SUBCHAIN_CIRCUITS.length));
     });
   });
 });
