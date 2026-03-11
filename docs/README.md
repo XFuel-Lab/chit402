@@ -73,6 +73,7 @@
 - **[Unified Deployment Guide](./UNIFIED_DEPLOYMENT_GUIDE.md)** — Consolidated multi-network deployment
 - **[Testing Guide](./TESTING.md)** — How to run the full test suite (755+ tests)
 - **[Security Deployment Checklist](./SECURITY_DEPLOYMENT_CHECKLIST.md)** — Pre-deployment security gates
+- **[Quick Reference](./QUICK_REFERENCE.md)** — Common commands and contract addresses at a glance
 
 ### API & Integration
 
@@ -110,6 +111,12 @@
 | Phase 5 | Multi-Network AI | [phase5-report.json](./phase5-report.json) |
 | Phase 6 | Ecosystem Expansion | [phase6-report.json](./phase6-report.json) |
 | Priority Circuits | Circuit validation | [priority-circuits-report.json](./priority-circuits-report.json) |
+
+---
+
+## Archived Documentation
+
+Historical implementation guides, v4.4-era deployment notes, WalletConnect integration docs, performance tooling guides, and legacy bridge/swap docs have been moved to [`legacy-archive/docs/`](../legacy-archive/docs/) and [`legacy-archive/docs/security/`](../legacy-archive/docs/security/). They are preserved for reference but are no longer applicable to the current v2.4 architecture.
 
 ---
 
