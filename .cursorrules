@@ -2,7 +2,9 @@
 # Based on Whitepaper v1.6 core with expansions to v2.4
 
 ## Solidity
-- Use Solidity 0.8.20 for all contracts.
+- Use Solidity ^0.8.22 for all contracts in `contracts/core/` and any new audit-scope contracts.
+- Use Solidity ^0.8.20 for all other contracts (`contracts/circuits/`, `contracts/mocks/`, `contracts/legacy/`, `contracts/interfaces/`).
+- Do NOT use versions below 0.8.20 in any new contract.
 - Follow OpenZeppelin patterns for access control, pausability, and safe transfers.
 
 ## Architecture
