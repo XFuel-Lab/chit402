@@ -1766,6 +1766,7 @@ if (isMainModule) {
         const apiCalls = hStats.edgeCloud.stats.calls + hStats.rapidApi.stats.calls + hStats.mock.calls;
         const settled = hStats.onChain.stats.settles || 0;
         const completed = hStats.onChain.stats.completes || 0;
+        const attested = hStats.onChain.stats.attests || 0;
         const errChains = [];
         for (const [k, v] of listener.chainErrors) {
           errChains.push(`${k}(${v.consecutive})`);
@@ -1783,7 +1784,7 @@ if (isMainModule) {
           `[Heartbeat ${new Date().toLocaleTimeString()}] ` +
           `uptime=${uptime}s | events=${status.metrics.eventsProcessed} | ` +
           `intents=${status.metrics.intentsParsed} | proofs=${status.metrics.proofsGenerated} | ` +
-          `api=${apiLabel}(${apiCalls}) | settled=${settled}/${completed}` +
+          `api=${apiLabel}(${apiCalls}) | settled=${settled}/${completed} | attested=${attested}` +
           `${errSuffix}${predSuffix}`
         );
       }, 30000);

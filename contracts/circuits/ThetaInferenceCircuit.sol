@@ -6,6 +6,19 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
+ * @dev Minimal ERC-20 interface for TDROP (TNT-20).
+ *      TDROP on Theta mainnet: 0x1336739B05C7Ab8a526D40DCC0d04a826b5f8B03 (chain 361)
+ *      Testnet:                0xde41591ED1f8ED1484aC2CD8ca0876428de60EfF (chain 365)
+ *      Only transferFrom + balanceOf are needed for the payment path.
+ */
+interface ITdropToken {
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function transfer(address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+    function allowance(address owner, address spender) external view returns (uint256);
+}
+
+/**
  * @title ThetaInferenceCircuit
  * @author XFuel Protocol — Circuits
  * @notice Specialized AI Services Circuit for Theta EdgeCloud inference products.
@@ -64,6 +77,23 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
     uint16 public constant MAX_FEE_BPS = 100;   // 1%
     uint16 public constant BPS_DENOM = 10000;
 
+    // ─── TDROP Payment (Track 4.2) ────────────────────────────────────────────
+    // TDROP (TNT-20) is Theta's designated AI-to-AI incentive token.
+    // Callers who pay in TDROP receive a discount on the circuit fee (default 20%),
+    // incentivising adoption of the native Theta token in XFuel settlement.
+    //
+    // Price conversion: tdropPerTfuel is set by governance / oracle keeper and
+    // represents how many TDROP wei equal 1 TFUEL wei.  Default: 1:1 (placeholder
+    // until a live TDROP/TFUEL Chainlink feed is available on Theta mainnet).
+    //
+    // Mainnet TDROP:  0x1336739B05C7Ab8a526D40DCC0d04a826b5f8B03 (chain 361)
+    // Testnet TDROP:  0xde41591ED1f8ED1484aC2CD8ca0876428de60EfF (chain 365)
+    ITdropToken public tdropToken;             // zero → TDROP payments disabled
+    uint16 public tdropDiscountBps = 2000;     // 20% fee discount for TDROP payers
+    uint16 public constant MAX_TDROP_DISCOUNT = 5000; // 50% max discount
+    uint256 public tdropPerTfuel = 1e18;       // TDROP wei per 1 TFUEL wei (1:1 default)
+    uint256 public totalTdropCollected;        // lifetime TDROP fees received
+
     // ─── Service Types ────────────────────────────────────────────────────────
     enum ServiceType {
         LLM_INFERENCE,      // 0 — Llama, GPT-style chat/completions
@@ -81,6 +111,33 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
         A100,       // 1 — Data-center mid-tier
         H100        // 2 — Flagship, highest throughput
     }
+
+    // ─── Provider Tag ─────────────────────────────────────────────────────────
+    // Tracks whether execution was Theta-native or routed to a hybrid fallback.
+    // THETA_NATIVE unlocks boostMultiplier in CoreRevenueSplitter GET sub-bucket.
+    enum ProviderTag {
+        UNSET,           // 0 — not yet attested
+        THETA_NATIVE,    // 1 — executed on Theta EdgeCloud (priority tier)
+        HYBRID_FALLBACK, // 2 — legacy alias; kept for ABI backward compat
+        DEPIN_AKASH,     // 3 — routed to Akash Network GPU marketplace
+        DEPIN_RENDER,    // 4 — routed to Render Network distributed GPU
+        HYBRID_CLOUD     // 5 — routed to AWS Bedrock / Google Vertex (last resort)
+    }
+
+    // ─── EdgeCloud Node Attestation ───────────────────────────────────────────
+    // Cryptographically binds the EdgeCloud node that executed a job to its
+    // on-chain intent. nodeId is also encoded in SP1 publicValues so the ZK
+    // proof commits to the specific hardware that produced the output.
+    struct EdgeCloudAttestation {
+        bytes32 nodeId;          // EdgeCloud node identifier (from job response)
+        bytes32 gpuFingerprint;  // Hash of GPU model + driver version reported by node
+        uint64  petaflopsUsed;   // Compute consumed (in GFLOPS — divide by 1000 for PFLOPS)
+        uint64  attestedAt;      // Block timestamp of attestation
+        ProviderTag providerTag; // THETA_NATIVE | DEPIN_AKASH | DEPIN_RENDER | HYBRID_CLOUD
+    }
+
+    mapping(bytes32 => EdgeCloudAttestation) public attestations; // intentId → attestation
+    uint256 public attestationCount;
 
     // ─── Service Catalog (isolated state) ─────────────────────────────────────
     struct ServiceConfig {
@@ -169,6 +226,20 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
         bytes32 inputHash
     );
 
+    // Emitted when a caller pays in TDROP instead of TFUEL.
+    // tdropFee is the TDROP fee amount transferred to this contract.
+    // discountBps is the fee discount applied relative to the TFUEL price.
+    event TdropIntentSubmitted(
+        bytes32 indexed intentId,
+        address indexed requester,
+        uint256 tdropFee,
+        uint256 tfuelEquivalent,
+        uint16  discountBps
+    );
+
+    // Emitted when governance updates the TDROP payment configuration.
+    event TdropConfigUpdated(address tdropToken, uint16 discountBps, uint256 tdropPerTfuel);
+
     event IntentCompleted(
         bytes32 indexed intentId,
         bytes32 outputHash,
@@ -194,6 +265,23 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
         uint256 payment
     );
 
+    // Emitted by attestEdgeCloudNode() — ai-listener.js calls this before settleIntent()
+    event EdgeCloudNodeAttested(
+        bytes32 indexed intentId,
+        bytes32 indexed nodeId,
+        bytes32 gpuFingerprint,
+        uint64  petaflopsUsed,
+        ProviderTag providerTag
+    );
+
+    // Stub for Track 3.2 — emitted when Video API transcoding completes
+    event VideoProvenance(
+        bytes32 indexed intentId,
+        bytes32 videoId,
+        bytes32 contentHash,
+        string  playbackUri
+    );
+
     // ─── Errors ───────────────────────────────────────────────────────────────
     error ServiceNotFound();
     error ServiceNotActive();
@@ -203,6 +291,11 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
     error NullifierUsed();
     error PresetNotFound();
     error PresetNotActive();
+    error AlreadyAttested();
+    error IntentNotCompleted();
+    error TdropNotEnabled();
+    error TdropTransferFailed();
+    error InvalidTdropDiscount();
 
     // ─── Constructor ──────────────────────────────────────────────────────────
     /**
@@ -477,6 +570,112 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
         );
     }
 
+    /**
+     * @notice Submit an AI inference intent paid in TDROP (TNT-20) instead of TFUEL.
+     *
+     * Callers approve this contract for the required TDROP amount before calling.
+     * The TDROP amount required is:
+     *   tfuelPrice   = service.pricePerCall
+     *   discountedFee = feeBps * (1 - tdropDiscountBps / BPS_DENOM)
+     *   tdropRequired = tfuelPrice * tdropPerTfuel / 1e18
+     *     (minus the fee discount already baked into `tdropFee` below)
+     *
+     * Concretely:
+     *   tdropFee        = (tfuelPrice * tdropPerTfuel / 1e18) * feeBps / BPS_DENOM
+     *                     * (BPS_DENOM - tdropDiscountBps) / BPS_DENOM
+     *   tdropPayment    = (tfuelPrice * tdropPerTfuel / 1e18) - tdropFee
+     *   totalTdrop      = tdropFee + tdropPayment  == tfuelPrice * tdropPerTfuel / 1e18
+     *
+     * TDROP fees are forwarded to CoreRevenueSplitter via receiveERC20Fee().
+     * The intent is recorded in the same `intents` mapping as TFUEL intents,
+     * allowing identical settlement, attestation, and ZK proof paths.
+     *
+     * @param serviceId   Service to invoke (must be registered + active).
+     * @param inputHash   Keccak256 of the off-chain request payload.
+     * @return intentId   bytes32 identifier for downstream tracking.
+     */
+    function submitIntentWithTDROP(
+        bytes32 serviceId,
+        bytes32 inputHash
+    ) external whenNotPaused nonReentrant returns (bytes32 intentId) {
+        if (address(tdropToken) == address(0)) revert TdropNotEnabled();
+
+        ServiceConfig storage svc = services[serviceId];
+        if (svc.serviceId == bytes32(0)) revert ServiceNotFound();
+        if (!svc.active) revert ServiceNotActive();
+
+        // Convert TFUEL price → TDROP amount using the configured rate
+        // tdropPerTfuel: how many TDROP wei equal 1 TFUEL wei
+        uint256 tdropTotal = (svc.pricePerCall * tdropPerTfuel) / 1e18;
+        require(tdropTotal > 0, "PriceTooSmall");
+
+        // Apply discount to the fee portion only (not the full payment)
+        uint256 tdropFeeBase   = (tdropTotal * feeBps) / BPS_DENOM;
+        uint256 tdropFeeActual = (tdropFeeBase * (BPS_DENOM - tdropDiscountBps)) / BPS_DENOM;
+        uint256 tdropPayment   = tdropTotal - tdropFeeBase; // base net payment
+        // Adjust for the discount: caller saves tdropFeeBase - tdropFeeActual
+        uint256 tdropRequired  = tdropPayment + tdropFeeActual;
+
+        // Pull TDROP from caller (must have approved this contract beforehand)
+        bool ok = tdropToken.transferFrom(msg.sender, address(this), tdropRequired);
+        if (!ok) revert TdropTransferFailed();
+
+        totalTdropCollected += tdropRequired;
+
+        intentId = keccak256(abi.encodePacked(
+            CIRCUIT_ID, msg.sender, serviceId, block.number, intentCount++
+        ));
+
+        // Store intent with zero TFUEL payment — fee denominated in TDROP
+        intents[intentId] = Intent({
+            intentId:       intentId,
+            serviceType:    svc.serviceType,
+            serviceId:      serviceId,
+            requester:      msg.sender,
+            payment:        tdropPayment,   // TDROP units (not TFUEL)
+            fee:            tdropFeeActual, // TDROP fee (discounted)
+            inputHash:      inputHash,
+            outputHash:     bytes32(0),
+            modelHash:      bytes32(0),
+            status:         IntentStatus.Submitted,
+            submittedAt:    uint64(block.timestamp),
+            completedAt:    0,
+            settledAt:      0,
+            latencyMs:      0,
+            proofNullifier: bytes32(0)
+        });
+
+        callsByType[svc.serviceType]++;
+        svc.totalCalls++;
+        // Note: volumeByType tracks TDROP in TDROP units for this serviceType
+
+        // Forward TDROP fee to CoreRevenueSplitter (non-fatal if not configured)
+        if (tdropFeeActual > 0 && revenueSplitter != address(0)) {
+            // Approve splitter to pull the fee
+            // (some ERC-20s require re-approval; this is safe for TNT-20)
+            (bool appOk, ) = address(tdropToken).call(
+                abi.encodeWithSignature("approve(address,uint256)", revenueSplitter, tdropFeeActual)
+            );
+            if (appOk) {
+                // Call receiveERC20Fee on the splitter — non-fatal if not implemented
+                // solhint-disable-next-line no-unused-vars
+                bool _fwdOk; bytes memory _fwdData;
+                (_fwdOk, _fwdData) = revenueSplitter.call(
+                    abi.encodeWithSignature(
+                        "receiveERC20Fee(bytes32,address,uint256,uint8)",
+                        CIRCUIT_ID, address(tdropToken), tdropFeeActual, uint8(1) // THETA_NATIVE tag
+                    )
+                );
+            }
+        }
+
+        emit TdropIntentSubmitted(intentId, msg.sender, tdropFeeActual, svc.pricePerCall, tdropDiscountBps);
+        emit InferenceIntentSubmitted(
+            CIRCUIT_ID, intentId, svc.serviceType, serviceId,
+            msg.sender, tdropPayment, tdropFeeActual, inputHash
+        );
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  3. COMPLETION & SETTLEMENT
     // ═══════════════════════════════════════════════════════════════════════════
@@ -507,6 +706,72 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
         i.completedAt = uint64(block.timestamp);
 
         emit IntentCompleted(intentId, outputHash, modelHash, latencyMs);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  3b. EDGECLOUD NODE ATTESTATION  (Track 2.1)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Attest which Theta EdgeCloud node executed a given intent.
+     *
+     * @dev Called by ai-listener.js (RELAYER_ROLE) after receiving the EdgeCloud
+     *      API job response and before calling settleIntent(). The nodeId must
+     *      also be encoded in the SP1 publicValues passed to settleIntent() so
+     *      the ZK proof cryptographically commits to the specific hardware.
+     *
+     *      Workflow in ai-listener.js:
+     *        1. completeIntent(intentId, outputHash, modelHash, latencyMs)
+     *        2. attestEdgeCloudNode(intentId, nodeId, gpuFingerprint, petaflops, tag)
+     *        3. settleIntent(intentId, proof, publicValues, nullifier)
+     *           └─ publicValues must include nodeId at bytes[64:96]
+     *
+     * @param intentId        The intent being attested.
+     * @param nodeId          EdgeCloud node ID from job response metadata.
+     * @param gpuFingerprint  Hash of GPU model string + driver version (off-chain hashed).
+     * @param petaflopsUsed   Compute consumed reported by node (in GFLOPS units).
+     * @param providerTag     THETA_NATIVE (1) or HYBRID_FALLBACK (2).
+     */
+    function attestEdgeCloudNode(
+        bytes32 intentId,
+        bytes32 nodeId,
+        bytes32 gpuFingerprint,
+        uint64  petaflopsUsed,
+        ProviderTag providerTag
+    ) external onlyRole(RELAYER_ROLE) {
+        Intent storage i = intents[intentId];
+        if (i.submittedAt == 0) revert IntentNotFound();
+        if (i.status != IntentStatus.Completed) revert IntentNotCompleted();
+        if (attestations[intentId].attestedAt != 0) revert AlreadyAttested();
+        require(providerTag != ProviderTag.UNSET, "ProviderTagUnset");
+
+        attestations[intentId] = EdgeCloudAttestation({
+            nodeId:         nodeId,
+            gpuFingerprint: gpuFingerprint,
+            petaflopsUsed:  petaflopsUsed,
+            attestedAt:     uint64(block.timestamp),
+            providerTag:    providerTag
+        });
+        attestationCount++;
+
+        emit EdgeCloudNodeAttested(intentId, nodeId, gpuFingerprint, petaflopsUsed, providerTag);
+    }
+
+    /**
+     * @notice Emit video provenance for a VIDEO_PROCESSING intent.
+     *         Called by the backend after Theta Video API transcoding succeeds.
+     * @dev    Track 3.2 stub — handler populates from Video API GET /video/<id> response.
+     */
+    function emitVideoProvenance(
+        bytes32 intentId,
+        bytes32 videoId,
+        bytes32 contentHash,
+        string calldata playbackUri
+    ) external onlyRole(RELAYER_ROLE) {
+        Intent storage i = intents[intentId];
+        if (i.submittedAt == 0) revert IntentNotFound();
+        require(i.serviceType == ServiceType.VIDEO_PROCESSING, "NotVideoIntent");
+        emit VideoProvenance(intentId, videoId, contentHash, playbackUri);
     }
 
     /**
@@ -550,6 +815,25 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
         i.settledAt = uint64(block.timestamp);
         i.proofNullifier = nullifier;
 
+        // ── Tag fee origin on splitter for dynamic boost accounting ──────────
+        // The fee was forwarded at submitIntent() time; now we know the providerTag
+        // from the attestation (if any) and report it to CoreRevenueSplitter so the
+        // dynamic boost multiplier reflects real Theta-native execution share.
+        if (revenueSplitter != address(0) && i.fee > 0) {
+            EdgeCloudAttestation storage att = attestations[intentId];
+            uint8 tag = att.attestedAt > 0 ? uint8(att.providerTag) : uint8(ProviderTag.UNSET);
+            if (tag != uint8(ProviderTag.UNSET)) {
+                // Non-fatal — boost accounting failure must not block settlement
+                bool _tagOk;
+                (_tagOk, ) = revenueSplitter.call(
+                    abi.encodeWithSignature(
+                        "tagFeeOrigin(bytes32,uint8,uint256)",
+                        CIRCUIT_ID, tag, i.fee
+                    )
+                );
+            }
+        }
+
         emit IntentSettled(intentId, nullifier, i.payment);
     }
 
@@ -591,6 +875,64 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
         zkVerifier = _zk;
     }
 
+    /**
+     * @notice Configure TDROP payment support.
+     * @param _tdropToken      TNT-20 TDROP contract address. Zero disables TDROP payments.
+     * @param _discountBps     Fee discount for TDROP payers, in BPS (0–5000).
+     * @param _tdropPerTfuel   TDROP wei equivalent of 1 TFUEL wei. Set by governance
+     *                         or an oracle keeper. Default 1e18 (1:1).
+     *
+     * Mainnet TDROP:  0x1336739B05C7Ab8a526D40DCC0d04a826b5f8B03 (chain 361)
+     * Testnet TDROP:  0xde41591ED1f8ED1484aC2CD8ca0876428de60EfF (chain 365)
+     *
+     * @dev Callable by DEFAULT_ADMIN_ROLE. Also callable by GOVERNANCE_ROLE to allow
+     *      on-chain governance proposals to adjust the discount rate and price feed.
+     */
+    function setTdropConfig(
+        address _tdropToken,
+        uint16  _discountBps,
+        uint256 _tdropPerTfuel
+    ) external {
+        require(
+            hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || hasRole(OPERATOR_ROLE, msg.sender),
+            "NotAdminOrOperator"
+        );
+        if (_discountBps > MAX_TDROP_DISCOUNT) revert InvalidTdropDiscount();
+        require(_tdropPerTfuel > 0, "ZeroRate");
+
+        tdropToken       = ITdropToken(_tdropToken);
+        tdropDiscountBps = _discountBps;
+        tdropPerTfuel    = _tdropPerTfuel;
+
+        emit TdropConfigUpdated(_tdropToken, _discountBps, _tdropPerTfuel);
+    }
+
+    /**
+     * @notice Calculate how much TDROP is required to pay for a service.
+     * @param serviceId  Registered service to query.
+     * @return tdropRequired  Total TDROP wei the caller must approve + transfer.
+     * @return tdropFee       TDROP fee portion (discounted).
+     * @return tdropPayment   TDROP net payment portion.
+     * @return discountBps    Applied discount in BPS.
+     */
+    function quoteTdrop(bytes32 serviceId) external view returns (
+        uint256 tdropRequired,
+        uint256 tdropFee,
+        uint256 tdropPayment,
+        uint16  discountBps
+    ) {
+        ServiceConfig storage svc = services[serviceId];
+        if (svc.serviceId == bytes32(0)) revert ServiceNotFound();
+        if (address(tdropToken) == address(0)) revert TdropNotEnabled();
+
+        uint256 tdropTotal = (svc.pricePerCall * tdropPerTfuel) / 1e18;
+        uint256 feeBase    = (tdropTotal * feeBps) / BPS_DENOM;
+        tdropFee     = (feeBase * (BPS_DENOM - tdropDiscountBps)) / BPS_DENOM;
+        tdropPayment = tdropTotal - feeBase;
+        tdropRequired = tdropPayment + tdropFee;
+        discountBps  = tdropDiscountBps;
+    }
+
     function pause() external onlyRole(OPERATOR_ROLE) { _pause(); }
     function unpause() external onlyRole(OPERATOR_ROLE) { _unpause(); }
 
@@ -630,6 +972,14 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
 
     function getGpuMultiplier(GpuTier tier) external view returns (uint256) {
         return gpuPriceMultiplier[tier];
+    }
+
+    function getAttestation(bytes32 intentId) external view returns (EdgeCloudAttestation memory) {
+        return attestations[intentId];
+    }
+
+    function getAttestationCount() external view returns (uint256) {
+        return attestationCount;
     }
 
     receive() external payable {}

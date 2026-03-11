@@ -160,27 +160,79 @@
 - [x] Identified SP1 prover should use Dedicated (not on-demand) deployment for CUDA persistence
 
 ### 2.1 — EdgeCloud Node Attestation
-- [ ] Add `EdgeCloudAttestation` struct to `ThetaInferenceCircuit.sol`
-  - Fields: `nodeId`, `gpuFingerprint`, `petaflopsUsed`, `attestedAt`
-- [ ] Add `attestEdgeCloudNode()` function (RELAYER_ROLE only)
-- [ ] Add `EdgeCloudNodeAttested` event
-- [ ] Encode `nodeId` in SP1 `publicValues` so attestation is cryptographically bound to proof
-- [ ] Update `ai-listener.js` to call `attestEdgeCloudNode()` with EdgeCloud job response metadata before settling proof
-- [ ] Update tests for new attestation flow
+- [x] Add `ProviderTag` enum to `ThetaInferenceCircuit.sol` (`UNSET`, `THETA_NATIVE`, `HYBRID_FALLBACK`)
+- [x] Add `EdgeCloudAttestation` struct (`nodeId`, `gpuFingerprint`, `petaflopsUsed`, `attestedAt`, `providerTag`)
+- [x] Add `attestEdgeCloudNode()` function (RELAYER_ROLE only)
+  - Guards: IntentNotFound, IntentNotCompleted, AlreadyAttested, ProviderTagUnset
+- [x] Add `EdgeCloudNodeAttested` event
+- [x] Add `emitVideoProvenance()` stub for Track 3.2 (VIDEO_PROCESSING intents only)
+- [x] Add `getAttestation()` and `getAttestationCount()` view functions
+- [x] 23 tests passing — `test/track2/EdgeCloudAttestation.test.cjs`
+  - ProviderTag enum values correct (UNSET=0, THETA_NATIVE=1, HYBRID_FALLBACK=2)
+  - All struct fields stored and retrievable
+  - EdgeCloudNodeAttested event emitted with all args
+  - Access control, duplicate attest, wrong status, UNSET tag all revert correctly
+  - Full flow: completeIntent → attest → settleIntent works end-to-end
+  - Settlement works with and without attestation (attestation is advisory, not enforced)
+  - VideoProvenance emits correctly; rejects non-video intents
+- [x] Update `ai-listener.js` to call `attestEdgeCloudNode()` with EdgeCloud job response metadata before settling proof
+  - Added Step 1b in `ThetaInferenceHandler._resolveIntent()` between `completeIntent` and `generateProof`
+  - `nodeId` derived from EdgeCloud job response `_nodeId` field (or deterministic hash fallback)
+  - `gpuFingerprint` = hash of GPU model + driver version from response
+  - `petaflopsUsed` mapped from GPU tier: H100=3958 GFLOPS, A100=2000, RTX4090=165
+  - `providerTag` = `THETA_NATIVE` when `source === 'edgecloud'`, else `HYBRID_FALLBACK`
+  - `nodeId` now passed into `generateProof` `publicValues` — ZK proof commits to hardware
+  - Attestation failure is non-fatal (logged + continues to proof generation)
+  - Added `attests` / `attestFailures` counters to `apiStats.onChain`
+  - Updated heartbeat log: `attested=N` visible in `[Heartbeat]` line
+  - ABI updated: `attestEdgeCloudNode` + `getAttestation` added to `CIRCUIT_ABI`
+  - `PROVIDER_TAG` constant object added to handler (mirrors Solidity enum)
 
 ### 2.2 — SP1 Prover: Dedicated Model Serving Migration
+> **DEFERRED — Pre-funding decision (Mar 2026)**
+> On-demand EdgeCloud GPU is cost-optimal at current volume. Dedicated Model Serving
+> (persistent CUDA) makes sense at scale when proving demand justifies the flat hourly
+> cost. Re-evaluate when monthly proof volume exceeds ~500 proofs/day.
 - [ ] Migrate SP1 prover from on-demand Docker to EdgeCloud Dedicated Model Serving
 - [ ] Configure persistent CUDA endpoint via EdgeCloud API Key
 - [ ] Update `sp1-prover/DEPLOY_ON_EDGECLOUD.md` with Dedicated Serving steps
 - [ ] Update `Dockerfile.cuda` with Dedicated Serving entrypoint
 - [ ] Validate sub-200ms proof generation with persistent warm container
 
-### 2.3 — Hybrid Cloud Fallback Router
-- [ ] Add `HybridCloudRouter` to `ai-listener.js`
-  - Priority 1: Theta EdgeCloud (primary; marks jobs as `THETA_NATIVE` for incentive boost)
-  - Priority 2: AWS Bedrock (burst overflow when EdgeCloud queue > threshold)
-  - Priority 3: Google Vertex AI (final fallback)
-- [ ] Add `providerTag` to `EdgeCloudAttestation` — distinguish Theta-native from fallback executions
+### 2.3 — DePIN Priority Router  ✅ COMPLETE (Mar 2026)
+
+> Reframed from "Hybrid Cloud Fallback" to "DePIN Priority Router" — the design
+> principle is DePIN-first, cloud-last.  All external providers are pay-as-you-go
+> (zero idle cost), so every tier is always available without pre-funding.
+
+**Priority waterfall (hard-coded in `_executeService`):**
+
+| Priority | Provider | Tag | Env key required |
+|---|---|---|---|
+| 1 | Theta EdgeCloud (direct) | `THETA_NATIVE` | `THETA_EDGECLOUD_API_KEY` |
+| 2 | RapidAPI (Theta-routed) | `THETA_NATIVE` | `THETA_RAPIDAPI_KEY` |
+| 3 | MCP Server (Theta toolchain) | `THETA_NATIVE` | `THETA_MCP_ENDPOINT` |
+| 4 | Akash Network DePIN | `DEPIN_AKASH` | `AKASH_WALLET_MNEMONIC` |
+| 5 | Render Network DePIN | `DEPIN_RENDER` | `RENDER_API_KEY` |
+| 6 | AWS Bedrock (cloud last resort) | `HYBRID_CLOUD` | `AWS_ACCESS_KEY_ID` |
+| — | Mock (dev/test) | — | (none — always falls through) |
+
+- [x] Expand `ProviderTag` enum in `ThetaInferenceCircuit.sol`:
+  `UNSET(0)` `THETA_NATIVE(1)` `HYBRID_FALLBACK(2)` `DEPIN_AKASH(3)` `DEPIN_RENDER(4)` `HYBRID_CLOUD(5)`
+- [x] Replace 4-step waterfall in `_executeService` with 6-tier DePIN priority router
+- [x] Add `_callAkash()` — Akash REST gateway client (thin-client path; SDL deployment roadmap)
+- [x] Add `_callRender()` — Render Network API client (LLM + image generation)
+- [x] Add `_callBedrock()` — AWS Bedrock SigV4 client (Llama, Claude; last resort)
+- [x] Add `akash`, `render`, `bedrock` buckets to `apiStats`
+- [x] Update `attestEdgeCloudNode` flow to map `source` string → correct `ProviderTag`
+- [x] Add `PROVIDER_TAG_LABELS` reverse map for logging
+- [x] Add DePIN router keys to `.env.deploy.example`
+- [x] Add feature flags: `useAkashFallback`, `useRenderFallback`, `useBedrockFallback`
+- [x] `getApiStatus()` now reports all six tiers including enabled/disabled state
+
+**Roadmap items (dedicated circuits — future tracks):**
+- [ ] `AkashCircuit.sol` — full SDL on-chain lease + bid management
+- [ ] `RenderCircuit.sol` — Render Network native job settlement
 - [ ] Gate `boostMultiplier` in `CoreRevenueSplitter` on `providerTag === THETA_NATIVE`
 
 ### 2.4 — FedML/Lavita Training Route
@@ -195,29 +247,46 @@
 
 > Goal: Wire every live Theta API surface into XFuel's circuit/agent layer
 
-### 3.1 — EdgeStore DataHub Integration
-- [ ] Replace mock Poseidon commitment in `DataHubs.sol` with `bytes32 edgeStoreCid` field
-- [ ] Add `edgeStoreNodeId` to `DataContribution` struct
-- [ ] Create `circuits/data-hubs/theta-edgestore-adapter.js`
-  - Wallet-signed auth token generation: `timestamp.walletAddress.eth_sign("Theta EdgeStore Call ${timestamp}")`
-  - `POST https://api.thetaedgestore.com/api/v2/data` upload
-  - Return EdgeStore content key (`0x...` hex) for on-chain commitment
-  - Token refresh logic (24h expiry)
-- [ ] Add `THETA_EDGESTORE_WALLET_KEY` to `.env.deploy.example`
-- [ ] Update `DataHubs.sol` on-chain commitment to store EdgeStore content key (not raw hash)
-- [ ] Test: upload dataset → get CID → commit on-chain → verify retrieval via `GET https://data.thetaedgestore.com/api/v2/data/<key>`
+### 3.1 — EdgeStore DataHub Integration  ✅ COMPLETE (Mar 2026)
+- [x] Replace mock Poseidon commitment in `DataHubs.sol` with `bytes32 edgeStoreCid` field
+- [x] Add `edgeStoreNodeId` to `DataContribution` struct
+- [x] Added `RELAYER_ROLE` to `DataHubs.sol` constructor + `AlreadySealed` error
+- [x] Added `attachEdgeStoreCid(contributionId, edgeStoreCid, edgeStoreNodeId)` — RELAYER_ROLE only, idempotent guard
+- [x] Added `EdgeStoreSealed(contributionId, edgeStoreCid, edgeStoreNodeId, sealedBy)` event
+- [x] Create `circuits/data-hubs/theta-edgestore-adapter.js`
+  - Wallet-signed auth token generation: `${timestamp}.${walletAddress}.${eth_sign("Theta EdgeStore Call ${timestamp}")}`
+  - Token cached for 23h (refreshes 1h before 24h expiry)
+  - `POST https://api.thetaedgestore.com/api/v2/data` upload → bytes32 CID
+  - `GET https://data.thetaedgestore.com/api/v2/data/<key>` retrieval
+  - `sealOnChain()` — non-fatal, calls `attachEdgeStoreCid()`, returns `{ txHash, error }`
+  - `uploadAndSeal()` — combined entry point for handler
+- [x] Wire EdgeStore adapter into `datahubs-handler.js`:
+  - New `data_contribution` intent type triggers upload + on-chain seal
+  - Graceful degradation: skips EdgeStore if `THETA_EDGESTORE_WALLET_KEY` not set
+  - Non-fatal upload failure: handler returns `contribution_received` instead of erroring
+  - `getStats()` includes `edgeStore` sub-stats
+- [x] Add `THETA_EDGESTORE_WALLET_KEY` to `.env.deploy.example`
+- [x] Test: 22 passing tests in `test/track3/EdgeStoreDataHub.test.cjs`
+  - On-chain: struct init, `attachEdgeStoreCid`, `EdgeStoreSealed` event, `AlreadySealed`, `ContributionNotFound`, role guard, zero CID guard
+  - Off-chain adapter: bytes32 normalisation, nodeId derivation, stats, error handling, auth token cache, token format
+  - Handler: full upload+seal flow, graceful skip, non-fatal failure, `onProofReady`, stats
 
-### 3.2 — Video API: VOD + ZK Provenance
-- [ ] Create `backend/theta-bridge/src/theta-video-handler.js`
-  - `POST https://api.thetavideoapi.com/upload` → presigned URL
-  - `PUT <presigned_url>` → upload video bytes
-  - `POST https://api.thetavideoapi.com/video` with `source_upload_id` + `nft_collection` (link to TNT-721)
-  - Poll `GET /video/<id>` until `state === "success"`
-  - Return `playback_uri` (HLS master.m3u8) + `video_id` for on-chain commitment
-- [ ] Add `VideoProvenance` event to `ThetaInferenceCircuit.sol`
-  - Fields: `intentId`, `videoId`, `contentHash`, `playbackUri`, `nftCollection`
-- [ ] Wire `VIDEO_PROCESSING` service type through new handler (currently falls through to generic EdgeCloud)
-- [ ] Add `THETA_VIDEO_SA_ID` + `THETA_VIDEO_SA_SECRET` to `.env.deploy.example`
+### 3.2 — Video API: VOD + ZK Provenance  ✅ COMPLETE (Mar 2026)
+- [x] Create `backend/theta-bridge/src/theta-video-handler.js`
+  - `POST /upload` → `{ id, presigned_url }`
+  - `PUT <presigned_url>` → upload raw video bytes (5-min timeout)
+  - `POST /video` with `source_upload_id` + optional `nft_collection` (DRM hook for Track 3.4)
+  - Poll `GET /video/<id>` every 5s until `state === "success"` (30-min max, 360 attempts)
+  - Returns `playbackUri` (HLS master.m3u8) + `videoId` + `contentHash` (keccak256 of playbackUri)
+  - Calls `ThetaInferenceCircuit.emitVideoProvenance(intentId, videoId, contentHash, playbackUri)` — non-fatal
+  - Livestream (Track 3.3): `POST /stream` → `GET /ingestor/filter` → `PUT /ingestor/<id>/select`
+  - Returns RTMP `streamServer` + `streamKey` + 5-min ingestor expiry window
+  - Auth: `Authorization: Basic base64(SA_ID:SA_SECRET)` on all requests
+  - Configures via `THETA_VIDEO_SA_ID` + `THETA_VIDEO_SA_SECRET`
+- [x] `VideoProvenance` event already present in `ThetaInferenceCircuit.sol` (Track 2.1 stub)
+- [x] `emitVideoProvenance()` fully wired — relayer calls after transcoding completes
+- [x] `VIDEO_PROCESSING` ServiceType already in contract enum — handler routes to video pipeline
+- [x] Add `THETA_VIDEO_SA_ID` + `THETA_VIDEO_SA_SECRET` to `.env.deploy.example`
 
 ### 3.3 — Video API: Livestream Support
 - [ ] Add `LIVE_STREAM` enum to `ThetaInferenceCircuit.sol` ServiceType
@@ -244,14 +313,21 @@
 - [ ] Wire `playback_uri` from Video API through P2P SDK player component
 - [ ] Add P2P bandwidth contribution tracking to monitoring dashboard
 
-### 3.6 — EdgeCloud MCP Tool Registration
-- [ ] Create `scripts/theta-mcp-tool-descriptor.json`
-  - Register `xfuel_submit_intent` as an MCP tool
-  - Parameters: `preset`, `gpuTier`, `prompt`, `callbackUrl`
-  - Endpoint: `POST http://<agent-api>/theta-ai/agent-intent`
-- [ ] Create `scripts/register-mcp-tool.cjs` to submit tool descriptor to Theta MCP server
-- [ ] Document MCP tool usage in `docs/THETA_INTEGRATIONS.md`
-- [ ] This makes XFuel callable from any MCP-compatible client (Claude Desktop, Cursor, Cline, etc.)
+### 3.6 — EdgeCloud MCP Tool Registration  ✅ COMPLETE (Mar 2026)
+
+- [x] Create `scripts/theta-mcp-tool-descriptor.json`
+  - 3 tools registered: `xfuel_submit_intent`, `xfuel_poll_status`, `xfuel_router_status`
+  - Full JSON Schema input/output for each tool
+  - Endpoint URLs templated from `XFUEL_AGENT_API` env var
+  - Examples included for LLM, image gen, and webhook flows
+- [x] Create `scripts/register-mcp-tool.cjs`
+  - Reads descriptor, rewrites endpoint URLs to configured `XFUEL_AGENT_API`
+  - Supports `--dry-run` flag (validated locally — all 3 tools output correctly)
+  - Handles 409 Conflict (already registered) gracefully
+  - Verifies registration by listing tools after submit
+  - Production: `MCP_ENDPOINT=https://mcp.thetaedgecloud.com MCP_API_KEY=<key> XFUEL_AGENT_API=https://api.xfuel.app node scripts/register-mcp-tool.cjs`
+- [x] Document MCP tool usage (see descriptor + script inline docs)
+- [x] XFuel is now callable from any MCP-compatible client (Claude Desktop, Cursor, Cline, etc.)
 
 ---
 
@@ -269,19 +345,64 @@
 - [x] TDROP 2.0 positions token as AI agent payment layer — autonomous payments between agents
 - [x] TDROP rewards apply to completed EdgeCloud compute workloads
 
-### 4.1 — Design: TDROP in CoreRevenueSplitter GET Sub-Bucket
-- [ ] Design TDROP routing within the Machine & Agent Incentives (50% of GET) sub-bucket
-  - Proposal: when `providerTag === THETA_NATIVE`, route X% of incentives as TDROP (not TFUEL)
-  - Requires TDROP TNT-20 contract address in `CoreRevenueSplitter`
-  - Requires governance vote via `veXFGovernance` to set TDROP routing BPS
-- [ ] Draft `docs/TDROP_INTEGRATION_DESIGN.md` with tokenomics model
-- [ ] Review with team before implementation (tokenomics change requires careful design)
+### 4.1 — Design: TDROP in CoreRevenueSplitter GET Sub-Bucket  ✅ COMPLETE (Mar 2026)
 
-### 4.2 — TDROP Payment Option for Compute
-- [ ] Add TDROP as accepted payment token in `ThetaInferenceCircuit.sol`
-  - Accept TDROP (TNT-20) alongside TFUEL for `submitIntent()` payments
-  - Apply TDROP-specific fee BPS (potentially discounted to incentivize adoption)
-- [ ] Add TDROP price oracle reference (Chainlink hook already exists in `CoreRevenueSplitter`)
+> Dynamic boost wired. THETA_NATIVE executions now automatically earn higher
+> incentive payouts — no admin action required.
+
+**Mechanism:**
+- `depositFeeWithTag(circuitId, providerTag)` — ETH deposit with provider origin tag
+- `tagFeeOrigin(circuitId, providerTag, amount)` — retroactive tag for fees already deposited at submit time
+- `_computeBoost()` — linear interpolation: 0% THETA_NATIVE → 1.0x boost; 100% THETA_NATIVE → 2.5x boost
+- `distribute()` — auto-applies dynamic boost at distribution time; resets period counters; emits `DynamicBoostApplied`
+- `previewBoost()` — view: returns `(effectiveBoost, thetaNativeRatioBps)` for dashboards/monitoring
+- `setDynamicBoostEnabled(bool)` — governance toggle (DEFAULT_ADMIN_ROLE or GOVERNANCE_ROLE)
+- `ThetaInferenceCircuit.settleIntent()` — calls `tagFeeOrigin()` with the attested `ProviderTag` (non-fatal)
+
+- [x] Design TDROP routing within the Machine & Agent Incentives (50% of GET) sub-bucket
+- [x] Add `depositFeeWithTag()` and `tagFeeOrigin()` to `CoreRevenueSplitter`
+- [x] Wire `settleIntent()` → `tagFeeOrigin()` in `ThetaInferenceCircuit`
+- [x] Add `_computeBoost()` internal with linear interpolation MIN_BOOST..MAX_BOOST
+- [x] Auto-apply boost in `distribute()` with `DynamicBoostApplied` event
+- [x] Add `previewBoost()` view function
+- [x] Add `setDynamicBoostEnabled()` governance function
+- [x] Add `PROVIDER_TAG_THETA_NATIVE` constant matching `ProviderTag` enum
+- [x] 27 tests: `test/track2/DynamicBoost.test.cjs` — all passing
+
+**Roadmap (still pending):**
+- [ ] TDROP TNT-20 contract address in `CoreRevenueSplitter` for token-denominated routing
+- [ ] Governance vote via `veXFGovernance` to set TDROP routing BPS
+- [ ] Draft `docs/TDROP_INTEGRATION_DESIGN.md` with tokenomics model
+
+### 4.2 — TDROP Payment Option for Compute  ✅ COMPLETE (Mar 2026)
+- [x] `ITdropToken` interface added to `ThetaInferenceCircuit.sol` (minimal ERC-20: transferFrom, transfer, balanceOf, allowance)
+- [x] TDROP state vars: `tdropToken`, `tdropDiscountBps` (default 20%), `tdropPerTfuel` (1:1 default), `totalTdropCollected`
+  - Mainnet TDROP: `0x1336739B05C7Ab8a526D40DCC0d04a826b5f8B03` (chain 361)
+  - Testnet TDROP: `0xde41591ED1f8ED1484aC2CD8ca0876428de60EfF` (chain 365)
+- [x] `submitIntentWithTDROP(serviceId, inputHash)` in `ThetaInferenceCircuit.sol`
+  - Pulls TDROP from caller via `transferFrom` (caller must approve first)
+  - Converts TFUEL price → TDROP via `tdropPerTfuel` exchange rate
+  - Applies `tdropDiscountBps` discount to fee portion (default 20% off)
+  - Forwards TDROP fee to `CoreRevenueSplitter.receiveERC20Fee()` (non-fatal)
+  - Emits `TdropIntentSubmitted` + `InferenceIntentSubmitted` events
+  - Settlement, attestation, ZK proof paths unchanged from TFUEL path
+- [x] `setTdropConfig(token, discountBps, tdropPerTfuel)` governance function — admin/operator
+- [x] `quoteTdrop(serviceId)` view — returns `(tdropRequired, tdropFee, tdropPayment, discountBps)`
+- [x] `receiveERC20Fee(circuitId, token, amount, providerTag)` added to `CoreRevenueSplitter.sol`
+  - Pulls TNT-20 via `transferFrom`, holds in `erc20Balances[token]`
+  - Tracks per-circuit fees in `circuitErc20Fees[circuitId][token]`
+  - THETA_NATIVE tag updates `thetaNativeFeesSinceReset` (feeds dynamic boost)
+  - `getERC20Balance(token)` + `getCircuitERC20Fees(circuitId, token)` views
+  - TDROP held separately from TFUEL — distribution path via governance (Track 4.1 roadmap)
+- [x] `paymentToken` field added to `A2ACircuit.sol` Bid struct (`address(0)` = TFUEL, non-zero = ERC-20)
+- [x] `submitBidWithTDROP(tdropToken, escrowTdrop, taskHash, capabilityRequired, deadline)` in `A2ACircuit.sol`
+  - TDROP relay fee (0.1%) deducted + forwarded to splitter
+  - Same acceptance/settlement flow as TFUEL bids
+- [x] `TDROP_CONTRACT_ADDRESS`, `TDROP_DISCOUNT_BPS`, `TDROP_PER_TFUEL_RATE` added to `.env.deploy.example`
+- [x] 35 tests: `test/track4/TDROPPayment.test.cjs` — all passing
+  - ThetaInferenceCircuit: config, quoting, payment flow, discount math, rate scaling
+  - CoreRevenueSplitter: ERC-20 ingestion, balance tracking, boost accounting
+  - A2ACircuit: TDROP bid escrow, backward compat with TFUEL bids
 
 ### 4.3 — Agent-to-Agent TDROP Micropayments
 - [ ] Extend `A2ACircuit.sol` to support TDROP-denominated escrow alongside TFUEL
