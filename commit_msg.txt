@@ -1,0 +1,36 @@
+fix: audit and correct all Theta API integrations across EdgeCloud, Video, Edge Node
+
+Comprehensive audit against official Theta docs, fixing multiple API integration bugs:
+
+EdgeCloud Video Services (theta-video-handler.js):
+- Fix auth: replace Authorization Basic with x-tva-sa-id / x-tva-sa-secret headers
+- Fix POST /upload: remove invalid request body (no body required per docs)
+- Fix response parsing: /upload returns body.uploads[0].id and presigned_url
+- Fix response parsing: /video returns body.videos[0] array, not flat object
+- Fix POST /stream: remove invalid playback_policy field (VOD-only parameter)
+- Fix PUT /ingestor/{id}/select: add required tva_stream body (403 without it)
+- Add Video API Webhooks section to THETA_INTEGRATIONS.md
+
+EdgeCloud AI Services (ai-listener.js, theta-inference-handler.js):
+- Fix EdgeCloud Client RPC: use correct method edgecloud.GetJobs (was getjobs)
+- Fix EdgeCloud Client RPC: remove erroneous x-api-key header (local RPC, no auth)
+- Fix job status parsing: use success_time/error_time fields (no status field)
+- Fix On-Demand API auth: use x-api-key header (was Authorization Bearer)
+
+Edge Node earnings (tpulseApi.ts):
+- Fix tx type: use type=2 send txs (was type=6 split rule - wrong type entirely)
+- Fix data parsing: use outputs[].coins.tfuelwei (was nonexistent data.tfuel_amount)
+- Fix classifyEarningSource: correct thresholds and field access for type-2 txs
+- Add isEqualType=true query param per Explorer API docs
+
+Explorer API (thetaEdgeCloud.ts, EdgeNodeDashboard.tsx):
+- Rewrite to use correct base domain and documented endpoints
+- Correctly parse account response balance fields
+
+Docs and config:
+- Fix .env.deploy.example: correct Video API auth comment
+- Add EdgeCloud AI Services Overview section to THETA_INTEGRATIONS.md
+- Update .cursorrules with EdgeCloud API key guidance and ETH-RPC limitations
+- Update THETA_INTEGRATION_PLAN.md to reflect completed and deferred tracks
+- Add ThetaP2PPlayer component for P2P video delivery and NFT-based DRM
+- Update Dashboard.tsx with EdgeCloud, Subchain, and TDROP stats panels

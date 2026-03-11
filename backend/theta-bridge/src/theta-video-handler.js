@@ -5,8 +5,8 @@
  *   3.2 — VOD: upload → transcode → ZK provenance on-chain
  *   3.3 — Livestream: create stream → select ingestor → return RTMP details
  *
- * Theta Video API docs (Feb 2026):
- *   Auth:  Service Account ID + Secret in Authorization header
+ * Theta Video API docs:
+ *   Auth:  x-tva-sa-id: {sa_id} and x-tva-sa-secret: {sa_secret} headers on every request
  *   Base:  https://api.thetavideoapi.com
  *
  * VOD flow:
@@ -53,11 +53,16 @@ class ThetaVideoHandler {
     this.log = config.logger || console;
   }
 
-  // ─── Auth header ───────────────────────────────────────────────────────────
+  // ─── Auth headers ──────────────────────────────────────────────────────────
+  // Per Theta Video API docs: use x-tva-sa-id and x-tva-sa-secret headers.
+  // NOT Authorization: Basic — those are separate named headers.
 
-  _authHeader() {
+  _authHeaders() {
     if (!this.saId || !this.saSecret) throw new Error('THETA_VIDEO_SA_ID / THETA_VIDEO_SA_SECRET not configured');
-    return `Basic ${Buffer.from(`${this.saId}:${this.saSecret}`).toString('base64')}`;
+    return {
+      'x-tva-sa-id': this.saId,
+      'x-tva-sa-secret': this.saSecret,
+    };
   }
 
   async _fetch(path, options = {}) {
@@ -68,7 +73,7 @@ class ThetaVideoHandler {
       const res = await fetch(url, {
         ...options,
         headers: {
-          'Authorization': this._authHeader(),
+          ...this._authHeaders(),
           'Content-Type': 'application/json',
           ...(options.headers || {}),
         },
@@ -128,10 +133,8 @@ class ThetaVideoHandler {
     this.stats.uploads++;
     this.log.info?.(`[VideoHandler] Creating upload slot | file=${filename}`);
 
-    const res = await this._fetch('/upload', {
-      method: 'POST',
-      body: JSON.stringify({ name: filename }),
-    });
+    // POST /upload — no body required per Theta Video API docs
+    const res = await this._fetch('/upload', { method: 'POST' });
 
     if (!res.ok) {
       this.stats.uploadFailures++;
@@ -140,10 +143,11 @@ class ThetaVideoHandler {
     }
 
     const data = await res.json();
-    // Response: { body: { id, presigned_url } } or { id, presigned_url }
+    // Response: { status, body: { uploads: [{ id, presigned_url, ... }] } }
     const inner = data.body || data;
-    const uploadId     = inner.id     || inner.upload_id;
-    const presignedUrl = inner.presigned_url || inner.upload_url;
+    const upload = Array.isArray(inner.uploads) ? inner.uploads[0] : inner;
+    const uploadId     = upload.id     || upload.upload_id;
+    const presignedUrl = upload.presigned_url || upload.upload_url;
     if (!uploadId || !presignedUrl) throw new Error(`Unexpected /upload response: ${JSON.stringify(data)}`);
 
     this.log.info?.(`[VideoHandler] Upload slot created | id=${uploadId}`);
@@ -196,8 +200,10 @@ class ThetaVideoHandler {
     }
 
     const data  = await res.json();
+    // Response: { status, body: { videos: [{ id, state, ... }] } }
     const inner = data.body || data;
-    const videoId = inner.id || inner.video_id;
+    const video = Array.isArray(inner.videos) ? inner.videos[0] : inner;
+    const videoId = video.id || video.video_id;
     if (!videoId) throw new Error(`Unexpected /video response: ${JSON.stringify(data)}`);
 
     this.log.info?.(`[VideoHandler] Transcode started | videoId=${videoId}`);
@@ -221,23 +227,25 @@ class ThetaVideoHandler {
       }
 
       const data  = await res.json();
+      // Response: { status, body: { videos: [{ id, state, progress, playback_uri, ... }] } }
       const inner = data.body || data;
-      const state = inner.state || inner.status;
-      const progress = inner.progress ?? null;
+      const video = Array.isArray(inner.videos) ? inner.videos[0] : inner;
+      const state = video.state || video.status;
+      const progress = video.progress ?? null;
 
       if (progress !== null) {
         this.log.info?.(`[VideoHandler] Transcoding... ${progress}% | attempt=${attempt + 1}`);
       }
 
       if (state === 'success') {
-        const playbackUri = inner.playback_uri || inner.hls_url || inner.playback_url || '';
+        const playbackUri = video.playback_uri || video.hls_url || video.playback_url || '';
         this.log.info?.(`[VideoHandler] Transcode complete | state=success | playback=${playbackUri.slice(0, 60)}...`);
-        return { state: 'success', playbackUri, inner };
+        return { state: 'success', playbackUri, inner: video };
       }
 
       if (state === 'error' || state === 'failed') {
         this.stats.transcodeFailures++;
-        return { state, playbackUri: null, inner };
+        return { state, playbackUri: null, inner: video };
       }
     }
 
@@ -283,10 +291,10 @@ class ThetaVideoHandler {
     this.stats.livestreams++;
 
     try {
-      // Step 1: Create stream
+      // Step 1: Create stream — body: { name } only (no playback_policy for streams)
       const streamRes = await this._fetch('/stream', {
         method: 'POST',
-        body: JSON.stringify({ name, playback_policy: 'public' }),
+        body: JSON.stringify({ name }),
       });
 
       if (!streamRes.ok) {
@@ -307,7 +315,7 @@ class ThetaVideoHandler {
       if (!ingestors.length) throw new Error('No Edge Ingestors available');
 
       // Step 3: Select nearest ingestor (first = highest priority per Theta docs)
-      const selected = await this._selectIngestor(ingestors[0].id);
+      const selected = await this._selectIngestor(ingestors[0].id, streamId);
 
       this.log.info?.(`[VideoHandler] Livestream ready | streamId=${streamId} | ingestor=${ingestors[0].id}`);
       return {
@@ -333,8 +341,12 @@ class ThetaVideoHandler {
     return Array.isArray(inner) ? inner : (inner.ingestors || []);
   }
 
-  async _selectIngestor(ingestorId) {
-    const res = await this._fetch(`/ingestor/${ingestorId}/select`, { method: 'PUT', body: '{}' });
+  async _selectIngestor(ingestorId, streamId) {
+    // Body must include tva_stream per Theta docs — omitting it causes 403
+    const res = await this._fetch(`/ingestor/${ingestorId}/select`, {
+      method: 'PUT',
+      body: JSON.stringify({ tva_stream: streamId }),
+    });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       throw new Error(`PUT /ingestor/${ingestorId}/select HTTP ${res.status}: ${body.slice(0, 200)}`);

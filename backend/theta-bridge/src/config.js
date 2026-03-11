@@ -16,8 +16,7 @@ const config = {
   theta: {
     rpcUrls: process.env.THETA_RPC_URLS?.split(',').map(url => url.trim()) || [
       'https://eth-rpc-api.thetatoken.org/rpc',
-      'https://theta-eth-rpc.thetatoken.org/rpc',
-      'https://theta-bridge-rpc.thetatoken.org/rpc'
+      'https://eth-rpc-api-testnet.thetatoken.org/rpc'
     ],
     timeout: parseInt(process.env.RPC_TIMEOUT_MS) || 30000,
     requiredConfirmations: parseInt(process.env.REQUIRED_CONFIRMATIONS) || 3,

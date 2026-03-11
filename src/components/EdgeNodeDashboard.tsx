@@ -114,35 +114,37 @@ export default function EdgeNodeDashboard({ walletAddress, walletBalance, onPump
             </div>
           </div>
 
-          {/* Total Compute Card */}
+          {/* TFUEL Supply Card */}
           <div className="group relative overflow-hidden rounded-2xl border border-purple-400/40 bg-gradient-to-br from-purple-500/20 via-pink-500/15 to-cyan-500/20 backdrop-blur-xl shadow-[0_0_30px_rgba(168,85,247,0.4)] transition-all duration-300 hover:border-purple-400/60 hover:shadow-[0_0_40px_rgba(168,85,247,0.6)]">
             <div className="absolute inset-0 bg-gradient-to-br from-purple-400/10 via-transparent to-pink-400/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
             <div className="relative px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-300/70">Total Compute</p>
+              <p className="text-xs uppercase tracking-[0.12em] text-slate-300/70">TFUEL Supply</p>
               <p className="mt-2 text-2xl font-bold text-purple-300 drop-shadow-[0_0_8px_rgba(168,85,247,0.8)]">
                 {loading ? (
                   <span className="inline-block h-7 w-24 animate-pulse rounded bg-purple-400/30" />
                 ) : (
-                  networkStats.totalCompute
+                  networkStats.tfuelSupply ?? '—'
                 )}
               </p>
-              <p className="mt-1 text-[10px] text-slate-400">GPU Power</p>
+              <p className="mt-1 text-[10px] text-slate-400">Circulating supply</p>
             </div>
           </div>
 
-          {/* Current AI Jobs Card */}
+          {/* Current AI Jobs / Staked Nodes Card */}
           <div className="group relative overflow-hidden rounded-2xl border border-pink-400/40 bg-gradient-to-br from-pink-500/20 via-purple-500/15 to-cyan-500/20 backdrop-blur-xl shadow-[0_0_30px_rgba(236,72,153,0.4)] transition-all duration-300 hover:border-pink-400/60 hover:shadow-[0_0_40px_rgba(236,72,153,0.6)]">
             <div className="absolute inset-0 bg-gradient-to-br from-pink-400/10 via-transparent to-purple-400/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
             <div className="relative px-4 py-4">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-300/70">AI Jobs</p>
+              <p className="text-xs uppercase tracking-[0.12em] text-slate-300/70">Stake Nodes</p>
               <p className="mt-2 text-2xl font-bold text-pink-300 drop-shadow-[0_0_8px_rgba(236,72,153,0.8)]">
                 {loading ? (
                   <span className="inline-block h-7 w-16 animate-pulse rounded bg-pink-400/30" />
                 ) : (
-                  networkStats.currentAIJobs
+                  networkStats.totalStakeNodes?.toLocaleString() ?? '—'
                 )}
               </p>
-              <p className="mt-1 text-[10px] text-slate-400">Active Tasks</p>
+              <p className="mt-1 text-[10px] text-slate-400">
+                {networkStats.totalStaked ? `${networkStats.totalStaked} staked` : 'Active stake nodes'}
+              </p>
             </div>
           </div>
         </div>
@@ -155,39 +157,44 @@ export default function EdgeNodeDashboard({ walletAddress, walletBalance, onPump
             <p className="text-xs uppercase tracking-[0.15em] text-emerald-300/80">Your Earnings</p>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            {/* TFUEL Rewards Card */}
+          {/* TFUEL Balance Card */}
             <div className="group relative overflow-hidden rounded-2xl border border-emerald-400/40 bg-gradient-to-br from-emerald-500/20 via-cyan-500/15 to-green-500/20 backdrop-blur-xl shadow-[0_0_30px_rgba(16,185,129,0.4)] transition-all duration-300 hover:border-emerald-400/60 hover:shadow-[0_0_40px_rgba(16,185,129,0.6)]">
               <div className="absolute inset-0 bg-gradient-to-br from-emerald-400/10 via-transparent to-cyan-400/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
               <div className="relative px-4 py-4">
-                <p className="text-xs uppercase tracking-[0.12em] text-slate-300/70">TFUEL Rewards</p>
+                <p className="text-xs uppercase tracking-[0.12em] text-slate-300/70">TFUEL Balance</p>
                 <p className="mt-2 text-2xl font-bold text-emerald-300 drop-shadow-[0_0_8px_rgba(16,185,129,0.8)]">
-                  {personalEarnings?.tfuelRewards || '0.00'}
+                  {personalEarnings?.tfuelBalance || '0.00'}
                 </p>
-                <p className="mt-1 text-[10px] text-slate-400">Total Earned</p>
+                <p className="mt-1 text-[10px] text-slate-400">On-chain balance</p>
               </div>
             </div>
 
-            {/* Pending Rewards Card */}
+            {/* THETA Balance Card */}
             <div className="group relative overflow-hidden rounded-2xl border border-yellow-400/40 bg-gradient-to-br from-yellow-500/20 via-orange-500/15 to-amber-500/20 backdrop-blur-xl shadow-[0_0_30px_rgba(234,179,8,0.4)] transition-all duration-300 hover:border-yellow-400/60 hover:shadow-[0_0_40px_rgba(234,179,8,0.6)]">
               <div className="absolute inset-0 bg-gradient-to-br from-yellow-400/10 via-transparent to-orange-400/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
               <div className="relative px-4 py-4">
-                <p className="text-xs uppercase tracking-[0.12em] text-slate-300/70">Pending</p>
+                <p className="text-xs uppercase tracking-[0.12em] text-slate-300/70">THETA Balance</p>
                 <p className="mt-2 text-2xl font-bold text-yellow-300 drop-shadow-[0_0_8px_rgba(234,179,8,0.8)]">
-                  {personalEarnings?.pendingRewards || '0.00'}
+                  {personalEarnings?.thetaBalance || '0.00'}
                 </p>
-                <p className="mt-1 text-[10px] text-slate-400">Awaiting Distribution</p>
+                <p className="mt-1 text-[10px] text-slate-400">On-chain balance</p>
               </div>
             </div>
 
-            {/* TDROP Boost Card */}
+            {/* Explorer link card */}
             <div className="group relative overflow-hidden rounded-2xl border border-blue-400/40 bg-gradient-to-br from-blue-500/20 via-indigo-500/15 to-purple-500/20 backdrop-blur-xl shadow-[0_0_30px_rgba(59,130,246,0.4)] transition-all duration-300 hover:border-blue-400/60 hover:shadow-[0_0_40px_rgba(59,130,246,0.6)]">
               <div className="absolute inset-0 bg-gradient-to-br from-blue-400/10 via-transparent to-indigo-400/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
               <div className="relative px-4 py-4">
-                <p className="text-xs uppercase tracking-[0.12em] text-slate-300/70">TDROP Boost</p>
-                <p className="mt-2 text-2xl font-bold text-blue-300 drop-shadow-[0_0_8px_rgba(59,130,246,0.8)]">
-                  {personalEarnings?.tdropBoost ? `+${personalEarnings.tdropBoost}%` : '0%'}
-                </p>
-                <p className="mt-1 text-[10px] text-slate-400">Earnings Multiplier</p>
+                <p className="text-xs uppercase tracking-[0.12em] text-slate-300/70">Explorer</p>
+                <a
+                  href={`https://explorer.thetatoken.org/account/${walletAddress}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 block truncate font-mono text-xs text-blue-300 underline decoration-dotted hover:text-blue-200"
+                >
+                  View on Theta Explorer →
+                </a>
+                <p className="mt-1 text-[10px] text-slate-400">Full tx history</p>
               </div>
             </div>
           </div>

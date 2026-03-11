@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAccount, useWriteContract, useReadContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseEther, formatEther, keccak256, toBytes } from 'viem';
 import { Link } from 'react-router-dom';
+import ThetaP2PPlayer from '../components/ThetaP2PPlayer';
 
 // ─── Contract ABI (subset for ThetaInferenceCircuit) ─────────────────────────
 const THETA_INFERENCE_ABI = [
@@ -1361,6 +1362,32 @@ export default function ThetaAI() {
                 <pre style={styles.resultPre}>
                   {JSON.stringify(JSON.parse(mockResult), null, 2)}
                 </pre>
+
+                {/* ── Track 3.5 / 3.4: P2P + optional NFT-DRM player for VIDEO_PROCESSING ── */}
+                {selectedService.type === 'VIDEO_PROCESSING' && (() => {
+                  let parsed: Record<string, string> = {};
+                  try { parsed = JSON.parse(mockResult); } catch { /* ignore */ }
+                  const playbackUri = parsed.playback_uri || parsed.output_url || parsed.hls_url;
+                  if (!playbackUri) return null;
+                  // Track 3.4: videoId is the Theta Video API ID (e.g. "video_m3jxh0...")
+                  // nftCollection is set when the NFT_DRM_GUARD preset was used
+                  const tvaVideoId = parsed.video_id || parsed.videoId;
+                  const nftCollection = parsed.nft_collection ||
+                    (activePreset?.key === 'NFT_DRM_GUARD' ? parsed.nft_collection : undefined);
+                  return (
+                    <ThetaP2PPlayer
+                      src={playbackUri}
+                      videoId={tvaVideoId}
+                      internalVideoId={txHash ?? undefined}
+                      nftCollection={nftCollection}
+                      networkId={365}
+                      onAccessDenied={(col) => {
+                        window.open(`https://testnet-explorer.thetatoken.org/account/${col}`, '_blank');
+                      }}
+                    />
+                  );
+                })()}
+
                 <div style={styles.proofMeta}>
                   <span>Nullifier: 0x{Array(16).fill(0).map(() => Math.floor(Math.random() * 16).toString(16)).join('')}...</span>
                   <span>Gas: ~108K | GPU: {GPU_TIERS[selectedGpu].name}</span>

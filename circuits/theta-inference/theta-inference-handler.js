@@ -1128,8 +1128,9 @@ class ThetaInferenceHandler {
 
   /**
    * Call Theta EdgeCloud On-Demand API.
-   * Auth: Authorization: Bearer {access_token}
+   * Auth: x-api-key: {access_token}  (per https://docs.thetatoken.org/docs/edgecloud-api-keys)
    * Body: { input: { messages, max_tokens, ... }, stream: false, variant: "quantized" }
+   * Endpoint: https://ondemand.thetaedgecloud.com/infer_request/{slug}/completions
    */
   async _callEdgeCloud(serviceType, body, modelName = '', gpuName = '') {
     const endpointTemplate = EDGECLOUD_ENDPOINTS[serviceType];
@@ -1164,7 +1165,7 @@ class ThetaInferenceHandler {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.edgeCloudApiKey}`,
+          'x-api-key': this.edgeCloudApiKey,
         },
         body: JSON.stringify(thetaBody),
         signal: controller.signal,

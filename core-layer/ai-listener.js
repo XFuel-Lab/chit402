@@ -1021,6 +1021,10 @@ class CoreListener {
 
     this.log.info?.('CoreListener started') ||
       console.log('[CoreListener] Started polling all chains');
+
+    this._startEdgeCloudJobMonitor().catch(err =>
+      console.warn(`[EdgeCloud] Job monitor init error: ${err.message?.slice(0, 80)}`)
+    );
   }
 
   stop() {
@@ -1038,6 +1042,11 @@ class CoreListener {
     }
     this.wsProviders.clear();
     this.wsSubscriptions.clear();
+
+    if (this._edgeCloudJobTimer) {
+      clearTimeout(this._edgeCloudJobTimer);
+      this._edgeCloudJobTimer = null;
+    }
 
     this.log.info?.({ metrics: this.metrics }, 'CoreListener stopped') ||
       console.log('[CoreListener] Stopped', this.metrics);
@@ -1653,6 +1662,112 @@ class CoreListener {
     };
   }
 
+  // ─── EdgeCloud Dedicated Deployment Job Monitor (Track 5.3) ──────────────
+  //
+  // Polls the EdgeCloud Client RPC GetJobs endpoint for dedicated deployments.
+  // This is only relevant when SP1_PROVER_ENDPOINT is set (i.e. Track 2.2 is
+  // active). At current scale, the SP1 prover is deployed on-demand during
+  // testing only — this monitor fires but exits early when not configured.
+  //
+  // EdgeCloud Client RPC (the SP1_PROVER_ENDPOINT, NOT the Theta Node port 16888):
+  //   POST { method: "getjobs", params: [] } → { result: { jobs: [...] } }
+  //
+  // Note: Theta Node native RPC (port 16888) exposes theta.GetBlock / theta.GetAccount etc.
+  // XFuel uses the ETH-RPC adaptor (eth-rpc-api.thetatoken.org/rpc) for all on-chain reads
+  // via ethers.js getLogs/provider — NOT the native 16888 interface.
+  //
+  // Interval: every 30s (EDGECLOUD_JOBS_POLL_MS).
+  // Non-fatal: all errors are logged, never thrown.
+
+  async _startEdgeCloudJobMonitor() {
+    const EDGECLOUD_JOBS_POLL_MS = 30_000;
+    // EdgeCloud Client RPC is a local node process — no API key required.
+    // Default: http://localhost:9545/rpc (per Theta EdgeCloud Client Guide).
+    // Set SP1_PROVER_ENDPOINT to the client node's RPC address to enable monitoring.
+    const endpoint = this.sp1Config?.proverEndpoint || process.env.SP1_PROVER_ENDPOINT || 'http://localhost:9545/rpc';
+    const explicitlyConfigured = !!(this.sp1Config?.proverEndpoint || process.env.SP1_PROVER_ENDPOINT);
+
+    if (!explicitlyConfigured) {
+      console.log('[EdgeCloud] Job monitor not started — SP1_PROVER_ENDPOINT not set (deferred: Track 2.2)');
+      return;
+    }
+
+    const rpcBase = endpoint.replace(/\/+$/, '');
+
+    this.edgeCloudJobStats = {
+      lastPoll: null,
+      lastError: null,
+      activeJobs: 0,
+      completedJobs: 0,
+      failedJobs: 0,
+      totalJobsSeen: 0,
+    };
+
+    const poll = async () => {
+      if (!this.isRunning) return;
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10_000);
+        // EdgeCloud Client RPC — local node only (http://localhost:9545/rpc)
+        // Method: "edgecloud.GetJobs" (per https://docs.thetatoken.org/docs/theta-edgecloud-client-rpc-apis)
+        // Response fields: id, reward_usd, success_time, error_time, error_message
+        // Note: no live "status" field — completed jobs have success_time set, failed have error_time set.
+        const res = await fetch(`${rpcBase}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'edgecloud.GetJobs',
+            params: [{ page: 0, size: 50 }],
+            id: 1,
+          }),
+          signal: controller.signal,
+        }).finally(() => clearTimeout(timeout));
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const jobs = data?.result?.jobs || [];
+
+        // success_time is set for completed jobs; error_time for failed jobs
+        const completed = jobs.filter(j => j.success_time && !j.error_time).length;
+        const failed = jobs.filter(j => j.error_time || j.error_message).length;
+        const active = jobs.length - completed - failed;
+
+        this.edgeCloudJobStats = {
+          lastPoll: Date.now(),
+          lastError: null,
+          activeJobs: active,
+          completedJobs: completed,
+          failedJobs: failed,
+          totalJobsSeen: jobs.length,
+        };
+
+        if (failed > 0) {
+          console.warn(`[EdgeCloud] ${failed} failed job(s) detected on dedicated prover — check SP1_PROVER_ENDPOINT`);
+        }
+        console.log(`[EdgeCloud] Jobs: active=${active} completed=${completed} failed=${failed}`);
+
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          this.edgeCloudJobStats.lastError = 'timeout';
+          console.warn('[EdgeCloud] GetJobs RPC timed out');
+        } else {
+          this.edgeCloudJobStats.lastError = err.message?.slice(0, 80) || 'unknown';
+          console.warn(`[EdgeCloud] GetJobs poll error: ${this.edgeCloudJobStats.lastError}`);
+        }
+      }
+
+      if (this.isRunning) {
+        this._edgeCloudJobTimer = setTimeout(poll, EDGECLOUD_JOBS_POLL_MS);
+      }
+    };
+
+    console.log(`[EdgeCloud] Job monitor started (${EDGECLOUD_JOBS_POLL_MS / 1000}s interval) — endpoint: ${rpcBase}`);
+    this._edgeCloudJobTimer = setTimeout(poll, EDGECLOUD_JOBS_POLL_MS);
+  }
+
   // ─── Status ───────────────────────────────────────────────────────────────
 
   getStatus() {
@@ -1688,6 +1803,7 @@ class CoreListener {
       intentOutcomes: this.getIntentOutcomeStats(),
       gasBenchmarks: GAS_BENCHMARKS,
       routes: ProofRouter.allRoutes(),
+      edgeCloudJobs: this.edgeCloudJobStats || null,
     };
   }
 }

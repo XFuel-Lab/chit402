@@ -1,8 +1,26 @@
-# XFuel Protocol — Phase 1: Bittensor TAOCircuit via Hyperlane E2E
+# XFuel Protocol — Bittensor TAOCircuit via Hyperlane: Testnet E2E Guide
 
 **Status:** In Progress
 **Whitepaper refs:** Sections 3.2, 4.3, 8.1–8.5
 **Date:** February 2026
+
+> **⚠ TESTNET ONLY — Domain IDs in this document are for testnet deployment.**
+> Do **not** use these domain IDs for mainnet. Mainnet uses different domain IDs.
+> See the Domain ID Reference table below before running any deploy or wiring step.
+
+---
+
+## Domain ID Reference
+
+| Environment | Network | Chain ID | Hyperlane Domain ID |
+|-------------|---------|----------|---------------------|
+| **TESTNET** | Theta Testnet | 365 | **365** |
+| **TESTNET** | Bittensor Testnet | 945 | **945** |
+| **MAINNET** | Theta Mainnet | 361 | **361** |
+| **MAINNET** | Bittensor Mainnet | 964 | **964** |
+
+> All steps below target **testnet** (Theta 365 ↔ Bittensor 945).
+> For mainnet, substitute domain IDs **361** and **964** respectively and use the mainnet RPCs from `.env.deploy.example`.
 
 ---
 
@@ -85,25 +103,25 @@ Theta Testnet (365) submitTask
 - [ ] **3.2** Deploy `TAOCircuit` to Theta Testnet (365)
   - Constructor args: admin, revenueSplitter, zkVerifier, mailbox, priceOracle
   - Set Mailbox to deployed Hyperlane Mailbox from step 2.4
-  - Add supported domain for Bittensor (domain 945)
+  - Add supported domain for Bittensor Testnet (`domainId = 945` — **TESTNET ONLY**; mainnet is 964)
   - Set trusted remote to ZKVerifierSP1 on Bittensor
 
 - [ ] **3.3** Deploy `TAOCircuit` to Bittensor Testnet (945)
   - Mirror of Theta deployment for handling incoming messages
-  - Add supported domain for Theta (domain 365)
+  - Add supported domain for Theta Testnet (`domainId = 365` — **TESTNET ONLY**; mainnet is 361)
 
 ### 4. Cross-Chain Wiring (Est: 15 min)
 
 - [ ] **4.1** On Theta TAOCircuit:
-  - `addSupportedDomain(945, bytes32(bittensorTAOCircuitAddress))`
+  - `addSupportedDomain(945, bytes32(bittensorTAOCircuitAddress))` ← Bittensor **testnet** domain (mainnet: 964)
   - `setMailbox(thetaHyperlaneMailbox)`
 
 - [ ] **4.2** On Bittensor TAOCircuit:
-  - `addSupportedDomain(365, bytes32(thetaTAOCircuitAddress))`
+  - `addSupportedDomain(365, bytes32(thetaTAOCircuitAddress))` ← Theta **testnet** domain (mainnet: 361)
   - `setMailbox(bittensorHyperlaneMailbox)`
 
 - [ ] **4.3** On Bittensor ZKVerifierSP1:
-  - `configureDomain(365, bytes32(thetaZKVerifier), true)`
+  - `configureDomain(365, bytes32(thetaZKVerifier), true)` ← Theta **testnet** domain (mainnet: 361)
   - `setMailbox(bittensorHyperlaneMailbox)`
   - `setStakeCheck(0x0805, minStake, true)`
 
@@ -228,5 +246,5 @@ THETA TESTNET (365)                     BITTENSOR TESTNET (945)
 - All contracts use Solidity 0.8.20+ per `.cursorrules`
 - Gas target: <300K per operation, <500K end-to-end (whitepaper Section 3.2)
 - Mock mode (SP1 Gateway = address(0)) is used for testnet E2E
-- Hyperlane domain IDs are set equal to chain IDs for simplicity in Phase 1
+- **Hyperlane domain IDs equal chain IDs in this testnet flow** (365=Theta testnet, 945=Bittensor testnet). This is a deliberate simplification for Phase 1. Mainnet domain IDs are 361 (Theta) and 964 (Bittensor) — never mix testnet and mainnet domain IDs in the same deployment.
 - Production deployment will require ISM configuration and validator setup
