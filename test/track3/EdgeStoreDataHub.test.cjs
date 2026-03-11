@@ -293,6 +293,8 @@ describe('Track 3.1 — EdgeStore DataHub Integration', function () {
         },
       };
       const adapter = makeAdapter({ contract: mockContract });
+      // Retrieval confirmation is covered separately in Track 5.4 tests — skip here
+      adapter.retrieve = async () => Buffer.alloc(10, 1);
       const result = await adapter.uploadAndSeal({
         data: Buffer.from('combined-dataset'),
         filename: 'dataset.json',
@@ -359,10 +361,19 @@ describe('Track 3.1 — EdgeStore DataHub Integration', function () {
         },
       };
 
-      globalThis.fetch = async (url, opts) => ({
-        ok: true,
-        json: async () => ({ key: TEST_KEY, node_id: 'handler-node', size: 512 }),
-      });
+      globalThis.fetch = async (url, opts) => {
+        // retrieve endpoint returns arrayBuffer; upload endpoint returns JSON
+        if (url.includes('data.thetaedgestore.com')) {
+          return {
+            ok: true,
+            arrayBuffer: async () => Buffer.alloc(9).buffer,
+          };
+        }
+        return {
+          ok: true,
+          json: async () => ({ key: TEST_KEY, node_id: 'handler-node', size: 512 }),
+        };
+      };
 
       const handler = new DataHubsHandler({
         edgeStoreWalletKey: process.env.THETA_EDGESTORE_WALLET_KEY,

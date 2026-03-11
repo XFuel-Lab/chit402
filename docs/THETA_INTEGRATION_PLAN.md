@@ -404,11 +404,15 @@
   - CoreRevenueSplitter: ERC-20 ingestion, balance tracking, boost accounting
   - A2ACircuit: TDROP bid escrow, backward compat with TFUEL bids
 
-### 4.3 — Agent-to-Agent TDROP Micropayments
-- [ ] Extend `A2ACircuit.sol` to support TDROP-denominated escrow alongside TFUEL
-  - TDROP is described in TDROP 2.0 whitepaper as the designated AI-to-AI payment token
-  - A2A relay fee (currently 0.1%) could be paid in TDROP for agents on Theta
-- [ ] Add `paymentToken` field to `A2ACircuit` task escrow struct
+### 4.3 — Agent-to-Agent TDROP Micropayments  ✅ COMPLETE (Mar 2026)
+- [x] `paymentToken` field added to `A2ACircuit.sol` Bid struct (landed in Track 4.2)
+  - `address(0)` = TFUEL (native); non-zero = ERC-20 (TDROP or any TNT-20)
+- [x] `submitBidWithTDROP(tdropToken, escrowTdrop, taskHash, capabilityRequired, deadline)` (landed in Track 4.2)
+  - TDROP relay fee (0.1% of escrow) deducted in TDROP, forwarded to splitter
+  - Bid acceptance, settlement, and cancellation paths unchanged — provider receives TDROP
+  - TDROP relay fees tagged `THETA_NATIVE (1)` in `CoreRevenueSplitter`, feeding dynamic boost
+- [x] `receiveERC20Fee()` in `CoreRevenueSplitter` handles TDROP relay fees from both A2A and Inference circuits
+- [x] Tests: covered by `test/track4/TDROPPayment.test.cjs` (tests 28–35)
 
 ### 4.4 — Staker Reward Integration (Roadmap)
 - [ ] Investigate routing portion of veXF staker rewards as TDROP (complementing TFUEL)
@@ -449,19 +453,25 @@ LAYER 3 — XFuel → Agents (Outbound)
   We are the webhook sender. Agents are the receivers.
 ```
 
-### 5.1 — On-Chain Event Polling (Current — Strengthen)
-- [ ] Audit `ai-listener.js` for complete coverage of all contract events
-  - `InferenceIntentSubmitted` ✓ (currently handled)
-  - `IntentSettled` ✓ (currently handled)
-  - `EdgeCloudNodeAttested` — add after Track 2.1
-  - `VideoProvenance` — add after Track 3.2
-  - `FeeDeposited` / `Distributed` (CoreRevenueSplitter) — confirm coverage
-  - `ProofVerified` / `ProofFailed` (ZKVerifierSP1) — confirm coverage
-  - `AgentRegistered` / `ReputationUpdated` (A2ACircuit) — confirm coverage
-- [ ] Add WebSocket subscription path (`eth_subscribe newLogs`) for low-latency event detection
-  - Current: HTTP polling every ~10s
-  - Target: WebSocket subscription with HTTP polling fallback
-  - Theta EVM supports `eth_subscribe` via WebSocket RPC endpoint
+### 5.1 — On-Chain Event Polling (Current — Strengthen)  ✅ COMPLETE (Mar 2026)
+- [x] Audit `ai-listener.js` for complete coverage of all contract events
+  - `InferenceIntentSubmitted` ✓ (was already handled)
+  - `IntentSettled` + `IntentFailed` ✓ (added — was missing from event map)
+  - `EdgeCloudNodeAttested` ✓ (added — Track 2.1 event)
+  - `VideoProvenance` ✓ (added — Track 3.2 event)
+  - `EdgeStoreSealed` ✓ (added — Track 3.1 event)
+  - `TdropIntentSubmitted` ✓ (added — Track 4.2 event)
+  - `FeeReceivedTagged` / `DynamicBoostApplied` / `ERC20FeeReceived` ✓ (CoreRevenueSplitter)
+  - `ProofVerified` / `ProofFailed` (ZKVerifierSP1) ✓ (added to INFERENCE_IFACE)
+  - `BidSubmitted` / `AgentSettled` (A2ACircuit) ✓ (added to INFERENCE_IFACE)
+- [x] Add WebSocket subscription path (`eth_subscribe newLogs`) for low-latency event detection
+  - `DEFAULT_CHAINS.theta_mainnet.wsRpc` and `theta_testnet.wsRpc` wired to wss:// endpoints
+  - `_connectWebSocket(chainKey, chain, wsUrl)` opens `ethers.WebSocketProvider` and calls `wsProv.on(filter, onLog)`
+  - `_pollEVM()` skips HTTP polling when WS subscription is active (no double-processing)
+  - Auto-reconnect on WS `close` event with 15s backoff
+  - `getStatus()` now includes `wsConnected: bool` per chain
+  - `stop()` cleanly destroys all WS providers
+- [x] 11 new tests: `test/track5/EventLayer.test.cjs` (5.1 event map + WS path)
 
 ### 5.2 — Video API Status Polling → Webhook Pattern
 - [ ] Implement polling loop for video transcoding completion in `theta-video-handler.js`
@@ -483,19 +493,30 @@ LAYER 3 — XFuel → Agents (Outbound)
   - Dedicated deployments: same synchronous pattern via persistent endpoint
   - Job queue monitoring: use `GetJobs` RPC for dedicated deployment job history
 
-### 5.4 — EdgeStore Upload Confirmation
-- [ ] Add upload confirmation check in `theta-edgestore-adapter.js`
+### 5.4 — EdgeStore Upload Confirmation  ✅ COMPLETE (Mar 2026)
+- [x] Upload confirmation check added to `theta-edgestore-adapter.js`
   - `POST /api/v2/data` returns content key synchronously — no webhook needed
-  - Verify retrieval: `GET https://data.thetaedgestore.com/api/v2/data/<key>` returns data
-  - Only commit content key on-chain after retrieval confirmation succeeds
+  - `GET https://data.thetaedgestore.com/api/v2/data/<key>` verifies data is retrievable
+  - `uploadAndSeal()` now takes `verifyRetrieval=true` (default) — aborts on-chain seal if retrieval fails
+  - Returns `{ ..., retrievalConfirmed: boolean }` for callers to inspect
+  - Stats: `retrievalConfirmations` and `retrievalConfirmFailures` counters added
+- [x] 4 new tests in `test/track5/EventLayer.test.cjs`
 
-### 5.5 — XFuel Outbound Webhook System (Strengthen Existing)
-- [ ] Audit existing webhook delivery in `backend/theta-bridge/src/m2m-server.js`
-  - Confirm retry logic on failed delivery (target: 3 retries with exponential backoff)
-  - Confirm webhook payload includes: `intentId`, `status`, `outputHash`, `proofTxHash`, `edgeCloudNodeId`
-  - Add `videoProvenanceUri` field to webhook payload for VIDEO_PROCESSING intents
-  - Add `edgeStoreCid` field to webhook payload for DataHub intents
-- [ ] Add webhook signature (HMAC-SHA256 of payload with shared secret) for verification by receivers
+### 5.5 — XFuel Outbound Webhook System (Strengthen Existing)  ✅ COMPLETE (Mar 2026)
+- [x] Audit existing webhook delivery in `circuits/theta-inference/theta-inference-handler.js`
+  - Retry logic confirmed: 3 attempts, exponential backoff (1s → 2s → 4s)
+  - Webhook payload now includes: `intentId`, `status`, `output_hash`, `proof_tx_hash`, `edge_cloud_node_id`
+  - Added `video_provenance_uri` field for VIDEO_PROCESSING intents
+  - Added `edge_store_cid` field for DataHub intents
+  - Added `provider_tag` (0-5) indicating which DePIN tier served the intent
+  - Added `timestamp` (Unix ms) to all webhook payloads
+- [x] HMAC-SHA256 webhook signature for receiver verification
+  - Header: `X-XFuel-Signature: sha256=<hex>`
+  - Key: `WEBHOOK_SECRET` env var (added to `.env.deploy.example`)
+  - Signing: `HMAC-SHA256(key=WEBHOOK_SECRET, message=<JSON body string>)`
+  - Non-fatal: if `crypto` import fails or secret not set, delivers without signature
+  - Receivers verify with `crypto.timingSafeEqual(expected, received)`
+- [x] 10 new tests in `test/track5/EventLayer.test.cjs`
 
 ### 5.6 — Theta On-Chain Native Event Subscriptions
 - [ ] Add WebSocket RPC endpoint to `thetaConfig.ts`

@@ -757,6 +757,14 @@ class ThetaInferenceHandler {
         status: entry.status,
         latency_ms: entry.latencyMs,
         settled_tx: entry.settleTxHash || null,
+        // Track 5.5 — extended fields
+        output_hash: entry.outputHash || null,
+        proof_tx_hash: entry.settleTxHash || null,
+        edge_cloud_node_id: entry.attestation?.nodeId || null,
+        provider_tag: entry.providerTag ?? null,
+        video_provenance_uri: entry.videoProvenanceUri || null,
+        edge_store_cid: entry.edgeStoreCid || null,
+        timestamp: Date.now(),
       };
       await this._deliverWebhook(entry.callbackUrl, payload, proofRequest.intentId);
     }
@@ -764,19 +772,43 @@ class ThetaInferenceHandler {
 
   /**
    * Deliver a webhook POST with retry logic (3 attempts, exponential backoff).
-   * Used after settleIntent or immediate completion to notify agents/machines.
+   * Includes HMAC-SHA256 signature header for receiver verification (Track 5.5).
+   *
+   * Signature: X-XFuel-Signature: sha256=<hex>
+   *   HMAC-SHA256(key=WEBHOOK_SECRET, message=<JSON body string>)
+   *
+   * Receivers should verify: `crypto.timingSafeEqual(expected, received)`
    */
   async _deliverWebhook(url, payload, intentId) {
     const maxAttempts = 3;
     const baseDelayMs = 1000;
 
+    const body = JSON.stringify(payload);
+
+    // HMAC-SHA256 signature (if WEBHOOK_SECRET is configured)
+    const webhookSecret = this._webhookSecret || process.env.WEBHOOK_SECRET || '';
+    let signatureHeader = null;
+    if (webhookSecret) {
+      try {
+        const { createHmac } = await import('crypto');
+        const hmac = createHmac('sha256', webhookSecret);
+        hmac.update(body);
+        signatureHeader = `sha256=${hmac.digest('hex')}`;
+      } catch {
+        // crypto import failure is non-fatal — deliver without signature
+      }
+    }
+
+    const headers = { 'Content-Type': 'application/json' };
+    if (signatureHeader) headers['X-XFuel-Signature'] = signatureHeader;
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        console.log(`[Webhook] POST ${url} | attempt=${attempt}/${maxAttempts} | intent=${intentId?.slice(0, 20)}...`);
+        console.log(`[Webhook] POST ${url} | attempt=${attempt}/${maxAttempts} | intent=${intentId?.slice(0, 20)}... | signed=${!!signatureHeader}`);
         const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          headers,
+          body,
           signal: AbortSignal.timeout(10000),
         });
 

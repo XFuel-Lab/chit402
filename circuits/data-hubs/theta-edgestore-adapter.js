@@ -56,6 +56,7 @@ export class ThetaEdgeStoreAdapter {
     this.stats = {
       uploads: 0, uploadFailures: 0, totalBytesUploaded: 0,
       retrievals: 0, retrievalFailures: 0,
+      retrievalConfirmations: 0, retrievalConfirmFailures: 0,
       seals: 0, sealFailures: 0,
     };
 
@@ -239,21 +240,42 @@ export class ThetaEdgeStoreAdapter {
     }
   }
 
-  // ─── Combined: upload + seal ───────────────────────────────────────────────
+  // ─── Combined: upload + verify + seal ─────────────────────────────────────
 
   /**
-   * Upload data to EdgeStore then immediately seal the contribution on-chain.
-   * This is the primary entry point for the datahubs-handler.js contributeData flow.
+   * Upload data to EdgeStore, verify retrieval (Track 5.4), then seal on-chain.
+   * Retrieval confirmation ensures the data is actually available before we commit
+   * the CID on-chain — prevents sealing phantom or corrupt uploads.
    *
    * @param {object} opts
-   * @param {Buffer|string}  opts.data           Raw data to upload.
-   * @param {string}         opts.filename        Filename for upload (default: data.bin).
-   * @param {string}         opts.contributionId  bytes32 contribution ID for sealing.
-   * @param {number}         [opts.gasLimit]      Gas limit for seal tx.
-   * @returns {{ cid, nodeId, sizeBytes, txHash, sealError }}
+   * @param {Buffer|string}  opts.data              Raw data to upload.
+   * @param {string}         opts.filename           Filename for upload (default: data.bin).
+   * @param {string}         opts.contributionId     bytes32 contribution ID for sealing.
+   * @param {number}         [opts.gasLimit]         Gas limit for seal tx.
+   * @param {boolean}        [opts.verifyRetrieval]  Default true — confirm data is retrievable before sealing.
+   * @returns {{ cid, nodeId, sizeBytes, uploadMs, txHash, sealError, retrievalConfirmed }}
    */
-  async uploadAndSeal({ data, filename = 'data.bin', contributionId, gasLimit }) {
-    const { cid, nodeId, sizeBytes, elapsed } = await this.upload(data, filename);
+  async uploadAndSeal({ data, filename = 'data.bin', contributionId, gasLimit, verifyRetrieval = true }) {
+    const uploaded = await this.upload(data, filename);
+    const { cid, nodeId, sizeBytes, elapsed } = uploaded;
+
+    // Track 5.4 — verify retrieval before committing CID on-chain
+    let retrievalConfirmed = false;
+    if (verifyRetrieval) {
+      try {
+        const retrieved = await this.retrieve(cid);
+        retrievalConfirmed = retrieved && (retrieved.length > 0 || retrieved.byteLength > 0);
+        if (retrievalConfirmed) {
+          this.log.info?.(`[EdgeStore] Retrieval confirmed | cid=${cid.slice(0, 18)}... | bytes=${retrieved.length ?? retrieved.byteLength}`);
+        } else {
+          throw new Error('Retrieval returned empty body');
+        }
+      } catch (err) {
+        const msg = err.message?.slice(0, 120);
+        this.log.warn?.(`[EdgeStore] Retrieval confirmation failed — aborting seal: ${msg}`);
+        return { cid, nodeId, sizeBytes, uploadMs: elapsed, txHash: null, sealError: `Retrieval failed: ${msg}`, retrievalConfirmed: false };
+      }
+    }
 
     let txHash = null, sealError = null;
     if (contributionId) {
@@ -262,7 +284,7 @@ export class ThetaEdgeStoreAdapter {
       sealError = sealed.error;
     }
 
-    return { cid, nodeId, sizeBytes, uploadMs: elapsed, txHash, sealError };
+    return { cid, nodeId, sizeBytes, uploadMs: elapsed, txHash, sealError, retrievalConfirmed };
   }
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
