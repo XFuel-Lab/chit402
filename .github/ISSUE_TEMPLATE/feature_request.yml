@@ -1,0 +1,84 @@
+name: Feature Request
+description: Suggest a new feature or improvement for XFuel Protocol
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! XFuel is a modular protocol — most new capabilities are implemented as **circuits** that plug into the Core Layer. Please describe your idea with as much detail as possible.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Feature Area
+      description: Which part of the protocol would this affect?
+      options:
+        - New Circuit (new use case / ecosystem integration)
+        - Core Layer enhancement (ZKVerifierSP1, CoreRevenueSplitter, veXFGovernance)
+        - SP1 Prover improvement
+        - Cross-chain / Hyperlane integration
+        - Frontend / UI
+        - SDK (sdk/js/)
+        - Backend / Bridge service
+        - CosmWasm contract
+        - Mobile app
+        - Developer tooling / DX
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve? What is currently painful or missing?
+      placeholder: Currently, there is no way to route AI inference tasks to Solana-based GPU providers. This means...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the feature you'd like. Be as specific as possible — include contract function signatures, API shapes, or UX flows if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What other approaches did you consider? Why is your proposed solution better?
+
+  - type: dropdown
+    id: whitepaper_alignment
+    attributes:
+      label: Whitepaper Alignment
+      description: Is this feature already in the roadmap or whitepaper?
+      options:
+        - "Yes — it's in the whitepaper but not yet implemented"
+        - "Partially — it extends something in the whitepaper"
+        - "No — this is a new idea not currently in the roadmap"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Expected Impact
+      description: What user groups benefit? What metrics would improve (TVL, task volume, gas efficiency, developer adoption)?
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues and this feature has not already been requested
+          required: true
+        - label: I have read [WHITEPAPER.md](../../WHITEPAPER.md) and this feature aligns with the protocol's goals
+          required: true
+        - label: I am willing to contribute to implementing this feature (optional but encouraged)

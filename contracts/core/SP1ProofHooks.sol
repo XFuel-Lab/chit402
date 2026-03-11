@@ -6,6 +6,7 @@ import "../interfaces/ISP1Verifier.sol";
 /**
  * @title SP1ProofHooks
  * @author XFuel Protocol — Core Layer
+ * @custom:security-contact security@xfuel.app
  * @notice Library for integrating SP1 proof verification into any circuit contract.
  *
  * Research ties (SP1 docs v5.x, Feb 2026):

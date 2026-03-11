@@ -16,6 +16,7 @@ interface IRevenueSplitter {
 /**
  * @title veXFGovernance
  * @author XFuel Protocol — Core Layer
+ * @custom:security-contact security@xfuel.app
  * @notice Vote-escrowed XF governance with Curve-style linear decay, ZK nullifiers,
  *         per-scope quorum requirements, and on-chain execution hooks.
  *

@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /**
  * @title CoreRevenueSplitter
  * @author XFuel Protocol — Core Layer
+ * @custom:security-contact security@xfuel.app
  * @notice Ecosystem-agnostic fee collection and distribution with configurable splits,
  *         multi-chain Fee-to-Stake routing, and governance integration.
  *

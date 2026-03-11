@@ -1,0 +1,122 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in XFuel Protocol
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill out as much detail as possible — the more context you provide, the faster we can reproduce and fix it.
+        
+        **Security vulnerability?** Please do NOT use this form. Instead, see [SECURITY.md](../../SECURITY.md) for responsible disclosure instructions.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component
+      description: Which part of the protocol is affected?
+      options:
+        - contracts/core/ZKVerifierSP1.sol
+        - contracts/core/CoreRevenueSplitter.sol
+        - contracts/core/veXFGovernance.sol
+        - contracts/core/SP1ProofHooks.sol
+        - Circuit contract (specify in description)
+        - SP1 Prover (sp1-prover/)
+        - Backend Bridge (backend/theta-bridge/)
+        - Frontend (src/)
+        - SDK (sdk/js/)
+        - CosmWasm contracts
+        - Mobile app (edgefarm-mobile/)
+        - Deployment scripts
+        - CI/CD
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network
+      description: Which network did you observe this on?
+      options:
+        - Hardhat local (chain 1337)
+        - Theta Testnet (chain 365)
+        - Theta Mainnet (chain 361)
+        - Bittensor Testnet (chain 945)
+        - Bittensor EVM (chain 964)
+        - Not network-related
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: When I call `verifyProof()` with a valid SP1 proof, the transaction reverts with...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Exact steps to reproduce the behavior.
+      placeholder: |
+        1. Deploy ZKVerifierSP1 to local Hardhat with `npx hardhat run scripts/deploy.cjs`
+        2. Generate a proof via `cargo run --bin host`
+        3. Call `verifyProof(proofBytes, publicInputs)`
+        4. See error: `ProofVerificationFailed`
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include transaction hashes, revert messages, or error output.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Please complete the following information.
+      value: |
+        - Node.js version: 
+        - Hardhat version: 
+        - OS: 
+        - Rust version (if applicable): 
+        - SP1 version (if applicable): 
+        - Browser/Wallet (if frontend): 
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other context — stack traces, contract addresses, relevant tx hashes, etc.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+        - label: I have read the [CONTRIBUTING.md](../../CONTRIBUTING.md)
+          required: true
+        - label: This is NOT a security vulnerability (if it is, I will use the security contact in SECURITY.md)
+          required: true

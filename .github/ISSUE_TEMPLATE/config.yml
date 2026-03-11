@@ -1,0 +1,14 @@
+---
+name: Issue Template Config
+---
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/XFuelAI/xfuel-protocol/security
+    about: Please report security vulnerabilities privately via our Security Policy — do NOT open a public issue.
+  - name: Discord Community
+    url: https://discord.gg/xfuel
+    about: For general discussion, protocol questions, or community support, join our Discord.
+  - name: X / Twitter
+    url: https://twitter.com/xfuel_protocol
+    about: Follow us for announcements, updates, and ecosystem news.

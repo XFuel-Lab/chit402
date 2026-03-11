@@ -5,8 +5,8 @@ members = [
     "cosmwasm-contracts/persistence-minter",
     "cosmwasm-contracts/fee-collector",
     "cosmwasm-contracts/ai-verifier",
-    # "sp1-prover/program",  # temporarily disabled - causes edition 2024 conflict
-    # "sp1-prover/host",     # temporarily disabled - depends on sp1-prover/program
+    # "sp1-prover/program",  # Unix-only: sp1-jit v6.0.2 uses std::os::fd (Linux/macOS only)
+    # "sp1-prover/host",     # Unix-only: depends on sp1-prover/program + sp1-jit
 
     # ── Core Layer (ecosystem-agnostic modules) ──────────────────────────
     "core-layer/wasm/zk-verifier",

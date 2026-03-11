@@ -7,6 +7,7 @@ on:
     branches: [main, develop]
 
 jobs:
+  # ── Full Solidity test suite + coverage ─────────────────────
   solidity:
     name: Solidity Tests
     runs-on: ubuntu-latest
@@ -23,6 +24,9 @@ jobs:
       - name: Compile contracts
         run: npx hardhat compile
 
+      - name: Generate TypeChain types
+        run: npm run typechain
+
       - name: Run core + circuit tests
         run: npm run test:contracts:all
 
@@ -36,6 +40,12 @@ jobs:
           name: solidity-coverage
           path: coverage/
 
+      - name: Gas report
+        run: npm run test:contracts:core
+        env:
+          REPORT_GAS: "true"
+
+  # ── CosmWasm Rust tests ──────────────────────────────────────
   cosmwasm:
     name: CosmWasm Tests
     runs-on: ubuntu-latest
@@ -46,8 +56,67 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: core-layer/wasm/zk-verifier
+          workspaces: |
+            core-layer/wasm/zk-verifier
+            core-layer/wasm/revenue-splitter
 
-      - name: Run CosmWasm verifier tests
+      - name: Run ZK verifier tests
         working-directory: core-layer/wasm/zk-verifier
         run: cargo test
+
+      - name: Run revenue splitter tests
+        working-directory: core-layer/wasm/revenue-splitter
+        run: cargo test
+
+  # ── Slither static analysis ──────────────────────────────────
+  slither:
+    name: Slither Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Compile contracts (needed for Slither)
+        run: npx hardhat compile
+
+      - name: Install Slither
+        run: pip3 install slither-analyzer
+
+      - name: Run Slither on core contracts
+        run: |
+          slither contracts/core/ \
+            --exclude-dependencies \
+            --exclude naming-convention,solc-version \
+            --json slither-report.json || true
+
+      - name: Upload Slither report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slither-report
+          path: slither-report.json
+
+      - name: Fail on high-severity findings
+        run: |
+          if [ -f slither-report.json ]; then
+            HIGH=$(python3 -c "
+          import json, sys
+          data = json.load(open('slither-report.json'))
+          results = data.get('results', {}).get('detectors', [])
+          highs = [r for r in results if r.get('impact') == 'High' and r.get('confidence') in ['High', 'Medium']]
+          print(len(highs))
+          sys.exit(0)
+          ")
+            echo "High-severity findings: $HIGH"
+            if [ "$HIGH" -gt "0" ]; then
+              echo "❌ Slither found $HIGH high-severity issue(s). Review slither-report.json artifact."
+              exit 1
+            fi
+            echo "✅ No high-severity Slither findings."
+          fi

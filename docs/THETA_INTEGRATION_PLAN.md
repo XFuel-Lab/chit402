@@ -20,6 +20,13 @@
 - [Track 5 — Webhooks and Event Layer](#track-5--webhooks-and-event-layer)
 - [Track 6 — Dashboard and Grant](#track-6--dashboard-and-grant)
 - [Roadmap Items (Future)](#roadmap-items-future)
+  - [Track 2.5 — EdgeCloud Distributed Training](#roadmap-items-future)
+  - [Track 2.6 — Distributed Inference ProviderTag](#roadmap-items-future)
+  - [Track 3.7 — AI Characters API (Gaming/Esports)](#roadmap-items-future)
+  - [Track 4.5 — TDROP 2.0 EdgeCloud Payment Routing](#roadmap-items-future)
+  - [Track 4.6 — TDROP Usage Rebate Capture](#roadmap-items-future)
+  - [Track 7 — TPULSE Subchain Integration](#roadmap-items-future)
+  - [Track 8 — LavitaCircuit (Health AI + Cross-Subchain)](#roadmap-items-future)
 - [Theta API Reference Summary](#theta-api-reference-summary)
 - [TDROP Deep Dive](#tdrop-deep-dive)
 - [Webhook and Event Layer Deep Dive](#webhook-and-event-layer-deep-dive)
@@ -239,12 +246,13 @@
 - [ ] Gate `boostMultiplier` in `CoreRevenueSplitter` on `providerTag === THETA_NATIVE`
 
 ### 2.4 — FedML/Lavita Training Route
-> **DEFERRED — Integration issues (Mar 2026)**
-> FedML's API surface and authentication flow changed significantly in their recent
-> release; the current SDK is incompatible with the differential-privacy job submission
-> path documented here. Re-evaluate when FedML publishes a stable v2 API or an
-> alternative decentralised training provider (e.g. Bittensor subnet 9 / Omega Labs)
-> reaches feature parity.
+> **DEFERRED — Integration incompatibility (Mar 2026, confirmed Mar 2026)**
+> FedML has rebranded to TensorOpera. Their v2 API is now stable but is **Python SDK only**
+> (`fedml.api.launch_job(yaml_file)` — no documented REST/HTTP endpoint exists).
+> XFuel's Node.js backend cannot call this without a fragile Python sidecar subprocess.
+> Differential privacy training is no longer documented in their public API surface.
+> Remaining deferred. Superseded by Track 2.5 (Theta EdgeCloud native GPU cluster training)
+> which uses the same `controller.thetaedgecloud.com` HTTP API already integrated in Track 2.2.
 - [ ] Extend `ai-listener.js` ThetaInference handler for `preset = GPU_TRAINING_JOB`
 - [ ] Add FedML job submission client (differential privacy mode)
 - [ ] Generate SP1 proof with `publicValues: { jobId, datasetHash, outputModelHash }`
@@ -501,8 +509,9 @@ LAYER 3 — XFuel → Agents (Outbound)
   - On success: calls `_emitProvenance()` — fires `VideoProvenance` on-chain event
   - On error: propagates failure to `ThetaInferenceHandler` which refunds intent + emits `IntentFailed`
 - [x] Agent webhook callback (`callbackUrl` POST) fires from `ThetaInferenceHandler` layer after proof settlement — includes `video_provenance_uri`, `edge_store_cid`, `provider_tag` fields (Track 5.5 payload)
-- [x] **Note:** Theta Video API has no native server-push webhooks — polling is the correct and only available pattern
+- [x] **Note:** Theta Video API supports native server-push webhooks (configurable in the TVA dashboard — event types: `video.created`, `video.partial_finished`, `video.finished`, `video.errored`; see `docs/THETA_INTEGRATIONS.md` Video API Webhooks section). XFuel currently uses polling (`_pollVideo`) for simplicity; TVA webhook wiring is a future optimization.
 - [ ] Wire `progress` field (0-100%) from poll response through to agent for real-time progress reporting
+- [ ] Wire TVA native webhooks (`video.finished`) as optional replacement for `_pollVideo` polling loop — requires a public-facing endpoint to receive Theta's POST callbacks
 
 ### 5.3 — EdgeCloud Job Completion Events  ✅ COMPLETE (Mar 2026)
 - [x] `CoreListener._startEdgeCloudJobMonitor()` added to `core-layer/ai-listener.js`
@@ -606,15 +615,20 @@ LAYER 3 — XFuel → Agents (Outbound)
 
 > These are acknowledged but not scheduled. Revisit after tracks 1-6 are complete.
 
+- [ ] **Track 2.5 — Theta EdgeCloud Distributed Training:** Route `GPU_TRAINING_JOB` preset to Theta's native GPU cluster training API (`controller.thetaedgecloud.com` — same credentials as Track 2.2). Supports multi-node clusters and SSH-access GPU nodes. SP1 proof `publicValues: { jobId, datasetHash, outputModelHash }`. Post-funding milestone; supersedes Track 2.4 (FedML deferred — see above). Docs: https://docs.thetatoken.org/docs/edgecloud-ai-training-with-gpu-clusters
+- [ ] **Track 2.6 — Distributed Inference ProviderTag:** When Theta ships H2 2026 multi-node distributed inference (multiple community EdgeCloud nodes hosting 70B+ parameter models collectively), add `DEPIN_THETA_DISTRIBUTED` to the `ProviderTag` enum in `ThetaInferenceCircuit.sol`. Route large-model intents (e.g., Llama 3.1 405B) to this tier when available. No API surface exists yet — activate when Theta publishes distributed inference endpoint docs.
+- [ ] **Track 3.7 — AI Characters API (Gaming/Esports):** Theta H1 2026 roadmap ships "AI Characters API" for gaming persona agents (esports partners: Team Heretics, Vegas Golden Knights, Houston Rockets, Olympique de Marseille). Integration path: wrap an AI Character as an A2A agent in `A2ACircuit` — agent registers with `CHARACTER_AGENT` capability tag; intents routed to `ondemand.thetaedgecloud.com/ai-characters/...` endpoint once published. XFuel becomes the ZK settlement backend for Theta's gaming vertical. Billing record: `AgentSettled` event provides immutable per-interaction audit trail for sponsors. Monitor: https://docs.thetatoken.org/docs/edgecloud-agentic-ai for endpoint publication.
+- [ ] **Track 4.5 — TDROP 2.0: EdgeCloud TDROP Payment Routing:** Theta confirmed TDROP is now accepted as payment on EdgeCloud (March 2026). Gap: XFuel's DePIN router currently pays EdgeCloud in TFUEL even when the caller paid in TDROP. Integration: when `paymentToken === TDROP_CONTRACT_ADDRESS`, convert the TDROP fee to the EdgeCloud-expected TDROP amount and pass it through to the on-demand API call headers/body. This creates a compound discount: caller gets 20% discount from `submitIntentWithTDROP()` AND EdgeCloud accepts TDROP natively — no TFUEL conversion loss. Requires confirming EdgeCloud's TDROP payment API header/field once Theta publishes integration docs.
+- [ ] **Track 4.6 — TDROP Usage Rebate Capture:** Theta H2 2026 roadmap: developers who consume EdgeCloud compute receive TDROP rebates. When Theta ships this program, register XFuel's EdgeCloud account for rebate eligibility. Capture incoming TDROP rebates in `CoreRevenueSplitter` via `receiveERC20Fee(TDROP_CONTRACT_ADDRESS, amount)` and redistribute to XF stakers as a bonus yield layer on top of the standard 25% staker split. Creates a virtuous cycle: XFuel drives EdgeCloud demand → EdgeCloud rebates TDROP → TDROP flows to XF stakers.
+- [ ] **Track 7 — TPULSE Subchain Integration:** TPULSE is Theta's AI interaction tracking subchain (launched Nov 2025, chain active). It records AI interactions as on-chain events — exactly what XFuel's `IntentSettled`, `ZKProofVerified`, and `VideoProvenance` events represent. Integration path: (1) register XFuel as a TPULSE data source via Theta Labs contact once TPULSE's event ingestion API is published; (2) forward `IntentSettled` events from XFuel's subchain (365001) to TPULSE's chain as interaction records; (3) add a TPULSE feed column to `Dashboard.tsx` EdgeCloud Stats Panel showing TPULSE-verified interaction counts. Theta H2 2026 roadmap confirms EdgeCloud stats will surface on TPULSE — XFuel should be a TPULSE-aware operator from launch. Reference: https://medium.com/theta-network/introducing-the-theta-pulse-subchain-powering-transparency-across-edgecloud-network-3b6e90f3990d
+- [ ] **Track 8 — LavitaCircuit (Health AI + Cross-Subchain):** Lavita is a health/genomics data marketplace on Theta Subchain (chain ID `tsub360890`), using Theta EdgeStore for storage and Theta Edge Network for TEE compute. XFuel can serve Lavita as a ZK verification layer: (1) Add `LavitaCircuit.sol` as a pluggable circuit routing `HEALTH_AI_JOB` intents to Lavita's AI jobs system; (2) Accept LAVITA TNT-20 token as a payment token via `receiveERC20Fee(LAVITA_CONTRACT_ADDRESS, amount)` — same pattern as TDROP; (3) SP1 proof of Lavita model output gives researchers cryptographic attestation of what model ran on what data (`publicValues: { jobId, datasetHash, outputModelHash }`) — critical for medical compliance; (4) Cross-subchain bridge: XFuel subchain (365001) → Lavita subchain (tsub360890) via Theta's built-in inter-subchain messaging channel. Lavita's compute is TEE-only today — SP1 ZK proofs add a complementary verifiability layer. XFuel already uses EdgeStore (same as Lavita's storage layer), so zero new storage infrastructure needed. Lavita token (LAVITA, TNT-20): mainnet address TBD — confirm at https://explorer.thetatoken.org. Lavita docs: https://docs.lavita.ai
 - [ ] TDROP tokenomics design and governance vote (Track 4.1 design first)
 - [ ] `mintStakerReward` TNT20 governance token for subchain validators (Track 1.3 minimal version first)
-- [ ] TPULSE subchain metrics overlay in dashboard (pending Theta publishing TPULSE RPC access)
 - [ ] Second subchain for high-volume circuit (branch from current subchain if ThetaInferenceCircuit volume warrants isolation)
 - [ ] Theta Intelligence analytics integration (Theta's own BI agent — explore as dashboard data source)
 - [ ] Deutsche Telekom / NTT Digital validator routing in `Fee-to-Stake` (contact Theta Labs for validator node addresses)
 - [ ] Osmosis CosmWasm governance whitelist (file proposal; vote rallying via Theta ecosystem validators who hold OSMO)
-- [ ] TDROP usage rebate routing (H2 2026 Theta roadmap — developers get TDROP rebates on compute)
-- [ ] Distributed inference (H2 2026 Theta roadmap — large models across multiple community EdgeCloud nodes)
+- [ ] Replay subchain ZK-settlement: XFuel's `VideoProvenance` events are consumable by Replay (video micropayment subchain) — explore cross-subchain ZK settlement for video micropayment flows once Replay's subchain RPC is published
 
 ---
 
@@ -875,4 +889,4 @@ SOURCE: XFuel Agent API (Outbound)
 ---
 
 *This document is maintained alongside the XFuel Protocol codebase. Update check marks as work is completed.*
-*Last updated: 2026-03-11 — All tracks 1–6 complete. Remaining deferred items: Track 2.2 (SP1 Dedicated Serving), Track 2.4 (FedML), Track 3.3 partial (LIVESTREAM_START agent API action).*
+*Last updated: 2026-03-11 — All tracks 1–6 complete. Track 2.4 (FedML) confirmed deferred — TensorOpera SDK is Python-only, no Node.js REST path. Track 2.5 (Theta EdgeCloud Distributed Training) added as roadmap replacement. Track 5.2 TVA webhook note corrected. Remaining deferred: Track 2.2 (SP1 Dedicated Serving), Track 3.3 partial (LIVESTREAM_START agent API action). Added new roadmap tracks: Track 2.6 (Distributed Inference ProviderTag — H2 2026), Track 3.7 (AI Characters API — H1 2026 gaming/esports), Track 4.5 (TDROP 2.0 EdgeCloud payment routing — live March 2026), Track 4.6 (TDROP usage rebate capture — H2 2026), Track 7 (TPULSE subchain integration), Track 8 (LavitaCircuit — health AI + cross-subchain bridge to tsub360890). Replay cross-subchain ZK-settlement added as exploratory item.*

@@ -5,6 +5,10 @@ require('@nomicfoundation/hardhat-toolbox')
 require('@nomicfoundation/hardhat-ethers')
 require('@openzeppelin/hardhat-upgrades')
 
+// hardhat-tracer: enables `npx hardhat test --trace` for ZK proof debugging
+// Install: npm install --save-dev hardhat-tracer
+try { require('hardhat-tracer') } catch (_) { /* optional — install when needed */ }
+
 // ============================================================
 // HARDHAT 3 MIGRATION TRACKING
 // Blocked by two upstream issues (as of 2026-03-08):
@@ -112,6 +116,10 @@ module.exports = {
     tests: './test',
     cache: './cache',
     artifacts: './artifacts',
+  },
+  typechain: {
+    outDir: 'typechain-types',
+    target: 'ethers-v6',
   },
   mocha: {
     timeout: 40000,

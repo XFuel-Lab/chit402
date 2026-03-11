@@ -249,30 +249,58 @@ settleIntent(intentId, proof, publicValues, nullifier)
 
 ## Architecture
 
-```
-                    ┌──────────────────────────────────────┐
-                    │         CORE LAYER (Hub)              │
-                    ├──────────────────────────────────────┤
-                    │  ZKVerifierSP1    (EVM + WASM + SVM)  │ ← Proof verification
-                    │  CoreRevenueSplitter  (GET)            │ ← Fee distribution
-                    │  veXFGovernance                       │ ← Parameter voting
-                    │  SP1ProofHooks                        │ ← Proof utilities
-                    │  CoreListener     (ai-listener.js)    │ ← Event polling / routing
-                    └──────────┬───────────────────────────┘
-                               │
-           ┌───────────────────┼───────────────────┐
-           │                   │                   │
-    ┌──────▼──────┐    ┌──────▼──────┐    ┌──────▼──────┐
-    │  Theta      │    │  Agent      │    │  Circuit N  │
-    │  Inference  │    │  Comms      │    │  (Custom    │
-    │  Circuit    │    │  (A2A)      │    │   Module)   │
-    └──────┬──────┘    └─────────────┘    └─────────────┘
-           │
-    ┌──────▼────────────────────────────────────────┐
-    │  Theta EdgeCloud (Primary GPU Backbone)        │
-    │  H100 SXM / A100 / RTX 4090                   │
-    │  Live inference + SP1 CUDA proving             │
-    └───────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Users["Users / Agents / Protocols"]
+        U1["👤 End User\n(xfuel.app)"]
+        U2["🤖 Autonomous Agent\n(/theta-ai/agent-intent)"]
+        U3["🔗 External Protocol\n(xfuel-sdk)"]
+    end
+
+    subgraph CoreLayer["🔷 CORE LAYER — Theta Mainnet (chain 361)"]
+        direction TB
+        ZK["ZKVerifierSP1\nGroth16/PLONK · <270K gas\nNullifiers · Circuit registry"]
+        RS["CoreRevenueSplitter\n30% BBB · 30% GET · 25% Stakers · 15% Treasury\nFee-to-Stake routing"]
+        GOV["veXFGovernance\nCurve-style lock · ZK nullifiers\nOn-chain execution hooks"]
+        HOOKS["SP1ProofHooks\nNullifier compute · Fee commitments\nCross-chain payload encoding"]
+        LISTENER["CoreListener (ai-listener.js)\nEvent polling · Intent routing\nWebhook dispatch · Proof submission"]
+        ZK <-->|"verified nullifiers"| RS
+        RS <-->|"governance params"| GOV
+        HOOKS -.->|"used by all circuits"| ZK
+        LISTENER -->|"submits proofs"| ZK
+        LISTENER -->|"collects fees"| RS
+    end
+
+    subgraph Circuits["⚡ CIRCUITS — Pluggable Modules"]
+        CI["ThetaInferenceCircuit\nEdgeCloud · TDROP payments\nGPU tier selection"]
+        TAO["TAOCircuit\nBittensor dTAO staking\nSubnet routing via EVM 964"]
+        BRG["BridgeCircuit\nHyperlane cross-chain\nISM-secured relay"]
+        A2A["A2ACircuit\nAgent-to-agent messaging\nEscrow · ZK verified"]
+        MORE["+ 17 more circuits\nAkash · Yield · ZKML\nSolana · DataHubs…"]
+    end
+
+    subgraph Provers["🔐 ZK PROVING"]
+        SP1["SP1 zkVM v6.0.2\nRISC-V → STARK → Groth16\n~9s proof · <270K gas verify"]
+        EDGE["Theta EdgeCloud\nH100 SXM · A100 · RTX 4090\nCUDA SP1 proving"]
+        SP1 <-->|"CUDA acceleration"| EDGE
+    end
+
+    subgraph Chains["🌐 SETTLEMENT CHAINS"]
+        TH["Theta Mainnet\nchain 361"]
+        BT["Bittensor EVM\nchain 964"]
+        COS["Cosmos IBC\nOsmosis · Persistence"]
+        SOL["Solana\n(Phase 3)"]
+    end
+
+    Users --> LISTENER
+    Circuits --> LISTENER
+    Circuits <-->|"proofBytes + publicValues"| SP1
+    LISTENER <-->|"EdgeCloud inference API"| EDGE
+    CoreLayer -->|"verified settlements"| TH
+    BRG -->|"Hyperlane dispatch"| BT
+    TAO -->|"dTAO precompile 0x805"| BT
+    BRG -->|"IBC relay"| COS
+    BRG -.->|"Phase 3"| SOL
 ```
 
 ### Core Components
@@ -898,10 +926,15 @@ chmod +x deploy/deploy-devnet.sh
 
 ```
 xfuel-protocol/
-├── xfuel-app/                  # xfuel.app website (Vite + React 19 + Wagmi 2)
-│   └── src/pages/              # Home, Bridge, Dashboard, Governance, Circuits, Staking, etc.
-├── src/                        # Bridge UI (Vite + React)
-├── frontend/                   # AI DePIN Dashboard (dev/testing)
+├── xfuel-app/                  # ✅ CANONICAL frontend — xfuel.app (Vite + React 19 + Wagmi)
+│                               #    Deployed to Vercel via vercel.json. This is the live app.
+├── legacy-archive/
+│   └── cosmos-yield-station/   # 🗄️  ARCHIVED — original Cosmos Yield Station (src/)
+│                               #    Phase 2 reactivation planned post-governance approval
+├── tools/
+│   └── m2m-dev-dashboard/      # 🔧 INTERNAL — local dev tool for testing M2M API endpoints
+├── edgefarm-mobile/            # 📱 PIVOTING — React Native (Expo) companion app
+│                               #    Cosmos yield screens tabled; AI DePIN rebuild planned
 ├── contracts/                  # Solidity contracts (Theta EVM)
 ├── cosmwasm-contracts/         # CosmWasm contracts (Cosmos)
 │   ├── zk-verifier/

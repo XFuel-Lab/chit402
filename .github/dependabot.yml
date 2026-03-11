@@ -1,0 +1,101 @@
+version: 2
+updates:
+  # ── npm (root monorepo) ─────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "automated"
+    groups:
+      # Bundle all OpenZeppelin upgrades together
+      openzeppelin:
+        patterns:
+          - "@openzeppelin/*"
+      # Bundle all Hardhat tooling upgrades together
+      hardhat:
+        patterns:
+          - "hardhat"
+          - "@nomicfoundation/*"
+          - "@nomiclabs/*"
+          - "hardhat-*"
+      # Bundle all testing library upgrades
+      testing:
+        patterns:
+          - "@testing-library/*"
+          - "jest"
+          - "jest-*"
+          - "ts-jest"
+          - "cypress"
+    ignore:
+      # Ethers v6 → v7 is a breaking change — pin until migrated
+      - dependency-name: "ethers"
+        update-types: ["version-update:semver-major"]
+
+  # ── npm (backend theta-bridge) ──────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/backend/theta-bridge"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "automated"
+      - "backend"
+
+  # ── npm (mobile app) ────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/edgefarm-mobile"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "automated"
+      - "mobile"
+
+  # ── npm (sdk) ───────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/sdk/js"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "automated"
+      - "sdk"
+
+  # ── Cargo (Rust workspace) ──────────────────────────────────
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "automated"
+      - "rust"
+
+  # ── GitHub Actions ───────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "automated"
+      - "ci"

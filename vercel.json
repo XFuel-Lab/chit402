@@ -1,23 +1,14 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
-  "installCommand": "npm install --legacy-peer-deps && npm list terser || npm install terser --save-dev",
+  "buildCommand": "cd xfuel-app && npm install && tsc -b && npx vite build",
+  "outputDirectory": "xfuel-app/dist",
+  "installCommand": "npm install --legacy-peer-deps",
   "env": {
-    "VITE_MAINTENANCE": "true"
+    "VITE_MAINTENANCE": "false"
   },
   "rewrites": [
-    {
-      "source": "/institutions",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/institutions/",
-      "destination": "/index.html"
-    },
     {
       "source": "/(.*)",
       "destination": "/index.html"
     }
   ]
 }
-

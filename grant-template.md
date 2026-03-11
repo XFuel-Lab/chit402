@@ -13,7 +13,7 @@
 | **Requested Amount** | $[100,000 – 500,000] USD equivalent |
 | **Token** | [NEAR / TAO / AKT / TFUEL / USDC] |
 | **Duration** | [6 – 12 months] |
-| **Team Size** | [3 – 8 contributors] |
+| **Team Size** | [3–8 contributors] <!-- Note: current XFuel submissions use "1 (solo-dev, open-source)" — adjust per context --> |
 | **Contact** | [name@xfuel.app] |
 | **Website** | [https://xfuel.app](https://xfuel.app) |
 | **GitHub** | [github.com/XFuel-Lab/xfuel-protocol](https://github.com/XFuel-Lab/xfuel-protocol) |
@@ -221,36 +221,37 @@ All code produced under this grant will be:
 
 | Metric | Value |
 |--------|-------|
-| Total circuits | 10 (3 priority + 7 expansion) |
-| Total tests | 175+ (150 unit + 20 integration + 10 system) |
-| Solidity contracts | 14 (4 core + 10 circuits) |
+| Total circuits | 21 (4 core + 17 expansion) |
+| Total tests | 755+ (85%+ coverage on audit-scope contracts) |
+| Solidity contracts | 22 (5 core + 17 circuits) |
 | Gas optimized | All settlements < 300K gas |
-| ZK backend | SP1 zkVM (Groth16 + PLONK) |
+| ZK backend | SP1 zkVM v6.0.2 (Groth16 + PLONK) |
 
 ### B. Reference Documentation
 
-- [WHITEPAPER_v1.6_CORE.md](WHITEPAPER_v1.6_CORE.md) — Full technical architecture
+- [WHITEPAPER.md](WHITEPAPER.md) — Full technical architecture (v2.4 — Hybrid Theta-Centric)
 - [README.md](README.md) — Setup, testing, deployment guides
 - [CONTRIBUTING.md](CONTRIBUTING.md) — Contribution guidelines
+- [docs/AUDIT_GRANT_READINESS.md](docs/AUDIT_GRANT_READINESS.md) — CertiK Phase 1 readiness checklist
 
 ### C. Circuit Architecture
 
 ```
-circuits/
-├── index.js                    # Central registry
-├── tao-evm/                    # AI Marketplace (Bittensor)
-├── a2a/                        # Agent Communication
-├── theta-gpu/                  # Edge Compute (Theta)
-├── zkml/                       # Private ML Inference
-├── akash/                      # DePIN GPU Leasing
-├── autonomous-vaults/          # AI-Driven Vaults
-├── agent-robotics/             # Sim-to-Real Robotics
-├── data-hubs/                  # Data Ownership DAOs
-├── yield-optimization/         # Multi-Pool Yield
-└── near-agents/                # Autonomous AI Agents (NEAR)
+contracts/circuits/
+├── ThetaInferenceCircuit.sol    # EdgeCloud AI inference (Theta-primary)
+├── A2ACircuit.sol               # Agent-to-agent task market
+├── ThetaGPUCircuit.sol          # Raw GPU compute leasing
+├── DataHubs.sol                 # Data contribution + EdgeStore sealing
+├── BridgeCircuit.sol            # Cross-chain ZK bridge
+├── InferenceRouter.sol          # Multi-chain inference routing
+├── ComputeMarketplace.sol       # DePIN compute marketplace
+├── TAOCircuit.sol               # Bittensor dTAO staking
+├── ZKMLCircuit.sol              # Private ML inference
+├── AkashCircuit.sol             # Akash Network GPU leasing
+└── [11 expansion circuits]      # See docs/CIRCUITS.md
 ```
 
 ---
 
-*Template version: 1.0 — XFuel Protocol, February 2026*
+*Template version: 2.0 — XFuel Protocol, March 2026 (v2.4 — Hybrid Theta-Centric Architecture)*
 *Adapt sections to match the specific grant program's requirements.*

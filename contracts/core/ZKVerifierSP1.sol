@@ -11,6 +11,7 @@ import "../interfaces/IBittensorStaking.sol";
 /**
  * @title ZKVerifierSP1
  * @author XFuel Protocol — Core Layer
+ * @custom:security-contact security@xfuel.app
  * @notice Chain-agnostic SP1 Groth16/PLONK proof verifier with SP1-CC composed
  *         call support, Hyperlane cross-chain relay, and dTAO staking integration.
  *

@@ -1,0 +1,47 @@
+name: Question / Support
+description: Ask a question about XFuel Protocol — architecture, integration, or usage
+title: "[Question]: "
+labels: ["question"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before asking, please check:
+        - [README.md](../../README.md) — project overview and quick start
+        - [WHITEPAPER.md](../../WHITEPAPER.md) — technical architecture
+        - [docs/](../../docs/) — technical guides and specifications
+        - [CONTRIBUTING.md](../../CONTRIBUTING.md) — contributor guide
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic
+      options:
+        - Architecture / Design
+        - Smart contract integration
+        - SP1 / ZK proofs
+        - SDK usage
+        - Deployment
+        - Testing
+        - Cross-chain / Hyperlane
+        - Theta EdgeCloud / AI inference
+        - Governance / veXF
+        - CosmWasm
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      description: Be as specific as possible. What are you trying to do? What have you already tried?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Any relevant code, config, or error messages that would help us answer your question.
