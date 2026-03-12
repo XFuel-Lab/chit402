@@ -1,0 +1,207 @@
+# XFuel Protocol — Agent Reference
+
+> This file is designed to be machine-readable. If you are an AI agent, LLM, or automated system
+> reading this repository, this is the fastest way to understand what XFuel does and how to use it.
+
+---
+
+## What Is XFuel?
+
+XFuel is a **ZK settlement and orchestration layer for AI compute across decentralized GPU networks (DePIN)**.
+
+It lets any agent submit an AI compute task, routes it to the best available GPU provider, generates a cryptographic ZK proof that the work was done, and settles payment on-chain — with fees distributed automatically to stakeholders.
+
+**Primary network:** Theta (chain 361/365). **Cross-chain:** Bittensor EVM (964/945), Cosmos IBC (pending governance).
+
+---
+
+## Core Contracts (Audit Scope)
+
+| Contract | Address (Testnet 365) | Purpose |
+|----------|-----------------------|---------|
+| `ZKVerifierSP1` | See `deploy/manifests/` | SP1 Groth16/PLONK proof verification + Hyperlane relay |
+| `CoreRevenueSplitter` | See `deploy/manifests/` | Fee collection + distribution (BBB/GET/Staker/Treasury) |
+| `veXFGovernance` | See `deploy/manifests/` | Vote-escrowed governance (Curve-style, 3x max multiplier) |
+| `SP1ProofHooks` | Library (no address) | Nullifier computation, fee commitment, public value encoding |
+
+---
+
+## How to Submit a Task (M2M API)
+
+```bash
+POST http://{host}:3002/task-request
+Headers: X-API-Key: {key}
+Body:
+{
+  "message_type": "inference_request",  // or compute_bid, data_attestation, capability_query
+  "chain_id": "theta",                  // theta | bittensor | akash | osmosis | persistence
+  "amount": "1000000",                  // gross task value in wei (min 10000)
+  "sender": "0xYourAddress",
+  "model_id": "llama-3-70b",            // required for inference_request
+  "input_hash": "0xabc...",             // keccak256 of your input (required for inference)
+  "theta_recipient": "0xOptional"       // settlement address on Theta
+}
+
+Response: { taskId, status, routedTo, estimatedGas }
+```
+
+Poll status: `GET /task-status/{taskId}`
+Webhook: register via `PUT /webhook` with `{ url, secret }` — receives `TaskSettled` events
+
+Full API: `docs/M2M_API.md`
+
+---
+
+## Compute Routing Priority
+
+Tasks are routed through a 6-tier DePIN priority router (first available, lowest cost):
+
+```
+1. Theta EdgeCloud (ondemand.thetaedgecloud.com) — primary GPU backbone
+2. RapidAPI inference                           — inference fallback
+3. MCP (local)                                  — low-latency local
+4. Akash Network                                — decentralized Cosmos GPU marketplace
+5. Render Network                               — GPU marketplace (image/LLM)
+6. AWS Bedrock                                  — centralized last resort
+```
+
+Configure tiers via `.env.local`. Leave a tier blank to skip it.
+
+---
+
+## ZK Proof Pipeline
+
+1. Task intent submitted → fee tagged with `ProviderTag` (THETA_NATIVE=1, DEPIN_AKASH=3, etc.)
+2. SP1 prover (CUDA, EdgeCloud Dedicated) generates Groth16 proof (~260 bytes, ~270K gas)
+3. `AITaskPublicValues` committed: `(taskType, sourceChain, destChain, taskIdHash, senderHash, netAmount, feeAmount, feeBps, outputHash, blockHeight, timestamp, nonce)`
+4. `ZKVerifierSP1.verifyProof(programVKey, publicValues, proofBytes)` called on-chain
+5. Nullifier stored → replay protection
+6. Fees distributed via `CoreRevenueSplitter.distribute()`
+
+---
+
+## Fee Distribution
+
+Every settled task contributes fees distributed as:
+
+| Bucket | Share | Destination |
+|--------|-------|-------------|
+| Buyback-Burn (BBB) | 30% | Buy XF on open market + burn |
+| Growth & Expansion (GET) | 30% | Machine incentives (50%), LP boost (30%), Agent grants (20%) |
+| Stakers (veXF) | 25% | Yield to XF token lockers |
+| Treasury | 15% | Operations + Fee-to-Stake routing |
+
+Fee-to-Stake (15–25% of Treasury) routes to chain validators:
+- Theta (chain 361): wTHETA/TFUEL staking
+- Bittensor EVM (chain 964): dTAO via precompile `0x0805`
+- Cosmos (osmosis-1): IBC relay → native staking (pending governance)
+
+---
+
+## Agent-to-Agent (A2A) Communication
+
+```
+// Register your agent
+A2ACircuit.registerAgent(identityHash, endpoint, capabilityFlags)
+
+// Submit a bid for a task
+A2ACircuit.submitBid(taskHash, capabilityRequired, deadline)  // with TFUEL escrow
+
+// Accept a bid (as provider)
+A2ACircuit.acceptBid(bidId, price)
+
+// Settle with ZK proof of delivery
+A2ACircuit.settleBid(bidId, resultHash, proofBytes, nullifier)
+
+// Open a micropayment channel (x402-style)
+CoreRevenueSplitter.createEscrow(payee, maxAmount, taskId, duration)
+CoreRevenueSplitter.claimEscrow(escrowId, claimAmount)  // repeatable
+```
+
+Swarm lifecycle: `formSwarm → joinSwarm (up to 18 agents) → settleSwarmAgent → dissolveSwarm`
+
+---
+
+## Cross-Chain Proof Relay
+
+```
+// Verify locally and relay to Bittensor EVM
+ZKVerifierSP1.relayProofCrossChain(
+  circuitId, programVKey, publicValues, proofBytes, nullifier,
+  destDomain,    // 964 = Bittensor Mainnet, 945 = Bittensor Testnet
+  recipient      // TAOCircuit address on destination
+)
+
+// Bittensor: stake-gated verification
+ZKVerifierSP1.verifyWithStakeCheck(circuitId, programVKey, publicValues, proofBytes, nullifier, minStake)
+```
+
+---
+
+## Governance
+
+Agents holding veXF can vote on protocol parameters:
+
+```
+veXFGovernance.lock(amount, unlockTime)         // lock XF → receive veXF
+veXFGovernance.createProposal(type, circuit, description, data)
+veXFGovernance.vote(proposalId, support)         // with ZK nullifier replay protection
+```
+
+| Proposal Type | Quorum | What it controls |
+|---------------|--------|-----------------|
+| CircuitPriority | 10% | Which circuits get priority routing |
+| LPAllocation | 15% | GET sub-allocation weights |
+| FeeStructure | 20% | Fee BPS and split ratios |
+| TreasurySpend | 25% | Expenditures >$50K |
+| EmergencyPause | 5% + 67% supermajority | Circuit breakers |
+
+---
+
+## SDK (JavaScript)
+
+```bash
+npm install xfuel-sdk  # (publishing in progress — see sdk/js/)
+```
+
+```javascript
+import { XFuelClient } from 'xfuel-sdk';
+
+const client = new XFuelClient({
+  rpc: 'https://eth-rpc-api-testnet.thetatoken.org/rpc',
+  chainId: 365,
+  apiKey: process.env.XFUEL_API_KEY
+});
+
+const task = await client.submitInference({
+  model: 'llama-3-70b',
+  input: 'Explain ZK proofs in one sentence.',
+  maxFee: '1000000'
+});
+
+const result = await client.waitForSettlement(task.taskId);
+```
+
+---
+
+## Key Repository Paths
+
+```
+contracts/core/           — 4 audit-scope contracts (CertiK Phase 1)
+contracts/circuits/       — 16 ecosystem circuits
+core-layer/               — AI listener, A2A orchestrator, CosmWasm WASM
+backend/theta-bridge/     — Bridge service, M2M API server, fee analytics
+sdk/js/                   — JavaScript SDK (xfuel-sdk)
+docs/M2M_API.md           — Full REST API reference
+docs/THETA_INTEGRATION_PLAN.md — Theta deep integration tracker
+docs/TAO_CIRCUIT_HYPERLANE_E2E.md — Bittensor cross-chain E2E guide
+deploy/manifests/         — Timestamped deployment manifests (testnet addresses)
+```
+
+---
+
+## Security
+
+- Bug bounty: up to $50,000 (Critical). See [`docs/bug-bounty.md`](docs/bug-bounty.md)
+- Responsible disclosure: security@xfuel.app or [GitHub Security Advisory](https://github.com/XFuelAI/xfuel-protocol/security)
+- CertiK Phase 1 audit: Q2 2026 (scope: `contracts/core/`)

@@ -807,7 +807,10 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
         emit RecipientUpdated("StakePool", a);
     }
 
+    /// @notice Pause fee collection and distribution. Restricted to DEFAULT_ADMIN_ROLE.
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) { _pause(); }
+
+    /// @notice Unpause fee collection and distribution. Restricted to DEFAULT_ADMIN_ROLE.
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) { _unpause(); }
 
     // ─── x402 Escrow Operations ────────────────────────────────────────────────
@@ -902,7 +905,9 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /**
-     * @notice Refund escrow to payer after expiry.
+     * @notice Refund escrow to payer after it has expired without being claimed.
+     * @param escrowId The escrow to refund.
+     * @dev Only the original payer can call. Reverts if not yet expired or already settled.
      */
     function refundEscrow(uint256 escrowId) external nonReentrant {
         Escrow storage e = escrows[escrowId];
