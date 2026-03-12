@@ -71,7 +71,7 @@ contract ZKVerifierSP1 is AccessControl, Pausable, ReentrancyGuard, ICrossChainR
     // ─── SP1 Recursive Rollup State ─────────────────────────────────────────
     uint256 public totalRecursiveVerified;
     uint256 public totalRollupBatches;
-    uint256 public rollupBatchSize;
+    uint256 public constant rollupBatchSize = 100;
 
     struct RollupBatch {
         bytes32 batchRoot;

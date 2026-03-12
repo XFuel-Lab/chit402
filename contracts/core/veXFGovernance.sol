@@ -182,6 +182,7 @@ contract veXFGovernance is AccessControl, ReentrancyGuard {
     function lock(uint256 amount, uint256 unlockTime) external nonReentrant {
         require(amount > 0, "ZeroAmount");
         // Round to nearest week boundary for gas-efficient slope tracking
+        // slither-disable-next-line divide-before-multiply
         unlockTime = (unlockTime / 1 weeks) * 1 weeks;
 
         uint256 duration = unlockTime - block.timestamp;
@@ -224,6 +225,7 @@ contract veXFGovernance is AccessControl, ReentrancyGuard {
      * @notice Extend lock duration (must be longer than current).
      */
     function extendLock(uint256 newUnlockTime) external nonReentrant {
+        // slither-disable-next-line divide-before-multiply
         newUnlockTime = (newUnlockTime / 1 weeks) * 1 weeks;
         Lock storage l = locks[msg.sender];
         if (l.amount == 0) revert NoExistingLock();
@@ -264,6 +266,7 @@ contract veXFGovernance is AccessControl, ReentrancyGuard {
      */
     function votingPower(address user) public view returns (uint256) {
         Lock memory l = locks[user];
+        // slither-disable-next-line incorrect-equality
         if (l.amount == 0 || block.timestamp >= l.unlockTime) return 0;
 
         uint256 remaining = l.unlockTime - block.timestamp;
@@ -296,7 +299,7 @@ contract veXFGovernance is AccessControl, ReentrancyGuard {
         string calldata description,
         bytes calldata _executionData
     ) external nonReentrant returns (uint256 id) {
-        if (votingPower(msg.sender) == 0) revert InsufficientVotingPower();
+        if (votingPower(msg.sender) == 0) revert InsufficientVotingPower(); // slither-disable-line incorrect-equality
 
         id = ++proposalCount;
         Proposal storage p = proposals[id];
@@ -321,7 +324,7 @@ contract veXFGovernance is AccessControl, ReentrancyGuard {
      */
     function vote(uint256 proposalId, bool support) external nonReentrant {
         Proposal storage p = proposals[proposalId];
-        require(p.id != 0, "InvalidProposal");
+        require(p.id != 0, "InvalidProposal"); // slither-disable-line incorrect-equality
         if (block.timestamp > p.endTime) revert VotingClosed();
         if (hasVoted[proposalId][msg.sender]) revert AlreadyVoted();
 
@@ -353,7 +356,7 @@ contract veXFGovernance is AccessControl, ReentrancyGuard {
      */
     function executeProposal(uint256 proposalId) external onlyRole(EXECUTOR_ROLE) {
         Proposal storage p = proposals[proposalId];
-        require(p.id != 0, "InvalidProposal");
+        require(p.id != 0, "InvalidProposal"); // slither-disable-line incorrect-equality
         if (p.executed) revert AlreadyExecuted();
         if (block.timestamp <= p.endTime) revert VotingNotEnded();
 

@@ -1,0 +1,21 @@
+fix: resolve all High/Medium Slither findings in contracts/core/
+
+CoreRevenueSplitter.sol:
+- reentrancy-eth (High): move all state updates before external calls in
+  distribute() and _routeStake() — CEI pattern now strictly enforced
+- divide-before-multiply (Medium): rewrite incentivesAmount calculation in
+  distribute() to multiply first: (getAmount * incentivesBps * effectiveBoost)
+  / (TOTAL_BPS * TOTAL_BPS) — eliminates precision loss from intermediate division
+
+veXFGovernance.sol:
+- incorrect-equality (High/Medium): add slither-disable-line annotations on
+  l.amount == 0 and p.id != 0 existence checks — these are intentional sentinel
+  patterns, not numeric comparisons
+- divide-before-multiply (Medium): suppress on week-boundary rounding in lock()
+  and extendLock() — (unlockTime / 1 weeks) * 1 weeks is intentional, not a
+  precision bug
+
+ZKVerifierSP1.sol:
+- uninitialized-state (High): convert rollupBatchSize from uninitialized mutable
+  storage variable to constant = 100, resolving both uninitialized-state and
+  constable-states findings simultaneously

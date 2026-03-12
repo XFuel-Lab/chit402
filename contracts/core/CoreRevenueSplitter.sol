@@ -571,25 +571,18 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
         thetaNativeFeesSinceReset = 0;
         totalFeesSinceReset = 0;
 
-        // GET sub-split: incentives (with dynamic boost), LP boost, grants pool
-        uint256 incentivesRaw = (getAmount * incentivesBps) / TOTAL_BPS;
-        uint256 incentivesAmount = (incentivesRaw * effectiveBoost) / TOTAL_BPS;
+        // Per Section 2.3: GET sub-split with dynamic boost applied before division
+        // Multiply before dividing to preserve precision (avoids divide-before-multiply)
+        uint256 incentivesAmount = (getAmount * incentivesBps * effectiveBoost) / (uint256(TOTAL_BPS) * TOTAL_BPS);
         if (incentivesAmount > getAmount) incentivesAmount = getAmount;
         uint256 lpBoostAmount = (getAmount * lpBoostBps) / TOTAL_BPS;
+        uint256 incentivesRaw = (getAmount * incentivesBps) / TOTAL_BPS;
         uint256 grantsAmount = getAmount - incentivesRaw - lpBoostAmount;
 
         // Forward incentives + LP boost to GET wallet; grants portion stays in contract
         uint256 getForwarded = getAmount - grantsAmount;
 
-        _safeTransfer(bbbWallet, bbbAmount, "BBB");
-        _safeTransfer(getWallet, getForwarded, "GET");
-        _safeTransfer(stakerVault, stakerAmount, "Staker");
-        _safeTransfer(treasuryWallet, treasuryAmount, "Treasury");
-
-        if (feeToStakeAmount > 0) {
-            _routeStake(feeToStakeAmount);
-        }
-
+        // Per CEI: update all state before external calls
         grantPoolBalance += grantsAmount;
         lastGrantActivity = block.timestamp;
 
@@ -610,6 +603,16 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
             treasuryAmount, feeToStakeAmount,
             distributionCount, block.timestamp
         );
+
+        // External calls last (CEI pattern)
+        _safeTransfer(bbbWallet, bbbAmount, "BBB");
+        _safeTransfer(getWallet, getForwarded, "GET");
+        _safeTransfer(stakerVault, stakerAmount, "Staker");
+        _safeTransfer(treasuryWallet, treasuryAmount, "Treasury");
+
+        if (feeToStakeAmount > 0) {
+            _routeStake(feeToStakeAmount);
+        }
     }
 
     /**
@@ -631,19 +634,22 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
                 }
 
                 if (share > 0) {
-                    _safeTransfer(r.pool, share, r.label);
+                    // Per CEI: update state before external call
                     chainStakeTotal[r.chainId] += share;
                     distributed += share;
                     emit StakeRouted(r.chainId, r.pool, share, r.label, block.timestamp);
+                    _safeTransfer(r.pool, share, r.label);
                 }
             }
         } else if (stakePool != address(0)) {
-            _safeTransfer(stakePool, amount, "StakePool");
+            // Per CEI: update state before external call
             chainStakeTotal[block.chainid] += amount;
             emit StakeRouted(block.chainid, stakePool, amount, "DefaultPool", block.timestamp);
+            _safeTransfer(stakePool, amount, "StakePool");
         } else {
-            _safeTransfer(treasuryWallet, amount, "Treasury(stake)");
+            // Per CEI: update state before external call
             totalTreasury += amount;
+            _safeTransfer(treasuryWallet, amount, "Treasury(stake)");
         }
     }
 
