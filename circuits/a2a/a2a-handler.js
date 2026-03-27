@@ -28,6 +28,7 @@ const A2A_EVENTS = [
   'event BidSubmitted(bytes32 indexed circuitId, bytes32 indexed bidId, address indexed requester, bytes32 capabilityRequired, uint256 escrowAmount, uint64 deadline)',
   'event BidAccepted(bytes32 indexed bidId, address indexed provider, uint256 acceptedPrice)',
   'event BidSettled(bytes32 indexed bidId, bytes32 resultHash, bytes32 nullifier, uint256 paidAmount, uint256 fee)',
+  'event BidSettledFairExchange(bytes32 indexed bidId, bytes32 resultHash, uint256 paidAmount, uint256 fee)',
   'event A2AMessageSent(bytes32 indexed circuitId, address indexed sender, address indexed recipient, bytes32 payloadHash, uint256 escrowAmount)',
   'event ChannelOpened(bytes32 indexed channelId, address indexed payer, address indexed payee, uint256 deposit, uint64 expiresAt)',
   'event ChannelClaimed(bytes32 indexed channelId, uint256 amount, bytes32 proofNullifier)',
@@ -132,6 +133,7 @@ class A2AHandler {
     return [
       this.iface.getEvent('BidSubmitted').topicHash,
       this.iface.getEvent('A2AMessageSent').topicHash,
+      this.iface.getEvent('BidSettledFairExchange').topicHash,
     ];
   }
 }

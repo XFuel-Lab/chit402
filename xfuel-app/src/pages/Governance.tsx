@@ -7,7 +7,7 @@ import { ADDRESSES, GOVERNANCE_ABI, isDeployed } from '../contracts';
 const mockProposals = [
   {
     id: 'XIP-7',
-    title: 'Deploy Inference Router Circuit to Bittensor EVM',
+    title: '[Example] Deploy Inference Router Circuit to Bittensor EVM',
     status: 'active',
     votesFor: 842_500,
     votesAgainst: 124_300,
@@ -18,18 +18,18 @@ const mockProposals = [
   },
   {
     id: 'XIP-6',
-    title: 'Increase LP Revenue Split to 35%',
+    title: '[Example] Adjust revenue split parameters',
     status: 'passed',
     votesFor: 1_250_000,
     votesAgainst: 180_000,
     quorum: 1_000_000,
     endTime: 'Ended 3d ago',
     author: '0xcd56...gh78',
-    description: 'Adjust CoreRevenueSplitter parameters to increase LP share from 30% to 35%, reducing BBB from 40% to 35%.',
+    description: 'Illustrative proposal — parameters must match deployed CoreRevenueSplitter.',
   },
   {
     id: 'XIP-5',
-    title: 'Add Sui Network Support',
+    title: '[Example] Add Sui network support',
     status: 'passed',
     votesFor: 980_000,
     votesAgainst: 45_000,
@@ -40,14 +40,14 @@ const mockProposals = [
   },
   {
     id: 'XIP-4',
-    title: 'Partner Hook: Almanak AI Agent Integration',
+    title: '[Example] Partner hook: third-party agent integration',
     status: 'rejected',
     votesFor: 320_000,
     votesAgainst: 780_000,
     quorum: 1_000_000,
     endTime: 'Ended 2w ago',
     author: '0xmn34...op56',
-    description: 'Grant Almanak AI agents direct access to circuit verification endpoints without fee requirements.',
+    description: 'Fictional example — no implied live partnership.',
   },
 ];
 
@@ -87,7 +87,7 @@ export default function Governance() {
 
   const totalLockedDisplay = totalLocked
     ? `${(Number(formatEther(totalLocked)) / 1e6).toFixed(1)}M XF`
-    : '14.2M XF';
+    : '—';
 
   const userLockedAmount = userLock ? formatEther(userLock[0]) : '0.00';
   const userVeXFBalance = userLock ? formatEther(userLock[2]) : '0.00';
@@ -108,9 +108,9 @@ export default function Governance() {
 
   const governanceStats = [
     { label: 'Total veXF Locked', value: totalLockedDisplay },
-    { label: 'Unique Voters', value: '2,847' },
-    { label: 'Active Proposals', value: proposalCount ? String(Number(proposalCount)) : '1' },
-    { label: 'Avg Lock Duration', value: '8.4 months' },
+    { label: 'Unique Voters', value: '(demo)' },
+    { label: 'Active Proposals', value: proposalCount ? String(Number(proposalCount)) : '—' },
+    { label: 'Avg Lock Duration', value: '(demo)' },
   ];
 
   return (
@@ -221,7 +221,7 @@ export default function Governance() {
 
         <div className="card" style={{ padding: '2rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-            <h3>Proposals</h3>
+            <h3>Proposals (illustrative examples)</h3>
             <button className="btn btn-secondary btn-sm" disabled={!isConnected || !govDeployed}>
               Create Proposal
             </button>

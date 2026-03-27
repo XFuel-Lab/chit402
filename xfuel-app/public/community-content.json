@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "socialLinks": [
+    {
+      "platform": "Discord",
+      "url": "https://discord.gg/n9jHyW88",
+      "statLabel": "2+ members",
+      "description": "Community hub — server structure and onboarding are being refreshed; this invite stays valid.",
+      "color": "#5865F2"
+    },
+    {
+      "platform": "Twitter / X",
+      "url": "https://twitter.com/XFuelLab",
+      "statLabel": "@XFuelLab",
+      "description": "Protocol updates, partnerships, and ecosystem news.",
+      "color": "#1DA1F2"
+    },
+    {
+      "platform": "Telegram",
+      "url": "https://t.me/xfuelprotocol",
+      "statLabel": "t.me/xfuelprotocol",
+      "description": "Alerts and community chat.",
+      "color": "#26A5E4"
+    },
+    {
+      "platform": "GitHub",
+      "url": "https://github.com/XFuel-Lab/xfuel-protocol",
+      "statLabel": "0 stars",
+      "description": "Open-source protocol, circuits, and tooling.",
+      "color": "#f0f0f5",
+      "kind": "github"
+    }
+  ],
+  "upcomingEvents": [
+    {
+      "title": "Discord refresh — roles, channels, and docs",
+      "date": "Rolling",
+      "time": "—",
+      "platform": "Discord",
+      "description": "Legacy layout is being replaced with clearer onboarding and support paths. Join via the current invite; announcements will track changes."
+    },
+    {
+      "title": "Community AMA — roadmap & testnet",
+      "date": "TBA",
+      "time": "UTC",
+      "platform": "Discord / X",
+      "description": "Edit dates in public/community-content.json or set VITE_COMMUNITY_CONTENT_URL to a hosted JSON."
+    }
+  ],
+  "pastAMAs": [
+    {
+      "title": "Recordings & past sessions",
+      "date": "See Discord #announcements and @XFuelLab on X",
+      "views": "—",
+      "recordingUrl": "https://discord.gg/n9jHyW88"
+    }
+  ],
+  "github": {
+    "org": "XFuel-Lab",
+    "repo": "xfuel-protocol"
+  },
+  "discordInviteCode": "n9jHyW88"
+}

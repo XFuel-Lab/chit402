@@ -231,7 +231,7 @@ describe('ThetaInferenceCircuit', function () {
       // Settle with ZK proof
       const nullifier = ethers.keccak256(ethers.toUtf8Bytes('theta-inf-null-1'));
       await circuit.connect(relayer).settleIntent(
-        intentId, MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier
+        intentId, MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier, false
       );
 
       intent = await circuit.getIntent(intentId);
@@ -243,7 +243,7 @@ describe('ThetaInferenceCircuit', function () {
       const nullifier = ethers.keccak256(ethers.toUtf8Bytes('theta-inf-null-2'));
       await expect(
         circuit.connect(relayer).settleIntent(
-          intentId, MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier
+          intentId, MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier, false
         )
       ).to.be.reverted;
     });
@@ -255,7 +255,7 @@ describe('ThetaInferenceCircuit', function () {
 
       const nullifier = ethers.keccak256(ethers.toUtf8Bytes('theta-inf-null-dup'));
       await circuit.connect(relayer).settleIntent(
-        intentId, MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier
+        intentId, MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier, false
       );
 
       // Submit + complete another intent
@@ -276,7 +276,7 @@ describe('ThetaInferenceCircuit', function () {
       // Same nullifier should be rejected
       await expect(
         circuit.connect(relayer).settleIntent(
-          intentId2, MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier
+          intentId2, MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier, false
         )
       ).to.be.reverted;
     });
@@ -418,7 +418,7 @@ describe('ThetaInferenceCircuit', function () {
       const nullifier = ethers.keccak256(ethers.toUtf8Bytes('null-auth'));
       await expect(
         circuit.connect(user).settleIntent(
-          intentId, MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier
+          intentId, MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier, false
         )
       ).to.be.reverted;
     });
@@ -634,7 +634,7 @@ describe('ThetaInferenceCircuit', function () {
 
       const nullifier = ethers.keccak256(ethers.toUtf8Bytes('agent-rag-null'));
       await circuit.connect(relayer).settleIntent(
-        intentId, MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier
+        intentId, MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier, false
       );
 
       const intent = await circuit.getIntent(intentId);

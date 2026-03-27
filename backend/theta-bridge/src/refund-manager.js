@@ -22,11 +22,13 @@ class RefundManager {
    */
   async init() {
     try {
+      if (!config.relayer?.privateKey) {
+        logger.info('RELAYER_PRIVATE_KEY not set — refund manager disabled');
+        return;
+      }
       const provider = getProvider();
-      
-      // Create relayer wallet
       this.relayerWallet = provider.getSigner(config.relayer.privateKey);
-      
+
       logger.info({
         relayerAddress: await this.relayerWallet.getAddress()
       }, 'Refund manager initialized');

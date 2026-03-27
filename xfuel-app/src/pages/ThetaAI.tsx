@@ -212,7 +212,7 @@ const PRESET_HOOKS: PresetHook[] = [
     defaultModel: 'Whisper Large V3',
     defaultGpu: 'A100',
     defaultPrompt: '',
-    description: 'HIPAA-grade transcription, 90+ languages',
+    description: 'Medical-style transcription demo — not for PHI; not HIPAA compliant.',
     icon: '🏥',
     color: '#22c55e',
   },
@@ -1511,15 +1511,15 @@ export default function ThetaAI() {
               <h3 style={{ fontSize: '1rem', marginTop: '1.5rem', marginBottom: '0.75rem', color: '#8a8a9a' }}>Network Status</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {[
-                  { name: 'Theta Mainnet (361)', status: 'live', latency: '~1.2s finality' },
-                  { name: 'Theta Testnet (365)', status: 'live', latency: '~1.0s finality' },
-                  { name: 'EdgeCloud Nodes', status: 'live', latency: '2,400+ active' },
-                  { name: 'RapidAPI Gateway', status: 'live', latency: 'Enterprise routing' },
+                  { name: 'Theta Mainnet (361)', status: 'roadmap', latency: '—' },
+                  { name: 'Theta Testnet (365)', status: 'live', latency: 'primary beta target' },
+                  { name: 'EdgeCloud routing', status: 'beta', latency: 'when M2M + keys configured' },
+                  { name: 'RapidAPI / other tiers', status: 'fallback', latency: 'router-dependent' },
                 ].map((n) => (
                   <div key={n.name} style={styles.networkRow}>
                     <span style={{
                       width: 8, height: 8, borderRadius: '50%',
-                      background: n.status === 'live' ? '#22c55e' : '#f59e0b',
+                      background: n.status === 'live' ? '#22c55e' : n.status === 'roadmap' ? '#8b5cf6' : '#f59e0b',
                       display: 'inline-block', flexShrink: 0,
                     }} />
                     <span style={{ flex: 1 }}>{n.name}</span>

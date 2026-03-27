@@ -9,9 +9,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /**
- * Configuration object for the Theta-Persistence ZK Bridge service
+ * Configuration for XFuel Theta Bridge (AI DePIN M2M + optional Persistence bridge).
+ * Set PERSISTENCE_BRIDGE_ENABLED=true to enable legacy Theta→Persistence deposit flow.
  */
 const config = {
+  // Persistence bridge (Theta → Persistence deposits): optional; default off — focus AI DePIN
+  persistenceBridgeEnabled: process.env.PERSISTENCE_BRIDGE_ENABLED === 'true',
+
   // Theta RPC Configuration
   theta: {
     rpcUrls: process.env.THETA_RPC_URLS?.split(',').map(url => url.trim()) || [
@@ -27,7 +31,9 @@ const config = {
   contracts: {
     vaultFactoryAddress: process.env.VAULT_FACTORY_ADDRESS,
     subVaultAbiPath: process.env.SUBVAULT_ABI_PATH || join(__dirname, '../abis/SubVault.json'),
-    vaultFactoryAbiPath: process.env.VAULT_FACTORY_ABI_PATH || join(__dirname, '../abis/VaultFactory.json')
+    vaultFactoryAbiPath: process.env.VAULT_FACTORY_ABI_PATH || join(__dirname, '../abis/VaultFactory.json'),
+    /** Phase 1 Fair Exchange: A2ACircuit address for settleBidFairExchange (optional). */
+    a2aCircuitAddress: process.env.A2A_CIRCUIT_ADDRESS || null,
   },
 
   // Redis Configuration
@@ -37,9 +43,14 @@ const config = {
     db: parseInt(process.env.REDIS_DB) || 0
   },
 
-  // Relayer Configuration
+  // Relayer Configuration (optional for zkGPT-only / dev; refunds and Fair Exchange submit need it)
   relayer: {
-    privateKey: process.env.RELAYER_PRIVATE_KEY,
+    privateKey: (() => {
+      const v = process.env.RELAYER_PRIVATE_KEY;
+      if (!v || typeof v !== 'string') return null;
+      if (/YOUR_|_HERE|your_key|placeholder|0x\.\.\./i.test(v.trim())) return null;
+      return v.trim();
+    })(),
     gasLimit: parseInt(process.env.RELAYER_GAS_LIMIT) || 100000,
     maxFeePerGas: BigInt(process.env.RELAYER_MAX_FEE_PER_GAS || '100000000000')
   },
@@ -142,7 +153,8 @@ const config = {
 
   // AI Listener Configuration (Phase E: AI DePIN Bridge)
   aiListener: {
-    enabled: process.env.AI_LISTENER_ENABLED === 'true',
+    // When Persistence bridge is off, AI listener is on by default (AI DePIN mode)
+    enabled: process.env.AI_LISTENER_ENABLED === 'true' || !config.persistenceBridgeEnabled,
 
     // Theta Edge Cloud URL for inference routing
     thetaEdgeUrl: process.env.THETA_EDGE_URL,
@@ -194,21 +206,20 @@ const config = {
 export function validateConfig() {
   const errors = [];
 
-  if (!config.contracts.vaultFactoryAddress) {
-    errors.push('VAULT_FACTORY_ADDRESS is required');
+  if (config.persistenceBridgeEnabled && !config.contracts.vaultFactoryAddress) {
+    errors.push('VAULT_FACTORY_ADDRESS is required when PERSISTENCE_BRIDGE_ENABLED=true');
   }
 
+  // RELAYER_PRIVATE_KEY optional: needed for refunds, Fair Exchange submit; omit or use placeholder for zkGPT-only dev
   if (!config.relayer.privateKey) {
-    errors.push('RELAYER_PRIVATE_KEY is required');
+    // No error; relayer-dependent features will be disabled
   }
 
   if (config.theta.rpcUrls.length === 0) {
     errors.push('At least one THETA_RPC_URL is required');
   }
 
-  if (!config.sp1.proverUrl) {
-    errors.push('SP1_PROVER_URL is required (Theta EdgeCloud endpoint)');
-  }
+  // SP1_PROVER_URL is optional: bridge can run with zkGPT-only (Phase 1 E2E); SP1 proof paths skip or return 503 if unset
 
   // Phase C: Validate Persistence configuration if whitelisting is approved
   if (config.persistence.whitelistApproved) {

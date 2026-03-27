@@ -12,6 +12,8 @@ import Treasury from './pages/Treasury';
 import Docs from './pages/Docs';
 import Community from './pages/Community';
 import Grants from './pages/Grants';
+import Believers from './pages/Believers';
+import Angels from './pages/Angels';
 
 export default function App() {
   return (
@@ -29,6 +31,8 @@ export default function App() {
         <Route path="docs" element={<Docs />} />
         <Route path="community" element={<Community />} />
         <Route path="grants" element={<Grants />} />
+        <Route path="believers" element={<Believers />} />
+        <Route path="angels" element={<Angels />} />
       </Route>
     </Routes>
   );

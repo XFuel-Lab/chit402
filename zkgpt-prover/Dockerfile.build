@@ -1,0 +1,27 @@
+# Build upstream zkGPT (security-Anonymous/zkgpt) — run on a host with 200GB+ RAM.
+# Usage (on a high-RAM cloud VM):
+#   docker build -f zkgpt-prover/Dockerfile.build -t xfuel-zkgpt-built .
+# Then copy the binary into your runtime image or extract it:
+#   docker create --name zkgpt-extract xfuel-zkgpt-built
+#   docker cp zkgpt-extract:/zkgpt/cmake-build-release/src/demo_llm_run ./demo_llm_run
+#   docker rm zkgpt-extract
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    libgmp-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /zkgpt
+
+RUN git clone --recurse-submodules https://github.com/security-Anonymous/zkgpt.git . \
+    && ./build.sh Release
+
+# Binary at /zkgpt/cmake-build-release/src/demo_llm_run
+# Keep image for extraction; default run for sanity check
+CMD ["/zkgpt/cmake-build-release/src/demo_llm_run"]

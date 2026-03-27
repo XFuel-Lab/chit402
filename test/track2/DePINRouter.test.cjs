@@ -103,7 +103,7 @@ describe('Track 2.3 — DePIN Priority Router', function () {
       await circuit.connect(relayer).attestEdgeCloudNode(
         intentId, nodeId, gpuFingerprint, PETAFLOPS, Number(tag)
       );
-      await circuit.connect(relayer).settleIntent(intentId, MOCK_PROOF, MOCK_PV, nullifier);
+      await circuit.connect(relayer).settleIntent(intentId, MOCK_PROOF, MOCK_PV, nullifier, false);
 
       return { intentId, nodeId, gpuFingerprint };
     }

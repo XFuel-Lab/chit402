@@ -390,7 +390,7 @@ const OPENAPI_SPEC = {
 const CIRCUIT_ABI = [
   'function completeIntent(bytes32 intentId, bytes32 outputHash, bytes32 modelHash, uint256 latencyMs)',
   'function attestEdgeCloudNode(bytes32 intentId, bytes32 nodeId, bytes32 gpuFingerprint, uint64 petaflopsUsed, uint8 providerTag)',
-  'function settleIntent(bytes32 intentId, bytes proof, bytes publicValues, bytes32 nullifier)',
+  'function settleIntent(bytes32 intentId, bytes proof, bytes publicValues, bytes32 nullifier, bool useZkGPT)',
   'function failIntent(bytes32 intentId, string reason)',
   'function getIntent(bytes32 intentId) view returns (tuple(bytes32 intentId, uint8 serviceType, bytes32 serviceId, address requester, uint256 payment, uint256 fee, bytes32 inputHash, bytes32 outputHash, bytes32 modelHash, uint8 status, uint64 submittedAt, uint64 completedAt, uint64 settledAt, uint256 latencyMs, bytes32 proofNullifier))',
   'function getAttestation(bytes32 intentId) view returns (tuple(bytes32 nodeId, bytes32 gpuFingerprint, uint64 petaflopsUsed, uint64 attestedAt, uint8 providerTag))',
@@ -722,11 +722,13 @@ class ThetaInferenceHandler {
     if (this.contract && proofRequest.onChainIntentId) {
       try {
         console.log(`[ThetaInference] Settling intent on-chain...`);
+        const useZkGPT = proofRequest.proofSystem === 'zkgpt';
         const tx = await this.contract.settleIntent(
           proofRequest.onChainIntentId,
           proofResult.proof,
           proofResult.publicValues,
           proofResult.nullifier,
+          useZkGPT,
           { gasLimit: this.gasLimit }
         );
         const receipt = await tx.wait();
@@ -1107,6 +1109,7 @@ class ThetaInferenceHandler {
           ? ethers.keccak256(ethers.toUtf8Bytes(result._nodeId || `edgecloud-${source}-${onChainIntentId?.slice(0, 16)}`))
           : '0x' + '00'.repeat(32),
         providerTag: entry.providerTag || 'UNSET',
+        proofSystem: intent.args?.proofSystem || 'sp1', // Phase 1: 'sp1' | 'zkgpt' for settleIntent verifier choice
       });
     }
 

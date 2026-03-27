@@ -5,6 +5,8 @@ export const ADDRESSES = {
   verifier: (import.meta.env.VITE_VERIFIER_ADDRESS || '') as `0x${string}`,
   governance: (import.meta.env.VITE_GOVERNANCE_ADDRESS || '') as `0x${string}`,
   thetaInference: (import.meta.env.VITE_THETA_INFERENCE_ADDRESS || '') as `0x${string}`,
+  believerRound: (import.meta.env.VITE_BELIEVER_ROUND_ADDRESS || '') as `0x${string}`,
+  angelRound: (import.meta.env.VITE_ANGEL_ROUND_ADDRESS || '') as `0x${string}`,
 };
 
 export function isDeployed(addr: string): addr is `0x${string}` {
@@ -47,3 +49,57 @@ export const THETA_INFERENCE_ABI = [
 export const THETA_MAINNET_ID = 361;
 export const THETA_TESTNET_ID = 365;
 export const BITTENSOR_ID = 964;
+
+/** BelieverRound.sol — commit / commitWithLock / views */
+export const BELIEVER_ROUND_ABI = [
+  { type: 'function', name: 'commit', inputs: [], outputs: [], stateMutability: 'payable' },
+  {
+    type: 'function',
+    name: 'commitWithLock',
+    inputs: [{ name: 'lockTier', type: 'uint8' }],
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    name: 'getStats',
+    inputs: [],
+    outputs: [
+      { name: 'committed_', type: 'uint256' },
+      { name: 'believers_', type: 'uint256' },
+      { name: 'allocated_', type: 'uint256' },
+      { name: 'claimed_', type: 'uint256' },
+      { name: 'hardCap_', type: 'uint256' },
+      { name: 'status_', type: 'uint8' },
+      { name: 'phase_', type: 'uint8' },
+    ],
+    stateMutability: 'view',
+  },
+  { type: 'function', name: 'totalXFReserved', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+] as const satisfies Abi;
+
+/** AngelRound.sol — pre-TGE treasury round; no refunds */
+export const ANGEL_ROUND_ABI = [
+  { type: 'function', name: 'commit', inputs: [], outputs: [], stateMutability: 'payable' },
+  {
+    type: 'function',
+    name: 'getStats',
+    inputs: [],
+    outputs: [
+      { name: 'committed_', type: 'uint256' },
+      { name: 'angels_', type: 'uint256' },
+      { name: 'allocated_', type: 'uint256' },
+      { name: 'claimed_', type: 'uint256' },
+      { name: 'hardCap_', type: 'uint256' },
+      { name: 'status_', type: 'uint8' },
+      { name: 'phase_', type: 'uint8' },
+      { name: 'treasuryWithdrawn_', type: 'uint256' },
+      { name: 'xfReserved_', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+  },
+  { type: 'function', name: 'minCommitment', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'hardCap', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'tokenPriceNumerator', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'tokenPriceDenominator', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+] as const satisfies Abi;

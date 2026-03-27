@@ -58,12 +58,14 @@ Submit an AI task for routing to Akash, Bittensor (TAO), Osmosis, or Theta Edge 
 | `model_id` | string | Cond. | Required for `inference_request` |
 | `input_hash` | string | Cond. | Required for `inference_request`, `data_attestation` |
 | `output_hash` | string | Cond. | Required for `compute_result` |
+| `proof_system` | string | No | For `inference_request`: `sp1` (default) or `zkgpt` (Phase 1 zkGPT path). |
 | `subnet_id` | number | Cond. | Required for `bittensor` routing |
 | `theta_recipient` | string | No | Theta EVM settlement address |
 | `max_gpu_hours` | string | No | Akash GPU lease duration |
 
-**Example:**
+**Examples:**
 
+Default (SP1 proof):
 ```bash
 curl -X POST http://localhost:3002/task-request \
   -H "Content-Type: application/json" \
@@ -74,7 +76,24 @@ curl -X POST http://localhost:3002/task-request \
     "amount": "1000000",
     "sender": "0xYourAgentAddress",
     "model_id": "llama-3-70b",
-    "input_hash": "0xabcdef..."
+    "input_hash": "0xabcdef...",
+    "proof_system": "sp1"
+  }'
+```
+
+Phase 1 zkGPT path (requires `ZKGPT_PROVER_URL` configured):
+```bash
+curl -X POST http://localhost:3002/task-request \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: my-secret-key" \
+  -d '{
+    "message_type": "inference_request",
+    "chain_id": "theta",
+    "amount": "1000000",
+    "sender": "0xYourAgentAddress",
+    "model_id": "llama-3-70b",
+    "input_hash": "0xabcdef...",
+    "proof_system": "zkgpt"
   }'
 ```
 
@@ -195,6 +214,22 @@ curl -X POST http://localhost:3002/a2a-message \
   "ttl": 3600
 }
 ```
+
+---
+
+### `POST /a2a-settle-fair-exchange` — Settle A2A bid via Fair Exchange (Phase 1)
+
+Settle an accepted A2A bid using a PAS (Proxy Adaptor Signature) instead of a ZK proof. Requires `A2A_CIRCUIT_ADDRESS`; if `RELAYER_PRIVATE_KEY` is set, the server submits the tx; otherwise returns encoded calldata.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `bid_id` | string | Yes | Bytes32 bid ID (0x-prefixed 64 hex chars) |
+| `result_hash` | string | Yes | Hash of delivered result (0x-prefixed 64 hex chars) |
+| `v` | number | Yes | ECDSA recovery id (0–255) |
+| `r` | string | Yes | Signature r (0x-prefixed 64 hex chars) |
+| `s` | string | Yes | Signature s (0x-prefixed 64 hex chars) |
+
+**Responses:** 202 + `tx_hash` when relayer configured; 200 + `calldata` when not; 503 if `A2A_CIRCUIT_ADDRESS` unset.
 
 ---
 

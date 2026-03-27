@@ -1,0 +1,6 @@
+# Same as smoke but do NOT override ENTRYPOINT — use node:20-slim default (entrypoint + CMD).
+# Some platforms mishandle ENTRYPOINT []. Try this if smoke gets 0/22.
+# Build: docker build -f zkgpt-prover/Dockerfile.smoke-v2 --platform linux/amd64 -t xfuel/xfuel-zkgpt-prover:smoke-v2 .
+FROM node:20-slim
+EXPOSE 81
+CMD ["node", "-e", "require('http').createServer((q,r)=>{r.writeHead(200,{'Content-Type':'application/json'});r.end(JSON.stringify({status:'ok',service':'smoke-v2'}));}).listen(81,'0.0.0.0',()=>console.log('smoke-v2 listening 81'));"]

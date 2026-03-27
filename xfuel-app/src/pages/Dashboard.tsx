@@ -65,25 +65,25 @@ interface TdropStats {
 }
 
 const mockCircuitActivity = [
-  { name: 'A2A Circuit', verifications: '12,450', gasAvg: '0.0034 ETH', status: 'active', uptime: '99.8%' },
-  { name: 'ZKML Circuit', verifications: '8,230', gasAvg: '0.0041 ETH', status: 'active', uptime: '99.9%' },
-  { name: 'Data Hubs', verifications: '6,120', gasAvg: '0.0028 ETH', status: 'active', uptime: '99.7%' },
-  { name: 'Bridge Verifier', verifications: '4,821', gasAvg: '0.0052 ETH', status: 'active', uptime: '100%' },
-  { name: 'Compute Marketplace', verifications: '3,450', gasAvg: '0.0038 ETH', status: 'active', uptime: '99.5%' },
-  { name: 'Inference Router', verifications: '2,890', gasAvg: '0.0045 ETH', status: 'active', uptime: '99.6%' },
+  { name: 'A2A Circuit', verifications: '—', gasAvg: '—', status: 'demo', uptime: '—' },
+  { name: 'ZKML Circuit', verifications: '—', gasAvg: '—', status: 'demo', uptime: '—' },
+  { name: 'Data Hubs', verifications: '—', gasAvg: '—', status: 'demo', uptime: '—' },
+  { name: 'Bridge Verifier', verifications: '—', gasAvg: '—', status: 'demo', uptime: '—' },
+  { name: 'Compute Marketplace', verifications: '—', gasAvg: '—', status: 'demo', uptime: '—' },
+  { name: 'Inference Router', verifications: '—', gasAvg: '—', status: 'demo', uptime: '—' },
 ];
 
 const mockRevenue = [
-  { source: 'Bridge Fees', amount: '$840K', percent: 40 },
-  { source: 'Circuit Verification', amount: '$630K', percent: 30 },
-  { source: 'AI Inference', amount: '$420K', percent: 20 },
-  { source: 'Partner Hooks', amount: '$210K', percent: 10 },
+  { source: 'Buyback-Burn (BBB)', amount: '(demo)', percent: 30 },
+  { source: 'Growth & expansion (GET)', amount: '(demo)', percent: 30 },
+  { source: 'Stakers (veXF)', amount: '(demo)', percent: 25 },
+  { source: 'Treasury', amount: '(demo)', percent: 15 },
 ];
 
 const mockNetworkHealth = [
-  { network: 'Theta Mainnet', blockHeight: '24,582,100', latency: '12ms', status: 'healthy' },
-  { network: 'Bittensor EVM', blockHeight: '3,142,850', latency: '45ms', status: 'healthy' },
-  { network: 'Osmosis', blockHeight: '18,901,200', latency: '23ms', status: 'syncing' },
+  { network: 'Theta (testnet target)', blockHeight: '—', latency: '—', status: 'demo' },
+  { network: 'Bittensor EVM', blockHeight: '—', latency: '—', status: 'demo' },
+  { network: 'Osmosis', blockHeight: '—', latency: '—', status: 'demo' },
 ];
 
 function formatUptime(seconds: number): string {
@@ -255,19 +255,19 @@ export default function Dashboard() {
 
   const tvlDisplay = totalDeposited
     ? `$${(Number(formatEther(totalDeposited)) * 0.5).toFixed(1)}M`
-    : '$48.2M';
+    : '—';
   const feesDisplay = totalDistributed
     ? `$${(Number(formatEther(totalDistributed)) * 0.5).toFixed(1)}M`
-    : '$2.1M';
-  const distDisplay = distCount ? Number(distCount).toLocaleString() : '1,247';
+    : '—';
+  const distDisplay = distCount ? Number(distCount).toLocaleString() : '—';
   const proofCount = verifierStats ? Number(verifierStats[0]).toLocaleString() : '—';
   const circuitsDisplay = circuitCount ? String(Number(circuitCount)) : '21';
 
   const protocolStats = [
-    { label: 'Total Value Locked', value: tvlDisplay, change: '+12.4%' },
-    { label: 'Total Fees Generated', value: feesDisplay, change: '+8.7%' },
-    { label: 'Distributions Made', value: distDisplay, change: `+${distCount ? '34' : '34'}` },
-    { label: 'Active Circuits', value: circuitsDisplay, change: proofCount !== '—' ? `${proofCount} proofs` : '+3' },
+    { label: 'Total Value Locked', value: tvlDisplay, change: hasLiveData ? 'live' : 'demo' },
+    { label: 'Total Fees Generated', value: feesDisplay, change: hasLiveData ? 'live' : 'demo' },
+    { label: 'Distributions Made', value: distDisplay, change: hasLiveData ? 'live' : 'demo' },
+    { label: 'Active Circuits', value: circuitsDisplay, change: proofCount !== '—' ? `${proofCount} proofs` : 'demo' },
   ];
 
   return (
@@ -275,7 +275,7 @@ export default function Dashboard() {
       <div className="container">
         <div className="page-header">
           <h1>Protocol Dashboard</h1>
-          <p>Real-time metrics across all XFuel Protocol infrastructure</p>
+          <p>Mix of on-chain reads (when env is set) and labeled demo placeholders.</p>
         </div>
 
         {!hasLiveData && (
@@ -289,7 +289,7 @@ export default function Dashboard() {
             <div key={s.label} className="card">
               <div className="stat-label">{s.label}</div>
               <div className="stat-value" style={{ fontSize: '1.75rem' }}>{s.value}</div>
-              <div style={{ color: '#22c55e', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+              <div style={{ color: s.change === 'demo' ? '#a78bfa' : '#22c55e', fontSize: '0.85rem', marginTop: '0.25rem' }}>
                 {s.change}
               </div>
             </div>
@@ -298,7 +298,7 @@ export default function Dashboard() {
 
         <div className="grid grid-2" style={{ marginBottom: '2rem' }}>
           <div className="card">
-            <h3 style={{ marginBottom: '1.25rem' }}>Revenue Breakdown</h3>
+            <h3 style={{ marginBottom: '1.25rem' }}>Revenue breakdown (demo split 30/30/25/15)</h3>
             {mockRevenue.map((r) => (
               <div key={r.source} style={{ marginBottom: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
@@ -313,7 +313,7 @@ export default function Dashboard() {
           </div>
 
           <div className="card">
-            <h3 style={{ marginBottom: '1.25rem' }}>Network Health</h3>
+            <h3 style={{ marginBottom: '1.25rem' }}>Network health (demo)</h3>
             {mockNetworkHealth.map((n) => (
               <div key={n.network} style={rowStyle}>
                 <div>
@@ -322,7 +322,7 @@ export default function Dashboard() {
                     Block #{n.blockHeight} · {n.latency}
                   </div>
                 </div>
-                <span className={`badge badge-${n.status === 'healthy' ? 'green' : 'orange'}`}>
+                <span className={`badge badge-${n.status === 'demo' ? 'purple' : 'green'}`}>
                   {n.status}
                 </span>
               </div>
@@ -331,11 +331,11 @@ export default function Dashboard() {
             <hr className="separator" />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
               <span style={{ color: '#8a8a9a' }}>SP1 Prover Status</span>
-              <span className="badge badge-green">Online</span>
+              <span className="badge badge-purple">{hasLiveData ? 'check env' : 'demo'}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginTop: '0.5rem' }}>
               <span style={{ color: '#8a8a9a' }}>Hyperlane Relayer</span>
-              <span className="badge badge-green">Active</span>
+              <span className="badge badge-purple">{hasLiveData ? 'check env' : 'demo'}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginTop: '0.5rem' }}>
               <span style={{ color: '#8a8a9a' }}>AI Intents</span>
@@ -347,7 +347,7 @@ export default function Dashboard() {
         </div>
 
         <div className="card">
-          <h3 style={{ marginBottom: '1.25rem' }}>Circuit Activity</h3>
+          <h3 style={{ marginBottom: '1.25rem' }}>Circuit activity (demo — not live analytics)</h3>
           <div style={{ overflowX: 'auto' }}>
             <table style={tableStyle}>
               <thead>
@@ -367,7 +367,7 @@ export default function Dashboard() {
                     <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>{c.gasAvg}</td>
                     <td style={tdStyle}>{c.uptime}</td>
                     <td style={tdStyle}>
-                      <span className="badge badge-green">{c.status}</span>
+                      <span className="badge badge-purple">{c.status}</span>
                     </td>
                   </tr>
                 ))}
@@ -491,7 +491,6 @@ export default function Dashboard() {
             </>
           )}
         </div>
-      </div>
 
         {/* ── 6.1 EdgeCloud Stats (Track 6.1) ──────────────────────────────── */}
         <div className="card" style={{ marginTop: '2rem' }}>
@@ -604,8 +603,7 @@ export default function Dashboard() {
             </>
           )}
         </div>
-
-    </div>
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 # XFuel Protocol — Documentation Hub
 
-> **Live app:** [xfuel.app](https://xfuel.app) · **GitHub:** [github.com/XFuelAI/xfuel-protocol](https://github.com/XFuelAI/xfuel-protocol) · **Security:** security@xfuel.app
+> **Live app:** [xfuel.app](https://xfuel.app) · **GitHub:** [github.com/XFuel-Lab/xfuel-protocol](https://github.com/XFuel-Lab/xfuel-protocol) · **Security:** security@xfuel.app
 
 ---
 

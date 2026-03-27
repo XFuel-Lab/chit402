@@ -141,7 +141,8 @@ describe('ThetaInferenceCircuit — Branch Coverage', function () {
     await circuit.connect(relayer).completeIntent(iid1, MOCK_OUTPUT, MOCK_MODEL, 500);
     await circuit.connect(relayer).settleIntent(
       iid1, MOCK_PROOF, MOCK_PV,
-      ethers.keccak256(ethers.toUtf8Bytes('branch-settle-1'))
+      ethers.keccak256(ethers.toUtf8Bytes('branch-settle-1')),
+      false
     );
 
     await expect(
@@ -166,7 +167,7 @@ describe('ThetaInferenceCircuit — Branch Coverage', function () {
   it('should revert settleIntent/failIntent on non-existent intents and getEffectivePrice/submitIntent on non-existent service', async function () {
     const nul = ethers.keccak256(ethers.toUtf8Bytes('branch-noexist'));
     await expect(
-      circuit.connect(relayer).settleIntent(BOGUS, MOCK_PROOF, MOCK_PV, nul)
+      circuit.connect(relayer).settleIntent(BOGUS, MOCK_PROOF, MOCK_PV, nul, false)
     ).to.be.reverted;
 
     await expect(
@@ -208,7 +209,7 @@ describe('ThetaInferenceCircuit — Branch Coverage', function () {
     await c.connect(relayer).completeIntent(iid, MOCK_OUTPUT, MOCK_MODEL, 800);
 
     const nul = ethers.keccak256(ethers.toUtf8Bytes('zk-eoa-null'));
-    await c.connect(relayer).settleIntent(iid, MOCK_PROOF, MOCK_PV, nul);
+    await c.connect(relayer).settleIntent(iid, MOCK_PROOF, MOCK_PV, nul, false);
 
     const intent = await c.getIntent(iid);
     expect(intent.status).to.equal(5n);
@@ -277,7 +278,7 @@ describe('ThetaInferenceCircuit — Branch Coverage', function () {
     await circuit.pause();
     const nul = ethers.keccak256(ethers.toUtf8Bytes('paused-settle'));
     await expect(
-      circuit.connect(relayer).settleIntent(iid, MOCK_PROOF, MOCK_PV, nul)
+      circuit.connect(relayer).settleIntent(iid, MOCK_PROOF, MOCK_PV, nul, false)
     ).to.be.reverted;
 
     await circuit.unpause();

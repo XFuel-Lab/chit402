@@ -166,13 +166,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-[Unreleased]: https://github.com/XFuelAI/xfuel-protocol/compare/v2.4.0...HEAD
-[2.4.0]: https://github.com/XFuelAI/xfuel-protocol/compare/v2.3.0...v2.4.0
-[2.3.0]: https://github.com/XFuelAI/xfuel-protocol/compare/v2.2.0...v2.3.0
-[2.2.0]: https://github.com/XFuelAI/xfuel-protocol/compare/v2.1.0...v2.2.0
-[2.1.0]: https://github.com/XFuelAI/xfuel-protocol/compare/v2.0.0...v2.1.0
-[2.0.0]: https://github.com/XFuelAI/xfuel-protocol/compare/v1.6.0...v2.0.0
-[1.6.0]: https://github.com/XFuelAI/xfuel-protocol/compare/v1.5.0...v1.6.0
-[1.5.0]: https://github.com/XFuelAI/xfuel-protocol/compare/v1.4.0...v1.5.0
-[1.4.0]: https://github.com/XFuelAI/xfuel-protocol/compare/v1.0.0...v1.4.0
-[1.0.0]: https://github.com/XFuelAI/xfuel-protocol/releases/tag/v1.0.0
+[Unreleased]: https://github.com/XFuel-Lab/xfuel-protocol/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/XFuel-Lab/xfuel-protocol/compare/v2.3.0...v2.4.0
+[2.3.0]: https://github.com/XFuel-Lab/xfuel-protocol/compare/v2.2.0...v2.3.0
+[2.2.0]: https://github.com/XFuel-Lab/xfuel-protocol/compare/v2.1.0...v2.2.0
+[2.1.0]: https://github.com/XFuel-Lab/xfuel-protocol/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/XFuel-Lab/xfuel-protocol/compare/v1.6.0...v2.0.0
+[1.6.0]: https://github.com/XFuel-Lab/xfuel-protocol/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/XFuel-Lab/xfuel-protocol/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/XFuel-Lab/xfuel-protocol/compare/v1.0.0...v1.4.0
+[1.0.0]: https://github.com/XFuel-Lab/xfuel-protocol/releases/tag/v1.0.0

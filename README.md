@@ -38,6 +38,7 @@ Live: **[xfuel.app](https://xfuel.app)** (Theta Mainnet Beta)
 - [EVM Prover (Phase 2)](#evm-prover-phase-2)
 - [Solana Prover (Phase 3)](#solana-prover-phase-3)
 - [Security](#security)
+- [Research Integration & Attribution](#research-integration--attribution)
 - [Tech Stack](#tech-stack)
 - [Repo Structure](#repo-structure)
 - [Development Setup](#development-setup)
@@ -85,6 +86,7 @@ Read the complete technical whitepaper: **[WHITEPAPER.md](WHITEPAPER.md)**
 - **16+ modular circuits** — AI compute, DePIN infrastructure, yield, robotics, data, energy, wireless, and more
 - **Revenue innovation** — Growth & Expansion Treasury (GET), Fee-to-Stake routing
 - **Cross-chain** — Theta (primary), Bittensor, Osmosis, Akash, Solana, Filecoin, NEAR, Aptos, Sui
+- **Phase 1 research integration** — zkGPT (LLM ZK proofs; [eprint 2025/1184](https://eprint.iacr.org/2025/1184), [security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt)) and Fair Exchange / PAS (atomic A2A payment↔result; [eprint 2026/395](https://eprint.iacr.org/2026/395)). Mock prover: `node zkgpt-prover/mock-server.cjs`; smoke test: `npm run test:zkgpt-mock`. Full attribution: [`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md).
 
 ---
 
@@ -104,6 +106,7 @@ Read the complete technical whitepaper: **[WHITEPAPER.md](WHITEPAPER.md)**
 | **Security** | Trustless by design | SP1 proofs, nullifier replay protection, circuit breakers |
 | **Cross-chain** | Hybrid EVM + WASM + SVM | Theta, Bittensor, Osmosis, Akash, Solana, Filecoin, NEAR, Aptos, Sui |
 | **DePIN** | Beyond AI | Energy grids, wireless coverage, mapping sensors, bandwidth sharing |
+| **Phase 1 research** | zkGPT + Fair Exchange | Optional zkGPT inference path; A2A Fair Exchange (PAS) — see [References & attribution](#research-integration--attribution) |
 
 ### Revenue Model
 
@@ -945,6 +948,20 @@ chmod +x deploy/deploy-devnet.sh
 | Bug Bounty | $500K via Immunefi | Ongoing post-Phase 1 |
 
 > **Pre-Audit Notice:** Beta launch for traction validation. Use at your own risk. Report vulnerabilities to security@xfuel.app.
+
+---
+
+## Research Integration & Attribution
+
+XFuel integrates third-party research with full credit to authors and sources. Formal citations, eprint links, and compliance notes are in **[`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md)**.
+
+| Integration | Source | XFuel use |
+|-------------|--------|-----------|
+| **zkGPT** | [eprint.iacr.org/2025/1184](https://eprint.iacr.org/2025/1184) — *zkGPT: Efficient Non-Interactive ZK for LLM Inference* (NUS/HKUST). Code: [github.com/security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt) | Optional inference proof path (`proof_system: zkgpt`); `ZKVerifierZkGPT.sol`; `zkgpt-prover/` scaffold. |
+| **Fair Exchange (PAS)** | [eprint.iacr.org/2026/395](https://eprint.iacr.org/2026/395) — *Delegated Payments for AI Agents: Fair Exchange on Bitcoin/EVM* | A2A atomic payment↔result; `settleBidFairExchange()`, `POST /a2a-settle-fair-exchange`, SDK `settleWithFairExchange()`. |
+| **Interstellar** | [eprint.iacr.org/2025/1294](https://eprint.iacr.org/2025/1294) (Jieyi Long, Theta Labs; PKC 2026) | Future prover track — see WHITEPAPER §12. |
+
+We do not claim ownership of the names “zkGPT” or “Interstellar”; they refer to the cited works. When referencing XFuel’s use of these results, please cite the original papers.
 
 ---
 

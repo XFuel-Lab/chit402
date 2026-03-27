@@ -69,7 +69,8 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
 
     // ─── Core Layer References ────────────────────────────────────────────────
     address public revenueSplitter;
-    address public zkVerifier;
+    address public zkVerifier;           // ZKVerifierSP1 for SP1 proofs
+    address public zkVerifierZkGPT;      // Phase 1: ZKVerifierZkGPT for zkGPT (GKR+Lasso) inference proofs
 
     // ─── Fee Configuration ────────────────────────────────────────────────────
     uint16 public feeBps = 50;                  // 0.5% default
@@ -781,6 +782,7 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
      * @param publicValues SP1 public values encoding serviceType, modelHash,
      *        inputHash, outputHash for privacy-preserving verification.
      * @param nullifier Replay protection nullifier.
+     * @param useZkGPT If true and zkVerifierZkGPT is set, use ZKVerifierZkGPT (Phase 1); else use zkVerifier (SP1).
      *
      * @dev Per Section 7: Uses SP1ProofHooks for nullifier computation.
      *      In mock mode (zkVerifier == address(0)), proof verification is skipped.
@@ -789,7 +791,8 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
         bytes32 intentId,
         bytes calldata proof,
         bytes calldata publicValues,
-        bytes32 nullifier
+        bytes32 nullifier,
+        bool useZkGPT
     ) external onlyRole(RELAYER_ROLE) nonReentrant whenNotPaused {
         Intent storage i = intents[intentId];
         if (i.submittedAt == 0) revert IntentNotFound();
@@ -800,9 +803,10 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
         if (_usedNullifiers[nullifier]) revert NullifierUsed();
         _usedNullifiers[nullifier] = true;
 
-        // Verify SP1 proof via Core ZKVerifier — per Section 3.2
-        if (zkVerifier != address(0)) {
-            (bool ok, ) = zkVerifier.call(
+        // Verify proof via Core verifier (SP1 or zkGPT per Phase 1) — per Section 3.2
+        address verifier = (useZkGPT && zkVerifierZkGPT != address(0)) ? zkVerifierZkGPT : zkVerifier;
+        if (verifier != address(0)) {
+            (bool ok, ) = verifier.call(
                 abi.encodeWithSignature(
                     "verifyProof(bytes32,bytes,bytes,bytes32)",
                     CIRCUIT_ID, publicValues, proof, nullifier
@@ -873,6 +877,11 @@ contract ThetaInferenceCircuit is AccessControl, Pausable, ReentrancyGuard {
 
     function setZKVerifier(address _zk) external onlyRole(DEFAULT_ADMIN_ROLE) {
         zkVerifier = _zk;
+    }
+
+    /// @notice Set zkGPT verifier for Phase 1 inference path (proof_system: zkgpt).
+    function setZKVerifierZkGPT(address _zk) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        zkVerifierZkGPT = _zk;
     }
 
     /**

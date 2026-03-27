@@ -4,6 +4,7 @@ import { ethers } from 'ethers';
 import config from './config.js';
 import logger from './logger.js';
 import { getSP1Prover } from './sp1-prover-client.js';
+import { getZkGPTProver, isZkGPTProverConfigured } from './zkgpt-prover-client.js';
 
 /**
  * AI Intent Listener — Osmosis/Akash IBC Event Monitor
@@ -1233,8 +1234,6 @@ class AIListener {
    */
   async _generateTaskProof(task) {
     try {
-      const sp1Prover = getSP1Prover();
-
       // Prepare AI task proof request (compatible with SP1 prover batch format)
       const proofRequest = {
         // Standard SP1 fields
@@ -1255,40 +1254,90 @@ class AIListener {
         fee_amount: task.feeAmount,
         output_hash: task.result?.outputHash || task.result?.commitment || null,
         completed_at: task.updatedAt,
+        // Phase 1: proof_system for routing (sp1 | zkgpt) — circuits use this for verifier choice
+        proof_system: task.intent.proofSystem || 'sp1',
       };
 
-      logger.info({
-        taskId: task.taskId,
-        intentType: task.intent.type,
-        amount: task.intent.amount,
-      }, 'Generating SP1 ZK proof for AI task settlement');
+      const useZkGPT = (task.intent.proofSystem || 'sp1') === 'zkgpt';
+      const zkGPTUrl = process.env.ZKGPT_PROVER_URL || '';
+      const zkGPTProver = getZkGPTProver();
 
-      // Generate proof (use urgent=true for AI tasks — low latency preferred)
-      const proofResult = await sp1Prover.generateProof(proofRequest, true);
+      logger.info(
+        { taskId: task.taskId, useZkGPT, zkGPTConfigured: !!zkGPTProver, zkGPTUrlHint: zkGPTUrl ? `${zkGPTUrl.slice(0, 40)}...` : '(unset)' },
+        'Proof generation: branch check'
+      );
 
-      task.sp1Proof = {
-        proof: proofResult.proof,
-        publicInputs: proofResult.publicInputs,
-        nullifier: proofResult.nullifier,
-        provingTimeMs: proofResult.provingTimeMs,
-        timestamp: Date.now(),
-      };
-
-      logger.info({
-        taskId: task.taskId,
-        provingTimeMs: proofResult.provingTimeMs,
-        nullifier: proofResult.nullifier,
-      }, 'SP1 ZK proof generated for AI task');
+      let proofResult;
+      if (useZkGPT && zkGPTProver) {
+        logger.info({ taskId: task.taskId }, 'Generating zkGPT proof for AI task (Phase 1)');
+        proofResult = await zkGPTProver.generateProof(proofRequest, true);
+        task.sp1Proof = {
+          proof: proofResult.proof,
+          publicInputs: proofResult.publicInputs,
+          publicValues: proofResult.publicValues ?? proofResult.publicInputs,
+          nullifier: proofResult.nullifier,
+          provingTimeMs: proofResult.provingTimeMs,
+          timestamp: Date.now(),
+          proofSystem: 'zkgpt',
+        };
+        logger.info({
+          taskId: task.taskId,
+          provingTimeMs: proofResult.provingTimeMs,
+          nullifier: proofResult.nullifier?.slice(0, 18) + '...',
+          proofLen: proofResult.proof?.length ?? 0,
+        }, 'zkGPT proof generated for AI task');
+      } else {
+        if (useZkGPT && !isZkGPTProverConfigured()) {
+          logger.warn(
+            { taskId: task.taskId },
+            'proof_system=zkgpt requested but ZKGPT_PROVER_URL not set; falling back to SP1'
+          );
+        }
+        const sp1Prover = getSP1Prover();
+        if (!sp1Prover) {
+          logger.warn({ taskId: task.taskId }, 'SP1_PROVER_URL not set; skipping SP1 proof');
+          task.sp1Proof = { error: 'SP1_PROVER_URL not set', timestamp: Date.now() };
+        } else {
+          logger.info({
+            taskId: task.taskId,
+            intentType: task.intent.type,
+            amount: task.intent.amount,
+          }, 'Generating SP1 ZK proof for AI task settlement');
+          proofResult = await sp1Prover.generateProof(proofRequest, true);
+          task.sp1Proof = {
+            proof: proofResult.proof,
+            publicInputs: proofResult.publicInputs,
+            nullifier: proofResult.nullifier,
+            provingTimeMs: proofResult.provingTimeMs,
+            timestamp: Date.now(),
+          };
+          logger.info({
+            taskId: task.taskId,
+            provingTimeMs: proofResult.provingTimeMs,
+            nullifier: proofResult.nullifier,
+          }, 'SP1 ZK proof generated for AI task');
+        }
+      }
     } catch (error) {
       // Proof generation failure is non-fatal for AI tasks — log and continue
       // The task is still completed; proof can be regenerated later
+      const proverBody = error.response?.data;
+      const errCode = error.code ?? error.response?.data?.code;
+      const errMsg = error.message ?? String(error);
       logger.warn({
-        err: error,
         taskId: task.taskId,
+        status: error.response?.status,
+        errorCode: errCode,
+        errorMessage: errMsg,
+        proverError: proverBody?.error ?? (typeof proverBody === 'string' ? proverBody : undefined),
+        proverUrlHint: process.env.ZKGPT_PROVER_URL ? `${process.env.ZKGPT_PROVER_URL.replace(/\/$/, '').slice(0, 50)}...` : '(unset)',
       }, 'SP1 proof generation failed for AI task (non-fatal — task still completed)');
 
+      const proverError = proverBody?.error ?? (typeof proverBody === 'string' ? proverBody : undefined);
       task.sp1Proof = {
-        error: error.message,
+        error: errMsg,
+        prover_error: proverError ?? (errCode ? `${errCode}: ${errMsg}` : errMsg),
+        prover_response: typeof proverBody === 'object' && proverBody !== null ? proverBody : undefined,
         timestamp: Date.now(),
       };
     }

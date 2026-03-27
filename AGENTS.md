@@ -195,7 +195,11 @@ sdk/js/                   — JavaScript SDK (xfuel-sdk)
 docs/M2M_API.md           — Full REST API reference
 docs/THETA_INTEGRATION_PLAN.md — Theta deep integration tracker
 docs/TAO_CIRCUIT_HYPERLANE_E2E.md — Bittensor cross-chain E2E guide
+docs/ZK-RESEARCH-PIPELINE.md — ZK research pipeline (papers, tiers, product-fit)
+docs/ZK-RESEARCH-UPGRADE-PACKAGE.md — Unified upgrade package (best per area, no overlap)
 deploy/manifests/         — Timestamped deployment manifests (testnet addresses)
+zkgpt-prover/             — Phase 1 zkGPT mock server + smoke test (E2E)
+docs/PHASE1_KICKOFF.md    — Phase 1 status, run Phase 1 checks (npm run test:phase1), post-deploy checklist
 ```
 
 ---
@@ -203,5 +207,88 @@ deploy/manifests/         — Timestamped deployment manifests (testnet addresse
 ## Security
 
 - Bug bounty: up to $50,000 (Critical). See [`docs/bug-bounty.md`](docs/bug-bounty.md)
-- Responsible disclosure: security@xfuel.app or [GitHub Security Advisory](https://github.com/XFuelAI/xfuel-protocol/security)
+- Responsible disclosure: security@xfuel.app or [GitHub Security Advisory](https://github.com/XFuel-Lab/xfuel-protocol/security)
 - CertiK Phase 1 audit: Q2 2026 (scope: `contracts/core/`)
+
+---
+
+## Believer Round — Community Funding
+
+XFuel is running a phased community funding round using the `BelieverRound.sol` contract.
+
+**Current Phase: 1**
+
+| Parameter | Value |
+|-----------|-------|
+| Contract | `contracts/circuits/BelieverRound.sol` |
+| Hard cap | 2,000,000 TFUEL (Phase 1) |
+| Base price (Phase 1) | 25 XF per 1 TFUEL |
+| Min commitment | 100 TFUEL |
+| Max per wallet | None |
+| Cliff | 90 days |
+| Vesting | 270 days linear after cliff (9 months; ~12 months total from TGE) |
+| Lock bonuses | Optional tiers 1–3: +8% / +20% / +35% XF with longer min-claim delay (on-chain) |
+| Admin | `0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257` (Gnosis Safe) |
+| UI | `believers/index.html`, `xfuel-app` route `/believers` |
+
+**Commit (on-chain):**
+```
+BelieverRound.commit{ value: tfuelAmount }()           // base tier
+BelieverRound.commitWithLock{ value: tfuelAmount }(tier)  // tier 1–3
+```
+
+**Token allocation (total 1B XF supply):**
+- Phase 1: 40M XF (4%) @ 25 XF/TFUEL base
+- Phase 2: 120M XF (12%) @ 20 XF/TFUEL
+- Phase 3: 240M XF (24%) @ 15 XF/TFUEL
+- Total believer allocation: 400M XF (40%)
+
+Refund available if TGE not triggered within 180 days. See `believer/launch-round.cjs` for deployment.
+
+---
+
+## Angel Round — Pre-TGE treasury (no refund)
+
+Separate contract from Believers: **`contracts/circuits/AngelRound.sol`**. For parties who accept **no on-chain TFUEL refund** and **pre-TGE treasury use** (audits, ops, etc.). Admin may call `withdrawToTreasury(to, amount, memo)` while the round is Open or Closed **before** `triggerTGE`; memos are on-chain for transparency (not a cryptographic earmark).
+
+| Parameter | Typical default (env overrides) |
+|-----------|----------------------------------|
+| Deploy script | `believer/launch-angel-round.cjs` |
+| Hard cap | 2,000,000 TFUEL (set `ANGEL_HARD_CAP`) |
+| Min commitment | 10,000 TFUEL (`ANGEL_MIN_COMMITMENT`) |
+| Price | 35 XF / 1 TFUEL (`ANGEL_PRICE_NUM` / `ANGEL_PRICE_DEN`) |
+| Cliff / vesting | 90d cliff + 270d linear (same family as Believer) |
+| Lock tiers | None in v1 |
+| TGE | **Separate** `triggerTGE` from BelieverRound — two contracts ⇒ two TGE calls |
+
+**veXF:** AngelRound does **not** mint veXF. Commitments yield **vested XF claims** after TGE; **veXF** comes from locking XF in `veXFGovernance` (or equivalent) after tokens are held.
+
+**xfuel-app:** route `/angels`, env `VITE_ANGEL_ROUND_ADDRESS`.
+
+---
+
+## ZK Prover Research Track — Interstellar
+
+XFuel's current ZK pipeline uses **SP1 (Succinct)** — STARK proving with Groth16/PLONK wrapping for on-chain settlement (~270K gas per proof). A first-party research upgrade has been published by Theta Labs:
+
+**[Interstellar](https://eprint.iacr.org/2025/1294)** — GKR-based IVC folding scheme (Jieyi Long, Theta Labs, PKC 2026). Key properties:
+- **1.59x–6.74x prover speedup** on matrix/transformer workloads (direct benefit to `inference_request` proving)
+- **Collaborative folding** — multiple provers with disjoint private witnesses produce a single joint IVC proof (enables ZK-verified swarm tasks across `formSwarm`/`joinSwarm` agents)
+
+**No on-chain changes required.** `ZKVerifierSP1.sol` verifies Groth16/PLONK — it is proof-system-agnostic. Interstellar is a prover-side upgrade only (`sp1-prover/` + a new `SP1_PROVER=interstellar` env option).
+
+**Status:** Not yet integrated (pending SP1 toolchain support or Theta EdgeCloud dedicated prover). Tracked in `WHITEPAPER.md` Section 12 — Research Track.
+
+---
+
+## References & Research Credits
+
+XFuel attributes and cites third-party research used in the protocol. Full citations, eprint links, and compliance: **[`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md)**.
+
+| Integration | Source |
+|-------------|--------|
+| **zkGPT** (Phase 1) | [eprint.iacr.org/2025/1184](https://eprint.iacr.org/2025/1184); implementation [github.com/security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt) |
+| **Fair Exchange (PAS)** (Phase 1) | [eprint.iacr.org/2026/395](https://eprint.iacr.org/2026/395) — *Delegated Payments for AI Agents: Fair Exchange on Bitcoin/EVM* |
+| **Interstellar** (research track) | [eprint.iacr.org/2025/1294](https://eprint.iacr.org/2025/1294) (Jieyi Long, Theta Labs; PKC 2026) |
+
+**Phase 1 deploy (optional env):** `FAIR_EXCHANGE_PROXY_ADDRESS` (deploy-full/testnet → setFairExchangeProxy), `ZK_VERIFIER_ZKGPT` (theta-inference.cjs), `ZKGPT_PROVER_URL` (backend + core-layer). See [docs/PHASE1_KICKOFF.md](docs/PHASE1_KICKOFF.md) post-deploy checklist.

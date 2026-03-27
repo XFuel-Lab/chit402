@@ -1443,12 +1443,26 @@ class CoreListener {
   async _generateProof(proofRequest, circuitId) {
     const MAX_RETRIES = 3;
     const LATENCY_THRESHOLD_MS = 10000;
+    const useZkGPT = proofRequest.proofSystem === 'zkgpt' && process.env.ZKGPT_PROVER_URL;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       const startTime = Date.now();
 
       try {
-        const result = await this._callSP1Prover(proofRequest);
+        let result;
+        if (useZkGPT) {
+          try {
+            result = await this._callZkGPTProver(proofRequest);
+          } catch (zkgptErr) {
+            this.log.warn?.({ err: zkgptErr.message, circuitId }, 'zkGPT prover failed — falling back to SP1 mock');
+            result = await this._callSP1Prover(proofRequest);
+          }
+        } else {
+          if (proofRequest.proofSystem === 'zkgpt' && !process.env.ZKGPT_PROVER_URL) {
+            this.log.warn?.({ circuitId }, 'proof_system=zkgpt requested but ZKGPT_PROVER_URL not set — using SP1 mock');
+          }
+          result = await this._callSP1Prover(proofRequest);
+        }
         const elapsed = Date.now() - startTime;
 
         result.provingTimeMs = elapsed;
@@ -1495,6 +1509,64 @@ class CoreListener {
     await new Promise((r) => setTimeout(r, delay));
 
     return mockProof;
+  }
+
+  /**
+   * Call the zkGPT prover (Phase 1 — ZKG-1). Uses ZKGPT_PROVER_URL; request/response
+   * shape matches backend theta-bridge zkgpt-prover-client for compatibility.
+   */
+  async _callZkGPTProver(proofRequest) {
+    const baseUrl = (process.env.ZKGPT_PROVER_URL || '').replace(/\/$/, '');
+    if (!baseUrl) throw new Error('ZKGPT_PROVER_URL not set');
+    const timeoutMs = parseInt(process.env.ZKGPT_PROVER_TIMEOUT_MS || '120000', 10);
+
+    const body = {
+      task_id: proofRequest.task_id ?? proofRequest.intentId,
+      output_hash: proofRequest.output_hash ?? proofRequest.outputHash,
+      net_amount: proofRequest.net_amount ?? proofRequest.netAmount ?? '0',
+      block_number: proofRequest.block_number ?? proofRequest.blockNumber ?? 0,
+      merkle_root: proofRequest.merkle_root ?? proofRequest.merkleRoot ?? '0x' + '00'.repeat(32),
+      identity_commitment: proofRequest.identity_commitment ?? proofRequest.identityCommitment ?? '0x' + '00'.repeat(32),
+      task_type: proofRequest.task_type ?? proofRequest.taskType ?? 'inference_request',
+      source_chain: proofRequest.source_chain ?? proofRequest.sourceChain ?? 'theta',
+    };
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(`${baseUrl}/prove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`zkGPT prover HTTP ${res.status}: ${text.slice(0, 200)}`);
+    }
+
+    const data = await res.json();
+    const proof = data.proof ?? data.proof_bytes;
+    if (!proof) throw new Error('zkGPT prover response missing proof');
+
+    const proofHex = typeof proof === 'string' && proof.startsWith('0x')
+      ? proof
+      : (typeof proof === 'string' ? '0x' + Buffer.from(proof, 'base64').toString('hex') : '0x' + Buffer.from(proof).toString('hex'));
+    const publicInputs = data.public_inputs ?? data.publicInputs ?? {};
+    const publicValues = data.public_values ?? data.publicValues ?? (typeof publicInputs === 'string' ? publicInputs : '0x' + 'cd'.repeat(64));
+    const rawNullifier = data.nullifier ?? data.nullifier_hex ?? '0';
+    const nullifier = rawNullifier.startsWith('0x') ? rawNullifier : '0x' + rawNullifier;
+    const provingTimeMs = data.proving_time_ms ?? data.provingTimeMs ?? 0;
+
+    return {
+      proof: proofHex,
+      publicValues: typeof publicValues === 'string' ? publicValues : ('0x' + Buffer.from(JSON.stringify(publicValues)).toString('hex')),
+      nullifier: nullifier.length === 66 ? nullifier : '0x' + nullifier.replace(/^0x/, '').padStart(64, '0'),
+      programVKey: proofRequest.programVKey || '0x' + '00'.repeat(32),
+      proofSizeBytes: data.proof_size ?? Math.max(260, (proofHex.length / 2) - 1),
+      provingTimeMs,
+    };
   }
 
   // ─── Proof Result Tracking ────────────────────────────────────────────────

@@ -25,7 +25,7 @@ XFuel's Cosmos IBC integration, completing the Theta ↔ Osmosis compute-and-set
 | **Package** | `ai-verifier v0.1.0` |
 | **Description** | ZK-verified AI DePIN task settlement + A2A messaging on Osmosis |
 | **License** | MIT |
-| **Source Repo** | https://github.com/XFuelAI/xfuel-protocol |
+| **Source Repo** | https://github.com/XFuel-Lab/xfuel-protocol |
 | **Source Path** | `cosmwasm-contracts/ai-verifier/` |
 | **Compiled Artifact** | `cosmwasm-contracts/ai-verifier/artifacts/ai_verifier.wasm` |
 | **Optimizer** | `cosmwasm/rust-optimizer:0.15.1` (reproducible) |
@@ -208,7 +208,7 @@ be deployed, and ibcTFUEL minting is blocked.
 
 ## Contact & Resources
 
-- **Repository:** https://github.com/XFuelAI/xfuel-protocol
+- **Repository:** https://github.com/XFuel-Lab/xfuel-protocol
 - **Technical docs:** `docs/ZK_BRIDGE_ARCHITECTURE.md`, `docs/THETA_INTEGRATION_PLAN.md`
 - **Security policy:** `SECURITY.md` (bug bounty up to $50K)
 - **CertiK audit:** Q2 2026 (EVM `contracts/core/` scope — CosmWasm audit planned for Q3)

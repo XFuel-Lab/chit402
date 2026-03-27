@@ -1223,10 +1223,14 @@ poll();setInterval(poll,5000);
 let sp1ProverClient = null;
 
 /**
- * Initialize the SP1 prover client
- * @returns {Promise<SP1ProverClient>}
+ * Initialize the SP1 prover client (skipped if SP1_PROVER_URL not set; allows zkGPT-only dev).
+ * @returns {Promise<SP1ProverClient | null>}
  */
 export async function initSP1Prover() {
+  if (!process.env.SP1_PROVER_URL) {
+    logger.info('SP1_PROVER_URL not set — SP1 proof generation disabled (zkGPT-only or dev)');
+    return null;
+  }
   if (!sp1ProverClient) {
     sp1ProverClient = new SP1ProverClient();
     
@@ -1251,14 +1255,11 @@ export async function initSP1Prover() {
 }
 
 /**
- * Get the SP1 prover client instance
- * @returns {SP1ProverClient}
+ * Get the SP1 prover client instance (null if SP1_PROVER_URL was not set).
+ * @returns {SP1ProverClient | null}
  */
 export function getSP1Prover() {
-  if (!sp1ProverClient) {
-    throw new Error('SP1 prover not initialized. Call initSP1Prover() first.');
-  }
-  return sp1ProverClient;
+  return sp1ProverClient ?? null;
 }
 
 export default SP1ProverClient;

@@ -10,48 +10,51 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 /**
  * @title BelieverRound
  * @author XFuel Protocol
- * @notice Community-first micro-commitment funding with cliff + linear vesting.
+ * @notice Community-first phased funding round with cliff + linear vesting and optional lock bonuses.
  *
- * Architecture:
- *   1. Commitment Phase  — Believers commit TFUEL/ETH within per-wallet caps.
- *   2. TGE Trigger       — Admin triggers Token Generation Event, deposits XF tokens.
- *   3. Cliff Period      — 3-month cliff; no claims allowed.
- *   4. Linear Vesting    — 12-month linear release (~8.33% per month).
- *   5. Claiming          — Believers claim unlocked tokens; excess returned.
- *   6. Refund Safety     — If TGE not triggered within deadline, full refund.
+ * Tokenomics (phased):
+ *   - Total XF supply:      1,000,000,000 XF
+ *   - Phase 1 allocation:   40,000,000 XF (4%)
+ *   - Phase 2 allocation:   120,000,000 XF (12%)
+ *   - Phase 3 allocation:   240,000,000 XF (24%)
+ *   - Total believer alloc: 400,000,000 XF (40%)
+ *   - Phase prices (base XF per 1 TFUEL): set per deployment (e.g. Phase 1 = 25/1).
  *
- * Key parameters:
- *   - Min commitment: 0.01 ETH / TFUEL  (gas-cost protection)
- *   - Max commitment: configurable per-wallet cap (anti-whale)
- *   - Cliff: 90 days (3 months)
- *   - Vesting: 365 days (12 months) linear after cliff
- *   - Total vesting: 455 days (15 months)
- *   - Refund deadline: 180 days from round close (if no TGE)
+ * Vesting (all tiers):
+ *   - 3-month cliff — no claims
+ *   - 9-month linear vesting after cliff — 12 months from TGE to full unlock by schedule
  *
- * Per OpenZeppelin VestingWallet patterns:
- *   - Linear vesting: tokens released proportional to elapsed time.
- *   - SafeERC20 for safe token transfers.
- *   - Immutable vesting parameters (no admin override post-TGE).
+ * Optional lock tiers (chosen on first commit; additional commits must match):
+ *   - Tier 0: base allocation, claims allowed after cliff (per vesting schedule)
+ *   - Tier 1: +8% XF,  earliest claim after 365 days from TGE
+ *   - Tier 2: +20% XF, earliest claim after 730 days from TGE
+ *   - Tier 3: +35% XF, earliest claim after 1095 days from TGE
+ *
+ * Refund: if TGE not triggered within 180 days of round open, full TFUEL refund.
  */
 contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
-    // ─── Round Parameters ─────────────────────────────────────────────
-    uint256 public maxCommitmentPerWallet;    // Max native token per wallet
-    uint256 public constant MIN_COMMITMENT = 0.01 ether;
-    uint256 public hardCap;                    // Total raise hard cap
-    uint256 public tokenPriceNumerator;        // XF tokens per 1 ETH (numerator)
-    uint256 public tokenPriceDenominator;      // XF tokens per 1 ETH (denominator)
+    uint256 public maxCommitmentPerWallet;
+    uint256 public constant MIN_COMMITMENT = 100 ether;
+    uint256 public hardCap;
+    uint256 public tokenPriceNumerator;
+    uint256 public tokenPriceDenominator;
+    uint8 public phase;
 
-    // ─── Vesting Parameters ───────────────────────────────────────────
-    uint256 public constant CLIFF_DURATION = 90 days;     // 3 months
-    uint256 public constant VESTING_DURATION = 365 days;   // 12 months linear
-    uint256 public constant REFUND_DEADLINE = 180 days;    // 6 months for TGE
+    uint256 public constant CLIFF_DURATION = 90 days;
+    /// @notice Linear vesting length after cliff (9 months).
+    uint256 public constant VESTING_DURATION = 270 days;
+    uint256 public constant REFUND_DEADLINE = 180 days;
 
-    // ─── State ────────────────────────────────────────────────────────
-    enum RoundStatus { Open, Closed, TGETriggered, Refunding }
+    enum RoundStatus {
+        Open,
+        Closed,
+        TGETriggered,
+        Refunding
+    }
     RoundStatus public status;
 
     IERC20 public xfToken;
@@ -60,29 +63,30 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
     uint256 public tgeTimestamp;
     uint256 public totalCommitted;
     uint256 public totalBelievers;
+    /// @notice Sum of XF reserved for all commitments (includes lock bonuses). Used at TGE.
+    uint256 public totalXFReserved;
     uint256 public totalTokensAllocated;
     uint256 public totalTokensClaimed;
 
     struct Commitment {
-        uint256 amount;          // Native token committed
-        uint256 tokenAllocation; // XF tokens allocated at TGE
-        uint256 tokensClaimed;   // XF tokens already claimed
-        uint64  committedAt;
-        bool    refunded;
+        uint256 amount;
+        uint256 tokenAllocation;
+        uint256 tokensClaimed;
+        uint64 committedAt;
+        uint8 lockTier;
+        bool refunded;
     }
 
     mapping(address => Commitment) public commitments;
 
-    // ─── Events ───────────────────────────────────────────────────────
-    event RoundOpened(uint256 hardCap, uint256 maxPerWallet, uint256 timestamp);
-    event Committed(address indexed believer, uint256 amount, uint256 totalCommitted);
+    event RoundOpened(uint256 hardCap, uint256 maxPerWallet, uint8 phase, uint256 timestamp);
+    event Committed(address indexed believer, uint256 amount, uint256 totalCommitted, uint8 lockTier);
     event RoundClosed(uint256 totalRaised, uint256 totalBelievers, uint256 timestamp);
     event TGETriggered(address xfToken, uint256 totalTokens, uint256 timestamp);
     event TokensClaimed(address indexed believer, uint256 amount, uint256 totalClaimed);
     event Refunded(address indexed believer, uint256 amount);
     event FundsWithdrawn(address indexed to, uint256 amount);
 
-    // ─── Errors ───────────────────────────────────────────────────────
     error RoundNotOpen();
     error RoundNotClosed();
     error TGENotTriggered();
@@ -94,23 +98,29 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
     error TGEAlreadyTriggered();
     error RefundDeadlineNotReached();
     error NoCommitment();
+    error BadLockTier();
+    error LockTierMismatch();
+    error LockPeriodActive();
 
     constructor(
         address _admin,
         uint256 _hardCap,
         uint256 _maxPerWallet,
         uint256 _priceNumerator,
-        uint256 _priceDenominator
+        uint256 _priceDenominator,
+        uint8 _phase
     ) {
         require(_admin != address(0), "ZeroAdmin");
         require(_hardCap > 0, "ZeroHardCap");
-        require(_maxPerWallet > 0 && _maxPerWallet <= _hardCap, "BadWalletCap");
+        require(_maxPerWallet == 0 || _maxPerWallet <= _hardCap, "BadWalletCap");
         require(_priceNumerator > 0 && _priceDenominator > 0, "BadPrice");
+        require(_phase >= 1 && _phase <= 3, "BadPhase");
 
         hardCap = _hardCap;
         maxCommitmentPerWallet = _maxPerWallet;
         tokenPriceNumerator = _priceNumerator;
         tokenPriceDenominator = _priceDenominator;
+        phase = _phase;
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
         _grantRole(OPERATOR_ROLE, _admin);
@@ -118,35 +128,47 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
         status = RoundStatus.Open;
         roundOpenedAt = block.timestamp;
 
-        emit RoundOpened(_hardCap, _maxPerWallet, block.timestamp);
+        emit RoundOpened(_hardCap, _maxPerWallet, _phase, block.timestamp);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  1. COMMITMENT PHASE
-    // ═══════════════════════════════════════════════════════════════════
-
     function commit() external payable nonReentrant whenNotPaused {
+        _commit(msg.value, 0);
+    }
+
+    /// @param lockTier 0 = base; 1 = +8% / 1y lock; 2 = +20% / 2y lock; 3 = +35% / 3y lock
+    function commitWithLock(uint8 lockTier) external payable nonReentrant whenNotPaused {
+        _commit(msg.value, lockTier);
+    }
+
+    function _commit(uint256 value, uint8 lockTier) internal {
         if (status != RoundStatus.Open) revert RoundNotOpen();
-        if (msg.value < MIN_COMMITMENT) revert BelowMinimum();
+        if (value < MIN_COMMITMENT) revert BelowMinimum();
 
         Commitment storage c = commitments[msg.sender];
-        if (c.amount + msg.value > maxCommitmentPerWallet) revert ExceedsWalletCap();
-        if (totalCommitted + msg.value > hardCap) revert ExceedsHardCap();
+
+        if (c.amount > 0) {
+            if (lockTier != c.lockTier) revert LockTierMismatch();
+        }
+
+        uint8 tier = c.amount == 0 ? lockTier : c.lockTier;
+
+        if (maxCommitmentPerWallet > 0 && c.amount + value > maxCommitmentPerWallet) revert ExceedsWalletCap();
+        if (totalCommitted + value > hardCap) revert ExceedsHardCap();
+
+        uint256 xfDelta = _xfForAmount(value, tier);
+        totalXFReserved += xfDelta;
 
         if (c.amount == 0) {
             totalBelievers++;
             c.committedAt = uint64(block.timestamp);
+            c.lockTier = lockTier;
         }
 
-        c.amount += msg.value;
-        totalCommitted += msg.value;
+        c.amount += value;
+        totalCommitted += value;
 
-        emit Committed(msg.sender, msg.value, totalCommitted);
+        emit Committed(msg.sender, value, totalCommitted, tier);
     }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //  2. ROUND MANAGEMENT
-    // ═══════════════════════════════════════════════════════════════════
 
     function closeRound() external onlyRole(OPERATOR_ROLE) {
         if (status != RoundStatus.Open) revert RoundNotOpen();
@@ -154,10 +176,6 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
         roundClosedAt = block.timestamp;
         emit RoundClosed(totalCommitted, totalBelievers, block.timestamp);
     }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //  3. TOKEN GENERATION EVENT (TGE)
-    // ═══════════════════════════════════════════════════════════════════
 
     function triggerTGE(address _xfToken) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (status != RoundStatus.Closed) revert RoundNotClosed();
@@ -168,28 +186,22 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
         tgeTimestamp = block.timestamp;
         status = RoundStatus.TGETriggered;
 
-        // Calculate total tokens needed
-        totalTokensAllocated = (totalCommitted * tokenPriceNumerator) / tokenPriceDenominator;
+        totalTokensAllocated = totalXFReserved;
 
-        // Pull tokens from admin (must have approved this contract)
         xfToken.safeTransferFrom(msg.sender, address(this), totalTokensAllocated);
 
         emit TGETriggered(_xfToken, totalTokensAllocated, block.timestamp);
     }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //  4. VESTING & CLAIMING
-    // ═══════════════════════════════════════════════════════════════════
 
     function claim() external nonReentrant {
         if (status != RoundStatus.TGETriggered) revert TGENotTriggered();
 
         Commitment storage c = commitments[msg.sender];
         if (c.amount == 0) revert NoCommitment();
+        if (block.timestamp < _lockEnd(c)) revert LockPeriodActive();
 
-        // Calculate allocation if not yet set
         if (c.tokenAllocation == 0) {
-            c.tokenAllocation = (c.amount * tokenPriceNumerator) / tokenPriceDenominator;
+            c.tokenAllocation = _xfForAmount(c.amount, c.lockTier);
         }
 
         uint256 vested = _vestedAmount(c);
@@ -207,22 +219,41 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
     function _vestedAmount(Commitment memory c) internal view returns (uint256) {
         uint256 elapsed = block.timestamp - tgeTimestamp;
 
-        // During cliff: nothing vested
         if (elapsed < CLIFF_DURATION) return 0;
 
-        // After cliff: linear vesting over VESTING_DURATION
         uint256 vestingElapsed = elapsed - CLIFF_DURATION;
-        if (vestingElapsed >= VESTING_DURATION) return c.tokenAllocation;
+        uint256 alloc = c.tokenAllocation;
+        if (vestingElapsed >= VESTING_DURATION) return alloc;
 
-        return (c.tokenAllocation * vestingElapsed) / VESTING_DURATION;
+        return (alloc * vestingElapsed) / VESTING_DURATION;
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  5. REFUND SAFETY
-    // ═══════════════════════════════════════════════════════════════════
+    function _lockEnd(Commitment memory c) internal view returns (uint256) {
+        uint256 t = tgeTimestamp;
+        if (c.lockTier == 0) return t + CLIFF_DURATION;
+        if (c.lockTier == 1) return t + 365 days;
+        if (c.lockTier == 2) return t + 730 days;
+        return t + 1095 days;
+    }
+
+    function _bonusBps(uint8 tier) internal pure returns (uint256 bps) {
+        if (tier == 0) return 10_000;
+        if (tier == 1) return 10_800;
+        if (tier == 2) return 12_000;
+        if (tier == 3) return 13_500;
+        revert BadLockTier();
+    }
+
+    function bonusBps(uint8 tier) external pure returns (uint256) {
+        return _bonusBps(tier);
+    }
+
+    function _xfForAmount(uint256 amountWei, uint8 tier) internal view returns (uint256) {
+        uint256 bps = _bonusBps(tier);
+        return (amountWei * tokenPriceNumerator * bps) / (tokenPriceDenominator * 10_000);
+    }
 
     function requestRefund() external nonReentrant {
-        // Refund only if TGE not triggered and deadline passed
         if (status == RoundStatus.TGETriggered) revert TGEAlreadyTriggered();
         if (block.timestamp < roundOpenedAt + REFUND_DEADLINE) revert RefundDeadlineNotReached();
 
@@ -230,18 +261,20 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
         if (c.amount == 0) revert NoCommitment();
         if (c.refunded) revert AlreadyRefunded();
 
-        c.refunded = true;
         uint256 refundAmount = c.amount;
+        uint256 xfPart = _xfForAmount(refundAmount, c.lockTier);
+
+        totalCommitted -= refundAmount;
+        totalXFReserved -= xfPart;
+
+        c.refunded = true;
+        c.amount = 0;
 
         (bool ok, ) = payable(msg.sender).call{value: refundAmount}("");
         require(ok, "RefundFailed");
 
         emit Refunded(msg.sender, refundAmount);
     }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //  6. ADMIN
-    // ═══════════════════════════════════════════════════════════════════
 
     function withdrawFunds(address to) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (status != RoundStatus.TGETriggered) revert TGENotTriggered();
@@ -252,12 +285,13 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
         emit FundsWithdrawn(to, bal);
     }
 
-    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) { _pause(); }
-    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) { _unpause(); }
+    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _pause();
+    }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  7. VIEWS
-    // ═══════════════════════════════════════════════════════════════════
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _unpause();
+    }
 
     function getCommitment(address believer) external view returns (Commitment memory) {
         return commitments[believer];
@@ -267,19 +301,37 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
         if (status != RoundStatus.TGETriggered) return 0;
         Commitment memory c = commitments[believer];
         if (c.amount == 0) return 0;
+        if (block.timestamp < _lockEnd(c)) return 0;
+
         if (c.tokenAllocation == 0) {
-            c.tokenAllocation = (c.amount * tokenPriceNumerator) / tokenPriceDenominator;
+            c.tokenAllocation = _xfForAmount(c.amount, c.lockTier);
         }
         uint256 vested = _vestedAmount(c);
         return vested > c.tokensClaimed ? vested - c.tokensClaimed : 0;
     }
 
-    function getStats() external view returns (
-        uint256 committed_, uint256 believers_, uint256 allocated_,
-        uint256 claimed_, uint256 hardCap_, RoundStatus status_
-    ) {
-        return (totalCommitted, totalBelievers, totalTokensAllocated,
-                totalTokensClaimed, hardCap, status);
+    function getStats()
+        external
+        view
+        returns (
+            uint256 committed_,
+            uint256 believers_,
+            uint256 allocated_,
+            uint256 claimed_,
+            uint256 hardCap_,
+            RoundStatus status_,
+            uint8 phase_
+        )
+    {
+        return (
+            totalCommitted,
+            totalBelievers,
+            totalTokensAllocated,
+            totalTokensClaimed,
+            hardCap,
+            status,
+            phase
+        );
     }
 
     receive() external payable {}

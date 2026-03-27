@@ -404,7 +404,7 @@ Inference Flow:
   Prover → runs model off-chain, generates SP1 proof:
        └── Private inputs: model weights, user input
        └── Public outputs: weightCommitment, inputHash, outputHash
-  Prover → verifyInference(requestId, outputHash, weightCommitment, proof, nullifier)
+  Prover → verifyInference(requestId, outputHash, weightCommitment, proof, nullifier, useZkGPT)  // Phase 1: useZkGPT selects ZKVerifierZkGPT vs SP1
        └── Checks: prover authorized, commitment matches, nullifier unused
        └── Model owner receives payment
   User  → claimRefund(requestId) [only if deadline expired without proof]

@@ -3,7 +3,7 @@ import { useState } from 'react';
 type Circuit = {
   name: string;
   category: string;
-  status: 'live' | 'testnet' | 'audit' | 'development';
+  status: 'live' | 'testnet' | 'audit' | 'development' | 'roadmap';
   verifications: string;
   gasAvg: string;
   network: string;
@@ -11,27 +11,27 @@ type Circuit = {
 };
 
 const circuits: Circuit[] = [
-  { name: 'A2A Circuit', category: 'Agent', status: 'live', verifications: '12,450', gasAvg: '0.0034', network: 'Theta', description: 'Agent-to-Agent verification for autonomous AI interactions' },
-  { name: 'ZKML Circuit', category: 'ML', status: 'live', verifications: '8,230', gasAvg: '0.0041', network: 'Theta', description: 'Zero-knowledge machine learning inference verification' },
-  { name: 'Data Hubs', category: 'Data', status: 'live', verifications: '6,120', gasAvg: '0.0028', network: 'Theta', description: 'Verified data hub operations and integrity proofs' },
-  { name: 'Bridge Verifier', category: 'Bridge', status: 'live', verifications: '4,821', gasAvg: '0.0052', network: 'Multi', description: 'Cross-chain bridge transaction verification with SP1' },
-  { name: 'Compute Marketplace', category: 'Compute', status: 'live', verifications: '3,450', gasAvg: '0.0038', network: 'Theta', description: 'Decentralized compute marketplace order verification' },
-  { name: 'Inference Router', category: 'ML', status: 'live', verifications: '2,890', gasAvg: '0.0045', network: 'Bittensor', description: 'AI inference routing with load balancing verification' },
-  { name: 'Revenue Splitter', category: 'DeFi', status: 'live', verifications: '1,247', gasAvg: '0.0031', network: 'Multi', description: 'Verified revenue distribution across stakeholders' },
-  { name: 'Governance Verifier', category: 'Governance', status: 'live', verifications: '980', gasAvg: '0.0025', network: 'Theta', description: 'On-chain governance vote tallying and execution verification' },
-  { name: 'Staking Verifier', category: 'DeFi', status: 'live', verifications: '2,100', gasAvg: '0.0029', network: 'Multi', description: 'Cross-chain staking position and reward verification' },
-  { name: 'Partner Hook Verifier', category: 'Integration', status: 'live', verifications: '1,560', gasAvg: '0.0033', network: 'Theta', description: 'Third-party integration hook verification' },
-  { name: 'AI Listener Verifier', category: 'Agent', status: 'live', verifications: '3,200', gasAvg: '0.0036', network: 'Theta', description: 'AI event listener action verification' },
-  { name: 'Oracle Circuit', category: 'Data', status: 'live', verifications: '4,100', gasAvg: '0.0042', network: 'Multi', description: 'Chainlink oracle data feed verification' },
-  { name: 'Treasury Circuit', category: 'DeFi', status: 'live', verifications: '620', gasAvg: '0.0027', network: 'Theta', description: 'Treasury management and allocation verification' },
-  { name: 'Identity Circuit', category: 'Identity', status: 'live', verifications: '890', gasAvg: '0.0039', network: 'Theta', description: 'Decentralized identity attestation verification' },
-  { name: 'Subnet Verifier', category: 'Compute', status: 'live', verifications: '1,780', gasAvg: '0.0048', network: 'Bittensor', description: 'Bittensor subnet computation verification' },
-  { name: 'CosmWasm Verifier', category: 'Bridge', status: 'live', verifications: '540', gasAvg: '0.0035', network: 'Osmosis', description: 'Cosmos-native WASM contract verification' },
-  { name: 'Edge Compute Circuit', category: 'Compute', status: 'testnet', verifications: '230', gasAvg: '0.0055', network: 'Theta', description: 'Edge node compute task verification' },
-  { name: 'Move Verifier', category: 'Bridge', status: 'testnet', verifications: '120', gasAvg: '0.0060', network: 'Aptos', description: 'Move VM proof verification for Aptos/Sui' },
-  { name: 'DePIN Registry', category: 'DePIN', status: 'audit', verifications: '—', gasAvg: '—', network: 'Multi', description: 'Physical infrastructure node registration verification' },
-  { name: 'Reputation Circuit', category: 'Identity', status: 'audit', verifications: '—', gasAvg: '—', network: 'Multi', description: 'Cross-chain reputation score aggregation' },
-  { name: 'MEV Protection', category: 'DeFi', status: 'development', verifications: '—', gasAvg: '—', network: 'Multi', description: 'ZK-verified MEV protection for bridge transactions' },
+  { name: 'A2A Circuit', category: 'Agent', status: 'testnet', verifications: '—', gasAvg: '—', network: 'Theta', description: 'Agent-to-agent flows (per deployment).' },
+  { name: 'ZKML Circuit', category: 'ML', status: 'testnet', verifications: '—', gasAvg: '—', network: 'Theta', description: 'ML inference verification path.' },
+  { name: 'Data Hubs', category: 'Data', status: 'development', verifications: '—', gasAvg: '—', network: 'Theta', description: 'Data hub proofs (roadmap).' },
+  { name: 'Bridge Verifier', category: 'Bridge', status: 'testnet', verifications: '—', gasAvg: '—', network: 'Multi', description: 'Cross-chain attestations (env-specific).' },
+  { name: 'Compute Marketplace', category: 'Compute', status: 'development', verifications: '—', gasAvg: '—', network: 'Theta', description: 'Compute order verification (roadmap).' },
+  { name: 'Inference Router', category: 'ML', status: 'roadmap', verifications: '—', gasAvg: '—', network: 'Bittensor', description: 'Subnet routing (not production-claimed).' },
+  { name: 'Revenue Splitter', category: 'DeFi', status: 'testnet', verifications: '—', gasAvg: '—', network: 'Theta', description: 'CoreRevenueSplitter (deploy-dependent).' },
+  { name: 'Governance Verifier', category: 'Governance', status: 'development', verifications: '—', gasAvg: '—', network: 'Theta', description: 'Governance proof hooks (roadmap).' },
+  { name: 'Staking Verifier', category: 'DeFi', status: 'roadmap', verifications: '—', gasAvg: '—', network: 'Multi', description: 'Cross-chain staking proofs (roadmap).' },
+  { name: 'Partner Hook Verifier', category: 'Integration', status: 'development', verifications: '—', gasAvg: '—', network: 'Theta', description: 'Third-party integration hooks.' },
+  { name: 'AI Listener Verifier', category: 'Agent', status: 'testnet', verifications: '—', gasAvg: '—', network: 'Theta', description: 'Listener / task pipeline (M2M).' },
+  { name: 'Oracle path', category: 'Data', status: 'roadmap', verifications: '—', gasAvg: '—', network: 'Multi', description: 'Oracle-fed verification (no live Chainlink claim).' },
+  { name: 'Treasury Circuit', category: 'DeFi', status: 'development', verifications: '—', gasAvg: '—', network: 'Theta', description: 'Treasury allocation proofs (roadmap).' },
+  { name: 'Identity Circuit', category: 'Identity', status: 'audit', verifications: '—', gasAvg: '—', network: 'Theta', description: 'Identity attestations (in audit / design).' },
+  { name: 'Subnet Verifier', category: 'Compute', status: 'roadmap', verifications: '—', gasAvg: '—', network: 'Bittensor', description: 'Subnet compute verification (roadmap).' },
+  { name: 'CosmWasm Verifier', category: 'Bridge', status: 'roadmap', verifications: '—', gasAvg: '—', network: 'Osmosis', description: 'Cosmos WASM verifier (governance-dependent).' },
+  { name: 'Edge Compute Circuit', category: 'Compute', status: 'testnet', verifications: '—', gasAvg: '—', network: 'Theta', description: 'Edge node tasks (testnet).' },
+  { name: 'Move Verifier', category: 'Bridge', status: 'roadmap', verifications: '—', gasAvg: '—', network: 'Aptos', description: 'Move VM path (planned).' },
+  { name: 'DePIN Registry', category: 'DePIN', status: 'audit', verifications: '—', gasAvg: '—', network: 'Multi', description: 'Physical infra registry (design / audit).' },
+  { name: 'Reputation Circuit', category: 'Identity', status: 'development', verifications: '—', gasAvg: '—', network: 'Multi', description: 'Cross-chain reputation (development).' },
+  { name: 'MEV Protection', category: 'DeFi', status: 'development', verifications: '—', gasAvg: '—', network: 'Multi', description: 'Bridge MEV ideas (development).' },
 ];
 
 const categories = ['All', 'Agent', 'ML', 'Data', 'Bridge', 'Compute', 'DeFi', 'Governance', 'Integration', 'Identity', 'DePIN'];
@@ -47,37 +47,46 @@ export default function Circuits() {
   });
 
   const statusColor = (s: Circuit['status']) =>
-    s === 'live' ? 'green' : s === 'testnet' ? 'cyan' : s === 'audit' ? 'orange' : 'purple';
+    s === 'live'
+      ? 'green'
+      : s === 'testnet'
+        ? 'cyan'
+        : s === 'audit'
+          ? 'orange'
+          : s === 'roadmap'
+            ? 'purple'
+            : 'purple';
 
   return (
     <div className="page">
       <div className="container">
         <div className="page-header">
           <h1>Circuit Explorer</h1>
-          <p>Browse all {circuits.length} ZK circuits powering XFuel Protocol</p>
+          <p>
+            {circuits.length} circuit modules in the repository. Status reflects engineering intent — not all are live on mainnet.
+            Verifications and gas are <strong>not</strong> live metrics here (demo / TBD).
+          </p>
         </div>
 
-        {/* Stats Row */}
         <div className="grid grid-4" style={{ marginBottom: '2rem' }}>
           <div className="card" style={{ textAlign: 'center' }}>
-            <div className="stat-value" style={{ fontSize: '1.5rem' }}>{circuits.filter(c => c.status === 'live').length}</div>
-            <div className="stat-label">Live</div>
+            <div className="stat-value" style={{ fontSize: '1.5rem' }}>{circuits.filter((c) => c.status === 'testnet').length}</div>
+            <div className="stat-label">Testnet / dev</div>
           </div>
           <div className="card" style={{ textAlign: 'center' }}>
-            <div className="stat-value" style={{ fontSize: '1.5rem' }}>{circuits.filter(c => c.status === 'testnet').length}</div>
-            <div className="stat-label">Testnet</div>
+            <div className="stat-value" style={{ fontSize: '1.5rem' }}>{circuits.filter((c) => c.status === 'roadmap').length}</div>
+            <div className="stat-label">Roadmap</div>
           </div>
           <div className="card" style={{ textAlign: 'center' }}>
-            <div className="stat-value" style={{ fontSize: '1.5rem' }}>{circuits.filter(c => c.status === 'audit').length}</div>
-            <div className="stat-label">In Audit</div>
+            <div className="stat-value" style={{ fontSize: '1.5rem' }}>{circuits.filter((c) => c.status === 'audit').length}</div>
+            <div className="stat-label">Audit / design</div>
           </div>
           <div className="card" style={{ textAlign: 'center' }}>
-            <div className="stat-value" style={{ fontSize: '1.5rem' }}>{circuits.filter(c => c.status === 'development').length}</div>
-            <div className="stat-label">Development</div>
+            <div className="stat-value" style={{ fontSize: '1.5rem' }}>{circuits.filter((c) => c.status === 'development').length}</div>
+            <div className="stat-label">In development</div>
           </div>
         </div>
 
-        {/* Filters */}
         <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <input
             className="input"
@@ -99,7 +108,6 @@ export default function Circuits() {
           </div>
         </div>
 
-        {/* Circuit Grid */}
         <div className="grid grid-3">
           {filtered.map((c) => (
             <div key={c.name} className="card">
@@ -119,7 +127,7 @@ export default function Circuits() {
                   <div style={{ fontWeight: 700 }}>{c.verifications}</div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  <div style={{ color: '#8a8a9a' }}>Avg Gas (ETH)</div>
+                  <div style={{ color: '#8a8a9a' }}>Avg gas</div>
                   <div style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{c.gasAvg}</div>
                 </div>
               </div>
@@ -128,9 +136,7 @@ export default function Circuits() {
         </div>
 
         {filtered.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '3rem', color: '#8a8a9a' }}>
-            No circuits match your filters.
-          </div>
+          <div style={{ textAlign: 'center', padding: '3rem', color: '#8a8a9a' }}>No circuits match your filters.</div>
         )}
       </div>
     </div>

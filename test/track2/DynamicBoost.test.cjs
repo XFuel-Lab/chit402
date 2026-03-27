@@ -384,7 +384,7 @@ describe('Dynamic Theta-Native Boost — CoreRevenueSplitter', function () {
 
       await inferenceCircuit.connect(circuitRelayer).completeIntent(intentId, MOCK_OUTPUT, MOCK_MODEL, 600n);
       await inferenceCircuit.connect(circuitRelayer).attestEdgeCloudNode(intentId, nodeId, fp, 500n, providerTag);
-      await inferenceCircuit.connect(circuitRelayer).settleIntent(intentId, MOCK_PROOF, MOCK_PV, nullifier);
+      await inferenceCircuit.connect(circuitRelayer).settleIntent(intentId, MOCK_PROOF, MOCK_PV, nullifier, false);
 
       return intentId;
     }
@@ -426,7 +426,7 @@ describe('Dynamic Theta-Native Boost — CoreRevenueSplitter', function () {
       await inferenceCircuit.connect(circuitRelayer).completeIntent(intentId, MOCK_OUTPUT, MOCK_MODEL, 300n);
       // settleIntent without attestation — should succeed, no tagFeeOrigin
       await expect(
-        inferenceCircuit.connect(circuitRelayer).settleIntent(intentId, MOCK_PROOF, MOCK_PV, nullifier)
+        inferenceCircuit.connect(circuitRelayer).settleIntent(intentId, MOCK_PROOF, MOCK_PV, nullifier, false)
       ).to.not.be.reverted;
     });
   });

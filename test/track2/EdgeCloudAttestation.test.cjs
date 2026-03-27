@@ -272,7 +272,7 @@ describe('Track 2.1 — EdgeCloud Node Attestation', function () {
       // settleIntent should succeed after attestation
       // net payment = 0.01 ETH − 0.5% fee = 0.01 * 9950 / 10000 = 0.00995 ETH
       await expect(
-        circuit.connect(relayer).settleIntent(intentId, MOCK_PROOF, MOCK_PV, NULLIFIER)
+        circuit.connect(relayer).settleIntent(intentId, MOCK_PROOF, MOCK_PV, NULLIFIER, false)
       ).to.emit(circuit, 'IntentSettled').withArgs(intentId, NULLIFIER, ethers.parseEther('0.00995'));
 
       // Attestation still readable after settlement
@@ -287,7 +287,8 @@ describe('Track 2.1 — EdgeCloud Node Attestation', function () {
       await expect(
         circuit.connect(relayer).settleIntent(
           intentId, MOCK_PROOF, MOCK_PV,
-          ethers.keccak256(ethers.toUtf8Bytes('nullifier-no-attest'))
+          ethers.keccak256(ethers.toUtf8Bytes('nullifier-no-attest')),
+          false
         )
       ).to.emit(circuit, 'IntentSettled');
     });
@@ -300,7 +301,8 @@ describe('Track 2.1 — EdgeCloud Node Attestation', function () {
       await expect(
         circuit.connect(relayer).settleIntent(
           intentId, MOCK_PROOF, MOCK_PV,
-          ethers.keccak256(ethers.toUtf8Bytes('nullifier-fallback'))
+          ethers.keccak256(ethers.toUtf8Bytes('nullifier-fallback')),
+          false
         )
       ).to.emit(circuit, 'IntentSettled');
 

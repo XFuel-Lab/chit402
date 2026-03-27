@@ -48,6 +48,8 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
     // ─── Core Layer References ────────────────────────────────────────────────
     address public revenueSplitter;
     address public zkVerifier;
+    /// @notice Phase 1 Fair Exchange: proxy/relayer address whose signature authorizes escrow release (PAS). address(0) = disabled.
+    address public fairExchangeProxy;
     IERC20 public _stakeToken;
 
     // ─── Sybil-Resistance Staking ──────────────────────────────────────────────
@@ -193,6 +195,14 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
         uint256 fee
     );
 
+    /// @notice Phase 1 Fair Exchange: bid settled via PAS-adapted signature (no ZK proof).
+    event BidSettledFairExchange(
+        bytes32 indexed bidId,
+        bytes32 resultHash,
+        uint256 paidAmount,
+        uint256 fee
+    );
+
     event BidCancelled(bytes32 indexed bidId);
 
     event A2AMessageSent(
@@ -257,6 +267,9 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
     error ChannelNotActive();
     error InsufficientChannelBalance();
     error NullifierUsed();
+    error FairExchangeDisabled();
+    error InvalidFairExchangeSignature();
+    error FairExchangeTFUELOnly();
     error OnlyRequester();
     error OnlyProvider();
     error PriceTooHigh();
@@ -611,6 +624,68 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
         totalMessagesRelayed++;
 
         emit BidSettled(bidId, resultHash, nullifier, providerPayout, taskFee);
+    }
+
+    /**
+     * @notice Settle a bid via Fair Exchange (Phase 1 PAS): proxy-adapted signature authorizes release.
+     * @dev No ZK proof; atomicity from PAS: provider gets σ only by supplying witness (result); contract verifies σ.
+     *      Only TFUEL bids (paymentToken == address(0)) supported.
+     *      Reference: eprint.iacr.org/2026/395 — Delegated Payments for AI Agents: Fair Exchange on Bitcoin/EVM.
+     *      See docs/REFERENCES-AND-ATTRIBUTION.md and docs/research/fair-exchange-design-memo.md.
+     * @param bidId Bid to settle.
+     * @param resultHash Hash of delivered result (for event indexing; not verified on-chain).
+     * @param v Recovery id (ECDSA).
+     * @param r Signature r (ECDSA).
+     * @param s Signature s (ECDSA).
+     */
+    function settleBidFairExchange(
+        bytes32 bidId,
+        bytes32 resultHash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external nonReentrant whenNotPaused {
+        if (fairExchangeProxy == address(0)) revert FairExchangeDisabled();
+
+        Bid storage b = bids[bidId];
+        if (b.createdAt == 0) revert BidNotFound();
+        if (b.status != BidStatus.Accepted) revert BidNotAccepted();
+        if (b.paymentToken != address(0)) revert FairExchangeTFUELOnly();
+
+        bytes32 messageHash = keccak256(abi.encode(CIRCUIT_ID, "settleBidFairExchange", bidId, b.provider, b.acceptedPrice));
+        bytes32 prefixed = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
+        address signer = ecrecover(prefixed, v, r, s);
+        if (signer != fairExchangeProxy) revert InvalidFairExchangeSignature();
+
+        uint256 taskFee = (b.acceptedPrice * taskFeeBps) / BPS_DENOM;
+        uint256 providerPayout = b.acceptedPrice - taskFee;
+        uint256 refund = b.escrowAmount - b.acceptedPrice;
+
+        b.resultHash = resultHash;
+        b.status = BidStatus.Completed;
+
+        totalEscrow -= b.escrowAmount;
+        activeBids--;
+        totalSettled += b.acceptedPrice;
+
+        if (providerPayout > 0) {
+            (bool ok1, ) = payable(b.provider).call{value: providerPayout}("");
+            require(ok1, "ProviderPay");
+        }
+        if (refund > 0) {
+            (bool ok2, ) = payable(b.requester).call{value: refund}("");
+            require(ok2, "Refund");
+        }
+        if (taskFee > 0) {
+            totalTaskFees += taskFee;
+            _forwardFee(taskFee);
+        }
+
+        agents[b.provider].tasksCompleted++;
+        _addReputationClamped(b.provider, 1);
+        totalMessagesRelayed++;
+
+        emit BidSettledFairExchange(bidId, resultHash, providerPayout, taskFee);
     }
 
     /**
@@ -1031,6 +1106,11 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
 
     function setZKVerifier(address _zk) external onlyRole(DEFAULT_ADMIN_ROLE) {
         zkVerifier = _zk;
+    }
+
+    /// @notice Phase 1 Fair Exchange: set proxy address for PAS signature verification. Zero disables FE path.
+    function setFairExchangeProxy(address _proxy) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        fairExchangeProxy = _proxy;
     }
 
     function setMinStake(uint256 _min) external onlyRole(DEFAULT_ADMIN_ROLE) {

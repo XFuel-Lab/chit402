@@ -53,6 +53,12 @@ async function main() {
   manifest.contracts.ZKVerifierSP1 = await verifier.getAddress();
   console.log(`  ✓ ZKVerifierSP1:       ${manifest.contracts.ZKVerifierSP1}`);
 
+  const ZkGPTVerifierF = await ethers.getContractFactory('ZKVerifierZkGPT');
+  const zkGPTVerifier = await ZkGPTVerifierF.deploy(admin);
+  await zkGPTVerifier.waitForDeployment();
+  manifest.contracts.ZKVerifierZkGPT = await zkGPTVerifier.getAddress();
+  console.log(`  ✓ ZKVerifierZkGPT:     ${manifest.contracts.ZKVerifierZkGPT}`);
+
   // SP1ProofHooks is a library — linked at compile time, not deployed separately.
 
   const xfToken = process.env.XF_TOKEN_ADDRESS;
@@ -99,6 +105,23 @@ async function main() {
   for (const c of circuitDefs) {
     await splitter.grantRole(CIRCUIT_ROLE, manifest.contracts[c.name]);
     console.log(`  ✓ CIRCUIT_ROLE → ${c.name}`);
+  }
+
+  // ─── Phase 3b: zkGPT verifier (Phase 1) ───────────────────────────────
+  if (manifest.contracts.ZKVerifierZkGPT && manifest.contracts.ZKMLCircuit) {
+    console.log('\n──── Phase 3b: Set ZKVerifierZkGPT on ZKMLCircuit ────────');
+    const ZKML = await ethers.getContractAt('ZKMLCircuit', manifest.contracts.ZKMLCircuit);
+    await ZKML.setZKVerifierZkGPT(manifest.contracts.ZKVerifierZkGPT);
+    console.log('  ✓ ZKMLCircuit.setZKVerifierZkGPT(ZKVerifierZkGPT)');
+  }
+
+  // ─── Phase 3c: Fair Exchange proxy (Phase 1, optional) ─────────────────
+  const fairExchangeProxy = process.env.FAIR_EXCHANGE_PROXY_ADDRESS || null;
+  if (fairExchangeProxy && manifest.contracts.A2ACircuit) {
+    console.log('\n──── Phase 3c: Set Fair Exchange proxy on A2ACircuit ───');
+    const A2A = await ethers.getContractAt('A2ACircuit', manifest.contracts.A2ACircuit);
+    await A2A.setFairExchangeProxy(fairExchangeProxy);
+    console.log(`  ✓ A2ACircuit.setFairExchangeProxy(${fairExchangeProxy})`);
   }
 
   // ─── Deployment Manifest ────────────────────────────────────────────

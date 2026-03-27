@@ -5,6 +5,7 @@ import config from './config.js';
 import logger from './logger.js';
 import { initAIListener, getAIListener } from './ai-listener.js';
 import { getSP1Prover } from './sp1-prover-client.js';
+import { getProvider } from './provider.js';
 
 /**
  * XFuel AI DePIN — M2M API Server
@@ -17,6 +18,7 @@ import { getSP1Prover } from './sp1-prover-client.js';
  *   POST  /task-request    Submit an AI intent (COMPUTE_BID, INFERENCE_REQUEST, …)
  *   GET   /prove-result    Retrieve ZK settlement proof for a completed task
  *   POST  /a2a-message     Send an A2A (Agent-to-Agent) message with optional escrow
+ *   POST  /a2a-settle-fair-exchange  Settle an A2A bid via Fair Exchange (PAS signature)
  *   GET   /task-status     Query task status / ProofOutcome
  *   GET   /health          Health / metrics
  *
@@ -302,6 +304,7 @@ export function createApp() {
   app.use('/task-request',  rateLimit, authenticate);
   app.use('/prove-result',  rateLimit, authenticate);
   app.use('/a2a-message',   rateLimit, authenticate);
+  app.use('/a2a-settle-fair-exchange', rateLimit, authenticate);
   app.use('/task-status',   rateLimit, authenticate);
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -324,6 +327,7 @@ export function createApp() {
         subnet_id,          // optional – Bittensor subnet UID (for TAO routing)
         ibc_channel,        // optional – explicit IBC channel override
         memo,               // optional – free-form memo
+        proof_system,       // optional – inference proof system: 'sp1' | 'zkgpt' (Phase 1); default 'sp1'
       } = req.body;
 
       // ── Validation ────────────────────────────────────────────────────
@@ -365,6 +369,10 @@ export function createApp() {
       if (fee_bps !== undefined && (fee_bps < MIN_FEE_BPS || fee_bps > MAX_FEE_BPS)) {
         errors.push(`fee_bps must be between ${MIN_FEE_BPS} and ${MAX_FEE_BPS}`);
       }
+      const PROOF_SYSTEMS = new Set(['sp1', 'zkgpt']);
+      if (proof_system !== undefined && proof_system !== null && proof_system !== '' && !PROOF_SYSTEMS.has(proof_system)) {
+        errors.push(`proof_system must be one of: ${[...PROOF_SYSTEMS].join(', ')}`);
+      }
 
       if (errors.length > 0) {
         return res.status(400).json({ error: 'validation_error', details: errors });
@@ -394,6 +402,7 @@ export function createApp() {
         subnetId:       subnet_id || null,
         ibcChannel:     ibc_channel || null,
         outputHash:     output_hash || null,
+        proofSystem:    proof_system || 'sp1', // Phase 1: 'sp1' | 'zkgpt' for inference
       };
 
       const meta = {
@@ -691,6 +700,101 @@ export function createApp() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // POST /a2a-settle-fair-exchange — Settle A2A bid via Fair Exchange (Phase 1 PAS)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  const A2A_SETTLE_FE_ABI = [
+    'function settleBidFairExchange(bytes32 bidId, bytes32 resultHash, uint8 v, bytes32 r, bytes32 s)',
+  ];
+
+  app.post('/a2a-settle-fair-exchange', async (req, res) => {
+    try {
+      const { bid_id, result_hash, v, r, s } = req.body;
+
+      const errors = [];
+      if (!bid_id || typeof bid_id !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(bid_id)) {
+        errors.push('bid_id is required (0x-prefixed 32-byte hex)');
+      }
+      if (!result_hash || typeof result_hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(result_hash)) {
+        errors.push('result_hash is required (0x-prefixed 32-byte hex)');
+      }
+      const vNum = v !== undefined && v !== null ? Number(v) : NaN;
+      if (Number.isNaN(vNum) || vNum < 0 || vNum > 255) {
+        errors.push('v is required (0–255)');
+      }
+      if (!r || typeof r !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(r)) {
+        errors.push('r is required (0x-prefixed 32-byte hex)');
+      }
+      if (!s || typeof s !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(s)) {
+        errors.push('s is required (0x-prefixed 32-byte hex)');
+      }
+      if (errors.length > 0) {
+        return res.status(400).json({ error: 'validation_error', details: errors });
+      }
+
+      const a2aAddress = config.contracts?.a2aCircuitAddress;
+      const relayerKey = config.relayer?.privateKey;
+
+      if (!a2aAddress) {
+        return res.status(503).json({
+          error: 'service_unavailable',
+          message: 'A2A_CIRCUIT_ADDRESS not configured; Fair Exchange settlement unavailable.',
+        });
+      }
+
+      const bidId = bid_id;
+      const resultHash = result_hash;
+      const sig = { v: vNum, r, s };
+
+      if (relayerKey) {
+        try {
+          const provider = getProvider();
+          const signer = provider.getSigner(relayerKey);
+          const contract = new ethers.Contract(a2aAddress, A2A_SETTLE_FE_ABI, signer);
+          const tx = await contract.settleBidFairExchange(bidId, resultHash, sig.v, sig.r, sig.s);
+          const receipt = await tx.wait(1).catch(() => null);
+          return res.status(202).json({
+            status: 'submitted',
+            tx_hash: tx.hash,
+            bid_id: bidId,
+            result_hash: resultHash,
+            confirmed: !!receipt,
+            _links: { status: `/task-status?message_id=${bidId}` },
+          });
+        } catch (providerErr) {
+          if (providerErr.message?.includes('Provider not initialized')) {
+            const iface = new ethers.Interface(A2A_SETTLE_FE_ABI);
+            const calldata = iface.encodeFunctionData('settleBidFairExchange', [bidId, resultHash, sig.v, sig.r, sig.s]);
+            return res.status(200).json({
+              status: 'calldata',
+              message: 'Provider not initialized; submit calldata to A2ACircuit with your relayer.',
+              contract: a2aAddress,
+              calldata,
+              bid_id: bidId,
+              result_hash: resultHash,
+            });
+          }
+          throw providerErr;
+        }
+      }
+
+      const iface = new ethers.Interface(A2A_SETTLE_FE_ABI);
+      const calldata = iface.encodeFunctionData('settleBidFairExchange', [bidId, resultHash, sig.v, sig.r, sig.s]);
+      return res.status(200).json({
+        status: 'calldata',
+        message: 'Submit this calldata to A2ACircuit (relayer not configured).',
+        contract: a2aAddress,
+        calldata,
+        bid_id: bidId,
+        result_hash: resultHash,
+      });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /a2a-settle-fair-exchange error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // GET /task-status — Query task or A2A message status / ProofOutcome
   // ═══════════════════════════════════════════════════════════════════════
 
@@ -732,6 +836,7 @@ export function createApp() {
           task_id:        task.taskId,
           status:         task.status,
           proof_outcome:  proofOutcome,
+          proof_system:   task.intent?.proofSystem || 'sp1', // 'sp1' | 'zkgpt' — which prover ran; proof data is in sp1_proof for both
           message_type:   task.intent?.type,
           chain_id:       task.meta?.chain,
           gross_amount:   task.intent?.amount || '0',
@@ -744,6 +849,8 @@ export function createApp() {
             nullifier:      task.sp1Proof.nullifier || null,
             proving_time_ms: task.sp1Proof.provingTimeMs || null,
             error:          task.sp1Proof.error || null,
+            prover_error:   task.sp1Proof.prover_error || null,
+            prover_response: task.sp1Proof.prover_response || null,
           } : null,
           created_at:     task.createdAt,
           updated_at:     task.updatedAt,
@@ -866,6 +973,10 @@ function _findTask(aiListener, taskId) {
 async function _generateA2AProof(msg) {
   try {
     const sp1Prover = getSP1Prover();
+    if (!sp1Prover) {
+      msg.sp1Proof = { error: 'SP1_PROVER_URL not set', timestamp: Date.now() };
+      return;
+    }
 
     const proofRequest = {
       vault_address:       ethers.ZeroAddress,

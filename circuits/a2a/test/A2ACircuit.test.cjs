@@ -171,6 +171,35 @@ describe('A2ACircuit', function () {
         circuit.connect(user).acceptBid(bidId, ethers.parseEther('0.5'))
       ).to.be.revertedWithCustomError(circuit, 'AgentNotRegistered');
     });
+
+    it('should settle bid via Fair Exchange (PAS signature)', async function () {
+      await circuit.connect(admin).setFairExchangeProxy(relayer.address);
+
+      await circuit.connect(agent1).acceptBid(bidId, ethers.parseEther('0.5'));
+      const bid = await circuit.getBid(bidId);
+      const acceptedPrice = bid.acceptedPrice;
+      const providerAddr = bid.provider;
+
+      const messageHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ['bytes32', 'string', 'bytes32', 'address', 'uint256'],
+          [CIRCUIT_ID, 'settleBidFairExchange', bidId, providerAddr, acceptedPrice]
+        )
+      );
+      const sig = await relayer.signMessage(ethers.getBytes(messageHash));
+      const { v, r, s } = ethers.Signature.from(sig);
+      const resultHash = ethers.keccak256(ethers.toUtf8Bytes('fe-result-1'));
+
+      const agent1Before = await ethers.provider.getBalance(agent1.address);
+      await expect(
+        circuit.settleBidFairExchange(bidId, resultHash, v, r, s)
+      ).to.emit(circuit, 'BidSettledFairExchange');
+
+      const bidAfter = await circuit.getBid(bidId);
+      expect(bidAfter.status).to.equal(2); // Completed
+      const agent1After = await ethers.provider.getBalance(agent1.address);
+      expect(agent1After).to.be.gt(agent1Before);
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════

@@ -268,7 +268,7 @@ describe('ZKMLCircuit', function () {
 
       await circuit.connect(prover).verifyInference(
         requestId, outputHash, WEIGHT_COMMITMENT,
-        MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier
+        MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier, false
       );
 
       const req = await circuit.getRequest(requestId);
@@ -287,7 +287,7 @@ describe('ZKMLCircuit', function () {
       await expect(
         circuit.connect(user2).verifyInference(
           requestId, outputHash, WEIGHT_COMMITMENT,
-          MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier
+          MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier, false
         )
       ).to.be.revertedWithCustomError(circuit, 'ProverNotAuthorized');
     });
@@ -300,7 +300,7 @@ describe('ZKMLCircuit', function () {
       await expect(
         circuit.connect(prover).verifyInference(
           requestId, outputHash, fakeCommitment,
-          MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier
+          MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier, false
         )
       ).to.be.revertedWithCustomError(circuit, 'InvalidCommitment');
     });
@@ -311,7 +311,7 @@ describe('ZKMLCircuit', function () {
 
       await circuit.connect(prover).verifyInference(
         requestId, outputHash, WEIGHT_COMMITMENT,
-        MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier
+        MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier, false
       );
 
       // Submit a new request and try same nullifier
@@ -329,7 +329,7 @@ describe('ZKMLCircuit', function () {
       await expect(
         circuit.connect(prover).verifyInference(
           requestId2, outputHash, WEIGHT_COMMITMENT,
-          MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier
+          MOCK_PROOF, MOCK_PUBLIC_VALUES, nullifier, false
         )
       ).to.be.revertedWithCustomError(circuit, 'NullifierUsed');
     });

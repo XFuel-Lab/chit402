@@ -48,7 +48,7 @@ const grants: Grant[] = [
       { name: 'M1: Core Contracts', status: 'done', deliverable: 'CoreRevenueSplitter, ZKVerifierSP1 deployed' },
       { name: 'M2: AI Listener', status: 'done', deliverable: 'On-chain AI event listener with proof hooks' },
       { name: 'M3: Edge Compute', status: 'done', deliverable: 'Theta edge compute node integration' },
-      { name: 'M4: Mainnet Launch', status: 'done', deliverable: 'Full mainnet deployment with 16 circuits' },
+      { name: 'M4: Production rollout', status: 'pending', deliverable: 'Audited mainnet + operational runway (roadmap)' },
     ],
   },
   {
@@ -68,10 +68,10 @@ const grants: Grant[] = [
 ];
 
 const grantStats = [
-  { label: 'Total Grant Value', value: '$205K+' },
-  { label: 'Active Grants', value: '2' },
-  { label: 'Milestones Completed', value: '10/16' },
-  { label: 'Networks Covered', value: '4' },
+  { label: 'Tracker status', value: 'Internal / demo' },
+  { label: 'Active (illustrative)', value: '2' },
+  { label: 'Milestones (approx.)', value: 'see cards' },
+  { label: 'Networks', value: '4 targets' },
 ];
 
 export default function Grants() {
@@ -80,7 +80,10 @@ export default function Grants() {
       <div className="container">
         <div className="page-header">
           <h1>Grant Tracker</h1>
-          <p>Ecosystem grants, milestone progress, and deliverables across all network partners</p>
+          <p>
+            Illustrative milestone boards — confirm status with your own records before external use.
+            Not all programs are awarded or active.
+          </p>
         </div>
 
         {/* Stats */}
@@ -160,7 +163,7 @@ export default function Grants() {
             Apply for a grant to integrate XFuel ZK verification into your project.
             We support circuit development, bridge integrations, and DePIN nodes.
           </p>
-          <a href="https://github.com/XFuelAI/xfuel-protocol/issues" target="_blank" rel="noreferrer" className="btn btn-primary">
+          <a href="https://github.com/XFuel-Lab/xfuel-protocol/issues" target="_blank" rel="noreferrer" className="btn btn-primary">
             Apply for Grant ↗
           </a>
         </div>

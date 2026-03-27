@@ -4,6 +4,8 @@ import WalletButton from './WalletButton';
 
 const navLinks = [
   { to: '/', label: 'Home' },
+  { to: '/believers', label: 'Believers' },
+  { to: '/angels', label: 'Angels' },
   { to: '/bridge', label: 'Bridge' },
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/governance', label: 'Governance' },
@@ -65,6 +67,19 @@ export default function Layout() {
         </div>
       </header>
 
+      <div
+        style={{
+          textAlign: 'center',
+          fontSize: '0.78rem',
+          color: '#a78bfa',
+          padding: '0.45rem 1rem',
+          background: 'rgba(139,92,246,0.08)',
+          borderBottom: '1px solid rgba(139,92,246,0.15)',
+        }}
+      >
+        Beta — Theta testnet focus. UI figures may be <strong style={{ color: '#c4b5fd' }}>demo</strong> unless wired to your env.
+      </div>
+
       <main style={{ flex: 1 }}>
         <Outlet />
       </main>
@@ -73,12 +88,12 @@ export default function Layout() {
         <div className="container" style={styles.footerInner}>
           <div style={styles.footerBrand}>
             <strong style={{ color: '#f0f0f5' }}>XFuel Protocol</strong>
-            <span style={{ color: '#55556a', fontSize: '0.85rem' }}>ZK-Verified AI Pumping Station</span>
+            <span style={{ color: '#55556a', fontSize: '0.85rem' }}>AI + ZK settlement (beta)</span>
           </div>
           <div style={styles.footerLinks}>
-            <a href="https://github.com/XFuelAI" target="_blank" rel="noreferrer">GitHub</a>
-            <a href="https://twitter.com/XFuelAI" target="_blank" rel="noreferrer">Twitter</a>
-            <a href="https://discord.gg/xfuel" target="_blank" rel="noreferrer">Discord</a>
+            <a href="https://github.com/XFuel-Lab/xfuel-protocol" target="_blank" rel="noreferrer">GitHub</a>
+            <a href="https://twitter.com/XFuelLab" target="_blank" rel="noreferrer">Twitter</a>
+            <a href="https://discord.gg/n9jHyW88" target="_blank" rel="noreferrer">Discord</a>
             <a href="https://xfuel.app/docs" target="_blank" rel="noreferrer">Docs</a>
           </div>
           <div style={{ color: '#55556a', fontSize: '0.8rem' }}>

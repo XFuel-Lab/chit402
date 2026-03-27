@@ -269,7 +269,7 @@ describe('Phase 6: Ecosystem Expansion', function () {
       const nullifier = ethers.keccak256(ethers.toUtf8Bytes('nullifier-cache-1'));
       await zkml.connect(admin).verifyInference(
         requestId, outputHash, model.weightCommitment,
-        '0x', '0x', nullifier
+        '0x', '0x', nullifier, false
       );
 
       const cached = await zkml.semanticCache(cacheKey);

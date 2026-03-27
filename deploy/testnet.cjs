@@ -160,6 +160,11 @@ async function main() {
   );
   const zkAddr = manifest.contracts.ZKVerifierSP1;
 
+  await deployContract('ZKVerifierZkGPT',
+    await ethers.getContractFactory('ZKVerifierZkGPT'),
+    [d]
+  );
+
   // ══════════════════════════════════════════════════════════════════
   //  PHASE 2: CIRCUITS (16)
   // ══════════════════════════════════════════════════════════════════
@@ -197,7 +202,7 @@ async function main() {
   console.log('\n══ Phase 2b: BelieverRound ═════════════════════════════');
   await deployContract('BelieverRound',
     await ethers.getContractFactory('BelieverRound'),
-    [d, ethers.parseEther('100'), ethers.parseEther('5'), 10000n, 1n]
+    [d, ethers.parseEther('100'), ethers.parseEther('5'), 10000n, 1n, 1]
   );
 
   // ══════════════════════════════════════════════════════════════════
@@ -232,6 +237,25 @@ async function main() {
     }
   }
   console.log(`  ✓ Role verification: ${rolesOk}/${circuitDefs.length} circuits confirmed`);
+
+  // Phase 3b: Set ZKVerifierZkGPT on ZKMLCircuit (Phase 1 zkGPT path)
+  if (manifest.contracts.ZKVerifierZkGPT && manifest.contracts.ZKMLCircuit) {
+    console.log('\n── Phase 3b: ZKVerifierZkGPT → ZKMLCircuit ───────────────────');
+    const zkml = await ethers.getContractAt('ZKMLCircuit', manifest.contracts.ZKMLCircuit);
+    const tx = await zkml.setZKVerifierZkGPT(manifest.contracts.ZKVerifierZkGPT, TX);
+    await tx.wait();
+    console.log('  ✓ ZKMLCircuit.setZKVerifierZkGPT(ZKVerifierZkGPT)');
+  }
+
+  // Phase 3c: Fair Exchange proxy (Phase 1, optional)
+  const fairExchangeProxy = process.env.FAIR_EXCHANGE_PROXY_ADDRESS || null;
+  if (fairExchangeProxy && manifest.contracts.A2ACircuit) {
+    console.log('\n── Phase 3c: Fair Exchange proxy → A2ACircuit ─────────────────');
+    const a2a = await ethers.getContractAt('A2ACircuit', manifest.contracts.A2ACircuit);
+    const txFe = await a2a.setFairExchangeProxy(fairExchangeProxy, TX);
+    await txFe.wait();
+    console.log(`  ✓ A2ACircuit.setFairExchangeProxy(${fairExchangeProxy})`);
+  }
 
   // ══════════════════════════════════════════════════════════════════
   //  PHASE 4: COMPREHENSIVE SMOKE TESTS
