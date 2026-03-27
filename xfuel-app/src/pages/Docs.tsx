@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 
-const GITHUB_BASE = 'https://github.com/XFuelAI/xfuel-protocol/blob/main';
+const GITHUB_BASE = 'https://github.com/XFuel-Lab/xfuel-protocol/blob/main';
 
 const docSections = [
   {
@@ -78,7 +78,7 @@ const docSections = [
 ];
 
 const quickLinks = [
-  { label: 'GitHub Repository', url: 'https://github.com/XFuelAI/xfuel-protocol', external: true },
+  { label: 'GitHub Repository', url: 'https://github.com/XFuel-Lab/xfuel-protocol', external: true },
   { label: 'NPM Package', url: 'https://www.npmjs.com/package/xfuel-sdk', external: true },
   { label: 'CertiK Audit', url: '#certik', external: false },
   { label: 'Bug Bounty', url: '#bounty', external: false },

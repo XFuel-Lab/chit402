@@ -334,8 +334,9 @@ async function main() {
 
   console.log('  Deploying BelieverRound...');
   const BelieverF = await ethers.getContractFactory('BelieverRound');
+  const BELIEVER_PHASE = process.env.BELIEVER_PHASE ? parseInt(process.env.BELIEVER_PHASE, 10) : 1;
   const believer = await BelieverF.deploy(
-    ADMIN, BELIEVER_HARD_CAP, BELIEVER_MAX_PER_WALLET, PRICE_NUM, PRICE_DEN
+    ADMIN, BELIEVER_HARD_CAP, BELIEVER_MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, BELIEVER_PHASE
   );
   await believer.waitForDeployment();
   const believerAddr = await believer.getAddress();

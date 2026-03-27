@@ -96,6 +96,7 @@ class ZKMLHandler {
       / this.stats.proofsGenerated
     );
 
+    const useZkGPT = proofRequest.proofSystem === 'zkgpt';
     return {
       action: 'settle',
       target: 'ZKMLCircuit',
@@ -107,6 +108,7 @@ class ZKMLHandler {
         proofResult.proof,
         proofResult.publicValues,
         proofResult.nullifier,
+        useZkGPT,
       ],
     };
   }

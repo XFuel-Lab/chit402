@@ -9,8 +9,9 @@
  *   npx hardhat run deploy/theta-inference.cjs --network theta-mainnet
  *
  * Environment variables (optional):
- *   REVENUE_SPLITTER  — CoreRevenueSplitter address (defaults to deployer)
- *   ZK_VERIFIER       — ZKVerifierSP1 address (defaults to address(0) for mock)
+ *   REVENUE_SPLITTER   — CoreRevenueSplitter address (defaults to deployer)
+ *   ZK_VERIFIER        — ZKVerifierSP1 address (defaults to address(0) for mock)
+ *   ZK_VERIFIER_ZKGPT  — ZKVerifierZkGPT address (Phase 1); if set, calls setZKVerifierZkGPT after deploy
  */
 
 const hre = require('hardhat');
@@ -135,6 +136,15 @@ async function main() {
   } catch (err) {
     console.error(`  ✗ Deployment failed: ${err.message}`);
     process.exit(1);
+  }
+
+  // Phase 1: Set ZKVerifierZkGPT on ThetaInferenceCircuit if provided
+  const zkVerifierZkGPT = process.env.ZK_VERIFIER_ZKGPT || null;
+  if (zkVerifierZkGPT) {
+    console.log('\n  Setting ZKVerifierZkGPT (Phase 1)...');
+    const tx = await circuit.setZKVerifierZkGPT(zkVerifierZkGPT);
+    await tx.wait();
+    console.log(`  ✓ ThetaInferenceCircuit.setZKVerifierZkGPT(${zkVerifierZkGPT})`);
   }
 
   // ─── Register Default EdgeCloud Services ───────────────────────────────────

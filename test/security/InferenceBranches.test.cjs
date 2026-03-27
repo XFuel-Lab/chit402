@@ -218,7 +218,7 @@ describe('ThetaInferenceCircuit — Branch Coverage', function () {
     it('reverts when intent not found', async function () {
       const fakeId = ethers.keccak256(ethers.toUtf8Bytes('FAKE'));
       await expect(
-        circuit.settleIntent(fakeId, MOCK_PROOF, MOCK_PUB_VALS, ethers.keccak256(ethers.toUtf8Bytes('null')))
+        circuit.settleIntent(fakeId, MOCK_PROOF, MOCK_PUB_VALS, ethers.keccak256(ethers.toUtf8Bytes('null')), false)
       ).to.be.reverted;
     });
 
@@ -235,7 +235,7 @@ describe('ThetaInferenceCircuit — Branch Coverage', function () {
       const intentId = parsed.args[1];
 
       await expect(
-        circuit.settleIntent(intentId, MOCK_PROOF, MOCK_PUB_VALS, ethers.keccak256(ethers.toUtf8Bytes('null')))
+        circuit.settleIntent(intentId, MOCK_PROOF, MOCK_PUB_VALS, ethers.keccak256(ethers.toUtf8Bytes('null')), false)
       ).to.be.reverted;
     });
   });

@@ -48,6 +48,8 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
     // ─── Core Layer References ────────────────────────────────────────────────
     address public revenueSplitter;
     address public zkVerifier;
+    /// @notice Phase 1 Fair Exchange: proxy/relayer address whose signature authorizes escrow release (PAS). address(0) = disabled.
+    address public fairExchangeProxy;
     IERC20 public _stakeToken;
 
     // ─── Sybil-Resistance Staking ──────────────────────────────────────────────
@@ -89,6 +91,7 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
     // ─── Bidding / Auction ────────────────────────────────────────────────────
     enum BidStatus { Open, Accepted, Completed, Cancelled, Disputed }
 
+    // paymentToken == address(0) means TFUEL (native); non-zero means ERC-20 (e.g. TDROP).
     struct Bid {
         bytes32 bidId;
         address requester;
@@ -103,6 +106,7 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
         uint64 deadline;             // TTL for bid acceptance
         bytes32 resultHash;          // Hash of delivered result
         bytes32 proofNullifier;      // SP1 proof nullifier for settlement
+        address paymentToken;        // address(0) = TFUEL; non-zero = ERC-20 (Track 4.2)
     }
 
     mapping(bytes32 => Bid) public bids;
@@ -191,6 +195,14 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
         uint256 fee
     );
 
+    /// @notice Phase 1 Fair Exchange: bid settled via PAS-adapted signature (no ZK proof).
+    event BidSettledFairExchange(
+        bytes32 indexed bidId,
+        bytes32 resultHash,
+        uint256 paidAmount,
+        uint256 fee
+    );
+
     event BidCancelled(bytes32 indexed bidId);
 
     event A2AMessageSent(
@@ -255,6 +267,9 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
     error ChannelNotActive();
     error InsufficientChannelBalance();
     error NullifierUsed();
+    error FairExchangeDisabled();
+    error InvalidFairExchangeSignature();
+    error FairExchangeTFUELOnly();
     error OnlyRequester();
     error OnlyProvider();
     error PriceTooHigh();
@@ -418,7 +433,8 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
             createdAt: uint64(block.timestamp),
             deadline: deadline,
             resultHash: bytes32(0),
-            proofNullifier: bytes32(0)
+            proofNullifier: bytes32(0),
+            paymentToken: address(0)
         });
 
         totalEscrow += netEscrow;
@@ -428,6 +444,88 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
         if (relayFee > 0) {
             totalRelayFees += relayFee;
             _forwardFee(relayFee);
+        }
+
+        emit BidSubmitted(CIRCUIT_ID, bidId, msg.sender, capabilityRequired, netEscrow, deadline);
+    }
+
+    /**
+     * @notice Submit a bid using TDROP (TNT-20) as the escrow token.
+     *
+     * Caller must pre-approve this contract for `escrowTdrop` TDROP.
+     * The relay fee (relayFeeBps) is deducted in TDROP and forwarded to
+     * CoreRevenueSplitter.receiveERC20Fee() if configured.
+     * Settlement and acceptance paths remain unchanged — provider receives
+     * TDROP when the bid is settled via `settleBid()`.
+     *
+     * TDROP relay fee = 0.1% (same relayFeeBps as TFUEL bids), but agents
+     * that pay in TDROP signal stronger alignment with the Theta ecosystem
+     * and qualify for the THETA_NATIVE boost in the revenue splitter.
+     *
+     * @param tdropToken        TDROP contract address (TNT-20).
+     * @param escrowTdrop       Total TDROP to escrow (relay fee deducted from this).
+     * @param taskHash          keccak256 of the task specification.
+     * @param capabilityRequired Required capability hash.
+     * @param deadline          Block timestamp after which bid expires.
+     * @return bidId            Unique bid identifier.
+     */
+    function submitBidWithTDROP(
+        address tdropToken,
+        uint256 escrowTdrop,
+        bytes32 taskHash,
+        bytes32 capabilityRequired,
+        uint64 deadline
+    ) external whenNotPaused nonReentrant returns (bytes32 bidId) {
+        require(tdropToken != address(0), "ZeroToken");
+        require(escrowTdrop > 0, "ZeroEscrow");
+        require(deadline > block.timestamp, "PastDeadline");
+
+        // Pull TDROP from caller
+        bool ok = IERC20(tdropToken).transferFrom(msg.sender, address(this), escrowTdrop);
+        require(ok, "TdropTransferFailed");
+
+        uint256 relayFee  = (escrowTdrop * relayFeeBps) / BPS_DENOM;
+        uint256 netEscrow = escrowTdrop - relayFee;
+
+        bidId = keccak256(abi.encodePacked(CIRCUIT_ID, msg.sender, block.number, bidCount++));
+
+        bids[bidId] = Bid({
+            bidId: bidId,
+            requester: msg.sender,
+            provider: address(0),
+            taskHash: taskHash,
+            capabilityRequired: capabilityRequired,
+            escrowAmount: netEscrow,
+            maxPrice: netEscrow,
+            acceptedPrice: 0,
+            status: BidStatus.Open,
+            createdAt: uint64(block.timestamp),
+            deadline: deadline,
+            resultHash: bytes32(0),
+            proofNullifier: bytes32(0),
+            paymentToken: tdropToken
+        });
+
+        totalEscrow += netEscrow;
+        activeBids++;
+
+        // Forward TDROP relay fee to CoreRevenueSplitter (non-fatal)
+        if (relayFee > 0 && revenueSplitter != address(0)) {
+            totalRelayFees += relayFee;
+            // Approve then call receiveERC20Fee
+            (bool appOk, ) = tdropToken.call(
+                abi.encodeWithSignature("approve(address,uint256)", revenueSplitter, relayFee)
+            );
+            if (appOk) {
+                // solhint-disable-next-line no-unused-vars
+                bool _fwdOk; bytes memory _fwdData;
+                (_fwdOk, _fwdData) = revenueSplitter.call(
+                    abi.encodeWithSignature(
+                        "receiveERC20Fee(bytes32,address,uint256,uint8)",
+                        CIRCUIT_ID, tdropToken, relayFee, uint8(1) // THETA_NATIVE
+                    )
+                );
+            }
         }
 
         emit BidSubmitted(CIRCUIT_ID, bidId, msg.sender, capabilityRequired, netEscrow, deadline);
@@ -526,6 +624,68 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
         totalMessagesRelayed++;
 
         emit BidSettled(bidId, resultHash, nullifier, providerPayout, taskFee);
+    }
+
+    /**
+     * @notice Settle a bid via Fair Exchange (Phase 1 PAS): proxy-adapted signature authorizes release.
+     * @dev No ZK proof; atomicity from PAS: provider gets σ only by supplying witness (result); contract verifies σ.
+     *      Only TFUEL bids (paymentToken == address(0)) supported.
+     *      Reference: eprint.iacr.org/2026/395 — Delegated Payments for AI Agents: Fair Exchange on Bitcoin/EVM.
+     *      See docs/REFERENCES-AND-ATTRIBUTION.md and docs/research/fair-exchange-design-memo.md.
+     * @param bidId Bid to settle.
+     * @param resultHash Hash of delivered result (for event indexing; not verified on-chain).
+     * @param v Recovery id (ECDSA).
+     * @param r Signature r (ECDSA).
+     * @param s Signature s (ECDSA).
+     */
+    function settleBidFairExchange(
+        bytes32 bidId,
+        bytes32 resultHash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external nonReentrant whenNotPaused {
+        if (fairExchangeProxy == address(0)) revert FairExchangeDisabled();
+
+        Bid storage b = bids[bidId];
+        if (b.createdAt == 0) revert BidNotFound();
+        if (b.status != BidStatus.Accepted) revert BidNotAccepted();
+        if (b.paymentToken != address(0)) revert FairExchangeTFUELOnly();
+
+        bytes32 messageHash = keccak256(abi.encode(CIRCUIT_ID, "settleBidFairExchange", bidId, b.provider, b.acceptedPrice));
+        bytes32 prefixed = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
+        address signer = ecrecover(prefixed, v, r, s);
+        if (signer != fairExchangeProxy) revert InvalidFairExchangeSignature();
+
+        uint256 taskFee = (b.acceptedPrice * taskFeeBps) / BPS_DENOM;
+        uint256 providerPayout = b.acceptedPrice - taskFee;
+        uint256 refund = b.escrowAmount - b.acceptedPrice;
+
+        b.resultHash = resultHash;
+        b.status = BidStatus.Completed;
+
+        totalEscrow -= b.escrowAmount;
+        activeBids--;
+        totalSettled += b.acceptedPrice;
+
+        if (providerPayout > 0) {
+            (bool ok1, ) = payable(b.provider).call{value: providerPayout}("");
+            require(ok1, "ProviderPay");
+        }
+        if (refund > 0) {
+            (bool ok2, ) = payable(b.requester).call{value: refund}("");
+            require(ok2, "Refund");
+        }
+        if (taskFee > 0) {
+            totalTaskFees += taskFee;
+            _forwardFee(taskFee);
+        }
+
+        agents[b.provider].tasksCompleted++;
+        _addReputationClamped(b.provider, 1);
+        totalMessagesRelayed++;
+
+        emit BidSettledFairExchange(bidId, resultHash, providerPayout, taskFee);
     }
 
     /**
@@ -946,6 +1106,11 @@ contract A2ACircuit is AccessControl, Pausable, ReentrancyGuard {
 
     function setZKVerifier(address _zk) external onlyRole(DEFAULT_ADMIN_ROLE) {
         zkVerifier = _zk;
+    }
+
+    /// @notice Phase 1 Fair Exchange: set proxy address for PAS signature verification. Zero disables FE path.
+    function setFairExchangeProxy(address _proxy) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        fairExchangeProxy = _proxy;
     }
 
     function setMinStake(uint256 _min) external onlyRole(DEFAULT_ADMIN_ROLE) {

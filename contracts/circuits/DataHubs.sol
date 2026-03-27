@@ -46,9 +46,10 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  *   - Fully isolated: own hub registry, contribution state, access grants.
  */
 contract DataHubs is AccessControl, Pausable, ReentrancyGuard {
-    bytes32 public constant CURATOR_ROLE = keccak256("CURATOR_ROLE");
+    bytes32 public constant CURATOR_ROLE   = keccak256("CURATOR_ROLE");
     bytes32 public constant VALIDATOR_ROLE = keccak256("VALIDATOR_ROLE");
-    bytes32 public constant CIRCUIT_ID = keccak256("DATA_HUBS_CIRCUIT");
+    bytes32 public constant RELAYER_ROLE   = keccak256("RELAYER_ROLE");
+    bytes32 public constant CIRCUIT_ID     = keccak256("DATA_HUBS_CIRCUIT");
 
     address public revenueSplitter;
     address public zkVerifier;
@@ -90,6 +91,12 @@ contract DataHubs is AccessControl, Pausable, ReentrancyGuard {
         ContributionStatus status;
         uint64 submittedAt;
         uint64 validatedAt;
+        // ─── Theta EdgeStore fields ───────────────────────────────────────
+        // edgeStoreCid replaces the mock keccak commitment as the canonical
+        // off-chain data address.  Set by the relayer after upload succeeds.
+        // edgeStoreNodeId identifies which EdgeStore node holds the content.
+        bytes32 edgeStoreCid;         // EdgeStore content key (0x hex from upload response)
+        bytes32 edgeStoreNodeId;      // EdgeStore node identifier (keccak256 of node address)
     }
 
     mapping(bytes32 => Contribution) public contributions;
@@ -163,6 +170,16 @@ contract DataHubs is AccessControl, Pausable, ReentrancyGuard {
     event ContributorPaid(bytes32 indexed hubId, address indexed contributor, uint256 amount);
     event HubUpdated(bytes32 indexed hubId, uint256 newPrice, bool active);
 
+    // Emitted when a relayer seals a contribution with its Theta EdgeStore CID.
+    // This is the on-chain proof that the data has been durably stored on Theta's
+    // decentralised storage layer — replacing the temporary keccak commitment.
+    event EdgeStoreSealed(
+        bytes32 indexed contributionId,
+        bytes32 indexed edgeStoreCid,
+        bytes32 edgeStoreNodeId,
+        address indexed sealedBy
+    );
+
     event DataProvenanced(
         bytes32 indexed circuitId,
         bytes32 indexed recordId,
@@ -184,6 +201,7 @@ contract DataHubs is AccessControl, Pausable, ReentrancyGuard {
     error NullifierUsed();
     error QualityTooLow();
     error InsufficientPayment();
+    error AlreadySealed();
 
     constructor(address _admin, address _revenueSplitter, address _zkVerifier) {
         require(_admin != address(0), "ZeroAdmin");
@@ -192,6 +210,7 @@ contract DataHubs is AccessControl, Pausable, ReentrancyGuard {
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
         _grantRole(CURATOR_ROLE, _admin);
         _grantRole(VALIDATOR_ROLE, _admin);
+        _grantRole(RELAYER_ROLE, _admin);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -266,7 +285,9 @@ contract DataHubs is AccessControl, Pausable, ReentrancyGuard {
             sizeBytes: sizeBytes,
             status: ContributionStatus.Pending,
             submittedAt: uint64(block.timestamp),
-            validatedAt: 0
+            validatedAt: 0,
+            edgeStoreCid: bytes32(0),
+            edgeStoreNodeId: bytes32(0)
         });
 
         contributionCount++;
@@ -497,6 +518,39 @@ contract DataHubs is AccessControl, Pausable, ReentrancyGuard {
     }
 
     // ─── Internal ─────────────────────────────────────────────────────────
+
+    /**
+     * @notice Seal a contribution with its Theta EdgeStore content identifier.
+     * @param contributionId   Contribution to seal.
+     * @param edgeStoreCid     EdgeStore content key returned by the upload API
+     *                         (`0x` prefixed hex string, stored as bytes32).
+     * @param edgeStoreNodeId  keccak256 of the EdgeStore node address that holds
+     *                         the content, for geographic/reliability audits.
+     *
+     * Called by the relayer (RELAYER_ROLE) after a successful EdgeStore upload.
+     * The CID permanently replaces the temporary keccak dataCommitment as the
+     * canonical off-chain data address — validators can retrieve and verify the
+     * content directly from `https://data.thetaedgestore.com/api/v2/data/<cid>`.
+     *
+     * Sealing is idempotent-guarded: once set, the CID cannot be changed
+     * (prevents a compromised relayer from redirecting a validated contribution
+     * to different content).
+     */
+    function attachEdgeStoreCid(
+        bytes32 contributionId,
+        bytes32 edgeStoreCid,
+        bytes32 edgeStoreNodeId
+    ) external onlyRole(RELAYER_ROLE) whenNotPaused {
+        Contribution storage c = contributions[contributionId];
+        if (c.submittedAt == 0) revert ContributionNotFound();
+        if (c.edgeStoreCid != bytes32(0)) revert AlreadySealed();
+        require(edgeStoreCid != bytes32(0), "ZeroCid");
+
+        c.edgeStoreCid     = edgeStoreCid;
+        c.edgeStoreNodeId  = edgeStoreNodeId;
+
+        emit EdgeStoreSealed(contributionId, edgeStoreCid, edgeStoreNodeId, msg.sender);
+    }
 
     function _forwardFee(uint256 amount) internal {
         if (amount == 0 || revenueSplitter == address(0)) return;

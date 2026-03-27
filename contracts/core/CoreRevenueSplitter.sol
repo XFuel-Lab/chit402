@@ -4,10 +4,12 @@ pragma solidity ^0.8.22;
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title CoreRevenueSplitter
  * @author XFuel Protocol — Core Layer
+ * @custom:security-contact security@xfuel.app
  * @notice Ecosystem-agnostic fee collection and distribution with configurable splits,
  *         multi-chain Fee-to-Stake routing, and governance integration.
  *
@@ -44,6 +46,25 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant CIRCUIT_ROLE = keccak256("CIRCUIT_ROLE");
     bytes32 public constant GOVERNANCE_ROLE = keccak256("GOVERNANCE_ROLE");
 
+    // ─── TDROP ERC-20 Fee Accounting (Track 4.2) ──────────────────────────────
+    // receiveERC20Fee() pulls TDROP (or any TNT-20) from the calling circuit
+    // and records it for attribution and future distribution (e.g., TDROP buy-back,
+    // TDROP staker yield).  TDROP is NOT mixed with TFUEL in the main distribution
+    // pool — it is held separately in `erc20Balances` until a governance-approved
+    // distribution path is implemented (Track 4.1 roadmap item).
+    mapping(address => uint256) public erc20Balances;      // token → amount held
+    mapping(bytes32 => mapping(address => uint256)) public circuitErc20Fees; // circuitId → token → amount
+    mapping(address => uint256) public totalErc20Collected; // token → lifetime total
+
+    event ERC20FeeReceived(
+        bytes32 indexed circuitId,
+        address indexed token,
+        address indexed sender,
+        uint256 amount,
+        uint8   providerTag,
+        uint256 timestamp
+    );
+
     // ─── Split Configuration (in BPS, must sum to 10000) ───────────────────────
     uint16 public bbbBps = 3000;
     uint16 public getBps = 3000;
@@ -62,6 +83,17 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
     uint16 public constant MAX_BOOST = 25000;
     uint256 public monthlyVolume;
     uint256 public lastVolumeReset;
+
+    // ─── Theta-Native Boost Accounting ───────────────────────────────────────
+    // Tracks the share of fees that originated from THETA_NATIVE executions.
+    // Used by distribute() to auto-scale boostMultiplier without admin action.
+    // THETA_NATIVE tag = 1 (mirrors ThetaInferenceCircuit.ProviderTag enum).
+    uint8  public constant PROVIDER_TAG_THETA_NATIVE = 1;
+    uint256 public thetaNativeFeesSinceReset;  // fees tagged THETA_NATIVE this period
+    uint256 public totalFeesSinceReset;        // all fees this period (tagged + untagged)
+    uint256 public totalThetaNativeFees;       // lifetime Theta-native fee volume
+    // Boost scale: 100% Theta-native → MAX_BOOST; 0% → MIN_BOOST (linear interpolation)
+    bool   public dynamicBoostEnabled = true;  // governance can disable if needed
 
     // ─── Agent Grant Proposals ──────────────────────────────────────────────
     struct GrantProposal {
@@ -191,6 +223,24 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
         address indexed sender,
         uint256 amount,
         uint256 timestamp
+    );
+
+    // Emitted when a tagged fee deposit arrives — providerTag mirrors ProviderTag enum
+    event FeeReceivedTagged(
+        bytes32 indexed circuitId,
+        address indexed sender,
+        uint256 amount,
+        uint8   providerTag,
+        uint256 timestamp
+    );
+
+    // Emitted when dynamic boost is recalculated at distribute() time
+    event DynamicBoostApplied(
+        uint16  oldMultiplier,
+        uint16  newMultiplier,
+        uint256 thetaNativeFees,
+        uint256 totalFees,
+        uint256 thetaNativeRatioBps
     );
 
     event FeeDistributed(
@@ -335,7 +385,145 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
         require(msg.value > 0, "ZeroAmount");
         totalCollected += msg.value;
         circuitFees[circuitId] += msg.value;
+        totalFeesSinceReset += msg.value;
         emit FeeReceived(circuitId, msg.sender, msg.value, block.timestamp);
+    }
+
+    /**
+     * @notice Deposit a fee tagged with a ProviderTag.
+     * @param circuitId  Circuit identifier (keccak256 of circuit name).
+     * @param providerTag  Provider tag value (1 = THETA_NATIVE, 3 = DEPIN_AKASH, etc.).
+     *
+     * When providerTag == PROVIDER_TAG_THETA_NATIVE (1), the deposit is counted toward
+     * the Theta-native volume used by the dynamic boost calculation in distribute().
+     * Higher Theta-native share → higher boostMultiplier → more incentives to Theta
+     * ecosystem participants.  The relationship is linear:
+     *   boostMultiplier = MIN_BOOST + (MAX_BOOST - MIN_BOOST) * (thetaNativeRatio)
+     * where thetaNativeRatio = thetaNativeFeesSinceReset / totalFeesSinceReset ∈ [0, 1].
+     */
+    function depositFeeWithTag(bytes32 circuitId, uint8 providerTag) external payable whenNotPaused {
+        require(msg.value > 0, "ZeroAmount");
+        totalCollected += msg.value;
+        circuitFees[circuitId] += msg.value;
+        totalFeesSinceReset += msg.value;
+
+        if (providerTag == PROVIDER_TAG_THETA_NATIVE) {
+            thetaNativeFeesSinceReset += msg.value;
+            totalThetaNativeFees += msg.value;
+        }
+
+        emit FeeReceivedTagged(circuitId, msg.sender, msg.value, providerTag, block.timestamp);
+    }
+
+    /**
+     * @notice Retroactively tag a previously deposited fee with a providerTag.
+     * @param circuitId   Same circuitId used in the original depositFee() call.
+     * @param providerTag Provider tag (1 = THETA_NATIVE, 3 = DEPIN_AKASH, etc.).
+     * @param amount      Amount of the original fee deposit being tagged.
+     *
+     * Called by ThetaInferenceCircuit.settleIntent() after attestEdgeCloudNode()
+     * has recorded the ProviderTag on-chain.  The fee was already forwarded to this
+     * contract at submitIntent() time; this call updates the boost accounting only.
+     *
+     * @dev No ETH is transferred. Emits FeeReceivedTagged with amount for indexing.
+     *      Callable by any registered circuit (no access control — circuits self-report).
+     */
+    function tagFeeOrigin(bytes32 circuitId, uint8 providerTag, uint256 amount) external whenNotPaused {
+        require(amount > 0, "ZeroAmount");
+        // Only update the running totals; the fee itself was already counted
+        totalFeesSinceReset += amount;
+
+        if (providerTag == PROVIDER_TAG_THETA_NATIVE) {
+            thetaNativeFeesSinceReset += amount;
+            totalThetaNativeFees += amount;
+        }
+
+        emit FeeReceivedTagged(circuitId, msg.sender, amount, providerTag, block.timestamp);
+    }
+
+    /**
+     * @notice Accept a TNT-20 / ERC-20 fee (e.g., TDROP) from a registered circuit.
+     *
+     * This is the counterpart to `depositFeeWithTag()` for ERC-20 tokens.
+     * The circuit must have already approved this contract for `amount` of `token`
+     * before calling.  The fee is pulled via `transferFrom` and held in
+     * `erc20Balances[token]` for future governance-directed distribution.
+     *
+     * Design notes:
+     *   - TDROP is NOT added to the TFUEL distribution pool.  It is held separately
+     *     until a distribution path is ratified (governance vote via Track 4.1 roadmap).
+     *   - providerTag mirrors ProviderTag enum; TDROP payments are always THETA_NATIVE (1)
+     *     since TDROP is a Theta-native token.
+     *   - Non-fatal in ThetaInferenceCircuit: if this call reverts (e.g., wrong allowance)
+     *     the circuit catches the error and the intent still proceeds.
+     *   - `erc20Balances` accumulates until a future `distributeERC20()` governance fn
+     *     is added (Track 4.1 roadmap: TDROP buy-back or staker yield).
+     *
+     * @param circuitId   Circuit originating the fee.
+     * @param token       ERC-20 token address (e.g., TDROP).
+     * @param amount      Amount to pull from msg.sender.
+     * @param providerTag ProviderTag enum value from the circuit (uint8).
+     */
+    function receiveERC20Fee(
+        bytes32 circuitId,
+        address token,
+        uint256 amount,
+        uint8   providerTag
+    ) external whenNotPaused {
+        require(token != address(0), "ZeroToken");
+        require(amount > 0, "ZeroAmount");
+
+        bool ok = IERC20(token).transferFrom(msg.sender, address(this), amount);
+        require(ok, "ERC20TransferFailed");
+
+        erc20Balances[token]                   += amount;
+        circuitErc20Fees[circuitId][token]     += amount;
+        totalErc20Collected[token]             += amount;
+
+        // Mirror Theta-native boost accounting for TDROP (always tagged as native)
+        if (providerTag == PROVIDER_TAG_THETA_NATIVE) {
+            thetaNativeFeesSinceReset += amount;
+            totalThetaNativeFees      += amount;
+            totalFeesSinceReset       += amount;
+        }
+
+        emit ERC20FeeReceived(circuitId, token, msg.sender, amount, providerTag, block.timestamp);
+    }
+
+    /**
+     * @notice Return the ERC-20 balance held for a specific token.
+     * @param token  ERC-20 token address (e.g., TDROP).
+     * @return Amount of `token` held by this contract, awaiting distribution.
+     */
+    function getERC20Balance(address token) external view returns (uint256) {
+        return erc20Balances[token];
+    }
+
+    /**
+     * @notice Return the ERC-20 fees attributed to a specific circuit and token.
+     * @param circuitId  Circuit identifier.
+     * @param token      ERC-20 token address.
+     * @return Amount of `token` collected from that circuit.
+     */
+    function getCircuitERC20Fees(bytes32 circuitId, address token) external view returns (uint256) {
+        return circuitErc20Fees[circuitId][token];
+    }
+
+    /**
+     * @dev Compute the dynamic boost multiplier from the current Theta-native ratio.
+     *      Linear interpolation: 0% native → MIN_BOOST; 100% native → MAX_BOOST.
+     *      Falls back to the manually-set boostMultiplier when dynamic boost is disabled
+     *      or when no tagged fees have been received this period.
+     */
+    function _computeBoost() internal view returns (uint16) {
+        if (!dynamicBoostEnabled || totalFeesSinceReset == 0) {
+            return boostMultiplier;
+        }
+        // thetaNativeRatioBps ∈ [0, 10000]
+        uint256 ratioBps = (thetaNativeFeesSinceReset * TOTAL_BPS) / totalFeesSinceReset;
+        uint256 boost = uint256(MIN_BOOST) + ((uint256(MAX_BOOST) - uint256(MIN_BOOST)) * ratioBps) / TOTAL_BPS;
+        if (boost > MAX_BOOST) boost = MAX_BOOST;
+        return uint16(boost);
     }
 
     // ─── Distribution ──────────────────────────────────────────────────────────
@@ -352,6 +540,8 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
      *      The function is protected by nonReentrant and whenNotPaused. Admin can pause
      *      to block distributions if needed.
      */
+    // slither-disable-start reentrancy-eth
+    // nonReentrant + CEI: all balances and counters updated before external ETH sends.
     function distribute() external nonReentrant whenNotPaused {
         uint256 balance = address(this).balance;
         if (balance == 0) revert NothingToDistribute();
@@ -366,25 +556,35 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
         uint256 feeToStakeAmount = (treasuryRaw * feeToStakeBps) / TOTAL_BPS;
         uint256 treasuryAmount = treasuryRaw - feeToStakeAmount;
 
-        // GET sub-split: incentives (with boost), LP boost, grants pool
-        uint256 incentivesRaw = (getAmount * incentivesBps) / TOTAL_BPS;
-        uint256 incentivesAmount = (incentivesRaw * boostMultiplier) / TOTAL_BPS;
+        // ── Dynamic boost: auto-scale from Theta-native fee share ────────────
+        // boostMultiplier is recomputed each distribute() based on what fraction
+        // of fees since the last distribution were tagged THETA_NATIVE.
+        // This requires zero admin action — the boost follows real usage.
+        uint16 effectiveBoost = _computeBoost();
+        if (effectiveBoost != boostMultiplier) {
+            uint256 ratioBps = totalFeesSinceReset > 0
+                ? (thetaNativeFeesSinceReset * TOTAL_BPS) / totalFeesSinceReset
+                : 0;
+            emit DynamicBoostApplied(boostMultiplier, effectiveBoost, thetaNativeFeesSinceReset, totalFeesSinceReset, ratioBps);
+            boostMultiplier = effectiveBoost;
+        }
+
+        // Reset period counters for next distribution window
+        thetaNativeFeesSinceReset = 0;
+        totalFeesSinceReset = 0;
+
+        // Per Section 2.3: GET sub-split with dynamic boost applied before division
+        // Multiply before dividing to preserve precision (avoids divide-before-multiply)
+        uint256 incentivesAmount = (getAmount * incentivesBps * effectiveBoost) / (uint256(TOTAL_BPS) * TOTAL_BPS);
         if (incentivesAmount > getAmount) incentivesAmount = getAmount;
         uint256 lpBoostAmount = (getAmount * lpBoostBps) / TOTAL_BPS;
+        uint256 incentivesRaw = (getAmount * incentivesBps) / TOTAL_BPS;
         uint256 grantsAmount = getAmount - incentivesRaw - lpBoostAmount;
 
         // Forward incentives + LP boost to GET wallet; grants portion stays in contract
         uint256 getForwarded = getAmount - grantsAmount;
 
-        _safeTransfer(bbbWallet, bbbAmount, "BBB");
-        _safeTransfer(getWallet, getForwarded, "GET");
-        _safeTransfer(stakerVault, stakerAmount, "Staker");
-        _safeTransfer(treasuryWallet, treasuryAmount, "Treasury");
-
-        if (feeToStakeAmount > 0) {
-            _routeStake(feeToStakeAmount);
-        }
-
+        // Per CEI: update all state before external calls
         grantPoolBalance += grantsAmount;
         lastGrantActivity = block.timestamp;
 
@@ -405,12 +605,25 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
             treasuryAmount, feeToStakeAmount,
             distributionCount, block.timestamp
         );
+
+        // External calls last (CEI pattern)
+        _safeTransfer(bbbWallet, bbbAmount, "BBB");
+        _safeTransfer(getWallet, getForwarded, "GET");
+        _safeTransfer(stakerVault, stakerAmount, "Staker");
+        _safeTransfer(treasuryWallet, treasuryAmount, "Treasury");
+
+        if (feeToStakeAmount > 0) {
+            _routeStake(feeToStakeAmount);
+        }
     }
+    // slither-disable-end reentrancy-eth
 
     /**
      * @notice Route fee-to-stake funds to registered chain-specific pools.
      *         Falls back to default stakePool if no routes are configured.
      */
+    // slither-disable-start reentrancy-eth
+    // Invoked only from distribute() (nonReentrant); chainStakeTotal/totalTreasury updated before each send.
     function _routeStake(uint256 amount) internal {
         if (stakeRoutes.length > 0 && totalStakeWeight > 0) {
             uint256 distributed = 0;
@@ -426,21 +639,25 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
                 }
 
                 if (share > 0) {
-                    _safeTransfer(r.pool, share, r.label);
+                    // Per CEI: update state before external call
                     chainStakeTotal[r.chainId] += share;
                     distributed += share;
                     emit StakeRouted(r.chainId, r.pool, share, r.label, block.timestamp);
+                    _safeTransfer(r.pool, share, r.label);
                 }
             }
         } else if (stakePool != address(0)) {
-            _safeTransfer(stakePool, amount, "StakePool");
+            // Per CEI: update state before external call
             chainStakeTotal[block.chainid] += amount;
             emit StakeRouted(block.chainid, stakePool, amount, "DefaultPool", block.timestamp);
+            _safeTransfer(stakePool, amount, "StakePool");
         } else {
-            _safeTransfer(treasuryWallet, amount, "Treasury(stake)");
+            // Per CEI: update state before external call
             totalTreasury += amount;
+            _safeTransfer(treasuryWallet, amount, "Treasury(stake)");
         }
     }
+    // slither-disable-end reentrancy-eth
 
     // ─── Stake Route Management ────────────────────────────────────────────────
 
@@ -596,7 +813,10 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
         emit RecipientUpdated("StakePool", a);
     }
 
+    /// @notice Pause fee collection and distribution. Restricted to DEFAULT_ADMIN_ROLE.
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) { _pause(); }
+
+    /// @notice Unpause fee collection and distribution. Restricted to DEFAULT_ADMIN_ROLE.
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) { _unpause(); }
 
     // ─── x402 Escrow Operations ────────────────────────────────────────────────
@@ -691,7 +911,9 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /**
-     * @notice Refund escrow to payer after expiry.
+     * @notice Refund escrow to payer after it has expired without being claimed.
+     * @param escrowId The escrow to refund.
+     * @dev Only the original payer can call. Reverts if not yet expired or already settled.
      */
     function refundEscrow(uint256 escrowId) external nonReentrant {
         Escrow storage e = escrows[escrowId];
@@ -968,6 +1190,36 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
         emit BoostMultiplierUpdated(oldMultiplier, _multiplier, monthlyVolume);
     }
 
+    /**
+     * @notice Enable or disable the dynamic Theta-native boost calculation.
+     * @param enabled  If true, distribute() auto-scales boostMultiplier from the
+     *                 Theta-native fee share.  If false, the manually-set boostMultiplier
+     *                 is used as a fixed value (original behaviour).
+     * @dev Callable by DEFAULT_ADMIN_ROLE or GOVERNANCE_ROLE.
+     *      Disable if a governance vote sets a fixed multiplier for a promotional period.
+     */
+    function setDynamicBoostEnabled(bool enabled)
+        external
+    {
+        require(
+            hasRole(DEFAULT_ADMIN_ROLE, msg.sender) || hasRole(GOVERNANCE_ROLE, msg.sender),
+            "NotAdminOrGovernance"
+        );
+        dynamicBoostEnabled = enabled;
+    }
+
+    /**
+     * @notice Preview the effective boost that would be applied if distribute() ran now.
+     * @return effectiveBoost  Boost in BPS (10000 = 1.0x, up to 25000 = 2.5x).
+     * @return thetaNativeRatioBps  Share of tagged fees that are THETA_NATIVE, in BPS.
+     */
+    function previewBoost() external view returns (uint16 effectiveBoost, uint256 thetaNativeRatioBps) {
+        effectiveBoost = _computeBoost();
+        thetaNativeRatioBps = totalFeesSinceReset > 0
+            ? (thetaNativeFeesSinceReset * TOTAL_BPS) / totalFeesSinceReset
+            : 0;
+    }
+
     // ─── Agent Grant Proposals ──────────────────────────────────────────────
 
     /**
@@ -1067,6 +1319,7 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
 
     function _safeTransfer(address to, uint256 amount, string memory label) internal {
         if (amount == 0 || to == address(0)) return;
+        // slither-disable-next-line arbitrary-send-eth -- governance wallets, stake pools, approved grant payees only
         (bool ok, ) = payable(to).call{value: amount}("");
         if (!ok) revert TransferFailed(label);
     }

@@ -36,6 +36,7 @@ This whitepaper describes the Core Layer architecture, its components, and how t
 12. [Roadmap](#12-roadmap)
 13. [Technical Specifications](#13-technical-specifications) *(→ [`docs/Technical-Specifications.md`](docs/Technical-Specifications.md))*
 14. [Circuit Implementations](#14-circuit-implementations--expansion-history) *(→ [`docs/Circuit-Design-and-Expansion.md`](docs/Circuit-Design-and-Expansion.md))*
+15. [References & Attribution](#references--attribution) *(→ [`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md))*
 
 ---
 
@@ -86,22 +87,22 @@ The Core Layer consists of five primary components, each implemented in both Sol
 
 ```
                         ┌──────────────────────────────┐
-                        │       CORE LAYER (Hub)       │
+                        │       CORE LAYER (Hub)                 │
                         ├──────────────────────────────┤
-                        │  ZKVerifierSP1 (EVM/WASM)    │ ← Proof verification
-                        │  CoreRevenueSplitter         │ ← Fee distribution
-                        │  veXFGovernance              │ ← Parameter voting
-                        │  SP1ProofHooks               │ ← Proof utilities
-                        │  CoreListener (ai-listener)  │ ← Event polling/routing
+                        │  ZKVerifierSP1 (EVM/WASM)              │ ← Proof verification
+                        │  CoreRevenueSplitter                   │ ← Fee distribution
+                        │  veXFGovernance                        │ ← Parameter voting
+                        │  SP1ProofHooks                         │ ← Proof utilities
+                        │  CoreListener (ai-listener)            │ ← Event polling/routing
                         └──────────┬───────────────────┘
                                    │
                ┌───────────────────┼───────────────────┐
-               │                   │                   │
-        ┌──────▼──────┐    ┌──────▼──────┐    ┌──────▼──────┐
-        │  Circuit A  │    │  Circuit B  │    │  Circuit N  │
-        │ (Compute    │    │ (Inference  │    │ (Custom     │
-        │  Marketplace)│   │  Router)    │    │  Module)    │
-        └─────────────┘    └─────────────┘    └─────────────┘
+               │                         │                          │
+        ┌──────▼──────┐    ┌──────▼──────┐       ┌──────▼──────┐
+        │  Circuit A       │    │  Circuit B      │       │  Circuit N       │
+        │ (Compute         │    │ (Inference      │       │ (Custom          │
+        │  Marketplace)    │    │  Router)        │       │  Module)         │
+        └─────────────┘     └─────────────┘       └─────────────┘
 ```
 
 ### Component Responsibilities
@@ -182,7 +183,15 @@ All three share the same BN254 curve, Groth16 proof system, nullifier-based repl
 
 Circuit registration is admin-gated, transitioning to veXF governance control (see [Section 6](#6-governance-vexf)).
 
-> For full verifier architectures, gas benchmarks, WASM/Solana program sizes, and multi-prover security matrices, see [`docs/Technical-Specifications.md`](docs/Technical-Specifications.md).
+### 3.5 Phase 1 Research Integration: zkGPT and Fair Exchange
+
+XFuel integrates two research lines with full attribution (see [References & Attribution](#references--attribution) and [`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md)):
+
+**zkGPT** ([eprint.iacr.org/2025/1184](https://eprint.iacr.org/2025/1184)) — A non-interactive ZK proof framework for LLM inference (GKR + Lasso, Hyrax on BN254; open-source: [security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt)). XFuel offers a **parallel proof path**: inference requests may specify `proof_system: zkgpt`; a dedicated verifier contract (`ZKVerifierZkGPT.sol`) and prover scaffold (`zkgpt-prover/`) implement or reference this design. SP1 remains the default; zkGPT targets LLM-specific verification with ~101 KB proofs and sub-25s proving for GPT-2-scale models.
+
+**Fair Exchange (PAS)** ([eprint.iacr.org/2026/395](https://eprint.iacr.org/2026/395)) — *Delegated Payments for AI Agents: Fair Exchange on Bitcoin/EVM* introduces Proxy Adaptor Signatures so payment and result delivery are cryptographically atomic. XFuel implements this in the A2A circuit: `settleBidFairExchange(bidId, resultHash, v, r, s)` verifies a signature from a registered proxy and releases escrow to the provider only when the adapted signature is valid — no ZK proof required for this path. The M2M API exposes `POST /a2a-settle-fair-exchange`; the SDK offers `settleWithFairExchange()`.
+
+> Full citations, author credits, and compliance notes: [`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md).
 
 ---
 
@@ -286,24 +295,24 @@ All collected fees flow through the CoreRevenueSplitter using a clean four-way s
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│              CoreRevenueSplitter v2.4                 │
+│              CoreRevenueSplitter v2.4                                  │
 ├──────────────────────────────────────────────────────┤
-│  30%  →  Buyback-Burn (BBB)                          │
-│          XF token deflationary pressure              │
-│                                                      │
-│  30%  →  Growth & Expansion Treasury (GET)           │
-│          AI DePIN growth engine (see sub-breakdown)  │
-│          ├─ 50% Machine & Agent Incentives           │
-│          ├─ 30% LP Boost                             │
-│          └─ 20% Agent-Driven Grant Proposals         │
-│                                                      │
-│  25%  →  veXF Stake Rewards                          │
-│          Distributed to governance lockers           │
-│                                                      │
-│  15%  →  Ops Treasury                                │
-│          Operations, development, audits             │
-│          ├─ 15-25% → Fee-to-Stake pool               │
-│          └─ Validator incentives                     │
+│  30%  →  Buyback-Burn (BBB)                                            │
+│          XF token deflationary pressure                                │
+│                                                                        │
+│  30%  →  Growth & Expansion Treasury (GET)                             │
+│          AI DePIN growth engine (see sub-breakdown)                    │
+│          ├─ 50% Machine & Agent Incentives                            │
+│          ├─ 30% LP Boost                                              │
+│          └─ 20% Agent-Driven Grant Proposals                          │
+│                                                                        │
+│  25%  →  veXF Stake Rewards                                            │
+│          Distributed to governance lockers                             │
+│                                                                        │
+│  15%  →  Ops Treasury                                                  │
+│          Operations, development, audits                               │
+│          ├─ 15-25% → Fee-to-Stake pool                                │
+│          └─ Validator incentives                                      │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -457,13 +466,13 @@ XFuel's Core Layer supports three integration tiers:
 ### 8.3 Cross-Chain Proof Flow (Solana ↔ EVM ↔ Cosmos)
 
 ```
-Solana SVM                           Theta EVM                          Cosmos/IBC
+          Solana SVM                                   Theta EVM                                  Cosmos/IBC
 ┌─────────────────────┐    Wormhole   ┌──────────────────────┐   Hyperlane  ┌──────────────────┐
-│ xfuel-solana-prover │───── VAA ────→│ ZKVerifierSP1.sol    │───dispatch──→│ xfuel-zk-verifier│
-│                     │               │                      │              │  (CosmWasm)      │
-│ • SP1 Groth16 proof │               │ • handle() receives  │              │ • IBC relay      │
-│ • Nullifier PDA     │               │   proof result        │              │ • Nullifier check│
-│ • sol_log_data emit │               │ • ProofRelayed event  │              │ • Event emit     │
+│ xfuel-solana-prover        │─── VAA ───→│ ZKVerifierSP1.sol           │─dispatch──→│ xfuel-zk-verifier      │
+│                            │               │                             │              │  (CosmWasm)            │
+│ • SP1 Groth16 proof        │               │ • handle() receives         │              │ • IBC relay            │
+│ • Nullifier PDA            │               │   proof result              │              │ • Nullifier check      │
+│ • sol_log_data emit        │               │ • ProofRelayed event        │              │ • Event emit           │
 └─────────────────────┘               └──────────────────────┘              └──────────────────┘
 ```
 
@@ -523,6 +532,39 @@ Any project can build a custom circuit by implementing the circuit interface (ev
 ---
 
 ## 10. Tokenomics
+
+### XF Token Supply
+
+| Parameter | Value |
+|-----------|-------|
+| **Total Supply** | 1,000,000,000 XF (1B) |
+| **Token Standard** | ERC-20 on Theta Mainnet (chain 361) |
+| **TGE Status** | Pending — gated on CertiK Phase 1 audit completion |
+
+### Token Allocation
+
+| Bucket | % | XF Amount | Vesting |
+|--------|---|-----------|---------|
+| **Believer Rounds** (community) | 40% | 400,000,000 | 3mo cliff + 12mo linear per round |
+| **Ecosystem & Grants** | 20% | 200,000,000 | Protocol-owned, governance-distributed |
+| **Team & Founders** | 15% | 150,000,000 | 12mo cliff + 36mo linear |
+| **Protocol Treasury** | 15% | 150,000,000 | DAO-controlled via veXF governance |
+| **Liquidity (LP seed)** | 10% | 100,000,000 | Unlocked at TGE for DEX listing |
+
+### Believer Round — Phased Rollout
+
+| Phase | XF Allocated | Hard Cap | Price | Raises (est.) | Status |
+|-------|-------------|----------|-------|--------------|--------|
+| Phase 1 | 40M XF (4%) | 2,000,000 TFUEL | 20 XF/TFUEL | ~$26K | **Open** |
+| Phase 2 | 120M XF (12%) | 6,000,000 TFUEL | 20 XF/TFUEL | ~$78K | Post-grant |
+| Phase 3 | 240M XF (24%) | 8,000,000 TFUEL | 30 XF/TFUEL | ~$104K | Post-audit |
+| **Total** | **400M XF (40%)** | **16,000,000 TFUEL** | | **~$208K** | |
+
+- **Min commitment:** 100 TFUEL (~$1.30) — no per-wallet cap
+- **Vesting:** 3-month cliff + 12-month linear release (15 months total)
+- **Refund safety:** Full TFUEL refund available if TGE not triggered within 180 days
+- **Admin / Multisig:** `0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257` (Gnosis Safe, Theta)
+- **Believer page:** `believers/index.html` · Contract: `contracts/circuits/BelieverRound.sol`
 
 ### XF Token Utility
 
@@ -632,12 +674,42 @@ All six development phases are code-complete. The protocol is now in audit prepa
 - [x] Theta Testnet full deployment — 22 contracts (Core Layer + 16 circuits + BelieverRound + mocks) with resumable deploy script
 - [x] 755+ total tests
 
+### Phase 1 Research Integration: zkGPT + Fair Exchange (In Progress)
+
+XFuel’s Phase 1 ZK Research Upgrade integrates two externally developed research lines with full attribution (see [References & Attribution](#references--attribution) and [`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md)):
+
+- **zkGPT** ([eprint.iacr.org/2025/1184](https://eprint.iacr.org/2025/1184); implementation: [security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt)) — Parallel proof path for LLM inference. API supports `proof_system: zkgpt`; `ZKVerifierZkGPT.sol` (stub) and `zkgpt-prover/` scaffold in place; real GKR+Lasso verifier and prover integration in progress.
+- **Fair Exchange (PAS)** ([eprint.iacr.org/2026/395](https://eprint.iacr.org/2026/395)) — Atomic payment↔result in A2A. `A2ACircuit.settleBidFairExchange()`, M2M `POST /a2a-settle-fair-exchange`, and SDK `settleWithFairExchange()` implemented; proxy/relayer config and PAS off-chain flow documented.
+
 ### Next: Audit & Mainnet (Q2–Q3 2026)
 - [ ] CertiK Phase 1 audit — Core Layer + ThetaInferenceCircuit (5 contracts, ~2,068 lines)
 - [ ] Mainnet deployment — Theta 361, Bittensor 964, Osmosis osmosis-1
 - [ ] CertiK Phase 2 audit — InferenceRouter, TAOCircuit, BridgeCircuit
 - [ ] Immunefi bug bounty launch — $500K max payout
 - [ ] CertiK Phase 3 audit — ComputeMarketplace, ZKML, DataHubs, A2A
+
+### Research Track: Interstellar Prover Integration (H2 2026 / 2027)
+
+XFuel's ZK stack is built on SP1 (Succinct), which today uses STARK aggregation + Groth16/PLONK wrapping for on-chain settlement. A first-party upgrade path has emerged from Theta Labs' own research.
+
+**[Interstellar](https://eprint.iacr.org/2025/1294)** (Jieyi Long, Theta Labs — published PKC 2026) is a GKR-based IVC folding scheme with two properties of direct relevance to XFuel:
+
+1. **zkML prover speedup** — GKR's arithmetic structure maps naturally to matrix multiplication (transformer attention, dense layers). Benchmarks show **1.59x–6.74x prover speedup** per folding round for matrix workloads and up to **2.93x** for hash chains (MiMC), directly reducing the cost and latency of XFuel's `inference_request` proving pipeline.
+
+2. **Collaborative folding / IVC** — A new primitive formalised in the paper: multiple provers holding *disjoint private witnesses* for the same public statement can jointly produce a single IVC proof without revealing their witnesses to each other. This is the cryptographic primitive required to give XFuel's swarm model (`formSwarm → joinSwarm → settleSwarmAgent`) genuine ZK guarantees — each of up to 18 agents proves only its own slice of a distributed computation, and the collaborative fold produces a single verifiable proof of the entire swarm's work.
+
+**What does NOT change:** `ZKVerifierSP1.sol` and all on-chain contracts remain unchanged. The final proof is still Groth16/PLONK — Interstellar lives entirely in the prover pipeline (`sp1-prover/`). The upgrade is a new `SP1_PROVER=interstellar` backend, not a contract migration.
+
+**Adoption dependency:** Interstellar is not yet integrated into Succinct's SP1 toolchain (paper accepted PKC 2026, Feb 2026 revision). Integration requires either an upstream SP1 contribution or a standalone Theta EdgeCloud prover backend. XFuel is well-positioned to be an early adopter given the shared Theta ecosystem.
+
+> Full ZK research pipeline — including additional papers on collaborative SNARKs, zkML constraint systems, distributed proving, and Keccak optimisation — is tracked in [`docs/ZK-RESEARCH-PIPELINE.md`](docs/ZK-RESEARCH-PIPELINE.md).
+
+**Planned tasks (when prover is production-ready):**
+- [ ] Evaluate Theta EdgeCloud Interstellar prover availability — engage Theta Labs team
+- [ ] Benchmark Interstellar vs SP1 STARK aggregation on `inference_request` workloads (llama-3-70b, MiMC nullifier circuits)
+- [ ] Prototype collaborative folding for 2-prover swarm task as proof-of-concept in `sp1-prover/`
+- [ ] If benchmarks positive: add `SP1_PROVER=interstellar` option to `.env.deploy.example` and prover selector in `core-layer/`
+- [ ] Update `SP1ProofHooks.sol` NatSpec to document Interstellar compatibility (no ABI changes required)
 
 > For detailed phase milestones and circuit expansion history (Steps 2–16), see [`docs/Circuit-Design-and-Expansion.md`](docs/Circuit-Design-and-Expansion.md).
 
@@ -654,6 +726,18 @@ Full multi-prover gas benchmarks, verifier architectures, SP1 proving performanc
 XFuel's modularity is validated by **16+ production circuits** spanning AI inference, compute marketplaces, agent communication, DeFi vaults, robotics verification, data ownership, energy grids, wireless coverage, and geospatial mapping. Each circuit is fully isolated with its own state, events, pause mechanism, and off-chain handler.
 
 Full circuit architectures, gas profiles, isolation matrices, test coverage tables, deployment infrastructure, grant templates, and community tools are documented in [`docs/Circuit-Design-and-Expansion.md`](docs/Circuit-Design-and-Expansion.md).
+
+---
+
+## References & Attribution
+
+XFuel integrates or references the following research with full credit to authors and sources. For eprint links, author information, open-source repos, and compliance notes, see **[`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md)**.
+
+| Integration | Source | Use in XFuel |
+|-------------|--------|--------------|
+| **zkGPT** | [eprint.iacr.org/2025/1184](https://eprint.iacr.org/2025/1184); [github.com/security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt) | Parallel LLM inference proof path; `ZKVerifierZkGPT`, `zkgpt-prover/` |
+| **Fair Exchange (PAS)** | [eprint.iacr.org/2026/395](https://eprint.iacr.org/2026/395) | A2A atomic payment↔result; `settleBidFairExchange`, M2M + SDK |
+| **Interstellar** | [eprint.iacr.org/2025/1294](https://eprint.iacr.org/2025/1294) (Jieyi Long, Theta Labs; PKC 2026) | Future prover track (no contract change) |
 
 ---
 

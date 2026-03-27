@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAccount, useWriteContract, useReadContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseEther, formatEther, keccak256, toBytes } from 'viem';
 import { Link } from 'react-router-dom';
+import ThetaP2PPlayer from '../components/ThetaP2PPlayer';
 
 // ─── Contract ABI (subset for ThetaInferenceCircuit) ─────────────────────────
 const THETA_INFERENCE_ABI = [
@@ -211,7 +212,7 @@ const PRESET_HOOKS: PresetHook[] = [
     defaultModel: 'Whisper Large V3',
     defaultGpu: 'A100',
     defaultPrompt: '',
-    description: 'HIPAA-grade transcription, 90+ languages',
+    description: 'Medical-style transcription demo — not for PHI; not HIPAA compliant.',
     icon: '🏥',
     color: '#22c55e',
   },
@@ -1361,6 +1362,32 @@ export default function ThetaAI() {
                 <pre style={styles.resultPre}>
                   {JSON.stringify(JSON.parse(mockResult), null, 2)}
                 </pre>
+
+                {/* ── Track 3.5 / 3.4: P2P + optional NFT-DRM player for VIDEO_PROCESSING ── */}
+                {selectedService.type === 'VIDEO_PROCESSING' && (() => {
+                  let parsed: Record<string, string> = {};
+                  try { parsed = JSON.parse(mockResult); } catch { /* ignore */ }
+                  const playbackUri = parsed.playback_uri || parsed.output_url || parsed.hls_url;
+                  if (!playbackUri) return null;
+                  // Track 3.4: videoId is the Theta Video API ID (e.g. "video_m3jxh0...")
+                  // nftCollection is set when the NFT_DRM_GUARD preset was used
+                  const tvaVideoId = parsed.video_id || parsed.videoId;
+                  const nftCollection = parsed.nft_collection ||
+                    (activePreset?.key === 'NFT_DRM_GUARD' ? parsed.nft_collection : undefined);
+                  return (
+                    <ThetaP2PPlayer
+                      src={playbackUri}
+                      videoId={tvaVideoId}
+                      internalVideoId={txHash ?? undefined}
+                      nftCollection={nftCollection}
+                      networkId={365}
+                      onAccessDenied={(col) => {
+                        window.open(`https://testnet-explorer.thetatoken.org/account/${col}`, '_blank');
+                      }}
+                    />
+                  );
+                })()}
+
                 <div style={styles.proofMeta}>
                   <span>Nullifier: 0x{Array(16).fill(0).map(() => Math.floor(Math.random() * 16).toString(16)).join('')}...</span>
                   <span>Gas: ~108K | GPU: {GPU_TIERS[selectedGpu].name}</span>
@@ -1484,15 +1511,15 @@ export default function ThetaAI() {
               <h3 style={{ fontSize: '1rem', marginTop: '1.5rem', marginBottom: '0.75rem', color: '#8a8a9a' }}>Network Status</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {[
-                  { name: 'Theta Mainnet (361)', status: 'live', latency: '~1.2s finality' },
-                  { name: 'Theta Testnet (365)', status: 'live', latency: '~1.0s finality' },
-                  { name: 'EdgeCloud Nodes', status: 'live', latency: '2,400+ active' },
-                  { name: 'RapidAPI Gateway', status: 'live', latency: 'Enterprise routing' },
+                  { name: 'Theta Mainnet (361)', status: 'roadmap', latency: '—' },
+                  { name: 'Theta Testnet (365)', status: 'live', latency: 'primary beta target' },
+                  { name: 'EdgeCloud routing', status: 'beta', latency: 'when M2M + keys configured' },
+                  { name: 'RapidAPI / other tiers', status: 'fallback', latency: 'router-dependent' },
                 ].map((n) => (
                   <div key={n.name} style={styles.networkRow}>
                     <span style={{
                       width: 8, height: 8, borderRadius: '50%',
-                      background: n.status === 'live' ? '#22c55e' : '#f59e0b',
+                      background: n.status === 'live' ? '#22c55e' : n.status === 'roadmap' ? '#8b5cf6' : '#f59e0b',
                       display: 'inline-block', flexShrink: 0,
                     }} />
                     <span style={{ flex: 1 }}>{n.name}</span>

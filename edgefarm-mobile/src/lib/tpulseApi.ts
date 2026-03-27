@@ -25,9 +25,12 @@ export interface TPulseSummary {
   averageEarningPerHour: number
 }
 
-// Mock TPulse API endpoint (replace with real API)
-const TPULSE_API_URL = 'https://api.thetaedgecloud.com/v1'
-const THETA_EXPLORER_API = 'https://explorer.thetatoken.org:8443/api'
+// NOTE: There is no public "TPulse" earnings API on thetaedgecloud.com.
+// api.thetaedgecloud.com/v1 is the EdgeCloud deployment management API (vm/list, deployments, etc.)
+// Edge Node earnings are obtained via the Theta Explorer API (/accounttx/:address).
+// The constant below is kept as a placeholder for a potential future Theta earnings endpoint.
+const TPULSE_API_URL = 'https://api.thetaedgecloud.com/v1' // deployment mgmt API — not for earnings
+const THETA_EXPLORER_API = 'https://explorer-api.thetatoken.org/api'
 
 /**
  * Fetch Edge Node earnings for a given address
@@ -41,8 +44,14 @@ export async function fetchEdgeNodeEarnings(
     // For now, use Theta Explorer API to fetch transactions
     const sinceTimestamp = since || Date.now() - 24 * 60 * 60 * 1000 // Last 24h
     
+    // Fetch type=2 (send transactions — TFUEL earned by edge nodes arrives as sends from reward distributor)
+    // Transaction type reference (from Explorer API docs):
+    //   0 = coinbase (validator/guardian reward), 1 = slash, 2 = send, 3 = reserve fund,
+    //   4 = release fund, 5 = service payment, 6 = split rule (NOT earnings), 7 = smart contract,
+    //   8 = deposit stake, 9 = withdraw stake
+    // Edge Node TFUEL earnings arrive as type-2 (send) from the network reward pool.
     const response = await fetch(
-      `${THETA_EXPLORER_API}/accounttx/${nodeAddress}?type=6&pageNumber=1&limitNumber=100`
+      `${THETA_EXPLORER_API}/accounttx/${nodeAddress}?type=2&pageNumber=1&limitNumber=100&isEqualType=true`
     )
     
     if (!response.ok) {
@@ -56,18 +65,27 @@ export async function fetchEdgeNodeEarnings(
     
     if (data.body && Array.isArray(data.body)) {
       for (const tx of data.body) {
-        // Filter for TFUEL earnings (incoming transfers)
-        if (tx.type === 6 && tx.timestamp) {
-          const tfuelAmount = parseFloat(tx.data?.tfuel_amount || '0') / 1e18
-          
-          if (tfuelAmount > 0) {
-            earnings.push({
-              timestamp: tx.timestamp * 1000, // Convert to ms
-              tfuelAmount,
-              source: classifyEarningSource(tx),
-              nodeAddress,
-              txHash: tx.hash,
-            })
+        // type=2 send transactions from Explorer API:
+        // tx.data.outputs = [{ address, coins: { thetawei, tfuelwei } }]
+        // tx.data.inputs  = [{ address, coins: { thetawei, tfuelwei } }]
+        // We want incoming sends where one of the outputs matches nodeAddress
+        if (tx.type === 2 && tx.timestamp) {
+          const outputs: Array<{ address: string; coins: { tfuelwei: string } }> =
+            tx.data?.outputs || []
+          const matchingOutput = outputs.find(
+            (o) => o.address?.toLowerCase() === nodeAddress.toLowerCase()
+          )
+          if (matchingOutput) {
+            const tfuelAmount = parseFloat(matchingOutput.coins?.tfuelwei || '0') / 1e18
+            if (tfuelAmount > 0) {
+              earnings.push({
+                timestamp: tx.timestamp * 1000,
+                tfuelAmount,
+                source: classifyEarningSource(tx),
+                nodeAddress,
+                txHash: tx.hash,
+              })
+            }
           }
         }
       }
@@ -82,16 +100,23 @@ export async function fetchEdgeNodeEarnings(
 }
 
 /**
- * Classify earning source based on transaction data
+ * Classify earning source based on transaction amount heuristic.
+ * Edge nodes earn small fractions of TFUEL per reward cycle.
+ * Without a dedicated earnings API, amounts are used as a rough proxy.
  */
 function classifyEarningSource(tx: any): 'video' | 'compute' | 'cdn' | 'storage' {
-  // Heuristic: classify based on amount or memo (if available in future)
-  const amount = parseFloat(tx.data?.tfuel_amount || '0') / 1e18
-  
-  // Video/CDN earnings are typically larger (streaming revenue)
-  if (amount > 10) return 'video'
-  if (amount > 1) return 'cdn'
+  // Sum all outputs to get total sent (rough heuristic only)
+  const outputs: Array<{ coins: { tfuelwei: string } }> = tx.data?.outputs || []
+  const totalWei = outputs.reduce(
+    (sum, o) => sum + parseFloat(o.coins?.tfuelwei || '0'),
+    0
+  )
+  const amount = totalWei / 1e18
+
+  // Small amounts typical of CDN/relay; larger ones suggest compute or video
+  if (amount > 1) return 'video'
   if (amount > 0.1) return 'compute'
+  if (amount > 0.01) return 'cdn'
   return 'storage'
 }
 

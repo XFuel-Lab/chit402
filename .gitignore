@@ -89,6 +89,15 @@ target/
 
 # Embedded repos
 sp1-source/
+# zkGPT upstream clone + local CMake build (keep out of tree; document URL in docs)
+backend/theta-bridge/zkgpt/
+
+# Timestamped believer launch reports (local only)
+believer/launch-round-[0-9]*.json
+believer/launch-angel-round-[0-9]*.json
+
+# TypeScript incremental
+*.tsbuildinfo
 
 # ZK Proof files (generated)
 proof_*.json
@@ -125,6 +134,12 @@ deployment-*.json
 # Generated proof binaries
 *.bin
 !src/**/*.bin
+
+# Rust build artifacts (but NOT committed CosmWasm artifacts)
+target/
+# Whitelist CosmWasm artifacts — these are committed intentionally for on-chain hash verification
+!cosmwasm-contracts/artifacts/*.wasm
+!cosmwasm-contracts/*/artifacts/*.wasm
 
 # IDE
 *.code-workspace

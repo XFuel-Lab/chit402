@@ -315,9 +315,12 @@ class DepositListener {
       ]);
 
       // Step 6: Generate ZK proof using SP1
-      logger.info({ vault: depositData.vault }, 'Generating SP1 ZK proof');
-      
       const prover = getSP1Prover();
+      if (!prover) {
+        logger.warn('SP1_PROVER_URL not set; skipping deposit proof generation');
+        return;
+      }
+      logger.info({ vault: depositData.vault }, 'Generating SP1 ZK proof');
       const proof = await prover.generateProof(
         depositData,
         {
@@ -393,7 +396,10 @@ class DepositListener {
     try {
       // Step 1: Get SP1 prover client
       const sp1Prover = getSP1Prover();
-      
+      if (!sp1Prover) {
+        throw new Error('SP1_PROVER_URL not set; cannot generate proof for persistence');
+      }
+
       // Step 2: Prepare SP1 proof request from deposit data
       const provider = getProvider();
       const blockData = await provider.getBlock(depositData.blockNumber);

@@ -10,6 +10,8 @@
   ],
   "scripts": {
     "build": "tsc",
+    "test": "jest",
+    "test:watch": "jest --watch",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -28,13 +30,34 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/XFuelAI/xfuel-protocol.git",
+    "url": "https://github.com/XFuel-Lab/xfuel-protocol.git",
     "directory": "sdk/js"
   },
   "dependencies": {
     "axios": "^1.7.0"
   },
   "devDependencies": {
+    "@jest/globals": "^29.7.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.6",
     "typescript": "^5.2.2"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "extensionsToTreatAsEsm": [
+      ".ts"
+    ],
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
+    "transform": {
+      "^.+\\.tsx?$": [
+        "ts-jest",
+        {
+          "useESM": true
+        }
+      ]
+    }
   }
 }

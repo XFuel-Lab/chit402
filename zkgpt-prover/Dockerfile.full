@@ -1,0 +1,72 @@
+# Multi-stage: build upstream zkGPT, then run Node wrapper + adapter on Theta GPU node.
+#
+# IMPORTANT: We do NOT use entrypoint.sh or "ulimit" in the start command. Adding those
+# to fix "too many open files" caused 0/20 deploy failure on Theta (container exits immediately).
+# If you get 1/1 and later see "too many open files" when proving, fix via 1 replica or
+# platform ulimit/inotify — do not add a custom start command with sh -c ulimit.
+#
+# After pulling this Dockerfile, build a new tag and update Theta template, e.g.:
+#   docker build -f zkgpt-prover/Dockerfile.full --platform linux/amd64 -t xfuel/xfuel-zkgpt-prover:full-v5 .
+#   docker push xfuel/xfuel-zkgpt-prover:full-v5
+# Then set Theta template image to xfuel/xfuel-zkgpt-prover:full-v5 and leave container command/args empty.
+
+# -----------------------------------------------------------------------------
+# Stage 1: build C++ prover (security-Anonymous/zkgpt)
+# -----------------------------------------------------------------------------
+FROM ubuntu:22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    cmake \
+    git \
+    libgmp-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /zkgpt
+
+RUN git clone --recurse-submodules https://github.com/security-Anonymous/zkgpt.git . \
+    && sed -i 's/\r$//' build.sh 2>/dev/null || true \
+    && bash build.sh Release
+
+# -----------------------------------------------------------------------------
+# Stage 2: runtime = Node wrapper + adapter + binary
+# -----------------------------------------------------------------------------
+FROM node:20-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends libgmp10 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Binary and mcl shared libs from builder (binary links against libmcl.so.1)
+COPY --from=builder /zkgpt/cmake-build-release/src/demo_llm_run ./demo_llm_run
+COPY --from=builder /zkgpt/cmake-build-release/lib/libmcl*.so* ./lib/
+COPY --from=builder /zkgpt/cmake-build-release/lib/libmclbn256*.so* ./lib/
+# Soname links (loader looks for libmcl.so.1; build outputs e.g. libmcl.so.1.74)
+RUN cd /app/lib && for lib in mcl mclbn256; do f=$(ls lib$${lib}.so.1.* 2>/dev/null | head -1); [ -n "$$f" ] && ln -sf "$$f" "lib$${lib}.so.1"; done
+RUN chmod +x ./demo_llm_run
+
+# Wrapper + adapter (build from repo root: docker build -f zkgpt-prover/Dockerfile.full -t xfuel-zkgpt-prover:full .)
+# No entrypoint — same pattern as Phase 1 mock image so Theta runs image default CMD.
+COPY zkgpt-prover/wrapper-template.cjs ./
+COPY zkgpt-prover/mock-server.cjs ./
+COPY zkgpt-prover/adapter.cjs ./
+COPY zkgpt-prover/start-ping.cjs ./
+
+ENV NODE_ENV=production
+ENV ZKGPT_PROVER_PORT=81
+ENV ZKGPT_DEMO_BINARY=/app/demo_llm_run
+ENV ZKGPT_PROVER_CMD="node /app/adapter.cjs"
+ENV ZKGPT_PROVER_TIMEOUT_MS=300000
+# So demo_llm_run can load libmcl.so.1 and libmclbn256.so.1
+ENV LD_LIBRARY_PATH=/app/lib
+
+EXPOSE 81
+
+# Override base image entrypoint so container runs only CMD (some platforms don't pass CMD to entrypoint).
+ENTRYPOINT []
+# Use absolute path to node so we don't depend on PATH; leave Theta template command/args empty.
+CMD ["/usr/local/bin/node", "/app/wrapper-template.cjs"]

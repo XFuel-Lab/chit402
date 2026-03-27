@@ -111,7 +111,7 @@ describe('Privacy-Preserving Data Markets (Phase 5)', function () {
       const verifyNull = ethers.keccak256(ethers.toUtf8Bytes('verify-null'));
 
       await zkml.connect(modelOwner).verifyInference(
-        requestId, outputHash, weightCommitment, proof, pubValues, verifyNull
+        requestId, outputHash, weightCommitment, proof, pubValues, verifyNull, false
       );
 
       const disclosureNull = ethers.keccak256(ethers.toUtf8Bytes('disclosure-null'));
@@ -119,7 +119,7 @@ describe('Privacy-Preserving Data Markets (Phase 5)', function () {
       const disclosurePub = '0x' + '11'.repeat(64);
 
       const tx = await zkml.connect(requester).verifySelectiveDisclosure(
-        policyId, requestId, disclosureProof, disclosurePub, disclosureNull
+        policyId, requestId, disclosureProof, disclosurePub, disclosureNull, false
       );
       const receipt = await tx.wait();
 
@@ -153,17 +153,17 @@ describe('Privacy-Preserving Data Markets (Phase 5)', function () {
       const oh = ethers.keccak256(ethers.toUtf8Bytes('output'));
       const vNull = ethers.keccak256(ethers.toUtf8Bytes('v-null-dup'));
       await zkml.connect(modelOwner).verifyInference(
-        requestId, oh, wc, '0x' + 'ab'.repeat(130), '0x' + 'cd'.repeat(64), vNull
+        requestId, oh, wc, '0x' + 'ab'.repeat(130), '0x' + 'cd'.repeat(64), vNull, false
       );
 
       const sharedNull = ethers.keccak256(ethers.toUtf8Bytes('shared-nullifier'));
       await zkml.connect(requester).verifySelectiveDisclosure(
-        policyId, requestId, '0x' + 'ef'.repeat(130), '0x' + '11'.repeat(64), sharedNull
+        policyId, requestId, '0x' + 'ef'.repeat(130), '0x' + '11'.repeat(64), sharedNull, false
       );
 
       await expect(
         zkml.connect(requester).verifySelectiveDisclosure(
-          policyId, requestId, '0x' + 'ef'.repeat(130), '0x' + '11'.repeat(64), sharedNull
+          policyId, requestId, '0x' + 'ef'.repeat(130), '0x' + '11'.repeat(64), sharedNull, false
         )
       ).to.be.reverted;
     });

@@ -86,10 +86,10 @@ function generateMockStats(): StatsPayload {
   ];
 
   const rpcHealth: RpcHealth[] = [
-    { chain: 'theta_mainnet', name: 'Theta Mainnet (361)', connected: true, lastBlock: 28451032, errorCount: 0, lastError: null },
-    { chain: 'theta_testnet', name: 'Theta Testnet (365)', connected: true, lastBlock: 19832456, errorCount: 2, lastError: null },
-    { chain: 'bittensor', name: 'Bittensor EVM (964)', connected: true, lastBlock: 5142871, errorCount: 0, lastError: null },
-    { chain: 'solana_devnet', name: 'Solana Devnet', connected: false, lastBlock: 0, errorCount: 5, lastError: 'Connection refused' },
+    { chain: 'theta_mainnet', name: 'Theta Mainnet (361)', connected: false, lastBlock: 0, errorCount: 0, lastError: 'demo' },
+    { chain: 'theta_testnet', name: 'Theta Testnet (365)', connected: true, lastBlock: 0, errorCount: 0, lastError: null },
+    { chain: 'bittensor', name: 'Bittensor EVM (964)', connected: false, lastBlock: 0, errorCount: 0, lastError: 'demo' },
+    { chain: 'solana_devnet', name: 'Solana Devnet', connected: false, lastBlock: 0, errorCount: 0, lastError: 'demo' },
   ];
 
   return {

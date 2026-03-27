@@ -8,8 +8,8 @@ const stakingRoutes = [
   {
     network: 'Bittensor',
     token: 'TAO',
-    apy: '12.4%',
-    tvl: '$18.2M',
+    apy: '(demo)',
+    tvl: '(demo)',
     minStake: '1 TAO',
     mechanism: 'Subnet Delegation',
     status: 'live' as const,
@@ -18,8 +18,8 @@ const stakingRoutes = [
   {
     network: 'Theta',
     token: 'TFUEL',
-    apy: '8.7%',
-    tvl: '$14.5M',
+    apy: '(demo)',
+    tvl: '(demo)',
     minStake: '10,000 TFUEL',
     mechanism: 'Guardian Node',
     status: 'live' as const,
@@ -28,8 +28,8 @@ const stakingRoutes = [
   {
     network: 'Osmosis',
     token: 'OSMO',
-    apy: '15.2%',
-    tvl: '$8.1M',
+    apy: '(demo)',
+    tvl: '(demo)',
     minStake: '10 OSMO',
     mechanism: 'LP Staking',
     status: 'testnet' as const,
@@ -38,7 +38,7 @@ const stakingRoutes = [
   {
     network: 'Aptos',
     token: 'APT',
-    apy: '7.8%',
+    apy: '(demo)',
     tvl: '—',
     minStake: '10 APT',
     mechanism: 'Validator Delegation',
@@ -76,15 +76,15 @@ export default function Staking() {
 
   const tvlDisplay = totalDeposited
     ? `$${(Number(formatEther(totalDeposited)) * 0.5).toFixed(1)}M`
-    : '$40.8M';
+    : '—';
   const veXFDisplay = totalLocked
     ? `${(Number(formatEther(totalLocked)) / 1e6).toFixed(1)}M XF`
-    : '14.2M XF';
+    : '—';
 
   const stakingStats = [
     { label: 'Total Staked Value', value: tvlDisplay },
-    { label: 'Avg. APY', value: '11.0%' },
-    { label: 'Active Stakers', value: '3,421' },
+    { label: 'Avg. APY', value: '(demo)' },
+    { label: 'Active Stakers', value: '(demo)' },
     { label: 'veXF Locked', value: veXFDisplay },
   ];
 
@@ -93,7 +93,7 @@ export default function Staking() {
       <div className="container">
         <div className="page-header">
           <h1>Fee-to-Stake</h1>
-          <p>Multi-chain staking routes with veXF locking and auto-compounding rewards</p>
+          <p>Fee-to-stake routing (roadmap). Figures below are demo unless your contracts are wired.</p>
         </div>
 
         {!splitterDeployed && (

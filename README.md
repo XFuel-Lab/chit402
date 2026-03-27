@@ -38,6 +38,7 @@ Live: **[xfuel.app](https://xfuel.app)** (Theta Mainnet Beta)
 - [EVM Prover (Phase 2)](#evm-prover-phase-2)
 - [Solana Prover (Phase 3)](#solana-prover-phase-3)
 - [Security](#security)
+- [Research Integration & Attribution](#research-integration--attribution)
 - [Tech Stack](#tech-stack)
 - [Repo Structure](#repo-structure)
 - [Development Setup](#development-setup)
@@ -85,6 +86,7 @@ Read the complete technical whitepaper: **[WHITEPAPER.md](WHITEPAPER.md)**
 - **16+ modular circuits** — AI compute, DePIN infrastructure, yield, robotics, data, energy, wireless, and more
 - **Revenue innovation** — Growth & Expansion Treasury (GET), Fee-to-Stake routing
 - **Cross-chain** — Theta (primary), Bittensor, Osmosis, Akash, Solana, Filecoin, NEAR, Aptos, Sui
+- **Phase 1 research integration** — zkGPT (LLM ZK proofs; [eprint 2025/1184](https://eprint.iacr.org/2025/1184), [security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt)) and Fair Exchange / PAS (atomic A2A payment↔result; [eprint 2026/395](https://eprint.iacr.org/2026/395)). Mock prover: `node zkgpt-prover/mock-server.cjs`; smoke test: `npm run test:zkgpt-mock`. Full attribution: [`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md).
 
 ---
 
@@ -104,6 +106,7 @@ Read the complete technical whitepaper: **[WHITEPAPER.md](WHITEPAPER.md)**
 | **Security** | Trustless by design | SP1 proofs, nullifier replay protection, circuit breakers |
 | **Cross-chain** | Hybrid EVM + WASM + SVM | Theta, Bittensor, Osmosis, Akash, Solana, Filecoin, NEAR, Aptos, Sui |
 | **DePIN** | Beyond AI | Energy grids, wireless coverage, mapping sensors, bandwidth sharing |
+| **Phase 1 research** | zkGPT + Fair Exchange | Optional zkGPT inference path; A2A Fair Exchange (PAS) — see [References & attribution](#research-integration--attribution) |
 
 ### Revenue Model
 
@@ -249,30 +252,58 @@ settleIntent(intentId, proof, publicValues, nullifier)
 
 ## Architecture
 
-```
-                    ┌──────────────────────────────────────┐
-                    │         CORE LAYER (Hub)              │
-                    ├──────────────────────────────────────┤
-                    │  ZKVerifierSP1    (EVM + WASM + SVM)  │ ← Proof verification
-                    │  CoreRevenueSplitter  (GET)            │ ← Fee distribution
-                    │  veXFGovernance                       │ ← Parameter voting
-                    │  SP1ProofHooks                        │ ← Proof utilities
-                    │  CoreListener     (ai-listener.js)    │ ← Event polling / routing
-                    └──────────┬───────────────────────────┘
-                               │
-           ┌───────────────────┼───────────────────┐
-           │                   │                   │
-    ┌──────▼──────┐    ┌──────▼──────┐    ┌──────▼──────┐
-    │  Theta      │    │  Agent      │    │  Circuit N  │
-    │  Inference  │    │  Comms      │    │  (Custom    │
-    │  Circuit    │    │  (A2A)      │    │   Module)   │
-    └──────┬──────┘    └─────────────┘    └─────────────┘
-           │
-    ┌──────▼────────────────────────────────────────┐
-    │  Theta EdgeCloud (Primary GPU Backbone)        │
-    │  H100 SXM / A100 / RTX 4090                   │
-    │  Live inference + SP1 CUDA proving             │
-    └───────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Users["Users / Agents / Protocols"]
+        U1["👤 End User\n(xfuel.app)"]
+        U2["🤖 Autonomous Agent\n(/theta-ai/agent-intent)"]
+        U3["🔗 External Protocol\n(xfuel-sdk)"]
+    end
+
+    subgraph CoreLayer["🔷 CORE LAYER — Theta Mainnet (chain 361)"]
+        direction TB
+        ZK["ZKVerifierSP1\nGroth16/PLONK · <270K gas\nNullifiers · Circuit registry"]
+        RS["CoreRevenueSplitter\n30% BBB · 30% GET · 25% Stakers · 15% Treasury\nFee-to-Stake routing"]
+        GOV["veXFGovernance\nCurve-style lock · ZK nullifiers\nOn-chain execution hooks"]
+        HOOKS["SP1ProofHooks\nNullifier compute · Fee commitments\nCross-chain payload encoding"]
+        LISTENER["CoreListener (ai-listener.js)\nEvent polling · Intent routing\nWebhook dispatch · Proof submission"]
+        ZK <-->|"verified nullifiers"| RS
+        RS <-->|"governance params"| GOV
+        HOOKS -.->|"used by all circuits"| ZK
+        LISTENER -->|"submits proofs"| ZK
+        LISTENER -->|"collects fees"| RS
+    end
+
+    subgraph Circuits["⚡ CIRCUITS — Pluggable Modules"]
+        CI["ThetaInferenceCircuit\nEdgeCloud · TDROP payments\nGPU tier selection"]
+        TAO["TAOCircuit\nBittensor dTAO staking\nSubnet routing via EVM 964"]
+        BRG["BridgeCircuit\nHyperlane cross-chain\nISM-secured relay"]
+        A2A["A2ACircuit\nAgent-to-agent messaging\nEscrow · ZK verified"]
+        MORE["+ 17 more circuits\nAkash · Yield · ZKML\nSolana · DataHubs…"]
+    end
+
+    subgraph Provers["🔐 ZK PROVING"]
+        SP1["SP1 zkVM v6.0.2\nRISC-V → STARK → Groth16\n~9s proof · <270K gas verify"]
+        EDGE["Theta EdgeCloud\nH100 SXM · A100 · RTX 4090\nCUDA SP1 proving"]
+        SP1 <-->|"CUDA acceleration"| EDGE
+    end
+
+    subgraph Chains["🌐 SETTLEMENT CHAINS"]
+        TH["Theta Mainnet\nchain 361"]
+        BT["Bittensor EVM\nchain 964"]
+        COS["Cosmos IBC\nOsmosis · Persistence"]
+        SOL["Solana\n(Phase 3)"]
+    end
+
+    Users --> LISTENER
+    Circuits --> LISTENER
+    Circuits <-->|"proofBytes + publicValues"| SP1
+    LISTENER <-->|"EdgeCloud inference API"| EDGE
+    CoreLayer -->|"verified settlements"| TH
+    BRG -->|"Hyperlane dispatch"| BT
+    TAO -->|"dTAO precompile 0x805"| BT
+    BRG -->|"IBC relay"| COS
+    BRG -.->|"Phase 3"| SOL
 ```
 
 ### Core Components
@@ -482,91 +513,134 @@ FeeCollector:       Awaiting governance whitelist
 
 ## Roadmap
 
-*All dates as of March 2026.*
-
-### Phase 1: Core Layer Skeleton ✅ (Q1 2026)
-
-- ✅ ZKVerifierSP1, CoreRevenueSplitter, veXFGovernance, SP1 Proof Hooks
-- ✅ CoreListener multi-prover event poller (EVM/Cosmos/Solana)
-- ✅ Bi-directional bridge (forward + reverse), FeeCollector, nonce-based replay protection
-- ✅ 520+ tests
-
-### Phase 2: Circuit PoCs ✅ (Q1 2026)
-
-- ✅ Compute Marketplace, Inference Router, Bridge circuits (69 tests)
-- ✅ Multi-prover integration (85 tests), 6 PoC circuits with prover assignments
-- ✅ BelieverRound vesting contract
-
-### Phase 3: Mainnet + Governance ✅ (Q1 2026)
-
-- ✅ Mainnet deployment: Theta 361 + Osmosis osmosis-1
-- ✅ veXF governance activation (Curve-style lock/vote, 3x max, ZK nullifiers)
-- ✅ Fee-to-Stake multi-chain routing (Theta 50%, Bittensor 30%, Osmosis 20%)
-- ✅ CertiK Phase 1 scope prepared, $500K Immunefi bounty defined
-- ✅ 550+ tests
-- ⏳ CertiK Phase 1 audit (in progress)
-- ⏳ Osmosis CosmWasm governance whitelisting
-
-### Phase 4: Scale ✅ (Q1 2026)
-
-- ✅ Theta subchain live — single shared XFuel subchain (privatenet: `tsub360777`, testnet: `tsub365001`, mainnet: `tsub361001`) hosting ThetaInferenceCircuit, A2ACircuit, ThetaGPUCircuit, DataHubs with <2s finality. Branch-ready: additional subchains spun up per circuit as demand warrants.
-- ✅ ZK rollup layer (SP1 Hypercube recursion, <100K gas/proof)
-- ✅ Cross-DePIN routing (Akash + Render), intent-based architecture
-- ✅ x402 v3 micropayments, $100M+ TVL simulation tests
-- ✅ 620+ tests
-
-### Phase 5: Multi-Network AI ✅ (Q1 2026)
-
-- ✅ Autonomous agent economy (Almanak-style swarms, ZK micro-settlements)
-- ✅ Privacy-preserving data markets (zkML selective disclosure, DataHubs provenance)
-- ✅ 5-VM coverage: EVM, CosmWasm, Solana SVM, Aptos Move, Sui Move
-- ✅ 700+ tests
-
-### Phase 6: Ecosystem Expansion ✅ (Q1 2026)
-
-- ✅ 16+ circuits deployed across 5 networks
-- ✅ Partner integrations (Almanak, Succinct, Chainlink)
-- ✅ xfuel.app launched (Vite + React + Wagmi)
-- ✅ **Theta Testnet full deployment** — Core Layer + 16 circuits + mocks with resumable deploy script
-- ✅ Revenue model: Growth & Expansion Treasury (GET) + Fee-to-Stake routing
-- ✅ Grant execution pipeline, marketing automation
-- ✅ **755+ total tests**
-
-> For circuit expansion history, see [`docs/Circuit-Design-and-Expansion.md`](docs/Circuit-Design-and-Expansion.md).
+> Phases 1–6 are complete. The roadmap below reflects where the protocol is heading, not where it's been.
+> For the full build history, see [`docs/Circuit-Design-and-Expansion.md`](docs/Circuit-Design-and-Expansion.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
-## AI DePIN Overview
+### ✅ Foundation Complete (Q1 2026)
 
-XFuel extends the ZK bridge beyond financial transactions into **AI agent interoperability** — enabling trustless compute settlements across heterogeneous DePIN networks. Theta EdgeCloud serves as the primary GPU backbone, with ecosystem-agnostic circuits routing workloads across Bittensor, Akash, Render, Solana, and more.
+All six build phases are shipped:
+- **Core Layer** — ZKVerifierSP1, CoreRevenueSplitter, veXFGovernance, SP1ProofHooks (755+ tests)
+- **16 Circuits** — deployed across Theta, Bittensor EVM, Cosmos, Solana, Akash, Render
+- **Theta Subchain** — privatenet validated → testnet live (chain 365001), mainnet-ready (361001)
+- **AI Listener** — multi-prover event orchestrator, 6-tier DePIN router, EdgeCloud attestation
+- **ZK Settlement** — SP1 Groth16/PLONK proof pipeline, SP1-CC composed calls, Hyperlane relay
+- **Agent Economy** — A2ACircuit swarms, x402 micropayments, privacy-preserving data markets
 
-### Defining Capabilities
+---
 
-| Capability | Description |
-|-----------|-------------|
-| **Live Inference** | Real AI execution on EdgeCloud GPUs — LLM, image gen, STT, voice clone, RAG, video, detection |
-| **15 Preset Hooks** | One-click intent templates from `QUICK_LLAMA` to `GPU_TRAINING_JOB` |
-| **Smart GPU Selector** | RTX 4090 (1x) / A100 (2.5x) / H100 SXM (5x) — on-chain pricing |
-| **Agent API** | `POST /theta-ai/agent-intent` + 6 query endpoints + webhook callbacks |
-| **A2A Messaging** | ZK-verified agent-to-agent communication with escrowed payments |
-| **M2M Settlements** | Automated machine-to-machine payment for GPU leases, inference jobs |
-| **Cross-DePIN Routing** | Route to cheapest provider (Theta Edge vs Akash vs Bittensor vs Render) |
-| **Monitoring + ROI** | Live dashboard with failure prediction, gas profiles, ROI calculator |
+### ⏳ Now: Audit & Grant Sprint (Q2 2026)
 
-### SP1 Circuit Message Types
+| Item | Status | Blocker |
+|------|--------|---------|
+| CertiK Phase 1 audit — `contracts/core/` | Preparing submission | None — ready |
+| Theta Grant application | Drafting | Testnet deployed addresses captured |
+| `xfuel-sdk` 0.1.0 publish to npm | Ready to publish | Final build check |
+| Mainnet deployment (Theta 361) | Post-audit | CertiK clearance required |
+| CosmWasm governance whitelist (Osmosis/Persistence) | Proposal submitted | ⏳ On-chain governance vote |
+
+---
+
+### 🔜 Near-Term: Agent Capture (Q2–Q3 2026)
+
+**Positioning:** XFuel is becoming the ZK settlement layer for AI compute across all DePIN networks. The agent economy narrative is heating up in 2026 — our goal is to own the infrastructure layer that agents trust.
+
+| Track | Description |
+|-------|-------------|
+| **Agent Console** | Dedicated operator dashboard — task queue, per-agent earnings, proof explorer, API key management |
+| **A2A Visual Dashboard** | Live graph of agent interactions, real-time fee flow, DePIN tier utilization |
+| **SP1 Prover → EdgeCloud Dedicated** | Migrate from on-demand to persistent CUDA for sub-200ms proof generation |
+| **TDROP 2.0 Routing** | Route Machine & Agent Incentives portion of GET to Theta EdgeCloud GPU contributors via TDROP |
+| **Hyperlane Mailbox deploy** | Theta Mainnet (361) + Bittensor EVM (964) Mailbox — enables live cross-chain proof relay |
+
+---
+
+### 🗓 Medium-Term: Ecosystem Expansion (Q3–Q4 2026)
+
+| Track | Description |
+|-------|-------------|
+| **Bittensor Active Development** | Re-activate TAO circuit for Bittensor → Theta compute bridging; Theta EdgeCloud as GPU export layer for TAO subnets |
+| **Cosmos IBC live** | `ai-verifier` CosmWasm active post-governance whitelist; ibcTFUEL minting + FeeCollector go live |
+| **veXF First Proposal** | First on-chain governance vote — GET sub-split ratios and circuit priority |
+| **ComputeProvenance NFT** | Non-transferable attestation for each verified DePIN job (GPU fingerprint + SP1 proof hash) |
+| **Agent Flywheel** | Agents accumulating veXF via fee-to-stake get priority routing in the DePIN router |
+
+---
+
+### 🔭 Long-Term Vision (2027+)
+
+- Additional subchains per circuit when volume warrants (currently single shared XFuel subchain)
+- TPULSE subchain integration (Track 7 — health AI + cross-subchain)
+- LavitaCircuit — health AI × biomedical DePIN
+- EdgeCloud Distributed Training (Track 2.5) — ZK-proven model training jobs
+- Cross-DePIN reputation ledger — verifiable GPU track records across Theta, Akash, Render, Bittensor
+
+---
+
+## XFuel as AI DePIN Hub: How It Works
+
+XFuel is the **ZK settlement and orchestration layer for AI compute across decentralized networks**. The core insight: AI agents and DePIN GPU providers need trustless, verifiable proof that compute actually happened — on the right hardware, producing the right output — before funds settle. XFuel provides that proof layer.
+
+### The Flow (How an Agent Uses XFuel)
 
 ```
-COMPUTE_BID        → Agent requests GPU resources with ZK-verified escrow
-COMPUTE_RESULT     → Provider attests job completion with output hash
-INFERENCE_REQUEST  → Route ML inference to optimal provider
-CAPABILITY_QUERY   → Discover peer agent capabilities across chains
-DATA_ATTESTATION   → Certify dataset provenance on-chain
-SETTLEMENT         → Settle cross-chain payments
+1. INTENT SUBMISSION
+   Agent (or circuit) → submitIntent(taskType, model, input_hash)
+   └── Fee deposited → CoreRevenueSplitter (circuit-attributed)
+
+2. COMPUTE ROUTING (6-tier DePIN priority router)
+   Tier 1: Theta EdgeCloud       ← primary (GPU-native, CUDA persistent)
+   Tier 2: RapidAPI              ← inference fallback
+   Tier 3: MCP (local)           ← low-latency local inference
+   Tier 4: Akash Network         ← decentralized GPU marketplace (Cosmos)
+   Tier 5: Render Network        ← GPU marketplace (image/LLM workloads)
+   Tier 6: AWS Bedrock           ← centralized last resort
+
+3. ATTESTATION (on-chain proof of compute provenance)
+   EdgeCloud node → attestEdgeCloudNode(nodeId, gpuFingerprint, petaflopsUsed)
+   └── EdgeCloudAttestation stored on-chain with ProviderTag
+
+4. ZK PROOF GENERATION
+   SP1 Prover (CUDA) → groth16 proof of AITaskPublicValues
+   └── Inputs: taskId, outputHash, feeBps, sender, chainId, blockHeight
+
+5. ON-CHAIN SETTLEMENT
+   ZKVerifierSP1.verifyProof(programVKey, publicValues, proofBytes)
+   └── Nullifier stored (replay protection)
+   └── Fee distributed: BBB 30% / GET 30% / Stakers 25% / Treasury 15%
+
+6. CROSS-CHAIN RELAY (optional)
+   Hyperlane.dispatch(destDomain, recipient, proofPayload)
+   └── Bittensor EVM (964): dTAO stake-gated verification via precompile 0x0805
+   └── Cosmos/IBC: ai-verifier CosmWasm (pending governance whitelist)
 ```
 
-### Agent Swarm Economy
+### Why Theta First
 
-Swarm lifecycle via `A2ACircuit.sol`:
+Theta is uniquely positioned as the GPU-native backbone:
+- **EdgeCloud** provides real CUDA GPU compute with on-demand + dedicated serving
+- **Subchain** gives XFuel <2s finality at near-zero gas costs (tsub365001 testnet, tsub361001 mainnet)
+- **TDROP** is the designated AI-to-AI incentive token — callers paying in TDROP receive 20% fee discount
+- **EdgeStore** provides decentralized proof artifact storage (ZK proofs, model output attestations)
+- **Video API** enables AI-generated media with on-chain DRM and provenance via VideoProvenance events
+
+### Theta as GPU Export Layer for Other Networks
+
+The strategic insight beyond Theta-native value: **Theta EdgeCloud can serve as the GPU compute backend for other DePIN networks.** A Bittensor subnet or Akash deployment can route their GPU workloads through Theta EdgeCloud, get ZK-attested proof of delivery via XFuel, and settle payments cross-chain via Hyperlane. XFuel becomes the settlement and attestation bridge between DePIN networks — not just a Theta-native protocol.
+
+```
+Bittensor Subnet → TAOCircuit.submitTask()
+   └── Routes to Theta EdgeCloud via DePIN router
+   └── SP1 proof generated on EdgeCloud CUDA
+   └── Proof relayed back via Hyperlane (Bittensor 945 → Theta 365)
+   └── dTAO stake verified via precompile 0x0805
+   └── Settlement on Bittensor, fee distribution on Theta
+```
+
+### Agent-to-Agent (A2A) Economy
+
+XFuel's `A2ACircuit.sol` enables autonomous agents to discover, bid, and settle work between each other:
 
 ```
 formSwarm(objectiveHash) → joinSwarm(swarmId) → settleSwarmAgent(proof) → dissolveSwarm()
@@ -574,26 +648,53 @@ formSwarm(objectiveHash) → joinSwarm(swarmId) → settleSwarmAgent(proof) → 
 
 - Up to 18 agents per swarm (Almanak Monte Carlo lifecycle)
 - ZK-verified micro-settlements at <50K gas per `AgentSettled` event
-- Nullifier replay protection per settlement
+- x402-style payment channels: `openChannel → claimChannel (repeatable) → closeChannel`
+- Sybil resistance via stake-weighted agent registration
+- Reputation-priority routing: higher-reputation agents get first access to tasks
 
-### Privacy-Preserving Data Markets
+### SP1 Circuit Message Types
 
-**Selective Disclosure (ZKMLCircuit.sol)** — Model owners define which inference output fields are revealed; consumers verify partial results via ZK proofs using Poseidon commitments.
+```
+COMPUTE_BID        → Agent requests GPU resources with ZK-verified escrow
+COMPUTE_RESULT     → Provider attests job completion with output hash
+INFERENCE_REQUEST  → Route ML inference to optimal DePIN provider
+CAPABILITY_QUERY   → Discover peer agent capabilities across chains
+DATA_ATTESTATION   → Certify dataset provenance on-chain
+SETTLEMENT         → Settle cross-chain payments with nullifier protection
+```
 
-**Data Provenance (DataHubs.sol)** — Contributors attest data lineage with Poseidon source commitments, preserving identity privacy.
+### For Developers / Agents: Quick Integration
+
+```bash
+# Submit an AI task via M2M API
+curl -X POST http://localhost:3002/task-request \
+  -H "X-API-Key: $XFUEL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message_type": "inference_request",
+    "chain_id": "theta",
+    "amount": "1000000",
+    "sender": "0xYourAgentAddress",
+    "model_id": "llama-3-70b",
+    "input_hash": "0xabc..."
+  }'
+
+# Poll settlement status
+curl http://localhost:3002/task-status/$TASK_ID
+```
+
+Full M2M API reference: [`docs/M2M_API.md`](docs/M2M_API.md)
 
 ### DePIN Synergy Incentives
 
-| Tier | Coverage | Multiplier |
-|------|----------|------------|
-| FULL | 3/3 circuits active | 1.0x (baseline) |
-| PARTIAL | 2/3 circuits | 1.5x |
-| FRONTIER | 1/3 circuits | 3.0x |
-| DEAD | 0/3 circuits | 5.0x |
+Circuits that route through multiple DePIN tiers receive boost multipliers:
 
-### Cross-Chain Expansion
-
-ProofRouter supports 5 VM types with 29+ cross-chain routes:
+| Coverage | Multiplier | Effect |
+|----------|------------|--------|
+| 3/3 circuits active (FULL) | 1.0x baseline | Standard incentives |
+| 2/3 circuits (PARTIAL) | 1.5x | +50% to Machine & Agent Incentives bucket |
+| 1/3 circuits (FRONTIER) | 3.0x | +200% — early adopter reward |
+| 0/3 circuits (DEAD) | 5.0x | Emergency incentive to reactivate |
 
 | Source → Dest | Bridge Protocol |
 |---------------|-----------------|
@@ -850,6 +951,20 @@ chmod +x deploy/deploy-devnet.sh
 
 ---
 
+## Research Integration & Attribution
+
+XFuel integrates third-party research with full credit to authors and sources. Formal citations, eprint links, and compliance notes are in **[`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md)**.
+
+| Integration | Source | XFuel use |
+|-------------|--------|-----------|
+| **zkGPT** | [eprint.iacr.org/2025/1184](https://eprint.iacr.org/2025/1184) — *zkGPT: Efficient Non-Interactive ZK for LLM Inference* (NUS/HKUST). Code: [github.com/security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt) | Optional inference proof path (`proof_system: zkgpt`); `ZKVerifierZkGPT.sol`; `zkgpt-prover/` scaffold. |
+| **Fair Exchange (PAS)** | [eprint.iacr.org/2026/395](https://eprint.iacr.org/2026/395) — *Delegated Payments for AI Agents: Fair Exchange on Bitcoin/EVM* | A2A atomic payment↔result; `settleBidFairExchange()`, `POST /a2a-settle-fair-exchange`, SDK `settleWithFairExchange()`. |
+| **Interstellar** | [eprint.iacr.org/2025/1294](https://eprint.iacr.org/2025/1294) (Jieyi Long, Theta Labs; PKC 2026) | Future prover track — see WHITEPAPER §12. |
+
+We do not claim ownership of the names “zkGPT” or “Interstellar”; they refer to the cited works. When referencing XFuel’s use of these results, please cite the original papers.
+
+---
+
 ## Tech Stack
 
 ### Frontend
@@ -898,10 +1013,15 @@ chmod +x deploy/deploy-devnet.sh
 
 ```
 xfuel-protocol/
-├── xfuel-app/                  # xfuel.app website (Vite + React 19 + Wagmi 2)
-│   └── src/pages/              # Home, Bridge, Dashboard, Governance, Circuits, Staking, etc.
-├── src/                        # Bridge UI (Vite + React)
-├── frontend/                   # AI DePIN Dashboard (dev/testing)
+├── xfuel-app/                  # ✅ CANONICAL frontend — xfuel.app (Vite + React 19 + Wagmi)
+│                               #    Deployed to Vercel via vercel.json. This is the live app.
+├── legacy-archive/
+│   └── cosmos-yield-station/   # 🗄️  ARCHIVED — original Cosmos Yield Station (src/)
+│                               #    Phase 2 reactivation planned post-governance approval
+├── tools/
+│   └── m2m-dev-dashboard/      # 🔧 INTERNAL — local dev tool for testing M2M API endpoints
+├── edgefarm-mobile/            # 📱 PIVOTING — React Native (Expo) companion app
+│                               #    Cosmos yield screens tabled; AI DePIN rebuild planned
 ├── contracts/                  # Solidity contracts (Theta EVM)
 ├── cosmwasm-contracts/         # CosmWasm contracts (Cosmos)
 │   ├── zk-verifier/

@@ -1,10 +1,13 @@
 # xfuel-sdk
 
-JavaScript / TypeScript SDK for the **XFuel Protocol M2M API**.
+> JavaScript / TypeScript SDK for the XFuel Protocol M2M API — submit AI tasks, retrieve ZK proofs, send A2A messages.
 
-Submit AI tasks, retrieve SP1 ZK settlement proofs, send agent-to-agent (A2A) messages, and poll task status — all from a single client.
+[![npm](https://img.shields.io/npm/v/xfuel-sdk?color=blue)](https://www.npmjs.com/package/xfuel-sdk)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
 
-## Install
+---
+
+## Installation
 
 ```bash
 npm install xfuel-sdk
@@ -13,99 +16,52 @@ npm install xfuel-sdk
 ## Quick Start
 
 ```typescript
-import { XFuelClient, ChainId } from 'xfuel-sdk';
+import XFuelClient from 'xfuel-sdk';
 
-const xfuel = new XFuelClient({
-  baseUrl: 'https://api.xfuel.ai',   // or http://localhost:3002
-  apiKey:  'your-api-key',
+const client = new XFuelClient({
+  baseUrl: 'https://api.xfuel.app',   // or http://localhost:3002 for local dev
+  apiKey: process.env.XFUEL_API_KEY,  // optional — for rate-limit bypass
 });
-```
 
-## Examples
-
-### 1. Submit a Llama Inference Request
-
-```typescript
-import { XFuelClient } from 'xfuel-sdk';
-
-const xfuel = new XFuelClient({ apiKey: process.env.XFUEL_API_KEY });
-
-// Convenience method — sets message_type to "inference_request"
-const task = await xfuel.submitInference(
-  'llama-3-70b',                     // model ID
-  '0xYourAgentAddress',              // sender
-  '1000000',                         // amount (gross value)
-  {
-    chain_id:   'akash',             // route to Akash GPU
-    input_hash: '0xabcdef1234...',   // SHA-256 of your prompt
-  },
+// Submit an AI inference task
+const task = await client.submitInference(
+  'meta-llama/Llama-3.2-3B-Instruct',
+  '0xYourWalletAddress',
+  '1000000000000000000',    // 1 TFUEL in wei
+  { chain_id: 'theta' }
 );
 
-console.log('Task accepted:', task.task_id);
-console.log('Fee:', task.fee_amount, `(${task.fee_bps} BPS)`);
+console.log('Task ID:', task.task_id);
 
-// Poll until settled
-const result = await xfuel.waitForCompletion(task.task_id, {
-  intervalMs: 3000,
-  onPoll: (s, attempt) => console.log(`  poll #${attempt}: ${s.status}`),
+// Poll until complete (auto-retries, 5s interval, 60 attempts max)
+const result = await client.waitForCompletion(task.task_id, {
+  onPoll: (status, attempt) => console.log(`Attempt ${attempt}: ${status.status}`),
 });
 
-console.log('Final status:', result.status);
-console.log('Proof outcome:', result.proof_outcome);
-```
-
-### 2. Send an A2A Cross-Chain Message with Escrow
-
-```typescript
-import { XFuelClient, MessageType } from 'xfuel-sdk';
-
-const xfuel = new XFuelClient({ apiKey: process.env.XFUEL_API_KEY });
-
-const msg = await xfuel.sendA2AMessage({
-  message_type:    MessageType.COMPUTE_BID,
-  sender_chain:    'theta',
-  recipient_chain: 'akash',
-  payload_hash:    '0xdeadbeef1234567890abcdef',
-  escrow_amount:   '250000',
-  ttl:             3600,
-  sender_address:  '0xYourAgentAddress',
-  sender_identity: '0xPoseidonCommitmentHash',
-  ibc_channel:     'channel-42',
-});
-
-console.log('A2A message ID:', msg.message_id);
-console.log('Relay fee:', msg.relay_fee);
-
-// Check A2A verification status
-const status = await xfuel.getA2AStatus(msg.message_id);
-console.log('Verified:', status.proof_outcome);
-```
-
-### 3. Poll a Task and Retrieve its ZK Proof
-
-```typescript
-import { XFuelClient, MessageType, ChainId } from 'xfuel-sdk';
-
-const xfuel = new XFuelClient({ apiKey: process.env.XFUEL_API_KEY });
-
-// Submit a full task request with all params
-const task = await xfuel.submitTask({
-  message_type: MessageType.COMPUTE_BID,
-  chain_id:     ChainId.BITTENSOR,
-  amount:       '500000',
-  sender:       '0xYourAgentAddress',
-  subnet_id:    1,
-});
-
-// Wait for completion (auto-retries on 429)
-const settled = await xfuel.waitForCompletion(task.task_id);
-
-if (settled.proof_outcome === 'valid') {
-  const proof = await xfuel.getProof(task.task_id);
-
-  console.log('SP1 proof:', proof.sp1_proof?.nullifier);
+// Retrieve the ZK proof
+if (result.status === 'completed') {
+  const proof = await client.getProof(task.task_id);
+  console.log('Nullifier:', proof.sp1_proof?.nullifier);
   console.log('Revenue split:', proof.fee.revenue_split);
 }
+```
+
+## Agent-to-Agent (A2A) Messaging
+
+```typescript
+// Send a cross-chain A2A message (e.g., Theta → Bittensor)
+const msg = await client.sendA2AMessage({
+  message_type: 'compute_bid',
+  sender_chain: 'theta',
+  recipient_chain: 'bittensor',
+  payload_hash: '0xabc...',
+  escrow_amount: '500000000000000000',  // 0.5 TFUEL escrow
+  ttl: 3600,
+  sender_address: '0xYourAddress',
+  sender_identity: 'agent-v1',
+});
+
+const status = await client.getA2AStatus(msg.message_id);
 ```
 
 ## API Reference
@@ -113,61 +69,51 @@ if (settled.proof_outcome === 'valid') {
 ### `new XFuelClient(options?)`
 
 | Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `baseUrl` | `string` | `http://localhost:3002` | M2M API server URL |
-| `apiKey` | `string` | — | API key sent via `X-API-Key` header |
-| `maxRetries` | `number` | `3` | Auto-retries on 429 / 5xx |
-| `retryBaseMs` | `number` | `1000` | Base delay before first retry |
-| `timeoutMs` | `number` | `30000` | Request timeout |
+|---|---|---|---|
+| `baseUrl` | `string` | `http://localhost:3002` | XFuel API base URL |
+| `apiKey` | `string` | — | Optional API key for `X-API-Key` header |
+| `maxRetries` | `number` | `3` | Auto-retry on 429 / 5xx |
+| `retryBaseMs` | `number` | `1000` | Base delay (ms) for exponential backoff |
+| `timeoutMs` | `number` | `30000` | Request timeout (ms) |
 
 ### Methods
 
-| Method | Endpoint | Returns |
-|--------|----------|---------|
-| `submitTask(params)` | `POST /task-request` | `TaskRequestResponse` |
-| `submitInference(modelId, sender, amount, opts?)` | `POST /task-request` | `TaskRequestResponse` |
-| `getTaskStatus(taskId)` | `GET /task-status` | `TaskStatusResponse` |
-| `getProof(taskId)` | `GET /prove-result` | `ProofResponse` |
-| `sendA2AMessage(params)` | `POST /a2a-message` | `A2AMessageResponse` |
-| `getA2AStatus(messageId)` | `GET /task-status` | `A2AStatusResponse` |
-| `getHealth()` | `GET /health` | `HealthResponse` |
-| `waitForCompletion(taskId, opts?)` | Polls `/task-status` | `TaskStatusResponse` |
+| Method | Description |
+|---|---|
+| `submitTask(params)` | Submit any task type |
+| `submitInference(modelId, sender, amount, opts?)` | Inference shorthand |
+| `getTaskStatus(taskId)` | Poll task status |
+| `getProof(taskId)` | Retrieve SP1 ZK proof |
+| `waitForCompletion(taskId, opts?)` | Poll until terminal status |
+| `sendA2AMessage(params)` | Send agent-to-agent message |
+| `getA2AStatus(messageId)` | Get A2A message status |
+| `getHealth()` | Check API health |
 
 ### Error Handling
-
-All API errors throw `XFuelApiError` with structured fields:
 
 ```typescript
 import { XFuelApiError } from 'xfuel-sdk';
 
 try {
-  await xfuel.submitTask({ /* ... */ });
+  await client.getProof('invalid-task-id');
 } catch (err) {
   if (err instanceof XFuelApiError) {
-    console.error(err.status);   // HTTP status (400, 401, 429, etc.)
-    console.error(err.code);     // "validation_error", "unauthorized", etc.
-    console.error(err.details);  // field-level validation errors (if any)
+    console.error(err.status, err.code, err.message);
+    // e.g. 404, 'task_not_found', 'Task not found'
   }
 }
 ```
 
-429 responses are automatically retried with exponential backoff (respects `Retry-After` header).
+## Supported Chains
 
-## Build from Source
-
-```bash
-cd sdk/js
-npm install
-npm run build    # outputs to dist/
-```
-
-## Publish
-
-```bash
-npm login
-npm publish --access public
-```
+| `chain_id` | Network |
+|---|---|
+| `theta` | Theta Mainnet / Testnet (chain 361 / 365) |
+| `bittensor` | Bittensor EVM (chain 964 / 945) |
+| `akash` | Akash Network (Cosmos) |
+| `osmosis` | Osmosis (IBC) |
+| `persistence` | Persistence (IBC) |
 
 ## License
 
-MIT
+MIT — see [LICENSE](../../LICENSE)

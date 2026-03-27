@@ -1,0 +1,7 @@
+# Absolute minimum: no app files, no COPY. Only node -e "http server on 81".
+# If this 0/20 on Theta, the platform is not running our CMD. If 1/1, the issue is our image/content.
+# Build: docker build -f zkgpt-prover/Dockerfile.smoke --platform linux/amd64 -t xfuel/xfuel-zkgpt-prover:smoke .
+FROM node:20-slim
+EXPOSE 81
+ENTRYPOINT []
+CMD ["/usr/local/bin/node", "-e", "require('http').createServer((q,r)=>{r.writeHead(200,{'Content-Type':'application/json'});r.end(JSON.stringify({status:'ok',service':'smoke'}));}).listen(81,'0.0.0.0',()=>console.log('smoke listening 81'));"]

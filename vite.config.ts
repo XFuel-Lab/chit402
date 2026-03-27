@@ -1,34 +1,26 @@
+/**
+ * Root vite.config.ts — LEGACY / COSMOS YIELD STATION
+ *
+ * This config was the build entry for the old Cosmos Yield Station frontend (src/).
+ * That frontend has been archived to legacy-archive/cosmos-yield-station/.
+ *
+ * The canonical frontend is now xfuel-app/.
+ * Its build config lives at xfuel-app/vite.config.ts.
+ *
+ * Retained here only so `npx vite` at root doesn't crash tools that probe it.
+ */
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  root: 'xfuel-app',
   build: {
-    outDir: 'dist',
-    sourcemap: false,
-    // Keep console.log for router debugging, only drop debugger
-    esbuild: {
-      drop: ['debugger'],
-    },
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          'react-vendor': ['react', 'react-dom'],
-        },
-        // Ensure no eval is used in production build
-        format: 'es',
-      },
-    },
-    // Ensure production build doesn't use eval
-    minify: 'esbuild',
+    outDir: '../dist',
+    emptyOutDir: true,
   },
   server: {
     port: 3000,
     open: true,
   },
-  preview: {
-    port: 3000,
-  },
 })
-

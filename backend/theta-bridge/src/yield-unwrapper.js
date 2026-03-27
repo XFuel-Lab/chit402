@@ -25,11 +25,12 @@ class YieldUnwrapper {
    */
   async init() {
     try {
+      if (!config.relayer?.privateKey) {
+        logger.info('RELAYER_PRIVATE_KEY not set — yield unwrapper disabled');
+        return;
+      }
       const provider = getProvider();
-      
-      // Create relayer wallet
       this.relayerWallet = provider.getSigner(config.relayer.privateKey);
-      
       const relayerAddress = await this.relayerWallet.getAddress();
       
       logger.info({

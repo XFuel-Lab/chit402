@@ -389,10 +389,46 @@ const OPENAPI_SPEC = {
 // Contract ABI for on-chain completion + settlement
 const CIRCUIT_ABI = [
   'function completeIntent(bytes32 intentId, bytes32 outputHash, bytes32 modelHash, uint256 latencyMs)',
-  'function settleIntent(bytes32 intentId, bytes proof, bytes publicValues, bytes32 nullifier)',
+  'function attestEdgeCloudNode(bytes32 intentId, bytes32 nodeId, bytes32 gpuFingerprint, uint64 petaflopsUsed, uint8 providerTag)',
+  'function settleIntent(bytes32 intentId, bytes proof, bytes publicValues, bytes32 nullifier, bool useZkGPT)',
   'function failIntent(bytes32 intentId, string reason)',
   'function getIntent(bytes32 intentId) view returns (tuple(bytes32 intentId, uint8 serviceType, bytes32 serviceId, address requester, uint256 payment, uint256 fee, bytes32 inputHash, bytes32 outputHash, bytes32 modelHash, uint8 status, uint64 submittedAt, uint64 completedAt, uint64 settledAt, uint256 latencyMs, bytes32 proofNullifier))',
+  'function getAttestation(bytes32 intentId) view returns (tuple(bytes32 nodeId, bytes32 gpuFingerprint, uint64 petaflopsUsed, uint64 attestedAt, uint8 providerTag))',
 ];
+
+// ProviderTag enum — must match ThetaInferenceCircuit.sol
+const PROVIDER_TAG = Object.freeze({
+  UNSET:           0,
+  THETA_NATIVE:    1,
+  HYBRID_FALLBACK: 2, // legacy alias; retained for backward compat
+  DEPIN_AKASH:     3,
+  DEPIN_RENDER:    4,
+  HYBRID_CLOUD:    5,
+});
+
+// Human-readable labels for logging / heartbeat
+const PROVIDER_TAG_LABELS = Object.freeze(
+  Object.fromEntries(Object.entries(PROVIDER_TAG).map(([k, v]) => [v, k]))
+);
+
+// ─── DePIN Provider Config ───────────────────────────────────────────────────
+// Priority order: THETA_NATIVE → DEPIN_AKASH → DEPIN_RENDER → HYBRID_CLOUD
+//
+// All three external providers are pay-as-you-go — zero idle cost.
+// Keys are optional at startup; missing keys cause that tier to be skipped.
+// Akash Network: deploy SDL manifests via REST gateway
+// Render Network:  submit jobs via render.com API
+// AWS Bedrock:    invoke model via Bedrock Runtime (SigV4 auth)
+
+const AKASH_GATEWAY_URL  = 'https://api.akash.network/akash/provider/v1/lease/shell';
+const RENDER_API_BASE    = 'https://api.render.com/v1';
+const BEDROCK_MODEL_MAP  = {
+  'llama-3.1-8b':  'us.meta.llama3-8b-instruct-v1:0',
+  'llama-3.1-70b': 'us.meta.llama3-70b-instruct-v1:0',
+  'llama-3.1-405b':'us.meta.llama3-405b-instruct-v1:0',
+  'claude-3-haiku':'anthropic.claude-3-haiku-20240307-v1:0',
+  'claude-3-sonnet':'anthropic.claude-3-sonnet-20240229-v1:0',
+};
 
 class ThetaInferenceHandler {
   constructor(config = {}) {
@@ -409,6 +445,26 @@ class ThetaInferenceHandler {
 
     // MCP server — per research doc §2.3 (Phase 2 stub)
     this.mcpEndpoint = config.mcpEndpoint || process.env.THETA_MCP_ENDPOINT || '';
+
+    // ─── DePIN / Cloud provider credentials ─────────────────────────────────
+    // Akash Network — deploy SDL manifests; pay per compute block
+    this.akashGatewayUrl = config.akashGatewayUrl || process.env.AKASH_GATEWAY_URL || AKASH_GATEWAY_URL;
+    this.akashMnemonic   = config.akashMnemonic   || process.env.AKASH_WALLET_MNEMONIC || '';
+    this.akashCert       = config.akashCert       || process.env.AKASH_CERT_PEM || '';
+
+    // Render Network — GPU job API
+    this.renderApiKey    = config.renderApiKey    || process.env.RENDER_API_KEY || '';
+    this.renderApiBase   = config.renderApiBase   || process.env.RENDER_API_BASE || RENDER_API_BASE;
+
+    // AWS Bedrock — last-resort cloud fallback (SigV4 signed requests)
+    this.awsRegion          = config.awsRegion          || process.env.AWS_REGION          || 'us-east-1';
+    this.awsAccessKeyId     = config.awsAccessKeyId     || process.env.AWS_ACCESS_KEY_ID   || '';
+    this.awsSecretAccessKey = config.awsSecretAccessKey || process.env.AWS_SECRET_ACCESS_KEY || '';
+
+    // Feature flags — disable individual tiers without removing credentials
+    this.useAkashFallback   = config.useAkashFallback   !== false;
+    this.useRenderFallback  = config.useRenderFallback  !== false;
+    this.useBedrockFallback = config.useBedrockFallback !== false;
 
     // On-chain settlement (relayer signer for completeIntent + settleIntent)
     this.relayerPrivateKey = config.relayerPrivateKey || null;
@@ -427,8 +483,11 @@ class ThetaInferenceHandler {
       edgeCloud: { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
       rapidApi:  { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
       mcp:       { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
+      akash:     { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
+      render:    { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
+      bedrock:   { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
       mock:      { calls: 0 },
-      onChain:   { completes: 0, settles: 0, failures: 0 },
+      onChain:   { completes: 0, settles: 0, failures: 0, attests: 0, attestFailures: 0 },
       webhooks:  { delivered: 0, failed: 0 },
     };
 
@@ -557,6 +616,21 @@ class ThetaInferenceHandler {
         endpoint: this.mcpEndpoint || '(not configured)',
         stats: { ...this.apiStats.mcp },
       },
+      akash: {
+        enabled: this.useAkashFallback && !!this.akashMnemonic,
+        gateway: this.akashGatewayUrl,
+        stats: { ...this.apiStats.akash },
+      },
+      render: {
+        enabled: this.useRenderFallback && !!this.renderApiKey,
+        base: this.renderApiBase,
+        stats: { ...this.apiStats.render },
+      },
+      bedrock: {
+        enabled: this.useBedrockFallback && !!(this.awsAccessKeyId && this.awsSecretAccessKey),
+        region: this.awsRegion,
+        stats: { ...this.apiStats.bedrock },
+      },
       mock: { calls: this.apiStats.mock.calls },
       webhooks: { ...this.apiStats.webhooks },
       onChain: {
@@ -564,7 +638,12 @@ class ThetaInferenceHandler {
         relayer: this.relayerSigner?.address || '(none)',
         stats: { ...this.apiStats.onChain },
       },
-      mode: this.edgeCloudApiKey ? 'LIVE' : this.rapidApiKey ? 'RAPIDAPI' : 'MOCK',
+      mode: this.edgeCloudApiKey ? 'LIVE'
+          : this.rapidApiKey     ? 'RAPIDAPI'
+          : (this.useAkashFallback && this.akashMnemonic) ? 'AKASH'
+          : (this.useRenderFallback && this.renderApiKey) ? 'RENDER'
+          : (this.useBedrockFallback && this.awsAccessKeyId) ? 'BEDROCK'
+          : 'MOCK',
     };
   }
 
@@ -643,11 +722,13 @@ class ThetaInferenceHandler {
     if (this.contract && proofRequest.onChainIntentId) {
       try {
         console.log(`[ThetaInference] Settling intent on-chain...`);
+        const useZkGPT = proofRequest.proofSystem === 'zkgpt';
         const tx = await this.contract.settleIntent(
           proofRequest.onChainIntentId,
           proofResult.proof,
           proofResult.publicValues,
           proofResult.nullifier,
+          useZkGPT,
           { gasLimit: this.gasLimit }
         );
         const receipt = await tx.wait();
@@ -678,6 +759,14 @@ class ThetaInferenceHandler {
         status: entry.status,
         latency_ms: entry.latencyMs,
         settled_tx: entry.settleTxHash || null,
+        // Track 5.5 — extended fields
+        output_hash: entry.outputHash || null,
+        proof_tx_hash: entry.settleTxHash || null,
+        edge_cloud_node_id: entry.attestation?.nodeId || null,
+        provider_tag: entry.providerTag ?? null,
+        video_provenance_uri: entry.videoProvenanceUri || null,
+        edge_store_cid: entry.edgeStoreCid || null,
+        timestamp: Date.now(),
       };
       await this._deliverWebhook(entry.callbackUrl, payload, proofRequest.intentId);
     }
@@ -685,19 +774,43 @@ class ThetaInferenceHandler {
 
   /**
    * Deliver a webhook POST with retry logic (3 attempts, exponential backoff).
-   * Used after settleIntent or immediate completion to notify agents/machines.
+   * Includes HMAC-SHA256 signature header for receiver verification (Track 5.5).
+   *
+   * Signature: X-XFuel-Signature: sha256=<hex>
+   *   HMAC-SHA256(key=WEBHOOK_SECRET, message=<JSON body string>)
+   *
+   * Receivers should verify: `crypto.timingSafeEqual(expected, received)`
    */
   async _deliverWebhook(url, payload, intentId) {
     const maxAttempts = 3;
     const baseDelayMs = 1000;
 
+    const body = JSON.stringify(payload);
+
+    // HMAC-SHA256 signature (if WEBHOOK_SECRET is configured)
+    const webhookSecret = this._webhookSecret || process.env.WEBHOOK_SECRET || '';
+    let signatureHeader = null;
+    if (webhookSecret) {
+      try {
+        const { createHmac } = await import('crypto');
+        const hmac = createHmac('sha256', webhookSecret);
+        hmac.update(body);
+        signatureHeader = `sha256=${hmac.digest('hex')}`;
+      } catch {
+        // crypto import failure is non-fatal — deliver without signature
+      }
+    }
+
+    const headers = { 'Content-Type': 'application/json' };
+    if (signatureHeader) headers['X-XFuel-Signature'] = signatureHeader;
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        console.log(`[Webhook] POST ${url} | attempt=${attempt}/${maxAttempts} | intent=${intentId?.slice(0, 20)}...`);
+        console.log(`[Webhook] POST ${url} | attempt=${attempt}/${maxAttempts} | intent=${intentId?.slice(0, 20)}... | signed=${!!signatureHeader}`);
         const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          headers,
+          body,
           signal: AbortSignal.timeout(10000),
         });
 
@@ -825,35 +938,57 @@ class ThetaInferenceHandler {
     let source = 'mock';
 
     try {
-      // 1. Primary: Direct EdgeCloud API
+      // ── Priority 1: Theta EdgeCloud (native DePIN — preferred) ──────────
       if (this.edgeCloudApiKey) {
         result = await this._callEdgeCloud(serviceType, requestBody, modelName, gpuName);
         if (result) source = 'edgecloud';
       }
 
-      // 2. Fallback: RapidAPI — per research doc §2.4
+      // ── Priority 2: RapidAPI gateway (Theta-routed, still Theta infra) ──
       if (!result && this.useRapidApiFallback && this.rapidApiKey) {
-        console.log(`[ThetaInference] EdgeCloud unavailable, falling back to RapidAPI...`);
+        console.log(`[Router] EdgeCloud unavailable → trying RapidAPI...`);
         result = await this._callRapidAPI(serviceType, requestBody, modelName, gpuName);
         if (result) source = 'rapidapi';
       }
 
-      // 3. Fallback: MCP Server — per research doc §2.3 (Phase 2)
+      // ── Priority 3: MCP Server (Theta toolchain) ─────────────────────────
       if (!result && this.useMcpFallback && this.mcpEndpoint) {
-        console.log(`[ThetaInference] RapidAPI unavailable, falling back to MCP...`);
+        console.log(`[Router] RapidAPI unavailable → trying MCP...`);
         result = await this._callMCP(serviceType, requestBody, modelName, gpuName);
         if (result) source = 'mcp';
       }
 
-      // 4. Final fallback: mock response with warning
+      // ── Priority 4: Akash Network DePIN ──────────────────────────────────
+      if (!result && this.useAkashFallback && this.akashMnemonic) {
+        console.log(`[Router] Theta tiers unavailable → trying Akash Network DePIN...`);
+        result = await this._callAkash(serviceType, requestBody, modelName, gpuName);
+        if (result) source = 'akash';
+      }
+
+      // ── Priority 5: Render Network DePIN ─────────────────────────────────
+      if (!result && this.useRenderFallback && this.renderApiKey) {
+        console.log(`[Router] Akash unavailable → trying Render Network DePIN...`);
+        result = await this._callRender(serviceType, requestBody, modelName, gpuName);
+        if (result) source = 'render';
+      }
+
+      // ── Priority 6: AWS Bedrock (cloud last resort) ───────────────────────
+      if (!result && this.useBedrockFallback && this.awsAccessKeyId && this.awsSecretAccessKey) {
+        console.log(`[Router] All DePINs unavailable → falling back to AWS Bedrock (centralized)...`);
+        result = await this._callBedrock(serviceType, requestBody, modelName, gpuName);
+        if (result) source = 'bedrock';
+      }
+
+      // ── Final: mock (dev/test only) ───────────────────────────────────────
       if (!result) {
         const reason = !this.edgeCloudApiKey && !this.rapidApiKey && !this.mcpEndpoint
+          && !this.akashMnemonic && !this.renderApiKey && !this.awsAccessKeyId
           ? 'no API keys configured'
-          : 'all backends failed';
-        console.warn(`[ThetaInference] WARNING: Using mock response (${reason})`);
+          : 'all providers failed';
+        console.warn(`[Router] WARNING: Using mock response (${reason})`);
         result = this._mockResponse(serviceType);
         result._mock = true;
-        result._warning = `Mock response — ${reason}. Set THETA_EDGECLOUD_API_KEY or THETA_RAPIDAPI_KEY for live inference.`;
+        result._warning = `Mock response — ${reason}. Configure at least one DePIN provider.`;
         this.apiStats.mock.calls++;
       }
 
@@ -905,6 +1040,60 @@ class ThetaInferenceHandler {
       }
     }
 
+    // ─── Step 1b: Attest EdgeCloud node ──────────────────────────────────
+    // Binds the specific EdgeCloud node that executed this job to the intent.
+    // providerTag = THETA_NATIVE when using EdgeCloud directly; HYBRID_FALLBACK
+    // when routed through RapidAPI, MCP, or any non-Theta backend.
+    // The nodeId is also encoded into SP1 publicValues (Step 2) so the ZK proof
+    // cryptographically commits to the hardware that produced the output.
+    if (this.contract && onChainIntentId && typeof onChainIntentId === 'string' && onChainIntentId.startsWith('0x') && entry.status === 'completed_onchain') {
+      try {
+        // Extract node metadata from EdgeCloud job response if available
+        const nodeId = result._nodeId
+          ? ethers.keccak256(ethers.toUtf8Bytes(result._nodeId))
+          : ethers.keccak256(ethers.toUtf8Bytes(`edgecloud-${source}-${onChainIntentId.slice(0, 16)}`));
+
+        const gpuFingerprint = ethers.keccak256(
+          ethers.toUtf8Bytes(`${gpuName}-${result._driverVersion || 'unknown'}`)
+        );
+
+        // Petaflops in GFLOPS units — H100 ≈ 3958, A100 ≈ 2000, RTX4090 ≈ 165
+        const GPU_GFLOPS = { H100_SXM: 3958, H100: 3958, A100: 2000, RTX_4090: 165 };
+        const petaflopsUsed = BigInt(GPU_GFLOPS[gpuName.replace(/-/g, '_')] || 500);
+
+        const providerTag = source === 'edgecloud' || source === 'rapidapi' || source === 'mcp'
+          ? PROVIDER_TAG.THETA_NATIVE
+          : source === 'akash'
+          ? PROVIDER_TAG.DEPIN_AKASH
+          : source === 'render'
+          ? PROVIDER_TAG.DEPIN_RENDER
+          : source === 'bedrock'
+          ? PROVIDER_TAG.HYBRID_CLOUD
+          : PROVIDER_TAG.HYBRID_FALLBACK;
+        const tagLabel = PROVIDER_TAG_LABELS[providerTag] || 'UNKNOWN';
+
+        console.log(`[ThetaInference] Attesting EdgeCloud node | tag=${tagLabel} | node=${nodeId.slice(0, 18)}...`);
+        const attestTx = await this.contract.attestEdgeCloudNode(
+          onChainIntentId,
+          nodeId,
+          gpuFingerprint,
+          petaflopsUsed,
+          providerTag,
+          { gasLimit: this.gasLimit }
+        );
+        const attestReceipt = await attestTx.wait();
+        entry.attestTxHash = attestReceipt.hash;
+        entry.providerTag = tagLabel;
+        console.log(`[ThetaInference] Node attested | tx=${attestReceipt.hash.slice(0, 18)}... | tag=${tagLabel} | gas=${attestReceipt.gasUsed}`);
+        this.apiStats.onChain.attests++;
+      } catch (err) {
+        // Attestation failure is non-fatal — log and continue to proof generation
+        console.warn(`[ThetaInference] attestEdgeCloudNode failed (non-fatal): ${err.message?.split('\n')[0]?.slice(0, 120)}`);
+        entry.attestError = err.message;
+        this.apiStats.onChain.attestFailures++;
+      }
+    }
+
     // ─── Step 2: Trigger SP1 proof generation — per Section 7 ────────────
     if (ctx.generateProof) {
       await ctx.generateProof({
@@ -914,6 +1103,13 @@ class ThetaInferenceHandler {
         outputHash,
         modelHash,
         inputHash: intent.args?.inputHash || '0x' + '00'.repeat(32),
+        // nodeId encoded in publicValues — ZK proof commits to the hardware
+        // Layout: [serviceType(32) | modelHash(32) | inputHash(32) | outputHash(32) | nodeId(32)]
+        nodeId: entry.attestTxHash
+          ? ethers.keccak256(ethers.toUtf8Bytes(result._nodeId || `edgecloud-${source}-${onChainIntentId?.slice(0, 16)}`))
+          : '0x' + '00'.repeat(32),
+        providerTag: entry.providerTag || 'UNSET',
+        proofSystem: intent.args?.proofSystem || 'sp1', // Phase 1: 'sp1' | 'zkgpt' for settleIntent verifier choice
       });
     }
 
@@ -935,8 +1131,9 @@ class ThetaInferenceHandler {
 
   /**
    * Call Theta EdgeCloud On-Demand API.
-   * Auth: Authorization: Bearer {access_token}
+   * Auth: x-api-key: {access_token}  (per https://docs.thetatoken.org/docs/edgecloud-api-keys)
    * Body: { input: { messages, max_tokens, ... }, stream: false, variant: "quantized" }
+   * Endpoint: https://ondemand.thetaedgecloud.com/infer_request/{slug}/completions
    */
   async _callEdgeCloud(serviceType, body, modelName = '', gpuName = '') {
     const endpointTemplate = EDGECLOUD_ENDPOINTS[serviceType];
@@ -971,7 +1168,7 @@ class ThetaInferenceHandler {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.edgeCloudApiKey}`,
+          'x-api-key': this.edgeCloudApiKey,
         },
         body: JSON.stringify(thetaBody),
         signal: controller.signal,
@@ -1150,6 +1347,280 @@ class ThetaInferenceHandler {
       const elapsed = Date.now() - t0;
       this.apiStats.mcp.failures++;
       console.warn(`[MCP] Request failed after ${elapsed}ms: ${err.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * DePIN Priority 4 — Akash Network GPU marketplace.
+   *
+   * Akash is a decentralised cloud built on Cosmos. Providers post bids;
+   * deployers accept and run SDL (Stack Definition Language) workloads.
+   *
+   * At low volume we use the Akash REST gateway to submit and poll a job
+   * rather than managing a full on-chain lease deployment cycle.
+   * Full SDL deployment is tracked as a roadmap item (dedicated AkashCircuit).
+   *
+   * Env vars: AKASH_WALLET_MNEMONIC, AKASH_CERT_PEM, AKASH_GATEWAY_URL
+   */
+  async _callAkash(serviceType, body, modelName = '', gpuName = '') {
+    // Only LLM inference is supported via the thin-client path
+    if (serviceType !== SERVICE_TYPES.LLM_INFERENCE) return null;
+    if (!this.akashMnemonic) return null;
+
+    const t0 = Date.now();
+    this.apiStats.akash.calls++;
+    console.log(`[Akash] Submitting job | model=${modelName} | gpu=${gpuName}`);
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.apiTimeout);
+
+      // Thin-client gateway: POST a JSON job, receive result directly.
+      // Production: replace gateway URL with actual Akash provider endpoint
+      // or use the akash-js SDK for full on-chain lease flow.
+      const payload = {
+        model: modelName,
+        messages: body.messages || [{ role: 'user', content: body.prompt || '' }],
+        max_tokens: body.max_tokens || 512,
+        temperature: body.temperature || 0.7,
+        // Akash-specific fields
+        _wallet: this.akashMnemonic.slice(0, 8) + '***', // masked for logs
+      };
+
+      const res = await fetch(this.akashGatewayUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Provider': 'akash',
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      const elapsed = Date.now() - t0;
+
+      if (!res.ok) {
+        this.apiStats.akash.failures++;
+        const errBody = await res.text().catch(() => '');
+        console.warn(`[Akash] HTTP ${res.status} after ${elapsed}ms: ${errBody.slice(0, 200)}`);
+        return null;
+      }
+
+      const data = await res.json();
+      this.apiStats.akash.successes++;
+      this.apiStats.akash.totalLatencyMs += elapsed;
+      console.log(`[Akash] ${modelName} — ${(elapsed / 1000).toFixed(1)}s | provider=akash-depin`);
+
+      return {
+        choices: [{ message: { role: 'assistant', content: data.output || data.choices?.[0]?.message?.content || JSON.stringify(data) } }],
+        model: modelName,
+        usage: data.usage || { total_tokens: 0 },
+        _source: 'akash-depin',
+        _nodeId: data.provider_address || data.node_id || `akash-${Date.now()}`,
+      };
+    } catch (err) {
+      const elapsed = Date.now() - t0;
+      this.apiStats.akash.failures++;
+      if (err.name === 'AbortError') {
+        console.warn(`[Akash] Request timed out after ${this.apiTimeout}ms`);
+      } else {
+        console.warn(`[Akash] Request failed after ${elapsed}ms: ${err.message}`);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * DePIN Priority 5 — Render Network distributed GPU.
+   *
+   * Render is a marketplace of GPU nodes originally built for 3D rendering,
+   * now expanding into AI inference. Jobs are submitted via the Render REST API.
+   *
+   * Supported service types: LLM_INFERENCE, IMAGE_GENERATION.
+   * Env vars: RENDER_API_KEY, RENDER_API_BASE
+   */
+  async _callRender(serviceType, body, modelName = '', gpuName = '') {
+    if (serviceType !== SERVICE_TYPES.LLM_INFERENCE && serviceType !== SERVICE_TYPES.IMAGE_GENERATION) return null;
+    if (!this.renderApiKey) return null;
+
+    const t0 = Date.now();
+    this.apiStats.render.calls++;
+    console.log(`[Render] Submitting job | model=${modelName} | gpu=${gpuName}`);
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.apiTimeout);
+
+      const isImage = serviceType === SERVICE_TYPES.IMAGE_GENERATION;
+      const endpoint = isImage ? `${this.renderApiBase}/jobs/image` : `${this.renderApiBase}/jobs/inference`;
+
+      const payload = isImage
+        ? { model: modelName, prompt: body.prompt || '', n: body.n || 1, size: body.size || '1024x1024' }
+        : { model: modelName, messages: body.messages || [{ role: 'user', content: body.prompt || '' }], max_tokens: body.max_tokens || 512 };
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.renderApiKey}`,
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      const elapsed = Date.now() - t0;
+
+      if (!res.ok) {
+        this.apiStats.render.failures++;
+        const errBody = await res.text().catch(() => '');
+        console.warn(`[Render] HTTP ${res.status} after ${elapsed}ms: ${errBody.slice(0, 200)}`);
+        return null;
+      }
+
+      const data = await res.json();
+      this.apiStats.render.successes++;
+      this.apiStats.render.totalLatencyMs += elapsed;
+      console.log(`[Render] ${modelName} — ${(elapsed / 1000).toFixed(1)}s | provider=render-depin`);
+
+      if (isImage) {
+        return {
+          data: data.images || data.data || [{ url: data.output_url || '', revised_prompt: body.prompt }],
+          _source: 'render-depin',
+          _nodeId: data.node_id || `render-${Date.now()}`,
+        };
+      }
+      return {
+        choices: [{ message: { role: 'assistant', content: data.output || data.choices?.[0]?.message?.content || JSON.stringify(data) } }],
+        model: modelName,
+        usage: data.usage || { total_tokens: 0 },
+        _source: 'render-depin',
+        _nodeId: data.node_id || `render-${Date.now()}`,
+      };
+    } catch (err) {
+      const elapsed = Date.now() - t0;
+      this.apiStats.render.failures++;
+      if (err.name === 'AbortError') {
+        console.warn(`[Render] Request timed out after ${this.apiTimeout}ms`);
+      } else {
+        console.warn(`[Render] Request failed after ${elapsed}ms: ${err.message}`);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Cloud fallback (Priority 6) — AWS Bedrock.
+   *
+   * Bedrock is a managed AI service — pay-as-you-go, zero idle cost.
+   * Uses SigV4 signing (same helper already in resolveApiKeys for Secrets Manager).
+   * Env vars: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+   *
+   * Only LLM_INFERENCE is routed here; other service types fall through to mock.
+   */
+  async _callBedrock(serviceType, body, modelName = '', gpuName = '') {
+    if (serviceType !== SERVICE_TYPES.LLM_INFERENCE) return null;
+    if (!this.awsAccessKeyId || !this.awsSecretAccessKey) return null;
+
+    const t0 = Date.now();
+    this.apiStats.bedrock.calls++;
+
+    const modelId = BEDROCK_MODEL_MAP[modelName] || BEDROCK_MODEL_MAP['llama-3.1-8b'];
+    console.log(`[Bedrock] Invoking ${modelId} | region=${this.awsRegion}`);
+
+    try {
+      const { createHmac, createHash } = await import('crypto');
+      const hash = (data) => createHash('sha256').update(data).digest('hex');
+      const hmac = (key, data) => createHmac('sha256', key).update(data).digest();
+
+      const now = new Date();
+      const amzDate = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+      const dateStamp = amzDate.slice(0, 8);
+
+      const region = this.awsRegion;
+      const service = 'bedrock';
+      const host = `bedrock-runtime.${region}.amazonaws.com`;
+      const endpoint = `https://${host}/model/${encodeURIComponent(modelId)}/invoke`;
+
+      // Claude uses a different body format than Llama/Titan
+      const isAnthropic = modelId.startsWith('anthropic.');
+      const reqBody = isAnthropic
+        ? JSON.stringify({
+            anthropic_version: 'bedrock-2023-05-31',
+            max_tokens: body.max_tokens || 512,
+            messages: body.messages || [{ role: 'user', content: body.prompt || '' }],
+          })
+        : JSON.stringify({
+            prompt: body.messages?.[0]?.content || body.prompt || '',
+            max_gen_len: body.max_tokens || 512,
+            temperature: body.temperature || 0.7,
+          });
+
+      const payloadHash = hash(reqBody);
+      const canonicalHeaders = `content-type:application/json\nhost:${host}\nx-amz-date:${amzDate}\n`;
+      const signedHeaders = 'content-type;host;x-amz-date';
+      const canonicalRequest = `POST\n/model/${encodeURIComponent(modelId)}/invoke\n\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`;
+      const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+      const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${credentialScope}\n${hash(canonicalRequest)}`;
+
+      let signingKey = hmac(`AWS4${this.awsSecretAccessKey}`, dateStamp);
+      signingKey = hmac(signingKey, region);
+      signingKey = hmac(signingKey, service);
+      signingKey = hmac(signingKey, 'aws4_request');
+      const signature = createHmac('sha256', signingKey).update(stringToSign).digest('hex');
+      const authHeader = `AWS4-HMAC-SHA256 Credential=${this.awsAccessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.apiTimeout);
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Amz-Date': amzDate,
+          'Authorization': authHeader,
+        },
+        body: reqBody,
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      const elapsed = Date.now() - t0;
+
+      if (!res.ok) {
+        this.apiStats.bedrock.failures++;
+        const errBody = await res.text().catch(() => '');
+        console.warn(`[Bedrock] HTTP ${res.status} after ${elapsed}ms: ${errBody.slice(0, 200)}`);
+        return null;
+      }
+
+      const data = await res.json();
+      this.apiStats.bedrock.successes++;
+      this.apiStats.bedrock.totalLatencyMs += elapsed;
+      console.log(`[Bedrock] ${modelId} — ${(elapsed / 1000).toFixed(1)}s | CENTRALIZED FALLBACK`);
+
+      const content = isAnthropic
+        ? data.content?.[0]?.text || JSON.stringify(data)
+        : data.generation || data.outputs?.[0]?.text || JSON.stringify(data);
+
+      return {
+        choices: [{ message: { role: 'assistant', content } }],
+        model: modelId,
+        usage: data.usage || { total_tokens: 0 },
+        _source: 'aws-bedrock',
+        _nodeId: `bedrock-${region}-${Date.now()}`,
+        _driverVersion: 'bedrock-managed',
+      };
+    } catch (err) {
+      const elapsed = Date.now() - t0;
+      this.apiStats.bedrock.failures++;
+      if (err.name === 'AbortError') {
+        console.warn(`[Bedrock] Request timed out after ${this.apiTimeout}ms`);
+      } else {
+        console.warn(`[Bedrock] Request failed after ${elapsed}ms: ${err.message}`);
+      }
       return null;
     }
   }

@@ -1,7 +1,8 @@
 /**
  * XFuel Protocol — Core Layer Deployment Script
  *
- * Deploys CoreRevenueSplitter + ZKVerifierSP1 + SP1ProofHooks + veXFGovernance.
+ * Deploys CoreRevenueSplitter + ZKVerifierSP1 + ZKVerifierZkGPT (Phase 1) + veXFGovernance.
+ * SP1ProofHooks is a library (linked at compile time).
  *
  * Usage:
  *   npx hardhat run deploy/deploy-core.cjs --network theta-testnet
@@ -47,18 +48,26 @@ async function main() {
 
   // 2. ZKVerifierSP1
   const sp1Gateway = process.env.SP1_GATEWAY_ADDRESS || ethers.ZeroAddress;
-  console.log('\n[2/3] Deploying ZKVerifierSP1...');
+  console.log('\n[2/4] Deploying ZKVerifierSP1...');
   const VerifierF = await ethers.getContractFactory('ZKVerifierSP1');
   const verifier = await VerifierF.deploy(admin, sp1Gateway);
   await verifier.waitForDeployment();
   const verifierAddr = await verifier.getAddress();
   console.log(`  ✓ ZKVerifierSP1: ${verifierAddr}`);
 
-  // Note: SP1ProofHooks is a library — it is linked at compile time, not deployed separately.
+  // 3. ZKVerifierZkGPT (Phase 1 — stub until GKR+Lasso verifier implemented)
+  console.log('\n[3/4] Deploying ZKVerifierZkGPT...');
+  const ZkGPTVerifierF = await ethers.getContractFactory('ZKVerifierZkGPT');
+  const zkGPTVerifier = await ZkGPTVerifierF.deploy(admin);
+  await zkGPTVerifier.waitForDeployment();
+  const zkGPTVerifierAddr = await zkGPTVerifier.getAddress();
+  console.log(`  ✓ ZKVerifierZkGPT: ${zkGPTVerifierAddr}`);
 
-  // 3. veXFGovernance
+  // Note: SP1ProofHooks is a library — linked at compile time, not deployed separately.
+
+  // 4. veXFGovernance
   const xfToken = process.env.XF_TOKEN_ADDRESS || ethers.ZeroAddress;
-  console.log('\n[3/3] Deploying veXFGovernance...');
+  console.log('\n[4/4] Deploying veXFGovernance...');
   if (xfToken === ethers.ZeroAddress) {
     console.log('  ⚠ XF_TOKEN_ADDRESS not set — skipping veXFGovernance (requires token)');
   }
@@ -76,10 +85,11 @@ async function main() {
   console.log('═══════════════════════════════════════════════════════════');
   console.log(`  CoreRevenueSplitter: ${splitterAddr}`);
   console.log(`  ZKVerifierSP1:       ${verifierAddr}`);
+  console.log(`  ZKVerifierZkGPT:     ${zkGPTVerifierAddr}`);
   console.log(`  veXFGovernance:      ${govAddr}`);
   console.log('═══════════════════════════════════════════════════════════');
 
-  return { splitterAddr, verifierAddr, govAddr };
+  return { splitterAddr, verifierAddr, zkGPTVerifierAddr, govAddr };
 }
 
 main()

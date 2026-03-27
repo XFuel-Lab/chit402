@@ -5,6 +5,10 @@ require('@nomicfoundation/hardhat-toolbox')
 require('@nomicfoundation/hardhat-ethers')
 require('@openzeppelin/hardhat-upgrades')
 
+// hardhat-tracer: enables `npx hardhat test --trace` for ZK proof debugging
+// Install: npm install --save-dev hardhat-tracer
+try { require('hardhat-tracer') } catch (_) { /* optional — install when needed */ }
+
 // ============================================================
 // HARDHAT 3 MIGRATION TRACKING
 // Blocked by two upstream issues (as of 2026-03-08):
@@ -56,7 +60,9 @@ module.exports = {
       {
         version: '0.8.22',
         settings: {
-          viaIR: !process.env.HARDHAT_FAST,
+          // Always on: core contracts (e.g. ZKVerifierZkGPT) hit "stack too deep" without IR.
+          // HARDHAT_FAST no longer disables this — compile cost is acceptable for CI/local.
+          viaIR: true,
           optimizer: {
             enabled: true,
             runs: 200,
@@ -67,7 +73,7 @@ module.exports = {
       {
         version: '0.8.20',
         settings: {
-          viaIR: !process.env.HARDHAT_FAST,
+          viaIR: true,
           optimizer: {
             enabled: true,
             runs: 200,
@@ -112,6 +118,10 @@ module.exports = {
     tests: './test',
     cache: './cache',
     artifacts: './artifacts',
+  },
+  typechain: {
+    outDir: 'typechain-types',
+    target: 'ethers-v6',
   },
   mocha: {
     timeout: 40000,

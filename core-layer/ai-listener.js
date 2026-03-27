@@ -59,6 +59,7 @@ const DEFAULT_CHAINS = {
     name: 'Theta Mainnet',
     chainId: 361,
     rpc: 'https://eth-rpc-api.thetatoken.org/rpc',
+    wsRpc: 'wss://eth-rpc-api.thetatoken.org/rpc',
     blockTime: 6000,
     pollInterval: 2000,
     gasTarget: 270000,
@@ -69,6 +70,7 @@ const DEFAULT_CHAINS = {
     name: 'Theta Testnet',
     chainId: 365,
     rpc: 'https://eth-rpc-api-testnet.thetatoken.org/rpc',
+    wsRpc: 'wss://eth-rpc-api-testnet.thetatoken.org/rpc',
     blockTime: 6000,
     pollInterval: 2000,
     gasTarget: 270000,
@@ -447,6 +449,21 @@ class IntentSolver {
         DataProvenanced: AI_INTENT_TYPES.DATA_PROVENANCED,
         SelectiveDisclosureVerified: AI_INTENT_TYPES.SELECTIVE_DISCLOSURE,
         InferenceIntentSubmitted: AI_INTENT_TYPES.INFERENCE_REQUEST,
+        // Track 2.1 — EdgeCloud attestation (new)
+        EdgeCloudNodeAttested: AI_INTENT_TYPES.COMPUTE_RESULT,
+        // Track 2.3 — TDROP payment (new)
+        TdropIntentSubmitted: AI_INTENT_TYPES.INFERENCE_REQUEST,
+        // Track 3.1 — EdgeStore seal (new)
+        EdgeStoreSealed: AI_INTENT_TYPES.DATA_ATTESTATION,
+        // Track 3.2 — Video provenance (new)
+        VideoProvenance: AI_INTENT_TYPES.DATA_ATTESTATION,
+        // Settlement path (new — was missing)
+        IntentSettled: AI_INTENT_TYPES.SETTLEMENT_REQUEST,
+        IntentFailed: AI_INTENT_TYPES.SETTLEMENT_REQUEST,
+        // Revenue splitter events for Theta-native boost visibility (new)
+        FeeReceivedTagged: AI_INTENT_TYPES.COMPUTE_RESULT,
+        DynamicBoostApplied: AI_INTENT_TYPES.COMPUTE_RESULT,
+        ERC20FeeReceived: AI_INTENT_TYPES.COMPUTE_RESULT,
       };
 
       const intentType = eventToIntent[parsed.name] || null;
@@ -865,6 +882,7 @@ class CoreListener {
 
     // Provider cache
     this.providers = new Map();
+    this.wsProviders = new Map(); // WebSocket providers (one per EVM chain if ws URL configured)
 
     // Circuit registry
     this.circuits = new Map();
@@ -874,6 +892,7 @@ class CoreListener {
     this.pollTimers = new Map();
     this.lastBlocks = new Map();
     this.lastSolanaSignatures = new Map();
+    this.wsSubscriptions = new Map(); // chainKey → active WS subscription listener IDs
 
     // Processed events (dedup)
     this.processedEvents = new Set();
@@ -974,6 +993,15 @@ class CoreListener {
           this.lastBlocks.set(key, block);
           this.log.info?.(`Connected to ${chain.name} (block ${block})`) ||
             console.log(`[CoreListener] Connected to ${chain.name} (block ${block})`);
+
+          // Attempt WebSocket subscription for low-latency event delivery.
+          // wsRpc must be a ws:// or wss:// URL; falls back to HTTP polling if absent.
+          const wsUrl = chain.wsRpc || chain.ws;
+          if (wsUrl) {
+            this._connectWebSocket(key, chain, wsUrl).catch(err =>
+              console.warn(`[CoreListener] WS connect failed for ${chain.name}: ${err.message?.slice(0, 80)}`)
+            );
+          }
         } catch (err) {
           this.log.warn?.(`Failed to connect to ${chain.name}: ${err.message}`) ||
             console.warn(`[CoreListener] Failed to connect to ${chain.name}: ${err.message}`);
@@ -993,6 +1021,10 @@ class CoreListener {
 
     this.log.info?.('CoreListener started') ||
       console.log('[CoreListener] Started polling all chains');
+
+    this._startEdgeCloudJobMonitor().catch(err =>
+      console.warn(`[EdgeCloud] Job monitor init error: ${err.message?.slice(0, 80)}`)
+    );
   }
 
   stop() {
@@ -1003,8 +1035,101 @@ class CoreListener {
     this.pollTimers.clear();
     this.providers.clear();
 
+    // Destroy WebSocket providers cleanly
+    for (const [key, wsProv] of this.wsProviders) {
+      try { wsProv.destroy?.(); } catch { /* ignore */ }
+      console.log(`[CoreListener] WS provider closed: ${key}`);
+    }
+    this.wsProviders.clear();
+    this.wsSubscriptions.clear();
+
+    if (this._edgeCloudJobTimer) {
+      clearTimeout(this._edgeCloudJobTimer);
+      this._edgeCloudJobTimer = null;
+    }
+
     this.log.info?.({ metrics: this.metrics }, 'CoreListener stopped') ||
       console.log('[CoreListener] Stopped', this.metrics);
+  }
+
+  // ─── WebSocket Subscription (eth_subscribe) ────────────────────────────────
+
+  /**
+   * Connect a WebSocket provider for an EVM chain and subscribe to log events
+   * for all registered contract addresses. Falls back to HTTP polling if the
+   * connection drops, then retries WS after RECONNECT_DELAY_MS.
+   *
+   * Theta EVM WS endpoints:
+   *   Mainnet:  wss://eth-rpc-api.thetatoken.org/rpc
+   *   Testnet:  wss://eth-rpc-api-testnet.thetatoken.org/rpc
+   */
+  async _connectWebSocket(chainKey, chain, wsUrl) {
+    const RECONNECT_DELAY_MS = 15000;
+
+    try {
+      const wsProv = new ethers.WebSocketProvider(wsUrl, chain.chainId);
+      this.wsProviders.set(chainKey, wsProv);
+
+      const contractAddrs = this.contracts[chainKey] || [];
+      const listenerIds = [];
+
+      for (const contractCfg of contractAddrs) {
+        if (!contractCfg.address || !contractCfg.iface) continue;
+
+        const filter = { address: contractCfg.address };
+
+        const onLog = async (log) => {
+          if (!this.isRunning) return;
+
+          const eventId = `${chainKey}-${log.transactionHash}-${log.index ?? log.logIndex}`;
+          if (this.processedEvents.has(eventId)) return;
+          this._addProcessedEvent(eventId);
+
+          this.metrics.eventsProcessed++;
+          this._incChainMetric(chainKey, 'events');
+
+          const proofResult = ProverNormalizer.normalizeEVM(log, contractCfg.iface);
+          if (proofResult) {
+            proofResult.chain = chainKey;
+            this._recordProofResult(proofResult);
+          }
+
+          const intent = IntentSolver.parseEVMEvent(log, contractCfg.iface);
+          if (intent) {
+            this.metrics.intentsParsed++;
+            this._incChainMetric(chainKey, 'intents');
+            intent.chain = chainKey;
+            intent.prover = chain.prover;
+            await this._dispatchIntent(intent, chainKey);
+          }
+        };
+
+        wsProv.on(filter, onLog);
+        listenerIds.push({ filter, onLog });
+      }
+
+      this.wsSubscriptions.set(chainKey, listenerIds);
+
+      console.log(`[CoreListener] WS subscribed: ${chain.name} (${wsUrl})`);
+
+      // Handle unexpected disconnects — re-attempt after delay
+      wsProv.websocket?.addEventListener?.('close', () => {
+        if (!this.isRunning) return;
+        console.warn(`[CoreListener] WS closed for ${chain.name} — retrying in ${RECONNECT_DELAY_MS}ms`);
+        try { wsProv.destroy?.(); } catch { /* ignore */ }
+        this.wsProviders.delete(chainKey);
+        this.wsSubscriptions.delete(chainKey);
+        setTimeout(() => {
+          if (!this.isRunning) return;
+          this._connectWebSocket(chainKey, chain, wsUrl).catch(err =>
+            console.warn(`[CoreListener] WS reconnect failed for ${chain.name}: ${err.message?.slice(0, 80)}`)
+          );
+        }, RECONNECT_DELAY_MS);
+      });
+
+    } catch (err) {
+      console.warn(`[CoreListener] WS setup error for ${chain.name}: ${err.message?.slice(0, 80)}`);
+    }
   }
 
   // ─── Polling ──────────────────────────────────────────────────────────────
@@ -1054,8 +1179,13 @@ class CoreListener {
 
   /**
    * Poll an EVM chain for new events since lastBlock.
+   * Skipped for chains with an active WebSocket subscription since WS delivers
+   * events in real-time; polling acts as fallback when WS is unavailable.
    */
   async _pollEVM(chainKey, chain) {
+    // If WebSocket subscription is active for this chain, skip HTTP polling.
+    if (this.wsProviders.has(chainKey) && this.wsSubscriptions.has(chainKey)) return;
+
     const provider = this.providers.get(chainKey);
     if (!provider) return;
 
@@ -1313,12 +1443,26 @@ class CoreListener {
   async _generateProof(proofRequest, circuitId) {
     const MAX_RETRIES = 3;
     const LATENCY_THRESHOLD_MS = 10000;
+    const useZkGPT = proofRequest.proofSystem === 'zkgpt' && process.env.ZKGPT_PROVER_URL;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       const startTime = Date.now();
 
       try {
-        const result = await this._callSP1Prover(proofRequest);
+        let result;
+        if (useZkGPT) {
+          try {
+            result = await this._callZkGPTProver(proofRequest);
+          } catch (zkgptErr) {
+            this.log.warn?.({ err: zkgptErr.message, circuitId }, 'zkGPT prover failed — falling back to SP1 mock');
+            result = await this._callSP1Prover(proofRequest);
+          }
+        } else {
+          if (proofRequest.proofSystem === 'zkgpt' && !process.env.ZKGPT_PROVER_URL) {
+            this.log.warn?.({ circuitId }, 'proof_system=zkgpt requested but ZKGPT_PROVER_URL not set — using SP1 mock');
+          }
+          result = await this._callSP1Prover(proofRequest);
+        }
         const elapsed = Date.now() - startTime;
 
         result.provingTimeMs = elapsed;
@@ -1365,6 +1509,64 @@ class CoreListener {
     await new Promise((r) => setTimeout(r, delay));
 
     return mockProof;
+  }
+
+  /**
+   * Call the zkGPT prover (Phase 1 — ZKG-1). Uses ZKGPT_PROVER_URL; request/response
+   * shape matches backend theta-bridge zkgpt-prover-client for compatibility.
+   */
+  async _callZkGPTProver(proofRequest) {
+    const baseUrl = (process.env.ZKGPT_PROVER_URL || '').replace(/\/$/, '');
+    if (!baseUrl) throw new Error('ZKGPT_PROVER_URL not set');
+    const timeoutMs = parseInt(process.env.ZKGPT_PROVER_TIMEOUT_MS || '120000', 10);
+
+    const body = {
+      task_id: proofRequest.task_id ?? proofRequest.intentId,
+      output_hash: proofRequest.output_hash ?? proofRequest.outputHash,
+      net_amount: proofRequest.net_amount ?? proofRequest.netAmount ?? '0',
+      block_number: proofRequest.block_number ?? proofRequest.blockNumber ?? 0,
+      merkle_root: proofRequest.merkle_root ?? proofRequest.merkleRoot ?? '0x' + '00'.repeat(32),
+      identity_commitment: proofRequest.identity_commitment ?? proofRequest.identityCommitment ?? '0x' + '00'.repeat(32),
+      task_type: proofRequest.task_type ?? proofRequest.taskType ?? 'inference_request',
+      source_chain: proofRequest.source_chain ?? proofRequest.sourceChain ?? 'theta',
+    };
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(`${baseUrl}/prove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`zkGPT prover HTTP ${res.status}: ${text.slice(0, 200)}`);
+    }
+
+    const data = await res.json();
+    const proof = data.proof ?? data.proof_bytes;
+    if (!proof) throw new Error('zkGPT prover response missing proof');
+
+    const proofHex = typeof proof === 'string' && proof.startsWith('0x')
+      ? proof
+      : (typeof proof === 'string' ? '0x' + Buffer.from(proof, 'base64').toString('hex') : '0x' + Buffer.from(proof).toString('hex'));
+    const publicInputs = data.public_inputs ?? data.publicInputs ?? {};
+    const publicValues = data.public_values ?? data.publicValues ?? (typeof publicInputs === 'string' ? publicInputs : '0x' + 'cd'.repeat(64));
+    const rawNullifier = data.nullifier ?? data.nullifier_hex ?? '0';
+    const nullifier = rawNullifier.startsWith('0x') ? rawNullifier : '0x' + rawNullifier;
+    const provingTimeMs = data.proving_time_ms ?? data.provingTimeMs ?? 0;
+
+    return {
+      proof: proofHex,
+      publicValues: typeof publicValues === 'string' ? publicValues : ('0x' + Buffer.from(JSON.stringify(publicValues)).toString('hex')),
+      nullifier: nullifier.length === 66 ? nullifier : '0x' + nullifier.replace(/^0x/, '').padStart(64, '0'),
+      programVKey: proofRequest.programVKey || '0x' + '00'.repeat(32),
+      proofSizeBytes: data.proof_size ?? Math.max(260, (proofHex.length / 2) - 1),
+      provingTimeMs,
+    };
   }
 
   // ─── Proof Result Tracking ────────────────────────────────────────────────
@@ -1532,6 +1734,112 @@ class CoreListener {
     };
   }
 
+  // ─── EdgeCloud Dedicated Deployment Job Monitor (Track 5.3) ──────────────
+  //
+  // Polls the EdgeCloud Client RPC GetJobs endpoint for dedicated deployments.
+  // This is only relevant when SP1_PROVER_ENDPOINT is set (i.e. Track 2.2 is
+  // active). At current scale, the SP1 prover is deployed on-demand during
+  // testing only — this monitor fires but exits early when not configured.
+  //
+  // EdgeCloud Client RPC (the SP1_PROVER_ENDPOINT, NOT the Theta Node port 16888):
+  //   POST { method: "getjobs", params: [] } → { result: { jobs: [...] } }
+  //
+  // Note: Theta Node native RPC (port 16888) exposes theta.GetBlock / theta.GetAccount etc.
+  // XFuel uses the ETH-RPC adaptor (eth-rpc-api.thetatoken.org/rpc) for all on-chain reads
+  // via ethers.js getLogs/provider — NOT the native 16888 interface.
+  //
+  // Interval: every 30s (EDGECLOUD_JOBS_POLL_MS).
+  // Non-fatal: all errors are logged, never thrown.
+
+  async _startEdgeCloudJobMonitor() {
+    const EDGECLOUD_JOBS_POLL_MS = 30_000;
+    // EdgeCloud Client RPC is a local node process — no API key required.
+    // Default: http://localhost:9545/rpc (per Theta EdgeCloud Client Guide).
+    // Set SP1_PROVER_ENDPOINT to the client node's RPC address to enable monitoring.
+    const endpoint = this.sp1Config?.proverEndpoint || process.env.SP1_PROVER_ENDPOINT || 'http://localhost:9545/rpc';
+    const explicitlyConfigured = !!(this.sp1Config?.proverEndpoint || process.env.SP1_PROVER_ENDPOINT);
+
+    if (!explicitlyConfigured) {
+      console.log('[EdgeCloud] Job monitor not started — SP1_PROVER_ENDPOINT not set (deferred: Track 2.2)');
+      return;
+    }
+
+    const rpcBase = endpoint.replace(/\/+$/, '');
+
+    this.edgeCloudJobStats = {
+      lastPoll: null,
+      lastError: null,
+      activeJobs: 0,
+      completedJobs: 0,
+      failedJobs: 0,
+      totalJobsSeen: 0,
+    };
+
+    const poll = async () => {
+      if (!this.isRunning) return;
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10_000);
+        // EdgeCloud Client RPC — local node only (http://localhost:9545/rpc)
+        // Method: "edgecloud.GetJobs" (per https://docs.thetatoken.org/docs/theta-edgecloud-client-rpc-apis)
+        // Response fields: id, reward_usd, success_time, error_time, error_message
+        // Note: no live "status" field — completed jobs have success_time set, failed have error_time set.
+        const res = await fetch(`${rpcBase}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'edgecloud.GetJobs',
+            params: [{ page: 0, size: 50 }],
+            id: 1,
+          }),
+          signal: controller.signal,
+        }).finally(() => clearTimeout(timeout));
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const jobs = data?.result?.jobs || [];
+
+        // success_time is set for completed jobs; error_time for failed jobs
+        const completed = jobs.filter(j => j.success_time && !j.error_time).length;
+        const failed = jobs.filter(j => j.error_time || j.error_message).length;
+        const active = jobs.length - completed - failed;
+
+        this.edgeCloudJobStats = {
+          lastPoll: Date.now(),
+          lastError: null,
+          activeJobs: active,
+          completedJobs: completed,
+          failedJobs: failed,
+          totalJobsSeen: jobs.length,
+        };
+
+        if (failed > 0) {
+          console.warn(`[EdgeCloud] ${failed} failed job(s) detected on dedicated prover — check SP1_PROVER_ENDPOINT`);
+        }
+        console.log(`[EdgeCloud] Jobs: active=${active} completed=${completed} failed=${failed}`);
+
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          this.edgeCloudJobStats.lastError = 'timeout';
+          console.warn('[EdgeCloud] GetJobs RPC timed out');
+        } else {
+          this.edgeCloudJobStats.lastError = err.message?.slice(0, 80) || 'unknown';
+          console.warn(`[EdgeCloud] GetJobs poll error: ${this.edgeCloudJobStats.lastError}`);
+        }
+      }
+
+      if (this.isRunning) {
+        this._edgeCloudJobTimer = setTimeout(poll, EDGECLOUD_JOBS_POLL_MS);
+      }
+    };
+
+    console.log(`[EdgeCloud] Job monitor started (${EDGECLOUD_JOBS_POLL_MS / 1000}s interval) — endpoint: ${rpcBase}`);
+    this._edgeCloudJobTimer = setTimeout(poll, EDGECLOUD_JOBS_POLL_MS);
+  }
+
   // ─── Status ───────────────────────────────────────────────────────────────
 
   getStatus() {
@@ -1544,6 +1852,7 @@ class CoreListener {
           prover: v.prover,
           lastBlock: this.lastBlocks.get(k) || 0,
           connected: this.providers.has(k) || v.type === ChainType.SVM || v.type === ChainType.DEPIN,
+          wsConnected: this.wsProviders.has(k),
           gasTarget: v.gasTarget,
           depinProvider: v.depinProvider || null,
         }])
@@ -1566,6 +1875,7 @@ class CoreListener {
       intentOutcomes: this.getIntentOutcomeStats(),
       gasBenchmarks: GAS_BENCHMARKS,
       routes: ProofRouter.allRoutes(),
+      edgeCloudJobs: this.edgeCloudJobStats || null,
     };
   }
 }
@@ -1622,11 +1932,30 @@ if (isMainModule) {
       }
 
       const INFERENCE_IFACE = new ethers.Interface([
+        // ThetaInferenceCircuit
         'event InferenceIntentSubmitted(bytes32 indexed circuitId, bytes32 indexed intentId, uint8 serviceType, bytes32 indexed serviceId, address requester, uint256 payment, uint256 fee, bytes32 inputHash)',
         'event IntentCompleted(bytes32 indexed intentId, bytes32 outputHash, bytes32 modelHash, uint256 latencyMs)',
         'event IntentSettled(bytes32 indexed intentId, bytes32 nullifier, uint256 settledAmount)',
         'event IntentFailed(bytes32 indexed intentId, string reason)',
         'event PresetIntentSubmitted(bytes32 indexed intentId, bytes32 indexed presetId, uint8 gpuTier, address requester, uint256 payment)',
+        // Track 2.1 — EdgeCloud attestation
+        'event EdgeCloudNodeAttested(bytes32 indexed intentId, string nodeId, string gpuModel, uint256 computeUnits, uint8 providerTag)',
+        // Track 3.2 — Video provenance
+        'event VideoProvenance(bytes32 indexed intentId, bytes32 contentHash, string playbackUri)',
+        // Track 4.2 — TDROP payment
+        'event TdropIntentSubmitted(bytes32 indexed intentId, address indexed requester, uint256 tdropFee, uint256 tfuelEquivalent, uint16 discountBps)',
+        // ZKVerifierSP1
+        'event ProofVerified(bytes32 indexed circuitId, bytes32 nullifier, bytes32 publicValuesHash, address verifier, uint256 timestamp)',
+        'event ProofFailed(bytes32 indexed circuitId, bytes32 nullifier, address verifier, uint256 timestamp)',
+        // CoreRevenueSplitter — boost and fee events
+        'event FeeReceivedTagged(bytes32 indexed circuitId, uint256 amount, uint8 providerTag, uint256 thetaNativeTotal, uint256 totalFees)',
+        'event DynamicBoostApplied(uint256 boostMultiplier, uint256 thetaNativeRatio, uint256 distributed)',
+        'event ERC20FeeReceived(bytes32 indexed circuitId, address indexed token, address indexed from, uint256 amount, uint8 providerTag, uint256 timestamp)',
+        // DataHubs — EdgeStore seal
+        'event EdgeStoreSealed(bytes32 indexed contributionId, bytes32 edgeStoreCid, bytes32 edgeStoreNodeId, address relayer)',
+        // A2ACircuit
+        'event BidSubmitted(bytes32 indexed circuitId, bytes32 indexed bidId, address indexed bidder, bytes32 capabilityRequired, uint256 escrow, uint64 deadline)',
+        'event AgentSettled(bytes32 indexed circuitId, bytes32 indexed bidId, address indexed provider, uint256 payout)',
       ]);
 
       const contracts = {};
@@ -1736,9 +2065,13 @@ if (isMainModule) {
         : apiStatus.mode === 'RAPIDAPI' ? '✓ RAPIDAPI'
         : '✗ MOCK (set THETA_EDGECLOUD_API_KEY for live)';
 
+      const wsCount = listener.wsProviders.size;
+      const wsLabel = wsCount > 0 ? `ws(${wsCount})` : 'http-poll';
+
       console.log('');
       console.log('  ✓ XFuel CoreListener started successfully');
       console.log(`  ✓ Polling ${connectedCount} EVM chains (${chainCount} total configured)`);
+      console.log(`  ✓ Event delivery: ${wsLabel}`);
       console.log('  ✓ Registered circuit: theta-inference');
       console.log(`  ✓ Live EdgeCloud mode: ${modeLabel}`);
       if (apiStatus.edgeCloud.enabled) {
@@ -1766,6 +2099,7 @@ if (isMainModule) {
         const apiCalls = hStats.edgeCloud.stats.calls + hStats.rapidApi.stats.calls + hStats.mock.calls;
         const settled = hStats.onChain.stats.settles || 0;
         const completed = hStats.onChain.stats.completes || 0;
+        const attested = hStats.onChain.stats.attests || 0;
         const errChains = [];
         for (const [k, v] of listener.chainErrors) {
           errChains.push(`${k}(${v.consecutive})`);
@@ -1783,7 +2117,8 @@ if (isMainModule) {
           `[Heartbeat ${new Date().toLocaleTimeString()}] ` +
           `uptime=${uptime}s | events=${status.metrics.eventsProcessed} | ` +
           `intents=${status.metrics.intentsParsed} | proofs=${status.metrics.proofsGenerated} | ` +
-          `api=${apiLabel}(${apiCalls}) | settled=${settled}/${completed}` +
+          `api=${apiLabel}(${apiCalls}) | settled=${settled}/${completed} | attested=${attested} | ` +
+          `ws=${listener.wsProviders.size}` +
           `${errSuffix}${predSuffix}`
         );
       }, 30000);

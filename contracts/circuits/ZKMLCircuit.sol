@@ -51,7 +51,8 @@ contract ZKMLCircuit is AccessControl, Pausable, ReentrancyGuard {
 
     // ─── Core Layer References ────────────────────────────────────────────────
     address public revenueSplitter;
-    address public zkVerifier;
+    address public zkVerifier;           // ZKVerifierSP1 for SP1 proofs
+    address public zkVerifierZkGPT;      // Phase 1: ZKVerifierZkGPT for zkGPT (GKR+Lasso) inference proofs
 
     // ─── Fee Configuration ────────────────────────────────────────────────────
     uint16 public feeBps = 75;                  // 0.75% default (higher for private compute)
@@ -404,6 +405,7 @@ contract ZKMLCircuit is AccessControl, Pausable, ReentrancyGuard {
      * @dev Only authorized provers for the model can submit proofs.
      *      The proof attests: "I ran model with commitment C on input X and got Y"
      *      without revealing the actual model weights.
+     * @param useZkGPT If true and zkVerifierZkGPT is set, use ZKVerifierZkGPT (Phase 1 zkGPT path); else use zkVerifier (SP1).
      */
     function verifyInference(
         bytes32 requestId,
@@ -411,7 +413,8 @@ contract ZKMLCircuit is AccessControl, Pausable, ReentrancyGuard {
         bytes32 weightCommitmentInProof,
         bytes calldata proof,
         bytes calldata publicValues,
-        bytes32 nullifier
+        bytes32 nullifier,
+        bool useZkGPT
     ) external nonReentrant whenNotPaused {
         InferenceRequest storage req = requests[requestId];
         if (req.requestedAt == 0) revert RequestNotFound();
@@ -433,9 +436,10 @@ contract ZKMLCircuit is AccessControl, Pausable, ReentrancyGuard {
         if (usedNullifiers[nullifier]) revert NullifierUsed();
         usedNullifiers[nullifier] = true;
 
-        // Verify SP1 proof via Core ZKVerifier
-        if (zkVerifier != address(0)) {
-            (bool ok, ) = zkVerifier.call(
+        // Verify proof via Core verifier (SP1 or zkGPT per Phase 1)
+        address verifier = (useZkGPT && zkVerifierZkGPT != address(0)) ? zkVerifierZkGPT : zkVerifier;
+        if (verifier != address(0)) {
+            (bool ok, ) = verifier.call(
                 abi.encodeWithSignature(
                     "verifyProof(bytes32,bytes,bytes,bytes32)",
                     CIRCUIT_ID, publicValues, proof, nullifier
@@ -612,13 +616,15 @@ contract ZKMLCircuit is AccessControl, Pausable, ReentrancyGuard {
      * @param proof SP1 proof of selective disclosure.
      * @param publicValues Encoded disclosed fields + commitment.
      * @param nullifier Replay protection.
+     * @param useZkGPT If true and zkVerifierZkGPT is set, use ZKVerifierZkGPT; else use zkVerifier (SP1).
      */
     function verifySelectiveDisclosure(
         bytes32 policyId,
         bytes32 requestId,
         bytes calldata proof,
         bytes calldata publicValues,
-        bytes32 nullifier
+        bytes32 nullifier,
+        bool useZkGPT
     ) external nonReentrant whenNotPaused {
         DisclosurePolicy storage dp = disclosurePolicies[policyId];
         require(dp.active, "PolicyNotActive");
@@ -631,8 +637,9 @@ contract ZKMLCircuit is AccessControl, Pausable, ReentrancyGuard {
 
         usedNullifiers[nullifier] = true;
 
-        if (zkVerifier != address(0)) {
-            (bool ok, ) = zkVerifier.call(
+        address verifier = (useZkGPT && zkVerifierZkGPT != address(0)) ? zkVerifierZkGPT : zkVerifier;
+        if (verifier != address(0)) {
+            (bool ok, ) = verifier.call(
                 abi.encodeWithSignature(
                     "verifyProof(bytes32,bytes,bytes,bytes32)",
                     CIRCUIT_ID, publicValues, proof, nullifier
@@ -683,6 +690,11 @@ contract ZKMLCircuit is AccessControl, Pausable, ReentrancyGuard {
 
     function setZKVerifier(address _zk) external onlyRole(DEFAULT_ADMIN_ROLE) {
         zkVerifier = _zk;
+    }
+
+    /// @notice Set zkGPT verifier for Phase 1 inference path (proof_system: zkgpt).
+    function setZKVerifierZkGPT(address _zk) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        zkVerifierZkGPT = _zk;
     }
 
     function pause() external onlyRole(OPERATOR_ROLE) { _pause(); }

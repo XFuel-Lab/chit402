@@ -114,6 +114,7 @@ class TestHandler {
           proofResult.proof,
           proofResult.publicValues,
           proofResult.nullifier,
+          false, // useZkGPT
           { gasLimit: 500000 }
         );
         await tx.wait();
@@ -454,9 +455,9 @@ async function asyncTest(name, fn) {
 
     const handler = new TestHandler({ edgeCloudApiKey: 'key' });
     handler.contract = {
-      settleIntent: async (intentId, proof, publicValues, nullifier, opts) => {
+      settleIntent: async (intentId, proof, publicValues, nullifier, useZkGPT, opts) => {
         settleCalled = true;
-        settleArgs = { intentId, nullifier };
+        settleArgs = { intentId, nullifier, useZkGPT };
         return { wait: async () => ({ hash: '0xsettletx', gasUsed: 200000n }) };
       },
     };

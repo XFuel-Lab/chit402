@@ -35,26 +35,55 @@ interface M2MHealthData {
 const M2M_API_URL = import.meta.env.VITE_M2M_API_URL || 'http://localhost:3002';
 const M2M_POLL_INTERVAL = 10_000;
 
+// ─── Theta Infra Endpoints ────────────────────────────────────────────────
+const SUBCHAIN_RPC_URL = import.meta.env.VITE_SUBCHAIN_TESTNET_RPC || import.meta.env.VITE_SUBCHAIN_MAINNET_RPC || '';
+const THETA_INFERENCE_ADDR = import.meta.env.VITE_THETA_INFERENCE_ADDRESS || '';
+
+// ─── EdgeCloud Stats Type ─────────────────────────────────────────────────
+interface EdgeCloudStats {
+  activeJobs: number;
+  completedJobs: number;
+  failedJobs: number;
+  petaflopsActive: number;
+  proverEndpointOk: boolean | null;
+}
+
+// ─── Subchain Health Type ─────────────────────────────────────────────────
+interface SubchainHealth {
+  chainId: number | null;
+  blockHeight: number | null;
+  latency: number | null;
+  status: 'healthy' | 'syncing' | 'unreachable';
+}
+
+// ─── TDROP Stats Type ─────────────────────────────────────────────────────
+interface TdropStats {
+  tdropIntents: number;
+  tdropVolumeRaw: string;
+  tfuelIntents: number;
+  tdropSharePct: number;
+}
+
 const mockCircuitActivity = [
-  { name: 'A2A Circuit', verifications: '12,450', gasAvg: '0.0034 ETH', status: 'active', uptime: '99.8%' },
-  { name: 'ZKML Circuit', verifications: '8,230', gasAvg: '0.0041 ETH', status: 'active', uptime: '99.9%' },
-  { name: 'Data Hubs', verifications: '6,120', gasAvg: '0.0028 ETH', status: 'active', uptime: '99.7%' },
-  { name: 'Bridge Verifier', verifications: '4,821', gasAvg: '0.0052 ETH', status: 'active', uptime: '100%' },
-  { name: 'Compute Marketplace', verifications: '3,450', gasAvg: '0.0038 ETH', status: 'active', uptime: '99.5%' },
-  { name: 'Inference Router', verifications: '2,890', gasAvg: '0.0045 ETH', status: 'active', uptime: '99.6%' },
+  { name: 'A2A Circuit', verifications: '—', gasAvg: '—', status: 'demo', uptime: '—' },
+  { name: 'ZKML Circuit', verifications: '—', gasAvg: '—', status: 'demo', uptime: '—' },
+  { name: 'Data Hubs', verifications: '—', gasAvg: '—', status: 'demo', uptime: '—' },
+  { name: 'Bridge Verifier', verifications: '—', gasAvg: '—', status: 'demo', uptime: '—' },
+  { name: 'Compute Marketplace', verifications: '—', gasAvg: '—', status: 'demo', uptime: '—' },
+  { name: 'Inference Router', verifications: '—', gasAvg: '—', status: 'demo', uptime: '—' },
 ];
 
 const mockRevenue = [
-  { source: 'Bridge Fees', amount: '$840K', percent: 40 },
-  { source: 'Circuit Verification', amount: '$630K', percent: 30 },
-  { source: 'AI Inference', amount: '$420K', percent: 20 },
-  { source: 'Partner Hooks', amount: '$210K', percent: 10 },
+  { source: 'Buyback-Burn (BBB)', amount: '(demo)', percent: 30 },
+  { source: 'Growth & expansion (GET)', amount: '(demo)', percent: 30 },
+  { source: 'Stakers (veXF)', amount: '(demo)', percent: 25 },
+  { source: 'Treasury', amount: '(demo)', percent: 15 },
 ];
 
 const mockNetworkHealth = [
-  { network: 'Theta Mainnet', blockHeight: '24,582,100', latency: '12ms', status: 'healthy' },
-  { network: 'Bittensor EVM', blockHeight: '3,142,850', latency: '45ms', status: 'healthy' },
-  { network: 'Osmosis', blockHeight: '18,901,200', latency: '23ms', status: 'syncing' },
+  { network: 'Theta (testnet target)', blockHeight: '—', latency: '—', status: 'demo' },
+  { network: 'Bittensor EVM', blockHeight: '—', latency: '—', status: 'demo' },
+  { network: 'Osmosis', blockHeight: '—', latency: '—', status: 'demo' },
 ];
 
 function formatUptime(seconds: number): string {
@@ -76,6 +105,17 @@ export default function Dashboard() {
   const [m2mError, setM2mError] = useState<string | null>(null);
   const [m2mLastRefresh, setM2mLastRefresh] = useState<Date | null>(null);
 
+  // ── EdgeCloud Stats (6.1) — poll M2M /status endpoint every 30s ──────────
+  const [edgeCloudStats, setEdgeCloudStats] = useState<EdgeCloudStats | null>(null);
+
+  // ── Subchain Health (6.2) — poll subchain RPC every 15s ──────────────────
+  const [subchainHealth, setSubchainHealth] = useState<SubchainHealth>({
+    chainId: null, blockHeight: null, latency: null, status: 'unreachable',
+  });
+
+  // ── TDROP Stats (6.3) — derived from M2M /status ai_listener stats ───────
+  const [tdropStats, setTdropStats] = useState<TdropStats | null>(null);
+
   const fetchHealth = useCallback(async () => {
     try {
       const res = await fetch(`${M2M_API_URL}/health`);
@@ -94,6 +134,80 @@ export default function Dashboard() {
     const timer = setInterval(fetchHealth, M2M_POLL_INTERVAL);
     return () => clearInterval(timer);
   }, [fetchHealth]);
+
+  // ── EdgeCloud Stats: pull from M2M /status (ai_listener sub-object) ───────
+  useEffect(() => {
+    const fetch30s = async () => {
+      try {
+        const res = await fetch(`${M2M_API_URL}/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const ecJobs = data?.edgeCloudJobs;
+        const handler = data?.handler;
+        if (ecJobs || handler) {
+          const active = ecJobs?.activeJobs ?? 0;
+          const completed = ecJobs?.completedJobs ?? 0;
+          const failed = ecJobs?.failedJobs ?? 0;
+          // petaflops: sum attested petaflops from on-chain stats if available, else estimate
+          const petaflops = handler?.onChain?.stats?.petaflopsTotal
+            ? Math.round(handler.onChain.stats.petaflopsTotal / 1_000_000)
+            : active * 165; // RTX 4090 baseline GFLOPS
+          setEdgeCloudStats({
+            activeJobs: active,
+            completedJobs: completed,
+            failedJobs: failed,
+            petaflopsActive: petaflops,
+            proverEndpointOk: ecJobs?.lastError === null ? true : ecJobs?.lastError ? false : null,
+          });
+          // derive TDROP stats from handler stats
+          const tdropI = handler?.tdrop?.stats?.intents ?? 0;
+          const tfuelI = handler?.onChain?.stats?.settles ?? 0;
+          const total = tdropI + tfuelI;
+          setTdropStats({
+            tdropIntents: tdropI,
+            tdropVolumeRaw: handler?.tdrop?.stats?.volumeRaw ?? '0',
+            tfuelIntents: tfuelI,
+            tdropSharePct: total > 0 ? Math.round((tdropI / total) * 100) : 0,
+          });
+        }
+      } catch { /* non-fatal */ }
+    };
+    fetch30s();
+    const t = setInterval(fetch30s, 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // ── Subchain Health: eth_blockNumber RPC call every 15s ───────────────────
+  useEffect(() => {
+    if (!SUBCHAIN_RPC_URL) return;
+    const pollSubchain = async () => {
+      const t0 = Date.now();
+      try {
+        const res = await fetch(SUBCHAIN_RPC_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ method: 'eth_blockNumber', params: [], id: 1, jsonrpc: '2.0' }),
+          signal: AbortSignal.timeout(5000),
+        });
+        const data = await res.json();
+        const hex = data?.result;
+        const latency = Date.now() - t0;
+        if (hex) {
+          setSubchainHealth({
+            chainId: Number(import.meta.env.VITE_SUBCHAIN_CHAINID || 365001),
+            blockHeight: parseInt(hex, 16),
+            latency,
+            status: latency < 3000 ? 'healthy' : 'syncing',
+          });
+        }
+      } catch {
+        setSubchainHealth(prev => ({ ...prev, status: 'unreachable', latency: null }));
+      }
+    };
+    pollSubchain();
+    const t = setInterval(pollSubchain, 15_000);
+    return () => clearInterval(t);
+  }, []);
 
   const { data: totalDeposited } = useReadContract({
     address: ADDRESSES.splitter,
@@ -141,19 +255,19 @@ export default function Dashboard() {
 
   const tvlDisplay = totalDeposited
     ? `$${(Number(formatEther(totalDeposited)) * 0.5).toFixed(1)}M`
-    : '$48.2M';
+    : '—';
   const feesDisplay = totalDistributed
     ? `$${(Number(formatEther(totalDistributed)) * 0.5).toFixed(1)}M`
-    : '$2.1M';
-  const distDisplay = distCount ? Number(distCount).toLocaleString() : '1,247';
+    : '—';
+  const distDisplay = distCount ? Number(distCount).toLocaleString() : '—';
   const proofCount = verifierStats ? Number(verifierStats[0]).toLocaleString() : '—';
   const circuitsDisplay = circuitCount ? String(Number(circuitCount)) : '21';
 
   const protocolStats = [
-    { label: 'Total Value Locked', value: tvlDisplay, change: '+12.4%' },
-    { label: 'Total Fees Generated', value: feesDisplay, change: '+8.7%' },
-    { label: 'Distributions Made', value: distDisplay, change: `+${distCount ? '34' : '34'}` },
-    { label: 'Active Circuits', value: circuitsDisplay, change: proofCount !== '—' ? `${proofCount} proofs` : '+3' },
+    { label: 'Total Value Locked', value: tvlDisplay, change: hasLiveData ? 'live' : 'demo' },
+    { label: 'Total Fees Generated', value: feesDisplay, change: hasLiveData ? 'live' : 'demo' },
+    { label: 'Distributions Made', value: distDisplay, change: hasLiveData ? 'live' : 'demo' },
+    { label: 'Active Circuits', value: circuitsDisplay, change: proofCount !== '—' ? `${proofCount} proofs` : 'demo' },
   ];
 
   return (
@@ -161,7 +275,7 @@ export default function Dashboard() {
       <div className="container">
         <div className="page-header">
           <h1>Protocol Dashboard</h1>
-          <p>Real-time metrics across all XFuel Protocol infrastructure</p>
+          <p>Mix of on-chain reads (when env is set) and labeled demo placeholders.</p>
         </div>
 
         {!hasLiveData && (
@@ -175,7 +289,7 @@ export default function Dashboard() {
             <div key={s.label} className="card">
               <div className="stat-label">{s.label}</div>
               <div className="stat-value" style={{ fontSize: '1.75rem' }}>{s.value}</div>
-              <div style={{ color: '#22c55e', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+              <div style={{ color: s.change === 'demo' ? '#a78bfa' : '#22c55e', fontSize: '0.85rem', marginTop: '0.25rem' }}>
                 {s.change}
               </div>
             </div>
@@ -184,7 +298,7 @@ export default function Dashboard() {
 
         <div className="grid grid-2" style={{ marginBottom: '2rem' }}>
           <div className="card">
-            <h3 style={{ marginBottom: '1.25rem' }}>Revenue Breakdown</h3>
+            <h3 style={{ marginBottom: '1.25rem' }}>Revenue breakdown (demo split 30/30/25/15)</h3>
             {mockRevenue.map((r) => (
               <div key={r.source} style={{ marginBottom: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
@@ -199,7 +313,7 @@ export default function Dashboard() {
           </div>
 
           <div className="card">
-            <h3 style={{ marginBottom: '1.25rem' }}>Network Health</h3>
+            <h3 style={{ marginBottom: '1.25rem' }}>Network health (demo)</h3>
             {mockNetworkHealth.map((n) => (
               <div key={n.network} style={rowStyle}>
                 <div>
@@ -208,7 +322,7 @@ export default function Dashboard() {
                     Block #{n.blockHeight} · {n.latency}
                   </div>
                 </div>
-                <span className={`badge badge-${n.status === 'healthy' ? 'green' : 'orange'}`}>
+                <span className={`badge badge-${n.status === 'demo' ? 'purple' : 'green'}`}>
                   {n.status}
                 </span>
               </div>
@@ -217,11 +331,11 @@ export default function Dashboard() {
             <hr className="separator" />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
               <span style={{ color: '#8a8a9a' }}>SP1 Prover Status</span>
-              <span className="badge badge-green">Online</span>
+              <span className="badge badge-purple">{hasLiveData ? 'check env' : 'demo'}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginTop: '0.5rem' }}>
               <span style={{ color: '#8a8a9a' }}>Hyperlane Relayer</span>
-              <span className="badge badge-green">Active</span>
+              <span className="badge badge-purple">{hasLiveData ? 'check env' : 'demo'}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginTop: '0.5rem' }}>
               <span style={{ color: '#8a8a9a' }}>AI Intents</span>
@@ -233,7 +347,7 @@ export default function Dashboard() {
         </div>
 
         <div className="card">
-          <h3 style={{ marginBottom: '1.25rem' }}>Circuit Activity</h3>
+          <h3 style={{ marginBottom: '1.25rem' }}>Circuit activity (demo — not live analytics)</h3>
           <div style={{ overflowX: 'auto' }}>
             <table style={tableStyle}>
               <thead>
@@ -253,7 +367,7 @@ export default function Dashboard() {
                     <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>{c.gasAvg}</td>
                     <td style={tdStyle}>{c.uptime}</td>
                     <td style={tdStyle}>
-                      <span className="badge badge-green">{c.status}</span>
+                      <span className="badge badge-purple">{c.status}</span>
                     </td>
                   </tr>
                 ))}
@@ -373,6 +487,118 @@ export default function Dashboard() {
                     </>
                   )}
                 </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ── 6.1 EdgeCloud Stats (Track 6.1) ──────────────────────────────── */}
+        <div className="card" style={{ marginTop: '2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <h3>Theta EdgeCloud — Live GPU Stats</h3>
+            <span className={`badge badge-${edgeCloudStats ? (edgeCloudStats.failedJobs > 0 ? 'orange' : 'green') : 'purple'}`}>
+              {edgeCloudStats ? (edgeCloudStats.failedJobs > 0 ? `${edgeCloudStats.failedJobs} failed` : 'Healthy') : 'No data'}
+            </span>
+          </div>
+          {!edgeCloudStats && (
+            <div style={{ fontSize: '0.8rem', color: '#8a8a9a' }}>
+              Waiting for M2M backend stats — ensure <code style={{ fontFamily: 'var(--font-mono)' }}>SP1_PROVER_ENDPOINT</code> is set for dedicated job tracking (Track 2.2).
+            </div>
+          )}
+          {edgeCloudStats && (
+            <div className="grid grid-4">
+              {[
+                { label: 'Active Jobs', value: edgeCloudStats.activeJobs.toString(), color: '#00d4ff' },
+                { label: 'Completed Jobs', value: edgeCloudStats.completedJobs.toLocaleString(), color: '#22c55e' },
+                { label: 'Failed Jobs', value: edgeCloudStats.failedJobs.toString(), color: edgeCloudStats.failedJobs > 0 ? '#f59e0b' : '#22c55e' },
+                { label: 'Est. Active GFLOPS', value: edgeCloudStats.petaflopsActive > 0 ? edgeCloudStats.petaflopsActive.toLocaleString() : '—', color: '#a78bfa' },
+              ].map((s) => (
+                <div key={s.label} style={m2mStatStyle}>
+                  <div style={{ color: '#8a8a9a', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>{s.label}</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: s.color }}>{s.value}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {edgeCloudStats && (
+            <div style={{ marginTop: '1rem', fontSize: '0.8rem', color: '#8a8a9a', display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
+              <span>SP1 Prover: <span className={`badge badge-${edgeCloudStats.proverEndpointOk === true ? 'green' : edgeCloudStats.proverEndpointOk === false ? 'orange' : 'purple'}`}>{edgeCloudStats.proverEndpointOk === true ? 'Connected' : edgeCloudStats.proverEndpointOk === false ? 'Error' : 'On-demand only'}</span></span>
+              <span style={{ color: '#55556a' }}>GPU tiers: RTX 4090 (165 GFLOPS) · A100 (2,000 GFLOPS) · H100 SXM (3,958 GFLOPS)</span>
+            </div>
+          )}
+        </div>
+
+        {/* ── 6.2 Subchain Status (Track 6.2) ──────────────────────────────── */}
+        <div className="card" style={{ marginTop: '2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <h3>XFuel Subchain Status</h3>
+            <span className={`badge badge-${subchainHealth.status === 'healthy' ? 'green' : subchainHealth.status === 'syncing' ? 'orange' : 'purple'}`}>
+              {subchainHealth.status}
+            </span>
+          </div>
+          {!SUBCHAIN_RPC_URL && (
+            <div style={{ fontSize: '0.8rem', color: '#8a8a9a' }}>
+              Set <code style={{ fontFamily: 'var(--font-mono)' }}>VITE_SUBCHAIN_TESTNET_RPC</code> or <code style={{ fontFamily: 'var(--font-mono)' }}>VITE_SUBCHAIN_MAINNET_RPC</code> to monitor the XFuel subchain (chain 365001 / 361001).
+            </div>
+          )}
+          {SUBCHAIN_RPC_URL && (
+            <div className="grid grid-4">
+              {[
+                { label: 'Chain ID', value: subchainHealth.chainId?.toString() ?? '—' },
+                { label: 'Block Height', value: subchainHealth.blockHeight?.toLocaleString() ?? '—' },
+                { label: 'RPC Latency', value: subchainHealth.latency !== null ? `${subchainHealth.latency}ms` : '—' },
+                { label: 'Validators', value: '3' },
+              ].map((s) => (
+                <div key={s.label} style={m2mStatStyle}>
+                  <div style={{ color: '#8a8a9a', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>{s.label}</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: '#00d4ff' }}>{s.value}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {SUBCHAIN_RPC_URL && (
+            <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.8rem', color: '#8a8a9a' }}>
+              <span>Circuits: ThetaInferenceCircuit · A2ACircuit · ThetaGPUCircuit · DataHubs</span>
+              <span style={{ color: '#55556a' }}>Privatenet: 360777 · Testnet: 365001 · Mainnet: 361001</span>
+            </div>
+          )}
+        </div>
+
+        {/* ── 6.3 TDROP Stats (Track 6.3) ───────────────────────────────────── */}
+        <div className="card" style={{ marginTop: '2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <h3>TDROP Payment Stats</h3>
+            <span className="badge badge-purple">TNT-20</span>
+          </div>
+          {!tdropStats && (
+            <div style={{ fontSize: '0.8rem', color: '#8a8a9a' }}>
+              Waiting for M2M backend stats — TDROP metrics populate once the AI listener reports <code style={{ fontFamily: 'var(--font-mono)' }}>TdropIntentSubmitted</code> events.
+            </div>
+          )}
+          {tdropStats && (
+            <>
+              <div className="grid grid-4" style={{ marginBottom: '1rem' }}>
+                {[
+                  { label: 'TDROP Intents', value: tdropStats.tdropIntents.toLocaleString(), color: '#a78bfa' },
+                  { label: 'TFUEL Intents', value: tdropStats.tfuelIntents.toLocaleString(), color: '#00d4ff' },
+                  { label: 'TDROP Share', value: `${tdropStats.tdropSharePct}%`, color: '#a78bfa' },
+                  { label: 'TDROP Volume', value: tdropStats.tdropVolumeRaw !== '0' ? tdropStats.tdropVolumeRaw : '—', color: '#22c55e' },
+                ].map((s) => (
+                  <div key={s.label} style={m2mStatStyle}>
+                    <div style={{ color: '#8a8a9a', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>{s.label}</div>
+                    <div style={{ fontSize: '1.4rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: s.color }}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginBottom: '0.35rem', display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+                <span style={{ color: '#8a8a9a' }}>TDROP vs TFUEL payment split</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>{tdropStats.tdropSharePct}% TDROP</span>
+              </div>
+              <div className="progress-bar">
+                <div className="progress-bar-fill" style={{ width: `${tdropStats.tdropSharePct}%`, background: 'linear-gradient(90deg, #a78bfa, #7c3aed)' }} />
+              </div>
+              <div style={{ marginTop: '0.75rem', fontSize: '0.75rem', color: '#55556a' }}>
+                20% discount for TDROP payers · Mainnet TDROP: <code style={{ fontFamily: 'var(--font-mono)' }}>0x1336739B05C7Ab8a526D40DCC0d04a826b5f8B03</code>
               </div>
             </>
           )}

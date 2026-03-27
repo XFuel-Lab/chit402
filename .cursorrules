@@ -2,7 +2,9 @@
 # Based on Whitepaper v1.6 core with expansions to v2.4
 
 ## Solidity
-- Use Solidity 0.8.20 for all contracts.
+- Use Solidity ^0.8.22 for all contracts in `contracts/core/` and any new audit-scope contracts.
+- Use Solidity ^0.8.20 for all other contracts (`contracts/circuits/`, `contracts/mocks/`, `contracts/legacy/`, `contracts/interfaces/`).
+- Do NOT use versions below 0.8.20 in any new contract.
 - Follow OpenZeppelin patterns for access control, pausability, and safe transfers.
 
 ## Architecture
@@ -17,6 +19,23 @@
 
 ## Hardhat / Testing
 - Use ethers.js v6+ for all RPC interactions.
+- NEVER run `npx hardhat test` against a live Theta RPC. Tests run against Hardhat local (chain 1337) only.
+- Theta ETH-RPC adaptor does NOT support `evm_snapshot`, `evm_revert`, or `evm_mine`. Waffle fixtures will fail on-chain.
+- When writing Theta-live integration tests, replace `revertedWith('custom message')` with `revertedWith('evm: execution reverted')` — Theta always returns the generic message.
+
+## Theta ETH-RPC Networks
+- Mainnet: chain ID 361 (`0x169`), RPC `https://eth-rpc-api.thetatoken.org/rpc`
+- Testnet: chain ID 365 (`0x16d`), RPC `https://eth-rpc-api-testnet.thetatoken.org/rpc`
+- Privatenet: chain ID 366, RPC `http://localhost:18888/rpc`
+- Subchain Testnet: chain ID 365001; Mainnet: 361001; Privatenet: 360777
+
+## EdgeCloud API Keys (two types — do not mix)
+- On-demand inference key: from "On-demand model APIs" dashboard page → used as `x-api-key` on `ondemand.thetaedgecloud.com`
+- Project management key: from "Settings → Projects" → used as `x-api-key` on `controller.thetaedgecloud.com`
+- EdgeCloud Client RPC (`localhost:9545/rpc`): NO API key — local process only, method `edgecloud.GetJobs`
+- On-demand endpoint pattern: `POST https://ondemand.thetaedgecloud.com/infer_request/{model_slug}/completions`
+  - Body: `{ input: { messages, max_tokens, ... }, stream: false, variant: "quantized" }` (model in URL slug, NOT body)
+- Dedicated LLM endpoint (OpenAI-compat): `POST {inference_endpoint}/v1/chat/completions` (no key needed for public deployments)
 
 ## Reference Networks (2026)
 - Bittensor EVM Mainnet: chain ID 964, RPC `https://lite.chain.opentensor.ai`

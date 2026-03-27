@@ -164,6 +164,28 @@ export interface A2AStatusResponse {
   sp1_proof: unknown | null;
 }
 
+/** Phase 1 Fair Exchange: params for POST /a2a-settle-fair-exchange */
+export interface A2ASettleFairExchangeParams {
+  bid_id: string;
+  result_hash: string;
+  v: number;
+  r: string;
+  s: string;
+}
+
+/** Phase 1 Fair Exchange: response (submitted or calldata) */
+export interface A2ASettleFairExchangeResponse {
+  status: 'submitted' | 'calldata';
+  tx_hash?: string;
+  contract?: string;
+  calldata?: string;
+  bid_id: string;
+  result_hash: string;
+  confirmed?: boolean;
+  message?: string;
+  _links?: { status: string };
+}
+
 export interface HealthResponse {
   status: string;
   server: string;
@@ -378,6 +400,22 @@ export class XFuelClient {
     const { data } = await this.http.get<A2AStatusResponse>('/task-status', {
       params: { message_id: messageId },
     });
+    return data;
+  }
+
+  /**
+   * Phase 1 Fair Exchange: settle an A2A bid via PAS signature.
+   * Calls POST /a2a-settle-fair-exchange. If the server has a relayer configured,
+   * returns with status 'submitted' and tx_hash; otherwise returns 'calldata' for
+   * the client to submit to A2ACircuit.
+   */
+  async settleWithFairExchange(
+    params: A2ASettleFairExchangeParams,
+  ): Promise<A2ASettleFairExchangeResponse> {
+    const { data } = await this.http.post<A2ASettleFairExchangeResponse>(
+      '/a2a-settle-fair-exchange',
+      params,
+    );
     return data;
   }
 

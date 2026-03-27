@@ -11,6 +11,7 @@ import "../interfaces/IBittensorStaking.sol";
 /**
  * @title ZKVerifierSP1
  * @author XFuel Protocol — Core Layer
+ * @custom:security-contact security@xfuel.app
  * @notice Chain-agnostic SP1 Groth16/PLONK proof verifier with SP1-CC composed
  *         call support, Hyperlane cross-chain relay, and dTAO staking integration.
  *
@@ -70,7 +71,7 @@ contract ZKVerifierSP1 is AccessControl, Pausable, ReentrancyGuard, ICrossChainR
     // ─── SP1 Recursive Rollup State ─────────────────────────────────────────
     uint256 public totalRecursiveVerified;
     uint256 public totalRollupBatches;
-    uint256 public rollupBatchSize;
+    uint256 public constant rollupBatchSize = 100;
 
     struct RollupBatch {
         bytes32 batchRoot;
@@ -430,6 +431,7 @@ contract ZKVerifierSP1 is AccessControl, Pausable, ReentrancyGuard, ICrossChainR
         uint256 fee = mailbox.quoteDispatch(destDomain, remote, payload);
         require(msg.value >= fee, "InsufficientBridgeFee");
 
+        // slither-disable-next-line arbitrary-send-eth -- Hyperlane mailbox protocol fee (trusted IMailbox)
         messageId = mailbox.dispatch{value: fee}(destDomain, remote, payload);
         totalRelayed++;
 
