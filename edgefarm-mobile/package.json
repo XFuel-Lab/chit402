@@ -37,7 +37,7 @@
     "expo-linear-gradient": "^15.0.8",
     "expo-local-authentication": "~17.0.8",
     "expo-sharing": "~14.0.3",
-    "expo-speech": "~14.0.8",
+    "expo-speech": "~55.0.9",
     "expo-status-bar": "~3.0.9",
     "expo-updates": "~29.0.15",
     "lottie-react-native": "^7.2.0",
