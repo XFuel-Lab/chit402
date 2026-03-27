@@ -14,18 +14,17 @@ import {
 
 // ── Mock axios ────────────────────────────────────────────────────────────────
 jest.mock('axios');
-const mockedAxios = axios as jest.Mocked<typeof axios>;
 
-const mockPost = jest.fn();
-const mockGet = jest.fn();
-const mockCreate = jest.fn(() => ({
+const mockPost = jest.fn() as any;
+const mockGet = jest.fn() as any;
+const mockCreate: jest.Mock = jest.fn(() => ({
   post: mockPost,
   get: mockGet,
   interceptors: {
     response: { use: jest.fn() },
   },
 }));
-mockedAxios.create = mockCreate as unknown as typeof axios.create;
+(axios as unknown as { create: jest.Mock }).create = mockCreate;
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -155,14 +154,14 @@ describe('XFuelClient', () => {
   describe('constructor', () => {
     it('creates axios instance with correct baseURL', () => {
       new XFuelClient({ baseUrl: 'https://api.xfuel.app' });
-      expect(mockedAxios.create).toHaveBeenCalledWith(
+      expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ baseURL: 'https://api.xfuel.app' }),
       );
     });
 
     it('injects X-API-Key header when apiKey is provided', () => {
       new XFuelClient({ apiKey: 'test-key-123' });
-      expect(mockedAxios.create).toHaveBeenCalledWith(
+      expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           headers: expect.objectContaining({ 'X-API-Key': 'test-key-123' }),
         }),
@@ -171,7 +170,7 @@ describe('XFuelClient', () => {
 
     it('uses default baseURL when none provided', () => {
       new XFuelClient();
-      expect(mockedAxios.create).toHaveBeenCalledWith(
+      expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ baseURL: 'http://localhost:3002' }),
       );
     });

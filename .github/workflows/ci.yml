@@ -21,8 +21,11 @@ jobs:
 
       - run: npm ci
 
-      - name: Run Jest unit tests
-        run: npm test -- --ci --coverage=false
+      - name: Install SDK test dependencies
+        run: npm ci --prefix sdk/js
+
+      - name: Run Jest unit tests (xfuel-sdk)
+        run: npm test --prefix sdk/js -- --ci --coverage=false
 
   # ── Solidity compile + core contract tests ──────────────────
   contracts-core:
@@ -40,18 +43,12 @@ jobs:
 
       - name: Compile contracts
         run: npx hardhat compile
-        env:
-          HARDHAT_FAST: "true"
 
       - name: Generate TypeChain types
         run: npm run typechain
-        env:
-          HARDHAT_FAST: "true"
 
       - name: Run core + security tests
         run: npm run test:contracts:core
-        env:
-          HARDHAT_FAST: "true"
 
   # ── Cypress E2E: disabled until wallet mocking is set up ────
   # These require Theta Wallet / Keplr browser extensions and are

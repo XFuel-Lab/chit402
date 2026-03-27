@@ -90,7 +90,10 @@ jobs:
 
       - name: Run Slither on core contracts
         run: |
-          slither contracts/core/ \
+          slither . \
+            --ignore-compile \
+            --config-file slither.config.json \
+            --filter-paths "contracts/core" \
             --exclude-dependencies \
             --exclude naming-convention,solc-version \
             --json slither-report.json || true

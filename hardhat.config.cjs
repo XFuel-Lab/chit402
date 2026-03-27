@@ -60,7 +60,9 @@ module.exports = {
       {
         version: '0.8.22',
         settings: {
-          viaIR: !process.env.HARDHAT_FAST,
+          // Always on: core contracts (e.g. ZKVerifierZkGPT) hit "stack too deep" without IR.
+          // HARDHAT_FAST no longer disables this — compile cost is acceptable for CI/local.
+          viaIR: true,
           optimizer: {
             enabled: true,
             runs: 200,
@@ -71,7 +73,7 @@ module.exports = {
       {
         version: '0.8.20',
         settings: {
-          viaIR: !process.env.HARDHAT_FAST,
+          viaIR: true,
           optimizer: {
             enabled: true,
             runs: 200,
