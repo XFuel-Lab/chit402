@@ -541,8 +541,8 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
      *      to block distributions if needed.
      */
     // slither-disable-start reentrancy-eth
-    // nonReentrant + CEI: all balances and counters updated before external ETH sends.
     function distribute() external nonReentrant whenNotPaused {
+        // nonReentrant + CEI: all balances and counters updated before external ETH sends.
         uint256 balance = address(this).balance;
         if (balance == 0) revert NothingToDistribute();
 
@@ -623,8 +623,8 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
      *         Falls back to default stakePool if no routes are configured.
      */
     // slither-disable-start reentrancy-eth
-    // Invoked only from distribute() (nonReentrant); chainStakeTotal/totalTreasury updated before each send.
     function _routeStake(uint256 amount) internal {
+        // Invoked only from distribute() (nonReentrant); chainStakeTotal/totalTreasury updated before each send.
         if (stakeRoutes.length > 0 && totalStakeWeight > 0) {
             uint256 distributed = 0;
             for (uint256 i = 0; i < stakeRoutes.length; i++) {
@@ -1317,10 +1317,11 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
 
     // ─── Internal ──────────────────────────────────────────────────────────────
 
+    // slither-disable-start arbitrary-send-eth
     function _safeTransfer(address to, uint256 amount, string memory label) internal {
         if (amount == 0 || to == address(0)) return;
-        // slither-disable-next-line arbitrary-send-eth -- governance wallets, stake pools, approved grant payees only
         (bool ok, ) = payable(to).call{value: amount}("");
         if (!ok) revert TransferFailed(label);
     }
+    // slither-disable-end arbitrary-send-eth
 }
