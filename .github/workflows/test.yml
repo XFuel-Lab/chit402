@@ -93,7 +93,7 @@ jobs:
           slither . \
             --ignore-compile \
             --config-file slither.config.json \
-            --filter-paths "contracts/core" \
+            --include-paths "contracts/core" \
             --exclude-dependencies \
             --exclude naming-convention,solc-version \
             --json slither-report.json || true

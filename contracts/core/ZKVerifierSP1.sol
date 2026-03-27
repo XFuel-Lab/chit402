@@ -431,6 +431,7 @@ contract ZKVerifierSP1 is AccessControl, Pausable, ReentrancyGuard, ICrossChainR
         uint256 fee = mailbox.quoteDispatch(destDomain, remote, payload);
         require(msg.value >= fee, "InsufficientBridgeFee");
 
+        // slither-disable-next-line arbitrary-send-eth -- Hyperlane mailbox protocol fee (trusted IMailbox)
         messageId = mailbox.dispatch{value: fee}(destDomain, remote, payload);
         totalRelayed++;
 
