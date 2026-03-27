@@ -105,21 +105,16 @@ jobs:
           name: slither-report
           path: slither-report.json
 
-      - name: Fail on high-severity findings
+      # Slither JSON includes all contracts; --include-paths does not trim the file.
+      # Gate only on High/Medium-confidence findings whose elements touch contracts/core/.
+      - name: Fail on high-severity findings (contracts/core)
         run: |
           if [ -f slither-report.json ]; then
-            HIGH=$(python3 -c "
-          import json, sys
-          data = json.load(open('slither-report.json'))
-          results = data.get('results', {}).get('detectors', [])
-          highs = [r for r in results if r.get('impact') == 'High' and r.get('confidence') in ['High', 'Medium']]
-          print(len(highs))
-          sys.exit(0)
-          ")
-            echo "High-severity findings: $HIGH"
+            HIGH=$(python3 scripts/slither-count-high-core.py slither-report.json)
+            echo "High-severity findings (contracts/core scope): $HIGH"
             if [ "$HIGH" -gt "0" ]; then
-              echo "❌ Slither found $HIGH high-severity issue(s). Review slither-report.json artifact."
+              echo "❌ Slither found $HIGH high-severity issue(s) in contracts/core. Review slither-report.json artifact."
               exit 1
             fi
-            echo "✅ No high-severity Slither findings."
+            echo "✅ No high-severity Slither findings in contracts/core."
           fi
