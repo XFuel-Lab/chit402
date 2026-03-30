@@ -409,7 +409,6 @@ contract ZKVerifierSP1 is AccessControl, Pausable, ReentrancyGuard, ICrossChainR
      *   re-verifying the proof (already proven on origin).
      *   Excess msg.value beyond Hyperlane fee is refunded.
      */
-    // slither-disable-start arbitrary-send-eth
     function relayProofCrossChain(
         bytes32 circuitId,
         bytes calldata publicValues,
@@ -438,17 +437,19 @@ contract ZKVerifierSP1 is AccessControl, Pausable, ReentrancyGuard, ICrossChainR
         uint256 fee = mailbox.quoteDispatch(destDomain, remote, payload);
         require(msg.value >= fee, "InsufficientBridgeFee");
 
-        messageId = mailbox.dispatch{value: fee}(destDomain, remote, payload);
+        // CEI: counter before external Hyperlane dispatch (Slither reentrancy-eth; nonReentrant still applies).
         totalRelayed++;
+        // slither-disable-next-line arbitrary-send-eth
+        messageId = mailbox.dispatch{value: fee}(destDomain, remote, payload);
 
         emit ProofRelayed(circuitId, nullifier, destDomain, messageId, block.timestamp);
 
         if (msg.value > fee) {
+            // slither-disable-next-line arbitrary-send-eth
             (bool refunded, ) = payable(msg.sender).call{value: msg.value - fee}("");
             require(refunded, "RefundFailed");
         }
     }
-    // slither-disable-end arbitrary-send-eth
 
     /**
      * @notice Handle an incoming cross-chain proof result from Hyperlane.
