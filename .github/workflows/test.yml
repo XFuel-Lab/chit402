@@ -7,9 +7,9 @@ on:
     branches: [main, develop]
 
 jobs:
-  # ── Full Solidity test suite + coverage ─────────────────────
+  # ── Core listener (node:test) + full Hardhat suite + coverage ─────────────
   solidity:
-    name: Solidity Tests
+    name: Contracts & Core Listener
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,8 +27,13 @@ jobs:
       - name: Generate TypeChain types
         run: npm run typechain
 
-      - name: Run core + circuit tests
-        run: npm run test:contracts:all
+      - name: Core listener (node:test)
+        run: npm run test:contracts:core:listener
+
+      # Windows-safe explicit file list (scripts/hardhat-test-all.cjs). Failing tests here
+      # are tracked separately from the core gate in ci.yml (test:contracts:core:solidity).
+      - name: Full Hardhat suite (test + circuits + security)
+        run: npm run test:contracts:all:hardhat
 
       - name: Run coverage
         run: npm run test:coverage
@@ -40,8 +45,8 @@ jobs:
           name: solidity-coverage
           path: coverage/
 
-      - name: Gas report
-        run: npm run test:contracts:core
+      - name: Gas report (Hardhat core subset)
+        run: npm run test:contracts:core:solidity
         env:
           REPORT_GAS: "true"
 
@@ -86,7 +91,7 @@ jobs:
         run: npx hardhat compile
 
       - name: Install Slither
-        run: pip3 install slither-analyzer
+        run: pip3 install "slither-analyzer>=0.10.0,<0.11.0"
 
       - name: Run Slither on core contracts
         run: |
@@ -105,6 +110,10 @@ jobs:
           name: slither-report
           path: slither-report.json
 
+      # Ensures the branch includes the triage table; otherwise known core false positives fail the job.
+      - name: Verify Slither core counter (triage present)
+        run: grep -q '_TRIAGED_CORE_HIGH' scripts/slither-count-high-core.py
+
       # Slither JSON includes all contracts; --include-paths does not trim the file.
       # Gate only on High/Medium-confidence findings whose elements touch contracts/core/.
       - name: Fail on high-severity findings (contracts/core)
@@ -112,6 +121,10 @@ jobs:
           if [ -f slither-report.json ]; then
             HIGH=$(python3 scripts/slither-count-high-core.py slither-report.json)
             echo "High-severity findings (contracts/core scope): $HIGH"
+            if ! [[ "$HIGH" =~ ^[0-9]+$ ]]; then
+              echo "Slither counter did not print a number (got: '$HIGH'). Check scripts/slither-count-high-core.py."
+              exit 1
+            fi
             if [ "$HIGH" -gt "0" ]; then
               echo "❌ Slither found $HIGH high-severity issue(s) in contracts/core. Review slither-report.json artifact."
               exit 1

@@ -15,6 +15,7 @@
 
 const { expect } = require('chai');
 const { ethers } = require('hardhat');
+const { futureDeadline } = require('../helpers.cjs');
 
 describe('Multi-Circuit Integration', function () {
   let splitter, taoCircuit, a2aCircuit, gpuCircuit, zkmlCircuit, akashCircuit;
@@ -168,7 +169,7 @@ describe('Multi-Circuit Integration', function () {
     );
 
     // A2A: 10 ETH → 0.1% = 0.01 ETH relay fee
-    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const deadline = Number(await futureDeadline(ethers.provider));
     await a2aCircuit.connect(user2).submitBid(
       MOCK_INPUT, MOCK_INPUT, deadline, { value: ethers.parseEther('10') }
     );
@@ -212,7 +213,7 @@ describe('Multi-Circuit Integration', function () {
     await gpuCircuit.connect(user1).submitJob(gpuModelId, MOCK_INPUT, { value: ethers.parseEther('10') });
 
     // zkML: 10 ETH → 0.75% = 0.075
-    const dl = Math.floor(Date.now() / 1000) + 3600;
+    const dl = Number(await futureDeadline(ethers.provider));
     await zkmlCircuit.connect(user2).requestInference(
       zkModelId, MOCK_INPUT, dl, { value: ethers.parseEther('10') }
     );
@@ -277,7 +278,7 @@ describe('Multi-Circuit Integration', function () {
     await vaultsCircuit.connect(user1).deposit(vaultId, { value: ethers.parseEther('10') });
 
     // Robotics trajectory: 10 ETH → 1% = 0.1
-    const dl = Math.floor(Date.now() / 1000) + 7200;
+    const dl = Number(await futureDeadline(ethers.provider));
     await roboticsCircuit.connect(user1).submitTrajectory(
       agentId, envId, MOCK_INPUT, MOCK_INPUT, dl,
       { value: ethers.parseEther('10') }
@@ -447,7 +448,7 @@ describe('Multi-Circuit Integration', function () {
     );
 
     // Submit bid in A2A
-    const dl = Math.floor(Date.now() / 1000) + 3600;
+    const dl = Number(await futureDeadline(ethers.provider));
     await a2aCircuit.connect(user1).submitBid(
       MOCK_INPUT, cap, dl, { value: ethers.parseEther('5') }
     );
@@ -540,7 +541,7 @@ describe('Multi-Circuit Integration', function () {
     ).args.agentId;
 
     // Submit and verify trajectory
-    const dl = Math.floor(Date.now() / 1000) + 7200;
+    const dl = Number(await futureDeadline(ethers.provider));
     const txT = await roboticsCircuit.connect(user1).submitTrajectory(
       agentId, envId, MOCK_INPUT, MOCK_INPUT, dl, { value: ethers.parseEther('1') }
     );
@@ -653,7 +654,7 @@ describe('Multi-Circuit Integration', function () {
     ).to.be.reverted;
 
     // A2A should still work
-    const dl = Math.floor(Date.now() / 1000) + 3600;
+    const dl = Number(await futureDeadline(ethers.provider));
     await expect(
       a2aCircuit.connect(user1).submitBid(MOCK_INPUT, MOCK_INPUT, dl, { value: ethers.parseEther('1') })
     ).to.not.be.reverted;
@@ -768,7 +769,7 @@ describe('Multi-Circuit Integration', function () {
       })
     ).args.agentId;
 
-    const dl = Math.floor(Date.now() / 1000) + 7200;
+    const dl = Number(await futureDeadline(ethers.provider));
     const txT = await roboticsCircuit.connect(user1).submitTrajectory(
       agentId, envId, MOCK_INPUT, MOCK_INPUT, dl, { value: ethers.parseEther('0.5') }
     );

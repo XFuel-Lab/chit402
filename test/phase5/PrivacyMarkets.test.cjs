@@ -11,6 +11,7 @@
 const { expect } = require('chai');
 const hre = require('hardhat');
 const { ethers } = hre;
+const { futureDeadline } = require('../helpers.cjs');
 
 describe('Privacy-Preserving Data Markets (Phase 5)', function () {
   let zkml, dataHubs, splitter, verifier;
@@ -94,7 +95,7 @@ describe('Privacy-Preserving Data Markets (Phase 5)', function () {
       const policyId = pEvent.args.policyId;
 
       const inputHash = ethers.keccak256(ethers.toUtf8Bytes('test-input'));
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      const deadline = await futureDeadline(ethers.provider);
       const reqTx = await zkml.connect(requester).requestInference(
         modelId, inputHash, deadline, { value: ethers.parseEther('0.01') }
       );
@@ -139,7 +140,7 @@ describe('Privacy-Preserving Data Markets (Phase 5)', function () {
       const policyId = pEvent.args.policyId;
 
       const inputHash = ethers.keccak256(ethers.toUtf8Bytes('dup-input'));
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      const deadline = await futureDeadline(ethers.provider);
       const reqTx = await zkml.connect(requester).requestInference(
         modelId, inputHash, deadline, { value: ethers.parseEther('0.01') }
       );

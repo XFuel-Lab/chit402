@@ -10,15 +10,13 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 /**
  * @title BelieverRound
  * @author XFuel Protocol
- * @notice Community-first phased funding round with cliff + linear vesting and optional lock bonuses.
+ * @notice Community contribution round: cliff + linear vesting, optional lock bonuses, on-chain XF ceiling.
  *
- * Tokenomics (phased):
- *   - Total XF supply:      1,000,000,000 XF
- *   - Phase 1 allocation:   40,000,000 XF (4%)
- *   - Phase 2 allocation:   120,000,000 XF (12%)
- *   - Phase 3 allocation:   240,000,000 XF (24%)
- *   - Total believer alloc: 400,000,000 XF (40%)
- *   - Phase prices (base XF per 1 TFUEL): set per deployment (e.g. Phase 1 = 25/1).
+ * Tokenomics (see WHITEPAPER §10):
+ *   - Community Contribution bucket: up to 150,000,000 XF (15% of 1B) — enforced by `xfAllocationCap`.
+ *   - Single open round (no phased tranches); `phase` is retained for ABI/deploy compatibility (use 1).
+ *   - XF per TFUEL (`tokenPriceNumerator` / `tokenPriceDenominator`) may be updated while status is Open
+ *     via `setTokenPrice` (e.g. multisig adjusts from TFUEL/USD reference — see docs/PRICING_TFUEL_XF.md).
  *
  * Vesting (all tiers):
  *   - 3-month cliff — no claims
@@ -43,6 +41,9 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
     uint256 public tokenPriceNumerator;
     uint256 public tokenPriceDenominator;
     uint8 public phase;
+
+    /// @notice Hard ceiling on sum of XF reserved across all commitments (in XF wei). Typically 150M * 10**18.
+    uint256 public immutable xfAllocationCap;
 
     uint256 public constant CLIFF_DURATION = 90 days;
     /// @notice Linear vesting length after cliff (9 months).
@@ -86,6 +87,7 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
     event TokensClaimed(address indexed believer, uint256 amount, uint256 totalClaimed);
     event Refunded(address indexed believer, uint256 amount);
     event FundsWithdrawn(address indexed to, uint256 amount);
+    event TokenPriceUpdated(uint256 numerator, uint256 denominator);
 
     error RoundNotOpen();
     error RoundNotClosed();
@@ -101,6 +103,8 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
     error BadLockTier();
     error LockTierMismatch();
     error LockPeriodActive();
+    error ExceedsXFAllocationCap();
+    error PriceUpdateNotAllowed();
 
     constructor(
         address _admin,
@@ -108,19 +112,22 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
         uint256 _maxPerWallet,
         uint256 _priceNumerator,
         uint256 _priceDenominator,
-        uint8 _phase
+        uint8 _phase,
+        uint256 _xfAllocationCap
     ) {
         require(_admin != address(0), "ZeroAdmin");
         require(_hardCap > 0, "ZeroHardCap");
         require(_maxPerWallet == 0 || _maxPerWallet <= _hardCap, "BadWalletCap");
         require(_priceNumerator > 0 && _priceDenominator > 0, "BadPrice");
         require(_phase >= 1 && _phase <= 3, "BadPhase");
+        require(_xfAllocationCap > 0, "ZeroXFCap");
 
         hardCap = _hardCap;
         maxCommitmentPerWallet = _maxPerWallet;
         tokenPriceNumerator = _priceNumerator;
         tokenPriceDenominator = _priceDenominator;
         phase = _phase;
+        xfAllocationCap = _xfAllocationCap;
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
         _grantRole(OPERATOR_ROLE, _admin);
@@ -129,6 +136,15 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
         roundOpenedAt = block.timestamp;
 
         emit RoundOpened(_hardCap, _maxPerWallet, _phase, block.timestamp);
+    }
+
+    /// @notice Updates XF per 1e18 TFUEL while the round is Open (e.g. after off-chain TFUEL/USD observation).
+    function setTokenPrice(uint256 newNumerator, uint256 newDenominator) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (status != RoundStatus.Open) revert PriceUpdateNotAllowed();
+        require(newNumerator > 0 && newDenominator > 0, "BadPrice");
+        tokenPriceNumerator = newNumerator;
+        tokenPriceDenominator = newDenominator;
+        emit TokenPriceUpdated(newNumerator, newDenominator);
     }
 
     function commit() external payable nonReentrant whenNotPaused {
@@ -156,6 +172,7 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
         if (totalCommitted + value > hardCap) revert ExceedsHardCap();
 
         uint256 xfDelta = _xfForAmount(value, tier);
+        if (totalXFReserved + xfDelta > xfAllocationCap) revert ExceedsXFAllocationCap();
         totalXFReserved += xfDelta;
 
         if (c.amount == 0) {

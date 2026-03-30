@@ -48,10 +48,19 @@ function getZeroAddress() {
   return ethers.ZeroAddress
 }
 
+/**
+ * Deadline strictly after `block.timestamp` (avoids PastDeadline when wall clock lags chain time).
+ */
+async function futureDeadline(provider, offsetSec = 86400n) {
+  const b = await provider.getBlock('latest')
+  return BigInt(b.timestamp) + offsetSec
+}
+
 module.exports = {
   getAddress,
   parseEther,
   parseUnits,
-  getZeroAddress
+  getZeroAddress,
+  futureDeadline
 }
 

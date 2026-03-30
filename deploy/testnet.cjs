@@ -200,9 +200,12 @@ async function main() {
   //  PHASE 2b: BELIEVER ROUND
   // ══════════════════════════════════════════════════════════════════
   console.log('\n══ Phase 2b: BelieverRound ═════════════════════════════');
+  const believerXfCap = process.env.BELIEVER_XF_ALLOCATION_CAP
+    ? ethers.parseEther(process.env.BELIEVER_XF_ALLOCATION_CAP)
+    : ethers.parseEther('150000000');
   await deployContract('BelieverRound',
     await ethers.getContractFactory('BelieverRound'),
-    [d, ethers.parseEther('100'), ethers.parseEther('5'), 10000n, 1n, 1]
+    [d, ethers.parseEther('100'), ethers.parseEther('5'), 5n, 1n, 1, believerXfCap]
   );
 
   // ══════════════════════════════════════════════════════════════════

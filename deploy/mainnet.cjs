@@ -18,10 +18,6 @@
  *   STAKE_POOL_ADDRESS     — Staking pool contract address
  *   SP1_GATEWAY_ADDRESS    — SP1 Verifier Gateway (optional, address(0) for mock)
  *   XF_TOKEN_ADDRESS       — XF ERC-20 token (optional, address(0) for mock)
- *   USDC_ADDRESS           — USDC token for Jackpot payouts (optional, address(0) for mock)
- *   VRF_COORDINATOR        — Chainlink VRF coordinator (optional, address(0) for mock)
- *   VRF_KEY_HASH           — Chainlink VRF key hash (optional)
- *   VRF_SUB_ID             — Chainlink VRF subscription ID (optional)
  *
  * Optional monitoring environment variables:
  *   THETASCAN_API_KEY      — ThetaScan.io API key for contract verification
@@ -188,10 +184,6 @@ async function main() {
   const STAKE    = resolveAddr('STAKE_POOL_ADDRESS', deployer.address);
   const SP1GW    = resolveAddr('SP1_GATEWAY_ADDRESS', ethers.ZeroAddress);
   const XF_TOKEN = resolveAddr('XF_TOKEN_ADDRESS', ethers.ZeroAddress);
-  const USDC_ADDR = resolveAddr('USDC_ADDRESS', ethers.ZeroAddress);
-  const VRF_COORD = resolveAddr('VRF_COORDINATOR', ethers.ZeroAddress);
-  const VRF_KEY_HASH = process.env.VRF_KEY_HASH || ethers.ZeroHash;
-  const VRF_SUB_ID = parseInt(process.env.VRF_SUB_ID || '0', 10);
 
   console.log('\n── Pre-flight: Address Configuration ───────────────────');
   console.log(`  Admin (multisig):  ${ADMIN}`);
@@ -262,23 +254,6 @@ async function main() {
     manifest.contracts.veXFGovernance = 'SKIPPED — set XF_TOKEN_ADDRESS';
   }
 
-  // 1d. Jackpot (veXF Staker Jackpot — 2% of all fees)
-  console.log('  Deploying Jackpot...');
-  const JackpotF = await ethers.getContractFactory('Jackpot');
-  const veXFAddr = manifest.contracts.veXFGovernance && !manifest.contracts.veXFGovernance.startsWith('SKIP') ? manifest.contracts.veXFGovernance : ethers.ZeroAddress;
-  const jackpot = await JackpotF.deploy(ADMIN, veXFAddr, USDC_ADDR, VRF_COORD, VRF_KEY_HASH, VRF_SUB_ID);
-  await jackpot.waitForDeployment();
-  const jackpotAddr = await jackpot.getAddress();
-  const jackpotDeploy = await jackpot.deploymentTransaction().wait();
-  manifest.contracts.Jackpot = jackpotAddr;
-  manifest.gasUsed.Jackpot = Number(jackpotDeploy.gasUsed);
-  totalGas += jackpotDeploy.gasUsed;
-  console.log(`  ✓ Jackpot:             ${jackpotAddr} (${jackpotDeploy.gasUsed} gas)`);
-
-  const linkJackpotTx = await splitter.setJackpotAddress(jackpotAddr);
-  await linkJackpotTx.wait();
-  console.log(`  ✓ CoreRevenueSplitter.jackpotAddress → Jackpot`);
-
   // ══════════════════════════════════════════════════════════════════════
   //  PHASE 2: CIRCUITS (11)
   // ══════════════════════════════════════════════════════════════════════
@@ -326,7 +301,7 @@ async function main() {
 
   const PRICE_NUM = process.env.BELIEVER_PRICE_NUM
     ? BigInt(process.env.BELIEVER_PRICE_NUM)
-    : 10000n; // 10,000 XF per 1 ETH/TFUEL
+    : 5n; // 5 XF per 1 TFUEL (see docs/PRICING_TFUEL_XF.md)
 
   const PRICE_DEN = process.env.BELIEVER_PRICE_DEN
     ? BigInt(process.env.BELIEVER_PRICE_DEN)
@@ -335,8 +310,11 @@ async function main() {
   console.log('  Deploying BelieverRound...');
   const BelieverF = await ethers.getContractFactory('BelieverRound');
   const BELIEVER_PHASE = process.env.BELIEVER_PHASE ? parseInt(process.env.BELIEVER_PHASE, 10) : 1;
+  const BELIEVER_XF_CAP = process.env.BELIEVER_XF_ALLOCATION_CAP
+    ? ethers.parseEther(process.env.BELIEVER_XF_ALLOCATION_CAP)
+    : ethers.parseEther('150000000');
   const believer = await BelieverF.deploy(
-    ADMIN, BELIEVER_HARD_CAP, BELIEVER_MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, BELIEVER_PHASE
+    ADMIN, BELIEVER_HARD_CAP, BELIEVER_MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, BELIEVER_PHASE, BELIEVER_XF_CAP
   );
   await believer.waitForDeployment();
   const believerAddr = await believer.getAddress();
@@ -449,8 +427,6 @@ async function main() {
   console.log('    6. Announce deployment to community');
   console.log('    7. Fund BelieverRound with XF tokens via triggerTGE()');
   console.log('    8. Verify contracts on ThetaScan.io Smart Contract HQ');
-  console.log('    9. Fund Jackpot VRF subscription and verify USDC token address');
-  console.log('   10. Register initial veXF stakers on Jackpot via registerStaker()');
 
   // ══════════════════════════════════════════════════════════════════════
   //  PHASE 7: POST-DEPLOY HEALTH CHECKS

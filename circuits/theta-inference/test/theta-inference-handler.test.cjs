@@ -294,7 +294,7 @@ async function asyncTest(name, fn) {
   }
 }
 
-(async () => {
+async function runThetaInferenceHandlerTests() {
   console.log('\nTheta Inference Handler — Unit Tests\n');
 
   // Test 1: EdgeCloud success path
@@ -735,5 +735,14 @@ async function asyncTest(name, fn) {
   });
 
   console.log(`\n  ${passed} passed, ${failed} failed\n`);
-  process.exit(failed > 0 ? 1 : 0);
-})();
+  if (failed > 0) throw new Error(`${failed} Theta inference handler test(s) failed`);
+}
+
+// Standalone: node circuits/theta-inference/test/theta-inference-handler.test.cjs
+// Hardhat loads this file during full suite — do not process.exit.
+if (require.main === module) {
+  runThetaInferenceHandlerTests().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

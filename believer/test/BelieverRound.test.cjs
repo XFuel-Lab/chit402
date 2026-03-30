@@ -1,7 +1,7 @@
 /**
  * BelieverRound — Hardhat Tests
  *
- * Phase 1 params: 2,000,000 TFUEL hard cap, 25 XF/TFUEL base, 100 TFUEL min, optional lock tiers.
+ * Phase 1 params: 2,000,000 TFUEL hard cap, 5 XF/TFUEL base, 100 TFUEL min, optional lock tiers.
  *
  * Run: npx hardhat test believer/test/BelieverRound.test.cjs
  */
@@ -20,10 +20,11 @@ describe('BelieverRound', function () {
 
   const HARD_CAP = ethers.parseEther('2000000');
   const MAX_PER_WALLET = 0n;
-  const PRICE_NUM = 25n;
+  const PRICE_NUM = 5n;
   const PRICE_DEN = 1n;
   const PHASE = 1;
   const MIN = ethers.parseEther('100');
+  const XF_CAP = ethers.parseEther('150000000');
 
   const CLIFF = 90 * 24 * 60 * 60;
   const VESTING = 270 * 24 * 60 * 60;
@@ -38,7 +39,7 @@ describe('BelieverRound', function () {
     await mockToken.mint(admin.address, ethers.parseEther('100000000'));
 
     const RF = await ethers.getContractFactory('BelieverRound');
-    round = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, PHASE);
+    round = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, PHASE, XF_CAP);
     await round.waitForDeployment();
   });
 
@@ -73,6 +74,21 @@ describe('BelieverRound', function () {
       ).to.be.revertedWithCustomError(round, 'BadLockTier');
     });
 
+    it('should revert when XF allocation cap would be exceeded', async function () {
+      const RF = await ethers.getContractFactory('BelieverRound');
+      const tinyCap = ethers.parseEther('400');
+      const r = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, PHASE, tinyCap);
+      await r.waitForDeployment();
+      // 100 TFUEL × 5 XF/TFUEL = 500 XF > 400 XF cap
+      await expect(r.connect(believer1).commit({ value: MIN })).to.be.revertedWithCustomError(r, 'ExceedsXFAllocationCap');
+    });
+
+    it('should allow admin setTokenPrice while Open', async function () {
+      await round.connect(admin).setTokenPrice(30n, 1n);
+      expect(await round.tokenPriceNumerator()).to.equal(30n);
+      expect(await round.tokenPriceDenominator()).to.equal(1n);
+    });
+
     it('should reject commitment below 100 TFUEL minimum', async function () {
       await expect(round.connect(believer1).commit({ value: ethers.parseEther('50') })).to.be.reverted;
     });
@@ -81,9 +97,9 @@ describe('BelieverRound', function () {
   describe('TGE & Vesting', function () {
     const B1_TFUEL = ethers.parseEther('500');
     const B2_TFUEL = ethers.parseEther('1000');
-    const B1_XF = ethers.parseEther('12500');
-    const B2_XF = ethers.parseEther('25000');
-    const TOTAL_XF = ethers.parseEther('37500');
+    const B1_XF = ethers.parseEther('2500');
+    const B2_XF = ethers.parseEther('5000');
+    const TOTAL_XF = ethers.parseEther('7500');
 
     beforeEach(async function () {
       await round.connect(believer1).commit({ value: B1_TFUEL });
@@ -109,7 +125,7 @@ describe('BelieverRound', function () {
       await increaseTime(CLIFF + VESTING / 2);
 
       const claimable1 = await round.claimable(believer1.address);
-      expect(claimable1).to.be.closeTo(ethers.parseEther('6250'), ethers.parseEther('100'));
+      expect(claimable1).to.be.closeTo(ethers.parseEther('1250'), ethers.parseEther('100'));
     });
 
     it('should allow full claim after vesting for tier 0', async function () {
@@ -123,7 +139,7 @@ describe('BelieverRound', function () {
 
     it('should block claim for tier 1 until 365 days after TGE even if vested', async function () {
       const RF = await ethers.getContractFactory('BelieverRound');
-      const r = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, PHASE);
+      const r = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, PHASE, XF_CAP);
       await r.waitForDeployment();
 
       await r.connect(believer3).commitWithLock(1, { value: ethers.parseEther('100') });
@@ -169,7 +185,7 @@ describe('BelieverRound', function () {
       await round.connect(believer1).commit({ value: commitment });
       await round.closeRound();
 
-      const tokensNeeded = ethers.parseEther('5000');
+      const tokensNeeded = ethers.parseEther('1000');
       await mockToken.approve(await round.getAddress(), tokensNeeded);
       await round.triggerTGE(await mockToken.getAddress());
 

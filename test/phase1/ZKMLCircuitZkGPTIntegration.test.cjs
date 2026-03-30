@@ -9,6 +9,7 @@
 
 const { expect } = require('chai');
 const { ethers } = require('hardhat');
+const { futureDeadline } = require('../helpers.cjs');
 
 describe('ZKMLCircuit + ZKVerifierZkGPT integration', function () {
   let splitter, zkVerifierZkGPT, circuit;
@@ -62,7 +63,7 @@ describe('ZKMLCircuit + ZKVerifierZkGPT integration', function () {
     const modelId = circuit.interface.parseLog(modelEvent).args.modelId;
     await circuit.connect(modelOwner).authorizeProver(modelId, prover.address);
 
-    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const deadline = Number(await futureDeadline(ethers.provider));
     const txReq = await circuit.connect(user).requestInference(
       modelId, INPUT_HASH, deadline, { value: ethers.parseEther('1.0') }
     );

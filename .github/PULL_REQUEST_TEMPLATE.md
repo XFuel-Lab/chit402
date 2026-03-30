@@ -40,7 +40,7 @@ Closes #
 <!-- How did you test this change? -->
 
 - [ ] New unit tests added
-- [ ] Existing tests pass (`npm run test:contracts:core`)
+- [ ] Existing tests pass (`npm run test:contracts:core`, or `test:contracts:core:listener` + `test:contracts:core:solidity`)
 - [ ] Gas benchmarks checked (no regression above thresholds)
 - [ ] Tested on Hardhat local (chain 1337)
 - [ ] Tested on Theta Testnet (chain 365)
@@ -48,6 +48,9 @@ Closes #
 **Test command used:**
 ```
 npm run test:contracts:core
+# split: test:contracts:core:listener && test:contracts:core:solidity
+# full matrix (CI test.yml): npm run test:contracts:all
+#   (= listener + test:contracts:all:hardhat)
 ```
 
 ## Checklist

@@ -7,7 +7,7 @@
 //   node scripts/gas-snapshot.cjs              # generate snapshot
 //   node scripts/gas-snapshot.cjs --check      # compare against committed baseline
 //
-// In CI, use: REPORT_GAS=true npm run test:contracts:core
+// In CI, use: REPORT_GAS=true npm run test:contracts:core:solidity
 
 const { execSync } = require('child_process');
 const fs = require('fs');

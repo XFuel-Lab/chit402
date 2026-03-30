@@ -76,6 +76,9 @@ export const BELIEVER_ROUND_ABI = [
     stateMutability: 'view',
   },
   { type: 'function', name: 'totalXFReserved', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'xfAllocationCap', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'tokenPriceNumerator', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'tokenPriceDenominator', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
 ] as const satisfies Abi;
 
 /** AngelRound.sol — pre-TGE treasury round; no refunds */
@@ -102,4 +105,5 @@ export const ANGEL_ROUND_ABI = [
   { type: 'function', name: 'hardCap', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'tokenPriceNumerator', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'tokenPriceDenominator', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'xfAllocationCap', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
 ] as const satisfies Abi;

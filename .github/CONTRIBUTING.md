@@ -12,7 +12,7 @@ git checkout -b feature/your-feature-name
 ### 2. Make Your Changes
 - Write code
 - Test locally (`npm run dev`)
-- Run tests (`npm test`, `npm run test:contracts`)
+- Run tests (`npm test`, `npm run test:contracts:core` or `npm run test:contracts:all` before larger changes)
 
 ### 3. Commit Your Changes
 ```bash

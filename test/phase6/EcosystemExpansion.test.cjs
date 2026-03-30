@@ -19,6 +19,7 @@ const { expect } = require('chai');
 const hre = require('hardhat');
 const { ethers } = hre;
 const path = require('path');
+const { futureDeadline } = require('../helpers.cjs');
 
 describe('Phase 6: Ecosystem Expansion', function () {
   let admin, user1, user2, user3;
@@ -253,7 +254,7 @@ describe('Phase 6: Ecosystem Expansion', function () {
     });
 
     it('populates cache on verifyInference', async function () {
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+      const deadline = await futureDeadline(ethers.provider);
       const model = await zkml.getModel(modelId);
 
       const reqTx = await zkml.connect(user1).requestInference(
@@ -441,7 +442,8 @@ describe('Phase 6: Ecosystem Expansion', function () {
     });
 
     it('staleness check rejects stale oracle prices', async function () {
-      const oldTimestamp = Math.floor(Date.now() / 1000) - 7200;
+      const b = await ethers.provider.getBlock('latest');
+      const oldTimestamp = Number(b.timestamp) - 7200;
       await mockAggregator.setUpdatedAt(oldTimestamp);
 
       const feedKey = ethers.keccak256(ethers.toUtf8Bytes('ETH/USD'));

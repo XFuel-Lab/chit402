@@ -124,7 +124,9 @@ npm run android              # Run on Android Emulator
 # Testing
 npm test                     # Run unit tests
 npm run test:e2e            # Run Cypress E2E tests
-npm run test:contracts      # Run Hardhat contract tests
+npm run test:contracts       # Hardhat default test discovery
+npm run test:contracts:core  # Core listener (node:test) + core Hardhat (*.cjs, phase3, security)
+npm run test:contracts:all   # Same listener + full Hardhat (all test/**, circuits, security) — CI `test.yml`
 ```
 
 ### Deployment

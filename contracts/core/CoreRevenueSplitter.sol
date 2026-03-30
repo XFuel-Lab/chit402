@@ -540,8 +540,7 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
      *      The function is protected by nonReentrant and whenNotPaused. Admin can pause
      *      to block distributions if needed.
      */
-    // slither-disable-start reentrancy-eth
-    function distribute() external nonReentrant whenNotPaused {
+    function distribute() external nonReentrant whenNotPaused { // slither-disable-line reentrancy-eth
         // nonReentrant + CEI: all balances and counters updated before external ETH sends.
         uint256 balance = address(this).balance;
         if (balance == 0) revert NothingToDistribute();
@@ -616,14 +615,12 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
             _routeStake(feeToStakeAmount);
         }
     }
-    // slither-disable-end reentrancy-eth
 
     /**
      * @notice Route fee-to-stake funds to registered chain-specific pools.
      *         Falls back to default stakePool if no routes are configured.
      */
-    // slither-disable-start reentrancy-eth
-    function _routeStake(uint256 amount) internal {
+    function _routeStake(uint256 amount) internal { // slither-disable-line reentrancy-eth
         // Invoked only from distribute() (nonReentrant); chainStakeTotal/totalTreasury updated before each send.
         if (stakeRoutes.length > 0 && totalStakeWeight > 0) {
             uint256 distributed = 0;
@@ -657,7 +654,6 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
             _safeTransfer(treasuryWallet, amount, "Treasury(stake)");
         }
     }
-    // slither-disable-end reentrancy-eth
 
     // ─── Stake Route Management ────────────────────────────────────────────────
 
@@ -1317,11 +1313,10 @@ contract CoreRevenueSplitter is AccessControl, Pausable, ReentrancyGuard {
 
     // ─── Internal ──────────────────────────────────────────────────────────────
 
-    // slither-disable-start arbitrary-send-eth
     function _safeTransfer(address to, uint256 amount, string memory label) internal {
         if (amount == 0 || to == address(0)) return;
+        // slither-disable-next-line arbitrary-send-eth
         (bool ok, ) = payable(to).call{value: amount}("");
         if (!ok) revert TransferFailed(label);
     }
-    // slither-disable-end arbitrary-send-eth
 }

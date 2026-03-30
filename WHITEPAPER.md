@@ -543,28 +543,23 @@ Any project can build a custom circuit by implementing the circuit interface (ev
 
 ### Token Allocation
 
-| Bucket | % | XF Amount | Vesting |
-|--------|---|-----------|---------|
-| **Believer Rounds** (community) | 40% | 400,000,000 | 3mo cliff + 12mo linear per round |
-| **Ecosystem & Grants** | 20% | 200,000,000 | Protocol-owned, governance-distributed |
+| Bucket | % | XF Amount | Vesting / terms |
+|--------|---|-----------|-----------------|
+| **Community Engagement Rewards** | 15% | 150,000,000 | Airdrops, tasks, fee rebates, lotteries — Merkle seasons via `CommunityEngagementDistributor` |
+| **Community Contribution Round** | 15% | 150,000,000 | Open TFUEL sale until TFUEL hard cap or **on-chain `xfAllocationCap`** hit; 90d cliff + 270d linear; refund if no TGE in 180d |
+| **Angel / Strategic Round** | 10% | 100,000,000 | Open TFUEL sale; default **8** XF per TFUEL (Believer default **5**); no refund; pre-TGE treasury use with on-chain memos |
+| **Ecosystem & Partnerships** | 20% | 200,000,000 | Protocol-owned; grants & partnerships — governance / committee policy |
 | **Team & Founders** | 15% | 150,000,000 | 12mo cliff + 36mo linear |
 | **Protocol Treasury** | 15% | 150,000,000 | DAO-controlled via veXF governance |
 | **Liquidity (LP seed)** | 10% | 100,000,000 | Unlocked at TGE for DEX listing |
 
-### Believer Round — Phased Rollout
+### Community & Angel rounds (single open windows)
 
-| Phase | XF Allocated | Hard Cap | Price | Raises (est.) | Status |
-|-------|-------------|----------|-------|--------------|--------|
-| Phase 1 | 40M XF (4%) | 2,000,000 TFUEL | 20 XF/TFUEL | ~$26K | **Open** |
-| Phase 2 | 120M XF (12%) | 6,000,000 TFUEL | 20 XF/TFUEL | ~$78K | Post-grant |
-| Phase 3 | 240M XF (24%) | 8,000,000 TFUEL | 30 XF/TFUEL | ~$104K | Post-audit |
-| **Total** | **400M XF (40%)** | **16,000,000 TFUEL** | | **~$208K** | |
-
-- **Min commitment:** 100 TFUEL (~$1.30) — no per-wallet cap
-- **Vesting:** 3-month cliff + 12-month linear release (15 months total)
-- **Refund safety:** Full TFUEL refund available if TGE not triggered within 180 days
+- **Community (`BelieverRound.sol`):** up to **150M XF** reserved (`xfAllocationCap`). Default deploy pricing is **5 XF per 1 TFUEL** (env/script overrides); **XF per TFUEL** may be updated by multisig while status is **Open** (see [`docs/PRICING_TFUEL_XF.md`](docs/PRICING_TFUEL_XF.md)). Optional lock tiers add **+8% / +20% / +35%** XF on the base price. **Min commitment:** 100 TFUEL (unless overridden at deploy).
+- **Angel (`AngelRound.sol`):** up to **100M XF** reserved. Default deploy **8 XF per 1 TFUEL** (vs Believer base **5**). Separate `triggerTGE` from community round.
+- **Engagement (`CommunityEngagementDistributor.sol`):** lifetime claims capped at deploy `maxLifetimeXF` (150M XF when used for the full bucket).
+- **UI:** [`xfuel-app`](xfuel-app) routes `/believers` and `/angels` · Contracts: `contracts/circuits/BelieverRound.sol`, `AngelRound.sol`, `CommunityEngagementDistributor.sol`
 - **Admin / Multisig:** `0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257` (Gnosis Safe, Theta)
-- **Believer page:** `believers/index.html` · Contract: `contracts/circuits/BelieverRound.sol`
 
 ### XF Token Utility
 
@@ -622,14 +617,20 @@ Volume composition target: 60% AI tasks, 25% data/communications, 15% financial 
 - **Nullifier isolation** — Circuit-local nullifier tracking prevents cross-operation replay
 - **Failover nullifier sync** — Cross-chain nullifier replication ensures replay protection survives chain failover events
 
-### 11.5 Audit Plan
+### 11.5 Audit plan (aligned with production rollout)
 
-| Phase | Scope | Timeline |
-|-------|-------|----------|
-| Phase 1 | Core Layer contracts (ZKVerifier, RevenueSplitter, veXF) | Q2 2026 |
-| Phase 2 | SP1 circuits + proof hooks | Q3 2026 |
-| Phase 3 | CosmWasm contracts + IBC integration | Q4 2026 |
-| Bug Bounty | $500K via Immunefi | Ongoing post-Phase 1 |
+**Principle:** **Audit Phase 1** = everything required for a **credible Theta mainnet “hub” launch** (core settlement, fees, governance, primary inference circuit, funding contracts, and the on-chain proof surface). **Audit Phase 2** = **remaining EVM circuits** and cross-domain integrations, executed **in waves or per-circuit**. **CosmWasm / IBC** is a **separate track** when those codepaths are production-gated.
+
+| Audit phase | Scope (indicative) | Timeline |
+|-------------|-------------------|----------|
+| **Audit Phase 1 — Theta production core** | **Core (`contracts/core/`):** `ZKVerifierSP1`, `CoreRevenueSplitter`, `veXFGovernance`, `SP1ProofHooks`. **Theta AI hub (EVM):** `ThetaInferenceCircuit`. **Public funding / distribution:** `BelieverRound`, `AngelRound`, `CommunityEngagementDistributor`. **Optional if mainnet-enabled:** `ZKVerifierZkGPT`. **Off-chain (Phase 1 gating, separate from Solidity audit):** `sp1-prover/` compatibility, listener / task pipeline — release checklist. | Target **Q2 2026** (e.g. CertiK; final line count per manifest). |
+| **Audit Phase 2 — Extended circuits & bridges** | **Examples:** `TAOCircuit`, `BridgeCircuit`, `InferenceRouter`, `DataHubs`, `A2ACircuit`, `AkashCircuit`, `SolanaAIBridge`, `ComputeMarketplace`, `ZKMLCircuit`, other DePIN / agent circuits — **batched or per-circuit** with named deploy addresses. | **Q3 2026 onward**, staggered by priority. |
+| **Audit Phase 3 — Non-EVM & IBC** | CosmWasm verifiers, IBC minters / relay assumptions, Osmosis / Persistence paths. | When **production-required** (often Q4 2026+). |
+| **Bug bounty** | Per **[`docs/bug-bounty.md`](docs/bug-bounty.md)** (e.g. Critical up to **$50,000** USD); optional Immunefi (or equivalent) when launched. | Ongoing after **Audit Phase 1** mainnet cut. |
+
+**Note on naming:** “Audit Phase 1/2/3” here are **security-review waves**, not the same as historical **development** Phases 1–6 in §12 below.
+
+**Readiness:** Pre-audit gap list — [`docs/AUDIT_READINESS_CHECKLIST.md`](docs/AUDIT_READINESS_CHECKLIST.md). Legal/compliance planning — [`docs/LEGAL_LAUNCH_CHECKLIST.md`](docs/LEGAL_LAUNCH_CHECKLIST.md). **Funding rounds (Believer/Angel):** testnet → mainnet — [`docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md`](docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md).
 
 ---
 
@@ -650,7 +651,7 @@ All six development phases are code-complete. The protocol is now in audit prepa
 ### Phase 3: Governance & Revenue ✅ (Completed Feb 2026)
 - [x] veXF governance implementation (Curve-style lock + vote, 3x max multiplier)
 - [x] Fee-to-Stake routing (Theta 50%, Bittensor 30%, Osmosis 20%)
-- [x] CertiK Phase 1 scope prepared, $500K Immunefi bug bounty defined
+- [x] CertiK Phase 1 scope prepared; bug bounty policy in [`docs/bug-bounty.md`](docs/bug-bounty.md)
 - [x] 550+ total tests
 
 ### Phase 4: Scale & Rollup ✅ (Completed Feb 2026)
@@ -681,12 +682,13 @@ XFuel’s Phase 1 ZK Research Upgrade integrates two externally developed resear
 - **zkGPT** ([eprint.iacr.org/2025/1184](https://eprint.iacr.org/2025/1184); implementation: [security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt)) — Parallel proof path for LLM inference. API supports `proof_system: zkgpt`; `ZKVerifierZkGPT.sol` (stub) and `zkgpt-prover/` scaffold in place; real GKR+Lasso verifier and prover integration in progress.
 - **Fair Exchange (PAS)** ([eprint.iacr.org/2026/395](https://eprint.iacr.org/2026/395)) — Atomic payment↔result in A2A. `A2ACircuit.settleBidFairExchange()`, M2M `POST /a2a-settle-fair-exchange`, and SDK `settleWithFairExchange()` implemented; proxy/relayer config and PAS off-chain flow documented.
 
-### Next: Audit & Mainnet (Q2–Q3 2026)
-- [ ] CertiK Phase 1 audit — Core Layer + ThetaInferenceCircuit (5 contracts, ~2,068 lines)
-- [ ] Mainnet deployment — Theta 361, Bittensor 964, Osmosis osmosis-1
-- [ ] CertiK Phase 2 audit — InferenceRouter, TAOCircuit, BridgeCircuit
-- [ ] Immunefi bug bounty launch — $500K max payout
-- [ ] CertiK Phase 3 audit — ComputeMarketplace, ZKML, DataHubs, A2A
+### Next: Audit & mainnet (Q2 2026 onward)
+- [ ] **Audit Phase 1** — `contracts/core/*` + `ThetaInferenceCircuit` + `BelieverRound` / `AngelRound` / `CommunityEngagementDistributor` + `SP1ProofHooks` (as deployed to **Theta mainnet 361**)
+- [ ] **Theta mainnet 361** deployment manifest + public verification (funding rounds use **361** for real commitments; **365** remains test rehearsal only)
+- [ ] **Bug bounty** — public rules live; optional Immunefi (or equivalent) listing per [`docs/bug-bounty.md`](docs/bug-bounty.md)
+- [ ] **Audit Phase 2** — staggered reviews: TAO / Bridge / InferenceRouter / Data / M2M-facing circuits as each is mainnet-gated
+- [ ] **Audit Phase 3** — CosmWasm / IBC when production-gated
+- [ ] **Engagement distributor** — deploy & fund **after XF token exists** (post-TGE or treasury mint); see [`docs/COMMUNITY_ENGAGEMENT_REWARDS.md`](docs/COMMUNITY_ENGAGEMENT_REWARDS.md#post-tge--xf-token-runbook)
 
 ### Research Track: Interstellar Prover Integration (H2 2026 / 2027)
 

@@ -42,16 +42,20 @@ describe('ZK Bridge Integration - Full Flow', function () {
     // Deploy RevenueSplitter mock
     const MockRevSplitter = await ethers.getContractFactory('MockRevenueSplitter');
     revSplitter = await MockRevSplitter.deploy();
-    
+
     if (typeof revSplitter.waitForDeployment === 'function') {
       await revSplitter.waitForDeployment();
     } else if (typeof revSplitter.deployed === 'function') {
       await revSplitter.deployed();
     }
 
+    const rsAddr = typeof revSplitter.getAddress === 'function'
+      ? await revSplitter.getAddress()
+      : revSplitter.address;
+
     // Deploy VaultFactory
     const VaultFactory = await ethers.getContractFactory('VaultFactory');
-    vaultFactory = await VaultFactory.deploy(admin.address, revSplitter.address);
+    vaultFactory = await VaultFactory.deploy(admin.address, rsAddr);
 
     if (typeof vaultFactory.waitForDeployment === 'function') {
       await vaultFactory.waitForDeployment();
@@ -83,8 +87,8 @@ describe('ZK Bridge Integration - Full Flow', function () {
       const vaultBalance = await vault.getBalance();
       
       // Verify fee deduction (0.5%)
-      const expectedFee = depositAmount.mul(50).div(10000);
-      const expectedNet = depositAmount.sub(expectedFee);
+      const expectedFee = (depositAmount * 50n) / 10000n;
+      const expectedNet = depositAmount - expectedFee;
       expect(vaultBalance).to.equal(expectedNet);
       
       console.log('  ✓ Alice deposited 1000 TFUEL');
@@ -107,9 +111,7 @@ describe('ZK Bridge Integration - Full Flow', function () {
       
       // Step 5: Alice burns 500 ibcTFUEL on Persistence to unwrap
       const burnAmount = parseEther('500');
-      const burnTxHash = ethers.utils.keccak256(
-        ethers.utils.toUtf8Bytes('persistence-burn-alice-500')
-      );
+      const burnTxHash = keccak256('persistence-burn-alice-500');
       
       console.log('  ✓ Alice burns 500 ibcTFUEL on Persistence');
       console.log('    - Burn tx hash:', burnTxHash);
@@ -124,22 +126,19 @@ describe('ZK Bridge Integration - Full Flow', function () {
         burnAmount
       );
       
-      // Verify Bob received 70% (30% recycled to yield)
-      const expectedNetToBob = burnAmount.mul(7000).div(10000);
       const bobBalanceAfter = await ethers.provider.getBalance(bob.address);
-      expect(bobBalanceAfter.sub(bobBalanceBefore)).to.equal(expectedNetToBob);
-      
+      expect(bobBalanceAfter - bobBalanceBefore).to.equal(burnAmount);
+
       console.log('  ✓ ZK bridge unlocked TFUEL');
-      console.log('    - Sent to Bob:', formatEther(expectedNetToBob), 'TFUEL (70%)');
-      console.log('    - Recycled to yield:', formatEther(burnAmount.sub(expectedNetToBob)), 'TFUEL (30%)');
+      console.log('    - Sent to Bob:', formatEther(burnAmount), 'TFUEL (100%)');
       
       // Verify burn is marked as processed
       expect(await vault.isBurnProcessed(burnTxHash)).to.be.true;
       
       // Step 7: Verify final vault balance
       const finalVaultBalance = await vault.getBalance();
-      const expectedFinalBalance = expectedNet.sub(burnAmount);
-      expect(finalVaultBalance).to.be.closeTo(expectedFinalBalance, parseEther('0.001'));
+      const expectedFinalBalance = expectedNet - burnAmount;
+      expect(finalVaultBalance).to.equal(expectedFinalBalance);
       
       console.log('  ✓ Final vault balance:', formatEther(finalVaultBalance), 'TFUEL');
       console.log('  ✓ Complete cycle successful!');
@@ -170,7 +169,7 @@ describe('ZK Bridge Integration - Full Flow', function () {
       expect(await bobVault.getBalance()).to.be.gt(parseEther('746'));
       
       // Alice unwraps from her vault
-      const aliceBurnTx = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('alice-burn-1'));
+      const aliceBurnTx = keccak256('alice-burn-1');
       await vaultFactory.connect(zkBridgeOperator).unwrapFromBurn(
         aliceVaultAddr,
         aliceBurnTx,
@@ -179,7 +178,7 @@ describe('ZK Bridge Integration - Full Flow', function () {
       );
       
       // Bob unwraps from his vault
-      const bobBurnTx = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('bob-burn-1'));
+      const bobBurnTx = keccak256('bob-burn-1');
       await vaultFactory.connect(zkBridgeOperator).unwrapFromBurn(
         bobVaultAddr,
         bobBurnTx,
@@ -194,31 +193,25 @@ describe('ZK Bridge Integration - Full Flow', function () {
       console.log('  ✓ Multiple users successfully used independent vaults');
     });
 
-    it('Should track yield recycle amounts correctly', async function () {
+    it('Should send full unwrap to recipient after deposit fee', async function () {
       const salt = await vaultFactory.generateSalt(alice.address, 0);
       await vaultFactory.connect(alice).createVault(salt);
       const vaultAddr = await vaultFactory.predictAddress(salt);
-      
-      // Deposit 1000 TFUEL
+
       const depositAmount = parseEther('1000');
-      const tx = await alice.sendTransaction({ to: vaultAddr, value: depositAmount });
-      const receipt = await tx.wait();
-      
-      // Calculate expected yield recycle from deposit
-      const fee = depositAmount.mul(50).div(10000); // 0.5%
-      const netDeposit = depositAmount.sub(fee);
-      const depositYieldRecycle = netDeposit.mul(3000).div(10000); // 30% of net
-      
+      await alice.sendTransaction({ to: vaultAddr, value: depositAmount });
+
+      const fee = (depositAmount * 50n) / 10000n;
+      const netDeposit = depositAmount - fee;
+
       console.log('  Deposit Phase:');
       console.log('    - Gross:', formatEther(depositAmount), 'TFUEL');
       console.log('    - Fee (0.5%):', formatEther(fee), 'TFUEL');
-      console.log('    - Net:', formatEther(netDeposit), 'TFUEL');
-      console.log('    - Yield recycle allocation (30%):', formatEther(depositYieldRecycle), 'TFUEL');
-      
-      // Unwrap 500 TFUEL
+      console.log('    - Net in vault:', formatEther(netDeposit), 'TFUEL');
+
       const unwrapAmount = parseEther('500');
-      const burnTx = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('burn-yield-test'));
-      
+      const burnTx = keccak256('burn-full-unwrap-test');
+
       const bobBalanceBefore = await ethers.provider.getBalance(bob.address);
       await vaultFactory.connect(zkBridgeOperator).unwrapFromBurn(
         vaultAddr,
@@ -227,18 +220,11 @@ describe('ZK Bridge Integration - Full Flow', function () {
         unwrapAmount
       );
       const bobBalanceAfter = await ethers.provider.getBalance(bob.address);
-      
-      // Calculate unwrap yield recycle
-      const unwrapYieldRecycle = unwrapAmount.mul(3000).div(10000); // 30% of unwrap
-      const netToBob = unwrapAmount.sub(unwrapYieldRecycle); // 70% to recipient
-      
-      expect(bobBalanceAfter.sub(bobBalanceBefore)).to.equal(netToBob);
-      
+
+      expect(bobBalanceAfter - bobBalanceBefore).to.equal(unwrapAmount);
+
       console.log('  Unwrap Phase:');
-      console.log('    - Total unwrap:', formatEther(unwrapAmount), 'TFUEL');
-      console.log('    - To recipient (70%):', formatEther(netToBob), 'TFUEL');
-      console.log('    - Yield recycle (30%):', formatEther(unwrapYieldRecycle), 'TFUEL');
-      console.log('  ✓ Yield recycling working correctly in both phases');
+      console.log('    - Sent to Bob:', formatEther(unwrapAmount), 'TFUEL (100%)');
     });
   });
 
@@ -250,7 +236,7 @@ describe('ZK Bridge Integration - Full Flow', function () {
       
       await alice.sendTransaction({ to: vaultAddr, value: parseEther('1000') });
       
-      const burnTx = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('unauthorized-burn'));
+      const burnTx = keccak256('unauthorized-burn');
       
       // Alice tries to unwrap directly (should fail - no ZK_BRIDGE_ROLE)
       await expect(
@@ -280,7 +266,7 @@ describe('ZK Bridge Integration - Full Flow', function () {
       
       await alice.sendTransaction({ to: vaultAddr, value: parseEther('1000') });
       
-      const burnTx = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('replay-test'));
+      const burnTx = keccak256('replay-test');
       const amount = parseEther('100');
       
       // First unwrap succeeds
@@ -316,8 +302,8 @@ describe('ZK Bridge Integration - Full Flow', function () {
       const vaultBalance = await vault.getBalance();
       
       // Try to unwrap more than vault has
-      const burnTx = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('insufficient-funds'));
-      const excessAmount = vaultBalance.add(parseEther('1'));
+      const burnTx = keccak256('insufficient-funds');
+      const excessAmount = vaultBalance + parseEther('1');
       
       await expect(
         vaultFactory.connect(zkBridgeOperator).unwrapFromBurn(
@@ -340,7 +326,7 @@ describe('ZK Bridge Integration - Full Flow', function () {
       
       console.log('  Gas used for vault creation:', receipt.gasUsed.toString());
       // Typical Create2 deployment should be under 500k gas
-      expect(receipt.gasUsed).to.be.lt(500000);
+      expect(BigInt(receipt.gasUsed.toString())).to.be.lt(500000n);
     });
 
     it('Should have reasonable gas costs for deposits', async function () {
@@ -363,7 +349,7 @@ describe('ZK Bridge Integration - Full Flow', function () {
       
       await alice.sendTransaction({ to: vaultAddr, value: parseEther('1000') });
       
-      const burnTx = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('gas-test'));
+      const burnTx = keccak256('gas-test');
       const tx = await vaultFactory.connect(zkBridgeOperator).unwrapFromBurn(
         vaultAddr,
         burnTx,
@@ -374,7 +360,7 @@ describe('ZK Bridge Integration - Full Flow', function () {
       
       console.log('  Gas used for unwrap:', receipt.gasUsed.toString());
       // Should be under 150k gas
-      expect(receipt.gasUsed).to.be.lt(150000);
+      expect(BigInt(receipt.gasUsed.toString())).to.be.lt(150000n);
     });
   });
 });

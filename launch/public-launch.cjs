@@ -172,9 +172,12 @@ async function main() {
     ? ethers.parseEther(process.env.BELIEVER_HARD_CAP) : ethers.parseEther('500');
   const maxPerWallet = ethers.parseEther('5');
 
+  const believerXfCap = process.env.BELIEVER_XF_ALLOCATION_CAP
+    ? ethers.parseEther(process.env.BELIEVER_XF_ALLOCATION_CAP)
+    : ethers.parseEther('150000000');
   const believer = await deploy('BelieverRound',
     await ethers.getContractFactory('BelieverRound'),
-    [d, hardCap, maxPerWallet, 10000n, 1n]);
+    [d, hardCap, maxPerWallet, 10000n, 1n, 1, believerXfCap]);
 
   manifest.believerRound = {
     address: manifest.contracts.BelieverRound,
