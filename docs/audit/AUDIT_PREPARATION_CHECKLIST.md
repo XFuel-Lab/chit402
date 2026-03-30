@@ -91,8 +91,8 @@
 
 ### Test Scripts
 - `npm run test:contracts` — Main test suite
-- `npm run test:contracts:all` — All tests including circuits
-- `npm run test:contracts:core` — Core Layer + security tests
+- `npm run test:contracts:all` — Core listener (`node:test`) then full Hardhat run (`test:contracts:all:hardhat`: repo tests, `core-layer/test/*.cjs`, circuits, security)
+- `npm run test:contracts:core` — Core listener (`node:test`) + Hardhat core (`*.test.cjs` under core-layer/test, phase3, security). Split: `test:contracts:core:listener`, `test:contracts:core:solidity`
 - `npm run test:contracts:theta` — Theta circuit tests
 - `npm run test:coverage` — Coverage report
 

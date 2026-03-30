@@ -69,7 +69,18 @@ async function main() {
     { name: 'YieldCircuit', args: [admin.address, ethers.ZeroAddress, ethers.ZeroAddress] },
     { name: 'NearAgents', args: [admin.address, ethers.ZeroAddress, ethers.ZeroAddress] },
     { name: 'SolanaAIBridge', args: [admin.address, ethers.ZeroAddress, ethers.ZeroAddress] },
-    { name: 'BelieverRound', args: [admin.address, ethers.parseEther('500'), ethers.parseEther('5'), 10000n, 1n] },
+    {
+      name: 'BelieverRound',
+      args: [
+        admin.address,
+        ethers.parseEther('500'),
+        ethers.parseEther('5'),
+        10000n,
+        1n,
+        1,
+        ethers.parseEther('150000000'),
+      ],
+    },
   ];
 
   let totalDeployGas = 0n;

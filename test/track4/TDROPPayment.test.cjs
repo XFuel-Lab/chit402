@@ -52,6 +52,7 @@
 
 const { expect } = require('chai');
 const { ethers } = require('hardhat');
+const { futureDeadline } = require('../helpers.cjs');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -366,7 +367,7 @@ describe('Track 4.2 — TDROP Payment Option for Compute', function () {
   describe('A2ACircuit — submitBidWithTDROP()', function () {
     let a2a, splitter3;
     const ESCROW = ethers.parseEther('100');
-    const DEADLINE = () => Math.floor(Date.now() / 1000) + 3600;
+    const nextDeadline = async () => Number(await futureDeadline(ethers.provider));
 
     before(async function () {
       const Splitter = await ethers.getContractFactory('CoreRevenueSplitter');
@@ -387,7 +388,7 @@ describe('Track 4.2 — TDROP Payment Option for Compute', function () {
       await tdrop.connect(user1).approve(a2a.target, ESCROW);
       const before = await tdrop.balanceOf(user1.address);
       await a2a.connect(user1).submitBidWithTDROP(
-        tdrop.target, ESCROW, b32('task-28'), b32('cap-28'), DEADLINE()
+        tdrop.target, ESCROW, b32('task-28'), b32('cap-28'), await nextDeadline()
       );
       const after = await tdrop.balanceOf(user1.address);
       expect(before - after).to.equal(ESCROW);
@@ -396,7 +397,7 @@ describe('Track 4.2 — TDROP Payment Option for Compute', function () {
     it('29. paymentToken field is set to tdropToken address', async function () {
       await tdrop.connect(user1).approve(a2a.target, ESCROW);
       const tx = await a2a.connect(user1).submitBidWithTDROP(
-        tdrop.target, ESCROW, b32('task-29'), b32('cap-29'), DEADLINE()
+        tdrop.target, ESCROW, b32('task-29'), b32('cap-29'), await nextDeadline()
       );
       const receipt = await tx.wait();
       const ev = receipt.logs.find(l => l.fragment?.name === 'BidSubmitted');
@@ -412,7 +413,7 @@ describe('Track 4.2 — TDROP Payment Option for Compute', function () {
       const expectedNet = ESCROW - expectedRelay;
 
       const tx = await a2a.connect(user1).submitBidWithTDROP(
-        tdrop.target, ESCROW, b32('task-30'), b32('cap-30'), DEADLINE()
+        tdrop.target, ESCROW, b32('task-30'), b32('cap-30'), await nextDeadline()
       );
       const receipt = await tx.wait();
       const ev = receipt.logs.find(l => l.fragment?.name === 'BidSubmitted');
@@ -424,14 +425,14 @@ describe('Track 4.2 — TDROP Payment Option for Compute', function () {
     it('31. emits BidSubmitted event', async function () {
       await tdrop.connect(user1).approve(a2a.target, ESCROW);
       const tx = await a2a.connect(user1).submitBidWithTDROP(
-        tdrop.target, ESCROW, b32('task-31'), b32('cap-31'), DEADLINE()
+        tdrop.target, ESCROW, b32('task-31'), b32('cap-31'), await nextDeadline()
       );
       await expect(tx).to.emit(a2a, 'BidSubmitted');
     });
 
     it('32. TFUEL submitBid still works (backward compat)', async function () {
       const tx = await a2a.connect(user1).submitBid(
-        b32('task-32'), b32('cap-32'), DEADLINE(),
+        b32('task-32'), b32('cap-32'), await nextDeadline(),
         { value: ethers.parseEther('0.01') }
       );
       const receipt = await tx.wait();
@@ -444,7 +445,7 @@ describe('Track 4.2 — TDROP Payment Option for Compute', function () {
     it('33. submitBidWithTDROP reverts on zero token address', async function () {
       await expect(
         a2a.connect(user1).submitBidWithTDROP(
-          ethers.ZeroAddress, ESCROW, b32('task-33'), b32('cap-33'), DEADLINE()
+          ethers.ZeroAddress, ESCROW, b32('task-33'), b32('cap-33'), await nextDeadline()
         )
       ).to.be.revertedWith('ZeroToken');
     });
@@ -452,13 +453,14 @@ describe('Track 4.2 — TDROP Payment Option for Compute', function () {
     it('34. submitBidWithTDROP reverts on zero escrow', async function () {
       await expect(
         a2a.connect(user1).submitBidWithTDROP(
-          tdrop.target, 0, b32('task-34'), b32('cap-34'), DEADLINE()
+          tdrop.target, 0, b32('task-34'), b32('cap-34'), await nextDeadline()
         )
       ).to.be.revertedWith('ZeroEscrow');
     });
 
     it('35. submitBidWithTDROP reverts on past deadline', async function () {
-      const pastDeadline = Math.floor(Date.now() / 1000) - 1;
+      const b = await ethers.provider.getBlock('latest');
+      const pastDeadline = Number(b.timestamp) - 1;
       await tdrop.connect(user1).approve(a2a.target, ESCROW);
       await expect(
         a2a.connect(user1).submitBidWithTDROP(

@@ -959,6 +959,46 @@ class CoreListener {
     };
   }
 
+  /**
+   * Route to structured logger when present. Do not use `log.info?.() || console` —
+   * no-op loggers return undefined and incorrectly fall through to console.
+   */
+  _emitInfo(...args) {
+    if (typeof this.log?.info === 'function') {
+      this.log.info(...args);
+      return;
+    }
+    if (args.length === 1 && typeof args[0] === 'string') {
+      console.log(`[CoreListener] ${args[0]}`);
+    } else if (
+      args.length === 2 &&
+      typeof args[0] === 'object' &&
+      args[0] !== null &&
+      typeof args[1] === 'string'
+    ) {
+      console.log(`[CoreListener] ${args[1]}`, args[0]);
+    } else {
+      console.log('[CoreListener]', ...args);
+    }
+  }
+
+  _emitWarn(...args) {
+    if (typeof this.log?.warn === 'function') {
+      this.log.warn(...args);
+      return;
+    }
+    if (args.length === 1) console.warn(`[CoreListener] ${args[0]}`);
+    else console.warn('[CoreListener]', ...args);
+  }
+
+  _emitError(...args) {
+    if (typeof this.log?.error === 'function') {
+      this.log.error(...args);
+      return;
+    }
+    console.error('[CoreListener]', ...args);
+  }
+
   // ─── Circuit Registration ─────────────────────────────────────────────────
 
   registerCircuit(circuitId, handler, chains = null, intentTypes = null) {
@@ -967,8 +1007,7 @@ class CoreListener {
       chains: chains || Object.keys(this.chains),
       intentTypes: intentTypes || Object.values(AI_INTENT_TYPES),
     });
-    this.log.info?.(`Circuit registered: ${circuitId}`) ||
-      console.log(`[CoreListener] Circuit registered: ${circuitId}`);
+    this._emitInfo(`Circuit registered: ${circuitId}`);
   }
 
   unregisterCircuit(circuitId) {
@@ -991,8 +1030,7 @@ class CoreListener {
           this.providers.set(key, provider);
           const block = await provider.getBlockNumber();
           this.lastBlocks.set(key, block);
-          this.log.info?.(`Connected to ${chain.name} (block ${block})`) ||
-            console.log(`[CoreListener] Connected to ${chain.name} (block ${block})`);
+          this._emitInfo(`Connected to ${chain.name} (block ${block})`);
 
           // Attempt WebSocket subscription for low-latency event delivery.
           // wsRpc must be a ws:// or wss:// URL; falls back to HTTP polling if absent.
@@ -1003,13 +1041,11 @@ class CoreListener {
             );
           }
         } catch (err) {
-          this.log.warn?.(`Failed to connect to ${chain.name}: ${err.message}`) ||
-            console.warn(`[CoreListener] Failed to connect to ${chain.name}: ${err.message}`);
+          this._emitWarn(`Failed to connect to ${chain.name}: ${err.message}`);
         }
       } else if (chain.type === ChainType.SVM) {
         this.lastSolanaSignatures.set(key, null);
-        this.log.info?.(`Solana chain configured: ${chain.name}`) ||
-          console.log(`[CoreListener] Solana chain configured: ${chain.name}`);
+        this._emitInfo(`Solana chain configured: ${chain.name}`);
       }
     }
 
@@ -1019,8 +1055,7 @@ class CoreListener {
       this.pollTimers.set(key, timer);
     }
 
-    this.log.info?.('CoreListener started') ||
-      console.log('[CoreListener] Started polling all chains');
+    this._emitInfo('CoreListener started (polling all chains)');
 
     this._startEdgeCloudJobMonitor().catch(err =>
       console.warn(`[EdgeCloud] Job monitor init error: ${err.message?.slice(0, 80)}`)
@@ -1048,8 +1083,7 @@ class CoreListener {
       this._edgeCloudJobTimer = null;
     }
 
-    this.log.info?.({ metrics: this.metrics }, 'CoreListener stopped') ||
-      console.log('[CoreListener] Stopped', this.metrics);
+    this._emitInfo({ metrics: this.metrics }, 'CoreListener stopped');
   }
 
   // ─── WebSocket Subscription (eth_subscribe) ────────────────────────────────
@@ -1357,8 +1391,8 @@ class CoreListener {
   async _dispatchIntent(intent, chainKey) {
     if (this.queue.size >= this.maxPending) {
       this.metrics.queueOverflows++;
-      console.warn(
-        `[CoreListener] Queue overflow: ${this.queue.size}/${this.maxPending} pending. Rejecting intent.`
+      this._emitWarn(
+        `Queue overflow: ${this.queue.size}/${this.maxPending} pending. Rejecting intent.`
       );
       const rejectId = intent.txHash ||
         `intent-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -1369,9 +1403,7 @@ class CoreListener {
 
     if (this.queue.size > this.backpressureThreshold) {
       this.metrics.backpressureWarnings++;
-      console.warn(
-        `[CoreListener] Backpressure: queue ${this.queue.size}/${this.maxPending}`
-      );
+      this._emitWarn(`Backpressure: queue ${this.queue.size}/${this.maxPending}`);
     }
 
     return this.queue.add(() => this._processIntent(intent, chainKey));
@@ -1423,8 +1455,7 @@ class CoreListener {
           });
         }
       } catch (err) {
-        this.log.error?.({ err, circuitId, intent: intent.type }, 'Circuit handler error') ||
-          console.error(`[CoreListener] Circuit ${circuitId} error:`, err.message);
+        this._emitError({ err, circuitId, intent: intent.type }, 'Circuit handler error');
         this._resolveIntentOutcome(intentId, IntentOutcomeType.FAILED, {
           circuitId, error: err.message,
         });
@@ -1620,8 +1651,7 @@ class CoreListener {
       tasksCompleted: 0,
       avgLatencyMs: 0,
     });
-    this.log.info?.(`DePIN provider registered: ${providerId} (${config.network})`) ||
-      console.log(`[CoreListener] DePIN provider registered: ${providerId}`);
+    this._emitInfo(`DePIN provider registered: ${providerId} (${config.network})`);
   }
 
   async routeDePINTask(task) {
@@ -1671,8 +1701,7 @@ class CoreListener {
 
     this.pendingIntents.delete(intentId);
 
-    this.log.info?.({ intentId, outcomeType }, 'IntentOutcome resolved') ||
-      console.log(`[CoreListener] IntentOutcome: ${intentId} → ${outcomeType}`);
+    this._emitInfo({ intentId, outcomeType }, 'IntentOutcome resolved');
 
     return outcome;
   }

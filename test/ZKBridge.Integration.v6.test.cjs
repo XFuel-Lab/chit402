@@ -63,14 +63,11 @@ describe('ZK Bridge Integration - Full Flow (v6)', function () {
       burnAmount
     );
     
-    // Verify Bob received 70% (30% recycled)
-    const expectedNetToBob = burnAmount * 7000n / 10000n;
     const bobBalanceAfter = await ethers.provider.getBalance(bob.address);
-    expect(bobBalanceAfter - bobBalanceBefore).to.equal(expectedNetToBob);
-    
+    expect(bobBalanceAfter - bobBalanceBefore).to.equal(burnAmount);
+
     console.log('  ✓ ZK bridge unlocked TFUEL');
-    console.log('    - Sent to Bob:', ethers.formatEther(expectedNetToBob), 'TFUEL (70%)');
-    console.log('    - Recycled to yield:', ethers.formatEther(burnAmount - expectedNetToBob), 'TFUEL (30%)');
+    console.log('    - Sent to Bob:', ethers.formatEther(burnAmount), 'TFUEL (100%)');
     
     // Verify burn processed
     expect(await vault.isBurnProcessed(burnTxHash)).to.be.true;
@@ -109,29 +106,25 @@ describe('ZK Bridge Integration - Full Flow (v6)', function () {
     console.log('  ✓ Replay attack prevented');
   });
 
-  it('Should track yield recycle amounts', async function () {
+  it('Should send full unwrap amount to recipient', async function () {
     const salt = await vaultFactory.generateSalt(alice.address, 0);
     await vaultFactory.connect(alice).createVault(salt);
     const vaultAddr = await vaultFactory.predictAddress(salt);
-    
-    // Deposit
+
     const depositAmount = ethers.parseEther('1000');
     await alice.sendTransaction({ to: vaultAddr, value: depositAmount });
-    
+
     const fee = depositAmount * 50n / 10000n;
     const netDeposit = depositAmount - fee;
-    const depositYieldRecycle = netDeposit * 3000n / 10000n;
-    
+
     console.log('  Deposit Phase:');
     console.log('    - Gross:', ethers.formatEther(depositAmount), 'TFUEL');
     console.log('    - Fee (0.5%):', ethers.formatEther(fee), 'TFUEL');
-    console.log('    - Net:', ethers.formatEther(netDeposit), 'TFUEL');
-    console.log('    - Yield recycle (30%):', ethers.formatEther(depositYieldRecycle), 'TFUEL');
-    
-    // Unwrap
+    console.log('    - Net in vault:', ethers.formatEther(netDeposit), 'TFUEL');
+
     const unwrapAmount = ethers.parseEther('500');
     const burnTx = ethers.id('burn-yield-test');
-    
+
     const bobBalanceBefore = await ethers.provider.getBalance(bob.address);
     await vaultFactory.connect(zkBridgeOperator).unwrapFromBurn(
       vaultAddr,
@@ -140,16 +133,11 @@ describe('ZK Bridge Integration - Full Flow (v6)', function () {
       unwrapAmount
     );
     const bobBalanceAfter = await ethers.provider.getBalance(bob.address);
-    
-    const unwrapYieldRecycle = unwrapAmount * 3000n / 10000n;
-    const netToBob = unwrapAmount - unwrapYieldRecycle;
-    
-    expect(bobBalanceAfter - bobBalanceBefore).to.equal(netToBob);
-    
+
+    expect(bobBalanceAfter - bobBalanceBefore).to.equal(unwrapAmount);
+
     console.log('  Unwrap Phase:');
-    console.log('    - Total unwrap:', ethers.formatEther(unwrapAmount), 'TFUEL');
-    console.log('    - To recipient (70%):', ethers.formatEther(netToBob), 'TFUEL');
-    console.log('    - Yield recycle (30%):', ethers.formatEther(unwrapYieldRecycle), 'TFUEL');
+    console.log('    - Sent to Bob:', ethers.formatEther(unwrapAmount), 'TFUEL (100%)');
   });
 
   it('Should enforce access control', async function () {

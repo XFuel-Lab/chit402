@@ -7,7 +7,7 @@
  * Defaults (override via env):
  *   Hard cap: 2,000,000 TFUEL
  *   Min commit: 10,000 TFUEL
- *   Price: 35 XF per 1 TFUEL
+ *   Price: 8 XF per 1 TFUEL
  *   Phase: 1 (metadata only)
  *
  * Usage:
@@ -20,6 +20,7 @@
  *   ANGEL_MIN_COMMITMENT
  *   ANGEL_MAX_PER_WALLET   (0 = no cap)
  *   ANGEL_PRICE_NUM / ANGEL_PRICE_DEN
+ *   ANGEL_XF_ALLOCATION_CAP (default 100000000 = 10% of 1B XF)
  *   EXISTING_ANGEL_MANIFEST — JSON with contracts.AngelRound to skip deploy
  *   ANGEL_SMOKE_COMMIT — set 0 to skip test commit (needs min TFUEL + gas)
  */
@@ -62,8 +63,11 @@ async function main() {
     : ethers.parseEther('10000');
   const MAX_PW_STR = process.env.ANGEL_MAX_PER_WALLET ?? '0';
   const MAX_PW = MAX_PW_STR === '0' ? 0n : ethers.parseEther(MAX_PW_STR);
-  const P_NUM = process.env.ANGEL_PRICE_NUM ? BigInt(process.env.ANGEL_PRICE_NUM) : 35n;
+  const P_NUM = process.env.ANGEL_PRICE_NUM ? BigInt(process.env.ANGEL_PRICE_NUM) : 8n;
   const P_DEN = process.env.ANGEL_PRICE_DEN ? BigInt(process.env.ANGEL_PRICE_DEN) : 1n;
+  const XF_CAP = process.env.ANGEL_XF_ALLOCATION_CAP
+    ? ethers.parseEther(process.env.ANGEL_XF_ALLOCATION_CAP)
+    : ethers.parseEther('100000000');
 
   console.log('\n  ═ Phase 1: Deployment ═════════════════════════════');
 
@@ -85,7 +89,7 @@ async function main() {
   if (!round) {
     console.log('    Deploying AngelRound...');
     const F = await ethers.getContractFactory('AngelRound');
-    round = await F.deploy(ADMIN, HARD_CAP, MAX_PW, MIN_COMMIT, P_NUM, P_DEN, PHASE);
+    round = await F.deploy(ADMIN, HARD_CAP, MAX_PW, MIN_COMMIT, P_NUM, P_DEN, PHASE, XF_CAP);
     await round.waitForDeployment();
     roundAddr = await round.getAddress();
     const receipt = await round.deploymentTransaction().wait();
@@ -100,6 +104,7 @@ async function main() {
   console.log(`    Min commit:  ${ethers.formatEther(MIN_COMMIT)} TFUEL`);
   console.log(`    Max/wallet:  ${MAX_PW === 0n ? 'none' : ethers.formatEther(MAX_PW) + ' TFUEL'}`);
   console.log(`    Price:       ${P_NUM}/${P_DEN} XF per TFUEL`);
+  console.log(`    XF cap:      ${ethers.formatEther(XF_CAP)} XF reserved (on-chain ceiling)`);
 
   console.log('\n  ═ Phase 3: Smoke ════════════════════════════════');
   let pass = 0;
@@ -208,6 +213,7 @@ async function main() {
       refunds: 'none — separate from BelieverRound',
       preTGETreasury: 'withdrawToTreasury(to, amount, memo) — admin only, before TGE',
       tgeNote: 'triggerTGE is per-contract; call separately from BelieverRound.triggerTGE',
+      xfAllocationCapXF: ethers.formatEther(XF_CAP),
     },
     smokeTests: { passed: pass, total: smokeTotal, commitSmoke: smokeNote || 'not_run' },
     deploymentGas: deployGas,

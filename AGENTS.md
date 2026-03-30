@@ -187,8 +187,13 @@ const result = await client.waitForSettlement(task.taskId);
 ## Key Repository Paths
 
 ```
-contracts/core/           — 4 audit-scope contracts (CertiK Phase 1)
-contracts/circuits/       — 16 ecosystem circuits
+contracts/core/           — Core settlement (see WHITEPAPER §11.5 Audit Phase 1)
+contracts/circuits/       — Circuits incl. ThetaInference + funding + ecosystem
+test/cosmos-yield/        — IBC reverse bridge + legacy VaultFactory tests (YieldCircuit / Cosmos track; not Phase 1 core audit). `npm run test:contracts:cosmos-yield`
+docs/AUDIT_READINESS_CHECKLIST.md — Gap list before auditor handover
+docs/LEGAL_LAUNCH_CHECKLIST.md    — Legal/compliance planning (not legal advice)
+docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md — Testnet 365 + mainnet 361 steps, tests (`npm run test:believer`)
+xfuel-app/.env.example   — All VITE_* vars; testnet 365 vs mainnet 361
 core-layer/               — AI listener, A2A orchestrator, CosmWasm WASM
 backend/theta-bridge/     — Bridge service, M2M API server, fee analytics
 sdk/js/                   — JavaScript SDK (xfuel-sdk)
@@ -202,68 +207,68 @@ zkgpt-prover/             — Phase 1 zkGPT mock server + smoke test (E2E)
 docs/PHASE1_KICKOFF.md    — Phase 1 status, run Phase 1 checks (npm run test:phase1), post-deploy checklist
 ```
 
+**Core tests:** `npm run test:contracts:core` runs `test:contracts:core:listener` (`node:test`, `core-layer/test/ai-listener.test.js`) then `test:contracts:core:solidity` (Hardhat: `core-layer/test/*.cjs`, `test/phase3`, `test/security`). **Full contract matrix:** `npm run test:contracts:all` runs the same listener step then `test:contracts:all:hardhat`, implemented by `scripts/hardhat-test-all.cjs` (explicit file list — works on Windows; no shell glob). CI `test.yml` mirrors this with two steps before coverage. Believer or Angel rounds: `npm run test:believer`. For a narrower green gate (core + phase3 + security Hardhat only), use `npm run test:contracts:core:solidity`.
+
 ---
 
 ## Security
 
 - Bug bounty: up to $50,000 (Critical). See [`docs/bug-bounty.md`](docs/bug-bounty.md)
 - Responsible disclosure: security@xfuel.app or [GitHub Security Advisory](https://github.com/XFuel-Lab/xfuel-protocol/security)
-- CertiK Phase 1 audit: Q2 2026 (scope: `contracts/core/`)
+- **Audit waves:** See **WHITEPAPER.md §11.5** — **Audit Phase 1** = `contracts/core/` + `ThetaInferenceCircuit` + funding/engagement contracts + proof hooks; **Audit Phase 2** = remaining EVM circuits (TAO, Bridge, Data, M2M-facing, etc.) staggered post–Phase 1.
 
 ---
 
-## Believer Round — Community Funding
+## Community Contribution Round (`BelieverRound`)
 
-XFuel is running a phased community funding round using the `BelieverRound.sol` contract.
-
-**Current Phase: 1**
+Single open community sale (no phased 4/12/24% tranches). **`xfAllocationCap`** enforces up to **150M XF** (15% of 1B) reserved. **`setTokenPrice`** while **Open** updates XF per TFUEL (multisig; see `docs/PRICING_TFUEL_XF.md`).
 
 | Parameter | Value |
 |-----------|-------|
 | Contract | `contracts/circuits/BelieverRound.sol` |
-| Hard cap | 2,000,000 TFUEL (Phase 1) |
-| Base price (Phase 1) | 25 XF per 1 TFUEL |
-| Min commitment | 100 TFUEL |
-| Max per wallet | None |
-| Cliff | 90 days |
-| Vesting | 270 days linear after cliff (9 months; ~12 months total from TGE) |
-| Lock bonuses | Optional tiers 1–3: +8% / +20% / +35% XF with longer min-claim delay (on-chain) |
+| XF ceiling | `xfAllocationCap` (default deploy: 150M XF) |
+| TFUEL hard cap | Env / deploy (e.g. `BELIEVER_HARD_CAP`) |
+| Min commitment | 100 TFUEL (on-chain constant unless contract variant) |
+| Max per wallet | Env (`0` = none) |
+| Base price (default deploy) | **5 XF per 1 TFUEL** (`BELIEVER_PRICE_NUM` / `DEN`) |
+| Cliff / vesting | 90d cliff + 270d linear |
+| Lock bonuses | Optional tiers 1–3: **+8% / +20% / +35%** on base XF (effective **5.4 / 6 / 6.75** XF per TFUEL at default base 5) |
 | Admin | `0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257` (Gnosis Safe) |
-| UI | `believers/index.html`, `xfuel-app` route `/believers` |
+| UI | `xfuel-app` route `/believers` |
 
 **Commit (on-chain):**
 ```
-BelieverRound.commit{ value: tfuelAmount }()           // base tier
-BelieverRound.commitWithLock{ value: tfuelAmount }(tier)  // tier 1–3
+BelieverRound.commit{ value: tfuelAmount }()
+BelieverRound.commitWithLock{ value: tfuelAmount }(tier)
 ```
 
-**Token allocation (total 1B XF supply):**
-- Phase 1: 40M XF (4%) @ 25 XF/TFUEL base
-- Phase 2: 120M XF (12%) @ 20 XF/TFUEL
-- Phase 3: 240M XF (24%) @ 15 XF/TFUEL
-- Total believer allocation: 400M XF (40%)
-
-Refund available if TGE not triggered within 180 days. See `believer/launch-round.cjs` for deployment.
+Refund if TGE not triggered within 180 days. Deploy: `believer/launch-round.cjs` · Env: `BELIEVER_XF_ALLOCATION_CAP` (human XF, default `150000000`). **Full launch flow:** [`docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md`](docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md) · Tests: `npm run test:believer`.
 
 ---
 
-## Angel Round — Pre-TGE treasury (no refund)
+## Community Engagement Rewards (15%)
 
-Separate contract from Believers: **`contracts/circuits/AngelRound.sol`**. For parties who accept **no on-chain TFUEL refund** and **pre-TGE treasury use** (audits, ops, etc.). Admin may call `withdrawToTreasury(to, amount, memo)` while the round is Open or Closed **before** `triggerTGE`; memos are on-chain for transparency (not a cryptographic earmark).
+**`contracts/circuits/CommunityEngagementDistributor.sol`** — Merkle seasons, lifetime cap `maxLifetimeXF` (150M XF when matching full bucket). Docs: `docs/COMMUNITY_ENGAGEMENT_REWARDS.md`. Deploy helper: `believer/deploy-engagement-distributor.cjs`.
+
+---
+
+## Angel / Strategic Round (`AngelRound`)
+
+Separate from community round: **no TFUEL refund**; **`withdrawToTreasury`** before TGE with memo. **`xfAllocationCap`** = **100M XF** (10%) at default deploy.
 
 | Parameter | Typical default (env overrides) |
 |-----------|----------------------------------|
 | Deploy script | `believer/launch-angel-round.cjs` |
-| Hard cap | 2,000,000 TFUEL (set `ANGEL_HARD_CAP`) |
-| Min commitment | 10,000 TFUEL (`ANGEL_MIN_COMMITMENT`) |
-| Price | 35 XF / 1 TFUEL (`ANGEL_PRICE_NUM` / `ANGEL_PRICE_DEN`) |
-| Cliff / vesting | 90d cliff + 270d linear (same family as Believer) |
-| Lock tiers | None in v1 |
-| TGE | **Separate** `triggerTGE` from BelieverRound — two contracts ⇒ two TGE calls |
+| XF ceiling | `ANGEL_XF_ALLOCATION_CAP` (default `100000000`) |
+| Hard cap | `ANGEL_HARD_CAP` TFUEL |
+| Min commitment | `ANGEL_MIN_COMMITMENT` |
+| Price | `ANGEL_PRICE_NUM` / `ANGEL_PRICE_DEN` (default deploy **8 XF per 1 TFUEL** — more XF per TFUEL than Believer base **5**) |
+| Cliff / vesting | 90d + 270d linear |
+| TGE | **Separate** `triggerTGE` from BelieverRound |
 
-**veXF:** AngelRound does **not** mint veXF. Commitments yield **vested XF claims** after TGE; **veXF** comes from locking XF in `veXFGovernance` (or equivalent) after tokens are held.
+**veXF:** Lock XF in `veXFGovernance` after claim.
 
-**xfuel-app:** route `/angels`, env `VITE_ANGEL_ROUND_ADDRESS`.
+**xfuel-app:** `/angels`, env `VITE_ANGEL_ROUND_ADDRESS`. **Launch runbook:** [`docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md`](docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md).
 
 ---
 

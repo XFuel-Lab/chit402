@@ -5,7 +5,7 @@ const hre = require('hardhat');
 /**
  * @title Comprehensive VaultFactory & SubVault Test Suite
  * @notice Tests for ZK Bridge Hybrid: Create2 deploys, 0.5% fees, pause/refunds,
- *         UnwrapFromBurn (admin/ZK-triggered), yield loop integration (30% recycle)
+ *         UnwrapFromBurn (admin/ZK-triggered); full amount to recipient (no on-vault yield split)
  * @author @XFuelLab
  */
 describe('VaultFactory & SubVault - Comprehensive ZK Bridge Tests', function () {
@@ -263,14 +263,12 @@ describe('VaultFactory & SubVault - Comprehensive ZK Bridge Tests', function () 
       const parsedEvent = SubVault.interface.parseLog(event);
       const feeAmount = (depositAmount * 50n) / 10000n;
       const netAmount = depositAmount - feeAmount;
-      const yieldRecycleAmount = (netAmount * 3000n) / 10000n;
 
       expect(parsedEvent.args.vault).to.equal(vaultAddr);
       expect(parsedEvent.args.sender).to.equal(await getAddress(user1));
       expect(parsedEvent.args.grossAmount).to.equal(depositAmount);
       expect(parsedEvent.args.feeAmount).to.equal(feeAmount);
       expect(parsedEvent.args.netAmount).to.equal(netAmount);
-      expect(parsedEvent.args.yieldRecycleAmount).to.equal(yieldRecycleAmount);
     });
 
     it('Should handle multiple deposits correctly', async function () {
@@ -339,7 +337,7 @@ describe('VaultFactory & SubVault - Comprehensive ZK Bridge Tests', function () 
     });
   });
 
-  describe('4. Yield Loop Integration (30% Recycle)', function () {
+  describe('4. Deposit net balance (no on-vault yield split)', function () {
     let vaultAddr;
     let SubVault;
 
@@ -347,12 +345,12 @@ describe('VaultFactory & SubVault - Comprehensive ZK Bridge Tests', function () 
       const salt = await factory.generateSalt(await getAddress(user1), 0);
       await factory.connect(user1).createVault(salt);
       vaultAddr = await factory.predictAddress(salt);
-      
+
       const SubVaultFactory = await ethers.getContractFactory('SubVault');
       SubVault = SubVaultFactory.attach(vaultAddr);
     });
 
-    it('Should track 30% yield recycle amount on deposit', async function () {
+    it('Should emit DepositReceived without yield fields; net stays in vault', async function () {
       const depositAmount = parseEther('1000');
 
       const tx = await user1.sendTransaction({
@@ -373,31 +371,12 @@ describe('VaultFactory & SubVault - Comprehensive ZK Bridge Tests', function () 
       const parsedEvent = SubVault.interface.parseLog(event);
       const feeAmount = (depositAmount * 50n) / 10000n;
       const netAmount = depositAmount - feeAmount;
-      const expectedYieldRecycle = (netAmount * 3000n) / 10000n; // 30%
 
-      expect(parsedEvent.args.yieldRecycleAmount).to.equal(expectedYieldRecycle);
-
-      // Verify full net amount stays in vault (yield recycle stays in vault for now)
+      expect(parsedEvent.args.netAmount).to.equal(netAmount);
       expect(await SubVault.getBalance()).to.equal(netAmount);
     });
 
-    it('Should keep yield recycle funds in vault', async function () {
-      const depositAmount = parseEther('1000');
-      await user1.sendTransaction({ to: vaultAddr, value: depositAmount });
-
-      const feeAmount = (depositAmount * 50n) / 10000n;
-      const netAmount = depositAmount - feeAmount;
-
-      // Full net amount should be in vault (yield recycle portion not yet moved)
-      expect(await SubVault.getBalance()).to.equal(netAmount);
-    });
-
-    it('Should verify YIELD_RECYCLE_BPS constant is 3000 (30%)', async function () {
-      const yieldRecycleBps = await SubVault.YIELD_RECYCLE_BPS();
-      expect(yieldRecycleBps).to.equal(3000n);
-    });
-
-    it('Should calculate correct yield recycle for multiple deposits', async function () {
+    it('Should aggregate multiple deposits as sum of nets', async function () {
       const deposit1 = parseEther('500');
       const deposit2 = parseEther('300');
 
@@ -451,10 +430,8 @@ describe('VaultFactory & SubVault - Comprehensive ZK Bridge Tests', function () 
       );
       await tx.wait();
 
-      // Verify user2 received 70% (30% recycled to yield)
-      const expectedNetAmount = (unlockAmount * 7000n) / 10000n; // 70 TFUEL
       const user2BalanceAfter = await ethers.provider.getBalance(await getAddress(user2));
-      expect(user2BalanceAfter - user2BalanceBefore).to.equal(expectedNetAmount);
+      expect(user2BalanceAfter - user2BalanceBefore).to.equal(unlockAmount);
 
       // Verify burn is marked as processed
       expect(await SubVault.isBurnProcessed(burnTxHash)).to.be.true;
@@ -519,14 +496,10 @@ describe('VaultFactory & SubVault - Comprehensive ZK Bridge Tests', function () 
       expect(event).to.not.be.undefined;
 
       const parsedEvent = SubVault.interface.parseLog(event);
-      const expectedNet = (unlockAmount * 7000n) / 10000n;
-      const expectedYieldRecycle = unlockAmount - expectedNet;
 
       expect(parsedEvent.args.burnTxHash).to.equal(burnTxHash);
       expect(parsedEvent.args.recipient).to.equal(await getAddress(user2));
       expect(parsedEvent.args.amount).to.equal(unlockAmount);
-      expect(parsedEvent.args.netAmount).to.equal(expectedNet);
-      expect(parsedEvent.args.yieldRecycleAmount).to.equal(expectedYieldRecycle);
     });
 
     it('Should prevent double-processing of same burn', async function () {
@@ -647,15 +620,12 @@ describe('VaultFactory & SubVault - Comprehensive ZK Bridge Tests', function () 
       expect(await SubVault.getUnwrapRecipient(burnTxHash2)).to.equal(await getAddress(user2));
     });
 
-    it('Should correctly calculate 30% yield recycle on unwrap', async function () {
+    it('Should send full unwrap amount from vault balance', async function () {
       const burnTxHash = ethers.keccak256
-        ? ethers.keccak256(ethers.toUtf8Bytes('yield-recycle-test'))
-        : ethers.utils.keccak256(ethers.utils.toUtf8Bytes('yield-recycle-test'));
-      
-      // Get actual vault balance (after deposit fees)
+        ? ethers.keccak256(ethers.toUtf8Bytes('full-unwrap-test'))
+        : ethers.utils.keccak256(ethers.utils.toUtf8Bytes('full-unwrap-test'));
+
       const vaultBalanceBefore = await SubVault.getBalance();
-      
-      // Use a smaller unlock amount that we know is available
       const unlockAmount = parseEther('500');
 
       await factory.connect(zkBridgeOperator).unwrapFromBurn(
@@ -665,13 +635,8 @@ describe('VaultFactory & SubVault - Comprehensive ZK Bridge Tests', function () 
         unlockAmount
       );
 
-      const expectedYieldRecycle = (unlockAmount * 3000n) / 10000n; // 150 TFUEL
-      const expectedSent = (unlockAmount * 7000n) / 10000n; // 350 TFUEL
-
       const vaultBalanceAfter = await SubVault.getBalance();
-      
-      // Vault should have lost 350 TFUEL (sent to user), 150 TFUEL stays for yield
-      expect(vaultBalanceBefore - vaultBalanceAfter).to.equal(expectedSent);
+      expect(vaultBalanceBefore - vaultBalanceAfter).to.equal(unlockAmount);
     });
 
     it('Should revert unwrap from non-vault address', async function () {
@@ -911,9 +876,8 @@ describe('VaultFactory & SubVault - Comprehensive ZK Bridge Tests', function () 
         unlockAmount
       );
 
-      const expectedNet = (unlockAmount * 7000n) / 10000n;
       const user2BalanceAfter = await ethers.provider.getBalance(await getAddress(user2));
-      expect(user2BalanceAfter - user2BalanceBefore).to.equal(expectedNet);
+      expect(user2BalanceAfter - user2BalanceBefore).to.equal(unlockAmount);
     });
 
     it('Should handle multiple deposits and multiple unwraps', async function () {

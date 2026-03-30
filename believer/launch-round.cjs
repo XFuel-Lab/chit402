@@ -1,21 +1,16 @@
 /**
- * XFuel Protocol — Believer Round Phase 1 Launch Script
+ * XFuel Protocol — Believer Round Launch Script
  *
- * Phase 1 Parameters (locked):
- *   - Hard cap:      2,000,000 TFUEL  (~$26K at $0.013/TFUEL)
- *   - Max/wallet:    0 (no cap — whale-friendly, total cap enforces distribution)
- *   - Price:         25 XF per 1 TFUEL (Phase 1 base; optional lock tiers add bonus XF on-chain)
- *   - XF allocated:  up to 40,000,000 XF (4% of 1B total supply)
- *   - Min commit:    100 TFUEL
- *   - Cliff:         90 days
- *   - Vesting:       270 days linear after cliff (9 months)
- *   - Admin/multisig: 0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257 (Gnosis Safe on Theta)
+ * Default parameters (env overrides):
+ *   - TFUEL hard cap:  e.g. 2,000,000 TFUEL (BELIEVER_HARD_CAP)
+ *   - XF ceiling:      150,000,000 XF on-chain (BELIEVER_XF_ALLOCATION_CAP = 15% of 1B)
+ *   - Max/wallet:      0 = no cap
+ *   - Price:           5 XF per 1 TFUEL base (BELIEVER_PRICE_NUM/DEN); multisig setTokenPrice while Open
+ *   - Min commit:      100 TFUEL (contract constant)
+ *   - Cliff / vesting: 90d + 270d linear
+ *   - Admin/multisig:  0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257 (Gnosis Safe on Theta)
  *
- * Phased Rollout:
- *   Phase 1:  2,000,000 TFUEL hard cap → 40M XF  (4%)  @ 25 XF/TFUEL
- *   Phase 2:  6,000,000 TFUEL hard cap → 120M XF (12%) @ 20 XF/TFUEL
- *   Phase 3:  8,000,000 TFUEL hard cap → 240M XF (24%) @ 15 XF/TFUEL
- *   Total:   16,000,000 TFUEL          → 400M XF (40%) ~ $208K USD
+ * Single open community round (no phased 4/12/24% tranches). See WHITEPAPER §10.
  *
  * Usage:
  *   npx hardhat run believer/launch-round.cjs --network theta-testnet
@@ -24,11 +19,12 @@
  * Environment variables (.env.local):
  *   DEPLOYER_PRIVATE_KEY
  *   ADMIN_ADDRESS              (defaults to 0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257)
- *   BELIEVER_PHASE             (default 1)
+ *   BELIEVER_PHASE             (default 1 — on-chain metadata only, 1–3; does NOT enable tranches; see below)
  *   BELIEVER_HARD_CAP          (default 2000000 TFUEL)
  *   BELIEVER_MAX_PER_WALLET    (default 0 = no cap)
- *   BELIEVER_PRICE_NUM         (default 25)
+ *   BELIEVER_PRICE_NUM         (default 5)
  *   BELIEVER_PRICE_DEN         (default 1)
+ *   BELIEVER_XF_ALLOCATION_CAP (default 150000000 = 15% of 1B XF, human units → parseEther)
  *   EXISTING_MANIFEST          (path to manifest JSON, skips deploy if set)
  *   BELIEVER_SMOKE_COMMIT      (default on) Set to 0 or false to skip the 100 TFUEL test commit
  */
@@ -55,26 +51,31 @@ async function main() {
     try { return ethers.getAddress(v); } catch { return fb; }
   }
 
-  // Phase 1 defaults — locked in tokenomics design
+  // Single open round: `xfAllocationCap` (15%) + optional TFUEL `hardCap` end the sale — not sequential tranches.
+  // `PHASE` below is only the contract constructor uint8 (events/stats); BelieverRound does not branch logic on it.
   const MULTISIG = '0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257';
   const ADMIN = resolveAddr('ADMIN_ADDRESS', MULTISIG);
-  const PHASE = process.env.BELIEVER_PHASE ? parseInt(process.env.BELIEVER_PHASE) : 1;
+  const PHASE = process.env.BELIEVER_PHASE ? parseInt(process.env.BELIEVER_PHASE, 10) : 1;
+  if (PHASE < 1 || PHASE > 3) {
+    throw new Error(`BELIEVER_PHASE must be 1–3 (constructor metadata only); got ${PHASE}`);
+  }
 
-  // Phase-specific defaults
-  const PHASE_CONFIGS = {
-    1: { hardCap: '2000000', maxPerWallet: '0', priceNum: 25n, priceDen: 1n },
-    2: { hardCap: '6000000', maxPerWallet: '0', priceNum: 20n, priceDen: 1n },
-    3: { hardCap: '8000000', maxPerWallet: '0', priceNum: 15n, priceDen: 1n },
-  };
-  const cfg = PHASE_CONFIGS[PHASE] || PHASE_CONFIGS[1];
+  const DEFAULT_HARD_CAP = '2000000';
+  const DEFAULT_MAX_PER_WALLET = '0';
+  const DEFAULT_PRICE_NUM = 5n;
+  const DEFAULT_PRICE_DEN = 1n;
 
   const HARD_CAP = process.env.BELIEVER_HARD_CAP
-    ? ethers.parseEther(process.env.BELIEVER_HARD_CAP) : ethers.parseEther(cfg.hardCap);
-  // 0 = no per-wallet cap
-  const MAX_PW_STR = process.env.BELIEVER_MAX_PER_WALLET ?? cfg.maxPerWallet;
+    ? ethers.parseEther(process.env.BELIEVER_HARD_CAP)
+    : ethers.parseEther(DEFAULT_HARD_CAP);
+  const MAX_PW_STR = process.env.BELIEVER_MAX_PER_WALLET ?? DEFAULT_MAX_PER_WALLET;
   const MAX_PW = MAX_PW_STR === '0' ? 0n : ethers.parseEther(MAX_PW_STR);
-  const P_NUM = process.env.BELIEVER_PRICE_NUM ? BigInt(process.env.BELIEVER_PRICE_NUM) : cfg.priceNum;
-  const P_DEN = process.env.BELIEVER_PRICE_DEN ? BigInt(process.env.BELIEVER_PRICE_DEN) : cfg.priceDen;
+  const P_NUM = process.env.BELIEVER_PRICE_NUM ? BigInt(process.env.BELIEVER_PRICE_NUM) : DEFAULT_PRICE_NUM;
+  const P_DEN = process.env.BELIEVER_PRICE_DEN ? BigInt(process.env.BELIEVER_PRICE_DEN) : DEFAULT_PRICE_DEN;
+
+  const XF_CAP = process.env.BELIEVER_XF_ALLOCATION_CAP
+    ? ethers.parseEther(process.env.BELIEVER_XF_ALLOCATION_CAP)
+    : ethers.parseEther('150000000');
 
   // ═══ Phase 1: Check for Existing Deployment ═════════════════════
   console.log('\n  ═ Phase 1: Deployment Check ═══════════════════════');
@@ -97,7 +98,7 @@ async function main() {
   if (!round) {
     console.log('    Deploying new BelieverRound...');
     const F = await ethers.getContractFactory('BelieverRound');
-    round = await F.deploy(ADMIN, HARD_CAP, MAX_PW, P_NUM, P_DEN, PHASE);
+    round = await F.deploy(ADMIN, HARD_CAP, MAX_PW, P_NUM, P_DEN, PHASE, XF_CAP);
     await round.waitForDeployment();
     roundAddr = await round.getAddress();
     const receipt = await round.deploymentTransaction().wait();
@@ -107,11 +108,12 @@ async function main() {
 
   // ═══ Phase 2: Configuration Verify ══════════════════════════════
   console.log('\n  ═ Phase 2: Configuration ═════════════════════════');
-  console.log(`    Phase:       ${PHASE}`);
+  console.log(`    on-chain phase (metadata): ${PHASE} — not a sequential tranche; use 1 unless you need ABI compat`);
   console.log(`    Admin:       ${ADMIN}`);
   console.log(`    Hard cap:    ${ethers.formatEther(HARD_CAP)} TFUEL`);
   console.log(`    Max/wallet:  ${MAX_PW === 0n ? 'NO CAP (whale-friendly)' : ethers.formatEther(MAX_PW) + ' TFUEL'}`);
   console.log(`    Price:       ${P_NUM}/${P_DEN} XF per TFUEL`);
+  console.log(`    XF cap:      ${ethers.formatEther(XF_CAP)} XF reserved (on-chain ceiling)`);
 
   // ═══ Phase 3: Smoke Tests ═══════════════════════════════════════
   console.log('\n  ═ Phase 3: Smoke Tests ═══════════════════════════');
@@ -215,13 +217,13 @@ async function main() {
   const report = {
     protocol: 'XFuel Protocol',
     version: '2.0.0',
-    event: `Believer Round Phase ${PHASE} Launch`,
+    event: 'Believer Round Launch',
     network: network.name,
     timestamp: new Date().toISOString(),
     contract: roundAddr,
     explorerUrl: explorer ? `${explorer}/account/${roundAddr}` : null,
     parameters: {
-      phase: PHASE,
+      onChainPhaseMetadata: PHASE,
       hardCap: ethers.formatEther(HARD_CAP),
       maxPerWallet: MAX_PW === 0n ? 'none' : ethers.formatEther(MAX_PW),
       priceXFPerTFUEL: `${P_NUM}/${P_DEN}`,
@@ -232,14 +234,14 @@ async function main() {
       refundDeadlineDays: 180,
       lockTiers: 'commit() = tier 0; commitWithLock(1|2|3) = +8%/+20%/+35% XF with longer min-claim delay (see BelieverRound.sol)',
       admin: ADMIN,
+      xfAllocationCapXF: ethers.formatEther(XF_CAP),
     },
     tokenomics: {
       totalSupply: '1,000,000,000 XF',
-      phase1Allocation: '40,000,000 XF (4%)',
-      phase2Allocation: '120,000,000 XF (12%)',
-      phase3Allocation: '240,000,000 XF (24%)',
-      totalBelieverAllocation: '400,000,000 XF (40%)',
-      illustrativePhase1RaiseNote: 'If 2M TFUEL cap fills, rough fiat scale depends on spot TFUEL (e.g. ~$32K @ ~$0.016) — not an FDV quote.',
+      communityContributionRound: 'Up to 150,000,000 XF (15%) — on-chain xfAllocationCap',
+      communityEngagementRewards: '150,000,000 XF (15%) — CommunityEngagementDistributor + Merkle seasons',
+      angelStrategicRound: 'Up to 100,000,000 XF (10%) — AngelRound.sol',
+      note: 'Single open community round (no phased 4/12/24% believer tranches). See WHITEPAPER §10.',
     },
     smokeTests: {
       passed: pass,
@@ -263,13 +265,13 @@ async function main() {
   console.log('\n  ═ Phase 5: Campaign Copy ═════════════════════════');
   console.log(`
   ── Discord ──────────────────────────────────────────
-  **XFuel Believer Round Phase ${PHASE} is LIVE on Theta!**
+  **XFuel Believer Round is LIVE on Theta!**
 
   Commit TFUEL to become an early XFuel Protocol supporter.
   - Min: 100 TFUEL | No wallet cap (first come, first served)
   - Hard cap: ${ethers.formatEther(HARD_CAP)} TFUEL total
   - Price: ${P_NUM} XF per 1 TFUEL base (optional lock tiers: commitWithLock for bonus XF)
-  - 4% of total XF supply allocated to Phase ${PHASE}
+  - Up to 15% of total XF supply for Community Contribution (on-chain cap)
   - Vesting: ${cliffDaysOnChain}-day cliff + ${linearVestingDaysOnChain}-day linear (~${approxDaysCliffPlusLinear}d from TGE to full schedule); lock tiers can delay first claim
   - On-chain refund: full TFUEL back if TGE missed (180 days)
   - Multisig-secured: ${ADMIN}
@@ -281,7 +283,7 @@ async function main() {
   ${explorer ? `Explorer: ${explorer}/account/${roundAddr}` : ''}
 
   ── X/Twitter ────────────────────────────────────────
-  1/ XFuel Believer Round Phase ${PHASE} is LIVE.
+  1/ XFuel Believer Round is LIVE.
 
   21 modular AI circuits. 22 deployed contracts. 755+ tests.
   ZK-verified compute on Theta — routing AI tasks to TAO, Akash, 

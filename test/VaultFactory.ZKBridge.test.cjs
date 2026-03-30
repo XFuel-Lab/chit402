@@ -202,7 +202,7 @@ describe('VaultFactory & SubVault - ZK Bridge Hybrid', function () {
     });
   });
 
-  describe('SubVault Deposits with Fees & Yield Loop', function () {
+  describe('SubVault Deposits with Fees', function () {
     let vaultAddr;
     let SubVault;
 
@@ -252,21 +252,17 @@ describe('VaultFactory & SubVault - ZK Bridge Hybrid', function () {
       expect(await SubVault.getBalance()).to.equal(expectedNet);
     });
 
-    it('Should calculate 30% yield recycle amount', async function () {
+    it('Should keep full net deposit in vault (no on-vault yield split)', async function () {
       const depositAmount = parseEther('1000');
-      
-      const tx = await user1.sendTransaction({
+
+      await user1.sendTransaction({
         to: vaultAddr,
         value: depositAmount
       });
-      const receipt = await tx.wait();
-      
-      // Calculate expected amounts with BigInt
-      const feeAmount = (depositAmount * 50n) / 10000n; // 0.5% = 5 TFUEL
-      const netAmount = depositAmount - feeAmount; // 995 TFUEL
-      const yieldRecycleAmount = (netAmount * 3000n) / 10000n; // 30% of 995 = 298.5 TFUEL
-      
-      // Verify vault keeps full net amount (yield recycle stays in vault)
+
+      const feeAmount = (depositAmount * 50n) / 10000n;
+      const netAmount = depositAmount - feeAmount;
+
       expect(await SubVault.getBalance()).to.equal(netAmount);
     });
 
@@ -339,10 +335,8 @@ describe('VaultFactory & SubVault - ZK Bridge Hybrid', function () {
       });
       expect(factoryEvent).to.not.be.undefined;
       
-      // Verify user2 received 70% (30% recycled to yield)
-      const expectedNetAmount = unlockAmount * 7000n / 10000n; // 70 TFUEL
       const user2BalanceAfter = await ethers.provider.getBalance(user2Addr);
-      expect(user2BalanceAfter - user2BalanceBefore).to.equal(expectedNetAmount);
+      expect(user2BalanceAfter - user2BalanceBefore).to.equal(unlockAmount);
       
       // Verify burn is marked as processed
       expect(await SubVault.isBurnProcessed(burnTxHash)).to.be.true;

@@ -139,9 +139,12 @@ async function main() {
   console.log('\n  -- Phase 3: BelieverRound --');
   const hCap = process.env.BELIEVER_HARD_CAP
     ? ethers.parseEther(process.env.BELIEVER_HARD_CAP) : ethers.parseEther('500');
+  const believerXfCap = process.env.BELIEVER_XF_ALLOCATION_CAP
+    ? ethers.parseEther(process.env.BELIEVER_XF_ALLOCATION_CAP)
+    : ethers.parseEther('150000000');
   await dep('BelieverRound',
     await ethers.getContractFactory('BelieverRound'),
-    [d, hCap, ethers.parseEther('5'), 10000n, 1n]);
+    [d, hCap, ethers.parseEther('5'), 10000n, 1n, 1, believerXfCap]);
   manifest.believerRound = {
     address: manifest.contracts.BelieverRound,
     hardCap: ethers.formatEther(hCap), maxPerWallet: '5.0',

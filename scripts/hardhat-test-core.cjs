@@ -1,6 +1,8 @@
 /**
- * Run core-layer + phase3 + security Hardhat tests with explicit file list.
- * Shell globs are unreliable on Windows; CI (Linux) and local both use this.
+ * Run core-layer (Hardhat *.cjs only) + phase3 + security with an explicit file list.
+ * Core listener / multi-prover unit tests live in ai-listener.test.js — run via
+ * `npm run test:contracts:core:listener` (node:test), not Hardhat.
+ * Shell globs are unreliable on Windows; CI and local both use this script.
  */
 const { spawnSync } = require('child_process');
 const fs = require('fs');
@@ -17,14 +19,14 @@ const files = [];
 for (const dir of dirs) {
   if (!fs.existsSync(dir)) continue;
   for (const name of fs.readdirSync(dir)) {
-    if (/\.test\.(cjs|js)$/.test(name)) {
+    if (/\.test\.cjs$/.test(name)) {
       files.push(path.relative(root, path.join(dir, name)).split(path.sep).join('/'));
     }
   }
 }
 
 if (!files.length) {
-  console.error('hardhat-test-core: no *.test.cjs / *.test.js found under core-layer/test, test/phase3, test/security');
+  console.error('hardhat-test-core: no *.test.cjs found under core-layer/test, test/phase3, test/security');
   process.exit(1);
 }
 

@@ -49,6 +49,13 @@ export default function Angels() {
     query: { enabled: deployed },
   });
 
+  const { data: xfCap } = useReadContract({
+    address: roundAddr,
+    abi: ANGEL_ROUND_ABI,
+    functionName: 'xfAllocationCap',
+    query: { enabled: deployed },
+  });
+
   const { writeContract, data: hash, isPending, error: writeError, reset } = useWriteContract();
   const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
@@ -68,7 +75,7 @@ export default function Angels() {
 
   const minTfuel = minCommitment ? Number(formatEther(minCommitment)) : 10_000;
   const hardCapTfuel = stats ? Number(formatEther(stats[4])) : 0;
-  const num = priceNum ?? 35n;
+  const num = priceNum ?? 8n;
   const den = priceDen && priceDen > 0n ? priceDen : 1n;
 
   const xfPreview = useMemo(() => {
@@ -87,6 +94,18 @@ export default function Angels() {
       committedLabel: `${committed.toLocaleString(undefined, { maximumFractionDigits: 0 })} TFUEL committed`,
     };
   }, [stats, hardCapTfuel]);
+
+  const xfReserved = stats?.[8];
+  const xfProgress = useMemo(() => {
+    if (!xfCap || xfCap === 0n || xfReserved === undefined) return { pct: 0, label: 'XF allocation (on-chain cap)' };
+    const pct = Math.min(100, Number((xfReserved * 10000n) / xfCap) / 100);
+    const reservedHuman = Number(formatEther(xfReserved));
+    const capHuman = Number(formatEther(xfCap));
+    return {
+      pct,
+      label: `${reservedHuman.toLocaleString(undefined, { maximumFractionDigits: 0 })} / ${capHuman.toLocaleString(undefined, { maximumFractionDigits: 0 })} XF reserved`,
+    };
+  }, [xfCap, xfReserved]);
 
   const statusLabel = useMemo(() => {
     if (!stats) return '—';
@@ -134,17 +153,17 @@ export default function Angels() {
     <div className="page" style={{ maxWidth: 900, margin: '0 auto', padding: '0 1rem 4rem' }}>
       <div style={{ textAlign: 'center', padding: '2.5rem 0 1.5rem' }}>
         <span className="badge badge-orange" style={{ marginBottom: '1rem', display: 'inline-block' }}>
-          Pre-TGE treasury — high risk
+          {chainId === 361 ? 'Theta mainnet (361)' : 'Theta testnet (365)'} · Strategic — high risk
         </span>
-        <h1 style={styles.h1}>Angel Round</h1>
+        <h1 style={styles.h1}>Angel / Strategic Round</h1>
         <p style={styles.sub}>
           Separate from the{' '}
           <Link to="/believers" style={{ color: '#00d4ff' }}>
-            Believer Round
+            Community Round
           </Link>
-          . No on-chain TFUEL refund. The protocol may move committed TFUEL to treasury before TGE (audits, ops) via{' '}
-          <code style={{ fontSize: '0.85em' }}>withdrawToTreasury</code> with an on-chain memo. XF still vests after TGE (same cliff + linear schedule as
-          Believers). <strong style={{ color: '#e9d5ff' }}>TGE is triggered separately</strong> on this contract from BelieverRound.
+          . Up to <strong style={{ color: '#e9d5ff' }}>10%</strong> of XF supply (on-chain cap). No on-chain TFUEL refund. The protocol may move committed TFUEL
+          to treasury before TGE (audits, ops) via <code style={{ fontSize: '0.85em' }}>withdrawToTreasury</code> with an on-chain memo. XF vests after TGE (same
+          cliff + linear schedule). <strong style={{ color: '#e9d5ff' }}>TGE is triggered separately</strong> from BelieverRound.
         </p>
       </div>
 
@@ -185,6 +204,16 @@ export default function Angels() {
         <div className="progress-bar">
           <div className="progress-bar-fill" style={{ width: `${progress.pct}%`, background: 'linear-gradient(90deg, #a855f7, #f97316)' }} />
         </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.75rem', marginBottom: '0.35rem', fontSize: '0.82rem' }}>
+          <span style={{ color: '#8a8a9a' }}>{xfProgress.label}</span>
+          <span style={{ color: '#8a8a9a' }}>{xfProgress.pct.toFixed(1)}% of XF cap</span>
+        </div>
+        <div className="progress-bar">
+          <div
+            className="progress-bar-fill"
+            style={{ width: `${xfProgress.pct}%`, background: 'linear-gradient(90deg, #7c3aed, #ea580c)' }}
+          />
+        </div>
       </div>
 
       <div className="card" style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem', borderColor: 'rgba(249,115,22,0.35)' }}>
@@ -198,7 +227,9 @@ export default function Angels() {
         <div className="card" style={{ padding: '1.5rem' }}>
           <div style={styles.cardTitle}>Commit TFUEL</div>
           <p style={{ fontSize: '0.82rem', color: '#8a8a9a', marginBottom: '0.75rem' }}>
-            {isConnected ? `Wallet: ${truncate(address!)} · chain ${chainId}` : 'Use the header to connect (Theta testnet 365 recommended).'}
+            {isConnected
+              ? `Wallet: ${truncate(address!)} · chain ${chainId}`
+              : 'Use the header to connect (Theta mainnet 361 for production).'}
           </p>
 
           <label style={styles.label}>Amount (TFUEL)</label>
@@ -252,8 +283,12 @@ export default function Angels() {
         <div className="card" style={{ padding: '1.5rem' }}>
           <div style={styles.cardTitle}>On-chain transparency</div>
           <div style={styles.row}>
-            <span style={{ color: '#8a8a9a' }}>XF reserved (sum of commits)</span>
-            <span>{!deployed || !stats ? '—' : `${Number(formatEther(stats[8])).toLocaleString(undefined, { maximumFractionDigits: 0 })} XF`}</span>
+            <span style={{ color: '#8a8a9a' }}>XF reserved / cap</span>
+            <span>
+              {!deployed || !stats || !xfCap
+                ? '—'
+                : `${Number(formatEther(stats[8])).toLocaleString(undefined, { maximumFractionDigits: 0 })} / ${Number(formatEther(xfCap)).toLocaleString()} XF`}
+            </span>
           </div>
           <div style={styles.row}>
             <span style={{ color: '#8a8a9a' }}>Pre-TGE treasury withdrawals</span>

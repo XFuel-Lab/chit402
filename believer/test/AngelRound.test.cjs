@@ -19,9 +19,10 @@ describe('AngelRound', function () {
   const HARD_CAP = ethers.parseEther('1000000');
   const MAX_PER_WALLET = 0n;
   const MIN = ethers.parseEther('100');
-  const PRICE_NUM = 35n;
+  const PRICE_NUM = 8n;
   const PRICE_DEN = 1n;
   const PHASE = 1;
+  const XF_CAP = ethers.parseEther('100000000');
 
   const CLIFF = 90 * 24 * 60 * 60;
   const VESTING = 270 * 24 * 60 * 60;
@@ -35,7 +36,7 @@ describe('AngelRound', function () {
     await mockToken.mint(admin.address, ethers.parseEther('100000000'));
 
     const RF = await ethers.getContractFactory('AngelRound');
-    round = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, MIN, PRICE_NUM, PRICE_DEN, PHASE);
+    round = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, MIN, PRICE_NUM, PRICE_DEN, PHASE, XF_CAP);
     await round.waitForDeployment();
   });
 
@@ -54,6 +55,19 @@ describe('AngelRound', function () {
         round,
         'BelowMinimum'
       );
+    });
+
+    it('reverts when XF cap would be exceeded', async function () {
+      const RF = await ethers.getContractFactory('AngelRound');
+      const tinyCap = ethers.parseEther('500');
+      const r = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, MIN, PRICE_NUM, PRICE_DEN, PHASE, tinyCap);
+      await r.waitForDeployment();
+      await expect(r.connect(angel1).commit({ value: MIN })).to.be.revertedWithCustomError(r, 'ExceedsXFAllocationCap');
+    });
+
+    it('allows setTokenPrice while Open', async function () {
+      await round.connect(admin).setTokenPrice(9n, 1n);
+      expect(await round.tokenPriceNumerator()).to.equal(9n);
     });
   });
 

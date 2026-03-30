@@ -10,7 +10,10 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 /**
  * @title AngelRound
  * @author XFuel Protocol
- * @notice Pre-TGE treasury / audit funding round. Separate from BelieverRound (refundable community round).
+ * @notice Strategic / angel contribution round. Separate from BelieverRound (community; refundable if no TGE).
+ *
+ * Tokenomics: up to 100,000,000 XF (10% of 1B) — `xfAllocationCap`. Single open round; `phase` kept for ABI compat.
+ * `setTokenPrice` while Open aligns XF per TFUEL with TFUEL/USD policy (see docs/PRICING_TFUEL_XF.md).
  *
  * Key differences vs BelieverRound:
  *   - No TFUEL refund path — angels accept pre-TGE treasury use.
@@ -32,6 +35,9 @@ contract AngelRound is AccessControl, Pausable, ReentrancyGuard {
     uint256 public tokenPriceNumerator;
     uint256 public tokenPriceDenominator;
     uint8 public phase;
+
+    /// @notice Hard ceiling on XF reserved (XF wei). Typically 100M * 10**18.
+    uint256 public immutable xfAllocationCap;
 
     uint256 public constant CLIFF_DURATION = 90 days;
     uint256 public constant VESTING_DURATION = 270 days;
@@ -71,6 +77,7 @@ contract AngelRound is AccessControl, Pausable, ReentrancyGuard {
     event TGETriggered(address xfToken, uint256 totalTokens, uint256 timestamp);
     event TokensClaimed(address indexed angel, uint256 amount, uint256 totalClaimed);
     event FundsWithdrawn(address indexed to, uint256 amount);
+    event TokenPriceUpdated(uint256 numerator, uint256 denominator);
 
     error RoundNotOpen();
     error RoundNotClosed();
@@ -86,6 +93,8 @@ contract AngelRound is AccessControl, Pausable, ReentrancyGuard {
     error ZeroAddress();
     error ZeroWithdraw();
     error CliffNotEnded();
+    error ExceedsXFAllocationCap();
+    error PriceUpdateNotAllowed();
 
     constructor(
         address _admin,
@@ -94,7 +103,8 @@ contract AngelRound is AccessControl, Pausable, ReentrancyGuard {
         uint256 _minCommitment,
         uint256 _priceNumerator,
         uint256 _priceDenominator,
-        uint8 _phase
+        uint8 _phase,
+        uint256 _xfAllocationCap
     ) {
         require(_admin != address(0), "ZeroAdmin");
         require(_hardCap > 0, "ZeroHardCap");
@@ -102,6 +112,7 @@ contract AngelRound is AccessControl, Pausable, ReentrancyGuard {
         require(_maxPerWallet == 0 || _maxPerWallet <= _hardCap, "BadWalletCap");
         require(_priceNumerator > 0 && _priceDenominator > 0, "BadPrice");
         require(_phase >= 1 && _phase <= 3, "BadPhase");
+        require(_xfAllocationCap > 0, "ZeroXFCap");
 
         hardCap = _hardCap;
         maxCommitmentPerWallet = _maxPerWallet;
@@ -109,6 +120,7 @@ contract AngelRound is AccessControl, Pausable, ReentrancyGuard {
         tokenPriceNumerator = _priceNumerator;
         tokenPriceDenominator = _priceDenominator;
         phase = _phase;
+        xfAllocationCap = _xfAllocationCap;
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
         _grantRole(OPERATOR_ROLE, _admin);
@@ -117,6 +129,15 @@ contract AngelRound is AccessControl, Pausable, ReentrancyGuard {
         roundOpenedAt = block.timestamp;
 
         emit RoundOpened(_hardCap, _maxPerWallet, _minCommitment, _phase, block.timestamp);
+    }
+
+    /// @notice Updates XF per 1e18 TFUEL while the round is Open.
+    function setTokenPrice(uint256 newNumerator, uint256 newDenominator) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (status != RoundStatus.Open) revert PriceUpdateNotAllowed();
+        require(newNumerator > 0 && newDenominator > 0, "BadPrice");
+        tokenPriceNumerator = newNumerator;
+        tokenPriceDenominator = newDenominator;
+        emit TokenPriceUpdated(newNumerator, newDenominator);
     }
 
     function commit() external payable nonReentrant whenNotPaused {
@@ -129,6 +150,7 @@ contract AngelRound is AccessControl, Pausable, ReentrancyGuard {
         if (totalCommitted + msg.value > hardCap) revert ExceedsHardCap();
 
         uint256 xfDelta = _xfForAmount(msg.value);
+        if (totalXFReserved + xfDelta > xfAllocationCap) revert ExceedsXFAllocationCap();
         totalXFReserved += xfDelta;
 
         if (c.amount == 0) {

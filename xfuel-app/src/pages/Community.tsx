@@ -118,7 +118,7 @@ export default function Community() {
         <div className="grid grid-2" style={{ marginBottom: '2rem' }}>
           <div className="card" style={{ padding: '2rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3>Believer round</h3>
+              <h3>Community round</h3>
               {!believerOn ? (
                 <span className="badge badge-orange">Not configured</span>
               ) : (
@@ -161,7 +161,7 @@ export default function Community() {
             </ul>
 
             <Link to="/believers" className="btn btn-primary" style={{ width: '100%', marginTop: '1.25rem', justifyContent: 'center', display: 'flex' }}>
-              Open Believer round
+              Open community round
             </Link>
           </div>
 

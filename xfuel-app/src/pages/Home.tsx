@@ -112,7 +112,7 @@ export default function Home() {
             }}
           >
             <span style={{ color: '#a5f3fc' }}>
-              <strong>Early Believer Round</strong> — TFUEL → XF (Theta testnet). 25 XF/TFUEL base + optional lock bonuses.
+              <strong>Early Believer Round</strong> — TFUEL → XF (Theta testnet). 5 XF/TFUEL base + optional lock bonuses.
             </span>
             <Link to="/believers" className="btn btn-primary btn-sm">
               View Believers

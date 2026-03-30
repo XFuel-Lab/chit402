@@ -4,8 +4,6 @@ import { formatEther, parseEther } from 'viem';
 import { ADDRESSES, BELIEVER_ROUND_ABI, isDeployed } from '../contracts';
 
 const ADMIN_MULTISIG = '0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257';
-const HARD_CAP_TFUEL = 2_000_000;
-const BASE_PRICE = 25;
 const BONUS_BPS = [10_000, 10_800, 12_000, 13_500] as const;
 const EXPLORER_TESTNET = 'https://testnet-explorer.thetatoken.org';
 const EXPLORER_MAINNET = 'https://explorer.thetatoken.org';
@@ -31,6 +29,34 @@ export default function Believers() {
     query: { enabled: deployed, refetchInterval: 15_000 },
   });
 
+  const { data: xfCap } = useReadContract({
+    address: roundAddr,
+    abi: BELIEVER_ROUND_ABI,
+    functionName: 'xfAllocationCap',
+    query: { enabled: deployed },
+  });
+
+  const { data: xfReserved } = useReadContract({
+    address: roundAddr,
+    abi: BELIEVER_ROUND_ABI,
+    functionName: 'totalXFReserved',
+    query: { enabled: deployed, refetchInterval: 15_000 },
+  });
+
+  const { data: priceNum } = useReadContract({
+    address: roundAddr,
+    abi: BELIEVER_ROUND_ABI,
+    functionName: 'tokenPriceNumerator',
+    query: { enabled: deployed },
+  });
+
+  const { data: priceDen } = useReadContract({
+    address: roundAddr,
+    abi: BELIEVER_ROUND_ABI,
+    functionName: 'tokenPriceDenominator',
+    query: { enabled: deployed },
+  });
+
   const { writeContract, data: hash, isPending, error: writeError, reset } = useWriteContract();
   const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
@@ -48,23 +74,52 @@ export default function Believers() {
     }
   }, [isSuccess, hash, refetchStats]);
 
+  const baseXfPerTfuel = useMemo(() => {
+    const n = priceNum ?? 5n;
+    const d = priceDen && priceDen > 0n ? priceDen : 1n;
+    return Number(n) / Number(d);
+  }, [priceNum, priceDen]);
+
   const xfPreview = useMemo(() => {
     const v = parseFloat(amountTfuel) || 0;
     if (v <= 0) return '0 XF';
     const bps = BONUS_BPS[lockTier] ?? 10_000;
-    const xf = (v * BASE_PRICE * bps) / 10_000;
+    const xf = (v * baseXfPerTfuel * bps) / 10_000;
     return `${xf.toLocaleString(undefined, { maximumFractionDigits: 0 })} XF`;
-  }, [amountTfuel, lockTier]);
+  }, [amountTfuel, lockTier, baseXfPerTfuel]);
+
+  const hardCapTfuel = stats ? Number(formatEther(stats[4])) : 0;
 
   const progress = useMemo(() => {
-    if (!stats) return { pct: 0, committedLabel: '0 TFUEL committed' };
+    if (!stats || !hardCapTfuel) return { pct: 0, committedLabel: '0 TFUEL committed' };
     const committed = Number(formatEther(stats[0]));
-    const pct = Math.min(100, (committed / HARD_CAP_TFUEL) * 100);
+    const pct = Math.min(100, (committed / hardCapTfuel) * 100);
     return {
       pct,
       committedLabel: `${committed.toLocaleString(undefined, { maximumFractionDigits: 0 })} TFUEL committed`,
     };
-  }, [stats]);
+  }, [stats, hardCapTfuel]);
+
+  const xfProgress = useMemo(() => {
+    if (!xfCap || xfCap === 0n || !xfReserved) return { pct: 0, label: 'XF allocation (on-chain cap)' };
+    const pct = Math.min(100, Number((xfReserved * 10000n) / xfCap) / 100);
+    const reservedHuman = Number(formatEther(xfReserved));
+    const capHuman = Number(formatEther(xfCap));
+    return {
+      pct,
+      label: `${reservedHuman.toLocaleString(undefined, { maximumFractionDigits: 0 })} / ${capHuman.toLocaleString(undefined, { maximumFractionDigits: 0 })} XF reserved`,
+    };
+  }, [xfCap, xfReserved]);
+
+  const effXfPerTier = useMemo(() => {
+    const b = baseXfPerTfuel;
+    return [
+      b,
+      (b * 10_800) / 10_000,
+      (b * 12_000) / 10_000,
+      (b * 13_500) / 10_000,
+    ].map((x) => x.toLocaleString(undefined, { maximumFractionDigits: 4 }));
+  }, [baseXfPerTfuel]);
 
   const statusLabel = useMemo(() => {
     if (!stats) return '—';
@@ -120,12 +175,16 @@ export default function Believers() {
     <div className="page" style={{ maxWidth: 900, margin: '0 auto', padding: '0 1rem 4rem' }}>
       <div style={{ textAlign: 'center', padding: '2.5rem 0 1.5rem' }}>
         <span className="badge badge-cyan" style={{ marginBottom: '1rem', display: 'inline-block' }}>
-          Phase 1 — Theta testnet beta
+          {chainId === 361 ? 'Theta mainnet (361)' : 'Theta testnet (365)'} · Community contribution
         </span>
-        <h1 style={styles.h1}>XFuel Believer Round</h1>
+        <h1 style={styles.h1}>XFuel Community Round</h1>
         <p style={styles.sub}>
-          Commit TFUEL. Receive XF tokens. 3-month cliff + 9-month linear vest (12 months from TGE).
-          Optional longer locks earn bonus XF (on-chain). No wallet cap.
+          Up to <strong style={{ color: '#a5f3fc' }}>15%</strong> of XF supply sold here (on-chain <code style={{ fontSize: '0.88em' }}>xfAllocationCap</code>
+          ). Commit TFUEL; 3-month cliff + 9-month linear vest. Optional lock tiers earn bonus XF. Multisig may update XF/TFUEL price while the round is open (
+          <a href="https://github.com/XFuel-Lab/xfuel-protocol/blob/main/docs/PRICING_TFUEL_XF.md" style={{ color: '#00d4ff' }} rel="noreferrer">
+            pricing policy
+          </a>
+          ).
         </p>
       </div>
 
@@ -143,12 +202,16 @@ export default function Believers() {
           <div className="stat-label">Believers</div>
         </div>
         <div className="card" style={{ padding: '1rem' }}>
-          <div className="stat-value" style={{ fontSize: '1.35rem' }}>{HARD_CAP_TFUEL.toLocaleString()}</div>
-          <div className="stat-label">TFUEL hard cap</div>
+          <div className="stat-value" style={{ fontSize: '1.35rem' }}>
+            {!deployed || !stats ? '…' : hardCapTfuel.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </div>
+          <div className="stat-label">TFUEL hard cap (chain)</div>
         </div>
         <div className="card" style={{ padding: '1rem' }}>
-          <div className="stat-value" style={{ fontSize: '1.35rem' }}>{BASE_PRICE} XF</div>
-          <div className="stat-label">Base / 1 TFUEL (P1)</div>
+          <div className="stat-value" style={{ fontSize: '1.35rem' }}>
+            {!deployed ? '…' : `${baseXfPerTfuel.toLocaleString(undefined, { maximumFractionDigits: 2 })} XF`}
+          </div>
+          <div className="stat-label">Base / 1 TFUEL (chain)</div>
         </div>
       </div>
 
@@ -159,6 +222,16 @@ export default function Believers() {
         </div>
         <div className="progress-bar">
           <div className="progress-bar-fill" style={{ width: `${progress.pct}%` }} />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.75rem', marginBottom: '0.35rem', fontSize: '0.82rem' }}>
+          <span style={{ color: '#8a8a9a' }}>{xfProgress.label}</span>
+          <span style={{ color: '#8a8a9a' }}>{xfProgress.pct.toFixed(1)}% of XF cap</span>
+        </div>
+        <div className="progress-bar">
+          <div
+            className="progress-bar-fill"
+            style={{ width: `${xfProgress.pct}%`, background: 'linear-gradient(90deg, #8b5cf6, #06b6d4)' }}
+          />
         </div>
       </div>
 
@@ -173,7 +246,9 @@ export default function Believers() {
         <div className="card" style={{ padding: '1.5rem' }}>
           <div style={styles.cardTitle}>Commit TFUEL</div>
           <p style={{ fontSize: '0.82rem', color: '#8a8a9a', marginBottom: '0.75rem' }}>
-            {isConnected ? `Wallet: ${truncate(address!)} · chain ${chainId}` : 'Use the header to connect (Theta testnet 365 recommended).'}
+            {isConnected
+              ? `Wallet: ${truncate(address!)} · chain ${chainId}`
+              : 'Use the header to connect (Theta mainnet 361 for production funding).'}
           </p>
 
           <label style={styles.label}>Lock tier (first commit only; top-ups must match)</label>
@@ -183,10 +258,10 @@ export default function Believers() {
             className="input"
             style={{ width: '100%', marginBottom: '0.75rem' }}
           >
-            <option value={0}>Base — 25 XF/TFUEL · claims after cliff</option>
-            <option value={1}>+8% — ~27 eff. XF/TFUEL · earliest claim 365d after TGE</option>
-            <option value={2}>+20% — ~30 eff. XF/TFUEL · earliest claim 730d after TGE</option>
-            <option value={3}>+35% — ~33.75 eff. XF/TFUEL · earliest claim 1095d after TGE</option>
+            <option value={0}>Base — chain XF/TFUEL · claims after cliff</option>
+            <option value={1}>+8% XF · earliest claim 365d after TGE</option>
+            <option value={2}>+20% XF · earliest claim 730d after TGE</option>
+            <option value={3}>+35% XF · earliest claim 1095d after TGE</option>
           </select>
 
           <label style={styles.label}>Amount (TFUEL)</label>
@@ -226,12 +301,21 @@ export default function Believers() {
 
         <div className="card" style={{ padding: '1.5rem' }}>
           <div style={styles.cardTitle}>Round parameters</div>
-          <div style={styles.row}><span style={{ color: '#8a8a9a' }}>Phase</span><span>1 of 3</span></div>
-          <div style={styles.row}><span style={{ color: '#8a8a9a' }}>Hard cap</span><span>2,000,000 TFUEL</span></div>
-          <div style={styles.row}><span style={{ color: '#8a8a9a' }}>Base price (P1)</span><span style={{ color: '#00d4ff' }}>25 XF / TFUEL</span></div>
-          <div style={styles.row}><span style={{ color: '#8a8a9a' }}>Phase 2 / 3 (future deploys)</span><span>20 / 15 XF</span></div>
-          <div style={styles.row}><span style={{ color: '#8a8a9a' }}>XF allocation (P1)</span><span>40M XF (4%)</span></div>
-          <div style={styles.row}><span style={{ color: '#8a8a9a' }}>Network</span><span>Theta testnet (365)</span></div>
+          <div style={styles.row}><span style={{ color: '#8a8a9a' }}>Round type</span><span>Single open sale (no phased tranches)</span></div>
+          <div style={styles.row}>
+            <span style={{ color: '#8a8a9a' }}>TFUEL hard cap</span>
+            <span>{!stats ? '—' : `${hardCapTfuel.toLocaleString()} TFUEL`}</span>
+          </div>
+          <div style={styles.row}>
+            <span style={{ color: '#8a8a9a' }}>XF cap (this contract)</span>
+            <span>{!xfCap ? '—' : `${Number(formatEther(xfCap)).toLocaleString()} XF (15% policy)`}</span>
+          </div>
+          <div style={styles.row}>
+            <span style={{ color: '#8a8a9a' }}>Base XF / TFUEL</span>
+            <span style={{ color: '#00d4ff' }}>{baseXfPerTfuel.toLocaleString(undefined, { maximumFractionDigits: 4 })} (on-chain)</span>
+          </div>
+          <div style={styles.row}><span style={{ color: '#8a8a9a' }}>Engagement rewards</span><span>15% — separate Merkle distributor (see docs)</span></div>
+          <div style={styles.row}><span style={{ color: '#8a8a9a' }}>Network</span><span>{chainId === 361 ? 'Theta mainnet (361)' : 'Theta testnet (365)'}</span></div>
           <div style={styles.row}><span style={{ color: '#8a8a9a' }}>Admin</span><span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}>{truncate(ADMIN_MULTISIG)} (Safe)</span></div>
         </div>
       </div>
@@ -249,10 +333,10 @@ export default function Believers() {
               <th style={styles.th}>Eff. XF / TFUEL</th>
               <th style={styles.th}>Earliest claim*</th>
             </tr>
-            <tr><td style={styles.td}>0</td><td style={styles.td}>0%</td><td style={styles.td}>25</td><td style={styles.td}>After cliff (per vesting)</td></tr>
-            <tr><td style={styles.td}>1</td><td style={styles.td}>+8%</td><td style={styles.td}>27</td><td style={styles.td}>365d after TGE</td></tr>
-            <tr><td style={styles.td}>2</td><td style={styles.td}>+20%</td><td style={styles.td}>30</td><td style={styles.td}>730d after TGE</td></tr>
-            <tr><td style={styles.td}>3</td><td style={styles.td}>+35%</td><td style={styles.td}>33.75</td><td style={styles.td}>1095d after TGE</td></tr>
+            <tr><td style={styles.td}>0</td><td style={styles.td}>0%</td><td style={styles.td}>{effXfPerTier[0]}</td><td style={styles.td}>After cliff (per vesting)</td></tr>
+            <tr><td style={styles.td}>1</td><td style={styles.td}>+8%</td><td style={styles.td}>{effXfPerTier[1]}</td><td style={styles.td}>365d after TGE</td></tr>
+            <tr><td style={styles.td}>2</td><td style={styles.td}>+20%</td><td style={styles.td}>{effXfPerTier[2]}</td><td style={styles.td}>730d after TGE</td></tr>
+            <tr><td style={styles.td}>3</td><td style={styles.td}>+35%</td><td style={styles.td}>{effXfPerTier[3]}</td><td style={styles.td}>1095d after TGE</td></tr>
           </tbody>
         </table>
         <p style={{ fontSize: '0.72rem', color: '#55556a', marginTop: '0.5rem' }}>

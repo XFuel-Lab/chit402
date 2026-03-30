@@ -5,7 +5,8 @@
  * multi-prover normalization, gas <270K equivalents, cross-chain routing,
  * end-to-end proof flows.
  *
- * Run: node --test core-layer/test/ai-listener.test.js
+ * Run: npm run test:contracts:core:listener
+ *        (or: node --test core-layer/test/ai-listener.test.js)
  */
 
 import { strict as assert } from 'node:assert';

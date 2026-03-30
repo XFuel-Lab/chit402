@@ -9,9 +9,8 @@ describe('Ownable', function () {
   beforeEach(async function () {
     [owner, newOwner, user] = await ethers.getSigners()
 
-    // Deploy a contract that uses Ownable (using TipPool as example)
-    const TipPool = await ethers.getContractFactory('TipPool')
-    ownable = await TipPool.deploy()
+    const Harness = await ethers.getContractFactory('MockOwnableHarness')
+    ownable = await Harness.deploy()
     await (ownable.waitForDeployment?.() || ownable.deployed?.())
   })
 

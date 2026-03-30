@@ -150,10 +150,16 @@ async function runTests() {
   // ── Results ────────────────────────────────────────────────────────────
 
   console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`);
-  process.exit(failed > 0 ? 1 : 0);
+  if (failed > 0) {
+    throw new Error(`${failed} fee-analytics tokenomics assertion(s) failed`);
+  }
 }
 
-runTests().catch(err => {
-  console.error('Test runner error:', err);
-  process.exit(1);
-});
+// Standalone: node test/tokenomics/fee-analytics-tokenomics.test.cjs
+// Hardhat loads this file for discovery — do not process.exit (kills the whole suite).
+if (require.main === module) {
+  runTests().catch((err) => {
+    console.error('Test runner error:', err);
+    process.exit(1);
+  });
+}

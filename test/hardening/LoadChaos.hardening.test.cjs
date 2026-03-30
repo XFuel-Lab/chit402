@@ -13,6 +13,7 @@
  */
 const { expect } = require('chai');
 const { ethers } = require('hardhat');
+const { futureDeadline } = require('../helpers.cjs');
 
 describe('Load & Chaos Hardening', function () {
   let splitter;
@@ -144,7 +145,7 @@ describe('Load & Chaos Hardening', function () {
   it('06: 15 intents submitted and cancelled without loss', async function () {
     for (let i = 0; i < 15; i++) {
       const u = [user1, user2, user3][i % 3];
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = Number(await futureDeadline(ethers.provider));
       const tx = await near.connect(u).submitIntent(HASH, HASH, deadline, { value: ethers.parseEther('1') });
       const r = await tx.wait();
       const ev = r.logs.find(l => { try { return near.interface.parseLog(l)?.name === 'IntentSubmitted'; } catch { return false; } });
@@ -167,7 +168,7 @@ describe('Load & Chaos Hardening', function () {
     const provId = solana.interface.parseLog(evP).args.providerId;
 
     for (let i = 0; i < 20; i++) {
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = Number(await futureDeadline(ethers.provider));
       const txT = await solana.connect(user2).submitTask(provId, HASH, HASH, deadline, { value: ethers.parseEther('0.5') });
       const rT = await txT.wait();
       const evT = rT.logs.find(l => { try { return solana.interface.parseLog(l)?.name === 'TaskSubmitted'; } catch { return false; } });
@@ -263,7 +264,7 @@ describe('Load & Chaos Hardening', function () {
     const evP = rP.logs.find(l => { try { return solana.interface.parseLog(l)?.name === 'ProviderRegistered'; } catch { return false; } });
     const provId = solana.interface.parseLog(evP).args.providerId;
 
-    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const deadline = Number(await futureDeadline(ethers.provider));
     const n = ethers.keccak256(ethers.toUtf8Bytes('shared-null-sol'));
 
     // First task: submit → bridge → settle with nullifier
@@ -275,7 +276,7 @@ describe('Load & Chaos Hardening', function () {
     await solana.connect(relayer).settleTask(taskId1, HASH, 9000, MOCK_PROOF, MOCK_PV, n);
 
     // Second task: same nullifier should be rejected
-    const deadline2 = Math.floor(Date.now() / 1000) + 7200;
+    const deadline2 = Number(await futureDeadline(ethers.provider, 172800n));
     const tx2 = await solana.connect(user2).submitTask(provId, HASH, HASH, deadline2, { value: ethers.parseEther('1') });
     const r2 = await tx2.wait();
     const ev2 = r2.logs.find(l => { try { return solana.interface.parseLog(l)?.name === 'TaskSubmitted'; } catch { return false; } });
@@ -344,7 +345,7 @@ describe('Load & Chaos Hardening', function () {
     const provId = solana.interface.parseLog(evP).args.providerId;
 
     for (let i = 0; i < 5; i++) {
-      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const deadline = Number(await futureDeadline(ethers.provider));
       const txT = await solana.connect(user2).submitTask(provId, HASH, HASH, deadline, { value: ethers.parseEther('1') });
       const rT = await txT.wait();
       const evT = rT.logs.find(l => { try { return solana.interface.parseLog(l)?.name === 'TaskSubmitted'; } catch { return false; } });

@@ -7,9 +7,9 @@ on:
     branches: [main, develop]
 
 jobs:
-  # ── Full Solidity test suite + coverage ─────────────────────
+  # ── Core listener (node:test) + full Hardhat suite + coverage ─────────────
   solidity:
-    name: Solidity Tests
+    name: Contracts & Core Listener
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,8 +27,13 @@ jobs:
       - name: Generate TypeChain types
         run: npm run typechain
 
-      - name: Run core + circuit tests
-        run: npm run test:contracts:all
+      - name: Core listener (node:test)
+        run: npm run test:contracts:core:listener
+
+      # Windows-safe explicit file list (scripts/hardhat-test-all.cjs). Failing tests here
+      # are tracked separately from the core gate in ci.yml (test:contracts:core:solidity).
+      - name: Full Hardhat suite (test + circuits + security)
+        run: npm run test:contracts:all:hardhat
 
       - name: Run coverage
         run: npm run test:coverage
@@ -40,8 +45,8 @@ jobs:
           name: solidity-coverage
           path: coverage/
 
-      - name: Gas report
-        run: npm run test:contracts:core
+      - name: Gas report (Hardhat core subset)
+        run: npm run test:contracts:core:solidity
         env:
           REPORT_GAS: "true"
 

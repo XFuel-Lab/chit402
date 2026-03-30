@@ -9,6 +9,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Core tests:** Split `test:contracts:core` into `test:contracts:core:listener` (`node:test`, `ai-listener.test.js`) and `test:contracts:core:solidity` (Hardhat `*.test.cjs` only). `ci.yml` runs them as separate steps; `test.yml` gas job uses `:solidity` only.
+- **`test:contracts:all`:** Runs the core listener first, then `test:contracts:all:hardhat` via `scripts/hardhat-test-all.cjs` (collects every `test/**/*.test.cjs`, `core-layer/test/*.cjs`, `circuits/*/test/*.cjs` without shell globs — fixes Windows). `test.yml` uses two explicit steps matching that split.
+- **`theta-inference-handler.test.cjs`:** Wrapped the runner in `require.main === module` so Hardhat no longer exits the whole process on `require()` (same class of bug as fee-analytics tokenomics tests).
+
 ### Planned
 - CertiK Phase 1 audit (Q2 2026) — `contracts/core/` scope
 - Mainnet deployment (post-audit) — Theta Mainnet (chain 361)

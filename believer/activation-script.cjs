@@ -13,7 +13,7 @@
  *   ADMIN_ADDRESS           — Multisig admin (optional, defaults to deployer)
  *   BELIEVER_HARD_CAP       — Total raise cap in ETH/TFUEL (default: 500)
  *   BELIEVER_MAX_PER_WALLET — Per-wallet cap (default: 5)
- *   BELIEVER_PRICE_NUM      — XF tokens per ETH numerator (default: 10000)
+ *   BELIEVER_PRICE_NUM      — XF per 1 TFUEL numerator (default: 5)
  *   BELIEVER_PRICE_DEN      — XF tokens per ETH denominator (default: 1)
  *
  * Phases:
@@ -54,9 +54,13 @@ async function main() {
   const MAX_PER_WALLET = process.env.BELIEVER_MAX_PER_WALLET
     ? ethers.parseEther(process.env.BELIEVER_MAX_PER_WALLET) : ethers.parseEther('5');
   const PRICE_NUM = process.env.BELIEVER_PRICE_NUM
-    ? BigInt(process.env.BELIEVER_PRICE_NUM) : 10000n;
+    ? BigInt(process.env.BELIEVER_PRICE_NUM) : 5n;
   const PRICE_DEN = process.env.BELIEVER_PRICE_DEN
     ? BigInt(process.env.BELIEVER_PRICE_DEN) : 1n;
+  const BELIEVER_PHASE = process.env.BELIEVER_PHASE ? parseInt(process.env.BELIEVER_PHASE, 10) : 1;
+  const XF_CAP = process.env.BELIEVER_XF_ALLOCATION_CAP
+    ? ethers.parseEther(process.env.BELIEVER_XF_ALLOCATION_CAP)
+    : ethers.parseEther('150000000');
 
   console.log(`  Admin:          ${ADMIN}`);
   console.log(`  Hard cap:       ${ethers.formatEther(HARD_CAP)} TFUEL`);
@@ -67,7 +71,7 @@ async function main() {
   console.log('\n══ Phase 2: Deploy BelieverRound ════════════════════════');
 
   const F = await ethers.getContractFactory('BelieverRound');
-  const round = await F.deploy(ADMIN, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN);
+  const round = await F.deploy(ADMIN, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, BELIEVER_PHASE, XF_CAP);
   await round.waitForDeployment();
   const roundAddr = await round.getAddress();
   const receipt = await round.deploymentTransaction().wait();
