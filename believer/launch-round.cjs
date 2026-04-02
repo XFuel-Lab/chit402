@@ -6,7 +6,7 @@
  *   - XF ceiling:      150,000,000 XF on-chain (BELIEVER_XF_ALLOCATION_CAP = 15% of 1B)
  *   - Max/wallet:      0 = no cap
  *   - Price:           5 XF per 1 TFUEL base (BELIEVER_PRICE_NUM/DEN); multisig setTokenPrice while Open
- *   - Min commit:      100 TFUEL (contract constant)
+ *   - Min commit:      100 TFUEL default (`BELIEVER_MIN_COMMITMENT` env at deploy)
  *   - Cliff / vesting: 90d + 270d linear
  *   - Admin/multisig:  0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257 (Gnosis Safe on Theta)
  *
@@ -24,9 +24,10 @@
  *   BELIEVER_MAX_PER_WALLET    (default 0 = no cap)
  *   BELIEVER_PRICE_NUM         (default 5)
  *   BELIEVER_PRICE_DEN         (default 1)
+ *   BELIEVER_MIN_COMMITMENT    (default 100 TFUEL human string; e.g. 1 or 0.01 for testnet faucet limits)
  *   BELIEVER_XF_ALLOCATION_CAP (default 150000000 = 15% of 1B XF, human units → parseEther)
  *   EXISTING_MANIFEST          (path to manifest JSON, skips deploy if set)
- *   BELIEVER_SMOKE_COMMIT      (default on) Set to 0 or false to skip the 100 TFUEL test commit
+ *   BELIEVER_SMOKE_COMMIT      (default on) Set to 0 or false to skip the min-TFUEL test commit
  */
 const { ethers, network } = require('hardhat');
 const fs = require('fs');
@@ -77,6 +78,10 @@ async function main() {
     ? ethers.parseEther(process.env.BELIEVER_XF_ALLOCATION_CAP)
     : ethers.parseEther('150000000');
 
+  const MIN_COMMIT = process.env.BELIEVER_MIN_COMMITMENT
+    ? ethers.parseEther(process.env.BELIEVER_MIN_COMMITMENT)
+    : ethers.parseEther('100');
+
   // ═══ Phase 1: Check for Existing Deployment ═════════════════════
   console.log('\n  ═ Phase 1: Deployment Check ═══════════════════════');
 
@@ -98,7 +103,7 @@ async function main() {
   if (!round) {
     console.log('    Deploying new BelieverRound...');
     const F = await ethers.getContractFactory('BelieverRound');
-    round = await F.deploy(ADMIN, HARD_CAP, MAX_PW, P_NUM, P_DEN, PHASE, XF_CAP);
+    round = await F.deploy(ADMIN, HARD_CAP, MAX_PW, P_NUM, P_DEN, PHASE, XF_CAP, MIN_COMMIT);
     await round.waitForDeployment();
     roundAddr = await round.getAddress();
     const receipt = await round.deploymentTransaction().wait();
@@ -113,6 +118,7 @@ async function main() {
   console.log(`    Hard cap:    ${ethers.formatEther(HARD_CAP)} TFUEL`);
   console.log(`    Max/wallet:  ${MAX_PW === 0n ? 'NO CAP (whale-friendly)' : ethers.formatEther(MAX_PW) + ' TFUEL'}`);
   console.log(`    Price:       ${P_NUM}/${P_DEN} XF per TFUEL`);
+  console.log(`    Min commit:  ${ethers.formatEther(MIN_COMMIT)} TFUEL`);
   console.log(`    XF cap:      ${ethers.formatEther(XF_CAP)} XF reserved (on-chain ceiling)`);
 
   // ═══ Phase 3: Smoke Tests ═══════════════════════════════════════
@@ -150,12 +156,12 @@ async function main() {
     pass++;
   } catch (e) { console.log(`    ✗ Durations: ${e.message.slice(0, 50)}`); }
 
-  // Optional on-chain commit smoke (100 TFUEL min) — needs native TFUEL + gas after deploy
+  // Optional on-chain commit smoke (exactly min commitment) — needs native TFUEL + gas after deploy
   if (!smokeCommitOn) {
     console.log('    ⊘ Smoke commit disabled (BELIEVER_SMOKE_COMMIT=0)');
     smokeCommitNote = 'disabled_by_env';
   } else {
-    const minCommit = ethers.parseEther('100');
+    const minCommit = MIN_COMMIT;
     const bal = await ethers.provider.getBalance(deployer.address);
     let gasReserve = ethers.parseEther('0.2');
     try {
@@ -169,7 +175,7 @@ async function main() {
     const required = minCommit + gasReserve;
     if (bal < required) {
       console.log(
-        `    ⊘ Smoke commit skipped: deployer has ${ethers.formatEther(bal)} TFUEL; need ≥ ${ethers.formatEther(required)} (100 min commit + ~gas). Top up testnet TFUEL or set BELIEVER_SMOKE_COMMIT=0.`
+        `    ⊘ Smoke commit skipped: deployer has ${ethers.formatEther(bal)} TFUEL; need ≥ ${ethers.formatEther(required)} (min commit + ~gas). Top up testnet TFUEL or set BELIEVER_SMOKE_COMMIT=0.`
       );
       smokeCommitNote = 'skipped_insufficient_balance';
     } else {

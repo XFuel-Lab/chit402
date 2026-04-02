@@ -228,7 +228,7 @@ Single open community sale (no phased 4/12/24% tranches). **`xfAllocationCap`** 
 | Contract | `contracts/circuits/BelieverRound.sol` |
 | XF ceiling | `xfAllocationCap` (default deploy: 150M XF) |
 | TFUEL hard cap | Env / deploy (e.g. `BELIEVER_HARD_CAP`) |
-| Min commitment | 100 TFUEL (on-chain constant unless contract variant) |
+| Min commitment | Default **100 TFUEL** at deploy; override with `BELIEVER_MIN_COMMITMENT` (human TFUEL string, e.g. `1` for testnet) |
 | Max per wallet | Env (`0` = none) |
 | Base price (default deploy) | **5 XF per 1 TFUEL** (`BELIEVER_PRICE_NUM` / `DEN`) |
 | Cliff / vesting | 90d cliff + 270d linear |
@@ -261,7 +261,7 @@ Separate from community round: **no TFUEL refund**; **`withdrawToTreasury`** bef
 | Deploy script | `believer/launch-angel-round.cjs` |
 | XF ceiling | `ANGEL_XF_ALLOCATION_CAP` (default `100000000`) |
 | Hard cap | `ANGEL_HARD_CAP` TFUEL |
-| Min commitment | `ANGEL_MIN_COMMITMENT` |
+| Min commitment | `ANGEL_MIN_COMMITMENT` (TFUEL) or `ANGEL_MIN_COMMITMENT_WEI` (raw wei, e.g. `1`) |
 | Price | `ANGEL_PRICE_NUM` / `ANGEL_PRICE_DEN` (default deploy **8 XF per 1 TFUEL** — more XF per TFUEL than Believer base **5**) |
 | Cliff / vesting | 90d + 270d linear |
 | TGE | **Separate** `triggerTGE` from BelieverRound |

@@ -1,4 +1,5 @@
 import { createConfig, http } from 'wagmi';
+import { injected } from 'wagmi/connectors';
 
 const thetaMainnet = {
   id: 361,
@@ -25,6 +26,7 @@ const bittensorEVM = {
 
 export const config = createConfig({
   chains: [thetaMainnet, thetaTestnet, bittensorEVM],
+  connectors: [injected()],
   transports: {
     [thetaMainnet.id]: http(),
     [thetaTestnet.id]: http(),

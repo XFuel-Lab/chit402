@@ -142,13 +142,23 @@ async function main() {
   const believerXfCap = process.env.BELIEVER_XF_ALLOCATION_CAP
     ? ethers.parseEther(process.env.BELIEVER_XF_ALLOCATION_CAP)
     : ethers.parseEther('150000000');
+  const brMaxStr = process.env.BELIEVER_MAX_PER_WALLET ?? '0';
+  const brMaxPw = brMaxStr === '0' ? 0n : ethers.parseEther(brMaxStr);
+  const brPriceNum = process.env.BELIEVER_PRICE_NUM ? BigInt(process.env.BELIEVER_PRICE_NUM) : 5n;
+  const brPriceDen = process.env.BELIEVER_PRICE_DEN ? BigInt(process.env.BELIEVER_PRICE_DEN) : 1n;
+  const brMin = process.env.BELIEVER_MIN_COMMITMENT
+    ? ethers.parseEther(process.env.BELIEVER_MIN_COMMITMENT)
+    : ethers.parseEther('100');
   await dep('BelieverRound',
     await ethers.getContractFactory('BelieverRound'),
-    [d, hCap, ethers.parseEther('5'), 10000n, 1n, 1, believerXfCap]);
+    [d, hCap, brMaxPw, brPriceNum, brPriceDen, 1, believerXfCap, brMin]);
   manifest.believerRound = {
     address: manifest.contracts.BelieverRound,
-    hardCap: ethers.formatEther(hCap), maxPerWallet: '5.0',
-    price: '10000 XF/TFUEL', cliff: '90d', vesting: '365d',
+    hardCap: ethers.formatEther(hCap),
+    maxPerWallet: brMaxStr === '0' ? '0 (none)' : brMaxStr,
+    price: `${brPriceNum}/${brPriceDen} XF per TFUEL`,
+    minCommitmentTFUEL: ethers.formatEther(brMin),
+    cliff: '90d', vesting: '270d linear after cliff',
   };
 
   // Phase 4

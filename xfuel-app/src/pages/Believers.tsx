@@ -1,12 +1,16 @@
 import { useMemo, useState, useEffect, type CSSProperties } from 'react';
-import { useAccount, useChainId, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { Link } from 'react-router-dom';
+import { useAccount, useChainId, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain, useBlock } from 'wagmi';
 import { formatEther, parseEther } from 'viem';
-import { ADDRESSES, BELIEVER_ROUND_ABI, isDeployed } from '../contracts';
+import { ADDRESSES, BELIEVER_ROUND_ABI, THETA_MAINNET_ID, isDeployed } from '../contracts';
 
 const ADMIN_MULTISIG = '0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257';
 const BONUS_BPS = [10_000, 10_800, 12_000, 13_500] as const;
 const EXPLORER_TESTNET = 'https://testnet-explorer.thetatoken.org';
 const EXPLORER_MAINNET = 'https://explorer.thetatoken.org';
+
+/** Must match `BelieverRound.REFUND_DEADLINE` (180 days). */
+const REFUND_DEADLINE_SEC = 15552000n;
 
 function truncate(addr: string) {
   return addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '';
@@ -15,17 +19,21 @@ function truncate(addr: string) {
 export default function Believers() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
+  const { switchChain } = useSwitchChain();
   const roundAddr = ADDRESSES.believerRound;
   const deployed = isDeployed(roundAddr);
+  const wrongChain = isConnected && chainId !== THETA_MAINNET_ID;
 
   const [lockTier, setLockTier] = useState(0);
   const [amountTfuel, setAmountTfuel] = useState('');
-  const [msg, setMsg] = useState<{ type: 'ok' | 'err' | 'info'; text: string } | null>(null);
+  const [commitMsg, setCommitMsg] = useState<{ type: 'ok' | 'err' | 'info'; text: string } | null>(null);
+  const [refundMsg, setRefundMsg] = useState<{ type: 'ok' | 'err' | 'info'; text: string } | null>(null);
 
   const { data: stats, refetch: refetchStats } = useReadContract({
     address: roundAddr,
     abi: BELIEVER_ROUND_ABI,
     functionName: 'getStats',
+    chainId: THETA_MAINNET_ID,
     query: { enabled: deployed, refetchInterval: 15_000 },
   });
 
@@ -33,6 +41,7 @@ export default function Believers() {
     address: roundAddr,
     abi: BELIEVER_ROUND_ABI,
     functionName: 'xfAllocationCap',
+    chainId: THETA_MAINNET_ID,
     query: { enabled: deployed },
   });
 
@@ -40,13 +49,28 @@ export default function Believers() {
     address: roundAddr,
     abi: BELIEVER_ROUND_ABI,
     functionName: 'totalXFReserved',
+    chainId: THETA_MAINNET_ID,
     query: { enabled: deployed, refetchInterval: 15_000 },
+  });
+
+  const {
+    data: minCommitment,
+    isSuccess: minReadOk,
+    isPending: minReadPending,
+    isError: minReadError,
+  } = useReadContract({
+    address: roundAddr,
+    abi: BELIEVER_ROUND_ABI,
+    functionName: 'minCommitment',
+    chainId: THETA_MAINNET_ID,
+    query: { enabled: deployed },
   });
 
   const { data: priceNum } = useReadContract({
     address: roundAddr,
     abi: BELIEVER_ROUND_ABI,
     functionName: 'tokenPriceNumerator',
+    chainId: THETA_MAINNET_ID,
     query: { enabled: deployed },
   });
 
@@ -54,25 +78,85 @@ export default function Believers() {
     address: roundAddr,
     abi: BELIEVER_ROUND_ABI,
     functionName: 'tokenPriceDenominator',
+    chainId: THETA_MAINNET_ID,
     query: { enabled: deployed },
   });
 
-  const { writeContract, data: hash, isPending, error: writeError, reset } = useWriteContract();
-  const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { data: roundOpenedAt } = useReadContract({
+    address: roundAddr,
+    abi: BELIEVER_ROUND_ABI,
+    functionName: 'roundOpenedAt',
+    chainId: THETA_MAINNET_ID,
+    query: { enabled: deployed },
+  });
+
+  const { data: commitment, refetch: refetchCommitment } = useReadContract({
+    address: roundAddr,
+    abi: BELIEVER_ROUND_ABI,
+    functionName: 'commitments',
+    args: address ? [address] : undefined,
+    chainId: THETA_MAINNET_ID,
+    query: { enabled: deployed && !!address },
+  });
+
+  const { data: latestBlock } = useBlock({
+    chainId: THETA_MAINNET_ID,
+    blockTag: 'latest',
+    query: { enabled: deployed, refetchInterval: 15_000 },
+  });
+
+  const {
+    writeContract: writeCommit,
+    data: commitHash,
+    isPending: commitPending,
+    error: commitError,
+    reset: resetCommit,
+  } = useWriteContract();
+  const {
+    writeContract: writeRefund,
+    data: refundHash,
+    isPending: refundPending,
+    error: refundError,
+    reset: resetRefund,
+  } = useWriteContract();
+  const { isLoading: commitConfirming, isSuccess: commitSuccess } = useWaitForTransactionReceipt({
+    hash: commitHash,
+    chainId: THETA_MAINNET_ID,
+  });
+  const { isLoading: refundConfirming, isSuccess: refundSuccess } = useWaitForTransactionReceipt({
+    hash: refundHash,
+    chainId: THETA_MAINNET_ID,
+  });
 
   useEffect(() => {
-    if (writeError) {
-      setMsg({ type: 'err', text: writeError.message.split('\n')[0] || 'Transaction failed' });
-      reset();
+    if (commitError) {
+      setCommitMsg({ type: 'err', text: commitError.message.split('\n')[0] || 'Transaction failed' });
+      resetCommit();
     }
-  }, [writeError, reset]);
+  }, [commitError, resetCommit]);
 
   useEffect(() => {
-    if (isSuccess && hash) {
-      setMsg({ type: 'ok', text: 'Transaction confirmed.' });
+    if (refundError) {
+      setRefundMsg({ type: 'err', text: refundError.message.split('\n')[0] || 'Refund failed' });
+      resetRefund();
+    }
+  }, [refundError, resetRefund]);
+
+  useEffect(() => {
+    if (commitSuccess && commitHash) {
+      setCommitMsg({ type: 'ok', text: 'Commit confirmed.' });
       refetchStats();
+      refetchCommitment();
     }
-  }, [isSuccess, hash, refetchStats]);
+  }, [commitSuccess, commitHash, refetchStats, refetchCommitment]);
+
+  useEffect(() => {
+    if (refundSuccess && refundHash) {
+      setRefundMsg({ type: 'ok', text: 'Refund confirmed. TFUEL returned to your wallet.' });
+      refetchStats();
+      refetchCommitment();
+    }
+  }, [refundSuccess, refundHash, refetchStats, refetchCommitment]);
 
   const baseXfPerTfuel = useMemo(() => {
     const n = priceNum ?? 5n;
@@ -127,55 +211,149 @@ export default function Believers() {
     return labels[Number(stats[5])] ?? 'Unknown';
   }, [stats]);
 
-  const onCommit = () => {
-    setMsg(null);
+  const chainNow = latestBlock?.timestamp ?? 0n;
+  const chainTimeReady = chainNow > 0n;
+  const roundStatusU8 = stats?.[5];
+  const tgeTriggered = roundStatusU8 !== undefined && Number(roundStatusU8) === 2;
+  const refundDeadlineTs =
+    roundOpenedAt !== undefined && roundOpenedAt > 0n ? roundOpenedAt + REFUND_DEADLINE_SEC : 0n;
+  const commitmentWei = commitment?.[0] ?? 0n;
+  const commitmentRefunded = commitment?.[5] === true;
+  const hasCommitment = commitmentWei > 0n;
+  const deadlinePassed = refundDeadlineTs > 0n && chainTimeReady && chainNow >= refundDeadlineTs;
+  const secondsUntilRefund =
+    refundDeadlineTs > 0n && chainTimeReady && chainNow < refundDeadlineTs ? refundDeadlineTs - chainNow : 0n;
+  const refundEligible =
+    deployed &&
+    isConnected &&
+    chainId === THETA_MAINNET_ID &&
+    chainTimeReady &&
+    hasCommitment &&
+    !commitmentRefunded &&
+    !tgeTriggered &&
+    deadlinePassed;
+
+  const refundDeadlineDateLabel =
+    refundDeadlineTs > 0n
+      ? new Date(Number(refundDeadlineTs) * 1000).toLocaleString(undefined, {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        })
+      : null;
+
+  const countdownLabel = useMemo(() => {
+    if (secondsUntilRefund <= 0n) return null;
+    const s = secondsUntilRefund;
+    const days = Number(s / 86400n);
+    const hrs = Number((s % 86400n) / 3600n);
+    if (days >= 1) return `${days}d ${hrs}h remaining until refund window opens`;
+    const mins = Number((s % 3600n) / 60n);
+    return `${hrs}h ${mins}m remaining until refund window opens`;
+  }, [secondsUntilRefund]);
+
+  const onRequestRefund = () => {
+    setRefundMsg(null);
     if (!deployed) {
-      setMsg({ type: 'err', text: 'BelieverRound not configured (set VITE_BELIEVER_ROUND_ADDRESS).' });
+      setRefundMsg({ type: 'err', text: 'BelieverRound not configured.' });
       return;
     }
     if (!isConnected || !address) {
-      setMsg({ type: 'err', text: 'Connect your wallet from the header first.' });
+      setRefundMsg({ type: 'err', text: 'Connect your wallet first.' });
+      return;
+    }
+    if (chainId !== THETA_MAINNET_ID) {
+      switchChain({ chainId: THETA_MAINNET_ID });
+      setRefundMsg({ type: 'err', text: 'Switch to Theta Mainnet (361) to request a refund.' });
+      return;
+    }
+    if (!refundEligible) {
+      setRefundMsg({ type: 'err', text: 'Refund is not available for this wallet right now.' });
+      return;
+    }
+    writeRefund({
+      address: roundAddr,
+      abi: BELIEVER_ROUND_ABI,
+      functionName: 'requestRefund',
+      chainId: THETA_MAINNET_ID,
+    });
+    setRefundMsg({ type: 'info', text: 'Confirm refund in your wallet…' });
+  };
+
+  const uiMinTfuel = import.meta.env.VITE_BELIEVER_MIN_TFUEL || '100';
+  const uiMinWei = parseEther(uiMinTfuel);
+  const onChainMinWei = minReadOk && typeof minCommitment === 'bigint' ? minCommitment : null;
+  const effectiveMinWei = onChainMinWei !== null && onChainMinWei > uiMinWei ? onChainMinWei : uiMinWei;
+  const effectiveMinLabel = formatEther(effectiveMinWei);
+
+  const onCommit = () => {
+    setCommitMsg(null);
+    if (!deployed) {
+      setCommitMsg({ type: 'err', text: 'BelieverRound not configured (set VITE_BELIEVER_ROUND_ADDRESS).' });
+      return;
+    }
+    if (!isConnected || !address) {
+      setCommitMsg({ type: 'err', text: 'Connect your wallet from the header first.' });
+      return;
+    }
+    if (chainId !== THETA_MAINNET_ID) {
+      setCommitMsg({ type: 'err', text: `Switch your wallet to Theta Mainnet (chain ${THETA_MAINNET_ID}). You are on chain ${chainId}.` });
+      switchChain({ chainId: THETA_MAINNET_ID });
       return;
     }
     const v = parseFloat(amountTfuel);
-    if (!v || v < 100) {
-      setMsg({ type: 'err', text: 'Minimum commitment is 100 TFUEL.' });
+    if (!v || v <= 0) {
+      setCommitMsg({ type: 'err', text: 'Enter a positive TFUEL amount.' });
       return;
     }
     let wei: bigint;
     try {
       wei = parseEther(amountTfuel.trim());
     } catch {
-      setMsg({ type: 'err', text: 'Invalid TFUEL amount.' });
+      setCommitMsg({ type: 'err', text: 'Invalid TFUEL amount.' });
+      return;
+    }
+    if (wei < effectiveMinWei) {
+      setCommitMsg({
+        type: 'err',
+        text: `Minimum commitment is ${effectiveMinLabel} TFUEL.`,
+      });
       return;
     }
 
     if (lockTier === 0) {
-      writeContract({
+      writeCommit({
         address: roundAddr,
         abi: BELIEVER_ROUND_ABI,
         functionName: 'commit',
         value: wei,
+        chainId: THETA_MAINNET_ID,
       });
     } else {
-      writeContract({
+      writeCommit({
         address: roundAddr,
         abi: BELIEVER_ROUND_ABI,
         functionName: 'commitWithLock',
         args: [lockTier],
         value: wei,
+        chainId: THETA_MAINNET_ID,
       });
     }
-    setMsg({ type: 'info', text: 'Confirm in your wallet…' });
+    setCommitMsg({ type: 'info', text: 'Confirm in your wallet…' });
   };
 
   const explorerBase = chainId === 361 ? EXPLORER_MAINNET : EXPLORER_TESTNET;
 
   return (
     <div className="page" style={{ maxWidth: 900, margin: '0 auto', padding: '0 1rem 4rem' }}>
+      {wrongChain && (
+        <div style={{ background: '#7f1d1d', border: '1px solid #dc2626', borderRadius: 8, padding: '0.75rem 1rem', margin: '1rem 0', textAlign: 'center', color: '#fca5a5', fontWeight: 600 }}>
+          Your wallet is on chain {chainId} (testnet). Switch to <strong>Theta Mainnet (361)</strong> to commit.
+          <button onClick={() => switchChain({ chainId: THETA_MAINNET_ID })} style={{ marginLeft: 12, padding: '4px 12px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}>Switch Now</button>
+        </div>
+      )}
       <div style={{ textAlign: 'center', padding: '2.5rem 0 1.5rem' }}>
         <span className="badge badge-cyan" style={{ marginBottom: '1rem', display: 'inline-block' }}>
-          {chainId === 361 ? 'Theta mainnet (361)' : 'Theta testnet (365)'} · Community contribution
+          {chainId === THETA_MAINNET_ID ? 'Theta mainnet (361)' : `Wrong network (chain ${chainId})`} · Community contribution
         </span>
         <h1 style={styles.h1}>XFuel Community Round</h1>
         <p style={styles.sub}>
@@ -268,32 +446,40 @@ export default function Believers() {
           <input
             className="input"
             type="number"
-            min={100}
-            step={100}
-            placeholder="100"
+            min={0}
+            step="any"
+            placeholder={effectiveMinLabel}
             value={amountTfuel}
             onChange={(e) => setAmountTfuel(e.target.value)}
             style={{ width: '100%', marginBottom: '0.35rem' }}
           />
-          <p style={{ fontSize: '0.78rem', color: '#55556a', marginBottom: '1rem' }}>Minimum 100 TFUEL</p>
+          <p style={{ fontSize: '0.78rem', color: '#55556a', marginBottom: '1rem' }}>
+            Minimum {effectiveMinLabel} TFUEL
+          </p>
 
           <div style={styles.xfPreview}>
             <span style={{ color: '#8a8a9a' }}>You receive (at TGE)</span>
             <span style={{ fontWeight: 700, color: '#00d4ff' }}>{xfPreview}</span>
           </div>
 
-          {msg && (
-            <p style={{ fontSize: '0.85rem', color: msg.type === 'err' ? '#f87171' : msg.type === 'ok' ? '#4ade80' : '#7dd3fc', marginBottom: '0.75rem' }}>
-              {msg.text}
+          {commitMsg && (
+            <p style={{ fontSize: '0.85rem', color: commitMsg.type === 'err' ? '#f87171' : commitMsg.type === 'ok' ? '#4ade80' : '#7dd3fc', marginBottom: '0.75rem' }}>
+              {commitMsg.text}
             </p>
           )}
 
-          <button type="button" className="btn btn-primary" style={{ width: '100%' }} disabled={!deployed || isPending || confirming} onClick={onCommit}>
-            {isPending || confirming ? 'Waiting for wallet / chain…' : 'Commit TFUEL'}
+          <button
+            type="button"
+            className="btn btn-primary"
+            style={{ width: '100%' }}
+            disabled={commitPending || commitConfirming}
+            onClick={onCommit}
+          >
+            {commitPending || commitConfirming ? 'Waiting for wallet / chain…' : !isConnected ? 'Connect Wallet First' : wrongChain ? 'Switch to Theta Mainnet' : 'Commit TFUEL'}
           </button>
 
-          {hash && (
-            <a href={`${explorerBase}/tx/${hash}`} target="_blank" rel="noreferrer" style={{ display: 'block', marginTop: '0.75rem', fontSize: '0.82rem', color: '#00d4ff' }}>
+          {commitHash && (
+            <a href={`${explorerBase}/tx/${commitHash}`} target="_blank" rel="noreferrer" style={{ display: 'block', marginTop: '0.75rem', fontSize: '0.82rem', color: '#00d4ff' }}>
               View transaction →
             </a>
           )}
@@ -314,10 +500,84 @@ export default function Believers() {
             <span style={{ color: '#8a8a9a' }}>Base XF / TFUEL</span>
             <span style={{ color: '#00d4ff' }}>{baseXfPerTfuel.toLocaleString(undefined, { maximumFractionDigits: 4 })} (on-chain)</span>
           </div>
+          <div style={styles.row}>
+            <span style={{ color: '#8a8a9a' }}>Min commit</span>
+            <span>{effectiveMinLabel} TFUEL</span>
+          </div>
           <div style={styles.row}><span style={{ color: '#8a8a9a' }}>Engagement rewards</span><span>15% — separate Merkle distributor (see docs)</span></div>
-          <div style={styles.row}><span style={{ color: '#8a8a9a' }}>Network</span><span>{chainId === 361 ? 'Theta mainnet (361)' : 'Theta testnet (365)'}</span></div>
+          <div style={styles.row}><span style={{ color: '#8a8a9a' }}>Network</span><span>{chainId === THETA_MAINNET_ID ? 'Theta mainnet (361)' : <span style={{ color: '#f87171' }}>Wrong network (chain {chainId})</span>}</span></div>
           <div style={styles.row}><span style={{ color: '#8a8a9a' }}>Admin</span><span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}>{truncate(ADMIN_MULTISIG)} (Safe)</span></div>
         </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: '1.5rem', padding: '1.5rem', borderColor: 'rgba(6,182,212,0.25)' }}>
+        <div style={styles.cardTitle}>TFUEL refund (on-chain)</div>
+        <p style={{ fontSize: '0.82rem', color: '#8a8a9a', marginBottom: '1rem', lineHeight: 1.55 }}>
+          If <strong>TGE is not triggered</strong> within <strong>180 days</strong> of the round opening, you may call <code style={{ fontSize: '0.85em' }}>requestRefund</code> on BelieverRound to recover your committed TFUEL (and release your XF reservation). This does not apply after TGE.{' '}
+          <Link to="/security" style={{ color: '#00d4ff' }}>
+            Security &amp; transparency
+          </Link>
+        </p>
+        {!deployed ? (
+          <p style={{ fontSize: '0.85rem', color: '#8a8a9a', margin: 0 }}>Configure <code style={{ fontSize: '0.85em' }}>VITE_BELIEVER_ROUND_ADDRESS</code> to load refund status.</p>
+        ) : !isConnected ? (
+          <p style={{ fontSize: '0.85rem', color: '#8a8a9a', margin: 0 }}>Connect your wallet on Theta mainnet (361) to see eligibility for your address.</p>
+        ) : wrongChain ? (
+          <p style={{ fontSize: '0.85rem', color: '#fca5a5', margin: 0 }}>
+            Switch to Theta Mainnet to interact with refunds.{' '}
+            <button type="button" onClick={() => switchChain({ chainId: THETA_MAINNET_ID })} style={{ marginLeft: 8, padding: '4px 10px', borderRadius: 4, border: 'none', background: '#0891b2', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>
+              Switch
+            </button>
+          </p>
+        ) : tgeTriggered ? (
+          <p style={{ fontSize: '0.85rem', color: '#86efac', margin: 0 }}>TGE has been triggered — on-chain refunds via this path are closed. Claims follow vesting.</p>
+        ) : commitmentRefunded ? (
+          <p style={{ fontSize: '0.85rem', color: '#86efac', margin: 0 }}>This wallet has already received a full TFUEL refund.</p>
+        ) : !hasCommitment ? (
+          <p style={{ fontSize: '0.85rem', color: '#8a8a9a', margin: 0 }}>No Believer commitment for this wallet.</p>
+        ) : roundOpenedAt === undefined || roundOpenedAt === 0n ? (
+          <p style={{ fontSize: '0.85rem', color: '#8a8a9a', margin: 0 }}>Refund timing will appear once <code style={{ fontSize: '0.85em' }}>roundOpenedAt</code> is set on-chain.</p>
+        ) : (
+          <>
+            <div style={{ ...styles.xfPreview, marginBottom: '0.75rem', background: 'rgba(6,182,212,0.06)', borderColor: 'rgba(6,182,212,0.2)' }}>
+              <span style={{ color: '#8a8a9a' }}>Your commitment</span>
+              <span style={{ fontWeight: 700, color: '#22d3ee' }}>{formatEther(commitmentWei)} TFUEL</span>
+            </div>
+            <p style={{ fontSize: '0.8rem', color: '#a5f3fc', marginBottom: '0.5rem' }}>
+              Refund window opens: <strong>{refundDeadlineDateLabel}</strong>
+            </p>
+            {!chainTimeReady ? (
+              <p style={{ fontSize: '0.82rem', color: '#8a8a9a', marginBottom: '0.75rem' }}>Loading chain time…</p>
+            ) : !deadlinePassed && countdownLabel ? (
+              <p style={{ fontSize: '0.82rem', color: '#fcd34d', marginBottom: '0.75rem' }}>{countdownLabel}</p>
+            ) : null}
+            {deadlinePassed && refundEligible ? (
+              <p style={{ fontSize: '0.82rem', color: '#86efac', marginBottom: '0.75rem' }}>You are eligible to request a full TFUEL refund now.</p>
+            ) : null}
+            {deadlinePassed && hasCommitment && !commitmentRefunded && !tgeTriggered && !refundEligible ? (
+              <p style={{ fontSize: '0.82rem', color: '#fbbf24', marginBottom: '0.75rem' }}>Unable to confirm eligibility — wait for block time to sync or retry.</p>
+            ) : null}
+            {refundMsg && (
+              <p style={{ fontSize: '0.85rem', color: refundMsg.type === 'err' ? '#f87171' : refundMsg.type === 'ok' ? '#4ade80' : '#7dd3fc', marginBottom: '0.75rem' }}>
+                {refundMsg.text}
+              </p>
+            )}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ width: '100%', borderColor: 'rgba(34,211,238,0.45)', color: '#a5f3fc' }}
+              disabled={refundPending || refundConfirming || !refundEligible}
+              onClick={onRequestRefund}
+            >
+              {refundPending || refundConfirming ? 'Waiting for wallet…' : refundEligible ? 'Request full TFUEL refund' : deadlinePassed ? 'Refund unavailable' : 'Refund not open yet'}
+            </button>
+            {refundHash && (
+              <a href={`${explorerBase}/tx/${refundHash}`} target="_blank" rel="noreferrer" style={{ display: 'block', marginTop: '0.75rem', fontSize: '0.82rem', color: '#00d4ff' }}>
+                View refund transaction →
+              </a>
+            )}
+          </>
+        )}
       </div>
 
       <div className="card" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
@@ -357,9 +617,11 @@ export default function Believers() {
       </div>
 
       <p style={{ fontSize: '0.72rem', color: '#55556a', textAlign: 'center', marginTop: '2rem', lineHeight: 1.6 }}>
-        Contribution to support XFuel development. Not investment advice. Refund if no TGE within 180 days of round open.
+        Contribution to support XFuel development. Not investment advice. On-chain refund via <code style={{ fontSize: '0.85em' }}>requestRefund</code> if no TGE within 180 days of round open.
         <br />
         <strong style={{ color: '#a1a1b5' }}>Contact:</strong> believers@xfuel.app ·{' '}
+        <Link to="/security" style={{ color: '#00d4ff' }}>Security</Link>
+        {' · '}
         <a href="https://github.com/XFuel-Lab/xfuel-protocol" style={{ color: '#00d4ff' }}>GitHub</a>
       </p>
     </div>

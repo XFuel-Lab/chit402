@@ -7,71 +7,112 @@ const stats = [
   { value: '21+', label: 'Circuit modules (repo)' },
   { value: '700+', label: 'Tests passing (repo)' },
   { value: '5', label: 'Network targets' },
-  { value: 'Goal', label: 'TVL at scale (roadmap)' },
+  { value: 'Theta', label: 'EdgeCloud + EVM mainnet' },
+];
+
+const roadmap = [
+  {
+    tag: 'Now',
+    title: 'Phase 1 audit',
+    detail: 'Core settlement, verifier, and funding contracts — firm engagement announced when signed.',
+  },
+  {
+    tag: 'Next',
+    title: 'Subchain & operators',
+    detail: 'XFuel subchain RPC, explorer, and operator-facing dashboards.',
+  },
+  {
+    tag: 'Next',
+    title: 'Public metrics',
+    detail: 'Live counters for routed tasks, proofs verified, and settlement volume.',
+  },
+  {
+    tag: 'Then',
+    title: 'veXF rollout',
+    detail: 'Governance parameters and fee votes as deployments go live.',
+  },
+  {
+    tag: 'Roadmap',
+    title: 'Cross-chain relay',
+    detail: 'Bittensor EVM and additional relay paths beyond Theta.',
+  },
 ];
 
 const features = [
   {
-    title: 'Cross-Chain Bridge',
+    title: 'Theta EdgeCloud routing',
     description:
-      'Hyperlane-oriented bridge design with SP1 ZK verification; Theta testnet is the primary integration surface today.',
-    icon: '⟷',
-    link: '/bridge',
+      'Primary path for GPU-backed inference; ZK attestation ties delivery to on-chain settlement — not just another API aggregator.',
+    icon: '◉',
+    link: '/theta-ai',
     color: '#00d4ff',
   },
   {
-    title: 'veXF Governance',
-    description: 'Vote-escrow style governance (deploy when live). Parameters and timelines are roadmap.',
-    icon: '⚖',
-    link: '/governance',
-    color: '#8b5cf6',
-  },
-  {
-    title: 'Fee-to-Stake',
-    description: 'Fee routing toward staking / DePIN targets (Bittensor, Theta, Cosmos paths — roadmap).',
-    icon: '◈',
-    link: '/staking',
-    color: '#22c55e',
-  },
-  {
-    title: 'ZK Circuits',
-    description: 'Many circuit modules in-repo; deployment mix is testnet / roadmap — see Circuit Explorer labels.',
+    title: 'ZK verification',
+    description: 'SP1 Groth16/PLONK pipeline: provable task outputs, nullifiers, and verifier hooks aligned with deploy manifests.',
     icon: '⬡',
     link: '/circuits',
     color: '#f59e0b',
   },
   {
-    title: 'DePIN Infrastructure',
-    description: 'AI listener, M2M API, and routing stack — run against your env for live metrics.',
-    icon: '◉',
+    title: 'Cross-Chain Bridge',
+    description: 'Hyperlane-oriented relay with SP1 proof verification; extend settlement beyond Theta as domains go live.',
+    icon: '⟷',
+    link: '/bridge',
+    color: '#06b6d4',
+  },
+  {
+    title: 'CoreRevenueSplitter',
+    description: 'BBB, GET, stakers, treasury — fee flow encoded for sustainable DePIN economics.',
+    icon: '◈',
+    link: '/treasury',
+    color: '#22c55e',
+  },
+  {
+    title: 'M2M & agents',
+    description: 'Task API and listener stack for machine-to-machine inference and orchestration.',
+    icon: '◎',
     link: '/dashboard',
     color: '#ef4444',
   },
   {
-    title: 'Stack & tools',
-    description: 'Succinct SP1, Hyperlane, Theta. Other integrations (e.g. oracles, agent platforms) are roadmap unless wired.',
-    icon: '◎',
-    link: '/docs',
-    color: '#06b6d4',
+    title: 'veXF Governance',
+    description: 'Vote-escrow style controls over fees and priorities as governance contracts deploy.',
+    icon: '⚖',
+    link: '/governance',
+    color: '#8b5cf6',
   },
 ];
 
 const stackItems = [
   { name: 'Succinct', role: 'SP1 proving stack', tag: 'in use' },
   { name: 'Hyperlane', role: 'Interchain messaging', tag: 'in use' },
-  { name: 'Theta Network', role: 'Primary chain / EdgeCloud', tag: 'in use' },
+  { name: 'Theta Network', role: 'EdgeCloud + EVM (361)', tag: 'in use' },
   { name: 'Chainlink CCIP', role: 'Oracle / messaging (roadmap)', tag: 'roadmap' },
   { name: 'Almanak', role: 'Agent orchestration (exploring)', tag: 'roadmap' },
   { name: 'Bittensor', role: 'Decentralized AI (EVM subnet)', tag: 'ecosystem' },
 ];
 
 const networks = [
-  { name: 'Theta', status: 'testnet' },
+  { name: 'Theta', status: 'live' },
   { name: 'Bittensor EVM', status: 'testnet' },
   { name: 'Osmosis', status: 'roadmap' },
   { name: 'Aptos', status: 'planned' },
   { name: 'Sui', status: 'planned' },
 ];
+
+function networkDot(status: string) {
+  if (status === 'live') return '#22c55e';
+  if (status === 'testnet') return '#f59e0b';
+  if (status === 'roadmap') return '#8b5cf6';
+  return '#55556a';
+}
+
+function networkBadgeClass(status: string) {
+  if (status === 'live') return 'badge badge-cyan';
+  if (status === 'testnet') return 'badge badge-orange';
+  return 'badge badge-purple';
+}
 
 export default function Home() {
   const [showBelieverChip, setShowBelieverChip] = useState(true);
@@ -105,17 +146,21 @@ export default function Home() {
               gap: '0.75rem',
               flexWrap: 'wrap',
               padding: '0.65rem 1rem',
-              background: 'rgba(0,212,255,0.08)',
-              border: '1px solid rgba(0,212,255,0.22)',
+              background: 'rgba(34,197,94,0.1)',
+              border: '1px solid rgba(34,197,94,0.28)',
               borderRadius: 10,
               fontSize: '0.88rem',
             }}
           >
-            <span style={{ color: '#a5f3fc' }}>
-              <strong>Early Believer Round</strong> — TFUEL → XF (Theta testnet). 5 XF/TFUEL base + optional lock bonuses.
+            <span style={{ color: '#bbf7d0' }}>
+              <strong>Community &amp; Angel rounds</strong> — commit TFUEL on <strong>Theta mainnet (361)</strong>. Believer base pricing + optional lock
+              bonuses; separate strategic Angel path.
             </span>
             <Link to="/believers" className="btn btn-primary btn-sm">
-              View Believers
+              Believers
+            </Link>
+            <Link to="/angels" className="btn btn-secondary btn-sm">
+              Angels
             </Link>
             <button type="button" className="btn btn-secondary btn-sm" onClick={dismissBeliever} aria-label="Dismiss">
               Dismiss
@@ -128,24 +173,25 @@ export default function Home() {
       <section style={styles.hero}>
         <div className="container" style={{ textAlign: 'center' }}>
           <div style={styles.heroBadge}>
-            <span className="badge badge-orange">Beta · testnet</span>
-            <span style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>AI + ZK settlement stack</span>
+            <span className="badge badge-orange">Beta protocol</span>
+            <span style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>ZK-verified AI on Theta EdgeCloud</span>
           </div>
           <h1 style={styles.heroTitle}>XFuel Protocol</h1>
-          <p style={styles.heroSubtitle}>ZK-backed AI compute &amp; DePIN orchestration</p>
+          <p style={styles.heroSubtitle}>ZK-verified AI routing &amp; DePIN settlement</p>
           <p style={styles.heroDescription}>
-            Ecosystem-agnostic infrastructure: SP1 proofs, veXF-style governance, and cross-chain settlement — iterate on
-            Theta testnet first; mainnet is roadmap.
+            Route inference to Theta EdgeCloud and partner DePINs, then settle with <strong>SP1-backed proofs</strong> and transparent fee splits. The stack is
+            still in <strong>beta</strong>, but <strong>Believer and Angel funding rounds are live on Theta mainnet</strong> — same chain the protocol targets
+            for production.
           </p>
           <div style={styles.heroCta}>
-            <Link to="/theta-ai" className="btn btn-primary">
-              AI Hub
-            </Link>
-            <Link to="/believers" className="btn btn-secondary">
+            <Link to="/believers" className="btn btn-primary">
               Believer Round
             </Link>
             <Link to="/angels" className="btn btn-secondary">
               Angel Round
+            </Link>
+            <Link to="/theta-ai" className="btn btn-secondary">
+              AI Hub
             </Link>
             <Link to="/dashboard" className="btn btn-secondary">
               Dashboard
@@ -168,6 +214,38 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Roadmap strip */}
+      <section style={{ padding: '2rem 0 1rem' }}>
+        <div className="container">
+          <h2 style={{ textAlign: 'center', marginBottom: '0.35rem' }}>Roadmap</h2>
+          <p style={{ textAlign: 'center', color: '#8a8a9a', fontSize: '0.9rem', marginBottom: '1.5rem', maxWidth: 520, marginLeft: 'auto', marginRight: 'auto' }}>
+            Near-term milestones toward full production on Theta and connected networks.
+          </p>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+              gap: '1rem',
+            }}
+          >
+            {roadmap.map((item) => (
+              <div key={item.title} className="card" style={{ padding: '1.15rem', height: '100%' }}>
+                <span className="badge badge-purple" style={{ fontSize: '0.65rem', marginBottom: '0.5rem', display: 'inline-block' }}>
+                  {item.tag}
+                </span>
+                <h3 style={{ fontSize: '0.95rem', color: '#f0f0f5', marginBottom: '0.4rem' }}>{item.title}</h3>
+                <p style={{ fontSize: '0.8rem', color: '#8a8a9a', lineHeight: 1.5, margin: 0 }}>{item.detail}</p>
+              </div>
+            ))}
+          </div>
+          <p style={{ textAlign: 'center', marginTop: '1rem' }}>
+            <Link to="/security" style={{ color: '#00d4ff', fontSize: '0.88rem' }}>
+              Security &amp; transparency →
+            </Link>
+          </p>
+        </div>
+      </section>
+
       {/* Networks */}
       <section style={{ padding: '2rem 0' }}>
         <div className="container">
@@ -180,17 +258,12 @@ export default function Home() {
                     width: 8,
                     height: 8,
                     borderRadius: '50%',
-                    background:
-                      n.status === 'testnet' ? '#f59e0b' : n.status === 'roadmap' ? '#8b5cf6' : '#55556a',
+                    background: networkDot(n.status),
                     display: 'inline-block',
                   }}
                 />
                 <span>{n.name}</span>
-                <span
-                  className={`badge badge-${n.status === 'testnet' ? 'orange' : n.status === 'roadmap' ? 'purple' : 'purple'}`}
-                >
-                  {n.status}
-                </span>
+                <span className={networkBadgeClass(n.status)}>{n.status}</span>
               </div>
             ))}
           </div>
@@ -202,7 +275,7 @@ export default function Home() {
         <div className="container">
           <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Core infrastructure</h2>
           <p style={{ textAlign: 'center', color: '#8a8a9a', marginBottom: '2rem' }}>
-            Verification, routing, and governance — scope matches what you deploy and wire in your environment.
+            ZK-first settlement for AI compute — built for Theta EdgeCloud and cross-chain expansion.
           </p>
           <div className="grid grid-3">
             {features.map((f) => (
@@ -231,7 +304,7 @@ export default function Home() {
                 <span style={styles.flowDot} />
                 <div>
                   <strong>Protocol fees</strong>
-                  <p style={{ fontSize: '0.85rem', color: '#8a8a9a' }}>Inference, verification, and bridge fees (when live).</p>
+                  <p style={{ fontSize: '0.85rem', color: '#8a8a9a' }}>Inference, verification, and bridge fees as deployments go live.</p>
                 </div>
               </div>
               <div style={styles.flowItem}>
@@ -245,7 +318,7 @@ export default function Home() {
                 <span style={{ ...styles.flowDot, background: '#22c55e' }} />
                 <div>
                   <strong>Cross-chain distribution</strong>
-                  <p style={{ fontSize: '0.85rem', color: '#8a8a9a' }}>Hyperlane and chain-specific routes (roadmap).</p>
+                  <p style={{ fontSize: '0.85rem', color: '#8a8a9a' }}>Hyperlane and chain-specific routes on the roadmap.</p>
                 </div>
               </div>
             </div>
@@ -300,18 +373,21 @@ export default function Home() {
       <section style={{ padding: '4rem 0', textAlign: 'center' }}>
         <div className="container">
           <h2 style={{ marginBottom: '0.5rem' }}>Ready to fuel the future of AI?</h2>
-          <p style={{ color: '#8a8a9a', marginBottom: '2rem', maxWidth: '500px', margin: '0 auto 2rem' }}>
-            Explore the believer round, bridge (when deployed), and community channels.
+          <p style={{ color: '#8a8a9a', marginBottom: '2rem', maxWidth: '520px', margin: '0 auto 2rem' }}>
+            Join the community round on Theta mainnet, review the strategic Angel path, and follow security &amp; audit updates.
           </p>
           <div style={styles.heroCta}>
             <Link to="/believers" className="btn btn-primary">
               Believer Round
             </Link>
-            <Link to="/bridge" className="btn btn-secondary">
-              Bridge
+            <Link to="/angels" className="btn btn-secondary">
+              Angel Round
             </Link>
             <Link to="/community" className="btn btn-secondary">
               Community
+            </Link>
+            <Link to="/security" className="btn btn-secondary">
+              Security
             </Link>
           </div>
         </div>

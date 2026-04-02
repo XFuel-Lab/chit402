@@ -34,7 +34,7 @@
     "test:zkgpt-e2e": "node zkgpt-prover/e2e-prover-test.cjs",
     "run:zkgpt-prover": "node zkgpt-prover/wrapper-template.cjs",
     "test:phase1": "npm run test:contracts:theta && npm run test:zkgpt-mock",
-    "test:believer": "hardhat test believer/test/BelieverRound.test.cjs believer/test/AngelRound.test.cjs",
+    "test:believer": "hardhat test believer/test/BelieverRound.test.cjs believer/test/AngelRound.test.cjs believer/test/AngelEscrow.test.cjs",
     "test:tokenomics": "node test/tokenomics/fee-analytics-tokenomics.test.cjs",
     "test:coverage": "hardhat coverage --solcoverjs .solcover.cjs --testfiles 'test/coverage-runner.js'",
     "typechain": "hardhat typechain",

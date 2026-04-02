@@ -36,7 +36,8 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
     uint256 public maxCommitmentPerWallet;
-    uint256 public constant MIN_COMMITMENT = 100 ether;
+    /// @notice Minimum native TFUEL per commit (set at deploy; lower for testnet / ops rehearsal).
+    uint256 public immutable minCommitment;
     uint256 public hardCap;
     uint256 public tokenPriceNumerator;
     uint256 public tokenPriceDenominator;
@@ -113,7 +114,8 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
         uint256 _priceNumerator,
         uint256 _priceDenominator,
         uint8 _phase,
-        uint256 _xfAllocationCap
+        uint256 _xfAllocationCap,
+        uint256 _minCommitment
     ) {
         require(_admin != address(0), "ZeroAdmin");
         require(_hardCap > 0, "ZeroHardCap");
@@ -121,6 +123,7 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
         require(_priceNumerator > 0 && _priceDenominator > 0, "BadPrice");
         require(_phase >= 1 && _phase <= 3, "BadPhase");
         require(_xfAllocationCap > 0, "ZeroXFCap");
+        require(_minCommitment > 0, "ZeroMin");
 
         hardCap = _hardCap;
         maxCommitmentPerWallet = _maxPerWallet;
@@ -128,6 +131,7 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
         tokenPriceDenominator = _priceDenominator;
         phase = _phase;
         xfAllocationCap = _xfAllocationCap;
+        minCommitment = _minCommitment;
 
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
         _grantRole(OPERATOR_ROLE, _admin);
@@ -158,7 +162,7 @@ contract BelieverRound is AccessControl, Pausable, ReentrancyGuard {
 
     function _commit(uint256 value, uint8 lockTier) internal {
         if (status != RoundStatus.Open) revert RoundNotOpen();
-        if (value < MIN_COMMITMENT) revert BelowMinimum();
+        if (value < minCommitment) revert BelowMinimum();
 
         Commitment storage c = commitments[msg.sender];
 

@@ -23,6 +23,8 @@
  *   ANGEL_XF_ALLOCATION_CAP (default 100000000 = 10% of 1B XF)
  *   EXISTING_ANGEL_MANIFEST — JSON with contracts.AngelRound to skip deploy
  *   ANGEL_SMOKE_COMMIT — set 0 to skip test commit (needs min TFUEL + gas)
+ *   ANGEL_MIN_COMMITMENT — human TFUEL string (default 10000); use e.g. 0.01 for testnet
+ *   ANGEL_MIN_COMMITMENT_WEI — optional raw wei min (e.g. 1 for 1-wei floor); overrides ANGEL_MIN_COMMITMENT when set
  */
 const { ethers, network } = require('hardhat');
 const fs = require('fs');
@@ -58,9 +60,14 @@ async function main() {
   const HARD_CAP = process.env.ANGEL_HARD_CAP
     ? ethers.parseEther(process.env.ANGEL_HARD_CAP)
     : ethers.parseEther('2000000');
-  const MIN_COMMIT = process.env.ANGEL_MIN_COMMITMENT
-    ? ethers.parseEther(process.env.ANGEL_MIN_COMMITMENT)
-    : ethers.parseEther('10000');
+  let MIN_COMMIT;
+  if (process.env.ANGEL_MIN_COMMITMENT_WEI) {
+    MIN_COMMIT = BigInt(process.env.ANGEL_MIN_COMMITMENT_WEI);
+  } else if (process.env.ANGEL_MIN_COMMITMENT) {
+    MIN_COMMIT = ethers.parseEther(process.env.ANGEL_MIN_COMMITMENT);
+  } else {
+    MIN_COMMIT = ethers.parseEther('10000');
+  }
   const MAX_PW_STR = process.env.ANGEL_MAX_PER_WALLET ?? '0';
   const MAX_PW = MAX_PW_STR === '0' ? 0n : ethers.parseEther(MAX_PW_STR);
   const P_NUM = process.env.ANGEL_PRICE_NUM ? BigInt(process.env.ANGEL_PRICE_NUM) : 8n;

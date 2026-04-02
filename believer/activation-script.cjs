@@ -15,6 +15,7 @@
  *   BELIEVER_MAX_PER_WALLET — Per-wallet cap (default: 5)
  *   BELIEVER_PRICE_NUM      — XF per 1 TFUEL numerator (default: 5)
  *   BELIEVER_PRICE_DEN      — XF tokens per ETH denominator (default: 1)
+ *   BELIEVER_MIN_COMMITMENT — Min TFUEL per commit (default: 100)
  *
  * Phases:
  *   1. Pre-flight checks
@@ -71,7 +72,7 @@ async function main() {
   console.log('\n══ Phase 2: Deploy BelieverRound ════════════════════════');
 
   const F = await ethers.getContractFactory('BelieverRound');
-  const round = await F.deploy(ADMIN, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, BELIEVER_PHASE, XF_CAP);
+  const round = await F.deploy(ADMIN, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, BELIEVER_PHASE, XF_CAP, MIN_COMMIT);
   await round.waitForDeployment();
   const roundAddr = await round.getAddress();
   const receipt = await round.deploymentTransaction().wait();

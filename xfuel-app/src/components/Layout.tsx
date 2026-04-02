@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Outlet, NavLink } from 'react-router-dom';
+import { Link, Outlet, NavLink } from 'react-router-dom';
 import WalletButton from './WalletButton';
 
 const navLinks = [
@@ -15,6 +15,7 @@ const navLinks = [
   { to: '/staking', label: 'Staking' },
   { to: '/treasury', label: 'Treasury' },
   { to: '/docs', label: 'Docs' },
+  { to: '/security', label: 'Security' },
   { to: '/community', label: 'Community' },
   { to: '/grants', label: 'Grants' },
 ];
@@ -77,7 +78,9 @@ export default function Layout() {
           borderBottom: '1px solid rgba(139,92,246,0.15)',
         }}
       >
-        Beta — Theta testnet focus. UI figures may be <strong style={{ color: '#c4b5fd' }}>demo</strong> unless wired to your env.
+        <strong style={{ color: '#a5f3fc' }}>Beta protocol</strong> — integration and metrics pages may use testnet or staging backends.{' '}
+        <strong style={{ color: '#86efac' }}>Believer &amp; Angel rounds</strong> commit on{' '}
+        <strong>Theta mainnet (361)</strong> when addresses are configured.
       </div>
 
       <main style={{ flex: 1 }}>
@@ -94,7 +97,8 @@ export default function Layout() {
             <a href="https://github.com/XFuel-Lab/xfuel-protocol" target="_blank" rel="noreferrer">GitHub</a>
             <a href="https://twitter.com/XFuelLab" target="_blank" rel="noreferrer">Twitter</a>
             <a href="https://discord.gg/n9jHyW88" target="_blank" rel="noreferrer">Discord</a>
-            <a href="https://xfuel.app/docs" target="_blank" rel="noreferrer">Docs</a>
+            <Link to="/docs">Docs</Link>
+            <Link to="/security">Security</Link>
           </div>
           <div style={{ color: '#55556a', fontSize: '0.8rem' }}>
             &copy; {new Date().getFullYear()} XFuel Protocol. All rights reserved.
