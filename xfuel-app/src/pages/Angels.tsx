@@ -1,8 +1,8 @@
 import { useMemo, useState, useEffect, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import { useAccount, useChainId, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useChainId, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain } from 'wagmi';
 import { formatEther, parseEther } from 'viem';
-import { ADDRESSES, ANGEL_ROUND_ABI, isDeployed } from '../contracts';
+import { ADDRESSES, ANGEL_ROUND_ABI, THETA_MAINNET_ID, isDeployed } from '../contracts';
 
 const ADMIN_MULTISIG = '0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257';
 const EXPLORER_TESTNET = 'https://testnet-explorer.thetatoken.org';
@@ -15,8 +15,10 @@ function truncate(addr: string) {
 export default function Angels() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
+  const { switchChain } = useSwitchChain();
   const roundAddr = ADDRESSES.angelRound;
   const deployed = isDeployed(roundAddr);
+  const wrongChain = isConnected && chainId !== THETA_MAINNET_ID;
 
   const [amountTfuel, setAmountTfuel] = useState('');
   const [msg, setMsg] = useState<{ type: 'ok' | 'err' | 'info'; text: string } | null>(null);
@@ -25,6 +27,7 @@ export default function Angels() {
     address: roundAddr,
     abi: ANGEL_ROUND_ABI,
     functionName: 'getStats',
+    chainId: THETA_MAINNET_ID,
     query: { enabled: deployed, refetchInterval: 15_000 },
   });
 
@@ -32,6 +35,7 @@ export default function Angels() {
     address: roundAddr,
     abi: ANGEL_ROUND_ABI,
     functionName: 'minCommitment',
+    chainId: THETA_MAINNET_ID,
     query: { enabled: deployed },
   });
 
@@ -39,6 +43,7 @@ export default function Angels() {
     address: roundAddr,
     abi: ANGEL_ROUND_ABI,
     functionName: 'tokenPriceNumerator',
+    chainId: THETA_MAINNET_ID,
     query: { enabled: deployed },
   });
 
@@ -46,6 +51,7 @@ export default function Angels() {
     address: roundAddr,
     abi: ANGEL_ROUND_ABI,
     functionName: 'tokenPriceDenominator',
+    chainId: THETA_MAINNET_ID,
     query: { enabled: deployed },
   });
 
@@ -53,11 +59,12 @@ export default function Angels() {
     address: roundAddr,
     abi: ANGEL_ROUND_ABI,
     functionName: 'xfAllocationCap',
+    chainId: THETA_MAINNET_ID,
     query: { enabled: deployed },
   });
 
   const { writeContract, data: hash, isPending, error: writeError, reset } = useWriteContract();
-  const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash, chainId: THETA_MAINNET_ID });
 
   useEffect(() => {
     if (writeError) {
@@ -73,7 +80,11 @@ export default function Angels() {
     }
   }, [isSuccess, hash, refetchStats]);
 
-  const minTfuel = minCommitment ? Number(formatEther(minCommitment)) : 10_000;
+  const uiMinTfuel = import.meta.env.VITE_ANGEL_MIN_TFUEL || '10000';
+  const uiMinWei = parseEther(uiMinTfuel);
+  const onChainMinWei = typeof minCommitment === 'bigint' ? minCommitment : null;
+  const effectiveMinWei = onChainMinWei !== null && onChainMinWei > uiMinWei ? onChainMinWei : uiMinWei;
+  const effectiveMinLabel = formatEther(effectiveMinWei);
   const hardCapTfuel = stats ? Number(formatEther(stats[4])) : 0;
   const num = priceNum ?? 8n;
   const den = priceDen && priceDen > 0n ? priceDen : 1n;
@@ -123,9 +134,14 @@ export default function Angels() {
       setMsg({ type: 'err', text: 'Connect your wallet from the header first.' });
       return;
     }
+    if (chainId !== THETA_MAINNET_ID) {
+      setMsg({ type: 'err', text: `Switch your wallet to Theta Mainnet (chain ${THETA_MAINNET_ID}). You are on chain ${chainId}.` });
+      switchChain({ chainId: THETA_MAINNET_ID });
+      return;
+    }
     const v = parseFloat(amountTfuel);
-    if (!v || v < minTfuel) {
-      setMsg({ type: 'err', text: `Minimum commitment is ${minTfuel.toLocaleString()} TFUEL (on-chain).` });
+    if (!v || v <= 0) {
+      setMsg({ type: 'err', text: 'Enter a positive TFUEL amount.' });
       return;
     }
     let wei: bigint;
@@ -135,12 +151,20 @@ export default function Angels() {
       setMsg({ type: 'err', text: 'Invalid TFUEL amount.' });
       return;
     }
+    if (wei < effectiveMinWei) {
+      setMsg({
+        type: 'err',
+        text: `Minimum commitment is ${effectiveMinLabel} TFUEL.`,
+      });
+      return;
+    }
 
     writeContract({
       address: roundAddr,
       abi: ANGEL_ROUND_ABI,
       functionName: 'commit',
       value: wei,
+      chainId: THETA_MAINNET_ID,
     });
     setMsg({ type: 'info', text: 'Confirm in your wallet…' });
   };
@@ -151,9 +175,15 @@ export default function Angels() {
 
   return (
     <div className="page" style={{ maxWidth: 900, margin: '0 auto', padding: '0 1rem 4rem' }}>
+      {wrongChain && (
+        <div style={{ background: '#7f1d1d', border: '1px solid #dc2626', borderRadius: 8, padding: '0.75rem 1rem', margin: '1rem 0', textAlign: 'center', color: '#fca5a5', fontWeight: 600 }}>
+          Your wallet is on chain {chainId} (testnet). Switch to <strong>Theta Mainnet (361)</strong> to commit.
+          <button onClick={() => switchChain({ chainId: THETA_MAINNET_ID })} style={{ marginLeft: 12, padding: '4px 12px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}>Switch Now</button>
+        </div>
+      )}
       <div style={{ textAlign: 'center', padding: '2.5rem 0 1.5rem' }}>
         <span className="badge badge-orange" style={{ marginBottom: '1rem', display: 'inline-block' }}>
-          {chainId === 361 ? 'Theta mainnet (361)' : 'Theta testnet (365)'} · Strategic — high risk
+          {chainId === THETA_MAINNET_ID ? 'Theta mainnet (361)' : `Wrong network (chain ${chainId})`} · Strategic — high risk
         </span>
         <h1 style={styles.h1}>Angel / Strategic Round</h1>
         <p style={styles.sub}>
@@ -236,15 +266,15 @@ export default function Angels() {
           <input
             className="input"
             type="number"
-            min={minTfuel}
-            step={1000}
-            placeholder={String(minTfuel)}
+            min={0}
+            step="any"
+            placeholder={effectiveMinLabel}
             value={amountTfuel}
             onChange={(e) => setAmountTfuel(e.target.value)}
             style={{ width: '100%', marginBottom: '0.35rem' }}
           />
           <p style={{ fontSize: '0.78rem', color: '#55556a', marginBottom: '1rem' }}>
-            Minimum {minTfuel.toLocaleString()} TFUEL (from contract)
+            Minimum {effectiveMinLabel} TFUEL
           </p>
 
           <div style={styles.xfPreview}>
@@ -264,8 +294,8 @@ export default function Angels() {
             </p>
           )}
 
-          <button type="button" className="btn btn-primary" style={{ width: '100%' }} disabled={!deployed || isPending || confirming} onClick={onCommit}>
-            {isPending || confirming ? 'Waiting for wallet / chain…' : 'Commit TFUEL (Angel)'}
+          <button type="button" className="btn btn-primary" style={{ width: '100%' }} disabled={isPending || confirming} onClick={onCommit}>
+            {isPending || confirming ? 'Waiting for wallet / chain…' : !isConnected ? 'Connect Wallet First' : wrongChain ? 'Switch to Theta Mainnet' : 'Commit TFUEL (Angel)'}
           </button>
 
           {hash && (

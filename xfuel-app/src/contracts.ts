@@ -7,6 +7,7 @@ export const ADDRESSES = {
   thetaInference: (import.meta.env.VITE_THETA_INFERENCE_ADDRESS || '') as `0x${string}`,
   believerRound: (import.meta.env.VITE_BELIEVER_ROUND_ADDRESS || '') as `0x${string}`,
   angelRound: (import.meta.env.VITE_ANGEL_ROUND_ADDRESS || '') as `0x${string}`,
+  angelEscrow: (import.meta.env.VITE_ANGEL_ESCROW_ADDRESS || '') as `0x${string}`,
 };
 
 export function isDeployed(addr: string): addr is `0x${string}` {
@@ -76,6 +77,7 @@ export const BELIEVER_ROUND_ABI = [
     stateMutability: 'view',
   },
   { type: 'function', name: 'totalXFReserved', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'minCommitment', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'xfAllocationCap', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'tokenPriceNumerator', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'tokenPriceDenominator', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
@@ -106,4 +108,28 @@ export const ANGEL_ROUND_ABI = [
   { type: 'function', name: 'tokenPriceNumerator', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'tokenPriceDenominator', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'xfAllocationCap', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+] as const satisfies Abi;
+
+/** AngelEscrow.sol — multisig escrow admin */
+export const ANGEL_ESCROW_ABI = [
+  { type: 'function', name: 'deposit', inputs: [], outputs: [], stateMutability: 'payable' },
+  { type: 'function', name: 'getBalance', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'totalRaised', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'threshold', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'treasury', inputs: [], outputs: [{ type: 'address' }], stateMutability: 'view' },
+  { type: 'function', name: 'signerCount', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'signers', inputs: [{ type: 'uint256' }], outputs: [{ type: 'address' }], stateMutability: 'view' },
+  { type: 'function', name: 'bucketCaps', inputs: [{ type: 'uint256' }], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'releasedFromBucket', inputs: [{ type: 'uint8' }], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'outstandingObligations', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'VERSION', inputs: [], outputs: [{ type: 'string' }], stateMutability: 'view' },
+  { type: 'function', name: 'paused', inputs: [], outputs: [{ type: 'bool' }], stateMutability: 'view' },
+  { type: 'function', name: 'releaseFromBucket', inputs: [{ name: 'bucket', type: 'uint8' }, { name: 'recipient', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }], stateMutability: 'nonpayable' },
+  { type: 'function', name: 'setBucketCap', inputs: [{ name: 'bucket', type: 'uint8' }, { name: 'newCap', type: 'uint256' }], outputs: [{ type: 'bool' }], stateMutability: 'nonpayable' },
+  { type: 'function', name: 'refundExcessToTreasury', inputs: [], outputs: [{ type: 'bool' }], stateMutability: 'nonpayable' },
+  { type: 'function', name: 'pause', inputs: [], outputs: [{ type: 'bool' }], stateMutability: 'nonpayable' },
+  { type: 'function', name: 'unpause', inputs: [], outputs: [{ type: 'bool' }], stateMutability: 'nonpayable' },
+  { type: 'event', name: 'DepositReceived', inputs: [{ name: 'sender', type: 'address', indexed: true }, { name: 'amount', type: 'uint256' }, { name: 'newBalance', type: 'uint256' }, { name: 'totalRaised', type: 'uint256' }] },
+  { type: 'event', name: 'BucketReleased', inputs: [{ name: 'bucket', type: 'uint8', indexed: true }, { name: 'recipient', type: 'address', indexed: true }, { name: 'amount', type: 'uint256' }] },
+  { type: 'event', name: 'ActionApproved', inputs: [{ name: 'actionHash', type: 'bytes32', indexed: true }, { name: 'signer', type: 'address', indexed: true }, { name: 'approvalCount', type: 'uint256' }] },
 ] as const satisfies Abi;

@@ -74,11 +74,12 @@ async function main() {
       args: [
         admin.address,
         ethers.parseEther('500'),
-        ethers.parseEther('5'),
-        10000n,
+        0n,
+        5n,
         1n,
         1,
         ethers.parseEther('150000000'),
+        ethers.parseEther('100'),
       ],
     },
   ];
@@ -205,7 +206,7 @@ async function main() {
   if (deployedContracts['BelieverRound']) {
     const br = deployedContracts['BelieverRound'];
     await measureGas('BelieverRound.commit',
-      br.connect(user1).commit({ value: ethers.parseEther('1') })
+      br.connect(user1).commit({ value: ethers.parseEther('100') })
     );
     await measureGas('BelieverRound.closeRound',
       br.closeRound()

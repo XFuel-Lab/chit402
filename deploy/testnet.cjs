@@ -203,9 +203,20 @@ async function main() {
   const believerXfCap = process.env.BELIEVER_XF_ALLOCATION_CAP
     ? ethers.parseEther(process.env.BELIEVER_XF_ALLOCATION_CAP)
     : ethers.parseEther('150000000');
+  const believerHardCap = process.env.BELIEVER_HARD_CAP
+    ? ethers.parseEther(process.env.BELIEVER_HARD_CAP)
+    : ethers.parseEther('2000000');
+  const believerMaxPwStr = process.env.BELIEVER_MAX_PER_WALLET ?? '0';
+  const believerMaxPw = believerMaxPwStr === '0' ? 0n : ethers.parseEther(believerMaxPwStr);
+  const believerPriceNum = process.env.BELIEVER_PRICE_NUM ? BigInt(process.env.BELIEVER_PRICE_NUM) : 5n;
+  const believerPriceDen = process.env.BELIEVER_PRICE_DEN ? BigInt(process.env.BELIEVER_PRICE_DEN) : 1n;
+  const believerPhase = process.env.BELIEVER_PHASE ? parseInt(process.env.BELIEVER_PHASE, 10) : 1;
+  const believerMin = process.env.BELIEVER_MIN_COMMITMENT
+    ? ethers.parseEther(process.env.BELIEVER_MIN_COMMITMENT)
+    : ethers.parseEther('100');
   await deployContract('BelieverRound',
     await ethers.getContractFactory('BelieverRound'),
-    [d, ethers.parseEther('100'), ethers.parseEther('5'), 5n, 1n, 1, believerXfCap]
+    [d, believerHardCap, believerMaxPw, believerPriceNum, believerPriceDen, believerPhase, believerXfCap, believerMin]
   );
 
   // ══════════════════════════════════════════════════════════════════

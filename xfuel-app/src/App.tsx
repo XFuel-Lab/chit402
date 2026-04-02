@@ -14,6 +14,7 @@ import Community from './pages/Community';
 import Grants from './pages/Grants';
 import Believers from './pages/Believers';
 import Angels from './pages/Angels';
+import EscrowAdmin from './pages/EscrowAdmin';
 
 export default function App() {
   return (
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="grants" element={<Grants />} />
         <Route path="believers" element={<Believers />} />
         <Route path="angels" element={<Angels />} />
+        <Route path="escrow-admin" element={<EscrowAdmin />} />
       </Route>
     </Routes>
   );

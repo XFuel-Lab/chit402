@@ -58,6 +58,16 @@ module.exports = {
   solidity: {
     compilers: [
       {
+        version: '0.8.24',
+        settings: {
+          viaIR: true,
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+        },
+      },
+      {
         version: '0.8.22',
         settings: {
           // Always on: core contracts (e.g. ZKVerifierZkGPT) hit "stack too deep" without IR.

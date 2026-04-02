@@ -295,9 +295,9 @@ async function main() {
     ? ethers.parseEther(process.env.BELIEVER_HARD_CAP)
     : ethers.parseEther('500'); // Default 500 ETH/TFUEL
 
-  const BELIEVER_MAX_PER_WALLET = process.env.BELIEVER_MAX_PER_WALLET
-    ? ethers.parseEther(process.env.BELIEVER_MAX_PER_WALLET)
-    : ethers.parseEther('5'); // Default 5 ETH/TFUEL
+  const BELIEVER_MAX_PW_STR = process.env.BELIEVER_MAX_PER_WALLET ?? '5';
+  const BELIEVER_MAX_PER_WALLET =
+    BELIEVER_MAX_PW_STR === '0' ? 0n : ethers.parseEther(BELIEVER_MAX_PW_STR);
 
   const PRICE_NUM = process.env.BELIEVER_PRICE_NUM
     ? BigInt(process.env.BELIEVER_PRICE_NUM)
@@ -313,8 +313,11 @@ async function main() {
   const BELIEVER_XF_CAP = process.env.BELIEVER_XF_ALLOCATION_CAP
     ? ethers.parseEther(process.env.BELIEVER_XF_ALLOCATION_CAP)
     : ethers.parseEther('150000000');
+  const BELIEVER_MIN = process.env.BELIEVER_MIN_COMMITMENT
+    ? ethers.parseEther(process.env.BELIEVER_MIN_COMMITMENT)
+    : ethers.parseEther('100');
   const believer = await BelieverF.deploy(
-    ADMIN, BELIEVER_HARD_CAP, BELIEVER_MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, BELIEVER_PHASE, BELIEVER_XF_CAP
+    ADMIN, BELIEVER_HARD_CAP, BELIEVER_MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, BELIEVER_PHASE, BELIEVER_XF_CAP, BELIEVER_MIN
   );
   await believer.waitForDeployment();
   const believerAddr = await believer.getAddress();
@@ -326,6 +329,7 @@ async function main() {
   console.log(`    Hard cap: ${ethers.formatEther(BELIEVER_HARD_CAP)} TFUEL`);
   console.log(`    Max/wallet: ${ethers.formatEther(BELIEVER_MAX_PER_WALLET)} TFUEL`);
   console.log(`    Price: ${PRICE_NUM}/${PRICE_DEN} XF per ETH`);
+  console.log(`    Min commit: ${ethers.formatEther(BELIEVER_MIN)} TFUEL`);
 
   // ══════════════════════════════════════════════════════════════════════
   //  PHASE 3: ROLE CONFIGURATION

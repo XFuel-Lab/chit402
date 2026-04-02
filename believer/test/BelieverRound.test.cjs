@@ -39,7 +39,7 @@ describe('BelieverRound', function () {
     await mockToken.mint(admin.address, ethers.parseEther('100000000'));
 
     const RF = await ethers.getContractFactory('BelieverRound');
-    round = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, PHASE, XF_CAP);
+    round = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, PHASE, XF_CAP, MIN);
     await round.waitForDeployment();
   });
 
@@ -77,7 +77,7 @@ describe('BelieverRound', function () {
     it('should revert when XF allocation cap would be exceeded', async function () {
       const RF = await ethers.getContractFactory('BelieverRound');
       const tinyCap = ethers.parseEther('400');
-      const r = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, PHASE, tinyCap);
+      const r = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, PHASE, tinyCap, MIN);
       await r.waitForDeployment();
       // 100 TFUEL × 5 XF/TFUEL = 500 XF > 400 XF cap
       await expect(r.connect(believer1).commit({ value: MIN })).to.be.revertedWithCustomError(r, 'ExceedsXFAllocationCap');
@@ -139,7 +139,7 @@ describe('BelieverRound', function () {
 
     it('should block claim for tier 1 until 365 days after TGE even if vested', async function () {
       const RF = await ethers.getContractFactory('BelieverRound');
-      const r = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, PHASE, XF_CAP);
+      const r = await RF.deploy(admin.address, HARD_CAP, MAX_PER_WALLET, PRICE_NUM, PRICE_DEN, PHASE, XF_CAP, MIN);
       await r.waitForDeployment();
 
       await r.connect(believer3).commitWithLock(1, { value: ethers.parseEther('100') });
