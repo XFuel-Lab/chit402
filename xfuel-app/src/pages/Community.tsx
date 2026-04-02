@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useReadContract } from 'wagmi';
 import { formatEther } from 'viem';
-import { ADDRESSES, ANGEL_ROUND_ABI, BELIEVER_ROUND_ABI, isDeployed } from '../contracts';
+import { ADDRESSES, ANGEL_ROUND_ABI, BELIEVER_ROUND_ABI, THETA_MAINNET_ID, isDeployed } from '../contracts';
 
 type SocialLink = {
   platform: string;
@@ -53,6 +53,7 @@ export default function Community() {
     address: believerAddr,
     abi: BELIEVER_ROUND_ABI,
     functionName: 'getStats',
+    chainId: THETA_MAINNET_ID,
     query: { enabled: believerOn, refetchInterval: 30_000 },
   });
 
@@ -60,7 +61,18 @@ export default function Community() {
     address: angelAddr,
     abi: ANGEL_ROUND_ABI,
     functionName: 'getStats',
+    chainId: THETA_MAINNET_ID,
     query: { enabled: angelOn, refetchInterval: 30_000 },
+  });
+
+  const { data: ghRepo } = useQuery({
+    queryKey: ['github-repo-stars', 'XFuel-Lab', 'xfuel-protocol'],
+    queryFn: async (): Promise<{ stargazers_count: number } | null> => {
+      const r = await fetch('https://api.github.com/repos/XFuel-Lab/xfuel-protocol');
+      if (!r.ok) return null;
+      return r.json();
+    },
+    staleTime: 5 * 60_000,
   });
 
   const social = content?.socialLinks ?? [];
@@ -98,15 +110,25 @@ export default function Community() {
         )}
 
         <div className="grid grid-4" style={{ marginBottom: '2rem' }}>
-          {social.map((s) => (
-            <a key={s.platform} href={s.url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
-              <div className="card" style={{ textAlign: 'center', height: '100%' }}>
-                <h3 style={{ color: s.color, marginBottom: '0.25rem' }}>{s.platform}</h3>
-                <div style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>{s.statLabel || '—'}</div>
-                <p style={{ fontSize: '0.85rem' }}>{s.description}</p>
-              </div>
-            </a>
-          ))}
+          {social.map((s) => {
+            const ghLabel =
+              s.kind !== 'github'
+                ? s.statLabel || '—'
+                : ghRepo === undefined
+                  ? '…'
+                  : ghRepo === null
+                    ? 'Open source'
+                    : `${ghRepo.stargazers_count.toLocaleString()} stars`;
+            return (
+              <a key={s.platform} href={s.url} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
+                <div className="card" style={{ textAlign: 'center', height: '100%' }}>
+                  <h3 style={{ color: s.color, marginBottom: '0.25rem' }}>{s.platform}</h3>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>{ghLabel}</div>
+                  <p style={{ fontSize: '0.85rem' }}>{s.description}</p>
+                </div>
+              </a>
+            );
+          })}
         </div>
 
         <p style={{ fontSize: '0.78rem', color: '#55556a', marginBottom: '1.5rem' }}>

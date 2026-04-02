@@ -4,15 +4,15 @@
     {
       "platform": "Discord",
       "url": "https://discord.gg/n9jHyW88",
-      "statLabel": "2+ members",
-      "description": "Community hub — server structure and onboarding are being refreshed; this invite stays valid.",
+      "statLabel": "Join the server",
+      "description": "Builders, believers, and protocol updates — onboarding and roles refreshed regularly.",
       "color": "#5865F2"
     },
     {
       "platform": "Twitter / X",
       "url": "https://twitter.com/XFuelLab",
       "statLabel": "@XFuelLab",
-      "description": "Protocol updates, partnerships, and ecosystem news.",
+      "description": "Ship logs, partnerships, and Theta / DePIN ecosystem news.",
       "color": "#1DA1F2"
     },
     {
@@ -25,32 +25,32 @@
     {
       "platform": "GitHub",
       "url": "https://github.com/XFuel-Lab/xfuel-protocol",
-      "statLabel": "0 stars",
-      "description": "Open-source protocol, circuits, and tooling.",
+      "statLabel": "",
+      "description": "Open-source protocol, circuits, and funding contracts — audit scope and manifests in-repo.",
       "color": "#f0f0f5",
       "kind": "github"
     }
   ],
   "upcomingEvents": [
     {
-      "title": "Discord refresh — roles, channels, and docs",
+      "title": "Community AMA — roadmap & mainnet funding",
+      "date": "Schedule in Discord",
+      "time": "UTC (TBA)",
+      "platform": "Discord / X",
+      "description": "Walkthrough of Believer/Angel rounds on Theta 361, AngelEscrow transparency, and audit timeline. Date posted in #announcements."
+    },
+    {
+      "title": "Discord — roles & support",
       "date": "Rolling",
       "time": "—",
       "platform": "Discord",
-      "description": "Legacy layout is being replaced with clearer onboarding and support paths. Join via the current invite; announcements will track changes."
-    },
-    {
-      "title": "Community AMA — roadmap & testnet",
-      "date": "TBA",
-      "time": "UTC",
-      "platform": "Discord / X",
-      "description": "Edit dates in public/community-content.json or set VITE_COMMUNITY_CONTENT_URL to a hosted JSON."
+      "description": "Clearer onboarding paths for contributors and round participants."
     }
   ],
   "pastAMAs": [
     {
-      "title": "Recordings & past sessions",
-      "date": "See Discord #announcements and @XFuelLab on X",
+      "title": "Recordings & updates",
+      "date": "See Discord #announcements",
       "views": "—",
       "recordingUrl": "https://discord.gg/n9jHyW88"
     }

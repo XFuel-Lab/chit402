@@ -23,33 +23,35 @@ export default function EscrowAdmin() {
   const [relAmount, setRelAmount] = useState('');
   const [depAmount, setDepAmount] = useState('');
 
-  const rc = (fn: string, args?: readonly unknown[]) => ({
-    address: ESCROW_ADDR,
-    abi: ANGEL_ESCROW_ABI,
-    functionName: fn,
-    args,
-    chainId: THETA_MAINNET_ID,
-    query: { enabled: deployed },
-  } as const);
+  /** Wagmi narrows `functionName` from ABI; helper uses runtime names — cast for reads. */
+  const rc = (fn: string, args?: readonly unknown[]) =>
+    ({
+      address: ESCROW_ADDR,
+      abi: ANGEL_ESCROW_ABI,
+      functionName: fn,
+      args,
+      chainId: THETA_MAINNET_ID,
+      query: { enabled: deployed },
+    }) as const;
 
-  const { data: balance } = useReadContract(rc('getBalance'));
-  const { data: totalRaised } = useReadContract(rc('totalRaised'));
-  const { data: threshold } = useReadContract(rc('threshold'));
-  const { data: treasury } = useReadContract(rc('treasury'));
-  const { data: signerCount } = useReadContract(rc('signerCount'));
-  const { data: outstanding } = useReadContract(rc('outstandingObligations'));
-  const { data: paused } = useReadContract(rc('paused'));
-  const { data: version } = useReadContract(rc('VERSION'));
+  const { data: balance } = useReadContract(rc('getBalance') as never);
+  const { data: totalRaised } = useReadContract(rc('totalRaised') as never);
+  const { data: threshold } = useReadContract(rc('threshold') as never);
+  const { data: treasury } = useReadContract(rc('treasury') as never);
+  const { data: signerCount } = useReadContract(rc('signerCount') as never);
+  const { data: outstanding } = useReadContract(rc('outstandingObligations') as never);
+  const { data: paused } = useReadContract(rc('paused') as never);
+  const { data: version } = useReadContract(rc('VERSION') as never);
 
-  const { data: cap0 } = useReadContract(rc('bucketCaps', [0n]));
-  const { data: cap1 } = useReadContract(rc('bucketCaps', [1n]));
-  const { data: cap2 } = useReadContract(rc('bucketCaps', [2n]));
-  const { data: rel0 } = useReadContract(rc('releasedFromBucket', [0]));
-  const { data: rel1 } = useReadContract(rc('releasedFromBucket', [1]));
-  const { data: rel2 } = useReadContract(rc('releasedFromBucket', [2]));
+  const { data: cap0 } = useReadContract(rc('bucketCaps', [0n]) as never);
+  const { data: cap1 } = useReadContract(rc('bucketCaps', [1n]) as never);
+  const { data: cap2 } = useReadContract(rc('bucketCaps', [2n]) as never);
+  const { data: rel0 } = useReadContract(rc('releasedFromBucket', [0]) as never);
+  const { data: rel1 } = useReadContract(rc('releasedFromBucket', [1]) as never);
+  const { data: rel2 } = useReadContract(rc('releasedFromBucket', [2]) as never);
 
-  const { data: signer0 } = useReadContract(rc('signers', [0n]));
-  const { data: signer1 } = useReadContract(rc('signers', [1n]));
+  const { data: signer0 } = useReadContract(rc('signers', [0n]) as never);
+  const { data: signer1 } = useReadContract(rc('signers', [1n]) as never);
 
   const { writeContract, data: hash, isPending, error: writeError, reset } = useWriteContract();
   const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash, chainId: THETA_MAINNET_ID });
@@ -118,10 +120,12 @@ export default function EscrowAdmin() {
   const caps = [cap0, cap1, cap2];
   const released = [rel0, rel1, rel2];
   const fmt = (v: bigint | undefined) => v !== undefined ? Number(formatEther(v)).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '…';
-  const isSigner = isConnected && address && (
-    signer0?.toLowerCase() === address.toLowerCase() ||
-    signer1?.toLowerCase() === address.toLowerCase()
-  );
+  const s0 = typeof signer0 === 'string' ? signer0 : undefined;
+  const s1 = typeof signer1 === 'string' ? signer1 : undefined;
+  const isSigner =
+    isConnected &&
+    address &&
+    ((s0 && s0.toLowerCase() === address.toLowerCase()) || (s1 && s1.toLowerCase() === address.toLowerCase()));
 
   const s: Record<string, CSSProperties> = {
     page: { maxWidth: 900, margin: '0 auto', padding: '0 1rem 4rem' },

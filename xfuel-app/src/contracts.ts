@@ -81,6 +81,23 @@ export const BELIEVER_ROUND_ABI = [
   { type: 'function', name: 'xfAllocationCap', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'tokenPriceNumerator', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
   { type: 'function', name: 'tokenPriceDenominator', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  { type: 'function', name: 'status', inputs: [], outputs: [{ type: 'uint8' }], stateMutability: 'view' },
+  { type: 'function', name: 'roundOpenedAt', inputs: [], outputs: [{ type: 'uint256' }], stateMutability: 'view' },
+  {
+    type: 'function',
+    name: 'commitments',
+    inputs: [{ name: 'who', type: 'address' }],
+    outputs: [
+      { name: 'amount', type: 'uint256' },
+      { name: 'tokenAllocation', type: 'uint256' },
+      { name: 'tokensClaimed', type: 'uint256' },
+      { name: 'committedAt', type: 'uint64' },
+      { name: 'lockTier', type: 'uint8' },
+      { name: 'refunded', type: 'bool' },
+    ],
+    stateMutability: 'view',
+  },
+  { type: 'function', name: 'requestRefund', inputs: [], outputs: [], stateMutability: 'nonpayable' },
 ] as const satisfies Abi;
 
 /** AngelRound.sol — pre-TGE treasury round; no refunds */
