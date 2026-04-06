@@ -96,7 +96,7 @@ export default function Layout() {
           <div style={styles.footerLinks}>
             <a href="https://github.com/XFuel-Lab/xfuel-protocol" target="_blank" rel="noreferrer">GitHub</a>
             <a href="https://twitter.com/XFuelLab" target="_blank" rel="noreferrer">Twitter</a>
-            <a href="https://discord.gg/n9jHyW88" target="_blank" rel="noreferrer">Discord</a>
+            <a href="https://discord.com/invite/He5j6NeQ6R" target="_blank" rel="noreferrer">Discord</a>
             <Link to="/docs">Docs</Link>
             <Link to="/security">Security</Link>
           </div>
