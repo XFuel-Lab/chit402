@@ -129,6 +129,30 @@ cd sp1-prover
 
 This will create `verifier/SP1Verifier.sol` which can be deployed to Theta mainnet.
 
+## Phase 2 — x402 payment binding (v2 public values)
+
+AI-task proofs can commit an optional 13th public value (`paymentCommitment`) that binds
+an x402 `payment_ref` to the task. Implementation is **flag-gated** so v1 proofs keep
+working until you rebuild and re-key.
+
+| Env (prover host) | Effect |
+|-------------------|--------|
+| unset / `false` | v1 layout (12 fields); default |
+| `SP1_PUBLIC_VALUES_V2=true` | v2 when request includes non-zero `payment_commitment` |
+
+| Env (backend) | Effect |
+|---------------|--------|
+| `X402_PROOF_BINDING=true` | Computes commitment, threads fields to `/prove` |
+
+**Activation:** rebuild guest ELF → register new `programVKey` → enable both flags → smoke
+test with `sdk/js/examples/pay-prove-verify.ts`. Details:
+`skills/_shared/reference/public-values.md`, `docs/X402_ADAPTER.md`.
+
+Shared Rust hooks: `core-layer/sp1-hooks/src/payment_binding.rs` (parity with
+`SP1ProofHooks.sol` and `backend/theta-bridge/src/payment-binding.js`).
+
+---
+
 ## Integration with Existing Backend
 
 The SP1 prover integrates with the existing `backend/theta-bridge` infrastructure:

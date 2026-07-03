@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 sp1-zkvm = { workspace = true }
 serde = { workspace = true }
+xfuel-sp1-hooks = { workspace = true }
 
 [profile.release]
 opt-level = 3

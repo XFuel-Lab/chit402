@@ -4,20 +4,69 @@ import https from 'node:https';
 import logger from './logger.js';
 
 /**
+ * Resolve the prover endpoint configuration from env.
+ *
+ * Prover backends (SP1_PROVER, default `cuda`):
+ *   cuda  → Theta EdgeCloud CUDA GPU (SP1_PROVER_URL primary; SP1_FALLBACK_URL fallback)
+ *   zan   → ZAN PowerZebra HTTP endpoint (ZAN_PROVER_URL primary). The CUDA endpoint
+ *           (SP1_PROVER_URL) is retained as an AUTOMATIC fallback so enabling ZAN is
+ *           safe/reversible — if ZAN is unreachable, proving falls back to CUDA.
+ *
+ * ZAN is a drop-in: it must speak the same wire protocol (`/prove`, `/prove/binary`,
+ * `/health`, `/metrics`) as the existing prover. Auth via ZAN_PROVER_API_KEY
+ * (header name ZAN_PROVER_API_KEY_HEADER, default `x-api-key`).
+ *
+ * @param {NodeJS.ProcessEnv} [env=process.env]
+ * @returns {{ mode:'cuda'|'zan', primaryUrl:string|null, fallbackUrl:string|null, zanUrl:string|null, degraded?:string }}
+ */
+export function resolveProverConfig(env = process.env) {
+  const mode = (env.SP1_PROVER || 'cuda').toLowerCase();
+  const cudaUrl = env.SP1_PROVER_URL || null;
+  const explicitFallback = env.SP1_FALLBACK_URL || null;
+  const zanUrl = env.ZAN_PROVER_URL || null;
+
+  if (mode === 'zan') {
+    if (zanUrl) {
+      return {
+        mode: 'zan',
+        primaryUrl: zanUrl,
+        // CUDA endpoint is the automatic fallback (reversible); else any explicit fallback.
+        fallbackUrl: cudaUrl || explicitFallback,
+        zanUrl,
+      };
+    }
+    // Requested zan but not configured → degrade to CUDA (logged at construction).
+    return { mode: 'cuda', primaryUrl: cudaUrl, fallbackUrl: explicitFallback, zanUrl: null, degraded: 'zan_url_missing' };
+  }
+
+  return { mode: 'cuda', primaryUrl: cudaUrl, fallbackUrl: explicitFallback, zanUrl: null };
+}
+
+/**
  * SP1 Prover Client
- * Primary: Theta EdgeCloud (CUDA GPU, paid in TFUEL)
- * Fallback: Succinct Network (SP1_FALLBACK_URL, optional)
+ * Primary: Theta EdgeCloud (CUDA GPU, paid in TFUEL) — or ZAN PowerZebra when SP1_PROVER=zan
+ * Fallback: CUDA endpoint (when in zan mode) or Succinct Network (SP1_FALLBACK_URL, optional)
  * 
  * Supports batching (5-10 deposits per proof) with 11.6x speedup
  */
 class SP1ProverClient {
   constructor() {
-    if (!process.env.SP1_PROVER_URL) {
-      throw new Error('SP1_PROVER_URL environment variable is required');
+    const cfg = resolveProverConfig();
+    if (!cfg.primaryUrl) {
+      throw new Error(
+        'No prover URL configured: set SP1_PROVER_URL, or SP1_PROVER=zan with ZAN_PROVER_URL',
+      );
     }
 
-    this.primaryUrl = process.env.SP1_PROVER_URL;
-    this.fallbackUrl = process.env.SP1_FALLBACK_URL || null;
+    this.proverMode = cfg.mode;                       // 'cuda' (default) | 'zan'
+    this.primaryUrl = cfg.primaryUrl;
+    this.fallbackUrl = cfg.fallbackUrl || null;
+    this.zanUrl = cfg.zanUrl;                          // set only when zan is active
+    this.zanApiKey = process.env.ZAN_PROVER_API_KEY || null;
+    this.zanApiKeyHeader = (process.env.ZAN_PROVER_API_KEY_HEADER || 'x-api-key').toLowerCase();
+    if (cfg.degraded === 'zan_url_missing') {
+      logger.warn('SP1_PROVER=zan requested but ZAN_PROVER_URL is not set — using CUDA path');
+    }
     this.activeUrl = this.primaryUrl;
     this.timeout = parseInt(process.env.SP1_PROVER_TIMEOUT || '120000');
     this.retries = parseInt(process.env.SP1_PROVER_RETRIES || '3');
@@ -47,15 +96,31 @@ class SP1ProverClient {
 
     logger.info(
       {
+        proverMode: this.proverMode,
         primaryUrl: this.primaryUrl,
         fallbackUrl: this.fallbackUrl || 'none',
+        zanAuth: this.proverMode === 'zan' ? (this.zanApiKey ? 'configured' : 'none') : 'n/a',
         batchingEnabled: this.batchingEnabled,
         batchSize: this.batchSize,
         batchTimeoutMs: this.batchTimeoutMs,
         minBatchSize: this.minBatchSize
       },
-      'SP1ProverClient initialized (primary: Theta EdgeCloud)'
+      `SP1ProverClient initialized (primary: ${this.proverMode === 'zan' ? 'ZAN PowerZebra' : 'Theta EdgeCloud CUDA'})`
     );
+  }
+
+  /**
+   * Auth headers for a given prover URL. Attaches the ZAN API key only when the
+   * request targets the ZAN endpoint (CUDA/Succinct endpoints get no auth header).
+   * @private
+   * @param {string} url
+   * @returns {Record<string,string>}
+   */
+  _authHeaders(url) {
+    if (this.zanApiKey && this.zanUrl && url === this.zanUrl) {
+      return { [this.zanApiKeyHeader]: this.zanApiKey };
+    }
+    return {};
   }
 
   /**
@@ -66,7 +131,7 @@ class SP1ProverClient {
     const status = { primary: false, fallback: false };
 
     try {
-      const resp = await axios.get(`${this.primaryUrl}/health`, { timeout: 5000 });
+      const resp = await axios.get(`${this.primaryUrl}/health`, { timeout: 5000, headers: this._authHeaders(this.primaryUrl) });
       status.primary = resp.status === 200;
     } catch (error) {
       logger.warn({ err: error.message, url: this.primaryUrl }, 'Primary prover health check failed');
@@ -74,7 +139,7 @@ class SP1ProverClient {
 
     if (this.fallbackUrl) {
       try {
-        const resp = await axios.get(`${this.fallbackUrl}/health`, { timeout: 5000 });
+        const resp = await axios.get(`${this.fallbackUrl}/health`, { timeout: 5000, headers: this._authHeaders(this.fallbackUrl) });
         status.fallback = resp.status === 200;
       } catch (error) {
         logger.warn({ err: error.message, url: this.fallbackUrl }, 'Fallback prover health check failed');
@@ -98,8 +163,9 @@ class SP1ProverClient {
    * @returns {Promise<Object>} Proof response
    */
   async generateProof(request, urgent = false) {
-    // Validate request
-    if (!request.vault_address || !request.net_amount || !request.block_number) {
+    // Validate request. block_number 0 is valid (e.g. off-chain M2M tasks with no
+    // source-chain height) — test for presence, not truthiness.
+    if (!request.vault_address || !request.net_amount || request.block_number == null) {
       throw new Error('Invalid proof request: missing required fields');
     }
 
@@ -358,13 +424,13 @@ class SP1ProverClient {
     for (const url of urls) {
       try {
         const response = await axios.post(`${url}${path}`, body, {
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...this._authHeaders(url) },
           timeout: this.timeout,
           httpAgent: this._keepAliveAgent,
           httpsAgent: this._keepAliveHttpsAgent,
         });
         if (url !== this.primaryUrl) {
-          logger.warn({ url }, 'Proof served by FALLBACK prover (Succinct Network)');
+          logger.warn({ url }, 'Proof served by FALLBACK prover');
         }
         return response;
       } catch (error) {
@@ -456,7 +522,7 @@ class SP1ProverClient {
     for (const url of urls) {
       try {
         const response = await axios.post(`${url}/prove/binary`, body, {
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...this._authHeaders(url) },
           responseType: 'arraybuffer',
           timeout: this.timeout,
           httpAgent: this._keepAliveAgent,
@@ -595,7 +661,10 @@ class SP1ProverClient {
           totalTimeMs: elapsedTime,
           attempt,
           timestamp: Date.now(),
-          isBatch: false
+          isBatch: false,
+          publicValuesVersion: response.data.public_values_version ?? null,
+          aiPublicValuesAbi: response.data.ai_public_values_abi ?? null,
+          paymentCommitment: response.data.payment_commitment ?? null,
         };
       } catch (error) {
         lastError = error;
@@ -689,6 +758,7 @@ class SP1ProverClient {
         const start = Date.now();
         const resp = await axios.get(`${this.primaryUrl}/healthz`, {
           timeout: 8000,
+          headers: this._authHeaders(this.primaryUrl),
           httpAgent: this._keepAliveAgent,
           httpsAgent: this._keepAliveHttpsAgent,
         });
@@ -759,6 +829,7 @@ class SP1ProverClient {
       const start = Date.now();
       const resp = await axios.get(`${this.primaryUrl}/healthz`, {
         timeout: 8000,
+        headers: this._authHeaders(this.primaryUrl),
         httpAgent: this._keepAliveAgent,
         httpsAgent: this._keepAliveHttpsAgent,
       });
@@ -789,6 +860,7 @@ class SP1ProverClient {
 
   getFallbackStatus() {
     return {
+      proverMode: this.proverMode,
       usingFallback: this._usingFallback,
       activeUrl: this.activeUrl,
       primaryUrl: this.primaryUrl,
@@ -818,6 +890,7 @@ class SP1ProverClient {
       try {
         const resp = await axios.get(`${this.activeUrl}/metrics`, {
           timeout: 5000,
+          headers: this._authHeaders(this.activeUrl),
           httpAgent: this._keepAliveAgent,
           httpsAgent: this._keepAliveHttpsAgent,
         });
@@ -901,6 +974,7 @@ class SP1ProverClient {
             logger.info({ count }, 'Dashboard benchmark triggered');
             const resp = await axios.post(`${this.activeUrl}/benchmark`, { count, skip_verify: params.skip_verify ?? false }, {
               timeout: count * 30000,
+              headers: { 'Content-Type': 'application/json', ...this._authHeaders(this.activeUrl) },
               httpAgent: this._keepAliveAgent,
               httpsAgent: this._keepAliveHttpsAgent,
             });
@@ -1187,6 +1261,7 @@ poll();setInterval(poll,5000);
    */
   getBatchStats() {
     return {
+      proverMode: this.proverMode,
       primaryUrl: this.primaryUrl,
       fallbackUrl: this.fallbackUrl,
       enabled: this.batchingEnabled,
@@ -1227,8 +1302,9 @@ let sp1ProverClient = null;
  * @returns {Promise<SP1ProverClient | null>}
  */
 export async function initSP1Prover() {
-  if (!process.env.SP1_PROVER_URL) {
-    logger.info('SP1_PROVER_URL not set — SP1 proof generation disabled (zkGPT-only or dev)');
+  const cfg = resolveProverConfig();
+  if (!cfg.primaryUrl) {
+    logger.info('No prover URL set (SP1_PROVER_URL / ZAN_PROVER_URL) — SP1 proof generation disabled (zkGPT-only or dev)');
     return null;
   }
   if (!sp1ProverClient) {

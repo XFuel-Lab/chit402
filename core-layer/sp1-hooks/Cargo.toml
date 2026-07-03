@@ -8,10 +8,10 @@ license = "MIT"
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 hex = "0.4"
+tiny-keccak = { version = "2.0", default-features = false, features = ["keccak"] }
 
-# SP1 dependencies (uncomment when sp1 crates are available)
-# sp1-zkvm = "6.0"
-# sp1-sdk = "6.0"
+[dev-dependencies]
+serde_json = "1.0"
 
 [features]
 default = []

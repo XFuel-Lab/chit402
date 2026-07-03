@@ -45,6 +45,37 @@ contract SP1ProofHooksHarness {
         );
     }
 
+    function computePaymentCommitment(
+        bytes32 paymentRefHash,
+        bytes32 taskIdHash,
+        uint8 paymentRail,
+        uint256 amount
+    ) external pure returns (bytes32) {
+        return SP1ProofHooks.computePaymentCommitment(paymentRefHash, taskIdHash, paymentRail, amount);
+    }
+
+    function encodeAITaskPublicValuesV2(
+        uint8 taskType,
+        uint8 sourceChain,
+        uint8 destChain,
+        bytes32 taskIdHash,
+        bytes32 senderHash,
+        uint256 netAmount,
+        uint256 feeAmount,
+        uint16 feeBps,
+        bytes32 outputHash,
+        uint64 blockHeight,
+        uint64 timestamp,
+        uint64 nonce,
+        bytes32 paymentCommitment
+    ) external pure returns (bytes memory) {
+        return SP1ProofHooks.encodeAITaskPublicValuesV2(
+            taskType, sourceChain, destChain, taskIdHash, senderHash,
+            netAmount, feeAmount, feeBps, outputHash, blockHeight, timestamp, nonce,
+            paymentCommitment
+        );
+    }
+
     function computeComposedCallNullifier(
         bytes32 taskId,
         bytes32 stateRoot,

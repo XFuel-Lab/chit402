@@ -7,6 +7,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use base64::Engine;
+use xfuel_sp1_hooks::{
+    encode_ai_task_public_values_v2, u256_be32_from_u128, PublicValuesVersion,
+    PAYMENT_RAIL_USDC,
+};
 
 // Guest program ELF, embedded at compile time via build.rs + sp1_build::build_program
 const ELF: sp1_sdk::Elf = include_elf!("deposit-proof-program");
@@ -41,6 +45,16 @@ impl U256 {
     fn to_hex(&self) -> String {
         let hex_bytes: Vec<u8> = self.0.iter().rev().copied().collect();
         format!("0x{}", hex::encode(hex_bytes))
+    }
+
+    fn from_u128(value: u128) -> Self {
+        let mut arr = [0u8; 32];
+        arr[..16].copy_from_slice(&value.to_le_bytes());
+        U256(arr)
+    }
+
+    fn as_u128(&self) -> u128 {
+        u128::from_le_bytes(self.0[..16].try_into().unwrap())
     }
 }
 
@@ -81,18 +95,58 @@ pub struct ProofRequest {
     pub merkle_root: String,
     pub identity_commitment: String,
 
+    #[serde(default = "default_zero_address")]
     pub sender_address: String,
+    #[serde(default)]
     pub gross_amount: String,
+    #[serde(default)]
     pub fee_amount: String,
+    #[serde(default)]
     pub block_hash: String,
+    #[serde(default)]
     pub block_timestamp: u64,
+    #[serde(default)]
     pub tx_hash: String,
+    #[serde(default)]
     pub tx_index: u16,
+    #[serde(default)]
     pub merkle_proof: Vec<String>,
+    #[serde(default)]
     pub merkle_path_indices: Vec<u8>,
+    #[serde(default)]
     pub identity_secret: String,
+    #[serde(default)]
     pub identity_nullifier: String,
+    #[serde(default)]
     pub identity_trapdoor: String,
+
+    // ── AI task extensions (Phase E / backend ai-listener.js) ─────────────
+    #[serde(default)]
+    pub ai_task: bool,
+    #[serde(default)]
+    pub task_type: Option<String>,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub source_chain: Option<String>,
+    #[serde(default)]
+    pub source_tx: Option<String>,
+    #[serde(default)]
+    pub output_hash: Option<String>,
+    #[serde(default)]
+    pub completed_at: Option<u64>,
+    #[serde(default)]
+    pub fee_bps: Option<u16>,
+
+    // ── Phase 2: x402 payment binding (optional) ──────────────────────────
+    #[serde(default)]
+    pub payment_commitment: Option<String>,
+    #[serde(default)]
+    pub payment_ref_hash: Option<String>,
+    #[serde(default)]
+    pub payment_rail: Option<u8>,
+    #[serde(default)]
+    pub payment_amount: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -115,6 +169,15 @@ pub struct ProofResponse {
     pub public_inputs: PublicInputsJson,
     pub nullifier: String,
     pub proving_time_ms: u64,
+    /// Phase 2: 1 = v1 layout, 2 = v2 (+ paymentCommitment). Omitted for deposit proofs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_values_version: Option<u8>,
+    /// Phase 2: ABI-encoded v2 public values (hex) for on-chain verifyProof.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ai_public_values_abi: Option<String>,
+    /// Phase 2: payment commitment echoed from guest output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payment_commitment: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -283,6 +346,7 @@ async fn query_gpu_stats() -> serde_json::Value {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BatchPublicInputs {
+    pub public_values_version: u8,
     pub proof_type: ProofType,
     pub batch_size: u32,
     pub deposits: Vec<PublicInputs>,
@@ -368,6 +432,7 @@ struct AITaskPublicInputs {
     pub block_height: u64,
     pub timestamp: u64,
     pub nonce: u64,
+    pub payment_commitment: Hash256,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -380,6 +445,8 @@ struct AITaskPrivateInputs {
     pub execution_duration_ms: u64,
     pub ibc_channel_hash: Hash256,
     pub tao_evm_target: Address,
+    pub payment_ref_hash: Hash256,
+    pub payment_rail: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -414,6 +481,8 @@ struct BatchOutput {
     pub outcome: ProofOutcome,
     pub aggregate_fee: U256,
     pub output_hashes: Vec<Hash256>,
+    pub payment_commitments: Vec<Hash256>,
+    pub public_values_version: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -426,6 +495,153 @@ pub enum ProofOutcome {
 // ============================================================================
 // PARSING
 // ============================================================================
+
+fn default_zero_address() -> String {
+    "0x0000000000000000000000000000000000000000".into()
+}
+
+fn parse_hash_or_zero(s: Option<&String>) -> Hash256 {
+    match s {
+        Some(v) if !v.is_empty() && v != "null" => parse_hash(v).unwrap_or([0u8; 32]),
+        _ => [0u8; 32],
+    }
+}
+
+fn parse_chain_id(s: &str) -> ChainId {
+    match s.to_lowercase().as_str() {
+        "theta" => ChainId::Theta,
+        "osmosis" => ChainId::Osmosis,
+        "akash" => ChainId::Akash,
+        "bittensor" | "tao" => ChainId::Bittensor,
+        "persistence" => ChainId::Persistence,
+        _ => ChainId::Theta,
+    }
+}
+
+fn parse_message_type(s: &str) -> MessageType {
+    match s.to_lowercase().as_str() {
+        "compute_bid" => MessageType::ComputeBid,
+        "compute_result" => MessageType::ComputeResult,
+        "inference_request" => MessageType::InferenceRequest,
+        "capability_query" => MessageType::CapabilityQuery,
+        "data_attestation" => MessageType::DataAttestation,
+        _ => MessageType::InferenceRequest,
+    }
+}
+
+/// True when the host should use v2 public values (payment binding in-circuit).
+/// Requires `SP1_PUBLIC_VALUES_V2=true` AND a non-zero payment_commitment on the request.
+fn resolve_public_values_version(req: &ProofRequest) -> u8 {
+    let v2_flag = std::env::var("SP1_PUBLIC_VALUES_V2")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !v2_flag {
+        return PublicValuesVersion::V1 as u8;
+    }
+    match &req.payment_commitment {
+        Some(c) if !c.is_empty() && c != "0x0" && c != "0x0000000000000000000000000000000000000000000000000000000000000000" => {
+            PublicValuesVersion::V2 as u8
+        }
+        _ => PublicValuesVersion::V1 as u8,
+    }
+}
+
+fn parse_ai_task_batch(
+    req: &ProofRequest,
+) -> Result<(BatchPublicInputs, BatchPrivateInputs)> {
+    let public_values_version = resolve_public_values_version(req);
+    let task_id_hash = parse_hash(&req.merkle_root)?; // backend sets keccak256(taskId)
+    let sender_hash = parse_hash(&req.identity_commitment)?;
+    let net_amount = U256::from_hex(&req.net_amount)?;
+    let fee_amount = if req.fee_amount.is_empty() {
+        U256::from_u128(0)
+    } else {
+        U256::from_hex(&req.fee_amount)?
+    };
+    let fee_bps = req.fee_bps.unwrap_or(50);
+
+    let output_hash = parse_hash_or_zero(req.output_hash.as_ref());
+    let payment_commitment = if public_values_version == PublicValuesVersion::V2 as u8 {
+        parse_hash(req.payment_commitment.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("v2 requires payment_commitment on the request")
+        })?)
+    } else {
+        [0u8; 32]
+    };
+
+    let payment_ref_hash = parse_hash_or_zero(req.payment_ref_hash.as_ref());
+    let payment_rail = req.payment_rail.unwrap_or(PAYMENT_RAIL_USDC);
+
+    let task_type = parse_message_type(
+        req.task_type.as_deref().unwrap_or("inference_request"),
+    );
+    let source_chain = parse_chain_id(req.source_chain.as_deref().unwrap_or("theta"));
+    let destination_chain = ChainId::Theta;
+
+    // M2M off-chain tasks may send block_number 0; guest requires block_height > 0.
+    let block_height = req.block_number.max(1);
+    let timestamp = req.completed_at.unwrap_or(req.block_timestamp).max(1);
+    let nonce = 1u64;
+
+    let gross_amount = if req.gross_amount.is_empty() || req.gross_amount == "0" {
+        // Derive gross from net + fee when omitted (backend AI path)
+        let net = net_amount.as_u128();
+        let fee = fee_amount.as_u128();
+        U256::from_u128(net + fee)
+    } else {
+        U256::from_hex(&req.gross_amount)?
+    };
+
+    let source_tx_hash = parse_hash_or_zero(req.source_tx.as_ref());
+
+    let ai_public = AITaskPublicInputs {
+        task_type,
+        source_chain,
+        destination_chain,
+        task_id_hash,
+        sender_hash,
+        net_amount,
+        fee_amount,
+        fee_bps,
+        output_hash,
+        block_height,
+        timestamp,
+        nonce,
+        payment_commitment,
+    };
+
+    let ai_private = AITaskPrivateInputs {
+        gross_amount,
+        source_tx_hash,
+        model_id_hash: [0u8; 32],
+        input_hash: [0u8; 32],
+        provider_hash: [0u8; 32],
+        execution_duration_ms: 1,
+        ibc_channel_hash: [0u8; 32],
+        tao_evm_target: [0u8; 20],
+        payment_ref_hash,
+        payment_rail,
+    };
+
+    Ok((
+        BatchPublicInputs {
+            public_values_version,
+            proof_type: ProofType::AITask,
+            batch_size: 1,
+            deposits: vec![],
+            reverse_burns: vec![],
+            fee_burns: vec![],
+            ai_tasks: vec![ai_public],
+            a2a_messages: vec![],
+        },
+        BatchPrivateInputs {
+            deposits: vec![],
+            reverse_burns: vec![],
+            ai_tasks: vec![ai_private],
+            a2a_messages: vec![],
+        },
+    ))
+}
 
 fn parse_proof_request(request: &ProofRequest) -> Result<(PublicInputs, PrivateInputs)> {
     let public_inputs = PublicInputs {
@@ -489,9 +705,14 @@ fn parse_request_to_batch(
 ) -> Result<(BatchPublicInputs, BatchPrivateInputs, bool, Vec<ProofRequest>)> {
     match request {
         UnifiedProofRequest::Single(single_req) => {
+            if single_req.ai_task {
+                let (pub_batch, priv_batch) = parse_ai_task_batch(&single_req)?;
+                return Ok((pub_batch, priv_batch, false, vec![single_req]));
+            }
             let (pub_in, priv_in) = parse_proof_request(&single_req)?;
             Ok((
                 BatchPublicInputs {
+                    public_values_version: 1,
                     proof_type: ProofType::ForwardDeposit,
                     batch_size: 1,
                     deposits: vec![pub_in],
@@ -527,6 +748,7 @@ fn parse_request_to_batch(
             }
             Ok((
                 BatchPublicInputs {
+                    public_values_version: 1,
                     proof_type: ProofType::ForwardDeposit,
                     batch_size: batch_size as u32,
                     deposits: public_inputs,
@@ -545,6 +767,26 @@ fn parse_request_to_batch(
                 batch_req.deposits,
             ))
         }
+    }
+}
+
+fn chain_discriminant(c: &ChainId) -> u8 {
+    match c {
+        ChainId::Theta => 0,
+        ChainId::Osmosis => 1,
+        ChainId::Akash => 2,
+        ChainId::Bittensor => 3,
+        ChainId::Persistence => 4,
+    }
+}
+
+fn message_type_discriminant(m: &MessageType) -> u8 {
+    match m {
+        MessageType::ComputeBid => 1,
+        MessageType::ComputeResult => 2,
+        MessageType::InferenceRequest => 3,
+        MessageType::CapabilityQuery => 4,
+        MessageType::DataAttestation => 5,
     }
 }
 
@@ -580,6 +822,24 @@ fn build_response(
     } else {
         let nullifier = format!("0x{}", hex::encode(batch_output.nullifiers[0]));
         eprintln!("Single proof done: {}ms", proving_time_ms);
+
+        let req = &original_requests[0];
+        let (pv_version, ai_abi, pay_commitment) = if req.ai_task {
+            let pv = Some(batch_output.public_values_version);
+            let pc = batch_output
+                .payment_commitments
+                .first()
+                .map(|h| format!("0x{}", hex::encode(h)));
+            let abi = if batch_output.public_values_version == PublicValuesVersion::V2 as u8 {
+                Some(build_ai_public_values_abi_v2(req, &batch_output)?)
+            } else {
+                None
+            };
+            (pv, abi, pc)
+        } else {
+            (None, None, None)
+        };
+
         Ok(UnifiedProofResponse::Single(ProofResponse {
             proof: proof_b64,
             public_inputs: PublicInputsJson {
@@ -591,8 +851,57 @@ fn build_response(
             },
             nullifier,
             proving_time_ms,
+            public_values_version: pv_version,
+            ai_public_values_abi: ai_abi,
+            payment_commitment: pay_commitment,
         }))
     }
+}
+
+/// ABI-encode v2 AI-task public values for on-chain `verifyProof` (13 words).
+fn build_ai_public_values_abi_v2(req: &ProofRequest, output: &BatchOutput) -> Result<String> {
+    let task_type = parse_message_type(
+        req.task_type.as_deref().unwrap_or("inference_request"),
+    );
+    let source_chain = parse_chain_id(req.source_chain.as_deref().unwrap_or("theta"));
+    let task_id_hash = parse_hash(&req.merkle_root)?;
+    let sender_hash = parse_hash(&req.identity_commitment)?;
+    let net_amount = U256::from_hex(&req.net_amount)?;
+    let fee_amount = if req.fee_amount.is_empty() {
+        U256::from_u128(0)
+    } else {
+        U256::from_hex(&req.fee_amount)?
+    };
+    let fee_bps = req.fee_bps.unwrap_or(50);
+    let output_hash = parse_hash_or_zero(req.output_hash.as_ref());
+    let block_height = req.block_number.max(1);
+    let timestamp = req.completed_at.unwrap_or(req.block_timestamp).max(1);
+    let nonce = 1u64;
+    let payment_commitment = output
+        .payment_commitments
+        .first()
+        .copied()
+        .unwrap_or([0u8; 32]);
+
+    let net_be = u256_be32_from_u128(net_amount.as_u128());
+    let fee_be = u256_be32_from_u128(fee_amount.as_u128());
+
+    let encoded = encode_ai_task_public_values_v2(
+        message_type_discriminant(&task_type),
+        chain_discriminant(&source_chain),
+        chain_discriminant(&ChainId::Theta),
+        &task_id_hash,
+        &sender_hash,
+        &net_be,
+        &fee_be,
+        fee_bps,
+        &output_hash,
+        block_height,
+        timestamp,
+        nonce,
+        &payment_commitment,
+    );
+    Ok(format!("0x{}", hex::encode(encoded)))
 }
 
 fn build_binary_response(
@@ -690,6 +999,7 @@ async fn main() -> Result<()> {
             let (pub_in, priv_in) = parse_proof_request(&request)?;
             let mut stdin = SP1Stdin::new();
             stdin.write(&BatchPublicInputs {
+                public_values_version: 1,
                 proof_type: ProofType::ForwardDeposit,
                 batch_size: 1,
                 deposits: vec![pub_in],

@@ -12,16 +12,36 @@ const __dirname = dirname(__filename);
  * Configuration for XFuel Theta Bridge (AI DePIN M2M + optional Persistence bridge).
  * Set PERSISTENCE_BRIDGE_ENABLED=true to enable legacy Theta→Persistence deposit flow.
  */
+// Computed before the config object so fields below can reference it without a
+// temporal-dead-zone self-reference (previously `!config.persistenceBridgeEnabled`
+// inside the literal threw a ReferenceError whenever AI_LISTENER_ENABLED !== 'true').
+const persistenceBridgeEnabled = process.env.PERSISTENCE_BRIDGE_ENABLED === 'true';
+
+// ── Theta RPC failover list ────────────────────────────────────────────────
+// Order = failover priority (MultiRpcProvider uses index 0 as primary). If a
+// ZAN Node Service endpoint is configured it becomes primary, with the explicit
+// THETA_RPC_URLS list (or the public defaults) retained as fallback so ZAN is
+// never a single point of failure. Deduped; empties stripped.
+const PUBLIC_THETA_RPCS = [
+  'https://eth-rpc-api.thetatoken.org/rpc',          // mainnet 361
+  'https://eth-rpc-api-testnet.thetatoken.org/rpc',  // testnet 365
+];
+const explicitThetaRpcs = process.env.THETA_RPC_URLS
+  ? process.env.THETA_RPC_URLS.split(',').map((u) => u.trim()).filter(Boolean)
+  : null;
+const zanThetaRpc = (process.env.ZAN_THETA_RPC_URL || '').trim();
+const thetaRpcUrls = [
+  ...(zanThetaRpc ? [zanThetaRpc] : []),
+  ...(explicitThetaRpcs || PUBLIC_THETA_RPCS),
+].filter((url, i, arr) => url && arr.indexOf(url) === i);
+
 const config = {
   // Persistence bridge (Theta → Persistence deposits): optional; default off — focus AI DePIN
-  persistenceBridgeEnabled: process.env.PERSISTENCE_BRIDGE_ENABLED === 'true',
+  persistenceBridgeEnabled,
 
-  // Theta RPC Configuration
+  // Theta RPC Configuration — ZAN primary (if set) + public fallback; see thetaRpcUrls above
   theta: {
-    rpcUrls: process.env.THETA_RPC_URLS?.split(',').map(url => url.trim()) || [
-      'https://eth-rpc-api.thetatoken.org/rpc',
-      'https://eth-rpc-api-testnet.thetatoken.org/rpc'
-    ],
+    rpcUrls: thetaRpcUrls,
     timeout: parseInt(process.env.RPC_TIMEOUT_MS) || 30000,
     requiredConfirmations: parseInt(process.env.REQUIRED_CONFIRMATIONS) || 3,
     blockPollInterval: parseInt(process.env.BLOCK_POLL_INTERVAL_MS) || 5000
@@ -34,6 +54,40 @@ const config = {
     vaultFactoryAbiPath: process.env.VAULT_FACTORY_ABI_PATH || join(__dirname, '../abis/VaultFactory.json'),
     /** Phase 1 Fair Exchange: A2ACircuit address for settleBidFairExchange (optional). */
     a2aCircuitAddress: process.env.A2A_CIRCUIT_ADDRESS || null,
+  },
+
+  // x402 / USDC payment rail (agent-native micropayments). USDC via x402 is the
+  // DEFAULT rail for new agent flows; TFUEL/TDROP on Theta is the secondary rail.
+  // Settlement (Phase 1): USDC → Base treasury (payTo); Theta fee-split reconciled
+  // off-chain by paymentRef via a deferred bridge. Payer is agent-side (no server
+  // keys). All flag-gated: with enabled=false the server keeps the TFUEL path.
+  // See docs/X402_ADAPTER.md and docs/payments-x402.md.
+  x402: {
+    enabled: process.env.X402_ENABLED === 'true',
+    // Server default rail when a request omits payment.rail. Start 'tfuel' and
+    // flip to 'usdc' once the ZAN facilitator is live and stable.
+    defaultRail: (process.env.X402_DEFAULT_RAIL || 'tfuel').toLowerCase() === 'usdc' ? 'usdc' : 'tfuel',
+    // If usdc is requested but the facilitator is unavailable: fall back to TFUEL
+    // (true) or return 503 (false).
+    fallbackToTfuel: process.env.X402_FALLBACK_TFUEL === 'true',
+    gatewayUrl: process.env.ZAN_X402_GATEWAY_URL || null,   // facilitator (verify + settle)
+    apiKey: process.env.ZAN_X402_API_KEY || null,
+    payTo: process.env.X402_PAY_TO || null,                 // Base USDC treasury
+    network: process.env.X402_NETWORK || 'base',            // base | solana
+    asset: process.env.X402_ASSET || 'USDC',
+    challengeTtlMs: parseInt(process.env.X402_CHALLENGE_TTL_MS, 10) || 120000,
+    // Phase 2: bind the x402 payment_ref into the SP1 proof so it attests BOTH
+    // computation AND payment. Flag-gated (default off). When on, the backend
+    // computes a deterministic payment commitment and threads it to the prover;
+    // full in-proof attestation activates once the SP1 guest commits the v2 layout
+    // (new programVKey). See docs/X402_ADAPTER.md §"Phase 2 proof binding".
+    proofBinding: process.env.X402_PROOF_BINDING === 'true',
+    // USDC pricing (smallest unit, 6dp). Default per task + optional per-model JSON map.
+    usdcPriceDefault: process.env.X402_USDC_PRICE_DEFAULT || '10000', // $0.01
+    usdcPrices: (() => {
+      if (!process.env.X402_USDC_PRICES) return {};
+      try { return JSON.parse(process.env.X402_USDC_PRICES); } catch { return {}; }
+    })(),
   },
 
   // Redis Configuration
@@ -154,7 +208,7 @@ const config = {
   // AI Listener Configuration (Phase E: AI DePIN Bridge)
   aiListener: {
     // When Persistence bridge is off, AI listener is on by default (AI DePIN mode)
-    enabled: process.env.AI_LISTENER_ENABLED === 'true' || !config.persistenceBridgeEnabled,
+    enabled: process.env.AI_LISTENER_ENABLED === 'true' || !persistenceBridgeEnabled,
 
     // Theta Edge Cloud URL for inference routing
     thetaEdgeUrl: process.env.THETA_EDGE_URL,

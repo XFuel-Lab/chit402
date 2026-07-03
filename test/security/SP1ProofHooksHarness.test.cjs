@@ -160,6 +160,88 @@ describe('SP1ProofHooks Library (via Harness)', function () {
     });
   });
 
+  describe('computePaymentCommitment (Phase 2 x402 binding)', function () {
+    const railUsdc = 1;
+    const railTfuel = 2;
+
+    it('should match the backend JS formula (parity)', async function () {
+      const paymentRefHash = ethers.keccak256(ethers.toUtf8Bytes('base:0xabc123'));
+      const taskIdHash = ethers.keccak256(ethers.toUtf8Bytes('task-pay-1'));
+      const amount = ethers.parseEther('0.95');
+
+      const result = await harness.computePaymentCommitment(paymentRefHash, taskIdHash, railUsdc, amount);
+      // Mirror of backend/theta-bridge/src/payment-binding.js computePaymentCommitment.
+      const expected = ethers.keccak256(
+        ethers.solidityPacked(
+          ['bytes32', 'bytes32', 'uint8', 'uint256'],
+          [paymentRefHash, taskIdHash, railUsdc, amount]
+        )
+      );
+      expect(result).to.equal(expected);
+    });
+
+    it('should differ by rail, ref, task, and amount', async function () {
+      const ref = ethers.keccak256(ethers.toUtf8Bytes('base:0xtx'));
+      const task = ethers.keccak256(ethers.toUtf8Bytes('t'));
+      const amt = 1000n;
+
+      const base = await harness.computePaymentCommitment(ref, task, railUsdc, amt);
+      const byRail = await harness.computePaymentCommitment(ref, task, railTfuel, amt);
+      const byRef = await harness.computePaymentCommitment(ethers.keccak256(ethers.toUtf8Bytes('base:0xOTHER')), task, railUsdc, amt);
+      const byTask = await harness.computePaymentCommitment(ref, ethers.keccak256(ethers.toUtf8Bytes('t2')), railUsdc, amt);
+      const byAmt = await harness.computePaymentCommitment(ref, task, railUsdc, 2000n);
+
+      expect(base).to.not.equal(byRail);
+      expect(base).to.not.equal(byRef);
+      expect(base).to.not.equal(byTask);
+      expect(base).to.not.equal(byAmt);
+    });
+  });
+
+  describe('encodeAITaskPublicValuesV2 (Phase 2 x402 binding)', function () {
+    const v1Args = [
+      1, 0, 1,
+      ethers.keccak256(ethers.toUtf8Bytes('task-id')),
+      ethers.keccak256(ethers.toUtf8Bytes('sender')),
+      ethers.parseEther('0.95'),
+      ethers.parseEther('0.05'),
+      50,
+      ethers.keccak256(ethers.toUtf8Bytes('output')),
+      12345n, 1700000000n, 1n,
+    ];
+
+    it('appends a decodable paymentCommitment as the 13th field', async function () {
+      const paymentCommitment = ethers.keccak256(ethers.toUtf8Bytes('pay-commit'));
+      const result = await harness.encodeAITaskPublicValuesV2(...v1Args, paymentCommitment);
+
+      const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
+        ['uint8', 'uint8', 'uint8', 'bytes32', 'bytes32',
+         'uint256', 'uint256', 'uint16', 'bytes32', 'uint64', 'uint64', 'uint64', 'bytes32'],
+        result
+      );
+      expect(decoded[12]).to.equal(paymentCommitment);
+      expect(decoded[5]).to.equal(ethers.parseEther('0.95'));
+    });
+
+    it('is a strict superset of v1 (v1 fields decode identically)', async function () {
+      const v1 = await harness.encodeAITaskPublicValues(...v1Args);
+      const v2 = await harness.encodeAITaskPublicValuesV2(...v1Args, ethers.ZeroHash);
+      // v2 = v1 (12 head words) + one extra 32-byte word.
+      expect(v2.startsWith(v1)).to.equal(true);
+      expect((v2.length - v1.length)).to.equal(64); // 32 bytes hex
+    });
+
+    it('bytes32(0) commitment marks an unbound task', async function () {
+      const result = await harness.encodeAITaskPublicValuesV2(...v1Args, ethers.ZeroHash);
+      const decoded = ethers.AbiCoder.defaultAbiCoder().decode(
+        ['uint8', 'uint8', 'uint8', 'bytes32', 'bytes32',
+         'uint256', 'uint256', 'uint16', 'bytes32', 'uint64', 'uint64', 'uint64', 'bytes32'],
+        result
+      );
+      expect(decoded[12]).to.equal(ethers.ZeroHash);
+    });
+  });
+
   describe('computeComposedCallNullifier', function () {
     it('should include stateRoot and sourceBlock for replay protection', async function () {
       const taskId = ethers.keccak256(ethers.toUtf8Bytes('cc-task'));
