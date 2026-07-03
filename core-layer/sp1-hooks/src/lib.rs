@@ -1,15 +1,18 @@
 //! XFuel Core Layer — SP1 Proof Hooks
 //!
 //! Shared types and helpers for SP1 proof generation/verification across
-//! Solidity (EVM), CosmWasm (WASM), and Rust host environments.
+//! Solidity (EVM), CosmWasm (WASM), and Rust host/guest environments.
 //!
-//! Research ties (SP1 docs v5.x, Feb 2026):
-//!   - Guest program: sp1_zkvm::entrypoint!(main), sp1_zkvm::io::{read, commit}
-//!   - Host: ProverClient::from_env(), client.prove(&pk, &stdin).groth16().run()
-//!   - Verification key: keccak256 of the program ELF
-//!   - Groth16 proofs: ~260 bytes on Bn254, ~270k gas on-chain
-//!   - Optimize with precompiles for SHA-256, Keccak, BN254 (orders of magnitude faster)
-//!   - Set lto = "thin" and codegen-units = 1 for smaller binaries
+//! Phase 2 (x402): see `payment_binding` for the v2 `paymentCommitment` layout
+//! that mirrors `SP1ProofHooks.computePaymentCommitment` / `encodeAITaskPublicValuesV2`.
+
+pub mod payment_binding;
+
+pub use payment_binding::{
+    compute_payment_commitment, compute_payment_commitment_u128, encode_ai_task_public_values_v2,
+    is_zero_bytes32, keccak256, u256_be32_from_le_bytes, u256_be32_from_u128,
+    PublicValuesVersion, PAYMENT_RAIL_TFUEL, PAYMENT_RAIL_USDC,
+};
 
 use serde::{Deserialize, Serialize};
 

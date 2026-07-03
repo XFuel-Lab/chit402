@@ -2,12 +2,22 @@
 sp1_zkvm::entrypoint!(main);
 
 use serde::{Deserialize, Serialize};
+use xfuel_sp1_hooks::{
+    compute_payment_commitment, is_zero_bytes32, u256_be32_from_le_bytes, PAYMENT_RAIL_USDC,
+    PAYMENT_RAIL_TFUEL,
+};
 
 // ============================================================================
 // SP1 BIDIRECTIONAL BRIDGE PROOF + AI DePIN zkML EXTENSIONS
 // ============================================================================
-// Version: 5.0 (AI DePIN + zkML + A2A Messaging)
-// Date: February 11, 2026
+// Version: 5.1 (Phase 2 — x402 payment binding in v2 public values)
+// Date: July 2026
+// Changes from v5.0:
+// - Phase 2: optional v2 public-values layout binds x402 payment_ref via
+//   paymentCommitment (13th ABI field; mirrors SP1ProofHooks.encodeAITaskPublicValuesV2)
+// - Guest verifies keccak256(abi.encodePacked(refHash, taskIdHash, rail, amount))
+//   when public_values_version == 2 and payment_commitment != bytes32(0)
+// - Controlled by batch input `public_values_version` (1 = v1 default, 2 = v2)
 // Changes from v4.0:
 // - Added AI DePIN proof circuits (Phase E.2/E.3)
 // - Added zkML inference output verification (COMPUTE_RESULT with output_hash)
@@ -274,6 +284,10 @@ struct AITaskPublicInputs {
     pub block_height: u64,            // Source chain block height
     pub timestamp: u64,               // Task completion timestamp
     pub nonce: u64,                   // Per-agent replay protection
+    /// Phase 2 (v2): x402 payment commitment bound into the proof.
+    /// `bytes32(0)` = unbound (TFUEL rail or binding disabled). When non-zero and
+    /// `public_values_version == 2`, the guest verifies it against private witness fields.
+    pub payment_commitment: Hash256,
 }
 
 /// Private inputs for AI task settlement proof
@@ -287,6 +301,9 @@ struct AITaskPrivateInputs {
     pub execution_duration_ms: u64,   // Task execution time in milliseconds
     pub ibc_channel_hash: Hash256,    // Hash of IBC channel ID (Osmosis/Akash routing)
     pub tao_evm_target: Address,      // TAO EVM contract address (zero if non-TAO)
+    /// Phase 2 (v2): witness for payment commitment verification (ignored in v1).
+    pub payment_ref_hash: Hash256,
+    pub payment_rail: u8,             // 1 = USDC/x402, 2 = TFUEL
 }
 
 /// Public inputs for A2A/M2M message verification (Phase E.3)
@@ -320,6 +337,8 @@ struct A2AMessagePrivateInputs {
 /// Unified batch public inputs (Phase E — all proof types)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UnifiedBatchPublicInputs {
+    /// Public-values layout: 1 = v1 (12 fields), 2 = v2 (+ paymentCommitment).
+    pub public_values_version: u8,
     pub proof_type: ProofType,
     pub batch_size: u32,
     // Bridge flows (Phase C)
@@ -355,6 +374,10 @@ struct UnifiedBatchOutput {
     pub aggregate_fee: U256,
     /// Output hashes for COMPUTE_RESULT proofs (empty for other types)
     pub output_hashes: Vec<Hash256>,
+    /// Phase 2 (v2): per-task payment commitments (parallel to ai_tasks; empty for bridge proofs)
+    pub payment_commitments: Vec<Hash256>,
+    /// Echo of the input layout version (1 or 2).
+    pub public_values_version: u8,
 }
 
 // ============================================================================
@@ -856,24 +879,16 @@ fn validate_fee_burn(public_inputs: &FeeBurnPublicInputs) -> Hash256 {
 // AI TASK VALIDATION (Phase E.2 — zkML Inference + Compute Settlement)
 // ============================================================================
 
-/// Validate an AI task settlement and return (nullifier, fee_commitment, output_hash)
+/// Validate an AI task settlement and return (nullifier, fee_commitment, output_hash, payment_commitment)
 ///
-/// This circuit proves:
-/// 1. Task fee was correctly calculated (0.5-1% of gross amount)
-/// 2. Net settlement amount is correct (gross - fee)
-/// 3. Output hash matches committed compute/inference result
-/// 4. Task originated from a valid source chain
-/// 5. Nonce is bound to prevent replay
-/// 6. IBC channel routing is valid (for Osmosis/Akash)
-/// 7. TAO EVM target is valid (for Bittensor calls)
-///
-/// Compatible with ai-listener.js proof request format:
-///   { ai_task: true, task_type, task_id, source_chain, source_tx,
-///     fee_amount, output_hash, completed_at }
+/// Phase 2 (v2): when `public_values_version == 2` and `payment_commitment != 0`, verifies
+/// the commitment matches `keccak256(abi.encodePacked(paymentRefHash, taskIdHash, rail, netAmount))`
+/// — the same formula as `SP1ProofHooks.computePaymentCommitment`.
 fn validate_ai_task(
     public_inputs: &AITaskPublicInputs,
     private_inputs: &AITaskPrivateInputs,
-) -> (Hash256, Hash256, Hash256) {
+    public_values_version: u8,
+) -> (Hash256, Hash256, Hash256, Hash256) {
     // ── Basic validation ─────────────────────────────────────────────────
 
     assert!(
@@ -1032,6 +1047,39 @@ fn validate_ai_task(
         "Task amount below minimum threshold"
     );
 
+    // ── Phase 2: x402 payment binding (v2 public values) ───────────────────
+    let effective_payment_commitment = if public_values_version == 2
+        && !is_zero_bytes32(&public_inputs.payment_commitment)
+    {
+        assert!(
+            !is_zero_bytes32(&private_inputs.payment_ref_hash),
+            "v2 payment binding requires non-zero payment_ref_hash witness"
+        );
+        assert!(
+            private_inputs.payment_rail == PAYMENT_RAIL_USDC
+                || private_inputs.payment_rail == PAYMENT_RAIL_TFUEL,
+            "Invalid payment rail (expected 1=USDC or 2=TFUEL)"
+        );
+        let amount_be = u256_be32_from_le_bytes(&public_inputs.net_amount.to_le_bytes());
+        let expected = compute_payment_commitment(
+            &private_inputs.payment_ref_hash,
+            &public_inputs.task_id_hash,
+            private_inputs.payment_rail,
+            &amount_be,
+        );
+        assert!(
+            expected == public_inputs.payment_commitment,
+            "Payment commitment mismatch (x402 binding)"
+        );
+        public_inputs.payment_commitment
+    } else {
+        assert!(
+            is_zero_bytes32(&public_inputs.payment_commitment),
+            "payment_commitment must be bytes32(0) unless public_values_version == 2"
+        );
+        [0u8; 32]
+    };
+
     // ── Nullifier generation (per-agent replay protection) ───────────────
 
     let nonce_padded = {
@@ -1082,7 +1130,12 @@ fn validate_ai_task(
         poseidon_hash(&meta_inputs)
     };
 
-    (nullifier, fee_commitment, effective_output_hash)
+    (
+        nullifier,
+        fee_commitment,
+        effective_output_hash,
+        effective_payment_commitment,
+    )
 }
 
 // ============================================================================
@@ -1260,7 +1313,8 @@ pub fn main() {
     let mut nullifiers = Vec::with_capacity(batch_public.batch_size as usize);
     let mut aggregate_fee = U256::from_u64(0);
     let mut output_hashes: Vec<Hash256> = Vec::new();
-    let mut outcome = ProofOutcome::Valid;
+    let mut payment_commitments: Vec<Hash256> = Vec::new();
+    let outcome = ProofOutcome::Valid;
 
     match batch_public.proof_type {
         // ── Phase C: Forward Deposit (TFUEL → ibcTFUEL) ─────────────────
@@ -1328,12 +1382,15 @@ pub fn main() {
             );
 
             for i in 0..batch_public.batch_size as usize {
-                let (nullifier, _fee_commitment, effective_output_hash) = validate_ai_task(
-                    &batch_public.ai_tasks[i],
-                    &batch_private.ai_tasks[i],
-                );
+                let (nullifier, _fee_commitment, effective_output_hash, payment_commitment) =
+                    validate_ai_task(
+                        &batch_public.ai_tasks[i],
+                        &batch_private.ai_tasks[i],
+                        batch_public.public_values_version,
+                    );
                 nullifiers.push(nullifier);
                 output_hashes.push(effective_output_hash);
+                payment_commitments.push(payment_commitment);
 
                 // Accumulate batch fees for FeeCollector hook
                 aggregate_fee = aggregate_fee
@@ -1395,6 +1452,8 @@ pub fn main() {
         outcome,
         aggregate_fee,
         output_hashes,
+        payment_commitments,
+        public_values_version: batch_public.public_values_version,
     };
 
     sp1_zkvm::io::commit(&output);

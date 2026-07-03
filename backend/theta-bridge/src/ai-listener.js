@@ -5,6 +5,7 @@ import config from './config.js';
 import logger from './logger.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { getZkGPTProver, isZkGPTProverConfigured } from './zkgpt-prover-client.js';
+import { buildPaymentBinding } from './payment-binding.js';
 
 /**
  * AI Intent Listener — Osmosis/Akash IBC Event Monitor
@@ -947,6 +948,19 @@ class AIListener {
     task.updatedAt = Date.now();
     this.metrics.totalInferenceRouted++;
 
+    // Opt-in: route through the full 6-tier DePIN ComputeRouter instead of the
+    // single THETA_EDGE_URL path. Default OFF — preserves current behavior. Any
+    // failure (or a hash-only request with no raw input) falls back below.
+    if (process.env.M2M_USE_FULL_ROUTER === 'true') {
+      try {
+        const handled = await this._routeInferenceViaFullRouter(task, netAmount);
+        if (handled) return;
+        logger.info({ taskId: task.taskId }, 'Full router declined (no raw input); using default path');
+      } catch (err) {
+        logger.warn({ err: err.message, taskId: task.taskId }, 'Full router error; using default path');
+      }
+    }
+
     try {
       const thetaEdgeUrl = config.aiListener?.thetaEdgeUrl;
 
@@ -995,6 +1009,75 @@ class AIListener {
       task.updatedAt = Date.now();
       this.metrics.totalTasksFailed++;
     }
+  }
+
+  /**
+   * Route an inference task through the full 6-tier DePIN ComputeRouter
+   * (EdgeCloud → RapidAPI → MCP → Akash → Render → Bedrock). Gated by
+   * M2M_USE_FULL_ROUTER. The 6-tier executors run *real* inference, so they need
+   * raw input — not just an input_hash. If the intent is hash-only (privacy
+   * mode) or no tier produces output, returns false so the caller falls back to
+   * the default THETA_EDGE_URL path. Never throws to the caller's happy path on
+   * provider issues; returns false instead.
+   *
+   * @param {Object} task
+   * @param {bigint} netAmount
+   * @returns {Promise<boolean>} true if the task was completed here
+   * @private
+   */
+  async _routeInferenceViaFullRouter(task, netAmount) {
+    const intent = task.intent || {};
+    const messages = Array.isArray(intent.messages) ? intent.messages : null;
+    const prompt = intent.input || intent.prompt || null;
+    if (!messages && !prompt) {
+      // Hash-only request — the full router cannot execute without raw input.
+      return false;
+    }
+
+    // Lazy, isolated import: only loaded when the flag is on. Keeps the M2M
+    // server decoupled from the heavier inference handler at load time.
+    const { ThetaInferenceHandler } = await import(
+      '../../../circuits/theta-inference/theta-inference-handler.js'
+    );
+    const { ComputeRouter } = await import(
+      '../../../circuits/theta-inference/compute-router.js'
+    );
+
+    if (!this._fullRouterHandler) {
+      this._fullRouterHandler = new ThetaInferenceHandler({});
+      if (typeof this._fullRouterHandler.resolveApiKeys === 'function') {
+        await this._fullRouterHandler.resolveApiKeys().catch(() => {});
+      }
+    }
+
+    const router = ComputeRouter.fromHandler(this._fullRouterHandler);
+    const modelName = intent.modelId || 'default-llm';
+    const requestBody = {
+      model: modelName,
+      messages: messages || undefined,
+      prompt: prompt || undefined,
+      max_tokens: intent.maxTokens,
+      temperature: intent.temperature,
+    };
+
+    // SERVICE_TYPES.LLM_INFERENCE === 0 (see theta-inference-handler.js).
+    const routed = await router.route({ serviceType: 0, requestBody, modelName, gpuName: 'default' });
+    if (!routed.result) {
+      // All eligible tiers unavailable or returned no output → fall back.
+      return false;
+    }
+
+    task.result = {
+      ...routed.result,
+      provider: routed.source,
+      routedTo: routed.source,
+      net_amount: netAmount.toString(),
+    };
+    task.status = TASK_STATUS.COMPLETED;
+    task.updatedAt = Date.now();
+    this.metrics.totalTasksCompleted++;
+    logger.info({ taskId: task.taskId, routedTo: routed.source }, 'Inference completed via 6-tier ComputeRouter');
+    return true;
   }
 
   /**
@@ -1238,7 +1321,7 @@ class AIListener {
       const proofRequest = {
         // Standard SP1 fields
         vault_address: ethers.ZeroAddress, // AI tasks don't use vaults
-        net_amount: task.intent.amount,
+        net_amount: task.netAmount ?? task.intent.amount,
         block_number: parseInt(task.meta.height) || 0,
         merkle_root: ethers.keccak256(ethers.toUtf8Bytes(task.taskId)),
         identity_commitment: ethers.keccak256(
@@ -1257,6 +1340,19 @@ class AIListener {
         // Phase 1: proof_system for routing (sp1 | zkgpt) — circuits use this for verifier choice
         proof_system: task.intent.proofSystem || 'sp1',
       };
+
+      // Phase 2 (flag-gated): bind the x402 payment_ref into the proof. When enabled
+      // for a USDC-settled task, thread the payment commitment to the prover so the
+      // SP1 guest can commit it (v2 layout); null/no-op otherwise. Fully reversible.
+      const paymentBinding = buildPaymentBinding(task, config.x402);
+      if (paymentBinding) {
+        proofRequest.payment_commitment = paymentBinding.commitment;
+        proofRequest.payment_ref_hash = paymentBinding.payment_ref_hash;
+        proofRequest.payment_rail = 1; // usdc discriminant (matches Solidity)
+        proofRequest.payment_amount = paymentBinding.amount;
+        logger.info({ taskId: task.taskId, commitment: paymentBinding.commitment.slice(0, 18) + '...' },
+          'x402 proof binding: attached payment commitment to proof request');
+      }
 
       const useZkGPT = (task.intent.proofSystem || 'sp1') === 'zkgpt';
       const zkGPTUrl = process.env.ZKGPT_PROVER_URL || '';
@@ -1279,6 +1375,7 @@ class AIListener {
           provingTimeMs: proofResult.provingTimeMs,
           timestamp: Date.now(),
           proofSystem: 'zkgpt',
+          paymentBinding: paymentBinding || null,
         };
         logger.info({
           taskId: task.taskId,
@@ -1304,12 +1401,21 @@ class AIListener {
             amount: task.intent.amount,
           }, 'Generating SP1 ZK proof for AI task settlement');
           proofResult = await sp1Prover.generateProof(proofRequest, true);
+          const bindingInProof =
+            paymentBinding &&
+            (proofResult.publicValuesVersion === 2 ||
+              proofResult.aiPublicValuesAbi != null);
           task.sp1Proof = {
             proof: proofResult.proof,
             publicInputs: proofResult.publicInputs,
             nullifier: proofResult.nullifier,
             provingTimeMs: proofResult.provingTimeMs,
             timestamp: Date.now(),
+            paymentBinding: paymentBinding
+              ? { ...paymentBinding, in_proof: !!bindingInProof }
+              : null,
+            publicValuesVersion: proofResult.publicValuesVersion ?? null,
+            aiPublicValuesAbi: proofResult.aiPublicValuesAbi ?? null,
           };
           logger.info({
             taskId: task.taskId,

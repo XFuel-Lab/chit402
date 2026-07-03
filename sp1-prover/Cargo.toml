@@ -1,5 +1,5 @@
 [workspace]
-members = ["program", "host"]
+members = ["program", "host", "../core-layer/sp1-hooks"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -8,3 +8,5 @@ sp1-zkvm = "6.0.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
+xfuel-sp1-hooks = { path = "../core-layer/sp1-hooks" }
+tiny-keccak = { version = "2.0", default-features = false, features = ["keccak"] }

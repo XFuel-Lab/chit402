@@ -39,14 +39,26 @@ Body:
   "sender": "0xYourAddress",
   "model_id": "llama-3-70b",            // required for inference_request
   "input_hash": "0xabc...",             // keccak256 of your input (required for inference)
-  "theta_recipient": "0xOptional"       // settlement address on Theta
+  "theta_recipient": "0xOptional",      // settlement address on Theta
+  "payment": { "rail": "usdc", "network": "base" }  // DEFAULT rail; use { "rail": "tfuel" } for Theta-native
 }
 
 Response: { taskId, status, routedTo, estimatedGas }
 ```
 
-Poll status: `GET /task-status/{taskId}`
-Webhook: register via `PUT /webhook` with `{ url, secret }` — receives `TaskSettled` events
+**Payment rails:** USDC via **x402** is the default/recommended rail (agent pays
+USDC on Base against a 402 challenge; agent-side pluggable payer — no server keys).
+**TFUEL/TDROP on Theta** is the secondary rail for Theta-native flows. The x402
+server handshake is flag-gated (`X402_ENABLED`, rolling out Phase 1;
+`X402_DEFAULT_RAIL` starts `tfuel`). See `docs/X402_ADAPTER.md` and
+`skills/_shared/reference/payments-x402.md`.
+
+Poll status: `GET /task-status?task_id={taskId}`
+
+Webhooks (two options):
+- Global: register via `PUT /webhook` with `{ url, secret, events? }` (events default to all; currently `TaskSettled`, `A2ASettled`). List with `GET /webhook`, remove with `DELETE /webhook?id=` or `?url=`.
+- Per-task: pass `callback_url` (and optional `callback_secret`) on `POST /task-request`.
+- Deliveries are signed: `X-XFuel-Signature: sha256=<hmac>` where HMAC-SHA256 uses the webhook secret (or `WEBHOOK_SECRET`). Verify with `crypto.timingSafeEqual`.
 
 Full API: `docs/M2M_API.md`
 
@@ -73,7 +85,7 @@ Configure tiers via `.env.local`. Leave a tier blank to skip it.
 
 1. Task intent submitted → fee tagged with `ProviderTag` (THETA_NATIVE=1, DEPIN_AKASH=3, etc.)
 2. SP1 prover (CUDA, EdgeCloud Dedicated) generates Groth16 proof (~260 bytes, ~270K gas)
-3. `AITaskPublicValues` committed: `(taskType, sourceChain, destChain, taskIdHash, senderHash, netAmount, feeAmount, feeBps, outputHash, blockHeight, timestamp, nonce)`
+3. `AITaskPublicValues` committed: `(taskType, sourceChain, destChain, taskIdHash, senderHash, netAmount, feeAmount, feeBps, outputHash, blockHeight, timestamp, nonce)`. **Phase 2 (flag-gated, `X402_PROOF_BINDING`):** an optional 13th field `paymentCommitment` binds the x402 `payment_ref` so the proof attests payment + computation (`SP1ProofHooks.encodeAITaskPublicValuesV2`; surfaced as `payment_binding`). Activates on SP1 guest v2 rebuild (new `programVKey`).
 4. `ZKVerifierSP1.verifyProof(programVKey, publicValues, proofBytes)` called on-chain
 5. Nullifier stored → replay protection
 6. Fees distributed via `CoreRevenueSplitter.distribute()`
@@ -161,7 +173,7 @@ veXFGovernance.vote(proposalId, support)         // with ZK nullifier replay pro
 ## SDK (JavaScript)
 
 ```bash
-npm install xfuel-sdk  # (publishing in progress — see sdk/js/)
+npm install xfuel-sdk  # live on npm (Apache-2.0). On-chain module: import 'xfuel-sdk/onchain' (requires ethers peer dep)
 ```
 
 ```javascript
@@ -196,7 +208,8 @@ docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md — Testnet 365 + mainnet 361 steps, tests
 xfuel-app/.env.example   — All VITE_* vars; testnet 365 vs mainnet 361
 core-layer/               — AI listener, A2A orchestrator, CosmWasm WASM
 backend/theta-bridge/     — Bridge service, M2M API server, fee analytics
-sdk/js/                   — JavaScript SDK (xfuel-sdk)
+sdk/js/                   — JavaScript SDK (xfuel-sdk) + runnable examples/ (pay-with-usdc, a2a-swarm, swarm-coordinate)
+skills/                   — Agent Skills (front door for agents); start with skills/AGENT_PLAYBOOK.md
 docs/M2M_API.md           — Full REST API reference
 docs/THETA_INTEGRATION_PLAN.md — Theta deep integration tracker
 docs/TAO_CIRCUIT_HYPERLANE_E2E.md — Bittensor cross-chain E2E guide

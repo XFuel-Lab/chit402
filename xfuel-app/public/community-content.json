@@ -3,7 +3,7 @@
   "socialLinks": [
     {
       "platform": "Discord",
-      "url": "https://discord.gg/n9jHyW88",
+      "url": "https://discord.com/invite/He5j6NeQ6R",
       "statLabel": "Join the server",
       "description": "Builders, believers, and protocol updates — onboarding and roles refreshed regularly.",
       "color": "#5865F2"
@@ -52,12 +52,12 @@
       "title": "Recordings & updates",
       "date": "See Discord #announcements",
       "views": "—",
-      "recordingUrl": "https://discord.gg/n9jHyW88"
+      "recordingUrl": "https://discord.com/invite/He5j6NeQ6R"
     }
   ],
   "github": {
     "org": "XFuel-Lab",
     "repo": "xfuel-protocol"
   },
-  "discordInviteCode": "n9jHyW88"
+  "discordInviteCode": "He5j6NeQ6R"
 }

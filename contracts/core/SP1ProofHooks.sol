@@ -147,6 +147,57 @@ library SP1ProofHooks {
         );
     }
 
+    // ─── Phase 2: x402 payment binding (flag-gated; additive to v1) ────────────
+
+    /**
+     * @notice Compute a payment commitment binding an off-chain settlement to a task.
+     * @param paymentRefHash keccak256 of the x402 settlement ref string ("<network>:<txRef>").
+     * @param taskIdHash Hash of the task ID the payment settles.
+     * @param paymentRail Rail discriminant (1 = USDC/x402, 2 = TFUEL).
+     * @param amount Bound economic value (settlement/net amount).
+     * @return Commitment hash the SP1 guest commits as the v2 `paymentCommitment`
+     *         public value, so a verified proof attests BOTH computation and payment.
+     * @dev Phase 2 (flag-gated). Mirror of the backend `payment-binding.js` helper —
+     *      keep the two byte-for-byte identical (parity-tested).
+     */
+    function computePaymentCommitment(
+        bytes32 paymentRefHash,
+        bytes32 taskIdHash,
+        uint8 paymentRail,
+        uint256 amount
+    ) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(paymentRefHash, taskIdHash, paymentRail, amount));
+    }
+
+    /**
+     * @notice v2 AI-task public values: v1 layout + a trailing `paymentCommitment`.
+     * @dev Additive to `encodeAITaskPublicValues` (v1 is untouched / audit-stable).
+     *      Activated when the SP1 guest commits the v2 layout (new programVKey) and a
+     *      circuit decodes the 13th field. `paymentCommitment == bytes32(0)` means the
+     *      task carried no bound payment (e.g. TFUEL rail or binding disabled).
+     */
+    function encodeAITaskPublicValuesV2(
+        uint8 taskType,
+        uint8 sourceChain,
+        uint8 destChain,
+        bytes32 taskIdHash,
+        bytes32 senderHash,
+        uint256 netAmount,
+        uint256 feeAmount,
+        uint16 feeBps,
+        bytes32 outputHash,
+        uint64 blockHeight,
+        uint64 timestamp,
+        uint64 nonce,
+        bytes32 paymentCommitment
+    ) internal pure returns (bytes memory) {
+        return abi.encode(
+            taskType, sourceChain, destChain, taskIdHash, senderHash,
+            netAmount, feeAmount, feeBps, outputHash, blockHeight, timestamp, nonce,
+            paymentCommitment
+        );
+    }
+
     // ─── SP1-CC Composed Call Helpers ─────────────────────────────────────────
 
     /**
