@@ -1,0 +1,129 @@
+/**
+ * Configuration resolution for xfuel-mcp.
+ *
+ * Precedence (highest first): CLI flags → environment variables → sensible
+ * defaults (XFuel hosted testnet demo + public demo key). Nothing is required.
+ */
+import { DEFAULT_BASE_URL, PUBLIC_DEMO_API_KEY } from 'xfuel-sdk';
+
+export const SERVER_NAME = 'xfuel-mcp-server';
+export const SERVER_VERSION = '0.1.0';
+
+export type TransportKind = 'stdio' | 'http';
+
+export interface McpConfig {
+  /** XFuel API base URL the tools call. */
+  apiUrl: string;
+  /** API key sent as X-API-Key. */
+  apiKey: string;
+  /** Transport to serve. */
+  transport: TransportKind;
+  /** HTTP port (http transport only). */
+  port: number;
+  /** Optional bearer token required on the HTTP endpoint. */
+  httpAuthToken?: string;
+  /** Optional RPC URL for the verify_proof on-chain nullifier read. */
+  rpcUrl?: string;
+  /** Optional ZKVerifierSP1 address (paired with rpcUrl). */
+  zkVerifierAddress?: string;
+}
+
+export interface ParsedArgs {
+  config: McpConfig;
+  /** Set when --help / --version short-circuited normal startup. */
+  action?: 'help' | 'version';
+}
+
+const HELP = `xfuel-mcp — Model Context Protocol server for the XFuel Protocol
+
+USAGE
+  xfuel-mcp [options]
+
+TRANSPORT
+  --stdio                 Serve over stdio (default; for Claude Desktop / Cursor)
+  --http                  Serve over streamable HTTP (for remote / shared use)
+  --port <n>              HTTP port (default 3033; http only)
+
+XFUEL API
+  --api-url <url>         XFuel API base URL (default: hosted testnet demo)
+  --api-key <key>         API key / X-API-Key (default: public demo key "xfuel-demo")
+
+MISC
+  -h, --help              Show this help
+  -v, --version           Print version
+
+ENVIRONMENT (CLI flags take precedence)
+  XFUEL_API_URL, XFUEL_API_KEY, XFUEL_MCP_TRANSPORT, XFUEL_MCP_PORT,
+  XFUEL_MCP_AUTH_TOKEN, XFUEL_RPC_URL, ZK_VERIFIER_ADDRESS
+
+EXAMPLES
+  npx xfuel-mcp                         # stdio, hosted testnet demo
+  npx xfuel-mcp --http --port 3033      # streamable HTTP on :3033
+  XFUEL_API_KEY=sk_live... npx xfuel-mcp
+`;
+
+export function helpText(): string {
+  return HELP;
+}
+
+function envTransport(): TransportKind | undefined {
+  const t = process.env.XFUEL_MCP_TRANSPORT?.toLowerCase();
+  return t === 'http' || t === 'stdio' ? t : undefined;
+}
+
+/**
+ * Parse argv + env into a resolved config. Pure (except reading process.env),
+ * so it is unit-testable. `argv` should exclude the node/script prefix.
+ */
+export function parseArgs(argv: string[]): ParsedArgs {
+  let transport: TransportKind = envTransport() ?? 'stdio';
+  let port = Number(process.env.XFUEL_MCP_PORT) || 3033;
+  let apiUrl = process.env.XFUEL_API_URL || DEFAULT_BASE_URL;
+  let apiKey = process.env.XFUEL_API_KEY || PUBLIC_DEMO_API_KEY;
+  let action: 'help' | 'version' | undefined;
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    switch (arg) {
+      case '--stdio':
+        transport = 'stdio';
+        break;
+      case '--http':
+        transport = 'http';
+        break;
+      case '--port':
+        port = Number(argv[++i]) || port;
+        break;
+      case '--api-url':
+        apiUrl = argv[++i] ?? apiUrl;
+        break;
+      case '--api-key':
+        apiKey = argv[++i] ?? apiKey;
+        break;
+      case '-h':
+      case '--help':
+        action = 'help';
+        break;
+      case '-v':
+      case '--version':
+        action = 'version';
+        break;
+      default:
+        // Ignore unknown flags rather than crash a long-lived server.
+        break;
+    }
+  }
+
+  return {
+    action,
+    config: {
+      apiUrl,
+      apiKey,
+      transport,
+      port,
+      httpAuthToken: process.env.XFUEL_MCP_AUTH_TOKEN || undefined,
+      rpcUrl: process.env.XFUEL_RPC_URL || undefined,
+      zkVerifierAddress: process.env.ZK_VERIFIER_ADDRESS || undefined,
+    },
+  };
+}
