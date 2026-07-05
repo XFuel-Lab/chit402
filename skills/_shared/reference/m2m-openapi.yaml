@@ -1,0 +1,384 @@
+openapi: 3.1.0
+info:
+  title: XFuel Protocol — M2M API
+  version: 1.1.0
+  description: >-
+    Machine-to-machine REST API for the XFuel Protocol: submit verifiable AI
+    inference/compute tasks across decentralized GPU providers (DePIN), retrieve
+    ZK proofs (SP1/zkGPT), coordinate agent-to-agent (A2A) messaging and
+    settlement, and register webhooks for settlement events.
+
+    Implemented by backend/theta-bridge/src/server.js (default port 3002).
+  license:
+    name: Apache-2.0
+servers:
+  - url: http://localhost:3002
+    description: Local dev
+  - url: "{baseUrl}"
+    description: Deployment
+    variables:
+      baseUrl:
+        default: http://localhost:3002
+security:
+  - ApiKeyAuth: []
+  - RelayerSig: []
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    RelayerSig:
+      type: apiKey
+      in: header
+      name: X-Signature
+      description: >-
+        ECDSA signature over `${method}${path}${sha256(body)}${timestamp}`.
+        Requires X-Sig-Timestamp header (unix seconds, <=5min old). Recovered
+        address must be in M2M_RELAYER_ADDRESSES.
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        message: { type: string }
+        details:
+          type: array
+          items: { type: string }
+    MessageType:
+      type: string
+      enum: [compute_bid, compute_result, inference_request, capability_query, data_attestation]
+    ChainId:
+      type: string
+      enum: [theta, osmosis, akash, bittensor, persistence]
+    Payment:
+      type: object
+      description: >-
+        Payment rail selector. USDC via x402 is the default/recommended rail
+        (flag-gated by X402_ENABLED); TFUEL is the Theta-native secondary rail.
+      properties:
+        rail:
+          type: string
+          enum: [usdc, tfuel]
+          description: Defaults to server X402_DEFAULT_RAIL when omitted.
+        asset: { type: string, example: USDC }
+        network:
+          type: string
+          description: 'USDC only: settlement network (e.g. "base").'
+        maxAmount:
+          type: string
+          description: Smallest unit (USDC = 6dp, TFUEL = wei). Caps the x402 challenge amount.
+    PaymentChallenge:
+      type: object
+      description: x402 402 body. Pay against accepts[] then retry with X-PAYMENT (+ nonce).
+      properties:
+        x402Version: { type: integer, example: 1 }
+        accepts:
+          type: array
+          items:
+            type: object
+            properties:
+              scheme: { type: string, example: exact }
+              network: { type: string, example: base }
+              asset: { type: string, example: USDC }
+              maxAmountRequired: { type: string }
+              payTo: { type: string }
+              extra:
+                type: object
+                properties:
+                  nonce: { type: string }
+                  expiresAt: { type: integer }
+    TaskRequest:
+      type: object
+      required: [message_type, chain_id, amount, sender]
+      properties:
+        message_type: { $ref: '#/components/schemas/MessageType' }
+        chain_id: { $ref: '#/components/schemas/ChainId' }
+        amount:
+          type: string
+          description: Gross task value in wei (>= 10000, dust protection).
+        fee_bps:
+          type: integer
+          minimum: 50
+          maximum: 100
+          description: Optional fee override in basis points (default 50 = 0.5%).
+        sender: { type: string }
+        model_id:
+          type: string
+          description: Required for inference_request.
+        input_hash: { type: string }
+        output_hash:
+          type: string
+          description: Required for compute_result.
+        theta_recipient: { type: string }
+        max_gpu_hours: { type: integer }
+        subnet_id:
+          type: integer
+          description: Required for Bittensor routing (except capability_query).
+        ibc_channel: { type: string }
+        memo: { type: string }
+        proof_system:
+          type: string
+          enum: [sp1, zkgpt]
+          default: sp1
+        callback_url:
+          type: string
+          format: uri
+          description: Optional per-task webhook; receives a TaskSettled event on completion.
+        callback_secret:
+          type: string
+          description: Optional HMAC secret for this task's callback (else WEBHOOK_SECRET).
+        payment: { $ref: '#/components/schemas/Payment' }
+    TaskAccepted:
+      type: object
+      properties:
+        task_id: { type: string }
+        status: { type: string, example: accepted }
+        gross_amount: { type: string }
+        fee_amount: { type: string }
+        net_amount: { type: string }
+        fee_bps: { type: integer }
+        payment_rail: { type: string, enum: [usdc, tfuel] }
+        payment_ref: { type: string, nullable: true, description: 'x402 settlement ref (network:txRef); null for TFUEL.' }
+        _links:
+          type: object
+          properties:
+            status: { type: string }
+            proof: { type: string }
+    TaskStatus:
+      type: object
+      properties:
+        task_id: { type: string }
+        status:
+          type: string
+          enum: [pending, routing, processing, completed, fee_collected, failed]
+        proof_outcome:
+          type: string
+          enum: [pending, valid, regenerable, invalid]
+        proof_system: { type: string, enum: [sp1, zkgpt] }
+        message_type: { type: string }
+        chain_id: { type: string }
+        gross_amount: { type: string }
+        fee_amount: { type: string }
+        net_amount: { type: string }
+        fee_bps: { type: integer }
+        payment_rail: { type: string, enum: [usdc, tfuel] }
+        payment_ref: { type: string, nullable: true }
+        result: { nullable: true }
+        sp1_proof:
+          type: object
+          nullable: true
+          properties:
+            has_proof: { type: boolean }
+            nullifier: { type: string, nullable: true }
+            proving_time_ms: { type: integer, nullable: true }
+            error: { type: string, nullable: true }
+    Webhook:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, format: uri }
+        secret:
+          type: string
+          description: HMAC secret. If omitted, WEBHOOK_SECRET is used for signing.
+        events:
+          type: array
+          items: { type: string, enum: [TaskSettled, A2ASettled] }
+          description: Defaults to all events when omitted.
+paths:
+  /task-request:
+    post:
+      summary: Submit an AI task intent
+      operationId: submitTask
+      description: >-
+        When payment.rail="usdc" and X402_ENABLED is on, an unpaid request returns
+        402 with a payment challenge. Retry with X-PAYMENT (+ X-PAYMENT-NONCE) to
+        verify + settle. With the flag off (or on failure with X402_FALLBACK_TFUEL),
+        the request settles via the TFUEL path.
+      parameters:
+        - in: header
+          name: X-PAYMENT
+          required: false
+          schema: { type: string }
+          description: x402 payment blob produced by the agent-side payer (retry after 402).
+        - in: header
+          name: X-PAYMENT-NONCE
+          required: false
+          schema: { type: string }
+          description: The challenge nonce from the 402 accepts[].extra.nonce.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaskRequest' }
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskAccepted' }
+        '400':
+          description: Validation error
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { description: Unauthorized }
+        '402':
+          description: Payment required (x402 challenge) — pay then retry with X-PAYMENT.
+          content: { application/json: { schema: { $ref: '#/components/schemas/PaymentChallenge' } } }
+        '429': { description: Rate limited }
+        '503': { description: x402 enabled but facilitator not configured/unavailable. }
+  /task-quote:
+    post:
+      summary: Price a task per payment rail (USDC via x402 / TFUEL)
+      operationId: quoteTask
+      description: Read-only pricing preview; no task is created.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model_id: { type: string }
+                amount: { type: string, description: TFUEL task value in wei (echoed back). }
+      responses:
+        '200':
+          description: Per-rail quote
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recommended: { type: string, example: usdc }
+                  default_rail: { type: string }
+                  rails:
+                    type: object
+                    properties:
+                      usdc:
+                        type: object
+                        properties:
+                          rail: { type: string }
+                          enabled: { type: boolean }
+                          asset: { type: string }
+                          network: { type: string }
+                          decimals: { type: integer, example: 6 }
+                          amount: { type: string }
+                          pay_to: { type: string }
+                      tfuel:
+                        type: object
+                        properties:
+                          rail: { type: string }
+                          amount: { type: string, nullable: true }
+        '401': { description: Unauthorized }
+        '429': { description: Rate limited }
+  /task-status:
+    get:
+      summary: Query task or A2A message status
+      operationId: getTaskStatus
+      parameters:
+        - in: query
+          name: task_id
+          schema: { type: string }
+        - in: query
+          name: message_id
+          schema: { type: string }
+      responses:
+        '200':
+          description: Status
+          content: { application/json: { schema: { $ref: '#/components/schemas/TaskStatus' } } }
+        '404': { description: Not found }
+  /prove-result:
+    get:
+      summary: Retrieve the ZK proof for a completed task
+      operationId: getProof
+      parameters:
+        - in: query
+          name: task_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Proof payload }
+        '409': { description: Task not settled yet }
+        '404': { description: Not found }
+  /a2a-message:
+    post:
+      summary: Send an A2A message with optional escrow
+      operationId: sendA2AMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message_type, sender_chain, recipient_chain, payload_hash, ttl, sender_address, sender_identity]
+              properties:
+                message_type: { $ref: '#/components/schemas/MessageType' }
+                sender_chain: { $ref: '#/components/schemas/ChainId' }
+                recipient_chain: { $ref: '#/components/schemas/ChainId' }
+                payload_hash: { type: string }
+                escrow_amount: { type: string }
+                ttl: { type: integer, minimum: 1, maximum: 86400 }
+                sender_address: { type: string }
+                sender_identity: { type: string }
+                recipient_address: { type: string }
+                ibc_channel: { type: string }
+      responses:
+        '202': { description: Accepted }
+        '400': { description: Validation error }
+  /a2a-settle-fair-exchange:
+    post:
+      summary: Settle an A2A bid via Fair Exchange (PAS signature)
+      operationId: settleWithFairExchange
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bid_id, result_hash, v, r, s]
+              properties:
+                bid_id: { type: string, pattern: '^0x[0-9a-fA-F]{64}$' }
+                result_hash: { type: string, pattern: '^0x[0-9a-fA-F]{64}$' }
+                v: { type: integer, minimum: 0, maximum: 255 }
+                r: { type: string, pattern: '^0x[0-9a-fA-F]{64}$' }
+                s: { type: string, pattern: '^0x[0-9a-fA-F]{64}$' }
+      responses:
+        '202': { description: Submitted on-chain }
+        '200': { description: Calldata returned (no relayer configured) }
+        '503': { description: A2A_CIRCUIT_ADDRESS not configured }
+  /webhook:
+    put:
+      summary: Register or update a settlement webhook
+      operationId: registerWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Webhook' }
+      responses:
+        '200': { description: Registered }
+        '400': { description: Validation error }
+    get:
+      summary: List registered webhooks
+      operationId: listWebhooks
+      responses:
+        '200': { description: Webhook list }
+    delete:
+      summary: Remove a webhook by id or url
+      operationId: deleteWebhook
+      parameters:
+        - in: query
+          name: id
+          schema: { type: string }
+        - in: query
+          name: url
+          schema: { type: string }
+      responses:
+        '200': { description: Removed }
+        '404': { description: Not found }
+  /health:
+    get:
+      summary: Health and metrics
+      operationId: getHealth
+      security: []
+      responses:
+        '200': { description: OK }
