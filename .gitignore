@@ -37,8 +37,10 @@ coverage.json
 .env.production
 .env.docker
 .env.test
+.env.benchmark
 *.env
 !.env.example
+!.env.benchmark.example
 !env.example
 !env.docker.example
 

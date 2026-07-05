@@ -64,6 +64,26 @@ Full API: `docs/M2M_API.md`
 
 ---
 
+## OpenAI-Compatible Endpoint (drop-in)
+
+Prefer standard tooling? XFuel serves the OpenAI surface on the same server:
+
+```
+GET  {host}:3002/v1/models
+POST {host}:3002/v1/chat/completions   # streaming + non-streaming
+GET  {host}:3002/llms.txt              # public agent-discovery manifest (no auth)
+Auth: Authorization: Bearer {key}  (or X-API-Key: {key})
+```
+
+Point any OpenAI-compatible client's `baseURL` at `{host}:3002/v1`. Each response
+carries a verifiable-compute receipt in `x-xfuel-*` headers and an `xfuel` body
+field (`compute.real`, `proof.status`, `proof.attests`, links to `/prove-result`).
+The proof attests settlement metadata + an output-hash commitment (not inference
+correctness); the OpenAI path is unmetered in Phase 1 (use `/task-request` +
+`payment.rail="usdc"` for x402). Full reference: `docs/OPENAI_COMPATIBLE_GATEWAY.md`.
+
+---
+
 ## Compute Routing Priority
 
 Tasks are routed through a 6-tier DePIN priority router (first available, lowest cost):
@@ -209,6 +229,7 @@ xfuel-app/.env.example   — All VITE_* vars; testnet 365 vs mainnet 361
 core-layer/               — AI listener, A2A orchestrator, CosmWasm WASM
 backend/theta-bridge/     — Bridge service, M2M API server, fee analytics
 sdk/js/                   — JavaScript SDK (xfuel-sdk) + runnable examples/ (pay-with-usdc, a2a-swarm, swarm-coordinate)
+xfuel-mcp/                — First-party MCP server (npx xfuel-mcp): submit_inference, get_task_status, get_proof, verify_proof, quote_task, get_health; stdio + streamable HTTP
 skills/                   — Agent Skills (front door for agents); start with skills/AGENT_PLAYBOOK.md
 docs/M2M_API.md           — Full REST API reference
 docs/THETA_INTEGRATION_PLAN.md — Theta deep integration tracker
