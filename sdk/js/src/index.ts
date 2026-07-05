@@ -4,6 +4,21 @@ import axios, {
   AxiosRequestConfig,
   InternalAxiosRequestConfig,
 } from 'axios';
+import {
+  type X402Payer,
+  type X402Challenge,
+  selectAccept,
+} from './x402.js';
+
+export {
+  type X402Accept,
+  type X402Challenge,
+  type X402PaymentAuthorization,
+  type X402Payer,
+  selectAccept,
+  createMockPayer,
+  createSignerPayer,
+} from './x402.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -27,7 +42,37 @@ export const ChainId = {
 
 export type ChainId = (typeof ChainId)[keyof typeof ChainId];
 
+/**
+ * Default endpoint the SDK talks to when no `baseUrl` is given: XFuel's hosted
+ * **testnet** demo API. Point at your own deployment (or `http://localhost:3002`)
+ * for production / local dev.
+ */
+export const DEFAULT_BASE_URL = 'https://api-testnet.xfuel.app';
+
+/**
+ * Shared PUBLIC demo key used against {@link DEFAULT_BASE_URL} when no `apiKey`
+ * is provided. It is heavily rate-limited per IP — bring your own key
+ * (`X-API-Key`) for higher limits and production use.
+ */
+export const PUBLIC_DEMO_API_KEY = 'xfuel-demo';
+
 // ─── Request Types ──────────────────────────────────────────────────────────
+
+/**
+ * Payment rail selector. USDC via x402 is the default/recommended rail; TFUEL on
+ * Theta is the secondary rail. When `rail: 'usdc'`, settlement uses the x402
+ * handshake (402 challenge → agent-side payer signs X-PAYMENT → verify+settle).
+ * The payer is agent-side and pluggable — the SDK never holds keys.
+ */
+export interface PaymentParams {
+  rail: 'usdc' | 'tfuel';
+  /** usdc rail: asset symbol (default USDC). */
+  asset?: string;
+  /** usdc rail: settlement network (default base). */
+  network?: 'base' | 'solana';
+  /** Max amount in smallest unit (USDC 6dp; TFUEL wei). */
+  maxAmount?: string;
+}
 
 export interface TaskRequestParams {
   message_type: MessageType;
@@ -43,6 +88,13 @@ export interface TaskRequestParams {
   subnet_id?: number;
   ibc_channel?: string;
   memo?: string;
+  proof_system?: 'sp1' | 'zkgpt';
+  /** Optional per-task webhook; receives a signed TaskSettled event on completion. */
+  callback_url?: string;
+  /** Optional HMAC secret for this task's callback (else server WEBHOOK_SECRET). */
+  callback_secret?: string;
+  /** Payment rail (default USDC via x402; TFUEL secondary). Server-side handshake is flag-gated (Phase 1). */
+  payment?: PaymentParams;
 }
 
 export interface A2AMessageParams {
@@ -69,6 +121,10 @@ export interface TaskRequestResponse {
   fee_amount: string;
   net_amount: string;
   fee_bps: number;
+  /** Resolved payment rail: 'usdc' (x402) | 'tfuel'. */
+  payment_rail?: 'usdc' | 'tfuel';
+  /** x402 settlement reference (network:txRef) or null for TFUEL. */
+  payment_ref?: string | null;
   fee_info: {
     description: string;
     collector: string;
@@ -76,6 +132,48 @@ export interface TaskRequestResponse {
   _links: {
     status: string;
     proof: string;
+  };
+}
+
+/**
+ * Phase 2 (flag-gated) x402 payment binding: a deterministic commitment that binds
+ * the settlement `payment_ref` to the task. `in_proof` is true once the SP1 guest
+ * commits the v2 public-values layout (until then it's server-attested metadata).
+ */
+export interface PaymentBinding {
+  version: number;
+  rail: 'usdc';
+  commitment: string;
+  payment_ref_hash: string;
+  amount: string;
+  in_proof: boolean;
+}
+
+export interface TaskQuoteParams {
+  model_id?: string;
+  /** TFUEL task value in wei (echoed back in the tfuel rail). */
+  amount?: string;
+}
+
+export interface TaskQuoteResponse {
+  recommended: string;
+  default_rail: 'usdc' | 'tfuel';
+  rails: {
+    usdc: {
+      rail: 'usdc';
+      enabled: boolean;
+      asset: string;
+      network: string;
+      decimals: number;
+      amount: string;
+      pay_to: string | null;
+      note?: string;
+    };
+    tfuel: {
+      rail: 'tfuel';
+      amount: string | null;
+      note?: string;
+    };
   };
 }
 
@@ -89,6 +187,12 @@ export interface TaskStatusResponse {
   fee_amount: string;
   net_amount: string;
   fee_bps: number;
+  /** Resolved payment rail: 'usdc' (x402) | 'tfuel'. Defaults to 'tfuel'. */
+  payment_rail?: 'usdc' | 'tfuel';
+  /** x402 settlement reference (network:txRef) or null for TFUEL. */
+  payment_ref?: string | null;
+  /** Phase 2 (flag-gated): x402 payment commitment bound into the proof, or null. */
+  payment_binding?: PaymentBinding | null;
   result: unknown | null;
   sp1_proof: {
     has_proof: boolean;
@@ -104,6 +208,8 @@ export interface ProofResponse {
   task_id: string;
   status: string;
   proof_outcome: 'valid' | 'regenerable';
+  /** Phase 2 (flag-gated): x402 payment commitment bound into the proof, or null. */
+  payment_binding?: PaymentBinding | null;
   sp1_proof: {
     proof: string;
     publicInputs: string;
@@ -223,7 +329,9 @@ export class XFuelApiError extends Error {
 // ─── Client Options ─────────────────────────────────────────────────────────
 
 export interface XFuelClientOptions {
+  /** API base URL. Defaults to {@link DEFAULT_BASE_URL} (hosted testnet demo). */
   baseUrl?: string;
+  /** API key (sent as `X-API-Key`). Defaults to {@link PUBLIC_DEMO_API_KEY}. */
   apiKey?: string;
   /** Max automatic retries on 429 / 5xx (default: 3) */
   maxRetries?: number;
@@ -259,8 +367,8 @@ export class XFuelClient {
 
   constructor(options: XFuelClientOptions = {}) {
     const {
-      baseUrl = 'http://localhost:3002',
-      apiKey,
+      baseUrl = DEFAULT_BASE_URL,
+      apiKey = PUBLIC_DEMO_API_KEY,
       maxRetries = 3,
       retryBaseMs = 1000,
       timeoutMs = 30_000,
@@ -338,6 +446,70 @@ export class XFuelClient {
     return data;
   }
 
+  // ── POST /task-request with USDC/x402 payment handshake ─────────────────
+
+  /**
+   * Submit a task and, if the server replies **402** (USDC/x402), complete the
+   * payment handshake with `payer` and retry — returning the accepted task.
+   *
+   * If the server settles via the TFUEL fallback (x402 flag off, or x402 failure
+   * with fallback enabled), it returns 202 directly and `payer` is never called.
+   * The payer is agent-side and signs the payment; the SDK never holds keys.
+   *
+   * @param params  task request (typically `payment: { rail: 'usdc' }`)
+   * @param payer   an X402Payer (e.g. `createMockPayer()` for dev, `createSignerPayer(fn)` for prod)
+   * @see docs/payments-x402.md
+   */
+  async submitTaskWithPayment(
+    params: TaskRequestParams,
+    payer: X402Payer,
+  ): Promise<TaskRequestResponse> {
+    if (typeof payer !== 'function') {
+      throw new XFuelApiError('submitTaskWithPayment requires a payer function', 0, 'bad_payer');
+    }
+    const acceptStatus = (s: number) => s === 402 || (s >= 200 && s < 300);
+
+    // Step 1 — submit; accept a 402 challenge without throwing.
+    const first = await this.http.post<TaskRequestResponse | X402Challenge>(
+      '/task-request',
+      params,
+      { validateStatus: acceptStatus },
+    );
+    if (first.status !== 402) return first.data as TaskRequestResponse;
+
+    // Step 2 — pay the challenge (agent-side) and retry with X-PAYMENT.
+    const challenge = first.data as X402Challenge;
+    const auth = await payer(challenge);
+    const nonce = auth.nonce ?? selectAccept(challenge).extra?.nonce;
+    const headers: Record<string, string> = { 'X-PAYMENT': auth.header };
+    if (nonce) headers['X-PAYMENT-NONCE'] = nonce;
+
+    const second = await this.http.post<TaskRequestResponse>(
+      '/task-request',
+      params,
+      { headers, validateStatus: acceptStatus },
+    );
+    if (second.status === 402) {
+      throw new XFuelApiError(
+        'x402 payment was rejected or re-challenged after retry',
+        402,
+        'payment_rejected',
+      );
+    }
+    return second.data;
+  }
+
+  // ── POST /task-quote ───────────────────────────────────────────────────
+
+  /** Preview per-rail pricing (USDC via x402 / TFUEL) without creating a task. */
+  async quoteTask(params: TaskQuoteParams = {}): Promise<TaskQuoteResponse> {
+    const { data } = await this.http.post<TaskQuoteResponse>(
+      '/task-quote',
+      params,
+    );
+    return data;
+  }
+
   // ── Convenience: inference shorthand ───────────────────────────────────
 
   async submitInference(
@@ -352,16 +524,24 @@ export class XFuelClient {
       max_gpu_hours?: string;
       subnet_id?: number;
       memo?: string;
+      proof_system?: 'sp1' | 'zkgpt';
+      callback_url?: string;
+      callback_secret?: string;
+      payment?: PaymentParams;
+      /** Agent-side x402 payer. When provided, the USDC 402 handshake is run automatically. */
+      payer?: X402Payer;
     } = {},
   ): Promise<TaskRequestResponse> {
-    return this.submitTask({
+    const { payer, ...taskOpts } = opts;
+    const params: TaskRequestParams = {
       message_type: MessageType.INFERENCE_REQUEST,
-      chain_id: opts.chain_id ?? ChainId.AKASH,
+      chain_id: opts.chain_id ?? ChainId.THETA,
       amount,
       sender,
       model_id: modelId,
-      ...opts,
-    });
+      ...taskOpts,
+    };
+    return payer ? this.submitTaskWithPayment(params, payer) : this.submitTask(params);
   }
 
   // ── GET /task-status?task_id= ──────────────────────────────────────────

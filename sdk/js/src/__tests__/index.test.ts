@@ -5,11 +5,15 @@ import {
   XFuelApiError,
   MessageType,
   ChainId,
+  createMockPayer,
+  createSignerPayer,
+  selectAccept,
   type TaskRequestResponse,
   type TaskStatusResponse,
   type ProofResponse,
   type A2AMessageResponse,
   type HealthResponse,
+  type X402Challenge,
 } from '../index.js';
 
 // ── Mock axios ────────────────────────────────────────────────────────────────
@@ -168,10 +172,13 @@ describe('XFuelClient', () => {
       );
     });
 
-    it('uses default baseURL when none provided', () => {
+    it('uses default baseURL (hosted testnet) + public demo key when none provided', () => {
       new XFuelClient();
       expect(mockCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ baseURL: 'http://localhost:3002' }),
+        expect.objectContaining({
+          baseURL: 'https://api-testnet.xfuel.app',
+          headers: expect.objectContaining({ 'X-API-Key': 'xfuel-demo' }),
+        }),
       );
     });
   });
@@ -229,6 +236,8 @@ describe('XFuelClient', () => {
         model_id: 'llama3',
         sender: '0xSender',
         amount: '1000000000000000000',
+        // defaults to Theta (primary settlement network) when chain_id omitted
+        chain_id: ChainId.THETA,
       }));
     });
 
@@ -374,6 +383,148 @@ describe('XFuelClient', () => {
       expect(onPoll).toHaveBeenCalledTimes(2);
       expect(onPoll).toHaveBeenNthCalledWith(1, pendingStatus, 1);
       expect(onPoll).toHaveBeenNthCalledWith(2, mockStatusCompleted, 2);
+    });
+  });
+
+  // ── USDC/x402 payment handshake ────────────────────────────────────────────
+
+  describe('x402 payers', () => {
+    const challenge: X402Challenge = {
+      x402Version: 1,
+      error: 'payment_required',
+      accepts: [
+        {
+          scheme: 'exact',
+          network: 'base',
+          asset: 'USDC',
+          maxAmountRequired: '50000',
+          resource: '/x402/task/x402-req1',
+          payTo: '0xTreasury',
+          extra: { taskId: 'x402-req1', nonce: 'nonce-abc', expiresAt: null },
+        },
+      ],
+    };
+
+    it('selectAccept picks the exact-scheme accept', () => {
+      expect(selectAccept(challenge).network).toBe('base');
+    });
+
+    it('createMockPayer returns a decodable X-PAYMENT header bound to the nonce', async () => {
+      const payer = createMockPayer({ from: '0xAgent' });
+      const { header, nonce } = await payer(challenge);
+      expect(nonce).toBe('nonce-abc');
+      const decoded = JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
+      expect(decoded).toMatchObject({
+        asset: 'USDC',
+        network: 'base',
+        amount: '50000',
+        payTo: '0xTreasury',
+        nonce: 'nonce-abc',
+        from: '0xAgent',
+        mock: true,
+      });
+    });
+
+    it('createSignerPayer envelopes the caller-signed authorization', async () => {
+      const signAuthorization = jest.fn(async () => ({ sig: '0xdeadbeef', v: 27 }));
+      const payer = createSignerPayer(signAuthorization as any);
+      const { header } = await payer(challenge);
+      expect(signAuthorization).toHaveBeenCalledTimes(1);
+      const decoded = JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
+      expect(decoded.authorization).toEqual({ sig: '0xdeadbeef', v: 27 });
+      expect(decoded.nonce).toBe('nonce-abc');
+    });
+
+    it('createSignerPayer rejects a non-function argument', () => {
+      expect(() => createSignerPayer(undefined as any)).toThrow();
+    });
+  });
+
+  describe('submitTaskWithPayment', () => {
+    const taskParams = {
+      message_type: MessageType.INFERENCE_REQUEST,
+      chain_id: ChainId.THETA,
+      amount: '50000',
+      sender: '0xSender',
+      model_id: 'llama3',
+      payment: { rail: 'usdc' as const },
+    };
+    const challengeBody: X402Challenge = {
+      x402Version: 1,
+      error: 'payment_required',
+      accepts: [
+        {
+          scheme: 'exact',
+          network: 'base',
+          asset: 'USDC',
+          maxAmountRequired: '50000',
+          resource: '/x402/task/x402-req1',
+          payTo: '0xTreasury',
+          extra: { taskId: 'x402-req1', nonce: 'nonce-abc' },
+        },
+      ],
+    };
+
+    it('runs the 402 -> pay -> retry loop and returns the settled task', async () => {
+      mockPost
+        .mockResolvedValueOnce({ status: 402, data: challengeBody })
+        .mockResolvedValueOnce({
+          status: 202,
+          data: { ...mockTaskResponse, payment_rail: 'usdc', payment_ref: 'base:0xtxref' },
+        });
+
+      const client = makeClient();
+      const result = await client.submitTaskWithPayment(taskParams, createMockPayer());
+
+      expect(mockPost).toHaveBeenCalledTimes(2);
+      // Second call carries the X-PAYMENT + X-PAYMENT-NONCE headers.
+      const secondCall = mockPost.mock.calls[1];
+      expect(secondCall[0]).toBe('/task-request');
+      expect(secondCall[2].headers['X-PAYMENT']).toBeDefined();
+      expect(secondCall[2].headers['X-PAYMENT-NONCE']).toBe('nonce-abc');
+      expect(result.payment_rail).toBe('usdc');
+      expect(result.payment_ref).toBe('base:0xtxref');
+    });
+
+    it('returns immediately (no payer call) when the server settles without a 402', async () => {
+      mockPost.mockResolvedValueOnce({ status: 202, data: mockTaskResponse });
+      const payer = jest.fn();
+      const client = makeClient();
+
+      const result = await client.submitTaskWithPayment(taskParams, payer as any);
+
+      expect(payer).not.toHaveBeenCalled();
+      expect(mockPost).toHaveBeenCalledTimes(1);
+      expect(result.task_id).toBe(TASK_ID);
+    });
+
+    it('throws when the payment is re-challenged after retry', async () => {
+      mockPost
+        .mockResolvedValueOnce({ status: 402, data: challengeBody })
+        .mockResolvedValueOnce({ status: 402, data: challengeBody });
+
+      const client = makeClient();
+      await expect(
+        client.submitTaskWithPayment(taskParams, createMockPayer()),
+      ).rejects.toThrow(XFuelApiError);
+    });
+
+    it('submitInference auto-runs the handshake when a payer is supplied', async () => {
+      mockPost
+        .mockResolvedValueOnce({ status: 402, data: challengeBody })
+        .mockResolvedValueOnce({ status: 202, data: { ...mockTaskResponse, payment_rail: 'usdc' } });
+
+      const client = makeClient();
+      const result = await client.submitInference('llama3', '0xSender', '50000', {
+        chain_id: ChainId.THETA,
+        payment: { rail: 'usdc' },
+        payer: createMockPayer(),
+      });
+
+      expect(mockPost).toHaveBeenCalledTimes(2);
+      // `payer` must not leak into the request body.
+      expect(mockPost.mock.calls[0][1].payer).toBeUndefined();
+      expect(result.payment_rail).toBe('usdc');
     });
   });
 
