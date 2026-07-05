@@ -8,14 +8,18 @@
  *   node scripts/benchmark-prover.js [options]
  *
  * Options:
- *   --sequential N    Number of sequential proofs (default: 50)
- *   --concurrent N    Number of concurrent proofs (default: 10)
- *   --batch N         Deposits per proof (1 = single, >1 = batch) (default: 1)
- *   --endpoint TYPE   binary | json (default: binary)
- *   --csv PATH        Output CSV path (default: benchmark-results.csv)
+ *   --sequential N       Number of sequential proofs (default: 50)
+ *   --concurrent N       Number of concurrent proofs (default: 10)
+ *   --batch N            Deposits per proof (1 = single, >1 = batch) (default: 1)
+ *   --endpoint TYPE      binary | json (default: binary)
+ *   --csv PATH           Output CSV path (default: benchmark-results.csv)
+ *   --api-key KEY        API key sent on every request (for gated ZAN endpoints)
+ *   --api-key-header H   Header name for the key (default: x-api-key)
  *
  * Environment:
- *   SP1_PROVER_URL  - Required. Theta EdgeCloud prover URL.
+ *   SP1_PROVER_URL             - Required. Prover URL (EdgeCloud CUDA or ZAN PowerZebra).
+ *   SP1_PROVER_API_KEY         - API key (alias: ZAN_PROVER_API_KEY). --api-key overrides.
+ *   ZAN_PROVER_API_KEY_HEADER  - Header name for the key (default: x-api-key).
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -42,6 +46,17 @@ const CONC_COUNT = parseInt(getArg('concurrent', '10'));
 const BATCH_SIZE = parseInt(getArg('batch', '1'));
 const ENDPOINT = getArg('endpoint', 'binary');
 const CSV_PATH = getArg('csv', resolve(__dirname, '..', 'benchmark-results.csv'));
+// Label this run so two summaries (e.g. baseline vs PowerZebra) can be compared
+// with scripts/compare-benchmarks.cjs. Summary JSON written next to the CSV.
+const LABEL = getArg('label', 'baseline');
+const SUMMARY_PATH = getArg('summary', CSV_PATH.replace(/\.csv$/i, '') + `.summary.json`);
+const COST_PER_HOUR = parseFloat(getArg('cost-per-hour', '0')); // optional $/GPU-hr for $/proof
+// Optional API key for gated endpoints (e.g. ZAN PowerZebra). Sent on every request.
+const API_KEY = getArg('api-key', process.env.SP1_PROVER_API_KEY || process.env.ZAN_PROVER_API_KEY || '');
+const API_KEY_HEADER = getArg('api-key-header', process.env.ZAN_PROVER_API_KEY_HEADER || 'x-api-key').toLowerCase();
+function authHeaders() {
+  return API_KEY ? { [API_KEY_HEADER]: API_KEY } : {};
+}
 const HIGH_CONC_MODE = CONC_COUNT >= 500;
 const USE_EDGECLOUD = !!(process.env.THETA_EDGECLOUD_API_KEY || process.env.SP1_PROVER_URL?.includes('edgecloud'));
 
@@ -72,7 +87,7 @@ async function doProof(index, tag) {
 
   const resp = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body,
     signal: AbortSignal.timeout(300000),
   });
@@ -155,6 +170,7 @@ function printStats(label, results) {
 async function runBenchmark() {
   console.log(`\nSP1 Prover Benchmark`);
   console.log(`  URL:          ${PROVER_URL}`);
+  console.log(`  Auth:         ${API_KEY ? `${API_KEY_HEADER} (set)` : 'none'}`);
   console.log(`  Endpoint:     /prove${ENDPOINT === 'binary' ? '/binary' : ''}`);
   console.log(`  Batch size:   ${BATCH_SIZE} deposit(s) per proof`);
   console.log(`  Sequential:   ${SEQ_COUNT} proofs (${SEQ_COUNT * BATCH_SIZE} deposits)`);
@@ -164,7 +180,7 @@ async function runBenchmark() {
   console.log(`  CSV output:   ${CSV_PATH}\n`);
 
   try {
-    const hResp = await fetch(`${PROVER_URL}/healthz`, { signal: AbortSignal.timeout(10000) });
+    const hResp = await fetch(`${PROVER_URL}/healthz`, { headers: authHeaders(), signal: AbortSignal.timeout(10000) });
     const hData = await hResp.json();
     console.log(`  Prover status: ${hData.status} | uptime: ${hData.uptime_seconds}s | proofs: ${hData.proofs_served}\n`);
   } catch (e) {
@@ -300,6 +316,34 @@ async function runBenchmark() {
   writeFileSync(CSV_PATH, csvHeader + csvRows + '\n');
   console.log(`\nCSV saved to: ${CSV_PATH}`);
 
+  // ── Machine-readable summary (control artifact for PowerZebra A/B) ─────────
+  const gpuSummary = allValid.length ? stats(allValid, 'gpuTimeMs') : null;
+  const effSummary = allValid.length ? stats(allValid, 'effectiveMsPerDeposit') : null;
+  const rttSummary = allValid.length ? stats(allValid, 'roundTripMs') : null;
+  const totalDepsAll = allValid.reduce((s, r) => s + r.batchSize, 0);
+  // Cost per proof = (avg GPU seconds) * ($/hr / 3600), if cost provided.
+  const costPerProof = COST_PER_HOUR > 0 && gpuSummary
+    ? Number(((gpuSummary.avg / 1000) * (COST_PER_HOUR / 3600)).toFixed(8))
+    : null;
+  const summary = {
+    label: LABEL,
+    prover_url: PROVER_URL,
+    runtime: USE_EDGECLOUD ? 'edgecloud' : 'local',
+    endpoint: ENDPOINT,
+    batch_size: BATCH_SIZE,
+    timestamp: new Date().toISOString(),
+    proofs_succeeded: allValid.length,
+    proofs_failed: allResults.length - allValid.length,
+    total_deposits_proved: totalDepsAll,
+    gpu_time_ms: gpuSummary,
+    effective_ms_per_deposit: effSummary,
+    roundtrip_ms: rttSummary,
+    cost_per_hour_usd: COST_PER_HOUR || null,
+    cost_per_proof_usd: costPerProof,
+  };
+  writeFileSync(SUMMARY_PATH, JSON.stringify(summary, null, 2) + '\n');
+  console.log(`Summary saved to: ${SUMMARY_PATH}  (label="${LABEL}")`);
+
   // Summary
   console.log(`\n${'='.repeat(65)}`);
   console.log('  BENCHMARK COMPLETE');
@@ -316,7 +360,7 @@ async function runBenchmark() {
   console.log(`${'='.repeat(65)}\n`);
 
   try {
-    const mResp = await fetch(`${PROVER_URL}/metrics`, { signal: AbortSignal.timeout(10000) });
+    const mResp = await fetch(`${PROVER_URL}/metrics`, { headers: authHeaders(), signal: AbortSignal.timeout(10000) });
     const mData = await mResp.json();
     console.log('Final prover metrics:', JSON.stringify(mData, null, 2));
   } catch (_) { /* ignore */ }

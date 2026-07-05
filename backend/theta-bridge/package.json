@@ -13,7 +13,12 @@
     "fee-analytics:watch": "node src/fee-analytics.js --watch --interval 60",
     "fee-analytics:prometheus": "node src/fee-analytics.js --format prometheus --watch --port 9100",
     "fee-analytics:simulate": "node src/fee-analytics.js --simulate --volume 2000000 --ai-share 0.6",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "benchmark:cuda": "node scripts/run-benchmark.mjs cuda",
+    "benchmark:zan": "node scripts/run-benchmark.mjs zan",
+    "benchmark:compare": "node ../../scripts/compare-benchmarks.cjs bench/edgecloud-cuda.summary.json bench/powerzebra.summary.json --out bench/comparison.md",
+    "benchmark:mock:cuda": "node scripts/mock-prover-server.js --port 8091 --prove-ms 520 --jitter 40",
+    "benchmark:mock:zan": "node scripts/mock-prover-server.js --port 8092 --prove-ms 105 --jitter 12",
+    "test": "node --test test/webhooks.test.mjs test/x402-adapter.test.mjs test/x402-server.test.mjs test/prover-config.test.mjs test/prover-zan-auth.test.mjs test/payment-binding.test.mjs test/openai-gateway.test.mjs test/demo-mode.test.mjs"
   },
   "keywords": [
     "theta",

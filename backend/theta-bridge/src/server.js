@@ -4,8 +4,11 @@ import { ethers } from 'ethers';
 import config from './config.js';
 import logger from './logger.js';
 import { initAIListener, getAIListener } from './ai-listener.js';
-import { getSP1Prover } from './sp1-prover-client.js';
+import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
+import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
+import { resolveRail, runX402Handshake, priceUSDC } from './x402-server.js';
+import { registerOpenAIRoutes } from './openai-gateway.js';
 
 /**
  * XFuel AI DePIN — M2M API Server
@@ -16,10 +19,14 @@ import { getProvider } from './provider.js';
  *
  * Endpoints:
  *   POST  /task-request    Submit an AI intent (COMPUTE_BID, INFERENCE_REQUEST, …)
+ *   POST  /task-quote      Price a task per payment rail (USDC via x402 / TFUEL)
  *   GET   /prove-result    Retrieve ZK settlement proof for a completed task
  *   POST  /a2a-message     Send an A2A (Agent-to-Agent) message with optional escrow
  *   POST  /a2a-settle-fair-exchange  Settle an A2A bid via Fair Exchange (PAS signature)
  *   GET   /task-status     Query task status / ProofOutcome
+ *   PUT   /webhook         Register a webhook for TaskSettled events (HMAC-signed)
+ *   GET   /webhook         List registered webhooks
+ *   DELETE /webhook        Remove a registered webhook (by id or url)
  *   GET   /health          Health / metrics
  *
  * Integrations:
@@ -65,6 +72,51 @@ const CHAIN_IDS = {
 const VALID_MESSAGE_TYPES = new Set(Object.values(MESSAGE_TYPES));
 const VALID_CHAIN_IDS     = new Set(Object.values(CHAIN_IDS));
 
+// ─── /llms.txt — agent discoverability manifest ───────────────────────────────
+// Served at GET /llms.txt (llmstxt.org convention). Keep concise; deep detail
+// lives in the linked docs so agents can progressively disclose.
+
+const LLMS_TXT = `# XFuel Protocol
+
+> ZK settlement + orchestration layer for AI compute across decentralized GPU
+> networks (DePIN). Submit AI inference, route it to a provider, get a
+> verifiable-compute receipt, and settle on-chain. Agent-native: use the
+> OpenAI-compatible endpoint or the M2M API.
+
+## Start here (OpenAI-compatible — zero integration)
+
+- POST /v1/chat/completions : OpenAI chat completions (streaming + non-streaming).
+- GET  /v1/models           : list routable models.
+- Auth: "Authorization: Bearer <key>" or "X-API-Key: <key>".
+- Point any OpenAI client's baseURL at this host + /v1. Every response carries a
+  verifiable-compute receipt in x-xfuel-* headers and an "xfuel" body field.
+- The proof attests settlement metadata + an output-hash commitment (NOT
+  inference correctness). Follow xfuel.proof.links.proof to fetch the proof.
+
+## M2M API (full protocol)
+
+- POST /task-request      : submit an AI task (inference/compute/attestation).
+- POST /task-quote        : price a task per rail (USDC via x402 / TFUEL).
+- GET  /task-status       : task status + proof outcome.
+- GET  /prove-result      : ZK settlement proof + revenue split.
+- POST /a2a-message       : agent-to-agent message (optional escrow).
+- PUT/GET/DELETE /webhook : signed settlement webhooks.
+- GET  /health            : status, fee config, demo limits.
+
+## SDK
+
+- npm install xfuel-sdk  (TypeScript/JS). "new XFuelClient()" is zero-config
+  against the hosted testnet demo. On-chain helpers: import "xfuel-sdk/onchain".
+
+## Docs
+
+- Protocol map: AGENTS.md
+- Agent Playbook: skills/AGENT_PLAYBOOK.md
+- OpenAI gateway: docs/OPENAI_COMPATIBLE_GATEWAY.md
+- Full REST API: docs/M2M_API.md
+- Payments (x402): docs/payments-x402.md
+`;
+
 // ─── In-Memory Rate Limiter ──────────────────────────────────────────────────
 
 class RateLimiter {
@@ -77,8 +129,10 @@ class RateLimiter {
     this.maxHits  = maxHits;
     /** @type {Map<string, number[]>} key → sorted timestamps */
     this.buckets  = new Map();
-    // Garbage-collect stale buckets every 5 min
+    // Garbage-collect stale buckets every 5 min. unref() so the timer never
+    // keeps the process (or a test runner) alive on its own.
     this._gcTimer = setInterval(() => this._gc(), 5 * 60_000);
+    if (typeof this._gcTimer.unref === 'function') this._gcTimer.unref();
   }
 
   /**
@@ -172,6 +226,19 @@ const RELAYER_ADDRESSES = new Set(
     .filter(Boolean)
 );
 
+// ─── Public Demo Mode ─────────────────────────────────────────────────────────
+//
+// Powers the hosted testnet endpoint (api-testnet.xfuel.app). When
+// M2M_DEMO_MODE=true, a single shared PUBLIC demo key is accepted so anything —
+// the SDK, a plain OpenAI client — works out of the box. Demo requests get an
+// aggressive per-IP dual window (per-minute + per-day) and the OpenAI gateway
+// caps max_tokens (OPENAI_GATEWAY_MAX_TOKENS_CAP). Private keys in M2M_API_KEYS
+// bypass the demo limits and use the normal limiter.
+const DEMO_MODE         = process.env.M2M_DEMO_MODE === 'true';
+const DEMO_API_KEY      = process.env.M2M_DEMO_API_KEY || 'xfuel-demo';
+const DEMO_RATE_PER_MIN = parseInt(process.env.M2M_DEMO_RATE_PER_MIN, 10) || 15;
+const DEMO_RATE_PER_DAY = parseInt(process.env.M2M_DEMO_RATE_PER_DAY, 10) || 150;
+
 function verifyRelayerSignature(req) {
   try {
     const sig       = req.headers['x-signature'];
@@ -227,9 +294,38 @@ function calculateTaskFee(grossAmount, feeBps = AI_TASK_FEE_BPS) {
 export function createApp() {
   const app = express();
 
+  // ── Proxy trust ──────────────────────────────────────────────────────────
+  // Behind a TLS reverse proxy (Caddy/nginx), req.ip is the proxy's address
+  // unless we trust the forwarded header. This is REQUIRED for correct per-IP
+  // demo rate limiting — without it every demo user shares one IP bucket.
+  // M2M_TRUST_PROXY: 'true' (trust all), a hop count, or a subnet string.
+  const TRUST_PROXY = process.env.M2M_TRUST_PROXY;
+  if (TRUST_PROXY) {
+    app.set(
+      'trust proxy',
+      TRUST_PROXY === 'true' ? true : /^\d+$/.test(TRUST_PROXY) ? Number(TRUST_PROXY) : TRUST_PROXY,
+    );
+  }
+
   // ── Global middleware ────────────────────────────────────────────────────
 
   app.use(express.json({ limit: '1mb' }));
+
+  // ── CORS (opt-in) ──────────────────────────────────────────────────────────
+  // Off by default. Set M2M_CORS_ORIGIN (e.g. '*' or a specific origin) to allow
+  // browser-based agents / playgrounds to call the API (incl. the /v1 gateway).
+  const CORS_ORIGIN = process.env.M2M_CORS_ORIGIN;
+  if (CORS_ORIGIN) {
+    app.use((req, res, next) => {
+      res.header('Access-Control-Allow-Origin', CORS_ORIGIN);
+      res.header('Vary', 'Origin');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-PAYMENT, X-PAYMENT-NONCE');
+      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url');
+      if (req.method === 'OPTIONS') return res.sendStatus(204);
+      next();
+    });
+  }
 
   // Request ID
   app.use((req, _res, next) => {
@@ -259,8 +355,32 @@ export function createApp() {
     parseInt(process.env.M2M_RATE_MAX_HITS)  || 120,
   );
 
+  // Demo key limiters: an aggressive per-IP dual window (minute + day). Only
+  // consulted when a request presents the shared public demo key.
+  const demoMinLimiter = new RateLimiter(60_000, DEMO_RATE_PER_MIN);
+  const demoDayLimiter = new RateLimiter(24 * 60 * 60_000, DEMO_RATE_PER_DAY);
+
   function rateLimit(req, res, next) {
-    const key = req.headers['x-api-key'] || req.ip || 'anon';
+    const apiKey = req.headers['x-api-key'];
+
+    // Public demo key → strict per-IP minute + day windows.
+    if (DEMO_MODE && apiKey && apiKey === DEMO_API_KEY) {
+      const ipKey = `demo:${req.ip || 'anon'}`;
+      const okMin = demoMinLimiter.allow(ipKey);
+      const okDay = okMin && demoDayLimiter.allow(ipKey);
+      if (!okMin || !okDay) {
+        const info = okMin ? demoDayLimiter.info(ipKey) : demoMinLimiter.info(ipKey);
+        res.set('Retry-After', Math.ceil(info.resetMs / 1000).toString());
+        return res.status(429).json({
+          error: 'rate_limit_exceeded',
+          message: `Demo key limit reached (${DEMO_RATE_PER_MIN}/min, ${DEMO_RATE_PER_DAY}/day per IP). Use your own X-API-Key for higher limits.`,
+          retryAfterMs: info.resetMs,
+        });
+      }
+      return next();
+    }
+
+    const key = apiKey || req.ip || 'anon';
     if (!rateLimiter.allow(key)) {
       const info = rateLimiter.info(key);
       res.set('Retry-After', Math.ceil(info.resetMs / 1000).toString());
@@ -288,6 +408,13 @@ export function createApp() {
       return next();
     }
 
+    // 1b. Shared public demo key (rate-limited hard in rateLimit()).
+    if (DEMO_MODE && apiKey && apiKey === DEMO_API_KEY) {
+      req.authMethod = 'demo_key';
+      req.isDemo = true;
+      return next();
+    }
+
     // 2. Relayer ECDSA signature
     if (verifyRelayerSignature(req)) {
       req.authMethod = 'relayer_sig';
@@ -302,10 +429,12 @@ export function createApp() {
 
   // Apply rate-limit + auth to all API routes
   app.use('/task-request',  rateLimit, authenticate);
+  app.use('/task-quote',    rateLimit, authenticate);
   app.use('/prove-result',  rateLimit, authenticate);
   app.use('/a2a-message',   rateLimit, authenticate);
   app.use('/a2a-settle-fair-exchange', rateLimit, authenticate);
   app.use('/task-status',   rateLimit, authenticate);
+  app.use('/webhook',       rateLimit, authenticate);
 
   // ═══════════════════════════════════════════════════════════════════════
   // POST /task-request — Submit an AI intent
@@ -321,6 +450,7 @@ export function createApp() {
         sender,             // required – sender address / identifier
         model_id,           // optional – ML model hash (for INFERENCE_REQUEST)
         input_hash,         // optional – hash of input data
+        input,              // optional – raw input/prompt; enables full 6-tier routing (M2M_USE_FULL_ROUTER)
         output_hash,        // optional – hash of output (for COMPUTE_RESULT)
         theta_recipient,    // optional – Theta EVM address for settlement
         max_gpu_hours,      // optional – Akash GPU lease duration
@@ -328,6 +458,8 @@ export function createApp() {
         ibc_channel,        // optional – explicit IBC channel override
         memo,               // optional – free-form memo
         proof_system,       // optional – inference proof system: 'sp1' | 'zkgpt' (Phase 1); default 'sp1'
+        callback_url,       // optional – per-task webhook; receives TaskSettled on completion
+        callback_secret,    // optional – HMAC secret for this task's callback (else WEBHOOK_SECRET)
       } = req.body;
 
       // ── Validation ────────────────────────────────────────────────────
@@ -373,9 +505,50 @@ export function createApp() {
       if (proof_system !== undefined && proof_system !== null && proof_system !== '' && !PROOF_SYSTEMS.has(proof_system)) {
         errors.push(`proof_system must be one of: ${[...PROOF_SYSTEMS].join(', ')}`);
       }
+      if (callback_url) {
+        try {
+          const u = new URL(callback_url);
+          if (!/^https?:$/.test(u.protocol)) errors.push('callback_url must use http or https');
+        } catch {
+          errors.push('callback_url must be a valid absolute URL');
+        }
+      }
 
       if (errors.length > 0) {
         return res.status(400).json({ error: 'validation_error', details: errors });
+      }
+
+      // ── Payment rail (USDC via x402 default; TFUEL fallback) ───────────
+      // Fully reversible: with config.x402.enabled=false this whole block is a
+      // no-op and every request settles via the existing TFUEL path.
+      let paymentRail = 'tfuel';
+      let paymentRef = null;
+      {
+        const rail = resolveRail(req.body);
+        if (rail === 'usdc' && config.x402.enabled) {
+          const decision = await runX402Handshake(req, { taskId: `x402-${req.id}` });
+          if (decision.kind === 'challenge') {
+            // No X-PAYMENT yet — return the 402 challenge for the agent to pay.
+            return res.status(402).json(decision.body);
+          }
+          if (decision.kind === 'settled') {
+            paymentRail = 'usdc';
+            paymentRef = decision.paymentRef;
+          } else {
+            // verify/settle failed. Misconfig → 503; otherwise fall back to TFUEL
+            // (if allowed) or re-challenge with the reason.
+            if (decision.reason === 'gateway_not_configured') {
+              return res.status(503).json({ error: 'x402_unavailable', reason: decision.reason });
+            }
+            if (config.x402.fallbackToTfuel) {
+              logger.warn({ reqId: req.id, reason: decision.reason }, 'x402 failed — falling back to TFUEL');
+              paymentRail = 'tfuel';
+            } else {
+              return res.status(402).json({ error: 'payment_required', reason: decision.reason });
+            }
+          }
+        }
+        // rail === 'usdc' with the flag OFF → silently use the TFUEL path.
       }
 
       // ── Fee calculation ───────────────────────────────────────────────
@@ -395,6 +568,7 @@ export function createApp() {
         thetaRecipient: theta_recipient || null,
         modelId:        model_id || null,
         inputHash:      input_hash || null,
+        input:          input || null, // raw prompt for full 6-tier router (optional; input_hash stays for privacy/proof)
         maxGpuHours:    max_gpu_hours || null,
         nonce:          null, // assigned by listener
         memo:           memo || null,
@@ -403,6 +577,8 @@ export function createApp() {
         ibcChannel:     ibc_channel || null,
         outputHash:     output_hash || null,
         proofSystem:    proof_system || 'sp1', // Phase 1: 'sp1' | 'zkgpt' for inference
+        paymentRail,    // 'usdc' (x402) | 'tfuel' — resolved above; flows to listener task
+        paymentRef,     // x402 settlement ref (network:txRef) or null for TFUEL
       };
 
       const meta = {
@@ -431,6 +607,8 @@ export function createApp() {
         feeBps:     appliedBps,
         sp1Proof:   null,
         result:     null,
+        callbackUrl:    callback_url || null,
+        callbackSecret: callback_secret || null,
       };
 
       aiListener.activeTasks.set(taskId, task);
@@ -468,6 +646,8 @@ export function createApp() {
         fee_amount:    feeAmount,
         net_amount:    netAmount,
         fee_bps:       appliedBps,
+        payment_rail:  paymentRail,
+        payment_ref:   paymentRef,
         fee_info: {
           description: `${(appliedBps / 100).toFixed(1)}% protocol fee → RevenueSplitter (30% BBB / 30% LP / 25% veXF / 15% Treasury)`,
           collector:   'FeeCollector.wasm → CW20 Send → RevenueSplitter',
@@ -479,6 +659,41 @@ export function createApp() {
       });
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /task-request error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // POST /task-quote — Price a task per rail (USDC via x402 default; TFUEL)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  app.post('/task-quote', async (req, res) => {
+    try {
+      const { amount } = req.body || {};
+      const usdcAmount = priceUSDC(req.body);
+      return res.json({
+        recommended: 'usdc',
+        default_rail: config.x402.defaultRail,
+        rails: {
+          usdc: {
+            rail: 'usdc',
+            enabled: config.x402.enabled,
+            asset: config.x402.asset,
+            network: config.x402.network,
+            decimals: 6,
+            amount: usdcAmount,
+            pay_to: config.x402.payTo,
+            note: 'Pay via x402: submit /task-request with payment.rail="usdc"; a 402 challenge is returned to pay against (agent-side payer).',
+          },
+          tfuel: {
+            rail: 'tfuel',
+            amount: amount || null,
+            note: 'Theta-native settlement; pass task value as `amount` (wei) with payment.rail="tfuel".',
+          },
+        },
+      });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /task-quote error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
   });
@@ -531,6 +746,8 @@ export function createApp() {
         status:         task.status,
         proof_outcome:  task.sp1Proof?.error ? 'regenerable' : 'valid',
         sp1_proof:      task.sp1Proof || null,
+        // Phase 2 (flag-gated): x402 payment commitment bound into the proof.
+        payment_binding: task.sp1Proof?.paymentBinding || null,
         fee: {
           gross_amount:  task.intent?.amount || '0',
           fee_amount:    task.feeAmount || feeAmount,
@@ -843,6 +1060,10 @@ export function createApp() {
           fee_amount:     task.feeAmount || '0',
           net_amount:     task.netAmount || '0',
           fee_bps:        task.feeBps || AI_TASK_FEE_BPS,
+          payment_rail:   task.intent?.paymentRail || 'tfuel',
+          payment_ref:    task.intent?.paymentRef || null,
+          // Phase 2 (flag-gated): x402 payment commitment bound into the proof.
+          payment_binding: task.sp1Proof?.paymentBinding || null,
           result:         task.result || null,
           sp1_proof:      task.sp1Proof ? {
             has_proof:      !!task.sp1Proof.proof,
@@ -892,6 +1113,56 @@ export function createApp() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // PUT /webhook — Register (or update) a webhook for settlement events
+  // GET /webhook — List registered webhooks
+  // DELETE /webhook — Remove a webhook by id or url
+  // ═══════════════════════════════════════════════════════════════════════
+
+  const webhooks = getWebhookRegistry();
+
+  app.put('/webhook', (req, res) => {
+    try {
+      const { url, secret, events } = req.body || {};
+      const hook = webhooks.register({ url, secret, events });
+      logger.info({ reqId: req.id, id: hook.id, url: hook.url, events: hook.events }, 'Webhook registered');
+      return res.status(200).json({
+        status: 'registered',
+        webhook: hook,
+        supported_events: Object.values(WEBHOOK_EVENTS),
+        signature_info: 'Deliveries include X-XFuel-Signature: sha256=<hmac> when a secret is set.',
+      });
+    } catch (err) {
+      return res.status(400).json({ error: 'validation_error', message: err.message });
+    }
+  });
+
+  app.get('/webhook', (_req, res) => {
+    return res.json({ webhooks: webhooks.list(), supported_events: Object.values(WEBHOOK_EVENTS) });
+  });
+
+  app.delete('/webhook', (req, res) => {
+    const id = req.query.id || req.body?.id;
+    const url = req.query.url || req.body?.url;
+    if (!id && !url) {
+      return res.status(400).json({ error: 'validation_error', message: 'Provide id or url to delete' });
+    }
+    const removed = id ? webhooks.remove(id) : webhooks.removeByUrl(url);
+    if (!removed) {
+      return res.status(404).json({ error: 'not_found', message: 'No matching webhook' });
+    }
+    return res.json({ status: 'removed', webhook: removed });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // GET /llms.txt — Agent-discoverability manifest (public, no auth)
+  // Convention: https://llmstxt.org/ — a concise map for LLMs/agents.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  app.get('/llms.txt', (_req, res) => {
+    res.type('text/plain; charset=utf-8').send(LLMS_TXT);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // GET /health — Server health and aggregate metrics
   // ═══════════════════════════════════════════════════════════════════════
 
@@ -910,6 +1181,7 @@ export function createApp() {
         timestamp:   new Date().toISOString(),
         uptime_s:    Math.floor(process.uptime()),
         a2a_messages_total: _a2aMessages.size,
+        webhooks_registered: getWebhookRegistry().list().length,
         ai_listener: aiStatus,
         fee_config: {
           default_bps:    AI_TASK_FEE_BPS,
@@ -921,18 +1193,29 @@ export function createApp() {
         },
         chains: Object.values(CHAIN_IDS),
         message_types: Object.values(MESSAGE_TYPES),
+        demo: DEMO_MODE
+          ? { enabled: true, rate_per_min: DEMO_RATE_PER_MIN, rate_per_day: DEMO_RATE_PER_DAY, note: 'Public demo key is rate-limited per IP. Bring your own X-API-Key for higher limits.' }
+          : { enabled: false },
       });
     } catch (err) {
       return res.status(503).json({ status: 'error', message: err.message });
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // OpenAI-compatible gateway (/v1/models, /v1/chat/completions)
+  // Drop-in surface: point any OpenAI-compatible client's baseURL here.
+  // Shares the rate-limit + auth middleware (accepts Authorization: Bearer).
+  // ═══════════════════════════════════════════════════════════════════════
+
+  registerOpenAIRoutes(app, { rateLimit, authenticate });
+
   // ── 404 fallback ────────────────────────────────────────────────────────
 
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, GET /prove-result, POST /a2a-message, GET /task-status, GET /health',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, GET /task-status, PUT|GET|DELETE /webhook, GET /health, GET /llms.txt, GET /v1/models, POST /v1/chat/completions',
     });
   });
 
@@ -1041,7 +1324,27 @@ export async function startServer() {
     await ai.startListening();
   }
 
+  // Initialise the SP1 prover so /task-request tasks get settlement proofs.
+  // Non-fatal + skipped when SP1_PROVER_URL/ZAN_PROVER_URL are unset (zkGPT-only
+  // or proofless dev). The bridge entrypoint (index.js) inits its own instance.
+  if (!getSP1Prover()) {
+    try {
+      await initSP1Prover();
+    } catch (err) {
+      logger.warn({ err }, 'SP1 prover init skipped (proofs disabled for M2M tasks)');
+    }
+  }
+
   const app = createApp();
+
+  // Start the webhook dispatcher: watches activeTasks for terminal states
+  // and delivers signed TaskSettled events to subscribers + per-task callbacks.
+  try {
+    const dispatcher = new WebhookDispatcher(getWebhookRegistry(), getAIListener());
+    dispatcher.start();
+  } catch (err) {
+    logger.warn({ err }, 'Webhook dispatcher not started (AI listener unavailable)');
+  }
 
   return new Promise((resolve) => {
     const server = app.listen(port, () => {

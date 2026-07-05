@@ -30,6 +30,7 @@
  */
 
 import { ethers } from 'ethers';
+import { ComputeRouter } from './compute-router.js';
 
 // GPU tier enum names for logging
 const GPU_TIER_NAMES = { 0: 'RTX-4090', 1: 'A100', 2: 'H100' };
@@ -938,45 +939,16 @@ class ThetaInferenceHandler {
     let source = 'mock';
 
     try {
-      // ── Priority 1: Theta EdgeCloud (native DePIN — preferred) ──────────
-      if (this.edgeCloudApiKey) {
-        result = await this._callEdgeCloud(serviceType, requestBody, modelName, gpuName);
-        if (result) source = 'edgecloud';
-      }
-
-      // ── Priority 2: RapidAPI gateway (Theta-routed, still Theta infra) ──
-      if (!result && this.useRapidApiFallback && this.rapidApiKey) {
-        console.log(`[Router] EdgeCloud unavailable → trying RapidAPI...`);
-        result = await this._callRapidAPI(serviceType, requestBody, modelName, gpuName);
-        if (result) source = 'rapidapi';
-      }
-
-      // ── Priority 3: MCP Server (Theta toolchain) ─────────────────────────
-      if (!result && this.useMcpFallback && this.mcpEndpoint) {
-        console.log(`[Router] RapidAPI unavailable → trying MCP...`);
-        result = await this._callMCP(serviceType, requestBody, modelName, gpuName);
-        if (result) source = 'mcp';
-      }
-
-      // ── Priority 4: Akash Network DePIN ──────────────────────────────────
-      if (!result && this.useAkashFallback && this.akashMnemonic) {
-        console.log(`[Router] Theta tiers unavailable → trying Akash Network DePIN...`);
-        result = await this._callAkash(serviceType, requestBody, modelName, gpuName);
-        if (result) source = 'akash';
-      }
-
-      // ── Priority 5: Render Network DePIN ─────────────────────────────────
-      if (!result && this.useRenderFallback && this.renderApiKey) {
-        console.log(`[Router] Akash unavailable → trying Render Network DePIN...`);
-        result = await this._callRender(serviceType, requestBody, modelName, gpuName);
-        if (result) source = 'render';
-      }
-
-      // ── Priority 6: AWS Bedrock (cloud last resort) ───────────────────────
-      if (!result && this.useBedrockFallback && this.awsAccessKeyId && this.awsSecretAccessKey) {
-        console.log(`[Router] All DePINs unavailable → falling back to AWS Bedrock (centralized)...`);
-        result = await this._callBedrock(serviceType, requestBody, modelName, gpuName);
-        if (result) source = 'bedrock';
+      // ── 6-tier DePIN waterfall (EdgeCloud → RapidAPI → MCP → Akash →
+      //    Render → Bedrock). Control flow extracted to ComputeRouter so the
+      //    same priority logic is reused by the M2M listener. Behavior is
+      //    identical: tiers run in order, first truthy result wins, soft
+      //    failures return null (fallthrough), thrown errors are fatal. ──────
+      const router = this._computeRouter || (this._computeRouter = ComputeRouter.fromHandler(this));
+      const routed = await router.route({ serviceType, requestBody, modelName, gpuName });
+      if (routed.result) {
+        result = routed.result;
+        source = routed.source;
       }
 
       // ── Final: mock (dev/test only) ───────────────────────────────────────
