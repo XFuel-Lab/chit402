@@ -1,0 +1,11 @@
+{
+  "name": "xfuel-theta-inference",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Theta EdgeCloud inference handler + 6-tier compute router. Imported at runtime by the theta-bridge M2M backend (OpenAI gateway). This package.json declares the runtime dependency (ethers) so Node resolves it from circuits/theta-inference/node_modules when the file is loaded from outside backend/theta-bridge.",
+  "main": "theta-inference-handler.js",
+  "dependencies": {
+    "ethers": "^6.16.0"
+  }
+}
