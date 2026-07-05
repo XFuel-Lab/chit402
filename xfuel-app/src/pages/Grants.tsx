@@ -1,77 +1,98 @@
-type Grant = {
+type ActiveGrant = {
   program: string;
-  network: string;
-  amount: string;
-  status: 'active' | 'completed' | 'pending';
-  startDate: string;
+  org: string;
+  pool: string;
+  type: string;
   color: string;
-  milestones: { name: string; status: 'done' | 'in-progress' | 'pending'; deliverable: string }[];
+  applyUrl: string;
+  deadline: string;
+  backers: string[];
+  why: string;
+  requirements: { label: string; met: boolean }[];
 };
 
-const grants: Grant[] = [
+type PipelineGrant = {
+  program: string;
+  org: string;
+  color: string;
+  focus: string;
+  target: string;
+  blocker: string;
+};
+
+const activeGrants: ActiveGrant[] = [
   {
-    program: 'Solana Foundation Grant',
-    network: 'Solana',
-    amount: '$75,000',
-    status: 'active',
-    startDate: 'Dec 2025',
-    color: '#9945FF',
-    milestones: [
-      { name: 'M1: Solana Prover MVP', status: 'done', deliverable: 'SP1 proof generation on Solana runtime' },
-      { name: 'M2: On-Chain Verifier', status: 'done', deliverable: 'Solana program for ZK proof verification' },
-      { name: 'M3: Bridge Integration', status: 'in-progress', deliverable: 'Wormhole bridge with ZK attestations' },
-      { name: 'M4: Mainnet Deployment', status: 'pending', deliverable: 'Production deployment with audit' },
+    program: 'EASY Residency — Season 3',
+    org: 'YZi Labs',
+    pool: 'Up to $500K',
+    type: 'Incubator / Equity',
+    color: '#F0B90B',
+    applyUrl: 'https://wkf.ms/3IA5iBk',
+    deadline: 'Rolling — Demo Day April 2026',
+    backers: ['YZi Labs', 'CertiK ($1M audit pool)'],
+    why: 'XFuel maps directly to YZi\'s S3 focus: decentralized compute, DePIN, AI data networks, and privacy-preserving infrastructure. The CertiK audit grant pool is a direct match for our Phase 1 audit scope.',
+    requirements: [
+      { label: 'ZK-verified AI compute', met: true },
+      { label: 'DePIN infrastructure (Theta EdgeCloud, Akash, Bittensor)', met: true },
+      { label: 'Privacy-preserving infra (model weights hidden in proofs)', met: true },
+      { label: 'On-chain markets (task marketplace + escrow)', met: true },
+      { label: 'Open source (MIT licensed)', met: true },
+      { label: 'Testnet deployed (17/17 smoke tests)', met: true },
+      { label: 'Audit-ready (59/59 checklist items)', met: true },
     ],
   },
   {
-    program: 'Bittensor TAO Grant',
-    network: 'Bittensor',
-    amount: '500 TAO',
-    status: 'active',
-    startDate: 'Jan 2026',
-    color: '#00d4ff',
-    milestones: [
-      { name: 'M1: EVM Subnet Research', status: 'done', deliverable: 'Bittensor EVM compatibility layer research' },
-      { name: 'M2: Staking Precompile', status: 'done', deliverable: 'IBittensorStaking interface implementation' },
-      { name: 'M3: Subnet Verification', status: 'in-progress', deliverable: 'ZK verification for subnet computations' },
-      { name: 'M4: Full Integration', status: 'pending', deliverable: 'Complete Bittensor EVM deployment' },
-    ],
-  },
-  {
-    program: 'Theta Network Grant',
-    network: 'Theta',
-    amount: '$50,000',
-    status: 'completed',
-    startDate: 'Oct 2025',
-    color: '#2ab8e6',
-    milestones: [
-      { name: 'M1: Core Contracts', status: 'done', deliverable: 'CoreRevenueSplitter, ZKVerifierSP1 deployed' },
-      { name: 'M2: AI Listener', status: 'done', deliverable: 'On-chain AI event listener with proof hooks' },
-      { name: 'M3: Edge Compute', status: 'done', deliverable: 'Theta edge compute node integration' },
-      { name: 'M4: Production rollout', status: 'pending', deliverable: 'Audited mainnet + operational runway (roadmap)' },
-    ],
-  },
-  {
-    program: 'Osmosis Grant',
-    network: 'Osmosis',
-    amount: '$30,000',
-    status: 'pending',
-    startDate: 'Mar 2026',
-    color: '#8b5cf6',
-    milestones: [
-      { name: 'M1: CosmWasm Verifier', status: 'done', deliverable: 'Rust WASM ZK verifier contract' },
-      { name: 'M2: IBC Integration', status: 'pending', deliverable: 'IBC message handling for cross-chain proofs' },
-      { name: 'M3: LP Integration', status: 'pending', deliverable: 'XF/OSMO liquidity pool with superfluid staking' },
-      { name: 'M4: Testnet Launch', status: 'pending', deliverable: 'Full Osmosis testnet deployment' },
+    program: 'The Pitch — Global Startup Competition',
+    org: 'Deel',
+    pool: 'Up to $1M (global champion) · $50K (regional winner)',
+    type: 'Seed Competition',
+    color: '#FF6B4A',
+    applyUrl: 'https://www.deel.com/the-pitch-by-deel/',
+    deadline: 'Regional finals → Global finale May 2026',
+    backers: ['J.P. Morgan', 'a16z', 'Google', 'Ribbit Ventures', 'Stripe', 'Orrick'],
+    why: 'Seed-stage, global, founder-first competition with top-tier backers. XFuel is a strong candidate as a solo-founder AI/DePIN infrastructure project with mainnet contracts and a live product.',
+    requirements: [
+      { label: 'Seed-stage startup', met: true },
+      { label: 'Live product (xfuel.app)', met: true },
+      { label: 'Global / borderless team', met: true },
+      { label: 'AI infrastructure angle', met: true },
+      { label: 'On-chain funding transparency (AngelEscrow)', met: true },
     ],
   },
 ];
 
-const grantStats = [
-  { label: 'Tracker status', value: 'Internal / demo' },
-  { label: 'Active (illustrative)', value: '2' },
-  { label: 'Milestones (approx.)', value: 'see cards' },
-  { label: 'Networks', value: '4 targets' },
+const pipelineGrants: PipelineGrant[] = [
+  {
+    program: 'Subnet / Ecosystem Grants',
+    org: 'Bittensor / TAO',
+    color: '#00d4ff',
+    focus: 'TAOCircuit — ZK-verified dTAO subnet staking + cross-chain settlement',
+    target: 'Q3 2026',
+    blocker: 'Awaiting Phase 1 audit completion for credibility with TAO ecosystem reviewers',
+  },
+  {
+    program: 'Ecosystem Grants',
+    org: 'Osmosis / Cosmos',
+    color: '#8b5cf6',
+    focus: 'CosmWasm ZK verifier + IBC relay + XF/OSMO liquidity pool',
+    target: 'Q3–Q4 2026',
+    blocker: 'IBC reverse bridge pending governance; CosmWasm verifier production-ready',
+  },
+  {
+    program: 'Foundation Grants',
+    org: 'Solana Foundation',
+    color: '#9945FF',
+    focus: 'SolanaAIBridge circuit — Wormhole VAA + ZK attestations for Solana AI tasks',
+    target: 'Q4 2026',
+    blocker: 'Solana program deployment pending Phase 2 audit scope',
+  },
+];
+
+const stats = [
+  { label: 'Active applications', value: '2' },
+  { label: 'Total pool (active)', value: '$15M+' },
+  { label: 'Pipeline programs', value: '3' },
+  { label: 'Audit readiness', value: '59/59' },
 ];
 
 export default function Grants() {
@@ -79,16 +100,16 @@ export default function Grants() {
     <div className="page">
       <div className="container">
         <div className="page-header">
-          <h1>Grant Tracker</h1>
+          <h1>Grant Applications</h1>
           <p>
-            Illustrative milestone boards — confirm status with your own records before external use.
-            Not all programs are awarded or active.
+            Active applications and pipeline programs XFuel is pursuing for audit funding,
+            infrastructure, and ecosystem expansion.
           </p>
         </div>
 
         {/* Stats */}
-        <div className="grid grid-4" style={{ marginBottom: '2rem' }}>
-          {grantStats.map((s) => (
+        <div className="grid grid-4" style={{ marginBottom: '2.5rem' }}>
+          {stats.map((s) => (
             <div key={s.label} className="card" style={{ textAlign: 'center' }}>
               <div className="stat-value" style={{ fontSize: '1.5rem' }}>{s.value}</div>
               <div className="stat-label">{s.label}</div>
@@ -96,75 +117,128 @@ export default function Grants() {
           ))}
         </div>
 
-        {/* Grant Cards */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          {grants.map((g) => {
-            const completed = g.milestones.filter((m) => m.status === 'done').length;
-            const progress = (completed / g.milestones.length) * 100;
-
-            return (
-              <div key={g.program} className="card" style={{ padding: '2rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                  <div>
-                    <h3 style={{ color: g.color, marginBottom: '0.25rem' }}>{g.program}</h3>
-                    <div style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>
-                      {g.network} · Started {g.startDate} · {g.amount}
-                    </div>
+        {/* Active Applications */}
+        <h2 style={{ marginBottom: '1rem', fontSize: '1.1rem', color: '#8a8a9a', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Active Applications
+        </h2>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginBottom: '3rem' }}>
+          {activeGrants.map((g) => (
+            <div key={g.program} className="card" style={{ padding: '2rem', borderLeft: `3px solid ${g.color}` }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <div>
+                  <h3 style={{ color: g.color, marginBottom: '0.2rem' }}>{g.program}</h3>
+                  <div style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>
+                    {g.org} · {g.type} · {g.pool}
                   </div>
-                  <span className={`badge badge-${g.status === 'active' ? 'cyan' : g.status === 'completed' ? 'green' : 'orange'}`}>
-                    {g.status}
-                  </span>
                 </div>
+                <span className="badge badge-cyan">Applying</span>
+              </div>
 
-                {/* Progress */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem', fontSize: '0.85rem' }}>
-                  <span style={{ color: '#8a8a9a' }}>Progress</span>
-                  <span style={{ fontWeight: 600 }}>{completed}/{g.milestones.length} milestones</span>
+              {/* Deadline + backers */}
+              <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                <div style={{ fontSize: '0.85rem' }}>
+                  <span style={{ color: '#8a8a9a' }}>Deadline: </span>
+                  <span style={{ fontWeight: 600 }}>{g.deadline}</span>
                 </div>
-                <div className="progress-bar" style={{ marginBottom: '1.25rem' }}>
-                  <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
-                </div>
-
-                {/* Milestones */}
-                <div style={{ display: 'grid', gap: '0.75rem' }}>
-                  {g.milestones.map((m) => (
-                    <div
-                      key={m.name}
-                      style={{
-                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                        padding: '0.75rem 1rem',
-                        background: m.status === 'done' ? 'rgba(34,197,94,0.05)' : m.status === 'in-progress' ? 'rgba(0,212,255,0.05)' : 'rgba(255,255,255,0.02)',
-                        borderRadius: '8px',
-                        border: `1px solid ${m.status === 'done' ? 'rgba(34,197,94,0.15)' : m.status === 'in-progress' ? 'rgba(0,212,255,0.15)' : 'rgba(255,255,255,0.06)'}`,
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.15rem' }}>
-                          {m.status === 'done' ? '✓ ' : m.status === 'in-progress' ? '◐ ' : '○ '}
-                          {m.name}
-                        </div>
-                        <div style={{ color: '#8a8a9a', fontSize: '0.8rem' }}>{m.deliverable}</div>
-                      </div>
-                      <span className={`badge badge-${m.status === 'done' ? 'green' : m.status === 'in-progress' ? 'cyan' : 'purple'}`}>
-                        {m.status === 'done' ? 'Complete' : m.status === 'in-progress' ? 'In Progress' : 'Pending'}
-                      </span>
-                    </div>
-                  ))}
+                <div style={{ fontSize: '0.85rem' }}>
+                  <span style={{ color: '#8a8a9a' }}>Backed by: </span>
+                  <span style={{ fontWeight: 600 }}>{g.backers.join(' · ')}</span>
                 </div>
               </div>
-            );
-          })}
+
+              {/* Why we fit */}
+              <div style={{
+                padding: '0.85rem 1rem',
+                background: 'rgba(255,255,255,0.03)',
+                borderRadius: '8px',
+                border: '1px solid rgba(255,255,255,0.06)',
+                marginBottom: '1.25rem',
+                fontSize: '0.875rem',
+                color: '#c0c0d0',
+                lineHeight: 1.6,
+              }}>
+                {g.why}
+              </div>
+
+              {/* Requirements checklist */}
+              <div style={{ display: 'grid', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                {g.requirements.map((r) => (
+                  <div key={r.label} style={{
+                    display: 'flex', alignItems: 'center', gap: '0.6rem',
+                    fontSize: '0.875rem',
+                    color: r.met ? '#e0e0f0' : '#8a8a9a',
+                  }}>
+                    <span style={{
+                      width: '18px', height: '18px', borderRadius: '50%', flexShrink: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '0.7rem', fontWeight: 700,
+                      background: r.met ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.05)',
+                      color: r.met ? '#22c55e' : '#8a8a9a',
+                      border: `1px solid ${r.met ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.1)'}`,
+                    }}>
+                      {r.met ? '✓' : '○'}
+                    </span>
+                    {r.label}
+                  </div>
+                ))}
+              </div>
+
+              <a
+                href={g.applyUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="btn btn-primary"
+                style={{ display: 'inline-block' }}
+              >
+                View Program ↗
+              </a>
+            </div>
+          ))}
         </div>
 
-        {/* Apply for Grant */}
-        <div className="card" style={{ padding: '2rem', marginTop: '2rem', textAlign: 'center' }}>
-          <h3 style={{ marginBottom: '0.5rem' }}>Building on XFuel?</h3>
-          <p style={{ color: '#8a8a9a', marginBottom: '1.5rem', maxWidth: '500px', margin: '0 auto 1.5rem' }}>
-            Apply for a grant to integrate XFuel ZK verification into your project.
-            We support circuit development, bridge integrations, and DePIN nodes.
+        {/* Pipeline */}
+        <h2 style={{ marginBottom: '1rem', fontSize: '1.1rem', color: '#8a8a9a', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Pipeline — Post-Audit
+        </h2>
+        <div style={{ display: 'grid', gap: '1rem', marginBottom: '3rem' }}>
+          {pipelineGrants.map((g) => (
+            <div key={g.program} className="card" style={{
+              padding: '1.25rem 1.5rem',
+              borderLeft: `3px solid ${g.color}`,
+              display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+              flexWrap: 'wrap', gap: '0.75rem',
+            }}>
+              <div style={{ flex: 1, minWidth: '200px' }}>
+                <div style={{ fontWeight: 600, marginBottom: '0.2rem' }}>
+                  <span style={{ color: g.color }}>{g.org}</span>
+                  {' '}
+                  <span style={{ color: '#c0c0d0', fontWeight: 400 }}>— {g.program}</span>
+                </div>
+                <div style={{ fontSize: '0.85rem', color: '#8a8a9a', marginBottom: '0.35rem' }}>
+                  {g.focus}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#6a6a7a' }}>
+                  Blocker: {g.blocker}
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem' }}>
+                <span className="badge badge-purple">Pipeline</span>
+                <span style={{ fontSize: '0.78rem', color: '#8a8a9a' }}>Target: {g.target}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Contact CTA */}
+        <div className="card" style={{ padding: '2rem', textAlign: 'center' }}>
+          <h3 style={{ marginBottom: '0.5rem' }}>Interested in partnering or co-applying?</h3>
+          <p style={{ color: '#8a8a9a', maxWidth: '500px', margin: '0 auto 1.5rem' }}>
+            Reach out directly — XFuel is open to ecosystem partnerships, co-grant applications,
+            and integration conversations.
           </p>
-          <a href="https://github.com/XFuel-Lab/xfuel-protocol/issues" target="_blank" rel="noreferrer" className="btn btn-primary">
-            Apply for Grant ↗
+          <a href="mailto:founderxfuel@gmail.com" className="btn btn-primary">
+            Contact the Founder ↗
           </a>
         </div>
       </div>

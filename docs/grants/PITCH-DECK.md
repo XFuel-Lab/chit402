@@ -315,7 +315,7 @@ All fees are collected and distributed automatically by `CoreRevenueSplitter`:
 
 ### Founder
 
-*[Add your name, photo, LinkedIn, and relevant background here.]*
+*Christopher Hayes, USN Veteran, Elec. Eng., Project and Engineering Team Lead, Electrical Authority over $1B facility, Founder - Hayes Automation LLC, currently full time Founder & Developer of Xfuel-Protocol*
 
 **Execution track record (this project):**
 - Designed and shipped 21 circuit modules and a full ZK settlement stack in under 6 months

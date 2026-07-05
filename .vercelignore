@@ -1,0 +1,16 @@
+backend/
+core-layer/
+zkgpt-prover/
+sp1-prover/
+artifacts/
+cache/
+node_modules/
+test/
+believer/test/
+deploy/manifests/
+*.so
+*.so.*
+*.a
+*.o
+*.dylib
+cmake-build-*

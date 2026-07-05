@@ -50,6 +50,41 @@ jobs:
         env:
           REPORT_GAS: "true"
 
+  # ── M2M backend (webhooks + x402) + SDK + Agent Skills ───────
+  m2m-sdk-skills:
+    name: M2M Backend + SDK + Skills
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install M2M backend deps
+        working-directory: backend/theta-bridge
+        run: npm install --no-audit --no-fund
+
+      - name: M2M backend tests (webhooks + x402 adapter)
+        working-directory: backend/theta-bridge
+        run: npm test
+
+      - name: Install SDK deps
+        working-directory: sdk/js
+        run: npm install --no-audit --no-fund
+
+      - name: SDK build + tests (REST client + on-chain module)
+        working-directory: sdk/js
+        run: |
+          npm run build
+          npm test
+
+      - name: ComputeRouter + _executeService regression tests
+        run: node --test circuits/theta-inference/test/compute-router.test.mjs circuits/theta-inference/test/execute-service.test.mjs
+
+      - name: Validate Agent Skills (SKILL.md frontmatter)
+        run: node scripts/validate-skills.cjs
+
   # ── CosmWasm Rust tests ──────────────────────────────────────
   cosmwasm:
     name: CosmWasm Tests

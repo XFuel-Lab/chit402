@@ -2,7 +2,13 @@
 
 Goal: quantify **ZAN PowerZebra** (GPU/FPGA ZK acceleration) against XFuel's **current
 CUDA prover** (Theta EdgeCloud SP1 host) so we can decide whether to wire it in behind
-a flag + fallback. This doc is the runbook + the initial data.
+a flag + fallback. This doc is the technical reference + the initial data.
+
+> **Looking for the simple step-by-step version?** See
+> [`docs/BENCHMARK_RUNBOOK.md`](./BENCHMARK_RUNBOOK.md) — a beginner-friendly checklist
+> with copy-paste `npm run benchmark:cuda` / `benchmark:zan` / `benchmark:compare`
+> commands that wrap everything in §3 below. This document remains the deep-dive
+> reference (architecture, raw commands, gotchas, decision gate).
 
 > **TL;DR status (2026-07):** PowerZebra is **⛔ procurement-blocked** (Contact-Us on
 > zan.top — no GPU endpoint provisioned yet), and this workstation has **no NVIDIA GPU
@@ -41,9 +47,10 @@ this a pure latency/cost/throughput comparison.
 
 | Piece | Path | Role |
 |-------|------|------|
+| Beginner wrapper | `backend/theta-bridge/scripts/run-benchmark.mjs` (npm: `benchmark:cuda` / `benchmark:zan` / `benchmark:compare`) | Reads URLs/keys from `backend/theta-bridge/.env.benchmark` (copy from `.env.benchmark.example`) and calls the driver + comparator below with sane defaults and fixed output filenames. See [`docs/BENCHMARK_RUNBOOK.md`](./BENCHMARK_RUNBOOK.md). |
 | Benchmark driver | `backend/theta-bridge/scripts/benchmark-prover.js` | Warm-up + sequential + concurrent proofs; emits stats, CSV, and a machine-readable `*.summary.json` (incl. `cost_per_proof_usd` when `--cost-per-hour` is given). |
 | Comparator | `scripts/compare-benchmarks.cjs` | Diffs two `summary.json` files → markdown before/after table with speedup + cost Δ. |
-| Mock prover | `backend/theta-bridge/scripts/mock-prover-server.js` | **SIMULATED** prover speaking the exact wire contract (`/healthz`, `/metrics`, `/prove`, `/prove/binary` bincode). For pipeline validation + dry-runs only. |
+| Mock prover | `backend/theta-bridge/scripts/mock-prover-server.js` (npm: `benchmark:mock:cuda` / `benchmark:mock:zan`) | **SIMULATED** prover speaking the exact wire contract (`/healthz`, `/metrics`, `/prove`, `/prove/binary` bincode). For pipeline validation + dry-runs only. |
 | Workload | `sp1-prover/test-data/deposit-1tfuel.json` | The proof input (batchable via `--batch N`). |
 
 The driver reads `SP1_PROVER_URL` and hits `/prove/binary` (falls back to `/prove`),
@@ -53,6 +60,16 @@ mock. That's the whole point: one harness, swap the URL.
 ---
 
 ## 3. Running the REAL A/B (once a ZAN GPU host is provisioned)
+
+**Simplest path:** fill in `backend/theta-bridge/.env.benchmark` (copy from
+`.env.benchmark.example`) with `BENCHMARK_CUDA_URL` / `BENCHMARK_ZAN_URL` /
+`BENCHMARK_ZAN_API_KEY`, then run `npm run benchmark:cuda`, `npm run benchmark:zan`,
+`npm run benchmark:compare` from `backend/theta-bridge`. That's a thin wrapper around
+the exact commands below (fixed `--label`/`--csv`/`--summary` paths under `bench/`) —
+see [`docs/BENCHMARK_RUNBOOK.md`](./BENCHMARK_RUNBOOK.md) for the full walkthrough.
+
+**Manual/advanced path** (full control over flags, e.g. custom `--sequential`/`--batch`
+counts or one-off runs without touching `.env.benchmark`):
 
 ```bash
 cd backend/theta-bridge
@@ -178,6 +195,12 @@ is PowerZebra's hardware $/hr, which we need from ZAN's quote to finalize $/proo
 - **No `Δ`/unicode issues in files** — the comparator writes clean UTF-8; a mangled `Δ`
   in a PowerShell console is just terminal encoding, the `.md` file is correct.
 - **`bench/` must exist** before a run (harness writes CSV/summary there; `mkdir -p bench`).
+  The `npm run benchmark:*` wrapper scripts create it automatically.
+- **`.env.benchmark` is git-ignored.** It's separate from the backend's real `.env` —
+  safe place for ZAN keys used only for benchmarking. `benchmark:compare` always reads
+  fixed filenames (`bench/edgecloud-cuda.summary.json`, `bench/powerzebra.summary.json`),
+  so re-running `benchmark:cuda`/`benchmark:zan` overwrites the previous result — copy
+  them elsewhere first if you need to keep multiple historical runs.
 - **Mock ≠ prover.** `mock-prover-server.js` emits *simulated* times and logs a warning on
   boot. Never let a `*-SIM` summary leak into a real comparison.
 - **Fresh baseline.** Re-measure EdgeCloud CUDA at benchmark time; the reference numbers
