@@ -125,8 +125,13 @@ async function runChatInference({ model, messages, max_tokens, temperature }) {
     temperature: temperature ?? undefined,
   };
 
+  let providerConfigured = false;
   try {
     const handler = await getRouterHandler();
+    providerConfigured = !!(handler && (
+      handler.edgeCloudApiKey || handler.rapidApiKey || handler.mcpEndpoint ||
+      handler.akashMnemonic || handler.renderApiKey || handler.awsAccessKeyId
+    ));
     const { ComputeRouter } = await import(
       '../../../circuits/theta-inference/compute-router.js'
     );
@@ -145,9 +150,14 @@ async function runChatInference({ model, messages, max_tokens, temperature }) {
     logger.warn({ err: err.message, model: modelName }, 'OpenAI gateway: router error — using mock');
   }
 
-  // No eligible provider (no keys) or soft failure → labelled mock.
-  const content = `[XFuel mock] No DePIN provider is configured (set THETA_EDGECLOUD_API_KEY or a fallback tier). Echoing prompt: ${messagesToText(messages).slice(0, 200)}`;
-  return { content, provider: 'mock', mock: true, raw: { mock: true } };
+  // Soft failure → labelled mock. Be honest about WHY: a configured provider
+  // that returns no result is almost always transient capacity (e.g. Theta
+  // on-demand "no instances available"), not a missing key.
+  const reason = providerConfigured
+    ? 'Provider(s) configured but returned no result (likely transient capacity — e.g. Theta on-demand "no instances available"). Retry shortly.'
+    : 'No DePIN provider is configured (set THETA_EDGECLOUD_API_KEY or a fallback tier).';
+  const content = `[XFuel mock] ${reason} Echoing prompt: ${messagesToText(messages).slice(0, 200)}`;
+  return { content, provider: 'mock', mock: true, raw: { mock: true, providerConfigured, reason } };
 }
 
 /** Pull assistant text out of the router's OpenAI-shaped result. */
@@ -223,7 +233,7 @@ function registerTaskAndProve({ model, messages, content, provider }) {
 
 // ─── Verification receipt ─────────────────────────────────────────────────────
 
-function buildReceipt({ taskId, provider, mock, proverConfigured }) {
+function buildReceipt({ taskId, provider, mock, proverConfigured, mockReason }) {
   const proofStatus = mock ? 'skipped' : proverConfigured ? 'pending' : 'unavailable';
   return {
     task_id: taskId,
@@ -231,7 +241,7 @@ function buildReceipt({ taskId, provider, mock, proverConfigured }) {
       provider,
       real: !mock,
       note: mock
-        ? 'No DePIN provider configured — response is a mock. Set a provider key to route real compute.'
+        ? `Response is a mock (compute.real=false). ${mockReason || 'No DePIN provider configured — set a provider key to route real compute.'}`
         : `Routed to ${provider} via the XFuel DePIN router.`,
     },
     payment: {
@@ -337,7 +347,7 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
 
     const { content, provider, mock } = inference;
     const { taskId, proverConfigured } = registerTaskAndProve({ model: echoModel, messages, content, provider });
-    const receipt = buildReceipt({ taskId, provider, mock, proverConfigured });
+    const receipt = buildReceipt({ taskId, provider, mock, proverConfigured, mockReason: inference.raw?.reason });
 
     const promptTokens = estimateTokens(messagesToText(messages));
     const completionTokens = estimateTokens(content);

@@ -59,32 +59,46 @@ const INFERENCE_EVENTS = [
 ];
 
 // Theta EdgeCloud On-Demand API — https://ondemand.thetaedgecloud.com
-// Endpoint pattern: /infer_request/{model_slug}/completions
+// Current contract (verified against @thetalabs/on-demand-api-mcp):
+//   Auth:     Authorization: Bearer <access_token>
+//   Endpoint: POST /infer_request/{service_alias}?wait=<0-60>
+//   Body:     { input: { messages, max_tokens, ... } }
+//   Response: { status, body: { infer_requests: [ { state, output, ... } ] } }
+// Discover aliases via GET /service/list. Theta rotates its catalog; as of
+// 2026-07 the on-demand LLM is `qwen3` (Llama models were retired). Unknown or
+// generic model names resolve to EDGECLOUD_DEFAULT_LLM_SLUG.
 const EDGECLOUD_BASE = 'https://ondemand.thetaedgecloud.com';
 
+const EDGECLOUD_DEFAULT_LLM_SLUG = 'qwen3';
+
 const EDGECLOUD_MODEL_SLUGS = {
-  'llama-3.1-8b': 'llama_3_8b',
-  'llama-3.1-70b': 'llama_3_8b',
-  'llama-3.1-405b': 'llama_3_8b',
-  'flux-schnell': 'flux_schnell',
-  'flux-dev': 'flux_dev',
-  'flux-pro': 'flux_pro',
-  'whisper-large-v3': 'whisper_large_v3',
-  'stable-diffusion-xl': 'stable_diffusion_xl',
-  'yolov8': 'yolov8',
-  'theta-transcode-v2': 'theta_transcode_v2',
-  'theta-drm-v1': 'theta_drm_v1',
-  'voice-clone-v1': 'voice_clone_v1',
+  // LLMs (all generic/legacy LLM names resolve to the current on-demand LLM)
+  'qwen3': 'qwen3',
+  'default-llm': 'qwen3',
+  'xfuel-auto': 'qwen3',
+  'llama-3-70b': 'qwen3',
+  'llama-3.1-8b': 'qwen3',
+  'llama-3.1-70b': 'qwen3',
+  'llama-3.1-405b': 'qwen3',
+  // Vision-language
+  'llava': 'llava',
+  // Audio
+  'whisper': 'whisper',
+  'whisper-large-v3': 'whisper',
+  // Image
+  'stable-diffusion-xl-turbo': 'stable_diffusion_xl_turbo',
+  'stable-diffusion-xl': 'stable_diffusion_xl_turbo',
+  'blip': 'blip',
 };
 
 const EDGECLOUD_ENDPOINTS = {
-  [SERVICE_TYPES.LLM_INFERENCE]: '/infer_request/{slug}/completions',
-  [SERVICE_TYPES.IMAGE_GENERATION]: '/infer_request/{slug}/completions',
-  [SERVICE_TYPES.SPEECH_TO_TEXT]: '/infer_request/{slug}/completions',
-  [SERVICE_TYPES.VOICE_CLONING]: '/infer_request/{slug}/completions',
-  [SERVICE_TYPES.RAG_QUERY]: '/infer_request/{slug}/completions',
-  [SERVICE_TYPES.VIDEO_PROCESSING]: '/infer_request/{slug}/completions',
-  [SERVICE_TYPES.OBJECT_DETECTION]: '/infer_request/{slug}/completions',
+  [SERVICE_TYPES.LLM_INFERENCE]: '/infer_request/{slug}',
+  [SERVICE_TYPES.IMAGE_GENERATION]: '/infer_request/{slug}',
+  [SERVICE_TYPES.SPEECH_TO_TEXT]: '/infer_request/{slug}',
+  [SERVICE_TYPES.VOICE_CLONING]: '/infer_request/{slug}',
+  [SERVICE_TYPES.RAG_QUERY]: '/infer_request/{slug}',
+  [SERVICE_TYPES.VIDEO_PROCESSING]: '/infer_request/{slug}',
+  [SERVICE_TYPES.OBJECT_DETECTION]: '/infer_request/{slug}',
 };
 
 const RAPIDAPI_HOST = 'theta-edge-cloud-ai-inference-api.p.rapidapi.com';
@@ -1103,120 +1117,152 @@ class ThetaInferenceHandler {
 
   /**
    * Call Theta EdgeCloud On-Demand API.
-   * Auth: x-api-key: {access_token}  (per https://docs.thetatoken.org/docs/edgecloud-api-keys)
-   * Body: { input: { messages, max_tokens, ... }, stream: false, variant: "quantized" }
-   * Endpoint: https://ondemand.thetaedgecloud.com/infer_request/{slug}/completions
+   * Auth:     Authorization: Bearer {access_token}   (from the model's "Access Token" tab)
+   * Endpoint: POST https://ondemand.thetaedgecloud.com/infer_request/{alias}?wait=<0-60>
+   * Body:     { input: { messages, max_tokens, ... } }   (model chosen by the URL alias)
+   * Response: { status, body: { infer_requests: [ { state, output, ... } ] } }
+   * Verified against @thetalabs/on-demand-api-mcp (api/client.js).
+   * Retries once on HTTP 409 ("No instances available") — on-demand cold/no capacity.
    */
   async _callEdgeCloud(serviceType, body, modelName = '', gpuName = '') {
     const endpointTemplate = EDGECLOUD_ENDPOINTS[serviceType];
     if (!endpointTemplate) return null;
 
-    const slug = EDGECLOUD_MODEL_SLUGS[modelName] || EDGECLOUD_MODEL_SLUGS['llama-3.1-8b'];
-    const endpoint = endpointTemplate.replace('{slug}', slug);
+    const slug = EDGECLOUD_MODEL_SLUGS[modelName] || EDGECLOUD_DEFAULT_LLM_SLUG;
+    const waitSec = 30; // ask Theta to hold the connection up to 30s for the result
+    const endpoint = `${endpointTemplate.replace('{slug}', slug)}?wait=${waitSec}`;
     const url = `${this.edgeCloudBase}${endpoint}`;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.apiTimeout);
-    const t0 = Date.now();
-
-    // Wrap body in Theta's { input, stream, variant } format
-    // Model is specified via URL slug, NOT in the body
+    // Model is selected by the URL alias, NOT in the body.
     const thetaBody = {
       input: {
         messages: body.messages || [{ role: 'user', content: body.prompt || '' }],
         max_tokens: body.max_tokens || 500,
-        temperature: body.temperature || 0.7,
-        top_p: body.top_p || 0.9,
+        temperature: body.temperature ?? 0.7,
+        top_p: body.top_p ?? 0.9,
       },
-      stream: false,
-      variant: 'quantized',
     };
 
-    this.apiStats.edgeCloud.calls++;
-    console.log(`[EdgeCloud] POST ${endpoint} | model=${modelName} (${slug}) | gpu=${gpuName}`);
+    const maxAttempts = 2;      // retry once on transient capacity (HTTP 409)
+    const retryDelayMs = 2000;
+    const perCallTimeout = Math.max(this.apiTimeout, waitSec * 1000 + 15000);
 
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': this.edgeCloudApiKey,
-        },
-        body: JSON.stringify(thetaBody),
-        signal: controller.signal,
-      });
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), perCallTimeout);
+      const t0 = Date.now();
+      this.apiStats.edgeCloud.calls++;
+      console.log(`[EdgeCloud] POST ${endpoint} | model=${modelName} (${slug}) | gpu=${gpuName} | attempt ${attempt}/${maxAttempts}`);
 
-      const elapsed = Date.now() - t0;
-
-      if (!res.ok) {
-        this.apiStats.edgeCloud.failures++;
-        const errBody = await res.text().catch(() => '');
-        console.warn(`[EdgeCloud] HTTP ${res.status} after ${elapsed}ms: ${errBody.slice(0, 200)}`);
-        return null;
-      }
-
-      // Theta may return SSE stream (data: {...}) even with stream:false
-      const rawText = await res.text();
-      let data;
       try {
-        data = JSON.parse(rawText);
-      } catch {
-        // Parse SSE: extract all "data: {...}" lines and merge
-        const lines = rawText.split('\n').filter(l => l.startsWith('data: '));
-        if (lines.length === 0) {
-          console.warn(`[EdgeCloud] Unparseable response after ${elapsed}ms: ${rawText.slice(0, 200)}`);
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.edgeCloudApiKey}`,
+          },
+          body: JSON.stringify(thetaBody),
+          signal: controller.signal,
+        });
+
+        const elapsed = Date.now() - t0;
+
+        if (!res.ok) {
+          this.apiStats.edgeCloud.failures++;
+          const errBody = await res.text().catch(() => '');
+          console.warn(`[EdgeCloud] HTTP ${res.status} after ${elapsed}ms: ${errBody.slice(0, 200)}`);
+          // 409 = "No instances available" (on-demand cold/no capacity) → brief retry
+          if (res.status === 409 && attempt < maxAttempts) {
+            await new Promise(r => setTimeout(r, retryDelayMs));
+            continue;
+          }
           return null;
         }
-        // Collect streamed chunks into a single response
-        let fullContent = '';
-        let lastParsed = null;
-        for (const line of lines) {
-          const json = line.slice(6).trim(); // strip "data: "
-          if (json === '[DONE]') continue;
-          try {
-            const chunk = JSON.parse(json);
-            lastParsed = chunk;
-            const delta = chunk.choices?.[0]?.delta?.content
-              || chunk.choices?.[0]?.message?.content
-              || chunk.output || '';
-            fullContent += delta;
-          } catch { /* skip malformed chunks */ }
+
+        const rawText = await res.text();
+        let data;
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          // Defensive: some deployments still stream SSE (data: {...})
+          const lines = rawText.split('\n').filter(l => l.startsWith('data: '));
+          let fullContent = '';
+          for (const line of lines) {
+            const json = line.slice(6).trim();
+            if (json === '[DONE]') continue;
+            try {
+              const chunk = JSON.parse(json);
+              fullContent += chunk.choices?.[0]?.delta?.content
+                || chunk.choices?.[0]?.message?.content
+                || chunk.output?.text || chunk.output || '';
+            } catch { /* skip malformed chunks */ }
+          }
+          if (!fullContent) {
+            console.warn(`[EdgeCloud] Unparseable response after ${elapsed}ms: ${rawText.slice(0, 200)}`);
+            return null;
+          }
+          this.apiStats.edgeCloud.successes++;
+          this.apiStats.edgeCloud.totalLatencyMs += elapsed;
+          return {
+            choices: [{ message: { role: 'assistant', content: fullContent } }],
+            model: modelName,
+            usage: { total_tokens: 0 },
+            _source: 'theta-edgecloud-ondemand-stream',
+          };
         }
-        data = {
-          choices: [{ message: { role: 'assistant', content: fullContent } }],
-          model: lastParsed?.model || modelName,
-          usage: lastParsed?.usage || { total_tokens: fullContent.split(/\s+/).length },
-          _source: 'theta-edgecloud-ondemand-stream',
-        };
-      }
 
-      this.apiStats.edgeCloud.successes++;
-      this.apiStats.edgeCloud.totalLatencyMs += elapsed;
-      console.log(`[EdgeCloud] ${modelName} on ${gpuName} — ${(elapsed / 1000).toFixed(1)}s response`);
+        // Current Theta envelope: { status, body: { infer_requests: [ { state, output } ] } }
+        const reqObj = data?.body?.infer_requests?.[0] || data?.infer_requests?.[0] || null;
+        if (reqObj) {
+          if (reqObj.state && reqObj.state !== 'success') {
+            console.warn(`[EdgeCloud] infer state='${reqObj.state}' after ${elapsed}ms (not ready) — no result`);
+            return null;
+          }
+          const out = reqObj.output ?? {};
+          const text = (typeof out === 'string') ? out
+            : (out.text
+              ?? out.message?.content
+              ?? out.choices?.[0]?.message?.content
+              ?? (Array.isArray(out.data) ? out.data[0] : undefined)
+              ?? JSON.stringify(out));
+          this.apiStats.edgeCloud.successes++;
+          this.apiStats.edgeCloud.totalLatencyMs += elapsed;
+          console.log(`[EdgeCloud] ${modelName} (${slug}) — ${(elapsed / 1000).toFixed(1)}s response`);
+          return {
+            choices: [{ message: { role: 'assistant', content: text } }],
+            model: modelName,
+            usage: reqObj.usage || out.usage || { total_tokens: 0 },
+            _source: 'theta-edgecloud-ondemand',
+          };
+        }
 
-      // Normalize Theta's response to OpenAI-compatible format
-      if (data.choices) return data;
-      if (data.output || data.result) {
-        return {
-          choices: [{ message: { role: 'assistant', content: data.output || data.result || JSON.stringify(data) } }],
-          model: modelName,
-          usage: data.usage || { total_tokens: 0 },
-          _source: 'theta-edgecloud-ondemand',
-        };
+        // Legacy / OpenAI-shaped fallbacks
+        this.apiStats.edgeCloud.successes++;
+        this.apiStats.edgeCloud.totalLatencyMs += elapsed;
+        if (data.choices) return data;
+        if (data.output || data.result) {
+          return {
+            choices: [{ message: { role: 'assistant', content: data.output || data.result || JSON.stringify(data) } }],
+            model: modelName,
+            usage: data.usage || { total_tokens: 0 },
+            _source: 'theta-edgecloud-ondemand',
+          };
+        }
+        return data;
+      } catch (err) {
+        const elapsed = Date.now() - t0;
+        this.apiStats.edgeCloud.failures++;
+        if (err.name === 'AbortError') {
+          console.warn(`[EdgeCloud] Request timed out after ${perCallTimeout}ms`);
+        } else {
+          console.warn(`[EdgeCloud] Request failed after ${elapsed}ms: ${err.message}`);
+        }
+        return null;
+      } finally {
+        clearTimeout(timeout);
       }
-      return data;
-    } catch (err) {
-      const elapsed = Date.now() - t0;
-      this.apiStats.edgeCloud.failures++;
-      if (err.name === 'AbortError') {
-        console.warn(`[EdgeCloud] Request timed out after ${this.apiTimeout}ms`);
-      } else {
-        console.warn(`[EdgeCloud] Request failed after ${elapsed}ms: ${err.message}`);
-      }
-      return null;
-    } finally {
-      clearTimeout(timeout);
     }
+    return null;
   }
 
   /**
