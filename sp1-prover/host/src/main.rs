@@ -137,6 +137,12 @@ pub struct ProofRequest {
     pub completed_at: Option<u64>,
     #[serde(default)]
     pub fee_bps: Option<u16>,
+    // Inference witnesses (backend ai-listener.js). The guest requires non-zero
+    // model_id_hash + input_hash for an INFERENCE_REQUEST.
+    #[serde(default)]
+    pub model_id_hash: Option<String>,
+    #[serde(default)]
+    pub input_hash: Option<String>,
 
     // ── Phase 2: x402 payment binding (optional) ──────────────────────────
     #[serde(default)]
@@ -580,7 +586,21 @@ fn parse_ai_task_batch(
 
     // M2M off-chain tasks may send block_number 0; guest requires block_height > 0.
     let block_height = req.block_number.max(1);
-    let timestamp = req.completed_at.unwrap_or(req.block_timestamp).max(1);
+    // completed_at from the backend is JS Date.now() (MILLISECONDS); the guest
+    // bounds timestamps to seconds in (1.6e9, 2e9). Normalize ms→s and fall back
+    // to wall-clock seconds when the value is missing/out of range.
+    let timestamp = {
+        let raw = req.completed_at.unwrap_or(req.block_timestamp);
+        let secs = if raw >= 1_000_000_000_000 { raw / 1000 } else { raw };
+        if (1_600_000_001..2_000_000_000).contains(&secs) {
+            secs
+        } else {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(1_700_000_000)
+        }
+    };
     let nonce = 1u64;
 
     let gross_amount = if req.gross_amount.is_empty() || req.gross_amount == "0" {
@@ -592,7 +612,16 @@ fn parse_ai_task_batch(
         U256::from_hex(&req.gross_amount)?
     };
 
-    let source_tx_hash = parse_hash_or_zero(req.source_tx.as_ref());
+    // The guest asserts these witnesses are non-zero (per task type). Off-chain
+    // M2M tasks may omit source_tx / model / input; fall back to task_id_hash
+    // (always non-zero) so a settlement proof never zero-panics.
+    let nonzero_or_task = |h: Hash256| -> Hash256 {
+        if h == [0u8; 32] { task_id_hash } else { h }
+    };
+    let source_tx_hash = nonzero_or_task(parse_hash_or_zero(req.source_tx.as_ref()));
+    let model_id_hash = nonzero_or_task(parse_hash_or_zero(req.model_id_hash.as_ref()));
+    let input_hash = nonzero_or_task(parse_hash_or_zero(req.input_hash.as_ref()));
+    let provider_hash = task_id_hash;
 
     let ai_public = AITaskPublicInputs {
         task_type,
@@ -613,9 +642,9 @@ fn parse_ai_task_batch(
     let ai_private = AITaskPrivateInputs {
         gross_amount,
         source_tx_hash,
-        model_id_hash: [0u8; 32],
-        input_hash: [0u8; 32],
-        provider_hash: [0u8; 32],
+        model_id_hash,
+        input_hash,
+        provider_hash,
         execution_duration_ms: 1,
         ibc_channel_hash: [0u8; 32],
         tao_evm_target: [0u8; 20],

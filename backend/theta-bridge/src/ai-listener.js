@@ -816,6 +816,10 @@ class AIListener {
       const feeAmount = (taskAmount * BigInt(AI_TASK_FEE_BPS)) / BigInt(FEE_DENOMINATOR);
       const netAmount = taskAmount - feeAmount;
       task.feeAmount = feeAmount.toString();
+      // Persist net too — the SP1 guest recomputes fee/net from gross and asserts
+      // they reconcile. Without this task.netAmount was undefined and the proof
+      // request sent gross as net → guest "fee calculation mismatch" panic.
+      task.netAmount = netAmount.toString();
 
       logger.info({
         taskId,
@@ -1346,8 +1350,17 @@ class AIListener {
         source_chain: task.meta.chain,
         source_tx: task.meta.txHash,
         fee_amount: toProverHex(task.feeAmount),
+        fee_bps: AI_TASK_FEE_BPS,
         output_hash: task.result?.outputHash || task.result?.commitment || null,
         completed_at: task.updatedAt,
+        // The SP1 guest requires non-zero model_id_hash + input_hash for an
+        // INFERENCE_REQUEST. modelId is required for inference; fall back to the
+        // task-id hash for input_hash so an omitted input never zero-panics.
+        model_id_hash: task.intent.modelId
+          ? ethers.keccak256(ethers.toUtf8Bytes(String(task.intent.modelId)))
+          : ethers.keccak256(ethers.toUtf8Bytes(task.taskId)),
+        input_hash: task.intent.inputHash
+          || ethers.keccak256(ethers.toUtf8Bytes(task.taskId)),
         // Phase 1: proof_system for routing (sp1 | zkgpt) — circuits use this for verifier choice
         proof_system: task.intent.proofSystem || 'sp1',
       };
