@@ -30,6 +30,7 @@ export const PROVIDER_TAGS = Object.freeze({
   AKASH: 'akash',
   RENDER: 'render',
   BEDROCK: 'bedrock',
+  CLAUDE: 'claude',
   MOCK: 'mock',
 });
 
@@ -109,6 +110,14 @@ export class ComputeRouter {
         available: !!(handler.useBedrockFallback && handler.awsAccessKeyId && handler.awsSecretAccessKey),
         execute: run('_callBedrock'),
         log: '[Router] All DePINs unavailable → falling back to AWS Bedrock (centralized)...',
+      },
+      {
+        // Reliable centralized backstop so a demo/agent request never hard-fails
+        // when DePIN tiers are cold (e.g. Theta on-demand "no instances"). LLM only.
+        tag: PROVIDER_TAGS.CLAUDE,
+        available: !!(handler.useClaudeFallback && handler.anthropicApiKey),
+        execute: run('_callClaude'),
+        log: '[Router] All prior tiers unavailable → falling back to Claude (Anthropic, centralized)...',
       },
     ];
 

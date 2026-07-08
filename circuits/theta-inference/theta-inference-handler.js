@@ -476,10 +476,18 @@ class ThetaInferenceHandler {
     this.awsAccessKeyId     = config.awsAccessKeyId     || process.env.AWS_ACCESS_KEY_ID   || '';
     this.awsSecretAccessKey = config.awsSecretAccessKey || process.env.AWS_SECRET_ACCESS_KEY || '';
 
+    // Claude (Anthropic) — reliable centralized backstop for LLM inference so a
+    // request never hard-fails when the DePIN tiers are cold. LLM only.
+    this.anthropicApiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY || '';
+    this.anthropicModel  = config.anthropicModel  || process.env.ANTHROPIC_MODEL  || 'claude-3-5-sonnet-latest';
+    this.anthropicVersion = config.anthropicVersion || process.env.ANTHROPIC_VERSION || '2023-06-01';
+    this.anthropicBase   = config.anthropicBase   || process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
+
     // Feature flags — disable individual tiers without removing credentials
     this.useAkashFallback   = config.useAkashFallback   !== false;
     this.useRenderFallback  = config.useRenderFallback  !== false;
     this.useBedrockFallback = config.useBedrockFallback !== false;
+    this.useClaudeFallback  = config.useClaudeFallback  !== false;
 
     // On-chain settlement (relayer signer for completeIntent + settleIntent)
     this.relayerPrivateKey = config.relayerPrivateKey || null;
@@ -499,6 +507,7 @@ class ThetaInferenceHandler {
       rapidApi:  { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
       mcp:       { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
       akash:     { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
+      claude:    { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
       render:    { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
       bedrock:   { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
       mock:      { calls: 0 },
@@ -1263,6 +1272,100 @@ class ThetaInferenceHandler {
       }
     }
     return null;
+  }
+
+  /**
+   * Call Claude (Anthropic Messages API) — reliable centralized LLM backstop.
+   * Auth:     x-api-key: <ANTHROPIC_API_KEY> + anthropic-version header
+   * Endpoint: POST {ANTHROPIC_BASE_URL}/v1/messages
+   * LLM inference only; other service types fall through (return null).
+   * Returns an OpenAI-shaped result (choices[].message.content) or null on soft failure.
+   */
+  async _callClaude(serviceType, body, modelName = '', gpuName = '') {
+    if (serviceType !== SERVICE_TYPES.LLM_INFERENCE) return null;
+    if (!this.anthropicApiKey) return null;
+
+    // Anthropic wants `system` as a top-level field and only user/assistant turns.
+    const srcMessages = body.messages || [{ role: 'user', content: body.prompt || '' }];
+    const asText = (c) => (typeof c === 'string' ? c : JSON.stringify(c));
+    const systemText = srcMessages.filter(m => m.role === 'system').map(m => asText(m.content)).join('\n\n');
+    const messages = srcMessages
+      .filter(m => m.role !== 'system')
+      .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: asText(m.content) }));
+    if (messages.length === 0) messages.push({ role: 'user', content: '' });
+
+    const reqBody = {
+      model: this.anthropicModel,
+      max_tokens: body.max_tokens || 1024,
+      messages,
+      ...(systemText ? { system: systemText } : {}),
+      ...(body.temperature != null ? { temperature: body.temperature } : {}),
+    };
+
+    const url = `${this.anthropicBase}/v1/messages`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.apiTimeout);
+    const t0 = Date.now();
+    this.apiStats.claude.calls++;
+    console.log(`[Claude] POST /v1/messages | model=${this.anthropicModel} (requested ${modelName || 'default'})`);
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': this.anthropicApiKey,
+          'anthropic-version': this.anthropicVersion,
+        },
+        body: JSON.stringify(reqBody),
+        signal: controller.signal,
+      });
+      const elapsed = Date.now() - t0;
+
+      if (!res.ok) {
+        this.apiStats.claude.failures++;
+        const errBody = await res.text().catch(() => '');
+        console.warn(`[Claude] HTTP ${res.status} after ${elapsed}ms: ${errBody.slice(0, 200)}`);
+        return null;
+      }
+
+      const data = await res.json().catch(() => null);
+      if (!data) { this.apiStats.claude.failures++; return null; }
+
+      const text = Array.isArray(data.content)
+        ? data.content.filter(b => b && (b.type === 'text' || typeof b.text === 'string')).map(b => b.text || '').join('')
+        : (typeof data.content === 'string' ? data.content : '');
+
+      if (!text) {
+        this.apiStats.claude.failures++;
+        console.warn(`[Claude] Empty content after ${elapsed}ms`);
+        return null;
+      }
+
+      const inTok = data.usage?.input_tokens || 0;
+      const outTok = data.usage?.output_tokens || 0;
+      this.apiStats.claude.successes++;
+      this.apiStats.claude.totalLatencyMs += elapsed;
+      console.log(`[Claude] ${data.model || this.anthropicModel} — ${(elapsed / 1000).toFixed(1)}s response`);
+
+      return {
+        choices: [{ message: { role: 'assistant', content: text } }],
+        model: data.model || this.anthropicModel,
+        usage: { prompt_tokens: inTok, completion_tokens: outTok, total_tokens: inTok + outTok },
+        _source: 'anthropic-claude',
+      };
+    } catch (err) {
+      const elapsed = Date.now() - t0;
+      this.apiStats.claude.failures++;
+      if (err.name === 'AbortError') {
+        console.warn(`[Claude] Request timed out after ${this.apiTimeout}ms`);
+      } else {
+        console.warn(`[Claude] Request failed after ${elapsed}ms: ${err.message}`);
+      }
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   /**

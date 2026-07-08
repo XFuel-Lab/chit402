@@ -130,7 +130,8 @@ async function runChatInference({ model, messages, max_tokens, temperature }) {
     const handler = await getRouterHandler();
     providerConfigured = !!(handler && (
       handler.edgeCloudApiKey || handler.rapidApiKey || handler.mcpEndpoint ||
-      handler.akashMnemonic || handler.renderApiKey || handler.awsAccessKeyId
+      handler.akashMnemonic || handler.renderApiKey || handler.awsAccessKeyId ||
+      handler.anthropicApiKey
     ));
     const { ComputeRouter } = await import(
       '../../../circuits/theta-inference/compute-router.js'
