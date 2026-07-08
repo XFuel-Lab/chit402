@@ -87,15 +87,48 @@ npx pm2 restart xfuel-m2m --update-env
 
 Receipts flip `proof.status: skipped → pending → complete`.
 
-## On / Off (save cost when idle)
+## Stable endpoint (ALB)
+
+The Fargate task IP is ephemeral (changes on every redeploy). An Application Load
+Balancer gives a stable DNS name; ECS auto-registers each new task IP to the
+target group, so the URL never changes.
+
+- **ALB DNS:** `xfuel-sp1-alb-1873465045.us-east-1.elb.amazonaws.com`
+- **Target group:** `xfuel-sp1-tg` (HTTP :80, health check `/healthz`)
+- **SG:** `xfuel-sp1-alb-sg` — inbound :80 locked to the Lightsail IP only
+
+Backend wiring (on the Lightsail box):
 
 ```bash
-# OFF
-aws ecs update-service --cluster xfuel-sp1-prover --service xfuel-sp1-prover \
+SP1_PROVER_URL=http://xfuel-sp1-alb-1873465045.us-east-1.elb.amazonaws.com
+```
+
+## On / Off (save cost when idle)
+
+The service is `sp1-prover` in cluster `xfuel-sp1-prover`. Scale to zero to stop
+paying for the container when no proofs are needed:
+
+```bash
+# OFF (container cost → $0)
+aws ecs update-service --cluster xfuel-sp1-prover --service sp1-prover \
   --desired-count 0 --region us-east-1
 # ON  (allow ~3-5 min for key generation before the first proof)
-aws ecs update-service --cluster xfuel-sp1-prover --service xfuel-sp1-prover \
+aws ecs update-service --cluster xfuel-sp1-prover --service sp1-prover \
   --desired-count 1 --region us-east-1
 ```
 
-When OFF, inference still works (Theta/Claude); proofs report `unavailable`.
+When OFF, inference still works (router tiers); proofs report `unavailable`.
+
+### Pair with the backend cost gate
+
+For a public/live demo, run the prover **off by default** and only spin it up for
+allow-listed partners. In the backend `.env`:
+
+```bash
+PROVER_ENABLED=false            # signed receipts for everyone (Tier 0)
+PROVER_ALLOW_KEYS=zan-key,...   # only these keys trigger a Tier-1 SP1 proof
+```
+
+Flow for a gated demo: set the allow-list, scale the service to 1 shortly before a
+partner runs their proof, then back to 0 afterward. Public traffic keeps getting
+real inference + signed receipts the whole time.

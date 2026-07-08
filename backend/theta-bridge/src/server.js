@@ -9,6 +9,7 @@ import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDC } from './x402-server.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
+import { proveAllowedForKey } from './prove-gate.js';
 
 /**
  * XFuel AI DePIN — M2M API Server
@@ -579,6 +580,10 @@ export function createApp() {
         proofSystem:    proof_system || 'sp1', // Phase 1: 'sp1' | 'zkgpt' for inference
         paymentRail,    // 'usdc' (x402) | 'tfuel' — resolved above; flows to listener task
         paymentRef,     // x402 settlement ref (network:txRef) or null for TFUEL
+        // Cost control: whether this request's API key may trigger a Tier-1 ZK
+        // proof. When false, the task still settles + returns a signed receipt,
+        // but the expensive SP1 proof is skipped (see prove-gate.js).
+        proveAllowed:   proveAllowedForKey(req.headers['x-api-key']),
       };
 
       const meta = {

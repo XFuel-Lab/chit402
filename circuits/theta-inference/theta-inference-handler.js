@@ -476,6 +476,15 @@ class ThetaInferenceHandler {
     this.awsAccessKeyId     = config.awsAccessKeyId     || process.env.AWS_ACCESS_KEY_ID   || '';
     this.awsSecretAccessKey = config.awsSecretAccessKey || process.env.AWS_SECRET_ACCESS_KEY || '';
 
+    // Generic OpenAI-compatible endpoint — the provider-agnostic tier. Point it
+    // at ANY OpenAI-shaped API via env (OpenAI, Groq, Together, Fireworks,
+    // DeepInfra, Novita, a self-hosted vLLM, an Akash-hosted model…). Swapping
+    // providers is an env change, not a code change. LLM only.
+    this.openaiCompatBase  = config.openaiCompatBase  || process.env.OPENAI_COMPAT_BASE_URL || '';
+    this.openaiCompatKey   = config.openaiCompatKey   || process.env.OPENAI_COMPAT_API_KEY || '';
+    this.openaiCompatModel = config.openaiCompatModel || process.env.OPENAI_COMPAT_MODEL || '';
+    this.openaiCompatName  = config.openaiCompatName  || process.env.OPENAI_COMPAT_NAME || 'openai-compatible';
+
     // Claude (Anthropic) — reliable centralized backstop for LLM inference so a
     // request never hard-fails when the DePIN tiers are cold. LLM only.
     this.anthropicApiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY || '';
@@ -484,10 +493,11 @@ class ThetaInferenceHandler {
     this.anthropicBase   = config.anthropicBase   || process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
 
     // Feature flags — disable individual tiers without removing credentials
-    this.useAkashFallback   = config.useAkashFallback   !== false;
-    this.useRenderFallback  = config.useRenderFallback  !== false;
-    this.useBedrockFallback = config.useBedrockFallback !== false;
-    this.useClaudeFallback  = config.useClaudeFallback  !== false;
+    this.useAkashFallback        = config.useAkashFallback        !== false;
+    this.useRenderFallback       = config.useRenderFallback       !== false;
+    this.useOpenAICompatFallback = config.useOpenAICompatFallback !== false;
+    this.useBedrockFallback      = config.useBedrockFallback      !== false;
+    this.useClaudeFallback       = config.useClaudeFallback       !== false;
 
     // On-chain settlement (relayer signer for completeIntent + settleIntent)
     this.relayerPrivateKey = config.relayerPrivateKey || null;
@@ -507,6 +517,7 @@ class ThetaInferenceHandler {
       rapidApi:  { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
       mcp:       { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
       akash:     { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
+      openai:    { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
       claude:    { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
       render:    { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
       bedrock:   { calls: 0, successes: 0, failures: 0, totalLatencyMs: 0 },
@@ -1281,6 +1292,88 @@ class ThetaInferenceHandler {
    * LLM inference only; other service types fall through (return null).
    * Returns an OpenAI-shaped result (choices[].message.content) or null on soft failure.
    */
+  /**
+   * Call a generic OpenAI-compatible chat endpoint — the provider-agnostic tier.
+   * Endpoint: POST {OPENAI_COMPAT_BASE_URL}/chat/completions
+   * Auth:     Authorization: Bearer <OPENAI_COMPAT_API_KEY>
+   * Works with OpenAI, Groq, Together, Fireworks, DeepInfra, Novita, vLLM, etc.
+   * LLM inference only; other service types fall through (return null).
+   * Returns an OpenAI-shaped result (choices[].message.content) or null on soft failure.
+   */
+  async _callOpenAICompatible(serviceType, body, modelName = '', gpuName = '') {
+    if (serviceType !== SERVICE_TYPES.LLM_INFERENCE) return null;
+    if (!this.openaiCompatKey || !this.openaiCompatBase) return null;
+
+    const messages = body.messages || [{ role: 'user', content: body.prompt || '' }];
+    // Prefer the env-pinned model; else honor the requested model; else a safe default.
+    const model = this.openaiCompatModel || modelName || 'gpt-4o-mini';
+    const reqBody = {
+      model,
+      messages,
+      ...(body.max_tokens != null ? { max_tokens: body.max_tokens } : {}),
+      ...(body.temperature != null ? { temperature: body.temperature } : {}),
+      stream: false,
+    };
+
+    const base = this.openaiCompatBase.replace(/\/+$/, '');
+    const url = `${base}/chat/completions`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.apiTimeout);
+    const t0 = Date.now();
+    this.apiStats.openai.calls++;
+    console.log(`[OpenAI-compat] POST ${url} | model=${model} provider=${this.openaiCompatName} (requested ${modelName || 'default'})`);
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'authorization': `Bearer ${this.openaiCompatKey}`,
+        },
+        body: JSON.stringify(reqBody),
+        signal: controller.signal,
+      });
+      const elapsed = Date.now() - t0;
+
+      if (!res.ok) {
+        this.apiStats.openai.failures++;
+        const errBody = await res.text().catch(() => '');
+        console.warn(`[OpenAI-compat] HTTP ${res.status} after ${elapsed}ms: ${errBody.slice(0, 200)}`);
+        return null;
+      }
+
+      const data = await res.json().catch(() => null);
+      const text = data?.choices?.[0]?.message?.content ?? '';
+      if (!text) {
+        this.apiStats.openai.failures++;
+        console.warn(`[OpenAI-compat] Empty content after ${elapsed}ms`);
+        return null;
+      }
+
+      this.apiStats.openai.successes++;
+      this.apiStats.openai.totalLatencyMs += elapsed;
+      console.log(`[OpenAI-compat] ${data.model || model} — ${(elapsed / 1000).toFixed(1)}s response`);
+
+      return {
+        choices: [{ message: { role: 'assistant', content: text } }],
+        model: data.model || model,
+        usage: data.usage || undefined,
+        _source: this.openaiCompatName,
+      };
+    } catch (err) {
+      const elapsed = Date.now() - t0;
+      this.apiStats.openai.failures++;
+      if (err.name === 'AbortError') {
+        console.warn(`[OpenAI-compat] Request timed out after ${this.apiTimeout}ms`);
+      } else {
+        console.warn(`[OpenAI-compat] Request failed after ${elapsed}ms: ${err.message}`);
+      }
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async _callClaude(serviceType, body, modelName = '', gpuName = '') {
     if (serviceType !== SERVICE_TYPES.LLM_INFERENCE) return null;
     if (!this.anthropicApiKey) return null;

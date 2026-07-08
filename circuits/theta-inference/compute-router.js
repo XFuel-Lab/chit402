@@ -2,9 +2,11 @@
  * ComputeRouter — XFuel 6-tier DePIN compute waterfall (control flow only).
  *
  * Extracted from ThetaInferenceHandler._executeService so the priority routing
- * (EdgeCloud → RapidAPI → MCP → Akash → Render → Bedrock) lives in one place and
- * can be unit-tested in isolation and reused by both the inference handler and
- * the M2M AI listener.
+ * (EdgeCloud → RapidAPI → MCP → Akash → Render → OpenAI-compatible → Bedrock →
+ * Claude) lives in one place and can be unit-tested in isolation and reused by
+ * both the inference handler and the M2M AI listener. Providers are pluggable
+ * tiers — the generic OpenAI-compatible tier makes the router truly
+ * provider-agnostic (point it at any OpenAI-shaped endpoint via env).
  *
  * This module is intentionally pure control-flow: it does NOT own the provider
  * executors or API keys. Callers supply an ordered list of tier descriptors. The
@@ -29,6 +31,7 @@ export const PROVIDER_TAGS = Object.freeze({
   MCP: 'mcp',
   AKASH: 'akash',
   RENDER: 'render',
+  OPENAI: 'openai-compatible',
   BEDROCK: 'bedrock',
   CLAUDE: 'claude',
   MOCK: 'mock',
@@ -104,6 +107,17 @@ export class ComputeRouter {
         available: !!(handler.useRenderFallback && handler.renderApiKey),
         execute: run('_callRender'),
         log: '[Router] Akash unavailable → trying Render Network DePIN...',
+      },
+      {
+        // Provider-agnostic tier: any OpenAI-compatible endpoint (OpenAI, Groq,
+        // Together, Fireworks, DeepInfra, a self-hosted vLLM, an Akash-hosted
+        // model…) plugs in via env — no code change to swap providers. This is
+        // where the bulk of real-world inference lives today, so it sits right
+        // after the DePIN tiers as the primary reliable route. LLM only.
+        tag: PROVIDER_TAGS.OPENAI,
+        available: !!(handler.useOpenAICompatFallback && handler.openaiCompatKey && handler.openaiCompatBase),
+        execute: run('_callOpenAICompatible'),
+        log: '[Router] DePIN tiers unavailable → trying configured OpenAI-compatible endpoint...',
       },
       {
         tag: PROVIDER_TAGS.BEDROCK,

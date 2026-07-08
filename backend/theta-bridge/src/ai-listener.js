@@ -6,6 +6,7 @@ import logger from './logger.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { getZkGPTProver, isZkGPTProverConfigured } from './zkgpt-prover-client.js';
 import { buildPaymentBinding } from './payment-binding.js';
+import { proveGatedReason } from './prove-gate.js';
 
 /**
  * AI Intent Listener — Osmosis/Akash IBC Event Monitor
@@ -952,10 +953,12 @@ class AIListener {
     task.updatedAt = Date.now();
     this.metrics.totalInferenceRouted++;
 
-    // Opt-in: route through the full 6-tier DePIN ComputeRouter instead of the
-    // single THETA_EDGE_URL path. Default OFF — preserves current behavior. Any
-    // failure (or a hash-only request with no raw input) falls back below.
-    if (process.env.M2M_USE_FULL_ROUTER === 'true') {
+    // Route through the provider-agnostic ComputeRouter (EdgeCloud → RapidAPI →
+    // MCP → Akash → Render → OpenAI-compatible → Bedrock → Claude) by default.
+    // This is a safe no-op for hash-only requests: the executors need raw input,
+    // so a privacy-mode request (input_hash only) or any failure falls through
+    // to the default THETA_EDGE_URL path below. Opt out with M2M_USE_FULL_ROUTER=false.
+    if (process.env.M2M_USE_FULL_ROUTER !== 'false') {
       try {
         const handled = await this._routeInferenceViaFullRouter(task, netAmount);
         if (handled) return;
@@ -1016,10 +1019,11 @@ class AIListener {
   }
 
   /**
-   * Route an inference task through the full 6-tier DePIN ComputeRouter
-   * (EdgeCloud → RapidAPI → MCP → Akash → Render → Bedrock). Gated by
-   * M2M_USE_FULL_ROUTER. The 6-tier executors run *real* inference, so they need
-   * raw input — not just an input_hash. If the intent is hash-only (privacy
+   * Route an inference task through the provider-agnostic ComputeRouter
+   * (EdgeCloud → RapidAPI → MCP → Akash → Render → OpenAI-compatible → Bedrock →
+   * Claude). On by default; opt out with M2M_USE_FULL_ROUTER=false. The tier
+   * executors run *real* inference, so they need raw input — not just an
+   * input_hash. If the intent is hash-only (privacy
    * mode) or no tier produces output, returns false so the caller falls back to
    * the default THETA_EDGE_URL path. Never throws to the caller's happy path on
    * provider issues; returns false instead.
@@ -1321,6 +1325,21 @@ class AIListener {
    */
   async _generateTaskProof(task) {
     try {
+      // Cost gate (Tier 1): the task always settles + gets a signed receipt, but
+      // the expensive SP1 proof is optional. When the requesting key isn't
+      // allowed to prove (public demo, prover scaled to zero), skip cleanly and
+      // mark the task so /task-status reports an honest "gated" status.
+      if (task.intent?.proveAllowed === false) {
+        task.sp1Proof = {
+          skipped: true,
+          reason: 'proving_gated',
+          note: proveGatedReason(),
+          timestamp: Date.now(),
+        };
+        logger.info({ taskId: task.taskId }, 'SP1 proof gated (cost control); signed receipt only');
+        return;
+      }
+
       // The SP1 prover parses amount fields with U256::from_hex (expects a
       // 0x-prefixed, EVEN-length hex string). The backend tracks amounts as
       // decimal wei strings, so a raw value like "1000000" (odd length, decimal)

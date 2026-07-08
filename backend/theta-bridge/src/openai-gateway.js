@@ -4,6 +4,7 @@ import config from './config.js';
 import logger from './logger.js';
 import { getAIListener } from './ai-listener.js';
 import { getSP1Prover } from './sp1-prover-client.js';
+import { proveAllowedForKey } from './prove-gate.js';
 
 /**
  * XFuel OpenAI-compatible gateway.
@@ -131,7 +132,7 @@ async function runChatInference({ model, messages, max_tokens, temperature }) {
     providerConfigured = !!(handler && (
       handler.edgeCloudApiKey || handler.rapidApiKey || handler.mcpEndpoint ||
       handler.akashMnemonic || handler.renderApiKey || handler.awsAccessKeyId ||
-      handler.anthropicApiKey
+      handler.openaiCompatKey || handler.anthropicApiKey
     ));
     const { ComputeRouter } = await import(
       '../../../circuits/theta-inference/compute-router.js'
@@ -180,13 +181,13 @@ function extractContent(result) {
  *
  * @returns {{ taskId: string, proverConfigured: boolean }}
  */
-function registerTaskAndProve({ model, messages, content, provider }) {
+function registerTaskAndProve({ model, messages, content, provider, proveAllowed = true }) {
   let aiListener;
   try {
     aiListener = getAIListener();
   } catch {
     // Listener not initialised (e.g. isolated tests) — skip settlement wiring.
-    return { taskId: `openai-${crypto.randomUUID()}`, proverConfigured: false };
+    return { taskId: `openai-${crypto.randomUUID()}`, proverConfigured: false, proveAllowed };
   }
 
   const taskId = `openai-${crypto.randomUUID()}`;
@@ -206,6 +207,7 @@ function registerTaskAndProve({ model, messages, content, provider }) {
       proofSystem: 'sp1',
       paymentRail: 'unmetered', // OpenAI-compat path is not x402-metered in Phase 1
       paymentRef: null,
+      proveAllowed, // cost gate: false → settle + signed receipt, skip SP1 proof
     },
     meta: { chain: 'theta', txHash: `openai-${taskId}`, height: 0, source: 'openai-gateway' },
     status: 'completed',
@@ -223,19 +225,27 @@ function registerTaskAndProve({ model, messages, content, provider }) {
   aiListener.activeTasks.set(taskId, task);
 
   const proverConfigured = !!getSP1Prover();
-  if (proverConfigured && typeof aiListener._generateTaskProof === 'function') {
+  if (proverConfigured && proveAllowed && typeof aiListener._generateTaskProof === 'function') {
     aiListener._generateTaskProof(task).catch((err) => {
       logger.warn({ err: err.message, taskId }, 'OpenAI gateway: async proof failed (non-fatal)');
     });
   }
 
-  return { taskId, proverConfigured };
+  return { taskId, proverConfigured, proveAllowed };
 }
 
 // ─── Verification receipt ─────────────────────────────────────────────────────
 
-function buildReceipt({ taskId, provider, mock, proverConfigured, mockReason }) {
-  const proofStatus = mock ? 'skipped' : proverConfigured ? 'pending' : 'unavailable';
+function buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed = true, mockReason }) {
+  // pending  → proof generating; unavailable → no prover; gated → cost-gated for
+  // this key (signed receipt only); skipped → mock response (nothing to prove).
+  const proofStatus = mock
+    ? 'skipped'
+    : !proverConfigured
+      ? 'unavailable'
+      : !proveAllowed
+        ? 'gated'
+        : 'pending';
   return {
     task_id: taskId,
     compute: {
@@ -250,9 +260,12 @@ function buildReceipt({ taskId, provider, mock, proverConfigured, mockReason }) 
       note: 'The OpenAI-compatible path is unmetered in Phase 1. Use POST /task-request with payment.rail="usdc" for x402 settlement.',
     },
     proof: {
-      status: proofStatus, // pending | unavailable | skipped
+      status: proofStatus, // pending | unavailable | gated | skipped
       system: 'sp1',
       attests: 'settlement metadata + commitment to the output hash (NOT inference correctness)',
+      ...(proofStatus === 'gated'
+        ? { note: 'On-chain proof is cost-gated for this key. Signed receipt above stands; request proving access to generate an SP1 settlement proof.' }
+        : {}),
       links: {
         status: `/task-status?task_id=${taskId}`,
         proof: `/prove-result?task_id=${taskId}`,
@@ -347,8 +360,9 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
     }
 
     const { content, provider, mock } = inference;
-    const { taskId, proverConfigured } = registerTaskAndProve({ model: echoModel, messages, content, provider });
-    const receipt = buildReceipt({ taskId, provider, mock, proverConfigured, mockReason: inference.raw?.reason });
+    const proveAllowed = proveAllowedForKey(req.headers['x-api-key']);
+    const { taskId, proverConfigured } = registerTaskAndProve({ model: echoModel, messages, content, provider, proveAllowed });
+    const receipt = buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed, mockReason: inference.raw?.reason });
 
     const promptTokens = estimateTokens(messagesToText(messages));
     const completionTokens = estimateTokens(content);
