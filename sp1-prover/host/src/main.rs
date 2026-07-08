@@ -971,6 +971,12 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize SP1's tracing subscriber so SDK logs (network RPC target,
+    // "Created request 0x… View at explorer.succinct.xyz/request/…", auction
+    // status, and errors) are emitted to stdout/CloudWatch. Without this the
+    // SDK's `tracing` events are silently dropped. Honors RUST_LOG.
+    sp1_sdk::utils::setup_logger();
+
     // Bridge SP1_PRIVATE_KEY -> NETWORK_PRIVATE_KEY for Succinct Network compatibility
     if let Ok(key) = std::env::var("SP1_PRIVATE_KEY") {
         if !key.is_empty() && std::env::var("NETWORK_PRIVATE_KEY").is_err() {
