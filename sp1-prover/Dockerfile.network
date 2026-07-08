@@ -39,19 +39,30 @@ RUN cargo prove --version && rustup toolchain list
 
 WORKDIR /app
 
-COPY Cargo.toml /app/Cargo.toml
-COPY rust-toolchain.toml /app/rust-toolchain.toml
-COPY program /app/program
-COPY host /app/host
+# NOTE: build context is the REPO ROOT (not sp1-prover/), because the workspace
+# Cargo.toml references ../core-layer/sp1-hooks. Build with:
+#   docker build --platform linux/amd64 -f sp1-prover/Dockerfile.network -t xfuel-sp1-prover:network .
+COPY sp1-prover/Cargo.toml /app/Cargo.toml
+COPY sp1-prover/rust-toolchain.toml /app/rust-toolchain.toml
+COPY sp1-prover/program /app/program
+COPY sp1-prover/host /app/host
+# Vendor the out-of-tree workspace member in-tree. Cargo requires every workspace
+# member to live below the workspace root, so copy core-layer/sp1-hooks under /app
+# and rewrite the ../core-layer/sp1-hooks path in the copied Cargo.toml only
+# (source tree is untouched).
+COPY core-layer/sp1-hooks /app/sp1-hooks
+RUN sed -i 's|\.\./core-layer/sp1-hooks|sp1-hooks|g' /app/Cargo.toml
 
 # Build host (build.rs compiles guest automatically)
 # Use x86-64-v3 (AVX2) for portability across EdgeCloud nodes
 RUN cd /app/host && \
     RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release
 
-COPY test-data /app/test-data
-COPY watchdog.sh /app/watchdog.sh
-RUN chmod +x /app/watchdog.sh
+COPY sp1-prover/test-data /app/test-data
+COPY sp1-prover/watchdog.sh /app/watchdog.sh
+# Normalize line endings (a CRLF shebang makes the kernel look for `/bin/bash\r`,
+# which fails with "exec: no such file or directory") then make executable.
+RUN sed -i 's/\r$//' /app/watchdog.sh && chmod +x /app/watchdog.sh
 
 EXPOSE 80
 

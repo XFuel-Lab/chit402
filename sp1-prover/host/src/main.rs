@@ -564,7 +564,7 @@ fn parse_ai_task_batch(
     let payment_commitment = if public_values_version == PublicValuesVersion::V2 as u8 {
         parse_hash(req.payment_commitment.as_ref().ok_or_else(|| {
             anyhow::anyhow!("v2 requires payment_commitment on the request")
-        })?)
+        })?)?
     } else {
         [0u8; 32]
     };

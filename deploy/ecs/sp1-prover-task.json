@@ -1,0 +1,48 @@
+{
+  "family": "xfuel-sp1-prover",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "2048",
+  "memory": "8192",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::187510174358:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "sp1-prover",
+      "image": "187510174358.dkr.ecr.us-east-1.amazonaws.com/xfuel-sp1-prover:network",
+      "essential": true,
+      "command": ["/bin/bash", "-c", "sed -i 's/\\r$//' /app/watchdog.sh && exec /bin/bash /app/watchdog.sh"],
+      "portMappings": [
+        { "containerPort": 80, "protocol": "tcp" }
+      ],
+      "environment": [
+        { "name": "SP1_PROVER", "value": "network" },
+        { "name": "RUST_LOG", "value": "info" }
+      ],
+      "secrets": [
+        {
+          "name": "NETWORK_PRIVATE_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:187510174358:secret:NETWORK_PRIVATE_KEY-eDxca0"
+        }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:80/healthz || exit 1"],
+        "interval": 30,
+        "timeout": 10,
+        "retries": 3,
+        "startPeriod": 300
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/xfuel-sp1-prover",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "prover"
+        }
+      }
+    }
+  ]
+}
