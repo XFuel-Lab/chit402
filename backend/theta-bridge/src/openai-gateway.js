@@ -142,8 +142,10 @@ async function runChatInference({ model, messages, max_tokens, temperature }) {
     const routed = await router.route({ serviceType: 0, requestBody, modelName, gpuName: 'default' });
     if (routed.result) {
       return {
+        // Prefer the executor's friendly label (e.g. "groq", "anthropic-claude")
+        // over the generic tier tag ("openai-compatible") when it provides one.
         content: extractContent(routed.result),
-        provider: routed.source,
+        provider: routed.result?._source || routed.source,
         mock: false,
         raw: routed.result,
       };
@@ -253,7 +255,7 @@ function buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed =
       real: !mock,
       note: mock
         ? `Response is a mock (compute.real=false). ${mockReason || 'No DePIN provider configured — set a provider key to route real compute.'}`
-        : `Routed to ${provider} via the XFuel DePIN router.`,
+        : `Routed to ${provider} via the XFuel provider-agnostic router.`,
     },
     payment: {
       rail: 'unmetered',
