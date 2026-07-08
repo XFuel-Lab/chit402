@@ -1148,6 +1148,9 @@ async fn main() -> Result<()> {
                                     match parse_request_to_batch(request) {
                                         Ok(v) => v,
                                         Err(e) => {
+                                            // Parse failed: undo the fetch_add above so a
+                                            // malformed request doesn't leak queue_depth.
+                                            metrics.queue_depth.fetch_sub(1, Ordering::Relaxed);
                                             return (
                                                 StatusCode::BAD_REQUEST,
                                                 format!("Parse error: {:#}", e),
@@ -1241,6 +1244,9 @@ async fn main() -> Result<()> {
                                     match parse_request_to_batch(request) {
                                         Ok(v) => v,
                                         Err(e) => {
+                                            // Parse failed: undo the fetch_add above so a
+                                            // malformed request doesn't leak queue_depth.
+                                            metrics.queue_depth.fetch_sub(1, Ordering::Relaxed);
                                             return (
                                                 StatusCode::BAD_REQUEST,
                                                 format!("Parse error: {:#}", e),
