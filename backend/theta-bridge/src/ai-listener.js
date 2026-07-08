@@ -1317,11 +1317,22 @@ class AIListener {
    */
   async _generateTaskProof(task) {
     try {
+      // The SP1 prover parses amount fields with U256::from_hex (expects a
+      // 0x-prefixed, EVEN-length hex string). The backend tracks amounts as
+      // decimal wei strings, so a raw value like "1000000" (odd length, decimal)
+      // makes the prover's hex::decode fail → /prove returns 400 "Parse error"
+      // before proving. Convert to even-length 0x-hex here (value-preserving).
+      const toProverHex = (v) => {
+        let h = BigInt(v || 0).toString(16);
+        if (h.length % 2 === 1) h = '0' + h;
+        return '0x' + h;
+      };
+
       // Prepare AI task proof request (compatible with SP1 prover batch format)
       const proofRequest = {
         // Standard SP1 fields
         vault_address: ethers.ZeroAddress, // AI tasks don't use vaults
-        net_amount: task.netAmount ?? task.intent.amount,
+        net_amount: toProverHex(task.netAmount ?? task.intent.amount),
         block_number: parseInt(task.meta.height) || 0,
         merkle_root: ethers.keccak256(ethers.toUtf8Bytes(task.taskId)),
         identity_commitment: ethers.keccak256(
@@ -1334,7 +1345,7 @@ class AIListener {
         task_id: task.taskId,
         source_chain: task.meta.chain,
         source_tx: task.meta.txHash,
-        fee_amount: task.feeAmount,
+        fee_amount: toProverHex(task.feeAmount),
         output_hash: task.result?.outputHash || task.result?.commitment || null,
         completed_at: task.updatedAt,
         // Phase 1: proof_system for routing (sp1 | zkgpt) — circuits use this for verifier choice
