@@ -7,11 +7,16 @@
 
 ## What Is XFuel?
 
-XFuel is a **ZK settlement and orchestration layer for AI compute across decentralized GPU networks (DePIN)**.
+XFuel is the **verifiable settlement + payments layer for AI compute**. Any agent or app submits an inference task; XFuel routes it to the best available provider (centralized, neocloud, or DePIN), settles payment over any rail (USDC via x402, or TFUEL on Theta), and returns a **verifiable receipt**.
 
-It lets any agent submit an AI compute task, routes it to the best available GPU provider, generates a cryptographic ZK proof that the work was done, and settles payment on-chain — with fees distributed automatically to stakeholders.
+**Trust is tiered (and we're precise about it):**
+- **Signed receipt** (default, ~free): route, model, cost, and output hash, signed by XFuel.
+- **ZK settlement proof** (on demand): SP1 proof of correct fees + payment binding + output commitment + single-use nullifier, anchored on Theta. *This proves correct settlement — NOT that a black-box provider computed the model correctly.*
+- **ZK proof-of-inference** (roadmap): zkGPT — proves the computation itself, only where XFuel runs the model.
 
-**Primary network:** Theta (chain 361/365). **Cross-chain:** Bittensor EVM (964/945), Cosmos IBC (pending governance).
+**Providers are pluggable** — an OpenAI-compatible tier (OpenAI, Groq, Together, Fireworks, vLLM…) plugs in via env; Theta EdgeCloud and Akash are DePIN tiers. Providers are options; the settlement + proof layer is the product.
+
+**Settlement home:** Theta (chain 361/365). **Cross-chain:** Bittensor EVM (964/945), Cosmos IBC (pending governance).
 
 ---
 

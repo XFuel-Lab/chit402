@@ -1,17 +1,17 @@
 # XFuel Protocol — Pitch Deck
 
-**ZK-Verified Settlement for AI Compute Across Decentralized GPU Networks**
+**Verifiable Settlement & Payments for AI Compute — Route Any Model, Prove Every Dollar**
 
-*Version 1.0 — April 2026*
+*Version 1.1 — July 2026*
 
 ---
 
 ## Slide 1: Cover
 
 **XFuel Protocol**
-*The Pumping Station for Decentralized AI*
+*Route any model. Prove every dollar.*
 
-> "Submit an AI task anywhere — XFuel routes it to the best GPU, proves delivery with a ZK proof, and settles payment on-chain with transparent fee splits."
+> "Give your AI agent a budget, not your API keys — XFuel routes the task to the best available provider, settles over any rail, and returns a verifiable receipt you can check on-chain."
 
 - **Website:** [xfuel.app](https://xfuel.app)
 - **GitHub:** [github.com/XFuel-Lab/xfuel-protocol](https://github.com/XFuel-Lab/xfuel-protocol)
@@ -21,28 +21,28 @@
 
 ## Slide 2: The Problem
 
-**Decentralized AI compute is a $10B+ market — but the settlement layer is broken.**
+**AI agents are starting to spend money on their own — but there's no accountability layer.**
 
-Every decentralized GPU network (Theta, Bittensor, Akash, Render) operates as a silo:
+As agents autonomously buy inference, tools, and data, three gaps block trust:
 
-### 1. No Proof of Delivery
-Nodes claim they ran your inference, but there is no cryptographic receipt. Consumers pay and trust — there is no trustless verification that work was actually completed.
+### 1. No Accountable Spend
+Today an agent needs your API keys, and the principal (a person, app, or DAO) can neither **cap** what it spends nor **audit** what it actually bought. Autonomous spend with no receipt is a non-starter for real money.
 
-### 2. No Unified Settlement
-Each network has its own token, fee model, and trust assumptions. Developers building AI agents or dApps must write a custom integration per provider, increasing cost and fragmentation.
+### 2. No Portable Trust
+A result from any provider is unverifiable. There is no cryptographic receipt you can check, share, or settle against on-chain — so work can't be trusted across parties or composed between agents.
 
-### 3. No Transparent Economics
-Fee flows are opaque. Operators cannot verify revenue is split fairly. Stakers cannot audit yield sources. Investors cannot see where protocol funds actually go.
+### 3. No Native Payment Rail
+Agents can't hold credit cards. Per-call crypto micropayments (x402/USDC) are emerging, but there is no clean layer that ties payment to a provable settlement and a transparent fee split.
 
-**Result:** AI agents are locked into single providers, overpay for unverified compute, and cannot compose across DePIN networks. The "decentralized AI" stack has centralized trust at the settlement layer.
+**Result:** autonomous AI spend is either locked to one provider with shared keys, or unverifiable and unauditable. The trust layer for machine-bought compute is missing.
 
 ---
 
 ## Slide 3: The Solution
 
-**XFuel is the ZK settlement and orchestration layer for AI compute.**
+**XFuel is the verifiable settlement + payments layer for AI compute.**
 
-It sits between AI consumers (agents, dApps, enterprises) and GPU providers (Theta EdgeCloud, Bittensor, Akash, Render, and beyond).
+It sits between AI consumers (agents, dApps, enterprises) and *any* compute provider — centralized (OpenAI, Anthropic), neocloud (Groq, Together, Fireworks), or DePIN (Theta EdgeCloud, Akash). The invariant is **route anywhere, settle over any rail, return a verifiable receipt**. Providers are pluggable tiers; the settlement + proof layer is the product.
 
 ### Architecture
 
@@ -58,24 +58,24 @@ Agent / dApp / Enterprise
 │  │  veXF Gov       │    │   Vote-escrowed governance
 │  └─────────────────┘    │
 └───────────┬─────────────┘
-            │ Modular Circuits (21+ and growing)
-            ├── Theta EdgeCloud     (Tier 1 — primary GPU backbone)
-            ├── Bittensor EVM       (dTAO subnet integration)
+            │ Provider-agnostic router (pluggable tiers, first-available)
+            ├── OpenAI-compatible   (OpenAI, Groq, Together, Fireworks, vLLM…)
+            ├── Theta EdgeCloud     (DePIN — used when it has capacity)
             ├── Akash Network       (decentralized GPU marketplace)
             ├── Render Network      (image/LLM workloads)
-            └── AWS Bedrock         (enterprise fallback)
+            └── AWS Bedrock / Claude (reliable centralized backstop)
 ```
 
 ### Key Properties
 
 | Capability | Detail |
 |------------|--------|
-| **ZK Proof of delivery** | SP1 Groth16/PLONK — cryptographic receipt for every task |
-| **6-tier routing** | Priority engine routes to cheapest/fastest available provider |
+| **Verifiable receipts** | Signed receipt for every task; on-chain SP1 settlement proof on demand |
+| **Provider-agnostic routing** | One OpenAI-compatible endpoint → any provider (centralized, neocloud, DePIN) |
+| **Agent-native payments** | Pay per call over x402/USDC or TFUEL — budgets + escrow, not shared API keys |
 | **On-chain fee splits** | `CoreRevenueSplitter` — 30/30/25/15, publicly auditable |
 | **Replay protection** | Nullifiers + per-sender nonces prevent proof reuse |
-| **Modular circuits** | Independent plug-in modules, no shared state between providers |
-| **Agent-native** | A2A communication, webhooks, MCP endpoints, swarm coordination |
+| **Composable & open** | M2M API, OpenAI gateway, MCP server, SDK, signed webhooks — MIT |
 
 ---
 
@@ -106,6 +106,23 @@ XFuel integrates and attributes two peer-reviewed research contributions:
 | **zkGPT** (Phase 1) | [eprint.iacr.org/2025/1184](https://eprint.iacr.org/2025/1184) — verifiable LLM inference |
 | **Fair Exchange (PAS)** | [eprint.iacr.org/2026/395](https://eprint.iacr.org/2026/395) — delegated payments for AI agents |
 | **Interstellar** (research track) | [eprint.iacr.org/2025/1294](https://eprint.iacr.org/2025/1294) — 1.6–6.7x prover speedup for transformers |
+
+---
+
+## Slide 4b: Proof Scope (what we prove — precisely)
+
+**Trust is tiered, and we're explicit about it. Cost tracks the level of trust you need.**
+
+| Tier | Name | What it cryptographically attests | Cost | Availability |
+|------|------|-----------------------------------|------|--------------|
+| **0** | Signed receipt | Task, route, model, tokens, cost, and a hash of the output — signed by XFuel | ~free, instant | Always on |
+| **1** | ZK settlement proof | Correct fee split, payment binding, output-hash commitment, single-use nullifier — anchored on Theta | Prover cost | On demand / gated |
+| **2** | ZK proof-of-inference | The *computation itself* ran as claimed (zkGPT) | High | Roadmap — only where XFuel runs the model |
+
+- **What we claim (true):** verifiable *settlement* over any provider — provably correct fees + an immutable output commitment.
+- **What we never claim:** that a black-box API "ran the model correctly." That is only Tier 2, and only where XFuel controls the compute.
+
+This honesty is a credibility asset with auditors and technical reviewers — and it lets a live demo run nearly free (Tier 0) while the expensive proof (Tier 1) is a gated upgrade.
 
 ---
 
@@ -221,31 +238,31 @@ All fees are collected and distributed automatically by `CoreRevenueSplitter`:
 | Segment | 2026 Estimate | Growth |
 |---------|--------------|--------|
 | Total AI Compute Market | $150B+ | ~40% YoY |
-| Decentralized AI / DePIN | $10B+ | ~80% YoY |
-| Verifiable AI Settlement | **Greenfield** | XFuel is category creator |
+| Agentic / autonomous AI spend | Fast-emerging | steep |
+| Verifiable AI settlement + agent payments | **Greenfield** | XFuel is category creator |
+
+**Where the volume actually is:** today the majority of inference runs on centralized + neocloud providers (OpenAI, Anthropic, Groq, Together, Fireworks, Bedrock); DePIN is a small but fast-growing slice. XFuel monetizes **settlement across all of it now**, and rides the DePIN + zkML shift as it matures — no rewrite, just new provider tiers.
 
 ### Why now
 
-- AI agent proliferation (ChatGPT, Grok, Claude, open-source LLMs) is creating massive demand for programmatic, cost-efficient inference.
-- DePIN GPU networks are scaling but lack a trust layer — operators and buyers need ZK receipts to settle fairly.
-- Cross-chain AI tasks (run on Bittensor, settle on Theta, pay on Cosmos) are becoming real — there is no protocol that handles this end-to-end today.
-
-**Even 0.1% capture of decentralized AI volume = $10M+ annual protocol revenue at current market scale.**
+- Agents are beginning to spend money autonomously — creating demand for accountable spend, budgets, and receipts.
+- x402 / stablecoin micropayments give agents a native payment rail; no clean verifiable-settlement layer exists on top of it.
+- Verifiable receipts + on-chain settlement are exactly what a Web2 billing router can't provide — an open, defensible wedge.
 
 ---
 
 ## Slide 10: Competitive Landscape
 
-| | **XFuel** | Ritual | Giza | Modulus | Generic Bridges |
-|--|-----------|--------|------|---------|-----------------|
-| ZK proof of compute | **SP1 Groth16** | ONNX verify | Cairo | Plonky2 | No |
-| Multi-DePIN routing | **6 providers** | Single | Single | Single | N/A |
-| On-chain fee splits | **30/30/25/15** | No | No | No | No |
-| Modular circuit architecture | **21+ circuits** | Monolithic | Monolithic | Monolithic | N/A |
-| Funding on-chain | **Believer + Angel** | VC only | VC only | VC only | N/A |
-| Open source | **MIT** | Partial | Partial | Partial | Varies |
+| | **XFuel** | OpenRouter | Ritual / Giza / Modulus | Neoclouds (Groq/Together) |
+|--|-----------|-----------|-------------------------|---------------------------|
+| Model / provider routing | **Any (agnostic)** | **Any (Web2 leader)** | Single | Own models only |
+| Crypto-native agent payments | **x402 + TFUEL** | No (fiat billing) | Partial | No |
+| Verifiable settlement receipts | **Signed + on-chain SP1** | No | ZK-ML focused | No |
+| Programmable escrow / budgets | **Yes** | No | No | No |
+| On-chain fee splits | **30/30/25/15** | No | No | No |
+| Open source | **MIT** | No | Partial | No |
 
-**XFuel is the only protocol combining ZK-verified AI settlement + multi-DePIN routing + transparent on-chain economics + a modular circuit architecture.**
+**We do not compete with OpenRouter on model coverage — that's a Web2 billing router's game.** XFuel adds what it structurally can't: **crypto-native agent payments + on-chain verifiable settlement + programmable escrow.** Claim we defend: *the neutral, verifiable settlement + payments rail for autonomous AI compute spend.*
 
 ---
 

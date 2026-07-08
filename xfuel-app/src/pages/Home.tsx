@@ -4,10 +4,10 @@ import { useEffect, useState, type CSSProperties } from 'react';
 const BELIEVER_DISMISS_KEY = 'xfuel-believer-chip-dismissed';
 
 const stats = [
-  { value: '21+', label: 'Circuit modules (repo)' },
+  { value: 'Any', label: 'Model or provider, routed' },
+  { value: 'SP1', label: 'On-chain proofs (live)' },
+  { value: 'x402', label: 'USDC + TFUEL payment rails' },
   { value: '700+', label: 'Tests passing (repo)' },
-  { value: '5', label: 'Network targets' },
-  { value: 'Theta', label: 'EdgeCloud + EVM mainnet' },
 ];
 
 const roadmap = [
@@ -40,46 +40,46 @@ const roadmap = [
 
 const features = [
   {
-    title: 'Theta EdgeCloud routing',
+    title: 'Provider-agnostic routing',
     description:
-      'Primary path for GPU-backed inference; ZK attestation ties delivery to on-chain settlement — not just another API aggregator.',
-    icon: '◉',
+      'One OpenAI-compatible endpoint routes to the best available provider — centralized, neocloud (Groq/Together/Fireworks), or DePIN (Theta, Akash). Configured, not hardcoded.',
+    icon: '◎',
     link: '/theta-ai',
     color: '#00d4ff',
   },
   {
-    title: 'ZK verification',
-    description: 'SP1 Groth16/PLONK pipeline: provable task outputs, nullifiers, and verifier hooks aligned with deploy manifests.',
+    title: 'Verifiable receipts',
+    description: 'Every task returns a signed receipt; upgrade to an on-chain SP1 settlement proof with a single-use nullifier (replay-proof) when it matters.',
     icon: '⬡',
     link: '/circuits',
     color: '#f59e0b',
   },
   {
-    title: 'Cross-Chain Bridge',
-    description: 'Hyperlane-oriented relay with SP1 proof verification; extend settlement beyond Theta as domains go live.',
-    icon: '⟷',
-    link: '/bridge',
-    color: '#06b6d4',
-  },
-  {
-    title: 'CoreRevenueSplitter',
-    description: 'BBB, GET, stakers, treasury — fee flow encoded for sustainable DePIN economics.',
+    title: 'Agent-native payments',
+    description: 'Pay per call over x402/USDC or TFUEL — give an agent a budget, not your API keys. Escrow caps the spend.',
     icon: '◈',
-    link: '/treasury',
+    link: '/docs',
     color: '#22c55e',
   },
   {
-    title: 'M2M & agents',
-    description: 'Task API and listener stack for machine-to-machine inference and orchestration.',
-    icon: '◎',
-    link: '/dashboard',
+    title: 'On-chain settlement',
+    description: 'CoreRevenueSplitter distributes fees transparently — 30% BBB · 30% GET · 25% veXF · 15% treasury — settled on Theta.',
+    icon: '⬢',
+    link: '/treasury',
+    color: '#06b6d4',
+  },
+  {
+    title: 'Proof, when it matters',
+    description: 'Signed receipt (free) → ZK settlement proof (on demand) → proof-of-inference via zkGPT (roadmap). Cost tracks the level of trust you need.',
+    icon: '◉',
+    link: '/security',
     color: '#ef4444',
   },
   {
-    title: 'veXF Governance',
-    description: 'Vote-escrow style controls over fees and priorities as governance contracts deploy.',
-    icon: '⚖',
-    link: '/governance',
+    title: 'Composable & open',
+    description: 'M2M REST API, OpenAI-compatible gateway, MCP server, TypeScript SDK, and signed webhooks. MIT licensed.',
+    icon: '⚙',
+    link: '/docs',
     color: '#8b5cf6',
   },
 ];
@@ -174,27 +174,28 @@ export default function Home() {
         <div className="container" style={{ textAlign: 'center' }}>
           <div style={styles.heroBadge}>
             <span className="badge badge-orange">Beta protocol</span>
-            <span style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>ZK-verified AI on Theta EdgeCloud</span>
+            <span style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>Verifiable settlement for AI compute</span>
           </div>
           <h1 style={styles.heroTitle}>XFuel Protocol</h1>
-          <p style={styles.heroSubtitle}>ZK-verified AI routing &amp; DePIN settlement</p>
+          <p style={styles.heroSubtitle}>Route any model. Prove every dollar.</p>
           <p style={styles.heroDescription}>
-            Route inference to Theta EdgeCloud and partner DePINs, then settle with <strong>SP1-backed proofs</strong> and transparent fee splits. The stack is
-            still in <strong>beta</strong>, but <strong>Believer and Angel funding rounds are live on Theta mainnet</strong> — same chain the protocol targets
-            for production.
+            XFuel is the payments-and-proof layer for AI compute. Route inference to the best available provider — centralized, neocloud, or DePIN — settle over
+            any rail (<strong>USDC via x402</strong> or <strong>TFUEL on Theta</strong>), and get a <strong>verifiable receipt</strong> for every task: a signed
+            statement by default, or an <strong>on-chain SP1 proof</strong> on demand. The stack is in <strong>beta</strong>; Believer and Angel funding rounds
+            are live on Theta mainnet.
           </p>
           <div style={styles.heroCta}>
-            <Link to="/believers" className="btn btn-primary">
-              Believer Round
-            </Link>
-            <Link to="/angels" className="btn btn-secondary">
-              Angel Round
+            <Link to="/docs" className="btn btn-primary">
+              Try the API
             </Link>
             <Link to="/theta-ai" className="btn btn-secondary">
               AI Hub
             </Link>
-            <Link to="/dashboard" className="btn btn-secondary">
-              Dashboard
+            <Link to="/believers" className="btn btn-secondary">
+              Believer Round
+            </Link>
+            <Link to="/angels" className="btn btn-secondary">
+              Angel Round
             </Link>
           </div>
         </div>
@@ -275,7 +276,7 @@ export default function Home() {
         <div className="container">
           <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Core infrastructure</h2>
           <p style={{ textAlign: 'center', color: '#8a8a9a', marginBottom: '2rem' }}>
-            ZK-first settlement for AI compute — built for Theta EdgeCloud and cross-chain expansion.
+            Provider-agnostic routing, verifiable receipts, and on-chain settlement — Theta-settled, with any provider underneath.
           </p>
           <div className="grid grid-3">
             {features.map((f) => (
