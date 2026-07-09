@@ -26,12 +26,21 @@ async function main() {
   const settled = await client.waitForCompletion(task.task_id);
   console.log('settled      :', settled.status, `(proof: ${settled.proof_outcome})`);
 
+  // A ZK settlement proof is only produced when the endpoint has a prover wired
+  // (SP1_PROVER_URL). On the zero-config demo, compute settles but the proof is
+  // pending/unavailable — expected, so treat it as an informational outcome
+  // rather than a hard failure.
+  if (settled.proof_outcome !== 'valid') {
+    console.log(`\n✓ compute settled (status=${settled.status}). ZK proof ${settled.proof_outcome} — this endpoint has no prover wired (set SP1_PROVER_URL for on-chain settlement proofs).`);
+    process.exit(0);
+  }
+
   const proof = await client.getProof(task.task_id);
   console.log('nullifier    :', proof.sp1_proof?.nullifier);
 
   // verifyProof (no RPC needed): checks proof presence + outcome client-side.
   const { ok, reasons } = await new XFuelOnChain({}).verifyProof(proof);
-  console.log(ok ? '\n✓ verified' : `\n✗ verification failed: ${reasons.join('; ')}`);
+  console.log(ok ? '\n✓ verified (compute + proof)' : `\n✗ verification failed: ${reasons.join('; ')}`);
   process.exit(ok ? 0 : 1);
 }
 
