@@ -1,0 +1,67 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.XFuel-Lab/xfuel-mcp",
+  "title": "XFuel",
+  "description": "Submit AI inference to XFuel, pay per task (USDC via x402 or TFUEL), fetch/verify ZK proofs.",
+  "version": "0.1.1",
+  "websiteUrl": "https://github.com/XFuel-Lab/xfuel-protocol/tree/main/xfuel-mcp#readme",
+  "repository": {
+    "url": "https://github.com/XFuel-Lab/xfuel-protocol",
+    "source": "github",
+    "subfolder": "xfuel-mcp"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "xfuel-mcp",
+      "version": "0.1.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "XFUEL_API_URL",
+          "description": "XFuel API base URL. Defaults to the hosted testnet demo.",
+          "isRequired": false,
+          "format": "string",
+          "default": "https://api-testnet.xfuel.app"
+        },
+        {
+          "name": "XFUEL_API_KEY",
+          "description": "API key sent as X-API-Key. Defaults to the shared public demo key.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string",
+          "default": "xfuel-demo"
+        },
+        {
+          "name": "XFUEL_MCP_AUTH_TOKEN",
+          "description": "Optional bearer token required on the HTTP transport (Authorization: Bearer <token>).",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "XFUEL_RPC_URL",
+          "description": "Theta RPC URL enabling verify_proof's optional on-chain nullifier read.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "ZK_VERIFIER_ADDRESS",
+          "description": "ZKVerifierSP1 contract address (paired with XFUEL_RPC_URL).",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "XFUEL_PAYER_PRIVATE_KEY",
+          "description": "Funded payer private key that enables the pay_with_usdc tool. Moves USDC - keep secret; use a low-balance wallet.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

@@ -42,6 +42,10 @@ ExecStart=/usr/bin/npm run m2m-server
 EnvironmentFile=/opt/xfuel-protocol/backend/theta-bridge/.env
 Restart=always
 RestartSec=5
+# The server drains in-flight requests on SIGTERM (up to 10s) before exiting.
+# Give systemd a slightly longer stop window so restarts/redeploys are graceful.
+TimeoutStopSec=15
+KillSignal=SIGTERM
 User=xfuel
 
 [Install]
@@ -107,6 +111,47 @@ XFUEL_API_URL=https://api-testnet.xfuel.app npm --prefix sdk/js run example:open
 Private keys in `M2M_API_KEYS` bypass the demo limits (normal limiter). If GPU
 spend spikes, drop `THETA_EDGECLOUD_API_KEY` to fall back to mock instantly (the
 receipt then reports `compute.real=false`).
+
+## 6. Production hardening (enforced by the server)
+
+These are on by default — no extra config needed:
+
+| Concern | Behavior |
+|---------|----------|
+| Security headers | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `X-DNS-Prefetch-Control: off`; `X-Powered-By` removed. |
+| Rate-limit headers | Every rate-limited route returns `X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Reset`; `429` and quota-exhausted responses add `Retry-After`. |
+| Malformed input | Invalid JSON → `400 invalid_json`; body > 1 MB → `413 payload_too_large` (instead of a generic `500`). |
+| Error isolation | Per-route `try/catch` + a global handler that never leaks internals (`500 internal`), plus a `404 not_found` fallback listing valid endpoints. |
+| Graceful shutdown | `SIGTERM`/`SIGINT` stop accepting connections and drain in-flight requests, force-exiting after a 10s timeout — so `systemctl restart` / redeploys don't cut live requests. |
+
+CORS is opt-in (see §3); when `M2M_CORS_ORIGIN` is set, the rate-limit and
+`Retry-After` headers are added to `Access-Control-Expose-Headers` so browser
+clients can read them.
+
+## 7. Monitoring & logs
+
+**Uptime check** — point your monitor (UptimeRobot, healthchecks.io, a k8s probe,
+or a cron) at `GET /health`; it's public, unauthenticated, and cheap:
+
+```bash
+# 200 + status:"ok" when healthy. Alert on non-200 or a missing "demo" block.
+curl -fsS https://api-testnet.xfuel.app/health | jq '{status, uptime_s, demo}'
+```
+
+The payload also exposes `ai_listener`, `webhooks_registered`, and `fee_config` for
+quick diagnostics without shelling into the box.
+
+**Logs** — with `NODE_ENV=production` the server emits **structured Pino JSON** to
+stdout (no pretty-printing). Under systemd that lands in the journal:
+
+```bash
+journalctl -u xfuel-testnet-api -f            # live tail
+journalctl -u xfuel-testnet-api -o cat | jq . # parse the JSON lines
+```
+
+Each request logs `{ reqId, method, path, status, durationMs }`; forward stdout to
+your aggregator (Loki, Datadog, CloudWatch) if you want retention/alerting. Set
+`LOG_LEVEL=debug` temporarily to trace routing/proof decisions.
 
 ## Gotchas / notes (from building this)
 

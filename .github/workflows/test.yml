@@ -73,6 +73,10 @@ jobs:
         working-directory: sdk/js
         run: npm install --no-audit --no-fund
 
+      - name: Install theta-inference circuit deps (ethers for handler tests)
+        working-directory: circuits/theta-inference
+        run: npm install --no-audit --no-fund
+
       - name: SDK build + tests (REST client + on-chain module)
         working-directory: sdk/js
         run: |

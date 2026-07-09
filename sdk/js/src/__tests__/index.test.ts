@@ -343,6 +343,29 @@ describe('XFuelClient', () => {
     });
   });
 
+  // ── listModels ──────────────────────────────────────────────────────────
+
+  describe('listModels', () => {
+    it('GETs /v1/models and returns the OpenAI-shaped model list', async () => {
+      mockGet.mockResolvedValueOnce({
+        data: {
+          object: 'list',
+          data: [
+            { id: 'llama-3-70b', object: 'model', created: 1_700_000_000, owned_by: 'xfuel' },
+            { id: 'xfuel-auto', object: 'model', created: 1_700_000_000, owned_by: 'xfuel' },
+          ],
+        },
+      });
+      const client = makeClient();
+
+      const result = await client.listModels();
+
+      expect(mockGet).toHaveBeenCalledWith('/v1/models');
+      expect(result.object).toBe('list');
+      expect(result.data.map((m) => m.id)).toContain('llama-3-70b');
+    });
+  });
+
   // ── waitForCompletion ─────────────────────────────────────────────────────
 
   describe('waitForCompletion', () => {
@@ -383,6 +406,23 @@ describe('XFuelClient', () => {
       expect(onPoll).toHaveBeenCalledTimes(2);
       expect(onPoll).toHaveBeenNthCalledWith(1, pendingStatus, 1);
       expect(onPoll).toHaveBeenNthCalledWith(2, mockStatusCompleted, 2);
+    });
+  });
+
+  // ── waitForSettlement (alias) ─────────────────────────────────────────────
+
+  describe('waitForSettlement', () => {
+    it('is an alias for waitForCompletion and resolves on terminal status', async () => {
+      const pendingStatus: TaskStatusResponse = { ...mockStatusCompleted, status: 'pending', proof_outcome: 'pending' };
+      mockGet
+        .mockResolvedValueOnce({ data: pendingStatus })
+        .mockResolvedValueOnce({ data: mockStatusCompleted });
+
+      const client = makeClient();
+      const result = await client.waitForSettlement(TASK_ID, { intervalMs: 0 });
+
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(result.status).toBe('completed');
     });
   });
 

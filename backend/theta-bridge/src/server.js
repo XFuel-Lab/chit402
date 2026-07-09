@@ -310,11 +310,22 @@ export function createApp() {
 
   // ── Global middleware ────────────────────────────────────────────────────
 
-  app.use(express.json({ limit: '1mb' }));
+  // Security headers (lightweight; avoids a helmet dependency). Hardens the
+  // hosted testnet against MIME-sniffing, clickjacking and referrer leakage.
+  app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-DNS-Prefetch-Control', 'off');
+    next();
+  });
 
   // ── CORS (opt-in) ──────────────────────────────────────────────────────────
   // Off by default. Set M2M_CORS_ORIGIN (e.g. '*' or a specific origin) to allow
   // browser-based agents / playgrounds to call the API (incl. the /v1 gateway).
+  // Registered before body parsing so even 400/413/429 error responses carry
+  // CORS headers and can be read by a browser client.
   const CORS_ORIGIN = process.env.M2M_CORS_ORIGIN;
   if (CORS_ORIGIN) {
     app.use((req, res, next) => {
@@ -322,11 +333,26 @@ export function createApp() {
       res.header('Vary', 'Origin');
       res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-PAYMENT, X-PAYMENT-NONCE');
       res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url');
+      res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset');
       if (req.method === 'OPTIONS') return res.sendStatus(204);
       next();
     });
   }
+
+  app.use(express.json({ limit: '1mb' }));
+
+  // JSON body-parse errors → clean 4xx (otherwise they hit the 500 handler).
+  // Malformed JSON = 400; oversized body (> 1mb limit above) = 413.
+  app.use((err, _req, res, next) => {
+    if (!err) return next();
+    if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+      return res.status(400).json({ error: 'invalid_json', message: 'Request body is not valid JSON.' });
+    }
+    if (err.type === 'entity.too.large') {
+      return res.status(413).json({ error: 'payload_too_large', message: 'Request body exceeds the 1mb limit.' });
+    }
+    return next(err);
+  });
 
   // Request ID
   app.use((req, _res, next) => {
@@ -369,21 +395,29 @@ export function createApp() {
       const ipKey = `demo:${req.ip || 'anon'}`;
       const okMin = demoMinLimiter.allow(ipKey);
       const okDay = okMin && demoDayLimiter.allow(ipKey);
+      const info = demoMinLimiter.info(ipKey);
+      res.set('X-RateLimit-Limit', String(DEMO_RATE_PER_MIN));
+      res.set('X-RateLimit-Remaining', String(info.remaining));
+      res.set('X-RateLimit-Reset', String(Math.ceil(info.resetMs / 1000)));
       if (!okMin || !okDay) {
-        const info = okMin ? demoDayLimiter.info(ipKey) : demoMinLimiter.info(ipKey);
-        res.set('Retry-After', Math.ceil(info.resetMs / 1000).toString());
+        const overInfo = okMin ? demoDayLimiter.info(ipKey) : info;
+        res.set('Retry-After', Math.ceil(overInfo.resetMs / 1000).toString());
         return res.status(429).json({
           error: 'rate_limit_exceeded',
           message: `Demo key limit reached (${DEMO_RATE_PER_MIN}/min, ${DEMO_RATE_PER_DAY}/day per IP). Use your own X-API-Key for higher limits.`,
-          retryAfterMs: info.resetMs,
+          retryAfterMs: overInfo.resetMs,
         });
       }
       return next();
     }
 
     const key = apiKey || req.ip || 'anon';
-    if (!rateLimiter.allow(key)) {
-      const info = rateLimiter.info(key);
+    const allowed = rateLimiter.allow(key);
+    const info = rateLimiter.info(key);
+    res.set('X-RateLimit-Limit', String(rateLimiter.maxHits));
+    res.set('X-RateLimit-Remaining', String(info.remaining));
+    res.set('X-RateLimit-Reset', String(Math.ceil(info.resetMs / 1000)));
+    if (!allowed) {
       res.set('Retry-After', Math.ceil(info.resetMs / 1000).toString());
       return res.status(429).json({
         error: 'rate_limit_exceeded',
@@ -1364,6 +1398,31 @@ export async function startServer() {
 
       resolve(server);
     });
+
+    // Graceful shutdown: stop accepting new connections and drain in-flight
+    // requests before exiting. Process managers (systemd/Docker) send SIGTERM;
+    // Ctrl-C sends SIGINT. Force-exit after a timeout so we never hang a deploy.
+    let shuttingDown = false;
+    const shutdown = (signal) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      logger.info({ signal }, 'Shutting down M2M API server…');
+      const forceExit = setTimeout(() => {
+        logger.warn('Forced shutdown after 10s drain timeout');
+        process.exit(1);
+      }, 10_000);
+      if (typeof forceExit.unref === 'function') forceExit.unref();
+      server.close((err) => {
+        if (err) {
+          logger.error({ err }, 'Error during server close');
+          process.exit(1);
+        }
+        logger.info('HTTP server closed cleanly');
+        process.exit(0);
+      });
+    };
+    process.once('SIGTERM', () => shutdown('SIGTERM'));
+    process.once('SIGINT', () => shutdown('SIGINT'));
   });
 }
 

@@ -198,7 +198,7 @@ veXFGovernance.vote(proposalId, support)         // with ZK nullifier replay pro
 ## SDK (JavaScript)
 
 ```bash
-npm install xfuel-sdk  # live on npm (Apache-2.0). On-chain module: import 'xfuel-sdk/onchain' (requires ethers peer dep)
+npm install xfuel-sdk  # live on npm @0.2.0 (Apache-2.0). On-chain module: import 'xfuel-sdk/onchain' (requires ethers peer dep). Quickstart: npm run example:quickstart (sdk/js)
 ```
 
 ```javascript
@@ -233,8 +233,8 @@ docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md — Testnet 365 + mainnet 361 steps, tests
 xfuel-app/.env.example   — All VITE_* vars; testnet 365 vs mainnet 361
 core-layer/               — AI listener, A2A orchestrator, CosmWasm WASM
 backend/theta-bridge/     — Bridge service, M2M API server, fee analytics
-sdk/js/                   — JavaScript SDK (xfuel-sdk) + runnable examples/ (pay-with-usdc, a2a-swarm, swarm-coordinate)
-xfuel-mcp/                — First-party MCP server (npx xfuel-mcp): submit_inference, get_task_status, get_proof, verify_proof, quote_task, get_health; stdio + streamable HTTP
+sdk/js/                   — JavaScript SDK (xfuel-sdk, live on npm @0.2.0) + runnable examples/ (quickstart, pay-with-usdc, pay-prove-verify, a2a-swarm, swarm-coordinate)
+xfuel-mcp/                — First-party MCP server (live on npm @0.1.1: npx xfuel-mcp; MCP registry io.github.XFuel-Lab/xfuel-mcp): list_models, submit_inference, pay_with_usdc, get_task_status, get_proof, verify_proof, quote_task, get_health; stdio + streamable HTTP
 skills/                   — Agent Skills (front door for agents); start with skills/AGENT_PLAYBOOK.md
 docs/M2M_API.md           — Full REST API reference
 docs/THETA_INTEGRATION_PLAN.md — Theta deep integration tracker
