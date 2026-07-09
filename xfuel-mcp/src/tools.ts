@@ -7,9 +7,10 @@
  * official `xfuel-sdk` so behaviour stays identical to the SDK/examples.
  */
 import { z } from 'zod';
+import { Wallet } from 'ethers';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { XFuelClient, ChainId } from 'xfuel-sdk';
-import { XFuelOnChain } from 'xfuel-sdk/onchain';
+import { XFuelOnChain, createEip3009Payer } from 'xfuel-sdk/onchain';
 import type { McpConfig } from './config.js';
 import { ok, fail, describeError } from './format.js';
 
@@ -83,6 +84,100 @@ settlement (which needs an agent-side signer) use the xfuel-sdk directly.`,
         return ok(
           res as unknown as Record<string, unknown>,
           `Submitted task ${res.task_id} (status: ${res.status}, rail: ${res.payment_rail ?? 'tfuel'}).`,
+        );
+      } catch (err) {
+        return fail(describeError(err));
+      }
+    },
+  );
+
+  // ── pay_with_usdc ──────────────────────────────────────────────────────────
+  // Opt-in: only functional when the server was started with
+  // XFUEL_PAYER_PRIVATE_KEY. Submits an inference task paying with USDC over
+  // x402 (EIP-3009 on Base), signed by the server's payer wallet. Every other
+  // tool stays zero-config; this one needs a key because it moves funds.
+  server.registerTool(
+    'pay_with_usdc',
+    {
+      title: 'Submit + pay for inference with USDC (x402)',
+      description: `Submit an AI inference task and settle it with USDC via x402 (the default XFuel rail).
+The server signs an EIP-3009 USDC authorization on Base with its configured payer wallet, so
+the agent doesn't manage the handshake. If the server has x402 disabled it transparently
+falls back to the TFUEL rail (no payment is made).
+
+Requires the server to be started with XFUEL_PAYER_PRIVATE_KEY. If it is not set, this tool
+returns a clear "not configured" message — use submit_inference (TFUEL) instead, or the
+xfuel-sdk with your own payer. The USDC network is chosen by the server's x402 challenge
+(the payer signs for whatever network the challenge specifies, e.g. Base or Base Sepolia).
+
+Args:
+  - model (string): model id, e.g. "llama-3-70b"
+  - amount (string): gross task value in the smallest unit (wei); minimum 10000
+  - sender (string, optional): the 0x address that owns the task (default: the payer wallet address)
+  - chain_id ('theta'|'bittensor'|'akash'|'osmosis'|'persistence'): settlement network (default 'theta')
+  - input_hash (string, optional): keccak256 of your input (recommended for inference)
+  - memo (string, optional): free-form note echoed on the task
+  - max_gpu_hours (string, optional): compute budget hint
+  - subnet_id (number, optional): Bittensor subnet id when chain_id='bittensor'
+  - callback_url (string, optional): webhook that receives a signed TaskSettled event
+
+Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount, net_amount, links }.
+'payment_rail' is 'usdc' when the x402 handshake ran, or 'tfuel' if the server fell back.`,
+      inputSchema: {
+        model: z.string().min(1).describe('Model id, e.g. "llama-3-70b"'),
+        amount: z
+          .string()
+          .regex(AMOUNT_RE, 'amount must be an integer string (wei/smallest unit)')
+          .describe('Gross task value in smallest unit (wei); min 10000'),
+        sender: z.string().optional().describe('0x address that owns the task (default: payer wallet)'),
+        chain_id: z.enum(CHAIN_IDS).default('theta').describe('Settlement network (default theta)'),
+        input_hash: z.string().optional().describe('keccak256 of your input'),
+        memo: z.string().optional().describe('Free-form note'),
+        max_gpu_hours: z.string().optional().describe('Compute budget hint'),
+        subnet_id: z.number().int().optional().describe('Bittensor subnet id'),
+        callback_url: z.string().url().optional().describe('Webhook for signed TaskSettled event'),
+      },
+      annotations: {
+        title: 'Submit + pay for inference with USDC (x402)',
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      if (!config.payerPrivateKey) {
+        return fail(
+          'pay_with_usdc is not configured: start the server with XFUEL_PAYER_PRIVATE_KEY. ' +
+            'For unpaid/TFUEL settlement use submit_inference instead.',
+        );
+      }
+      let wallet: Wallet;
+      try {
+        wallet = new Wallet(config.payerPrivateKey);
+      } catch {
+        return fail('XFUEL_PAYER_PRIVATE_KEY is not a valid private key.');
+      }
+      try {
+        // Cast across ethers copies (MCP vs SDK node_modules): createEip3009Payer
+        // duck-types the signer (signTypedData + getAddress), so this is safe.
+        const signer = wallet as unknown as Parameters<typeof createEip3009Payer>[0];
+        const payer = createEip3009Payer(signer, { from: wallet.address });
+        const res = await client.submitInference(args.model, args.sender ?? wallet.address, args.amount, {
+          chain_id: args.chain_id as ChainId,
+          input_hash: args.input_hash,
+          memo: args.memo,
+          max_gpu_hours: args.max_gpu_hours,
+          subnet_id: args.subnet_id,
+          callback_url: args.callback_url,
+          payment: { rail: 'usdc' },
+          payer,
+        });
+        const rail = res.payment_rail ?? 'usdc';
+        return ok(
+          res as unknown as Record<string, unknown>,
+          `Submitted+paid task ${res.task_id} (status: ${res.status}, rail: ${rail}` +
+            `${rail === 'tfuel' ? ' — server has x402 disabled, fell back to TFUEL' : ` via x402, ref: ${res.payment_ref ?? 'n/a'}`}).`,
         );
       } catch (err) {
         return fail(describeError(err));
@@ -298,6 +393,41 @@ Returns JSON: the /health payload (status, server, version, fee_config, chains, 
         return ok(
           res as unknown as Record<string, unknown>,
           `API ${config.apiUrl}: ${res.status} (v${res.version}).`,
+        );
+      } catch (err) {
+        return fail(describeError(err));
+      }
+    },
+  );
+
+  // ── list_models ────────────────────────────────────────────────────────────
+  server.registerTool(
+    'list_models',
+    {
+      title: 'List routable models',
+      description: `List the models XFuel can route inference to (OpenAI-compatible GET /v1/models).
+Call this first to discover valid model ids, then pass one as 'model' to submit_inference
+or pay_with_usdc. No side effects.
+
+Args: none.
+
+Returns JSON: { object: 'list', data: [{ id, object: 'model', created, owned_by }] }.`,
+      inputSchema: {},
+      annotations: {
+        title: 'List routable models',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async () => {
+      try {
+        const res = await client.listModels();
+        const ids = res.data?.map((m) => m.id) ?? [];
+        return ok(
+          res as unknown as Record<string, unknown>,
+          `${ids.length} model(s): ${ids.join(', ') || 'none'}.`,
         );
       } catch (err) {
         return fail(describeError(err));

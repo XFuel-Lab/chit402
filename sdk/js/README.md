@@ -13,6 +13,10 @@
 npm install xfuel-sdk
 ```
 
+> **Runnable quickstart:** [`examples/quickstart.ts`](./examples/quickstart.ts)
+> (`npm run example:quickstart`) — the full submit → settle → prove → verify loop in
+> ~20 lines against the hosted testnet demo (zero config).
+
 ## Quick Start
 
 ```typescript

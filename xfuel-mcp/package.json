@@ -1,6 +1,7 @@
 {
   "name": "xfuel-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "mcpName": "io.github.XFuel-Lab/xfuel-mcp",
   "description": "First-party Model Context Protocol (MCP) server for the XFuel Protocol — submit AI inference, quote/price tasks, fetch ZK proofs, and verify them from any MCP client. Runs over stdio or streamable HTTP.",
   "type": "module",
   "main": "dist/index.js",
@@ -11,7 +12,8 @@
     "dist",
     "README.md",
     "LICENSE",
-    ".env.example"
+    ".env.example",
+    "server.json"
   ],
   "engines": {
     "node": ">=18"
@@ -24,6 +26,8 @@
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
+    "test": "node --import tsx --test src/__tests__/config.test.ts src/__tests__/format.test.ts src/__tests__/tools.test.ts",
+    "prepublishOnly": "npm run build && npm test",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
   },
   "keywords": [
@@ -53,7 +57,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "ethers": "^6.16.0",
     "express": "^5.2.1",
-    "xfuel-sdk": "file:../sdk/js",
+    "xfuel-sdk": "^0.2.0",
     "zod": "^3.25.1"
   },
   "devDependencies": {

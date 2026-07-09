@@ -26,6 +26,14 @@ export interface McpConfig {
   rpcUrl?: string;
   /** Optional ZKVerifierSP1 address (paired with rpcUrl). */
   zkVerifierAddress?: string;
+  /**
+   * Optional payer private key that enables the `pay_with_usdc` tool. When unset,
+   * the tool returns a clear "not configured" message and every other tool still
+   * works zero-config. Read from env ONLY (never a CLI flag) so keys don't land
+   * in shell history / process listings. The USDC network is taken from the
+   * server's x402 challenge, so no network config is needed here.
+   */
+  payerPrivateKey?: string;
 }
 
 export interface ParsedArgs {
@@ -55,6 +63,7 @@ MISC
 ENVIRONMENT (CLI flags take precedence)
   XFUEL_API_URL, XFUEL_API_KEY, XFUEL_MCP_TRANSPORT, XFUEL_MCP_PORT,
   XFUEL_MCP_AUTH_TOKEN, XFUEL_RPC_URL, ZK_VERIFIER_ADDRESS
+  XFUEL_PAYER_PRIVATE_KEY  enables the pay_with_usdc tool (env only; never a flag)
 
 EXAMPLES
   npx xfuel-mcp                         # stdio, hosted testnet demo
@@ -124,6 +133,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       httpAuthToken: process.env.XFUEL_MCP_AUTH_TOKEN || undefined,
       rpcUrl: process.env.XFUEL_RPC_URL || undefined,
       zkVerifierAddress: process.env.ZK_VERIFIER_ADDRESS || undefined,
+      payerPrivateKey: process.env.XFUEL_PAYER_PRIVATE_KEY || undefined,
     },
   };
 }

@@ -312,6 +312,20 @@ export interface HealthResponse {
   message_types: string[];
 }
 
+/** One entry of the OpenAI-compatible `GET /v1/models` list. */
+export interface ModelObject {
+  id: string;
+  object: 'model';
+  created?: number;
+  owned_by?: string;
+}
+
+/** Response of `GET /v1/models` (OpenAI-compatible model list). */
+export interface ModelsResponse {
+  object: 'list';
+  data: ModelObject[];
+}
+
 // ─── Error Types ────────────────────────────────────────────────────────────
 
 export class XFuelApiError extends Error {
@@ -606,6 +620,18 @@ export class XFuelClient {
     return data;
   }
 
+  // ── GET /v1/models ─────────────────────────────────────────────────────
+
+  /**
+   * List the models routable through XFuel (OpenAI-compatible `GET /v1/models`).
+   * Handy for discovery before {@link submitInference} — use a returned `id` as
+   * the `model`.
+   */
+  async listModels(): Promise<ModelsResponse> {
+    const { data } = await this.http.get<ModelsResponse>('/v1/models');
+    return data;
+  }
+
   // ── Polling helper ─────────────────────────────────────────────────────
 
   async waitForCompletion(
@@ -637,6 +663,18 @@ export class XFuelClient {
       0,
       'polling_timeout',
     );
+  }
+
+  /**
+   * Alias for {@link waitForCompletion}. Kept for parity with the docs/AGENTS.md
+   * quick-start (`client.waitForSettlement(taskId)`); a task is "settled" once it
+   * reaches a terminal status.
+   */
+  async waitForSettlement(
+    taskId: string,
+    opts: WaitOptions = {},
+  ): Promise<TaskStatusResponse> {
+    return this.waitForCompletion(taskId, opts);
   }
 }
 
