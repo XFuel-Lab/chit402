@@ -70,7 +70,13 @@ const config = {
     // If usdc is requested but the facilitator is unavailable: fall back to TFUEL
     // (true) or return 503 (false).
     fallbackToTfuel: process.env.X402_FALLBACK_TFUEL === 'true',
-    gatewayUrl: process.env.ZAN_X402_GATEWAY_URL || null,   // facilitator (verify + settle)
+    // Facilitator protocol: 'x402' (standard — e.g. Coinbase's Base Sepolia
+    // reference, no key) or 'zan' (bespoke gateway; default, also the mock's shape).
+    facilitatorProvider: (process.env.X402_FACILITATOR_PROVIDER || 'zan').toLowerCase() === 'x402' ? 'x402' : 'zan',
+    // Standard x402 facilitator URL (used when facilitatorProvider='x402'); null →
+    // the adapter defaults to the public reference facilitator (Base Sepolia).
+    facilitatorUrl: process.env.X402_FACILITATOR_URL || null,
+    gatewayUrl: process.env.ZAN_X402_GATEWAY_URL || null,   // ZAN facilitator (verify + settle)
     apiKey: process.env.ZAN_X402_API_KEY || null,
     payTo: process.env.X402_PAY_TO || null,                 // Base USDC treasury
     network: process.env.X402_NETWORK || 'base',            // base | solana

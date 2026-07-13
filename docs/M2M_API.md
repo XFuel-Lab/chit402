@@ -115,7 +115,8 @@ curl -X POST http://localhost:3002/task-request \
   },
   "_links": {
     "status": "/task-status?task_id=m2m-task-1-1739299200000",
-    "proof": "/prove-result?task_id=m2m-task-1-1739299200000"
+    "proof": "/prove-result?task_id=m2m-task-1-1739299200000",
+    "receipt": "/receipt/m2m-task-1-1739299200000"
   }
 }
 ```
@@ -243,6 +244,35 @@ Settle an accepted A2A bid using a PAS (Proxy Adaptor Signature) instead of a ZK
 ```bash
 curl "http://localhost:3002/task-status?task_id=m2m-task-1-..." -H "X-API-Key: ..."
 ```
+
+---
+
+### `GET /receipt/:taskId` — Public verifiable receipt (no auth)
+
+A **public, no-auth, shareable** receipt for a task. Returns a clean **HTML** page by
+default (great for sharing a link / unfurling), or **JSON** with `?format=json` (or
+`Accept: application/json`) for agents. Rate-limited per-IP.
+
+It exposes **no secrets** — no proof bytes, no raw model output, no keys. It shows the
+route, payment (rail + settlement ref, with a block-explorer link for Base/Base Sepolia
+txs), proof status (system, outcome, nullifier, proving time), an output-hash
+commitment, and an **independent re-derivation of the x402 payment-binding commitment**
+so anyone can confirm "paid + proven" without trusting the server.
+
+```bash
+# Shareable HTML page (open in a browser)
+curl "http://localhost:3002/receipt/m2m-task-1-..."
+
+# Machine-readable JSON (agents)
+curl "http://localhost:3002/receipt/m2m-task-1-...?format=json"
+```
+
+The JSON `binding` block includes `expected_commitment`, `recomputed_commitment`, and
+`matches` — the local re-derivation of `keccak256(paymentRefHash, taskIdHash, rail,
+amount)`. Honest proof scope is stated on the receipt: the SP1 proof attests settlement
+metadata + an output-hash commitment, **not** that the provider computed the model
+correctly (see `docs/POSITIONING.md` §2). The `POST /task-request` response now also
+returns `_links.receipt`.
 
 ---
 

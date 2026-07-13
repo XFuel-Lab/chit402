@@ -64,7 +64,11 @@ export function priceUSDC(body = {}, cfg = config.x402) {
  * @param {{ taskId:string, cfg?:Object }} opts
  */
 export async function runX402Handshake(req, { taskId, cfg = config.x402 } = {}) {
-  const gwOpts = { gatewayUrl: cfg.gatewayUrl, apiKey: cfg.apiKey, store: challengeStore };
+  // For the standard x402 facilitator, the URL comes from cfg.facilitatorUrl
+  // (falling back to the adapter's public-reference default when null).
+  const provider = (cfg.facilitatorProvider || 'zan').toLowerCase() === 'x402' ? 'x402' : 'zan';
+  const gatewayUrl = provider === 'x402' ? (cfg.facilitatorUrl || cfg.gatewayUrl || null) : cfg.gatewayUrl;
+  const gwOpts = { provider, gatewayUrl, apiKey: cfg.apiKey, store: challengeStore };
   const paymentHeader = req.headers?.['x-payment'];
 
   // Step 1 — no payment yet: issue a bound 402 challenge.

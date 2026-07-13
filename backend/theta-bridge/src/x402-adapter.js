@@ -1,5 +1,10 @@
 import crypto from 'crypto';
 import logger from './logger.js';
+import {
+  verifyViaFacilitator,
+  settleViaFacilitator,
+  DEFAULT_FACILITATOR_URL,
+} from './x402-facilitator.js';
 
 /**
  * XFuel ⇄ ZAN x402 adapter.
@@ -19,15 +24,20 @@ import logger from './logger.js';
  * the AGENT's wallet (agent-side, pluggable); this module never holds keys.
  *
  * Status: adapter hardened (challenge binding, nonce/replay store, verify+settle,
- * pricing). The facilitator HTTP calls target a ZAN x402 gateway; until one is
- * provisioned, use the mock facilitator (x402-mock-facilitator.js) for dev/CI.
+ * pricing). Two facilitator protocols are supported via X402_FACILITATOR_PROVIDER:
+ *   - 'x402' → the STANDARD x402 facilitator (e.g. Coinbase's public Base Sepolia
+ *     reference at https://x402.org/facilitator, no API key) — see x402-facilitator.js.
+ *   - 'zan'  → the bespoke ZAN gateway (default; also the shape the mock speaks).
  * Gated behind X402_ENABLED at the server layer.
  *
  * Env:
  *   X402_ENABLED=true
  *   X402_DEFAULT_RAIL=usdc|tfuel        (server default rail; start tfuel)
  *   X402_FALLBACK_TFUEL=true            (usdc unavailable → fall back vs 503)
- *   ZAN_X402_GATEWAY_URL=https://...    (facilitator; verify + settle)
+ *   X402_FACILITATOR_PROVIDER=x402|zan  (which facilitator protocol to speak)
+ *   X402_FACILITATOR_URL=https://...    (standard facilitator; default public ref)
+ *   X402_FACILITATOR_API_KEY=...        (optional; not needed for the public testnet)
+ *   ZAN_X402_GATEWAY_URL=https://...    (ZAN facilitator; verify + settle)
  *   ZAN_X402_API_KEY=...
  *   X402_PAY_TO=0x...                   (Base USDC treasury)
  *   X402_NETWORK=base                   (base | solana)
@@ -185,8 +195,28 @@ export function buildPaymentChallenge(p, opts = {}) {
 }
 
 // ─── Shared facilitator resolution ─────────────────────────────────────────
+/**
+ * Which facilitator protocol to speak:
+ *   'x402' → standard x402 facilitator (e.g. Coinbase's Base Sepolia reference)
+ *   'zan'  → bespoke ZAN /verify+/settle contract (default; also the mock's shape)
+ */
+function resolveProvider(opts = {}) {
+  const p = (opts.provider || process.env.X402_FACILITATOR_PROVIDER || 'zan').toLowerCase();
+  return p === 'x402' ? 'x402' : 'zan';
+}
+
 function resolveGateway(opts = {}) {
+  const provider = resolveProvider(opts);
+  if (provider === 'x402') {
+    return {
+      provider,
+      // Public testnet facilitator (Base Sepolia) needs no API key.
+      gateway: opts.gatewayUrl || process.env.X402_FACILITATOR_URL || DEFAULT_FACILITATOR_URL,
+      apiKey: opts.apiKey || process.env.X402_FACILITATOR_API_KEY || null,
+    };
+  }
   return {
+    provider,
     gateway: opts.gatewayUrl || process.env.ZAN_X402_GATEWAY_URL || null,
     apiKey: opts.apiKey || process.env.ZAN_X402_API_KEY || null,
   };
@@ -226,13 +256,20 @@ function checkBinding(opts) {
  * @returns {Promise<{valid:boolean, txRef?:string, reason?:string}>}
  */
 export async function verifyPayment(paymentHeader, opts = {}) {
-  const { gateway, apiKey } = resolveGateway(opts);
-  if (!gateway || !apiKey) return { valid: false, reason: 'gateway_not_configured' };
+  const { provider, gateway, apiKey } = resolveGateway(opts);
+  // ZAN gateway requires an API key; the standard x402 public facilitator does not.
+  if (!gateway || (provider === 'zan' && !apiKey)) {
+    return { valid: false, reason: 'gateway_not_configured' };
+  }
   if (!paymentHeader) return { valid: false, reason: 'missing_payment_header' };
 
   const bind = checkBinding(opts);
   if (!bind.ok) return { valid: false, reason: bind.reason };
   const challenge = bind.challenge;
+
+  if (provider === 'x402') {
+    return verifyViaFacilitator(paymentHeader, { gateway, apiKey, challenge });
+  }
 
   try {
     const res = await fetch(`${gateway.replace(/\/$/, '')}/verify`, {
@@ -272,8 +309,10 @@ export async function verifyPayment(paymentHeader, opts = {}) {
  * @returns {Promise<{settled:boolean, txRef?:string, reason?:string}>}
  */
 export async function settlePayment(paymentHeader, opts = {}) {
-  const { gateway, apiKey } = resolveGateway(opts);
-  if (!gateway || !apiKey) return { settled: false, reason: 'gateway_not_configured' };
+  const { provider, gateway, apiKey } = resolveGateway(opts);
+  if (!gateway || (provider === 'zan' && !apiKey)) {
+    return { settled: false, reason: 'gateway_not_configured' };
+  }
   if (!paymentHeader) return { settled: false, reason: 'missing_payment_header' };
 
   const bind = checkBinding(opts);
@@ -281,6 +320,12 @@ export async function settlePayment(paymentHeader, opts = {}) {
   const challenge = bind.challenge;
   const store = opts.store === undefined ? challengeStore : opts.store;
   const nonce = opts.nonce || challenge?.nonce || null;
+
+  if (provider === 'x402') {
+    const r = await settleViaFacilitator(paymentHeader, { gateway, apiKey, challenge });
+    if (r.settled && store && nonce) store.markSpent(nonce);
+    return r;
+  }
 
   try {
     const res = await fetch(`${gateway.replace(/\/$/, '')}/settle`, {

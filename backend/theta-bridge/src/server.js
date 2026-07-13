@@ -10,6 +10,7 @@ import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhook
 import { resolveRail, runX402Handshake, priceUSDC } from './x402-server.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { proveAllowedForKey } from './prove-gate.js';
+import { buildReceipt, renderReceiptHtml, renderReceiptNotFound } from './receipt.js';
 
 /**
  * XFuel AI DePIN — M2M API Server
@@ -25,6 +26,7 @@ import { proveAllowedForKey } from './prove-gate.js';
  *   POST  /a2a-message     Send an A2A (Agent-to-Agent) message with optional escrow
  *   POST  /a2a-settle-fair-exchange  Settle an A2A bid via Fair Exchange (PAS signature)
  *   GET   /task-status     Query task status / ProofOutcome
+ *   GET   /receipt/:taskId Public, no-auth verifiable receipt (HTML + ?format=json)
  *   PUT   /webhook         Register a webhook for TaskSettled events (HMAC-signed)
  *   GET   /webhook         List registered webhooks
  *   DELETE /webhook        Remove a registered webhook (by id or url)
@@ -692,8 +694,9 @@ export function createApp() {
           collector:   'FeeCollector.wasm → CW20 Send → RevenueSplitter',
         },
         _links: {
-          status: `/task-status?task_id=${effectiveTaskId}`,
-          proof:  `/prove-result?task_id=${effectiveTaskId}`,
+          status:  `/task-status?task_id=${effectiveTaskId}`,
+          proof:   `/prove-result?task_id=${effectiveTaskId}`,
+          receipt: `/receipt/${effectiveTaskId}`,   // public, no-auth, shareable
         },
       });
     } catch (err) {
@@ -1152,6 +1155,39 @@ export function createApp() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // GET /receipt/:taskId — PUBLIC, no-auth verifiable receipt.
+  //   • HTML by default (clean, shareable page for a browser / link unfurl)
+  //   • JSON via `?format=json` or `Accept: application/json` (for agents)
+  // Rate-limited (per-IP) but intentionally NOT behind authenticate — the whole
+  // point is that anyone can independently verify "paid + proven". It exposes no
+  // secrets (no proof bytes, no raw output, no keys) — see src/receipt.js.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  app.get('/receipt/:taskId', rateLimit, (req, res) => {
+    try {
+      const { taskId } = req.params;
+      const aiListener = getAIListener();
+      const task = _findTask(aiListener, taskId);
+      const wantsJson = req.query.format === 'json' || req.accepts(['html', 'json']) === 'json';
+
+      if (!task) {
+        if (wantsJson) {
+          return res.status(404).json({ error: 'not_found', message: `Task ${taskId} not found`, task_id: taskId });
+        }
+        return res.status(404).type('html').send(renderReceiptNotFound(taskId));
+      }
+
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const receipt = buildReceipt(task, { baseUrl });
+      if (wantsJson) return res.json(receipt);
+      return res.type('html').send(renderReceiptHtml(receipt));
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /receipt error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // PUT /webhook — Register (or update) a webhook for settlement events
   // GET /webhook — List registered webhooks
   // DELETE /webhook — Remove a webhook by id or url
@@ -1254,7 +1290,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, GET /task-status, PUT|GET|DELETE /webhook, GET /health, GET /llms.txt, GET /v1/models, POST /v1/chat/completions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /llms.txt, GET /v1/models, POST /v1/chat/completions',
     });
   });
 

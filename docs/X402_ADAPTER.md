@@ -1,8 +1,40 @@
-# ZAN x402 Adapter
+# x402 Adapter
 
 Status: **Flag-gated** (`X402_ENABLED`). Module: `backend/theta-bridge/src/x402-adapter.js`.
-Mock facilitator: `backend/theta-bridge/src/x402-mock-facilitator.js`.
-Tests: `backend/theta-bridge/test/x402-adapter.test.mjs`.
+Facilitator protocols: **standard x402** (`backend/theta-bridge/src/x402-facilitator.js`,
+provider `x402` — live public Base Sepolia facilitator) and **ZAN** (bespoke gateway,
+provider `zan`, the default). Mock facilitator (speaks both shapes):
+`backend/theta-bridge/src/x402-mock-facilitator.js`.
+Tests: `backend/theta-bridge/test/x402-adapter.test.mjs`,
+`backend/theta-bridge/test/x402-facilitator.test.mjs`.
+
+## Live public facilitator (Base Sepolia) — recommended for testnet
+
+The standard x402 provider points at a public **Coinbase reference facilitator**
+(`https://x402.org/facilitator`) which settles real (test) USDC on Base Sepolia and
+needs **no API key**. This is the fastest way to make the USDC/x402 loop real without
+waiting on a bespoke gateway.
+
+```bash
+X402_ENABLED=true
+X402_DEFAULT_RAIL=usdc
+X402_FACILITATOR_PROVIDER=x402         # speak the standard x402 protocol
+# X402_FACILITATOR_URL=                # optional; defaults to https://x402.org/facilitator
+X402_NETWORK=base-sepolia              # challenge network (client signs USDC on Base Sepolia)
+X402_PAY_TO=0x<your-base-sepolia-treasury>
+X402_USDC_PRICE_DEFAULT=10000          # $0.01 (6dp)
+```
+
+The agent-side payer signs a spec EIP-3009 `transferWithAuthorization` with
+`createEip3009Payer` (`xfuel-sdk/onchain`) — the SDK already knows the Base Sepolia
+USDC address + EIP-712 domain, so no client change is needed. The backend translates
+the X-PAYMENT blob into the standard `paymentPayload` + `paymentRequirements` and calls
+the facilitator's `/verify` then `/settle`. `paymentRef` comes back as
+`base-sepolia:<txHash>`.
+
+> To move to **Base mainnet** later, use a facilitator that supports mainnet (e.g.
+> Coinbase CDP via `X402_FACILITATOR_URL` + `X402_FACILITATOR_API_KEY`), set
+> `X402_NETWORK=base`, and fund a mainnet treasury. No code change.
 
 ## Why
 
@@ -64,16 +96,26 @@ payer is **agent-side / pluggable** (no server-custodial keys).
 
 ```bash
 X402_ENABLED=true
-X402_DEFAULT_RAIL=tfuel            # start tfuel; flip to usdc once gateway is stable
+X402_DEFAULT_RAIL=tfuel            # start tfuel; flip to usdc once a facilitator is live
 X402_FALLBACK_TFUEL=true          # usdc unavailable → fall back to TFUEL vs 503
+
+# Facilitator protocol selection
+X402_FACILITATOR_PROVIDER=zan     # 'x402' (standard/public) | 'zan' (bespoke; default)
+X402_FACILITATOR_URL=             # standard facilitator; blank → https://x402.org/facilitator
+X402_FACILITATOR_API_KEY=         # optional; not needed for the public testnet facilitator
+
+# ZAN gateway (only used when provider=zan)
 ZAN_X402_GATEWAY_URL=https://<zan-x402-facilitator>
 ZAN_X402_API_KEY=<key>
-X402_PAY_TO=0x<base-usdc-treasury>
-X402_NETWORK=base                 # base | solana
+
+X402_PAY_TO=0x<usdc-treasury>
+X402_NETWORK=base-sepolia         # base-sepolia (testnet) | base | solana
 X402_ASSET=USDC
 X402_CHALLENGE_TTL_MS=120000
 X402_USDC_PRICE_DEFAULT=10000     # $0.01 (6dp)
 X402_USDC_PRICES={"llama-3-70b":"50000"}
+# Optional overrides for the standard facilitator's EIP-712 domain / token:
+# X402_ASSET_ADDRESS=0x...  X402_EIP712_NAME=USDC  X402_EIP712_VERSION=2
 ```
 
 ## Open / next (Phase 1 wiring)
@@ -82,8 +124,9 @@ X402_USDC_PRICES={"llama-3-70b":"50000"}
    challenge when `rail=usdc` and no `X-PAYMENT`; verify+settle on retry; attach
    `paymentRail`/`paymentRef` to the task + status + `TaskSettled` webhook.
 2. **`/task-quote`** endpoint using `priceTaskUSDC`.
-3. **ZAN facilitator** — provision the real gateway + key; until then the mock
-   facilitator covers dev/CI.
+3. **Facilitator** — ✅ standard x402 provider wired to the public Base Sepolia
+   reference (`provider=x402`, no key). ZAN remains an option (`provider=zan`) once
+   its gateway is provisioned; the mock facilitator (both shapes) covers dev/CI.
 4. **Phase 2** — commit `paymentRef` into SP1 public values (proof attests
    paid+computed); Base→Theta fee-split bridge/accounting; Solana network option.
 
