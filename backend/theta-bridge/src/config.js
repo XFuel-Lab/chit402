@@ -70,7 +70,13 @@ const config = {
     // If usdc is requested but the facilitator is unavailable: fall back to TFUEL
     // (true) or return 503 (false).
     fallbackToTfuel: process.env.X402_FALLBACK_TFUEL === 'true',
-    gatewayUrl: process.env.ZAN_X402_GATEWAY_URL || null,   // facilitator (verify + settle)
+    // Facilitator protocol: 'x402' (standard — e.g. Coinbase's Base Sepolia
+    // reference, no key) or 'zan' (bespoke gateway; default, also the mock's shape).
+    facilitatorProvider: (process.env.X402_FACILITATOR_PROVIDER || 'zan').toLowerCase() === 'x402' ? 'x402' : 'zan',
+    // Standard x402 facilitator URL (used when facilitatorProvider='x402'); null →
+    // the adapter defaults to the public reference facilitator (Base Sepolia).
+    facilitatorUrl: process.env.X402_FACILITATOR_URL || null,
+    gatewayUrl: process.env.ZAN_X402_GATEWAY_URL || null,   // ZAN facilitator (verify + settle)
     apiKey: process.env.ZAN_X402_API_KEY || null,
     payTo: process.env.X402_PAY_TO || null,                 // Base USDC treasury
     network: process.env.X402_NETWORK || 'base',            // base | solana
@@ -243,7 +249,29 @@ const config = {
   service: {
     port: parseInt(process.env.PORT) || 3001,
     logLevel: process.env.LOG_LEVEL || 'info',
-    nodeEnv: process.env.NODE_ENV || 'development'
+    nodeEnv: process.env.NODE_ENV || 'development',
+    // Canonical public base URL for building absolute, shareable links (the
+    // `verify_url` / receipt link). Set this when the server sits behind a proxy
+    // or CDN (e.g. https://api-testnet.xfuel.app) so links aren't derived from the
+    // internal host. When unset, links are derived from the request host.
+    publicBaseUrl: process.env.PUBLIC_BASE_URL || null,
+  },
+
+  // Task/receipt persistence. Tasks (and thus the public `verify_url` receipt) are
+  // held in memory for the task lifetime; without persistence a shared verify_url
+  // 404s after a restart or once a settled task is GC'd. This write-through file
+  // store keeps a durable, public-safe snapshot so receipts survive both.
+  // Single-node/file by design (matches the Phase-1 single-process model); swap the
+  // dir for a shared volume, or a Redis/Postgres store, when scaling horizontally.
+  taskStore: {
+    // Disable to run purely in-memory (e.g. ephemeral CI) with TASK_STORE_PERSIST=false.
+    persist: process.env.TASK_STORE_PERSIST !== 'false',
+    // Durable snapshot directory (gitignored). Defaults next to the package.
+    dir: process.env.TASK_STORE_DIR || join(__dirname, '..', '.data', 'tasks'),
+    // How often to flush in-place task mutations (status/proof) to disk.
+    autoFlushMs: parseInt(process.env.TASK_STORE_FLUSH_MS, 10) || 10000,
+    // Retain a settled receipt this long before pruning (default 30 days).
+    retentionMs: parseInt(process.env.TASK_STORE_RETENTION_MS, 10) || 30 * 24 * 3600 * 1000,
   },
 
   // Retry Configuration

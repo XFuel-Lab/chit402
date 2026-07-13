@@ -5,6 +5,7 @@ import logger from './logger.js';
 import { getAIListener } from './ai-listener.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { proveAllowedForKey } from './prove-gate.js';
+import { buildVerifyUrl, baseUrlFromReq } from './receipt.js';
 
 /**
  * XFuel OpenAI-compatible gateway.
@@ -238,7 +239,7 @@ function registerTaskAndProve({ model, messages, content, provider, proveAllowed
 
 // ─── Verification receipt ─────────────────────────────────────────────────────
 
-function buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed = true, mockReason }) {
+function buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed = true, mockReason, baseUrl = '' }) {
   // pending  → proof generating; unavailable → no prover; gated → cost-gated for
   // this key (signed receipt only); skipped → mock response (nothing to prove).
   const proofStatus = mock
@@ -248,8 +249,11 @@ function buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed =
       : !proveAllowed
         ? 'gated'
         : 'pending';
+  const verifyUrl = buildVerifyUrl(baseUrl, taskId);
   return {
     task_id: taskId,
+    // Canonical shareable proof link (public receipt page — same across all surfaces).
+    verify_url: verifyUrl,
     compute: {
       provider,
       real: !mock,
@@ -271,6 +275,7 @@ function buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed =
       links: {
         status: `/task-status?task_id=${taskId}`,
         proof: `/prove-result?task_id=${taskId}`,
+        receipt: verifyUrl,
       },
     },
   };
@@ -283,6 +288,7 @@ function setReceiptHeaders(res, receipt) {
   res.setHeader('x-xfuel-payment-rail', receipt.payment.rail);
   res.setHeader('x-xfuel-proof-status', receipt.proof.status);
   res.setHeader('x-xfuel-proof-url', receipt.proof.links.proof);
+  if (receipt.verify_url) res.setHeader('x-xfuel-verify-url', receipt.verify_url);
 }
 
 // ─── Bearer → X-API-Key shim ──────────────────────────────────────────────────
@@ -364,7 +370,8 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
     const { content, provider, mock } = inference;
     const proveAllowed = proveAllowedForKey(req.headers['x-api-key']);
     const { taskId, proverConfigured } = registerTaskAndProve({ model: echoModel, messages, content, provider, proveAllowed });
-    const receipt = buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed, mockReason: inference.raw?.reason });
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+    const receipt = buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed, mockReason: inference.raw?.reason, baseUrl });
 
     const promptTokens = estimateTokens(messagesToText(messages));
     const completionTokens = estimateTokens(content);

@@ -13,7 +13,10 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text: string }>;
 }>;
 
-function captureTools(config: Partial<McpConfig>): Map<string, ToolHandler> {
+function captureTools(
+  config: Partial<McpConfig>,
+  client: Partial<XFuelClient> = {},
+): Map<string, ToolHandler> {
   const handlers = new Map<string, ToolHandler>();
   const fakeServer = {
     registerTool(name: string, _def: unknown, handler: ToolHandler) {
@@ -27,9 +30,7 @@ function captureTools(config: Partial<McpConfig>): Map<string, ToolHandler> {
     port: 3033,
     ...config,
   };
-  // The client is never called on the branches under test.
-  const client = {} as XFuelClient;
-  registerTools(fakeServer as never, { client, config: fullConfig });
+  registerTools(fakeServer as never, { client: client as XFuelClient, config: fullConfig });
   return handlers;
 }
 
@@ -63,4 +64,36 @@ test('pay_with_usdc with an invalid payer key is rejected before any network cal
   const res = await handlers.get('pay_with_usdc')!({ model: 'llama-3-70b', amount: '10000', chain_id: 'theta' });
   assert.equal(res.isError, true);
   assert.match(res.content[0].text, /not a valid private key/);
+});
+
+test('submit_inference surfaces the server-provided verify_url in the summary', async () => {
+  const handlers = captureTools(
+    {},
+    {
+      submitInference: async () =>
+        ({
+          task_id: 'task-xyz',
+          status: 'accepted',
+          payment_rail: 'tfuel',
+          verify_url: 'https://api-testnet.xfuel.app/receipt/task-xyz',
+        }) as never,
+    },
+  );
+  const res = await handlers.get('submit_inference')!({ model: 'llama-3-70b', sender: '0xabc', amount: '10000', chain_id: 'theta' });
+  assert.equal(res.isError, undefined);
+  assert.match(res.content[0].text, /Verify\/share: https:\/\/api-testnet\.xfuel\.app\/receipt\/task-xyz/);
+});
+
+test('get_task_status falls back to a client-side verify_url when the server omits it', async () => {
+  const handlers = captureTools(
+    { apiUrl: 'https://api-testnet.xfuel.app/' },
+    {
+      // No verify_url on the response → tool derives it from apiUrl + task_id.
+      getTaskStatus: async () =>
+        ({ task_id: 'task-777', status: 'fee_collected', proof_outcome: 'regenerable' }) as never,
+    },
+  );
+  const res = await handlers.get('get_task_status')!({ task_id: 'task-777' });
+  assert.equal(res.isError, undefined);
+  assert.match(res.content[0].text, /Verify\/share: https:\/\/api-testnet\.xfuel\.app\/receipt\/task-777/);
 });

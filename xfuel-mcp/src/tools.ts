@@ -22,6 +22,17 @@ export interface ToolContext {
 const CHAIN_IDS = ['theta', 'bittensor', 'akash', 'osmosis', 'persistence'] as const;
 const AMOUNT_RE = /^\d+$/;
 
+/**
+ * The shareable public receipt link for a task. Prefer the server-provided
+ * `verify_url`; fall back to constructing it from the configured API URL so a tool
+ * always surfaces one link an agent (or its user) can open/share.
+ */
+function verifyUrlOf(res: { task_id?: string; verify_url?: string }, apiUrl: string): string {
+  if (res.verify_url) return res.verify_url;
+  const base = apiUrl.replace(/\/$/, '');
+  return res.task_id ? `${base}/receipt/${res.task_id}` : '';
+}
+
 /** Register every XFuel tool on `server`. */
 export function registerTools(server: McpServer, ctx: ToolContext): void {
   const { client, config } = ctx;
@@ -44,7 +55,8 @@ Args:
   - subnet_id (number, optional): Bittensor subnet id when chain_id='bittensor'
   - callback_url (string, optional): webhook that receives a signed TaskSettled event
 
-Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount, net_amount, links }.
+Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount, net_amount, verify_url, links }.
+'verify_url' is a public, no-auth receipt page you can open or share to prove settlement.
 Poll progress with get_task_status(task_id); fetch settlement with get_proof(task_id).
 
 Note: this submits with the server's default (unpaid/TFUEL) rail. For USDC/x402
@@ -83,7 +95,8 @@ settlement (which needs an agent-side signer) use the xfuel-sdk directly.`,
         });
         return ok(
           res as unknown as Record<string, unknown>,
-          `Submitted task ${res.task_id} (status: ${res.status}, rail: ${res.payment_rail ?? 'tfuel'}).`,
+          `Submitted task ${res.task_id} (status: ${res.status}, rail: ${res.payment_rail ?? 'tfuel'}).\n` +
+            `Verify/share: ${verifyUrlOf(res, config.apiUrl)}`,
         );
       } catch (err) {
         return fail(describeError(err));
@@ -177,7 +190,8 @@ Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount
         return ok(
           res as unknown as Record<string, unknown>,
           `Submitted+paid task ${res.task_id} (status: ${res.status}, rail: ${rail}` +
-            `${rail === 'tfuel' ? ' — server has x402 disabled, fell back to TFUEL' : ` via x402, ref: ${res.payment_ref ?? 'n/a'}`}).`,
+            `${rail === 'tfuel' ? ' — server has x402 disabled, fell back to TFUEL' : ` via x402, ref: ${res.payment_ref ?? 'n/a'}`}).\n` +
+            `Verify/share: ${verifyUrlOf(res, config.apiUrl)}`,
         );
       } catch (err) {
         return fail(describeError(err));
@@ -195,8 +209,9 @@ Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount
 Args:
   - task_id (string): the id returned by submit_inference
 
-Returns JSON: { task_id, status, proof_outcome, message_type, chain_id, gross_amount,
+Returns JSON: { task_id, status, proof_outcome, verify_url, message_type, chain_id, gross_amount,
 fee_amount, net_amount, fee_bps, payment_rail, payment_ref, result, sp1_proof, created_at, updated_at }.
+'verify_url' is a public, no-auth receipt page you can open or share to prove settlement.
 'status' reaches a terminal value ('completed' | 'fee_collected' | 'failed'); 'proof_outcome'
 is one of 'pending' | 'valid' | 'regenerable' | 'invalid'.`,
       inputSchema: {
@@ -215,7 +230,8 @@ is one of 'pending' | 'valid' | 'regenerable' | 'invalid'.`,
         const res = await client.getTaskStatus(args.task_id);
         return ok(
           res as unknown as Record<string, unknown>,
-          `Task ${res.task_id}: status=${res.status}, proof=${res.proof_outcome}.`,
+          `Task ${res.task_id}: status=${res.status}, proof=${res.proof_outcome}.\n` +
+            `Verify/share: ${verifyUrlOf(res, config.apiUrl)}`,
         );
       } catch (err) {
         return fail(describeError(err));
@@ -233,8 +249,9 @@ is one of 'pending' | 'valid' | 'regenerable' | 'invalid'.`,
 Args:
   - task_id (string): the id returned by submit_inference
 
-Returns JSON: { task_id, status, proof_outcome, payment_binding, sp1_proof: { proof,
+Returns JSON: { task_id, status, proof_outcome, verify_url, payment_binding, sp1_proof: { proof,
 publicInputs, nullifier, provingTimeMs }, fee }.
+'verify_url' is a public, no-auth receipt page you can open or share to prove settlement.
 
 The proof attests settlement metadata + a commitment to the output hash (NOT inference
 correctness). To validate it, use verify_proof(task_id). Fails if the task has not
@@ -255,7 +272,8 @@ settled yet — poll get_task_status until proof_outcome is 'valid'.`,
         const res = await client.getProof(args.task_id);
         return ok(
           res as unknown as Record<string, unknown>,
-          `Proof for ${res.task_id}: outcome=${res.proof_outcome}, nullifier=${res.sp1_proof?.nullifier ?? 'n/a'}.`,
+          `Proof for ${res.task_id}: outcome=${res.proof_outcome}, nullifier=${res.sp1_proof?.nullifier ?? 'n/a'}.\n` +
+            `Verify/share: ${verifyUrlOf(res, config.apiUrl)}`,
         );
       } catch (err) {
         return fail(describeError(err));

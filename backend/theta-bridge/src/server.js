@@ -10,6 +10,9 @@ import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhook
 import { resolveRail, runX402Handshake, priceUSDC } from './x402-server.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { proveAllowedForKey } from './prove-gate.js';
+import { buildReceipt, renderReceiptHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
+import { buildX402Manifest } from './x402-discovery.js';
+import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 
 /**
  * XFuel AI DePIN — M2M API Server
@@ -25,6 +28,7 @@ import { proveAllowedForKey } from './prove-gate.js';
  *   POST  /a2a-message     Send an A2A (Agent-to-Agent) message with optional escrow
  *   POST  /a2a-settle-fair-exchange  Settle an A2A bid via Fair Exchange (PAS signature)
  *   GET   /task-status     Query task status / ProofOutcome
+ *   GET   /receipt/:taskId Public, no-auth verifiable receipt (HTML + ?format=json)
  *   PUT   /webhook         Register a webhook for TaskSettled events (HMAC-signed)
  *   GET   /webhook         List registered webhooks
  *   DELETE /webhook        Remove a registered webhook (by id or url)
@@ -103,6 +107,13 @@ const LLMS_TXT = `# XFuel Protocol
 - POST /a2a-message       : agent-to-agent message (optional escrow).
 - PUT/GET/DELETE /webhook : signed settlement webhooks.
 - GET  /health            : status, fee config, demo limits.
+- GET  /stats             : aggregate, public-safe network usage (JSON + dashboard).
+
+## Discovery (x402 Bazaar)
+
+- GET  /.well-known/x402  : x402 discovery manifest — self-describes the USDC/x402
+  payable resource (POST /task-request, exact scheme on Base) in the bazaar shape,
+  so agents can discover + price XFuel with no XFuel-specific integration.
 
 ## SDK
 
@@ -333,7 +344,7 @@ export function createApp() {
       res.header('Vary', 'Origin');
       res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-PAYMENT, X-PAYMENT-NONCE');
       res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset');
+      res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, x-xfuel-verify-url, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset');
       if (req.method === 'OPTIONS') return res.sendStatus(204);
       next();
     });
@@ -676,6 +687,8 @@ export function createApp() {
         feeBps: appliedBps,
       }, 'Task request accepted');
 
+      const verifyUrl = buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl), effectiveTaskId);
+
       return res.status(202).json({
         task_id:       effectiveTaskId,
         status:        'accepted',
@@ -687,13 +700,16 @@ export function createApp() {
         fee_bps:       appliedBps,
         payment_rail:  paymentRail,
         payment_ref:   paymentRef,
+        // Canonical shareable proof link (public, no-auth). Same value as _links.receipt.
+        verify_url:    verifyUrl,
         fee_info: {
           description: `${(appliedBps / 100).toFixed(1)}% protocol fee → RevenueSplitter (30% BBB / 30% LP / 25% veXF / 15% Treasury)`,
           collector:   'FeeCollector.wasm → CW20 Send → RevenueSplitter',
         },
         _links: {
-          status: `/task-status?task_id=${effectiveTaskId}`,
-          proof:  `/prove-result?task_id=${effectiveTaskId}`,
+          status:  `/task-status?task_id=${effectiveTaskId}`,
+          proof:   `/prove-result?task_id=${effectiveTaskId}`,
+          receipt: verifyUrl,   // public, no-auth, shareable
         },
       });
     } catch (err) {
@@ -784,6 +800,7 @@ export function createApp() {
         task_id:        task.taskId,
         status:         task.status,
         proof_outcome:  task.sp1Proof?.error ? 'regenerable' : 'valid',
+        verify_url:     buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl), task.taskId),
         sp1_proof:      task.sp1Proof || null,
         // Phase 2 (flag-gated): x402 payment commitment bound into the proof.
         payment_binding: task.sp1Proof?.paymentBinding || null,
@@ -1092,6 +1109,7 @@ export function createApp() {
           task_id:        task.taskId,
           status:         task.status,
           proof_outcome:  proofOutcome,
+          verify_url:     buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl), task.taskId),
           proof_system:   task.intent?.proofSystem || 'sp1', // 'sp1' | 'zkgpt' — which prover ran; proof data is in sp1_proof for both
           message_type:   task.intent?.type,
           chain_id:       task.meta?.chain,
@@ -1152,6 +1170,39 @@ export function createApp() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // GET /receipt/:taskId — PUBLIC, no-auth verifiable receipt.
+  //   • HTML by default (clean, shareable page for a browser / link unfurl)
+  //   • JSON via `?format=json` or `Accept: application/json` (for agents)
+  // Rate-limited (per-IP) but intentionally NOT behind authenticate — the whole
+  // point is that anyone can independently verify "paid + proven". It exposes no
+  // secrets (no proof bytes, no raw output, no keys) — see src/receipt.js.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  app.get('/receipt/:taskId', rateLimit, (req, res) => {
+    try {
+      const { taskId } = req.params;
+      const aiListener = getAIListener();
+      const task = _findTask(aiListener, taskId);
+      const wantsJson = req.query.format === 'json' || req.accepts(['html', 'json']) === 'json';
+
+      if (!task) {
+        if (wantsJson) {
+          return res.status(404).json({ error: 'not_found', message: `Task ${taskId} not found`, task_id: taskId });
+        }
+        return res.status(404).type('html').send(renderReceiptNotFound(taskId));
+      }
+
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+      const receipt = buildReceipt(task, { baseUrl });
+      if (wantsJson) return res.json(receipt);
+      return res.type('html').send(renderReceiptHtml(receipt));
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /receipt error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // PUT /webhook — Register (or update) a webhook for settlement events
   // GET /webhook — List registered webhooks
   // DELETE /webhook — Remove a webhook by id or url
@@ -1202,6 +1253,23 @@ export function createApp() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // GET /.well-known/x402 — x402 Bazaar discovery manifest (public, no auth)
+  // Self-describes XFuel's USDC/x402-payable resource(s) in the bazaar shape so
+  // agents, crawlers, and Bazaar tooling can discover + price XFuel with no
+  // XFuel-specific integration. See docs/DISTRIBUTION.md and src/x402-discovery.js.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  app.get('/.well-known/x402', rateLimit, (req, res) => {
+    try {
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+      res.json(buildX402Manifest(baseUrl));
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /.well-known/x402 error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // GET /health — Server health and aggregate metrics
   // ═══════════════════════════════════════════════════════════════════════
 
@@ -1242,6 +1310,43 @@ export function createApp() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // GET /stats — Aggregate, public-safe usage telemetry + tiny dashboard
+  // Derived from the durable task snapshots, so numbers survive restarts and
+  // reflect real historical activity. HTML by default (shareable dashboard),
+  // JSON with ?format=json (or Accept: application/json). No secrets, no PII.
+  // Short in-memory cache bounds disk IO. Public, rate-limited. See telemetry.js.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  let _statsCache = { at: 0, data: null };
+  const STATS_TTL_MS = 15_000;
+
+  app.get('/stats', rateLimit, (req, res) => {
+    try {
+      const wantsJson =
+        req.query.format === 'json' ||
+        (req.headers.accept || '').includes('application/json');
+
+      const now = Date.now();
+      if (!_statsCache.data || now - _statsCache.at > STATS_TTL_MS) {
+        let tasks = [];
+        try {
+          const store = getAIListener().activeTasks;
+          tasks = typeof store.allSnapshots === 'function'
+            ? store.allSnapshots()
+            : [...store.values()];
+        } catch { /* listener not initialised — report zeros */ }
+        _statsCache = { at: now, data: computeUsageStats(tasks, { now }) };
+      }
+
+      if (wantsJson) return res.json(_statsCache.data);
+      return res.type('html').send(renderStatsHtml(_statsCache.data));
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /stats error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // OpenAI-compatible gateway (/v1/models, /v1/chat/completions)
   // Drop-in surface: point any OpenAI-compatible client's baseURL here.
   // Shares the rate-limit + auth middleware (accepts Authorization: Bearer).
@@ -1254,7 +1359,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, GET /task-status, PUT|GET|DELETE /webhook, GET /health, GET /llms.txt, GET /v1/models, POST /v1/chat/completions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /llms.txt, GET /.well-known/x402, GET /v1/models, POST /v1/chat/completions',
     });
   });
 
@@ -1407,6 +1512,13 @@ export async function startServer() {
       if (shuttingDown) return;
       shuttingDown = true;
       logger.info({ signal }, 'Shutting down M2M API server…');
+      // Flush any in-place task mutations to disk so the public verify_url receipt
+      // reflects the latest state after a restart (best-effort; safe if unsupported).
+      try {
+        getAIListener()?.activeTasks?.flushAll?.();
+      } catch (err) {
+        logger.warn({ err: err.message }, 'task-store flush on shutdown failed');
+      }
       const forceExit = setTimeout(() => {
         logger.warn('Forced shutdown after 10s drain timeout');
         process.exit(1);

@@ -7,6 +7,7 @@ import { getSP1Prover } from './sp1-prover-client.js';
 import { getZkGPTProver, isZkGPTProverConfigured } from './zkgpt-prover-client.js';
 import { buildPaymentBinding } from './payment-binding.js';
 import { proveGatedReason } from './prove-gate.js';
+import { createTaskStore } from './task-store.js';
 
 /**
  * AI Intent Listener — Osmosis/Akash IBC Event Monitor
@@ -82,7 +83,10 @@ class AIListener {
 
     // Event & task tracking
     this.processedEvents = new Set();
-    this.activeTasks = new Map(); // taskId → task data
+    // Durable, restart-safe task store (drop-in Map). Persists a public-safe snapshot
+    // so the public verify_url receipt survives restarts + the ~1h terminal GC below.
+    // Set TASK_STORE_PERSIST=false for a purely in-memory store. See task-store.js.
+    this.activeTasks = createTaskStore(config.taskStore); // taskId → task data
     this.taskNonce = 0;
     this.lastBlockHeights = { osmosis: 0, akash: 0 };
 
@@ -1436,7 +1440,15 @@ class AIListener {
         const sp1Prover = getSP1Prover();
         if (!sp1Prover) {
           logger.warn({ taskId: task.taskId }, 'SP1_PROVER_URL not set; skipping SP1 proof');
-          task.sp1Proof = { error: 'SP1_PROVER_URL not set', timestamp: Date.now() };
+          task.sp1Proof = {
+            error: 'SP1_PROVER_URL not set',
+            timestamp: Date.now(),
+            // The x402 payment binding is derived from the settlement (payment_ref +
+            // task + rail + amount), not from the prover — surface it as server-attested
+            // metadata (in_proof:false) even when no proof was generated, so the public
+            // receipt can still verify "paid" against the on-chain settlement.
+            paymentBinding: paymentBinding || null,
+          };
         } else {
           logger.info({
             taskId: task.taskId,
@@ -1488,6 +1500,9 @@ class AIListener {
         prover_error: proverError ?? (errCode ? `${errCode}: ${errMsg}` : errMsg),
         prover_response: typeof proverBody === 'object' && proverBody !== null ? proverBody : undefined,
         timestamp: Date.now(),
+        // Keep the settlement's payment binding on failed/regenerable proofs too
+        // (server-attested; recomputed pure from the task). See buildPaymentBinding.
+        paymentBinding: buildPaymentBinding(task, config.x402),
       };
     }
   }

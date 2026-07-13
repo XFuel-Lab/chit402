@@ -109,16 +109,25 @@ curl -X POST http://localhost:3002/task-request \
   "fee_amount": "5000",
   "net_amount": "995000",
   "fee_bps": 50,
+  "verify_url": "http://localhost:3002/receipt/m2m-task-1-1739299200000",
   "fee_info": {
     "description": "0.5% protocol fee → CoreRevenueSplitter (30% BBB / 30% GET / 25% veXF / 15% Treasury)",
     "collector": "FeeCollector.wasm → CW20 Send → RevenueSplitter"
   },
   "_links": {
     "status": "/task-status?task_id=m2m-task-1-1739299200000",
-    "proof": "/prove-result?task_id=m2m-task-1-1739299200000"
+    "proof": "/prove-result?task_id=m2m-task-1-1739299200000",
+    "receipt": "http://localhost:3002/receipt/m2m-task-1-1739299200000"
   }
 }
 ```
+
+**`verify_url`** is the canonical, **public, no-auth** proof link — the same value is
+threaded consistently across every surface (this API's `/task-status` + `/prove-result`
+responses, the OpenAI gateway `xfuel.verify_url` body field + `x-xfuel-verify-url` header,
+the SDK, and the MCP tools). Open or share it to prove settlement. It's absolute when the
+server knows its public base URL (set `PUBLIC_BASE_URL` behind a proxy/CDN) and matches
+`_links.receipt`.
 
 ---
 
@@ -142,6 +151,7 @@ curl "http://localhost:3002/prove-result?task_id=m2m-task-1-1739299200000" \
   "task_id": "m2m-task-1-1739299200000",
   "status": "fee_collected",
   "proof_outcome": "valid",
+  "verify_url": "http://localhost:3002/receipt/m2m-task-1-1739299200000",
   "sp1_proof": {
     "proof": "0x...",
     "publicInputs": "0x...",
@@ -242,6 +252,78 @@ Settle an accepted A2A bid using a PAS (Proxy Adaptor Signature) instead of a ZK
 
 ```bash
 curl "http://localhost:3002/task-status?task_id=m2m-task-1-..." -H "X-API-Key: ..."
+```
+
+The task response includes `verify_url` — the public, shareable receipt link (see below).
+
+---
+
+### `GET /receipt/:taskId` — Public verifiable receipt (no auth)
+
+A **public, no-auth, shareable** receipt for a task. Returns a clean **HTML** page by
+default (great for sharing a link / unfurling), or **JSON** with `?format=json` (or
+`Accept: application/json`) for agents. Rate-limited per-IP.
+
+It exposes **no secrets** — no proof bytes, no raw model output, no keys. It shows the
+route, payment (rail + settlement ref, with a block-explorer link for Base/Base Sepolia
+txs), proof status (system, outcome, nullifier, proving time), an output-hash
+commitment, and an **independent re-derivation of the x402 payment-binding commitment**
+so anyone can confirm "paid + proven" without trusting the server.
+
+```bash
+# Shareable HTML page (open in a browser)
+curl "http://localhost:3002/receipt/m2m-task-1-..."
+
+# Machine-readable JSON (agents)
+curl "http://localhost:3002/receipt/m2m-task-1-...?format=json"
+```
+
+The JSON `binding` block includes `expected_commitment`, `recomputed_commitment`, and
+`matches` — the local re-derivation of `keccak256(paymentRefHash, taskIdHash, rail,
+amount)`. Honest proof scope is stated on the receipt: the SP1 proof attests settlement
+metadata + an output-hash commitment, **not** that the provider computed the model
+correctly (see `docs/POSITIONING.md` §2).
+
+This page is the target of the `verify_url` returned by `POST /task-request`,
+`GET /task-status`, and `GET /prove-result` (and by the OpenAI gateway, SDK, and MCP
+tools) — one consistent, shareable proof link for every task. Set `PUBLIC_BASE_URL`
+to emit absolute links behind a proxy/CDN.
+
+**Durability:** tasks are held in an in-memory hot map for their live lifecycle, but a
+public-safe snapshot is also **persisted to disk** (write-through), so a shared
+`verify_url` keeps resolving across server restarts and after a settled task is evicted
+from the hot map. Snapshots are retained for `TASK_STORE_RETENTION_MS` (default 30 days),
+then pruned. Set `TASK_STORE_PERSIST=false` for a purely in-memory (ephemeral) node, or
+`TASK_STORE_DIR` to relocate the store (e.g. a shared volume). Single-node/file by
+design — swap for Redis/Postgres when scaling horizontally.
+
+---
+
+### `GET /stats` — Aggregate usage (public, no auth)
+
+A **public-safe** network-activity view derived from the durable task snapshots, so the
+numbers survive restarts and reflect real historical activity. Returns a small **HTML
+dashboard** by default (shareable) or **JSON** with `?format=json` (or
+`Accept: application/json`). Rate-limited per-IP; short-cached server-side.
+
+Exposes **only aggregates** — task counts by status/provider/type, proof outcomes, and
+per-rail summed amounts (USDC and TFUEL are summed separately, never across rails). **No
+task ids, senders, model output, or proof bytes.**
+
+```bash
+curl "http://localhost:3002/stats?format=json"
+```
+
+```jsonc
+{
+  "window": "all-time",
+  "tasks": { "total": 42, "settled": 39, "by_status": { "fee_collected": 39, "failed": 1 },
+             "by_provider": { "edgecloud": 30, "akash": 9 }, "by_message_type": { "inference_request": 41 } },
+  "payments": { "by_rail": { "usdc": { "count": 12, "fee_amount": "60000", "net_amount": "…", "gross_amount": "…" },
+                             "tfuel": { "count": 30, "fee_amount": "…", "net_amount": "…", "gross_amount": "…" } } },
+  "proofs": { "valid": 38, "regenerable": 1, "pending": 2, "invalid": 1, "proven_pct": 90.5 },
+  "activity": { "last_24h": 5, "last_7d": 20, "first_seen": "…", "last_seen": "…" }
+}
 ```
 
 ---

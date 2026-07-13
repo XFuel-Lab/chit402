@@ -13,6 +13,12 @@ import { pathToFileURL } from 'node:url';
  *   POST /verify  { payment, expected? } → 200 { valid:boolean, txRef?, reason? }
  *   POST /settle  { payment, nonce? }     → 200 { settled:boolean, txRef?, reason? }
  *
+ * It ALSO speaks the STANDARD x402 facilitator protocol (used by the 'x402'
+ * provider path in x402-facilitator.js) — detected when the request body carries
+ * a `paymentPayload`:
+ *   POST /verify  { paymentPayload, paymentRequirements } → 200 { isValid, invalidReason?, payer? }
+ *   POST /settle  { paymentPayload, paymentRequirements } → 200 { success, transaction, network, payer? }
+ *
  * Behavior is deterministic and configurable for negative tests:
  *   - valid:false           → verify/settle reject
  *   - requireApiKey:true    → 401 unless x-api-key header present
@@ -46,7 +52,17 @@ export function createMockFacilitator(config = {}) {
       let parsed = {};
       try { parsed = body ? JSON.parse(body) : {}; } catch { return send(400, { error: 'bad_json' }); }
 
+      // Standard x402 protocol (payload-bearing body) → x402-shaped responses.
+      const isStandardX402 = !!parsed.paymentPayload;
+      const payer = parsed.paymentPayload?.payload?.authorization?.from || '0xmockpayer';
+      const network = parsed.paymentRequirements?.network || 'base-sepolia';
+
       if (url.endsWith('/verify')) {
+        if (isStandardX402) {
+          return send(200, valid
+            ? { isValid: true, payer }
+            : { isValid: false, invalidReason: 'mock_rejected' });
+        }
         if (amountMustMatch && !(parsed.expected && parsed.expected.amount)) {
           return send(200, { valid: false, reason: 'amount_mismatch' });
         }
@@ -56,6 +72,11 @@ export function createMockFacilitator(config = {}) {
       }
 
       if (url.endsWith('/settle')) {
+        if (isStandardX402) {
+          return send(200, valid
+            ? { success: true, transaction: txRef, network, payer }
+            : { success: false, errorReason: 'mock_settle_rejected' });
+        }
         return send(200, valid
           ? { settled: true, txRef }
           : { settled: false, reason: 'mock_settle_rejected' });

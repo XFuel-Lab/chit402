@@ -84,6 +84,8 @@ async function main() {
   console.log(`  payment_rail : ${task.payment_rail ?? 'tfuel'}`);
   console.log(`  payment_ref  : ${task.payment_ref ?? '(none — settled on Theta)'}`);
   console.log(`  net_amount   : ${task.net_amount} (fee ${task.fee_amount}, ${task.fee_bps} bps)`);
+  // One shareable, public proof link (falls back to client-side construction).
+  console.log(`  verify_url   : ${task.verify_url ?? client.receiptUrl(task.task_id)}`);
 
   // 3) Wait for settlement.
   console.log('\nWaiting for settlement…');
@@ -101,6 +103,7 @@ async function main() {
     console.log(`  revenue split: ${JSON.stringify(proof.fee.revenue_split)}`);
   }
 
+  console.log(`\nShareable receipt: ${settled.verify_url ?? client.receiptUrl(task.task_id)}`);
   console.log('\nDone.');
 }
 
