@@ -257,6 +257,23 @@ const config = {
     publicBaseUrl: process.env.PUBLIC_BASE_URL || null,
   },
 
+  // Task/receipt persistence. Tasks (and thus the public `verify_url` receipt) are
+  // held in memory for the task lifetime; without persistence a shared verify_url
+  // 404s after a restart or once a settled task is GC'd. This write-through file
+  // store keeps a durable, public-safe snapshot so receipts survive both.
+  // Single-node/file by design (matches the Phase-1 single-process model); swap the
+  // dir for a shared volume, or a Redis/Postgres store, when scaling horizontally.
+  taskStore: {
+    // Disable to run purely in-memory (e.g. ephemeral CI) with TASK_STORE_PERSIST=false.
+    persist: process.env.TASK_STORE_PERSIST !== 'false',
+    // Durable snapshot directory (gitignored). Defaults next to the package.
+    dir: process.env.TASK_STORE_DIR || join(__dirname, '..', '.data', 'tasks'),
+    // How often to flush in-place task mutations (status/proof) to disk.
+    autoFlushMs: parseInt(process.env.TASK_STORE_FLUSH_MS, 10) || 10000,
+    // Retain a settled receipt this long before pruning (default 30 days).
+    retentionMs: parseInt(process.env.TASK_STORE_RETENTION_MS, 10) || 30 * 24 * 3600 * 1000,
+  },
+
   // Retry Configuration
   retry: {
     maxRetries: parseInt(process.env.MAX_RETRIES) || 3,

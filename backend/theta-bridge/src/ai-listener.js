@@ -7,6 +7,7 @@ import { getSP1Prover } from './sp1-prover-client.js';
 import { getZkGPTProver, isZkGPTProverConfigured } from './zkgpt-prover-client.js';
 import { buildPaymentBinding } from './payment-binding.js';
 import { proveGatedReason } from './prove-gate.js';
+import { createTaskStore } from './task-store.js';
 
 /**
  * AI Intent Listener — Osmosis/Akash IBC Event Monitor
@@ -82,7 +83,10 @@ class AIListener {
 
     // Event & task tracking
     this.processedEvents = new Set();
-    this.activeTasks = new Map(); // taskId → task data
+    // Durable, restart-safe task store (drop-in Map). Persists a public-safe snapshot
+    // so the public verify_url receipt survives restarts + the ~1h terminal GC below.
+    // Set TASK_STORE_PERSIST=false for a purely in-memory store. See task-store.js.
+    this.activeTasks = createTaskStore(config.taskStore); // taskId → task data
     this.taskNonce = 0;
     this.lastBlockHeights = { osmosis: 0, akash: 0 };
 

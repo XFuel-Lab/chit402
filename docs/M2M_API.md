@@ -289,6 +289,14 @@ This page is the target of the `verify_url` returned by `POST /task-request`,
 tools) — one consistent, shareable proof link for every task. Set `PUBLIC_BASE_URL`
 to emit absolute links behind a proxy/CDN.
 
+**Durability:** tasks are held in an in-memory hot map for their live lifecycle, but a
+public-safe snapshot is also **persisted to disk** (write-through), so a shared
+`verify_url` keeps resolving across server restarts and after a settled task is evicted
+from the hot map. Snapshots are retained for `TASK_STORE_RETENTION_MS` (default 30 days),
+then pruned. Set `TASK_STORE_PERSIST=false` for a purely in-memory (ephemeral) node, or
+`TASK_STORE_DIR` to relocate the store (e.g. a shared volume). Single-node/file by
+design — swap for Redis/Postgres when scaling horizontally.
+
 ---
 
 ### `GET /health` — Server Health

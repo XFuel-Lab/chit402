@@ -1473,6 +1473,13 @@ export async function startServer() {
       if (shuttingDown) return;
       shuttingDown = true;
       logger.info({ signal }, 'Shutting down M2M API server…');
+      // Flush any in-place task mutations to disk so the public verify_url receipt
+      // reflects the latest state after a restart (best-effort; safe if unsupported).
+      try {
+        getAIListener()?.activeTasks?.flushAll?.();
+      } catch (err) {
+        logger.warn({ err: err.message }, 'task-store flush on shutdown failed');
+      }
       const forceExit = setTimeout(() => {
         logger.warn('Forced shutdown after 10s drain timeout');
         process.exit(1);

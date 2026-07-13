@@ -21,6 +21,10 @@ lerna-debug.log*
 # IBC Transaction Database
 backend/ibc/transactions.json
 
+# Durable task/receipt store (PersistentTaskStore snapshots)
+backend/theta-bridge/.data/
+.data/
+
 node_modules
 dist
 dist-ssr
