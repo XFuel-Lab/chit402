@@ -7,7 +7,10 @@
 import { DEFAULT_BASE_URL, PUBLIC_DEMO_API_KEY } from 'xfuel-sdk';
 
 export const SERVER_NAME = 'xfuel-mcp-server';
-export const SERVER_VERSION = '0.1.0';
+// Keep in lockstep with package.json / server.json (registry listing) so the
+// version reported over MCP, on /health, and in the static server card matches
+// the published npm package.
+export const SERVER_VERSION = '0.1.1';
 
 export type TransportKind = 'stdio' | 'http';
 
