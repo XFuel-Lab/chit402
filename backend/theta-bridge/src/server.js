@@ -11,6 +11,7 @@ import { resolveRail, runX402Handshake, priceUSDC } from './x402-server.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { proveAllowedForKey } from './prove-gate.js';
 import { buildReceipt, renderReceiptHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
+import { buildX402Manifest } from './x402-discovery.js';
 
 /**
  * XFuel AI DePIN — M2M API Server
@@ -105,6 +106,12 @@ const LLMS_TXT = `# XFuel Protocol
 - POST /a2a-message       : agent-to-agent message (optional escrow).
 - PUT/GET/DELETE /webhook : signed settlement webhooks.
 - GET  /health            : status, fee config, demo limits.
+
+## Discovery (x402 Bazaar)
+
+- GET  /.well-known/x402  : x402 discovery manifest — self-describes the USDC/x402
+  payable resource (POST /task-request, exact scheme on Base) in the bazaar shape,
+  so agents can discover + price XFuel with no XFuel-specific integration.
 
 ## SDK
 
@@ -1244,6 +1251,23 @@ export function createApp() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // GET /.well-known/x402 — x402 Bazaar discovery manifest (public, no auth)
+  // Self-describes XFuel's USDC/x402-payable resource(s) in the bazaar shape so
+  // agents, crawlers, and Bazaar tooling can discover + price XFuel with no
+  // XFuel-specific integration. See docs/DISTRIBUTION.md and src/x402-discovery.js.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  app.get('/.well-known/x402', rateLimit, (req, res) => {
+    try {
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+      res.json(buildX402Manifest(baseUrl));
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /.well-known/x402 error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // GET /health — Server health and aggregate metrics
   // ═══════════════════════════════════════════════════════════════════════
 
@@ -1296,7 +1320,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /llms.txt, GET /v1/models, POST /v1/chat/completions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /llms.txt, GET /.well-known/x402, GET /v1/models, POST /v1/chat/completions',
     });
   });
 

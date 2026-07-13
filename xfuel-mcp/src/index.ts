@@ -14,6 +14,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { parseArgs, helpText, SERVER_VERSION, type McpConfig } from './config.js';
 import { buildServer } from './server.js';
+import { buildServerCard } from './server-card.js';
 
 function jsonRpcError(res: Response, status: number, code: number, message: string): void {
   res.status(status).json({
@@ -54,8 +55,18 @@ async function runHttp(config: McpConfig): Promise<void> {
       version: SERVER_VERSION,
       transport: 'streamable-http',
       mcp_endpoint: '/mcp',
+      server_card: '/.well-known/mcp/server-card.json',
       xfuel_api: config.apiUrl,
     });
+  });
+
+  // Static MCP server card (Smithery convention) — lets scan-based aggregators
+  // index accurate metadata without completing a live scan. Public, no auth.
+  app.get('/.well-known/mcp/server-card.json', (req: Request, res: Response) => {
+    const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol;
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    const mcpEndpoint = host ? `${proto}://${host}/mcp` : '/mcp';
+    res.json(buildServerCard(config, mcpEndpoint));
   });
 
   // MCP endpoint — a fresh server + transport per request (stateless).
