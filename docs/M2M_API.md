@@ -299,6 +299,35 @@ design — swap for Redis/Postgres when scaling horizontally.
 
 ---
 
+### `GET /stats` — Aggregate usage (public, no auth)
+
+A **public-safe** network-activity view derived from the durable task snapshots, so the
+numbers survive restarts and reflect real historical activity. Returns a small **HTML
+dashboard** by default (shareable) or **JSON** with `?format=json` (or
+`Accept: application/json`). Rate-limited per-IP; short-cached server-side.
+
+Exposes **only aggregates** — task counts by status/provider/type, proof outcomes, and
+per-rail summed amounts (USDC and TFUEL are summed separately, never across rails). **No
+task ids, senders, model output, or proof bytes.**
+
+```bash
+curl "http://localhost:3002/stats?format=json"
+```
+
+```jsonc
+{
+  "window": "all-time",
+  "tasks": { "total": 42, "settled": 39, "by_status": { "fee_collected": 39, "failed": 1 },
+             "by_provider": { "edgecloud": 30, "akash": 9 }, "by_message_type": { "inference_request": 41 } },
+  "payments": { "by_rail": { "usdc": { "count": 12, "fee_amount": "60000", "net_amount": "…", "gross_amount": "…" },
+                             "tfuel": { "count": 30, "fee_amount": "…", "net_amount": "…", "gross_amount": "…" } } },
+  "proofs": { "valid": 38, "regenerable": 1, "pending": 2, "invalid": 1, "proven_pct": 90.5 },
+  "activity": { "last_24h": 5, "last_7d": 20, "first_seen": "…", "last_seen": "…" }
+}
+```
+
+---
+
 ### `GET /health` — Server Health
 
 No authentication required.

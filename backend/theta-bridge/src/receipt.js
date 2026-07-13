@@ -65,7 +65,7 @@ export function explorerUrlForRef(paymentRef) {
 }
 
 /** Map task/proof state to a coarse ProofOutcome (mirrors /task-status). */
-function proofOutcomeOf(task) {
+export function proofOutcomeOf(task) {
   if (task.sp1Proof && !task.sp1Proof.error) return 'valid';
   if (task.sp1Proof?.error) return 'regenerable';
   if (task.status === 'failed') return 'invalid';

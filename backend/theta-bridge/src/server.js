@@ -12,6 +12,7 @@ import { registerOpenAIRoutes } from './openai-gateway.js';
 import { proveAllowedForKey } from './prove-gate.js';
 import { buildReceipt, renderReceiptHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
 import { buildX402Manifest } from './x402-discovery.js';
+import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 
 /**
  * XFuel AI DePIN — M2M API Server
@@ -106,6 +107,7 @@ const LLMS_TXT = `# XFuel Protocol
 - POST /a2a-message       : agent-to-agent message (optional escrow).
 - PUT/GET/DELETE /webhook : signed settlement webhooks.
 - GET  /health            : status, fee config, demo limits.
+- GET  /stats             : aggregate, public-safe network usage (JSON + dashboard).
 
 ## Discovery (x402 Bazaar)
 
@@ -1308,6 +1310,43 @@ export function createApp() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // GET /stats — Aggregate, public-safe usage telemetry + tiny dashboard
+  // Derived from the durable task snapshots, so numbers survive restarts and
+  // reflect real historical activity. HTML by default (shareable dashboard),
+  // JSON with ?format=json (or Accept: application/json). No secrets, no PII.
+  // Short in-memory cache bounds disk IO. Public, rate-limited. See telemetry.js.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  let _statsCache = { at: 0, data: null };
+  const STATS_TTL_MS = 15_000;
+
+  app.get('/stats', rateLimit, (req, res) => {
+    try {
+      const wantsJson =
+        req.query.format === 'json' ||
+        (req.headers.accept || '').includes('application/json');
+
+      const now = Date.now();
+      if (!_statsCache.data || now - _statsCache.at > STATS_TTL_MS) {
+        let tasks = [];
+        try {
+          const store = getAIListener().activeTasks;
+          tasks = typeof store.allSnapshots === 'function'
+            ? store.allSnapshots()
+            : [...store.values()];
+        } catch { /* listener not initialised — report zeros */ }
+        _statsCache = { at: now, data: computeUsageStats(tasks, { now }) };
+      }
+
+      if (wantsJson) return res.json(_statsCache.data);
+      return res.type('html').send(renderStatsHtml(_statsCache.data));
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /stats error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // OpenAI-compatible gateway (/v1/models, /v1/chat/completions)
   // Drop-in surface: point any OpenAI-compatible client's baseURL here.
   // Shares the rate-limit + auth middleware (accepts Authorization: Bearer).
@@ -1320,7 +1359,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /llms.txt, GET /.well-known/x402, GET /v1/models, POST /v1/chat/completions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /llms.txt, GET /.well-known/x402, GET /v1/models, POST /v1/chat/completions',
     });
   });
 

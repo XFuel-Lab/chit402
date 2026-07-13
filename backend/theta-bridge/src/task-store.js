@@ -124,6 +124,37 @@ export class PersistentTaskStore extends Map {
   }
 
   /**
+   * All known tasks for aggregation/telemetry: the union of durable snapshots on
+   * disk and the live hot map, with the live copy winning (it's the freshest).
+   * Restart-surviving — the basis for real usage stats. Read-only; never mutate the
+   * returned objects (disk copies aren't tracked).
+   * @returns {Array<Object>}
+   */
+  allSnapshots() {
+    const byId = new Map();
+    if (this.persist) {
+      let files = [];
+      try {
+        files = fs.readdirSync(this.dir);
+      } catch {
+        files = [];
+      }
+      for (const f of files) {
+        if (!f.endsWith('.json')) continue;
+        try {
+          const snap = JSON.parse(fs.readFileSync(path.join(this.dir, f), 'utf8'));
+          if (snap && snap.taskId) byId.set(snap.taskId, snap);
+        } catch {
+          // Skip unreadable/partial files.
+        }
+      }
+    }
+    // Live entries override the on-disk snapshot (may hold newer in-place mutations).
+    for (const [id, task] of super.entries()) byId.set(id, task);
+    return [...byId.values()];
+  }
+
+  /**
    * Prune persisted receipts older than `maxAgeMs` (by updatedAt/createdAt).
    * @returns {number} files removed
    */

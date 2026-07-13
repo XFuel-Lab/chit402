@@ -134,6 +134,28 @@ test('serializes BigInt task fields without throwing', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('allSnapshots unions disk + live tasks (live wins) and survives restart', () => {
+  const dir = tmpDir();
+  const a = new PersistentTaskStore({ dir, autoFlushMs: 0 });
+  a.set('t-disk', sampleTask('t-disk', { status: 'fee_collected' }));
+  a.set('t-both', sampleTask('t-both', { status: 'pending' }));
+  a.destroy();
+
+  // Fresh process: t-both is also live with a newer status → live must win.
+  const b = new PersistentTaskStore({ dir, autoFlushMs: 0 });
+  b.set('t-both', sampleTask('t-both', { status: 'completed' }));
+  b.set('t-live-only', sampleTask('t-live-only', { status: 'routed' }));
+
+  const all = b.allSnapshots();
+  const byId = Object.fromEntries(all.map((t) => [t.taskId, t]));
+  assert.equal(all.length, 3, 'disk-only + merged + live-only, de-duped');
+  assert.equal(byId['t-disk'].status, 'fee_collected', 'disk-only task included after restart');
+  assert.equal(byId['t-both'].status, 'completed', 'live copy overrides the on-disk snapshot');
+  assert.ok(byId['t-live-only']);
+  b.destroy();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('persist=false behaves as a plain in-memory Map (no disk, no rehydrate)', () => {
   const dir = tmpDir();
   const store = createTaskStore({ dir, persist: false, autoFlushMs: 0 });
