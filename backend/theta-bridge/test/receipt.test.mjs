@@ -5,6 +5,8 @@ import {
   renderReceiptHtml,
   renderReceiptNotFound,
   explorerUrlForRef,
+  buildVerifyUrl,
+  baseUrlFromReq,
 } from '../src/receipt.js';
 import { computePaymentCommitment } from '../src/payment-binding.js';
 
@@ -90,6 +92,23 @@ test('buildReceipt: USDC task is proven, priced, and independently binding-verif
   // Absolute links when a baseUrl is provided.
   assert.equal(r.links.self, `https://api-testnet.xfuel.app/receipt/${TASK_ID}`);
   assert.equal(r.links.json, `https://api-testnet.xfuel.app/receipt/${TASK_ID}?format=json`);
+  // Canonical shareable verify_url is present and matches links.self.
+  assert.equal(r.verify_url, `https://api-testnet.xfuel.app/receipt/${TASK_ID}`);
+  assert.equal(r.verify_url, r.links.self);
+});
+
+test('buildVerifyUrl: absolute with base, relative without, trims trailing slash', () => {
+  assert.equal(buildVerifyUrl('https://api-testnet.xfuel.app', TASK_ID), `https://api-testnet.xfuel.app/receipt/${TASK_ID}`);
+  assert.equal(buildVerifyUrl('https://api-testnet.xfuel.app/', TASK_ID), `https://api-testnet.xfuel.app/receipt/${TASK_ID}`);
+  assert.equal(buildVerifyUrl('', TASK_ID), `/receipt/${TASK_ID}`);
+});
+
+test('baseUrlFromReq: prefers configured base, else derives from request', () => {
+  const req = { protocol: 'http', get: (h) => (h === 'host' ? 'localhost:3002' : null) };
+  assert.equal(baseUrlFromReq(req, 'https://api-testnet.xfuel.app'), 'https://api-testnet.xfuel.app');
+  assert.equal(baseUrlFromReq(req, 'https://api-testnet.xfuel.app/'), 'https://api-testnet.xfuel.app');
+  assert.equal(baseUrlFromReq(req, null), 'http://localhost:3002');
+  assert.equal(baseUrlFromReq({}, null), '');
 });
 
 test('buildReceipt: binding mismatch is detected (tampered commitment)', () => {

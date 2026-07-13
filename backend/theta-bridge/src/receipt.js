@@ -30,6 +30,28 @@ const EXPLORERS = {
   base: 'https://basescan.org/tx/',
 };
 
+/**
+ * Canonical, shareable proof link for a task: the public `/receipt/:taskId` page.
+ * Absolute when a base URL is known, otherwise a root-relative path. This is the
+ * single `verify_url` threaded consistently across every surface (M2M API,
+ * OpenAI gateway, SDK, MCP) so an agent always gets one link it can share.
+ */
+export function buildVerifyUrl(baseUrl, taskId) {
+  const base = baseUrl ? String(baseUrl).replace(/\/$/, '') : '';
+  return `${base}/receipt/${taskId}`;
+}
+
+/**
+ * Resolve the public base URL for building absolute links. Prefers an explicitly
+ * configured canonical URL (PUBLIC_BASE_URL — correct behind a proxy/CDN), else
+ * derives it from the request's protocol + host. Returns '' if neither is known.
+ */
+export function baseUrlFromReq(req, configuredBase) {
+  if (configuredBase) return String(configuredBase).replace(/\/$/, '');
+  const host = typeof req?.get === 'function' ? req.get('host') : null;
+  return host ? `${req.protocol}://${host}` : '';
+}
+
 /** Build an explorer URL from a `payment_ref` like "base-sepolia:0xabc…", or null. */
 export function explorerUrlForRef(paymentRef) {
   if (!paymentRef || typeof paymentRef !== 'string') return null;
@@ -112,6 +134,7 @@ export function buildReceipt(task, { baseUrl = '' } = {}) {
     task_id: task.taskId,
     status: task.status,
     proof_outcome: outcome,
+    verify_url: buildVerifyUrl(base, task.taskId),
     created_at: task.createdAt || null,
     updated_at: task.updatedAt || null,
     route: {
@@ -343,4 +366,4 @@ export function renderReceiptNotFound(taskId) {
 </html>`;
 }
 
-export default { buildReceipt, renderReceiptHtml, renderReceiptNotFound, explorerUrlForRef };
+export default { buildReceipt, renderReceiptHtml, renderReceiptNotFound, explorerUrlForRef, buildVerifyUrl, baseUrlFromReq };

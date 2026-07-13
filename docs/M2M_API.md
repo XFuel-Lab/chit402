@@ -109,6 +109,7 @@ curl -X POST http://localhost:3002/task-request \
   "fee_amount": "5000",
   "net_amount": "995000",
   "fee_bps": 50,
+  "verify_url": "http://localhost:3002/receipt/m2m-task-1-1739299200000",
   "fee_info": {
     "description": "0.5% protocol fee → CoreRevenueSplitter (30% BBB / 30% GET / 25% veXF / 15% Treasury)",
     "collector": "FeeCollector.wasm → CW20 Send → RevenueSplitter"
@@ -116,10 +117,17 @@ curl -X POST http://localhost:3002/task-request \
   "_links": {
     "status": "/task-status?task_id=m2m-task-1-1739299200000",
     "proof": "/prove-result?task_id=m2m-task-1-1739299200000",
-    "receipt": "/receipt/m2m-task-1-1739299200000"
+    "receipt": "http://localhost:3002/receipt/m2m-task-1-1739299200000"
   }
 }
 ```
+
+**`verify_url`** is the canonical, **public, no-auth** proof link — the same value is
+threaded consistently across every surface (this API's `/task-status` + `/prove-result`
+responses, the OpenAI gateway `xfuel.verify_url` body field + `x-xfuel-verify-url` header,
+the SDK, and the MCP tools). Open or share it to prove settlement. It's absolute when the
+server knows its public base URL (set `PUBLIC_BASE_URL` behind a proxy/CDN) and matches
+`_links.receipt`.
 
 ---
 
@@ -143,6 +151,7 @@ curl "http://localhost:3002/prove-result?task_id=m2m-task-1-1739299200000" \
   "task_id": "m2m-task-1-1739299200000",
   "status": "fee_collected",
   "proof_outcome": "valid",
+  "verify_url": "http://localhost:3002/receipt/m2m-task-1-1739299200000",
   "sp1_proof": {
     "proof": "0x...",
     "publicInputs": "0x...",
@@ -245,6 +254,8 @@ Settle an accepted A2A bid using a PAS (Proxy Adaptor Signature) instead of a ZK
 curl "http://localhost:3002/task-status?task_id=m2m-task-1-..." -H "X-API-Key: ..."
 ```
 
+The task response includes `verify_url` — the public, shareable receipt link (see below).
+
 ---
 
 ### `GET /receipt/:taskId` — Public verifiable receipt (no auth)
@@ -271,8 +282,12 @@ The JSON `binding` block includes `expected_commitment`, `recomputed_commitment`
 `matches` — the local re-derivation of `keccak256(paymentRefHash, taskIdHash, rail,
 amount)`. Honest proof scope is stated on the receipt: the SP1 proof attests settlement
 metadata + an output-hash commitment, **not** that the provider computed the model
-correctly (see `docs/POSITIONING.md` §2). The `POST /task-request` response now also
-returns `_links.receipt`.
+correctly (see `docs/POSITIONING.md` §2).
+
+This page is the target of the `verify_url` returned by `POST /task-request`,
+`GET /task-status`, and `GET /prove-result` (and by the OpenAI gateway, SDK, and MCP
+tools) — one consistent, shareable proof link for every task. Set `PUBLIC_BASE_URL`
+to emit absolute links behind a proxy/CDN.
 
 ---
 

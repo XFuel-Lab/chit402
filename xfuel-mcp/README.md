@@ -134,6 +134,11 @@ reports `payment_rail: "tfuel"`.
 4. `get_proof` → fetch the proof.
 5. `verify_proof` → confirm integrity + payment binding (set `check_nullifier: true` with `XFUEL_RPC_URL` + `ZK_VERIFIER_ADDRESS` to also read on-chain replay state).
 
+Every task-producing tool (`submit_inference`, `pay_with_usdc`, `get_task_status`,
+`get_proof`) surfaces a **`verify_url`** — the public, no-auth `/receipt/:taskId` page —
+in its summary and structured output. It's one shareable link that renders the
+settlement, proof status, and (for USDC tasks) an independent payment-binding check.
+
 ## Development
 
 ```bash

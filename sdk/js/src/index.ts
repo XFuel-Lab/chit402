@@ -125,6 +125,12 @@ export interface TaskRequestResponse {
   payment_rail?: 'usdc' | 'tfuel';
   /** x402 settlement reference (network:txRef) or null for TFUEL. */
   payment_ref?: string | null;
+  /**
+   * Canonical shareable proof link — the public `/receipt/:taskId` page (no auth).
+   * Absolute when the server knows its public base URL. Falls back client-side via
+   * {@link XFuelClient.receiptUrl} if an older server omits it.
+   */
+  verify_url?: string;
   fee_info: {
     description: string;
     collector: string;
@@ -132,6 +138,8 @@ export interface TaskRequestResponse {
   _links: {
     status: string;
     proof: string;
+    /** Public, no-auth receipt page (same value as {@link verify_url}). */
+    receipt?: string;
   };
 }
 
@@ -191,6 +199,8 @@ export interface TaskStatusResponse {
   payment_rail?: 'usdc' | 'tfuel';
   /** x402 settlement reference (network:txRef) or null for TFUEL. */
   payment_ref?: string | null;
+  /** Canonical shareable proof link — the public `/receipt/:taskId` page (no auth). */
+  verify_url?: string;
   /** Phase 2 (flag-gated): x402 payment commitment bound into the proof, or null. */
   payment_binding?: PaymentBinding | null;
   result: unknown | null;
@@ -208,6 +218,8 @@ export interface ProofResponse {
   task_id: string;
   status: string;
   proof_outcome: 'valid' | 'regenerable';
+  /** Canonical shareable proof link — the public `/receipt/:taskId` page (no auth). */
+  verify_url?: string;
   /** Phase 2 (flag-gated): x402 payment commitment bound into the proof, or null. */
   payment_binding?: PaymentBinding | null;
   sp1_proof: {
@@ -378,6 +390,8 @@ export class XFuelClient {
   private readonly http: AxiosInstance;
   private readonly maxRetries: number;
   private readonly retryBaseMs: number;
+  /** Resolved API base URL (used to build client-side receipt/verify links). */
+  readonly baseUrl: string;
 
   constructor(options: XFuelClientOptions = {}) {
     const {
@@ -390,6 +404,7 @@ export class XFuelClient {
 
     this.maxRetries = maxRetries;
     this.retryBaseMs = retryBaseMs;
+    this.baseUrl = baseUrl.replace(/\/$/, '');
 
     this.http = axios.create({
       baseURL: baseUrl,
@@ -556,6 +571,19 @@ export class XFuelClient {
       ...taskOpts,
     };
     return payer ? this.submitTaskWithPayment(params, payer) : this.submitTask(params);
+  }
+
+  // ── Shareable receipt / verify link ─────────────────────────────────────
+
+  /**
+   * The public, no-auth receipt URL for a task — one shareable link that renders
+   * the settlement, proof status, and (for USDC tasks) an independent payment-binding
+   * check. Prefer the `verify_url` returned by the API; use this to construct the
+   * same link client-side (e.g. before the server responds, or against an older
+   * server that doesn't yet echo `verify_url`).
+   */
+  receiptUrl(taskId: string): string {
+    return `${this.baseUrl}/receipt/${taskId}`;
   }
 
   // ── GET /task-status?task_id= ──────────────────────────────────────────

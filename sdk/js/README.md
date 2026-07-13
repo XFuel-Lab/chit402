@@ -53,6 +53,11 @@ if (result.status === 'completed') {
   console.log('Nullifier:', proof.sp1_proof?.nullifier);
   console.log('Revenue split:', proof.fee.revenue_split);
 }
+
+// One public, shareable proof link (renders settlement + proof + payment binding).
+// Prefer the server-provided `verify_url`; `client.receiptUrl(id)` builds the same
+// link client-side as a fallback.
+console.log('Verify/share:', task.verify_url ?? client.receiptUrl(task.task_id));
 ```
 
 ## Paying in USDC via x402 (default rail)

@@ -53,19 +53,27 @@ clients that drop unknown body fields).
 ```jsonc
 "xfuel": {
   "task_id": "openai-…",
+  "verify_url": "https://api-testnet.xfuel.app/receipt/openai-…",
   "compute": { "provider": "edgecloud", "real": true, "note": "…" },
   "payment": { "rail": "unmetered", "note": "…" },
   "proof":   {
     "status": "pending",          // pending | unavailable | skipped
     "system": "sp1",
     "attests": "settlement metadata + commitment to the output hash (NOT inference correctness)",
-    "links": { "status": "/task-status?task_id=…", "proof": "/prove-result?task_id=…" }
+    "links": { "status": "/task-status?task_id=…", "proof": "/prove-result?task_id=…", "receipt": "https://api-testnet.xfuel.app/receipt/openai-…" }
   }
 }
 ```
 
 Headers: `x-xfuel-task-id`, `x-xfuel-provider`, `x-xfuel-compute-real`,
-`x-xfuel-payment-rail`, `x-xfuel-proof-status`, `x-xfuel-proof-url`.
+`x-xfuel-payment-rail`, `x-xfuel-proof-status`, `x-xfuel-proof-url`,
+`x-xfuel-verify-url`.
+
+**`verify_url`** is the canonical, **public, no-auth** shareable proof link (the
+`/receipt/:taskId` page) — the same field name used across the M2M API, SDK, and MCP
+tools. It's mirrored in the `x-xfuel-verify-url` header (the reliable channel for strict
+OpenAI clients that drop unknown body fields) and in `proof.links.receipt`. Absolute when
+`PUBLIC_BASE_URL` is set.
 
 **Honesty semantics (do not over-read the receipt):**
 

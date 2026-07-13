@@ -10,7 +10,7 @@ import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhook
 import { resolveRail, runX402Handshake, priceUSDC } from './x402-server.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { proveAllowedForKey } from './prove-gate.js';
-import { buildReceipt, renderReceiptHtml, renderReceiptNotFound } from './receipt.js';
+import { buildReceipt, renderReceiptHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
 
 /**
  * XFuel AI DePIN — M2M API Server
@@ -335,7 +335,7 @@ export function createApp() {
       res.header('Vary', 'Origin');
       res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-PAYMENT, X-PAYMENT-NONCE');
       res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset');
+      res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, x-xfuel-verify-url, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset');
       if (req.method === 'OPTIONS') return res.sendStatus(204);
       next();
     });
@@ -678,6 +678,8 @@ export function createApp() {
         feeBps: appliedBps,
       }, 'Task request accepted');
 
+      const verifyUrl = buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl), effectiveTaskId);
+
       return res.status(202).json({
         task_id:       effectiveTaskId,
         status:        'accepted',
@@ -689,6 +691,8 @@ export function createApp() {
         fee_bps:       appliedBps,
         payment_rail:  paymentRail,
         payment_ref:   paymentRef,
+        // Canonical shareable proof link (public, no-auth). Same value as _links.receipt.
+        verify_url:    verifyUrl,
         fee_info: {
           description: `${(appliedBps / 100).toFixed(1)}% protocol fee → RevenueSplitter (30% BBB / 30% LP / 25% veXF / 15% Treasury)`,
           collector:   'FeeCollector.wasm → CW20 Send → RevenueSplitter',
@@ -696,7 +700,7 @@ export function createApp() {
         _links: {
           status:  `/task-status?task_id=${effectiveTaskId}`,
           proof:   `/prove-result?task_id=${effectiveTaskId}`,
-          receipt: `/receipt/${effectiveTaskId}`,   // public, no-auth, shareable
+          receipt: verifyUrl,   // public, no-auth, shareable
         },
       });
     } catch (err) {
@@ -787,6 +791,7 @@ export function createApp() {
         task_id:        task.taskId,
         status:         task.status,
         proof_outcome:  task.sp1Proof?.error ? 'regenerable' : 'valid',
+        verify_url:     buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl), task.taskId),
         sp1_proof:      task.sp1Proof || null,
         // Phase 2 (flag-gated): x402 payment commitment bound into the proof.
         payment_binding: task.sp1Proof?.paymentBinding || null,
@@ -1095,6 +1100,7 @@ export function createApp() {
           task_id:        task.taskId,
           status:         task.status,
           proof_outcome:  proofOutcome,
+          verify_url:     buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl), task.taskId),
           proof_system:   task.intent?.proofSystem || 'sp1', // 'sp1' | 'zkgpt' — which prover ran; proof data is in sp1_proof for both
           message_type:   task.intent?.type,
           chain_id:       task.meta?.chain,
@@ -1177,7 +1183,7 @@ export function createApp() {
         return res.status(404).type('html').send(renderReceiptNotFound(taskId));
       }
 
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
       const receipt = buildReceipt(task, { baseUrl });
       if (wantsJson) return res.json(receipt);
       return res.type('html').send(renderReceiptHtml(receipt));

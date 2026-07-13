@@ -74,6 +74,11 @@ test('POST /v1/chat/completions returns an OpenAI completion + XFuel receipt', a
   // Verification receipt is mirrored in headers.
   assert.equal(typeof res.headers.get('x-xfuel-task-id'), 'string');
   assert.ok(['pending', 'unavailable', 'skipped'].includes(res.headers.get('x-xfuel-proof-status')));
+  // Shareable proof link is present as a header and points at the receipt page.
+  const verifyHeader = res.headers.get('x-xfuel-verify-url');
+  assert.equal(typeof verifyHeader, 'string');
+  assert.ok(verifyHeader.includes('/receipt/'));
+  assert.ok(verifyHeader.includes(res.headers.get('x-xfuel-task-id')));
 
   const body = await res.json();
   assert.equal(body.object, 'chat.completion');
@@ -88,6 +93,11 @@ test('POST /v1/chat/completions returns an OpenAI completion + XFuel receipt', a
   assert.equal(body.xfuel.proof.status, 'skipped');
   assert.match(body.xfuel.proof.attests, /NOT inference correctness/);
   assert.ok(body.xfuel.proof.links.proof.includes(body.xfuel.task_id));
+  // Canonical shareable proof link is present in the body + proof links.
+  assert.equal(typeof body.xfuel.verify_url, 'string');
+  assert.ok(body.xfuel.verify_url.endsWith(`/receipt/${body.xfuel.task_id}`));
+  assert.equal(body.xfuel.proof.links.receipt, body.xfuel.verify_url);
+  assert.equal(body.xfuel.verify_url, verifyHeader);
 });
 
 test('POST /v1/chat/completions rejects a bad body with an OpenAI error', async () => {
