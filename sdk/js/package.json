@@ -37,6 +37,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "typecheck:examples": "tsc --noEmit -p tsconfig.examples.json",
+    "example:demo": "tsx examples/flagship-demo.ts",
     "example:quickstart": "tsx examples/quickstart.ts",
     "example:openai": "tsx examples/openai-drop-in.ts",
     "example:pay": "tsx examples/pay-with-usdc.ts",
