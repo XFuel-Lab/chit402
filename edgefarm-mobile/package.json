@@ -22,7 +22,7 @@
     "@thetalabs/theta-js": "^0.0.86",
     "@thetalabs/theta-wallet-connect": "^0.0.18",
     "@walletconnect/modal-react-native": "^1.1.0",
-    "@walletconnect/react-native-compat": "^2.17.2",
+    "@walletconnect/react-native-compat": "^2.23.10",
     "@walletconnect/universal-provider": "^2.17.2",
     "babel-preset-expo": "~54.0.9",
     "buffer": "^6.0.3",
