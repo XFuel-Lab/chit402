@@ -73,7 +73,7 @@
     "sdk:pack": "cd sdk/js && npm run build && npm pack"
   },
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.958.0",
+    "@aws-sdk/client-secrets-manager": "^3.1086.0",
     "@cosmjs/cosmwasm-stargate": "^0.33.1",
     "@cosmjs/proto-signing": "^0.33.1",
     "@cosmjs/stargate": "^0.33.1",
