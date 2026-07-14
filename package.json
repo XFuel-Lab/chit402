@@ -58,7 +58,6 @@
     "test:performance": "ts-node --esm scripts/test-performance.ts",
     "perf:monitor": "echo \"Performance monitoring enabled in dev mode. Check console for metrics.\"",
     "setup:theta-wallet": "node -e \"console.log('Run ./setup-theta-wallet.sh (Linux/Mac) or setup-theta-wallet.bat (Windows)')\"",
-    "test:wallet": "jest --testPathPattern=walletConnect",
     "test:wallet:e2e": "cypress run --spec 'cypress/e2e/theta-wallet-qr.cy.ts'",
     "postinstall": "node scripts/patch-solcover.cjs",
     "sdk:build": "cd sdk/js && npm install && npm run build",
