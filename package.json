@@ -8,12 +8,12 @@
     "npm": ">=10.0.0"
   },
   "scripts": {
-    "dev": "cd xfuel-app && vite",
-    "build": "cd xfuel-app && tsc -b && vite build",
-    "preview": "cd xfuel-app && vite preview",
+    "dev": "cd apps/web && vite",
+    "build": "cd apps/web && tsc -b && vite build",
+    "preview": "cd apps/web && vite preview",
     "lint": "eslint . --max-warnings 5",
-    "test": "npm test --prefix sdk/js",
-    "test:watch": "npm run test:watch --prefix sdk/js",
+    "test": "npm test --prefix packages/sdk",
+    "test:watch": "npm run test:watch --prefix packages/sdk",
     "test:e2e": "wait-on http://localhost:3000 && cypress open",
     "cypress:open": "wait-on http://localhost:3000 && cypress open",
     "test:e2e:headless": "wait-on http://localhost:3000 && cypress run",
@@ -42,8 +42,8 @@
     "verify:mainnet": "node scripts/verify-deployment.cjs --manifest deploy/manifests/mainnet-1771282254947.json --rpc https://eth-rpc-api.thetatoken.org/rpc",
     "health": "node backend/theta-bridge/src/server.js",
     "dev:backend": "node backend/theta-bridge/src/server.js",
-    "dev:web": "cd xfuel-app && vite",
-    "build:web": "cd xfuel-app && tsc -b && vite build",
+    "dev:web": "cd apps/web && vite",
+    "build:web": "cd apps/web && tsc -b && vite build",
     "bridge:dev": "cd backend/theta-bridge && npm run dev",
     "bridge:start": "cd backend/theta-bridge && npm start",
     "bridge:pm2": "cd backend/theta-bridge && pm2 start ecosystem.config.cjs",
@@ -60,8 +60,8 @@
     "setup:theta-wallet": "node -e \"console.log('Run ./setup-theta-wallet.sh (Linux/Mac) or setup-theta-wallet.bat (Windows)')\"",
     "test:wallet:e2e": "cypress run --spec 'cypress/e2e/theta-wallet-qr.cy.ts'",
     "postinstall": "node scripts/patch-solcover.cjs",
-    "sdk:build": "cd sdk/js && npm install && npm run build",
-    "sdk:pack": "cd sdk/js && npm run build && npm pack"
+    "sdk:build": "cd packages/sdk && npm install && npm run build",
+    "sdk:pack": "cd packages/sdk && npm run build && npm pack"
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1086.0",

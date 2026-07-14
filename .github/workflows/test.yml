@@ -70,7 +70,7 @@ jobs:
         run: npm test
 
       - name: Install SDK deps
-        working-directory: sdk/js
+        working-directory: packages/sdk
         run: npm install --no-audit --no-fund
 
       - name: Install theta-inference circuit deps (ethers for handler tests)
@@ -78,7 +78,7 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: SDK build + tests (REST client + on-chain module)
-        working-directory: sdk/js
+        working-directory: packages/sdk
         run: |
           npm run build
           npm test

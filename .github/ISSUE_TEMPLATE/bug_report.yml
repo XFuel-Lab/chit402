@@ -25,7 +25,7 @@ body:
         - SP1 Prover (services/sp1-prover/)
         - Backend Bridge (backend/theta-bridge/)
         - Frontend (src/)
-        - SDK (sdk/js/)
+        - SDK (packages/sdk/)
         - CosmWasm contracts
         - Deployment scripts
         - CI/CD

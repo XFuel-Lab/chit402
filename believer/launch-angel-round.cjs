@@ -232,7 +232,7 @@ async function main() {
   const rFile = path.join(__dirname, `launch-angel-round-${Date.now()}.json`);
   fs.writeFileSync(rFile, JSON.stringify(report, null, 2));
   console.log(`\n  Report: ${rFile}`);
-  console.log('\n  Set in xfuel-app .env:\n    VITE_ANGEL_ROUND_ADDRESS=' + roundAddr);
+  console.log('\n  Set in apps/web .env:\n    VITE_ANGEL_ROUND_ADDRESS=' + roundAddr);
 
   return report;
 }

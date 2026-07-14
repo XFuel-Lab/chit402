@@ -22,10 +22,10 @@ jobs:
       - run: npm ci
 
       - name: Install SDK test dependencies
-        run: npm ci --prefix sdk/js
+        run: npm ci --prefix packages/sdk
 
       - name: Run Jest unit tests (xfuel-sdk)
-        run: npm test --prefix sdk/js -- --ci --coverage=false
+        run: npm test --prefix packages/sdk -- --ci --coverage=false
 
   # ── Solidity compile + core contract tests ──────────────────
   contracts-core:
