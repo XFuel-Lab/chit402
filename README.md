@@ -1015,9 +1015,6 @@ We do not claim ownership of the names “zkGPT” or “Interstellar”; they r
 xfuel-protocol/
 ├── xfuel-app/                  # ✅ CANONICAL frontend — xfuel.app (Vite + React 19 + Wagmi)
 │                               #    Deployed to Vercel via vercel.json. This is the live app.
-├── legacy-archive/
-│   └── cosmos-yield-station/   # 🗄️  ARCHIVED — original Cosmos Yield Station (src/)
-│                               #    Phase 2 reactivation planned post-governance approval
 ├── tools/
 │   └── m2m-dev-dashboard/      # 🔧 INTERNAL — local dev tool for testing M2M API endpoints
 ├── edgefarm-mobile/            # 📱 PIVOTING — React Native (Expo) companion app
