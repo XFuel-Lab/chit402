@@ -73,7 +73,7 @@
     "sdk:pack": "cd sdk/js && npm run build && npm pack"
   },
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.958.0",
+    "@aws-sdk/client-secrets-manager": "^3.1086.0",
     "@cosmjs/cosmwasm-stargate": "^0.33.1",
     "@cosmjs/proto-signing": "^0.33.1",
     "@cosmjs/stargate": "^0.33.1",
@@ -84,7 +84,7 @@
     "@walletconnect/modal": "^2.7.0",
     "axios": "^1.13.6",
     "canvas-confetti": "^1.9.4",
-    "cors": "^2.8.5",
+    "cors": "^2.8.6",
     "ethers": "^6.16.0",
     "express": "^4.18.2",
     "framer-motion": "^12.23.26",
@@ -95,7 +95,7 @@
     "qrcode.react": "^4.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^7.11.0",
+    "react-router-dom": "^7.18.1",
     "zustand": "^5.0.9"
   },
   "devDependencies": {

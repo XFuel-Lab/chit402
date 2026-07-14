@@ -12,9 +12,9 @@ jobs:
     name: Jest Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.x'
           cache: 'npm'
@@ -32,9 +32,9 @@ jobs:
     name: Core Contract Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
@@ -61,8 +61,8 @@ jobs:
   #   name: Cypress E2E
   #   runs-on: ubuntu-latest
   #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-node@v4
+  #     - uses: actions/checkout@v6
+  #     - uses: actions/setup-node@v7
   #       with: { node-version: '20', cache: 'npm' }
   #     - run: npm ci
   #     - run: npm run dev &
