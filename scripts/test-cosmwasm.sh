@@ -4,11 +4,6 @@
 echo "🧪 Testing ZK Verifier..."
 cd cosmwasm/zk-verifier
 cargo test --release
-echo ""
-
-echo "🧪 Testing ibcTFUEL Minter..."
-cd ../ibc-tfuel-minter
-cargo test --release
 cd ../..
 
 echo ""

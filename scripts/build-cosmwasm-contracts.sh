@@ -51,35 +51,11 @@ echo ""
 
 cd ../..
 
-# Build ibcTFUEL Minter
-echo "========================================================================"
-echo "🪙 Building ibcTFUEL Minter Contract"
-echo "========================================================================"
-cd cosmwasm/ibc-tfuel-minter
-
-echo "Running tests..."
-cargo test --release
-
-echo ""
-echo "Building WASM..."
-cargo build --release --target wasm32-unknown-unknown --lib
-
-echo ""
-echo -e "${GREEN}✅ ibcTFUEL Minter built successfully${NC}"
-ls -lh ../../target/wasm32-unknown-unknown/release/ibc_tfuel_minter.wasm
-echo ""
-
-cd ../..
-
 echo "========================================================================"
 echo "✅ BUILD COMPLETE"
 echo "========================================================================"
 echo ""
-echo "📦 Unoptimized WASM files:"
+echo "📦 Unoptimized WASM file:"
 echo "  - target/wasm32-unknown-unknown/release/zk_verifier.wasm"
-echo "  - target/wasm32-unknown-unknown/release/ibc_tfuel_minter.wasm"
-echo ""
-echo "📝 Next step: Optimize with CosmWasm Optimizer"
-echo "   Run: ./scripts/optimize-cosmwasm.sh"
 echo ""
 
