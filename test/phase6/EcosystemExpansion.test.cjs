@@ -645,16 +645,8 @@ describe('Phase 6: Ecosystem Expansion', function () {
     let TEMPLATES, buildWebhookPayload, SCHEDULE_SLOTS;
 
     before(function () {
-      const campaignPath = path.resolve(__dirname, '../../community/campaign-automation.cjs');
-      delete require.cache[campaignPath];
-
-      const originalArgv = process.argv;
-      process.argv = ['node', 'test'];
-
-      const campaignModule = require(campaignPath);
-
-      process.argv = originalArgv;
-
+      // NOTE: the former community/campaign-automation.cjs was removed in the
+      // repo cleanup; these tests exercise the inline template/schedule logic below.
       TEMPLATES = {
         partner: {
           type: 'partner',
