@@ -53,7 +53,7 @@ updates:
 
   # ── npm (sdk) ───────────────────────────────────────────────
   - package-ecosystem: "npm"
-    directory: "/sdk/js"
+    directory: "/packages/sdk"
     schedule:
       interval: "weekly"
       day: "monday"

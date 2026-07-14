@@ -20,7 +20,7 @@ body:
         - SP1 Prover improvement
         - Cross-chain / Hyperlane integration
         - Frontend / UI
-        - SDK (sdk/js/)
+        - SDK (packages/sdk/)
         - Backend / Bridge service
         - CosmWasm contract
         - Mobile app
