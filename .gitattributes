@@ -1,4 +1,4 @@
 # Shell scripts must use LF regardless of host OS. A CRLF shebang makes Linux
 # look for `/bin/bash\r` and fail at exec ("no such file or directory"), which
-# breaks container entrypoints (e.g. sp1-prover/watchdog.sh).
+# breaks container entrypoints (e.g. services/sp1-prover/watchdog.sh).
 *.sh text eol=lf

@@ -173,7 +173,7 @@ switch ($Suite) {
         Write-Host "   [3/3] Rust SP1 Benchmarks (if nightly available)..." -ForegroundColor Yellow
         $rustNightly = rustup run nightly rustc --version 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Push-Location sp1-prover/program
+            Push-Location services/sp1-prover/program
             cargo +nightly test --lib -- benchmarks 2>&1
             if ($LASTEXITCODE -ne 0) {
                 Write-Host "   Rust bench tests had issues (non-blocking)" -ForegroundColor Yellow

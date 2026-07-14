@@ -1,6 +1,6 @@
-# Keep repo-root Docker build contexts small (e.g. sp1-prover/Dockerfile.network,
+# Keep repo-root Docker build contexts small (e.g. services/sp1-prover/Dockerfile.network,
 # which must build from the repo root to reach core-layer/sp1-hooks).
-# Exclude the heavy / irrelevant trees; the SP1 image only needs sp1-prover/ +
+# Exclude the heavy / irrelevant trees; the SP1 image only needs services/sp1-prover/ +
 # core-layer/sp1-hooks.
 **/node_modules
 **/.git
@@ -11,11 +11,11 @@
 **/coverage
 **/*.log
 .github
-xfuel-app
+apps
 docs
 deploy
 believer
-zkgpt-prover
+services/zkgpt-prover
 sdk
-skills
+packages
 backend

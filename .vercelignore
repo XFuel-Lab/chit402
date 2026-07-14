@@ -1,7 +1,6 @@
 backend/
 core-layer/
-zkgpt-prover/
-sp1-prover/
+services/
 artifacts/
 cache/
 node_modules/

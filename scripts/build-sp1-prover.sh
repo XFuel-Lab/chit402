@@ -15,14 +15,14 @@
 #   SP1_PROVER=cuda ./scripts/build-sp1-prover.sh --prove   # build + generate GPU proof
 #
 # OUTPUT:
-#   sp1-prover/host/target/release/prove   — prover binary
+#   services/sp1-prover/host/target/release/prove   — prover binary
 #   proof.bin                              — generated proof (if --prove flag set)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-PROVER_DIR="$ROOT_DIR/sp1-prover"
+PROVER_DIR="$ROOT_DIR/services/sp1-prover"
 
 echo "=== XFuel SP1 Prover Build ==="
 echo "Root:  $ROOT_DIR"
@@ -48,7 +48,7 @@ echo "Rust: $RUST_VERSION"
 # Build the prover
 cd "$PROVER_DIR"
 echo ""
-echo "--- Building sp1-prover/host (release) ---"
+echo "--- Building services/sp1-prover/host (release) ---"
 cargo build --release --bin prove
 
 BINARY="$PROVER_DIR/host/target/release/prove"

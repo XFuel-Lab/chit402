@@ -24,13 +24,12 @@ Closes #
 
 - [ ] `contracts/core/` — Core Layer contracts (ZKVerifierSP1, CoreRevenueSplitter, veXFGovernance, SP1ProofHooks)
 - [ ] `contracts/circuits/` — Circuit contracts
-- [ ] `sp1-prover/` — Rust SP1 prover
-- [ ] `core-layer/` — Backend AI listener / orchestration
-- [ ] `backend/theta-bridge/` — Bridge service
-- [ ] `src/` — Frontend
-- [ ] `sdk/js/` — JavaScript SDK
-- [ ] `cosmwasm-contracts/` — CosmWasm contracts
-- [ ] `edgefarm-mobile/` — Mobile app
+- [ ] `contracts/cosmwasm/` — CosmWasm contracts
+- [ ] `services/sp1-prover/` — Rust SP1 prover
+- [ ] `services/gateway/` — Agent-facing API gateway (routing / payments / proving / receipts)
+- [ ] `core-layer/` — Settlement orchestration / AI listener
+- [ ] `apps/web/` — Frontend
+- [ ] `packages/sdk/` — JavaScript SDK
 - [ ] `scripts/` or `deploy/` — Deployment scripts
 - [ ] `.github/` — CI/CD
 - [ ] `docs/` — Documentation

@@ -51,10 +51,10 @@ RUN chmod +x ./demo_llm_run
 
 # Wrapper + adapter (build from repo root: docker build -f zkgpt-prover/Dockerfile.full -t xfuel-zkgpt-prover:full .)
 # No entrypoint — same pattern as Phase 1 mock image so Theta runs image default CMD.
-COPY zkgpt-prover/wrapper-template.cjs ./
-COPY zkgpt-prover/mock-server.cjs ./
-COPY zkgpt-prover/adapter.cjs ./
-COPY zkgpt-prover/start-ping.cjs ./
+COPY services/zkgpt-prover/wrapper-template.cjs ./
+COPY services/zkgpt-prover/mock-server.cjs ./
+COPY services/zkgpt-prover/adapter.cjs ./
+COPY services/zkgpt-prover/start-ping.cjs ./
 
 ENV NODE_ENV=production
 ENV ZKGPT_PROVER_PORT=81

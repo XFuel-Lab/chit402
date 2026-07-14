@@ -15,7 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const skillsDir = process.argv[2] || path.join(__dirname, '..', 'skills');
+const skillsDir = process.argv[2] || path.join(__dirname, '..', 'packages', 'agent-skills');
 
 function parseFrontmatter(text) {
   if (!text.startsWith('---')) return null;
