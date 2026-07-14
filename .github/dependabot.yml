@@ -51,18 +51,6 @@ updates:
       - "automated"
       - "backend"
 
-  # ── npm (mobile app) ────────────────────────────────────────
-  - package-ecosystem: "npm"
-    directory: "/edgefarm-mobile"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "automated"
-      - "mobile"
-
   # ── npm (sdk) ───────────────────────────────────────────────
   - package-ecosystem: "npm"
     directory: "/sdk/js"
