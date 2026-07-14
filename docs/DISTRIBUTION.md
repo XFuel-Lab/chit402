@@ -76,12 +76,29 @@ from it (and from GitHub). Submit once there, then claim the aggregator listings
 
 ### Publish / claim steps  **[you]**
 
-1. **Official MCP Registry** (canonical — do this first):
+1. **Official MCP Registry** (canonical — do this first). Uses the `mcp-publisher`
+   CLI (a Go binary from GitHub releases / Homebrew — *not* an npm package).
+   Ownership is verified via the `mcpName` field already published in
+   `xfuel-mcp/package.json` on npm (must match the `server.json` `name`).
+
+   **macOS/Linux:**
    ```bash
-   # one-time: prove the io.github namespace via GitHub login
-   npx @modelcontextprotocol/publisher login github
-   # publish (bump server.json version on each change)
-   npx @modelcontextprotocol/publisher publish   # reads xfuel-mcp/server.json
+   brew install mcp-publisher   # or download the release binary
+   cd xfuel-mcp
+   mcp-publisher validate       # optional: check server.json (no auth)
+   mcp-publisher login github   # prove the io.github.XFuel-Lab namespace
+   mcp-publisher publish         # reads ./server.json; bump version on each change
+   ```
+
+   **Windows (PowerShell):** no `brew`/`uname` — download the binary directly:
+   ```powershell
+   $dir = "$env:USERPROFILE\mcp-publisher"; New-Item -ItemType Directory -Force $dir | Out-Null
+   Invoke-WebRequest "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_windows_amd64.tar.gz" -OutFile "$dir\p.tar.gz" -UseBasicParsing
+   tar -xzf "$dir\p.tar.gz" -C $dir
+   cd xfuel-mcp
+   & "$dir\mcp-publisher.exe" validate
+   & "$dir\mcp-publisher.exe" login github   # opens browser; sign in as an XFuel-Lab member
+   & "$dir\mcp-publisher.exe" publish
    ```
 2. **GitHub topics** (Glama + others auto-index from these): on the repo →
    Settings → Topics, add: `mcp`, `model-context-protocol`, `x402`, `ai-agents`,
@@ -93,7 +110,25 @@ from it (and from GitHub). Submit once there, then claim the aggregator listings
    npx @smithery/cli mcp publish "https://mcp.xfuel.app/mcp" -n XFuel-Lab/xfuel-mcp
    ```
 4. **PulseMCP**: auto-ingests from the registry within ~7 days. To expedite, email
-   `hello@pulsemcp.com` with the server name + namespace `io.github.XFuel-Lab/xfuel-mcp`.
+   `hello@pulsemcp.com` — ready-to-send template:
+
+   > **Subject:** New MCP server on the official registry — XFuel (`io.github.XFuel-Lab/xfuel-mcp`)
+   >
+   > Hi PulseMCP team,
+   >
+   > We just published our first-party MCP server to the official registry and would love
+   > to be indexed:
+   >
+   > - **Name / namespace:** `io.github.XFuel-Lab/xfuel-mcp` (v0.1.1, status: active)
+   > - **Registry:** https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.XFuel-Lab/xfuel-mcp
+   > - **npm:** https://www.npmjs.com/package/xfuel-mcp (`npx xfuel-mcp`; stdio + streamable HTTP)
+   > - **Repo:** https://github.com/XFuel-Lab/xfuel-protocol (subfolder `xfuel-mcp`)
+   > - **What it does:** XFuel is a verifiable settlement + payments layer for AI compute.
+   >   The server lets an agent submit inference, pay per task (USDC via x402 or TFUEL),
+   >   and fetch/verify ZK settlement proofs — 8 tools (list_models, submit_inference,
+   >   pay_with_usdc, get_task_status, get_proof, verify_proof, quote_task, get_health).
+   >
+   > Happy to provide anything else. Thanks!
 5. **Glama / mcp.so**: verify they picked up the repo after topics are set; claim the
    listing to control the description.
 

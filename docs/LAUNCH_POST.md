@@ -73,11 +73,25 @@ Route any model. Prove every dollar.
 
 ---
 
+## Where to find it (live)
+
+- **MCP Registry:** `io.github.XFuel-Lab/xfuel-mcp` (v0.1.1, active) —
+  <https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.XFuel-Lab/xfuel-mcp>
+- **npm:** [`xfuel-mcp`](https://www.npmjs.com/package/xfuel-mcp) · [`xfuel-sdk`](https://www.npmjs.com/package/xfuel-sdk)
+- **Run it:** `npx xfuel-mcp`
+- **Aggregators (auto-ingest from the registry):** PulseMCP, Glama, mcp.so — links
+  populate within a few days of the registry publish.
+
+---
+
 ### Pre-publish checklist
 
+- [x] Publish to the official MCP Registry (`io.github.XFuel-Lab/xfuel-mcp` active).
 - [ ] Swap `{host}` for the public API host and confirm `PUBLIC_BASE_URL` so
-      `verify_url`s in examples are absolute.
+      `verify_url`s in examples are absolute. *(needs branch merged + deployed)*
 - [ ] Include one real `verify_url` from a settled testnet task as the hero link.
-- [ ] Link the MCP registry listing once published (see `docs/DISTRIBUTION.md`).
+      *(needs deploy — the receipt endpoint ships in this branch)*
+- [ ] Confirm aggregator listings (PulseMCP/Glama/mcp.so) picked up the registry entry;
+      claim them to control the description.
 - [ ] Keep the proof-scope paragraph verbatim — do not let copy drift into
       "proves the model ran correctly" (see `docs/POSITIONING.md` §2).
