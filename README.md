@@ -1017,8 +1017,6 @@ xfuel-protocol/
 │                               #    Deployed to Vercel via vercel.json. This is the live app.
 ├── tools/
 │   └── m2m-dev-dashboard/      # 🔧 INTERNAL — local dev tool for testing M2M API endpoints
-├── edgefarm-mobile/            # 📱 PIVOTING — React Native (Expo) companion app
-│                               #    Cosmos yield screens tabled; AI DePIN rebuild planned
 ├── contracts/                  # Solidity contracts (Theta EVM)
 ├── cosmwasm-contracts/         # CosmWasm contracts (Cosmos)
 │   ├── zk-verifier/

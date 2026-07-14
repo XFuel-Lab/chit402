@@ -27,7 +27,6 @@ body:
         - Frontend (src/)
         - SDK (sdk/js/)
         - CosmWasm contracts
-        - Mobile app (edgefarm-mobile/)
         - Deployment scripts
         - CI/CD
         - Documentation
