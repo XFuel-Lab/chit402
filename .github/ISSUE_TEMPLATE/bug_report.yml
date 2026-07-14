@@ -22,7 +22,7 @@ body:
         - contracts/core/veXFGovernance.sol
         - contracts/core/SP1ProofHooks.sol
         - Circuit contract (specify in description)
-        - SP1 Prover (sp1-prover/)
+        - SP1 Prover (services/sp1-prover/)
         - Backend Bridge (backend/theta-bridge/)
         - Frontend (src/)
         - SDK (sdk/js/)

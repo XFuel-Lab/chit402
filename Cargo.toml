@@ -2,8 +2,8 @@
 members = [
     # CosmWasm BN254 Groth16 verifier for Cosmos chains (CertiK Phase 1 audit scope).
     "cosmwasm/zk-verifier",
-    # "sp1-prover/program",  # Unix-only: sp1-jit v6.0.2 uses std::os::fd (Linux/macOS only)
-    # "sp1-prover/host",     # Unix-only: depends on sp1-prover/program + sp1-jit
+    # "services/sp1-prover/program",  # Unix-only: sp1-jit v6.0.2 uses std::os::fd (Linux/macOS only)
+    # "services/sp1-prover/host",     # Unix-only: depends on services/sp1-prover/program + sp1-jit
 
     # ── Core Layer (ecosystem-agnostic modules) ──────────────────────────
     "core-layer/wasm/zk-verifier",

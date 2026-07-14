@@ -2,7 +2,7 @@
 # Build from repo root: docker build -f zkgpt-prover/Dockerfile.theta-diagnostic -t xfuel/xfuel-zkgpt-prover:theta-diagnostic .
 FROM node:20-slim
 WORKDIR /app
-COPY zkgpt-prover/start-ping.cjs ./
+COPY services/zkgpt-prover/start-ping.cjs ./
 EXPOSE 81
 ENTRYPOINT []
 CMD ["/usr/local/bin/node", "/app/start-ping.cjs"]
