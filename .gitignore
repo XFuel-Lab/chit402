@@ -111,11 +111,6 @@ witness_*.json
 *.zkey.old
 *.ptau.old
 
-# CosmWasm artifacts
-cosmwasm-contracts/artifacts/
-cosmwasm-contracts/target/
-cosmwasm/target/
-
 # Docker
 .docker/
 *.log.txt
@@ -141,11 +136,8 @@ deployment-*.json
 *.bin
 !src/**/*.bin
 
-# Rust build artifacts (but NOT committed CosmWasm artifacts)
+# Rust build artifacts
 target/
-# Whitelist CosmWasm artifacts — these are committed intentionally for on-chain hash verification
-!cosmwasm-contracts/artifacts/*.wasm
-!cosmwasm-contracts/*/artifacts/*.wasm
 
 # IDE
 *.code-workspace
