@@ -394,7 +394,7 @@ export default function Dashboard() {
 
           {m2mError && (
             <div style={{ fontSize: '0.8rem', color: '#f59e0b', marginBottom: '1rem' }}>
-              M2M API not reachable ({m2mError}). Start with: <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>cd backend/theta-bridge && node src/server.js</code>
+              M2M API not reachable ({m2mError}). Start with: <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>cd services/gateway && node src/server.js</code>
             </div>
           )}
 

@@ -16,6 +16,5 @@ docs
 deploy
 believer
 services/zkgpt-prover
-sdk
+services/gateway
 packages
-backend

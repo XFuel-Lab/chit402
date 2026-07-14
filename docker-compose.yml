@@ -18,7 +18,7 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
-      - ./backend:/app/backend
+      - ./services/gateway:/app/backend
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s

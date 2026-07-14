@@ -62,11 +62,11 @@ jobs:
           node-version: '20'
 
       - name: Install M2M backend deps
-        working-directory: backend/theta-bridge
+        working-directory: services/gateway
         run: npm install --no-audit --no-fund
 
       - name: M2M backend tests (webhooks + x402 adapter)
-        working-directory: backend/theta-bridge
+        working-directory: services/gateway
         run: npm test
 
       - name: Install SDK deps
