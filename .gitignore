@@ -22,7 +22,7 @@ lerna-debug.log*
 backend/ibc/transactions.json
 
 # Durable task/receipt store (PersistentTaskStore snapshots)
-backend/theta-bridge/.data/
+services/gateway/.data/
 .data/
 
 node_modules
@@ -96,7 +96,7 @@ target/
 # Embedded repos
 sp1-source/
 # zkGPT upstream clone + local CMake build (keep out of tree; document URL in docs)
-backend/theta-bridge/zkgpt/
+services/gateway/zkgpt/
 
 # Timestamped believer launch reports (local only)
 believer/launch-round-[0-9]*.json

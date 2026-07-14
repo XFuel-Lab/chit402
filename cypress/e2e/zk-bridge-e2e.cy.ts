@@ -9,7 +9,7 @@ describe('ZK Bridge E2E Testing', () => {
     cy.task('checkBackendHealth').then((health: any) => {
       if (!health.ok) {
         cy.log('⚠️ Backend not running. Some tests may fail.')
-        cy.log('Start backend with: cd backend/theta-bridge && npm run dev')
+        cy.log('Start backend with: cd services/gateway && npm run dev')
       } else {
         cy.log('✅ Backend is healthy')
       }

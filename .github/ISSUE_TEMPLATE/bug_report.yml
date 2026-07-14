@@ -23,7 +23,7 @@ body:
         - contracts/core/SP1ProofHooks.sol
         - Circuit contract (specify in description)
         - SP1 Prover (services/sp1-prover/)
-        - Backend Bridge (backend/theta-bridge/)
+        - Gateway service (services/gateway/)
         - Frontend (src/)
         - SDK (packages/sdk/)
         - CosmWasm contracts

@@ -1,7 +1,7 @@
 module.exports = {
   apps: [{
     name: 'xfuel-backend',
-    script: './backend/theta-bridge/server.js',
+    script: './services/gateway/src/server.js',
     instances: 1,
     exec_mode: 'fork',
     watch: false,

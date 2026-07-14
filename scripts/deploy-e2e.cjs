@@ -91,7 +91,7 @@ exec('npx hardhat run scripts/deploy-vault-factory.cjs --network theta-mainnet',
       console.log('=' .repeat(70));
       console.log('');
       console.log('1. ADD RELAYER PRIVATE KEY:');
-      console.log('   cd backend/theta-bridge');
+      console.log('   cd services/gateway');
       console.log('   Edit .env and add RELAYER_PRIVATE_KEY');
       console.log('');
       console.log('2. FUND RELAYER WALLET:');
@@ -101,7 +101,7 @@ exec('npx hardhat run scripts/deploy-vault-factory.cjs --network theta-mainnet',
       console.log('   redis-server');
       console.log('');
       console.log('4. START BRIDGE SERVICE:');
-      console.log('   cd backend/theta-bridge');
+      console.log('   cd services/gateway');
       console.log('   npm run dev');
       console.log('');
       console.log('5. TEST DEPOSIT:');
