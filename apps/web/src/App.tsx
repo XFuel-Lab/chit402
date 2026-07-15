@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import Home from './pages/Home';
 import Bridge from './pages/Bridge';
@@ -12,8 +12,6 @@ import Treasury from './pages/Treasury';
 import Docs from './pages/Docs';
 import Community from './pages/Community';
 import Grants from './pages/Grants';
-import Believers from './pages/Believers';
-import Angels from './pages/Angels';
 import EscrowAdmin from './pages/EscrowAdmin';
 import Security from './pages/Security';
 
@@ -34,8 +32,9 @@ export default function App() {
         <Route path="security" element={<Security />} />
         <Route path="community" element={<Community />} />
         <Route path="grants" element={<Grants />} />
-        <Route path="believers" element={<Believers />} />
-        <Route path="angels" element={<Angels />} />
+        {/* Funding rounds pulled from the public UI (not open); redirect legacy links home. */}
+        <Route path="believers" element={<Navigate to="/" replace />} />
+        <Route path="angels" element={<Navigate to="/" replace />} />
         <Route path="escrow-admin" element={<EscrowAdmin />} />
       </Route>
     </Routes>

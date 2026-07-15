@@ -4,8 +4,6 @@ import WalletButton from './WalletButton';
 
 const navLinks = [
   { to: '/', label: 'Home' },
-  { to: '/believers', label: 'Believers' },
-  { to: '/angels', label: 'Angels' },
   { to: '/bridge', label: 'Bridge' },
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/governance', label: 'Governance' },
@@ -78,9 +76,7 @@ export default function Layout() {
           borderBottom: '1px solid rgba(139,92,246,0.15)',
         }}
       >
-        <strong style={{ color: '#a5f3fc' }}>Beta protocol</strong> — integration and metrics pages may use testnet or staging backends.{' '}
-        <strong style={{ color: '#86efac' }}>Believer &amp; Angel rounds</strong> commit on{' '}
-        <strong>Theta mainnet (361)</strong> when addresses are configured.
+        <strong style={{ color: '#a5f3fc' }}>Beta protocol</strong> — integration and metrics pages may use testnet or staging backends. Funding rounds are not currently open.
       </div>
 
       <main style={{ flex: 1 }}>

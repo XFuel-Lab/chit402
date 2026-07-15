@@ -1,8 +1,5 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { useReadContract } from 'wagmi';
-import { formatEther } from 'viem';
-import { ADDRESSES, ANGEL_ROUND_ABI, BELIEVER_ROUND_ABI, THETA_MAINNET_ID, isDeployed } from '../contracts';
 
 type SocialLink = {
   platform: string;
@@ -34,11 +31,6 @@ type CommunityContent = {
 const CONTENT_URL = (import.meta.env.VITE_COMMUNITY_CONTENT_URL || '/community-content.json') as string;
 
 export default function Community() {
-  const believerAddr = ADDRESSES.believerRound;
-  const angelAddr = ADDRESSES.angelRound;
-  const believerOn = isDeployed(believerAddr);
-  const angelOn = isDeployed(angelAddr);
-
   const { data: content, isError: contentError, isPending: contentPending } = useQuery({
     queryKey: ['community-content', CONTENT_URL],
     queryFn: async (): Promise<CommunityContent> => {
@@ -47,22 +39,6 @@ export default function Community() {
       return r.json();
     },
     staleTime: 60_000,
-  });
-
-  const { data: bStats } = useReadContract({
-    address: believerAddr,
-    abi: BELIEVER_ROUND_ABI,
-    functionName: 'getStats',
-    chainId: THETA_MAINNET_ID,
-    query: { enabled: believerOn, refetchInterval: 30_000 },
-  });
-
-  const { data: aStats } = useReadContract({
-    address: angelAddr,
-    abi: ANGEL_ROUND_ABI,
-    functionName: 'getStats',
-    chainId: THETA_MAINNET_ID,
-    query: { enabled: angelOn, refetchInterval: 30_000 },
   });
 
   const { data: ghRepo } = useQuery({
@@ -78,17 +54,6 @@ export default function Community() {
   const social = content?.socialLinks ?? [];
   const events = content?.upcomingEvents ?? [];
   const amas = content?.pastAMAs ?? [];
-
-  const believerLabels = ['Open', 'Closed', 'TGE live', 'Refunding'];
-  const angelLabels = ['Open', 'Closed', 'TGE live'];
-
-  const believerPct =
-    believerOn && bStats && bStats[4] > 0n
-      ? Math.min(100, Number((bStats[0] * 10000n) / bStats[4]) / 100)
-      : 0;
-
-  const angelPct =
-    angelOn && aStats && aStats[4] > 0n ? Math.min(100, Number((aStats[0] * 10000n) / aStats[4]) / 100) : 0;
 
   return (
     <div className="page">
@@ -136,101 +101,6 @@ export default function Community() {
           <code style={{ fontFamily: 'var(--font-mono)' }}>xfuel-app</code> before build. Twitter / Telegram stay manual in{' '}
           <code style={{ fontFamily: 'var(--font-mono)' }}>public/community-content.json</code>.
         </p>
-
-        <div className="grid grid-2" style={{ marginBottom: '2rem' }}>
-          <div className="card" style={{ padding: '2rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3>Community round</h3>
-              {!believerOn ? (
-                <span className="badge badge-orange">Not configured</span>
-              ) : (
-                <span className="badge badge-green">{believerLabels[Number(bStats?.[5] ?? 0)] ?? '—'}</span>
-              )}
-            </div>
-
-            {believerOn && bStats ? (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <span style={{ color: '#8a8a9a' }}>TFUEL committed</span>
-                  <span style={{ fontWeight: 700 }}>
-                    {Number(formatEther(bStats[0])).toLocaleString(undefined, { maximumFractionDigits: 2 })} /{' '}
-                    {Number(formatEther(bStats[4])).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </span>
-                </div>
-                <div className="progress-bar" style={{ marginBottom: '1rem' }}>
-                  <div className="progress-bar-fill" style={{ width: `${believerPct}%` }} />
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
-                  <div>
-                    <div style={{ color: '#8a8a9a', fontSize: '0.8rem' }}>Participants</div>
-                    <div style={{ fontWeight: 700 }}>{bStats[1].toString()}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: '#8a8a9a', fontSize: '0.8rem' }}>Min commitment</div>
-                    <div style={{ fontWeight: 700 }}>100 TFUEL</div>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <p style={{ color: '#8a8a9a', fontSize: '0.9rem' }}>Set VITE_BELIEVER_ROUND_ADDRESS to show live progress from the contract.</p>
-            )}
-
-            <h3 style={{ fontSize: '0.95rem', marginBottom: '0.5rem' }}>Highlights</h3>
-            <ul style={{ paddingLeft: '1.25rem', color: '#8a8a9a', fontSize: '0.85rem' }}>
-              <li style={{ marginBottom: '0.3rem' }}>On-chain commitment; refund path if TGE not triggered (see contract)</li>
-              <li style={{ marginBottom: '0.3rem' }}>Optional lock tiers for bonus XF</li>
-              <li style={{ marginBottom: '0.3rem' }}>Governance participation via veXF after you hold XF</li>
-            </ul>
-
-            <Link to="/believers" className="btn btn-primary" style={{ width: '100%', marginTop: '1.25rem', justifyContent: 'center', display: 'flex' }}>
-              Open community round
-            </Link>
-          </div>
-
-          <div className="card" style={{ padding: '2rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3>Angel round</h3>
-              {!angelOn ? (
-                <span className="badge badge-orange">Not configured</span>
-              ) : (
-                <span className="badge badge-green">{angelLabels[Number(aStats?.[5] ?? 0)] ?? '—'}</span>
-              )}
-            </div>
-
-            {angelOn && aStats ? (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <span style={{ color: '#8a8a9a' }}>TFUEL committed</span>
-                  <span style={{ fontWeight: 700 }}>
-                    {Number(formatEther(aStats[0])).toLocaleString(undefined, { maximumFractionDigits: 2 })} /{' '}
-                    {Number(formatEther(aStats[4])).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </span>
-                </div>
-                <div className="progress-bar" style={{ marginBottom: '1rem' }}>
-                  <div className="progress-bar-fill" style={{ width: `${angelPct}%`, background: 'linear-gradient(90deg, #a855f7, #f97316)' }} />
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-                  <div>
-                    <div style={{ color: '#8a8a9a', fontSize: '0.8rem' }}>Angels</div>
-                    <div style={{ fontWeight: 700 }}>{aStats[1].toString()}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: '#8a8a9a', fontSize: '0.8rem' }}>Pre-TGE treasury pulled</div>
-                    <div style={{ fontWeight: 700, color: '#fdba74' }}>
-                      {Number(formatEther(aStats[7])).toLocaleString(undefined, { maximumFractionDigits: 2 })} TFUEL
-                    </div>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <p style={{ color: '#8a8a9a', fontSize: '0.9rem' }}>Set VITE_ANGEL_ROUND_ADDRESS for live Angel round stats (separate from Believers).</p>
-            )}
-
-            <Link to="/angels" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center', display: 'flex' }}>
-              Open Angel round
-            </Link>
-          </div>
-        </div>
 
         <div style={{ marginBottom: '2rem' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
