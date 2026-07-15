@@ -101,15 +101,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
-            core-layer/wasm/zk-verifier
-            core-layer/wasm/revenue-splitter
+            contracts/cosmwasm/sp1-verifier
+            contracts/cosmwasm/revenue-splitter
 
       - name: Run ZK verifier tests
-        working-directory: core-layer/wasm/zk-verifier
+        working-directory: contracts/cosmwasm/sp1-verifier
         run: cargo test
 
       - name: Run revenue splitter tests
-        working-directory: core-layer/wasm/revenue-splitter
+        working-directory: contracts/cosmwasm/revenue-splitter
         run: cargo test
 
   # ── Slither static analysis ──────────────────────────────────
