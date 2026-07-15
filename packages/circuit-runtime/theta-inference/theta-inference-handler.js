@@ -18,7 +18,7 @@
  *
  * Usage:
  *   import { ThetaInferenceHandler } from './theta-inference-handler.js';
- *   import { CoreListener } from '../../core-layer/ai-listener.js';
+ *   import { CoreListener } from '../../../core-layer/ai-listener.js';
  *
  *   const listener = new CoreListener(config);
  *   const handler = new ThetaInferenceHandler({

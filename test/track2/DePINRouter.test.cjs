@@ -200,7 +200,7 @@ describe('Track 2.3 — DePIN Priority Router', function () {
     before(async function () {
       // Dynamic import of the ES module
       try {
-        const mod = await import('../../circuits/theta-inference/theta-inference-handler.js');
+        const mod = await import('../../packages/circuit-runtime/theta-inference/theta-inference-handler.js');
         ThetaInferenceHandler = mod.ThetaInferenceHandler;
       } catch (err) {
         // If import fails (e.g., missing deps in test env), skip off-chain tests

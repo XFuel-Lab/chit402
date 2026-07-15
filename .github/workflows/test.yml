@@ -74,7 +74,7 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Install theta-inference circuit deps (ethers for handler tests)
-        working-directory: circuits/theta-inference
+        working-directory: packages/circuit-runtime/theta-inference
         run: npm install --no-audit --no-fund
 
       - name: SDK build + tests (REST client + on-chain module)
@@ -84,7 +84,7 @@ jobs:
           npm test
 
       - name: ComputeRouter + _executeService regression tests
-        run: node --test circuits/theta-inference/test/compute-router.test.mjs circuits/theta-inference/test/execute-service.test.mjs
+        run: node --test packages/circuit-runtime/theta-inference/test/compute-router.test.mjs packages/circuit-runtime/theta-inference/test/execute-service.test.mjs
 
       - name: Validate Agent Skills (SKILL.md frontmatter)
         run: node scripts/validate-skills.cjs

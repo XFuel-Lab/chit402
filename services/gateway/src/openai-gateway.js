@@ -98,7 +98,7 @@ async function getRouterHandler() {
   if (!_handlerReady) {
     _handlerReady = (async () => {
       const { ThetaInferenceHandler } = await import(
-        '../../../circuits/theta-inference/theta-inference-handler.js'
+        '../../../packages/circuit-runtime/theta-inference/theta-inference-handler.js'
       );
       const h = new ThetaInferenceHandler({});
       if (typeof h.resolveApiKeys === 'function') {
@@ -136,7 +136,7 @@ async function runChatInference({ model, messages, max_tokens, temperature }) {
       handler.openaiCompatKey || handler.anthropicApiKey
     ));
     const { ComputeRouter } = await import(
-      '../../../circuits/theta-inference/compute-router.js'
+      '../../../packages/circuit-runtime/theta-inference/compute-router.js'
     );
     const router = ComputeRouter.fromHandler(handler);
     // SERVICE_TYPES.LLM_INFERENCE === 0

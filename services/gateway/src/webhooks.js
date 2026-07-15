@@ -9,7 +9,7 @@ import logger from './logger.js';
  * register a URL + secret and receive signed `TaskSettled` / `A2ASettled`
  * events when tasks reach a terminal state.
  *
- * Delivery convention matches circuits/theta-inference/theta-inference-handler.js:
+ * Delivery convention matches packages/circuit-runtime/theta-inference/theta-inference-handler.js:
  *   Header: X-XFuel-Signature: sha256=<hex>
  *   HMAC-SHA256(key=<webhook secret>, message=<JSON body string>)
  *

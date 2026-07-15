@@ -223,7 +223,7 @@ describe('Track 5.4 — EdgeStore retrieval confirmation', function () {
   let ThetaEdgeStoreAdapter;
 
   before(async function () {
-    const mod = await import('../../circuits/data-hubs/theta-edgestore-adapter.js');
+    const mod = await import('../../packages/circuit-runtime/data-hubs/theta-edgestore-adapter.js');
     ThetaEdgeStoreAdapter = mod.ThetaEdgeStoreAdapter;
   });
 
@@ -312,7 +312,7 @@ describe('Track 5.5 — Webhook HMAC-SHA256 signature', function () {
   }
 
   it('_deliverWebhook sends X-XFuel-Signature header when WEBHOOK_SECRET is set', async function () {
-    const { ThetaInferenceHandler } = await import('../../circuits/theta-inference/theta-inference-handler.js');
+    const { ThetaInferenceHandler } = await import('../../packages/circuit-runtime/theta-inference/theta-inference-handler.js');
 
     const handler = new ThetaInferenceHandler({});
     handler._webhookSecret = 'test-secret-key';
@@ -339,7 +339,7 @@ describe('Track 5.5 — Webhook HMAC-SHA256 signature', function () {
   });
 
   it('_deliverWebhook does NOT send X-XFuel-Signature when no secret configured', async function () {
-    const { ThetaInferenceHandler } = await import('../../circuits/theta-inference/theta-inference-handler.js');
+    const { ThetaInferenceHandler } = await import('../../packages/circuit-runtime/theta-inference/theta-inference-handler.js');
 
     const handler = new ThetaInferenceHandler({});
     handler._webhookSecret = '';
@@ -371,7 +371,7 @@ describe('Track 5.5 — Webhook HMAC-SHA256 signature', function () {
   });
 
   it('webhook payload includes new fields: edge_cloud_node_id, video_provenance_uri, edge_store_cid', async function () {
-    const { ThetaInferenceHandler } = await import('../../circuits/theta-inference/theta-inference-handler.js');
+    const { ThetaInferenceHandler } = await import('../../packages/circuit-runtime/theta-inference/theta-inference-handler.js');
 
     const handler = new ThetaInferenceHandler({});
 
@@ -430,7 +430,7 @@ describe('Track 5.5 — Webhook HMAC-SHA256 signature', function () {
   });
 
   it('webhook delivery retries 3 times on HTTP failure then marks failed', async function () {
-    const { ThetaInferenceHandler } = await import('../../circuits/theta-inference/theta-inference-handler.js');
+    const { ThetaInferenceHandler } = await import('../../packages/circuit-runtime/theta-inference/theta-inference-handler.js');
 
     const handler = new ThetaInferenceHandler({});
     handler._webhookSecret = '';

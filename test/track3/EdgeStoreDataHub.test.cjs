@@ -174,7 +174,7 @@ describe('Track 3.1 — EdgeStore DataHub Integration', function () {
     const TEST_KEY = 'abcdef1234567890abcdef12';
 
     before(async function () {
-      const mod = await import('../../circuits/data-hubs/theta-edgestore-adapter.js');
+      const mod = await import('../../packages/circuit-runtime/data-hubs/theta-edgestore-adapter.js');
       ThetaEdgeStoreAdapter = mod.ThetaEdgeStoreAdapter;
     });
 
@@ -341,7 +341,7 @@ describe('Track 3.1 — EdgeStore DataHub Integration', function () {
     const TEST_KEY = 'cafebabe00001111';
 
     before(async function () {
-      const mod = await import('../../circuits/data-hubs/datahubs-handler.js');
+      const mod = await import('../../packages/circuit-runtime/data-hubs/datahubs-handler.js');
       DataHubsHandler = mod.DataHubsHandler;
     });
 
