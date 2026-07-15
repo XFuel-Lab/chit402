@@ -1,8 +1,10 @@
 # XFUEL Protocol
 
-**Theta-Hybrid AI DePIN Hub — live inference on EdgeCloud GPUs, ZK-verified settlements, agent-first API, and cross-chain yield across Theta, Bittensor, Akash, Solana, and beyond.**
+**The verifiable settlement & payments layer for AI compute. Route any model to any provider, settle over any rail (USDC via x402 or TFUEL), and get a cryptographic receipt for every task — anchored on Theta.**
 
-Live: **[xfuel.app](https://xfuel.app)** (Theta Mainnet Beta)
+> **Route any model. Prove every dollar.**
+
+Live: **[xfuel.app](https://xfuel.app)** (beta · Believer & Angel rounds live on Theta mainnet)
 
 [![Docs](https://img.shields.io/badge/docs-v2.4-blue.svg)](WHITEPAPER.md)
 [![Status](https://img.shields.io/badge/status-beta-orange.svg)](https://xfuel.app)
@@ -54,38 +56,38 @@ Live: **[xfuel.app](https://xfuel.app)** (Theta Mainnet Beta)
 
 ## What is XFUEL?
 
-XFuel Protocol is a **Theta-hybrid AI DePIN hub** — a modular, ZK-secured Core Layer that pumps intelligence, compute, liquidity, and value across AI ecosystems. Built with **Theta EdgeCloud as the primary GPU backbone**, XFuel routes real AI inference (LLM, image gen, STT, voice cloning, RAG, video, object detection) through live EdgeCloud APIs, generates SP1 zkVM proofs on the same GPU hardware, and settles everything on-chain with cryptographic guarantees.
+XFuel is the **verifiable settlement & payments layer for AI compute**. Any agent or app submits an inference task; XFuel routes it to the best available provider — centralized, neocloud (Groq / Together / Fireworks), or DePIN (Theta EdgeCloud, Akash) — settles payment over any rail (USDC via **x402**, or TFUEL on Theta), and returns a **verifiable receipt**: a signed statement by default, or an on-chain **SP1 settlement proof** on demand. Give an agent a *budget instead of your API keys*, with a cryptographic audit trail for every dollar.
 
-The Core Layer verifies proofs, routes intents, splits fees, and governs parameters. All domain-specific logic — which AI model to run, which GPU tier to select, how to price a lease — lives in **circuits** (independent modules). The result is an agent-first, intent-driven system where any user, developer, or autonomous agent can access verifiable AI compute in under 10 seconds.
+The Core Layer verifies proofs, routes intents, splits fees, and governs parameters. Domain-specific logic — which model to run, which provider tier to select, how to price a task — lives in **circuits** (independent modules). **Providers are pluggable options; the settlement + proof layer is the product.** Theta is XFuel's settlement home (chain 361/365) and one provider tier — not the identity.
 
 **In practical terms, XFuel lets you:**
 
-- **Run AI inference** via 15 one-click preset hooks with smart GPU selection (RTX 4090 / A100 / H100 SXM) — real EdgeCloud execution, ZK-proven results
-- **Route** workloads to the cheapest DePIN provider across Theta EdgeCloud, Akash, Bittensor, Render, and more
-- **Settle** cross-chain AI tasks with SP1 zkVM Groth16 proofs — sub-200ms proving on EdgeCloud GPUs, <270K gas on-chain
-- **Build agents** that interact via structured API (`/theta-ai/agent-intent`) with webhook callbacks — no polling, no UI needed
-- **Earn** from a unified revenue model: 30/30/25/15 split (see [Revenue Model](#revenue-model))
-- **Monitor** everything via a live dashboard with failure prediction, gas profiles, and ROI calculator
-- **Govern** circuit priorities, fee parameters, and treasury via vote-escrowed veXF
+- **Route any model to any provider** via one OpenAI-compatible endpoint — OpenAI, neoclouds (Groq/Together/Fireworks), or DePIN tiers (Theta EdgeCloud, Akash). Configured, not hardcoded.
+- **Pay per call over x402/USDC** (or TFUEL on Theta) — give an agent a budget, not your keys; escrow caps the spend.
+- **Get a verifiable receipt for every task** — signed by default; upgrade to an on-chain SP1 settlement proof (correct fee split + payment binding + output-hash commitment + single-use nullifier), anchored on Theta.
+- **Build agents** via a structured M2M API and OpenAI-compatible gateway with webhook callbacks — no polling, no UI needed.
+- **Earn** from a transparent on-chain revenue model: 30/30/25/15 split (see [Revenue Model](#revenue-model)).
+- **Govern** circuit priorities, fee parameters, and treasury via vote-escrowed veXF.
 
 ---
 
 ## Whitepaper
 
 **XFuel Protocol — Whitepaper v2.4**
-*AI Pumping Station: Modular ZK-Secured DePIN Hub — Hybrid Theta-Centric Architecture*
+*A Verifiable Settlement & Payments Layer for AI Compute*
 
 Read the complete technical whitepaper: **[WHITEPAPER.md](WHITEPAPER.md)**
 
 **Highlights:**
 
-- **Theta-hybrid Core Layer** — ZKVerifierSP1, CoreRevenueSplitter (with GET), veXFGovernance
-- **Live inference pipeline** — 15 presets, smart GPU selector, EdgeCloud execution, agent webhooks, monitoring dashboard
+- **Provider-agnostic Core Layer** — ZKVerifierSP1, CoreRevenueSplitter (with GET), veXFGovernance
+- **Verifiable receipts** — signed by default; on-chain SP1 settlement proof (fees + payment binding + output commitment + nullifier) on demand
+- **Live inference pipeline** — OpenAI-compatible routing across neocloud + DePIN tiers, agent webhooks, monitoring dashboard
 - **SP1 zkVM v6.0.2** — Binary serialization, batch=10 recursive rollup (11.6x speedup), sub-200ms per proof on EdgeCloud
 - **Tri-prover architecture** — EVM (Solidity) + CosmWasm (Rust) + Solana SVM (Rust) — all <270K gas equivalent
 - **16+ modular circuits** — AI compute, DePIN infrastructure, yield, robotics, data, energy, wireless, and more
 - **Revenue innovation** — Growth & Expansion Treasury (GET), Fee-to-Stake routing
-- **Cross-chain** — Theta (primary), Bittensor, Osmosis, Akash, Solana, Filecoin, NEAR, Aptos, Sui
+- **Cross-chain** — Theta (settlement home), Bittensor, Osmosis, Akash, Solana, Filecoin, NEAR, Aptos, Sui
 - **Phase 1 research integration** — zkGPT (LLM ZK proofs; [eprint 2025/1184](https://eprint.iacr.org/2025/1184), [security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt)) and Fair Exchange / PAS (atomic A2A payment↔result; [eprint 2026/395](https://eprint.iacr.org/2026/395)). Mock prover: `node services/zkgpt-prover/mock-server.cjs`; smoke test: `npm run test:zkgpt-mock`. Full attribution: [`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md).
 
 ---
@@ -578,9 +580,9 @@ All six build phases are shipped:
 
 ---
 
-## XFuel as AI DePIN Hub: How It Works
+## How XFuel Works
 
-XFuel is the **ZK settlement and orchestration layer for AI compute across decentralized networks**. The core insight: AI agents and DePIN GPU providers need trustless, verifiable proof that compute actually happened — on the right hardware, producing the right output — before funds settle. XFuel provides that proof layer.
+XFuel is the **verifiable settlement & payments layer for AI compute**. The core insight: when an agent pays for compute across any provider, the principal needs a trustless, verifiable receipt of *what was bought and that the fees settled correctly* — before and after funds move. XFuel provides that settlement + proof layer, provider-agnostic underneath.
 
 ### The Flow (How an Agent Uses XFuel)
 

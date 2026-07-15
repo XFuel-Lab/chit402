@@ -1,20 +1,20 @@
 # XFuel Protocol — Whitepaper v2.4
 
-**AI Pumping Station: A Modular, ZK-Secured DePIN Hub for Cross-Ecosystem Intelligence**
+**A Verifiable Settlement & Payments Layer for AI Compute**
 
-*Version 2.4 — Hybrid Theta-Centric Architecture*
+*Version 2.4 — Provider-Agnostic Settlement Architecture*
 *March 2026*
 
 ---
 
 ## Abstract
 
-XFuel Protocol is a **modular, zero-knowledge-secured DePIN hub** that pumps intelligence, compute, liquidity, and value across AI ecosystems. Built around a **hybrid Theta-centric architecture** — with Theta EdgeCloud as the primary GPU backbone — XFuel's **Core Layer** handles ZK proof verification, task routing, fee distribution, governance, and treasury operations. Independent **circuits** (specialized modules) plug into the Core Layer to serve specific use cases, while the orchestration layer routes workloads across Theta, Bittensor, Akash, Solana, and other DePIN networks based on cost, latency, and availability.
+XFuel Protocol is the **verifiable settlement & payments layer for AI compute**. An agent or app submits an inference task; XFuel's **Core Layer** routes it to the best available provider — centralized, neocloud (Groq, Together, Fireworks), or DePIN (Theta EdgeCloud, Akash) — settles payment over any rail (USDC via x402, or TFUEL on Theta), and returns a **verifiable receipt**: a signed statement by default, or an on-chain SP1 settlement proof on demand. The Core Layer handles ZK proof verification, task routing, fee distribution, governance, and treasury operations. Independent **circuits** (specialized modules) plug in to serve specific use cases, while the orchestration layer routes workloads across providers based on cost, latency, and availability. **Theta is XFuel's settlement home (chain 361/365) and one provider tier — not its identity; providers are pluggable options, and the settlement + proof layer is the product.**
 
 This whitepaper describes the Core Layer architecture, its components, and how they interact to enable trustless, verifiable pumping of AI workloads across heterogeneous blockchain environments. The design prioritizes:
 
 1. **Full modularity** — Independent circuits plug in via event-driven interfaces; no shared state between modules.
-2. **Theta-hybrid integration** — Theta EdgeCloud as the primary GPU and inference backbone, with ecosystem-agnostic circuits for Bittensor, Akash, Solana, and beyond.
+2. **Provider-agnostic routing** — route to the best available provider (OpenAI-compatible neoclouds, or DePIN tiers like Theta EdgeCloud and Akash), configured not hardcoded; settlement anchors on Theta, with ecosystem-agnostic circuits for Bittensor, Akash, Solana, and beyond.
 3. **Circuit integrity** — Isolation for security and scalability, including subchain-ready architecture.
 4. **2030-forward resilience** — Designed for multi-network AI economies at scale.
 
@@ -63,7 +63,7 @@ Raw DePIN infrastructure lacks embedded intelligence for autonomous coordination
 **5. Economic and Reward Architecture Layer**
 Token models often ignore real hardware costs, leading to idle nodes and diluted incentives. XFuel's 30/30/25/15 revenue split, GPU-tier multipliers, and veXF governance create sustainable economics. Live ROI calculators and Fee-to-Stake routing align operator incentives with actual usage, while our hybrid Theta focus leverages EdgeCloud's real-world GPU network for competitive yields.
 
-By addressing these layers head-on, XFuel is not just another DePIN protocol — it is the pumping station that makes decentralized AI economically viable and operationally simple at scale.
+By addressing these layers head-on, XFuel is not just another DePIN protocol — it is the neutral settlement and payments rail that makes autonomous AI compute spend accountable and verifiable at scale.
 
 ### How It Works
 
@@ -74,7 +74,7 @@ Concretely, XFuel provides a **Core Layer** — a minimal settlement and routing
 | Principle | Implementation |
 |-----------|---------------|
 | **Modularity** | Circuits plug into Core via events; no shared state between modules |
-| **Theta-hybrid** | Theta EdgeCloud as primary GPU backbone; ecosystem-agnostic circuit layer for Bittensor, Akash, Solana, and beyond |
+| **Provider-agnostic** | Route to any provider (neocloud or DePIN) via event-driven circuits; Theta is the settlement home and one provider tier |
 | **Low-gas settlement** | Target <100K gas per proof verification on EVM chains |
 | **Trustless** | SP1 zkVM proofs replace trusted intermediaries |
 | **Progressive decentralization** | Admin roles → veXF governance → fully on-chain DAO |
@@ -455,7 +455,7 @@ XFuel's Core Layer supports three integration tiers:
 
 ### 8.2 Chain-Specific Notes
 
-**Theta Metachain (primary)** — Theta (chain 361) is XFuel's primary deployment chain, with live EdgeCloud inference, GPU tiers, and SP1 CUDA proving on A100/H200 hardware. This Theta-hybrid focus leverages EdgeCloud's real-world GPU network for competitive yields, while ecosystem-agnostic circuits extend to Bittensor, Akash, Solana, and beyond. Interconnected "chain of chains" architecture with EVM compatibility, native subchain execution, and TFUEL gas. All 23 testnet contracts are deployed on Theta Testnet (chain 365). XFuel operates a **dedicated shared subchain** (`tsub365001` on testnet, `tsub361001` on mainnet) hosting ThetaInferenceCircuit, A2ACircuit, ThetaGPUCircuit, and DataHubs — delivering <2s block finality per intent. Architecture is branch-ready: additional per-circuit subchains are spun up as volume demands isolation.
+**Theta Metachain (settlement home)** — Theta (chain 361) is XFuel's settlement home and primary deployment chain, where receipts anchor on-chain; it is also a provider tier, with EdgeCloud inference, GPU tiers, and SP1 CUDA proving on A100/H200 hardware. Provider-agnostic circuits route to neoclouds and other DePIN tiers (Bittensor, Akash, Solana, and beyond) based on cost, latency, and availability. Interconnected "chain of chains" architecture with EVM compatibility, native subchain execution, and TFUEL gas. All 23 testnet contracts are deployed on Theta Testnet (chain 365). XFuel operates a **dedicated shared subchain** (`tsub365001` on testnet, `tsub361001` on mainnet) hosting ThetaInferenceCircuit, A2ACircuit, ThetaGPUCircuit, and DataHubs — delivering <2s block finality per intent. Architecture is branch-ready: additional per-circuit subchains are spun up as volume demands isolation.
 
 **Bittensor EVM** — Chain ID 964, TAO as native currency, EVM precompiles for staking and subnet management, Hyperlane bridge for cross-chain messaging.
 
