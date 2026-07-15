@@ -11,7 +11,7 @@
  *
  * Usage:
  *   import { A2AHandler } from './a2a-handler.js';
- *   import { CoreListener } from '../../core-layer/ai-listener.js';
+ *   import { CoreListener } from '../../../core-layer/ai-listener.js';
  *
  *   const listener = new CoreListener(config);
  *   const a2aHandler = new A2AHandler(a2aConfig);

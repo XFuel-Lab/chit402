@@ -5,7 +5,7 @@
  * Import this file to auto-register all priority circuits with CoreListener.
  *
  * Usage:
- *   import { CoreListener } from '../core-layer/ai-listener.js';
+ *   import { CoreListener } from '../../core-layer/ai-listener.js';
  *   import { registerAllCircuits } from './index.js';
  *
  *   const listener = new CoreListener(config);
@@ -29,7 +29,7 @@ import { EnergyHandler } from './energy-grid/energy-handler.js';
 import { MappingHandler } from './mapping-sensor/mapping-handler.js';
 import { WirelessHandler } from './wireless-depin/wireless-handler.js';
 import { UplinkHandler } from './uplink/uplink-handler.js';
-import { AI_INTENT_TYPES } from '../core-layer/ai-listener.js';
+import { AI_INTENT_TYPES } from '../../core-layer/ai-listener.js';
 
 /**
  * Register all priority circuits with a CoreListener instance.

@@ -1049,10 +1049,10 @@ class AIListener {
     // Lazy, isolated import: only loaded when the flag is on. Keeps the M2M
     // server decoupled from the heavier inference handler at load time.
     const { ThetaInferenceHandler } = await import(
-      '../../../circuits/theta-inference/theta-inference-handler.js'
+      '../../../packages/circuit-runtime/theta-inference/theta-inference-handler.js'
     );
     const { ComputeRouter } = await import(
-      '../../../circuits/theta-inference/compute-router.js'
+      '../../../packages/circuit-runtime/theta-inference/compute-router.js'
     );
 
     if (!this._fullRouterHandler) {

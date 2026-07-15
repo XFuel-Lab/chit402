@@ -17,7 +17,7 @@
  *
  * Usage:
  *   import { GPUHandler } from './gpu-handler.js';
- *   import { CoreListener } from '../../core-layer/ai-listener.js';
+ *   import { CoreListener } from '../../../core-layer/ai-listener.js';
  *
  *   const listener = new CoreListener(config);
  *   const gpuHandler = new GPUHandler(gpuConfig);

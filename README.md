@@ -1020,32 +1020,21 @@ xfuel-protocol/
 ├── packages/                   # Publishable / shared libraries
 │   ├── sdk/                    # JavaScript SDK (xfuel-sdk on npm) + runnable examples/
 │   ├── mcp/                    # First-party MCP server (xfuel-mcp on npm)
-│   └── agent-skills/           # Agent Skills (front door for agents)
+│   ├── agent-skills/           # Agent Skills (front door for agents)
+│   └── circuit-runtime/        # 20+ modular circuit handlers (JS) + Hardhat tests
 ├── services/                   # Long-running backend services
 │   ├── gateway/                # Agent-facing API gateway (routing / payments / proving / receipts)
 │   ├── sp1-prover/             # SP1 Rust RISC-V prover (EdgeCloud CUDA / Succinct network)
 │   └── zkgpt-prover/           # zkGPT prover (Phase 1 mock + wrapper)
-├── contracts/                  # Solidity contracts (Theta EVM)
+├── contracts/                  # Solidity + CosmWasm contracts
 │   ├── core/                   # ZKVerifierSP1, CoreRevenueSplitter, veXFGovernance, SP1ProofHooks
-│   ├── circuits/               # Circuit contracts (audit scope)
+│   ├── circuits/               # Circuit contracts (Solidity, audit scope)
+│   ├── cosmwasm/               # CosmWasm contracts (Cosmos): zk-verifier, sp1-verifier, revenue-splitter
 │   ├── governance/  interfaces/  legacy/  mocks/  test-helpers/
-├── circuits/                   # 20+ modular circuit handlers (JS) + circuit .sol + tests
-│   ├── theta-inference/        # Theta EdgeCloud inference (presets, GPU tiers, webhooks)
-│   ├── tao-evm/                # AI Marketplace (priority)
-│   ├── a2a/                    # Agent Comms (priority)
-│   ├── theta-gpu/              # Edge Compute (priority)
-│   ├── compute-marketplace/    # Akash GPU Compute (CosmWasm + Solidity)
-│   ├── inference-router/       # Bittensor Inference (dTAO precompiles)
-│   ├── bridge-circuit/         # Cross-Chain Bridge (Hyperlane/IBC)
-│   ├── zkml/  data-hubs/       # Private ML Inference / Decentralized Data
-│   └── ...                     # autonomous-vaults, agent-robotics, yield, near, solana, filecoin
 ├── core-layer/                 # Settlement orchestration hub
 │   ├── ai-listener.js          # Multi-prover event poller + normalizer + router
-│   ├── wasm/                   # CosmWasm SP1 verifier + revenue splitter
 │   ├── sp1-hooks/              # Rust SP1 proof utilities
 │   └── test/                   # Multi-prover tests
-├── cosmwasm/                   # CosmWasm contracts (Cosmos)
-│   └── zk-verifier/            # arkworks BN254 Groth16 verifier (CertiK Phase 1 scope)
 ├── believer/                   # BelieverRound / AngelRound vesting contracts
 ├── deploy/                     # Deployment scripts + manifests
 │   ├── testnet.cjs             # Theta Testnet (resumable)

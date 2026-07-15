@@ -1943,7 +1943,7 @@ if (isMainModule) {
       dotenv.config({ path: '.env.local', override: true });
 
       // Dynamic import of the handler (ES module)
-      const { ThetaInferenceHandler } = await import('../circuits/theta-inference/theta-inference-handler.js');
+      const { ThetaInferenceHandler } = await import('../packages/circuit-runtime/theta-inference/theta-inference-handler.js');
 
       console.log('═══════════════════════════════════════════════════════════');
       console.log('  XFuel Protocol — Core AI Listener');

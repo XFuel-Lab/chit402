@@ -11,7 +11,7 @@
  *
  * Usage:
  *   import { TAOHandler } from './tao-handler.js';
- *   import { CoreListener } from '../../core-layer/ai-listener.js';
+ *   import { CoreListener } from '../../../core-layer/ai-listener.js';
  *
  *   const listener = new CoreListener(config);
  *   const taoHandler = new TAOHandler(taoConfig);

@@ -5,7 +5,7 @@
  * Collects:
  *   - every .test.cjs under test/ (recursive)
  *   - core-layer/test (Hardhat .cjs only)
- *   - circuits/<name>/test (flat .cjs files)
+ *   - packages/circuit-runtime/<name>/test (flat .cjs files)
  *
  * Does not include `believer/test` (use `npm run test:believer`) or `ai-listener.test.js`
  * (use `npm run test:contracts:core:listener`).
@@ -40,7 +40,7 @@ if (fs.existsSync(clDir)) {
   }
 }
 
-const circuitsRoot = path.join(root, 'circuits');
+const circuitsRoot = path.join(root, 'packages', 'circuit-runtime');
 if (fs.existsSync(circuitsRoot)) {
   for (const ent of fs.readdirSync(circuitsRoot, { withFileTypes: true })) {
     if (!ent.isDirectory()) continue;
@@ -48,7 +48,7 @@ if (fs.existsSync(circuitsRoot)) {
     if (!fs.existsSync(tdir)) continue;
     for (const name of fs.readdirSync(tdir)) {
       if (/\.test\.cjs$/.test(name)) {
-        files.push(`circuits/${ent.name}/test/${name}`);
+        files.push(`packages/circuit-runtime/${ent.name}/test/${name}`);
       }
     }
   }

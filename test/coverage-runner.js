@@ -13,5 +13,5 @@ require('./phase3/veXFGovernance.test.cjs');
 require('./phase3/E2E.governance.test.cjs');
 require('./priority-circuits/PriorityCircuits.test.cjs');
 require('../core-layer/test/ZKVerifierSP1.test.cjs');
-require('../circuits/theta-inference/test/ThetaInferenceCircuit.test.cjs');
+require('../packages/circuit-runtime/theta-inference/test/ThetaInferenceCircuit.test.cjs');
 require('./circuits/ThetaInference.test.cjs');
