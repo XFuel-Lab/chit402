@@ -109,18 +109,19 @@ Diagnosed via `believer/pause-rounds.mjs` (audits which stored key holds the rol
 - The rounds' admin is **`0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257`**.
 - **Neither key in root `.env.local`** holds `DEFAULT_ADMIN_ROLE` — `TREASURY_PRIVATE_KEY`
   (`0xe49b47…43bd`) and `DEPLOYER_PRIVATE_KEY` (`0xDC17Cbd2…d33c`) are both different wallets.
-- The admin address has **no contract code on Theta mainnet**, so it is **not a live Gnosis
-  Safe on Theta** — it behaves as a plain wallet whose key we don't currently have.
+- The admin is a **Gnosis Safe** (managed by external EOA signers, e.g. MetaMask), but it has
+  **no contract code on Theta mainnet** — the Safe proxy was **never deployed on Theta**. So
+  the admin cannot execute transactions on Theta as-is, and no single stored key can either.
 
-**Therefore `pause()` cannot be sent right now.** Because exposure is trivial (~1.1 TFUEL,
-founder's own; zero external commitments), the rounds were instead **neutralized by removing
-them from the public UI** (nav + home + community + security links; `/believers` and `/angels`
-redirect home). The contracts stay `Open` on-chain but are unreachable from the site.
+**Therefore `pause()` cannot be sent right now** without first deploying the Safe proxy on
+Theta and executing via its signers — extra steps for a trivial exposure (~1.1 TFUEL, founder's
+own; zero external commitments). The rounds were instead **neutralized by removing them from the
+public UI** (nav + home + community + security links; `/believers` and `/angels` redirect home).
+The contracts stay `Open` on-chain but are unreachable from the site.
 
-**To actually pause / transfer admin later:** locate the key for `0x9D6fC5…7257` (likely a
-MetaMask account) and run `ROUND_ADMIN_PK=0x… node believer/pause-rounds.mjs --execute`, or —
-if that address turns out to be a Safe deployed on another chain — resolve admin ownership
-before any community-round relaunch.
+**To actually pause / transfer admin later:** deploy the admin Safe on Theta mainnet (same
+address via the Safe factory), then execute `pause()` from the Safe with its MetaMask signers.
+Resolve this before any community-round relaunch that reuses these contracts.
 
 ## 9. Open items for counsel
 
