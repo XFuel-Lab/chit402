@@ -35,7 +35,7 @@ echo ""
 echo "========================================================================"
 echo "🔐 Building ZK Verifier Contract"
 echo "========================================================================"
-cd cosmwasm/zk-verifier
+cd contracts/cosmwasm/zk-verifier
 
 echo "Running tests..."
 cargo test --release
@@ -46,10 +46,10 @@ cargo build --release --target wasm32-unknown-unknown --lib
 
 echo ""
 echo -e "${GREEN}✅ ZK Verifier built successfully${NC}"
-ls -lh ../../target/wasm32-unknown-unknown/release/zk_verifier.wasm
+ls -lh ../../../target/wasm32-unknown-unknown/release/zk_verifier.wasm
 echo ""
 
-cd ../..
+cd ../../..
 
 echo "========================================================================"
 echo "✅ BUILD COMPLETE"

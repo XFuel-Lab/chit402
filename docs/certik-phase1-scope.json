@@ -139,14 +139,14 @@
     "cosmwasm_contracts": [
       {
         "name": "xfuel-zk-verifier",
-        "path": "cosmwasm/zk-verifier/src/contract.rs",
+        "path": "contracts/cosmwasm/zk-verifier/src/contract.rs",
         "language": "Rust (CosmWasm)",
         "risk_level": "HIGH",
         "description": "arkworks BN254 Groth16 verification for Cosmos chains"
       },
       {
         "name": "xfuel-zk-verifier (core-layer)",
-        "path": "core-layer/wasm/zk-verifier/src/contract.rs",
+        "path": "contracts/cosmwasm/sp1-verifier/src/contract.rs",
         "language": "Rust (CosmWasm)",
         "risk_level": "HIGH",
         "description": "Core Layer WASM verifier with IBC event emission"
