@@ -17,7 +17,7 @@ import {
   toSplitsV2Config,
   splitFee,
   describeSplit,
-} from '../../src/revenue-split.js';
+} from '../src/revenue-split.js';
 
 const A = '0x1111111111111111111111111111111111111111';
 const B = '0x2222222222222222222222222222222222222222';
