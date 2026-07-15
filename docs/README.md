@@ -14,7 +14,7 @@
 | Set up and run the repo | [Main README](../README.md) |
 | Deploy to Theta Testnet | [Deployment Guide](./DEPLOYMENT.md) |
 | Run the test suite (755+ tests) | [Testing Guide](./TESTING.md) |
-| Integrate via the M2M API | [M2M API Reference](./M2M_API.md) · [SDK README](../sdk/js/README.md) |
+| Integrate via the M2M API | [M2M API Reference](./M2M_API.md) · [SDK README](../packages/sdk/README.md) |
 | Understand all circuit contracts | [Circuit Design](./Circuit-Design-and-Expansion.md) · [Circuits Reference](./CIRCUITS.md) |
 | Verify a live deployment | `node scripts/verify-deployment.cjs --manifest <manifest>` |
 | Debug on-chain transactions | `npx hardhat test --trace` (hardhat-tracer) |
@@ -78,7 +78,7 @@
 ### API & Integration
 
 - **[M2M API Reference](./M2M_API.md)** — Machine-to-machine API (task submission, A2A messaging, proof retrieval)
-- **[SDK README](../sdk/js/README.md)** — JavaScript/TypeScript SDK (`xfuel-sdk`)
+- **[SDK README](../packages/sdk/README.md)** — JavaScript/TypeScript SDK (`xfuel-sdk`)
 - **[Theta Integration Plan](./THETA_INTEGRATION_PLAN.md)** — Full Theta ecosystem integration roadmap
 - **[Theta Integrations](./THETA_INTEGRATIONS.md)** — EdgeStore, Video API, TDROP, EdgeCloud specs
 - **[TAO Circuit + Hyperlane E2E](./TAO_CIRCUIT_HYPERLANE_E2E.md)** — Bittensor cross-chain flow

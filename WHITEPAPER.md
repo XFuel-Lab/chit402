@@ -558,7 +558,7 @@ Any project can build a custom circuit by implementing the circuit interface (ev
 - **Community (`BelieverRound.sol`):** up to **150M XF** reserved (`xfAllocationCap`). Default deploy pricing is **5 XF per 1 TFUEL** (env/script overrides); **XF per TFUEL** may be updated by multisig while status is **Open** (see [`docs/PRICING_TFUEL_XF.md`](docs/PRICING_TFUEL_XF.md)). Optional lock tiers add **+8% / +20% / +35%** XF on the base price. **Min commitment:** 100 TFUEL (unless overridden at deploy).
 - **Angel (`AngelRound.sol`):** up to **100M XF** reserved. Default deploy **8 XF per 1 TFUEL** (vs Believer base **5**). Separate `triggerTGE` from community round.
 - **Engagement (`CommunityEngagementDistributor.sol`):** lifetime claims capped at deploy `maxLifetimeXF` (150M XF when used for the full bucket).
-- **UI:** [`xfuel-app`](xfuel-app) routes `/believers` and `/angels` · Contracts: `contracts/circuits/BelieverRound.sol`, `AngelRound.sol`, `CommunityEngagementDistributor.sol`
+- **UI:** [`apps/web`](apps/web) routes `/believers` and `/angels` · Contracts: `contracts/circuits/BelieverRound.sol`, `AngelRound.sol`, `CommunityEngagementDistributor.sol`
 - **Admin / Multisig:** `0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257` (Gnosis Safe, Theta)
 
 ### XF Token Utility
