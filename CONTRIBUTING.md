@@ -70,7 +70,7 @@ Start with low-risk tasks to build familiarity—**no coding required** for many
 4. **Code Review (Technical)**
    - Review open PRs (use AI tools like Cursor to analyze changes)
    - Suggest gas optimizations in [ZKVerifierSP1.sol](contracts/core/ZKVerifierSP1.sol) or [CoreRevenueSplitter.sol](contracts/core/CoreRevenueSplitter.sol)
-   - Validate SP1 proof logic in [sp1-prover/host/src/main.rs](sp1-prover/host/src/main.rs)
+   - Validate SP1 proof logic in [services/sp1-prover/host/src/main.rs](services/sp1-prover/host/src/main.rs)
 
 ### Setup Instructions
 
@@ -295,7 +295,7 @@ If the project gains traction (e.g., $5M TVL, governance approval), active contr
 ### 1. Security & Auditing (Technical)
 **Priority:** High
 - Review [ZKVerifierSP1.sol](contracts/core/ZKVerifierSP1.sol) and [CoreRevenueSplitter.sol](contracts/core/CoreRevenueSplitter.sol) for vulnerabilities
-- Validate SP1 proof logic in [sp1-prover/host/src/main.rs](sp1-prover/host/src/main.rs)
+- Validate SP1 proof logic in [services/sp1-prover/host/src/main.rs](services/sp1-prover/host/src/main.rs)
 - Add fuzz tests for edge cases (see `test/security/ContractFuzz.test.cjs` for examples)
 - Help prep for CertiK audit (Q2 2026) — see [Audit Readiness Checklist](docs/AUDIT_GRANT_READINESS.md)
 
@@ -397,8 +397,8 @@ We follow the [Contributor Covenant Code of Conduct](https://www.contributor-cov
 - [docs/ZK_BRIDGE_IMPLEMENTATION.md](docs/ZK_BRIDGE_IMPLEMENTATION.md) - ZK proof details
 
 **For Developers:**
-- [Backend Setup Guide](backend/theta-bridge/README.md)
-- [SP1 Prover Deployment](sp1-prover/DEPLOY_ON_EDGECLOUD.md)
+- [Backend Setup Guide](services/gateway/README.md)
+- [SP1 Prover Deployment](services/sp1-prover/DEPLOY_ON_EDGECLOUD.md)
 - [Mock Testing Plan](MOCK_TESTING_PLAN.md)
 
 **For Governance:**

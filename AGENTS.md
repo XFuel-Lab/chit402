@@ -56,7 +56,7 @@ USDC on Base against a 402 challenge; agent-side pluggable payer — no server k
 **TFUEL/TDROP on Theta** is the secondary rail for Theta-native flows. The x402
 server handshake is flag-gated (`X402_ENABLED`, rolling out Phase 1;
 `X402_DEFAULT_RAIL` starts `tfuel`). See `docs/X402_ADAPTER.md` and
-`skills/_shared/reference/payments-x402.md`.
+`packages/agent-skills/_shared/reference/payments-x402.md`.
 
 Poll status: `GET /task-status?task_id={taskId}`
 
@@ -198,7 +198,7 @@ veXFGovernance.vote(proposalId, support)         // with ZK nullifier replay pro
 ## SDK (JavaScript)
 
 ```bash
-npm install xfuel-sdk  # live on npm @0.2.0 (Apache-2.0). On-chain module: import 'xfuel-sdk/onchain' (requires ethers peer dep). Quickstart: npm run example:quickstart (sdk/js)
+npm install xfuel-sdk  # live on npm @0.2.0 (Apache-2.0). On-chain module: import 'xfuel-sdk/onchain' (requires ethers peer dep). Quickstart: npm run example:quickstart (packages/sdk)
 ```
 
 ```javascript
@@ -226,23 +226,22 @@ const result = await client.waitForSettlement(task.taskId);
 ```
 contracts/core/           — Core settlement (see WHITEPAPER §11.5 Audit Phase 1)
 contracts/circuits/       — Circuits incl. ThetaInference + funding + ecosystem
-test/cosmos-yield/        — IBC reverse bridge + legacy VaultFactory tests (YieldCircuit / Cosmos track; not Phase 1 core audit). `npm run test:contracts:cosmos-yield`
 docs/AUDIT_READINESS_CHECKLIST.md — Gap list before auditor handover
 docs/LEGAL_LAUNCH_CHECKLIST.md    — Legal/compliance planning (not legal advice)
 docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md — Testnet 365 + mainnet 361 steps, tests (`npm run test:believer`)
-xfuel-app/.env.example   — All VITE_* vars; testnet 365 vs mainnet 361
-core-layer/               — AI listener, A2A orchestrator, CosmWasm WASM
-backend/theta-bridge/     — Bridge service, M2M API server, fee analytics
-sdk/js/                   — JavaScript SDK (xfuel-sdk, live on npm @0.2.0) + runnable examples/ (quickstart, pay-with-usdc, pay-prove-verify, a2a-swarm, swarm-coordinate)
-xfuel-mcp/                — First-party MCP server (live on npm @0.1.1: npx xfuel-mcp; MCP registry io.github.XFuel-Lab/xfuel-mcp): list_models, submit_inference, pay_with_usdc, get_task_status, get_proof, verify_proof, quote_task, get_health; stdio + streamable HTTP
-skills/                   — Agent Skills (front door for agents); start with skills/AGENT_PLAYBOOK.md
+apps/web/.env.example    — All VITE_* vars; testnet 365 vs mainnet 361
+core-layer/               — Settlement orchestration: AI listener, A2A orchestrator, CosmWasm WASM
+services/gateway/         — Agent-facing API gateway: routing, payments, proving, receipts, M2M API, fee analytics
+packages/sdk/             — JavaScript SDK (xfuel-sdk, live on npm @0.2.0) + runnable examples/ (quickstart, pay-with-usdc, pay-prove-verify, a2a-swarm, swarm-coordinate)
+packages/mcp/             — First-party MCP server (live on npm @0.1.1: npx xfuel-mcp; MCP registry io.github.XFuel-Lab/xfuel-mcp): list_models, submit_inference, pay_with_usdc, get_task_status, get_proof, verify_proof, quote_task, get_health; stdio + streamable HTTP
+packages/agent-skills/    — Agent Skills (front door for agents); start with packages/agent-skills/AGENT_PLAYBOOK.md
 docs/M2M_API.md           — Full REST API reference
 docs/THETA_INTEGRATION_PLAN.md — Theta deep integration tracker
 docs/TAO_CIRCUIT_HYPERLANE_E2E.md — Bittensor cross-chain E2E guide
 docs/ZK-RESEARCH-PIPELINE.md — ZK research pipeline (papers, tiers, product-fit)
 docs/ZK-RESEARCH-UPGRADE-PACKAGE.md — Unified upgrade package (best per area, no overlap)
 deploy/manifests/         — Timestamped deployment manifests (testnet addresses)
-zkgpt-prover/             — Phase 1 zkGPT mock server + smoke test (E2E)
+services/zkgpt-prover/    — Phase 1 zkGPT mock server + smoke test (E2E)
 docs/PHASE1_KICKOFF.md    — Phase 1 status, run Phase 1 checks (npm run test:phase1), post-deploy checklist
 ```
 
@@ -273,7 +272,7 @@ Single open community sale (no phased 4/12/24% tranches). **`xfAllocationCap`** 
 | Cliff / vesting | 90d cliff + 270d linear |
 | Lock bonuses | Optional tiers 1–3: **+8% / +20% / +35%** on base XF (effective **5.4 / 6 / 6.75** XF per TFUEL at default base 5) |
 | Admin | `0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257` (Gnosis Safe) |
-| UI | `xfuel-app` route `/believers` |
+| UI | `apps/web` route `/believers` |
 
 **Commit (on-chain):**
 ```
@@ -307,7 +306,7 @@ Separate from community round: **no TFUEL refund**; **`withdrawToTreasury`** bef
 
 **veXF:** Lock XF in `veXFGovernance` after claim.
 
-**xfuel-app:** `/angels`, env `VITE_ANGEL_ROUND_ADDRESS`. **Launch runbook:** [`docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md`](docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md).
+**apps/web:** `/angels`, env `VITE_ANGEL_ROUND_ADDRESS`. **Launch runbook:** [`docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md`](docs/FUNDING_ROUNDS_LAUNCH_RUNBOOK.md).
 
 ---
 
@@ -319,7 +318,7 @@ XFuel's current ZK pipeline uses **SP1 (Succinct)** — STARK proving with Groth
 - **1.59x–6.74x prover speedup** on matrix/transformer workloads (direct benefit to `inference_request` proving)
 - **Collaborative folding** — multiple provers with disjoint private witnesses produce a single joint IVC proof (enables ZK-verified swarm tasks across `formSwarm`/`joinSwarm` agents)
 
-**No on-chain changes required.** `ZKVerifierSP1.sol` verifies Groth16/PLONK — it is proof-system-agnostic. Interstellar is a prover-side upgrade only (`sp1-prover/` + a new `SP1_PROVER=interstellar` env option).
+**No on-chain changes required.** `ZKVerifierSP1.sol` verifies Groth16/PLONK — it is proof-system-agnostic. Interstellar is a prover-side upgrade only (`services/sp1-prover/` + a new `SP1_PROVER=interstellar` env option).
 
 **Status:** Not yet integrated (pending SP1 toolchain support or Theta EdgeCloud dedicated prover). Tracked in `WHITEPAPER.md` Section 12 — Research Track.
 

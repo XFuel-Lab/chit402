@@ -9,7 +9,7 @@ Live: **[xfuel.app](https://xfuel.app)** (Theta Mainnet Beta)
 [![Audit Status](https://img.shields.io/badge/audit-pending-yellow.svg)](docs/security-design.md)
 [![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/XFuel-Lab/xfuel-protocol)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![ZK-VM](https://img.shields.io/badge/ZK--VM-SP1%20v6.0.2-purple.svg)](sp1-prover/README.md)
+[![ZK-VM](https://img.shields.io/badge/ZK--VM-SP1%20v6.0.2-purple.svg)](services/sp1-prover/README.md)
 [![DePIN](https://img.shields.io/badge/DePIN-AI%20Hub-orange.svg)](WHITEPAPER.md)
 [![Tests](https://img.shields.io/badge/tests-755%2B-green.svg)](#testing)
 
@@ -86,7 +86,7 @@ Read the complete technical whitepaper: **[WHITEPAPER.md](WHITEPAPER.md)**
 - **16+ modular circuits** — AI compute, DePIN infrastructure, yield, robotics, data, energy, wireless, and more
 - **Revenue innovation** — Growth & Expansion Treasury (GET), Fee-to-Stake routing
 - **Cross-chain** — Theta (primary), Bittensor, Osmosis, Akash, Solana, Filecoin, NEAR, Aptos, Sui
-- **Phase 1 research integration** — zkGPT (LLM ZK proofs; [eprint 2025/1184](https://eprint.iacr.org/2025/1184), [security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt)) and Fair Exchange / PAS (atomic A2A payment↔result; [eprint 2026/395](https://eprint.iacr.org/2026/395)). Mock prover: `node zkgpt-prover/mock-server.cjs`; smoke test: `npm run test:zkgpt-mock`. Full attribution: [`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md).
+- **Phase 1 research integration** — zkGPT (LLM ZK proofs; [eprint 2025/1184](https://eprint.iacr.org/2025/1184), [security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt)) and Fair Exchange / PAS (atomic A2A payment↔result; [eprint 2026/395](https://eprint.iacr.org/2026/395)). Mock prover: `node services/zkgpt-prover/mock-server.cjs`; smoke test: `npm run test:zkgpt-mock`. Full attribution: [`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md).
 
 ---
 
@@ -957,7 +957,7 @@ XFuel integrates third-party research with full credit to authors and sources. F
 
 | Integration | Source | XFuel use |
 |-------------|--------|-----------|
-| **zkGPT** | [eprint.iacr.org/2025/1184](https://eprint.iacr.org/2025/1184) — *zkGPT: Efficient Non-Interactive ZK for LLM Inference* (NUS/HKUST). Code: [github.com/security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt) | Optional inference proof path (`proof_system: zkgpt`); `ZKVerifierZkGPT.sol`; `zkgpt-prover/` scaffold. |
+| **zkGPT** | [eprint.iacr.org/2025/1184](https://eprint.iacr.org/2025/1184) — *zkGPT: Efficient Non-Interactive ZK for LLM Inference* (NUS/HKUST). Code: [github.com/security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt) | Optional inference proof path (`proof_system: zkgpt`); `ZKVerifierZkGPT.sol`; `services/zkgpt-prover/` scaffold. |
 | **Fair Exchange (PAS)** | [eprint.iacr.org/2026/395](https://eprint.iacr.org/2026/395) — *Delegated Payments for AI Agents: Fair Exchange on Bitcoin/EVM* | A2A atomic payment↔result; `settleBidFairExchange()`, `POST /a2a-settle-fair-exchange`, SDK `settleWithFairExchange()`. |
 | **Interstellar** | [eprint.iacr.org/2025/1294](https://eprint.iacr.org/2025/1294) (Jieyi Long, Theta Labs; PKC 2026) | Future prover track — see WHITEPAPER §12. |
 
@@ -1013,22 +1013,23 @@ We do not claim ownership of the names “zkGPT” or “Interstellar”; they r
 
 ```
 xfuel-protocol/
-├── xfuel-app/                  # ✅ CANONICAL frontend — xfuel.app (Vite + React 19 + Wagmi)
-│                               #    Deployed to Vercel via vercel.json. This is the live app.
-├── tools/
-│   └── m2m-dev-dashboard/      # 🔧 INTERNAL — local dev tool for testing M2M API endpoints
+├── apps/                       # End-user / operator applications
+│   ├── web/                    # ✅ CANONICAL frontend — xfuel.app (Vite + React 19 + Wagmi)
+│   │                           #    Deployed to Vercel via vercel.json. This is the live app.
+│   └── m2m-dashboard/          # 🔧 INTERNAL — local dev tool for testing M2M API endpoints
+├── packages/                   # Publishable / shared libraries
+│   ├── sdk/                    # JavaScript SDK (xfuel-sdk on npm) + runnable examples/
+│   ├── mcp/                    # First-party MCP server (xfuel-mcp on npm)
+│   └── agent-skills/           # Agent Skills (front door for agents)
+├── services/                   # Long-running backend services
+│   ├── gateway/                # Agent-facing API gateway (routing / payments / proving / receipts)
+│   ├── sp1-prover/             # SP1 Rust RISC-V prover (EdgeCloud CUDA / Succinct network)
+│   └── zkgpt-prover/           # zkGPT prover (Phase 1 mock + wrapper)
 ├── contracts/                  # Solidity contracts (Theta EVM)
-├── cosmwasm-contracts/         # CosmWasm contracts (Cosmos)
-│   ├── zk-verifier/
-│   ├── persistence-minter/     # ibcTFUEL CW20 + burn_for_unwrap
-│   └── fee-collector/
-├── core-layer/                 # Core Layer hub
-│   ├── ai-listener.js          # Multi-prover event poller + normalizer + router
-│   ├── contracts/              # ZKVerifierSP1, CoreRevenueSplitter, veXFGovernance, SP1ProofHooks
-│   ├── wasm/                   # CosmWasm verifier + splitter
-│   ├── sp1-hooks/              # Rust SP1 proof utilities
-│   └── test/                   # 85 multi-prover tests
-├── circuits/                   # 16+ modular circuit contracts + handlers
+│   ├── core/                   # ZKVerifierSP1, CoreRevenueSplitter, veXFGovernance, SP1ProofHooks
+│   ├── circuits/               # Circuit contracts (audit scope)
+│   ├── governance/  interfaces/  legacy/  mocks/  test-helpers/
+├── circuits/                   # 20+ modular circuit handlers (JS) + circuit .sol + tests
 │   ├── theta-inference/        # Theta EdgeCloud inference (presets, GPU tiers, webhooks)
 │   ├── tao-evm/                # AI Marketplace (priority)
 │   ├── a2a/                    # Agent Comms (priority)
@@ -1036,29 +1037,24 @@ xfuel-protocol/
 │   ├── compute-marketplace/    # Akash GPU Compute (CosmWasm + Solidity)
 │   ├── inference-router/       # Bittensor Inference (dTAO precompiles)
 │   ├── bridge-circuit/         # Cross-Chain Bridge (Hyperlane/IBC)
-│   ├── zkml/                   # Private ML Inference
-│   ├── data-hubs/              # Decentralized Data
+│   ├── zkml/  data-hubs/       # Private ML Inference / Decentralized Data
 │   └── ...                     # autonomous-vaults, agent-robotics, yield, near, solana, filecoin
-├── solana-prover/              # Solana SVM SP1 Groth16 verifier (native program)
-├── sp1-prover/                 # SP1 Rust RISC-V prover (EdgeCloud CUDA)
-├── backend/theta-bridge/       # Backend services (listeners, agent API, analytics)
-├── believer/                   # BelieverRound vesting contract
+├── core-layer/                 # Settlement orchestration hub
+│   ├── ai-listener.js          # Multi-prover event poller + normalizer + router
+│   ├── wasm/                   # CosmWasm SP1 verifier + revenue splitter
+│   ├── sp1-hooks/              # Rust SP1 proof utilities
+│   └── test/                   # Multi-prover tests
+├── cosmwasm/                   # CosmWasm contracts (Cosmos)
+│   └── zk-verifier/            # arkworks BN254 Groth16 verifier (CertiK Phase 1 scope)
+├── believer/                   # BelieverRound / AngelRound vesting contracts
 ├── deploy/                     # Deployment scripts + manifests
-│   ├── testnet.cjs             # Theta Testnet (resumable, 23 contracts)
-│   ├── full.cjs                # Phase 3+ mainnet (Core + circuits + governance)
+│   ├── testnet.cjs             # Theta Testnet (resumable)
+│   ├── full.cjs                # Mainnet (Core + circuits + governance)
 │   └── manifests/              # Deployment address manifests
-├── dashboard/                  # Live monitoring UI (failure prediction, gas profiles)
-├── governance/                 # Proposal creation + simulation
-├── community/                  # Discord bot, campaign templates
-├── test/                       # Integration, system, hardening tests (755+)
+├── scripts/                    # Build / deploy / dev helpers (scripts/dev/ = local launchers)
+├── test/                       # Integration, system, hardening tests
+├── cypress/                    # E2E browser tests
 ├── docs/                       # Extended documentation
-│   ├── Growth-Expansion-Treasury.md  # GET mechanics and governance
-│   ├── Technical-Specifications.md  # Multi-prover benchmarks
-│   ├── Circuit-Design-and-Expansion.md
-│   ├── M2M_API.md                   # Agent API reference
-│   ├── CIRCUITS.md                  # Circuit specifications
-│   ├── TESTING.md                   # Test suite guide
-│   └── DEPLOYMENT.md               # Deployment guides
 ├── WHITEPAPER.md               # Canonical whitepaper (v2.4)
 ├── CONTRIBUTING.md             # Contribution guidelines
 └── README.md                   # This file
@@ -1089,7 +1085,7 @@ npm run build        # Production build
 ### Backend Services + Agent API
 
 ```bash
-cd backend/theta-bridge
+cd services/gateway
 npm install
 npm run dev                # Theta listener
 npm run ai-listener        # AI intent monitoring
@@ -1100,7 +1096,7 @@ pm2 start ecosystem.config.cjs  # Production (PM2)
 ### xfuel.app Website
 
 ```bash
-cd xfuel-app
+cd apps/web
 npm install
 npm run dev      # http://localhost:3000
 npm run build    # Production build for Vercel
@@ -1234,7 +1230,7 @@ npx hardhat run deploy/full.cjs --network theta-mainnet
 npx serve dashboard -l 3000
 
 # Fee analytics (Prometheus + Grafana)
-cd backend/theta-bridge && node src/fee-analytics.js --format prometheus --watch --port 9100
+cd services/gateway && node src/fee-analytics.js --format prometheus --watch --port 9100
 
 # BelieverRound monitoring
 node believer/monitoring-script.cjs --watch --webhook https://discord.com/api/webhooks/...
@@ -1340,7 +1336,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 **For Operators:**
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Deployment guides (testnet + mainnet)
-- [sp1-prover/DEPLOY_ON_EDGECLOUD.md](sp1-prover/DEPLOY_ON_EDGECLOUD.md) — Prover infrastructure
+- [services/sp1-prover/DEPLOY_ON_EDGECLOUD.md](services/sp1-prover/DEPLOY_ON_EDGECLOUD.md) — Prover infrastructure
 - [docs/Growth-Expansion-Treasury.md](docs/Growth-Expansion-Treasury.md) — GET mechanics
 
 
