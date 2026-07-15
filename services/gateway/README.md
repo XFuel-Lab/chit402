@@ -35,7 +35,7 @@ This backend service orchestrates the XFuelLab hybrid ZK bridge, enabling trustl
 ### Install Dependencies
 
 ```bash
-cd backend/theta-bridge
+cd services/gateway
 npm install
 ```
 

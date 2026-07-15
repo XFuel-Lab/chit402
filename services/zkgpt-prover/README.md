@@ -12,7 +12,7 @@
 
 **Requirements (from upstream):** C++14, cmake ≥ 3.10, GMP. **Clone and build** are standard — laptop is fine (same as the other prover). The upstream **200GB RAM / 16+ cores** recommendation is for **running** the prover (circuit init + proving), not for the build. Build locally; use a big server or EdgeCloud when you actually run proof generation.
 
-**Windows:** The upstream uses bash and apt (Linux). Use **WSL**: open a WSL terminal, `cd` to your repo (e.g. `cd /mnt/c/Users/seeha/xfuel-protocol/backend/theta-bridge/zkgpt`), then run the install and build steps below (apt, build.sh). PowerShell cannot run `build.sh` and has no `apt`.
+**Windows:** The upstream uses bash and apt (Linux). Use **WSL**: open a WSL terminal, `cd` to your repo (e.g. `cd /mnt/c/Users/seeha/xfuel-protocol/services/gateway/zkgpt`), then run the install and build steps below (apt, build.sh). PowerShell cannot run `build.sh` and has no `apt`.
 
 - **EdgeCloud** is used to **run** the prover (we already deploy the mock there). You deploy a **pre-built** Docker image via the [Theta EdgeCloud dashboard](https://www.thetaedgecloud.com/dashboard); EdgeCloud does not provide a general “build server” or SSH. So: build the image somewhere with enough RAM, then deploy that image to EdgeCloud (same flow as the current zkGPT mock).
 - **Recommended flow:**
@@ -25,7 +25,7 @@ If Theta adds a “run custom job” or Jupyter with large RAM, you could run th
 **Optional — `Dockerfile.build`** (from repo root):
 
 ```bash
-docker build -f zkgpt-prover/Dockerfile.build -t xfuel-zkgpt-built .
+docker build -f services/zkgpt-prover/Dockerfile.build -t xfuel-zkgpt-built .
 ```
 
 Extract the binary: `docker create --name ex xfuel-zkgpt-built && docker cp ex:/zkgpt/cmake-build-release/src/demo_llm_run ./demo_llm_run && docker rm ex`. Then add it to a runtime image with the wrapper and deploy to EdgeCloud.
@@ -66,17 +66,17 @@ The upstream **demo** (`main_demo_llm.cpp`) has **no JSON or HTTP API**: it runs
   2. Run the upstream binary (or a modified build that accepts config/inputs) and capture the proof output (file or stdout, depending on what the code exposes).
   3. Write a single JSON object to **stdout**: `proof` (hex), `public_inputs`, `nullifier`, `proving_time_ms`.
 
-  Then run: `ZKGPT_PROVER_CMD="/path/to/adapter" node zkgpt-prover/wrapper-template.cjs` (or set in the Theta EdgeCloud container).
+  Then run: `ZKGPT_PROVER_CMD="/path/to/adapter" node services/zkgpt-prover/wrapper-template.cjs` (or set in the Theta EdgeCloud container).
 
 ## XFuel integration (target)
 
 1. **Inputs** (from inference task): model commitment, input embedding (or hash), output.
 2. **Outputs:** `proofBytes` (~101 KB), `publicValues` (ABI-encoded for `ZKVerifierZkGPT.verifyProof`).
-3. **Backend:** When `task.intent.proofSystem === 'zkgpt'`, the backend (`backend/theta-bridge`) calls the zkGPT prover via `zkgpt-prover-client.js` if `ZKGPT_PROVER_URL` is set; otherwise falls back to SP1 with a warning.
+3. **Backend:** When `task.intent.proofSystem === 'zkgpt'`, the backend (`services/gateway`) calls the zkGPT prover via `zkgpt-prover-client.js` if `ZKGPT_PROVER_URL` is set; otherwise falls back to SP1 with a warning.
 
 ### Expected HTTP API (for a wrapper service)
 
-The backend client (`backend/theta-bridge/src/zkgpt-prover-client.js`) POSTs to `{ZKGPT_PROVER_URL}/prove` with JSON body:
+The backend client (`services/gateway/src/zkgpt-prover-client.js`) POSTs to `{ZKGPT_PROVER_URL}/prove` with JSON body:
 
 - `task_id`, `net_amount`, `block_number`, `merkle_root`, `identity_commitment`, `output_hash`, `task_type`, `source_chain`
 
@@ -95,7 +95,7 @@ A mock HTTP server is included so you can test the full flow without building th
 
 ```bash
 # From repo root
-node zkgpt-prover/mock-server.cjs
+node services/zkgpt-prover/mock-server.cjs
 # Listens on http://localhost:81 (or ZKGPT_PROVER_PORT)
 ```
 
@@ -103,9 +103,9 @@ Then set `ZKGPT_PROVER_URL=http://localhost:81` in backend (theta-bridge) or cor
 
 Optional env for mock: `ZKGPT_PROVER_PORT` (default 81), `ZKGPT_MOCK_DELAY_MS` (default 500, simulates proving time).
 
-**Smoke test:** Run `npm run test:zkgpt-mock` (or `node zkgpt-prover/smoke-test.cjs`) to spawn the mock server, hit GET /health and POST /prove, and assert the response shape. Uses port 8099 by default (set `ZKGPT_SMOKE_PORT` to override).
+**Smoke test:** Run `npm run test:zkgpt-mock` (or `node services/zkgpt-prover/smoke-test.cjs`) to spawn the mock server, hit GET /health and POST /prove, and assert the response shape. Uses port 8099 by default (set `ZKGPT_SMOKE_PORT` to override).
 
-**E2E prover test:** Run `npm run test:zkgpt-e2e` (or `node zkgpt-prover/e2e-prover-test.cjs`) to spawn the wrapper-template (same service used on Theta EdgeCloud), send a proof request in the exact shape the backend sends, and assert the response. Confirms the prover is E2E-ready.
+**E2E prover test:** Run `npm run test:zkgpt-e2e` (or `node services/zkgpt-prover/e2e-prover-test.cjs`) to spawn the wrapper-template (same service used on Theta EdgeCloud), send a proof request in the exact shape the backend sends, and assert the response. Confirms the prover is E2E-ready.
 
 ## Adapter (stdin/stdout ↔ demo_llm_run)
 
@@ -119,17 +119,17 @@ Use `wrapper-template.cjs` when you have a prover binary or adapter that reads J
 
 ```bash
 # With adapter (wraps demo_llm_run)
-ZKGPT_PROVER_CMD="node adapter.cjs" ZKGPT_DEMO_BINARY=/path/to/demo_llm_run node zkgpt-prover/wrapper-template.cjs
+ZKGPT_PROVER_CMD="node adapter.cjs" ZKGPT_DEMO_BINARY=/path/to/demo_llm_run node services/zkgpt-prover/wrapper-template.cjs
 ```
 
 If `ZKGPT_PROVER_CMD` is not set, the wrapper runs in mock mode (same as mock-server.cjs). Env: `ZKGPT_PROVER_PORT`, `ZKGPT_PROVER_TIMEOUT_MS` (default 120000), `ZKGPT_MOCK_DELAY_MS`.
 
-**Run locally:** `npm run run:zkgpt-prover` (or `node zkgpt-prover/wrapper-template.cjs`). Listens on port 81.
+**Run locally:** `npm run run:zkgpt-prover` (or `node services/zkgpt-prover/wrapper-template.cjs`). Listens on port 81.
 
 **Docker — mock only (current):** Build and run the wrapper in mock mode (no C++ binary):
 
 ```bash
-# From repo root; build context is zkgpt-prover/
+# From repo root; build context is services/zkgpt-prover/
 docker build -t xfuel-zkgpt-prover zkgpt-prover
 docker run -p 81:81 -e ZKGPT_PROVER_PORT=81 xfuel-zkgpt-prover
 ```
@@ -137,12 +137,12 @@ docker run -p 81:81 -e ZKGPT_PROVER_PORT=81 xfuel-zkgpt-prover
 **Docker — full (C++ prover + adapter, for Theta GPU node):** Multi-stage build: compile upstream zkGPT, then run Node wrapper + adapter. Build from **repo root** (takes a while). **Theta currently runs `xfuel/xfuel-zkgpt-prover:full-v4`.** After pulling the simplified Dockerfile, build a new tag (e.g. full-v5) and set the Theta template to that tag.
 
 ```bash
-docker build -f zkgpt-prover/Dockerfile.full --platform linux/amd64 -t xfuel/xfuel-zkgpt-prover:full-v5 .
+docker build -f services/zkgpt-prover/Dockerfile.full --platform linux/amd64 -t xfuel/xfuel-zkgpt-prover:full-v5 .
 docker push xfuel/xfuel-zkgpt-prover:full-v5
 docker run -p 81:81 -e ZKGPT_PROVER_PORT=81 xfuel/xfuel-zkgpt-prover:full-v5
 ```
 
-Push and deploy to Theta EdgeCloud per [zkgpt-prover/THETA-EDGECLOUD-DEPLOY.md](THETA-EDGECLOUD-DEPLOY.md). If you get 0/20 or 0/22, set **Container Argument** in the template to `["/usr/local/bin/node", "/app/wrapper-template.cjs"]` (see that doc). Set `ZKGPT_PROVER_URL` in the backend to the deployment URL.
+Push and deploy to Theta EdgeCloud per [services/zkgpt-prover/THETA-EDGECLOUD-DEPLOY.md](THETA-EDGECLOUD-DEPLOY.md). If you get 0/20 or 0/22, set **Container Argument** in the template to `["/usr/local/bin/node", "/app/wrapper-template.cjs"]` (see that doc). Set `ZKGPT_PROVER_URL` in the backend to the deployment URL.
 
 Do **not** add a custom start command (e.g. ulimit) to fix deploy — that caused 0/20. Only if you get 1/1 and then see `failed to create fsnotify watcher: too many open files` in logs when proving and you do **not** see `[zkgpt-entrypoint] ulimit -n:` in the logs, the platform is not using the image’s entrypoint (it starts the container with `node wrapper-template.cjs` directly). **Fix:** In the Theta EdgeCloud deployment, set the container **start command** to this exact value so `ulimit` runs before Node:
 Try container start command: `sh -c "ulimit -n 65536 2>/dev/null || true; exec node /app/wrapper-template.cjs"`. If the platform allows setting container ulimits (e.g. `nofile=65536`), you can use that instead. If you *do* see `[zkgpt-entrypoint] ulimit -n: 65536` but still get `failed to create fsnotify watcher: too many open files`, the limit is **kernel inotify** (`fs.inotify.max_user_watches` / `max_user_instances`). The entrypoint tries to raise these when the container can write `/proc/sys/fs/inotify/`; if not, the host/platform must set them (e.g. host: `sysctl -w fs.inotify.max_user_watches=524288` and `fs.inotify.max_user_instances=512`; in Theta/Kubernetes use the deployment’s sysctl option if available).
@@ -151,9 +151,9 @@ Try container start command: `sh -c "ulimit -n 65536 2>/dev/null || true; exec n
 
 ## Current status
 
-- [x] Mock HTTP server for E2E (`zkgpt-prover/mock-server.cjs`) and smoke test (`zkgpt-prover/smoke-test.cjs`).
-- [x] Wrapper template (`zkgpt-prover/wrapper-template.cjs`) to plug in a real prover via `ZKGPT_PROVER_CMD` (stdin/stdout JSON).
-- [x] Adapter (`zkgpt-prover/adapter.cjs`) — runs `demo_llm_run`, returns JSON (stub proof + real proving time from stdout).
+- [x] Mock HTTP server for E2E (`services/zkgpt-prover/mock-server.cjs`) and smoke test (`services/zkgpt-prover/smoke-test.cjs`).
+- [x] Wrapper template (`services/zkgpt-prover/wrapper-template.cjs`) to plug in a real prover via `ZKGPT_PROVER_CMD` (stdin/stdout JSON).
+- [x] Adapter (`services/zkgpt-prover/adapter.cjs`) — runs `demo_llm_run`, returns JSON (stub proof + real proving time from stdout).
 - [x] Full Docker image (`Dockerfile.full`) — multi-stage: build upstream zkGPT + Node wrapper + adapter; ready to deploy to Theta GPU node.
 - [x] Backend and core-layer route to zkGPT prover when `proof_system === 'zkgpt'` (see `zkgpt-prover-client.js`, `core-layer/ai-listener.js`).
 - [ ] Upstream demo emits proof bytes in a parseable way (adapter currently returns stub proof; ZKG-2 verifier still stub).

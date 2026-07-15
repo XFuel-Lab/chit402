@@ -7,7 +7,7 @@ This directory contains the SP1 zkVM implementation for XFUEL's zero-knowledge b
 ## Architecture
 
 ```
-sp1-prover/
+services/sp1-prover/
 ├── host/                    # Host program (proof orchestration)
 │   ├── src/
 │   │   ├── main.rs         # Entry point for proof generation
@@ -109,14 +109,14 @@ cd sp1-prover
 ### 2. Run Tests
 
 ```bash
-cd sp1-prover/host
+cd services/sp1-prover/host
 cargo test --release
 ```
 
 ### 3. Generate a Proof (Example)
 
 ```bash
-cd sp1-prover/host
+cd services/sp1-prover/host
 cargo run --release -- --input ../test-data/deposit-1.json
 ```
 
@@ -145,25 +145,25 @@ working until you rebuild and re-key.
 | `X402_PROOF_BINDING=true` | Computes commitment, threads fields to `/prove` |
 
 **Activation:** rebuild guest ELF → register new `programVKey` → enable both flags → smoke
-test with `sdk/js/examples/pay-prove-verify.ts`. Details:
+test with `packages/sdk/examples/pay-prove-verify.ts`. Details:
 `skills/_shared/reference/public-values.md`, `docs/X402_ADAPTER.md`.
 
 Shared Rust hooks: `core-layer/sp1-hooks/src/payment_binding.rs` (parity with
-`SP1ProofHooks.sol` and `backend/theta-bridge/src/payment-binding.js`).
+`SP1ProofHooks.sol` and `services/gateway/src/payment-binding.js`).
 
 ---
 
 ## Integration with Existing Backend
 
-The SP1 prover integrates with the existing `backend/theta-bridge` infrastructure:
+The SP1 prover integrates with the existing `services/gateway` infrastructure:
 
 ### Proof Generation Flow
 
-1. **Deposit Detection**: `backend/theta-bridge/src/listener.js` detects deposit
+1. **Deposit Detection**: `services/gateway/src/listener.js` detects deposit
 2. **Proof Request**: Calls SP1 prover via HTTP API or CLI
 3. **Proof Generation**: SP1 host program runs guest program in zkVM
 4. **Proof Return**: Returns proof + public inputs in JSON format
-5. **On-Chain Submission**: `backend/theta-bridge/src/prover.js` submits to verifier contract
+5. **On-Chain Submission**: `services/gateway/src/prover.js` submits to verifier contract
 
 ### API Interface
 
@@ -223,7 +223,7 @@ interface ProofResponse {
 export SP1_PROVER=cuda
 
 # Build with GPU support
-cd sp1-prover/host
+cd services/sp1-prover/host
 cargo build --release --features cuda
 ```
 
