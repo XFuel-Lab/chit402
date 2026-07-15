@@ -10,22 +10,22 @@
 
 | # | Circuit | Contract | Default Chains | Fee |
 |---|---------|----------|---------------|-----|
-| 1 | AI Marketplace | `circuits/tao-evm/TAOCircuit.sol` | Bittensor, Theta | 0.5% |
-| 2 | Agent Comms | `circuits/a2a/A2ACircuit.sol` | All chains | 0.1% relay + 0.5% task |
-| 3 | Edge Compute | `circuits/theta-gpu/ThetaGPUCircuit.sol` | Theta | 0.5% |
-| 4 | zkML Inference | `circuits/zkml/ZKMLCircuit.sol` | All chains | 0.75% |
-| 5 | DePIN Compute | `circuits/akash/AkashCircuit.sol` | All chains | 0.5% |
-| 6 | Autonomous Vaults | `circuits/autonomous-vaults/AutonomousVaults.sol` | All chains | 0.5% |
-| 7 | Agent Robotics | `circuits/agent-robotics/AgentRobotics.sol` | All chains | 1% cert + 0.5% task |
-| 8 | Data Hubs | `circuits/data-hubs/DataHubs.sol` | All chains | 0.5% |
-| 9 | Yield Optimization | `circuits/yield-optimization/YieldCircuit.sol` | All chains | 0.5% + 1% harvest |
-| 10 | NEAR Agents | `circuits/near-agents/NearAgents.sol` | All chains | 0.5% |
-| 11 | Solana AI Bridge | `circuits/solana-ai-bridge/SolanaAIBridge.sol` | All chains | 0.75% |
-| 12 | Filecoin Storage | `circuits/filecoin-storage/FilecoinStorage.sol` | All chains | 0.5% |
-| 13 | Energy Grid | `circuits/energy-grid/EnergyGrid.sol` | All chains | 0.5% |
-| 14 | Mapping Sensor | `circuits/mapping-sensor/MappingSensor.sol` | All chains | 0.5% |
-| 15 | Wireless DePIN | `circuits/wireless-depin/WirelessDePIN.sol` | All chains | 0.5% |
-| 16 | Uplink | `circuits/uplink/UplinkCircuit.sol` | All chains | 0.5% |
+| 1 | AI Marketplace | `contracts/circuits/TAOCircuit.sol` | Bittensor, Theta | 0.5% |
+| 2 | Agent Comms | `contracts/circuits/A2ACircuit.sol` | All chains | 0.1% relay + 0.5% task |
+| 3 | Edge Compute | `contracts/circuits/ThetaGPUCircuit.sol` | Theta | 0.5% |
+| 4 | zkML Inference | `contracts/circuits/ZKMLCircuit.sol` | All chains | 0.75% |
+| 5 | DePIN Compute | `contracts/circuits/AkashCircuit.sol` | All chains | 0.5% |
+| 6 | Autonomous Vaults | `contracts/circuits/AutonomousVaults.sol` | All chains | 0.5% |
+| 7 | Agent Robotics | `contracts/circuits/AgentRobotics.sol` | All chains | 1% cert + 0.5% task |
+| 8 | Data Hubs | `contracts/circuits/DataHubs.sol` | All chains | 0.5% |
+| 9 | Yield Optimization | `contracts/circuits/YieldCircuit.sol` | All chains | 0.5% + 1% harvest |
+| 10 | NEAR Agents | `contracts/circuits/NearAgents.sol` | All chains | 0.5% |
+| 11 | Solana AI Bridge | `contracts/circuits/SolanaAIBridge.sol` | All chains | 0.75% |
+| 12 | Filecoin Storage | `contracts/circuits/FilecoinStorage.sol` | All chains | 0.5% |
+| 13 | Energy Grid | `contracts/circuits/EnergyGrid.sol` | All chains | 0.5% |
+| 14 | Mapping Sensor | `contracts/circuits/MappingSensor.sol` | All chains | 0.5% |
+| 15 | Wireless DePIN | `contracts/circuits/WirelessDePIN.sol` | All chains | 0.5% |
+| 16 | Uplink | `contracts/circuits/UplinkCircuit.sol` | All chains | 0.5% |
 
 ---
 
@@ -148,7 +148,7 @@ WiFi bandwidth sharing, ZK session proofs, router quality EMA, and connectivity 
 
 ```javascript
 import { CoreListener } from './core-layer/ai-listener.js';
-import { registerAllCircuits } from './circuits/index.js';
+import { registerAllCircuits } from './packages/circuit-runtime/index.js';
 
 const listener = new CoreListener({
   chains: {
@@ -174,7 +174,7 @@ await listener.start();
 Any project can build a circuit that plugs into XFuel's Core Layer:
 
 ```javascript
-import { registerCustomCircuit } from './circuits/index.js';
+import { registerCustomCircuit } from './packages/circuit-runtime/index.js';
 
 const myHandler = {
   async onIntent(intent, ctx) {
@@ -196,29 +196,30 @@ registerCustomCircuit(listener, 'my-custom-circuit', myHandler,
 
 ## File Structure
 
+Solidity contracts and the off-chain JS handlers live in two separate trees:
+
 ```
-circuits/
-├── index.js                  # Central registry — registerAllCircuits()
+contracts/circuits/            # Solidity contracts (Hardhat sources, audit scope)
+├── TAOCircuit.sol
+├── A2ACircuit.sol
+├── ThetaGPUCircuit.sol
+└── … ZKMLCircuit, AkashCircuit, AutonomousVaults, AgentRobotics,
+      DataHubs, YieldCircuit, NearAgents, SolanaAIBridge,
+      FilecoinStorage, EnergyGrid, MappingSensor, WirelessDePIN, UplinkCircuit
+
+packages/circuit-runtime/      # Off-chain handlers (JS) + Hardhat tests
+├── index.js                   # Central registry — registerAllCircuits()
 ├── tao-evm/
-│   ├── TAOCircuit.sol        # Solidity contract
-│   ├── tao-handler.js        # Off-chain handler for ai-listener
-│   ├── interfaces/           # Hyperlane, Chainlink interfaces
-│   └── test/                 # 15 Hardhat tests
+│   ├── tao-handler.js         # Off-chain handler for ai-listener
+│   └── test/                  # 15 Hardhat tests
 ├── a2a/
-│   ├── A2ACircuit.sol
 │   ├── a2a-handler.js
-│   └── test/                 # 15 Hardhat tests
-├── theta-gpu/
-│   ├── ThetaGPUCircuit.sol
-│   ├── gpu-handler.js
-│   └── test/                 # 15 Hardhat tests
-├── [zkml, akash, autonomous-vaults, agent-robotics, data-hubs,
-│    yield-optimization, near-agents, solana-ai-bridge,
-│    filecoin-storage, energy-grid, mapping-sensor,
-│    wireless-depin, uplink]/
-│   ├── *.sol                 # Solidity contract
-│   ├── *-handler.js          # Off-chain handler
-│   └── test/                 # 14–15 Hardhat tests each
+│   └── test/                  # 15 Hardhat tests
+└── [theta-gpu, zkml, akash, autonomous-vaults, agent-robotics, data-hubs,
+     yield-optimization, near-agents, solana-ai-bridge, filecoin-storage,
+     energy-grid, mapping-sensor, wireless-depin, uplink]/
+    ├── *-handler.js           # Off-chain handler
+    └── test/                  # 14–15 Hardhat tests each
 ```
 
 Full circuit architecture and design rationale: **[WHITEPAPER.md — Sections 14-20](../WHITEPAPER.md#14-priority-circuits-step-2--v161)**

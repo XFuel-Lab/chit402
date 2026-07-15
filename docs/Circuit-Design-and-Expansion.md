@@ -196,7 +196,7 @@ Task Lifecycle:
 **Research notes:**
 - Per Akash Network: SDL v2.0 defines GPU specs; reverse auction bidding (providers compete on price); escrow via AKT/USDC.
 - Per AEP-78: CosmWasm support (wasmd v0.61.6+) enables on-chain task management natively on Akash.
-- CosmWasm prover (circuits/compute-marketplace/cosmwasm/) provides native Cosmos verification via ark-bn254.
+- CosmWasm prover (packages/circuit-runtime/compute-marketplace/cosmwasm/) provides native Cosmos verification via ark-bn254.
 
 ### 14.5 Inference Router Circuit (InferenceRouter)
 
@@ -639,8 +639,8 @@ DataHubs Circuit Flow:
 | Access grants | Time-limited; fee split between protocol + hub treasury |
 | Contributor rewards | Proportional to quality-weighted shares |
 | Protocol fee | 0.5% on access purchases → CoreRevenueSplitter |
-| Contract | `circuits/data-hubs/DataHubs.sol` |
-| Handler | `circuits/data-hubs/datahubs-handler.js` |
+| Contract | `contracts/circuits/DataHubs.sol` |
+| Handler | `packages/circuit-runtime/data-hubs/datahubs-handler.js` |
 | Tests | 15 Hardhat tests |
 
 ### 17.2 Yield Optimization (`YieldCircuit.sol`)
@@ -676,8 +676,8 @@ YieldCircuit Flow:
 | Yield harvest | Separate harvest step with 1% performance fee |
 | Position management | Open/close with proportional value tracking |
 | Protocol fees | 0.5% deposit fee + 1% harvest fee → CoreRevenueSplitter |
-| Contract | `circuits/yield-optimization/YieldCircuit.sol` |
-| Handler | `circuits/yield-optimization/yield-handler.js` |
+| Contract | `contracts/circuits/YieldCircuit.sol` |
+| Handler | `packages/circuit-runtime/yield-optimization/yield-handler.js` |
 | Tests | 15 Hardhat tests |
 
 ### 17.3 System Optimization & Gas Profiling
@@ -778,8 +778,8 @@ NearAgents Circuit Flow:
 | Reputation | Cumulative quality-weighted score; updated per settlement |
 | Refund logic | Excess budget (intent budget - agreed price) auto-refunded |
 | Protocol fee | 0.5% on agreed settlement price → CoreRevenueSplitter |
-| Contract | `circuits/near-agents/NearAgents.sol` |
-| Handler | `circuits/near-agents/near-handler.js` |
+| Contract | `contracts/circuits/NearAgents.sol` |
+| Handler | `packages/circuit-runtime/near-agents/near-handler.js` |
 | Tests | 15+ Hardhat tests |
 
 ### 18.2 Deployment Infrastructure
@@ -1296,9 +1296,9 @@ Structured grant tracking across three programs:
 
 The twelfth modular circuit bridges decentralized storage via ZK-verified Filecoin proofs.
 
-**Contract:** `circuits/filecoin-storage/FilecoinStorage.sol`
-**Handler:** `circuits/filecoin-storage/filecoin-handler.js`
-**Tests:** `circuits/filecoin-storage/test/FilecoinStorage.test.cjs` (14 tests passing)
+**Contract:** `contracts/circuits/FilecoinStorage.sol`
+**Handler:** `packages/circuit-runtime/filecoin-storage/filecoin-handler.js`
+**Tests:** `packages/circuit-runtime/filecoin-storage/test/FilecoinStorage.test.cjs` (14 tests passing)
 
 **Architecture:**
 1. **Provider Registration** — Storage miners register with capacity, pricing, location, and tier.
