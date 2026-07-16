@@ -96,6 +96,19 @@ const config = {
     })(),
   },
 
+  // USDC revenue split (ADR 0001 — token-light). Protocol fees land at ONE address on
+  // Base — a Splits v2 Split — which fans USDC out to the buckets OFF the hot path.
+  // Per-bucket addresses/bps live in env (see revenue-split.js); XF buyback-burn is a
+  // downstream treasury op, not a per-task rake. splitAddress falls back to X402_PAY_TO
+  // so a single treasury address works until the Split is deployed.
+  revenue: {
+    // Deployed Splits v2 Split address on Base (fees land here). Falls back to payTo.
+    splitAddress: process.env.REVENUE_SPLIT_ADDRESS || process.env.X402_PAY_TO || null,
+    network: process.env.REVENUE_NETWORK || process.env.X402_NETWORK || 'base',
+    // Distributor incentive (uint16) baked into the Split at deploy (0 = none).
+    distributionIncentive: parseInt(process.env.REVENUE_DISTRIBUTION_INCENTIVE, 10) || 0,
+  },
+
   // Redis Configuration
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
