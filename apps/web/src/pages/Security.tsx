@@ -78,7 +78,7 @@ export default function Security() {
             <strong>AngelRound</strong> (strategic allocation); when both are used, angels should follow the path your terms describe.
           </p>
           <p style={{ ...styles.p, marginBottom: 0 }}>
-            Live bucket stats appear on the <Link to="/angels" style={{ color: '#00d4ff' }}>Angels</Link> page when{' '}
+            Per-bucket <code style={{ fontSize: '0.85em' }}>totalRaised</code> and releases are readable on-chain when{' '}
             <code style={{ fontSize: '0.85em' }}>VITE_ANGEL_ESCROW_ADDRESS</code> is set.
           </p>
         </div>
@@ -112,9 +112,7 @@ export default function Security() {
         </div>
 
         <div style={{ textAlign: 'center', fontSize: '0.85rem', color: '#8a8a9a' }}>
-          <Link to="/believers" style={{ color: '#00d4ff' }}>Believers</Link>
-          {' · '}
-          <Link to="/angels" style={{ color: '#00d4ff' }}>Angels</Link>
+          <Link to="/community" style={{ color: '#00d4ff' }}>Community</Link>
           {' · '}
           <Link to="/docs" style={{ color: '#00d4ff' }}>Docs</Link>
         </div>

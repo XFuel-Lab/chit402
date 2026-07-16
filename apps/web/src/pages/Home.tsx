@@ -1,7 +1,5 @@
 import { Link } from 'react-router-dom';
-import { useEffect, useState, type CSSProperties } from 'react';
-
-const BELIEVER_DISMISS_KEY = 'xfuel-believer-chip-dismissed';
+import { type CSSProperties } from 'react';
 
 const stats = [
   { value: 'Any', label: 'Model or provider, routed' },
@@ -115,60 +113,8 @@ function networkBadgeClass(status: string) {
 }
 
 export default function Home() {
-  const [showBelieverChip, setShowBelieverChip] = useState(true);
-
-  useEffect(() => {
-    try {
-      if (sessionStorage.getItem(BELIEVER_DISMISS_KEY)) setShowBelieverChip(false);
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  const dismissBeliever = () => {
-    try {
-      sessionStorage.setItem(BELIEVER_DISMISS_KEY, '1');
-    } catch {
-      /* ignore */
-    }
-    setShowBelieverChip(false);
-  };
-
   return (
     <div className="page">
-      {showBelieverChip && (
-        <div className="container" style={{ paddingTop: '1rem' }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '0.75rem',
-              flexWrap: 'wrap',
-              padding: '0.65rem 1rem',
-              background: 'rgba(34,197,94,0.1)',
-              border: '1px solid rgba(34,197,94,0.28)',
-              borderRadius: 10,
-              fontSize: '0.88rem',
-            }}
-          >
-            <span style={{ color: '#bbf7d0' }}>
-              <strong>Community &amp; Angel rounds</strong> — commit TFUEL on <strong>Theta mainnet (361)</strong>. Believer base pricing + optional lock
-              bonuses; separate strategic Angel path.
-            </span>
-            <Link to="/believers" className="btn btn-primary btn-sm">
-              Believers
-            </Link>
-            <Link to="/angels" className="btn btn-secondary btn-sm">
-              Angels
-            </Link>
-            <button type="button" className="btn btn-secondary btn-sm" onClick={dismissBeliever} aria-label="Dismiss">
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Hero */}
       <section style={styles.hero}>
         <div className="container" style={{ textAlign: 'center' }}>
@@ -181,8 +127,7 @@ export default function Home() {
           <p style={styles.heroDescription}>
             XFuel is the payments-and-proof layer for AI compute. Route inference to the best available provider — centralized, neocloud, or DePIN — settle over
             any rail (<strong>USDC via x402</strong> or <strong>TFUEL on Theta</strong>), and get a <strong>verifiable receipt</strong> for every task: a signed
-            statement by default, or an <strong>on-chain SP1 proof</strong> on demand. The stack is in <strong>beta</strong>; Believer and Angel funding rounds
-            are live on Theta mainnet.
+            statement by default, or an <strong>on-chain SP1 proof</strong> on demand. The stack is in <strong>beta</strong>.
           </p>
           <div style={styles.heroCta}>
             <Link to="/docs" className="btn btn-primary">
@@ -190,12 +135,6 @@ export default function Home() {
             </Link>
             <Link to="/theta-ai" className="btn btn-secondary">
               AI Hub
-            </Link>
-            <Link to="/believers" className="btn btn-secondary">
-              Believer Round
-            </Link>
-            <Link to="/angels" className="btn btn-secondary">
-              Angel Round
             </Link>
           </div>
         </div>
@@ -375,14 +314,11 @@ export default function Home() {
         <div className="container">
           <h2 style={{ marginBottom: '0.5rem' }}>Ready to fuel the future of AI?</h2>
           <p style={{ color: '#8a8a9a', marginBottom: '2rem', maxWidth: '520px', margin: '0 auto 2rem' }}>
-            Join the community round on Theta mainnet, review the strategic Angel path, and follow security &amp; audit updates.
+            Try the API, explore the AI hub, and follow security &amp; audit updates.
           </p>
           <div style={styles.heroCta}>
-            <Link to="/believers" className="btn btn-primary">
-              Believer Round
-            </Link>
-            <Link to="/angels" className="btn btn-secondary">
-              Angel Round
+            <Link to="/docs" className="btn btn-primary">
+              Try the API
             </Link>
             <Link to="/community" className="btn btn-secondary">
               Community
