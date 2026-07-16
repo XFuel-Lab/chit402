@@ -9,7 +9,7 @@
 
 ## Abstract
 
-XFuel Protocol is a **modular, zero-knowledge-secured DePIN hub** that pumps intelligence, compute, liquidity, and value across AI ecosystems. Built around a **hybrid Theta-centric architecture** — with Theta EdgeCloud as the primary GPU backbone — XFuel's **Core Layer** handles ZK proof verification, task routing, fee distribution, governance, and treasury operations. Independent **circuits** (specialized modules) plug into the Core Layer to serve specific use cases, while the orchestration layer routes workloads across Theta, Bittensor, Akash, Solana, and other DePIN networks based on cost, latency, and availability.
+XFuel Protocol is the **verifiable settlement and payments layer for AI compute**: a modular, ZK-secured stack that **routes** inference to the best available provider (centralized, neocloud, or DePIN GPU), settles in **USDC via x402 on Base**, and returns **verifiable receipts** (signed by default; on-chain SP1 settlement proofs on demand). The Core Layer handles proof verification, task routing, and governance hooks. Independent **circuits** plug in for specific use cases. EdgeCloud and other GPU networks are **optional provider tiers**, not settlement home ([ADR 0002](docs/adr/0002-base-settlement-home.md)).
 
 This whitepaper describes the Core Layer architecture, its components, and how they interact to enable trustless, verifiable pumping of AI workloads across heterogeneous blockchain environments. The design prioritizes:
 
@@ -61,7 +61,7 @@ Data leaks and unverifiable inference remain widespread. XFuel delivers zkML cir
 Raw DePIN infrastructure lacks embedded intelligence for autonomous coordination and failure prediction. XFuel's agent-first design (webhooks, MCP-compatible endpoints, preset workflows) turns passive pipes into adaptive systems. Agents can submit intents, receive real-time callbacks, and coordinate across Theta EdgeCloud, Bittensor, and beyond — all ZK-verified.
 
 **5. Economic and Reward Architecture Layer**
-Token models often ignore real hardware costs, leading to idle nodes and diluted incentives. XFuel's 30/30/25/15 revenue split, GPU-tier multipliers, and veXF governance create sustainable economics. Live ROI calculators and Fee-to-Stake routing align operator incentives with actual usage, while our hybrid Theta focus leverages EdgeCloud's real-world GPU network for competitive yields.
+Token models often ignore real hardware costs. XFuel is **token-light**: protocol fees accrue in USDC on Base; XF buyback-burn (when the token exists) is downstream treasury policy, not a hardcoded per-fee staker yield. veXF (later on Base) governs parameters. Optional GPU providers (including EdgeCloud) compete on cost and availability — they are not the fee engine.
 
 By addressing these layers head-on, XFuel is not just another DePIN protocol — it is the pumping station that makes decentralized AI economically viable and operationally simple at scale.
 
@@ -171,7 +171,7 @@ XFuel deploys native verifiers on three VM families, ensuring proofs can settle 
 
 All three share the same BN254 curve, Groth16 proof system, nullifier-based replay protection, circuit registry, and pause/unpause controls. Proofs generated once can settle on any backend.
 
-**Primary deployment:** Theta Mainnet (chain 361, TFUEL gas) with live EdgeCloud inference. Secondary chains include Bittensor EVM (964) with dTAO stake-gated verification and Hyperlane cross-chain relay, Osmosis/Akash via CosmWasm IBC, and Solana via Wormhole VAA bridging.
+**Primary deployment (money + proof home):** Base (chain 8453; Sepolia 84532 for testnet) — USDC via x402, protocol Safe / Splits, go-forward `ZKVerifierSP1`. **Providers:** pluggable OpenAI-compatible and DePIN GPU tiers (EdgeCloud, Akash, …). Optional cross-chain: Bittensor EVM (964/945) via Hyperlane. Historical Theta EVM manifests are archive-only.
 
 ### 3.4 Key Capabilities
 
@@ -289,36 +289,15 @@ All protocol interactions incur a configurable fee (0.1%–1%) that flows throug
 | Bridge transfer | 50 | Cross-chain deposits/withdrawals |
 | Data attestation | 50 | Dataset provenance certification |
 
-### 5.2 Revenue Split (30/30/25/15)
+### 5.2 Revenue Model (token-light USDC on Base)
 
-All collected fees flow through the CoreRevenueSplitter using a clean four-way split. The split is designed to maximize deflationary pressure, power a self-sustaining growth engine, reward long-term holders, and fund operations.
+Go-forward fees accrue in **USDC on Base** via x402 to a single protocol address (Safe or Splits v2). Fan-out is off the hot path and governance-adjustable. There is **no** hardcoded 30/30/25/15 per-fee split and **no** fixed staker yield. XF buyback-burn (when the token exists) is downstream treasury policy on Base. See [ADR 0001](docs/adr/0001-usdc-revenue-and-router-verifier-positioning.md) and [ADR 0002](docs/adr/0002-base-settlement-home.md).
 
-```
-┌──────────────────────────────────────────────────────┐
-│              CoreRevenueSplitter v2.4                                  │
-├──────────────────────────────────────────────────────┤
-│  30%  →  Buyback-Burn (BBB)                                            │
-│          XF token deflationary pressure                                │
-│                                                                        │
-│  30%  →  Growth & Expansion Treasury (GET)                             │
-│          AI DePIN growth engine (see sub-breakdown)                    │
-│          ├─ 50% Machine & Agent Incentives                            │
-│          ├─ 30% LP Boost                                              │
-│          └─ 20% Agent-Driven Grant Proposals                          │
-│                                                                        │
-│  25%  →  veXF Stake Rewards                                            │
-│          Distributed to governance lockers                             │
-│                                                                        │
-│  15%  →  Ops Treasury                                                  │
-│          Operations, development, audits                               │
-│          ├─ 15-25% → Fee-to-Stake pool                                │
-│          └─ Validator incentives                                      │
-└──────────────────────────────────────────────────────┘
-```
+Legacy `CoreRevenueSplitter` / GET / Fee-to-Stake machinery below is **historical** and deprecated from the live fee path.
 
-### 5.3 Growth & Expansion Treasury (GET) — The AI DePIN Growth Engine
+### 5.3 Growth & Expansion Treasury (GET) — historical
 
-The **GET** bucket replaces the legacy Liquidity Provision allocation with a purpose-built growth engine for the AI DePIN era. Thirty percent of all distributed fees flow here and are sub-allocated as follows:
+*(Deprecated go-forward.)* The legacy GET bucket was a sub-split of the old 30/30/25/15 TFUEL model:
 
 | GET Sub-Bucket | Share | Purpose |
 |----------------|-------|---------|
@@ -455,7 +434,9 @@ XFuel's Core Layer supports three integration tiers:
 
 ### 8.2 Chain-Specific Notes
 
-**Theta Metachain (primary)** — Theta (chain 361) is XFuel's primary deployment chain, with live EdgeCloud inference, GPU tiers, and SP1 CUDA proving on A100/H200 hardware. This Theta-hybrid focus leverages EdgeCloud's real-world GPU network for competitive yields, while ecosystem-agnostic circuits extend to Bittensor, Akash, Solana, and beyond. Interconnected "chain of chains" architecture with EVM compatibility, native subchain execution, and TFUEL gas. All 23 testnet contracts are deployed on Theta Testnet (chain 365). XFuel operates a **dedicated shared subchain** (`tsub365001` on testnet, `tsub361001` on mainnet) hosting ThetaInferenceCircuit, A2ACircuit, ThetaGPUCircuit, and DataHubs — delivering <2s block finality per intent. Architecture is branch-ready: additional per-circuit subchains are spun up as volume demands isolation.
+**Base (money + proof home)** — Chain 8453 (Sepolia 84532 for testnet). USDC via x402, protocol Safe / Splits v2, go-forward `ZKVerifierSP1`. See [ADR 0002](docs/adr/0002-base-settlement-home.md).
+
+**EdgeCloud GPU (optional provider)** — Inference and optional CUDA proving as a **router tier**, not settlement home. Provider-specific circuits (e.g. `ThetaInferenceCircuit`) may remain as EdgeCloud adapters. Historical Theta EVM / subchain manifests are archive-only under `deploy/manifests/`.
 
 **Bittensor EVM** — Chain ID 964, TAO as native currency, EVM precompiles for staking and subnet management, Hyperlane bridge for cross-chain messaging.
 
@@ -538,8 +519,8 @@ Any project can build a custom circuit by implementing the circuit interface (ev
 | Parameter | Value |
 |-----------|-------|
 | **Total Supply** | 1,000,000,000 XF (1B) |
-| **Token Standard** | ERC-20 on Theta Mainnet (chain 361) |
-| **TGE Status** | Pending — gated on CertiK Phase 1 audit completion |
+| **Token Standard** | ERC-20 on **Base** (when launched; ADR 0002) |
+| **TGE Status** | Deferred — equity-first raise first; see `docs/FUNDRAISING_STRUCTURE.md` |
 
 ### Token Allocation
 
@@ -553,26 +534,23 @@ Any project can build a custom circuit by implementing the circuit interface (ev
 | **Protocol Treasury** | 15% | 150,000,000 | DAO-controlled via veXF governance |
 | **Liquidity (LP seed)** | 10% | 100,000,000 | Unlocked at TGE for DEX listing |
 
-### Community & Angel rounds (single open windows)
+### Community & Angel rounds (retired)
 
-- **Community (`BelieverRound.sol`):** up to **150M XF** reserved (`xfAllocationCap`). Default deploy pricing is **5 XF per 1 TFUEL** (env/script overrides); **XF per TFUEL** may be updated by multisig while status is **Open** (see [`docs/PRICING_TFUEL_XF.md`](docs/PRICING_TFUEL_XF.md)). Optional lock tiers add **+8% / +20% / +35%** XF on the base price. **Min commitment:** 100 TFUEL (unless overridden at deploy).
-- **Angel (`AngelRound.sol`):** up to **100M XF** reserved. Default deploy **8 XF per 1 TFUEL** (vs Believer base **5**). Separate `triggerTGE` from community round.
-- **Engagement (`CommunityEngagementDistributor.sol`):** lifetime claims capped at deploy `maxLifetimeXF` (150M XF when used for the full bucket).
-- **UI:** [`apps/web`](apps/web) routes `/believers` and `/angels` · Contracts: `contracts/circuits/BelieverRound.sol`, `AngelRound.sol`, `CommunityEngagementDistributor.sol`
-- **Admin / Multisig:** `0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257` (Gnosis Safe, Theta)
+`BelieverRound` / `AngelRound` TFUEL sales on Theta are **retired** as fundraising vehicles (UI redirected; see `docs/FUNDRAISING_STRUCTURE.md`). Pre-seed/seed = equity-first SAFE + token warrant. A later community token round, if any, would be USDC-priced on Base after product + counsel review — not a relaunch of the Theta TFUEL sales.
 
-### XF Token Utility
+### XF Token Utility (token-light)
 
-| Utility | Split | Mechanism |
-|---------|-------|-----------|
-| **Deflationary (BBB)** | 30% | Buyback-and-burn creates relentless sell-side absorption |
-| **Growth & Expansion Treasury (GET)** | 30% | AI DePIN growth engine — Machine & Agent Incentives (50%), LP Boost (30%), Agent-Driven Grant Proposals (20%) |
-| **veXF Stake Rewards** | 25% | Real yield distributed to governance lockers every epoch |
-| **Ops Treasury** | 15% | Operations, audits, grants, Fee-to-Stake validator incentives |
+| Utility | Mechanism |
+|---------|-----------|
+| **Governance** | veXF locks vote on parameters, treasury, circuit priority (when live on Base) |
+| **Deflationary** | Governance-set buyback-burn from USDC treasury on Base (~adjustable; not a fixed per-fee %) |
+| **Access** | Optional gated features / agent grants via engagement programs — not a fee-share entitlement |
+
+**Do not claim** fixed “X% of fees to stakers” / “real yield every epoch.” See `docs/tokenomics-reconciliation.md` and ADR 0001.
 
 ### Fee Flow
 
-All protocol fees (0.1–1% per transaction) flow through the CoreRevenueSplitter at the **30/30/25/15** split. The GET allocation (30%) is sub-divided into Machine & Agent Incentives, LP Boost, and Agent-Driven Grant Proposals — see [`docs/Growth-Expansion-Treasury.md`](docs/Growth-Expansion-Treasury.md) for the full breakdown. A portion (15–25%) of the Ops Treasury allocation is further routed to multi-chain validator staking pools via the Fee-to-Stake mechanism. See [Section 5](#5-revenue--fee-distribution) for the full breakdown.
+Protocol fees land as **USDC on Base** at `X402_PAY_TO` / Splits v2 (ADR 0001). Fan-out is off the hot path. Legacy `CoreRevenueSplitter` (30/30/25/15 TFUEL) is deprecated from the go-forward fee path.
 
 ### Revenue Projections (Steady-State)
 

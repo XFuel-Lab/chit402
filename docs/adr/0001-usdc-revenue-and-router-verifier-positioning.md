@@ -1,10 +1,10 @@
 # ADR 0001 — USDC Revenue Architecture & Router/Verifier Positioning
 
-- **Status:** Proposed (pending founder review)
+- **Status:** Accepted (revenue model). Settlement *locus* partially superseded by [ADR 0002](0002-base-settlement-home.md) (Base = money + proof home; Theta = GPU provider only).
 - **Date:** 2026-07-15
 - **Deciders:** Founder + engineering
 - **Supersedes:** The legacy `CoreRevenueSplitter` fee model and the "Theta-centric DePIN hub" framing
-- **Related:** `docs/POSITIONING.md` (north star), `AGENTS.md`
+- **Related:** `docs/POSITIONING.md` (north star), `AGENTS.md`, [ADR 0002](0002-base-settlement-home.md)
 
 ---
 
@@ -35,8 +35,8 @@ This creates three problems with the legacy design:
 1. **Positioning:** XFuel's identity is the **verifiable settlement & payments layer for AI
    compute** ("Route any model. Prove every dollar."). Routing is the on-ramp; the
    **verifier + crypto-native settlement is the moat.** DePIN/orchestration are provider
-   *tiers/features*, not identity. This makes XFuel **complementary** to Theta (drives
-   settlement volume to it) rather than competitive.
+   *tiers/features*, not identity. EdgeCloud (and other GPU networks) are optional compute
+   tiers — complementary volume, not settlement home (see ADR 0002).
 
 2. **Token posture: token-light.** The per-task hot path does **no tokenomics**. XF value
    accrual (buyback-burn) and any staker yield are **downstream treasury policy**, not an
@@ -52,8 +52,9 @@ This creates three problems with the legacy design:
    batched) — per-task cost is a single transfer to one address.
 
 5. **Token value accrual: buyback-burn, downstream.** Treasury periodically routes a slice
-   of accumulated USDC → buys & burns **XF on Theta** (scheduled multisig/keeper action,
-   adjustable without redeploy). veXF governs the *policy*, not each fee event.
+   of accumulated USDC → buys & burns **XF on Base** when the token exists (same-chain;
+   scheduled multisig/keeper action, adjustable without redeploy). veXF governs the
+   *policy*, not each fee event. *(Locus updated by ADR 0002.)*
 
 6. **Provider settlement: hybrid.** Pass-through for crypto-native providers (Theta,
    Akash); collect-and-forward for Web2 providers (Groq, OpenAI) that bill in fiat.
@@ -72,7 +73,7 @@ This creates three problems with the legacy design:
 | x402 integration + receipt / `verify_url` + gateway routing | Theta-native boost multiplier |
 | Circuit/handler architecture (provider extensibility) | TDROP accounting, in-contract Chainlink oracles, grant-voting-in-fee-contract |
 | A2A / swarm settlement (more verifiable-settlement surface) | Native-TFUEL escrow / deferred claims |
-| XF + veXF + live Believer/Angel rounds (reposition, don't remove) | The 4-way on-chain enforced split as hot-path logic |
+| XF + veXF (later on Base; see ADR 0002) | Live Believer/Angel token sales; 4-way on-chain fee split |
 
 ## Shortest path to live (what's actually on the critical path)
 
@@ -91,16 +92,14 @@ oracle feeds, fee-to-stake, buyback-burn automation, the 4-way split.
 - [ ] Groq routing + signed receipts (Tier 0)
 - [ ] SP1 proof path (Tier 1) wired as premium upsell (prover live on AWS, verifier on testnet)
 - [ ] Deploy a Splits v2 Split on Base (treasury/ops + buyback buckets), owner = Safe
-- [ ] Treasury runbook: periodic USDC → XF buyback-burn on Theta
+- [ ] Treasury runbook: periodic USDC → XF buyback-burn on Base (when XF exists)
 
 ## Consequences
 
-- **Positive:** near-zero bespoke audit surface for revenue; on-strategy (no Theta bias);
-  faster path to live; token complexity moves to adjustable treasury policy; better Theta
-  relationship (complementary).
-- **Trade-off accepted:** revenue on Base while XF/veXF on Theta → a **periodic treasury
-  bridge** for buyback-burn (scheduled op, not per-task). Strictly simpler than per-fee
-  USDC→TFUEL swaps.
+- **Positive:** near-zero bespoke audit surface for revenue; on-strategy (no provider bias);
+  faster path to live; token complexity moves to adjustable treasury policy.
+- **Trade-off (superseded by ADR 0002):** original note assumed XF on Theta; go-forward is
+  same-chain USDC→XF on Base — no per-task bridge.
 - **Open item:** provider collect-and-forward custody model needs legal review before
   mainnet revenue (see `docs/LEGAL_LAUNCH_CHECKLIST.md`).
 

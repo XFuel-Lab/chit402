@@ -2,20 +2,20 @@
 /**
  * find-positioning.cjs — positioning + terminology drift linter for docs.
  *
- * Flags language and paths that pre-date the "north star" repositioning:
- *   XFuel = the verifiable settlement & payments layer for AI compute
- *   (provider-agnostic routing; Theta is the settlement home, not the identity).
+ * Flags language and paths that pre-date Base-home repositioning (ADR 0002):
+ *   XFuel = verifiable settlement & payments for AI compute
+ *   Money + proof home = Base (USDC/x402); Theta EdgeCloud = optional GPU provider only.
  *
  * Two categories:
- *   [positioning] stale framing (Theta-centric DePIN "hub", "pumping station", etc.)
+ *   [positioning] stale framing (Theta settlement home, DePIN hub, 30/30/25/15 as live, etc.)
  *   [path]        stale repo paths left over from the monorepo restructure
  *
  * Usage:
  *   node scripts/dev/find-positioning.cjs           # scan *.md
  *   node scripts/dev/find-positioning.cjs --all     # scan all tracked text files
  *
- * Output: files ranked by hit count, with matched lines. CHANGELOG is historical
- * (reported but flagged "keep"). This is a signal to review, not an auto-fixer.
+ * Output: files ranked by hit count, with matched lines. CHANGELOG / ADR context /
+ * docs/providers/ may be historical (reported but flagged). Signal to review, not auto-fix.
  */
 const { execFileSync } = require('child_process');
 
@@ -26,10 +26,17 @@ const pathspec = scanAll ? '.' : '*.md';
 const PATTERNS = [
   ['positioning', 'theta-?hybrid', 'Theta-Hybrid framing'],
   ['positioning', 'theta-?centric', 'Theta-centric framing'],
+  ['positioning', 'Settlement home:\\s*Theta', 'Theta claimed as settlement home'],
+  ['positioning', 'Primary deployment:\\s*Theta', 'Theta claimed as primary deployment'],
+  ['positioning', 'Theta Metachain \\(primary\\)|primary deployment chain', 'Theta as primary chain'],
   ['positioning', '(ai )?depin hub', '"DePIN hub" identity'],
   ['positioning', 'pumping station|pumps? (intelligence|value|compute)', '"AI pumping station" metaphor'],
   ['positioning', 'primary gpu backbone|edgecloud.{0,12}(primary|backbone)', 'EdgeCloud-as-primary framing'],
   ['positioning', 'cross-chain yield', '"cross-chain yield" as headline'],
+  ['positioning', '30/30/25/15', 'Legacy fee split as live model'],
+  ['positioning', 'CoreRevenueSplitter', 'Deprecated fee path cited as live'],
+  ['positioning', 'real yield.*(staker|veXF)|25%.*(staker|veXF)', 'Staker fee-share promise'],
+  ['positioning', 'Believer and Angel funding rounds are live|rounds are live on Theta', 'Retired rounds advertised live'],
   ['path', 'backend/theta-bridge', '→ services/gateway'],
   ['path', '\\bsdk/js\\b', '→ packages/sdk'],
   ['path', '\\bxfuel-app\\b', '→ apps/web'],
@@ -65,7 +72,9 @@ let total = 0;
 for (const [, hits] of ranked) total += hits.length;
 console.log(`Positioning/terminology drift: ${total} hits across ${ranked.length} files (scan: ${pathspec})\n`);
 for (const [file, hits] of ranked) {
-  const historical = /CHANGELOG/i.test(file) ? '  [historical — keep]' : '';
+  const historical = /CHANGELOG|docs\/adr\/0001|docs\/tokenomics-reconciliation|docs\/providers\//i.test(file)
+    ? '  [historical / ADR context — review]'
+    : '';
   console.log(`── ${file}  (${hits.length})${historical}`);
   for (const h of hits) console.log(`   ${h.ln}: [${h.label}] ${h.note}  ·  ${h.text}`);
 }
