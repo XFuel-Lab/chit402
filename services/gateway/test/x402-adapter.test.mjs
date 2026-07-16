@@ -65,11 +65,13 @@ test('isX402Enabled reflects env flag', () => {
   if (prev === undefined) delete process.env.X402_ENABLED; else process.env.X402_ENABLED = prev;
 });
 
-test('defaultRail / fallbackToTfuel reflect env (usdc opt-in)', () => {
+test('defaultRail / fallbackToTfuel reflect env (usdc default)', () => {
   const prevRail = process.env.X402_DEFAULT_RAIL;
   const prevFb = process.env.X402_FALLBACK_TFUEL;
   delete process.env.X402_DEFAULT_RAIL;
-  assert.equal(defaultRail(), 'tfuel', 'defaults to tfuel until gateway live');
+  assert.equal(defaultRail(), 'usdc', 'defaults to usdc on Base (ADR 0002)');
+  process.env.X402_DEFAULT_RAIL = 'tfuel';
+  assert.equal(defaultRail(), 'tfuel');
   process.env.X402_DEFAULT_RAIL = 'usdc';
   assert.equal(defaultRail(), 'usdc');
   process.env.X402_FALLBACK_TFUEL = 'true';

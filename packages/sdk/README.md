@@ -73,15 +73,14 @@ const client = new XFuelClient({ baseUrl, apiKey });
 
 // Dev/CI: works against the mock facilitator (does NOT move real funds)
 const task = await client.submitInference('llama-3-70b', '0xYourAddr', '1000000', {
-  chain_id: 'theta',
+  chain_id: 'base',
   payment: { rail: 'usdc', network: 'base', maxAmount: '50000' },
   payer: createMockPayer(),
 });
 console.log(task.payment_rail, task.payment_ref); // "usdc", "base:0x…"
+// Prefer task.verify_url for a shareable receipt link.
 
 // Production: sign USDC EIP-3009 `transferWithAuthorization` on Base with your wallet.
-// `createEip3009Payer` lives in the /onchain entry (needs the `ethers` peer dep);
-// your private key stays inside the signer — the SDK never sees it.
 import { Wallet } from 'ethers';
 import { createEip3009Payer } from 'xfuel-sdk/onchain';
 
@@ -89,9 +88,8 @@ const payer = createEip3009Payer(new Wallet(process.env.XFUEL_PAYER_PK));
 await client.submitTaskWithPayment({ /* task params */, payment: { rail: 'usdc' } }, payer);
 ```
 
-Omit `payer` (or use `payment: { rail: 'tfuel' }`) to settle in TFUEL on Theta. If
-the server settles without issuing a 402 (x402 flag off, or TFUEL fallback), the
-payer is never called. Preview pricing first with `client.quoteTask({ model_id })`.
+Default settlement is **USDC on Base** (x402). Optional legacy rails may exist if the
+server enables them. Preview pricing with `client.quoteTask({ model_id })`.
 
 > **Runnable examples:** [`examples/pay-with-usdc.ts`](./examples/pay-with-usdc.ts) —
 > a full quote → pay → prove loop (`npx tsx examples/pay-with-usdc.ts`; uses the mock

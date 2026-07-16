@@ -122,6 +122,19 @@ module.exports = {
       chainId: 964,
       timeout: 120000,
     },
+    // Base — money + proof home (ADR 0002)
+    'base-sepolia': {
+      url: process.env.BASE_SEPOLIA_RPC_URL || process.env.BASE_RPC_URL || 'https://sepolia.base.org',
+      chainId: 84532,
+      accounts: pk ? [pk] : [],
+      timeout: 120000,
+    },
+    base: {
+      url: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      chainId: 8453,
+      accounts: pk ? [pk] : [],
+      timeout: 120000,
+    },
   },
   paths: {
     sources: './contracts',

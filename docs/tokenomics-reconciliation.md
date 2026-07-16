@@ -1,6 +1,6 @@
 # Tokenomics Reconciliation — Redline for Founder + Counsel Review
 
-> **Status:** In progress — Tier B applied to AGENTS / POSITIONING / README / WHITEOPBER §5.2+§10 fee language (Base home wave). Remaining Tier A decks + Tier C refs still pending.
+> **Status:** In progress — Tier B applied to AGENTS / POSITIONING / README / WHITEPAPER §5.2+§10 fee language (Base home wave). Remaining Tier A decks + Tier C refs still pending.
 > **Date:** 2026-07-15
 > **Trigger:** ADR 0001 (token-light revenue) + the decision to defer staker fee-share.
 > **Purpose:** Catalog every representation that promises a **fixed fee-share / "real

@@ -1,7 +1,7 @@
 {
-  "name": "theta-bridge-backend",
+  "name": "xfuel-gateway",
   "version": "2.0.0",
-  "description": "XFuelLab Hybrid ZK Bridge - Backend service with reverse-burn loop",
+  "description": "XFuel agent gateway — routing, x402/USDC on Base, proving, receipts",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -22,14 +22,13 @@
     "test": "node --test test/webhooks.test.mjs test/x402-adapter.test.mjs test/x402-facilitator.test.mjs test/x402-server.test.mjs test/receipt.test.mjs test/x402-discovery.test.mjs test/task-store.test.mjs test/telemetry.test.mjs test/stats-route.test.mjs test/prover-config.test.mjs test/prover-zan-auth.test.mjs test/payment-binding.test.mjs test/openai-gateway.test.mjs test/demo-mode.test.mjs test/revenue-split.test.mjs"
   },
   "keywords": [
-    "theta",
-    "osmosis",
-    "akash",
-    "persistence",
-    "bridge",
+    "xfuel",
+    "x402",
+    "usdc",
+    "base",
     "zk-proof",
-    "ai-depin",
-    "blockchain"
+    "ai-agents",
+    "gateway"
   ],
   "author": "XFuelLab",
   "license": "MIT",

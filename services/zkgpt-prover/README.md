@@ -1,6 +1,6 @@
 # zkGPT Prover Integration (Phase 1 — ZKG-1)
 
-> Scaffolding for integrating the [zkGPT](https://eprint.iacr.org/2025/1184) prover into XFuel's inference pipeline. When a task is submitted with `proof_system: zkgpt`, the backend can route proof generation to this prover instead of SP1.
+> Scaffolding for integrating the [zkGPT](https://eprint.iacr.org/2025/1184) prover into XFuel's inference pipeline. When a task is submitted with `proof_system: zkgpt`, the gateway (`services/gateway`) can route proof generation here instead of SP1. Settlement home is **Base** (ADR 0002); EdgeCloud is an optional run host for the prover image, not product identity.
 
 ## Upstream
 
@@ -12,7 +12,7 @@
 
 **Requirements (from upstream):** C++14, cmake ≥ 3.10, GMP. **Clone and build** are standard — laptop is fine (same as the other prover). The upstream **200GB RAM / 16+ cores** recommendation is for **running** the prover (circuit init + proving), not for the build. Build locally; use a big server or EdgeCloud when you actually run proof generation.
 
-**Windows:** The upstream uses bash and apt (Linux). Use **WSL**: open a WSL terminal, `cd` to your repo (e.g. `cd /mnt/c/Users/seeha/xfuel-protocol/backend/theta-bridge/zkgpt`), then run the install and build steps below (apt, build.sh). PowerShell cannot run `build.sh` and has no `apt`.
+**Windows:** The upstream uses bash and apt (Linux). Use **WSL**: open a WSL terminal, `cd` to your repo (e.g. `cd /mnt/c/Users/seeha/xfuel-protocol/services/gateway/zkgpt`), then run the install and build steps below (apt, build.sh). PowerShell cannot run `build.sh` and has no `apt`.
 
 - **EdgeCloud** is used to **run** the prover (we already deploy the mock there). You deploy a **pre-built** Docker image via the [Theta EdgeCloud dashboard](https://www.thetaedgecloud.com/dashboard); EdgeCloud does not provide a general “build server” or SSH. So: build the image somewhere with enough RAM, then deploy that image to EdgeCloud (same flow as the current zkGPT mock).
 - **Recommended flow:**
@@ -25,7 +25,7 @@ If Theta adds a “run custom job” or Jupyter with large RAM, you could run th
 **Optional — `Dockerfile.build`** (from repo root):
 
 ```bash
-docker build -f zkgpt-prover/Dockerfile.build -t xfuel-zkgpt-built .
+docker build -f services/zkgpt-prover/Dockerfile.build -t xfuel-zkgpt-built .
 ```
 
 Extract the binary: `docker create --name ex xfuel-zkgpt-built && docker cp ex:/zkgpt/cmake-build-release/src/demo_llm_run ./demo_llm_run && docker rm ex`. Then add it to a runtime image with the wrapper and deploy to EdgeCloud.
@@ -72,11 +72,11 @@ The upstream **demo** (`main_demo_llm.cpp`) has **no JSON or HTTP API**: it runs
 
 1. **Inputs** (from inference task): model commitment, input embedding (or hash), output.
 2. **Outputs:** `proofBytes` (~101 KB), `publicValues` (ABI-encoded for `ZKVerifierZkGPT.verifyProof`).
-3. **Backend:** When `task.intent.proofSystem === 'zkgpt'`, the backend (`backend/theta-bridge`) calls the zkGPT prover via `zkgpt-prover-client.js` if `ZKGPT_PROVER_URL` is set; otherwise falls back to SP1 with a warning.
+3. **Backend:** When `task.intent.proofSystem === 'zkgpt'`, the backend (`services/gateway`) calls the zkGPT prover via `zkgpt-prover-client.js` if `ZKGPT_PROVER_URL` is set; otherwise falls back to SP1 with a warning.
 
 ### Expected HTTP API (for a wrapper service)
 
-The backend client (`backend/theta-bridge/src/zkgpt-prover-client.js`) POSTs to `{ZKGPT_PROVER_URL}/prove` with JSON body:
+The backend client (`services/gateway/src/zkgpt-prover-client.js`) POSTs to `{ZKGPT_PROVER_URL}/prove` with JSON body:
 
 - `task_id`, `net_amount`, `block_number`, `merkle_root`, `identity_commitment`, `output_hash`, `task_type`, `source_chain`
 
@@ -137,7 +137,7 @@ docker run -p 81:81 -e ZKGPT_PROVER_PORT=81 xfuel-zkgpt-prover
 **Docker — full (C++ prover + adapter, for Theta GPU node):** Multi-stage build: compile upstream zkGPT, then run Node wrapper + adapter. Build from **repo root** (takes a while). **Theta currently runs `xfuel/xfuel-zkgpt-prover:full-v4`.** After pulling the simplified Dockerfile, build a new tag (e.g. full-v5) and set the Theta template to that tag.
 
 ```bash
-docker build -f zkgpt-prover/Dockerfile.full --platform linux/amd64 -t xfuel/xfuel-zkgpt-prover:full-v5 .
+docker build -f services/zkgpt-prover/Dockerfile.full --platform linux/amd64 -t xfuel/xfuel-zkgpt-prover:full-v5 .
 docker push xfuel/xfuel-zkgpt-prover:full-v5
 docker run -p 81:81 -e ZKGPT_PROVER_PORT=81 xfuel/xfuel-zkgpt-prover:full-v5
 ```

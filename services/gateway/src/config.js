@@ -9,8 +9,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /**
- * Configuration for XFuel Theta Bridge (AI DePIN M2M + optional Persistence bridge).
- * Set PERSISTENCE_BRIDGE_ENABLED=true to enable legacy Theta→Persistence deposit flow.
+ * Configuration for XFuel gateway (agent routing, x402/USDC on Base, proofs, receipts).
+ * EdgeCloud / Theta RPC remain available as optional provider ops — not settlement home (ADR 0002).
+ * Set PERSISTENCE_BRIDGE_ENABLED=true to enable legacy deposit flow.
  */
 // Computed before the config object so fields below can reference it without a
 // temporal-dead-zone self-reference (previously `!config.persistenceBridgeEnabled`
@@ -56,23 +57,18 @@ const config = {
     a2aCircuitAddress: process.env.A2A_CIRCUIT_ADDRESS || null,
   },
 
-  // x402 / USDC payment rail (agent-native micropayments). USDC via x402 is the
-  // DEFAULT rail for new agent flows; TFUEL/TDROP on Theta is the secondary rail.
-  // Settlement (Phase 1): USDC → Base treasury (payTo); Theta fee-split reconciled
-  // off-chain by paymentRef via a deferred bridge. Payer is agent-side (no server
-  // keys). All flag-gated: with enabled=false the server keeps the TFUEL path.
-  // See docs/X402_ADAPTER.md and docs/payments-x402.md.
+  // x402 / USDC payment rail (ADR 0001 / 0002). Default rail is USDC on Base.
+  // Optional TFUEL fallback only if X402_FALLBACK_TFUEL=true. Payer is agent-side.
+  // See docs/X402_ADAPTER.md.
   x402: {
     enabled: process.env.X402_ENABLED === 'true',
-    // Server default rail when a request omits payment.rail. Start 'tfuel' and
-    // flip to 'usdc' once the ZAN facilitator is live and stable.
-    defaultRail: (process.env.X402_DEFAULT_RAIL || 'tfuel').toLowerCase() === 'usdc' ? 'usdc' : 'tfuel',
+    // Server default rail when a request omits payment.rail.
+    defaultRail: (process.env.X402_DEFAULT_RAIL || 'usdc').toLowerCase() === 'tfuel' ? 'tfuel' : 'usdc',
     // If usdc is requested but the facilitator is unavailable: fall back to TFUEL
     // (true) or return 503 (false).
     fallbackToTfuel: process.env.X402_FALLBACK_TFUEL === 'true',
-    // Facilitator protocol: 'x402' (standard — e.g. Coinbase's Base Sepolia
-    // reference, no key) or 'zan' (bespoke gateway; default, also the mock's shape).
-    facilitatorProvider: (process.env.X402_FACILITATOR_PROVIDER || 'zan').toLowerCase() === 'x402' ? 'x402' : 'zan',
+    // Facilitator protocol: 'x402' (standard public Base facilitator) or 'zan'.
+    facilitatorProvider: (process.env.X402_FACILITATOR_PROVIDER || 'x402').toLowerCase() === 'zan' ? 'zan' : 'x402',
     // Standard x402 facilitator URL (used when facilitatorProvider='x402'); null →
     // the adapter defaults to the public reference facilitator (Base Sepolia).
     facilitatorUrl: process.env.X402_FACILITATOR_URL || null,

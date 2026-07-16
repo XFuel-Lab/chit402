@@ -32,7 +32,7 @@ import {
  *
  * Env:
  *   X402_ENABLED=true
- *   X402_DEFAULT_RAIL=usdc|tfuel        (server default rail; start tfuel)
+ *   X402_DEFAULT_RAIL=usdc|tfuel        (server default rail; default usdc)
  *   X402_FALLBACK_TFUEL=true            (usdc unavailable → fall back vs 503)
  *   X402_FACILITATOR_PROVIDER=x402|zan  (which facilitator protocol to speak)
  *   X402_FACILITATOR_URL=https://...    (standard facilitator; default public ref)
@@ -53,10 +53,10 @@ export function isX402Enabled() {
   return process.env.X402_ENABLED === 'true';
 }
 
-/** Server default rail: "usdc" (recommended) | "tfuel". Starts "tfuel" until the gateway is live. */
+/** Server default rail: "usdc" (default, Base) | "tfuel" (optional legacy). */
 export function defaultRail() {
-  const r = (process.env.X402_DEFAULT_RAIL || 'tfuel').toLowerCase();
-  return r === 'usdc' ? 'usdc' : 'tfuel';
+  const r = (process.env.X402_DEFAULT_RAIL || 'usdc').toLowerCase();
+  return r === 'tfuel' ? 'tfuel' : 'usdc';
 }
 
 /** Whether to fall back to TFUEL when USDC/x402 is requested but unavailable. */

@@ -76,7 +76,7 @@ Runnable end-to-end example (quote → pay → prove):
 to sign real USDC on Base).
 
 > Status: the server-side 402 handshake is **flag-gated** (`X402_ENABLED`, Phase 1)
-> and `X402_DEFAULT_RAIL` starts at `tfuel` until the ZAN facilitator is live. Until
+> and `X402_DEFAULT_RAIL` defaults to `usdc` on Base. Until
 > then, requests settle via TFUEL even if `rail: 'usdc'` is set (with
 > `X402_FALLBACK_TFUEL`). Always trust the `payment_rail` field in the status response.
 > Preview per-rail pricing first with `POST /task-quote`.
