@@ -236,8 +236,8 @@ describe('XFuelClient', () => {
         model_id: 'llama3',
         sender: '0xSender',
         amount: '1000000000000000000',
-        // defaults to Theta (primary settlement network) when chain_id omitted
-        chain_id: ChainId.THETA,
+        // defaults to Base (money + proof home — ADR 0002) when chain_id omitted
+        chain_id: ChainId.BASE,
       }));
     });
 

@@ -92,6 +92,14 @@ const config = {
     })(),
   },
 
+  // On-chain settlement proof home (ADR 0002) — Base Sepolia / Base.
+  // Deploy: npx hardhat run deploy/base-verifier.cjs --network base-sepolia
+  settlement: {
+    chainId: parseInt(process.env.VERIFIER_CHAIN_ID || process.env.SETTLEMENT_CHAIN_ID || '84532', 10),
+    rpcUrl: process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || null,
+    zkVerifierAddress: process.env.ZK_VERIFIER_ADDRESS || process.env.VERIFIER_ADDRESS || null,
+  },
+
   // USDC revenue split (ADR 0001 — token-light). Protocol fees land at ONE address on
   // Base — a Splits v2 Split — which fans USDC out to the buckets OFF the hot path.
   // Per-bucket addresses/bps live in env (see revenue-split.js); XF buyback-burn is a

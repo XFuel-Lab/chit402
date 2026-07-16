@@ -6,7 +6,7 @@ XFuel-specific integration required. Every response additionally carries a
 **verifiable-compute receipt**.
 
 - Source: `backend/theta-bridge/src/openai-gateway.js`
-- Wired into the M2M server: `backend/theta-bridge/src/server.js`
+- Wired into the M2M server: `services/gateway/src/server.js`
 - Runnable example: `sdk/js/examples/openai-drop-in.ts` (`npm run example:openai`)
 
 ---

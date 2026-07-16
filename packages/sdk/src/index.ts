@@ -33,7 +33,8 @@ export const MessageType = {
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];
 
 export const ChainId = {
-  THETA: 'theta',
+  BASE: 'base',
+  THETA: 'theta', // legacy / EdgeCloud provider hint — not settlement home (ADR 0002)
   OSMOSIS: 'osmosis',
   AKASH: 'akash',
   BITTENSOR: 'bittensor',
@@ -564,7 +565,7 @@ export class XFuelClient {
     const { payer, ...taskOpts } = opts;
     const params: TaskRequestParams = {
       message_type: MessageType.INFERENCE_REQUEST,
-      chain_id: opts.chain_id ?? ChainId.THETA,
+      chain_id: opts.chain_id ?? ChainId.BASE,
       amount,
       sender,
       model_id: modelId,
