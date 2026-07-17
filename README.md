@@ -1,8 +1,8 @@
 # XFUEL Protocol
 
-**Theta-Hybrid AI DePIN Hub — live inference on EdgeCloud GPUs, ZK-verified settlements, agent-first API, and cross-chain yield across Theta, Bittensor, Akash, Solana, and beyond.**
+**Route any model. Prove every dollar.** — the verifiable settlement and payments layer for AI compute: agent routing, USDC (x402 on Base), and tiered receipts (signed → on-chain SP1).
 
-Live: **[xfuel.app](https://xfuel.app)** (Theta Mainnet Beta)
+Live: **[xfuel.app](https://xfuel.app)** (beta)
 
 [![Docs](https://img.shields.io/badge/docs-v2.4-blue.svg)](WHITEPAPER.md)
 [![Status](https://img.shields.io/badge/status-beta-orange.svg)](https://xfuel.app)
@@ -10,7 +10,7 @@ Live: **[xfuel.app](https://xfuel.app)** (Theta Mainnet Beta)
 [![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/XFuel-Lab/xfuel-protocol)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![ZK-VM](https://img.shields.io/badge/ZK--VM-SP1%20v6.0.2-purple.svg)](services/sp1-prover/README.md)
-[![DePIN](https://img.shields.io/badge/DePIN-AI%20Hub-orange.svg)](WHITEPAPER.md)
+[![Settlement](https://img.shields.io/badge/settlement-Base%20USDC-blue.svg)](docs/adr/0002-base-settlement-home.md)
 [![Tests](https://img.shields.io/badge/tests-755%2B-green.svg)](#testing)
 
 ---
@@ -54,39 +54,36 @@ Live: **[xfuel.app](https://xfuel.app)** (Theta Mainnet Beta)
 
 ## What is XFUEL?
 
-XFuel Protocol is a **Theta-hybrid AI DePIN hub** — a modular, ZK-secured Core Layer that pumps intelligence, compute, liquidity, and value across AI ecosystems. Built with **Theta EdgeCloud as the primary GPU backbone**, XFuel routes real AI inference (LLM, image gen, STT, voice cloning, RAG, video, object detection) through live EdgeCloud APIs, generates SP1 zkVM proofs on the same GPU hardware, and settles everything on-chain with cryptographic guarantees.
+XFuel is the **verifiable settlement and payments layer for AI compute**. Agents and apps submit inference tasks; XFuel **routes** to the best available provider (centralized, neocloud, or DePIN GPU), settles in **USDC via x402 on Base**, and returns a **verifiable receipt** — signed by default, or an on-chain SP1 settlement proof on demand.
 
-The Core Layer verifies proofs, routes intents, splits fees, and governs parameters. All domain-specific logic — which AI model to run, which GPU tier to select, how to price a lease — lives in **circuits** (independent modules). The result is an agent-first, intent-driven system where any user, developer, or autonomous agent can access verifiable AI compute in under 10 seconds.
+Routing is the on-ramp; **verifier + crypto-native settlement is the product**. EdgeCloud and other GPU networks are **optional provider tiers**, not identity or settlement home ([ADR 0002](docs/adr/0002-base-settlement-home.md)).
 
 **In practical terms, XFuel lets you:**
 
-- **Run AI inference** via 15 one-click preset hooks with smart GPU selection (RTX 4090 / A100 / H100 SXM) — real EdgeCloud execution, ZK-proven results
-- **Route** workloads to the cheapest DePIN provider across Theta EdgeCloud, Akash, Bittensor, Render, and more
-- **Settle** cross-chain AI tasks with SP1 zkVM Groth16 proofs — sub-200ms proving on EdgeCloud GPUs, <270K gas on-chain
-- **Build agents** that interact via structured API (`/theta-ai/agent-intent`) with webhook callbacks — no polling, no UI needed
-- **Earn** from a unified revenue model: 30/30/25/15 split (see [Revenue Model](#revenue-model))
-- **Monitor** everything via a live dashboard with failure prediction, gas profiles, and ROI calculator
-- **Govern** circuit priorities, fee parameters, and treasury via vote-escrowed veXF
+- **Route AI inference** via OpenAI-compatible gateway, M2M API, MCP, or SDK — providers plugged in via env
+- **Pay in USDC** (x402 on Base) with agent-side payers — budget instead of API keys
+- **Prove settlement** with tiered trust: signed receipt → ZK settlement proof → zkGPT (roadmap)
+- **Share receipts** via public `verify_url` / receipt pages
+- **Optional GPU**: EdgeCloud (and Akash, etc.) when they are the best compute option
+- **Govern** (when XF launches on Base) via vote-escrowed veXF — token-light fee model (ADR 0001)
 
 ---
 
 ## Whitepaper
 
 **XFuel Protocol — Whitepaper v2.4**
-*AI Pumping Station: Modular ZK-Secured DePIN Hub — Hybrid Theta-Centric Architecture*
+*Verifiable settlement for AI compute — agent routing, USDC payments, SP1 proofs*
 
 Read the complete technical whitepaper: **[WHITEPAPER.md](WHITEPAPER.md)**
 
 **Highlights:**
 
-- **Theta-hybrid Core Layer** — ZKVerifierSP1, CoreRevenueSplitter (with GET), veXFGovernance
-- **Live inference pipeline** — 15 presets, smart GPU selector, EdgeCloud execution, agent webhooks, monitoring dashboard
-- **SP1 zkVM v6.0.2** — Binary serialization, batch=10 recursive rollup (11.6x speedup), sub-200ms per proof on EdgeCloud
-- **Tri-prover architecture** — EVM (Solidity) + CosmWasm (Rust) + Solana SVM (Rust) — all <270K gas equivalent
-- **16+ modular circuits** — AI compute, DePIN infrastructure, yield, robotics, data, energy, wireless, and more
-- **Revenue innovation** — Growth & Expansion Treasury (GET), Fee-to-Stake routing
-- **Cross-chain** — Theta (primary), Bittensor, Osmosis, Akash, Solana, Filecoin, NEAR, Aptos, Sui
-- **Phase 1 research integration** — zkGPT (LLM ZK proofs; [eprint 2025/1184](https://eprint.iacr.org/2025/1184), [security-Anonymous/zkgpt](https://github.com/security-Anonymous/zkgpt)) and Fair Exchange / PAS (atomic A2A payment↔result; [eprint 2026/395](https://eprint.iacr.org/2026/395)). Mock prover: `node services/zkgpt-prover/mock-server.cjs`; smoke test: `npm run test:zkgpt-mock`. Full attribution: [`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md).
+- **Money + proof home: Base** — USDC/x402 fees; `ZKVerifierSP1` go-forward on Base ([ADR 0002](docs/adr/0002-base-settlement-home.md))
+- **Provider-agnostic routing** — OpenAI-compat, neoclouds, optional EdgeCloud / Akash GPU tiers
+- **SP1 zkVM** — Groth16/PLONK settlement proofs, nullifiers, payment binding
+- **Token-light revenue** — fees to Safe/Splits on Base; buyback is downstream treasury policy (ADR 0001)
+- **Agent surfaces** — M2M API, MCP, TypeScript SDK, webhooks, OpenAI-compatible gateway
+- **Phase 1 research** — zkGPT ([eprint 2025/1184](https://eprint.iacr.org/2025/1184)); Fair Exchange / PAS ([eprint 2026/395](https://eprint.iacr.org/2026/395)). Attribution: [`docs/REFERENCES-AND-ATTRIBUTION.md`](docs/REFERENCES-AND-ATTRIBUTION.md).
 
 ---
 
@@ -101,7 +98,7 @@ Read the complete technical whitepaper: **[WHITEPAPER.md](WHITEPAPER.md)**
 | **GPU Selector** | Smart tier routing | On-chain price computation: `basePrice × gpuMultiplier / 10000` |
 | **Monitoring** | Real-time dashboard | Contract health, gas profiles, RPC status, failure prediction, 10s auto-refresh |
 | **ROI Calculator** | Economic modeling | GPU tier, lock duration, protocol volume projections with veXF multipliers |
-| **Revenue** | Unified fee capture + GET | 30/30/25/15 split — see [Revenue Model](#revenue-model) |
+| **Revenue** | USDC on Base (x402) | Token-light Safe/Splits — see [Revenue Model](#revenue-model) |
 | **Governance** | Vote-escrowed veXF | Lock XF → veXF for parameter voting (Curve-style, up to 3x) |
 | **Security** | Trustless by design | SP1 proofs, nullifier replay protection, circuit breakers |
 | **Cross-chain** | Hybrid EVM + WASM + SVM | Theta, Bittensor, Osmosis, Akash, Solana, Filecoin, NEAR, Aptos, Sui |
@@ -110,35 +107,11 @@ Read the complete technical whitepaper: **[WHITEPAPER.md](WHITEPAPER.md)**
 
 ### Revenue Model
 
-Every fee-generating interaction — AI inference, bridge transfers, A2A relay, data attestations — flows through `CoreRevenueSplitter`. All fees are distributed via a clean four-way split:
+**Token-light (go-forward):** protocol fees accrue in **USDC on Base** via x402 to a single address (protocol Safe or Splits v2). Bucket fan-out is off the hot path and governance-adjustable. There is **no** hardcoded 30/30/25/15 per-fee split and **no** fixed staker yield entitlement. XF buyback-burn (when the token exists) is downstream treasury policy on Base.
 
-| Recipient | Share | Purpose |
-|-----------|-------|---------|
-| Buyback-Burn (BBB) | 30% | Purchase and burn XF tokens for deflationary pressure |
-| Growth & Expansion Treasury (GET) | 30% | AI DePIN growth engine — sub-allocated below |
-| veXF Staker Rewards | 25% | Distributed pro-rata to governance lockers |
-| Ops Treasury | 15% | Operations, audits, development; 15-25% sub-allocated to Fee-to-Stake |
+See [ADR 0001](docs/adr/0001-usdc-revenue-and-router-verifier-positioning.md), [ADR 0002](docs/adr/0002-base-settlement-home.md), and `services/gateway/src/revenue-split.js`.
 
-**GET Sub-Breakdown:**
-
-| Sub-Bucket | Share of GET | Purpose |
-|------------|-------------|---------|
-| Machine & Agent Incentives | 50% | Compute subsidies, inference rewards, volume-triggered boosts |
-| LP Boost | 30% | Concentrated liquidity for XF trading pairs |
-| Agent-Driven Grant Proposals | 20% | Community-governed micro-grants; unused funds auto-burn after 6 months |
-
-**Fee rates by stream:**
-
-| Stream | Typical Rate | Example Source |
-|--------|-------------|----------------|
-| AI task settlement | 0.5–1% | Compute bids, inference routing, result attestation |
-| Bridge transfer | 0.5% | TFUEL deposits, ibcTFUEL burn-for-unwrap |
-| A2A relay | 0.1% | Agent-to-agent escrowed messages |
-| Data attestation | 0.5% | Dataset provenance certification |
-
-**Steady-state volume target:** 60% AI tasks, 25% data & communications, 15% financial settlements. Governance (veXF) can adjust fee BPS ranges and split ratios via proposal — see [Governance](#governance-vexf).
-
-> See [`docs/Growth-Expansion-Treasury.md`](docs/Growth-Expansion-Treasury.md) for GET mechanics.
+Legacy `CoreRevenueSplitter` (native TFUEL, 30/30/25/15) is **deprecated** from the fee path.
 
 ---
 
@@ -260,59 +233,41 @@ flowchart TB
         U3["🔗 External Protocol\n(xfuel-sdk)"]
     end
 
-    subgraph CoreLayer["🔷 CORE LAYER — Theta Mainnet (chain 361)"]
+    subgraph CoreLayer["CORE — Base (money + proof home)"]
         direction TB
-        ZK["ZKVerifierSP1\nGroth16/PLONK · <270K gas\nNullifiers · Circuit registry"]
-        RS["CoreRevenueSplitter\n30% BBB · 30% GET · 25% Stakers · 15% Treasury\nFee-to-Stake routing"]
-        GOV["veXFGovernance\nCurve-style lock · ZK nullifiers\nOn-chain execution hooks"]
-        HOOKS["SP1ProofHooks\nNullifier compute · Fee commitments\nCross-chain payload encoding"]
-        LISTENER["CoreListener (ai-listener.js)\nEvent polling · Intent routing\nWebhook dispatch · Proof submission"]
-        ZK <-->|"verified nullifiers"| RS
-        RS <-->|"governance params"| GOV
-        HOOKS -.->|"used by all circuits"| ZK
-        LISTENER -->|"submits proofs"| ZK
-        LISTENER -->|"collects fees"| RS
+        ZK["ZKVerifierSP1\nGroth16/PLONK · nullifiers"]
+        PAY["USDC x402 → Safe / Splits\nToken-light revenue ADR 0001"]
+        GOV["veXFGovernance (later on Base)"]
+        HOOKS["SP1ProofHooks"]
+        GW["Gateway services/gateway\nRoute · pay · prove · receipts"]
+        HOOKS -.-> ZK
+        GW -->|"optional Tier-1 proof"| ZK
+        GW -->|"USDC fees"| PAY
     end
 
-    subgraph Circuits["⚡ CIRCUITS — Pluggable Modules"]
-        CI["ThetaInferenceCircuit\nEdgeCloud · TDROP payments\nGPU tier selection"]
-        TAO["TAOCircuit\nBittensor dTAO staking\nSubnet routing via EVM 964"]
-        BRG["BridgeCircuit\nHyperlane cross-chain\nISM-secured relay"]
-        A2A["A2ACircuit\nAgent-to-agent messaging\nEscrow · ZK verified"]
-        MORE["+ 17 more circuits\nAkash · Yield · ZKML\nSolana · DataHubs…"]
+    subgraph Providers["PROVIDERS — pluggable"]
+        NEO["Neocloud / OpenAI-compat\nGroq · OpenAI · Together…"]
+        EDGE["EdgeCloud GPU\noptional DePIN tier"]
+        AK["Akash · other GPU"]
     end
 
-    subgraph Provers["🔐 ZK PROVING"]
-        SP1["SP1 zkVM v6.0.2\nRISC-V → STARK → Groth16\n~9s proof · <270K gas verify"]
-        EDGE["Theta EdgeCloud\nH100 SXM · A100 · RTX 4090\nCUDA SP1 proving"]
-        SP1 <-->|"CUDA acceleration"| EDGE
+    subgraph Provers["ZK PROVING"]
+        SP1["SP1 zkVM\nSTARK → Groth16/PLONK"]
     end
 
-    subgraph Chains["🌐 SETTLEMENT CHAINS"]
-        TH["Theta Mainnet\nchain 361"]
-        BT["Bittensor EVM\nchain 964"]
-        COS["Cosmos IBC\nOsmosis · Persistence"]
-        SOL["Solana\n(Phase 3)"]
-    end
-
-    Users --> LISTENER
-    Circuits --> LISTENER
-    Circuits <-->|"proofBytes + publicValues"| SP1
-    LISTENER <-->|"EdgeCloud inference API"| EDGE
-    CoreLayer -->|"verified settlements"| TH
-    BRG -->|"Hyperlane dispatch"| BT
-    TAO -->|"dTAO precompile 0x805"| BT
-    BRG -->|"IBC relay"| COS
-    BRG -.->|"Phase 3"| SOL
+    Users --> GW
+    GW --> Providers
+    GW <--> SP1
+    CoreLayer -->|"settle + verify"| PAY
 ```
 
 ### Core Components
 
 | Component | Role | EVM | WASM | SVM |
 |-----------|------|-----|------|-----|
-| **ZKVerifierSP1** | Verify SP1 proofs, track nullifiers, manage circuits | `ZKVerifierSP1.sol` | `xfuel-zk-verifier` | `xfuel-solana-prover` |
-| **CoreRevenueSplitter** | Collect and distribute fees (30/30/25/15 split) | `CoreRevenueSplitter.sol` | `xfuel-revenue-splitter` | — |
-| **veXFGovernance** | Vote-escrowed governance for parameter updates | `veXFGovernance.sol` | (planned) | — |
+| **ZKVerifierSP1** | Verify SP1 proofs, track nullifiers (go-forward on Base) | `ZKVerifierSP1.sol` | `xfuel-zk-verifier` | `xfuel-solana-prover` |
+| **USDC treasury / Splits** | Fee sink on Base (ADR 0001); legacy splitter deprecated | Safe / Splits v2 | — | — |
+| **veXFGovernance** | Vote-escrowed governance (later on Base) | `veXFGovernance.sol` | (planned) | — |
 | **SP1ProofHooks** | Nullifier computation, fee commitments, encoding | `SP1ProofHooks.sol` | `xfuel-sp1-hooks` (crate) | — |
 | **CoreListener** | Multi-prover event poller, normalizer, router | `ai-listener.js` | — | — |
 
@@ -327,18 +282,15 @@ Circuits emit: IntentSubmitted, TaskCompleted, SettlementRequested
 
 ### Supported Chains
 
-| Chain | Type | ID | Token | Role |
-|-------|------|----|-------|------|
-| Theta Mainnet | EVM | 361 | TFUEL | **Primary** — live EdgeCloud inference + SP1 CUDA proving |
-| Theta Mainnet | EVM | 361 | TFUEL | Primary — CoreRevenueSplitter, VaultFactory live |
-| **XFuel Subchain** | **EVM** | **361001** | **TFUEL** | **Dedicated subchain — ThetaInferenceCircuit, A2ACircuit, ThetaGPUCircuit, DataHubs. <2s finality.** |
-| Theta Testnet | EVM | 365 | TFUEL | Testing — 23 contracts deployed |
-| Bittensor EVM | EVM | 964 | TAO | dTAO staking, AI subnets |
-| Osmosis | Cosmos | osmosis-1 | OSMO | Primary DeFi hub, AI yield pools |
-| Akash | Cosmos | akashnet-2 | AKT | GPU compute marketplace |
-| Solana | SVM | devnet | SOL | SP1 Groth16 verifier, DePIN AI compute |
+| Chain | Type | ID | Role |
+|-------|------|----|------|
+| **Base** | EVM | 8453 | **Money + proof home** — USDC/x402, Safe, go-forward verifier |
+| **Base Sepolia** | EVM | 84532 | Testnet for USDC e2e + verifier |
+| Bittensor EVM | EVM | 964 / 945 | Optional cross-chain / stake-gated verify |
+| EdgeCloud (Theta) | API / EVM ops | — | **Optional GPU provider** — not settlement home |
+| Akash | Cosmos | akashnet-2 | Optional GPU marketplace provider |
 
-Additional chains via circuits: Filecoin, NEAR, Aptos (Move), Sui (Move).
+Historical Theta mainnet/testnet contract manifests remain under `deploy/manifests/` (archive).
 
 ---
 

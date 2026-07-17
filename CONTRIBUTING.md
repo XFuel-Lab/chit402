@@ -1,12 +1,12 @@
 # Contributing to XFuel Protocol
 
-Welcome to XFuel Protocol! We're building a modular, ZK-secured DePIN hub for cross-ecosystem AI intelligence, and we'd love your help making it production-ready.
+Welcome to XFuel Protocol! We're building the **verifiable settlement and payments layer for AI compute** (agent routing, USDC on Base, tiered receipts), and we'd love your help making it production-ready.
 
 ---
 
-## 🚀 About This Project
+## About This Project
 
-XFuel Protocol is a **modular, zero-knowledge-secured DePIN hub** that routes intelligence, compute, liquidity, and value across AI ecosystems. Built around a **hybrid Theta-centric architecture** with Theta EdgeCloud as the primary GPU backbone, XFuel's Core Layer handles ZK proof verification (SP1 zkVM), task routing, fee distribution (CoreRevenueSplitter), and governance (veXFGovernance). Independent circuits plug into the Core Layer for specific use cases — Theta AI inference, Bittensor dTAO staking, cross-chain bridging, and more.
+XFuel is a **provider-agnostic router + verifier**: route inference to the best available provider, settle in **USDC via x402 on Base**, and return verifiable receipts (signed or on-chain SP1). Money and proof home is **Base** ([ADR 0002](docs/adr/0002-base-settlement-home.md)); EdgeCloud and other GPU networks are **optional provider tiers**. Core work includes `ZKVerifierSP1`, the gateway (`services/gateway`), SP1 proving, SDK/MCP, and circuits. Legacy `CoreRevenueSplitter` is deprecated from the go-forward fee path (ADR 0001).
 
 **Current Status:** All 6 development phases complete (755+ tests). Preparing for CertiK Phase 1 audit (Q2 2026) and grant submissions.
 

@@ -9,8 +9,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 /**
- * Configuration for XFuel Theta Bridge (AI DePIN M2M + optional Persistence bridge).
- * Set PERSISTENCE_BRIDGE_ENABLED=true to enable legacy Theta→Persistence deposit flow.
+ * Configuration for XFuel gateway (agent routing, x402/USDC on Base, proofs, receipts).
+ * EdgeCloud / Theta RPC remain available as optional provider ops — not settlement home (ADR 0002).
+ * Set PERSISTENCE_BRIDGE_ENABLED=true to enable legacy deposit flow.
  */
 // Computed before the config object so fields below can reference it without a
 // temporal-dead-zone self-reference (previously `!config.persistenceBridgeEnabled`
@@ -56,23 +57,18 @@ const config = {
     a2aCircuitAddress: process.env.A2A_CIRCUIT_ADDRESS || null,
   },
 
-  // x402 / USDC payment rail (agent-native micropayments). USDC via x402 is the
-  // DEFAULT rail for new agent flows; TFUEL/TDROP on Theta is the secondary rail.
-  // Settlement (Phase 1): USDC → Base treasury (payTo); Theta fee-split reconciled
-  // off-chain by paymentRef via a deferred bridge. Payer is agent-side (no server
-  // keys). All flag-gated: with enabled=false the server keeps the TFUEL path.
-  // See docs/X402_ADAPTER.md and docs/payments-x402.md.
+  // x402 / USDC payment rail (ADR 0001 / 0002). Default rail is USDC on Base.
+  // Optional TFUEL fallback only if X402_FALLBACK_TFUEL=true. Payer is agent-side.
+  // See docs/X402_ADAPTER.md.
   x402: {
     enabled: process.env.X402_ENABLED === 'true',
-    // Server default rail when a request omits payment.rail. Start 'tfuel' and
-    // flip to 'usdc' once the ZAN facilitator is live and stable.
-    defaultRail: (process.env.X402_DEFAULT_RAIL || 'tfuel').toLowerCase() === 'usdc' ? 'usdc' : 'tfuel',
+    // Server default rail when a request omits payment.rail.
+    defaultRail: (process.env.X402_DEFAULT_RAIL || 'usdc').toLowerCase() === 'tfuel' ? 'tfuel' : 'usdc',
     // If usdc is requested but the facilitator is unavailable: fall back to TFUEL
     // (true) or return 503 (false).
     fallbackToTfuel: process.env.X402_FALLBACK_TFUEL === 'true',
-    // Facilitator protocol: 'x402' (standard — e.g. Coinbase's Base Sepolia
-    // reference, no key) or 'zan' (bespoke gateway; default, also the mock's shape).
-    facilitatorProvider: (process.env.X402_FACILITATOR_PROVIDER || 'zan').toLowerCase() === 'x402' ? 'x402' : 'zan',
+    // Facilitator protocol: 'x402' (standard public Base facilitator) or 'zan'.
+    facilitatorProvider: (process.env.X402_FACILITATOR_PROVIDER || 'x402').toLowerCase() === 'zan' ? 'zan' : 'x402',
     // Standard x402 facilitator URL (used when facilitatorProvider='x402'); null →
     // the adapter defaults to the public reference facilitator (Base Sepolia).
     facilitatorUrl: process.env.X402_FACILITATOR_URL || null,
@@ -94,6 +90,27 @@ const config = {
       if (!process.env.X402_USDC_PRICES) return {};
       try { return JSON.parse(process.env.X402_USDC_PRICES); } catch { return {}; }
     })(),
+  },
+
+  // On-chain settlement proof home (ADR 0002) — Base Sepolia / Base.
+  // Deploy: npx hardhat run deploy/base-verifier.cjs --network base-sepolia
+  settlement: {
+    chainId: parseInt(process.env.VERIFIER_CHAIN_ID || process.env.SETTLEMENT_CHAIN_ID || '84532', 10),
+    rpcUrl: process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || null,
+    zkVerifierAddress: process.env.ZK_VERIFIER_ADDRESS || process.env.VERIFIER_ADDRESS || null,
+  },
+
+  // USDC revenue split (ADR 0001 — token-light). Protocol fees land at ONE address on
+  // Base — a Splits v2 Split — which fans USDC out to the buckets OFF the hot path.
+  // Per-bucket addresses/bps live in env (see revenue-split.js); XF buyback-burn is a
+  // downstream treasury op, not a per-task rake. splitAddress falls back to X402_PAY_TO
+  // so a single treasury address works until the Split is deployed.
+  revenue: {
+    // Deployed Splits v2 Split address on Base (fees land here). Falls back to payTo.
+    splitAddress: process.env.REVENUE_SPLIT_ADDRESS || process.env.X402_PAY_TO || null,
+    network: process.env.REVENUE_NETWORK || process.env.X402_NETWORK || 'base',
+    // Distributor incentive (uint16) baked into the Split at deploy (0 = none).
+    distributionIncentive: parseInt(process.env.REVENUE_DISTRIBUTION_INCENTIVE, 10) || 0,
   },
 
   // Redis Configuration

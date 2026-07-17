@@ -1,0 +1,11 @@
+{
+  "network": "base",
+  "chainId": 8453,
+  "deployedAt": "2026-07-17T08:04:12.891Z",
+  "deployer": "0xe49b47e759Ca01B6D66A49807Bb2aEe31c1243bd",
+  "admin": "0xe49b47e759Ca01B6D66A49807Bb2aEe31c1243bd",
+  "contracts": {
+    "ZKVerifierSP1": "0x9373499645292715a2275A78eD65B14215C41c06"
+  },
+  "note": "Go-forward proof home on Base. Theta testnet verifier addresses are archive-only."
+}

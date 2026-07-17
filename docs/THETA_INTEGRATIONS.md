@@ -1,10 +1,14 @@
-# XFuel Protocol — Theta Integrations Reference
+# XFuel Protocol — EdgeCloud / Theta API Reference (provider ops)
+
+> **Banner (ADR 0002):** Provider integration only — **not** settlement home.
+> Canonical entry: [`docs/providers/edgecloud.md`](providers/edgecloud.md).
 
 **Created:** 2026-03-11  
 **Owner:** XFuel Core Team  
-**Status:** Living document — update as integrations evolve
+**Status:** Living ops reference for EdgeCloud + Theta RPC surfaces
 
-This document is the master technical reference for every Theta API surface XFuel integrates with. It covers authentication patterns, endpoint shapes, on-chain event hooks, and the webhook patterns that connect them.
+Technical reference for Theta/EdgeCloud API surfaces (auth, endpoints, events) used when
+EdgeCloud is enabled as a **GPU provider tier**.
 
 ---
 

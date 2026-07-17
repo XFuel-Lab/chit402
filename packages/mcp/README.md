@@ -101,7 +101,7 @@ All optional. CLI flags take precedence over environment variables.
 | `XFUEL_MCP_TRANSPORT` | `--stdio` / `--http` | `stdio` | Transport |
 | `XFUEL_MCP_PORT` | `--port` | `3033` | HTTP port (http only) |
 | `XFUEL_MCP_AUTH_TOKEN` | — | (none) | Optional bearer token for the HTTP endpoint |
-| `XFUEL_RPC_URL` | — | (none) | Theta RPC for `verify_proof`'s on-chain nullifier read |
+| `XFUEL_RPC_URL` | — | (none) | Base (or verifier chain) RPC for `verify_proof` nullifier read |
 | `ZK_VERIFIER_ADDRESS` | — | (none) | ZKVerifierSP1 address (paired with `XFUEL_RPC_URL`) |
 | `XFUEL_PAYER_PRIVATE_KEY` | — | (none) | Enables `pay_with_usdc`. **Env only** (never a CLI flag). |
 

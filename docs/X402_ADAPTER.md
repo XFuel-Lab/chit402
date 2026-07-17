@@ -1,12 +1,13 @@
 # x402 Adapter
 
-Status: **Flag-gated** (`X402_ENABLED`). Module: `backend/theta-bridge/src/x402-adapter.js`.
-Facilitator protocols: **standard x402** (`backend/theta-bridge/src/x402-facilitator.js`,
-provider `x402` — live public Base Sepolia facilitator) and **ZAN** (bespoke gateway,
-provider `zan`, the default). Mock facilitator (speaks both shapes):
-`backend/theta-bridge/src/x402-mock-facilitator.js`.
-Tests: `backend/theta-bridge/test/x402-adapter.test.mjs`,
-`backend/theta-bridge/test/x402-facilitator.test.mjs`.
+Status: **Flag-gated** (`X402_ENABLED`). Module: `services/gateway/src/x402-adapter.js`.
+Facilitator protocols: **standard x402** (`services/gateway/src/x402-facilitator.js`,
+provider `x402` — **default**, live public Base Sepolia facilitator) and **ZAN** (bespoke
+gateway, provider `zan`). Mock facilitator (speaks both shapes):
+`services/gateway/src/x402-mock-facilitator.js`.
+Tests: `services/gateway/test/x402-*.test.mjs`.
+
+Default rail: **`usdc`** on Base ([ADR 0002](adr/0002-base-settlement-home.md)).
 
 ## Live public facilitator (Base Sepolia) — recommended for testnet
 
@@ -79,7 +80,7 @@ Emulates the ZAN gateway's `/verify` + `/settle` so the full handshake is testab
 before a real gateway exists:
 
 ```bash
-node backend/theta-bridge/src/x402-mock-facilitator.js   # PORT=X402_MOCK_PORT|8402
+node services/gateway/src/x402-mock-facilitator.js   # PORT=X402_MOCK_PORT|8402
 ```
 
 In tests: `const { url, close } = await startMockFacilitator();` then point
@@ -96,7 +97,7 @@ payer is **agent-side / pluggable** (no server-custodial keys).
 
 ```bash
 X402_ENABLED=true
-X402_DEFAULT_RAIL=tfuel            # start tfuel; flip to usdc once a facilitator is live
+X402_DEFAULT_RAIL=usdc             # default on Base (ADR 0002)
 X402_FALLBACK_TFUEL=true          # usdc unavailable → fall back to TFUEL vs 503
 
 # Facilitator protocol selection
@@ -136,7 +137,7 @@ Goal: a verified proof attests **both** computation **and** payment.
 
 - **Commitment (source of truth):** `SP1ProofHooks.computePaymentCommitment(
   paymentRefHash, taskIdHash, paymentRail, amount) = keccak256(abi.encodePacked(...))`.
-  Mirrored byte-for-byte off-chain by `backend/theta-bridge/src/payment-binding.js`
+  Mirrored byte-for-byte off-chain by `services/gateway/src/payment-binding.js`
   (parity-tested in `test/security/SP1ProofHooksHarness.test.cjs`).
 - **v2 public values:** `SP1ProofHooks.encodeAITaskPublicValuesV2(...)` appends a
   trailing `paymentCommitment` (13th field). The v1 12-field layout is untouched
@@ -170,7 +171,7 @@ by the backend when `X402_PROOF_BINDING` is enabled). Deposit / v1 AI proofs sta
 v1 (`public_values_version: 1`).
 
 **Shared formula (Rust / JS / Solidity):** `core-layer/sp1-hooks/src/payment_binding.rs`
-↔ `backend/theta-bridge/src/payment-binding.js` ↔ `SP1ProofHooks.computePaymentCommitment`.
+↔ `services/gateway/src/payment-binding.js` ↔ `SP1ProofHooks.computePaymentCommitment`.
 
 **Rollback:** unset `SP1_PUBLIC_VALUES_V2` on the prover (falls back to v1 layout);
 keep serving v1 `programVKey` until cutover is complete.

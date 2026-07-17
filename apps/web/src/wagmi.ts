@@ -1,6 +1,8 @@
 import { createConfig, http } from 'wagmi';
+import { base, baseSepolia } from 'wagmi/chains';
 import { injected } from 'wagmi/connectors';
 
+/** Optional EdgeCloud / historical Theta ops — not settlement home (ADR 0002). */
 const thetaMainnet = {
   id: 361,
   name: 'Theta Mainnet',
@@ -25,9 +27,11 @@ const bittensorEVM = {
 } as const;
 
 export const config = createConfig({
-  chains: [thetaMainnet, thetaTestnet, bittensorEVM],
+  chains: [base, baseSepolia, thetaMainnet, thetaTestnet, bittensorEVM],
   connectors: [injected()],
   transports: {
+    [base.id]: http(),
+    [baseSepolia.id]: http(),
     [thetaMainnet.id]: http(),
     [thetaTestnet.id]: http(),
     [bittensorEVM.id]: http(),

@@ -7,27 +7,29 @@
 
 ## What Is XFuel?
 
-XFuel is the **verifiable settlement + payments layer for AI compute**. Any agent or app submits an inference task; XFuel routes it to the best available provider (centralized, neocloud, or DePIN), settles payment over any rail (USDC via x402, or TFUEL on Theta), and returns a **verifiable receipt**.
+XFuel is the **verifiable settlement + payments layer for AI compute**. Any agent or app submits an inference task; XFuel routes it to the best available provider (centralized, neocloud, or DePIN GPU), settles in **USDC via x402 on Base**, and returns a **verifiable receipt**.
 
 **Trust is tiered (and we're precise about it):**
 - **Signed receipt** (default, ~free): route, model, cost, and output hash, signed by XFuel.
-- **ZK settlement proof** (on demand): SP1 proof of correct fees + payment binding + output commitment + single-use nullifier, anchored on Theta. *This proves correct settlement — NOT that a black-box provider computed the model correctly.*
+- **ZK settlement proof** (on demand): SP1 proof of correct fees + payment binding + output commitment + single-use nullifier, anchored on **Base**. *This proves correct settlement — NOT that a black-box provider computed the model correctly.*
 - **ZK proof-of-inference** (roadmap): zkGPT — proves the computation itself, only where XFuel runs the model.
 
-**Providers are pluggable** — an OpenAI-compatible tier (OpenAI, Groq, Together, Fireworks, vLLM…) plugs in via env; Theta EdgeCloud and Akash are DePIN tiers. Providers are options; the settlement + proof layer is the product.
+**Providers are pluggable** — OpenAI-compatible (OpenAI, Groq, Together, Fireworks, vLLM…) via env; **EdgeCloud (Theta) and Akash are optional GPU / DePIN tiers**, not identity. Providers are options; the settlement + proof layer is the product.
 
-**Settlement home:** Theta (chain 361/365). **Cross-chain:** Bittensor EVM (964/945), Cosmos IBC (pending governance).
+**Money + proof home:** Base (8453 / 84532). **Cross-chain (optional):** Bittensor EVM (964/945), Hyperlane relay. See `docs/adr/0002-base-settlement-home.md`.
 
 ---
 
 ## Core Contracts (Audit Scope)
 
-| Contract | Address (Testnet 365) | Purpose |
-|----------|-----------------------|---------|
-| `ZKVerifierSP1` | See `deploy/manifests/` | SP1 Groth16/PLONK proof verification + Hyperlane relay |
-| `CoreRevenueSplitter` | See `deploy/manifests/` | Fee collection + distribution (BBB/GET/Staker/Treasury) |
-| `veXFGovernance` | See `deploy/manifests/` | Vote-escrowed governance (Curve-style, 3x max multiplier) |
+| Contract | Address | Purpose |
+|----------|---------|---------|
+| `ZKVerifierSP1` | See `deploy/manifests/` (Base Sepolia/mainnet go-forward; Theta testnet = archive) | SP1 Groth16/PLONK proof verification + Hyperlane relay |
+| Protocol treasury / Splits | `X402_PAY_TO` / `REVENUE_SPLIT_ADDRESS` on Base | USDC fee sink (ADR 0001) — **not** `CoreRevenueSplitter` |
+| `veXFGovernance` | Later on Base | Vote-escrowed governance (when token launches) |
 | `SP1ProofHooks` | Library (no address) | Nullifier computation, fee commitment, public value encoding |
+
+`CoreRevenueSplitter` is **deprecated** from the go-forward fee path (ADR 0001).
 
 ---
 
@@ -39,23 +41,21 @@ Headers: X-API-Key: {key}
 Body:
 {
   "message_type": "inference_request",  // or compute_bid, data_attestation, capability_query
-  "chain_id": "theta",                  // theta | bittensor | akash | osmosis | persistence
+  "chain_id": "base",                   // base | bittensor | akash | … (settlement / routing hint)
   "amount": "1000000",                  // gross task value in wei (min 10000)
   "sender": "0xYourAddress",
   "model_id": "llama-3-70b",            // required for inference_request
   "input_hash": "0xabc...",             // keccak256 of your input (required for inference)
-  "theta_recipient": "0xOptional",      // settlement address on Theta
-  "payment": { "rail": "usdc", "network": "base" }  // DEFAULT rail; use { "rail": "tfuel" } for Theta-native
+  "payment": { "rail": "usdc", "network": "base" }  // DEFAULT; optional legacy rails may exist
 }
 
 Response: { taskId, status, routedTo, estimatedGas }
 ```
 
-**Payment rails:** USDC via **x402** is the default/recommended rail (agent pays
-USDC on Base against a 402 challenge; agent-side pluggable payer — no server keys).
-**TFUEL/TDROP on Theta** is the secondary rail for Theta-native flows. The x402
-server handshake is flag-gated (`X402_ENABLED`, rolling out Phase 1;
-`X402_DEFAULT_RAIL` starts `tfuel`). See `docs/X402_ADAPTER.md` and
+**Payment rails:** USDC via **x402 on Base** is the default (`X402_DEFAULT_RAIL=usdc`).
+Agent pays USDC against a 402 challenge; agent-side pluggable payer — no server keys.
+Optional native rails (e.g. TFUEL) may exist for specific provider flows but are not
+the product default. See `docs/X402_ADAPTER.md` and
 `packages/agent-skills/_shared/reference/payments-x402.md`.
 
 Poll status: `GET /task-status?task_id={taskId}`
@@ -91,18 +91,19 @@ correctness); the OpenAI path is unmetered in Phase 1 (use `/task-request` +
 
 ## Compute Routing Priority
 
-Tasks are routed through a 6-tier DePIN priority router (first available, lowest cost):
+Tasks are routed through a configurable multi-tier router (first available, lowest cost).
+Typical order (override via `.env.local`; leave a tier blank to skip):
 
 ```
-1. Theta EdgeCloud (ondemand.thetaedgecloud.com) — primary GPU backbone
-2. RapidAPI inference                           — inference fallback
+1. Neocloud / OpenAI-compatible (Groq, OpenAI, Together, Fireworks, …)
+2. EdgeCloud GPU (optional DePIN tier — ondemand.thetaedgecloud.com)
 3. MCP (local)                                  — low-latency local
-4. Akash Network                                — decentralized Cosmos GPU marketplace
+4. Akash Network                                — decentralized GPU marketplace
 5. Render Network                               — GPU marketplace (image/LLM)
 6. AWS Bedrock                                  — centralized last resort
 ```
 
-Configure tiers via `.env.local`. Leave a tier blank to skip it.
+EdgeCloud is a **GPU provider option**, not settlement home (ADR 0002).
 
 ---
 
@@ -111,27 +112,23 @@ Configure tiers via `.env.local`. Leave a tier blank to skip it.
 1. Task intent submitted → fee tagged with `ProviderTag` (THETA_NATIVE=1, DEPIN_AKASH=3, etc.)
 2. SP1 prover (CUDA, EdgeCloud Dedicated) generates Groth16 proof (~260 bytes, ~270K gas)
 3. `AITaskPublicValues` committed: `(taskType, sourceChain, destChain, taskIdHash, senderHash, netAmount, feeAmount, feeBps, outputHash, blockHeight, timestamp, nonce)`. **Phase 2 (flag-gated, `X402_PROOF_BINDING`):** an optional 13th field `paymentCommitment` binds the x402 `payment_ref` so the proof attests payment + computation (`SP1ProofHooks.encodeAITaskPublicValuesV2`; surfaced as `payment_binding`). Activates on SP1 guest v2 rebuild (new `programVKey`).
-4. `ZKVerifierSP1.verifyProof(programVKey, publicValues, proofBytes)` called on-chain
+4. `ZKVerifierSP1.verifyProof(programVKey, publicValues, proofBytes)` on **Base**
 5. Nullifier stored → replay protection
-6. Fees distributed via `CoreRevenueSplitter.distribute()`
+6. Protocol USDC fee already at `X402_PAY_TO` / Splits (off hot path; ADR 0001)
 
 ---
 
 ## Fee Distribution
 
-Every settled task contributes fees distributed as:
+**Token-light (go-forward):** each task's USDC fee lands at **one address on Base**
+(protocol Safe or Splits v2). Bucket fan-out is off the hot path and
+governance-adjustable. There is **no** hardcoded 30/30/25/15 per-fee split and
+**no** fixed staker yield entitlement. XF buyback-burn (when the token exists) is
+downstream treasury policy on Base. See ADR 0001 / ADR 0002 and
+`services/gateway/src/revenue-split.js`.
 
-| Bucket | Share | Destination |
-|--------|-------|-------------|
-| Buyback-Burn (BBB) | 30% | Buy XF on open market + burn |
-| Growth & Expansion (GET) | 30% | Machine incentives (50%), LP boost (30%), Agent grants (20%) |
-| Stakers (veXF) | 25% | Yield to XF token lockers |
-| Treasury | 15% | Operations + Fee-to-Stake routing |
-
-Fee-to-Stake (15–25% of Treasury) routes to chain validators:
-- Theta (chain 361): wTHETA/TFUEL staking
-- Bittensor EVM (chain 964): dTAO via precompile `0x0805`
-- Cosmos (osmosis-1): IBC relay → native staking (pending governance)
+Legacy `CoreRevenueSplitter` (native TFUEL, 30/30/25/15) is deprecated from the
+fee path; ignore it for new integrations.
 
 ---
 
@@ -257,7 +254,9 @@ docs/PHASE1_KICKOFF.md    — Phase 1 status, run Phase 1 checks (npm run test:p
 
 ---
 
-## Community Contribution Round (`BelieverRound`)
+## Community Contribution Round (`BelieverRound`) — RETIRED
+
+> **Status: retired as a fundraising vehicle.** Public UI redirects `/believers` and `/angels` home. Pre-seed/seed = equity-first SAFE ([`docs/FUNDRAISING_STRUCTURE.md`](docs/FUNDRAISING_STRUCTURE.md)). Historical contract params below are archive-only.
 
 Single open community sale (no phased 4/12/24% tranches). **`xfAllocationCap`** enforces up to **150M XF** (15% of 1B) reserved. **`setTokenPrice`** while **Open** updates XF per TFUEL (multisig; see `docs/PRICING_TFUEL_XF.md`).
 

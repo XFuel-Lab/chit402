@@ -122,7 +122,7 @@ and `docs/X402_ADAPTER.md`.
 | Flag | Meaning |
 |------|---------|
 | `X402_ENABLED` | Master switch. `false` → server keeps the TFUEL path only. |
-| `X402_DEFAULT_RAIL` | `tfuel` (start) → `usdc` once the facilitator is stable. |
+| `X402_DEFAULT_RAIL` | `usdc` (default on Base; ADR 0002). |
 | `X402_FALLBACK_TFUEL` | If `usdc` requested but facilitator unavailable: `true` → fall back to TFUEL; `false` → `503`. |
 | `ZAN_X402_GATEWAY_URL` / `ZAN_X402_API_KEY` | Facilitator (verify + settle). |
 | `X402_PAY_TO` / `X402_NETWORK` / `X402_ASSET` | Base treasury + rail defaults. |

@@ -10,6 +10,7 @@
 ## Architecture
 - Prioritize modularity per whitepaper Section 2: No shared state between circuits, event-driven interfaces.
 - Use SP1 hooks for zkML proofs per Section 7.
+- Money + proof home = Base (USDC/x402, ZKVerifierSP1). Theta EdgeCloud = optional GPU provider only (ADR 0002).
 
 ## Gas Optimization
 - Target <300K gas per operation, <500K gas end-to-end per Section 3.5.
@@ -23,13 +24,18 @@
 - Theta ETH-RPC adaptor does NOT support `evm_snapshot`, `evm_revert`, or `evm_mine`. Waffle fixtures will fail on-chain.
 - When writing Theta-live integration tests, replace `revertedWith('custom message')` with `revertedWith('evm: execution reverted')` — Theta always returns the generic message.
 
-## Theta ETH-RPC Networks
+## Base Networks (money + proof home — ADR 0002)
+- Mainnet: chain ID 8453, RPC `https://mainnet.base.org` (or Alchemy/Infura)
+- Sepolia: chain ID 84532, RPC `https://sepolia.base.org`
+- Hardhat networks: `base`, `base-sepolia`
+
+## Theta ETH-RPC (provider / EdgeCloud ops only — not settlement home)
 - Mainnet: chain ID 361 (`0x169`), RPC `https://eth-rpc-api.thetatoken.org/rpc`
 - Testnet: chain ID 365 (`0x16d`), RPC `https://eth-rpc-api-testnet.thetatoken.org/rpc`
 - Privatenet: chain ID 366, RPC `http://localhost:18888/rpc`
 - Subchain Testnet: chain ID 365001; Mainnet: 361001; Privatenet: 360777
 
-## EdgeCloud API Keys (two types — do not mix)
+## EdgeCloud API Keys (two types — do not mix; optional GPU provider)
 - On-demand inference key: from "On-demand model APIs" dashboard page → used as `x-api-key` on `ondemand.thetaedgecloud.com`
 - Project management key: from "Settings → Projects" → used as `x-api-key` on `controller.thetaedgecloud.com`
 - EdgeCloud Client RPC (`localhost:9545/rpc`): NO API key — local process only, method `edgecloud.GetJobs`

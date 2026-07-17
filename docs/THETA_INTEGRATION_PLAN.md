@@ -1,12 +1,16 @@
-# XFuel Protocol — Theta Integration Master Plan
+# XFuel Protocol — Theta / EdgeCloud Integration (historical + provider ops)
+
+> **Banner (ADR 0002):** This is **not** settlement-home documentation.
+> Money + proof home = **Base**. Theta/EdgeCloud = optional **GPU provider** tier.
+> Canonical provider entry: [`docs/providers/edgecloud.md`](providers/edgecloud.md).
 
 **Created:** 2026-03-09  
 **Owner:** XFuel Core Team  
-**Status:** Active — Working Document  
-**Purpose:** Track all Theta-focused integration tracks, research findings, and completion status.
+**Status:** Archive / provider ops — settlement claims superseded by ADR 0002  
+**Purpose:** Historical tracker for EdgeCloud + Theta EVM integration work.
 
-> Check off items as completed. This document is the single source of truth for Theta integration work.
-> Architecture principle: **One XFuel subchain, multiple circuits, branch-ready.**
+> Check off items as completed when touching EdgeCloud provider wiring.
+> Architecture principle (go-forward): **Base settlement + pluggable providers.**
 
 ---
 

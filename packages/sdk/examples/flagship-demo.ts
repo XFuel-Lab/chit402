@@ -89,7 +89,7 @@ async function main() {
 
   // ② Pay & submit — the payer runs the 402 → pay → retry handshake automatically.
   const task = await client.submitInference(XFUEL_MODEL, XFUEL_SENDER, XFUEL_AMOUNT, {
-    chain_id: ChainId.THETA,
+    chain_id: ChainId.BASE,
     payment: { rail: 'usdc', network: 'base', maxAmount: usdc.amount },
     payer,
   });
