@@ -15,17 +15,29 @@ Money + proof home is **Base**. Theta EdgeCloud remains an optional GPU provider
 
 ## 2. Proof home — deploy verifier
 
+**Live on Base mainnet (2026-07-17):**
+
+| Field | Value |
+|-------|--------|
+| `ZKVerifierSP1` | `0x9373499645292715a2275A78eD65B14215C41c06` |
+| Chain | Base `8453` |
+| Admin / deployer | `0xe49b47e759Ca01B6D66A49807Bb2aEe31c1243bd` |
+| Manifest | `deploy/manifests/base-verifier-base-2026-07-17T08-04-12-891Z.json` |
+| Explorer | https://basescan.org/address/0x9373499645292715a2275A78eD65B14215C41c06 |
+
+Set in gateway `.env` / `.env.local`:
+
 ```bash
-# Fund deployer with Base Sepolia ETH, then:
-npx hardhat run deploy/base-verifier.cjs --network base-sepolia
+ZK_VERIFIER_ADDRESS=0x9373499645292715a2275A78eD65B14215C41c06
+VERIFIER_CHAIN_ID=8453
+BASE_RPC_URL=https://mainnet.base.org
 ```
 
-Set in gateway `.env`:
+Optional Sepolia (testnet only):
 
 ```bash
-ZK_VERIFIER_ADDRESS=0x...   # from manifest
-VERIFIER_CHAIN_ID=84532     # 8453 on mainnet
-# BASE_RPC_URL=https://sepolia.base.org
+npx hardhat run deploy/base-verifier.cjs --network base-sepolia
+# VERIFIER_CHAIN_ID=84532
 ```
 
 Theta testnet verifier addresses under `deploy/manifests/` are **archive only**.
