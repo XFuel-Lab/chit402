@@ -67,7 +67,8 @@ const MESSAGE_TYPES = {
 
 /** Allowed chain IDs — sync with AIDePINRouter.sol, main.rs */
 const CHAIN_IDS = {
-  THETA:       'theta',
+  BASE:        'base',       // settlement home (USDC / x402); Per ADR 0002
+  THETA:       'theta',      // legacy routing label; EdgeCloud is provider-only
   OSMOSIS:     'osmosis',
   AKASH:       'akash',
   BITTENSOR:   'bittensor',
@@ -610,7 +611,9 @@ export function createApp() {
         sender,
         recipient:      theta_recipient || null,
         amount,
-        denom:          chain_id === CHAIN_IDS.BITTENSOR ? 'vtao' : 'uosmo',
+        denom:          chain_id === CHAIN_IDS.BITTENSOR ? 'vtao'
+                          : chain_id === CHAIN_IDS.BASE ? 'usdc'
+                          : 'uosmo',
         thetaRecipient: theta_recipient || null,
         modelId:        model_id || null,
         inputHash:      input_hash || null,

@@ -67,7 +67,9 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402 } = {}) 
   // For the standard x402 facilitator, the URL comes from cfg.facilitatorUrl
   // (falling back to the adapter's public-reference default when null).
   const provider = (cfg.facilitatorProvider || 'zan').toLowerCase() === 'x402' ? 'x402' : 'zan';
-  const gatewayUrl = provider === 'x402' ? (cfg.facilitatorUrl || cfg.gatewayUrl || null) : cfg.gatewayUrl;
+  // x402: only facilitatorUrl (null → adapter's public reference). Do NOT fall back
+  // to ZAN_X402_GATEWAY_URL — that silently routes live demos through the local mock.
+  const gatewayUrl = provider === 'x402' ? (cfg.facilitatorUrl || null) : cfg.gatewayUrl;
   const gwOpts = { provider, gatewayUrl, apiKey: cfg.apiKey, store: challengeStore };
   const paymentHeader = req.headers?.['x-payment'];
 

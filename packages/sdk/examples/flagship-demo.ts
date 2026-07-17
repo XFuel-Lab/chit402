@@ -11,19 +11,23 @@
  * This is the "aha": route any model, prove every dollar.
  *
  * ─── Run it ──────────────────────────────────────────────────────────────────
- *   From sdk/js:
- *     # Dry run (mock payer — no real funds, great for a first look):
+ *   From packages/sdk:
+ *     # Loads repo-root .env.local automatically (DEPLOYER_* → payer/sender).
+ *     $env:XFUEL_API_URL="http://localhost:3002"
  *     npx tsx examples/flagship-demo.ts
  *
- *     # Real USDC on Base Sepolia (agent signs EIP-3009):
- *     XFUEL_PAYER_PK=0x<funded-key> XFUEL_SENDER=0x<your-addr> \
- *     npx tsx examples/flagship-demo.ts
+ *     # Explicit overrides still win over .env.local:
+ *     #   XFUEL_PAYER_PK / XFUEL_SENDER / XFUEL_API_URL
  *
- *   Override the endpoint with XFUEL_API_URL (default: hosted testnet). The public
- *   verify_url resolves once the target server serves /receipt/:id (merged main).
+ *   Dry run (no key in env): uses createMockPayer (no real funds).
+ *   Live: set gateway X402_NETWORK=base-sepolia + provider=x402; fund DEPLOYER
+ *   with Base Sepolia ETH + USDC.
  *
  * Published-package users import from 'xfuel-sdk' / 'xfuel-sdk/onchain'.
  */
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   XFuelClient,
   ChainId,
@@ -31,14 +35,67 @@ import {
   type X402Payer,
 } from '../src/index.js';
 
-const {
-  XFUEL_API_URL = 'https://api-testnet.xfuel.app',
-  XFUEL_API_KEY,
-  XFUEL_SENDER = '0x000000000000000000000000000000000000dEaD',
-  XFUEL_MODEL = 'llama-3-70b',
-  XFUEL_AMOUNT = '1000000', // gross task value in base units (min 10000)
-  XFUEL_PAYER_PK, // set to sign real USDC EIP-3009 on Base; else a mock payer is used
-} = process.env;
+/** Load repo-root `.env.local` / `.env` without adding a dotenv dependency to the SDK. */
+function loadRootEnv(): void {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const root = resolve(here, '../../..');
+  for (const name of ['.env.local', '.env'] as const) {
+    const path = resolve(root, name);
+    if (!existsSync(path)) continue;
+    const parsed = new Map<string, string>();
+    for (const raw of readFileSync(path, 'utf8').split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      const eq = line.indexOf('=');
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim();
+      let val = line.slice(eq + 1).trim();
+      if (
+        (val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))
+      ) {
+        val = val.slice(1, -1);
+      }
+      parsed.set(key, val); // last duplicate wins (matches dotenv)
+    }
+    for (const [key, val] of parsed) {
+      if (process.env[key] === undefined) process.env[key] = val;
+    }
+    break; // prefer .env.local over .env
+  }
+}
+
+loadRootEnv();
+
+/** True for a 32-byte hex private key (0x + 64 hex). Rejects placeholders like 0xYOUR_…. */
+function isPrivateKey(v: string | undefined): v is string {
+  return !!v && /^0x[0-9a-fA-F]{64}$/.test(v.trim());
+}
+
+function pickPrivateKey(): string | undefined {
+  for (const v of [process.env.XFUEL_PAYER_PK, process.env.DEPLOYER_PRIVATE_KEY]) {
+    if (isPrivateKey(v)) return v!.trim();
+  }
+  return undefined;
+}
+
+const XFUEL_API_URL = process.env.XFUEL_API_URL || 'https://api-testnet.xfuel.app';
+const XFUEL_API_KEY = process.env.XFUEL_API_KEY;
+const XFUEL_MODEL = process.env.XFUEL_MODEL || 'llama-3-70b';
+const XFUEL_AMOUNT = process.env.XFUEL_AMOUNT || '1000000'; // gross task value (min 10000)
+// Real signer: valid XFUEL_PAYER_PK, else DEPLOYER_PRIVATE_KEY from .env.local
+const XFUEL_PAYER_PK = pickPrivateKey();
+const XFUEL_SENDER =
+  process.env.XFUEL_SENDER ||
+  process.env.DEPLOYER_ADDRESS ||
+  '0x000000000000000000000000000000000000dEaD';
+
+if (process.env.XFUEL_PAYER_PK && !isPrivateKey(process.env.XFUEL_PAYER_PK)) {
+  console.warn(
+    '\n  Warning: XFUEL_PAYER_PK looks like a placeholder — ignoring it and using DEPLOYER_PRIVATE_KEY from .env.local if present.\n' +
+      '  Clear it in this shell:  Remove-Item Env:XFUEL_PAYER_PK\n',
+  );
+}
 
 const b = (s: string) => `\x1b[1m${s}\x1b[0m`;
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
@@ -90,7 +147,8 @@ async function main() {
   // ② Pay & submit — the payer runs the 402 → pay → retry handshake automatically.
   const task = await client.submitInference(XFUEL_MODEL, XFUEL_SENDER, XFUEL_AMOUNT, {
     chain_id: ChainId.BASE,
-    payment: { rail: 'usdc', network: 'base', maxAmount: usdc.amount },
+    // Use the network the gateway quoted (base / base-sepolia), not a hardcode.
+    payment: { rail: 'usdc', network: usdc.network, maxAmount: usdc.amount },
     payer,
   });
   const rail = task.payment_rail ?? 'tfuel';
@@ -145,5 +203,11 @@ async function main() {
 
 main().catch((err) => {
   console.error('\nDemo failed:', err?.message ?? err);
+  if (err?.code || err?.status) {
+    console.error(dim(`  code=${err.code ?? '?'} status=${err.status ?? '?'}`));
+  }
+  if (Array.isArray(err?.details) && err.details.length) {
+    for (const d of err.details) console.error(dim(`  · ${d}`));
+  }
   process.exit(1);
 });
