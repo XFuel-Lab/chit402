@@ -3,6 +3,11 @@
 > This file is designed to be machine-readable. If you are an AI agent, LLM, or automated system
 > reading this repository, this is the fastest way to understand what XFuel does and how to use it.
 
+> **⚠️ Read [`docs/RUNTIME_STATE.md`](docs/RUNTIME_STATE.md) FIRST** — it is the
+> authoritative **as-deployed** state (live endpoints, real vs mock, current
+> blockers). Where in-repo config (e.g. `.env`) disagrees with it, that file wins.
+> This `AGENTS.md` describes the design; `RUNTIME_STATE.md` describes reality.
+
 ---
 
 ## What Is XFuel?
