@@ -139,7 +139,7 @@ const REVENUE_SPLIT = {
   treasury: { label: 'Treasury',             pct: 15, color: '#b388ff' },
 };
 
-const CHAINS = ['theta', 'osmosis', 'akash', 'bittensor', 'persistence'];
+const CHAINS = ['base', 'theta', 'osmosis', 'akash', 'bittensor', 'persistence'];
 
 const MESSAGE_TYPES = [
   'compute_bid', 'compute_result', 'inference_request',

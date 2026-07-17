@@ -51,7 +51,7 @@ Submit an AI task for routing to Akash, Bittensor (TAO), Osmosis, or Theta Edge 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `message_type` | string | Yes | `compute_bid`, `compute_result`, `inference_request`, `capability_query`, `data_attestation` |
-| `chain_id` | string | Yes | `theta`, `osmosis`, `akash`, `bittensor`, `persistence` |
+| `chain_id` | string | Yes | `base` (settlement home), `theta`, `osmosis`, `akash`, `bittensor`, `persistence` |
 | `amount` | string | Yes | Gross task value (≥ 10000, dust protection) |
 | `sender` | string | Yes | Sender address / agent identifier |
 | `fee_bps` | number | No | Fee override (50–100 BPS). Default: 50 (0.5%) |

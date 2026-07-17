@@ -458,11 +458,19 @@ export class XFuelClient {
       | { error?: string; message?: string; details?: string[] }
       | undefined;
 
+    const details = data?.details;
+    const detailSuffix =
+      Array.isArray(details) && details.length > 0
+        ? `: ${details.join('; ')}`
+        : '';
+    const message =
+      (data?.message ?? data?.error ?? error.message) + detailSuffix;
+
     return new XFuelApiError(
-      data?.message ?? error.message,
+      message,
       error.response?.status ?? 0,
       data?.error ?? 'network_error',
-      data?.details,
+      details,
     );
   }
 
