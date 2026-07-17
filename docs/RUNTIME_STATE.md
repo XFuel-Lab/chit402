@@ -28,22 +28,32 @@
 |-----------|-------|-------|
 | `ZKVerifierSP1` | Base mainnet `0x9373499645292715a2275A78eD65B14215C41c06` (chain 8453) | Admin/deployer `0xe49b47e759Ca01B6D66A49807Bb2aEe31c1243bd`. Manifest: `deploy/manifests/base-verifier-base-2026-07-17T08-04-12-891Z.json` |
 | **SP1 prover (LIVE, "light")** | AWS ECS `xfuel-sp1-prover` (us-east-1, acct 187510174358) → validated on Succinct | Behind ALB **`http://xfuel-sp1-alb-1873465045.us-east-1.elb.amazonaws.com`** (port 80, service `sp1-prover`, target group `xfuel-sp1-tg`). Gateway var: `SP1_PROVER_URL`. **Ingress locked to `35.180.10.142/32` (Lightsail) only** — not reachable from laptops/other IPs by design. |
-| **Demo / showcase gateway** | AWS Lightsail `35.180.10.142` (internal `172.26.5.141`) | The showcase gateway. **Too small to run the prover** — it calls the ALB above via `SP1_PROVER_URL`. Only host allowed to reach the prover, so real Tier-2 proofs happen here (not locally). ⚠️ **STALE — see Deployment status below.** |
+| **Demo / showcase gateway** | AWS Lightsail `35.180.10.142` (internal `172.26.5.141`) | The showcase gateway. **Too small to run the prover** — it calls the ALB above via `SP1_PROVER_URL`. Only host allowed to reach the prover, so real Tier-2 proofs happen here (not locally). ✅ **CURRENT — see Deployment status below.** |
 
-### Deployment status (Lightsail demo box) — as of 2026-07-17
+### Deployment status (Lightsail demo box) — as of 2026-07-17 (updated after deploy)
 
-- **Repo:** `/home/ubuntu/xfuel-protocol` on branch `main`, commit `196a703`.
-- **Running:** `node src/server.js` from **`backend/theta-bridge/`** (the *pre-restructure*
-  path), process up since **Jul 09**. The monorepo move to `services/gateway/` has
-  **not** been deployed here.
-- **Env:** `backend/theta-bridge/.env` has the correct `SP1_PROVER_URL`
-  (`xfuel-sp1-alb-1873465045…`), but appears to **lack x402 config**
-  (`X402_ENABLED` / `X402_FACILITATOR_PROVIDER` / `X402_NETWORK`) — so the live demo
-  box likely does **not** run the USDC/x402 path yet.
-- **Consequence:** the demo box predates the Base-home work and the `feat/base-home-rehome`
-  fixes (base `chain_id`, live x402). Updating it = a **production deploy** (git pull →
-  restructure → migrate `.env` to `services/gateway/.env` → `npm install` → restart).
-  Requires manual review/approval (live host).
+- **Repo:** `/home/ubuntu/xfuel-protocol` on branch `main`, now at the merged
+  `Feat/base-home-rehome (#130)` (base `chain_id` + live x402). `/health` reports
+  `chains:[…,"base",…]`.
+- **Running:** `services/gateway` via **PM2** app **`xfuel-m2m`** (`pm2 start npm
+  --name xfuel-m2m -- run m2m-server`, cwd `services/gateway`, PORT 3002). `pm2 save`
+  persisted; PM2 God Daemon is managed by systemd (auto-restart + survives reboot).
+  - PM2 was invoked via an **npx cache** (`~/.npm/_npx/5f7878ce38f1eb13/…/pm2/lib/binaries/CLI.js`),
+    not a global install — fragile if the npx cache is pruned. Hardening TODO:
+    `npm i -g pm2` and re-`pm2 save`.
+  - Stale, **unused** `ecosystem.config.js` at repo root (`xfuel-backend`, port 3000,
+    `backend/theta-bridge/server.js`) does **not** match the live app — ignore it.
+- **Env:** `services/gateway/.env` — migrated from the old `backend/theta-bridge/.env`
+  (kept `SP1_PROVER_URL=…alb-1873465045…`), plus the x402 block appended
+  (`X402_ENABLED=true`, `X402_FACILITATOR_PROVIDER=x402`, `X402_NETWORK=base-sepolia`,
+  `X402_PAY_TO`, `X402_PROOF_BINDING=true`). Backup at `~/gateway.env.bak`.
+- **Pre-restructure state (historical):** was running `node src/server.js` from
+  `backend/theta-bridge/` (up since Jul 09, commit `196a703`) with no x402 config —
+  replaced by the deploy above.
+- **Redeploy recipe:** `cp backend/theta-bridge/.env ~/gateway.env.bak` (if present) →
+  `git pull` main → restore `.env` to `services/gateway/.env` → `npm install` in
+  `services/gateway` → `pm2 delete xfuel-m2m && cd services/gateway && pm2 start npm
+  --name xfuel-m2m -- run m2m-server && pm2 save` → verify `base` in `/health`.
 | x402 facilitator (testnet) | public `https://x402.org/facilitator` | Base Sepolia, no API key. `X402_FACILITATOR_PROVIDER=x402`. |
 | x402 facilitator (mainnet) | **not provisioned** | Needs a mainnet-capable facilitator (e.g. Coinbase CDP: `X402_FACILITATOR_URL` + `X402_FACILITATOR_API_KEY`, `X402_NETWORK=base`). |
 
