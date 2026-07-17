@@ -96,38 +96,39 @@ export SP1_PROVER=cuda
 
 **Windows:**
 ```powershell
-cd sp1-prover
+cd services/sp1-prover
 .\script\build.ps1
 ```
 
 **Linux/Mac:**
 ```bash
-cd sp1-prover
+cd services/sp1-prover
 ./script/build.sh
 ```
 
 ### 2. Run Tests
 
 ```bash
-cd sp1-prover/host
+cd services/sp1-prover/host
 cargo test --release
 ```
 
 ### 3. Generate a Proof (Example)
 
 ```bash
-cd sp1-prover/host
+cd services/sp1-prover/host
 cargo run --release -- --input ../test-data/deposit-1.json
 ```
 
 ### 4. Generate Solidity Verifier
 
 ```bash
-cd sp1-prover
+cd services/sp1-prover
 ./script/generate-verifier.sh
 ```
 
-This will create `verifier/SP1Verifier.sol` which can be deployed to Theta mainnet.
+This will create `verifier/SP1Verifier.sol`. Settlement home is **Base** (ADR 0002),
+so the verifier deploys to Base Sepolia/mainnet; the Theta-mainnet target is historical/archive.
 
 ## Phase 2 — x402 payment binding (v2 public values)
 
@@ -145,25 +146,25 @@ working until you rebuild and re-key.
 | `X402_PROOF_BINDING=true` | Computes commitment, threads fields to `/prove` |
 
 **Activation:** rebuild guest ELF → register new `programVKey` → enable both flags → smoke
-test with `sdk/js/examples/pay-prove-verify.ts`. Details:
-`skills/_shared/reference/public-values.md`, `docs/X402_ADAPTER.md`.
+test with `packages/sdk/examples/pay-prove-verify.ts`. Details:
+`packages/agent-skills/_shared/reference/public-values.md`, `docs/X402_ADAPTER.md`.
 
 Shared Rust hooks: `core-layer/sp1-hooks/src/payment_binding.rs` (parity with
-`SP1ProofHooks.sol` and `backend/theta-bridge/src/payment-binding.js`).
+`SP1ProofHooks.sol` and `services/gateway/src/payment-binding.js`).
 
 ---
 
-## Integration with Existing Backend
+## Integration with the Gateway
 
-The SP1 prover integrates with the existing `backend/theta-bridge` infrastructure:
+The SP1 prover integrates with the `services/gateway` infrastructure:
 
 ### Proof Generation Flow
 
-1. **Deposit Detection**: `backend/theta-bridge/src/listener.js` detects deposit
-2. **Proof Request**: Calls SP1 prover via HTTP API or CLI
-3. **Proof Generation**: SP1 host program runs guest program in zkVM
+1. **Task Detection**: `services/gateway/src/ai-listener.js` detects a settleable task
+2. **Proof Request**: `services/gateway/src/sp1-prover-client.js` calls the SP1 prover over HTTP
+3. **Proof Generation**: SP1 host program runs guest program in zkVM (AWS ECS `xfuel-sp1-prover`)
 4. **Proof Return**: Returns proof + public inputs in JSON format
-5. **On-Chain Submission**: `backend/theta-bridge/src/prover.js` submits to verifier contract
+5. **On-Chain Submission**: the gateway submits the proof to the `ZKVerifierSP1` contract on Base
 
 ### API Interface
 
@@ -223,7 +224,7 @@ interface ProofResponse {
 export SP1_PROVER=cuda
 
 # Build with GPU support
-cd sp1-prover/host
+cd services/sp1-prover/host
 cargo build --release --features cuda
 ```
 
@@ -270,6 +271,11 @@ unset SP1_PROVER           # Use local CPU prover
 - [ ] Verifier contract audit (pending)
 
 ## Migration Plan
+
+> **Historical / archive.** This Groth16→SP1 migration plan is complete, and the
+> "deploy SP1 verifier to Theta mainnet" cutover is **superseded**: settlement home is
+> **Base** (ADR 0002), so `ZKVerifierSP1` deploys to Base Sepolia/mainnet (Theta testnet =
+> archive). The SP1 prover itself is **LIVE** — see the status note below.
 
 ### Phase 1: Setup (Current)
 - ✅ Analyze circom circuit
@@ -338,5 +344,11 @@ For issues specific to SP1 integration, please open an issue in the XFUEL repo o
 
 ---
 
-**Last Updated:** 2026-01-19  
-**Status:** Phase 1 - Setup In Progress
+**Last Updated:** 2026-07-17
+**Status:** **LIVE** — SP1 settlement prover runs on **AWS ECS (`xfuel-sp1-prover`)**,
+proofs validated on **Succinct**, ~25s/proof (~270K gas on-chain). Ingress is served via
+an ALB (`SP1_PROVER_URL=http://xfuel-sp1-alb-1873465045.us-east-1.elb.amazonaws.com`) whose
+security group is **locked to the Lightsail testnet box IP** (the old
+`ALB-1-1092545307...` and any hardcoded prover IP like `3.83.140.122:8080` are **dead** — do
+not use). Deploy/infra: [`deploy/ecs/README.md`](../../deploy/ecs/README.md). As-deployed
+state: [`docs/RUNTIME_STATE.md`](../../docs/RUNTIME_STATE.md).

@@ -1,6 +1,6 @@
 # xfuel-mcp
 
-First-party **Model Context Protocol (MCP)** server for the [XFuel Protocol](https://github.com/XFuel-Lab/xfuel-protocol) — the ZK settlement + orchestration layer for AI compute across decentralized GPU networks (DePIN).
+First-party **Model Context Protocol (MCP)** server for the [XFuel Protocol](https://github.com/XFuel-Lab/xfuel-protocol) — the verifiable settlement + payments layer for AI compute (USDC via x402 on Base). GPU providers (EdgeCloud, Akash, …) are optional, pluggable tiers.
 
 It exposes XFuel's core capabilities as MCP tools so any MCP client (Claude Desktop, Cursor, your own agent) can submit AI inference, price tasks, and fetch/verify ZK settlement proofs. Runs over **stdio** (local) or **streamable HTTP** (remote/shared).
 
@@ -34,9 +34,10 @@ Zero config: with no env set it talks to XFuel's hosted testnet demo (`https://a
 
 > The proof attests settlement metadata + a commitment to the output hash — **not** inference correctness. `verify_proof` reports exactly what was checked.
 
-> `submit_inference` settles with the server's default (unpaid/TFUEL) rail and needs no key.
-> `pay_with_usdc` is the only tool that moves funds — it is **inert unless** the server is
-> started with `XFUEL_PAYER_PRIVATE_KEY`, so the default experience stays zero-config.
+> `submit_inference` uses the server's default (unmetered) path and needs no key.
+> `pay_with_usdc` is the only tool that moves funds (USDC via x402 on Base) — it is
+> **inert unless** the server is started with `XFUEL_PAYER_PRIVATE_KEY`, so the default
+> experience stays zero-config.
 
 ## Quick start
 
@@ -124,7 +125,7 @@ reports `payment_rail: "tfuel"`.
 
 > **Security:** this key can spend USDC. Scope it to a low-balance wallet, keep it out of
 > shell history (env/secret store only), and prefer running the server on a trusted host.
-> For agent-held keys, use the [`xfuel-sdk`](../sdk/js) directly with your own payer instead.
+> For agent-held keys, use the [`xfuel-sdk`](../sdk) directly with your own payer instead.
 
 ## Typical flow
 
@@ -149,7 +150,7 @@ npm run dev       # tsx watch
 npm run inspect   # @modelcontextprotocol/inspector against the built server
 ```
 
-Built on the official [`xfuel-sdk`](../sdk/js) — MCP tools are thin wrappers so behaviour matches the SDK and examples exactly.
+Built on the official [`xfuel-sdk`](../sdk) — MCP tools are thin wrappers so behaviour matches the SDK and examples exactly.
 
 ## Publishing
 
@@ -160,15 +161,15 @@ in the MCP registry.
 
 The `xfuel-sdk` dependency is pinned to the published range `^0.2.0` (which includes the
 helpers this server uses: `verifyProof`, `createEip3009Payer`, `listModels`). For **local**
-development against the in-repo SDK, temporarily `npm install ../sdk/js` (or restore
-`file:../sdk/js`) — the committed `^0.2.0` is what consumers resolve from npm.
+development against the in-repo SDK, temporarily `npm install ../sdk` (or restore
+`file:../sdk`) — the committed `^0.2.0` is what consumers resolve from npm.
 
 Release order (bump versions first; npm auth required):
 
 ```bash
 # 1. Publish the SDK first (the MCP depends on xfuel-sdk@^0.2.0).
 #    --auth-type=web opens a browser for 2FA / security-key auth.
-cd ../sdk/js && npm publish --auth-type=web    # runs build + tests via prepublishOnly
+cd ../sdk && npm publish --auth-type=web    # runs build + tests via prepublishOnly
 
 # 2. Publish the MCP (prepublishOnly runs build + tests).
 cd ../../xfuel-mcp && npm publish --auth-type=web

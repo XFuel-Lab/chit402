@@ -6,7 +6,7 @@ across decentralized GPU networks, **prove** the work cryptographically, **pay**
 USDC or TFUEL, and **coordinate** with other agents 1:1 or in swarms.
 
 This playbook ties the [Agent Skills](./README.md) and [runnable SDK
-examples](../sdk/js/examples/) into one narrative. Each flow links the skill you
+examples](../sdk/examples/) into one narrative. Each flow links the skill you
 install into your agent and the example you can run today.
 
 ---
@@ -53,7 +53,12 @@ export ZK_VERIFIER_ADDRESS=0x...  A2A_CIRCUIT_ADDRESS=0x...  VE_GOVERNANCE_ADDRE
 ```
 
 Full matrix: [`_shared/reference/env-and-endpoints.md`](./_shared/reference/env-and-endpoints.md).
-Run the API server from `backend/theta-bridge/` (default port 3002).
+Self-host the API server with `cd services/gateway && npm run m2m-server` (default port 3002).
+
+> **As-deployed reality:** read [`docs/RUNTIME_STATE.md`](../../docs/RUNTIME_STATE.md) first —
+> it's the authoritative live-state source (endpoints, real vs mock, x402/proof config).
+> For the whole pay → infer → prove → receipt loop in one script, run the flagship demo
+> [`packages/sdk/examples/flagship-demo.ts`](../sdk/examples/flagship-demo.ts).
 
 ```js
 import { XFuelClient } from 'xfuel-sdk';
@@ -66,7 +71,7 @@ const client = new XFuelClient({ baseUrl: process.env.XFUEL_API_URL, apiKey: pro
 
 **Goal:** use XFuel from *any* agent framework with zero XFuel-specific code —
 just point an OpenAI-compatible client at XFuel's `baseURL`.
-**Example:** [`examples/openai-drop-in.ts`](../sdk/js/examples/openai-drop-in.ts) (`npm run example:openai`)
+**Example:** [`examples/openai-drop-in.ts`](../sdk/examples/openai-drop-in.ts) (`npm run example:openai`)
 
 XFuel serves the standard OpenAI surface:
 
@@ -116,7 +121,7 @@ The same one-line `baseURL` swap works for the **Vercel AI SDK**
 
 **Goal:** run an LLM/compute task and get a settled, proof-backed result.
 **Skill:** [`xfuel-submit-inference`](./xfuel-submit-inference/SKILL.md) ·
-**Example:** [`examples/pay-with-usdc.ts`](../sdk/js/examples/pay-with-usdc.ts) (`npm run example:pay`)
+**Example:** [`examples/pay-with-usdc.ts`](../sdk/examples/pay-with-usdc.ts) (`npm run example:pay`)
 
 ```js
 import { XFuelClient, ChainId, createMockPayer } from 'xfuel-sdk';
@@ -129,9 +134,9 @@ const quote = await client.quoteTask({ model_id: 'llama-3-70b' });
 
 // Submit. Pass a payer and the SDK runs the whole USDC/x402 402→pay→retry loop for you.
 const task = await client.submitInference('llama-3-70b', '0xYourAddr', '1000000', {
-  chain_id: ChainId.THETA,
+  chain_id: 'base',                                                // settlement home (Base)
   input_hash: keccak256(toUtf8Bytes('Explain ZK proofs in one sentence.')),
-  payment: { rail: 'usdc', network: 'base', maxAmount: '50000' }, // or { rail: 'tfuel' }
+  payment: { rail: 'usdc', network: 'base-sepolia', maxAmount: '50000' }, // network from quoteTask (mainnet pending CDP); or { rail: 'tfuel' }
   payer: createMockPayer(),                                        // omit for TFUEL
 });
 
@@ -144,8 +149,9 @@ const done = await client.waitForCompletion(task.task_id);
 - **TFUEL path:** omit the payer (or set `payment: { rail: 'tfuel' }`) — settles on Theta.
 - Prefer webhooks over polling? Pass `callback_url` and skip `waitForCompletion`.
 
-> Phase-1 status: the server 402 handshake is flag-gated (`X402_ENABLED`) and starts
-> in TFUEL fallback until the ZAN facilitator is live. **Always trust the
+> Status: x402/USDC is **live on base-sepolia** (`X402_ENABLED=true`,
+> `X402_FACILITATOR_PROVIDER=x402`, public `x402.org` facilitator — no API key). Base
+> mainnet is pending CDP provisioning. **Always trust the
 > `payment_rail` field** in the response for what actually settled.
 > Deep dive: [`_shared/reference/payments-x402.md`](./_shared/reference/payments-x402.md).
 
@@ -194,7 +200,7 @@ const check = verifyPaymentBinding(proof.payment_binding, {
 }); // { valid, recomputedCommitment, expectedCommitment, paymentRefHashMatches }
 ```
 
-**Example:** [`examples/pay-prove-verify.ts`](../sdk/js/examples/pay-prove-verify.ts)
+**Example:** [`examples/pay-prove-verify.ts`](../sdk/examples/pay-prove-verify.ts)
 (`npm run example:verify`) — the full pay → prove → verify (proof + binding) loop.
 
 ---
@@ -204,7 +210,7 @@ const check = verifyPaymentBinding(proof.payment_binding, {
 **Goal:** discover a provider agent, escrow TFUEL on a bid, delegate the compute,
 and settle trustlessly on delivery.
 **Skill:** [`xfuel-a2a-bid`](./xfuel-a2a-bid/SKILL.md) ·
-**Example:** [`examples/a2a-swarm.ts`](../sdk/js/examples/a2a-swarm.ts) (`npm run example:a2a`)
+**Example:** [`examples/a2a-swarm.ts`](../sdk/examples/a2a-swarm.ts) (`npm run example:a2a`)
 
 ```js
 // 1) Discover (zero escrow)
@@ -231,7 +237,7 @@ via Flow 1 (USDC/x402 or TFUEL).
 
 **Goal:** run a group of agents on a shared objective with a pooled escrow.
 **Skill:** [`xfuel-swarm-coordinate`](./xfuel-swarm-coordinate/SKILL.md) ·
-**Example:** [`examples/swarm-coordinate.ts`](../sdk/js/examples/swarm-coordinate.ts) (`npm run example:swarm`)
+**Example:** [`examples/swarm-coordinate.ts`](../sdk/examples/swarm-coordinate.ts) (`npm run example:swarm`)
 
 Lifecycle (Almanak-style, ≤18 members): `register → form → join → settle-member → dissolve`,
 phases `Forming → Active → Settling → Dissolved`.
@@ -259,7 +265,7 @@ Fee: 0.3% (`swarmFeeBps`) on settlements and the dissolve refund.
 |------|-------|-----|
 | "Which GPU provider / rail will this hit? What does it cost?" | [`xfuel-route-compute`](./xfuel-route-compute/SKILL.md) | `client.getHealth()` for tiers/status; `client.quoteTask({ model_id })` for per-rail price. Read-only. |
 | "Make this proof recognized on Bittensor EVM (964/945)." | [`xfuel-relay-proof-crosschain`](./xfuel-relay-proof-crosschain/SKILL.md) | `chain.encodeRelayProofCrossChain(circuitId, publicValues, proof, nullifier, destDomain, feeWei)` → relayer/out-of-band. |
-| "Lock XF, read voting power, propose, or vote." | [`xfuel-govern-vexf`](./xfuel-govern-vexf/SKILL.md) | `chain.getVotingPower(addr)`; `encodeLock` / `encodeCreateProposal` / `encodeVote`. Example: [`govern-vexf.ts`](../sdk/js/examples/govern-vexf.ts) (`npm run example:govern`). |
+| "Lock XF, read voting power, propose, or vote." | [`xfuel-govern-vexf`](./xfuel-govern-vexf/SKILL.md) | `chain.getVotingPower(addr)`; `encodeLock` / `encodeCreateProposal` / `encodeVote`. Example: [`govern-vexf.ts`](../sdk/examples/govern-vexf.ts) (`npm run example:govern`). |
 
 ---
 
@@ -280,8 +286,8 @@ A realistic agent stitches several flows into one job:
 6. **Go cross-chain (optional)** — relay a proof to Bittensor for stake-gated
    verification (relay-proof-crosschain).
 
-The [`a2a-swarm.ts`](../sdk/js/examples/a2a-swarm.ts) example is the compact version
-of steps 1–4; [`swarm-coordinate.ts`](../sdk/js/examples/swarm-coordinate.ts) is the
+The [`a2a-swarm.ts`](../sdk/examples/a2a-swarm.ts) example is the compact version
+of steps 1–4; [`swarm-coordinate.ts`](../sdk/examples/swarm-coordinate.ts) is the
 full pool lifecycle (steps 2, 5).
 
 ---
@@ -327,20 +333,20 @@ Detail: [`_shared/reference/payments-x402.md`](./_shared/reference/payments-x402
 | [`xfuel-relay-proof-crosschain`](./xfuel-relay-proof-crosschain/SKILL.md) | Cross-chain proof relay |
 | [`xfuel-govern-vexf`](./xfuel-govern-vexf/SKILL.md) | veXF governance |
 
-**Runnable examples** (in `sdk/js/`, run with `tsx`):
+**Runnable examples** (in `packages/sdk/`, run with `tsx`):
 
 | Example | Command | Shows |
 |---------|---------|-------|
-| [`openai-drop-in.ts`](../sdk/js/examples/openai-drop-in.ts) | `npm run example:openai` | OpenAI-compatible `/v1` (models, chat, streaming) + receipt |
-| [`pay-with-usdc.ts`](../sdk/js/examples/pay-with-usdc.ts) | `npm run example:pay` | quote → pay (USDC/x402) → prove |
-| [`pay-prove-verify.ts`](../sdk/js/examples/pay-prove-verify.ts) | `npm run example:verify` | pay → prove → verify proof + payment binding |
-| [`a2a-swarm.ts`](../sdk/js/examples/a2a-swarm.ts) | `npm run example:a2a` | discover → bid → delegate → settle |
-| [`swarm-coordinate.ts`](../sdk/js/examples/swarm-coordinate.ts) | `npm run example:swarm` | register → form → join → settle → dissolve |
-| [`govern-vexf.ts`](../sdk/js/examples/govern-vexf.ts) | `npm run example:govern` | power → lock → propose → vote |
+| [`openai-drop-in.ts`](../sdk/examples/openai-drop-in.ts) | `npm run example:openai` | OpenAI-compatible `/v1` (models, chat, streaming) + receipt |
+| [`pay-with-usdc.ts`](../sdk/examples/pay-with-usdc.ts) | `npm run example:pay` | quote → pay (USDC/x402) → prove |
+| [`pay-prove-verify.ts`](../sdk/examples/pay-prove-verify.ts) | `npm run example:verify` | pay → prove → verify proof + payment binding |
+| [`a2a-swarm.ts`](../sdk/examples/a2a-swarm.ts) | `npm run example:a2a` | discover → bid → delegate → settle |
+| [`swarm-coordinate.ts`](../sdk/examples/swarm-coordinate.ts) | `npm run example:swarm` | register → form → join → settle → dissolve |
+| [`govern-vexf.ts`](../sdk/examples/govern-vexf.ts) | `npm run example:govern` | power → lock → propose → vote |
 
 **Shared reference:** [`env-and-endpoints.md`](./_shared/reference/env-and-endpoints.md) ·
 [`payments-x402.md`](./_shared/reference/payments-x402.md) ·
 [`public-values.md`](./_shared/reference/public-values.md) ·
 `m2m-openapi.yaml`
 
-**Protocol map:** repo root [`AGENTS.md`](../AGENTS.md) · SDK [`sdk/js/README.md`](../sdk/js/README.md)
+**Protocol map:** repo root [`AGENTS.md`](../AGENTS.md) · SDK [`packages/sdk/README.md`](../sdk/README.md)

@@ -110,8 +110,8 @@ Confirm that an XFuel task produced a valid ZK proof and settled on-chain.
 
 ## Runnable example
 
-[`examples/pay-prove-verify.ts`](../../sdk/js/examples/pay-prove-verify.ts)
-(`npm run example:verify` from `sdk/js`) walks the full **pay → prove → verify**
+[`examples/pay-prove-verify.ts`](../../sdk/examples/pay-prove-verify.ts)
+(`npm run example:verify` from `packages/sdk`) walks the full **pay → prove → verify**
 loop end-to-end against the mock facilitator + mock prover, including an independent
 re-derivation of the `payment_binding` commitment.
 

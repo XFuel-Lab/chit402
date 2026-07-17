@@ -45,15 +45,17 @@ trust-minimally (proof + nullifier).
 
 | Tier | Name | What it cryptographically attests | Cost | Availability |
 |------|------|-----------------------------------|------|--------------|
-| **0** | **Signed receipt** | Task, route, model, tokens, cost, output hash — signed by XFuel | ~free | **Always on** |
-| **1** | **ZK settlement proof** | Correct fees, payment binding, output-hash commitment, single-use nullifier — anchored on **Base** | Prover cost | **On demand** |
-| **2** | **ZK proof-of-inference** | The *computation itself* (zkGPT) | High | **Roadmap — only where XFuel runs the model** |
+| **1** | **Signed receipt** | Task, route, model, tokens, cost, output hash — signed by XFuel | ~free | **LIVE — always on (default)** |
+| **2** | **ZK settlement proof (SP1)** | Correct fees, payment binding, output-hash commitment, single-use nullifier — anchored on **Base** | Prover cost (~25s) | **LIVE — on demand** |
+| **3** | **ZK proof-of-inference (zkGPT)** | The *computation itself* | High | **ROADMAP / BLOCKED on GPU — only where XFuel runs the model** |
+
+> Tier numbering matches [`docs/RUNTIME_STATE.md`](RUNTIME_STATE.md) and the whitepaper (Tier 1/2/3).
 
 **What we say (true):** "Verifiable settlement for AI compute — provably correct fees
 and an immutable output commitment over any provider, anchored on Base."
 
 **What we never say (false for black-box APIs):** "We ZK-prove the model ran
-correctly." That is only true at **Tier 2**, and only when XFuel controls the compute.
+correctly." That is only true at **Tier 3**, and only when XFuel controls the compute.
 
 ---
 

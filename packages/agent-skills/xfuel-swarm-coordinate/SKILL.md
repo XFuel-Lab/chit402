@@ -134,7 +134,7 @@ const chain = new XFuelOnChain({
 
 ## Runnable example
 
-[`sdk/js/examples/swarm-coordinate.ts`](../../sdk/js/examples/swarm-coordinate.ts)
+[`packages/sdk/examples/swarm-coordinate.ts`](../../sdk/examples/swarm-coordinate.ts)
 — `npx tsx examples/swarm-coordinate.ts` walks register → form → join →
 settle-member → status → dissolve. Calldata builders run fully offline; on-chain
 reads run when `THETA_RPC_URL` + `A2A_CIRCUIT_ADDRESS` are set.

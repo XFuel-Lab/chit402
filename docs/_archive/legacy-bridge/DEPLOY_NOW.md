@@ -1,3 +1,10 @@
+> **⚠️ ARCHIVED / LEGACY (as of 2026-07-17).** This document describes the retired
+> `backend/theta-bridge` stack and is kept for historical reference only. It does
+> **not** reflect the current system. The gateway now lives at `services/gateway/`
+> and runs live at `https://api-testnet.xfuel.app`. For the authoritative
+> as-deployed state, see [`docs/RUNTIME_STATE.md`](../../RUNTIME_STATE.md) and
+> [`services/gateway/README.md`](../../../services/gateway/README.md).
+
 # 🚀 DEPLOYMENT COMPLETE - Ready for E2E Testing
 
 ## ✅ What's Ready

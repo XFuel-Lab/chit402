@@ -475,10 +475,10 @@ run-dev.bat
 
 ## References
 
-- [Main Architecture](./ARCHITECTURE.md)
-- [Deployment Guide](./DEPLOYMENT.md)
-- [Module Structure](./MODULE_STRUCTURE.md)
-- [E2E Testing](./E2E_TESTING_GUIDE.md)
+- [Main Architecture](../../docs/_archive/legacy-bridge/ARCHITECTURE.md) *(archived — legacy bridge)*
+- [Deployment Guide](../../docs/_archive/legacy-bridge/DEPLOYMENT.md) *(archived — legacy bridge)*
+- [Module Structure](../../docs/_archive/legacy-bridge/MODULE_STRUCTURE.md) *(archived — legacy bridge)*
+- [E2E Testing](../../docs/_archive/legacy-bridge/E2E_TESTING_GUIDE.md) *(archived — legacy bridge)*
 - [Quick Reference](./QUICK_REFERENCE.md)
 
 ## Support

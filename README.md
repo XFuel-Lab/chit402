@@ -2,9 +2,9 @@
 
 **Route any model. Prove every dollar.** — the verifiable settlement and payments layer for AI compute: agent routing, USDC (x402 on Base), and tiered receipts (signed → on-chain SP1).
 
-Live: **[xfuel.app](https://xfuel.app)** (beta)
+Live: **[xfuel.app](https://xfuel.app)** (beta) · Public API: **[`https://api-testnet.xfuel.app`](https://api-testnet.xfuel.app)** · As-deployed state: **[`docs/RUNTIME_STATE.md`](docs/RUNTIME_STATE.md)**
 
-[![Docs](https://img.shields.io/badge/docs-v2.4-blue.svg)](WHITEPAPER.md)
+[![Docs](https://img.shields.io/badge/docs-v2.5-blue.svg)](WHITEPAPER.md)
 [![Status](https://img.shields.io/badge/status-beta-orange.svg)](https://xfuel.app)
 [![Audit Status](https://img.shields.io/badge/audit-pending-yellow.svg)](docs/security-design.md)
 [![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/XFuel-Lab/xfuel-protocol)
@@ -91,10 +91,10 @@ Read the complete technical whitepaper: **[WHITEPAPER.md](WHITEPAPER.md)**
 
 | Category | Feature | Detail |
 |----------|---------|--------|
-| **Live Inference** | Theta EdgeCloud AI execution | 15 presets, 3 GPU tiers (RTX 4090/A100/H100), sub-200ms ZK proofs |
+| **Live Inference** | Provider-agnostic routing | OpenAI-compatible + DePIN GPU tiers; Tier-2 SP1 settlement proofs (~25s, AWS→Succinct) |
 | **ZK Bridge** | Bi-directional TFUEL ↔ Cosmos | SP1 zkVM proofs, ~11-12s forward / ~12-15s reverse |
 | **Core Layer** | Modular circuit architecture | 16+ independent circuits, event-driven, zero shared state |
-| **Agent API** | M2M-first design | `POST /theta-ai/agent-intent`, webhook callbacks, OpenAPI 3.0 spec |
+| **Agent API** | M2M-first design | `POST /task-request`, OpenAI-compatible `/v1/chat/completions`, webhooks, `/llms.txt` |
 | **GPU Selector** | Smart tier routing | On-chain price computation: `basePrice × gpuMultiplier / 10000` |
 | **Monitoring** | Real-time dashboard | Contract health, gas profiles, RPC status, failure prediction, 10s auto-refresh |
 | **ROI Calculator** | Economic modeling | GPU tier, lock duration, protocol volume projections with veXF multipliers |
@@ -163,24 +163,29 @@ npx hardhat run activation/public-activation.cjs
 Submit AI inference intents directly via the agent API — no UI required:
 
 ```bash
-# Submit an inference intent with GPU tier selection
-curl -X POST http://localhost:3002/theta-ai/agent-intent \
+# Submit an inference task (USDC via x402 on Base is the default rail)
+curl -X POST https://api-testnet.xfuel.app/task-request \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: xfuel-demo" \
   -d '{
-    "preset": "QUICK_LLAMA",
-    "gpuTier": "rtx4090",
-    "prompt": "Explain ZK proofs in one sentence",
-    "callbackUrl": "https://my-agent.example.com/webhook"
+    "message_type": "inference_request",
+    "chain_id": "base",
+    "model_id": "llama-3-70b",
+    "amount": "1000000",
+    "sender": "0xYourAddress",
+    "input_hash": "0xabc...",
+    "payment": { "rail": "usdc" }
   }'
 
-# List available presets and GPU pricing
-curl http://localhost:3002/theta-ai/presets
+# Poll status
+curl "https://api-testnet.xfuel.app/task-status?task_id=<taskId>"
 
-# Check webhook delivery status
-curl http://localhost:3002/theta-ai/webhook-status/<taskId>
+# Or use the OpenAI-compatible surface
+curl https://api-testnet.xfuel.app/v1/chat/completions -H "Authorization: Bearer xfuel-demo" \
+  -d '{"model":"llama-3-70b","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-Agents receive webhook callbacks with full output, ZK proof data, and settlement tx hash. See [`docs/M2M_API.md`](docs/M2M_API.md) for the complete API reference.
+Each response carries a verifiable receipt; register a `callback_url` or global webhook for `TaskSettled`. See [`docs/M2M_API.md`](docs/M2M_API.md) for the complete API reference.
 
 ---
 
@@ -189,22 +194,21 @@ Agents receive webhook callbacks with full output, ZK proof data, and settlement
 ### Live Inference + Settlement Flow
 
 ```
-User / Agent submits intent (UI, preset hook, or POST /theta-ai/agent-intent)
+Agent submits task (POST /task-request or OpenAI /v1/chat/completions)
   │
-  ├─ On-chain: submitIntent(serviceId, inputHash) or submitPresetIntent(presetId)
-  │     └─ TFUEL payment + 0.5% fee → CoreRevenueSplitter (30/30/25/15 split)
-  │
-  ▼
-CoreListener (ai-listener.js) detects InferenceIntentSubmitted event
-  │
-  ├─ Smart GPU Selector: RTX 4090 (1x) → A100 (2.5x) → H100 SXM (5x)
-  ├─ Routes to Theta EdgeCloud API (primary) or RapidAPI (fallback)
+  ├─ x402 handshake: 402 challenge → agent signs USDC (EIP-3009) → retry
+  │     └─ USDC fee settles on Base → X402_PAY_TO / Splits (ADR 0001)
   │
   ▼
-EdgeCloud executes inference (LLM, image gen, STT, voice clone, RAG, video, detection)
+Router (services/gateway) selects best provider
   │
-  ├─ completeIntent(intentId, outputHash, modelHash, latencyMs)
-  ├─ SP1 proof generated on EdgeCloud GPU (sub-200ms, batch=10 recursive rollup)
+  ├─ OpenAI-compatible / neocloud → DePIN GPU (EdgeCloud, Akash, Render) → local → last resort
+  │
+  ▼
+Provider executes inference (LLM, image gen, STT, voice clone, RAG, video, detection)
+  │
+  ├─ Tier 1: signed receipt returned by default
+  ├─ Tier 2 (on demand): SP1 settlement proof — AWS ECS prover → Succinct (~25s)
   │
   ▼
 settleIntent(intentId, proof, publicValues, nullifier)
@@ -229,7 +233,7 @@ settleIntent(intentId, proof, publicValues, nullifier)
 flowchart TB
     subgraph Users["Users / Agents / Protocols"]
         U1["👤 End User\n(xfuel.app)"]
-        U2["🤖 Autonomous Agent\n(/theta-ai/agent-intent)"]
+        U2["🤖 Autonomous Agent\n(/task-request)"]
         U3["🔗 External Protocol\n(xfuel-sdk)"]
     end
 
@@ -426,11 +430,12 @@ XFuel ships **16+ modular circuits** — each fully isolated with its own state,
 | Theta Mainnet Contracts | ✅ Deployed | VaultFactory, RevenueSplitter live (chain 361) |
 | **XFuel Subchain (privatenet)** | ✅ **Live** | `tsub360777` — registered, validator staked, blocks finalizing |
 | **XFuel Subchain (testnet)** | ⏳ Next | `tsub365001` — deploy after privatenet validation |
-| SP1 zkVM Prover | ✅ Operational | v6.0.2, sub-200ms on EdgeCloud, batch=10 (11.6x speedup) |
-| Live Inference Pipeline | ✅ Running | 15 presets, 3 GPU tiers, EdgeCloud + RapidAPI fallback |
-| Agent API + Webhooks | ✅ Live | `/theta-ai/agent-intent`, 7 endpoints, OpenAPI 3.0 |
-| Monitoring Dashboard | ✅ Live | Contract health, failure prediction, 10s auto-refresh |
-| Core Layer (EVM) | ✅ Deployed | ZKVerifierSP1, CoreRevenueSplitter (GET), veXFGovernance |
+| **Base verifier (`ZKVerifierSP1`)** | ✅ **Live (mainnet)** | `0x9373499645292715a2275A78eD65B14215C41c06` (chain 8453) |
+| **Public gateway** | ✅ **Live** | [`https://api-testnet.xfuel.app`](https://api-testnet.xfuel.app) — pay → infer → prove → receipt on Base Sepolia |
+| SP1 zkVM Prover (Tier 2) | ✅ Operational | AWS ECS `xfuel-sp1-prover` → validated on Succinct, ~25s/proof, ~270K gas |
+| x402 / USDC payments | ✅ Live (Base Sepolia) | public x402.org facilitator; Base **mainnet** facilitator not yet provisioned |
+| Agent API + Webhooks | ✅ Live | `/task-request`, `/v1/chat/completions`, `/receipt/:id`, webhooks, `/llms.txt` |
+| Core Layer (EVM) | ✅ Deployed | ZKVerifierSP1 (Base), SP1ProofHooks, USDC fee sink, veXFGovernance (pre-TGE) |
 | 16+ Circuits (EVM) | ✅ Deployed | Testnet-validated, 755+ tests passing |
 | veXF Governance | ✅ Active | Curve-style lock/vote, 3x max, ZK nullifiers |
 | Fee-to-Stake | ✅ Active | Multi-chain: Theta/Bittensor/Osmosis validator pools |
@@ -488,8 +493,8 @@ All six build phases are shipped:
 |------|--------|---------|
 | CertiK Phase 1 audit — `contracts/core/` | Preparing submission | None — ready |
 | Theta Grant application | Drafting | Testnet deployed addresses captured |
-| `xfuel-sdk` 0.1.0 publish to npm | Ready to publish | Final build check |
-| Mainnet deployment (Theta 361) | Post-audit | CertiK clearance required |
+| `xfuel-sdk` / `xfuel-mcp` npm publish | ✅ Published | `xfuel-sdk@0.2.0`, `xfuel-mcp@0.1.1` |
+| Base mainnet x402 facilitator | Pending | Needs CDP (or equivalent) mainnet facilitator |
 | CosmWasm governance whitelist (Osmosis/Persistence) | Proposal submitted | ⏳ On-chain governance vote |
 
 ---
@@ -502,7 +507,7 @@ All six build phases are shipped:
 |-------|-------------|
 | **Agent Console** | Dedicated operator dashboard — task queue, per-agent earnings, proof explorer, API key management |
 | **A2A Visual Dashboard** | Live graph of agent interactions, real-time fee flow, DePIN tier utilization |
-| **SP1 Prover → EdgeCloud Dedicated** | Migrate from on-demand to persistent CUDA for sub-200ms proof generation |
+| **SP1 Prover (live)** | AWS ECS `xfuel-sp1-prover` → validated on Succinct (~25s/proof); Interstellar prover track is future (§Whitepaper 12) |
 | **TDROP 2.0 Routing** | Route Machine & Agent Incentives portion of GET to Theta EdgeCloud GPU contributors via TDROP |
 | **Hyperlane Mailbox deploy** | Theta Mainnet (361) + Bittensor EVM (964) Mailbox — enables live cross-chain proof relay |
 
@@ -624,7 +629,8 @@ curl -X POST http://localhost:3002/task-request \
   -H "Content-Type: application/json" \
   -d '{
     "message_type": "inference_request",
-    "chain_id": "theta",
+    "chain_id": "base",
+    "payment": { "rail": "usdc" },
     "amount": "1000000",
     "sender": "0xYourAgentAddress",
     "model_id": "llama-3-70b",
@@ -1028,11 +1034,13 @@ npm run build        # Production build
 ```bash
 cd services/gateway
 npm install
-npm run dev                # Theta listener
-npm run ai-listener        # AI intent monitoring
-npm run m2m-server         # Agent API (port 3002) — 7 endpoints + webhooks
-pm2 start ecosystem.config.cjs  # Production (PM2)
+npm run m2m-server         # Agent API (port 3002) — task-request, /v1, receipts, webhooks
+# Production (PM2, as on the live demo box):
+pm2 start npm --name xfuel-m2m -- run m2m-server && pm2 save
 ```
+
+> Live deploy layout (Lightsail + PM2 app `xfuel-m2m`, prover URL, etc.) is documented
+> in [`docs/RUNTIME_STATE.md`](docs/RUNTIME_STATE.md).
 
 ### xfuel.app Website
 

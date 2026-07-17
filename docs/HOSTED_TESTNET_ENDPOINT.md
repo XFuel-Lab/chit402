@@ -4,9 +4,14 @@ Stands up **`https://api-testnet.xfuel.app`**: the XFuel M2M API + OpenAI-compat
 gateway, with a shared, rate-limited **public demo key** so the SDK and any OpenAI
 client work out of the box.
 
-- Server: `backend/theta-bridge/src/server.js` (M2M + `/v1/*`), port **3002**.
-- Env template: [`backend/theta-bridge/.env.testnet-demo.example`](../backend/theta-bridge/.env.testnet-demo.example)
+- Server: `services/gateway` (M2M + `/v1/*`), started with `npm run m2m-server`, port **3002**.
+- Env template: [`services/gateway/.env.testnet-demo.example`](../services/gateway/.env.testnet-demo.example)
 - SDK default now points here (`DEFAULT_BASE_URL`, `PUBLIC_DEMO_API_KEY = "xfuel-demo"`).
+- **Public entry is `https://api-testnet.xfuel.app` only** (behind TLS). The raw
+  `:3002` origin / any host IP is **not** publicly reachable — never share it as an endpoint.
+
+> **Current state:** [`docs/RUNTIME_STATE.md`](./RUNTIME_STATE.md) is the authoritative
+> as-deployed source (live endpoints, real vs mock, x402 + prover config). Read it first.
 
 > Target: an existing VPS/host we already run. The server is long-lived (Express +
 > WebSocket listeners), so run it as a managed process behind a TLS reverse proxy —
@@ -17,7 +22,7 @@ client work out of the box.
 ## 1. Configure
 
 ```bash
-cd backend/theta-bridge
+cd services/gateway
 cp .env.testnet-demo.example .env
 # edit .env: set M2M_API_KEYS (a real private key), THETA_EDGECLOUD_API_KEY (real
 # compute), optionally SP1_PROVER_URL (settlement proofs). Keep M2M_DEMO_MODE=true.
@@ -25,6 +30,20 @@ npm ci
 ```
 
 The demo key **must** stay `xfuel-demo` to match the SDK default (or change both).
+
+### Live x402 + prover config (as deployed on the testnet box)
+
+```bash
+# x402 / USDC — LIVE on base-sepolia via the public x402.org facilitator (no API key)
+X402_ENABLED=true
+X402_FACILITATOR_PROVIDER=x402
+X402_NETWORK=base-sepolia          # Base mainnet ("base") pending CDP provisioning
+X402_PROOF_BINDING=true
+# SP1 settlement prover — AWS ECS xfuel-sp1-prover behind the ALB (ingress locked to the box IP)
+SP1_PROVER_URL=http://xfuel-sp1-alb-1873465045.us-east-1.elb.amazonaws.com
+```
+
+ZAN is optional (only if `X402_FACILITATOR_PROVIDER=zan`) — not required and not a blocker.
 
 ## 2. Run as a managed process
 
@@ -37,9 +56,9 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/xfuel-protocol/backend/theta-bridge
+WorkingDirectory=/opt/xfuel-protocol/services/gateway
 ExecStart=/usr/bin/npm run m2m-server
-EnvironmentFile=/opt/xfuel-protocol/backend/theta-bridge/.env
+EnvironmentFile=/opt/xfuel-protocol/services/gateway/.env
 Restart=always
 RestartSec=5
 # The server drains in-flight requests on SIGTERM (up to 10s) before exiting.
@@ -56,7 +75,7 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload && sudo systemctl enable --now xfuel-testnet-api
 ```
 
-(or `pm2 start "npm run m2m-server" --name xfuel-testnet-api` if you use pm2.)
+(or `pm2 start "npm run m2m-server" --name xfuel-m2m` — from `services/gateway` — if you use pm2.)
 
 ## 3. DNS + TLS reverse proxy
 
@@ -97,7 +116,7 @@ curl https://api-testnet.xfuel.app/v1/chat/completions \
   -i    # -i to see the x-xfuel-* receipt headers
 
 # SDK (zero-config → hits this endpoint with the demo key)
-XFUEL_API_URL=https://api-testnet.xfuel.app npm --prefix sdk/js run example:openai
+XFUEL_API_URL=https://api-testnet.xfuel.app npm --prefix packages/sdk run example:openai
 ```
 
 ## 5. Demo limits & cost control

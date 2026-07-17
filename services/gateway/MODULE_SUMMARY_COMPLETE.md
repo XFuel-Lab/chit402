@@ -810,14 +810,14 @@ Before production:
 
 - [REVERSE_BURN_LOOP.md](./REVERSE_BURN_LOOP.md) - Detailed reverse-burn guide
 - [DEPLOYMENT_REVERSE_BURN.md](./DEPLOYMENT_REVERSE_BURN.md) - Complete deployment guide
-- [ARCHITECTURE.md](./ARCHITECTURE.md) - System architecture
-- [MODULE_STRUCTURE.md](./MODULE_STRUCTURE.md) - Module details
-- [E2E_TESTING_GUIDE.md](./E2E_TESTING_GUIDE.md) - Testing guide
+- [ARCHITECTURE.md](../../docs/_archive/legacy-bridge/ARCHITECTURE.md) - System architecture *(archived — legacy bridge)*
+- [MODULE_STRUCTURE.md](../../docs/_archive/legacy-bridge/MODULE_STRUCTURE.md) - Module details *(archived — legacy bridge)*
+- [E2E_TESTING_GUIDE.md](../../docs/_archive/legacy-bridge/E2E_TESTING_GUIDE.md) - Testing guide *(archived — legacy bridge)*
 
 ### Quick References
 
 - [QUICK_REFERENCE.md](./QUICK_REFERENCE.md) - Common commands
-- [QUICKSTART.md](./QUICKSTART.md) - Getting started
+- [QUICKSTART.md](../../docs/_archive/legacy-bridge/QUICKSTART.md) - Getting started *(archived — legacy bridge)*
 - [env.example](./env.example) - Environment template
 
 ### Troubleshooting

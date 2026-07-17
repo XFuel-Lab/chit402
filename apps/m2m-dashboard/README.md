@@ -13,7 +13,7 @@ A minimal React dashboard for testing the **XFuel M2M (Machine-to-Machine) API**
 
 ## Intended Users
 
-Backend and protocol developers who want a quick browser-based way to fire requests at the local Node.js bridge (`backend/theta-bridge/`) without using `curl` or Postman.
+Backend and protocol developers who want a quick browser-based way to fire requests at the local gateway (`services/gateway/`) without using `curl` or Postman.
 
 ## How to Run
 
@@ -26,7 +26,7 @@ npm run dev        # starts on http://localhost:5173
 ```
 
 Required env (see `.env.example`):
-- `VITE_API_URL` — base URL of the running `backend/theta-bridge` server
+- `VITE_API_URL` — base URL of the running `services/gateway` server
 
 ## What This Is NOT
 
@@ -39,9 +39,9 @@ Required env (see `.env.example`):
 For automated integration testing, prefer the TypeScript SDK instead:
 
 ```typescript
-import { XFuelClient } from '../../sdk/js/src'
-const client = new XFuelClient({ apiUrl: 'http://localhost:3001' })
+import { XFuelClient } from 'xfuel-sdk'
+const client = new XFuelClient({ baseUrl: 'http://localhost:3002' })
 await client.submitInference({ model: 'llama3', prompt: 'Hello' })
 ```
 
-See [`sdk/js/README.md`](../../sdk/js/README.md) for full API reference.
+See [`packages/sdk/README.md`](../../packages/sdk/README.md) for full API reference.

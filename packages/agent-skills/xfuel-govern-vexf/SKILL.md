@@ -65,7 +65,7 @@ Lock XF, check voting power, create proposals, and vote.
 
 ## Runnable example
 
-[`sdk/js/examples/govern-vexf.ts`](../../sdk/js/examples/govern-vexf.ts) —
+[`packages/sdk/examples/govern-vexf.ts`](../../sdk/examples/govern-vexf.ts) —
 `npx tsx examples/govern-vexf.ts` walks power → lock → propose → vote. Calldata
 builders run fully offline; the voting-power read runs when `THETA_RPC_URL` +
 `VE_GOVERNANCE_ADDRESS` are set.

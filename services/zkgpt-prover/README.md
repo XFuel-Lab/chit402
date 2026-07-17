@@ -2,6 +2,12 @@
 
 > Scaffolding for integrating the [zkGPT](https://eprint.iacr.org/2025/1184) prover into XFuel's inference pipeline. When a task is submitted with `proof_system: zkgpt`, the gateway (`services/gateway`) can route proof generation here instead of SP1. Settlement home is **Base** (ADR 0002); EdgeCloud is an optional run host for the prover image, not product identity.
 
+> ⚠️ **STATUS: Tier-3 zkGPT proof-of-inference is ROADMAP / BLOCKED on GPU capacity.**
+> It is **not** a live or demo path today. The bundled mock server/wrapper is **DEV-ONLY**
+> (stub proofs for E2E plumbing) and must never be presented as a live/demo proof. The live
+> verifiable-compute tiers are **Tier-1 signed receipt** and **Tier-2 SP1 ZK settlement
+> proof** (see [`docs/RUNTIME_STATE.md`](../../docs/RUNTIME_STATE.md)).
+
 ## Upstream
 
 - **Paper:** [eprint.iacr.org/2025/1184](https://eprint.iacr.org/2025/1184) — zkGPT: An Efficient Non-interactive Zero-knowledge Proof Framework for LLM Inference
@@ -16,7 +22,7 @@
 
 - **EdgeCloud** is used to **run** the prover (we already deploy the mock there). You deploy a **pre-built** Docker image via the [Theta EdgeCloud dashboard](https://www.thetaedgecloud.com/dashboard); EdgeCloud does not provide a general “build server” or SSH. So: build the image somewhere with enough RAM, then deploy that image to EdgeCloud (same flow as the current zkGPT mock).
 - **Recommended flow:**
-  1. **Laptop:** Develop, run mock, run `.\scripts\test-task-zkgpt.ps1` against `ZKGPT_PROVER_URL` (mock or EdgeCloud).
+  1. **Laptop:** Develop and run the DEV-ONLY mock, run `.\scripts\test-task-zkgpt.ps1` against a mock `ZKGPT_PROVER_URL` (plumbing only — not a live proof).
   2. **Build** on your laptop (steps below or `Dockerfile.build`). **Run** the demo locally or deploy the binary in an image to EdgeCloud; 200GB is for running the prover, not for the build.
   3. **EdgeCloud:** Deploy the new image as your zkGPT prover endpoint; point `ZKGPT_PROVER_URL` at it and run real proof tests from your laptop.
 
@@ -89,7 +95,11 @@ Expected response (JSON):
 
 Optional: `GET /health` → 200 when the prover is ready.
 
-## Mock server (E2E testing)
+## Mock server (E2E testing) — DEV-ONLY
+
+> ⚠️ **DEV-ONLY.** This mock returns **stub proofs** purely to exercise the M2M/gateway
+> plumbing. It is **never** a demo or live proof path, and on-chain settlement still reverts
+> with `ProofFailed` until ZKG-2 (real verifier). Tier-3 zkGPT is roadmap/blocked on GPU.
 
 A mock HTTP server is included so you can test the full flow without building the C++ prover:
 
@@ -99,7 +109,7 @@ node zkgpt-prover/mock-server.cjs
 # Listens on http://localhost:81 (or ZKGPT_PROVER_PORT)
 ```
 
-Then set `ZKGPT_PROVER_URL=http://localhost:81` in backend (theta-bridge) or core-layer. Submit a task with `proof_system: "zkgpt"`; the backend will call the mock and receive a stub proof (~101 KB), nullifier, and public inputs. On-chain settlement will still revert with `ProofFailed` until ZKG-2 (real verifier) is implemented.
+Then set `ZKGPT_PROVER_URL=http://localhost:81` in `services/gateway/.env` (or core-layer). Submit a task with `proof_system: "zkgpt"`; the gateway will call the mock and receive a stub proof (~101 KB), nullifier, and public inputs. On-chain settlement will still revert with `ProofFailed` until ZKG-2 (real verifier) is implemented.
 
 Optional env for mock: `ZKGPT_PROVER_PORT` (default 81), `ZKGPT_MOCK_DELAY_MS` (default 500, simulates proving time).
 
@@ -134,7 +144,7 @@ docker build -t xfuel-zkgpt-prover zkgpt-prover
 docker run -p 81:81 -e ZKGPT_PROVER_PORT=81 xfuel-zkgpt-prover
 ```
 
-**Docker — full (C++ prover + adapter, for Theta GPU node):** Multi-stage build: compile upstream zkGPT, then run Node wrapper + adapter. Build from **repo root** (takes a while). **Theta currently runs `xfuel/xfuel-zkgpt-prover:full-v4`.** After pulling the simplified Dockerfile, build a new tag (e.g. full-v5) and set the Theta template to that tag.
+**Docker — full (C++ prover + adapter, for Theta GPU node):** Multi-stage build: compile upstream zkGPT, then run Node wrapper + adapter. Build from **repo root** (takes a while). **No full zkGPT prover is currently running** — the `xfuel/xfuel-zkgpt-prover:full-v4` image is not deployed while Tier-3 is blocked on GPU capacity. When capacity is available, build a new tag (e.g. full-v5) and set the Theta template to that tag.
 
 ```bash
 docker build -f services/zkgpt-prover/Dockerfile.full --platform linux/amd64 -t xfuel/xfuel-zkgpt-prover:full-v5 .
@@ -147,7 +157,7 @@ Push and deploy to Theta EdgeCloud per [zkgpt-prover/THETA-EDGECLOUD-DEPLOY.md](
 Do **not** add a custom start command (e.g. ulimit) to fix deploy — that caused 0/20. Only if you get 1/1 and then see `failed to create fsnotify watcher: too many open files` in logs when proving and you do **not** see `[zkgpt-entrypoint] ulimit -n:` in the logs, the platform is not using the image’s entrypoint (it starts the container with `node wrapper-template.cjs` directly). **Fix:** In the Theta EdgeCloud deployment, set the container **start command** to this exact value so `ulimit` runs before Node:
 Try container start command: `sh -c "ulimit -n 65536 2>/dev/null || true; exec node /app/wrapper-template.cjs"`. If the platform allows setting container ulimits (e.g. `nofile=65536`), you can use that instead. If you *do* see `[zkgpt-entrypoint] ulimit -n: 65536` but still get `failed to create fsnotify watcher: too many open files`, the limit is **kernel inotify** (`fs.inotify.max_user_watches` / `max_user_instances`). The entrypoint tries to raise these when the container can write `/proc/sys/fs/inotify/`; if not, the host/platform must set them (e.g. host: `sysctl -w fs.inotify.max_user_watches=524288` and `fs.inotify.max_user_instances=512`; in Theta/Kubernetes use the deployment’s sysctl option if available).
 
-**Note:** The C++ prover can use a lot of RAM (range phase ~38s then GKR). If the container has limited memory, `demo_llm_run` may be OOM-killed and the backend will see `proof_outcome: regenerable` and `sp1_proof.error: 502`. Use a node with more memory for real proofs, or run the mock image for E2E with `proof_outcome: valid`.
+**Note:** The C++ prover can use a lot of RAM (range phase ~38s then GKR). If the container has limited memory, `demo_llm_run` may be OOM-killed and the backend will see `proof_outcome: regenerable` and `sp1_proof.error: 502`. A real deployment needs a node with more memory (blocked on GPU capacity today). The DEV-ONLY mock image only exercises E2E plumbing (stub proof) — it is not a live proof.
 
 ## Current status
 

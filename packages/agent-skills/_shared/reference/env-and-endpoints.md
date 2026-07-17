@@ -41,7 +41,8 @@ The SDK defaults to the hosted testnet demo endpoint + public demo key, so
 ## Conventions
 
 - **Amounts** are strings in wei. Minimum task amount is `10000` (dust protection).
-- **Fees**: 50–100 bps (default 50 = 0.5%), split 30% BBB / 30% LP / 25% veXF / 15% Treasury.
+- **Settlement home**: `chain_id: "base"` is the default settlement/routing home (USDC via x402; ADR 0002). `theta`, `akash`, `bittensor`, etc. are routing hints.
+- **Fees**: 50–100 bps (default 50 = 0.5%). Token-light: the protocol USDC fee lands at **one Base address** (`X402_PAY_TO` / Splits; ADR 0001). The legacy `CoreRevenueSplitter` 30/30/25/15 split is **deprecated** from the fee path.
 - **Proof systems**: `sp1` (default) or `zkgpt`. The `proof_system` in a status
   response is authoritative (the backend may fall back to SP1 if zkGPT is unset).
 - **Webhook signature**: `X-XFuel-Signature: sha256=<hmac>`, HMAC-SHA256 over the
@@ -54,8 +55,9 @@ The SDK defaults to the hosted testnet demo endpoint + public demo key, so
 - Payment-bearing skills accept a `payment` object (`{ rail: 'usdc' | 'tfuel', ... }`).
   **USDC via x402 (on Base) is the default/recommended rail**; **TFUEL on Theta** is
   the secondary rail. When `payment` is omitted, the server `X402_DEFAULT_RAIL` applies.
-- The server-side 402 handshake is **flag-gated** (`X402_ENABLED`, default off — Phase 1).
-  With the flag off (or on failure with `X402_FALLBACK_TFUEL`), requests settle via TFUEL.
+- The server-side 402 handshake is **live on the hosted testnet** (`X402_ENABLED=true`,
+  `X402_FACILITATOR_PROVIDER=x402`, `X402_NETWORK=base-sepolia`; Base mainnet pending CDP).
+  See [`docs/RUNTIME_STATE.md`](../../../../docs/RUNTIME_STATE.md) for as-deployed config.
 - **Agent side:** an unpaid `usdc` request gets a `402` challenge; retry with the
   `X-PAYMENT` header (+ `X-PAYMENT-NONCE` echoing `accepts[].extra.nonce`). The payer is
   **pluggable and agent-side** — skills/SDK never hold private keys.
@@ -65,7 +67,7 @@ The SDK defaults to the hosted testnet demo endpoint + public demo key, so
 
 ## SDK
 
-Skills SHOULD use the JS SDK (`xfuel-sdk`, see `sdk/js/`) rather than raw fetch:
+Skills SHOULD use the JS SDK (`xfuel-sdk`, see `packages/sdk/`) rather than raw fetch:
 
 ```js
 import { XFuelClient } from 'xfuel-sdk';

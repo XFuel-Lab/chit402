@@ -71,7 +71,7 @@ const payer = createEip3009Payer(new Wallet(process.env.XFUEL_PAYER_PK));
 ```
 
 Runnable end-to-end example (quote → pay → prove):
-[`sdk/js/examples/pay-with-usdc.ts`](../../sdk/js/examples/pay-with-usdc.ts) —
+[`packages/sdk/examples/pay-with-usdc.ts`](../../sdk/examples/pay-with-usdc.ts) —
 `npx tsx examples/pay-with-usdc.ts` (mock payer by default; set `XFUEL_PAYER_PK`
 to sign real USDC on Base).
 

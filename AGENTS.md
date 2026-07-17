@@ -51,7 +51,7 @@ Body:
   "sender": "0xYourAddress",
   "model_id": "llama-3-70b",            // required for inference_request
   "input_hash": "0xabc...",             // keccak256 of your input (required for inference)
-  "payment": { "rail": "usdc", "network": "base" }  // DEFAULT; optional legacy rails may exist
+  "payment": { "rail": "usdc", "network": "base-sepolia" }  // use network from /task-quote (hosted testnet = base-sepolia; base mainnet facilitator not yet provisioned)
 }
 
 Response: { taskId, status, routedTo, estimatedGas }
@@ -115,7 +115,7 @@ EdgeCloud is a **GPU provider option**, not settlement home (ADR 0002).
 ## ZK Proof Pipeline
 
 1. Task intent submitted → fee tagged with `ProviderTag` (THETA_NATIVE=1, DEPIN_AKASH=3, etc.)
-2. SP1 prover (CUDA, EdgeCloud Dedicated) generates Groth16 proof (~260 bytes, ~270K gas)
+2. SP1 prover (AWS ECS `xfuel-sp1-prover`, validated on Succinct, ~25s) generates Groth16 proof (~260 bytes, ~270K gas)
 3. `AITaskPublicValues` committed: `(taskType, sourceChain, destChain, taskIdHash, senderHash, netAmount, feeAmount, feeBps, outputHash, blockHeight, timestamp, nonce)`. **Phase 2 (flag-gated, `X402_PROOF_BINDING`):** an optional 13th field `paymentCommitment` binds the x402 `payment_ref` so the proof attests payment + computation (`SP1ProofHooks.encodeAITaskPublicValuesV2`; surfaced as `payment_binding`). Activates on SP1 guest v2 rebuild (new `programVKey`).
 4. `ZKVerifierSP1.verifyProof(programVKey, publicValues, proofBytes)` on **Base**
 5. Nullifier stored → replay protection
@@ -207,8 +207,7 @@ npm install xfuel-sdk  # live on npm @0.2.0 (Apache-2.0). On-chain module: impor
 import { XFuelClient } from 'xfuel-sdk';
 
 const client = new XFuelClient({
-  rpc: 'https://eth-rpc-api-testnet.thetatoken.org/rpc',
-  chainId: 365,
+  baseUrl: 'https://api-testnet.xfuel.app',   // live public gateway
   apiKey: process.env.XFUEL_API_KEY
 });
 
@@ -338,4 +337,4 @@ XFuel attributes and cites third-party research used in the protocol. Full citat
 | **Fair Exchange (PAS)** (Phase 1) | [eprint.iacr.org/2026/395](https://eprint.iacr.org/2026/395) — *Delegated Payments for AI Agents: Fair Exchange on Bitcoin/EVM* |
 | **Interstellar** (research track) | [eprint.iacr.org/2025/1294](https://eprint.iacr.org/2025/1294) (Jieyi Long, Theta Labs; PKC 2026) |
 
-**Phase 1 deploy (optional env):** `FAIR_EXCHANGE_PROXY_ADDRESS` (deploy-full/testnet → setFairExchangeProxy), `ZK_VERIFIER_ZKGPT` (theta-inference.cjs), `ZKGPT_PROVER_URL` (backend + core-layer). See [docs/PHASE1_KICKOFF.md](docs/PHASE1_KICKOFF.md) post-deploy checklist.
+**Phase 1 deploy (optional env):** `FAIR_EXCHANGE_PROXY_ADDRESS` (deploy-full/testnet → setFairExchangeProxy), `ZK_VERIFIER_ZKGPT` (theta-inference.cjs), `ZKGPT_PROVER_URL` (`services/gateway` + core-layer; Tier-3 zkGPT is roadmap/blocked on GPU — the `services/zkgpt-prover/` mock is dev-only, never a live path). See [docs/PHASE1_KICKOFF.md](docs/PHASE1_KICKOFF.md) post-deploy checklist.

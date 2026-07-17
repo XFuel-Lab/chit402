@@ -187,18 +187,18 @@ npm run build
 
 ---
 
-## Backend Deployment
+## Gateway Deployment
 
 ```bash
-cd backend/theta-bridge
+cd services/gateway
 npm install
 
-# PM2 (production)
-pm2 start ecosystem.config.cjs
-
-# Docker/Kubernetes
-# See backend/theta-bridge/deployment.yaml
+# PM2 (production — as on the live demo box)
+pm2 start npm --name xfuel-m2m -- run m2m-server && pm2 save
 ```
+
+> Full live deploy layout (Lightsail, PM2 app `xfuel-m2m`, `SP1_PROVER_URL` → AWS ALB,
+> x402 config) is documented in [`RUNTIME_STATE.md`](RUNTIME_STATE.md).
 
 ---
 
@@ -217,7 +217,7 @@ npx serve dashboard -l 3000
 ### Fee Analytics
 
 ```bash
-cd backend/theta-bridge
+cd services/gateway
 
 # Prometheus + Grafana
 node src/fee-analytics.js --format prometheus --watch --port 9100

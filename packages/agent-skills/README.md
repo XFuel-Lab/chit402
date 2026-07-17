@@ -54,7 +54,7 @@ is safe while the facilitator rolls out. Preview per-rail pricing with `POST
 
 ## Install / use
 
-1. Run the XFuel M2M API server (`backend/theta-bridge/`, default port 3002) or
+1. Run the XFuel M2M API server (`services/gateway/`, `npm run m2m-server`, default port 3002) or
    point at a hosted deployment.
 2. Set environment: `XFUEL_API_URL` and `XFUEL_API_KEY`.
 3. Drop a skill directory into your agent's skills folder (e.g. Cursor/Claude

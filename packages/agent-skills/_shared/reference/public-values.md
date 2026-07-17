@@ -31,7 +31,7 @@ paymentCommitment = keccak256(abi.encodePacked(paymentRefHash, taskIdHash, payme
 
 (`paymentRail`: 1 = USDC, 2 = TFUEL). Encoded on-chain by
 `SP1ProofHooks.encodeAITaskPublicValuesV2(...)` and mirrored off-chain by
-`backend/theta-bridge/src/payment-binding.js` (parity-tested). Surfaced in
+`services/gateway/src/payment-binding.js` (parity-tested). Surfaced in
 `/task-status` and `/prove-result` as `payment_binding`. `in_proof` becomes `true`
 once the SP1 guest commits this layout (new `programVKey`); until then it is
 server-attested settlement metadata. The v1 12-field layout is unchanged.
@@ -52,7 +52,7 @@ the `/prove` request.
 3. **Prover host:** `SP1_PUBLIC_VALUES_V2=true` (CUDA, ZAN PowerZebra, or local host).
 4. **Backend:** `X402_PROOF_BINDING=true` + `X402_ENABLED=true` for USDC tasks.
 5. **Verify:** `payment_binding.in_proof === true` in `/task-status`, or run
-   `sdk/js/examples/pay-prove-verify.ts` (re-derives commitment independently).
+   `packages/sdk/examples/pay-prove-verify.ts` (re-derives commitment independently).
 
 **Rollback:** unset `SP1_PUBLIC_VALUES_V2` on the prover; v1 proofs and the existing
 vKey continue to work. No M2M API change between phases.
@@ -65,7 +65,7 @@ vKey continue to work. No M2M API change between phases.
 | Rust hooks (guest + host) | `core-layer/sp1-hooks/src/payment_binding.rs` |
 | SP1 guest verify | `sp1-prover/program/src/main.rs` (`validate_ai_task`, v2 branch) |
 | SP1 host version switch | `sp1-prover/host/src/main.rs` (`resolve_public_values_version`) |
-| Backend threading | `backend/theta-bridge/src/payment-binding.js`, `ai-listener.js` |
+| Backend threading | `services/gateway/src/payment-binding.js`, `services/gateway/src/ai-listener.js` |
 
 ## Nullifier
 

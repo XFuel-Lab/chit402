@@ -9,7 +9,7 @@
 ## Quick Start
 
 ```bash
-cd backend/theta-bridge
+cd services/gateway
 npm install
 
 # Start the M2M API server (port 3002)
@@ -58,37 +58,42 @@ Submit an AI task for routing to Akash, Bittensor (TAO), Osmosis, or Theta Edge 
 | `model_id` | string | Cond. | Required for `inference_request` |
 | `input_hash` | string | Cond. | Required for `inference_request`, `data_attestation` |
 | `output_hash` | string | Cond. | Required for `compute_result` |
-| `proof_system` | string | No | For `inference_request`: `sp1` (default) or `zkgpt` (Phase 1 zkGPT path). |
+| `proof_system` | string | No | For `inference_request`: `sp1` (default, LIVE — Tier‑2 settlement proof). `zkgpt` is **roadmap/blocked on GPU capacity**; the local zkGPT prover is a **dev-only mock**, not a live path. |
+| `payment` | object | No | Payment selector: `{ rail, network, maxAmount }`. Default rail is **USDC via x402** (`rail: "usdc"`, `network: "base-sepolia"` today — Base mainnet pending CDP); optional `rail: "tfuel"`. When omitted, the server `X402_DEFAULT_RAIL` applies. |
 | `subnet_id` | number | Cond. | Required for `bittensor` routing |
 | `theta_recipient` | string | No | Theta EVM settlement address |
 | `max_gpu_hours` | string | No | Akash GPU lease duration |
 
 **Examples:**
 
-Default (SP1 proof):
+Default (SP1 settlement proof, USDC via x402 on Base):
 ```bash
 curl -X POST http://localhost:3002/task-request \
   -H "Content-Type: application/json" \
   -H "X-API-Key: my-secret-key" \
   -d '{
     "message_type": "inference_request",
-    "chain_id": "akash",
+    "chain_id": "base",
     "amount": "1000000",
     "sender": "0xYourAgentAddress",
     "model_id": "llama-3-70b",
     "input_hash": "0xabcdef...",
-    "proof_system": "sp1"
+    "proof_system": "sp1",
+    "payment": { "rail": "usdc", "network": "base-sepolia", "maxAmount": "50000" }
   }'
 ```
 
-Phase 1 zkGPT path (requires `ZKGPT_PROVER_URL` configured):
+> `network: "base-sepolia"` is live today (public `x402.org` facilitator); Base
+> mainnet (`network: "base"`) is pending CDP provisioning.
+
+zkGPT path (**roadmap / blocked on GPU capacity** — the bundled prover is a dev-only mock, not a live path):
 ```bash
 curl -X POST http://localhost:3002/task-request \
   -H "Content-Type: application/json" \
   -H "X-API-Key: my-secret-key" \
   -d '{
     "message_type": "inference_request",
-    "chain_id": "theta",
+    "chain_id": "base",
     "amount": "1000000",
     "sender": "0xYourAgentAddress",
     "model_id": "llama-3-70b",
@@ -104,15 +109,15 @@ curl -X POST http://localhost:3002/task-request \
   "task_id": "m2m-task-1-1739299200000",
   "status": "accepted",
   "message_type": "inference_request",
-  "chain_id": "akash",
+  "chain_id": "base",
   "gross_amount": "1000000",
   "fee_amount": "5000",
   "net_amount": "995000",
   "fee_bps": 50,
   "verify_url": "http://localhost:3002/receipt/m2m-task-1-1739299200000",
   "fee_info": {
-    "description": "0.5% protocol fee → CoreRevenueSplitter (30% BBB / 30% GET / 25% veXF / 15% Treasury)",
-    "collector": "FeeCollector.wasm → CW20 Send → RevenueSplitter"
+    "description": "0.5% protocol USDC fee → single Base fee sink (X402_PAY_TO / Splits; ADR 0001, token-light)",
+    "collector": "X402_PAY_TO (Base) — see services/gateway/src/revenue-split.js"
   },
   "_links": {
     "status": "/task-status?task_id=m2m-task-1-1739299200000",
@@ -163,7 +168,7 @@ curl "http://localhost:3002/prove-result?task_id=m2m-task-1-1739299200000" \
     "fee_amount": "5000",
     "net_amount": "995000",
     "fee_bps": 50,
-    "revenue_split": { "bbb": "30%", "lp": "30%", "vexf": "25%", "treasury": "15%" }
+    "fee_sink": "X402_PAY_TO (single Base address / Splits; ADR 0001 — token-light, no per-fee 30/30/25/15 split)"
   }
 }
 ```
@@ -219,7 +224,7 @@ curl -X POST http://localhost:3002/a2a-message \
   "message_type": "compute_bid",
   "escrow_amount": "250000",
   "relay_fee": "25",
-  "relay_fee_info": "0.1% on escrowed amount → CoreRevenueSplitter (30/30/25/15)",
+  "relay_fee_info": "0.1% on escrowed amount → protocol fee sink on Base (X402_PAY_TO / Splits; ADR 0001)",
   "nonce": 1,
   "ttl": 3600
 }
@@ -344,11 +349,11 @@ Returns server health, configuration, AI listener metrics, and aggregate stats.
 
 | Fee Type | Rate | Collected By |
 |----------|------|-------------|
-| AI task fee | 0.5–1% (50–100 BPS) | `FeeCollector.wasm` |
+| AI task fee | 0.5–1% (50–100 BPS) | USDC fee sink on Base (`X402_PAY_TO` / Splits) |
 | A2A relay fee | 0.1% (10 BPS) on escrow | `AIDePINRouter.sol` |
 | Bridge fee | 0.5% (50 BPS) | Existing bridge flow |
 
-All fees distribute via CoreRevenueSplitter: 30% BBB, 30% GET (Growth & Expansion Treasury), 25% veXF, 15% Treasury. See [`Growth-Expansion-Treasury.md`](Growth-Expansion-Treasury.md) for GET sub-breakdown.
+**Token-light (go-forward, ADR 0001):** the protocol USDC fee lands at **one Base address** (`X402_PAY_TO` / Splits v2) — off the hot path and governance-adjustable. There is **no** hardcoded per-fee 30/30/25/15 split; any bucket fan-out is downstream treasury policy. The legacy `CoreRevenueSplitter` (native TFUEL, 30/30/25/15) is **deprecated** from the fee path. See `services/gateway/src/revenue-split.js`.
 
 ---
 
@@ -375,4 +380,4 @@ All fees distribute via CoreRevenueSplitter: 30% BBB, 30% GET (Growth & Expansio
 | `AIVerifier.wasm` | `RouteTask` / `SettleTask` execute messages |
 | `FeeCollector.wasm` | CW20 `Receive` hook, `TriggerFeeBurn` |
 | `sp1-prover/main.rs` | `validate_ai_task()`, `validate_a2a_message()` circuits |
-| `CoreRevenueSplitter.sol` | 30/30/25/15 fee distribution |
+| `services/gateway/src/revenue-split.js` | Token-light USDC fee sink on Base (`X402_PAY_TO` / Splits; ADR 0001). `CoreRevenueSplitter.sol` 30/30/25/15 is deprecated from the fee path. |

@@ -32,12 +32,12 @@ const client = new XFuelClient();
 //   apiKey: process.env.XFUEL_API_KEY, // higher limits than the public demo key
 // });
 
-// Submit an AI inference task
+// Submit an AI inference task (USDC via x402 on Base is the default rail)
 const task = await client.submitInference(
   'meta-llama/Llama-3.2-3B-Instruct',
   '0xYourWalletAddress',
-  '1000000000000000000',    // 1 TFUEL in wei
-  { chain_id: 'theta' }
+  '1000000',                // gross task value (min 10000)
+  { chain_id: 'base', payment: { rail: 'usdc' } }  // network from /task-quote (hosted testnet = base-sepolia)
 );
 
 console.log('Task ID:', task.task_id);
@@ -234,11 +234,12 @@ try {
 
 | `chain_id` | Network |
 |---|---|
-| `theta` | Theta Mainnet / Testnet (chain 361 / 365) |
+| `base` | **Base — settlement + proof home (chain 8453 / Sepolia 84532); default** |
 | `bittensor` | Bittensor EVM (chain 964 / 945) |
 | `akash` | Akash Network (Cosmos) |
 | `osmosis` | Osmosis (IBC) |
 | `persistence` | Persistence (IBC) |
+| `theta` | Theta (legacy routing label; EdgeCloud is a provider option) |
 
 ## License
 

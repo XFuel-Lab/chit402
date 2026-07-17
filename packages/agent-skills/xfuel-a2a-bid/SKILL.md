@@ -31,7 +31,7 @@ capability_query                    submitInference (USDC/x402 | TFUEL)   settle
 - The **delegated compute** is an ordinary M2M task and settles in **USDC via x402 (default)
   or TFUEL** — see `xfuel-submit-inference` and `../_shared/reference/payments-x402.md`.
 
-**Runnable example:** [`sdk/js/examples/a2a-swarm.ts`](../../sdk/js/examples/a2a-swarm.ts)
+**Runnable example:** [`packages/sdk/examples/a2a-swarm.ts`](../../sdk/examples/a2a-swarm.ts)
 — `npx tsx examples/a2a-swarm.ts` (swarm calldata + payer run offline; the REST
 steps run against a live API and skip gracefully when it's unreachable).
 

@@ -9,10 +9,10 @@ payment-bearing skill accepts a `payment` object; when omitted, the server defau
 
 ```jsonc
 {
-  "rail": "usdc",        // "usdc" (default) | "tfuel"
-  "asset": "USDC",       // usdc only
-  "network": "base",     // usdc only: "base" (default) | "solana"
-  "maxAmount": "50000"   // smallest unit: USDC = 6dp (50000 = $0.05), TFUEL = wei
+  "rail": "usdc",              // "usdc" (default) | "tfuel"
+  "asset": "USDC",             // usdc only
+  "network": "base-sepolia",   // usdc only: "base-sepolia" (LIVE today) | "base" (mainnet, pending CDP) | "solana"
+  "maxAmount": "50000"         // smallest unit: USDC = 6dp (50000 = $0.05), TFUEL = wei
 }
 ```
 
@@ -28,9 +28,9 @@ POST /task-quote { model_id?, amount? }
 ## USDC/x402 handshake (agent side)
 
 ```
-1. POST /task-request { ..., payment: { rail: "usdc", network: "base", maxAmount } }
+1. POST /task-request { ..., payment: { rail: "usdc", network: "base-sepolia", maxAmount } }
 2. ← 402 Payment Required + body.accepts[] { scheme:"exact", network, asset, maxAmountRequired, payTo, extra:{ nonce, expiresAt } }
-3. Agent-side payer signs USDC on Base for the challenge → produces the X-PAYMENT header
+3. Agent-side payer signs USDC on Base (base-sepolia today) for the challenge → produces the X-PAYMENT header
 4. Retry POST /task-request with headers  X-PAYMENT: <blob>  and  X-PAYMENT-NONCE: <extra.nonce>
    (the nonce may instead be embedded as a `nonce` field inside a JSON / base64-JSON X-PAYMENT blob)
 5. Server verifies + settles via the facilitator (binds nonce/amount, rejects replays) → { task_id, payment_rail:"usdc", payment_ref }
@@ -56,7 +56,7 @@ const client = new XFuelClient({ baseUrl, apiKey });
 
 // Dev/CI — works against the mock facilitator; does NOT move real funds.
 const task = await client.submitInference('llama-3-70b', '0xAddr', '1000000', {
-  payment: { rail: 'usdc', network: 'base', maxAmount: '50000' },
+  payment: { rail: 'usdc', network: 'base-sepolia', maxAmount: '50000' }, // base-sepolia is LIVE; mainnet "base" pending CDP
   payer: createMockPayer(),
 });
 
@@ -72,11 +72,11 @@ await client.submitTaskWithPayment({ /* task params */, payment: { rail: 'usdc' 
 - `submitTaskWithPayment(params, payer)` — generic; runs the 402 loop.
 - `submitInference(model, sender, amount, { payment, payer })` — inference shorthand.
 - Omit `payer` (or use `{ rail: 'tfuel' }`) to settle via TFUEL. If the server settles
-  without a 402 (flag off / TFUEL fallback), the payer is never called.
+  without a 402 (TFUEL rail), the payer is never called.
 - Payers: `createMockPayer()` (dev/CI, `xfuel-sdk`), `createEip3009Payer(signer)`
   (Base USDC, `xfuel-sdk/onchain`), `createSignerPayer(signFn)` (generic). Also
   `selectAccept(challenge)`.
-- **Runnable example:** `sdk/js/examples/pay-with-usdc.ts` (`npx tsx examples/pay-with-usdc.ts`).
+- **Runnable example:** `packages/sdk/examples/pay-with-usdc.ts` (`npx tsx examples/pay-with-usdc.ts`).
 
 The EIP-3009 `authorization` blob delivered to the facilitator is
 `{ type:'eip3009-transferWithAuthorization', domain, message, signature }` where
@@ -91,12 +91,13 @@ submits it via `USDC.transferWithAuthorization(...)`.
 
 No 402 handshake — the existing amount-in-wei M2M flow settles on Theta (361/365).
 
-## Settlement model (Phase 1)
+## Settlement model (token-light, ADR 0001)
 
-- USDC lands in a **Base treasury** (`X402_PAY_TO`).
-- The Theta-side fee split (30% BBB / 30% GET-LP / 25% veXF / 15% Treasury) is
-  reconciled from the Base treasury by `payment_ref` via a **deferred/periodic
-  bridge** — not synchronously. TFUEL payments settle directly on Theta as before.
+- The protocol USDC fee lands at **one Base address** (`X402_PAY_TO` / Splits) —
+  off the hot path. There is **no** synchronous per-fee 30/30/25/15 split; bucket
+  fan-out (if any) is downstream, governance-adjustable treasury policy on Base.
+  The legacy `CoreRevenueSplitter` (native TFUEL, 30/30/25/15) is **deprecated**
+  from the fee path. TFUEL payments still settle directly on Theta.
 
 ## Replay & binding
 
@@ -107,8 +108,8 @@ nullifiers).
 
 ## Proof binding (Phase 2, flag-gated)
 
-`X402_PROOF_BINDING` (default off) binds the settlement `payment_ref` into the SP1
-proof so it attests **payment + computation**. When enabled for a USDC task,
+`X402_PROOF_BINDING` (enabled on the live testnet) binds the settlement `payment_ref`
+into the SP1 proof so it attests **payment + computation**. When enabled for a USDC task,
 `/task-status` and `/prove-result` return a `payment_binding` object
 (`{ version, rail, commitment, payment_ref_hash, amount, in_proof }`), also exposed
 as the SDK `PaymentBinding` type. The `commitment` mirrors
@@ -121,19 +122,22 @@ and `docs/X402_ADAPTER.md`.
 
 | Flag | Meaning |
 |------|---------|
-| `X402_ENABLED` | Master switch. `false` → server keeps the TFUEL path only. |
+| `X402_ENABLED` | Master switch. Live testnet runs `true`. |
+| `X402_FACILITATOR_PROVIDER` | Facilitator backend. **`x402`** (primary; public `x402.org/facilitator`, no API key) — live on base-sepolia. `zan` is optional/alternative. |
+| `X402_NETWORK` | Payment network. Live: `base-sepolia`. Mainnet `base` pending CDP. |
 | `X402_DEFAULT_RAIL` | `usdc` (default on Base; ADR 0002). |
 | `X402_FALLBACK_TFUEL` | If `usdc` requested but facilitator unavailable: `true` → fall back to TFUEL; `false` → `503`. |
-| `ZAN_X402_GATEWAY_URL` / `ZAN_X402_API_KEY` | Facilitator (verify + settle). |
-| `X402_PAY_TO` / `X402_NETWORK` / `X402_ASSET` | Base treasury + rail defaults. |
+| `ZAN_X402_GATEWAY_URL` / `ZAN_X402_API_KEY` | Optional ZAN facilitator (only when `X402_FACILITATOR_PROVIDER=zan`). |
+| `X402_PAY_TO` / `X402_ASSET` | Base treasury + asset defaults. |
 
-**Status (Phase 1 — implemented, flag-gated):** the server-side 402 handshake on
-`POST /task-request` is live behind `X402_ENABLED` (default **off**). With the flag
-off, `usdc` requests silently use the TFUEL path — behavior is unchanged. With the
-flag on, an unpaid `usdc` request returns a bound 402 challenge; a retry with a valid
-`X-PAYMENT` (+ nonce) is verified and settled, and `payment_rail="usdc"` +
-`payment_ref` are attached to the task. Until the ZAN facilitator is live, keep the
-flag off (or `X402_FALLBACK_TFUEL=true`). Always trust the `payment_rail` field in the
-status response. For local/CI, run the mock facilitator
-(`backend/theta-bridge/src/x402-mock-facilitator.js`); the full loop is covered by
-`backend/theta-bridge/test/x402-server.test.mjs`.
+**Status — LIVE on testnet:** the server-side 402 handshake on `POST /task-request`
+is enabled on the hosted testnet (`X402_ENABLED=true`, `X402_FACILITATOR_PROVIDER=x402`
+against the public `x402.org` facilitator, `X402_NETWORK=base-sepolia`,
+`X402_PROOF_BINDING=true`). An unpaid `usdc` request returns a bound 402 challenge; a
+retry with a valid `X-PAYMENT` (+ nonce) is verified and settled, and
+`payment_rail="usdc"` + `payment_ref` are attached to the task. Base **mainnet**
+(`network: "base"`) is not provisioned yet (needs CDP). ZAN is optional, not required,
+and not a blocker. Always trust the `payment_rail` field in the status response. For
+local/CI, run the mock facilitator (`services/gateway/src/x402-mock-facilitator.js`);
+the full loop is covered by `services/gateway/test/x402-server.test.mjs`. See
+[`docs/RUNTIME_STATE.md`](../../../../docs/RUNTIME_STATE.md) for as-deployed config.

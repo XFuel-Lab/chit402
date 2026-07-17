@@ -5,9 +5,9 @@ client or agent framework can use XFuel by swapping a single `baseURL` — no
 XFuel-specific integration required. Every response additionally carries a
 **verifiable-compute receipt**.
 
-- Source: `backend/theta-bridge/src/openai-gateway.js`
+- Source: `services/gateway/src/openai-gateway.js`
 - Wired into the M2M server: `services/gateway/src/server.js`
-- Runnable example: `sdk/js/examples/openai-drop-in.ts` (`npm run example:openai`)
+- Runnable example: `packages/sdk/examples/openai-drop-in.ts` (`npm run example:openai`)
 
 ---
 
@@ -82,7 +82,9 @@ OpenAI clients that drop unknown body fields) and in `proof.links.receipt`. Abso
   for real compute.
 - `proof.status`:
   - `pending` — an SP1 prover is configured and a settlement proof is being
-    generated asynchronously (poll `proof.links.proof`).
+    generated asynchronously (poll `proof.links.proof`). The hosted testnet has
+    **LIVE async SP1** (AWS ECS `xfuel-sp1-prover` → validated on Succinct, ~25s/proof)
+    whenever `SP1_PROVER_URL` is set.
   - `unavailable` — no prover configured (`SP1_PROVER_URL` unset).
   - `skipped` — compute was mock, so no proof was attempted.
 - `proof.attests` — the SP1 proof binds **settlement metadata + a commitment to
@@ -90,13 +92,13 @@ OpenAI clients that drop unknown body fields) and in `proof.links.receipt`. Abso
   is deliberately stated so adopters are never misled.
 - `payment.rail=unmetered` — the OpenAI path is not x402-metered in Phase 1. For
   USDC settlement over x402, use `POST /task-request` with
-  `payment.rail="usdc"` (see `docs/payments-x402.md`).
+  `payment.rail="usdc"` (see `docs/X402_ADAPTER.md`).
 
 ## How it works
 
 1. The request is routed through the 6-tier DePIN `ComputeRouter`
-   (`circuits/theta-inference/`). Real compute runs when a provider key is set;
-   otherwise a labelled mock is returned.
+   (`packages/circuit-runtime/theta-inference/`). Real compute runs when a provider
+   key is set; otherwise a labelled mock is returned.
 2. A completed task is registered in the `AIListener` so the existing
    `/task-status`, `/prove-result`, and webhook machinery work unchanged.
 3. An SP1 settlement proof is generated **asynchronously and non-fatally**
@@ -109,7 +111,7 @@ OpenAI clients that drop unknown body fields) and in `proof.links.receipt`. Abso
 | `OPENAI_GATEWAY_MODELS` | `llama-3-70b,xfuel-auto` | CSV of advertised model IDs. `xfuel-auto` lets the router choose. |
 | `OPENAI_GATEWAY_TASK_AMOUNT` | `10000` | Accounting amount (wei) for the fee/proof record on the unmetered path. |
 | `THETA_EDGECLOUD_API_KEY` | — | Enables real EdgeCloud compute (else mock). |
-| `SP1_PROVER_URL` | — | Enables async settlement proofs. |
+| `SP1_PROVER_URL` | — | Enables async settlement proofs. Set on hosted testnet → **LIVE** SP1 (AWS ECS prover, validated on Succinct, ~25s/proof). |
 | `M2M_API_KEYS` | — | CSV of accepted API keys (open mode if unset). |
 
 ## Roadmap

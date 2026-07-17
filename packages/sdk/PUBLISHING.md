@@ -8,7 +8,7 @@ build + tests.
 **Confirmed decisions:**
 - **Name:** `xfuel-sdk` (unscoped — confirmed available; matches `npm install
   xfuel-sdk` in `AGENTS.md`, README, and the skills).
-- **License:** Apache-2.0 (aligned with the repo root; `sdk/js/LICENSE` bundled).
+- **License:** Apache-2.0 (aligned with the repo root; `packages/sdk/LICENSE` bundled).
 
 ## One-time setup
 
@@ -26,7 +26,7 @@ build + tests.
 ## Publish
 
 ```bash
-cd sdk/js
+cd packages/sdk
 npm login                       # interactive; stores token
 npm version patch               # or minor/major — bumps version + git tag
 npm publish                     # runs prepublishOnly (build + test) first
