@@ -1,47 +1,63 @@
-# ZKG-5: zkGPT Prover & Verifier Benchmarks
+# XFuel zkLLM — Benchmark Harness (Phase 5 / M5.x)
 
-> Placeholder for Phase 1 benchmark results. Fill once the zkGPT prover (ZKG-1) and on-chain verifier (ZKG-2) are operational.
+Tracks prove/verify time, proof size, and **RAM** for the zkLLM prover. Phase 5 is RAM-bound (not
+GPU) — this doc is where we record real numbers as milestones land and hardware is sized.
 
-**References:** [eprint.iacr.org/2025/1184](https://eprint.iacr.org/2025/1184), [ZKG2_VERIFIER_SPEC.md](ZKG2_VERIFIER_SPEC.md), [zkgpt-prover/README.md](../zkgpt-prover/README.md).
+Harness: [`services/zkllm-prover`](../services/zkllm-prover) → `cargo run --release --example prove_block M K N`.
 
----
+## M5.1 — generic matmul argument (the architecture-agnostic core)
 
-## 1. What to measure
+Single `C = A·B` proof (sumcheck + Keccak256 Fiat–Shamir). Proof size = `log2(K)·3 + log2(M) + log2(N) + 3`
+field elements (~32 B each) — succinct and logarithmic in the inner dimension.
 
-| Metric | Source | Notes |
-|--------|--------|--------|
-| **Prover time (ms)** | zkGPT prover service / upstream repo | Time from request to proof ready (e.g. single block or GPT-2-small). Paper: &lt;25 s for GPT-2. |
-| **Proof size (bytes)** | Prover output | Expect ~101 KB per paper. |
-| **Verification gas** | On-chain `ZKVerifierZkGPT.verifyProof` | Gas used once real GKR+Lasso verifier is implemented. Stub is not representative. |
-| **End-to-end latency** | Task submit → proof → verify → settle | From M2M request to settlement event. |
+**Reference run** (dev laptop, single core, debug-free `--release`; indicative only):
 
----
+| M×K·K×N | matmul build | prove | verify | sumcheck rounds | proof (field elts) |
+|---------|-------------|-------|--------|-----------------|--------------------|
+| 256×256 · 256×256 | ~1.0 s | ~21 ms | ~32 ms | 8 | 43 |
+| 512×512 · 512×512 | _tbd_ | _tbd_ | _tbd_ | 9 | 48 |
+| 1024×1024 · 1024×1024 | _tbd_ | _tbd_ | _tbd_ | 10 | 53 |
 
-## 2. How to run (when E2E is ready)
+> The proof is tiny (tens of field elements) and verify is milliseconds regardless of matrix size —
+> the cost is prover-side and scales with the matmul, exactly as intended.
 
-1. **Prover:** Run upstream zkGPT (or HTTP wrapper) with a fixed model/input. Record wall-clock time and proof size. Optionally run multiple trials and report min/avg/max. *Until then:* the mock server (`node zkgpt-prover/mock-server.cjs`) returns ~101 KB stub proofs; you can measure client round-trip with `npm run test:zkgpt-mock`.
-2. **Verifier:** Deploy `ZKVerifierZkGPT` with real implementation (ZKG-2). Call `verifyProof(circuitId, publicValues, proofBytes, nullifier)` and record `gasUsed` from the receipt. The stub verifier does not reflect real verification cost.
-3. **E2E:** Submit an `inference_request` with `proof_system: zkgpt`; note timestamp at submit and at settlement event; compute latency.
+## M5.2a — SwiGLU FFN sub-block (matmul core + gating Hadamard)
 
----
+Composes 3 matmul proofs (`Wgate`, `Wup`, `Wdown`) + the SwiGLU gating Hadamard proof under one
+Fiat–Shamir transcript. Norm + activation are recorded as pending `LookupObligation`s (M5.2b), so
+these numbers are the **linear + gating** cost — the dominant, architecture-independent part.
 
-## 3. Results
+Harness: `cargo run --release --example prove_ffn SEQ D_MODEL D_FF`.
 
-| Scenario | Prover time (ms) | Proof size (bytes) | Verification gas | E2E latency (s) |
-|----------|------------------|--------------------|------------------|-----------------|
-| **Mock (wrapper-template on Theta EdgeCloud)** | ~500 | ~103_424 | N/A (stub verifier) | ~0.7 |
-| GPT-2-small (paper reference) | &lt;25_000 | ~101_000 | TBD | TBD |
-| Single block / minimal (real C++ prover) | TBD | TBD | TBD | TBD |
+| seq × d_model × d_ff | prove (3 matmul + gate) | verify | proof (field elts) | obligations |
+|----------------------|--------------------------|--------|--------------------|-------------|
+| 64 × 512 × 1024 | ~4.4 s | ~0.34 s | 223 | rmsnorm, silu |
+| 128 × 1024 × 4096 | _tbd_ | _tbd_ | _tbd_ | rmsnorm, silu |
 
-*Mock: M2M task-request → Theta GPU node (xfuel-zkgpt-prover) → stub proof → fee_collected. Real prover and verification gas pending ZKG-1 (C++ build) and ZKG-2 (GKR+Lasso verifier).*
+> Verify stays sub-second and the proof stays a few hundred field elements; prover cost tracks the
+> three projections. Reference run on a dev laptop — refill on the high-RAM host alongside M5.3.
 
----
+## M5.2b–M5.3 — full block / small-model spot-check (to fill on the high-RAM host)
 
-## 4. Comparison (SP1 baseline)
+| Model (quant) | Block window | prove time | peak RAM | verify | proof size |
+|---------------|--------------|-----------|----------|--------|-----------|
+| TinyLlama-1.1B (q4_k_m) | 1 block | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| GPT-2 (fp16) | 1 block | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| Llama-3-8B (q4_k_m) | 1 block | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
 
-| System | Proof size | Verify gas (EVM) | Prover time (typical) |
-|--------|------------|------------------|------------------------|
-| SP1 (Groth16) | ~260 bytes | ~270K | Sub-200 ms (EdgeCloud batch) |
-| zkGPT (GKR+Lasso) | ~101 KB | TBD | &lt;25 s (paper, GPT-2) |
+## Running at model scale (AWS container)
 
-zkGPT trades smaller proof-system footprint and LLM-specific optimizations for larger proof size and different verification cost; benchmarks will inform when to recommend `proof_system: zkgpt` vs `sp1`.
+The prover is a CPU-only Rust binary — it runs in any container. The only scaling knob is **memory**.
+
+1. **Build the image:** `docker build -t xfuel-zkllm services/zkllm-prover`
+2. **Pick a high-memory instance** (memory-optimized, not GPU):
+   - `r7i.4xlarge` (128 GB) → `r7i.8xlarge` (256 GB) for M5.2/M5.3 block proofs.
+   - `x2iedn.8xlarge` (1 TB) for full-pass (M5.5) experiments.
+   - Or a large-memory **Fargate** task if you prefer serverless (set task memory explicitly).
+3. **Run a sweep:** `docker run --rm xfuel-zkllm 1024 1024 1024` (and larger), record the printed
+   timings + `/usr/bin/time -v` peak RSS into the tables above.
+4. **Cost note:** memory-optimized on-demand is cheap relative to GPU; spot instances are fine for
+   benchmarking (the job is deterministic and restartable).
+
+> A detailed, click-by-click AWS setup walkthrough will be added when we start M5.3 (the first run
+> that needs the big host). Nothing here needs a GPU.

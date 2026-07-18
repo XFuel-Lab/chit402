@@ -40,6 +40,15 @@ Verification involves: (1) parsing the proof structure, (2) running the GKR sumc
 - **proofBytes:** Opaque blob from the zkGPT prover (~101 KB). Exact layout must be taken from the [zkGPT repo](https://github.com/security-Anonymous/zkgpt) or paper Section on proof structure. Likely contains: GKR proof (sumcheck messages, polynomial commitments), Lasso proof (lookup arguments), and Fiat–Shamir randomness/challenges.
 - **publicValues:** ABI-encoded or fixed layout that the verifier expects. Should at least bind: `circuitId`, public input (e.g. input hash or commitment), and any public output (e.g. output hash) so that settlement can enforce correctness. XFuel circuits today pass the same `publicValues` they use for SP1; we may need a zkGPT-specific encoding once the prover output is fixed.
 
+> **PBR binding (Phase 2):** the v2 AI-task public values already carry `outputHash` and a
+> flag-gated `paymentCommitment` (`SP1ProofHooks.encodeAITaskPublicValuesV2`). Verified
+> Inference upgrades that field to the **inference-binding commitment**
+> `SP1ProofHooks.computeInferenceBindingCommitment(paymentRefHash, taskIdHash, rail, amount,
+> modelCommitment, outputHash)` — binding payment + PoMA model authenticity + output into one
+> value. The backend mirror is `payment-binding.js` `computeInferenceBinding` and the SDK mirror
+> is `computeInferenceBinding` (all three parity-tested). A zkGPT/Tier-3 proof that commits this
+> value attests "the paid, committed model produced this output."
+
 **Size bounds (on-chain):**
 
 - `proofBytes.length`: min 1, max `MAX_ZKGPT_PROOF_BYTES` (e.g. 150_000 to allow for growth). Reject out-of-range to avoid DoS.
