@@ -4,9 +4,10 @@
 //! For a residual-stream input `X` (seq × d_model) with a pre-norm architecture:
 //! ```text
 //!   xn   = norm(X)                     (obligation: rmsnorm/layernorm — M5.2b)
-//!   gate = xn · Wgate                  (matmul proof)
+//!   gate = xn · Wgate                  (matmul proof — wide accumulator)
+//!   gate_q = ⌊(gate+bias)/D⌋           (requant proof — wide→code hop, M5.3; optional)
 //!   up   = xn · Wup                    (matmul proof)
-//!   act  = SiLU(gate)                  (obligation: silu — M5.2b)
+//!   act  = SiLU(gate_q)                (lookup proof — sound, M5.2b)
 //!   h    = act ⊙ up                    (hadamard proof — sound)
 //!   down = h · Wdown                   (matmul proof)
 //!   out  = X + down                    (residual — direct, linear)
@@ -27,6 +28,8 @@ use crate::lookup::LookupProof;
 use crate::manifest::{ModelManifest, NormType};
 use crate::matmul::{prove as prove_mm, verify as verify_mm, MatMul, MatMulProof};
 use crate::norm::{prove_rmsnorm, verify_rmsnorm, RmsNormProof, RsqrtTable};
+use crate::range::RangeTable;
+use crate::requant::{prove_requant, verify_requant, RequantProof};
 use crate::transcript::Transcript;
 use crate::Fr;
 
@@ -36,6 +39,21 @@ use crate::Fr;
 pub struct NormParams<'a> {
     pub weight: &'a [Fr],
     pub table: &'a RsqrtTable,
+}
+
+/// Requantization parameters for the (quantized) gate path. A matmul over code-valued tensors
+/// produces a **wide** accumulator; before it can feed the non-linear activation it must be
+/// requantized back into the activation's small code domain. When supplied, the gate accumulator is
+/// requantized by the [`crate::requant`] gadget (`gate_q = ⌊(gate + bias) / divisor⌋`, soundly
+/// proven), and the activation lookup runs on `gate_q` — closing the wide→code hop with zero
+/// obligations. `divisor` must equal `r_table.bound` (a power of two); `q_table` bounds `gate_q`
+/// into `[0, q_bound)` (the activation domain); `bias` is public (use `Fr::zero()` for a
+/// non-negative accumulator, or a shift for signed codes).
+pub struct RequantParams<'a> {
+    pub bias: Fr,
+    pub divisor: usize,
+    pub r_table: &'a RangeTable,
+    pub q_table: &'a RangeTable,
 }
 
 /// FFN geometry + gadget selection, derived from a [`ModelManifest`].
@@ -76,6 +94,12 @@ pub struct FfnProof {
     pub act: Vec<Fr>,
     pub h: Vec<Fr>,
     pub down: Vec<Fr>,
+    /// When `Some`, the wide gate accumulator was requantized into the activation's code domain and
+    /// this is that requantized gate (the activation lookup runs on it). When `None`, the activation
+    /// runs on `gate` directly (small-code fixtures / non-requant path).
+    pub gate_q: Option<Vec<Fr>>,
+    /// When `Some`, the sound requant proof for `gate → gate_q` (the wide→code hop is discharged).
+    pub p_requant: Option<RequantProof>,
     pub p_gate: MatMulProof,
     pub p_up: MatMulProof,
     pub p_down: MatMulProof,
@@ -104,10 +128,15 @@ fn apply_norm(x: &[Fr]) -> Vec<Fr> {
 /// identity placeholder and the norm stays a pending obligation.
 ///
 /// When `act_table` is `Some` (quantized mode), the activation is computed from the table and
-/// **soundly proven** by a lookup (the `silu`/`gelu` obligation is discharged); the gate values
-/// must be valid codes for that table. When `None`, the activation is a placeholder (identity) and
-/// stays a pending obligation — used to exercise the linear+gating composition on arbitrary field
-/// inputs.
+/// **soundly proven** by a lookup (the `silu`/`gelu` obligation is discharged); the activation
+/// input values must be valid codes for that table. When `None`, the activation is a placeholder
+/// (identity) and stays a pending obligation — used to exercise the linear+gating composition on
+/// arbitrary field inputs.
+///
+/// When `requant` is `Some`, the **wide** gate accumulator is requantized into the activation's
+/// code domain by the [`crate::requant`] gadget and the activation lookup runs on that quotient
+/// `gate_q` — the sound wide→code hop for a fully-quantized block. When `None`, the activation runs
+/// on `gate` directly (small-code fixtures where the accumulator already lands in-domain).
 #[allow(clippy::too_many_arguments)]
 pub fn prove_ffn(
     cfg: &FfnConfig,
@@ -116,6 +145,7 @@ pub fn prove_ffn(
     wup: &[Fr],
     wdown: &[Fr],
     act_table: Option<&ActivationTable>,
+    requant: Option<&RequantParams>,
     norm: Option<&NormParams>,
     tr: &mut Transcript,
 ) -> (FfnProof, Vec<Fr>) {
@@ -146,15 +176,25 @@ pub fn prove_ffn(
     let up = mm_up.c.clone();
     let p_up = prove_mm(&mm_up, tr);
 
+    // Requantize the wide gate accumulator into the activation's code domain (sound wide→code hop).
+    // The activation then runs on `gate_q`; without requant it runs on `gate` directly.
+    let (act_in, gate_q, p_requant) = match requant {
+        Some(rp) => {
+            let (pr, gq) = prove_requant(&gate, rp.bias, rp.divisor, rp.r_table, rp.q_table, tr);
+            (gq.clone(), Some(gq), Some(pr))
+        }
+        None => (gate.clone(), None, None),
+    };
+
     let (act, act_lookup) = match act_table {
         Some(table) => {
-            let act = table.apply(&gate);
-            let proof = table.prove(&gate, &act, tr);
+            let act = table.apply(&act_in);
+            let proof = table.prove(&act_in, &act, tr);
             (act, Some(proof))
         }
         None => {
-            let act = apply_activation(cfg.act, &gate);
-            obligations.push(LookupObligation::new(cfg.act_name, &gate, &act));
+            let act = apply_activation(cfg.act, &act_in);
+            obligations.push(LookupObligation::new(cfg.act_name, &act_in, &act));
             (act, None)
         }
     };
@@ -178,6 +218,8 @@ pub fn prove_ffn(
         act,
         h,
         down,
+        gate_q,
+        p_requant,
         p_gate,
         p_up,
         p_down,
@@ -204,6 +246,7 @@ pub fn verify_ffn(
     out: &[Fr],
     proof: &FfnProof,
     act_table: Option<&ActivationTable>,
+    requant: Option<&RequantParams>,
     norm: Option<&NormParams>,
     tr: &mut Transcript,
 ) -> bool {
@@ -245,15 +288,33 @@ pub fn verify_ffn(
         return false;
     }
 
-    // Activation: sound lookup (quantized) or placeholder obligation.
+    // Requant: verify the wide→code hop (quantized gate path) and use its quotient as the
+    // activation input. Without requant the activation runs on `gate` directly. Must match the
+    // prover's mode; the requant proof is folded into the transcript before the activation.
+    let act_in: &[Fr] = match (requant, &proof.p_requant, &proof.gate_q) {
+        (Some(rp), Some(pr), Some(gq)) => {
+            if gq.len() != seq * d_ff {
+                return false;
+            }
+            if !verify_requant(&proof.gate, gq, rp.bias, rp.divisor, rp.r_table, rp.q_table, pr, tr) {
+                return false;
+            }
+            gq
+        }
+        (None, None, None) => &proof.gate,
+        // Mode/proof mismatch (requant verify against a non-requant proof or vice-versa).
+        _ => return false,
+    };
+
+    // Activation: sound lookup (quantized) or placeholder obligation — on the (requantized) input.
     match (act_table, &proof.act_lookup) {
         (Some(table), Some(lk)) => {
-            if !table.verify(&proof.gate, &proof.act, lk, tr) {
+            if !table.verify(act_in, &proof.act, lk, tr) {
                 return false;
             }
         }
         (None, None) => {
-            expected_obl.push(LookupObligation::new(cfg.act_name, &proof.gate, &proof.act));
+            expected_obl.push(LookupObligation::new(cfg.act_name, act_in, &proof.act));
         }
         // Mode/proof mismatch (quantized verify against placeholder proof or vice-versa).
         _ => return false,

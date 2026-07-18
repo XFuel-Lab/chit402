@@ -341,23 +341,30 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           Q/K, and the per-head softmax argument for every head under one transcript; GQA is index
           layout (`head → kv group`). **Zero pending obligations** (quantized). This closes the
           M5.2b-cont assembly — the transformer block is now full-width, not just single-head.
-      - **65 `cargo test` green** (matmul 4 + commitments 5 + hadamard 4 + **lookup 4** + **activation
+      - **73 `cargo test` green** (matmul 4 + commitments 5 + hadamard 4 + **lookup 4** + **activation
         3** + **norm 6** + **attention 6** + **block 2** + **rope 4** + **mha 7** + **range 4** +
-        **requant 6** (honest / tampered q,r / out-of-range decomposition / wrong divisor / requant→
-        activation-lookup integration) + **FFN 10**); `--example prove_ffn` harness
-        (64×512×1024: prove ~4.4s, verify ~0.34s, CPU-only).
-- [~] **M5.3** In progress. **Requantization range-checks shipped:**
+        **requant 7** (honest / tampered q,r / out-of-range decomposition / wrong divisor / **signed
+        accumulator + bias** / requant→activation-lookup integration) + **FFN 12** (adds wide-gate→
+        requant→activation zero-obligation + requant mode-mismatch) + **spotcheck 5**);
+        `--example prove_ffn` harness (64×512×1024: prove ~4.4s, verify ~0.34s, CPU-only).
+- [~] **M5.3** In progress. **Requant wired into the block + spot-check orchestration shipped:**
       - **Range-check gadget** (`range.rs`): proves a column ∈ `[0, bound)` as a membership lookup
         into the identity table — the reusable backbone for requant bounds and limb decompositions.
-      - **Inter-op requantization** (`requant.rs`): proves `acc = q·D + r` with `0 ≤ r < D` and
+      - **Inter-op requantization** (`requant.rs`): proves `acc + bias = q·D + r` with `0 ≤ r < D` and
         `0 ≤ q < q_bound` (division-with-remainder + two range checks; `D=2^shift` public, so the
         identity is checked directly). Uniquely determines `q = ⌊acc/D⌋`, bounds output into the next
-        op's code domain, and forces `acc < q_bound·D` (no silent overflow). Integration-tested: a
-        requantized accumulator feeds a SiLU activation lookup under one transcript.
-      - **Remaining:** wire `requant` between the `block`'s sub-ops (fully-quantized zero-obligation
-        end-to-end block), then random-block-window spot-check vs committed weights + bench time/RAM
-        on the high-RAM CPU host (256–512 GB, **not GPU** — per the RAM reframing).
-        Fill `docs/ZKG5_BENCHMARK.md`.
+        op's code domain, and forces `acc < q_bound·D` (no silent overflow). Signed accumulators are
+        handled by the public `bias` (`acc + bias ≥ 0`), byte-checked in the identity.
+      - **Requant wired into the FFN gate path** (`ffn.rs` `RequantParams`): a wide `gate = xn·Wgate`
+        accumulator is requantized into the activation's code domain under the block transcript, and
+        the activation lookup runs on the quotient. An FFN test proves wide-gate → requant →
+        activation → sound RMSNorm with **zero pending obligations**; it threads through `prove_block`.
+      - **Tier-3b block-window spot-check** (`spotcheck.rs`): a Fiat–Shamir-selected pseudo-random
+        window of `k` blocks bound to the model + PBR commitments (prover can't cherry-pick; any trace
+        tampering re-rolls the selection). Generic over the per-block prover; tests cover determinism,
+        binding-sensitivity, honest verify, tampered-output rejection, and cherry-pick rejection.
+      - **Remaining:** bench time/RAM on the high-RAM CPU host (256–512 GB, **not GPU** — per the RAM
+        reframing). Fill `docs/ZKG5_BENCHMARK.md`.
 - [ ] **M5.4** Implement `IVerifiedInference` verifier (Option A Solidity or wrapper); gas bench.
 - [ ] E2E: task → spot-check proof → on-chain verify → settle.
 
