@@ -92,6 +92,57 @@ const config = {
     })(),
   },
 
+  // Verifiable receipts. When a signing secret is set, public receipts carry a
+  // Tier-1 HMAC signature over the payment-bound tuple (PBR) so a third party can
+  // detect tampering. Off by default → receipt JSON is unchanged. Dedicated secret
+  // (NOT reused from WEBHOOK_SECRET) so enabling webhooks never implies signing.
+  receipts: {
+    signingSecret: process.env.RECEIPT_SIGNING_SECRET || null,
+  },
+
+  // Verified Inference tier engine (Phase 4). Disabled by default → receipts behave as before
+  // (proof.tier = settlement/signed, no verified_inference block). When enabled, the gateway
+  // prices trust to value-at-risk and stamps the selected tier + honest attestation/spot-check
+  // summaries on the receipt. See docs/VERIFIED_INFERENCE_TIERS.md.
+  verifiedInference: {
+    enabled: process.env.VERIFIED_INFERENCE_ENABLED === 'true',
+    tier2Min: process.env.VI_TIER2_MIN_USDC || '10000',      // ≥ this → settlement floor
+    tier3Min: process.env.VI_TIER3_MIN_USDC || '1000000',    // ≥ this → inference floor
+    defaultMechanism: process.env.VI_DEFAULT_MECHANISM || 'tee',
+    available: {
+      settlement: process.env.VI_SETTLEMENT_AVAILABLE !== 'false',
+      tee: process.env.VI_TEE_ENABLED === 'true',
+      'zk-spotcheck': process.env.VI_SPOTCHECK_ENABLED === 'true',
+      'zk-full': process.env.VI_ZKFULL_ENABLED === 'true',
+    },
+    tee: {
+      allowedVendors: (process.env.VI_TEE_VENDORS || 'dev').split(',').map((s) => s.trim()).filter(Boolean),
+      allowedSigners: (process.env.VI_TEE_SIGNERS || '').split(',').map((s) => s.trim()).filter(Boolean),
+      allowedMeasurements: (process.env.VI_TEE_MEASUREMENTS || '').split(',').map((s) => s.trim()).filter(Boolean),
+      requireModelRootMatch: process.env.VI_TEE_REQUIRE_MODEL_ROOT === 'true',
+    },
+    spotcheck: {
+      rateBps: parseInt(process.env.VI_SPOTCHECK_RATE_BPS, 10) || 0,
+      seed: process.env.VI_SPOTCHECK_SEED || null,
+    },
+    stakingAddress: process.env.PROVIDER_STAKING_ADDRESS || null,
+  },
+
+  // ERC-8004 (Trustless Agents) Validation Registry adapter (Phase 3). XFuel acts as a
+  // validator: an XFuel receipt → a validationResponse verdict. Default is non-custodial —
+  // POST /erc8004/validate returns a ready-to-submit record + calldata; set autoSubmit=true
+  // (with a submitter key + adapter) to have the gateway push the verdict on-chain itself.
+  erc8004: {
+    registryAddress: process.env.ERC8004_VALIDATION_REGISTRY || null,   // the ERC-8004 registry
+    adapterAddress: process.env.XFUEL_VALIDATION_ADAPTER || null,       // contracts/core/XFuelValidationAdapter.sol
+    // The address agents name as `validatorAddress` in their request (usually the adapter).
+    validatorAddress:
+      process.env.XFUEL_VALIDATOR_ADDRESS || process.env.XFUEL_VALIDATION_ADAPTER || null,
+    autoSubmit: process.env.ERC8004_AUTO_SUBMIT === 'true',
+    submitterKey: process.env.ERC8004_SUBMITTER_KEY || null,            // only used when autoSubmit
+    rpcUrl: process.env.ERC8004_RPC_URL || process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || null,
+  },
+
   // On-chain settlement proof home (ADR 0002) — Base Sepolia / Base.
   // Deploy: npx hardhat run deploy/base-verifier.cjs --network base-sepolia
   settlement: {

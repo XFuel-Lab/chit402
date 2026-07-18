@@ -50,6 +50,47 @@ export function computePaymentCommitment({ paymentRef, taskId, rail, amount }) {
 }
 
 /**
+ * PBR — Payment-Bound Receipt commitment (Phase 2). Superset of computePaymentCommitment
+ * that also binds the PoMA model commitment and the output hash, so the receipt attests
+ * "the paid model produced this output". Mirrors
+ * SP1ProofHooks.computeInferenceBindingCommitment (parity-tested).
+ *
+ *   keccak256(abi.encodePacked(paymentRefHash, taskIdHash, rail, amount, modelCommitment, outputHash))
+ *
+ * @param {object} p
+ * @param {string} p.paymentRef
+ * @param {string} p.taskId
+ * @param {'usdc'|'tfuel'|number} p.rail
+ * @param {string|bigint} p.amount
+ * @param {string} [p.modelCommitment]  0x bytes32 PoMA commitment (default zero).
+ * @param {string} [p.outputHash]       0x bytes32 output commitment (default zero).
+ * @returns {{ commitment, paymentRefHash, taskIdHash, railDiscriminant, amount, modelCommitment, outputHash }}
+ */
+export function computeInferenceBinding({ paymentRef, taskId, rail, amount, modelCommitment, outputHash }) {
+  const railDiscriminant = typeof rail === 'number' ? rail : (PAYMENT_RAIL[rail] ?? 0);
+  const paymentRefHash = paymentRef ? keccak256(toUtf8Bytes(String(paymentRef))) : ZERO32;
+  const taskIdHash = keccak256(toUtf8Bytes(String(taskId)));
+  const amt = BigInt(amount ?? 0);
+  const model = modelCommitment && /^0x[0-9a-fA-F]{64}$/.test(modelCommitment) ? modelCommitment : ZERO32;
+  const output = outputHash && /^0x[0-9a-fA-F]{64}$/.test(outputHash) ? outputHash : ZERO32;
+  const commitment = keccak256(
+    solidityPacked(
+      ['bytes32', 'bytes32', 'uint8', 'uint256', 'bytes32', 'bytes32'],
+      [paymentRefHash, taskIdHash, railDiscriminant, amt, model, output],
+    ),
+  );
+  return {
+    commitment,
+    paymentRefHash,
+    taskIdHash,
+    railDiscriminant,
+    amount: amt.toString(),
+    modelCommitment: model,
+    outputHash: output,
+  };
+}
+
+/**
  * Build the payment-binding descriptor for a task, or null when it does not apply.
  *
  * Applies only when: proof binding is enabled AND the task settled via USDC/x402
@@ -68,6 +109,38 @@ export function buildPaymentBinding(task, x402Cfg) {
   if (rail !== 'usdc' || !paymentRef) return null;
 
   const amount = task.netAmount ?? task?.intent?.amount ?? '0';
+
+  // PBR (Phase 2): if the task carries a PoMA model commitment AND an output hash, bind
+  // them alongside the payment so the receipt attests "the paid model produced this output".
+  // Otherwise fall back to the payment-only commitment (backward compatible).
+  const modelCommitment =
+    task?.meta?.modelCommitment?.commitment || task?.modelCommitment?.commitment || task?.modelCommitment || null;
+  const outputHash = task?.outputHash || task?.meta?.outputHash || task?.sp1Proof?.outputHash || null;
+  const isValid32 = (h) => typeof h === 'string' && /^0x[0-9a-fA-F]{64}$/.test(h);
+  const bindsInference = isValid32(modelCommitment) && isValid32(outputHash);
+
+  if (bindsInference) {
+    const { commitment, paymentRefHash } = computeInferenceBinding({
+      paymentRef,
+      taskId: task.taskId,
+      rail,
+      amount,
+      modelCommitment,
+      outputHash,
+    });
+    return {
+      version: 2,
+      rail: 'usdc',
+      commitment,
+      payment_ref_hash: paymentRefHash,
+      amount: String(amount),
+      model_commitment: modelCommitment,
+      output_hash: outputHash,
+      covers: ['payment', 'settlement', 'model', 'inference'],
+      in_proof: false,
+    };
+  }
+
   const { commitment, paymentRefHash } = computePaymentCommitment({
     paymentRef,
     taskId: task.taskId,
@@ -81,10 +154,11 @@ export function buildPaymentBinding(task, x402Cfg) {
     commitment,
     payment_ref_hash: paymentRefHash,
     amount: String(amount),
+    covers: ['payment', 'settlement'],
     // false until the SP1 guest commits the v2 layout (new programVKey). Until then
     // this is server-attested settlement metadata, not yet proven in-circuit.
     in_proof: false,
   };
 }
 
-export default { PAYMENT_RAIL, computePaymentCommitment, buildPaymentBinding };
+export default { PAYMENT_RAIL, computePaymentCommitment, computeInferenceBinding, buildPaymentBinding };

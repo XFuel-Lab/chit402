@@ -38,7 +38,12 @@ test('buildPaymentChallenge requires taskId and amount', () => {
 });
 
 test('verifyPayment returns gateway_not_configured without env', async () => {
-  const r = await verifyPayment('some-header', {});
+  // Pin the legacy gateway provider: these tests exercise the generic ZAN-style
+  // /verify+/settle path (the mock speaks that protocol). The default 'x402'
+  // facilitator path is covered hermetically in x402-facilitator.test.mjs. Pinning
+  // keeps this file independent of the repo .env (config.js dotenv.config() would
+  // otherwise leak X402_FACILITATOR_PROVIDER=x402 into the shared test process).
+  const r = await verifyPayment('some-header', { provider: 'zan' });
   assert.equal(r.valid, false);
   assert.equal(r.reason, 'gateway_not_configured');
 });
@@ -125,7 +130,7 @@ test('verify + settle against mock facilitator (happy path + replay)', async () 
       { store }
     );
     const nonce = body.accepts[0].extra.nonce;
-    const opts = { gatewayUrl: url, apiKey: 'k', store, nonce };
+    const opts = { provider: 'zan', gatewayUrl: url, apiKey: 'k', store, nonce };
 
     const v = await verifyPayment('X-PAYMENT-blob', opts);
     assert.equal(v.valid, true);
@@ -161,7 +166,7 @@ test('verify rejects unknown/expired challenge before hitting gateway', async ()
 test('verify surfaces facilitator rejection', async () => {
   const { url, close } = await startMockFacilitator({ valid: false });
   try {
-    const r = await verifyPayment('X-PAYMENT-blob', { gatewayUrl: url, apiKey: 'k' });
+    const r = await verifyPayment('X-PAYMENT-blob', { provider: 'zan', gatewayUrl: url, apiKey: 'k' });
     assert.equal(r.valid, false);
     assert.equal(r.reason, 'mock_rejected');
   } finally {

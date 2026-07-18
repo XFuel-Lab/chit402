@@ -11,6 +11,7 @@ import { resolveRail, runX402Handshake, priceUSDC } from './x402-server.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { proveAllowedForKey } from './prove-gate.js';
 import { buildReceipt, renderReceiptHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
+import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest } from './x402-discovery.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 
@@ -482,6 +483,7 @@ export function createApp() {
   app.use('/a2a-settle-fair-exchange', rateLimit, authenticate);
   app.use('/task-status',   rateLimit, authenticate);
   app.use('/webhook',       rateLimit, authenticate);
+  app.use('/erc8004/validate', rateLimit, authenticate);
 
   // ═══════════════════════════════════════════════════════════════════════
   // POST /task-request — Submit an AI intent
@@ -505,6 +507,7 @@ export function createApp() {
         ibc_channel,        // optional – explicit IBC channel override
         memo,               // optional – free-form memo
         proof_system,       // optional – inference proof system: 'sp1' | 'zkgpt' (Phase 1); default 'sp1'
+        proof_tier,         // optional – requested assurance tier (Phase 4): signed|settlement|inference|tee|zk-spotcheck|zk-full
         callback_url,       // optional – per-task webhook; receives TaskSettled on completion
         callback_secret,    // optional – HMAC secret for this task's callback (else WEBHOOK_SECRET)
       } = req.body;
@@ -626,6 +629,7 @@ export function createApp() {
         ibcChannel:     ibc_channel || null,
         outputHash:     output_hash || null,
         proofSystem:    proof_system || 'sp1', // Phase 1: 'sp1' | 'zkgpt' for inference
+        proofTier:      proof_tier || null,    // Phase 4: requested assurance tier (signed|settlement|inference|tee|zk-spotcheck|zk-full)
         paymentRail,    // 'usdc' (x402) | 'tfuel' — resolved above; flows to listener task
         paymentRef,     // x402 settlement ref (network:txRef) or null for TFUEL
         // Cost control: whether this request's API key may trigger a Tier-1 ZK
@@ -752,6 +756,107 @@ export function createApp() {
       });
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /task-quote error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // POST /erc8004/validate — Turn an XFuel receipt into an ERC-8004 validation
+  //   verdict. XFuel is a *validator*: an agent opens a validationRequest naming
+  //   the XFuel validator address; this endpoint returns the ready-to-submit
+  //   validationResponse (score + evidence + calldata). Non-custodial by default;
+  //   set ERC8004_AUTO_SUBMIT=true (+ submitter key + adapter) to push on-chain.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  const ERC8004_ADAPTER_ABI = [
+    'function submitValidation(bytes32 requestHash, uint256 agentId, uint8 response, string responseURI, bytes32 responseHash, string tag, bytes32 taskIdHash) external',
+  ];
+
+  app.post('/erc8004/validate', async (req, res) => {
+    try {
+      const { task_id, request_hash, agent_id } = req.body || {};
+      if (!task_id || !request_hash || agent_id === undefined || agent_id === null) {
+        return res.status(400).json({
+          error: 'validation_error',
+          message: 'task_id, request_hash, and agent_id are required',
+        });
+      }
+
+      const aiListener = getAIListener();
+      const task = _findTask(aiListener, task_id);
+      if (!task) {
+        return res.status(404).json({ error: 'not_found', message: `Task ${task_id} not found` });
+      }
+
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+      const receipt = buildReceipt(task, {
+        baseUrl,
+        signingSecret: config.receipts?.signingSecret,
+        viPolicy: config.verifiedInference,
+      });
+
+      let record;
+      try {
+        record = buildValidationRecord(receipt, { requestHash: request_hash, agentId: agent_id });
+      } catch (e) {
+        return res.status(400).json({ error: 'validation_error', message: e.message });
+      }
+
+      if (!record.eligible) {
+        return res.status(409).json({ error: 'not_validatable', message: record.reason, validation: record });
+      }
+
+      const validatorAddress = config.erc8004.validatorAddress;
+      const adapterAddress = config.erc8004.adapterAddress;
+
+      // Ready-to-submit call (adapter path): the agent/operator or XFuel can broadcast this.
+      let submit = null;
+      if (adapterAddress) {
+        const iface = new ethers.Interface(ERC8004_ADAPTER_ABI);
+        submit = {
+          to: adapterAddress,
+          method: 'submitValidation',
+          args: [
+            record.request_hash, record.agent_id, record.response,
+            record.response_uri || '', record.response_hash, record.tag, record.task_id_hash,
+          ],
+          data: iface.encodeFunctionData('submitValidation', [
+            record.request_hash, record.agent_id, record.response,
+            record.response_uri || '', record.response_hash, record.tag, record.task_id_hash,
+          ]),
+        };
+      }
+
+      // Optional: XFuel pushes the verdict on-chain itself (custodial submitter key).
+      let submitted = null;
+      if (config.erc8004.autoSubmit && config.erc8004.submitterKey && adapterAddress && config.erc8004.rpcUrl) {
+        try {
+          const provider = new ethers.JsonRpcProvider(config.erc8004.rpcUrl);
+          const wallet = new ethers.Wallet(config.erc8004.submitterKey, provider);
+          const adapter = new ethers.Contract(adapterAddress, ERC8004_ADAPTER_ABI, wallet);
+          const tx = await adapter.submitValidation(
+            record.request_hash, record.agent_id, record.response,
+            record.response_uri || '', record.response_hash, record.tag, record.task_id_hash,
+          );
+          submitted = { tx_hash: tx.hash };
+        } catch (e) {
+          logger.error({ err: e, reqId: req.id }, 'ERC-8004 auto-submit failed');
+          submitted = { error: e.message };
+        }
+      }
+
+      return res.json({
+        validation: record,
+        validator_address: validatorAddress,
+        registry_address: config.erc8004.registryAddress,
+        adapter_address: adapterAddress,
+        submit,
+        submitted,
+        note: 'ERC-8004 score: 0=failed, 100=passed. The tag conveys the XFuel assurance tier. ' +
+          'Submit `submit.data` from the XFuel validator address (or SUBMITTER_ROLE on the adapter).',
+      });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /erc8004/validate error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
   });
@@ -1196,7 +1301,11 @@ export function createApp() {
       }
 
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
-      const receipt = buildReceipt(task, { baseUrl });
+      const receipt = buildReceipt(task, {
+        baseUrl,
+        signingSecret: config.receipts?.signingSecret,
+        viPolicy: config.verifiedInference,
+      });
       if (wantsJson) return res.json(receipt);
       return res.type('html').send(renderReceiptHtml(receipt));
     } catch (err) {
@@ -1362,7 +1471,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /llms.txt, GET /.well-known/x402, GET /v1/models, POST /v1/chat/completions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /erc8004/validate, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /llms.txt, GET /.well-known/x402, GET /v1/models, POST /v1/chat/completions',
     });
   });
 
