@@ -14,14 +14,14 @@
 //!   and the gateway/SDK, so a zkLLM proof slots into the same settlement path as the SP1 proof.
 //!
 //! Architecture-specific gadgets ([`gadgets`]) and their composition ([`ffn`] SwiGLU, [`attention`]
-//! causal self-attention, and a full [`block`]) are the small, swappable long tail selected by the
-//! [`manifest::ModelManifest`]. Soundly proven today: all linear projections (matmul), elementwise
+//! single-head causal attention, [`mha`] multi-head + GQA attention with [`rope`], and a full
+//! [`block`]) are the small, swappable long tail selected by the [`manifest::ModelManifest`]. Soundly proven today: all linear projections (matmul), elementwise
 //! gating (Hadamard), the **transcendental activation** (SiLU/GeLU) via the [`lookup`] logup
 //! argument over quantized [`activation`] tables, **RMSNorm** ([`norm`], `rsqrt` via the same lookup
 //! plus a linear row-reduction), and **softmax** ([`attention`], `exp` and reciprocal via the
 //! [`table`] lookup). A quantized SwiGLU FFN block and a quantized single-head attention block each
-//! have **zero pending obligations**; one full transformer [`block`] composes them under a single
-//! transcript. Remaining (M5.2b-cont): multi-head/GQA and RoPE assembly, and inter-op
+//! have **zero pending obligations** (single- or multi-head); one full transformer [`block`] composes
+//! them under a single transcript, and RoPE ([`rope`]) is public-linear. Remaining: inter-op
 //! requantization range-checks (M5.3).
 //!
 //! CPU-only; no GPU. Runs in any container (see the crate `Dockerfile`).
@@ -35,8 +35,10 @@ pub mod gadgets;
 pub mod lookup;
 pub mod manifest;
 pub mod matmul;
+pub mod mha;
 pub mod mle;
 pub mod norm;
+pub mod rope;
 pub mod sumcheck;
 pub mod table;
 pub mod transcript;

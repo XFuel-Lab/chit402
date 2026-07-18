@@ -22,19 +22,22 @@ and ADR 0003). CPU-only — runs in any container.
 | `table` | Generic canonical **`code → code` lookup table** (`ScalarTable`) — the reusable backbone for any quantized non-linearity (backs softmax's `exp` + reciprocal). |
 | `ffn` | **SwiGLU FFN sub-block** — (quantized) RMSNorm + 3 matmul proofs + gating Hadamard + (quantized) activation lookup under one transcript, manifest-driven. **Zero pending obligations in quantized mode.** |
 | `attention` | **Causal self-attention sub-block** — Q/K/V/O + `Q·Kᵀ` + `P·V` (matmul), causal mask, and **softmax** as `exp` + row-sum + reciprocal lookups + a normalization Hadamard. **Zero pending obligations** (single-head, quantized). |
+| `rope` | **RoPE** — public-linear (fixed-point cos/sin) exact rotation of Q/K; verifier recomputes, no proof object. |
+| `mha` | **Multi-head + GQA attention** — one shared norm + Q/K/V/O, RoPE on Q/K, and the per-head softmax argument for every head under one transcript. GQA is index layout (`head → kv group`). **Zero pending obligations** (quantized). |
 | `block` | **Full transformer block** — composes `attention → ffn` under one Fiat–Shamir transcript. |
 | `manifest` | `ModelManifest` (arch config) + **arch-bound PoMA commitment** — proof attests "these weights + this architecture". |
 | `commitment` | keccak256 weights root / model commitment + `commit_field_table` + **PBR public-input binding**, byte-identical to `SP1ProofHooks.computeInferenceBindingCommitment`. |
 
 **Soundly proven today:** all linear projections (matmul), elementwise gating (Hadamard), the
 **transcendental activation** (SiLU/GeLU) via the logup lookup, **RMSNorm** (rsqrt via the same
-lookup + a sum-of-squares reduction + a Hadamard scaling chain), and **causal self-attention** with
-**softmax** (`exp` + row-sum + reciprocal lookups + a normalization Hadamard). In quantized mode a
-full SwiGLU FFN block and a single-head attention block each have **zero pending obligations**, and a
-full transformer `block` composes them under one transcript.
-**Explicitly pending (M5.2b-cont):** multi-head/GQA + RoPE **assembly** (reuses the shipped
-attention core — pure witness assembly, no new argument). Then inter-op requantization range-checks
-and random-block-window spot-checks (M5.3) and an on-chain verifier (M5.4).
+lookup + a sum-of-squares reduction + a Hadamard scaling chain), **causal self-attention** with
+**softmax** (`exp` + row-sum + reciprocal lookups + a normalization Hadamard), **multi-head + GQA**
+attention, and **RoPE** (public-linear). In quantized mode a SwiGLU FFN block and a multi-head
+attention block each have **zero pending obligations**, and a full transformer `block` composes them
+under one transcript.
+**Explicitly pending:** inter-op **requantization range-checks** so each op's output re-enters the
+next op's code domain (needed for a fully-quantized end-to-end block) + random-block-window
+spot-checks (M5.3), then the PCS binding + on-chain verifier + Groth16 wrap (M5.4).
 
 ## Build & test
 
@@ -72,14 +75,14 @@ CPU-only; the scaling knob is **RAM**, not GPU. For model-scale runs pick a high
 M5.1/M5.2 are a *verifiable-computation* reduction: the verifier is given the tensors + advice and
 checks the sumcheck/lookup arguments are sound. Two boundaries remain explicit:
 
-1. **The transcendental steps are wired; assembly + requant remain.** Activation (SiLU/GeLU),
-   RMSNorm's rsqrt, and softmax's `exp`/reciprocal are all soundly proven by the logup lookup in
-   quantized mode — quantized FFN and single-head attention blocks each have zero pending
-   obligations. What remains for a full model: **multi-head/GQA + RoPE assembly** (reuses the shipped
-   attention core) and **inter-op requantization range-checks** so each op's output `y` re-enters the
-   next op's code domain (the `block` test runs the FFN half in placeholder mode for exactly this
-   reason) — M5.2b-cont/M5.3. The non-quantized path keeps placeholder norm/activation for exercising
-   linear+gating on arbitrary field inputs.
+1. **The transcendental steps + attention assembly are wired; requant remains.** Activation
+   (SiLU/GeLU), RMSNorm's rsqrt, and softmax's `exp`/reciprocal are all soundly proven by the logup
+   lookup in quantized mode; multi-head/GQA + RoPE assembly is done — quantized FFN and multi-head
+   attention blocks each have zero pending obligations. What remains for a full model: **inter-op
+   requantization range-checks** so each op's output `y` re-enters the next op's code domain (the
+   `block` test runs the FFN half in placeholder mode for exactly this reason) — M5.3. The
+   non-quantized path keeps placeholder norm/activation for exercising linear+gating on arbitrary
+   field inputs.
 2. **No polynomial commitment yet.** Binding MLE evaluations to an on-chain **polynomial commitment**
    of the weights (so the verifier needs only the commitment) + the Groth16 wrap for cheap on-chain
    verification are the M5.4 milestone.

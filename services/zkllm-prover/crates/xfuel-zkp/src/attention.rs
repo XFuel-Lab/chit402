@@ -105,7 +105,7 @@ fn norm_op(name: &str) -> &'static str {
 }
 
 /// Transpose a `rows × cols` row-major matrix into `cols × rows`.
-fn transpose(m: &[Fr], rows: usize, cols: usize) -> Vec<Fr> {
+pub(crate) fn transpose(m: &[Fr], rows: usize, cols: usize) -> Vec<Fr> {
     let mut out = vec![Fr::zero(); rows * cols];
     for r in 0..rows {
         for c in 0..cols {
@@ -116,7 +116,7 @@ fn transpose(m: &[Fr], rows: usize, cols: usize) -> Vec<Fr> {
 }
 
 /// Causal mask: keys `j > i` are set to the sentinel code `0` (whose `exp`-table image is 0).
-fn causal_mask(scores: &[Fr], seq: usize) -> Vec<Fr> {
+pub(crate) fn causal_mask(scores: &[Fr], seq: usize) -> Vec<Fr> {
     let mut out = scores.to_vec();
     for i in 0..seq {
         for j in (i + 1)..seq {
@@ -127,7 +127,7 @@ fn causal_mask(scores: &[Fr], seq: usize) -> Vec<Fr> {
 }
 
 /// Per-row sums of a `rows × cols` row-major matrix.
-fn row_sums(m: &[Fr], rows: usize, cols: usize) -> Vec<Fr> {
+pub(crate) fn row_sums(m: &[Fr], rows: usize, cols: usize) -> Vec<Fr> {
     let mut out = vec![Fr::zero(); rows];
     for i in 0..rows {
         let mut acc = Fr::zero();
@@ -140,7 +140,7 @@ fn row_sums(m: &[Fr], rows: usize, cols: usize) -> Vec<Fr> {
 }
 
 /// Broadcast a per-row column `v` (len `rows`) across `cols` → `bc[i*cols+j] = v[i]`.
-fn broadcast_rows(v: &[Fr], cols: usize) -> Vec<Fr> {
+pub(crate) fn broadcast_rows(v: &[Fr], cols: usize) -> Vec<Fr> {
     let mut out = Vec::with_capacity(v.len() * cols);
     for &vi in v {
         for _ in 0..cols {
