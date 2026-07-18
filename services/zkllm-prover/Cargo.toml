@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/xfuel-zkp"]
+
+# XFuel zkLLM — self-owned, model-agnostic ZK prover for Verified Inference (Tier-3).
+# Clean-room, permissive-only (ADR 0003 / ADR 0004). CPU-only; container-portable.
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

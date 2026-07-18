@@ -1,0 +1,21 @@
+[package]
+name = "xfuel-zkp"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+description = "XFuel zkLLM: model-agnostic ZK prover core (sumcheck matmul, PoMA arch commitment, PBR binding)."
+repository = "https://github.com/XFuel-Lab/xfuel-protocol"
+
+# Approved, OSI-permissive deps only (see docs/adr/0004-zkllm-prover-stack.md provenance log).
+[dependencies]
+ark-ff = "0.4"
+ark-bn254 = "0.4"
+ark-std = { version = "0.4", features = ["std"] }
+sha3 = "0.10"
+
+[dev-dependencies]
+ark-std = { version = "0.4", features = ["std"] }
+
+[[example]]
+name = "prove_block"
+path = "examples/prove_block.rs"
