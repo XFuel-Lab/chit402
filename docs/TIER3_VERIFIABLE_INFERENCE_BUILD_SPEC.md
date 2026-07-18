@@ -288,8 +288,9 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
   SwiGLU/SiLU via Lasso/logup lookups → RoPE → GQA assembly). GPT-2-style falls out as a subset.
   *(← M5.2a shipped: Hadamard gadget + SwiGLU FFN; M5.2b shipped: logup lookup + quantized
   activation (SiLU/GeLU) + **RMSNorm** + **causal self-attention** (softmax via exp+reciprocal
-  lookups) + a full **transformer block** composition — FFN and single-head attention each reach
-  **zero pending obligations**; remaining: multi-head/GQA + RoPE assembly and inter-op requant)*
+  lookups) + a full **transformer block**; M5.2b-cont shipped: **multi-head + GQA** attention +
+  **RoPE** (public-linear) — FFN and multi-head attention each reach **zero pending obligations**;
+  remaining: inter-op requantization range-checks (M5.3))*
 - **M5.3 Small-model spot-check** (TinyLlama/GPT-2-class): prove a random block window against the
   committed weights+arch (PoMA), not the whole pass; bench time/RAM on the high-RAM CPU host.
 - **M5.4 On-chain verify:** Solidity/Yul (BN254 precompiles) or Groth16 wrapper → `ZKVerifierSP1`;
@@ -333,12 +334,19 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           attention reaches **zero pending obligations**. RoPE (public-linear) and multi-head/GQA
           (witness assembly) are the documented follow-ups; the argument set is complete.
         - **Full transformer block** (`block.rs`): composes `attention → ffn` under one transcript.
-      - **Remaining (M5.2b-cont):** multi-head/GQA + RoPE **assembly** (reuses the shipped core, no new
-        argument); then inter-op **requantization range-checks** for a faithful end-to-end quantized
-        pipeline (M5.3).
-      - **44 `cargo test` green** (matmul 4 + commitments 5 + hadamard 4 + **lookup 4** + **activation
-        3** + **norm 6** + **attention 6** (honest/zero-obligations/tamper ×3/wrong-table) + **block 2**
-        + **FFN 10**); `--example prove_ffn` harness (64×512×1024: prove ~4.4s, verify ~0.34s, CPU-only).
+        - **RoPE** (`rope.rs`): public-linear (fixed-point cos/sin) exact rotation of Q/K — verifier
+          recomputes, no proof object, no rounding hazard.
+        - **Multi-head + GQA attention** (`mha.rs`): one shared norm + Q/K/V/O projections, RoPE on
+          Q/K, and the per-head softmax argument for every head under one transcript; GQA is index
+          layout (`head → kv group`). **Zero pending obligations** (quantized). This closes the
+          M5.2b-cont assembly — the transformer block is now full-width, not just single-head.
+      - **Remaining (M5.3):** inter-op **requantization range-checks** so each op's output re-enters
+        the next op's code domain (the one thing between here and a fully-quantized zero-obligation
+        end-to-end block).
+      - **55 `cargo test` green** (matmul 4 + commitments 5 + hadamard 4 + **lookup 4** + **activation
+        3** + **norm 6** + **attention 6** + **block 2** + **rope 4** + **mha 7** (honest GQA + full MHA
+        + zero-obligations + RoPE + tamper ×3) + **FFN 10**); `--example prove_ffn` harness
+        (64×512×1024: prove ~4.4s, verify ~0.34s, CPU-only).
 - [ ] **M5.3** Random-block-window spot-check vs committed weights; bench time/RAM on the
       high-RAM CPU host (256–512 GB, **not GPU** — per the RAM reframing). Fill `docs/ZKG5_BENCHMARK.md`.
 - [ ] **M5.4** Implement `IVerifiedInference` verifier (Option A Solidity or wrapper); gas bench.
