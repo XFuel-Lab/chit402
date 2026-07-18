@@ -31,8 +31,12 @@ Zero config: with no env set it talks to XFuel's hosted testnet demo (`https://a
 | `verify_proof` | Verify a proof client-side: integrity + x402 payment-binding re-derivation (+ optional on-chain nullifier read) |
 | `quote_task` | Preview per-rail pricing (USDC via x402 / TFUEL) — no side effects |
 | `get_health` | XFuel API health, fee config, supported chains (discovery/diagnostics) |
+| `verify_model_commitment` | Check a served model against its on-chain authenticity commitment (PoMA) — anti-downgrade for Verified Inference (needs `XFUEL_RPC_URL` + `MODEL_REGISTRY_ADDRESS`) |
+| `get_verified_quote` | Price a task **and** the assurance tiers available (signed / settlement / inference) + whether the model is PoMA-registered — shop on trust, not just cost |
+| `get_validation_status` | Read an ERC-8004 validation record by `requestHash` — who validated an agent task and whether it passed (needs `XFUEL_RPC_URL` + `ERC8004_VALIDATION_REGISTRY`) |
+| `get_provider_stake` | Read a provider's stake + slash history — shop on trust before paying a counterparty (needs `XFUEL_RPC_URL` + `PROVIDER_STAKING_ADDRESS`) |
 
-> The proof attests settlement metadata + a commitment to the output hash — **not** inference correctness. `verify_proof` reports exactly what was checked.
+> The proof attests settlement metadata + a commitment to the output hash — **not** inference correctness. `verify_proof` reports exactly what was checked. `verify_model_commitment` adds model-authenticity: it confirms the served model matches the weights committed on-chain (Tier-3 / PoMA — see `docs/POMA_SPEC.md`).
 
 > `submit_inference` uses the server's default (unmetered) path and needs no key.
 > `pay_with_usdc` is the only tool that moves funds (USDC via x402 on Base) — it is
@@ -102,8 +106,9 @@ All optional. CLI flags take precedence over environment variables.
 | `XFUEL_MCP_TRANSPORT` | `--stdio` / `--http` | `stdio` | Transport |
 | `XFUEL_MCP_PORT` | `--port` | `3033` | HTTP port (http only) |
 | `XFUEL_MCP_AUTH_TOKEN` | — | (none) | Optional bearer token for the HTTP endpoint |
-| `XFUEL_RPC_URL` | — | (none) | Base (or verifier chain) RPC for `verify_proof` nullifier read |
+| `XFUEL_RPC_URL` | — | (none) | Base (or verifier chain) RPC for `verify_proof` nullifier read + `verify_model_commitment` |
 | `ZK_VERIFIER_ADDRESS` | — | (none) | ZKVerifierSP1 address (paired with `XFUEL_RPC_URL`) |
+| `MODEL_REGISTRY_ADDRESS` | — | (none) | ModelRegistry (PoMA) address on Base for `verify_model_commitment` (paired with `XFUEL_RPC_URL`) |
 | `XFUEL_PAYER_PRIVATE_KEY` | — | (none) | Enables `pay_with_usdc`. **Env only** (never a CLI flag). |
 
 See [`.env.example`](./.env.example).
