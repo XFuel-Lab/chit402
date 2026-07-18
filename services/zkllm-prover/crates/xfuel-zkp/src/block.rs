@@ -11,7 +11,7 @@
 
 use crate::activation::ActivationTable;
 use crate::attention::{prove_attention, verify_attention, AttnConfig, AttnProof};
-use crate::ffn::{prove_ffn, verify_ffn, FfnConfig, FfnProof, NormParams};
+use crate::ffn::{prove_ffn, verify_ffn, FfnConfig, FfnProof, NormParams, RequantParams};
 use crate::gadgets::LookupObligation;
 use crate::table::ScalarTable;
 use crate::transcript::Transcript;
@@ -36,8 +36,9 @@ impl BlockProof {
 
 /// Prove one transformer block. `x` is seq×d_model. Attention weights `wq,wk,wv` are d_model×d_head,
 /// `wo` is d_head×d_model; FFN weights `wgate,wup` are d_model×d_ff, `wdown` is d_ff×d_model. The
-/// `exp_table`/`recip_table` drive the softmax, `act_table` the FFN activation, and the two
-/// `NormParams` the two RMSNorms (all `Some` ⇒ zero pending obligations). Returns `(proof, out)`.
+/// `exp_table`/`recip_table` drive the softmax, `act_table` the FFN activation, `ffn_requant` the
+/// optional wide→code hop on the FFN gate, and the two `NormParams` the two RMSNorms (all `Some` ⇒
+/// zero pending obligations). Returns `(proof, out)`.
 #[allow(clippy::too_many_arguments)]
 pub fn prove_block(
     attn_cfg: &AttnConfig,
@@ -54,12 +55,13 @@ pub fn prove_block(
     wup: &[Fr],
     wdown: &[Fr],
     act_table: Option<&ActivationTable>,
+    ffn_requant: Option<&RequantParams>,
     ffn_norm: Option<&NormParams>,
     tr: &mut Transcript,
 ) -> (BlockProof, Vec<Fr>) {
     let (attn, h) =
         prove_attention(attn_cfg, x, wq, wk, wv, wo, exp_table, recip_table, attn_norm, tr);
-    let (ffn, out) = prove_ffn(ffn_cfg, &h, wgate, wup, wdown, act_table, ffn_norm, tr);
+    let (ffn, out) = prove_ffn(ffn_cfg, &h, wgate, wup, wdown, act_table, ffn_requant, ffn_norm, tr);
     (BlockProof { attn, h, ffn }, out)
 }
 
@@ -80,6 +82,7 @@ pub fn verify_block(
     wup: &[Fr],
     wdown: &[Fr],
     act_table: Option<&ActivationTable>,
+    ffn_requant: Option<&RequantParams>,
     ffn_norm: Option<&NormParams>,
     out: &[Fr],
     proof: &BlockProof,
@@ -91,6 +94,6 @@ pub fn verify_block(
         return false;
     }
     verify_ffn(
-        ffn_cfg, &proof.h, wgate, wup, wdown, out, &proof.ffn, act_table, ffn_norm, tr,
+        ffn_cfg, &proof.h, wgate, wup, wdown, out, &proof.ffn, act_table, ffn_requant, ffn_norm, tr,
     )
 }

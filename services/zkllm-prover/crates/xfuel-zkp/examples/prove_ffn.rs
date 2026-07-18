@@ -54,13 +54,15 @@ fn main() {
     let t_setup = t.elapsed();
 
     let t = Instant::now();
-    let (proof, out) =
-        prove_ffn(&cfg, &x, &wgate, &wup, &wdown, None, None, &mut Transcript::new(b"prove_ffn"));
+    let (proof, out) = prove_ffn(
+        &cfg, &x, &wgate, &wup, &wdown, None, None, None, &mut Transcript::new(b"prove_ffn"),
+    );
     let t_prove = t.elapsed();
 
     let t = Instant::now();
     let ok = verify_ffn(
-        &cfg, &x, &wgate, &wup, &wdown, &out, &proof, None, None, &mut Transcript::new(b"prove_ffn"),
+        &cfg, &x, &wgate, &wup, &wdown, &out, &proof, None, None, None,
+        &mut Transcript::new(b"prove_ffn"),
     );
     let t_verify = t.elapsed();
 

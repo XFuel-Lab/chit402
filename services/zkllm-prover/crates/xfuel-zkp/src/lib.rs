@@ -23,7 +23,9 @@
 //! have **zero pending obligations** (single- or multi-head); one full transformer [`block`] composes
 //! them under a single transcript, and RoPE ([`rope`]) is public-linear. Inter-op
 //! **requantization** ([`requant`]) is proven as division-with-remainder plus two [`range`] checks,
-//! so each op's wide accumulator re-enters the next op's code domain soundly (M5.3).
+//! so each op's wide accumulator re-enters the next op's code domain soundly (M5.3). The
+//! [`spotcheck`] layer turns the per-block prover into the cheaper **Tier-3b** by proving a
+//! Fiat–Shamir-selected window of blocks, bound to the model + PBR commitments (M5.3).
 //!
 //! CPU-only; no GPU. Runs in any container (see the crate `Dockerfile`).
 
@@ -42,6 +44,7 @@ pub mod norm;
 pub mod range;
 pub mod requant;
 pub mod rope;
+pub mod spotcheck;
 pub mod sumcheck;
 pub mod table;
 pub mod transcript;

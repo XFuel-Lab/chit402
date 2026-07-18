@@ -53,11 +53,11 @@ fn honest_ffn_verifies_and_lists_obligations() {
     for &(seq, d_model, d_ff) in &[(2usize, 4u32, 8u32), (4, 8, 16), (1, 2, 4)] {
         let f = fixture(seq, d_model, d_ff);
         let (proof, out) = prove_ffn(
-            &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, None, None, &mut Transcript::new(b"ffn"),
+            &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, None, None, None, &mut Transcript::new(b"ffn"),
         );
         assert!(
             verify_ffn(
-                &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, &out, &proof, None, None,
+                &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, &out, &proof, None, None, None,
                 &mut Transcript::new(b"ffn")
             ),
             "honest FFN seq={seq} d_model={d_model} d_ff={d_ff} should verify"
@@ -75,12 +75,12 @@ fn honest_ffn_verifies_and_lists_obligations() {
 fn tampered_output_is_rejected() {
     let f = fixture(4, 8, 16);
     let (proof, mut out) = prove_ffn(
-        &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, None, None, &mut Transcript::new(b"ffn"),
+        &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, None, None, None, &mut Transcript::new(b"ffn"),
     );
     out[0] += Fr::from(1u64);
     assert!(
         !verify_ffn(
-            &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, &out, &proof, None, None,
+            &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, &out, &proof, None, None, None,
             &mut Transcript::new(b"ffn")
         ),
         "tampered residual output must be rejected"
@@ -91,13 +91,13 @@ fn tampered_output_is_rejected() {
 fn tampered_gating_is_rejected() {
     let f = fixture(4, 8, 16);
     let (mut proof, out) = prove_ffn(
-        &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, None, None, &mut Transcript::new(b"ffn"),
+        &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, None, None, None, &mut Transcript::new(b"ffn"),
     );
     // Corrupt the gated hidden state h — the Hadamard proof must reject.
     proof.h[3] += Fr::from(5u64);
     assert!(
         !verify_ffn(
-            &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, &out, &proof, None, None,
+            &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, &out, &proof, None, None, None,
             &mut Transcript::new(b"ffn")
         ),
         "tampered gated hidden state must be rejected"
@@ -108,13 +108,13 @@ fn tampered_gating_is_rejected() {
 fn tampered_projection_is_rejected() {
     let f = fixture(4, 8, 16);
     let (mut proof, out) = prove_ffn(
-        &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, None, None, &mut Transcript::new(b"ffn"),
+        &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, None, None, None, &mut Transcript::new(b"ffn"),
     );
     // Corrupt the gate projection output — its matmul proof must reject.
     proof.gate[2] += Fr::from(9u64);
     assert!(
         !verify_ffn(
-            &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, &out, &proof, None, None,
+            &f.cfg, &f.x, &f.wgate, &f.wup, &f.wdown, &out, &proof, None, None, None,
             &mut Transcript::new(b"ffn")
         ),
         "tampered gate projection must be rejected"
@@ -124,7 +124,9 @@ fn tampered_projection_is_rejected() {
 // ─── Quantized mode: activation obligation discharged by a sound lookup ────────
 
 use xfuel_zkp::activation::{encode_i64, ActKind, ActivationTable};
+use xfuel_zkp::ffn::RequantParams;
 use xfuel_zkp::norm::RsqrtTable;
+use xfuel_zkp::range::RangeTable;
 
 /// Small-code fixture: gate = xn·Wgate must land inside the activation domain, so xn and Wgate are
 /// built from tiny non-negative integers.
@@ -154,7 +156,7 @@ fn quantized_ffn_discharges_activation_via_lookup() {
     let (cfg, x, wgate, wup, wdown) = quant_fixture(2, 4, 8, domain);
 
     let (proof, out) = prove_ffn(
-        &cfg, &x, &wgate, &wup, &wdown, Some(&table), None, &mut Transcript::new(b"qffn"),
+        &cfg, &x, &wgate, &wup, &wdown, Some(&table), None, None, &mut Transcript::new(b"qffn"),
     );
     assert!(proof.act_lookup.is_some(), "quantized mode must produce an activation lookup");
     // Only the norm obligation remains — the activation is now soundly proven.
@@ -163,7 +165,7 @@ fn quantized_ffn_discharges_activation_via_lookup() {
 
     assert!(
         verify_ffn(
-            &cfg, &x, &wgate, &wup, &wdown, &out, &proof, Some(&table), None,
+            &cfg, &x, &wgate, &wup, &wdown, &out, &proof, Some(&table), None, None,
             &mut Transcript::new(b"qffn")
         ),
         "honest quantized FFN must verify"
@@ -177,13 +179,13 @@ fn quantized_ffn_rejects_tampered_activation() {
     let (cfg, x, wgate, wup, wdown) = quant_fixture(2, 4, 8, domain);
 
     let (mut proof, out) = prove_ffn(
-        &cfg, &x, &wgate, &wup, &wdown, Some(&table), None, &mut Transcript::new(b"qffn"),
+        &cfg, &x, &wgate, &wup, &wdown, Some(&table), None, None, &mut Transcript::new(b"qffn"),
     );
     // Forge an activation output that is not act(gate): the lookup must reject.
     proof.act[0] = encode_i64(7);
     assert!(
         !verify_ffn(
-            &cfg, &x, &wgate, &wup, &wdown, &out, &proof, Some(&table), None,
+            &cfg, &x, &wgate, &wup, &wdown, &out, &proof, Some(&table), None, None,
             &mut Transcript::new(b"qffn")
         ),
         "tampered activation output must be rejected by the lookup"
@@ -196,11 +198,11 @@ fn quantized_proof_rejected_by_placeholder_verify() {
     let table = ActivationTable::new(ActKind::Silu, domain, 0.5);
     let (cfg, x, wgate, wup, wdown) = quant_fixture(2, 4, 8, domain);
     let (proof, out) = prove_ffn(
-        &cfg, &x, &wgate, &wup, &wdown, Some(&table), None, &mut Transcript::new(b"qffn"),
+        &cfg, &x, &wgate, &wup, &wdown, Some(&table), None, None, &mut Transcript::new(b"qffn"),
     );
     // Mode mismatch: verifying a quantized (activation) proof without the table must fail.
     assert!(
-        !verify_ffn(&cfg, &x, &wgate, &wup, &wdown, &out, &proof, None, None, &mut Transcript::new(b"qffn")),
+        !verify_ffn(&cfg, &x, &wgate, &wup, &wdown, &out, &proof, None, None, None, &mut Transcript::new(b"qffn")),
         "activation mode mismatch must be rejected"
     );
 }
@@ -228,7 +230,7 @@ fn quantized_ffn_with_norm_has_zero_obligations() {
     let np = NormParams { weight: &w_norm, table: &rsqrt };
 
     let (proof, out) = prove_ffn(
-        &cfg, &x, &wgate, &wup, &wdown, Some(&table_act), Some(&np), &mut Transcript::new(b"qffn"),
+        &cfg, &x, &wgate, &wup, &wdown, Some(&table_act), None, Some(&np), &mut Transcript::new(b"qffn"),
     );
     assert!(proof.p_norm.is_some(), "quantized norm must produce an RMSNorm proof");
     assert!(proof.act_lookup.is_some(), "quantized mode must produce an activation lookup");
@@ -239,7 +241,7 @@ fn quantized_ffn_with_norm_has_zero_obligations() {
 
     assert!(
         verify_ffn(
-            &cfg, &x, &wgate, &wup, &wdown, &out, &proof, Some(&table_act), Some(&np),
+            &cfg, &x, &wgate, &wup, &wdown, &out, &proof, Some(&table_act), None, Some(&np),
             &mut Transcript::new(b"qffn")
         ),
         "honest quantized FFN (norm + activation) must verify"
@@ -256,16 +258,110 @@ fn quantized_ffn_rejects_tampered_norm() {
     let np = NormParams { weight: &w_norm, table: &rsqrt };
 
     let (mut proof, out) = prove_ffn(
-        &cfg, &x, &wgate, &wup, &wdown, Some(&table_act), Some(&np), &mut Transcript::new(b"qffn"),
+        &cfg, &x, &wgate, &wup, &wdown, Some(&table_act), None, Some(&np), &mut Transcript::new(b"qffn"),
     );
     // Forge the norm's inv_rms advice — the RMSNorm gadget (lookup + scaling Hadamard) must reject.
     proof.p_norm.as_mut().unwrap().inv_rms[0] += Fr::from(1u64);
     assert!(
         !verify_ffn(
-            &cfg, &x, &wgate, &wup, &wdown, &out, &proof, Some(&table_act), Some(&np),
+            &cfg, &x, &wgate, &wup, &wdown, &out, &proof, Some(&table_act), None, Some(&np),
             &mut Transcript::new(b"qffn")
         ),
         "tampered RMSNorm advice must be rejected"
+    );
+}
+
+// ─── M5.3: wide gate accumulator → proven requant → activation → zero obligations ────
+
+/// A fixture whose gate projection yields a **wide** accumulator (values up to `q_bound·D`), so the
+/// activation cannot run on it directly — it must be requantized into `[0, q_bound)` first. `xn = x`
+/// (identity RMSNorm), `up = 1`, and each gate column `j` carries the single wide code `wide[j]`
+/// (row 0 of `Wgate`; since `xn = 1`, `gate[.,j] = wide[j]`).
+fn wide_gate_fixture(
+    seq: usize,
+    d_model: usize,
+    d_ff: usize,
+    wide: &[u64],
+) -> (FfnConfig, Vec<Fr>, Vec<Fr>, Vec<Fr>, Vec<Fr>) {
+    assert_eq!(wide.len(), d_ff);
+    let m = llama_like(d_model as u32, d_ff as u32);
+    let cfg = FfnConfig::from_manifest(&m, seq);
+    let x = vec![Fr::from(1u64); seq * d_model];
+    let mut wgate = vec![Fr::from(0u64); d_model * d_ff];
+    let mut wup = vec![Fr::from(0u64); d_model * d_ff];
+    for j in 0..d_ff {
+        wgate[j] = Fr::from(wide[j]); // row 0, col j
+        wup[j] = Fr::from(1u64); //     up[.,j] = 1
+    }
+    let wdown = vec![encode_i64(1); d_ff * d_model];
+    (cfg, x, wgate, wup, wdown)
+}
+
+#[test]
+fn quantized_ffn_requant_bridges_wide_gate_to_activation() {
+    // The full M5.3 closure: gate = xn·Wgate is a wide integer accumulator; the requant gadget
+    // proves gate_q = ⌊gate/4⌋ ∈ [0,16), the activation lookup runs on gate_q, and the RMSNorm is
+    // sound — so the FFN has ZERO pending obligations with a real wide→code hop proven.
+    let (divisor, q_bound) = (4usize, 16usize);
+    let (r_table, q_table) = (RangeTable::new(divisor), RangeTable::new(q_bound));
+    let rp = RequantParams { bias: Fr::from(0u64), divisor, r_table: &r_table, q_table: &q_table };
+
+    let act = ActivationTable::new(ActKind::Silu, q_bound, 0.5);
+    let rsqrt = identity_rsqrt(4);
+    let w_norm = vec![Fr::from(1u64); 4];
+    let np = NormParams { weight: &w_norm, table: &rsqrt };
+
+    // Wide gate codes in [0,64): requant ⌊·/4⌋ → [0,16).
+    let wide = [3u64, 12, 60, 40, 8, 44, 16, 28];
+    let (cfg, x, wgate, wup, wdown) = wide_gate_fixture(2, 4, 8, &wide);
+
+    let (proof, out) = prove_ffn(
+        &cfg, &x, &wgate, &wup, &wdown, Some(&act), Some(&rp), Some(&np),
+        &mut Transcript::new(b"wide"),
+    );
+    assert!(proof.p_requant.is_some(), "the wide→code requant hop must be proven");
+    // gate_q = ⌊wide/4⌋, repeated per row.
+    let per_row: Vec<Fr> = wide.iter().map(|&w| Fr::from(w / 4)).collect();
+    let expect_q: Vec<Fr> = (0..2).flat_map(|_| per_row.clone()).collect();
+    assert_eq!(proof.gate_q.as_ref().unwrap(), &expect_q, "gate_q must be ⌊gate/D⌋");
+    assert!(
+        proof.obligations.is_empty(),
+        "a proven wide→code requant + sound norm + activation ⇒ zero pending obligations"
+    );
+
+    assert!(
+        verify_ffn(
+            &cfg, &x, &wgate, &wup, &wdown, &out, &proof, Some(&act), Some(&rp), Some(&np),
+            &mut Transcript::new(b"wide")
+        ),
+        "fully-quantized FFN with a proven wide→code requant hop must verify"
+    );
+}
+
+#[test]
+fn requant_mode_mismatch_is_rejected() {
+    // A requant-proven FFN must not verify when the verifier omits the requant params (and vice
+    // versa) — the wide→code hop is part of the statement.
+    let (divisor, q_bound) = (4usize, 16usize);
+    let (r_table, q_table) = (RangeTable::new(divisor), RangeTable::new(q_bound));
+    let rp = RequantParams { bias: Fr::from(0u64), divisor, r_table: &r_table, q_table: &q_table };
+    let act = ActivationTable::new(ActKind::Silu, q_bound, 0.5);
+    let rsqrt = identity_rsqrt(4);
+    let w_norm = vec![Fr::from(1u64); 4];
+    let np = NormParams { weight: &w_norm, table: &rsqrt };
+    let wide = [3u64, 12, 60, 40, 8, 44, 16, 28];
+    let (cfg, x, wgate, wup, wdown) = wide_gate_fixture(2, 4, 8, &wide);
+
+    let (proof, out) = prove_ffn(
+        &cfg, &x, &wgate, &wup, &wdown, Some(&act), Some(&rp), Some(&np),
+        &mut Transcript::new(b"wide"),
+    );
+    assert!(
+        !verify_ffn(
+            &cfg, &x, &wgate, &wup, &wdown, &out, &proof, Some(&act), None, Some(&np),
+            &mut Transcript::new(b"wide")
+        ),
+        "verifying a requant-proven FFN without requant params must be rejected"
     );
 }
 
@@ -279,12 +375,12 @@ fn norm_mode_mismatch_is_rejected() {
     let np = NormParams { weight: &w_norm, table: &rsqrt };
 
     let (proof, out) = prove_ffn(
-        &cfg, &x, &wgate, &wup, &wdown, Some(&table_act), Some(&np), &mut Transcript::new(b"qffn"),
+        &cfg, &x, &wgate, &wup, &wdown, Some(&table_act), None, Some(&np), &mut Transcript::new(b"qffn"),
     );
     // Verifying a norm-proven proof without norm params (or vice versa) must fail.
     assert!(
         !verify_ffn(
-            &cfg, &x, &wgate, &wup, &wdown, &out, &proof, Some(&table_act), None,
+            &cfg, &x, &wgate, &wup, &wdown, &out, &proof, Some(&table_act), None, None,
             &mut Transcript::new(b"qffn")
         ),
         "norm mode mismatch must be rejected"

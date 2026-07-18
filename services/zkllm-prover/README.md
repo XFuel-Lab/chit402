@@ -8,7 +8,7 @@ and ADR 0003). CPU-only — runs in any container.
 > market (open-weight decoder transformers: Llama, Mistral, Qwen, Gemma, GPT-2, MoE). Closed models
 > (no weight access) are un-provable by anyone and are covered by the TEE / signed tiers.
 
-## What's here (M5.1 core + M5.2 gadget/block/lookup layer)
+## What's here (M5.1 core + M5.2 gadget/block/lookup layer + M5.3 requant/spot-check)
 
 | Module | Purpose |
 |--------|---------|
@@ -25,8 +25,9 @@ and ADR 0003). CPU-only — runs in any container.
 | `rope` | **RoPE** — public-linear (fixed-point cos/sin) exact rotation of Q/K; verifier recomputes, no proof object. |
 | `mha` | **Multi-head + GQA attention** — one shared norm + Q/K/V/O, RoPE on Q/K, and the per-head softmax argument for every head under one transcript. GQA is index layout (`head → kv group`). **Zero pending obligations** (quantized). |
 | `range` | **Range-check gadget** — proves a column lies in `[0, bound)` via a membership lookup into the identity table. The reusable backbone for requant bounds and any limb decomposition. |
-| `requant` | **Inter-op requantization** — proves `acc = q·D + r` with `0 ≤ r < D` and `0 ≤ q < q_bound` (division-with-remainder + two range checks), so a wide accumulator re-enters the next op's code domain. Closes the last quantized-pipeline gap. |
-| `block` | **Full transformer block** — composes `attention → ffn` under one Fiat–Shamir transcript. |
+| `requant` | **Inter-op requantization** — proves `acc + bias = q·D + r` with `0 ≤ r < D` and `0 ≤ q < q_bound` (division-with-remainder + two range checks; public `bias` handles signed accumulators), so a wide accumulator re-enters the next op's code domain. **Wired into the FFN gate path** (`RequantParams`). |
+| `block` | **Full transformer block** — composes `attention → ffn` under one Fiat–Shamir transcript; the FFN gate's wide→code requant hop threads through. |
+| `spotcheck` | **Tier-3b block-window spot-check** — a Fiat–Shamir-selected pseudo-random window of `k` blocks, bound to the model + PBR commitments so the prover can't cherry-pick and any trace tampering re-rolls the selection. Generic over the per-block prover. |
 | `manifest` | `ModelManifest` (arch config) + **arch-bound PoMA commitment** — proof attests "these weights + this architecture". |
 | `commitment` | keccak256 weights root / model commitment + `commit_field_table` + **PBR public-input binding**, byte-identical to `SP1ProofHooks.computeInferenceBindingCommitment`. |
 
@@ -36,11 +37,13 @@ lookup + a sum-of-squares reduction + a Hadamard scaling chain), **causal self-a
 **softmax** (`exp` + row-sum + reciprocal lookups + a normalization Hadamard), **multi-head + GQA**
 attention, and **RoPE** (public-linear). In quantized mode a SwiGLU FFN block and a multi-head
 attention block each have **zero pending obligations**, and a full transformer `block` composes them
-under one transcript. Inter-op **requantization** (`requant`) is now proven as division-with-remainder
-plus two `range` checks — a wide accumulator re-enters the next op's code domain soundly (M5.3).
-**Explicitly pending:** wiring `requant` between the block's sub-ops for a fully-quantized end-to-end
-`block` + random-block-window spot-check orchestration and the RAM bench on a high-RAM host (M5.3),
-then the PCS binding + on-chain verifier + Groth16 wrap (M5.4).
+under one transcript. Inter-op **requantization** (`requant`) is proven as division-with-remainder
+plus two `range` checks and is now **wired into the FFN gate path** — a wide matmul accumulator is
+requantized into the activation's code domain under the block transcript (an FFN test proves a wide
+gate → requant → activation → sound norm with **zero pending obligations**). The **Tier-3b
+block-window spot-check** (`spotcheck`) selects a Fiat–Shamir window of blocks bound to the model +
+PBR commitments (M5.3). **Explicitly pending:** the RAM bench on a high-RAM host (M5.3), then the PCS
+binding + on-chain verifier + Groth16 wrap (M5.4).
 
 ## Build & test
 
@@ -78,16 +81,15 @@ CPU-only; the scaling knob is **RAM**, not GPU. For model-scale runs pick a high
 M5.1/M5.2 are a *verifiable-computation* reduction: the verifier is given the tensors + advice and
 checks the sumcheck/lookup arguments are sound. Two boundaries remain explicit:
 
-1. **The transcendental steps, attention assembly, and requant are proven; block wiring remains.**
+1. **The transcendental steps, attention assembly, and inter-op requant are all proven.**
    Activation (SiLU/GeLU), RMSNorm's rsqrt, and softmax's `exp`/reciprocal are all soundly proven by
-   the logup lookup in quantized mode; multi-head/GQA + RoPE assembly is done — quantized FFN and
-   multi-head attention blocks each have zero pending obligations; and inter-op **requantization** is
-   now a sound gadget (`requant` = division-with-remainder + two `range` checks, with an integration
-   test showing a requantized accumulator feeding an activation lookup). What remains for a full
-   model: **wiring `requant` between the `block`'s sub-ops** so a full transformer block is
-   zero-obligation end-to-end (the `block` test still runs the FFN half in placeholder mode) — M5.3.
-   The non-quantized path keeps placeholder norm/activation for exercising linear+gating on arbitrary
-   field inputs.
+   the logup lookup in quantized mode; multi-head/GQA + RoPE assembly is done; and inter-op
+   **requantization** (`requant` = division-with-remainder + two `range` checks) is **wired into the
+   FFN gate path** — an FFN test proves a wide gate accumulator → requant → activation → sound norm
+   with zero pending obligations, and it threads through the `block`. The `spotcheck` layer selects a
+   Fiat–Shamir block window for the cheaper Tier-3b. The non-quantized path keeps placeholder
+   norm/activation for exercising linear+gating on arbitrary field inputs. What remains is the
+   full-model **RAM benchmark** on a high-RAM host (M5.3).
 2. **No polynomial commitment yet.** Binding MLE evaluations to an on-chain **polynomial commitment**
    of the weights (so the verifier needs only the commitment) + the Groth16 wrap for cheap on-chain
    verification are the M5.4 milestone.

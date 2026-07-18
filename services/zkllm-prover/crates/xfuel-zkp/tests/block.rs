@@ -79,7 +79,7 @@ fn honest_block_verifies_and_lists_obligations() {
     let f = fixture(4, 4, 8);
     let (proof, out) = prove_block(
         &f.attn_cfg, &f.ffn_cfg, &f.x, &f.wq, &f.wk, &f.wv, &f.wo, &f.exp, &f.recip, None,
-        &f.wgate, &f.wup, &f.wdown, None, None, &mut Transcript::new(b"block"),
+        &f.wgate, &f.wup, &f.wdown, None, None, None, &mut Transcript::new(b"block"),
     );
     // Placeholder norms/activation: attn norm + ffn norm + ffn activation remain pending.
     let obl = proof.obligations();
@@ -90,7 +90,7 @@ fn honest_block_verifies_and_lists_obligations() {
     assert!(
         verify_block(
             &f.attn_cfg, &f.ffn_cfg, &f.x, &f.wq, &f.wk, &f.wv, &f.wo, &f.exp, &f.recip, None,
-            &f.wgate, &f.wup, &f.wdown, None, None, &out, &proof, &mut Transcript::new(b"block")
+            &f.wgate, &f.wup, &f.wdown, None, None, None, &out, &proof, &mut Transcript::new(b"block")
         ),
         "honest transformer block must verify"
     );
@@ -101,14 +101,14 @@ fn tampered_block_link_is_rejected() {
     let f = fixture(4, 4, 8);
     let (mut proof, out) = prove_block(
         &f.attn_cfg, &f.ffn_cfg, &f.x, &f.wq, &f.wk, &f.wv, &f.wo, &f.exp, &f.recip, None,
-        &f.wgate, &f.wup, &f.wdown, None, None, &mut Transcript::new(b"block"),
+        &f.wgate, &f.wup, &f.wdown, None, None, None, &mut Transcript::new(b"block"),
     );
     // Corrupt the attention→FFN link tensor h: the attention residual check must reject.
     proof.h[0] += Fr::from(1u64);
     assert!(
         !verify_block(
             &f.attn_cfg, &f.ffn_cfg, &f.x, &f.wq, &f.wk, &f.wv, &f.wo, &f.exp, &f.recip, None,
-            &f.wgate, &f.wup, &f.wdown, None, None, &out, &proof, &mut Transcript::new(b"block")
+            &f.wgate, &f.wup, &f.wdown, None, None, None, &out, &proof, &mut Transcript::new(b"block")
         ),
         "tampered attention→FFN link must be rejected"
     );

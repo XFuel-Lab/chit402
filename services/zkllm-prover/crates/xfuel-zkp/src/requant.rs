@@ -6,20 +6,22 @@
 //! non-linear (it discards the low bits), so we prove it soundly as **division-with-remainder +
 //! two range checks**:
 //! ```text
-//!   acc = q·D + r        (exact — linear in the committed q, r; D public ⇒ verifier checks directly)
-//!   0 ≤ r < D            (range check — bounds the discarded remainder)
-//!   0 ≤ q < q_bound      (range check — bounds the output into the next op's code domain)
+//!   acc + bias = q·D + r   (exact — linear in the committed q, r; D, bias public ⇒ checked directly)
+//!   0 ≤ r < D              (range check — bounds the discarded remainder)
+//!   0 ≤ q < q_bound        (range check — bounds the output into the next op's code domain)
 //! ```
-//! With `r < D`, the pair `(q, r)` is the *unique* Euclidean division of `acc` by `D`, and
-//! `q < q_bound` both bounds the output and forces `acc < q_bound·D` (no silent overflow). This is
-//! the one missing piece for a fully-quantized, zero-obligation end-to-end block: a proven requant
-//! sits between each op so every output re-enters the next op's [`crate::range`] domain.
+//! With `r < D`, the pair `(q, r)` is the *unique* Euclidean division of `acc + bias` by `D`, and
+//! `q < q_bound` both bounds the output and forces `acc + bias < q_bound·D` (no silent overflow).
+//! This is the one missing piece for a fully-quantized, zero-obligation end-to-end block: a proven
+//! requant sits between each op so every output re-enters the next op's [`crate::range`] domain.
 //!
-//! **Conventions.** Truncation (floor). For round-to-nearest, the caller pre-adds `D/2` to `acc`.
-//! `acc` and `q` are treated as **non-negative** codes; signed accumulators are shifted by a public
-//! bias (`acc' = acc + bias`, `q' = q + offset`) before requant — the relation and ranges hold on
-//! the shifted quantities. Saturating clamp (when `acc ≥ q_bound·D`) is a follow-up (a min/compare
-//! gadget); here an out-of-range `q` is simply rejected.
+//! **Conventions.** Truncation (floor). For round-to-nearest, fold `D/2` into `bias`.
+//! Signed accumulators are handled by the **public `bias`**: matmul over signed codes yields a
+//! (possibly negative) `acc`; a caller passes `bias ≥ |min(acc)|` so `acc + bias ≥ 0` and small,
+//! and `q` is the requantized code in the next op's `[0, q_bound)` domain. `bias` is public and
+//! enters the directly-checked identity, so it binds the shift. Saturating clamp (when
+//! `acc + bias ≥ q_bound·D`) is a follow-up (a min/compare gadget); here an out-of-range `q` is
+//! simply rejected.
 
 use crate::range::RangeTable;
 use crate::lookup::LookupProof;
@@ -46,11 +48,13 @@ fn decode_small(f: &Fr) -> u64 {
     limbs[0]
 }
 
-/// Prove `q = ⌊acc / divisor⌋` for every element of `acc`, with the quotient bounded by
+/// Prove `q = ⌊(acc + bias) / divisor⌋` for every element of `acc`, with the quotient bounded by
 /// `q_table` (`[0, q_bound)` = next op's code domain) and the remainder by `r_table`
-/// (`[0, divisor)`). `divisor` must equal `r_table.bound` (a power of two). Returns `(proof, q)`.
+/// (`[0, divisor)`). `bias` is a public shift (use `Fr::zero()` for non-negative `acc`); `divisor`
+/// must equal `r_table.bound` (a power of two). Returns `(proof, q)`.
 pub fn prove_requant(
     acc: &[Fr],
+    bias: Fr,
     divisor: usize,
     r_table: &RangeTable,
     q_table: &RangeTable,
@@ -63,7 +67,7 @@ pub fn prove_requant(
     let mut q = Vec::with_capacity(acc.len());
     let mut r = Vec::with_capacity(acc.len());
     for a in acc {
-        let av = decode_small(a);
+        let av = decode_small(&(*a + bias));
         q.push(Fr::from(av / d));
         r.push(Fr::from(av % d));
     }
@@ -75,11 +79,13 @@ pub fn prove_requant(
     (RequantProof { r, p_r, p_q }, q)
 }
 
-/// Verify a requantization proof: the exact division identity `acc = q·divisor + r` (direct) plus
-/// the remainder and quotient range checks.
+/// Verify a requantization proof: the exact division identity `acc + bias = q·divisor + r` (direct)
+/// plus the remainder and quotient range checks.
+#[allow(clippy::too_many_arguments)]
 pub fn verify_requant(
     acc: &[Fr],
     q: &[Fr],
+    bias: Fr,
     divisor: usize,
     r_table: &RangeTable,
     q_table: &RangeTable,
@@ -95,10 +101,10 @@ pub fn verify_requant(
         return false;
     }
 
-    // Exact Euclidean identity acc = q·D + r (D public ⇒ linear, checked directly).
+    // Exact Euclidean identity acc + bias = q·D + r (D, bias public ⇒ linear, checked directly).
     let d = Fr::from(divisor as u64);
     for i in 0..n {
-        if acc[i] != q[i] * d + proof.r[i] {
+        if acc[i] + bias != q[i] * d + proof.r[i] {
             return false;
         }
     }

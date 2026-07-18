@@ -39,11 +39,18 @@ Harness: `cargo run --release --example prove_ffn SEQ D_MODEL D_FF`.
 
 ## M5.2b–M5.3 — full block / small-model spot-check (to fill on the high-RAM host)
 
+**Code status (M5.3, shipped):** the inter-op **requantization** gadget is wired into the FFN gate
+path (wide `gate` accumulator → proven requant → activation lookup, zero-obligation), and the
+**Tier-3b block-window spot-check** (`spotcheck.rs`) selects a Fiat–Shamir window of `k` blocks bound
+to the model + PBR commitments. Correctness/soundness are covered by the 73-test suite; the numbers
+below are **hardware-gated** — they need a high-RAM host (below) to record real model-scale
+prove-time and peak RSS, which is the only remaining M5.3 item.
+
 | Model (quant) | Block window | prove time | peak RAM | verify | proof size |
 |---------------|--------------|-----------|----------|--------|-----------|
-| TinyLlama-1.1B (q4_k_m) | 1 block | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
-| GPT-2 (fp16) | 1 block | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
-| Llama-3-8B (q4_k_m) | 1 block | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| TinyLlama-1.1B (q4_k_m) | k=1 block (FS-selected) | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| GPT-2 (fp16) | k=1 block (FS-selected) | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| Llama-3-8B (q4_k_m) | k=2 blocks (FS-selected) | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
 
 ## Running at model scale (AWS container)
 
