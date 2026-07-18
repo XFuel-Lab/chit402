@@ -290,9 +290,10 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
   activation (SiLU/GeLU) + **RMSNorm** + **causal self-attention** (softmax via exp+reciprocal
   lookups) + a full **transformer block**; M5.2b-cont shipped: **multi-head + GQA** attention +
   **RoPE** (public-linear) — FFN and multi-head attention each reach **zero pending obligations**;
-  remaining: inter-op requantization range-checks (M5.3))*
-- **M5.3 Small-model spot-check** (TinyLlama/GPT-2-class): prove a random block window against the
-  committed weights+arch (PoMA), not the whole pass; bench time/RAM on the high-RAM CPU host.
+  M5.3 shipped the inter-op **requantization** gadget (division-with-remainder + range checks))*
+- **M5.3 Small-model spot-check** (TinyLlama/GPT-2-class): inter-op **requantization range-checks**
+  (shipped) so each op re-enters the next op's code domain; then prove a random block window against
+  the committed weights+arch (PoMA), not the whole pass; bench time/RAM on the high-RAM CPU host.
 - **M5.4 On-chain verify:** Solidity/Yul (BN254 precompiles) or Groth16 wrapper → `ZKVerifierSP1`;
   nullifier + settlement.
 - **M5.5 (premium) full-pass** for small–mid models (T3c).
@@ -340,15 +341,23 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           Q/K, and the per-head softmax argument for every head under one transcript; GQA is index
           layout (`head → kv group`). **Zero pending obligations** (quantized). This closes the
           M5.2b-cont assembly — the transformer block is now full-width, not just single-head.
-      - **Remaining (M5.3):** inter-op **requantization range-checks** so each op's output re-enters
-        the next op's code domain (the one thing between here and a fully-quantized zero-obligation
-        end-to-end block).
-      - **55 `cargo test` green** (matmul 4 + commitments 5 + hadamard 4 + **lookup 4** + **activation
-        3** + **norm 6** + **attention 6** + **block 2** + **rope 4** + **mha 7** (honest GQA + full MHA
-        + zero-obligations + RoPE + tamper ×3) + **FFN 10**); `--example prove_ffn` harness
+      - **65 `cargo test` green** (matmul 4 + commitments 5 + hadamard 4 + **lookup 4** + **activation
+        3** + **norm 6** + **attention 6** + **block 2** + **rope 4** + **mha 7** + **range 4** +
+        **requant 6** (honest / tampered q,r / out-of-range decomposition / wrong divisor / requant→
+        activation-lookup integration) + **FFN 10**); `--example prove_ffn` harness
         (64×512×1024: prove ~4.4s, verify ~0.34s, CPU-only).
-- [ ] **M5.3** Random-block-window spot-check vs committed weights; bench time/RAM on the
-      high-RAM CPU host (256–512 GB, **not GPU** — per the RAM reframing). Fill `docs/ZKG5_BENCHMARK.md`.
+- [~] **M5.3** In progress. **Requantization range-checks shipped:**
+      - **Range-check gadget** (`range.rs`): proves a column ∈ `[0, bound)` as a membership lookup
+        into the identity table — the reusable backbone for requant bounds and limb decompositions.
+      - **Inter-op requantization** (`requant.rs`): proves `acc = q·D + r` with `0 ≤ r < D` and
+        `0 ≤ q < q_bound` (division-with-remainder + two range checks; `D=2^shift` public, so the
+        identity is checked directly). Uniquely determines `q = ⌊acc/D⌋`, bounds output into the next
+        op's code domain, and forces `acc < q_bound·D` (no silent overflow). Integration-tested: a
+        requantized accumulator feeds a SiLU activation lookup under one transcript.
+      - **Remaining:** wire `requant` between the `block`'s sub-ops (fully-quantized zero-obligation
+        end-to-end block), then random-block-window spot-check vs committed weights + bench time/RAM
+        on the high-RAM CPU host (256–512 GB, **not GPU** — per the RAM reframing).
+        Fill `docs/ZKG5_BENCHMARK.md`.
 - [ ] **M5.4** Implement `IVerifiedInference` verifier (Option A Solidity or wrapper); gas bench.
 - [ ] E2E: task → spot-check proof → on-chain verify → settle.
 
