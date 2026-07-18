@@ -26,6 +26,18 @@ describe('ProviderStaking', function () {
     await ethers.provider.send('evm_mine', []);
   }
 
+  // These tests fast-forward the EVM clock past the unbonding window. In the full
+  // Hardhat matrix (one shared process, files run alphabetically) that advance would
+  // otherwise leak into later deadline-sensitive suites and revert them with
+  // PastDeadline. Snapshot on entry and revert on exit so the clock never leaks out.
+  let clockSnapshotId;
+  before(async function () {
+    clockSnapshotId = await ethers.provider.send('evm_snapshot', []);
+  });
+  after(async function () {
+    if (clockSnapshotId) await ethers.provider.send('evm_revert', [clockSnapshotId]);
+  });
+
   beforeEach(async function () {
     [admin, provider, slasher, treasury, stranger] = await ethers.getSigners();
     const Token = await ethers.getContractFactory('MockERC20');
