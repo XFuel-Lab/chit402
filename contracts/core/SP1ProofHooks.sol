@@ -170,6 +170,36 @@ library SP1ProofHooks {
     }
 
     /**
+     * @notice PBR — Payment-Bound Receipt commitment (Verified Inference / Tier-3, Phase 2).
+     * @param paymentRefHash keccak256 of the x402 settlement ref ("<network>:<txRef>").
+     * @param taskIdHash Hash of the task ID the payment settles.
+     * @param paymentRail Rail discriminant (1 = USDC/x402, 2 = TFUEL).
+     * @param amount Bound economic value (settlement/net amount).
+     * @param modelCommitment PoMA model-authenticity commitment served (0 if none).
+     * @param outputHash Commitment to the produced output (0 if none).
+     * @return Commitment binding payment + model authenticity + output into one value, so a
+     *         receipt (or proof) attests "the paid model produced this output".
+     * @dev Superset of {computePaymentCommitment}: the first four fields are identical, then
+     *      modelCommitment + outputHash are appended. When both are 0 the value is NOT equal
+     *      to the payment-only commitment (extra packed 0-words), so callers pick the function
+     *      that matches the receipt's declared `covers`. Mirror of the backend
+     *      `payment-binding.js` `computeInferenceBinding` (parity-tested). Carried in the v2
+     *      `paymentCommitment` public value once the SP1 guest activates model binding.
+     */
+    function computeInferenceBindingCommitment(
+        bytes32 paymentRefHash,
+        bytes32 taskIdHash,
+        uint8 paymentRail,
+        uint256 amount,
+        bytes32 modelCommitment,
+        bytes32 outputHash
+    ) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(paymentRefHash, taskIdHash, paymentRail, amount, modelCommitment, outputHash)
+        );
+    }
+
+    /**
      * @notice v2 AI-task public values: v1 layout + a trailing `paymentCommitment`.
      * @dev Additive to `encodeAITaskPublicValues` (v1 is untouched / audit-stable).
      *      Activated when the SP1 guest commits the v2 layout (new programVKey) and a

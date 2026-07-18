@@ -25,6 +25,9 @@ import {
   keccak256,
   toUtf8Bytes,
   solidityPacked,
+  concat,
+  getBytes,
+  computeHmac,
   type Provider,
   type Signer,
 } from 'ethers';
@@ -82,6 +85,34 @@ export interface SwarmInfo {
   exists: boolean;
 }
 
+export const MODEL_REGISTRY_ABI = [
+  'function registerModel(bytes32 modelId, bytes32 commitment, uint8 scheme, string arch, string quant, string metadataURI) returns (uint256)',
+  'function retireVersion(bytes32 modelId, uint256 version)',
+  'function latestVersion(bytes32 modelId) view returns (uint256)',
+  'function versionCount(bytes32 modelId) view returns (uint256)',
+  'function getModel(bytes32 modelId, uint256 version) view returns (tuple(bytes32 commitment, uint8 scheme, string arch, string quant, string metadataURI, uint64 registeredAt, address registrar))',
+  'function getLatestModel(bytes32 modelId) view returns (tuple(bytes32 commitment, uint8 scheme, string arch, string quant, string metadataURI, uint64 registeredAt, address registrar))',
+  'function isActive(bytes32 modelId, uint256 version) view returns (bool)',
+  'function verifyCommitment(bytes32 modelId, uint256 version, bytes32 commitment) view returns (bool)',
+  'function lookupCommitment(bytes32 commitment) view returns (bytes32 modelId, uint256 version)',
+] as const;
+
+/** PoMA commitment scheme, indexed by the on-chain uint8 value. */
+export const COMMITMENT_SCHEMES = ['KECCAK_MERKLE', 'MLE_POLY'] as const;
+export type CommitmentScheme = (typeof COMMITMENT_SCHEMES)[number];
+
+/** Decoded on-chain model version (from ModelRegistry). */
+export interface ModelInfo {
+  commitment: string;
+  scheme: number;
+  schemeName: CommitmentScheme;
+  arch: string;
+  quant: string;
+  metadataURI: string;
+  registeredAt: number;
+  registrar: string;
+}
+
 export const VE_GOVERNANCE_ABI = [
   'function lock(uint256 amount, uint256 unlockTime)',
   'function createProposal(uint8 pType, bytes32 targetCircuit, string description, bytes executionData) returns (uint256)',
@@ -104,11 +135,390 @@ export interface XFuelOnChainOptions {
   zkVerifierAddress?: string;
   a2aCircuitAddress?: string;
   veGovernanceAddress?: string;
+  modelRegistryAddress?: string;
+  /** ERC-8004 Validation Registry (reads: status/summary/agent validations). */
+  erc8004RegistryAddress?: string;
+  /** XFuelValidationAdapter (reads: provenance; encode: submitValidation). */
+  xfuelValidationAdapterAddress?: string;
+  /** ProviderStaking (reads: stake/slash; encode: stake/unstake/withdraw). */
+  providerStakingAddress?: string;
 }
+
+/** ERC-8004 Validation Registry (pinned; see contracts/interfaces/IERC8004ValidationRegistry.sol). */
+export const ERC8004_VALIDATION_REGISTRY_ABI = [
+  'function validationResponse(bytes32 requestHash, uint8 response, string responseURI, bytes32 responseHash, string tag) external',
+  'function getValidationStatus(bytes32 requestHash) view returns (address validatorAddress, uint256 agentId, uint8 response, bytes32 responseHash, string tag, uint256 lastUpdate)',
+  'function getSummary(uint256 agentId, address[] validatorAddresses, string tag) view returns (uint64 count, uint8 averageResponse)',
+  'function getAgentValidations(uint256 agentId) view returns (bytes32[] requestHashes)',
+  'function getValidatorRequests(address validatorAddress) view returns (bytes32[] requestHashes)',
+] as const;
+
+/** XFuelValidationAdapter (contracts/core/XFuelValidationAdapter.sol). */
+export const XFUEL_VALIDATION_ADAPTER_ABI = [
+  'function submitValidation(bytes32 requestHash, uint256 agentId, uint8 response, string responseURI, bytes32 responseHash, string tag, bytes32 taskIdHash) external',
+  'function provenanceOf(bytes32 requestHash) view returns (bytes32 taskIdHash, bool isAnswered)',
+  'function validatorAddress() view returns (address)',
+] as const;
+
+/** ProviderStaking (contracts/core/ProviderStaking.sol) — Phase 4 T3b economics. */
+export const PROVIDER_STAKING_ABI = [
+  'function stake(uint256 amount) external',
+  'function requestUnstake(uint256 amount) external',
+  'function withdraw() external',
+  'function stakeOf(address provider) view returns (uint256)',
+  'function pendingOf(address provider) view returns (uint256 amount, uint256 unlockAt)',
+  'function isActiveProvider(address provider) view returns (bool)',
+  'function slashCount(address provider) view returns (uint256)',
+  'function minStake() view returns (uint256)',
+  'function totalActiveStake() view returns (uint256)',
+] as const;
 
 const iZk = new Interface(ZK_VERIFIER_ABI as unknown as string[]);
 const iA2A = new Interface(A2A_CIRCUIT_ABI as unknown as string[]);
 const iGov = new Interface(VE_GOVERNANCE_ABI as unknown as string[]);
+const iModel = new Interface(MODEL_REGISTRY_ABI as unknown as string[]);
+const iErc8004 = new Interface(ERC8004_VALIDATION_REGISTRY_ABI as unknown as string[]);
+const iAdapter = new Interface(XFUEL_VALIDATION_ADAPTER_ABI as unknown as string[]);
+const iStaking = new Interface(PROVIDER_STAKING_ABI as unknown as string[]);
+
+// ─── PoMA — Proof of Model Authenticity helpers ────────────────────────────────
+//
+// Pure, provider-free helpers mirroring services/gateway/src/model-commitment.js and
+// contracts/core/ModelRegistry.sol so an agent can independently compute a model
+// commitment and check it against the on-chain registry (anti-downgrade). See
+// docs/POMA_SPEC.md for the scheme.
+
+const _LEAF_PREFIX = '0x00';
+const _NODE_PREFIX = '0x01';
+
+/** Canonical model slug → stable modelId (keccak256 of the lowercased slug). */
+export function modelIdFromSlug(slug: string): string {
+  return keccak256(toUtf8Bytes(String(slug).trim().toLowerCase()));
+}
+
+/** Domain-separated keccak leaf for a shard buffer. */
+export function shardLeaf(buffer: Uint8Array | string): string {
+  const bytes = typeof buffer === 'string' ? getBytes(buffer) : buffer;
+  return keccak256(concat([_LEAF_PREFIX, bytes]));
+}
+
+/** KECCAK_MERKLE root over ordered leaves (odd tail promoted). Matches PoMA scheme id 0. */
+export function keccakMerkleRoot(leaves: string[]): string {
+  if (!leaves || leaves.length === 0) return '0x' + '0'.repeat(64);
+  let level = leaves.slice();
+  while (level.length > 1) {
+    const next: string[] = [];
+    for (let i = 0; i < level.length; i += 2) {
+      next.push(i + 1 < level.length ? keccak256(concat([_NODE_PREFIX, level[i], level[i + 1]])) : level[i]);
+    }
+    level = next;
+  }
+  return level[0];
+}
+
+/**
+ * Compute a model commitment from ordered weight shard buffers (KECCAK_MERKLE).
+ * @returns `{ modelId, commitment, scheme: 0, shardCount }`
+ */
+export function computeModelCommitment(params: {
+  shards: Array<Uint8Array | string>;
+  slug: string;
+}): { modelId: string; commitment: string; scheme: number; shardCount: number } {
+  if (!params.shards || params.shards.length === 0) {
+    throw new Error('computeModelCommitment: at least one shard is required');
+  }
+  const leaves = params.shards.map(shardLeaf);
+  return {
+    modelId: modelIdFromSlug(params.slug),
+    commitment: keccakMerkleRoot(leaves),
+    scheme: 0,
+    shardCount: params.shards.length,
+  };
+}
+
+// ─── PBR — Payment-Bound Receipt helpers ───────────────────────────────────────
+//
+// Mirror of services/gateway/src/payment-binding.js `computeInferenceBinding` and
+// SP1ProofHooks.computeInferenceBindingCommitment. Lets an agent independently re-derive
+// the payment-bound commitment (payment + model authenticity + output) on a receipt.
+
+const _ZERO32 = '0x' + '0'.repeat(64);
+const _isHex32 = (h?: string) => !!h && /^0x[0-9a-fA-F]{64}$/.test(h);
+
+/**
+ * Re-derive the PBR commitment:
+ *   keccak256(abi.encodePacked(paymentRefHash, taskIdHash, rail, amount, modelCommitment, outputHash))
+ */
+export function computeInferenceBinding(params: {
+  paymentRef?: string;
+  taskId: string;
+  rail: string | number;
+  amount: string | bigint;
+  modelCommitment?: string;
+  outputHash?: string;
+}): string {
+  const rail = typeof params.rail === 'number' ? params.rail : (PAYMENT_RAIL_DISCRIMINANT[params.rail] ?? 0);
+  const paymentRefHash = params.paymentRef ? keccak256(toUtf8Bytes(String(params.paymentRef))) : _ZERO32;
+  const taskIdHash = keccak256(toUtf8Bytes(String(params.taskId)));
+  const model = _isHex32(params.modelCommitment) ? (params.modelCommitment as string) : _ZERO32;
+  const output = _isHex32(params.outputHash) ? (params.outputHash as string) : _ZERO32;
+  return keccak256(
+    solidityPacked(
+      ['bytes32', 'bytes32', 'uint8', 'uint256', 'bytes32', 'bytes32'],
+      [paymentRefHash, taskIdHash, rail, BigInt(params.amount ?? 0), model, output],
+    ),
+  );
+}
+
+/**
+ * Canonical, order-stable payload a receipt signature covers. MUST match
+ * `canonicalSignedPayload` in services/gateway/src/receipt.js (same fields + order).
+ */
+export function canonicalReceiptPayload(receipt: Record<string, unknown>): string {
+  const r = receipt as {
+    task_id?: string;
+    payment?: { rail?: string; ref?: string; net_amount?: string; fee_amount?: string };
+    route?: { model?: string; model_commitment?: { commitment?: string } };
+    output?: { hash?: string };
+    binding?: { expected_commitment?: string };
+  };
+  return JSON.stringify([
+    r.task_id ?? null,
+    r.payment?.rail ?? null,
+    r.payment?.ref ?? null,
+    r.payment?.net_amount ?? null,
+    r.payment?.fee_amount ?? null,
+    r.route?.model ?? null,
+    r.route?.model_commitment?.commitment ?? null,
+    r.output?.hash ?? null,
+    r.binding?.expected_commitment ?? null,
+  ]);
+}
+
+// ─── ERC-8004 Validation Registry helpers ───────────────────────────────────────
+//
+// Mirror of services/gateway/src/erc8004.js `buildValidationRecord`. Turn an XFuel receipt
+// into an ERC-8004 verdict (score 0..100 + evidence + tag) an agent can submit or verify.
+
+export interface ValidationVerdict {
+  eligible: boolean;
+  reason?: string;
+  request_hash: string;
+  agent_id: string;
+  response: number;
+  tag: string;
+  response_uri: string | null;
+  response_hash: string;
+  task_id: string | null;
+  task_id_hash: string;
+  tier: string;
+  covers: string[];
+  binding_matches: boolean | null;
+}
+
+const _REQUEST_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+
+/**
+ * Derive the ERC-8004 verdict for a receipt. Byte-identical to the gateway so an agent can
+ * recompute (and cross-check) what XFuel will submit. Score: 0 = failed, 100 = passed; the
+ * tag conveys the assurance tier.
+ */
+export function receiptToValidationVerdict(
+  receipt: Record<string, unknown>,
+  opts: { requestHash: string; agentId: string | number },
+): ValidationVerdict {
+  if (!_REQUEST_HASH_RE.test(String(opts.requestHash || ''))) {
+    throw new Error('requestHash must be a 0x-prefixed 32-byte hex string');
+  }
+  const agent = String(opts.agentId ?? '');
+  if (!/^\d+$/.test(agent)) throw new Error('agentId must be a non-negative integer');
+
+  const r = receipt as {
+    task_id?: string;
+    proof_outcome?: string;
+    proof?: { tier?: string };
+    binding?: { covers?: string[]; matches?: boolean };
+    output?: { hash?: string };
+    verify_url?: string;
+    links?: { self?: string };
+  };
+
+  const tier = r.proof?.tier || 'signed';
+  const covers = Array.isArray(r.binding?.covers) ? (r.binding!.covers as string[]) : [];
+  const bindingMatches = r.binding ? (r.binding.matches ?? null) : null;
+  const base = {
+    request_hash: opts.requestHash,
+    agent_id: agent,
+    tier,
+    covers,
+    binding_matches: bindingMatches,
+    task_id: r.task_id || null,
+    task_id_hash: r.task_id ? keccak256(toUtf8Bytes(String(r.task_id))) : '0x' + '0'.repeat(64),
+    response_uri: r.verify_url || r.links?.self || null,
+    response_hash: keccak256(toUtf8Bytes(canonicalReceiptPayload(receipt))),
+  };
+
+  const validatable = r.proof_outcome !== 'pending' && !!r.output?.hash;
+  if (!validatable) {
+    return { ...base, eligible: false, reason: 'task not settled / no delivered output', response: 0, tag: 'xfuel:pending' };
+  }
+  if (bindingMatches === false) return { ...base, eligible: true, response: 0, tag: 'xfuel:binding-mismatch' };
+  if (r.proof_outcome === 'invalid') return { ...base, eligible: true, response: 0, tag: 'xfuel:proof-invalid' };
+
+  const tag = covers.includes('inference') ? `xfuel:${tier}+pbr` : `xfuel:${tier}`;
+  return { ...base, eligible: true, response: 100, tag };
+}
+
+// ─── Verified Inference — tier selection mirror ─────────────────────────────────
+//
+// Faithful mirror of services/gateway/src/tier-policy.js so an agent can predict the assurance
+// tier BEFORE submitting (and pass `proof_tier` to raise it). Keep in lockstep with the gateway.
+
+export const TIER_ORDER = ['signed', 'settlement', 'inference'] as const;
+export type Tier = (typeof TIER_ORDER)[number];
+export type Mechanism = 'tee' | 'zk-spotcheck' | 'zk-full';
+
+export interface TierPolicy {
+  enabled: boolean;
+  tier2Min?: string | bigint;
+  tier3Min?: string | bigint;
+  defaultMechanism?: Mechanism;
+  available?: Partial<Record<'settlement' | Mechanism, boolean>>;
+}
+
+export interface TierSelection {
+  tier: Tier;
+  mechanism: Mechanism | null;
+  reason: string;
+  floor: Tier;
+  requested: Tier | null;
+  degraded: boolean;
+}
+
+const _tierRank = (t: string) => Math.max(0, TIER_ORDER.indexOf(t as Tier));
+
+export function normalizeRequestedTier(requested?: string | null): { tier: Tier; mechanism: Mechanism | null } | null {
+  if (!requested) return null;
+  const r = String(requested).toLowerCase().trim();
+  if (r === 'signed') return { tier: 'signed', mechanism: null };
+  if (r === 'settlement') return { tier: 'settlement', mechanism: null };
+  if (r === 'inference') return { tier: 'inference', mechanism: null };
+  if (r === 'tee' || r === 't3a') return { tier: 'inference', mechanism: 'tee' };
+  if (r === 'zk-spotcheck' || r === 'spotcheck' || r === 't3b') return { tier: 'inference', mechanism: 'zk-spotcheck' };
+  if (r === 'zk-full' || r === 'full' || r === 't3c') return { tier: 'inference', mechanism: 'zk-full' };
+  return null;
+}
+
+function _resolveMechanism(desired: Mechanism | null, available?: TierPolicy['available']): { mechanism: Mechanism | null; degraded: boolean } {
+  const avail = available || {};
+  const order: Mechanism[] = ['zk-full', 'zk-spotcheck', 'tee'];
+  const start = desired ? order.indexOf(desired) : -1;
+  const from = start < 0 ? order.length - 1 : start;
+  for (let i = from; i < order.length; i++) {
+    if (avail[order[i]]) return { mechanism: order[i], degraded: order[i] !== desired };
+  }
+  return { mechanism: null, degraded: true };
+}
+
+/** Predict the assurance tier for a task under a policy. Mirror of the gateway selector. */
+export function selectTier(
+  task: { amount?: string | bigint; netAmount?: string | bigint; proofTier?: string | null; intent?: { amount?: string | bigint; proofTier?: string | null } },
+  policy: TierPolicy,
+): TierSelection {
+  const p = policy || ({} as TierPolicy);
+  const amount = BigInt(task?.intent?.amount ?? task?.amount ?? task?.netAmount ?? 0);
+  const requested = normalizeRequestedTier(task?.intent?.proofTier ?? task?.proofTier ?? null);
+
+  if (!p.enabled) {
+    const tier: Tier = p.available?.settlement ? 'settlement' : 'signed';
+    return { tier, mechanism: null, reason: 'tier engine disabled (legacy)', floor: tier, requested: requested?.tier ?? null, degraded: false };
+  }
+
+  const tier2Min = BigInt(p.tier2Min ?? 0);
+  const tier3Min = BigInt(p.tier3Min ?? 0);
+  let floorTier: Tier = 'signed';
+  if (tier3Min > 0n && amount >= tier3Min) floorTier = 'inference';
+  else if (tier2Min > 0n && amount >= tier2Min) floorTier = 'settlement';
+
+  let targetTier: Tier = floorTier;
+  let targetMechanism: Mechanism | null = floorTier === 'inference' ? (p.defaultMechanism || 'tee') : null;
+  if (requested && _tierRank(requested.tier) > _tierRank(targetTier)) {
+    targetTier = requested.tier;
+    targetMechanism = requested.tier === 'inference' ? (requested.mechanism || p.defaultMechanism || 'tee') : null;
+  } else if (requested && requested.tier === 'inference' && targetTier === 'inference' && requested.mechanism) {
+    targetMechanism = requested.mechanism;
+  }
+
+  let reason = requested && _tierRank(requested.tier) > _tierRank(floorTier) ? 'requested tier above value floor' : 'value-at-risk floor';
+  let degraded = false;
+
+  if (targetTier === 'settlement' && !p.available?.settlement) {
+    targetTier = 'signed';
+    reason = 'settlement unavailable — degraded to signed';
+    degraded = true;
+  }
+
+  if (targetTier === 'inference') {
+    const res = _resolveMechanism(targetMechanism, p.available);
+    if (!res.mechanism) {
+      targetTier = p.available?.settlement ? 'settlement' : 'signed';
+      targetMechanism = null;
+      reason = 'no Tier-3 mechanism available — degraded';
+      degraded = true;
+    } else {
+      targetMechanism = res.mechanism;
+      if (res.degraded) {
+        reason = `mechanism degraded to ${res.mechanism}`;
+        degraded = true;
+      }
+    }
+  }
+
+  return { tier: targetTier, mechanism: targetMechanism, reason, floor: floorTier, requested: requested?.tier ?? null, degraded };
+}
+
+/** Encode `validationResponse(...)` calldata for the ERC-8004 registry (validator submits directly). */
+export function encodeValidationResponse(v: ValidationVerdict): string {
+  return iErc8004.encodeFunctionData('validationResponse', [
+    v.request_hash, v.response, v.response_uri || '', v.response_hash, v.tag,
+  ]);
+}
+
+/** Encode `submitValidation(...)` calldata for the XFuelValidationAdapter (SUBMITTER_ROLE). */
+export function encodeSubmitValidation(v: ValidationVerdict): string {
+  return iAdapter.encodeFunctionData('submitValidation', [
+    v.request_hash, v.agent_id, v.response, v.response_uri || '', v.response_hash, v.tag, v.task_id_hash,
+  ]);
+}
+
+export interface ReceiptSignatureCheck {
+  /** Whether a signature was present to check. */
+  checked: boolean;
+  /** True if the recomputed HMAC matches; null when nothing was checked. */
+  valid: boolean | null;
+  expected?: string;
+  recomputed?: string;
+}
+
+/**
+ * Verify a receipt's Tier-1 HMAC signature (tamper-evidence over the payment-bound tuple).
+ * Requires the shared signing secret (server `RECEIPT_SIGNING_SECRET`).
+ */
+export function verifyReceiptSignature(
+  receipt: Record<string, unknown>,
+  secret: string,
+): ReceiptSignatureCheck {
+  const sig = (receipt as { signature?: { value?: string } }).signature;
+  if (!sig?.value) return { checked: false, valid: null };
+  const digest = computeHmac('sha256', toUtf8Bytes(secret), toUtf8Bytes(canonicalReceiptPayload(receipt)));
+  const recomputed = `sha256=${digest.slice(2)}`; // strip 0x, match "sha256=<hex>"
+  return {
+    checked: true,
+    valid: recomputed.toLowerCase() === String(sig.value).toLowerCase(),
+    expected: sig.value,
+    recomputed,
+  };
+}
 
 // ─── Proof verification ───────────────────────────────────────────────────────
 //
@@ -202,12 +612,20 @@ export class XFuelOnChain {
   readonly zkVerifierAddress?: string;
   readonly a2aCircuitAddress?: string;
   readonly veGovernanceAddress?: string;
+  readonly modelRegistryAddress?: string;
+  readonly erc8004RegistryAddress?: string;
+  readonly xfuelValidationAdapterAddress?: string;
+  readonly providerStakingAddress?: string;
 
   constructor(opts: XFuelOnChainOptions = {}) {
     this.provider = opts.provider ?? (opts.rpcUrl ? new JsonRpcProvider(opts.rpcUrl) : undefined);
     this.zkVerifierAddress = opts.zkVerifierAddress;
     this.a2aCircuitAddress = opts.a2aCircuitAddress;
     this.veGovernanceAddress = opts.veGovernanceAddress;
+    this.modelRegistryAddress = opts.modelRegistryAddress;
+    this.erc8004RegistryAddress = opts.erc8004RegistryAddress;
+    this.xfuelValidationAdapterAddress = opts.xfuelValidationAdapterAddress;
+    this.providerStakingAddress = opts.providerStakingAddress;
   }
 
   /** Attach a signer for advanced callers who manage their own key. */
@@ -297,6 +715,169 @@ export class XFuelOnChain {
     if (!this.provider) throw new Error('provider/rpcUrl required for reads');
     const c = new Contract(this.requireAddr(this.veGovernanceAddress, 'veGovernance'), VE_GOVERNANCE_ABI as unknown as string[], this.provider);
     return c.votingPower(address);
+  }
+
+  // ── Reads (ModelRegistry / PoMA) ───────────────────────────────────────────
+
+  private modelRegistry(): Contract {
+    if (!this.provider) throw new Error('provider/rpcUrl required for reads');
+    return new Contract(this.requireAddr(this.modelRegistryAddress, 'modelRegistry'), MODEL_REGISTRY_ABI as unknown as string[], this.provider);
+  }
+
+  private static decodeModel(v: {
+    commitment: string; scheme: bigint | number; arch: string; quant: string;
+    metadataURI: string; registeredAt: bigint | number; registrar: string;
+  }): ModelInfo {
+    const scheme = Number(v.scheme);
+    return {
+      commitment: v.commitment,
+      scheme,
+      schemeName: COMMITMENT_SCHEMES[scheme] ?? 'KECCAK_MERKLE',
+      arch: v.arch,
+      quant: v.quant,
+      metadataURI: v.metadataURI,
+      registeredAt: Number(v.registeredAt),
+      registrar: v.registrar,
+    };
+  }
+
+  /** Latest (highest) version index for a model, or 0 if unknown. Accepts a modelId or a slug. */
+  async latestModelVersion(modelIdOrSlug: string): Promise<number> {
+    const modelId = modelIdOrSlug.startsWith('0x') && modelIdOrSlug.length === 66 ? modelIdOrSlug : modelIdFromSlug(modelIdOrSlug);
+    return Number(await this.modelRegistry().latestVersion(modelId));
+  }
+
+  /** Read a specific model version. Accepts a modelId or a slug. */
+  async getModel(modelIdOrSlug: string, version: number): Promise<ModelInfo> {
+    const modelId = modelIdOrSlug.startsWith('0x') && modelIdOrSlug.length === 66 ? modelIdOrSlug : modelIdFromSlug(modelIdOrSlug);
+    return XFuelOnChain.decodeModel(await this.modelRegistry().getModel(modelId, version));
+  }
+
+  /** Read the latest version of a model. Accepts a modelId or a slug. */
+  async getLatestModel(modelIdOrSlug: string): Promise<ModelInfo> {
+    const modelId = modelIdOrSlug.startsWith('0x') && modelIdOrSlug.length === 66 ? modelIdOrSlug : modelIdFromSlug(modelIdOrSlug);
+    return XFuelOnChain.decodeModel(await this.modelRegistry().getLatestModel(modelId));
+  }
+
+  /**
+   * Verify a claimed commitment matches a registered, active model version (anti-downgrade).
+   * Accepts a modelId or a slug.
+   */
+  async verifyModelCommitment(modelIdOrSlug: string, version: number, commitment: string): Promise<boolean> {
+    const modelId = modelIdOrSlug.startsWith('0x') && modelIdOrSlug.length === 66 ? modelIdOrSlug : modelIdFromSlug(modelIdOrSlug);
+    return this.modelRegistry().verifyCommitment(modelId, version, commitment);
+  }
+
+  /** Reverse lookup: which (modelId, version) a commitment belongs to (zero/0 if none). */
+  async lookupModelCommitment(commitment: string): Promise<{ modelId: string; version: number }> {
+    const r = await this.modelRegistry().lookupCommitment(commitment);
+    return { modelId: r.modelId ?? r[0], version: Number(r.version ?? r[1]) };
+  }
+
+  /** Build calldata to register a model version (REGISTRAR_ROLE; normally the protocol Safe/relayer). */
+  encodeRegisterModel(
+    modelIdOrSlug: string, commitment: string, scheme: number, arch: string, quant: string, metadataURI: string,
+  ): CallData {
+    const modelId = modelIdOrSlug.startsWith('0x') && modelIdOrSlug.length === 66 ? modelIdOrSlug : modelIdFromSlug(modelIdOrSlug);
+    return { to: this.requireAddr(this.modelRegistryAddress, 'modelRegistry'), data: iModel.encodeFunctionData('registerModel', [modelId, commitment, scheme, arch, quant, metadataURI]) };
+  }
+
+  // ── ERC-8004 Validation Registry (reads + calldata) ───────────────────────
+
+  private erc8004Registry(): Contract {
+    if (!this.provider) throw new Error('provider/rpcUrl required for reads');
+    return new Contract(this.requireAddr(this.erc8004RegistryAddress, 'erc8004Registry'), ERC8004_VALIDATION_REGISTRY_ABI as unknown as string[], this.provider);
+  }
+
+  /** Read a single ERC-8004 validation record. */
+  async getValidationStatus(requestHash: string): Promise<{
+    validatorAddress: string; agentId: bigint; response: number; responseHash: string; tag: string; lastUpdate: bigint;
+  }> {
+    const r = await this.erc8004Registry().getValidationStatus(requestHash);
+    return {
+      validatorAddress: r.validatorAddress ?? r[0],
+      agentId: BigInt(r.agentId ?? r[1]),
+      response: Number(r.response ?? r[2]),
+      responseHash: r.responseHash ?? r[3],
+      tag: r.tag ?? r[4],
+      lastUpdate: BigInt(r.lastUpdate ?? r[5]),
+    };
+  }
+
+  /** Aggregate ERC-8004 stats for an agent (count + average score 0..100). */
+  async getValidationSummary(
+    agentId: string | number | bigint, validatorAddresses: string[] = [], tag = '',
+  ): Promise<{ count: bigint; averageResponse: number }> {
+    const r = await this.erc8004Registry().getSummary(agentId, validatorAddresses, tag);
+    return { count: BigInt(r.count ?? r[0]), averageResponse: Number(r.averageResponse ?? r[1]) };
+  }
+
+  /** All ERC-8004 request hashes recorded for an agent. */
+  async getAgentValidations(agentId: string | number | bigint): Promise<string[]> {
+    return this.erc8004Registry().getAgentValidations(agentId);
+  }
+
+  /** XFuel-adapter provenance for a request: which XFuel task backed the verdict. */
+  async validationProvenance(requestHash: string): Promise<{ taskIdHash: string; isAnswered: boolean }> {
+    if (!this.provider) throw new Error('provider/rpcUrl required for reads');
+    const c = new Contract(this.requireAddr(this.xfuelValidationAdapterAddress, 'xfuelValidationAdapter'), XFUEL_VALIDATION_ADAPTER_ABI as unknown as string[], this.provider);
+    const r = await c.provenanceOf(requestHash);
+    return { taskIdHash: r.taskIdHash ?? r[0], isAnswered: Boolean(r.isAnswered ?? r[1]) };
+  }
+
+  /** Calldata: XFuel (validator) answers a request directly on the ERC-8004 registry. */
+  encodeValidationResponse(v: ValidationVerdict): CallData {
+    return { to: this.requireAddr(this.erc8004RegistryAddress, 'erc8004Registry'), data: encodeValidationResponse(v) };
+  }
+
+  /** Calldata: push an XFuel verdict via the adapter (SUBMITTER_ROLE). */
+  encodeSubmitValidation(v: ValidationVerdict): CallData {
+    return { to: this.requireAddr(this.xfuelValidationAdapterAddress, 'xfuelValidationAdapter'), data: encodeSubmitValidation(v) };
+  }
+
+  // ── ProviderStaking (reads + calldata) ────────────────────────────────────
+
+  private staking(): Contract {
+    if (!this.provider) throw new Error('provider/rpcUrl required for reads');
+    return new Contract(this.requireAddr(this.providerStakingAddress, 'providerStaking'), PROVIDER_STAKING_ABI as unknown as string[], this.provider);
+  }
+
+  /** Active (slashable) stake for a provider. */
+  async getProviderStake(provider: string): Promise<bigint> {
+    return BigInt(await this.staking().stakeOf(provider));
+  }
+
+  /** Provider status: stake, active flag, slash count, minStake, and pending unbonding. */
+  async getProviderStatus(provider: string): Promise<{
+    stake: bigint; isActive: boolean; slashCount: bigint; minStake: bigint; pending: bigint; unlockAt: bigint;
+  }> {
+    const c = this.staking();
+    const [stake, isActive, slashes, minStake, pending] = await Promise.all([
+      c.stakeOf(provider), c.isActiveProvider(provider), c.slashCount(provider), c.minStake(), c.pendingOf(provider),
+    ]);
+    return {
+      stake: BigInt(stake),
+      isActive: Boolean(isActive),
+      slashCount: BigInt(slashes),
+      minStake: BigInt(minStake),
+      pending: BigInt(pending.amount ?? pending[0]),
+      unlockAt: BigInt(pending.unlockAt ?? pending[1]),
+    };
+  }
+
+  /** Calldata: stake `amount` (approve the stake token first). */
+  encodeStake(amount: string | bigint): CallData {
+    return { to: this.requireAddr(this.providerStakingAddress, 'providerStaking'), data: iStaking.encodeFunctionData('stake', [amount]) };
+  }
+
+  /** Calldata: begin unbonding `amount`. */
+  encodeRequestUnstake(amount: string | bigint): CallData {
+    return { to: this.requireAddr(this.providerStakingAddress, 'providerStaking'), data: iStaking.encodeFunctionData('requestUnstake', [amount]) };
+  }
+
+  /** Calldata: withdraw matured unbonding funds. */
+  encodeWithdrawStake(): CallData {
+    return { to: this.requireAddr(this.providerStakingAddress, 'providerStaking'), data: iStaking.encodeFunctionData('withdraw', []) };
   }
 
   // ── Calldata builders (A2A) ───────────────────────────────────────────────

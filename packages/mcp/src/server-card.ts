@@ -22,6 +22,10 @@ const TOOLS: Array<{ name: string; description: string }> = [
   { name: 'quote_task', description: 'Price a task per rail (USDC via x402 / TFUEL) before submitting.' },
   { name: 'get_health', description: 'Server health, fee config, and demo limits.' },
   { name: 'list_models', description: 'List routable inference models.' },
+  { name: 'verify_model_commitment', description: 'Check a model against its on-chain authenticity commitment (PoMA) — anti-downgrade for Verified Inference.' },
+  { name: 'get_verified_quote', description: 'Price a task + the assurance tiers available (signed/settlement/inference) and whether the model is PoMA-registered.' },
+  { name: 'get_validation_status', description: 'Read an ERC-8004 validation record by requestHash — who validated an agent task and whether it passed.' },
+  { name: 'get_provider_stake', description: 'Read a provider stake + slash history — shop on trust before paying a counterparty.' },
 ];
 
 /**

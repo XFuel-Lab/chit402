@@ -8,7 +8,8 @@ import {
   buildVerifyUrl,
   baseUrlFromReq,
 } from '../src/receipt.js';
-import { computePaymentCommitment } from '../src/payment-binding.js';
+import { computePaymentCommitment, computeInferenceBinding } from '../src/payment-binding.js';
+import crypto from 'crypto';
 
 const TASK_ID = 'task-abc123';
 
@@ -154,4 +155,57 @@ test('renderReceiptNotFound: escapes the task id', () => {
   const html = renderReceiptNotFound('<b>x</b>');
   assert.ok(!html.includes('<b>x</b>'));
   assert.ok(html.includes('&lt;b&gt;x&lt;/b&gt;'));
+});
+
+// ── Phase 2 — Verified Inference fields (PoMA + PBR + signature) ────────────────
+
+test('buildReceipt: proof.tier is "settlement" with a proof, "signed" without', () => {
+  assert.equal(buildReceipt(usdcTask()).proof.tier, 'settlement');
+  const pending = usdcTask({ status: 'routing', sp1Proof: null, result: null });
+  assert.equal(buildReceipt(pending).proof.tier, 'signed');
+});
+
+test('buildReceipt: binding.covers reports payment/settlement by default', () => {
+  const r = buildReceipt(usdcTask());
+  assert.deepEqual(r.binding.covers, ['payment', 'settlement']);
+});
+
+test('buildReceipt: PBR binding (model + output) verifies via the superset commitment', () => {
+  const MODEL_C = '0x' + 'ab'.repeat(32);
+  const OUTPUT_H = '0x' + 'cd'.repeat(32);
+  const netAmount = '995000';
+  const paymentRef = 'base-sepolia:0x' + 'ab'.repeat(32);
+  const { commitment } = computeInferenceBinding({
+    paymentRef, taskId: TASK_ID, rail: 'usdc', amount: netAmount,
+    modelCommitment: MODEL_C, outputHash: OUTPUT_H,
+  });
+  const task = usdcTask();
+  task.sp1Proof.paymentBinding = {
+    version: 2, rail: 'usdc', commitment, amount: netAmount, in_proof: false,
+    model_commitment: MODEL_C, output_hash: OUTPUT_H,
+    covers: ['payment', 'settlement', 'model', 'inference'],
+  };
+  const r = buildReceipt(task);
+  assert.deepEqual(r.binding.covers, ['payment', 'settlement', 'model', 'inference']);
+  assert.equal(r.binding.matches, true);
+  assert.equal(r.binding.model_commitment, MODEL_C);
+});
+
+test('buildReceipt: signature is absent by default and valid HMAC when a secret is given', () => {
+  const secret = 'test-receipt-secret';
+  assert.equal(buildReceipt(usdcTask()).signature, undefined);
+
+  const r = buildReceipt(usdcTask(), { signingSecret: secret });
+  assert.ok(r.signature);
+  assert.equal(r.signature.alg, 'HMAC-SHA256');
+
+  // Recompute the HMAC over the same canonical payload → must match.
+  const payload = JSON.stringify([
+    r.task_id, r.payment?.rail ?? null, r.payment?.ref ?? null,
+    r.payment?.net_amount ?? null, r.payment?.fee_amount ?? null,
+    r.route?.model ?? null, r.route?.model_commitment?.commitment ?? null,
+    r.output?.hash ?? null, r.binding?.expected_commitment ?? null,
+  ]);
+  const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  assert.equal(r.signature.value, expected);
 });

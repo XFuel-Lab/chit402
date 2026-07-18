@@ -198,6 +198,47 @@ describe('SP1ProofHooks Library (via Harness)', function () {
     });
   });
 
+  describe('computeInferenceBindingCommitment (Phase 2 PBR)', function () {
+    const railUsdc = 1;
+
+    it('should match the backend JS formula (parity)', async function () {
+      const paymentRefHash = ethers.keccak256(ethers.toUtf8Bytes('base:0xabc123'));
+      const taskIdHash = ethers.keccak256(ethers.toUtf8Bytes('task-pbr-1'));
+      const amount = ethers.parseEther('0.95');
+      const modelCommitment = ethers.keccak256(ethers.toUtf8Bytes('model-weights'));
+      const outputHash = ethers.keccak256(ethers.toUtf8Bytes('output'));
+
+      const result = await harness.computeInferenceBindingCommitment(
+        paymentRefHash, taskIdHash, railUsdc, amount, modelCommitment, outputHash
+      );
+      // Mirror of services/gateway/src/payment-binding.js computeInferenceBinding.
+      const expected = ethers.keccak256(
+        ethers.solidityPacked(
+          ['bytes32', 'bytes32', 'uint8', 'uint256', 'bytes32', 'bytes32'],
+          [paymentRefHash, taskIdHash, railUsdc, amount, modelCommitment, outputHash]
+        )
+      );
+      expect(result).to.equal(expected);
+    });
+
+    it('should differ from the payment-only commitment and by model/output', async function () {
+      const ref = ethers.keccak256(ethers.toUtf8Bytes('base:0xtx'));
+      const task = ethers.keccak256(ethers.toUtf8Bytes('t'));
+      const amt = 1000n;
+      const model = ethers.keccak256(ethers.toUtf8Bytes('m'));
+      const output = ethers.keccak256(ethers.toUtf8Bytes('o'));
+
+      const paymentOnly = await harness.computePaymentCommitment(ref, task, railUsdc, amt);
+      const pbr = await harness.computeInferenceBindingCommitment(ref, task, railUsdc, amt, model, output);
+      const byModel = await harness.computeInferenceBindingCommitment(ref, task, railUsdc, amt, ethers.keccak256(ethers.toUtf8Bytes('m2')), output);
+      const byOutput = await harness.computeInferenceBindingCommitment(ref, task, railUsdc, amt, model, ethers.keccak256(ethers.toUtf8Bytes('o2')));
+
+      expect(pbr).to.not.equal(paymentOnly);
+      expect(pbr).to.not.equal(byModel);
+      expect(pbr).to.not.equal(byOutput);
+    });
+  });
+
   describe('encodeAITaskPublicValuesV2 (Phase 2 x402 binding)', function () {
     const v1Args = [
       1, 0, 1,

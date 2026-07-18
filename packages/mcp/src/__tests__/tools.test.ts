@@ -34,7 +34,7 @@ function captureTools(
   return handlers;
 }
 
-test('all eight tools are registered', () => {
+test('all twelve tools are registered', () => {
   const handlers = captureTools({});
   for (const name of [
     'submit_inference',
@@ -45,10 +45,45 @@ test('all eight tools are registered', () => {
     'quote_task',
     'get_health',
     'list_models',
+    'verify_model_commitment',
+    'get_verified_quote',
+    'get_validation_status',
+    'get_provider_stake',
   ]) {
     assert.ok(handlers.has(name), `missing tool: ${name}`);
   }
-  assert.equal(handlers.size, 8);
+  assert.equal(handlers.size, 12);
+});
+
+test('get_validation_status without RPC + registry returns a clear "not configured" error', async () => {
+  const handlers = captureTools({});
+  const res = await handlers.get('get_validation_status')!({ request_hash: '0x' + '11'.repeat(32) });
+  assert.equal(res.isError, true);
+  assert.match(res.content[0].text, /ERC8004_VALIDATION_REGISTRY/);
+});
+
+test('get_provider_stake without RPC + staking address returns a clear "not configured" error', async () => {
+  const handlers = captureTools({});
+  const res = await handlers.get('get_provider_stake')!({ provider: '0x' + '11'.repeat(20) });
+  assert.equal(res.isError, true);
+  assert.match(res.content[0].text, /PROVIDER_STAKING_ADDRESS/);
+});
+
+test('get_verified_quote returns pricing + tiers (PoMA unknown without registry)', async () => {
+  const handlers = captureTools(
+    {},
+    { quoteTask: async () => ({ recommended: 'usdc', default_rail: 'usdc', rails: {} }) as never },
+  );
+  const res = await handlers.get('get_verified_quote')!({ model: 'llama-3-70b:q4_k_m' });
+  assert.equal(res.isError, undefined);
+  assert.match(res.content[0].text, /tiers=signed\/settlement/);
+});
+
+test('verify_model_commitment without RPC + registry returns a clear "not configured" error', async () => {
+  const handlers = captureTools({ rpcUrl: undefined, modelRegistryAddress: undefined });
+  const res = await handlers.get('verify_model_commitment')!({ model: 'llama-3-70b:q4_k_m' });
+  assert.equal(res.isError, true);
+  assert.match(res.content[0].text, /MODEL_REGISTRY_ADDRESS/);
 });
 
 test('pay_with_usdc without a payer key returns a clear "not configured" error', async () => {

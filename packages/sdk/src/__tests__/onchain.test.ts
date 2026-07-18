@@ -9,7 +9,20 @@ import {
   verifyPaymentBinding,
   PAYMENT_RAIL_DISCRIMINANT,
   USDC_NETWORKS,
+  modelIdFromSlug,
+  shardLeaf,
+  keccakMerkleRoot,
+  computeModelCommitment,
+  computeInferenceBinding,
+  canonicalReceiptPayload,
+  verifyReceiptSignature,
+  receiptToValidationVerdict,
+  encodeValidationResponse,
+  encodeSubmitValidation,
+  selectTier,
+  normalizeRequestedTier,
 } from '../onchain';
+import { computeHmac } from 'ethers';
 import { type X402Challenge, type PaymentBinding, type ProofResponse } from '../index';
 
 const A2A = '0x000000000000000000000000000000000000a2a0';
@@ -285,5 +298,213 @@ describe('verifyPaymentBinding / verifyProof', () => {
     expect(r.checks.nullifier.checkedOnChain).toBe(false);
     expect(r.ok).toBe(true);
     expect(r.reasons.join(' ')).toMatch(/provider\/zkVerifier/i);
+  });
+});
+
+describe('PoMA — model commitment helpers', () => {
+  it('modelIdFromSlug is keccak256 of the lowercased utf8 slug (case-insensitive)', () => {
+    const expected = keccak256(toUtf8Bytes('llama-3-70b:q4_k_m'));
+    expect(modelIdFromSlug('llama-3-70b:q4_k_m')).toBe(expected);
+    expect(modelIdFromSlug('  LLaMA-3-70B:Q4_K_M ')).toBe(expected);
+  });
+
+  it('shardLeaf is domain-separated (0x00 prefix)', () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const expected = keccak256(new Uint8Array([0x00, 1, 2, 3, 4]));
+    expect(shardLeaf(bytes)).toBe(expected);
+    // hex input resolves to the same leaf
+    expect(shardLeaf('0x01020304')).toBe(expected);
+  });
+
+  it('single-shard commitment equals its leaf', () => {
+    const shard = new Uint8Array([9, 9, 9]);
+    const { commitment, shardCount, scheme } = computeModelCommitment({ shards: [shard], slug: 's:q' });
+    expect(commitment).toBe(shardLeaf(shard));
+    expect(shardCount).toBe(1);
+    expect(scheme).toBe(0);
+  });
+
+  it('two-shard commitment is the domain-separated (0x01) parent of the two leaves', () => {
+    const a = new Uint8Array([1]);
+    const b = new Uint8Array([2]);
+    const la = shardLeaf(a);
+    const lb = shardLeaf(b);
+    const root = computeModelCommitment({ shards: [a, b], slug: 'm:q' }).commitment;
+    expect(root).toBe(keccakMerkleRoot([la, lb]));
+    // parent = keccak(0x01 || la || lb) — order matters
+    expect(root).not.toBe(keccakMerkleRoot([lb, la]));
+  });
+
+  it('odd tail is promoted (3 shards)', () => {
+    const leaves = [new Uint8Array([1]), new Uint8Array([2]), new Uint8Array([3])].map(shardLeaf);
+    // level1 = [ parent(l0,l1), l2 ]; root = parent(level1[0], level1[1])
+    expect(keccakMerkleRoot(leaves)).toBe(computeModelCommitment({
+      shards: [new Uint8Array([1]), new Uint8Array([2]), new Uint8Array([3])],
+      slug: 'x:q',
+    }).commitment);
+  });
+
+  it('empty leaves → zero root', () => {
+    expect(keccakMerkleRoot([])).toBe('0x' + '0'.repeat(64));
+  });
+
+  it('computeModelCommitment throws on empty shards', () => {
+    expect(() => computeModelCommitment({ shards: [], slug: 's:q' })).toThrow(/at least one shard/);
+  });
+});
+
+describe('PBR — payment-bound receipt helpers', () => {
+  const MODEL = b32('c0ffee');
+  const OUTPUT = b32('0117');
+
+  it('computeInferenceBinding is deterministic and superset of payment-only', () => {
+    const a = computeInferenceBinding({
+      paymentRef: 'base:0xabc', taskId: 'task-1', rail: 'usdc', amount: '1000000',
+      modelCommitment: MODEL, outputHash: OUTPUT,
+    });
+    const b = computeInferenceBinding({
+      paymentRef: 'base:0xabc', taskId: 'task-1', rail: 'usdc', amount: '1000000',
+      modelCommitment: MODEL, outputHash: OUTPUT,
+    });
+    expect(a).toBe(b);
+    // changing the model commitment changes the binding (downgrade would break it)
+    const c = computeInferenceBinding({
+      paymentRef: 'base:0xabc', taskId: 'task-1', rail: 'usdc', amount: '1000000',
+      modelCommitment: b32('dead'), outputHash: OUTPUT,
+    });
+    expect(c).not.toBe(a);
+  });
+
+  it('rail name and discriminant produce the same binding', () => {
+    const byName = computeInferenceBinding({ paymentRef: 'base:0x1', taskId: 't', rail: 'usdc', amount: '5', modelCommitment: MODEL, outputHash: OUTPUT });
+    const byNum = computeInferenceBinding({ paymentRef: 'base:0x1', taskId: 't', rail: 1, amount: '5', modelCommitment: MODEL, outputHash: OUTPUT });
+    expect(byName).toBe(byNum);
+  });
+
+  it('verifyReceiptSignature validates a well-formed signature and detects tampering', () => {
+    const secret = 'test-receipt-secret';
+    const receipt: Record<string, unknown> = {
+      task_id: 'task-xyz',
+      payment: { rail: 'usdc', ref: 'base:0xabc', net_amount: '995000', fee_amount: '5000' },
+      route: { model: 'llama-3-70b:q4_k_m', model_commitment: { commitment: MODEL } },
+      output: { hash: OUTPUT },
+      binding: { expected_commitment: b32('99') },
+    };
+    const value = 'sha256=' + computeHmac('sha256', toUtf8BytesLocal(secret), toUtf8BytesLocal(canonicalReceiptPayload(receipt))).slice(2);
+    receipt.signature = { alg: 'HMAC-SHA256', value };
+
+    expect(verifyReceiptSignature(receipt, secret).valid).toBe(true);
+
+    // tamper the net_amount → signature must fail
+    (receipt.payment as { net_amount: string }).net_amount = '1';
+    expect(verifyReceiptSignature(receipt, secret).valid).toBe(false);
+  });
+
+  it('verifyReceiptSignature returns checked:false when no signature present', () => {
+    const res = verifyReceiptSignature({ task_id: 'x' }, 'secret');
+    expect(res.checked).toBe(false);
+    expect(res.valid).toBeNull();
+  });
+});
+
+// local helper mirrors ethers.toUtf8Bytes without adding a duplicate top-level import
+function toUtf8BytesLocal(s: string): Uint8Array {
+  return new TextEncoder().encode(s);
+}
+
+describe('ERC-8004 validation verdict', () => {
+  const REQ = '0x' + '11'.repeat(32);
+  const settledReceipt = () => ({
+    task_id: 'task-erc-1',
+    proof_outcome: 'valid',
+    proof: { tier: 'settlement' },
+    binding: { covers: ['payment', 'settlement'], matches: true },
+    output: { hash: '0x' + 'cd'.repeat(32) },
+    verify_url: 'https://api.xfuel.app/receipt/task-erc-1',
+  });
+
+  it('passes a settled, matching receipt with score 100', () => {
+    const v = receiptToValidationVerdict(settledReceipt(), { requestHash: REQ, agentId: 42 });
+    expect(v.eligible).toBe(true);
+    expect(v.response).toBe(100);
+    expect(v.tag).toBe('xfuel:settlement');
+    expect(v.agent_id).toBe('42');
+    expect(v.response_uri).toBe('https://api.xfuel.app/receipt/task-erc-1');
+    expect(v.response_hash).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+
+  it('tags PBR when the binding covers inference', () => {
+    const r = settledReceipt();
+    r.binding.covers = ['payment', 'settlement', 'model', 'inference'];
+    const v = receiptToValidationVerdict(r, { requestHash: REQ, agentId: 1 });
+    expect(v.tag).toBe('xfuel:settlement+pbr');
+  });
+
+  it('fails (0) on a binding mismatch', () => {
+    const r = settledReceipt();
+    r.binding.matches = false;
+    const v = receiptToValidationVerdict(r, { requestHash: REQ, agentId: 1 });
+    expect(v.response).toBe(0);
+    expect(v.tag).toBe('xfuel:binding-mismatch');
+  });
+
+  it('is ineligible when no output was delivered', () => {
+    const r = { ...settledReceipt(), output: null, proof_outcome: 'pending' };
+    const v = receiptToValidationVerdict(r as never, { requestHash: REQ, agentId: 1 });
+    expect(v.eligible).toBe(false);
+    expect(v.tag).toBe('xfuel:pending');
+  });
+
+  it('rejects a bad requestHash / agentId', () => {
+    expect(() => receiptToValidationVerdict(settledReceipt(), { requestHash: '0xabc', agentId: 1 })).toThrow(/requestHash/);
+    expect(() => receiptToValidationVerdict(settledReceipt(), { requestHash: REQ, agentId: 'x' as never })).toThrow(/agentId/);
+  });
+
+  it('encodes registry + adapter calldata (distinct selectors)', () => {
+    const v = receiptToValidationVerdict(settledReceipt(), { requestHash: REQ, agentId: 7 });
+    const respData = encodeValidationResponse(v);
+    const submitData = encodeSubmitValidation(v);
+    expect(respData).toMatch(/^0x[0-9a-f]+$/);
+    expect(submitData).toMatch(/^0x[0-9a-f]+$/);
+    expect(respData.slice(0, 10)).not.toBe(submitData.slice(0, 10));
+  });
+});
+
+describe('tier selection (SDK mirror of the gateway)', () => {
+  const policy = {
+    enabled: true,
+    tier2Min: '10000',
+    tier3Min: '1000000',
+    defaultMechanism: 'tee' as const,
+    available: { settlement: true, tee: true, 'zk-spotcheck': true, 'zk-full': false },
+  };
+  const task = (amount: number, proofTier?: string) => ({ intent: { amount: String(amount), proofTier } });
+
+  it('applies value-at-risk floors', () => {
+    expect(selectTier(task(5000), policy).tier).toBe('signed');
+    expect(selectTier(task(50_000), policy).tier).toBe('settlement');
+    const hi = selectTier(task(2_000_000), policy);
+    expect(hi.tier).toBe('inference');
+    expect(hi.mechanism).toBe('tee');
+  });
+
+  it('lets a request raise but not lower the tier', () => {
+    expect(selectTier(task(5000, 'tee'), policy).tier).toBe('inference');
+    expect(selectTier(task(2_000_000, 'signed'), policy).tier).toBe('inference');
+  });
+
+  it('degrades an unavailable mechanism with a reason', () => {
+    const r = selectTier(task(2_000_000, 'zk-full'), policy);
+    expect(r.mechanism).toBe('zk-spotcheck');
+    expect(r.degraded).toBe(true);
+  });
+
+  it('disabled engine → legacy tier', () => {
+    expect(selectTier(task(2_000_000), { enabled: false, available: { settlement: true } }).tier).toBe('settlement');
+  });
+
+  it('normalizeRequestedTier maps aliases', () => {
+    expect(normalizeRequestedTier('t3b')).toEqual({ tier: 'inference', mechanism: 'zk-spotcheck' });
+    expect(normalizeRequestedTier('bogus')).toBeNull();
   });
 });

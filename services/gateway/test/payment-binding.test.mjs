@@ -11,6 +11,7 @@ import { keccak256, toUtf8Bytes, solidityPacked } from 'ethers';
 import {
   PAYMENT_RAIL,
   computePaymentCommitment,
+  computeInferenceBinding,
   buildPaymentBinding,
 } from '../src/payment-binding.js';
 
@@ -78,6 +79,47 @@ test('buildPaymentBinding produces a bound descriptor for USDC tasks', () => {
   // Matches the standalone commitment for the same inputs.
   const direct = computePaymentCommitment({
     paymentRef: 'base:0xdeadbeef', taskId: 'task-abc', rail: 'usdc', amount: '950000000000000000',
+  }).commitment;
+  assert.equal(binding.commitment, direct);
+  assert.deepEqual(binding.covers, ['payment', 'settlement']);
+});
+
+const MODEL_C = '0x' + 'ab'.repeat(32);
+const OUTPUT_H = '0x' + 'cd'.repeat(32);
+
+test('computeInferenceBinding matches the 6-field abi.encodePacked formula', () => {
+  const paymentRef = 'base:0xdeadbeef';
+  const taskId = 'task-abc';
+  const amount = '950000000000000000';
+  const { commitment } = computeInferenceBinding({
+    paymentRef, taskId, rail: 'usdc', amount, modelCommitment: MODEL_C, outputHash: OUTPUT_H,
+  });
+  const expected = keccak256(
+    solidityPacked(
+      ['bytes32', 'bytes32', 'uint8', 'uint256', 'bytes32', 'bytes32'],
+      [keccak256(toUtf8Bytes(paymentRef)), keccak256(toUtf8Bytes(taskId)), 1, BigInt(amount), MODEL_C, OUTPUT_H],
+    ),
+  );
+  assert.equal(commitment, expected);
+  // superset differs from the payment-only commitment
+  const paymentOnly = computePaymentCommitment({ paymentRef, taskId, rail: 'usdc', amount }).commitment;
+  assert.notEqual(commitment, paymentOnly);
+});
+
+test('buildPaymentBinding upgrades to PBR when model commitment + output hash present', () => {
+  const cfg = { proofBinding: true };
+  const task = taskFixture({
+    modelCommitment: MODEL_C,
+    outputHash: OUTPUT_H,
+  });
+  const binding = buildPaymentBinding(task, cfg);
+  assert.ok(binding);
+  assert.deepEqual(binding.covers, ['payment', 'settlement', 'model', 'inference']);
+  assert.equal(binding.model_commitment, MODEL_C);
+  assert.equal(binding.output_hash, OUTPUT_H);
+  const direct = computeInferenceBinding({
+    paymentRef: 'base:0xdeadbeef', taskId: 'task-abc', rail: 'usdc', amount: '950000000000000000',
+    modelCommitment: MODEL_C, outputHash: OUTPUT_H,
   }).commitment;
   assert.equal(binding.commitment, direct);
 });

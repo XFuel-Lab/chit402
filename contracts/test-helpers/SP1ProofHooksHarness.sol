@@ -54,6 +54,19 @@ contract SP1ProofHooksHarness {
         return SP1ProofHooks.computePaymentCommitment(paymentRefHash, taskIdHash, paymentRail, amount);
     }
 
+    function computeInferenceBindingCommitment(
+        bytes32 paymentRefHash,
+        bytes32 taskIdHash,
+        uint8 paymentRail,
+        uint256 amount,
+        bytes32 modelCommitment,
+        bytes32 outputHash
+    ) external pure returns (bytes32) {
+        return SP1ProofHooks.computeInferenceBindingCommitment(
+            paymentRefHash, taskIdHash, paymentRail, amount, modelCommitment, outputHash
+        );
+    }
+
     function encodeAITaskPublicValuesV2(
         uint8 taskType,
         uint8 sourceChain,

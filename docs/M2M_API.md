@@ -289,6 +289,22 @@ amount)`. Honest proof scope is stated on the receipt: the SP1 proof attests set
 metadata + an output-hash commitment, **not** that the provider computed the model
 correctly (see `docs/POSITIONING.md` §2).
 
+**Verified Inference fields (Tier-3, additive):**
+- `route.model_commitment` — the on-chain PoMA model-authenticity commitment for the served
+  model (`{ commitment, model_id, version, scheme }`), or `null` when not configured. Lets a
+  third party detect a **model downgrade**. See `docs/POMA_SPEC.md`.
+- `proof.tier` — coarse assurance level: `signed` (Tier-1) · `settlement` (Tier-2 SP1) ·
+  `inference` (Tier-3, roadmap).
+- `binding.covers` — what the payment binding attests: `["payment","settlement"]`, upgraded to
+  `["payment","settlement","model","inference"]` when a model commitment + output hash are
+  present (**PBR — Payment-Bound Receipt**). Then `expected_commitment` re-derives
+  `keccak256(paymentRefHash, taskIdHash, rail, amount, modelCommitment, outputHash)`; `binding`
+  also carries `model_commitment` + `output_hash`.
+- `signature` (optional) — when the node runs with `RECEIPT_SIGNING_SECRET`, a Tier-1 HMAC-SHA256
+  (`{ alg, value: "sha256=…", signed_fields }`) over the payment-bound tuple, so the receipt is
+  tamper-evident. Verify with the SDK `verifyReceiptSignature(receipt, secret)`. Full target
+  shape: `docs/RECEIPT_SCHEMA_V2.md`.
+
 This page is the target of the `verify_url` returned by `POST /task-request`,
 `GET /task-status`, and `GET /prove-result` (and by the OpenAI gateway, SDK, and MCP
 tools) — one consistent, shareable proof link for every task. Set `PUBLIC_BASE_URL`

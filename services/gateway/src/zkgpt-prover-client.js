@@ -42,13 +42,23 @@ const DEFAULT_TIMEOUT_MS = 300_000; // 5 min — upstream demo can take 38s+ (ra
 
 let _client = null;
 
+/**
+ * Resolve the inference-prover URL. Prefers the generalized INFERENCE_PROVER_URL
+ * (mechanism-agnostic seam — see docs/TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md Phase 0),
+ * falling back to the legacy ZKGPT_PROVER_URL for backward compatibility.
+ * @returns {string}
+ */
+export function resolveInferenceProverUrl() {
+  return (process.env.INFERENCE_PROVER_URL || process.env.ZKGPT_PROVER_URL || '').trim();
+}
+
 class ZkGPTProverClient {
-  constructor() {
-    const url = process.env.ZKGPT_PROVER_URL || '';
-    if (!url || url.trim() === '') {
-      throw new Error('ZKGPT_PROVER_URL is required for ZkGPTProverClient');
+  constructor(url) {
+    const resolved = (url || resolveInferenceProverUrl() || '').trim();
+    if (!resolved) {
+      throw new Error('INFERENCE_PROVER_URL (or legacy ZKGPT_PROVER_URL) is required for the inference prover client');
     }
-    this.baseUrl = url.replace(/\/$/, '');
+    this.baseUrl = resolved.replace(/\/$/, '');
     this.timeout = parseInt(process.env.ZKGPT_PROVER_TIMEOUT_MS || String(DEFAULT_TIMEOUT_MS), 10);
     logger.info(
       { baseUrl: this.baseUrl, timeout: this.timeout },
@@ -147,7 +157,7 @@ class ZkGPTProverClient {
  * @returns {ZkGPTProverClient | null}
  */
 export function getZkGPTProver() {
-  if (process.env.ZKGPT_PROVER_URL) {
+  if (resolveInferenceProverUrl()) {
     if (!_client) {
       _client = new ZkGPTProverClient();
     }
@@ -157,11 +167,11 @@ export function getZkGPTProver() {
 }
 
 /**
- * Check if zkGPT prover is configured (ZKGPT_PROVER_URL set).
+ * Check if the inference prover is configured (INFERENCE_PROVER_URL or legacy ZKGPT_PROVER_URL set).
  * @returns {boolean}
  */
 export function isZkGPTProverConfigured() {
-  return !!(process.env.ZKGPT_PROVER_URL && process.env.ZKGPT_PROVER_URL.trim() !== '');
+  return !!resolveInferenceProverUrl();
 }
 
 export default ZkGPTProverClient;

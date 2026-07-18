@@ -7,12 +7,49 @@
  * official `xfuel-sdk` so behaviour stays identical to the SDK/examples.
  */
 import { z } from 'zod';
-import { Wallet } from 'ethers';
+import { Wallet, Contract, JsonRpcProvider, keccak256, toUtf8Bytes } from 'ethers';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { XFuelClient, ChainId } from 'xfuel-sdk';
 import { XFuelOnChain, createEip3009Payer } from 'xfuel-sdk/onchain';
 import type { McpConfig } from './config.js';
 import { ok, fail, describeError } from './format.js';
+
+/**
+ * Minimal ModelRegistry read ABI (PoMA). Kept local to the MCP package so this tool
+ * works against the published xfuel-sdk + MCP's own `ethers` dep — no unpublished SDK
+ * surface required. Mirrors contracts/core/ModelRegistry.sol (see docs/POMA_SPEC.md).
+ */
+const MODEL_REGISTRY_READ_ABI = [
+  'function latestVersion(bytes32 modelId) view returns (uint256)',
+  'function getModel(bytes32 modelId, uint256 version) view returns (tuple(bytes32 commitment, uint8 scheme, string arch, string quant, string metadataURI, uint64 registeredAt, address registrar))',
+  'function verifyCommitment(bytes32 modelId, uint256 version, bytes32 commitment) view returns (bool)',
+] as const;
+
+const COMMITMENT_SCHEME_NAMES = ['KECCAK_MERKLE', 'MLE_POLY'] as const;
+
+/** Minimal read ABI for the ERC-8004 Validation Registry (get_validation_status tool). */
+const ERC8004_READ_ABI = [
+  'function getValidationStatus(bytes32 requestHash) view returns (address validatorAddress, uint256 agentId, uint8 response, bytes32 responseHash, string tag, uint256 lastUpdate)',
+] as const;
+
+const REQUEST_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/** Minimal read ABI for ProviderStaking (get_provider_stake tool). */
+const PROVIDER_STAKING_READ_ABI = [
+  'function stakeOf(address provider) view returns (uint256)',
+  'function pendingOf(address provider) view returns (uint256 amount, uint256 unlockAt)',
+  'function isActiveProvider(address provider) view returns (bool)',
+  'function slashCount(address provider) view returns (uint256)',
+  'function minStake() view returns (uint256)',
+] as const;
+
+/** Canonical model slug → modelId (keccak256 of the lowercased slug); pass through a 0x bytes32. */
+function toModelId(model: string): string {
+  return model.startsWith('0x') && model.length === 66
+    ? model
+    : keccak256(toUtf8Bytes(model.trim().toLowerCase()));
+}
 
 export interface ToolContext {
   client: XFuelClient;
@@ -446,6 +483,325 @@ Returns JSON: { object: 'list', data: [{ id, object: 'model', created, owned_by 
         return ok(
           res as unknown as Record<string, unknown>,
           `${ids.length} model(s): ${ids.join(', ') || 'none'}.`,
+        );
+      } catch (err) {
+        return fail(describeError(err));
+      }
+    },
+  );
+
+  // ── verify_model_commitment ──────────────────────────────────────────────────
+  server.registerTool(
+    'verify_model_commitment',
+    {
+      title: 'Verify model authenticity (PoMA)',
+      description: `Look up a model's on-chain authenticity commitment and (optionally) check a claimed
+commitment against it — the anti-downgrade check for XFuel Verified Inference (Tier-3).
+Reads the ModelRegistry on Base; requires the server to be started with XFUEL_RPC_URL +
+MODEL_REGISTRY_ADDRESS.
+
+Args:
+  - model (string): canonical slug ("llama-3-70b:q4_k_m") or a 0x modelId (bytes32)
+  - version (number, optional): version to read/verify (default: latest registered)
+  - commitment (string, optional): a claimed 0x commitment to check for a match
+
+Returns JSON: { model_id, version, registered: { commitment, scheme, arch, quant, metadataURI,
+registeredAt, registrar }, match }. 'match' is true/false when a commitment is supplied
+(false = possible model downgrade), or null when only reading the registered model.`,
+      inputSchema: {
+        model: z.string().min(1).describe('Model slug ("family:quant") or 0x modelId'),
+        version: z.number().int().positive().optional().describe('Version to read/verify (default: latest)'),
+        commitment: z.string().optional().describe('Claimed 0x commitment to check for a match'),
+      },
+      annotations: {
+        title: 'Verify model authenticity (PoMA)',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        if (!config.rpcUrl || !config.modelRegistryAddress) {
+          return fail(
+            'verify_model_commitment needs the server started with XFUEL_RPC_URL + MODEL_REGISTRY_ADDRESS.',
+          );
+        }
+        const provider = new JsonRpcProvider(config.rpcUrl);
+        const registry = new Contract(
+          config.modelRegistryAddress,
+          MODEL_REGISTRY_READ_ABI as unknown as string[],
+          provider,
+        );
+        const modelId = toModelId(args.model);
+        const version = args.version ?? Number(await registry.latestVersion(modelId));
+        if (!version) {
+          return fail(`No registered version found for model "${args.model}" (${modelId}).`);
+        }
+        const v = await registry.getModel(modelId, version);
+        const scheme = Number(v.scheme);
+        const registered = {
+          commitment: v.commitment as string,
+          scheme,
+          scheme_name: COMMITMENT_SCHEME_NAMES[scheme] ?? 'KECCAK_MERKLE',
+          arch: v.arch as string,
+          quant: v.quant as string,
+          metadata_uri: v.metadataURI as string,
+          registered_at: Number(v.registeredAt),
+          registrar: v.registrar as string,
+        };
+        const match = args.commitment
+          ? Boolean(await registry.verifyCommitment(modelId, version, args.commitment))
+          : null;
+
+        return ok(
+          { model_id: modelId, version, registered, match } as unknown as Record<string, unknown>,
+          `Model ${args.model} v${version}: commitment=${registered.commitment.slice(0, 18)}…` +
+            (match === null ? '' : match ? ' — MATCH (authentic)' : ' — MISMATCH (possible downgrade)'),
+        );
+      } catch (err) {
+        return fail(describeError(err));
+      }
+    },
+  );
+
+  // ── get_verified_quote ───────────────────────────────────────────────────────
+  server.registerTool(
+    'get_verified_quote',
+    {
+      title: 'Quote a task with assurance tiers',
+      description: `Preview a task's price AND the verifiable-assurance available for the model — so an
+agent can shop on trust, not just cost. Combines quote_task pricing with Verified Inference
+(Tier-3) metadata: whether the model is registered on-chain for model-authenticity (PoMA)
+and which trust tiers apply. No side effects.
+
+Tiers: 'signed' (Tier-1 signed receipt) and 'settlement' (Tier-2 SP1 proof on Base) are
+always available; 'inference' (Tier-3 TEE / ZK proof-of-inference) is roadmap. When the
+server has XFUEL_RPC_URL + MODEL_REGISTRY_ADDRESS, model_registered reflects the on-chain
+PoMA registry.
+
+Args:
+  - model (string): model slug ("llama-3-70b:q4_k_m") or id (used for pricing + PoMA lookup)
+  - amount (string, optional): task value in wei (echoed in the tfuel rail)
+
+Returns JSON: { quote, verified_inference: { model, model_registered, model_commitment,
+tiers_available, note } }.`,
+      inputSchema: {
+        model: z.string().min(1).describe('Model slug or id'),
+        amount: z
+          .string()
+          .regex(AMOUNT_RE, 'amount must be an integer string (wei)')
+          .optional()
+          .describe('Task value in wei'),
+      },
+      annotations: {
+        title: 'Quote a task with assurance tiers',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const quote = await client.quoteTask({ model_id: args.model, amount: args.amount });
+
+        // Tier-1/Tier-2 are live for every XFuel task; Tier-3 is roadmap.
+        const tiers_available = ['signed', 'settlement'];
+        let model_registered: boolean | null = null;
+        let model_commitment: string | null = null;
+
+        if (config.rpcUrl && config.modelRegistryAddress) {
+          try {
+            const provider = new JsonRpcProvider(config.rpcUrl);
+            const registry = new Contract(
+              config.modelRegistryAddress,
+              MODEL_REGISTRY_READ_ABI as unknown as string[],
+              provider,
+            );
+            const modelId = toModelId(args.model);
+            const version = Number(await registry.latestVersion(modelId));
+            model_registered = version > 0;
+            if (version > 0) {
+              const v = await registry.getModel(modelId, version);
+              model_commitment = v.commitment as string;
+            }
+          } catch {
+            model_registered = null; // registry read failed; leave unknown
+          }
+        }
+
+        const note =
+          'signed + settlement are live on Base; inference (TEE/ZK proof-of-inference) is roadmap. ' +
+          (model_registered === null
+            ? 'Model-authenticity (PoMA) status unknown — configure XFUEL_RPC_URL + MODEL_REGISTRY_ADDRESS.'
+            : model_registered
+              ? 'Model is registered for on-chain authenticity (PoMA).'
+              : 'Model is NOT yet registered for on-chain authenticity (PoMA).');
+
+        return ok(
+          {
+            quote,
+            verified_inference: {
+              model: args.model,
+              model_registered,
+              model_commitment,
+              tiers_available,
+              note,
+            },
+          } as unknown as Record<string, unknown>,
+          `Quote for ${args.model}: default_rail=${quote.default_rail}; tiers=${tiers_available.join('/')}` +
+            (model_registered === null ? '' : model_registered ? '; PoMA-registered ✓' : '; not PoMA-registered'),
+        );
+      } catch (err) {
+        return fail(describeError(err));
+      }
+    },
+  );
+
+  // ── get_validation_status ──────────────────────────────────────────────────────
+  server.registerTool(
+    'get_validation_status',
+    {
+      title: 'Read an ERC-8004 validation record',
+      description: `Read an ERC-8004 Validation Registry record by requestHash — the on-chain verdict a
+validator (e.g. XFuel) posted for an agent task. Lets an agent independently check "was this
+task independently validated, by whom, and did it pass?" before trusting/paying a counterparty.
+Read-only.
+
+Score semantics: 0 = failed, 100 = passed; the tag conveys the validator's assurance category
+(XFuel uses "xfuel:settlement", "xfuel:signed", "xfuel:...+pbr", "xfuel:binding-mismatch").
+
+Requires the server to be configured with XFUEL_RPC_URL + ERC8004_VALIDATION_REGISTRY.
+
+Args:
+  - request_hash (string): the 0x 32-byte requestHash of the validation.
+
+Returns JSON: { request_hash, validator_address, agent_id, response, passed, response_hash, tag, last_update }.`,
+      inputSchema: {
+        request_hash: z
+          .string()
+          .regex(REQUEST_HASH_RE, 'request_hash must be a 0x-prefixed 32-byte hex string')
+          .describe('ERC-8004 requestHash (0x, 32 bytes)'),
+      },
+      annotations: {
+        title: 'Read an ERC-8004 validation record',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        if (!config.rpcUrl || !config.erc8004RegistryAddress) {
+          return fail(
+            'get_validation_status needs the server configured with XFUEL_RPC_URL + ERC8004_VALIDATION_REGISTRY.',
+          );
+        }
+        const provider = new JsonRpcProvider(config.rpcUrl);
+        const registry = new Contract(
+          config.erc8004RegistryAddress,
+          ERC8004_READ_ABI as unknown as string[],
+          provider,
+        );
+        const r = await registry.getValidationStatus(args.request_hash);
+        const validatorAddress = (r.validatorAddress ?? r[0]) as string;
+        const agentId = (r.agentId ?? r[1]) as bigint;
+        const response = Number(r.response ?? r[2]);
+        const lastUpdate = Number(r.lastUpdate ?? r[5]);
+
+        if (validatorAddress === '0x0000000000000000000000000000000000000000' && lastUpdate === 0) {
+          return ok(
+            { request_hash: args.request_hash, found: false } as unknown as Record<string, unknown>,
+            `No validation record found for ${args.request_hash.slice(0, 18)}… (request may be open/unanswered).`,
+          );
+        }
+
+        return ok(
+          {
+            request_hash: args.request_hash,
+            found: true,
+            validator_address: validatorAddress,
+            agent_id: agentId.toString(),
+            response,
+            passed: response >= 100,
+            response_hash: (r.responseHash ?? r[3]) as string,
+            tag: (r.tag ?? r[4]) as string,
+            last_update: lastUpdate,
+          } as unknown as Record<string, unknown>,
+          `Validation ${args.request_hash.slice(0, 18)}…: response=${response}/100 (${response >= 100 ? 'passed' : 'failed'}), tag="${(r.tag ?? r[4]) as string}".`,
+        );
+      } catch (err) {
+        return fail(describeError(err));
+      }
+    },
+  );
+
+  // ── get_provider_stake ─────────────────────────────────────────────────────────
+  server.registerTool(
+    'get_provider_stake',
+    {
+      title: 'Read a provider stake + slash history',
+      description: `Read an XFuel Verified Inference provider's economic security: how much it has staked,
+whether it's an active provider, and how many times it's been slashed for a failed spot-check.
+Lets an agent "shop on trust" — check a counterparty's skin-in-the-game before paying.
+Read-only. See docs/VERIFIED_INFERENCE_TIERS.md.
+
+Requires the server configured with XFUEL_RPC_URL + PROVIDER_STAKING_ADDRESS.
+
+Args:
+  - provider (string): the provider's 0x address.
+
+Returns JSON: { provider, stake, min_stake, is_active, slash_count, pending, unlock_at }.`,
+      inputSchema: {
+        provider: z
+          .string()
+          .regex(ADDRESS_RE, 'provider must be a 0x-prefixed 20-byte address')
+          .describe('Provider address (0x, 20 bytes)'),
+      },
+      annotations: {
+        title: 'Read a provider stake + slash history',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        if (!config.rpcUrl || !config.providerStakingAddress) {
+          return fail(
+            'get_provider_stake needs the server configured with XFUEL_RPC_URL + PROVIDER_STAKING_ADDRESS.',
+          );
+        }
+        const provider = new JsonRpcProvider(config.rpcUrl);
+        const staking = new Contract(
+          config.providerStakingAddress,
+          PROVIDER_STAKING_READ_ABI as unknown as string[],
+          provider,
+        );
+        const [stake, isActive, slashes, minStake, pending] = await Promise.all([
+          staking.stakeOf(args.provider),
+          staking.isActiveProvider(args.provider),
+          staking.slashCount(args.provider),
+          staking.minStake(),
+          staking.pendingOf(args.provider),
+        ]);
+        const pendingAmount = (pending.amount ?? pending[0]) as bigint;
+        const unlockAt = Number(pending.unlockAt ?? pending[1]);
+        return ok(
+          {
+            provider: args.provider,
+            stake: (stake as bigint).toString(),
+            min_stake: (minStake as bigint).toString(),
+            is_active: Boolean(isActive),
+            slash_count: (slashes as bigint).toString(),
+            pending: pendingAmount.toString(),
+            unlock_at: unlockAt,
+          } as unknown as Record<string, unknown>,
+          `Provider ${args.provider.slice(0, 10)}…: stake=${(stake as bigint).toString()} (${isActive ? 'active' : 'inactive'}), slashed ${(slashes as bigint).toString()}×.`,
         );
       } catch (err) {
         return fail(describeError(err));

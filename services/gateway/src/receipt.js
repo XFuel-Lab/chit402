@@ -1,5 +1,9 @@
 import crypto from 'crypto';
-import { computePaymentCommitment } from './payment-binding.js';
+import { computePaymentCommitment, computeInferenceBinding } from './payment-binding.js';
+import { resolveModelCommitment } from './model-commitment.js';
+import { selectTier } from './tier-policy.js';
+import { verifyAttestation, attestationNonce } from './tee-attestation.js';
+import { buildSpotCheckRecord } from './spotcheck.js';
 
 /**
  * Public verifiable-receipt builder + renderer.
@@ -64,6 +68,77 @@ export function explorerUrlForRef(paymentRef) {
   return base + tx;
 }
 
+/**
+ * Coarse assurance tier for a task (RECEIPT_SCHEMA_V2 §5). Honest by construction:
+ *   - 'signed'     : Tier-1 signed receipt, no on-chain proof
+ *   - 'settlement' : Tier-2 SP1 settlement proof present
+ *   - 'inference'  : Tier-3 verified inference (TEE/ZK) — reserved for Phase 4/5
+ * PBR model-binding does NOT upgrade the tier (that needs a real inference check); it is
+ * reported separately via `binding.covers`.
+ */
+export function proofTierOf(task) {
+  if (task.verifiedInference?.tier) return task.verifiedInference.tier;
+  if (task.verifiedInference?.mechanism) return 'inference';
+  if (task.sp1Proof?.proof && !task.sp1Proof?.error) return 'settlement';
+  return 'signed';
+}
+
+/**
+ * Resolve the Verified Inference (Tier-3) block for a task under a policy (Phase 4).
+ * Returns null when the tier engine is disabled. Additive: when present, it drives `proof.tier`
+ * and adds a `verified_inference` block (mechanism + honest attestation/spot-check summaries).
+ * @param {object} task
+ * @param {object} viPolicy  config.verifiedInference (see config.js)
+ * @param {object} [ctx]     { modelCommitment, outputHash }
+ */
+export function verifiedInferenceOf(task, viPolicy, ctx = {}) {
+  if (!viPolicy || !viPolicy.enabled) return null;
+
+  const sel = selectTier(task, viPolicy);
+  const block = {
+    tier: sel.tier,
+    mechanism: sel.mechanism,
+    reason: sel.reason,
+    degraded: sel.degraded,
+    attestation: null,
+    spot_check: null,
+  };
+
+  // T3a — verify a provider-supplied attestation envelope (honest trust label).
+  const envelope = task.attestation || task.meta?.attestation || null;
+  if (sel.mechanism === 'tee' && envelope) {
+    const modelRoot = ctx.modelCommitment || null;
+    const res = verifyAttestation(envelope, {
+      policy: viPolicy.tee || {},
+      expectedModelRoot: modelRoot,
+      expectedNonce: modelRoot ? attestationNonce(task.taskId, modelRoot) : undefined,
+    });
+    block.attestation = {
+      verified: res.verified,
+      vendor: res.vendor,
+      method: res.method,
+      trust: res.trust,
+      measurement: res.measurement,
+      model_root: res.model_root,
+      reasons: res.reasons,
+    };
+  }
+
+  // T3b — verifiable spot-check decision (deep check is orchestrated off the hot path).
+  if (sel.mechanism === 'zk-spotcheck' && viPolicy.spotcheck?.rateBps) {
+    block.spot_check = buildSpotCheckRecord({
+      taskId: task.taskId,
+      seed: viPolicy.spotcheck.seed,
+      rateBps: viPolicy.spotcheck.rateBps,
+      method: 'reexec-compare',
+      observedOutputHash: task.spotCheckObservedHash || null,
+      expectedOutputHash: ctx.outputHash || null,
+    });
+  }
+
+  return block;
+}
+
 /** Map task/proof state to a coarse ProofOutcome (mirrors /task-status). */
 export function proofOutcomeOf(task) {
   if (task.sp1Proof && !task.sp1Proof.error) return 'valid';
@@ -85,11 +160,25 @@ function verifyBinding(task) {
   const paymentRef = task.intent?.paymentRef || null;
   const amount = binding.amount ?? task.netAmount ?? task.intent?.amount ?? '0';
 
+  // PBR: when the binding covers model + inference, re-derive the superset commitment
+  // (payment + model authenticity + output); otherwise the payment-only commitment.
+  const covers = Array.isArray(binding.covers) ? binding.covers : ['payment', 'settlement'];
+  const bindsInference =
+    covers.includes('inference') || !!(binding.model_commitment && binding.output_hash);
+
   let recomputed = null;
   try {
-    ({ commitment: recomputed } = computePaymentCommitment({
-      paymentRef, taskId: task.taskId, rail, amount,
-    }));
+    if (bindsInference) {
+      ({ commitment: recomputed } = computeInferenceBinding({
+        paymentRef, taskId: task.taskId, rail, amount,
+        modelCommitment: binding.model_commitment,
+        outputHash: binding.output_hash,
+      }));
+    } else {
+      ({ commitment: recomputed } = computePaymentCommitment({
+        paymentRef, taskId: task.taskId, rail, amount,
+      }));
+    }
   } catch {
     recomputed = null;
   }
@@ -100,9 +189,39 @@ function verifyBinding(task) {
     in_proof: !!binding.in_proof,
     rail: binding.rail || rail || null,
     amount: String(amount),
+    covers,
+    model_commitment: binding.model_commitment || null,
+    output_hash: binding.output_hash || null,
     expected_commitment: expected,
     recomputed_commitment: recomputed,
     matches: !!(expected && recomputed && expected.toLowerCase() === recomputed.toLowerCase()),
+  };
+}
+
+/**
+ * Resolve the PoMA model-authenticity commitment for a task (Phase 1). Prefers a value
+ * stamped by the serving path (`task.meta.modelCommitment`), else resolves the served model
+ * slug against the local registry config. Returns null when PoMA is not configured — the
+ * receipt then simply omits the commitment (backward-compatible).
+ */
+function modelCommitmentOf(task) {
+  const stamped = task.meta?.modelCommitment || task.modelCommitment;
+  if (stamped) {
+    return {
+      commitment: stamped.commitment || stamped,
+      model_id: stamped.modelId || null,
+      version: stamped.version ?? null,
+      scheme: stamped.scheme ?? 0,
+    };
+  }
+  const model = task.intent?.model || task.intent?.modelId || null;
+  const resolved = model ? resolveModelCommitment(model) : null;
+  if (!resolved) return null;
+  return {
+    commitment: resolved.commitment,
+    model_id: resolved.modelId,
+    version: resolved.version,
+    scheme: resolved.scheme,
   };
 }
 
@@ -118,19 +237,58 @@ function outputHashOf(task) {
 }
 
 /**
+ * Canonical, order-stable serialization of the tamper-critical fields a receipt signature
+ * covers (PBR — the "signed receipt", Tier-1). Anyone can recompute this from the public
+ * receipt and verify the HMAC. Keep this list + order in lockstep with the SDK verifier.
+ */
+export function canonicalSignedPayload(receipt) {
+  return JSON.stringify([
+    receipt.task_id,
+    receipt.payment?.rail ?? null,
+    receipt.payment?.ref ?? null,
+    receipt.payment?.net_amount ?? null,
+    receipt.payment?.fee_amount ?? null,
+    receipt.route?.model ?? null,
+    receipt.route?.model_commitment?.commitment ?? null,
+    receipt.output?.hash ?? null,
+    receipt.binding?.expected_commitment ?? null,
+  ]);
+}
+
+/** HMAC-SHA256 signature over the canonical signed payload. */
+function signReceiptPayload(receipt, secret) {
+  const value = crypto.createHmac('sha256', secret).update(canonicalSignedPayload(receipt)).digest('hex');
+  return {
+    alg: 'HMAC-SHA256',
+    value: `sha256=${value}`,
+    signed_fields: [
+      'task_id', 'payment.rail', 'payment.ref', 'payment.net_amount', 'payment.fee_amount',
+      'route.model', 'route.model_commitment.commitment', 'output.hash', 'binding.expected_commitment',
+    ],
+  };
+}
+
+/**
  * Build the public receipt JSON for a task.
  * @param {object} task     Listener task (from aiListener.activeTasks).
- * @param {object} [opts]   { baseUrl }
+ * @param {object} [opts]   { baseUrl, signingSecret } — signingSecret enables the Tier-1
+ *                          signed receipt (HMAC over the payment-bound tuple). Omit to keep
+ *                          the receipt byte-compatible with the unsigned form.
  */
-export function buildReceipt(task, { baseUrl = '' } = {}) {
+export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolicy = null } = {}) {
   const outcome = proofOutcomeOf(task);
   const feeBps = task.feeBps || 50;
   const paymentRail = task.intent?.paymentRail || 'tfuel';
   const paymentRef = task.intent?.paymentRef || null;
   const output = outputHashOf(task);
+  const modelCommitment = modelCommitmentOf(task);
+  const vi = verifiedInferenceOf(task, viPolicy, {
+    modelCommitment: modelCommitment?.commitment || null,
+    outputHash: output?.value || null,
+  });
   const base = baseUrl ? baseUrl.replace(/\/$/, '') : '';
 
-  return {
+  const receipt = {
     task_id: task.taskId,
     status: task.status,
     proof_outcome: outcome,
@@ -140,6 +298,7 @@ export function buildReceipt(task, { baseUrl = '' } = {}) {
     route: {
       message_type: task.intent?.type || null,
       model: task.intent?.model || task.intent?.modelId || null,
+      model_commitment: modelCommitment,
       provider: task.meta?.provider || task.routedTo || null,
       chain_id: task.meta?.chain || task.intent?.chainId || null,
     },
@@ -154,12 +313,14 @@ export function buildReceipt(task, { baseUrl = '' } = {}) {
     },
     proof: {
       system: task.intent?.proofSystem || 'sp1',
+      tier: vi?.tier || proofTierOf(task),
       outcome,
       has_proof: !!task.sp1Proof?.proof,
       nullifier: task.sp1Proof?.nullifier || null,
       proving_time_ms: task.sp1Proof?.provingTimeMs || null,
       attests: PROOF_SCOPE_NOTE,
     },
+    verified_inference: vi,
     binding: verifyBinding(task),
     output: output ? { hash: output.value, kind: output.kind } : null,
     links: base
@@ -176,6 +337,9 @@ export function buildReceipt(task, { baseUrl = '' } = {}) {
           proof: `/prove-result?task_id=${task.taskId}`,
         },
   };
+
+  if (signingSecret) receipt.signature = signReceiptPayload(receipt, signingSecret);
+  return receipt;
 }
 
 // ─── HTML rendering ──────────────────────────────────────────────────────────
@@ -242,6 +406,12 @@ export function renderReceiptHtml(receipt) {
     ? row(receipt.output.kind === 'committed' ? 'Output commitment' : 'Output hash (SHA-256)', `<code>${esc(shortHash(receipt.output.hash, 12, 10))}</code>`)
     : '';
 
+  const mc = receipt.route.model_commitment;
+  const modelCommitmentRow = mc && mc.commitment
+    ? row('Model commitment <span class="scope">PoMA</span>',
+        `<code>${esc(shortHash(mc.commitment, 12, 10))}</code>${mc.version != null ? ` <span class="muted">v${esc(mc.version)}</span>` : ''}`)
+    : '';
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -299,6 +469,7 @@ export function renderReceiptHtml(receipt) {
       ${row('Status', esc(receipt.status))}
       ${row('Type', esc(receipt.route.message_type) || '<span class="muted">—</span>')}
       ${row('Model', esc(receipt.route.model) || '<span class="muted">—</span>')}
+      ${modelCommitmentRow}
       ${row('Provider', esc(receipt.route.provider) || '<span class="muted">—</span>')}
       ${row('Chain', esc(receipt.route.chain_id) || '<span class="muted">—</span>')}
       ${outputRow}
