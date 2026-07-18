@@ -21,8 +21,9 @@
 //! plus a linear row-reduction), and **softmax** ([`attention`], `exp` and reciprocal via the
 //! [`table`] lookup). A quantized SwiGLU FFN block and a quantized single-head attention block each
 //! have **zero pending obligations** (single- or multi-head); one full transformer [`block`] composes
-//! them under a single transcript, and RoPE ([`rope`]) is public-linear. Remaining: inter-op
-//! requantization range-checks (M5.3).
+//! them under a single transcript, and RoPE ([`rope`]) is public-linear. Inter-op
+//! **requantization** ([`requant`]) is proven as division-with-remainder plus two [`range`] checks,
+//! so each op's wide accumulator re-enters the next op's code domain soundly (M5.3).
 //!
 //! CPU-only; no GPU. Runs in any container (see the crate `Dockerfile`).
 
@@ -38,6 +39,8 @@ pub mod matmul;
 pub mod mha;
 pub mod mle;
 pub mod norm;
+pub mod range;
+pub mod requant;
 pub mod rope;
 pub mod sumcheck;
 pub mod table;
