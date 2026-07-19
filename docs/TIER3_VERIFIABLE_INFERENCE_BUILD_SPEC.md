@@ -341,14 +341,17 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           Q/K, and the per-head softmax argument for every head under one transcript; GQA is index
           layout (`head → kv group`). **Zero pending obligations** (quantized). This closes the
           M5.2b-cont assembly — the transformer block is now full-width, not just single-head.
-      - **98 `cargo test` green** (matmul **10** (adds committed succinct-verify / wrong-weight-commit /
+      - **106 `cargo test` green** (matmul **10** (adds committed succinct-verify / wrong-weight-commit /
         forged-final-eval / **commitment-bound challenge** / **I/O-committed 2-matmul chain** /
         **tampered-intermediate composition reject**) + commitments 5 + **residual 4** (committed add:
         honest / wrong-sum / forged-opening / wrong-commit) + hadamard/gadgets **10** (committed verify /
         wrong-operand-commit / forged-final-eval + I/O-committed verify / tampered-output-commit /
         **matmul-output→hadamard-operand cross-op composition**) + **lookup 8** (adds committed
         succinct-verify / forged-Σa=Σb-sum / forged-opening / wrong-advice-commit) + **activation
-        3** + **norm 6** + **attention 6** + **block 2** + **rope 4** + **mha 7** + **range 4** +
+        3** + **reduce 4** (committed row-sum: honest / wrong-sum / forged-opening / wrong-commit) +
+        **norm 10** (adds committed RMSNorm: honest succinct verify / wrong-output-commit /
+        **forged-table tie** / forged-scaling-opening) + **attention 6** + **block 2** + **rope 4** +
+        **mha 7** + **range 4** +
         **requant 7** (honest / tampered q,r / out-of-range decomposition / wrong divisor / **signed
         accumulator + bias** / requant→activation-lookup integration) + **FFN 12** (adds wide-gate→
         requant→activation zero-obligation + requant mode-mismatch) + **spotcheck 5** + **pcs 5**
@@ -413,11 +416,19 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           commitment reuse, verifier materializes nothing.
         - `residual.rs` `prove_committed_add`/`verify_committed_add`: `out = x + sub` as a linear
           (Schwartz–Zippel) one-point + three-opening check — the block's two residual seams.
+        - `reduce.rs` `prove_committed_rowsum`/`verify_committed_rowsum`: `narrow[r] = Σ_j wide[r,j]`
+          via a 2-product sumcheck against a broadcast `eq` (the broadcast operand needs no opening).
+        - `norm.rs` `prove_committed_rmsnorm`/`verify_committed_rmsnorm`: the first **assembled**
+          committed sub-block — hadamard-io (`xsq`) → committed row-sum (`ss`) → committed lookup
+          (`inv=rsqrt(ss)`) → a fused 4-product scaling sumcheck (`y = x·inv[r]·w[j]`, no broadcast
+          tensors for the verifier). Ops linked by commitment reuse; the lookup's table tied to the
+          canonical `rsqrt` table (anti-forged-table). `w` public for now (PoMA-commit is the last
+          weight-binding step).
         - `pcs.rs` gains a canonical `Opening`/`open_at`/`check_open` (lookup refactored onto it).
-        Total `cargo test`: **98** (+25 over M5.3).
-      - **Remaining (M5.4b):** the committed **norm** (Hadamard-io + committed lookup + a committed
-        row-sum reduction) + a lookup-io, then assemble the fully-succinct `block`; then the on-chain
-        verifier + settlement E2E below.
+        Total `cargo test`: **106** (+33 over M5.3).
+      - **Remaining (M5.4b):** a committed **attention** (softmax reuses `reduce` + committed lookup) +
+        a lookup-io, then assemble the fully-succinct `block`; then the on-chain verifier + settlement
+        E2E below.
 - [ ] **M5.4b** Implement `IVerifiedInference` verifier (Option A native Solidity via BN254
       precompiles: KZG opening + sumcheck; Groth16 wrap optional for gas); gas bench.
 - [ ] E2E: task → spot-check proof → on-chain verify → settle.
