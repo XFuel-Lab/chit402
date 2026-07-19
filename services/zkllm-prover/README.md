@@ -16,7 +16,7 @@ and ADR 0003). CPU-only — runs in any container.
 | `pcs` | **Multilinear-KZG polynomial commitment** (PST, `ark-poly-commit`) over BN254 — commit a tensor's MLE, then open its evaluation at a point with a constant-size proof. This is the succinctness step: the verifier checks openings instead of holding tensors. Pairing-based ⇒ `ecPairing`-precompile-verifiable on Base. (M5.4a) |
 | `sumcheck` | Product sumcheck + **generic multi-product (degree-d) sumcheck** + Lagrange eval, over a Keccak256 Fiat–Shamir transcript. |
 | `mle` | Multilinear-extension helpers (`eq` weights, MLE evaluation, `eq_eval`). |
-| `gadgets` | **Sound Hadamard (elementwise-product) argument** `z = a⊙b` (SwiGLU/RoPE workhorse) + typed `LookupObligation`. `prove_committed_hadamard`/`verify_committed_hadamard` bind the operands to PCS commitments so the verifier holds only `z` (M5.4a). |
+| `gadgets` | **Sound Hadamard (elementwise-product) argument** `z = a⊙b` (SwiGLU/RoPE workhorse) + typed `LookupObligation`. `prove_committed_hadamard`/`verify_committed_hadamard` bind the operands to PCS commitments so the verifier holds only `z` (M5.4a); `prove_committed_hadamard_io`/`verify_committed_hadamard_io` also commit+open `z`, so a chain reuses `z`'s commitment as the next op's operand (M5.4b). |
 | `lookup` | **Logup lookup argument** — proves a non-linearity via a `(in, out)` table (SiLU/GeLU/softmax-exp/rsqrt) with no field-native circuit. `prove_committed_lookup`/`verify_committed_lookup` make it succinct: the grand-sum `Σa=Σb` becomes two sumchecks and every column + advice is bound to a PCS commitment, so the verifier holds only commitments (M5.4a). |
 | `activation` | Quantized **SiLU/GeLU** lookup table + `prove`/`verify` — discharges the FFN's activation obligation soundly. |
 | `norm` | **RMSNorm gadget** — `rsqrt` via a canonical lookup table + a linear sum-of-squares reduction + a Hadamard scaling chain. Discharges the FFN's norm obligation soundly. |
@@ -28,6 +28,7 @@ and ADR 0003). CPU-only — runs in any container.
 | `range` | **Range-check gadget** — proves a column lies in `[0, bound)` via a membership lookup into the identity table. The reusable backbone for requant bounds and any limb decomposition. |
 | `requant` | **Inter-op requantization** — proves `acc + bias = q·D + r` with `0 ≤ r < D` and `0 ≤ q < q_bound` (division-with-remainder + two range checks; public `bias` handles signed accumulators), so a wide accumulator re-enters the next op's code domain. **Wired into the FFN gate path** (`RequantParams`). |
 | `block` | **Full transformer block** — composes `attention → ffn` under one Fiat–Shamir transcript; the FFN gate's wide→code requant hop threads through. |
+| `residual` | **Committed residual-add check** `out = x + sub` — a linear (Schwartz–Zippel) one-point + three-opening argument for the block's two residual seams, verifier holds no tensors (M5.4b). |
 | `spotcheck` | **Tier-3b block-window spot-check** — a Fiat–Shamir-selected pseudo-random window of `k` blocks, bound to the model + PBR commitments so the prover can't cherry-pick and any trace tampering re-rolls the selection. Generic over the per-block prover. |
 | `manifest` | `ModelManifest` (arch config) + **arch-bound PoMA commitment** — proof attests "these weights + this architecture". |
 | `commitment` | keccak256 weights root / model commitment + `commit_field_table` + **PBR public-input binding**, byte-identical to `SP1ProofHooks.computeInferenceBindingCommitment`. |
@@ -50,11 +51,13 @@ multilinear-KZG openings, so the verifier needs only the commitments — the wei
 PoMA anchor (M5.4a). The committed transcripts **absorb the operand commitments before drawing the
 evaluation point**, so a prover cannot adaptively pick a witness after seeing the challenge.
 The **lookup** sub-argument is committed too: its grand-sum `Σa=Σb` is two sumchecks and every column +
-advice vector is PCS-bound (M5.4a). The **composition primitive** (`matmul::prove_committed_io`) commits
-each op's output and links ops by commitment reuse, so a chain of matmuls verifies without the verifier
-ever holding an intermediate (M5.4b). **Explicitly pending:** apply the I/O-committed pattern to the
-Hadamard/lookup/norm sub-ops and assemble the fully-succinct `block`, then the on-chain
-`IVerifiedInference` verifier (BN254 precompiles) + settlement E2E, plus the RAM bench (M5.3).
+advice vector is PCS-bound (M5.4a). The **composition primitives** commit each op's output and link ops by commitment reuse, so chains
+verify without the verifier ever holding an intermediate: `matmul::prove_committed_io`,
+`gadgets::prove_committed_hadamard_io`, and the `residual` add-check all thread commitments across the
+seam (a matmul output feeds a Hadamard operand in the tests). (M5.4b). **Explicitly pending:** the
+committed **norm** (compose Hadamard-io + committed lookup + a committed row-sum) and lookup-io, then
+assemble the fully-succinct `block`; then the on-chain `IVerifiedInference` verifier (BN254 precompiles)
++ settlement E2E, plus the RAM bench (M5.3).
 
 ## Build & test
 
@@ -110,11 +113,12 @@ checks the sumcheck/lookup arguments are sound. Two boundaries remain explicit:
    `Σa=Σb` was turned into two sumchecks so that too is succinct. Every committed transcript absorbs the
    operand commitments **before** the evaluation point, closing the adaptive-witness attack. This
    carries a trusted-setup (powers-of-tau) assumption, generated once off the hot path (`pcs::setup`).
-   **Composition (M5.4b) is now sound in principle:** `matmul::prove_committed_io`/`verify_committed_io`
-   also commit+open the output, and a two-matmul chain `Z=(A·B)·D` verifies with the verifier holding
-   only commitments — the intermediate `Y` is linked purely by reusing its commitment (PCS binding
-   forces the same polynomial on both sides; a tampered intermediate is rejected). Still pending: apply
-   this I/O-committed pattern to the Hadamard/lookup/norm sub-ops and assemble the fully-succinct
+   **Composition (M5.4b) is now sound in principle** and generalizes across op types:
+   `matmul::prove_committed_io`, `gadgets::prove_committed_hadamard_io` and `residual` all commit+open
+   their outputs, so ops link purely by reusing commitments (PCS binding forces the same polynomial
+   across the seam; tampered intermediates are rejected). The tests chain a matmul output straight into
+   a Hadamard operand with the verifier holding no tensors. Still pending: the committed **norm**
+   (Hadamard-io + committed lookup + a committed row-sum) + lookup-io, then assemble the fully-succinct
    **block**, then the **on-chain `IVerifiedInference` verifier** (BN254 precompiles verify a KZG
    opening + the sumcheck) with nullifier + settlement; a Groth16 wrap remains an optional gas
    optimization.

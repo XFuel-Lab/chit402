@@ -24,6 +24,7 @@
 //! (row bits high, column bits low). [`open`]/[`verify`] therefore reverse the query point so a PCS
 //! opening reproduces exactly `mle::mle_eval(table, point)`. This is asserted directly in the tests.
 
+use crate::mle::mle_eval;
 use crate::{log2_exact, Fr};
 use ark_bn254::Bn254;
 use ark_poly::DenseMultilinearExtension;
@@ -101,4 +102,22 @@ pub fn open(ck: &Ck, table: &[Fr], point: &[Fr]) -> OpeningProof {
 /// Soundness here rests only on the commitment + the trusted setup — the full tensor is not needed.
 pub fn verify(vk: &Vk, comm: &Comm, point: &[Fr], value: Fr, proof: &OpeningProof) -> bool {
     MultilinearPC::check(vk, comm, &ark_point(point), value, proof)
+}
+
+/// A committed MLE evaluation: the claimed `value` at a point plus its opening `proof`. The point is
+/// re-derived by the verifier from the transcript, so it is not carried here. Bundling the two keeps
+/// composed arguments (lookup, residual, norm, block) tidy and their many openings uniform.
+pub struct Opening {
+    pub value: Fr,
+    pub proof: OpeningProof,
+}
+
+/// Open `table`'s MLE at `point`, bundling the evaluation and the proof into an [`Opening`].
+pub fn open_at(ck: &Ck, table: &[Fr], point: &[Fr]) -> Opening {
+    Opening { value: mle_eval(table, point), proof: open(ck, table, point) }
+}
+
+/// Check an [`Opening`] against a commitment at a verifier-derived `point`.
+pub fn check_open(vk: &Vk, comm: &Comm, point: &[Fr], o: &Opening) -> bool {
+    verify(vk, comm, point, o.value, &o.proof)
 }

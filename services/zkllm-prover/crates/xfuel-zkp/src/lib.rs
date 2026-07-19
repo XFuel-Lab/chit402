@@ -44,6 +44,7 @@ pub mod norm;
 pub mod pcs;
 pub mod range;
 pub mod requant;
+pub mod residual;
 pub mod rope;
 pub mod spotcheck;
 pub mod sumcheck;

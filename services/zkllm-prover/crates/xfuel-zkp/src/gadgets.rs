@@ -143,6 +143,90 @@ pub fn verify_committed_hadamard(
         && pcs::verify(vk, comm_b, &ch, inner.b_final, &proof.open_b)
 }
 
+// ─── I/O-committed Hadamard — composition variant (M5.4b) ─────────────────────
+//
+// [`verify_committed_hadamard`] still holds the output `z` (it recomputes `ẑ(r)`). For a succinct
+// block the gate output feeds the next op, so — mirroring `matmul::verify_committed_io` — the I/O
+// variant also commits `z` and discharges `ẑ(r)` with a PCS opening. Chaining then reuses `z`'s
+// commitment as the next op's operand commitment, with no separate linking argument.
+
+/// A fully-committed Hadamard proof: also opens the **output** `z` at `r`, so the verifier holds no
+/// tensors — only the `a`,`b`,`z` commitments.
+pub struct CommittedIoHadamardProof {
+    pub inner: HadamardProof,
+    pub open_a: pcs::OpeningProof,
+    pub open_b: pcs::OpeningProof,
+    pub open_z: pcs::OpeningProof,
+}
+
+/// I/O-committed binding: absorb the `a`,`b`,`z` commitments before drawing `r`.
+fn bind_hadamard_io(
+    tr: &mut Transcript,
+    comm_a: &pcs::Comm,
+    comm_b: &pcs::Comm,
+    comm_z: &pcs::Comm,
+    len: usize,
+) -> Vec<Fr> {
+    tr.absorb_bytes(b"hio.a", &pcs::commitment_bytes(comm_a));
+    tr.absorb_bytes(b"hio.b", &pcs::commitment_bytes(comm_b));
+    tr.absorb_bytes(b"hio.z", &pcs::commitment_bytes(comm_z));
+    (0..log2_exact(len)).map(|_| tr.challenge(b"hio.r")).collect()
+}
+
+/// Prove `z = a ⊙ b`, committing **all three** tensors and opening `a`,`b` at the sumcheck point and
+/// `z` at `r`. Returns the proof and the `(a, b, z)` commitments for reuse across the block seam.
+pub fn prove_committed_hadamard_io(
+    a: &[Fr],
+    b: &[Fr],
+    z: &[Fr],
+    ck: &pcs::Ck,
+    tr: &mut Transcript,
+) -> (CommittedIoHadamardProof, pcs::Comm, pcs::Comm, pcs::Comm) {
+    assert_eq!(a.len(), b.len());
+    assert_eq!(a.len(), z.len());
+    let comm_a = pcs::commit(ck, a);
+    let comm_b = pcs::commit(ck, b);
+    let comm_z = pcs::commit(ck, z);
+    let r = bind_hadamard_io(tr, &comm_a, &comm_b, &comm_z, z.len());
+    let (inner, ch) = prove_hadamard_core(a, b, z, r, tr);
+    let open_a = pcs::open(ck, a, &ch);
+    let open_b = pcs::open(ck, b, &ch);
+    let open_z = pcs::open(ck, z, &inner.r);
+    (CommittedIoHadamardProof { inner, open_a, open_b, open_z }, comm_a, comm_b, comm_z)
+}
+
+/// Succinctly verify `z = a ⊙ b` from commitments to `a`,`b`,**`z`** — the verifier holds no tensors.
+/// The output claim `ẑ(r) = inner.z_at_r` is discharged by an opening of `comm_z` at `r`, so the same
+/// commitment can be reused as the next op's operand commitment.
+pub fn verify_committed_hadamard_io(
+    len: usize,
+    comm_a: &pcs::Comm,
+    comm_b: &pcs::Comm,
+    comm_z: &pcs::Comm,
+    proof: &CommittedIoHadamardProof,
+    vk: &pcs::Vk,
+    tr: &mut Transcript,
+) -> bool {
+    if !len.is_power_of_two() {
+        return false;
+    }
+    let inner = &proof.inner;
+    let r = bind_hadamard_io(tr, comm_a, comm_b, comm_z, len);
+    if r != inner.r {
+        return false;
+    }
+    let (ch, reduced) = match verify_product_multi(&inner.sumcheck, inner.z_at_r, tr) {
+        Some(v) => v,
+        None => return false,
+    };
+    if reduced != eq_eval(&r, &ch) * inner.a_final * inner.b_final {
+        return false;
+    }
+    pcs::verify(vk, comm_a, &ch, inner.a_final, &proof.open_a)
+        && pcs::verify(vk, comm_b, &ch, inner.b_final, &proof.open_b)
+        && pcs::verify(vk, comm_z, &r, inner.z_at_r, &proof.open_z)
+}
+
 /// A transcendental step whose sound lookup argument is pending (M5.2b). The witness is produced
 /// by the forward pass now; this records the input→output relation that must still be argued.
 #[derive(Clone, Debug, PartialEq, Eq)]
