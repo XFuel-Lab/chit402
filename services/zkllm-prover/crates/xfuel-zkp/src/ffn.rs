@@ -22,16 +22,29 @@
 
 use crate::activation::ActivationTable;
 use crate::gadgets::{
-    act_name, apply_activation, prove_hadamard, verify_hadamard, HadamardProof, LookupObligation,
+    act_name, apply_activation, prove_committed_hadamard_io, prove_hadamard,
+    verify_committed_hadamard_io, verify_hadamard, CommittedIoHadamardProof, HadamardProof,
+    LookupObligation,
 };
-use crate::lookup::LookupProof;
+use crate::lookup::{CommittedLookupProof, LookupProof};
 use crate::manifest::{ModelManifest, NormType};
-use crate::matmul::{prove as prove_mm, verify as verify_mm, MatMul, MatMulProof};
-use crate::norm::{prove_rmsnorm, verify_rmsnorm, RmsNormProof, RsqrtTable};
+use crate::matmul::{
+    prove as prove_mm, prove_committed_io, verify as verify_mm, verify_committed_io,
+    CommittedIoMatMulProof, MatMul, MatMulProof,
+};
+use crate::norm::{
+    prove_committed_rmsnorm, prove_rmsnorm, verify_committed_rmsnorm, verify_rmsnorm,
+    CommittedRmsNormProof, RmsNormProof, RsqrtTable,
+};
+use crate::pcs;
 use crate::range::RangeTable;
-use crate::requant::{prove_requant, verify_requant, RequantProof};
+use crate::requant::{
+    prove_committed_requant, prove_requant, verify_committed_requant, verify_requant,
+    CommittedRequantProof, RequantProof,
+};
+use crate::residual::{prove_committed_add, verify_committed_add, CommittedAddProof};
 use crate::transcript::Transcript;
-use crate::Fr;
+use crate::{log2_exact, Fr};
 
 /// Norm parameters for the (quantized) sound path: a per-channel weight and the canonical `rsqrt`
 /// table. When supplied, `norm(X)` is **soundly proven** by the [`crate::norm`] gadget and the
@@ -343,4 +356,259 @@ fn norm_op(name: &str) -> &'static str {
     } else {
         "rmsnorm"
     }
+}
+
+// ─── Committed (succinct) SwiGLU FFN — M5.4b ──────────────────────────────────
+//
+// The sibling of committed attention: assembles the committed primitives into a whole succinct FFN
+// sub-block, verifier holding only the block I/O commitments + the public weights. Dataflow under one
+// Fiat–Shamir transcript, threaded by commitment reuse:
+//   1. xn     = RMSNorm(x)          → norm::…rmsnorm            (comm_x → comm_xn)
+//   2. gate   = xn·Wgate            → matmul::…io               (comm_xn → comm_gate)
+//   3. up     = xn·Wup              → matmul::…io               (comm_xn → comm_up)
+//   4. gate_q = ⌊(gate+bias)/D⌋     → requant::…committed        (comm_gate → comm_gate_q)
+//   5. act    = SiLU(gate_q)        → activation::…committed     (comm_gate_q → comm_act)
+//   6. h      = act ⊙ up            → gadgets::…hadamard_io       (comm_act, comm_up → comm_h)
+//   7. down   = h·Wdown             → matmul::…io               (comm_h → comm_down)
+//   8. out    = x + down            → residual::…add             (comm_x, comm_down → comm_out)
+// The wide→code hop (step 4) is the one non-linear seam beyond the lookups; it is bound to the gate
+// matmul output on one side (comm_gate) and to the activation input on the other (comm_gate_q). This
+// is the fully-quantized, zero-obligation FFN in the succinct model — the committed sibling of
+// [`prove_ffn`] with `Some` tables. Trust boundary: weights are public here (verifier recomputes
+// their commitments); the KZG trusted setup is as in [`crate::pcs`].
+
+/// A fully-committed SwiGLU FFN proof. The intermediate commitments are carried so the verifier can
+/// thread each seam by reusing one commitment as both an op's output and the next op's operand;
+/// `comm_gate_q` lives in `p_requant.p_q_range.comm_query[0]` and `comm_act` in `p_act.comm_query[1]`.
+pub struct CommittedFfnProof {
+    pub comm_xn: pcs::Comm,
+    pub comm_gate: pcs::Comm,
+    pub comm_up: pcs::Comm,
+    pub comm_h: pcs::Comm,
+    pub comm_down: pcs::Comm,
+    pub p_norm: CommittedRmsNormProof,
+    pub p_gate: CommittedIoMatMulProof,
+    pub p_up: CommittedIoMatMulProof,
+    pub p_requant: CommittedRequantProof,
+    pub p_act: CommittedLookupProof,
+    pub p_had: CommittedIoHadamardProof,
+    pub p_down: CommittedIoMatMulProof,
+    pub p_resid: CommittedAddProof,
+}
+
+/// Committer/verifier keys for every tensor width the FFN touches, trimmed once from a single SRS.
+/// (`.0` = committer key, `.1` = verifier key.) `w` covers both `d_model×d_ff` and `d_ff×d_model`.
+struct FfnKeys {
+    a: (pcs::Ck, pcs::Vk),       // seq·d_model (x, xn, down, out)
+    w: (pcs::Ck, pcs::Vk),       // d_model·d_ff (Wgate/Wup/Wdown)
+    f: (pcs::Ck, pcs::Vk),       // seq·d_ff (gate, up, gate_q, r, act, h)
+    s: (pcs::Ck, pcs::Vk),       // seq (norm row column)
+    rsqrt_t: (pcs::Ck, pcs::Vk), // rsqrt table domain
+    rt: (pcs::Ck, pcs::Vk),      // remainder range domain (divisor)
+    qt: (pcs::Ck, pcs::Vk),      // quotient range domain (q_bound)
+    act_t: (pcs::Ck, pcs::Vk),   // activation table domain
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ffn_keys(
+    params: &pcs::Params,
+    seq: usize,
+    d_model: usize,
+    d_ff: usize,
+    rsqrt_domain: usize,
+    divisor: usize,
+    q_bound: usize,
+    act_domain: usize,
+) -> FfnKeys {
+    FfnKeys {
+        a: pcs::keys(params, log2_exact(seq * d_model)),
+        w: pcs::keys(params, log2_exact(d_model * d_ff)),
+        f: pcs::keys(params, log2_exact(seq * d_ff)),
+        s: pcs::keys(params, log2_exact(seq)),
+        rsqrt_t: pcs::keys(params, log2_exact(rsqrt_domain)),
+        rt: pcs::keys(params, log2_exact(divisor)),
+        qt: pcs::keys(params, log2_exact(q_bound)),
+        act_t: pcs::keys(params, log2_exact(act_domain)),
+    }
+}
+
+/// Prove one SwiGLU FFN sub-block succinctly. `x` is seq×d_model; weights are row-major
+/// (`wgate,wup`: d_model×d_ff; `wdown`: d_ff×d_model). `norm`/`requant`/`act_table` are all required
+/// (the committed path is the fully-quantized, zero-obligation one). `params` is an SRS with
+/// `max_vars ≥` every tensor width. Returns `(proof, comm_x, comm_out, out)`.
+#[allow(clippy::too_many_arguments)]
+pub fn prove_committed_ffn(
+    cfg: &FfnConfig,
+    x: &[Fr],
+    wgate: &[Fr],
+    wup: &[Fr],
+    wdown: &[Fr],
+    act_table: &ActivationTable,
+    requant: &RequantParams,
+    norm: &NormParams,
+    params: &pcs::Params,
+    tr: &mut Transcript,
+) -> (CommittedFfnProof, pcs::Comm, pcs::Comm, Vec<Fr>) {
+    let (seq, d_model, d_ff) = (cfg.seq, cfg.d_model, cfg.d_ff);
+    assert_eq!(x.len(), seq * d_model, "x must be seq*d_model");
+    assert_eq!(wgate.len(), d_model * d_ff, "wgate must be d_model*d_ff");
+    assert_eq!(wup.len(), d_model * d_ff, "wup must be d_model*d_ff");
+    assert_eq!(wdown.len(), d_ff * d_model, "wdown must be d_ff*d_model");
+
+    let ks = ffn_keys(
+        params, seq, d_model, d_ff, norm.table.domain, requant.divisor, requant.q_table.bound,
+        act_table.domain,
+    );
+
+    // 1. xn = RMSNorm(x): comm_x → comm_xn.
+    let (p_norm, comm_x, comm_xn, xn) = prove_committed_rmsnorm(
+        x, norm.weight, seq, d_model, norm.table, &ks.a.0, &ks.s.0, &ks.rsqrt_t.0, tr,
+    );
+
+    // 2. gate = xn·Wgate, 3. up = xn·Wup (both reuse comm_xn).
+    let mm_gate = MatMul::new(seq, d_model, d_ff, xn.clone(), wgate.to_vec());
+    let gate = mm_gate.c.clone();
+    let (p_gate, _cxn, _cwg, comm_gate) = prove_committed_io(&mm_gate, &ks.a.0, &ks.w.0, &ks.f.0, tr);
+
+    let mm_up = MatMul::new(seq, d_model, d_ff, xn.clone(), wup.to_vec());
+    let up = mm_up.c.clone();
+    let (p_up, _cxn2, _cwu, comm_up) = prove_committed_io(&mm_up, &ks.a.0, &ks.w.0, &ks.f.0, tr);
+
+    // 4. gate_q = requant(gate) — the wide→code hop (reuses comm_gate as the accumulator).
+    let (p_requant, _cacc, _cgq, gate_q) = prove_committed_requant(
+        &gate, requant.bias, requant.divisor, requant.r_table, requant.q_table, &ks.f.0, &ks.rt.0,
+        &ks.qt.0, tr,
+    );
+
+    // 5. act = act(gate_q) — committed lookup on the requantized gate.
+    let act = act_table.apply(&gate_q);
+    let p_act = act_table.prove_committed(&gate_q, &act, &ks.f.0, &ks.act_t.0, tr);
+
+    // 6. h = act ⊙ up (reuses comm_act and comm_up).
+    let h: Vec<Fr> = act.iter().zip(up.iter()).map(|(a, b)| *a * *b).collect();
+    let (p_had, _ca, _cb, comm_h) = prove_committed_hadamard_io(&act, &up, &h, &ks.f.0, tr);
+
+    // 7. down = h·Wdown (reuses comm_h).
+    let mm_down = MatMul::new(seq, d_ff, d_model, h.clone(), wdown.to_vec());
+    let down = mm_down.c.clone();
+    let (p_down, _ch, _cwd, comm_down) = prove_committed_io(&mm_down, &ks.f.0, &ks.w.0, &ks.a.0, tr);
+
+    // 8. out = x + down (residual — reuses comm_x and comm_down).
+    let out: Vec<Fr> = x.iter().zip(down.iter()).map(|(a, b)| *a + *b).collect();
+    let (p_resid, _cx, _cd, comm_out) = prove_committed_add(x, &down, &out, &ks.a.0, tr);
+
+    let proof = CommittedFfnProof {
+        comm_xn,
+        comm_gate,
+        comm_up,
+        comm_h,
+        comm_down,
+        p_norm,
+        p_gate,
+        p_up,
+        p_requant,
+        p_act,
+        p_had,
+        p_down,
+        p_resid,
+    };
+    (proof, comm_x, comm_out, out)
+}
+
+/// Succinctly verify a SwiGLU FFN sub-block from `comm_x`, `comm_out`, the public weights, the
+/// RMSNorm/requant params, and the canonical activation table. The verifier holds no activation
+/// tensors; each seam is bound by commitment reuse.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_committed_ffn(
+    cfg: &FfnConfig,
+    wgate: &[Fr],
+    wup: &[Fr],
+    wdown: &[Fr],
+    act_table: &ActivationTable,
+    requant: &RequantParams,
+    norm: &NormParams,
+    comm_x: &pcs::Comm,
+    comm_out: &pcs::Comm,
+    proof: &CommittedFfnProof,
+    params: &pcs::Params,
+    tr: &mut Transcript,
+) -> bool {
+    let (seq, d_model, d_ff) = (cfg.seq, cfg.d_model, cfg.d_ff);
+    if wgate.len() != d_model * d_ff
+        || wup.len() != d_model * d_ff
+        || wdown.len() != d_ff * d_model
+    {
+        return false;
+    }
+
+    let ks = ffn_keys(
+        params, seq, d_model, d_ff, norm.table.domain, requant.divisor, requant.q_table.bound,
+        act_table.domain,
+    );
+    let bytes = pcs::commitment_bytes;
+
+    // Public weight commitments.
+    let comm_wgate = pcs::commit(&ks.w.0, wgate);
+    let comm_wup = pcs::commit(&ks.w.0, wup);
+    let comm_wdown = pcs::commit(&ks.w.0, wdown);
+
+    // 1. xn = RMSNorm(x).
+    if !verify_committed_rmsnorm(
+        norm.weight, seq, d_model, norm.table, comm_x, &proof.comm_xn, &proof.p_norm,
+        &ks.rsqrt_t.0, &ks.a.1, &ks.s.1, &ks.rsqrt_t.1, tr,
+    ) {
+        return false;
+    }
+
+    // 2. gate = xn·Wgate, 3. up = xn·Wup.
+    if !verify_committed_io(
+        seq, d_model, d_ff, &proof.comm_xn, &comm_wgate, &proof.comm_gate, &proof.p_gate, &ks.a.1,
+        &ks.w.1, &ks.f.1, tr,
+    ) {
+        return false;
+    }
+    if !verify_committed_io(
+        seq, d_model, d_ff, &proof.comm_xn, &comm_wup, &proof.comm_up, &proof.p_up, &ks.a.1,
+        &ks.w.1, &ks.f.1, tr,
+    ) {
+        return false;
+    }
+
+    // 4. gate_q = requant(gate) — the accumulator is comm_gate.
+    if !verify_committed_requant(
+        seq * d_ff, requant.bias, requant.divisor, requant.r_table, requant.q_table,
+        &proof.comm_gate, &proof.p_requant, &ks.rt.0, &ks.qt.0, &ks.f.1, &ks.rt.1, &ks.qt.1, tr,
+    ) {
+        return false;
+    }
+    let comm_gate_q = &proof.p_requant.p_q_range.comm_query[0];
+
+    // 5. act = act(gate_q) — tie the lookup's input column to comm_gate_q; table-tie is inside verify.
+    if proof.p_act.comm_query.len() != 2 || bytes(&proof.p_act.comm_query[0]) != bytes(comm_gate_q) {
+        return false;
+    }
+    if !act_table.verify_committed(seq * d_ff, &proof.p_act, &ks.act_t.0, &ks.f.1, &ks.act_t.1, tr) {
+        return false;
+    }
+    let comm_act = &proof.p_act.comm_query[1];
+
+    // 6. h = act ⊙ up.
+    if !verify_committed_hadamard_io(
+        seq * d_ff, comm_act, &proof.comm_up, &proof.comm_h, &proof.p_had, &ks.f.1, tr,
+    ) {
+        return false;
+    }
+
+    // 7. down = h·Wdown.
+    if !verify_committed_io(
+        seq, d_ff, d_model, &proof.comm_h, &comm_wdown, &proof.comm_down, &proof.p_down, &ks.f.1,
+        &ks.w.1, &ks.a.1, tr,
+    ) {
+        return false;
+    }
+
+    // 8. out = x + down.
+    verify_committed_add(
+        seq * d_model, comm_x, &proof.comm_down, comm_out, &proof.p_resid, &ks.a.1, tr,
+    )
 }

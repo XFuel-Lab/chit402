@@ -2,11 +2,14 @@
 //! including the payoff: a requantized output re-enters an activation's code domain and its lookup
 //! verifies under a shared transcript.
 
+use ark_std::test_rng;
 use xfuel_zkp::activation::{ActKind, ActivationTable};
 use xfuel_zkp::range::RangeTable;
-use xfuel_zkp::requant::{prove_requant, verify_requant};
+use xfuel_zkp::requant::{
+    prove_committed_requant, prove_requant, verify_committed_requant, verify_requant,
+};
 use xfuel_zkp::transcript::Transcript;
-use xfuel_zkp::Fr;
+use xfuel_zkp::{log2_exact, pcs, Fr};
 
 fn v(xs: &[u64]) -> Vec<Fr> {
     xs.iter().map(|&x| Fr::from(x)).collect()
@@ -153,5 +156,78 @@ fn requant_output_feeds_activation_lookup() {
     assert!(
         act.verify(&q, &out, &act_proof, &mut tr_v),
         "activation on the requantized codes must verify under the shared transcript"
+    );
+}
+
+// ─── Committed (succinct) requant — M5.4b ─────────────────────────────────────
+
+/// Keys for the committed requant: `n` = acc/q/r column (len 8 → 3 vars), remainder (4 → 2 vars),
+/// quotient (16 → 4 vars) table domains. Max var = 4.
+#[allow(clippy::type_complexity)]
+fn committed_keys() -> (pcs::Params, (pcs::Ck, pcs::Vk), (pcs::Ck, pcs::Vk), (pcs::Ck, pcs::Vk)) {
+    let mut rng = test_rng();
+    let params = pcs::setup(4, &mut rng);
+    let kn = pcs::keys(&params, log2_exact(8));
+    let krt = pcs::keys(&params, log2_exact(DIVISOR));
+    let kqt = pcs::keys(&params, log2_exact(Q_BOUND));
+    (params, kn, krt, kqt)
+}
+
+#[test]
+fn committed_requant_verifies() {
+    let (r_table, q_table) = (RangeTable::new(DIVISOR), RangeTable::new(Q_BOUND));
+    let (_params, kn, krt, kqt) = committed_keys();
+    let acc = acc_col();
+
+    let (proof, comm_acc, _comm_q, q) = prove_committed_requant(
+        &acc, zero(), DIVISOR, &r_table, &q_table, &kn.0, &krt.0, &kqt.0, &mut Transcript::new(b"crq"),
+    );
+    assert_eq!(q, expected_q(), "quotient must be ⌊acc/D⌋");
+    assert!(
+        verify_committed_requant(
+            8, zero(), DIVISOR, &r_table, &q_table, &comm_acc, &proof, &krt.0, &kqt.0, &kn.1,
+            &krt.1, &kqt.1, &mut Transcript::new(b"crq"),
+        ),
+        "honest committed requant must verify from commitments alone"
+    );
+}
+
+#[test]
+fn committed_requant_wrong_accumulator_commitment_is_rejected() {
+    let (r_table, q_table) = (RangeTable::new(DIVISOR), RangeTable::new(Q_BOUND));
+    let (_params, kn, krt, kqt) = committed_keys();
+    let acc = acc_col();
+
+    let (proof, _comm_acc, _comm_q, _q) = prove_committed_requant(
+        &acc, zero(), DIVISOR, &r_table, &q_table, &kn.0, &krt.0, &kqt.0, &mut Transcript::new(b"crq"),
+    );
+    // A commitment to a different accumulator must fail the division-identity opening.
+    let bad_comm = pcs::commit(&kn.0, &v(&[13, 0, 63, 30, 32, 5, 63, 9]));
+    assert!(
+        !verify_committed_requant(
+            8, zero(), DIVISOR, &r_table, &q_table, &bad_comm, &proof, &krt.0, &kqt.0, &kn.1,
+            &krt.1, &kqt.1, &mut Transcript::new(b"crq"),
+        ),
+        "a wrong accumulator commitment must be rejected"
+    );
+}
+
+#[test]
+fn committed_requant_tampered_quotient_opening_is_rejected() {
+    let (r_table, q_table) = (RangeTable::new(DIVISOR), RangeTable::new(Q_BOUND));
+    let (_params, kn, krt, kqt) = committed_keys();
+    let acc = acc_col();
+
+    let (mut proof, comm_acc, _comm_q, _q) = prove_committed_requant(
+        &acc, zero(), DIVISOR, &r_table, &q_table, &kn.0, &krt.0, &kqt.0, &mut Transcript::new(b"crq"),
+    );
+    // Forge the quotient's claimed evaluation: breaks the affine identity acc+bias = q·D + r at ρ.
+    proof.q.value += Fr::from(1u64);
+    assert!(
+        !verify_committed_requant(
+            8, zero(), DIVISOR, &r_table, &q_table, &comm_acc, &proof, &krt.0, &kqt.0, &kn.1,
+            &krt.1, &kqt.1, &mut Transcript::new(b"crq"),
+        ),
+        "a tampered quotient opening must be rejected"
     );
 }

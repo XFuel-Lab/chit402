@@ -18,17 +18,17 @@ and ADR 0003). CPU-only — runs in any container.
 | `mle` | Multilinear-extension helpers (`eq` weights, MLE evaluation, `eq_eval`). |
 | `gadgets` | **Sound Hadamard (elementwise-product) argument** `z = a⊙b` (SwiGLU/RoPE workhorse) + typed `LookupObligation`. `prove_committed_hadamard`/`verify_committed_hadamard` bind the operands to PCS commitments so the verifier holds only `z` (M5.4a); `prove_committed_hadamard_io`/`verify_committed_hadamard_io` also commit+open `z`, so a chain reuses `z`'s commitment as the next op's operand (M5.4b). |
 | `lookup` | **Logup lookup argument** — proves a non-linearity via a `(in, out)` table (SiLU/GeLU/softmax-exp/rsqrt) with no field-native circuit. `prove_committed_lookup`/`verify_committed_lookup` make it succinct: the grand-sum `Σa=Σb` becomes two sumchecks and every column + advice is bound to a PCS commitment, so the verifier holds only commitments (M5.4a). |
-| `activation` | Quantized **SiLU/GeLU** lookup table + `prove`/`verify` — discharges the FFN's activation obligation soundly. |
+| `activation` | Quantized **SiLU/GeLU** lookup table + `prove`/`verify` — discharges the FFN's activation obligation soundly. `prove_committed`/`verify_committed` make it succinct and **tie the committed table to the canonical activation table** (M5.4b). |
 | `norm` | **RMSNorm gadget** — `rsqrt` via a canonical lookup table + a linear sum-of-squares reduction + a Hadamard scaling chain. Discharges the FFN's norm obligation soundly. `prove_committed_rmsnorm`/`verify_committed_rmsnorm` (M5.4b) make it **fully succinct**: composes hadamard-io + committed row-sum + committed lookup + a fused 4-product scaling sumcheck, threaded by commitment reuse, with the table tied to the canonical `rsqrt` table. |
 | `reduce` | **Committed row-sum reduction** — `narrow[r] = Σ_j wide[r,j]` via a 2-product sumcheck against a broadcast `eq`, so the verifier holds neither tensor (M5.4b). Backs RMSNorm's sum-of-squares and softmax denominators. |
 | `softmax` | **Committed causal softmax** — `P = softmax(causal_mask(S))` from committed `S` to committed `P`, composing mask hadamard-io + `exp`/reciprocal committed lookups + committed row-sum + a fused row-scale sumcheck (M5.4b). The causal mask and both tables are tied to their canonical forms. The novel core of a succinct attention block. |
 | `table` | Generic canonical **`code → code` lookup table** (`ScalarTable`) — the reusable backbone for any quantized non-linearity (backs softmax's `exp` + reciprocal). |
-| `ffn` | **SwiGLU FFN sub-block** — (quantized) RMSNorm + 3 matmul proofs + gating Hadamard + (quantized) activation lookup under one transcript, manifest-driven. **Zero pending obligations in quantized mode.** |
+| `ffn` | **SwiGLU FFN sub-block** — (quantized) RMSNorm + 3 matmul proofs + gating Hadamard + (quantized) activation lookup under one transcript, manifest-driven. **Zero pending obligations in quantized mode.** `prove_committed_ffn`/`verify_committed_ffn` (M5.4b) make it **fully succinct**: norm → gate/up (io) → committed requant → committed activation → hadamard-io → down (io) → residual, threaded by commitment reuse — the verifier holds only the block I/O commitments + public weights. |
 | `attention` | **Causal self-attention sub-block** — Q/K/V/O + `Q·Kᵀ` + `P·V` (matmul), causal mask, and **softmax** as `exp` + row-sum + reciprocal lookups + a normalization Hadamard. **Zero pending obligations** (single-head, quantized). |
 | `rope` | **RoPE** — public-linear (fixed-point cos/sin) exact rotation of Q/K; verifier recomputes, no proof object. |
 | `mha` | **Multi-head + GQA attention** — one shared norm + Q/K/V/O, RoPE on Q/K, and the per-head softmax argument for every head under one transcript. GQA is index layout (`head → kv group`). **Zero pending obligations** (quantized). |
-| `range` | **Range-check gadget** — proves a column lies in `[0, bound)` via a membership lookup into the identity table. The reusable backbone for requant bounds and any limb decomposition. |
-| `requant` | **Inter-op requantization** — proves `acc + bias = q·D + r` with `0 ≤ r < D` and `0 ≤ q < q_bound` (division-with-remainder + two range checks; public `bias` handles signed accumulators), so a wide accumulator re-enters the next op's code domain. **Wired into the FFN gate path** (`RequantParams`). |
+| `range` | **Range-check gadget** — proves a column lies in `[0, bound)` via a membership lookup into the identity table. The reusable backbone for requant bounds and any limb decomposition. `prove_committed`/`verify_committed` make it succinct with the table tied to the canonical `[0,bound)` identity table (M5.4b). |
+| `requant` | **Inter-op requantization** — proves `acc + bias = q·D + r` with `0 ≤ r < D` and `0 ≤ q < q_bound` (division-with-remainder + two range checks; public `bias` handles signed accumulators), so a wide accumulator re-enters the next op's code domain. **Wired into the FFN gate path** (`RequantParams`). `prove_committed_requant`/`verify_committed_requant` (M5.4b) make it succinct: the affine identity holds at one Fiat–Shamir point (Schwartz–Zippel) + two committed range checks — the verifier holds no tensors and the `q` commitment is the next op's operand. |
 | `block` | **Full transformer block** — composes `attention → ffn` under one Fiat–Shamir transcript; the FFN gate's wide→code requant hop threads through. |
 | `residual` | **Committed residual-add check** `out = x + sub` — a linear (Schwartz–Zippel) one-point + three-opening argument for the block's two residual seams, verifier holds no tensors (M5.4b). |
 | `spotcheck` | **Tier-3b block-window spot-check** — a Fiat–Shamir-selected pseudo-random window of `k` blocks, bound to the model + PBR commitments so the prover can't cherry-pick and any trace tampering re-rolls the selection. Generic over the per-block prover. |
@@ -63,12 +63,17 @@ composes the same toolkit into attention's nonlinear core. The **transposed-oper
 (`matmul::prove_committed_io_bt`) proves scores `S = Q·Kᵀ` with **no transpose argument**: since
 `Kᵀ`'s MLE at `(ch,ry)` equals `K`'s at `(ry,ch)`, the verifier opens `K`'s natural `n×k` commitment at
 the **swapped point** — so the scores matmul reuses the *same* commitment the `K` projection emitted as
-its output. Finally, **committed attention** (`attention::prove_committed_attention`) assembles all of
+its output. **Committed attention** (`attention::prove_committed_attention`) assembles all of
 these into a whole succinct causal self-attention sub-block — `norm → Q/K/V projections → scores (bt) →
 softmax → context (P·V) → output → residual` — with the verifier holding only the block's input/output
-commitments + the public weights; every seam is threaded by commitment reuse (M5.4b). **Explicitly
-pending:** assemble the committed FFN seam into a fully-succinct `block`; then the on-chain
-`IVerifiedInference` verifier (BN254 precompiles) + settlement E2E, plus the RAM bench (M5.3).
+commitments + the public weights; every seam is threaded by commitment reuse (M5.4b). Its sibling
+**committed FFN** (`ffn::prove_committed_ffn`) does the same for the SwiGLU path — `norm → gate/up (io) →
+committed requant → committed activation → gate ⊙ up (hadamard-io) → down (io) → residual` — where the
+**committed requant** (`requant::prove_committed_requant`) proves the one non-linear wide→code seam
+(affine division identity at one point + two committed range checks) so `gate`'s commitment feeds it and
+its `q` commitment feeds the activation lookup (M5.4b). **Explicitly pending:** compose the two committed
+sub-blocks into a fully-succinct `block` (two residual seams); then the on-chain `IVerifiedInference`
+verifier (BN254 precompiles) + settlement E2E, plus the RAM bench (M5.3).
 
 ## Build & test
 
@@ -137,10 +142,13 @@ checks the sumcheck/lookup arguments are sound. Two boundaries remain explicit:
    argument, and the same commitment the `K` projection emitted is reused. The **committed attention**
    sub-block (`prove_committed_attention`) then threads norm → projections → scores → softmax → context
    → output → residual entirely by commitment reuse — the verifier holds only the block I/O commitments
-   + public weights. Still pending: assemble the committed FFN seam into a fully-succinct **block**,
-   then the **on-chain `IVerifiedInference` verifier** (BN254 precompiles verify a KZG
-   opening + the sumcheck) with nullifier + settlement; a Groth16 wrap remains an optional gas
-   optimization.
+   + public weights. Its sibling **committed FFN** (`prove_committed_ffn`) threads norm → gate/up →
+   committed requant → committed activation → gating hadamard-io → down → residual the same way, where
+   the **committed requant** (`prove_committed_requant`) discharges the wide→code seam with an affine
+   division identity at one point (Schwartz–Zippel) + two committed range checks. Still pending: compose
+   the two committed sub-blocks into a fully-succinct **block** (two residual seams), then the
+   **on-chain `IVerifiedInference` verifier** (BN254 precompiles verify a KZG opening + the sumcheck)
+   with nullifier + settlement; a Groth16 wrap remains an optional gas optimization.
 
 Until those land, zkLLM proofs are generated/verified off-chain and the tier engine keeps serving
 `tee` / `settlement` / `signed`.
