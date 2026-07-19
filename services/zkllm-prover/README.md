@@ -29,7 +29,7 @@ and ADR 0003). CPU-only — runs in any container.
 | `mha` | **Multi-head + GQA attention** — one shared norm + Q/K/V/O, RoPE on Q/K, and the per-head softmax argument for every head under one transcript. GQA is index layout (`head → kv group`). **Zero pending obligations** (quantized). |
 | `range` | **Range-check gadget** — proves a column lies in `[0, bound)` via a membership lookup into the identity table. The reusable backbone for requant bounds and any limb decomposition. `prove_committed`/`verify_committed` make it succinct with the table tied to the canonical `[0,bound)` identity table (M5.4b). |
 | `requant` | **Inter-op requantization** — proves `acc + bias = q·D + r` with `0 ≤ r < D` and `0 ≤ q < q_bound` (division-with-remainder + two range checks; public `bias` handles signed accumulators), so a wide accumulator re-enters the next op's code domain. **Wired into the FFN gate path** (`RequantParams`). `prove_committed_requant`/`verify_committed_requant` (M5.4b) make it succinct: the affine identity holds at one Fiat–Shamir point (Schwartz–Zippel) + two committed range checks — the verifier holds no tensors and the `q` commitment is the next op's operand. |
-| `block` | **Full transformer block** — composes `attention → ffn` under one Fiat–Shamir transcript; the FFN gate's wide→code requant hop threads through. |
+| `block` | **Full transformer block** — composes `attention → ffn` under one Fiat–Shamir transcript; the FFN gate's wide→code requant hop threads through. `prove_committed_block`/`verify_committed_block` (M5.4b) make it **fully succinct**: committed attention → committed FFN sharing a single seam commitment `comm_h` (attention output = FFN input), so the verifier holds only the block's input/output commitments + public weights. |
 | `residual` | **Committed residual-add check** `out = x + sub` — a linear (Schwartz–Zippel) one-point + three-opening argument for the block's two residual seams, verifier holds no tensors (M5.4b). |
 | `spotcheck` | **Tier-3b block-window spot-check** — a Fiat–Shamir-selected pseudo-random window of `k` blocks, bound to the model + PBR commitments so the prover can't cherry-pick and any trace tampering re-rolls the selection. Generic over the per-block prover. |
 | `manifest` | `ModelManifest` (arch config) + **arch-bound PoMA commitment** — proof attests "these weights + this architecture". |
@@ -71,9 +71,13 @@ commitments + the public weights; every seam is threaded by commitment reuse (M5
 committed requant → committed activation → gate ⊙ up (hadamard-io) → down (io) → residual` — where the
 **committed requant** (`requant::prove_committed_requant`) proves the one non-linear wide→code seam
 (affine division identity at one point + two committed range checks) so `gate`'s commitment feeds it and
-its `q` commitment feeds the activation lookup (M5.4b). **Explicitly pending:** compose the two committed
-sub-blocks into a fully-succinct `block` (two residual seams); then the on-chain `IVerifiedInference`
-verifier (BN254 precompiles) + settlement E2E, plus the RAM bench (M5.3).
+its `q` commitment feeds the activation lookup (M5.4b). Finally, **committed block**
+(`block::prove_committed_block`) composes committed attention → committed FFN under one transcript,
+sharing a single seam commitment `comm_h` (the attention residual output reused verbatim as the FFN
+input) — a whole succinct transformer block where the verifier holds only the block's input/output
+commitments + the public weights (M5.4b). **Explicitly pending:** the on-chain `IVerifiedInference`
+verifier (BN254 precompiles verify a KZG opening + the sumcheck) + settlement E2E, plus the RAM bench
+(M5.3).
 
 ## Build & test
 
@@ -145,10 +149,12 @@ checks the sumcheck/lookup arguments are sound. Two boundaries remain explicit:
    + public weights. Its sibling **committed FFN** (`prove_committed_ffn`) threads norm → gate/up →
    committed requant → committed activation → gating hadamard-io → down → residual the same way, where
    the **committed requant** (`prove_committed_requant`) discharges the wide→code seam with an affine
-   division identity at one point (Schwartz–Zippel) + two committed range checks. Still pending: compose
-   the two committed sub-blocks into a fully-succinct **block** (two residual seams), then the
-   **on-chain `IVerifiedInference` verifier** (BN254 precompiles verify a KZG opening + the sumcheck)
-   with nullifier + settlement; a Groth16 wrap remains an optional gas optimization.
+   division identity at one point (Schwartz–Zippel) + two committed range checks. The **committed block**
+   (`prove_committed_block`) then composes committed attention → committed FFN under one transcript,
+   sharing a single seam commitment `comm_h` (attention output = FFN input) — a whole succinct
+   transformer block. Still pending: the **on-chain `IVerifiedInference` verifier** (BN254 precompiles
+   verify a KZG opening + the sumcheck) with nullifier + settlement; a Groth16 wrap remains an optional
+   gas optimization.
 
 Until those land, zkLLM proofs are generated/verified off-chain and the tier engine keeps serving
 `tee` / `settlement` / `signed`.
