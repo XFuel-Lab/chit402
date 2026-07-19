@@ -9,7 +9,11 @@
 //! reciprocal in [`crate::attention`].
 
 use crate::activation::encode_i64;
-use crate::lookup::{prove_lookup, verify_lookup, LookupProof};
+use crate::lookup::{
+    prove_committed_lookup, prove_lookup, verify_committed_lookup, verify_lookup,
+    CommittedLookupProof, LookupProof,
+};
+use crate::pcs;
 use crate::transcript::Transcript;
 use crate::Fr;
 use ark_ff::PrimeField;
@@ -53,6 +57,49 @@ impl ScalarTable {
         tr: &mut Transcript,
     ) -> bool {
         verify_lookup(&[input_codes, output_codes], &[&self.in_codes, &self.out_codes], proof, tr)
+    }
+
+    /// Prove `output = f(input)` succinctly (committed). `ck_q` sizes the query columns (`log2(n)`
+    /// vars), `ck_t` the table domain (`log2(domain)` vars).
+    pub fn prove_committed(
+        &self,
+        input_codes: &[Fr],
+        output_codes: &[Fr],
+        ck_q: &pcs::Ck,
+        ck_t: &pcs::Ck,
+        tr: &mut Transcript,
+    ) -> CommittedLookupProof {
+        prove_committed_lookup(
+            &[input_codes, output_codes],
+            &[&self.in_codes, &self.out_codes],
+            ck_q,
+            ck_t,
+            tr,
+        )
+    }
+
+    /// Verify a committed lookup, **tying the proof's committed table to this canonical table** — a
+    /// forged table would otherwise let a prover "look up" an arbitrary `output`. `n` is the query
+    /// length (a power of two). `ck_t` re-derives the canonical table commitments (public infra).
+    pub fn verify_committed(
+        &self,
+        n: usize,
+        proof: &CommittedLookupProof,
+        ck_t: &pcs::Ck,
+        vk_q: &pcs::Vk,
+        vk_t: &pcs::Vk,
+        tr: &mut Transcript,
+    ) -> bool {
+        if proof.comm_table.len() != 2 {
+            return false;
+        }
+        let bytes = pcs::commitment_bytes;
+        if bytes(&proof.comm_table[0]) != bytes(&pcs::commit(ck_t, &self.in_codes))
+            || bytes(&proof.comm_table[1]) != bytes(&pcs::commit(ck_t, &self.out_codes))
+        {
+            return false;
+        }
+        verify_committed_lookup(n, self.domain, proof, vk_q, vk_t, tr)
     }
 }
 

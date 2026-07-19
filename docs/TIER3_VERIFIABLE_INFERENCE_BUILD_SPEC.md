@@ -341,7 +341,7 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           Q/K, and the per-head softmax argument for every head under one transcript; GQA is index
           layout (`head → kv group`). **Zero pending obligations** (quantized). This closes the
           M5.2b-cont assembly — the transformer block is now full-width, not just single-head.
-      - **106 `cargo test` green** (matmul **10** (adds committed succinct-verify / wrong-weight-commit /
+      - **111 `cargo test` green** (matmul **10** (adds committed succinct-verify / wrong-weight-commit /
         forged-final-eval / **commitment-bound challenge** / **I/O-committed 2-matmul chain** /
         **tampered-intermediate composition reject**) + commitments 5 + **residual 4** (committed add:
         honest / wrong-sum / forged-opening / wrong-commit) + hadamard/gadgets **10** (committed verify /
@@ -350,7 +350,9 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
         succinct-verify / forged-Σa=Σb-sum / forged-opening / wrong-advice-commit) + **activation
         3** + **reduce 4** (committed row-sum: honest / wrong-sum / forged-opening / wrong-commit) +
         **norm 10** (adds committed RMSNorm: honest succinct verify / wrong-output-commit /
-        **forged-table tie** / forged-scaling-opening) + **attention 6** + **block 2** + **rope 4** +
+        **forged-table tie** / forged-scaling-opening) + **attention 6** + **softmax 5** (committed
+        causal softmax: honest / wrong-output-commit / **forged-exp-table** / forged-scaling-opening /
+        tampered-masked-commit) + **block 2** + **rope 4** +
         **mha 7** + **range 4** +
         **requant 7** (honest / tampered q,r / out-of-range decomposition / wrong divisor / **signed
         accumulator + bias** / requant→activation-lookup integration) + **FFN 12** (adds wide-gate→
@@ -425,10 +427,15 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           canonical `rsqrt` table (anti-forged-table). `w` public for now (PoMA-commit is the last
           weight-binding step).
         - `pcs.rs` gains a canonical `Opening`/`open_at`/`check_open` (lookup refactored onto it).
-        Total `cargo test`: **106** (+33 over M5.3).
-      - **Remaining (M5.4b):** a committed **attention** (softmax reuses `reduce` + committed lookup) +
-        a lookup-io, then assemble the fully-succinct `block`; then the on-chain verifier + settlement
-        E2E below.
+        - `softmax.rs` `prove_committed_softmax`/`verify_committed_softmax`: the committed **causal
+          softmax** — attention's nonlinear core, from committed `S` to committed `P`. Composes mask
+          hadamard-io + `exp`/reciprocal committed lookups + committed row-sum + a fused row-scale
+          sumcheck, threaded by commitment reuse; the causal mask and both tables are tied to their
+          canonical forms (`ScalarTable::{prove,verify}_committed` centralize the table-tie).
+        Total `cargo test`: **111** (+38 over M5.3).
+      - **Remaining (M5.4b):** the rest of a committed **attention** (projections/scores via matmul-io
+        with a transposed `Kᵀ` opening, context/output, residual), then assemble the fully-succinct
+        `block`; then the on-chain verifier + settlement E2E below.
 - [ ] **M5.4b** Implement `IVerifiedInference` verifier (Option A native Solidity via BN254
       precompiles: KZG opening + sumcheck; Groth16 wrap optional for gas); gas bench.
 - [ ] E2E: task → spot-check proof → on-chain verify → settle.

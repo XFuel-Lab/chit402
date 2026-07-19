@@ -21,6 +21,7 @@ and ADR 0003). CPU-only — runs in any container.
 | `activation` | Quantized **SiLU/GeLU** lookup table + `prove`/`verify` — discharges the FFN's activation obligation soundly. |
 | `norm` | **RMSNorm gadget** — `rsqrt` via a canonical lookup table + a linear sum-of-squares reduction + a Hadamard scaling chain. Discharges the FFN's norm obligation soundly. `prove_committed_rmsnorm`/`verify_committed_rmsnorm` (M5.4b) make it **fully succinct**: composes hadamard-io + committed row-sum + committed lookup + a fused 4-product scaling sumcheck, threaded by commitment reuse, with the table tied to the canonical `rsqrt` table. |
 | `reduce` | **Committed row-sum reduction** — `narrow[r] = Σ_j wide[r,j]` via a 2-product sumcheck against a broadcast `eq`, so the verifier holds neither tensor (M5.4b). Backs RMSNorm's sum-of-squares and softmax denominators. |
+| `softmax` | **Committed causal softmax** — `P = softmax(causal_mask(S))` from committed `S` to committed `P`, composing mask hadamard-io + `exp`/reciprocal committed lookups + committed row-sum + a fused row-scale sumcheck (M5.4b). The causal mask and both tables are tied to their canonical forms. The novel core of a succinct attention block. |
 | `table` | Generic canonical **`code → code` lookup table** (`ScalarTable`) — the reusable backbone for any quantized non-linearity (backs softmax's `exp` + reciprocal). |
 | `ffn` | **SwiGLU FFN sub-block** — (quantized) RMSNorm + 3 matmul proofs + gating Hadamard + (quantized) activation lookup under one transcript, manifest-driven. **Zero pending obligations in quantized mode.** |
 | `attention` | **Causal self-attention sub-block** — Q/K/V/O + `Q·Kᵀ` + `P·V` (matmul), causal mask, and **softmax** as `exp` + row-sum + reciprocal lookups + a normalization Hadamard. **Zero pending obligations** (single-head, quantized). |
@@ -57,10 +58,11 @@ verify without the verifier ever holding an intermediate: `matmul::prove_committ
 `gadgets::prove_committed_hadamard_io`, and the `residual` add-check all thread commitments across the
 seam (a matmul output feeds a Hadamard operand in the tests). The **committed RMSNorm** is assembled from
 these (`norm::prove_committed_rmsnorm`): hadamard-io + committed row-sum (`reduce`) + committed lookup +
-a fused scaling sumcheck, threaded by commitment reuse. (M5.4b). **Explicitly pending:** a committed
-attention (softmax reuses `reduce` + committed lookup) + lookup-io, then assemble the fully-succinct
-`block`; then the on-chain `IVerifiedInference` verifier (BN254 precompiles) + settlement E2E, plus the
-RAM bench (M5.3).
+a fused scaling sumcheck, threaded by commitment reuse. The **committed causal softmax** (`softmax`)
+composes the same toolkit into attention's nonlinear core. (M5.4b). **Explicitly pending:** the rest of
+a committed attention (projections/scores via matmul-io with a transposed `Kᵀ` opening, context/output,
+residual) then assemble the fully-succinct `block`; then the on-chain `IVerifiedInference` verifier
+(BN254 precompiles) + settlement E2E, plus the RAM bench (M5.3).
 
 ## Build & test
 
@@ -122,8 +124,10 @@ checks the sumcheck/lookup arguments are sound. Two boundaries remain explicit:
    across the seam; tampered intermediates are rejected). The tests chain a matmul output straight into
    a Hadamard operand with the verifier holding no tensors. The **committed RMSNorm** composes these
    (hadamard-io + committed row-sum + committed lookup + a fused scaling sumcheck), with the lookup's
-   table tied to the canonical `rsqrt` table so it can't be forged. Still pending: a committed attention
-   (softmax reuses the committed row-sum + lookup) + lookup-io, then assemble the fully-succinct
+   table tied to the canonical `rsqrt` table so it can't be forged. The **committed causal softmax**
+   does the same for attention's nonlinear core, tying the causal mask + `exp`/reciprocal tables to
+   their canonical forms. Still pending: the rest of a committed attention (projections/scores via
+   matmul-io + a transposed `Kᵀ` opening, context/output, residual), then assemble the fully-succinct
    **block**, then the **on-chain `IVerifiedInference` verifier** (BN254 precompiles verify a KZG
    opening + the sumcheck) with nullifier + settlement; a Groth16 wrap remains an optional gas
    optimization.

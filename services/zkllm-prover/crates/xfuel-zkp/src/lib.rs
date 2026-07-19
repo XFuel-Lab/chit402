@@ -47,6 +47,7 @@ pub mod reduce;
 pub mod requant;
 pub mod residual;
 pub mod rope;
+pub mod softmax;
 pub mod spotcheck;
 pub mod sumcheck;
 pub mod table;
