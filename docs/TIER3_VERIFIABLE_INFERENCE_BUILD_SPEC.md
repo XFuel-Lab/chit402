@@ -341,11 +341,13 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           Q/K, and the per-head softmax argument for every head under one transcript; GQA is index
           layout (`head → kv group`). **Zero pending obligations** (quantized). This closes the
           M5.2b-cont assembly — the transformer block is now full-width, not just single-head.
-      - **73 `cargo test` green** (matmul 4 + commitments 5 + hadamard 4 + **lookup 4** + **activation
+      - **81 `cargo test` green** (matmul **7** (adds committed succinct-verify / wrong-weight-commit /
+        forged-final-eval) + commitments 5 + hadamard 4 + **lookup 4** + **activation
         3** + **norm 6** + **attention 6** + **block 2** + **rope 4** + **mha 7** + **range 4** +
         **requant 7** (honest / tampered q,r / out-of-range decomposition / wrong divisor / **signed
         accumulator + bias** / requant→activation-lookup integration) + **FFN 12** (adds wide-gate→
-        requant→activation zero-obligation + requant mode-mismatch) + **spotcheck 5**);
+        requant→activation zero-obligation + requant mode-mismatch) + **spotcheck 5** + **pcs 5**
+        (convention-match vs `mle_eval` / round-trip / wrong-value / wrong-point / tampered-commitment));
         `--example prove_ffn` harness (64×512×1024: prove ~4.4s, verify ~0.34s, CPU-only).
 - [~] **M5.3** In progress. **Requant wired into the block + spot-check orchestration shipped:**
       - **Range-check gadget** (`range.rs`): proves a column ∈ `[0, bound)` as a membership lookup
@@ -365,7 +367,24 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
         binding-sensitivity, honest verify, tampered-output rejection, and cherry-pick rejection.
       - **Remaining:** bench time/RAM on the high-RAM CPU host (256–512 GB, **not GPU** — per the RAM
         reframing). Fill `docs/ZKG5_BENCHMARK.md`.
-- [ ] **M5.4** Implement `IVerifiedInference` verifier (Option A Solidity or wrapper); gas bench.
+- [~] **M5.4** In progress. **M5.4a (PCS binding for the matmul core) shipped.**
+      - **PCS module** (`pcs.rs`): a thin wrapper over `ark_poly_commit::multilinear_pc::MultilinearPC`
+        — **multilinear KZG** (Papamanthou–Shi–Tamassia) over BN254. `setup` (trusted powers-of-tau,
+        off the hot path) → `keys` (trim per `num_vars`) → `commit`/`open`/`verify`. Bridges our
+        MSB-first MLE point convention to ark-poly's LSB-first order (reverse-point), pinned by a
+        convention-match test asserting a PCS opening reproduces `mle::mle_eval` exactly.
+      - **Matmul made succinct** (`matmul.rs` `prove_committed`/`verify_committed`): the two final MLE
+        evaluations `f(r)=Â(rx,r)`, `g(r)=B̂(r,ry)` — previously recomputed from the full tensors — are
+        now discharged by PCS openings against commitments to `A`,`B`. The verifier holds only `C` +
+        the commitments (the weight commitment `B` is the PoMA anchor). Tests: honest succinct verify
+        (incl. rectangular A/B of different MLE widths), wrong-weight-commitment rejection, forged
+        final-evaluation rejection. **Rationale for multilinear KZG:** pairing-based on BN254 ⇒ an
+        opening verifies with the `ecPairing` precompile, keeping the on-chain verifier native-Solidity
+        (see ADR 0004 provenance note). Total `cargo test`: **81** (+8).
+      - **Remaining (M5.4b+):** extend the commitment binding to the lookup/Hadamard sub-arguments and
+        the `block`; then the on-chain verifier + settlement E2E below.
+- [ ] **M5.4b** Implement `IVerifiedInference` verifier (Option A native Solidity via BN254
+      precompiles: KZG opening + sumcheck; Groth16 wrap optional for gas); gas bench.
 - [ ] E2E: task → spot-check proof → on-chain verify → settle.
 
 **Exit criteria:** a real (non-mock) spot-check proof verifies on Base and gates settlement.

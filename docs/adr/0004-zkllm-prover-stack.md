@@ -58,9 +58,22 @@ so a zkLLM proof slots into the same settlement path as the SP1 settlement proof
 | Crate | Version | License | Role |
 |-------|---------|---------|------|
 | `ark-ff` | 0.4 | Apache-2.0 OR MIT | Prime field arithmetic (BN254 `Fr`) |
-| `ark-bn254` | 0.4 | Apache-2.0 OR MIT | BN254 scalar field (on-chain-friendly) |
+| `ark-bn254` | 0.4 | Apache-2.0 OR MIT | BN254 scalar field + pairing (on-chain-friendly) |
+| `ark-ec` | 0.4 | Apache-2.0 OR MIT | Elliptic-curve / `Pairing` trait for the multilinear-KZG PCS |
+| `ark-poly` | 0.4 | Apache-2.0 OR MIT | `DenseMultilinearExtension` (tensor → MLE) for the PCS |
+| `ark-poly-commit` | 0.4 | Apache-2.0 OR MIT | `multilinear_pc::MultilinearPC` — multilinear KZG (PST) commitment (M5.4) |
 | `ark-std` | 0.4 | Apache-2.0 OR MIT | RNG / no-std shims / test utils |
 | `sha3` | 0.10 | Apache-2.0 OR MIT | `Keccak256` — Ethereum-compatible commitments + Fiat-Shamir |
+
+**M5.4 PCS choice (2026-07-19).** The succinctness binding uses **multilinear KZG** (the Marlin
+variant of Papamanthou–Shi–Tamassia, `ark_poly_commit::multilinear_pc`) over BN254. Rationale:
+(1) pairing-based on BN254 ⇒ an opening verifies with the `ecPairing` precompile (`0x08`), keeping
+the future on-chain `IVerifiedInference` verifier a **native-Solidity** path rather than forcing a
+non-native-pairing Groth16 wrap of the whole verifier; (2) constant-size commitments/openings;
+(3) Apache/MIT (ADR 0003). **Trust cost:** a per-`num_vars` trusted-setup SRS (powers-of-tau) — the
+same assumption Groth16 already carries; keys are generated once, never on the hot path
+(`pcs::setup`). A transparent alternative (Hyrax, also in `ark-poly-commit`) is available if we later
+choose to drop the setup at the cost of `√n` opening size.
 
 Every future component (GKR backend, lookups, Groth16 wrapper) gets a row here with its license
 verified **before** it is added. Nothing enters the tree that isn't OSI-permissive.

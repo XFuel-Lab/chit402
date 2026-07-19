@@ -41,6 +41,7 @@ pub mod matmul;
 pub mod mha;
 pub mod mle;
 pub mod norm;
+pub mod pcs;
 pub mod range;
 pub mod requant;
 pub mod rope;
