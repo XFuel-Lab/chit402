@@ -248,6 +248,20 @@ docs/PHASE1_KICKOFF.md    — Phase 1 status, run Phase 1 checks (npm run test:p
 
 **Core tests:** `npm run test:contracts:core` runs `test:contracts:core:listener` (`node:test`, `core-layer/test/ai-listener.test.js`) then `test:contracts:core:solidity` (Hardhat: `core-layer/test/*.cjs`, `test/phase3`, `test/security`). **Full contract matrix:** `npm run test:contracts:all` runs the same listener step then `test:contracts:all:hardhat`, implemented by `scripts/hardhat-test-all.cjs` (explicit file list — works on Windows; no shell glob). CI `test.yml` mirrors this with two steps before coverage. Believer or Angel rounds: `npm run test:believer`. For a narrower green gate (core + phase3 + security Hardhat only), use `npm run test:contracts:core:solidity`.
 
+**zkLLM prover tests:** `cd services/zkllm-prover && cargo test` (self-owned ZK prover, Phase 5). CI runs this in the `zkLLM Prover Tests` job in `test.yml` (plus `cargo build --examples`). The RAM/time benchmark is hardware-gated — see `docs/ZKG5_BENCHMARK.md`.
+
+---
+
+## Committing (local git hooks)
+
+This repo ships a `.git/hooks/pre-commit` that requires an interactive `YES` (read from `/dev/tty`), which a non-interactive agent shell cannot provide. **Do NOT use `git commit --no-verify`** to get around this — the hook has a built-in bypass for automation. Instead run:
+
+```bash
+GIT_COMMIT_CONFIRMED=YES git commit -F <msg-file>
+```
+
+This runs the hook and passes its check via its own escape hatch, so any future hook logic (lint/tests) still executes. The `pre-push` hook only blocks direct pushes to `main`/`master`/`develop`; always work on a feature branch and merge via PR (`gh`), which the hook allows. On PowerShell, set it inline as `$env:GIT_COMMIT_CONFIRMED='YES'; git commit -F <msg-file>` (multi-line messages: write to a temp file and use `-F`, since heredocs aren't supported).
+
 ---
 
 ## Security

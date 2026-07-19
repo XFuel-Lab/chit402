@@ -52,19 +52,82 @@ prove-time and peak RSS, which is the only remaining M5.3 item.
 | GPT-2 (fp16) | k=1 block (FS-selected) | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
 | Llama-3-8B (q4_k_m) | k=2 blocks (FS-selected) | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
 
-## Running at model scale (AWS container)
+## Running at model scale (AWS) — click-by-click
 
-The prover is a CPU-only Rust binary — it runs in any container. The only scaling knob is **memory**.
+The prover is a **CPU-only** Rust binary; the only scaling knob is **memory** (no GPU). Pick a
+memory-optimized instance sized to the model, run the harness under `/usr/bin/time -v`, and copy the
+printed timings + **peak RSS** into the tables above.
 
-1. **Build the image:** `docker build -t xfuel-zkllm services/zkllm-prover`
-2. **Pick a high-memory instance** (memory-optimized, not GPU):
-   - `r7i.4xlarge` (128 GB) → `r7i.8xlarge` (256 GB) for M5.2/M5.3 block proofs.
-   - `x2iedn.8xlarge` (1 TB) for full-pass (M5.5) experiments.
-   - Or a large-memory **Fargate** task if you prefer serverless (set task memory explicitly).
-3. **Run a sweep:** `docker run --rm xfuel-zkllm 1024 1024 1024` (and larger), record the printed
-   timings + `/usr/bin/time -v` peak RSS into the tables above.
-4. **Cost note:** memory-optimized on-demand is cheap relative to GPU; spot instances are fine for
-   benchmarking (the job is deterministic and restartable).
+### 1. Pick the instance (memory-optimized, not GPU)
 
-> A detailed, click-by-click AWS setup walkthrough will be added when we start M5.3 (the first run
-> that needs the big host). Nothing here needs a GPU.
+| Target | Instance | RAM | Notes |
+|--------|----------|-----|-------|
+| M5.2/M5.3 single block (TinyLlama/GPT-2) | `r7i.4xlarge` → `r7i.8xlarge` | 128 → 256 GB | start here |
+| Larger block / small spot-check window | `r7i.12xlarge` / `r7i.16xlarge` | 384 / 512 GB | |
+| Full-pass (M5.5) experiments | `x2iedn.8xlarge` | 1 TB | only if needed |
+
+Spot instances are fine — the job is deterministic and restartable, and memory-optimized on-demand
+is already cheap relative to any GPU box.
+
+### 2. Launch (console)
+
+1. **EC2 → Launch instance.**
+2. **AMI:** Ubuntu Server 24.04 LTS (x86_64).
+3. **Instance type:** `r7i.8xlarge` (or from the table above).
+4. **Key pair:** select/create one for SSH.
+5. **Storage:** bump the root EBS volume to **≥ 100 GB gp3** (build artifacts + model weights).
+6. **Launch**, then `ssh ubuntu@<public-ip>`.
+
+CLI equivalent (optional):
+
+```bash
+aws ec2 run-instances \
+  --image-id <ubuntu-24.04-ami> --instance-type r7i.8xlarge \
+  --key-name <your-key> --block-device-mappings \
+  '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]'
+```
+
+### 3. Set up + build (native — simplest for peak-RSS capture)
+
+```bash
+sudo apt-get update && sudo apt-get install -y build-essential git time
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+
+git clone https://github.com/XFuel-Lab/xfuel-protocol && cd xfuel-protocol/services/zkllm-prover
+cargo build --release --examples          # arkworks release build (a few minutes, one-off)
+```
+
+### 4. Run the sweep + record peak RAM
+
+`/usr/bin/time -v` reports **Maximum resident set size** (peak RSS, in KB) — the number for the RAM
+column. Dimensions must be powers of two.
+
+```bash
+# Single matmul-heavy block (the Dockerfile default entrypoint too):
+/usr/bin/time -v cargo run --release --example prove_block 1024 1024 1024
+
+# SwiGLU FFN sub-block (prints prove/verify + proof size + obligations):
+/usr/bin/time -v cargo run --release --example prove_ffn 128 1024 4096
+```
+
+Read off `Elapsed (wall clock) time` and `Maximum resident set size (kbytes)` (÷ 1_048_576 for GB),
+plus the harness's own `prove` / `verify` / `proof field elements` lines, and fill the tables above.
+
+### 5. Container path (optional, e.g. Fargate)
+
+The shipped image builds and runs the `prove_block` harness:
+
+```bash
+docker build -t xfuel-zkllm services/zkllm-prover
+docker run --rm xfuel-zkllm 1024 1024 1024      # ENTRYPOINT prove_block, args = M K N
+docker stats --no-stream                         # peak container memory if not using /usr/bin/time
+```
+
+For a large-memory **Fargate** task, set the task memory explicitly (e.g. 240 GB) and pass the M K N
+args as the container command. For the FFN / spot-check harnesses, run them natively via
+`cargo run --release --example …` (the image only bundles `prove_block`).
+
+> **Status:** the M5.3 tables above are **hardware-gated** — the code + harness are ready and covered
+> by the 73-test suite; they just need one run on a high-RAM host to populate real numbers. Nothing
+> here needs a GPU.

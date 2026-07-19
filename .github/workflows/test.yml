@@ -112,6 +112,30 @@ jobs:
         working-directory: contracts/cosmwasm/revenue-splitter
         run: cargo test
 
+  # ── XFuel zkLLM prover (Phase 5 / Verified Inference Tier-3) ──
+  zkllm:
+    name: zkLLM Prover Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: services/zkllm-prover
+
+      # Soundness + tamper-rejection suite for the self-owned ZK prover core
+      # (matmul, lookups, activation, norm, attention, block, requant, spot-check).
+      - name: Run xfuel-zkp tests
+        working-directory: services/zkllm-prover
+        run: cargo test
+
+      # Keep the RAM/time benchmark harness (examples) compiling.
+      - name: Build benchmark examples
+        working-directory: services/zkllm-prover
+        run: cargo build --examples
+
   # ── Slither static analysis ──────────────────────────────────
   slither:
     name: Slither Static Analysis
