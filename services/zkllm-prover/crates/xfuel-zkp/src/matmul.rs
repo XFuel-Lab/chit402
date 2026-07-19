@@ -7,12 +7,15 @@
 //!
 //! Dimensions `m, k, n` must be powers of two (pad otherwise). All matrices are row-major.
 //!
-//! Trust boundary (M5.1): this is a *verifiable-computation* reduction — the verifier is given
-//! `A, B, C` and checks the reduction is sound. Binding `Â, B̂` evaluations to an on-chain
-//! polynomial commitment of the weights (so the verifier needs only the commitment, not `A, B`) is
-//! the M5.4 polynomial-commitment milestone.
+//! Trust boundary. The plain [`prove`]/[`verify`] pair is a *verifiable-computation* reduction —
+//! the verifier is given `A, B, C` and recomputes `Â(rx,r)`/`B̂(r,ry)` via `mle_eval`. The
+//! [`prove_committed`]/[`verify_committed`] pair (M5.4) closes that gap for the core: the two final
+//! MLE evaluations are instead discharged by [`crate::pcs`] openings against commitments to `A` and
+//! `B`, so the verifier needs only the commitments (the weight commitment is `B`'s — the PoMA anchor)
+//! and never holds the full tensors. This is the succinctness step for ~90% of inference cost.
 
 use crate::mle::{eq_weights, mle_eval};
+use crate::pcs;
 use crate::sumcheck::{prove_product, verify_product, SumcheckProof};
 use crate::transcript::Transcript;
 use crate::{log2_exact, Fr};
@@ -112,8 +115,18 @@ fn bind_and_draw(tr: &mut Transcript, m: usize, k: usize, n: usize, c: &[Fr]) ->
     (rx, ry)
 }
 
-/// Produce a proof that `C = A·B`.
-pub fn prove(mm: &MatMul, tr: &mut Transcript) -> MatMulProof {
+/// The two MLE query points a matmul proof reduces to: `Â` is opened at `rx ++ ch`, `B̂` at
+/// `ch ++ ry`, where `ch` is the sumcheck's per-round challenge vector.
+fn opening_points(rx: &[Fr], ry: &[Fr], ch: &[Fr]) -> (Vec<Fr>, Vec<Fr>) {
+    let mut a_point = rx.to_vec();
+    a_point.extend_from_slice(ch);
+    let mut b_point = ch.to_vec();
+    b_point.extend_from_slice(ry);
+    (a_point, b_point)
+}
+
+/// Core prover, also returning the `Â`/`B̂` opening points so [`prove_committed`] can open them.
+fn prove_inner(mm: &MatMul, tr: &mut Transcript) -> (MatMulProof, Vec<Fr>, Vec<Fr>) {
     let (rx, ry) = bind_and_draw(tr, mm.m, mm.k, mm.n, &mm.c);
     let eqx = eq_weights(&rx);
     let eqy = eq_weights(&ry);
@@ -139,8 +152,14 @@ pub fn prove(mm: &MatMul, tr: &mut Transcript) -> MatMulProof {
     }
 
     let claim = c_hat(&mm.c, mm.m, mm.n, &eqx, &eqy);
-    let (sumcheck, _ch, f_final, g_final) = prove_product(f, g, tr);
-    MatMulProof { rx, ry, claim, sumcheck, f_final, g_final }
+    let (sumcheck, ch, f_final, g_final) = prove_product(f, g, tr);
+    let (a_point, b_point) = opening_points(&rx, &ry, &ch);
+    (MatMulProof { rx, ry, claim, sumcheck, f_final, g_final }, a_point, b_point)
+}
+
+/// Produce a proof that `C = A·B`.
+pub fn prove(mm: &MatMul, tr: &mut Transcript) -> MatMulProof {
+    prove_inner(mm, tr).0
 }
 
 /// Verify a proof that `C = A·B` (verifiable-computation setting: verifier holds `A, B, C`).
@@ -170,4 +189,72 @@ pub fn verify(m: usize, k: usize, n: usize, a: &[Fr], b: &[Fr], c: &[Fr], proof:
     let f_expected = mle_eval(a, &a_point);
     let g_expected = mle_eval(b, &b_point);
     proof.f_final == f_expected && proof.g_final == g_expected
+}
+
+/// A succinct matmul proof: the sumcheck reduction plus polynomial-commitment openings that bind
+/// `f(r)=Â(rx,r)` and `g(r)=B̂(r,ry)` to commitments of `A` and `B` — so the verifier never holds
+/// the tensors. (M5.4)
+pub struct CommittedMatMulProof {
+    pub inner: MatMulProof,
+    pub open_a: pcs::OpeningProof,
+    pub open_b: pcs::OpeningProof,
+}
+
+impl CommittedMatMulProof {
+    /// Field-element count of the sumcheck part (the PCS openings are group elements, counted apart).
+    pub fn field_len(&self) -> usize {
+        self.inner.field_len()
+    }
+}
+
+/// Commit to a matmul instance's tensors. `ck_a` must be trimmed to `log2(m·k)` variables and
+/// `ck_b` to `log2(k·n)` — the two tensors generally have different MLE widths.
+pub fn commit(mm: &MatMul, ck_a: &pcs::Ck, ck_b: &pcs::Ck) -> (pcs::Comm, pcs::Comm) {
+    (pcs::commit(ck_a, &mm.a), pcs::commit(ck_b, &mm.b))
+}
+
+/// Prove `C = A·B` and open `A`, `B` at the argument's final MLE query points.
+pub fn prove_committed(mm: &MatMul, ck_a: &pcs::Ck, ck_b: &pcs::Ck, tr: &mut Transcript) -> CommittedMatMulProof {
+    let (inner, a_point, b_point) = prove_inner(mm, tr);
+    let open_a = pcs::open(ck_a, &mm.a, &a_point);
+    let open_b = pcs::open(ck_b, &mm.b, &b_point);
+    CommittedMatMulProof { inner, open_a, open_b }
+}
+
+/// Succinctly verify `C = A·B` from commitments to `A` and `B` (the verifier holds only `C` and the
+/// commitments). Mirrors [`verify`] but discharges the two final MLE evaluations with PCS openings.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_committed(
+    m: usize,
+    k: usize,
+    n: usize,
+    comm_a: &pcs::Comm,
+    comm_b: &pcs::Comm,
+    c: &[Fr],
+    proof: &CommittedMatMulProof,
+    vk_a: &pcs::Vk,
+    vk_b: &pcs::Vk,
+    tr: &mut Transcript,
+) -> bool {
+    let inner = &proof.inner;
+    let (rx, ry) = bind_and_draw(tr, m, k, n, c);
+    if rx != inner.rx || ry != inner.ry {
+        return false;
+    }
+    let eqx = eq_weights(&rx);
+    let eqy = eq_weights(&ry);
+    if c_hat(c, m, n, &eqx, &eqy) != inner.claim {
+        return false;
+    }
+    let (ch, reduced) = match verify_product(&inner.sumcheck, inner.claim, tr) {
+        Some(v) => v,
+        None => return false,
+    };
+    if reduced != inner.f_final * inner.g_final {
+        return false;
+    }
+    // Bind f(r), g(r) to committed A, B via PCS openings instead of recomputing mle_eval(A/B).
+    let (a_point, b_point) = opening_points(&rx, &ry, &ch);
+    pcs::verify(vk_a, comm_a, &a_point, inner.f_final, &proof.open_a)
+        && pcs::verify(vk_b, comm_b, &b_point, inner.g_final, &proof.open_b)
 }

@@ -8,11 +8,12 @@ and ADR 0003). CPU-only — runs in any container.
 > market (open-weight decoder transformers: Llama, Mistral, Qwen, Gemma, GPT-2, MoE). Closed models
 > (no weight access) are un-provable by anyone and are covered by the TEE / signed tiers.
 
-## What's here (M5.1 core + M5.2 gadget/block/lookup layer + M5.3 requant/spot-check)
+## What's here (M5.1 core + M5.2 gadget/block/lookup layer + M5.3 requant/spot-check + M5.4a PCS binding)
 
 | Module | Purpose |
 |--------|---------|
-| `matmul` | Sumcheck-based `C = A·B` argument (Thaler-style). Matmul is ~90%+ of transformer cost and identical across LLMs — this is the reusable core. |
+| `matmul` | Sumcheck-based `C = A·B` argument (Thaler-style). Matmul is ~90%+ of transformer cost and identical across LLMs — this is the reusable core. `prove_committed`/`verify_committed` bind `A`,`B` to PCS commitments so the verifier holds only the commitments (M5.4a). |
+| `pcs` | **Multilinear-KZG polynomial commitment** (PST, `ark-poly-commit`) over BN254 — commit a tensor's MLE, then open its evaluation at a point with a constant-size proof. This is the succinctness step: the verifier checks openings instead of holding tensors. Pairing-based ⇒ `ecPairing`-precompile-verifiable on Base. (M5.4a) |
 | `sumcheck` | Product sumcheck + **generic multi-product (degree-d) sumcheck** + Lagrange eval, over a Keccak256 Fiat–Shamir transcript. |
 | `mle` | Multilinear-extension helpers (`eq` weights, MLE evaluation, `eq_eval`). |
 | `gadgets` | **Sound Hadamard (elementwise-product) argument** `z = a⊙b` (SwiGLU/RoPE workhorse) + typed `LookupObligation`. |
@@ -42,8 +43,12 @@ plus two `range` checks and is now **wired into the FFN gate path** — a wide m
 requantized into the activation's code domain under the block transcript (an FFN test proves a wide
 gate → requant → activation → sound norm with **zero pending obligations**). The **Tier-3b
 block-window spot-check** (`spotcheck`) selects a Fiat–Shamir window of blocks bound to the model +
-PBR commitments (M5.3). **Explicitly pending:** the RAM bench on a high-RAM host (M5.3), then the PCS
-binding + on-chain verifier + Groth16 wrap (M5.4).
+PBR commitments (M5.3). The **matmul core is now succinct** (`matmul::prove_committed`/
+`verify_committed`): the two final MLE evaluations that previously required the full `A`,`B` tensors
+are discharged by `pcs` multilinear-KZG openings, so the verifier needs only the commitments — the
+weight commitment (`B`) being the PoMA anchor (M5.4a). **Explicitly pending:** extend the PCS binding
+to the lookup/Hadamard sub-arguments and the block, then the on-chain `IVerifiedInference` verifier
+(BN254 precompiles) + settlement E2E, plus the RAM bench on a high-RAM host (M5.3).
 
 ## Build & test
 
@@ -90,9 +95,14 @@ checks the sumcheck/lookup arguments are sound. Two boundaries remain explicit:
    Fiat–Shamir block window for the cheaper Tier-3b. The non-quantized path keeps placeholder
    norm/activation for exercising linear+gating on arbitrary field inputs. What remains is the
    full-model **RAM benchmark** on a high-RAM host (M5.3).
-2. **No polynomial commitment yet.** Binding MLE evaluations to an on-chain **polynomial commitment**
-   of the weights (so the verifier needs only the commitment) + the Groth16 wrap for cheap on-chain
-   verification are the M5.4 milestone.
+2. **Polynomial commitment: matmul core done, rest pending (M5.4a shipped).** The matmul argument now
+   has a succinct path (`matmul::prove_committed`/`verify_committed`): the two final MLE evaluations
+   are bound to **multilinear-KZG** commitments of `A`,`B` via `pcs`, so the verifier holds only the
+   commitments (the weight commitment `B` is the PoMA anchor) — not the tensors. This carries a
+   trusted-setup (powers-of-tau) assumption, generated once off the hot path (`pcs::setup`). Still
+   pending: extend the same commitment binding to the lookup/Hadamard sub-arguments and the block,
+   then the **on-chain `IVerifiedInference` verifier** (BN254 precompiles verify a KZG opening + the
+   sumcheck) with nullifier + settlement; a Groth16 wrap remains an optional gas optimization.
 
 Until those land, zkLLM proofs are generated/verified off-chain and the tier engine keeps serving
 `tee` / `settlement` / `signed`.
