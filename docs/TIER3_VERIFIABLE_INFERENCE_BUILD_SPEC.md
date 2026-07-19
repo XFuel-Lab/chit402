@@ -439,10 +439,15 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           point** `ry ++ ch`, so the scores matmul reuses the *same* commitment the `K` projection
           emitted as its output. Tests: honest `S=Q·Kᵀ`, projection-output-commitment reuse across the
           attention seam, tampered-`K`-commitment rejection.
-        Total `cargo test`: **114** (+41 over M5.3).
-      - **Remaining (M5.4b):** wire the committed projections/scores (`matmul-io` + `io_bt`)/context/
-        output + residual into `prove_committed_attention`, then assemble the fully-succinct `block`;
-        then the on-chain verifier + settlement E2E below.
+        - `attention.rs` `prove_committed_attention`/`verify_committed_attention`: the **assembled
+          committed causal self-attention** sub-block — `norm → Q/K/V (io) → scores (io_bt) → softmax →
+          context (io) → output (io) → residual`, threaded entirely by commitment reuse. The verifier
+          holds only the block I/O commitments + the public weights (whose commitments it recomputes);
+          `AttnKeys` trims per-width keys once from one SRS. Tests: honest verify, wrong-output-commit,
+          forged-`Wq`, tampered-intermediate-commit rejections.
+        Total `cargo test`: **118** (+45 over M5.3).
+      - **Remaining (M5.4b):** assemble the committed FFN seam into a fully-succinct `block` (attention →
+        FFN with the two residual adds); then the on-chain verifier + settlement E2E below.
 - [ ] **M5.4b** Implement `IVerifiedInference` verifier (Option A native Solidity via BN254
       precompiles: KZG opening + sumcheck; Groth16 wrap optional for gas); gas bench.
 - [ ] E2E: task → spot-check proof → on-chain verify → settle.
