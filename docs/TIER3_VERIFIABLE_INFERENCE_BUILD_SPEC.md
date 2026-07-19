@@ -341,10 +341,12 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           Q/K, and the per-head softmax argument for every head under one transcript; GQA is index
           layout (`head → kv group`). **Zero pending obligations** (quantized). This closes the
           M5.2b-cont assembly — the transformer block is now full-width, not just single-head.
-      - **91 `cargo test` green** (matmul **10** (adds committed succinct-verify / wrong-weight-commit /
+      - **98 `cargo test` green** (matmul **10** (adds committed succinct-verify / wrong-weight-commit /
         forged-final-eval / **commitment-bound challenge** / **I/O-committed 2-matmul chain** /
-        **tampered-intermediate composition reject**) + commitments 5 + hadamard/gadgets **7**
-        (adds committed verify / wrong-operand-commit / forged-final-eval) + **lookup 8** (adds committed
+        **tampered-intermediate composition reject**) + commitments 5 + **residual 4** (committed add:
+        honest / wrong-sum / forged-opening / wrong-commit) + hadamard/gadgets **10** (committed verify /
+        wrong-operand-commit / forged-final-eval + I/O-committed verify / tampered-output-commit /
+        **matmul-output→hadamard-operand cross-op composition**) + **lookup 8** (adds committed
         succinct-verify / forged-Σa=Σb-sum / forged-opening / wrong-advice-commit) + **activation
         3** + **norm 6** + **attention 6** + **block 2** + **rope 4** + **mha 7** + **range 4** +
         **requant 7** (honest / tampered q,r / out-of-range decomposition / wrong divisor / **signed
@@ -400,15 +402,22 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
         `bind_committed` for lookup, `bind_and_draw_io` for the composition primitive, via
         `pcs::commitment_bytes`), so a prover can't fix the witness after seeing the "random" points
         (adaptive-witness attack). Guarded by a dedicated matmul test.
-      - **Composition primitive** (`matmul.rs` `prove_committed_io`/`verify_committed_io`): also commits
-        and opens the *output* `C` (its claim `Ĉ(rx,ry)` becomes a PCS opening, not a `c_hat` recompute),
-        so the verifier holds **no tensors**. Chaining reuses one op's output commitment as the next op's
-        operand commitment; PCS binding forces the same polynomial across the seam — no separate linking
-        argument. Tests: a 2-matmul chain `Z=(A·B)·D` verified from commitments alone (intermediate `Y`
-        never materialized), and a tampered-intermediate rejection. Total `cargo test`: **91** (+18 over M5.3).
-      - **Remaining (M5.4b):** apply the I/O-committed pattern to the Hadamard/lookup/norm sub-ops (and a
-        residual-add linear check), assemble the fully-succinct `block`; then the on-chain verifier +
-        settlement E2E below.
+      - **Composition primitives** (M5.4b): each op commits+opens its *output* so the verifier holds
+        **no tensors** and ops link by commitment reuse (PCS binding forces the same polynomial across
+        the seam — no separate linking argument).
+        - `matmul.rs` `prove_committed_io`/`verify_committed_io`: the output claim `Ĉ(rx,ry)` becomes a
+          PCS opening (not a `c_hat` recompute). Test: 2-matmul chain `Z=(A·B)·D` verified from
+          commitments alone + tampered-intermediate rejection.
+        - `gadgets.rs` `prove_committed_hadamard_io`/`verify_committed_hadamard_io`: also commits+opens
+          the gate output `z`. Test: a **cross-op** seam — a matmul output feeds a Hadamard operand by
+          commitment reuse, verifier materializes nothing.
+        - `residual.rs` `prove_committed_add`/`verify_committed_add`: `out = x + sub` as a linear
+          (Schwartz–Zippel) one-point + three-opening check — the block's two residual seams.
+        - `pcs.rs` gains a canonical `Opening`/`open_at`/`check_open` (lookup refactored onto it).
+        Total `cargo test`: **98** (+25 over M5.3).
+      - **Remaining (M5.4b):** the committed **norm** (Hadamard-io + committed lookup + a committed
+        row-sum reduction) + a lookup-io, then assemble the fully-succinct `block`; then the on-chain
+        verifier + settlement E2E below.
 - [ ] **M5.4b** Implement `IVerifiedInference` verifier (Option A native Solidity via BN254
       precompiles: KZG opening + sumcheck; Groth16 wrap optional for gas); gas bench.
 - [ ] E2E: task → spot-check proof → on-chain verify → settle.

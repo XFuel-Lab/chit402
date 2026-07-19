@@ -222,23 +222,6 @@ fn field_key(f: &Fr) -> Vec<u8> {
 // single (committed) evaluation. `γ,β` and the zero-check points are all drawn *after* the operand
 // commitments are absorbed, so the witness is fixed before any challenge.
 
-/// A committed MLE evaluation: the claimed value plus its opening proof (the point is re-derived by
-/// the verifier from the transcript, so it is not carried here).
-pub struct Opening {
-    pub value: Fr,
-    pub proof: pcs::OpeningProof,
-}
-
-/// Open `table`'s MLE at `point` (value + proof).
-fn open_at(ck: &pcs::Ck, table: &[Fr], point: &[Fr]) -> Opening {
-    Opening { value: mle_eval(table, point), proof: pcs::open(ck, table, point) }
-}
-
-/// Check an [`Opening`] against a commitment at a verifier-derived `point`.
-fn check_open(vk: &pcs::Vk, comm: &pcs::Comm, point: &[Fr], o: &Opening) -> bool {
-    pcs::verify(vk, comm, point, o.value, &o.proof)
-}
-
 /// Fold committed-column opening *values* at a shared point into the folded-column evaluation
 /// `Σ_c γ^c · col_c(point)` — the linear-in-columns image of [`fold_columns`].
 fn fold_values(vals: &[Fr], gamma: Fr) -> Fr {
@@ -264,15 +247,15 @@ pub struct CommittedLookupProof {
     pub comm_m: pcs::Comm,
     pub comm_a: pcs::Comm,
     pub comm_b: pcs::Comm,
-    pub a_cha: Opening,
-    pub a_r2: Opening,
-    pub a_ch2: Opening,
-    pub b_chb: Opening,
-    pub b_r3: Opening,
-    pub b_ch3: Opening,
-    pub m_r3: Opening,
-    pub query_ch2: Vec<Opening>,
-    pub table_ch3: Vec<Opening>,
+    pub a_cha: pcs::Opening,
+    pub a_r2: pcs::Opening,
+    pub a_ch2: pcs::Opening,
+    pub b_chb: pcs::Opening,
+    pub b_r3: pcs::Opening,
+    pub b_ch3: pcs::Opening,
+    pub m_r3: pcs::Opening,
+    pub query_ch2: Vec<pcs::Opening>,
+    pub table_ch3: Vec<pcs::Opening>,
 }
 
 /// Absorb the operand commitments, then draw `(γ, β)`. Shared by prover and verifier.
@@ -357,15 +340,15 @@ pub fn prove_committed_lookup(
         sc_sum_b,
         sc_q,
         sc_t,
-        a_cha: open_at(ck_q, &a, &cha),
-        b_chb: open_at(ck_t, &b, &chb),
-        a_r2: open_at(ck_q, &a, &r2),
-        a_ch2: open_at(ck_q, &a, &ch2),
-        b_r3: open_at(ck_t, &b, &r3),
-        b_ch3: open_at(ck_t, &b, &ch3),
-        m_r3: open_at(ck_t, &m, &r3),
-        query_ch2: query_cols.iter().map(|c| open_at(ck_q, c, &ch2)).collect(),
-        table_ch3: table_cols.iter().map(|c| open_at(ck_t, c, &ch3)).collect(),
+        a_cha: pcs::open_at(ck_q, &a, &cha),
+        b_chb: pcs::open_at(ck_t, &b, &chb),
+        a_r2: pcs::open_at(ck_q, &a, &r2),
+        a_ch2: pcs::open_at(ck_q, &a, &ch2),
+        b_r3: pcs::open_at(ck_t, &b, &r3),
+        b_ch3: pcs::open_at(ck_t, &b, &ch3),
+        m_r3: pcs::open_at(ck_t, &m, &r3),
+        query_ch2: query_cols.iter().map(|c| pcs::open_at(ck_q, c, &ch2)).collect(),
+        table_ch3: table_cols.iter().map(|c| pcs::open_at(ck_t, c, &ch3)).collect(),
         comm_query,
         comm_table,
         comm_m,
@@ -440,21 +423,21 @@ pub fn verify_committed_lookup(
     }
 
     // All claimed evaluations must be genuine openings of the committed tensors at the derived points.
-    check_open(vk_q, &proof.comm_a, &cha, &proof.a_cha)
-        && check_open(vk_q, &proof.comm_a, &r2, &proof.a_r2)
-        && check_open(vk_q, &proof.comm_a, &ch2, &proof.a_ch2)
-        && check_open(vk_t, &proof.comm_b, &chb, &proof.b_chb)
-        && check_open(vk_t, &proof.comm_b, &r3, &proof.b_r3)
-        && check_open(vk_t, &proof.comm_b, &ch3, &proof.b_ch3)
-        && check_open(vk_t, &proof.comm_m, &r3, &proof.m_r3)
+    pcs::check_open(vk_q, &proof.comm_a, &cha, &proof.a_cha)
+        && pcs::check_open(vk_q, &proof.comm_a, &r2, &proof.a_r2)
+        && pcs::check_open(vk_q, &proof.comm_a, &ch2, &proof.a_ch2)
+        && pcs::check_open(vk_t, &proof.comm_b, &chb, &proof.b_chb)
+        && pcs::check_open(vk_t, &proof.comm_b, &r3, &proof.b_r3)
+        && pcs::check_open(vk_t, &proof.comm_b, &ch3, &proof.b_ch3)
+        && pcs::check_open(vk_t, &proof.comm_m, &r3, &proof.m_r3)
         && proof
             .comm_query
             .iter()
             .zip(proof.query_ch2.iter())
-            .all(|(c, o)| check_open(vk_q, c, &ch2, o))
+            .all(|(c, o)| pcs::check_open(vk_q, c, &ch2, o))
         && proof
             .comm_table
             .iter()
             .zip(proof.table_ch3.iter())
-            .all(|(c, o)| check_open(vk_t, c, &ch3, o))
+            .all(|(c, o)| pcs::check_open(vk_t, c, &ch3, o))
 }
