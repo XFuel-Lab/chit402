@@ -404,3 +404,103 @@ pub fn verify_committed_io(
         && pcs::verify(vk_b, comm_b, &b_point, inner.g_final, &proof.open_b)
         && pcs::verify(vk_c, comm_c, &cp, inner.claim, &proof.open_c)
 }
+
+// ─── Transposed-operand I/O matmul — `C = A·Bᵀ` (M5.4b) ────────────────────────
+//
+// Attention's scores are `S = Q·Kᵀ`, but `K` was produced by a projection as a row-major `seq×d_head`
+// tensor and is committed in *that* layout — so a succinct block must reuse `K`'s commitment, not a
+// separately-committed `Kᵀ`. No transpose argument is needed: the matmul reduces `g_final = B̂ᵀ(ch,ry)`,
+// and since `Bᵀ[l,j] = B[j,l]` we have `B̂ᵀ(ch,ry) = B̂(ry,ch)`. So the verifier opens the *natural*
+// commitment to `B` at the **swapped** point `ry ++ ch` — the same commitment a prior op emitted as its
+// `n×k` output. `A` and `C` are handled exactly as in [`verify_committed_io`].
+
+/// The point at which the natural (untransposed) `B` — committed as row-major `n×k` — is opened for a
+/// `C = A·Bᵀ` argument: `ry ++ ch` (the transpose of the usual `ch ++ ry`).
+fn bt_open_point(ry: &[Fr], ch: &[Fr]) -> Vec<Fr> {
+    let mut p = ry.to_vec();
+    p.extend_from_slice(ch);
+    p
+}
+
+/// Transpose a `rows × cols` row-major matrix to `cols × rows` (prover-only; builds `Bᵀ` for the
+/// instance while the *commitment* stays on the natural `B`).
+fn transpose_rm(mat: &[Fr], rows: usize, cols: usize) -> Vec<Fr> {
+    let mut out = vec![Fr::zero(); rows * cols];
+    for r in 0..rows {
+        for c in 0..cols {
+            out[c * rows + r] = mat[r * cols + c];
+        }
+    }
+    out
+}
+
+/// Prove `C = A·Bᵀ` where `A` is `m×k` and `B` is row-major `n×k` (so `Bᵀ` is `k×n`), committing all
+/// three tensors. `B` is committed in its **natural `n×k` layout** and opened at the swapped point, so
+/// its commitment is identical to the one a prior op produced as its `n×k` output (e.g. the `K`
+/// projection feeding attention scores). Returns the proof and the `(A, B, C)` commitments.
+#[allow(clippy::too_many_arguments)]
+pub fn prove_committed_io_bt(
+    a: &[Fr],
+    b: &[Fr],
+    m: usize,
+    k: usize,
+    n: usize,
+    ck_a: &pcs::Ck,
+    ck_b: &pcs::Ck,
+    ck_c: &pcs::Ck,
+    tr: &mut Transcript,
+) -> (CommittedIoMatMulProof, pcs::Comm, pcs::Comm, pcs::Comm) {
+    assert_eq!(a.len(), m * k, "A must be m*k");
+    assert_eq!(b.len(), n * k, "B must be n*k (natural, untransposed)");
+    let bt = transpose_rm(b, n, k); // n×k → k×n = Bᵀ
+    let mm = MatMul::new(m, k, n, a.to_vec(), bt);
+    let comm_a = pcs::commit(ck_a, a);
+    let comm_b = pcs::commit(ck_b, b); // natural n×k layout — the reusable commitment
+    let comm_c = pcs::commit(ck_c, &mm.c);
+    let (rx, ry) = bind_and_draw_io(tr, m, k, n, &comm_a, &comm_b, &comm_c);
+    let (inner, a_point, _b_point) = prove_core(&mm, rx, ry, tr);
+    let ch = &a_point[log2_exact(m)..]; // a_point = rx ++ ch
+    let bt_point = bt_open_point(&inner.ry, ch);
+    let cp = c_point(&inner.rx, &inner.ry);
+    let open_a = pcs::open(ck_a, a, &a_point);
+    let open_b = pcs::open(ck_b, b, &bt_point);
+    let open_c = pcs::open(ck_c, &mm.c, &cp);
+    (CommittedIoMatMulProof { inner, open_a, open_b, open_c }, comm_a, comm_b, comm_c)
+}
+
+/// Succinctly verify `C = A·Bᵀ` from commitments to `A`, natural `B` (`n×k`), and `C`. `g_final` is
+/// bound to `B` by opening it at the swapped point `ry ++ ch` (see the section note above).
+#[allow(clippy::too_many_arguments)]
+pub fn verify_committed_io_bt(
+    m: usize,
+    k: usize,
+    n: usize,
+    comm_a: &pcs::Comm,
+    comm_b: &pcs::Comm,
+    comm_c: &pcs::Comm,
+    proof: &CommittedIoMatMulProof,
+    vk_a: &pcs::Vk,
+    vk_b: &pcs::Vk,
+    vk_c: &pcs::Vk,
+    tr: &mut Transcript,
+) -> bool {
+    let inner = &proof.inner;
+    let (rx, ry) = bind_and_draw_io(tr, m, k, n, comm_a, comm_b, comm_c);
+    if rx != inner.rx || ry != inner.ry {
+        return false;
+    }
+    let (ch, reduced) = match verify_product(&inner.sumcheck, inner.claim, tr) {
+        Some(v) => v,
+        None => return false,
+    };
+    if reduced != inner.f_final * inner.g_final {
+        return false;
+    }
+    let mut a_point = rx.clone();
+    a_point.extend_from_slice(&ch);
+    let bt_point = bt_open_point(&ry, &ch);
+    let cp = c_point(&rx, &ry);
+    pcs::verify(vk_a, comm_a, &a_point, inner.f_final, &proof.open_a)
+        && pcs::verify(vk_b, comm_b, &bt_point, inner.g_final, &proof.open_b)
+        && pcs::verify(vk_c, comm_c, &cp, inner.claim, &proof.open_c)
+}

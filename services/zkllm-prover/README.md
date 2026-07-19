@@ -59,10 +59,13 @@ verify without the verifier ever holding an intermediate: `matmul::prove_committ
 seam (a matmul output feeds a Hadamard operand in the tests). The **committed RMSNorm** is assembled from
 these (`norm::prove_committed_rmsnorm`): hadamard-io + committed row-sum (`reduce`) + committed lookup +
 a fused scaling sumcheck, threaded by commitment reuse. The **committed causal softmax** (`softmax`)
-composes the same toolkit into attention's nonlinear core. (M5.4b). **Explicitly pending:** the rest of
-a committed attention (projections/scores via matmul-io with a transposed `Kᵀ` opening, context/output,
-residual) then assemble the fully-succinct `block`; then the on-chain `IVerifiedInference` verifier
-(BN254 precompiles) + settlement E2E, plus the RAM bench (M5.3).
+composes the same toolkit into attention's nonlinear core. The **transposed-operand matmul-io**
+(`matmul::prove_committed_io_bt`) proves scores `S = Q·Kᵀ` with **no transpose argument**: since
+`Kᵀ`'s MLE at `(ch,ry)` equals `K`'s at `(ry,ch)`, the verifier opens `K`'s natural `n×k` commitment at
+the **swapped point** — so the scores matmul reuses the *same* commitment the `K` projection emitted as
+its output (M5.4b). **Explicitly pending:** the rest of a committed attention (wire projections/scores/
+context/output + residual into `prove_committed_attention`) then assemble the fully-succinct `block`;
+then the on-chain `IVerifiedInference` verifier (BN254 precompiles) + settlement E2E, plus the RAM bench (M5.3).
 
 ## Build & test
 
@@ -126,9 +129,11 @@ checks the sumcheck/lookup arguments are sound. Two boundaries remain explicit:
    (hadamard-io + committed row-sum + committed lookup + a fused scaling sumcheck), with the lookup's
    table tied to the canonical `rsqrt` table so it can't be forged. The **committed causal softmax**
    does the same for attention's nonlinear core, tying the causal mask + `exp`/reciprocal tables to
-   their canonical forms. Still pending: the rest of a committed attention (projections/scores via
-   matmul-io + a transposed `Kᵀ` opening, context/output, residual), then assemble the fully-succinct
-   **block**, then the **on-chain `IVerifiedInference` verifier** (BN254 precompiles verify a KZG
+   their canonical forms. The **transposed-operand matmul-io** (`prove_committed_io_bt`) closes the
+   scores seam `S = Q·Kᵀ` by opening `K`'s natural commitment at a swapped point — no transpose
+   argument, and the same commitment the `K` projection emitted is reused. Still pending: wire the
+   committed projections/scores/context/output + residual into `prove_committed_attention`, then
+   assemble the fully-succinct **block**, then the **on-chain `IVerifiedInference` verifier** (BN254 precompiles verify a KZG
    opening + the sumcheck) with nullifier + settlement; a Groth16 wrap remains an optional gas
    optimization.
 

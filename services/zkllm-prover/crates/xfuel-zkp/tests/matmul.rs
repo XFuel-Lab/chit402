@@ -3,8 +3,8 @@
 use ark_std::rand::Rng;
 use ark_std::{test_rng, UniformRand};
 use xfuel_zkp::matmul::{
-    commit, prove, prove_committed, prove_committed_io, verify, verify_committed,
-    verify_committed_io, MatMul,
+    commit, prove, prove_committed, prove_committed_io, prove_committed_io_bt, verify,
+    verify_committed, verify_committed_io, verify_committed_io_bt, MatMul,
 };
 use xfuel_zkp::transcript::Transcript;
 use xfuel_zkp::{log2_exact, pcs, Fr};
@@ -265,5 +265,101 @@ fn io_matmul_chain_rejects_a_tampered_intermediate() {
     assert!(
         !verify_committed_io(4, 4, 4, &comm_y, &comm_d, &comm_z, &p2, &vk, &vk, &vk, &mut Transcript::new(b"c2")),
         "matmul-2 built on a different intermediate than matmul-1 emitted must be rejected"
+    );
+}
+
+/// Row-major `S = Q·Kᵀ` where `Q` is `m×k` and `K` is `n×k`: `S[i,j] = Σ_l Q[i,l]·K[j,l]`.
+fn scores_qkt(q: &[Fr], k_mat: &[Fr], m: usize, k: usize, n: usize) -> Vec<Fr> {
+    let mut s = vec![Fr::from(0u64); m * n];
+    for i in 0..m {
+        for j in 0..n {
+            let mut acc = Fr::from(0u64);
+            for l in 0..k {
+                acc += q[i * k + l] * k_mat[j * k + l];
+            }
+            s[i * n + j] = acc;
+        }
+    }
+    s
+}
+
+#[test]
+fn io_bt_matmul_verifies() {
+    // S = Q·Kᵀ with K committed in its natural n×k layout and opened at the swapped point.
+    let mut rng = test_rng();
+    let nv = log2_exact(16);
+    let params = pcs::setup(nv, &mut rng);
+    let (ck, vk) = pcs::keys(&params, nv);
+
+    let q = rand_vec(16, &mut rng); // 4×4
+    let k_mat = rand_vec(16, &mut rng); // 4×4 (natural)
+    let s = scores_qkt(&q, &k_mat, 4, 4, 4);
+
+    let (proof, comm_q, comm_k, comm_s) =
+        prove_committed_io_bt(&q, &k_mat, 4, 4, 4, &ck, &ck, &ck, &mut Transcript::new(b"bt"));
+    // Sanity: the argument's committed output equals the independently-computed S.
+    assert_eq!(pcs::commitment_bytes(&comm_s), pcs::commitment_bytes(&pcs::commit(&ck, &s)));
+    assert!(
+        verify_committed_io_bt(4, 4, 4, &comm_q, &comm_k, &comm_s, &proof, &vk, &vk, &vk, &mut Transcript::new(b"bt")),
+        "honest S = Q·Kᵀ must verify from commitments alone"
+    );
+}
+
+#[test]
+fn io_bt_reuses_a_projection_output_commitment() {
+    // The attention seam: K is produced by a projection matmul (K = Xn·Wk) and committed as its n×k
+    // output; the scores matmul S = Q·Kᵀ must reuse THAT commitment as its B operand — no separate Kᵀ.
+    let mut rng = test_rng();
+    let nv = log2_exact(16);
+    let params = pcs::setup(nv, &mut rng);
+    let (ck, vk) = pcs::keys(&params, nv);
+
+    let xn = rand_vec(16, &mut rng);
+    let wk = rand_vec(16, &mut rng);
+    let mm_k = MatMul::new(4, 4, 4, xn, wk); // K = mm_k.c (4×4)
+    let q = rand_vec(16, &mut rng);
+    let s = scores_qkt(&q, &mm_k.c, 4, 4, 4);
+
+    let mut tp = Transcript::new(b"attn");
+    let (p_k, _cxn, _cwk, comm_k) = prove_committed_io(&mm_k, &ck, &ck, &ck, &mut tp);
+    let (p_s, comm_q, comm_k2, comm_s) =
+        prove_committed_io_bt(&q, &mm_k.c, 4, 4, 4, &ck, &ck, &ck, &mut tp);
+
+    // The scores' B-operand commitment IS the projection's output commitment.
+    assert_eq!(
+        pcs::commitment_bytes(&comm_k),
+        pcs::commitment_bytes(&comm_k2),
+        "the K projection output commitment must be reused as the scores operand commitment"
+    );
+
+    let mut tv = Transcript::new(b"attn");
+    // (Reconstruct the projection's input/weight commitments the way a full block would carry them.)
+    let (comm_xn, comm_wk) = commit(&mm_k, &ck, &ck);
+    assert!(
+        verify_committed_io(4, 4, 4, &comm_xn, &comm_wk, &comm_k, &p_k, &vk, &vk, &vk, &mut tv),
+        "the K projection must verify"
+    );
+    assert!(
+        verify_committed_io_bt(4, 4, 4, &comm_q, &comm_k, &comm_s, &p_s, &vk, &vk, &vk, &mut tv),
+        "scores reusing the projection's K commitment must verify — no Kᵀ materialized"
+    );
+}
+
+#[test]
+fn io_bt_tampered_k_commitment_is_rejected() {
+    let mut rng = test_rng();
+    let nv = log2_exact(16);
+    let params = pcs::setup(nv, &mut rng);
+    let (ck, vk) = pcs::keys(&params, nv);
+
+    let q = rand_vec(16, &mut rng);
+    let k_mat = rand_vec(16, &mut rng);
+    let (proof, comm_q, _comm_k, comm_s) =
+        prove_committed_io_bt(&q, &k_mat, 4, 4, 4, &ck, &ck, &ck, &mut Transcript::new(b"bt"));
+
+    let bad_comm_k = pcs::commit(&ck, &rand_vec(16, &mut rng));
+    assert!(
+        !verify_committed_io_bt(4, 4, 4, &comm_q, &bad_comm_k, &comm_s, &proof, &vk, &vk, &vk, &mut Transcript::new(b"bt")),
+        "a mismatched K commitment must be rejected"
     );
 }
