@@ -341,9 +341,10 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           Q/K, and the per-head softmax argument for every head under one transcript; GQA is index
           layout (`head → kv group`). **Zero pending obligations** (quantized). This closes the
           M5.2b-cont assembly — the transformer block is now full-width, not just single-head.
-      - **111 `cargo test` green** (matmul **10** (adds committed succinct-verify / wrong-weight-commit /
+      - **114 `cargo test` green** (matmul **13** (adds committed succinct-verify / wrong-weight-commit /
         forged-final-eval / **commitment-bound challenge** / **I/O-committed 2-matmul chain** /
-        **tampered-intermediate composition reject**) + commitments 5 + **residual 4** (committed add:
+        **tampered-intermediate composition reject** / **transposed-operand `S=Q·Kᵀ`** / **projection-output
+        reuse** / **tampered-`K`-commit reject**) + commitments 5 + **residual 4** (committed add:
         honest / wrong-sum / forged-opening / wrong-commit) + hadamard/gadgets **10** (committed verify /
         wrong-operand-commit / forged-final-eval + I/O-committed verify / tampered-output-commit /
         **matmul-output→hadamard-operand cross-op composition**) + **lookup 8** (adds committed
@@ -432,10 +433,16 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           hadamard-io + `exp`/reciprocal committed lookups + committed row-sum + a fused row-scale
           sumcheck, threaded by commitment reuse; the causal mask and both tables are tied to their
           canonical forms (`ScalarTable::{prove,verify}_committed` centralize the table-tie).
-        Total `cargo test`: **111** (+38 over M5.3).
-      - **Remaining (M5.4b):** the rest of a committed **attention** (projections/scores via matmul-io
-        with a transposed `Kᵀ` opening, context/output, residual), then assemble the fully-succinct
-        `block`; then the on-chain verifier + settlement E2E below.
+        - `matmul.rs` `prove_committed_io_bt`/`verify_committed_io_bt`: the **transposed-operand**
+          matmul-io for scores `S = Q·Kᵀ`. No transpose argument — since `Kᵀ`'s MLE at `(ch,ry)` equals
+          `K`'s at `(ry,ch)`, `K` is committed in its natural `n×k` layout and opened at the **swapped
+          point** `ry ++ ch`, so the scores matmul reuses the *same* commitment the `K` projection
+          emitted as its output. Tests: honest `S=Q·Kᵀ`, projection-output-commitment reuse across the
+          attention seam, tampered-`K`-commitment rejection.
+        Total `cargo test`: **114** (+41 over M5.3).
+      - **Remaining (M5.4b):** wire the committed projections/scores (`matmul-io` + `io_bt`)/context/
+        output + residual into `prove_committed_attention`, then assemble the fully-succinct `block`;
+        then the on-chain verifier + settlement E2E below.
 - [ ] **M5.4b** Implement `IVerifiedInference` verifier (Option A native Solidity via BN254
       precompiles: KZG opening + sumcheck; Groth16 wrap optional for gas); gas bench.
 - [ ] E2E: task → spot-check proof → on-chain verify → settle.
