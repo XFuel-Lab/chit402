@@ -459,10 +459,15 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           commitment is tied to the activation's input column). Verifier holds only the block I/O
           commitments + public weights; `FfnKeys` trims per-width keys once. Tests: honest verify,
           wrong-output-commit, forged-`Wdown`, tampered-gate-commit rejections.
-        Total `cargo test`: **125** (+52 over M5.3).
-      - **Remaining (M5.4b):** compose the committed attention + FFN sub-blocks into a fully-succinct
-        `block` (two residual adds sharing the residual-stream commitment); then the on-chain verifier +
-        settlement E2E below.
+        - `block.rs` `prove_committed_block`/`verify_committed_block`: the **assembled committed
+          transformer block** — committed attention → committed FFN under one transcript, sharing a
+          single seam commitment `comm_h` (the attention residual output reused verbatim as the FFN
+          input; both halves size seq·d_model keys from the same SRS ⇒ byte-identical commitment, so no
+          linking argument). Verifier holds only the block I/O commitments + public weights. Tests:
+          honest verify, wrong-output-commit, tampered-seam-commit rejections.
+        Total `cargo test`: **128** (+55 over M5.3).
+      - **Remaining (M5.4b):** the on-chain verifier + settlement E2E below (the succinct-prover
+        composition — matmul/gadgets/lookup/norm/softmax/attention/requant/ffn/**block** — is complete).
 - [ ] **M5.4b** Implement `IVerifiedInference` verifier (Option A native Solidity via BN254
       precompiles: KZG opening + sumcheck; Groth16 wrap optional for gas); gas bench.
 - [ ] E2E: task → spot-check proof → on-chain verify → settle.
