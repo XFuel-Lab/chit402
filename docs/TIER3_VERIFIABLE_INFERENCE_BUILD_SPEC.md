@@ -341,9 +341,10 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           Q/K, and the per-head softmax argument for every head under one transcript; GQA is index
           layout (`head → kv group`). **Zero pending obligations** (quantized). This closes the
           M5.2b-cont assembly — the transformer block is now full-width, not just single-head.
-      - **85 `cargo test` green** (matmul **8** (adds committed succinct-verify / wrong-weight-commit /
+      - **89 `cargo test` green** (matmul **8** (adds committed succinct-verify / wrong-weight-commit /
         forged-final-eval / **commitment-bound challenge**) + commitments 5 + hadamard/gadgets **7**
-        (adds committed verify / wrong-operand-commit / forged-final-eval) + **lookup 4** + **activation
+        (adds committed verify / wrong-operand-commit / forged-final-eval) + **lookup 8** (adds committed
+        succinct-verify / forged-Σa=Σb-sum / forged-opening / wrong-advice-commit) + **activation
         3** + **norm 6** + **attention 6** + **block 2** + **rope 4** + **mha 7** + **range 4** +
         **requant 7** (honest / tampered q,r / out-of-range decomposition / wrong divisor / **signed
         accumulator + bias** / requant→activation-lookup integration) + **FFN 12** (adds wide-gate→
@@ -368,7 +369,7 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
         binding-sensitivity, honest verify, tampered-output rejection, and cherry-pick rejection.
       - **Remaining:** bench time/RAM on the high-RAM CPU host (256–512 GB, **not GPU** — per the RAM
         reframing). Fill `docs/ZKG5_BENCHMARK.md`.
-- [~] **M5.4** In progress. **M5.4a (PCS binding for the matmul core) shipped.**
+- [~] **M5.4** In progress. **M5.4a (PCS binding for the matmul core, Hadamard gate, and logup lookup) shipped.**
       - **PCS module** (`pcs.rs`): a thin wrapper over `ark_poly_commit::multilinear_pc::MultilinearPC`
         — **multilinear KZG** (Papamanthou–Shi–Tamassia) over BN254. `setup` (trusted powers-of-tau,
         off the hot path) → `keys` (trim per `num_vars`) → `commit`/`open`/`verify`. Bridges our
@@ -386,14 +387,20 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
         the SwiGLU gate's `a(ch)`, `b(ch)` are bound to PCS commitments of `a`,`b`; the verifier holds
         only `z`. Tests: honest verify from commitments, wrong-operand-commitment rejection, forged
         final-evaluation rejection.
+      - **Lookup made succinct** (`lookup.rs` `prove_committed_lookup`/`verify_committed_lookup`): the
+        logup grand-sum `Σa=Σb` is turned into **two single-factor sumchecks** (each reduces a sum to one
+        committed evaluation, and both must reduce the *same* claimed sum — that's where `Σa=Σb` is
+        enforced); every query/table column plus the `m`,`a`,`b` advice is PCS-committed, and the ~11 MLE
+        evaluations the M5.2b verifier recomputed become PCS openings at transcript-derived points. The
+        verifier holds only commitments. Tests: honest succinct verify (incl. rectangular n≠t), forged
+        `Σa=Σb` sum rejection, forged opening-value rejection, wrong-advice-commitment rejection.
       - **Fiat–Shamir soundness (committed paths):** the committed transcripts absorb the operand
-        commitments **before** drawing the evaluation point (`bind_and_draw_committed`,
-        `bind_hadamard_committed`, via `pcs::commitment_bytes`), so a prover can't fix the witness after
-        seeing the "random" point (adaptive-witness attack). Guarded by a dedicated matmul test. Total
-        `cargo test`: **85** (+12 over M5.3).
-      - **Remaining (M5.4b+):** extend the commitment binding to the **lookup** sub-argument (its
-        grand-sum `Σa=Σb` becomes a sumcheck + PCS openings) and the `block`; then the on-chain verifier
-        + settlement E2E below.
+        commitments **before** drawing any challenge (`bind_and_draw_committed`, `bind_hadamard_committed`,
+        `bind_committed` for lookup, via `pcs::commitment_bytes`), so a prover can't fix the witness after
+        seeing the "random" points (adaptive-witness attack). Guarded by a dedicated matmul test. Total
+        `cargo test`: **89** (+16 over M5.3).
+      - **Remaining (M5.4b+):** compose the committed matmul + Hadamard + lookup into a fully-succinct
+        `block`; then the on-chain verifier + settlement E2E below.
 - [ ] **M5.4b** Implement `IVerifiedInference` verifier (Option A native Solidity via BN254
       precompiles: KZG opening + sumcheck; Groth16 wrap optional for gas); gas bench.
 - [ ] E2E: task → spot-check proof → on-chain verify → settle.
