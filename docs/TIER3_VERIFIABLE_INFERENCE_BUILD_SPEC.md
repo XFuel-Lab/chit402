@@ -341,8 +341,9 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           Q/K, and the per-head softmax argument for every head under one transcript; GQA is index
           layout (`head → kv group`). **Zero pending obligations** (quantized). This closes the
           M5.2b-cont assembly — the transformer block is now full-width, not just single-head.
-      - **89 `cargo test` green** (matmul **8** (adds committed succinct-verify / wrong-weight-commit /
-        forged-final-eval / **commitment-bound challenge**) + commitments 5 + hadamard/gadgets **7**
+      - **91 `cargo test` green** (matmul **10** (adds committed succinct-verify / wrong-weight-commit /
+        forged-final-eval / **commitment-bound challenge** / **I/O-committed 2-matmul chain** /
+        **tampered-intermediate composition reject**) + commitments 5 + hadamard/gadgets **7**
         (adds committed verify / wrong-operand-commit / forged-final-eval) + **lookup 8** (adds committed
         succinct-verify / forged-Σa=Σb-sum / forged-opening / wrong-advice-commit) + **activation
         3** + **norm 6** + **attention 6** + **block 2** + **rope 4** + **mha 7** + **range 4** +
@@ -396,11 +397,18 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
         `Σa=Σb` sum rejection, forged opening-value rejection, wrong-advice-commitment rejection.
       - **Fiat–Shamir soundness (committed paths):** the committed transcripts absorb the operand
         commitments **before** drawing any challenge (`bind_and_draw_committed`, `bind_hadamard_committed`,
-        `bind_committed` for lookup, via `pcs::commitment_bytes`), so a prover can't fix the witness after
-        seeing the "random" points (adaptive-witness attack). Guarded by a dedicated matmul test. Total
-        `cargo test`: **89** (+16 over M5.3).
-      - **Remaining (M5.4b+):** compose the committed matmul + Hadamard + lookup into a fully-succinct
-        `block`; then the on-chain verifier + settlement E2E below.
+        `bind_committed` for lookup, `bind_and_draw_io` for the composition primitive, via
+        `pcs::commitment_bytes`), so a prover can't fix the witness after seeing the "random" points
+        (adaptive-witness attack). Guarded by a dedicated matmul test.
+      - **Composition primitive** (`matmul.rs` `prove_committed_io`/`verify_committed_io`): also commits
+        and opens the *output* `C` (its claim `Ĉ(rx,ry)` becomes a PCS opening, not a `c_hat` recompute),
+        so the verifier holds **no tensors**. Chaining reuses one op's output commitment as the next op's
+        operand commitment; PCS binding forces the same polynomial across the seam — no separate linking
+        argument. Tests: a 2-matmul chain `Z=(A·B)·D` verified from commitments alone (intermediate `Y`
+        never materialized), and a tampered-intermediate rejection. Total `cargo test`: **91** (+18 over M5.3).
+      - **Remaining (M5.4b):** apply the I/O-committed pattern to the Hadamard/lookup/norm sub-ops (and a
+        residual-add linear check), assemble the fully-succinct `block`; then the on-chain verifier +
+        settlement E2E below.
 - [ ] **M5.4b** Implement `IVerifiedInference` verifier (Option A native Solidity via BN254
       precompiles: KZG opening + sumcheck; Groth16 wrap optional for gas); gas bench.
 - [ ] E2E: task → spot-check proof → on-chain verify → settle.
