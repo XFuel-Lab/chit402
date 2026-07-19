@@ -13,6 +13,11 @@
 //! MLE evaluations are instead discharged by [`crate::pcs`] openings against commitments to `A` and
 //! `B`, so the verifier needs only the commitments (the weight commitment is `B`'s — the PoMA anchor)
 //! and never holds the full tensors. This is the succinctness step for ~90% of inference cost.
+//!
+//! For **composition** (M5.4b), [`prove_committed_io`]/[`verify_committed_io`] additionally commit and
+//! open the *output* `C`, so the verifier holds no tensors at all. Chaining matmuls then reuses the
+//! first op's output commitment as the second op's operand commitment — PCS binding forces the same
+//! polynomial on both sides, so no separate cross-op linking argument is needed.
 
 use crate::mle::{eq_weights, mle_eval};
 use crate::pcs;
@@ -285,4 +290,117 @@ pub fn verify_committed(
     let (a_point, b_point) = opening_points(&rx, &ry, &ch);
     pcs::verify(vk_a, comm_a, &a_point, inner.f_final, &proof.open_a)
         && pcs::verify(vk_b, comm_b, &b_point, inner.g_final, &proof.open_b)
+}
+
+// ─── I/O-committed matmul — the composition primitive (M5.4b) ─────────────────
+//
+// [`verify_committed`] still holds the output `C` in the clear (it recomputes `Ĉ(rx,ry)` via
+// `c_hat`). That blocks composition: in a transformer block the output of one matmul is an operand of
+// the next, so the verifier would have to materialize every intermediate tensor. The I/O-committed
+// pair below also commits `C` and discharges the output claim `Ĉ(rx,ry)` with a PCS opening — so the
+// verifier holds *no* tensors, only commitments. Chaining two matmuls then needs no separate linking
+// argument: feed the first op's **output commitment** as the second op's **operand commitment**, and
+// PCS binding forces the same polynomial on both sides. The `C`-flattening (row-major `i·n+j`, MSB=row
+// bits, LSB=col bits) matches [`crate::mle::mle_eval`], so a matmul that emits `C` as `m×n` and a next
+// matmul that consumes it as an `m×k'` operand open the *same* multilinear extension.
+
+/// A fully-committed matmul proof: like [`CommittedMatMulProof`] but also opens the **output** `C` at
+/// `(rx,ry)`, so the verifier holds no tensors at all. This is the block composition primitive.
+pub struct CommittedIoMatMulProof {
+    pub inner: MatMulProof,
+    pub open_a: pcs::OpeningProof,
+    pub open_b: pcs::OpeningProof,
+    pub open_c: pcs::OpeningProof,
+}
+
+impl CommittedIoMatMulProof {
+    /// Field-element count of the sumcheck part (PCS openings are group elements, counted apart).
+    pub fn field_len(&self) -> usize {
+        self.inner.field_len()
+    }
+}
+
+/// I/O-committed binding: absorb dims and the `A`,`B`,`C` **PCS commitments** before drawing the
+/// point. `C`'s keccak is replaced by its PCS commitment because the verifier never sees `C` in clear.
+fn bind_and_draw_io(
+    tr: &mut Transcript,
+    m: usize,
+    k: usize,
+    n: usize,
+    comm_a: &pcs::Comm,
+    comm_b: &pcs::Comm,
+    comm_c: &pcs::Comm,
+) -> (Vec<Fr>, Vec<Fr>) {
+    tr.absorb_bytes(b"dims", &encode_dims(m, k, n));
+    tr.absorb_bytes(b"ioA", &pcs::commitment_bytes(comm_a));
+    tr.absorb_bytes(b"ioB", &pcs::commitment_bytes(comm_b));
+    tr.absorb_bytes(b"ioC", &pcs::commitment_bytes(comm_c));
+    let rx = draw_point(tr, log2_exact(m), b"rx");
+    let ry = draw_point(tr, log2_exact(n), b"ry");
+    (rx, ry)
+}
+
+/// The point at which the flattened output `C` (row-major `m×n`) is opened: `rx ++ ry`.
+fn c_point(rx: &[Fr], ry: &[Fr]) -> Vec<Fr> {
+    let mut p = rx.to_vec();
+    p.extend_from_slice(ry);
+    p
+}
+
+/// Prove `C = A·B` committing **all three** tensors and opening each at the argument's query points.
+/// Returns the proof and the `(A, B, C)` commitments so a caller can reuse `C`'s commitment as the
+/// next op's operand commitment. `ck_c` must be trimmed to `log2(m·n)` variables.
+pub fn prove_committed_io(
+    mm: &MatMul,
+    ck_a: &pcs::Ck,
+    ck_b: &pcs::Ck,
+    ck_c: &pcs::Ck,
+    tr: &mut Transcript,
+) -> (CommittedIoMatMulProof, pcs::Comm, pcs::Comm, pcs::Comm) {
+    let comm_a = pcs::commit(ck_a, &mm.a);
+    let comm_b = pcs::commit(ck_b, &mm.b);
+    let comm_c = pcs::commit(ck_c, &mm.c);
+    let (rx, ry) = bind_and_draw_io(tr, mm.m, mm.k, mm.n, &comm_a, &comm_b, &comm_c);
+    let (inner, a_point, b_point) = prove_core(mm, rx, ry, tr);
+    let cp = c_point(&inner.rx, &inner.ry);
+    let open_a = pcs::open(ck_a, &mm.a, &a_point);
+    let open_b = pcs::open(ck_b, &mm.b, &b_point);
+    let open_c = pcs::open(ck_c, &mm.c, &cp);
+    (CommittedIoMatMulProof { inner, open_a, open_b, open_c }, comm_a, comm_b, comm_c)
+}
+
+/// Succinctly verify `C = A·B` from commitments to `A`, `B`, **and** `C` — the verifier holds no
+/// tensors. The output claim `Ĉ(rx,ry) = inner.claim` is discharged by a PCS opening of `comm_c` at
+/// `rx ++ ry`, so the same commitment can be reused as the next op's operand commitment.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_committed_io(
+    m: usize,
+    k: usize,
+    n: usize,
+    comm_a: &pcs::Comm,
+    comm_b: &pcs::Comm,
+    comm_c: &pcs::Comm,
+    proof: &CommittedIoMatMulProof,
+    vk_a: &pcs::Vk,
+    vk_b: &pcs::Vk,
+    vk_c: &pcs::Vk,
+    tr: &mut Transcript,
+) -> bool {
+    let inner = &proof.inner;
+    let (rx, ry) = bind_and_draw_io(tr, m, k, n, comm_a, comm_b, comm_c);
+    if rx != inner.rx || ry != inner.ry {
+        return false;
+    }
+    let (ch, reduced) = match verify_product(&inner.sumcheck, inner.claim, tr) {
+        Some(v) => v,
+        None => return false,
+    };
+    if reduced != inner.f_final * inner.g_final {
+        return false;
+    }
+    let (a_point, b_point) = opening_points(&rx, &ry, &ch);
+    let cp = c_point(&rx, &ry);
+    pcs::verify(vk_a, comm_a, &a_point, inner.f_final, &proof.open_a)
+        && pcs::verify(vk_b, comm_b, &b_point, inner.g_final, &proof.open_b)
+        && pcs::verify(vk_c, comm_c, &cp, inner.claim, &proof.open_c)
 }

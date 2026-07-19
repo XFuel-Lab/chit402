@@ -2,7 +2,10 @@
 
 use ark_std::rand::Rng;
 use ark_std::{test_rng, UniformRand};
-use xfuel_zkp::matmul::{commit, prove, prove_committed, verify, verify_committed, MatMul};
+use xfuel_zkp::matmul::{
+    commit, prove, prove_committed, prove_committed_io, verify, verify_committed,
+    verify_committed_io, MatMul,
+};
 use xfuel_zkp::transcript::Transcript;
 use xfuel_zkp::{log2_exact, pcs, Fr};
 
@@ -185,5 +188,82 @@ fn committed_forged_final_evaluation_is_rejected() {
             &mut Transcript::new(b"t")
         ),
         "forged f_final must fail the commitment opening"
+    );
+}
+
+#[test]
+fn io_matmul_chain_verifies_without_materializing_the_intermediate() {
+    // The block composition primitive: prove Z = (A·B)·D where the verifier is given ONLY the input,
+    // weight and output commitments — never the intermediate Y = A·B. The two matmuls are linked
+    // purely by reusing Y's commitment (matmul-1's output = matmul-2's operand); no separate linking
+    // argument. All tensors are 4×4 (16 elems, 4 MLE vars) so one trusted setup covers every commit.
+    let mut rng = test_rng();
+    let nv = log2_exact(16);
+    let params = pcs::setup(nv, &mut rng);
+    let (ck, vk) = pcs::keys(&params, nv);
+
+    let a = rand_vec(16, &mut rng);
+    let b = rand_vec(16, &mut rng);
+    let d = rand_vec(16, &mut rng);
+    let mm1 = MatMul::new(4, 4, 4, a, b); // Y = mm1.c
+    let mm2 = MatMul::new(4, 4, 4, mm1.c.clone(), d); // Z = mm2.c = Y·D
+
+    // Prove both matmuls under ONE shared transcript (as a real block would).
+    let mut tp = Transcript::new(b"chain");
+    let (p1, comm_a, comm_b, comm_y) = prove_committed_io(&mm1, &ck, &ck, &ck, &mut tp);
+    let (p2, comm_y2, comm_d, comm_z) = prove_committed_io(&mm2, &ck, &ck, &ck, &mut tp);
+
+    // The link is literal commitment reuse: matmul-1's output commitment IS matmul-2's operand one.
+    assert_eq!(
+        pcs::commitment_bytes(&comm_y),
+        pcs::commitment_bytes(&comm_y2),
+        "the intermediate commitment must be reused across the chain"
+    );
+
+    // Verifier replays the same transcript order and holds no tensors — only commitments (+ never Y).
+    let mut tv = Transcript::new(b"chain");
+    assert!(
+        verify_committed_io(4, 4, 4, &comm_a, &comm_b, &comm_y, &p1, &vk, &vk, &vk, &mut tv),
+        "matmul-1 must verify from commitments alone"
+    );
+    assert!(
+        verify_committed_io(4, 4, 4, &comm_y, &comm_d, &comm_z, &p2, &vk, &vk, &vk, &mut tv),
+        "matmul-2 must verify reusing the intermediate commitment as its operand"
+    );
+}
+
+#[test]
+fn io_matmul_chain_rejects_a_tampered_intermediate() {
+    // Composition soundness: a prover cannot feed matmul-2 a different intermediate than matmul-1
+    // emitted. We prove matmul-2 over a tampered Y', but the verifier uses matmul-1's HONEST output
+    // commitment as matmul-2's operand commitment — the mismatch (absorbed before the point is drawn)
+    // makes the re-derived point diverge and the opening fail.
+    let mut rng = test_rng();
+    let nv = log2_exact(16);
+    let params = pcs::setup(nv, &mut rng);
+    let (ck, vk) = pcs::keys(&params, nv);
+
+    let a = rand_vec(16, &mut rng);
+    let b = rand_vec(16, &mut rng);
+    let d = rand_vec(16, &mut rng);
+    let mm1 = MatMul::new(4, 4, 4, a, b);
+    let (_p1, _ca, _cb, comm_y) = prove_committed_io(&mm1, &ck, &ck, &ck, &mut Transcript::new(b"c"));
+
+    // Tamper the intermediate fed into matmul-2.
+    let mut y_bad = mm1.c.clone();
+    y_bad[0] += Fr::from(1u64);
+    let mm2 = MatMul::new(4, 4, 4, y_bad, d);
+    let (p2, comm_y_bad, comm_d, comm_z) =
+        prove_committed_io(&mm2, &ck, &ck, &ck, &mut Transcript::new(b"c2"));
+
+    assert_ne!(
+        pcs::commitment_bytes(&comm_y),
+        pcs::commitment_bytes(&comm_y_bad),
+        "a tampered intermediate must commit differently"
+    );
+    // Verify matmul-2 with the honest intermediate commitment (what the chain forces): must reject.
+    assert!(
+        !verify_committed_io(4, 4, 4, &comm_y, &comm_d, &comm_z, &p2, &vk, &vk, &vk, &mut Transcript::new(b"c2")),
+        "matmul-2 built on a different intermediate than matmul-1 emitted must be rejected"
     );
 }

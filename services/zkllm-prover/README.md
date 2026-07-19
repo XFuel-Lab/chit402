@@ -12,7 +12,7 @@ and ADR 0003). CPU-only — runs in any container.
 
 | Module | Purpose |
 |--------|---------|
-| `matmul` | Sumcheck-based `C = A·B` argument (Thaler-style). Matmul is ~90%+ of transformer cost and identical across LLMs — this is the reusable core. `prove_committed`/`verify_committed` bind `A`,`B` to PCS commitments so the verifier holds only the commitments (M5.4a). |
+| `matmul` | Sumcheck-based `C = A·B` argument (Thaler-style). Matmul is ~90%+ of transformer cost and identical across LLMs — this is the reusable core. `prove_committed`/`verify_committed` bind `A`,`B` to PCS commitments so the verifier holds only the commitments (M5.4a); `prove_committed_io`/`verify_committed_io` also commit+open the output `C`, the **composition primitive** — chaining reuses one op's output commitment as the next op's operand, so the verifier never materializes intermediates (M5.4b). |
 | `pcs` | **Multilinear-KZG polynomial commitment** (PST, `ark-poly-commit`) over BN254 — commit a tensor's MLE, then open its evaluation at a point with a constant-size proof. This is the succinctness step: the verifier checks openings instead of holding tensors. Pairing-based ⇒ `ecPairing`-precompile-verifiable on Base. (M5.4a) |
 | `sumcheck` | Product sumcheck + **generic multi-product (degree-d) sumcheck** + Lagrange eval, over a Keccak256 Fiat–Shamir transcript. |
 | `mle` | Multilinear-extension helpers (`eq` weights, MLE evaluation, `eq_eval`). |
@@ -49,10 +49,12 @@ the final MLE evaluations that previously required the full operand tensors are 
 multilinear-KZG openings, so the verifier needs only the commitments — the weight commitment being the
 PoMA anchor (M5.4a). The committed transcripts **absorb the operand commitments before drawing the
 evaluation point**, so a prover cannot adaptively pick a witness after seeing the challenge.
-The **lookup** sub-argument is now committed too: its grand-sum `Σa=Σb` is two sumchecks and every
-column + advice vector is PCS-bound (M5.4a). **Explicitly pending:** compose the committed matmul +
-Hadamard + lookup into a fully-succinct `block`, then the on-chain `IVerifiedInference` verifier
-(BN254 precompiles) + settlement E2E, plus the RAM bench on a high-RAM host (M5.3).
+The **lookup** sub-argument is committed too: its grand-sum `Σa=Σb` is two sumchecks and every column +
+advice vector is PCS-bound (M5.4a). The **composition primitive** (`matmul::prove_committed_io`) commits
+each op's output and links ops by commitment reuse, so a chain of matmuls verifies without the verifier
+ever holding an intermediate (M5.4b). **Explicitly pending:** apply the I/O-committed pattern to the
+Hadamard/lookup/norm sub-ops and assemble the fully-succinct `block`, then the on-chain
+`IVerifiedInference` verifier (BN254 precompiles) + settlement E2E, plus the RAM bench (M5.3).
 
 ## Build & test
 
@@ -108,9 +110,14 @@ checks the sumcheck/lookup arguments are sound. Two boundaries remain explicit:
    `Σa=Σb` was turned into two sumchecks so that too is succinct. Every committed transcript absorbs the
    operand commitments **before** the evaluation point, closing the adaptive-witness attack. This
    carries a trusted-setup (powers-of-tau) assumption, generated once off the hot path (`pcs::setup`).
-   Still pending: compose these into a fully-succinct **block**, then the **on-chain
-   `IVerifiedInference` verifier** (BN254 precompiles verify a KZG opening + the sumcheck) with
-   nullifier + settlement; a Groth16 wrap remains an optional gas optimization.
+   **Composition (M5.4b) is now sound in principle:** `matmul::prove_committed_io`/`verify_committed_io`
+   also commit+open the output, and a two-matmul chain `Z=(A·B)·D` verifies with the verifier holding
+   only commitments — the intermediate `Y` is linked purely by reusing its commitment (PCS binding
+   forces the same polynomial on both sides; a tampered intermediate is rejected). Still pending: apply
+   this I/O-committed pattern to the Hadamard/lookup/norm sub-ops and assemble the fully-succinct
+   **block**, then the **on-chain `IVerifiedInference` verifier** (BN254 precompiles verify a KZG
+   opening + the sumcheck) with nullifier + settlement; a Groth16 wrap remains an optional gas
+   optimization.
 
 Until those land, zkLLM proofs are generated/verified off-chain and the tier engine keeps serving
 `tee` / `settlement` / `signed`.
