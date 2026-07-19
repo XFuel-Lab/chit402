@@ -9,7 +9,11 @@
 //! Codes are `0..domain` (power of two). Code `c` denotes the signed integer `c − domain/2`; the
 //! real value is `signed·scale`. Outputs are requantized back to signed codes and field-encoded.
 
-use crate::lookup::{prove_lookup, verify_lookup, LookupProof};
+use crate::lookup::{
+    prove_committed_lookup, prove_lookup, verify_committed_lookup, verify_lookup,
+    CommittedLookupProof, LookupProof,
+};
+use crate::pcs;
 use crate::transcript::Transcript;
 use crate::Fr;
 use ark_ff::PrimeField;
@@ -118,5 +122,49 @@ impl ActivationTable {
             proof,
             tr,
         )
+    }
+
+    /// Prove `output = act(input)` **succinctly** (committed). `ck_q` sizes the query columns
+    /// (`log2(n)` vars), `ck_t` the table domain (`log2(domain)` vars). The input/output query
+    /// commitments are `comm_query[0]`/`comm_query[1]`.
+    pub fn prove_committed(
+        &self,
+        input_codes: &[Fr],
+        output_codes: &[Fr],
+        ck_q: &pcs::Ck,
+        ck_t: &pcs::Ck,
+        tr: &mut Transcript,
+    ) -> CommittedLookupProof {
+        prove_committed_lookup(
+            &[input_codes, output_codes],
+            &[&self.in_codes, &self.out_codes],
+            ck_q,
+            ck_t,
+            tr,
+        )
+    }
+
+    /// Verify a committed activation lookup, **tying the proof's committed table to this canonical
+    /// activation table** (a forged table would otherwise let a prover map any input to any output).
+    /// `n` is the query length (a power of two); `ck_t` re-derives the canonical table commitments.
+    pub fn verify_committed(
+        &self,
+        n: usize,
+        proof: &CommittedLookupProof,
+        ck_t: &pcs::Ck,
+        vk_q: &pcs::Vk,
+        vk_t: &pcs::Vk,
+        tr: &mut Transcript,
+    ) -> bool {
+        if proof.comm_table.len() != 2 {
+            return false;
+        }
+        let bytes = pcs::commitment_bytes;
+        if bytes(&proof.comm_table[0]) != bytes(&pcs::commit(ck_t, &self.in_codes))
+            || bytes(&proof.comm_table[1]) != bytes(&pcs::commit(ck_t, &self.out_codes))
+        {
+            return false;
+        }
+        verify_committed_lookup(n, self.domain, proof, vk_q, vk_t, tr)
     }
 }

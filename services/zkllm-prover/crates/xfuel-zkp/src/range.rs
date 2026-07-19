@@ -8,7 +8,11 @@
 //! `bound` is a power of two (the lookup requires power-of-two table + query lengths); larger
 //! ranges decompose into base-`bound` limbs, each range-checked here (a follow-up as needed).
 
-use crate::lookup::{prove_lookup, verify_lookup, LookupProof};
+use crate::lookup::{
+    prove_committed_lookup, prove_lookup, verify_committed_lookup, verify_lookup,
+    CommittedLookupProof, LookupProof,
+};
+use crate::pcs;
 use crate::transcript::Transcript;
 use crate::Fr;
 
@@ -35,5 +39,40 @@ impl RangeTable {
     /// Verify a range-check proof for `xs` against `[0, bound)`.
     pub fn verify(&self, xs: &[Fr], proof: &LookupProof, tr: &mut Transcript) -> bool {
         verify_lookup(&[xs], &[&self.codes], proof, tr)
+    }
+
+    /// Prove every value of `xs` is in `[0, bound)` **succinctly** (committed): a single-column
+    /// committed membership lookup. `ck_q` sizes the query column (`log2(xs.len())` vars), `ck_t` the
+    /// identity table domain (`log2(bound)` vars). The query commitment is `comm_query[0]`, which the
+    /// caller ties to the committed tensor being range-checked.
+    pub fn prove_committed(
+        &self,
+        xs: &[Fr],
+        ck_q: &pcs::Ck,
+        ck_t: &pcs::Ck,
+        tr: &mut Transcript,
+    ) -> CommittedLookupProof {
+        prove_committed_lookup(&[xs], &[&self.codes], ck_q, ck_t, tr)
+    }
+
+    /// Verify a committed range check, **tying the proof's committed table to the canonical identity
+    /// table** `[0, bound)` (else a prover could range-check against a forged table). `n` is the query
+    /// length (a power of two). `ck_t` re-derives the canonical table commitment (public infra).
+    pub fn verify_committed(
+        &self,
+        n: usize,
+        proof: &CommittedLookupProof,
+        ck_t: &pcs::Ck,
+        vk_q: &pcs::Vk,
+        vk_t: &pcs::Vk,
+        tr: &mut Transcript,
+    ) -> bool {
+        if proof.comm_table.len() != 1 {
+            return false;
+        }
+        if pcs::commitment_bytes(&proof.comm_table[0]) != pcs::commitment_bytes(&pcs::commit(ck_t, &self.codes)) {
+            return false;
+        }
+        verify_committed_lookup(n, self.bound, proof, vk_q, vk_t, tr)
     }
 }

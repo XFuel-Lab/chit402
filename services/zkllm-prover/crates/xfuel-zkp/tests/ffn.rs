@@ -2,10 +2,12 @@
 
 use ark_std::rand::Rng;
 use ark_std::{test_rng, UniformRand};
-use xfuel_zkp::ffn::{prove_ffn, verify_ffn, FfnConfig, NormParams};
+use xfuel_zkp::ffn::{
+    prove_committed_ffn, prove_ffn, verify_committed_ffn, verify_ffn, FfnConfig, NormParams,
+};
 use xfuel_zkp::manifest::{ActType, ModelManifest, NormType, PosType};
 use xfuel_zkp::transcript::Transcript;
-use xfuel_zkp::Fr;
+use xfuel_zkp::{pcs, Fr};
 
 fn rand_vec(len: usize, rng: &mut impl Rng) -> Vec<Fr> {
     (0..len).map(|_| Fr::rand(rng)).collect()
@@ -384,5 +386,125 @@ fn norm_mode_mismatch_is_rejected() {
             &mut Transcript::new(b"qffn")
         ),
         "norm mode mismatch must be rejected"
+    );
+}
+
+// ─── Committed (succinct) FFN — M5.4b ─────────────────────────────────────────
+
+/// SRS large enough for every FFN tensor width: the rsqrt table domain (64 → 6 vars) dominates the
+/// (2,4,8) fixture.
+fn ffn_srs() -> pcs::Params {
+    pcs::setup(6, &mut test_rng())
+}
+
+/// The fully-quantized committed FFN inputs: a wide gate accumulator + requant into [0,16), an
+/// identity RMSNorm (`xn = x`), and a SiLU activation table. Mirrors the wide-gate plain fixture.
+#[allow(clippy::type_complexity)]
+fn committed_ffn_inputs() -> (
+    FfnConfig,
+    Vec<Fr>,
+    Vec<Fr>,
+    Vec<Fr>,
+    Vec<Fr>,
+    RangeTable,
+    RangeTable,
+    ActivationTable,
+    RsqrtTable,
+    Vec<Fr>,
+) {
+    let (divisor, q_bound) = (4usize, 16usize);
+    let (r_table, q_table) = (RangeTable::new(divisor), RangeTable::new(q_bound));
+    let act = ActivationTable::new(ActKind::Silu, q_bound, 0.5);
+    let rsqrt = identity_rsqrt(4);
+    let w_norm = vec![Fr::from(1u64); 4];
+    let wide = [3u64, 12, 60, 40, 8, 44, 16, 28];
+    let (cfg, x, wgate, wup, wdown) = wide_gate_fixture(2, 4, 8, &wide);
+    (cfg, x, wgate, wup, wdown, r_table, q_table, act, rsqrt, w_norm)
+}
+
+#[test]
+fn committed_ffn_verifies() {
+    let (cfg, x, wgate, wup, wdown, r_table, q_table, act, rsqrt, w_norm) = committed_ffn_inputs();
+    let rp = RequantParams { bias: Fr::from(0u64), divisor: 4, r_table: &r_table, q_table: &q_table };
+    let np = NormParams { weight: &w_norm, table: &rsqrt };
+    let params = ffn_srs();
+
+    let (proof, comm_x, comm_out, _out) = prove_committed_ffn(
+        &cfg, &x, &wgate, &wup, &wdown, &act, &rp, &np, &params, &mut Transcript::new(b"cffn"),
+    );
+    assert!(
+        verify_committed_ffn(
+            &cfg, &wgate, &wup, &wdown, &act, &rp, &np, &comm_x, &comm_out, &proof, &params,
+            &mut Transcript::new(b"cffn"),
+        ),
+        "honest committed FFN (norm → gate/up → requant → act → gate ⊙ up → down → residual) must verify"
+    );
+}
+
+#[test]
+fn committed_ffn_wrong_output_commitment_is_rejected() {
+    let (cfg, x, wgate, wup, wdown, r_table, q_table, act, rsqrt, w_norm) = committed_ffn_inputs();
+    let rp = RequantParams { bias: Fr::from(0u64), divisor: 4, r_table: &r_table, q_table: &q_table };
+    let np = NormParams { weight: &w_norm, table: &rsqrt };
+    let params = ffn_srs();
+
+    let (proof, comm_x, _comm_out, out) = prove_committed_ffn(
+        &cfg, &x, &wgate, &wup, &wdown, &act, &rp, &np, &params, &mut Transcript::new(b"cffn"),
+    );
+    let (ck_a, _vk) = pcs::keys(&params, 3); // seq*d_model = 2*4 = 8 → 3 vars
+    let mut bad = out.clone();
+    bad[0] += Fr::from(1u64);
+    let bad_comm_out = pcs::commit(&ck_a, &bad);
+    assert!(
+        !verify_committed_ffn(
+            &cfg, &wgate, &wup, &wdown, &act, &rp, &np, &comm_x, &bad_comm_out, &proof, &params,
+            &mut Transcript::new(b"cffn"),
+        ),
+        "a wrong output commitment must be rejected"
+    );
+}
+
+#[test]
+fn committed_ffn_forged_weight_is_rejected() {
+    let (cfg, x, wgate, wup, wdown, r_table, q_table, act, rsqrt, w_norm) = committed_ffn_inputs();
+    let rp = RequantParams { bias: Fr::from(0u64), divisor: 4, r_table: &r_table, q_table: &q_table };
+    let np = NormParams { weight: &w_norm, table: &rsqrt };
+    let params = ffn_srs();
+
+    let (proof, comm_x, comm_out, _out) = prove_committed_ffn(
+        &cfg, &x, &wgate, &wup, &wdown, &act, &rp, &np, &params, &mut Transcript::new(b"cffn"),
+    );
+    // A different Wdown: its recomputed commitment won't match the proof's opening.
+    let mut wdown_bad = wdown.clone();
+    wdown_bad[0] += Fr::from(1u64);
+    assert!(
+        !verify_committed_ffn(
+            &cfg, &wgate, &wup, &wdown_bad, &act, &rp, &np, &comm_x, &comm_out, &proof, &params,
+            &mut Transcript::new(b"cffn"),
+        ),
+        "a forged Wdown must be rejected"
+    );
+}
+
+#[test]
+fn committed_ffn_tampered_gate_commitment_is_rejected() {
+    let (cfg, x, wgate, wup, wdown, r_table, q_table, act, rsqrt, w_norm) = committed_ffn_inputs();
+    let rp = RequantParams { bias: Fr::from(0u64), divisor: 4, r_table: &r_table, q_table: &q_table };
+    let np = NormParams { weight: &w_norm, table: &rsqrt };
+    let params = ffn_srs();
+
+    let (mut proof, comm_x, comm_out, _out) = prove_committed_ffn(
+        &cfg, &x, &wgate, &wup, &wdown, &act, &rp, &np, &params, &mut Transcript::new(b"cffn"),
+    );
+    // The gate commitment is both the gate matmul output and the requant accumulator: swapping it
+    // for unrelated data breaks both the projection opening and the requant division identity.
+    let (ck_f, _vk) = pcs::keys(&params, 4); // seq*d_ff = 2*8 = 16 → 4 vars
+    proof.comm_gate = pcs::commit(&ck_f, &vec![Fr::from(5u64); 16]);
+    assert!(
+        !verify_committed_ffn(
+            &cfg, &wgate, &wup, &wdown, &act, &rp, &np, &comm_x, &comm_out, &proof, &params,
+            &mut Transcript::new(b"cffn"),
+        ),
+        "a tampered gate commitment must be rejected"
     );
 }
