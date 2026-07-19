@@ -341,8 +341,9 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           Q/K, and the per-head softmax argument for every head under one transcript; GQA is index
           layout (`head → kv group`). **Zero pending obligations** (quantized). This closes the
           M5.2b-cont assembly — the transformer block is now full-width, not just single-head.
-      - **81 `cargo test` green** (matmul **7** (adds committed succinct-verify / wrong-weight-commit /
-        forged-final-eval) + commitments 5 + hadamard 4 + **lookup 4** + **activation
+      - **85 `cargo test` green** (matmul **8** (adds committed succinct-verify / wrong-weight-commit /
+        forged-final-eval / **commitment-bound challenge**) + commitments 5 + hadamard/gadgets **7**
+        (adds committed verify / wrong-operand-commit / forged-final-eval) + **lookup 4** + **activation
         3** + **norm 6** + **attention 6** + **block 2** + **rope 4** + **mha 7** + **range 4** +
         **requant 7** (honest / tampered q,r / out-of-range decomposition / wrong divisor / **signed
         accumulator + bias** / requant→activation-lookup integration) + **FFN 12** (adds wide-gate→
@@ -380,9 +381,19 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
         (incl. rectangular A/B of different MLE widths), wrong-weight-commitment rejection, forged
         final-evaluation rejection. **Rationale for multilinear KZG:** pairing-based on BN254 ⇒ an
         opening verifies with the `ecPairing` precompile, keeping the on-chain verifier native-Solidity
-        (see ADR 0004 provenance note). Total `cargo test`: **81** (+8).
-      - **Remaining (M5.4b+):** extend the commitment binding to the lookup/Hadamard sub-arguments and
-        the `block`; then the on-chain verifier + settlement E2E below.
+        (see ADR 0004 provenance note).
+      - **Hadamard made succinct** (`gadgets.rs` `prove_committed_hadamard`/`verify_committed_hadamard`):
+        the SwiGLU gate's `a(ch)`, `b(ch)` are bound to PCS commitments of `a`,`b`; the verifier holds
+        only `z`. Tests: honest verify from commitments, wrong-operand-commitment rejection, forged
+        final-evaluation rejection.
+      - **Fiat–Shamir soundness (committed paths):** the committed transcripts absorb the operand
+        commitments **before** drawing the evaluation point (`bind_and_draw_committed`,
+        `bind_hadamard_committed`, via `pcs::commitment_bytes`), so a prover can't fix the witness after
+        seeing the "random" point (adaptive-witness attack). Guarded by a dedicated matmul test. Total
+        `cargo test`: **85** (+12 over M5.3).
+      - **Remaining (M5.4b+):** extend the commitment binding to the **lookup** sub-argument (its
+        grand-sum `Σa=Σb` becomes a sumcheck + PCS openings) and the `block`; then the on-chain verifier
+        + settlement E2E below.
 - [ ] **M5.4b** Implement `IVerifiedInference` verifier (Option A native Solidity via BN254
       precompiles: KZG opening + sumcheck; Groth16 wrap optional for gas); gas bench.
 - [ ] E2E: task → spot-check proof → on-chain verify → settle.

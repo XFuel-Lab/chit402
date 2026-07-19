@@ -13,6 +13,7 @@ ark-bn254 = "0.4"
 ark-ec = "0.4"
 ark-poly = "0.4"
 ark-poly-commit = "0.4"
+ark-serialize = "0.4"
 ark-std = { version = "0.4", features = ["std"] }
 sha3 = "0.10"
 

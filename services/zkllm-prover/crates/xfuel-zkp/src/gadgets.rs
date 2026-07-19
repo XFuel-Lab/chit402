@@ -11,6 +11,7 @@
 use crate::commitment::commit_field_table;
 use crate::manifest::ActType;
 use crate::mle::{eq_eval, eq_weights, mle_eval};
+use crate::pcs;
 use crate::sumcheck::{prove_product_multi, verify_product_multi, MultiSumcheckProof};
 use crate::transcript::Transcript;
 use crate::{log2_exact, Fr};
@@ -24,6 +25,15 @@ pub struct HadamardProof {
     pub b_final: Fr,
 }
 
+/// Core prover for an already-drawn point `r`: runs the degree-3 sumcheck and returns the proof plus
+/// the sumcheck challenge `ch` (the point at which `a`,`b` are finally evaluated / opened).
+fn prove_hadamard_core(a: &[Fr], b: &[Fr], z: &[Fr], r: Vec<Fr>, tr: &mut Transcript) -> (HadamardProof, Vec<Fr>) {
+    let e = eq_weights(&r);
+    let z_at_r = mle_eval(z, &r);
+    let (sumcheck, ch, finals) = prove_product_multi(vec![e, a.to_vec(), b.to_vec()], tr);
+    (HadamardProof { r, z_at_r, sumcheck, a_final: finals[1], b_final: finals[2] }, ch)
+}
+
 /// Prove `z = a ⊙ b`.
 pub fn prove_hadamard(a: &[Fr], b: &[Fr], z: &[Fr], tr: &mut Transcript) -> HadamardProof {
     assert_eq!(a.len(), b.len());
@@ -35,10 +45,7 @@ pub fn prove_hadamard(a: &[Fr], b: &[Fr], z: &[Fr], tr: &mut Transcript) -> Hada
     tr.absorb_bytes(b"had.z", &commit_field_table(z));
     let r: Vec<Fr> = (0..s).map(|_| tr.challenge(b"had.r")).collect();
 
-    let e = eq_weights(&r);
-    let z_at_r = mle_eval(z, &r);
-    let (sumcheck, _ch, finals) = prove_product_multi(vec![e, a.to_vec(), b.to_vec()], tr);
-    HadamardProof { r, z_at_r, sumcheck, a_final: finals[1], b_final: finals[2] }
+    prove_hadamard_core(a, b, z, r, tr).0
 }
 
 /// Verify `z = a ⊙ b` (verifier holds `a, b, z` in the M5.2 verifiable-computation model).
@@ -68,6 +75,72 @@ pub fn verify_hadamard(a: &[Fr], b: &[Fr], z: &[Fr], proof: &HadamardProof, tr: 
     }
     // Bind a(r), b(r) to the committed tables.
     proof.a_final == mle_eval(a, &ch) && proof.b_final == mle_eval(b, &ch)
+}
+
+/// A succinct Hadamard proof: the sumcheck plus PCS openings binding `a(ch)`, `b(ch)` to commitments
+/// of `a`, `b`. The verifier holds only `z` (the elementwise-product output claim) and the two
+/// commitments — never the operands. (M5.4a)
+pub struct CommittedHadamardProof {
+    pub inner: HadamardProof,
+    pub open_a: pcs::OpeningProof,
+    pub open_b: pcs::OpeningProof,
+}
+
+/// Committed-mode binding: absorb the `a`,`b` commitments and the output `z` before drawing `r`.
+/// Absorbing the commitments up front fixes the operands before the "random" point is known (same
+/// soundness requirement as the committed matmul). `a` and `b` share one MLE width, so one key pair
+/// serves both.
+fn bind_hadamard_committed(tr: &mut Transcript, comm_a: &pcs::Comm, comm_b: &pcs::Comm, z: &[Fr]) -> Vec<Fr> {
+    tr.absorb_bytes(b"had.commA", &pcs::commitment_bytes(comm_a));
+    tr.absorb_bytes(b"had.commB", &pcs::commitment_bytes(comm_b));
+    tr.absorb_bytes(b"had.z", &commit_field_table(z));
+    let s = log2_exact(z.len());
+    (0..s).map(|_| tr.challenge(b"had.r")).collect()
+}
+
+/// Prove `z = a ⊙ b`, committing `a`,`b` and opening them at the sumcheck challenge point.
+pub fn prove_committed_hadamard(a: &[Fr], b: &[Fr], z: &[Fr], ck: &pcs::Ck, tr: &mut Transcript) -> CommittedHadamardProof {
+    assert_eq!(a.len(), b.len());
+    assert_eq!(a.len(), z.len());
+    let comm_a = pcs::commit(ck, a);
+    let comm_b = pcs::commit(ck, b);
+    let r = bind_hadamard_committed(tr, &comm_a, &comm_b, z);
+    let (inner, ch) = prove_hadamard_core(a, b, z, r, tr);
+    let open_a = pcs::open(ck, a, &ch);
+    let open_b = pcs::open(ck, b, &ch);
+    CommittedHadamardProof { inner, open_a, open_b }
+}
+
+/// Succinctly verify `z = a ⊙ b` from commitments to `a`,`b` (the verifier holds only `z`).
+pub fn verify_committed_hadamard(
+    z: &[Fr],
+    comm_a: &pcs::Comm,
+    comm_b: &pcs::Comm,
+    proof: &CommittedHadamardProof,
+    vk: &pcs::Vk,
+    tr: &mut Transcript,
+) -> bool {
+    if !z.len().is_power_of_two() {
+        return false;
+    }
+    let inner = &proof.inner;
+    let r = bind_hadamard_committed(tr, comm_a, comm_b, z);
+    if r != inner.r {
+        return false;
+    }
+    if mle_eval(z, &r) != inner.z_at_r {
+        return false;
+    }
+    let (ch, reduced) = match verify_product_multi(&inner.sumcheck, inner.z_at_r, tr) {
+        Some(v) => v,
+        None => return false,
+    };
+    if reduced != eq_eval(&r, &ch) * inner.a_final * inner.b_final {
+        return false;
+    }
+    // Bind a(ch), b(ch) to the commitments via PCS openings instead of recomputing mle_eval(a/b).
+    pcs::verify(vk, comm_a, &ch, inner.a_final, &proof.open_a)
+        && pcs::verify(vk, comm_b, &ch, inner.b_final, &proof.open_b)
 }
 
 /// A transcendental step whose sound lookup argument is pending (M5.2b). The witness is produced

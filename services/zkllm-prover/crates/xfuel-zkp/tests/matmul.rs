@@ -139,6 +139,34 @@ fn committed_wrong_weight_commitment_is_rejected() {
 }
 
 #[test]
+fn committed_challenge_binds_the_weight_commitment() {
+    // Soundness guard: the evaluation point must depend on the A,B commitments, not just C. If a
+    // verifier were handed a proof produced under a *different* weight commitment (i.e. the prover
+    // committed to other weights than the transcript pins), the re-derived point must diverge and
+    // the proof must fail. This is the property that closes the adaptive-witness attack.
+    let mut rng = test_rng();
+    let (m, k, n) = (4, 8, 4);
+    let a = rand_vec(m * k, &mut rng);
+    let b = rand_vec(k * n, &mut rng);
+    let mm = MatMul::new(m, k, n, a, b);
+    let ((ck_a, vk_a), (ck_b, vk_b)) = matmul_keys(m, k, n, &mut rng);
+    let (comm_a, _comm_b) = commit(&mm, &ck_a, &ck_b);
+    let proof = prove_committed(&mm, &ck_a, &ck_b, &mut Transcript::new(b"t"));
+
+    // Verify with a commitment to different weights: since commB is absorbed before (rx,ry), the
+    // point re-derives differently and the sumcheck rx/ry equality check fails.
+    let other_b = rand_vec(k * n, &mut rng);
+    let bad_comm_b = pcs::commit(&ck_b, &other_b);
+    assert!(
+        !verify_committed(
+            m, k, n, &comm_a, &bad_comm_b, &mm.c, &proof, &vk_a, &vk_b,
+            &mut Transcript::new(b"t")
+        ),
+        "the evaluation point must be bound to the weight commitment"
+    );
+}
+
+#[test]
 fn committed_forged_final_evaluation_is_rejected() {
     let mut rng = test_rng();
     let (m, k, n) = (4, 8, 4);
