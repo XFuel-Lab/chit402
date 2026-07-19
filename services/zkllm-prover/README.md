@@ -63,9 +63,12 @@ composes the same toolkit into attention's nonlinear core. The **transposed-oper
 (`matmul::prove_committed_io_bt`) proves scores `S = Q·Kᵀ` with **no transpose argument**: since
 `Kᵀ`'s MLE at `(ch,ry)` equals `K`'s at `(ry,ch)`, the verifier opens `K`'s natural `n×k` commitment at
 the **swapped point** — so the scores matmul reuses the *same* commitment the `K` projection emitted as
-its output (M5.4b). **Explicitly pending:** the rest of a committed attention (wire projections/scores/
-context/output + residual into `prove_committed_attention`) then assemble the fully-succinct `block`;
-then the on-chain `IVerifiedInference` verifier (BN254 precompiles) + settlement E2E, plus the RAM bench (M5.3).
+its output. Finally, **committed attention** (`attention::prove_committed_attention`) assembles all of
+these into a whole succinct causal self-attention sub-block — `norm → Q/K/V projections → scores (bt) →
+softmax → context (P·V) → output → residual` — with the verifier holding only the block's input/output
+commitments + the public weights; every seam is threaded by commitment reuse (M5.4b). **Explicitly
+pending:** assemble the committed FFN seam into a fully-succinct `block`; then the on-chain
+`IVerifiedInference` verifier (BN254 precompiles) + settlement E2E, plus the RAM bench (M5.3).
 
 ## Build & test
 
@@ -131,9 +134,11 @@ checks the sumcheck/lookup arguments are sound. Two boundaries remain explicit:
    does the same for attention's nonlinear core, tying the causal mask + `exp`/reciprocal tables to
    their canonical forms. The **transposed-operand matmul-io** (`prove_committed_io_bt`) closes the
    scores seam `S = Q·Kᵀ` by opening `K`'s natural commitment at a swapped point — no transpose
-   argument, and the same commitment the `K` projection emitted is reused. Still pending: wire the
-   committed projections/scores/context/output + residual into `prove_committed_attention`, then
-   assemble the fully-succinct **block**, then the **on-chain `IVerifiedInference` verifier** (BN254 precompiles verify a KZG
+   argument, and the same commitment the `K` projection emitted is reused. The **committed attention**
+   sub-block (`prove_committed_attention`) then threads norm → projections → scores → softmax → context
+   → output → residual entirely by commitment reuse — the verifier holds only the block I/O commitments
+   + public weights. Still pending: assemble the committed FFN seam into a fully-succinct **block**,
+   then the **on-chain `IVerifiedInference` verifier** (BN254 precompiles verify a KZG
    opening + the sumcheck) with nullifier + settlement; a Groth16 wrap remains an optional gas
    optimization.
 

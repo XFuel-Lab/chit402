@@ -1,12 +1,16 @@
 //! Soundness/completeness tests for the causal self-attention sub-block (projections + Q·Kᵀ +
 //! softmax-via-lookup + P·V + output projection + residual).
 
-use xfuel_zkp::attention::{prove_attention, verify_attention, AttnConfig};
+use xfuel_zkp::attention::{
+    prove_attention, prove_committed_attention, verify_attention, verify_committed_attention,
+    AttnConfig,
+};
 use xfuel_zkp::ffn::NormParams;
 use xfuel_zkp::norm::RsqrtTable;
 use xfuel_zkp::table::ScalarTable;
 use xfuel_zkp::transcript::Transcript;
-use xfuel_zkp::Fr;
+use xfuel_zkp::{pcs, Fr};
+use ark_std::test_rng;
 
 /// `d × d` row-major identity.
 fn identity(d: usize) -> Vec<Fr> {
@@ -163,5 +167,121 @@ fn wrong_exp_table_is_rejected() {
             &mut Transcript::new(b"attn")
         ),
         "an E from a different exp table must be rejected"
+    );
+}
+
+// ─── Committed (succinct) attention — M5.4b ───────────────────────────────────
+
+/// Identity RMSNorm params for `d`: `ss = d`, `inv_rms(d) = out_scale/√d = 1` with `out_scale = √d`,
+/// weight `1` ⇒ `xn = x`. Domain 64 covers `ss = d` for the small fixtures.
+fn norm_params(d: usize) -> (RsqrtTable, Vec<Fr>) {
+    let rsqrt = RsqrtTable::new(64, (d as f64).sqrt(), 0.0);
+    assert_eq!(rsqrt.apply(&[Fr::from(d as u64)])[0], Fr::from(1u64));
+    (rsqrt, vec![Fr::from(1u64); d])
+}
+
+/// SRS large enough for every tensor width the block touches (max = the length-64 table domains → 6
+/// vars for the (4,4) fixture).
+fn srs() -> pcs::Params {
+    pcs::setup(6, &mut test_rng())
+}
+
+#[test]
+fn committed_attention_verifies() {
+    let (seq, d) = (4, 4);
+    let c = cfg(seq, d);
+    let (x, wq, wk, wv, wo) = fixture(seq, d);
+    let (exp, recip) = (exp_table(), recip_table());
+    let (rsqrt, w_norm) = norm_params(d);
+    let np = NormParams { weight: &w_norm, table: &rsqrt };
+    let params = srs();
+
+    let (proof, comm_x, comm_out, _out) = prove_committed_attention(
+        &c, &x, &wq, &wk, &wv, &wo, &np, &exp, &recip, &params, &mut Transcript::new(b"catt"),
+    );
+    assert!(
+        verify_committed_attention(
+            &c, &wq, &wk, &wv, &wo, &np, &exp, &recip, &comm_x, &comm_out, &proof, &params,
+            &mut Transcript::new(b"catt"),
+        ),
+        "honest committed attention must verify from commitments alone"
+    );
+}
+
+#[test]
+fn committed_attention_wrong_output_commitment_is_rejected() {
+    let (seq, d) = (4, 4);
+    let c = cfg(seq, d);
+    let (x, wq, wk, wv, wo) = fixture(seq, d);
+    let (exp, recip) = (exp_table(), recip_table());
+    let (rsqrt, w_norm) = norm_params(d);
+    let np = NormParams { weight: &w_norm, table: &rsqrt };
+    let params = srs();
+
+    let (proof, comm_x, _comm_out, out) = prove_committed_attention(
+        &c, &x, &wq, &wk, &wv, &wo, &np, &exp, &recip, &params, &mut Transcript::new(b"catt"),
+    );
+    // A commitment to a different `out` must fail the residual opening.
+    let (ck_a, _vk) = pcs::keys(&params, 4); // seq*d = 16 → 4 vars
+    let mut bad = out.clone();
+    bad[0] += Fr::from(1u64);
+    let bad_comm_out = pcs::commit(&ck_a, &bad);
+    assert!(
+        !verify_committed_attention(
+            &c, &wq, &wk, &wv, &wo, &np, &exp, &recip, &comm_x, &bad_comm_out, &proof, &params,
+            &mut Transcript::new(b"catt"),
+        ),
+        "a wrong output commitment must be rejected"
+    );
+}
+
+#[test]
+fn committed_attention_forged_weight_is_rejected() {
+    let (seq, d) = (4, 4);
+    let c = cfg(seq, d);
+    let (x, wq, wk, wv, wo) = fixture(seq, d);
+    let (exp, recip) = (exp_table(), recip_table());
+    let (rsqrt, w_norm) = norm_params(d);
+    let np = NormParams { weight: &w_norm, table: &rsqrt };
+    let params = srs();
+
+    let (proof, comm_x, comm_out, _out) = prove_committed_attention(
+        &c, &x, &wq, &wk, &wv, &wo, &np, &exp, &recip, &params, &mut Transcript::new(b"catt"),
+    );
+    // Verify against a different Wq: its recomputed commitment won't match the proof's opening.
+    let mut wq_bad = wq.clone();
+    wq_bad[0] += Fr::from(1u64);
+    assert!(
+        !verify_committed_attention(
+            &c, &wq_bad, &wk, &wv, &wo, &np, &exp, &recip, &comm_x, &comm_out, &proof, &params,
+            &mut Transcript::new(b"catt"),
+        ),
+        "a forged Wq must be rejected"
+    );
+}
+
+#[test]
+fn committed_attention_tampered_intermediate_commitment_is_rejected() {
+    let (seq, d) = (4, 4);
+    let c = cfg(seq, d);
+    let (x, wq, wk, wv, wo) = fixture(seq, d);
+    let (exp, recip) = (exp_table(), recip_table());
+    let (rsqrt, w_norm) = norm_params(d);
+    let np = NormParams { weight: &w_norm, table: &rsqrt };
+    let params = srs();
+
+    let (mut proof, comm_x, comm_out, _out) = prove_committed_attention(
+        &c, &x, &wq, &wk, &wv, &wo, &np, &exp, &recip, &params, &mut Transcript::new(b"catt"),
+    );
+    // Swap the carried Q commitment for a commitment to unrelated data: the projection output opening
+    // and the scores operand opening both break.
+    let (ck_h, _vk) = pcs::keys(&params, 4); // seq*d_head = 16 → 4 vars
+    proof.comm_q = pcs::commit(&ck_h, &vec![Fr::from(7u64); seq * d]);
+    assert!(
+        !verify_committed_attention(
+            &c, &wq, &wk, &wv, &wo, &np, &exp, &recip, &comm_x, &comm_out, &proof, &params,
+            &mut Transcript::new(b"catt"),
+        ),
+        "a tampered intermediate commitment must be rejected"
     );
 }
