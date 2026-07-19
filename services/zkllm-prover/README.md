@@ -16,7 +16,7 @@ and ADR 0003). CPU-only — runs in any container.
 | `pcs` | **Multilinear-KZG polynomial commitment** (PST, `ark-poly-commit`) over BN254 — commit a tensor's MLE, then open its evaluation at a point with a constant-size proof. This is the succinctness step: the verifier checks openings instead of holding tensors. Pairing-based ⇒ `ecPairing`-precompile-verifiable on Base. (M5.4a) |
 | `sumcheck` | Product sumcheck + **generic multi-product (degree-d) sumcheck** + Lagrange eval, over a Keccak256 Fiat–Shamir transcript. |
 | `mle` | Multilinear-extension helpers (`eq` weights, MLE evaluation, `eq_eval`). |
-| `gadgets` | **Sound Hadamard (elementwise-product) argument** `z = a⊙b` (SwiGLU/RoPE workhorse) + typed `LookupObligation`. |
+| `gadgets` | **Sound Hadamard (elementwise-product) argument** `z = a⊙b` (SwiGLU/RoPE workhorse) + typed `LookupObligation`. `prove_committed_hadamard`/`verify_committed_hadamard` bind the operands to PCS commitments so the verifier holds only `z` (M5.4a). |
 | `lookup` | **Logup lookup argument** — proves a non-linearity via a `(in, out)` table (SiLU/GeLU/softmax-exp/rsqrt) with no field-native circuit. |
 | `activation` | Quantized **SiLU/GeLU** lookup table + `prove`/`verify` — discharges the FFN's activation obligation soundly. |
 | `norm` | **RMSNorm gadget** — `rsqrt` via a canonical lookup table + a linear sum-of-squares reduction + a Hadamard scaling chain. Discharges the FFN's norm obligation soundly. |
@@ -43,12 +43,15 @@ plus two `range` checks and is now **wired into the FFN gate path** — a wide m
 requantized into the activation's code domain under the block transcript (an FFN test proves a wide
 gate → requant → activation → sound norm with **zero pending obligations**). The **Tier-3b
 block-window spot-check** (`spotcheck`) selects a Fiat–Shamir window of blocks bound to the model +
-PBR commitments (M5.3). The **matmul core is now succinct** (`matmul::prove_committed`/
-`verify_committed`): the two final MLE evaluations that previously required the full `A`,`B` tensors
-are discharged by `pcs` multilinear-KZG openings, so the verifier needs only the commitments — the
-weight commitment (`B`) being the PoMA anchor (M5.4a). **Explicitly pending:** extend the PCS binding
-to the lookup/Hadamard sub-arguments and the block, then the on-chain `IVerifiedInference` verifier
-(BN254 precompiles) + settlement E2E, plus the RAM bench on a high-RAM host (M5.3).
+PBR commitments (M5.3). The **matmul core and the Hadamard gate are now succinct** (`matmul::
+prove_committed`/`verify_committed`, `gadgets::prove_committed_hadamard`/`verify_committed_hadamard`):
+the final MLE evaluations that previously required the full operand tensors are discharged by `pcs`
+multilinear-KZG openings, so the verifier needs only the commitments — the weight commitment being the
+PoMA anchor (M5.4a). The committed transcripts **absorb the operand commitments before drawing the
+evaluation point**, so a prover cannot adaptively pick a witness after seeing the challenge.
+**Explicitly pending:** extend the PCS binding to the lookup sub-argument (incl. turning its grand-sum
+into a sumcheck) and the block, then the on-chain `IVerifiedInference` verifier (BN254 precompiles) +
+settlement E2E, plus the RAM bench on a high-RAM host (M5.3).
 
 ## Build & test
 
@@ -95,14 +98,17 @@ checks the sumcheck/lookup arguments are sound. Two boundaries remain explicit:
    Fiat–Shamir block window for the cheaper Tier-3b. The non-quantized path keeps placeholder
    norm/activation for exercising linear+gating on arbitrary field inputs. What remains is the
    full-model **RAM benchmark** on a high-RAM host (M5.3).
-2. **Polynomial commitment: matmul core done, rest pending (M5.4a shipped).** The matmul argument now
-   has a succinct path (`matmul::prove_committed`/`verify_committed`): the two final MLE evaluations
-   are bound to **multilinear-KZG** commitments of `A`,`B` via `pcs`, so the verifier holds only the
-   commitments (the weight commitment `B` is the PoMA anchor) — not the tensors. This carries a
-   trusted-setup (powers-of-tau) assumption, generated once off the hot path (`pcs::setup`). Still
-   pending: extend the same commitment binding to the lookup/Hadamard sub-arguments and the block,
-   then the **on-chain `IVerifiedInference` verifier** (BN254 precompiles verify a KZG opening + the
-   sumcheck) with nullifier + settlement; a Groth16 wrap remains an optional gas optimization.
+2. **Polynomial commitment: matmul core + Hadamard done, rest pending (M5.4a).** The matmul argument
+   and the Hadamard gate now have succinct paths (`matmul::prove_committed`/`verify_committed`,
+   `gadgets::prove_committed_hadamard`/`verify_committed_hadamard`): the final MLE evaluations are
+   bound to **multilinear-KZG** commitments via `pcs`, so the verifier holds only the commitments (the
+   weight commitment is the PoMA anchor) — not the tensors. The committed transcripts absorb the
+   operand commitments **before** the evaluation point, closing the adaptive-witness attack. This
+   carries a trusted-setup (powers-of-tau) assumption, generated once off the hot path (`pcs::setup`).
+   Still pending: the **lookup** sub-argument (its grand-sum `Σa=Σb` must become a sumcheck + PCS
+   openings) and the block, then the **on-chain `IVerifiedInference` verifier** (BN254 precompiles
+   verify a KZG opening + the sumcheck) with nullifier + settlement; a Groth16 wrap remains an optional
+   gas optimization.
 
 Until those land, zkLLM proofs are generated/verified off-chain and the tier engine keeps serving
 `tee` / `settlement` / `signed`.

@@ -62,6 +62,7 @@ so a zkLLM proof slots into the same settlement path as the SP1 settlement proof
 | `ark-ec` | 0.4 | Apache-2.0 OR MIT | Elliptic-curve / `Pairing` trait for the multilinear-KZG PCS |
 | `ark-poly` | 0.4 | Apache-2.0 OR MIT | `DenseMultilinearExtension` (tensor → MLE) for the PCS |
 | `ark-poly-commit` | 0.4 | Apache-2.0 OR MIT | `multilinear_pc::MultilinearPC` — multilinear KZG (PST) commitment (M5.4) |
+| `ark-serialize` | 0.4 | Apache-2.0 OR MIT | Canonical commitment encoding, absorbed into the Fiat–Shamir transcript (M5.4) |
 | `ark-std` | 0.4 | Apache-2.0 OR MIT | RNG / no-std shims / test utils |
 | `sha3` | 0.10 | Apache-2.0 OR MIT | `Keccak256` — Ethereum-compatible commitments + Fiat-Shamir |
 

@@ -31,6 +31,7 @@ use ark_poly_commit::multilinear_pc::data_structures::{
     Commitment, CommitterKey, Proof, UniversalParams, VerifierKey,
 };
 use ark_poly_commit::multilinear_pc::MultilinearPC;
+use ark_serialize::CanonicalSerialize;
 use ark_std::rand::RngCore;
 
 /// Universal parameters (the SRS) from the trusted setup; supports any `num_vars ≤ max_vars`.
@@ -74,6 +75,20 @@ fn ark_point(point: &[Fr]) -> Vec<Fr> {
 /// Commit to a tensor given as its `2^n`-length row-major MLE table.
 pub fn commit(ck: &Ck, table: &[Fr]) -> Comm {
     MultilinearPC::commit(ck, &to_mle(table))
+}
+
+/// Canonical byte encoding of a commitment, for absorbing into the Fiat–Shamir transcript.
+///
+/// **Soundness-critical:** a committed argument must bind its operand commitments into the
+/// transcript *before* the verifier's evaluation point is drawn — otherwise a prover could pick the
+/// committed tensor after seeing the "random" point and satisfy the single-point check while the
+/// global relation fails. Callers absorb this before challenging. The multilinear-KZG commitment is
+/// deterministic, so prover and verifier absorb identical bytes.
+pub fn commitment_bytes(comm: &Comm) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    comm.serialize_compressed(&mut bytes)
+        .expect("commitment serialization is infallible for in-memory buffers");
+    bytes
 }
 
 /// Produce an opening proof that `table`'s MLE evaluates to `mle_eval(table, point)` at `point`.

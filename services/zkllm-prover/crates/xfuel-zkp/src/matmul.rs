@@ -115,6 +115,28 @@ fn bind_and_draw(tr: &mut Transcript, m: usize, k: usize, n: usize, c: &[Fr]) ->
     (rx, ry)
 }
 
+/// Committed-mode binding: absorb dims, `C`, **and the `A`,`B` commitments** before drawing the
+/// evaluation point. Absorbing the commitments up front is soundness-critical — it forces the prover
+/// to fix `A`,`B` before learning `(rx, ry)`, closing the adaptive-witness attack that would exist if
+/// the point were derived from `C` alone.
+fn bind_and_draw_committed(
+    tr: &mut Transcript,
+    m: usize,
+    k: usize,
+    n: usize,
+    c: &[Fr],
+    comm_a: &pcs::Comm,
+    comm_b: &pcs::Comm,
+) -> (Vec<Fr>, Vec<Fr>) {
+    tr.absorb_bytes(b"dims", &encode_dims(m, k, n));
+    tr.absorb_bytes(b"C", &commit_table(c));
+    tr.absorb_bytes(b"commA", &pcs::commitment_bytes(comm_a));
+    tr.absorb_bytes(b"commB", &pcs::commitment_bytes(comm_b));
+    let rx = draw_point(tr, log2_exact(m), b"rx");
+    let ry = draw_point(tr, log2_exact(n), b"ry");
+    (rx, ry)
+}
+
 /// The two MLE query points a matmul proof reduces to: `Â` is opened at `rx ++ ch`, `B̂` at
 /// `ch ++ ry`, where `ch` is the sumcheck's per-round challenge vector.
 fn opening_points(rx: &[Fr], ry: &[Fr], ch: &[Fr]) -> (Vec<Fr>, Vec<Fr>) {
@@ -125,9 +147,9 @@ fn opening_points(rx: &[Fr], ry: &[Fr], ch: &[Fr]) -> (Vec<Fr>, Vec<Fr>) {
     (a_point, b_point)
 }
 
-/// Core prover, also returning the `Â`/`B̂` opening points so [`prove_committed`] can open them.
-fn prove_inner(mm: &MatMul, tr: &mut Transcript) -> (MatMulProof, Vec<Fr>, Vec<Fr>) {
-    let (rx, ry) = bind_and_draw(tr, mm.m, mm.k, mm.n, &mm.c);
+/// Core prover for an already-drawn evaluation point `(rx, ry)`. Runs the inner-dimension sumcheck
+/// and returns the proof plus the `Â`/`B̂` opening points so [`prove_committed`] can open them.
+fn prove_core(mm: &MatMul, rx: Vec<Fr>, ry: Vec<Fr>, tr: &mut Transcript) -> (MatMulProof, Vec<Fr>, Vec<Fr>) {
     let eqx = eq_weights(&rx);
     let eqy = eq_weights(&ry);
 
@@ -159,7 +181,8 @@ fn prove_inner(mm: &MatMul, tr: &mut Transcript) -> (MatMulProof, Vec<Fr>, Vec<F
 
 /// Produce a proof that `C = A·B`.
 pub fn prove(mm: &MatMul, tr: &mut Transcript) -> MatMulProof {
-    prove_inner(mm, tr).0
+    let (rx, ry) = bind_and_draw(tr, mm.m, mm.k, mm.n, &mm.c);
+    prove_core(mm, rx, ry, tr).0
 }
 
 /// Verify a proof that `C = A·B` (verifiable-computation setting: verifier holds `A, B, C`).
@@ -214,8 +237,13 @@ pub fn commit(mm: &MatMul, ck_a: &pcs::Ck, ck_b: &pcs::Ck) -> (pcs::Comm, pcs::C
 }
 
 /// Prove `C = A·B` and open `A`, `B` at the argument's final MLE query points.
+///
+/// The commitments are bound into the transcript before the evaluation point is drawn (see
+/// [`bind_and_draw_committed`]), so this is sound against an adaptively-chosen witness.
 pub fn prove_committed(mm: &MatMul, ck_a: &pcs::Ck, ck_b: &pcs::Ck, tr: &mut Transcript) -> CommittedMatMulProof {
-    let (inner, a_point, b_point) = prove_inner(mm, tr);
+    let (comm_a, comm_b) = commit(mm, ck_a, ck_b);
+    let (rx, ry) = bind_and_draw_committed(tr, mm.m, mm.k, mm.n, &mm.c, &comm_a, &comm_b);
+    let (inner, a_point, b_point) = prove_core(mm, rx, ry, tr);
     let open_a = pcs::open(ck_a, &mm.a, &a_point);
     let open_b = pcs::open(ck_b, &mm.b, &b_point);
     CommittedMatMulProof { inner, open_a, open_b }
@@ -237,7 +265,7 @@ pub fn verify_committed(
     tr: &mut Transcript,
 ) -> bool {
     let inner = &proof.inner;
-    let (rx, ry) = bind_and_draw(tr, m, k, n, c);
+    let (rx, ry) = bind_and_draw_committed(tr, m, k, n, c, comm_a, comm_b);
     if rx != inner.rx || ry != inner.ry {
         return false;
     }

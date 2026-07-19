@@ -56,7 +56,8 @@ code; verbatim source from zkGPT/DeepProve/Expander implementations.
 | Matmul/attention GKR proof | planned | 2025/1184 §linear; Libra | `ceno`, `gkr-backend` | — |
 | Non-linear (GeLU/softmax/LN) | planned | 2025/1184 §non-linear; Lasso | `jolt`/Lasso | Constraint-fusion technique from paper |
 | Polynomial commitment (`pcs.rs`) | **implemented (M5.4a)** | PST TCC 2013 (multilinear KZG); Hyrax 2017/1132 (alt) | `ark-poly-commit::multilinear_pc`, `ark-bn254` | Thin wrapper over the crate's `MultilinearPC`; MSB↔LSB point bridge to our `mle`; pinned by a `mle_eval` convention-match test. No encumbered code. |
-| Matmul PCS binding (`matmul::*_committed`) | **implemented (M5.4a)** | Thaler matmul + PST opening | `ark-poly-commit`, `ark-bn254` | Verifier discharges the two final MLE evals via PCS openings; weight commitment `B` = PoMA anchor. |
+| Matmul PCS binding (`matmul::*_committed`) | **implemented (M5.4a)** | Thaler matmul + PST opening | `ark-poly-commit`, `ark-bn254` | Verifier discharges the two final MLE evals via PCS openings; weight commitment `B` = PoMA anchor. **Fiat–Shamir absorbs the A,B commitments before the evaluation point (soundness: no adaptive witness).** |
+| Hadamard PCS binding (`gadgets::*_committed_hadamard`) | **implemented (M5.4a)** | logup/GKR product-sumcheck + PST opening | `ark-poly-commit`, `ark-bn254` | Committed elementwise-product (SwiGLU gating); operands bound via PCS openings, commitments absorbed pre-challenge. |
 | On-chain verifier | planned | ZKG2_VERIFIER_SPEC | BN254 precompiles | **Native Solidity (Option A): `ecPairing` verifies a KZG opening + sumcheck; Groth16 wrap optional for gas (M5.4b).** |
 
 ---
