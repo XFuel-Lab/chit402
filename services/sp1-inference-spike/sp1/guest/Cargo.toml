@@ -5,7 +5,12 @@ edition = "2021"
 publish = false
 
 [dependencies]
-sp1-zkvm = "6.0.2"
+# NOTE (spike finding 2026-07-20): sp1-zkvm must be matched to the SP1 *toolchain* in use. Both
+# 6.3.1 (caret) and =6.0.2 fail to compile under the rustc-1.92 `succinct` toolchain baked into
+# xfuel-sp1-prover:latest ("type `u64` cannot be used with this register class" in sp1-zkvm's own
+# syscall asm). Resume on a matched SP1 *release* image / a toolchain installed via `sp1up` that
+# pairs with the chosen sp1-zkvm version. This is an SP1 env/version issue, NOT an arkworks/zkVM one.
+sp1-zkvm = "=6.0.2"
 xfuel-inference-spike-core = { path = "../../verify-core" }
 
 [profile.release]

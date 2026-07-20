@@ -99,12 +99,28 @@ weighed:
 
 **Spike status:** scaffolded + isolated in [`services/sp1-inference-spike/`](../../services/sp1-inference-spike/README.md)
 (PR #149). The SP1-independent core (serialize a KZG opening → `pcs::verify` → bundle) compiles and
-passes tests on any host incl. Windows; the zkVM build is the one remaining unknown.
+passes tests on any host incl. Windows.
 
-> **▶ RESUME HERE (Tier-3 on-chain verifier):** in Linux/Docker/WSL/AWS with the SP1 toolchain
-> (`sp1up`), run `cd services/sp1-inference-spike/sp1 && cargo prove build -p xfuel-inference-spike-guest`.
-> If it compiles → C1 confirmed; record the guest cycle count (`host` execute) here. If it fails on
-> `ark-poly-commit` → adopt **C2** and record why. **No audit-scope Solidity until this passes.**
+**Spike run 1 — 2026-07-20 (Docker `xfuel-sp1-prover:latest`).** `cargo prove build` of the guest:
+- ✅ **The arkworks stack compiles to the zkVM target** (`riscv32im-succinct-zkvm-elf`):
+  `ark-ff`, `ark-poly`, `ark-serialize`, `ark-std`, `ark-relations`, `ark-snark`, `sha3` all built.
+  **This de-risks the scary part of C1** — the crypto foundation is zkVM-compatible.
+- ⚠️ **Blocker (env/version, not crypto):** the build aborts at **`sp1-zkvm` itself** — `type u64
+  cannot be used with this register class` in its syscall inline-asm (`halt.rs`/`ed25519.rs`). This
+  image's `succinct` toolchain is **rustc 1.92** (Dec 2025), which is too new for the crates.io
+  `sp1-zkvm` asm; **both** `6.3.1` and pinned `=6.0.2` fail identically (transitive `sp1-lib`/
+  `sp1-primitives` still resolve to `6.3.1`). This is an **sp1-zkvm ↔ toolchain matching** problem.
+- ⏳ **Not yet reached:** `ark-bn254`/`ark-ec`/`ark-poly-commit` pairing compilation (build aborted at
+  `sp1-zkvm` first). C1's pairing-in-zkVM question stays open, but the arkworks foundation compiling
+  is a strong positive signal. **Lean remains C1.**
+
+> **▶ RESUME HERE (Tier-3 on-chain verifier):** use an SP1 environment where the `sp1-zkvm` crate
+> version and the `succinct` rustc toolchain are a **matched pair** — i.e. an official Succinct
+> release Docker image for a specific SP1 version, or `sp1up --version <v>` installing the toolchain
+> that pairs with the chosen `sp1-zkvm`. Then `cd services/sp1-inference-spike/sp1 && cargo prove build`.
+> Once `sp1-zkvm` compiles, the next signal is whether `ark-bn254`/`ark-poly-commit` pairings build:
+> compiles → **C1 confirmed**, record guest cycle count; fails → adopt **C2** (keccak + in-guest eval)
+> and record why. **No audit-scope Solidity until this passes.**
 
 Every future component (GKR backend, lookups, Groth16 wrapper) gets a row here with its license
 verified **before** it is added. Nothing enters the tree that isn't OSI-permissive.
