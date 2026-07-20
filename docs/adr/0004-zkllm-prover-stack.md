@@ -76,6 +76,36 @@ same assumption Groth16 already carries; keys are generated once, never on the h
 (`pcs::setup`). A transparent alternative (Hyrax, also in `ark-poly-commit`) is available if we later
 choose to drop the setup at the cost of `√n` opening size.
 
+**On-chain verifier decision — SP1-wrap (C1) (2026-07-20).** Rather than ship a hand-rolled
+native-Solidity multilinear-KZG + sumcheck verifier (large new audit surface, high gas), we run our
+**verifier inside an SP1 guest** and let Succinct wrap it to a cheap on-chain proof verified by the
+**existing `SP1Verifier.sol` on Base** — no new audit-scope Solidity, no GPU, and the *same* wrap
+serves Tier-2 settlement and Tier-3 inference (only the guest's checks differ). Two variants were
+weighed:
+
+- **C1 (chosen): keep KZG.** The guest runs `pcs::verify` (multilinear-KZG); each opening is O(1)
+  BN254 pairings (SP1 has a `bn254` pairing precompile), so the guest stays small.
+- **C2 (fallback): drop KZG.** The guest commits tensors by keccak (native in SP1) and recomputes
+  `mle_eval` in-guest — no SRS/ceremony, but O(n) field ops per opening.
+
+**Two honest caveats, deliberately deferred to a spike (not yet resolved):**
+1. **SRS.** Multilinear KZG needs a *multilinear* SRS; public powers-of-tau ceremonies are
+   *univariate* (see [`docs/POMA_SPEC.md`](../POMA_SPEC.md) §6). C1 therefore implies either a small
+   first-party setup or a scheme swap (e.g. Zeromorph over a univariate SRS). This does **not** block
+   the PoMA commitment, which is PCS-agnostic.
+2. **zkVM compile.** Whether `ark-poly-commit` + BN254 pairings compile to the SP1 `riscv32im`
+   target (with SP1's patched arkworks crates) is the make-or-break for C1 vs C2. It is measured by a
+   throwaway spike, **not** by touching product code.
+
+**Spike status:** scaffolded + isolated in [`services/sp1-inference-spike/`](../../services/sp1-inference-spike/README.md)
+(PR #149). The SP1-independent core (serialize a KZG opening → `pcs::verify` → bundle) compiles and
+passes tests on any host incl. Windows; the zkVM build is the one remaining unknown.
+
+> **▶ RESUME HERE (Tier-3 on-chain verifier):** in Linux/Docker/WSL/AWS with the SP1 toolchain
+> (`sp1up`), run `cd services/sp1-inference-spike/sp1 && cargo prove build -p xfuel-inference-spike-guest`.
+> If it compiles → C1 confirmed; record the guest cycle count (`host` execute) here. If it fails on
+> `ark-poly-commit` → adopt **C2** and record why. **No audit-scope Solidity until this passes.**
+
 Every future component (GKR backend, lookups, Groth16 wrapper) gets a row here with its license
 verified **before** it is added. Nothing enters the tree that isn't OSI-permissive.
 

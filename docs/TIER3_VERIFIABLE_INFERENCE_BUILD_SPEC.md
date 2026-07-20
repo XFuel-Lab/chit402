@@ -476,9 +476,25 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
         Total `cargo test`: **133** (+60 over M5.3).
       - **Remaining (M5.4b):** the on-chain verifier + settlement E2E below (the succinct-prover
         composition — matmul/gadgets/lookup/norm/softmax/attention/requant/ffn/**block** — is complete).
-- [ ] **M5.4b** Implement `IVerifiedInference` verifier (Option A native Solidity via BN254
-      precompiles: KZG opening + sumcheck; Groth16 wrap optional for gas); gas bench.
-- [ ] E2E: task → spot-check proof → on-chain verify → settle.
+
+> **▶ RESUME HERE (Tier-3 on-chain verifier).** Ordered, and where this session paused (clean
+> stopping point — nothing below is half-wired):
+>
+> 1. **PoMA `MLE_POLY`** — ✅ done (PR #148). Model-authenticity anchor, PCS-agnostic.
+> 2. **SP1-compat spike** — scaffolded + isolated (PR #149, `services/sp1-inference-spike/`); the
+>    Windows-checkable core passes. **Make-or-break still open:** `cargo prove build` the guest in
+>    Linux/Docker to decide **C1** (keep KZG) vs **C2** (keccak commitments). See
+>    [ADR 0004](./adr/0004-zkllm-prover-stack.md) "On-chain verifier decision".
+> 3. **RAM bench** on a high-RAM host; pin the spot-check window `k`.
+> 4. **Verifier via SP1-wrap (C1)** — guest runs `verify_committed_*`; Succinct wraps to Groth16;
+>    verified on Base by the **existing `SP1Verifier.sol`** (no new audit-scope Solidity). New guest
+>    ⇒ new `programVKey` to register.
+> 5. **E2E** (the pause line): task → spot-check proof → on-chain verify → settle.
+
+- [ ] **M5.4b** Verifier via **SP1-wrap (C1, ADR 0004)** — guest runs the committed verifier; Groth16
+      wrap verified by the existing `SP1Verifier.sol` on Base; cycle/gas bench. *(Native-Solidity KZG
+      verification was considered and rejected: larger audit surface + gas.)*
+- [ ] E2E: task → spot-check proof → on-chain verify → settle. **← this session's pause line.**
 
 **Exit criteria:** a real (non-mock) spot-check proof verifies on Base and gates settlement.
 **Effort:** XL. **Risk:** high (specialist crypto + time). **Moat:** #4.
