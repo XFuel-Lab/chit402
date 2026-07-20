@@ -41,15 +41,15 @@ fn keccak_concat(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
     out
 }
 
-/// keccak Merkle root over ordered weight shards (leaf = `keccak(shard)`; odd level duplicates the
-/// last node). Empty input → the zero hash. Mirrors PoMA `KECCAK_MERKLE`.
-pub fn weights_root(shards: &[Vec<u8>]) -> [u8; 32] {
-    if shards.is_empty() {
+/// Fold a level of leaf digests up to a single Merkle root (odd level duplicates the last node).
+/// Empty input → the zero hash. Shared by the shard-based [`weights_root`] (PoMA `KECCAK_MERKLE`)
+/// and the commitment-based [`poly_weights_root`] (PoMA `MLE_POLY`).
+fn merkle_root(mut level: Vec<[u8; 32]>) -> [u8; 32] {
+    if level.is_empty() {
         return [0u8; 32];
     }
-    let mut level: Vec<[u8; 32]> = shards.iter().map(|s| keccak256(s)).collect();
     while level.len() > 1 {
-        let mut next = Vec::with_capacity((level.len() + 1) / 2);
+        let mut next = Vec::with_capacity(level.len().div_ceil(2));
         let mut i = 0;
         while i < level.len() {
             let left = level[i];
@@ -62,7 +62,26 @@ pub fn weights_root(shards: &[Vec<u8>]) -> [u8; 32] {
     level[0]
 }
 
-/// Arch-bound PoMA model commitment: `keccak(weightsRoot || archCommitment)`.
+/// keccak Merkle root over ordered weight shards (leaf = `keccak(shard)`; odd level duplicates the
+/// last node). Empty input → the zero hash. Mirrors PoMA `KECCAK_MERKLE`.
+pub fn weights_root(shards: &[Vec<u8>]) -> [u8; 32] {
+    merkle_root(shards.iter().map(|s| keccak256(s)).collect())
+}
+
+/// keccak Merkle root over ordered **per-tensor commitment leaves** — the `MLE_POLY` analogue of
+/// [`weights_root`] for the self-owned KZG prover (ADR 0004). A leaf is the keccak of a tensor's
+/// canonical polynomial-commitment bytes (see [`crate::pcs::commitment_leaf`]); **ordering is
+/// significant** and MUST match the manifest's canonical tensor order. This collapses the many
+/// per-tensor commitments a ZK proof opens into the single `bytes32` the on-chain `ModelRegistry`
+/// stores under scheme `MLE_POLY`. Empty input → the zero hash. PCS-agnostic: the same structure
+/// serves a keccak-per-tensor leaf too, so it does not pin the commitment scheme.
+pub fn poly_weights_root(leaves: &[[u8; 32]]) -> [u8; 32] {
+    merkle_root(leaves.to_vec())
+}
+
+/// Arch-bound PoMA model commitment: `keccak(weightsRoot || archCommitment)`. `weightsRoot` is
+/// [`weights_root`] for `KECCAK_MERKLE` or [`poly_weights_root`] for `MLE_POLY` — the arch binding
+/// (so a proof attests "these weights **+ this** architecture") is identical for both schemes.
 pub fn model_commitment(weights_root: &[u8; 32], arch_commitment: &[u8; 32]) -> [u8; 32] {
     keccak_concat(weights_root, arch_commitment)
 }

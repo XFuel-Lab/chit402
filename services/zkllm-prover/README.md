@@ -33,7 +33,7 @@ and ADR 0003). CPU-only — runs in any container.
 | `residual` | **Committed residual-add check** `out = x + sub` — a linear (Schwartz–Zippel) one-point + three-opening argument for the block's two residual seams, verifier holds no tensors (M5.4b). |
 | `spotcheck` | **Tier-3b block-window spot-check** — a Fiat–Shamir-selected pseudo-random window of `k` blocks, bound to the model + PBR commitments so the prover can't cherry-pick and any trace tampering re-rolls the selection. Generic over the per-block prover. |
 | `manifest` | `ModelManifest` (arch config) + **arch-bound PoMA commitment** — proof attests "these weights + this architecture". |
-| `commitment` | keccak256 weights root / model commitment + `commit_field_table` + **PBR public-input binding**, byte-identical to `SP1ProofHooks.computeInferenceBindingCommitment`. |
+| `commitment` | keccak256 weights root (`KECCAK_MERKLE` shard root **and** `poly_weights_root`, the **PoMA `MLE_POLY`** root over per-tensor commitment leaves — see `pcs::commitment_leaf`) / arch-bound model commitment + `commit_field_table` + **PBR public-input binding**, byte-identical to `SP1ProofHooks.computeInferenceBindingCommitment`. |
 
 **Soundly proven today:** all linear projections (matmul), elementwise gating (Hadamard), the
 **transcendental activation** (SiLU/GeLU) via the logup lookup, **RMSNorm** (rsqrt via the same

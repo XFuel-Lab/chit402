@@ -118,19 +118,46 @@ payment; Phase 4/5 replace attestation with TEE/ZK checks against the **same** c
 
 ---
 
-## 6. Upgrade path — `MLE_POLY` (scheme id `1`)
+## 6. ZK tier — `MLE_POLY` (scheme id `1`)
 
-The keccak-Merkle root is perfect for cheap on-chain equality checks but is **opaque to a
-ZK circuit**. The ZK tier (Phase 5) needs the commitment to be a **multilinear-extension /
-polynomial commitment** over the weight tensors so a proof can open individual weights.
+The keccak-Merkle shard root is perfect for cheap on-chain equality checks but is **opaque to a
+ZK proof** — it says nothing that lets a proof open individual weights. The ZK tier (Phase 5) needs
+a commitment the prover can *open* at points, i.e. a **polynomial commitment** over the weight
+tensors. The self-owned XFuel zkLLM prover (ADR 0004) commits each weight tensor as a multilinear
+polynomial with **multilinear KZG** (arkworks `MultilinearPC<Bn254>`, `services/zkllm-prover` →
+`pcs.rs`), which the sumcheck arguments open. This supersedes the earlier `gkr-backend`
+(BaseFold/WHIR) plan — the prover is now first-party and permissive.
 
-Plan:
-- Add scheme `MLE_POLY` (id `1`) computed with the permissive PCS from
-  `scroll-tech/gkr-backend` (BaseFold/WHIR) — see [ADR 0003](./adr/0003-verified-inference-cleanroom.md)
-  allow-list and [`PROVENANCE_LOG.md`](./verified-inference/PROVENANCE_LOG.md).
-- Register it as an **additional version** of the same `modelId` (both schemes coexist):
-  keccak version for fast checks, MLE version referenced by ZK proofs.
-- `IVerifiedInference.commitmentBundle` carries whichever commitment the mechanism needs.
+**Commitment (scheme `MLE_POLY`, id `1`):** identical *arch-bound* shape as §3, only the weights
+root changes:
+
+```
+tensorLeaf(i) = keccak256( canonicalCommitmentBytes(tensorCommitment(i)) )   # ordered per manifest
+polyWeightsRoot = Merkle root over [tensorLeaf(0), tensorLeaf(1), ...]        # same fold as §3
+commitment      = keccak256( polyWeightsRoot || archCommitment )             # same arch binding as §3
+```
+
+- **Collapses to one `bytes32`:** a model has many per-tensor commitments (one per Wq/Wk/Wv/Wo/
+  Wgate/Wup/Wdown/norm…); the Merkle root folds them into the single `bytes32` the registry stores,
+  while a proof still carries and opens the *specific* per-tensor commitments it needs. The bundle
+  (§ `IVerifiedInference.commitmentBundle`) re-derives `polyWeightsRoot` from those and checks it
+  against the registered `commitment`.
+- **Ordering is significant** and MUST match the manifest's canonical tensor order (recorded in the
+  off-chain manifest, like §3 shard order).
+- **No contract change:** `ModelRegistry` is already scheme-agnostic (`bytes32 commitment` +
+  `CommitmentScheme.MLE_POLY`). A model registers `MLE_POLY` as an **additional version** of the
+  same `modelId` (both schemes coexist): keccak version for fast off-chain checks, MLE version
+  referenced by ZK proofs.
+- **Reference implementation:** `commitment.rs` (`poly_weights_root`, `model_commitment`) and
+  `pcs.rs` (`commitment_leaf`, `model_weights_root`) in `services/zkllm-prover/crates/xfuel-zkp`.
+
+> **Open decision (M5.4 spike):** the *leaf content* is deliberately pluggable. Multilinear KZG
+> (C1) needs a **multilinear** SRS — the big public powers-of-tau ceremonies are *univariate*, so C1
+> implies either a small first-party setup or a scheme swap (e.g. Zeromorph over a univariate SRS).
+> The alternative (C2) commits tensors by keccak and runs the verifier's evaluations inside the SP1
+> guest — **no SRS at all**. The `polyWeightsRoot`/arch-binding *structure above is identical either
+> way*, so this spec does not pin the choice; the SP1-compat spike decides it on real cycle/gas
+> numbers. See [ADR 0004](./adr/0004-zkllm-prover-stack.md).
 
 ---
 
