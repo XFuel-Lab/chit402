@@ -4,7 +4,18 @@ import { useReadContract } from 'wagmi';
 import { formatEther } from 'viem';
 import { ADDRESSES, GOVERNANCE_ABI, isDeployed } from '../contracts';
 
-const stakingRoutes = [
+type RouteStatus = 'live' | 'testnet' | 'planned';
+
+const stakingRoutes: {
+  network: string;
+  token: string;
+  apy: string;
+  tvl: string;
+  minStake: string;
+  mechanism: string;
+  status: RouteStatus;
+  description: string;
+}[] = [
   {
     network: 'Base (veXF)',
     token: 'XF',
@@ -12,7 +23,7 @@ const stakingRoutes = [
     tvl: '(demo)',
     minStake: '—',
     mechanism: 'Vote-escrow lock',
-    status: 'planned' as const,
+    status: 'planned',
     description: 'Lock XF for veXF voting power (post-TGE on Base). Governance — not a fixed fee-yield entitlement.',
   },
   {
@@ -22,7 +33,7 @@ const stakingRoutes = [
     tvl: '(demo)',
     minStake: '1 TAO',
     mechanism: 'Subnet Delegation',
-    status: 'testnet' as const,
+    status: 'testnet',
     description: 'Optional provider-side stake path via Bittensor EVM precompile (cross-chain, not settlement home).',
   },
   {
@@ -32,7 +43,7 @@ const stakingRoutes = [
     tvl: '(demo)',
     minStake: '—',
     mechanism: 'Provider ops',
-    status: 'testnet' as const,
+    status: 'testnet',
     description: 'Optional GPU provider-side staking for EdgeCloud operators — not XFuel fee settlement.',
   },
 ];
