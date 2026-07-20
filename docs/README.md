@@ -1,134 +1,76 @@
-# XFuel Protocol — Documentation Hub
+# XFuel Documentation
 
-> **Live app:** [xfuel.app](https://xfuel.app) · **GitHub:** [github.com/XFuel-Lab/xfuel-protocol](https://github.com/XFuel-Lab/xfuel-protocol) · **Security:** security@xfuel.app
+Verifiable settlement and payments for AI compute — USDC via x402 on Base, tiered proofs, provider-agnostic routing.
 
----
-
-## Start Here by Role
-
-### 👩‍💻 I'm a Developer
-
-| Goal | Document |
-|---|---|
-| Understand the full architecture | [WHITEPAPER.md](../WHITEPAPER.md) |
-| Set up and run the repo | [Main README](../README.md) |
-| Deploy to Theta Testnet | [Deployment Guide](./DEPLOYMENT.md) |
-| Run the test suite (755+ tests) | [Testing Guide](./TESTING.md) |
-| Integrate via the M2M API | [M2M API Reference](./M2M_API.md) · [SDK README](../packages/sdk/README.md) |
-| Understand all circuit contracts | [Circuit Design](./Circuit-Design-and-Expansion.md) · [Circuits Reference](./CIRCUITS.md) |
-| Verify a live deployment | `node scripts/verify-deployment.cjs --manifest <manifest>` |
-| Debug on-chain transactions | `npx hardhat test --trace` (hardhat-tracer) |
-
-### 🔍 I'm an Auditor (CertiK Phase 1)
-
-| Goal | Document |
-|---|---|
-| Audit readiness checklist | [Audit & Grant Readiness](./AUDIT_GRANT_READINESS.md) |
-| Pre-submission gap analysis | [Gap Analysis](./GAP_ANALYSIS.md) |
-| Formal audit scope | [CertiK Phase 1 Scope](./certik-phase1-scope.json) |
-| Security architecture | [Security Design](./security-design.md) |
-| ZK verification baseline | [ZK Audit Baseline](./zk-audit-baseline.json) |
-| Bug bounty program | [Bug Bounty](./bug-bounty.md) |
-| Core contract source | `contracts/core/` — ZKVerifierSP1, CoreRevenueSplitter, veXFGovernance, SP1ProofHooks |
-| Safeguards & mitigations | [Routing Mitigations](./routing-mitigations-design.md) · [Safeguards](./SAFEGUARDS.md) |
-
-### 💰 I'm an Investor / Grant Reviewer
-
-| Goal | Document |
-|---|---|
-| Project overview and vision | [Main README](../README.md) |
-| Technical whitepaper | [WHITEPAPER.md](../WHITEPAPER.md) |
-| Token economics | [Whitepaper Section 5](../WHITEPAPER.md) · [Tokenomics Sensitivity](./tokenomics-sensitivity.md) |
-| GET mechanics (revenue) | [Growth-Expansion-Treasury](./Growth-Expansion-Treasury.md) |
-| Technical benchmarks | [Technical Specifications](./Technical-Specifications.md) |
-| Phase completion reports | [Phase Reports](#phase-reports) |
-| Theta integration plan | [Theta Integration Plan](./THETA_INTEGRATION_PLAN.md) · [Theta Integrations](./THETA_INTEGRATIONS.md) |
-
-### 🤝 I'm a Contributor
-
-| Goal | Document |
-|---|---|
-| Getting started | [CONTRIBUTING.md](../CONTRIBUTING.md) |
-| Code of conduct | [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) |
-| Submit an issue or PR | [GitHub Issue Templates](../.github/ISSUE_TEMPLATE/) |
-| Changelog | [CHANGELOG.md](../CHANGELOG.md) |
-| Quick reference card | [Quick Reference](./QUICK_REFERENCE.md) |
+https://xfuel.app · https://api-testnet.xfuel.app
 
 ---
 
-## Documentation Sections
+## Start here
 
-### Architecture & Core Protocol
-
-- **[WHITEPAPER.md](../WHITEPAPER.md)** — Canonical whitepaper v2.4 (Hybrid Theta-Centric Architecture)
-- **[Technical Specifications](./Technical-Specifications.md)** — Core Layer, ZK verification, cross-chain integration, benchmarks
-- **[Circuit Design & Expansion](./Circuit-Design-and-Expansion.md)** — All 16+ circuit implementations and design history
-- **[Circuits Reference](./CIRCUITS.md)** — Circuit contract and handler documentation
-- **[ZK Bridge Architecture](./ZK_BRIDGE_ARCHITECTURE.md)** — ZK proof flow diagrams
-- **[ZK Bridge Implementation](./ZK_BRIDGE_IMPLEMENTATION.md)** — SP1 zkVM proof generation details
-
-### Deployment & Operations
-
-- **[Deployment Guide](./DEPLOYMENT.md)** — Full deployment walkthrough (Theta, Bittensor, CosmWasm)
-- **[Unified Deployment Guide](./UNIFIED_DEPLOYMENT_GUIDE.md)** — Consolidated multi-network deployment
-- **[Testing Guide](./TESTING.md)** — How to run the full test suite (755+ tests)
-- **[Security Deployment Checklist](./SECURITY_DEPLOYMENT_CHECKLIST.md)** — Pre-deployment security gates
-- **[Quick Reference](./QUICK_REFERENCE.md)** — Common commands and contract addresses at a glance
-
-### API & Integration
-
-- **[M2M API Reference](./M2M_API.md)** — Machine-to-machine API (task submission, A2A messaging, proof retrieval)
-- **[SDK README](../packages/sdk/README.md)** — JavaScript/TypeScript SDK (`xfuel-sdk`)
-- **[Theta Integration Plan](./THETA_INTEGRATION_PLAN.md)** — Full Theta ecosystem integration roadmap
-- **[Theta Integrations](./THETA_INTEGRATIONS.md)** — EdgeStore, Video API, TDROP, EdgeCloud specs
-- **[TAO Circuit + Hyperlane E2E](./TAO_CIRCUIT_HYPERLANE_E2E.md)** — Bittensor cross-chain flow
-
-### Audit & Security
-
-- **[Audit & Grant Readiness](./AUDIT_GRANT_READINESS.md)** — CertiK Phase 1 checklist and progress tracker
-- **[Gap Analysis](./GAP_ANALYSIS.md)** — Pre-submission gap analysis with priority sprints
-- **[CertiK Phase 1 Scope](./certik-phase1-scope.json)** — Formal audit scope definition (v5.0.0)
-- **[Security Design](./security-design.md)** — Defense-in-depth architecture, emergency response
-- **[Safeguards](./SAFEGUARDS.md)** — Circuit-level and protocol-level safeguards
-- **[Routing Mitigations](./routing-mitigations-design.md)** — Fee routing safety mechanisms
-- **[Bug Bounty Program](./bug-bounty.md)** — Vulnerability reporting (up to $50K rewards)
-- **[ZK Audit Baseline](./zk-audit-baseline.json)** — ZK verification audit baseline
-- **[ZK Patch Report](./zk-patch-report.json)** — Security patches applied
-
-### Governance & Tokenomics
-
-- **[Whitepaper Section 5 & 9](../WHITEPAPER.md)** — Token distribution, governance model
-- **[Growth-Expansion-Treasury](./Growth-Expansion-Treasury.md)** — GET mechanics and multi-sig governance
-- **[Tokenomics Sensitivity](./tokenomics-sensitivity.md)** — Economic model stress tests
-- **[Auto-Rebalance](./AUTO_REBALANCE.md)** — Automated yield routing logic
-
-### Phase Reports {#phase-reports}
-
-| Phase | Focus | Report |
-|---|---|---|
-| Phase 3 | Governance + Revenue Splitter | [phase3-report.json](./phase3-report.json) |
-| Phase 4 | Scale + ZK Rollup | [phase4-report.json](./phase4-report.json) |
-| Phase 5 | Multi-Network AI | [phase5-report.json](./phase5-report.json) |
-| Phase 6 | Ecosystem Expansion | [phase6-report.json](./phase6-report.json) |
-| Priority Circuits | Circuit validation | [priority-circuits-report.json](./priority-circuits-report.json) |
+| Doc | Purpose |
+|-----|---------|
+| [RUNTIME_STATE.md](./RUNTIME_STATE.md) | Live endpoints, real vs mock |
+| [POSITIONING.md](./POSITIONING.md) | Locked messaging |
+| [../WHITEPAPER.md](../WHITEPAPER.md) | Protocol design |
+| [../README.md](../README.md) | Clone, build, try the API |
 
 ---
 
-## Archived Documentation
+## Build
 
-Historical implementation guides, v4.4-era deployment notes, WalletConnect integration docs, performance tooling guides, and legacy bridge/swap docs have been moved to [`legacy-archive/docs/`](../legacy-archive/docs/) and [`legacy-archive/docs/security/`](../legacy-archive/docs/security/). They are preserved for reference but are no longer applicable to the current v2.4 architecture.
-
----
-
-## Contributing to Documentation
-
-Found an issue with the docs? Want to improve them?
-
-1. Check [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines
-2. Submit a PR with your improvements
-3. Update this index if adding new docs
+| Doc | Purpose |
+|-----|---------|
+| [M2M_API.md](./M2M_API.md) | REST API |
+| [OPENAI_COMPATIBLE_GATEWAY.md](./OPENAI_COMPATIBLE_GATEWAY.md) | OpenAI `/v1` |
+| [X402_ADAPTER.md](./X402_ADAPTER.md) | USDC payments |
+| [../packages/sdk/README.md](../packages/sdk/README.md) | TypeScript SDK |
+| [../packages/mcp/README.md](../packages/mcp/README.md) | MCP server |
+| [../packages/agent-skills/AGENT_PLAYBOOK.md](../packages/agent-skills/AGENT_PLAYBOOK.md) | Agent flows |
 
 ---
 
-**Last Updated:** March 2026
-**Documentation Version:** v2.4 (Hybrid Theta-Centric Architecture)
+## Operate
+
+| Doc | Purpose |
+|-----|---------|
+| [DEPLOYMENT.md](./DEPLOYMENT.md) | Deploy |
+| [TESTING.md](./TESTING.md) | Tests |
+| [HOSTED_TESTNET_ENDPOINT.md](./HOSTED_TESTNET_ENDPOINT.md) | Public demo API + demo path |
+
+---
+
+## Trust & security
+
+| Doc | Purpose |
+|-----|---------|
+| [VERIFIED_INFERENCE_TIERS.md](./VERIFIED_INFERENCE_TIERS.md) | Trust ladder |
+| [VERIFIED_INFERENCE_HANDOFF.md](./VERIFIED_INFERENCE_HANDOFF.md) | Tier-3 handoff |
+| [TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md](./TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md) | zkLLM plan |
+| [POMA_SPEC.md](./POMA_SPEC.md) | Model authenticity |
+| [RECEIPT_SCHEMA_V2.md](./RECEIPT_SCHEMA_V2.md) | Payment-bound receipt |
+| [ERC8004_INTEGRATION.md](./ERC8004_INTEGRATION.md) | Validation registry |
+| [AUDIT_READINESS_CHECKLIST.md](./AUDIT_READINESS_CHECKLIST.md) | Audit Phase 1 |
+| [security-design.md](./security-design.md) | Security model |
+| [bug-bounty.md](./bug-bounty.md) | Bounty |
+
+---
+
+## Decisions & reference
+
+| Doc | Purpose |
+|-----|---------|
+| [adr/0001](./adr/0001-usdc-revenue-and-router-verifier-positioning.md) | USDC revenue |
+| [adr/0002](./adr/0002-base-settlement-home.md) | Base home |
+| [adr/0003](./adr/0003-verified-inference-cleanroom.md) | Clean-room Tier-3 |
+| [adr/0004](./adr/0004-zkllm-prover-stack.md) | zkLLM stack |
+| [CIRCUITS.md](./CIRCUITS.md) | Circuits |
+| [Technical-Specifications.md](./Technical-Specifications.md) | Gas / benchmarks |
+| [providers/README.md](./providers/README.md) | Provider tiers |
+| [TAO_CIRCUIT_HYPERLANE_E2E.md](./TAO_CIRCUIT_HYPERLANE_E2E.md) | Optional Bittensor relay |
+| [REFERENCES-AND-ATTRIBUTION.md](./REFERENCES-AND-ATTRIBUTION.md) | Research credits |
+| [FUNDRAISING_STRUCTURE.md](./FUNDRAISING_STRUCTURE.md) | Equity-first raise (counsel) |
+| [LEGAL_LAUNCH_CHECKLIST.md](./LEGAL_LAUNCH_CHECKLIST.md) | Legal planning |
+| [SAFEGUARDS.md](./SAFEGUARDS.md) | Git / deploy safeguards |
+
+Agents: [../AGENTS.md](../AGENTS.md). Historical: [_archive/](./_archive/README.md).

@@ -17,7 +17,7 @@ const circuits: Circuit[] = [
   { name: 'Bridge Verifier', category: 'Bridge', status: 'testnet', verifications: '—', gasAvg: '—', network: 'Multi', description: 'Cross-chain attestations (env-specific).' },
   { name: 'Compute Marketplace', category: 'Compute', status: 'development', verifications: '—', gasAvg: '—', network: 'Theta', description: 'Compute order verification (roadmap).' },
   { name: 'Inference Router', category: 'ML', status: 'roadmap', verifications: '—', gasAvg: '—', network: 'Bittensor', description: 'Subnet routing (not production-claimed).' },
-  { name: 'Revenue Splitter', category: 'DeFi', status: 'testnet', verifications: '—', gasAvg: '—', network: 'Theta', description: 'CoreRevenueSplitter (deploy-dependent).' },
+  { name: 'USDC Fee Sink', category: 'DeFi', status: 'live', verifications: '—', gasAvg: '—', network: 'Base', description: 'Token-light: fees settle in USDC to protocol Safe / Splits v2 (ADR 0001).' },
   { name: 'Governance Verifier', category: 'Governance', status: 'development', verifications: '—', gasAvg: '—', network: 'Theta', description: 'Governance proof hooks (roadmap).' },
   { name: 'Staking Verifier', category: 'DeFi', status: 'roadmap', verifications: '—', gasAvg: '—', network: 'Multi', description: 'Cross-chain staking proofs (roadmap).' },
   { name: 'Partner Hook Verifier', category: 'Integration', status: 'development', verifications: '—', gasAvg: '—', network: 'Theta', description: 'Third-party integration hooks.' },

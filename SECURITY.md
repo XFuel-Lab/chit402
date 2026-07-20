@@ -1,68 +1,46 @@
 # Security Policy
 
-## Supported Versions
+## Supported versions
 
 | Version | Supported |
-|---|---|
-| v2.4 (current) | ✅ Actively supported |
-| v2.x | ✅ Security patches only |
-| v1.x | ❌ End of life |
+|---------|-----------|
+| v2.6 (current) | Actively supported |
+| v2.x | Security patches only |
+| v1.x | End of life |
 
-## Reporting a Vulnerability
+## Reporting
 
-**Please do NOT open a public GitHub issue for security vulnerabilities.**
+Do not open a public GitHub issue for security vulnerabilities.
 
-### Contact
+- Email: security@xfuel.app
+- Acknowledge within 48 hours; status within 7 days
+- PGP on request
 
-- **Email:** security@xfuel.app
-- **Response SLA:** We will acknowledge your report within **48 hours** and provide a status update within **7 days**.
-- **Encryption:** PGP key available on request.
+Include: description, affected components, reproduction steps, impact, optional fix.
 
-### What to Include
+## Scope
 
-A strong report helps us triage and fix faster. Please include:
+Details and rewards: [docs/bug-bounty.md](docs/bug-bounty.md).
 
-1. A description of the vulnerability and affected component(s)
-2. Steps to reproduce (proof-of-concept code or transaction trace)
-3. The potential impact and attack scenario
-4. Your suggested fix (optional but appreciated)
+Priority:
 
-### Scope
+- `contracts/core/ZKVerifierSP1.sol`
+- `contracts/core/SP1ProofHooks.sol`
+- `contracts/core/veXFGovernance.sol`
+- `ModelRegistry` / `ProviderStaking`
+- Gateway payment and receipt paths
+- Circuit contracts that can drain funds or manipulate settlement
 
-See the full bug bounty scope in **[docs/bug-bounty.md](docs/bug-bounty.md)**.
+Out of scope: `contracts/legacy/`, theoretical >51% attacks, phishing, third-party dependency issues (report upstream).
 
-**In scope (highest priority):**
-- `contracts/core/ZKVerifierSP1.sol` — SP1 proof verification bypass
-- `contracts/core/CoreRevenueSplitter.sol` — fee routing manipulation or fund theft
-- `contracts/core/veXFGovernance.sol` — governance takeover or vote manipulation
-- `contracts/core/SP1ProofHooks.sol` — hook spoofing or replay attacks
-- Any circuit contract that can drain user funds or manipulate fee distribution
+## Disclosure
 
-**Out of scope:**
-- Issues in `contracts/legacy/` (archived, not deployed)
-- Theoretical attacks requiring >51% network hash rate
-- Frontend phishing or social engineering attacks
-- Issues in third-party dependencies (report directly to those maintainers)
+Coordinated disclosure: private report → fix → deploy → optional public credit.  
+Default embargo: 90 days from report (may shorten if actively exploited).
 
-## Disclosure Policy
+## Resources
 
-We follow **coordinated disclosure**:
-
-1. You report privately → we confirm and fix → we deploy a patch → we credit you publicly (unless you prefer anonymity).
-2. We request a **90-day embargo** from the date of your report to allow time for a patch and coordinated announcement.
-3. For critical vulnerabilities that are actively exploited, we may shorten this timeline.
-
-## Bug Bounty
-
-We maintain a formal bug bounty program. Details including reward tiers (up to $50,000 for critical findings) are documented in **[docs/bug-bounty.md](docs/bug-bounty.md)**.
-
-## Security Resources
-
-- [Security Design Document](docs/security-design.md)
-- [Audit Preparation Checklist](docs/audit/AUDIT_PREPARATION_CHECKLIST.md)
-- [CertiK Phase 1 Scope](docs/certik-phase1-scope.json)
-- [ZK Audit Baseline](docs/zk-audit-baseline.json)
-
-## Past Security Advisories
-
-No advisories have been published yet. The first external audit (CertiK Phase 1) is scheduled for Q2 2026.
+- [docs/bug-bounty.md](docs/bug-bounty.md)
+- [docs/AUDIT_READINESS_CHECKLIST.md](docs/AUDIT_READINESS_CHECKLIST.md)
+- [docs/security-design.md](docs/security-design.md)
+- [WHITEPAPER.md](WHITEPAPER.md)

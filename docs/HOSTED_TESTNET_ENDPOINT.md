@@ -1,194 +1,56 @@
-# Hosted Testnet Endpoint — Deploy Runbook
+# Hosted Testnet & Demo
 
-Stands up **`https://api-testnet.xfuel.app`**: the XFuel M2M API + OpenAI-compatible
-gateway, with a shared, rate-limited **public demo key** so the SDK and any OpenAI
-client work out of the box.
+Public gateway for builders and demos.
 
-- Server: `services/gateway` (M2M + `/v1/*`), started with `npm run m2m-server`, port **3002**.
-- Env template: [`services/gateway/.env.testnet-demo.example`](../services/gateway/.env.testnet-demo.example)
-- SDK default now points here (`DEFAULT_BASE_URL`, `PUBLIC_DEMO_API_KEY = "xfuel-demo"`).
-- **Public entry is `https://api-testnet.xfuel.app` only** (behind TLS). The raw
-  `:3002` origin / any host IP is **not** publicly reachable — never share it as an endpoint.
+Base URL: https://api-testnet.xfuel.app  
+As-deployed details: [RUNTIME_STATE.md](./RUNTIME_STATE.md).
 
-> **Current state:** [`docs/RUNTIME_STATE.md`](./RUNTIME_STATE.md) is the authoritative
-> as-deployed source (live endpoints, real vs mock, x402 + prover config). Read it first.
+## Auth
 
-> Target: an existing VPS/host we already run. The server is long-lived (Express +
-> WebSocket listeners), so run it as a managed process behind a TLS reverse proxy —
-> not on Vercel serverless.
+Demo key: `xfuel-demo` (rate-limited per IP).  
+Or: `X-API-Key` / `Authorization: Bearer <key>`.
 
----
+## Demo path
 
-## 1. Configure
+1. Health: https://api-testnet.xfuel.app/health  
+2. Submit a task (curl below)  
+3. Open the `verify_url` / receipt from the response  
+
+What to show: Tier 1 signed receipt; optional Tier 2 SP1 when the prover URL is set; USDC x402 on Base Sepolia when `X402_ENABLED=true`. Do not present the zkGPT mock as a live proof.
+
+## Try it
+
+```bash
+curl https://api-testnet.xfuel.app/health
+
+curl -X POST https://api-testnet.xfuel.app/task-request \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: xfuel-demo" \
+  -d '{
+    "message_type": "inference_request",
+    "chain_id": "base",
+    "amount": "1000000",
+    "sender": "0xYourAddress",
+    "model_id": "llama-3-70b",
+    "input_hash": "0xabc...",
+    "payment": { "rail": "usdc" }
+  }'
+```
+
+OpenAI-compatible: `https://api-testnet.xfuel.app/v1`  
+Payments: USDC via x402 on Base Sepolia — [X402_ADAPTER.md](./X402_ADAPTER.md).
+
+## Local demo
 
 ```bash
 cd services/gateway
-cp .env.testnet-demo.example .env
-# edit .env: set M2M_API_KEYS (a real private key), THETA_EDGECLOUD_API_KEY (real
-# compute), optionally SP1_PROVER_URL (settlement proofs). Keep M2M_DEMO_MODE=true.
-npm ci
+npm install
+npm run m2m-server
 ```
 
-The demo key **must** stay `xfuel-demo` to match the SDK default (or change both).
+Point clients at `http://localhost:3002`. For real Tier-2 proofs you need `SP1_PROVER_URL` as in [RUNTIME_STATE.md](./RUNTIME_STATE.md).
 
-### Live x402 + prover config (as deployed on the testnet box)
+## Related
 
-```bash
-# x402 / USDC — LIVE on base-sepolia via the public x402.org facilitator (no API key)
-X402_ENABLED=true
-X402_FACILITATOR_PROVIDER=x402
-X402_NETWORK=base-sepolia          # Base mainnet ("base") pending CDP provisioning
-X402_PROOF_BINDING=true
-# SP1 settlement prover — AWS ECS xfuel-sp1-prover behind the ALB (ingress locked to the box IP)
-SP1_PROVER_URL=http://xfuel-sp1-alb-1873465045.us-east-1.elb.amazonaws.com
-```
-
-ZAN is optional (only if `X402_FACILITATOR_PROVIDER=zan`) — not required and not a blocker.
-
-## 2. Run as a managed process
-
-**systemd** (`/etc/systemd/system/xfuel-testnet-api.service`):
-
-```ini
-[Unit]
-Description=XFuel Testnet M2M + OpenAI API
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/xfuel-protocol/services/gateway
-ExecStart=/usr/bin/npm run m2m-server
-EnvironmentFile=/opt/xfuel-protocol/services/gateway/.env
-Restart=always
-RestartSec=5
-# The server drains in-flight requests on SIGTERM (up to 10s) before exiting.
-# Give systemd a slightly longer stop window so restarts/redeploys are graceful.
-TimeoutStopSec=15
-KillSignal=SIGTERM
-User=xfuel
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now xfuel-testnet-api
-```
-
-(or `pm2 start "npm run m2m-server" --name xfuel-m2m` — from `services/gateway` — if you use pm2.)
-
-## 3. DNS + TLS reverse proxy
-
-Point `api-testnet.xfuel.app` at the host (A/AAAA or CNAME), then terminate TLS
-with **Caddy** (auto HTTPS):
-
-```
-api-testnet.xfuel.app {
-    reverse_proxy 127.0.0.1:3002
-}
-```
-
-`caddy reload`. (nginx + certbot works equally well — proxy to `127.0.0.1:3002`.)
-
-> **Gotcha — trust the proxy or all demo users share one bucket.** Behind Caddy/nginx,
-> `req.ip` is the proxy's loopback address, so the per-IP demo limiter would throttle
-> *every* client together (a global 15/min). Set **`M2M_TRUST_PROXY=true`** (in `.env`)
-> so Express reads `X-Forwarded-For` and per-IP limiting works. Use a hop count
-> (e.g. `M2M_TRUST_PROXY=1`) or a subnet string if you chain proxies. This is already
-> in the env template.
-
-> **Gotcha — CORS for browser clients.** Server-side agents don't need CORS, but a
-> browser playground / web app calling `/v1/*` will be blocked by the same-origin
-> policy. Set **`M2M_CORS_ORIGIN`** (e.g. `*` for the open demo, or a specific origin)
-> to emit the `Access-Control-*` headers (incl. exposing the `x-xfuel-*` receipt
-> headers). Off by default.
-
-## 4. Smoke test
-
-```bash
-# health (note the "demo" block with the advertised limits)
-curl https://api-testnet.xfuel.app/health
-
-# OpenAI drop-in (Bearer == the public demo key)
-curl https://api-testnet.xfuel.app/v1/chat/completions \
-  -H "Authorization: Bearer xfuel-demo" -H "Content-Type: application/json" \
-  -d '{"model":"llama-3-70b","messages":[{"role":"user","content":"Explain ZK proofs in one sentence."}]}' \
-  -i    # -i to see the x-xfuel-* receipt headers
-
-# SDK (zero-config → hits this endpoint with the demo key)
-XFUEL_API_URL=https://api-testnet.xfuel.app npm --prefix packages/sdk run example:openai
-```
-
-## 5. Demo limits & cost control
-
-| Control | Value | Env |
-|---------|-------|-----|
-| Rate (per IP) | 15/min, 150/day | `M2M_DEMO_RATE_PER_MIN`, `M2M_DEMO_RATE_PER_DAY` |
-| Generation cap | `max_tokens` ≤ 512 | `OPENAI_GATEWAY_MAX_TOKENS_CAP` |
-| Real vs mock | real if `THETA_EDGECLOUD_API_KEY` set, else labelled mock | `THETA_EDGECLOUD_API_KEY` |
-
-Private keys in `M2M_API_KEYS` bypass the demo limits (normal limiter). If GPU
-spend spikes, drop `THETA_EDGECLOUD_API_KEY` to fall back to mock instantly (the
-receipt then reports `compute.real=false`).
-
-## 6. Production hardening (enforced by the server)
-
-These are on by default — no extra config needed:
-
-| Concern | Behavior |
-|---------|----------|
-| Security headers | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `X-DNS-Prefetch-Control: off`; `X-Powered-By` removed. |
-| Rate-limit headers | Every rate-limited route returns `X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Reset`; `429` and quota-exhausted responses add `Retry-After`. |
-| Malformed input | Invalid JSON → `400 invalid_json`; body > 1 MB → `413 payload_too_large` (instead of a generic `500`). |
-| Error isolation | Per-route `try/catch` + a global handler that never leaks internals (`500 internal`), plus a `404 not_found` fallback listing valid endpoints. |
-| Graceful shutdown | `SIGTERM`/`SIGINT` stop accepting connections and drain in-flight requests, force-exiting after a 10s timeout — so `systemctl restart` / redeploys don't cut live requests. |
-
-CORS is opt-in (see §3); when `M2M_CORS_ORIGIN` is set, the rate-limit and
-`Retry-After` headers are added to `Access-Control-Expose-Headers` so browser
-clients can read them.
-
-## 7. Monitoring & logs
-
-**Uptime check** — point your monitor (UptimeRobot, healthchecks.io, a k8s probe,
-or a cron) at `GET /health`; it's public, unauthenticated, and cheap:
-
-```bash
-# 200 + status:"ok" when healthy. Alert on non-200 or a missing "demo" block.
-curl -fsS https://api-testnet.xfuel.app/health | jq '{status, uptime_s, demo}'
-```
-
-The payload also exposes `ai_listener`, `webhooks_registered`, and `fee_config` for
-quick diagnostics without shelling into the box.
-
-**Logs** — with `NODE_ENV=production` the server emits **structured Pino JSON** to
-stdout (no pretty-printing). Under systemd that lands in the journal:
-
-```bash
-journalctl -u xfuel-testnet-api -f            # live tail
-journalctl -u xfuel-testnet-api -o cat | jq . # parse the JSON lines
-```
-
-Each request logs `{ reqId, method, path, status, durationMs }`; forward stdout to
-your aggregator (Loki, Datadog, CloudWatch) if you want retention/alerting. Set
-`LOG_LEVEL=debug` temporarily to trace routing/proof decisions.
-
-## Gotchas / notes (from building this)
-
-- **`M2M_TRUST_PROXY`** — required behind a reverse proxy, or per-IP demo limits
-  collapse into a single shared bucket. See §3.
-- **`M2M_CORS_ORIGIN`** — set it if browser clients (a playground/web app) must call
-  `/v1/*`; server-side agents don't need it. See §3.
-- **dotenv precedence** — the process loads `.env` but does **not** override variables
-  already present in the real environment. `systemd`'s `EnvironmentFile` and shell
-  exports win over `.env`. Put demo config in one place to avoid confusion.
-- **`M2M_API_KEYS` gates demo mode's usefulness** — if it's empty the server is in
-  *open mode* (any/no key accepted) and the demo throttle never engages. Always set at
-  least one private key so unauthenticated traffic falls back to the rate-limited demo
-  key. (`GET /health` → `demo` block confirms limits are active.)
-- **Real inference** needs the repo-root `circuits/` reachable from the process (it is,
-  when running from a full checkout). The existing `Dockerfile` copies only a local
-  `circuits/` and runs `src/index.js`; a dedicated API image (correct entrypoint +
-  repo-root build context) is a follow-up if you containerize this later.
-- **`Redis` is optional** for the demo; the server runs without it.
-- **`/llms.txt`** is served publicly (no auth) at the root for agent discovery — verify
-  with `curl https://api-testnet.xfuel.app/llms.txt`.
+- [M2M_API.md](./M2M_API.md)
+- [OPENAI_COMPATIBLE_GATEWAY.md](./OPENAI_COMPATIBLE_GATEWAY.md)

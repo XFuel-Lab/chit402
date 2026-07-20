@@ -14,13 +14,10 @@ import { buildReceipt, renderReceiptHtml, renderReceiptNotFound, buildVerifyUrl,
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest } from './x402-discovery.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
+import { resolveSplit, describeSplit } from './revenue-split.js';
 
 /**
- * XFuel AI DePIN — M2M API Server
- *
- * Standalone Express server exposing machine-to-machine (M2M) endpoints for
- * the AI DePIN module.  Pivoted from Persistence to Osmosis/Akash direct
- * with BTC-focused settlement.
+ * XFuel M2M API Server — agent gateway for verifiable AI compute settlement.
  *
  * Endpoints:
  *   POST  /task-request    Submit an AI intent (COMPUTE_BID, INFERENCE_REQUEST, …)
@@ -35,14 +32,8 @@ import { computeUsageStats, renderStatsHtml } from './telemetry.js';
  *   DELETE /webhook        Remove a registered webhook (by id or url)
  *   GET   /health          Health / metrics
  *
- * Integrations:
- *   - ai-listener.js        → Task routing, fee calc, SP1 proof generation
- *   - AIVerifier.wasm        → RouteTask / SettleTask on Osmosis (CW20 fee sends)
- *   - AIDePINRouter.sol      → On-chain task routing + SP1 proof verification
- *   - TAOWrapper.sol         → Bittensor subnet inference via Substrate bridge
- *   - sp1-prover/main.rs     → validate_ai_task / validate_a2a_message circuits
- *   - FeeCollector.wasm      → CW20 fee accumulation → burn → RevenueSplitter
- *   - RevenueSplitter.sol    → 30/30/25/15 (BBB / LP / veXF / Treasury)
+ * Settlement: USDC via x402 on Base → X402_PAY_TO / Splits v2 (token-light, ADR 0001).
+ * Proofs: Tier-1 signed receipt (default); Tier-2 SP1 on Base (on demand).
  *
  * Auth: API key header (`X-API-Key`) or relayer ECDSA signature (`X-Signature`).
  * Rate limiting: per-key sliding window (configurable).
@@ -710,8 +701,8 @@ export function createApp() {
         // Canonical shareable proof link (public, no-auth). Same value as _links.receipt.
         verify_url:    verifyUrl,
         fee_info: {
-          description: `${(appliedBps / 100).toFixed(1)}% protocol fee → RevenueSplitter (30% BBB / 30% LP / 25% veXF / 15% Treasury)`,
-          collector:   'FeeCollector.wasm → CW20 Send → RevenueSplitter',
+          description: `${(appliedBps / 100).toFixed(1)}% protocol fee → USDC on Base (X402_PAY_TO / Splits v2; token-light, ADR 0001)`,
+          collector:   process.env.X402_PAY_TO || 'X402_PAY_TO (protocol Safe / Splits v2)',
         },
         _links: {
           status:  `/task-status?task_id=${effectiveTaskId}`,
@@ -917,13 +908,8 @@ export function createApp() {
           fee_amount:    task.feeAmount || feeAmount,
           net_amount:    netAmount,
           fee_bps:       feeBps,
-          fee_collector: config.osmosis?.feeCollectorContract || '(not deployed)',
-          revenue_split: {
-            bbb_buyback_burn:  '30%',
-            lp_provision:      '30%',
-            vexf_stakers:      '25%',
-            treasury:          '15%',
-          },
+          fee_collector: process.env.X402_PAY_TO || config.osmosis?.feeCollectorContract || '(not configured)',
+          revenue_split: describeSplit(resolveSplit()),
         },
         result:         task.result || null,
         meta: {
@@ -1066,7 +1052,7 @@ export function createApp() {
         payload_hash,
         escrow_amount:   escrow.toString(),
         relay_fee:       relayFee,
-        relay_fee_info:  '0.1% on escrowed amount → RevenueSplitter (30/30/25/15)',
+        relay_fee_info:  '0.1% on escrowed amount → USDC on Base (X402_PAY_TO / Splits v2)',
         nonce,
         ttl,
         timestamp:       a2aMessage.timestamp,
@@ -1408,7 +1394,7 @@ export function createApp() {
           max_bps:        MAX_FEE_BPS,
           min_task_amount: MIN_TASK_AMOUNT,
           a2a_relay_bps:  10,
-          revenue_split:  '30% BBB / 30% LP / 25% veXF / 15% Treasury',
+          revenue_split:  describeSplit(resolveSplit()),
         },
         chains: Object.values(CHAIN_IDS),
         message_types: Object.values(MESSAGE_TYPES),

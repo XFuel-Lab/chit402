@@ -1,230 +1,236 @@
 import { Link } from 'react-router-dom';
 
-const GITHUB_BASE = 'https://github.com/XFuel-Lab/xfuel-protocol/blob/main';
+const GITHUB = 'https://github.com/XFuel-Lab/xfuel-protocol/blob/main';
 
-const docSections = [
+type DocLink = {
+  title: string;
+  description: string;
+  href: string;
+  meta: string;
+  external?: boolean;
+};
+
+const startHere: DocLink[] = [
+  {
+    title: 'Runtime state',
+    description: 'As-deployed endpoints, real vs mock, current blockers.',
+    href: `${GITHUB}/docs/RUNTIME_STATE.md`,
+    meta: 'ops',
+    external: true,
+  },
+  {
+    title: 'Positioning',
+    description: 'Locked product story for site, deck, and agents.',
+    href: `${GITHUB}/docs/POSITIONING.md`,
+    meta: 'story',
+    external: true,
+  },
   {
     title: 'Whitepaper',
-    description: 'Core protocol design: ZK verification, revenue flow, veXF governance, and multi-chain architecture.',
-    icon: '📄',
-    links: [
-      { label: 'Full Whitepaper', href: `${GITHUB_BASE}/WHITEPAPER.md`, external: true },
-      { label: 'Protocol Overview', href: '#overview' },
-      { label: 'Tokenomics', href: '#tokenomics' },
-    ],
-    badge: 'v1.0',
-    badgeColor: 'green' as const,
-  },
-  {
-    title: 'Circuits Guide',
-    description: 'Technical documentation for all 21 ZK circuits: A2A, ZKML, Data Hubs, Bridge, Compute, and more.',
-    icon: '⬡',
-    links: [
-      { label: 'Circuit Architecture', href: `${GITHUB_BASE}/docs/CIRCUITS.md`, external: true },
-      { label: 'SP1 Prover Setup', href: '#sp1-setup' },
-      { label: 'Circuit Registry', href: '/circuits' },
-    ],
-    badge: '21 circuits',
-    badgeColor: 'cyan' as const,
-  },
-  {
-    title: 'Smart Contracts',
-    description: 'Contract ABIs, deployment addresses, and interaction guides for CoreRevenueSplitter, ZKVerifierSP1, and veXFGovernance.',
-    icon: '📋',
-    links: [
-      { label: 'Contract Reference', href: '#contracts' },
-      { label: 'ABI Downloads', href: '#abis' },
-      { label: 'Deployment Addresses', href: `${GITHUB_BASE}/docs/DEPLOYMENT.md`, external: true },
-    ],
-    badge: 'Audited',
-    badgeColor: 'green' as const,
-  },
-  {
-    title: 'API Documentation',
-    description: 'M2M API gateway for AI agents, partner hooks, and automated circuit interactions.',
-    icon: '🔌',
-    links: [
-      { label: 'M2M API Reference', href: `${GITHUB_BASE}/docs/M2M_API.md`, external: true },
-      { label: 'Authentication', href: '#auth' },
-      { label: 'Rate Limits', href: '#rate-limits' },
-    ],
-    badge: 'REST + WS',
-    badgeColor: 'purple' as const,
-  },
-  {
-    title: 'Deployment Guide',
-    description: 'Step-by-step deployment for Theta, Bittensor EVM, Osmosis CosmWasm, and testnet environments.',
-    icon: '🚀',
-    links: [
-      { label: 'Deployment Steps', href: `${GITHUB_BASE}/docs/DEPLOYMENT.md`, external: true },
-      { label: 'Testnet Faucets', href: '#faucets' },
-      { label: 'Vercel Hosting', href: '#vercel' },
-    ],
-    badge: '5 networks',
-    badgeColor: 'cyan' as const,
-  },
-  {
-    title: 'Testing Guide',
-    description: 'Test suites, CI/CD configuration, coverage reports, and testing best practices for 700+ tests.',
-    icon: '✅',
-    links: [
-      { label: 'Testing Guide', href: `${GITHUB_BASE}/docs/TESTING.md`, external: true },
-      { label: 'Coverage Reports', href: '#coverage' },
-      { label: 'CI/CD Pipeline', href: '#ci' },
-    ],
-    badge: '700+ tests',
-    badgeColor: 'green' as const,
+    description: 'Protocol design: settlement, proofs, circuits, governance.',
+    href: `${GITHUB}/WHITEPAPER.md`,
+    meta: 'v2.6',
+    external: true,
   },
 ];
 
-const quickLinks = [
-  { label: 'GitHub Repository', url: 'https://github.com/XFuel-Lab/xfuel-protocol', external: true },
-  { label: 'NPM Package', url: 'https://www.npmjs.com/package/xfuel-sdk', external: true },
-  { label: 'CertiK Audit', url: '#certik', external: false },
-  { label: 'Bug Bounty', url: '#bounty', external: false },
+const builders: DocLink[] = [
+  {
+    title: 'M2M API',
+    description: 'REST task submit, status, webhooks, quotes.',
+    href: `${GITHUB}/docs/M2M_API.md`,
+    meta: 'REST',
+    external: true,
+  },
+  {
+    title: 'OpenAI-compatible gateway',
+    description: 'Drop-in /v1 models and chat completions with receipts.',
+    href: `${GITHUB}/docs/OPENAI_COMPATIBLE_GATEWAY.md`,
+    meta: '/v1',
+    external: true,
+  },
+  {
+    title: 'USDC / x402',
+    description: 'Agent-side payments on Base — no server hot wallets.',
+    href: `${GITHUB}/docs/X402_ADAPTER.md`,
+    meta: 'Base',
+    external: true,
+  },
+  {
+    title: 'TypeScript SDK',
+    description: 'Submit, pay, prove, verify — npm xfuel-sdk.',
+    href: `${GITHUB}/packages/sdk/README.md`,
+    meta: '0.2.0',
+    external: true,
+  },
+  {
+    title: 'MCP server',
+    description: 'npx xfuel-mcp — tools for agents in Cursor and Claude.',
+    href: `${GITHUB}/packages/mcp/README.md`,
+    meta: 'MCP',
+    external: true,
+  },
+  {
+    title: 'Agent playbook',
+    description: 'End-to-end flows: infer, pay, verify, A2A, swarms.',
+    href: `${GITHUB}/packages/agent-skills/AGENT_PLAYBOOK.md`,
+    meta: 'skills',
+    external: true,
+  },
 ];
 
-const codeExamples = [
+const operators: DocLink[] = [
   {
-    title: 'Verify a ZK Proof',
-    language: 'solidity',
-    code: `// Verify an SP1 proof on-chain
-IZKVerifierSP1(verifier).verifyProof(
-  circuitId,
-  publicInputs,
-  proofBytes
-);`,
+    title: 'Deployment',
+    description: 'Base verifier, gateway, manifests.',
+    href: `${GITHUB}/docs/DEPLOYMENT.md`,
+    meta: 'deploy',
+    external: true,
   },
   {
-    title: 'Bridge via Hyperlane',
-    language: 'typescript',
-    code: `// Dispatch cross-chain bridge
-const tx = await splitter.bridgeAndDistribute(
-  destChainId,
-  amount,
-  { value: bridgeFee }
-);`,
+    title: 'Testing',
+    description: 'Contract matrix, gateway tests, zkLLM cargo tests.',
+    href: `${GITHUB}/docs/TESTING.md`,
+    meta: '755+',
+    external: true,
   },
   {
-    title: 'Lock veXF',
-    language: 'typescript',
-    code: `// Lock XF for veXF voting power
-const tx = await governance.lock(
-  parseEther("1000"),
-  TWELVE_MONTHS
-);`,
+    title: 'Hosted testnet',
+    description: 'Public API at api-testnet.xfuel.app.',
+    href: `${GITHUB}/docs/HOSTED_TESTNET_ENDPOINT.md`,
+    meta: 'demo',
+    external: true,
   },
 ];
+
+const auditors: DocLink[] = [
+  {
+    title: 'Audit readiness',
+    description: 'Phase 1 scope freeze and handover checklist.',
+    href: `${GITHUB}/docs/AUDIT_READINESS_CHECKLIST.md`,
+    meta: 'audit',
+    external: true,
+  },
+  {
+    title: 'Bug bounty',
+    description: 'Scope and rewards up to $50,000 critical.',
+    href: `${GITHUB}/docs/bug-bounty.md`,
+    meta: 'security',
+    external: true,
+  },
+  {
+    title: 'Security design',
+    description: 'Trust ladder and settlement surfaces.',
+    href: `${GITHUB}/docs/security-design.md`,
+    meta: 'model',
+    external: true,
+  },
+];
+
+function DocSection({ title, items }: { title: string; items: DocLink[] }) {
+  return (
+    <section className="docs-section">
+      <h2 className="docs-section-title">{title}</h2>
+      <div className="docs-list">
+        {items.map((item) => (
+          <a
+            key={item.title}
+            href={item.href}
+            className="docs-row"
+            target={item.external ? '_blank' : undefined}
+            rel={item.external ? 'noreferrer' : undefined}
+          >
+            <div>
+              <div className="docs-row-title">{item.title}</div>
+              <p className="docs-row-desc">{item.description}</p>
+            </div>
+            <span className="docs-row-meta">{item.meta}</span>
+          </a>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 export default function Docs() {
   return (
-    <div className="page">
+    <div className="page docs-page">
       <div className="container">
-        <div className="page-header">
-          <h1>Developer Documentation</h1>
-          <p>Everything you need to build on and integrate with XFuel Protocol</p>
-        </div>
-
-        {/* Quick Links */}
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', flexWrap: 'wrap' }}>
-          {quickLinks.map((l) => (
-            <a
-              key={l.label}
-              href={l.url}
-              target={l.external ? '_blank' : undefined}
-              rel={l.external ? 'noreferrer' : undefined}
-              className="btn btn-secondary btn-sm"
-            >
-              {l.label} {l.external && '↗'}
-            </a>
-          ))}
-        </div>
-
-        {/* Doc Sections */}
-        <div className="grid grid-2" style={{ marginBottom: '2rem' }}>
-          {docSections.map((s) => (
-            <div key={s.title} className="card" style={{ padding: '1.5rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <span style={{ fontSize: '1.5rem' }}>{s.icon}</span>
-                  <h3>{s.title}</h3>
-                </div>
-                <span className={`badge badge-${s.badgeColor}`}>{s.badge}</span>
-              </div>
-              <p style={{ marginBottom: '1rem' }}>{s.description}</p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                {s.links.map((l) => (
-                  <a
-                    key={l.label}
-                    href={l.href}
-                    target={'external' in l && l.external ? '_blank' : undefined}
-                    rel={'external' in l && l.external ? 'noreferrer' : undefined}
-                    style={{ fontSize: '0.9rem' }}
-                  >
-                    → {l.label} {'external' in l && l.external ? '↗' : ''}
-                  </a>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Code Examples */}
-        <div className="card" style={{ padding: '2rem' }}>
-          <h3 style={{ marginBottom: '1.5rem' }}>Quick Start Examples</h3>
-          <div className="grid grid-3">
-            {codeExamples.map((ex) => (
-              <div key={ex.title}>
-                <h3 style={{ fontSize: '0.95rem', marginBottom: '0.75rem', color: '#00d4ff' }}>{ex.title}</h3>
-                <pre style={codeStyle}>
-                  <code>{ex.code}</code>
-                </pre>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* SDK Section */}
-        <div className="card" style={{ padding: '2rem', marginTop: '1.5rem' }}>
-          <h3 style={{ marginBottom: '1rem' }}>XFuel M2M SDK</h3>
-          <p style={{ color: '#8a8a9a', marginBottom: '1rem' }}>
-            Submit AI tasks, retrieve ZK proofs, and send A2A messages via the M2M API.
+        <header className="page-header">
+          <span className="docs-kicker">Documentation</span>
+          <h1>Build on XFuel</h1>
+          <p>
+            Verifiable settlement for AI compute — USDC on Base, tiered receipts, pluggable
+            providers. Sparse docs for agents; this hub is for humans.
           </p>
-          <pre style={codeStyle}>
-            <code>npm install xfuel-sdk@0.1.0</code>
-          </pre>
-          <pre style={{ ...codeStyle, marginTop: '0.75rem' }}>
-            <code>{`import { XFuelClient } from 'xfuel-sdk';
+        </header>
 
-const xfuel = new XFuelClient({ apiKey: 'your-key' });
-const task  = await xfuel.submitInference('llama-3-70b', sender, '1000000');
-const result = await xfuel.waitForCompletion(task.task_id);`}</code>
+        <nav className="docs-rail" aria-label="Quick links">
+          <a href="https://api-testnet.xfuel.app/health" target="_blank" rel="noreferrer">
+            API health
+          </a>
+          <a href="https://github.com/XFuel-Lab/xfuel-protocol" target="_blank" rel="noreferrer">
+            GitHub
+          </a>
+          <a href="https://www.npmjs.com/package/xfuel-sdk" target="_blank" rel="noreferrer">
+            npm SDK
+          </a>
+          <a href={`${GITHUB}/docs/bug-bounty.md`} target="_blank" rel="noreferrer">
+            Bug bounty
+          </a>
+          <Link to="/circuits">Circuits</Link>
+          <Link to="/security">Security</Link>
+        </nav>
+
+        <DocSection title="Start here" items={startHere} />
+        <DocSection title="Builders" items={builders} />
+        <DocSection title="Operators" items={operators} />
+        <DocSection title="Auditors" items={auditors} />
+
+        <div className="docs-panel">
+          <h2>Try the API</h2>
+          <p>
+            Hosted demo key <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>xfuel-demo</code> —
+            rate-limited. Default rail is USDC via x402 on Base Sepolia.
+          </p>
+          <pre className="docs-code">
+            <code>{`curl -X POST https://api-testnet.xfuel.app/task-request \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: xfuel-demo" \\
+  -d '{
+    "message_type": "inference_request",
+    "chain_id": "base",
+    "amount": "1000000",
+    "sender": "0xYourAddress",
+    "model_id": "llama-3-70b",
+    "input_hash": "0xabc...",
+    "payment": { "rail": "usdc" }
+  }'`}</code>
           </pre>
-          <div style={{ marginTop: '1.5rem', display: 'flex', gap: '0.75rem' }}>
+          <pre className="docs-code">
+            <code>{`npm install xfuel-sdk
+npx xfuel-mcp`}</code>
+          </pre>
+          <div className="docs-actions">
             <a
-              href={`${GITHUB_BASE}/sdk/js/README.md`}
+              href={`${GITHUB}/packages/sdk/README.md`}
               target="_blank"
               rel="noreferrer"
               className="btn btn-primary btn-sm"
             >
-              SDK Documentation
+              SDK docs
             </a>
-            <Link to="/circuits" className="btn btn-secondary btn-sm">Explore Circuits</Link>
+            <a
+              href={`${GITHUB}/docs/README.md`}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-secondary btn-sm"
+            >
+              Full docs hub
+            </a>
           </div>
         </div>
       </div>
     </div>
   );
 }
-
-const codeStyle: React.CSSProperties = {
-  background: 'var(--bg-secondary)',
-  border: '1px solid var(--border-color)',
-  borderRadius: 'var(--radius-sm)',
-  padding: '1rem',
-  fontSize: '0.8rem',
-  fontFamily: 'var(--font-mono)',
-  overflow: 'auto',
-  lineHeight: 1.6,
-  color: '#c0c0d0',
-};

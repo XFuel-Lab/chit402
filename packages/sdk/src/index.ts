@@ -235,11 +235,12 @@ export interface ProofResponse {
     net_amount: string;
     fee_bps: number;
     fee_collector: string;
+    /** Token-light describeSplit() payload from the gateway (ADR 0001). */
     revenue_split: {
-      bbb_buyback_burn: string;
-      lp_provision: string;
-      vexf_stakers: string;
-      treasury: string;
+      model: string;
+      note?: string;
+      totalBps?: number;
+      buckets: Array<{ key: string; label: string; bps: number; pct: number; address?: string | null }>;
     };
   };
   result: unknown | null;

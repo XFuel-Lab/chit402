@@ -18,14 +18,14 @@ const mockProposals = [
   },
   {
     id: 'XIP-6',
-    title: '[Example] Adjust revenue split parameters',
+    title: '[Example] Adjust treasury fee policy',
     status: 'passed',
     votesFor: 1_250_000,
     votesAgainst: 180_000,
     quorum: 1_000_000,
     endTime: 'Ended 3d ago',
     author: '0xcd56...gh78',
-    description: 'Illustrative proposal — parameters must match deployed CoreRevenueSplitter.',
+    description: 'Illustrative proposal — downstream USDC fee distribution is governance-set treasury policy (token-light; ADR 0001).',
   },
   {
     id: 'XIP-5',

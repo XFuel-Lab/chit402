@@ -1,12 +1,14 @@
 import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
-import { ADDRESSES, THETA_MAINNET_ID, isDeployed } from '../contracts';
+import { ADDRESSES, isDeployed } from '../contracts';
 
-const EXPLORER = 'https://explorer.thetatoken.org';
+const BASESCAN = 'https://basescan.org';
 const BUG_BOUNTY =
   'https://github.com/XFuel-Lab/xfuel-protocol/blob/main/docs/bug-bounty.md';
 const AUDIT_CHECKLIST =
   'https://github.com/XFuel-Lab/xfuel-protocol/blob/main/docs/AUDIT_READINESS_CHECKLIST.md';
+const POSITIONING =
+  'https://github.com/XFuel-Lab/xfuel-protocol/blob/main/docs/POSITIONING.md';
 
 function row(label: string, value: string, mono = false) {
   return (
@@ -20,11 +22,8 @@ function row(label: string, value: string, mono = false) {
 }
 
 export default function Security() {
-  const b = ADDRESSES.believerRound;
-  const a = ADDRESSES.angelRound;
-  const e = ADDRESSES.angelEscrow;
-  const splitter = ADDRESSES.splitter;
   const verifier = ADDRESSES.verifier;
+  const baseVerifier = '0x9373499645292715a2275A78eD65B14215C41c06';
 
   return (
     <div className="page">
@@ -35,20 +34,21 @@ export default function Security() {
           </span>
           <h1 style={styles.h1}>Security &amp; transparency</h1>
           <p style={styles.lead}>
-            How we handle audits, disclosure, and on-chain funding. Believer and Angel rounds commit on{' '}
-            <strong>Theta mainnet (chain {THETA_MAINNET_ID})</strong>.
+            Money and proofs settle on <strong>Base</strong>. Trust is tiered: signed receipts by default, on-chain SP1
+            settlement proofs on demand. See our{' '}
+            <a href={POSITIONING} target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>
+              positioning
+            </a>{' '}
+            for honest proof-scope language.
           </p>
         </div>
 
         <div className="card" style={{ padding: '1.5rem', marginBottom: '1.25rem' }}>
           <h2 style={styles.h2}>Audit status</h2>
           <p style={styles.p}>
-            Phase 1 scope covers core settlement, verifier, and funding contracts (see whitepaper audit section). We track readiness in the repo checklist
-            below; status updates will be posted on{' '}
-            <a href="https://twitter.com/XFuelLab" target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>
-              @XFuelLab
-            </a>{' '}
-            and Discord when a firm is engaged and reports are published.
+            Audit Phase 1 covers the Base production core — <code style={{ fontSize: '0.85em' }}>ZKVerifierSP1</code>,{' '}
+            <code style={{ fontSize: '0.85em' }}>SP1ProofHooks</code>, the USDC fee sink, and the primary inference circuit.
+            Status updates will be posted when a firm is engaged and reports are published.
           </p>
           <a href={AUDIT_CHECKLIST} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ marginTop: '0.5rem', display: 'inline-flex' }}>
             Audit readiness checklist (GitHub)
@@ -62,7 +62,7 @@ export default function Security() {
             <a href="https://github.com/XFuel-Lab/xfuel-protocol/security" target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>
               GitHub Security Advisory
             </a>
-            .
+            . Rewards up to <strong>$50,000</strong> for critical findings.
           </p>
           <a href={BUG_BOUNTY} target="_blank" rel="noreferrer" className="btn btn-primary btn-sm" style={{ marginTop: '0.5rem', display: 'inline-flex' }}>
             Bug bounty rules
@@ -70,45 +70,18 @@ export default function Security() {
         </div>
 
         <div className="card" style={{ padding: '1.5rem', marginBottom: '1.25rem' }}>
-          <h2 style={styles.h2}>AngelEscrow buckets</h2>
-          <p style={styles.p}>
-            <strong>AngelEscrow</strong> is an optional, immutable TFUEL contract that ring-fences deposits into three fixed buckets —{' '}
-            <strong>AUDIT</strong>, <strong>SUBCHAIN</strong>, and <strong>DEVOPS</strong>. Multisig signers approve releases against caps;{' '}
-            <code style={{ fontSize: '0.85em' }}>totalRaised</code> and per-bucket releases are on-chain. It is separate from{' '}
-            <strong>AngelRound</strong> (strategic allocation); when both are used, angels should follow the path your terms describe.
-          </p>
-          <p style={{ ...styles.p, marginBottom: 0 }}>
-            Per-bucket <code style={{ fontSize: '0.85em' }}>totalRaised</code> and releases are readable on-chain when{' '}
-            <code style={{ fontSize: '0.85em' }}>VITE_ANGEL_ESCROW_ADDRESS</code> is set.
-          </p>
-        </div>
-
-        <div className="card" style={{ padding: '1.5rem', marginBottom: '1.25rem' }}>
-          <h2 style={styles.h2}>Contract map (env-configured)</h2>
+          <h2 style={styles.h2}>Live contracts (Base)</h2>
           <p style={{ ...styles.p, marginBottom: '1rem' }}>
-            Addresses are baked in at build time from Vercel / <code style={{ fontSize: '0.85em' }}>.env.local</code>. Verify the live address on Theta
-            explorer before committing funds.
+            Verify addresses on Basescan before relying on them. Env-configured addresses are baked in at build time from{' '}
+            <code style={{ fontSize: '0.85em' }}>Vercel / .env.local</code>.
           </p>
-          {row('BelieverRound', isDeployed(b) ? `${b.slice(0, 10)}…` : 'Not set (VITE_BELIEVER_ROUND_ADDRESS)', true)}
-          {isDeployed(b) && (
-            <a href={`${EXPLORER}/address/${b}`} target="_blank" rel="noreferrer" style={{ display: 'block', fontSize: '0.82rem', color: '#00d4ff', marginTop: '0.35rem', marginBottom: '0.5rem' }}>
-              Explorer → BelieverRound
-            </a>
-          )}
-          {row('AngelRound', isDeployed(a) ? `${a.slice(0, 10)}…` : 'Not set (VITE_ANGEL_ROUND_ADDRESS)', true)}
-          {isDeployed(a) && (
-            <a href={`${EXPLORER}/address/${a}`} target="_blank" rel="noreferrer" style={{ display: 'block', fontSize: '0.82rem', color: '#00d4ff', marginTop: '0.35rem', marginBottom: '0.5rem' }}>
-              Explorer → AngelRound
-            </a>
-          )}
-          {row('AngelEscrow', isDeployed(e) ? `${e.slice(0, 10)}…` : 'Not set (VITE_ANGEL_ESCROW_ADDRESS)', true)}
-          {isDeployed(e) && (
-            <a href={`${EXPLORER}/address/${e}`} target="_blank" rel="noreferrer" style={{ display: 'block', fontSize: '0.82rem', color: '#00d4ff', marginTop: '0.35rem', marginBottom: '0.5rem' }}>
-              Explorer → AngelEscrow
-            </a>
-          )}
-          {row('CoreRevenueSplitter', isDeployed(splitter) ? `${splitter.slice(0, 10)}…` : 'Not set (VITE_SPLITTER_ADDRESS)', true)}
-          {row('ZKVerifierSP1', isDeployed(verifier) ? `${verifier.slice(0, 10)}…` : 'Not set (VITE_VERIFIER_ADDRESS)', true)}
+          {row('ZKVerifierSP1 (mainnet)', baseVerifier, true)}
+          <a href={`${BASESCAN}/address/${baseVerifier}`} target="_blank" rel="noreferrer" style={{ display: 'block', fontSize: '0.82rem', color: '#00d4ff', marginTop: '0.35rem', marginBottom: '0.75rem' }}>
+            Basescan → ZKVerifierSP1
+          </a>
+          {row('ZKVerifierSP1 (env)', isDeployed(verifier) ? `${verifier.slice(0, 10)}…` : 'Not set (VITE_VERIFIER_ADDRESS)', true)}
+          {row('Fee sink', 'X402_PAY_TO / protocol Safe · Splits v2 (USDC on Base)', false)}
+          {row('Fundraising', 'Equity-first (SAFE). Token sales not open.', false)}
         </div>
 
         <div style={{ textAlign: 'center', fontSize: '0.85rem', color: '#8a8a9a' }}>
@@ -131,16 +104,15 @@ const styles: Record<string, CSSProperties> = {
     backgroundClip: 'text',
     marginBottom: '0.75rem',
   },
-  h2: { fontSize: '1rem', fontWeight: 700, color: '#e4e4ef', marginBottom: '0.65rem' },
-  lead: { color: '#8a8a9a', fontSize: '1.02rem', lineHeight: 1.65, maxWidth: 560, margin: '0 auto' },
-  p: { color: '#a1a1b5', fontSize: '0.9rem', lineHeight: 1.65, marginBottom: '0.75rem' },
+  lead: { color: '#8a8a9a', lineHeight: 1.65, fontSize: '1rem' },
+  h2: { fontSize: '1.1rem', marginBottom: '0.75rem', color: '#f0f0f5' },
+  p: { color: '#8a8a9a', lineHeight: 1.65, fontSize: '0.92rem', marginBottom: '0.75rem' },
   row: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
     gap: '1rem',
     padding: '0.55rem 0',
     borderBottom: '1px solid rgba(255,255,255,0.06)',
-    fontSize: '0.88rem',
+    fontSize: '0.9rem',
   },
 };

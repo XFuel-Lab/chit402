@@ -1,138 +1,23 @@
-# ADR 0004 — XFuel zkLLM Prover Stack (arkworks; model-agnostic, op-first)
+# ADR 0004 — zkLLM Prover Stack
 
-- **Status:** Accepted
-- **Date:** 2026-07-18
-- **Deciders:** Founder + engineering
-- **Related:** ADR 0003 (clean-room, permissive-only), ADR 0002 (Base settlement home),
-  [`docs/TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md`](../TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md) §8,
-  [`docs/VERIFIED_INFERENCE_TIERS.md`](../VERIFIED_INFERENCE_TIERS.md)
-
----
+Status: Accepted. Date: 2026-07-18.  
+Related: [ADR 0003](./0003-verified-inference-cleanroom.md), [VERIFIED_INFERENCE_TIERS.md](../VERIFIED_INFERENCE_TIERS.md), `services/zkllm-prover/`.
 
 ## Context
 
-Phase 5 builds XFuel's **own** ZK prover for Tier-3 (T3b spot-check / T3c full). ADR 0003 committed
-us to a clean-room, permissive-only build. This ADR pins the concrete crypto stack and the
-architecture that lets **one codebase cover the whole ZK-addressable LLM market**.
+Tier-3 needs a self-owned ZK prover. Mainstream open LLMs are decoder-only transformers whose cost is mostly matmul — so the stack is op-first and config-driven (zkLLM), not a single-model “zkGPT.” ZK proof-of-inference applies to open-weight models only; closed models stay on signed / TEE tiers.
 
-Two findings drive the design:
+## Decisions
 
-1. **The specific LLM barely matters for the expensive core.** Every mainstream open LLM (Llama,
-   Mistral, Qwen, Gemma, GPT-2, MoE variants) is a decoder-only transformer whose cost is
-   ~90%+ **matmul** — architecture-independent (only dimensions change). Positional encoding,
-   normalization, activation, and attention grouping differ, but they are a small, swappable
-   "long tail." So we build **op-first + config-driven**, not model-specific. "zkGPT" was the wrong
-   label; this is **XFuel zkLLM**.
-2. **ZK proof-of-inference only applies to open-weight models.** You can only prove a computation
-   you run. Closed models (GPT-4o/Claude/Gemini) have no weight access → un-provable by anyone;
-   they are honestly covered by the **T3a TEE** and signed tiers. Open-weight models — exactly what
-   XFuel routes to on DePIN/neocloud, overwhelmingly Llama-lineage — are the ZK-addressable set.
+1. Proving stack: arkworks (`ark-ff`, `ark-bn254`, …) — Apache-2.0 / MIT; avoid AGPL/encumbered stacks (ADR 0003).
+2. Architecture: matmul-first sumcheck argument; model manifest for gadget selection; pluggable gadgets (Llama-family first); quantized-integer first; spot-check granularity = one block.
+3. Public inputs bind arch-bound PoMA + payment-bound receipt tuple with the same keccak / ABI semantics as `SP1ProofHooks` / gateway so proofs settle on the existing Base path.
+4. On-chain verify target: wrap to Groth16 / existing Base verifier surface where possible (minimize new audit-scope Solidity).
 
-## Decision
+## Resume / make-or-break
 
-**Proving stack: [arkworks](https://github.com/arkworks-rs)** (`ark-ff`, `ark-bn254`, `ark-std`) —
-mature, modular, **Apache-2.0 / MIT** dual-licensed, with the sumcheck/MLE and BN254 +
-Groth16-wrap primitives we need for on-chain verification. We **avoid** AGPL/encumbered stacks
-(Polyhedra Expander = AGPL-3.0; Lagrange `zkml` = custom license) per ADR 0003.
-
-**Architecture:**
-- **Matmul-first.** Implement a generic **sumcheck-based matmul argument** (Thaler-style: reduce
-  `C = A·B` to evaluations of the multilinear extensions of `A`, `B` at a Fiat-Shamir point). This
-  is the model-agnostic 90% and the first shippable slice (M5.1).
-- **Model manifest.** A compact architecture config drives gadget selection. Committing the
-  manifest **extends PoMA**: the proof attests "*these* weights **+ this** architecture produced
-  this output," closing a model-substitution/downgrade gap.
-- **Gadgets as pluggable modules**, added Llama-family first (RMSNorm → SwiGLU/SiLU → RoPE → GQA),
-  via Lasso/logup lookups for non-linearities. GPT-2-style (LayerNorm/GeLU/learned-pos) is a subset.
-- **Quantized-integer first.** Finite-field-native and market-real; floats are deferred.
-- **Spot-check granularity = one block.** Every block is structurally identical, so one block
-  prover + the manifest covers any depth / any model without whole-model RAM.
-
-**Public-input binding.** Proof public inputs bind the **arch-bound PoMA model commitment** + the
-**PBR tuple** (payment_ref, task_id, rail, amount, output_hash) using `keccak256`/`abi.encodePacked`
-semantics identical to `SP1ProofHooks.computeInferenceBindingCommitment` and the gateway/SDK —
-so a zkLLM proof slots into the same settlement path as the SP1 settlement proof.
-
-## Approved dependencies (provenance log)
-
-| Crate | Version | License | Role |
-|-------|---------|---------|------|
-| `ark-ff` | 0.4 | Apache-2.0 OR MIT | Prime field arithmetic (BN254 `Fr`) |
-| `ark-bn254` | 0.4 | Apache-2.0 OR MIT | BN254 scalar field + pairing (on-chain-friendly) |
-| `ark-ec` | 0.4 | Apache-2.0 OR MIT | Elliptic-curve / `Pairing` trait for the multilinear-KZG PCS |
-| `ark-poly` | 0.4 | Apache-2.0 OR MIT | `DenseMultilinearExtension` (tensor → MLE) for the PCS |
-| `ark-poly-commit` | 0.4 | Apache-2.0 OR MIT | `multilinear_pc::MultilinearPC` — multilinear KZG (PST) commitment (M5.4) |
-| `ark-serialize` | 0.4 | Apache-2.0 OR MIT | Canonical commitment encoding, absorbed into the Fiat–Shamir transcript (M5.4) |
-| `ark-std` | 0.4 | Apache-2.0 OR MIT | RNG / no-std shims / test utils |
-| `sha3` | 0.10 | Apache-2.0 OR MIT | `Keccak256` — Ethereum-compatible commitments + Fiat-Shamir |
-
-**M5.4 PCS choice (2026-07-19).** The succinctness binding uses **multilinear KZG** (the Marlin
-variant of Papamanthou–Shi–Tamassia, `ark_poly_commit::multilinear_pc`) over BN254. Rationale:
-(1) pairing-based on BN254 ⇒ an opening verifies with the `ecPairing` precompile (`0x08`), keeping
-the future on-chain `IVerifiedInference` verifier a **native-Solidity** path rather than forcing a
-non-native-pairing Groth16 wrap of the whole verifier; (2) constant-size commitments/openings;
-(3) Apache/MIT (ADR 0003). **Trust cost:** a per-`num_vars` trusted-setup SRS (powers-of-tau) — the
-same assumption Groth16 already carries; keys are generated once, never on the hot path
-(`pcs::setup`). A transparent alternative (Hyrax, also in `ark-poly-commit`) is available if we later
-choose to drop the setup at the cost of `√n` opening size.
-
-**On-chain verifier decision — SP1-wrap (C1) (2026-07-20).** Rather than ship a hand-rolled
-native-Solidity multilinear-KZG + sumcheck verifier (large new audit surface, high gas), we run our
-**verifier inside an SP1 guest** and let Succinct wrap it to a cheap on-chain proof verified by the
-**existing `SP1Verifier.sol` on Base** — no new audit-scope Solidity, no GPU, and the *same* wrap
-serves Tier-2 settlement and Tier-3 inference (only the guest's checks differ). Two variants were
-weighed:
-
-- **C1 (chosen): keep KZG.** The guest runs `pcs::verify` (multilinear-KZG); each opening is O(1)
-  BN254 pairings (SP1 has a `bn254` pairing precompile), so the guest stays small.
-- **C2 (fallback): drop KZG.** The guest commits tensors by keccak (native in SP1) and recomputes
-  `mle_eval` in-guest — no SRS/ceremony, but O(n) field ops per opening.
-
-**Two honest caveats, deliberately deferred to a spike (not yet resolved):**
-1. **SRS.** Multilinear KZG needs a *multilinear* SRS; public powers-of-tau ceremonies are
-   *univariate* (see [`docs/POMA_SPEC.md`](../POMA_SPEC.md) §6). C1 therefore implies either a small
-   first-party setup or a scheme swap (e.g. Zeromorph over a univariate SRS). This does **not** block
-   the PoMA commitment, which is PCS-agnostic.
-2. **zkVM compile.** Whether `ark-poly-commit` + BN254 pairings compile to the SP1 `riscv32im`
-   target (with SP1's patched arkworks crates) is the make-or-break for C1 vs C2. It is measured by a
-   throwaway spike, **not** by touching product code.
-
-**Spike status:** scaffolded + isolated in [`services/sp1-inference-spike/`](../../services/sp1-inference-spike/README.md)
-(PR #149). The SP1-independent core (serialize a KZG opening → `pcs::verify` → bundle) compiles and
-passes tests on any host incl. Windows.
-
-**Spike run 1 — 2026-07-20 (Docker `xfuel-sp1-prover:latest`).** `cargo prove build` of the guest:
-- ✅ **The arkworks stack compiles to the zkVM target** (`riscv32im-succinct-zkvm-elf`):
-  `ark-ff`, `ark-poly`, `ark-serialize`, `ark-std`, `ark-relations`, `ark-snark`, `sha3` all built.
-  **This de-risks the scary part of C1** — the crypto foundation is zkVM-compatible.
-- ⚠️ **Blocker (env/version, not crypto):** the build aborts at **`sp1-zkvm` itself** — `type u64
-  cannot be used with this register class` in its syscall inline-asm (`halt.rs`/`ed25519.rs`). This
-  image's `succinct` toolchain is **rustc 1.92** (Dec 2025), which is too new for the crates.io
-  `sp1-zkvm` asm; **both** `6.3.1` and pinned `=6.0.2` fail identically (transitive `sp1-lib`/
-  `sp1-primitives` still resolve to `6.3.1`). This is an **sp1-zkvm ↔ toolchain matching** problem.
-- ⏳ **Not yet reached:** `ark-bn254`/`ark-ec`/`ark-poly-commit` pairing compilation (build aborted at
-  `sp1-zkvm` first). C1's pairing-in-zkVM question stays open, but the arkworks foundation compiling
-  is a strong positive signal. **Lean remains C1.**
-
-> **▶ RESUME HERE (Tier-3 on-chain verifier):** use an SP1 environment where the `sp1-zkvm` crate
-> version and the `succinct` rustc toolchain are a **matched pair** — i.e. an official Succinct
-> release Docker image for a specific SP1 version, or `sp1up --version <v>` installing the toolchain
-> that pairs with the chosen `sp1-zkvm`. Then `cd services/sp1-inference-spike/sp1 && cargo prove build`.
-> Once `sp1-zkvm` compiles, the next signal is whether `ark-bn254`/`ark-poly-commit` pairings build:
-> compiles → **C1 confirmed**, record guest cycle count; fails → adopt **C2** (keccak + in-guest eval)
-> and record why. **No audit-scope Solidity until this passes.**
-
-Every future component (GKR backend, lookups, Groth16 wrapper) gets a row here with its license
-verified **before** it is added. Nothing enters the tree that isn't OSI-permissive.
+See [VERIFIED_INFERENCE_HANDOFF.md](../VERIFIED_INFERENCE_HANDOFF.md) and the build-spec resume section: SP1-compat spike (`services/sp1-inference-spike`) decides wrap path C1 vs C2; then RAM bench, on-chain verify, E2E.
 
 ## Consequences
 
-- **Positive:** one model-agnostic codebase; day-one coverage of the matmul-dominated cost for all
-  open LLMs; clean licensing; proofs bind to the same PoMA+PBR settlement tuple; container-portable
-  (CPU-only), so it runs on any AWS container (RAM-sized instance for model-scale).
-- **Negative / risk:** specialist crypto and time (XL). M5.1 is a verifiable-computation reduction;
-  the polynomial-commitment opening that binds `A,B` to the on-chain weight commitment, and the
-  Groth16 wrap for cheap on-chain verification, are explicit later milestones (M5.4).
-- **Honesty boundary:** until M5.4 lands on Base, zkLLM proofs are generated + verified off-chain;
-  the tier engine keeps serving `tee`/`settlement`/`signed` and never labels a task `zk-full`
-  unless a real full-proof verifier is configured.
+One codebase covers the ZK-addressable open-weight market; honest exclusion of closed models; Base settlement binding preserved.

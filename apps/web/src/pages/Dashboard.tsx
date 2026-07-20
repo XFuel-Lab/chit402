@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useReadContract } from 'wagmi';
-import { formatEther } from 'viem';
 import {
-  ADDRESSES, SPLITTER_ABI, VERIFIER_ABI, THETA_INFERENCE_ABI,
+  ADDRESSES, VERIFIER_ABI, THETA_INFERENCE_ABI,
   isDeployed,
 } from '../contracts';
 
@@ -26,7 +25,8 @@ interface M2MHealthData {
     max_bps: number;
     min_task_amount: string;
     a2a_relay_bps: number;
-    revenue_split: string;
+    /** Token-light describeSplit() object, or legacy string from older gateways */
+    revenue_split: string | { model?: string; note?: string; buckets?: Array<{ key: string; label: string; pct: number }> };
   };
   chains: string[];
   message_types: string[];
@@ -74,16 +74,16 @@ const mockCircuitActivity = [
 ];
 
 const mockRevenue = [
-  { source: 'Buyback-Burn (BBB)', amount: '(demo)', percent: 30 },
-  { source: 'Growth & expansion (GET)', amount: '(demo)', percent: 30 },
-  { source: 'Stakers (veXF)', amount: '(demo)', percent: 25 },
-  { source: 'Treasury', amount: '(demo)', percent: 15 },
+  { source: 'AI task settlement (0.5%–1%)', amount: '(demo)', percent: 70 },
+  { source: 'A2A relay (0.1%)', amount: '(demo)', percent: 10 },
+  { source: 'Bridge transfer (0.5%)', amount: '(demo)', percent: 12 },
+  { source: 'Data attestation (0.5%)', amount: '(demo)', percent: 8 },
 ];
 
 const mockNetworkHealth = [
-  { network: 'Theta (testnet target)', blockHeight: '—', latency: '—', status: 'demo' },
+  { network: 'Base (settlement home)', blockHeight: '—', latency: '—', status: 'demo' },
+  { network: 'Base Sepolia (testnet)', blockHeight: '—', latency: '—', status: 'demo' },
   { network: 'Bittensor EVM', blockHeight: '—', latency: '—', status: 'demo' },
-  { network: 'Osmosis', blockHeight: '—', latency: '—', status: 'demo' },
 ];
 
 function formatUptime(seconds: number): string {
@@ -95,8 +95,18 @@ function formatUptime(seconds: number): string {
   return `${m}m ${seconds % 60}s`;
 }
 
+function formatRevenueSplit(
+  split: M2MHealthData['fee_config']['revenue_split'] | undefined,
+): string {
+  if (!split) return 'USDC → Safe / Splits v2 (token-light)';
+  if (typeof split === 'string') return split;
+  if (split.buckets?.length) {
+    return split.buckets.map((b) => `${b.label} ${b.pct}%`).join(' · ');
+  }
+  return split.note || split.model || 'USDC → Safe / Splits v2 (token-light)';
+}
+
 export default function Dashboard() {
-  const splitterDeployed = isDeployed(ADDRESSES.splitter);
   const verifierDeployed = isDeployed(ADDRESSES.verifier);
   const inferenceDeployed = isDeployed(ADDRESSES.thetaInference);
 
@@ -209,27 +219,6 @@ export default function Dashboard() {
     return () => clearInterval(t);
   }, []);
 
-  const { data: totalDeposited } = useReadContract({
-    address: ADDRESSES.splitter,
-    abi: SPLITTER_ABI,
-    functionName: 'totalDeposited',
-    query: { enabled: splitterDeployed },
-  });
-
-  const { data: totalDistributed } = useReadContract({
-    address: ADDRESSES.splitter,
-    abi: SPLITTER_ABI,
-    functionName: 'totalDistributed',
-    query: { enabled: splitterDeployed },
-  });
-
-  const { data: distCount } = useReadContract({
-    address: ADDRESSES.splitter,
-    abi: SPLITTER_ABI,
-    functionName: 'distributionCount',
-    query: { enabled: splitterDeployed },
-  });
-
   const { data: verifierStats } = useReadContract({
     address: ADDRESSES.verifier,
     abi: VERIFIER_ABI,
@@ -251,23 +240,16 @@ export default function Dashboard() {
     query: { enabled: inferenceDeployed },
   });
 
-  const hasLiveData = splitterDeployed || verifierDeployed;
+  const hasLiveData = verifierDeployed;
 
-  const tvlDisplay = totalDeposited
-    ? `$${(Number(formatEther(totalDeposited)) * 0.5).toFixed(1)}M`
-    : '—';
-  const feesDisplay = totalDistributed
-    ? `$${(Number(formatEther(totalDistributed)) * 0.5).toFixed(1)}M`
-    : '—';
-  const distDisplay = distCount ? Number(distCount).toLocaleString() : '—';
   const proofCount = verifierStats ? Number(verifierStats[0]).toLocaleString() : '—';
-  const circuitsDisplay = circuitCount ? String(Number(circuitCount)) : '21';
+  const circuitsDisplay = circuitCount ? String(Number(circuitCount)) : '16+';
 
   const protocolStats = [
-    { label: 'Total Value Locked', value: tvlDisplay, change: hasLiveData ? 'live' : 'demo' },
-    { label: 'Total Fees Generated', value: feesDisplay, change: hasLiveData ? 'live' : 'demo' },
-    { label: 'Distributions Made', value: distDisplay, change: hasLiveData ? 'live' : 'demo' },
-    { label: 'Active Circuits', value: circuitsDisplay, change: proofCount !== '—' ? `${proofCount} proofs` : 'demo' },
+    { label: 'Settlement home', value: 'Base', change: 'USDC / x402' },
+    { label: 'Proofs verified', value: proofCount, change: hasLiveData ? 'live' : 'demo' },
+    { label: 'Active circuits', value: circuitsDisplay, change: hasLiveData ? 'live' : 'demo' },
+    { label: 'Fee model', value: 'Token-light', change: 'Safe / Splits v2' },
   ];
 
   return (
@@ -280,7 +262,7 @@ export default function Dashboard() {
 
         {!hasLiveData && (
           <div style={{ fontSize: '0.8rem', color: '#f59e0b', textAlign: 'center', marginBottom: '1rem' }}>
-            Contracts not configured — showing demo data. Set VITE_SPLITTER_ADDRESS and VITE_VERIFIER_ADDRESS to connect.
+            Verifier not configured — showing demo data. Set VITE_VERIFIER_ADDRESS (Base) to connect.
           </div>
         )}
 
@@ -298,7 +280,7 @@ export default function Dashboard() {
 
         <div className="grid grid-2" style={{ marginBottom: '2rem' }}>
           <div className="card">
-            <h3 style={{ marginBottom: '1.25rem' }}>Revenue breakdown (demo split 30/30/25/15)</h3>
+            <h3 style={{ marginBottom: '1.25rem' }}>Fee revenue by source (USDC on Base — demo)</h3>
             {mockRevenue.map((r) => (
               <div key={r.source} style={{ marginBottom: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
@@ -443,8 +425,10 @@ export default function Dashboard() {
                         <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', textAlign: 'right' }}>{Number(m2mHealth.fee_config.min_task_amount).toLocaleString()}</td>
                       </tr>
                       <tr>
-                        <td style={tdStyle}>Revenue Split</td>
-                        <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', textAlign: 'right', fontSize: '0.8rem' }}>{m2mHealth.fee_config.revenue_split}</td>
+                        <td style={tdStyle}>Fee sink</td>
+                        <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', textAlign: 'right', fontSize: '0.75rem', maxWidth: 280 }}>
+                          {formatRevenueSplit(m2mHealth.fee_config.revenue_split)}
+                        </td>
                       </tr>
                     </tbody>
                   </table>
@@ -566,10 +550,13 @@ export default function Dashboard() {
 
         {/* ── 6.3 TDROP Stats (Track 6.3) ───────────────────────────────────── */}
         <div className="card" style={{ marginTop: '2rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
             <h3>TDROP Payment Stats</h3>
-            <span className="badge badge-purple">TNT-20</span>
+            <span className="badge badge-purple">optional rail</span>
           </div>
+          <p style={{ color: '#8a8a9a', fontSize: '0.78rem', marginBottom: '1.25rem' }}>
+            Optional Theta-provider rail. The default payment rail is <strong>USDC via x402 on Base</strong>.
+          </p>
           {!tdropStats && (
             <div style={{ fontSize: '0.8rem', color: '#8a8a9a' }}>
               Waiting for M2M backend stats — TDROP metrics populate once the AI listener reports <code style={{ fontFamily: 'var(--font-mono)' }}>TdropIntentSubmitted</code> events.

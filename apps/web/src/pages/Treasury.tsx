@@ -1,21 +1,19 @@
 const treasuryOverview = [
-  { label: 'Total Treasury', value: '(demo)' },
-  { label: 'Monthly Inflow', value: '(demo)' },
-  { label: 'Distributions', value: '(demo)' },
+  { label: 'Fee currency', value: 'USDC' },
+  { label: 'Settlement home', value: 'Base' },
+  { label: 'Fee sink', value: 'Safe / Splits v2' },
   { label: 'Last Distribution', value: '(demo)' },
 ];
 
-const revenueSplits = [
-  { name: 'Buyback-Burn (BBB)', percent: 30, amount: '(demo)', color: '#00d4ff', description: 'Open-market buy + burn bucket' },
-  { name: 'Growth & expansion (GET)', percent: 30, amount: '(demo)', color: '#8b5cf6', description: 'Machine incentives, LP boost, grants (per docs)' },
-  { name: 'Stakers (veXF)', percent: 25, amount: '(demo)', color: '#22c55e', description: 'Yield to lockers / stakers' },
-  { name: 'Treasury', percent: 15, amount: '(demo)', color: '#f59e0b', description: 'Ops + fee-to-stake routing' },
+// Token-light: fees settle in USDC to one Base address; downstream fan-out is
+// governance-set treasury policy, NOT a hardcoded per-fee split (ADR 0001 / 0002).
+const feeFlow = [
+  { name: 'Fee collected', color: '#00d4ff', description: 'USDC via x402 on Base, per task (0.1%–1%)' },
+  { name: 'Fee sink', color: '#8b5cf6', description: 'Lands at X402_PAY_TO — protocol Safe / Splits v2 (off hot path)' },
+  { name: 'Downstream policy', color: '#22c55e', description: 'Ecosystem, reserve, XF buyback (post-TGE) — set by veXF governance' },
 ];
 
-const distributionHistory = [
-  { date: '—', total: '(demo)', bbb: '—', get: '—', stakers: '—', treasury: '—', txHash: '—' },
-];
-
+// Illustrative treasury allocation — governance-adjustable, not a fixed per-fee split.
 const treasuryAllocations = [
   { category: 'Development', amount: '(demo)', percent: 25 },
   { category: 'Security Audits', amount: '(demo)', percent: 20 },
@@ -26,13 +24,17 @@ const treasuryAllocations = [
   { category: 'Reserve', amount: '(demo)', percent: 17.5 },
 ];
 
+const distributionHistory = [
+  { date: '—', total: '(demo)', destination: '—', txHash: '—' },
+];
+
 export default function Treasury() {
   return (
     <div className="page">
       <div className="container">
         <div className="page-header">
           <h1>Treasury Dashboard</h1>
-          <p>Illustrative layout — wire to on-chain data for live treasury views.</p>
+          <p>Token-light: fees settle in USDC on Base to the protocol Safe / Splits v2. Illustrative layout — wire to on-chain data for live views.</p>
         </div>
 
         {/* Overview Stats */}
@@ -45,32 +47,28 @@ export default function Treasury() {
           ))}
         </div>
 
-        {/* Revenue Splits */}
+        {/* Fee flow + allocations */}
         <div className="grid grid-2" style={{ marginBottom: '2rem' }}>
           <div className="card" style={{ padding: '2rem' }}>
-            <h3 style={{ marginBottom: '1.5rem' }}>Revenue split (target 30/30/25/15 — demo)</h3>
-            {revenueSplits.map((s) => (
+            <h3 style={{ marginBottom: '1.5rem' }}>Fee flow — token-light (USDC on Base)</h3>
+            {feeFlow.map((s, i) => (
               <div key={s.name} style={{ marginBottom: '1.25rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: s.color, display: 'inline-block' }} />
-                    <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{s.name}</span>
-                  </div>
-                  <span style={{ fontWeight: 700 }}>{s.percent}%</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
+                  <span style={{ width: 10, height: 10, borderRadius: '50%', background: s.color, display: 'inline-block' }} />
+                  <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{i + 1}. {s.name}</span>
                 </div>
-                <div className="progress-bar">
-                  <div style={{ height: '100%', borderRadius: '999px', background: s.color, width: `${s.percent}%` }} />
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.25rem' }}>
-                  <span style={{ color: '#8a8a9a', fontSize: '0.8rem' }}>{s.description}</span>
-                  <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{s.amount}</span>
+                <div style={{ paddingLeft: '1.1rem' }}>
+                  <span style={{ color: '#8a8a9a', fontSize: '0.82rem' }}>{s.description}</span>
                 </div>
               </div>
             ))}
+            <p style={{ color: '#8a8a9a', fontSize: '0.78rem', marginTop: '0.5rem' }}>
+              No hardcoded per-fee split and no fixed staker-yield entitlement (ADR 0001).
+            </p>
           </div>
 
           <div className="card" style={{ padding: '2rem' }}>
-            <h3 style={{ marginBottom: '1.5rem' }}>Treasury Allocations</h3>
+            <h3 style={{ marginBottom: '1.5rem' }}>Treasury allocation (governance-set, demo)</h3>
             {treasuryAllocations.map((a) => (
               <div key={a.category} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                 <span style={{ fontSize: '0.9rem' }}>{a.category}</span>
@@ -94,7 +92,7 @@ export default function Treasury() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
               <thead>
                 <tr>
-                  {['Date', 'Total', 'BBB (30%)', 'GET (30%)', 'Stakers (25%)', 'Treasury (15%)', 'Tx'].map((h) => (
+                  {['Date', 'Total (USDC)', 'Destination', 'Tx'].map((h) => (
                     <th key={h} style={thStyle}>{h}</th>
                   ))}
                 </tr>
@@ -104,10 +102,7 @@ export default function Treasury() {
                   <tr key={d.date}>
                     <td style={tdStyle}>{d.date}</td>
                     <td style={{ ...tdStyle, fontWeight: 700 }}>{d.total}</td>
-                    <td style={{ ...tdStyle, color: '#00d4ff' }}>{d.bbb}</td>
-                    <td style={{ ...tdStyle, color: '#8b5cf6' }}>{d.get}</td>
-                    <td style={{ ...tdStyle, color: '#22c55e' }}>{d.stakers}</td>
-                    <td style={{ ...tdStyle, color: '#f59e0b' }}>{d.treasury}</td>
+                    <td style={{ ...tdStyle, color: '#8b5cf6' }}>{d.destination}</td>
                     <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>{d.txHash}</td>
                   </tr>
                 ))}
