@@ -68,7 +68,7 @@ const features = [
   },
   {
     title: 'Proof, when it matters',
-    description: 'Signed receipt (free) → ZK settlement proof (on demand) → proof-of-inference via zkGPT (roadmap). Cost tracks the level of trust you need.',
+    description: 'Signed receipt (free) → SP1 settlement proof (on demand) → Verified Inference via zkLLM (active build). Cost tracks the level of trust you need.',
     icon: '◉',
     link: '/security',
     color: '#ef4444',

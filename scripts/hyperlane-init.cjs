@@ -17,7 +17,8 @@
  *   node scripts/hyperlane-init.cjs --manifest-only  # Write chain manifest only
  *
  * If Hyperlane CLI is not installed globally, the script will log the install command.
- * After deployment, Mailbox addresses are stored in deploy/manifests/hyperlane.json.
+ * After deployment, Mailbox addresses are stored in deploy/legacy/manifests/hyperlane.json
+ * (optional cross-chain experiment — settlement home remains Base).
  */
 
 const { execSync, exec } = require('child_process');
@@ -69,7 +70,7 @@ const CHAINS = {
   },
 };
 
-const MANIFEST_DIR = path.join(__dirname, '..', 'deploy', 'manifests');
+const MANIFEST_DIR = path.join(__dirname, '..', 'deploy', 'legacy', 'manifests');
 const MANIFEST_FILE = path.join(MANIFEST_DIR, 'hyperlane.json');
 
 // ─── CLI Detection ───────────────────────────────────────────────────────────

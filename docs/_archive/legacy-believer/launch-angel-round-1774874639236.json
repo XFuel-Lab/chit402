@@ -1,0 +1,31 @@
+{
+  "protocol": "XFuel Protocol",
+  "event": "Angel Round Launch",
+  "network": "theta-testnet",
+  "timestamp": "2026-03-30T12:43:59.235Z",
+  "contract": "0xb646083A5aDB4F93750bC1Ee1F0E11BFCe06d465",
+  "explorerUrl": "https://testnet-explorer.thetatoken.org/account/0xb646083A5aDB4F93750bC1Ee1F0E11BFCe06d465",
+  "parameters": {
+    "phase": 1,
+    "admin": "0x9D6fC5EEa264182783Da01Bcfc135E52bE7bF257",
+    "hardCapTFUEL": "2000000.0",
+    "minCommitmentTFUEL": "0.1",
+    "maxPerWallet": "none",
+    "priceXFPerTFUEL": "8/1",
+    "cliffDays": 90,
+    "linearVestingDays": 270,
+    "refunds": "none — separate from BelieverRound",
+    "preTGETreasury": "withdrawToTreasury(to, amount, memo) — admin only, before TGE",
+    "tgeNote": "triggerTGE is per-contract; call separately from BelieverRound.triggerTGE",
+    "xfAllocationCapXF": "100000000.0"
+  },
+  "smokeTests": {
+    "passed": 5,
+    "total": 5,
+    "commitSmoke": "ran"
+  },
+  "deploymentGas": 1902407,
+  "frontendEnv": {
+    "VITE_ANGEL_ROUND_ADDRESS": "0xb646083A5aDB4F93750bC1Ee1F0E11BFCe06d465"
+  }
+}

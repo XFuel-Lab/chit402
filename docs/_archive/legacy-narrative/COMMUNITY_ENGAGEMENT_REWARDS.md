@@ -4,7 +4,7 @@ Budget line in tokenomics for **airdrops, farming, task rewards, giveaways** —
 
 ## On-chain vehicle
 
-- **`CommunityEngagementDistributor`** (`contracts/circuits/CommunityEngagementDistributor.sol`)
+- **`CommunityEngagementDistributor`** (`contracts/legacy/circuits/CommunityEngagementDistributor.sol`)
   - **`maxLifetimeXF`**: deploy with `150_000_000 * 10**18` (match policy).
   - **`fund(amount)`**: treasury sends XF into the contract.
   - **`publishSeason(root)`**: operator sets a Merkle root per **season** (e.g. quarterly snapshot).

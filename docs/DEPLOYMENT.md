@@ -1,6 +1,6 @@
 # Deployment
 
-Deploy the Base-settled core, optional networks, and the agent gateway.
+Deploy the Base-settled core, Verified Inference surfaces, and the agent gateway.
 
 As-deployed topology: [RUNTIME_STATE.md](./RUNTIME_STATE.md).
 
@@ -8,8 +8,8 @@ As-deployed topology: [RUNTIME_STATE.md](./RUNTIME_STATE.md).
 
 - Node.js 20+, npm 10+
 - Hardhat
-- Funded deployer on the target network
-- Root `.env.local` (or network-specific env)
+- Funded deployer on Base (or Base Sepolia)
+- Root `.env.local` (see `.env.deploy.example`)
 
 ## Environment (minimal)
 
@@ -21,30 +21,24 @@ X402_PAY_TO=0x...                  # Base USDC fee sink
 XF_TOKEN_ADDRESS=0x...             # optional, post-TGE
 ```
 
-Gateway payment / prover vars: see [X402_ADAPTER.md](./X402_ADAPTER.md) and [RUNTIME_STATE.md](./RUNTIME_STATE.md).
+Gateway payment / prover vars: [X402_ADAPTER.md](./X402_ADAPTER.md), [RUNTIME_STATE.md](./RUNTIME_STATE.md).
 
-## Scripts
+## Go-forward scripts
 
 | Script | Purpose |
 |--------|---------|
 | `deploy/base-verifier.cjs` | `ZKVerifierSP1` on Base |
-| `deploy/deploy-core.cjs` | Core contracts |
-| `deploy/deploy-circuits.cjs` | Circuit contracts |
-| `deploy/deploy-full.cjs` | Core + circuits + roles + manifest |
-| `deploy/testnet.cjs` | Testnet deploy + smoke tests |
-| `deploy/mainnet.cjs` | Production checks + manifest |
+| `deploy/model-registry.cjs` | PoMA ModelRegistry |
+| `deploy/provider-staking.cjs` | Provider staking / slash |
+| `deploy/erc8004-adapter.cjs` | ERC-8004 validation adapter |
+| `deploy/register-model.cjs` | Register a model commitment |
+| `deploy/ecs/` | SP1 prover AWS task def |
 
-Manifests land in `deploy/manifests/`.
-
-## Local
-
-```
-npx hardhat run deploy/deploy-full.cjs
-```
+Manifests: `deploy/manifests/` (live Base only — e.g. `base-verifier-*.json`). Historical Theta/Believer/activation/phase/Hyperlane JSON lives under `deploy/legacy/manifests/`.
 
 ## Base
 
-```
+```bash
 npx hardhat run deploy/base-verifier.cjs --network base-sepolia
 npx hardhat run deploy/base-verifier.cjs --network base
 ```
@@ -53,20 +47,22 @@ Live mainnet verifier: `0x9373499645292715a2275A78eD65B14215C41c06` (8453).
 
 ## Gateway
 
-```
+```bash
 cd services/gateway
 npm install
 npm run m2m-server
 ```
 
-Production demo box uses PM2 app `xfuel-m2m` — see [RUNTIME_STATE.md](./RUNTIME_STATE.md).
-
-## Optional networks
-
-Historical Theta / Bittensor / CosmWasm scripts remain under `deploy/` for provider or cross-chain experiments. Settlement home is Base ([ADR 0002](./adr/0002-base-settlement-home.md)).
+Production demo box uses PM2 app `xfuel-m2m` — [RUNTIME_STATE.md](./RUNTIME_STATE.md).
 
 ## Verify
 
+```bash
+npm run verify:base      # live Base verifier manifest
+npm run verify:testnet   # historical Theta testnet (legacy)
+npm run verify:mainnet   # historical Theta mainnet (legacy)
 ```
-node scripts/verify-deployment.cjs --manifest deploy/manifests/<manifest>.json
-```
+
+## Legacy (Theta / splitter / Believer)
+
+Historical full-stack scripts and Theta manifests: [`deploy/legacy/`](../deploy/legacy/README.md). Not the product fee path.

@@ -71,6 +71,5 @@ https://xfuel.app · https://api-testnet.xfuel.app
 | [REFERENCES-AND-ATTRIBUTION.md](./REFERENCES-AND-ATTRIBUTION.md) | Research credits |
 | [FUNDRAISING_STRUCTURE.md](./FUNDRAISING_STRUCTURE.md) | Equity-first raise (counsel) |
 | [LEGAL_LAUNCH_CHECKLIST.md](./LEGAL_LAUNCH_CHECKLIST.md) | Legal planning |
-| [SAFEGUARDS.md](./SAFEGUARDS.md) | Git / deploy safeguards |
 
 Agents: [../AGENTS.md](../AGENTS.md). Historical: [_archive/](./_archive/README.md).

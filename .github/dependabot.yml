@@ -37,7 +37,7 @@ updates:
       - dependency-name: "ethers"
         update-types: ["version-update:semver-major"]
 
-  # ── npm (backend theta-bridge) ──────────────────────────────
+  # ── npm (gateway — routing / payments / receipts) ───────────
   - package-ecosystem: "npm"
     directory: "/services/gateway"
     schedule:

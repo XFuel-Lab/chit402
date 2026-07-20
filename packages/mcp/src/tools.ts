@@ -56,7 +56,7 @@ export interface ToolContext {
   config: McpConfig;
 }
 
-const CHAIN_IDS = ['theta', 'bittensor', 'akash', 'osmosis', 'persistence'] as const;
+const CHAIN_IDS = ['base', 'theta', 'bittensor', 'akash', 'osmosis', 'persistence'] as const;
 const AMOUNT_RE = /^\d+$/;
 
 /**
@@ -79,13 +79,13 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     'submit_inference',
     {
       title: 'Submit AI inference task',
-      description: `Submit an AI inference task to the XFuel Protocol. XFuel routes it to a GPU provider (Theta EdgeCloud → DePIN fallbacks), and settles with a ZK proof.
+      description: `Submit an AI inference task to the XFuel Protocol. XFuel routes to a pluggable provider and settles with a verifiable receipt (signed by default; SP1 settlement proof on demand). Money + proofs live on Base (USDC via x402).
 
 Args:
   - model (string): model id, e.g. "llama-3-70b"
   - sender (string): the 0x address that owns/pays for the task
   - amount (string): gross task value in the smallest unit (wei); minimum 10000
-  - chain_id ('theta'|'bittensor'|'akash'|'osmosis'|'persistence'): settlement network (default 'theta')
+  - chain_id ('base'|'theta'|'bittensor'|'akash'|'osmosis'|'persistence'): settlement / routing hint (default 'base')
   - input_hash (string, optional): keccak256 of your input (recommended for inference)
   - memo (string, optional): free-form note echoed on the task
   - max_gpu_hours (string, optional): compute budget hint
@@ -96,8 +96,8 @@ Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount
 'verify_url' is a public, no-auth receipt page you can open or share to prove settlement.
 Poll progress with get_task_status(task_id); fetch settlement with get_proof(task_id).
 
-Note: this submits with the server's default (unpaid/TFUEL) rail. For USDC/x402
-settlement (which needs an agent-side signer) use the xfuel-sdk directly.`,
+Note: this submits on the server's default path. For USDC/x402 settlement (agent-side
+signer) use pay_with_usdc or the xfuel-sdk with a payer.`,
       inputSchema: {
         model: z.string().min(1).describe('Model id, e.g. "llama-3-70b"'),
         sender: z.string().min(1).describe('0x address that owns/pays for the task'),
@@ -105,7 +105,7 @@ settlement (which needs an agent-side signer) use the xfuel-sdk directly.`,
           .string()
           .regex(AMOUNT_RE, 'amount must be an integer string (wei/smallest unit)')
           .describe('Gross task value in smallest unit (wei); min 10000'),
-        chain_id: z.enum(CHAIN_IDS).default('theta').describe('Settlement network (default theta)'),
+        chain_id: z.enum(CHAIN_IDS).default('base').describe('Settlement / routing hint (default base)'),
         input_hash: z.string().optional().describe('keccak256 of your input'),
         memo: z.string().optional().describe('Free-form note'),
         max_gpu_hours: z.string().optional().describe('Compute budget hint'),
@@ -156,15 +156,14 @@ the agent doesn't manage the handshake. If the server has x402 disabled it trans
 falls back to the TFUEL rail (no payment is made).
 
 Requires the server to be started with XFUEL_PAYER_PRIVATE_KEY. If it is not set, this tool
-returns a clear "not configured" message — use submit_inference (TFUEL) instead, or the
-xfuel-sdk with your own payer. The USDC network is chosen by the server's x402 challenge
-(the payer signs for whatever network the challenge specifies, e.g. Base or Base Sepolia).
+returns a clear "not configured" message — use submit_inference, or the xfuel-sdk with your
+own payer. The USDC network is chosen by the server's x402 challenge (e.g. Base or Base Sepolia).
 
 Args:
   - model (string): model id, e.g. "llama-3-70b"
   - amount (string): gross task value in the smallest unit (wei); minimum 10000
   - sender (string, optional): the 0x address that owns the task (default: the payer wallet address)
-  - chain_id ('theta'|'bittensor'|'akash'|'osmosis'|'persistence'): settlement network (default 'theta')
+  - chain_id ('base'|'theta'|'bittensor'|'akash'|'osmosis'|'persistence'): settlement / routing hint (default 'base')
   - input_hash (string, optional): keccak256 of your input (recommended for inference)
   - memo (string, optional): free-form note echoed on the task
   - max_gpu_hours (string, optional): compute budget hint
@@ -172,7 +171,7 @@ Args:
   - callback_url (string, optional): webhook that receives a signed TaskSettled event
 
 Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount, net_amount, links }.
-'payment_rail' is 'usdc' when the x402 handshake ran, or 'tfuel' if the server fell back.`,
+'payment_rail' is 'usdc' when the x402 handshake ran, or a fallback rail if the server falls back.`,
       inputSchema: {
         model: z.string().min(1).describe('Model id, e.g. "llama-3-70b"'),
         amount: z
@@ -180,7 +179,7 @@ Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount
           .regex(AMOUNT_RE, 'amount must be an integer string (wei/smallest unit)')
           .describe('Gross task value in smallest unit (wei); min 10000'),
         sender: z.string().optional().describe('0x address that owns the task (default: payer wallet)'),
-        chain_id: z.enum(CHAIN_IDS).default('theta').describe('Settlement network (default theta)'),
+        chain_id: z.enum(CHAIN_IDS).default('base').describe('Settlement / routing hint (default base)'),
         input_hash: z.string().optional().describe('keccak256 of your input'),
         memo: z.string().optional().describe('Free-form note'),
         max_gpu_hours: z.string().optional().describe('Compute budget hint'),

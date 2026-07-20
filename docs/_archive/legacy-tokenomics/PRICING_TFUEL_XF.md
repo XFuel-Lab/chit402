@@ -61,5 +61,5 @@ Document each update (forum/post + optional `TokenPriceUpdated` event indexing).
 
 ## Related contracts
 
-- `contracts/circuits/BelieverRound.sol`
-- `contracts/circuits/AngelRound.sol`
+- `contracts/legacy/circuits/BelieverRound.sol`
+- `contracts/legacy/circuits/AngelRound.sol`

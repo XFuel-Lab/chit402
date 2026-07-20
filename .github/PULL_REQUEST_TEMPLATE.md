@@ -22,11 +22,12 @@ Closes #
 
 <!-- Check all that apply -->
 
-- [ ] `contracts/core/` — Core Layer contracts (ZKVerifierSP1, CoreRevenueSplitter, veXFGovernance, SP1ProofHooks)
-- [ ] `contracts/circuits/` — Circuit contracts
+- [ ] `contracts/core/` — Core Layer (ZKVerifierSP1, CoreRevenueSplitter, veXFGovernance, SP1ProofHooks; Base settlement)
+- [ ] `packages/circuit-runtime/` — Provider / circuit runtime modules
 - [ ] `contracts/cosmwasm/` — CosmWasm contracts
 - [ ] `services/sp1-prover/` — Rust SP1 prover
-- [ ] `services/gateway/` — Agent-facing API gateway (routing / payments / proving / receipts)
+- [ ] `services/zkllm-prover/` — Verified Inference (Tier-3) prover
+- [ ] `services/gateway/` — Agent-facing API gateway (routing / USDC x402 / proving / receipts)
 - [ ] `core-layer/` — Settlement orchestration / AI listener
 - [ ] `apps/web/` — Frontend
 - [ ] `packages/sdk/` — JavaScript SDK
@@ -42,7 +43,8 @@ Closes #
 - [ ] Existing tests pass (`npm run test:contracts:core`, or `test:contracts:core:listener` + `test:contracts:core:solidity`)
 - [ ] Gas benchmarks checked (no regression above thresholds)
 - [ ] Tested on Hardhat local (chain 1337)
-- [ ] Tested on Theta Testnet (chain 365)
+- [ ] Tested on Base Sepolia (chain 84532) and/or Base mainnet (8453) where applicable
+- [ ] Provider-only check on Theta EdgeCloud / testnet (optional GPU — not settlement home)
 
 **Test command used:**
 ```

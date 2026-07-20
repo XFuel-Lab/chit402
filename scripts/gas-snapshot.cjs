@@ -20,12 +20,16 @@ console.log(`\n=== XFuel Gas Snapshot ${CHECK_MODE ? '(check mode)' : '(generate
 
 let output;
 try {
-  output = execSync('npx hardhat test test/phase3/*.test.cjs test/security/SplitterBranches.test.cjs', {
-    env: { ...process.env, REPORT_GAS: 'true', HARDHAT_FAST: 'true' },
-    cwd: path.join(__dirname, '..'),
-    encoding: 'utf8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
+  // Go-forward gas baseline: governance + ZK verifier / SP1 hooks (not archived splitter suites).
+  output = execSync(
+    'npx hardhat test test/phase3/veXFGovernance.test.cjs test/security/ZKVerifierExpanded.test.cjs test/security/SP1ProofHooksHarness.test.cjs',
+    {
+      env: { ...process.env, REPORT_GAS: 'true', HARDHAT_FAST: 'true' },
+      cwd: path.join(__dirname, '..'),
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  );
 } catch (err) {
   console.error('Test run failed:', err.message);
   process.exit(1);

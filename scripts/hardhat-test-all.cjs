@@ -3,11 +3,12 @@
  * Windows does not expand glob patterns in npm scripts; Mocha would treat a literal path and fail.
  *
  * Collects:
- *   - every .test.cjs under test/ (recursive)
+ *   - every .test.cjs under test/ (recursive; skips test/_archive/)
  *   - core-layer/test (Hardhat .cjs only)
  *   - packages/circuit-runtime/<name>/test (flat .cjs files)
  *
- * Does not include `believer/test` (use `npm run test:believer`) or `ai-listener.test.js`
+ * Does not include archived Believer tests (use `npm run test:believer`),
+ * suites under test/_archive/ (see test/_archive/README.md), or `ai-listener.test.js`
  * (use `npm run test:contracts:core:listener`).
  */
 const { spawnSync } = require('child_process');
@@ -21,6 +22,7 @@ function walkTestCjs(dir, acc) {
   for (const name of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, name.name);
     if (name.isDirectory()) {
+      if (name.name === '_archive' || name.name === 'node_modules') continue;
       walkTestCjs(full, acc);
     } else if (name.isFile() && /\.test\.cjs$/.test(name.name)) {
       acc.push(path.relative(root, full).split(path.sep).join('/'));

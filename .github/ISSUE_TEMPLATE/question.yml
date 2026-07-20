@@ -25,7 +25,8 @@ body:
         - Deployment
         - Testing
         - Cross-chain / Hyperlane
-        - Theta EdgeCloud / AI inference
+        - Base settlement / USDC x402
+        - Theta EdgeCloud (optional GPU provider — not settlement)
         - Governance / veXF
         - CosmWasm
         - Other

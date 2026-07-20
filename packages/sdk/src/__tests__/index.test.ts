@@ -138,9 +138,9 @@ const mockHealthResponse: HealthResponse = {
     max_bps: 1000,
     min_task_amount: '100000000000000000',
     a2a_relay_bps: 300,
-    revenue_split: '30/30/25/15',
+    revenue_split: { model: 'token-light', currency: 'USDC', network: 'base' },
   },
-  chains: ['theta', 'bittensor', 'akash'],
+  chains: ['base', 'theta', 'bittensor', 'akash'],
   message_types: ['inference_request', 'compute_bid', 'a2a_message'],
 };
 

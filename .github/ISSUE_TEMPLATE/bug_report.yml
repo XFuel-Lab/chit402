@@ -21,10 +21,11 @@ body:
         - contracts/core/CoreRevenueSplitter.sol
         - contracts/core/veXFGovernance.sol
         - contracts/core/SP1ProofHooks.sol
-        - Circuit contract (specify in description)
+        - Circuit / provider runtime (specify in description)
         - SP1 Prover (services/sp1-prover/)
+        - zkLLM Prover (services/zkllm-prover/)
         - Gateway service (services/gateway/)
-        - Frontend (src/)
+        - Frontend (apps/web/)
         - SDK (packages/sdk/)
         - CosmWasm contracts
         - Deployment scripts
@@ -38,11 +39,13 @@ body:
     id: network
     attributes:
       label: Network
-      description: Which network did you observe this on?
+      description: Which network did you observe this on? Settlement home is Base (USDC/x402); Theta is optional GPU provider only.
       options:
         - Hardhat local (chain 1337)
-        - Theta Testnet (chain 365)
-        - Theta Mainnet (chain 361)
+        - Base Sepolia (chain 84532)
+        - Base Mainnet (chain 8453)
+        - Theta Testnet (chain 365) — provider / EdgeCloud ops only
+        - Theta Mainnet (chain 361) — provider / EdgeCloud ops only
         - Bittensor Testnet (chain 945)
         - Bittensor EVM (chain 964)
         - Not network-related
@@ -64,7 +67,7 @@ body:
       label: Steps to Reproduce
       description: Exact steps to reproduce the behavior.
       placeholder: |
-        1. Deploy ZKVerifierSP1 to local Hardhat with `npx hardhat run scripts/deploy.cjs`
+        1. Deploy ZKVerifierSP1 to local Hardhat (see `deploy/` manifests / Base deploy docs)
         2. Generate a proof via `cargo run --bin host`
         3. Call `verifyProof(proofBytes, publicInputs)`
         4. See error: `ProofVerificationFailed`

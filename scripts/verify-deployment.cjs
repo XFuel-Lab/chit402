@@ -7,8 +7,10 @@
  * circuit registration, and key parameter values.
  *
  * Usage:
- *   node scripts/verify-deployment.cjs --manifest deploy/manifests/testnet-1772715928482.json
- *   node scripts/verify-deployment.cjs --manifest deploy/manifests/testnet-1772715928482.json --rpc https://eth-rpc-api-testnet.thetatoken.org/rpc
+ *   npm run verify:base
+ *   node scripts/verify-deployment.cjs --manifest deploy/manifests/base-verifier-base-2026-07-17T08-04-12-891Z.json --rpc https://mainnet.base.org
+ *   # Historical Theta manifests (legacy):
+ *   node scripts/verify-deployment.cjs --manifest deploy/legacy/manifests/testnet-1772715928482.json
  *
  * Exit codes:
  *   0 — all checks passed

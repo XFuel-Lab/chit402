@@ -15,13 +15,15 @@ body:
       label: Feature Area
       description: Which part of the protocol would this affect?
       options:
-        - New Circuit (new use case / ecosystem integration)
-        - Core Layer enhancement (ZKVerifierSP1, CoreRevenueSplitter, veXFGovernance)
+        - New Circuit / provider module (ecosystem integration)
+        - Core Layer enhancement (ZKVerifierSP1, CoreRevenueSplitter, veXFGovernance — Base settlement)
         - SP1 Prover improvement
+        - Verified Inference / zkLLM prover
+        - x402 / USDC payments on Base
         - Cross-chain / Hyperlane integration
-        - Frontend / UI
+        - Frontend / UI (apps/web/)
         - SDK (packages/sdk/)
-        - Backend / Bridge service
+        - Gateway service (services/gateway/)
         - CosmWasm contract
         - Mobile app
         - Developer tooling / DX
