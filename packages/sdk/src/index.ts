@@ -236,12 +236,7 @@ export interface ProofResponse {
     fee_bps: number;
     fee_collector: string;
     /** Token-light describeSplit() payload from the gateway (ADR 0001). */
-    revenue_split: {
-      model: string;
-      note?: string;
-      totalBps?: number;
-      buckets: Array<{ key: string; label: string; bps: number; pct: number; address?: string | null }>;
-    };
+    revenue_split: RevenueSplitDescription;
   };
   result: unknown | null;
   meta: {
@@ -306,6 +301,14 @@ export interface A2ASettleFairExchangeResponse {
   _links?: { status: string };
 }
 
+/** Token-light describeSplit() payload from the gateway (ADR 0001). */
+export interface RevenueSplitDescription {
+  model: string;
+  note?: string;
+  totalBps?: number;
+  buckets: Array<{ key: string; label: string; bps: number; pct: number; address?: string | null }>;
+}
+
 export interface HealthResponse {
   status: string;
   server: string;
@@ -320,7 +323,7 @@ export interface HealthResponse {
     max_bps: number;
     min_task_amount: string;
     a2a_relay_bps: number;
-    revenue_split: string;
+    revenue_split: RevenueSplitDescription;
   };
   chains: string[];
   message_types: string[];

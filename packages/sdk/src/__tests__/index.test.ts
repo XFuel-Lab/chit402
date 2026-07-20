@@ -138,7 +138,16 @@ const mockHealthResponse: HealthResponse = {
     max_bps: 1000,
     min_task_amount: '100000000000000000',
     a2a_relay_bps: 300,
-    revenue_split: { model: 'token-light', currency: 'USDC', network: 'base' },
+    revenue_split: {
+      model: 'usdc-base-splits-v2',
+      note: 'Token-light: fee lands at one Splits v2 address on Base; buckets fan out off the hot path.',
+      totalBps: 10000,
+      buckets: [
+        { key: 'treasury', label: 'Treasury / Ops', bps: 4000, pct: 40, address: null },
+        { key: 'buyback', label: 'XF Buyback-Burn (Base, post-TGE)', bps: 3500, pct: 35, address: null },
+        { key: 'stakers', label: 'veXF Stakers (optional USDC yield)', bps: 2500, pct: 25, address: null },
+      ],
+    },
   },
   chains: ['base', 'theta', 'bittensor', 'akash'],
   message_types: ['inference_request', 'compute_bid', 'a2a_message'],
