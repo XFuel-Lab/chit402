@@ -73,6 +73,7 @@ jobs:
         working-directory: packages/sdk
         run: npm install --no-audit --no-fund
 
+      # Optional GPU provider circuit (EdgeCloud) — not settlement home (ADR 0002).
       - name: Install theta-inference circuit deps (ethers for handler tests)
         working-directory: packages/circuit-runtime/theta-inference
         run: npm install --no-audit --no-fund
@@ -83,7 +84,7 @@ jobs:
           npm run build
           npm test
 
-      - name: ComputeRouter + _executeService regression tests
+      - name: ComputeRouter + _executeService regression tests (provider circuit)
         run: node --test packages/circuit-runtime/theta-inference/test/compute-router.test.mjs packages/circuit-runtime/theta-inference/test/execute-service.test.mjs
 
       - name: Validate Agent Skills (SKILL.md frontmatter)

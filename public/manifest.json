@@ -1,11 +1,11 @@
 {
-  "name": "XFUEL Protocol",
-  "short_name": "XFUEL",
-  "description": "Sub-4s institutional-grade settlement rail for Theta EdgeCloud GPU/video revenue to auto-compounding Cosmos LSTs",
+  "name": "XFuel Protocol",
+  "short_name": "XFuel",
+  "description": "Verifiable settlement and payments for AI compute — USDC via x402 on Base, tiered receipts, pluggable providers.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#8b5cf6",
+  "background_color": "#0a0a0f",
+  "theme_color": "#00d4ff",
   "icons": [
     {
       "src": "/android-chrome-192x192.png",
@@ -19,4 +19,3 @@
     }
   ]
 }
-

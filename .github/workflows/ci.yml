@@ -53,10 +53,11 @@ jobs:
       - name: Core contracts + security (Hardhat)
         run: npm run test:contracts:core:solidity
 
-  # ── Cypress E2E: disabled until wallet mocking is set up ────
-  # These require Theta Wallet / Keplr browser extensions and are
-  # best run locally or in a dedicated browser-automation environment.
-  # Uncomment and configure when a wallet mock layer is added.
+  # ── Cypress E2E: no active specs ────────────────────────────
+  # Legacy Theta/TFUEL/Keplr/fee-splitter specs live under
+  # cypress/_archive/e2e/ (see cypress/_archive/README.md).
+  # npm run test:e2e:headless is a no-op skip until new Base/x402
+  # specs are added under cypress/e2e/.
   # e2e:
   #   name: Cypress E2E
   #   runs-on: ubuntu-latest

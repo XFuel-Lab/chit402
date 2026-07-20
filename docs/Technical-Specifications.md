@@ -5,9 +5,9 @@ Companion to [WHITEPAPER.md](../WHITEPAPER.md). Gas figures below are measured o
 ## Settlement home
 
 Primary deployment: Base (8453) and Base Sepolia (84532).  
-Live verifier: `ZKVerifierSP1` on Base mainnet — `0x9373499645292715a2275A78eD65B14215C41c06`.
+Live verifier: `ZKVerifierSP1` on Base mainnet â€” `0x9373499645292715a2275A78eD65B14215C41c06`.
 
-Optional verifier backends also exist for CosmWasm and Solana (same BN254 / Groth16 design). Historical Theta EVM manifests are archive-only under `deploy/manifests/`.
+Optional verifier backends also exist for CosmWasm and Solana (same BN254 / Groth16 design). Historical Theta EVM manifests are archive-only under `deploy/legacy/manifests/`.
 
 ## EVM verifier (`ZKVerifierSP1.sol`)
 
@@ -58,4 +58,4 @@ Tier-3 Verified Inference: `services/zkllm-prover` (active build). See [VERIFIED
 
 ## Cross-chain (optional)
 
-Proofs can be relayed with Hyperlane (EVM↔EVM / Cosmos) or Wormhole (Solana). Settlement home remains Base. Routing times are typically 12–30s depending on path.
+Proofs can be relayed with Hyperlane (EVMâ†”EVM / Cosmos) or Wormhole (Solana). Settlement home remains Base. Routing times are typically 12â€“30s depending on path.

@@ -3,16 +3,16 @@ name: xfuel-submit-inference
 description: >-
   Submit a verifiable AI inference or compute task to the XFuel Protocol and get
   back an on-chain-settled result with a ZK proof. Use when a user or agent wants
-  to run an LLM/compute task across decentralized GPU providers (Theta EdgeCloud,
-  Akash, Render, Bittensor) AND needs cryptographic proof the work was performed.
+  to run an LLM/compute task via pluggable providers (neocloud / optional DePIN GPU)
+  with a verifiable receipt. Settlement is USDC via x402 on Base by default.
   Triggers: "run inference with proof", "verifiable LLM call", "submit a compute
-  task to XFuel", "route this to DePIN GPUs".
+  task to XFuel", "pay with x402".
 ---
 
 # XFuel: Submit Verifiable Inference
 
-Run an AI inference/compute task through XFuel's DePIN router and receive a
-settled, proof-backed result. Prefer the SDK over raw HTTP.
+Run an AI inference/compute task through XFuel's router and receive a settled,
+proof-backed receipt. Prefer the SDK over raw HTTP. Money + proofs live on Base.
 
 ## Prerequisites
 
@@ -28,25 +28,20 @@ settled, proof-backed result. Prefer the SDK over raw HTTP.
 | `input` | recommended | Prompt/string. You compute `input_hash = keccak256(input)` (the SDK takes `input_hash`, not the raw input). |
 | `sender` | yes | Caller address (settlement attribution). |
 | `amount` | no | Gross fee in wei (min `10000`). Default `1000000`. |
-| `chain_id` | no | `theta` \| `bittensor` \| `akash` \| `osmosis`. SDK `submitInference` defaults to `akash`; pass `theta` for Theta settlement. |
-| `theta_recipient` | no | Settlement address on Theta. |
-| `proof_system` | no | `sp1` (default) \| `zkgpt`. |
+| `chain_id` | no | `base` (default) \| `theta` \| `bittensor` \| `akash` \| `osmosis`. `base` = settlement home; others are routing / optional-rail hints. |
+| `proof_system` | no | `sp1` (default settlement proof). `zkgpt` is a retired/dev scaffold — not the Tier-3 path. |
 | `callback_url` | no | Webhook to receive the `TaskSettled` event instead of polling. |
-| `payment` | no | Payment rail. **Default USDC via x402** (`{ rail: 'usdc', network: 'base' }`); pass `{ rail: 'tfuel' }` for Theta-native TFUEL. See "Payment rail" below. |
+| `payment` | no | Payment rail. **Default USDC via x402** (`{ rail: 'usdc', network: 'base' }`). Optional legacy rails may exist if the server enables them. |
 | `subnet_id` | yes if `chain_id=bittensor` | Bittensor subnet UID. |
 
 ## Payment rail (USDC via x402 is the default)
 
-XFuel's default, recommended rail is **USDC via x402** — an agent-native flow where
-the caller pays USDC (on Base) against a machine-parseable 402 challenge. **TFUEL/TDROP
-on Theta is fully supported as a secondary rail** (best for Theta-native use cases).
+XFuel's default rail is **USDC via x402** — agent-native payment on Base against a
+machine-parseable 402 challenge. The SDK never holds keys.
 
 ```jsonc
-// Default — USDC via x402 (agent-side wallet signs the payment; SDK never holds keys)
+// Default — USDC via x402 (agent-side wallet signs; SDK never holds keys)
 "payment": { "rail": "usdc", "asset": "USDC", "network": "base", "maxAmount": "50000" }
-
-// Secondary — TFUEL on Theta (existing on-chain settlement)
-"payment": { "rail": "tfuel", "maxAmount": "1000000000000000000" }
 ```
 
 USDC/x402 handshake (agent side): submit → receive `402` + `accepts[]` challenge →
@@ -132,7 +127,7 @@ to sign real USDC on Base).
 - `401 unauthorized` → missing/invalid `X-API-Key`.
 - `429` → rate limited; honor `Retry-After`.
 - Task stuck in `routing` → all DePIN tiers may be disabled; check `GET /health`.
-- `proof_system: zkgpt` requested but unset on server → backend falls back to SP1;
+- legacy `proof_system: zkgpt` requested but unset → backend falls back to SP1 (not a live Tier-3 path);
   trust the `proof_system` field in the status response.
 
 ## Notes

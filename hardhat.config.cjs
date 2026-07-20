@@ -5,6 +5,14 @@ require('@nomicfoundation/hardhat-toolbox')
 require('@nomicfoundation/hardhat-ethers')
 require('@openzeppelin/hardhat-upgrades')
 
+// Exclude test/_archive from bare `npx hardhat test` discovery (CI uses hardhat-test-*.cjs).
+const { subtask } = require('hardhat/config')
+const { TASK_TEST_GET_TEST_FILES } = require('hardhat/builtin-tasks/task-names')
+subtask(TASK_TEST_GET_TEST_FILES).setAction(async (args, hre, runSuper) => {
+  const files = await runSuper(args)
+  return files.filter((f) => !f.replace(/\\/g, '/').includes('/_archive/'))
+})
+
 // hardhat-tracer: enables `npx hardhat test --trace` for ZK proof debugging
 // Install: npm install --save-dev hardhat-tracer
 try { require('hardhat-tracer') } catch (_) { /* optional — install when needed */ }

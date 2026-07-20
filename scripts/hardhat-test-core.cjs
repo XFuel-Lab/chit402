@@ -3,6 +3,8 @@
  * Core listener / multi-prover unit tests live in ai-listener.test.js — run via
  * `npm run test:contracts:core:listener` (node:test), not Hardhat.
  * Shell globs are unreliable on Windows; CI and local both use this script.
+ *
+ * Skips test/_archive/ (retired CoreRevenueSplitter / VaultFactory / Cosmos suites).
  */
 const { spawnSync } = require('child_process');
 const fs = require('fs');
@@ -18,6 +20,8 @@ const dirs = [
 const files = [];
 for (const dir of dirs) {
   if (!fs.existsSync(dir)) continue;
+  // Flat only — do not recurse into accidental nested dirs; never touch _archive.
+  if (path.basename(dir) === '_archive') continue;
   for (const name of fs.readdirSync(dir)) {
     if (/\.test\.cjs$/.test(name)) {
       files.push(path.relative(root, path.join(dir, name)).split(path.sep).join('/'));

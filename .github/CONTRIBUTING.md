@@ -53,9 +53,10 @@ Follow conventional commits:
 - `chore:` - Maintenance
 
 ## CI/CD
-- All PRs automatically run:
-  - Jest unit tests
-  - Hardhat contract tests
-  - Cypress E2E tests
-- PRs must pass all tests before merging
+- All PRs automatically run (see `.github/workflows/`):
+  - Jest unit tests (`ci.yml` — packages/sdk)
+  - Core contract tests (`ci.yml` — Hardhat local)
+  - Full Hardhat suite + coverage, gateway/SDK/skills, CosmWasm, zkLLM, Slither (`test.yml`)
+- Cypress E2E is not in CI: legacy Theta/TFUEL/Keplr specs live under `cypress/_archive/`; active specs belong in `cypress/e2e/` when added
+- PRs must pass required checks before merging
 

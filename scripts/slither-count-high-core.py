@@ -22,6 +22,8 @@ _TRIAGED_CORE_HIGH: tuple[tuple[str, str], ...] = (
     ("arbitrary-send-eth", "CoreRevenueSplitter._safeTransfer"),
     ("arbitrary-send-eth", "ZKVerifierSP1.relayProofCrossChain"),
     ("uninitialized-state", "ZKVerifierSP1.rollupBatchSize"),
+    # Mapping storage is zero-initialized by the EVM; Slither still flags dynamic arrays under mappings.
+    ("uninitialized-state", "ModelRegistry._versions"),
 )
 
 

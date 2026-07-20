@@ -1,23 +1,23 @@
 ---
 name: xfuel-verify-proof
 description: >-
-  Retrieve and validate the zero-knowledge proof (SP1 Groth16/PLONK or zkGPT) for
-  a completed XFuel task, confirm the result hash matches, check the nullifier for
-  replay protection, and optionally verify on-chain settlement. Use after
-  submitting a task when the user asks "is this result actually proven?", "verify
-  the proof", "show me the ZK attestation", or needs audit evidence of compute.
+  Retrieve and validate the SP1 settlement proof for a completed XFuel task,
+  confirm the result hash matches, check the nullifier for replay protection, and
+  optionally verify on-chain settlement on Base. Use after submitting a task when
+  the user asks "is this result actually proven?", "verify the proof", "show me
+  the ZK attestation", or needs audit evidence of settlement.
 ---
 
 # XFuel: Verify Proof
 
-Confirm that an XFuel task produced a valid ZK proof and settled on-chain.
+Confirm that an XFuel task produced a valid SP1 settlement proof and settled on-chain.
+(Tier-2 attests settlement metadata + output commitment — not black-box model correctness.)
 
 ## Prerequisites
 
 - `XFUEL_API_URL`, `XFUEL_API_KEY`.
-- Optional on-chain check: `THETA_RPC_URL` (a Theta ETH-RPC endpoint — public or
-  dedicated; **not** ZAN, which does not serve Theta) and `ZK_VERIFIER_ADDRESS`.
-  See `../_shared/reference/env-and-endpoints.md`.
+- Optional on-chain check: Base RPC + `ZK_VERIFIER_ADDRESS` (`ZKVerifierSP1` on Base).
+  See `../_shared/reference/env-and-endpoints.md` and `docs/RUNTIME_STATE.md`.
 
 ## Parameters
 
