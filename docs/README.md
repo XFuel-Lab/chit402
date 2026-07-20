@@ -1,8 +1,8 @@
 # XFuel Documentation
 
-Verifiable settlement and payments for AI compute — USDC via x402 on Base, tiered proofs, provider-agnostic routing.
+Verifiable settlement and payments for AI compute â€” USDC via x402 on Base, tiered proofs, provider-agnostic routing.
 
-https://xfuel.app · https://api-testnet.xfuel.app
+https://xfuel.app Â· https://api-testnet.xfuel.app
 
 ---
 
