@@ -92,6 +92,21 @@ pub fn commitment_bytes(comm: &Comm) -> Vec<u8> {
     bytes
 }
 
+/// Per-tensor commitment **leaf** for a `MLE_POLY` PoMA model commitment: `keccak256(commitment_bytes)`.
+/// Feed these — in the manifest's canonical tensor order — to [`crate::commitment::poly_weights_root`].
+/// Hashing the (compressed) group element to a `bytes32` is what lets the many per-tensor KZG
+/// commitments a proof opens collapse into the single root the on-chain `ModelRegistry` stores.
+pub fn commitment_leaf(comm: &Comm) -> [u8; 32] {
+    crate::commitment::keccak256(&commitment_bytes(comm))
+}
+
+/// Ordered `MLE_POLY` weights root over a model's per-tensor commitments (convenience over
+/// [`commitment_leaf`] + [`crate::commitment::poly_weights_root`]).
+pub fn model_weights_root(commitments: &[Comm]) -> [u8; 32] {
+    let leaves: Vec<[u8; 32]> = commitments.iter().map(commitment_leaf).collect();
+    crate::commitment::poly_weights_root(&leaves)
+}
+
 /// Produce an opening proof that `table`'s MLE evaluates to `mle_eval(table, point)` at `point`.
 pub fn open(ck: &Ck, table: &[Fr], point: &[Fr]) -> OpeningProof {
     MultilinearPC::open(ck, &to_mle(table), &ark_point(point))

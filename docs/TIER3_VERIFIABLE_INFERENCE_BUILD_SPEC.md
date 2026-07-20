@@ -465,7 +465,15 @@ Clean-room from papers + Apache/MIT primitives (`arkworks`; **not** AGPL/`zkml`-
           input; both halves size seq·d_model keys from the same SRS ⇒ byte-identical commitment, so no
           linking argument). Verifier holds only the block I/O commitments + public weights. Tests:
           honest verify, wrong-output-commit, tampered-seam-commit rejections.
-        Total `cargo test`: **128** (+55 over M5.3).
+        - `commitment.rs` `poly_weights_root` + `pcs.rs` `commitment_leaf`/`model_weights_root`: the
+          **PoMA `MLE_POLY` model commitment** for the KZG prover — a keccak-Merkle root over ordered
+          per-tensor commitment leaves (`leaf = keccak(canonical commitment bytes)`), arch-bound
+          identically to `KECCAK_MERKLE` via `model_commitment`. Collapses the many per-tensor
+          commitments a proof opens into the single `bytes32` the (unchanged, scheme-agnostic)
+          `ModelRegistry` stores. PCS-agnostic structure (survives the C1/C2 SRS spike). Tests:
+          determinism, order-sensitivity, single-leaf, arch-binding, weight-downgrade detection.
+          See [`POMA_SPEC.md`](./POMA_SPEC.md) §6.
+        Total `cargo test`: **133** (+60 over M5.3).
       - **Remaining (M5.4b):** the on-chain verifier + settlement E2E below (the succinct-prover
         composition — matmul/gadgets/lookup/norm/softmax/attention/requant/ffn/**block** — is complete).
 - [ ] **M5.4b** Implement `IVerifiedInference` verifier (Option A native Solidity via BN254

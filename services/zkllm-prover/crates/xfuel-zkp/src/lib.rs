@@ -9,9 +9,11 @@
 //!   the expensive core works for the whole ZK-addressable LLM market.
 //! * [`manifest`] — a compact model architecture config + an **arch-bound PoMA commitment**, so a
 //!   proof attests "*these* weights **+ this** architecture produced this output".
-//! * [`commitment`] — keccak256 commitments (weights merkle root, model commitment) and the
-//!   **PBR public-input binding**, byte-compatible with `SP1ProofHooks.computeInferenceBindingCommitment`
-//!   and the gateway/SDK, so a zkLLM proof slots into the same settlement path as the SP1 proof.
+//! * [`commitment`] — keccak256 commitments (keccak-Merkle shard root for PoMA `KECCAK_MERKLE`, the
+//!   per-tensor commitment root [`commitment::poly_weights_root`] for PoMA `MLE_POLY`, and the arch-
+//!   bound model commitment) plus the **PBR public-input binding**, byte-compatible with
+//!   `SP1ProofHooks.computeInferenceBindingCommitment` and the gateway/SDK, so a zkLLM proof slots
+//!   into the same settlement path as the SP1 proof.
 //!
 //! Architecture-specific gadgets ([`gadgets`]) and their composition ([`ffn`] SwiGLU, [`attention`]
 //! single-head causal attention, [`mha`] multi-head + GQA attention with [`rope`], and a full
