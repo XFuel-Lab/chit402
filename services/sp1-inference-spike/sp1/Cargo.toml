@@ -1,0 +1,6 @@
+# SP1 shells for the compat spike (guest + host). Its OWN workspace — separate from `../verify-core`
+# (which stays Windows-checkable) — because these depend on `sp1-*`, which is Unix-only (sp1-jit uses
+# std::os::fd). Build these in Linux/Docker/WSL/AWS only. NOT in the repo root workspace or CI.
+[workspace]
+members = ["guest", "host"]
+resolver = "2"

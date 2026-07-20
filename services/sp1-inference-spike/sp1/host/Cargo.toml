@@ -1,0 +1,26 @@
+[package]
+name = "xfuel-inference-spike-host"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "spike"
+path = "src/main.rs"
+
+[dependencies]
+sp1-sdk = "6.0.2"
+xfuel-inference-spike-core = { path = "../../verify-core" }
+xfuel-zkp = { path = "../../../zkllm-prover/crates/xfuel-zkp" }
+ark-std = { version = "0.4", features = ["std"] }
+anyhow = "1.0"
+hex = "0.4"
+tokio = { version = "1.40", features = ["full"] }
+
+[build-dependencies]
+sp1-build = "6.0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
