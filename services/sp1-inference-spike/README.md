@@ -69,6 +69,23 @@ SP1_PROVER=cpu cargo run -p xfuel-inference-spike-host --release -- 16
 - **Groth16 prove time** and that `SP1Verifier.sol` accepts the wrapped proof (Base testnet).
 - The printed **`programVKey`** (a new guest ⇒ new vkey to register on-chain).
 
+## Findings — spike run 1 (2026-07-20, Docker `xfuel-sp1-prover:latest`)
+
+- ✅ **arkworks compiles to the zkVM target.** `cargo prove build` of the guest compiled
+  `ark-ff`, `ark-poly`, `ark-serialize`, `ark-std`, `ark-relations`, `ark-snark`, and `sha3` for
+  `riscv32im-succinct-zkvm-elf`. The scariest C1 risk (arkworks-on-zkVM) is largely de-risked.
+- ⚠️ **Blocker: `sp1-zkvm` ↔ toolchain version mismatch (not our crypto).** The build aborts inside
+  `sp1-zkvm` with `type u64 cannot be used with this register class` (its syscall inline-asm). This
+  image's `succinct` toolchain is rustc **1.92** (Dec 2025), too new for the crates.io `sp1-zkvm`
+  asm; **both** `6.3.1` (caret) and pinned `=6.0.2` fail identically.
+- ⏳ **Not yet reached:** `ark-bn254`/`ark-ec`/`ark-poly-commit` pairing compilation (build stopped at
+  `sp1-zkvm`). The C1 pairing-in-zkVM question is still open; lean stays **C1**.
+
+**To resume:** use a **matched** SP1 env — an official Succinct release image for a specific SP1
+version, or `sp1up --version <v>` so the `succinct` toolchain pairs with the chosen `sp1-zkvm` crate.
+Then rerun `cargo prove build`; once `sp1-zkvm` compiles, watch whether the BN254/`ark-poly-commit`
+pairings build (→ C1) or not (→ C2).
+
 ## Notes / caveats
 
 - The exact sp1-sdk 6.0.2 builder methods (`execute(..).await`, `.groth16().await`) should be confirmed

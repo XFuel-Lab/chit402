@@ -76,6 +76,52 @@ same assumption Groth16 already carries; keys are generated once, never on the h
 (`pcs::setup`). A transparent alternative (Hyrax, also in `ark-poly-commit`) is available if we later
 choose to drop the setup at the cost of `√n` opening size.
 
+**On-chain verifier decision — SP1-wrap (C1) (2026-07-20).** Rather than ship a hand-rolled
+native-Solidity multilinear-KZG + sumcheck verifier (large new audit surface, high gas), we run our
+**verifier inside an SP1 guest** and let Succinct wrap it to a cheap on-chain proof verified by the
+**existing `SP1Verifier.sol` on Base** — no new audit-scope Solidity, no GPU, and the *same* wrap
+serves Tier-2 settlement and Tier-3 inference (only the guest's checks differ). Two variants were
+weighed:
+
+- **C1 (chosen): keep KZG.** The guest runs `pcs::verify` (multilinear-KZG); each opening is O(1)
+  BN254 pairings (SP1 has a `bn254` pairing precompile), so the guest stays small.
+- **C2 (fallback): drop KZG.** The guest commits tensors by keccak (native in SP1) and recomputes
+  `mle_eval` in-guest — no SRS/ceremony, but O(n) field ops per opening.
+
+**Two honest caveats, deliberately deferred to a spike (not yet resolved):**
+1. **SRS.** Multilinear KZG needs a *multilinear* SRS; public powers-of-tau ceremonies are
+   *univariate* (see [`docs/POMA_SPEC.md`](../POMA_SPEC.md) §6). C1 therefore implies either a small
+   first-party setup or a scheme swap (e.g. Zeromorph over a univariate SRS). This does **not** block
+   the PoMA commitment, which is PCS-agnostic.
+2. **zkVM compile.** Whether `ark-poly-commit` + BN254 pairings compile to the SP1 `riscv32im`
+   target (with SP1's patched arkworks crates) is the make-or-break for C1 vs C2. It is measured by a
+   throwaway spike, **not** by touching product code.
+
+**Spike status:** scaffolded + isolated in [`services/sp1-inference-spike/`](../../services/sp1-inference-spike/README.md)
+(PR #149). The SP1-independent core (serialize a KZG opening → `pcs::verify` → bundle) compiles and
+passes tests on any host incl. Windows.
+
+**Spike run 1 — 2026-07-20 (Docker `xfuel-sp1-prover:latest`).** `cargo prove build` of the guest:
+- ✅ **The arkworks stack compiles to the zkVM target** (`riscv32im-succinct-zkvm-elf`):
+  `ark-ff`, `ark-poly`, `ark-serialize`, `ark-std`, `ark-relations`, `ark-snark`, `sha3` all built.
+  **This de-risks the scary part of C1** — the crypto foundation is zkVM-compatible.
+- ⚠️ **Blocker (env/version, not crypto):** the build aborts at **`sp1-zkvm` itself** — `type u64
+  cannot be used with this register class` in its syscall inline-asm (`halt.rs`/`ed25519.rs`). This
+  image's `succinct` toolchain is **rustc 1.92** (Dec 2025), which is too new for the crates.io
+  `sp1-zkvm` asm; **both** `6.3.1` and pinned `=6.0.2` fail identically (transitive `sp1-lib`/
+  `sp1-primitives` still resolve to `6.3.1`). This is an **sp1-zkvm ↔ toolchain matching** problem.
+- ⏳ **Not yet reached:** `ark-bn254`/`ark-ec`/`ark-poly-commit` pairing compilation (build aborted at
+  `sp1-zkvm` first). C1's pairing-in-zkVM question stays open, but the arkworks foundation compiling
+  is a strong positive signal. **Lean remains C1.**
+
+> **▶ RESUME HERE (Tier-3 on-chain verifier):** use an SP1 environment where the `sp1-zkvm` crate
+> version and the `succinct` rustc toolchain are a **matched pair** — i.e. an official Succinct
+> release Docker image for a specific SP1 version, or `sp1up --version <v>` installing the toolchain
+> that pairs with the chosen `sp1-zkvm`. Then `cd services/sp1-inference-spike/sp1 && cargo prove build`.
+> Once `sp1-zkvm` compiles, the next signal is whether `ark-bn254`/`ark-poly-commit` pairings build:
+> compiles → **C1 confirmed**, record guest cycle count; fails → adopt **C2** (keccak + in-guest eval)
+> and record why. **No audit-scope Solidity until this passes.**
+
 Every future component (GKR backend, lookups, Groth16 wrapper) gets a row here with its license
 verified **before** it is added. Nothing enters the tree that isn't OSI-permissive.
 
