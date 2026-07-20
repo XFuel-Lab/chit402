@@ -2,9 +2,30 @@ import { useState } from 'react';
 import { useAccount } from 'wagmi';
 import { useReadContract } from 'wagmi';
 import { formatEther } from 'viem';
-import { ADDRESSES, SPLITTER_ABI, GOVERNANCE_ABI, isDeployed } from '../contracts';
+import { ADDRESSES, GOVERNANCE_ABI, isDeployed } from '../contracts';
 
-const stakingRoutes = [
+type RouteStatus = 'live' | 'testnet' | 'planned';
+
+const stakingRoutes: {
+  network: string;
+  token: string;
+  apy: string;
+  tvl: string;
+  minStake: string;
+  mechanism: string;
+  status: RouteStatus;
+  description: string;
+}[] = [
+  {
+    network: 'Base (veXF)',
+    token: 'XF',
+    apy: '(gov)',
+    tvl: '(demo)',
+    minStake: '—',
+    mechanism: 'Vote-escrow lock',
+    status: 'planned',
+    description: 'Lock XF for veXF voting power (post-TGE on Base). Governance — not a fixed fee-yield entitlement.',
+  },
   {
     network: 'Bittensor',
     token: 'TAO',
@@ -12,38 +33,18 @@ const stakingRoutes = [
     tvl: '(demo)',
     minStake: '1 TAO',
     mechanism: 'Subnet Delegation',
-    status: 'live' as const,
-    description: 'Delegate TAO to Bittensor subnets via EVM staking precompile. Rewards auto-compound.',
+    status: 'testnet',
+    description: 'Optional provider-side stake path via Bittensor EVM precompile (cross-chain, not settlement home).',
   },
   {
-    network: 'Theta',
+    network: 'EdgeCloud (Theta)',
     token: 'TFUEL',
     apy: '(demo)',
     tvl: '(demo)',
-    minStake: '10,000 TFUEL',
-    mechanism: 'Guardian Node',
-    status: 'live' as const,
-    description: 'Stake TFUEL as a Guardian Node operator. Edge compute rewards distributed weekly.',
-  },
-  {
-    network: 'Osmosis',
-    token: 'OSMO',
-    apy: '(demo)',
-    tvl: '(demo)',
-    minStake: '10 OSMO',
-    mechanism: 'LP Staking',
-    status: 'testnet' as const,
-    description: 'Provide liquidity to XF/OSMO pools. Superfluid staking for dual rewards.',
-  },
-  {
-    network: 'Aptos',
-    token: 'APT',
-    apy: '(demo)',
-    tvl: '—',
-    minStake: '10 APT',
-    mechanism: 'Validator Delegation',
-    status: 'planned' as const,
-    description: 'Delegate APT to XFuel validators on Aptos network. Move-native staking.',
+    minStake: '—',
+    mechanism: 'Provider ops',
+    status: 'testnet',
+    description: 'Optional GPU provider-side staking for EdgeCloud operators — not XFuel fee settlement.',
   },
 ];
 
@@ -52,15 +53,7 @@ export default function Staking() {
   const [stakeAmount, setStakeAmount] = useState('');
   const { isConnected } = useAccount();
 
-  const splitterDeployed = isDeployed(ADDRESSES.splitter);
   const govDeployed = isDeployed(ADDRESSES.governance);
-
-  const { data: totalDeposited } = useReadContract({
-    address: ADDRESSES.splitter,
-    abi: SPLITTER_ABI,
-    functionName: 'totalDeposited',
-    query: { enabled: splitterDeployed },
-  });
 
   const { data: totalLocked } = useReadContract({
     address: ADDRESSES.governance,
@@ -70,21 +63,18 @@ export default function Staking() {
   });
 
   const route = stakingRoutes[selectedRoute];
-  const estimatedReward = stakeAmount
+  const estimatedReward = stakeAmount && !Number.isNaN(parseFloat(route.apy))
     ? (parseFloat(stakeAmount) * parseFloat(route.apy) / 100).toFixed(4)
-    : '0.00';
-
-  const tvlDisplay = totalDeposited
-    ? `$${(Number(formatEther(totalDeposited)) * 0.5).toFixed(1)}M`
     : '—';
+
   const veXFDisplay = totalLocked
     ? `${(Number(formatEther(totalLocked)) / 1e6).toFixed(1)}M XF`
     : '—';
 
   const stakingStats = [
-    { label: 'Total Staked Value', value: tvlDisplay },
-    { label: 'Avg. APY', value: '(demo)' },
-    { label: 'Active Stakers', value: '(demo)' },
+    { label: 'Settlement home', value: 'Base' },
+    { label: 'Fee model', value: 'Token-light' },
+    { label: 'Governance', value: 'veXF (post-TGE)' },
     { label: 'veXF Locked', value: veXFDisplay },
   ];
 
@@ -92,13 +82,16 @@ export default function Staking() {
     <div className="page">
       <div className="container">
         <div className="page-header">
-          <h1>Fee-to-Stake</h1>
-          <p>Fee-to-stake routing (roadmap). Figures below are demo unless your contracts are wired.</p>
+          <h1>Governance staking</h1>
+          <p>
+            Protocol fees settle in USDC on Base (token-light). Lock XF → veXF for governance when the token launches.
+            Figures below are demo unless contracts are wired.
+          </p>
         </div>
 
-        {!splitterDeployed && (
+        {!govDeployed && (
           <div style={{ fontSize: '0.8rem', color: '#f59e0b', textAlign: 'center', marginBottom: '1rem' }}>
-            Contracts not configured — showing demo data. Deploy and set VITE_SPLITTER_ADDRESS to connect.
+            veXF governance not configured — showing demo data. Set VITE_GOVERNANCE_ADDRESS when live on Base.
           </div>
         )}
 

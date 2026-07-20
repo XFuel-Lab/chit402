@@ -1,61 +1,40 @@
-# Legal and compliance checklist (launch)
+# Legal Launch Checklist
 
-**This is not legal advice.** XFuel should **hire qualified counsel** in relevant jurisdictions before a public sale, token distribution, or broad retail marketing. This file is an **internal planning** aid only.
+Not legal advice. Engage qualified counsel before a public sale, token distribution, or broad retail marketing.
 
-## Document inventory (counsel to draft or approve)
+Fundraising shape: [FUNDRAISING_STRUCTURE.md](./FUNDRAISING_STRUCTURE.md) (equity-first SAFE).
 
-| Document | Typical contents | Host / link |
-|----------|------------------|-------------|
-| **Terms of Use** | Binding agreement for xfuel.app; limitation of liability; dispute resolution; no investment advice; software “as is”. | `/terms` or external URL linked from footer |
-| **Privacy Policy** | Data collected (wallet, analytics, APIs), retention, subprocessors, GDPR/CCPA hooks if applicable. | `/privacy` |
-| **Cookie / analytics notice** | If using Plausible, GA, etc. | Banner + policy |
-| **Risk disclosure (funding)** | Short standalone or section: TFUEL risk, smart-contract risk, no guaranteed TGE, **Community** vs **Angel** differences. | `/believers`, `/angels` + linked doc |
-| **Engagement program rules** | Eligibility, sybil policy, snapshot methodology, tax responsibility disclaimer (user’s obligation). | Docs site or `/docs` |
+## Documents (counsel draft / approve)
+
+| Document | Purpose |
+|----------|---------|
+| Terms of Use | App agreement, liability, dispute resolution |
+| Privacy Policy | Data, retention, subprocessors |
+| Cookie / analytics notice | If analytics are used |
+| Risk disclosure | Smart-contract / product risk (no investment advice) |
 
 ## General
 
-- [ ] **Engage counsel** for: token / offering classification, **ToS**, **Privacy**, **jurisdiction** and **marketing** restrictions.
-- [ ] **No investment contract framing** unless counsel approves a registered exemption path — prefer **utility**, **contribution**, and **protocol participation** language consistent with product reality.
-- [ ] **Geoblock or disclaimers** for **sanctions** and **restricted territories** (implement per counsel).
-- [ ] **Email / support** for legal requests: e.g. `legal@xfuel.app` or designated inbox (even if forwarded to counsel).
+- [ ] Engage counsel: token/offering classification, ToS, Privacy, jurisdiction, marketing limits
+- [ ] No investment-contract framing unless counsel approves an exemption path
+- [ ] Sanctions / restricted-territory handling per counsel
+- [ ] Legal inbox (e.g. legal@xfuel.app)
 
-## Per-product disclosures (must match on-chain behavior)
+## Product disclosures
 
-### Community contribution (`BelieverRound` — xfuel.app `/believers`)
+Must match live product:
 
-- [ ] **Refund:** if TGE not triggered within **180 days** of round open, users can **`requestRefund`** (native TFUEL) — explain in plain language.
-- [ ] **Vesting:** cliff + linear schedule; **lock tiers** delay earliest claim — link to contract or explorer.
-- [ ] **Caps:** **TFUEL hard cap** and **XF `xfAllocationCap`** (15% policy) — UI surfaces chain values; legal copy must not contradict.
-- [ ] **Price changes:** multisig may call **`setTokenPrice`** while round is **Open** — users should know implied XF/TFUEL can change (see [`docs/PRICING_TFUEL_XF.md`](PRICING_TFUEL_XF.md)).
+- Settlement: USDC via x402 on Base; Tier-1 signed / Tier-2 SP1 as documented
+- Do not claim Tier 2 proves black-box inference correctness
+- Do not present retired on-chain sale UIs as an open raise
 
-### Angel / strategic (`AngelRound` — `/angels`)
+## Ops / security
 
-- [ ] **No on-chain refund** of TFUEL; **pre-TGE** use of funds via **`withdrawToTreasury`** with on-chain memo.
-- [ ] **Suitability:** counsel may require **accredited / professional / non-US** restrictions — reflect in UI and eligibility flow if required.
-- [ ] **Separate TGE** from Community round.
+- [ ] Bug bounty public — [bug-bounty.md](./bug-bounty.md)
+- [ ] Security contact — [SECURITY.md](../SECURITY.md)
+- [ ] Audit readiness — [AUDIT_READINESS_CHECKLIST.md](./AUDIT_READINESS_CHECKLIST.md)
 
-### Engagement rewards (`CommunityEngagementDistributor`)
+## Before mainnet revenue
 
-- [ ] Not a **sale**; **Merkle claims** after eligibility — rules published before each **season**.
-- [ ] **Anti-sybil** and **abuse** policy (right to exclude addresses per rules).
-
-## Marketing and communications
-
-- [ ] No **guaranteed returns**, **APY**, or **profit** promises for XF or rounds.
-- [ ] **WHITEPAPER**, **pitch deck**, and **social** copy aligned with **deployed** contracts and caps.
-- [ ] **Testnet vs mainnet:** if promoting testnet activity, label clearly **not real funds** / **not the offering**.
-
-## Technical / ops
-
-- [ ] **Contract ownership** = documented multisig; **admin** changes logged.
-- [ ] **Incident response:** `security@xfuel.app`, [`docs/bug-bounty.md`](bug-bounty.md).
-- [ ] **Audit readiness:** [`docs/AUDIT_READINESS_CHECKLIST.md`](AUDIT_READINESS_CHECKLIST.md) (parallel workstream).
-
-## Audit & third parties
-
-- [ ] Auditor **engagement letter** defines scope (see **WHITEPAPER §11.5**).
-- [ ] **Findings remediation** tracked; **public summary** or report link when appropriate.
-
-## When using AI-generated drafts
-
-- [ ] **Counsel review** of every user-facing legal page before publish. Repository markdown is **not** a substitute.
+- [ ] Collect-and-forward custody / money-transmission review ([ADR 0001](./adr/0001-usdc-revenue-and-router-verifier-positioning.md))
+- [ ] Facilitator + `X402_PAY_TO` / Splits custody documented

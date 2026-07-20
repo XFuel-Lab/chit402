@@ -137,9 +137,8 @@ to sign real USDC on Base).
 
 ## Notes
 
-- Fee is 0.5% by default (`fee_bps` 50–100), split 30% BBB / 30% LP / 25% veXF /
-  15% Treasury.
-- Payment rails: USDC/x402 settles to a Base treasury and is reconciled to the
-  Theta fee-split by `payment_ref` (deferred bridge); TFUEL settles directly on
-  Theta. See `../_shared/reference/payments-x402.md`.
+- Fee is 0.5% by default (`fee_bps` 50–100). Fees settle as **USDC on Base** to
+  `X402_PAY_TO` / Splits v2 (token-light; ADR 0001) — no hardcoded per-fee split.
+- Payment rails: USDC/x402 on Base is the default. See
+  `../_shared/reference/payments-x402.md`.
 - Full request/response schema: `../_shared/reference/m2m-openapi.yaml`.

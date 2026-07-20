@@ -4,8 +4,8 @@ import { type CSSProperties } from 'react';
 const stats = [
   { value: 'Any', label: 'Model or provider, routed' },
   { value: 'SP1', label: 'On-chain proofs (live)' },
-  { value: 'x402', label: 'USDC + TFUEL payment rails' },
-  { value: '700+', label: 'Tests passing (repo)' },
+  { value: 'x402', label: 'USDC on Base (default rail)' },
+  { value: '755+', label: 'Tests passing (repo)' },
 ];
 
 const roadmap = [
@@ -32,7 +32,7 @@ const roadmap = [
   {
     tag: 'Roadmap',
     title: 'Cross-chain relay',
-    detail: 'Bittensor EVM and additional relay paths beyond Theta.',
+    detail: 'Bittensor EVM and additional relay paths from the Base-settled core.',
   },
 ];
 
@@ -40,7 +40,7 @@ const features = [
   {
     title: 'Provider-agnostic routing',
     description:
-      'One OpenAI-compatible endpoint routes to the best available provider — centralized, neocloud (Groq/Together/Fireworks), or DePIN (Theta, Akash). Configured, not hardcoded.',
+      'One OpenAI-compatible endpoint routes to the best available provider — OpenAI, Groq/Together/Fireworks, or DePIN GPU (EdgeCloud, Akash). Configured, not hardcoded.',
     icon: '◎',
     link: '/theta-ai',
     color: '#00d4ff',
@@ -54,14 +54,14 @@ const features = [
   },
   {
     title: 'Agent-native payments',
-    description: 'Pay per call over x402/USDC or TFUEL — give an agent a budget, not your API keys. Escrow caps the spend.',
+    description: 'Pay per call over x402/USDC on Base — give an agent a budget, not your API keys. Escrow caps the spend (optional TFUEL rail for legacy Theta flows).',
     icon: '◈',
     link: '/docs',
     color: '#22c55e',
   },
   {
     title: 'On-chain settlement',
-    description: 'CoreRevenueSplitter distributes fees transparently — 30% BBB · 30% GET · 25% veXF · 15% treasury — settled on Theta.',
+    description: 'Fees accrue in USDC on Base (protocol Safe / Splits v2). Token-light: buyback is downstream, governance-adjustable treasury policy — no fixed per-fee split (ADR 0001 / 0002).',
     icon: '⬢',
     link: '/treasury',
     color: '#06b6d4',
@@ -83,20 +83,20 @@ const features = [
 ];
 
 const stackItems = [
+  { name: 'Base', role: 'Settlement + proof home (USDC / x402)', tag: 'in use' },
   { name: 'Succinct', role: 'SP1 proving stack', tag: 'in use' },
   { name: 'Hyperlane', role: 'Interchain messaging', tag: 'in use' },
-  { name: 'Theta Network', role: 'EdgeCloud + EVM (361)', tag: 'in use' },
+  { name: 'Theta EdgeCloud', role: 'Optional DePIN GPU provider', tag: 'in use' },
   { name: 'Chainlink CCIP', role: 'Oracle / messaging (roadmap)', tag: 'roadmap' },
-  { name: 'Almanak', role: 'Agent orchestration (exploring)', tag: 'roadmap' },
   { name: 'Bittensor', role: 'Decentralized AI (EVM subnet)', tag: 'ecosystem' },
 ];
 
 const networks = [
-  { name: 'Theta', status: 'live' },
+  { name: 'Base', status: 'live' },
+  { name: 'Base Sepolia', status: 'testnet' },
   { name: 'Bittensor EVM', status: 'testnet' },
   { name: 'Osmosis', status: 'roadmap' },
   { name: 'Aptos', status: 'planned' },
-  { name: 'Sui', status: 'planned' },
 ];
 
 function networkDot(status: string) {
@@ -125,8 +125,8 @@ export default function Home() {
           <h1 style={styles.heroTitle}>XFuel Protocol</h1>
           <p style={styles.heroSubtitle}>Route any model. Prove every dollar.</p>
           <p style={styles.heroDescription}>
-            XFuel is the payments-and-proof layer for AI compute. Route inference to the best available provider — centralized, neocloud, or DePIN — settle over
-            any rail (<strong>USDC via x402</strong> or <strong>TFUEL on Theta</strong>), and get a <strong>verifiable receipt</strong> for every task: a signed
+            XFuel is the payments-and-proof layer for AI compute. Route inference to the best available provider — centralized, neocloud, or DePIN GPU — settle in
+            <strong> USDC via x402 on Base</strong>, and get a <strong>verifiable receipt</strong> for every task: a signed
             statement by default, or an <strong>on-chain SP1 proof</strong> on demand. The stack is in <strong>beta</strong>.
           </p>
           <div style={styles.heroCta}>
@@ -159,7 +159,7 @@ export default function Home() {
         <div className="container">
           <h2 style={{ textAlign: 'center', marginBottom: '0.35rem' }}>Roadmap</h2>
           <p style={{ textAlign: 'center', color: '#8a8a9a', fontSize: '0.9rem', marginBottom: '1.5rem', maxWidth: 520, marginLeft: 'auto', marginRight: 'auto' }}>
-            Near-term milestones toward full production on Theta and connected networks.
+            Near-term milestones toward full production on Base and connected networks.
           </p>
           <div
             style={{
@@ -215,7 +215,7 @@ export default function Home() {
         <div className="container">
           <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Core infrastructure</h2>
           <p style={{ textAlign: 'center', color: '#8a8a9a', marginBottom: '2rem' }}>
-            Provider-agnostic routing, verifiable receipts, and on-chain settlement — Theta-settled, with any provider underneath.
+            Provider-agnostic routing, verifiable receipts, and on-chain settlement — Base-settled (USDC / x402), with any provider underneath.
           </p>
           <div className="grid grid-3">
             {features.map((f) => (
@@ -243,22 +243,22 @@ export default function Home() {
               <div style={styles.flowItem}>
                 <span style={styles.flowDot} />
                 <div>
-                  <strong>Protocol fees</strong>
-                  <p style={{ fontSize: '0.85rem', color: '#8a8a9a' }}>Inference, verification, and bridge fees as deployments go live.</p>
+                  <strong>Protocol fees (USDC on Base)</strong>
+                  <p style={{ fontSize: '0.85rem', color: '#8a8a9a' }}>Inference, verification, and relay fees settle in USDC via x402 as tasks complete.</p>
                 </div>
               </div>
               <div style={styles.flowItem}>
                 <span style={{ ...styles.flowDot, background: '#8b5cf6' }} />
                 <div>
-                  <strong>CoreRevenueSplitter</strong>
-                  <p style={{ fontSize: '0.85rem', color: '#8a8a9a' }}>30% BBB · 30% GET · 25% stakers · 15% treasury</p>
+                  <strong>Protocol Safe / Splits v2</strong>
+                  <p style={{ fontSize: '0.85rem', color: '#8a8a9a' }}>Fees land at one address on Base. Token-light — no fixed per-fee split (ADR 0001).</p>
                 </div>
               </div>
               <div style={styles.flowItem}>
                 <span style={{ ...styles.flowDot, background: '#22c55e' }} />
                 <div>
-                  <strong>Cross-chain distribution</strong>
-                  <p style={{ fontSize: '0.85rem', color: '#8a8a9a' }}>Hyperlane and chain-specific routes on the roadmap.</p>
+                  <strong>Governance-adjustable fan-out</strong>
+                  <p style={{ fontSize: '0.85rem', color: '#8a8a9a' }}>Bucket distribution and XF buyback are downstream treasury policy, set by veXF (post-TGE).</p>
                 </div>
               </div>
             </div>

@@ -19,12 +19,8 @@
  * rake). Defaults are illustrative and owner-adjustable — governance sets the real
  * values on the Split:
  *   - treasury : operations / runway
- *   - buyback  : USDC slice routed to XF buyback-and-burn on Theta (scheduled treasury op)
- *   - stakers  : veXF real-yield (paid in USDC) — optional
- *
- * NOTE: This is deliberately NOT the legacy 30/30/25/15 CoreRevenueSplitter model
- * (native TFUEL on Theta, Theta-native boost). That contract is deprecated from the
- * go-forward fee path (see ADR 0001).
+ *   - buyback  : USDC slice reserved for XF buyback-and-burn on Base (scheduled treasury op)
+ *   - stakers  : optional veXF USDC yield — governance-set, not a fixed entitlement
  */
 
 /** BPS scale — bucket allocations must sum to this. */
@@ -36,8 +32,8 @@ export const TOTAL_BPS = 10000;
  */
 export const BUCKETS = [
   { key: 'treasury', label: 'Treasury / Ops', defaultBps: 4000, addrEnv: 'REVENUE_TREASURY_ADDRESS', bpsEnv: 'REVENUE_TREASURY_BPS' },
-  { key: 'buyback',  label: 'XF Buyback-Burn (bridged to Theta)', defaultBps: 3500, addrEnv: 'REVENUE_BUYBACK_ADDRESS', bpsEnv: 'REVENUE_BUYBACK_BPS' },
-  { key: 'stakers',  label: 'veXF Stakers (USDC yield)', defaultBps: 2500, addrEnv: 'REVENUE_STAKERS_ADDRESS', bpsEnv: 'REVENUE_STAKERS_BPS' },
+  { key: 'buyback',  label: 'XF Buyback-Burn (Base, post-TGE)', defaultBps: 3500, addrEnv: 'REVENUE_BUYBACK_ADDRESS', bpsEnv: 'REVENUE_BUYBACK_BPS' },
+  { key: 'stakers',  label: 'veXF Stakers (optional USDC yield)', defaultBps: 2500, addrEnv: 'REVENUE_STAKERS_ADDRESS', bpsEnv: 'REVENUE_STAKERS_BPS' },
 ];
 
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;

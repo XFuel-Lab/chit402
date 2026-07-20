@@ -301,7 +301,7 @@ async function main() {
 
   const PRICE_NUM = process.env.BELIEVER_PRICE_NUM
     ? BigInt(process.env.BELIEVER_PRICE_NUM)
-    : 5n; // 5 XF per 1 TFUEL (see docs/PRICING_TFUEL_XF.md)
+    : 5n; // 5 XF per 1 TFUEL (archived: docs/_archive/legacy-tokenomics/PRICING_TFUEL_XF.md)
 
   const PRICE_DEN = process.env.BELIEVER_PRICE_DEN
     ? BigInt(process.env.BELIEVER_PRICE_DEN)

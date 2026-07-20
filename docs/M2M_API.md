@@ -1,399 +1,120 @@
-# XFuel Protocol — M2M API Documentation
+# M2M API
 
-> REST API for programmatic access to the AI DePIN module. Agents, bots, and orchestrators use these endpoints to submit AI tasks, retrieve ZK settlement proofs, send A2A messages, and query task status.
+REST API for agents and applications. Submit tasks, retrieve proofs, send A2A messages, and poll status.
 
-**Back to:** [README.md](../README.md)
+Server: `services/gateway` (default port 3002).  
+Hosted testnet: `https://api-testnet.xfuel.app`.  
+As-deployed notes: [RUNTIME_STATE.md](./RUNTIME_STATE.md).
 
----
+## Quick start
 
-## Quick Start
-
-```bash
+```
 cd services/gateway
 npm install
-
-# Start the M2M API server (port 3002)
 npm run m2m-server
+```
 
-# With explicit port and auth
+```
 M2M_API_PORT=3002 M2M_API_KEYS=my-secret-key npm run m2m-server
 ```
 
----
-
 ## Authentication
 
-All endpoints (except `GET /health`) require one of:
+All endpoints except `GET /health` require one of:
 
-| Method | Header | Description |
-|--------|--------|-------------|
-| API Key | `X-API-Key: <key>` | Static key from `M2M_API_KEYS` env var (comma-separated) |
-| Relayer ECDSA | `X-Signature: <0x-sig>` + `X-Sig-Timestamp: <epoch>` | ECDSA over `method+path+sha256(body)+timestamp`; signer in `M2M_RELAYER_ADDRESSES` |
+- `X-API-Key: <key>` — from `M2M_API_KEYS` (comma-separated)
+- `X-Signature` + `X-Sig-Timestamp` — ECDSA over `method+path+sha256(body)+timestamp`; signer in `M2M_RELAYER_ADDRESSES`
 
-If neither is set, the server runs in **open mode** (dev only).
+If neither env is set, the server runs open (dev only).
 
----
+## Rate limiting
 
-## Rate Limiting
-
-Sliding-window rate limiter keyed by API key (or IP). Defaults: **120 requests / 60s**. A `429` response includes `Retry-After` header.
-
----
+Sliding window by API key (or IP). Default: 120 requests / 60s. `429` includes `Retry-After`.
 
 ## Endpoints
 
-### `POST /task-request` — Submit an AI Intent
+### POST /task-request
 
-Submit an AI task for routing to Akash, Bittensor (TAO), Osmosis, or Theta Edge Cloud.
+Submit an AI task.
 
-**Request body:**
+| Field | Required | Notes |
+|-------|----------|-------|
+| `message_type` | yes | `inference_request`, `compute_bid`, `compute_result`, `capability_query`, `data_attestation` |
+| `chain_id` | yes | Prefer `base` (settlement home). Others are routing hints. |
+| `amount` | yes | Gross task value (≥ 10000) |
+| `sender` | yes | Address / agent id |
+| `model_id` | for inference | e.g. `llama-3-70b` |
+| `input_hash` | for inference | keccak256 of input |
+| `fee_bps` | no | Default 50 (0.5%); range 50–100 |
+| `payment` | no | `{ "rail": "usdc", "network": "base-sepolia" }` — default USDC/x402 |
+| `callback_url` | no | Per-task webhook |
+| `callback_secret` | no | HMAC secret for per-task webhook |
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `message_type` | string | Yes | `compute_bid`, `compute_result`, `inference_request`, `capability_query`, `data_attestation` |
-| `chain_id` | string | Yes | `base` (settlement home), `theta`, `osmosis`, `akash`, `bittensor`, `persistence` |
-| `amount` | string | Yes | Gross task value (≥ 10000, dust protection) |
-| `sender` | string | Yes | Sender address / agent identifier |
-| `fee_bps` | number | No | Fee override (50–100 BPS). Default: 50 (0.5%) |
-| `model_id` | string | Cond. | Required for `inference_request` |
-| `input_hash` | string | Cond. | Required for `inference_request`, `data_attestation` |
-| `output_hash` | string | Cond. | Required for `compute_result` |
-| `proof_system` | string | No | For `inference_request`: `sp1` (default, LIVE — Tier‑2 settlement proof). `zkgpt` is **roadmap/blocked on GPU capacity**; the local zkGPT prover is a **dev-only mock**, not a live path. |
-| `payment` | object | No | Payment selector: `{ rail, network, maxAmount }`. Default rail is **USDC via x402** (`rail: "usdc"`, `network: "base-sepolia"` today — Base mainnet pending CDP); optional `rail: "tfuel"`. When omitted, the server `X402_DEFAULT_RAIL` applies. |
-| `subnet_id` | number | Cond. | Required for `bittensor` routing |
-| `theta_recipient` | string | No | Theta EVM settlement address |
-| `max_gpu_hours` | string | No | Akash GPU lease duration |
-
-**Examples:**
-
-Default (SP1 settlement proof, USDC via x402 on Base):
-```bash
-curl -X POST http://localhost:3002/task-request \
+```
+curl -X POST https://api-testnet.xfuel.app/task-request \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: my-secret-key" \
+  -H "X-API-Key: xfuel-demo" \
   -d '{
     "message_type": "inference_request",
     "chain_id": "base",
     "amount": "1000000",
-    "sender": "0xYourAgentAddress",
+    "sender": "0xYourAddress",
     "model_id": "llama-3-70b",
-    "input_hash": "0xabcdef...",
-    "proof_system": "sp1",
-    "payment": { "rail": "usdc", "network": "base-sepolia", "maxAmount": "50000" }
+    "input_hash": "0xabc...",
+    "payment": { "rail": "usdc" }
   }'
 ```
 
-> `network: "base-sepolia"` is live today (public `x402.org` facilitator); Base
-> mainnet (`network: "base"`) is pending CDP provisioning.
+Response includes `taskId`, status, and links to status / proof / receipt.
 
-zkGPT path (**roadmap / blocked on GPU capacity** — the bundled prover is a dev-only mock, not a live path):
-```bash
-curl -X POST http://localhost:3002/task-request \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: my-secret-key" \
-  -d '{
-    "message_type": "inference_request",
-    "chain_id": "base",
-    "amount": "1000000",
-    "sender": "0xYourAgentAddress",
-    "model_id": "llama-3-70b",
-    "input_hash": "0xabcdef...",
-    "proof_system": "zkgpt"
-  }'
-```
+### GET /task-status
 
-**Response (202 Accepted):**
+`GET /task-status?task_id=<id>`
 
-```json
-{
-  "task_id": "m2m-task-1-1739299200000",
-  "status": "accepted",
-  "message_type": "inference_request",
-  "chain_id": "base",
-  "gross_amount": "1000000",
-  "fee_amount": "5000",
-  "net_amount": "995000",
-  "fee_bps": 50,
-  "verify_url": "http://localhost:3002/receipt/m2m-task-1-1739299200000",
-  "fee_info": {
-    "description": "0.5% protocol USDC fee → single Base fee sink (X402_PAY_TO / Splits; ADR 0001, token-light)",
-    "collector": "X402_PAY_TO (Base) — see services/gateway/src/revenue-split.js"
-  },
-  "_links": {
-    "status": "/task-status?task_id=m2m-task-1-1739299200000",
-    "proof": "/prove-result?task_id=m2m-task-1-1739299200000",
-    "receipt": "http://localhost:3002/receipt/m2m-task-1-1739299200000"
-  }
-}
-```
+### GET /prove-result
 
-**`verify_url`** is the canonical, **public, no-auth** proof link — the same value is
-threaded consistently across every surface (this API's `/task-status` + `/prove-result`
-responses, the OpenAI gateway `xfuel.verify_url` body field + `x-xfuel-verify-url` header,
-the SDK, and the MCP tools). Open or share it to prove settlement. It's absolute when the
-server knows its public base URL (set `PUBLIC_BASE_URL` behind a proxy/CDN) and matches
-`_links.receipt`.
+`GET /prove-result?task_id=<id>` — Tier-2 SP1 settlement proof when available.
 
----
+### GET /receipt/:taskId
 
-### `GET /prove-result` — Retrieve ZK Settlement Proof
+Public receipt (HTML or `?format=json`). No auth.
 
-Fetch the SP1 ZK proof and fee breakdown for a completed task.
+### POST /task-quote
 
-| Param | Required | Description |
-|-------|----------|-------------|
-| `task_id` | Yes | Task ID from `/task-request` response |
+Price a task for a payment rail before submit.
 
-```bash
-curl "http://localhost:3002/prove-result?task_id=m2m-task-1-1739299200000" \
-  -H "X-API-Key: my-secret-key"
-```
+### Webhooks
 
-**Response (200 OK):**
+- Global: `PUT /webhook` `{ url, secret, events? }` · `GET /webhook` · `DELETE /webhook?id=` or `?url=`
+- Per-task: `callback_url` / `callback_secret` on `/task-request`
+- Signature header: `X-XFuel-Signature: sha256=<hmac>`
 
-```json
-{
-  "task_id": "m2m-task-1-1739299200000",
-  "status": "fee_collected",
-  "proof_outcome": "valid",
-  "verify_url": "http://localhost:3002/receipt/m2m-task-1-1739299200000",
-  "sp1_proof": {
-    "proof": "0x...",
-    "publicInputs": "0x...",
-    "nullifier": "0xabc123...",
-    "provingTimeMs": 9200
-  },
-  "fee": {
-    "gross_amount": "1000000",
-    "fee_amount": "5000",
-    "net_amount": "995000",
-    "fee_bps": 50,
-    "fee_sink": "X402_PAY_TO (single Base address / Splits; ADR 0001 — token-light, no per-fee 30/30/25/15 split)"
-  }
-}
-```
+Events currently include `TaskSettled`, `A2ASettled`.
 
-Returns **409 Conflict** if the task is not yet settled.
+### A2A
 
----
+- `POST /a2a-message` — agent-to-agent message with optional escrow
+- `POST /a2a-settle-fair-exchange` — Fair Exchange / PAS settlement
 
-### `POST /a2a-message` — Send an A2A Message
+### OpenAI surface
 
-Submit a ZK-verifiable agent-to-agent message with optional escrow.
+Same server: `/v1/models`, `/v1/chat/completions`, `/llms.txt`.  
+See [OPENAI_COMPATIBLE_GATEWAY.md](./OPENAI_COMPATIBLE_GATEWAY.md).
 
-**Request body:**
+### GET /health
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `message_type` | string | Yes | One of the five message types |
-| `sender_chain` | string | Yes | Origin chain |
-| `recipient_chain` | string | Yes | Destination chain |
-| `payload_hash` | string | Yes | SHA-256 hex of message payload |
-| `escrow_amount` | string | Cond. | Required non-zero for `compute_bid` and `inference_request` |
-| `ttl` | number | Yes | Time-to-live in seconds (1–86400) |
-| `sender_address` | string | Yes | Sender agent address |
-| `sender_identity` | string | Yes | Agent identity commitment (Poseidon hash hex) |
-| `recipient_address` | string | No | Recipient agent address |
-| `ibc_channel` | string | Cond. | Required for cross-chain messages |
+Liveness, fee config, chains, message types. No auth.
 
-**Example:**
+## Payments
 
-```bash
-curl -X POST http://localhost:3002/a2a-message \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: my-secret-key" \
-  -d '{
-    "message_type": "compute_bid",
-    "sender_chain": "theta",
-    "recipient_chain": "akash",
-    "payload_hash": "0xdeadbeef...",
-    "escrow_amount": "250000",
-    "ttl": 3600,
-    "sender_address": "0xYourAgentAddress",
-    "sender_identity": "0xPoseidonCommitmentHash",
-    "ibc_channel": "channel-42"
-  }'
-```
+Default rail: USDC via x402 on Base. See [X402_ADAPTER.md](./X402_ADAPTER.md).
 
-**Response (202 Accepted):**
+Fees settle to `X402_PAY_TO` / Splits v2 (token-light). See [ADR 0001](./adr/0001-usdc-revenue-and-router-verifier-positioning.md).
 
-```json
-{
-  "message_id": "a2a-550e8400-...",
-  "status": "accepted",
-  "message_type": "compute_bid",
-  "escrow_amount": "250000",
-  "relay_fee": "25",
-  "relay_fee_info": "0.1% on escrowed amount → protocol fee sink on Base (X402_PAY_TO / Splits; ADR 0001)",
-  "nonce": 1,
-  "ttl": 3600
-}
-```
+## Related
 
----
-
-### `POST /a2a-settle-fair-exchange` — Settle A2A bid via Fair Exchange (Phase 1)
-
-Settle an accepted A2A bid using a PAS (Proxy Adaptor Signature) instead of a ZK proof. Requires `A2A_CIRCUIT_ADDRESS`; if `RELAYER_PRIVATE_KEY` is set, the server submits the tx; otherwise returns encoded calldata.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `bid_id` | string | Yes | Bytes32 bid ID (0x-prefixed 64 hex chars) |
-| `result_hash` | string | Yes | Hash of delivered result (0x-prefixed 64 hex chars) |
-| `v` | number | Yes | ECDSA recovery id (0–255) |
-| `r` | string | Yes | Signature r (0x-prefixed 64 hex chars) |
-| `s` | string | Yes | Signature s (0x-prefixed 64 hex chars) |
-
-**Responses:** 202 + `tx_hash` when relayer configured; 200 + `calldata` when not; 503 if `A2A_CIRCUIT_ADDRESS` unset.
-
----
-
-### `GET /task-status` — Query Status
-
-| Param | Description |
-|-------|-------------|
-| `task_id` | Query an AI task |
-| `message_id` | Query an A2A message |
-
-```bash
-curl "http://localhost:3002/task-status?task_id=m2m-task-1-..." -H "X-API-Key: ..."
-```
-
-The task response includes `verify_url` — the public, shareable receipt link (see below).
-
----
-
-### `GET /receipt/:taskId` — Public verifiable receipt (no auth)
-
-A **public, no-auth, shareable** receipt for a task. Returns a clean **HTML** page by
-default (great for sharing a link / unfurling), or **JSON** with `?format=json` (or
-`Accept: application/json`) for agents. Rate-limited per-IP.
-
-It exposes **no secrets** — no proof bytes, no raw model output, no keys. It shows the
-route, payment (rail + settlement ref, with a block-explorer link for Base/Base Sepolia
-txs), proof status (system, outcome, nullifier, proving time), an output-hash
-commitment, and an **independent re-derivation of the x402 payment-binding commitment**
-so anyone can confirm "paid + proven" without trusting the server.
-
-```bash
-# Shareable HTML page (open in a browser)
-curl "http://localhost:3002/receipt/m2m-task-1-..."
-
-# Machine-readable JSON (agents)
-curl "http://localhost:3002/receipt/m2m-task-1-...?format=json"
-```
-
-The JSON `binding` block includes `expected_commitment`, `recomputed_commitment`, and
-`matches` — the local re-derivation of `keccak256(paymentRefHash, taskIdHash, rail,
-amount)`. Honest proof scope is stated on the receipt: the SP1 proof attests settlement
-metadata + an output-hash commitment, **not** that the provider computed the model
-correctly (see `docs/POSITIONING.md` §2).
-
-**Verified Inference fields (Tier-3, additive):**
-- `route.model_commitment` — the on-chain PoMA model-authenticity commitment for the served
-  model (`{ commitment, model_id, version, scheme }`), or `null` when not configured. Lets a
-  third party detect a **model downgrade**. See `docs/POMA_SPEC.md`.
-- `proof.tier` — coarse assurance level: `signed` (Tier-1) · `settlement` (Tier-2 SP1) ·
-  `inference` (Tier-3, roadmap).
-- `binding.covers` — what the payment binding attests: `["payment","settlement"]`, upgraded to
-  `["payment","settlement","model","inference"]` when a model commitment + output hash are
-  present (**PBR — Payment-Bound Receipt**). Then `expected_commitment` re-derives
-  `keccak256(paymentRefHash, taskIdHash, rail, amount, modelCommitment, outputHash)`; `binding`
-  also carries `model_commitment` + `output_hash`.
-- `signature` (optional) — when the node runs with `RECEIPT_SIGNING_SECRET`, a Tier-1 HMAC-SHA256
-  (`{ alg, value: "sha256=…", signed_fields }`) over the payment-bound tuple, so the receipt is
-  tamper-evident. Verify with the SDK `verifyReceiptSignature(receipt, secret)`. Full target
-  shape: `docs/RECEIPT_SCHEMA_V2.md`.
-
-This page is the target of the `verify_url` returned by `POST /task-request`,
-`GET /task-status`, and `GET /prove-result` (and by the OpenAI gateway, SDK, and MCP
-tools) — one consistent, shareable proof link for every task. Set `PUBLIC_BASE_URL`
-to emit absolute links behind a proxy/CDN.
-
-**Durability:** tasks are held in an in-memory hot map for their live lifecycle, but a
-public-safe snapshot is also **persisted to disk** (write-through), so a shared
-`verify_url` keeps resolving across server restarts and after a settled task is evicted
-from the hot map. Snapshots are retained for `TASK_STORE_RETENTION_MS` (default 30 days),
-then pruned. Set `TASK_STORE_PERSIST=false` for a purely in-memory (ephemeral) node, or
-`TASK_STORE_DIR` to relocate the store (e.g. a shared volume). Single-node/file by
-design — swap for Redis/Postgres when scaling horizontally.
-
----
-
-### `GET /stats` — Aggregate usage (public, no auth)
-
-A **public-safe** network-activity view derived from the durable task snapshots, so the
-numbers survive restarts and reflect real historical activity. Returns a small **HTML
-dashboard** by default (shareable) or **JSON** with `?format=json` (or
-`Accept: application/json`). Rate-limited per-IP; short-cached server-side.
-
-Exposes **only aggregates** — task counts by status/provider/type, proof outcomes, and
-per-rail summed amounts (USDC and TFUEL are summed separately, never across rails). **No
-task ids, senders, model output, or proof bytes.**
-
-```bash
-curl "http://localhost:3002/stats?format=json"
-```
-
-```jsonc
-{
-  "window": "all-time",
-  "tasks": { "total": 42, "settled": 39, "by_status": { "fee_collected": 39, "failed": 1 },
-             "by_provider": { "edgecloud": 30, "akash": 9 }, "by_message_type": { "inference_request": 41 } },
-  "payments": { "by_rail": { "usdc": { "count": 12, "fee_amount": "60000", "net_amount": "…", "gross_amount": "…" },
-                             "tfuel": { "count": 30, "fee_amount": "…", "net_amount": "…", "gross_amount": "…" } } },
-  "proofs": { "valid": 38, "regenerable": 1, "pending": 2, "invalid": 1, "proven_pct": 90.5 },
-  "activity": { "last_24h": 5, "last_7d": 20, "first_seen": "…", "last_seen": "…" }
-}
-```
-
----
-
-### `GET /health` — Server Health
-
-No authentication required.
-
-```bash
-curl http://localhost:3002/health
-```
-
-Returns server health, configuration, AI listener metrics, and aggregate stats.
-
----
-
-## Fee Structure
-
-| Fee Type | Rate | Collected By |
-|----------|------|-------------|
-| AI task fee | 0.5–1% (50–100 BPS) | USDC fee sink on Base (`X402_PAY_TO` / Splits) |
-| A2A relay fee | 0.1% (10 BPS) on escrow | `AIDePINRouter.sol` |
-| Bridge fee | 0.5% (50 BPS) | Existing bridge flow |
-
-**Token-light (go-forward, ADR 0001):** the protocol USDC fee lands at **one Base address** (`X402_PAY_TO` / Splits v2) — off the hot path and governance-adjustable. There is **no** hardcoded per-fee 30/30/25/15 split; any bucket fan-out is downstream treasury policy. The legacy `CoreRevenueSplitter` (native TFUEL, 30/30/25/15) is **deprecated** from the fee path. See `services/gateway/src/revenue-split.js`.
-
----
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `M2M_API_PORT` | `3002` | Server port |
-| `M2M_API_KEYS` | (none) | Comma-separated API keys |
-| `M2M_RELAYER_ADDRESSES` | (none) | Comma-separated relayer EVM addresses |
-| `M2M_RATE_WINDOW_MS` | `60000` | Rate limit window (ms) |
-| `M2M_RATE_MAX_HITS` | `120` | Max requests per window |
-| `AI_TASK_FEE_BPS` | `50` | Default task fee (basis points) |
-| `AI_LISTENER_ENABLED` | `true` | Required for task routing |
-
----
-
-## Contract Sync Points
-
-| Contract | Sync Point |
-|----------|-----------|
-| `AIDePINRouter.sol` | `MessageType` / `ChainId` / `ProofOutcome` enums, `routeInference()`, `settleTask()` |
-| `TAOWrapper.sol` | `routeInference()` with `subnetId`, `ChainId.Bittensor` routing |
-| `AIVerifier.wasm` | `RouteTask` / `SettleTask` execute messages |
-| `FeeCollector.wasm` | CW20 `Receive` hook, `TriggerFeeBurn` |
-| `sp1-prover/main.rs` | `validate_ai_task()`, `validate_a2a_message()` circuits |
-| `services/gateway/src/revenue-split.js` | Token-light USDC fee sink on Base (`X402_PAY_TO` / Splits; ADR 0001). `CoreRevenueSplitter.sol` 30/30/25/15 is deprecated from the fee path. |
+- [OPENAI_COMPATIBLE_GATEWAY.md](./OPENAI_COMPATIBLE_GATEWAY.md)
+- [X402_ADAPTER.md](./X402_ADAPTER.md)
+- [HOSTED_TESTNET_ENDPOINT.md](./HOSTED_TESTNET_ENDPOINT.md)
+- SDK: `packages/sdk`
+- MCP: `packages/mcp`

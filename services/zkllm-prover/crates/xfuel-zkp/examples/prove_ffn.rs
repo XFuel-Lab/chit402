@@ -5,7 +5,7 @@
 //!   cargo run --release --example prove_ffn                 # defaults to seq=64 d_model=512 d_ff=1024
 //!   cargo run --release --example prove_ffn 128 1024 4096
 //!
-//! Dimensions must be powers of two. Use this on a high-RAM host to fill docs/ZKG5_BENCHMARK.md.
+//! Dimensions must be powers of two. Use this on a high-RAM host; record results in docs/VERIFIED_INFERENCE_HANDOFF.md.
 
 use ark_std::{test_rng, UniformRand};
 use std::time::Instant;

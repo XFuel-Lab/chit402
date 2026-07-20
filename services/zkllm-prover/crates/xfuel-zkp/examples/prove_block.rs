@@ -4,7 +4,7 @@
 //!   cargo run --release --example prove_block           # defaults to 256x256 * 256x256
 //!   cargo run --release --example prove_block 512 512 512
 //!
-//! Dimensions must be powers of two. Use this on a high-RAM host to fill docs/ZKG5_BENCHMARK.md.
+//! Dimensions must be powers of two. Use this on a high-RAM host; record results in docs/VERIFIED_INFERENCE_HANDOFF.md.
 
 use ark_std::{test_rng, UniformRand};
 use std::time::Instant;

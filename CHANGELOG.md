@@ -10,16 +10,39 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- **Docs merge lean:** `DEMO` → `HOSTED_TESTNET_ENDPOINT`; `BASE_CUTOVER` → `RUNTIME_STATE`; `ZKG5_BENCHMARK` → `VERIFIED_INFERENCE_HANDOFF` (thin redirect stubs left at old paths).
+- **Aggressive docs lean (single narrative):** archived phase kickoffs, engagement/treasury fluff, grant-audit duplicates, zkGPT research memos, pointer stubs, and phase JSON reports → `docs/_archive/legacy-narrative/`. `docs/README.md` is a clean hub only. Kept technical truth (RUNTIME_STATE, APIs, ADRs, VI, audit readiness).
+- **Repo docs → Theta-style GitHub README shape:** `README.md`, `WHITEPAPER.md`, and `docs/README.md` rewritten with opening prose, TOC, `---` section breaks, labeled `bash` fences, and human-readable link text (so GitHub render matches a modern protocol README — not raw editor view).
+- **Docs archive (approved):** gateway status dumps → `docs/_archive/legacy-gateway-ops/`; superseded design dumps → `docs/_archive/legacy-design-dumps/`.
+- **Docs formatting pass (continued):** ops (`RUNTIME_STATE`, `DEPLOYMENT`, `TESTING`, `DEMO`, `HOSTED_TESTNET`, `BASE_CUTOVER`), security (`bug-bounty`, `SECURITY`, `AUDIT_READINESS`, `security-design`, `LEGAL_LAUNCH`), fundraising, ADRs 0001–0004, Verified Inference front doors (`VERIFIED_INFERENCE_*`, Tier-3 build spec), package READMEs (SDK/MCP/agent-skills/playbook), and service READMEs (gateway/sp1/zkllm/zkgpt). Same sparse contract: plain headings, short paragraphs, link lists; Base + token-light narrative; Tier-3 = zkLLM active build.
+- **Docs formatting + lean pass (Theta-sparse):** plain headings, short paragraphs, link lists over badge/table walls. Slimmed `CIRCUITS.md`, `Technical-Specifications.md`, `M2M_API.md`, `OPENAI_COMPATIBLE_GATEWAY.md`, `X402_ADAPTER.md`, `POSITIONING.md`, and `pitch-deck.md`. Archived `Circuit-Design-and-Expansion.md`, obsolete `QUICK_REFERENCE.md`, and outdated `docs/grants/*` decks under `docs/_archive/`.
+- **Theta-style lean docs restructure:** `README.md`, `WHITEPAPER.md`, `AGENTS.md`, and `docs/README.md` rewritten as short front doors that point to satellite docs (RUNTIME_STATE, POSITIONING, M2M_API, CIRCUITS, etc.). Removed duplicated architecture essays, deployment tables, mermaid diagrams, and circuit/use-case catalogs from the canonical surfaces — depth lives in `docs/`.
+- **Follow-up accuracy sweep (UI + live API + archive):**
+  - **Gateway** (`services/gateway/src/server.js`, `revenue-split.js`) — removed hardcoded `30% BBB / 30% LP / 25% veXF / 15% Treasury` from `/health`, `/prove-result`, and `/task-request` fee_info; now returns `describeSplit(resolveSplit())` (token-light USDC on Base).
+  - **Frontend** — `Dashboard.tsx` no longer reads `CoreRevenueSplitter`; `Security.tsx` reframed to Base verifier + equity-first fundraising; `Staking.tsx` retitled from Fee-to-Stake to governance staking; `Docs.tsx` badges → v2.6 / Base / 755+.
+  - **SDK + agent skill** — `revenue_split` type matches `describeSplit()`; submit-inference skill notes updated.
+  - **Archived** to `docs/_archive/`: `Growth-Expansion-Treasury.md`, `FUNDING_ROUNDS_LAUNCH_RUNBOOK.md`, `PRICING_TFUEL_XF.md`, `THETA_INTEGRATION_PLAN.md` (see `docs/_archive/README.md`).
+  - **CONTRIBUTING.md / SECURITY.md** — Base-settled framing; removed CoreRevenueSplitter from bounty in-scope; version → v2.6.
+- **Docs de-legacy sweep — canonical docs now describe the project as-is (top-project shape).** Removed legacy machinery from the narrative entirely (history remains in git):
+  - **`WHITEPAPER.md`** — replaced §5 (GET / Fee-to-Stake / `CoreRevenueSplitter` 30/30/25/15) with a tight token-light "Revenue & Fees" section; removed all `CoreRevenueSplitter`/`RevenueSplitter` references (§2 note, §6 governance hooks, §7.2, §9.1); dropped believer/angel sale mechanics from §10 tokenomics and §11.5 audit scope; replaced the §12 Phase 1–6 completion log with a forward-only "Now → next / Later" roadmap; removed ThetaScan/believer-metrics mentions.
+  - **`README.md`** — full lean rewrite toward a top-project shape (~11 tight sections): what it is, trust tiers, quick start, how it works, architecture, providers/chains, current deployment status, repo map, testing, security, community. Cut the phase-by-phase deployment log, "Verifier Patches," standalone CosmWasm/EVM/Solana prover test-count sections, the "AI DePIN Hub / Why Theta First" section, and legacy `.env` vars.
+  - **`AGENTS.md`** — cut the retired BelieverRound/AngelRound/engagement fundraising blocks (one-line equity-first note remains), removed `CoreRevenueSplitter` refs, fixed the A2A escrow example (USDC/x402 + Fair Exchange, not `CoreRevenueSplitter.createEscrow`), updated the governance table (TreasuryPolicy), and reframed Tier-3 to the self-owned zkLLM prover.
+  - **`docs/README.md`** — core-contract list no longer lists deprecated `CoreRevenueSplitter`.
+- **Narrative alignment to locked core story (Base-settled, provider-agnostic, tiered-trust).** Aligned high-visibility surfaces to the locked positioning (`docs/POSITIONING.md`, ADR 0002) with zero change to technical facts, addresses, or test counts:
+  - **`WHITEPAPER.md` → v2.6** — reconciled Tier-3 from "zkGPT (blocked on GPU)" to the self-owned **XFuel zkLLM** prover (`services/zkllm-prover`, RAM-bound/CPU-only, active build); zkGPT retained as cited prior art. Updated §3.5 tier table, §3.6 research track, §11.1, roadmap, and references.
+  - **`README.md`** — version refs v2.4→v2.6, "As of March 2026"→July 2026, added locked one-liner summary, replaced the 30/30/25/15 fee-flow and "All fees route through CoreRevenueSplitter" with the token-light USDC-on-Base model, and reframed the DePIN-hub / "Why Theta First" section (neocloud-first router; EdgeCloud = optional GPU provider tier, not settlement home).
+  - **`apps/web/src/pages/Home.tsx`** — synced to `POSITIONING.md`: removed the "30% BBB · 30% GET · 25% veXF · 15% treasury — settled on Theta" card, made USDC-on-Base the default rail (TFUEL demoted to legacy), added Base/Base Sepolia to the networks list, and set the settlement framing to Base.
+  - **`docs/README.md`** — v2.4/"Hybrid Theta-Centric" → v2.6/"Base-Settled, Provider-Agnostic"; added a one-line positioning summary; date → July 2026.
 - **Core tests:** Split `test:contracts:core` into `test:contracts:core:listener` (`node:test`, `ai-listener.test.js`) and `test:contracts:core:solidity` (Hardhat `*.test.cjs` only). `ci.yml` runs them as separate steps; `test.yml` gas job uses `:solidity` only.
 - **`test:contracts:all`:** Runs the core listener first, then `test:contracts:all:hardhat` via `scripts/hardhat-test-all.cjs` (collects every `test/**/*.test.cjs`, `core-layer/test/*.cjs`, `circuits/*/test/*.cjs` without shell globs — fixes Windows). `test.yml` uses two explicit steps matching that split.
 - **`theta-inference-handler.test.cjs`:** Wrapped the runner in `require.main === module` so Hardhat no longer exits the whole process on `require()` (same class of bug as fee-analytics tokenomics tests).
 
 ### Planned
-- CertiK Phase 1 audit (Q2 2026) — `contracts/core/` scope
-- Mainnet deployment (post-audit) — Theta Mainnet (chain 361)
-- `xfuel-sdk` 0.1.0 publish to npm
-- Hyperlane Mailbox deployment on Theta + Bittensor EVM
-- veXFGovernance first on-chain proposal
+- Audit Phase 1 — `contracts/core/` on Base (see `docs/AUDIT_READINESS_CHECKLIST.md`)
+- Base mainnet x402 facilitator provisioning
+- SP1 guest v2 (in-proof payment binding)
+- Tier-3 on-chain verify + E2E (zkLLM)
+- veXFGovernance first on-chain proposal (when token launches)
 
 ---
 

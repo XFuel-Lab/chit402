@@ -89,10 +89,14 @@ const mockProofResponse: ProofResponse = {
     fee_bps: 300,
     fee_collector: '0xABC',
     revenue_split: {
-      bbb_buyback_burn: '30%',
-      lp_provision: '30%',
-      vexf_stakers: '25%',
-      treasury: '15%',
+      model: 'usdc-base-splits-v2',
+      note: 'Token-light: fee lands at one Splits v2 address on Base; buckets fan out off the hot path.',
+      totalBps: 10000,
+      buckets: [
+        { key: 'treasury', label: 'Treasury / Ops', bps: 4000, pct: 40, address: null },
+        { key: 'buyback', label: 'XF Buyback-Burn (Base, post-TGE)', bps: 3500, pct: 35, address: null },
+        { key: 'stakers', label: 'veXF Stakers (optional USDC yield)', bps: 2500, pct: 25, address: null },
+      ],
     },
   },
   result: { output: 'Hello from AI' },
@@ -297,8 +301,9 @@ describe('XFuelClient', () => {
       const client = makeClient();
       const result = await client.getProof(TASK_ID);
 
-      expect(result.fee.revenue_split.bbb_buyback_burn).toBe('30%');
-      expect(result.fee.revenue_split.vexf_stakers).toBe('25%');
+      expect(result.fee.revenue_split.model).toBe('usdc-base-splits-v2');
+      expect(result.fee.revenue_split.buckets.map((b) => b.key)).toEqual(['treasury', 'buyback', 'stakers']);
+      expect(result.fee.revenue_split.buckets.reduce((s, b) => s + b.bps, 0)).toBe(10000);
     });
   });
 
