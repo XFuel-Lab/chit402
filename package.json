@@ -68,7 +68,7 @@
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1086.0",
     "@cosmjs/cosmwasm-stargate": "^0.33.1",
-    "@cosmjs/proto-signing": "^0.33.1",
+    "@cosmjs/proto-signing": "^0.39.0",
     "@cosmjs/stargate": "^0.33.1",
     "@keplr-wallet/types": "^0.12.306",
     "@thetalabs/theta-js": "^0.0.86",
