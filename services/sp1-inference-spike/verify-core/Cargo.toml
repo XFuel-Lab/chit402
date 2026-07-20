@@ -1,0 +1,22 @@
+# SP1-compat spike — SP1-independent verify + (de)serialization core.
+# Its own single-crate workspace so it compiles + unit-tests on ANY host (incl. Windows), with no
+# `sp1-*` dependency. NOT a member of the repo root workspace or the zkllm-prover workspace, and NOT
+# referenced by CI — this is a throwaway spike (ADR 0004 sequencing step 2).
+[package]
+name = "xfuel-inference-spike-core"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+description = "SP1-compat spike core: SP1-independent (de)serialization + multilinear-KZG opening verify for the Tier-3 verifier guest."
+publish = false
+
+[workspace]
+
+[dependencies]
+xfuel-zkp = { path = "../../zkllm-prover/crates/xfuel-zkp" }
+ark-bn254 = "0.4"
+ark-serialize = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+ark-std = { version = "0.4", features = ["std"] }
