@@ -54,7 +54,7 @@ const features = [
   },
   {
     title: 'Agent-native payments',
-    description: 'Pay per call over x402/USDC on Base — give an agent a budget, not your API keys. Escrow caps the spend (optional TFUEL rail for legacy Theta flows).',
+    description: 'Pay per call over x402/USDC on Base — give an agent a budget, not your API keys. Escrow caps the spend.',
     icon: '◈',
     link: '/docs',
     color: '#22c55e',
@@ -131,11 +131,16 @@ export default function Home() {
           </p>
           <div style={styles.heroCta}>
             <Link to="/docs" className="btn btn-primary">
-              Try the API
+              Try the demo
             </Link>
-            <Link to="/theta-ai" className="btn btn-secondary">
-              AI Hub
-            </Link>
+            <a
+              href="https://github.com/XFuel-Lab/xfuel-protocol/blob/main/packages/sdk/README.md"
+              className="btn btn-secondary"
+              target="_blank"
+              rel="noreferrer"
+            >
+              SDK docs
+            </a>
           </div>
         </div>
       </section>

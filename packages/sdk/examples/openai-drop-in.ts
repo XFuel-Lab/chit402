@@ -13,7 +13,7 @@
  *   # 1. Start the XFuel backend (backend/theta-bridge):  node src/server.js
  *   #    (set THETA_EDGECLOUD_API_KEY for real compute; otherwise you get a
  *   #     clearly-labelled mock — the receipt says compute.real=false.)
- *   # 2. From sdk/js:
+ *   # 2. From packages/sdk:
  *   #      XFUEL_API_URL=http://localhost:3002 \
  *   #      XFUEL_API_KEY=your-key \
  *   #      npx tsx examples/openai-drop-in.ts

@@ -559,10 +559,10 @@ export function createApp() {
         return res.status(400).json({ error: 'validation_error', details: errors });
       }
 
-      // ── Payment rail (USDC via x402 default; TFUEL fallback) ───────────
-      // Fully reversible: with config.x402.enabled=false this whole block is a
-      // no-op and every request settles via the existing TFUEL path.
-      let paymentRail = 'tfuel';
+      // ── Payment rail (USDC via x402 default; TFUEL legacy fallback) ─────
+      // With config.x402.enabled=false, USDC handshake is skipped; legacy TFUEL
+      // path remains available when explicitly requested or fallbackToTfuel.
+      let paymentRail = config.x402?.defaultRail || 'usdc';
       let paymentRef = null;
       {
         const rail = resolveRail(req.body);
@@ -1211,7 +1211,7 @@ export function createApp() {
           fee_amount:     task.feeAmount || '0',
           net_amount:     task.netAmount || '0',
           fee_bps:        task.feeBps || AI_TASK_FEE_BPS,
-          payment_rail:   task.intent?.paymentRail || 'tfuel',
+          payment_rail:   task.intent?.paymentRail || 'usdc',
           payment_ref:    task.intent?.paymentRef || null,
           // Phase 2 (flag-gated): x402 payment commitment bound into the proof.
           payment_binding: task.sp1Proof?.paymentBinding || null,

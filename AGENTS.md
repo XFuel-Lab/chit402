@@ -8,26 +8,20 @@ Entry point for agents and automation.
 
 XFuel settles AI compute in USDC on Base (x402), routes to pluggable providers, and returns tiered receipts (signed → SP1 on Base → Verified Inference build).
 
-## Submit a task
+## Try the demo
 
 ```
-POST {host}:3002/task-request
-Headers: X-API-Key: {key}
-
-{
-  "message_type": "inference_request",
-  "chain_id": "base",
-  "amount": "1000000",
-  "sender": "0xYourAddress",
-  "model_id": "llama-3-70b",
-  "input_hash": "0xabc...",
-  "payment": { "rail": "usdc", "network": "base-sepolia" }
-}
+cd packages/sdk
+npx tsx examples/flagship-demo.ts
 ```
+
+Public test gateway: `https://api-testnet.xfuel.app` (demo key `xfuel-demo`, rate-limited).  
+Windows: use `curl.exe` for raw HTTP — PowerShell `curl` is not real curl.
 
 Status: `GET /task-status?task_id=`  
 OpenAI: `POST /v1/chat/completions`, `GET /v1/models`, `GET /llms.txt`
 
+- [docs/HOSTED_TESTNET_ENDPOINT.md](docs/HOSTED_TESTNET_ENDPOINT.md)
 - [docs/M2M_API.md](docs/M2M_API.md)
 - [docs/OPENAI_COMPATIBLE_GATEWAY.md](docs/OPENAI_COMPATIBLE_GATEWAY.md)
 - [docs/X402_ADAPTER.md](docs/X402_ADAPTER.md)
@@ -37,8 +31,6 @@ OpenAI: `POST /v1/chat/completions`, `GET /v1/models`, `GET /llms.txt`
 npm install xfuel-sdk
 npx xfuel-mcp
 ```
-
-Public test gateway: `https://api-testnet.xfuel.app`
 
 ## Contracts (Base)
 

@@ -656,13 +656,17 @@ export default function ThetaAI() {
 
   const isLivePrice = isContractDeployed && !!livePrice;
 
-  // ─── Curl Command Generator ────────────────────────────────────────────
-  const generateCurl = useCallback((preset: PresetHook) => {
-    const cbPart = callbackUrl ? `,"callbackUrl":"${callbackUrl}"` : '';
-    return `curl -X POST http://localhost:3002/theta-ai/agent-intent \\
-  -H "Content-Type: application/json" \\
-  -d '{"preset":"${preset.key}","gpu_tier":"${preset.defaultGpu}"${preset.defaultPrompt ? `,"prompt":"${preset.defaultPrompt.replace(/'/g, "\\'")}"` : ''}${cbPart}}'`;
-  }, [callbackUrl]);
+  // ─── Copy command (public settlement demo — not localhost / TFUEL) ─────
+  const generateCurl = useCallback((_preset: PresetHook) => {
+    // EdgeCloud presets are optional GPU routing. Settlement home is USDC on Base.
+    // Never ship bare bash `curl` — PowerShell aliases curl → Invoke-WebRequest.
+    return `# XFuel public demo (USDC on Base Sepolia → shareable receipt)
+# From repo: packages/sdk
+npx tsx examples/flagship-demo.ts
+
+# Optional HTTP (Windows PowerShell: use curl.exe, not curl)
+# See Docs → Try the demo`;
+  }, []);
 
   const handleCopyCurl = useCallback((preset: PresetHook) => {
     navigator.clipboard.writeText(generateCurl(preset));
@@ -817,10 +821,11 @@ export default function ThetaAI() {
             <span className="badge badge-purple">ZK-Verified</span>
             <span className="badge" style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>14 Presets</span>
           </div>
-          <h1 style={styles.heroTitle}>Theta AI Marketplace</h1>
+          <h1 style={styles.heroTitle}>Optional GPU hub (EdgeCloud)</h1>
           <p style={styles.heroSubtitle}>
-            Decentralized AI inference powered by Theta EdgeCloud. 14 one-click presets,
-            smart GPU selector, ZK-verified results, full catalog — pay per call in TFUEL.
+            Theta EdgeCloud is an optional compute provider — not the settlement home.
+            Money and proofs settle in <strong>USDC via x402 on Base</strong>. For the public
+            end-to-end demo, use Docs → Try the demo (<code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>flagship-demo.ts</code>).
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '0.75rem', marginTop: '1rem' }}>
             <button

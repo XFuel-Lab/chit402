@@ -8,7 +8,7 @@ const navLinks = [
   { to: '/dashboard', label: 'Dashboard' },
   { to: '/governance', label: 'Governance' },
   { to: '/circuits', label: 'Circuits' },
-  { to: '/theta-ai', label: 'Theta AI' },
+  { to: '/theta-ai', label: 'GPU hub' },
   { to: '/monitoring', label: 'Monitoring' },
   { to: '/staking', label: 'Staking' },
   { to: '/treasury', label: 'Treasury' },

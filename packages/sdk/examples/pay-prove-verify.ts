@@ -34,7 +34,7 @@
  *   #    plus:  node src/x402-mock-facilitator.js
  *   #    plus:  node scripts/mock-prover-server.js --port 8097
  *   #
- *   # 2. Run this example (from sdk/js):
+ *   # 2. Run this example (from packages/sdk):
  *   #      XFUEL_API_URL=http://localhost:3002 XFUEL_SENDER=0xYourAddress \
  *   #      npx tsx examples/pay-prove-verify.ts
  *   #
@@ -90,13 +90,13 @@ async function main() {
   const payer = await buildPayer();
   console.log('\n2) Submitting inference task (payment.rail=usdc)…');
   const task = await client.submitInference(XFUEL_MODEL, XFUEL_SENDER, XFUEL_AMOUNT, {
-    chain_id: ChainId.THETA,
-    payment: { rail: 'usdc', network: 'base', maxAmount: quote.rails.usdc.amount },
+    chain_id: ChainId.BASE,
+    payment: { rail: 'usdc', network: 'base-sepolia', maxAmount: quote.rails.usdc.amount },
     payer,
   });
   console.log(`   task_id      : ${task.task_id}`);
-  console.log(`   payment_rail : ${task.payment_rail ?? 'tfuel'}`);
-  console.log(`   payment_ref  : ${task.payment_ref ?? '(none — settled on Theta)'}`);
+  console.log(`   payment_rail : ${task.payment_rail ?? 'usdc'}`);
+  console.log(`   payment_ref  : ${task.payment_ref ?? '(none — x402 pending or disabled)'}`);
 
   // 3) Wait for settlement.
   console.log('\n3) Waiting for settlement…');

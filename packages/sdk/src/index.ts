@@ -69,8 +69,8 @@ export interface PaymentParams {
   rail: 'usdc' | 'tfuel';
   /** usdc rail: asset symbol (default USDC). */
   asset?: string;
-  /** usdc rail: settlement network (default base). */
-  network?: 'base' | 'solana';
+  /** usdc rail: settlement network (default base; demo often base-sepolia). */
+  network?: 'base' | 'base-sepolia' | 'solana';
   /** Max amount in smallest unit (USDC 6dp; TFUEL wei). */
   maxAmount?: string;
 }
@@ -196,9 +196,9 @@ export interface TaskStatusResponse {
   fee_amount: string;
   net_amount: string;
   fee_bps: number;
-  /** Resolved payment rail: 'usdc' (x402) | 'tfuel'. Defaults to 'tfuel'. */
+  /** Resolved payment rail: 'usdc' (x402, default) | 'tfuel' (legacy secondary). */
   payment_rail?: 'usdc' | 'tfuel';
-  /** x402 settlement reference (network:txRef) or null for TFUEL. */
+  /** x402 settlement reference (network:txRef), or null when unpaid / legacy TFUEL. */
   payment_ref?: string | null;
   /** Canonical shareable proof link — the public `/receipt/:taskId` page (no auth). */
   verify_url?: string;
@@ -574,13 +574,15 @@ export class XFuelClient {
       payer?: X402Payer;
     } = {},
   ): Promise<TaskRequestResponse> {
-    const { payer, ...taskOpts } = opts;
+    const { payer, payment, ...taskOpts } = opts;
     const params: TaskRequestParams = {
       message_type: MessageType.INFERENCE_REQUEST,
       chain_id: opts.chain_id ?? ChainId.BASE,
       amount,
       sender,
       model_id: modelId,
+      // Default rail = USDC/x402 (ADR 0002). Pass payment.rail: 'tfuel' only for legacy Theta flows.
+      payment: payment ?? { rail: 'usdc' },
       ...taskOpts,
     };
     return payer ? this.submitTaskWithPayment(params, payer) : this.submitTask(params);

@@ -249,8 +249,9 @@ describe('XFuelClient', () => {
         model_id: 'llama3',
         sender: '0xSender',
         amount: '1000000000000000000',
-        // defaults to Base (money + proof home — ADR 0002) when chain_id omitted
+        // defaults to Base + USDC (money + proof home — ADR 0002) when omitted
         chain_id: ChainId.BASE,
+        payment: { rail: 'usdc' },
       }));
     });
 

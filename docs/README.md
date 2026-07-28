@@ -37,6 +37,9 @@ https://xfuel.app Â· https://api-testnet.xfuel.app
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Deploy |
 | [TESTING.md](./TESTING.md) | Tests |
 | [HOSTED_TESTNET_ENDPOINT.md](./HOSTED_TESTNET_ENDPOINT.md) | Public demo API + demo path |
+| [DEMO_VIDEO_SCRIPT.md](./DEMO_VIDEO_SCRIPT.md) | 60–90s demo video script + checklist |
+| [DEMO_SHOT_LIST.md](./DEMO_SHOT_LIST.md) | Shot list / layout / highlights |
+| [DEMO_COMMANDS.md](./DEMO_COMMANDS.md) | Copy-paste Tier-1 + Tier-2 demo commands |
 
 ---
 

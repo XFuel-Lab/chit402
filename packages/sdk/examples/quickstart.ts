@@ -20,7 +20,10 @@ const { XFUEL_API_URL, XFUEL_API_KEY, XFUEL_SENDER = '0x000000000000000000000000
 async function main() {
   const client = new XFuelClient({ baseUrl: XFUEL_API_URL, apiKey: XFUEL_API_KEY });
 
-  const task = await client.submitInference('llama-3-70b', XFUEL_SENDER, '1000000', { chain_id: 'theta' });
+  const task = await client.submitInference('llama-3-70b', XFUEL_SENDER, '1000000', {
+    chain_id: 'base',
+    payment: { rail: 'usdc', network: 'base-sepolia' },
+  });
   console.log('submitted   :', task.task_id);
 
   const settled = await client.waitForCompletion(task.task_id);

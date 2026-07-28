@@ -55,37 +55,16 @@ npm install
 npm run dev
 ```
 
-## Using the API
+## Try the demo
 
-Submit an inference task against the hosted testnet demo (public demo key, rate-limited):
+One command against the hosted testnet (USDC on Base Sepolia → shareable receipt):
 
-```bash
-curl -X POST https://api-testnet.xfuel.app/task-request \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: xfuel-demo" \
-  -d '{
-    "message_type": "inference_request",
-    "chain_id": "base",
-    "model_id": "llama-3-70b",
-    "amount": "1000000",
-    "sender": "0xYourAddress",
-    "input_hash": "0xabc...",
-    "payment": { "rail": "usdc" }
-  }'
+```powershell
+cd packages/sdk
+npx tsx examples/flagship-demo.ts
 ```
 
-The same host exposes an OpenAI-compatible surface:
-
-```bash
-curl https://api-testnet.xfuel.app/v1/chat/completions \
-  -H "Authorization: Bearer xfuel-demo" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"llama-3-70b","messages":[{"role":"user","content":"hi"}]}'
-```
-
-API reference: [M2M API](docs/M2M_API.md) · OpenAI gateway: [docs here](docs/OPENAI_COMPATIBLE_GATEWAY.md) · Payments: [x402 adapter](docs/X402_ADAPTER.md).
-
-## Agent toolkit
+Or install the SDK in your own project:
 
 ```bash
 npm install xfuel-sdk
@@ -95,6 +74,11 @@ npx xfuel-mcp
 - TypeScript SDK — [packages/sdk](packages/sdk/README.md)
 - MCP server — [packages/mcp](packages/mcp/README.md)
 - Agent playbook — [packages/agent-skills](packages/agent-skills/AGENT_PLAYBOOK.md)
+- Hosted endpoint — [docs/HOSTED_TESTNET_ENDPOINT.md](docs/HOSTED_TESTNET_ENDPOINT.md)
+
+**Windows note:** if you use raw HTTP, call `curl.exe` — PowerShell’s `curl` is not real curl.
+
+API reference: [M2M API](docs/M2M_API.md) · OpenAI gateway: [docs here](docs/OPENAI_COMPATIBLE_GATEWAY.md) · Payments: [x402 adapter](docs/X402_ADAPTER.md).
 
 ## Documentation
 

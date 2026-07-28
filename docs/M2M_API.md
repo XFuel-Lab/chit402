@@ -50,7 +50,11 @@ Submit an AI task.
 | `callback_url` | no | Per-task webhook |
 | `callback_secret` | no | HMAC secret for per-task webhook |
 
-```
+**Easiest path:** from `packages/sdk`, run `npx tsx examples/flagship-demo.ts` (see [HOSTED_TESTNET_ENDPOINT.md](./HOSTED_TESTNET_ENDPOINT.md)).
+
+Optional raw HTTP — on **Windows PowerShell use `curl.exe`** (plain `curl` is not real curl):
+
+```bash
 curl -X POST https://api-testnet.xfuel.app/task-request \
   -H "Content-Type: application/json" \
   -H "X-API-Key: xfuel-demo" \
@@ -61,11 +65,11 @@ curl -X POST https://api-testnet.xfuel.app/task-request \
     "sender": "0xYourAddress",
     "model_id": "llama-3-70b",
     "input_hash": "0xabc...",
-    "payment": { "rail": "usdc" }
+    "payment": { "rail": "usdc", "network": "base-sepolia" }
   }'
 ```
 
-Response includes `taskId`, status, and links to status / proof / receipt.
+Response includes `task_id`, status, and links to status / proof / receipt.
 
 ### GET /task-status
 
