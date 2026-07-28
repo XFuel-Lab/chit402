@@ -10,20 +10,39 @@ As-deployed details: [RUNTIME_STATE.md](./RUNTIME_STATE.md).
 Demo key: `xfuel-demo` (rate-limited per IP).  
 Or: `X-API-Key` / `Authorization: Bearer <key>`.
 
-## Demo path
+## Try it (recommended)
 
-1. Health: https://api-testnet.xfuel.app/health  
-2. Submit a task (curl below)  
-3. Open the `verify_url` / receipt from the response  
+One command — pay → settle → SP1 proof → shareable receipt:
 
-What to show: Tier 1 signed receipt; optional Tier 2 SP1 when the prover URL is set; USDC x402 on Base Sepolia when `X402_ENABLED=true`. Do not present the zkGPT mock as a live proof.
+```powershell
+cd packages/sdk
+npx tsx examples/flagship-demo.ts
+```
 
-## Try it
+Open the printed `verify_url`. Then optionally:
+
+```text
+https://basescan.org/address/0x9373499645292715a2275A78eD65B14215C41c06
+```
+
+**Honest status:** Proofs live on Base mainnet. Payments currently on Base Sepolia (x402 USDC).  
+Do not present the zkGPT mock as a live proof.
+
+Demo video package: [DEMO_VIDEO_SCRIPT.md](./DEMO_VIDEO_SCRIPT.md) · [DEMO_SHOT_LIST.md](./DEMO_SHOT_LIST.md) · [DEMO_COMMANDS.md](./DEMO_COMMANDS.md)
+
+## Optional: raw HTTP
+
+On **Windows PowerShell**, use `curl.exe` (plain `curl` is `Invoke-WebRequest` and will fail).
+
+```powershell
+curl.exe -sS https://api-testnet.xfuel.app/health | python -m json.tool
+```
 
 ```bash
-curl https://api-testnet.xfuel.app/health
+# macOS / Linux / Git Bash
+curl -sS https://api-testnet.xfuel.app/health | python -m json.tool
 
-curl -X POST https://api-testnet.xfuel.app/task-request \
+curl -sS -X POST https://api-testnet.xfuel.app/task-request \
   -H "Content-Type: application/json" \
   -H "X-API-Key: xfuel-demo" \
   -d '{
@@ -33,7 +52,7 @@ curl -X POST https://api-testnet.xfuel.app/task-request \
     "sender": "0xYourAddress",
     "model_id": "llama-3-70b",
     "input_hash": "0xabc...",
-    "payment": { "rail": "usdc" }
+    "payment": { "rail": "usdc", "network": "base-sepolia" }
   }'
 ```
 

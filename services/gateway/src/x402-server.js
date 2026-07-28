@@ -20,7 +20,8 @@ import {
 
 /** Resolve the payment rail for a request: "usdc" | "tfuel". */
 export function resolveRail(body = {}, cfg = config.x402) {
-  const r = (body?.payment?.rail || cfg.defaultRail || 'tfuel').toLowerCase();
+  // Default rail is USDC (ADR 0002). TFUEL only when explicitly requested or X402_DEFAULT_RAIL=tfuel.
+  const r = (body?.payment?.rail || cfg.defaultRail || 'usdc').toLowerCase();
   return r === 'usdc' ? 'usdc' : 'tfuel';
 }
 

@@ -188,29 +188,31 @@ export default function Docs() {
         <DocSection title="Auditors" items={auditors} />
 
         <div className="docs-panel">
-          <h2>Try the API</h2>
+          <h2>Try the demo</h2>
           <p>
-            Hosted demo key <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>xfuel-demo</code> —
-            rate-limited. Default rail is USDC via x402 on Base Sepolia.
+            One command — pay (USDC / Base Sepolia), settle, attach an SP1 proof, get a shareable receipt.
+            Clone the repo, then from <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>packages/sdk</code>:
           </p>
           <pre className="docs-code">
-            <code>{`curl -X POST https://api-testnet.xfuel.app/task-request \\
-  -H "Content-Type: application/json" \\
-  -H "X-API-Key: xfuel-demo" \\
-  -d '{
-    "message_type": "inference_request",
-    "chain_id": "base",
-    "amount": "1000000",
-    "sender": "0xYourAddress",
-    "model_id": "llama-3-70b",
-    "input_hash": "0xabc...",
-    "payment": { "rail": "usdc" }
-  }'`}</code>
+            <code>{`npx tsx examples/flagship-demo.ts`}</code>
           </pre>
+          <p style={{ marginTop: '0.75rem' }}>
+            Or in your own project:
+          </p>
           <pre className="docs-code">
             <code>{`npm install xfuel-sdk
-npx xfuel-mcp`}</code>
+# see packages/sdk/README.md — submitInference + payment.rail: "usdc"`}</code>
           </pre>
+          <p style={{ marginTop: '0.75rem', fontSize: '0.9rem', opacity: 0.85 }}>
+            Optional raw HTTP: use <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>curl.exe</code> on
+            Windows PowerShell (plain <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>curl</code> is not
+            real curl there). Full recipes:{' '}
+            <a href={`${GITHUB}/docs/HOSTED_TESTNET_ENDPOINT.md`} target="_blank" rel="noreferrer">
+              Hosted testnet
+            </a>
+            . Demo key <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>xfuel-demo</code> (rate-limited).
+            Proofs on Base mainnet; payments currently Base Sepolia.
+          </p>
           <div className="docs-actions">
             <a
               href={`${GITHUB}/packages/sdk/README.md`}
@@ -219,6 +221,14 @@ npx xfuel-mcp`}</code>
               className="btn btn-primary btn-sm"
             >
               SDK docs
+            </a>
+            <a
+              href={`${GITHUB}/docs/DEMO_COMMANDS.md`}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-secondary btn-sm"
+            >
+              Demo commands
             </a>
             <a
               href={`${GITHUB}/docs/README.md`}

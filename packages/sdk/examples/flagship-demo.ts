@@ -151,7 +151,7 @@ async function main() {
     payment: { rail: 'usdc', network: usdc.network, maxAmount: usdc.amount },
     payer,
   });
-  const rail = task.payment_rail ?? 'tfuel';
+  const rail = task.payment_rail ?? 'usdc';
   console.log(`  ${b('②')} Pay+submit ${grn('✓')} task=${task.task_id} · rail=${rail}` +
     `${task.payment_ref ? ' · ref=' + task.payment_ref : ''}`);
 

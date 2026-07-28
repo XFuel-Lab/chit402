@@ -7,6 +7,12 @@ All notable changes to the XFuel SDK are documented here. This project adheres t
 
 Additive, backward-compatible. All new surface lives in `xfuel-sdk/onchain`.
 
+### Changed (Base settlement home — ADR 0002)
+- **`submitInference` defaults** — `chain_id: base` and `payment: { rail: 'usdc' }` when omitted (TFUEL is explicit/legacy only).
+- **Examples** — `quickstart`, `pay-with-usdc`, `pay-prove-verify`, `flagship-demo` use Base + USDC; display fallbacks no longer imply TFUEL.
+- **Types** — `PaymentParams.network` includes `base-sepolia`; status JSDoc no longer claims TFUEL as default rail.
+- **package metadata** — keywords prefer `usdc` / `x402` / `base`; homepage path `packages/sdk`.
+
 ### Added
 - **Tier selection mirror** (Phase 4) — predict a task's assurance tier before submitting:
   - `selectTier(task, policy)` + `normalizeRequestedTier(...)`, a faithful mirror of the gateway

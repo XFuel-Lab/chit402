@@ -26,13 +26,13 @@
  *   #      node src/server.js
  *   #    and in another shell:  node src/x402-mock-facilitator.js
  *   #
- *   # 2. Run this example (from sdk/js):
+ *   # 2. Run this example (from packages/sdk):
  *   #      XFUEL_API_URL=http://localhost:3002 \
  *   #      XFUEL_SENDER=0xYourAddress \
  *   #      npx tsx examples/pay-with-usdc.ts
  *   #
- *   # Note: with X402_ENABLED=off (the default), the server settles via TFUEL and
- *   # the payer is simply never called — the script still works end to end.
+ *   # Note: if a local gateway has X402_ENABLED=off, USDC handshake is skipped and
+ *   # the server may fall back to legacy TFUEL — not the public demo default.
  *
  * Published-package users import from 'xfuel-sdk' / 'xfuel-sdk/onchain' instead of
  * the relative '../src/...' paths used here.
@@ -76,13 +76,13 @@ async function main() {
   const payer = await buildPayer();
   console.log('\nSubmitting inference task (payment.rail=usdc)…');
   const task = await client.submitInference(XFUEL_MODEL, XFUEL_SENDER, XFUEL_AMOUNT, {
-    chain_id: ChainId.THETA,
-    payment: { rail: 'usdc', network: 'base', maxAmount: quote.rails.usdc.amount },
+    chain_id: ChainId.BASE,
+    payment: { rail: 'usdc', network: 'base-sepolia', maxAmount: quote.rails.usdc.amount },
     payer,
   });
   console.log(`  task_id      : ${task.task_id}`);
-  console.log(`  payment_rail : ${task.payment_rail ?? 'tfuel'}`);
-  console.log(`  payment_ref  : ${task.payment_ref ?? '(none — settled on Theta)'}`);
+  console.log(`  payment_rail : ${task.payment_rail ?? 'usdc'}`);
+  console.log(`  payment_ref  : ${task.payment_ref ?? '(none — x402 pending or disabled)'}`);
   console.log(`  net_amount   : ${task.net_amount} (fee ${task.fee_amount}, ${task.fee_bps} bps)`);
   // One shareable, public proof link (falls back to client-side construction).
   console.log(`  verify_url   : ${task.verify_url ?? client.receiptUrl(task.task_id)}`);
