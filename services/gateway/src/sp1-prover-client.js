@@ -562,8 +562,14 @@ class SP1ProverClient {
   async _generateSingleProof(request) {
     const startTime = Date.now();
 
+    // Payment-bound (v2) proofs need public_values_version / ai_public_values_abi in the
+    // JSON response so the gateway can set paymentBinding.in_proof. The binary wire
+    // format does not carry those fields yet — skip binary when a commitment is present.
+    const payC = request?.payment_commitment;
+    const needsV2Meta = !!(payC && String(payC).replace(/^0x/i, '').replace(/0/g, '') !== '');
+
     // Try binary endpoint first (much faster: no base64, no JSON overhead)
-    if (this._binarySupported) {
+    if (this._binarySupported && !needsV2Meta) {
       try {
         logger.info(
           { vault: request.vault_address, block: request.block_number },
@@ -612,6 +618,11 @@ class SP1ProverClient {
           logger.warn({ err: error.message }, 'Binary proof generation failed, falling back to JSON');
         }
       }
+    } else if (needsV2Meta) {
+      logger.info(
+        { vault: request.vault_address },
+        'Skipping binary prove path — payment_commitment present (need v2 JSON metadata)'
+      );
     }
 
     // JSON fallback (original path)

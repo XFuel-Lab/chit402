@@ -43,13 +43,15 @@ SP1 prover (live):
 Demo gateway:
 
 - Host: Lightsail `35.180.10.142`
-- App: PM2 `xfuel-m2m` → `services/gateway` → `npm run m2m-server` (port 3002)
+- App: **systemd `xfuel-api`** → `/home/ubuntu/xfuel-protocol/services/gateway` → `node src/server.js` (port 3002)
+- Install / recover: [deploy/lightsail/README.md](../deploy/lightsail/README.md)
 - Public: https://api-testnet.xfuel.app
+- **Do not** use `/opt/xfuel-protocol/backend/theta-bridge` or PM2 `xfuel-m2m` (legacy)
 
 x402:
 
 - Testnet: public `https://x402.org/facilitator` (`X402_NETWORK=base-sepolia`)
-- Mainnet facilitator: not provisioned
+- Mainnet facilitator: Coinbase CDP `https://api.cdp.coinbase.com/platform/v2/x402` (requires `CDP_API_KEY_ID` + `CDP_API_KEY_SECRET`). Local smoke Real; public host cutover via [deploy/lightsail/](../deploy/lightsail/) — see [MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md).
 
 ## Real vs mock
 
@@ -58,7 +60,7 @@ x402:
 | Signed receipt | Real |
 | SP1 settlement proof | Real (via AWS prover URL) |
 | USDC / x402 Base Sepolia | Real |
-| USDC / x402 Base mainnet | Not wired |
+| USDC / x402 Base mainnet | Local Real; public cutover in progress ([deploy/lightsail](../deploy/lightsail/)) |
 | Payment binding in-proof | Partial (server-attested) |
 | zkLLM Verified Inference | Active build |
 | `services/zkgpt-prover` mock | Dev-only — never demo as a proof |
@@ -66,23 +68,28 @@ x402:
 
 ## Blockers
 
-- Base mainnet x402 facilitator not provisioned
+- Public Lightsail must run `xfuel-api` on `services/gateway` (not legacy theta-bridge) — [deploy/lightsail/README.md](../deploy/lightsail/README.md)
 - SP1 guest v2 needed for in-proof payment binding
 - Tier-3 on-chain verify / E2E still in progress (see Verified Inference handoff)
+- Private Spend v0 code path shipped (flag off by default) — enable with `PRIVATE_SPEND_ENABLED=true`; see [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md) and [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md)
+- Auditor export: `GET /receipt/:taskId?format=auditor` — [RECEIPT_SCHEMA_V2.md](./RECEIPT_SCHEMA_V2.md)
+- Tier-3 posture: [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) (narrow SKU)
+- Seed scaffold: [SEED_READINESS.md](./SEED_READINESS.md)
 
 Ignore dead `ZKGPT_PROVER_URL` pointing at `ALB-1-1092545307…` — that ALB is gone. Real prover is `xfuel-sp1-alb-1873465045…` above.
 
 ## Redeploy demo gateway
 
 ```bash
+cd ~/xfuel-protocol
 git pull
-# restore services/gateway/.env (keep SP1_PROVER_URL + x402 block)
-cd services/gateway && npm install
-pm2 delete xfuel-m2m
-pm2 start npm --name xfuel-m2m -- run m2m-server
-pm2 save
-# verify /health includes base
+# ensure services/gateway/.env has X402_NETWORK=base + CDP_* + payTo ≠ deployer
+bash deploy/lightsail/install-api.sh
+# if port 3002 haunted: sudo reboot
+# fingerprint: /health must NOT show "30% BBB" string
 ```
+
+Legacy (do not use): PM2 `xfuel-m2m`, `/opt/.../theta-bridge`, `xfuel-testnet-api.service`.
 
 ## Local gateway
 

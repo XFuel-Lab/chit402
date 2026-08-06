@@ -26,6 +26,8 @@ Resume (in order):
 
 Product note: Tier 1 + Tier 2 is the traction surface; Tier 3 is the moat. Keep docs honest about real vs mock — [RUNTIME_STATE.md](./RUNTIME_STATE.md).
 
+**Sprint 4 decision:** [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) — narrow premium SKU, ≤20% eng until Seed gates, SP1 spike make-or-break gate.
+
 ## Tests and benchmarks
 
 Phase 5 is RAM-bound (CPU), not GPU. Record prove/verify time, proof size, and peak RAM on the host you use — laptop numbers are not capacity planning.

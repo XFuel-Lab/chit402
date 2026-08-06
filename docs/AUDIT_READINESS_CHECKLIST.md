@@ -2,7 +2,22 @@
 
 Gaps before handing auditors the Base production core. Scope: WHITEPAPER §11.5.
 
-Fundraising context: [FUNDRAISING_STRUCTURE.md](./FUNDRAISING_STRUCTURE.md) (equity-first SAFE).
+Fundraising context: [FUNDRAISING_STRUCTURE.md](./FUNDRAISING_STRUCTURE.md) (equity-first SAFE).  
+Seed scaffold: [SEED_READINESS.md](./SEED_READINESS.md). Staging ops: [STAGING_SLA.md](./STAGING_SLA.md).
+
+## Eng progress (Sprint 4)
+
+| Item | Status |
+|------|--------|
+| Fee sink docs (X402_PAY_TO / Splits) | Documented — ADR 0001 + MAINNET_X402_CHECKLIST |
+| Verifier address on Base mainnet | Live — RUNTIME_STATE |
+| Public-values / payment binding layout | Documented — public-values.md; guest v2 activation pending |
+| Receipt / auditor export | `?format=auditor` selective disclosure |
+| Bug bounty page | Present — bug-bounty.md |
+| Pinned manifest + git tag for audit commit | **Open — founder/ops** |
+| Slither + NatSpec sweep | **Open** |
+| Counsel / Terms | **Open — founder** |
+| Prover image ref pinned in RUNTIME_STATE | Partial — update on next deploy |
 
 ## Scope freeze
 

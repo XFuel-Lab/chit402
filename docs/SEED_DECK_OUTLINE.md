@@ -1,0 +1,78 @@
+# Seed Deck Outline (Live Metrics Only)
+
+Paste into Pitch / Gamma / slides. Do **not** invent volume numbers — pull from `GET /stats?format=json` after mainnet.
+
+Related: [SEED_READINESS.md](./SEED_READINESS.md), [POSITIONING.md](./POSITIONING.md), [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
+
+---
+
+## Slide 1 — Problem
+
+**Agents spend money. API keys and opaque invoices do not scale.**
+
+- Autonomous agents need budgets, not shared org credentials
+- Frontier labs observe spend topology (model mix, timing, multi-homing)
+- Finance / treasury need exportable receipts, not Discord screenshots
+
+## Slide 2 — Insight
+
+**Payments commoditized (x402). Budgets + receipts + proofs did not.**
+
+- Coinbase / Stripe / platforms own rails
+- XFuel sits above the rail: route → settle USDC on Base → verifiable receipt
+
+## Slide 3 — Product
+
+**Route any model. Prove every dollar.**  
+*(When Private Spend live: Spend without briefing the frontier lab.)*
+
+| Layer | What |
+|-------|------|
+| Gateway | OpenAI-compatible + `/task-request` + MCP/SDK |
+| Money | USDC via x402 on Base |
+| Trust | Signed receipt → SP1 settlement proof on demand |
+| Privacy | Private Spend (vendor-blind) — gateway-trusted |
+
+## Slide 4 — Proof (fill live)
+
+| Artifact | Value |
+|----------|-------|
+| Verifier (Base) | `0x9373499645292715a2275A78eD65B14215C41c06` |
+| Public API | `https://api-testnet.xfuel.app` |
+| Paid tasks (7d) | `[from /stats north_star.paid_tasks_7d]` |
+| USDC fees (7d) | `[from /stats north_star.usdc_fees_7d]` |
+| Design partners | `[N named]` |
+
+Demo: SDK `private-spend-budget.ts` or flagship demo. Auditor: `?format=auditor`.
+
+**Do not show:** mock facilitator as production; Tier-3 as live; Theta as settlement home.
+
+## Slide 5 — GTM
+
+Beachhead: **crypto-native agent teams on Base** (x402 / CDP familiar).
+
+- 10 outreach → 3 design partners
+- Install &lt; 1 day (OpenAI baseURL swap or SDK)
+- Expand → A2A multi-hop receipt chains
+
+## Slide 6 — Moat path (honest)
+
+1. Payment-bound settlement proofs (guest v2)
+2. Private Spend + selective disclosure
+3. Tier-3 Verified Inference as **premium SKU** (timeboxed; open-weight) — not company identity
+
+Compose TEE providers for content privacy; do not race EigenAI on latency.
+
+## Slide 7 — Ask
+
+Equity-first SAFE (USDC) + token warrant · See [FUNDRAISING_STRUCTURE.md](./FUNDRAISING_STRUCTURE.md)
+
+**Use of funds:** mainnet payments ops, design partners, audit, staging HA, counsel.
+
+**Milestones:** mainnet USDC fees → audit underway → Seed unlock.
+
+## Appendix (optional)
+
+- Known issues one-pager
+- Trust tier honesty table
+- Architecture: agent → gateway → provider; USDC on Base; optional SP1

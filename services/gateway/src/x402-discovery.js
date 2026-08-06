@@ -1,6 +1,6 @@
 import config from './config.js';
 import { isX402Enabled, defaultRail } from './x402-adapter.js';
-import { DEFAULT_FACILITATOR_URL } from './x402-facilitator.js';
+import { defaultFacilitatorUrlForNetwork } from './x402-facilitator.js';
 
 /**
  * x402 Bazaar discovery manifest.
@@ -64,7 +64,7 @@ export function buildX402Manifest(baseUrl = '') {
   const x = config.x402;
   const facilitatorUrl =
     x.facilitatorProvider === 'x402'
-      ? x.facilitatorUrl || DEFAULT_FACILITATOR_URL
+      ? x.facilitatorUrl || defaultFacilitatorUrlForNetwork(x.network)
       : x.gatewayUrl || null;
 
   return {

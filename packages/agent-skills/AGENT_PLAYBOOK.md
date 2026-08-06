@@ -69,6 +69,30 @@ Lifecycle: form → join (≤18) → settle members → dissolve.
 
 Skill: `xfuel-route-compute`. Also `GET /health`, `POST /task-quote`.
 
+## Flow 7 — Budget + Private Spend (design partners)
+
+Cookbook example: [`examples/private-spend-budget.ts`](../sdk/examples/private-spend-budget.ts).
+
+1. Get a **partner API key** (not the public `xfuel-demo` key for production usage).
+2. Pay with USDC via x402 — agent holds a budget wallet; never give OpenAI your org key.
+3. Confirm receipt `privacy.mode` is `vendor_blind` when the gateway has `PRIVATE_SPEND_ENABLED=true`.
+4. Open `verify_url?format=json` or SDK `getReceipt(taskId)` — third parties recompute binding without trusting HTML.
+5. Call `GET /stats/me` or SDK `getMyStats()` for **your** paid tasks / USDC fees (north-star).
+6. Auditor pack: `GET /receipt/:id?format=auditor` or SDK `getAuditorExport(taskId)` — policy + totals, no prompts.
+
+Thesis: [docs/PRIVATE_SPEND_THESIS.md](../../docs/PRIVATE_SPEND_THESIS.md).  
+Founder enablement: [docs/FOUNDER_ACTIONS.md](../../docs/FOUNDER_ACTIONS.md).
+
+Honest trust: Private Spend is **gateway-trusted**. It is not prompt encryption. For content privacy, ask for the confidential / TEE provider tier (`CONFIDENTIAL_PROVIDER_*`).
+
+## Flow 8 — Multi-hop / A2A receipt chain
+
+1. `POST /a2a-message` (optional `parent_task_id`, `correlation_id`).
+2. Follow-on `POST /task-request` with `parent_task_id` + `a2a_message_id` from the A2A response.
+3. Receipt JSON includes `lineage.receipt_chain`.
+
+Example seed: `examples/a2a-swarm.ts` + link fields above.
+
 ## Secrets
 
 Never put payer keys in skills or commit them. Prefer agent-side payers and out-of-band signing for on-chain calldata.

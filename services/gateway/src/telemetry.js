@@ -32,9 +32,11 @@ const SETTLED_STATUSES = new Set(['completed', 'fee_collected']);
 /**
  * Aggregate a list of task snapshots into public-safe usage stats.
  * @param {Array<Object>} tasks
- * @param {{ now?: number }} [opts]
+ * @param {{ now?: number, apiKeyHash?: string|null }} [opts]
+ *   When `apiKeyHash` is set, only tasks stamped with that buyer hash are counted
+ *   (Private Spend buyer-only analytics). Public `/stats` omits this filter.
  */
-export function computeUsageStats(tasks = [], { now = Date.now() } = {}) {
+export function computeUsageStats(tasks = [], { now = Date.now(), apiKeyHash = null } = {}) {
   const byStatus = {};
   const byMessageType = {};
   const byProvider = {};
@@ -49,9 +51,19 @@ export function computeUsageStats(tasks = [], { now = Date.now() } = {}) {
   let settled = 0;
   let firstSeen = null;
   let lastSeen = null;
+  let privateSpendTasks = 0;
+  let paidTasks7d = 0;
+  let usdcFees7d = 0n;
+  let usdcPaidTasks7d = 0;
+
+  const wantHash = apiKeyHash ? String(apiKeyHash).toLowerCase() : null;
 
   for (const t of tasks) {
     if (!t || !t.taskId) continue;
+    if (wantHash) {
+      const h = (t.meta?.apiKeyHash || '').toLowerCase();
+      if (h !== wantHash) continue;
+    }
 
     const status = t.status || 'pending';
     byStatus[status] = (byStatus[status] || 0) + 1;
@@ -73,18 +85,32 @@ export function computeUsageStats(tasks = [], { now = Date.now() } = {}) {
     r.net = addBig(r.net, t.netAmount);
 
     if (SETTLED_STATUSES.has(status)) settled += 1;
+    if (t.meta?.privateSpend || t.meta?.privacyMode === 'vendor_blind') privateSpendTasks += 1;
 
     const created = Number(t.createdAt) || 0;
     if (created) {
       if (now - created <= DAY_MS) last24h += 1;
-      if (now - created <= 7 * DAY_MS) last7d += 1;
+      if (now - created <= 7 * DAY_MS) {
+        last7d += 1;
+        // North-star: paid (settled) tasks in the last 7 days
+        if (SETTLED_STATUSES.has(status)) {
+          paidTasks7d += 1;
+          if (rail === 'usdc') {
+            usdcPaidTasks7d += 1;
+            usdcFees7d = addBig(usdcFees7d, t.feeAmount);
+          }
+        }
+      }
       if (firstSeen == null || created < firstSeen) firstSeen = created;
     }
     const updated = Number(t.updatedAt) || created;
     if (updated && (lastSeen == null || updated > lastSeen)) lastSeen = updated;
   }
 
-  const total = tasks.filter((t) => t && t.taskId).length;
+  const filtered = wantHash
+    ? tasks.filter((t) => t && t.taskId && (t.meta?.apiKeyHash || '').toLowerCase() === wantHash)
+    : tasks.filter((t) => t && t.taskId);
+  const total = filtered.length;
   const provenPct = total ? Math.round((proofs.valid / total) * 1000) / 10 : 0;
 
   const railOut = {};
@@ -97,15 +123,17 @@ export function computeUsageStats(tasks = [], { now = Date.now() } = {}) {
     };
   }
 
-  return {
+  const out = {
     generated_at: new Date(now).toISOString(),
     window: 'all-time',
+    scope: wantHash ? 'buyer' : 'network',
     tasks: {
       total,
       settled,
       by_status: byStatus,
       by_message_type: byMessageType,
       by_provider: byProvider,
+      private_spend: privateSpendTasks,
     },
     payments: { by_rail: railOut },
     proofs: { ...proofs, proven_pct: provenPct },
@@ -115,7 +143,14 @@ export function computeUsageStats(tasks = [], { now = Date.now() } = {}) {
       first_seen: firstSeen ? new Date(firstSeen).toISOString() : null,
       last_seen: lastSeen ? new Date(lastSeen).toISOString() : null,
     },
+    // Founder north-star (Sprint 3): paid tasks / week + USDC fees
+    north_star: {
+      paid_tasks_7d: paidTasks7d,
+      usdc_paid_tasks_7d: usdcPaidTasks7d,
+      usdc_fees_7d: usdcFees7d.toString(),
+    },
   };
+  return out;
 }
 
 // ─── HTML dashboard ────────────────────────────────────────────────────────────
@@ -153,6 +188,8 @@ export function renderStatsHtml(stats) {
   const tfuel = stats.payments.by_rail.tfuel;
   // USDC is 6dp — show a friendly dollar figure alongside base units.
   const usdcDollars = (Number(usdc.fee_amount) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 4 });
+  const ns = stats.north_star || { paid_tasks_7d: 0, usdc_paid_tasks_7d: 0, usdc_fees_7d: '0' };
+  const usdcFees7dDollars = (Number(ns.usdc_fees_7d) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 4 });
 
   return `<!doctype html>
 <html lang="en">
@@ -196,6 +233,8 @@ export function renderStatsHtml(stats) {
     <h1>Verifiable settlement for AI compute — live network activity</h1>
 
     <div class="grid">
+      ${stat('Paid tasks (7d)', ns.paid_tasks_7d, 'north-star')}
+      ${stat('USDC fees (7d)', `$${usdcFees7dDollars}`, `${ns.usdc_paid_tasks_7d} USDC tasks`)}
       ${stat('Tasks total', t.total)}
       ${stat('Settled', t.settled)}
       ${stat('Proven', p.valid, `${p.proven_pct}% of all tasks`)}

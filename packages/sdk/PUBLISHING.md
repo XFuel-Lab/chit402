@@ -23,20 +23,41 @@ build + tests.
 
    `publishConfig.access` is already `public`.
 
-## Publish
+## Publish (preferred — security key / WebAuthn)
+
+How `xfuel-sdk` 0.1.0 / 0.2.0 were shipped. Opens a browser for npm login +
+hardware security key (or passkey). Does **not** rely on a classic `~/.npmrc`
+token (those expire and return `E401`).
+
+```powershell
+cd packages/sdk
+npm publish --access public --auth-type=web
+```
+
+```bash
+cd packages/sdk
+npm publish --access public --auth-type=web
+```
+
+`prepublishOnly` runs `build` + `test` first. Complete the browser prompt, then
+verify: https://www.npmjs.com/package/xfuel-sdk
+
+## Alternate: classic login + OTP
 
 ```bash
 cd packages/sdk
 npm login                       # interactive; stores token
-npm version patch               # or minor/major — bumps version + git tag
-npm publish                     # runs prepublishOnly (build + test) first
+npm publish --access public --otp=XXXXXX   # authenticator code if 2FA requires it
 ```
 
-For CI publishing, create an **automation token** (npm → Access Tokens →
-Granular/Automation) and set it as `NODE_AUTH_TOKEN`, then:
+## CI publishing (optional — not wired today)
+
+There is **no** GitHub Actions publish workflow yet. If you add one, use an
+**automation** token (npm → Access Tokens → Granular/Automation) as
+`NODE_AUTH_TOKEN` (no OTP / no security-key prompt):
 
 ```bash
-npm publish --provenance        # if publishing from GitHub Actions
+npm publish --access public --provenance
 ```
 
 ## Verify

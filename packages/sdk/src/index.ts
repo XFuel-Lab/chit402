@@ -94,6 +94,12 @@ export interface TaskRequestParams {
   callback_url?: string;
   /** Optional HMAC secret for this task's callback (else server WEBHOOK_SECRET). */
   callback_secret?: string;
+  /** Prior task in a multi-hop / A2A receipt chain. */
+  parent_task_id?: string;
+  /** Link this task to an A2A message id. */
+  a2a_message_id?: string;
+  /** Free-form swarm / partner session correlation. */
+  correlation_id?: string;
   /** Payment rail (default USDC via x402; TFUEL secondary). Server-side handshake is flag-gated (Phase 1). */
   payment?: PaymentParams;
 }
@@ -109,6 +115,9 @@ export interface A2AMessageParams {
   sender_identity: string;
   recipient_address?: string;
   ibc_channel?: string;
+  /** Prior inference task to link in the receipt chain. */
+  parent_task_id?: string;
+  correlation_id?: string;
 }
 
 // ─── Response Types ─────────────────────────────────────────────────────────
@@ -526,16 +535,23 @@ export class XFuelClient {
     const headers: Record<string, string> = { 'X-PAYMENT': auth.header };
     if (nonce) headers['X-PAYMENT-NONCE'] = nonce;
 
-    const second = await this.http.post<TaskRequestResponse>(
+    const second = await this.http.post<TaskRequestResponse & { reason?: string; error?: string }>(
       '/task-request',
       params,
       { headers, validateStatus: acceptStatus },
     );
     if (second.status === 402) {
+      const body = second.data as { reason?: string; error?: string; accepts?: unknown };
+      // Failed verify/settle returns { error, reason }; a raw re-challenge has accepts[].
+      const why = body?.reason
+        || (Array.isArray(body?.accepts) ? 'rechallenge_without_reason' : undefined)
+        || body?.error
+        || 'unknown';
       throw new XFuelApiError(
-        'x402 payment was rejected or re-challenged after retry',
+        `x402 payment was rejected or re-challenged after retry (${why})`,
         402,
         'payment_rejected',
+        [why],
       );
     }
     return second.data;
@@ -569,6 +585,9 @@ export class XFuelClient {
       proof_system?: 'sp1' | 'zkgpt';
       callback_url?: string;
       callback_secret?: string;
+      parent_task_id?: string;
+      a2a_message_id?: string;
+      correlation_id?: string;
       payment?: PaymentParams;
       /** Agent-side x402 payer. When provided, the USDC 402 handshake is run automatically. */
       payer?: X402Payer;
@@ -599,6 +618,40 @@ export class XFuelClient {
    */
   receiptUrl(taskId: string): string {
     return `${this.baseUrl}/receipt/${taskId}`;
+  }
+
+  /**
+   * Fetch the public receipt JSON (`GET /receipt/:taskId?format=json`) — no auth.
+   * Third parties can recompute payment binding from this payload without trusting
+   * the HTML page. Prefer this over scraping the shareable UI.
+   */
+  async getReceipt(taskId: string): Promise<Record<string, unknown>> {
+    const { data } = await this.http.get<Record<string, unknown>>(
+      `/receipt/${encodeURIComponent(taskId)}`,
+      { params: { format: 'json' } },
+    );
+    return data;
+  }
+
+  /**
+   * Auditor selective-disclosure export (`GET /receipt/:id?format=auditor`).
+   * Policy + totals + binding — no prompts or raw outputs.
+   */
+  async getAuditorExport(taskId: string): Promise<Record<string, unknown>> {
+    const { data } = await this.http.get<Record<string, unknown>>(
+      `/receipt/${encodeURIComponent(taskId)}`,
+      { params: { format: 'auditor' } },
+    );
+    return data;
+  }
+
+  /**
+   * Buyer-only usage stats (`GET /stats/me`) — requires the same API key used on tasks.
+   * Returns Private Spend scope when enabled on the gateway.
+   */
+  async getMyStats(): Promise<Record<string, unknown>> {
+    const { data } = await this.http.get<Record<string, unknown>>('/stats/me');
+    return data;
   }
 
   // ── GET /task-status?task_id= ──────────────────────────────────────────

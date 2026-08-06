@@ -45,6 +45,19 @@ Claude / Cursor stdio config:
 
 Proofs attest settlement metadata + output-hash commitment, not inference correctness — unless Tier-3 Verified Inference applies.
 
+## Publish (maintainers)
+
+Same flow as the SDK — browser + security key (not a classic npm token):
+
+```powershell
+cd packages/sdk
+npm publish --access public --auth-type=web
+cd ../mcp
+npm publish --access public --auth-type=web
+```
+
+See [../sdk/PUBLISHING.md](../sdk/PUBLISHING.md).
+
 ## Docs
 
 - [docs/M2M_API.md](../../docs/M2M_API.md)

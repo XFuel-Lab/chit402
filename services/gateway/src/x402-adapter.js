@@ -3,7 +3,7 @@ import logger from './logger.js';
 import {
   verifyViaFacilitator,
   settleViaFacilitator,
-  DEFAULT_FACILITATOR_URL,
+  defaultFacilitatorUrlForNetwork,
 } from './x402-facilitator.js';
 
 /**
@@ -208,10 +208,17 @@ function resolveProvider(opts = {}) {
 function resolveGateway(opts = {}) {
   const provider = resolveProvider(opts);
   if (provider === 'x402') {
+    const network = opts.network
+      || opts.challenge?.network
+      || process.env.X402_NETWORK
+      || 'base-sepolia';
     return {
       provider,
       // Public testnet facilitator (Base Sepolia) needs no API key.
-      gateway: opts.gatewayUrl || process.env.X402_FACILITATOR_URL || DEFAULT_FACILITATOR_URL,
+      // Base mainnet defaults to CDP facilitator URL (needs CDP JWT env).
+      gateway: opts.gatewayUrl
+        || process.env.X402_FACILITATOR_URL
+        || defaultFacilitatorUrlForNetwork(network),
       apiKey: opts.apiKey || process.env.X402_FACILITATOR_API_KEY || null,
     };
   }

@@ -71,7 +71,13 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402 } = {}) 
   // x402: only facilitatorUrl (null → adapter's public reference). Do NOT fall back
   // to ZAN_X402_GATEWAY_URL — that silently routes live demos through the local mock.
   const gatewayUrl = provider === 'x402' ? (cfg.facilitatorUrl || null) : cfg.gatewayUrl;
-  const gwOpts = { provider, gatewayUrl, apiKey: cfg.apiKey, store: challengeStore };
+  const gwOpts = {
+    provider,
+    gatewayUrl,
+    apiKey: cfg.apiKey,
+    store: challengeStore,
+    network: cfg.network,
+  };
   const paymentHeader = req.headers?.['x-payment'];
 
   // Step 1 — no payment yet: issue a bound 402 challenge.
