@@ -2,24 +2,24 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-05 · Sprints 1–4 engineering complete · Your checklist below
+Last updated: 2026-08-06 · Public Base mainnet x402 live · Your checklist below
 
 ## How to use
 
 - Check boxes as you complete them.
 - Do not put secrets in git — Lightsail / 1Password only.
-- When mainnet USDC lands, tell eng so RUNTIME_STATE can flip to Real.
 
 ## Do this week (priority)
 
 | # | You | Eng can help / already done |
 |---|-----|------------------------------|
-| 1 | CDP Secret keys + Base Safe → wire mainnet env ([MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md)) | Code path shipped |
+| 1 | ~~Mainnet USDC go-live~~ | **Done 2026-08-06** — public flagship Real |
 | 2 | Put real contacts on [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md); send [OUTREACH_TEMPLATES.md](./OUTREACH_TEMPLATES.md) | 10 hunt targets + templates ready |
 | 3 | Accept or amend [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) (reply “accepted” / edit) | Decision draft shipped |
 | 4 | After partners say yes: partner API keys + [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) | Onboarding + cookbook shipped |
-| 5 | Paste [AUDIT_SCOPE_LETTER_DRAFT.md](./AUDIT_SCOPE_LETTER_DRAFT.md) to 2–3 firms (after git tag) | Letter + [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) ready |
-| 6 | Deck from [SEED_DECK_OUTLINE.md](./SEED_DECK_OUTLINE.md) — live numbers only | Outline ready |
+| 5 | Rotate CDP Secret API key (ops hygiene); prefer Safe for `X402_PAY_TO` | — |
+| 6 | Paste [AUDIT_SCOPE_LETTER_DRAFT.md](./AUDIT_SCOPE_LETTER_DRAFT.md) to 2–3 firms (after git tag) | Letter + [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) ready |
+| 7 | Deck from [SEED_DECK_OUTLINE.md](./SEED_DECK_OUTLINE.md) — live `/stats` numbers only | Outline ready |
 | Later | Guest v2 ELF + vKey; uptime monitor; counsel | Blocked on prover host / counsel |
 
 ---
@@ -30,11 +30,11 @@ Last updated: 2026-08-05 · Sprints 1–4 engineering complete · Your checklist
 
 Follow [MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md).
 
-- [ ] Create Coinbase CDP project + Secret API Key (`CDP_API_KEY_ID` / `CDP_API_KEY_SECRET`)
-- [ ] Create or reuse a **Safe** (or Splits v2) on Base mainnet for fees
-- [ ] Set on live gateway `.env`: `X402_NETWORK=base`, `X402_PAY_TO=<safe>`, CDP keys, `X402_ENABLED=true`, `X402_FACILITATOR_PROVIDER=x402`
-- [ ] Smoke: one real USDC payment → confirm on Basescan at `X402_PAY_TO`
-- [ ] Tell eng / update RUNTIME_STATE when done (or ask eng to flip the row)
+- [x] Create Coinbase CDP project + Secret API Key (`CDP_API_KEY_ID` / `CDP_API_KEY_SECRET`)
+- [x] Fee sink on Base (`X402_PAY_TO=0x23f7…7334` — prefer upgrading to Safe / Splits later)
+- [x] Live gateway: `X402_NETWORK=base`, CDP keys, `xfuel-api` on `services/gateway` (not theta-bridge)
+- [x] Smoke: public flagship 2026-08-06 — task `ai-task-1-1786004600540` / tx `0x066caacc…db70`
+- [x] RUNTIME_STATE flipped to Real (public Base mainnet)
 
 ### Design partners (beachhead A)
 

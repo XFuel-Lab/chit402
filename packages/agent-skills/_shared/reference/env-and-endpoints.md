@@ -56,7 +56,7 @@ The SDK defaults to the hosted testnet demo endpoint + public demo key, so
   **USDC via x402 (on Base) is the default/recommended rail**; **TFUEL on Theta** is
   the secondary rail. When `payment` is omitted, the server `X402_DEFAULT_RAIL` applies.
 - The server-side 402 handshake is **live on the hosted testnet** (`X402_ENABLED=true`,
-  `X402_FACILITATOR_PROVIDER=x402`, `X402_NETWORK=base-sepolia`; Base mainnet pending CDP).
+  `X402_FACILITATOR_PROVIDER=x402`, `X402_NETWORK=base`; CDP keys required for mainnet facilitator).
   See [`docs/RUNTIME_STATE.md`](../../../../docs/RUNTIME_STATE.md) for as-deployed config.
 - **Agent side:** an unpaid `usdc` request gets a `402` challenge; retry with the
   `X-PAYMENT` header (+ `X-PAYMENT-NONCE` echoing `accepts[].extra.nonce`). The payer is

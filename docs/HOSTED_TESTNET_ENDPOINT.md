@@ -25,7 +25,8 @@ Open the printed `verify_url`. Then optionally:
 https://basescan.org/address/0x9373499645292715a2275A78eD65B14215C41c06
 ```
 
-**Honest status:** Proofs live on Base mainnet. Payments currently on Base Sepolia (x402 USDC).  
+**Honest status:** Money + proofs on Base mainnet (USDC via x402 / CDP; SP1 on `ZKVerifierSP1`).  
+Demo hostname is still `api-testnet` — payments are **mainnet USDC**, not Sepolia.  
 Do not present the zkGPT mock as a live proof.
 
 Demo video package: [DEMO_VIDEO_SCRIPT.md](./DEMO_VIDEO_SCRIPT.md) · [DEMO_SHOT_LIST.md](./DEMO_SHOT_LIST.md) · [DEMO_COMMANDS.md](./DEMO_COMMANDS.md)
@@ -52,12 +53,12 @@ curl -sS -X POST https://api-testnet.xfuel.app/task-request \
     "sender": "0xYourAddress",
     "model_id": "llama-3-70b",
     "input_hash": "0xabc...",
-    "payment": { "rail": "usdc", "network": "base-sepolia" }
+    "payment": { "rail": "usdc", "network": "base" }
   }'
 ```
 
 OpenAI-compatible: `https://api-testnet.xfuel.app/v1`  
-Payments: USDC via x402 on Base Sepolia — [X402_ADAPTER.md](./X402_ADAPTER.md).
+Payments: USDC via x402 on **Base mainnet** — [X402_ADAPTER.md](./X402_ADAPTER.md) · [RUNTIME_STATE.md](./RUNTIME_STATE.md).
 
 ## Local demo
 

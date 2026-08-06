@@ -2,14 +2,14 @@
 
 Honest gaps for auditors, design partners, and Seed diligence. Keep this current.
 
-Last updated: 2026-08-05  
+Last updated: 2026-08-06  
 Runtime truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 
 ## Production / money
 
 | Issue | Severity | Status |
 |-------|----------|--------|
-| Base mainnet x402 facilitator not wired on live demo host | High (blocks revenue) | Code ready; ops: [MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md) |
+| ~~Base mainnet x402 facilitator not wired on live demo host~~ | — | **Resolved 2026-08-06** — public `api-testnet` on Base + CDP |
 | Payment binding is server-attested (`in_proof: false`) until SP1 guest v2 | Medium | Guest rebuild + new programVKey required |
 | OpenAI-compatible `/v1` path is **unmetered** (Phase 1) | Medium | Paid path = `/task-request` + x402 |
 | Web2 collect-and-forward custody not counsel-cleared | High if scaled | Do not enable broad OpenAI pass-through revenue yet |
