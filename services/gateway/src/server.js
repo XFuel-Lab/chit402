@@ -10,11 +10,12 @@ import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhook
 import { resolveRail, runX402Handshake, priceUSDC } from './x402-server.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { proveAllowedForKey } from './prove-gate.js';
-import { buildReceipt, renderReceiptHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
+import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest } from './x402-discovery.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
+import { apiKeyHashFromReq } from './buyer-attr.js';
 
 /**
  * XFuel M2M API Server — agent gateway for verifiable AI compute settlement.
@@ -501,6 +502,9 @@ export function createApp() {
         proof_tier,         // optional – requested assurance tier (Phase 4): signed|settlement|inference|tee|zk-spotcheck|zk-full
         callback_url,       // optional – per-task webhook; receives TaskSettled on completion
         callback_secret,    // optional – HMAC secret for this task's callback (else WEBHOOK_SECRET)
+        parent_task_id,     // optional – prior task in a multi-hop / A2A receipt chain
+        a2a_message_id,     // optional – link this task to an A2A message id
+        correlation_id,     // optional – free-form swarm / session correlation
       } = req.body;
 
       // ── Validation ────────────────────────────────────────────────────
@@ -634,6 +638,14 @@ export function createApp() {
         txHash:  `api-${req.id}`,
         height:  0,
         source:  'server.js',
+        // Buyer attribution (hash only) for Private Spend /stats/me
+        apiKeyHash: apiKeyHashFromReq(req),
+        privateSpend: !!config.privateSpend?.enabled,
+        privacyMode: config.privateSpend?.enabled ? 'vendor_blind' : null,
+        // Multi-hop / A2A receipt lineage (Sprint 3)
+        parentTaskId: parent_task_id || null,
+        a2aMessageId: a2a_message_id || null,
+        correlationId: correlation_id || null,
       };
 
       // ── Route via AIListener ──────────────────────────────────────────
@@ -944,6 +956,8 @@ export function createApp() {
         sender_identity,    // required – agent identity commitment (hex)
         recipient_address,  // optional – recipient agent address
         ibc_channel,        // optional – explicit IBC channel
+        parent_task_id,     // optional – prior inference task in a receipt chain
+        correlation_id,     // optional – swarm / session correlation
       } = req.body;
 
       // ── Validation ────────────────────────────────────────────────────
@@ -1024,6 +1038,8 @@ export function createApp() {
         recipientAddress: recipient_address || null,
         ibcChannel:      ibc_channel || null,
         relayFee,
+        parentTaskId:    parent_task_id || null,
+        correlationId:   correlation_id || null,
       };
 
       _a2aMessages.set(messageId, a2aMessage);
@@ -1056,8 +1072,14 @@ export function createApp() {
         nonce,
         ttl,
         timestamp:       a2aMessage.timestamp,
+        parent_task_id:  parent_task_id || null,
+        correlation_id:  correlation_id || null,
         _links: {
           status: `/task-status?message_id=${messageId}`,
+        },
+        next: {
+          hint: 'Link a follow-on inference with parent_task_id + a2a_message_id on /task-request',
+          a2a_message_id: messageId,
         },
       });
     } catch (err) {
@@ -1267,17 +1289,21 @@ export function createApp() {
   // GET /receipt/:taskId — PUBLIC, no-auth verifiable receipt.
   //   • HTML by default (clean, shareable page for a browser / link unfurl)
   //   • JSON via `?format=json` or `Accept: application/json` (for agents)
+  //   • Auditor selective disclosure via `?format=auditor` (policy + totals; no prompts)
   // Rate-limited (per-IP) but intentionally NOT behind authenticate — the whole
   // point is that anyone can independently verify "paid + proven". It exposes no
   // secrets (no proof bytes, no raw output, no keys) — see src/receipt.js.
-  // ═══════════════════════════════════════════════════════════════════════
 
   app.get('/receipt/:taskId', rateLimit, (req, res) => {
     try {
       const { taskId } = req.params;
       const aiListener = getAIListener();
       const task = _findTask(aiListener, taskId);
-      const wantsJson = req.query.format === 'json' || req.accepts(['html', 'json']) === 'json';
+      const fmt = String(req.query.format || '').toLowerCase();
+      const wantsAuditor = fmt === 'auditor' || fmt === 'audit';
+      const wantsJson = wantsAuditor
+        || fmt === 'json'
+        || req.accepts(['html', 'json']) === 'json';
 
       if (!task) {
         if (wantsJson) {
@@ -1292,6 +1318,19 @@ export function createApp() {
         signingSecret: config.receipts?.signingSecret,
         viPolicy: config.verifiedInference,
       });
+
+      if (wantsAuditor) {
+        let policy = null;
+        if (process.env.AUDITOR_POLICY_JSON) {
+          try { policy = JSON.parse(process.env.AUDITOR_POLICY_JSON); } catch { /* use default */ }
+        }
+        const exportDoc = buildAuditorExport(receipt, { policy });
+        if (String(req.query.view || '') === 'html') {
+          return res.type('html').send(renderAuditorHtml(exportDoc));
+        }
+        return res.json(exportDoc);
+      }
+
       if (wantsJson) return res.json(receipt);
       return res.type('html').send(renderReceiptHtml(receipt));
     } catch (err) {
@@ -1440,6 +1479,37 @@ export function createApp() {
       return res.type('html').send(renderStatsHtml(_statsCache.data));
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /stats error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // Buyer-only usage (Private Spend). Auth required — filters by apiKeyHash stamped on tasks.
+  // Never returns other buyers' data. JSON only.
+  app.get('/stats/me', rateLimit, authenticate, (req, res) => {
+    try {
+      const apiKeyHash = apiKeyHashFromReq(req);
+      if (!apiKeyHash) {
+        return res.status(401).json({
+          error: 'unauthorized',
+          message: 'X-API-Key or Authorization: Bearer required for buyer stats',
+        });
+      }
+      let tasks = [];
+      try {
+        const store = getAIListener().activeTasks;
+        tasks = typeof store.allSnapshots === 'function'
+          ? store.allSnapshots()
+          : [...store.values()];
+      } catch { /* empty */ }
+      const data = computeUsageStats(tasks, { now: Date.now(), apiKeyHash });
+      data.private_spend = {
+        enabled: !!config.privateSpend?.enabled,
+        mode: config.privateSpend?.enabled ? 'vendor_blind' : null,
+        trust: 'gateway',
+      };
+      return res.json(data);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /stats/me error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
   });

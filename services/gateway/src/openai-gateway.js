@@ -6,6 +6,7 @@ import { getAIListener } from './ai-listener.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { proveAllowedForKey } from './prove-gate.js';
 import { buildVerifyUrl, baseUrlFromReq } from './receipt.js';
+import { apiKeyHashFromReq } from './buyer-attr.js';
 
 /**
  * XFuel OpenAI-compatible gateway.
@@ -184,7 +185,7 @@ function extractContent(result) {
  *
  * @returns {{ taskId: string, proverConfigured: boolean }}
  */
-function registerTaskAndProve({ model, messages, content, provider, proveAllowed = true }) {
+function registerTaskAndProve({ model, messages, content, provider, proveAllowed = true, apiKeyHash = null, privateSpend = false }) {
   let aiListener;
   try {
     aiListener = getAIListener();
@@ -212,7 +213,16 @@ function registerTaskAndProve({ model, messages, content, provider, proveAllowed
       paymentRef: null,
       proveAllowed, // cost gate: false → settle + signed receipt, skip SP1 proof
     },
-    meta: { chain: 'theta', txHash: `openai-${taskId}`, height: 0, source: 'openai-gateway' },
+    meta: {
+      chain: 'theta',
+      txHash: `openai-${taskId}`,
+      height: 0,
+      source: 'openai-gateway',
+      provider,
+      apiKeyHash: apiKeyHash || null,
+      privateSpend: !!privateSpend,
+      privacyMode: privateSpend ? 'vendor_blind' : null,
+    },
     status: 'completed',
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -239,7 +249,7 @@ function registerTaskAndProve({ model, messages, content, provider, proveAllowed
 
 // ─── Verification receipt ─────────────────────────────────────────────────────
 
-function buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed = true, mockReason, baseUrl = '' }) {
+function buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed = true, mockReason, baseUrl = '', privateSpend = false }) {
   // pending  → proof generating; unavailable → no prover; gated → cost-gated for
   // this key (signed receipt only); skipped → mock response (nothing to prove).
   const proofStatus = mock
@@ -265,6 +275,13 @@ function buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed =
       rail: 'unmetered',
       note: 'The OpenAI-compatible path is unmetered in Phase 1. Use POST /task-request with payment.rail="usdc" for x402 settlement.',
     },
+    privacy: privateSpend
+      ? {
+          mode: 'vendor_blind',
+          trust: 'gateway',
+          notes: 'Provider saw gateway-pooled credentials, not end-customer identity. Not prompt-confidential.',
+        }
+      : null,
     proof: {
       status: proofStatus, // pending | unavailable | gated | skipped
       system: 'sp1',
@@ -369,9 +386,18 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
 
     const { content, provider, mock } = inference;
     const proveAllowed = proveAllowedForKey(req.headers['x-api-key']);
-    const { taskId, proverConfigured } = registerTaskAndProve({ model: echoModel, messages, content, provider, proveAllowed });
+    const privateSpend = !!config.privateSpend?.enabled;
+    const { taskId, proverConfigured } = registerTaskAndProve({
+      model: echoModel,
+      messages,
+      content,
+      provider,
+      proveAllowed,
+      apiKeyHash: apiKeyHashFromReq(req),
+      privateSpend,
+    });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
-    const receipt = buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed, mockReason: inference.raw?.reason, baseUrl });
+    const receipt = buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed, mockReason: inference.raw?.reason, baseUrl, privateSpend });
 
     const promptTokens = estimateTokens(messagesToText(messages));
     const completionTokens = estimateTokens(content);

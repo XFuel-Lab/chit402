@@ -454,6 +454,40 @@ Returns JSON: the /health payload (status, server, version, fee_config, chains, 
     },
   );
 
+  // ── get_my_stats ───────────────────────────────────────────────────────────
+  server.registerTool(
+    'get_my_stats',
+    {
+      title: 'Get buyer usage stats (Private Spend)',
+      description: `Fetch authenticated buyer-only usage for the configured API key (GET /stats/me).
+Includes north-star fields: paid_tasks_7d, usdc_fees_7d. Requires XFUEL_API_KEY.
+
+Args: none.
+
+Returns JSON: scope=buyer, tasks, payments, north_star, private_spend.`,
+      inputSchema: {},
+      annotations: {
+        title: 'Get buyer usage stats',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async () => {
+      try {
+        const res = await client.getMyStats();
+        const ns = (res as { north_star?: { paid_tasks_7d?: number; usdc_fees_7d?: string } }).north_star;
+        return ok(
+          res,
+          `Buyer stats: paid_tasks_7d=${ns?.paid_tasks_7d ?? '?'} usdc_fees_7d=${ns?.usdc_fees_7d ?? '?'}.`,
+        );
+      } catch (err) {
+        return fail(describeError(err));
+      }
+    },
+  );
+
   // ── list_models ────────────────────────────────────────────────────────────
   server.registerTool(
     'list_models',

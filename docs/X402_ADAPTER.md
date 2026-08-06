@@ -4,8 +4,10 @@ Flag-gated USDC payment rail for the gateway (`X402_ENABLED`).
 
 - Module: `services/gateway/src/x402-adapter.js`
 - Facilitator: standard x402 (default) or ZAN
+- CDP JWT auth: `services/gateway/src/cdp-jwt.js`
 - Mock (dev): `services/gateway/src/x402-mock-facilitator.js`
 - Tests: `services/gateway/test/x402-*.test.mjs`
+- Mainnet ops: [MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md)
 
 Default rail: `usdc` on Base ([ADR 0002](adr/0002-base-settlement-home.md)).
 
@@ -22,7 +24,19 @@ X402_USDC_PRICE_DEFAULT=10000
 
 Facilitator default: `https://x402.org/facilitator` (no API key). Agent signs EIP-3009 `transferWithAuthorization` (see `xfuel-sdk/onchain`).
 
-For Base mainnet later: use a mainnet-capable facilitator (e.g. Coinbase CDP), set `X402_NETWORK=base`, fund a mainnet treasury. See [RUNTIME_STATE.md](./RUNTIME_STATE.md).
+## Base mainnet (CDP facilitator)
+
+```
+X402_ENABLED=true
+X402_FACILITATOR_PROVIDER=x402
+X402_NETWORK=base
+X402_PAY_TO=0x<Safe_or_Splits_on_Base>
+CDP_API_KEY_ID=...
+CDP_API_KEY_SECRET=...
+```
+
+If `X402_FACILITATOR_URL` is unset and `X402_NETWORK=base`, the gateway defaults to  
+`https://api.cdp.coinbase.com/platform/v2/x402` and authenticates with a per-request EdDSA JWT. Full checklist: [MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md).
 
 ## Flow
 

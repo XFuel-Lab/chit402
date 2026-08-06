@@ -62,6 +62,12 @@ test('DEFAULT_FACILITATOR_URL is the public reference facilitator', () => {
   assert.equal(DEFAULT_FACILITATOR_URL, 'https://x402.org/facilitator');
 });
 
+test('CDP_FACILITATOR_URL is the Coinbase CDP hosted facilitator', async () => {
+  const { CDP_FACILITATOR_URL, defaultFacilitatorUrlForNetwork } = await import('../src/x402-facilitator.js');
+  assert.equal(CDP_FACILITATOR_URL, 'https://api.cdp.coinbase.com/platform/v2/x402');
+  assert.equal(defaultFacilitatorUrlForNetwork('base'), CDP_FACILITATOR_URL);
+});
+
 test('decodePaymentHeader: raw JSON and base64 JSON', () => {
   const obj = { x402Version: 1, scheme: 'exact' };
   assert.deepEqual(decodePaymentHeader(JSON.stringify(obj)), obj);

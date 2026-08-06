@@ -485,6 +485,22 @@ class ThetaInferenceHandler {
     this.openaiCompatModel = config.openaiCompatModel || process.env.OPENAI_COMPAT_MODEL || '';
     this.openaiCompatName  = config.openaiCompatName  || process.env.OPENAI_COMPAT_NAME || 'openai-compatible';
 
+    // Confidential / TEE-class OpenAI-compatible endpoint (Phala-class). Opt-in.
+    // When set, ComputeRouter prefers this tier for content privacy before plain OpenAI-compat.
+    this.confidentialProviderBase = config.confidentialProviderBase
+      || process.env.CONFIDENTIAL_PROVIDER_BASE_URL || '';
+    this.confidentialProviderKey = config.confidentialProviderKey
+      || process.env.CONFIDENTIAL_PROVIDER_API_KEY
+      || this.openaiCompatKey
+      || '';
+    this.confidentialProviderModel = config.confidentialProviderModel
+      || process.env.CONFIDENTIAL_PROVIDER_MODEL
+      || this.openaiCompatModel
+      || '';
+    this.confidentialProviderName = config.confidentialProviderName
+      || process.env.CONFIDENTIAL_PROVIDER_NAME
+      || 'confidential';
+
     // Claude (Anthropic) — reliable centralized backstop for LLM inference so a
     // request never hard-fails when the DePIN tiers are cold. LLM only.
     this.anthropicApiKey = config.anthropicApiKey || process.env.ANTHROPIC_API_KEY || '';
@@ -1368,6 +1384,65 @@ class ThetaInferenceHandler {
       } else {
         console.warn(`[OpenAI-compat] Request failed after ${elapsed}ms: ${err.message}`);
       }
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  /**
+   * Confidential / TEE-class OpenAI-compatible endpoint (Phala-class).
+   * Env: CONFIDENTIAL_PROVIDER_BASE_URL + CONFIDENTIAL_PROVIDER_API_KEY (or reuse OPENAI_COMPAT key).
+   * Tags result `_source` as confidential so receipts can set privacy.mode=content_tee.
+   */
+  async _callConfidential(serviceType, body, modelName = '', gpuName = '') {
+    if (serviceType !== SERVICE_TYPES.LLM_INFERENCE) return null;
+    if (!this.confidentialProviderBase || !this.confidentialProviderKey) return null;
+
+    const messages = body.messages || [{ role: 'user', content: body.prompt || '' }];
+    const model = this.confidentialProviderModel || modelName || 'default';
+    const reqBody = {
+      model,
+      messages,
+      ...(body.max_tokens != null ? { max_tokens: body.max_tokens } : {}),
+      ...(body.temperature != null ? { temperature: body.temperature } : {}),
+      stream: false,
+    };
+
+    const base = this.confidentialProviderBase.replace(/\/+$/, '');
+    const url = `${base}/chat/completions`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.apiTimeout);
+    const t0 = Date.now();
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'authorization': `Bearer ${this.confidentialProviderKey}`,
+        },
+        body: JSON.stringify(reqBody),
+        signal: controller.signal,
+      });
+      const elapsed = Date.now() - t0;
+      if (!res.ok) {
+        console.warn(`[Confidential] HTTP ${res.status} after ${elapsed}ms`);
+        return null;
+      }
+      const data = await res.json().catch(() => null);
+      const text = data?.choices?.[0]?.message?.content ?? '';
+      if (!text) return null;
+      console.log(`[Confidential] ${this.confidentialProviderName} — ${(elapsed / 1000).toFixed(1)}s`);
+      return {
+        choices: [{ message: { role: 'assistant', content: text } }],
+        model: data.model || model,
+        usage: data.usage || undefined,
+        _source: 'confidential',
+        _privacy: 'content_tee',
+      };
+    } catch (err) {
+      console.warn(`[Confidential] failed: ${err.message}`);
       return null;
     } finally {
       clearTimeout(timeout);

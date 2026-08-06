@@ -12,6 +12,14 @@ https://xfuel.app Â· https://api-testnet.xfuel.app
 |-----|---------|
 | [RUNTIME_STATE.md](./RUNTIME_STATE.md) | Live endpoints, real vs mock |
 | [POSITIONING.md](./POSITIONING.md) | Locked messaging |
+| [SEED_READINESS.md](./SEED_READINESS.md) | Seed / A- gate checklist |
+| [STAGING_SLA.md](./STAGING_SLA.md) | Partner staging reliability |
+| [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) | zkLLM narrow / continue gates |
+| [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) | Partner one-pager |
+| [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md) | Your checklist (CDP, Safe, partners, vKey) |
+| [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md) | Sprint beachhead + design partners |
+| [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md) | Spend / vendor-blind privacy |
+| [MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md) | Turn on Base mainnet USDC fees |
 | [../WHITEPAPER.md](../WHITEPAPER.md) | Protocol design |
 | [../README.md](../README.md) | Clone, build, try the API |
 

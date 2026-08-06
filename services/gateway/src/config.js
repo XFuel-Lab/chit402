@@ -70,12 +70,14 @@ const config = {
     // Facilitator protocol: 'x402' (standard public Base facilitator) or 'zan'.
     facilitatorProvider: (process.env.X402_FACILITATOR_PROVIDER || 'x402').toLowerCase() === 'zan' ? 'zan' : 'x402',
     // Standard x402 facilitator URL (used when facilitatorProvider='x402'); null →
-    // the adapter defaults to the public reference facilitator (Base Sepolia).
+    // network-aware default (base-sepolia → x402.org; base → CDP mainnet URL).
     facilitatorUrl: process.env.X402_FACILITATOR_URL || null,
     gatewayUrl: process.env.ZAN_X402_GATEWAY_URL || null,   // ZAN facilitator (verify + settle)
-    apiKey: process.env.ZAN_X402_API_KEY || null,
-    payTo: process.env.X402_PAY_TO || null,                 // Base USDC treasury
-    network: process.env.X402_NETWORK || 'base',            // base | solana
+    // ZAN key OR static bearer for non-CDP facilitators. CDP mainnet uses
+    // CDP_API_KEY_ID + CDP_API_KEY_SECRET (see cdp-jwt.js) — do not put those here.
+    apiKey: process.env.X402_FACILITATOR_API_KEY || process.env.ZAN_X402_API_KEY || null,
+    payTo: process.env.X402_PAY_TO || null,                 // Base USDC treasury / Safe
+    network: process.env.X402_NETWORK || 'base-sepolia',    // base-sepolia | base
     asset: process.env.X402_ASSET || 'USDC',
     challengeTtlMs: parseInt(process.env.X402_CHALLENGE_TTL_MS, 10) || 120000,
     // Phase 2: bind the x402 payment_ref into the SP1 proof so it attests BOTH
@@ -98,6 +100,14 @@ const config = {
   // (NOT reused from WEBHOOK_SECRET) so enabling webhooks never implies signing.
   receipts: {
     signingSecret: process.env.RECEIPT_SIGNING_SECRET || null,
+  },
+
+  // Private Spend v0 — vendor-blind routing mode. Buyer pays XFuel; providers see
+  // gateway-pooled credentials only. See docs/PRIVATE_SPEND_THESIS.md.
+  privateSpend: {
+    enabled: process.env.PRIVATE_SPEND_ENABLED === 'true',
+    // When true (default if Private Spend on), omit prompt/input bodies from long-lived logs.
+    minimizeLogs: process.env.PRIVATE_SPEND_MINIMIZE_LOGS !== 'false',
   },
 
   // Verified Inference tier engine (Phase 4). Disabled by default → receipts behave as before

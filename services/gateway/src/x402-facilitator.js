@@ -1,4 +1,5 @@
 import logger from './logger.js';
+import { resolveFacilitatorBearer } from './cdp-jwt.js';
 
 /**
  * Real x402 facilitator client (Base Sepolia + Base mainnet).
@@ -8,6 +9,10 @@ import logger from './logger.js';
  * STANDARD x402 facilitator protocol instead, so XFuel can point at a live public
  * facilitator (e.g. Coinbase's reference `https://x402.org/facilitator` on Base
  * Sepolia, which needs no API key) with no ZAN dependency.
+ *
+ * Base mainnet: use Coinbase CDP facilitator
+ * (`https://api.cdp.coinbase.com/platform/v2/x402`) with CDP_API_KEY_ID +
+ * CDP_API_KEY_SECRET (EdDSA JWT). See docs/MAINNET_X402_CHECKLIST.md.
  *
  * Standard protocol (x402 "exact" scheme, v1):
  *   POST /verify  { x402Version, paymentPayload, paymentRequirements }
@@ -29,6 +34,19 @@ import logger from './logger.js';
 
 /** Coinbase reference facilitator (testnet: Base Sepolia, no API key). */
 export const DEFAULT_FACILITATOR_URL = 'https://x402.org/facilitator';
+
+/** Coinbase CDP hosted facilitator (Base mainnet + multi-network; requires CDP JWT). */
+export const CDP_FACILITATOR_URL = 'https://api.cdp.coinbase.com/platform/v2/x402';
+
+/**
+ * Pick facilitator URL from network when X402_FACILITATOR_URL is unset.
+ * `base` → CDP mainnet; `base-sepolia` → public x402.org testnet.
+ */
+export function defaultFacilitatorUrlForNetwork(network) {
+  const n = String(network || '').toLowerCase();
+  if (n === 'base' || n === 'eip155:8453') return CDP_FACILITATOR_URL;
+  return DEFAULT_FACILITATOR_URL;
+}
 
 /**
  * USDC token address + EIP-712 domain per network. These MUST match the domain
@@ -107,9 +125,13 @@ export function toPaymentPayload(decoded, { network } = {}) {
 
 async function callFacilitator(path, { gateway, apiKey, body, timeoutMs }) {
   const headers = { 'Content-Type': 'application/json' };
-  // Public testnet facilitator needs no key; CDP/mainnet facilitators use a bearer token.
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  const res = await fetch(`${gateway.replace(/\/$/, '')}${path}`, {
+  const url = `${gateway.replace(/\/$/, '')}${path}`;
+  // Public testnet facilitator needs no key. CDP mainnet uses per-request EdDSA JWT
+  // (CDP_API_KEY_ID + CDP_API_KEY_SECRET). Optional static bearer via apiKey /
+  // X402_FACILITATOR_API_KEY for non-CDP facilitators.
+  const bearer = await resolveFacilitatorBearer({ apiKey, method: 'POST', url });
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
+  const res = await fetch(url, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -151,7 +173,30 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
       gateway, apiKey, timeoutMs: 15000,
       body: { x402Version: 1, paymentPayload, paymentRequirements },
     });
-    if (!ok) return { valid: false, reason: `facilitator_http_${status}` };
+    if (!ok) {
+      logger.warn(
+        {
+          status,
+          invalidReason: data.invalidReason || data.errorReason || data.errorMessage || data.errorType,
+          errKeys: Object.keys(data || {}),
+          rawSnippet: typeof data._raw === 'string' ? data._raw.slice(0, 240) : undefined,
+        },
+        'x402 facilitator verify HTTP error',
+      );
+      return { valid: false, reason: `facilitator_http_${status}` };
+    }
+    if (!data.isValid) {
+      logger.warn(
+        {
+          invalidReason: data.invalidReason,
+          network: paymentRequirements.network,
+          payTo: paymentRequirements.payTo,
+          amount: paymentRequirements.maxAmountRequired,
+          asset: paymentRequirements.asset,
+        },
+        'x402 facilitator verify rejected',
+      );
+    }
     return { valid: !!data.isValid, payer: data.payer || null, reason: data.invalidReason };
   } catch (err) {
     logger.warn({ err: err.message }, 'x402 facilitator verify failed');

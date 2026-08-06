@@ -37,6 +37,9 @@ test('GET /stats?format=json returns aggregate, public-safe usage stats', async 
   assert.equal(typeof body.payments.by_rail.usdc.fee_amount, 'string');
   assert.ok('proven_pct' in body.proofs);
   assert.ok('last_24h' in body.activity);
+  assert.ok(body.north_star);
+  assert.equal(typeof body.north_star.paid_tasks_7d, 'number');
+  assert.equal(typeof body.north_star.usdc_fees_7d, 'string');
   assert.ok(!JSON.stringify(body).includes('sender'));
 });
 

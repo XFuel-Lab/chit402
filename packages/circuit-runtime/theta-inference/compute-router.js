@@ -31,6 +31,8 @@ export const PROVIDER_TAGS = Object.freeze({
   MCP: 'mcp',
   AKASH: 'akash',
   RENDER: 'render',
+  /** Confidential / TEE-class content path (Phala-class). Prefer when Private Spend needs prompt privacy. */
+  CONFIDENTIAL: 'confidential',
   OPENAI: 'openai-compatible',
   BEDROCK: 'bedrock',
   CLAUDE: 'claude',
@@ -107,6 +109,14 @@ export class ComputeRouter {
         available: !!(handler.useRenderFallback && handler.renderApiKey),
         execute: run('_callRender'),
         log: '[Router] Akash unavailable → trying Render Network DePIN...',
+      },
+      {
+        // Confidential / TEE-class (Phala-compatible OpenAI shape). Opt-in via
+        // CONFIDENTIAL_PROVIDER_BASE_URL + CONFIDENTIAL_PROVIDER_API_KEY.
+        tag: PROVIDER_TAGS.CONFIDENTIAL,
+        available: !!(handler.confidentialProviderBase && handler.confidentialProviderKey),
+        execute: run('_callConfidential'),
+        log: '[Router] Trying confidential / TEE-class provider...',
       },
       {
         // Provider-agnostic tier: any OpenAI-compatible endpoint (OpenAI, Groq,

@@ -6,9 +6,13 @@ Locked story for site, deck, README, and agents. Theta / EdgeCloud appears only 
 
 Route any model. Prove every dollar.
 
+Privacy add (when Private Spend v0 is live): Spend without briefing the frontier lab.
+
 ## Elevator
 
 AI agents are starting to spend money on their own. Today that means handing over API keys and hoping the invoice is honest. XFuel gives an agent a budget instead of keys: route each task to the best available provider, settle in USDC via x402 on Base, and return a verifiable receipt — signed by default, or an on-chain SP1 settlement proof on demand.
+
+Private Spend (product mode, see [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md)): buyer pays XFuel; providers see gateway traffic, not the end-customer’s spend topology. Do not claim prompt confidentiality unless a TEE/confidential route is used.
 
 ## Trust tiers
 
@@ -25,7 +29,11 @@ Do not claim Tier 2 proves a black-box LLM ran correctly.
 - Token (later) — Base (XF / veXF)
 - Compute — pluggable providers
 
+## Beachhead
+
+Crypto-native agent teams on Base (USDC / x402). See [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md).
+
 ## Guardrails
 
-Say: verifiable settlement over any provider; money and proofs on Base; signed free, proof on demand.  
-Do not say: Theta-centric / DePIN hub as identity; TFUEL as default rail; every task is ZK-proven by default; retired sale rounds are open.
+Say: verifiable settlement over any provider; money and proofs on Base; signed free, proof on demand; budgets instead of API keys.  
+Do not say: Theta-centric / DePIN hub as identity; TFUEL as default rail; every task is ZK-proven by default; retired sale rounds are open; ZK alone means prompts are private.

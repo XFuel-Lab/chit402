@@ -8,6 +8,13 @@ Entry point for agents and automation.
 
 XFuel settles AI compute in USDC on Base (x402), routes to pluggable providers, and returns tiered receipts (signed → SP1 on Base → Verified Inference build).
 
+Beachhead: crypto-native agent teams — [docs/BEACHHEAD_ICP.md](docs/BEACHHEAD_ICP.md).  
+Mainnet USDC go-live: [docs/MAINNET_X402_CHECKLIST.md](docs/MAINNET_X402_CHECKLIST.md).  
+Privacy thesis (Private Spend): [docs/PRIVATE_SPEND_THESIS.md](docs/PRIVATE_SPEND_THESIS.md).  
+**Your open actions:** [docs/FOUNDER_ACTIONS.md](docs/FOUNDER_ACTIONS.md).  
+Design partners: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).  
+Seed scaffold: [docs/SEED_READINESS.md](docs/SEED_READINESS.md).
+
 ## Try the demo
 
 ```
@@ -71,6 +78,18 @@ GIT_COMMIT_CONFIRMED=YES git commit -F <msg-file>
 PowerShell: `$env:GIT_COMMIT_CONFIRMED='YES'; git commit -F <msg-file>`
 
 Do not use `--no-verify`. Do not push directly to `main`.
+
+## Publish SDK (npm)
+
+CI does **not** publish. Ship manually with browser + security key (WebAuthn):
+
+```powershell
+cd packages/sdk
+npm publish --access public --auth-type=web
+```
+
+Complete the browser prompt, then check https://www.npmjs.com/package/xfuel-sdk  
+Details: [packages/sdk/PUBLISHING.md](packages/sdk/PUBLISHING.md).
 
 ## Security
 

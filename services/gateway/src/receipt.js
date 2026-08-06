@@ -269,6 +269,47 @@ function signReceiptPayload(receipt, secret) {
 }
 
 /**
+ * Private Spend privacy block on the public receipt.
+ * @returns {{ mode: string, trust: string, notes: string } | null}
+ */
+export function privacyOf(task) {
+  const mode = task?.meta?.privacyMode
+    || (task?.meta?.privateSpend ? 'vendor_blind' : null)
+    || (task?.meta?.provider === 'confidential' || task?.meta?.provider === 'phala'
+      ? 'content_tee'
+      : null);
+  if (!mode) return null;
+  const notes =
+    mode === 'vendor_blind'
+      ? 'Buyer paid XFuel; provider saw gateway-pooled credentials, not the end-customer identity. Does not encrypt prompts — use a confidential/TEE route for content privacy.'
+      : mode === 'content_tee'
+        ? 'Routed via a confidential/TEE-class provider tier (attested content path when configured). Settlement privacy is separate — see Private Spend.'
+        : 'Privacy mode recorded on task.';
+  return {
+    mode,
+    trust: mode === 'content_tee' ? 'tee_provider' : 'gateway',
+    notes,
+  };
+}
+
+/** Multi-hop / A2A receipt lineage (Sprint 3). */
+export function lineageOf(task) {
+  const parent = task?.meta?.parentTaskId || task?.intent?.parentTaskId || null;
+  const a2a = task?.meta?.a2aMessageId || task?.intent?.a2aMessageId || null;
+  const correlation = task?.meta?.correlationId || task?.intent?.correlationId || null;
+  if (!parent && !a2a && !correlation) return null;
+  const chain = [];
+  if (parent) chain.push(parent);
+  if (task?.taskId) chain.push(task.taskId);
+  return {
+    parent_task_id: parent,
+    a2a_message_id: a2a,
+    correlation_id: correlation,
+    receipt_chain: chain.length > 1 ? chain : (parent ? [parent, task.taskId] : null),
+  };
+}
+
+/**
  * Build the public receipt JSON for a task.
  * @param {object} task     Listener task (from aiListener.activeTasks).
  * @param {object} [opts]   { baseUrl, signingSecret } — signingSecret enables the Tier-1
@@ -322,6 +363,10 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
     },
     verified_inference: vi,
     binding: verifyBinding(task),
+    // Private Spend v0 — vendor-blind mode (gateway-trusted). Never claim prompt privacy here.
+    privacy: privacyOf(task),
+    // Multi-hop / A2A lineage (additive; null when single-hop)
+    lineage: lineageOf(task),
     output: output ? { hash: output.value, kind: output.kind } : null,
     links: base
       ? {
@@ -401,6 +446,28 @@ export function renderReceiptHtml(receipt) {
         <h2>Payment binding</h2>
         <p class="muted">No x402 payment binding on this task (TFUEL-rail or binding disabled).</p>
       </section>`;
+
+  const privacy = receipt.privacy;
+  const privacyBlock = privacy
+    ? `<section class="card">
+        <h2>Privacy <span class="scope">${esc(privacy.mode)}</span></h2>
+        ${row('Mode', esc(privacy.mode))}
+        ${row('Trust', esc(privacy.trust || 'gateway'))}
+        <p class="scopebox">${esc(privacy.notes || '')}</p>
+        <p class="muted" style="margin:8px 0 0;font-size:12px">Machine-readable: <a href="?format=json">?format=json</a></p>
+      </section>`
+    : '';
+
+  const lin = receipt.lineage;
+  const lineageBlock = lin
+    ? `<section class="card">
+        <h2>Lineage <span class="scope">multi-hop / A2A</span></h2>
+        ${row('Parent task', lin.parent_task_id ? `<code>${esc(shortHash(lin.parent_task_id, 12, 8))}</code>` : '<span class="muted">—</span>')}
+        ${row('A2A message', lin.a2a_message_id ? `<code>${esc(shortHash(lin.a2a_message_id, 12, 8))}</code>` : '<span class="muted">—</span>')}
+        ${row('Correlation', lin.correlation_id ? `<code>${esc(lin.correlation_id)}</code>` : '<span class="muted">—</span>')}
+        ${row('Chain', lin.receipt_chain ? `<code>${esc(lin.receipt_chain.join(' → '))}</code>` : '<span class="muted">—</span>')}
+      </section>`
+    : '';
 
   const outputRow = receipt.output
     ? row(receipt.output.kind === 'committed' ? 'Output commitment' : 'Output hash (SHA-256)', `<code>${esc(shortHash(receipt.output.hash, 12, 10))}</code>`)
@@ -495,6 +562,8 @@ export function renderReceiptHtml(receipt) {
     </section>
 
     ${bindingBlock}
+    ${privacyBlock}
+    ${lineageBlock}
 
     <footer>
       Machine-readable: <a href="${esc(receipt.links.json)}">JSON</a> ·
@@ -538,4 +607,164 @@ export function renderReceiptNotFound(taskId) {
 </html>`;
 }
 
-export default { buildReceipt, renderReceiptHtml, renderReceiptNotFound, explorerUrlForRef, buildVerifyUrl, baseUrlFromReq };
+/**
+ * Selective disclosure for auditors (Sprint 4).
+ * Policy + totals + binding + privacy/lineage — never prompts, raw outputs, or proof bytes.
+ *
+ * @param {object} receipt  full public receipt from buildReceipt
+ * @param {{ policy?: object }} [opts]
+ */
+export function buildAuditorExport(receipt, { policy = null } = {}) {
+  if (!receipt || !receipt.task_id) {
+    throw new Error('buildAuditorExport: receipt with task_id required');
+  }
+  const defaultPolicy = {
+    max_fee_bps: 100,
+    allowed_rails: ['usdc', 'tfuel', 'unmetered'],
+    private_spend_ok: true,
+    notes: 'Default XFuel audit policy — override via AUDITOR_POLICY_JSON on gateway',
+  };
+  const pol = policy || defaultPolicy;
+  const feeBps = Number(receipt.payment?.fee_bps ?? 0);
+  const rail = (receipt.payment?.rail || '').toLowerCase();
+  const checks = {
+    fee_bps_within_cap: feeBps <= Number(pol.max_fee_bps ?? 100),
+    rail_allowed: Array.isArray(pol.allowed_rails)
+      ? pol.allowed_rails.map((r) => String(r).toLowerCase()).includes(rail)
+      : true,
+    binding_ok: receipt.binding == null ? null : !!receipt.binding.matches,
+    privacy_vendor_blind: receipt.privacy?.mode === 'vendor_blind',
+  };
+  const in_policy = Object.values(checks).every((v) => v === true || v === null);
+
+  return {
+    schema: 'xfuel.auditor_export.v1',
+    generated_at: new Date().toISOString(),
+    task_id: receipt.task_id,
+    status: receipt.status,
+    proof_outcome: receipt.proof_outcome,
+    verify_url: receipt.verify_url,
+    policy: pol,
+    checks,
+    in_policy,
+    totals: {
+      rail: receipt.payment?.rail || null,
+      gross_amount: receipt.payment?.gross_amount || null,
+      fee_amount: receipt.payment?.fee_amount || null,
+      net_amount: receipt.payment?.net_amount || null,
+      fee_bps: receipt.payment?.fee_bps ?? null,
+      payment_ref: receipt.payment?.ref || null,
+      explorer_url: receipt.payment?.explorer_url || null,
+    },
+    route_summary: {
+      message_type: receipt.route?.message_type || null,
+      model: receipt.route?.model || null,
+      provider: receipt.route?.provider || null,
+      chain_id: receipt.route?.chain_id || null,
+      // model commitment hash only — no weights / prompts
+      model_commitment: receipt.route?.model_commitment?.commitment || null,
+    },
+    proof_summary: {
+      tier: receipt.proof?.tier || null,
+      has_proof: !!receipt.proof?.has_proof,
+      nullifier: receipt.proof?.nullifier || null,
+      attests: receipt.proof?.attests || null,
+    },
+    binding: receipt.binding
+      ? {
+          matches: receipt.binding.matches,
+          in_proof: receipt.binding.in_proof,
+          expected_commitment: receipt.binding.expected_commitment,
+          recomputed_commitment: receipt.binding.recomputed_commitment,
+        }
+      : null,
+    privacy: receipt.privacy || null,
+    lineage: receipt.lineage || null,
+    output_hash: receipt.output?.hash || null,
+    redacted: [
+      'prompts',
+      'messages',
+      'raw_model_output',
+      'proof_bytes',
+      'api_keys',
+      'provider_credentials',
+    ],
+    links: {
+      full_json: receipt.links?.json || null,
+      self: receipt.links?.self || null,
+    },
+  };
+}
+
+/** Minimal HTML for auditor export (no prompt/content surfaces). */
+export function renderAuditorHtml(exportDoc) {
+  const e = exportDoc;
+  const ok = e.in_policy;
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>XFuel auditor export · ${esc(shortHash(e.task_id, 12, 6))}</title>
+<meta name="robots" content="noindex" />
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0b0e14; color: #e6e9ef; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 32px 20px 64px; }
+  .brand { font-weight: 700; } .brand span { color: #6ea8fe; }
+  .card { background: #131824; border: 1px solid #222a3a; border-radius: 12px; padding: 18px 20px; margin: 14px 0; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: #8b95a7; margin: 0 0 12px; }
+  .row { display: flex; justify-content: space-between; gap: 16px; padding: 6px 0; border-top: 1px solid #1b2231; }
+  .row:first-of-type { border-top: 0; }
+  .k { color: #8b95a7; } .v { text-align: right; word-break: break-word; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; background: #0e1420; padding: 2px 6px; border-radius: 6px; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .ok { background: #10331f; color: #6ee7a8; } .bad { background: #331414; color: #f08c8c; }
+  .muted { color: #6b7488; font-size: 13px; }
+  a { color: #6ea8fe; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">XFuel<span>·</span>auditor export</div>
+    <p class="muted">Selective disclosure — policy + totals only. No prompts or raw outputs.</p>
+    <p><span class="badge ${ok ? 'ok' : 'bad'}">${ok ? 'in policy' : 'policy check failed'}</span></p>
+    <section class="card">
+      <h2>Task</h2>
+      ${row('Task id', `<code>${esc(e.task_id)}</code>`)}
+      ${row('Status', esc(e.status))}
+      ${row('Proof outcome', esc(e.proof_outcome))}
+    </section>
+    <section class="card">
+      <h2>Totals</h2>
+      ${row('Rail', esc(e.totals?.rail))}
+      ${row('Gross', esc(e.totals?.gross_amount))}
+      ${row('Fee', `${esc(e.totals?.fee_amount)} (${esc(e.totals?.fee_bps)} bps)`)}
+      ${row('Net', esc(e.totals?.net_amount))}
+      ${row('Payment ref', e.totals?.payment_ref ? `<code>${esc(shortHash(e.totals.payment_ref, 16, 8))}</code>` : '—')}
+    </section>
+    <section class="card">
+      <h2>Checks</h2>
+      ${row('Fee within cap', String(e.checks?.fee_bps_within_cap))}
+      ${row('Rail allowed', String(e.checks?.rail_allowed))}
+      ${row('Binding ok', String(e.checks?.binding_ok))}
+      ${row('Vendor-blind', String(e.checks?.privacy_vendor_blind))}
+    </section>
+    <p class="muted">Redacted: ${(e.redacted || []).join(', ')}. Full machine JSON: <a href="?format=auditor">?format=auditor</a> · full receipt <a href="?format=json">?format=json</a></p>
+  </div>
+</body>
+</html>`;
+}
+
+export default {
+  buildReceipt,
+  buildAuditorExport,
+  renderReceiptHtml,
+  renderAuditorHtml,
+  renderReceiptNotFound,
+  explorerUrlForRef,
+  buildVerifyUrl,
+  baseUrlFromReq,
+  privacyOf,
+  lineageOf,
+};
