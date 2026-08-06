@@ -43,17 +43,17 @@ What it prints (film this):
 4. SP1 proof → nullifier (polls briefly)
 5. **Hero line:** one public `verify_url`
 
-Open that URL in the browser → Tier-1 receipt; proof tier becomes `settlement` once the nullifier attaches. Then cut to Basescan verifier. Say the honesty line: *Proofs live on Base mainnet. Payments currently on Base Sepolia.*
+Open that URL in the browser → Tier-1 receipt; proof tier becomes `settlement` once the nullifier attaches. Then cut to Basescan verifier. Say the honesty line: *Money + proofs on Base mainnet (USDC via x402). Hostname is still api-testnet.*
 
 ### Live USDC vs dry run
 
 | Mode | Setup | On camera |
 |------|--------|-----------|
 | **Dry run** | No payer key in env | Mock payer — still shows full receipt + proof flow; no real USDC moved |
-| **Live payment** | Fund Base Sepolia ETH + USDC; set key (see below) | Real x402 settle; receipt gets `payment.explorer_url` on Sepolia Basescan |
+| **Live payment** | Fund Base mainnet ETH + USDC; set key (see below) | Real x402 settle; receipt gets `payment.explorer_url` on Basescan |
 
 ```powershell
-# Optional live payer (Base Sepolia). Prefer repo-root .env.local DEPLOYER_* —
+# Optional live payer (Base mainnet). Prefer repo-root .env.local DEPLOYER_* —
 # flagship loads that automatically. Or:
 $env:XFUEL_PAYER_PK = "0xYOUR_64_HEX_KEY"
 # optional overrides:

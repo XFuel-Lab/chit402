@@ -16,7 +16,7 @@ Companion docs: [DEMO_SHOT_LIST.md](./DEMO_SHOT_LIST.md) · [DEMO_COMMANDS.md](.
 - [ ] Mic check; speak at conversational pace (~140–150 wpm)
 - [ ] Screen record 1080p / 30fps; leave 2–3s of silence at head and tail for edits
 - [ ] Do **not** demo `zkgpt` mock or ZAN mock facilitator as live proofs
-- [ ] Honesty line ready: *Proofs live on Base mainnet. Payments currently on Base Sepolia.*
+- [ ] Honesty line ready: *Money + proofs on Base mainnet (USDC via x402). Hostname is still api-testnet.*
 
 ---
 
@@ -43,7 +43,7 @@ In this demo:
 • ZKVerifierSP1 on Base mainnet: 0x9373499645292715a2275A78eD65B14215C41c06
 
 Honest status (as of recording):
-Proofs live on Base mainnet. Payments currently on Base Sepolia.
+Proofs and payments live on Base mainnet (USDC via x402 / CDP).
 Tier-2 attests settlement metadata + output commitment — not black-box model correctness.
 
 Try it: https://api-testnet.xfuel.app
@@ -66,7 +66,7 @@ Design partners: DM or email hello@xfuel.app
 | **0:08–0:22** | Terminal: run `npx tsx examples/flagship-demo.ts`. Highlight quote → pay+submit → `task_id`. | One call — pay, route, settle. Same budget model your agents need. No API-key handoff. |
 | **0:22–0:38** | Browser: open printed `verify_url`. Circle Tier-1: route, model, amounts, signature / signed tier. | Here's the Tier-1 signed receipt — route, model, cost, and output hash. Default. Free. Shareable. No login. |
 | **0:38–0:55** | Same terminal as proof/nullifier lines appear, or refresh receipt for tier `settlement`. | When it matters, we attach a Tier-2 SP1 settlement proof — fees, payment binding, output commitment, single-use nullifier. This proves settlement, not that a black-box model ran correctly. |
-| **0:55–1:10** | Basescan: `https://basescan.org/address/0x9373499645292715a2275A78eD65B14215C41c06` — Contract / Read Contract. Optional cut: Sepolia payment `explorer_url` from receipt. | The verifier lives on Base mainnet — ZKVerifierSP1. Proofs settle here. Payments today run on Base Sepolia via x402 USDC — mainnet facilitator not wired yet. |
+| **0:55–1:10** | Basescan: `https://basescan.org/address/0x9373499645292715a2275A78eD65B14215C41c06` — Contract / Read Contract. Optional cut: payment `explorer_url` from receipt (Base mainnet). | The verifier lives on Base mainnet — ZKVerifierSP1. Payments settle in USDC via x402 (CDP facilitator) on Base. |
 | **1:10–1:20** | Split: receipt + Basescan, or docs CTA card. | Route any model. Prove every dollar. Try the demo at api-testnet.xfuel.app — docs on xfuel.app. Design partners: DM us. |
 
 **Hard cut length:** drop the 0:00–0:08 opening metaphor if you need ≤60s; start on the curl and keep the honesty + CTA.
@@ -83,7 +83,7 @@ Design partners: DM or email hello@xfuel.app
 >
 > When it matters, we attach a Tier-2 SP1 settlement proof — fees, payment binding, output commitment, single-use nullifier. This proves settlement, not that a black-box model ran correctly.
 >
-> The verifier lives on Base mainnet — ZKVerifierSP1. Proofs settle here. Payments today run on Base Sepolia via x402 USDC — mainnet facilitator not wired yet.
+> The verifier lives on Base mainnet — ZKVerifierSP1. Proofs settle here. Payments settle in USDC via x402 on Base (CDP facilitator).
 >
 > Route any model. Prove every dollar. Try the demo at api-testnet.xfuel.app — docs on xfuel.app. Design partners: DM us.
 
@@ -104,7 +104,7 @@ Tier-2 proving can eat a minute — lean into that; don’t pretend the receipt 
 | **0:22–0:45** | Run `flagship-demo` · quote / pay / submit | One flagship call. Quote in USDC, pay over x402, route, settle. Same budget model your agents need — no API-key handoff. |
 | **0:45–1:28** | Terminal waiting / proving | Settlement’s done — now we’re waiting on the Tier-2 SP1 proof. That can take a bit. Worth it: fees, payment binding, output commitment, single-use nullifier. Proves settlement — not that a black-box model ran correctly. |
 | **1:30–1:50** | Open receipt (~1:36) | Here’s the shareable receipt. Tier-1 signed fields — route, model, cost, output hash — plus the Tier-2 proof once it lands. No login. Anyone can open this link. |
-| **1:50–2:05** | Scroll receipt / payment | Payments today are USDC via x402 on Base Sepolia. Proofs live on Base mainnet. |
+| **1:50–2:05** | Scroll receipt / payment | Payments are USDC via x402 on Base mainnet. Proofs live on Base mainnet. |
 | **2:05–2:20** | Basescan (verifier / output commitment) | ZKVerifierSP1 on Base mainnet — this is where settlement proofs anchor. Output commitment, nullifier, on-chain verify home. |
 | **2:20–end** | CTA / end card | Route any model. Prove every dollar. Try flagship-demo from packages/sdk — or start at xfuel.app. Design partners: DM us. |
 
@@ -118,7 +118,7 @@ Tier-2 proving can eat a minute — lean into that; don’t pretend the receipt 
 >
 > *(1:36)* Here’s the shareable receipt. Tier-1 signed fields — route, model, cost, output hash — plus the Tier-2 proof once it lands. No login. Anyone can open this link.
 >
-> *(1:50)* Payments today are USDC via x402 on Base Sepolia. Proofs live on Base mainnet.
+> *(1:50)* Payments are USDC via x402 on Base mainnet. Proofs live on Base mainnet.
 >
 > *(2:05)* ZKVerifierSP1 on Base mainnet — this is where settlement proofs anchor. Output commitment, nullifier, on-chain verify home.
 >
@@ -165,7 +165,7 @@ Optional soft music: use `scripts/demo-ffmpeg.sh` from Git Bash with `--music be
 | 0:22 | `Tier 1 — Signed receipt` |
 | 0:38 | `Tier 2 — SP1 settlement proof` |
 | 0:55 | `ZKVerifierSP1 · Base mainnet` |
-| 1:05 | `Payments: Base Sepolia (x402 USDC)` |
+| 1:05 | `Payments: Base mainnet (x402 USDC)` |
 | 1:12 | `Try: api-testnet.xfuel.app` |
 
 ---
