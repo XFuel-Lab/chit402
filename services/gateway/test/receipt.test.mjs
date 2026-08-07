@@ -40,6 +40,7 @@ function usdcTask(over = {}) {
     feeBps: 50,
     result: 'ZK proofs let you verify a computation without redoing it.',
     meta: { chain: 'base', provider: 'theta-edgecloud' },
+    result: { provider: 'theta-edgecloud', outputHash: '0xabc' },
     sp1Proof: {
       proof: '0xproofbytes',
       nullifier: '0x' + 'cd'.repeat(32),
@@ -129,6 +130,15 @@ test('buildReceipt: TFUEL task has no binding and no explorer link', () => {
   assert.equal(r.payment.rail, 'tfuel');
   assert.equal(r.payment.explorer_url, null);
   assert.equal(r.binding, null);
+});
+
+test('buildReceipt: mock compute wins over float provider label', () => {
+  const task = usdcTask({
+    meta: { chain: 'base', provider: 'theta-edgecloud', providerCogs: { provider: 'theta-edgecloud' } },
+    result: { mock: true, provider: 'theta-edge-mock', outputHash: '0xabc' },
+  });
+  const r = buildReceipt(task);
+  assert.equal(r.route.provider, 'theta-edge-mock');
 });
 
 test('buildReceipt: pending task (no proof yet)', () => {

@@ -360,7 +360,13 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
       message_type: task.intent?.type || null,
       model: task.intent?.model || task.intent?.modelId || null,
       model_commitment: modelCommitment,
-      provider: task.meta?.provider || task.routedTo || providerCogs?.provider || null,
+      // Prefer actual compute source over float-book label (float can say
+      // theta-edgecloud while result is still mock / another tier).
+      provider: (() => {
+        const fromResult = task.result?.provider || task.result?.routedTo || task.routedTo || null;
+        if (task.result?.mock) return fromResult || 'mock';
+        return fromResult || task.meta?.provider || providerCogs?.provider || null;
+      })(),
       chain_id: task.meta?.chain || task.intent?.chainId || null,
     },
     payment: {

@@ -145,8 +145,14 @@ async function main() {
   console.log(`  ${b('①')} Quote     ${grn('✓')} recommended=${quote.recommended} · ${usdc.amount} ${usdc.asset} on ${usdc.network}`);
 
   // ② Pay & submit — the payer runs the 402 → pay → retry handshake automatically.
+  // Raw `input` is required for live DePIN (EdgeCloud). Hash-only submits settle
+  // + prove on a mock output and will NOT show usage on Theta.
+  const prompt =
+    process.env.XFUEL_PROMPT ||
+    'In one short sentence: what is a payment-bound ZK receipt?';
   const task = await client.submitInference(XFUEL_MODEL, XFUEL_SENDER, XFUEL_AMOUNT, {
     chain_id: ChainId.BASE,
+    input: prompt,
     // Use the network the gateway quoted (base / base-sepolia), not a hardcode.
     payment: { rail: 'usdc', network: usdc.network, maxAmount: usdc.amount },
     payer,
@@ -157,7 +163,11 @@ async function main() {
 
   // ③ Settle — poll until terminal.
   const settled = await client.waitForCompletion(task.task_id);
-  console.log(`  ${b('③')} Settle    ${grn('✓')} status=${settled.status} · proof=${settled.proof_outcome}`);
+  const routed = settled.result as { mock?: boolean; provider?: string } | undefined;
+  const computeNote = routed?.mock
+    ? `compute=MOCK (${routed.provider || 'mock'}) — no EdgeCloud usage`
+    : `compute=${routed?.provider || 'unknown'}`;
+  console.log(`  ${b('③')} Settle    ${grn('✓')} status=${settled.status} · proof=${settled.proof_outcome} · ${computeNote}`);
 
   // ④ Proof — fetch the SP1 settlement proof (+ payment binding). Proving can lag
   //    settlement (the prover batches), so poll briefly for the proof to attach.

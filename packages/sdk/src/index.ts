@@ -82,6 +82,14 @@ export interface TaskRequestParams {
   sender: string;
   fee_bps?: number;
   model_id?: string;
+  /**
+   * Raw prompt for live DePIN routing (M2M full router). Without this (or
+   * `messages`), the gateway can only settle on an input_hash / mock path —
+   * EdgeCloud will not be called.
+   */
+  input?: string;
+  /** Chat-shaped input alternative to `input` for full-router inference. */
+  messages?: Array<{ role: string; content: string }>;
   input_hash?: string;
   output_hash?: string;
   theta_recipient?: string;
@@ -576,6 +584,9 @@ export class XFuelClient {
     amount: string,
     opts: {
       chain_id?: ChainId;
+      /** Raw prompt — required for live EdgeCloud / DePIN routing. */
+      input?: string;
+      messages?: Array<{ role: string; content: string }>;
       input_hash?: string;
       fee_bps?: number;
       theta_recipient?: string;
