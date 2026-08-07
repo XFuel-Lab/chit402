@@ -131,6 +131,7 @@ async function callFacilitator(path, { gateway, apiKey, body, timeoutMs }) {
   // X402_FACILITATOR_API_KEY for non-CDP facilitators.
   const bearer = await resolveFacilitatorBearer({ apiKey, method: 'POST', url });
   if (bearer) headers.Authorization = `Bearer ${bearer}`;
+  const t0 = Date.now();
   const res = await fetch(url, {
     method: 'POST',
     headers,
@@ -140,7 +141,7 @@ async function callFacilitator(path, { gateway, apiKey, body, timeoutMs }) {
   const text = await res.text();
   let data = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw: text }; }
-  return { ok: res.ok, status: res.status, data };
+  return { ok: res.ok, status: res.status, data, elapsedMs: Date.now() - t0 };
 }
 
 /** Resolve PaymentRequirements from the bound challenge, falling back to the decoded blob. */
@@ -169,7 +170,7 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
     return { valid: false, reason: 'payment_payload_invalid' };
   }
   try {
-    const { ok, status, data } = await callFacilitator('/verify', {
+    const { ok, status, data, elapsedMs } = await callFacilitator('/verify', {
       gateway, apiKey, timeoutMs: 15000,
       body: { x402Version: 1, paymentPayload, paymentRequirements },
     });
@@ -177,9 +178,14 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
       logger.warn(
         {
           status,
+          elapsedMs,
+          network: paymentRequirements.network,
+          payTo: paymentRequirements.payTo,
+          amount: paymentRequirements.maxAmountRequired,
+          correlationId: data.correlationId,
           invalidReason: data.invalidReason || data.errorReason || data.errorMessage || data.errorType,
           errKeys: Object.keys(data || {}),
-          rawSnippet: typeof data._raw === 'string' ? data._raw.slice(0, 240) : undefined,
+          rawSnippet: typeof data._raw === 'string' ? data._raw.slice(0, 240) : JSON.stringify(data).slice(0, 240),
         },
         'x402 facilitator verify HTTP error',
       );
@@ -220,11 +226,27 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
     return { settled: false, reason: 'payment_payload_invalid' };
   }
   try {
-    const { ok, status, data } = await callFacilitator('/settle', {
+    const { ok, status, data, elapsedMs } = await callFacilitator('/settle', {
       gateway, apiKey, timeoutMs: 30000,
       body: { x402Version: 1, paymentPayload, paymentRequirements },
     });
-    if (!ok) return { settled: false, reason: `facilitator_http_${status}` };
+    if (!ok) {
+      logger.warn(
+        {
+          status,
+          elapsedMs,
+          network: paymentRequirements.network,
+          payTo: paymentRequirements.payTo,
+          amount: paymentRequirements.maxAmountRequired,
+          correlationId: data.correlationId,
+          invalidReason: data.invalidReason || data.errorReason || data.errorMessage || data.errorType,
+          errKeys: Object.keys(data || {}),
+          rawSnippet: typeof data._raw === 'string' ? data._raw.slice(0, 240) : JSON.stringify(data).slice(0, 240),
+        },
+        'x402 facilitator settle HTTP error',
+      );
+      return { settled: false, reason: `facilitator_http_${status}` };
+    }
     const settled = !!data.success;
     return {
       settled,
