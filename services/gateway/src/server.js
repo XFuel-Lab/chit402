@@ -16,13 +16,14 @@ import { buildX402Manifest } from './x402-discovery.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
 import { apiKeyHashFromReq } from './buyer-attr.js';
+import { getFloatManager } from './provider-float.js';
 
 /**
  * XFuel M2M API Server — agent gateway for verifiable AI compute settlement.
  *
  * Endpoints:
  *   POST  /task-request    Submit an AI intent (COMPUTE_BID, INFERENCE_REQUEST, …)
- *   POST  /task-quote      Price a task per payment rail (USDC via x402 / TFUEL)
+ *   POST  /task-quote      Price a task (USDC via x402 default; legacy tfuel optional)
  *   GET   /prove-result    Retrieve ZK settlement proof for a completed task
  *   POST  /a2a-message     Send an A2A (Agent-to-Agent) message with optional escrow
  *   POST  /a2a-settle-fair-exchange  Settle an A2A bid via Fair Exchange (PAS signature)
@@ -34,6 +35,7 @@ import { apiKeyHashFromReq } from './buyer-attr.js';
  *   GET   /health          Health / metrics
  *
  * Settlement: USDC via x402 on Base → X402_PAY_TO / Splits v2 (token-light, ADR 0001).
+ * Provider COGS: prepaid floats (ADR 0005) — no hot-path FX.
  * Proofs: Tier-1 signed receipt (default); Tier-2 SP1 on Base (on demand).
  *
  * Auth: API key header (`X-API-Key`) or relayer ECDSA signature (`X-Signature`).
@@ -77,15 +79,16 @@ const VALID_CHAIN_IDS     = new Set(Object.values(CHAIN_IDS));
 
 const LLMS_TXT = `# XFuel Protocol
 
-> ZK settlement + orchestration layer for AI compute across decentralized GPU
-> networks (DePIN). Submit AI inference, route it to a provider, get a
-> verifiable-compute receipt, and settle on-chain. Agent-native: use the
-> OpenAI-compatible endpoint or the M2M API.
+> Crypto routing machine for AI compute: USDC budgets via x402 on Base, route
+> across DePIN and frontier providers (prepaid float COGS), return tiered proof
+> receipts. Agent-native OpenAI-compatible endpoint or M2M API. Money home = Base
+> (not TFUEL/AKT). See docs/STRATEGY.md.
 
 ## Start here (OpenAI-compatible — zero integration)
 
 - POST /v1/chat/completions : OpenAI chat completions (streaming + non-streaming).
-- GET  /v1/models           : list routable models.
+- GET  /v1/models           : live hub catalog (theta/qwen3, theta/glm_5_2, image/audio…).
+- POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - Auth: "Authorization: Bearer <key>" or "X-API-Key: <key>".
 - Point any OpenAI client's baseURL at this host + /v1. Every response carries a
   verifiable-compute receipt in x-xfuel-* headers and an "xfuel" body field.
@@ -95,12 +98,12 @@ const LLMS_TXT = `# XFuel Protocol
 ## M2M API (full protocol)
 
 - POST /task-request      : submit an AI task (inference/compute/attestation).
-- POST /task-quote        : price a task per rail (USDC via x402 / TFUEL).
+- POST /task-quote        : price a task (USDC via x402; provider float COGS status).
 - GET  /task-status       : task status + proof outcome.
 - GET  /prove-result      : ZK settlement proof + revenue split.
 - POST /a2a-message       : agent-to-agent message (optional escrow).
 - PUT/GET/DELETE /webhook : signed settlement webhooks.
-- GET  /health            : status, fee config, demo limits.
+- GET  /health            : status, fee config, provider floats (ADR 0005), demo limits.
 - GET  /stats             : aggregate, public-safe network usage (JSON + dashboard).
 
 ## Discovery (x402 Bazaar)
@@ -563,9 +566,9 @@ export function createApp() {
         return res.status(400).json({ error: 'validation_error', details: errors });
       }
 
-      // ── Payment rail (USDC via x402 default; TFUEL legacy fallback) ─────
-      // With config.x402.enabled=false, USDC handshake is skipped; legacy TFUEL
-      // path remains available when explicitly requested or fallbackToTfuel.
+      // ── Payment rail (USDC via x402 default; legacy tfuel only if opted in) ─
+      // Buyer settlement is USDC on Base (ADR 0002). TFUEL is not a buyer rail
+      // for go-forward GTM — only when X402_FALLBACK_TFUEL or explicit rail.
       let paymentRail = config.x402?.defaultRail || 'usdc';
       let paymentRef = null;
       {
@@ -580,20 +583,71 @@ export function createApp() {
             paymentRail = 'usdc';
             paymentRef = decision.paymentRef;
           } else {
-            // verify/settle failed. Misconfig → 503; otherwise fall back to TFUEL
-            // (if allowed) or re-challenge with the reason.
             if (decision.reason === 'gateway_not_configured') {
               return res.status(503).json({ error: 'x402_unavailable', reason: decision.reason });
             }
             if (config.x402.fallbackToTfuel) {
-              logger.warn({ reqId: req.id, reason: decision.reason }, 'x402 failed — falling back to TFUEL');
+              logger.warn({ reqId: req.id, reason: decision.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
               paymentRail = 'tfuel';
             } else {
               return res.status(402).json({ error: 'payment_required', reason: decision.reason });
             }
           }
+        } else if (rail === 'tfuel') {
+          paymentRail = 'tfuel';
         }
-        // rail === 'usdc' with the flag OFF → silently use the TFUEL path.
+      }
+
+      // ── Provider float COGS gate (ADR 0005) ─────────────────────────────
+      const floatMgr = getFloatManager({
+        floatsJson: config.providerFloats?.json,
+        cogsBps: config.providerFloats?.cogsBps,
+        defaultProvider: config.providerFloats?.defaultProvider,
+        enforce: config.providerFloats?.enforce,
+      }); // first call seeds singleton from config; burns persist in-process
+      const preferredProvider = req.body?.preferred_provider
+        || req.body?.provider
+        || config.providerFloats?.defaultProvider
+        || null;
+      const usdcQuote = paymentRail === 'usdc'
+        ? (priceUSDC(req.body) || amount || config.x402?.usdcPriceDefault || '10000')
+        : (amount || '0');
+      const floatPick = floatMgr.selectForQuote(usdcQuote, preferredProvider);
+      if (!floatPick.ok) {
+        return res.status(503).json({
+          error: 'provider_float_exhausted',
+          reason: floatPick.reason,
+          estimated_cogs: floatPick.estimated?.toString?.() || String(floatPick.estimated),
+          note: 'Prepaid provider float cannot cover COGS. Refill from treasury (docs/PROVIDER_FLOAT_TREASURY.md).',
+        });
+      }
+      let providerCogsMeta = null;
+      if (floatPick.float && floatPick.estimated > 0n && !floatPick.unconstrained) {
+        try {
+          const burnResult = floatMgr.burn(floatPick.float.id, floatPick.estimated);
+          providerCogsMeta = floatMgr.buildCogsRecord({
+            provider: floatPick.float.id,
+            float: floatPick.float,
+            estimated: floatPick.estimated,
+            actual: burnResult?.burned || floatPick.estimated,
+            burnResult,
+          });
+        } catch (burnErr) {
+          logger.error({ err: burnErr, reqId: req.id }, 'Provider float burn failed');
+          return res.status(503).json({
+            error: 'provider_float_exhausted',
+            reason: burnErr.message,
+          });
+        }
+      } else if (floatPick.estimated > 0n) {
+        // Unconstrained / soft: still record estimated COGS for receipts when a provider id is known.
+        providerCogsMeta = floatMgr.buildCogsRecord({
+          provider: preferredProvider || config.providerFloats?.defaultProvider || null,
+          float: floatPick.float,
+          estimated: floatPick.estimated,
+          actual: floatPick.estimated,
+          burnResult: null,
+        });
       }
 
       // ── Fee calculation ───────────────────────────────────────────────
@@ -625,8 +679,8 @@ export function createApp() {
         outputHash:     output_hash || null,
         proofSystem:    proof_system || 'sp1', // Phase 1: 'sp1' | 'zkgpt' for inference
         proofTier:      proof_tier || null,    // Phase 4: requested assurance tier (signed|settlement|inference|tee|zk-spotcheck|zk-full)
-        paymentRail,    // 'usdc' (x402) | 'tfuel' — resolved above; flows to listener task
-        paymentRef,     // x402 settlement ref (network:txRef) or null for TFUEL
+        paymentRail,    // 'usdc' (x402) | legacy 'tfuel'
+        paymentRef,     // x402 settlement ref (network:txRef) or null
         // Cost control: whether this request's API key may trigger a Tier-1 ZK
         // proof. When false, the task still settles + returns a signed receipt,
         // but the expensive SP1 proof is skipped (see prove-gate.js).
@@ -638,6 +692,9 @@ export function createApp() {
         txHash:  `api-${req.id}`,
         height:  0,
         source:  'server.js',
+        // Preferred / float-selected provider tier (ADR 0005)
+        provider: providerCogsMeta?.provider || preferredProvider || null,
+        providerCogs: providerCogsMeta,
         // Buyer attribution (hash only) for Private Spend /stats/me
         apiKeyHash: apiKeyHashFromReq(req),
         privateSpend: !!config.privateSpend?.enabled,
@@ -729,16 +786,26 @@ export function createApp() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  // POST /task-quote — Price a task per rail (USDC via x402 default; TFUEL)
+  // POST /task-quote — Price a task (USDC via x402). Includes float COGS status.
   // ═══════════════════════════════════════════════════════════════════════
 
   app.post('/task-quote', async (req, res) => {
     try {
-      const { amount } = req.body || {};
+      const { amount, preferred_provider, provider } = req.body || {};
       const usdcAmount = priceUSDC(req.body);
+      const floatMgr = getFloatManager({
+        floatsJson: config.providerFloats?.json,
+        cogsBps: config.providerFloats?.cogsBps,
+        defaultProvider: config.providerFloats?.defaultProvider,
+        enforce: config.providerFloats?.enforce,
+      });
+      const pref = preferred_provider || provider || floatMgr.defaultProvider || null;
+      const floatPick = floatMgr.selectForQuote(usdcAmount, pref);
       return res.json({
         recommended: 'usdc',
-        default_rail: config.x402.defaultRail,
+        default_rail: config.x402.defaultRail || 'usdc',
+        settlement_home: 'base',
+        strategy: 'crypto-routing-machine',
         rails: {
           usdc: {
             rail: 'usdc',
@@ -748,14 +815,26 @@ export function createApp() {
             decimals: 6,
             amount: usdcAmount,
             pay_to: config.x402.payTo,
-            note: 'Pay via x402: submit /task-request with payment.rail="usdc"; a 402 challenge is returned to pay against (agent-side payer).',
+            note: 'Buyer settlement: x402 USDC on Base. Submit /task-request with payment.rail="usdc".',
           },
+          // Legacy buyer rail — not go-forward GTM. Prefer USDC; provider TFUEL is ops float only.
           tfuel: {
             rail: 'tfuel',
+            legacy: true,
+            deprecated: true,
             amount: amount || null,
-            note: 'Theta-native settlement; pass task value as `amount` (wei) with payment.rail="tfuel".',
+            note: 'Legacy optional buyer rail only. Do not use for new integrations — provider TFUEL is prepaid float COGS, not settlement home (ADR 0002 / 0005).',
           },
         },
+        provider_cogs: {
+          estimated: floatPick.estimated?.toString?.() || String(floatPick.estimated),
+          cogs_bps: floatMgr.cogsBps,
+          float_ok: !!floatPick.ok,
+          selected_provider: floatPick.float?.id || pref || null,
+          soft: !!floatPick.soft,
+          unconstrained: !!floatPick.unconstrained,
+        },
+        provider_floats: floatMgr.publicSummary(),
       });
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /task-quote error');
@@ -1435,6 +1514,13 @@ export function createApp() {
           a2a_relay_bps:  10,
           revenue_split:  describeSplit(resolveSplit()),
         },
+        // ADR 0005 fingerprint — prepaid float COGS (buyer rail remains USDC).
+        provider_floats: getFloatManager({
+          floatsJson: config.providerFloats?.json,
+          cogsBps: config.providerFloats?.cogsBps,
+          defaultProvider: config.providerFloats?.defaultProvider,
+          enforce: config.providerFloats?.enforce,
+        }).publicSummary(), // ADR 0005 fingerprint
         chains: Object.values(CHAIN_IDS),
         message_types: Object.values(MESSAGE_TYPES),
         demo: DEMO_MODE

@@ -262,7 +262,7 @@ describe('Track 2.3 — DePIN Priority Router', function () {
         const handler = makeHandler();
         handler._keyResolved = true;
         const intent = {
-          args: { intentId: 'test-no-keys-0x0000', serviceType: 0, model: 'llama-3.1-8b', gpuTier: 1 },
+          args: { intentId: 'test-no-keys-0x0000', serviceType: 0, model: 'qwen3', gpuTier: 1 },
         };
         const ctx = { chain: 'theta_testnet', generateProof: null };
         const outcome = await handler.onIntent(intent, ctx);
@@ -282,12 +282,13 @@ describe('Track 2.3 — DePIN Priority Router', function () {
       handler._keyResolved = true;
       globalThis.fetch = makeMockFetch(200, {
         choices: [{ message: { role: 'assistant', content: 'EdgeCloud response' } }],
-        model: 'llama-3.1-8b', usage: { total_tokens: 10 },
+        model: 'qwen3', usage: { total_tokens: 10 },
         _source: 'theta-edgecloud-ondemand',
       });
 
       const intent = {
-        args: { intentId: 'test-ec-0x0001', serviceType: 0, model: 'llama-3.1-8b', gpuTier: 2 },
+        // Live Theta alias — retired Llama names are refused (no silent remap).
+        args: { intentId: 'test-ec-0x0001', serviceType: 0, model: 'qwen3', gpuTier: 2 },
       };
       const outcome = await handler.onIntent(intent, { chain: 'theta_testnet', generateProof: null });
       expect(outcome.outcome).to.equal('fulfilled');
@@ -315,7 +316,7 @@ describe('Track 2.3 — DePIN Priority Router', function () {
         };
       };
 
-      const intent = { args: { intentId: 'test-akash-0x0002', serviceType: 0, model: 'llama-3.1-8b', gpuTier: 1 } };
+      const intent = { args: { intentId: 'test-akash-0x0002', serviceType: 0, model: 'qwen3', gpuTier: 1 } };
       const outcome = await handler.onIntent(intent, { chain: 'theta_testnet', generateProof: null });
       expect(outcome.outcome).to.equal('fulfilled');
       const entry = handler.activeIntents.get('test-akash-0x0002');
@@ -342,7 +343,7 @@ describe('Track 2.3 — DePIN Priority Router', function () {
         };
       };
 
-      const intent = { args: { intentId: 'test-render-0x0003', serviceType: 0, model: 'llama-3.1-8b', gpuTier: 1 } };
+      const intent = { args: { intentId: 'test-render-0x0003', serviceType: 0, model: 'qwen3', gpuTier: 1 } };
       const outcome = await handler.onIntent(intent, { chain: 'theta_testnet', generateProof: null });
       expect(outcome.outcome).to.equal('fulfilled');
       const entry = handler.activeIntents.get('test-render-0x0003');
@@ -373,7 +374,7 @@ describe('Track 2.3 — DePIN Priority Router', function () {
         };
       };
 
-      const intent = { args: { intentId: 'test-bedrock-0x0004', serviceType: 0, model: 'llama-3.1-8b', gpuTier: 1 } };
+      const intent = { args: { intentId: 'test-bedrock-0x0004', serviceType: 0, model: 'qwen3', gpuTier: 1 } };
       const outcome = await handler.onIntent(intent, { chain: 'theta_testnet', generateProof: null });
       expect(outcome.outcome).to.equal('fulfilled');
       const entry = handler.activeIntents.get('test-bedrock-0x0004');
@@ -427,7 +428,7 @@ describe('Track 2.3 — DePIN Priority Router', function () {
       };
 
       await handler.onIntent(
-        { args: { intentId: 'stats-test-0x0005', serviceType: 0, model: 'llama-3.1-8b', gpuTier: 0 } },
+        { args: { intentId: 'stats-test-0x0005', serviceType: 0, model: 'qwen3', gpuTier: 0 } },
         { chain: 'theta_testnet', generateProof: null }
       );
 

@@ -19,7 +19,7 @@
     "benchmark:compare": "node ../../scripts/compare-benchmarks.cjs bench/edgecloud-cuda.summary.json bench/powerzebra.summary.json --out bench/comparison.md",
     "benchmark:mock:cuda": "node scripts/mock-prover-server.js --port 8091 --prove-ms 520 --jitter 40",
     "benchmark:mock:zan": "node scripts/mock-prover-server.js --port 8092 --prove-ms 105 --jitter 12",
-    "test": "node --test test/webhooks.test.mjs test/x402-adapter.test.mjs test/x402-facilitator.test.mjs test/x402-server.test.mjs test/receipt.test.mjs test/x402-discovery.test.mjs test/task-store.test.mjs test/telemetry.test.mjs test/stats-route.test.mjs test/prover-config.test.mjs test/prover-zan-auth.test.mjs test/payment-binding.test.mjs test/openai-gateway.test.mjs test/demo-mode.test.mjs test/revenue-split.test.mjs test/erc8004.test.mjs test/tier-policy.test.mjs test/tee-attestation.test.mjs test/spotcheck.test.mjs test/cdp-jwt.test.mjs test/private-spend.test.mjs"
+    "test": "node --test test/webhooks.test.mjs test/x402-adapter.test.mjs test/x402-facilitator.test.mjs test/x402-server.test.mjs test/receipt.test.mjs test/provider-float.test.mjs test/hub-catalog.test.mjs test/x402-discovery.test.mjs test/task-store.test.mjs test/telemetry.test.mjs test/stats-route.test.mjs test/prover-config.test.mjs test/prover-zan-auth.test.mjs test/payment-binding.test.mjs test/openai-gateway.test.mjs test/demo-mode.test.mjs test/revenue-split.test.mjs test/erc8004.test.mjs test/tier-policy.test.mjs test/tee-attestation.test.mjs test/spotcheck.test.mjs test/cdp-jwt.test.mjs test/private-spend.test.mjs"
   },
   "keywords": [
     "xfuel",

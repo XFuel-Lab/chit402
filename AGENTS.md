@@ -2,13 +2,15 @@
 
 Entry point for agents and automation.
 
-1. [docs/RUNTIME_STATE.md](docs/RUNTIME_STATE.md) — as-deployed truth  
-2. [docs/POSITIONING.md](docs/POSITIONING.md) — messaging  
-3. [WHITEPAPER.md](WHITEPAPER.md) — design  
+1. [docs/STRATEGY.md](docs/STRATEGY.md) — company strategy (build-from source)  
+2. [docs/RUNTIME_STATE.md](docs/RUNTIME_STATE.md) — as-deployed truth  
+3. [docs/POSITIONING.md](docs/POSITIONING.md) — messaging  
+4. [WHITEPAPER.md](WHITEPAPER.md) — design  
 
-XFuel settles AI compute in USDC on Base (x402), routes to pluggable providers, and returns tiered receipts (signed → SP1 on Base → Verified Inference build).
+XFuel is the crypto control plane for AI compute: settle in USDC on Base (x402), route across pluggable providers (DePIN + frontier), return tiered proof receipts (signed → SP1 on Base → Verified Inference build).
 
 Beachhead: crypto-native agent teams — [docs/BEACHHEAD_ICP.md](docs/BEACHHEAD_ICP.md).  
+Provider COGS floats: [docs/PROVIDER_FLOAT_TREASURY.md](docs/PROVIDER_FLOAT_TREASURY.md) · [ADR 0005](docs/adr/0005-provider-float-cogs.md).  
 Mainnet USDC go-live: [docs/MAINNET_X402_CHECKLIST.md](docs/MAINNET_X402_CHECKLIST.md).  
 Privacy thesis (Private Spend): [docs/PRIVATE_SPEND_THESIS.md](docs/PRIVATE_SPEND_THESIS.md).  
 **Your open actions:** [docs/FOUNDER_ACTIONS.md](docs/FOUNDER_ACTIONS.md).  

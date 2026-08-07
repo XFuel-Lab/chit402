@@ -18,9 +18,29 @@ Build plan: [TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md](./TIER3_VERIFIABLE_INFERE
 | `verified_inference` | Tier-3 mechanism + result (when applicable) |
 | `privacy` | Private Spend / confidential mode when set |
 | `lineage` | Multi-hop: `parent_task_id`, `a2a_message_id`, `receipt_chain` |
+| `provider_cogs` | Prepaid float burn (ADR 0005) — not a buyer rail |
 | Optional HMAC `signature` | Gated by `RECEIPT_SIGNING_SECRET` |
 
 v1 fields keep their meaning. Missing Tier-3 fields are null/absent until produced.
+
+## Provider COGS (ADR 0005)
+
+Buyer `payment.rail` stays USDC / x402 (default). Provider inventory burn is separate:
+
+```json
+"provider_cogs": {
+  "provider": "theta-edgecloud",
+  "float_id": "theta-edgecloud",
+  "currency": "USDC",
+  "estimated": "7000",
+  "actual": "7000",
+  "usd_mark": "7000",
+  "below_low_water": false
+}
+```
+
+Amounts are integer strings in the float asset's smallest units (USDC = 6dp).  
+Impl: `services/gateway/src/provider-float.js` · ops: [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md).
 
 ## Privacy (Private Spend v0)
 

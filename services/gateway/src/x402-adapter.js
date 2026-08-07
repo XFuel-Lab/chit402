@@ -15,13 +15,13 @@ import {
  * can pay in USDC, then maps a verified+settled payment to an XFuel task /
  * A2A settlement.
  *
- * Payment-rail strategy: USDC via x402 is the DEFAULT rail; TFUEL/TDROP on Theta
- * is retained as a secondary rail (see docs/payments-x402.md).
+ * Payment-rail strategy: USDC via x402 on Base is the DEFAULT (and go-forward)
+ * buyer rail. Legacy TFUEL buyer fallback is opt-in only (X402_FALLBACK_TFUEL).
+ * Provider TFUEL/ACT are prepaid float COGS (ADR 0005) — not settlement home.
  *
- * Settlement model (Phase 1 decision): USDC lands in a Base treasury
- * (X402_PAY_TO); the Theta-side BBB/GET/Staker/Treasury split is reconciled by
- * `paymentRef` via a deferred/periodic bridge — NOT synchronously. The payer is
- * the AGENT's wallet (agent-side, pluggable); this module never holds keys.
+ * Settlement model: USDC lands in a Base treasury (X402_PAY_TO / Splits v2).
+ * The payer is the AGENT's wallet (agent-side, pluggable); this module never
+ * holds keys. See docs/STRATEGY.md · docs/PROVIDER_FLOAT_TREASURY.md.
  *
  * Status: adapter hardened (challenge binding, nonce/replay store, verify+settle,
  * pricing). Two facilitator protocols are supported via X402_FACILITATOR_PROVIDER:

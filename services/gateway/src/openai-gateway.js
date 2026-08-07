@@ -7,50 +7,34 @@ import { getSP1Prover } from './sp1-prover-client.js';
 import { proveAllowedForKey } from './prove-gate.js';
 import { buildVerifyUrl, baseUrlFromReq } from './receipt.js';
 import { apiKeyHashFromReq } from './buyer-attr.js';
+import { getHubCatalog, resolveCatalogModel, toOpenAIList } from './hub-catalog.js';
+import {
+  inferEdgeCloud,
+  chatInputFromMessages,
+  imageInputFromPrompt,
+  audioInputFromUrl,
+  extractTextOutput,
+  extractImageUrl,
+} from './edgecloud-infer.js';
 
 /**
  * XFuel OpenAI-compatible gateway.
  *
- * Exposes the standard OpenAI surface so any agent framework (OpenAI SDK,
- * Vercel AI SDK, LangChain, LlamaIndex, Cursor/Claude via base-url override) can
- * use XFuel by swapping a single `baseURL` — no XFuel-specific integration.
- *
- *   GET  /v1/models              → list routable models
+ *   GET  /v1/models              → live hub catalog (Theta /service/list + …)
  *   GET  /v1/models/:id          → retrieve one model
- *   POST /v1/chat/completions    → run inference (streaming or not) + receipt
+ *   POST /v1/chat/completions    → chat (+ receipt)
+ *   POST /v1/images/generations  → image (+ receipt)
+ *   POST /v1/audio/transcriptions → STT (+ receipt)
  *
- * Under the hood the request is routed through the 6-tier DePIN ComputeRouter
- * (real compute when provider keys are set; a clearly-labelled mock otherwise),
- * a task is registered in the AIListener so the existing `/task-status`,
- * `/prove-result` and webhook machinery keep working, and an SP1 settlement
- * proof is generated asynchronously (non-fatal, exactly like the M2M path).
- *
- * Honesty note (surfaced in the receipt): the SP1 proof attests settlement
- * metadata + a commitment to the output hash — NOT that the model executed the
- * inference correctly. The receipt reports `compute` (real vs mock) and
- * `proof.status`/`proof.attests` truthfully so adopters are never misled.
+ * Model ids are hub-prefixed (theta/qwen3). No silent Llama→Qwen remap.
+ * OPENAI_GATEWAY_ALLOW_FALLBACK=false → hard-fail when preferred hub fails.
  */
 
-// ─── Model catalogue ─────────────────────────────────────────────────────────
-
-const DEFAULT_MODELS = ['llama-3-70b', 'xfuel-auto'];
-
-/** Models the gateway advertises. Override with OPENAI_GATEWAY_MODELS (CSV). */
-function modelIds() {
-  const env = (process.env.OPENAI_GATEWAY_MODELS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return env.length ? env : DEFAULT_MODELS;
-}
-
-function modelObject(id) {
-  return {
-    id,
-    object: 'model',
-    created: 1_700_000_000,
-    owned_by: 'xfuel',
-  };
+/** When false, preferred hub miss returns 503 instead of mock / other tiers. */
+function allowFallback(req) {
+  if (req?.body?.xfuel?.allow_fallback === false) return false;
+  if (req?.body?.allow_fallback === false) return false;
+  return process.env.OPENAI_GATEWAY_ALLOW_FALLBACK !== 'false';
 }
 
 // ─── Fee math (mirrors calculateTaskFee in server.js / main.rs) ───────────────
@@ -113,57 +97,254 @@ async function getRouterHandler() {
 }
 
 /**
- * Run a chat inference through the 6-tier ComputeRouter. Never throws on
- * provider issues — falls back to a clearly-labelled mock so the OpenAI
- * contract always resolves.
+ * Chat inference: resolve catalog model → Theta EdgeCloud when hub=theta;
+ * optional ComputeRouter fallthrough when allowFallback.
  *
- * @returns {Promise<{ content: string, provider: string, mock: boolean, raw: any }>}
+ * @returns {Promise<{ content: string, provider: string, mock: boolean, resolvedModel: string, raw: any, error?: object }>}
  */
-async function runChatInference({ model, messages, max_tokens, temperature }) {
-  const modelName = !model || model === 'xfuel-auto' || model === 'auto' ? 'default-llm' : model;
-  const requestBody = {
-    model: modelName,
-    messages,
-    max_tokens: max_tokens ?? undefined,
-    temperature: temperature ?? undefined,
-  };
-
-  let providerConfigured = false;
-  try {
-    const handler = await getRouterHandler();
-    providerConfigured = !!(handler && (
-      handler.edgeCloudApiKey || handler.rapidApiKey || handler.mcpEndpoint ||
-      handler.akashMnemonic || handler.renderApiKey || handler.awsAccessKeyId ||
-      handler.openaiCompatKey || handler.anthropicApiKey
-    ));
-    const { ComputeRouter } = await import(
-      '../../../packages/circuit-runtime/theta-inference/compute-router.js'
-    );
-    const router = ComputeRouter.fromHandler(handler);
-    // SERVICE_TYPES.LLM_INFERENCE === 0
-    const routed = await router.route({ serviceType: 0, requestBody, modelName, gpuName: 'default' });
-    if (routed.result) {
-      return {
-        // Prefer the executor's friendly label (e.g. "groq", "anthropic-claude")
-        // over the generic tier tag ("openai-compatible") when it provides one.
-        content: extractContent(routed.result),
-        provider: routed.result?._source || routed.source,
-        mock: false,
-        raw: routed.result,
-      };
-    }
-  } catch (err) {
-    logger.warn({ err: err.message, model: modelName }, 'OpenAI gateway: router error — using mock');
+async function runChatInference({ model, messages, max_tokens, temperature, allowFallback: fb }) {
+  const { models } = await getHubCatalog();
+  const resolved = resolveCatalogModel(model, models, { modality: 'chat' });
+  if (!resolved.ok) {
+    return {
+      content: '',
+      provider: 'none',
+      mock: true,
+      resolvedModel: resolved.requested,
+      raw: resolved,
+      error: {
+        status: resolved.reason === 'model_retired' || resolved.reason === 'model_not_found' ? 404 : 400,
+        code: resolved.reason,
+        message: resolved.hint || `Model '${resolved.requested}' is not available (${resolved.reason})`,
+      },
+    };
   }
 
-  // Soft failure → labelled mock. Be honest about WHY: a configured provider
-  // that returns no result is almost always transient capacity (e.g. Theta
-  // on-demand "no instances available"), not a missing key.
-  const reason = providerConfigured
-    ? 'Provider(s) configured but returned no result (likely transient capacity — e.g. Theta on-demand "no instances available"). Retry shortly.'
-    : 'No DePIN provider is configured (set THETA_EDGECLOUD_API_KEY or a fallback tier).';
-  const content = `[XFuel mock] ${reason} Echoing prompt: ${messagesToText(messages).slice(0, 200)}`;
-  return { content, provider: 'mock', mock: true, raw: { mock: true, providerConfigured, reason } };
+  const cat = resolved.model;
+  const resolvedModel = cat.id;
+
+  // Prefer direct EdgeCloud for theta hub (honest alias).
+  if (cat.hub === 'theta' && process.env.THETA_EDGECLOUD_API_KEY) {
+    const result = await inferEdgeCloud({
+      alias: cat.alias,
+      prediction: cat.default_prediction,
+      input: chatInputFromMessages({ messages, max_tokens, temperature }),
+    });
+    if (result.ok) {
+      return {
+        content: extractTextOutput(result.output),
+        provider: 'theta-edgecloud',
+        mock: false,
+        resolvedModel,
+        raw: result,
+      };
+    }
+    if (!fb) {
+      return {
+        content: '',
+        provider: 'theta-edgecloud',
+        mock: true,
+        resolvedModel,
+        raw: result,
+        error: {
+          status: 503,
+          code: 'provider_unavailable',
+          message: `theta/${cat.alias} failed (${result.reason}). Set allow_fallback or retry.`,
+        },
+      };
+    }
+  }
+
+  // Optional multi-tier fallthrough (Web2 / other DePIN) when allowed.
+  if (fb) {
+    let providerConfigured = false;
+    try {
+      const handler = await getRouterHandler();
+      providerConfigured = !!(handler && (
+        handler.edgeCloudApiKey || handler.rapidApiKey || handler.mcpEndpoint ||
+        handler.akashMnemonic || handler.renderApiKey || handler.awsAccessKeyId ||
+        handler.openaiCompatKey || handler.anthropicApiKey
+      ));
+      const { ComputeRouter } = await import(
+        '../../../packages/circuit-runtime/theta-inference/compute-router.js'
+      );
+      const router = ComputeRouter.fromHandler(handler);
+      const routed = await router.route({
+        serviceType: 0,
+        requestBody: { model: cat.alias, messages, max_tokens, temperature },
+        modelName: cat.id,
+        gpuName: 'default',
+      });
+      if (routed.result) {
+        return {
+          content: extractContent(routed.result),
+          provider: routed.result?._source || routed.source,
+          mock: false,
+          resolvedModel,
+          raw: routed.result,
+        };
+      }
+    } catch (err) {
+      logger.warn({ err: err.message, model: resolvedModel }, 'OpenAI gateway: router error');
+    }
+
+    const reason = providerConfigured
+      ? 'Provider(s) configured but returned no result (likely transient capacity). Retry shortly.'
+      : 'No DePIN provider is configured (set THETA_EDGECLOUD_API_KEY or a fallback tier).';
+    const content = `[XFuel mock] ${reason} Echoing prompt: ${messagesToText(messages).slice(0, 200)}`;
+    return { content, provider: 'mock', mock: true, resolvedModel, raw: { mock: true, providerConfigured, reason } };
+  }
+
+  return {
+    content: '',
+    provider: 'none',
+    mock: true,
+    resolvedModel,
+    raw: {},
+    error: {
+      status: 503,
+      code: 'provider_unavailable',
+      message: 'Preferred hub unavailable and allow_fallback=false',
+    },
+  };
+}
+
+async function runImageInference({ model, prompt, allowFallback: fb }) {
+  const { models } = await getHubCatalog();
+  let modelId = model || 'xfuel/auto';
+  if (modelId === 'xfuel/auto' || modelId === 'auto' || modelId === 'xfuel-auto') {
+    const img = models.find((m) => m.modality === 'image');
+    if (!img) {
+      return { error: { status: 404, code: 'model_not_found', message: 'No image models in catalog' } };
+    }
+    modelId = img.id;
+  }
+  const resolved = resolveCatalogModel(modelId, models);
+  if (!resolved.ok) {
+    return {
+      error: {
+        status: 404,
+        code: resolved.reason,
+        message: resolved.hint || `Model '${resolved.requested}' not found`,
+      },
+    };
+  }
+  if (resolved.model.modality !== 'image') {
+    return {
+      error: {
+        status: 400,
+        code: 'modality_mismatch',
+        message: `${resolved.model.id} is modality=${resolved.model.modality}, expected image`,
+      },
+    };
+  }
+  const cat = resolved.model;
+  if (!process.env.THETA_EDGECLOUD_API_KEY) {
+    if (!fb) {
+      return { error: { status: 503, code: 'provider_unavailable', message: 'THETA_EDGECLOUD_API_KEY not set' } };
+    }
+    return {
+      mock: true,
+      provider: 'mock',
+      resolvedModel: cat.id,
+      url: null,
+      raw: { reason: 'missing_api_key' },
+    };
+  }
+  const result = await inferEdgeCloud({
+    alias: cat.alias,
+    prediction: cat.default_prediction,
+    input: imageInputFromPrompt({ prompt }),
+  });
+  if (!result.ok) {
+    if (!fb) {
+      return {
+        error: {
+          status: 503,
+          code: 'provider_unavailable',
+          message: `${cat.id} failed (${result.reason})`,
+        },
+        resolvedModel: cat.id,
+      };
+    }
+    return { mock: true, provider: 'mock', resolvedModel: cat.id, url: null, raw: result };
+  }
+  return {
+    mock: false,
+    provider: 'theta-edgecloud',
+    resolvedModel: cat.id,
+    url: extractImageUrl(result.output),
+    raw: result,
+  };
+}
+
+async function runTranscriptionInference({ model, audioUrl, allowFallback: fb }) {
+  const { models } = await getHubCatalog();
+  let modelId = model || 'theta/whisper';
+  if (modelId === 'xfuel/auto' || modelId === 'auto') {
+    const w = models.find((m) => m.modality === 'audio') || models.find((m) => m.alias === 'whisper');
+    if (!w) return { error: { status: 404, code: 'model_not_found', message: 'No audio models in catalog' } };
+    modelId = w.id;
+  }
+  const resolved = resolveCatalogModel(modelId, models);
+  if (!resolved.ok) {
+    return {
+      error: {
+        status: 404,
+        code: resolved.reason,
+        message: resolved.hint || `Model '${resolved.requested}' not found`,
+      },
+    };
+  }
+  const cat = resolved.model;
+  if (cat.modality !== 'audio') {
+    return {
+      error: {
+        status: 400,
+        code: 'modality_mismatch',
+        message: `${cat.id} is modality=${cat.modality}, expected audio`,
+      },
+    };
+  }
+  if (!audioUrl) {
+    return { error: { status: 400, code: 'invalid_request', message: 'audio_url (or file URL) is required' } };
+  }
+  if (!process.env.THETA_EDGECLOUD_API_KEY) {
+    if (!fb) {
+      return { error: { status: 503, code: 'provider_unavailable', message: 'THETA_EDGECLOUD_API_KEY not set' } };
+    }
+    return {
+      mock: true,
+      provider: 'mock',
+      resolvedModel: cat.id,
+      text: '[XFuel mock] transcription — set THETA_EDGECLOUD_API_KEY',
+      raw: {},
+    };
+  }
+  const result = await inferEdgeCloud({
+    alias: cat.alias,
+    prediction: cat.default_prediction,
+    input: audioInputFromUrl(audioUrl),
+  });
+  if (!result.ok) {
+    if (!fb) {
+      return {
+        error: {
+          status: 503,
+          code: 'provider_unavailable',
+          message: `${cat.id} failed (${result.reason})`,
+        },
+      };
+    }
+    return { mock: true, provider: 'mock', resolvedModel: cat.id, text: `[mock] ${result.reason}`, raw: result };
+  }
+  return {
+    mock: false,
+    provider: 'theta-edgecloud',
+    resolvedModel: cat.id,
+    text: extractTextOutput(result.output),
+    raw: result,
+  };
 }
 
 /** Pull assistant text out of the router's OpenAI-shaped result. */
@@ -207,14 +388,14 @@ function registerTaskAndProve({ model, messages, content, provider, proveAllowed
       amount: GATEWAY_TASK_AMOUNT,
       modelId: model,
       inputHash,
-      chain: 'theta',
+      chain: 'base',
       proofSystem: 'sp1',
       paymentRail: 'unmetered', // OpenAI-compat path is not x402-metered in Phase 1
       paymentRef: null,
       proveAllowed, // cost gate: false → settle + signed receipt, skip SP1 proof
     },
     meta: {
-      chain: 'theta',
+      chain: 'base',
       txHash: `openai-${taskId}`,
       height: 0,
       source: 'openai-gateway',
@@ -339,20 +520,49 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
   app.use('/v1', ...chain);
 
   // ── GET /v1/models ───────────────────────────────────────────────────────
-  app.get('/v1/models', (_req, res) => {
-    res.json({ object: 'list', data: modelIds().map(modelObject) });
-  });
-
-  // ── GET /v1/models/:id ─────────────────────────────────────────────────────
-  app.get('/v1/models/:id', (req, res) => {
-    const id = req.params.id;
-    if (!modelIds().includes(id)) {
-      return res.status(404).json({
-        error: { message: `The model '${id}' does not exist`, type: 'invalid_request_error', code: 'model_not_found' },
+  app.get('/v1/models', async (req, res) => {
+    try {
+      const modality = typeof req.query.modality === 'string' ? req.query.modality : null;
+      const { models, source } = await getHubCatalog();
+      const body = toOpenAIList(models, { modality });
+      res.setHeader('x-xfuel-catalog-source', source);
+      res.json(body);
+    } catch (err) {
+      logger.error({ err: err.message }, 'GET /v1/models failed');
+      res.status(500).json({
+        error: { message: 'catalog unavailable', type: 'server_error', code: null },
       });
     }
-    res.json(modelObject(id));
   });
+
+  // ── GET /v1/models/:id (supports hub/alias via two path segments) ───────────
+  async function getModelById(req, res, id) {
+    const { models } = await getHubCatalog();
+    const resolved = resolveCatalogModel(id, models);
+    if (!resolved.ok) {
+      return res.status(404).json({
+        error: {
+          message: resolved.hint || `The model '${id}' does not exist`,
+          type: 'invalid_request_error',
+          code: resolved.reason || 'model_not_found',
+        },
+      });
+    }
+    const m = resolved.model;
+    return res.json({
+      id: m.id,
+      object: 'model',
+      created: m.created,
+      owned_by: m.owned_by,
+      hub: m.hub,
+      alias: m.alias,
+      name: m.name,
+      modality: m.modality,
+      default_prediction: m.default_prediction,
+    });
+  }
+  app.get('/v1/models/:hub/:alias', (req, res) => getModelById(req, res, `${req.params.hub}/${req.params.alias}`));
+  app.get('/v1/models/:id', (req, res) => getModelById(req, res, req.params.id));
 
   // ── POST /v1/chat/completions ──────────────────────────────────────────────
   app.post('/v1/chat/completions', async (req, res) => {
@@ -372,11 +582,17 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
 
     const id = `chatcmpl-${crypto.randomUUID()}`;
     const created = Math.floor(Date.now() / 1000);
-    const echoModel = model || 'xfuel-auto';
+    const fb = allowFallback(req);
 
     let inference;
     try {
-      inference = await runChatInference({ model, messages, max_tokens: clampMaxTokens(max_tokens), temperature });
+      inference = await runChatInference({
+        model: model || 'xfuel/auto',
+        messages,
+        max_tokens: clampMaxTokens(max_tokens),
+        temperature,
+        allowFallback: fb,
+      });
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /v1/chat/completions inference error');
       return res.status(500).json({
@@ -384,6 +600,17 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
       });
     }
 
+    if (inference.error) {
+      return res.status(inference.error.status || 400).json({
+        error: {
+          message: inference.error.message,
+          type: 'invalid_request_error',
+          code: inference.error.code,
+        },
+      });
+    }
+
+    const echoModel = inference.resolvedModel || model || 'xfuel/auto';
     const { content, provider, mock } = inference;
     const proveAllowed = proveAllowedForKey(req.headers['x-api-key']);
     const privateSpend = !!config.privateSpend?.enabled;
@@ -397,7 +624,11 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
       privateSpend,
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
-    const receipt = buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed, mockReason: inference.raw?.reason, baseUrl, privateSpend });
+    const receipt = buildReceipt({
+      taskId, provider, mock, proverConfigured, proveAllowed,
+      mockReason: inference.raw?.reason, baseUrl, privateSpend,
+    });
+    receipt.route = { requested: model || 'xfuel/auto', resolved: echoModel };
 
     const promptTokens = estimateTokens(messagesToText(messages));
     const completionTokens = estimateTokens(content);
@@ -425,6 +656,112 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
         completion_tokens: completionTokens,
         total_tokens: promptTokens + completionTokens,
       },
+      xfuel: receipt,
+    });
+  });
+
+  // ── POST /v1/images/generations ────────────────────────────────────────────
+  app.post('/v1/images/generations', async (req, res) => {
+    const { model, prompt, n } = req.body || {};
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({
+        error: { message: '`prompt` is required', type: 'invalid_request_error', param: 'prompt', code: null },
+      });
+    }
+    const fb = allowFallback(req);
+    const inference = await runImageInference({ model, prompt, allowFallback: fb });
+    if (inference.error) {
+      return res.status(inference.error.status || 400).json({
+        error: {
+          message: inference.error.message,
+          type: 'invalid_request_error',
+          code: inference.error.code,
+        },
+      });
+    }
+    const proveAllowed = proveAllowedForKey(req.headers['x-api-key']);
+    const privateSpend = !!config.privateSpend?.enabled;
+    const content = inference.url || JSON.stringify(inference.raw?.output || {});
+    const { taskId, proverConfigured } = registerTaskAndProve({
+      model: inference.resolvedModel,
+      messages: [{ role: 'user', content: prompt }],
+      content,
+      provider: inference.provider,
+      proveAllowed,
+      apiKeyHash: apiKeyHashFromReq(req),
+      privateSpend,
+    });
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+    const receipt = buildReceipt({
+      taskId,
+      provider: inference.provider,
+      mock: !!inference.mock,
+      proverConfigured,
+      proveAllowed,
+      baseUrl,
+      privateSpend,
+    });
+    receipt.route = { requested: model || 'xfuel/auto', resolved: inference.resolvedModel };
+    setReceiptHeaders(res, receipt);
+
+    const count = Math.min(Math.max(Number(n) || 1, 1), 4);
+    const data = [];
+    for (let i = 0; i < count; i++) {
+      data.push(inference.url
+        ? { url: inference.url, revised_prompt: prompt }
+        : { url: '', b64_json: null, revised_prompt: prompt });
+    }
+    return res.json({
+      created: Math.floor(Date.now() / 1000),
+      data,
+      model: inference.resolvedModel,
+      xfuel: receipt,
+    });
+  });
+
+  // ── POST /v1/audio/transcriptions ──────────────────────────────────────────
+  // JSON body (v0): { model, audio_url } — multipart file upload can follow.
+  app.post('/v1/audio/transcriptions', async (req, res) => {
+    const body = req.body || {};
+    const model = body.model;
+    const audioUrl = body.audio_url || body.file || body.audio_filename;
+    const fb = allowFallback(req);
+    const inference = await runTranscriptionInference({ model, audioUrl, allowFallback: fb });
+    if (inference.error) {
+      return res.status(inference.error.status || 400).json({
+        error: {
+          message: inference.error.message,
+          type: 'invalid_request_error',
+          code: inference.error.code,
+        },
+      });
+    }
+    const proveAllowed = proveAllowedForKey(req.headers['x-api-key']);
+    const privateSpend = !!config.privateSpend?.enabled;
+    const { taskId, proverConfigured } = registerTaskAndProve({
+      model: inference.resolvedModel,
+      messages: [{ role: 'user', content: String(audioUrl) }],
+      content: inference.text || '',
+      provider: inference.provider,
+      proveAllowed,
+      apiKeyHash: apiKeyHashFromReq(req),
+      privateSpend,
+    });
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+    const receipt = buildReceipt({
+      taskId,
+      provider: inference.provider,
+      mock: !!inference.mock,
+      proverConfigured,
+      proveAllowed,
+      baseUrl,
+      privateSpend,
+    });
+    receipt.route = { requested: model || 'theta/whisper', resolved: inference.resolvedModel };
+    setReceiptHeaders(res, receipt);
+    return res.json({
+      text: inference.text || '',
+      model: inference.resolvedModel,
       xfuel: receipt,
     });
   });

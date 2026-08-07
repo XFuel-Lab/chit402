@@ -10,6 +10,8 @@ https://xfuel.app Â· https://api-testnet.xfuel.app
 
 | Doc | Purpose |
 |-----|---------|
+| [STRATEGY.md](./STRATEGY.md) | Company strategy — build-from source |
+| [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md) | USDC in / provider float COGS |
 | [RUNTIME_STATE.md](./RUNTIME_STATE.md) | Live endpoints, real vs mock |
 | [POSITIONING.md](./POSITIONING.md) | Locked messaging |
 | [SEED_READINESS.md](./SEED_READINESS.md) | Seed / A- gate checklist |
@@ -75,6 +77,7 @@ https://xfuel.app Â· https://api-testnet.xfuel.app
 | [adr/0002](./adr/0002-base-settlement-home.md) | Base home |
 | [adr/0003](./adr/0003-verified-inference-cleanroom.md) | Clean-room Tier-3 |
 | [adr/0004](./adr/0004-zkllm-prover-stack.md) | zkLLM stack |
+| [adr/0005](./adr/0005-provider-float-cogs.md) | Provider float COGS |
 | [CIRCUITS.md](./CIRCUITS.md) | Circuits |
 | [Technical-Specifications.md](./Technical-Specifications.md) | Gas / benchmarks |
 | [providers/README.md](./providers/README.md) | Provider tiers |

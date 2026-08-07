@@ -110,6 +110,16 @@ const config = {
     minimizeLogs: process.env.PRIVATE_SPEND_MINIMIZE_LOGS !== 'false',
   },
 
+  // Provider Float Manager v0 (ADR 0005) — prepaid COGS; buyer rail stays USDC.
+  // See docs/PROVIDER_FLOAT_TREASURY.md. No hot-path FX.
+  providerFloats: {
+    json: process.env.PROVIDER_FLOATS_JSON || null,
+    cogsBps: parseInt(process.env.PROVIDER_COGS_BPS, 10) || 7000,
+    defaultProvider: process.env.PROVIDER_FLOAT_DEFAULT || 'theta-edgecloud',
+    enforce: process.env.PROVIDER_FLOAT_ENFORCE === 'true',
+    publicBalances: process.env.PROVIDER_FLOAT_PUBLIC_BALANCES === 'true',
+  },
+
   // Verified Inference tier engine (Phase 4). Disabled by default → receipts behave as before
   // (proof.tier = settlement/signed, no verified_inference block). When enabled, the gateway
   // prices trust to value-at-risk and stamps the selected tier + honest attestation/spot-check

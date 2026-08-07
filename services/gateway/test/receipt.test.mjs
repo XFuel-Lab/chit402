@@ -29,7 +29,7 @@ function usdcTask(over = {}) {
     intent: {
       type: 'inference_request',
       model: 'llama-3-70b',
-      chainId: 'theta',
+      chainId: 'base',
       amount,
       paymentRail: 'usdc',
       paymentRef,
@@ -39,7 +39,7 @@ function usdcTask(over = {}) {
     netAmount,
     feeBps: 50,
     result: 'ZK proofs let you verify a computation without redoing it.',
-    meta: { chain: 'theta', provider: 'theta-edgecloud' },
+    meta: { chain: 'base', provider: 'theta-edgecloud' },
     sp1Proof: {
       proof: '0xproofbytes',
       nullifier: '0x' + 'cd'.repeat(32),
