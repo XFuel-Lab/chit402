@@ -2,25 +2,29 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-06 · Public Base mainnet x402 live · Your checklist below
+Last updated: 2026-08-06 · Public Base mainnet x402 live · Strategy docs locked · Your checklist below
 
 ## How to use
 
 - Check boxes as you complete them.
 - Do not put secrets in git — Lightsail / 1Password only.
+- Build-from source: [STRATEGY.md](./STRATEGY.md) · floats: [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md)
 
 ## Do this week (priority)
 
 | # | You | Eng can help / already done |
 |---|-----|------------------------------|
 | 1 | ~~Mainnet USDC go-live~~ | **Done 2026-08-06** — public flagship Real |
-| 2 | Put real contacts on [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md); send [OUTREACH_TEMPLATES.md](./OUTREACH_TEMPLATES.md) | 10 hunt targets + templates ready |
-| 3 | Accept or amend [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) (reply “accepted” / edit) | Decision draft shipped |
-| 4 | After partners say yes: partner API keys + [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) | Onboarding + cookbook shipped |
-| 5 | Rotate CDP Secret API key (ops hygiene); prefer Safe for `X402_PAY_TO` | — |
-| 6 | Paste [AUDIT_SCOPE_LETTER_DRAFT.md](./AUDIT_SCOPE_LETTER_DRAFT.md) to 2–3 firms (after git tag) | Letter + [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) ready |
-| 7 | Deck from [SEED_DECK_OUTLINE.md](./SEED_DECK_OUTLINE.md) — live `/stats` numbers only | Outline ready |
-| Later | Guest v2 ELF + vKey; uptime monitor; counsel | Blocked on prover host / counsel |
+| 2 | Read and accept [STRATEGY.md](./STRATEGY.md) (or amend in writing) | STRATEGY + ADR 0005 + float treasury shipped |
+| 3 | Prefund Theta EdgeCloud with **USDC** (prefer over TFUEL); API key on gateway — [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md) | Eng wires route when key + float ready |
+| 4 | Put real contacts on [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md); send [OUTREACH_TEMPLATES.md](./OUTREACH_TEMPLATES.md) | 10 hunt targets + GTM motions in ICP |
+| 5 | Accept or amend [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) (reply “accepted” / edit) | Decision draft shipped |
+| 6 | After partners say yes: partner API keys + [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) | Onboarding + cookbook shipped |
+| 7 | Rotate CDP Secret API key (ops hygiene); prefer Safe for `X402_PAY_TO` | — |
+| 8 | Counsel: prepaid float COGS vs Web2 collect-and-forward — [LEGAL_LAUNCH_CHECKLIST.md](./LEGAL_LAUNCH_CHECKLIST.md) | ADR 0005 documents float default |
+| 9 | Paste [AUDIT_SCOPE_LETTER_DRAFT.md](./AUDIT_SCOPE_LETTER_DRAFT.md) to 2–3 firms (after git tag) | Letter + [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) ready |
+| 10 | Deck from [SEED_DECK_OUTLINE.md](./SEED_DECK_OUTLINE.md) — live `/stats` + STRATEGY language | Outline ready |
+| Later | Guest v2 ELF + vKey; uptime monitor; Akash ACT float | Blocked on prover host / ops |
 
 ---
 
@@ -119,6 +123,7 @@ Engineering shipped: auditor selective disclosure, staging SLA draft, Tier-3 tim
 
 | Item | Status |
 |------|--------|
+| STRATEGY + provider float treasury + ADR 0005 | **Shipped** (build-from source) |
 | CDP JWT + mainnet facilitator URL defaults | Shipped (Sprint 1) |
 | Mainnet operator checklist | Shipped |
 | Beachhead ICP + Private Spend thesis docs | Shipped |

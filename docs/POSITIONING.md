@@ -2,6 +2,8 @@
 
 Locked story for site, deck, README, and agents. Theta / EdgeCloud appears only as an optional GPU provider — never as settlement home. See [ADR 0002](adr/0002-base-settlement-home.md).
 
+Company strategy (GTM, rails, build sequence): [STRATEGY.md](./STRATEGY.md).
+
 ## One line
 
 Route any model. Prove every dollar.
@@ -10,7 +12,7 @@ Privacy add (when Private Spend v0 is live): Spend without briefing the frontier
 
 ## Elevator
 
-AI agents are starting to spend money on their own. Today that means handing over API keys and hoping the invoice is honest. XFuel gives an agent a budget instead of keys: route each task to the best available provider, settle in USDC via x402 on Base, and return a verifiable receipt — signed by default, or an on-chain SP1 settlement proof on demand.
+AI agents are starting to spend money on their own. Today that means handing over API keys and hoping the invoice is honest. XFuel is the crypto routing machine: give an agent a USDC budget instead of keys, route each task to the best available provider (DePIN or frontier), settle via x402 on Base, and return a verifiable receipt — signed by default, or an on-chain SP1 settlement proof on demand.
 
 Private Spend (product mode, see [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md)): buyer pays XFuel; providers see gateway traffic, not the end-customer’s spend topology. Do not claim prompt confidentiality unless a TEE/confidential route is used.
 
@@ -35,5 +37,5 @@ Crypto-native agent teams on Base (USDC / x402). See [BEACHHEAD_ICP.md](./BEACHH
 
 ## Guardrails
 
-Say: verifiable settlement over any provider; money and proofs on Base; signed free, proof on demand; budgets instead of API keys.  
-Do not say: Theta-centric / DePIN hub as identity; TFUEL as default rail; every task is ZK-proven by default; retired sale rounds are open; ZK alone means prompts are private.
+Say: verifiable settlement over any provider; crypto routing machine; money and proofs on Base; signed free, proof on demand; budgets instead of API keys.  
+Do not say: Theta-centric / DePIN hub as identity; TFUEL as default buyer rail; every task is ZK-proven by default; retired sale rounds are open; ZK alone means prompts are private.

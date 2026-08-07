@@ -64,32 +64,56 @@ const INFERENCE_EVENTS = [
 //   Endpoint: POST /infer_request/{service_alias}?wait=<0-60>
 //   Body:     { input: { messages, max_tokens, ... } }
 //   Response: { status, body: { infer_requests: [ { state, output, ... } ] } }
-// Discover aliases via GET /service/list. Theta rotates its catalog; as of
-// 2026-07 the on-demand LLM is `qwen3` (Llama models were retired). Unknown or
-// generic model names resolve to EDGECLOUD_DEFAULT_LLM_SLUG.
+// Discover aliases via GET /service/list (live). Do NOT silently remap unknown
+// names to qwen3 — that lied to agents (Llama advertised, Qwen executed).
+// Auto / default-llm still resolve to EDGECLOUD_DEFAULT_LLM_SLUG.
 const EDGECLOUD_BASE = 'https://ondemand.thetaedgecloud.com';
 
 const EDGECLOUD_DEFAULT_LLM_SLUG = 'qwen3';
 
 const EDGECLOUD_MODEL_SLUGS = {
-  // LLMs (all generic/legacy LLM names resolve to the current on-demand LLM)
   'qwen3': 'qwen3',
+  'glm_5_2': 'glm_5_2',
+  'theta/qwen3': 'qwen3',
+  'theta/glm_5_2': 'glm_5_2',
   'default-llm': 'qwen3',
   'xfuel-auto': 'qwen3',
-  'llama-3-70b': 'qwen3',
-  'llama-3.1-8b': 'qwen3',
-  'llama-3.1-70b': 'qwen3',
-  'llama-3.1-405b': 'qwen3',
-  // Vision-language
+  'xfuel/auto': 'qwen3',
+  'auto': 'qwen3',
+  // Vision / audio / image — pass-through aliases only
   'llava': 'llava',
-  // Audio
+  'theta/llava': 'llava',
   'whisper': 'whisper',
+  'theta/whisper': 'whisper',
   'whisper-large-v3': 'whisper',
-  // Image
+  'stable_diffusion_xl_turbo': 'stable_diffusion_xl_turbo',
   'stable-diffusion-xl-turbo': 'stable_diffusion_xl_turbo',
-  'stable-diffusion-xl': 'stable_diffusion_xl_turbo',
+  'theta/stable_diffusion_xl_turbo': 'stable_diffusion_xl_turbo',
   'blip': 'blip',
+  'theta/blip': 'blip',
+  'esrgan': 'esrgan',
+  'theta/esrgan': 'esrgan',
+  'image_to_image': 'image_to_image',
+  'theta/image_to_image': 'image_to_image',
 };
+
+/**
+ * Resolve EdgeCloud URL slug. Returns null for unknown/retired names (caller
+ * must fail or fall through) — never silently rewrite Llama → Qwen.
+ */
+function resolveEdgeCloudSlug(modelName = '') {
+  const raw = String(modelName || '').trim();
+  if (!raw || EDGECLOUD_MODEL_SLUGS[raw]) {
+    return EDGECLOUD_MODEL_SLUGS[raw] || EDGECLOUD_DEFAULT_LLM_SLUG;
+  }
+  const bare = raw.includes('/') ? raw.split('/').pop() : raw;
+  if (EDGECLOUD_MODEL_SLUGS[bare]) return EDGECLOUD_MODEL_SLUGS[bare];
+  // Retired fiction — do not execute
+  if (/^llama/i.test(bare)) return null;
+  // Hub-prefixed or bare slug that looks like a Theta alias → pass through
+  if (/^[a-z0-9][a-z0-9_-]*$/i.test(bare)) return bare;
+  return null;
+}
 
 const EDGECLOUD_ENDPOINTS = {
   [SERVICE_TYPES.LLM_INFERENCE]: '/infer_request/{slug}',
@@ -1164,20 +1188,38 @@ class ThetaInferenceHandler {
     const endpointTemplate = EDGECLOUD_ENDPOINTS[serviceType];
     if (!endpointTemplate) return null;
 
-    const slug = EDGECLOUD_MODEL_SLUGS[modelName] || EDGECLOUD_DEFAULT_LLM_SLUG;
+    const slug = resolveEdgeCloudSlug(modelName);
+    if (!slug) {
+      console.warn(`[EdgeCloud] refusing unknown/retired modelName=${modelName} (no silent remap)`);
+      return null;
+    }
     const waitSec = 30; // ask Theta to hold the connection up to 30s for the result
     const endpoint = `${endpointTemplate.replace('{slug}', slug)}?wait=${waitSec}`;
     const url = `${this.edgeCloudBase}${endpoint}`;
 
     // Model is selected by the URL alias, NOT in the body.
-    const thetaBody = {
-      input: {
+    // Shape input by service type — chat ≠ image ≠ STT.
+    let thetaInput;
+    if (serviceType === SERVICE_TYPES.SPEECH_TO_TEXT) {
+      thetaInput = { audio_filename: body.audio_filename || body.file || body.audio_url || '' };
+    } else if (serviceType === SERVICE_TYPES.IMAGE_GENERATION) {
+      thetaInput = {
+        prompt: body.prompt || body.messages?.[0]?.content || '',
+        ...(body.steps != null ? { steps: body.steps } : {}),
+        ...(body.guidance != null ? { guidance: body.guidance } : {}),
+        ...(body.seed != null ? { seed: body.seed } : {}),
+        ...(body.strength != null ? { strength: body.strength } : {}),
+      };
+    } else {
+      thetaInput = {
         messages: body.messages || [{ role: 'user', content: body.prompt || '' }],
         max_tokens: body.max_tokens || 500,
         temperature: body.temperature ?? 0.7,
         top_p: body.top_p ?? 0.9,
-      },
-    };
+        stream: false,
+      };
+    }
+    const thetaBody = { input: thetaInput };
 
     const maxAttempts = 2;      // retry once on transient capacity (HTTP 409)
     const retryDelayMs = 2000;

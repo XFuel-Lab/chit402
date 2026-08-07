@@ -2,7 +2,9 @@
 
 Paste into Pitch / Gamma / slides. Do **not** invent volume numbers — pull from `GET /stats?format=json` after mainnet.
 
-Related: [SEED_READINESS.md](./SEED_READINESS.md), [POSITIONING.md](./POSITIONING.md), [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
+Related: [STRATEGY.md](./STRATEGY.md), [SEED_READINESS.md](./SEED_READINESS.md), [POSITIONING.md](./POSITIONING.md), [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
+
+Use [STRATEGY.md](./STRATEGY.md) language: crypto routing machine + proof receipts; DePIN as supply; tiers as ladder.
 
 ---
 
@@ -11,15 +13,15 @@ Related: [SEED_READINESS.md](./SEED_READINESS.md), [POSITIONING.md](./POSITIONIN
 **Agents spend money. API keys and opaque invoices do not scale.**
 
 - Autonomous agents need budgets, not shared org credentials
-- Frontier labs observe spend topology (model mix, timing, multi-homing)
+- Cheap DePIN GPUs fragment supply; frontier labs observe spend topology
 - Finance / treasury need exportable receipts, not Discord screenshots
 
 ## Slide 2 — Insight
 
-**Payments commoditized (x402). Budgets + receipts + proofs did not.**
+**Payments commoditized (x402). The clearing layer did not.**
 
-- Coinbase / Stripe / platforms own rails
-- XFuel sits above the rail: route → settle USDC on Base → verifiable receipt
+- Coinbase / Stripe / platforms own rails; GPU markets own supply
+- XFuel is the crypto routing machine above both: route → settle USDC on Base → verifiable receipt
 
 ## Slide 3 — Product
 
@@ -29,8 +31,8 @@ Related: [SEED_READINESS.md](./SEED_READINESS.md), [POSITIONING.md](./POSITIONIN
 | Layer | What |
 |-------|------|
 | Gateway | OpenAI-compatible + `/task-request` + MCP/SDK |
-| Money | USDC via x402 on Base |
-| Trust | Signed receipt → SP1 settlement proof on demand |
+| Money | USDC via x402 on Base (provider COGS = prepaid floats) |
+| Trust | Signed receipt → SP1 settlement proof on demand → Tier-3 option |
 | Privacy | Private Spend (vendor-blind) — gateway-trusted |
 
 ## Slide 4 — Proof (fill live)
@@ -49,17 +51,18 @@ Demo: SDK `private-spend-budget.ts` or flagship demo. Auditor: `?format=auditor`
 
 ## Slide 5 — GTM
 
-Beachhead: **crypto-native agent teams on Base** (x402 / CDP familiar).
+Beachhead: **crypto-native agent teams on Base** (x402 / CDP familiar). See [STRATEGY.md](./STRATEGY.md) motions.
 
-- 10 outreach → 3 design partners
-- Install &lt; 1 day (OpenAI baseURL swap or SDK)
+- Eliza / MCP embed · Virtuals agent sidecars · swarm operators · Akash/Theta co-sell
+- 10 outreach → 3 design partners · install &lt; 1 day
 - Expand → A2A multi-hop receipt chains
 
 ## Slide 6 — Moat path (honest)
 
-1. Payment-bound settlement proofs (guest v2)
+1. Routing machine + payment-bound settlement proofs (guest v2)
 2. Private Spend + selective disclosure
-3. Tier-3 Verified Inference as **premium SKU** (timeboxed; open-weight) — not company identity
+3. Provider floats under USDC quotes (DePIN cost edge without buyer FX)
+4. Tier-3 Verified Inference as **premium SKU** (timeboxed; open-weight) — not company identity
 
 Compose TEE providers for content privacy; do not race EigenAI on latency.
 

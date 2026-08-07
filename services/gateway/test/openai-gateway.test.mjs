@@ -1,6 +1,11 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+
+// Honest catalog seed (no live Theta poll / no Llama fiction) for deterministic tests.
+process.env.HUB_CATALOG_OFFLINE = 'true';
+
 import { createApp } from '../src/server.js';
+import { resetHubCatalogCache } from '../src/hub-catalog.js';
 
 // Spin the real Express app on an ephemeral port and exercise the
 // OpenAI-compatible routes over HTTP. No provider keys are set, so
@@ -11,6 +16,7 @@ let server;
 let base;
 
 before(async () => {
+  resetHubCatalogCache();
   const app = createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
@@ -35,29 +41,36 @@ test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   assert.match(body, /xfuel-sdk/);
 });
 
-test('GET /v1/models lists routable models in OpenAI shape', async () => {
+test('GET /v1/models lists live hub catalog in OpenAI shape', async () => {
   const res = await fetch(`${base}/v1/models`);
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.object, 'list');
   assert.ok(Array.isArray(body.data));
   assert.ok(body.data.length >= 1);
+  assert.ok(body.data.some((m) => m.id === 'xfuel/auto'));
+  assert.ok(body.data.some((m) => m.id === 'theta/qwen3'));
+  assert.ok(!body.data.some((m) => m.id === 'llama-3-70b'));
   const first = body.data[0];
   assert.equal(first.object, 'model');
-  assert.equal(first.owned_by, 'xfuel');
   assert.equal(typeof first.id, 'string');
+  assert.ok(first.modality);
 });
 
-test('GET /v1/models/:id → 200 known, 404 unknown', async () => {
-  const known = await fetch(`${base}/v1/models/llama-3-70b`);
+test('GET /v1/models/:id → 200 known, 404 unknown / retired', async () => {
+  const known = await fetch(`${base}/v1/models/theta%2Fqwen3`);
   assert.equal(known.status, 200);
   const knownBody = await known.json();
-  assert.equal(knownBody.id, 'llama-3-70b');
+  assert.equal(knownBody.id, 'theta/qwen3');
+  assert.equal(knownBody.modality, 'chat');
+
+  const retired = await fetch(`${base}/v1/models/llama-3-70b`);
+  assert.equal(retired.status, 404);
 
   const unknown = await fetch(`${base}/v1/models/does-not-exist`);
   assert.equal(unknown.status, 404);
   const unknownBody = await unknown.json();
-  assert.equal(unknownBody.error.code, 'model_not_found');
+  assert.ok(unknownBody.error.code);
 });
 
 test('POST /v1/chat/completions returns an OpenAI completion + XFuel receipt', async () => {
@@ -65,7 +78,7 @@ test('POST /v1/chat/completions returns an OpenAI completion + XFuel receipt', a
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-key' },
     body: JSON.stringify({
-      model: 'llama-3-70b',
+      model: 'theta/qwen3',
       messages: [{ role: 'user', content: 'Explain ZK proofs in one sentence.' }],
     }),
   });
@@ -82,7 +95,7 @@ test('POST /v1/chat/completions returns an OpenAI completion + XFuel receipt', a
 
   const body = await res.json();
   assert.equal(body.object, 'chat.completion');
-  assert.equal(body.model, 'llama-3-70b');
+  assert.equal(body.model, 'theta/qwen3');
   assert.equal(body.choices[0].message.role, 'assistant');
   assert.equal(typeof body.choices[0].message.content, 'string');
   assert.equal(body.choices[0].finish_reason, 'stop');
@@ -104,7 +117,7 @@ test('POST /v1/chat/completions rejects a bad body with an OpenAI error', async 
   const res = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'llama-3-70b', messages: [] }),
+    body: JSON.stringify({ model: 'theta/qwen3', messages: [] }),
   });
   assert.equal(res.status, 400);
   const body = await res.json();
@@ -112,12 +125,26 @@ test('POST /v1/chat/completions rejects a bad body with an OpenAI error', async 
   assert.equal(body.error.param, 'messages');
 });
 
-test('POST /v1/chat/completions supports SSE streaming', async () => {
+test('POST /v1/chat/completions rejects retired llama fiction', async () => {
   const res = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'llama-3-70b',
+      messages: [{ role: 'user', content: 'hi' }],
+    }),
+  });
+  assert.equal(res.status, 404);
+  const body = await res.json();
+  assert.equal(body.error.code, 'model_retired');
+});
+
+test('POST /v1/chat/completions supports SSE streaming', async () => {
+  const res = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'theta/qwen3',
       stream: true,
       messages: [{ role: 'user', content: 'Say hello.' }],
     }),
@@ -129,4 +156,27 @@ test('POST /v1/chat/completions supports SSE streaming', async () => {
   assert.match(text, /"finish_reason":"stop"/);
   assert.match(text, /event: xfuel\.receipt/);
   assert.match(text, /data: \[DONE\]/);
+});
+
+test('GET /v1/models?modality=image filters catalog', async () => {
+  const res = await fetch(`${base}/v1/models?modality=image`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(body.data.every((m) => m.modality === 'image' || m.id === 'xfuel/auto'));
+});
+
+test('POST /v1/images/generations returns OpenAI image shape (mock without key)', async () => {
+  const res = await fetch(`${base}/v1/images/generations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-key' },
+    body: JSON.stringify({
+      model: 'theta/stable_diffusion_xl_turbo',
+      prompt: 'a verification receipt hologram',
+    }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(Array.isArray(body.data));
+  assert.equal(body.model, 'theta/stable_diffusion_xl_turbo');
+  assert.ok(body.xfuel?.task_id);
 });

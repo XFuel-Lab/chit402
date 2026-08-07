@@ -1,12 +1,24 @@
 # Beachhead ICP — Crypto-native agent teams
 
-Sprint 1 lock. Beachhead **A** from the founder/VC strategy.
+Sprint 1 lock. Beachhead **A** from [STRATEGY.md](./STRATEGY.md).
 
-Status: active · Last updated: 2026-08-05
+Status: active · Last updated: 2026-08-06
 
 ## One sentence
 
-Sell **budgets + receipts + optional settlement proofs** to teams already building agents that hold USDC on Base and speak (or will speak) x402.
+Sell **budgets + receipts + optional settlement proofs** (crypto routing machine) to teams already building agents that hold USDC on Base and speak (or will speak) x402.
+
+## GTM motions (from STRATEGY)
+
+| # | Motion | Who | Offer |
+|---|--------|-----|-------|
+| 1 | Framework embed | Eliza / MCP authors | OpenAI baseURL → XFuel; USDC budget + verify_url |
+| 2 | Launchpad sidecars | Virtuals agent teams | Escape siloed compute credits; DePIN + proofs |
+| 3 | Swarm operators | Olas / Theoriq / ACP runners | A2A lineage + multi-hop spend receipts |
+| 4 | Compute co-sell | Akash / Theta BD | Cheap GPUs ↔ Base agent demand |
+| 5 | Standards attach | ERC-8004 / x402 bazaar | Settlement receipt + validation objects |
+
+Full strategy: [STRATEGY.md](./STRATEGY.md). Hunt targets below.
 
 ## Who buys
 

@@ -310,6 +310,24 @@ export function lineageOf(task) {
 }
 
 /**
+ * Provider COGS from prepaid float (ADR 0005). Separate from buyer payment.rail.
+ * @returns {object|null}
+ */
+export function providerCogsOf(task) {
+  const c = task?.meta?.providerCogs || task?.providerCogs || null;
+  if (!c || typeof c !== 'object') return null;
+  return {
+    provider: c.provider || null,
+    float_id: c.float_id || c.floatId || null,
+    currency: c.currency || null,
+    estimated: c.estimated != null ? String(c.estimated) : null,
+    actual: c.actual != null ? String(c.actual) : null,
+    usd_mark: c.usd_mark != null ? String(c.usd_mark) : (c.usdMark != null ? String(c.usdMark) : null),
+    below_low_water: !!c.below_low_water || !!c.belowLowWater,
+  };
+}
+
+/**
  * Build the public receipt JSON for a task.
  * @param {object} task     Listener task (from aiListener.activeTasks).
  * @param {object} [opts]   { baseUrl, signingSecret } — signingSecret enables the Tier-1
@@ -319,7 +337,8 @@ export function lineageOf(task) {
 export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolicy = null } = {}) {
   const outcome = proofOutcomeOf(task);
   const feeBps = task.feeBps || 50;
-  const paymentRail = task.intent?.paymentRail || 'tfuel';
+  // Buyer default is USDC (ADR 0002). Legacy tfuel rail only when explicitly set.
+  const paymentRail = task.intent?.paymentRail || 'usdc';
   const paymentRef = task.intent?.paymentRef || null;
   const output = outputHashOf(task);
   const modelCommitment = modelCommitmentOf(task);
@@ -328,6 +347,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
     outputHash: output?.value || null,
   });
   const base = baseUrl ? baseUrl.replace(/\/$/, '') : '';
+  const providerCogs = providerCogsOf(task);
 
   const receipt = {
     task_id: task.taskId,
@@ -340,7 +360,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
       message_type: task.intent?.type || null,
       model: task.intent?.model || task.intent?.modelId || null,
       model_commitment: modelCommitment,
-      provider: task.meta?.provider || task.routedTo || null,
+      provider: task.meta?.provider || task.routedTo || providerCogs?.provider || null,
       chain_id: task.meta?.chain || task.intent?.chainId || null,
     },
     payment: {
@@ -352,6 +372,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
       net_amount: task.netAmount || '0',
       fee_bps: feeBps,
     },
+    // ADR 0005 — provider COGS from prepaid float (not a second buyer rail).
+    provider_cogs: providerCogs,
     proof: {
       system: task.intent?.proofSystem || 'sp1',
       tier: vi?.tier || proofTierOf(task),
@@ -444,8 +466,22 @@ export function renderReceiptHtml(receipt) {
       </section>`
     : `<section class="card">
         <h2>Payment binding</h2>
-        <p class="muted">No x402 payment binding on this task (TFUEL-rail or binding disabled).</p>
+        <p class="muted">No x402 payment binding on this task (legacy rail or binding disabled). Buyer settlement is USDC on Base.</p>
       </section>`;
+
+  const cogs = receipt.provider_cogs;
+  const cogsBlock = cogs
+    ? `<section class="card">
+        <h2>Provider COGS <span class="scope">prepaid float · ADR 0005</span></h2>
+        ${row('Provider', esc(cogs.provider) || '<span class="muted">—</span>')}
+        ${row('Float', esc(cogs.float_id) || '<span class="muted">—</span>')}
+        ${row('Currency', esc(cogs.currency) || '<span class="muted">—</span>')}
+        ${row('Estimated / actual', `${esc(cogs.estimated)} / ${esc(cogs.actual)}`)}
+        ${cogs.usd_mark != null ? row('USD mark', esc(cogs.usd_mark)) : ''}
+        ${cogs.below_low_water ? row('Float', '<span class="badge pending">at/below low water — refill</span>') : ''}
+        <p class="muted" style="margin:8px 0 0;font-size:12px">Buyer paid USDC on Base. Provider COGS burned a prepaid float (not a second buyer rail).</p>
+      </section>`
+    : '';
 
   const privacy = receipt.privacy;
   const privacyBlock = privacy
@@ -562,6 +598,7 @@ export function renderReceiptHtml(receipt) {
     </section>
 
     ${bindingBlock}
+    ${cogsBlock}
     ${privacyBlock}
     ${lineageBlock}
 
