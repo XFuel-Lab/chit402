@@ -495,6 +495,7 @@ export function createApp() {
         model_id,           // optional – ML model hash (for INFERENCE_REQUEST)
         input_hash,         // optional – hash of input data
         input,              // optional – raw input/prompt; enables full 6-tier routing (M2M_USE_FULL_ROUTER)
+        messages,           // optional – chat messages[]; enables full router (alt to input)
         output_hash,        // optional – hash of output (for COMPUTE_RESULT)
         theta_recipient,    // optional – Theta EVM address for settlement
         max_gpu_hours,      // optional – Akash GPU lease duration
@@ -670,6 +671,7 @@ export function createApp() {
         modelId:        model_id || null,
         inputHash:      input_hash || null,
         input:          input || null, // raw prompt for full 6-tier router (optional; input_hash stays for privacy/proof)
+        messages:       Array.isArray(messages) ? messages : null,
         maxGpuHours:    max_gpu_hours || null,
         nonce:          null, // assigned by listener
         memo:           memo || null,
