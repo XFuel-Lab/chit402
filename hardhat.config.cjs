@@ -35,12 +35,10 @@ try { require('hardhat-tracer') } catch (_) { /* optional — install when neede
 //   - chai 6 is ESM-only and 69 .cjs test files require('chai'), so chai
 //     stays on 4.x until the same CJS → ESM pass (dependabot #59).
 //
-// SEPARATE CONSTRAINT — OpenZeppelin contracts are pinned to ~5.4.0.
-// OZ 5.6 emits the Cancun `mcopy` opcode and drops ReentrancyGuardUpgradeable,
-// which 8 contracts under contracts/legacy/ import. Taking 5.6 therefore means
-// moving every importing contract to solc >=0.8.24 with evmVersion cancun and
-// rewriting those 8 — a deliberate compiler/EVM decision for audit-scope
-// bytecode, not a dependency bump.
+// OpenZeppelin is on 5.6.x (dependabot #74). This was previously pinned to
+// ~5.4.0 because 8 unreferenced contracts under contracts/legacy/ imported
+// ReentrancyGuardUpgradeable, which 5.6 removes. Those contracts were deleted
+// rather than rewritten, so the constraint no longer exists.
 // ============================================================
 
 // Theta RPC compatibility: strip the block tag from eth_estimateGas calls.

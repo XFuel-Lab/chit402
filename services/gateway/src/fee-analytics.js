@@ -160,7 +160,6 @@ const VOLUME_MIX_TARGETS = {
  *   - frontend/src/utils/api.js
  *   - backend/theta-bridge/src/server.js
  *   - sp1-prover/program/src/main.rs
- *   - contracts/AIDePINRouter.sol
  *
  * @param {string|number|bigint} grossAmount  Total task value
  * @param {number}               feeBps       Fee rate in BPS (50-100)
