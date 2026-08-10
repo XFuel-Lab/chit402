@@ -19,10 +19,12 @@ try { require('hardhat-tracer') } catch (_) { /* optional — install when neede
 
 // ============================================================
 // HARDHAT 3 MIGRATION TRACKING
-// Blocked by two upstream issues (as of 2026-03-08):
-//   1. @openzeppelin/hardhat-upgrades has no HH3 support yet.
-//      Track: https://github.com/OpenZeppelin/openzeppelin-upgrades/issues/1191
-//   2. hardhat-gas-reporter has no HH3 release yet.
+// Re-checked 2026-08-10. One of the two original blockers has lifted:
+//   1. RESOLVED — @openzeppelin/hardhat-upgrades v4 supports HH3. It also
+//      *requires* it: v4 imports hardhat/types/hre, so it cannot be taken
+//      before the migration. Pinned to ^3.9.1 until then (dependabot #74).
+//   2. STILL BLOCKED — hardhat-gas-reporter's latest (2.3.0) declares
+//      peerDependencies { hardhat: ^2.16.0 }; no HH3 release exists.
 //      Track: https://github.com/NomicFoundation/hardhat/discussions/5626
 // Additional migration requirements when unblocked:
 //   - Node.js 22.10+ (current engines: >=20.0.0 in package.json)
@@ -30,6 +32,15 @@ try { require('hardhat-tracer') } catch (_) { /* optional — install when neede
 //   - ~60 test files: hre.network.connect() pattern
 //   - extendEnvironment removed — replace Theta RPC patch below with HH3 hooks
 //   - solidity-coverage replaced by built-in --coverage flag
+//   - chai 6 is ESM-only and 69 .cjs test files require('chai'), so chai
+//     stays on 4.x until the same CJS → ESM pass (dependabot #59).
+//
+// SEPARATE CONSTRAINT — OpenZeppelin contracts are pinned to ~5.4.0.
+// OZ 5.6 emits the Cancun `mcopy` opcode and drops ReentrancyGuardUpgradeable,
+// which 8 contracts under contracts/legacy/ import. Taking 5.6 therefore means
+// moving every importing contract to solc >=0.8.24 with evmVersion cancun and
+// rewriting those 8 — a deliberate compiler/EVM decision for audit-scope
+// bytecode, not a dependency bump.
 // ============================================================
 
 // Theta RPC compatibility: strip the block tag from eth_estimateGas calls.
