@@ -34,7 +34,6 @@ const requiredDeps = [
   'redis',
   'pino',
   'dotenv',
-  'snarkjs',
   'express'
 ];
 

@@ -3,6 +3,25 @@
 All notable changes to the XFuel SDK are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.5.1 — Security: axios advisories cleared
+
+No API changes. Publish so installs stop resolving a vulnerable `axios`.
+
+### Security
+- **`axios` `^1.14.0` → `^1.19.0`** — clears the high-severity advisories that
+  `npm audit` reported against every `npm install xfuel-sdk`, including SSRF via
+  `NO_PROXY` bypass, prototype-pollution gadgets enabling credential injection and
+  request hijacking, and `Proxy-Authorization` leakage across redirects.
+  `npm audit` on this package now reports no high findings in the runtime tree.
+
+### Changed
+- Build moved to `module`/`moduleResolution` `node16`, so the compiler validates the
+  published `exports` map. Emitted output is unchanged CommonJS.
+- Examples typecheck as ESM (`module: esnext`), matching how `tsx` actually runs them.
+- Dev tooling: jest 29 → 30, `@types/jest` 30, `ts-jest` 29.4.12.
+  TypeScript stays on 5.9 — ts-jest does not yet support the TypeScript 7 native
+  compiler, which no longer exposes the JS compiler API ts-jest relies on.
+
 ## 0.5.0 — Live hub catalog + buyer stats (design-partner readiness)
 
 Additive and backward-compatible, but a **required publish**: `getMyStats` and the
