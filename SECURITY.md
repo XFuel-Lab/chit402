@@ -20,7 +20,8 @@ Include: description, affected components, reproduction steps, impact, optional 
 
 ## Scope
 
-Details and rewards: [docs/bug-bounty.md](docs/bug-bounty.md).
+Full scope and disclosure policy: [docs/bug-bounty.md](docs/bug-bounty.md). XFuel is
+pre-audit and offers no cash bounty today; safe harbour and public credit still apply.
 
 Priority:
 
