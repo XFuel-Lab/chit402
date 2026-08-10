@@ -11,13 +11,7 @@ const __dirname = dirname(__filename);
 /**
  * Configuration for XFuel gateway (agent routing, x402/USDC on Base, proofs, receipts).
  * EdgeCloud / Theta RPC remain available as optional provider ops — not settlement home (ADR 0002).
- * Set PERSISTENCE_BRIDGE_ENABLED=true to enable legacy deposit flow.
  */
-// Computed before the config object so fields below can reference it without a
-// temporal-dead-zone self-reference (previously `!config.persistenceBridgeEnabled`
-// inside the literal threw a ReferenceError whenever AI_LISTENER_ENABLED !== 'true').
-const persistenceBridgeEnabled = process.env.PERSISTENCE_BRIDGE_ENABLED === 'true';
-
 // ── Theta RPC failover list ────────────────────────────────────────────────
 // Order = failover priority (MultiRpcProvider uses index 0 as primary). If a
 // ZAN Node Service endpoint is configured it becomes primary, with the explicit
@@ -37,9 +31,6 @@ const thetaRpcUrls = [
 ].filter((url, i, arr) => url && arr.indexOf(url) === i);
 
 const config = {
-  // Persistence bridge (Theta → Persistence deposits): optional; default off — focus AI DePIN
-  persistenceBridgeEnabled,
-
   // Theta RPC Configuration — ZAN primary (if set) + public fallback; see thetaRpcUrls above
   theta: {
     rpcUrls: thetaRpcUrls,
@@ -50,9 +41,6 @@ const config = {
 
   // Contract Configuration
   contracts: {
-    vaultFactoryAddress: process.env.VAULT_FACTORY_ADDRESS,
-    subVaultAbiPath: process.env.SUBVAULT_ABI_PATH || join(__dirname, '../abis/SubVault.json'),
-    vaultFactoryAbiPath: process.env.VAULT_FACTORY_ABI_PATH || join(__dirname, '../abis/VaultFactory.json'),
     /** Phase 1 Fair Exchange: A2ACircuit address for settleBidFairExchange (optional). */
     a2aCircuitAddress: process.env.A2A_CIRCUIT_ADDRESS || null,
   },
@@ -235,31 +223,6 @@ const config = {
     minBatchSize: parseInt(process.env.SP1_MIN_BATCH_SIZE) || 5
   },
 
-  // Persistence Configuration (Phase C Update)
-  persistence: {
-    rpcUrl: process.env.PERSISTENCE_RPC_URL || 'https://rpc.core.persistence.one:443',
-    chainId: process.env.PERSISTENCE_CHAIN_ID || 'core-1',
-    wsUrl: process.env.PERSISTENCE_WS_URL || 'wss://rpc.core.persistence.one/websocket',
-    pollInterval: parseInt(process.env.PERSISTENCE_POLL_INTERVAL_MS) || 10000,
-    
-    // Phase C: Governance whitelisting status
-    whitelistApproved: process.env.PERSISTENCE_WHITELIST_APPROVED === 'true',
-    
-    // Contract addresses (deployed in Phase C)
-    zkVerifierContract: process.env.PERSISTENCE_ZK_VERIFIER_ADDRESS,
-    minterContract: process.env.PERSISTENCE_MINTER_ADDRESS,
-    
-    // Backend relayer wallet (for signing Persistence transactions)
-    mnemonic: process.env.PERSISTENCE_RELAYER_MNEMONIC,
-    
-    // Reverse-burn loop configuration
-    burnEventTopic: process.env.PERSISTENCE_BURN_EVENT_TOPIC || 'burn_ibcTFUEL',
-    
-    // Gas configuration
-    gasPrice: process.env.PERSISTENCE_GAS_PRICE || '0.025uxprt',
-    gasAdjustment: parseFloat(process.env.PERSISTENCE_GAS_ADJUSTMENT) || 1.8
-  },
-
   // Osmosis Configuration (Phase D/E: Primary settlement + AI routing)
   osmosis: {
     rpcUrl: process.env.OSMOSIS_RPC_URL || 'https://rpc.osmosis.zone:443',
@@ -301,9 +264,6 @@ const config = {
 
   // AI Listener Configuration (Phase E: AI DePIN Bridge)
   aiListener: {
-    // When Persistence bridge is off, AI listener is on by default (AI DePIN mode)
-    enabled: process.env.AI_LISTENER_ENABLED === 'true' || !persistenceBridgeEnabled,
-
     // Theta Edge Cloud URL for inference routing
     thetaEdgeUrl: process.env.THETA_EDGE_URL,
 
@@ -376,10 +336,6 @@ const config = {
 export function validateConfig() {
   const errors = [];
 
-  if (config.persistenceBridgeEnabled && !config.contracts.vaultFactoryAddress) {
-    errors.push('VAULT_FACTORY_ADDRESS is required when PERSISTENCE_BRIDGE_ENABLED=true');
-  }
-
   // RELAYER_PRIVATE_KEY optional: needed for refunds, Fair Exchange submit; omit or use placeholder for zkGPT-only dev
   if (!config.relayer.privateKey) {
     // No error; relayer-dependent features will be disabled
@@ -390,19 +346,6 @@ export function validateConfig() {
   }
 
   // SP1_PROVER_URL is optional: bridge can run with zkGPT-only (Phase 1 E2E); SP1 proof paths skip or return 503 if unset
-
-  // Phase C: Validate Persistence configuration if whitelisting is approved
-  if (config.persistence.whitelistApproved) {
-    if (!config.persistence.zkVerifierContract) {
-      errors.push('PERSISTENCE_ZK_VERIFIER_ADDRESS is required when whitelisting is approved');
-    }
-    if (!config.persistence.minterContract) {
-      errors.push('PERSISTENCE_MINTER_ADDRESS is required when whitelisting is approved');
-    }
-    if (!config.persistence.mnemonic) {
-      errors.push('PERSISTENCE_RELAYER_MNEMONIC is required when whitelisting is approved');
-    }
-  }
 
   // Validate yield configuration if reverse-burn is enabled
   if (config.yield.revenueSplitterAddress) {

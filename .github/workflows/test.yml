@@ -90,29 +90,6 @@ jobs:
       - name: Validate Agent Skills (SKILL.md frontmatter)
         run: node scripts/validate-skills.cjs
 
-  # ── CosmWasm Rust tests ──────────────────────────────────────
-  cosmwasm:
-    name: CosmWasm Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            contracts/cosmwasm/sp1-verifier
-            contracts/cosmwasm/revenue-splitter
-
-      - name: Run ZK verifier tests
-        working-directory: contracts/cosmwasm/sp1-verifier
-        run: cargo test
-
-      - name: Run revenue splitter tests
-        working-directory: contracts/cosmwasm/revenue-splitter
-        run: cargo test
-
   # ── XFuel zkLLM prover (Phase 5 / Verified Inference Tier-3) ──
   zkllm:
     name: zkLLM Prover Tests

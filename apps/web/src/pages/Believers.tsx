@@ -358,11 +358,7 @@ export default function Believers() {
         <h1 style={styles.h1}>XFuel Community Round</h1>
         <p style={styles.sub}>
           Up to <strong style={{ color: '#a5f3fc' }}>15%</strong> of XF supply sold here (on-chain <code style={{ fontSize: '0.88em' }}>xfAllocationCap</code>
-          ). Commit TFUEL; 3-month cliff + 9-month linear vest. Optional lock tiers earn bonus XF. Multisig may update XF/TFUEL price while the round is open (
-          <a href="https://github.com/XFuel-Lab/xfuel-protocol/blob/main/docs/_archive/legacy-tokenomics/PRICING_TFUEL_XF.md" style={{ color: '#00d4ff' }} rel="noreferrer">
-            pricing policy
-          </a>
-          ).
+          ). Commit TFUEL; 3-month cliff + 9-month linear vest. Optional lock tiers earn bonus XF. Multisig may update XF/TFUEL price while the round is open.
         </p>
       </div>
 
