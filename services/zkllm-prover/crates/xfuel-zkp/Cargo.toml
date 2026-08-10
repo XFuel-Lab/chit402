@@ -8,17 +8,17 @@ repository = "https://github.com/XFuel-Lab/xfuel-protocol"
 
 # Approved, OSI-permissive deps only (see docs/adr/0004-zkllm-prover-stack.md provenance log).
 [dependencies]
-ark-ff = "0.4"
-ark-bn254 = "0.4"
-ark-ec = "0.4"
-ark-poly = "0.4"
-ark-poly-commit = "0.4"
-ark-serialize = "0.4"
-ark-std = { version = "0.4", features = ["std"] }
+ark-ff = "0.6"
+ark-bn254 = "0.6"
+ark-ec = "0.6"
+ark-poly = "0.6"
+ark-poly-commit = "0.6"
+ark-serialize = "0.6"
+ark-std = { version = "0.6", features = ["std"] }
 sha3 = "0.10"
 
 [dev-dependencies]
-ark-std = { version = "0.4", features = ["std"] }
+ark-std = { version = "0.6", features = ["std"] }
 
 [[example]]
 name = "prove_block"
