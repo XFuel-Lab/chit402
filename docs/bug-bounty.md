@@ -1,9 +1,16 @@
-# Bug Bounty
+# Responsible Disclosure
 
-Rewards for responsible disclosure that protects XFuel users and funds.  
+Coordinated disclosure for issues that affect XFuel users and funds.  
 Contact: security@xfuel.app
 
-Last updated: 2026-07-20
+Last updated: 2026-08-10
+
+> **No cash bounty is offered today.** XFuel is pre-audit and pre-funding, so we
+> do not advertise reward amounts we cannot commit to paying. We recognise valid
+> reports publicly (with your consent) and credit you in the fix. A funded bounty
+> will launch alongside the first external audit — see
+> [AUDIT_READINESS_CHECKLIST.md](./AUDIT_READINESS_CHECKLIST.md). Until then,
+> please report anyway: safe harbour below applies in full.
 
 ## Scope
 
@@ -31,17 +38,23 @@ Out of scope:
 
 Full reporting policy: [SECURITY.md](../SECURITY.md).
 
-## Rewards (USD, typically paid in USDC or ETH)
+## Severity
 
-| Severity | Range |
-|----------|--------|
-| Critical | $10,000 – $50,000 |
-| High | $5,000 – $10,000 |
-| Medium | $1,000 – $5,000 |
-| Low | $100 – $1,000 |
+Used to prioritise triage and fixes. No monetary reward attaches to these today.
 
-Critical examples: direct loss of funds, RCE, critical auth bypass, private-key compromise.  
-Final amounts are at the security team's discretion (impact, quality, exploitability).
+| Severity | Examples |
+|----------|----------|
+| Critical | Direct loss of funds, RCE, auth bypass, private-key compromise |
+| High | Settlement forgery, proof-verification bypass, privilege escalation |
+| Medium | Information disclosure, receipt tampering without fund loss |
+| Low | Hardening gaps with limited practical impact |
+
+## Recognition
+
+- Public credit in the fix commit and release notes, if you want it.
+- A named entry in the security acknowledgements when the audit ships.
+- Reporters of valid Critical/High issues found before the funded programme opens
+  will be invited to it directly.
 
 ## Rules
 
@@ -61,7 +74,7 @@ Email security@xfuel.app with:
 - Steps to reproduce / PoC
 - Impact
 - Optional suggested fix
-- Wallet address for payment
+- How you would like to be credited (or "anonymous")
 
 SLA: acknowledge within 48 hours; triage within 5 business days.  
 Safe harbor applies when you follow these rules in good faith.

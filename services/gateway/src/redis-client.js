@@ -69,7 +69,7 @@ export async function storeVaultMapping(vaultAddress, keplrAddress, nonce) {
   await redisClient.set(
     `vault:${vaultAddress.toLowerCase()}`,
     JSON.stringify(mapping),
-    { EX: expirySeconds }
+    { expiration: { type: 'EX', value: expirySeconds } }
   );
 
   logger.info({
@@ -137,7 +137,7 @@ export async function updateVaultStatus(vaultAddress, status) {
   const ttl = await redisClient.ttl(key);
   
   if (ttl > 0) {
-    await redisClient.set(key, JSON.stringify(mapping), { EX: ttl });
+    await redisClient.set(key, JSON.stringify(mapping), { expiration: { type: 'EX', value: ttl } });
     logger.info({ vault: vaultAddress, status }, 'Vault status updated');
     return true;
   }
@@ -170,7 +170,7 @@ export async function markVaultCompleted(vaultAddress, proofHash) {
 
   // Keep completed records for 7 days for audit
   const sevenDaysInSeconds = 7 * 24 * 60 * 60;
-  await redisClient.set(key, JSON.stringify(mapping), { EX: sevenDaysInSeconds });
+  await redisClient.set(key, JSON.stringify(mapping), { expiration: { type: 'EX', value: sevenDaysInSeconds } });
 
   logger.info({ vault: vaultAddress, proofHash }, 'Vault marked as completed');
   return true;
@@ -201,7 +201,7 @@ export async function markVaultRefunded(vaultAddress, txHash) {
 
   // Keep refund records for 30 days for audit
   const thirtyDaysInSeconds = 30 * 24 * 60 * 60;
-  await redisClient.set(key, JSON.stringify(mapping), { EX: thirtyDaysInSeconds });
+  await redisClient.set(key, JSON.stringify(mapping), { expiration: { type: 'EX', value: thirtyDaysInSeconds } });
 
   logger.info({ vault: vaultAddress, txHash }, 'Vault marked as refunded');
   return true;
@@ -257,7 +257,7 @@ export async function storeReverseBurnEvent(burnData) {
 
   // Store with 7-day TTL
   const sevenDaysInSeconds = 7 * 24 * 60 * 60;
-  await redisClient.set(key, JSON.stringify(eventData), { EX: sevenDaysInSeconds });
+  await redisClient.set(key, JSON.stringify(eventData), { expiration: { type: 'EX', value: sevenDaysInSeconds } });
 
   logger.info({
     txHash: burnData.txHash,
@@ -318,7 +318,7 @@ export async function markReverseBurnProcessed(txHash, status) {
 
   // Keep processed records for 30 days for audit
   const thirtyDaysInSeconds = 30 * 24 * 60 * 60;
-  await redisClient.set(key, JSON.stringify(event), { EX: thirtyDaysInSeconds });
+  await redisClient.set(key, JSON.stringify(event), { expiration: { type: 'EX', value: thirtyDaysInSeconds } });
 
   logger.info({ txHash, status }, 'Reverse-burn event marked as processed');
   return true;

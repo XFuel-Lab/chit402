@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-10 · Public Base mainnet x402 live · Pre-outreach protocol review done · Your checklist below
+Last updated: 2026-08-10 · Public Base mainnet x402 live · Pre-outreach protocol review + dependency/security cleanup done · Your checklist below
 
 ## How to use
 
@@ -17,8 +17,9 @@ Last updated: 2026-08-10 · Public Base mainnet x402 live · Pre-outreach protoc
 | 1 | ~~Mainnet USDC go-live~~ | **Done 2026-08-06** — public flagship Real |
 | 2 | Read and accept [STRATEGY.md](./STRATEGY.md) (or amend in writing) | STRATEGY + ADR 0005 + float treasury shipped |
 | 3 | ~~Prefund Theta EdgeCloud with USDC; API key on gateway~~ | **Done 2026-08-07** — real EdgeCloud compute live; float cap enforced (`PROVIDER_FLOAT_ENFORCE=true`) |
-| 3b | **Publish `xfuel-sdk@0.5.0` to npm** (browser + security key) — blocks `xfuel-mcp`, which cannot build against the published 0.4.0 | Eng bumped version + changelog; see [packages/sdk/PUBLISHING.md](../packages/sdk/PUBLISHING.md) |
-| 3c | **Deploy the gateway fixes to Lightsail** before sending any partner links | `git pull && sudo systemctl restart xfuel-api` — see Eng status below |
+| 3b | ~~Publish `xfuel-sdk@0.5.0`~~ → **Publish `xfuel-sdk@0.5.1`** (axios security fix; every `npm install xfuel-sdk` currently resolves a vulnerable axios) | Eng bumped version + changelog; see [packages/sdk/PUBLISHING.md](../packages/sdk/PUBLISHING.md) |
+| 3c | **Deploy the gateway to Lightsail** — now also express 5 / redis 6 / pino 10. Run `npm install` on the box, not just `git pull` | `git pull && npm install && sudo systemctl restart xfuel-api` — see Eng status below |
+| 3d | Confirm the bounty change: XFuel no longer advertises cash rewards (was "up to $50,000") until the first audit is funded | Eng converted [bug-bounty.md](./bug-bounty.md) to a safe-harbour disclosure policy and scrubbed README / WHITEPAPER / SECURITY / site |
 | 4 | Put real contacts on [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md); send [OUTREACH_TEMPLATES.md](./OUTREACH_TEMPLATES.md) | 10 hunt targets + GTM motions in ICP |
 | 5 | Accept or amend [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) (reply “accepted” / edit) | Decision draft shipped |
 | 6 | After partners say yes: partner API keys + [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) | Onboarding + cookbook shipped |
@@ -160,3 +161,39 @@ Found by walking the protocol as a design partner would. All fixed in the repo;
 | Onboarding said `npx tsx node_modules/xfuel-sdk/examples/...` | Published package ships `dist` only — ENOENT |
 | `xfuel-mcp` could not compile against published `xfuel-sdk` | `npx xfuel-mcp` (advertised in AGENTS.md) is unbuildable until 0.5.0 ships |
 | x402 skill docs said mainnet was "pending CDP" | Partners plan against Sepolia when the endpoint settles real mainnet USDC |
+
+### Dependency + security cleanup (2026-08-10)
+
+Done before outreach on the reasoning that a breakage now costs engineering time,
+whereas the same breakage during a partner trial costs the trial.
+
+| Package | Vulnerabilities | Verification |
+|---------|-----------------|--------------|
+| `services/gateway` | **10 → 0** | 172/172 tests, plus a real boot on express 5 (health, `/v1/models`, 404, malformed POST) |
+| `packages/mcp` | **5 → 0** | 30/30 tests |
+| `packages/sdk` | **7 → 2** (both transitive, dev-only) | 72/72 tests + examples typecheck |
+| repo root | **79 → 40, 2 critical → 0** | 95 listener + 281 Solidity tests, web app builds |
+
+Notable: `snarkjs` (gateway) and `@thetalabs/theta-js` (root) were **imported nowhere**
+but between them carried 5 high and 1 critical advisory, including a `lodash` critical
+with no upstream fix. Removing them was the single largest win.
+
+Gateway majors taken: express 4→5, redis 4→6, pino 9→10, `ws` (uninitialised memory
+disclosure). Express 5 returns `undefined` rather than `{}` for an unparsed body, so
+three handlers were hardened — a partner who forgets `Content-Type: application/json`
+now gets a 400 instead of a 500.
+
+**Deliberately deferred, with reasons:**
+
+- **TypeScript 7** — blocked upstream. ts-jest cannot use the TS7 native compiler,
+  which no longer exposes the JS compiler API. The workaround needs two parallel
+  TypeScript installs; not worth it for a published SDK. Revisit when ts-jest ships support.
+- **Hardhat 2→3** (and `solidity-coverage`, `adm-zip`, `undici`, `tmp`) — the last 5 root
+  highs. All build-time only: never in the gateway, the published packages, or the web
+  bundle, so no partner is exposed. A real migration, worth scheduling on its own.
+- **arkworks `ark-*` 0.4→0.6** — confirmed **not** security-driven (no advisory on any of
+  the three PRs). It sits under the zkLLM proving gadgets, where a silent algebra-trait
+  change is a soundness risk, so it needs deliberate re-verification rather than a bump.
+- **`cw20` 1.1→2.0** — the one Rust PR that does cite security, in the CosmWasm
+  revenue-splitter. Cosmos is not the settlement home (ADR 0002); confirm whether that
+  contract is still live before spending effort.

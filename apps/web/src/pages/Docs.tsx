@@ -112,8 +112,8 @@ const auditors: DocLink[] = [
     external: true,
   },
   {
-    title: 'Bug bounty',
-    description: 'Scope and rewards up to $50,000 critical.',
+    title: 'Responsible disclosure',
+    description: 'Scope, safe harbour, and how findings are credited.',
     href: `${GITHUB}/docs/bug-bounty.md`,
     meta: 'security',
     external: true,
@@ -176,7 +176,7 @@ export default function Docs() {
             npm SDK
           </a>
           <a href={`${GITHUB}/docs/bug-bounty.md`} target="_blank" rel="noreferrer">
-            Bug bounty
+            Disclosure
           </a>
           <Link to="/circuits">Circuits</Link>
           <Link to="/security">Security</Link>

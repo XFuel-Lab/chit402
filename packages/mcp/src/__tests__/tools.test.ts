@@ -34,7 +34,7 @@ function captureTools(
   return handlers;
 }
 
-test('all twelve tools are registered', () => {
+test('all thirteen tools are registered', () => {
   const handlers = captureTools({});
   for (const name of [
     'submit_inference',

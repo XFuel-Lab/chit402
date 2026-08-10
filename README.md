@@ -95,7 +95,7 @@ API reference: [M2M API](docs/M2M_API.md) · OpenAI gateway: [docs here](docs/OP
 
 ## Security
 
-Bug bounty (up to $50,000 critical): [docs/bug-bounty.md](docs/bug-bounty.md).  
+Responsible disclosure (safe harbour; no cash bounty until the first audit): [docs/bug-bounty.md](docs/bug-bounty.md).  
 Reporting policy: [SECURITY.md](SECURITY.md).
 
 ---

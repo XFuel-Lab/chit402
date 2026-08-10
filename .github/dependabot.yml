@@ -63,6 +63,21 @@ updates:
       - "automated"
       - "sdk"
 
+  # ── npm (mcp server — published as xfuel-mcp) ───────────────
+  - package-ecosystem: "npm"
+    directory: "/packages/mcp"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "automated"
+      - "mcp"
+    ignore:
+      # Tracks the sibling SDK release, not dependabot
+      - dependency-name: "xfuel-sdk"
+
   # ── Cargo (Rust workspace) ──────────────────────────────────
   - package-ecosystem: "cargo"
     directory: "/"

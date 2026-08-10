@@ -1,6 +1,6 @@
-# Deploy SP1 Prover to Theta EdgeCloud - Automated
-# Uses AWS Secrets Manager for credentials
-# Run: node deploy-to-theta.js
+// Deploy SP1 Prover to Theta EdgeCloud - Automated
+// Uses AWS Secrets Manager for credentials
+// Run: node deploy-to-theta.cjs
 
 const { execSync } = require('child_process');
 require('dotenv').config({ path: '../.env.local' });

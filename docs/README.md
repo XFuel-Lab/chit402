@@ -65,7 +65,7 @@ https://xfuel.app Â· https://api-testnet.xfuel.app
 | [ERC8004_INTEGRATION.md](./ERC8004_INTEGRATION.md) | Validation registry |
 | [AUDIT_READINESS_CHECKLIST.md](./AUDIT_READINESS_CHECKLIST.md) | Audit Phase 1 |
 | [security-design.md](./security-design.md) | Security model |
-| [bug-bounty.md](./bug-bounty.md) | Bounty |
+| [bug-bounty.md](./bug-bounty.md) | Responsible disclosure |
 
 ---
 

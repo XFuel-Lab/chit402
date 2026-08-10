@@ -95,4 +95,4 @@ Details: [packages/sdk/PUBLISHING.md](packages/sdk/PUBLISHING.md).
 
 ## Security
 
-security@xfuel.app · [docs/bug-bounty.md](docs/bug-bounty.md) · up to $50,000 Critical
+security@xfuel.app · [docs/bug-bounty.md](docs/bug-bounty.md) · coordinated disclosure with safe harbour (no cash bounty pre-audit)

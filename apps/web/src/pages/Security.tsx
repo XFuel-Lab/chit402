@@ -56,16 +56,19 @@ export default function Security() {
         </div>
 
         <div className="card" style={{ padding: '1.5rem', marginBottom: '1.25rem' }}>
-          <h2 style={styles.h2}>Bug bounty &amp; disclosure</h2>
+          <h2 style={styles.h2}>Responsible disclosure</h2>
           <p style={styles.p}>
-            Responsible disclosure: <a href="mailto:security@xfuel.app" style={{ color: '#00d4ff' }}>security@xfuel.app</a> or a{' '}
+            Report privately: <a href="mailto:security@xfuel.app" style={{ color: '#00d4ff' }}>security@xfuel.app</a> or a{' '}
             <a href="https://github.com/XFuel-Lab/xfuel-protocol/security" target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>
               GitHub Security Advisory
             </a>
-            . Rewards up to <strong>$50,000</strong> for critical findings.
+            . Safe harbour applies for good-faith research. XFuel is pre-audit, so
+            there is <strong>no cash bounty today</strong> — valid findings get a
+            coordinated fix and public credit, and a funded programme launches with
+            the first external audit.
           </p>
           <a href={BUG_BOUNTY} target="_blank" rel="noreferrer" className="btn btn-primary btn-sm" style={{ marginTop: '0.5rem', display: 'inline-flex' }}>
-            Bug bounty rules
+            Disclosure policy
           </a>
         </div>
 

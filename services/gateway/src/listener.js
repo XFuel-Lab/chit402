@@ -689,7 +689,7 @@ class DepositListener {
       await redisClient.set(
         receiptKey,
         JSON.stringify(receipt),
-        { EX: ttl }
+        { expiration: { type: 'EX', value: ttl } }
       );
       
       // Also add to status-based index for easier querying

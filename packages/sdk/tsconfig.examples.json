@@ -5,7 +5,11 @@
     "rootDir": ".",
     "declaration": false,
     "declarationMap": false,
-    "sourceMap": false
+    "sourceMap": false,
+    // Examples run under tsx as ESM (they use import.meta), so they must be
+    // checked as ESM even though the published library emits CommonJS.
+    "module": "esnext",
+    "moduleResolution": "bundler"
   },
   "include": ["src", "examples"],
   "exclude": ["node_modules", "dist", "src/**/__tests__/**", "src/**/*.test.ts"]

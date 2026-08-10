@@ -509,7 +509,7 @@ export function createApp() {
         parent_task_id,     // optional – prior task in a multi-hop / A2A receipt chain
         a2a_message_id,     // optional – link this task to an A2A message id
         correlation_id,     // optional – free-form swarm / session correlation
-      } = req.body;
+      } = req.body || {};
 
       // ── Validation ────────────────────────────────────────────────────
 
@@ -1039,7 +1039,7 @@ export function createApp() {
         ibc_channel,        // optional – explicit IBC channel
         parent_task_id,     // optional – prior inference task in a receipt chain
         correlation_id,     // optional – swarm / session correlation
-      } = req.body;
+      } = req.body || {};
 
       // ── Validation ────────────────────────────────────────────────────
 
@@ -1179,7 +1179,7 @@ export function createApp() {
 
   app.post('/a2a-settle-fair-exchange', async (req, res) => {
     try {
-      const { bid_id, result_hash, v, r, s } = req.body;
+      const { bid_id, result_hash, v, r, s } = req.body || {};
 
       const errors = [];
       if (!bid_id || typeof bid_id !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(bid_id)) {

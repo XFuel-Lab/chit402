@@ -25,21 +25,27 @@ build + tests.
 
 ## Publish (preferred — security key / WebAuthn)
 
-How `xfuel-sdk` 0.1.0 / 0.2.0 were shipped. Opens a browser for npm login +
-hardware security key (or passkey). Does **not** rely on a classic `~/.npmrc`
-token (those expire and return `E401`).
+**Log in first, as a separate step.** On npm 9+ (verified on 11.6.2),
+`--auth-type=web` only selects the flow for `npm login`; passing it to
+`npm publish` does *not* trigger an interactive login. If the stored token has
+expired, publish runs unauthenticated and fails with a **misleading `E404`**:
+
+```
+npm error 404 Not Found - PUT https://registry.npmjs.org/xfuel-sdk
+```
+
+That is npm masking an auth failure (it hides package existence rather than
+returning 401) — it does **not** mean the package or version is wrong. Confirm
+with `npm whoami`: an `E401` there is the real error.
 
 ```powershell
 cd packages/sdk
-npm publish --access public --auth-type=web
+npm login --auth-type=web     # opens browser; security key / passkey
+npm whoami                    # must print: xfuel
+npm publish --access public   # browser re-prompts to authorize the publish
 ```
 
-```bash
-cd packages/sdk
-npm publish --access public --auth-type=web
-```
-
-`prepublishOnly` runs `build` + `test` first. Complete the browser prompt, then
+`prepublishOnly` runs `build` + `test` first. Complete the browser prompts, then
 verify: https://www.npmjs.com/package/xfuel-sdk
 
 ## Alternate: classic login + OTP
@@ -62,8 +68,13 @@ npm publish --access public --provenance
 
 ## Verify
 
+`npm view` reads a local metadata cache and will happily report the *previous*
+version for a while after a successful publish. Force it online, or ask the
+registry directly:
+
 ```bash
-npm view xfuel-sdk version
+npm view xfuel-sdk version --prefer-online
+curl -sS https://registry.npmjs.org/-/package/xfuel-sdk/dist-tags   # {"latest":"0.5.0"}
 npm pack --dry-run              # inspect exactly what ships (should be dist/ + README + package.json)
 ```
 

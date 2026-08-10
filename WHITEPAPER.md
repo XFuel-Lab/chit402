@@ -132,7 +132,7 @@ Allocation is forward-looking (community, strategic, ecosystem, team, treasury, 
 - Role-based access, pausability, and circuit breakers on verifiers
 - Non-custodial payments (agent signs USDC)
 - **Audit Phase 1:** `contracts/core/`, primary inference circuit, `SP1ProofHooks` (Base)
-- **Bug bounty:** up to $50,000 — [bug bounty program](docs/bug-bounty.md)
+- **Responsible disclosure:** safe harbour, coordinated fix, public credit. A funded bounty launches with the first external audit — [disclosure policy](docs/bug-bounty.md)
 
 ---
 
