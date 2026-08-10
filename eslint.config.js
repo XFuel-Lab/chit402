@@ -1,4 +1,5 @@
 import js from '@eslint/js'
+import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
@@ -6,9 +7,13 @@ import tseslint from 'typescript-eslint'
 export default tseslint.config(
   {
     ignores: [
-      'dist',
-      'node_modules',
-      'coverage',
+      // Bare names only match at the config root, so build output under
+      // apps/web/dist was being linted as source — minified bundles accounted
+      // for the overwhelming majority of reported problems.
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/coverage/**',
+      '**/cmake-build-release/**',
       'docs/**',
       'scripts/**',
       '**/*.config.js',
@@ -63,6 +68,17 @@ export default tseslint.config(
       '@typescript-eslint/no-namespace': 'off',
       '@typescript-eslint/no-empty-object-type': 'off',
       'no-undef': 'off',
+    },
+  },
+  {
+    // Plain .js here is Node service code (gateway, core-layer) plus the
+    // dashboard's React components. Only the ts/tsx block above declared an
+    // environment, so every console/process/Buffer reference tripped no-undef.
+    files: ['**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.node, ...globals.browser },
     },
   },
 )
