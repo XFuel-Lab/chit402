@@ -71,7 +71,7 @@
     "@cosmjs/proto-signing": "^0.39.0",
     "@cosmjs/stargate": "^0.39.0",
     "@types/canvas-confetti": "^1.9.0",
-    "@walletconnect/ethereum-provider": "^2.17.2",
+    "@walletconnect/ethereum-provider": "^2.23.10",
     "@walletconnect/modal": "^2.7.0",
     "axios": "^1.19.0",
     "canvas-confetti": "^1.9.4",
