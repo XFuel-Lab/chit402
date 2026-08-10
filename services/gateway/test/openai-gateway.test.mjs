@@ -6,6 +6,7 @@ process.env.HUB_CATALOG_OFFLINE = 'true';
 
 import { createApp } from '../src/server.js';
 import { resetHubCatalogCache } from '../src/hub-catalog.js';
+import { openAiErrorShape } from '../src/openai-gateway.js';
 
 // Spin the real Express app on an ephemeral port and exercise the
 // OpenAI-compatible routes over HTTP. No provider keys are set, so
@@ -156,6 +157,42 @@ test('POST /v1/chat/completions supports SSE streaming', async () => {
   assert.match(text, /"finish_reason":"stop"/);
   assert.match(text, /event: xfuel\.receipt/);
   assert.match(text, /data: \[DONE\]/);
+});
+
+// Shared M2M middleware (auth, rate limit, 404) answers `{ error: "code", message }`.
+// OpenAI client libraries throw opaquely on that shape, so /v1 rewrites it.
+function runErrorShape(status, body) {
+  let captured;
+  const res = { statusCode: status, json: (b) => { captured = b; return res; } };
+  openAiErrorShape({}, res, () => {});
+  res.json(body);
+  return captured;
+}
+
+test('openAiErrorShape rewrites flat M2M errors into the OpenAI envelope', () => {
+  const unauthorized = runErrorShape(401, {
+    error: 'unauthorized',
+    message: 'Provide a valid X-API-Key header or X-Signature relayer authentication.',
+  });
+  assert.equal(unauthorized.error.type, 'authentication_error');
+  assert.equal(unauthorized.error.code, 'unauthorized');
+  assert.match(unauthorized.error.message, /X-API-Key/);
+  assert.equal(unauthorized.error.param, null);
+
+  const limited = runErrorShape(429, { error: 'rate_limit_exceeded', message: 'Slow down.' });
+  assert.equal(limited.error.type, 'rate_limit_error');
+  assert.equal(limited.error.code, 'rate_limit_exceeded');
+
+  const server = runErrorShape(503, { error: 'provider_float_exhausted', message: 'Float low.' });
+  assert.equal(server.error.type, 'server_error');
+});
+
+test('openAiErrorShape leaves success bodies and nested errors untouched', () => {
+  const ok = runErrorShape(200, { object: 'list', data: [] });
+  assert.deepEqual(ok, { object: 'list', data: [] });
+
+  const nested = { error: { message: 'nope', type: 'invalid_request_error', code: 'model_not_found' } };
+  assert.deepEqual(runErrorShape(404, nested), nested);
 });
 
 test('GET /v1/models?modality=image filters catalog', async () => {

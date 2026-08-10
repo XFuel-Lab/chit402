@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-06 · Public Base mainnet x402 live · Strategy docs locked · Your checklist below
+Last updated: 2026-08-10 · Public Base mainnet x402 live · Pre-outreach protocol review done · Your checklist below
 
 ## How to use
 
@@ -16,7 +16,9 @@ Last updated: 2026-08-06 · Public Base mainnet x402 live · Strategy docs locke
 |---|-----|------------------------------|
 | 1 | ~~Mainnet USDC go-live~~ | **Done 2026-08-06** — public flagship Real |
 | 2 | Read and accept [STRATEGY.md](./STRATEGY.md) (or amend in writing) | STRATEGY + ADR 0005 + float treasury shipped |
-| 3 | Prefund Theta EdgeCloud with **USDC** (prefer over TFUEL); API key on gateway — [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md) | Eng wires route when key + float ready |
+| 3 | ~~Prefund Theta EdgeCloud with USDC; API key on gateway~~ | **Done 2026-08-07** — real EdgeCloud compute live; float cap enforced (`PROVIDER_FLOAT_ENFORCE=true`) |
+| 3b | **Publish `xfuel-sdk@0.5.0` to npm** (browser + security key) — blocks `xfuel-mcp`, which cannot build against the published 0.4.0 | Eng bumped version + changelog; see [packages/sdk/PUBLISHING.md](../packages/sdk/PUBLISHING.md) |
+| 3c | **Deploy the gateway fixes to Lightsail** before sending any partner links | `git pull && sudo systemctl restart xfuel-api` — see Eng status below |
 | 4 | Put real contacts on [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md); send [OUTREACH_TEMPLATES.md](./OUTREACH_TEMPLATES.md) | 10 hunt targets + GTM motions in ICP |
 | 5 | Accept or amend [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) (reply “accepted” / edit) | Decision draft shipped |
 | 6 | After partners say yes: partner API keys + [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) | Onboarding + cookbook shipped |
@@ -142,3 +144,19 @@ Engineering shipped: auditor selective disclosure, staging SLA draft, Tier-3 tim
 | Guest ELF rebuild + on-chain vKey | **Blocked on you / prover host** |
 | Design partner keys + onboarding send | **Your Sprint 3 action** |
 | Design partner logos / quotes | Blocked on outreach |
+
+### Pre-outreach review (2026-08-10) — partner-facing fixes
+
+Found by walking the protocol as a design partner would. All fixed in the repo;
+**needs a gateway deploy + an SDK publish to reach partners.**
+
+| Fix | Impact if left alone |
+|-----|----------------------|
+| Chat responses returned `{"message":"..."}` as the assistant content instead of plain text | Every OpenAI-client integration gets a JSON blob as the answer — the single worst first-impression bug |
+| `xfuel/auto` routed to `qwen3` on the paid M2M path but `glm_5_2` on `/v1` | Same alias, two models; `qwen3` is currently at capacity (409), so the paid path failed while the free one worked |
+| 401 / 429 on `/v1/*` used XFuel's flat error shape | OpenAI SDK clients throw an opaque error on a bad key or rate limit |
+| Every SDK example + doc defaulted to retired `llama-3-70b` | First command a partner runs fails with `model_retired` |
+| `quickstart` and `private-spend-budget` never passed a payer | Onboarding doc's primary path 402s on a real-money endpoint |
+| Onboarding said `npx tsx node_modules/xfuel-sdk/examples/...` | Published package ships `dist` only — ENOENT |
+| `xfuel-mcp` could not compile against published `xfuel-sdk` | `npx xfuel-mcp` (advertised in AGENTS.md) is unbuildable until 0.5.0 ships |
+| x402 skill docs said mainnet was "pending CDP" | Partners plan against Sepolia when the endpoint settles real mainnet USDC |

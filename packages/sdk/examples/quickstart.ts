@@ -12,17 +12,30 @@
  *   import { XFuelClient } from 'xfuel-sdk';
  *   import { XFuelOnChain } from 'xfuel-sdk/onchain';
  */
-import { XFuelClient } from '../src/index.js';
+import { XFuelClient, createMockPayer } from '../src/index.js';
 import { XFuelOnChain } from '../src/onchain.js';
 
-const { XFUEL_API_URL, XFUEL_API_KEY, XFUEL_SENDER = '0x000000000000000000000000000000000000dEaD' } = process.env;
+const {
+  XFUEL_API_URL,
+  XFUEL_API_KEY,
+  XFUEL_SENDER = '0x000000000000000000000000000000000000dEaD',
+  // xfuel/auto always resolves to the best live chat model in the hub catalog,
+  // so this stays correct as the catalog changes. `GET /v1/models` lists the rest.
+  XFUEL_MODEL = 'xfuel/auto',
+} = process.env;
 
 async function main() {
   const client = new XFuelClient({ baseUrl: XFUEL_API_URL, apiKey: XFUEL_API_KEY });
 
-  const task = await client.submitInference('llama-3-70b', XFUEL_SENDER, '1000000', {
+  // The hosted endpoint settles real USDC on Base mainnet via x402, so the quote
+  // decides the network and a payer must sign — without one the gateway answers 402.
+  const quote = await client.quoteTask({ model_id: XFUEL_MODEL, amount: '1000000' });
+
+  const task = await client.submitInference(XFUEL_MODEL, XFUEL_SENDER, '1000000', {
     chain_id: 'base',
-    payment: { rail: 'usdc', network: 'base-sepolia' },
+    payment: { rail: 'usdc', network: quote.rails.usdc.network, maxAmount: quote.rails.usdc.amount },
+    // Swap for createEip3009Payer(wallet) from 'xfuel-sdk/onchain' to move real USDC.
+    payer: createMockPayer(),
   });
   console.log('submitted   :', task.task_id);
 

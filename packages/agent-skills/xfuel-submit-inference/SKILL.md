@@ -24,7 +24,7 @@ proof-backed receipt. Prefer the SDK over raw HTTP. Money + proofs live on Base.
 
 | Name | Required | Description |
 |------|----------|-------------|
-| `model` | yes (inference) | Model slug, e.g. `llama-3-70b`. Maps to SDK `modelId`. |
+| `model` | yes (inference) | Live catalog id, e.g. `xfuel/auto` or `theta/glm_5_2` (list via `GET /v1/models`). Retired `llama-*` names are rejected, not remapped. Maps to SDK `modelId`. |
 | `input` | recommended | Prompt/string. You compute `input_hash = keccak256(input)` (the SDK takes `input_hash`, not the raw input). |
 | `sender` | yes | Caller address (settlement attribution). |
 | `amount` | no | Gross fee in wei (min `10000`). Default `1000000`. |
@@ -94,7 +94,7 @@ to sign real USDC on Base).
      baseUrl: process.env.XFUEL_API_URL,
      apiKey: process.env.XFUEL_API_KEY,
    });
-   const task = await client.submitInference('llama-3-70b', '0xYourAddr', '1000000', {
+   const task = await client.submitInference('xfuel/auto', '0xYourAddr', '1000000', {
      chain_id: ChainId.THETA,
      input_hash,
      theta_recipient: '0xYourAddr',

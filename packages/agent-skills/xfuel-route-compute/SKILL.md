@@ -67,7 +67,7 @@ on Base) and the TFUEL amount. Provider *routing* (this skill) and payment *rail
 tier and settle in USDC or TFUEL. See `../_shared/reference/payments-x402.md`.
 
 ```js
-const quote = await client.quoteTask({ model_id: 'llama-3-70b' }); // POST /task-quote
+const quote = await client.quoteTask({ model_id: 'xfuel/auto' }); // POST /task-quote
 // quote.rails.usdc.amount, quote.rails.tfuel.amount, quote.recommended
 ```
 

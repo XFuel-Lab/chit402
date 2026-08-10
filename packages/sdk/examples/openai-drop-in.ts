@@ -22,7 +22,9 @@
 const {
   XFUEL_API_URL = 'https://api-testnet.xfuel.app', // hosted testnet demo; override with http://localhost:3002 for local dev
   XFUEL_API_KEY = 'xfuel-demo', // shared public demo key (rate-limited); bring your own for higher limits
-  XFUEL_MODEL = 'llama-3-70b',
+  // Resolves to the best live chat model in the hub catalog. GET /v1/models lists
+  // the concrete ids (e.g. theta/glm_5_2) — retired names are rejected, not remapped.
+  XFUEL_MODEL = 'xfuel/auto',
 } = process.env;
 
 const baseURL = `${XFUEL_API_URL.replace(/\/$/, '')}/v1`;
@@ -120,15 +122,15 @@ main().catch((err) => {
  OpenAI SDK (Node):
    import OpenAI from 'openai';
    const openai = new OpenAI({ baseURL: `${process.env.XFUEL_API_URL}/v1`, apiKey: process.env.XFUEL_API_KEY });
-   const r = await openai.chat.completions.create({ model: 'llama-3-70b', messages: [...] });
+   const r = await openai.chat.completions.create({ model: 'xfuel/auto', messages: [...] });
    // r.xfuel carries the verification receipt (cast to any — it's an XFuel extension)
 
  Vercel AI SDK:
    import { createOpenAI } from '@ai-sdk/openai';
    const xfuel = createOpenAI({ baseURL: `${process.env.XFUEL_API_URL}/v1`, apiKey: process.env.XFUEL_API_KEY });
-   const { text } = await generateText({ model: xfuel('llama-3-70b'), prompt: '...' });
+   const { text } = await generateText({ model: xfuel('xfuel/auto'), prompt: '...' });
 
  LangChain:
    import { ChatOpenAI } from '@langchain/openai';
-   const model = new ChatOpenAI({ model: 'llama-3-70b', configuration: { baseURL: `${process.env.XFUEL_API_URL}/v1` }, apiKey: process.env.XFUEL_API_KEY });
+   const model = new ChatOpenAI({ model: 'xfuel/auto', configuration: { baseURL: `${process.env.XFUEL_API_URL}/v1` }, apiKey: process.env.XFUEL_API_KEY });
 */

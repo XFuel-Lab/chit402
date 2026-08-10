@@ -353,8 +353,9 @@ function extractContent(result) {
   const choice = result.choices?.[0];
   const msg = choice?.message?.content ?? choice?.delta?.content ?? choice?.text;
   if (typeof msg === 'string') return msg;
-  if (typeof result.output === 'string') return result.output;
-  return typeof result === 'string' ? result : JSON.stringify(result);
+  // Non-OpenAI tiers use provider-specific envelopes; share the EdgeCloud unwrapper
+  // so a partner never sees a JSON blob as assistant content.
+  return extractTextOutput(result.output ?? result);
 }
 
 // ─── Task registration + async proof (reuses AIListener machinery) ────────────
@@ -506,6 +507,40 @@ function bearerToApiKey(req, _res, next) {
   next();
 }
 
+// ─── Error-shape normalizer ───────────────────────────────────────────────────
+
+/** Map an HTTP status onto the OpenAI `error.type` vocabulary. */
+function openAiErrorType(status) {
+  if (status === 429) return 'rate_limit_error';
+  if (status === 401 || status === 403) return 'authentication_error';
+  if (status >= 500) return 'server_error';
+  return 'invalid_request_error';
+}
+
+/**
+ * Shared M2M middleware (auth, rate limit, 404) answers with XFuel's flat shape
+ * `{ error: "code", message }`. OpenAI client libraries expect the nested
+ * `{ error: { message, type, code } }` and throw opaquely on anything else, so
+ * rewrite flat error bodies for /v1 responses only.
+ */
+export function openAiErrorShape(_req, res, next) {
+  const sendJson = res.json.bind(res);
+  res.json = (body) => {
+    if (res.statusCode >= 400 && body && typeof body.error === 'string') {
+      return sendJson({
+        error: {
+          message: body.message || body.error,
+          type: openAiErrorType(res.statusCode),
+          code: body.error,
+          param: null,
+        },
+      });
+    }
+    return sendJson(body);
+  };
+  next();
+}
+
 // ─── Route registration ───────────────────────────────────────────────────────
 
 /**
@@ -515,7 +550,7 @@ function bearerToApiKey(req, _res, next) {
  * @param {{ rateLimit: Function, authenticate: Function }} mw  shared middleware
  */
 export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
-  const chain = [bearerToApiKey, rateLimit, authenticate].filter(Boolean);
+  const chain = [openAiErrorShape, bearerToApiKey, rateLimit, authenticate].filter(Boolean);
 
   app.use('/v1', ...chain);
 

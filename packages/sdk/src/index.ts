@@ -65,12 +65,18 @@ export const PUBLIC_DEMO_API_KEY = 'xfuel-demo';
  * handshake (402 challenge → agent-side payer signs X-PAYMENT → verify+settle).
  * The payer is agent-side and pluggable — the SDK never holds keys.
  */
+/**
+ * x402 settlement networks. Prefer feeding `quote.rails.usdc.network` straight
+ * into `payment.network` so a client follows whatever the gateway is settling on.
+ */
+export type X402Network = 'base' | 'base-sepolia' | 'solana';
+
 export interface PaymentParams {
   rail: 'usdc' | 'tfuel';
   /** usdc rail: asset symbol (default USDC). */
   asset?: string;
   /** usdc rail: settlement network (default base; demo often base-sepolia). */
-  network?: 'base' | 'base-sepolia' | 'solana';
+  network?: X402Network;
   /** Max amount in smallest unit (USDC 6dp; TFUEL wei). */
   maxAmount?: string;
 }
@@ -189,7 +195,7 @@ export interface TaskQuoteResponse {
       rail: 'usdc';
       enabled: boolean;
       asset: string;
-      network: string;
+      network: X402Network;
       decimals: number;
       amount: string;
       pay_to: string | null;

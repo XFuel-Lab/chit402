@@ -43,7 +43,7 @@ const {
   XFUEL_API_URL = 'https://api-testnet.xfuel.app', // hosted testnet demo; override with http://localhost:3002 for local dev
   XFUEL_API_KEY,
   XFUEL_SENDER = '0x000000000000000000000000000000000000dEaD',
-  XFUEL_MODEL = 'llama-3-70b',
+  XFUEL_MODEL = 'xfuel/auto',
   XFUEL_AMOUNT = '1000000', // gross task value (wei for TFUEL fallback; min 10000)
   XFUEL_PAYER_PK, // set to sign real USDC EIP-3009 on Base (else mock payer)
 } = process.env;
@@ -77,7 +77,7 @@ async function main() {
   console.log('\nSubmitting inference task (payment.rail=usdc)…');
   const task = await client.submitInference(XFUEL_MODEL, XFUEL_SENDER, XFUEL_AMOUNT, {
     chain_id: ChainId.BASE,
-    payment: { rail: 'usdc', network: 'base-sepolia', maxAmount: quote.rails.usdc.amount },
+    payment: { rail: 'usdc', network: quote.rails.usdc.network, maxAmount: quote.rails.usdc.amount },
     payer,
   });
   console.log(`  task_id      : ${task.task_id}`);

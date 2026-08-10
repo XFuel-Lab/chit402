@@ -18,15 +18,23 @@ Quickstart example: `npm run example:quickstart`.
 ## Quick start
 
 ```
-import XFuelClient from 'xfuel-sdk';
+import XFuelClient, { createMockPayer } from 'xfuel-sdk';
 
 const client = new XFuelClient(); // demo endpoint + public demo key
 
+// 'xfuel/auto' resolves to the best live chat model. List concrete ids (e.g.
+// theta/glm_5_2) with `await client.listModels()` — retired names are rejected.
 const task = await client.submitInference(
-  'meta-llama/Llama-3.2-3B-Instruct',
+  'xfuel/auto',
   '0xYourWalletAddress',
   '1000000',
-  { chain_id: 'base', payment: { rail: 'usdc' } }
+  {
+    chain_id: 'base',
+    payment: { rail: 'usdc' },
+    // The endpoint settles real USDC via x402; without a payer it answers 402.
+    // Swap for createEip3009Payer(wallet) from 'xfuel-sdk/onchain' to move funds.
+    payer: createMockPayer(),
+  }
 );
 
 const result = await client.waitForCompletion(task.task_id);

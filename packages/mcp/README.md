@@ -32,7 +32,7 @@ Claude / Cursor stdio config:
 
 | Tool | Purpose |
 |------|---------|
-| `list_models` | Routable model ids |
+| `list_models` | Routable model ids — call this first; ids are hub-prefixed (`theta/glm_5_2`) and `xfuel/auto` picks the best live chat model |
 | `submit_inference` | Submit task (default unmetered path) |
 | `pay_with_usdc` | Pay with x402 (needs `XFUEL_PAYER_PRIVATE_KEY`) |
 | `get_task_status` | Status / fees |
@@ -42,6 +42,7 @@ Claude / Cursor stdio config:
 | `get_verified_quote` | Price + available trust tiers |
 | `get_validation_status` | ERC-8004 validation record |
 | `get_provider_stake` | Stake / slash history |
+| `get_my_stats` | Buyer-scoped usage (your paid tasks + USDC fees only) |
 
 Proofs attest settlement metadata + output-hash commitment, not inference correctness — unless Tier-3 Verified Inference applies.
 

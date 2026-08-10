@@ -13,12 +13,22 @@ One-pager for Sprint 3 partners (beachhead A). Founder sends this after a yes.
 ## 15-minute install
 
 ```bash
-npm install xfuel-sdk
+git clone https://github.com/XFuel-Lab/xfuel-protocol && cd xfuel-protocol/packages/sdk
+npm install
 export XFUEL_API_URL=https://api-testnet.xfuel.app   # or your staging host
 export XFUEL_API_KEY=<partner-key>
-npx tsx node_modules/xfuel-sdk/examples/private-spend-budget.ts
-# or from the monorepo: cd packages/sdk && npx tsx examples/private-spend-budget.ts
+npx tsx examples/private-spend-budget.ts
 ```
+
+The published `xfuel-sdk` package ships `dist` only, so run the examples from a
+monorepo clone. In your own project, `npm install xfuel-sdk` and copy the example
+you want — each one is a single self-contained file.
+
+Model ids are hub-prefixed and come from the live catalog (`GET /v1/models`, or
+`client.listModels()`). Use `xfuel/auto` to always get the best live chat model.
+Retired names (any `llama-*`) are rejected with `model_retired` rather than
+silently remapped, so a stale id fails loudly instead of billing you for a
+different model.
 
 Playbook: [packages/agent-skills/AGENT_PLAYBOOK.md](../packages/agent-skills/AGENT_PLAYBOOK.md) Flow 7.  
 MCP: `npx xfuel-mcp` then tool `get_my_stats`.

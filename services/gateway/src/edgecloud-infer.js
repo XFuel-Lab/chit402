@@ -134,17 +134,45 @@ export function audioInputFromUrl(audioUrl) {
   return { audio_filename: String(audioUrl || '') };
 }
 
-/** Pull assistant text from EdgeCloud output envelopes. */
+/**
+ * Pull assistant text from EdgeCloud output envelopes.
+ *
+ * Theta services disagree on shape: `{ text }`, `{ message: "..." }` (GLM),
+ * `{ message: { content } }`, or an OpenAI-style `{ choices: [...] }`. Return the
+ * plain string in every case — never a JSON-encoded envelope, which would leak
+ * `{"message":"hi"}` into an OpenAI client's `choices[0].message.content`.
+ */
 export function extractTextOutput(output) {
   if (output == null) return '';
   if (typeof output === 'string') return output;
-  return (
-    output.text
-    ?? output.message?.content
-    ?? output.choices?.[0]?.message?.content
-    ?? (Array.isArray(output.data) ? (typeof output.data[0] === 'string' ? output.data[0] : output.data[0]?.text) : undefined)
-    ?? (typeof output === 'object' ? JSON.stringify(output) : String(output))
-  );
+  if (Array.isArray(output)) {
+    const first = output[0];
+    return typeof first === 'string' ? first : extractTextOutput(first);
+  }
+
+  const candidates = [
+    output.text,
+    output.message,
+    output.message?.content,
+    output.response,
+    output.content,
+    output.output,
+    output.generated_text,
+    output.choices?.[0]?.message?.content,
+    output.choices?.[0]?.text,
+    output.choices?.[0]?.delta?.content,
+    Array.isArray(output.data)
+      ? (typeof output.data[0] === 'string' ? output.data[0] : output.data[0]?.text)
+      : undefined,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.length > 0) return c;
+  }
+
+  // Unknown envelope — surface it rather than dropping the answer, but this is a
+  // shape we should teach the extractor about.
+  logger.warn({ keys: Object.keys(output).slice(0, 10) }, 'edgecloud-infer: unrecognized output envelope');
+  return JSON.stringify(output);
 }
 
 /** Pull image URL from EdgeCloud image outputs. */

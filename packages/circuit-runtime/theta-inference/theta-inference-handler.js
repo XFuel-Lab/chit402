@@ -69,17 +69,19 @@ const INFERENCE_EVENTS = [
 // Auto / default-llm still resolve to EDGECLOUD_DEFAULT_LLM_SLUG.
 const EDGECLOUD_BASE = 'https://ondemand.thetaedgecloud.com';
 
-const EDGECLOUD_DEFAULT_LLM_SLUG = 'qwen3';
+// Must match the `xfuel/auto` policy in services/gateway/src/hub-catalog.js, or the
+// same alias routes to a different model on the paid M2M path than on /v1.
+const EDGECLOUD_DEFAULT_LLM_SLUG = process.env.EDGECLOUD_DEFAULT_LLM_SLUG || 'glm_5_2';
 
 const EDGECLOUD_MODEL_SLUGS = {
   'qwen3': 'qwen3',
   'glm_5_2': 'glm_5_2',
   'theta/qwen3': 'qwen3',
   'theta/glm_5_2': 'glm_5_2',
-  'default-llm': 'qwen3',
-  'xfuel-auto': 'qwen3',
-  'xfuel/auto': 'qwen3',
-  'auto': 'qwen3',
+  'default-llm': EDGECLOUD_DEFAULT_LLM_SLUG,
+  'xfuel-auto': EDGECLOUD_DEFAULT_LLM_SLUG,
+  'xfuel/auto': EDGECLOUD_DEFAULT_LLM_SLUG,
+  'auto': EDGECLOUD_DEFAULT_LLM_SLUG,
   // Vision / audio / image — pass-through aliases only
   'llava': 'llava',
   'theta/llava': 'llava',
