@@ -21,7 +21,7 @@ const {
   XFUEL_API_URL = 'https://api-testnet.xfuel.app',
   XFUEL_API_KEY,
   XFUEL_SENDER = '0x000000000000000000000000000000000000dEaD',
-  XFUEL_MODEL = 'llama-3-70b',
+  XFUEL_MODEL = 'xfuel/auto',
   XFUEL_AMOUNT = '1000000',
   XFUEL_PAYER_PK,
   XFUEL_PARENT_TASK_ID,
@@ -58,6 +58,7 @@ async function main() {
     payment: { rail: 'usdc', network: quote.rails.usdc.network, maxAmount: quote.rails.usdc.amount },
     ...(XFUEL_PARENT_TASK_ID ? { parent_task_id: XFUEL_PARENT_TASK_ID } : {}),
     correlation_id: XFUEL_CORRELATION_ID,
+    payer,
   });
   console.log(`  task_id: ${task.task_id}`);
   console.log(`  verify:  ${task.verify_url || client.receiptUrl(task.task_id)}`);

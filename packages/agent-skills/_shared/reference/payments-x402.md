@@ -11,7 +11,8 @@ payment-bearing skill accepts a `payment` object; when omitted, the server defau
 {
   "rail": "usdc",              // "usdc" (default) | "tfuel"
   "asset": "USDC",             // usdc only
-  "network": "base-sepolia",   // usdc only: "base-sepolia" (LIVE today) | "base" (mainnet, pending CDP) | "solana"
+  "network": "base",           // usdc only: "base" (mainnet, LIVE today) | "base-sepolia" | "solana"
+                               // Take this from POST /task-quote rather than hardcoding.
   "maxAmount": "50000"         // smallest unit: USDC = 6dp (50000 = $0.05), TFUEL = wei
 }
 ```
@@ -28,9 +29,9 @@ POST /task-quote { model_id?, amount? }
 ## USDC/x402 handshake (agent side)
 
 ```
-1. POST /task-request { ..., payment: { rail: "usdc", network: "base-sepolia", maxAmount } }
+1. POST /task-request { ..., payment: { rail: "usdc", network: "base", maxAmount } }
 2. ← 402 Payment Required + body.accepts[] { scheme:"exact", network, asset, maxAmountRequired, payTo, extra:{ nonce, expiresAt } }
-3. Agent-side payer signs USDC on Base (base-sepolia today) for the challenge → produces the X-PAYMENT header
+3. Agent-side payer signs USDC on Base (mainnet today) for the challenge → produces the X-PAYMENT header
 4. Retry POST /task-request with headers  X-PAYMENT: <blob>  and  X-PAYMENT-NONCE: <extra.nonce>
    (the nonce may instead be embedded as a `nonce` field inside a JSON / base64-JSON X-PAYMENT blob)
 5. Server verifies + settles via the facilitator (binds nonce/amount, rejects replays) → { task_id, payment_rail:"usdc", payment_ref }
@@ -55,8 +56,8 @@ import { XFuelClient, createMockPayer, createSignerPayer } from 'xfuel-sdk';
 const client = new XFuelClient({ baseUrl, apiKey });
 
 // Dev/CI — works against the mock facilitator; does NOT move real funds.
-const task = await client.submitInference('llama-3-70b', '0xAddr', '1000000', {
-  payment: { rail: 'usdc', network: 'base-sepolia', maxAmount: '50000' }, // base-sepolia is LIVE; mainnet "base" pending CDP
+const task = await client.submitInference('xfuel/auto', '0xAddr', '1000000', {
+  payment: { rail: 'usdc', network: 'base', maxAmount: '50000' }, // Base mainnet is LIVE
   payer: createMockPayer(),
 });
 
@@ -123,21 +124,22 @@ and `docs/X402_ADAPTER.md`.
 | Flag | Meaning |
 |------|---------|
 | `X402_ENABLED` | Master switch. Live testnet runs `true`. |
-| `X402_FACILITATOR_PROVIDER` | Facilitator backend. **`x402`** (primary; public `x402.org/facilitator`, no API key) — live on base-sepolia. `zan` is optional/alternative. |
-| `X402_NETWORK` | Payment network. Live: `base-sepolia`. Mainnet `base` pending CDP. |
+| `X402_FACILITATOR_PROVIDER` | Facilitator backend. Live: **`cdp`** (Coinbase CDP, Base mainnet). `x402` (public `x402.org/facilitator`, no API key) is the Sepolia/rollback path; `zan` is optional. |
+| `X402_NETWORK` | Payment network. Live: `base` (mainnet). `base-sepolia` is the rollback. |
 | `X402_DEFAULT_RAIL` | `usdc` (default on Base; ADR 0002). |
 | `X402_FALLBACK_TFUEL` | If `usdc` requested but facilitator unavailable: `true` → fall back to TFUEL; `false` → `503`. |
 | `ZAN_X402_GATEWAY_URL` / `ZAN_X402_API_KEY` | Optional ZAN facilitator (only when `X402_FACILITATOR_PROVIDER=zan`). |
 | `X402_PAY_TO` / `X402_ASSET` | Base treasury + asset defaults. |
 
-**Status — LIVE on testnet:** the server-side 402 handshake on `POST /task-request`
-is enabled on the hosted testnet (`X402_ENABLED=true`, `X402_FACILITATOR_PROVIDER=x402`
-against the public `x402.org` facilitator, `X402_NETWORK=base-sepolia`,
-`X402_PROOF_BINDING=true`). An unpaid `usdc` request returns a bound 402 challenge; a
-retry with a valid `X-PAYMENT` (+ nonce) is verified and settled, and
-`payment_rail="usdc"` + `payment_ref` are attached to the task. Base **mainnet**
-(`network: "base"`) is not provisioned yet (needs CDP). ZAN is optional, not required,
-and not a blocker. Always trust the `payment_rail` field in the status response. For
+**Status — LIVE on Base mainnet:** the server-side 402 handshake on `POST /task-request`
+is enabled on the hosted endpoint (`X402_ENABLED=true`, `X402_FACILITATOR_PROVIDER=cdp`
+against the Coinbase CDP facilitator, `X402_NETWORK=base`, `X402_PROOF_BINDING=true`).
+An unpaid `usdc` request returns a bound 402 challenge; a retry with a valid
+`X-PAYMENT` (+ nonce) is verified and settled, and `payment_rail="usdc"` +
+`payment_ref` are attached to the task. The host is still named `api-testnet`, but the
+money is real — see `docs/RUNTIME_STATE.md`. Base Sepolia is the rollback path. ZAN is
+optional, not required, and not a blocker. Always trust the `payment_rail` field in the
+status response. For
 local/CI, run the mock facilitator (`services/gateway/src/x402-mock-facilitator.js`);
 the full loop is covered by `services/gateway/test/x402-server.test.mjs`. See
 [`docs/RUNTIME_STATE.md`](../../../../docs/RUNTIME_STATE.md) for as-deployed config.

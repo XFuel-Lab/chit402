@@ -67,6 +67,20 @@ test('demo key is throttled after the per-minute window', async () => {
   });
   assert.equal(limited.status, 429);
   assert.ok(limited.headers.get('retry-after'));
+  // /v1 is the OpenAI-compatible surface, so the throttle answers in the OpenAI
+  // error envelope — a plain OpenAI client can read message/type off the error.
   const body = await limited.json();
-  assert.equal(body.error, 'rate_limit_exceeded');
+  assert.equal(body.error.code, 'rate_limit_exceeded');
+  assert.equal(body.error.type, 'rate_limit_error');
+  assert.match(body.error.message, /Use your own X-API-Key/);
+});
+
+test('M2M routes keep the flat XFuel error shape', async () => {
+  const res = await fetch(`${base}/task-status?task_id=nope`, {
+    headers: { 'X-API-Key': 'not-a-real-key' },
+  });
+  assert.equal(res.status, 401);
+  const body = await res.json();
+  assert.equal(body.error, 'unauthorized');
+  assert.equal(typeof body.message, 'string');
 });

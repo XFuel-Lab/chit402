@@ -3,6 +3,31 @@
 All notable changes to the XFuel SDK are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.5.0 — Live hub catalog + buyer stats (design-partner readiness)
+
+Additive and backward-compatible, but a **required publish**: `getMyStats` and the
+live-catalog model ids exist only in this repo, so `xfuel-mcp` cannot build against
+0.4.0.
+
+### Added
+- **`getMyStats()`** — buyer-scoped usage (`GET /stats/me`): your paid tasks and USDC
+  fees only. Referenced by `xfuel-mcp`'s `get_my_stats` tool and the design-partner
+  onboarding flow.
+- **`X402Network` type** — exported union (`base` | `base-sepolia` | `solana`) now shared
+  by `PaymentParams.network` and `TaskQuoteResponse.rails.usdc.network`, so
+  `quote.rails.usdc.network` can be passed straight into `payment.network` without a
+  cast in strict TypeScript.
+
+### Changed
+- **Examples default to `xfuel/auto`** — resolves to the best live chat model in the hub
+  catalog instead of the retired `llama-3-70b`, which the gateway now rejects with
+  `model_retired`. Concrete ids (e.g. `theta/glm_5_2`) come from `listModels()`.
+- **Examples take the settlement network from the quote** rather than hardcoding
+  `base-sepolia`; the hosted endpoint settles USDC on **Base mainnet**.
+- **`quickstart` and `private-spend-budget` now pass a `payer`** — both previously hit a
+  402 against the hosted endpoint (`private-spend-budget` built a payer but never
+  passed it).
+
 ## 0.4.0 — Verified Inference (Tier-3): tiered trust engine (TEE + spot-check + staking)
 
 Additive, backward-compatible. All new surface lives in `xfuel-sdk/onchain`.

@@ -88,7 +88,7 @@ steps run against a live API and skip gracefully when it's unreachable).
 
    ```js
    import { createMockPayer } from 'xfuel-sdk'; // or createEip3009Payer from 'xfuel-sdk/onchain'
-   const task = await client.submitInference('llama-3-70b', '0xAgentA', '1000000', {
+   const task = await client.submitInference('xfuel/auto', '0xAgentA', '1000000', {
      chain_id: 'theta', input_hash: '0x..',
      payment: { rail: 'usdc', network: 'base', maxAmount: '50000' }, // or { rail: 'tfuel' }
      payer: createMockPayer(),                                        // omit for TFUEL

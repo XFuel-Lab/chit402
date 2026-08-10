@@ -43,10 +43,10 @@ Submit an AI task.
 | `chain_id` | yes | Prefer `base` (settlement home). Others are routing hints. |
 | `amount` | yes | Gross task value (≥ 10000) |
 | `sender` | yes | Address / agent id |
-| `model_id` | for inference | e.g. `llama-3-70b` |
+| `model_id` | for inference | Live catalog id, e.g. `xfuel/auto`, `theta/glm_5_2`. List with `GET /v1/models`. Retired `llama-*` names are rejected. |
 | `input_hash` | for inference | keccak256 of input |
 | `fee_bps` | no | Default 50 (0.5%); range 50–100 |
-| `payment` | no | `{ "rail": "usdc", "network": "base-sepolia" }` — default USDC/x402 |
+| `payment` | no | `{ "rail": "usdc", "network": "base" }` — default USDC/x402. Take `network` from `POST /task-quote` rather than hardcoding. |
 | `callback_url` | no | Per-task webhook |
 | `callback_secret` | no | HMAC secret for per-task webhook |
 
@@ -63,9 +63,9 @@ curl -X POST https://api-testnet.xfuel.app/task-request \
     "chain_id": "base",
     "amount": "1000000",
     "sender": "0xYourAddress",
-    "model_id": "llama-3-70b",
+    "model_id": "xfuel/auto",
     "input_hash": "0xabc...",
-    "payment": { "rail": "usdc", "network": "base-sepolia" }
+    "payment": { "rail": "usdc", "network": "base" }
   }'
 ```
 

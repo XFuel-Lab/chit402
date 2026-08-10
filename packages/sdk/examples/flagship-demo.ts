@@ -20,8 +20,9 @@
  *     #   XFUEL_PAYER_PK / XFUEL_SENDER / XFUEL_API_URL
  *
  *   Dry run (no key in env): uses createMockPayer (no real funds).
- *   Live: set gateway X402_NETWORK=base-sepolia + provider=x402; fund DEPLOYER
- *   with Base Sepolia ETH + USDC.
+ *   Live: the hosted endpoint settles real USDC on Base mainnet (X402_NETWORK=base),
+ *   so fund DEPLOYER with Base mainnet ETH + USDC. The quote's network is used, so
+ *   pointing at a Sepolia gateway works unchanged.
  *
  * Published-package users import from 'xfuel-sdk' / 'xfuel-sdk/onchain'.
  */
@@ -81,7 +82,9 @@ function pickPrivateKey(): string | undefined {
 
 const XFUEL_API_URL = process.env.XFUEL_API_URL || 'https://api-testnet.xfuel.app';
 const XFUEL_API_KEY = process.env.XFUEL_API_KEY;
-const XFUEL_MODEL = process.env.XFUEL_MODEL || 'llama-3-70b';
+// xfuel/auto resolves to the best live chat model in the hub catalog, so this
+// never goes stale. `GET /v1/models` lists the concrete ids (e.g. theta/glm_5_2).
+const XFUEL_MODEL = process.env.XFUEL_MODEL || 'xfuel/auto';
 const XFUEL_AMOUNT = process.env.XFUEL_AMOUNT || '1000000'; // gross task value (min 10000)
 // Real signer: valid XFUEL_PAYER_PK, else DEPLOYER_PRIVATE_KEY from .env.local
 const XFUEL_PAYER_PK = pickPrivateKey();

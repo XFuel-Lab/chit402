@@ -51,7 +51,7 @@ curl -sS -X POST https://api-testnet.xfuel.app/task-request \
     "chain_id": "base",
     "amount": "1000000",
     "sender": "0xYourAddress",
-    "model_id": "llama-3-70b",
+    "model_id": "xfuel/auto",
     "input_hash": "0xabc...",
     "payment": { "rail": "usdc", "network": "base" }
   }'

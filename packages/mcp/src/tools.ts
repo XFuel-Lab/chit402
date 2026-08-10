@@ -82,7 +82,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
       description: `Submit an AI inference task to the XFuel Protocol. XFuel routes to a pluggable provider and settles with a verifiable receipt (signed by default; SP1 settlement proof on demand). Money + proofs live on Base (USDC via x402).
 
 Args:
-  - model (string): model id, e.g. "llama-3-70b"
+  - model (string): live catalog id, e.g. "xfuel/auto" or "theta/glm_5_2". Call list_models first; retired "llama-*" names are rejected, not remapped.
   - sender (string): the 0x address that owns/pays for the task
   - amount (string): gross task value in the smallest unit (wei); minimum 10000
   - chain_id ('base'|'theta'|'bittensor'|'akash'|'osmosis'|'persistence'): settlement / routing hint (default 'base')
@@ -99,7 +99,7 @@ Poll progress with get_task_status(task_id); fetch settlement with get_proof(tas
 Note: this submits on the server's default path. For USDC/x402 settlement (agent-side
 signer) use pay_with_usdc or the xfuel-sdk with a payer.`,
       inputSchema: {
-        model: z.string().min(1).describe('Model id, e.g. "llama-3-70b"'),
+        model: z.string().min(1).describe('Live catalog id from list_models, e.g. "xfuel/auto" or "theta/glm_5_2"'),
         sender: z.string().min(1).describe('0x address that owns/pays for the task'),
         amount: z
           .string()
@@ -160,7 +160,7 @@ returns a clear "not configured" message — use submit_inference, or the xfuel-
 own payer. The USDC network is chosen by the server's x402 challenge (e.g. Base or Base Sepolia).
 
 Args:
-  - model (string): model id, e.g. "llama-3-70b"
+  - model (string): live catalog id, e.g. "xfuel/auto" or "theta/glm_5_2". Call list_models first; retired "llama-*" names are rejected, not remapped.
   - amount (string): gross task value in the smallest unit (wei); minimum 10000
   - sender (string, optional): the 0x address that owns the task (default: the payer wallet address)
   - chain_id ('base'|'theta'|'bittensor'|'akash'|'osmosis'|'persistence'): settlement / routing hint (default 'base')
@@ -173,7 +173,7 @@ Args:
 Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount, net_amount, links }.
 'payment_rail' is 'usdc' when the x402 handshake ran, or a fallback rail if the server falls back.`,
       inputSchema: {
-        model: z.string().min(1).describe('Model id, e.g. "llama-3-70b"'),
+        model: z.string().min(1).describe('Live catalog id from list_models, e.g. "xfuel/auto" or "theta/glm_5_2"'),
         amount: z
           .string()
           .regex(AMOUNT_RE, 'amount must be an integer string (wei/smallest unit)')

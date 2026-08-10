@@ -46,7 +46,7 @@ const {
   XFUEL_API_URL = 'https://api-testnet.xfuel.app', // hosted testnet demo; override with http://localhost:3002 for local dev
   XFUEL_API_KEY,
   XFUEL_SENDER = '0x000000000000000000000000000000000000dEaD',
-  XFUEL_MODEL = 'llama-3-70b',
+  XFUEL_MODEL = 'xfuel/auto',
   XFUEL_PAYMENT_RAIL = 'usdc', // usdc | tfuel — rail for the delegated compute task
   XFUEL_PAYER_PK, // set to sign real USDC EIP-3009 on Base (else mock payer)
   A2A_CIRCUIT_ADDRESS = '0x000000000000000000000000000000000000a2a0', // placeholder

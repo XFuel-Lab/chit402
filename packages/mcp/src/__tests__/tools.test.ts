@@ -49,10 +49,11 @@ test('all twelve tools are registered', () => {
     'get_verified_quote',
     'get_validation_status',
     'get_provider_stake',
+    'get_my_stats',
   ]) {
     assert.ok(handlers.has(name), `missing tool: ${name}`);
   }
-  assert.equal(handlers.size, 12);
+  assert.equal(handlers.size, 13);
 });
 
 test('get_validation_status without RPC + registry returns a clear "not configured" error', async () => {

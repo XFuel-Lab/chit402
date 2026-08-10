@@ -44,7 +44,7 @@ const client = new OpenAI({
 });
 
 const res = await client.chat.completions.create({
-  model: 'llama-3-70b',
+  model: 'xfuel/auto',
   messages: [{ role: 'user', content: 'Hello' }],
 });
 ```
