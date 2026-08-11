@@ -137,12 +137,37 @@ export async function inferAkashML({
       return { ok: false, reason: 'unparseable', model, detail: rawText.slice(0, 200), elapsed_ms: elapsed };
     }
 
-    const output =
-      data?.choices?.[0]?.message?.content
-      ?? data?.choices?.[0]?.text
-      ?? '';
+    const choice = data?.choices?.[0];
+    const finishReason = choice?.finish_reason ?? null;
+    const usage = data?.usage ?? null;
+    const output = choice?.message?.content ?? choice?.text ?? '';
+
     if (typeof output !== 'string' || !output) {
-      return { ok: false, reason: 'empty_output', model, detail: rawText.slice(0, 200), elapsed_ms: elapsed };
+      // Reasoning models (GLM-5.2 et al) emit `reasoning_content` before `content`,
+      // so a max_tokens budget consumed entirely by reasoning yields finish_reason
+      // 'length' with an empty answer. That is an under-budgeted request, NOT a
+      // provider fault — failing over would pay a second provider for the same
+      // mistake, so report it distinctly and let the caller raise max_tokens.
+      const truncated = finishReason === 'length';
+      const reasoned = typeof choice?.message?.reasoning_content === 'string'
+        && choice.message.reasoning_content.length > 0;
+      logger.warn(
+        { model, finishReason, usage, reasoning_only: truncated && reasoned },
+        truncated
+          ? 'akashml-infer: max_tokens exhausted before any answer (reasoning model)'
+          : 'akashml-infer: empty output',
+      );
+      return {
+        ok: false,
+        reason: truncated ? 'truncated' : 'empty_output',
+        model,
+        finish_reason: finishReason,
+        usage,
+        detail: truncated
+          ? `max_tokens (${max_tokens}) consumed by reasoning before any answer was emitted — raise max_tokens`
+          : rawText.slice(0, 200),
+        elapsed_ms: elapsed,
+      };
     }
 
     return {
@@ -150,6 +175,8 @@ export async function inferAkashML({
       model,
       output,
       raw: data,
+      usage,
+      finish_reason: finishReason,
       provider: 'akash-network',
       elapsed_ms: elapsed,
     };

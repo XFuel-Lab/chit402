@@ -140,6 +140,10 @@ async function runChatInference({ model, messages, max_tokens, temperature, allo
         raw: result,
       };
     }
+    logger.warn(
+      { hub: 'theta', model: cat.alias, reason: result.reason, fallback: fb },
+      'openai-gateway: preferred hub miss',
+    );
     if (!fb) {
       return {
         content: '',
@@ -173,6 +177,33 @@ async function runChatInference({ model, messages, max_tokens, temperature, allo
         raw: result,
       };
     }
+    // Truncation means the provider worked and the request was under-budgeted.
+    // Failing over would bill a second provider for the same mistake, and a mock
+    // blaming "transient capacity" hides the real cause — so answer honestly
+    // whether or not fallback is allowed.
+    if (result.reason === 'truncated') {
+      logger.warn(
+        { hub: 'akash', model: cat.alias, finish_reason: result.finish_reason, usage: result.usage },
+        'openai-gateway: max_tokens too small for a reasoning model — not failing over',
+      );
+      return {
+        content: '',
+        provider: 'akash-network',
+        mock: true,
+        resolvedModel,
+        raw: result,
+        error: {
+          status: 400,
+          code: 'max_tokens_too_small',
+          message: `akash/${cat.alias} is a reasoning model: max_tokens=${max_tokens} was consumed by `
+            + 'internal reasoning before any answer was emitted. Raise max_tokens and retry.',
+        },
+      };
+    }
+    logger.warn(
+      { hub: 'akash', model: cat.alias, reason: result.reason, fallback: fb },
+      'openai-gateway: preferred hub miss',
+    );
     if (!fb) {
       return {
         content: '',
@@ -720,8 +751,29 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
     });
     receipt.route = { requested: model || 'xfuel/auto', resolved: echoModel };
 
-    const promptTokens = estimateTokens(messagesToText(messages));
-    const completionTokens = estimateTokens(content);
+    // Prefer the provider's own usage. Estimating from visible text understates
+    // reasoning models badly — they bill hidden reasoning tokens, so a 2-word answer
+    // can cost 130+ completion tokens. Clients meter spend off this block, and the
+    // float should reconcile against the same numbers the provider billed.
+    const providerUsage = inference.raw?.usage;
+    const usage = Number.isFinite(providerUsage?.completion_tokens)
+      ? {
+        prompt_tokens: providerUsage.prompt_tokens ?? estimateTokens(messagesToText(messages)),
+        completion_tokens: providerUsage.completion_tokens,
+        total_tokens: providerUsage.total_tokens
+          ?? (providerUsage.prompt_tokens ?? 0) + providerUsage.completion_tokens,
+        xfuel_source: 'provider',
+      }
+      : (() => {
+        const promptTokens = estimateTokens(messagesToText(messages));
+        const completionTokens = estimateTokens(content);
+        return {
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: promptTokens + completionTokens,
+          xfuel_source: 'estimate',
+        };
+      })();
 
     setReceiptHeaders(res, receipt);
 
@@ -741,11 +793,7 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
           finish_reason: 'stop',
         },
       ],
-      usage: {
-        prompt_tokens: promptTokens,
-        completion_tokens: completionTokens,
-        total_tokens: promptTokens + completionTokens,
-      },
+      usage,
       xfuel: receipt,
     });
   });

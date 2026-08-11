@@ -34,6 +34,69 @@ test('akashmlApiKey selects on key prefix, not variable name', () => {
   }
 });
 
+test('inferAkashML: reasoning model starved of max_tokens reports truncated, not empty', async () => {
+  // Shape observed live from zai-org/GLM-5.2 at max_tokens=24: the whole budget is
+  // spent on reasoning_content, so content is '' with finish_reason 'length'.
+  const fetchFn = async () => new Response(JSON.stringify({
+    choices: [{
+      finish_reason: 'length',
+      message: { role: 'assistant', content: '', reasoning_content: '1. **Analyze the Request:**' },
+    }],
+    usage: { prompt_tokens: 20, completion_tokens: 24, total_tokens: 44 },
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  const r = await inferAkashML({
+    model: 'zai-org/GLM-5.2',
+    messages: [{ role: 'user', content: 'hi' }],
+    max_tokens: 24,
+    apiKey: 'akml-test',
+    fetchFn,
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'truncated', 'truncation is distinct from a provider fault');
+  assert.equal(r.finish_reason, 'length');
+  assert.equal(r.usage.completion_tokens, 24, 'usage is surfaced for COGS accounting');
+  assert.match(r.detail, /raise max_tokens/);
+});
+
+test('inferAkashML: a genuinely empty answer is still empty_output', async () => {
+  const fetchFn = async () => new Response(JSON.stringify({
+    choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '' } }],
+    usage: { prompt_tokens: 20, completion_tokens: 0, total_tokens: 20 },
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  const r = await inferAkashML({
+    model: 'zai-org/GLM-5.2',
+    messages: [{ role: 'user', content: 'hi' }],
+    apiKey: 'akml-test',
+    fetchFn,
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'empty_output', 'finish_reason stop → not a truncation');
+});
+
+test('inferAkashML: success surfaces usage + finish_reason for COGS', async () => {
+  const fetchFn = async () => new Response(JSON.stringify({
+    choices: [{
+      finish_reason: 'stop',
+      message: { role: 'assistant', content: 'AkashML online', reasoning_content: '1. ...' },
+    }],
+    usage: { prompt_tokens: 20, completion_tokens: 132, total_tokens: 152 },
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  const r = await inferAkashML({
+    model: 'zai-org/GLM-5.2',
+    messages: [{ role: 'user', content: 'hi' }],
+    apiKey: 'akml-test',
+    fetchFn,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.output, 'AkashML online');
+  assert.equal(r.finish_reason, 'stop');
+  // 132 output tokens for a two-word answer — the reasoning tax the float must cover.
+  assert.equal(r.usage.completion_tokens, 132);
+});
+
 test('inferAkashML: missing api key', async () => {
   const r = await inferAkashML({
     model: 'zai-org/GLM-5.2',
