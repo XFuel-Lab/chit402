@@ -28,6 +28,7 @@ Last updated: 2026-08-11 · Public Base mainnet x402 live · Pre-outreach review
 | 8 | Counsel: prepaid float COGS vs Web2 collect-and-forward — [LEGAL_LAUNCH_CHECKLIST.md](./LEGAL_LAUNCH_CHECKLIST.md) | ADR 0005 documents float default |
 | 9 | Paste [AUDIT_SCOPE_LETTER_DRAFT.md](./AUDIT_SCOPE_LETTER_DRAFT.md) to 2–3 firms (after git tag) | Letter + [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) ready |
 | 10 | Deck from [SEED_DECK_OUTLINE.md](./SEED_DECK_OUTLINE.md) — live `/stats` + STRATEGY language | Outline ready |
+| 11 | Accept / amend [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) — agent spend analytics as a wedge. Decide: metadata-only boundary, and advisory recommendations vs opt-in auto-routing | Thesis only, nothing built. Measured 96.7% true gross margin but COGS mis-burns ~21x; promote to ADR 0006 once accepted |
 | Later | Guest v2 ELF + vKey; uptime monitor; Akash ACT float | Blocked on prover host / ops |
 
 ---
