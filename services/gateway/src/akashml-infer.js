@@ -6,11 +6,66 @@
  *
  * Simpler than Theta EdgeCloud — no `{input:{messages}}` wrap / unwrap.
  * Chat-only; image/audio stay on Theta.
+ *
+ * Billing is per token against prepaid credits — there is no lease to leave
+ * running, unlike Akash Console SDL deployments (see docs/providers/README.md).
  */
 
 import logger from './logger.js';
 
 const DEFAULT_BASE = 'https://api.akashml.com/v1';
+
+/** AkashML inference keys carry this prefix; Akash Console keys use `ac.sk.`. */
+const AKASHML_PREFIX = 'akml-';
+const CONSOLE_PREFIX = 'ac.sk.';
+
+const warned = new Set();
+function warnOnce(id, msg) {
+  if (warned.has(id)) return;
+  warned.add(id);
+  logger.warn(msg);
+}
+
+/**
+ * Resolve the AkashML inference credential, selecting on key *prefix* rather than
+ * variable name — because Akash ships two unrelated credentials and its docs name
+ * the other one `AKASH_API_KEY`:
+ *
+ *   akml-…   AkashML inference, api.akashml.com, `Authorization: Bearer`, per-token
+ *   ac.sk.…  Akash Console, console-api.akash.network, `x-api-key`, per-lease
+ *
+ * A Console key on an inference endpoint 401s and would otherwise fall through to
+ * mock silently, so it is rejected loudly instead of forwarded.
+ * @returns {string} inference key, or '' when none is usable
+ */
+export function akashmlApiKey() {
+  const canonical = (process.env.AKASHML_API_KEY || '').trim();
+  if (canonical) {
+    if (canonical.startsWith(CONSOLE_PREFIX)) {
+      warnOnce(
+        'console-key-in-akashml-slot',
+        'AKASHML_API_KEY holds an Akash Console key (ac.sk.…). Console keys manage SDL '
+        + 'leases at console-api.akash.network and are rejected by AkashML inference. '
+        + 'Create an inference key (akml-…) at akashml.com → Settings → API Keys.',
+      );
+      return '';
+    }
+    return canonical;
+  }
+
+  // AKASH_API_KEY is Akash Console's documented variable name — only borrow it when
+  // the value is unambiguously an AkashML inference key.
+  const alt = (process.env.AKASH_API_KEY || '').trim();
+  if (alt.startsWith(AKASHML_PREFIX)) return alt;
+  if (alt) {
+    warnOnce(
+      'console-key-only',
+      'AKASH_API_KEY looks like an Akash Console key (deployments/leases), not AkashML '
+      + 'inference — AkashML routing stays disabled. Set AKASHML_API_KEY=akml-… to enable it.',
+    );
+  }
+  return '';
+}
 
 /**
  * @param {object} opts
@@ -30,7 +85,7 @@ export async function inferAkashML({
   messages,
   max_tokens = 500,
   temperature = 0.7,
-  apiKey = process.env.AKASHML_API_KEY || '',
+  apiKey = akashmlApiKey(),
   baseUrl = process.env.AKASHML_BASE_URL || DEFAULT_BASE,
   timeoutMs = 60_000,
   fetchFn = globalThis.fetch,

@@ -16,6 +16,7 @@
  */
 
 import logger from './logger.js';
+import { akashmlApiKey } from './akashml-infer.js';
 
 const DEFAULT_TTL_MS = 60_000;
 const DEFAULT_THETA_BASE = 'https://ondemand.thetaedgecloud.com';
@@ -216,7 +217,7 @@ export async function getHubCatalog(opts = {}) {
 
   const thetaBase = (opts.thetaBase || process.env.THETA_EDGECLOUD_BASE || DEFAULT_THETA_BASE).replace(/\/$/, '');
   const akashBase = (opts.akashBase || process.env.AKASHML_BASE_URL || DEFAULT_AKASHML_BASE).replace(/\/$/, '');
-  const akashKey = opts.akashApiKey ?? process.env.AKASHML_API_KEY ?? '';
+  const akashKey = opts.akashApiKey ?? akashmlApiKey();
   const fetchFn = opts.fetchFn || globalThis.fetch;
 
   const [thetaResult, akashResult] = await Promise.all([

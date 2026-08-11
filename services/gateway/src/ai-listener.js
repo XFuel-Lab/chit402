@@ -9,7 +9,7 @@ import { buildPaymentBinding } from './payment-binding.js';
 import { proveGatedReason } from './prove-gate.js';
 import { createTaskStore } from './task-store.js';
 import { getFloatManager, normalizeProviderId } from './provider-float.js';
-import { inferAkashML } from './akashml-infer.js';
+import { inferAkashML, akashmlApiKey } from './akashml-infer.js';
 import { inferEdgeCloud, chatInputFromMessages, extractTextOutput } from './edgecloud-infer.js';
 
 /**
@@ -977,7 +977,7 @@ class AIListener {
 
     // Prefer first-class adapters when the client named a provider (AkashML /
     // EdgeCloud). Avoids debiting one float while another tier serves.
-    if (preferred === 'akash-network' && process.env.AKASHML_API_KEY) {
+    if (preferred === 'akash-network' && akashmlApiKey()) {
       try {
         if (await this._routeViaAkashML(task, netAmount)) {
           this._reconcileProviderCogs(task);

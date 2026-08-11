@@ -16,7 +16,7 @@ import {
   extractTextOutput,
   extractImageUrl,
 } from './edgecloud-infer.js';
-import { inferAkashML } from './akashml-infer.js';
+import { inferAkashML, akashmlApiKey } from './akashml-infer.js';
 
 /**
  * XFuel OpenAI-compatible gateway.
@@ -157,7 +157,7 @@ async function runChatInference({ model, messages, max_tokens, temperature, allo
   }
 
   // AkashML hub — OpenAI-compatible chat only.
-  if (cat.hub === 'akash' && process.env.AKASHML_API_KEY) {
+  if (cat.hub === 'akash' && akashmlApiKey()) {
     const result = await inferAkashML({
       model: cat.alias,
       messages,
@@ -197,7 +197,7 @@ async function runChatInference({ model, messages, max_tokens, temperature, allo
       providerConfigured = !!(handler && (
         handler.edgeCloudApiKey || handler.rapidApiKey || handler.mcpEndpoint ||
         handler.akashMnemonic || handler.renderApiKey || handler.awsAccessKeyId ||
-        handler.openaiCompatKey || handler.anthropicApiKey || process.env.AKASHML_API_KEY
+        handler.openaiCompatKey || handler.anthropicApiKey || akashmlApiKey()
       ));
       const { ComputeRouter } = await import(
         '../../../packages/circuit-runtime/theta-inference/compute-router.js'

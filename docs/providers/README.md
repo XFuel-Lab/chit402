@@ -10,6 +10,21 @@ XFuel routes inference to pluggable providers. Settlement (USDC / proofs) is on 
 | **AkashML** (`api.akashml.com`) | First-class DePIN chat provider (OpenAI-compatible, pay-per-token). Same GLM-5.2 as Theta default → clean provider comparison. Set `AKASHML_API_KEY`. Catalog ids: `akash/<nativeId>` (e.g. `akash/zai-org/GLM-5.2`). Float id: `akash-network`. |
 | Akash SDL / lease | **Not used** for inference — container leasing path deliberately rejected |
 
+### Akash ships two credentials — don't cross them
+
+This is the single easiest mistake to make, because Akash's own docs name the *other* one `AKASH_API_KEY`:
+
+| Key prefix | Product | Endpoint | Header | Billing |
+| --- | --- | --- | --- | --- |
+| `akml-…` | **AkashML inference** (what XFuel uses) | `api.akashml.com/v1` | `Authorization: Bearer` | per token consumed |
+| `ac.sk.…` | Akash Console / managed wallet | `console-api.akash.network` | `x-api-key` | **per lease, for as long as the lease is open** |
+
+Get the inference key at akashml.com → Settings → API Keys, and put it in `AKASHML_API_KEY`.
+
+The billing distinction is why AkashML is a first-class provider and the SDL/lease path is not. A Console lease bills continuously from the moment a provider bid is accepted until the deployment is closed — idle or not — so it needs escrow funding, a lifecycle reaper, and orphan monitoring to avoid draining credits on a container serving nothing. AkashML has no lease and no instance: stop sending requests and spend goes to zero. Nothing to reap.
+
+`akashmlApiKey()` therefore selects on key prefix rather than variable name. A `ac.sk.…` key in the AkashML slot is rejected with a warning instead of forwarded, because a 401 from the inference endpoint would otherwise fall through to mock and look like a working integration.
+
 Confidential tier uses an OpenAI-shaped `/chat/completions` endpoint (e.g. Phala). When unset, the router skips it. Receipts may show `privacy.mode=content_tee` when this tier wins. This is **not** the same as Verified Inference `VI_TEE_*` (assurance attestation).
 
 Private Spend (vendor-blind) is orthogonal — [PRIVATE_SPEND_THESIS.md](../PRIVATE_SPEND_THESIS.md).
