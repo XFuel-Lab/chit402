@@ -584,6 +584,7 @@ export function createApp() {
       // for go-forward GTM — only when X402_FALLBACK_TFUEL or explicit rail.
       let paymentRail = config.x402?.defaultRail || 'usdc';
       let paymentRef = null;
+      let settledAmount = null;
       {
         const rail = resolveRail(req.body);
         if (rail === 'usdc' && config.x402.enabled) {
@@ -595,6 +596,7 @@ export function createApp() {
           if (decision.kind === 'settled') {
             paymentRail = 'usdc';
             paymentRef = decision.paymentRef;
+            settledAmount = decision.settledAmount || null;
           } else {
             if (decision.reason === 'gateway_not_configured') {
               return res.status(503).json({ error: 'x402_unavailable', reason: decision.reason });
@@ -609,6 +611,25 @@ export function createApp() {
         } else if (rail === 'tfuel') {
           paymentRail = 'tfuel';
         }
+      }
+
+      // ── Authoritative gross ───────────────────────────────────────────
+      // Gross is what was SETTLED, never what the caller declared. The buyer
+      // authorizes against a bound 402 challenge, so the settled amount is the
+      // only figure a receipt may attest — otherwise `amount` and the collected
+      // payment are two independent numbers and a $0.01 payment can mint a $1.00
+      // receipt. The declared `amount` remains authoritative only for rails with
+      // no settlement to derive from (legacy TFUEL). See docs/KNOWN_ISSUES.md.
+      let grossAmount = String(amount);
+      if (settledAmount) {
+        if (settledAmount !== grossAmount) {
+          logger.warn(
+            { reqId: req.id, declared: grossAmount, settled: settledAmount },
+            'task-request: declared amount diverges from settled x402 payment — '
+            + 'receipt reports the settled amount',
+          );
+        }
+        grossAmount = settledAmount;
       }
 
       // ── Provider float COGS gate (ADR 0005) ─────────────────────────────
@@ -626,8 +647,8 @@ export function createApp() {
         || config.providerFloats?.defaultProvider
         || null;
       const usdcQuote = paymentRail === 'usdc'
-        ? (priceUSDC(req.body) || amount || config.x402?.usdcPriceDefault || '10000')
-        : (amount || '0');
+        ? (settledAmount || priceUSDC(req.body) || grossAmount || config.x402?.usdcPriceDefault || '10000')
+        : (grossAmount || '0');
       const floatPick = floatMgr.selectForQuote(usdcQuote, preferredProvider);
       if (!floatPick.ok) {
         return res.status(503).json({
@@ -650,7 +671,7 @@ export function createApp() {
 
       const effectiveFeeBps = fee_bps || AI_TASK_FEE_BPS;
       const { feeAmount, netAmount, feeBps: appliedBps } =
-        calculateTaskFee(amount, effectiveFeeBps);
+        calculateTaskFee(grossAmount, effectiveFeeBps);
 
       // ── Build intent for ai-listener processing ───────────────────────
 
@@ -658,7 +679,9 @@ export function createApp() {
         type:           message_type,
         sender,
         recipient:      theta_recipient || null,
-        amount,
+        // Settled gross, not the caller's declaration — receipts, fee math, SP1
+        // public values and assurance-tier floors all read this.
+        amount:         grossAmount,
         denom:          chain_id === CHAIN_IDS.BITTENSOR ? 'vtao'
                           : chain_id === CHAIN_IDS.BASE ? 'usdc'
                           : 'uosmo',
@@ -749,7 +772,7 @@ export function createApp() {
         taskId: effectiveTaskId,
         messageType: message_type,
         chainId: chain_id,
-        amount,
+        amount: grossAmount,
         feeAmount,
         netAmount,
         feeBps: appliedBps,
@@ -762,7 +785,7 @@ export function createApp() {
         status:        'accepted',
         message_type,
         chain_id,
-        gross_amount:  amount,
+        gross_amount:  grossAmount,
         fee_amount:    feeAmount,
         net_amount:    netAmount,
         fee_bps:       appliedBps,

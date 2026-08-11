@@ -41,6 +41,35 @@ test('priceUSDC: model override, maxAmount cap, default', () => {
   assert.equal(priceUSDC({ payment: { maxAmount: '12345' }, model_id: 'llama-3-70b' }, cfg), '12345');
 });
 
+test('settled gross cannot be restated by the paid retry (receipt integrity)', async () => {
+  // The exploit this guards: the buyer pays a $0.01 challenge, then declares a
+  // $1.00 `amount` on the retry and mints a signed receipt claiming $1.00 gross.
+  // Gross must come from the challenge the payment was bound to. See
+  // docs/KNOWN_ISSUES.md — our own flagship demo did exactly this.
+  const { url, close } = await startMockFacilitator();
+  try {
+    const cfg = cfgFor(url, { usdcPriceDefault: '10000' });
+
+    const challenge = await runX402Handshake(
+      { headers: {}, body: { payment: { rail: 'usdc' } } },
+      { taskId: 'x402-integrity', cfg },
+    );
+    const accept = challenge.body.accepts[0];
+    assert.equal(accept.maxAmountRequired, '10000', 'challenge priced at $0.01');
+
+    const settled = await runX402Handshake({
+      headers: { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': accept.extra.nonce },
+      // Inflated declaration + a different maxAmount on the retry.
+      body: { payment: { rail: 'usdc', maxAmount: '1000000' }, amount: '1000000' },
+    }, { taskId: 'x402-integrity', cfg });
+
+    assert.equal(settled.kind, 'settled');
+    assert.equal(settled.settledAmount, '10000', 'gross is the bound challenge amount, not the declaration');
+  } finally {
+    await close();
+  }
+});
+
 test('extractPaymentNonce: explicit header, json blob, base64 blob', () => {
   assert.equal(extractPaymentNonce({ headers: { 'x-payment-nonce': 'abc' } }), 'abc');
   assert.equal(extractPaymentNonce({ headers: { 'x-payment': JSON.stringify({ nonce: 'n1' }) } }), 'n1');
@@ -74,6 +103,7 @@ test('full 402 loop against mock facilitator: challenge → settle → replay-re
     const settled = await runX402Handshake(reqPay, { taskId: 'x402-req-1', cfg });
     assert.equal(settled.kind, 'settled');
     assert.match(settled.paymentRef, /^base:0x/);
+    assert.equal(settled.settledAmount, '50000', 'settled gross comes from the bound challenge');
 
     // Step 3: replay the same nonce → rejected (spent)
     const replay = await runX402Handshake(reqPay, { taskId: 'x402-req-1', cfg });

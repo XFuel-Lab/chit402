@@ -58,7 +58,11 @@ export function priceUSDC(body = {}, cfg = config.x402) {
 /**
  * Run the x402 handshake for a task request. Returns a decision the caller acts on:
  *   { kind:'challenge', body }     → no X-PAYMENT present; reply 402 with this body
- *   { kind:'settled', paymentRef } → payment verified + settled (paymentRef = network:txRef)
+ *   { kind:'settled', paymentRef, settledAmount }
+ *                                  → payment verified + settled (paymentRef = network:txRef).
+ *                                    `settledAmount` is the amount bound to the 402 challenge
+ *                                    the buyer paid against — the only figure a receipt may
+ *                                    report as gross. Callers must NOT trust `body.amount`.
  *   { kind:'failed', reason }      → verify/settle failed; caller decides fallback vs error
  *
  * @param {Object} req  Express-like request ({ headers, body })
@@ -97,8 +101,17 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402 } = {}) 
   const v = await verifyPayment(paymentHeader, bound);
   if (!v.valid) return { kind: 'failed', reason: v.reason || 'verify_failed' };
 
+  // Read the amount bound to this challenge BEFORE settling — settle marks the
+  // nonce spent and drops the record. Verify is idempotent and does not.
+  const boundAmount = (nonce ? challengeStore.get(nonce)?.amount : null)
+    ?? priceUSDC(req.body, cfg);
+
   const s = await settlePayment(paymentHeader, bound);
   if (!s.settled) return { kind: 'failed', reason: s.reason || 'settle_failed' };
 
-  return { kind: 'settled', paymentRef: `${cfg.network}:${s.txRef}` };
+  return {
+    kind: 'settled',
+    paymentRef: `${cfg.network}:${s.txRef}`,
+    settledAmount: String(boundAmount),
+  };
 }

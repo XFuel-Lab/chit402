@@ -66,7 +66,9 @@ const TASK_STATUS = {
 
 // ─── Fee Constants ──────────────────────────────────────────────────────────
 
-const AI_TASK_FEE_BPS = 50; // 0.5% = 50 basis points
+// Must track server.js — a hardcode here made the two paths compute different
+// fees for the same task whenever AI_TASK_FEE_BPS was configured.
+const AI_TASK_FEE_BPS = Math.min(Math.max(parseInt(process.env.AI_TASK_FEE_BPS, 10) || 50, 50), 100);
 const FEE_DENOMINATOR = 10000;
 const MIN_TASK_AMOUNT = '10000'; // Minimum task value to process (avoid dust)
 
