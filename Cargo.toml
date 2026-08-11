@@ -1,11 +1,5 @@
 [workspace]
 members = [
-    # ── CosmWasm contracts (Cosmos chains) ───────────────────────────────
-    # Generic BN254 Groth16 verifier (CertiK Phase 1 audit scope).
-    "contracts/cosmwasm/zk-verifier",
-    # SP1-specific verifier + revenue splitter.
-    "contracts/cosmwasm/sp1-verifier",
-    "contracts/cosmwasm/revenue-splitter",
     # "services/sp1-prover/program",  # Unix-only: sp1-jit v6.0.2 uses std::os::fd (Linux/macOS only)
     # "services/sp1-prover/host",     # Unix-only: depends on services/sp1-prover/program + sp1-jit
 

@@ -6,7 +6,9 @@ description = "XFuel Core Layer — SP1 proof generation helpers and circuit int
 license = "MIT"
 
 [dependencies]
-serde = { version = "1.0", default-features = false, features = ["derive"] }
+# Needs serde's default `std` feature for Vec<u8>/String impls. This was previously
+# supplied by feature unification with the CosmWasm workspace members.
+serde = { version = "1.0", features = ["derive"] }
 hex = "0.4"
 tiny-keccak = { version = "2.0", default-features = false, features = ["keccak"] }
 

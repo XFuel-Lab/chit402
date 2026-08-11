@@ -2,8 +2,7 @@
 
 Modular circuits plug into the Core Layer via events. Each circuit has its own state, pause control, and off-chain handler. Protocol fees settle in USDC on Base ([ADR 0001](adr/0001-usdc-revenue-and-router-verifier-positioning.md)).
 
-Design overview: [WHITEPAPER.md](../WHITEPAPER.md).  
-Historical expansion notes: [_archive/legacy-circuits/Circuit-Design-and-Expansion.md](./_archive/legacy-circuits/Circuit-Design-and-Expansion.md).
+Design overview: [WHITEPAPER.md](../WHITEPAPER.md).
 
 ## Catalog
 

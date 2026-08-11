@@ -86,4 +86,4 @@ https://xfuel.app Â· https://api-testnet.xfuel.app
 | [FUNDRAISING_STRUCTURE.md](./FUNDRAISING_STRUCTURE.md) | Equity-first raise (counsel) |
 | [LEGAL_LAUNCH_CHECKLIST.md](./LEGAL_LAUNCH_CHECKLIST.md) | Legal planning |
 
-Agents: [../AGENTS.md](../AGENTS.md). Historical: [_archive/](./_archive/README.md).
+Agents: [../AGENTS.md](../AGENTS.md).

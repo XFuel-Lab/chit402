@@ -51,7 +51,7 @@ const FEE_DENOMINATOR = 10000;
 const MIN_TASK_AMOUNT  = '10000'; // dust threshold (matches main.rs / ai-listener.js)
 const MAX_TTL_SECONDS  = 86400;   // 24 h
 
-/** Allowed message types — sync with AIDePINRouter.sol, main.rs, ai-listener.js */
+/** Allowed message types — sync with main.rs, ai-listener.js */
 const MESSAGE_TYPES = {
   COMPUTE_BID:       'compute_bid',
   COMPUTE_RESULT:    'compute_result',
@@ -60,7 +60,7 @@ const MESSAGE_TYPES = {
   DATA_ATTESTATION:  'data_attestation',
 };
 
-/** Allowed chain IDs — sync with AIDePINRouter.sol, main.rs */
+/** Allowed chain IDs — sync with main.rs */
 const CHAIN_IDS = {
   BASE:        'base',       // settlement home (USDC / x402); Per ADR 0002
   THETA:       'theta',      // legacy routing label; EdgeCloud is provider-only
@@ -225,8 +225,8 @@ const AUTHORISED_KEYS = new Set(
  *   X-Signature: <0x-hex-sig>
  *   X-Sig-Timestamp: <unix-epoch-seconds>
  *
- * The recovered address must hold RELAYER_ROLE in AIDePINRouter.  For now we
- * check it against env `M2M_RELAYER_ADDRESSES` (comma-separated, checksummed).
+ * The recovered address is checked against env `M2M_RELAYER_ADDRESSES`
+ * (comma-separated, checksummed).
  */
 const RELAYER_ADDRESSES = new Set(
   (process.env.M2M_RELAYER_ADDRESSES || '')
@@ -275,8 +275,7 @@ function verifyRelayerSignature(req) {
 // ─── Fee Calculation ─────────────────────────────────────────────────────────
 
 /**
- * Pure fee calculation — mirrors calculate_task_fee() in main.rs,
- * calculateTaskFee() in AIDePINRouter.sol and TAOWrapper.sol.
+ * Pure fee calculation — mirrors calculate_task_fee() in main.rs.
  *
  * @param {string|bigint} grossAmount  Total task value
  * @param {number}        feeBps       Fee rate in BPS (50-100)
@@ -1070,7 +1069,7 @@ export function createApp() {
       }
 
       // Escrow validation per message type
-      // (mirrors _validateEscrowForMsgType in AIDePINRouter.sol / main.rs)
+      // (mirrors _validate_escrow_for_msg_type in main.rs)
       const escrow = BigInt(escrow_amount || '0');
       if (message_type === MESSAGE_TYPES.COMPUTE_BID && escrow <= 0n) {
         errors.push('COMPUTE_BID requires a non-zero escrow_amount');
@@ -1091,7 +1090,7 @@ export function createApp() {
         return res.status(400).json({ error: 'validation_error', details: errors });
       }
 
-      // ── A2A relay fee (0.1% on escrow — matches AIDePINRouter) ─────
+      // ── A2A relay fee (0.1% on escrow) ─────
 
       let relayFee = '0';
       if (escrow > 0n) {
@@ -1292,7 +1291,7 @@ export function createApp() {
           });
         }
 
-        // Map status to ProofOutcome (matches AIDePINRouter ProofOutcome enum)
+        // Map status to ProofOutcome (matches the ProofOutcome enum in main.rs)
         let proofOutcome = 'pending';
         if (task.sp1Proof && !task.sp1Proof.error) {
           proofOutcome = 'valid';   // ProofOutcome.Valid

@@ -35,7 +35,7 @@ Runtime truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 
 | Issue | Severity | Status |
 |-------|----------|--------|
-| Legacy Theta / Believer decks in `docs/_archive/` | Low if archived | Do not use for fundraising; go-forward = POSITIONING.md |
+| Legacy Theta / Believer decks (removed; in git history) | Low | Do not use for fundraising; go-forward = POSITIONING.md |
 | Public marketing site may still need scrub | Medium | Founder: site/deck pass |
 
 ## Not bugs

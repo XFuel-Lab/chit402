@@ -47,7 +47,7 @@ Related: [FUNDRAISING_STRUCTURE.md](./FUNDRAISING_STRUCTURE.md), [AUDIT_READINES
 
 - [x] Positioning: Base home, token-light
 - [x] Private Spend thesis documented
-- [ ] Public site / deck scrubbed of Theta-as-settlement and open sale residue (legacy pitch decks live only under `docs/_archive/` — do not present)
+- [ ] Public site / deck scrubbed of Theta-as-settlement and open sale residue (legacy pitch decks have been deleted; recover from git history only if needed — do not present)
 
 ## Deck slide order (Seed)
 
