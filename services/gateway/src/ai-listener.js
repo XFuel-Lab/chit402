@@ -8,6 +8,9 @@ import { getZkGPTProver, isZkGPTProverConfigured } from './zkgpt-prover-client.j
 import { buildPaymentBinding } from './payment-binding.js';
 import { proveGatedReason } from './prove-gate.js';
 import { createTaskStore } from './task-store.js';
+import { getFloatManager, normalizeProviderId } from './provider-float.js';
+import { inferAkashML } from './akashml-infer.js';
+import { inferEdgeCloud, chatInputFromMessages, extractTextOutput } from './edgecloud-infer.js';
 
 /**
  * AI Intent Listener — Osmosis/Akash IBC Event Monitor
@@ -165,25 +168,36 @@ class AIListener {
     }
 
     this.isListening = true;
-    logger.info('Starting AI Intent Listener (Osmosis + Akash IBC)');
 
-    // Connect to Osmosis WebSocket (pool events, IBC transfers)
-    if (config.osmosis?.wsUrl) {
-      await this.connectOsmosisWebSocket();
+    const cosmosEnabled = config.aiListener?.cosmosListeners === true;
+
+    if (cosmosEnabled) {
+      logger.info('Starting AI Intent Listener (Osmosis + Akash IBC)');
+
+      // Connect to Osmosis WebSocket (pool events, IBC transfers)
+      if (config.osmosis?.wsUrl) {
+        await this.connectOsmosisWebSocket();
+      }
+
+      // Connect to Akash WebSocket (bid acceptance, lease events)
+      if (config.akash?.wsUrl) {
+        await this.connectAkashWebSocket();
+      }
+
+      // Start periodic polling as backup for both chains
+      this.startPeriodicPolling();
     }
 
-    // Connect to Akash WebSocket (bid acceptance, lease events)
-    if (config.akash?.wsUrl) {
-      await this.connectAkashWebSocket();
-    }
-
-    // Start periodic polling as backup for both chains
-    this.startPeriodicPolling();
-
-    // Start task timeout watcher
+    // Task timeout watcher backs the task registry, which the M2M and OpenAI
+    // surfaces both read — it runs whether or not the Cosmos sockets are up.
     this.startTaskTimeoutWatcher();
 
-    logger.info('AI Intent Listener active — monitoring Osmosis + Akash IBC events');
+    logger.info(
+      { cosmosListeners: cosmosEnabled },
+      cosmosEnabled
+        ? 'AI Intent Listener active — monitoring Osmosis + Akash IBC events'
+        : 'AI Listener active — task registry only (Cosmos listeners disabled)'
+    );
   }
 
   /**
@@ -957,6 +971,33 @@ class AIListener {
     task.updatedAt = Date.now();
     this.metrics.totalInferenceRouted++;
 
+    const preferred = normalizeProviderId(
+      task.meta?.preferredProvider || task.intent?.preferredProvider || null,
+    );
+
+    // Prefer first-class adapters when the client named a provider (AkashML /
+    // EdgeCloud). Avoids debiting one float while another tier serves.
+    if (preferred === 'akash-network' && process.env.AKASHML_API_KEY) {
+      try {
+        if (await this._routeViaAkashML(task, netAmount)) {
+          this._reconcileProviderCogs(task);
+          return;
+        }
+      } catch (err) {
+        logger.warn({ err: err.message, taskId: task.taskId }, 'AkashML preferred route failed; falling through');
+      }
+    }
+    if (preferred === 'theta-edgecloud' && process.env.THETA_EDGECLOUD_API_KEY) {
+      try {
+        if (await this._routeViaEdgeCloud(task, netAmount)) {
+          this._reconcileProviderCogs(task);
+          return;
+        }
+      } catch (err) {
+        logger.warn({ err: err.message, taskId: task.taskId }, 'EdgeCloud preferred route failed; falling through');
+      }
+    }
+
     // Route through the provider-agnostic ComputeRouter (EdgeCloud → RapidAPI →
     // MCP → Akash → Render → OpenAI-compatible → Bedrock → Claude) by default.
     // This is a safe no-op for hash-only requests: the executors need raw input,
@@ -965,7 +1006,10 @@ class AIListener {
     if (process.env.M2M_USE_FULL_ROUTER !== 'false') {
       try {
         const handled = await this._routeInferenceViaFullRouter(task, netAmount);
-        if (handled) return;
+        if (handled) {
+          this._reconcileProviderCogs(task);
+          return;
+        }
         logger.info({ taskId: task.taskId }, 'Full router declined (no raw input); using default path');
       } catch (err) {
         logger.warn({ err: err.message, taskId: task.taskId }, 'Full router error; using default path');
@@ -988,6 +1032,7 @@ class AIListener {
         task.status = TASK_STATUS.COMPLETED;
         task.updatedAt = Date.now();
         this.metrics.totalTasksCompleted++;
+        this._reconcileProviderCogs(task);
         return;
       }
 
@@ -1004,10 +1049,14 @@ class AIListener {
         headers: { 'Content-Type': 'application/json' },
       });
 
-      task.result = response.data;
+      task.result = {
+        ...response.data,
+        provider: response.data?.provider || 'theta-edgecloud',
+      };
       task.status = TASK_STATUS.COMPLETED;
       task.updatedAt = Date.now();
       this.metrics.totalTasksCompleted++;
+      this._reconcileProviderCogs(task);
 
       logger.info({
         taskId: task.taskId,
@@ -1019,6 +1068,131 @@ class AIListener {
       task.status = TASK_STATUS.FAILED;
       task.updatedAt = Date.now();
       this.metrics.totalTasksFailed++;
+    }
+  }
+
+  /**
+   * Direct AkashML chat inference (preferred_provider=akash-network).
+   * @returns {Promise<boolean>}
+   * @private
+   */
+  async _routeViaAkashML(task, netAmount) {
+    const intent = task.intent || {};
+    const messages = Array.isArray(intent.messages) ? intent.messages : null;
+    const prompt = intent.input || intent.prompt || null;
+    if (!messages && !prompt) return false;
+
+    const model = intent.modelId
+      || process.env.AKASHML_DEFAULT_MODEL
+      || 'zai-org/GLM-5.2';
+    // Strip hub prefix if a catalog id was passed (akash/zai-org/GLM-5.2).
+    const nativeModel = model.startsWith('akash/') ? model.slice('akash/'.length) : model;
+    const msgs = messages || [{ role: 'user', content: String(prompt) }];
+
+    const result = await inferAkashML({
+      model: nativeModel,
+      messages: msgs,
+      max_tokens: intent.maxTokens || 500,
+      temperature: intent.temperature ?? 0.7,
+    });
+    if (!result.ok) {
+      logger.warn({ taskId: task.taskId, reason: result.reason }, 'AkashML inference failed');
+      return false;
+    }
+
+    task.result = {
+      content: result.output,
+      provider: 'akash-network',
+      routedTo: 'akash-network',
+      raw: result.raw,
+      net_amount: netAmount.toString(),
+      elapsed_ms: result.elapsed_ms,
+    };
+    task.status = TASK_STATUS.COMPLETED;
+    task.updatedAt = Date.now();
+    this.metrics.totalTasksCompleted++;
+    logger.info({ taskId: task.taskId, model: nativeModel }, 'Inference completed via AkashML');
+    return true;
+  }
+
+  /**
+   * Direct Theta EdgeCloud chat inference (preferred_provider=theta-edgecloud).
+   * @returns {Promise<boolean>}
+   * @private
+   */
+  async _routeViaEdgeCloud(task, netAmount) {
+    const intent = task.intent || {};
+    const messages = Array.isArray(intent.messages) ? intent.messages : null;
+    const prompt = intent.input || intent.prompt || null;
+    if (!messages && !prompt) return false;
+
+    let alias = intent.modelId || 'glm_5_2';
+    if (alias.startsWith('theta/')) alias = alias.slice('theta/'.length);
+    if (alias.startsWith('akash/')) return false; // wrong hub for this adapter
+    // Drop org-style ids that aren't Theta aliases
+    if (alias.includes('/')) alias = alias.split('/').pop().replace(/[-.]/g, '_').toLowerCase();
+
+    const msgs = messages || [{ role: 'user', content: String(prompt) }];
+    const result = await inferEdgeCloud({
+      alias,
+      prediction: 'completions',
+      input: chatInputFromMessages({
+        messages: msgs,
+        max_tokens: intent.maxTokens || 500,
+        temperature: intent.temperature ?? 0.7,
+      }),
+    });
+    if (!result.ok) {
+      logger.warn({ taskId: task.taskId, reason: result.reason, alias }, 'EdgeCloud preferred inference failed');
+      return false;
+    }
+
+    task.result = {
+      content: extractTextOutput(result.output),
+      provider: 'theta-edgecloud',
+      routedTo: 'theta-edgecloud',
+      raw: result.raw,
+      net_amount: netAmount.toString(),
+      elapsed_ms: result.elapsed_ms,
+    };
+    task.status = TASK_STATUS.COMPLETED;
+    task.updatedAt = Date.now();
+    this.metrics.totalTasksCompleted++;
+    logger.info({ taskId: task.taskId, alias }, 'Inference completed via preferred EdgeCloud');
+    return true;
+  }
+
+  /**
+   * Burn prepaid float COGS against the provider that actually served.
+   * @private
+   */
+  _reconcileProviderCogs(task) {
+    const pending = task.meta?.pendingCogs;
+    if (!pending || task.meta?.providerCogs) return;
+
+    const estimated = pending.estimated || '0';
+    if (pending.unconstrained && BigInt(estimated || '0') <= 0n) return;
+
+    try {
+      const floatMgr = getFloatManager();
+      const actual =
+        task.result?.provider
+        || task.result?.routedTo
+        || task.result?._source
+        || null;
+      const { provider, record } = floatMgr.reconcileAfterServe({
+        preferredProvider: pending.preferred_provider || task.meta?.preferredProvider,
+        actualProvider: actual,
+        estimated,
+      });
+      if (record) {
+        task.meta.providerCogs = record;
+        task.meta.provider = provider || record.provider;
+      } else if (provider) {
+        task.meta.provider = provider;
+      }
+    } catch (err) {
+      logger.error({ err: err.message, taskId: task.taskId }, 'Provider COGS reconcile failed');
     }
   }
 
@@ -1072,8 +1246,21 @@ class AIListener {
       temperature: intent.temperature,
     };
 
+    const preferred = normalizeProviderId(
+      task.meta?.preferredProvider || intent.preferredProvider || null,
+    );
+    // Prefer EdgeCloud when named; do NOT prefer the SDL/lease Akash tier
+    // (deliberately rejected — AkashML is the first-class path above).
+    const preferTags = preferred === 'theta-edgecloud' ? ['edgecloud'] : undefined;
+
     // SERVICE_TYPES.LLM_INFERENCE === 0 (see theta-inference-handler.js).
-    const routed = await router.route({ serviceType: 0, requestBody, modelName, gpuName: 'default' });
+    const routed = await router.route({
+      serviceType: 0,
+      requestBody,
+      modelName,
+      gpuName: 'default',
+      preferTags,
+    });
     if (!routed.result) {
       // All eligible tiers unavailable or returned no output → fall back.
       return false;
@@ -1081,7 +1268,7 @@ class AIListener {
 
     task.result = {
       ...routed.result,
-      provider: routed.source,
+      provider: routed.result?._source || routed.source,
       routedTo: routed.source,
       net_amount: netAmount.toString(),
     };

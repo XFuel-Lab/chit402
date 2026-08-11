@@ -240,6 +240,10 @@ function outputHashOf(task) {
  * Canonical, order-stable serialization of the tamper-critical fields a receipt signature
  * covers (PBR — the "signed receipt", Tier-1). Anyone can recompute this from the public
  * receipt and verify the HMAC. Keep this list + order in lockstep with the SDK verifier.
+ *
+ * Payload version 2 adds `route.provider` so the attested compute source is tamper-evident
+ * (required once multi-provider routing is live). Older verifiers that omit the field will
+ * not validate new signatures — see docs/RECEIPT_SCHEMA_V2.md.
  */
 export function canonicalSignedPayload(receipt) {
   return JSON.stringify([
@@ -250,6 +254,7 @@ export function canonicalSignedPayload(receipt) {
     receipt.payment?.fee_amount ?? null,
     receipt.route?.model ?? null,
     receipt.route?.model_commitment?.commitment ?? null,
+    receipt.route?.provider ?? null,
     receipt.output?.hash ?? null,
     receipt.binding?.expected_commitment ?? null,
   ]);
@@ -260,10 +265,12 @@ function signReceiptPayload(receipt, secret) {
   const value = crypto.createHmac('sha256', secret).update(canonicalSignedPayload(receipt)).digest('hex');
   return {
     alg: 'HMAC-SHA256',
+    payload_version: 2,
     value: `sha256=${value}`,
     signed_fields: [
       'task_id', 'payment.rail', 'payment.ref', 'payment.net_amount', 'payment.fee_amount',
-      'route.model', 'route.model_commitment.commitment', 'output.hash', 'binding.expected_commitment',
+      'route.model', 'route.model_commitment.commitment', 'route.provider',
+      'output.hash', 'binding.expected_commitment',
     ],
   };
 }
@@ -350,6 +357,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
   const providerCogs = providerCogsOf(task);
 
   const receipt = {
+    schema: 'xfuel.receipt.v3',
     task_id: task.taskId,
     status: task.status,
     proof_outcome: outcome,

@@ -386,7 +386,7 @@ describe('PBR — payment-bound receipt helpers', () => {
     const receipt: Record<string, unknown> = {
       task_id: 'task-xyz',
       payment: { rail: 'usdc', ref: 'base:0xabc', net_amount: '995000', fee_amount: '5000' },
-      route: { model: 'llama-3-70b:q4_k_m', model_commitment: { commitment: MODEL } },
+      route: { model: 'llama-3-70b:q4_k_m', model_commitment: { commitment: MODEL }, provider: 'theta-edgecloud' },
       output: { hash: OUTPUT },
       binding: { expected_commitment: b32('99') },
     };
@@ -397,6 +397,13 @@ describe('PBR — payment-bound receipt helpers', () => {
 
     // tamper the net_amount → signature must fail
     (receipt.payment as { net_amount: string }).net_amount = '1';
+    expect(verifyReceiptSignature(receipt, secret).valid).toBe(false);
+
+    // restore amount, tamper provider → signature must fail
+    (receipt.payment as { net_amount: string }).net_amount = '995000';
+    receipt.signature = { alg: 'HMAC-SHA256', value };
+    expect(verifyReceiptSignature(receipt, secret).valid).toBe(true);
+    (receipt.route as { provider: string }).provider = 'akash-network';
     expect(verifyReceiptSignature(receipt, secret).valid).toBe(false);
   });
 

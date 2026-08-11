@@ -1,33 +1,36 @@
 /**
  * Live multi-hub model catalog (control-plane inventory).
  *
- * Polls provider discovery endpoints (Theta EdgeCloud GET /service/list first),
- * caches briefly, and exposes OpenAI-shaped model rows with hub-prefixed ids
- * (e.g. theta/qwen3, theta/glm_5_2, theta/whisper).
+ * Polls provider discovery endpoints (Theta EdgeCloud GET /service/list +
+ * AkashML GET /v1/models), caches briefly, and exposes OpenAI-shaped model
+ * rows with hub-prefixed ids (e.g. theta/qwen3, akash/zai-org/GLM-5.2).
  *
  * See docs/STRATEGY.md · canvases multimodal catalog PMF.
  *
  * Env:
  *   HUB_CATALOG_TTL_MS=60000
  *   THETA_EDGECLOUD_BASE=https://ondemand.thetaedgecloud.com
- *   HUB_CATALOG_OFFLINE=true  — force seed (tests)
+ *   AKASHML_BASE_URL=https://api.akashml.com/v1
+ *   AKASHML_API_KEY=…          — optional; /v1/models may work without it
+ *   HUB_CATALOG_OFFLINE=true   — force seed (tests)
  */
 
 import logger from './logger.js';
 
 const DEFAULT_TTL_MS = 60_000;
 const DEFAULT_THETA_BASE = 'https://ondemand.thetaedgecloud.com';
+const DEFAULT_AKASHML_BASE = 'https://api.akashml.com/v1';
 
 /** @typedef {'chat'|'image'|'audio'|'vision'|'image_ops'|'other'} Modality */
 
 /**
  * @typedef {object} CatalogModel
- * @property {string} id              Hub-prefixed id (theta/qwen3)
+ * @property {string} id              Hub-prefixed id (theta/qwen3, akash/zai-org/GLM-5.2)
  * @property {string} object
  * @property {number} created
  * @property {string} owned_by
  * @property {string} hub
- * @property {string} alias           Native hub slug
+ * @property {string} alias           Native hub slug / model id
  * @property {string} name
  * @property {Modality} modality
  * @property {string} default_prediction
@@ -36,10 +39,11 @@ const DEFAULT_THETA_BASE = 'https://ondemand.thetaedgecloud.com';
  * @property {string} [workload_type]
  */
 
-/** Offline / fetch-failure seed — honest Theta chat aliases only (no Llama fiction). */
+/** Offline / fetch-failure seed — honest Theta + AkashML chat aliases only. */
 export const CATALOG_SEED = Object.freeze([
   seedRow('theta', 'qwen3', 'Qwen3', 'chat', 'completions'),
   seedRow('theta', 'glm_5_2', 'GLM 5.2', 'chat', 'completions'),
+  seedRow('akash', 'zai-org/GLM-5.2', 'GLM 5.2 (AkashML)', 'chat', 'completions'),
   seedRow('theta', 'whisper', 'Whisper', 'audio', 'stt'),
   seedRow('theta', 'stable_diffusion_xl_turbo', 'Stable Diffusion XL Turbo', 'image', 'predict'),
   seedRow('theta', 'llava', 'LLaVA', 'vision', 'predict'),
@@ -53,7 +57,7 @@ function seedRow(hub, alias, name, modality, defaultPrediction) {
     id: `${hub}/${alias}`,
     object: 'model',
     created: 1_700_000_000,
-    owned_by: hub === 'theta' ? 'theta-edgecloud' : hub,
+    owned_by: hub === 'theta' ? 'theta-edgecloud' : hub === 'akash' ? 'akash-network' : hub,
     hub,
     alias,
     name,
@@ -146,9 +150,54 @@ export function mapThetaService(svc) {
 }
 
 /**
+ * Infer modality from an AkashML /v1/models row (chat-first OpenAI shape).
+ * @param {object} model
+ * @returns {Modality}
+ */
+export function classifyAkashModel(model) {
+  const inputs = model?.input_modalities || model?.input_modality || [];
+  const arr = Array.isArray(inputs) ? inputs.map((x) => String(x).toLowerCase()) : [];
+  if (arr.includes('image') && !arr.includes('text')) return 'image';
+  if (arr.includes('audio')) return 'audio';
+  // AkashML is chat completions today; default chat.
+  return 'chat';
+}
+
+/**
+ * Map an AkashML /v1/models row → CatalogModel.
+ * Ids are `akash/<nativeId>` (nativeId may contain slashes, e.g. zai-org/GLM-5.2).
+ * @param {object} model
+ * @returns {CatalogModel|null}
+ */
+export function mapAkashService(model) {
+  if (!model) return null;
+  const alias = String(model.id || '').trim();
+  if (!alias) return null;
+  const modality = classifyAkashModel(model);
+  const created = Number.isFinite(model.created) ? model.created : 1_700_000_000;
+  const pricing = model.pricing || null;
+  return {
+    id: `akash/${alias}`,
+    object: 'model',
+    created,
+    owned_by: model.owned_by || 'akash-network',
+    hub: 'akash',
+    alias,
+    name: model.name || alias,
+    modality,
+    default_prediction: 'completions',
+    input_vars: null,
+    cost: pricing,
+    workload_type: null,
+  };
+}
+
+/**
  * @param {object} [opts]
  * @param {number} [opts.ttlMs]
  * @param {string} [opts.thetaBase]
+ * @param {string} [opts.akashBase]
+ * @param {string} [opts.akashApiKey]
  * @param {typeof fetch} [opts.fetchFn]
  * @param {boolean} [opts.forceRefresh]
  */
@@ -166,8 +215,48 @@ export async function getHubCatalog(opts = {}) {
   }
 
   const thetaBase = (opts.thetaBase || process.env.THETA_EDGECLOUD_BASE || DEFAULT_THETA_BASE).replace(/\/$/, '');
+  const akashBase = (opts.akashBase || process.env.AKASHML_BASE_URL || DEFAULT_AKASHML_BASE).replace(/\/$/, '');
+  const akashKey = opts.akashApiKey ?? process.env.AKASHML_API_KEY ?? '';
   const fetchFn = opts.fetchFn || globalThis.fetch;
 
+  const [thetaResult, akashResult] = await Promise.all([
+    fetchThetaModels(thetaBase, fetchFn),
+    fetchAkashModels(akashBase, akashKey, fetchFn),
+  ]);
+
+  const merged = [];
+  const sources = [];
+  if (thetaResult.models.length) {
+    merged.push(...thetaResult.models);
+    sources.push(thetaResult.source);
+  }
+  if (akashResult.models.length) {
+    merged.push(...akashResult.models);
+    sources.push(akashResult.source);
+  }
+
+  if (!merged.length) {
+    logger.warn(
+      { theta: thetaResult.error, akash: akashResult.error },
+      'hub-catalog: all hub polls failed — using seed',
+    );
+    if (_cache) return { models: _cache.models, source: `${_cache.source}+stale`, cached: true };
+    const models = withAuto([...CATALOG_SEED]);
+    _cache = { at: now, models, source: 'seed-fallback' };
+    return { models, source: 'seed-fallback', cached: false };
+  }
+
+  const models = withAuto(merged);
+  const source = sources.join('+');
+  _cache = { at: now, models, source };
+  logger.info(
+    { count: merged.length, theta: thetaResult.models.length, akash: akashResult.models.length, source },
+    'hub-catalog: refreshed multi-hub',
+  );
+  return { models, source, cached: false };
+}
+
+async function fetchThetaModels(thetaBase, fetchFn) {
   try {
     const res = await fetchFn(`${thetaBase}/service/list`, {
       method: 'GET',
@@ -179,16 +268,31 @@ export async function getHubCatalog(opts = {}) {
     const services = data?.body?.services || data?.services || [];
     const mapped = services.map(mapThetaService).filter(Boolean);
     if (!mapped.length) throw new Error('theta service/list empty');
-    const models = withAuto(mapped);
-    _cache = { at: now, models, source: 'theta-live' };
-    logger.info({ count: mapped.length }, 'hub-catalog: refreshed from Theta /service/list');
-    return { models, source: 'theta-live', cached: false };
+    return { models: mapped, source: 'theta-live', error: null };
   } catch (err) {
-    logger.warn({ err: err.message }, 'hub-catalog: Theta poll failed — using seed');
-    if (_cache) return { models: _cache.models, source: `${_cache.source}+stale`, cached: true };
-    const models = withAuto([...CATALOG_SEED]);
-    _cache = { at: now, models, source: 'seed-fallback' };
-    return { models, source: 'seed-fallback', cached: false };
+    logger.warn({ err: err.message }, 'hub-catalog: Theta poll failed');
+    return { models: [], source: 'theta-none', error: err.message };
+  }
+}
+
+async function fetchAkashModels(akashBase, apiKey, fetchFn) {
+  try {
+    const headers = { Accept: 'application/json' };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    const res = await fetchFn(`${akashBase}/models`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) throw new Error(`akashml /models HTTP ${res.status}`);
+    const data = await res.json();
+    const rows = data?.data || data?.models || (Array.isArray(data) ? data : []);
+    const mapped = rows.map(mapAkashService).filter(Boolean);
+    if (!mapped.length) throw new Error('akashml /models empty');
+    return { models: mapped, source: 'akash-live', error: null };
+  } catch (err) {
+    logger.warn({ err: err.message }, 'hub-catalog: AkashML poll failed');
+    return { models: [], source: 'akash-none', error: err.message };
   }
 }
 
@@ -201,7 +305,7 @@ function withAuto(models) {
 
 /**
  * Resolve a client model id to a catalog row.
- * Accepts hub/alias, bare alias (theta preferred), or xfuel/auto.
+ * Accepts hub/alias, bare alias (theta preferred, then any hub), or xfuel/auto.
  *
  * @param {string} modelId
  * @param {CatalogModel[]} models
@@ -214,9 +318,10 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
 
   if (requested === 'xfuel/auto' || requested === 'auto' || requested === 'xfuel-auto') {
     const chat = models.find((m) => m.hub !== 'xfuel' && m.modality === 'chat');
-    // Prefer GLM then Qwen when auto
+    // Prefer GLM on either hub, then Qwen, then first live chat model.
     const preferred =
       models.find((m) => m.id === 'theta/glm_5_2') ||
+      models.find((m) => m.id === 'akash/zai-org/GLM-5.2') ||
       models.find((m) => m.id === 'theta/qwen3') ||
       chat;
     if (!preferred) return { ok: false, reason: 'no_chat_models', requested };
@@ -233,7 +338,7 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
       ok: false,
       reason: 'model_retired',
       requested,
-      hint: 'Use a live hub id from GET /v1/models (e.g. theta/qwen3, theta/glm_5_2).',
+      hint: 'Use a live hub id from GET /v1/models (e.g. theta/qwen3, theta/glm_5_2, akash/zai-org/GLM-5.2).',
     };
   }
 
@@ -241,6 +346,11 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
   if (!hit && !requested.includes('/')) {
     hit = models.find((m) => m.alias === requested && m.hub === 'theta')
       || models.find((m) => m.alias === requested);
+  }
+  // Bare Akash native id (contains slash) without hub prefix
+  if (!hit && requested.includes('/') && !requested.startsWith('theta/') && !requested.startsWith('akash/') && !requested.startsWith('xfuel/')) {
+    hit = models.find((m) => m.hub === 'akash' && m.alias === requested)
+      || models.find((m) => m.id === `akash/${requested}`);
   }
   if (!hit) return { ok: false, reason: 'model_not_found', requested };
 
@@ -266,7 +376,7 @@ export function toOpenAIList(models, { modality = null } = {}) {
     object: 'list',
     data: rows.map((m) => ({
       id: m.id,
-      object: 'model',
+      object: m.object,
       created: m.created,
       owned_by: m.owned_by,
       // XFuel extensions (ignored by OpenAI SDKs)

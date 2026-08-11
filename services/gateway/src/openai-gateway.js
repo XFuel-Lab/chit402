@@ -16,17 +16,18 @@ import {
   extractTextOutput,
   extractImageUrl,
 } from './edgecloud-infer.js';
+import { inferAkashML } from './akashml-infer.js';
 
 /**
  * XFuel OpenAI-compatible gateway.
  *
- *   GET  /v1/models              → live hub catalog (Theta /service/list + …)
+ *   GET  /v1/models              → live hub catalog (Theta + AkashML + …)
  *   GET  /v1/models/:id          → retrieve one model
  *   POST /v1/chat/completions    → chat (+ receipt)
  *   POST /v1/images/generations  → image (+ receipt)
  *   POST /v1/audio/transcriptions → STT (+ receipt)
  *
- * Model ids are hub-prefixed (theta/qwen3). No silent Llama→Qwen remap.
+ * Model ids are hub-prefixed (theta/qwen3, akash/zai-org/GLM-5.2). No silent Llama→Qwen remap.
  * OPENAI_GATEWAY_ALLOW_FALLBACK=false → hard-fail when preferred hub fails.
  */
 
@@ -97,7 +98,7 @@ async function getRouterHandler() {
 }
 
 /**
- * Chat inference: resolve catalog model → Theta EdgeCloud when hub=theta;
+ * Chat inference: resolve catalog model → Theta EdgeCloud / AkashML by hub;
  * optional ComputeRouter fallthrough when allowFallback.
  *
  * @returns {Promise<{ content: string, provider: string, mock: boolean, resolvedModel: string, raw: any, error?: object }>}
@@ -155,6 +156,39 @@ async function runChatInference({ model, messages, max_tokens, temperature, allo
     }
   }
 
+  // AkashML hub — OpenAI-compatible chat only.
+  if (cat.hub === 'akash' && process.env.AKASHML_API_KEY) {
+    const result = await inferAkashML({
+      model: cat.alias,
+      messages,
+      max_tokens,
+      temperature,
+    });
+    if (result.ok) {
+      return {
+        content: result.output,
+        provider: 'akash-network',
+        mock: false,
+        resolvedModel,
+        raw: result,
+      };
+    }
+    if (!fb) {
+      return {
+        content: '',
+        provider: 'akash-network',
+        mock: true,
+        resolvedModel,
+        raw: result,
+        error: {
+          status: 503,
+          code: 'provider_unavailable',
+          message: `akash/${cat.alias} failed (${result.reason}). Set allow_fallback or retry.`,
+        },
+      };
+    }
+  }
+
   // Optional multi-tier fallthrough (Web2 / other DePIN) when allowed.
   if (fb) {
     let providerConfigured = false;
@@ -163,7 +197,7 @@ async function runChatInference({ model, messages, max_tokens, temperature, allo
       providerConfigured = !!(handler && (
         handler.edgeCloudApiKey || handler.rapidApiKey || handler.mcpEndpoint ||
         handler.akashMnemonic || handler.renderApiKey || handler.awsAccessKeyId ||
-        handler.openaiCompatKey || handler.anthropicApiKey
+        handler.openaiCompatKey || handler.anthropicApiKey || process.env.AKASHML_API_KEY
       ));
       const { ComputeRouter } = await import(
         '../../../packages/circuit-runtime/theta-inference/compute-router.js'
@@ -190,7 +224,7 @@ async function runChatInference({ model, messages, max_tokens, temperature, allo
 
     const reason = providerConfigured
       ? 'Provider(s) configured but returned no result (likely transient capacity). Retry shortly.'
-      : 'No DePIN provider is configured (set THETA_EDGECLOUD_API_KEY or a fallback tier).';
+      : 'No DePIN provider is configured (set THETA_EDGECLOUD_API_KEY, AKASHML_API_KEY, or a fallback tier).';
     const content = `[XFuel mock] ${reason} Echoing prompt: ${messagesToText(messages).slice(0, 200)}`;
     return { content, provider: 'mock', mock: true, resolvedModel, raw: { mock: true, providerConfigured, reason } };
   }
@@ -239,6 +273,17 @@ async function runImageInference({ model, prompt, allowFallback: fb }) {
     };
   }
   const cat = resolved.model;
+  // AkashML is chat-only — do not call Theta for an akash hub image id.
+  if (cat.hub === 'akash') {
+    return {
+      error: {
+        status: 400,
+        code: 'modality_unsupported',
+        message: `${cat.id} is AkashML chat-only; use a theta/* image model`,
+      },
+      resolvedModel: cat.id,
+    };
+  }
   if (!process.env.THETA_EDGECLOUD_API_KEY) {
     if (!fb) {
       return { error: { status: 503, code: 'provider_unavailable', message: 'THETA_EDGECLOUD_API_KEY not set' } };
@@ -308,6 +353,16 @@ async function runTranscriptionInference({ model, audioUrl, allowFallback: fb })
   }
   if (!audioUrl) {
     return { error: { status: 400, code: 'invalid_request', message: 'audio_url (or file URL) is required' } };
+  }
+  // AkashML is chat-only.
+  if (cat.hub === 'akash') {
+    return {
+      error: {
+        status: 400,
+        code: 'modality_unsupported',
+        message: `${cat.id} is AkashML chat-only; use theta/whisper for STT`,
+      },
+    };
   }
   if (!process.env.THETA_EDGECLOUD_API_KEY) {
     if (!fb) {

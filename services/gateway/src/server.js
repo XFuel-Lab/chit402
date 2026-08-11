@@ -73,6 +73,19 @@ const CHAIN_IDS = {
 const VALID_MESSAGE_TYPES = new Set(Object.values(MESSAGE_TYPES));
 const VALID_CHAIN_IDS     = new Set(Object.values(CHAIN_IDS));
 
+/**
+ * Chains advertised on /health — only those actually served.
+ * Keep CHAIN_IDS / VALID_CHAIN_IDS wide so inbound A2A still accepts legacy labels.
+ * Akash is listed for AkashML compute; Osmosis only when Cosmos IBC listeners are on.
+ */
+function advertisedChains() {
+  const out = [CHAIN_IDS.BASE, CHAIN_IDS.THETA, CHAIN_IDS.AKASH];
+  if (config.aiListener?.cosmosListeners) {
+    out.push(CHAIN_IDS.OSMOSIS);
+  }
+  return out;
+}
+
 // ─── /llms.txt — agent discoverability manifest ───────────────────────────────
 // Served at GET /llms.txt (llmstxt.org convention). Keep concise; deep detail
 // lives in the linked docs so agents can progressively disclose.
@@ -599,6 +612,9 @@ export function createApp() {
       }
 
       // ── Provider float COGS gate (ADR 0005) ─────────────────────────────
+      // Select/gate here, but burn AFTER inference against the provider that
+      // actually served (see ai-listener reconcile). Burning preferred early
+      // mis-attributes COGS when preferred_provider ≠ routed provider.
       const floatMgr = getFloatManager({
         floatsJson: config.providerFloats?.json,
         cogsBps: config.providerFloats?.cogsBps,
@@ -621,34 +637,14 @@ export function createApp() {
           note: 'Prepaid provider float cannot cover COGS. Refill from treasury (docs/PROVIDER_FLOAT_TREASURY.md).',
         });
       }
-      let providerCogsMeta = null;
-      if (floatPick.float && floatPick.estimated > 0n && !floatPick.unconstrained) {
-        try {
-          const burnResult = floatMgr.burn(floatPick.float.id, floatPick.estimated);
-          providerCogsMeta = floatMgr.buildCogsRecord({
-            provider: floatPick.float.id,
-            float: floatPick.float,
-            estimated: floatPick.estimated,
-            actual: burnResult?.burned || floatPick.estimated,
-            burnResult,
-          });
-        } catch (burnErr) {
-          logger.error({ err: burnErr, reqId: req.id }, 'Provider float burn failed');
-          return res.status(503).json({
-            error: 'provider_float_exhausted',
-            reason: burnErr.message,
-          });
-        }
-      } else if (floatPick.estimated > 0n) {
-        // Unconstrained / soft: still record estimated COGS for receipts when a provider id is known.
-        providerCogsMeta = floatMgr.buildCogsRecord({
-          provider: preferredProvider || config.providerFloats?.defaultProvider || null,
-          float: floatPick.float,
-          estimated: floatPick.estimated,
-          actual: floatPick.estimated,
-          burnResult: null,
-        });
-      }
+      // Pending COGS — filled in by reconcileAfterServe once a provider wins.
+      const pendingCogs = {
+        estimated: floatPick.estimated?.toString?.() || String(floatPick.estimated || '0'),
+        preferred_provider: preferredProvider,
+        float_id: floatPick.float?.id || null,
+        unconstrained: !!floatPick.unconstrained,
+        soft: !!floatPick.soft,
+      };
 
       // ── Fee calculation ───────────────────────────────────────────────
 
@@ -682,6 +678,8 @@ export function createApp() {
         proofTier:      proof_tier || null,    // Phase 4: requested assurance tier (signed|settlement|inference|tee|zk-spotcheck|zk-full)
         paymentRail,    // 'usdc' (x402) | legacy 'tfuel'
         paymentRef,     // x402 settlement ref (network:txRef) or null
+        // Preferred compute provider (float id / hub) — passed through to routing.
+        preferredProvider,
         // Cost control: whether this request's API key may trigger a Tier-1 ZK
         // proof. When false, the task still settles + returns a signed receipt,
         // but the expensive SP1 proof is skipped (see prove-gate.js).
@@ -693,9 +691,11 @@ export function createApp() {
         txHash:  `api-${req.id}`,
         height:  0,
         source:  'server.js',
-        // Preferred / float-selected provider tier (ADR 0005)
-        provider: providerCogsMeta?.provider || preferredProvider || null,
-        providerCogs: providerCogsMeta,
+        // Preferred provider for routing; actual provider + COGS filled after serve.
+        preferredProvider,
+        provider: preferredProvider || null,
+        pendingCogs,
+        providerCogs: null,
         // Buyer attribution (hash only) for Private Spend /stats/me
         apiKeyHash: apiKeyHashFromReq(req),
         privateSpend: !!config.privateSpend?.enabled,
@@ -1522,7 +1522,7 @@ export function createApp() {
           defaultProvider: config.providerFloats?.defaultProvider,
           enforce: config.providerFloats?.enforce,
         }).publicSummary(), // ADR 0005 fingerprint
-        chains: Object.values(CHAIN_IDS),
+        chains: advertisedChains(),
         message_types: Object.values(MESSAGE_TYPES),
         demo: DEMO_MODE
           ? { enabled: true, rate_per_min: DEMO_RATE_PER_MIN, rate_per_day: DEMO_RATE_PER_DAY, note: 'Public demo key is rate-limited per IP. Bring your own X-API-Key for higher limits.' }

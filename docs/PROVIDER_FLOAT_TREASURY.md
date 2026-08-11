@@ -90,7 +90,7 @@ Impl: `services/gateway/src/provider-float.js` (wired in `server.js` `/task-requ
 Env:
 
 ```bash
-PROVIDER_FLOATS_JSON={"theta-edgecloud":{"asset":"USDC","balance":"1000000","low_water":"100000","enabled":true}}
+PROVIDER_FLOATS_JSON={"theta-edgecloud":{"asset":"USDC","balance":"1000000","low_water":"100000","enabled":true},"akash-network":{"asset":"USDC","balance":"500000","low_water":"50000","enabled":true}}
 PROVIDER_COGS_BPS=7000
 PROVIDER_FLOAT_DEFAULT=theta-edgecloud
 PROVIDER_FLOAT_ENFORCE=true
@@ -100,7 +100,8 @@ PROVIDER_FLOAT_ENFORCE=true
 Behavior:
 
 - Quote / task path: reject with `provider_float_exhausted` when enforce + no float covers estimated COGS
-- Burn after accept; low-water → structured warn log (Slack/Telegram refill bots = P2)
+- Gate at accept; **burn after inference** against the provider that actually served (preferred_provider is routing preference only)
+- low-water → structured warn log (Slack/Telegram refill bots = P2)
 - No floats configured → unconstrained (demo / P0 manual)
 
 Durable store and refill_policy automation = later.

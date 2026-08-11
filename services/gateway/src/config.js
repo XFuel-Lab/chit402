@@ -264,6 +264,12 @@ const config = {
 
   // AI Listener Configuration (Phase E: AI DePIN Bridge)
   aiListener: {
+    // Cosmos (Osmosis/Akash) inbound intent listeners. Off by default: the
+    // settlement home is Base (ADR 0002) and these sockets only watch for IBC
+    // intents, which no current product surface depends on. The task registry
+    // and timeout watcher run regardless of this flag.
+    cosmosListeners: process.env.COSMOS_LISTENERS_ENABLED === 'true',
+
     // Theta Edge Cloud URL for inference routing
     thetaEdgeUrl: process.env.THETA_EDGE_URL,
 
@@ -277,20 +283,6 @@ const config = {
 
     // Fee configuration (basis points)
     feeBps: parseInt(process.env.AI_TASK_FEE_BPS) || 50, // 0.5% = 50 bps
-  },
-
-  // Yield Configuration (Reverse-burn)
-  yield: {
-    // 30% of ibcUSDC yields unwrapped to TFUEL and routed to RevenueSplitter
-    unwrapPercentage: parseInt(process.env.YIELD_UNWRAP_PERCENTAGE) || 30,
-    // 70% reinvested for LP growth
-    reinvestPercentage: parseInt(process.env.YIELD_REINVEST_PERCENTAGE) || 70,
-    // RevenueSplitter contract address
-    revenueSplitterAddress: process.env.REVENUE_SPLITTER_ADDRESS,
-    // Swap configuration for ibcUSDC -> TFUEL
-    swapRouterAddress: process.env.SWAP_ROUTER_ADDRESS,
-    // Minimum yield amount to process (avoid dust)
-    minYieldAmount: process.env.MIN_YIELD_AMOUNT || '1000000' // 1 USDC (6 decimals)
   },
 
   // Service Configuration
@@ -346,16 +338,6 @@ export function validateConfig() {
   }
 
   // SP1_PROVER_URL is optional: bridge can run with zkGPT-only (Phase 1 E2E); SP1 proof paths skip or return 503 if unset
-
-  // Validate yield configuration if reverse-burn is enabled
-  if (config.yield.revenueSplitterAddress) {
-    if (!config.yield.swapRouterAddress) {
-      errors.push('SWAP_ROUTER_ADDRESS is required when REVENUE_SPLITTER_ADDRESS is set');
-    }
-    if (config.yield.unwrapPercentage + config.yield.reinvestPercentage !== 100) {
-      errors.push('YIELD_UNWRAP_PERCENTAGE + YIELD_REINVEST_PERCENTAGE must equal 100');
-    }
-  }
 
   if (errors.length > 0) {
     throw new Error(`Configuration validation failed:\n${errors.join('\n')}`);

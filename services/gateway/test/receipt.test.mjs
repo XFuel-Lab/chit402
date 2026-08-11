@@ -208,12 +208,16 @@ test('buildReceipt: signature is absent by default and valid HMAC when a secret 
   const r = buildReceipt(usdcTask(), { signingSecret: secret });
   assert.ok(r.signature);
   assert.equal(r.signature.alg, 'HMAC-SHA256');
+  assert.equal(r.signature.payload_version, 2);
+  assert.equal(r.schema, 'xfuel.receipt.v3');
+  assert.ok(r.signature.signed_fields.includes('route.provider'));
 
   // Recompute the HMAC over the same canonical payload → must match.
   const payload = JSON.stringify([
     r.task_id, r.payment?.rail ?? null, r.payment?.ref ?? null,
     r.payment?.net_amount ?? null, r.payment?.fee_amount ?? null,
     r.route?.model ?? null, r.route?.model_commitment?.commitment ?? null,
+    r.route?.provider ?? null,
     r.output?.hash ?? null, r.binding?.expected_commitment ?? null,
   ]);
   const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(payload).digest('hex');

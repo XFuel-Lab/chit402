@@ -3,6 +3,8 @@
 Additive fields on the v1 receipt. Implementation: `services/gateway/src/receipt.js`.  
 Build plan: [TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md](./TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md).
 
+Public receipts now stamp `schema: "xfuel.receipt.v3"`. The filename stays V2 for link stability; v3 is the additive signed-payload bump below.
+
 ## Why
 
 - PoMA — bind model identity ([POMA_SPEC.md](./POMA_SPEC.md))
@@ -12,7 +14,9 @@ Build plan: [TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md](./TIER3_VERIFIABLE_INFERE
 
 | Field | Meaning |
 |-------|---------|
+| `schema` | `xfuel.receipt.v3` |
 | `route.model_commitment` | Claimed on-chain model commitment |
+| `route.provider` | Actual compute source (signed as of payload v2) |
 | `proof.tier` | `signed` · `settlement` · `inference` |
 | `binding.covers` | What the payment binding attests |
 | `verified_inference` | Tier-3 mechanism + result (when applicable) |
@@ -23,14 +27,22 @@ Build plan: [TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md](./TIER3_VERIFIABLE_INFERE
 
 v1 fields keep their meaning. Missing Tier-3 fields are null/absent until produced.
 
+## Signed payload v2 (`signature.payload_version: 2`)
+
+Tier-1 HMAC covers (order-stable; must match SDK `canonicalReceiptPayload`):
+
+`task_id`, `payment.rail`, `payment.ref`, `payment.net_amount`, `payment.fee_amount`, `route.model`, `route.model_commitment.commitment`, **`route.provider`**, `output.hash`, `binding.expected_commitment`.
+
+Adding `route.provider` is a breaking change for verifiers that recompute the old field set — republish `xfuel-sdk` in lockstep. Old unsigned receipts are unaffected.
+
 ## Provider COGS (ADR 0005)
 
-Buyer `payment.rail` stays USDC / x402 (default). Provider inventory burn is separate:
+Buyer `payment.rail` stays USDC / x402 (default). Provider inventory burn is separate and is reconciled **after** inference against the provider that actually served:
 
 ```json
 "provider_cogs": {
-  "provider": "theta-edgecloud",
-  "float_id": "theta-edgecloud",
+  "provider": "akash-network",
+  "float_id": "akash-network",
   "currency": "USDC",
   "estimated": "7000",
   "actual": "7000",

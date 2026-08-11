@@ -2,12 +2,12 @@
  * Provider Float Manager v0 — prepaid COGS inventory (ADR 0005).
  *
  * Buyer rail stays USDC/x402 on Base. Provider COGS burn against env-backed
- * floats (Theta USDC-preferred, Akash ACT, Web2 credits). No hot-path FX.
+ * floats (Theta USDC-preferred, AkashML ACT/USDC, Web2 credits). No hot-path FX.
  *
  * See docs/PROVIDER_FLOAT_TREASURY.md · docs/STRATEGY.md · ADR 0005.
  *
  * Env:
- *   PROVIDER_FLOATS_JSON={"theta-edgecloud":{"asset":"USDC","balance":"1000000","low_water":"100000","enabled":true}}
+ *   PROVIDER_FLOATS_JSON={"theta-edgecloud":{"asset":"USDC","balance":"1000000","low_water":"100000","enabled":true},"akash-network":{"asset":"USDC","balance":"500000","low_water":"50000","enabled":true}}
  *   PROVIDER_COGS_BPS=7000   // estimated COGS as bps of USDC quote (default 70%)
  *   PROVIDER_FLOAT_DEFAULT=theta-edgecloud
  *   PROVIDER_FLOAT_ENFORCE=true  // when true, reject if no float can cover COGS
@@ -17,6 +17,29 @@ import logger from './logger.js';
 
 const DEFAULT_COGS_BPS = 7000;
 const FLOATS_BPS_DENOM = 10000n;
+
+/**
+ * Map router / adapter source tags onto float ids used in PROVIDER_FLOATS_JSON.
+ * @param {string|null|undefined} source
+ * @returns {string|null}
+ */
+export function normalizeProviderId(source) {
+  if (source == null || source === '') return null;
+  const s = String(source).toLowerCase().trim();
+  if (
+    s === 'theta-edgecloud' || s === 'edgecloud' || s === 'theta'
+    || s.startsWith('theta-edgecloud') || s.startsWith('theta-edge')
+  ) {
+    return 'theta-edgecloud';
+  }
+  if (
+    s === 'akash-network' || s === 'akash' || s === 'akashml'
+    || s.includes('akash')
+  ) {
+    return 'akash-network';
+  }
+  return String(source).trim();
+}
 
 /** @typedef {{ id: string, asset: string, balance: bigint, low_water: bigint, enabled: boolean }} Float */
 
@@ -218,6 +241,43 @@ export class ProviderFloatManager {
       usd_mark: asset === 'USDC' ? act : null,
       below_low_water: !!burnResult?.below_low_water,
     };
+  }
+
+  /**
+   * Burn COGS against the provider that actually served (post-inference).
+   * Preferred id is only a fallback when the result has no provider tag.
+   *
+   * @param {object} opts
+   * @param {string|null} [opts.preferredProvider]
+   * @param {string|null} [opts.actualProvider]  result.provider / routedTo / hub adapter id
+   * @param {bigint|string|number} opts.estimated
+   * @returns {{ provider: string|null, record: object|null, burnResult: object|null }}
+   */
+  reconcileAfterServe({ preferredProvider = null, actualProvider = null, estimated }) {
+    const est = parseAmount(estimated, 0n);
+    const providerId =
+      normalizeProviderId(actualProvider)
+      || normalizeProviderId(preferredProvider)
+      || normalizeProviderId(this.defaultProvider);
+
+    if (!providerId) {
+      return { provider: null, record: null, burnResult: null };
+    }
+
+    const float = this.floats.get(providerId) || null;
+    let burnResult = null;
+    if (float && est > 0n) {
+      burnResult = this.burn(providerId, est);
+    }
+
+    const record = this.buildCogsRecord({
+      provider: providerId,
+      float,
+      estimated: est,
+      actual: burnResult?.burned || est,
+      burnResult,
+    });
+    return { provider: providerId, record, burnResult };
   }
 }
 

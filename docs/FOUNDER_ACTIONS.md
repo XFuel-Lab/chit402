@@ -17,9 +17,10 @@ Last updated: 2026-08-11 · Public Base mainnet x402 live · Pre-outreach review
 | 1 | ~~Mainnet USDC go-live~~ | **Done 2026-08-06** — public flagship Real |
 | 2 | Read and accept [STRATEGY.md](./STRATEGY.md) (or amend in writing) | STRATEGY + ADR 0005 + float treasury shipped |
 | 3 | ~~Prefund Theta EdgeCloud with USDC; API key on gateway~~ | **Done 2026-08-07** — real EdgeCloud compute live; float cap enforced (`PROVIDER_FLOAT_ENFORCE=true`) |
-| 3b | ~~Publish `xfuel-sdk@0.5.0`~~ → **Publish `xfuel-sdk@0.5.1`** (axios security fix; every `npm install xfuel-sdk` currently resolves a vulnerable axios) | Eng bumped version + changelog; see [packages/sdk/PUBLISHING.md](../packages/sdk/PUBLISHING.md) |
-| 3c | **Deploy the gateway to Lightsail** — now also express 5 / redis 6 / pino 10. Run `npm install` on the box, not just `git pull` | `git pull && npm install && sudo systemctl restart xfuel-api` — see Eng status below |
+| 3b | ~~Publish `xfuel-sdk@0.5.1`~~ → **Publish `xfuel-sdk@0.5.2`** (receipt signed payload v2 adds `route.provider`; old SDK verifiers reject new signatures) | Eng bumped onchain canonical payload; see [packages/sdk/PUBLISHING.md](../packages/sdk/PUBLISHING.md) |
+| 3c | ~~Deploy the gateway to Lightsail~~ | **Done 2026-08-11** — on `main` @ d33a8aa; `/health` healthy |
 | 3d | Confirm the bounty change: XFuel no longer advertises cash rewards (was "up to $50,000") until the first audit is funded | Eng converted [bug-bounty.md](./bug-bounty.md) to a safe-harbour disclosure policy and scrubbed README / WHITEPAPER / SECURITY / site |
+| 3e | **Get an AkashML API key** ($100 free credits at [akashml.com](https://akashml.com)) and set `AKASHML_API_KEY` + an `akash-network` float on the gateway | Eng: AkashML first-class provider + COGS reconcile; see [providers/README.md](./providers/README.md) |
 | 4 | Put real contacts on [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md); send [OUTREACH_TEMPLATES.md](./OUTREACH_TEMPLATES.md) | 10 hunt targets + GTM motions in ICP |
 | 5 | Accept or amend [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) (reply “accepted” / edit) | Decision draft shipped |
 | 6 | After partners say yes: partner API keys + [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) | Onboarding + cookbook shipped |
