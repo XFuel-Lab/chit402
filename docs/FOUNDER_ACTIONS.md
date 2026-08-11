@@ -27,8 +27,10 @@ Last updated: 2026-08-11 · Public Base mainnet x402 live · Pre-outreach review
 | 7 | Rotate CDP Secret API key (ops hygiene); prefer Safe for `X402_PAY_TO` | — |
 | 8 | Counsel: prepaid float COGS vs Web2 collect-and-forward — [LEGAL_LAUNCH_CHECKLIST.md](./LEGAL_LAUNCH_CHECKLIST.md) | ADR 0005 documents float default |
 | 9 | Paste [AUDIT_SCOPE_LETTER_DRAFT.md](./AUDIT_SCOPE_LETTER_DRAFT.md) to 2–3 firms (after git tag) | Letter + [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) ready |
-| 10 | Deck from [SEED_DECK_OUTLINE.md](./SEED_DECK_OUTLINE.md) — live `/stats` + STRATEGY language | Outline ready |
+| 10 | Deck from [SEED_DECK_OUTLINE.md](./SEED_DECK_OUTLINE.md) — STRATEGY language. **Do NOT quote live `/stats` USDC fee figures** | Pre-2026-08-11 rows are ~100x inflated ([KNOWN_ISSUES.md](./KNOWN_ISSUES.md)); needs backfill or a post-fix window before the numbers are quotable |
 | 11 | Accept / amend [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) — agent spend analytics as a wedge. Decide: metadata-only boundary, and advisory recommendations vs opt-in auto-routing | Thesis only, nothing built. Measured 96.7% true gross margin but COGS mis-burns ~21x; promote to ADR 0006 once accepted |
+| 12 | **Decide the price schedule** — [PRICING_STRATEGY.md](./PRICING_STRATEGY.md). Four classes ($0.01 / $0.02 / $0.05 / metered) + priced assurance tiers + a $29–$49/mo Spend Intelligence plan. Also: stop calling it a "0.5% protocol fee" — that framing caps us in the 5% router band | Market research done: routers top out ~5%, Akash abolished its 20%; $0.01 is the settlement floor; verifiability earns 10–20%, not a multiple; zkML proofs cost 60x the call we attest and we give them away |
+| 13 | **Decide the revenue-split base** (ADR 0001). Splitting the *fee* sends buyback $0.0000175/task — 1M tasks funds $17.50 while gross margin is ~$18,000. If the token thesis matters, the base must be gross margin | Flagged in [PRICING_STRATEGY.md](./PRICING_STRATEGY.md) open decisions |
 | Later | Guest v2 ELF + vKey; uptime monitor; Akash ACT float | Blocked on prover host / ops |
 
 ---

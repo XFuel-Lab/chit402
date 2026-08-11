@@ -79,6 +79,8 @@ Consequences, ranked:
 
 ### Recommendation: flat price per model class, plus tiered assurance
 
+Full schedule, market benchmarks and open decisions: **[PRICING_STRATEGY.md](./PRICING_STRATEGY.md)**. The headline from competitive research is that the framing decides the ceiling — a router that resells tokens tops out near a **5%** take rate (OpenRouter, Requesty, Eden AI all converged there; Akash tried 20% and abolished it in March 2026), whereas a per-call agent API anchors at **$0.01** and keeps its margin. We must not be benchmarked as a router.
+
 A **single** flat price makes Spend Intelligence pointless for the buyer — if every model costs $0.01, "route cheaper" saves them nothing and the entire gain accrues to us. **Pass-through** destroys the incentive alignment above. Flat-per-model-class resolves both:
 
 | Model | Assurance | Buyer savings lever | Margin stability |
