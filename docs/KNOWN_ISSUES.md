@@ -2,17 +2,33 @@
 
 Honest gaps for auditors, design partners, and Seed diligence. Keep this current.
 
-Last updated: 2026-08-06  
+Last updated: 2026-08-11  
 Runtime truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 
 ## Production / money
 
 | Issue | Severity | Status |
 |-------|----------|--------|
+| **Receipt `gross_amount` is buyer-declared and is NOT the amount x402 collected** | **Critical** | Open — see below |
+| **Assurance tier is selected from the same buyer-declared `amount`** | **High** | Open — inflating `amount` unlocks expensive proving for a $0.01 payment; only `PROVER_ENABLED` / `PROVER_ALLOW_KEYS` currently limit the blast radius |
+| Provider COGS burns a flat 70% of quote, measured ~21x off actual | High | Open — [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) |
 | ~~Base mainnet x402 facilitator not wired on live demo host~~ | — | **Resolved 2026-08-06** — public `api-testnet` on Base + CDP |
 | Payment binding is server-attested (`in_proof: false`) until SP1 guest v2 | Medium | Guest rebuild + new programVKey required |
 | OpenAI-compatible `/v1` path is **unmetered** (Phase 1) | Medium | Paid path = `/task-request` + x402 |
 | Web2 collect-and-forward custody not counsel-cleared | High if scaled | Do not enable broad OpenAI pass-through revenue yet |
+
+### Receipt gross vs collected payment (Critical)
+
+Two independent numbers are in play on `POST /task-request` and nothing reconciles them:
+
+- **What is charged** — `priceUSDC()` returns `payment.maxAmount` when the caller supplies it, else the flat `X402_USDC_PRICE_DEFAULT` (`10000` = $0.01). See `services/gateway/src/x402-server.js:49-55`.
+- **What the receipt reports** — `req.body.amount`, supplied by the caller, drives `calculateTaskFee` and `payment.gross_amount` / `fee_amount` / `net_amount` (`server.js:651-653`, `receipt.js:380-387`).
+
+A caller therefore controls both values independently and can pay $0.01 while minting a signed receipt asserting any gross it likes. Blast radius: signed receipts overstate settled value, `/stats` fee totals include revenue never collected, SP1 proofs bind a payment amount that may be fictional, and tier floors are trivially satisfied.
+
+**Our own flagship demo does this.** `packages/sdk/examples/flagship-demo.ts:88` sets `XFUEL_AMOUNT=1000000` ($1.00) while line 160 pays `maxAmount: usdc.amount` ($0.01), so every receipt it produces claims **$1.00 gross for a $0.01 payment** — under a banner reading "prove every dollar" (line 137).
+
+This is a product-integrity issue, not a rounding nit: it is the one field a price-assurance product cannot get wrong. Fix direction — derive receipt gross from the settled x402 amount (or reject a `/task-request` whose `amount` diverges from the collected amount) rather than trusting the caller.
 
 ## Trust / product honesty
 
