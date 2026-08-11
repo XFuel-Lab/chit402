@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-10 · Public Base mainnet x402 live · Pre-outreach protocol review + dependency/security cleanup done · Your checklist below
+Last updated: 2026-08-11 · Public Base mainnet x402 live · Pre-outreach review, dependency/security cleanup, and legacy-code removal done · Your checklist below
 
 ## How to use
 
@@ -142,6 +142,8 @@ Engineering shipped: auditor selective disclosure, staging SLA draft, Tier-3 tim
 | Staging SLA draft | **Shipped** |
 | Tier-3 timebox decision | **Shipped** — narrow SKU |
 | Seed readiness scaffold | **Shipped** |
+| Dependency cleanup: 15 of 17 dependabot PRs resolved | **Shipped** (2 left, both need the CJS→ESM pass) |
+| Legacy removal: ~59.5k lines, OpenZeppelin on 5.6.1 | **Shipped** |
 | Guest ELF rebuild + on-chain vKey | **Blocked on you / prover host** |
 | Design partner keys + onboarding send | **Your Sprint 3 action** |
 | Design partner logos / quotes | Blocked on outreach |
@@ -172,7 +174,7 @@ whereas the same breakage during a partner trial costs the trial.
 | `services/gateway` | **10 → 0** | 172/172 tests, plus a real boot on express 5 (health, `/v1/models`, 404, malformed POST) |
 | `packages/mcp` | **5 → 0** | 30/30 tests |
 | `packages/sdk` | **7 → 2** (both transitive, dev-only) | 72/72 tests + examples typecheck |
-| repo root | **79 → 40, 2 critical → 0** | 95 listener + 281 Solidity tests, web app builds |
+| repo root | **79 → 31, 2 critical → 0** | 824 contract tests, web app builds (40 → 31 after legacy removal) |
 
 Notable: `snarkjs` (gateway) and `@thetalabs/theta-js` (root) were **imported nowhere**
 but between them carried 5 high and 1 critical advisory, including a `lodash` critical
@@ -183,17 +185,46 @@ disclosure). Express 5 returns `undefined` rather than `{}` for an unparsed body
 three handlers were hardened — a partner who forgets `Content-Type: application/json`
 now gets a 400 instead of a 500.
 
-**Deliberately deferred, with reasons:**
+**Resolved since:**
 
-- **TypeScript 7** — blocked upstream. ts-jest cannot use the TS7 native compiler,
-  which no longer exposes the JS compiler API. The workaround needs two parallel
+- **arkworks `ark-*` 0.4→0.6** — **landed** in `xfuel-zkp` and (then) `sp1-verifier`.
+  Re-verified rather than bumped blind: the proving-gadget tests pass with no source
+  changes, so no algebra-trait behaviour moved under the soundness-critical code.
+- **`cw20` 1.1→2.0 / `cosmwasm-schema` 3.0** — **moot.** The question above ("confirm
+  whether that contract is still live") was answered: it was not. The whole CosmWasm
+  tree was dead and has been deleted (see legacy removal below).
+- **TypeScript 7** — **landed for `packages/mcp`** (builds clean, 30/30). Still deferred
+  for the SDK only, for the ts-jest reason below.
+
+**Still deferred, with reasons:**
+
+- **TypeScript 7 (SDK only)** — blocked upstream. ts-jest cannot use the TS7 native
+  compiler, which no longer exposes the JS compiler API. The workaround needs two parallel
   TypeScript installs; not worth it for a published SDK. Revisit when ts-jest ships support.
 - **Hardhat 2→3** (and `solidity-coverage`, `adm-zip`, `undici`, `tmp`) — the last 5 root
   highs. All build-time only: never in the gateway, the published packages, or the web
   bundle, so no partner is exposed. A real migration, worth scheduling on its own.
-- **arkworks `ark-*` 0.4→0.6** — confirmed **not** security-driven (no advisory on any of
-  the three PRs). It sits under the zkLLM proving gadgets, where a silent algebra-trait
-  change is a soundness risk, so it needs deliberate re-verification rather than a bump.
-- **`cw20` 1.1→2.0** — the one Rust PR that does cite security, in the CosmWasm
-  revenue-splitter. Cosmos is not the settlement home (ADR 0002); confirm whether that
-  contract is still live before spending effort.
+  Shares one prerequisite with **chai 6** (ESM-only vs the CJS test files), so both open
+  dependabot PRs (#54, #59) are really a single CJS→ESM piece of work.
+
+### Legacy removal (2026-08-11)
+
+Deleted ~59.5k lines that could not run in production: `contracts/legacy/`,
+`contracts/cosmwasm/` (3 crates), 9 gateway modules, and the three `_archive` trees.
+
+Judged by deployment and reachability, not by test presence — the trap being that
+retired code was kept alive by tests that never ran (`test/_archive` is skipped by the
+runner, so those suites contributed 0 of the 824 passing tests). `scripts/dev/reachable-from-entrypoint.cjs`
+reproduces the check: production runs `node src/server.js`, and the old Cosmos/Persistence
+bridge hung off a second entrypoint that shares nothing with it.
+
+Two side effects worth knowing:
+
+- **OpenZeppelin 5.6 unblocked.** The 8 contracts pinning it to `~5.4.0` (they imported
+  the removed `ReentrancyGuardUpgradeable`) were among the dead ones. Now on 5.6.1.
+- **A latent bug surfaced.** `xfuel-sp1-hooks` declared serde with `default-features = false`
+  and only compiled because workspace feature unification with the CosmWasm crates supplied
+  `std`. It now declares what it needs.
+
+The `.openzeppelin/` manifests were **kept**: they remain the only record of 30 abandoned
+Theta mainnet proxies. Source for those is recoverable from git history if ever needed.
