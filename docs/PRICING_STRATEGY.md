@@ -78,40 +78,74 @@ Interactive model: `canvases/pricing-model.canvas.tsx`.
 
 Verifiability does **not** command a multiple. Measured TEE premiums land at **10–20%**: GLM-5.2 on Tinfoil vs Together is +13.5%, confidential cloud instances run +10.0% to +18.7%, GPU-level TEE +35%. Nobody in the market sells attestation as a separate line item — the [Confidential Inference directory](https://confidentialinference.net/) has 8 providers and 50 models, none charging an attestation fee. HULDR, the closest analogue to our receipt product, states its model in the negative: revenue is provider stake yield, not call fees.
 
-**But zkML is different, because the marginal cost is real and enormous.** GPU proving runs **$0.02–$0.50 per proof** and onchain verification is 200k–600k gas (**$3–$18** on Ethereum mainnet; far less on Base). Against $0.000335 of inference, a $0.02 proof is **60x the COGS of the call it attests**.
+### Settlement proofs cost ~$0.007 — cheap enough to give away
 
-We currently give that away, gated on an amount the buyer used to declare themselves. The gate is now fixed (receipts derive gross from the settled payment), but the price is still zero:
+Costed properly (2026-08-12), a Tier 2 SP1 proof is far cheaper than assumed:
+
+| Component | Cost | Basis |
+|---|---|---|
+| SP1 proving, self-hosted, <10M cycles + Groth16 | **~$0.003** | ~10.6s on an L4 at $0.80/hr; cross-checked against Ethproofs' $0.0376 per full Ethereum block |
+| Groth16 verification **on Base** | **~$0.004** | 275k–300k gas at 0.005 gwei; Base's own docs give ~$0.002 for 200k gas |
+| **All-in** | **~$0.007** | **<$0.005 batched** — the STARK→SNARK wrap is near-constant, so batching N settlements divides it N ways |
+
+The **$3–$18 figure is Ethereum mainnet**. On Base it is roughly **1,000x cheaper**, which is not a detail — it changes the tier. At $0.007 a settlement proof costs less than a tenth of the $0.10 previously proposed for it, so it is affordable to **include free on every paid call**. That turns cryptographic settlement proof from an upsell into a default nobody else offers, and makes any future tier gate a willingness-to-pay experiment rather than cost recovery.
+
+**Open:** we run `SP1_PROVER=network`, so our real cost is Succinct's, not self-hosted. Their pricing is a live auction (`base fee + PGU × price/PGU`) and **the base fee is not published**. For a sub-2M-PGU circuit like ours, Succinct says fixed overhead dominates — so the base fee is essentially the whole cost. Closing this is a ~20 minute task: run `client.execute()` for the real PGU count, then read `GetProofRequestParams` for the live `GROTH16_FEE`.
+
+### Full zkML is not a product in 2026, at any price
+
+**Nobody has proven a 1B–8B forward pass.** The 2026 frontier is GPT-2 at 124M parameters (~$0.15–$0.40 per 512-token completion) and Gemma 3 at 270M (~$0.95). Lagrange lists Llama-class models as "in active development".
+
+Against ~$0.0002 of provider spend for a 512-token GPT-OSS-120B completion, that is **~1,000–5,000x the COGS of the call being attested** — and for a model 500x smaller than the ones we actually route. The "60x" figure below was wrong by more than an order of magnitude, which *strengthens* the case for keeping Tier 3c out of the price list entirely.
+
+**The tier we are missing is staked spot-check.** Hyperbolic runs Proof of Sampling in production across a billion tokens daily for 40,000+ developers; Gensyn's Verde ships refereed delegation at roughly 2.6x overhead. The peer-reviewed result worth internalising: **the sampling rate is not the security parameter — the slash is.** A very low sample rate still yields a Nash equilibrium provided the stake is large enough relative to the reward. At p=1% with single-forward-pass verification, overhead is about +0.1%: three orders of magnitude cheaper than zkML, and it is what the two largest verifiable-compute networks actually run.
+
+We currently give proofs away, gated on an amount the buyer used to declare themselves. The gate is now fixed (receipts derive gross from the settled payment), but the price is still zero:
 
 Our tier numbering is **off by one** from how it is often discussed informally — worth fixing before pricing it. `VERIFIED_INFERENCE_TIERS.md` is authoritative: Tier 1 `signed`, Tier 2 `settlement` (SP1), Tier 3 `inference` (3a `tee`, 3b `zk-spotcheck`, 3c `zk-full`).
 
 The pricing *shape* differs by tier, because only one of them scales with job size:
 
-| Tier | Scales with job size? | Shape | Proposed |
+| Tier | Cost multiplier on inference COGS | Shippable 2026? | Proposed |
 |---|---|---|---|
-| **1 `signed`** | No — effectively zero cost | — | **Free, permanently.** Baseline assurance, never an upsell |
-| **2 `settlement`** (SP1) | **No** | **Flat adder** | A percentage would be wrong here — see below |
-| **3a `tee`** | Weakly | Flat or small % | Cheapest real Tier 3; TEE premium is 10–20% in market |
-| **3b `zk-spotcheck`** | Tunable by sample rate | **Cost-plus %** | The affordability dial — prove a random fraction, stake against the rest |
-| **3c `zk-full`** | **Yes, strongly** | **Cost-plus %** | $0.02–$0.50+ per proof, small models only |
+| **1 `signed`** | ~1.0x | Live | **Free, permanently.** Baseline assurance, never an upsell |
+| **2 `settlement`** (SP1) | **~$0.007 flat** | Live | **Free on paid calls.** Flat if ever charged — a percentage is wrong here |
+| **3a `tee`** | 1.0–1.2x | Via Phala / Tinfoil | Pass through the 0–20% premium |
+| **3b `zk-spotcheck`** | **1 + p × ~0.1** | Yes — production elsewhere | **Cost-plus % on the sampled fraction.** The live option |
+| **3c `zk-full`** | **~1,000–5,000x** | **No** | **Not a product.** Research only |
 
-**Why a percentage is wrong for Tier 2.** An SP1 settlement proof attests fee arithmetic and a payment binding — the same circuit whether the job was $0.01 or $1.00. Proof cost is flat while a percentage would scale, so 5% would undercharge on small jobs and overcharge on large ones for identical work. Note `SP1_PROVER=network` in `deploy/ecs/sp1-prover-task.json`: we pay the Succinct Prover Network **per proof**, so this is a genuine marginal cost on top of the ~$100/month Fargate task and ALB. Exact per-proof price still to be confirmed.
+**Why a percentage is wrong for Tier 2.** An SP1 settlement proof attests fee arithmetic and a payment binding — the same circuit whether the job was $0.01 or $1.00. Proof cost is flat while a percentage would scale, so 5% would undercharge on small jobs and overcharge on large ones for identical work.
 
-**Why a percentage is right for Tier 3.** A forward-pass proof scales with model size and token count, so cost-plus keeps us whole. `zk-spotcheck` is already in the tier ladder and is the lever that makes it affordable: sample 5% of calls and expected cost is 5% of full proving, with staking deterrence covering the remainder.
+**Why a percentage is right for Tier 3b.** Spot-check cost scales with the sampled fraction and the size of the calls sampled, so cost-plus keeps us whole and the sample rate is a dial we control.
 
 Marlin prices `/v1/chat/premium` at $1.00 USDC via x402, so a proof add-on in this band is within observed norms. Tier conversion is also how we *measure* willingness-to-pay for verifiability — no published WTP figure for verifiable inference exists, which is the strongest argument for a tier gate over a guessed surcharge.
 
-### The DePIN savings benchmark
+### The savings benchmark — and why "DePIN savings" is the wrong frame
 
-Routing to decentralised GPUs is already a large cost saving that we currently keep entirely and never show anyone. Surfacing it turns our price from *a markup* into *a discount* — but only if the savings cap above is enforced, otherwise the benchmark prints a negative number.
+**DePIN is not the price floor.** Verified against OpenRouter's live API on 2026-08-12:
 
-Computed per call and shown on the receipt: **what this exact model would have cost on a named centralised host**, against what the buyer actually paid. Rules that keep it honest:
+| Model | We pay (AkashML) | Cheapest route | Hyperscaler | Verdict |
+|---|---|---|---|---|
+| Llama 3.3 70B | $0.13 / $0.40 | **$0.10 / $0.32** | Bedrock $0.72 / $0.72 | **We are ~25–30% above floor** |
+| GLM-5.2 | $0.77 / $2.42 | $0.50 / $3.15 | Fireworks $2.10 / $6.60 | Dearer input, **cheaper output** — wins on reasoning-shaped work |
+| GPT-OSS 120B | *not offered* | $0.03 / $0.17 | Consensus $0.15 / $0.60 | Cleanest benchmark model; we cannot route it |
 
-- **Same model, same token counts.** Comparing our Llama-70B to GPT-5 would be flattering and dishonest, and it is the standard way these benchmarks lose credibility.
-- **Name the reference host and its list price**, with the date it was captured. A benchmark against an unnamed "typical provider" is unfalsifiable.
-- **Show a negative saving when there is one**, or suppress the line entirely on floor-regime calls. Never round a loss up to zero.
-- Reference rate cards need a refresh job — they drift, and a stale baseline is how this becomes a misleading claim.
+DePIN comfortably beats hyperscalers and loses to the best aggregator routes. So the honest claim is not "decentralised GPUs are cheaper" — it is **"we route to whoever is actually cheapest, and prove which one ran."** That is a better story, and it makes the benchmark a forcing function on our own procurement rather than a marketing line.
 
-This is the strongest form of the assurance product: not "trust us on price" but "here is the counterfactual, verify it yourself."
+A secondary source reported GLM-5.2 at $0.07/$0.22, which would have put AkashML 11x above the floor. The live API says $0.50/$3.15 — **that claim was wrong** and is worth remembering as a caution about pricing aggregator blogs.
+
+Rules that keep the benchmark honest:
+
+- **Same model, same token counts, same date.** Comparing our Llama-70B to a frontier model would be flattering and is the standard way these benchmarks lose credibility.
+- **Publish the baseline as `{host, model, date, quantisation, context cap}`** and pick the **cheapest credible** same-model host, not the most flattering. DeepInfra shows $0.10 and $0.23 for the same model across trackers — that is an SKU difference, and quoting the low one without naming the SKU is how this goes wrong.
+- **Show a negative saving when there is one**, or suppress the line on floor-regime calls. Never round a loss to zero.
+- **Reference rate cards need an owner and a refresh job.** Stale baselines are the failure mode.
+
+**The strongest available caution:** LLMRouterBench (Jan 2026, 400k+ instances, 21 datasets, 33 models) found several routing methods — *including OpenRouter's commercial router, at −24.7%* — fail to beat simply picking the best single model. The honest ceiling for a routing-savings claim is ~31.7% at matched performance, with 20–25% typical, against the 85–98% figures still circulating from 2024-era results. Note also that the vendors best placed to publish a counterfactual (Vercel AI Gateway, Cloudflare AI Gateway, OpenRouter) all show spend and decline to show savings, and that Akash's own "$1.33/hr vs $3.93 AWS" claim is documented by independent researchers as unverifiable because the AWS SKU was never specified — a cautionary example inside our own supply chain.
+
+What makes our version defensible is narrow but real: every other vendor compares a *modelled* counterfactual against a *modelled* baseline. Our receipt binds an attested, actually-settled payment to the route that actually ran. Not "trust us on price" but "here is the counterfactual, verify it yourself" — which only holds if we pick the baseline honestly.
+
+**Model choice matters too.** Llama 3.3 70B hit its deprecation date on 2026-07-19, so it is a poor flagship. GPT-OSS 120B has a hard consensus price of $0.15/$0.60 across Groq, Together, Fireworks, Azure and Bedrock, which makes it the cleanest reference we have — but AkashML does not list it. Adding a provider that serves it would give us the ideal demo.
 
 ### Spend Intelligence: a plan, not a percentage
 
@@ -121,7 +155,7 @@ The profitable gate is **compliance, not the dashboard**: Helicone steps $79 →
 
 | Tier | Price | Contents |
 |---|---|---|
-| Included | free | Per-task receipt, **per-call DePIN savings benchmark**, `/stats/me` current-window totals |
+| Included | free | Per-task receipt, **SP1 settlement proof**, **per-call savings benchmark**, `/stats/me` current-window totals |
 | **Spend Intelligence** | **$29–$49/mo** | History, per-workload breakdowns, cross-call aggregation, cheaper-route hints |
 | **Audit-grade** | **$199–$799/mo** | Long retention, exports, tamper-evident trail, compliance attestations |
 
@@ -142,7 +176,9 @@ Worth noting: a monthly subscription fits the human who approves the invoice, no
 
 ## Open decisions
 
-1. **Reference rate cards need an owner.** The savings cap and the benchmark both depend on knowing what a centralised host charges. Stale baselines make the claim misleading, so this needs a refresh job and a named source per model.
+1. **Provider mix is now a pricing decision.** We are ~25–30% above the floor on Llama 3.3 70B, and cannot route GPT-OSS 120B at all. Under a savings cap, being above the floor means either no savings claim or selling below cost — so procurement, not pricing, is the binding constraint. Adding a cheap aggregator route may be worth more than any price change.
+2. **Reference rate cards need an owner.** The savings cap and the benchmark both depend on knowing what a centralised host charges. Stale baselines make the claim misleading, so this needs a refresh job and a named source per model.
+3. **Confirm Succinct's per-proof base fee** (`GetProofRequestParams`) — it is the whole cost for a circuit our size and it is unpublished.
 2. **Does the revenue split base need to change?** ADR 0001 splits the *fee* 40/35/25. At 50 bps on a $0.01 task the buyback bucket receives **$0.0000175 per task** — 1M tasks/month funds $17.50 of buyback, while gross margin on the same volume is roughly $18,000. If the token thesis depends on that split, the base has to be gross margin, not the nominal fee. This needs an explicit call.
 2. **Class boundaries will be gamed.** Which model sits in which class, and what happens when a provider re-prices under us?
 3. **Envelope enforcement.** Refuse over-envelope calls, or auto-escalate to metered `upto` with the agent's consent?
@@ -158,4 +194,6 @@ Worth noting: a monthly subscription fits the human who approves the invoice, no
 | 2 | Meter `/v1/chat/completions` | Open |
 | 3 | Populate `X402_USDC_PRICES` with the class schedule | Open |
 | 4 | Advertise per-model price on `/.well-known/x402` and `/v1/models` | Open |
-| 5 | Price the assurance tiers | Open — decision above |
+| 5 | Price the assurance tiers | Open — Tier 2 now looks free; Tier 3b spot-check is the one to price |
+| 6 | Confirm Succinct per-proof base fee via `GetProofRequestParams` | Open — ~20 min, closes the last cost unknown |
+| 7 | Add a provider that reaches the floor on Llama 3.3 70B / serves GPT-OSS 120B | Open — procurement gate on the savings claim |
