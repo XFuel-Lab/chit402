@@ -38,20 +38,39 @@ CDP's own seller guidance says it outright: a $0.001 endpoint nets nothing. This
 
 A *single* flat price makes Spend Intelligence worthless to the buyer — if every model costs $0.01, routing cheaper only widens our margin. Pass-through destroys incentive alignment, because waste becomes revenue. Flat-per-class resolves both while fixing the ~6x margin swing between GLM-5.2 and Llama-3.3-70B.
 
-### Price schedule (proposed)
+### Correction (2026-08-12): fixed class prices fail the savings test
 
-Each class carries a **token envelope**. Flat pricing without one is a loss-leader for context-stuffers: a 100k-context GLM-5.2 call costs ~$0.077 of provider spend and would sink any flat price. Beyond the envelope, the call switches to metered `upto` or is refused with a clear error — machinery we already have, since the AkashML adapter reports `truncated` and the gateway returns `max_tokens_too_small`.
+Modelling the class prices against real rate cards found a gap. At $0.01 / $0.02 / $0.05, **a buyer pays more with XFuel than going straight to a centralised host** on every job size below "long":
 
-| Class | Models | Envelope (in / out) | Price | Provider cost at envelope | Margin at envelope |
-|---|---|---|---|---|---|
-| **S** — small open | Llama 3.1 8B, small Qwen | 4k / 1k | **$0.01** | ~$0.0005 | ~95% |
-| **M** — mid open | Llama 3.3 70B, GPT-OSS 120B | 8k / 2k | **$0.02** | ~$0.0018 | ~91% |
-| **L** — reasoning / frontier open | GLM-5.2, DeepSeek-R1 | 8k / 4k | **$0.05** | ~$0.0158 | ~68% |
-| **XL** — frontier proprietary | Claude, GPT-5 class | metered | **`upto` ceiling** | pass-through + margin | set per model |
+| Job (Llama 3.3 70B) | Our COGS (AkashML) | Flat class price | Buyer direct (Together) | Buyer outcome |
+|---|---|---|---|---|
+| 500 in / 150 out | $0.000125 | $0.01 | $0.00057 | **17x worse** |
+| 8k in / 2k out | $0.00184 | $0.02 | $0.0088 | **2.3x worse** |
+| 32k in / 8k out | $0.00736 | $0.02 | $0.0352 | 43% better |
 
-Class M cost derived from AkashML Llama 3.3 70B at $0.13/$0.40 per 1M; Class L from GLM-5.2 at $0.77/$2.42 per 1M. Class L gets the widest output envelope because reasoning models spend tokens before answering — we measured 128 of 132 output tokens going to hidden reasoning.
+The DePIN cost advantage is real — Llama 3.3 70B is ~79% cheaper on AkashML than Together — but under flat pricing **100% of it becomes our margin and none reaches the buyer**. A "here's what you saved" benchmark built honestly would print a negative number for most calls.
 
-Note Class L's margin is materially thinner. That is honest: reasoning is genuinely expensive, and the envelope plus the price are what stop a reasoning-heavy buyer from being unprofitable.
+### Price schedule (revised)
+
+```
+price = max( $0.01 floor , min( k × COGS , cap × direct_price ) )
+```
+
+Three regimes, each with a job to do:
+
+| Component | Default | Purpose |
+|---|---|---|
+| **Floor** | $0.01 | Settlement economics — the facilitator takes $0.001/tx, so below this 10%+ of revenue goes to settlement |
+| **Multiple `k`** | 2.5x COGS | Guarantees margin never falls below 1.5x cost. This is the "percentage on bigger jobs" |
+| **Cap** | 0.7 × direct | Makes the DePIN savings claim structurally true rather than a marketing assertion |
+
+**A single global multiple does not work**, which is why the cap is load-bearing. The DePIN discount is not uniform: Llama 3.3 70B is ~79% below Together, but GLM-5.2 is only ~45% below. Applying 2.5x cost-plus to a GLM-5.2 standard job gives $0.0275 against a $0.02 direct price — we would overcharge relative to the buyer's alternative while believing we were being fair. The cap catches it.
+
+Model **classes survive as COGS bands** (which rate card applies), not as fixed price points. Token envelopes are no longer needed to prevent context-stuffing losses, because cost-plus scales with the job automatically — though a ceiling is still worth keeping as abuse protection.
+
+Where the floor binds (small jobs), **we should make no savings claim at all**. There we are selling settlement access and a receipt, not a cheaper token.
+
+Interactive model: `canvases/pricing-model.canvas.tsx`.
 
 **Implementation is mostly configuration, not code.** `X402_USDC_PRICES` already accepts a JSON map keyed by model id and `priceTaskUSDC()` already consults it. The gaps are that `/.well-known/x402` advertises only the default price (`x402-discovery.js:102`) and `/v1/models` does not carry price at all — both should expose the schedule so an agent can plan before committing.
 
@@ -63,13 +82,36 @@ Verifiability does **not** command a multiple. Measured TEE premiums land at **1
 
 We currently give that away, gated on an amount the buyer used to declare themselves. The gate is now fixed (receipts derive gross from the settled payment), but the price is still zero:
 
-| Tier | What it is | Marginal cost | Proposed |
+Our tier numbering is **off by one** from how it is often discussed informally — worth fixing before pricing it. `VERIFIED_INFERENCE_TIERS.md` is authoritative: Tier 1 `signed`, Tier 2 `settlement` (SP1), Tier 3 `inference` (3a `tee`, 3b `zk-spotcheck`, 3c `zk-full`).
+
+The pricing *shape* differs by tier, because only one of them scales with job size:
+
+| Tier | Scales with job size? | Shape | Proposed |
 |---|---|---|---|
-| **Signed receipt** | Gateway-signed, tamper-evident | ~0 | **Free, always** — this is baseline assurance and must never be an upsell |
-| **Settlement proof** (SP1 on Base) | Payment + routing bound in a proof | prover compute + Base gas | **~$0.10/task**, or bundled in a plan |
-| **Verified Inference** (zkLLM) | Execution-level proof | $0.02–$0.50+, small models only | **~$1.00/task or enterprise-only** |
+| **1 `signed`** | No — effectively zero cost | — | **Free, permanently.** Baseline assurance, never an upsell |
+| **2 `settlement`** (SP1) | **No** | **Flat adder** | A percentage would be wrong here — see below |
+| **3a `tee`** | Weakly | Flat or small % | Cheapest real Tier 3; TEE premium is 10–20% in market |
+| **3b `zk-spotcheck`** | Tunable by sample rate | **Cost-plus %** | The affordability dial — prove a random fraction, stake against the rest |
+| **3c `zk-full`** | **Yes, strongly** | **Cost-plus %** | $0.02–$0.50+ per proof, small models only |
+
+**Why a percentage is wrong for Tier 2.** An SP1 settlement proof attests fee arithmetic and a payment binding — the same circuit whether the job was $0.01 or $1.00. Proof cost is flat while a percentage would scale, so 5% would undercharge on small jobs and overcharge on large ones for identical work. Note `SP1_PROVER=network` in `deploy/ecs/sp1-prover-task.json`: we pay the Succinct Prover Network **per proof**, so this is a genuine marginal cost on top of the ~$100/month Fargate task and ALB. Exact per-proof price still to be confirmed.
+
+**Why a percentage is right for Tier 3.** A forward-pass proof scales with model size and token count, so cost-plus keeps us whole. `zk-spotcheck` is already in the tier ladder and is the lever that makes it affordable: sample 5% of calls and expected cost is 5% of full proving, with staking deterrence covering the remainder.
 
 Marlin prices `/v1/chat/premium` at $1.00 USDC via x402, so a proof add-on in this band is within observed norms. Tier conversion is also how we *measure* willingness-to-pay for verifiability — no published WTP figure for verifiable inference exists, which is the strongest argument for a tier gate over a guessed surcharge.
+
+### The DePIN savings benchmark
+
+Routing to decentralised GPUs is already a large cost saving that we currently keep entirely and never show anyone. Surfacing it turns our price from *a markup* into *a discount* — but only if the savings cap above is enforced, otherwise the benchmark prints a negative number.
+
+Computed per call and shown on the receipt: **what this exact model would have cost on a named centralised host**, against what the buyer actually paid. Rules that keep it honest:
+
+- **Same model, same token counts.** Comparing our Llama-70B to GPT-5 would be flattering and dishonest, and it is the standard way these benchmarks lose credibility.
+- **Name the reference host and its list price**, with the date it was captured. A benchmark against an unnamed "typical provider" is unfalsifiable.
+- **Show a negative saving when there is one**, or suppress the line entirely on floor-regime calls. Never round a loss up to zero.
+- Reference rate cards need a refresh job — they drift, and a stale baseline is how this becomes a misleading claim.
+
+This is the strongest form of the assurance product: not "trust us on price" but "here is the counterfactual, verify it yourself."
 
 ### Spend Intelligence: a plan, not a percentage
 
@@ -79,11 +121,13 @@ The profitable gate is **compliance, not the dashboard**: Helicone steps $79 →
 
 | Tier | Price | Contents |
 |---|---|---|
-| Included | free | Per-task receipt, `/stats/me` current-window totals |
-| **Spend Intelligence** | **$29–$49/mo** | History, per-workload breakdowns, counterfactual pricing, cheaper-route hints |
+| Included | free | Per-task receipt, **per-call DePIN savings benchmark**, `/stats/me` current-window totals |
+| **Spend Intelligence** | **$29–$49/mo** | History, per-workload breakdowns, cross-call aggregation, cheaper-route hints |
 | **Audit-grade** | **$199–$799/mo** | Long retention, exports, tamper-evident trail, compliance attestations |
 
-Worth noting: a monthly subscription fits the human who approves the invoice, not an anonymous agent. Consider a usage-metered equivalent for pure-agent buyers.
+The counterfactual moved **out** of the paid tier. Once the savings cap is enforced, the per-call comparison is the proof that our price is fair, so it belongs on every receipt for free — the paid tier sells *aggregation over time*, not the individual number.
+
+Worth noting: a monthly subscription fits the human who approves the invoice, not an anonymous agent. Consider a usage-metered equivalent for pure-agent buyers — and note that with the savings cap doing the assurance work, a subscription may not be needed at all.
 
 **Gain-share on proven savings** is the one place our receipt is genuinely unique — Vertice contractually guarantees a 20% software-spend saving and cannot prove it, whereas we could. Hold it until the counterfactual pricer is trustworthy, because without a quality signal a "saving" may be a quality regression in disguise.
 
@@ -93,12 +137,13 @@ Worth noting: a monthly subscription fits the human who approves the invoice, no
 |---|---|
 | **Prepaid credits + 5% top-up fee** (OpenRouter / Eden AI) | **Not as the primary model.** ~600x less revenue per call, needs OpenRouter-scale volume, puts the reasoning tax back on the buyer, and benchmarks us directly against a company with 8M developers. Viable only as an enterprise BYOK option |
 | **Sub-cent per-call pricing** | **Not yet.** Requires batched settlement; CDP's `batch-settlement` is not registered server-side today (withdrawn over a channel-lifecycle bug). Revisit when a specific sub-cent surface such as MCP tool calls has volume |
-| **Percentage skim on provider cost** | **No.** Caps us at the 5% router band and has an existence proof of failure at Akash's abandoned 20% |
+| **Publishing a percentage skim on provider cost** | **No — and this is a framing rule, not a mechanism rule.** Deriving price from cost internally (the `k × COGS` multiple) is fine and is what protects margin. *Advertising* a percentage over provider cost is not: it re-anchors us to the 5% router band and invites "why not 1.05x like OpenRouter?". Akash's abandoned 20% is the existence proof. Publish the price and the saving against the buyer's alternative; the cost basis and the multiple stay internal |
 | **Volume discounts on a published schedule** | **No.** OpenRouter states plainly it offers none; Requesty has no minimum. Discount at the enterprise contract instead |
 
 ## Open decisions
 
-1. **Does the revenue split base need to change?** ADR 0001 splits the *fee* 40/35/25. At 50 bps on a $0.01 task the buyback bucket receives **$0.0000175 per task** — 1M tasks/month funds $17.50 of buyback, while gross margin on the same volume is roughly $18,000. If the token thesis depends on that split, the base has to be gross margin, not the nominal fee. This needs an explicit call.
+1. **Reference rate cards need an owner.** The savings cap and the benchmark both depend on knowing what a centralised host charges. Stale baselines make the claim misleading, so this needs a refresh job and a named source per model.
+2. **Does the revenue split base need to change?** ADR 0001 splits the *fee* 40/35/25. At 50 bps on a $0.01 task the buyback bucket receives **$0.0000175 per task** — 1M tasks/month funds $17.50 of buyback, while gross margin on the same volume is roughly $18,000. If the token thesis depends on that split, the base has to be gross margin, not the nominal fee. This needs an explicit call.
 2. **Class boundaries will be gamed.** Which model sits in which class, and what happens when a provider re-prices under us?
 3. **Envelope enforcement.** Refuse over-envelope calls, or auto-escalate to metered `upto` with the agent's consent?
 4. **Unmetered `/v1`.** The busiest surface is free. Metering it is prerequisite to any of this producing revenue.
