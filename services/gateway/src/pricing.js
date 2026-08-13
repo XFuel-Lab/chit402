@@ -184,6 +184,52 @@ export function quoteTask(body = {}, cfg = {}) {
   };
 }
 
+/**
+ * Price an inference that has already run, from its measured usage.
+ *
+ * `quoteTask` has to guess output before the work runs, so it quotes `max_tokens`
+ * and overcharges whenever a completion stops short — measured at up to 3.8x on
+ * agent traffic, since agents ask for a large ceiling and use a fraction of it.
+ * This function has no such problem: it prices what the provider actually billed.
+ *
+ * The catch is ordering, not arithmetic. An exact price that only exists *after*
+ * the work is done cannot be put in a 402 challenge for that same work, which is
+ * why this is only usable under rolling settlement (ADR 0008) — the charge lands
+ * on the caller's next request.
+ *
+ * The floor still applies: settlement costs a facilitator fee per payment, so a
+ * sub-floor charge nets negative however small the call was.
+ *
+ * @param {{prompt_tokens?:number, completion_tokens?:number}} usage from `normalizeUsage`
+ * @param {string|null} model resolved model id — must be the model that served,
+ *   not the alias the caller asked for, or a GLM call prices as Llama
+ * @param {object} [cfg] same shape as `quoteTask`'s cfg
+ * @returns {{amount:string, basis:'measured', floor_applied:boolean,
+ *   prompt_tokens:number, completion_tokens:number, rate:{in:number,out:number}}}
+ */
+export function quoteUsage(usage = {}, model = null, cfg = {}) {
+  const rate = rateCardFor(model, cfg);
+  const floor = Math.max(0, Number(cfg.usdcFloor ?? process.env.X402_USDC_FLOOR ?? DEFAULT_FLOOR_UNITS) || 0);
+
+  const inTokens = Math.max(0, Number(usage.prompt_tokens) || 0);
+  // Providers fold reasoning tokens into `completion_tokens`, so adding
+  // `reasoning_tokens` on top would double-bill every reasoning model.
+  const outTokens = Math.max(0, Number(usage.completion_tokens) || 0);
+
+  const metered = Math.ceil((inTokens * rate.in) / PER_MILLION)
+    + Math.ceil((outTokens * rate.out) / PER_MILLION);
+  const amount = Math.max(floor, metered);
+
+  return {
+    amount: String(amount),
+    basis: 'measured',
+    floor_applied: amount === floor && metered < floor,
+    prompt_tokens: inTokens,
+    completion_tokens: outTokens,
+    rate,
+  };
+}
+
 export default {
-  quoteTask, rateCardFor, promptTokensFor, DEFAULT_RATE, DEFAULT_RATE_CARD, DEFAULT_FLOOR_UNITS,
+  quoteTask, quoteUsage, rateCardFor, promptTokensFor, DEFAULT_RATE, DEFAULT_RATE_CARD, DEFAULT_FLOOR_UNITS,
 };
