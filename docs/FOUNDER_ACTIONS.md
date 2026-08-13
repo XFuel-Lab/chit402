@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway redeployed @ `97833f3` (11/11 verify) · SDK `0.5.2` on npm · Next: merge PR #174, then items 14–16
+Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway on `main` @ `20fa5d6` (11/11 verify) · SDK `0.5.2` · SP1 prover scaled to 0 · Next: items 16 (AkashML questions), then 12–15 / 17
 
 ## How to use
 
@@ -18,7 +18,7 @@ Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway redeployed 
 | 2 | Read and accept [STRATEGY.md](./STRATEGY.md) (or amend in writing) | STRATEGY + ADR 0005 + float treasury shipped |
 | 3 | ~~Prefund Theta EdgeCloud with USDC; API key on gateway~~ | **Done 2026-08-07** — real EdgeCloud compute live; float cap enforced (`PROVIDER_FLOAT_ENFORCE=true`) |
 | 3b | ~~Publish `xfuel-sdk@0.5.2`~~ | **Done 2026-08-13** — https://www.npmjs.com/package/xfuel-sdk · payload v2 (`route.provider`) matches live receipts |
-| 3c | ~~Redeploy the gateway to Lightsail~~ | **Done 2026-08-13** @ `97833f3` on `feat/akashml-provider-cogs`. `scripts/dev/_verify_deploy.mjs` 11/11. Still not on `main` until [PR #174](https://github.com/XFuel-Lab/xfuel-protocol/pull/174) merges |
+| 3c | ~~Redeploy the gateway to Lightsail~~ | **Done 2026-08-13** — live on `main` @ `20fa5d6`. Verify 11/11 |
 | 3d | Confirm the bounty change: XFuel no longer advertises cash rewards (was "up to $50,000") until the first audit is funded | Eng converted [bug-bounty.md](./bug-bounty.md) to a safe-harbour disclosure policy and scrubbed README / WHITEPAPER / SECURITY / site |
 | 3e | ~~Get an AkashML _inference_ key~~ | **Done 2026-08-13** — `akml-` key + `akash-network` float on the live box; `/v1` served `akash-network` in the verify probe |
 | 4 | Put real contacts on [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md); send [OUTREACH_TEMPLATES.md](./OUTREACH_TEMPLATES.md) | 10 hunt targets + GTM motions in ICP |
@@ -31,7 +31,7 @@ Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway redeployed 
 | 11 | Accept / amend [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) — agent spend analytics as a wedge. Decide: metadata-only boundary, and advisory recommendations vs opt-in auto-routing | Steps 0–3 of its roadmap are now shipped; its flat-pricing and prepaid-credits recommendations are **superseded** (banner at the top of the doc). Promote to ADR 0006 once accepted |
 | 12 | **Accept the price schedule** — [PRICING_STRATEGY.md](./PRICING_STRATEGY.md). Metered per-model rate card with a floor is **already live**, so this is ratification of what runs, not a greenfield decision. Still open inside it: whether `xfuel/auto` may route agent work to a model that costs the buyer $0.21 vs $0.021. Also: stop calling it a "0.5% protocol fee" — that framing caps us in the 5% router band | Market research done: routers top out ~5%, Akash abolished its 20%; verifiability earns 10–20%, not a multiple; an SP1 settlement proof is ~$0.007 on Base and we give it away |
 | 13 | **Decide the revenue-split base** (ADR 0001). Splitting the *fee* sends buyback $0.0000175/task — 1M tasks funds $17.50 while gross margin is ~$18,000. If the token thesis matters, the base must be gross margin | Flagged in [PRICING_STRATEGY.md](./PRICING_STRATEGY.md) open decisions |
-| 14 | **Scale the SP1 prover to zero** — two `aws` commands in [deploy/ecs/README.md](../deploy/ecs/README.md#on--off-save-cost-when-idle), the largest single fixed-cost line (~$85/mo of ~$134/mo). Signed receipts are unaffected. Note the ALB still bills ~$20/mo with zero targets; only delete it if the prover is off for weeks | Eng made the state observable: `GET /health` now returns a `proofs` block distinguishing `unavailable` (scaled to zero) from `allow_listed` (up, gated). Cold start is 3–5 min, so scale up *before* a partner session |
+| 14 | ~~Scale the SP1 prover to zero~~ | **Done 2026-08-13** — ECS `sp1-prover` desired 0 / running 0. ALB left up (~$20/mo). Scale to 1 and wait 3–5 min before a partner session that needs Tier-2 |
 | 15 | **Turn on `X402_METER_V1`?** Metering `/v1/chat/completions` is built and tested but off. It is the busiest surface and it is currently free compute. Turning it on **breaks plain OpenAI SDK clients**, which have no way to pay a 402 | Eng shipped the meter; this is a pricing/GTM call, not a technical one |
 | 16 | **Ask AkashML four questions** (draft below) — they gate session affinity, cache economics, and a cross-tenant isolation claim we currently cannot verify | Eng probed everything answerable from outside; these are the residue |
 | 17 | **Does the receipt product require x402 payment at all?** Today a receipt only exists for a paid task. A free signed receipt for any call would be a much wider wedge, and would decouple "verifiable" from "crypto-paid" | Raised by the pricing work; no code implication until you decide |
