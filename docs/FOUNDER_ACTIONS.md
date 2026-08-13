@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway redeployed @ `97833f3` (11/11 verify) · Next: publish SDK 0.5.2 (3b), merge PR #174, then items 14–16
+Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway redeployed @ `97833f3` (11/11 verify) · SDK `0.5.2` on npm · Next: merge PR #174, then items 14–16
 
 ## How to use
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway redeployed 
 | 1 | ~~Mainnet USDC go-live~~ | **Done 2026-08-06** — public flagship Real |
 | 2 | Read and accept [STRATEGY.md](./STRATEGY.md) (or amend in writing) | STRATEGY + ADR 0005 + float treasury shipped |
 | 3 | ~~Prefund Theta EdgeCloud with USDC; API key on gateway~~ | **Done 2026-08-07** — real EdgeCloud compute live; float cap enforced (`PROVIDER_FLOAT_ENFORCE=true`) |
-| 3b | ~~Publish `xfuel-sdk@0.5.1`~~ → **Publish `xfuel-sdk@0.5.2`** (receipt signed payload v2 adds `route.provider`; old SDK verifiers reject new signatures) | Eng bumped onchain canonical payload; see [packages/sdk/PUBLISHING.md](../packages/sdk/PUBLISHING.md). **Do this next** — live receipts are payload v2; old SDK verifiers will reject them |
+| 3b | ~~Publish `xfuel-sdk@0.5.2`~~ | **Done 2026-08-13** — https://www.npmjs.com/package/xfuel-sdk · payload v2 (`route.provider`) matches live receipts |
 | 3c | ~~Redeploy the gateway to Lightsail~~ | **Done 2026-08-13** @ `97833f3` on `feat/akashml-provider-cogs`. `scripts/dev/_verify_deploy.mjs` 11/11. Still not on `main` until [PR #174](https://github.com/XFuel-Lab/xfuel-protocol/pull/174) merges |
 | 3d | Confirm the bounty change: XFuel no longer advertises cash rewards (was "up to $50,000") until the first audit is funded | Eng converted [bug-bounty.md](./bug-bounty.md) to a safe-harbour disclosure policy and scrubbed README / WHITEPAPER / SECURITY / site |
 | 3e | ~~Get an AkashML _inference_ key~~ | **Done 2026-08-13** — `akml-` key + `akash-network` float on the live box; `/v1` served `akash-network` in the verify probe |
