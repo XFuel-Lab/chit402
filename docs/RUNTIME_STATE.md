@@ -2,18 +2,15 @@
 
 As-deployed source of truth. When in-repo config disagrees with this file, this file wins.
 
-Last updated: 2026-08-12
+Last updated: 2026-08-13
 
-> **A deploy is pending.** Two days of correctness work landed in the repo on 2026-08-12/13 and is
-> **not on the live host yet**: metered pricing, measured COGS, signed `/v1` receipts, paid-path tool
-> calling, shape-aware `xfuel/auto`, mocks made opt-in, and the `proofs` block on `/health`. Until
-> `services/gateway` is redeployed, the live endpoint still has the old behaviour — most importantly
-> it can still answer a paid task with a mock, `/v1` receipts there are unsigned, and agent work is
-> underpriced by ~10x. See [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
->
-> Check the env prerequisites in [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md#before-you-restart-the-gateway-item-3c)
-> first — mocks being opt-in means a misconfigured provider key now fails visibly rather than
-> silently. Verify after with `node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app`.
+> **Live as of 2026-08-13.** `api-testnet.xfuel.app` is running `feat/akashml-provider-cogs` @
+> `97833f3`. Verified 11/11 by `scripts/dev/_verify_deploy.mjs`: metered quotes, GLM priced above
+> COGS, signed `/v1` receipts byte-identical to `/receipt/:id`, provider `akash-network` (not mock).
+> The host is **not on `main`** until [PR #174](https://github.com/XFuel-Lab/xfuel-protocol/pull/174)
+> merges. Theta EdgeCloud is unset on this box (`THETA_EDGE_URL` missing); AkashML is the live
+> inference path. Re-verify after any restart:
+> `node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app`.
 
 ## Current state
 

@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-13 · Public Base mainnet x402 live · Metered pricing, measured COGS, signed `/v1` receipts, and paid-path tool calling all shipped · **Nothing is on the live host yet — start at item 3c** · Your checklist below
+Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway redeployed @ `97833f3` (11/11 verify) · Next: publish SDK 0.5.2 (3b), merge PR #174, then items 14–16
 
 ## How to use
 
@@ -17,10 +17,10 @@ Last updated: 2026-08-13 · Public Base mainnet x402 live · Metered pricing, me
 | 1 | ~~Mainnet USDC go-live~~ | **Done 2026-08-06** — public flagship Real |
 | 2 | Read and accept [STRATEGY.md](./STRATEGY.md) (or amend in writing) | STRATEGY + ADR 0005 + float treasury shipped |
 | 3 | ~~Prefund Theta EdgeCloud with USDC; API key on gateway~~ | **Done 2026-08-07** — real EdgeCloud compute live; float cap enforced (`PROVIDER_FLOAT_ENFORCE=true`) |
-| 3b | ~~Publish `xfuel-sdk@0.5.1`~~ → **Publish `xfuel-sdk@0.5.2`** (receipt signed payload v2 adds `route.provider`; old SDK verifiers reject new signatures) | Eng bumped onchain canonical payload; see [packages/sdk/PUBLISHING.md](../packages/sdk/PUBLISHING.md) |
-| 3c | ~~Deploy the gateway to Lightsail~~ → **redeploy needed**. Check the three env vars below on the box *before* restarting, then verify with `node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app` | Done 2026-08-11 @ d33a8aa, but two days of correctness work have landed since (see Eng status). **The live host can still answer a paid task with a mock, still returns unsigned `/v1` receipts, and still underprices agent work by ~10x** — this is the highest-value deploy we have had |
+| 3b | ~~Publish `xfuel-sdk@0.5.1`~~ → **Publish `xfuel-sdk@0.5.2`** (receipt signed payload v2 adds `route.provider`; old SDK verifiers reject new signatures) | Eng bumped onchain canonical payload; see [packages/sdk/PUBLISHING.md](../packages/sdk/PUBLISHING.md). **Do this next** — live receipts are payload v2; old SDK verifiers will reject them |
+| 3c | ~~Redeploy the gateway to Lightsail~~ | **Done 2026-08-13** @ `97833f3` on `feat/akashml-provider-cogs`. `scripts/dev/_verify_deploy.mjs` 11/11. Still not on `main` until [PR #174](https://github.com/XFuel-Lab/xfuel-protocol/pull/174) merges |
 | 3d | Confirm the bounty change: XFuel no longer advertises cash rewards (was "up to $50,000") until the first audit is funded | Eng converted [bug-bounty.md](./bug-bounty.md) to a safe-harbour disclosure policy and scrubbed README / WHITEPAPER / SECURITY / site |
-| 3e | **Get an AkashML _inference_ key** — akashml.com → Settings → API Keys ($100 free credits). It starts with **`akml-`**. Set `AKASHML_API_KEY` + an `akash-network` float on the gateway. The `ac.sk.…` key already in `services/gateway/.env` is an **Akash Console** key (deployment leases, billed per lease) — wrong product, rejected by the inference API | Eng: AkashML first-class provider + COGS reconcile; two-credential trap documented in [providers/README.md](./providers/README.md) |
+| 3e | ~~Get an AkashML _inference_ key~~ | **Done 2026-08-13** — `akml-` key + `akash-network` float on the live box; `/v1` served `akash-network` in the verify probe |
 | 4 | Put real contacts on [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md); send [OUTREACH_TEMPLATES.md](./OUTREACH_TEMPLATES.md) | 10 hunt targets + GTM motions in ICP |
 | 5 | Accept or amend [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) (reply “accepted” / edit) | Decision draft shipped |
 | 6 | After partners say yes: partner API keys + [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) | Onboarding + cookbook shipped |
