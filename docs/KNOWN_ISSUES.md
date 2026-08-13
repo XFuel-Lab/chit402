@@ -435,6 +435,54 @@ stamps `task.usage`, carrying the cached-prompt and reasoning-token splits where
 reports them. `/stats` exposes a `tokens` block that keeps provider-reported and estimated counts
 separate. The numbers above remain other people's telemetry until our own traffic confirms them.
 
+**Confirmed from the inference response 2026-08-13, and one field is broken.** A completed Theta
+job carries `prediction_cost: {input:154, output:484}` alongside `prediction_cost_divisor: 1000000`,
+which pins the reading above: 154 cents per 1M input = **$1.54/M**, exactly what `provider-rates.js`
+assumes. The inference was right.
+
+The same job also carries `cost_usd`, which looks authoritative and is not. It returned
+`{input: 0.00023716, output: 0.00234256}` for a 13-token call and **the identical figures** for a
+257-token call — it does not vary with usage, so it cannot be the cost of the call. It appears to be
+`prediction_cost × (prediction_cost/100) / 1e6`, i.e. the rate multiplied by itself. **Do not bill
+from `cost_usd`.** Derive cost from `usage × prediction_cost / prediction_cost_divisor`. Worth
+reporting upstream.
+
+### Advertised supply is not available supply (measured 2026-08-13)
+
+`scripts/dev/_availability_probe.mjs` reads both hub catalogues and then sends every advertised chat
+model a real request. Over 5 runs in one 10-minute window:
+
+| Model | Served | Latency min/med/max | Failure |
+|---|---|---|---|
+| `theta/qwen3` | **0/5** | — | 409 `No instances available - try again later` |
+| `akash/Qwen/Qwen3.5-35B-A3B` | **0/5** | — | empty content at `max_tokens: 512` |
+| `akash/zai-org/GLM-5.2` | 4/5 | 3.3s / 8.7s / 9.6s | timeout |
+| `akash/openai/gpt-oss-120b` | 4/5 | 2.4s / 2.9s / 7.5s | timeout |
+| `theta/glm_5_2` | 5/5 | 1.8s / 2.0s / 2.9s | — |
+| `akash/deepseek-ai/DeepSeek-V4-Flash-0731` | 5/5 | 1.2s / 8.0s / **22.3s** | — |
+| `akash/Qwen/Qwen3.6-35B-A3B` | 5/5 | 3.0s / 4.3s / 8.9s | — |
+| `akash/meta-llama/Llama-3.3-70B-Instruct` | 5/5 | 0.8s / 2.6s / 3.8s | — |
+
+**Two of eight advertised chat models (25%) never served once.** Only half served on every run. One
+model's latency spread 19.2x on the same endpoint within ten minutes, which means no fixed client
+timeout is correct — set it tight and you abandon healthy calls, set it loose and an agent hangs.
+
+Three consequences:
+
+1. **Our default agent route is one of the flaky ones.** `autoPreferenceFor('agent')` prefers
+   `akash/zai-org/GLM-5.2`, which served 4/5 at a 8.7s median. `theta/glm_5_2` served **5/5 at a 2.0s
+   median** — 4x faster and more reliable in the same window, for a 10% higher rate. The routing
+   preference was set on agent-loop quality (`MODEL_QUALITY_EVAL.md`) with no availability input at
+   all, and should be revisited now that there is data.
+2. **A catalogue is a claim, not a fact.** `hub-catalog.js` publishes whatever discovery returns, so
+   `GET /v1/models` currently advertises two models to buyers that cannot serve them.
+3. **Measuring this honestly is hard**, which is the interesting part. The first probe reported 2/10
+   because it used Theta's display name instead of `alias`, starved reasoning models at
+   `max_tokens: 8`, and could not parse Theta's SSE default (`stream` defaults to **true**) or its
+   job envelope. Every naive integration will under-report availability for the same reasons: an
+   honest number requires knowing each provider's quirks, which is precisely why nobody publishes
+   one. Re-run the probe before quoting any figure here — this is a 10-minute window, not an SLA.
+
 ### Prompt caching — measured, and smaller than modelled (reassessed 2026-08-12)
 
 **The 5.7x was wrong.** It assumed cached input bills at 10% of the fresh rate, which is
