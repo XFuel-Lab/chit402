@@ -2,27 +2,87 @@
 
 Copy/paste. Customize the `[brackets]`. Targets: [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md).
 
+Framing follows [ADR 0006](./adr/0006-receipts-are-not-a-paid-feature.md): **lead with the audit
+trail, not the payment rail.** The receipt is free for anything we route and needs no wallet, so
+the first ask is a base-URL swap rather than a treasury decision. USDC settlement is the upgrade
+you offer once they care about the receipt — putting it first shrinks the conversation to teams
+who already hold USDC on Base *and* want an audit trail, and makes a "no" unreadable (did they
+not want the receipt, or not want to fund a wallet?).
+
 ---
 
 ## Cold DM / email (short)
 
-**Subject:** Design partner — budgets + receipts for agents on Base
+**Subject:** Can you say what your agents spent last week, and on what?
 
 Hi `[Name]` — saw `[project / post / hackathon]`.
 
-We’re XFuel: USDC budgets via x402 on Base, OpenAI-compatible routing, and verifiable receipts (optional on-chain SP1 settlement proofs). Looking for **3 design partners** to run real agent spend through our gateway and stress Private Spend (vendor-blind — providers don’t see your org’s spend topology).
+Most teams running agents can answer that from a provider invoice at the account level, and
+nowhere near the per-call level. Which model actually served it, which provider, how many tokens,
+what it cost — that either lives in your own logs, which attest nothing, or nowhere.
 
-30 min install: SDK or swap `baseURL` to our `/v1`. Early access + influence on the receipt schema.
+XFuel is an OpenAI-compatible gateway that returns a **signed receipt for every call**: model,
+provider, token counts, output hash, cost. Tamper-evident, verifiable with our SDK or your own
+HMAC check. Two minutes to try — change `baseURL` to `https://api-testnet.xfuel.app/v1` and keep
+everything else. No wallet, no signup call, receipts are free.
 
-Open to a 20-min call this week?
+Looking for **3 design partners** to run real agent traffic through it and push on the receipt
+schema before it sets.
+
+Worth 20 minutes this week?
 
 — `[You]` · https://xfuel.app · https://api-testnet.xfuel.app
 
 ---
 
+## Cold DM / email (crypto-native variant)
+
+Use when they already settle in USDC — a DAO treasury, an on-chain agent team, an x402 project.
+Here the payment rail is a feature rather than a hurdle, so it can lead.
+
+**Subject:** USDC settlement + a signed receipt per agent call
+
+Hi `[Name]` — saw `[project / post / hackathon]`.
+
+If `[project]`'s agents spend from a shared treasury, you have the reporting problem twice: what
+was spent, and proof for whoever asks. XFuel settles agent inference in USDC on Base over x402
+and returns a signed receipt per call naming the model, the provider, the tokens and the cost —
+so spend reconciles against something better than a screenshot. Optional SP1 settlement proof
+on-chain when a receipt needs to stand up to an auditor rather than a colleague.
+
+OpenAI-compatible, so it is a base-URL swap. You can see the receipt before touching a wallet —
+the free surface returns the same signed artifact.
+
+Open to 20 minutes?
+
+— `[You]` · https://xfuel.app
+
+---
+
 ## Follow-up (no reply in 5 days)
 
-Quick bump on design-partner access for `[project]`. Happy to run a live task on a shared screen — you’ll leave with a `verify_url` receipt. Still relevant?
+Quick bump on design-partner access for `[project]`. Fastest version: one `curl` on a shared
+screen and you leave with a `verify_url` you can check yourself. Still relevant?
+
+---
+
+## What to show on the call
+
+In order. The point is to get to a receipt they can verify inside five minutes.
+
+1. **Their own client, our base URL.** Whatever they already use — OpenAI SDK, LangChain, Cursor.
+   Nothing changes but one string.
+2. **The receipt.** `xfuel` block on the response, or `GET /receipt/:task_id`. Walk the fields:
+   `route.model`, `route.provider`, `usage`, `payment.rail`, `signature`.
+3. **Verify it in front of them.** `verifyReceiptSignature(receipt, secret)` from `xfuel-sdk`, or
+   `?format=auditor` for the human-readable pack.
+4. **Then, only if they ask about money:** x402 on `/task-request`, and the on-chain SP1 proof.
+
+Say plainly what the receipt does not do: on an unmetered call it attests **which model and
+provider ran**, not a dollar, because nothing settled. It is not a proof that the provider ran
+the weights it claimed — that is what the spot-check tier ([ADR 0007](./adr/0007-spot-check-assurance.md))
+is for, and it is not built yet. Overclaiming here is the one thing that loses a technical
+partner permanently.
 
 ---
 
@@ -30,7 +90,7 @@ Quick bump on design-partner access for `[project]`. Happy to run a live task on
 
 Send [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) + partner API key.
 
-Hi `[Name]` — you’re in.
+Hi `[Name]` — you're in.
 
 1. Key: `[partner-key]` (keep private; not the public demo key)
 2. One-pager: `[link to onboarding doc or Notion copy]`
@@ -38,7 +98,16 @@ Hi `[Name]` — you’re in.
 4. Your stats only: `GET /stats/me` with that key
 5. Auditor pack when needed: `/receipt/:taskId?format=auditor`
 
-Trust note: Private Spend is gateway-trusted (not prompt encryption). We’ll say that in every doc.
+Two operational notes, both better said now than discovered:
+
+- The free surface has a **daily provider-cost ceiling per key** (`FREE_TIER_DAILY_COGS_USD`,
+  currently $10/day). Past it you get a 402 until UTC midnight. Tell us before a heavy day and we
+  will raise yours — this exists to stop the public demo being farmed, not to interrupt you.
+- **Tier-2 on-chain proofs need warning.** The SP1 prover is scaled to zero when idle to control
+  cost; give us 5 minutes before a session where you want one. Tier-1 signed receipts are always
+  on. `GET /health` shows the current state under `proofs`.
+
+Trust note: Private Spend is gateway-trusted (not prompt encryption). We say that in every doc.
 
 Channel: `[Slack/Telegram invite]`
 
@@ -46,4 +115,5 @@ Channel: `[Slack/Telegram invite]`
 
 ## Ask for a quote (after 2 weeks of usage)
 
-Would you share 2–3 sentences we can use (or paraphrase) for Seed diligence — what broke without budgets/receipts, and what XFuel changed? Attribution optional.
+Would you share 2–3 sentences we can use (or paraphrase) for Seed diligence — what you could not
+answer about agent spend before, and what changed? Attribution optional.

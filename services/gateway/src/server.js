@@ -11,6 +11,7 @@ import { resolveRail, runX402Handshake, priceUSDCResolved, resolvePricingModel }
 import { quoteTask } from './pricing.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { proveAllowedForKey, proofAvailability } from './prove-gate.js';
+import { freeTierStatus } from './free-tier.js';
 import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest } from './x402-discovery.js';
@@ -1608,6 +1609,10 @@ export function createApp() {
             warning: 'RECEIPT_SIGNING_SECRET is not set — receipts are UNSIGNED and cannot be verified.',
           }),
         },
+        // What the unmetered surface is costing us today. Receipts are free by
+        // policy (ADR 0006); the compute behind them is not, and that subsidy was
+        // previously neither capped nor measured anywhere.
+        free_tier: freeTierStatus(),
         fee_config: {
           default_bps:    AI_TASK_FEE_BPS,
           min_bps:        MIN_FEE_BPS,

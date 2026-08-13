@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway on `main` @ `20fa5d6` (11/11 verify) · SDK `0.5.2` · SP1 prover scaled to 0 · AkashML questions sent · Next: items 12–15 / 17, then outreach (4)
+Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway on `main` @ `20fa5d6` (11/11 verify) · SDK `0.5.2` · SP1 prover scaled to 0 · AkashML questions sent · **Item 17 answered as [ADR 0006](./adr/0006-receipts-are-not-a-paid-feature.md); spot-check thesis measured in [ADR 0007](./adr/0007-spot-check-assurance.md)** · Next: accept 6/7, then items 12–13, then outreach (4)
 
 ## How to use
 
@@ -32,9 +32,11 @@ Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway on `main` @
 | 12 | **Accept the price schedule** — [PRICING_STRATEGY.md](./PRICING_STRATEGY.md). Metered per-model rate card with a floor is **already live**, so this is ratification of what runs, not a greenfield decision. Still open inside it: whether `xfuel/auto` may route agent work to a model that costs the buyer $0.21 vs $0.021. Also: stop calling it a "0.5% protocol fee" — that framing caps us in the 5% router band | Market research done: routers top out ~5%, Akash abolished its 20%; verifiability earns 10–20%, not a multiple; an SP1 settlement proof is ~$0.007 on Base and we give it away |
 | 13 | **Decide the revenue-split base** (ADR 0001). Splitting the *fee* sends buyback $0.0000175/task — 1M tasks funds $17.50 while gross margin is ~$18,000. If the token thesis matters, the base must be gross margin | Flagged in [PRICING_STRATEGY.md](./PRICING_STRATEGY.md) open decisions |
 | 14 | ~~Scale the SP1 prover to zero~~ | **Done 2026-08-13** — ECS `sp1-prover` desired 0 / running 0. ALB left up (~$20/mo). Scale to 1 and wait 3–5 min before a partner session that needs Tier-2 |
-| 15 | **Turn on `X402_METER_V1`?** Metering `/v1/chat/completions` is built and tested but off. It is the busiest surface and it is currently free compute. Turning it on **breaks plain OpenAI SDK clients**, which have no way to pay a 402 | Eng shipped the meter; this is a pricing/GTM call, not a technical one |
+| 15 | **Turn on `X402_METER_V1`?** Metering `/v1/chat/completions` is built and tested but off. It is the busiest surface and it is currently free compute. Turning it on **breaks plain OpenAI SDK clients**, which have no way to pay a 402 | Eng shipped the meter; this is a pricing/GTM call, not a technical one. **[ADR 0006](./adr/0006-receipts-are-not-a-paid-feature.md) answers this for now: leave it off.** Free `/v1` is the funnel that puts a signed receipt in front of a team before asking them to pay. Revisit once partners have said whether the receipt matters |
 | 16 | ~~Ask AkashML four questions~~ | **Sent 2026-08-13** to support@akashml.com. Q4 reframed against their pricing docs (`usage.prompt_tokens_details.cached_tokens` claimed; we don't see it on GLM-5.2). Waiting on reply |
-| 17 | **Does the receipt product require x402 payment at all?** Today a receipt only exists for a paid task. A free signed receipt for any call would be a much wider wedge, and would decouple "verifiable" from "crypto-paid" | Raised by the pricing work; no code implication until you decide |
+| 17 | **Accept [ADR 0006](./adr/0006-receipts-are-not-a-paid-feature.md)** — receipts are never a paid feature. The premise of this item was wrong: the decoupling *already ships*. Unmetered `/v1` calls have returned signed receipts all along (`payment.rail: "unmetered"`), so this is a positioning call, not a build. Accepting it sets the design-partner ask ("swap your base URL", no wallet) and answers item 15 for now | Verified live 2026-08-13. Two costs named in the ADR need your call: free `/v1` is subsidised COGS and wants a per-key ceiling before we advertise it, and an unmetered receipt attests *which model ran*, not a dollar — so it must not be sold with settled-payment language |
+| 18 | **Accept [ADR 0007](./adr/0007-spot-check-assurance.md)** — spot-check assurance, and the answer to "wouldn't a better product be: we spot-checked your work 1-in-X times". Yes, with the sampling unit changed: statistics pool per provider-and-model across the whole network, never per customer, because a small customer can never fund a verdict about their own traffic. Sell it as an assurance **tier**, not a SKU | **Measured before proposing**, $0.17 and 5½ minutes (`scripts/dev/_canary_probe.mjs`, `canary-baseline.json`). Curating the probe battery cuts the checks needed per pair from **179 to 23** — that one lever decides viability. Near-twin models (Qwen3.5 vs 3.6) are cleanly separable. But GLM-5.2, our own default, disagrees with *itself* on 21% of prompts, so per-call verdicts are impossible and the tier must only ever claim a rate. **Also found: a spot-check sampler already exists** (`src/spotcheck.js`, Phase 4) and compares output hashes byte-for-byte, so enabling it as written would flag ~1 in 5 honest re-executions as `slashable`. It is dormant (`VI_SPOTCHECK_ENABLED` off, rate 0) — **do not switch it on**; see [KNOWN_ISSUES](./KNOWN_ISSUES.md) |
+| 19 | **Get a Theta EdgeCloud key onto a dev machine** (or tell eng to use the box) | The one thing blocking the actual substitution check: GLM-5.2 exists on both Theta and AkashML, which is the only same-model-two-providers pair we have. Without it we can prove the comparator distinguishes *models*, not that it catches a *provider* lying |
 | Later | Guest v2 ELF + vKey; uptime monitor; Akash ACT float | Blocked on prover host / ops |
 
 ### Before you restart the gateway (item 3c)
@@ -48,6 +50,7 @@ the deploy will look like an outage:
 | `RECEIPT_SIGNING_SECRET` | **Unset = every receipt is unsigned**, with no error. The receipt still renders and looks complete. This is the single highest-consequence one, and it is easy to have missed because nothing ever complained |
 | `AKASHML_API_KEY` | Must start `akml-` (item 3e). Without it the Akash hub drops out of the catalogue, `xfuel/auto` degrades to Theta, and any tool-carrying request fails with `tools_unsupported_on_hub` — Theta cannot serve tools |
 | `ALLOW_MOCK_INFERENCE` | Leave **unset** in production. Setting it to `true` restores the old behaviour of answering a paid task with a mock, which is the bug we just closed |
+| `FREE_TIER_DAILY_COGS_USD` | **New, and it changes live behaviour on restart.** Unmetered `/v1` now stops serving a caller once they have burned this much provider cost in a UTC day (402 `free_tier_exhausted`), where before it served forever. Defaults to `$10`. The demo key is **one bucket for the whole internet**, so this is also the cap on public exposure — roughly 100 agent-shaped calls or 1,100 short completions a day across all demo users combined. Set it higher if you expect a busy demo day, or `0` to keep the old uncapped behaviour while still measuring |
 
 Then verify from your machine — one command, no JSON quoting:
 
@@ -76,6 +79,16 @@ specific on our side.
 4. **Will `usage` ever report cached tokens?** You publish an `input_cache_read` rate for GLM-5.2
    ($0.26/M against $1.40/M) and we can measure the speed-up, but nothing in the response says how
    many tokens hit. We cannot verify we received the discount, bill against it, or attest it.
+
+Add a fifth, found 2026-08-13 while building the spot-check harness:
+
+5. **Will you return `logprobs`?** The parameter is accepted — `logprobs: true, top_logprobs: 10`
+   returns HTTP 200 — but `choices[0].logprobs` is `null`. First-token logprob distributions over a
+   fixed prompt are the strongest available fingerprint of *which weights actually served*, far
+   stronger than comparing output text, and they cost one output token to collect. Without them our
+   [spot-check assurance](./adr/0007-spot-check-assurance.md) has to fall back to text comparison,
+   which is noisier and cannot separate near-identical models as sharply. Accepting a parameter and
+   silently returning null for it is also worth flagging on its own.
 
 Also worth flagging to them commercially: Llama 3.3 70B and GPT-OSS-120B have **no** cache-read rate
 published while three other models do, which looks like an omission rather than a policy.
@@ -211,6 +224,8 @@ Engineering shipped: auditor selective disclosure, staging SLA draft, Tier-3 tim
 | `/v1` quotes capped output, not requested output | **Shipped** 2026-08-13 — asking above `OPENAI_GATEWAY_MAX_TOKENS_CAP` was billed at the uncapped figure (~$0.09 overcharge/call). Only reachable with `X402_METER_V1` on, which is off |
 | Unsigned receipts are now visible instead of silent | **Shipped** 2026-08-13 — a missing `RECEIPT_SIGNING_SECRET` turned off Tier-1 verifiability with no warning anywhere. Now on `/health` (`receipts.tier1_signed`), warned at boot, and checked by the deploy probe |
 | `scripts/dev/_verify_deploy.mjs` | **Shipped** 2026-08-13 — 12 HTTP checks against a *deployed* host. Every other probe boots its own server, so none could tell you what was live |
+| The free surface measures and caps what it costs us | **Shipped** 2026-08-13 — `/v1` never called `measureCogs`, so the busiest and *unpaid* surface burned provider money with no record and the float overstated by all of it. Now burned like `/task-request`, reported on `/health` (`free_tier`), and capped per key by `FREE_TIER_DAILY_COGS_USD` (default $10/day) |
+| `scripts/dev/_canary_probe.mjs` | **Shipped** 2026-08-13 — measures whether output comparison can tell two models apart, which is the assumption all of ADR 0007 rests on. Hard budget cap, concurrent, writes raw responses so a new comparator can be scored without re-spending |
 
 ### Pre-outreach review (2026-08-10) — partner-facing fixes
 

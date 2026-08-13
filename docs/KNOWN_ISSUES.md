@@ -2,7 +2,7 @@
 
 Honest gaps for auditors, design partners, and Seed diligence. Keep this current.
 
-Last updated: 2026-08-12  
+Last updated: 2026-08-13  
 Runtime truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 
 ## Production / money
@@ -31,7 +31,9 @@ Runtime truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 | Provider COGS burns a flat 70% of quote, measured ~21x off actual | High | Open — [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) |
 | ~~Base mainnet x402 facilitator not wired on live demo host~~ | — | **Resolved 2026-08-06** — public `api-testnet` on Base + CDP |
 | Payment binding is server-attested (`in_proof: false`) until SP1 guest v2 | Medium | Guest rebuild + new programVKey required |
-| OpenAI-compatible `/v1` path is **unmetered** (Phase 1) | Medium | Paid path = `/task-request` + x402 |
+| **`/v1` never measured COGS, so the busiest surface spent provider money with no record of it** | **High** | **Fixed** 2026-08-13 — `/v1` measures and burns like `/task-request`; the subsidy is capped and reported. See below |
+| **The spot-check sampler would flag ~1 in 5 honest re-executions as slashable** | **High** | Open — **dormant, do not enable.** `buildSpotCheckRecord` compares output hashes for byte equality; measured self-disagreement on our default model is 21%. See below |
+| OpenAI-compatible `/v1` path is **unmetered** (Phase 1) | Medium | **By decision** as of 2026-08-13 — [ADR 0006](./adr/0006-receipts-are-not-a-paid-feature.md) keeps it free as the funnel. Paid path = `/task-request` + x402 |
 | Web2 collect-and-forward custody not counsel-cleared | High if scaled | Do not enable broad OpenAI pass-through revenue yet |
 
 ### Flat pricing is below cost on real agent traffic (Critical)
@@ -155,6 +157,64 @@ serves `min(max_tokens, OPENAI_GATEWAY_MAX_TOKENS_CAP)`, so a caller asking for 
 against the demo's cap was quoted **$0.09 of output it was structurally unable to receive**. The
 quote now uses the capped figure. Only reachable with `X402_METER_V1` on, which is off — worth
 fixing before the flag flips rather than after.
+
+### The free surface spent provider money off the books (High, fixed 2026-08-13)
+
+`/task-request` has always reconciled COGS after serving — measure real tokens against the
+provider's published rate, burn it against the prepaid float, record it on the receipt
+(`_reconcileProviderCogs`). `/v1` did none of it. It computed `usage`, registered the task, and
+stopped. So the busiest surface — the one that is unmetered by default and therefore the one
+where *we* pay for every call — was the one surface with no cost record at all.
+
+Two consequences, both quiet. The float balance overstated by the entire volume of unmetered
+traffic ever served, because money left the AkashML account that no burn ever reflected. And
+"what does the free tier cost us per day" had no answer anywhere in the system, on any surface,
+at any granularity.
+
+The only brakes were a request-rate limit and `OPENAI_GATEWAY_MAX_TOKENS_CAP`, and neither knows
+what a call costs. At measured rates, 150 demo calls a day is **$1.30 of short completions or
+$14 of agent-shaped ones** — an order of magnitude apart, indistinguishable to a counter of
+requests.
+
+Fixed in three parts. `/v1` now measures and burns COGS on the same code path as the M2M
+surface, so `provider_cogs` appears on the `/v1` receipt exactly as it does on the other one
+(unsigned block; it is not in `canonicalSignedPayload`, and `route.provider` still resolves from
+`task.result.provider` first, so no existing signature moved). `GET /health` reports a
+`free_tier` block with today's give-away. And `FREE_TIER_DAILY_COGS_USD` — default $10 per
+caller per day, denominated in provider cost rather than requests — returns 402
+`free_tier_exhausted` past the ceiling, with `Retry-After` set to the UTC reset.
+
+Bounded, not solved, and both limits are deliberate. The counter is in memory like the request
+rate limiter, so **a restart forgives the day's spend** — acceptable for a spend guard, which is
+why it never touches a buyer's invoice. And the ceiling is checked before a call but charged
+after it, so a caller can cross it by at most one call; a pre-serve check cannot know what the
+pending call will cost. The one to watch operationally: the demo key is a **single bucket for
+the whole public internet**, so `FREE_TIER_DAILY_COGS_USD` is also the cap on public exposure.
+`/v1/images/generations` and `/v1/audio/transcriptions` are not COGS-metered yet — no per-token
+rate exists for them — so they neither burn nor draw on the allowance.
+
+### The spot-check sampler compares bytes, and models are not deterministic (High, open)
+
+`src/spotcheck.js` decides `pass` vs `mismatch` by comparing `keccak256` output hashes for
+equality, and sets `slashable: outcome === 'mismatch'`. The sampling half is sound — a per-epoch
+beacon makes the draw unpredictable to the provider and auditable afterwards — but the comparison
+half assumes two honest runs of the same model produce identical bytes.
+
+Measured 2026-08-13 (`scripts/dev/_canary_probe.mjs`, 576 calls, temperature 0): identical prompt,
+identical model, same provider produced **different text on 21% of prompts for `zai-org/GLM-5.2`**,
+which is what `xfuel/auto` resolves to for agent work. `openai/gpt-oss-120b` was 17%. Different
+text is a different hash, so enabled against a re-execution this marks roughly one honest check in
+five as a mismatch — and flags it slashable.
+
+**Not live.** It reaches a receipt only when the mechanism resolves to `zk-spotcheck`, which needs
+`VI_SPOTCHECK_ENABLED=true` and a non-zero `VI_SPOTCHECK_RATE_BPS`; both default off. Nothing has
+been sampled in production. The exposure is that the flags default off rather than that the
+comparator is correct, so this is a "do not switch on" rather than an incident.
+
+Fix is in [ADR 0007](./adr/0007-spot-check-assurance.md): keep the sampler, replace byte equality
+with an accumulating agreement rate per `(provider, model)` scored over a curated probe battery
+(23 checks per pair, against 179 uncurated), and stop deriving `slashable` from one comparison
+against providers who have staked nothing.
 
 ### COGS was a percentage of our own price (High, fixed 2026-08-12)
 
