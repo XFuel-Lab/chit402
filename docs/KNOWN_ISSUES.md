@@ -483,6 +483,13 @@ Three consequences:
    honest number requires knowing each provider's quirks, which is precisely why nobody publishes
    one. Re-run the probe before quoting any figure here — this is a 10-minute window, not an SLA.
 
+**The same-model-different-endpoint gap is now measured by a third party.** Artificial Analysis
+launched an Endpoint Accuracy Index on 2026-08-04 covering GLM-5.2, gpt-oss-120b and DeepSeek V4 Pro
+— the models we route — finding gpt-oss-120b endpoints scoring 22% on tool calling against 37% for a
+self-hosted reference, and the most restrictive GLM-5.2 endpoints at half the reference or less
+because output-token limits truncate reasoning. Our 4x latency gap between the two GLM-5.2 endpoints
+is the same phenomenon. See [AGENT_PAIN_POINTS.md](./AGENT_PAIN_POINTS.md) §4.
+
 ### Prompt caching — measured, and smaller than modelled (reassessed 2026-08-12)
 
 **The 5.7x was wrong.** It assumed cached input bills at 10% of the fresh rate, which is
