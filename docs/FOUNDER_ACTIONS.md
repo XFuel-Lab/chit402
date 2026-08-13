@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway on `main` @ `20fa5d6` (11/11 verify) · SDK `0.5.2` · SP1 prover scaled to 0 · Next: items 16 (AkashML questions), then 12–15 / 17
+Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway on `main` @ `20fa5d6` (11/11 verify) · SDK `0.5.2` · SP1 prover scaled to 0 · AkashML questions sent · Next: items 12–15 / 17, then outreach (4)
 
 ## How to use
 
@@ -33,7 +33,7 @@ Last updated: 2026-08-13 · Public Base mainnet x402 live · Gateway on `main` @
 | 13 | **Decide the revenue-split base** (ADR 0001). Splitting the *fee* sends buyback $0.0000175/task — 1M tasks funds $17.50 while gross margin is ~$18,000. If the token thesis matters, the base must be gross margin | Flagged in [PRICING_STRATEGY.md](./PRICING_STRATEGY.md) open decisions |
 | 14 | ~~Scale the SP1 prover to zero~~ | **Done 2026-08-13** — ECS `sp1-prover` desired 0 / running 0. ALB left up (~$20/mo). Scale to 1 and wait 3–5 min before a partner session that needs Tier-2 |
 | 15 | **Turn on `X402_METER_V1`?** Metering `/v1/chat/completions` is built and tested but off. It is the busiest surface and it is currently free compute. Turning it on **breaks plain OpenAI SDK clients**, which have no way to pay a 402 | Eng shipped the meter; this is a pricing/GTM call, not a technical one |
-| 16 | **Ask AkashML four questions** (draft below) — they gate session affinity, cache economics, and a cross-tenant isolation claim we currently cannot verify | Eng probed everything answerable from outside; these are the residue |
+| 16 | ~~Ask AkashML four questions~~ | **Sent 2026-08-13** to support@akashml.com. Q4 reframed against their pricing docs (`usage.prompt_tokens_details.cached_tokens` claimed; we don't see it on GLM-5.2). Waiting on reply |
 | 17 | **Does the receipt product require x402 payment at all?** Today a receipt only exists for a paid task. A free signed receipt for any call would be a much wider wedge, and would decouple "verifiable" from "crypto-paid" | Raised by the pricing work; no code implication until you decide |
 | Later | Guest v2 ELF + vKey; uptime monitor; Akash ACT float | Blocked on prover host / ops |
 
