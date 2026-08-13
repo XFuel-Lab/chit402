@@ -5,9 +5,9 @@ import logger from './logger.js';
 import { getAIListener } from './ai-listener.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { proveAllowedForKey } from './prove-gate.js';
-import { buildVerifyUrl, baseUrlFromReq } from './receipt.js';
-import { apiKeyHashFromReq } from './buyer-attr.js';
-import { getHubCatalog, resolveCatalogModel, toOpenAIList } from './hub-catalog.js';
+import { buildVerifyUrl, baseUrlFromReq, buildReceipt as buildSignedReceipt } from './receipt.js';
+import { apiKeyHashFromReq, cacheNamespace } from './buyer-attr.js';
+import { getHubCatalog, resolveCatalogModel, requestShape, toOpenAIList } from './hub-catalog.js';
 import {
   inferEdgeCloud,
   chatInputFromMessages,
@@ -16,17 +16,20 @@ import {
   extractTextOutput,
   extractImageUrl,
 } from './edgecloud-infer.js';
+import { inferAkashML, akashmlApiKey } from './akashml-infer.js';
+import { normalizeUsage, messagesToText } from './usage.js';
+import { runX402Handshake } from './x402-server.js';
 
 /**
  * XFuel OpenAI-compatible gateway.
  *
- *   GET  /v1/models              → live hub catalog (Theta /service/list + …)
+ *   GET  /v1/models              → live hub catalog (Theta + AkashML + …)
  *   GET  /v1/models/:id          → retrieve one model
  *   POST /v1/chat/completions    → chat (+ receipt)
  *   POST /v1/images/generations  → image (+ receipt)
  *   POST /v1/audio/transcriptions → STT (+ receipt)
  *
- * Model ids are hub-prefixed (theta/qwen3). No silent Llama→Qwen remap.
+ * Model ids are hub-prefixed (theta/qwen3, akash/zai-org/GLM-5.2). No silent Llama→Qwen remap.
  * OPENAI_GATEWAY_ALLOW_FALLBACK=false → hard-fail when preferred hub fails.
  */
 
@@ -55,6 +58,81 @@ function clampMaxTokens(requested) {
   return Math.min(n, MAX_TOKENS_CAP);
 }
 
+// ─── x402 metering for /v1 (opt-in) ──────────────────────────────────────────
+
+/**
+ * The demo key and any explicitly listed key skip payment. Without this,
+ * enabling metering would 402 the public testnet gateway and every quickstart
+ * that points at it.
+ */
+function meteringExempt(req) {
+  const key = req.headers['x-api-key']
+    || (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  if (!key) return false;
+  if (key === (process.env.M2M_DEMO_API_KEY || 'xfuel-demo')) return true;
+  return (config.x402?.meterV1ExemptKeys || []).includes(key);
+}
+
+/**
+ * Charge for a `/v1` call over x402 before running it.
+ *
+ * `/v1` is the busiest surface and has been free, so metering `/task-request`
+ * alone earns nothing — the traffic goes through the unmetered door. Priced by
+ * the same rate card as the M2M path: `quoteTask` reads `model`/`messages`/
+ * `max_tokens`, which the OpenAI body already carries, and `xfuel/auto` is
+ * resolved to a concrete model first so the alias is not billed at the cheap
+ * default row.
+ *
+ * `max_tokens` is quoted at the **capped** value, not the requested one. Output is
+ * priced at its ceiling under the `exact` scheme, and the hosted demo caps the
+ * ceiling — quoting uncapped would charge for output the caller cannot receive.
+ *
+ * A plain OpenAI SDK cannot satisfy a 402, which is why this is opt-in. Callers
+ * that speak x402 (the XFuel SDK, x402-fetch wrappers) retry with `X-PAYMENT`.
+ *
+ * @returns {Promise<{halted:boolean, payment?:{ref:string, amount:string}|null}>}
+ *   `halted` → a 402 has already been written; the handler must return.
+ */
+async function meterV1Request(req, res, { taskId }) {
+  if (!config.x402?.meterV1 || !config.x402?.enabled) return { halted: false, payment: null };
+  if (meteringExempt(req)) return { halted: false, payment: null };
+
+  const body = { ...(req.body || {}) };
+  if (body.max_tokens != null || MAX_TOKENS_CAP > 0) body.max_tokens = clampMaxTokens(body.max_tokens);
+
+  const decision = await runX402Handshake(req, { taskId, body });
+
+  if (decision.kind === 'settled') {
+    return { halted: false, payment: { ref: decision.paymentRef, amount: decision.settledAmount } };
+  }
+
+  if (decision.kind === 'challenge') {
+    // One body serving two clients: an x402 caller reads `accepts`, an OpenAI
+    // client reads `error.message`. The spec's `error` is an informational
+    // string, so shaping it as an OpenAI error object costs the x402 caller
+    // nothing and makes the failure legible to everyone else.
+    res.status(402).json({
+      ...decision.body,
+      error: {
+        message: 'Payment required. Retry with an X-PAYMENT header for the amount in `accepts[0]`.',
+        type: 'payment_required',
+        code: 'payment_required',
+      },
+    });
+    return { halted: true };
+  }
+
+  logger.warn({ reqId: req.id, reason: decision.reason }, 'openai-gateway: x402 payment failed');
+  res.status(402).json({
+    error: {
+      message: `Payment could not be settled: ${decision.reason}`,
+      type: 'payment_required',
+      code: decision.reason || 'settle_failed',
+    },
+  });
+  return { halted: true };
+}
+
 function calcFee(grossAmount, feeBps = GATEWAY_FEE_BPS) {
   const gross = BigInt(grossAmount);
   const bps = BigInt(Math.min(Math.max(feeBps, 50), 100));
@@ -62,16 +140,8 @@ function calcFee(grossAmount, feeBps = GATEWAY_FEE_BPS) {
   return { feeAmount: fee.toString(), netAmount: (gross - fee).toString(), feeBps: Number(bps) };
 }
 
-// ─── Token estimate (rough — ~4 chars/token; good enough for usage fields) ────
-
-function estimateTokens(text) {
-  if (!text) return 0;
-  return Math.max(1, Math.ceil(text.length / 4));
-}
-
-function messagesToText(messages) {
-  return messages.map((m) => (typeof m?.content === 'string' ? m.content : '')).join('\n');
-}
+// Token accounting lives in usage.js so `/v1` and the metered `/task-request`
+// path report the same numbers.
 
 // ─── Inference runner (lazy 6-tier router singleton) ──────────────────────────
 
@@ -97,14 +167,20 @@ async function getRouterHandler() {
 }
 
 /**
- * Chat inference: resolve catalog model → Theta EdgeCloud when hub=theta;
+ * Chat inference: resolve catalog model → Theta EdgeCloud / AkashML by hub;
  * optional ComputeRouter fallthrough when allowFallback.
  *
  * @returns {Promise<{ content: string, provider: string, mock: boolean, resolvedModel: string, raw: any, error?: object }>}
  */
-async function runChatInference({ model, messages, max_tokens, temperature, allowFallback: fb }) {
+async function runChatInference({
+  model, messages, max_tokens, temperature, allowFallback: fb, cacheNs = null,
+  tools = null, tool_choice = null,
+}) {
   const { models } = await getHubCatalog();
-  const resolved = resolveCatalogModel(model, models, { modality: 'chat' });
+  const resolved = resolveCatalogModel(model, models, {
+    modality: 'chat',
+    shape: requestShape({ tools, messages }),
+  });
   if (!resolved.ok) {
     return {
       content: '',
@@ -122,6 +198,27 @@ async function runChatInference({ model, messages, max_tokens, temperature, allo
 
   const cat = resolved.model;
   const resolvedModel = cat.id;
+  const wantsTools = Array.isArray(tools) && tools.length > 0;
+
+  // Theta's on-demand completions accept only
+  // {messages, max_tokens, temperature, top_p, stream, enable_thinking} — there is
+  // no tools parameter, so forwarding would drop them and return prose where the
+  // caller expects a structured call. Say so instead of guessing.
+  if (wantsTools && cat.hub === 'theta') {
+    return {
+      content: '',
+      provider: 'theta-edgecloud',
+      mock: true,
+      resolvedModel,
+      raw: null,
+      error: {
+        status: 400,
+        code: 'tools_unsupported_on_hub',
+        message: `${resolvedModel} runs on Theta EdgeCloud, whose on-demand API has no tools `
+          + 'parameter. Use an akash/* model for tool calling (e.g. akash/meta-llama/Llama-3.3-70B-Instruct).',
+      },
+    };
+  }
 
   // Prefer direct EdgeCloud for theta hub (honest alias).
   if (cat.hub === 'theta' && process.env.THETA_EDGECLOUD_API_KEY) {
@@ -139,6 +236,10 @@ async function runChatInference({ model, messages, max_tokens, temperature, allo
         raw: result,
       };
     }
+    logger.warn(
+      { hub: 'theta', model: cat.alias, reason: result.reason, fallback: fb },
+      'openai-gateway: preferred hub miss',
+    );
     if (!fb) {
       return {
         content: '',
@@ -155,6 +256,70 @@ async function runChatInference({ model, messages, max_tokens, temperature, allo
     }
   }
 
+  // AkashML hub — OpenAI-compatible chat only.
+  if (cat.hub === 'akash' && akashmlApiKey()) {
+    const result = await inferAkashML({
+      model: cat.alias,
+      messages,
+      max_tokens,
+      temperature,
+      tools,
+      tool_choice,
+      cacheNamespace: cacheNs,
+    });
+    if (result.ok) {
+      return {
+        content: result.output,
+        toolCalls: result.toolCalls || null,
+        provider: 'akash-network',
+        mock: false,
+        resolvedModel,
+        raw: result,
+      };
+    }
+    // Truncation means the provider worked and the request was under-budgeted.
+    // Failing over would bill a second provider for the same mistake, and a mock
+    // blaming "transient capacity" hides the real cause — so answer honestly
+    // whether or not fallback is allowed.
+    if (result.reason === 'truncated') {
+      logger.warn(
+        { hub: 'akash', model: cat.alias, finish_reason: result.finish_reason, usage: result.usage },
+        'openai-gateway: max_tokens too small for a reasoning model — not failing over',
+      );
+      return {
+        content: '',
+        provider: 'akash-network',
+        mock: true,
+        resolvedModel,
+        raw: result,
+        error: {
+          status: 400,
+          code: 'max_tokens_too_small',
+          message: `akash/${cat.alias} is a reasoning model: max_tokens=${max_tokens} was consumed by `
+            + 'internal reasoning before any answer was emitted. Raise max_tokens and retry.',
+        },
+      };
+    }
+    logger.warn(
+      { hub: 'akash', model: cat.alias, reason: result.reason, fallback: fb },
+      'openai-gateway: preferred hub miss',
+    );
+    if (!fb) {
+      return {
+        content: '',
+        provider: 'akash-network',
+        mock: true,
+        resolvedModel,
+        raw: result,
+        error: {
+          status: 503,
+          code: 'provider_unavailable',
+          message: `akash/${cat.alias} failed (${result.reason}). Set allow_fallback or retry.`,
+        },
+      };
+    }
+  }
+
   // Optional multi-tier fallthrough (Web2 / other DePIN) when allowed.
   if (fb) {
     let providerConfigured = false;
@@ -163,7 +328,7 @@ async function runChatInference({ model, messages, max_tokens, temperature, allo
       providerConfigured = !!(handler && (
         handler.edgeCloudApiKey || handler.rapidApiKey || handler.mcpEndpoint ||
         handler.akashMnemonic || handler.renderApiKey || handler.awsAccessKeyId ||
-        handler.openaiCompatKey || handler.anthropicApiKey
+        handler.openaiCompatKey || handler.anthropicApiKey || akashmlApiKey()
       ));
       const { ComputeRouter } = await import(
         '../../../packages/circuit-runtime/theta-inference/compute-router.js'
@@ -190,7 +355,7 @@ async function runChatInference({ model, messages, max_tokens, temperature, allo
 
     const reason = providerConfigured
       ? 'Provider(s) configured but returned no result (likely transient capacity). Retry shortly.'
-      : 'No DePIN provider is configured (set THETA_EDGECLOUD_API_KEY or a fallback tier).';
+      : 'No DePIN provider is configured (set THETA_EDGECLOUD_API_KEY, AKASHML_API_KEY, or a fallback tier).';
     const content = `[XFuel mock] ${reason} Echoing prompt: ${messagesToText(messages).slice(0, 200)}`;
     return { content, provider: 'mock', mock: true, resolvedModel, raw: { mock: true, providerConfigured, reason } };
   }
@@ -239,6 +404,17 @@ async function runImageInference({ model, prompt, allowFallback: fb }) {
     };
   }
   const cat = resolved.model;
+  // AkashML is chat-only — do not call Theta for an akash hub image id.
+  if (cat.hub === 'akash') {
+    return {
+      error: {
+        status: 400,
+        code: 'modality_unsupported',
+        message: `${cat.id} is AkashML chat-only; use a theta/* image model`,
+      },
+      resolvedModel: cat.id,
+    };
+  }
   if (!process.env.THETA_EDGECLOUD_API_KEY) {
     if (!fb) {
       return { error: { status: 503, code: 'provider_unavailable', message: 'THETA_EDGECLOUD_API_KEY not set' } };
@@ -309,6 +485,16 @@ async function runTranscriptionInference({ model, audioUrl, allowFallback: fb })
   if (!audioUrl) {
     return { error: { status: 400, code: 'invalid_request', message: 'audio_url (or file URL) is required' } };
   }
+  // AkashML is chat-only.
+  if (cat.hub === 'akash') {
+    return {
+      error: {
+        status: 400,
+        code: 'modality_unsupported',
+        message: `${cat.id} is AkashML chat-only; use theta/whisper for STT`,
+      },
+    };
+  }
   if (!process.env.THETA_EDGECLOUD_API_KEY) {
     if (!fb) {
       return { error: { status: 503, code: 'provider_unavailable', message: 'THETA_EDGECLOUD_API_KEY not set' } };
@@ -367,32 +553,46 @@ function extractContent(result) {
  *
  * @returns {{ taskId: string, proverConfigured: boolean }}
  */
-function registerTaskAndProve({ model, messages, content, provider, proveAllowed = true, apiKeyHash = null, privateSpend = false }) {
-  let aiListener;
+function registerTaskAndProve({
+  taskId: providedTaskId,
+  model, messages, content, provider, toolCalls = null,
+  proveAllowed = true, apiKeyHash = null, privateSpend = false,
+  usage = null, payment = null,
+}) {
+  const taskId = providedTaskId || `openai-${crypto.randomUUID()}`;
+  let aiListener = null;
   try {
     aiListener = getAIListener();
   } catch {
-    // Listener not initialised (e.g. isolated tests) — skip settlement wiring.
-    return { taskId: `openai-${crypto.randomUUID()}`, proverConfigured: false, proveAllowed };
+    // Listener not initialised (e.g. isolated tests). Still build the task — the
+    // receipt is signed from it, and a receipt that silently loses its signature
+    // when a subsystem is absent is the failure mode this path already had.
   }
 
-  const taskId = `openai-${crypto.randomUUID()}`;
   const inputHash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(messages)));
-  const outputHash = ethers.keccak256(ethers.toUtf8Bytes(content ?? ''));
-  const { feeAmount, netAmount, feeBps } = calcFee(GATEWAY_TASK_AMOUNT);
+  // On a tool call the answer *is* the tool call and `content` is empty, so
+  // hashing content alone would attest an empty output for the response the
+  // caller actually acts on.
+  const outputHash = ethers.keccak256(ethers.toUtf8Bytes(
+    toolCalls ? JSON.stringify({ content: content || null, tool_calls: toolCalls }) : (content ?? ''),
+  ));
+  // Gross is what x402 actually settled when the call was paid. Never the
+  // notional accounting amount — a receipt may only report money that moved.
+  const grossAmount = payment?.amount || GATEWAY_TASK_AMOUNT;
+  const { feeAmount, netAmount, feeBps } = calcFee(grossAmount);
 
   const task = {
     taskId,
     intent: {
       type: 'inference_request',
       sender: 'openai-gateway',
-      amount: GATEWAY_TASK_AMOUNT,
+      amount: grossAmount,
       modelId: model,
       inputHash,
       chain: 'base',
       proofSystem: 'sp1',
-      paymentRail: 'unmetered', // OpenAI-compat path is not x402-metered in Phase 1
-      paymentRef: null,
+      paymentRail: payment ? 'usdc' : 'unmetered',
+      paymentRef: payment?.ref || null,
       proveAllowed, // cost gate: false → settle + signed receipt, skip SP1 proof
     },
     meta: {
@@ -412,10 +612,15 @@ function registerTaskAndProve({ model, messages, content, provider, proveAllowed
     netAmount,
     feeBps,
     sp1Proof: null,
-    result: { provider, outputHash, content_hash: outputHash },
+    // Token counts belong on the task, not only in the HTTP response — /stats
+    // aggregates from the durable snapshots, and /v1 is the busiest surface.
+    usage,
+    result: { provider, outputHash, content_hash: outputHash, usage },
     callbackUrl: null,
     callbackSecret: null,
   };
+
+  if (!aiListener) return { taskId, proverConfigured: false, proveAllowed, task };
 
   aiListener.activeTasks.set(taskId, task);
 
@@ -426,12 +631,31 @@ function registerTaskAndProve({ model, messages, content, provider, proveAllowed
     });
   }
 
-  return { taskId, proverConfigured, proveAllowed };
+  return { taskId, proverConfigured, proveAllowed, task };
 }
 
 // ─── Verification receipt ─────────────────────────────────────────────────────
 
-function buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed = true, mockReason, baseUrl = '', privateSpend = false }) {
+/**
+ * The `/v1` receipt.
+ *
+ * This used to be a hand-rolled object with **no signature field at all**, so the
+ * tamper-evident receipt that is the entire product did not exist on the busiest
+ * surface — while an inline `xfuel` block that looked authoritative was returned
+ * on every call. It is now the canonical receipt from `receipt.js`, signed with
+ * the same key over the same canonical payload, with the `/v1` presentation
+ * fields layered on top.
+ *
+ * One signature per task, not two: the object returned here and the one at
+ * `/receipt/:task_id` are built from the same task and verify identically, so an
+ * SDK verifier does not need to know which surface a receipt came from. Only
+ * unsigned presentation fields are added after signing — never a field in
+ * `canonicalSignedPayload`.
+ */
+function buildReceipt({
+  task, taskId, provider, mock, proverConfigured, proveAllowed = true, mockReason,
+  baseUrl = '', privateSpend = false, payment = null, requestedModel = null, resolvedModel = null,
+}) {
   // pending  → proof generating; unavailable → no prover; gated → cost-gated for
   // this key (signed receipt only); skipped → mock response (nothing to prove).
   const proofStatus = mock
@@ -442,10 +666,18 @@ function buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed =
         ? 'gated'
         : 'pending';
   const verifyUrl = buildVerifyUrl(baseUrl, taskId);
+
+  const signed = task
+    ? buildSignedReceipt(task, {
+        baseUrl,
+        signingSecret: config.receipts?.signingSecret,
+        viPolicy: config.verifiedInference,
+      })
+    : { task_id: taskId, verify_url: verifyUrl, route: {}, payment: {}, proof: {} };
+
   return {
-    task_id: taskId,
-    // Canonical shareable proof link (public receipt page — same across all surfaces).
-    verify_url: verifyUrl,
+    ...signed,
+    surface: 'openai-v1',
     compute: {
       provider,
       real: !mock,
@@ -453,9 +685,19 @@ function buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed =
         ? `Response is a mock (compute.real=false). ${mockReason || 'No DePIN provider configured — set a provider key to route real compute.'}`
         : `Routed to ${provider} via the XFuel provider-agnostic router.`,
     },
+    route: {
+      ...signed.route,
+      // What the caller asked for vs what served. `route.model` is signed and
+      // stays as the canonical builder set it.
+      requested: requestedModel || 'xfuel/auto',
+      resolved: resolvedModel || signed.route?.model || null,
+    },
     payment: {
-      rail: 'unmetered',
-      note: 'The OpenAI-compatible path is unmetered in Phase 1. Use POST /task-request with payment.rail="usdc" for x402 settlement.',
+      ...signed.payment,
+      note: payment
+        ? 'Settled over x402 before the request was served.'
+        : 'This call was not charged. /v1 is metered only when X402_METER_V1 is on, and '
+          + 'the demo key and X402_METER_V1_EXEMPT_KEYS stay exempt.',
     },
     privacy: privateSpend
       ? {
@@ -463,11 +705,10 @@ function buildReceipt({ taskId, provider, mock, proverConfigured, proveAllowed =
           trust: 'gateway',
           notes: 'Provider saw gateway-pooled credentials, not end-customer identity. Not prompt-confidential.',
         }
-      : null,
+      : signed.privacy ?? null,
     proof: {
+      ...signed.proof,
       status: proofStatus, // pending | unavailable | gated | skipped
-      system: 'sp1',
-      attests: 'settlement metadata + commitment to the output hash (NOT inference correctness)',
       ...(proofStatus === 'gated'
         ? { note: 'On-chain proof is cost-gated for this key. Signed receipt above stands; request proving access to generate an SP1 settlement proof.' }
         : {}),
@@ -601,23 +842,69 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
 
   // ── POST /v1/chat/completions ──────────────────────────────────────────────
   app.post('/v1/chat/completions', async (req, res) => {
-    const { model, messages, max_tokens, temperature, stream } = req.body || {};
+    const { model, messages, max_tokens, temperature, stream, tools, tool_choice } = req.body || {};
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({
         error: { message: '`messages` must be a non-empty array', type: 'invalid_request_error', param: 'messages', code: null },
       });
     }
-    const badMsg = messages.find((m) => !m || typeof m.role !== 'string' || typeof m.content !== 'string');
+    // A tool-calling conversation carries two shapes this used to reject outright:
+    // an assistant turn with `content: null` and `tool_calls`, and a `role: "tool"`
+    // turn carrying the result. Requiring a string `content` everywhere made a
+    // multi-turn agent loop impossible to express.
+    const badMsg = messages.find((m) => {
+      if (!m || typeof m.role !== 'string') return true;
+      if (typeof m.content === 'string') return false;
+      if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) return false;
+      return true;
+    });
     if (badMsg) {
       return res.status(400).json({
-        error: { message: 'each message requires a string `role` and string `content`', type: 'invalid_request_error', param: 'messages', code: null },
+        error: {
+          message: 'each message requires a string `role` and string `content` — except an '
+            + 'assistant turn carrying `tool_calls`, whose content may be null',
+          type: 'invalid_request_error',
+          param: 'messages',
+          code: null,
+        },
+      });
+    }
+    if (tools !== undefined && (!Array.isArray(tools) || tools.some((t) => t?.type !== 'function' || !t.function?.name))) {
+      return res.status(400).json({
+        error: { message: '`tools` must be an array of {type:"function", function:{name,...}}', type: 'invalid_request_error', param: 'tools', code: null },
+      });
+    }
+    const wantsTools = Array.isArray(tools) && tools.length > 0;
+    // Streaming a tool call means assembling `tool_calls` deltas across chunks, and
+    // streamCompletion re-chunks a finished string. Emitting the prose path here
+    // would hand back a plausible-looking answer with the tool call missing.
+    if (wantsTools && stream) {
+      return res.status(400).json({
+        error: {
+          message: 'streaming with `tools` is not supported yet — retry with stream:false',
+          type: 'invalid_request_error',
+          param: 'stream',
+          code: 'stream_tools_unsupported',
+        },
       });
     }
 
     const id = `chatcmpl-${crypto.randomUUID()}`;
     const created = Math.floor(Date.now() / 1000);
     const fb = allowFallback(req);
+
+    // Charge before serving. The task id is minted here so the 402 challenge and
+    // the receipt name the same resource.
+    const taskId = `openai-${crypto.randomUUID()}`;
+    let metering;
+    try {
+      metering = await meterV1Request(req, res, { taskId });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /v1/chat/completions metering error');
+      return res.status(500).json({ error: { message: 'payment processing failed', type: 'server_error', code: null } });
+    }
+    if (metering.halted) return undefined;
 
     let inference;
     try {
@@ -627,6 +914,9 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
         max_tokens: clampMaxTokens(max_tokens),
         temperature,
         allowFallback: fb,
+        cacheNs: cacheNamespace(apiKeyHashFromReq(req)),
+        tools: wantsTools ? tools : null,
+        tool_choice: wantsTools ? tool_choice : null,
       });
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /v1/chat/completions inference error');
@@ -646,27 +936,37 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
     }
 
     const echoModel = inference.resolvedModel || model || 'xfuel/auto';
-    const { content, provider, mock } = inference;
+    const { content, provider, mock, toolCalls } = inference;
     const proveAllowed = proveAllowedForKey(req.headers['x-api-key']);
     const privateSpend = !!config.privateSpend?.enabled;
-    const { taskId, proverConfigured } = registerTaskAndProve({
+
+    // Prefer the provider's own usage. Estimating from visible text understates
+    // reasoning models badly — they bill hidden reasoning tokens, so a 2-word answer
+    // can cost 130+ completion tokens. Clients meter spend off this block, and the
+    // float should reconcile against the same numbers the provider billed.
+    const { source, ...counts } = normalizeUsage(inference.raw, { messages, output: content });
+    const usage = { ...counts, xfuel_source: source };
+
+    const { proverConfigured, task } = registerTaskAndProve({
+      taskId,
       model: echoModel,
       messages,
       content,
+      toolCalls,
       provider,
       proveAllowed,
       apiKeyHash: apiKeyHashFromReq(req),
       privateSpend,
+      usage: { ...counts, source },
+      payment: metering.payment,
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
     const receipt = buildReceipt({
-      taskId, provider, mock, proverConfigured, proveAllowed,
+      task, taskId, provider, mock, proverConfigured, proveAllowed,
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
+      payment: metering.payment,
+      requestedModel: model, resolvedModel: echoModel,
     });
-    receipt.route = { requested: model || 'xfuel/auto', resolved: echoModel };
-
-    const promptTokens = estimateTokens(messagesToText(messages));
-    const completionTokens = estimateTokens(content);
 
     setReceiptHeaders(res, receipt);
 
@@ -682,15 +982,15 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
       choices: [
         {
           index: 0,
-          message: { role: 'assistant', content },
-          finish_reason: 'stop',
+          // OpenAI sends `content: null` alongside tool_calls, and clients branch
+          // on it to decide whether to execute a tool or render text.
+          message: toolCalls
+            ? { role: 'assistant', content: content || null, tool_calls: toolCalls }
+            : { role: 'assistant', content },
+          finish_reason: toolCalls ? 'tool_calls' : 'stop',
         },
       ],
-      usage: {
-        prompt_tokens: promptTokens,
-        completion_tokens: completionTokens,
-        total_tokens: promptTokens + completionTokens,
-      },
+      usage,
       xfuel: receipt,
     });
   });
@@ -717,7 +1017,7 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
     const proveAllowed = proveAllowedForKey(req.headers['x-api-key']);
     const privateSpend = !!config.privateSpend?.enabled;
     const content = inference.url || JSON.stringify(inference.raw?.output || {});
-    const { taskId, proverConfigured } = registerTaskAndProve({
+    const { taskId, proverConfigured, task } = registerTaskAndProve({
       model: inference.resolvedModel,
       messages: [{ role: 'user', content: prompt }],
       content,
@@ -728,6 +1028,7 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
     const receipt = buildReceipt({
+      task,
       taskId,
       provider: inference.provider,
       mock: !!inference.mock,
@@ -735,8 +1036,9 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
       proveAllowed,
       baseUrl,
       privateSpend,
+      requestedModel: model,
+      resolvedModel: inference.resolvedModel,
     });
-    receipt.route = { requested: model || 'xfuel/auto', resolved: inference.resolvedModel };
     setReceiptHeaders(res, receipt);
 
     const count = Math.min(Math.max(Number(n) || 1, 1), 4);
@@ -773,7 +1075,7 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
     }
     const proveAllowed = proveAllowedForKey(req.headers['x-api-key']);
     const privateSpend = !!config.privateSpend?.enabled;
-    const { taskId, proverConfigured } = registerTaskAndProve({
+    const { taskId, proverConfigured, task } = registerTaskAndProve({
       model: inference.resolvedModel,
       messages: [{ role: 'user', content: String(audioUrl) }],
       content: inference.text || '',
@@ -784,6 +1086,7 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
     const receipt = buildReceipt({
+      task,
       taskId,
       provider: inference.provider,
       mock: !!inference.mock,
@@ -791,8 +1094,9 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
       proveAllowed,
       baseUrl,
       privateSpend,
+      requestedModel: model || 'theta/whisper',
+      resolvedModel: inference.resolvedModel,
     });
-    receipt.route = { requested: model || 'theta/whisper', resolved: inference.resolvedModel };
     setReceiptHeaders(res, receipt);
     return res.json({
       text: inference.text || '',

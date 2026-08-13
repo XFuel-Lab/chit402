@@ -34,11 +34,62 @@ test('resolveRail: cfg default, explicit usdc/tfuel', () => {
   assert.equal(resolveRail({ payment: { rail: 'usdc' } }, { defaultRail: 'tfuel' }), 'usdc');
 });
 
-test('priceUSDC: model override, maxAmount cap, default', () => {
+test('priceUSDC: hand-set model price wins, otherwise the floor', () => {
   const cfg = { usdcPriceDefault: '50000', usdcPrices: { 'llama-3-70b': '90000' } };
   assert.equal(priceUSDC({ model_id: 'llama-3-70b' }, cfg), '90000');
+  // Nothing to meter on a bare request, so the floor is the price.
   assert.equal(priceUSDC({ model_id: 'unknown' }, cfg), '50000');
-  assert.equal(priceUSDC({ payment: { maxAmount: '12345' }, model_id: 'llama-3-70b' }, cfg), '12345');
+});
+
+test('priceUSDC: the buyer cannot name the price with payment.maxAmount', () => {
+  // This used to return the buyer's own figure verbatim, so a 68k-token job
+  // could be settled for one base unit. maxAmount is a ceiling they choose to
+  // meet or decline — never an instruction to us.
+  const cfg = { usdcPriceDefault: '10000' };
+  assert.equal(priceUSDC({ payment: { maxAmount: '1' } }, cfg), '10000');
+  assert.equal(priceUSDC({ payment: { maxAmount: '999999999' } }, cfg), '10000');
+});
+
+test('priceUSDC: a large prompt is priced above the floor, a ping is not', () => {
+  const cfg = { usdcPriceDefault: '10000' };
+  // ~68k prompt tokens (the measured median agent call) at the default card.
+  const agent = priceUSDC(
+    { messages: [{ role: 'user', content: 'x'.repeat(272_000) }], max_tokens: 250 },
+    cfg,
+  );
+  assert.ok(Number(agent) > 20_000, `median agent call should clear $0.02, got ${agent}`);
+
+  const ping = priceUSDC({ messages: [{ role: 'user', content: 'hello' }], max_tokens: 16 }, cfg);
+  assert.equal(ping, '10000', 'a ping falls back to the floor');
+});
+
+test('settled gross cannot be restated by the paid retry (receipt integrity)', async () => {
+  // The exploit this guards: the buyer pays a $0.01 challenge, then declares a
+  // $1.00 `amount` on the retry and mints a signed receipt claiming $1.00 gross.
+  // Gross must come from the challenge the payment was bound to. See
+  // docs/KNOWN_ISSUES.md — our own flagship demo did exactly this.
+  const { url, close } = await startMockFacilitator();
+  try {
+    const cfg = cfgFor(url, { usdcPriceDefault: '10000' });
+
+    const challenge = await runX402Handshake(
+      { headers: {}, body: { payment: { rail: 'usdc' } } },
+      { taskId: 'x402-integrity', cfg },
+    );
+    const accept = challenge.body.accepts[0];
+    assert.equal(accept.maxAmountRequired, '10000', 'challenge priced at $0.01');
+
+    const settled = await runX402Handshake({
+      headers: { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': accept.extra.nonce },
+      // Inflated declaration + a different maxAmount on the retry.
+      body: { payment: { rail: 'usdc', maxAmount: '1000000' }, amount: '1000000' },
+    }, { taskId: 'x402-integrity', cfg });
+
+    assert.equal(settled.kind, 'settled');
+    assert.equal(settled.settledAmount, '10000', 'gross is the bound challenge amount, not the declaration');
+  } finally {
+    await close();
+  }
 });
 
 test('extractPaymentNonce: explicit header, json blob, base64 blob', () => {
@@ -74,6 +125,7 @@ test('full 402 loop against mock facilitator: challenge → settle → replay-re
     const settled = await runX402Handshake(reqPay, { taskId: 'x402-req-1', cfg });
     assert.equal(settled.kind, 'settled');
     assert.match(settled.paymentRef, /^base:0x/);
+    assert.equal(settled.settledAmount, '50000', 'settled gross comes from the bound challenge');
 
     // Step 3: replay the same nonce → rejected (spent)
     const replay = await runX402Handshake(reqPay, { taskId: 'x402-req-1', cfg });

@@ -85,7 +85,10 @@ const XFUEL_API_KEY = process.env.XFUEL_API_KEY;
 // xfuel/auto resolves to the best live chat model in the hub catalog, so this
 // never goes stale. `GET /v1/models` lists the concrete ids (e.g. theta/glm_5_2).
 const XFUEL_MODEL = process.env.XFUEL_MODEL || 'xfuel/auto';
-const XFUEL_AMOUNT = process.env.XFUEL_AMOUNT || '1000000'; // gross task value (min 10000)
+// Declared task value (min 10000). The gateway reports the amount actually
+// SETTLED as receipt gross, so this no longer inflates the receipt — but keep it
+// aligned with the quote so the demo shows one consistent number end to end.
+const XFUEL_AMOUNT = process.env.XFUEL_AMOUNT || '10000';
 // Real signer: valid XFUEL_PAYER_PK, else DEPLOYER_PRIVATE_KEY from .env.local
 const XFUEL_PAYER_PK = pickPrivateKey();
 const XFUEL_SENDER =
@@ -153,7 +156,8 @@ async function main() {
   const prompt =
     process.env.XFUEL_PROMPT ||
     'In one short sentence: what is a payment-bound ZK receipt?';
-  const task = await client.submitInference(XFUEL_MODEL, XFUEL_SENDER, XFUEL_AMOUNT, {
+  // Declare the quoted amount, so declared gross == settled gross.
+  const task = await client.submitInference(XFUEL_MODEL, XFUEL_SENDER, usdc.amount ?? XFUEL_AMOUNT, {
     chain_id: ChainId.BASE,
     input: prompt,
     // Use the network the gateway quoted (base / base-sepolia), not a hardcode.

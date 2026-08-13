@@ -10,7 +10,8 @@ Entry point for agents and automation.
 XFuel is the crypto control plane for AI compute: settle in USDC on Base (x402), route across pluggable providers (DePIN + frontier), return tiered proof receipts (signed → SP1 on Base → Verified Inference build).
 
 Beachhead: crypto-native agent teams — [docs/BEACHHEAD_ICP.md](docs/BEACHHEAD_ICP.md).  
-Provider COGS floats: [docs/PROVIDER_FLOAT_TREASURY.md](docs/PROVIDER_FLOAT_TREASURY.md) · [ADR 0005](docs/adr/0005-provider-float-cogs.md).  
+Provider COGS floats: [docs/PROVIDER_FLOAT_TREASURY.md](docs/PROVIDER_FLOAT_TREASURY.md) · [ADR 0005](docs/adr/0005-provider-float-cogs.md). 
+Pricing: [docs/PRICING_STRATEGY.md](docs/PRICING_STRATEGY.md) · [docs/SPEND_INTELLIGENCE_THESIS.md](docs/SPEND_INTELLIGENCE_THESIS.md).  
 Mainnet USDC go-live: [docs/MAINNET_X402_CHECKLIST.md](docs/MAINNET_X402_CHECKLIST.md).  
 Privacy thesis (Private Spend): [docs/PRIVATE_SPEND_THESIS.md](docs/PRIVATE_SPEND_THESIS.md).  
 **Your open actions:** [docs/FOUNDER_ACTIONS.md](docs/FOUNDER_ACTIONS.md).  

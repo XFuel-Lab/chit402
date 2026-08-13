@@ -32,3 +32,29 @@ export function apiKeyFromReq(req) {
 export function apiKeyHashFromReq(req) {
   return hashApiKey(apiKeyFromReq(req));
 }
+
+/**
+ * A per-tenant prompt-cache namespace to send upstream.
+ *
+ * Why this exists: every XFuel buyer is multiplexed through one provider API
+ * key, so from the provider's side we are a single account and their
+ * per-account cache isolation collapses to none between our tenants. CacheProbe
+ * (SAGAI '26) measured this exact architecture on OpenRouter and found
+ * cross-account cache sharing as high as 100% on some upstreams, with prompts
+ * recoverable by timing. The mitigation is to partition the upstream cache per
+ * buyer.
+ *
+ * Derived by hashing again rather than forwarding `apiKeyHash` directly: that
+ * digest is a stable buyer identifier we use internally, and a provider should
+ * not receive a value that correlates across our own records.
+ *
+ * @param {string|null} apiKeyHash from `apiKeyHashFromReq`
+ * @returns {string|null} opaque namespace, or null for an unattributed caller
+ */
+export function cacheNamespace(apiKeyHash) {
+  if (!apiKeyHash || typeof apiKeyHash !== 'string') return null;
+  return crypto.createHash('sha256')
+    .update(`xfuel-cache-ns:${apiKeyHash}`, 'utf8')
+    .digest('hex')
+    .slice(0, 32);
+}

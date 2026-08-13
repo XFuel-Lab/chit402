@@ -4,6 +4,7 @@ import {
   ProviderFloatManager,
   parseFloatsJson,
   estimateCogs,
+  normalizeProviderId,
   resetFloatManagerForTests,
 } from '../src/provider-float.js';
 import { buildReceipt, providerCogsOf } from '../src/receipt.js';
@@ -63,6 +64,41 @@ test('burn decrements balance and flags low water', () => {
   assert.equal(r.burned, '6000');
   assert.equal(r.balance, '4000');
   assert.equal(r.below_low_water, true);
+});
+
+test('normalizeProviderId maps router tags to float ids', () => {
+  assert.equal(normalizeProviderId('edgecloud'), 'theta-edgecloud');
+  assert.equal(normalizeProviderId('theta-edgecloud'), 'theta-edgecloud');
+  assert.equal(normalizeProviderId('akash'), 'akash-network');
+  assert.equal(normalizeProviderId('akash-network'), 'akash-network');
+  assert.equal(normalizeProviderId('akashml'), 'akash-network');
+});
+
+test('reconcileAfterServe burns the ACTUAL provider float, not preferred', () => {
+  const mgr = new ProviderFloatManager({
+    floatsJson: JSON.stringify({
+      'theta-edgecloud': { asset: 'USDC', balance: '100000', low_water: '1000', enabled: true },
+      'akash-network': { asset: 'USDC', balance: '100000', low_water: '1000', enabled: true },
+    }),
+    cogsBps: 7000,
+    defaultProvider: 'theta-edgecloud',
+    enforce: true,
+  });
+  // Prefer theta at quote time…
+  const pick = mgr.selectForQuote('10000', 'theta-edgecloud');
+  assert.equal(pick.ok, true);
+  assert.equal(pick.float.id, 'theta-edgecloud');
+  // …but AkashML actually served → burn akash float.
+  const { provider, record } = mgr.reconcileAfterServe({
+    preferredProvider: 'theta-edgecloud',
+    actualProvider: 'akash-network',
+    estimated: pick.estimated,
+  });
+  assert.equal(provider, 'akash-network');
+  assert.equal(record.provider, 'akash-network');
+  assert.equal(record.float_id, 'akash-network');
+  assert.equal(mgr.get('akash-network').balance, 100000n - pick.estimated);
+  assert.equal(mgr.get('theta-edgecloud').balance, 100000n);
 });
 
 test('buildReceipt emits provider_cogs from task.meta', () => {

@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-11 · Public Base mainnet x402 live · Pre-outreach review, dependency/security cleanup, and legacy-code removal done · Your checklist below
+Last updated: 2026-08-13 · Public Base mainnet x402 live · Metered pricing, measured COGS, signed `/v1` receipts, and paid-path tool calling all shipped · **Nothing is on the live host yet — start at item 3c** · Your checklist below
 
 ## How to use
 
@@ -17,17 +17,68 @@ Last updated: 2026-08-11 · Public Base mainnet x402 live · Pre-outreach review
 | 1 | ~~Mainnet USDC go-live~~ | **Done 2026-08-06** — public flagship Real |
 | 2 | Read and accept [STRATEGY.md](./STRATEGY.md) (or amend in writing) | STRATEGY + ADR 0005 + float treasury shipped |
 | 3 | ~~Prefund Theta EdgeCloud with USDC; API key on gateway~~ | **Done 2026-08-07** — real EdgeCloud compute live; float cap enforced (`PROVIDER_FLOAT_ENFORCE=true`) |
-| 3b | ~~Publish `xfuel-sdk@0.5.0`~~ → **Publish `xfuel-sdk@0.5.1`** (axios security fix; every `npm install xfuel-sdk` currently resolves a vulnerable axios) | Eng bumped version + changelog; see [packages/sdk/PUBLISHING.md](../packages/sdk/PUBLISHING.md) |
-| 3c | **Deploy the gateway to Lightsail** — now also express 5 / redis 6 / pino 10. Run `npm install` on the box, not just `git pull` | `git pull && npm install && sudo systemctl restart xfuel-api` — see Eng status below |
+| 3b | ~~Publish `xfuel-sdk@0.5.1`~~ → **Publish `xfuel-sdk@0.5.2`** (receipt signed payload v2 adds `route.provider`; old SDK verifiers reject new signatures) | Eng bumped onchain canonical payload; see [packages/sdk/PUBLISHING.md](../packages/sdk/PUBLISHING.md) |
+| 3c | ~~Deploy the gateway to Lightsail~~ → **redeploy needed**. Check the three env vars below on the box *before* restarting, then verify with `node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app` | Done 2026-08-11 @ d33a8aa, but two days of correctness work have landed since (see Eng status). **The live host can still answer a paid task with a mock, still returns unsigned `/v1` receipts, and still underprices agent work by ~10x** — this is the highest-value deploy we have had |
 | 3d | Confirm the bounty change: XFuel no longer advertises cash rewards (was "up to $50,000") until the first audit is funded | Eng converted [bug-bounty.md](./bug-bounty.md) to a safe-harbour disclosure policy and scrubbed README / WHITEPAPER / SECURITY / site |
+| 3e | **Get an AkashML _inference_ key** — akashml.com → Settings → API Keys ($100 free credits). It starts with **`akml-`**. Set `AKASHML_API_KEY` + an `akash-network` float on the gateway. The `ac.sk.…` key already in `services/gateway/.env` is an **Akash Console** key (deployment leases, billed per lease) — wrong product, rejected by the inference API | Eng: AkashML first-class provider + COGS reconcile; two-credential trap documented in [providers/README.md](./providers/README.md) |
 | 4 | Put real contacts on [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md); send [OUTREACH_TEMPLATES.md](./OUTREACH_TEMPLATES.md) | 10 hunt targets + GTM motions in ICP |
 | 5 | Accept or amend [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) (reply “accepted” / edit) | Decision draft shipped |
 | 6 | After partners say yes: partner API keys + [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) | Onboarding + cookbook shipped |
 | 7 | Rotate CDP Secret API key (ops hygiene); prefer Safe for `X402_PAY_TO` | — |
 | 8 | Counsel: prepaid float COGS vs Web2 collect-and-forward — [LEGAL_LAUNCH_CHECKLIST.md](./LEGAL_LAUNCH_CHECKLIST.md) | ADR 0005 documents float default |
 | 9 | Paste [AUDIT_SCOPE_LETTER_DRAFT.md](./AUDIT_SCOPE_LETTER_DRAFT.md) to 2–3 firms (after git tag) | Letter + [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) ready |
-| 10 | Deck from [SEED_DECK_OUTLINE.md](./SEED_DECK_OUTLINE.md) — live `/stats` + STRATEGY language | Outline ready |
+| 10 | Deck from [SEED_DECK_OUTLINE.md](./SEED_DECK_OUTLINE.md) — STRATEGY language. Live `/stats` USDC fee figures are **now quotable**, with one caveat: describe them as a post-2026-08-12 window, not lifetime totals | Eng windowed the inflated pre-fix rows out of `/stats` and publishes the excluded count rather than dropping it silently ([KNOWN_ISSUES.md](./KNOWN_ISSUES.md)) |
+| 11 | Accept / amend [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) — agent spend analytics as a wedge. Decide: metadata-only boundary, and advisory recommendations vs opt-in auto-routing | Steps 0–3 of its roadmap are now shipped; its flat-pricing and prepaid-credits recommendations are **superseded** (banner at the top of the doc). Promote to ADR 0006 once accepted |
+| 12 | **Accept the price schedule** — [PRICING_STRATEGY.md](./PRICING_STRATEGY.md). Metered per-model rate card with a floor is **already live**, so this is ratification of what runs, not a greenfield decision. Still open inside it: whether `xfuel/auto` may route agent work to a model that costs the buyer $0.21 vs $0.021. Also: stop calling it a "0.5% protocol fee" — that framing caps us in the 5% router band | Market research done: routers top out ~5%, Akash abolished its 20%; verifiability earns 10–20%, not a multiple; an SP1 settlement proof is ~$0.007 on Base and we give it away |
+| 13 | **Decide the revenue-split base** (ADR 0001). Splitting the *fee* sends buyback $0.0000175/task — 1M tasks funds $17.50 while gross margin is ~$18,000. If the token thesis matters, the base must be gross margin | Flagged in [PRICING_STRATEGY.md](./PRICING_STRATEGY.md) open decisions |
+| 14 | **Scale the SP1 prover to zero** — two `aws` commands in [deploy/ecs/README.md](../deploy/ecs/README.md#on--off-save-cost-when-idle), the largest single fixed-cost line (~$85/mo of ~$134/mo). Signed receipts are unaffected. Note the ALB still bills ~$20/mo with zero targets; only delete it if the prover is off for weeks | Eng made the state observable: `GET /health` now returns a `proofs` block distinguishing `unavailable` (scaled to zero) from `allow_listed` (up, gated). Cold start is 3–5 min, so scale up *before* a partner session |
+| 15 | **Turn on `X402_METER_V1`?** Metering `/v1/chat/completions` is built and tested but off. It is the busiest surface and it is currently free compute. Turning it on **breaks plain OpenAI SDK clients**, which have no way to pay a 402 | Eng shipped the meter; this is a pricing/GTM call, not a technical one |
+| 16 | **Ask AkashML four questions** (draft below) — they gate session affinity, cache economics, and a cross-tenant isolation claim we currently cannot verify | Eng probed everything answerable from outside; these are the residue |
+| 17 | **Does the receipt product require x402 payment at all?** Today a receipt only exists for a paid task. A free signed receipt for any call would be a much wider wedge, and would decouple "verifiable" from "crypto-paid" | Raised by the pricing work; no code implication until you decide |
 | Later | Guest v2 ELF + vKey; uptime monitor; Akash ACT float | Blocked on prover host / ops |
+
+### Before you restart the gateway (item 3c)
+
+Mocks are opt-in now, which is the point — but it means a provider that used to fall back silently
+now fails visibly. Check these on the box (`services/gateway/.env`) *before* `systemctl restart`, or
+the deploy will look like an outage:
+
+| Var | Why it matters now |
+|-----|--------------------|
+| `RECEIPT_SIGNING_SECRET` | **Unset = every receipt is unsigned**, with no error. The receipt still renders and looks complete. This is the single highest-consequence one, and it is easy to have missed because nothing ever complained |
+| `AKASHML_API_KEY` | Must start `akml-` (item 3e). Without it the Akash hub drops out of the catalogue, `xfuel/auto` degrades to Theta, and any tool-carrying request fails with `tools_unsupported_on_hub` — Theta cannot serve tools |
+| `ALLOW_MOCK_INFERENCE` | Leave **unset** in production. Setting it to `true` restores the old behaviour of answering a paid task with a mock, which is the bug we just closed |
+
+Then verify from your machine — one command, no JSON quoting:
+
+```powershell
+node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app
+```
+
+Twelve checks: the build is actually deployed, signing is on, the quote names the model it priced,
+agent work clears its own COGS, the receipt is signed and identical inline vs canonical, and the paid
+path reaches a real provider. It exits non-zero on any failure, so it can gate a deploy script.
+
+### Draft: questions for AkashML (item 16)
+
+Ask by email or in their Discord; all four are cheap for them to answer and each unblocks something
+specific on our side.
+
+1. **Do you honour `cache_salt` or `prompt_cache_key`?** We send both on every request to partition
+   the prompt cache per buyer. If neither is honoured, our tenant isolation is unenforced and we
+   need to know.
+2. **Are prompt caches isolated per API key?** All XFuel traffic shares one key, so if the cache is
+   per-account we get isolation from other Akash customers but **not between our own buyers** — the
+   exact architecture CacheProbe found leaking up to 100% on OpenRouter.
+3. **Is there a session-affinity mechanism** (a header, a key, a sticky endpoint)? Fireworks,
+   Baseten and DeepInfra all expose one. Without it we cannot route a conversation back to the node
+   holding its prefix.
+4. **Will `usage` ever report cached tokens?** You publish an `input_cache_read` rate for GLM-5.2
+   ($0.26/M against $1.40/M) and we can measure the speed-up, but nothing in the response says how
+   many tokens hit. We cannot verify we received the discount, bill against it, or attest it.
+
+Also worth flagging to them commercially: Llama 3.3 70B and GPT-OSS-120B have **no** cache-read rate
+published while three other models do, which looks like an omission rather than a policy.
 
 ---
 
@@ -147,6 +198,19 @@ Engineering shipped: auditor selective disclosure, staging SLA draft, Tier-3 tim
 | Guest ELF rebuild + on-chain vKey | **Blocked on you / prover host** |
 | Design partner keys + onboarding send | **Your Sprint 3 action** |
 | Design partner logos / quotes | Blocked on outreach |
+| Metered pricing (per-model rate card + floor) | **Shipped** 2026-08-12 — replaced flat $0.01 |
+| Measured COGS from real tokens × live provider rates | **Shipped** 2026-08-12 — `basis: measured` on receipts |
+| `/v1` receipts signed, byte-identical to `/receipt/:id` | **Shipped** 2026-08-12 |
+| Paid path serves real compute; mocks are opt-in only | **Shipped** 2026-08-12 |
+| Tool calling on `/task-request` (+ `max_tokens` passthrough) | **Shipped** 2026-08-12 — agent loops now work on the paid surface |
+| `xfuel/auto` routes on request shape (agent vs short completion) | **Shipped** 2026-08-12 |
+| `/stats` money windowed past the inflated pre-fix rows | **Shipped** 2026-08-12 |
+| `/health` reports proof availability | **Shipped** 2026-08-12 — makes prover scale-to-zero safe to operate |
+| x402 `upto` + batch-settlement | **Assessed, not built** — CDP supports both on Base mainnet; blocked on our x402 v1→v2 + Permit2 migration ([X402_SCHEME_MIGRATION.md](./X402_SCHEME_MIGRATION.md)) |
+| The quote prices the model that actually serves | **Shipped** 2026-08-13 — the per-model rate card was being bypassed by `xfuel/auto`, the default request, so the −$0.075/call loss on agent work was still live a day after being marked fixed |
+| `/v1` quotes capped output, not requested output | **Shipped** 2026-08-13 — asking above `OPENAI_GATEWAY_MAX_TOKENS_CAP` was billed at the uncapped figure (~$0.09 overcharge/call). Only reachable with `X402_METER_V1` on, which is off |
+| Unsigned receipts are now visible instead of silent | **Shipped** 2026-08-13 — a missing `RECEIPT_SIGNING_SECRET` turned off Tier-1 verifiability with no warning anywhere. Now on `/health` (`receipts.tier1_signed`), warned at boot, and checked by the deploy probe |
+| `scripts/dev/_verify_deploy.mjs` | **Shipped** 2026-08-13 — 12 HTTP checks against a *deployed* host. Every other probe boots its own server, so none could tell you what was live |
 
 ### Pre-outreach review (2026-08-10) — partner-facing fixes
 

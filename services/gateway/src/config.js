@@ -74,11 +74,26 @@ const config = {
     // full in-proof attestation activates once the SP1 guest commits the v2 layout
     // (new programVKey). See docs/X402_ADAPTER.md §"Phase 2 proof binding".
     proofBinding: process.env.X402_PROOF_BINDING === 'true',
-    // USDC pricing (smallest unit, 6dp). Default per task + optional per-model JSON map.
+    // USDC pricing (smallest unit, 6dp). Tasks are metered against the rate card
+    // in pricing.js; these are the escape hatches. See docs/PRICING_STRATEGY.md.
+    //   usdcPriceDefault — legacy name for the floor a metered quote cannot go below
+    //   usdcPrices       — hand-set flat price for a specific model, overrides the card
+    //   rateCard         — retail base units per 1M tokens, per model family
     usdcPriceDefault: process.env.X402_USDC_PRICE_DEFAULT || '10000', // $0.01
+    usdcFloor: process.env.X402_USDC_FLOOR || null,
+    // Charge for /v1/chat/completions. Default OFF: turning it on makes the
+    // OpenAI-compatible surface reply 402 to any client that cannot pay, which
+    // is a breaking change for plain OpenAI SDKs. The demo key stays exempt.
+    meterV1: process.env.X402_METER_V1 === 'true',
+    meterV1ExemptKeys: (process.env.X402_METER_V1_EXEMPT_KEYS || '')
+      .split(',').map((s) => s.trim()).filter(Boolean),
     usdcPrices: (() => {
       if (!process.env.X402_USDC_PRICES) return {};
       try { return JSON.parse(process.env.X402_USDC_PRICES); } catch { return {}; }
+    })(),
+    rateCard: (() => {
+      if (!process.env.X402_USDC_RATE_CARD) return {};
+      try { return JSON.parse(process.env.X402_USDC_RATE_CARD); } catch { return {}; }
     })(),
   },
 
@@ -264,6 +279,12 @@ const config = {
 
   // AI Listener Configuration (Phase E: AI DePIN Bridge)
   aiListener: {
+    // Cosmos (Osmosis/Akash) inbound intent listeners. Off by default: the
+    // settlement home is Base (ADR 0002) and these sockets only watch for IBC
+    // intents, which no current product surface depends on. The task registry
+    // and timeout watcher run regardless of this flag.
+    cosmosListeners: process.env.COSMOS_LISTENERS_ENABLED === 'true',
+
     // Theta Edge Cloud URL for inference routing
     thetaEdgeUrl: process.env.THETA_EDGE_URL,
 
@@ -277,20 +298,6 @@ const config = {
 
     // Fee configuration (basis points)
     feeBps: parseInt(process.env.AI_TASK_FEE_BPS) || 50, // 0.5% = 50 bps
-  },
-
-  // Yield Configuration (Reverse-burn)
-  yield: {
-    // 30% of ibcUSDC yields unwrapped to TFUEL and routed to RevenueSplitter
-    unwrapPercentage: parseInt(process.env.YIELD_UNWRAP_PERCENTAGE) || 30,
-    // 70% reinvested for LP growth
-    reinvestPercentage: parseInt(process.env.YIELD_REINVEST_PERCENTAGE) || 70,
-    // RevenueSplitter contract address
-    revenueSplitterAddress: process.env.REVENUE_SPLITTER_ADDRESS,
-    // Swap configuration for ibcUSDC -> TFUEL
-    swapRouterAddress: process.env.SWAP_ROUTER_ADDRESS,
-    // Minimum yield amount to process (avoid dust)
-    minYieldAmount: process.env.MIN_YIELD_AMOUNT || '1000000' // 1 USDC (6 decimals)
   },
 
   // Service Configuration
@@ -346,16 +353,6 @@ export function validateConfig() {
   }
 
   // SP1_PROVER_URL is optional: bridge can run with zkGPT-only (Phase 1 E2E); SP1 proof paths skip or return 503 if unset
-
-  // Validate yield configuration if reverse-burn is enabled
-  if (config.yield.revenueSplitterAddress) {
-    if (!config.yield.swapRouterAddress) {
-      errors.push('SWAP_ROUTER_ADDRESS is required when REVENUE_SPLITTER_ADDRESS is set');
-    }
-    if (config.yield.unwrapPercentage + config.yield.reinvestPercentage !== 100) {
-      errors.push('YIELD_UNWRAP_PERCENTAGE + YIELD_REINVEST_PERCENTAGE must equal 100');
-    }
-  }
 
   if (errors.length > 0) {
     throw new Error(`Configuration validation failed:\n${errors.join('\n')}`);

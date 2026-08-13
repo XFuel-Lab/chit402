@@ -240,6 +240,10 @@ function outputHashOf(task) {
  * Canonical, order-stable serialization of the tamper-critical fields a receipt signature
  * covers (PBR — the "signed receipt", Tier-1). Anyone can recompute this from the public
  * receipt and verify the HMAC. Keep this list + order in lockstep with the SDK verifier.
+ *
+ * Payload version 2 adds `route.provider` so the attested compute source is tamper-evident
+ * (required once multi-provider routing is live). Older verifiers that omit the field will
+ * not validate new signatures — see docs/RECEIPT_SCHEMA_V2.md.
  */
 export function canonicalSignedPayload(receipt) {
   return JSON.stringify([
@@ -250,6 +254,7 @@ export function canonicalSignedPayload(receipt) {
     receipt.payment?.fee_amount ?? null,
     receipt.route?.model ?? null,
     receipt.route?.model_commitment?.commitment ?? null,
+    receipt.route?.provider ?? null,
     receipt.output?.hash ?? null,
     receipt.binding?.expected_commitment ?? null,
   ]);
@@ -260,10 +265,12 @@ function signReceiptPayload(receipt, secret) {
   const value = crypto.createHmac('sha256', secret).update(canonicalSignedPayload(receipt)).digest('hex');
   return {
     alg: 'HMAC-SHA256',
+    payload_version: 2,
     value: `sha256=${value}`,
     signed_fields: [
       'task_id', 'payment.rail', 'payment.ref', 'payment.net_amount', 'payment.fee_amount',
-      'route.model', 'route.model_commitment.commitment', 'output.hash', 'binding.expected_commitment',
+      'route.model', 'route.model_commitment.commitment', 'route.provider',
+      'output.hash', 'binding.expected_commitment',
     ],
   };
 }
@@ -322,6 +329,11 @@ export function providerCogsOf(task) {
     currency: c.currency || null,
     estimated: c.estimated != null ? String(c.estimated) : null,
     actual: c.actual != null ? String(c.actual) : null,
+    // Whether `actual` is real tokens at the provider's published rate
+    // ('measured') or the bps fallback ('estimated'), which is a share of our own
+    // price rather than of the work. Dropping this made the two indistinguishable
+    // on the receipt, which is the one place the difference is load-bearing.
+    basis: c.basis || null,
     usd_mark: c.usd_mark != null ? String(c.usd_mark) : (c.usdMark != null ? String(c.usdMark) : null),
     below_low_water: !!c.below_low_water || !!c.belowLowWater,
   };
@@ -350,6 +362,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
   const providerCogs = providerCogsOf(task);
 
   const receipt = {
+    schema: 'xfuel.receipt.v3',
     task_id: task.taskId,
     status: task.status,
     proof_outcome: outcome,
@@ -358,14 +371,23 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
     updated_at: task.updatedAt || null,
     route: {
       message_type: task.intent?.type || null,
-      model: task.intent?.model || task.intent?.modelId || null,
+      // The model that served, falling back to what was asked for. A receipt
+      // attesting `xfuel/auto` names an XFuel alias, not a model anyone can check.
+      model: task.result?.model || task.intent?.model || task.intent?.modelId || null,
       model_commitment: modelCommitment,
       // Prefer actual compute source over float-book label (float can say
       // theta-edgecloud while result is still mock / another tier).
       provider: (() => {
         const fromResult = task.result?.provider || task.result?.routedTo || task.routedTo || null;
         if (task.result?.mock) return fromResult || 'mock';
-        return fromResult || task.meta?.provider || providerCogs?.provider || null;
+        if (fromResult) return fromResult;
+        // Nothing served, so there is no compute source to name. `meta.provider`
+        // carries the float default, and attesting it on a failed task would
+        // credit a provider that never ran.
+        if (task.status !== 'completed' && !providerCogs) return null;
+        // A COGS record is evidence of a real burn against that float, so it
+        // outranks the treasury default label.
+        return providerCogs?.provider || task.meta?.provider || null;
       })(),
       chain_id: task.meta?.chain || task.intent?.chainId || null,
     },

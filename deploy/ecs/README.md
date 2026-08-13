@@ -119,6 +119,33 @@ aws ecs update-service --cluster xfuel-sp1-prover --service sp1-prover \
 
 When OFF, inference still works (router tiers); proofs report `unavailable`.
 
+**Check the state from outside** — `GET /health` reports a `proofs` block, so a partner does not
+have to discover this from a receipt:
+
+```json
+"proofs": {
+  "signed_receipts": "always",
+  "settlement_proof": "unavailable",   // "open" | "allow_listed" | "unavailable"
+  "prover_configured": false,
+  "allow_list_size": 0,
+  "note": "No SP1 prover is reachable ... Inference and signed receipts are unaffected."
+}
+```
+
+`unavailable` means nothing is reachable (this scale-to-zero state); `allow_listed` means the prover
+is up but gated to named keys. They are different failures and used to be indistinguishable.
+
+**The container is not the whole bill.** Scaling to zero stops the Fargate task (the larger line,
+~$85/mo of the ~$134/mo fixed base) but the **ALB keeps charging (~$20/mo) with zero targets**,
+because an idle load balancer is billed for existing. If the prover is going to be off for weeks
+rather than hours, delete the ALB too and re-create it from the steps above — the DNS name changes,
+so `SP1_PROVER_URL` on the Lightsail box has to be updated when it comes back. For overnight or
+between-demo gaps, leave the ALB up: a stable URL is worth $0.66/day.
+
+**Cold start is ~3–5 minutes** for proving-key generation, which is why waking on demand at the
+moment a proof is requested does not work — the request would time out. Scale up *before* a partner
+session, not during one.
+
 ### Pair with the backend cost gate
 
 For a public/live demo, run the prover **off by default** and only spin it up for

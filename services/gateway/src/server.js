@@ -7,9 +7,10 @@ import { initAIListener, getAIListener } from './ai-listener.js';
 import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
-import { resolveRail, runX402Handshake, priceUSDC } from './x402-server.js';
+import { resolveRail, runX402Handshake, priceUSDCResolved, resolvePricingModel } from './x402-server.js';
+import { quoteTask } from './pricing.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
-import { proveAllowedForKey } from './prove-gate.js';
+import { proveAllowedForKey, proofAvailability } from './prove-gate.js';
 import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest } from './x402-discovery.js';
@@ -72,6 +73,19 @@ const CHAIN_IDS = {
 
 const VALID_MESSAGE_TYPES = new Set(Object.values(MESSAGE_TYPES));
 const VALID_CHAIN_IDS     = new Set(Object.values(CHAIN_IDS));
+
+/**
+ * Chains advertised on /health — only those actually served.
+ * Keep CHAIN_IDS / VALID_CHAIN_IDS wide so inbound A2A still accepts legacy labels.
+ * Akash is listed for AkashML compute; Osmosis only when Cosmos IBC listeners are on.
+ */
+function advertisedChains() {
+  const out = [CHAIN_IDS.BASE, CHAIN_IDS.THETA, CHAIN_IDS.AKASH];
+  if (config.aiListener?.cosmosListeners) {
+    out.push(CHAIN_IDS.OSMOSIS);
+  }
+  return out;
+}
 
 // ─── /llms.txt — agent discoverability manifest ───────────────────────────────
 // Served at GET /llms.txt (llmstxt.org convention). Keep concise; deep detail
@@ -495,6 +509,10 @@ export function createApp() {
         input_hash,         // optional – hash of input data
         input,              // optional – raw input/prompt; enables full 6-tier routing (M2M_USE_FULL_ROUTER)
         messages,           // optional – chat messages[]; enables full router (alt to input)
+        tools,              // optional – OpenAI tool definitions, forwarded to the hub
+        tool_choice,        // optional – 'auto' | 'none' | {type:'function',function:{name}}
+        max_tokens,         // optional – output budget; the hub default is 500
+        temperature,        // optional – sampling temperature
         output_hash,        // optional – hash of output (for COMPUTE_RESULT)
         theta_recipient,    // optional – Theta EVM address for settlement
         max_gpu_hours,      // optional – Akash GPU lease duration
@@ -549,6 +567,16 @@ export function createApp() {
       if (fee_bps !== undefined && (fee_bps < MIN_FEE_BPS || fee_bps > MAX_FEE_BPS)) {
         errors.push(`fee_bps must be between ${MIN_FEE_BPS} and ${MAX_FEE_BPS}`);
       }
+      // Same contract as /v1/chat/completions — a caller should not have to learn
+      // two tool schemas to move from the free surface to the paid one.
+      if (tools !== undefined && tools !== null
+        && (!Array.isArray(tools) || tools.some((t) => t?.type !== 'function' || !t.function?.name))) {
+        errors.push('tools must be an array of {type:"function", function:{name,...}}');
+      }
+      if (max_tokens !== undefined && max_tokens !== null
+        && (!Number.isInteger(max_tokens) || max_tokens < 1)) {
+        errors.push('max_tokens must be a positive integer');
+      }
       const PROOF_SYSTEMS = new Set(['sp1', 'zkgpt']);
       if (proof_system !== undefined && proof_system !== null && proof_system !== '' && !PROOF_SYSTEMS.has(proof_system)) {
         errors.push(`proof_system must be one of: ${[...PROOF_SYSTEMS].join(', ')}`);
@@ -571,6 +599,7 @@ export function createApp() {
       // for go-forward GTM — only when X402_FALLBACK_TFUEL or explicit rail.
       let paymentRail = config.x402?.defaultRail || 'usdc';
       let paymentRef = null;
+      let settledAmount = null;
       {
         const rail = resolveRail(req.body);
         if (rail === 'usdc' && config.x402.enabled) {
@@ -582,6 +611,7 @@ export function createApp() {
           if (decision.kind === 'settled') {
             paymentRail = 'usdc';
             paymentRef = decision.paymentRef;
+            settledAmount = decision.settledAmount || null;
           } else {
             if (decision.reason === 'gateway_not_configured') {
               return res.status(503).json({ error: 'x402_unavailable', reason: decision.reason });
@@ -598,20 +628,47 @@ export function createApp() {
         }
       }
 
+      // ── Authoritative gross ───────────────────────────────────────────
+      // Gross is what was SETTLED, never what the caller declared. The buyer
+      // authorizes against a bound 402 challenge, so the settled amount is the
+      // only figure a receipt may attest — otherwise `amount` and the collected
+      // payment are two independent numbers and a $0.01 payment can mint a $1.00
+      // receipt. The declared `amount` remains authoritative only for rails with
+      // no settlement to derive from (legacy TFUEL). See docs/KNOWN_ISSUES.md.
+      let grossAmount = String(amount);
+      if (settledAmount) {
+        if (settledAmount !== grossAmount) {
+          logger.warn(
+            { reqId: req.id, declared: grossAmount, settled: settledAmount },
+            'task-request: declared amount diverges from settled x402 payment — '
+            + 'receipt reports the settled amount',
+          );
+        }
+        grossAmount = settledAmount;
+      }
+
       // ── Provider float COGS gate (ADR 0005) ─────────────────────────────
+      // Select/gate here, but burn AFTER inference against the provider that
+      // actually served (see ai-listener reconcile). Burning preferred early
+      // mis-attributes COGS when preferred_provider ≠ routed provider.
       const floatMgr = getFloatManager({
         floatsJson: config.providerFloats?.json,
         cogsBps: config.providerFloats?.cogsBps,
         defaultProvider: config.providerFloats?.defaultProvider,
         enforce: config.providerFloats?.enforce,
       }); // first call seeds singleton from config; burns persist in-process
-      const preferredProvider = req.body?.preferred_provider
-        || req.body?.provider
+      // Two different questions, and conflating them pinned every default
+      // request to a hub it could not be served from. `requestedProvider` is
+      // what the caller asked for and is the only thing allowed to steer
+      // routing; the float default is a treasury choice about which COGS float
+      // to debit, and must not decide where inference runs.
+      const requestedProvider = req.body?.preferred_provider || req.body?.provider || null;
+      const preferredProvider = requestedProvider
         || config.providerFloats?.defaultProvider
         || null;
       const usdcQuote = paymentRail === 'usdc'
-        ? (priceUSDC(req.body) || amount || config.x402?.usdcPriceDefault || '10000')
-        : (amount || '0');
+        ? (settledAmount || await priceUSDCResolved(req.body) || grossAmount || config.x402?.usdcPriceDefault || '10000')
+        : (grossAmount || '0');
       const floatPick = floatMgr.selectForQuote(usdcQuote, preferredProvider);
       if (!floatPick.ok) {
         return res.status(503).json({
@@ -621,40 +678,23 @@ export function createApp() {
           note: 'Prepaid provider float cannot cover COGS. Refill from treasury (docs/PROVIDER_FLOAT_TREASURY.md).',
         });
       }
-      let providerCogsMeta = null;
-      if (floatPick.float && floatPick.estimated > 0n && !floatPick.unconstrained) {
-        try {
-          const burnResult = floatMgr.burn(floatPick.float.id, floatPick.estimated);
-          providerCogsMeta = floatMgr.buildCogsRecord({
-            provider: floatPick.float.id,
-            float: floatPick.float,
-            estimated: floatPick.estimated,
-            actual: burnResult?.burned || floatPick.estimated,
-            burnResult,
-          });
-        } catch (burnErr) {
-          logger.error({ err: burnErr, reqId: req.id }, 'Provider float burn failed');
-          return res.status(503).json({
-            error: 'provider_float_exhausted',
-            reason: burnErr.message,
-          });
-        }
-      } else if (floatPick.estimated > 0n) {
-        // Unconstrained / soft: still record estimated COGS for receipts when a provider id is known.
-        providerCogsMeta = floatMgr.buildCogsRecord({
-          provider: preferredProvider || config.providerFloats?.defaultProvider || null,
-          float: floatPick.float,
-          estimated: floatPick.estimated,
-          actual: floatPick.estimated,
-          burnResult: null,
-        });
-      }
+      // Pending COGS — filled in by reconcileAfterServe once a provider wins.
+      const pendingCogs = {
+        estimated: floatPick.estimated?.toString?.() || String(floatPick.estimated || '0'),
+        // What the buyer actually pays, so the post-serve reconcile can compare it
+        // to measured COGS and shout when a route is sold below cost.
+        gross: String(usdcQuote || '0'),
+        preferred_provider: preferredProvider,
+        float_id: floatPick.float?.id || null,
+        unconstrained: !!floatPick.unconstrained,
+        soft: !!floatPick.soft,
+      };
 
       // ── Fee calculation ───────────────────────────────────────────────
 
       const effectiveFeeBps = fee_bps || AI_TASK_FEE_BPS;
       const { feeAmount, netAmount, feeBps: appliedBps } =
-        calculateTaskFee(amount, effectiveFeeBps);
+        calculateTaskFee(grossAmount, effectiveFeeBps);
 
       // ── Build intent for ai-listener processing ───────────────────────
 
@@ -662,7 +702,9 @@ export function createApp() {
         type:           message_type,
         sender,
         recipient:      theta_recipient || null,
-        amount,
+        // Settled gross, not the caller's declaration — receipts, fee math, SP1
+        // public values and assurance-tier floors all read this.
+        amount:         grossAmount,
         denom:          chain_id === CHAIN_IDS.BITTENSOR ? 'vtao'
                           : chain_id === CHAIN_IDS.BASE ? 'usdc'
                           : 'uosmo',
@@ -671,6 +713,15 @@ export function createApp() {
         inputHash:      input_hash || null,
         input:          input || null, // raw prompt for full 6-tier router (optional; input_hash stays for privacy/proof)
         messages:       Array.isArray(messages) ? messages : null,
+        // Tool definitions travel with the intent so the paid path can run the
+        // same agent loop as /v1. They also decide how `xfuel/auto` resolves —
+        // see requestShape() in hub-catalog.js.
+        tools:          Array.isArray(tools) && tools.length ? tools : null,
+        toolChoice:     tool_choice ?? null,
+        // The quote already meters `max_tokens` (pricing.js), so not forwarding it
+        // billed the caller's ceiling and then ran the adapter's own default.
+        maxTokens:      max_tokens ?? null,
+        temperature:    temperature ?? null,
         maxGpuHours:    max_gpu_hours || null,
         nonce:          null, // assigned by listener
         memo:           memo || null,
@@ -682,6 +733,10 @@ export function createApp() {
         proofTier:      proof_tier || null,    // Phase 4: requested assurance tier (signed|settlement|inference|tee|zk-spotcheck|zk-full)
         paymentRail,    // 'usdc' (x402) | legacy 'tfuel'
         paymentRef,     // x402 settlement ref (network:txRef) or null
+        // Preferred compute provider (float id / hub) — float accounting.
+        preferredProvider,
+        // Caller's explicit hub choice, if any. Null means "route by model".
+        requestedProvider,
         // Cost control: whether this request's API key may trigger a Tier-1 ZK
         // proof. When false, the task still settles + returns a signed receipt,
         // but the expensive SP1 proof is skipped (see prove-gate.js).
@@ -693,9 +748,12 @@ export function createApp() {
         txHash:  `api-${req.id}`,
         height:  0,
         source:  'server.js',
-        // Preferred / float-selected provider tier (ADR 0005)
-        provider: providerCogsMeta?.provider || preferredProvider || null,
-        providerCogs: providerCogsMeta,
+        // Float attribution; actual provider + COGS filled after serve.
+        preferredProvider,
+        requestedProvider,
+        provider: preferredProvider || null,
+        pendingCogs,
+        providerCogs: null,
         // Buyer attribution (hash only) for Private Spend /stats/me
         apiKeyHash: apiKeyHashFromReq(req),
         privateSpend: !!config.privateSpend?.enabled,
@@ -749,7 +807,7 @@ export function createApp() {
         taskId: effectiveTaskId,
         messageType: message_type,
         chainId: chain_id,
-        amount,
+        amount: grossAmount,
         feeAmount,
         netAmount,
         feeBps: appliedBps,
@@ -762,7 +820,7 @@ export function createApp() {
         status:        'accepted',
         message_type,
         chain_id,
-        gross_amount:  amount,
+        gross_amount:  grossAmount,
         fee_amount:    feeAmount,
         net_amount:    netAmount,
         fee_bps:       appliedBps,
@@ -793,7 +851,15 @@ export function createApp() {
   app.post('/task-quote', async (req, res) => {
     try {
       const { amount, preferred_provider, provider } = req.body || {};
-      const usdcAmount = priceUSDC(req.body);
+      // Quote the model that will serve, not the alias asked for — a preview that
+      // differs from the 402 challenge is worse than no preview.
+      const priced = await resolvePricingModel(req.body);
+      const quote = quoteTask(priced.body, {
+        usdcPrices: config.x402?.usdcPrices,
+        usdcFloor: config.x402?.usdcFloor ?? config.x402?.usdcPriceDefault,
+        rateCard: config.x402?.rateCard,
+      });
+      const usdcAmount = quote.amount;
       const floatMgr = getFloatManager({
         floatsJson: config.providerFloats?.json,
         cogsBps: config.providerFloats?.cogsBps,
@@ -817,6 +883,24 @@ export function createApp() {
             amount: usdcAmount,
             pay_to: config.x402.payTo,
             note: 'Buyer settlement: x402 USDC on Base. Submit /task-request with payment.rail="usdc".',
+            // Show the working. A buyer who can see which inputs moved the price
+            // can shrink the bill themselves — which is the point of the receipt.
+            pricing: {
+              basis: quote.basis,
+              floor_applied: quote.floor_applied,
+              prompt_tokens: quote.prompt_tokens,
+              max_output_tokens: quote.max_output_tokens,
+              rate_per_million: quote.rate,
+              // Which model this price is for. `xfuel/auto` resolves differently
+              // for agent work than for a short completion, and the two sit in
+              // different rate-card rows, so the alias alone does not explain the
+              // number.
+              requested_model: priced.requested,
+              priced_model: priced.model,
+              note: quote.basis === 'model_price'
+                ? 'Flat per-model price.'
+                : 'Metered on prompt size + the max_tokens ceiling, with a floor. Output is quoted at the ceiling because the x402 exact scheme prices before the work runs; lowering max_tokens lowers the quote.',
+            },
           },
           // Legacy buyer rail — not go-forward GTM. Prefer USDC; provider TFUEL is ops float only.
           tfuel: {
@@ -1318,6 +1402,9 @@ export function createApp() {
           // Phase 2 (flag-gated): x402 payment commitment bound into the proof.
           payment_binding: task.sp1Proof?.paymentBinding || null,
           result:         task.result || null,
+          // A failed task used to return status:'failed' and nothing else, so a
+          // caller could not tell an unknown model from an upstream outage.
+          error:          task.error || null,
           sp1_proof:      task.sp1Proof ? {
             has_proof:      !!task.sp1Proof.proof,
             nullifier:      task.sp1Proof.nullifier || null,
@@ -1507,6 +1594,20 @@ export function createApp() {
         a2a_messages_total: _a2aMessages.size,
         webhooks_registered: getWebhookRegistry().list().length,
         ai_listener: aiStatus,
+        // Whether Tier-2 proofs are actually being produced right now. The prover
+        // is scaled to zero when idle to control cost, and that has to be legible
+        // to a partner without asking us.
+        proofs: proofAvailability(!!getSP1Prover()),
+        // Tier-1 is the whole product, and it degrades *silently*: with no signing
+        // secret the receipt still renders and still looks authoritative, it just
+        // carries no signature. Report it so a missed env var is visible from
+        // outside instead of being discovered by a partner trying to verify.
+        receipts: {
+          tier1_signed: !!config.receipts?.signingSecret,
+          ...(config.receipts?.signingSecret ? {} : {
+            warning: 'RECEIPT_SIGNING_SECRET is not set — receipts are UNSIGNED and cannot be verified.',
+          }),
+        },
         fee_config: {
           default_bps:    AI_TASK_FEE_BPS,
           min_bps:        MIN_FEE_BPS,
@@ -1522,7 +1623,7 @@ export function createApp() {
           defaultProvider: config.providerFloats?.defaultProvider,
           enforce: config.providerFloats?.enforce,
         }).publicSummary(), // ADR 0005 fingerprint
-        chains: Object.values(CHAIN_IDS),
+        chains: advertisedChains(),
         message_types: Object.values(MESSAGE_TYPES),
         demo: DEMO_MODE
           ? { enabled: true, rate_per_min: DEMO_RATE_PER_MIN, rate_per_day: DEMO_RATE_PER_DAY, note: 'Public demo key is rate-limited per IP. Bring your own X-API-Key for higher limits.' }
@@ -1753,6 +1854,16 @@ export async function startServer() {
         logger.warn(
           'M2M API is running in OPEN MODE (no M2M_API_KEYS or M2M_RELAYER_ADDRESSES configured). ' +
           'Set these env vars in production!'
+        );
+      }
+
+      // Tier-1 signed receipts are the product. Missing the secret does not fail
+      // anything loudly — receipts just come out unsigned, look complete, and fail
+      // verification at the partner's end. Say so at boot.
+      if (!config.receipts?.signingSecret) {
+        logger.warn(
+          'RECEIPT_SIGNING_SECRET is not set — receipts will be UNSIGNED. Tier-1 verifiability is ' +
+          'off, and /receipt output cannot be verified by the SDK. Set it before serving partners.',
         );
       }
 

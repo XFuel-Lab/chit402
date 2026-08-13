@@ -11,7 +11,36 @@ Canonical way to run `https://api-testnet.xfuel.app` — **not** PM2, **not** `/
 | Unit | `xfuel-api.service` (this folder → `/etc/systemd/system/`) |
 | Port | `3002` |
 
-Do **not** use `EnvironmentFile=` for CDP secrets — systemd mangles base64 (`+/=`). The unit sources `.env` via bash.
+Do **not** use `EnvironmentFile=` for CDP secrets — systemd mangles base64 (`+/=`). The unit sources `.env` via bash:
+
+```
+ExecStart=/bin/bash -lc 'set -a; source ./.env; set +a; exec /usr/bin/node src/server.js'
+```
+
+Because it is **bash-sourced**, any value containing `{ } " ' space` must be single-quoted in `.env`
+(`PROVIDER_FLOATS_JSON='{"theta-edgecloud":{…}}'`). Unquoted JSON is mangled or fails to source, and
+the service then starts with the variable silently empty.
+
+## Required env
+
+`install-api.sh` checks the `X402_*` / `CDP_*` block. These are **not** checked and each fails
+quietly — the service starts, serves traffic, and is wrong:
+
+| Var | Missing means |
+|-----|---------------|
+| `RECEIPT_SIGNING_SECRET` | **Receipts are unsigned.** They still render with model, provider, payment and output hash, and look authoritative. Tier-1 verifiability is simply off. Visible at `GET /health` → `receipts.tier1_signed` and in the boot log. **Do not rotate it** once set — every receipt already issued verifies against the old value |
+| `AKASHML_API_KEY` | Must start `akml-` (an `ac.sk.…` Akash *Console* key is a different product and is rejected). Without it the Akash hub drops out of the catalogue, `xfuel/auto` degrades to Theta, and any request carrying `tools` fails with `tools_unsupported_on_hub` — Theta cannot serve tools |
+| `ALLOW_MOCK_INFERENCE` | Leave **unset** in production. `true` lets a paid task be answered by a mock, which is a signed receipt for an inference that never ran |
+| `PROVIDER_FLOATS_JSON` | Optional, but a float id must exist per provider you route to or that provider's COGS never burns. Ids are `theta-edgecloud` and `akash-network` |
+
+Check names without printing values:
+
+```bash
+cd ~/xfuel-protocol/services/gateway
+for v in RECEIPT_SIGNING_SECRET AKASHML_API_KEY ALLOW_MOCK_INFERENCE PROVIDER_FLOATS_JSON; do
+  grep -q "^$v=" .env && echo "SET      $v" || echo "MISSING  $v"
+done
+```
 
 ## One-time / recover (recommended)
 
@@ -54,6 +83,16 @@ cd services/gateway && npm install --omit=dev
 sudo systemctl restart xfuel-api
 sudo systemctl status xfuel-api --no-pager
 ```
+
+Then verify from a workstation — one command, and it exits non-zero on any failure:
+
+```bash
+node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app
+```
+
+It checks that the build actually deployed, signing is on, the quote prices the model that will
+serve, the receipt is signed and identical inline vs canonical, and the paid path reaches a real
+provider. `systemctl status` showing `active` proves none of that.
 
 ## Why reboot
 

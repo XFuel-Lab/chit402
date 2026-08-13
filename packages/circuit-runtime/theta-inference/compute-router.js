@@ -55,10 +55,22 @@ export class ComputeRouter {
    * (the caller decides on mock fallback).
    *
    * @param {Object} req  passed to each tier executor
+   * @param {string[]} [req.preferTags]  optional tags to try first (still skip unavailable)
    * @returns {Promise<{ result: any, source: string|null }>}
    */
   async route(req) {
-    for (const tier of this.tiers) {
+    let tiers = this.tiers;
+    const prefer = Array.isArray(req?.preferTags) ? req.preferTags.filter(Boolean) : [];
+    if (prefer.length) {
+      const preferred = [];
+      const rest = [];
+      for (const tier of this.tiers) {
+        if (prefer.includes(tier.tag)) preferred.push(tier);
+        else rest.push(tier);
+      }
+      tiers = [...preferred, ...rest];
+    }
+    for (const tier of tiers) {
       if (!tier || !tier.available) continue;
       if (tier.log) this.logger.log(tier.log);
       const result = await tier.execute(req);

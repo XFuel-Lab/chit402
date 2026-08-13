@@ -3,6 +3,14 @@
 All notable changes to the XFuel SDK are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.5.2 — Receipt signed payload v2 (`route.provider`)
+
+### Changed
+- **`canonicalReceiptPayload` / `verifyReceiptSignature`** — HMAC field set now includes
+  `route.provider` (payload version 2), matching the gateway. Signatures produced by
+  older SDKs / gateways will not verify against this set and vice versa. Required
+  republish when the gateway ships receipt schema `xfuel.receipt.v3`.
+
 ## 0.5.1 — Security: axios advisories cleared
 
 No API changes. Publish so installs stop resolving a vulnerable `axios`.

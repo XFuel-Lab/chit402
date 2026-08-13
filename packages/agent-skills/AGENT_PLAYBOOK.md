@@ -46,6 +46,15 @@ chain_id: "base"
 
 Poll `GET /task-status` or use `waitForCompletion`. Share `verify_url`.
 
+`tools`, `tool_choice`, `max_tokens` and `temperature` are accepted here too, so a paid agent loop
+works the same as on `/v1`: tool calls come back on `result.tool_calls`, and you feed them into the
+next request as an assistant turn plus a `tool` turn. Two things to know — a tool-carrying request
+routes `xfuel/auto` to a loop-capable model, and `max_tokens` is what the quote charges you for.
+
+On failure, read `error.code` rather than retrying blindly: `model_not_found` and
+`tools_unsupported_on_hub` will not succeed on retry, `no_provider_available` will. A task is never
+answered with a synthetic result, so a receipt always corresponds to work that ran.
+
 ## Flow 2 — Pay USDC (x402)
 
 Skill / SDK payer path. Example: `examples/pay-with-usdc.ts`.  
@@ -68,6 +77,10 @@ Lifecycle: form → join (≤18) → settle members → dissolve.
 ## Flow 6 — Route / health
 
 Skill: `xfuel-route-compute`. Also `GET /health`, `POST /task-quote`.
+
+`GET /health` carries a `proofs` block. Check it before promising a partner a Tier-2 proof: the
+prover is scaled to zero when idle, and `settlement_proof: "unavailable"` means nothing is running.
+`signed_receipts` is always `"always"` — Tier-0 does not depend on the prover.
 
 ## Flow 7 — Budget + Private Spend (design partners)
 

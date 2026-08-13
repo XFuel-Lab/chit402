@@ -273,12 +273,13 @@ export function computeInferenceBinding(params: {
 /**
  * Canonical, order-stable payload a receipt signature covers. MUST match
  * `canonicalSignedPayload` in services/gateway/src/receipt.js (same fields + order).
+ * Payload version 2 includes `route.provider`.
  */
 export function canonicalReceiptPayload(receipt: Record<string, unknown>): string {
   const r = receipt as {
     task_id?: string;
     payment?: { rail?: string; ref?: string; net_amount?: string; fee_amount?: string };
-    route?: { model?: string; model_commitment?: { commitment?: string } };
+    route?: { model?: string; model_commitment?: { commitment?: string }; provider?: string };
     output?: { hash?: string };
     binding?: { expected_commitment?: string };
   };
@@ -290,6 +291,7 @@ export function canonicalReceiptPayload(receipt: Record<string, unknown>): strin
     r.payment?.fee_amount ?? null,
     r.route?.model ?? null,
     r.route?.model_commitment?.commitment ?? null,
+    r.route?.provider ?? null,
     r.output?.hash ?? null,
     r.binding?.expected_commitment ?? null,
   ]);

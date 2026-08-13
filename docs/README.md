@@ -21,6 +21,7 @@ https://xfuel.app Â· https://api-testnet.xfuel.app
 | [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md) | Your checklist (CDP, Safe, partners, vKey) |
 | [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md) | Sprint beachhead + design partners |
 | [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md) | Spend / vendor-blind privacy |
+| [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) | Agent spend analytics + cheaper-route proof (thesis) |
 | [MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md) | Turn on Base mainnet USDC fees |
 | [../WHITEPAPER.md](../WHITEPAPER.md) | Protocol design |
 | [../README.md](../README.md) | Clone, build, try the API |
