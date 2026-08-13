@@ -34,11 +34,33 @@ test('resolveRail: cfg default, explicit usdc/tfuel', () => {
   assert.equal(resolveRail({ payment: { rail: 'usdc' } }, { defaultRail: 'tfuel' }), 'usdc');
 });
 
-test('priceUSDC: model override, maxAmount cap, default', () => {
+test('priceUSDC: hand-set model price wins, otherwise the floor', () => {
   const cfg = { usdcPriceDefault: '50000', usdcPrices: { 'llama-3-70b': '90000' } };
   assert.equal(priceUSDC({ model_id: 'llama-3-70b' }, cfg), '90000');
+  // Nothing to meter on a bare request, so the floor is the price.
   assert.equal(priceUSDC({ model_id: 'unknown' }, cfg), '50000');
-  assert.equal(priceUSDC({ payment: { maxAmount: '12345' }, model_id: 'llama-3-70b' }, cfg), '12345');
+});
+
+test('priceUSDC: the buyer cannot name the price with payment.maxAmount', () => {
+  // This used to return the buyer's own figure verbatim, so a 68k-token job
+  // could be settled for one base unit. maxAmount is a ceiling they choose to
+  // meet or decline — never an instruction to us.
+  const cfg = { usdcPriceDefault: '10000' };
+  assert.equal(priceUSDC({ payment: { maxAmount: '1' } }, cfg), '10000');
+  assert.equal(priceUSDC({ payment: { maxAmount: '999999999' } }, cfg), '10000');
+});
+
+test('priceUSDC: a large prompt is priced above the floor, a ping is not', () => {
+  const cfg = { usdcPriceDefault: '10000' };
+  // ~68k prompt tokens (the measured median agent call) at the default card.
+  const agent = priceUSDC(
+    { messages: [{ role: 'user', content: 'x'.repeat(272_000) }], max_tokens: 250 },
+    cfg,
+  );
+  assert.ok(Number(agent) > 20_000, `median agent call should clear $0.02, got ${agent}`);
+
+  const ping = priceUSDC({ messages: [{ role: 'user', content: 'hello' }], max_tokens: 16 }, cfg);
+  assert.equal(ping, '10000', 'a ping falls back to the floor');
 });
 
 test('settled gross cannot be restated by the paid retry (receipt integrity)', async () => {

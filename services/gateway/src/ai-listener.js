@@ -11,6 +11,10 @@ import { createTaskStore } from './task-store.js';
 import { getFloatManager, normalizeProviderId } from './provider-float.js';
 import { inferAkashML, akashmlApiKey } from './akashml-infer.js';
 import { inferEdgeCloud, chatInputFromMessages, extractTextOutput } from './edgecloud-infer.js';
+import { normalizeUsage } from './usage.js';
+import { cacheNamespace } from './buyer-attr.js';
+import { measureCogs } from './provider-rates.js';
+import { getHubCatalog, resolveCatalogModel, requestShape } from './hub-catalog.js';
 
 /**
  * AI Intent Listener — Osmosis/Akash IBC Event Monitor
@@ -71,6 +75,18 @@ const TASK_STATUS = {
 const AI_TASK_FEE_BPS = Math.min(Math.max(parseInt(process.env.AI_TASK_FEE_BPS, 10) || 50, 50), 100);
 const FEE_DENOMINATOR = 10000;
 const MIN_TASK_AMOUNT = '10000'; // Minimum task value to process (avoid dust)
+
+/**
+ * May an inference request be answered with a synthetic result?
+ *
+ * Only ever for local development. On a deployed gateway a mock is worse than an
+ * error: `/task-request` has already taken USDC by the time routing runs, so a
+ * mock produces a signed, verifiable receipt attesting an inference that never
+ * happened. Read at call time so tests can set it per-case.
+ */
+function mockInferenceAllowed() {
+  return process.env.ALLOW_MOCK_INFERENCE === 'true';
+}
 
 // ─── AIListener Class ───────────────────────────────────────────────────────
 
@@ -973,26 +989,73 @@ class AIListener {
     task.updatedAt = Date.now();
     this.metrics.totalInferenceRouted++;
 
+    // Only an explicit caller choice steers routing. `preferredProvider` also
+    // carries the float default, which is a treasury setting — letting it pick
+    // the hub sent every default request to a provider that could not serve it.
     const preferred = normalizeProviderId(
-      task.meta?.preferredProvider || task.intent?.preferredProvider || null,
+      task.meta?.requestedProvider ?? task.intent?.requestedProvider ?? null,
     );
 
-    // Prefer first-class adapters when the client named a provider (AkashML /
-    // EdgeCloud). Avoids debiting one float while another tier serves.
-    if (preferred === 'akash-network' && akashmlApiKey()) {
+    // Resolve the requested model against the live catalog before touching an
+    // adapter. `xfuel/auto` and bare aliases are XFuel-side names that no hub
+    // recognises — forwarding them raw makes the upstream 404 and drops the task
+    // into mock, so a paying caller gets a signed receipt for a fake inference.
+    const resolved = await this._resolveIntentModel(task, preferred);
+    if (resolved?.error) {
+      logger.warn(
+        { taskId: task.taskId, requested: resolved.requested, reason: resolved.error },
+        'Inference request names an unknown model; failing instead of serving a mock',
+      );
+      task.error = { code: resolved.error, message: `Unknown model '${resolved.requested}'`, hint: resolved.hint };
+      task.status = TASK_STATUS.FAILED;
+      task.updatedAt = Date.now();
+      this.metrics.totalTasksFailed++;
+      return;
+    }
+
+    // The hub that actually serves the resolved model. An explicit
+    // preferred_provider still wins, but absent one we no longer fall through to
+    // a tier list that has never contained AkashML.
+    const targetHub = preferred
+      || (resolved?.hub === 'akash' ? 'akash-network' : null)
+      || (resolved?.hub === 'theta' ? 'theta-edgecloud' : null);
+
+    // Only the OpenAI-compatible hub carries tools. Theta's on-demand API has no
+    // tools parameter and the generic router tiers drop it, so forwarding there
+    // returns prose where the caller's loop expects a tool call — and bills for
+    // it. Refuse instead, matching /v1's `tools_unsupported_on_hub`.
+    if (Array.isArray(task.intent?.tools) && task.intent.tools.length && targetHub !== 'akash-network') {
+      logger.warn(
+        { taskId: task.taskId, hub: targetHub, model: resolved?.id },
+        'Tool call requested on a hub that cannot serve tools; failing instead of returning prose',
+      );
+      task.error = {
+        code: 'tools_unsupported_on_hub',
+        message: `${resolved?.id || 'the routed model'} does not run on a hub that supports tools`,
+        hint: 'Retry without `tools`, or name an AkashML model (see GET /v1/models).',
+      };
+      task.status = TASK_STATUS.FAILED;
+      task.updatedAt = Date.now();
+      this.metrics.totalTasksFailed++;
+      return;
+    }
+
+    // Prefer first-class adapters (AkashML / EdgeCloud). Avoids debiting one
+    // float while another tier serves.
+    if (targetHub === 'akash-network' && akashmlApiKey()) {
       try {
-        if (await this._routeViaAkashML(task, netAmount)) {
-          this._reconcileProviderCogs(task);
+        if (await this._routeViaAkashML(task, netAmount, resolved)) {
+          await this._reconcileProviderCogs(task);
           return;
         }
       } catch (err) {
         logger.warn({ err: err.message, taskId: task.taskId }, 'AkashML preferred route failed; falling through');
       }
     }
-    if (preferred === 'theta-edgecloud' && process.env.THETA_EDGECLOUD_API_KEY) {
+    if (targetHub === 'theta-edgecloud' && process.env.THETA_EDGECLOUD_API_KEY) {
       try {
-        if (await this._routeViaEdgeCloud(task, netAmount)) {
-          this._reconcileProviderCogs(task);
+        if (await this._routeViaEdgeCloud(task, netAmount, resolved)) {
+          await this._reconcileProviderCogs(task);
           return;
         }
       } catch (err) {
@@ -1009,10 +1072,19 @@ class AIListener {
       try {
         const handled = await this._routeInferenceViaFullRouter(task, netAmount);
         if (handled) {
-          this._reconcileProviderCogs(task);
+          await this._reconcileProviderCogs(task);
           return;
         }
-        logger.info({ taskId: task.taskId }, 'Full router declined (no raw input); using default path');
+        // Declines for two different reasons — hash-only request (nothing to
+        // execute) vs every tier unavailable. Saying "no raw input" for both
+        // sends you hunting the wrong bug.
+        logger.info(
+          {
+            taskId: task.taskId,
+            reason: task.intent?.messages || task.intent?.input ? 'no_tier_available' : 'no_raw_input',
+          },
+          'Full router declined; using default path',
+        );
       } catch (err) {
         logger.warn({ err: err.message, taskId: task.taskId }, 'Full router error; using default path');
       }
@@ -1022,8 +1094,27 @@ class AIListener {
       const thetaEdgeUrl = config.aiListener?.thetaEdgeUrl;
 
       if (!thetaEdgeUrl) {
-        // Mock mode
-        logger.info({ taskId: task.taskId }, 'MOCK: Routing inference request (no THETA_EDGE_URL)');
+        // Every real route declined. This used to fall through to a mock and mark
+        // the task COMPLETED, which minted a correctly signed receipt for an
+        // inference that never ran — and `/task-request` is the surface that took
+        // the USDC. Failing is the honest outcome; the mock is opt-in for local
+        // work only.
+        if (!mockInferenceAllowed()) {
+          logger.warn(
+            { taskId: task.taskId, model: task.intent?.modelId },
+            'No provider could serve this task; failing rather than returning a mock',
+          );
+          task.error = {
+            code: 'no_provider_available',
+            message: 'No configured provider could serve this request',
+            hint: 'Check hub credentials (AKASHML_API_KEY / THETA_EDGECLOUD_API_KEY) or retry.',
+          };
+          task.status = TASK_STATUS.FAILED;
+          task.updatedAt = Date.now();
+          this.metrics.totalTasksFailed++;
+          return;
+        }
+        logger.info({ taskId: task.taskId }, 'MOCK: Routing inference request (ALLOW_MOCK_INFERENCE)');
         task.result = {
           mock: true,
           provider: 'theta-edge-mock',
@@ -1034,7 +1125,7 @@ class AIListener {
         task.status = TASK_STATUS.COMPLETED;
         task.updatedAt = Date.now();
         this.metrics.totalTasksCompleted++;
-        this._reconcileProviderCogs(task);
+        await this._reconcileProviderCogs(task);
         return;
       }
 
@@ -1058,7 +1149,7 @@ class AIListener {
       task.status = TASK_STATUS.COMPLETED;
       task.updatedAt = Date.now();
       this.metrics.totalTasksCompleted++;
-      this._reconcileProviderCogs(task);
+      await this._reconcileProviderCogs(task);
 
       logger.info({
         taskId: task.taskId,
@@ -1074,17 +1165,66 @@ class AIListener {
   }
 
   /**
-   * Direct AkashML chat inference (preferred_provider=akash-network).
+   * Resolve intent.modelId against the live hub catalog, so the M2M path names
+   * models exactly like /v1 does. Returns the serving hub and the hub-native
+   * alias, or an error for ids no hub can serve.
+   * @returns {Promise<{hub: string, alias: string, id: string, requested: string}
+   *   | {error: string, requested: string, hint?: string} | null>}
+   * @private
+   */
+  async _resolveIntentModel(task, preferredHub) {
+    const requested = task.intent?.modelId || null;
+    // Hash-only requests never reach an adapter; nothing to resolve.
+    if (!task.intent?.messages && !task.intent?.input && !task.intent?.prompt) return null;
+    try {
+      const { models } = await getHubCatalog();
+      // Tool-shaped work resolves `xfuel/auto` differently from a short
+      // completion — the models diverge sharply on loops. See hub-catalog.js.
+      const shape = requestShape(task.intent || {});
+
+      // "Auto, but on this hub" — a named provider narrows the auto pick rather
+      // than being ignored or overriding a concretely named model.
+      const isAuto = !requested || ['xfuel/auto', 'auto', 'xfuel-auto'].includes(String(requested).trim());
+      const hub = preferredHub === 'akash-network' ? 'akash'
+        : preferredHub === 'theta-edgecloud' ? 'theta'
+        : null;
+      if (isAuto && hub) {
+        // Reuse the catalog's evidence-led auto ordering, just restricted to the
+        // named hub, rather than grabbing whichever model happens to be first.
+        const scoped = resolveCatalogModel('xfuel/auto', models.filter((m) => m.hub === hub), { shape });
+        if (scoped.ok) {
+          return { hub: scoped.model.hub, alias: scoped.model.alias, id: scoped.model.id, requested: 'xfuel/auto' };
+        }
+      }
+
+      const res = resolveCatalogModel(requested || 'xfuel/auto', models, { modality: 'chat', shape });
+      if (!res.ok) return { error: res.reason, requested: res.requested, hint: res.hint };
+      return { hub: res.model.hub, alias: res.model.alias, id: res.model.id, requested: res.requested };
+    } catch (err) {
+      // A catalog outage must not fail an otherwise payable task — fall through
+      // to the adapters' own defaults.
+      logger.warn({ err: err.message, taskId: task.taskId }, 'Hub catalog unavailable; routing on defaults');
+      return null;
+    }
+  }
+
+  /**
+   * Direct AkashML chat inference.
+   * @param {{alias: string, id: string}} [resolved] catalog resolution
    * @returns {Promise<boolean>}
    * @private
    */
-  async _routeViaAkashML(task, netAmount) {
+  async _routeViaAkashML(task, netAmount, resolved) {
     const intent = task.intent || {};
     const messages = Array.isArray(intent.messages) ? intent.messages : null;
     const prompt = intent.input || intent.prompt || null;
     if (!messages && !prompt) return false;
 
-    const model = intent.modelId
+    // Last-resort default only — the catalog resolution above normally decides.
+    // GLM-5.2 is the one model that completes a multi-turn agent loop reliably
+    // (6/6 against Llama 3.3 70B's 0/6); see docs/MODEL_QUALITY_EVAL.md.
+    const model = resolved?.alias
+      || intent.modelId
       || process.env.AKASHML_DEFAULT_MODEL
       || 'zai-org/GLM-5.2';
     // Strip hub prefix if a catalog id was passed (akash/zai-org/GLM-5.2).
@@ -1096,17 +1236,30 @@ class AIListener {
       messages: msgs,
       max_tokens: intent.maxTokens || 500,
       temperature: intent.temperature ?? 0.7,
+      tools: intent.tools || null,
+      tool_choice: intent.toolChoice || null,
+      cacheNamespace: cacheNamespace(task.meta?.apiKeyHash),
     });
     if (!result.ok) {
       logger.warn({ taskId: task.taskId, reason: result.reason }, 'AkashML inference failed');
       return false;
     }
 
+    task.usage = normalizeUsage(result.raw, { messages: msgs, output: result.output });
     task.result = {
       content: result.output,
+      // A tool call is the answer, not a missing one — the caller needs it back
+      // verbatim to run the next turn of the loop.
+      tool_calls: result.toolCalls || null,
+      finish_reason: result.finish_reason ?? null,
+      // The hub-prefixed catalog id, which is what `/v1` receipts attest and what
+      // `/v1/models` publishes — the same model must not be named two different
+      // ways in a signed field. Falls back to the native alias off-catalog.
+      model: resolved?.id || nativeModel,
       provider: 'akash-network',
       routedTo: 'akash-network',
       raw: result.raw,
+      usage: task.usage,
       net_amount: netAmount.toString(),
       elapsed_ms: result.elapsed_ms,
     };
@@ -1118,17 +1271,18 @@ class AIListener {
   }
 
   /**
-   * Direct Theta EdgeCloud chat inference (preferred_provider=theta-edgecloud).
+   * Direct Theta EdgeCloud chat inference.
+   * @param {{alias: string, id: string}} [resolved] catalog resolution
    * @returns {Promise<boolean>}
    * @private
    */
-  async _routeViaEdgeCloud(task, netAmount) {
+  async _routeViaEdgeCloud(task, netAmount, resolved) {
     const intent = task.intent || {};
     const messages = Array.isArray(intent.messages) ? intent.messages : null;
     const prompt = intent.input || intent.prompt || null;
     if (!messages && !prompt) return false;
 
-    let alias = intent.modelId || 'glm_5_2';
+    let alias = resolved?.alias || intent.modelId || 'glm_5_2';
     if (alias.startsWith('theta/')) alias = alias.slice('theta/'.length);
     if (alias.startsWith('akash/')) return false; // wrong hub for this adapter
     // Drop org-style ids that aren't Theta aliases
@@ -1149,11 +1303,15 @@ class AIListener {
       return false;
     }
 
+    const content = extractTextOutput(result.output);
+    task.usage = normalizeUsage(result.raw, { messages: msgs, output: content });
     task.result = {
-      content: extractTextOutput(result.output),
+      content,
+      model: resolved?.id || `theta/${alias}`,
       provider: 'theta-edgecloud',
       routedTo: 'theta-edgecloud',
       raw: result.raw,
+      usage: task.usage,
       net_amount: netAmount.toString(),
       elapsed_ms: result.elapsed_ms,
     };
@@ -1168,12 +1326,28 @@ class AIListener {
    * Burn prepaid float COGS against the provider that actually served.
    * @private
    */
-  _reconcileProviderCogs(task) {
+  async _reconcileProviderCogs(task) {
     const pending = task.meta?.pendingCogs;
     if (!pending || task.meta?.providerCogs) return;
 
     const estimated = pending.estimated || '0';
     if (pending.unconstrained && BigInt(estimated || '0') <= 0n) return;
+
+    // Real tokens × the provider's published per-token rate, when both are
+    // available. Falls back to the bps estimate — which is a share of our own
+    // price, not of the work — and the record says which was used.
+    let measured = null;
+    try {
+      const m = await measureCogs({
+        // Served model first: the request may have asked for `xfuel/auto`, which
+        // no rate row matches.
+        modelId: task.result?.model || task.result?.routedModel || task.intent?.modelId,
+        usage: task.usage,
+      });
+      if (m.basis === 'measured') measured = m.amount;
+    } catch (err) {
+      logger.warn({ err: err.message, taskId: task.taskId }, 'COGS measurement failed; using estimate');
+    }
 
     try {
       const floatMgr = getFloatManager();
@@ -1186,6 +1360,7 @@ class AIListener {
         preferredProvider: pending.preferred_provider || task.meta?.preferredProvider,
         actualProvider: actual,
         estimated,
+        measured,
       });
       if (record) {
         task.meta.providerCogs = record;
@@ -1193,9 +1368,41 @@ class AIListener {
       } else if (provider) {
         task.meta.provider = provider;
       }
+
+      if (measured !== null) this._warnIfBelowCost(task, provider, measured, pending.gross);
     } catch (err) {
       logger.error({ err: err.message, taskId: task.taskId }, 'Provider COGS reconcile failed');
     }
+  }
+
+  /**
+   * Shout when a route was sold below what it cost us.
+   *
+   * Worth having permanently, not just while the model default is settled: our
+   * rate card is deliberately decoupled from COGS, so nothing else in the system
+   * would ever notice a provider repricing above our retail. It only fires on a
+   * measured cost — an estimate is not evidence of a loss.
+   * @private
+   */
+  _warnIfBelowCost(task, provider, measured, gross) {
+    let grossUnits;
+    try {
+      grossUnits = BigInt(gross || '0');
+    } catch {
+      return;
+    }
+    if (grossUnits <= 0n || measured <= grossUnits) return;
+
+    logger.warn({
+      taskId: task.taskId,
+      provider,
+      model: task.intent?.modelId || null,
+      gross: grossUnits.toString(),
+      cogs: measured.toString(),
+      loss: (measured - grossUnits).toString(),
+      prompt_tokens: task.usage?.prompt_tokens ?? null,
+      completion_tokens: task.usage?.completion_tokens ?? null,
+    }, 'Task served below cost — provider COGS exceeded the settled price');
   }
 
   /**
@@ -1268,10 +1475,16 @@ class AIListener {
       return false;
     }
 
+    task.usage = normalizeUsage(routed.result?.raw ?? routed.result, {
+      messages: messages || undefined,
+      prompt: prompt || undefined,
+      output: routed.result?.content ?? routed.result?.output,
+    });
     task.result = {
       ...routed.result,
       provider: routed.result?._source || routed.source,
       routedTo: routed.source,
+      usage: task.usage,
       net_amount: netAmount.toString(),
     };
     task.status = TASK_STATUS.COMPLETED;

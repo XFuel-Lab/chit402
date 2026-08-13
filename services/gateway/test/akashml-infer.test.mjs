@@ -1,6 +1,47 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { inferAkashML, akashmlApiKey } from '../src/akashml-infer.js';
+import { cacheNamespace, hashApiKey } from '../src/buyer-attr.js';
+
+test('a cache namespace partitions the upstream prompt cache per buyer', async () => {
+  let sent;
+  const fetchFn = async (_url, opts) => {
+    sent = JSON.parse(opts.body);
+    return new Response(JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { content: 'ok' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+    }), { status: 200 });
+  };
+
+  await inferAkashML({
+    model: 'm', messages: [{ role: 'user', content: 'hi' }],
+    apiKey: 'akml-test', cacheNamespace: 'ns-abc', fetchFn,
+  });
+  // Both spellings: `cache_salt` is vLLM's, `prompt_cache_key` is OpenAI's, and
+  // the upstream engine is not contractually known.
+  assert.equal(sent.cache_salt, 'ns-abc');
+  assert.equal(sent.prompt_cache_key, 'ns-abc');
+
+  await inferAkashML({
+    model: 'm', messages: [{ role: 'user', content: 'hi' }],
+    apiKey: 'akml-test', fetchFn,
+  });
+  assert.equal(sent.cache_salt, undefined, 'omitted for an unattributed caller');
+  assert.equal(sent.prompt_cache_key, undefined);
+});
+
+test('cacheNamespace is stable per buyer, distinct between buyers, and not the buyer id', () => {
+  const a = hashApiKey('buyer-a');
+  const b = hashApiKey('buyer-b');
+
+  assert.equal(cacheNamespace(a), cacheNamespace(a), 'stable, so a buyer keeps their cache');
+  assert.notEqual(cacheNamespace(a), cacheNamespace(b), 'distinct, so buyers cannot share one');
+  // The provider must not receive a value that correlates with our own records.
+  assert.notEqual(cacheNamespace(a), a);
+  assert.ok(!a.includes(cacheNamespace(a)));
+  assert.equal(cacheNamespace(null), null);
+  assert.equal(cacheNamespace(undefined), null);
+});
 
 test('akashmlApiKey selects on key prefix, not variable name', () => {
   const saved = [process.env.AKASHML_API_KEY, process.env.AKASH_API_KEY];

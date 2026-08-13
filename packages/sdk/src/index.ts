@@ -81,6 +81,32 @@ export interface PaymentParams {
   maxAmount?: string;
 }
 
+/** A tool call the model asked for, in OpenAI's shape. */
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool' | string;
+  content: string | null;
+  /** Present on an assistant turn that called tools. */
+  tool_calls?: ToolCall[];
+  /** Required on a `role: 'tool'` turn — the id of the call being answered. */
+  tool_call_id?: string;
+  name?: string;
+}
+
+export interface ToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
+}
+
 export interface TaskRequestParams {
   message_type: MessageType;
   chain_id: ChainId;
@@ -94,8 +120,31 @@ export interface TaskRequestParams {
    * EdgeCloud will not be called.
    */
   input?: string;
-  /** Chat-shaped input alternative to `input` for full-router inference. */
-  messages?: Array<{ role: string; content: string }>;
+  /**
+   * Chat-shaped input alternative to `input` for full-router inference.
+   *
+   * `content` may be null on an assistant turn that carries `tool_calls`, and a
+   * `role: 'tool'` turn carries the result — both are required to represent a
+   * multi-turn agent loop.
+   */
+  messages?: ChatMessage[];
+  /**
+   * OpenAI tool definitions, forwarded to the hub unchanged. Tool calls come back
+   * on `result.tool_calls`.
+   *
+   * Asking for tools also changes how `xfuel/auto` resolves: a tool-carrying
+   * request is agent work and routes to a model that completes multi-turn loops.
+   * Hubs that cannot serve tools reject the task with `tools_unsupported_on_hub`
+   * rather than answering with prose.
+   */
+  tools?: ToolDefinition[];
+  tool_choice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
+  /**
+   * Output budget. This is metered into the x402 quote, so it is also what you
+   * are charged for. Default 500.
+   */
+  max_tokens?: number;
+  temperature?: number;
   input_hash?: string;
   output_hash?: string;
   theta_recipient?: string;
@@ -227,7 +276,12 @@ export interface TaskStatusResponse {
   verify_url?: string;
   /** Phase 2 (flag-gated): x402 payment commitment bound into the proof, or null. */
   payment_binding?: PaymentBinding | null;
-  result: unknown | null;
+  result: TaskResult | null;
+  /**
+   * Why the task failed. A task no provider could serve fails rather than
+   * returning a synthetic answer, so this is the field to branch on.
+   */
+  error?: TaskError | null;
   sp1_proof: {
     has_proof: boolean;
     nullifier: string | null;
@@ -236,6 +290,28 @@ export interface TaskStatusResponse {
   } | null;
   created_at: number;
   updated_at: number;
+}
+
+export interface TaskResult {
+  content?: string;
+  /** Present when the model called a tool — feed these back as the next turn. */
+  tool_calls?: ToolCall[] | null;
+  finish_reason?: string | null;
+  /** Catalog id of the model that actually served, e.g. `akash/zai-org/GLM-5.2`. */
+  model?: string;
+  provider?: string;
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  [key: string]: unknown;
+}
+
+export interface TaskError {
+  /**
+   * `model_not_found` · `tools_unsupported_on_hub` · `no_provider_available`
+   * are the ones worth handling; treat unknown codes as retryable.
+   */
+  code: string;
+  message: string;
+  hint?: string;
 }
 
 export interface ProofResponse {
@@ -592,7 +668,13 @@ export class XFuelClient {
       chain_id?: ChainId;
       /** Raw prompt — required for live EdgeCloud / DePIN routing. */
       input?: string;
-      messages?: Array<{ role: string; content: string }>;
+      messages?: ChatMessage[];
+      /** Tool definitions for an agent loop. See {@link TaskRequestParams.tools}. */
+      tools?: ToolDefinition[];
+      tool_choice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
+      /** Output budget — metered into the quote, so also what you pay for. */
+      max_tokens?: number;
+      temperature?: number;
       input_hash?: string;
       fee_bps?: number;
       theta_recipient?: string;

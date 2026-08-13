@@ -1,4 +1,5 @@
 import { proofOutcomeOf } from './receipt.js';
+import { aggregateUsage } from './usage.js';
 
 /**
  * Usage telemetry — aggregate, public-safe network stats derived from the durable
@@ -30,13 +31,43 @@ function railOf(task) {
 const SETTLED_STATUSES = new Set(['completed', 'fee_collected']);
 
 /**
+ * Money figures are only summed from tasks created at or after this instant.
+ *
+ * Before the settled-gross fix, `payment.gross_amount` came from a buyer-declared
+ * `amount` rather than what x402 actually collected, and our own flagship demo
+ * declared $1.00 while paying $0.01. Every fee derived from those rows is ~100x
+ * over, which made the headline "USDC fees" figure unusable — and it is the one
+ * number that must never be overstated.
+ *
+ * Windowing rather than backfilling: the settled amount for a historical row
+ * cannot always be recovered, and inventing one would be the same class of error.
+ * Counts still include every task; only the money is windowed, and the excluded
+ * rows are reported rather than quietly dropped.
+ *
+ * The default is deliberately a few hours later than the fix, so the boundary
+ * errs towards under-reporting our own revenue.
+ */
+const DEFAULT_FEE_TRUST_FROM = '2026-08-12T00:00:00Z';
+
+function feeTrustFrom(override) {
+  const raw = override || process.env.STATS_FEE_TRUST_FROM || DEFAULT_FEE_TRUST_FROM;
+  if (raw === 'all') return 0; // opt out — accepts the inflated history
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? t : Date.parse(DEFAULT_FEE_TRUST_FROM);
+}
+
+/**
  * Aggregate a list of task snapshots into public-safe usage stats.
  * @param {Array<Object>} tasks
- * @param {{ now?: number, apiKeyHash?: string|null }} [opts]
+ * @param {{ now?: number, apiKeyHash?: string|null, feeTrustFrom?: string }} [opts]
  *   When `apiKeyHash` is set, only tasks stamped with that buyer hash are counted
  *   (Private Spend buyer-only analytics). Public `/stats` omits this filter.
+ *   `feeTrustFrom` overrides the money cutoff ('all' to sum every row).
  */
-export function computeUsageStats(tasks = [], { now = Date.now(), apiKeyHash = null } = {}) {
+export function computeUsageStats(
+  tasks = [],
+  { now = Date.now(), apiKeyHash = null, feeTrustFrom: trustOverride = null } = {},
+) {
   const byStatus = {};
   const byMessageType = {};
   const byProvider = {};
@@ -55,8 +86,10 @@ export function computeUsageStats(tasks = [], { now = Date.now(), apiKeyHash = n
   let paidTasks7d = 0;
   let usdcFees7d = 0n;
   let usdcPaidTasks7d = 0;
+  let excludedFromMoney = 0;
 
   const wantHash = apiKeyHash ? String(apiKeyHash).toLowerCase() : null;
+  const trustFrom = feeTrustFrom(trustOverride);
 
   for (const t of tasks) {
     if (!t || !t.taskId) continue;
@@ -79,10 +112,18 @@ export function computeUsageStats(tasks = [], { now = Date.now(), apiKeyHash = n
 
     const rail = railOf(t);
     const r = rails[rail];
+    const createdAt = Number(t.createdAt) || 0;
+    // A task with no timestamp cannot be placed relative to the fix, so it is
+    // treated as untrusted for money.
+    const moneyTrusted = createdAt >= trustFrom;
     r.count += 1;
-    r.gross = addBig(r.gross, t.intent?.amount);
-    r.fee = addBig(r.fee, t.feeAmount);
-    r.net = addBig(r.net, t.netAmount);
+    if (moneyTrusted) {
+      r.gross = addBig(r.gross, t.intent?.amount);
+      r.fee = addBig(r.fee, t.feeAmount);
+      r.net = addBig(r.net, t.netAmount);
+    } else {
+      excludedFromMoney += 1;
+    }
 
     if (SETTLED_STATUSES.has(status)) settled += 1;
     if (t.meta?.privateSpend || t.meta?.privacyMode === 'vendor_blind') privateSpendTasks += 1;
@@ -97,7 +138,7 @@ export function computeUsageStats(tasks = [], { now = Date.now(), apiKeyHash = n
           paidTasks7d += 1;
           if (rail === 'usdc') {
             usdcPaidTasks7d += 1;
-            usdcFees7d = addBig(usdcFees7d, t.feeAmount);
+            if (moneyTrusted) usdcFees7d = addBig(usdcFees7d, t.feeAmount);
           }
         }
       }
@@ -135,7 +176,21 @@ export function computeUsageStats(tasks = [], { now = Date.now(), apiKeyHash = n
       by_provider: byProvider,
       private_spend: privateSpendTasks,
     },
-    payments: { by_rail: railOut },
+    payments: {
+      by_rail: railOut,
+      // Say what was left out rather than presenting a silently filtered total.
+      fee_basis: {
+        trusted_from: new Date(trustFrom).toISOString(),
+        excluded_tasks: excludedFromMoney,
+        note: excludedFromMoney
+          ? 'Amounts exclude tasks created before gross was derived from the settled '
+            + 'x402 payment; those rows report a buyer-declared gross and overstate fees.'
+          : 'All tasks post-date the settled-gross fix.',
+      },
+    },
+    // Provider-reported and estimated token counts stay separate — averaging a
+    // guess into a measurement is how you end up pricing against fiction.
+    tokens: aggregateUsage(filtered),
     proofs: { ...proofs, proven_pct: provenPct },
     activity: {
       last_24h: last24h,
@@ -189,6 +244,7 @@ export function renderStatsHtml(stats) {
   // USDC is 6dp — show a friendly dollar figure alongside base units.
   const usdcDollars = (Number(usdc.fee_amount) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 4 });
   const ns = stats.north_star || { paid_tasks_7d: 0, usdc_paid_tasks_7d: 0, usdc_fees_7d: '0' };
+  const feeBasis = stats.payments.fee_basis || { excluded_tasks: 0, note: '' };
   const usdcFees7dDollars = (Number(ns.usdc_fees_7d) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 4 });
 
   return `<!doctype html>
@@ -257,6 +313,9 @@ export function renderStatsHtml(stats) {
         <div class="row"><span class="k">tasks</span><span class="v">${esc(usdc.count)}</span></div>
         <div class="row"><span class="k">fees (base units)</span><span class="v">${esc(usdc.fee_amount)}</span></div>
         <div class="row"><span class="k">fees (~USDC)</span><span class="v">$${esc(usdcDollars)}</span></div>
+        ${feeBasis.excluded_tasks
+          ? `<div class="row"><span class="k">excluded (pre-fix)</span><span class="v">${esc(feeBasis.excluded_tasks)}</span></div>`
+          : ''}
       </div>
       <div class="card">
         <h2>TFUEL rail</h2>

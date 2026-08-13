@@ -74,11 +74,26 @@ const config = {
     // full in-proof attestation activates once the SP1 guest commits the v2 layout
     // (new programVKey). See docs/X402_ADAPTER.md §"Phase 2 proof binding".
     proofBinding: process.env.X402_PROOF_BINDING === 'true',
-    // USDC pricing (smallest unit, 6dp). Default per task + optional per-model JSON map.
+    // USDC pricing (smallest unit, 6dp). Tasks are metered against the rate card
+    // in pricing.js; these are the escape hatches. See docs/PRICING_STRATEGY.md.
+    //   usdcPriceDefault — legacy name for the floor a metered quote cannot go below
+    //   usdcPrices       — hand-set flat price for a specific model, overrides the card
+    //   rateCard         — retail base units per 1M tokens, per model family
     usdcPriceDefault: process.env.X402_USDC_PRICE_DEFAULT || '10000', // $0.01
+    usdcFloor: process.env.X402_USDC_FLOOR || null,
+    // Charge for /v1/chat/completions. Default OFF: turning it on makes the
+    // OpenAI-compatible surface reply 402 to any client that cannot pay, which
+    // is a breaking change for plain OpenAI SDKs. The demo key stays exempt.
+    meterV1: process.env.X402_METER_V1 === 'true',
+    meterV1ExemptKeys: (process.env.X402_METER_V1_EXEMPT_KEYS || '')
+      .split(',').map((s) => s.trim()).filter(Boolean),
     usdcPrices: (() => {
       if (!process.env.X402_USDC_PRICES) return {};
       try { return JSON.parse(process.env.X402_USDC_PRICES); } catch { return {}; }
+    })(),
+    rateCard: (() => {
+      if (!process.env.X402_USDC_RATE_CARD) return {};
+      try { return JSON.parse(process.env.X402_USDC_RATE_CARD); } catch { return {}; }
     })(),
   },
 

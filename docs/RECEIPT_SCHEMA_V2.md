@@ -85,6 +85,25 @@ SDK: `client.getAuditorExport(taskId)`.
 
 Tier-2 settlement proofs attest fees / binding / output commitment — not black-box model correctness. Tier-3 fills that gap for open-weight models via zkLLM / TEE.
 
+### A receipt attests a live provider forward pass
+
+**XFuel never serves model output from its own cache.** Every receipt corresponds to a request the
+named provider actually executed. Stating this as a guarantee, not an implementation detail, because
+it constrains what we are allowed to build:
+
+- **Provider-side prefix/KV caching is fine and we rely on it.** Reusing attention state for a
+  repeated prefix still runs a full forward pass over the sequence on the provider's hardware with
+  the committed weights; only redundant prefill arithmetic is skipped. `route.provider` stays true.
+- **Gateway-side response or semantic caching is forbidden.** There, no provider runs anything, and
+  a receipt naming one would be false. This is the line, and it rules out a latency optimisation
+  that gateways built on Portkey-style semantic caches do ship.
+
+One caveat for Tier-3: cached and fresh prefill can reduce in different orders and yield
+bitwise-different logits. Quality is unaffected — providers commit that the output distribution is
+unchanged and sampling is independent per request either way — but no provider commits to bitwise
+determinism under caching. Any verified-inference scheme that assumes reproducible prefill must
+account for it.
+
 Third-party verify without trusting HTML: `GET /receipt/:taskId?format=json` or SDK `client.getReceipt(taskId)` + `verifyPaymentBinding`.
 
 API surface: [M2M_API.md](./M2M_API.md).

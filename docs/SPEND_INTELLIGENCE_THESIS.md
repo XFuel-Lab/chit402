@@ -2,6 +2,16 @@
 
 Internal product thesis. Not a marketing claim until the gates below are cleared.
 
+> **Superseded in two places (2026-08-12).** This doc argues for **flat per-model-class pricing** and
+> for **prepaid credits as the budgeting primitive**. Neither survived.
+> [PRICING_STRATEGY.md](./PRICING_STRATEGY.md) is now the source of truth on both: pricing is
+> **metered against a per-model rate card with a floor** (shipped, `src/pricing.js`), because fixed
+> class prices fail the savings test they were meant to enable. And prepaid credits are ruled out as
+> a primary model in [POSITIONING.md](./POSITIONING.md) — deposit-and-draw sells a promise about
+> supply we do not own, so a provider price shock lands on us rather than repricing the next call.
+> Enterprise BYOK is the one exception. Everything else here — the two-product split, the moat
+> argument, the disclosure stance — stands.
+
 Related: [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md), [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md), [providers/README.md](./providers/README.md), [RECEIPT_SCHEMA_V2.md](./RECEIPT_SCHEMA_V2.md), [KNOWN_ISSUES.md](./KNOWN_ISSUES.md), [ADR 0001](./adr/0001-usdc-revenue-and-router-verifier-positioning.md), [ADR 0005](./adr/0005-provider-float-cogs.md).
 
 ## Two products, deliberately separated
@@ -89,7 +99,7 @@ A **single** flat price makes Spend Intelligence pointless for the buyer — if 
 | **Flat per model class** | Strong | Real — choose a cheaper class | Good |
 | Pass-through + % margin | Weakest | Maximal | Buyer eats the reasoning tax |
 
-Price the assurance tier as a second axis (signed / settlement / inference), since it maps to real marginal cost we currently absorb. Keep prepaid credits as the budgeting primitive.
+Price the assurance tier as a second axis (signed / settlement / inference), since it maps to real marginal cost we currently absorb. ~~Keep prepaid credits as the budgeting primitive.~~ — rejected; see the banner above. The budgeting primitive is the per-call ceiling the buyer already sets in the x402 authorization, which caps spend without us holding a balance we owe compute against.
 
 **Disclosure stance (proposed):** merchant, not broker. The buyer is assured about *their* side of the ledger — price known before purchase, nothing added after, and proof of what was delivered. Our cost basis stays internal, exactly as an infrastructure vendor does not publish its input costs. Under flat pricing this is coherent rather than evasive, because the buyer's bill does not vary with our cost. `provider_cogs` therefore remains internal-only and must not be exposed on buyer receipts.
 
@@ -148,26 +158,26 @@ The value lands when an agent can read a cheaper-route hint off a response, or c
 
 | # | Step | Why in this order |
 |---|---|---|
-| 0 | **Receipt gross = settled x402 amount** | Blocking. Assurance is meaningless while the price field is buyer-declared |
-| 1 | True COGS — real `usage` × rate card into `provider_cogs.actual` | Gate. Everything downstream is fiction without it |
-| 2 | Meter `/v1/chat/completions` | The busiest surface contributes no spend data at all |
-| 3 | Price per model class + priced assurance tiers | Creates the buyer-side savings lever the product needs |
+| 0 | ~~**Receipt gross = settled x402 amount**~~ | **Shipped 2026-08-11.** Blocking; assurance is meaningless while the price field is buyer-declared |
+| 1 | ~~True COGS — real `usage` × rate card into `provider_cogs.actual`~~ | **Shipped 2026-08-12** (`provider-rates.js`, `basis: measured`) |
+| 2 | ~~Meter `/v1/chat/completions`~~ | **Shipped 2026-08-12**, behind `X402_METER_V1` — turning it on is a founder call |
+| 3 | ~~Price per model class~~ → **metered per-model rate card** + priced assurance tiers | Price shipped; **assurance tiers are still free** |
 | 4 | Counterfactual pricer on the receipt | The artifact that demonstrates value, advisory only |
 | 5 | Agent surface — MCP spend report + route hint | Where an agent acts on it |
 | 6 | Extend `/stats/me` into a spend graph | Human buying decision |
-| 7 | Prepaid credit balance with drawdown | Budget predictability + volume discount |
+| ~~7~~ | ~~Prepaid credit balance with drawdown~~ | **Rejected** — supply-shock exposure; see the banner above |
 | 8 | Opt-in auto-routing on a cost ceiling | Only with explicit opt-in or a quality signal |
 
 Steps 0–2 are correctness work we owe regardless of whether this product ships — step 0 is arguably a live integrity bug rather than a roadmap item. Steps 3–8 are the product.
 
 ## Open questions
 
-- **Price points.** Flat-per-model-class needs actual numbers. What is a class worth to an agent, and how many classes? Current $0.01 is on-pattern for the cheapest class but is a single point, not a schedule.
-- **Assurance tier pricing.** What does a settlement (SP1) or inference (Tier-3) proof cost us per task, and what is it worth? Today both are free and gated on a self-declared amount.
-- **Quality signal.** Auto-routing needs one. Buy an eval harness, sample-judge with a frontier model, or require per-workload opt-in? Unresolved.
+- ~~**Price points.**~~ Answered by metering: `DEFAULT_RATE_CARD` in `pricing.js` carries a row per model with a floor, so there are no classes to size.
+- **Assurance tier pricing.** What does a settlement (SP1) or inference (Tier-3) proof cost us per task, and what is it worth? Today both are free and gated on a self-declared amount. Costed since: an SP1 settlement proof is ~$0.007 on Base, cheap enough to include free ([PRICING_STRATEGY.md](./PRICING_STRATEGY.md)).
+- **Quality signal.** Auto-routing needs one. Partially answered: multi-turn agent-loop pass rate separates models where single-turn scores do not, and `xfuel/auto` now routes on request shape off that evidence ([MODEL_QUALITY_EVAL.md](./MODEL_QUALITY_EVAL.md)). Still not a per-call signal, so **auto-downgrade remains off**.
 - **Rate-card drift.** Published prices move (GLM-5.2 is currently 45% off). A cached card silently misprices COGS — refresh cadence and a staleness bound are needed.
 - **Non-token models.** AkashML publishes a `pricing_config` for models priced on request-level factors rather than tokens. The pricer must handle both or explicitly refuse.
-- **Prompt caching.** `input_cache_read` is roughly 5–6x below the input rate, so a stable system-prompt prefix is direct margin. Worth measuring before it is promised.
+- ~~**Prompt caching.**~~ Measured 2026-08-12 and smaller than modelled: the cache is real (~2–3x on prefill) but **AkashML reports no cached-token field**, so the discount cannot be observed, billed against, or put in a receipt. Roughly 2.5x at an 80% hit rate on models that price cached reads, 1.0x on those that do not ([KNOWN_ISSUES.md](./KNOWN_ISSUES.md)).
 - **Retention window.** How long do metadata rows live, and what does the customer-facing retention promise say?
 
 ## Status

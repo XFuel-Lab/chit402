@@ -45,6 +45,11 @@ Submit an AI task.
 | `sender` | yes | Address / agent id |
 | `model_id` | for inference | Live catalog id, e.g. `xfuel/auto`, `theta/glm_5_2`. List with `GET /v1/models`. Retired `llama-*` names are rejected. |
 | `input_hash` | for inference | keccak256 of input |
+| `messages` | for inference | OpenAI-shaped chat messages. Alternative to `input`. |
+| `tools` | no | OpenAI tool definitions (`{type:"function", function:{name,...}}`), forwarded to the hub. Tool calls come back on `result.tool_calls`. |
+| `tool_choice` | no | `auto` \| `none` \| `{type:"function",function:{name}}` |
+| `max_tokens` | no | Output budget. **The quote meters this**, so it is also what you are charged for. Default 500. |
+| `temperature` | no | Sampling temperature; default 0.7 |
 | `fee_bps` | no | Default 50 (0.5%); range 50–100 |
 | `payment` | no | `{ "rail": "usdc", "network": "base" }` — default USDC/x402. Take `network` from `POST /task-quote` rather than hardcoding. |
 | `callback_url` | no | Per-task webhook |
@@ -71,9 +76,36 @@ curl -X POST https://api-testnet.xfuel.app/task-request \
 
 Response includes `task_id`, status, and links to status / proof / receipt.
 
+#### Tool calling (agent loops)
+
+`tools` is forwarded to the hub unchanged, and a tool call comes back on
+`result.tool_calls` with `result.finish_reason: "tool_calls"` — feed it into the
+next `/task-request` as an `assistant` turn plus a `tool` turn, exactly as you
+would against the OpenAI API.
+
+Two things follow from asking for tools:
+
+- **`xfuel/auto` routes differently.** A request carrying tools (or a tool result)
+  is agent work, and resolves to the model that completes multi-turn loops; a
+  plain completion resolves to the cheaper, non-reasoning model. See
+  [MODEL_QUALITY_EVAL.md](./MODEL_QUALITY_EVAL.md).
+- **Not every hub can serve them.** Theta EdgeCloud's on-demand API has no tools
+  parameter, so a tool request routed there fails with `tools_unsupported_on_hub`
+  rather than returning prose your loop cannot parse. Name an AkashML model, or
+  drop `tools`.
+
 ### GET /task-status
 
 `GET /task-status?task_id=<id>`
+
+Returns the task's status, `result` (including `tool_calls` when the model called
+one), and — on `status: "failed"` — an `error` object with `code`, `message` and
+often a `hint`. Codes you should handle: `model_not_found`,
+`tools_unsupported_on_hub`, `no_provider_available`.
+
+A task that no configured provider can serve **fails**. It is never answered with
+a synthetic result: `/task-request` has already taken payment by then, so a mock
+would be a signed receipt for an inference that never ran.
 
 ### GET /prove-result
 
@@ -85,7 +117,28 @@ Public receipt (HTML or `?format=json`). No auth.
 
 ### POST /task-quote
 
-Price a task for a payment rail before submit.
+Price a task for a payment rail before submit. Send the same body you intend to submit — the quote
+meters your actual prompt and `max_tokens`, so a stripped-down body prices a different task.
+
+`rails.usdc.pricing` shows the working, including which model the price is for:
+
+```json
+"pricing": {
+  "basis": "metered",
+  "requested_model": "xfuel/auto",
+  "priced_model": "akash/zai-org/GLM-5.2",
+  "prompt_tokens": 68000,
+  "max_output_tokens": 247,
+  "rate_per_million": { "in": 3000000, "out": 9000000 },
+  "floor_applied": false
+}
+```
+
+**`xfuel/auto` is not one price.** It resolves per request shape, and the models sit in different
+rate-card rows, so agent work (anything carrying `tools` or a tool-result turn) prices roughly 10x a
+short completion — about $0.21 against $0.021 on a median 68k-token prompt. `priced_model` is what
+makes the number explainable; name a model explicitly if you want a price you can predict without
+quoting.
 
 ### Webhooks
 

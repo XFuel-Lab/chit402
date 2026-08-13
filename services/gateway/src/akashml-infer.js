@@ -73,6 +73,9 @@ export function akashmlApiKey() {
  * @param {Array}  opts.messages
  * @param {number} [opts.max_tokens]
  * @param {number} [opts.temperature]
+ * @param {Array}  [opts.tools]        OpenAI tool definitions, forwarded as-is
+ * @param {string|object} [opts.tool_choice]
+ * @param {string} [opts.cacheNamespace] per-buyer prompt-cache partition (see buyer-attr.js)
  * @param {string} [opts.apiKey]
  * @param {string} [opts.baseUrl]
  * @param {number} [opts.timeoutMs]
@@ -85,6 +88,9 @@ export async function inferAkashML({
   messages,
   max_tokens = 500,
   temperature = 0.7,
+  tools = null,
+  tool_choice = null,
+  cacheNamespace = null,
   apiKey = akashmlApiKey(),
   baseUrl = process.env.AKASHML_BASE_URL || DEFAULT_BASE,
   timeoutMs = 60_000,
@@ -108,6 +114,22 @@ export async function inferAkashML({
     temperature,
     max_tokens,
   };
+  if (Array.isArray(tools) && tools.length) {
+    body.tools = tools;
+    if (tool_choice) body.tool_choice = tool_choice;
+  }
+  // Partition the upstream prompt cache per buyer. All XFuel traffic shares one
+  // AkashML key, so the provider sees one account and cannot isolate our tenants
+  // from each other — a measured leak in this exact architecture (see
+  // cacheNamespace in buyer-attr.js). Both field names are sent because the
+  // upstream engine is not contractually known: `cache_salt` is vLLM's, and
+  // `prompt_cache_key` is the OpenAI-standard spelling. AkashML accepts and
+  // ignores unknown fields, so sending both is safe; neither is documented as
+  // honoured, which is why this is defence in depth rather than a guarantee.
+  if (cacheNamespace) {
+    body.cache_salt = cacheNamespace;
+    body.prompt_cache_key = cacheNamespace;
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -141,8 +163,14 @@ export async function inferAkashML({
     const finishReason = choice?.finish_reason ?? null;
     const usage = data?.usage ?? null;
     const output = choice?.message?.content ?? choice?.text ?? '';
+    const toolCalls = Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length
+      ? choice.message.tool_calls
+      : null;
 
-    if (typeof output !== 'string' || !output) {
+    // A tool call IS the answer, and it arrives with `content: null` by design.
+    // Treating empty content as failure here is what made tool calling unusable
+    // through the gateway even before the request side dropped `tools`.
+    if (!toolCalls && (typeof output !== 'string' || !output)) {
       // Reasoning models (GLM-5.2 et al) emit `reasoning_content` before `content`,
       // so a max_tokens budget consumed entirely by reasoning yields finish_reason
       // 'length' with an empty answer. That is an under-budgeted request, NOT a
@@ -174,6 +202,7 @@ export async function inferAkashML({
       ok: true,
       model,
       output,
+      toolCalls,
       raw: data,
       usage,
       finish_reason: finishReason,

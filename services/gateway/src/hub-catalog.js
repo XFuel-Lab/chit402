@@ -101,7 +101,12 @@ export function classifyThetaService(svc) {
   const predName = svc.default_prediction || Object.keys(svc.predictions || {})[0] || 'predict';
   const pred = svc.predictions?.[predName] || {};
   const vars = pred.input_vars || {};
-  const cost = pred.cost || null;
+  // Theta's price is `cost` over `cost_divisor`, in the unit named by
+  // `instructions` — tokens for LLMs, images for the diffusion models. All three
+  // are needed to read it; provider-rates.js does the interpreting.
+  const cost = pred.cost
+    ? { ...pred.cost, cost_divisor: pred.cost_divisor ?? 1, price_unit: parseThetaUnits(pred.instructions) }
+    : null;
 
   let modality = /** @type {Modality} */ ('other');
   if (predName === 'completions' || vars.messages) modality = 'chat';
@@ -121,6 +126,27 @@ export function classifyThetaService(svc) {
   if (alias === 'qwen3' || alias === 'glm_5_2' || alias.includes('llama')) modality = 'chat';
 
   return { modality, default_prediction: predName, input_vars: vars, cost };
+}
+
+/**
+ * Theta describes its own price units in an `instructions` JSON string:
+ * `{"isPriceSplit":true,"inputUnit":"1M input tokens","outputUnit":"1M output tokens"}`
+ * for LLMs, `{"unit":"image","isPriceSplit":false}` for the diffusion models. On
+ * some services it also carries unrelated sample-image URLs, so parse
+ * defensively and treat anything unreadable as unknown.
+ * @returns {{isPriceSplit:boolean, unit:string|null}}
+ */
+function parseThetaUnits(instructions) {
+  if (!instructions || typeof instructions !== 'string') return { isPriceSplit: false, unit: null };
+  try {
+    const parsed = JSON.parse(instructions);
+    return {
+      isPriceSplit: !!parsed.isPriceSplit,
+      unit: parsed.inputUnit || parsed.unit || parsed.outputUnit || null,
+    };
+  } catch {
+    return { isPriceSplit: false, unit: null };
+  }
 }
 
 /**
@@ -305,12 +331,75 @@ function withAuto(models) {
 }
 
 /**
+ * Does this request look like agent work? Tools offered, or a tool result being
+ * fed back. Both mean the caller is running a loop, which is the workload where
+ * models diverge sharply — see `autoPreferenceFor`.
+ * @param {{ tools?: unknown, messages?: Array<{role?: string, tool_calls?: unknown}> }} req
+ * @returns {'agent'|'simple'}
+ */
+export function requestShape(req = {}) {
+  if (Array.isArray(req.tools) && req.tools.length) return 'agent';
+  const messages = Array.isArray(req.messages) ? req.messages : [];
+  const looping = messages.some((m) => m?.role === 'tool' || (Array.isArray(m?.tool_calls) && m.tool_calls.length));
+  return looping ? 'agent' : 'simple';
+}
+
+/**
+ * What `xfuel/auto` should resolve to, per request shape. Evidence-led — see
+ * docs/MODEL_QUALITY_EVAL.md.
+ *
+ * There is no single right default, because the two workloads want opposite
+ * things and picking one model punishes the other:
+ *
+ *   - **Agent loops.** Over 18 runs of a dependent-tool-call loop, GLM-5.2
+ *     completed 6/6, GPT-OSS-120B 3/6, and Llama 3.3 70B **0/6** — Llama makes
+ *     three correct tool calls, then abandons the loop and emits Python
+ *     describing what it would have done. A default that cannot finish an agent
+ *     loop is a correctness bug, not a price/quality trade, and agent teams are
+ *     the beachhead.
+ *
+ *   - **Short completions.** GLM is a reasoning model: it spends ~110 output
+ *     tokens to answer "PONG" and returns nothing at all below `max_tokens=256`.
+ *     Making it the blanket default breaks every caller sending a small budget
+ *     and bills ~37x the output tokens for a one-word answer. Llama answers the
+ *     same prompt in 3 tokens at `max_tokens=16`, and swept the single-turn
+ *     primitives 27/27.
+ *
+ * So route on the shape of the request rather than paying one of those costs on
+ * every call. `XFUEL_AUTO_MODEL` overrides both without a code change.
+ *
+ * @param {'agent'|'simple'} [shape]
+ * @returns {string[]} catalog ids, best first
+ */
+export function autoPreferenceFor(shape) {
+  return shape === 'agent'
+    ? [
+        'akash/zai-org/GLM-5.2',
+        'akash/openai/gpt-oss-120b',
+        'theta/qwen3',
+        'akash/meta-llama/Llama-3.3-70B-Instruct',
+      ]
+    : [
+        'akash/meta-llama/Llama-3.3-70B-Instruct',
+        'akash/openai/gpt-oss-120b',
+        'theta/qwen3',
+        'akash/zai-org/GLM-5.2',
+      ];
+}
+
+/**
  * Resolve a client model id to a catalog row.
  * Accepts hub/alias, bare alias (theta preferred, then any hub), or xfuel/auto.
  *
+ * A failed hub poll drops that hub's models from `models` entirely, so the
+ * preference lists degrade to the other hub on an outage with no explicit
+ * failover logic.
+ *
  * @param {string} modelId
  * @param {CatalogModel[]} models
- * @param {{ modality?: Modality }} [opts]
+ * @param {{ modality?: Modality, shape?: 'agent'|'simple' }} [opts]
+ *   `shape` steers `xfuel/auto` only — 'agent' when the request carries tools or a
+ *   tool-result turn. See `autoPreferenceFor`.
  * @returns {{ ok: true, model: CatalogModel, requested: string } | { ok: false, reason: string, requested: string }}
  */
 export function resolveCatalogModel(modelId, models, opts = {}) {
@@ -319,11 +408,13 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
 
   if (requested === 'xfuel/auto' || requested === 'auto' || requested === 'xfuel-auto') {
     const chat = models.find((m) => m.hub !== 'xfuel' && m.modality === 'chat');
-    // Prefer GLM on either hub, then Qwen, then first live chat model.
+    const order = autoPreferenceFor(opts.shape);
+    const pick = (id) => models.find((m) => m.id === id);
+
+    const override = (process.env.XFUEL_AUTO_MODEL || '').trim();
     const preferred =
-      models.find((m) => m.id === 'theta/glm_5_2') ||
-      models.find((m) => m.id === 'akash/zai-org/GLM-5.2') ||
-      models.find((m) => m.id === 'theta/qwen3') ||
+      (override ? models.find((m) => m.id === override || m.alias === override) : null) ||
+      order.map(pick).find(Boolean) ||
       chat;
     if (!preferred) return { ok: false, reason: 'no_chat_models', requested };
     return { ok: true, model: preferred, requested };

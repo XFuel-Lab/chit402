@@ -8,7 +8,12 @@
  *
  * Env:
  *   PROVIDER_FLOATS_JSON={"theta-edgecloud":{"asset":"USDC","balance":"1000000","low_water":"100000","enabled":true},"akash-network":{"asset":"USDC","balance":"500000","low_water":"50000","enabled":true}}
- *   PROVIDER_COGS_BPS=7000   // estimated COGS as bps of USDC quote (default 70%)
+ *   PROVIDER_COGS_BPS=7000   // FALLBACK ONLY — estimated COGS as bps of the USDC
+ *                            // quote. Circular (a share of our own price, not of
+ *                            // the work) and measured 1.65x–5.6x high. Both live
+ *                            // hubs publish per-token rates, so this now applies
+ *                            // only to a provider that publishes none, or when
+ *                            // the catalog poll fails; see provider-rates.js.
  *   PROVIDER_FLOAT_DEFAULT=theta-edgecloud
  *   PROVIDER_FLOAT_ENFORCE=true  // when true, reject if no float can cover COGS
  */
@@ -227,7 +232,7 @@ export class ProviderFloatManager {
   /**
    * Build receipt/meta provider_cogs block after a successful select+burn.
    */
-  buildCogsRecord({ provider, float, estimated, actual, burnResult }) {
+  buildCogsRecord({ provider, float, estimated, actual, burnResult, basis = 'estimated' }) {
     if (!float && !provider) return null;
     const asset = float?.asset || 'USDC';
     const act = actual != null ? parseAmount(actual, estimated).toString() : estimated.toString();
@@ -237,6 +242,10 @@ export class ProviderFloatManager {
       currency: asset,
       estimated: estimated.toString(),
       actual: act,
+      // 'measured' → real tokens × the provider's published per-token rate.
+      // 'estimated' → the bps fallback, which is a guess about our own price
+      // rather than about the work. Label it so nobody reads one as the other.
+      basis,
       // USD mark: when asset is USDC, same as actual; otherwise ops fill later.
       usd_mark: asset === 'USDC' ? act : null,
       below_low_water: !!burnResult?.below_low_water,
@@ -251,9 +260,12 @@ export class ProviderFloatManager {
    * @param {string|null} [opts.preferredProvider]
    * @param {string|null} [opts.actualProvider]  result.provider / routedTo / hub adapter id
    * @param {bigint|string|number} opts.estimated
+   * @param {bigint|string|null} [opts.measured]  real cost from tokens × published rate
+   *   (see provider-rates.js). When present this is what burns — the estimate is a
+   *   percentage of our own price and was measured 1.65x–5.6x too high.
    * @returns {{ provider: string|null, record: object|null, burnResult: object|null }}
    */
-  reconcileAfterServe({ preferredProvider = null, actualProvider = null, estimated }) {
+  reconcileAfterServe({ preferredProvider = null, actualProvider = null, estimated, measured = null }) {
     const est = parseAmount(estimated, 0n);
     const providerId =
       normalizeProviderId(actualProvider)
@@ -265,17 +277,21 @@ export class ProviderFloatManager {
     }
 
     const float = this.floats.get(providerId) || null;
+    const hasMeasured = measured !== null && measured !== undefined;
+    const toBurn = hasMeasured ? parseAmount(measured, est) : est;
+
     let burnResult = null;
-    if (float && est > 0n) {
-      burnResult = this.burn(providerId, est);
+    if (float && toBurn > 0n) {
+      burnResult = this.burn(providerId, toBurn);
     }
 
     const record = this.buildCogsRecord({
       provider: providerId,
       float,
       estimated: est,
-      actual: burnResult?.burned || est,
+      actual: burnResult?.burned || toBurn,
       burnResult,
+      basis: hasMeasured ? 'measured' : 'estimated',
     });
     return { provider: providerId, record, burnResult };
   }

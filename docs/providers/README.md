@@ -31,6 +31,20 @@ Private Spend (vendor-blind) is orthogonal — [PRIVATE_SPEND_THESIS.md](../PRIV
 
 Buyers always pay USDC on Base. Do not surface TFUEL/AKT as buyer rails. Historical Theta EVM notes (if present) are provider-ops only — not settlement-home docs. Prefer [RUNTIME_STATE.md](../RUNTIME_STATE.md).
 
+## Theta EdgeCloud is a desktop-GPU marketplace, not pooled consumer devices
+
+Researched 2026-08-12, because the "combine phones and laptops" framing keeps resurfacing and it is worth not re-litigating.
+
+**It is not what it is described as.** Theta's own client requirements are bare-metal Ubuntu 22.04+, a discrete NVIDIA GPU with **≥8 GB VRAM** (they recommend 3090/4090/A100/H100), 16 GB RAM, 256 GB free disk and 100 Mbps symmetric. There is no macOS client, so every M-series Mac is excluded, and no phone meets a single line of it. The phone framing appears only in third-party summaries, never in Theta's own docs. Their own 235B prefill/decode disaggregation benchmark ran on **two H200 servers over RDMA** — when Theta does serious LLM engineering it uses datacenter hardware; the edge tier gets small models on consumer cards.
+
+**Scale, measured.** Theta's only usage disclosure (Sept 2025 AMA, covering Aug 2025) is 261M LLM tokens/month. At our measured 68,247-token median agent call that is **127 agent calls a day**, about 9% of one RTX 4090's throughput, and roughly **0.5% of AkashML's 1.7B tokens/day**. Their homepage advertises "30,000+ edge nodes" and, lower on the same page, a live counter reading 8,742 — consistent with the DePIN base rate, where io.net reports 327,000 registered GPUs against 6,720 daily active (2.1%). Treat any advertised device count as ~2% real.
+
+This is why [ADR 0002](../adr/0002-base-settlement-home.md) makes Theta an optional provider rather than a strategic bet. Keep the adapter; do not build positioning on it.
+
+**Two findings that change decisions elsewhere.** Long context inverts the usual batching argument — at 68k tokens the KV cache dominates and does not amortise across a batch, so a datacenter's edge over a 4090 narrows to ~5.6x on energy rather than the ~43x a naive concurrency comparison suggests. But prefix caching restores it to ~58x, because agent calls share prompts and a 24 GB card cannot hold the shared cache. That is another argument for prompt caching being the largest cost lever we have. Separately, the sub-4B tier — the only model class our old flat $0.01 was profitable on — is the exact tier becoming free on-device (Apple runs ~3B locally and routes ~20% of requests to its own servers). Cheap-tier pricing has a floor under it that is falling toward zero.
+
+Behind-the-meter generation, not distributed edge, is the industry's answer to the grid-interconnection queue: it converts a 5–7 year utility wait into 12–18 months while keeping industrial power rates, HBM, batching and RDMA. Residential electricity runs 2.12x industrial in the US (EIA, May 2026) and the ECB finds ~2x in the euro area, so pooled consumer compute pays more for power and gets no schedule advantage a BTM operator does not also get.
+
 ## Preferred provider + COGS
 
 `preferred_provider` on `/task-request` selects the *routing preference* and which float is checked at quote time. COGS are burned **after** inference against the provider that actually served (`provider_cogs.provider` / signed `route.provider`). This keeps multi-provider accounting honest.

@@ -1,6 +1,6 @@
 # Pricing Strategy
 
-Proposed. Numbers here are recommendations for decision, not shipped prices — today's live behaviour is a single flat `$0.01` (`X402_USDC_PRICE_DEFAULT`).
+**Shipped 2026-08-12:** tasks are metered against a rate card (`services/gateway/src/pricing.js`) instead of charged a flat `$0.01`. Sections below marked *superseded* record reasoning that did not survive later research; they are kept because the reasons they failed are the useful part.
 
 Related: [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) · [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md) · [VERIFIED_INFERENCE_TIERS.md](./VERIFIED_INFERENCE_TIERS.md) · [ADR 0001](./adr/0001-usdc-revenue-and-router-verifier-positioning.md) · [KNOWN_ISSUES.md](./KNOWN_ISSUES.md)
 
@@ -50,29 +50,65 @@ Modelling the class prices against real rate cards found a gap. At $0.01 / $0.02
 
 The DePIN cost advantage is real — Llama 3.3 70B is ~79% cheaper on AkashML than Together — but under flat pricing **100% of it becomes our margin and none reaches the buyer**. A "here's what you saved" benchmark built honestly would print a negative number for most calls.
 
-### Price schedule (revised)
+### Superseded: `price = max(floor, min(k × COGS, cap × direct))`
+
+The cost-plus multiple `k` was the recommendation until the cost curve was measured. **Price per task in this market falls 5–10x a year** (MIT/Thompson, at fixed benchmark performance on the Pareto frontier), of which ~3x is algorithmic rather than competitive. At 5x, a fixed markup loses ~14% of its absolute value every month. Cost-plus inherits the deflation and none of the upside, so deriving price from COGS — even privately — was the wrong instrument. See `canvases/pricing-architecture.canvas.tsx`.
+
+### Shipped: a rate card we own, metered per request, with a floor
+
+`services/gateway/src/pricing.js`:
 
 ```
-price = max( $0.01 floor , min( k × COGS , cap × direct_price ) )
+price = max( floor , prompt_tokens × rate.in + max_tokens × rate.out )
 ```
 
-Three regimes, each with a job to do:
-
-| Component | Default | Purpose |
+| Component | Default | Why |
 |---|---|---|
-| **Floor** | $0.01 | Settlement economics — the facilitator takes $0.001/tx, so below this 10%+ of revenue goes to settlement |
-| **Multiple `k`** | 2.5x COGS | Guarantees margin never falls below 1.5x cost. This is the "percentage on bigger jobs" |
-| **Cap** | 0.7 × direct | Makes the DePIN savings claim structurally true rather than a marketing assertion |
+| **`rate.in`** | $0.30 / 1M tokens | Retail, **not** a markup on COGS. Set so a median agent call lands near $0.02 — the median priced x402 route. Every efficiency we find, we keep |
+| **`rate.out`** | $0.90 / 1M tokens | 3x input, matching the shape of published cards |
+| **Floor** | $0.01 | Settlement costs money regardless of token count. The facilitator takes $0.001/tx, so a sub-floor task nets negative however cheap its tokens were |
 
-**A single global multiple does not work**, which is why the cap is load-bearing. The DePIN discount is not uniform: Llama 3.3 70B is ~79% below Together, but GLM-5.2 is only ~45% below. Applying 2.5x cost-plus to a GLM-5.2 standard job gives $0.0275 against a $0.02 direct price — we would overcharge relative to the buyer's alternative while believing we were being fair. The cap catches it.
+Worked against the measured workload shapes, at AkashML Llama 3.3 70B COGS:
 
-Model **classes survive as COGS bands** (which rate card applies), not as fixed price points. Token envelopes are no longer needed to prevent context-stuffing losses, because cost-plus scales with the job automatically — though a ceiling is still worth keeping as abuse protection.
+| Workload | Prompt | Output | We charge | COGS | Old flat price |
+|---|---|---|---|---|---|
+| Chat ping | 750 | 105 | $0.010 (floor) | $0.0001 | $0.01 |
+| **Agent call (median)** | 68,000 | 247 | **$0.021** | $0.0089 | $0.01 — **broke even at ~2.2M calls/mo** |
+| Agent call (P90) | 94,000 | 580 | $0.029 | $0.0125 | $0.01 — loss-making |
 
-Where the floor binds (small jobs), **we should make no savings claim at all**. There we are selling settlement access and a receipt, not a cheaper token.
+Configuration: `X402_USDC_RATE_CARD` (per model family, longest-prefix match), `X402_USDC_FLOOR`, and `X402_USDC_PRICES` for a hand-set flat price that overrides the card. Repricing is deliberate and short-notice — a card decoupled from COGS captures deflation but is fatal in a supply spike, and x402's per-request settlement is what keeps our repricing latency near zero.
 
-Interactive model: `canvases/pricing-model.canvas.tsx`.
+#### One row is not enough: the default model was 4.6x underwater
 
-**Implementation is mostly configuration, not code.** `X402_USDC_PRICES` already accepts a JSON map keyed by model id and `priceTaskUSDC()` already consults it. The gaps are that `/.well-known/x402` advertises only the default price (`x402-discovery.js:102`) and `/v1/models` does not carry price at all — both should expose the schedule so an agent can plan before committing.
+Metering fixed the price and left the card's *shape* wrong. A single `default` row charged the same for every model while AkashML's catalogue spans **$0.037/M to $1.40/M input, a 38x range**, so the row was set for the cheap end and GLM-5.2 was sold at **$0.021 against $0.096 of cost — a $0.075 loss on every median agent call**, worse per call than the flat price it replaced. GLM-5.2 is what both `AKASHML_DEFAULT_MODEL` and `xfuel/auto` resolve to, so the unmodified default path was the loss-making one. Fixed with a per-model row; the default path now returns +$0.112.
+
+This is still not cost-plus. The card does not track COGS as it drifts, and every efficiency we find we keep. Tiers exist because a frontier-class model is a genuinely different product from a small one — which is why every published card has them — not because we recompute a markup.
+
+Two residual holes. A newly-listed dear model falls to the cheap default row until someone adds one, so the backstop is a runtime warning when measured COGS exceeds the settled price (`_warnIfBelowCost`), which catches the loss only after we have taken it. And GLM now costs a buyer **$0.21 against $0.021 for everything else**, which makes routing agent work to it a live commercial choice rather than a hidden subsidy — see the open decision below.
+
+#### The rows only bite if the alias is resolved first
+
+Per-model rows fixed the loss for a caller who *names* GLM-5.2, and nobody does — the documented default is `model_id: "xfuel/auto"`. Pricing ran before routing resolved it, matched `model_id` verbatim, missed every row, and quoted the cheap default for whatever it went on to serve. **The $0.075 loss stayed live on the only path a real caller takes** for a day after being marked fixed, and the unit tests missed it because they priced concrete model ids.
+
+The quote now resolves the alias through the live catalog before pricing (`resolvePricingModel`), using the same request-shape classification routing uses, so the 402 challenge and the settled amount cannot disagree. One consequence is worth stating plainly to buyers rather than hiding: **the same alias is two prices**, ~$0.021 for a short completion and ~$0.21 for agent work, because the shape decides the model. `/task-quote` returns `requested_model` and `priced_model` so the number is explainable.
+
+#### COGS is measured now, not guessed
+
+Margin figures were previously unknowable, because COGS was `gross × 70%` — a share of our own price rather than of the work, circular and wrong by 1.65x to 5.6x. `src/provider-rates.js` prices real tokens at the provider's published per-token rate, read at runtime from the catalogue rather than hardcoded (the table changes: cache-read rates exist on some models and not others, and appeared on one mid-research). Receipts and float burns carry `basis: 'measured' | 'estimated'` so the two are never conflated.
+
+Both hubs are covered. Theta's rate is published too — `cost` over `cost_divisor`, in the unit its `instructions` field names — but **denominated in US cents, which the API never states**; TFUEL is the natural guess and is wrong by ~110x. See [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) for how the unit was pinned. With Theta read correctly, all eight live chat models clear cost at 1.52x to 7.90x, and `theta/glm_5_2` — which `xfuel/auto` preferred *before* the Akash copy at the time — turned out to be the dearest model in the catalogue at $0.106 per median agent call. It is priced, and no longer preferred.
+
+**`payment.maxAmount` no longer sets the price.** It was returned verbatim, so a buyer could name one base unit for a 68k-token job. It is now a ceiling they meet or decline.
+
+Two things metering does not yet do. Output is quoted at the `max_tokens` **ceiling**, because the `exact` scheme prices before the work runs — the `upto` scheme would settle actual output and refund the difference. And prompt tokens are estimated at ~4 chars/token rather than tokenised, which is proportional but not exact.
+
+Still open: `/.well-known/x402` advertises only the default price (`x402-discovery.js:102`) and `/v1/models` carries no price at all, so an agent cannot plan before committing.
+
+### Metering `/v1` — built, and deliberately not switched on
+
+`/v1/chat/completions` is the busiest surface and has always been free, so metering `/task-request` alone earns nothing: the traffic goes through the unmetered door. It is now payable over x402 behind `X402_METER_V1`, priced by the same rate card, with the demo key and `X402_METER_V1_EXEMPT_KEYS` exempt. An unpaid call gets a 402 whose body carries both the x402 `accepts` array and an OpenAI-shaped `error`, so either kind of client can read it. Every `/v1` task now records its token usage whether or not it was charged.
+
+**The flag is off, and turning it on is a commercial decision, not a deploy.** A plain OpenAI SDK cannot satisfy a 402 — the whole point of the OpenAI-compatible surface is that any client works unmodified, and metering it means only x402-aware callers can use it. The options are to keep `/v1` free as a funnel and meter `/task-request`, to meter `/v1` and accept that it serves x402 clients only, or to keep a free tier per key and charge above it. Worth noting the third reintroduces account balances, which the supply-shock analysis argues against.
 
 ### Assurance axis: start charging for proofs
 
@@ -128,7 +164,7 @@ Marlin prices `/v1/chat/premium` at $1.00 USDC via x402, so a proof add-on in th
 |---|---|---|---|---|
 | Llama 3.3 70B | $0.13 / $0.40 | **$0.10 / $0.32** | Bedrock $0.72 / $0.72 | **We are ~25–30% above floor** |
 | GLM-5.2 | $0.77 / $2.42 | $0.50 / $3.15 | Fireworks $2.10 / $6.60 | Dearer input, **cheaper output** — wins on reasoning-shaped work |
-| GPT-OSS 120B | *not offered* | $0.03 / $0.17 | Consensus $0.15 / $0.60 | Cleanest benchmark model; we cannot route it |
+| GPT-OSS 120B | $0.037 / — | $0.03 / $0.17 | Consensus $0.15 / $0.60 | Cleanest benchmark model; **AkashML now lists it and we route it** |
 
 DePIN comfortably beats hyperscalers and loses to the best aggregator routes. So the honest claim is not "decentralised GPUs are cheaper" — it is **"we route to whoever is actually cheapest, and prove which one ran."** That is a better story, and it makes the benchmark a forcing function on our own procurement rather than a marketing line.
 
@@ -145,7 +181,7 @@ Rules that keep the benchmark honest:
 
 What makes our version defensible is narrow but real: every other vendor compares a *modelled* counterfactual against a *modelled* baseline. Our receipt binds an attested, actually-settled payment to the route that actually ran. Not "trust us on price" but "here is the counterfactual, verify it yourself" — which only holds if we pick the baseline honestly.
 
-**Model choice matters too.** Llama 3.3 70B hit its deprecation date on 2026-07-19, so it is a poor flagship. GPT-OSS 120B has a hard consensus price of $0.15/$0.60 across Groq, Together, Fireworks, Azure and Bedrock, which makes it the cleanest reference we have — but AkashML does not list it. Adding a provider that serves it would give us the ideal demo.
+**Model choice matters too.** Llama 3.3 70B hit its deprecation date on 2026-07-19, so it is a poor flagship — and a multi-turn agent-loop eval since found it cannot complete an agent loop at all (0/6), which retired it as the default. GPT-OSS 120B has a hard consensus price of $0.15/$0.60 across Groq, Together, Fireworks, Azure and Bedrock, which makes it the cleanest reference we have, and AkashML now lists it, so the benchmark model and a routable model are finally the same thing.
 
 ### Spend Intelligence: a plan, not a percentage
 
@@ -170,13 +206,17 @@ Worth noting: a monthly subscription fits the human who approves the invoice, no
 | Option | Verdict |
 |---|---|
 | **Prepaid credits + 5% top-up fee** (OpenRouter / Eden AI) | **Not as the primary model.** ~600x less revenue per call, needs OpenRouter-scale volume, puts the reasoning tax back on the buyer, and benchmarks us directly against a company with 8M developers. Viable only as an enterprise BYOK option |
-| **Sub-cent per-call pricing** | **Not yet.** Requires batched settlement; CDP's `batch-settlement` is not registered server-side today (withdrawn over a channel-lifecycle bug). Revisit when a specific sub-cent surface such as MCP tool calls has volume |
+| **Sub-cent per-call pricing** | **Unblocked, not yet scheduled.** This was rejected because CDP's `batch-settlement` was not registered server-side. Asking CDP directly on 2026-08-12 says otherwise: `batch-settlement` **is live on Base mainnet** (`receiverAuthorizer 0x3721824a31197dcDD2984cF43b92B6cc8A87c0Fb`), as is `upto`. Both are x402 v2-only, so the v2 migration is the real prerequisite — see [X402_SCHEME_MIGRATION.md](./X402_SCHEME_MIGRATION.md) |
 | **Publishing a percentage skim on provider cost** | **No — and this is a framing rule, not a mechanism rule.** Deriving price from cost internally (the `k × COGS` multiple) is fine and is what protects margin. *Advertising* a percentage over provider cost is not: it re-anchors us to the 5% router band and invites "why not 1.05x like OpenRouter?". Akash's abandoned 20% is the existence proof. Publish the price and the saving against the buyer's alternative; the cost basis and the multiple stay internal |
 | **Volume discounts on a published schedule** | **No.** OpenRouter states plainly it offers none; Requesty has no minimum. Discount at the enterprise contract instead |
 
 ## Open decisions
 
-1. **Provider mix is now a pricing decision.** We are ~25–30% above the floor on Llama 3.3 70B, and cannot route GPT-OSS 120B at all. Under a savings cap, being above the floor means either no savings claim or selling below cost — so procurement, not pricing, is the binding constraint. Adding a cheap aggregator route may be worth more than any price change.
+0. **The cheap tier has a floor falling toward zero.** Sub-4B models — the only class the old flat $0.01 was profitable on — are the exact class becoming free on the buyer's own hardware. Apple runs a ~3B model on-device and routes only ~20% of requests to its servers. Any pricing that leans on small-model volume is leaning on a tier with a disappearing willingness to pay; the rate card should earn on long-context agent traffic, which is where the floor binds least. See [providers/README.md](./providers/README.md).
+
+1. **What should `xfuel/auto` default to? — decided twice on 2026-08-12, and the second answer stands.** Single-turn primitives found all three candidates at 27/27, so the default moved to the cheapest and fastest (Llama 3.3 70B). A multi-turn agent loop then found the opposite: over 18 runs, **GLM-5.2 completed 6/6, GPT-OSS-120B 3/6, and Llama 0/6** — Llama makes three correct tool calls and then abandons the loop to emit Python, and a corrective system prompt only reaches 2/6 ([MODEL_QUALITY_EVAL.md](./MODEL_QUALITY_EVAL.md)). Our beachhead is agent teams, so the default is back on `akash/zai-org/GLM-5.2`. **This is the open commercial question**: the buyer now pays **$0.21 against $0.021** per median agent call. Per *completed loop* the gap is far narrower, because GLM finishes in half the turns using parallel tool calls, but that is measured on small-context turns and does not transfer to the 68k shape. `XFUEL_AUTO_MODEL` flips it without a deploy; GPT-OSS-120B at 5/6 with a system prompt is the defensible cost-led alternative, at 3.5x the latency.
+
+   A second-order effect worth noting: **GLM-5.2 is one of only three models that price cached reads** ($1.40/M fresh against $0.26/M cached, 5.4x), where Llama and GPT-OSS price none. Agent loops resend the conversation every turn, so the default route is now the one where caching could pay — except AkashML does not report cache hits, so the discount is unobservable and unbillable (`scripts/dev/_cache_gate.mjs`). table changes — read them from `/v1/models` at runtime, never hardcode.
 2. **Reference rate cards need an owner.** The savings cap and the benchmark both depend on knowing what a centralised host charges. Stale baselines make the claim misleading, so this needs a refresh job and a named source per model.
 3. **Confirm Succinct's per-proof base fee** (`GetProofRequestParams`) — it is the whole cost for a circuit our size and it is unpublished.
 2. **Does the revenue split base need to change?** ADR 0001 splits the *fee* 40/35/25. At 50 bps on a $0.01 task the buyback bucket receives **$0.0000175 per task** — 1M tasks/month funds $17.50 of buyback, while gross margin on the same volume is roughly $18,000. If the token thesis depends on that split, the base has to be gross margin, not the nominal fee. This needs an explicit call.
@@ -190,9 +230,10 @@ Worth noting: a monthly subscription fits the human who approves the invoice, no
 | # | Item | Status |
 |---|---|---|
 | 0 | Receipt gross derives from settled payment | **Done** 2026-08-11 |
-| 1 | True COGS from real provider usage | Open — blocking gate |
-| 2 | Meter `/v1/chat/completions` | Open |
-| 3 | Populate `X402_USDC_PRICES` with the class schedule | Open |
+| 1 | Capture real token usage per task (`src/usage.js`, `/stats.tokens`) | **Done** 2026-08-12 |
+| 1b | True COGS from real provider usage, once traffic accumulates | Open — blocking gate |
+| 2 | Meter `/v1/chat/completions` | **Built** 2026-08-12 (`X402_METER_V1`, default off) — enabling it is a founder call, see below |
+| 3 | Rate card replaces the flat price | **Done** 2026-08-12 (`src/pricing.js`) |
 | 4 | Advertise per-model price on `/.well-known/x402` and `/v1/models` | Open |
 | 5 | Price the assurance tiers | Open — Tier 2 now looks free; Tier 3b spot-check is the one to price |
 | 6 | Confirm Succinct per-proof base fee via `GetProofRequestParams` | Open — ~20 min, closes the last cost unknown |

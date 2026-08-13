@@ -329,6 +329,11 @@ export function providerCogsOf(task) {
     currency: c.currency || null,
     estimated: c.estimated != null ? String(c.estimated) : null,
     actual: c.actual != null ? String(c.actual) : null,
+    // Whether `actual` is real tokens at the provider's published rate
+    // ('measured') or the bps fallback ('estimated'), which is a share of our own
+    // price rather than of the work. Dropping this made the two indistinguishable
+    // on the receipt, which is the one place the difference is load-bearing.
+    basis: c.basis || null,
     usd_mark: c.usd_mark != null ? String(c.usd_mark) : (c.usdMark != null ? String(c.usdMark) : null),
     below_low_water: !!c.below_low_water || !!c.belowLowWater,
   };
@@ -366,14 +371,23 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
     updated_at: task.updatedAt || null,
     route: {
       message_type: task.intent?.type || null,
-      model: task.intent?.model || task.intent?.modelId || null,
+      // The model that served, falling back to what was asked for. A receipt
+      // attesting `xfuel/auto` names an XFuel alias, not a model anyone can check.
+      model: task.result?.model || task.intent?.model || task.intent?.modelId || null,
       model_commitment: modelCommitment,
       // Prefer actual compute source over float-book label (float can say
       // theta-edgecloud while result is still mock / another tier).
       provider: (() => {
         const fromResult = task.result?.provider || task.result?.routedTo || task.routedTo || null;
         if (task.result?.mock) return fromResult || 'mock';
-        return fromResult || task.meta?.provider || providerCogs?.provider || null;
+        if (fromResult) return fromResult;
+        // Nothing served, so there is no compute source to name. `meta.provider`
+        // carries the float default, and attesting it on a failed task would
+        // credit a provider that never ran.
+        if (task.status !== 'completed' && !providerCogs) return null;
+        // A COGS record is evidence of a real burn against that float, so it
+        // outranks the treasury default label.
+        return providerCogs?.provider || task.meta?.provider || null;
       })(),
       chain_id: task.meta?.chain || task.intent?.chainId || null,
     },
