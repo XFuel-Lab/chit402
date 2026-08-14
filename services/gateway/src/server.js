@@ -8,7 +8,7 @@ import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, resolvePricingModel } from './x402-server.js';
-import { quoteTask } from './pricing.js';
+import { quoteTask, checkPricingConfig } from './pricing.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { proveAllowedForKey, proofAvailability } from './prove-gate.js';
 import { freeTierStatus } from './free-tier.js';
@@ -317,6 +317,11 @@ function calculateTaskFee(grossAmount, feeBps = AI_TASK_FEE_BPS) {
  */
 export function createApp() {
   const app = express();
+
+  // Cost-plus and the Tier-2 thresholds are only solvent together; each looks
+  // reasonable alone. Logged at error level rather than thrown — a pricing
+  // combination should not take the gateway down, but it must not be quiet.
+  checkPricingConfig(config.verifiedInference);
 
   // ── Proxy trust ──────────────────────────────────────────────────────────
   // Behind a TLS reverse proxy (Caddy/nginx), req.ip is the proxy's address

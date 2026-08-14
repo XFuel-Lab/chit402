@@ -965,8 +965,16 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
     if (freeBucket) {
       const allowance = checkFreeAllowance(freeBucket);
       if (!allowance.allowed) {
+        const global = allowance.scope === 'global';
         logger.warn(
-          { reqId: req.id, spentUsd: cogsUsd(allowance.spent), limitUsd: cogsUsd(allowance.limit) },
+          {
+            reqId: req.id,
+            scope: allowance.scope,
+            spentUsd: cogsUsd(allowance.spent),
+            limitUsd: cogsUsd(allowance.limit),
+            globalSpentUsd: cogsUsd(allowance.globalSpent),
+            globalLimitUsd: cogsUsd(allowance.globalLimit),
+          },
           'openai-gateway: free allowance exhausted',
         );
         // 402 rather than 429: retrying does not help before the reset, and the
@@ -976,11 +984,18 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
         res.set('Retry-After', String(allowance.retryAfterSec));
         return res.status(402).json({
           error: {
-            message: `Free allowance exhausted: $${cogsUsd(allowance.limit)} of provider cost today. `
-              + `It resets at ${allowance.resetAt}. For uninterrupted access, use a metered key — `
-              + 'receipts are free either way.',
+            // Say which ceiling was hit. Telling a caller who has spent nothing
+            // that they are over their own limit sends them looking for a fault
+            // on their side that does not exist.
+            message: global
+              ? `The shared free tier is exhausted for today: $${cogsUsd(allowance.globalLimit)} of provider cost `
+                + `across all free callers. It resets at ${allowance.resetAt}. A metered key is not subject to `
+                + 'this ceiling — receipts are free either way.'
+              : `Free allowance exhausted: $${cogsUsd(allowance.limit)} of provider cost today. `
+                + `It resets at ${allowance.resetAt}. For uninterrupted access, use a metered key — `
+                + 'receipts are free either way.',
             type: 'payment_required',
-            code: 'free_tier_exhausted',
+            code: global ? 'free_tier_capacity' : 'free_tier_exhausted',
           },
         });
       }

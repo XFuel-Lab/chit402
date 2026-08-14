@@ -189,10 +189,27 @@ Bounded, not solved, and both limits are deliberate. The counter is in memory li
 rate limiter, so **a restart forgives the day's spend** — acceptable for a spend guard, which is
 why it never touches a buyer's invoice. And the ceiling is checked before a call but charged
 after it, so a caller can cross it by at most one call; a pre-serve check cannot know what the
-pending call will cost. The one to watch operationally: the demo key is a **single bucket for
-the whole public internet**, so `FREE_TIER_DAILY_COGS_USD` is also the cap on public exposure.
+pending call will cost.
 `/v1/images/generations` and `/v1/audio/transcriptions` are not COGS-metered yet — no per-token
 rate exists for them — so they neither burn nor draw on the allowance.
+
+**Two holes in the above, both closed 2026-08-14.**
+
+*A per-key ceiling is not a budget.* `FREE_TIER_DAILY_COGS_USD` bounded a key, and keys are free
+to mint — N keys was N ceilings, so total subsidy was unbounded by construction. In open mode the
+bucket falls back to IP, which is cheaper still to rotate. Closed with
+`FREE_TIER_DAILY_COGS_TOTAL_USD` (default $50/day), a network-wide counter a request must also
+clear. It returns 402 `free_tier_capacity` rather than `free_tier_exhausted`, because that caller
+has spent nothing and telling them they are over their own limit sends them hunting a fault on
+their side that does not exist.
+
+*Bucket eviction was a subsidy bypass.* `pruneStale` called `buckets.clear()` once every bucket
+was from the current day, so churning `MAX_BUCKETS` (10,000) distinct keys reset **every** counter
+— including the churner's own — repeatably and for the cost of 10,000 trivial requests. A memory
+guard was a free-allowance reset. Two changes: eviction is now lowest-spend first, so churned
+buckets go and accumulated counters survive; and the network-wide total is held outside the bucket
+map, so no amount of eviction reduces it. `freeTierStatus` reads that counter rather than summing
+buckets, which previously under-reported the give-away at exactly the moment it mattered most.
 
 ### The spot-check sampler compares bytes, and models are not deterministic (High, open)
 
@@ -216,6 +233,49 @@ Fix is in [ADR 0007](./adr/0007-spot-check-assurance.md): keep the sampler, repl
 with an accumulating agreement rate per `(provider, model)` scored over a curated probe battery
 (23 checks per pair, against 179 uncurated), and stop deriving `slashable` from one comparison
 against providers who have staked nothing.
+
+### Proof batching falls back to singles at exactly the volume that needs it (High, open)
+
+A Succinct proof costs a **fixed fee per request**. Measured 2026-08-14 from request
+`0x073ef49f…384fb8b` (`sp1-v6.1.0`): base fee 0.341064 PROVE, total fee
+0.341064000000058698 PROVE. The variable component is 0.000000000058698 PROVE — about
+$8.6 × 10⁻¹², eleven orders of magnitude under the base fee. At PROVE $0.147 that is
+**≈$0.050 per request, whatever the circuit does**. Our circuit is 58,698 PGU; optimising
+it would save nothing.
+
+So cost per settlement is the base fee divided by batch size. **For AI-task settlement
+proofs the batch size is always 1, and no configuration changes that.**
+
+The batching machinery in `sp1-prover-client.js` — `batchSize`, `minBatchSize`,
+`SP1_BATCH_TIMEOUT_MS`, `_flushAsSingle` — cannot serve our proof type:
+
+- `ai-listener.js:1860` calls `sp1Prover.generateProof(proofRequest, true)`. The second
+  argument is `urgent`, and `generateProof` routes urgent requests straight to
+  `_generateSingleProof`, bypassing the queue.
+- It **must** do that. In the host, `parse_request_to_batch` handles `ai_task` only in the
+  `Single` branch, via `parse_ai_task_batch`. The `Batch` branch loops `parse_proof_request`,
+  which parses a `ForwardDeposit` and requires `merkle_proof` / `identity_secret`. Routing an
+  AI task through it would fail to parse or silently produce the wrong proof type.
+
+So the batch queue only ever served TFUEL deposit proofs — legacy Theta — and every Tier-2
+settlement proof pays the full **$0.050**. Against the 10% platform fee on a median agent
+call ($0.0094) that is **5.3x the entire fee**, on every proof, with no config-level remedy.
+
+Batching AI tasks requires extending the guest program's `Batch` branch to accept
+`ai_tasks`, which changes the ELF and therefore the **vKey** — so it also needs the new vKey
+registered in `ZKVerifierSP1` on Base. That is the "Guest v2 ELF + vKey" item already parked
+under Later in [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md), and it is now on the critical path
+for Tier-2 economics rather than a nice-to-have.
+
+Until then Tier-2 is solvent only as an opt-in flat charge, or gated at a COGS threshold high
+enough that 10% of provider cost covers a whole unbatched proof (~$2.00 of COGS at K=4). See
+[PRICING_STRATEGY.md](./PRICING_STRATEGY.md).
+
+Two related exposures. The measured request used `.compressed()`, not the Groth16 wrap
+`ZKVerifierSP1` verifies on Base, so on-chain settlement costs more than $0.050 by an
+unmeasured margin. And proof COGS is denominated in PROVE, which set its all-time low
+($0.1439) on 2026-08-13 after a ~86% annual decline — at its 1-year-ago $1.41 the same
+proof costs $0.48.
 
 ### COGS was a percentage of our own price (High, fixed 2026-08-12)
 

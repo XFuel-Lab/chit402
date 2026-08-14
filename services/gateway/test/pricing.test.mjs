@@ -3,10 +3,16 @@ import assert from 'node:assert/strict';
 
 import {
   quoteTask,
+  quoteFromCogs,
+  costPlusEnabled,
+  platformFeeBps,
+  checkPricingConfig,
   rateCardFor,
   promptTokensFor,
   DEFAULT_RATE,
   DEFAULT_FLOOR_UNITS,
+  DEFAULT_PLATFORM_FEE_BPS,
+  DEFAULT_TIER2_PROOF_UNITS,
 } from '../src/pricing.js';
 
 /** ~4 chars/token, so 4n characters is about n tokens. */
@@ -148,4 +154,161 @@ test('a malformed rate card falls back rather than throwing', () => {
     if (prev === undefined) delete process.env.X402_USDC_RATE_CARD;
     else process.env.X402_USDC_RATE_CARD = prev;
   }
+});
+
+// ── cost-plus pricing (ADR 0009) ─────────────────────────────────────────────
+
+/** Measured COGS of a median agent call on GLM-5.2 via AkashML: $0.094. */
+const MEDIAN_AGENT_COGS = 94_000n;
+
+test('cost-plus is off unless explicitly enabled', () => {
+  const prev = process.env.X402_COST_PLUS;
+  delete process.env.X402_COST_PLUS;
+  try {
+    assert.equal(costPlusEnabled(), false);
+    process.env.X402_COST_PLUS = 'true';
+    assert.equal(costPlusEnabled(), true);
+  } finally {
+    if (prev === undefined) delete process.env.X402_COST_PLUS;
+    else process.env.X402_COST_PLUS = prev;
+  }
+});
+
+test('a median agent call prices at COGS plus 10%', () => {
+  const q = quoteFromCogs(MEDIAN_AGENT_COGS);
+  assert.equal(q.basis, 'cost_plus');
+  assert.equal(q.provider_cogs, '94000');
+  assert.equal(q.platform_fee, '9400');
+  assert.equal(q.amount, '103400');
+  assert.equal(q.floor_applied, false);
+});
+
+test('the buyer can recompute the total from the receipt — the point of the model', () => {
+  // A buyer holds `provider_cogs.actual` (signed) and the stated fee_bps. If
+  // these do not reconcile exactly, the bill is not auditable and the whole
+  // argument for cost-plus over a rate card collapses.
+  const q = quoteFromCogs(MEDIAN_AGENT_COGS);
+  const recomputed = BigInt(q.provider_cogs) + BigInt(q.platform_fee);
+  assert.equal(String(recomputed), q.amount);
+  assert.equal(q.fee_bps, DEFAULT_PLATFORM_FEE_BPS);
+});
+
+test('the floor still catches a call too small to settle', () => {
+  // A 500-token tool call on Llama costs $0.000105. Ten percent of that is a
+  // hundredth of a cent — far below what a settlement costs us.
+  const q = quoteFromCogs(105n);
+  assert.equal(q.amount, String(DEFAULT_FLOOR_UNITS));
+  assert.equal(q.floor_applied, true);
+});
+
+test('the charge is cost-proportional, so no per-model row is needed', () => {
+  const single = BigInt(quoteFromCogs(MEDIAN_AGENT_COGS).amount);
+  const triple = BigInt(quoteFromCogs(MEDIAN_AGENT_COGS * 3n).amount);
+  assert.equal(triple, single * 3n);
+});
+
+test('the fee rounds up, so we never absorb the rounding', () => {
+  // 105 base units at 10% is 10.5 — truncating would hand back half a unit on
+  // every call, which at floor-adjacent sizes is most of the margin.
+  const q = quoteFromCogs(105n, { usdcFloor: 0 });
+  assert.equal(q.platform_fee, '11');
+  assert.equal(q.amount, '116');
+});
+
+test('the fee rate is configurable without touching the floor', () => {
+  const q = quoteFromCogs(MEDIAN_AGENT_COGS, { platformFeeBps: 500 });
+  assert.equal(q.platform_fee, '4700');
+  assert.equal(q.amount, '98700');
+});
+
+test('a bigint from costOfUsage and a number from JSON price identically', () => {
+  assert.equal(quoteFromCogs(94_000n).amount, quoteFromCogs(94_000).amount);
+  assert.equal(quoteFromCogs('94000').amount, quoteFromCogs(94_000n).amount);
+});
+
+test('unmeasurable COGS falls to the floor rather than charging zero', () => {
+  // `measureCogs` returns 0n with basis 'no_rate' when the catalogue has no
+  // price. Charging nothing would serve the call free; the floor is the honest
+  // fallback.
+  for (const bad of [0n, 0, null, undefined, -5, 'nonsense']) {
+    assert.equal(quoteFromCogs(bad).amount, String(DEFAULT_FLOOR_UNITS), `input: ${String(bad)}`);
+  }
+});
+
+test('a malformed fee rate keeps the default rather than mispricing', () => {
+  const prev = process.env.X402_PLATFORM_FEE_BPS;
+  process.env.X402_PLATFORM_FEE_BPS = 'ten percent';
+  try {
+    assert.equal(platformFeeBps(), DEFAULT_PLATFORM_FEE_BPS);
+  } finally {
+    if (prev === undefined) delete process.env.X402_PLATFORM_FEE_BPS;
+    else process.env.X402_PLATFORM_FEE_BPS = prev;
+  }
+});
+
+test('an opt-in Tier-2 proof is a flat charge on top, above the floor', () => {
+  // The proof costs ~$0.050 whatever the job was, so it is priced flat. Critically
+  // it is added *after* the floor: a floor-priced call that asks for a proof must
+  // not buy a $0.050 proof inside a $0.01 payment.
+  const tiny = quoteFromCogs(105n, { tier2: true });
+  assert.equal(tiny.tier2_proof, String(DEFAULT_TIER2_PROOF_UNITS));
+  assert.equal(tiny.amount, String(BigInt(DEFAULT_FLOOR_UNITS) + BigInt(DEFAULT_TIER2_PROOF_UNITS)));
+  assert.equal(tiny.floor_applied, true);
+});
+
+test('a proof is only charged when it was asked for', () => {
+  assert.equal(quoteFromCogs(MEDIAN_AGENT_COGS).tier2_proof, '0');
+  assert.equal(quoteFromCogs(MEDIAN_AGENT_COGS).amount, '103400');
+  assert.equal(quoteFromCogs(MEDIAN_AGENT_COGS, { tier2: true }).amount, '183400');
+});
+
+test('the proof price covers its measured cost', () => {
+  // 0.341064 PROVE at $0.147 is ~$0.050 per Succinct request, and it cannot be
+  // batched down for AI tasks. Selling below that is selling at a loss.
+  assert.ok(
+    BigInt(DEFAULT_TIER2_PROOF_UNITS) > 50_000n,
+    `proof price ${DEFAULT_TIER2_PROOF_UNITS} must exceed the ~50000 it costs`,
+  );
+});
+
+test('a risky pricing combination is reported, not silently accepted', () => {
+  const prev = process.env.X402_COST_PLUS;
+  process.env.X402_COST_PLUS = 'true';
+  try {
+    // Cost-plus on, Tier-2 gated on the settled amount: $0.0094 of fee against a
+    // $0.050 proof on every paid call.
+    const bad = checkPricingConfig({
+      enabled: true,
+      tier2Min: '10000',
+      available: { settlement: true },
+    });
+    assert.equal(bad.ok, false);
+    assert.match(bad.warnings[0], /VI_TIER2_MIN_COGS/);
+
+    const good = checkPricingConfig({
+      enabled: true,
+      tier2Min: '10000',
+      tier2MinCogs: '2000000',
+      available: { settlement: true },
+    });
+    assert.equal(good.ok, true);
+  } finally {
+    if (prev === undefined) delete process.env.X402_COST_PLUS;
+    else process.env.X402_COST_PLUS = prev;
+  }
+});
+
+test('the config check stays quiet while cost-plus is off', () => {
+  delete process.env.X402_COST_PLUS;
+  assert.equal(checkPricingConfig({ enabled: true, tier2Min: '10000' }).ok, true);
+});
+
+test('cost-plus is a large price cut against the rate card it replaces', () => {
+  // The GLM-5.2 row charges $0.195 for the same call cost-plus prices at
+  // $0.1034 — the competitive argument for the change, pinned so a rate-card
+  // edit cannot quietly undo it.
+  const card = Number(quoteTask({ model_id: 'zai-org/GLM-5.2', messages: promptOf(20_000), max_tokens: 15_000 }).amount);
+  const costPlus = Number(quoteFromCogs(MEDIAN_AGENT_COGS).amount);
+  const cut = 1 - costPlus / card;
+  assert.ok(cut > 0.4 && cut < 0.55, `expected a ~47% cut, got ${(cut * 100).toFixed(1)}%`);
 });

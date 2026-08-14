@@ -6,9 +6,12 @@ process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'false';
 process.env.X402_METER_V1 = 'false';
 process.env.FREE_TIER_DAILY_COGS_USD = '1';
+// The network-wide ceiling is off for the per-key tests below so each one is
+// about one mechanism. Its own section turns it back on.
+process.env.FREE_TIER_DAILY_COGS_TOTAL_USD = '0';
 
 const {
-  dailyLimitBaseUnits, freeTierBucket, checkFreeAllowance,
+  dailyLimitBaseUnits, dailyTotalLimitBaseUnits, freeTierBucket, checkFreeAllowance,
   recordFreeSpend, freeTierStatus, resetFreeTier, usd,
 } = await import('../src/free-tier.js');
 const { hashApiKey } = await import('../src/buyer-attr.js');
@@ -39,6 +42,7 @@ after(async () => {
 beforeEach(() => {
   resetFreeTier();
   process.env.FREE_TIER_DAILY_COGS_USD = '1';
+  process.env.FREE_TIER_DAILY_COGS_TOTAL_USD = '0';
 });
 
 // ─── The ceiling itself ───────────────────────────────────────────────────────
@@ -60,6 +64,73 @@ test('only an explicit zero disables enforcement', () => {
   assert.equal(dailyLimitBaseUnits(), 0n);
   assert.equal(checkFreeAllowance('key:whoever').enforced, false);
   assert.equal(checkFreeAllowance('key:whoever').allowed, true);
+});
+
+// ─── The network-wide ceiling ─────────────────────────────────────────────────
+
+test('the network-wide ceiling defaults to a real number too', () => {
+  // The per-key ceiling bounds a key; keys are free to mint. Without a default
+  // here, total subsidy is unbounded by construction.
+  delete process.env.FREE_TIER_DAILY_COGS_TOTAL_USD;
+  assert.equal(dailyTotalLimitBaseUnits(), 50n * USD);
+  process.env.FREE_TIER_DAILY_COGS_TOTAL_USD = 'fifty';
+  assert.equal(dailyTotalLimitBaseUnits(), 50n * USD, 'a typo must not uncap the total');
+});
+
+test('many small callers cannot outspend the network ceiling', () => {
+  // The exact hole the per-key ceiling leaves open: 100 fresh keys each well
+  // inside their own $1 allowance, together spending $50.
+  process.env.FREE_TIER_DAILY_COGS_TOTAL_USD = '5';
+  for (let i = 0; i < 100; i += 1) recordFreeSpend(`key:sybil-${i}`, 500_000n);
+
+  const a = checkFreeAllowance('key:sybil-fresh');
+  assert.equal(a.allowed, false, 'a brand-new caller is refused once the network is out');
+  assert.equal(a.scope, 'global');
+  assert.equal(a.spent, 0n, 'and it is not because they have spent anything');
+});
+
+test('the refusal names which ceiling was hit', () => {
+  process.env.FREE_TIER_DAILY_COGS_TOTAL_USD = '100';
+  recordFreeSpend('key:heavy', 2n * USD);
+  assert.equal(checkFreeAllowance('key:heavy').scope, 'key');
+  assert.equal(checkFreeAllowance('key:light').scope, null);
+});
+
+test('bucket eviction cannot be farmed for a fresh allowance', () => {
+  // pruneStale used to clear the whole map, so churning enough keys reset every
+  // counter — including the churner's. The global total lives outside the map
+  // precisely so eviction cannot forgive spend.
+  process.env.FREE_TIER_DAILY_COGS_TOTAL_USD = '5';
+  recordFreeSpend('key:persistent', 4n * USD);
+
+  // Churn well past MAX_BUCKETS (10,000) to force eviction repeatedly.
+  for (let i = 0; i < 12_000; i += 1) recordFreeSpend(`key:churn-${i}`, 1n);
+
+  const a = checkFreeAllowance('key:persistent');
+  assert.equal(a.allowed, false, 'the network ceiling survived the churn');
+  assert.equal(a.globalSpent >= 4n * USD, true, 'accrued spend was not forgiven');
+});
+
+test('eviction keeps the counters that matter and drops the cheap ones', () => {
+  process.env.FREE_TIER_DAILY_COGS_TOTAL_USD = '0';
+  recordFreeSpend('key:expensive', 900_000n);
+  for (let i = 0; i < 11_000; i += 1) recordFreeSpend(`key:cheap-${i}`, 1n);
+
+  // The high-spend bucket is what an attacker wants forgotten, so it must be the
+  // last thing evicted rather than the first.
+  assert.equal(checkFreeAllowance('key:expensive').spent, 900_000n);
+});
+
+test('the snapshot reports the total even after eviction discards buckets', () => {
+  process.env.FREE_TIER_DAILY_COGS_TOTAL_USD = '10';
+  recordFreeSpend('key:one', 3n * USD);
+  for (let i = 0; i < 11_000; i += 1) recordFreeSpend(`key:churn-${i}`, 1n);
+
+  const s = freeTierStatus();
+  // Summing surviving buckets would under-report here, which is the moment the
+  // number is most worth trusting.
+  assert.equal(Number(s.cogs_today_usd) >= 3, true, `expected ≥ $3, got ${s.cogs_today_usd}`);
+  assert.equal(s.daily_total_limit_usd, '10.000000');
 });
 
 test('fractional dollars survive the round-trip to base units', () => {
@@ -156,9 +227,11 @@ test('the snapshot answers "what is the free tier costing us today"', () => {
 
 test('the snapshot says so when nothing is capping the spend', () => {
   process.env.FREE_TIER_DAILY_COGS_USD = '0';
+  process.env.FREE_TIER_DAILY_COGS_TOTAL_USD = '0';
   const s = freeTierStatus();
   assert.equal(s.enforced, false);
   assert.equal(s.daily_limit_usd, null);
+  assert.equal(s.daily_total_limit_usd, null);
   assert.match(s.note, /uncapped/);
 });
 
@@ -212,4 +285,17 @@ test('the ceiling can be turned off without touching code', async () => {
   process.env.FREE_TIER_DAILY_COGS_USD = '0';
   recordFreeSpend(`key:${hashApiKey(TEST_KEY)}`, 2n * USD);
   assert.equal((await chat({ 'x-api-key': TEST_KEY })).status, 200);
+});
+
+test('a caller refused by the network ceiling gets a distinct, honest error', async () => {
+  process.env.FREE_TIER_DAILY_COGS_TOTAL_USD = '1';
+  recordFreeSpend('key:somebody-else', 2n * USD);
+
+  const res = await chat({ 'x-api-key': TEST_KEY });
+  assert.equal(res.status, 402);
+
+  const body = await res.json();
+  assert.equal(body.error.code, 'free_tier_capacity', 'not free_tier_exhausted — this caller spent nothing');
+  assert.match(body.error.message, /shared free tier/);
+  assert.match(body.error.message, /metered key/);
 });

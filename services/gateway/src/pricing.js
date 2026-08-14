@@ -11,6 +11,15 @@
  * task in this market falls ~5-10x a year; a cost-plus price would deflate with
  * it, so the card is set independently and repriced deliberately.
  *
+ * **`quoteFromCogs` deliberately reverses that**, behind `X402_COST_PLUS`. The
+ * rate card wins on deflation and loses on everything else: it sells at ~2.1x
+ * COGS on the one number every buyer compares, it needs a per-model row for a
+ * catalogue spanning 38x, and a buyer cannot check it. Cost-plus is a ~47% price
+ * cut, needs no rows at all, and is the only shape our own receipt can prove —
+ * `provider_cogs.actual` is already signed, so a stated percentage of it makes
+ * the whole bill auditable from the receipt. Both live here on purpose; see
+ * ADR 0009 for the decision and the deflation exposure it accepts.
+ *
  * Two protections:
  *   - a **floor**, because settlement itself costs money (the x402 facilitator
  *     charges per settlement, so a sub-floor call nets negative however cheap
@@ -20,6 +29,7 @@
  *     settle actual usage instead and refund the difference.
  */
 
+import logger from './logger.js';
 import { estimateTokens, messagesToText } from './usage.js';
 
 /** USDC has 6 decimals; rate-card entries are base units per 1,000,000 tokens. */
@@ -230,6 +240,207 @@ export function quoteUsage(usage = {}, model = null, cfg = {}) {
   };
 }
 
+/** Platform fee on measured provider cost, in basis points. 1000 = 10%. */
+export const DEFAULT_PLATFORM_FEE_BPS = 1000;
+
+/**
+ * Is cost-plus pricing on? Off unless explicitly enabled.
+ *
+ * Off by default because switching pricing models is a commercial decision, not
+ * a deploy — the same reason `X402_METER_V1` ships off.
+ */
+export function costPlusEnabled() {
+  return String(process.env.X402_COST_PLUS || '').toLowerCase() === 'true';
+}
+
+/**
+ * Platform fee in basis points.
+ *
+ * Read per call rather than at module load so a test can change it without
+ * re-importing. Unparseable input keeps the default and complains, because a
+ * typo here misprices every call rather than failing loudly.
+ */
+export function platformFeeBps(cfg = {}) {
+  const raw = cfg.platformFeeBps ?? process.env.X402_PLATFORM_FEE_BPS;
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return DEFAULT_PLATFORM_FEE_BPS;
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    logger.warn(
+      { value: raw, using: DEFAULT_PLATFORM_FEE_BPS },
+      'pricing: X402_PLATFORM_FEE_BPS is not a number; keeping the default fee',
+    );
+    return DEFAULT_PLATFORM_FEE_BPS;
+  }
+  return Math.round(n);
+}
+
+/**
+ * Flat charge for an opt-in Tier-2 SP1 settlement proof. $0.08.
+ *
+ * Flat because the cost is flat: measured 2026-08-14, a Succinct request costs a
+ * fixed 0.341064 PROVE (≈$0.050) whose *variable* component is $8.6 × 10⁻¹² — the
+ * circuit is byte-identical whether the job was $0.01 or $1.00, so a percentage
+ * would undercharge small jobs and overcharge large ones for the same work.
+ *
+ * $0.08 is 1.6x measured cost. The headroom is not margin greed, it is FX: proof
+ * cost is denominated in PROVE, which sits at its all-time low, and this price
+ * breaks even up to roughly PROVE $0.235. Above that it needs revisiting.
+ *
+ * It cannot be amortised down yet. AI-task proofs are unbatchable until Guest v2
+ * (see docs/KNOWN_ISSUES.md), so every proof is one full-price request.
+ */
+export const DEFAULT_TIER2_PROOF_UNITS = 80_000;
+
+/** Flat Tier-2 surcharge in base units. `0n` gives proofs away. */
+export function tier2ProofUnits(cfg = {}) {
+  const raw = cfg.tier2ProofUnits ?? process.env.X402_TIER2_PROOF_UNITS;
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return BigInt(DEFAULT_TIER2_PROOF_UNITS);
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    logger.warn(
+      { value: raw, using: DEFAULT_TIER2_PROOF_UNITS },
+      'pricing: X402_TIER2_PROOF_UNITS is not a number; keeping the default proof price',
+    );
+    return BigInt(DEFAULT_TIER2_PROOF_UNITS);
+  }
+  return BigInt(Math.trunc(n));
+}
+
+/** Accept the bigint `costOfUsage` returns, or a number/string from JSON. */
+function toBaseUnits(v) {
+  try {
+    const n = typeof v === 'bigint' ? v : BigInt(Math.trunc(Number(v) || 0));
+    return n > 0n ? n : 0n;
+  } catch {
+    return 0n;
+  }
+}
+
+/**
+ * Price a call as provider cost plus a stated percentage.
+ *
+ * Takes COGS as an argument rather than fetching it, because the measured figure
+ * is async (`measureCogs` needs the live catalogue) and every caller that wants
+ * this already has it — `quoteTask`/`quoteUsage` are sync and turning them async
+ * would ripple into x402-server.js for no gain.
+ *
+ * Two properties worth stating, because they are the argument for the whole
+ * model. The charge is **cost-proportional**, so the 3,257x spread between our
+ * cheapest and dearest call stops mattering and no per-model row is needed. And
+ * it is **verifiable**: the receipt already signs `provider_cogs.actual`, so a
+ * buyer can recompute this number from the receipt instead of trusting a price
+ * list. No competitor attests COGS, so none can offer that.
+ *
+ * The floor still applies, for the same reason it does everywhere else: a
+ * settlement costs a facilitator fee, so 10% of a tenth of a cent nets negative.
+ * On small calls the floor *is* the price and the percentage never binds.
+ *
+ * @param {bigint|number|string} cogsBaseUnits measured or estimated provider
+ *   cost in USDC base units — from `costOfUsage` / `measureCogs`
+ * @param {object} [cfg]
+ * @param {number} [cfg.platformFeeBps] override the fee
+ * @param {string|number} [cfg.usdcFloor] override the floor
+ * @param {boolean} [cfg.tier2] caller opted into an SP1 settlement proof
+ * @param {number} [cfg.tier2ProofUnits] override the proof price
+ * @returns {{amount:string, basis:'cost_plus', fee_bps:number,
+ *   provider_cogs:string, platform_fee:string, tier2_proof:string,
+ *   floor_applied:boolean}}
+ */
+export function quoteFromCogs(cogsBaseUnits, cfg = {}) {
+  const floorNum = Math.max(
+    0,
+    Number(cfg.usdcFloor ?? process.env.X402_USDC_FLOOR ?? DEFAULT_FLOOR_UNITS) || 0,
+  );
+  const floor = BigInt(Math.trunc(floorNum));
+  const bps = BigInt(platformFeeBps(cfg));
+  const cogs = toBaseUnits(cogsBaseUnits);
+
+  // Round the fee up. Truncating means we absorb the rounding on every call,
+  // and at a $0.01 floor most calls are small enough for that to be the whole
+  // margin.
+  const fee = (cogs * bps + 9_999n) / 10_000n;
+  const metered = cogs + fee;
+  const inference = metered < floor ? floor : metered;
+
+  // Added *after* the floor, never absorbed by it. A floor-priced call that asks
+  // for a proof would otherwise buy a $0.050 proof inside a $0.01 payment.
+  const proof = cfg.tier2 ? tier2ProofUnits(cfg) : 0n;
+
+  return {
+    amount: String(inference + proof),
+    basis: 'cost_plus',
+    fee_bps: Number(bps),
+    provider_cogs: String(cogs),
+    platform_fee: String(fee),
+    tier2_proof: String(proof),
+    floor_applied: metered < floor,
+  };
+}
+
+/**
+ * Refuse to run a configuration that loses money on every call.
+ *
+ * Cost-plus and the Tier-2 thresholds are only safe together. `VI_TIER2_MIN_USDC`
+ * defaults to 10000 — the same value as the price floor — so on the settled-amount
+ * basis essentially every paid call sits at the settlement floor. Combined with a
+ * 10% fee that is $0.0094 collected against a $0.050 proof: a loss on every call,
+ * from two settings that each look reasonable alone.
+ *
+ * Called once at startup. Warns rather than throws, because refusing to boot over
+ * a pricing combination would take the gateway down for a revenue bug — but it
+ * warns at `error` level, because it *is* one.
+ *
+ * @param {object} vi config.verifiedInference
+ */
+export function checkPricingConfig(vi = {}) {
+  if (!costPlusEnabled()) return { ok: true, warnings: [] };
+
+  const warnings = [];
+  const proofCost = 50_000n; // measured, base units
+  const feeOnMedian = 9_400n; // 10% of a median agent call's COGS
+
+  const usingCogsGate = String(vi.tier2MinCogs ?? '').trim() !== '';
+  const settlementOn = vi.available?.settlement !== false;
+
+  if (settlementOn && !usingCogsGate && vi.enabled) {
+    warnings.push(
+      'X402_COST_PLUS is on while VI_TIER2_MIN_COGS is unset, so Tier-2 is gated on the settled '
+      + `amount (VI_TIER2_MIN_USDC=${vi.tier2Min}). A proof costs ~${usdOf(proofCost)} against `
+      + `~${usdOf(feeOnMedian)} of fee on a median call. Set VI_TIER2_MIN_COGS (2000000 while `
+      + 'AI-task proofs are unbatchable) or this loses money on every proved call.',
+    );
+  }
+
+  if (tier2ProofUnits() > 0n && tier2ProofUnits() < proofCost) {
+    warnings.push(
+      `X402_TIER2_PROOF_UNITS is ${usdOf(tier2ProofUnits())}, below the ~${usdOf(proofCost)} a `
+      + 'Succinct request costs. Every opt-in proof is sold at a loss.',
+    );
+  }
+
+  for (const w of warnings) logger.error({ pricing: 'cost_plus' }, w);
+  return { ok: warnings.length === 0, warnings };
+}
+
+const usdOf = (units) => `$${(Number(units) / 1_000_000).toFixed(4)}`;
+
 export default {
-  quoteTask, quoteUsage, rateCardFor, promptTokensFor, DEFAULT_RATE, DEFAULT_RATE_CARD, DEFAULT_FLOOR_UNITS,
+  quoteTask,
+  quoteUsage,
+  quoteFromCogs,
+  costPlusEnabled,
+  platformFeeBps,
+  tier2ProofUnits,
+  checkPricingConfig,
+  rateCardFor,
+  promptTokensFor,
+  DEFAULT_RATE,
+  DEFAULT_RATE_CARD,
+  DEFAULT_FLOOR_UNITS,
+  DEFAULT_PLATFORM_FEE_BPS,
+  DEFAULT_TIER2_PROOF_UNITS,
 };
