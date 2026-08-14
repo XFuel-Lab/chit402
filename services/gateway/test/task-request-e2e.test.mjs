@@ -20,6 +20,11 @@ process.env.AKASHML_API_KEY = 'akml-test-key';
 // with routing. Payment is covered by the x402 suites; this file is about what
 // actually serves the request.
 process.env.X402_ENABLED = 'false';
+// Same reasoning: this file stubs both catalog endpoints at `fetch`, so offline mode
+// would short-circuit the stub and hand back the seed instead. The seed carries
+// Akash's GLM but not its Llama, so `xfuel/auto` on a simple shape silently resolves
+// to theta/qwen3 and the failure points at routing rather than at the environment.
+process.env.HUB_CATALOG_OFFLINE = 'false';
 // Force the mock branch to be *reachable*: if routing regresses, the task falls
 // through to it and these tests fail loudly rather than quietly passing.
 delete process.env.THETA_EDGE_URL;

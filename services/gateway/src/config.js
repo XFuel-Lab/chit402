@@ -131,6 +131,27 @@ const config = {
     enabled: process.env.VERIFIED_INFERENCE_ENABLED === 'true',
     tier2Min: process.env.VI_TIER2_MIN_USDC || '10000',      // ≥ this → settlement floor
     tier3Min: process.env.VI_TIER3_MIN_USDC || '1000000',    // ≥ this → inference floor
+    // COGS-denominated thresholds. When set AND the task carries measured COGS,
+    // these replace the amount thresholds above. Unset by default so behaviour
+    // does not change until someone chooses it.
+    //
+    // Why they exist: the amount thresholds move whenever we reprice. tier2Min is
+    // 10000 — the same value as the $0.01 price floor — so on the amount basis
+    // essentially every paid call sits at the settlement floor. A Tier-2 proof
+    // costs a fixed ~$0.050 per Succinct request (measured 2026-08-14, base fee
+    // 0.341064 PROVE), against a 10% fee of $0.0094 on a median call. Bundling a
+    // proof on every paid call is a ~5x loss per call.
+    //
+    // Deriving a solvent threshold: bundle only when the fee covers the amortised
+    // proof K times over, i.e. COGS × feeRate ≥ K × ($0.050 / batchSize).
+    //   batch 10, K=4  →  COGS ≥ $0.20   (200000)
+    //   batch 1,  K=4  →  COGS ≥ $2.00   (2000000)
+    // Batch size for AI-task proofs is 1 and cannot be configured: ai-listener
+    // calls generateProof(req, urgent=true), and the prover host only handles
+    // ai_task in its Single branch. So $2.00 is the operative row until Guest v2
+    // (new ELF + vKey) lands. See docs/KNOWN_ISSUES.md.
+    tier2MinCogs: process.env.VI_TIER2_MIN_COGS || null,
+    tier3MinCogs: process.env.VI_TIER3_MIN_COGS || null,
     defaultMechanism: process.env.VI_DEFAULT_MECHANISM || 'tee',
     available: {
       settlement: process.env.VI_SETTLEMENT_AVAILABLE !== 'false',

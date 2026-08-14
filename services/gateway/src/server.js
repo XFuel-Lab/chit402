@@ -8,9 +8,11 @@ import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, resolvePricingModel } from './x402-server.js';
-import { quoteTask } from './pricing.js';
+import { quoteTask, checkPricingConfig } from './pricing.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { proveAllowedForKey, proofAvailability } from './prove-gate.js';
+import { freeTierStatus } from './free-tier.js';
+import { rollingStatus } from './rolling-settlement.js';
 import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest } from './x402-discovery.js';
@@ -315,6 +317,11 @@ function calculateTaskFee(grossAmount, feeBps = AI_TASK_FEE_BPS) {
  */
 export function createApp() {
   const app = express();
+
+  // Cost-plus and the Tier-2 thresholds are only solvent together; each looks
+  // reasonable alone. Logged at error level rather than thrown — a pricing
+  // combination should not take the gateway down, but it must not be quiet.
+  checkPricingConfig(config.verifiedInference);
 
   // ── Proxy trust ──────────────────────────────────────────────────────────
   // Behind a TLS reverse proxy (Caddy/nginx), req.ip is the proxy's address
@@ -1608,6 +1615,14 @@ export function createApp() {
             warning: 'RECEIPT_SIGNING_SECRET is not set — receipts are UNSIGNED and cannot be verified.',
           }),
         },
+        // What the unmetered surface is costing us today. Receipts are free by
+        // policy (ADR 0006); the compute behind them is not, and that subsidy was
+        // previously neither capped nor measured anywhere.
+        free_tier: freeTierStatus(),
+        // Money we have served COGS for and not yet collected. Under rolling
+        // settlement (ADR 0008) every charge lands one call late, so a climbing
+        // figure here means settlement is failing, not that traffic is growing.
+        rolling_settlement: rollingStatus(),
         fee_config: {
           default_bps:    AI_TASK_FEE_BPS,
           min_bps:        MIN_FEE_BPS,

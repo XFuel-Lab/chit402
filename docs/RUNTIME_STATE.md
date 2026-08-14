@@ -2,24 +2,20 @@
 
 As-deployed source of truth. When in-repo config disagrees with this file, this file wins.
 
-Last updated: 2026-08-12
+Last updated: 2026-08-13
 
-> **A deploy is pending.** Two days of correctness work landed in the repo on 2026-08-12/13 and is
-> **not on the live host yet**: metered pricing, measured COGS, signed `/v1` receipts, paid-path tool
-> calling, shape-aware `xfuel/auto`, mocks made opt-in, and the `proofs` block on `/health`. Until
-> `services/gateway` is redeployed, the live endpoint still has the old behaviour — most importantly
-> it can still answer a paid task with a mock, `/v1` receipts there are unsigned, and agent work is
-> underpriced by ~10x. See [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
->
-> Check the env prerequisites in [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md#before-you-restart-the-gateway-item-3c)
-> first — mocks being opt-in means a misconfigured provider key now fails visibly rather than
-> silently. Verify after with `node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app`.
+> **Live as of 2026-08-13.** `api-testnet.xfuel.app` is on `main` @ `20fa5d6`. Verified 11/11:
+> metered quotes, GLM priced above COGS, signed `/v1` receipts byte-identical to `/receipt/:id`,
+> provider `akash-network` (not mock). Theta EdgeCloud is unset (`THETA_EDGE_URL` missing); AkashML
+> is the live inference path. **SP1 prover ECS task is scaled to 0** (desired 0 / running 0); the
+> ALB is still up. Signed receipts are unaffected. Re-verify after any restart:
+> `node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app`.
 
 ## Current state
 
 - Settlement home: Base (USDC via x402) — [ADR 0002](./adr/0002-base-settlement-home.md)
 - Tier 1 signed receipt: live (default)
-- Tier 2 SP1 settlement proof: live (AWS ECS prover → Succinct)
+- Tier 2 SP1 settlement proof: **scaled to zero** (ECS `sp1-prover` desired 0, 2026-08-13). Scale to 1 and wait 3–5 min before a session that needs it. ALB still up.
 - Tier 3 Verified Inference (zkLLM): active build — RAM-bound, CPU-only. See [VERIFIED_INFERENCE_HANDOFF.md](./VERIFIED_INFERENCE_HANDOFF.md)
 - Payment binding: server-attested today; in-proof after SP1 guest v2
 - **Public Base mainnet x402:** Real (2026-08-06) — flagship smoke `ai-task-1-1786004600540` / tx `0x066caacc…db70`
@@ -45,11 +41,12 @@ ZKVerifierSP1 (Base mainnet 8453):
 Manifest: `deploy/manifests/base-verifier-base-2026-07-17T08-04-12-891Z.json`  
 Admin/deployer: `0xe49b47e759Ca01B6D66A49807Bb2aEe31c1243bd`
 
-SP1 prover (live):
+SP1 prover (scaled to zero 2026-08-13):
 
-- AWS ECS `xfuel-sp1-prover` (us-east-1)
-- ALB: `http://xfuel-sp1-alb-1873465045.us-east-1.elb.amazonaws.com`
-- Gateway env: `SP1_PROVER_URL`
+- AWS ECS cluster `xfuel-sp1-prover` / service `sp1-prover` — **desired 0 / running 0**
+- ALB still up: `http://xfuel-sp1-alb-1873465045.us-east-1.elb.amazonaws.com` (~$20/mo idle)
+- Gateway env: `SP1_PROVER_URL` still set; signed receipts unaffected
+- Wake: `aws ecs update-service --cluster xfuel-sp1-prover --service sp1-prover --desired-count 1 --region us-east-1` then wait 3–5 min
 - Ingress locked to Lightsail `35.180.10.142/32` only
 
 Demo gateway:

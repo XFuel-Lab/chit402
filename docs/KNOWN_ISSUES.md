@@ -2,7 +2,7 @@
 
 Honest gaps for auditors, design partners, and Seed diligence. Keep this current.
 
-Last updated: 2026-08-12  
+Last updated: 2026-08-13  
 Runtime truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 
 ## Production / money
@@ -21,7 +21,8 @@ Runtime truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 | **`/v1` receipts are unsigned — the verifiable-receipt product is absent on the busiest surface** | **High** | **Fixed** 2026-08-12 — `/v1` now returns the canonical signed receipt; both surfaces produce one identical signature. See below |
 | **The default model could not complete an agent loop (0/6)** | **High** | **Fixed** 2026-08-12 — multi-turn eval reversed a same-day routing decision. See below |
 | **`/v1` receipts claimed `payment.rail: "unmetered"` even when x402 had settled** | **High** | **Fixed** 2026-08-12 — a regression introduced with `X402_METER_V1` |
-| **x402 uses the `exact` scheme, so output is quoted at the `max_tokens` ceiling — buyers overpay by up to 3.8x** | **High** | Open, **unblocked** 2026-08-12 — CDP settles `upto` on Base mainnet today; the blocker is our x402 v1→v2 + Permit2 migration ([X402_SCHEME_MIGRATION.md](./X402_SCHEME_MIGRATION.md)) |
+| **x402 uses the `exact` scheme, so output is quoted at the `max_tokens` ceiling — buyers overpay by up to 3.8x (15x on a ceiling-heavy call)** | **High** | **Remedy built** 2026-08-13 — rolling settlement ([ADR 0008](./adr/0008-rolling-settlement.md)) charges measured usage on the next request, needing no v2/Permit2. Behind `X402_ROLLING_SETTLEMENT`, default off pending a durable ledger |
+| **`/health` reports `prover_configured: true` and "proofs are generated for every settled task" from a configured URL, not a reachable prover** | **High** | Open, found 2026-08-13 — the ECS `sp1-prover` was scaled to 0 that morning and `/health` did not change. `SP1_PROVER_URL` points at a Theta EdgeCloud GPU node, so the claim may be true by a different path — but it is asserted, not checked. Probe the prover before reporting on it |
 | **Facilitator fee is ~10% of gross at $0.01; batch-settlement not enabled** | Medium | Open, **unblocked** 2026-08-12 — previously believed withdrawn; CDP advertises `batch-settlement` on Base mainnet. Same v2 prerequisite |
 | **No prompt-cache support; router has no session affinity** | Medium | **Reassessed** 2026-08-12 — the blocker moved: our default model *does* price cached reads, but hits are not reported. See below |
 | **All buyers share one provider API key, so upstream prompt caches are not isolated between tenants** | **High** | Mitigated 2026-08-12 (per-buyer `cache_salt`), unconfirmed upstream — see below |
@@ -31,7 +32,9 @@ Runtime truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 | Provider COGS burns a flat 70% of quote, measured ~21x off actual | High | Open — [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) |
 | ~~Base mainnet x402 facilitator not wired on live demo host~~ | — | **Resolved 2026-08-06** — public `api-testnet` on Base + CDP |
 | Payment binding is server-attested (`in_proof: false`) until SP1 guest v2 | Medium | Guest rebuild + new programVKey required |
-| OpenAI-compatible `/v1` path is **unmetered** (Phase 1) | Medium | Paid path = `/task-request` + x402 |
+| **`/v1` never measured COGS, so the busiest surface spent provider money with no record of it** | **High** | **Fixed** 2026-08-13 — `/v1` measures and burns like `/task-request`; the subsidy is capped and reported. See below |
+| **The spot-check sampler would flag ~1 in 5 honest re-executions as slashable** | **High** | Open — **dormant, do not enable.** `buildSpotCheckRecord` compares output hashes for byte equality; measured self-disagreement on our default model is 21%. See below |
+| OpenAI-compatible `/v1` path is **unmetered** (Phase 1) | Medium | **By decision** as of 2026-08-13 — [ADR 0006](./adr/0006-receipts-are-not-a-paid-feature.md) keeps it free as the funnel. Paid path = `/task-request` + x402 |
 | Web2 collect-and-forward custody not counsel-cleared | High if scaled | Do not enable broad OpenAI pass-through revenue yet |
 
 ### Flat pricing is below cost on real agent traffic (Critical)
@@ -155,6 +158,124 @@ serves `min(max_tokens, OPENAI_GATEWAY_MAX_TOKENS_CAP)`, so a caller asking for 
 against the demo's cap was quoted **$0.09 of output it was structurally unable to receive**. The
 quote now uses the capped figure. Only reachable with `X402_METER_V1` on, which is off — worth
 fixing before the flag flips rather than after.
+
+### The free surface spent provider money off the books (High, fixed 2026-08-13)
+
+`/task-request` has always reconciled COGS after serving — measure real tokens against the
+provider's published rate, burn it against the prepaid float, record it on the receipt
+(`_reconcileProviderCogs`). `/v1` did none of it. It computed `usage`, registered the task, and
+stopped. So the busiest surface — the one that is unmetered by default and therefore the one
+where *we* pay for every call — was the one surface with no cost record at all.
+
+Two consequences, both quiet. The float balance overstated by the entire volume of unmetered
+traffic ever served, because money left the AkashML account that no burn ever reflected. And
+"what does the free tier cost us per day" had no answer anywhere in the system, on any surface,
+at any granularity.
+
+The only brakes were a request-rate limit and `OPENAI_GATEWAY_MAX_TOKENS_CAP`, and neither knows
+what a call costs. At measured rates, 150 demo calls a day is **$1.30 of short completions or
+$14 of agent-shaped ones** — an order of magnitude apart, indistinguishable to a counter of
+requests.
+
+Fixed in three parts. `/v1` now measures and burns COGS on the same code path as the M2M
+surface, so `provider_cogs` appears on the `/v1` receipt exactly as it does on the other one
+(unsigned block; it is not in `canonicalSignedPayload`, and `route.provider` still resolves from
+`task.result.provider` first, so no existing signature moved). `GET /health` reports a
+`free_tier` block with today's give-away. And `FREE_TIER_DAILY_COGS_USD` — default $10 per
+caller per day, denominated in provider cost rather than requests — returns 402
+`free_tier_exhausted` past the ceiling, with `Retry-After` set to the UTC reset.
+
+Bounded, not solved, and both limits are deliberate. The counter is in memory like the request
+rate limiter, so **a restart forgives the day's spend** — acceptable for a spend guard, which is
+why it never touches a buyer's invoice. And the ceiling is checked before a call but charged
+after it, so a caller can cross it by at most one call; a pre-serve check cannot know what the
+pending call will cost.
+`/v1/images/generations` and `/v1/audio/transcriptions` are not COGS-metered yet — no per-token
+rate exists for them — so they neither burn nor draw on the allowance.
+
+**Two holes in the above, both closed 2026-08-14.**
+
+*A per-key ceiling is not a budget.* `FREE_TIER_DAILY_COGS_USD` bounded a key, and keys are free
+to mint — N keys was N ceilings, so total subsidy was unbounded by construction. In open mode the
+bucket falls back to IP, which is cheaper still to rotate. Closed with
+`FREE_TIER_DAILY_COGS_TOTAL_USD` (default $50/day), a network-wide counter a request must also
+clear. It returns 402 `free_tier_capacity` rather than `free_tier_exhausted`, because that caller
+has spent nothing and telling them they are over their own limit sends them hunting a fault on
+their side that does not exist.
+
+*Bucket eviction was a subsidy bypass.* `pruneStale` called `buckets.clear()` once every bucket
+was from the current day, so churning `MAX_BUCKETS` (10,000) distinct keys reset **every** counter
+— including the churner's own — repeatably and for the cost of 10,000 trivial requests. A memory
+guard was a free-allowance reset. Two changes: eviction is now lowest-spend first, so churned
+buckets go and accumulated counters survive; and the network-wide total is held outside the bucket
+map, so no amount of eviction reduces it. `freeTierStatus` reads that counter rather than summing
+buckets, which previously under-reported the give-away at exactly the moment it mattered most.
+
+### The spot-check sampler compares bytes, and models are not deterministic (High, open)
+
+`src/spotcheck.js` decides `pass` vs `mismatch` by comparing `keccak256` output hashes for
+equality, and sets `slashable: outcome === 'mismatch'`. The sampling half is sound — a per-epoch
+beacon makes the draw unpredictable to the provider and auditable afterwards — but the comparison
+half assumes two honest runs of the same model produce identical bytes.
+
+Measured 2026-08-13 (`scripts/dev/_canary_probe.mjs`, 576 calls, temperature 0): identical prompt,
+identical model, same provider produced **different text on 21% of prompts for `zai-org/GLM-5.2`**,
+which is what `xfuel/auto` resolves to for agent work. `openai/gpt-oss-120b` was 17%. Different
+text is a different hash, so enabled against a re-execution this marks roughly one honest check in
+five as a mismatch — and flags it slashable.
+
+**Not live.** It reaches a receipt only when the mechanism resolves to `zk-spotcheck`, which needs
+`VI_SPOTCHECK_ENABLED=true` and a non-zero `VI_SPOTCHECK_RATE_BPS`; both default off. Nothing has
+been sampled in production. The exposure is that the flags default off rather than that the
+comparator is correct, so this is a "do not switch on" rather than an incident.
+
+Fix is in [ADR 0007](./adr/0007-spot-check-assurance.md): keep the sampler, replace byte equality
+with an accumulating agreement rate per `(provider, model)` scored over a curated probe battery
+(23 checks per pair, against 179 uncurated), and stop deriving `slashable` from one comparison
+against providers who have staked nothing.
+
+### Proof batching falls back to singles at exactly the volume that needs it (High, open)
+
+A Succinct proof costs a **fixed fee per request**. Measured 2026-08-14 from request
+`0x073ef49f…384fb8b` (`sp1-v6.1.0`): base fee 0.341064 PROVE, total fee
+0.341064000000058698 PROVE. The variable component is 0.000000000058698 PROVE — about
+$8.6 × 10⁻¹², eleven orders of magnitude under the base fee. At PROVE $0.147 that is
+**≈$0.050 per request, whatever the circuit does**. Our circuit is 58,698 PGU; optimising
+it would save nothing.
+
+So cost per settlement is the base fee divided by batch size. **For AI-task settlement
+proofs the batch size is always 1, and no configuration changes that.**
+
+The batching machinery in `sp1-prover-client.js` — `batchSize`, `minBatchSize`,
+`SP1_BATCH_TIMEOUT_MS`, `_flushAsSingle` — cannot serve our proof type:
+
+- `ai-listener.js:1860` calls `sp1Prover.generateProof(proofRequest, true)`. The second
+  argument is `urgent`, and `generateProof` routes urgent requests straight to
+  `_generateSingleProof`, bypassing the queue.
+- It **must** do that. In the host, `parse_request_to_batch` handles `ai_task` only in the
+  `Single` branch, via `parse_ai_task_batch`. The `Batch` branch loops `parse_proof_request`,
+  which parses a `ForwardDeposit` and requires `merkle_proof` / `identity_secret`. Routing an
+  AI task through it would fail to parse or silently produce the wrong proof type.
+
+So the batch queue only ever served TFUEL deposit proofs — legacy Theta — and every Tier-2
+settlement proof pays the full **$0.050**. Against the 10% platform fee on a median agent
+call ($0.0094) that is **5.3x the entire fee**, on every proof, with no config-level remedy.
+
+Batching AI tasks requires extending the guest program's `Batch` branch to accept
+`ai_tasks`, which changes the ELF and therefore the **vKey** — so it also needs the new vKey
+registered in `ZKVerifierSP1` on Base. That is the "Guest v2 ELF + vKey" item already parked
+under Later in [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md), and it is now on the critical path
+for Tier-2 economics rather than a nice-to-have.
+
+Until then Tier-2 is solvent only as an opt-in flat charge, or gated at a COGS threshold high
+enough that 10% of provider cost covers a whole unbatched proof (~$2.00 of COGS at K=4). See
+[PRICING_STRATEGY.md](./PRICING_STRATEGY.md).
+
+Two related exposures. The measured request used `.compressed()`, not the Groth16 wrap
+`ZKVerifierSP1` verifies on Base, so on-chain settlement costs more than $0.050 by an
+unmeasured margin. And proof COGS is denominated in PROVE, which set its all-time low
+($0.1439) on 2026-08-13 after a ~86% annual decline — at its 1-year-ago $1.41 the same
+proof costs $0.48.
 
 ### COGS was a percentage of our own price (High, fixed 2026-08-12)
 
@@ -373,6 +494,61 @@ proven, because getting it wrong by 100x is silent and one-directional.
 stamps `task.usage`, carrying the cached-prompt and reasoning-token splits where the provider
 reports them. `/stats` exposes a `tokens` block that keeps provider-reported and estimated counts
 separate. The numbers above remain other people's telemetry until our own traffic confirms them.
+
+**Confirmed from the inference response 2026-08-13, and one field is broken.** A completed Theta
+job carries `prediction_cost: {input:154, output:484}` alongside `prediction_cost_divisor: 1000000`,
+which pins the reading above: 154 cents per 1M input = **$1.54/M**, exactly what `provider-rates.js`
+assumes. The inference was right.
+
+The same job also carries `cost_usd`, which looks authoritative and is not. It returned
+`{input: 0.00023716, output: 0.00234256}` for a 13-token call and **the identical figures** for a
+257-token call — it does not vary with usage, so it cannot be the cost of the call. It appears to be
+`prediction_cost × (prediction_cost/100) / 1e6`, i.e. the rate multiplied by itself. **Do not bill
+from `cost_usd`.** Derive cost from `usage × prediction_cost / prediction_cost_divisor`. Worth
+reporting upstream.
+
+### Advertised supply is not available supply (measured 2026-08-13)
+
+`scripts/dev/_availability_probe.mjs` reads both hub catalogues and then sends every advertised chat
+model a real request. Over 5 runs in one 10-minute window:
+
+| Model | Served | Latency min/med/max | Failure |
+|---|---|---|---|
+| `theta/qwen3` | **0/5** | — | 409 `No instances available - try again later` |
+| `akash/Qwen/Qwen3.5-35B-A3B` | **0/5** | — | empty content at `max_tokens: 512` |
+| `akash/zai-org/GLM-5.2` | 4/5 | 3.3s / 8.7s / 9.6s | timeout |
+| `akash/openai/gpt-oss-120b` | 4/5 | 2.4s / 2.9s / 7.5s | timeout |
+| `theta/glm_5_2` | 5/5 | 1.8s / 2.0s / 2.9s | — |
+| `akash/deepseek-ai/DeepSeek-V4-Flash-0731` | 5/5 | 1.2s / 8.0s / **22.3s** | — |
+| `akash/Qwen/Qwen3.6-35B-A3B` | 5/5 | 3.0s / 4.3s / 8.9s | — |
+| `akash/meta-llama/Llama-3.3-70B-Instruct` | 5/5 | 0.8s / 2.6s / 3.8s | — |
+
+**Two of eight advertised chat models (25%) never served once.** Only half served on every run. One
+model's latency spread 19.2x on the same endpoint within ten minutes, which means no fixed client
+timeout is correct — set it tight and you abandon healthy calls, set it loose and an agent hangs.
+
+Three consequences:
+
+1. **Our default agent route is one of the flaky ones.** `autoPreferenceFor('agent')` prefers
+   `akash/zai-org/GLM-5.2`, which served 4/5 at a 8.7s median. `theta/glm_5_2` served **5/5 at a 2.0s
+   median** — 4x faster and more reliable in the same window, for a 10% higher rate. The routing
+   preference was set on agent-loop quality (`MODEL_QUALITY_EVAL.md`) with no availability input at
+   all, and should be revisited now that there is data.
+2. **A catalogue is a claim, not a fact.** `hub-catalog.js` publishes whatever discovery returns, so
+   `GET /v1/models` currently advertises two models to buyers that cannot serve them.
+3. **Measuring this honestly is hard**, which is the interesting part. The first probe reported 2/10
+   because it used Theta's display name instead of `alias`, starved reasoning models at
+   `max_tokens: 8`, and could not parse Theta's SSE default (`stream` defaults to **true**) or its
+   job envelope. Every naive integration will under-report availability for the same reasons: an
+   honest number requires knowing each provider's quirks, which is precisely why nobody publishes
+   one. Re-run the probe before quoting any figure here — this is a 10-minute window, not an SLA.
+
+**The same-model-different-endpoint gap is now measured by a third party.** Artificial Analysis
+launched an Endpoint Accuracy Index on 2026-08-04 covering GLM-5.2, gpt-oss-120b and DeepSeek V4 Pro
+— the models we route — finding gpt-oss-120b endpoints scoring 22% on tool calling against 37% for a
+self-hosted reference, and the most restrictive GLM-5.2 endpoints at half the reference or less
+because output-token limits truncate reasoning. Our 4x latency gap between the two GLM-5.2 endpoints
+is the same phenomenon. See [AGENT_PAIN_POINTS.md](./AGENT_PAIN_POINTS.md) §4.
 
 ### Prompt caching — measured, and smaller than modelled (reassessed 2026-08-12)
 

@@ -19,6 +19,9 @@ import {
 import { inferAkashML, akashmlApiKey } from './akashml-infer.js';
 import { normalizeUsage, messagesToText } from './usage.js';
 import { runX402Handshake } from './x402-server.js';
+import { measureCogs } from './provider-rates.js';
+import { getFloatManager } from './provider-float.js';
+import { freeTierBucket, checkFreeAllowance, recordFreeSpend, usd as cogsUsd } from './free-tier.js';
 
 /**
  * XFuel OpenAI-compatible gateway.
@@ -634,6 +637,52 @@ function registerTaskAndProve({
   return { taskId, proverConfigured, proveAllowed, task };
 }
 
+/**
+ * Measure what a `/v1` call actually cost us, and burn it against the float.
+ *
+ * `/task-request` has always done this (`_reconcileProviderCogs` in ai-listener);
+ * `/v1` never did. So the busiest surface spent real provider money with no
+ * record of it anywhere — the float balance overstated by however much unmetered
+ * traffic had served, and "what does the free tier cost us" was unanswerable.
+ *
+ * Mutates `task.meta` before the receipt is built, so `provider_cogs` appears on
+ * the `/v1` receipt exactly as on the M2M one. This does not move the signature:
+ * `provider_cogs` is not in `canonicalSignedPayload`, and on a completed call
+ * `route.provider` resolves from `task.result.provider` before the COGS record is
+ * ever consulted.
+ *
+ * @returns {Promise<bigint>} measured COGS in USDC base units; `0n` when the
+ *   model has no published rate, in which case nothing is burned and the free
+ *   allowance is not charged — under-counting rather than inventing a number.
+ */
+async function accountForCogs({ task, modelId, usage, provider }) {
+  let measured = null;
+  try {
+    const m = await measureCogs({ modelId, usage });
+    if (m.basis === 'measured') measured = m.amount;
+  } catch (err) {
+    logger.warn({ err: err.message, taskId: task?.taskId }, 'openai-gateway: COGS measurement failed');
+  }
+
+  try {
+    const { provider: providerId, record } = getFloatManager().reconcileAfterServe({
+      actualProvider: provider,
+      // `/v1` does not quote, so there is no pre-serve estimate to reconcile
+      // against. Measured tokens are the only honest basis here.
+      estimated: 0n,
+      measured,
+    });
+    if (task?.meta && record) {
+      task.meta.providerCogs = record;
+      task.meta.provider = providerId || record.provider;
+    }
+  } catch (err) {
+    logger.error({ err: err.message, taskId: task?.taskId }, 'openai-gateway: COGS burn failed');
+  }
+
+  return measured ?? 0n;
+}
+
 // ─── Verification receipt ─────────────────────────────────────────────────────
 
 /**
@@ -697,7 +746,9 @@ function buildReceipt({
       note: payment
         ? 'Settled over x402 before the request was served.'
         : 'This call was not charged. /v1 is metered only when X402_METER_V1 is on, and '
-          + 'the demo key and X402_METER_V1_EXEMPT_KEYS stay exempt.',
+          + 'the demo key and X402_METER_V1_EXEMPT_KEYS stay exempt. Unpaid calls draw on a '
+          + 'daily provider-cost allowance (FREE_TIER_DAILY_COGS_USD); see provider_cogs for '
+          + 'what this one cost to serve.',
     },
     privacy: privateSpend
       ? {
@@ -906,6 +957,50 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
     }
     if (metering.halted) return undefined;
 
+    // A call that settled pays its own COGS; only unmetered traffic draws on the
+    // free allowance (ADR 0006 — receipts are free, compute is not). Checked
+    // before serving and charged after, so a caller can cross the line by at
+    // most one call.
+    const freeBucket = metering.payment ? null : freeTierBucket(req, apiKeyHashFromReq(req));
+    if (freeBucket) {
+      const allowance = checkFreeAllowance(freeBucket);
+      if (!allowance.allowed) {
+        const global = allowance.scope === 'global';
+        logger.warn(
+          {
+            reqId: req.id,
+            scope: allowance.scope,
+            spentUsd: cogsUsd(allowance.spent),
+            limitUsd: cogsUsd(allowance.limit),
+            globalSpentUsd: cogsUsd(allowance.globalSpent),
+            globalLimitUsd: cogsUsd(allowance.globalLimit),
+          },
+          'openai-gateway: free allowance exhausted',
+        );
+        // 402 rather than 429: retrying does not help before the reset, and the
+        // resolution we actually want is a metered key. A plain OpenAI SDK treats
+        // this as fatal and surfaces the message, which is the intent — this is a
+        // deliberate wall, not backpressure.
+        res.set('Retry-After', String(allowance.retryAfterSec));
+        return res.status(402).json({
+          error: {
+            // Say which ceiling was hit. Telling a caller who has spent nothing
+            // that they are over their own limit sends them looking for a fault
+            // on their side that does not exist.
+            message: global
+              ? `The shared free tier is exhausted for today: $${cogsUsd(allowance.globalLimit)} of provider cost `
+                + `across all free callers. It resets at ${allowance.resetAt}. A metered key is not subject to `
+                + 'this ceiling — receipts are free either way.'
+              : `Free allowance exhausted: $${cogsUsd(allowance.limit)} of provider cost today. `
+                + `It resets at ${allowance.resetAt}. For uninterrupted access, use a metered key — `
+                + 'receipts are free either way.',
+            type: 'payment_required',
+            code: global ? 'free_tier_capacity' : 'free_tier_exhausted',
+          },
+        });
+      }
+    }
+
     let inference;
     try {
       inference = await runChatInference({
@@ -960,6 +1055,12 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
       usage: { ...counts, source },
       payment: metering.payment,
     });
+
+    // Must precede buildReceipt — the receipt reads provider_cogs off task.meta.
+    // A mock cost us nothing, so it neither burns float nor spends the allowance.
+    const cogs = mock ? 0n : await accountForCogs({ task, modelId: echoModel, usage: counts, provider });
+    if (freeBucket) recordFreeSpend(freeBucket, cogs);
+
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
     const receipt = buildReceipt({
       task, taskId, provider, mock, proverConfigured, proveAllowed,

@@ -114,19 +114,72 @@ Still open: `/.well-known/x402` advertises only the default price (`x402-discove
 
 Verifiability does **not** command a multiple. Measured TEE premiums land at **10–20%**: GLM-5.2 on Tinfoil vs Together is +13.5%, confidential cloud instances run +10.0% to +18.7%, GPU-level TEE +35%. Nobody in the market sells attestation as a separate line item — the [Confidential Inference directory](https://confidentialinference.net/) has 8 providers and 50 models, none charging an attestation fee. HULDR, the closest analogue to our receipt product, states its model in the negative: revenue is provider stake yield, not call fees.
 
-### Settlement proofs cost ~$0.007 — cheap enough to give away
+### Settlement proofs cost $0.050 each — measured, and ~7x the old estimate
 
-Costed properly (2026-08-12), a Tier 2 SP1 proof is far cheaper than assumed:
+**Measured 2026-08-14** from a real request on the Succinct explorer, replacing the
+$0.007 self-hosted estimate this section used to carry. Request
+`0x073ef49f…384fb8b`, `sp1-v6.1.0`, auction strategy:
 
-| Component | Cost | Basis |
+| Field | Value |
+|---|---|
+| Gas used | 58,698 PGU |
+| Base fee | 0.341064 PROVE |
+| Total fee | 0.341064000000058698 PROVE |
+| **Variable component** | **0.000000000058698 PROVE — about $8.6 × 10⁻¹²** |
+| **Cost per request** | **≈ $0.050** at PROVE $0.147 |
+
+**The cost is entirely fixed per request.** The variable part is eleven orders of
+magnitude below the base fee, so Succinct's "fixed overhead dominates for small
+circuits" is not an approximation here — PGU count is irrelevant to what we pay.
+Our circuit is 58,698 PGU, far below the 2M this doc previously assumed, and
+shrinking it further would save nothing.
+
+That single fact determines the entire economics: **cost per settlement is the
+base fee divided by batch size, and nothing else.**
+
+| Batch size | Cost per settlement | Against a $0.0094 platform fee |
 |---|---|---|
-| SP1 proving, self-hosted, <10M cycles + Groth16 | **~$0.003** | ~10.6s on an L4 at $0.80/hr; cross-checked against Ethproofs' $0.0376 per full Ethereum block |
-| Groth16 verification **on Base** | **~$0.004** | 275k–300k gas at 0.005 gwei; Base's own docs give ~$0.002 for 200k gas |
-| **All-in** | **~$0.007** | **<$0.005 batched** — the STARK→SNARK wrap is near-constant, so batching N settlements divides it N ways |
+| **1 — what we actually pay** | **$0.0500** | **5.3x the whole fee** |
+| 5 | $0.0100 | 1.06x — still underwater |
+| 10 | $0.0050 | 53% of the fee |
+| 20 (host maximum) | $0.0025 | 27% of the fee |
 
-The **$3–$18 figure is Ethereum mainnet**. On Base it is roughly **1,000x cheaper**, which is not a detail — it changes the tier. At $0.007 a settlement proof costs less than a tenth of the $0.10 previously proposed for it, so it is affordable to **include free on every paid call**. That turns cryptographic settlement proof from an upsell into a default nobody else offers, and makes any future tier gate a willingness-to-pay experiment rather than cost recovery.
+**Break-even is batch 6** on a median agent call. Below that, a bundled Tier-2
+proof costs more than the entire 10% fee on the call it attests.
 
-**Open:** we run `SP1_PROVER=network`, so our real cost is Succinct's, not self-hosted. Their pricing is a live auction (`base fee + PGU × price/PGU`) and **the base fee is not published**. For a sub-2M-PGU circuit like ours, Succinct says fixed overhead dominates — so the base fee is essentially the whole cost. Closing this is a ~20 minute task: run `client.execute()` for the real PGU count, then read `GetProofRequestParams` for the live `GROTH16_FEE`.
+**Only the first row is real today, and no setting changes it.** AI-task
+settlement proofs cannot be batched at all. `ai-listener.js` calls
+`generateProof(request, true)` — `urgent` — which bypasses the queue, and it has
+to: in the host, `parse_request_to_batch` handles `ai_task` only in the `Single`
+branch, while the `Batch` branch parses `ForwardDeposit` and demands
+`merkle_proof` / `identity_secret`. The batch queue, `minBatchSize` and
+`SP1_BATCH_TIMEOUT_MS` only ever served legacy TFUEL deposit proofs.
+
+Batching AI tasks means extending the guest's `Batch` branch to accept
+`ai_tasks` — a new ELF, therefore a new **vKey**, therefore a vKey update in
+`ZKVerifierSP1` on Base. The rows above are the prize for doing that work, not a
+description of today. Guest v2 has moved from a nice-to-have to the gating item
+for Tier-2 economics.
+
+Two consequences for pricing:
+
+- **Tier-2 cannot be free on every call.** A floor-priced call collects $0.01 in
+  total; one unbatched proof against it costs $0.050. That is five times the
+  entire payment, not five times the margin.
+- **Tier-2 can be bundled above a COGS threshold**, where 10% of provider cost
+  comfortably exceeds the amortised proof. This is what `tier2Min` should be
+  re-based on — see the open item below.
+
+**We are structurally short PROVE.** Proof COGS is denominated in a token sitting
+at its all-time low ($0.1439, set 2026-08-13) after falling ~86% in a year. At
+its 1-year-ago price of $1.41 the same proof costs **$0.48**, and batch-20
+amortisation only brings that to $0.024 — still 2.6x the platform fee on a median
+call. Any decision to bundle Tier-2 free is a bet that PROVE stays cheap.
+
+**Still open:** the measured request used `.compressed()` (the host calls
+`prove(...).compressed()`), which is a STARK, not the Groth16 wrap that
+`ZKVerifierSP1` verifies on Base. On-chain settlement adds a Groth16 wrap plus
+Base calldata gas on top of the $0.050. That figure is not yet measured.
 
 ### Full zkML is not a product in 2026, at any price
 
@@ -145,12 +198,14 @@ The pricing *shape* differs by tier, because only one of them scales with job si
 | Tier | Cost multiplier on inference COGS | Shippable 2026? | Proposed |
 |---|---|---|---|
 | **1 `signed`** | ~1.0x | Live | **Free, permanently.** Baseline assurance, never an upsell |
-| **2 `settlement`** (SP1) | **~$0.007 flat** | Live | **Free on paid calls.** Flat if ever charged — a percentage is wrong here |
+| **2 `settlement`** (SP1) | **$0.050 flat, unbatchable** | Live | **Opt-in at a flat $0.08** (`X402_TIER2_PROOF_UNITS`). Bundling waits on Guest v2 batching |
 | **3a `tee`** | 1.0–1.2x | Via Phala / Tinfoil | Pass through the 0–20% premium |
 | **3b `zk-spotcheck`** | **1 + p × ~0.1** | Yes — production elsewhere | **Cost-plus % on the sampled fraction.** The live option |
 | **3c `zk-full`** | **~1,000–5,000x** | **No** | **Not a product.** Research only |
 
-**Why a percentage is wrong for Tier 2.** An SP1 settlement proof attests fee arithmetic and a payment binding — the same circuit whether the job was $0.01 or $1.00. Proof cost is flat while a percentage would scale, so 5% would undercharge on small jobs and overcharge on large ones for identical work.
+**Why a percentage is wrong for Tier 2.** An SP1 settlement proof attests fee arithmetic and a payment binding — the same circuit whether the job was $0.01 or $1.00. The measurement above makes this concrete rather than theoretical: cost is fixed per *request*, independent even of PGU count, so a percentage would undercharge on small jobs and overcharge on large ones for byte-identical work.
+
+**What a percentage is right for is the *gate*, not the price.** Proof cost is flat, so recover it flat — but decide *whether* to bundle by comparing the amortised proof against the fee the call earns. That is a percentage-of-COGS comparison, and it is why `tier2Min` belongs in COGS terms.
 
 **Why a percentage is right for Tier 3b.** Spot-check cost scales with the sampled fraction and the size of the calls sampled, so cost-plus keeps us whole and the sample rate is a dial we control.
 

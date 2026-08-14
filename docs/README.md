@@ -79,6 +79,8 @@ https://xfuel.app Â· https://api-testnet.xfuel.app
 | [adr/0003](./adr/0003-verified-inference-cleanroom.md) | Clean-room Tier-3 |
 | [adr/0004](./adr/0004-zkllm-prover-stack.md) | zkLLM stack |
 | [adr/0005](./adr/0005-provider-float-cogs.md) | Provider float COGS |
+| [adr/0006](./adr/0006-receipts-are-not-a-paid-feature.md) | Receipts are free, never gated on payment |
+| [adr/0007](./adr/0007-spot-check-assurance.md) | Spot-check assurance — pool the statistics |
 | [CIRCUITS.md](./CIRCUITS.md) | Circuits |
 | [Technical-Specifications.md](./Technical-Specifications.md) | Gas / benchmarks |
 | [providers/README.md](./providers/README.md) | Provider tiers |

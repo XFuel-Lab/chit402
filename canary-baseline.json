@@ -1,0 +1,1333 @@
+{
+  "at": "2026-08-13T11:36:04.549Z",
+  "config": {
+    "reps": 4,
+    "prompts": 24,
+    "maxTokens": 512,
+    "budgetUsd": 20
+  },
+  "spentUsd": 0.173306,
+  "stoppedForBudget": false,
+  "health": {
+    "deepseek-ai/DeepSeek-V4-Flash-0731": {
+      "ok": 94,
+      "calls": 96,
+      "empty": 0,
+      "http": 0,
+      "timeout": 2,
+      "totalMs": 353996,
+      "meanMs": 3687
+    },
+    "zai-org/GLM-5.2": {
+      "ok": 80,
+      "calls": 96,
+      "empty": 16,
+      "http": 0,
+      "timeout": 0,
+      "totalMs": 556804,
+      "meanMs": 5800
+    },
+    "openai/gpt-oss-120b": {
+      "ok": 96,
+      "calls": 96,
+      "empty": 0,
+      "http": 0,
+      "timeout": 0,
+      "totalMs": 167143,
+      "meanMs": 1741
+    },
+    "Qwen/Qwen3.6-35B-A3B": {
+      "ok": 62,
+      "calls": 96,
+      "empty": 33,
+      "http": 0,
+      "timeout": 1,
+      "totalMs": 701724,
+      "meanMs": 7310
+    },
+    "meta-llama/Llama-3.3-70B-Instruct": {
+      "ok": 96,
+      "calls": 96,
+      "empty": 0,
+      "http": 0,
+      "timeout": 0,
+      "totalMs": 58844,
+      "meanMs": 613
+    },
+    "Qwen/Qwen3.5-35B-A3B": {
+      "ok": 64,
+      "calls": 96,
+      "empty": 32,
+      "http": 0,
+      "timeout": 0,
+      "totalMs": 148082,
+      "meanMs": 1543
+    }
+  },
+  "self": {
+    "deepseek-ai/DeepSeek-V4-Flash-0731": {
+      "exact": 1,
+      "sim": 1,
+      "n": 138
+    },
+    "zai-org/GLM-5.2": {
+      "exact": 0.7863247863247863,
+      "sim": 0.8335877085877087,
+      "n": 117
+    },
+    "openai/gpt-oss-120b": {
+      "exact": 0.8263888888888888,
+      "sim": 0.8816792929292929,
+      "n": 144
+    },
+    "Qwen/Qwen3.6-35B-A3B": {
+      "exact": 0.9772727272727273,
+      "sim": 0.9772727272727273,
+      "n": 88
+    },
+    "meta-llama/Llama-3.3-70B-Instruct": {
+      "exact": 0.9583333333333334,
+      "sim": 0.9714912280701754,
+      "n": 144
+    },
+    "Qwen/Qwen3.5-35B-A3B": {
+      "exact": 0.978494623655914,
+      "sim": 0.9956989247311827,
+      "n": 93
+    }
+  },
+  "cross": [
+    {
+      "a": "zai-org/GLM-5.2",
+      "b": "Qwen/Qwen3.6-35B-A3B",
+      "exact": 0.6532258064516129,
+      "sim": 0.6862519201228878,
+      "n": 248,
+      "floor": 0.7863247863247863,
+      "margin": 0.13309897987317343,
+      "nearTwin": false
+    },
+    {
+      "a": "openai/gpt-oss-120b",
+      "b": "Qwen/Qwen3.6-35B-A3B",
+      "exact": 0.5483870967741935,
+      "sim": 0.5908602150537634,
+      "n": 248,
+      "floor": 0.8263888888888888,
+      "margin": 0.27800179211469533,
+      "nearTwin": false
+    },
+    {
+      "a": "zai-org/GLM-5.2",
+      "b": "Qwen/Qwen3.5-35B-A3B",
+      "exact": 0.5,
+      "sim": 0.5751488095238095,
+      "n": 256,
+      "floor": 0.7863247863247863,
+      "margin": 0.2863247863247863,
+      "nearTwin": false
+    },
+    {
+      "a": "Qwen/Qwen3.6-35B-A3B",
+      "b": "Qwen/Qwen3.5-35B-A3B",
+      "exact": 0.6212765957446809,
+      "sim": 0.7172441742654508,
+      "n": 235,
+      "floor": 0.9772727272727273,
+      "margin": 0.35599613152804643,
+      "nearTwin": true
+    },
+    {
+      "a": "zai-org/GLM-5.2",
+      "b": "openai/gpt-oss-120b",
+      "exact": 0.428125,
+      "sim": 0.5092372517188694,
+      "n": 320,
+      "floor": 0.7863247863247863,
+      "margin": 0.35819978632478633,
+      "nearTwin": false
+    },
+    {
+      "a": "zai-org/GLM-5.2",
+      "b": "meta-llama/Llama-3.3-70B-Instruct",
+      "exact": 0.365625,
+      "sim": 0.4834639332706767,
+      "n": 320,
+      "floor": 0.7863247863247863,
+      "margin": 0.42069978632478633,
+      "nearTwin": false
+    },
+    {
+      "a": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "b": "zai-org/GLM-5.2",
+      "exact": 0.31645569620253167,
+      "sim": 0.44337360951285,
+      "n": 316,
+      "floor": 0.7863247863247863,
+      "margin": 0.46986909012225464,
+      "nearTwin": false
+    },
+    {
+      "a": "openai/gpt-oss-120b",
+      "b": "Qwen/Qwen3.5-35B-A3B",
+      "exact": 0.328125,
+      "sim": 0.46313709077380955,
+      "n": 256,
+      "floor": 0.8263888888888888,
+      "margin": 0.49826388888888884,
+      "nearTwin": false
+    },
+    {
+      "a": "openai/gpt-oss-120b",
+      "b": "meta-llama/Llama-3.3-70B-Instruct",
+      "exact": 0.2604166666666667,
+      "sim": 0.4376863109012877,
+      "n": 384,
+      "floor": 0.8263888888888888,
+      "margin": 0.5659722222222221,
+      "nearTwin": false
+    },
+    {
+      "a": "Qwen/Qwen3.6-35B-A3B",
+      "b": "meta-llama/Llama-3.3-70B-Instruct",
+      "exact": 0.3870967741935484,
+      "sim": 0.43187403993855616,
+      "n": 248,
+      "floor": 0.9583333333333334,
+      "margin": 0.571236559139785,
+      "nearTwin": false
+    },
+    {
+      "a": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "b": "openai/gpt-oss-120b",
+      "exact": 0.18085106382978725,
+      "sim": 0.304944221402294,
+      "n": 376,
+      "floor": 0.8263888888888888,
+      "margin": 0.6455378250591016,
+      "nearTwin": false
+    },
+    {
+      "a": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "b": "Qwen/Qwen3.6-35B-A3B",
+      "exact": 0.3114754098360656,
+      "sim": 0.3416666666666666,
+      "n": 244,
+      "floor": 0.9772727272727273,
+      "margin": 0.6657973174366617,
+      "nearTwin": false
+    },
+    {
+      "a": "meta-llama/Llama-3.3-70B-Instruct",
+      "b": "Qwen/Qwen3.5-35B-A3B",
+      "exact": 0.265625,
+      "sim": 0.3485119047619048,
+      "n": 256,
+      "floor": 0.9583333333333334,
+      "margin": 0.6927083333333334,
+      "nearTwin": false
+    },
+    {
+      "a": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "b": "meta-llama/Llama-3.3-70B-Instruct",
+      "exact": 0.2127659574468085,
+      "sim": 0.35475091662101743,
+      "n": 376,
+      "floor": 0.9583333333333334,
+      "margin": 0.7455673758865249,
+      "nearTwin": false
+    },
+    {
+      "a": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "b": "Qwen/Qwen3.5-35B-A3B",
+      "exact": 0.12698412698412698,
+      "sim": 0.2434326255754827,
+      "n": 252,
+      "floor": 0.978494623655914,
+      "margin": 0.851510496671787,
+      "nearTwin": false
+    }
+  ],
+  "weakestSelf": 0.7863247863247863,
+  "narrowestMargin": 0.13309897987317343,
+  "nearTwinMargin": 0.35599613152804643,
+  "promptScores": [
+    {
+      "prompt": "Complete in exactly three words: \"She opened the door and\"",
+      "self": 1,
+      "cross": 0,
+      "discrimination": 1
+    },
+    {
+      "prompt": "Invent a one-word name for a coffee shop. Reply with the single word only.",
+      "self": 1,
+      "cross": 0,
+      "discrimination": 1
+    },
+    {
+      "prompt": "Invent a one-word name for a database table of audit records. Reply with the single word only.",
+      "self": 1,
+      "cross": 0,
+      "discrimination": 1
+    },
+    {
+      "prompt": "Complete in exactly four words: \"The best debugging tool is\"",
+      "self": 0.8333333333333334,
+      "cross": 0,
+      "discrimination": 0.8333333333333334
+    },
+    {
+      "prompt": "Pick a two-digit prime. Reply with the digits only.",
+      "self": 0.9166666666666666,
+      "cross": 0.1,
+      "discrimination": 0.8166666666666667
+    },
+    {
+      "prompt": "Name a metal. Reply with the single word only.",
+      "self": 0.9259259259259259,
+      "cross": 0.11042944785276074,
+      "discrimination": 0.8154964780731652
+    },
+    {
+      "prompt": "Name an animal. Reply with the single word only.",
+      "self": 1,
+      "cross": 0.2,
+      "discrimination": 0.8
+    },
+    {
+      "prompt": "Pick a letter of the alphabet. Reply with the single letter only.",
+      "self": 1,
+      "cross": 0.21818181818181817,
+      "discrimination": 0.7818181818181819
+    },
+    {
+      "prompt": "Name a country. Reply with the single word only.",
+      "self": 1,
+      "cross": 0.26666666666666666,
+      "discrimination": 0.7333333333333334
+    },
+    {
+      "prompt": "Pick a whole number between 1 and 100. Reply with the digits only.",
+      "self": 0.9166666666666666,
+      "cross": 0.25,
+      "discrimination": 0.6666666666666666
+    },
+    {
+      "prompt": "Pick a month. Reply with the single word only.",
+      "self": 0.9166666666666666,
+      "cross": 0.25,
+      "discrimination": 0.6666666666666666
+    },
+    {
+      "prompt": "Name a musical instrument. Reply with the single word only.",
+      "self": 0.8333333333333334,
+      "cross": 0.1875,
+      "discrimination": 0.6458333333333334
+    },
+    {
+      "prompt": "Pick a hexadecimal colour code you like. Reply with the code only.",
+      "self": 0.8387096774193549,
+      "cross": 0.21,
+      "discrimination": 0.6287096774193549
+    },
+    {
+      "prompt": "Name an emotion. Reply with the single word only.",
+      "self": 1,
+      "cross": 0.4,
+      "discrimination": 0.6
+    },
+    {
+      "prompt": "Name a planet. Reply with the single word only.",
+      "self": 0.9166666666666666,
+      "cross": 0.35,
+      "discrimination": 0.5666666666666667
+    },
+    {
+      "prompt": "Give a git branch name for a caching bug fix. Reply with the branch name only.",
+      "self": 0.7777777777777778,
+      "cross": 0.2222222222222222,
+      "discrimination": 0.5555555555555556
+    },
+    {
+      "prompt": "Name a fruit. Reply with the single word only.",
+      "self": 1,
+      "cross": 0.4666666666666667,
+      "discrimination": 0.5333333333333333
+    },
+    {
+      "prompt": "Complete in exactly three words: \"The morning air was\"",
+      "self": 0.6190476190476191,
+      "cross": 0.19047619047619047,
+      "discrimination": 0.4285714285714286
+    },
+    {
+      "prompt": "Give a function name that retries a failed network call. Reply with the identifier only.",
+      "self": 0.75,
+      "cross": 0.34375,
+      "discrimination": 0.40625
+    },
+    {
+      "prompt": "Name a colour. Reply with the single word only.",
+      "self": 0.8888888888888888,
+      "cross": 0.5333333333333333,
+      "discrimination": 0.3555555555555555
+    },
+    {
+      "prompt": "Choose a programming language. Reply with the single word only.",
+      "self": 1,
+      "cross": 0.6666666666666666,
+      "discrimination": 0.33333333333333337
+    },
+    {
+      "prompt": "Name a city. Reply with the single word only.",
+      "self": 0.7777777777777778,
+      "cross": 0.45,
+      "discrimination": 0.3277777777777778
+    },
+    {
+      "prompt": "Give a variable name for a user's remaining credit. Reply with the identifier only.",
+      "self": 1,
+      "cross": 1,
+      "discrimination": 0
+    },
+    {
+      "prompt": "Name a tree. Reply with the single word only.",
+      "self": 1,
+      "cross": 1,
+      "discrimination": 0
+    }
+  ],
+  "curated": {
+    "keep": [
+      "Complete in exactly three words: \"She opened the door and\"",
+      "Invent a one-word name for a coffee shop. Reply with the single word only.",
+      "Invent a one-word name for a database table of audit records. Reply with the single word only.",
+      "Complete in exactly four words: \"The best debugging tool is\"",
+      "Pick a two-digit prime. Reply with the digits only.",
+      "Name a metal. Reply with the single word only.",
+      "Name an animal. Reply with the single word only.",
+      "Pick a letter of the alphabet. Reply with the single letter only.",
+      "Name a country. Reply with the single word only.",
+      "Pick a whole number between 1 and 100. Reply with the digits only.",
+      "Pick a month. Reply with the single word only.",
+      "Name a musical instrument. Reply with the single word only."
+    ],
+    "weakestSelf": 0.8333333333333334,
+    "pairs": [
+      {
+        "a": "zai-org/GLM-5.2",
+        "b": "Qwen/Qwen3.6-35B-A3B",
+        "exact": 0.4838709677419355,
+        "sim": 0.5430107526881721,
+        "n": 124,
+        "floor": 0.875,
+        "margin": 0.3911290322580645,
+        "nearTwin": false
+      },
+      {
+        "a": "zai-org/GLM-5.2",
+        "b": "openai/gpt-oss-120b",
+        "exact": 0.3409090909090909,
+        "sim": 0.3522727272727273,
+        "n": 132,
+        "floor": 0.8333333333333334,
+        "margin": 0.4924242424242425,
+        "nearTwin": false
+      },
+      {
+        "a": "Qwen/Qwen3.6-35B-A3B",
+        "b": "Qwen/Qwen3.5-35B-A3B",
+        "exact": 0.43478260869565216,
+        "sim": 0.5553623188405797,
+        "n": 115,
+        "floor": 0.9555555555555556,
+        "margin": 0.5207729468599034,
+        "nearTwin": true
+      },
+      {
+        "a": "openai/gpt-oss-120b",
+        "b": "Qwen/Qwen3.6-35B-A3B",
+        "exact": 0.2903225806451613,
+        "sim": 0.34946236559139787,
+        "n": 124,
+        "floor": 0.8333333333333334,
+        "margin": 0.543010752688172,
+        "nearTwin": false
+      },
+      {
+        "a": "zai-org/GLM-5.2",
+        "b": "Qwen/Qwen3.5-35B-A3B",
+        "exact": 0.3103448275862069,
+        "sim": 0.367816091954023,
+        "n": 116,
+        "floor": 0.875,
+        "margin": 0.5646551724137931,
+        "nearTwin": false
+      },
+      {
+        "a": "deepseek-ai/DeepSeek-V4-Flash-0731",
+        "b": "zai-org/GLM-5.2",
+        "exact": 0.25,
+        "sim": 0.3822916666666667,
+        "n": 128,
+        "floor": 0.875,
+        "margin": 0.625,
+        "nearTwin": false
+      },
+      {
+        "a": "deepseek-ai/DeepSeek-V4-Flash-0731",
+        "b": "Qwen/Qwen3.6-35B-A3B",
+        "exact": 0.26666666666666666,
+        "sim": 0.30583333333333335,
+        "n": 120,
+        "floor": 0.9555555555555556,
+        "margin": 0.6888888888888889,
+        "nearTwin": false
+      },
+      {
+        "a": "deepseek-ai/DeepSeek-V4-Flash-0731",
+        "b": "openai/gpt-oss-120b",
+        "exact": 0.10869565217391304,
+        "sim": 0.2484472049689441,
+        "n": 184,
+        "floor": 0.8333333333333334,
+        "margin": 0.7246376811594203,
+        "nearTwin": false
+      },
+      {
+        "a": "openai/gpt-oss-120b",
+        "b": "Qwen/Qwen3.5-35B-A3B",
+        "exact": 0.10344827586206896,
+        "sim": 0.21264367816091956,
+        "n": 116,
+        "floor": 0.8333333333333334,
+        "margin": 0.7298850574712644,
+        "nearTwin": false
+      },
+      {
+        "a": "zai-org/GLM-5.2",
+        "b": "meta-llama/Llama-3.3-70B-Instruct",
+        "exact": 0.09090909090909091,
+        "sim": 0.2708513708513708,
+        "n": 132,
+        "floor": 0.875,
+        "margin": 0.7840909090909091,
+        "nearTwin": false
+      },
+      {
+        "a": "Qwen/Qwen3.6-35B-A3B",
+        "b": "meta-llama/Llama-3.3-70B-Instruct",
+        "exact": 0.12903225806451613,
+        "sim": 0.2001536098310292,
+        "n": 124,
+        "floor": 0.9555555555555556,
+        "margin": 0.8265232974910395,
+        "nearTwin": false
+      },
+      {
+        "a": "openai/gpt-oss-120b",
+        "b": "meta-llama/Llama-3.3-70B-Instruct",
+        "exact": 0,
+        "sim": 0.19387475949975952,
+        "n": 192,
+        "floor": 0.8333333333333334,
+        "margin": 0.8333333333333334,
+        "nearTwin": false
+      },
+      {
+        "a": "deepseek-ai/DeepSeek-V4-Flash-0731",
+        "b": "meta-llama/Llama-3.3-70B-Instruct",
+        "exact": 0.08695652173913043,
+        "sim": 0.27484472049689435,
+        "n": 184,
+        "floor": 1,
+        "margin": 0.9130434782608696,
+        "nearTwin": false
+      },
+      {
+        "a": "deepseek-ai/DeepSeek-V4-Flash-0731",
+        "b": "Qwen/Qwen3.5-35B-A3B",
+        "exact": 0,
+        "sim": 0.1282738095238095,
+        "n": 112,
+        "floor": 1,
+        "margin": 1,
+        "nearTwin": false
+      },
+      {
+        "a": "meta-llama/Llama-3.3-70B-Instruct",
+        "b": "Qwen/Qwen3.5-35B-A3B",
+        "exact": 0,
+        "sim": 0.0804597701149425,
+        "n": 116,
+        "floor": 1,
+        "margin": 1,
+        "nearTwin": false
+      }
+    ]
+  },
+  "samplesNeeded": {
+    "full": 179,
+    "curated": 23
+  },
+  "responses": {
+    "deepseek-ai/DeepSeek-V4-Flash-0731": {
+      "Name a city. Reply with the single word only.": [
+        "Tokyo",
+        "Tokyo",
+        "Tokyo",
+        "Tokyo"
+      ],
+      "Name a colour. Reply with the single word only.": [
+        "Violet",
+        "Violet",
+        "Violet",
+        "Violet"
+      ],
+      "Pick a whole number between 1 and 100. Reply with the digits only.": [
+        "7",
+        "7",
+        "7",
+        "7"
+      ],
+      "Name an animal. Reply with the single word only.": [
+        "Elephant",
+        "Elephant",
+        "Elephant",
+        "Elephant"
+      ],
+      "Name a fruit. Reply with the single word only.": [
+        "Apple",
+        "Apple",
+        "Apple",
+        "Apple"
+      ],
+      "Choose a programming language. Reply with the single word only.": [
+        "Rust",
+        "Rust",
+        "Rust",
+        "Rust"
+      ],
+      "Pick a letter of the alphabet. Reply with the single letter only.": [
+        "z",
+        "z",
+        "z"
+      ],
+      "Name a musical instrument. Reply with the single word only.": [
+        "Sitar",
+        "Sitar",
+        "Sitar",
+        "Sitar"
+      ],
+      "Complete in exactly three words: \"The morning air was\"": [
+        "crisp and cool.",
+        "crisp and cool.",
+        "crisp and cool.",
+        "crisp and cool."
+      ],
+      "Complete in exactly three words: \"She opened the door and\"": [
+        "saw her ex.",
+        "saw her ex.",
+        "saw her ex.",
+        "saw her ex."
+      ],
+      "Give a variable name for a user's remaining credit. Reply with the identifier only.": [
+        "remainingCredit",
+        "remainingCredit",
+        "remainingCredit",
+        "remainingCredit"
+      ],
+      "Give a function name that retries a failed network call. Reply with the identifier only.": [
+        "retryNetworkCall",
+        "retryNetworkCall",
+        "retryNetworkCall",
+        "retryNetworkCall"
+      ],
+      "Name a country. Reply with the single word only.": [
+        "Japan",
+        "Japan",
+        "Japan",
+        "Japan"
+      ],
+      "Pick a month. Reply with the single word only.": [
+        "October",
+        "October",
+        "October",
+        "October"
+      ],
+      "Invent a one-word name for a coffee shop. Reply with the single word only.": [
+        "Ember",
+        "Ember",
+        "Ember"
+      ],
+      "Pick a two-digit prime. Reply with the digits only.": [
+        "11",
+        "11",
+        "11",
+        "11"
+      ],
+      "Name an emotion. Reply with the single word only.": [
+        "Gratitude",
+        "Gratitude",
+        "Gratitude",
+        "Gratitude"
+      ],
+      "Name a metal. Reply with the single word only.": [
+        "Tungsten",
+        "Tungsten",
+        "Tungsten",
+        "Tungsten"
+      ],
+      "Complete in exactly four words: \"The best debugging tool is\"": [
+        "The best debugging tool is careful thought.",
+        "The best debugging tool is careful thought.",
+        "The best debugging tool is careful thought.",
+        "The best debugging tool is careful thought."
+      ],
+      "Give a git branch name for a caching bug fix. Reply with the branch name only.": [
+        "fix/cache-invalidation",
+        "fix/cache-invalidation",
+        "fix/cache-invalidation",
+        "fix/cache-invalidation"
+      ],
+      "Name a planet. Reply with the single word only.": [
+        "Neptune",
+        "Neptune",
+        "Neptune",
+        "Neptune"
+      ],
+      "Pick a hexadecimal colour code you like. Reply with the code only.": [
+        "#4A90E2",
+        "#4A90E2",
+        "#4A90E2",
+        "#4A90E2"
+      ],
+      "Name a tree. Reply with the single word only.": [
+        "Oak",
+        "Oak",
+        "Oak",
+        "Oak"
+      ],
+      "Invent a one-word name for a database table of audit records. Reply with the single word only.": [
+        "Ledger",
+        "Ledger",
+        "Ledger",
+        "Ledger"
+      ]
+    },
+    "zai-org/GLM-5.2": {
+      "Name a colour. Reply with the single word only.": [
+        "Blue",
+        "Blue",
+        "Blue",
+        "Blue"
+      ],
+      "Name a city. Reply with the single word only.": [
+        "London",
+        "London",
+        "Tokyo",
+        "Paris"
+      ],
+      "Pick a whole number between 1 and 100. Reply with the digits only.": [
+        "42",
+        "42",
+        "42",
+        "42"
+      ],
+      "Name an animal. Reply with the single word only.": [
+        "Elephant",
+        "Elephant",
+        "Elephant",
+        "Elephant"
+      ],
+      "Choose a programming language. Reply with the single word only.": [
+        "Python",
+        "Python",
+        "Python",
+        "Python"
+      ],
+      "Name a fruit. Reply with the single word only.": [
+        "Apple",
+        "Apple",
+        "Apple",
+        "Apple"
+      ],
+      "Pick a letter of the alphabet. Reply with the single letter only.": [
+        "Q",
+        "Q",
+        "Q",
+        "Q"
+      ],
+      "Name a musical instrument. Reply with the single word only.": [
+        "Piano",
+        "Guitar",
+        "Guitar",
+        "Guitar"
+      ],
+      "Complete in exactly three words: \"The morning air was\"": [
+        "crisp and clear.",
+        "cool and crisp.",
+        "fresh and crisp."
+      ],
+      "Give a variable name for a user's remaining credit. Reply with the identifier only.": [
+        "remainingCredit",
+        "remainingCredit",
+        "remainingCredit",
+        "remainingCredit"
+      ],
+      "Complete in exactly three words: \"She opened the door and\"": [
+        "walked right in."
+      ],
+      "Give a function name that retries a failed network call. Reply with the identifier only.": [
+        "retryNetworkCall",
+        "retryRequest",
+        "retryNetworkCall",
+        "retryNetworkCall"
+      ],
+      "Name a country. Reply with the single word only.": [
+        "Canada",
+        "Canada",
+        "Canada",
+        "Canada"
+      ],
+      "Pick a month. Reply with the single word only.": [
+        "October",
+        "October",
+        "October",
+        "October"
+      ],
+      "Name an emotion. Reply with the single word only.": [
+        "Joy",
+        "Joy",
+        "Joy",
+        "Joy"
+      ],
+      "Pick a two-digit prime. Reply with the digits only.": [
+        "23",
+        "23",
+        "23",
+        "37"
+      ],
+      "Name a metal. Reply with the single word only.": [
+        "Gold",
+        "Gold",
+        "Gold",
+        "Gold"
+      ],
+      "Give a git branch name for a caching bug fix. Reply with the branch name only.": [
+        "fix/caching-bug",
+        "fix/caching-bug",
+        "fix/caching-bug",
+        "fix/caching-bug"
+      ],
+      "Name a planet. Reply with the single word only.": [
+        "Mars",
+        "Mars",
+        "Mars",
+        "Jupiter"
+      ],
+      "Name a tree. Reply with the single word only.": [
+        "Oak",
+        "Oak",
+        "Oak",
+        "Oak"
+      ],
+      "Pick a hexadecimal colour code you like. Reply with the code only.": [
+        "#4A90E2",
+        "#2E86C1",
+        "#2ECC71",
+        "#2ECC71"
+      ]
+    },
+    "openai/gpt-oss-120b": {
+      "Name a colour. Reply with the single word only.": [
+        "Azure",
+        "Blue",
+        "Azure",
+        "Blue"
+      ],
+      "Name a city. Reply with the single word only.": [
+        "Paris",
+        "Paris",
+        "Paris",
+        "Paris"
+      ],
+      "Pick a whole number between 1 and 100. Reply with the digits only.": [
+        "57",
+        "42",
+        "57",
+        "57"
+      ],
+      "Name an animal. Reply with the single word only.": [
+        "Elephant",
+        "Elephant",
+        "Elephant",
+        "Elephant"
+      ],
+      "Choose a programming language. Reply with the single word only.": [
+        "Python",
+        "Python",
+        "Python",
+        "Python"
+      ],
+      "Name a fruit. Reply with the single word only.": [
+        "Mango",
+        "Mango",
+        "Mango",
+        "Mango"
+      ],
+      "Pick a letter of the alphabet. Reply with the single letter only.": [
+        "M",
+        "M",
+        "M",
+        "M"
+      ],
+      "Name a musical instrument. Reply with the single word only.": [
+        "violin",
+        "Piano",
+        "violin",
+        "violin"
+      ],
+      "Complete in exactly three words: \"The morning air was\"": [
+        "crisp and hopeful.",
+        "crisp and invigorating.",
+        "crisp and refreshing",
+        "crisp and refreshing"
+      ],
+      "Complete in exactly three words: \"She opened the door and\"": [
+        "found a surprise",
+        "found a surprise",
+        "found a surprise",
+        "found a surprise"
+      ],
+      "Give a variable name for a user's remaining credit. Reply with the identifier only.": [
+        "remainingCredit",
+        "remainingCredit",
+        "remainingCredit",
+        "remainingCredit"
+      ],
+      "Give a function name that retries a failed network call. Reply with the identifier only.": [
+        "fetchWithRetry",
+        "fetchWithRetry",
+        "fetchWithRetry",
+        "fetchWithRetry"
+      ],
+      "Name a country. Reply with the single word only.": [
+        "Canada",
+        "Canada",
+        "Canada",
+        "Canada"
+      ],
+      "Pick a month. Reply with the single word only.": [
+        "April",
+        "October",
+        "April",
+        "April"
+      ],
+      "Name an emotion. Reply with the single word only.": [
+        "joy",
+        "joy",
+        "joy",
+        "Joy"
+      ],
+      "Invent a one-word name for a coffee shop. Reply with the single word only.": [
+        "Brewtopia",
+        "Brewtopia",
+        "Brewtopia",
+        "Brewtopia"
+      ],
+      "Pick a two-digit prime. Reply with the digits only.": [
+        "37",
+        "37",
+        "37",
+        "37"
+      ],
+      "Name a metal. Reply with the single word only.": [
+        "Iron",
+        "Iron",
+        "Iron",
+        "Iron"
+      ],
+      "Give a git branch name for a caching bug fix. Reply with the branch name only.": [
+        "bugfix/caching-issue",
+        "bugfix/cache-bug",
+        "bugfix/cache-bug",
+        "bugfix/caching-issue"
+      ],
+      "Complete in exactly four words: \"The best debugging tool is\"": [
+        "your own curiosity, always.",
+        "the console, hands down.",
+        "your own curiosity, always.",
+        "your own curiosity, always."
+      ],
+      "Name a planet. Reply with the single word only.": [
+        "Mars",
+        "Mars",
+        "Mars",
+        "Mars"
+      ],
+      "Pick a hexadecimal colour code you like. Reply with the code only.": [
+        "#4A90E2",
+        "#4A90E2",
+        "#4A90E2",
+        "#4A90E2"
+      ],
+      "Name a tree. Reply with the single word only.": [
+        "Oak",
+        "Oak",
+        "Oak",
+        "Oak"
+      ],
+      "Invent a one-word name for a database table of audit records. Reply with the single word only.": [
+        "AuditTrail",
+        "AuditTrail",
+        "AuditTrail",
+        "AuditTrail"
+      ]
+    },
+    "Qwen/Qwen3.6-35B-A3B": {
+      "Name a colour. Reply with the single word only.": [
+        "Blue",
+        "Blue",
+        "Blue",
+        "Blue"
+      ],
+      "Name a city. Reply with the single word only.": [
+        "Paris",
+        "Paris",
+        "Paris",
+        "Paris"
+      ],
+      "Pick a whole number between 1 and 100. Reply with the digits only.": [
+        "42",
+        "42",
+        "42",
+        "42"
+      ],
+      "Name an animal. Reply with the single word only.": [
+        "Tiger",
+        "Tiger",
+        "Tiger",
+        "Tiger"
+      ],
+      "Choose a programming language. Reply with the single word only.": [
+        "Python",
+        "Python",
+        "Python",
+        "Python"
+      ],
+      "Name a fruit. Reply with the single word only.": [
+        "Apple",
+        "Apple",
+        "Apple",
+        "Apple"
+      ],
+      "Pick a letter of the alphabet. Reply with the single letter only.": [
+        "Q",
+        "Q",
+        "Q",
+        "Q"
+      ],
+      "Name a musical instrument. Reply with the single word only.": [
+        "Piano",
+        "Piano",
+        "Piano",
+        "Piano"
+      ],
+      "Give a variable name for a user's remaining credit. Reply with the identifier only.": [
+        "remainingCredit"
+      ],
+      "Name a country. Reply with the single word only.": [
+        "Japan",
+        "Japan",
+        "Japan",
+        "Japan"
+      ],
+      "Pick a month. Reply with the single word only.": [
+        "October",
+        "October",
+        "October",
+        "October"
+      ],
+      "Name an emotion. Reply with the single word only.": [
+        "Joy",
+        "Joy",
+        "Joy",
+        "Joy"
+      ],
+      "Pick a two-digit prime. Reply with the digits only.": [
+        "37",
+        "37",
+        "37",
+        "37"
+      ],
+      "Name a metal. Reply with the single word only.": [
+        "Iron",
+        "Gold",
+        "Iron"
+      ],
+      "Name a planet. Reply with the single word only.": [
+        "Mars",
+        "Mars",
+        "Mars",
+        "Mars"
+      ],
+      "Name a tree. Reply with the single word only.": [
+        "Oak",
+        "Oak",
+        "Oak",
+        "Oak"
+      ],
+      "Pick a hexadecimal colour code you like. Reply with the code only.": [
+        "#4A90E2",
+        "#4A90E2"
+      ]
+    },
+    "meta-llama/Llama-3.3-70B-Instruct": {
+      "Name a colour. Reply with the single word only.": [
+        "Blue",
+        "Blue",
+        "Blue",
+        "Blue"
+      ],
+      "Name a city. Reply with the single word only.": [
+        "Paris",
+        "Paris",
+        "Tokyo",
+        "Paris"
+      ],
+      "Pick a whole number between 1 and 100. Reply with the digits only.": [
+        "53",
+        "53",
+        "53",
+        "53"
+      ],
+      "Name an animal. Reply with the single word only.": [
+        "Lion",
+        "Lion",
+        "Lion",
+        "Lion"
+      ],
+      "Choose a programming language. Reply with the single word only.": [
+        "Python",
+        "Python",
+        "Python",
+        "Python"
+      ],
+      "Name a fruit. Reply with the single word only.": [
+        "Mango",
+        "Mango",
+        "Mango",
+        "Mango"
+      ],
+      "Pick a letter of the alphabet. Reply with the single letter only.": [
+        "K",
+        "K",
+        "K",
+        "K"
+      ],
+      "Name a musical instrument. Reply with the single word only.": [
+        "Guitar",
+        "Guitar",
+        "Guitar",
+        "Guitar"
+      ],
+      "Complete in exactly three words: \"The morning air was\"": [
+        "Crisp and cool",
+        "Crisp and cool",
+        "Crisp and cool",
+        "Crisp and cool"
+      ],
+      "Complete in exactly three words: \"She opened the door and\"": [
+        "saw her mother",
+        "saw her mother",
+        "saw her mother",
+        "saw her mother"
+      ],
+      "Give a variable name for a user's remaining credit. Reply with the identifier only.": [
+        "remainingCredit",
+        "remainingCredit",
+        "remainingCredit",
+        "remainingCredit"
+      ],
+      "Give a function name that retries a failed network call. Reply with the identifier only.": [
+        "retryNetworkCall",
+        "retryNetworkCall",
+        "retryNetworkCall",
+        "retryNetworkRequest"
+      ],
+      "Name a country. Reply with the single word only.": [
+        "Japan",
+        "Japan",
+        "Japan",
+        "Japan"
+      ],
+      "Pick a month. Reply with the single word only.": [
+        "June",
+        "June",
+        "June",
+        "June"
+      ],
+      "Invent a one-word name for a coffee shop. Reply with the single word only.": [
+        "Brewa",
+        "Brewa",
+        "Brewa",
+        "Brewa"
+      ],
+      "Name an emotion. Reply with the single word only.": [
+        "Sadness",
+        "Sadness",
+        "Sadness",
+        "Sadness"
+      ],
+      "Pick a two-digit prime. Reply with the digits only.": [
+        "2 3",
+        "2 3",
+        "2 3",
+        "2 3"
+      ],
+      "Name a metal. Reply with the single word only.": [
+        "Copper",
+        "Copper",
+        "Copper",
+        "Copper"
+      ],
+      "Complete in exactly four words: \"The best debugging tool is\"": [
+        "a good error message",
+        "a good error message",
+        "a good error message",
+        "a good error message"
+      ],
+      "Give a git branch name for a caching bug fix. Reply with the branch name only.": [
+        "fix/caching-bug",
+        "fix/caching-bug",
+        "fix/caching-bug",
+        "fix/caching-bug"
+      ],
+      "Name a planet. Reply with the single word only.": [
+        "Mars",
+        "Mars",
+        "Mars",
+        "Mars"
+      ],
+      "Pick a hexadecimal colour code you like. Reply with the code only.": [
+        "#3498db",
+        "#3498db",
+        "#3498db",
+        "#3498db"
+      ],
+      "Name a tree. Reply with the single word only.": [
+        "Oak",
+        "Oak",
+        "Oak",
+        "Oak"
+      ],
+      "Invent a one-word name for a database table of audit records. Reply with the single word only.": [
+        "Audits",
+        "Audits",
+        "Audits",
+        "Audits"
+      ]
+    },
+    "Qwen/Qwen3.5-35B-A3B": {
+      "Name a colour. Reply with the single word only.": [
+        "Blue",
+        "Blue",
+        "Blue",
+        "Blue"
+      ],
+      "Name a city. Reply with the single word only.": [
+        "Paris",
+        "Paris",
+        "Paris",
+        "Paris"
+      ],
+      "Name an animal. Reply with the single word only.": [
+        "Dog",
+        "Dog",
+        "Dog",
+        "Dog"
+      ],
+      "Pick a whole number between 1 and 100. Reply with the digits only.": [
+        "42",
+        "42",
+        "42",
+        "42"
+      ],
+      "Choose a programming language. Reply with the single word only.": [
+        "Python",
+        "Python",
+        "Python",
+        "Python"
+      ],
+      "Name a fruit. Reply with the single word only.": [
+        "Apple",
+        "Apple",
+        "Apple",
+        "Apple"
+      ],
+      "Pick a letter of the alphabet. Reply with the single letter only.": [
+        "Q",
+        "Q",
+        "Q",
+        "Q"
+      ],
+      "Name a musical instrument. Reply with the single word only.": [
+        "Piano",
+        "Piano",
+        "Piano",
+        "Piano"
+      ],
+      "Name a country. Reply with the single word only.": [
+        "France",
+        "France",
+        "France",
+        "France"
+      ],
+      "Pick a month. Reply with the single word only.": [
+        "May",
+        "May",
+        "May",
+        "May"
+      ],
+      "Name an emotion. Reply with the single word only.": [
+        "Joy",
+        "Joy",
+        "Joy",
+        "Joy"
+      ],
+      "Pick a two-digit prime. Reply with the digits only.": [
+        "17",
+        "17",
+        "17",
+        "17"
+      ],
+      "Name a metal. Reply with the single word only.": [
+        "Iron"
+      ],
+      "Give a git branch name for a caching bug fix. Reply with the branch name only.": [
+        "fix/caching-bug",
+        "fix/caching-bug",
+        "fix/cache-bug"
+      ],
+      "Name a planet. Reply with the single word only.": [
+        "Earth",
+        "Earth",
+        "Earth",
+        "Earth"
+      ],
+      "Pick a hexadecimal colour code you like. Reply with the code only.": [
+        "#1abc9c",
+        "#1abc9c",
+        "#1abc9c",
+        "#1abc9c"
+      ],
+      "Name a tree. Reply with the single word only.": [
+        "Oak",
+        "Oak",
+        "Oak",
+        "Oak"
+      ]
+    }
+  }
+}
