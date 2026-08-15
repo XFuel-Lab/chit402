@@ -24,6 +24,7 @@ Runtime truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 | **x402 uses the `exact` scheme, so output is quoted at the `max_tokens` ceiling — buyers overpay by up to 3.8x (15x on a ceiling-heavy call)** | **High** | **Remedy built** 2026-08-13 — rolling settlement ([ADR 0008](./adr/0008-rolling-settlement.md)) charges measured usage on the next request, needing no v2/Permit2. Behind `X402_ROLLING_SETTLEMENT`, default off pending a durable ledger |
 | **`/health` reports `prover_configured: true` and "proofs are generated for every settled task" from a configured URL, not a reachable prover** | **High** | **Fixed** 2026-08-15 — reachability is probed and reported separately. See below |
 | **A buyer could audit a price after paying it but not discover it beforehand** | Medium | **Fixed** 2026-08-15 — `/v1/models` publishes the provider rate, our fee and the resulting price per model; `/.well-known/x402` publishes the basis, floor and Tier-2 surcharge. Cost-plus claims the bill is checkable, and the rate was the one input a buyer could not see in advance |
+| **`X402_COST_PLUS` changed the advertised price and not the charged one — the gateway published $1.54/$4.84 per million while billing $3.00/$9.00** | **Critical** | **Fixed** 2026-08-15 — `quoteFromCogs` shipped with ADR 0009 reachable only from its own tests. Now wired into the one engine behind both the 402 challenge and `/task-quote`. See below |
 | **Facilitator fee is ~10% of gross at $0.01; batch-settlement not enabled** | Medium | Open, **unblocked** 2026-08-12 — previously believed withdrawn; CDP advertises `batch-settlement` on Base mainnet. Same v2 prerequisite |
 | **No prompt-cache support; router has no session affinity** | Medium | **Reassessed** 2026-08-12 — the blocker moved: our default model *does* price cached reads, but hits are not reported. See below |
 | **All buyers share one provider API key, so upstream prompt caches are not isolated between tenants** | **High** | Mitigated 2026-08-12 (per-buyer `cache_salt`), unconfirmed upstream — see below |
@@ -703,6 +704,34 @@ placed relative to the fix and is treated as untrusted. `STATS_FEE_TRUST_FROM=al
 Current `/stats` fee figures are now safe to quote — including in
 [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md) item 10 (seed deck) — with the caveat that they are a
 post-2026-08-12 window, not lifetime totals.
+
+### `X402_COST_PLUS` priced nothing (fixed 2026-08-15)
+
+Turning the flag on cut every advertised price by ~47% and changed no bill. `/v1/models` published
+GLM-5.2 at $1.54/$4.84 per million and `/.well-known/x402` published `basis: cost_plus`, while
+`/task-quote` and the 402 challenge kept quoting the rate card's $3.00/$9.00 — a median agent call
+advertised at $0.1034 and charged at $0.2062, almost exactly 2x. It was live on the testnet box for
+roughly an hour before a spot-check caught it. The flag was reverted immediately, which restored
+truthful advertising at the higher price, and the engine was wired properly afterwards.
+
+The mechanism is worth remembering, because nothing about it looked wrong. `quoteFromCogs` was
+implemented under [ADR 0009](./adr/0009-cost-plus-pricing.md), fully unit-tested, and never called
+from the money path — `priceUSDCResolved` still went to `quoteTask`. The flag was read only by the
+discovery surfaces that describe pricing, so it faithfully advertised a pricing model the gateway
+did not implement. Green tests, a correct-looking manifest, and a deployed flag all agreed with each
+other and disagreed with the invoice.
+
+Two things changed. Cost-plus now runs in the quote path, falling back to the rate card when a model
+has no published provider rate — pricing an unknown cost at cost-plus would land every such call on
+the floor and bill a $0.20 job at $0.01. And `/task-quote` and the 402 challenge now share one
+engine (`quoteResolved`) rather than two calls that happened to agree, so the preview cannot quote
+one pricing model while the challenge charges another.
+
+The tests that missed it asserted that `quoteFromCogs` computed the right number. The tests that
+replace them assert what a caller is quoted, including that the flag changes it at all, that an
+opt-in proof adds its $0.08, and that the published breakdown adds back up to the amount charged.
+The general lesson: a pricing test that never crosses the surface a buyer touches proves the
+arithmetic, not the price.
 
 ## Trust / product honesty
 

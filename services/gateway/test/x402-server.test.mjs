@@ -177,3 +177,167 @@ test('TaskSettled webhook payload includes payment_rail + payment_ref', () => {
   assert.equal(tfuel.payment_rail, 'tfuel');
   assert.equal(tfuel.payment_ref, null);
 });
+
+// -- Cost-plus has to reach the money path ------------------------------------
+// ADR 0009 shipped `quoteFromCogs` with unit tests and never called it from the
+// quote path, so `X402_COST_PLUS=true` changed what /v1/models and
+// /.well-known/x402 advertised and nothing about what was charged. The gateway
+// published $1.54/$4.84 per million while billing the rate card's $3.00/$9.00.
+// Every test here asserts a quoted amount, because that is the thing that was
+// wrong while the module-level tests were green.
+
+const { priceUSDCResolved } = await import('../src/x402-server.js');
+const { getHubCatalog, resetHubCatalogCache } = await import('../src/hub-catalog.js');
+const { costOfUsage } = await import('../src/provider-rates.js');
+const { quoteFromCogs } = await import('../src/pricing.js');
+
+/** AkashML GLM-5.2's published rate: $1.40 / $4.40 per million. */
+const GLM_IN = 0.0000014;
+const GLM_OUT = 0.0000044;
+
+/** Pin the catalogue so a quote does not depend on a live provider API. */
+async function primeCatalog() {
+  process.env.HUB_CATALOG_OFFLINE = 'false';
+  resetHubCatalogCache();
+  const fetchFn = async (url) => {
+    if (String(url).includes('/service/list')) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            body: {
+              services: [{
+                alias: 'glm_5_2',
+                name: 'GLM 5.2',
+                state: 'public',
+                default_prediction: 'completions',
+                // No `cost` block: Theta publishes none for this stub, which is
+                // the "provider rate unknown" case cost-plus must not price.
+                predictions: { completions: { input_vars: { messages: {} } } },
+              }],
+            },
+          };
+        },
+      };
+    }
+    if (String(url).includes('/models')) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            object: 'list',
+            data: [{
+              id: 'zai-org/GLM-5.2',
+              name: 'GLM 5.2',
+              created: 1,
+              owned_by: 'akash-network',
+              pricing: { input: String(GLM_IN), output: String(GLM_OUT) },
+            }],
+          };
+        },
+      };
+    }
+    throw new Error(`unexpected url ${url}`);
+  };
+  await getHubCatalog({ forceRefresh: true, fetchFn });
+}
+
+const agentBody = (over = {}) => ({
+  model_id: 'akash/zai-org/GLM-5.2',
+  messages: [{ role: 'user', content: 'x'.repeat(80_000) }],
+  max_tokens: 15_000,
+  ...over,
+});
+
+const withCostPlus = async (on, fn) => {
+  const prev = process.env.X402_COST_PLUS;
+  if (on) process.env.X402_COST_PLUS = 'true';
+  else delete process.env.X402_COST_PLUS;
+  try {
+    return await fn();
+  } finally {
+    if (prev === undefined) delete process.env.X402_COST_PLUS;
+    else process.env.X402_COST_PLUS = prev;
+  }
+};
+
+test('X402_COST_PLUS actually changes the quote, not just the advertised price', async () => {
+  await primeCatalog();
+  const cfg = { usdcPriceDefault: '10000', usdcPrices: {} };
+
+  const card = await withCostPlus(false, () => priceUSDCResolved(agentBody(), cfg));
+  const plus = await withCostPlus(true, () => priceUSDCResolved(agentBody(), cfg));
+
+  assert.notEqual(plus, card, 'the flag changed nothing — cost-plus is not wired');
+
+  // Exact, and derived from the published rate rather than a copied constant, so
+  // this pins the wiring (right model, right tokens, right function) without
+  // reimplementing the arithmetic it is checking.
+  const { promptTokensFor } = await import('../src/pricing.js');
+  const cogs = costOfUsage(
+    { prompt_tokens: promptTokensFor(agentBody()), completion_tokens: 15_000 },
+    { input: GLM_IN, output: GLM_OUT, cachedInput: null, perRequest: 0 },
+  );
+  assert.equal(plus, quoteFromCogs(cogs, { usdcFloor: '10000' }).amount);
+
+  // And it is the ~47% cut ADR 0009 promised, not a rounding difference.
+  const cut = 1 - Number(plus) / Number(card);
+  assert.ok(cut > 0.4 && cut < 0.55, `expected a ~47% cut, got ${(cut * 100).toFixed(1)}%`);
+});
+
+test('an opt-in proof is charged for at quote time', async () => {
+  await primeCatalog();
+  const cfg = { usdcPriceDefault: '10000', usdcPrices: {} };
+
+  const plain = await withCostPlus(true, () => priceUSDCResolved(agentBody(), cfg));
+  const proved = await withCostPlus(true, () =>
+    priceUSDCResolved(agentBody({ proof_tier: 'settlement' }), cfg));
+
+  // A requested tier raises the floor past tier2MinCogs, so without this an
+  // opt-in proof is a fixed ~$0.050 cost against a few cents of fee.
+  assert.equal(BigInt(proved) - BigInt(plain), 80_000n, 'the flat $0.08 proof price');
+
+  // `signed` is not a proof and must not be charged as one.
+  const signed = await withCostPlus(true, () =>
+    priceUSDCResolved(agentBody({ proof_tier: 'signed' }), cfg));
+  assert.equal(signed, plain);
+});
+
+test('a model with no published rate falls back to the card, never to the floor', async () => {
+  await primeCatalog();
+  const cfg = { usdcPriceDefault: '10000', usdcPrices: {} };
+  const body = agentBody({ model_id: 'theta/glm_5_2' });
+
+  const plus = await withCostPlus(true, () => priceUSDCResolved(body, cfg));
+  const card = await withCostPlus(false, () => priceUSDCResolved(body, cfg));
+
+  // Theta publishes no rate in this catalogue, so cost-plus cannot price it.
+  // Quoting an unknown cost at cost-plus would land every such call on the
+  // floor — a $0.20 job billed at $0.01.
+  assert.equal(plus, card);
+  assert.ok(BigInt(plus) > 10_000n, 'must not collapse to the floor');
+});
+
+test('a cost-plus quote publishes a breakdown that rebuilds the price', async () => {
+  await primeCatalog();
+  const { quoteResolved } = await import('../src/x402-server.js');
+  const cfg = { usdcPriceDefault: '10000', usdcPrices: {} };
+
+  const q = await withCostPlus(true, () =>
+    quoteResolved(agentBody({ proof_tier: 'settlement' }), cfg));
+
+  assert.equal(q.basis, 'cost_plus');
+
+  // The whole claim of cost-plus is that the bill is checkable. If the parts we
+  // publish on /task-quote do not add up to the amount we charge, the claim is
+  // marketing.
+  assert.equal(
+    BigInt(q.provider_cogs) + BigInt(q.platform_fee) + BigInt(q.tier2_proof),
+    BigInt(q.amount),
+  );
+  assert.equal(BigInt(q.platform_fee), (BigInt(q.provider_cogs) * 1000n + 9_999n) / 10_000n);
+
+  // And the rate we publish is the provider's, not the rate card's $3.00/$9.00.
+  assert.deepEqual(q.rate, { in: 1_400_000, out: 4_400_000 });
+  assert.equal(q.priced_model, 'akash/zai-org/GLM-5.2');
+});

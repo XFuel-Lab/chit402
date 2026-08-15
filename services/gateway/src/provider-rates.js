@@ -181,17 +181,21 @@ export async function measureCogs({ modelId, usage }) {
  * percentage of what we charge. Output is bounded by `max_tokens`, matching how
  * the buyer's own quote is computed (see pricing.js).
  *
- * @returns {Promise<{amount: bigint, basis: 'estimated'|'no_rate'}>}
+ * Returns the rate alongside the amount, matching `measureCogs`. Cost-plus
+ * quotes publish the provider rate they were computed from, so a buyer can check
+ * the arithmetic before paying rather than only auditing it afterwards.
+ *
+ * @returns {Promise<{amount: bigint, basis: 'estimated'|'no_rate', rate: object|null}>}
  */
 export async function estimateCogsFromRequest({ modelId, promptTokens = 0, maxOutputTokens = 0 }) {
   let models = [];
   try {
     ({ models } = await getHubCatalog());
   } catch {
-    return { amount: 0n, basis: 'no_rate' };
+    return { amount: 0n, basis: 'no_rate', rate: null };
   }
   const rate = rateForModel(findModel(models, modelId));
-  if (!rate) return { amount: 0n, basis: 'no_rate' };
+  if (!rate) return { amount: 0n, basis: 'no_rate', rate: null };
 
   return {
     amount: costOfUsage(
@@ -199,6 +203,7 @@ export async function estimateCogsFromRequest({ modelId, promptTokens = 0, maxOu
       rate,
     ),
     basis: 'estimated',
+    rate,
   };
 }
 

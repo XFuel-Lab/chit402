@@ -7,8 +7,8 @@ import { initAIListener, getAIListener } from './ai-listener.js';
 import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
-import { resolveRail, runX402Handshake, priceUSDCResolved, resolvePricingModel } from './x402-server.js';
-import { quoteTask, checkPricingConfig, tier2ProofUnits } from './pricing.js';
+import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved } from './x402-server.js';
+import { checkPricingConfig, tier2ProofUnits } from './pricing.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { proveAllowedForKey, proofAvailability, refreshProverProbe } from './prove-gate.js';
 import { freeTierStatus } from './free-tier.js';
@@ -879,14 +879,11 @@ export function createApp() {
   app.post('/task-quote', async (req, res) => {
     try {
       const { amount, preferred_provider, provider } = req.body || {};
-      // Quote the model that will serve, not the alias asked for — a preview that
-      // differs from the 402 challenge is worse than no preview.
-      const priced = await resolvePricingModel(req.body);
-      const quote = quoteTask(priced.body, {
-        usdcPrices: config.x402?.usdcPrices,
-        usdcFloor: config.x402?.usdcFloor ?? config.x402?.usdcPriceDefault,
-        rateCard: config.x402?.rateCard,
-      });
+      // The same engine that prices the 402 challenge, so the preview cannot
+      // quote one pricing model while the challenge charges another. It also
+      // resolves the alias, because `xfuel/auto` prices differently for agent
+      // work than for a short completion.
+      const quote = await quoteResolved(req.body);
       const usdcAmount = quote.amount;
       const floatMgr = getFloatManager({
         floatsJson: config.providerFloats?.json,
@@ -923,11 +920,20 @@ export function createApp() {
               // for agent work than for a short completion, and the two sit in
               // different rate-card rows, so the alias alone does not explain the
               // number.
-              requested_model: priced.requested,
-              priced_model: priced.model,
-              note: quote.basis === 'model_price'
-                ? 'Flat per-model price.'
-                : 'Metered on prompt size + the max_tokens ceiling, with a floor. Output is quoted at the ceiling because the x402 exact scheme prices before the work runs; lowering max_tokens lowers the quote.',
+              requested_model: quote.requested_model,
+              priced_model: quote.priced_model,
+              // Under cost-plus the buyer can rebuild the figure: rate_per_million
+              // is the provider's, and the receipt signs the measured COGS to
+              // check it against once the work has run.
+              ...(quote.basis === 'cost_plus' ? {
+                provider_cogs: quote.provider_cogs,
+                platform_fee: quote.platform_fee,
+                fee_bps: quote.fee_bps,
+                ...(quote.tier2_proof && quote.tier2_proof !== '0'
+                  ? { tier2_proof: quote.tier2_proof }
+                  : {}),
+              } : {}),
+              note: quoteNote(quote),
             },
           },
           // Legacy buyer rail — not go-forward GTM. Prefer USDC; provider TFUEL is ops float only.
@@ -954,6 +960,21 @@ export function createApp() {
       return res.status(500).json({ error: 'internal', message: err.message });
     }
   });
+
+  /** Explain the number in the terms of the model that produced it. */
+  function quoteNote(quote) {
+    if (quote.basis === 'cost_plus') {
+      const pct = (Number(quote.fee_bps || 0) / 100).toFixed(2).replace(/\.?0+$/, '');
+      return `Provider cost plus ${pct}%. rate_per_million is the provider's own rate, `
+        + 'not ours; provider_cogs is that rate applied to the prompt and the max_tokens '
+        + 'ceiling. The receipt signs the measured COGS, so this is checkable after the '
+        + 'fact. Lowering max_tokens lowers the quote.';
+    }
+    if (quote.basis === 'model_price') return 'Flat per-model price.';
+    return 'Metered on prompt size + the max_tokens ceiling, with a floor. Output is quoted '
+      + 'at the ceiling because the x402 exact scheme prices before the work runs; lowering '
+      + 'max_tokens lowers the quote.';
+  }
 
   // ═══════════════════════════════════════════════════════════════════════
   // POST /erc8004/validate — Turn an XFuel receipt into an ERC-8004 validation

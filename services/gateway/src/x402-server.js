@@ -5,7 +5,9 @@ import {
   settlePayment,
   challengeStore,
 } from './x402-adapter.js';
-import { quoteTask } from './pricing.js';
+import { quoteTask, quoteFromCogs, costPlusEnabled, promptTokensFor } from './pricing.js';
+import { estimateCogsFromRequest } from './provider-rates.js';
+import { normalizeRequestedTier } from './tier-policy.js';
 import { getHubCatalog, resolveCatalogModel, requestShape } from './hub-catalog.js';
 
 /**
@@ -82,11 +84,120 @@ export function priceUSDC(body = {}, cfg = config.x402) {
  * live catalog, and `quoteTask` is deliberately sync and pure. A catalog outage
  * falls back to the requested id, which is the pre-existing behaviour.
  *
+ * This is also where the pricing model is chosen. Under `X402_COST_PLUS` the
+ * price is measured provider cost plus the platform fee; otherwise, and whenever
+ * cost-plus cannot price a request, it is the rate card.
+ *
  * @returns {Promise<string>} amount in USDC base units
  */
 export async function priceUSDCResolved(body = {}, cfg = config.x402) {
-  const { body: priced } = await resolvePricingModel(body);
-  return priceUSDC(priced, cfg);
+  return (await quoteResolved(body, cfg)).amount;
+}
+
+/**
+ * The same price as `priceUSDCResolved`, with the working shown.
+ *
+ * One engine behind both the 402 challenge and the `/task-quote` preview. They
+ * used to be two calls into `pricing.js` that happened to agree, which held only
+ * while there was a single pricing model — the moment cost-plus landed on the
+ * challenge path, the preview kept quoting the rate card and a buyer could be
+ * shown $0.195 and charged $0.103. A preview that disagrees with the challenge
+ * is worse than no preview, so there is now nothing to keep in sync.
+ *
+ * @returns {Promise<object>} a `quoteTask`/`quoteFromCogs` result, plus
+ *   `requested_model` / `priced_model`
+ */
+export async function quoteResolved(body = {}, cfg = config.x402) {
+  const { body: priced, model, requested } = await resolvePricingModel(body);
+
+  const quote = (costPlusEnabled() ? await costPlusQuote(priced, model, cfg) : null)
+    ?? quoteTask(priced, {
+      usdcPrices: cfg.usdcPrices,
+      usdcFloor: cfg.usdcFloor ?? cfg.usdcPriceDefault,
+      rateCard: cfg.rateCard,
+    });
+
+  return { ...quote, requested_model: requested, priced_model: model };
+}
+
+/**
+ * Did the caller ask for a proof?
+ *
+ * Reads the same field `selectTier` ends up reading. `/task-request` destructures
+ * `proof_tier` off the body and stores it as `intent.proofTier`, so quoting on
+ * the body and deciding the tier on the task look at one value — if these ever
+ * diverge we either charge for a proof we do not produce, or produce one we did
+ * not charge for.
+ *
+ * A requested tier can raise the floor past `tier2MinCogs`, which is exactly the
+ * case the threshold does not cover: without this, an opt-in proof on a cheap
+ * call is a $0.050 cost against a few cents of fee.
+ */
+function wantsProof(body = {}) {
+  const requested = normalizeRequestedTier(
+    body?.proof_tier ?? body?.proofTier ?? body?.intent?.proofTier ?? body?.intent?.proof_tier ?? null,
+  );
+  return !!requested && requested.tier !== 'signed';
+}
+
+/**
+ * Price a request at measured provider cost plus the platform fee.
+ *
+ * This is the seam cost-plus was missing. `quoteFromCogs` shipped with ADR 0009
+ * and was reachable only from its own tests, so `X402_COST_PLUS=true` changed
+ * what the discovery surfaces advertised and nothing about what was charged —
+ * the gateway published $1.54/$4.84 per million while billing the rate card's
+ * $3.00/$9.00.
+ *
+ * It lives here rather than in `pricing.js` because COGS is async: the provider's
+ * real per-token rate comes from the live catalogue, and `quoteTask`/`quoteUsage`
+ * are deliberately sync and pure. `priceUSDCResolved` already awaits the
+ * catalogue to resolve the model, so the rate is one lookup away.
+ *
+ * Output is estimated at `max_tokens` for the same reason the rate card quotes
+ * it there — the `exact` scheme needs a price before the work runs. Rolling
+ * settlement (ADR 0008) is what replaces the estimate with measured usage.
+ *
+ * @returns {Promise<object|null>} a quote, or null when cost-plus cannot price
+ *   this request and the caller should fall back to the rate card
+ */
+async function costPlusQuote(body, resolvedModel, cfg) {
+  const modelId = resolvedModel || body?.model_id || body?.model || null;
+  if (!modelId) return null;
+
+  const promptTokens = promptTokensFor(body);
+  const maxOutputTokens = Math.max(0, Number(body?.max_tokens ?? body?.maxTokens ?? 0) || 0);
+  const { amount: cogs, basis, rate } = await estimateCogsFromRequest({
+    modelId,
+    promptTokens,
+    maxOutputTokens,
+  });
+
+  // No published rate for this model, or the catalogue is down. Falling through
+  // to the rate card is the only safe move: pricing an unknown cost at cost-plus
+  // would quote every such call at the floor, which is how a $0.20 job bills at
+  // $0.01. Better to overcharge against a card we own than to give work away.
+  if (basis !== 'estimated') return null;
+
+  return {
+    ...quoteFromCogs(cogs, {
+      usdcFloor: cfg.usdcFloor ?? cfg.usdcPriceDefault,
+      tier2: wantsProof(body),
+    }),
+    prompt_tokens: promptTokens,
+    max_output_tokens: maxOutputTokens,
+    // The provider's own rate, not ours — under cost-plus this is the input to
+    // the price rather than the price itself, and it is the figure the receipt's
+    // `provider_cogs.actual` can be checked against.
+    rate: perMillion(rate),
+  };
+}
+
+/** A per-token provider rate as whole USDC base units per million tokens. */
+function perMillion(rate) {
+  if (!rate) return null;
+  const scale = (v) => (Number.isFinite(Number(v)) ? Math.round(Number(v) * 1e6 * 1e6) : null);
+  return { in: scale(rate.input), out: scale(rate.output) };
 }
 
 /**
