@@ -254,7 +254,7 @@ async function runChatInference({
         error: {
           status: 503,
           code: 'provider_unavailable',
-          message: `theta/${cat.alias} failed (${result.reason}). Set allow_fallback or retry.`,
+          message: thetaFailureMessage(cat, result.reason),
         },
       };
     }
@@ -535,6 +535,28 @@ async function runTranscriptionInference({ model, audioUrl, allowFallback: fb })
     text: extractTextOutput(result.output),
     raw: result,
   };
+}
+
+/**
+ * Say what actually happened, and what would actually help.
+ *
+ * "Retry" was the wrong advice for the common case: EdgeCloud returns 409 when a
+ * service has no worker, and retrying a model with zero published capacity fails
+ * the same way every time. When the catalogue already told us there is nothing
+ * running, say so and point at a model that is up.
+ */
+function thetaFailureMessage(cat, reason) {
+  if (reason === 'http_409' && typeof cat?.capacity === 'number' && cat.capacity <= 0) {
+    return `theta/${cat.alias} has no workers running on Theta EdgeCloud, so it cannot serve `
+      + 'this request. This is provider capacity, not an error in your call — retrying will not '
+      + 'help. Use xfuel/auto to route to a model that is up, set allow_fallback, or check '
+      + '`availability` on GET /v1/models.';
+  }
+  if (reason === 'http_409') {
+    return `theta/${cat.alias} returned 409 after retries — the service is warming or has no `
+      + 'worker free. Set allow_fallback to route elsewhere, or retry shortly.';
+  }
+  return `theta/${cat.alias} failed (${reason}). Set allow_fallback or retry.`;
 }
 
 /** Pull assistant text out of the router's OpenAI-shaped result. */

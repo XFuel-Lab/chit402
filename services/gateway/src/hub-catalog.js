@@ -150,6 +150,26 @@ function parseThetaUnits(instructions) {
 }
 
 /**
+ * Live GPU capacity behind a Theta service, as a worker count.
+ *
+ * `state: "public"` says a service is listed, not that anything is running it —
+ * every Theta service reads `public`, including ones that answer every request
+ * with a 409. `workers` is the field that actually distinguishes them: measured
+ * 2026-08-15, `glm_5_2` at `{"default":1}` served, `qwen3` at `{}` did not, and
+ * 5 of the 8 listed services had none.
+ *
+ * A missing field is unknown, not zero — AkashML publishes no equivalent, and
+ * treating silence as "down" would hide a working hub.
+ *
+ * @returns {number|null} total workers, or null when the hub does not say
+ */
+function thetaCapacity(svc) {
+  const workers = svc?.workers;
+  if (!workers || typeof workers !== 'object') return null;
+  return Object.values(workers).reduce((n, v) => n + (Number(v) || 0), 0);
+}
+
+/**
  * Map a Theta /service/list row → CatalogModel.
  * @param {object} svc
  * @returns {CatalogModel|null}
@@ -173,6 +193,7 @@ export function mapThetaService(svc) {
     input_vars,
     cost,
     workload_type: svc.workload_type || null,
+    capacity: thetaCapacity(svc),
   };
 }
 
@@ -388,6 +409,18 @@ export function autoPreferenceFor(shape) {
 }
 
 /**
+ * Can this model serve right now, as far as the hub will say?
+ *
+ * Unknown counts as yes. Only a hub that publishes capacity *and* reports none
+ * is treated as down, so a hub that says nothing keeps working exactly as before.
+ *
+ * @param {CatalogModel} m
+ */
+export function hasCapacity(m) {
+  return !(typeof m?.capacity === 'number' && m.capacity <= 0);
+}
+
+/**
  * Resolve a client model id to a catalog row.
  * Accepts hub/alias, bare alias (theta preferred, then any hub), or xfuel/auto.
  *
@@ -407,12 +440,21 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
   const modality = opts.modality || null;
 
   if (requested === 'xfuel/auto' || requested === 'auto' || requested === 'xfuel-auto') {
-    const chat = models.find((m) => m.hub !== 'xfuel' && m.modality === 'chat');
+    // Never auto-route to a model the hub says has no workers. `theta/qwen3` sits
+    // third in the non-agent order and has had zero capacity — so an Akash outage,
+    // the one time failover matters, would have picked a model that answers every
+    // request with a 409. An explicit request for it still resolves; only the
+    // automatic choice is filtered, because the caller did not name this model and
+    // has no way to know it is dead.
+    const live = models.filter(hasCapacity);
+    const chat = live.find((m) => m.hub !== 'xfuel' && m.modality === 'chat');
     const order = autoPreferenceFor(opts.shape);
-    const pick = (id) => models.find((m) => m.id === id);
+    const pick = (id) => live.find((m) => m.id === id);
 
     const override = (process.env.XFUEL_AUTO_MODEL || '').trim();
     const preferred =
+      // An explicit override is an instruction, not a preference: honour it even
+      // if capacity is unknown or zero, and let it fail loudly if it is wrong.
       (override ? models.find((m) => m.id === override || m.alias === override) : null) ||
       order.map(pick).find(Boolean) ||
       chat;
@@ -490,7 +532,31 @@ export function toOpenAIList(models, { modality = null, priceFor = null } = {}) 
         modality: m.modality,
         default_prediction: m.default_prediction,
         ...(pricing ? { pricing } : {}),
+        availability: availabilityOf(m),
       };
     }),
   };
+}
+
+/**
+ * What a caller needs to know before picking this model.
+ *
+ * Published because a catalogue that lists a model it cannot serve is worse than
+ * one that omits it — an agent picks it, waits, and gets a 409. Listing it with
+ * `status: "no_capacity"` keeps it discoverable (capacity comes back) while
+ * saying plainly that a call right now will fail.
+ */
+function availabilityOf(m) {
+  if (typeof m?.capacity !== 'number') {
+    return { status: 'unknown', note: 'This hub does not publish live capacity.' };
+  }
+  if (m.capacity <= 0) {
+    return {
+      status: 'no_capacity',
+      workers: 0,
+      note: 'The hub reports no workers for this model — a request now will likely fail. '
+        + 'Not auto-routed to; an explicit request is still attempted.',
+    };
+  }
+  return { status: 'available', workers: m.capacity };
 }
