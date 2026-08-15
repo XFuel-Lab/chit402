@@ -2,20 +2,30 @@
 
 As-deployed source of truth. When in-repo config disagrees with this file, this file wins.
 
-Last updated: 2026-08-13
+Last updated: 2026-08-15
 
-> **Live as of 2026-08-13.** `api-testnet.xfuel.app` is on `main` @ `20fa5d6`. Verified 11/11:
-> metered quotes, GLM priced above COGS, signed `/v1` receipts byte-identical to `/receipt/:id`,
-> provider `akash-network` (not mock). Theta EdgeCloud is unset (`THETA_EDGE_URL` missing); AkashML
-> is the live inference path. **SP1 prover ECS task is scaled to 0** (desired 0 / running 0); the
-> ALB is still up. Signed receipts are unaffected. Re-verify after any restart:
+> **Live as of 2026-08-15.** `api-testnet.xfuel.app` is on `main` @ `00120d0`. Verified 12/12:
+> metered quotes, GLM priced above COGS, the advertised pricing model matches the charged one,
+> signed `/v1` receipts byte-identical to `/receipt/:id`, provider `akash-network` (not mock).
+> Theta EdgeCloud is unset (`THETA_EDGE_URL` missing); AkashML is the live inference path. **SP1
+> prover is running.** Re-verify after any restart:
 > `node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app`.
+
+> **Pricing: the rate card, not cost-plus.** `X402_COST_PLUS` is commented out in the box's `.env`,
+> so a median agent call quotes $0.2062 and not the $0.1034 cost-plus would charge. The cost-plus
+> engine *is* deployed as of `00120d0` and is one line from live, but it ships off by design: it was
+> enabled once on 2026-08-15 against a build where the flag moved only the advertised price, and the
+> gateway published $1.54/$4.84 per million while billing $3.00/$9.00 for about an hour. Enabling it
+> now requires `VI_TIER2_MIN_COGS=2000000` alongside — `checkPricingConfig` refuses to boot
+> otherwise — and should be confirmed with the verifier, whose pricing check exists specifically to
+> catch advertised and charged drifting apart again.
 
 ## Current state
 
 - Settlement home: Base (USDC via x402) — [ADR 0002](./adr/0002-base-settlement-home.md)
 - Tier 1 signed receipt: live (default)
-- Tier 2 SP1 settlement proof: **scaled to zero** (ECS `sp1-prover` desired 0, 2026-08-13). Scale to 1 and wait 3–5 min before a session that needs it. ALB still up.
+- Tier 2 SP1 settlement proof: **running** (2026-08-15). Gated at `VI_TIER2_MIN_COGS=2000000` — $2.00 of provider COGS, or an explicit `proof_tier` — because a proof costs a fixed ~$0.050 per Succinct request and AI-task proofs cannot be batched until guest v2
+- Pricing basis: **rate card** (`X402_COST_PLUS` off). Cost-plus is deployed and inert — see the note above
 - Tier 3 Verified Inference (zkLLM): active build — RAM-bound, CPU-only. See [VERIFIED_INFERENCE_HANDOFF.md](./VERIFIED_INFERENCE_HANDOFF.md)
 - Payment binding: server-attested today; in-proof after SP1 guest v2
 - **Public Base mainnet x402:** Real (2026-08-06) — flagship smoke `ai-task-1-1786004600540` / tx `0x066caacc…db70`
