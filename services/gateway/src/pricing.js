@@ -396,6 +396,140 @@ export function quoteFromCogs(cogsBaseUnits, cfg = {}) {
  *
  * @param {object} vi config.verifiedInference
  */
+/** USD from base units, trimmed of trailing zeros so $1.40 is `1.4` not `1.400000`. */
+const usdNum = (units) => Number((Number(units) / 1_000_000).toFixed(6));
+
+/**
+ * What one model costs a buyer, per million tokens, in the shape a buyer can
+ * check before they spend anything.
+ *
+ * Publishing this is not decoration. Cost-plus only means something if the
+ * buyer can see the two inputs — the provider's rate and our percentage — and
+ * multiply them out themselves. Until now they could audit a bill after the
+ * fact from `provider_cogs.actual` on the receipt but could not discover the
+ * rate beforehand, which is the wrong way round for a pricing model whose whole
+ * claim is that it is checkable.
+ *
+ * Under the rate card there is no provider rate to show: the card is ours and
+ * deliberately does not track COGS, so only our own price is published.
+ *
+ * @param {string|null} modelId catalog id, for the rate-card lookup
+ * @param {{input:number, output:number, cachedInput:number|null, perRequest?:number}|null} providerRate
+ *   per-token USD rates from `rateForModel`, or null when the provider publishes none
+ * @param {object} [cfg]
+ * @returns {object|null} null when neither basis can produce a number
+ */
+export function publishedPrice(modelId, providerRate, cfg = {}) {
+  const costPlus = cfg.costPlus ?? costPlusEnabled();
+  const floor = Math.max(
+    0,
+    Number(cfg.usdcFloor ?? process.env.X402_USDC_FLOOR ?? DEFAULT_FLOOR_UNITS) || 0,
+  );
+
+  const common = {
+    currency: 'USDC',
+    // Every call clears the floor, so on small calls this *is* the price and the
+    // per-token rates never bind. Saying so here saves a buyer the surprise.
+    min_charge_usd: usdNum(floor),
+    tier2_proof_usd: usdNum(tier2ProofUnits(cfg)),
+  };
+
+  if (!costPlus) {
+    const card = rateCardFor(modelId, cfg);
+    return {
+      basis: 'rate_card',
+      ...common,
+      price_per_million: { input: usdNum(card.in), output: usdNum(card.out) },
+      note: 'Retail rate card, set independently of provider cost. Output is quoted at '
+        + '`max_tokens` because x402 `exact` needs a price before the work runs, so a '
+        + 'completion that stops short is billed at the ceiling. POST /task-quote for an '
+        + 'exact figure on a specific request.',
+    };
+  }
+
+  // Cost-plus needs a measured provider rate; without one there is nothing to
+  // take a percentage of, and inventing a number here would be worse than
+  // admitting the gap.
+  if (!providerRate) {
+    return {
+      basis: 'cost_plus',
+      ...common,
+      fee_bps: platformFeeBps(cfg),
+      price_per_million: null,
+      note: 'This provider publishes no per-token rate, so the price cannot be quoted in '
+        + 'advance. POST /task-quote for a figure on a specific request.',
+    };
+  }
+
+  const bps = platformFeeBps(cfg);
+  const mult = 1 + bps / 10_000;
+  const perMillion = (perToken) => Number((perToken * 1_000_000).toFixed(6));
+
+  const cost = {
+    input: perMillion(providerRate.input),
+    output: perMillion(providerRate.output),
+    ...(providerRate.cachedInput !== null && providerRate.cachedInput !== undefined
+      ? { cached_input: perMillion(providerRate.cachedInput) }
+      : {}),
+  };
+
+  return {
+    basis: 'cost_plus',
+    ...common,
+    fee_bps: bps,
+    // The provider's own number, republished so the multiplication is checkable.
+    provider_cost_per_million: cost,
+    price_per_million: {
+      input: perMillion(providerRate.input * mult),
+      output: perMillion(providerRate.output * mult),
+      ...(cost.cached_input !== undefined
+        ? { cached_input: perMillion(providerRate.cachedInput * mult) }
+        : {}),
+    },
+    // Diffusion and upscaler models are priced per artefact with zero token
+    // rates, so this *is* the price for them — publishing only the cost side
+    // would leave `price_per_million: 0` reading as free.
+    ...(providerRate.perRequest
+      ? {
+        provider_per_request_usd: Number(providerRate.perRequest.toFixed(6)),
+        price_per_request_usd: Number((providerRate.perRequest * mult).toFixed(6)),
+      }
+      : {}),
+    note: `Provider cost plus ${bps / 100}%. The receipt signs \`provider_cogs.actual\`, so `
+      + 'the same multiplication can be recomputed against what actually ran.',
+  };
+}
+
+/**
+ * Protocol-level pricing, for discovery surfaces that describe the whole
+ * endpoint rather than one model (`/.well-known/x402`).
+ */
+export function describePricing(cfg = {}) {
+  const costPlus = cfg.costPlus ?? costPlusEnabled();
+  const floor = Math.max(
+    0,
+    Number(cfg.usdcFloor ?? process.env.X402_USDC_FLOOR ?? DEFAULT_FLOOR_UNITS) || 0,
+  );
+
+  return {
+    basis: costPlus ? 'cost_plus' : 'rate_card',
+    currency: 'USDC',
+    ...(costPlus ? { platform_fee_bps: platformFeeBps(cfg) } : {}),
+    min_charge_usd: usdNum(floor),
+    // Opt-in and flat: a Succinct request costs the same whatever it proves, so
+    // a percentage would misprice it in both directions. See ADR 0009.
+    tier2_proof_usd: usdNum(tier2ProofUnits(cfg)),
+    per_model_rates: '/v1/models',
+    quote_endpoint: 'POST /task-quote',
+    description: costPlus
+      ? `Price is measured provider cost plus ${platformFeeBps(cfg) / 100}%, both itemised on `
+        + 'the signed receipt, so a buyer can recompute the bill rather than trust a price '
+        + 'list. Tier-2 SP1 settlement proofs are opt-in and charged flat on top.'
+      : 'Metered against a retail rate card, floored per settlement. Tier-2 SP1 settlement '
+        + 'proofs are opt-in and charged flat on top.',
+  };
+}
+
 export function checkPricingConfig(vi = {}) {
   if (!costPlusEnabled()) return { ok: true, warnings: [] };
 
@@ -436,6 +570,8 @@ export default {
   platformFeeBps,
   tier2ProofUnits,
   checkPricingConfig,
+  publishedPrice,
+  describePricing,
   rateCardFor,
   promptTokensFor,
   DEFAULT_RATE,

@@ -19,7 +19,8 @@ import {
 import { inferAkashML, akashmlApiKey } from './akashml-infer.js';
 import { normalizeUsage, messagesToText } from './usage.js';
 import { runX402Handshake } from './x402-server.js';
-import { measureCogs } from './provider-rates.js';
+import { measureCogs, rateForModel } from './provider-rates.js';
+import { publishedPrice } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
 import { freeTierBucket, checkFreeAllowance, recordFreeSpend, usd as cogsUsd } from './free-tier.js';
 
@@ -841,6 +842,30 @@ export function openAiErrorShape(_req, res, next) {
  * @param {import('express').Express} app
  * @param {{ rateLimit: Function, authenticate: Function }} mw  shared middleware
  */
+/**
+ * Buyer-facing price for one catalogue row.
+ *
+ * `xfuel/auto` is quoted as unpriceable on purpose. It is an alias that resolves
+ * per request — agent-shaped work goes to GLM-5.2, short completions to Llama —
+ * and those differ by more than 10x. Publishing either number would be wrong for
+ * roughly half of all traffic, and the rate card's own default row is the one
+ * `xfuel/auto` never actually gets priced at (see `DEFAULT_RATE_CARD`).
+ */
+function priceForCatalogModel(m) {
+  if (!m) return null;
+  if (m.hub === 'xfuel') {
+    const { provider_cost_per_million: _cost, ...base } = publishedPrice(null, null) || {};
+    return {
+      ...base,
+      price_per_million: null,
+      note: 'Alias — resolved to a concrete model per request on request shape, so the rate '
+        + 'is whichever model serves. Call POST /task-quote, or name a hub model to see its '
+        + 'price here.',
+    };
+  }
+  return publishedPrice(m.id, rateForModel(m));
+}
+
 export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
   const chain = [openAiErrorShape, bearerToApiKey, rateLimit, authenticate].filter(Boolean);
 
@@ -851,7 +876,7 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
     try {
       const modality = typeof req.query.modality === 'string' ? req.query.modality : null;
       const { models, source } = await getHubCatalog();
-      const body = toOpenAIList(models, { modality });
+      const body = toOpenAIList(models, { modality, priceFor: priceForCatalogModel });
       res.setHeader('x-xfuel-catalog-source', source);
       res.json(body);
     } catch (err) {
@@ -876,6 +901,7 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
       });
     }
     const m = resolved.model;
+    const pricing = priceForCatalogModel(m);
     return res.json({
       id: m.id,
       object: 'model',
@@ -886,6 +912,7 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
       name: m.name,
       modality: m.modality,
       default_prediction: m.default_prediction,
+      ...(pricing ? { pricing } : {}),
     });
   }
   app.get('/v1/models/:hub/:alias', (req, res) => getModelById(req, res, `${req.params.hub}/${req.params.alias}`));

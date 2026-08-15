@@ -460,23 +460,37 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
   return { ok: true, model: hit, requested };
 }
 
-/** OpenAI list shape (+ XFuel extensions on each row). */
-export function toOpenAIList(models, { modality = null } = {}) {
+/**
+ * OpenAI list shape (+ XFuel extensions on each row).
+ *
+ * `priceFor` is injected rather than imported so this module stays free of the
+ * pricing layer — provider-rates.js already reads the catalogue, and importing
+ * it back here would close the cycle.
+ *
+ * @param {object} [opts]
+ * @param {string|null} [opts.modality]
+ * @param {(m: object) => object|null} [opts.priceFor] per-row buyer-facing price
+ */
+export function toOpenAIList(models, { modality = null, priceFor = null } = {}) {
   let rows = models;
   if (modality) rows = rows.filter((m) => m.modality === modality || m.id === 'xfuel/auto');
   return {
     object: 'list',
-    data: rows.map((m) => ({
-      id: m.id,
-      object: m.object,
-      created: m.created,
-      owned_by: m.owned_by,
-      // XFuel extensions (ignored by OpenAI SDKs)
-      hub: m.hub,
-      alias: m.alias,
-      name: m.name,
-      modality: m.modality,
-      default_prediction: m.default_prediction,
-    })),
+    data: rows.map((m) => {
+      const pricing = typeof priceFor === 'function' ? priceFor(m) : null;
+      return {
+        id: m.id,
+        object: m.object,
+        created: m.created,
+        owned_by: m.owned_by,
+        // XFuel extensions (ignored by OpenAI SDKs)
+        hub: m.hub,
+        alias: m.alias,
+        name: m.name,
+        modality: m.modality,
+        default_prediction: m.default_prediction,
+        ...(pricing ? { pricing } : {}),
+      };
+    }),
   };
 }

@@ -7,6 +7,8 @@ import {
   costPlusEnabled,
   platformFeeBps,
   checkPricingConfig,
+  publishedPrice,
+  describePricing,
   rateCardFor,
   promptTokensFor,
   DEFAULT_RATE,
@@ -311,4 +313,93 @@ test('cost-plus is a large price cut against the rate card it replaces', () => {
   const costPlus = Number(quoteFromCogs(MEDIAN_AGENT_COGS).amount);
   const cut = 1 - costPlus / card;
   assert.ok(cut > 0.4 && cut < 0.55, `expected a ~47% cut, got ${(cut * 100).toFixed(1)}%`);
+});
+
+// -- What a buyer can discover before they spend anything ----------------------
+// Cost-plus is only meaningful if the two inputs are visible in advance. The
+// receipt already signs `provider_cogs.actual`, so a bill could be audited after
+// the fact, but until these surfaces published a rate there was no way to check
+// a price *before* paying it.
+
+/** AkashML GLM-5.2: $1.40 / $4.40 per million, as per-token USD. */
+const GLM_RATE = { input: 0.0000014, output: 0.0000044, cachedInput: 0.00000026, perRequest: 0 };
+
+test('cost-plus publishes the provider rate and our price, so the fee is checkable', () => {
+  const p = publishedPrice('akash/zai-org/GLM-5.2', GLM_RATE, { costPlus: true });
+
+  assert.equal(p.basis, 'cost_plus');
+  assert.equal(p.fee_bps, DEFAULT_PLATFORM_FEE_BPS);
+  assert.equal(p.provider_cost_per_million.input, 1.4);
+  assert.equal(p.provider_cost_per_million.output, 4.4);
+  // A buyer must be able to multiply the published cost by the published fee
+  // and land exactly on the published price.
+  assert.equal(p.price_per_million.input, 1.54);
+  assert.equal(p.price_per_million.output, 4.84);
+});
+
+test('a published cached-read rate carries the same markup, and an absent one is not invented', () => {
+  const withCache = publishedPrice('akash/zai-org/GLM-5.2', GLM_RATE, { costPlus: true });
+  assert.equal(withCache.provider_cost_per_million.cached_input, 0.26);
+  assert.equal(withCache.price_per_million.cached_input, 0.286);
+
+  // Theta publishes no cached-read rate on any service. Absent must not read as free.
+  const noCache = publishedPrice('theta/glm_5_2', { ...GLM_RATE, cachedInput: null }, { costPlus: true });
+  assert.equal(noCache.provider_cost_per_million.cached_input, undefined);
+  assert.equal(noCache.price_per_million.cached_input, undefined);
+});
+
+test('a per-artefact model publishes a marked-up per-request price, not just the cost', () => {
+  // ESRGAN and the diffusion models charge $0.01 per image with zero token
+  // rates. Publishing only `provider_per_request_usd` left `price_per_million: 0`
+  // sitting there looking like the whole price, and looking like zero.
+  const p = publishedPrice('theta/esrgan', {
+    input: 0, output: 0, cachedInput: null, perRequest: 0.01,
+  }, { costPlus: true });
+
+  assert.equal(p.provider_per_request_usd, 0.01);
+  assert.equal(p.price_per_request_usd, 0.011);
+});
+
+test('cost-plus admits it cannot quote a model the provider prices nowhere', () => {
+  const p = publishedPrice('theta/blip', null, { costPlus: true });
+  assert.equal(p.basis, 'cost_plus');
+  assert.equal(p.price_per_million, null, 'better an admitted gap than an invented number');
+  assert.match(p.note, /task-quote/);
+});
+
+test('the rate card publishes our price only, because it does not track cost', () => {
+  const p = publishedPrice('zai-org/GLM-5.2', GLM_RATE, { costPlus: false });
+  assert.equal(p.basis, 'rate_card');
+  assert.equal(p.price_per_million.input, 3);
+  assert.equal(p.price_per_million.output, 9);
+  assert.equal(p.provider_cost_per_million, undefined, 'the card is ours; COGS is not its basis');
+  // The ceiling-quote overcharge is a property of the price, so it is disclosed.
+  assert.match(p.note, /max_tokens/);
+});
+
+test('every published price names the floor and the Tier-2 surcharge', () => {
+  for (const costPlus of [true, false]) {
+    const p = publishedPrice('akash/zai-org/GLM-5.2', GLM_RATE, { costPlus });
+    assert.equal(p.min_charge_usd, 0.01, `costPlus=${costPlus}`);
+    assert.equal(p.tier2_proof_usd, DEFAULT_TIER2_PROOF_UNITS / 1_000_000, `costPlus=${costPlus}`);
+    assert.equal(p.currency, 'USDC');
+  }
+});
+
+test('the manifest describes the basis in force, not the one we prefer', () => {
+  const plus = describePricing({ costPlus: true });
+  assert.equal(plus.basis, 'cost_plus');
+  assert.equal(plus.platform_fee_bps, DEFAULT_PLATFORM_FEE_BPS);
+  assert.match(plus.description, /recompute the bill/);
+
+  const card = describePricing({ costPlus: false });
+  assert.equal(card.basis, 'rate_card');
+  assert.equal(card.platform_fee_bps, undefined, 'no fee percentage exists under the card');
+});
+
+test('discovery points at the exact-quote endpoint, since per-token rates are not a price', () => {
+  const d = describePricing({ costPlus: true });
+  assert.equal(d.per_model_rates, '/v1/models');
+  assert.match(d.quote_endpoint, /task-quote/);
+  assert.equal(d.min_charge_usd, 0.01);
 });
