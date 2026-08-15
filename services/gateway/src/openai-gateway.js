@@ -8,6 +8,7 @@ import { proveAllowedForKey } from './prove-gate.js';
 import { buildVerifyUrl, baseUrlFromReq, buildReceipt as buildSignedReceipt } from './receipt.js';
 import { apiKeyHashFromReq, cacheNamespace } from './buyer-attr.js';
 import { getHubCatalog, resolveCatalogModel, requestShape, toOpenAIList } from './hub-catalog.js';
+import { recordSuccess, recordFailure } from './provider-health.js';
 import {
   inferEdgeCloud,
   chatInputFromMessages,
@@ -232,6 +233,7 @@ async function runChatInference({
       input: chatInputFromMessages({ messages, max_tokens, temperature }),
     });
     if (result.ok) {
+      recordSuccess(cat.id);
       return {
         content: extractTextOutput(result.output),
         provider: 'theta-edgecloud',
@@ -240,6 +242,7 @@ async function runChatInference({
         raw: result,
       };
     }
+    recordFailure(cat.id, { reason: result.reason });
     logger.warn(
       { hub: 'theta', model: cat.alias, reason: result.reason, fallback: fb },
       'openai-gateway: preferred hub miss',
@@ -272,6 +275,7 @@ async function runChatInference({
       cacheNamespace: cacheNs,
     });
     if (result.ok) {
+      recordSuccess(cat.id);
       return {
         content: result.output,
         toolCalls: result.toolCalls || null,
@@ -304,6 +308,9 @@ async function runChatInference({
         },
       };
     }
+    // A truncation is the caller's budget, not the provider's health, and is
+    // returned above — so anything reaching here is the provider failing us.
+    recordFailure(cat.id, { reason: result.reason });
     logger.warn(
       { hub: 'akash', model: cat.alias, reason: result.reason, fallback: fb },
       'openai-gateway: preferred hub miss',

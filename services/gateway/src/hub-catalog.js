@@ -16,6 +16,7 @@
  */
 
 import logger from './logger.js';
+import { isDown, healthOf } from './provider-health.js';
 import { akashmlApiKey } from './akashml-infer.js';
 
 const DEFAULT_TTL_MS = 60_000;
@@ -421,6 +422,19 @@ export function hasCapacity(m) {
 }
 
 /**
+ * Should `xfuel/auto` consider this model?
+ *
+ * Two independent sources, because the two hubs tell us different things. Theta
+ * publishes worker counts, so we know before calling. AkashML publishes nothing,
+ * so the only evidence is how recent calls went — see provider-health.js.
+ *
+ * @param {CatalogModel} m
+ */
+export function isRoutable(m) {
+  return hasCapacity(m) && !isDown(m?.id);
+}
+
+/**
  * Resolve a client model id to a catalog row.
  * Accepts hub/alias, bare alias (theta preferred, then any hub), or xfuel/auto.
  *
@@ -446,7 +460,12 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
     // request with a 409. An explicit request for it still resolves; only the
     // automatic choice is filtered, because the caller did not name this model and
     // has no way to know it is dead.
-    const live = models.filter(hasCapacity);
+    // If health has ruled out everything, route as though we knew nothing. A
+    // provider-wide outage would otherwise turn every request into
+    // `no_chat_models` — refusing to try is strictly worse than trying and
+    // failing, and it would also prevent the success that clears the state.
+    const routable = models.filter(isRoutable);
+    const live = routable.length ? routable : models;
     const chat = live.find((m) => m.hub !== 'xfuel' && m.modality === 'chat');
     const order = autoPreferenceFor(opts.shape);
     const pick = (id) => live.find((m) => m.id === id);
@@ -547,8 +566,20 @@ export function toOpenAIList(models, { modality = null, priceFor = null } = {}) 
  * saying plainly that a call right now will fail.
  */
 function availabilityOf(m) {
+  // Observed and probed health, when we have any. Reported alongside capacity
+  // rather than merged into it: they answer different questions — "does the hub
+  // say a GPU is attached" and "did calling it work" — and a model can fail both
+  // ways independently.
+  const health = healthOf(m?.id);
+
   if (typeof m?.capacity !== 'number') {
-    return { status: 'unknown', note: 'This hub does not publish live capacity.' };
+    return {
+      status: health?.status === 'down' ? 'down' : (health?.status || 'unknown'),
+      note: health
+        ? 'This hub does not publish capacity; status is from observed calls and probes.'
+        : 'This hub does not publish live capacity, and nothing has called this model yet.',
+      ...(health ? { health } : {}),
+    };
   }
   if (m.capacity <= 0) {
     return {
@@ -556,7 +587,14 @@ function availabilityOf(m) {
       workers: 0,
       note: 'The hub reports no workers for this model — a request now will likely fail. '
         + 'Not auto-routed to; an explicit request is still attempted.',
+      ...(health ? { health } : {}),
     };
   }
-  return { status: 'available', workers: m.capacity };
+  return {
+    // The hub says a worker is attached, but calls have been failing. Trust the
+    // calls: capacity is a claim, a failed request is an outcome.
+    status: health?.status === 'down' ? 'down' : 'available',
+    workers: m.capacity,
+    ...(health ? { health } : {}),
+  };
 }

@@ -762,6 +762,19 @@ The gap this leaves: **AkashML publishes no capacity signal**, so the whole live
 probing rather than a catalogue field — the canary probe measures it offline today but does not feed
 routing.
 
+**Closed 2026-08-15.** AkashML health now comes from two sources. Real calls record success and
+failure as they happen: free, and the strongest possible evidence, but it only learns about models
+people use and only while someone is already being failed. An optional prober
+(`PROVIDER_HEALTH_PROBE=true`) makes a 1-token call per model on a timer, which costs real money and
+so is off by default; it buys the two things observation cannot — noticing an outage before a
+customer does, and noticing recovery on a model nobody is calling. Three consecutive failures route
+a model out of `xfuel/auto`, one success brings it back, and failures older than 30 minutes stop
+counting so a blip cannot delist a model permanently. If health rules out *everything*, routing
+ignores it and tries anyway: refusing to serve is worse than trying and failing, and it would also
+prevent the success that clears the state. The canary probe was not reused — it is the ADR 0007
+substitution experiment (576 calls, minutes, real spend), which answers a different question at the
+wrong price for a health check.
+
 ## Trust / product honesty
 
 | Issue | Severity | Status |
@@ -790,3 +803,10 @@ routing.
 
 - TFUEL rail exists as optional fallback only when explicitly enabled.
 - Theta EdgeCloud remains an optional GPU provider, not settlement home.
+- AkashML's `/v1/models` carries `discount_to_user: 0.45` on GLM-5.2 and we ignore it. In the
+  OpenRouter provider schema that field means `user price = base × (1 − discount)`, which would make
+  our COGS for that model overstated ~1.8x and put a wrong number in the signed
+  `provider_cogs.actual`. Checked against actual AkashML billing 2026-08-15: **we pay list price on
+  the direct API**, so the field is an OpenRouter-channel display discount and does not apply to us.
+  Recorded because the field looks alarming, sits on the model `xfuel/auto` picks for agent work, and
+  is otherwise worth re-investigating from scratch every time someone reads that endpoint.
