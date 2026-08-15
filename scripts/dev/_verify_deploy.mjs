@@ -105,6 +105,23 @@ console.log(`\nVerifying ${base}\n${'─'.repeat(60)}`);
     agentAmount > 96_290,
     `agent quote = ${agentAmount}`,
   );
+
+  // The bug this catches: on 2026-08-15 `X402_COST_PLUS=true` moved every
+  // advertised price and no charged one, so the gateway published $1.54/$4.84 per
+  // million while billing $3.00/$9.00. Both surfaces were individually plausible;
+  // only comparing them shows it. A spot-check found it in production, which is
+  // the wrong place to find it.
+  const { body: manifest } = await json('/.well-known/x402');
+  const advertised = manifest?.pricing?.basis ?? null;
+  const charged = pricing?.basis ?? null;
+  const agrees = advertised === 'cost_plus'
+    ? charged === 'cost_plus'
+    : ['metered', 'model_price'].includes(charged);
+  record(
+    'the advertised pricing model is the one the quote uses',
+    !!advertised && !!charged && agrees,
+    `/.well-known/x402 says ${JSON.stringify(advertised)}, /task-quote priced as ${JSON.stringify(charged)}`,
+  );
 }
 
 // ── 3. Is the receipt signed, and does it attest real compute? ───────────────
