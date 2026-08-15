@@ -22,7 +22,8 @@ Runtime truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 | **The default model could not complete an agent loop (0/6)** | **High** | **Fixed** 2026-08-12 — multi-turn eval reversed a same-day routing decision. See below |
 | **`/v1` receipts claimed `payment.rail: "unmetered"` even when x402 had settled** | **High** | **Fixed** 2026-08-12 — a regression introduced with `X402_METER_V1` |
 | **x402 uses the `exact` scheme, so output is quoted at the `max_tokens` ceiling — buyers overpay by up to 3.8x (15x on a ceiling-heavy call)** | **High** | **Remedy built** 2026-08-13 — rolling settlement ([ADR 0008](./adr/0008-rolling-settlement.md)) charges measured usage on the next request, needing no v2/Permit2. Behind `X402_ROLLING_SETTLEMENT`, default off pending a durable ledger |
-| **`/health` reports `prover_configured: true` and "proofs are generated for every settled task" from a configured URL, not a reachable prover** | **High** | Open, found 2026-08-13 — the ECS `sp1-prover` was scaled to 0 that morning and `/health` did not change. `SP1_PROVER_URL` points at a Theta EdgeCloud GPU node, so the claim may be true by a different path — but it is asserted, not checked. Probe the prover before reporting on it |
+| **`/health` reports `prover_configured: true` and "proofs are generated for every settled task" from a configured URL, not a reachable prover** | **High** | **Fixed** 2026-08-15 — reachability is probed and reported separately. See below |
+| **A buyer could audit a price after paying it but not discover it beforehand** | Medium | **Fixed** 2026-08-15 — `/v1/models` publishes the provider rate, our fee and the resulting price per model; `/.well-known/x402` publishes the basis, floor and Tier-2 surcharge. Cost-plus claims the bill is checkable, and the rate was the one input a buyer could not see in advance |
 | **Facilitator fee is ~10% of gross at $0.01; batch-settlement not enabled** | Medium | Open, **unblocked** 2026-08-12 — previously believed withdrawn; CDP advertises `batch-settlement` on Base mainnet. Same v2 prerequisite |
 | **No prompt-cache support; router has no session affinity** | Medium | **Reassessed** 2026-08-12 — the blocker moved: our default model *does* price cached reads, but hits are not reported. See below |
 | **All buyers share one provider API key, so upstream prompt caches are not isolated between tenants** | **High** | Mitigated 2026-08-12 (per-buyer `cache_salt`), unconfirmed upstream — see below |
@@ -158,6 +159,31 @@ serves `min(max_tokens, OPENAI_GATEWAY_MAX_TOKENS_CAP)`, so a caller asking for 
 against the demo's cap was quoted **$0.09 of output it was structurally unable to receive**. The
 quote now uses the capped figure. Only reachable with `X402_METER_V1` on, which is off — worth
 fixing before the flag flips rather than after.
+
+### `/health` asserted the prover instead of asking it (High, fixed 2026-08-15)
+
+`prover_configured` meant what its name says — `SP1_PROVER_URL` is set — and was published next to
+the sentence *"Tier-2 SP1 settlement proofs are generated for every settled task."* Neither claim was
+checked against anything. The ECS `sp1-prover` was scaled to zero on 2026-08-13 and `/health` did not
+change by a character.
+
+That is the wrong direction to be wrong in. Scaling the prover to zero is the largest fixed-cost
+saving available and it is only safe while the state is legible from outside; an endpoint that keeps
+saying "proofs are on" while the prover is off converts a deliberate cost saving into a silent
+outage that a partner discovers for us.
+
+Two separate claims now. `prover_reachable` is probed against `healthCheck()` and is `null` until
+something has actually answered, so "not asked" is distinguishable from "asked and got nothing" —
+`settlement_proof` reports `unknown` rather than borrowing confidence from the config. The probe runs
+in the background on a 60s cache and is never awaited, because `healthCheck()` allows 5s per endpoint
+and a prover scaled to zero is exactly when it spends all of it; blocking would turn "proofs are off"
+into "the gateway looks down".
+
+The note was also simply false under [ADR 0009](./adr/0009-cost-plus-pricing.md). Tier-2 is
+threshold-gated and opt-in, and at a fixed ~$0.050 per proof against $0.0094 of fee on a median call,
+a proof on *every* settled task would lose money on every settled task. `/health` now publishes the
+gate itself (`proofs.tier2`: basis, threshold, opt-in price) so a partner can see why no proof
+appeared instead of asking.
 
 ### The free surface spent provider money off the books (High, fixed 2026-08-13)
 

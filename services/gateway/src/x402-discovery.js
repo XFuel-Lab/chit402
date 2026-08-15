@@ -1,6 +1,7 @@
 import config from './config.js';
 import { isX402Enabled, defaultRail } from './x402-adapter.js';
 import { defaultFacilitatorUrlForNetwork } from './x402-facilitator.js';
+import { describePricing } from './pricing.js';
 
 /**
  * x402 Bazaar discovery manifest.
@@ -78,6 +79,11 @@ export function buildX402Manifest(baseUrl = '') {
     // resource is still described (so tooling can plan) but requests settle via TFUEL.
     x402_enabled: isX402Enabled(),
     default_rail: defaultRail(),
+    // How a call is priced, before anyone spends anything. `accepts` below can
+    // only carry a single `maxAmountRequired`, which for a metered resource is
+    // the floor rather than the price — an agent reading only that field would
+    // budget $0.01 for a call that meters to more.
+    pricing: describePricing(),
     facilitator: {
       protocol: x.facilitatorProvider, // 'x402' (standard) | 'zan'
       url: facilitatorUrl,
@@ -102,6 +108,11 @@ export function buildX402Manifest(baseUrl = '') {
             maxAmountRequired: x.usdcPriceDefault,
             payTo: x.payTo,
             mimeType: 'application/json',
+            // The `exact` scheme wants one number, but the resource is metered:
+            // this is the per-settlement floor, not what a given call costs.
+            description:
+              'Minimum per settlement. The charged amount is metered per request — '
+              + 'see `pricing` on this manifest and POST /task-quote for an exact figure.',
           },
         ],
         input: TASK_REQUEST_INPUT_SCHEMA,
@@ -113,6 +124,7 @@ export function buildX402Manifest(baseUrl = '') {
     links: {
       agent_manifest: base ? `${base}/llms.txt` : '/llms.txt',
       openai_models: base ? `${base}/v1/models` : '/v1/models',
+      quote: base ? `${base}/task-quote` : '/task-quote',
       docs: 'https://github.com/XFuel-Lab/xfuel-protocol/blob/main/docs/M2M_API.md',
     },
   };

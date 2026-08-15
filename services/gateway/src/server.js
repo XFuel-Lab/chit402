@@ -8,9 +8,9 @@ import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, resolvePricingModel } from './x402-server.js';
-import { quoteTask, checkPricingConfig } from './pricing.js';
+import { quoteTask, checkPricingConfig, tier2ProofUnits } from './pricing.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
-import { proveAllowedForKey, proofAvailability } from './prove-gate.js';
+import { proveAllowedForKey, proofAvailability, refreshProverProbe } from './prove-gate.js';
 import { freeTierStatus } from './free-tier.js';
 import { rollingStatus } from './rolling-settlement.js';
 import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
@@ -87,6 +87,27 @@ function advertisedChains() {
     out.push(CHAIN_IDS.OSMOSIS);
   }
   return out;
+}
+
+/**
+ * The threshold a task must clear before it gets a Tier-2 proof, and what one
+ * costs if a caller asks for it.
+ *
+ * On `/health` so the gate is inspectable from outside. It is the difference
+ * between "proofs are on" and "proofs are on for calls above $2.00", and that
+ * distinction decides whether a partner sees a proof at all.
+ */
+function tier2Gate() {
+  const vi = config.verifiedInference || {};
+  const usd = (units) => (units == null || units === '' ? null : Number(units) / 1_000_000);
+  const cogsGate = usd(vi.tier2MinCogs);
+
+  return {
+    basis: cogsGate !== null ? 'provider_cogs' : 'settled_amount',
+    min_cogs_usd: cogsGate,
+    min_amount_usd: usd(vi.tier2Min),
+    opt_in_price_usd: Number(tier2ProofUnits()) / 1_000_000,
+  };
 }
 
 // ─── /llms.txt — agent discoverability manifest ───────────────────────────────
@@ -1592,6 +1613,9 @@ export function createApp() {
         aiStatus = ai.getStatus();
       } catch { /* not initialised */ }
 
+      // Not awaited: the result lands in time for a later call. See prove-gate.js.
+      refreshProverProbe(getSP1Prover());
+
       return res.json({
         status:      'ok',
         server:      'xfuel-m2m-api',
@@ -1603,8 +1627,9 @@ export function createApp() {
         ai_listener: aiStatus,
         // Whether Tier-2 proofs are actually being produced right now. The prover
         // is scaled to zero when idle to control cost, and that has to be legible
-        // to a partner without asking us.
-        proofs: proofAvailability(!!getSP1Prover()),
+        // to a partner without asking us. The probe runs in the background and
+        // this reports its last result, so a dead prover never slows /health.
+        proofs: proofAvailability(!!getSP1Prover(), { tier2: tier2Gate() }),
         // Tier-1 is the whole product, and it degrades *silently*: with no signing
         // secret the receipt still renders and still looks authoritative, it just
         // carries no signature. Report it so a missed env var is visible from
