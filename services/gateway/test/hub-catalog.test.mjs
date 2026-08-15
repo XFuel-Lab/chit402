@@ -151,3 +151,75 @@ test('getHubCatalog merges Theta + AkashML via fetchFn', async () => {
   assert.ok(models.some((m) => m.id === 'theta/glm_5_2'));
   assert.ok(models.some((m) => m.id === 'akash/zai-org/GLM-5.2'));
 });
+
+// -- Live capacity ------------------------------------------------------------
+// Theta lists every public service whether or not anything is running it, so
+// `state: "public"` says nothing about whether a call will work. Measured
+// 2026-08-15: glm_5_2 at workers {"default":1} served a completion, qwen3 at
+// workers {} returned 409, and 5 of 8 listed services had no workers at all.
+// The signal was in the poll we already make and was being discarded.
+
+const { hasCapacity } = await import('../src/hub-catalog.js');
+
+const svc = (alias, workers) => ({
+  alias,
+  state: 'public',
+  default_prediction: 'completions',
+  predictions: { completions: { input_vars: { messages: { type: 'chat_array' } } } },
+  ...(workers === undefined ? {} : { workers }),
+});
+
+test('mapThetaService reads live worker count as capacity', () => {
+  assert.equal(mapThetaService(svc('glm_5_2', { default: 1 })).capacity, 1);
+  assert.equal(mapThetaService(svc('sdxl', { default: 39 })).capacity, 39);
+  // The case that 409s.
+  assert.equal(mapThetaService(svc('qwen3', {})).capacity, 0);
+  // Absent is unknown, not zero — AkashML publishes no equivalent, and reading
+  // silence as "down" would take a working hub offline.
+  assert.equal(mapThetaService(svc('qwen3', undefined)).capacity, null);
+});
+
+test('hasCapacity: only a hub that reports none counts as down', () => {
+  assert.equal(hasCapacity({ capacity: 1 }), true);
+  assert.equal(hasCapacity({ capacity: 0 }), false);
+  assert.equal(hasCapacity({ capacity: null }), true);
+  assert.equal(hasCapacity({}), true);
+});
+
+test('xfuel/auto never routes to a model the hub says is empty', () => {
+  // theta/qwen3 sits third in the non-agent preference order, so this is not
+  // hypothetical: an Akash outage — the one time failover matters — used to pick
+  // a model that answers every request with a 409.
+  const models = [
+    { id: 'theta/qwen3', hub: 'theta', modality: 'chat', capacity: 0 },
+    { id: 'akash/zai-org/GLM-5.2', hub: 'akash', modality: 'chat', capacity: null },
+  ];
+  const res = resolveCatalogModel('xfuel/auto', models);
+  assert.equal(res.ok, true);
+  assert.equal(res.model.id, 'akash/zai-org/GLM-5.2');
+});
+
+test('an explicit request for an empty model still resolves', () => {
+  // Only the automatic choice is filtered. A caller who names a model may be
+  // willing to wait for it to warm, and silently serving something else would
+  // break a contract they stated explicitly.
+  const models = [{ id: 'theta/qwen3', hub: 'theta', alias: 'qwen3', modality: 'chat', capacity: 0 }];
+  const res = resolveCatalogModel('theta/qwen3', models);
+  assert.equal(res.ok, true);
+  assert.equal(res.model.id, 'theta/qwen3');
+});
+
+test('/v1/models publishes availability so an agent can avoid a dead model', () => {
+  const list = toOpenAIList([
+    { id: 'theta/qwen3', hub: 'theta', modality: 'chat', capacity: 0 },
+    { id: 'theta/glm_5_2', hub: 'theta', modality: 'chat', capacity: 1 },
+    { id: 'akash/x', hub: 'akash', modality: 'chat', capacity: null },
+  ]);
+  const at = (id) => list.data.find((m) => m.id === id).availability;
+
+  assert.equal(at('theta/qwen3').status, 'no_capacity');
+  assert.equal(at('theta/glm_5_2').status, 'available');
+  assert.equal(at('theta/glm_5_2').workers, 1);
+  // Not "down" — Akash simply does not report capacity.
+  assert.equal(at('akash/x').status, 'unknown');
+});

@@ -43,8 +43,16 @@ export async function inferEdgeCloud({
   const body = { input: input || {} };
   // Some services accept variant; leave unset unless caller adds it.
 
-  const maxAttempts = 2;
-  const retryDelayMs = 2000;
+  // EdgeCloud answers 409 while a service has no worker ready, so a retry is
+  // waiting on a GPU to come up, not on a network blip. Two attempts 2s apart
+  // covered neither case: too long to spend on a model that is simply down, and
+  // far too short for a genuine cold start. Backoff instead — 2s then 6s — so a
+  // service that is warming has a chance to answer, and give up after that
+  // rather than holding an agent for a minute. Models with no published capacity
+  // are filtered out of auto-routing upstream, so the common dead case never
+  // reaches here.
+  const maxAttempts = 3;
+  const retryDelaysMs = [2_000, 6_000];
   const perCallTimeout = waitSec * 1000 + 15_000;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -66,7 +74,7 @@ export async function inferEdgeCloud({
       const rawText = await res.text();
       if (!res.ok) {
         if (res.status === 409 && attempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, retryDelayMs));
+          await new Promise((r) => setTimeout(r, retryDelaysMs[attempt - 1] ?? 2_000));
           continue;
         }
         logger.warn({ alias, status: res.status, elapsed, body: rawText.slice(0, 200) }, 'edgecloud-infer: HTTP error');

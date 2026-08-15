@@ -11,6 +11,8 @@ import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved } from 
 import { checkPricingConfig, tier2ProofUnits } from './pricing.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { proveAllowedForKey, proofAvailability, refreshProverProbe } from './prove-gate.js';
+import { getHubCatalog } from './hub-catalog.js';
+import { startHealthProbes, healthSnapshot } from './provider-health.js';
 import { freeTierStatus } from './free-tier.js';
 import { rollingStatus } from './rolling-settlement.js';
 import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
@@ -343,6 +345,12 @@ export function createApp() {
   // reasonable alone. Logged at error level rather than thrown — a pricing
   // combination should not take the gateway down, but it must not be quiet.
   checkPricingConfig(config.verifiedInference);
+
+  // AkashML publishes no capacity signal and serves all live inference, so
+  // without this an outage there is discovered by failing a customer's call.
+  // Opt-in (`PROVIDER_HEALTH_PROBE=true`) because it spends real money on
+  // requests nobody asked for; passive observation runs regardless.
+  startHealthProbes(() => getHubCatalog());
 
   // ── Proxy trust ──────────────────────────────────────────────────────────
   // Behind a TLS reverse proxy (Caddy/nginx), req.ip is the proxy's address
@@ -1665,6 +1673,10 @@ export function createApp() {
         // policy (ADR 0006); the compute behind them is not, and that subsidy was
         // previously neither capped nor measured anywhere.
         free_tier: freeTierStatus(),
+        // Which models are actually serving. Theta's worker counts come free with
+        // the catalogue poll; AkashML publishes nothing, so its half is observed
+        // traffic plus the opt-in prober.
+        provider_health: healthSnapshot(),
         // Money we have served COGS for and not yet collected. Under rolling
         // settlement (ADR 0008) every charge lands one call late, so a climbing
         // figure here means settlement is failing, not that traffic is growing.

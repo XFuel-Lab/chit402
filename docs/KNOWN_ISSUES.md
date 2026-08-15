@@ -25,6 +25,7 @@ Runtime truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 | **`/health` reports `prover_configured: true` and "proofs are generated for every settled task" from a configured URL, not a reachable prover** | **High** | **Fixed** 2026-08-15 — reachability is probed and reported separately. See below |
 | **A buyer could audit a price after paying it but not discover it beforehand** | Medium | **Fixed** 2026-08-15 — `/v1/models` publishes the provider rate, our fee and the resulting price per model; `/.well-known/x402` publishes the basis, floor and Tier-2 surcharge. Cost-plus claims the bill is checkable, and the rate was the one input a buyer could not see in advance |
 | **`X402_COST_PLUS` changed the advertised price and not the charged one — the gateway published $1.54/$4.84 per million while billing $3.00/$9.00** | **Critical** | **Fixed** 2026-08-15 — `quoteFromCogs` shipped with ADR 0009 reachable only from its own tests. Now wired into the one engine behind both the 402 challenge and `/task-quote`. See below |
+| **`/v1/models` advertised 5 Theta models that answer every request with a 409, and `xfuel/auto` could route to one** | **High** | **Fixed** 2026-08-15 — the hub publishes live worker counts and we were discarding them. See below |
 | **Facilitator fee is ~10% of gross at $0.01; batch-settlement not enabled** | Medium | Open, **unblocked** 2026-08-12 — previously believed withdrawn; CDP advertises `batch-settlement` on Base mainnet. Same v2 prerequisite |
 | **No prompt-cache support; router has no session affinity** | Medium | **Reassessed** 2026-08-12 — the blocker moved: our default model *does* price cached reads, but hits are not reported. See below |
 | **All buyers share one provider API key, so upstream prompt caches are not isolated between tenants** | **High** | Mitigated 2026-08-12 (per-buyer `cache_salt`), unconfirmed upstream — see below |
@@ -733,6 +734,47 @@ opt-in proof adds its $0.08, and that the published breakdown adds back up to th
 The general lesson: a pricing test that never crosses the surface a buyer touches proves the
 arithmetic, not the price.
 
+### Theta capacity was in the catalogue and we threw it away (fixed 2026-08-15)
+
+`GET /v1/models` listed 8 Theta models. Three had GPUs behind them. The other five returned
+`http_409` on every call, and `theta/qwen3` — one of the dead ones — sat third in the `xfuel/auto`
+preference order, so an AkashML outage would have failed over to a model that cannot answer.
+
+The signal was already in the poll we make. Theta's `/service/list` returns `workers` per service,
+and it separates the two cases exactly: measured 2026-08-15, `glm_5_2` at `{"default":1}` served a
+completion, `qwen3` at `{}` did not, and `stable_diffusion_xl_turbo` reported 38. `mapThetaService`
+read `state` and dropped `workers` on the floor. `state` is useless for this — every service reads
+`public`, including all five dead ones.
+
+Capacity now rides on the catalogue row and does three things: `xfuel/auto` skips models with no
+workers, `/v1/models` publishes an `availability` block, and a 409 on a zero-worker model returns an
+error that says so instead of advising a retry that cannot work. Unknown is not down — AkashML
+publishes no equivalent field, so its models stay routable and report `status: "unknown"`. Only a
+hub that reports capacity *and* reports none is treated as unavailable.
+
+An explicit request for an empty model still resolves and is still attempted. Only the automatic
+choice is filtered, because a caller who names a model may be willing to wait for it to warm, and
+substituting silently would break a contract they stated explicitly — the same reason
+`OPENAI_GATEWAY_ALLOW_FALLBACK=false` is right on the hosted box.
+
+The gap this leaves: **AkashML publishes no capacity signal**, so the whole live inference path is
+`unknown` and an Akash outage is still discovered by failing a call. Closing that needs active
+probing rather than a catalogue field — the canary probe measures it offline today but does not feed
+routing.
+
+**Closed 2026-08-15.** AkashML health now comes from two sources. Real calls record success and
+failure as they happen: free, and the strongest possible evidence, but it only learns about models
+people use and only while someone is already being failed. An optional prober
+(`PROVIDER_HEALTH_PROBE=true`) makes a 1-token call per model on a timer, which costs real money and
+so is off by default; it buys the two things observation cannot — noticing an outage before a
+customer does, and noticing recovery on a model nobody is calling. Three consecutive failures route
+a model out of `xfuel/auto`, one success brings it back, and failures older than 30 minutes stop
+counting so a blip cannot delist a model permanently. If health rules out *everything*, routing
+ignores it and tries anyway: refusing to serve is worse than trying and failing, and it would also
+prevent the success that clears the state. The canary probe was not reused — it is the ADR 0007
+substitution experiment (576 calls, minutes, real spend), which answers a different question at the
+wrong price for a health check.
+
 ## Trust / product honesty
 
 | Issue | Severity | Status |
@@ -761,3 +803,10 @@ arithmetic, not the price.
 
 - TFUEL rail exists as optional fallback only when explicitly enabled.
 - Theta EdgeCloud remains an optional GPU provider, not settlement home.
+- AkashML's `/v1/models` carries `discount_to_user: 0.45` on GLM-5.2 and we ignore it. In the
+  OpenRouter provider schema that field means `user price = base × (1 − discount)`, which would make
+  our COGS for that model overstated ~1.8x and put a wrong number in the signed
+  `provider_cogs.actual`. Checked against actual AkashML billing 2026-08-15: **we pay list price on
+  the direct API**, so the field is an OpenRouter-channel display discount and does not apply to us.
+  Recorded because the field looks alarming, sits on the model `xfuel/auto` picks for agent work, and
+  is otherwise worth re-investigating from scratch every time someone reads that endpoint.
