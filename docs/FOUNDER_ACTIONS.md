@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-15 · Public Base mainnet x402 live · **Repo and the live box both on `main` @ `00120d0`** (verified 12/12) · SDK `0.5.2` · SP1 prover running · **Cost-plus + Tier-2 at $0.08 accepted ([ADR 0009](./adr/0009-cost-plus-pricing.md)); the engine is deployed and wired to the money path but ships off — prices are still the rate card, and turning it on is one line whenever you want it** · Next: outreach (4) — traffic is 0 tasks/24h, which is the real constraint
+Last updated: 2026-08-15 · Public Base mainnet x402 live · **Repo and the live box both on `main` @ `00120d0`** (verified 12/12) · SDK `0.5.2` · SP1 prover running · **Cost-plus is live ([ADR 0009](./adr/0009-cost-plus-pricing.md)) — a median agent call now costs a buyer $0.106 instead of $0.206, with Tier-2 opt-in at $0.08** · Next: outreach (4) — traffic is 0 tasks/24h, which is the real constraint
 
 ## How to use
 
