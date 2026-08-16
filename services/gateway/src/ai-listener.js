@@ -14,6 +14,9 @@ import { inferEdgeCloud, chatInputFromMessages, extractTextOutput } from './edge
 import { normalizeUsage } from './usage.js';
 import { cacheNamespace } from './buyer-attr.js';
 import { measureCogs } from './provider-rates.js';
+import { quoteFromCogs } from './pricing.js';
+import { rollingEnabled, recordPending } from './rolling-settlement.js';
+import { normalizeRequestedTier } from './tier-policy.js';
 import { getHubCatalog, resolveCatalogModel, requestShape } from './hub-catalog.js';
 
 /**
@@ -840,7 +843,10 @@ class AIListener {
 
     try {
       // Step 1: Validate task amount meets minimum threshold
-      if (BigInt(intent.amount || '0') < BigInt(MIN_TASK_AMOUNT)) {
+      // Rolling-fronted calls have no settlement yet (gross 0); the measured
+      // bill is written after serve and collected on the next request.
+      const fronted = !!(meta?.rolling?.fronted);
+      if (!fronted && BigInt(intent.amount || '0') < BigInt(MIN_TASK_AMOUNT)) {
         logger.warn({ taskId, amount: intent.amount }, 'Task amount below minimum threshold');
         task.status = TASK_STATUS.FAILED;
         task.updatedAt = Date.now();
@@ -1324,14 +1330,12 @@ class AIListener {
 
   /**
    * Burn prepaid float COGS against the provider that actually served.
+   * On a rolling-settlement fronted call, also records the measured cost-plus
+   * bill so the next request can collect it.
    * @private
    */
   async _reconcileProviderCogs(task) {
-    const pending = task.meta?.pendingCogs;
-    if (!pending || task.meta?.providerCogs) return;
-
-    const estimated = pending.estimated || '0';
-    if (pending.unconstrained && BigInt(estimated || '0') <= 0n) return;
+    if (task.meta?.providerCogs && task.meta?.rolling?.recorded) return;
 
     // Real tokens × the provider's published per-token rate, when both are
     // available. Falls back to the bps estimate — which is a share of our own
@@ -1348,6 +1352,49 @@ class AIListener {
     } catch (err) {
       logger.warn({ err: err.message, taskId: task.taskId }, 'COGS measurement failed; using estimate');
     }
+
+    if (rollingEnabled() && task.meta?.rolling?.fronted && !task.meta.rolling.recorded) {
+      const requested = normalizeRequestedTier(task.intent?.proofTier);
+      const cogs = measured ?? 0n;
+      const quote = quoteFromCogs(cogs, {
+        tier2: requested?.tier === 'settlement',
+      });
+      task.intent = task.intent || {};
+      task.intent.amount = quote.amount;
+      task.meta.pricing = quote;
+      const payerId = task.meta.rolling.payerId;
+      if (payerId) {
+        recordPending(payerId, {
+          cogs,
+          quote,
+          usage: task.usage || {},
+          model: task.result?.model || task.result?.routedModel || task.intent?.modelId,
+          taskId: task.taskId,
+        });
+      }
+      task.meta.rolling.recorded = true;
+      this.activeTasks.set(task.taskId, task);
+    } else if (measured !== null && task.meta) {
+      const requested = normalizeRequestedTier(task.intent?.proofTier);
+      task.meta.pricing = quoteFromCogs(measured, {
+        tier2: requested?.tier === 'settlement',
+      });
+    }
+
+    if (measured !== null && task.meta) {
+      task.meta.providerCogs = {
+        ...(task.meta.providerCogs || {}),
+        actual: String(measured),
+        basis: 'measured',
+      };
+      this.activeTasks.set(task.taskId, task);
+    }
+
+    const pending = task.meta?.pendingCogs;
+    if (!pending || task.meta?.providerCogs) return;
+
+    const estimated = pending.estimated || '0';
+    if (pending.unconstrained && BigInt(estimated || '0') <= 0n) return;
 
     try {
       const floatMgr = getFloatManager();

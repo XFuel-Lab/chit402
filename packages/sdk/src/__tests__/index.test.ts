@@ -273,6 +273,35 @@ describe('XFuelClient', () => {
     });
   });
 
+  describe('quoteTask', () => {
+    it('POSTs /task-quote with the request shape the gateway actually prices', async () => {
+      mockPost.mockResolvedValueOnce({
+        data: { recommended: 'usdc', default_rail: 'usdc', rails: { usdc: { amount: '103400' } } },
+      });
+      const client = makeClient();
+      const messages = [{ role: 'user' as const, content: 'hi' }];
+      const tools = [{ type: 'function' as const, function: { name: 'search', parameters: { type: 'object' } } }];
+
+      await client.quoteTask({
+        model_id: 'akash/zai-org/GLM-5.2',
+        amount: '10000',
+        messages,
+        max_tokens: 500,
+        tools,
+        proof_tier: 'settlement',
+      });
+
+      expect(mockPost).toHaveBeenCalledWith('/task-quote', {
+        model_id: 'akash/zai-org/GLM-5.2',
+        amount: '10000',
+        messages,
+        max_tokens: 500,
+        tools,
+        proof_tier: 'settlement',
+      });
+    });
+  });
+
   // ── getTaskStatus ─────────────────────────────────────────────────────────
 
   describe('getTaskStatus', () => {

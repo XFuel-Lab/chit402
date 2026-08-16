@@ -44,7 +44,7 @@ test('priceUSDC: hand-set model price wins, otherwise the floor', () => {
 test('priceUSDC: the buyer cannot name the price with payment.maxAmount', () => {
   // This used to return the buyer's own figure verbatim, so a 68k-token job
   // could be settled for one base unit. maxAmount is a ceiling they choose to
-  // meet or decline — never an instruction to us.
+  // meet or decline ? never an instruction to us.
   const cfg = { usdcPriceDefault: '10000' };
   assert.equal(priceUSDC({ payment: { maxAmount: '1' } }, cfg), '10000');
   assert.equal(priceUSDC({ payment: { maxAmount: '999999999' } }, cfg), '10000');
@@ -67,7 +67,7 @@ test('settled gross cannot be restated by the paid retry (receipt integrity)', a
   // The exploit this guards: the buyer pays a $0.01 challenge, then declares a
   // $1.00 `amount` on the retry and mints a signed receipt claiming $1.00 gross.
   // Gross must come from the challenge the payment was bound to. See
-  // docs/KNOWN_ISSUES.md — our own flagship demo did exactly this.
+  // docs/KNOWN_ISSUES.md ? our own flagship demo did exactly this.
   const { url, close } = await startMockFacilitator();
   try {
     const cfg = cfgFor(url, { usdcPriceDefault: '10000' });
@@ -92,6 +92,28 @@ test('settled gross cannot be restated by the paid retry (receipt integrity)', a
   }
 });
 
+test('handshake amount override prices the challenge, not the current body', async () => {
+  const { url, close } = await startMockFacilitator();
+  try {
+    const cfg = cfgFor(url, { usdcPriceDefault: '10000' });
+    const challenge = await runX402Handshake(
+      { headers: {}, body: { payment: { rail: 'usdc' } } },
+      { taskId: 'x402-rolling', cfg, amount: '20240' },
+    );
+    const accept = challenge.body.accepts[0];
+    assert.equal(accept.maxAmountRequired, '20240');
+
+    const settled = await runX402Handshake({
+      headers: { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': accept.extra.nonce },
+      body: { payment: { rail: 'usdc' } },
+    }, { taskId: 'x402-rolling', cfg, amount: '20240' });
+    assert.equal(settled.kind, 'settled');
+    assert.equal(settled.settledAmount, '20240');
+  } finally {
+    await close();
+  }
+});
+
 test('extractPaymentNonce: explicit header, json blob, base64 blob', () => {
   assert.equal(extractPaymentNonce({ headers: { 'x-payment-nonce': 'abc' } }), 'abc');
   assert.equal(extractPaymentNonce({ headers: { 'x-payment': JSON.stringify({ nonce: 'n1' }) } }), 'n1');
@@ -100,12 +122,12 @@ test('extractPaymentNonce: explicit header, json blob, base64 blob', () => {
   assert.equal(extractPaymentNonce({ headers: {} }), null);
 });
 
-test('full 402 loop against mock facilitator: challenge → settle → replay-rejected', async () => {
+test('full 402 loop against mock facilitator: challenge ? settle ? replay-rejected', async () => {
   const { url, close } = await startMockFacilitator();
   try {
     const cfg = cfgFor(url);
 
-    // Step 1: no X-PAYMENT → 402 challenge (bound to amount + payTo + nonce)
+    // Step 1: no X-PAYMENT ? 402 challenge (bound to amount + payTo + nonce)
     const reqNoPay = { headers: {}, body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' } };
     const challenge = await runX402Handshake(reqNoPay, { taskId: 'x402-req-1', cfg });
     assert.equal(challenge.kind, 'challenge');
@@ -117,7 +139,7 @@ test('full 402 loop against mock facilitator: challenge → settle → replay-re
     const nonce = accept.extra.nonce;
     assert.match(nonce, /^[0-9a-f]{32}$/);
 
-    // Step 2: retry with X-PAYMENT + nonce → verify + settle
+    // Step 2: retry with X-PAYMENT + nonce ? verify + settle
     const reqPay = {
       headers: { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': nonce },
       body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' },
@@ -127,7 +149,7 @@ test('full 402 loop against mock facilitator: challenge → settle → replay-re
     assert.match(settled.paymentRef, /^base:0x/);
     assert.equal(settled.settledAmount, '50000', 'settled gross comes from the bound challenge');
 
-    // Step 3: replay the same nonce → rejected (spent)
+    // Step 3: replay the same nonce ? rejected (spent)
     const replay = await runX402Handshake(reqPay, { taskId: 'x402-req-1', cfg });
     assert.equal(replay.kind, 'failed');
     assert.equal(replay.reason, 'payment_replayed');
@@ -136,7 +158,7 @@ test('full 402 loop against mock facilitator: challenge → settle → replay-re
   }
 });
 
-test('handshake surfaces facilitator rejection (→ caller falls back to TFUEL)', async () => {
+test('handshake surfaces facilitator rejection (? caller falls back to TFUEL)', async () => {
   const { url, close } = await startMockFacilitator({ valid: false });
   try {
     const cfg = cfgFor(url);
@@ -152,7 +174,7 @@ test('handshake surfaces facilitator rejection (→ caller falls back to TFUEL)'
   }
 });
 
-test('gateway_not_configured is reported (→ caller returns 503)', async () => {
+test('gateway_not_configured is reported (? caller returns 503)', async () => {
   const cfg = cfgFor(null, { gatewayUrl: null, apiKey: null });
   const reqPay = { headers: { 'x-payment': 'BLOB', 'x-payment-nonce': 'x' }, body: {} };
   const decision = await runX402Handshake(reqPay, { taskId: 't', cfg });
@@ -268,7 +290,7 @@ test('X402_COST_PLUS actually changes the quote, not just the advertised price',
   const card = await withCostPlus(false, () => priceUSDCResolved(agentBody(), cfg));
   const plus = await withCostPlus(true, () => priceUSDCResolved(agentBody(), cfg));
 
-  assert.notEqual(plus, card, 'the flag changed nothing � cost-plus is not wired');
+  assert.notEqual(plus, card, 'the flag changed nothing ? cost-plus is not wired');
 
   // Exact, and derived from the published rate rather than a copied constant, so
   // this pins the wiring (right model, right tokens, right function) without
@@ -313,7 +335,7 @@ test('a model with no published rate falls back to the card, never to the floor'
 
   // Theta publishes no rate in this catalogue, so cost-plus cannot price it.
   // Quoting an unknown cost at cost-plus would land every such call on the
-  // floor � a $0.20 job billed at $0.01.
+  // floor ? a $0.20 job billed at $0.01.
   assert.equal(plus, card);
   assert.ok(BigInt(plus) > 10_000n, 'must not collapse to the floor');
 });
@@ -340,4 +362,52 @@ test('a cost-plus quote publishes a breakdown that rebuilds the price', async ()
   // And the rate we publish is the provider's, not the rate card's $3.00/$9.00.
   assert.deepEqual(q.rate, { in: 1_400_000, out: 4_400_000 });
   assert.equal(q.priced_model, 'akash/zai-org/GLM-5.2');
+});
+
+test('TEE / spot-check / zk-full do not add the $0.08 settlement-proof surcharge', async () => {
+  await primeCatalog();
+  const { priceUSDCResolved, wantsSettlementProof } = await import('../src/x402-server.js');
+  const cfg = { usdcPriceDefault: '10000', usdcPrices: {} };
+
+  assert.equal(wantsSettlementProof({ proof_tier: 'settlement' }), true);
+  for (const t of ['signed', 'tee', 'zk-spotcheck', 'zk-full', 'spotcheck', undefined]) {
+    assert.equal(wantsSettlementProof({ proof_tier: t }), false, String(t));
+  }
+
+  const plain = await withCostPlus(true, () => priceUSDCResolved(agentBody(), cfg));
+  const tee = await withCostPlus(true, () =>
+    priceUSDCResolved(agentBody({ proof_tier: 'tee' }), cfg));
+  const spot = await withCostPlus(true, () =>
+    priceUSDCResolved(agentBody({ proof_tier: 'zk-spotcheck' }), cfg));
+  const full = await withCostPlus(true, () =>
+    priceUSDCResolved(agentBody({ proof_tier: 'zk-full' }), cfg));
+
+  assert.equal(tee, plain);
+  assert.equal(spot, plain);
+  assert.equal(full, plain);
+});
+
+test('advertised basis (/.well-known/x402) and /task-quote agree under cost-plus', async () => {
+  await primeCatalog();
+  const { quoteResolved } = await import('../src/x402-server.js');
+  const { buildX402Manifest } = await import('../src/x402-discovery.js');
+  const cfg = { usdcPriceDefault: '10000', usdcPrices: {} };
+
+  await withCostPlus(true, async () => {
+    const advertised = buildX402Manifest('https://example.test').pricing.basis;
+    const quoted = (await quoteResolved(agentBody(), cfg)).basis;
+    assert.equal(advertised, 'cost_plus');
+    assert.equal(quoted, advertised);
+  });
+});
+
+test('X402_USDC_PRICES wins even under cost-plus', async () => {
+  await primeCatalog();
+  const { priceUSDCResolved } = await import('../src/x402-server.js');
+  const cfg = {
+    usdcPriceDefault: '10000',
+    usdcPrices: { 'akash/zai-org/GLM-5.2': '77777' },
+  };
+  const priced = await withCostPlus(true, () => priceUSDCResolved(agentBody(), cfg));
+  assert.equal(priced, '77777');
 });

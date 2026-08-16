@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { Wallet, Contract, JsonRpcProvider, keccak256, toUtf8Bytes } from 'ethers';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { XFuelClient, ChainId } from 'xfuel-sdk';
+import type { TaskQuoteParams } from 'xfuel-sdk';
 import { XFuelOnChain, createEip3009Payer } from 'xfuel-sdk/onchain';
 import type { McpConfig } from './config.js';
 import { ok, fail, describeError } from './format.js';
@@ -399,6 +400,10 @@ decimals, amount, pay_to }, tfuel: { amount } } }.`,
           .regex(AMOUNT_RE, 'amount must be an integer string (wei)')
           .optional()
           .describe('TFUEL task value in wei'),
+        messages: z.array(z.unknown()).optional().describe('Chat messages to forecast (same as the request you will submit)'),
+        max_tokens: z.number().int().positive().optional().describe('Output budget to forecast'),
+        tools: z.array(z.unknown()).optional().describe('Tool definitions (counted as prompt tokens)'),
+        proof_tier: z.string().optional().describe('Requested assurance tier (only `settlement` adds the SP1 surcharge)'),
       },
       annotations: {
         title: 'Quote / price a task',
@@ -410,7 +415,14 @@ decimals, amount, pay_to }, tfuel: { amount } } }.`,
     },
     async (args) => {
       try {
-        const res = await client.quoteTask({ model_id: args.model_id, amount: args.amount });
+        const res = await client.quoteTask({
+          model_id: args.model_id,
+          amount: args.amount,
+          messages: args.messages as TaskQuoteParams['messages'],
+          max_tokens: args.max_tokens,
+          tools: args.tools as TaskQuoteParams['tools'],
+          proof_tier: args.proof_tier,
+        });
         return ok(
           res as unknown as Record<string, unknown>,
           `Quote: recommended=${res.recommended}, default_rail=${res.default_rail}.`,
@@ -638,7 +650,10 @@ tiers_available, note } }.`,
     },
     async (args) => {
       try {
-        const quote = await client.quoteTask({ model_id: args.model, amount: args.amount });
+        const quote = await client.quoteTask({
+          model_id: args.model,
+          amount: args.amount,
+        });
 
         // Tier-1/Tier-2 are live for every XFuel task; Tier-3 is roadmap.
         const tiers_available = ['signed', 'settlement'];

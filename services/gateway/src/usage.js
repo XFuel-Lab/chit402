@@ -19,10 +19,32 @@ export function estimateTokens(text) {
   return Math.max(1, Math.ceil(String(text).length / 4));
 }
 
+/** Pull billed text out of a message `content` field (string, parts, or object). */
+function contentToText(content) {
+  if (content == null) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (typeof part === 'string') return part;
+      if (part && typeof part === 'object') {
+        if (typeof part.text === 'string') return part.text;
+        return JSON.stringify(part);
+      }
+      return '';
+    }).join('');
+  }
+  if (typeof content === 'object') return JSON.stringify(content);
+  return String(content);
+}
+
 /** Flatten chat messages to plain text for estimation. */
 export function messagesToText(messages) {
   if (!Array.isArray(messages)) return '';
-  return messages.map((m) => (typeof m?.content === 'string' ? m.content : '')).join('\n');
+  return messages.map((m) => {
+    const parts = [contentToText(m?.content)];
+    if (m?.tool_calls) parts.push(JSON.stringify(m.tool_calls));
+    return parts.filter(Boolean).join('\n');
+  }).join('\n');
 }
 
 const num = (v) => (Number.isFinite(v) ? v : null);

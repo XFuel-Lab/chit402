@@ -11,6 +11,7 @@ import {
   describePricing,
   rateCardFor,
   promptTokensFor,
+  quotedMaxOutputTokens,
   DEFAULT_RATE,
   DEFAULT_FLOOR_UNITS,
   DEFAULT_PLATFORM_FEE_BPS,
@@ -25,6 +26,26 @@ test('the floor applies when there is nothing to meter', () => {
   assert.equal(q.amount, String(DEFAULT_FLOOR_UNITS));
   assert.equal(q.floor_applied, true);
   assert.equal(q.basis, 'metered');
+});
+
+test('omitted max_tokens is quoted at the adapter default of 500, not free output', () => {
+  assert.equal(quotedMaxOutputTokens({}), 500);
+  assert.equal(quotedMaxOutputTokens({ max_tokens: 0 }), 500);
+  assert.equal(quotedMaxOutputTokens({ max_tokens: 32 }), 32);
+  const body = { model_id: 'zai-org/GLM-5.2', messages: promptOf(5_000) };
+  const omitted = quoteTask(body);
+  const explicit = quoteTask({ ...body, max_tokens: 500 });
+  const tiny = quoteTask({ ...body, max_tokens: 1 });
+  assert.equal(omitted.amount, explicit.amount);
+  assert.equal(omitted.max_output_tokens, 500);
+  assert.ok(BigInt(omitted.amount) > BigInt(tiny.amount), '500 output tokens must cost more than 1');
+});
+
+test('tool definitions count as prompt tokens', () => {
+  const tools = [{ type: 'function', function: { name: 'search', parameters: { type: 'object' } } }];
+  const bare = promptTokensFor({ messages: promptOf(100) });
+  const withTools = promptTokensFor({ messages: promptOf(100), tools });
+  assert.ok(withTools > bare, `tools must add prompt tokens (${withTools} vs ${bare})`);
 });
 
 test('a chat-sized prompt stays at the floor', () => {

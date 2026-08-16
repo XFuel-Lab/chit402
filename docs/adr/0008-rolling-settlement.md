@@ -1,6 +1,6 @@
 # ADR 0008 — Rolling Settlement: Charge the Previous Call
 
-Status: Proposed (implemented behind `X402_ROLLING_SETTLEMENT`, default off). Date: 2026-08-13.
+Status: Implemented, default off (`X402_ROLLING_SETTLEMENT=false`). Date: 2026-08-13.
 Related: [ADR 0002](./0002-base-settlement-home.md), [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [X402_SCHEME_MIGRATION.md](../X402_SCHEME_MIGRATION.md), [PRICING_STRATEGY.md](../PRICING_STRATEGY.md), [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
 
 ## Context
@@ -36,12 +36,17 @@ buyer who price-checks has somewhere else to go.
 
 No facilitator change, no v2, no Permit2. The ordering changes; the protocol does not.
 
-Priced by `quoteUsage` in `pricing.js` from provider-reported usage, against the same
-rate card and the same floor. Reasoning tokens are not added on top of
-`completion_tokens`, because providers already fold them in — doing otherwise would
-double-bill most of the agent catalogue. Pricing uses the **resolved** model, not the
-requested alias, for the reason documented in `x402-server.js`: an `xfuel/auto` request
-that serves GLM-5.2 must not be priced as Llama.
+Priced by `quoteFromCogs` in `pricing.js` from **measured provider COGS**, not the
+rate card. Formula: `max($0.01, provider_cogs × 1.10) + $0.08` if they asked for a
+settlement proof. Reasoning tokens are not added on top of `completion_tokens`,
+because providers already fold them in. Pricing uses the **resolved** model, not the
+requested alias.
+
+The signed receipt proves the 10%: `provider_cogs.actual`, `payment.platform_fee_bps`
+(1000), and `payment.protocol_fee_bps` (50, ADR 0001 split of gross) are all in the
+HMAC payload. A buyer recomputes `max(floor, cogs × 1.10)` and matches `gross_amount`.
+When payment lands on the next request, `payment.ref` is written onto the **owed**
+task, not the new one.
 
 ### Bounding the bad debt
 
@@ -75,10 +80,10 @@ Bad, and accepted:
 
 - **Charges are one call late.** A buyer's invoice never reflects their most recent
   call. This must be stated plainly in the docs; discovering it feels like a bug.
-- **The ledger is in memory**, matching `free-tier.js` and the single-process design.
-  A restart forgives every pending charge. Acceptable for a subsidy guard, **not
-  acceptable for billing at volume** — a durable ledger is the prerequisite for
-  turning this on for real revenue, and is deliberately out of scope here.
+  **You pay for the last call; `/task-quote` is a forecast of the next one.**
+- **The ledger is durable** (JSON on disk, same single-process model as task-store).
+  A restart must not forgive an invoice. Do not enable `X402_ROLLING_SETTLEMENT` on
+  the live box until persist is on (it is, when `TASK_STORE_PERSIST` is not `false`).
 - Debts are keyed on the API-key hash, not the paying wallet, because the first call
   has no payment header and therefore no wallet to key on. Rotating keys resets the
   one free call — the same exposure the free tier already accepts.

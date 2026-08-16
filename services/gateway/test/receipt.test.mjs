@@ -208,18 +208,45 @@ test('buildReceipt: signature is absent by default and valid HMAC when a secret 
   const r = buildReceipt(usdcTask(), { signingSecret: secret });
   assert.ok(r.signature);
   assert.equal(r.signature.alg, 'HMAC-SHA256');
-  assert.equal(r.signature.payload_version, 2);
+  assert.equal(r.signature.payload_version, 3);
   assert.equal(r.schema, 'xfuel.receipt.v3');
-  assert.ok(r.signature.signed_fields.includes('route.provider'));
+  assert.ok(r.signature.signed_fields.includes('provider_cogs.actual'));
+  assert.ok(r.signature.signed_fields.includes('payment.platform_fee_bps'));
 
   // Recompute the HMAC over the same canonical payload → must match.
   const payload = JSON.stringify([
     r.task_id, r.payment?.rail ?? null, r.payment?.ref ?? null,
+    r.payment?.gross_amount ?? null,
     r.payment?.net_amount ?? null, r.payment?.fee_amount ?? null,
+    r.payment?.protocol_fee_bps ?? r.payment?.fee_bps ?? null,
+    r.payment?.platform_fee ?? null, r.payment?.platform_fee_bps ?? null,
+    r.provider_cogs?.actual ?? null,
     r.route?.model ?? null, r.route?.model_commitment?.commitment ?? null,
     r.route?.provider ?? null,
     r.output?.hash ?? null, r.binding?.expected_commitment ?? null,
   ]);
   const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(payload).digest('hex');
   assert.equal(r.signature.value, expected);
+});
+
+test('signed cost-plus fields recompute to gross', async () => {
+  const { quoteFromCogs } = await import('../src/pricing.js');
+  const quote = quoteFromCogs(10_000n, { usdcFloor: '0' });
+  const base = usdcTask();
+  const r = buildReceipt(usdcTask({
+    intent: { ...base.intent, amount: quote.amount },
+    meta: {
+      ...base.meta,
+      pricing: quote,
+      providerCogs: { actual: quote.provider_cogs, basis: 'measured' },
+    },
+  }), { signingSecret: 'test-receipt-secret' });
+
+  assert.equal(r.payment.protocol_fee_bps, 50);
+  assert.equal(r.payment.platform_fee_bps, 1000);
+  assert.equal(r.payment.platform_fee, quote.platform_fee);
+  assert.equal(r.provider_cogs.actual, '10000');
+
+  const recomputed = quoteFromCogs(r.provider_cogs.actual, { usdcFloor: '0' });
+  assert.equal(recomputed.amount, r.payment.gross_amount);
 });

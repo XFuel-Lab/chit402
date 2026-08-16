@@ -39,6 +39,20 @@ test('selectForQuote prefers default float that can cover COGS', () => {
   assert.equal(pick.estimated, 7000n);
 });
 
+test('selectForQuote uses a real COGS estimate when given, not 70% of our price', () => {
+  const mgr = new ProviderFloatManager({
+    floatsJson: JSON.stringify({
+      'theta-edgecloud': { asset: 'USDC', balance: '100000', low_water: '1000', enabled: true },
+    }),
+    cogsBps: 7000,
+    defaultProvider: 'theta-edgecloud',
+    enforce: true,
+  });
+  const pick = mgr.selectForQuote('10000', 'theta-edgecloud', { estimatedCogs: 18400n });
+  assert.equal(pick.ok, true);
+  assert.equal(pick.estimated, 18400n);
+});
+
 test('selectForQuote enforce rejects when exhausted', () => {
   const mgr = new ProviderFloatManager({
     floatsJson: JSON.stringify({
