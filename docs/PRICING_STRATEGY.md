@@ -1,5 +1,7 @@
 # Pricing Strategy
 
+**Superseded 2026-08-15 by [ADR 0009](./adr/0009-cost-plus-pricing.md): live pricing is measured provider COGS + 10%, not the rate card.** This file is the research log that led there and still holds the market evidence, the floor arithmetic, the proof-cost measurement and the savings-benchmark rules. Where it describes the rate card as shipped, read that as history — the card survives behind `X402_COST_PLUS=false`. For what is actually charged today see the ADR and [RUNTIME_STATE.md](./RUNTIME_STATE.md).
+
 **Shipped 2026-08-12:** tasks are metered against a rate card (`services/gateway/src/pricing.js`) instead of charged a flat `$0.01`. Sections below marked *superseded* record reasoning that did not survive later research; they are kept because the reasons they failed are the useful part.
 
 Related: [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) · [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md) · [VERIFIED_INFERENCE_TIERS.md](./VERIFIED_INFERENCE_TIERS.md) · [ADR 0001](./adr/0001-usdc-revenue-and-router-verifier-positioning.md) · [KNOWN_ISSUES.md](./KNOWN_ISSUES.md)
@@ -102,7 +104,7 @@ Both hubs are covered. Theta's rate is published too — `cost` over `cost_divis
 
 Two things metering does not yet do. Output is quoted at the `max_tokens` **ceiling**, because the `exact` scheme prices before the work runs — the `upto` scheme would settle actual output and refund the difference. And prompt tokens are estimated at ~4 chars/token rather than tokenised, which is proportional but not exact.
 
-Still open: `/.well-known/x402` advertises only the default price (`x402-discovery.js:102`) and `/v1/models` carries no price at all, so an agent cannot plan before committing.
+~~Still open: `/.well-known/x402` advertises only the default price and `/v1/models` carries no price at all.~~ **Closed 2026-08-15.** `/.well-known/x402` publishes a `pricing` descriptor (basis, fee bps, floor, Tier-2 price) and `/v1/models` carries a per-model `pricing` block, so an agent can plan before committing. `_verify_deploy.mjs` asserts the advertised basis is the one `/task-quote` prices with.
 
 ### Metering `/v1` — built, and deliberately not switched on
 
@@ -288,8 +290,8 @@ Worth noting: a monthly subscription fits the human who approves the invoice, no
 | 1 | Capture real token usage per task (`src/usage.js`, `/stats.tokens`) | **Done** 2026-08-12 |
 | 1b | True COGS from real provider usage, once traffic accumulates | Open — blocking gate |
 | 2 | Meter `/v1/chat/completions` | **Built** 2026-08-12 (`X402_METER_V1`, default off) — enabling it is a founder call, see below |
-| 3 | Rate card replaces the flat price | **Done** 2026-08-12 (`src/pricing.js`) |
-| 4 | Advertise per-model price on `/.well-known/x402` and `/v1/models` | Open |
-| 5 | Price the assurance tiers | Open — Tier 2 now looks free; Tier 3b spot-check is the one to price |
+| 3 | Rate card replaces the flat price | **Done** 2026-08-12 (`src/pricing.js`) — superseded by cost-plus, [ADR 0009](./adr/0009-cost-plus-pricing.md) |
+| 4 | Advertise per-model price on `/.well-known/x402` and `/v1/models` | **Done** 2026-08-15 |
+| 5 | Price the assurance tiers | **Tier 2 done** 2026-08-15 — opt-in, flat $0.08, measured against $0.050 of cost. Tier 3b spot-check is the one still to price |
 | 6 | Confirm Succinct per-proof base fee via `GetProofRequestParams` | Open — ~20 min, closes the last cost unknown |
 | 7 | Add a provider that reaches the floor on Llama 3.3 70B / serves GPT-OSS 120B | Open — procurement gate on the savings claim |

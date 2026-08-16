@@ -1,6 +1,7 @@
 # ADR 0009 — Cost-Plus Pricing, and What It Does Not Cover
 
-Status: Proposed (implemented behind `X402_COST_PLUS`, default off). Date: 2026-08-14.
+Status: **Accepted — live on `api-testnet.xfuel.app` since 2026-08-15.** Date: 2026-08-14.
+`X402_COST_PLUS` still exists and still defaults off, so the rate card remains one restart away.
 Related: [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [ADR 0007](./0007-spot-check-assurance.md), [ADR 0008](./0008-rolling-settlement.md), [PRICING_STRATEGY.md](../PRICING_STRATEGY.md), [KNOWN_ISSUES.md](../KNOWN_ISSUES.md), [VERIFIED_INFERENCE_TIERS.md](../VERIFIED_INFERENCE_TIERS.md).
 
 ## Context

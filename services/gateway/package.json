@@ -17,7 +17,7 @@
     "benchmark:compare": "node ../../scripts/compare-benchmarks.cjs bench/edgecloud-cuda.summary.json bench/powerzebra.summary.json --out bench/comparison.md",
     "benchmark:mock:cuda": "node scripts/mock-prover-server.js --port 8091 --prove-ms 520 --jitter 40",
     "benchmark:mock:zan": "node scripts/mock-prover-server.js --port 8092 --prove-ms 105 --jitter 12",
-    "test": "node --test test/webhooks.test.mjs test/x402-adapter.test.mjs test/x402-facilitator.test.mjs test/x402-server.test.mjs test/receipt.test.mjs test/provider-float.test.mjs test/provider-rates.test.mjs test/provider-health.test.mjs test/hub-catalog.test.mjs test/m2m-routing.test.mjs test/task-request-e2e.test.mjs test/tool-calling.test.mjs test/akashml-infer.test.mjs test/x402-discovery.test.mjs test/task-store.test.mjs test/usage.test.mjs test/pricing.test.mjs test/telemetry.test.mjs test/stats-route.test.mjs test/prover-config.test.mjs test/prove-gate.test.mjs test/prover-zan-auth.test.mjs test/payment-binding.test.mjs test/openai-gateway.test.mjs test/openai-metering.test.mjs test/v1-receipt-signing.test.mjs test/demo-mode.test.mjs test/revenue-split.test.mjs test/erc8004.test.mjs test/tier-policy.test.mjs test/tee-attestation.test.mjs test/spotcheck.test.mjs test/cdp-jwt.test.mjs test/private-spend.test.mjs test/free-tier.test.mjs test/rolling-settlement.test.mjs"
+    "test": "node scripts/run-tests.mjs"
   },
   "keywords": [
     "xfuel",
