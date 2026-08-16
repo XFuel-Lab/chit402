@@ -250,8 +250,13 @@ export function canonicalSignedPayload(receipt) {
     receipt.task_id,
     receipt.payment?.rail ?? null,
     receipt.payment?.ref ?? null,
+    receipt.payment?.gross_amount ?? null,
     receipt.payment?.net_amount ?? null,
     receipt.payment?.fee_amount ?? null,
+    receipt.payment?.protocol_fee_bps ?? receipt.payment?.fee_bps ?? null,
+    receipt.payment?.platform_fee ?? null,
+    receipt.payment?.platform_fee_bps ?? null,
+    receipt.provider_cogs?.actual ?? null,
     receipt.route?.model ?? null,
     receipt.route?.model_commitment?.commitment ?? null,
     receipt.route?.provider ?? null,
@@ -265,10 +270,12 @@ function signReceiptPayload(receipt, secret) {
   const value = crypto.createHmac('sha256', secret).update(canonicalSignedPayload(receipt)).digest('hex');
   return {
     alg: 'HMAC-SHA256',
-    payload_version: 2,
+    payload_version: 3,
     value: `sha256=${value}`,
     signed_fields: [
-      'task_id', 'payment.rail', 'payment.ref', 'payment.net_amount', 'payment.fee_amount',
+      'task_id', 'payment.rail', 'payment.ref', 'payment.gross_amount',
+      'payment.net_amount', 'payment.fee_amount', 'payment.protocol_fee_bps',
+      'payment.platform_fee', 'payment.platform_fee_bps', 'provider_cogs.actual',
       'route.model', 'route.model_commitment.commitment', 'route.provider',
       'output.hash', 'binding.expected_commitment',
     ],
@@ -360,6 +367,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
   });
   const base = baseUrl ? baseUrl.replace(/\/$/, '') : '';
   const providerCogs = providerCogsOf(task);
+  const pricing = task.meta?.pricing || null;
 
   const receipt = {
     schema: 'xfuel.receipt.v3',
@@ -398,7 +406,16 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
       gross_amount: task.intent?.amount || '0',
       fee_amount: task.feeAmount || '0',
       net_amount: task.netAmount || '0',
+      // Protocol split of gross (ADR 0001). Kept as `fee_bps` for older clients.
       fee_bps: feeBps,
+      protocol_fee_bps: feeBps,
+      // Cost-plus platform fee (ADR 0009). Signed separately so a buyer can
+      // recompute max(floor, cogs × 1.10) without confusing it with the 50 bps split.
+      platform_fee_bps: pricing?.fee_bps ?? null,
+      platform_fee: pricing?.platform_fee != null ? String(pricing.platform_fee) : null,
+      tier2_proof: pricing?.tier2_proof && pricing.tier2_proof !== '0' ? String(pricing.tier2_proof) : null,
+      floor_applied: pricing?.floor_applied ?? null,
+      basis: pricing?.basis ?? null,
     },
     // ADR 0005 — provider COGS from prepaid float (not a second buyer rail).
     provider_cogs: providerCogs,
@@ -611,7 +628,8 @@ export function renderReceiptHtml(receipt) {
       ${row('Rail', `<span class="badge ${p.rail === 'usdc' ? 'ok' : 'pending'}">${esc(p.rail.toUpperCase())}</span>`)}
       ${row('Settlement ref', refHtml)}
       ${row('Gross', esc(p.gross_amount))}
-      ${row('Fee', `${esc(p.fee_amount)} <span class="muted">(${esc(p.fee_bps)} bps)</span>`)}
+      ${row('Protocol fee', `${esc(p.fee_amount)} <span class="muted">(${esc(p.protocol_fee_bps ?? p.fee_bps)} bps)</span>`)}
+      ${p.platform_fee != null ? row('Platform fee', `${esc(p.platform_fee)} <span class="muted">(${esc(p.platform_fee_bps)} bps cost-plus)</span>`) : ''}
       ${row('Net', esc(p.net_amount))}
     </section>
 

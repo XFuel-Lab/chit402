@@ -273,12 +273,24 @@ export function computeInferenceBinding(params: {
 /**
  * Canonical, order-stable payload a receipt signature covers. MUST match
  * `canonicalSignedPayload` in services/gateway/src/receipt.js (same fields + order).
- * Payload version 2 includes `route.provider`.
+ * Payload version 3 signs gross, protocol fee, platform fee, and provider COGS
+ * so a buyer can recompute `max(floor, cogs × 1.10)` against the USDC they sent.
  */
 export function canonicalReceiptPayload(receipt: Record<string, unknown>): string {
   const r = receipt as {
     task_id?: string;
-    payment?: { rail?: string; ref?: string; net_amount?: string; fee_amount?: string };
+    payment?: {
+      rail?: string;
+      ref?: string;
+      gross_amount?: string;
+      net_amount?: string;
+      fee_amount?: string;
+      protocol_fee_bps?: number;
+      fee_bps?: number;
+      platform_fee?: string;
+      platform_fee_bps?: number;
+    };
+    provider_cogs?: { actual?: string };
     route?: { model?: string; model_commitment?: { commitment?: string }; provider?: string };
     output?: { hash?: string };
     binding?: { expected_commitment?: string };
@@ -287,8 +299,13 @@ export function canonicalReceiptPayload(receipt: Record<string, unknown>): strin
     r.task_id ?? null,
     r.payment?.rail ?? null,
     r.payment?.ref ?? null,
+    r.payment?.gross_amount ?? null,
     r.payment?.net_amount ?? null,
     r.payment?.fee_amount ?? null,
+    r.payment?.protocol_fee_bps ?? r.payment?.fee_bps ?? null,
+    r.payment?.platform_fee ?? null,
+    r.payment?.platform_fee_bps ?? null,
+    r.provider_cogs?.actual ?? null,
     r.route?.model ?? null,
     r.route?.model_commitment?.commitment ?? null,
     r.route?.provider ?? null,

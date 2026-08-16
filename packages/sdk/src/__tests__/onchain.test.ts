@@ -385,7 +385,11 @@ describe('PBR — payment-bound receipt helpers', () => {
     const secret = 'test-receipt-secret';
     const receipt: Record<string, unknown> = {
       task_id: 'task-xyz',
-      payment: { rail: 'usdc', ref: 'base:0xabc', net_amount: '995000', fee_amount: '5000' },
+      payment: {
+        rail: 'usdc', ref: 'base:0xabc', gross_amount: '103400', net_amount: '102883',
+        fee_amount: '517', protocol_fee_bps: 50, platform_fee: '9400', platform_fee_bps: 1000,
+      },
+      provider_cogs: { actual: '94000' },
       route: { model: 'llama-3-70b:q4_k_m', model_commitment: { commitment: MODEL }, provider: 'theta-edgecloud' },
       output: { hash: OUTPUT },
       binding: { expected_commitment: b32('99') },
@@ -399,8 +403,15 @@ describe('PBR — payment-bound receipt helpers', () => {
     (receipt.payment as { net_amount: string }).net_amount = '1';
     expect(verifyReceiptSignature(receipt, secret).valid).toBe(false);
 
-    // restore amount, tamper provider → signature must fail
-    (receipt.payment as { net_amount: string }).net_amount = '995000';
+    // restore amount, tamper measured COGS → signature must fail (payload v3)
+    (receipt.payment as { net_amount: string }).net_amount = '102883';
+    receipt.signature = { alg: 'HMAC-SHA256', value };
+    expect(verifyReceiptSignature(receipt, secret).valid).toBe(true);
+    (receipt.provider_cogs as { actual: string }).actual = '1';
+    expect(verifyReceiptSignature(receipt, secret).valid).toBe(false);
+
+    // restore COGS, tamper provider → signature must fail
+    (receipt.provider_cogs as { actual: string }).actual = '94000';
     receipt.signature = { alg: 'HMAC-SHA256', value };
     expect(verifyReceiptSignature(receipt, secret).valid).toBe(true);
     (receipt.route as { provider: string }).provider = 'akash-network';

@@ -676,10 +676,10 @@ function registerTaskAndProve({
  * traffic had served, and "what does the free tier cost us" was unanswerable.
  *
  * Mutates `task.meta` before the receipt is built, so `provider_cogs` appears on
- * the `/v1` receipt exactly as on the M2M one. This does not move the signature:
- * `provider_cogs` is not in `canonicalSignedPayload`, and on a completed call
- * `route.provider` resolves from `task.result.provider` before the COGS record is
- * ever consulted.
+ * the `/v1` receipt exactly as on the M2M one. `/v1` stays free (ADR 0006), so
+ * the signed cost-plus fields on the paid path (`provider_cogs.actual`,
+ * `payment.platform_fee`) are not the product here — `route.provider` still
+ * resolves from `task.result.provider` before the COGS record is consulted.
  *
  * @returns {Promise<bigint>} measured COGS in USDC base units; `0n` when the
  *   model has no published rate, in which case nothing is burned and the free

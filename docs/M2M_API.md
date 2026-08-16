@@ -37,6 +37,8 @@ Sliding window by API key (or IP). Default: 120 requests / 60s. `429` includes `
 
 Submit an AI task.
 
+**You pay for the last call.** When rolling settlement is on (`X402_ROLLING_SETTLEMENT`), the 402 on this request is the previous call's measured cost-plus bill (`max($0.01, provider_cogs × 1.10)`). `/task-quote` is a forecast of the next one, not the invoice. First small call is the free funnel; a call whose ceiling exceeds $1 still prepays.
+
 | Field | Required | Notes |
 |-------|----------|-------|
 | `message_type` | yes | `inference_request`, `compute_bid`, `compute_result`, `capability_query`, `data_attestation` |
@@ -48,7 +50,7 @@ Submit an AI task.
 | `messages` | for inference | OpenAI-shaped chat messages. Alternative to `input`. |
 | `tools` | no | OpenAI tool definitions (`{type:"function", function:{name,...}}`), forwarded to the hub. Tool calls come back on `result.tool_calls`. |
 | `tool_choice` | no | `auto` \| `none` \| `{type:"function",function:{name}}` |
-| `max_tokens` | no | Output budget. **The quote meters this**, so it is also what you are charged for. Default 500. |
+| `max_tokens` | no | Output budget. Default 500 (same as the adapters). `/task-quote` forecasts at this ceiling; under rolling settlement you pay measured usage on the next request. |
 | `temperature` | no | Sampling temperature; default 0.7 |
 | `fee_bps` | no | Default 50 (0.5%); range 50–100 |
 | `payment` | no | `{ "rail": "usdc", "network": "base" }` — default USDC/x402. Take `network` from `POST /task-quote` rather than hardcoding. |
@@ -117,8 +119,7 @@ Public receipt (HTML or `?format=json`). No auth.
 
 ### POST /task-quote
 
-Price a task for a payment rail before submit. Send the same body you intend to submit — the quote
-meters your actual prompt and `max_tokens`, so a stripped-down body prices a different task.
+Price a task for a payment rail before submit. This is a **forecast of the next call**, not the invoice — under rolling settlement you pay the previous call's measured bill. Send the same body you intend to submit (`messages`, `max_tokens`, `tools`, `proof_tier`) so the forecast matches what will run. Omitted `max_tokens` is quoted at 500, the adapter default.
 
 `rails.usdc.pricing` shows the working, including which model the price is for:
 

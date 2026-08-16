@@ -1,5 +1,6 @@
 import express from 'express';
 import crypto from 'crypto';
+import path from 'node:path';
 import { ethers } from 'ethers';
 import config from './config.js';
 import logger from './logger.js';
@@ -7,14 +8,24 @@ import { initAIListener, getAIListener } from './ai-listener.js';
 import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
-import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved } from './x402-server.js';
-import { checkPricingConfig, tier2ProofUnits } from './pricing.js';
+import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel } from './x402-server.js';
+import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens } from './pricing.js';
+import { estimateCogsFromRequest } from './provider-rates.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { proveAllowedForKey, proofAvailability, refreshProverProbe } from './prove-gate.js';
 import { getHubCatalog } from './hub-catalog.js';
 import { startHealthProbes, healthSnapshot } from './provider-health.js';
 import { freeTierStatus } from './free-tier.js';
-import { rollingStatus } from './rolling-settlement.js';
+import {
+  rollingStatus,
+  rollingEnabled,
+  rollingDecision,
+  payerBucket,
+  markSettled,
+  markSettleFailed,
+  applyPaymentToOwedTask,
+  configureRollingLedger,
+} from './rolling-settlement.js';
 import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest } from './x402-discovery.js';
@@ -346,6 +357,16 @@ export function createApp() {
   // combination should not take the gateway down, but it must not be quiet.
   checkPricingConfig(config.verifiedInference);
 
+  // Payer ledger for rolling settlement. Same single-process JSON-on-disk model
+  // as task-store — a restart must not forgive an invoice. The live flag stays
+  // off until this persist path exists (ADR 0008).
+  const payersDir = process.env.PAYERS_LEDGER_DIR
+    || (config.taskStore?.dir ? path.join(config.taskStore.dir, '..', 'payers') : null);
+  configureRollingLedger({
+    dir: payersDir,
+    persist: !!config.taskStore?.persist,
+  });
+
   // AkashML publishes no capacity signal and serves all live inference, so
   // without this an outage there is discovered by failing a customer's call.
   // Opt-in (`PROVIDER_HEALTH_PROBE=true`) because it spends real money on
@@ -633,30 +654,103 @@ export function createApp() {
       // ── Payment rail (USDC via x402 default; legacy tfuel only if opted in) ─
       // Buyer settlement is USDC on Base (ADR 0002). TFUEL is not a buyer rail
       // for go-forward GTM — only when X402_FALLBACK_TFUEL or explicit rail.
+      //
+      // Rolling settlement (ADR 0008): charge the previous call's *measured*
+      // cost-plus bill on this request. You pay for the last call; /task-quote
+      // is a forecast of the next one.
       let paymentRail = config.x402?.defaultRail || 'usdc';
       let paymentRef = null;
       let settledAmount = null;
+      let rollingMeta = null;
+      let ceilingQuote = null;
       {
         const rail = resolveRail(req.body);
         if (rail === 'usdc' && config.x402.enabled) {
-          const decision = await runX402Handshake(req, { taskId: `x402-${req.id}` });
-          if (decision.kind === 'challenge') {
-            // No X-PAYMENT yet — return the 402 challenge for the agent to pay.
-            return res.status(402).json(decision.body);
-          }
-          if (decision.kind === 'settled') {
-            paymentRail = 'usdc';
-            paymentRef = decision.paymentRef;
-            settledAmount = decision.settledAmount || null;
-          } else {
-            if (decision.reason === 'gateway_not_configured') {
-              return res.status(503).json({ error: 'x402_unavailable', reason: decision.reason });
-            }
-            if (config.x402.fallbackToTfuel) {
-              logger.warn({ reqId: req.id, reason: decision.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
-              paymentRail = 'tfuel';
+          if (rollingEnabled()) {
+            const payerId = payerBucket(req, apiKeyHashFromReq(req));
+            const hasPayment = !!req.headers?.['x-payment'];
+            ceilingQuote = await quoteResolved(req.body);
+            const decision = rollingDecision({
+              payerId,
+              hasPayment,
+              ceiling: ceilingQuote.amount,
+            });
+            rollingMeta = { fronted: false, payerId, action: decision.action };
+
+            if (decision.action === 'serve_free') {
+              paymentRail = 'usdc';
+              rollingMeta.fronted = true;
             } else {
-              return res.status(402).json({ error: 'payment_required', reason: decision.reason });
+              const handshakeTaskId = decision.pending?.taskId || `x402-${req.id}`;
+              const handshakeAmount = decision.pending ? decision.amount : null;
+              const hs = await runX402Handshake(req, {
+                taskId: handshakeTaskId,
+                amount: handshakeAmount,
+              });
+              if (hs.kind === 'challenge') {
+                return res.status(402).json(hs.body);
+              }
+              if (hs.kind === 'settled') {
+                if (decision.pending) {
+                  const listener = getAIListener();
+                  const owed = listener?.activeTasks?.get(decision.pending.taskId);
+                  if (owed) {
+                    applyPaymentToOwedTask(owed, {
+                      paymentRef: hs.paymentRef,
+                      settledAmount: hs.settledAmount,
+                      protocolFeeBps: owed.feeBps || AI_TASK_FEE_BPS,
+                    });
+                    listener.activeTasks.set(owed.taskId, owed);
+                  } else {
+                    logger.warn(
+                      { payerId, taskId: decision.pending.taskId, amount: hs.settledAmount },
+                      'rolling-settlement: settled payment but owed task was gone',
+                    );
+                  }
+                  markSettled(payerId);
+                  paymentRail = 'usdc';
+                  paymentRef = null;
+                  settledAmount = null;
+                  rollingMeta.fronted = true;
+                  rollingMeta.settled_task_id = decision.pending.taskId;
+                } else {
+                  paymentRail = 'usdc';
+                  paymentRef = hs.paymentRef;
+                  settledAmount = hs.settledAmount;
+                }
+              } else {
+                if (decision.pending) markSettleFailed(payerId, hs.reason);
+                if (hs.reason === 'gateway_not_configured') {
+                  return res.status(503).json({ error: 'x402_unavailable', reason: hs.reason });
+                }
+                if (config.x402.fallbackToTfuel) {
+                  logger.warn({ reqId: req.id, reason: hs.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
+                  paymentRail = 'tfuel';
+                  rollingMeta = null;
+                } else {
+                  return res.status(402).json({ error: 'payment_required', reason: hs.reason });
+                }
+              }
+            }
+          } else {
+            const decision = await runX402Handshake(req, { taskId: `x402-${req.id}` });
+            if (decision.kind === 'challenge') {
+              return res.status(402).json(decision.body);
+            }
+            if (decision.kind === 'settled') {
+              paymentRail = 'usdc';
+              paymentRef = decision.paymentRef;
+              settledAmount = decision.settledAmount || null;
+            } else {
+              if (decision.reason === 'gateway_not_configured') {
+                return res.status(503).json({ error: 'x402_unavailable', reason: decision.reason });
+              }
+              if (config.x402.fallbackToTfuel) {
+                logger.warn({ reqId: req.id, reason: decision.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
+                paymentRail = 'tfuel';
+              } else {
+                return res.status(402).json({ error: 'payment_required', reason: decision.reason });
+              }
             }
           }
         } else if (rail === 'tfuel') {
@@ -671,8 +765,13 @@ export function createApp() {
       // payment are two independent numbers and a $0.01 payment can mint a $1.00
       // receipt. The declared `amount` remains authoritative only for rails with
       // no settlement to derive from (legacy TFUEL). See docs/KNOWN_ISSUES.md.
+      //
+      // A rolling-fronted call has not been paid yet: gross stays 0 until the
+      // next request settles the measured bill onto this task_id.
       let grossAmount = String(amount);
-      if (settledAmount) {
+      if (rollingMeta?.fronted) {
+        grossAmount = '0';
+      } else if (settledAmount) {
         if (settledAmount !== grossAmount) {
           logger.warn(
             { reqId: req.id, declared: grossAmount, settled: settledAmount },
@@ -702,10 +801,22 @@ export function createApp() {
       const preferredProvider = requestedProvider
         || config.providerFloats?.defaultProvider
         || null;
+      let estimatedCogs = null;
+      try {
+        const { body: priced, model } = await resolvePricingModel(req.body);
+        const est = await estimateCogsFromRequest({
+          modelId: model || priced?.model_id,
+          promptTokens: promptTokensFor(priced),
+          maxOutputTokens: quotedMaxOutputTokens(priced),
+        });
+        if (est.basis === 'estimated') estimatedCogs = est.amount;
+      } catch {
+        // Catalog down — selectForQuote falls back to bps of our price.
+      }
       const usdcQuote = paymentRail === 'usdc'
-        ? (settledAmount || await priceUSDCResolved(req.body) || grossAmount || config.x402?.usdcPriceDefault || '10000')
+        ? (settledAmount || ceilingQuote?.amount || await priceUSDCResolved(req.body) || grossAmount || config.x402?.usdcPriceDefault || '10000')
         : (grossAmount || '0');
-      const floatPick = floatMgr.selectForQuote(usdcQuote, preferredProvider);
+      const floatPick = floatMgr.selectForQuote(usdcQuote, preferredProvider, { estimatedCogs });
       if (!floatPick.ok) {
         return res.status(503).json({
           error: 'provider_float_exhausted',
@@ -798,6 +909,8 @@ export function createApp() {
         parentTaskId: parent_task_id || null,
         a2aMessageId: a2a_message_id || null,
         correlationId: correlation_id || null,
+        rolling: rollingMeta,
+        pricing: (!rollingMeta?.fronted && ceilingQuote) ? ceilingQuote : null,
       };
 
       // ── Route via AIListener ──────────────────────────────────────────
@@ -862,6 +975,12 @@ export function createApp() {
         fee_bps:       appliedBps,
         payment_rail:  paymentRail,
         payment_ref:   paymentRef,
+        ...(rollingMeta ? {
+          rolling: {
+            this_call_billed_on: rollingMeta.fronted ? 'next_request' : 'this_request',
+            pays_previous_task: rollingMeta.settled_task_id || null,
+          },
+        } : {}),
         // Canonical shareable proof link (public, no-auth). Same value as _links.receipt.
         verify_url:    verifyUrl,
         fee_info: {

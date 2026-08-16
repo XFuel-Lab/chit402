@@ -21,7 +21,9 @@ test('messagesToText tolerates non-string content', () => {
     { role: 'assistant', content: [{ type: 'image' }] },
     { role: 'user', content: 'world' },
   ]);
-  assert.equal(text, 'hello\n\nworld');
+  assert.match(text, /hello/);
+  assert.match(text, /world/);
+  assert.match(text, /image/);
   assert.equal(messagesToText(null), '');
 });
 

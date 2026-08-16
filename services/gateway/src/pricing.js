@@ -135,13 +135,32 @@ export function rateCardFor(model, cfg = {}) {
   };
 }
 
-/** Prompt token count for a request, from messages or a raw prompt. */
+/** Hub adapters default to 500 when the caller omits `max_tokens`. Quote the same number. */
+export const DEFAULT_MAX_OUTPUT_TOKENS = 500;
+
+/** Output budget the quote meters. Omitted/`0` uses the adapter default, not free output. */
+export function quotedMaxOutputTokens(body = {}) {
+  const n = Number(body.max_tokens ?? body.maxTokens);
+  if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+  return DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
+/** Prompt token count for a request, from messages, a raw prompt, and tool definitions. */
 export function promptTokensFor(body = {}) {
+  let tokens = 0;
   if (Array.isArray(body.messages) && body.messages.length) {
-    return estimateTokens(messagesToText(body.messages));
+    tokens += estimateTokens(messagesToText(body.messages));
+  } else {
+    const prompt = body.input ?? body.prompt ?? null;
+    if (prompt) tokens += estimateTokens(String(prompt));
   }
-  const prompt = body.input ?? body.prompt ?? null;
-  return prompt ? estimateTokens(String(prompt)) : 0;
+  // Tool schemas are billed as prompt tokens by the hub and were previously
+  // invisible to the quote — the beachhead is agent traffic, so this is the
+  // expensive model plus an uncounted schema.
+  if (Array.isArray(body.tools) && body.tools.length) {
+    tokens += estimateTokens(JSON.stringify(body.tools));
+  }
+  return tokens;
 }
 
 /**
@@ -177,8 +196,9 @@ export function quoteTask(body = {}, cfg = {}) {
   const rate = rateCardFor(model, cfg);
   const promptTokens = promptTokensFor(body);
   // No prompt to measure (a bare compute bid, or a privacy-mode request carrying
-  // only an input hash) — there is nothing to meter, so the floor is the price.
-  const maxOutput = Math.max(0, Number(body.max_tokens ?? body.maxTokens ?? 0) || 0);
+  // only an input hash) — there is nothing to meter on the input side, so the
+  // floor (plus the adapter's default output budget) is the price.
+  const maxOutput = quotedMaxOutputTokens(body);
 
   const metered = Math.ceil((promptTokens * rate.in) / PER_MILLION)
     + Math.ceil((maxOutput * rate.out) / PER_MILLION);
@@ -495,8 +515,9 @@ export function publishedPrice(modelId, providerRate, cfg = {}) {
         price_per_request_usd: Number((providerRate.perRequest * mult).toFixed(6)),
       }
       : {}),
-    note: `Provider cost plus ${bps / 100}%. The receipt signs \`provider_cogs.actual\`, so `
-      + 'the same multiplication can be recomputed against what actually ran.',
+    note: `Provider cost plus ${bps / 100}%. The receipt signs \`provider_cogs.actual\` and `
+      + 'the platform fee, so a buyer can recompute `max(floor, cogs × 1.10)` against gross. '
+      + 'Under rolling settlement that charge is collected on the next request.',
   };
 }
 
@@ -574,9 +595,11 @@ export default {
   describePricing,
   rateCardFor,
   promptTokensFor,
+  quotedMaxOutputTokens,
   DEFAULT_RATE,
   DEFAULT_RATE_CARD,
   DEFAULT_FLOOR_UNITS,
   DEFAULT_PLATFORM_FEE_BPS,
   DEFAULT_TIER2_PROOF_UNITS,
+  DEFAULT_MAX_OUTPUT_TOKENS,
 };

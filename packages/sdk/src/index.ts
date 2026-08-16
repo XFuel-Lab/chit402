@@ -234,6 +234,11 @@ export interface TaskQuoteParams {
   model_id?: string;
   /** TFUEL task value in wei (echoed back in the tfuel rail). */
   amount?: string;
+  /** Same fields as the request you intend to submit — `/task-quote` is a forecast, not the invoice. */
+  messages?: ChatMessage[];
+  max_tokens?: number;
+  tools?: ToolDefinition[];
+  proof_tier?: string;
 }
 
 export interface TaskQuoteResponse {
@@ -653,7 +658,14 @@ export class XFuelClient {
   async quoteTask(params: TaskQuoteParams = {}): Promise<TaskQuoteResponse> {
     const { data } = await this.http.post<TaskQuoteResponse>(
       '/task-quote',
-      params,
+      {
+        model_id: params.model_id,
+        amount: params.amount,
+        messages: params.messages,
+        max_tokens: params.max_tokens,
+        tools: params.tools,
+        proof_tier: params.proof_tier,
+      },
     );
     return data;
   }

@@ -3,6 +3,21 @@
 All notable changes to the XFuel SDK are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.5.3 — Quote fields + receipt signed payload v3
+
+Do not publish until the live gateway is on the same commit. `verifyReceiptSignature`
+against a v2 receipt (or a v2 SDK against a v3 receipt) will fail.
+
+### Changed
+- **`quoteTask`** — sends `messages`, `max_tokens`, `tools`, and `proof_tier` so the
+  forecast matches the request you will submit. `model_id` + `amount` alone still
+  work; omitted `max_tokens` is the gateway default (500), not zero.
+- **`canonicalReceiptPayload` / `verifyReceiptSignature`** — HMAC field set now
+  includes `payment.gross_amount`, `payment.protocol_fee_bps`, `payment.platform_fee`,
+  `payment.platform_fee_bps`, and `provider_cogs.actual` (payload version 3), matching
+  the gateway. Signatures produced by older SDKs / gateways will not verify against
+  this set and vice versa. Same class of break as 0.5.2's `route.provider` bump.
+
 ## 0.5.2 — Receipt signed payload v2 (`route.provider`)
 
 ### Changed

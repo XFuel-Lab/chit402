@@ -1,35 +1,19 @@
+import fs from 'fs';
+import path from 'path';
 import logger from './logger.js';
-import { quoteUsage, quoteTask } from './pricing.js';
+import { quoteFromCogs } from './pricing.js';
 
 /**
- * Rolling settlement — charge the previous call's *actual* cost on the next call.
+ * Rolling settlement — charge the previous call's *measured* cost-plus bill
+ * on the next request (ADR 0008).
  *
- * Why: the x402 `exact` scheme needs a price before the work runs, so `quoteTask`
- * quotes output at `max_tokens`. Agents ask for a big ceiling and use a fraction
- * of it, which overcharges by up to 3.8x on agent traffic (docs/KNOWN_ISSUES.md).
- * The protocol-level fix is the `upto` scheme, which needs x402 v1→v2 and Permit2
- * — a multi-day breaking migration (docs/X402_SCHEME_MIGRATION.md).
+ * x402 `exact` needs a number before the work runs. Quoting `max_tokens` overcharges
+ * agents by up to 15x. Invert the order: serve, measure provider COGS, price with
+ * `quoteFromCogs`, and put that figure in the next 402. `exact` is then the right
+ * scheme because the amount is already known.
  *
- * This is the cheap fix for the same problem, and it needs no facilitator change
- * at all. Invert the order instead of changing the scheme: serve the call, measure
- * what it actually cost, and put that exact figure in the 402 on the caller's
- * *next* request. Every charge after the first is measured rather than estimated,
- * and `exact` is the right scheme for a figure that is already known.
- *
- * The price of the trick is bad debt: the last call before a caller goes away is
- * never paid. That is bounded at one call per payer and doubles as the free
- * allowance ADR 0006 already commits to, so it costs nothing we were not already
- * spending — but only if a single unpaid call cannot be large. A fresh payer whose
- * first request is a 200k-token job would otherwise be a free 200k-token job, so
- * a first call whose *ceiling* exceeds `X402_ROLLING_MAX_UNSETTLED_USD` is sent
- * down the ordinary prepay path instead. Rolling settlement for normal traffic,
- * prepay for whales.
- *
- * Scope and honesty, matching free-tier.js: in memory, per payer, single-process
- * by design (`instances: 1`). **A restart forgives every pending charge.** That is
- * acceptable for a subsidy guard and not acceptable for billing at volume, which
- * is why this is off by default and why the durable-ledger question is called out
- * in ADR 0008 rather than hidden.
+ * Durable: one JSON file per payer (same single-process model as task-store.js).
+ * A restart must not forgive an invoice. The flag stays off until persist is on.
  */
 
 const USDC_SCALE = 1_000_000;
@@ -40,6 +24,9 @@ const DEFAULT_MAX_UNSETTLED_USD = 1;
 /** @type {Map<string, { pending: null | PendingCharge, settled: number, forgiven: number }>} */
 const ledger = new Map();
 
+let persistDir = null;
+let persistEnabled = false;
+
 /** Bound the map when payer ids churn (key rotation, scans). */
 const MAX_PAYERS = 10_000;
 
@@ -49,6 +36,12 @@ const MAX_PAYERS = 10_000;
  * @property {string|null} taskId
  * @property {string|null} model resolved model that served it
  * @property {object} usage     measured usage the charge was computed from
+ * @property {string} [provider_cogs]
+ * @property {string} [platform_fee]
+ * @property {number} [fee_bps]
+ * @property {string} [tier2_proof]
+ * @property {boolean} [floor_applied]
+ * @property {string} [basis]
  * @property {number} at        epoch ms the call was served
  * @property {number} attempts  failed settlement attempts so far
  */
@@ -56,6 +49,49 @@ const MAX_PAYERS = 10_000;
 /** Is rolling settlement on? Off unless explicitly enabled. */
 export function rollingEnabled() {
   return String(process.env.X402_ROLLING_SETTLEMENT || '').toLowerCase() === 'true';
+}
+
+/**
+ * Point the ledger at a directory. `persist: false` keeps the in-memory map
+ * (tests / ephemeral CI). Call once at boot from createApp.
+ */
+export function configureRollingLedger({ dir = null, persist = false } = {}) {
+  persistDir = persist && dir ? String(dir) : null;
+  persistEnabled = !!persistDir;
+  if (persistEnabled) {
+    try {
+      fs.mkdirSync(persistDir, { recursive: true });
+    } catch (err) {
+      logger.warn({ err: err.message, dir: persistDir }, 'rolling-settlement: mkdir failed; persistence disabled');
+      persistEnabled = false;
+      persistDir = null;
+    }
+  }
+}
+
+function payerFile(id) {
+  return path.join(persistDir, `${encodeURIComponent(id)}.json`);
+}
+
+function persistPayer(id, rec) {
+  if (!persistEnabled || !rec) return;
+  try {
+    const target = payerFile(id);
+    const tmp = `${target}.tmp-${process.pid}`;
+    fs.writeFileSync(tmp, JSON.stringify(rec));
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    logger.warn({ err: err.message, payer: id }, 'rolling-settlement: persist failed');
+  }
+}
+
+function loadPayer(id) {
+  if (!persistEnabled) return null;
+  try {
+    return JSON.parse(fs.readFileSync(payerFile(id), 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -99,6 +135,11 @@ export function payerBucket(req, apiKeyHash) {
 function readPayer(id) {
   const existing = ledger.get(id);
   if (existing) return existing;
+  const fromDisk = loadPayer(id);
+  if (fromDisk) {
+    ledger.set(id, fromDisk);
+    return fromDisk;
+  }
   const fresh = { pending: null, settled: 0, forgiven: 0 };
   if (ledger.size >= MAX_PAYERS) prune();
   ledger.set(id, fresh);
@@ -106,7 +147,6 @@ function readPayer(id) {
 }
 
 function prune() {
-  // Drop payers with nothing outstanding first — they cost us nothing to forget.
   for (const [id, rec] of ledger) {
     if (!rec.pending) ledger.delete(id);
   }
@@ -118,50 +158,76 @@ function prune() {
 
 /** The charge this payer owes for their previous call, if any. */
 export function getPending(payerId) {
-  return ledger.get(payerId)?.pending || null;
+  const existing = ledger.get(payerId);
+  if (existing) return existing.pending || null;
+  const fromDisk = loadPayer(payerId);
+  if (fromDisk) {
+    ledger.set(payerId, fromDisk);
+    return fromDisk.pending || null;
+  }
+  return null;
 }
 
 /**
  * Record what a served call actually cost, to be collected next time.
  *
+ * Prices with `quoteFromCogs` on measured provider COGS — never the rate card.
+ * Pass `cogs` (bigint from `measureCogs`) and/or a precomputed `quote`.
+ *
  * @param {string} payerId
- * @param {{usage:object, model:string|null, taskId?:string|null, cfg?:object}} call
+ * @param {{cogs?:bigint|number|string, quote?:object, usage?:object, model?:string|null,
+ *   taskId?:string|null, cfg?:object}} call
  * @returns {PendingCharge}
  */
-export function recordPending(payerId, { usage, model, taskId = null, cfg = {} } = {}) {
-  const quote = quoteUsage(usage || {}, model, cfg);
+export function recordPending(payerId, {
+  cogs = null,
+  quote = null,
+  usage = {},
+  model = null,
+  taskId = null,
+  cfg = {},
+} = {}) {
+  const billed = quote && quote.amount != null
+    ? quote
+    : quoteFromCogs(cogs ?? 0n, cfg);
   const rec = readPayer(payerId);
-  // A payer should never have two pending charges: we refuse to serve while one
-  // is outstanding, so reaching here with one already set means the caller served
-  // work it should have gated. Keep the larger figure rather than lose the debt.
   if (rec.pending) {
     logger.warn(
-      { payer: payerId, existing: rec.pending.amount, incoming: quote.amount },
+      { payer: payerId, existing: rec.pending.amount, incoming: billed.amount },
       'rolling-settlement: second pending charge for one payer; keeping the larger',
     );
-    if (BigInt(rec.pending.amount) >= BigInt(quote.amount)) return rec.pending;
+    if (BigInt(rec.pending.amount) >= BigInt(billed.amount)) return rec.pending;
   }
   rec.pending = {
-    amount: quote.amount,
+    amount: String(billed.amount),
     taskId,
     model: model || null,
     usage: {
-      prompt_tokens: quote.prompt_tokens,
-      completion_tokens: quote.completion_tokens,
+      prompt_tokens: Number(usage.prompt_tokens) || billed.prompt_tokens || 0,
+      completion_tokens: Number(usage.completion_tokens) || billed.completion_tokens || 0,
     },
+    provider_cogs: billed.provider_cogs != null ? String(billed.provider_cogs) : String(cogs ?? 0),
+    platform_fee: billed.platform_fee != null ? String(billed.platform_fee) : null,
+    fee_bps: billed.fee_bps ?? null,
+    tier2_proof: billed.tier2_proof != null ? String(billed.tier2_proof) : '0',
+    floor_applied: !!billed.floor_applied,
+    basis: billed.basis || 'cost_plus',
     at: Date.now(),
     attempts: 0,
   };
+  persistPayer(payerId, rec);
   return rec.pending;
 }
 
 /** Payment for the outstanding charge landed. Clears the debt. */
 export function markSettled(payerId) {
-  const rec = ledger.get(payerId);
+  const rec = ledger.get(payerId) || loadPayer(payerId);
   if (!rec) return null;
+  ledger.set(payerId, rec);
   const cleared = rec.pending;
   rec.pending = null;
-  rec.settled += 1;
+  rec.settled = (rec.settled || 0) + 1;
+  persistPayer(payerId, rec);
   return cleared;
 }
 
@@ -170,14 +236,42 @@ export function markSettled(payerId) {
  * matching ZAN's `failed → settled` retry path rather than forgiving on error.
  */
 export function markSettleFailed(payerId, reason = null) {
-  const rec = ledger.get(payerId);
+  const rec = ledger.get(payerId) || loadPayer(payerId);
   if (!rec?.pending) return null;
+  ledger.set(payerId, rec);
   rec.pending.attempts += 1;
+  persistPayer(payerId, rec);
   logger.warn(
     { payer: payerId, amount: rec.pending.amount, attempts: rec.pending.attempts, reason },
     'rolling-settlement: settlement failed; debt retained for the next request',
   );
   return rec.pending;
+}
+
+/**
+ * Stamp a settled rolling payment onto the *owed* task, so the receipt for the
+ * work that ran binds the USDC that paid for it — not the next request.
+ */
+export function applyPaymentToOwedTask(task, { paymentRef, settledAmount, protocolFeeBps = 50 } = {}) {
+  if (!task) return null;
+  task.intent = task.intent || {};
+  task.intent.paymentRef = paymentRef;
+  task.intent.paymentRail = 'usdc';
+  task.intent.amount = String(settledAmount);
+  let gross;
+  try {
+    gross = BigInt(settledAmount);
+  } catch {
+    return task;
+  }
+  const bps = BigInt(Math.min(Math.max(Number(protocolFeeBps) || 50, 50), 100));
+  const fee = (gross * bps) / 10000n;
+  task.feeAmount = fee.toString();
+  task.netAmount = (gross - fee).toString();
+  task.feeBps = Number(bps);
+  task.meta = task.meta || {};
+  task.meta.rolling = { ...(task.meta.rolling || {}), settled: true, paymentRef };
+  return task;
 }
 
 /**
@@ -190,10 +284,6 @@ export function markSettleFailed(payerId, reason = null) {
  *   maxUnsettled:bigint}} input
  * @returns {{action:'serve_free'|'prepay'|'settle_first'|'settle_then_serve',
  *   amount?:string, reason?:string}}
- *   - `serve_free`        nothing owed and the call is small enough to front
- *   - `prepay`            nothing owed but too large to front — use the ceiling quote
- *   - `settle_first`      a debt is owed and no payment came with this request → 402
- *   - `settle_then_serve` a debt is owed and payment is present → settle, then serve
  */
 export function decideRolling({ pending, hasPayment, ceiling, maxUnsettled }) {
   if (pending) {
@@ -201,8 +291,6 @@ export function decideRolling({ pending, hasPayment, ceiling, maxUnsettled }) {
       ? { action: 'settle_then_serve', amount: pending.amount }
       : { action: 'settle_first', amount: pending.amount };
   }
-  // A payment arriving with nothing outstanding is not an error — a client may
-  // prepay, or a restart may have forgiven the debt it was paying. Take it.
   if (hasPayment) return { action: 'settle_then_serve', amount: '0' };
   if (maxUnsettled > 0n && ceiling > maxUnsettled) {
     return {
@@ -214,23 +302,28 @@ export function decideRolling({ pending, hasPayment, ceiling, maxUnsettled }) {
 }
 
 /**
- * Decide for a real request. Wraps `decideRolling` with the ledger lookup and the
- * ceiling estimate, which is only used to size the exposure of a *free* call.
+ * Decide for a real request. `ceiling` is the cost-plus *estimate* of this call,
+ * used only to size the exposure of a first free call (whale guard).
  *
- * @param {{payerId:string, priceBody:object, hasPayment:boolean, cfg?:object}} input
+ * @param {{payerId:string, hasPayment:boolean, ceiling:string|number|bigint}} input
  */
-export function rollingDecision({ payerId, priceBody = {}, hasPayment = false, cfg = {} }) {
+export function rollingDecision({ payerId, hasPayment = false, ceiling = '0' }) {
   const pending = getPending(payerId);
-  const ceilingQuote = quoteTask(priceBody, cfg);
+  let ceil;
+  try {
+    ceil = BigInt(ceiling);
+  } catch {
+    ceil = 0n;
+  }
   return {
     ...decideRolling({
       pending,
       hasPayment,
-      ceiling: BigInt(ceilingQuote.amount),
+      ceiling: ceil,
       maxUnsettled: maxUnsettledBaseUnits(),
     }),
     pending,
-    ceiling: ceilingQuote.amount,
+    ceiling: String(ceil),
   };
 }
 
@@ -241,47 +334,70 @@ export function usd(baseUnits) {
 
 /**
  * Outstanding-debt snapshot for `/health`.
- *
- * `unsettled_usd` is money we have spent COGS on and not collected. It should sit
- * near (payers x one small call); a number that climbs is the signal that
- * settlement is failing rather than that traffic is growing.
  */
 export function rollingStatus() {
   let unsettled = 0n;
   let owing = 0;
   let settled = 0;
+  if (persistEnabled && persistDir) {
+    try {
+      for (const f of fs.readdirSync(persistDir)) {
+        if (!f.endsWith('.json')) continue;
+        try {
+          const rec = JSON.parse(fs.readFileSync(path.join(persistDir, f), 'utf8'));
+          const id = decodeURIComponent(f.replace(/\.json$/, ''));
+          if (!ledger.has(id)) ledger.set(id, rec);
+        } catch { /* skip */ }
+      }
+    } catch { /* dir missing */ }
+  }
   for (const rec of ledger.values()) {
-    settled += rec.settled;
+    settled += rec.settled || 0;
     if (!rec.pending) continue;
     owing += 1;
     unsettled += BigInt(rec.pending.amount);
   }
   return {
     enabled: rollingEnabled(),
+    persist: persistEnabled,
     payers_tracked: ledger.size,
     payers_owing: owing,
     unsettled_usd: usd(unsettled),
     settled_calls: settled,
     max_unsettled_per_call_usd: usd(maxUnsettledBaseUnits()),
     note: rollingEnabled()
-      ? 'Each call settles the previous call\'s measured cost. In-memory: a restart forgives pending charges.'
+      ? (persistEnabled
+        ? 'Each call settles the previous call\'s measured cost-plus bill. Pending charges survive restart.'
+        : 'Each call settles the previous call\'s measured cost. In-memory: a restart forgives pending charges.')
       : 'Disabled — every call is quoted up front at max_tokens (X402_ROLLING_SETTLEMENT=true to enable).',
   };
 }
 
-/** Tests / hot reload. */
-export function resetRollingSettlement() {
+/**
+ * Tests / hot reload. `wipePersist: false` clears memory only so a restart can
+ * be simulated against files still on disk.
+ */
+export function resetRollingSettlement({ wipePersist = true } = {}) {
   ledger.clear();
+  if (wipePersist && persistEnabled && persistDir) {
+    try {
+      for (const f of fs.readdirSync(persistDir)) {
+        if (f.endsWith('.json')) fs.unlinkSync(path.join(persistDir, f));
+      }
+    } catch { /* empty */ }
+  }
 }
 
 export default {
   rollingEnabled,
+  configureRollingLedger,
   maxUnsettledBaseUnits,
   payerBucket,
   getPending,
   recordPending,
   markSettled,
   markSettleFailed,
+  applyPaymentToOwedTask,
   decideRolling,
   rollingDecision,
   rollingStatus,

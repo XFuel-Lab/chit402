@@ -5,7 +5,7 @@ import {
   settlePayment,
   challengeStore,
 } from './x402-adapter.js';
-import { quoteTask, quoteFromCogs, costPlusEnabled, promptTokensFor } from './pricing.js';
+import { quoteTask, quoteFromCogs, costPlusEnabled, promptTokensFor, quotedMaxOutputTokens } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { normalizeRequestedTier } from './tier-policy.js';
 import { getHubCatalog, resolveCatalogModel, requestShape } from './hub-catalog.js';
@@ -110,6 +110,24 @@ export async function priceUSDCResolved(body = {}, cfg = config.x402) {
 export async function quoteResolved(body = {}, cfg = config.x402) {
   const { body: priced, model, requested } = await resolvePricingModel(body);
 
+  // A hand-negotiated flat price wins even under cost-plus — otherwise
+  // X402_USDC_PRICES is silently ignored the moment the flag is on.
+  const prices = cfg.usdcPrices;
+  const explicit = (model && prices && prices[model] != null)
+    ? prices[model]
+    : (priced?.model_id && prices && prices[priced.model_id] != null ? prices[priced.model_id] : null);
+  if (explicit != null) {
+    return {
+      ...quoteTask(priced, {
+        usdcPrices: cfg.usdcPrices,
+        usdcFloor: cfg.usdcFloor ?? cfg.usdcPriceDefault,
+        rateCard: cfg.rateCard,
+      }),
+      requested_model: requested,
+      priced_model: model,
+    };
+  }
+
   const quote = (costPlusEnabled() ? await costPlusQuote(priced, model, cfg) : null)
     ?? quoteTask(priced, {
       usdcPrices: cfg.usdcPrices,
@@ -121,7 +139,7 @@ export async function quoteResolved(body = {}, cfg = config.x402) {
 }
 
 /**
- * Did the caller ask for a proof?
+ * True only for an SP1 settlement proof — TEE / spot-check / zk-full are not Succinct.
  *
  * Reads the same field `selectTier` ends up reading. `/task-request` destructures
  * `proof_tier` off the body and stores it as `intent.proofTier`, so quoting on
@@ -129,15 +147,15 @@ export async function quoteResolved(body = {}, cfg = config.x402) {
  * diverge we either charge for a proof we do not produce, or produce one we did
  * not charge for.
  *
- * A requested tier can raise the floor past `tier2MinCogs`, which is exactly the
- * case the threshold does not cover: without this, an opt-in proof on a cheap
- * call is a $0.050 cost against a few cents of fee.
+ * A requested settlement tier can raise the floor past `tier2MinCogs`, which is
+ * exactly the case the threshold does not cover: without this, an opt-in proof
+ * on a cheap call is a $0.050 cost against a few cents of fee.
  */
-function wantsProof(body = {}) {
+export function wantsSettlementProof(body = {}) {
   const requested = normalizeRequestedTier(
     body?.proof_tier ?? body?.proofTier ?? body?.intent?.proofTier ?? body?.intent?.proof_tier ?? null,
   );
-  return !!requested && requested.tier !== 'signed';
+  return requested?.tier === 'settlement';
 }
 
 /**
@@ -166,7 +184,7 @@ async function costPlusQuote(body, resolvedModel, cfg) {
   if (!modelId) return null;
 
   const promptTokens = promptTokensFor(body);
-  const maxOutputTokens = Math.max(0, Number(body?.max_tokens ?? body?.maxTokens ?? 0) || 0);
+  const maxOutputTokens = quotedMaxOutputTokens(body);
   const { amount: cogs, basis, rate } = await estimateCogsFromRequest({
     modelId,
     promptTokens,
@@ -182,7 +200,7 @@ async function costPlusQuote(body, resolvedModel, cfg) {
   return {
     ...quoteFromCogs(cogs, {
       usdcFloor: cfg.usdcFloor ?? cfg.usdcPriceDefault,
-      tier2: wantsProof(body),
+      tier2: wantsSettlementProof(body),
     }),
     prompt_tokens: promptTokens,
     max_output_tokens: maxOutputTokens,
@@ -245,7 +263,7 @@ export async function resolvePricingModel(body = {}) {
  *   before serving, and quoting the uncapped figure would bill for output the
  *   caller cannot receive.
  */
-export async function runX402Handshake(req, { taskId, cfg = config.x402, body = null } = {}) {
+export async function runX402Handshake(req, { taskId, cfg = config.x402, body = null, amount = null } = {}) {
   const priceBody = body || req.body;
   // For the standard x402 facilitator, the URL comes from cfg.facilitatorUrl
   // (falling back to the adapter's public-reference default when null).
@@ -264,12 +282,12 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
 
   // Step 1 — no payment yet: issue a bound 402 challenge.
   if (!paymentHeader) {
-    const amount = await priceUSDCResolved(priceBody, cfg);
-    const { body } = buildPaymentChallenge(
-      { taskId, maxAmountRequired: amount, network: cfg.network, asset: cfg.asset, payTo: cfg.payTo },
+    const charge = amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg);
+    const { body: challengeBody } = buildPaymentChallenge(
+      { taskId, maxAmountRequired: charge, network: cfg.network, asset: cfg.asset, payTo: cfg.payTo },
       { store: challengeStore },
     );
-    return { kind: 'challenge', body };
+    return { kind: 'challenge', body: challengeBody };
   }
 
   // Step 2 — payment present: verify (binding) then settle (marks nonce spent).
@@ -282,7 +300,7 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
   // Read the amount bound to this challenge BEFORE settling — settle marks the
   // nonce spent and drops the record. Verify is idempotent and does not.
   const boundAmount = (nonce ? challengeStore.get(nonce)?.amount : null)
-    ?? await priceUSDCResolved(priceBody, cfg);
+    ?? (amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg));
 
   const s = await settlePayment(paymentHeader, bound);
   if (!s.settled) return { kind: 'failed', reason: s.reason || 'settle_failed' };

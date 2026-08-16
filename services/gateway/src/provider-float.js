@@ -160,10 +160,16 @@ export class ProviderFloatManager {
    * Pick a float that can cover estimated COGS.
    * @param {string|bigint} usdcQuoteAmount
    * @param {string|null} [preferredProvider]
+   * @param {{ estimatedCogs?: bigint|string|null }} [opts]
+   *   When `estimatedCogs` is set (provider's published rate × tokens), that is
+   *   the float check — not 70% of our own price, which under cost-plus is ~0.77×
+   *   real COGS and would under-reserve.
    * @returns {{ ok: true, float: Float, estimated: bigint } | { ok: false, reason: string, estimated: bigint }}
    */
-  selectForQuote(usdcQuoteAmount, preferredProvider = null) {
-    const estimated = estimateCogs(usdcQuoteAmount, this.cogsBps);
+  selectForQuote(usdcQuoteAmount, preferredProvider = null, { estimatedCogs = null } = {}) {
+    const estimated = estimatedCogs != null && estimatedCogs !== ''
+      ? parseAmount(estimatedCogs, 0n)
+      : estimateCogs(usdcQuoteAmount, this.cogsBps);
     if (!this.hasFloats()) {
       // No floats configured → allow (P0 manual / unconstrained demo).
       return { ok: true, float: null, estimated, unconstrained: true };
