@@ -30,11 +30,21 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-// Node options have to precede the file list.
-const { status } = spawnSync(
+// Node options have to precede the file list. A per-test timeout so one hung
+// file cannot pin CI the way a missing filename used to skip it; spawnSync
+// also gets a hard cap so a stuck worker is killed rather than left running.
+const { status, error, signal } = spawnSync(
   process.execPath,
-  ['--test', ...process.argv.slice(2), ...files],
-  { stdio: 'inherit', cwd: gatewayDir },
+  ['--test', '--test-timeout=120000', ...process.argv.slice(2), ...files],
+  { stdio: 'inherit', cwd: gatewayDir, timeout: 10 * 60 * 1000, killSignal: 'SIGKILL' },
 );
 
+if (error) {
+  console.error(`run-tests: ${error.message}`);
+  process.exit(1);
+}
+if (signal) {
+  console.error(`run-tests: test process killed (${signal})`);
+  process.exit(1);
+}
 process.exit(status ?? 1);
