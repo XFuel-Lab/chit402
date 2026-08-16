@@ -2,14 +2,13 @@
 
 As-deployed source of truth. When in-repo config disagrees with this file, this file wins.
 
-Last updated: 2026-08-15
+Last updated: 2026-08-16
 
-> **Live as of 2026-08-15.** `api-testnet.xfuel.app` is on `main` @ `00120d0`. Verified 12/12:
-> metered quotes, GLM priced above COGS, the advertised pricing model matches the charged one,
-> signed `/v1` receipts byte-identical to `/receipt/:id`, provider `akash-network` (not mock).
-> Theta EdgeCloud is unset (`THETA_EDGE_URL` missing); AkashML is the live inference path. **SP1
-> prover is running.** Re-verify after any restart:
+> **Live as of 2026-08-16.** `api-testnet.xfuel.app` is on `main` @ `6173086`. SDK `0.5.3`
+> (receipt payload v3). Verified after the pull+restart; re-verify after flipping rolling:
 > `node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app`.
+> Theta EdgeCloud is unset (`THETA_EDGE_URL` missing); AkashML is the live inference path. **SP1
+> prover is running.**
 
 > **Pricing: cost-plus, live since 2026-08-15.** `X402_COST_PLUS` is on with
 > `X402_PLATFORM_FEE_BPS=1000` and `VI_TIER2_MIN_COGS=2000000`, so a median agent call quotes
@@ -26,6 +25,7 @@ Last updated: 2026-08-15
 - Tier 1 signed receipt: live (default)
 - Tier 2 SP1 settlement proof: **running** (2026-08-15). Gated at `VI_TIER2_MIN_COGS=2000000` — $2.00 of provider COGS, or an explicit `proof_tier` — because a proof costs a fixed ~$0.050 per Succinct request and AI-task proofs cannot be batched until guest v2
 - Pricing basis: **cost-plus** — measured provider COGS + 10% (`X402_COST_PLUS` on, `X402_PLATFORM_FEE_BPS=1000`), Tier-2 opt-in at a flat $0.08, $0.01 floor. [ADR 0009](./adr/0009-cost-plus-pricing.md). Live values: `GET /.well-known/x402` → `pricing`
+- Rolling settlement: **on** (`X402_ROLLING_SETTLEMENT=true`) — `/task-request` charges the previous call's measured bill. `/v1` stays free (ADR 0006). You pay for the last call; `/task-quote` is a forecast. [ADR 0008](./adr/0008-rolling-settlement.md). Confirm at `GET /health` → `rolling_settlement.enabled`
 - Tier 3 Verified Inference (zkLLM): active build — RAM-bound, CPU-only. See [VERIFIED_INFERENCE_HANDOFF.md](./VERIFIED_INFERENCE_HANDOFF.md)
 - Payment binding: server-attested today; in-proof after SP1 guest v2
 - **Public Base mainnet x402:** Real (2026-08-06) — flagship smoke `ai-task-1-1786004600540` / tx `0x066caacc…db70`
@@ -104,9 +104,11 @@ Ignore dead `ZKGPT_PROVER_URL` pointing at `ALB-1-1092545307…` — that ALB is
 cd ~/xfuel-protocol
 git pull
 # ensure services/gateway/.env has X402_NETWORK=base + CDP_* + payTo ≠ deployer
+# rolling: X402_ROLLING_SETTLEMENT=true (founder accepted 2026-08-16). Leave /v1 unmetered.
 bash deploy/lightsail/install-api.sh
 # if port 3002 haunted: sudo reboot
 # fingerprint: /health must show usdc-base-splits-v2 (NOT "30% BBB")
+#             rolling_settlement.enabled === true
 ```
 
 Legacy (do not use): PM2 `xfuel-m2m`, `/opt/.../theta-bridge`, `xfuel-testnet-api.service`.
