@@ -11,21 +11,21 @@ Last updated: 2026-08-15
 > prover is running.** Re-verify after any restart:
 > `node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app`.
 
-> **Pricing: the rate card, not cost-plus.** `X402_COST_PLUS` is commented out in the box's `.env`,
-> so a median agent call quotes $0.2062 and not the $0.1034 cost-plus would charge. The cost-plus
-> engine *is* deployed as of `00120d0` and is one line from live, but it ships off by design: it was
-> enabled once on 2026-08-15 against a build where the flag moved only the advertised price, and the
-> gateway published $1.54/$4.84 per million while billing $3.00/$9.00 for about an hour. Enabling it
-> now requires `VI_TIER2_MIN_COGS=2000000` alongside — `checkPricingConfig` refuses to boot
-> otherwise — and should be confirmed with the verifier, whose pricing check exists specifically to
-> catch advertised and charged drifting apart again.
+> **Pricing: cost-plus, live since 2026-08-15.** `X402_COST_PLUS` is on with
+> `X402_PLATFORM_FEE_BPS=1000` and `VI_TIER2_MIN_COGS=2000000`, so a median agent call quotes
+> **$0.1059** rather than the $0.2062 the rate card charged. `/.well-known/x402` publishes
+> `basis: cost_plus`, and the verifier confirms the advertised basis is the one `/task-quote`
+> actually uses — that check exists because the flag was enabled once earlier the same day against
+> a build where it moved only the advertised price, and the gateway published $1.54/$4.84 per
+> million while billing $3.00/$9.00 for about an hour. `checkPricingConfig` now refuses to boot
+> with cost-plus on and Tier-2 still gated on the settled amount. Re-verify after any restart.
 
 ## Current state
 
 - Settlement home: Base (USDC via x402) — [ADR 0002](./adr/0002-base-settlement-home.md)
 - Tier 1 signed receipt: live (default)
 - Tier 2 SP1 settlement proof: **running** (2026-08-15). Gated at `VI_TIER2_MIN_COGS=2000000` — $2.00 of provider COGS, or an explicit `proof_tier` — because a proof costs a fixed ~$0.050 per Succinct request and AI-task proofs cannot be batched until guest v2
-- Pricing basis: **rate card** (`X402_COST_PLUS` off). Cost-plus is deployed and inert — see the note above
+- Pricing basis: **cost-plus** — measured provider COGS + 10% (`X402_COST_PLUS` on, `X402_PLATFORM_FEE_BPS=1000`), Tier-2 opt-in at a flat $0.08, $0.01 floor. [ADR 0009](./adr/0009-cost-plus-pricing.md). Live values: `GET /.well-known/x402` → `pricing`
 - Tier 3 Verified Inference (zkLLM): active build — RAM-bound, CPU-only. See [VERIFIED_INFERENCE_HANDOFF.md](./VERIFIED_INFERENCE_HANDOFF.md)
 - Payment binding: server-attested today; in-proof after SP1 guest v2
 - **Public Base mainnet x402:** Real (2026-08-06) — flagship smoke `ai-task-1-1786004600540` / tx `0x066caacc…db70`
