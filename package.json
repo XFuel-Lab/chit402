@@ -113,7 +113,7 @@
     "autoprefixer": "^10.5.4",
     "chai": "^4.3.10",
     "cypress": "^15.20.0",
-    "dotenv": "^17.2.3",
+    "dotenv": "^17.4.2",
     "eslint": "^10.8.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.25",
