@@ -1,6 +1,6 @@
 # XFuel Documentation
 
-Verifiable settlement and payments for AI compute â€” USDC via x402 on Base, tiered proofs, provider-agnostic routing.
+Verifiable settlement and payments for AI compute — USDC via x402 on Base, tiered proofs, provider-agnostic routing.
 
 https://xfuel.app Â· https://api-testnet.xfuel.app
 
@@ -8,20 +8,27 @@ https://xfuel.app Â· https://api-testnet.xfuel.app
 
 ## Start here
 
+| You are… | Open |
+|----------|------|
+| A design partner / builder | [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) |
+| Checking the public host | [HOSTED_TESTNET_ENDPOINT.md](./HOSTED_TESTNET_ENDPOINT.md) · [RUNTIME_STATE.md](./RUNTIME_STATE.md) |
+| The founder | [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md) · [STRATEGY.md](./STRATEGY.md) · [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md) |
+
+Everything else is reference. Do not send partners this index.
+
+---
+
+## Company
+
 | Doc | Purpose |
 |-----|---------|
-| [STRATEGY.md](./STRATEGY.md) | Company strategy — build-from source |
-| [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md) | USDC in / provider float COGS |
-| [RUNTIME_STATE.md](./RUNTIME_STATE.md) | Live endpoints, real vs mock |
 | [POSITIONING.md](./POSITIONING.md) | Locked messaging |
+| [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md) | USDC in / provider float COGS |
 | [SEED_READINESS.md](./SEED_READINESS.md) | Seed / A- gate checklist |
 | [STAGING_SLA.md](./STAGING_SLA.md) | Partner staging reliability |
 | [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) | zkLLM narrow / continue gates |
-| [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) | Partner one-pager |
-| [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md) | Your checklist (CDP, Safe, partners, vKey) |
-| [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md) | Sprint beachhead + design partners |
 | [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md) | Spend / vendor-blind privacy |
-| [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) | Agent spend analytics + cheaper-route proof (thesis) |
+| [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) | Agent spend analytics (thesis) |
 | [MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md) | Turn on Base mainnet USDC fees |
 | [../WHITEPAPER.md](../WHITEPAPER.md) | Protocol design |
 | [../README.md](../README.md) | Clone, build, try the API |
@@ -47,10 +54,9 @@ https://xfuel.app Â· https://api-testnet.xfuel.app
 |-----|---------|
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Deploy |
 | [TESTING.md](./TESTING.md) | Tests |
-| [HOSTED_TESTNET_ENDPOINT.md](./HOSTED_TESTNET_ENDPOINT.md) | Public demo API + demo path |
-| [DEMO_VIDEO_SCRIPT.md](./DEMO_VIDEO_SCRIPT.md) | 60–90s demo video script + checklist |
-| [DEMO_SHOT_LIST.md](./DEMO_SHOT_LIST.md) | Shot list / layout / highlights |
-| [DEMO_COMMANDS.md](./DEMO_COMMANDS.md) | Copy-paste Tier-1 + Tier-2 demo commands |
+| [DEMO_VIDEO_SCRIPT.md](./DEMO_VIDEO_SCRIPT.md) | Recording script |
+| [DEMO_SHOT_LIST.md](./DEMO_SHOT_LIST.md) | Shot list |
+| [DEMO_COMMANDS.md](./DEMO_COMMANDS.md) | Recording commands |
 
 ---
 

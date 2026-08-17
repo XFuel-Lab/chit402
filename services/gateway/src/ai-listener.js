@@ -1381,17 +1381,26 @@ class AIListener {
       });
     }
 
-    if (measured !== null && task.meta) {
-      task.meta.providerCogs = {
-        ...(task.meta.providerCogs || {}),
-        actual: String(measured),
-        basis: 'measured',
-      };
-      this.activeTasks.set(task.taskId, task);
-    }
+    // Float reconcile must run before any stub `providerCogs` is stamped.
+    // A measured-only stub ({ actual, basis }) is truthy, and used to skip
+    // reconcileAfterServe — receipts then showed actual=$0.000017 with
+    // provider/float/currency all empty, and the prepaid float was never burned.
 
     const pending = task.meta?.pendingCogs;
-    if (!pending || task.meta?.providerCogs) return;
+    const cogsAlreadyReconciled = !!(
+      task.meta?.providerCogs?.float_id || task.meta?.providerCogs?.floatId
+    );
+    if (!pending || cogsAlreadyReconciled) {
+      if (measured !== null && task.meta) {
+        task.meta.providerCogs = {
+          ...(task.meta.providerCogs || {}),
+          actual: String(measured),
+          basis: 'measured',
+        };
+        this.activeTasks.set(task.taskId, task);
+      }
+      return;
+    }
 
     const estimated = pending.estimated || '0';
     if (pending.unconstrained && BigInt(estimated || '0') <= 0n) return;

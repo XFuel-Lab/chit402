@@ -2,7 +2,7 @@
 
 As-deployed source of truth. When in-repo config disagrees with this file, this file wins.
 
-Last updated: 2026-08-16
+Last updated: 2026-08-17
 
 > **Live as of 2026-08-16.** `api-testnet.xfuel.app` is on `main` @ `6173086`. SDK `0.5.3`
 > (receipt payload v3). Verified after the pull+restart; re-verify after flipping rolling:
@@ -51,12 +51,13 @@ ZKVerifierSP1 (Base mainnet 8453):
 Manifest: `deploy/manifests/base-verifier-base-2026-07-17T08-04-12-891Z.json`  
 Admin/deployer: `0xe49b47e759Ca01B6D66A49807Bb2aEe31c1243bd`
 
-SP1 prover (scaled to zero 2026-08-13):
+SP1 prover (**live for onboarding**, ~$2/day — 2026-08-17):
 
-- AWS ECS cluster `xfuel-sp1-prover` / service `sp1-prover` — **desired 0 / running 0**
-- ALB still up: `http://xfuel-sp1-alb-1873465045.us-east-1.elb.amazonaws.com` (~$20/mo idle)
-- Gateway env: `SP1_PROVER_URL` still set; signed receipts unaffected
-- Wake: `aws ecs update-service --cluster xfuel-sp1-prover --service sp1-prover --desired-count 1 --region us-east-1` then wait 3–5 min
+- AWS ECS cluster `xfuel-sp1-prover` / service `sp1-prover` — **running** (was desired 0 from 2026-08-13 until onboarding)
+- ALB: `http://xfuel-sp1-alb-1873465045.us-east-1.elb.amazonaws.com`
+- Confirm: `GET /health` → `proofs.settlement_proof: "open"`, `prover_reachable: true`
+- Gateway env: `SP1_PROVER_URL` set; signed receipts do not depend on it
+- Scale down after the partner wave: `aws ecs update-service --cluster xfuel-sp1-prover --service sp1-prover --desired-count 0 --region us-east-1`
 - Ingress locked to Lightsail `35.180.10.142/32` only
 
 Demo gateway:

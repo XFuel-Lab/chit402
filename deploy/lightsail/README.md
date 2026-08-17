@@ -32,7 +32,7 @@ quietly — the service starts, serves traffic, and is wrong:
 | `AKASHML_API_KEY` | Must start `akml-` (an `ac.sk.…` Akash *Console* key is a different product and is rejected). Without it the Akash hub drops out of the catalogue, `xfuel/auto` degrades to Theta, and any request carrying `tools` fails with `tools_unsupported_on_hub` — Theta cannot serve tools |
 | `ALLOW_MOCK_INFERENCE` | Leave **unset** in production. `true` lets a paid task be answered by a mock, which is a signed receipt for an inference that never ran |
 | `PROVIDER_FLOATS_JSON` | Optional, but a float id must exist per provider you route to or that provider's COGS never burns. Ids are `theta-edgecloud` and `akash-network` |
-| `FREE_TIER_DAILY_COGS_USD` | Defaults to `$10` per caller per UTC day, so **leaving it unset still enforces a ceiling** that did not exist before. Past it, unmetered `/v1` returns 402 `free_tier_exhausted`. The demo key is one bucket for all public traffic, making this the cap on public exposure. `0` restores uncapped serving; COGS is measured either way. Visible at `GET /health` → `free_tier` |
+| `FREE_TIER_DAILY_COGS_USD` | Defaults to `$1` per caller per UTC day, so **leaving it unset still enforces a ceiling**. Past it, unmetered `/v1` returns 402 `free_tier_exhausted`. The demo key is one bucket for all public traffic, making this the cap on public exposure (~10 agent-shaped calls or ~110 short completions). `0` restores uncapped serving; COGS is measured either way. Visible at `GET /health` → `free_tier` |
 
 Check names without printing values:
 
@@ -72,7 +72,7 @@ curl -sS http://127.0.0.1:3002/health
 
 curl -sS https://api-testnet.xfuel.app/task-quote \
   -H 'content-type: application/json' -H 'X-API-Key: xfuel-demo' \
-  -d '{"model_id":"llama-3-70b","amount":"10000"}'
+  -d '{"model_id":"xfuel/auto","amount":"10000"}'
 # PASS: "network":"base"
 ```
 

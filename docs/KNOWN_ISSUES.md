@@ -209,8 +209,8 @@ Fixed in three parts. `/v1` now measures and burns COGS on the same code path as
 surface, so `provider_cogs` appears on the `/v1` receipt exactly as it does on the other one
 (unsigned block; it is not in `canonicalSignedPayload`, and `route.provider` still resolves from
 `task.result.provider` first, so no existing signature moved). `GET /health` reports a
-`free_tier` block with today's give-away. And `FREE_TIER_DAILY_COGS_USD` — default $10 per
-caller per day, denominated in provider cost rather than requests — returns 402
+`free_tier` block with today's give-away. And `FREE_TIER_DAILY_COGS_USD` — default $1 per
+caller per day as of 2026-08-17 (was $10), denominated in provider cost rather than requests — returns 402
 `free_tier_exhausted` past the ceiling, with `Retry-After` set to the UTC reset.
 
 Bounded, not solved, and both limits are deliberate. The counter is in memory like the request
