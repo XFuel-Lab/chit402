@@ -37,7 +37,7 @@ Sliding window by API key (or IP). Default: 120 requests / 60s. `429` includes `
 
 Submit an AI task.
 
-**You pay for the last call.** When rolling settlement is on (`X402_ROLLING_SETTLEMENT`), the 402 on this request is the previous call's measured cost-plus bill (`max($0.01, provider_cogs × 1.10)`). `/task-quote` is a forecast of the next one, not the invoice. First small call is the free funnel; a call whose ceiling exceeds $1 still prepays.
+**You pay for the last call.** Rolling settlement is live on `/task-request` (`X402_ROLLING_SETTLEMENT=true`). The 402 on this request is the previous call's measured cost-plus bill (`max($0.01, provider_cogs × 1.10)`). `/task-quote` is a forecast of the next one, not the invoice. First small call is the free funnel; a call whose ceiling exceeds $1 still prepays. `/v1` stays free.
 
 | Field | Required | Notes |
 |-------|----------|-------|

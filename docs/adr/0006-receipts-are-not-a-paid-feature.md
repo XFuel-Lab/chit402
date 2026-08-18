@@ -59,7 +59,7 @@ free `/v1` separates them.
   record anywhere and the float balance overstated by however much it had served. Both are
   now fixed — `/v1` measures and burns COGS like `/task-request` does, `provider_cogs`
   appears on the `/v1` receipt, `GET /health` reports the day's give-away, and
-  `FREE_TIER_DAILY_COGS_USD` (default $10/caller/day) walls off a caller with a 402
+  `FREE_TIER_DAILY_COGS_USD` (default $1/caller/day as of 2026-08-17; was $10) walls off a caller with a 402
   `free_tier_exhausted` once they cross it. Two limits worth knowing: the counter is in
   memory, so a restart forgives the day, and the demo key is a single bucket for the whole
   public internet — that ceiling *is* our public exposure.

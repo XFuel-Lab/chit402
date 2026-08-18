@@ -49,14 +49,14 @@ beforeEach(() => {
 
 test('the default ceiling is a real number, so an unset env var does not uncap us', () => {
   delete process.env.FREE_TIER_DAILY_COGS_USD;
-  assert.equal(dailyLimitBaseUnits(), 10n * USD);
+  assert.equal(dailyLimitBaseUnits(), 1n * USD);
 });
 
 test('a typo keeps the default rather than silently uncapping the subsidy', () => {
   // The dangerous failure is `FREE_TIER_DAILY_COGS_USD=ten` parsing to NaN and
   // being read as "no limit" — a mistake nobody would notice until the bill.
   process.env.FREE_TIER_DAILY_COGS_USD = 'ten';
-  assert.equal(dailyLimitBaseUnits(), 10n * USD);
+  assert.equal(dailyLimitBaseUnits(), 1n * USD);
 });
 
 test('only an explicit zero disables enforcement', () => {

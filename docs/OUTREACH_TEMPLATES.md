@@ -88,28 +88,20 @@ partner permanently.
 
 ## After they say yes
 
-Send [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) + partner API key.
+Send the partner key, a Slack/Telegram invite, and
+[DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) — that file is the partner
+artifact (base-URL swap, receipt, stats, paid path). Do not send FOUNDER_ACTIONS or this
+templates file. Daily cap and trust notes live in the onboarding doc so you do not have
+to restate them. The prover is kept live during onboarding.
 
 Hi `[Name]` — you're in.
 
-1. Key: `[partner-key]` (keep private; not the public demo key)
-2. One-pager: `[link to onboarding doc or Notion copy]`
-3. Cookbook: `npx tsx examples/private-spend-budget.ts` (from `xfuel-sdk` / repo)
-4. Your stats only: `GET /stats/me` with that key
-5. Auditor pack when needed: `/receipt/:taskId?format=auditor`
+1. Key: `[partner-key]` (yours; not the public `xfuel-demo` key — keep it private)
+2. Working copy: `[link to DESIGN_PARTNER_ONBOARDING.md]`
+3. Channel: `[Slack/Telegram invite]`
 
-Two operational notes, both better said now than discovered:
-
-- The free surface has a **daily provider-cost ceiling per key** (`FREE_TIER_DAILY_COGS_USD`,
-  currently $10/day). Past it you get a 402 until UTC midnight. Tell us before a heavy day and we
-  will raise yours — this exists to stop the public demo being farmed, not to interrupt you.
-- **Tier-2 on-chain proofs need warning.** The SP1 prover is scaled to zero when idle to control
-  cost; give us 5 minutes before a session where you want one. Tier-1 signed receipts are always
-  on. `GET /health` shows the current state under `proofs`.
-
-Trust note: Private Spend is gateway-trusted (not prompt encryption). We say that in every doc.
-
-Channel: `[Slack/Telegram invite]`
+Start at section 1 of the working copy — one `baseURL` swap, no wallet. Ping here if
+anything 401s or 402s.
 
 ---
 

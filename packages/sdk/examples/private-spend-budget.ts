@@ -1,19 +1,15 @@
 /**
- * Design-partner cookbook: budget + Private Spend + buyer stats.
+ * Paid-path cookbook: quote → pay USDC → public receipt JSON → buyer stats.
  *
- * Demonstrates the Sprint 3 partner path:
- *   1. Quote USDC price
- *   2. Pay via x402 and submit inference (agent budget, not provider API keys)
- *   3. Fetch public receipt JSON (privacy + verify without trusting HTML)
- *   4. Poll buyer-only /stats/me north-star (paid tasks / USDC fees)
+ * The first hour is a free /v1 base-URL swap — see docs/DESIGN_PARTNER_ONBOARDING.md.
+ * This example is the optional upgrade: settle a task and inspect your own numbers.
  *
- * Run (packages/sdk):
  *   XFUEL_API_URL=https://api-testnet.xfuel.app \
  *   XFUEL_API_KEY=<your-partner-key> \
  *   npx tsx examples/private-spend-budget.ts
  *
- * Gateway should have PRIVATE_SPEND_ENABLED=true for privacy.mode=vendor_blind.
- * Docs: docs/PRIVATE_SPEND_THESIS.md · docs/FOUNDER_ACTIONS.md · AGENT_PLAYBOOK Flow 7
+ * When Private Spend is on, receipt.privacy.mode is vendor_blind (gateway-trusted,
+ * not prompt encryption). Docs: docs/DESIGN_PARTNER_ONBOARDING.md
  */
 import { XFuelClient, ChainId, createMockPayer, type X402Payer } from '../src/index.js';
 

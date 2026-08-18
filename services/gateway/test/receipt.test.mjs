@@ -167,6 +167,48 @@ test('renderReceiptNotFound: escapes the task id', () => {
   assert.ok(html.includes('&lt;b&gt;x&lt;/b&gt;'));
 });
 
+test('buildReceipt: rolling first call is pending, not a legacy rail, and carries usage', () => {
+  const base = usdcTask();
+  const task = usdcTask({
+    sp1Proof: null,
+    feeAmount: '0',
+    netAmount: '0',
+    usage: { prompt_tokens: 12, completion_tokens: 8, total_tokens: 20, source: 'provider' },
+    intent: { ...base.intent, paymentRef: null, amount: '10000' },
+    result: { provider: 'akash-network', model: 'akash/meta-llama/Llama-3.3-70B-Instruct', outputHash: '0xabc' },
+    meta: {
+      chain: 'base',
+      rolling: { fronted: true, recorded: true },
+      pricing: { basis: 'cost_plus', floor_applied: true, platform_fee: '2', fee_bps: 1000 },
+      providerCogs: {
+        provider: 'akash-network',
+        float_id: 'akash-network',
+        currency: 'USDC',
+        estimated: '20',
+        actual: '17',
+        basis: 'measured',
+      },
+    },
+  });
+  const r = buildReceipt(task, { signingSecret: 'test-receipt-secret' });
+  assert.equal(r.payment.ref, null);
+  assert.equal(r.payment.collected, false);
+  assert.equal(r.payment.collects_on, 'next_request');
+  assert.equal(r.usage.prompt_tokens, 12);
+  assert.equal(r.usage.completion_tokens, 8);
+  assert.equal(r.proof.has_proof, false);
+  assert.equal(r.binding, null);
+
+  const html = renderReceiptHtml(r);
+  assert.ok(!html.includes('legacy rail'));
+  assert.match(html, /bill pending/);
+  assert.match(html, /Prompt tokens/);
+  assert.match(html, /\$0\.000017/);
+  assert.match(html, /not on this call/);
+  assert.match(html, /HMAC-SHA256/);
+  assert.match(html, /next request/);
+});
+
 // ── Phase 2 — Verified Inference fields (PoMA + PBR + signature) ────────────────
 
 test('buildReceipt: proof.tier is "settlement" with a proof, "signed" without', () => {

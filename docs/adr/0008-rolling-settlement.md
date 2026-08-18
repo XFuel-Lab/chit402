@@ -1,6 +1,6 @@
 # ADR 0008 — Rolling Settlement: Charge the Previous Call
 
-Status: Implemented, default off (`X402_ROLLING_SETTLEMENT=false`). Date: 2026-08-13.
+Status: **Accepted — live on `api-testnet.xfuel.app` `/task-request` since 2026-08-16.** `/v1` stays free (ADR 0006). Date: 2026-08-13.
 Related: [ADR 0002](./0002-base-settlement-home.md), [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [X402_SCHEME_MIGRATION.md](../X402_SCHEME_MIGRATION.md), [PRICING_STRATEGY.md](../PRICING_STRATEGY.md), [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
 
 ## Context
@@ -10,7 +10,7 @@ knowable then, so `pricing.js` quotes output at `max_tokens`. Agents ask for a l
 ceiling and use a fraction of it, so buyers are systematically overcharged. Measured
 on a ceiling-heavy call — 1,000 prompt tokens, `max_tokens: 20000`, 1,000 tokens
 actually produced, priced on the GLM-5.2 row — the quote is **$0.183 against $0.012 of
-real usage, a 15x overcharge**. This is a live High-severity entry in `KNOWN_ISSUES.md`.
+real usage, a 15x overcharge**. This was a High-severity entry in `KNOWN_ISSUES.md`; the remedy is live.
 
 The known remedy is the x402 `upto` scheme, which settles actual usage and refunds the
 difference. `X402_SCHEME_MIGRATION.md` scopes that as an x402 v1→v2 migration plus
@@ -87,8 +87,8 @@ Bad, and accepted:
 - Debts are keyed on the API-key hash, not the paying wallet, because the first call
   has no payment header and therefore no wallet to key on. Rotating keys resets the
   one free call — the same exposure the free tier already accepts.
-- One more piece of state in the payment path, which is why it ships behind a flag
-  that defaults to off.
+- One more piece of state in the payment path. The flag remains so a rollback is
+  one line (`X402_ROLLING_SETTLEMENT=false`) plus a restart.
 
 ## Alternatives rejected
 
@@ -105,11 +105,9 @@ get wrong, and the buyer is out of pocket in between.
 Permit2 — the migration this ADR exists to avoid. Worth revisiting once the durable
 ledger exists.
 
-## Open questions for the founder
+## Founder decisions (2026-08-16)
 
-1. Turn it on for `/task-request`, `/v1`, or both? `/v1` is unmetered by default, so
-   the natural first home is `/task-request` where money already flows.
-2. Is the one-call-per-payer bad debt acceptable at the current `MAX_UNSETTLED` of $1,
-   or should the first call be capped tighter?
-3. Durable ledger before or after enabling in production? Recommended: before, for
-   anything that counts as revenue.
+1. **`/task-request` only.** `/v1` stays free (ADR 0006).
+2. **$1 whale prepay kept** (`X402_ROLLING_MAX_UNSETTLED_USD=1`).
+3. **Durable ledger first** — already in (JSON on disk). Last-call lag accepted:
+   you pay for the last call; `/task-quote` is a forecast.

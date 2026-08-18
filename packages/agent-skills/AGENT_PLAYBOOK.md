@@ -78,25 +78,25 @@ Lifecycle: form → join (≤18) → settle members → dissolve.
 
 Skill: `xfuel-route-compute`. Also `GET /health`, `POST /task-quote`.
 
-`GET /health` carries a `proofs` block. Check it before promising a partner a Tier-2 proof: the
-prover is scaled to zero when idle, and `settlement_proof: "unavailable"` means nothing is running.
-`signed_receipts` is always `"always"` — Tier-0 does not depend on the prover.
+`GET /health` carries a `proofs` block. During onboarding the prover is kept live
+(`settlement_proof: "open"`). If it ever reads `"unavailable"`, signed receipts still work;
+on-chain proofs will not attach until it is up. `signed_receipts` is always `"always"`.
 
 ## Flow 7 — Budget + Private Spend (design partners)
 
+Partner-facing first hour: [docs/DESIGN_PARTNER_ONBOARDING.md](../../docs/DESIGN_PARTNER_ONBOARDING.md).  
 Cookbook example: [`examples/private-spend-budget.ts`](../sdk/examples/private-spend-budget.ts).
 
-1. Get a **partner API key** (not the public `xfuel-demo` key for production usage).
-2. Pay with USDC via x402 — agent holds a budget wallet; never give OpenAI your org key.
-3. Confirm receipt `privacy.mode` is `vendor_blind` when the gateway has `PRIVATE_SPEND_ENABLED=true`.
+1. Use the **partner API key** (not the public `xfuel-demo` key).
+2. Start on `/v1` (base-URL swap, free signed receipt). Pay with USDC via x402 on `/task-request` when you want a budget — agent holds a wallet; never give OpenAI your org key.
+3. Confirm receipt `privacy.mode` is `vendor_blind` when Private Spend is on.
 4. Open `verify_url?format=json` or SDK `getReceipt(taskId)` — third parties recompute binding without trusting HTML.
-5. Call `GET /stats/me` or SDK `getMyStats()` for **your** paid tasks / USDC fees (north-star).
+5. Call `GET /stats/me` or SDK `getMyStats()` for **your** paid tasks / USDC fees.
 6. Auditor pack: `GET /receipt/:id?format=auditor` or SDK `getAuditorExport(taskId)` — policy + totals, no prompts.
 
-Thesis: [docs/PRIVATE_SPEND_THESIS.md](../../docs/PRIVATE_SPEND_THESIS.md).  
-Founder enablement: [docs/FOUNDER_ACTIONS.md](../../docs/FOUNDER_ACTIONS.md).
+Thesis: [docs/PRIVATE_SPEND_THESIS.md](../../docs/PRIVATE_SPEND_THESIS.md).
 
-Honest trust: Private Spend is **gateway-trusted**. It is not prompt encryption. For content privacy, ask for the confidential / TEE provider tier (`CONFIDENTIAL_PROVIDER_*`).
+Honest trust: Private Spend is **gateway-trusted**. It is not prompt encryption. For content privacy, ask for the confidential / TEE provider tier.
 
 ## Flow 8 — Multi-hop / A2A receipt chain
 

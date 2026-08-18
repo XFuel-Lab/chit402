@@ -346,6 +346,24 @@ export function providerCogsOf(task) {
   };
 }
 
+/** Token counts from the served call — never prompts or raw output. */
+export function usageOf(task) {
+  const u = task?.usage || task?.result?.usage || null;
+  if (!u || typeof u !== 'object') return null;
+  const prompt = Number(u.prompt_tokens);
+  const completion = Number(u.completion_tokens);
+  const total = Number(u.total_tokens);
+  if (!Number.isFinite(prompt) && !Number.isFinite(completion)) return null;
+  return {
+    prompt_tokens: Number.isFinite(prompt) ? prompt : null,
+    completion_tokens: Number.isFinite(completion) ? completion : null,
+    total_tokens: Number.isFinite(total)
+      ? total
+      : (Number.isFinite(prompt) && Number.isFinite(completion) ? prompt + completion : null),
+    source: u.source || u.xfuel_source || null,
+  };
+}
+
 /**
  * Build the public receipt JSON for a task.
  * @param {object} task     Listener task (from aiListener.activeTasks).
@@ -368,6 +386,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
   const base = baseUrl ? baseUrl.replace(/\/$/, '') : '';
   const providerCogs = providerCogsOf(task);
   const pricing = task.meta?.pricing || null;
+  const usage = usageOf(task);
+  const rollingFronted = !!(task.meta?.rolling?.fronted && !paymentRef && paymentRail === 'usdc');
 
   const receipt = {
     schema: 'xfuel.receipt.v3',
@@ -416,9 +436,12 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
       tier2_proof: pricing?.tier2_proof && pricing.tier2_proof !== '0' ? String(pricing.tier2_proof) : null,
       floor_applied: pricing?.floor_applied ?? null,
       basis: pricing?.basis ?? null,
+      collected: !!paymentRef,
+      collects_on: rollingFronted ? 'next_request' : 'this_request',
     },
     // ADR 0005 — provider COGS from prepaid float (not a second buyer rail).
     provider_cogs: providerCogs,
+    usage,
     proof: {
       system: task.intent?.proofSystem || 'sp1',
       tier: vi?.tier || proofTierOf(task),
@@ -476,14 +499,57 @@ function row(label, valueHtml) {
   return `<div class="row"><span class="k">${esc(label)}</span><span class="v">${valueHtml}</span></div>`;
 }
 
+/** USDC 6dp integer string → partner-readable dollars. Tiny COGS keeps extra decimals. */
+function formatUsdc(units) {
+  if (units == null || units === '') return null;
+  const n = Number(units);
+  if (!Number.isFinite(n)) return String(units);
+  const usd = n / 1e6;
+  if (usd === 0) return '$0';
+  if (Math.abs(usd) >= 0.01) return `$${usd.toFixed(2)}`;
+  return `$${usd.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')}`;
+}
+
+function usdcCell(units) {
+  const pretty = formatUsdc(units);
+  if (pretty == null) return '<span class="muted">—</span>';
+  return `${esc(pretty)} <span class="muted">${esc(units)}</span>`;
+}
+
 function badge(outcome, bindingMatches) {
   if (outcome === 'valid') {
     const bind = bindingMatches === false ? ' · binding mismatch' : bindingMatches ? ' · binding verified' : '';
     return `<span class="badge ok">Proven${esc(bind)}</span>`;
   }
   if (outcome === 'pending') return '<span class="badge pending">Proof pending</span>';
-  if (outcome === 'regenerable') return '<span class="badge warn">Regenerable</span>';
+  if (outcome === 'regenerable') return '<span class="badge pending">Signed</span>';
   return '<span class="badge bad">Invalid</span>';
+}
+
+function bindingCopy(receipt) {
+  const p = receipt.payment;
+  if (p?.rail === 'unmetered') {
+    return 'Nothing settled — this was the free path. The receipt attests which model and provider ran, not a dollar.';
+  }
+  if (p?.collects_on === 'next_request' || (p?.rail === 'usdc' && !p?.ref && p?.collected === false)) {
+    return 'No payment to bind yet. Rolling settlement collects this call’s measured bill on the next request; the settlement ref and explorer link appear on the receipt that pays it.';
+  }
+  if (p?.rail === 'tfuel') {
+    return 'No x402 payment binding on this task (legacy TFUEL rail).';
+  }
+  return 'Payment binding was not recorded on this task. Buyer settlement is still USDC on Base.';
+}
+
+function proofWhyMissing(receipt) {
+  const pr = receipt.proof;
+  if (pr?.has_proof) return '';
+  const cogs = formatUsdc(receipt.provider_cogs?.actual);
+  const bits = [
+    'On-chain SP1 proofs are opt-in ($0.08) or automatic above $2.00 of provider cost.',
+    cogs ? `This call cost ${cogs} to serve.` : null,
+    'The signed receipt above does not depend on the prover.',
+  ].filter(Boolean);
+  return bits.join(' ');
 }
 
 /** Render a clean, standalone, shareable HTML receipt page. */
@@ -492,13 +558,22 @@ export function renderReceiptHtml(receipt) {
   const pr = receipt.proof;
   const b = receipt.binding;
   const title = `XFuel receipt · ${shortHash(receipt.task_id, 12, 6)}`;
-  const desc = `${pr.outcome === 'valid' ? 'Proven' : pr.outcome} · ${p.rail.toUpperCase()} · net ${esc(p.net_amount)} · fee ${esc(p.fee_bps)}bps`;
+  const desc = `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} · ${p.rail.toUpperCase()} · ${formatUsdc(p.gross_amount) || p.gross_amount}`;
 
   const refHtml = p.ref
     ? (p.explorer_url
         ? `<a href="${esc(p.explorer_url)}" target="_blank" rel="noopener">${esc(shortHash(p.ref, 16, 8))} ↗</a>`
         : `<code>${esc(shortHash(p.ref, 16, 8))}</code>`)
-    : '<span class="muted">—</span>';
+    : (p.collects_on === 'next_request'
+        ? '<span class="badge pending">pending — next request</span>'
+        : '<span class="muted">—</span>');
+
+  const usage = receipt.usage;
+  const usageRows = usage
+    ? `${row('Prompt tokens', esc(usage.prompt_tokens ?? '—'))}
+      ${row('Completion tokens', esc(usage.completion_tokens ?? '—'))}
+      ${usage.total_tokens != null ? row('Total tokens', esc(usage.total_tokens)) : ''}`
+    : '';
 
   const bindingBlock = b
     ? `<section class="card">
@@ -511,20 +586,21 @@ export function renderReceiptHtml(receipt) {
       </section>`
     : `<section class="card">
         <h2>Payment binding</h2>
-        <p class="muted">No x402 payment binding on this task (legacy rail or binding disabled). Buyer settlement is USDC on Base.</p>
+        <p class="muted">${esc(bindingCopy(receipt))}</p>
       </section>`;
 
   const cogs = receipt.provider_cogs;
+  const cogsProvider = cogs?.provider || receipt.route?.provider;
   const cogsBlock = cogs
     ? `<section class="card">
-        <h2>Provider COGS <span class="scope">prepaid float · ADR 0005</span></h2>
-        ${row('Provider', esc(cogs.provider) || '<span class="muted">—</span>')}
-        ${row('Float', esc(cogs.float_id) || '<span class="muted">—</span>')}
-        ${row('Currency', esc(cogs.currency) || '<span class="muted">—</span>')}
-        ${row('Estimated / actual', `${esc(cogs.estimated)} / ${esc(cogs.actual)}`)}
-        ${cogs.usd_mark != null ? row('USD mark', esc(cogs.usd_mark)) : ''}
+        <h2>Provider cost <span class="scope">what we paid to serve this</span></h2>
+        ${row('Provider', esc(cogsProvider) || '<span class="muted">—</span>')}
+        ${cogs.float_id ? row('Float', esc(cogs.float_id)) : ''}
+        ${row('Measured cost', usdcCell(cogs.actual))}
+        ${cogs.estimated != null && cogs.estimated !== cogs.actual ? row('Quoted estimate', usdcCell(cogs.estimated)) : ''}
+        ${cogs.basis ? row('Basis', esc(cogs.basis)) : ''}
         ${cogs.below_low_water ? row('Float', '<span class="badge pending">at/below low water — refill</span>') : ''}
-        <p class="muted" style="margin:8px 0 0;font-size:12px">Buyer paid USDC on Base. Provider COGS burned a prepaid float (not a second buyer rail).</p>
+        <p class="muted" style="margin:8px 0 0;font-size:12px">You pay USDC on Base. We burn a prepaid provider float — not a second buyer rail.</p>
       </section>`
     : '';
 
@@ -620,27 +696,28 @@ export function renderReceiptHtml(receipt) {
       ${modelCommitmentRow}
       ${row('Provider', esc(receipt.route.provider) || '<span class="muted">—</span>')}
       ${row('Chain', esc(receipt.route.chain_id) || '<span class="muted">—</span>')}
+      ${usageRows}
       ${outputRow}
     </section>
 
     <section class="card">
       <h2>Payment</h2>
       ${row('Rail', `<span class="badge ${p.rail === 'usdc' ? 'ok' : 'pending'}">${esc(p.rail.toUpperCase())}</span>`)}
+      ${row('Settlement', p.collected ? '<span class="badge ok">collected</span>' : (p.collects_on === 'next_request' ? '<span class="badge pending">bill pending</span>' : '<span class="muted">not collected</span>'))}
       ${row('Settlement ref', refHtml)}
-      ${row('Gross', esc(p.gross_amount))}
-      ${row('Protocol fee', `${esc(p.fee_amount)} <span class="muted">(${esc(p.protocol_fee_bps ?? p.fee_bps)} bps)</span>`)}
-      ${p.platform_fee != null ? row('Platform fee', `${esc(p.platform_fee)} <span class="muted">(${esc(p.platform_fee_bps)} bps cost-plus)</span>`) : ''}
-      ${row('Net', esc(p.net_amount))}
+      ${row('Price', usdcCell(p.gross_amount))}
+      ${p.basis ? row('Basis', `${esc(p.basis)}${p.floor_applied ? ' · floor applied' : ''}`) : ''}
+      ${p.platform_fee != null ? row('Platform fee (10%)', usdcCell(p.platform_fee)) : ''}
+      ${row('Protocol fee', `${usdcCell(p.fee_amount)} <span class="muted">(${esc(p.protocol_fee_bps ?? p.fee_bps)} bps)</span>`)}
     </section>
 
     <section class="card">
       <h2>Proof</h2>
-      ${row('System', esc((pr.system || 'sp1').toUpperCase()))}
-      ${row('Outcome', esc(pr.outcome))}
-      ${row('Proof present', pr.has_proof ? 'yes' : '<span class="muted">not yet</span>')}
-      ${row('Nullifier', pr.nullifier ? `<code>${esc(shortHash(pr.nullifier, 12, 10))}</code>` : '<span class="muted">—</span>')}
-      ${row('Proving time', pr.proving_time_ms != null ? `${esc(pr.proving_time_ms)} ms` : '<span class="muted">—</span>')}
-      <div class="scopebox">${esc(pr.attests)}</div>
+      ${row('Signed receipt', receipt.signature?.value ? `<span class="badge ok">${esc(receipt.signature.alg || 'HMAC-SHA256')}</span>` : '<span class="muted">unsigned</span>')}
+      ${row('On-chain SP1', pr.has_proof ? '<span class="badge ok">yes</span>' : '<span class="muted">not on this call</span>')}
+      ${pr.nullifier ? row('Nullifier', `<code>${esc(shortHash(pr.nullifier, 12, 10))}</code>`) : ''}
+      ${pr.proving_time_ms != null ? row('Proving time', `${esc(pr.proving_time_ms)} ms`) : ''}
+      ${pr.has_proof ? `<div class="scopebox">${esc(pr.attests)}</div>` : `<p class="muted" style="margin:8px 0 0;font-size:12px">${esc(proofWhyMissing(receipt))}</p>`}
     </section>
 
     ${bindingBlock}
@@ -652,6 +729,7 @@ export function renderReceiptHtml(receipt) {
       Machine-readable: <a href="${esc(receipt.links.json)}">JSON</a> ·
       <a href="${esc(receipt.links.proof)}">proof</a> ·
       <a href="${esc(receipt.links.status)}">status</a><br />
+      ${receipt.signature?.value ? `Signed ${esc(receipt.signature.alg)} · payload v${esc(receipt.signature.payload_version)} · ` : ''}
       Verifiable settlement for AI compute — route any model, prove every dollar.
     </footer>
   </div>

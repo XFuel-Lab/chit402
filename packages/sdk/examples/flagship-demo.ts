@@ -8,7 +8,13 @@
  * block-explorer link), the proof status, and an INDEPENDENT re-derivation of the
  * x402 payment binding. No login. No trust-me.
  *
- * This is the "aha": route any model, prove every dollar.
+ * This is the paid-path hero: `/task-request` → USDC → shareable receipt.
+ * Design partners start on the free OpenAI surface (`/v1`) — see
+ * docs/DESIGN_PARTNER_ONBOARDING.md. Rolling settlement means the *first*
+ * paid call from a new payer has no settlement ref (the bill lands on the next
+ * request). A short prompt will not mint an on-chain proof unless you pass
+ * `proof_tier: 'settlement'` (opt-in $0.08); automatic proofs need ≥ $2.00 of
+ * provider cost.
  *
  * ─── Run it ──────────────────────────────────────────────────────────────────
  *   From packages/sdk:
@@ -163,6 +169,7 @@ async function main() {
     // Use the network the gateway quoted (base / base-sepolia), not a hardcode.
     payment: { rail: 'usdc', network: usdc.network, maxAmount: usdc.amount },
     payer,
+    ...(process.env.XFUEL_PROOF_TIER ? { proof_tier: process.env.XFUEL_PROOF_TIER } : {}),
   });
   const rail = task.payment_rail ?? 'usdc';
   console.log(`  ${b('②')} Pay+submit ${grn('✓')} task=${task.task_id} · rail=${rail}` +

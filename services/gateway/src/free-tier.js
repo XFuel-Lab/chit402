@@ -29,8 +29,8 @@ import logger from './logger.js';
 
 const USDC_SCALE = 1_000_000;
 
-/** $10/key/day. ~100 agent-shaped GLM-5.2 calls, or ~1,100 short completions. */
-const DEFAULT_DAILY_USD = 10;
+/** $1/key/day. ~10 agent-shaped GLM-5.2 calls, or ~110 short completions. */
+const DEFAULT_DAILY_USD = 1;
 
 /**
  * $50/day across every free caller.

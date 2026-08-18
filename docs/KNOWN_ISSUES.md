@@ -21,7 +21,7 @@ Runtime truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 | **`/v1` receipts are unsigned — the verifiable-receipt product is absent on the busiest surface** | **High** | **Fixed** 2026-08-12 — `/v1` now returns the canonical signed receipt; both surfaces produce one identical signature. See below |
 | **The default model could not complete an agent loop (0/6)** | **High** | **Fixed** 2026-08-12 — multi-turn eval reversed a same-day routing decision. See below |
 | **`/v1` receipts claimed `payment.rail: "unmetered"` even when x402 had settled** | **High** | **Fixed** 2026-08-12 — a regression introduced with `X402_METER_V1` |
-| **x402 uses the `exact` scheme, so output is quoted at the `max_tokens` ceiling — buyers overpay by up to 3.8x (15x on a ceiling-heavy call)** | **High** | **Remedy built** — rolling settlement ([ADR 0008](./adr/0008-rolling-settlement.md)) charges measured cost-plus (`COGS × 1.10`) on the next request. Durable payer ledger is in. Flag `X402_ROLLING_SETTLEMENT` stays **off** on the live box until you turn it on. |
+| **x402 uses the `exact` scheme, so output is quoted at the `max_tokens` ceiling — buyers overpay by up to 3.8x (15x on a ceiling-heavy call)** | **High** | **Fixed** 2026-08-16 — rolling settlement ([ADR 0008](./adr/0008-rolling-settlement.md)) is live on `/task-request`. You pay the previous call's measured cost-plus; `/task-quote` is a forecast. Last unpaid call per payer is accepted bad debt, capped at $1 of ceiling quote. `/v1` stays free. |
 | **`/health` reports `prover_configured: true` and "proofs are generated for every settled task" from a configured URL, not a reachable prover** | **High** | **Fixed** 2026-08-15 — reachability is probed and reported separately. See below |
 | **A buyer could audit a price after paying it but not discover it beforehand** | Medium | **Fixed** 2026-08-15 — `/v1/models` publishes the provider rate, our fee and the resulting price per model; `/.well-known/x402` publishes the basis, floor and Tier-2 surcharge. Cost-plus claims the bill is checkable, and the rate was the one input a buyer could not see in advance |
 | **`X402_COST_PLUS` changed the advertised price and not the charged one — the gateway published $1.54/$4.84 per million while billing $3.00/$9.00** | **Critical** | **Fixed** 2026-08-15 — `quoteFromCogs` shipped with ADR 0009 reachable only from its own tests. Now wired into the one engine behind both the 402 challenge and `/task-quote`. See below |
@@ -209,8 +209,8 @@ Fixed in three parts. `/v1` now measures and burns COGS on the same code path as
 surface, so `provider_cogs` appears on the `/v1` receipt exactly as it does on the other one
 (unsigned block; it is not in `canonicalSignedPayload`, and `route.provider` still resolves from
 `task.result.provider` first, so no existing signature moved). `GET /health` reports a
-`free_tier` block with today's give-away. And `FREE_TIER_DAILY_COGS_USD` — default $10 per
-caller per day, denominated in provider cost rather than requests — returns 402
+`free_tier` block with today's give-away. And `FREE_TIER_DAILY_COGS_USD` — default $1 per
+caller per day as of 2026-08-17 (was $10), denominated in provider cost rather than requests — returns 402
 `free_tier_exhausted` past the ceiling, with `Retry-After` set to the UTC reset.
 
 Bounded, not solved, and both limits are deliberate. The counter is in memory like the request
