@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-17 · Public Base mainnet x402 live · **Repo `main` @ `6173086`** · SDK `0.5.3` (receipt payload v3) · **SP1 prover kept live for onboarding (~$2/day)** · **Cost-plus is live ([ADR 0009](./adr/0009-cost-plus-pricing.md))** · **Rolling settlement accepted and on ([ADR 0008](./adr/0008-rolling-settlement.md)) — you pay for the last call; `/task-quote` is a forecast** · Next: outreach (4) — traffic is 0 tasks/24h, which is the real constraint
+Last updated: 2026-08-19 · Public Base mainnet x402 live · **Repo `main` @ `2ef73ee` (#193)** · box `592865d` · SDK **`0.5.4`** · **free-tier $1/day live** · **SP1 prover kept live for onboarding (~$2/day)** · **Cost-plus is live ([ADR 0009](./adr/0009-cost-plus-pricing.md))** · **Rolling settlement accepted and on ([ADR 0008](./adr/0008-rolling-settlement.md)) — you pay for the last call; `/task-quote` is a forecast** · Next: outreach (4) — traffic is 0 tasks/24h, which is the real constraint
 
 ## How to use
 
@@ -19,7 +19,7 @@ Last updated: 2026-08-17 · Public Base mainnet x402 live · **Repo `main` @ `61
 | 3 | ~~Prefund Theta EdgeCloud with USDC; API key on gateway~~ | **Done 2026-08-07** — real EdgeCloud compute live; float cap enforced (`PROVIDER_FLOAT_ENFORCE=true`) |
 | 3b | ~~Publish `xfuel-sdk@0.5.2`~~ | **Done 2026-08-13** — payload v2. Superseded by 3f |
 | 3c | ~~Redeploy the gateway to Lightsail~~ | **Done 2026-08-13** @ `20fa5d6`; refreshed 2026-08-16 @ `6173086` |
-| 3f | ~~Publish `xfuel-sdk@0.5.3` and deploy `6173086`~~ | **Done 2026-08-16** — https://www.npmjs.com/package/xfuel-sdk · payload v3 (`gross_amount`, platform fee, `provider_cogs.actual`). Box pull+restart; rolling flag is item 21 |
+| 3f | ~~Publish `xfuel-sdk@0.5.3` and deploy `6173086`~~ | **Done 2026-08-16**. Superseded 2026-08-19: **`xfuel-sdk@0.5.4`** on npm + box `592865d` — honest `/v1` receipt (pending proof, committed hash), `$1` demo cap. https://www.npmjs.com/package/xfuel-sdk |
 | 3d | Confirm the bounty change: XFuel no longer advertises cash rewards (was "up to $50,000") until the first audit is funded | Eng converted [bug-bounty.md](./bug-bounty.md) to a safe-harbour disclosure policy and scrubbed README / WHITEPAPER / SECURITY / site |
 | 3e | ~~Get an AkashML _inference_ key~~ | **Done 2026-08-13** — `akml-` key + `akash-network` float on the live box; `/v1` served `akash-network` in the verify probe |
 | 4 | Put real contacts on [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md); send [OUTREACH_TEMPLATES.md](./OUTREACH_TEMPLATES.md) | 10 hunt targets + GTM motions in ICP |

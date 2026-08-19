@@ -2,13 +2,20 @@
 
 As-deployed source of truth. When in-repo config disagrees with this file, this file wins.
 
-Last updated: 2026-08-17
+Last updated: 2026-08-19
 
-> **Live as of 2026-08-16.** `api-testnet.xfuel.app` is on `main` @ `6173086`. SDK `0.5.3`
-> (receipt payload v3). Verified after the pull+restart; re-verify after flipping rolling:
+> **Live as of 2026-08-19.** `api-testnet.xfuel.app` is serving
+> `docs/rolling-live-and-runtime-state` @ `592865d` (includes #193 on `main` @ `2ef73ee`).
+> SDK **`0.5.4`** is on npm. Free-tier cap is **$1/UTC-day** (`GET /health` →
+> `free_tier.daily_limit_usd: "1.000000"`). Verified with a public `/v1` hello:
+> task `openai-1ef8db1f-a049-4683-ae70-19d81cf59eea` — Akash Llama 3.3 70B, rail
+> `unmetered`, `proof_outcome: pending`, `output.kind: committed`, HMAC present.
+> Receipt: `https://api-testnet.xfuel.app/receipt/openai-1ef8db1f-a049-4683-ae70-19d81cf59eea`.
+> Re-verify after the next pull+restart:
 > `node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app`.
 > Theta EdgeCloud is unset (`THETA_EDGE_URL` missing); AkashML is the live inference path. **SP1
-> prover is running.**
+> prover is running.** Unmetered `/v1` does **not** auto-prove; Tier-2 is opt-in or
+> ≥ $2 COGS. PowerShell must use `curl.exe` (plain `curl` is Invoke-WebRequest).
 
 > **Pricing: cost-plus, live since 2026-08-15.** `X402_COST_PLUS` is on with
 > `X402_PLATFORM_FEE_BPS=1000` and `VI_TIER2_MIN_COGS=2000000`, so a median agent call quotes
@@ -26,6 +33,7 @@ Last updated: 2026-08-17
 - Tier 2 SP1 settlement proof: **running** (2026-08-15). Gated at `VI_TIER2_MIN_COGS=2000000` — $2.00 of provider COGS, or an explicit `proof_tier` — because a proof costs a fixed ~$0.050 per Succinct request and AI-task proofs cannot be batched until guest v2
 - Pricing basis: **cost-plus** — measured provider COGS + 10% (`X402_COST_PLUS` on, `X402_PLATFORM_FEE_BPS=1000`), Tier-2 opt-in at a flat $0.08, $0.01 floor. [ADR 0009](./adr/0009-cost-plus-pricing.md). Live values: `GET /.well-known/x402` → `pricing`
 - Rolling settlement: **on** (`X402_ROLLING_SETTLEMENT=true`) — `/task-request` charges the previous call's measured bill. `/v1` stays free (ADR 0006). You pay for the last call; `/task-quote` is a forecast. [ADR 0008](./adr/0008-rolling-settlement.md). Confirm at `GET /health` → `rolling_settlement.enabled`
+- Free `/v1` first hour: **live and honest** (2026-08-19) — `proof_outcome` is `valid` only when proof bytes exist; receipt output hash is the stored keccak; public demo key capped at **$1/day**. SDK 0.5.4 named import + `chatCompletions`. Do not `createMockPayer()` against this host.
 - Tier 3 Verified Inference (zkLLM): active build — RAM-bound, CPU-only. See [VERIFIED_INFERENCE_HANDOFF.md](./VERIFIED_INFERENCE_HANDOFF.md)
 - Payment binding: server-attested today; in-proof after SP1 guest v2
 - **Public Base mainnet x402:** Real (2026-08-06) — flagship smoke `ai-task-1-1786004600540` / tx `0x066caacc…db70`
