@@ -21,6 +21,8 @@
  * so the prover container also costs nothing while off.
  */
 
+import { normalizeRequestedTier } from './tier-policy.js';
+
 function parseKeys(csv) {
   return String(csv || '')
     .split(',')
@@ -42,6 +44,33 @@ export function proveAllowedForKey(apiKey) {
 
   // No allow-list → global switch decides.
   return enabled;
+}
+
+/**
+ * Whether this call should spend a Tier-2 proof (~$0.05).
+ * Key allow-list still wins. Then: explicit `proof_tier` of settlement/inference,
+ * or measured COGS at/above `VI_TIER2_MIN_COGS`. Unmetered hellos do not prove.
+ */
+export function settlementProofAllowed({
+  apiKey,
+  cogs = 0n,
+  proofTier = null,
+  minCogs = process.env.VI_TIER2_MIN_COGS,
+} = {}) {
+  if (!proveAllowedForKey(apiKey)) return false;
+  const requested = normalizeRequestedTier(proofTier);
+  if (requested && (requested.tier === 'settlement' || requested.tier === 'inference')) {
+    return true;
+  }
+  try {
+    const raw = minCogs == null ? '' : String(minCogs).trim();
+    if (!raw) return false;
+    const gate = BigInt(raw);
+    if (gate <= 0n) return false;
+    return BigInt(cogs ?? 0n) >= gate;
+  } catch {
+    return false;
+  }
 }
 
 /** Human-readable reason for a receipt when proving was gated off. */
@@ -169,6 +198,7 @@ export function proofAvailability(proverConfigured, { tier2 = null } = {}) {
 
 export default {
   proveAllowedForKey,
+  settlementProofAllowed,
   proveGatedReason,
   proofAvailability,
   refreshProverProbe,

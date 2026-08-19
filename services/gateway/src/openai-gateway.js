@@ -4,7 +4,7 @@ import config from './config.js';
 import logger from './logger.js';
 import { getAIListener } from './ai-listener.js';
 import { getSP1Prover } from './sp1-prover-client.js';
-import { proveAllowedForKey } from './prove-gate.js';
+import { settlementProofAllowed } from './prove-gate.js';
 import { buildVerifyUrl, baseUrlFromReq, buildReceipt as buildSignedReceipt } from './receipt.js';
 import { apiKeyHashFromReq, cacheNamespace } from './buyer-attr.js';
 import { getHubCatalog, resolveCatalogModel, requestShape, toOpenAIList } from './hub-catalog.js';
@@ -586,11 +586,28 @@ function extractContent(result) {
  *
  * @returns {{ taskId: string, proverConfigured: boolean }}
  */
+function startTaskProof(task, proveAllowed) {
+  if (!task) return;
+  task.intent = task.intent || {};
+  task.intent.proveAllowed = !!proveAllowed;
+  if (!proveAllowed) return;
+  let aiListener;
+  try {
+    aiListener = getAIListener();
+  } catch {
+    return;
+  }
+  if (!getSP1Prover() || typeof aiListener._generateTaskProof !== 'function') return;
+  aiListener._generateTaskProof(task).catch((err) => {
+    logger.warn({ err: err.message, taskId: task.taskId }, 'OpenAI gateway: async proof failed (non-fatal)');
+  });
+}
+
 function registerTaskAndProve({
   taskId: providedTaskId,
   model, messages, content, provider, toolCalls = null,
   proveAllowed = true, apiKeyHash = null, privateSpend = false,
-  usage = null, payment = null,
+  usage = null, payment = null, deferProve = false,
 }) {
   const taskId = providedTaskId || `openai-${crypto.randomUUID()}`;
   let aiListener = null;
@@ -648,6 +665,7 @@ function registerTaskAndProve({
     // Token counts belong on the task, not only in the HTTP response — /stats
     // aggregates from the durable snapshots, and /v1 is the busiest surface.
     usage,
+    outputHash,
     result: { provider, outputHash, content_hash: outputHash, usage },
     callbackUrl: null,
     callbackSecret: null,
@@ -658,11 +676,7 @@ function registerTaskAndProve({
   aiListener.activeTasks.set(taskId, task);
 
   const proverConfigured = !!getSP1Prover();
-  if (proverConfigured && proveAllowed && typeof aiListener._generateTaskProof === 'function') {
-    aiListener._generateTaskProof(task).catch((err) => {
-      logger.warn({ err: err.message, taskId }, 'OpenAI gateway: async proof failed (non-fatal)');
-    });
-  }
+  if (!deferProve) startTaskProof(task, proveAllowed);
 
   return { taskId, proverConfigured, proveAllowed, task };
 }
@@ -1088,7 +1102,6 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
 
     const echoModel = inference.resolvedModel || model || 'xfuel/auto';
     const { content, provider, mock, toolCalls } = inference;
-    const proveAllowed = proveAllowedForKey(req.headers['x-api-key']);
     const privateSpend = !!config.privateSpend?.enabled;
 
     // Prefer the provider's own usage. Estimating from visible text understates
@@ -1105,7 +1118,8 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
       content,
       toolCalls,
       provider,
-      proveAllowed,
+      proveAllowed: false,
+      deferProve: true,
       apiKeyHash: apiKeyHashFromReq(req),
       privateSpend,
       usage: { ...counts, source },
@@ -1116,6 +1130,13 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
     // A mock cost us nothing, so it neither burns float nor spends the allowance.
     const cogs = mock ? 0n : await accountForCogs({ task, modelId: echoModel, usage: counts, provider });
     if (freeBucket) recordFreeSpend(freeBucket, cogs);
+    const proveAllowed = settlementProofAllowed({
+      apiKey: req.headers['x-api-key'],
+      cogs,
+      proofTier: req.body?.proof_tier ?? req.body?.xfuel?.proof_tier,
+      minCogs: config.verifiedInference?.tier2MinCogs,
+    });
+    startTaskProof(task, proveAllowed);
 
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
     const receipt = buildReceipt({
@@ -1171,7 +1192,11 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
         },
       });
     }
-    const proveAllowed = proveAllowedForKey(req.headers['x-api-key']);
+    const proveAllowed = settlementProofAllowed({
+      apiKey: req.headers['x-api-key'],
+      proofTier: req.body?.proof_tier ?? req.body?.xfuel?.proof_tier,
+      minCogs: config.verifiedInference?.tier2MinCogs,
+    });
     const privateSpend = !!config.privateSpend?.enabled;
     const content = inference.url || JSON.stringify(inference.raw?.output || {});
     const { taskId, proverConfigured, task } = registerTaskAndProve({
@@ -1230,7 +1255,11 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
         },
       });
     }
-    const proveAllowed = proveAllowedForKey(req.headers['x-api-key']);
+    const proveAllowed = settlementProofAllowed({
+      apiKey: req.headers['x-api-key'],
+      proofTier: req.body?.proof_tier ?? req.body?.xfuel?.proof_tier,
+      minCogs: config.verifiedInference?.tier2MinCogs,
+    });
     const privateSpend = !!config.privateSpend?.enabled;
     const { taskId, proverConfigured, task } = registerTaskAndProve({
       model: inference.resolvedModel,

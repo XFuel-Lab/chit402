@@ -26,7 +26,7 @@ import {
   applyPaymentToOwedTask,
   configureRollingLedger,
 } from './rolling-settlement.js';
-import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq } from './receipt.js';
+import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, proofOutcomeOf } from './receipt.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest } from './x402-discovery.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
@@ -1250,7 +1250,7 @@ export function createApp() {
       const proofPayload = {
         task_id:        task.taskId,
         status:         task.status,
-        proof_outcome:  task.sp1Proof?.error ? 'regenerable' : 'valid',
+        proof_outcome:  proofOutcomeOf(task),
         verify_url:     buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl), task.taskId),
         sp1_proof:      task.sp1Proof || null,
         // Phase 2 (flag-gated): x402 payment commitment bound into the proof.
@@ -1551,15 +1551,7 @@ export function createApp() {
           });
         }
 
-        // Map status to ProofOutcome (matches the ProofOutcome enum in main.rs)
-        let proofOutcome = 'pending';
-        if (task.sp1Proof && !task.sp1Proof.error) {
-          proofOutcome = 'valid';   // ProofOutcome.Valid
-        } else if (task.sp1Proof?.error) {
-          proofOutcome = 'regenerable'; // ProofOutcome.Regenerable
-        } else if (task.status === 'failed') {
-          proofOutcome = 'invalid'; // ProofOutcome.Invalid
-        }
+        const proofOutcome = proofOutcomeOf(task);
 
         return res.json({
           task_id:        task.taskId,

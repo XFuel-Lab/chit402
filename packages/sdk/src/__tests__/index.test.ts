@@ -8,6 +8,7 @@ import {
   createMockPayer,
   createSignerPayer,
   selectAccept,
+  verifyReceiptSignature,
   type TaskRequestResponse,
   type TaskStatusResponse,
   type ProofResponse,
@@ -21,11 +22,16 @@ jest.mock('axios');
 
 const mockPost = jest.fn() as any;
 const mockGet = jest.fn() as any;
+let responseRejected: ((err: unknown) => Promise<unknown>) | undefined;
 const mockCreate: jest.Mock = jest.fn(() => ({
   post: mockPost,
   get: mockGet,
   interceptors: {
-    response: { use: jest.fn() },
+    response: {
+      use: jest.fn((_ok: unknown, rej: (err: unknown) => Promise<unknown>) => {
+        responseRejected = rej;
+      }),
+    },
   },
 }));
 (axios as unknown as { create: jest.Mock }).create = mockCreate;
@@ -614,7 +620,48 @@ describe('XFuelClient', () => {
 
   // ── XFuelApiError ─────────────────────────────────────────────────────────
 
+  describe('chatCompletions', () => {
+    it('POSTs /v1/chat/completions', async () => {
+      mockPost.mockResolvedValueOnce({
+        data: {
+          id: 'chatcmpl-1',
+          model: 'theta/glm_5_2',
+          choices: [{ message: { role: 'assistant', content: 'Hello' } }],
+          xfuel: { task_id: 'openai-1', verify_url: 'https://api-testnet.xfuel.app/receipt/openai-1' },
+        },
+      });
+      const client = makeClient();
+      const result = await client.chatCompletions({
+        model: 'xfuel/auto',
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+      expect(mockPost).toHaveBeenCalledWith('/v1/chat/completions', {
+        model: 'xfuel/auto',
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+      expect(result.xfuel?.task_id).toBe('openai-1');
+    });
+  });
+
   describe('XFuelApiError', () => {
+    it('attaches the 402 challenge body so submitTask can complete the handshake', async () => {
+      const client = makeClient();
+      expect(responseRejected).toBeDefined();
+      const challenge = {
+        x402Version: 1,
+        error: 'payment_required',
+        accepts: [{ scheme: 'exact', network: 'base', asset: 'USDC', maxAmountRequired: '10000' }],
+      };
+      const err = await (responseRejected as (e: unknown) => Promise<unknown>)({
+        message: 'Request failed with status code 402',
+        config: {},
+        response: { status: 402, data: challenge },
+      }).catch((e: unknown) => e) as XFuelApiError;
+      expect(err).toBeInstanceOf(XFuelApiError);
+      expect(err.code).toBe('payment_required');
+      expect(err.challenge?.accepts?.[0].maxAmountRequired).toBe('10000');
+    });
+
     it('has correct name and properties', () => {
       const err = new XFuelApiError('rate limited', 429, 'rate_limit', ['try again']);
       expect(err.name).toBe('XFuelApiError');
@@ -627,6 +674,12 @@ describe('XFuelClient', () => {
     it('is instanceof Error', () => {
       const err = new XFuelApiError('test', 500, 'internal_error');
       expect(err).toBeInstanceOf(Error);
+    });
+  });
+
+  describe('verifyReceiptSignature', () => {
+    it('is exported from the main package (no ethers import)', () => {
+      expect(verifyReceiptSignature({ task_id: 'x' }, 'secret').checked).toBe(false);
     });
   });
 });
