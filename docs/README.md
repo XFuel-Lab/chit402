@@ -12,7 +12,7 @@ https://xfuel.app Â· https://api-testnet.xfuel.app
 |----------|------|
 | A design partner / builder | [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) |
 | Checking the public host | [HOSTED_TESTNET_ENDPOINT.md](./HOSTED_TESTNET_ENDPOINT.md) · [RUNTIME_STATE.md](./RUNTIME_STATE.md) |
-| The founder | [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md) · [STRATEGY.md](./STRATEGY.md) · [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md) |
+| The founder | [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md) · [STRATEGY.md](./STRATEGY.md) · [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md) · [FIRST_HOUR_PLAN.md](./FIRST_HOUR_PLAN.md) |
 
 Everything else is reference. Do not send partners this index.
 
