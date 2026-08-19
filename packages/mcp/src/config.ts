@@ -10,7 +10,16 @@ export const SERVER_NAME = 'xfuel-mcp-server';
 // Keep in lockstep with package.json / server.json (registry listing) so the
 // version reported over MCP, on /health, and in the static server card matches
 // the published npm package.
-export const SERVER_VERSION = '0.1.1';
+export const SERVER_VERSION = '0.3.0';
+
+/** Handshake text so a first-hour client does not need GitHub. */
+export const SERVER_INSTRUCTIONS = `XFuel first-hour: call list_models, then chat_completions to generate text (POST /v1/chat/completions). Default model xfuel/auto. The demo key xfuel-demo is shared and rate-limited (15/min, 150/day). That path is unmetered.
+
+submit_inference is the paid M2M door (POST /task-request). It requires model + sender + amount, forwards messages/input when provided, and returns HTTP 402 without a payer. It is not unmetered.
+
+pay_with_usdc spends real USDC on Base mainnet. It is only listed if the operator set XFUEL_PAYER_PRIVATE_KEY.
+
+Amounts are USDC 6 decimals (10000 = $0.01), not wei. The hostname api-testnet.xfuel.app still says testnet; paying it moves mainnet USDC.`;
 
 export type TransportKind = 'stdio' | 'http';
 

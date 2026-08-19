@@ -173,5 +173,13 @@ describe('describeSplit — transparency surface', () => {
     assert.equal(d.model, 'usdc-base-splits-v2');
     assert.equal(d.totalBps, TOTAL_BPS);
     assert.deepEqual(d.buckets.map((b) => b.pct), [40, 35, 25]);
+    assert.equal(d.post_tge, undefined);
+  });
+
+  it('hides null-address buckets from the live list (no token pitch on /health)', () => {
+    const d = describeSplit(resolveSplit({}));
+    assert.deepEqual(d.buckets, []);
+    assert.equal(d.post_tge.live, false);
+    assert.ok(d.post_tge.buckets.some((b) => b.key === 'buyback'));
   });
 });

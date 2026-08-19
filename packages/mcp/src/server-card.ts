@@ -14,18 +14,20 @@ import { SERVER_VERSION, type McpConfig } from './config.js';
 
 /** The tool surface, kept in lockstep with registerTools() in tools.ts. */
 const TOOLS: Array<{ name: string; description: string }> = [
-  { name: 'submit_inference', description: 'Submit an AI inference task (default/TFUEL rail). Returns task_id + a public verify_url.' },
-  { name: 'pay_with_usdc', description: 'Submit + pay for a task in USDC via x402 (needs a payer key). Returns task_id, payment_ref, verify_url.' },
-  { name: 'get_task_status', description: 'Poll a task to a terminal status + proof outcome. Returns verify_url.' },
+  { name: 'chat_completions', description: 'Unmetered OpenAI-compatible chat (POST /v1/chat/completions). Required: messages.' },
+  { name: 'list_models', description: 'List routable inference models (hub, pricing, availability).' },
+  { name: 'submit_inference', description: 'Paid POST /task-request. 402 without a payer. Not the demo path.' },
+  { name: 'pay_with_usdc', description: 'Spends real USDC on Base. Only listed when a payer key is set.' },
+  { name: 'get_task_status', description: 'Poll a task (from chat_completions or submit_inference) to a terminal status.' },
   { name: 'get_proof', description: 'Fetch the SP1 ZK settlement proof + fee/revenue split for a settled task.' },
   { name: 'verify_proof', description: 'Verify proof integrity + payment binding; optional on-chain nullifier (replay) read.' },
-  { name: 'quote_task', description: 'Price a task per rail (USDC via x402 / TFUEL) before submitting.' },
+  { name: 'quote_task', description: 'Price a paid task per rail before submitting.' },
   { name: 'get_health', description: 'Server health, fee config, and demo limits.' },
-  { name: 'list_models', description: 'List routable inference models.' },
-  { name: 'verify_model_commitment', description: 'Check a model against its on-chain authenticity commitment (PoMA) — anti-downgrade for Verified Inference.' },
-  { name: 'get_verified_quote', description: 'Price a task + the assurance tiers available (signed/settlement/inference) and whether the model is PoMA-registered.' },
-  { name: 'get_validation_status', description: 'Read an ERC-8004 validation record by requestHash — who validated an agent task and whether it passed.' },
-  { name: 'get_provider_stake', description: 'Read a provider stake + slash history — shop on trust before paying a counterparty.' },
+  { name: 'get_my_stats', description: 'Usage for the configured API key (demo key is shared).' },
+  { name: 'verify_model_commitment', description: 'Check a model against its on-chain authenticity commitment (PoMA).' },
+  { name: 'get_verified_quote', description: 'Price a task + the assurance tiers available (signed/settlement).' },
+  { name: 'get_validation_status', description: 'Read an ERC-8004 validation record by requestHash.' },
+  { name: 'get_provider_stake', description: 'Read a provider stake + slash history.' },
 ];
 
 /**
@@ -34,13 +36,11 @@ const TOOLS: Array<{ name: string; description: string }> = [
  */
 export function buildServerCard(config: McpConfig, mcpEndpoint: string) {
   return {
-    // Match the official MCP Registry namespace so directories can de-dupe/claim.
     name: 'io.github.XFuel-Lab/xfuel-mcp',
     title: 'XFuel',
     description:
-      'Verifiable settlement + payments layer for AI compute. Submit AI inference, pay ' +
-      'per task (USDC via x402 or TFUEL), fetch/verify ZK settlement proofs — from any ' +
-      'MCP client. Every task yields a public, shareable verify_url receipt.',
+      'Generate text via chat_completions (unmetered /v1), or submit a paid USDC task. ' +
+      'Every call yields a public verify_url receipt. Hostname may say testnet; paying is Base mainnet USDC.',
     version: SERVER_VERSION,
     websiteUrl: 'https://github.com/XFuel-Lab/xfuel-protocol/tree/main/xfuel-mcp#readme',
     repository: {
@@ -55,7 +55,7 @@ export function buildServerCard(config: McpConfig, mcpEndpoint: string) {
       xfuel_api: config.apiUrl,
       registry: 'https://registry.modelcontextprotocol.io',
       npm: 'https://www.npmjs.com/package/xfuel-mcp',
-      tags: ['ai', 'inference', 'x402', 'usdc', 'zk-proof', 'payments', 'settlement', 'depin', 'theta'],
+      tags: ['ai', 'inference', 'x402', 'usdc', 'zk-proof', 'payments', 'settlement'],
     },
   };
 }

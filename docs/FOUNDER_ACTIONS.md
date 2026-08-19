@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-17 · Public Base mainnet x402 live · **Repo `main` @ `6173086`** · SDK `0.5.3` (receipt payload v3) · **SP1 prover kept live for onboarding (~$2/day)** · **Cost-plus is live ([ADR 0009](./adr/0009-cost-plus-pricing.md))** · **Rolling settlement accepted and on ([ADR 0008](./adr/0008-rolling-settlement.md)) — you pay for the last call; `/task-quote` is a forecast** · Next: outreach (4) — traffic is 0 tasks/24h, which is the real constraint
+Last updated: 2026-08-19 · Public Base mainnet x402 live · SDK `0.5.4` · **Waiting on you (outreach tomorrow):** publish `xfuel-mcp@0.3.0` (WebAuthn), redeploy gateway (`/llms.txt` + health hide null token buckets), deploy `apps/web` to xfuel.app. Until those three are live, first-hour bots still see the old lies. DNS rename (`api.xfuel.app`) can wait if the banner is up.
 
 ## How to use
 

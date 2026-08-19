@@ -1,8 +1,13 @@
 # xfuel-mcp
 
-MCP server for XFuel: list models, submit inference, pay USDC via x402, quote, fetch/verify settlement proofs.
+MCP server for XFuel.
+
+**First hour:** `list_models` then `chat_completions` — that is unmetered `POST /v1/chat/completions`.
+`submit_inference` is the **paid** `/task-request` door and returns 402 without a payer. It is not unmetered.
 
 Zero config talks to https://api-testnet.xfuel.app with the public demo key.
+
+The hostname says testnet. **Paying that host moves real USDC on Base mainnet.** Do not set `XFUEL_PAYER_PRIVATE_KEY` unless you mean to.
 
 npm: `xfuel-mcp` · Registry: `io.github.XFuel-Lab/xfuel-mcp`
 
@@ -32,17 +37,18 @@ Claude / Cursor stdio config:
 
 | Tool | Purpose |
 |------|---------|
-| `list_models` | Routable model ids — call this first; ids are hub-prefixed (`theta/glm_5_2`) and `xfuel/auto` picks the best live chat model |
-| `submit_inference` | Submit task (default unmetered path) |
-| `pay_with_usdc` | Pay with x402 (needs `XFUEL_PAYER_PRIVATE_KEY`) |
-| `get_task_status` | Status / fees |
+| `chat_completions` | Generate text (unmetered `/v1`). Required: `messages`. Default model `xfuel/auto`. |
+| `list_models` | Live catalog — hub, modality, pricing, availability |
+| `submit_inference` | Paid `/task-request`. 402 without a payer. Pass `messages` or `input`. Amount is USDC 6dp (`10000` = $0.01). |
+| `pay_with_usdc` | Listed **only** if `XFUEL_PAYER_PRIVATE_KEY` is set. Spends real USDC on Base. |
+| `get_task_status` | Status / fees — task ids also come from `chat_completions` |
 | `get_proof` / `verify_proof` | Settlement proof + binding checks |
 | `quote_task` / `get_health` | Pricing / health |
 | `verify_model_commitment` | PoMA check (needs RPC + registry) |
 | `get_verified_quote` | Price + available trust tiers |
 | `get_validation_status` | ERC-8004 validation record |
 | `get_provider_stake` | Stake / slash history |
-| `get_my_stats` | Buyer-scoped usage (your paid tasks + USDC fees only) |
+| `get_my_stats` | Usage for the configured key. Demo key is shared, not yours. |
 
 Proofs attest settlement metadata + output-hash commitment, not inference correctness — unless Tier-3 Verified Inference applies.
 
@@ -57,7 +63,7 @@ cd ../mcp
 npm publish --access public --auth-type=web
 ```
 
-See [../sdk/PUBLISHING.md](../sdk/PUBLISHING.md).
+See [../sdk/PUBLISHING.md](../sdk/PUBLISHING.md). Publish **xfuel-sdk@0.5.4** before this package.
 
 ## Docs
 

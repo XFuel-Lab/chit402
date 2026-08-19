@@ -152,10 +152,18 @@ export function splitFee(feeAmount, split) {
  * @param {ReturnType<typeof resolveSplit>} split
  */
 export function describeSplit(split) {
+  const live = [];
+  const postTge = [];
+  for (const b of split.buckets) {
+    const row = { key: b.key, label: b.label, bps: b.bps, pct: b.bps / 100, address: b.address };
+    if (b.address) live.push(row);
+    else postTge.push({ key: b.key, label: b.label, bps: b.bps, pct: b.bps / 100, live: false });
+  }
   return {
     model: 'usdc-base-splits-v2',
-    note: 'Token-light: fee lands at one Splits v2 address on Base; buckets fan out off the hot path. XF buyback-burn is a downstream treasury op (ADR 0001).',
+    note: 'Token-light: fee lands at one Splits v2 address on Base; buckets fan out off the hot path. XF buyback-burn is post-TGE treasury policy (ADR 0001), not a live split.',
     totalBps: split.totalBps,
-    buckets: split.buckets.map((b) => ({ key: b.key, label: b.label, bps: b.bps, pct: b.bps / 100, address: b.address })),
+    buckets: live,
+    ...(postTge.length ? { post_tge: { live: false, buckets: postTge } } : {}),
   };
 }

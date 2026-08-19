@@ -58,9 +58,9 @@ const builders: DocLink[] = [
   },
   {
     title: 'TypeScript SDK',
-    description: 'Submit, pay, prove, verify — npm xfuel-sdk.',
+    description: 'chatCompletions is the free path. npm xfuel-sdk.',
     href: `${GITHUB}/packages/sdk/README.md`,
-    meta: '0.2.0',
+    meta: '0.5.4',
     external: true,
   },
   {
@@ -160,8 +160,8 @@ export default function Docs() {
           <span className="docs-kicker">Documentation</span>
           <h1>Build on XFuel</h1>
           <p>
-            Verifiable settlement for AI compute — USDC on Base, tiered receipts, pluggable
-            providers. Sparse docs for agents; this hub is for humans.
+            First hour is OpenAI <code>/v1</code> — no wallet. Paid USDC on Base is a second door.
+            Apache-2.0. Hostname says testnet; paying it is mainnet.
           </p>
         </header>
 
@@ -178,7 +178,7 @@ export default function Docs() {
           <a href={`${GITHUB}/docs/bug-bounty.md`} target="_blank" rel="noreferrer">
             Disclosure
           </a>
-          <Link to="/circuits">Circuits</Link>
+          <Link to="/pricing">Pricing</Link>
           <Link to="/security">Security</Link>
         </nav>
 
@@ -188,30 +188,26 @@ export default function Docs() {
         <DocSection title="Auditors" items={auditors} />
 
         <div className="docs-panel">
-          <h2>Try the demo</h2>
+          <h2>Try the demo (no wallet)</h2>
           <p>
-            One command — pay (USDC / Base Sepolia), settle, attach an SP1 proof, get a shareable receipt.
-            Clone the repo, then from <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>packages/sdk</code>:
+            Unmetered <code>/v1</code> with the public demo key. Receipt comes back on the response.
+            This does not spend USDC.
           </p>
           <pre className="docs-code">
-            <code>{`npx tsx examples/flagship-demo.ts`}</code>
+            <code>{`curl -sS https://api-testnet.xfuel.app/v1/chat/completions \\
+  -H "X-API-Key: xfuel-demo" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`}</code>
           </pre>
-          <p style={{ marginTop: '0.75rem' }}>
-            Or in your own project:
-          </p>
+          <p style={{ marginTop: '0.75rem' }}>SDK (same door):</p>
           <pre className="docs-code">
             <code>{`npm install xfuel-sdk
-# see packages/sdk/README.md — submitInference + payment.rail: "usdc"`}</code>
+# client.chatCompletions({ model: 'xfuel/auto', messages: [...] })`}</code>
           </pre>
           <p style={{ marginTop: '0.75rem', fontSize: '0.9rem', opacity: 0.85 }}>
-            Optional raw HTTP: use <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>curl.exe</code> on
-            Windows PowerShell (plain <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>curl</code> is not
-            real curl there). Full recipes:{' '}
-            <a href={`${GITHUB}/docs/HOSTED_TESTNET_ENDPOINT.md`} target="_blank" rel="noreferrer">
-              Hosted testnet
-            </a>
-            . Demo key <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>xfuel-demo</code> (rate-limited).
-            Proofs on Base mainnet; payments currently Base Sepolia.
+            Paid path is <code>POST /task-request</code> (402 without x402). Do not use{' '}
+            <code>createMockPayer</code> against this host. Windows: <code>curl.exe</code>.
+            Demo key is rate-limited (15/min, 150/day).
           </p>
           <div className="docs-actions">
             <a

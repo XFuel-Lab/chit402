@@ -40,6 +40,8 @@ test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   assert.match(body, /# XFuel Protocol/);
   assert.match(body, /\/v1\/chat\/completions/);
   assert.match(body, /xfuel-sdk/);
+  assert.match(body, /npx xfuel-mcp/);
+  assert.match(body, /Base mainnet/);
 });
 
 test('GET /v1/models lists live hub catalog in OpenAI shape', async () => {

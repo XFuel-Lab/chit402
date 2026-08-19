@@ -326,7 +326,7 @@ export function renderStatsHtml(stats) {
 
     <footer>
       Aggregate, public-safe stats — no task ids, senders, or outputs.
-      Machine-readable: <a href="?format=json">JSON</a>. Route any model, prove every dollar.
+      Machine-readable: <a href="?format=json">JSON</a>. Signed receipt: model, hub, cost.
     </footer>
   </div>
 </body>
