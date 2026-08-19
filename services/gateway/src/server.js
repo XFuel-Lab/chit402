@@ -129,43 +129,45 @@ function tier2Gate() {
 
 const LLMS_TXT = `# XFuel Protocol
 
-> Crypto routing machine for AI compute: USDC budgets via x402 on Base, route
-> across DePIN and frontier providers (prepaid float COGS), return tiered proof
-> receipts. Agent-native OpenAI-compatible endpoint or M2M API. Money home = Base
-> (not TFUEL/AKT). See docs/STRATEGY.md.
+> Swap one baseURL. Every call comes back with a public receipt that names the
+> model, the hub, and the cost. /v1 is unmetered (demo key, rate-limited).
+> USDC on Base is a separate paid door. Hostname says testnet; paying this
+> host moves real USDC on Base mainnet.
 
-## Start here (OpenAI-compatible — zero integration)
+## Start here (OpenAI-compatible — no wallet)
 
-- POST /v1/chat/completions : OpenAI chat completions (streaming + non-streaming).
-- GET  /v1/models           : live hub catalog (theta/qwen3, theta/glm_5_2, image/audio…).
+- POST /v1/chat/completions : OpenAI chat completions. Demo key: xfuel-demo.
+- GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Not OpenAI/Groq/Together.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - Auth: "Authorization: Bearer <key>" or "X-API-Key: <key>".
-- Point any OpenAI client's baseURL at this host + /v1. Every response carries a
-  verifiable-compute receipt in x-xfuel-* headers and an "xfuel" body field.
-- The proof attests settlement metadata + an output-hash commitment (NOT
-  inference correctness). Follow xfuel.proof.links.proof to fetch the proof.
+- Point any OpenAI client's baseURL at this host + /v1. Receipt in x-xfuel-*
+  headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
+- proof_outcome may be pending on the chat body — poll GET /task-status.
 
-## M2M API (full protocol)
+## Paid door (USDC / x402 on Base mainnet)
 
-- POST /task-request      : submit an AI task (inference/compute/attestation).
-- POST /task-quote        : price a task (USDC via x402; provider float COGS status).
-- GET  /task-status       : task status + proof outcome.
-- GET  /prove-result      : ZK settlement proof + revenue split.
-- POST /a2a-message       : agent-to-agent message (optional escrow).
-- PUT/GET/DELETE /webhook : signed settlement webhooks.
-- GET  /health            : status, fee config, provider floats (ADR 0005), demo limits.
-- GET  /stats             : aggregate, public-safe network usage (JSON + dashboard).
+- POST /task-request      : paid task. 402 without X-PAYMENT. Real USDC.
+- POST /task-quote        : forecast only (not an invoice).
+- GET  /task-status       : status + proof outcome (also works for /v1 task ids).
+- GET  /prove-result      : SP1 settlement proof when requested / above COGS gate.
+- GET  /health            : status, demo limits, floats. Token buckets with null
+  addresses are post-TGE, not live.
+- GET  /stats             : public-safe usage.
+
+## MCP
+
+- npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
+- submit_inference = POST /task-request (paid, 402 without a payer).
+- pay_with_usdc is only listed if XFUEL_PAYER_PRIVATE_KEY is set.
 
 ## Discovery (x402 Bazaar)
 
-- GET  /.well-known/x402  : x402 discovery manifest — self-describes the USDC/x402
-  payable resource (POST /task-request, exact scheme on Base) in the bazaar shape,
-  so agents can discover + price XFuel with no XFuel-specific integration.
+- GET  /.well-known/x402  : paid resource is POST /task-request only. /v1 is not listed.
 
 ## SDK
 
-- npm install xfuel-sdk  (TypeScript/JS). "new XFuelClient()" is zero-config
-  against the hosted testnet demo. On-chain helpers: import "xfuel-sdk/onchain".
+- npm install xfuel-sdk — client.chatCompletions() is the free path.
+- createMockPayer() is for a local mock facilitator only. This host rejects it.
 
 ## Docs
 

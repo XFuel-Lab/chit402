@@ -299,6 +299,7 @@ select.input {
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
   .page { padding: 2rem 0; }
   .container { padding: 0 1rem; }
+  .header-burger { display: flex !important; }
 }
 
 @media (max-width: 480px) {

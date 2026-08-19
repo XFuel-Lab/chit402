@@ -1,15 +1,14 @@
 /**
  * XFuel MCP tools.
  *
- * A focused set that covers the agent settlement loop end-to-end:
- *   submit_inference → get_task_status → get_proof → verify_proof
- * plus quote_task (pricing) and get_health (discovery). Each tool wraps the
- * official `xfuel-sdk` so behaviour stays identical to the SDK/examples.
+ * First-hour path: chat_completions (unmetered POST /v1/chat/completions).
+ * Paid loop: submit_inference → get_task_status → get_proof → verify_proof.
+ * Each tool wraps official `xfuel-sdk` so behaviour matches the SDK.
  */
 import { z } from 'zod';
 import { Wallet, Contract, JsonRpcProvider, keccak256, toUtf8Bytes } from 'ethers';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { XFuelClient, ChainId } from 'xfuel-sdk';
+import { XFuelClient, ChainId, PUBLIC_DEMO_API_KEY } from 'xfuel-sdk';
 import type { TaskQuoteParams } from 'xfuel-sdk';
 import { XFuelOnChain, createEip3009Payer } from 'xfuel-sdk/onchain';
 import type { McpConfig } from './config.js';
@@ -59,6 +58,12 @@ export interface ToolContext {
 
 const CHAIN_IDS = ['base', 'theta', 'bittensor', 'akash', 'osmosis', 'persistence'] as const;
 const AMOUNT_RE = /^\d+$/;
+const USDC_AMOUNT =
+  'USDC smallest unit, 6 decimals (10000 = $0.01). Not wei. Minimum 10000.';
+const chatMessageSchema = z.object({
+  role: z.string().describe('system | user | assistant | tool'),
+  content: z.string().nullable().describe('Message text'),
+});
 
 /**
  * The shareable public receipt link for a task. Prefer the server-provided
@@ -75,40 +80,98 @@ function verifyUrlOf(res: { task_id?: string; verify_url?: string }, apiUrl: str
 export function registerTools(server: McpServer, ctx: ToolContext): void {
   const { client, config } = ctx;
 
+  // ── chat_completions (default / first-hour) ────────────────────────────────
+  server.registerTool(
+    'chat_completions',
+    {
+      title: 'Chat completions (unmetered /v1)',
+      description: `Generate text via XFuel's OpenAI-compatible POST /v1/chat/completions.
+This is the first-hour / demo path. With the demo key it is unmetered (rate-limited).
+It is NOT submit_inference and does NOT spend USDC.
+
+Args:
+  - messages (required): OpenAI chat messages, e.g. [{role:"user", content:"Say hello"}]
+  - model (optional): catalog id from list_models (default xfuel/auto)
+  - max_tokens, temperature (optional)
+
+Returns the completion plus xfuel.task_id, xfuel.payment.rail (usually unmetered),
+and xfuel.verify_url. proof_outcome may still be pending — poll get_task_status
+if you need the later SP1 proof. Do not wait in this tool.`,
+      inputSchema: {
+        messages: z
+          .array(chatMessageSchema)
+          .min(1)
+          .describe('OpenAI chat messages (required)'),
+        model: z.string().min(1).default('xfuel/auto').describe('Catalog id from list_models'),
+        max_tokens: z.number().int().positive().optional().describe('Output budget'),
+        temperature: z.number().optional().describe('Sampling temperature'),
+      },
+      annotations: {
+        title: 'Chat completions (unmetered /v1)',
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const res = await client.chatCompletions({
+          model: args.model,
+          messages: args.messages,
+          max_tokens: args.max_tokens,
+          temperature: args.temperature,
+        });
+        const xf = res.xfuel;
+        const text = res.choices?.[0]?.message?.content ?? '';
+        return ok(
+          res as unknown as Record<string, unknown>,
+          `chat_completions model=${res.model} rail=${xf?.payment?.rail ?? 'unmetered'}` +
+            (xf?.task_id ? ` task_id=${xf.task_id}` : '') +
+            `\n${text}` +
+            (xf?.verify_url ? `\nVerify/share: ${xf.verify_url}` : ''),
+        );
+      } catch (err) {
+        return fail(describeError(err));
+      }
+    },
+  );
+
   // ── submit_inference ───────────────────────────────────────────────────────
   server.registerTool(
     'submit_inference',
     {
-      title: 'Submit AI inference task',
-      description: `Submit an AI inference task to the XFuel Protocol. XFuel routes to a pluggable provider and settles with a verifiable receipt (signed by default; SP1 settlement proof on demand). Money + proofs live on Base (USDC via x402).
+      title: 'Submit paid AI inference task',
+      description: `Submit a PAID M2M inference task (POST /task-request). Default rail is USDC on Base.
+Without a payer this returns HTTP 402. This is NOT the unmetered demo path —
+use chat_completions to generate text with the demo key.
+
+Pass messages or input so a live provider is actually called. input_hash/memo alone
+do not send a prompt to the model.
 
 Args:
-  - model (string): live catalog id, e.g. "xfuel/auto" or "theta/glm_5_2". Call list_models first; retired "llama-*" names are rejected, not remapped.
-  - sender (string): the 0x address that owns/pays for the task
-  - amount (string): gross task value in the smallest unit (wei); minimum 10000
-  - chain_id ('base'|'theta'|'bittensor'|'akash'|'osmosis'|'persistence'): settlement / routing hint (default 'base')
-  - input_hash (string, optional): keccak256 of your input (recommended for inference)
-  - memo (string, optional): free-form note echoed on the task
-  - max_gpu_hours (string, optional): compute budget hint
-  - subnet_id (number, optional): Bittensor subnet id when chain_id='bittensor'
-  - callback_url (string, optional): webhook that receives a signed TaskSettled event
+  - model (string): live catalog id from list_models
+  - sender (string): 0x address that owns/pays for the task
+  - amount (string): USDC 6 decimals; 10000 = $0.01; minimum 10000
+  - messages / input (optional): the prompt. Required for live routing.
+  - max_tokens, temperature (optional)
 
-Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount, net_amount, verify_url, links }.
-'verify_url' is a public, no-auth receipt page you can open or share to prove settlement.
-Poll progress with get_task_status(task_id); fetch settlement with get_proof(task_id).
-
-Note: this submits on the server's default path. For USDC/x402 settlement (agent-side
-signer) use pay_with_usdc or the xfuel-sdk with a payer.`,
+Poll get_task_status(task_id). For agent-side USDC settlement use pay_with_usdc
+(only listed when XFUEL_PAYER_PRIVATE_KEY is set).`,
       inputSchema: {
         model: z.string().min(1).describe('Live catalog id from list_models, e.g. "xfuel/auto" or "theta/glm_5_2"'),
         sender: z.string().min(1).describe('0x address that owns/pays for the task'),
         amount: z
           .string()
-          .regex(AMOUNT_RE, 'amount must be an integer string (wei/smallest unit)')
-          .describe('Gross task value in smallest unit (wei); min 10000'),
+          .regex(AMOUNT_RE, 'amount must be an integer string (USDC 6 decimals)')
+          .describe(USDC_AMOUNT),
         chain_id: z.enum(CHAIN_IDS).default('base').describe('Settlement / routing hint (default base)'),
+        messages: z.array(chatMessageSchema).optional().describe('Chat messages for live routing'),
+        input: z.string().optional().describe('Raw prompt for live routing'),
+        max_tokens: z.number().int().positive().optional().describe('Output budget'),
+        temperature: z.number().optional().describe('Sampling temperature'),
         input_hash: z.string().optional().describe('keccak256 of your input'),
-        memo: z.string().optional().describe('Free-form note'),
+        memo: z.string().optional().describe('Free-form note — NOT the prompt'),
         max_gpu_hours: z.string().optional().describe('Compute budget hint'),
         subnet_id: z.number().int().optional().describe('Bittensor subnet id'),
         callback_url: z.string().url().optional().describe('Webhook for signed TaskSettled event'),
@@ -125,6 +188,10 @@ signer) use pay_with_usdc or the xfuel-sdk with a payer.`,
       try {
         const res = await client.submitInference(args.model, args.sender, args.amount, {
           chain_id: args.chain_id as ChainId,
+          messages: args.messages,
+          input: args.input,
+          max_tokens: args.max_tokens,
+          temperature: args.temperature,
           input_hash: args.input_hash,
           memo: args.memo,
           max_gpu_hours: args.max_gpu_hours,
@@ -143,54 +210,40 @@ signer) use pay_with_usdc or the xfuel-sdk with a payer.`,
   );
 
   // ── pay_with_usdc ──────────────────────────────────────────────────────────
-  // Opt-in: only functional when the server was started with
-  // XFUEL_PAYER_PRIVATE_KEY. Submits an inference task paying with USDC over
-  // x402 (EIP-3009 on Base), signed by the server's payer wallet. Every other
-  // tool stays zero-config; this one needs a key because it moves funds.
+  // Hidden unless XFUEL_PAYER_PRIVATE_KEY is set. First-hour clients never see
+  // a tool that can spend real USDC on Base.
+  if (config.payerPrivateKey) {
   server.registerTool(
     'pay_with_usdc',
     {
-      title: 'Submit + pay for inference with USDC (x402)',
-      description: `Submit an AI inference task and settle it with USDC via x402 (the default XFuel rail).
-The server signs an EIP-3009 USDC authorization on Base with its configured payer wallet, so
-the agent doesn't manage the handshake. If the server has x402 disabled it transparently
-falls back to the TFUEL rail (no payment is made).
+      title: 'SPENDS REAL USDC ON BASE — submit + pay',
+      description: `SPENDS REAL USDC ON BASE via x402. Only listed because XFUEL_PAYER_PRIVATE_KEY is set.
+Do not call this to try a demo prompt — use chat_completions.
 
-Requires the server to be started with XFUEL_PAYER_PRIVATE_KEY. If it is not set, this tool
-returns a clear "not configured" message — use submit_inference, or the xfuel-sdk with your
-own payer. The USDC network is chosen by the server's x402 challenge (e.g. Base or Base Sepolia).
+The server signs an EIP-3009 authorization. Pass messages or input so a model actually runs.
 
-Args:
-  - model (string): live catalog id, e.g. "xfuel/auto" or "theta/glm_5_2". Call list_models first; retired "llama-*" names are rejected, not remapped.
-  - amount (string): gross task value in the smallest unit (wei); minimum 10000
-  - sender (string, optional): the 0x address that owns the task (default: the payer wallet address)
-  - chain_id ('base'|'theta'|'bittensor'|'akash'|'osmosis'|'persistence'): settlement / routing hint (default 'base')
-  - input_hash (string, optional): keccak256 of your input (recommended for inference)
-  - memo (string, optional): free-form note echoed on the task
-  - max_gpu_hours (string, optional): compute budget hint
-  - subnet_id (number, optional): Bittensor subnet id when chain_id='bittensor'
-  - callback_url (string, optional): webhook that receives a signed TaskSettled event
-
-Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount, net_amount, links }.
-'payment_rail' is 'usdc' when the x402 handshake ran, or a fallback rail if the server falls back.`,
+Amount is USDC 6 decimals (10000 = $0.01), not wei.`,
       inputSchema: {
-        model: z.string().min(1).describe('Live catalog id from list_models, e.g. "xfuel/auto" or "theta/glm_5_2"'),
+        model: z.string().min(1).describe('Live catalog id from list_models'),
         amount: z
           .string()
-          .regex(AMOUNT_RE, 'amount must be an integer string (wei/smallest unit)')
-          .describe('Gross task value in smallest unit (wei); min 10000'),
+          .regex(AMOUNT_RE, 'amount must be an integer string (USDC 6 decimals)')
+          .describe(USDC_AMOUNT),
         sender: z.string().optional().describe('0x address that owns the task (default: payer wallet)'),
         chain_id: z.enum(CHAIN_IDS).default('base').describe('Settlement / routing hint (default base)'),
+        messages: z.array(chatMessageSchema).optional().describe('Chat messages for live routing'),
+        input: z.string().optional().describe('Raw prompt for live routing'),
+        max_tokens: z.number().int().positive().optional().describe('Output budget'),
         input_hash: z.string().optional().describe('keccak256 of your input'),
-        memo: z.string().optional().describe('Free-form note'),
+        memo: z.string().optional().describe('Free-form note — NOT the prompt'),
         max_gpu_hours: z.string().optional().describe('Compute budget hint'),
         subnet_id: z.number().int().optional().describe('Bittensor subnet id'),
         callback_url: z.string().url().optional().describe('Webhook for signed TaskSettled event'),
       },
       annotations: {
-        title: 'Submit + pay for inference with USDC (x402)',
+        title: 'SPENDS REAL USDC ON BASE',
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: false,
         openWorldHint: true,
       },
@@ -215,6 +268,9 @@ Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount
         const payer = createEip3009Payer(signer, { from: wallet.address });
         const res = await client.submitInference(args.model, args.sender ?? wallet.address, args.amount, {
           chain_id: args.chain_id as ChainId,
+          messages: args.messages,
+          input: args.input,
+          max_tokens: args.max_tokens,
           input_hash: args.input_hash,
           memo: args.memo,
           max_gpu_hours: args.max_gpu_hours,
@@ -235,6 +291,7 @@ Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount
       }
     },
   );
+  }
 
   // ── get_task_status ──────────────────────────────────────────────────────
   server.registerTool(
@@ -244,7 +301,7 @@ Returns JSON: { task_id, status, payment_rail, fee_bps, gross_amount, fee_amount
       description: `Get the current status of an XFuel task, including proof outcome and fee breakdown.
 
 Args:
-  - task_id (string): the id returned by submit_inference
+  - task_id (string): from chat_completions (xfuel.task_id) or submit_inference
 
 Returns JSON: { task_id, status, proof_outcome, verify_url, message_type, chain_id, gross_amount,
 fee_amount, net_amount, fee_bps, payment_rail, payment_ref, result, sp1_proof, created_at, updated_at }.
@@ -252,7 +309,7 @@ fee_amount, net_amount, fee_bps, payment_rail, payment_ref, result, sp1_proof, c
 'status' reaches a terminal value ('completed' | 'fee_collected' | 'failed'); 'proof_outcome'
 is one of 'pending' | 'valid' | 'regenerable' | 'invalid'.`,
       inputSchema: {
-        task_id: z.string().min(1).describe('Task id from submit_inference'),
+        task_id: z.string().min(1).describe('Task id from chat_completions or submit_inference'),
       },
       annotations: {
         title: 'Get task status',
@@ -284,7 +341,7 @@ is one of 'pending' | 'valid' | 'regenerable' | 'invalid'.`,
       description: `Fetch the SP1 ZK settlement proof for a settled task.
 
 Args:
-  - task_id (string): the id returned by submit_inference
+  - task_id (string): from chat_completions (xfuel.task_id) or submit_inference
 
 Returns JSON: { task_id, status, proof_outcome, verify_url, payment_binding, sp1_proof: { proof,
 publicInputs, nullifier, provingTimeMs }, fee }.
@@ -294,7 +351,7 @@ The proof attests settlement metadata + a commitment to the output hash (NOT inf
 correctness). To validate it, use verify_proof(task_id). Fails if the task has not
 settled yet — poll get_task_status until proof_outcome is 'valid'.`,
       inputSchema: {
-        task_id: z.string().min(1).describe('Task id from submit_inference'),
+        task_id: z.string().min(1).describe('Task id from chat_completions or submit_inference'),
       },
       annotations: {
         title: 'Get ZK settlement proof',
@@ -330,14 +387,14 @@ settled yet — poll get_task_status until proof_outcome is 'valid'.`,
      server was started with XFUEL_RPC_URL + ZK_VERIFIER_ADDRESS.
 
 Args:
-  - task_id (string): the id returned by submit_inference
+  - task_id (string): from chat_completions (xfuel.task_id) or submit_inference
   - check_nullifier (boolean, optional): also read the on-chain nullifier state (default false)
 
 Returns JSON: { ok, checks: { hasProof, proofOutcomeValid, paymentBinding, nullifier }, reasons }.
 'ok' is true when the proof is present + valid and any present payment binding is consistent.
 The nullifier read is informational and does not gate 'ok'.`,
       inputSchema: {
-        task_id: z.string().min(1).describe('Task id from submit_inference'),
+        task_id: z.string().min(1).describe('Task id from chat_completions or submit_inference'),
         check_nullifier: z
           .boolean()
           .default(false)
@@ -384,22 +441,24 @@ The nullifier read is informational and does not gate 'ok'.`,
     'quote_task',
     {
       title: 'Quote / price a task',
-      description: `Preview per-rail pricing for a task WITHOUT creating it (no side effects). Use this
-before submit_inference to show the user cost across payment rails.
+      description: `Preview per-rail pricing WITHOUT creating a task. Use before submit_inference.
+Unknown model ids still return the $0.01 USDC floor — the human summary warns when
+priced_model is null (inference will fail).
 
 Args:
-  - model_id (string, optional): model id to price (some models have overrides)
-  - amount (string, optional): TFUEL task value in wei (echoed back in the tfuel rail)
+  - model (preferred) or model_id: catalog id to price
+  - amount (optional): USDC 6 decimals for the USDC rail
+  - messages / max_tokens / tools: forecast the request you will submit
 
-Returns JSON: { recommended, default_rail, rails: { usdc: { enabled, asset, network,
-decimals, amount, pay_to }, tfuel: { amount } } }.`,
+Unmetered chat_completions does not need this quote.`,
       inputSchema: {
-        model_id: z.string().optional().describe('Model id to price'),
+        model: z.string().optional().describe('Preferred: catalog id to price'),
+        model_id: z.string().optional().describe('Deprecated alias for model'),
         amount: z
           .string()
-          .regex(AMOUNT_RE, 'amount must be an integer string (wei)')
+          .regex(AMOUNT_RE, 'amount must be an integer string (USDC 6 decimals)')
           .optional()
-          .describe('TFUEL task value in wei'),
+          .describe('USDC 6 decimals (10000 = $0.01). Legacy TFUEL quotes still echo this field.'),
         messages: z.array(z.unknown()).optional().describe('Chat messages to forecast (same as the request you will submit)'),
         max_tokens: z.number().int().positive().optional().describe('Output budget to forecast'),
         tools: z.array(z.unknown()).optional().describe('Tool definitions (counted as prompt tokens)'),
@@ -415,17 +474,23 @@ decimals, amount, pay_to }, tfuel: { amount } } }.`,
     },
     async (args) => {
       try {
+        const modelId = args.model ?? args.model_id;
         const res = await client.quoteTask({
-          model_id: args.model_id,
+          model_id: modelId,
           amount: args.amount,
           messages: args.messages as TaskQuoteParams['messages'],
           max_tokens: args.max_tokens,
           tools: args.tools as TaskQuoteParams['tools'],
           proof_tier: args.proof_tier,
         });
+        const priced = (res as { priced_model?: string | null }).priced_model;
+        const unknown =
+          modelId && (priced == null || priced === '')
+            ? ` priced_model=null — "${modelId}" is not in the catalog; the $0.01 floor is not a real quote.`
+            : '';
         return ok(
           res as unknown as Record<string, unknown>,
-          `Quote: recommended=${res.recommended}, default_rail=${res.default_rail}.`,
+          `Quote: recommended=${res.recommended}, default_rail=${res.default_rail}.${unknown}`,
         );
       } catch (err) {
         return fail(describeError(err));
@@ -471,12 +536,9 @@ Returns JSON: the /health payload (status, server, version, fee_config, chains, 
     'get_my_stats',
     {
       title: 'Get buyer usage stats (Private Spend)',
-      description: `Fetch authenticated buyer-only usage for the configured API key (GET /stats/me).
-Includes north-star fields: paid_tasks_7d, usdc_fees_7d. Requires XFUEL_API_KEY.
-
-Args: none.
-
-Returns JSON: scope=buyer, tasks, payments, north_star, private_spend.`,
+      description: `Fetch usage for the configured API key (GET /stats/me).
+The public demo key xfuel-demo is SHARED — numbers are not this client.
+Bring your own XFUEL_API_KEY for buyer-scoped stats.`,
       inputSchema: {},
       annotations: {
         title: 'Get buyer usage stats',
@@ -490,9 +552,13 @@ Returns JSON: scope=buyer, tasks, payments, north_star, private_spend.`,
       try {
         const res = await client.getMyStats();
         const ns = (res as { north_star?: { paid_tasks_7d?: number; usdc_fees_7d?: string } }).north_star;
+        const shared =
+          !config.apiKey || config.apiKey === PUBLIC_DEMO_API_KEY
+            ? 'SHARED demo key (xfuel-demo) — not this client. '
+            : '';
         return ok(
           res,
-          `Buyer stats: paid_tasks_7d=${ns?.paid_tasks_7d ?? '?'} usdc_fees_7d=${ns?.usdc_fees_7d ?? '?'}.`,
+          `${shared}Buyer stats: paid_tasks_7d=${ns?.paid_tasks_7d ?? '?'} usdc_fees_7d=${ns?.usdc_fees_7d ?? '?'}.`,
         );
       } catch (err) {
         return fail(describeError(err));
@@ -505,13 +571,13 @@ Returns JSON: scope=buyer, tasks, payments, north_star, private_spend.`,
     'list_models',
     {
       title: 'List routable models',
-      description: `List the models XFuel can route inference to (OpenAI-compatible GET /v1/models).
-Call this first to discover valid model ids, then pass one as 'model' to submit_inference
-or pay_with_usdc. No side effects.
+      description: `List models XFuel can route (GET /v1/models). Call first, then pass an id to
+chat_completions (unmetered) or submit_inference (paid).
 
-Args: none.
+Rows include hub, modality, pricing, availability. Unmetered vs paid is the TOOL
+(chat_completions vs submit_inference), not a per-id flag. No side effects.
 
-Returns JSON: { object: 'list', data: [{ id, object: 'model', created, owned_by }] }.`,
+Returns OpenAI {object,data} plus XFuel extras on each row.`,
       inputSchema: {},
       annotations: {
         title: 'List routable models',

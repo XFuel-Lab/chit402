@@ -1,21 +1,11 @@
 import { useState } from 'react';
-import { Link, Outlet, NavLink } from 'react-router-dom';
-import WalletButton from './WalletButton';
+import { Outlet, NavLink } from 'react-router-dom';
 
 const navLinks = [
   { to: '/', label: 'Home' },
-  { to: '/bridge', label: 'Bridge' },
-  { to: '/dashboard', label: 'Dashboard' },
-  { to: '/governance', label: 'Governance' },
-  { to: '/circuits', label: 'Circuits' },
-  { to: '/theta-ai', label: 'GPU hub' },
-  { to: '/monitoring', label: 'Monitoring' },
-  { to: '/staking', label: 'Staking' },
-  { to: '/treasury', label: 'Treasury' },
   { to: '/docs', label: 'Docs' },
+  { to: '/pricing', label: 'Pricing' },
   { to: '/security', label: 'Security' },
-  { to: '/community', label: 'Community' },
-  { to: '/grants', label: 'Grants' },
 ];
 
 export default function Layout() {
@@ -51,32 +41,32 @@ export default function Layout() {
             ))}
           </nav>
 
-          <div style={styles.headerRight}>
-            <WalletButton />
-            <button
-              style={styles.hamburger}
-              onClick={() => setMenuOpen(!menuOpen)}
-              aria-label="Toggle menu"
-            >
-              <span style={{ ...styles.hamburgerLine, ...(menuOpen ? { transform: 'rotate(45deg) translate(4px, 4px)' } : {}) }} />
-              <span style={{ ...styles.hamburgerLine, ...(menuOpen ? { opacity: 0 } : {}) }} />
-              <span style={{ ...styles.hamburgerLine, ...(menuOpen ? { transform: 'rotate(-45deg) translate(4px, -4px)' } : {}) }} />
-            </button>
-          </div>
+          <button
+            className="header-burger"
+            style={styles.hamburger}
+            onClick={() => setMenuOpen(!menuOpen)}
+            aria-label="Toggle menu"
+          >
+            <span style={{ ...styles.hamburgerLine, ...(menuOpen ? { transform: 'rotate(45deg) translate(4px, 4px)' } : {}) }} />
+            <span style={{ ...styles.hamburgerLine, ...(menuOpen ? { opacity: 0 } : {}) }} />
+            <span style={{ ...styles.hamburgerLine, ...(menuOpen ? { transform: 'rotate(-45deg) translate(4px, -4px)' } : {}) }} />
+          </button>
         </div>
       </header>
 
       <div
         style={{
           textAlign: 'center',
-          fontSize: '0.78rem',
-          color: '#a78bfa',
-          padding: '0.45rem 1rem',
-          background: 'rgba(139,92,246,0.08)',
-          borderBottom: '1px solid rgba(139,92,246,0.15)',
+          fontSize: '0.8rem',
+          color: '#fde68a',
+          padding: '0.5rem 1rem',
+          background: 'rgba(245,158,11,0.1)',
+          borderBottom: '1px solid rgba(245,158,11,0.25)',
         }}
       >
-        <strong style={{ color: '#a5f3fc' }}>Beta protocol</strong> — integration and metrics pages may use testnet or staging backends. Funding rounds are not currently open.
+        Public API hostname says <strong>testnet</strong>. Paying it moves <strong>real USDC on Base mainnet</strong>.
+        {' '}The free path is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>/v1</code> with key{' '}
+        <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>xfuel-demo</code>. Do not send funds unless you mean to.
       </div>
 
       <main style={{ flex: 1 }}>
@@ -86,18 +76,15 @@ export default function Layout() {
       <footer style={styles.footer}>
         <div className="container" style={styles.footerInner}>
           <div style={styles.footerBrand}>
-            <strong style={{ color: '#f0f0f5' }}>XFuel Protocol</strong>
-            <span style={{ color: '#55556a', fontSize: '0.85rem' }}>AI + ZK settlement (beta)</span>
+            <strong style={{ color: '#f0f0f5' }}>XFuel</strong>
+            <span style={{ color: '#55556a', fontSize: '0.85rem' }}>Receipts for routed AI compute. Apache-2.0.</span>
           </div>
           <div style={styles.footerLinks}>
             <a href="https://github.com/XFuel-Lab/xfuel-protocol" target="_blank" rel="noreferrer">GitHub</a>
             <a href="https://twitter.com/XFuelLab" target="_blank" rel="noreferrer">Twitter</a>
-            <a href="https://discord.com/invite/He5j6NeQ6R" target="_blank" rel="noreferrer">Discord</a>
-            <Link to="/docs">Docs</Link>
-            <Link to="/security">Security</Link>
-          </div>
-          <div style={{ color: '#55556a', fontSize: '0.8rem' }}>
-            &copy; {new Date().getFullYear()} XFuel Protocol. All rights reserved.
+            <NavLink to="/docs">Docs</NavLink>
+            <NavLink to="/security">Security</NavLink>
+            <a href="mailto:security@xfuel.app">security@xfuel.app</a>
           </div>
         </div>
       </footer>
@@ -140,9 +127,6 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'all 0.2s',
     textDecoration: 'none',
   },
-  headerRight: {
-    display: 'flex', alignItems: 'center', gap: '0.75rem',
-  },
   hamburger: {
     display: 'none',
     flexDirection: 'column' as const, gap: '4px',
@@ -166,6 +150,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', flexDirection: 'column' as const, gap: '0.25rem',
   },
   footerLinks: {
-    display: 'flex', gap: '1.5rem', fontSize: '0.9rem',
+    display: 'flex', gap: '1.5rem', fontSize: '0.9rem', flexWrap: 'wrap' as const, justifyContent: 'center',
   },
 };

@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.XFuel-Lab/xfuel-mcp",
   "title": "XFuel",
-  "description": "Submit AI inference to XFuel, pay per task (USDC via x402 or TFUEL), fetch/verify ZK proofs.",
-  "version": "0.1.1",
+  "description": "Generate text via chat_completions (unmetered /v1), or pay per task in USDC on Base. Fetch/verify settlement proofs.",
+  "version": "0.3.0",
   "websiteUrl": "https://github.com/XFuel-Lab/xfuel-protocol/tree/main/xfuel-mcp#readme",
   "repository": {
     "url": "https://github.com/XFuel-Lab/xfuel-protocol",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "xfuel-mcp",
-      "version": "0.1.1",
+      "version": "0.3.0",
       "transport": {
         "type": "stdio"
       },

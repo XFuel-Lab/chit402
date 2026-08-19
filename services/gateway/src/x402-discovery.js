@@ -72,9 +72,10 @@ export function buildX402Manifest(baseUrl = '') {
     x402Version: 1,
     name: 'XFuel Protocol',
     description:
-      'Verifiable settlement + payments layer for AI compute. Submit an AI inference ' +
-      'task, pay per task in USDC via x402, and get a signed receipt + public verify_url ' +
-      '(optional SP1 on-chain settlement proof). Route any model; prove every dollar.',
+      'Paid inference on Base (USDC via x402). POST /task-request returns a signed ' +
+      'receipt and public verify_url. Optional SP1 settlement proof on demand. ' +
+      'The unmetered OpenAI path is POST /v1/chat/completions (not this resource). ' +
+      'Hostname may say testnet; this rail is Base mainnet USDC.',
     // Whether this node is currently accepting the USDC/x402 rail. When false, the
     // resource is still described (so tooling can plan) but requests settle via TFUEL.
     x402_enabled: isX402Enabled(),

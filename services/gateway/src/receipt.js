@@ -760,7 +760,7 @@ export function renderReceiptHtml(receipt) {
       <a href="${esc(receipt.links.proof)}">proof</a> ·
       <a href="${esc(receipt.links.status)}">status</a><br />
       ${receipt.signature?.value ? `Signed ${esc(receipt.signature.alg)} · payload v${esc(receipt.signature.payload_version)} · ` : ''}
-      Verifiable settlement for AI compute — route any model, prove every dollar.
+      Signed receipt for routed AI compute — model, hub, and cost. HMAC by default; SP1 on demand.
     </footer>
   </div>
 </body>

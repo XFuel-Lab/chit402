@@ -7,14 +7,17 @@
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { XFuelClient } from 'xfuel-sdk';
-import { SERVER_NAME, SERVER_VERSION, type McpConfig } from './config.js';
+import { SERVER_NAME, SERVER_VERSION, SERVER_INSTRUCTIONS, type McpConfig } from './config.js';
 import { registerTools } from './tools.js';
 
 export function buildServer(config: McpConfig): McpServer {
-  const server = new McpServer({
-    name: SERVER_NAME,
-    version: SERVER_VERSION,
-  });
+  const server = new McpServer(
+    {
+      name: SERVER_NAME,
+      version: SERVER_VERSION,
+    },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
 
   const client = new XFuelClient({
     baseUrl: config.apiUrl,

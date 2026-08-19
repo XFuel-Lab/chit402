@@ -1,13 +1,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { XFuelClient } from 'xfuel-sdk';
 import type { McpConfig } from '../config.js';
+import { SERVER_VERSION } from '../config.js';
 import { registerTools } from '../tools.js';
 
-/**
- * Minimal fake McpServer that captures each tool's handler so we can invoke it
- * directly. We only exercise deterministic, no-network branches here.
- */
+const CORE_TOOLS = [
+  'chat_completions',
+  'submit_inference',
+  'get_task_status',
+  'get_proof',
+  'verify_proof',
+  'quote_task',
+  'get_health',
+  'list_models',
+  'verify_model_commitment',
+  'get_verified_quote',
+  'get_validation_status',
+  'get_provider_stake',
+  'get_my_stats',
+] as const;
+
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
   isError?: boolean;
   content: Array<{ type: string; text: string }>;
@@ -34,26 +50,54 @@ function captureTools(
   return handlers;
 }
 
-test('all thirteen tools are registered', () => {
+test('SERVER_VERSION matches package.json', () => {
+  const pkgPath = join(dirname(fileURLToPath(import.meta.url)), '../../package.json');
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { version: string };
+  assert.equal(SERVER_VERSION, pkg.version);
+});
+
+test('thirteen tools without a payer key; pay_with_usdc is hidden', () => {
   const handlers = captureTools({});
-  for (const name of [
-    'submit_inference',
-    'pay_with_usdc',
-    'get_task_status',
-    'get_proof',
-    'verify_proof',
-    'quote_task',
-    'get_health',
-    'list_models',
-    'verify_model_commitment',
-    'get_verified_quote',
-    'get_validation_status',
-    'get_provider_stake',
-    'get_my_stats',
-  ]) {
+  for (const name of CORE_TOOLS) {
     assert.ok(handlers.has(name), `missing tool: ${name}`);
   }
+  assert.equal(handlers.has('pay_with_usdc'), false);
   assert.equal(handlers.size, 13);
+});
+
+test('fourteen tools when a payer key is configured', () => {
+  const handlers = captureTools({
+    payerPrivateKey: '0x' + '11'.repeat(32),
+  });
+  assert.ok(handlers.has('pay_with_usdc'));
+  assert.equal(handlers.size, 14);
+});
+
+test('chat_completions forwards messages and surfaces the receipt', async () => {
+  const handlers = captureTools(
+    {},
+    {
+      chatCompletions: async () =>
+        ({
+          id: 'chatcmpl-1',
+          model: 'akash/meta-llama/Llama-3.3-70B-Instruct',
+          choices: [{ message: { role: 'assistant', content: 'Hello there friend today.' } }],
+          xfuel: {
+            task_id: 'openai-abc',
+            verify_url: 'https://api-testnet.xfuel.app/receipt/openai-abc',
+            payment: { rail: 'unmetered' },
+          },
+        }) as never,
+    },
+  );
+  const res = await handlers.get('chat_completions')!({
+    model: 'xfuel/auto',
+    messages: [{ role: 'user', content: 'Say hello in 5 words.' }],
+  });
+  assert.equal(res.isError, undefined);
+  assert.match(res.content[0].text, /Hello there friend today/);
+  assert.match(res.content[0].text, /rail=unmetered/);
+  assert.match(res.content[0].text, /task_id=openai-abc/);
 });
 
 test('get_validation_status without RPC + registry returns a clear "not configured" error', async () => {
@@ -87,19 +131,35 @@ test('verify_model_commitment without RPC + registry returns a clear "not config
   assert.match(res.content[0].text, /MODEL_REGISTRY_ADDRESS/);
 });
 
-test('pay_with_usdc without a payer key returns a clear "not configured" error', async () => {
-  const handlers = captureTools({ payerPrivateKey: undefined });
-  const res = await handlers.get('pay_with_usdc')!({ model: 'llama-3-70b', amount: '10000', chain_id: 'theta' });
-  assert.equal(res.isError, true);
-  assert.match(res.content[0].text, /not configured/);
-  assert.match(res.content[0].text, /XFUEL_PAYER_PRIVATE_KEY/);
-});
-
 test('pay_with_usdc with an invalid payer key is rejected before any network call', async () => {
   const handlers = captureTools({ payerPrivateKey: 'not-a-valid-key' });
   const res = await handlers.get('pay_with_usdc')!({ model: 'llama-3-70b', amount: '10000', chain_id: 'theta' });
   assert.equal(res.isError, true);
   assert.match(res.content[0].text, /not a valid private key/);
+});
+
+test('quote_task warns when priced_model is null', async () => {
+  const handlers = captureTools(
+    {},
+    {
+      quoteTask: async () =>
+        ({ recommended: 'usdc', default_rail: 'usdc', priced_model: null, rails: {} }) as never,
+    },
+  );
+  const res = await handlers.get('quote_task')!({ model: 'definitely/not-a-real-model-xyz' });
+  assert.equal(res.isError, undefined);
+  assert.match(res.content[0].text, /priced_model=null/);
+  assert.match(res.content[0].text, /not a real quote/);
+});
+
+test('get_my_stats warns that the demo key is shared', async () => {
+  const handlers = captureTools(
+    { apiKey: 'xfuel-demo' },
+    { getMyStats: async () => ({ north_star: { paid_tasks_7d: 21, usdc_fees_7d: '50' } }) as never },
+  );
+  const res = await handlers.get('get_my_stats')!({});
+  assert.equal(res.isError, undefined);
+  assert.match(res.content[0].text, /SHARED demo key/);
 });
 
 test('submit_inference surfaces the server-provided verify_url in the summary', async () => {
@@ -110,12 +170,17 @@ test('submit_inference surfaces the server-provided verify_url in the summary', 
         ({
           task_id: 'task-xyz',
           status: 'accepted',
-          payment_rail: 'tfuel',
+          payment_rail: 'usdc',
           verify_url: 'https://api-testnet.xfuel.app/receipt/task-xyz',
         }) as never,
     },
   );
-  const res = await handlers.get('submit_inference')!({ model: 'llama-3-70b', sender: '0xabc', amount: '10000', chain_id: 'theta' });
+  const res = await handlers.get('submit_inference')!({
+    model: 'llama-3-70b',
+    sender: '0xabc',
+    amount: '10000',
+    chain_id: 'theta',
+  });
   assert.equal(res.isError, undefined);
   assert.match(res.content[0].text, /Verify\/share: https:\/\/api-testnet\.xfuel\.app\/receipt\/task-xyz/);
 });
@@ -124,7 +189,6 @@ test('get_task_status falls back to a client-side verify_url when the server omi
   const handlers = captureTools(
     { apiUrl: 'https://api-testnet.xfuel.app/' },
     {
-      // No verify_url on the response → tool derives it from apiUrl + task_id.
       getTaskStatus: async () =>
         ({ task_id: 'task-777', status: 'fee_collected', proof_outcome: 'regenerable' }) as never,
     },
