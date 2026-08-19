@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { ethers } from 'ethers';
 import { computePaymentCommitment, computeInferenceBinding } from './payment-binding.js';
 import { resolveModelCommitment } from './model-commitment.js';
 import { selectTier } from './tier-policy.js';
@@ -140,10 +141,16 @@ export function verifiedInferenceOf(task, viPolicy, ctx = {}) {
 }
 
 /** Map task/proof state to a coarse ProofOutcome (mirrors /task-status). */
+/** True only when settlement proof bytes are present — a placeholder or skip is not "valid". */
+export function hasSettlementProof(task) {
+  const p = task?.sp1Proof;
+  return !!(p && p.proof && !p.error && !p.skipped);
+}
+
 export function proofOutcomeOf(task) {
-  if (task.sp1Proof && !task.sp1Proof.error) return 'valid';
-  if (task.sp1Proof?.error) return 'regenerable';
-  if (task.status === 'failed') return 'invalid';
+  if (task?.sp1Proof?.error) return 'regenerable';
+  if (hasSettlementProof(task)) return 'valid';
+  if (task?.status === 'failed') return 'invalid';
   return 'pending';
 }
 
@@ -225,13 +232,39 @@ function modelCommitmentOf(task) {
   };
 }
 
-/** SHA-256 of the returned output (server-computed convenience commitment), or null. */
+const HASH32 = /^0x[0-9a-fA-F]{64}$/;
+
+function committedHash(value) {
+  return typeof value === 'string' && HASH32.test(value) ? value : null;
+}
+
+/**
+ * One output commitment, same bytes the /v1 path and /task-status already store
+ * (`keccak256` of the acting output). Do not SHA-256 the whole `result` object
+ * when `result.outputHash` is present — that was two hashes for one task.
+ */
 function outputHashOf(task) {
-  // Prefer an explicitly stored commitment if the pipeline provides one.
-  const explicit = task.outputHash || task.meta?.outputHash || task.sp1Proof?.outputHash;
+  const explicit = committedHash(
+    task.outputHash
+    || task.meta?.outputHash
+    || task.sp1Proof?.outputHash
+    || task.result?.outputHash
+    || task.result?.content_hash,
+  );
   if (explicit) return { value: explicit, kind: 'committed' };
   if (task.result == null) return null;
-  const serialized = typeof task.result === 'string' ? task.result : JSON.stringify(task.result);
+
+  const result = task.result;
+  if (typeof result === 'string') {
+    return { value: ethers.keccak256(ethers.toUtf8Bytes(result)), kind: 'committed' };
+  }
+  if (result.tool_calls || result.content != null) {
+    const acting = result.tool_calls
+      ? JSON.stringify({ content: result.content || null, tool_calls: result.tool_calls })
+      : String(result.content ?? '');
+    return { value: ethers.keccak256(ethers.toUtf8Bytes(acting)), kind: 'committed' };
+  }
+  const serialized = JSON.stringify(result);
   const digest = '0x' + crypto.createHash('sha256').update(serialized).digest('hex');
   return { value: digest, kind: 'sha256_of_output' };
 }

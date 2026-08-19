@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 
 import {
   proveAllowedForKey,
+  settlementProofAllowed,
   proofAvailability,
   refreshProverProbe,
   resetProverProbe,
@@ -27,6 +28,28 @@ const prover = (ok) => ({ healthCheck: async () => ok });
 
 test('proving is on by default', () => {
   assert.equal(proveAllowedForKey('any-key'), true);
+});
+
+test('settlementProofAllowed: unmetered hello does not prove; opt-in and COGS gate do', () => {
+  delete process.env.VI_TIER2_MIN_COGS;
+  assert.equal(settlementProofAllowed({ apiKey: 'k', cogs: 86n }), false);
+  assert.equal(settlementProofAllowed({ apiKey: 'k', cogs: 86n, proofTier: 'settlement' }), true);
+  assert.equal(settlementProofAllowed({
+    apiKey: 'k',
+    cogs: 2_000_000n,
+    minCogs: '2000000',
+  }), true);
+  assert.equal(settlementProofAllowed({
+    apiKey: 'k',
+    cogs: 86n,
+    minCogs: '2000000',
+  }), false);
+});
+
+test('settlementProofAllowed still honors the key allow-list', () => {
+  process.env.PROVER_ALLOW_KEYS = 'partner-a';
+  assert.equal(settlementProofAllowed({ apiKey: 'xfuel-demo', proofTier: 'settlement' }), false);
+  assert.equal(settlementProofAllowed({ apiKey: 'partner-a', proofTier: 'settlement' }), true);
 });
 
 test('PROVER_ENABLED=false turns proving off for everyone', () => {

@@ -40,7 +40,7 @@ function usdcTask(over = {}) {
     feeBps: 50,
     result: 'ZK proofs let you verify a computation without redoing it.',
     meta: { chain: 'base', provider: 'theta-edgecloud' },
-    result: { provider: 'theta-edgecloud', outputHash: '0xabc' },
+    result: { provider: 'theta-edgecloud', outputHash: '0x' + 'ab'.repeat(32) },
     sp1Proof: {
       proof: '0xproofbytes',
       nullifier: '0x' + 'cd'.repeat(32),
@@ -87,9 +87,9 @@ test('buildReceipt: USDC task is proven, priced, and independently binding-verif
   assert.equal(r.binding.expected_commitment, r.binding.recomputed_commitment);
   assert.equal(r.binding.in_proof, false);
 
-  // Output hash is a commitment (not the raw text).
-  assert.equal(r.output.kind, 'sha256_of_output');
-  assert.match(r.output.hash, /^0x[0-9a-f]{64}$/);
+  // Output hash is the stored keccak commitment, not SHA-256 of the result object.
+  assert.equal(r.output.kind, 'committed');
+  assert.equal(r.output.hash, '0x' + 'ab'.repeat(32));
 
   // Absolute links when a baseUrl is provided.
   assert.equal(r.links.self, `https://api-testnet.xfuel.app/receipt/${TASK_ID}`);
@@ -291,4 +291,27 @@ test('signed cost-plus fields recompute to gross', async () => {
 
   const recomputed = quoteFromCogs(r.provider_cogs.actual, { usdcFloor: '0' });
   assert.equal(recomputed.amount, r.payment.gross_amount);
+});
+
+test('proofOutcomeOf: a skip or empty proof object is pending, not valid', async () => {
+  const { proofOutcomeOf } = await import('../src/receipt.js');
+  assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: null }), 'pending');
+  assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: { skipped: true } }), 'pending');
+  assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: {} }), 'pending');
+  assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: { proof: '0xab' } }), 'valid');
+  assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: { error: 'nope' } }), 'regenerable');
+});
+
+test('outputHashOf prefers result.outputHash over hashing the result envelope', async () => {
+  const { buildReceipt } = await import('../src/receipt.js');
+  const hash = '0x' + '11'.repeat(32);
+  const r = buildReceipt({
+    taskId: 'openai-hash-check',
+    status: 'completed',
+    intent: { paymentRail: 'unmetered', amount: '0' },
+    result: { provider: 'theta-edgecloud', outputHash: hash, content_hash: hash, usage: { prompt_tokens: 3 } },
+    sp1Proof: null,
+  });
+  assert.equal(r.output.hash, hash);
+  assert.equal(r.output.kind, 'committed');
 });

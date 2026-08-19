@@ -3,6 +3,20 @@
 All notable changes to the XFuel SDK are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.5.4 — First-hour path is `/v1`; ESM default import; honest 402
+
+### Added
+- **`chatCompletions`** — free OpenAI-compatible submit (`POST /v1/chat/completions`).
+- **`verifyReceiptSignature` / `canonicalReceiptPayload`** on the main entry (node:crypto). `xfuel-sdk/onchain` still re-exports them.
+
+### Fixed
+- Native ESM `import XFuelClient from 'xfuel-sdk'` is now the constructor (`index.mjs` / `index.cjs` wrappers). Named `{ XFuelClient }` still works.
+- `XFuelApiError` on a 402 keeps `challenge.accepts` so `submitTask` can complete the handshake.
+
+### Changed
+- README leads with `/v1` and named imports. `createMockPayer` is documented as local-only; the hosted host is Coinbase x402 on Base mainnet.
+- Types cover live `/health`, `/task-quote`, `getReceipt`, and `getMyStats`.
+
 ## 0.5.3 — Quote fields + receipt signed payload v3
 
 Do not publish until the live gateway is on the same commit. `verifyReceiptSignature`

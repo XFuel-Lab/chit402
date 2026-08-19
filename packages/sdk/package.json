@@ -1,14 +1,14 @@
 {
   "name": "xfuel-sdk",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "XFuel M2M SDK — USDC/x402 on Base, tiered receipts, SP1 proofs. Submit AI tasks, pay, prove, verify.",
-  "main": "dist/index.js",
+  "main": "./index.cjs",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.js"
+      "import": "./index.mjs",
+      "require": "./index.cjs"
     },
     "./onchain": {
       "types": "./dist/onchain.d.ts",
@@ -22,6 +22,8 @@
   },
   "files": [
     "dist",
+    "index.cjs",
+    "index.mjs",
     "README.md",
     "LICENSE"
   ],

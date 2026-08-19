@@ -19,6 +19,11 @@ export {
   createMockPayer,
   createSignerPayer,
 } from './x402.js';
+export {
+  canonicalReceiptPayload,
+  verifyReceiptSignature,
+  type ReceiptSignatureCheck,
+} from './receipt.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -244,19 +249,29 @@ export interface TaskQuoteParams {
 export interface TaskQuoteResponse {
   recommended: string;
   default_rail: 'usdc' | 'tfuel';
+  settlement_home?: string;
   rails: {
     usdc: {
-      rail: 'usdc';
-      enabled: boolean;
+      rail?: 'usdc';
+      enabled?: boolean;
       asset: string;
       network: X402Network;
-      decimals: number;
+      decimals?: number;
       amount: string;
       pay_to: string | null;
       note?: string;
+      pricing?: {
+        basis?: string;
+        floor_applied?: boolean;
+        prompt_tokens?: number;
+        provider_cogs?: string;
+        platform_fee?: string;
+        fee_bps?: number;
+      };
     };
     tfuel: {
-      rail: 'tfuel';
+      rail?: 'tfuel';
+      legacy?: boolean;
       amount: string | null;
       note?: string;
     };
@@ -322,7 +337,7 @@ export interface TaskError {
 export interface ProofResponse {
   task_id: string;
   status: string;
-  proof_outcome: 'valid' | 'regenerable';
+  proof_outcome: 'pending' | 'valid' | 'regenerable' | 'invalid';
   /** Canonical shareable proof link — the public `/receipt/:taskId` page (no auth). */
   verify_url?: string;
   /** Phase 2 (flag-gated): x402 payment commitment bound into the proof, or null. */
@@ -415,22 +430,85 @@ export interface RevenueSplitDescription {
 
 export interface HealthResponse {
   status: string;
-  server: string;
-  version: string;
-  timestamp: string;
-  uptime_s: number;
-  a2a_messages_total: number;
-  ai_listener: unknown | null;
-  fee_config: {
-    default_bps: number;
-    min_bps: number;
-    max_bps: number;
-    min_task_amount: string;
-    a2a_relay_bps: number;
-    revenue_split: RevenueSplitDescription;
+  server?: string;
+  version?: string;
+  timestamp?: string;
+  uptime_s?: number;
+  a2a_messages_total?: number;
+  ai_listener?: unknown | null;
+  free_tier?: {
+    enforced?: boolean;
+    daily_limit_usd?: string;
   };
-  chains: string[];
-  message_types: string[];
+  demo?: {
+    rate_per_min?: number;
+  };
+  rolling_settlement?: {
+    enabled?: boolean;
+    unsettled_usd?: string;
+  };
+  proofs?: {
+    signed_receipts?: string;
+    settlement_proof?: string;
+    prover_configured?: boolean;
+    prover_reachable?: boolean | null;
+    note?: string;
+  };
+  provider_floats?: unknown;
+  fee_config?: {
+    default_bps?: number;
+    min_bps?: number;
+    max_bps?: number;
+    min_task_amount?: string;
+    a2a_relay_bps?: number;
+    revenue_split?: RevenueSplitDescription;
+  };
+  chains?: string[];
+  message_types?: string[];
+}
+
+/** Public receipt JSON (`GET /receipt/:taskId?format=json`). */
+export interface Receipt {
+  schema?: string;
+  task_id: string;
+  status?: string;
+  proof_outcome?: string;
+  verify_url?: string;
+  payment?: {
+    rail?: string;
+    ref?: string | null;
+    gross_amount?: string;
+    net_amount?: string;
+    fee_amount?: string;
+    collected?: boolean;
+    collects_on?: string;
+  };
+  output?: { hash?: string | null; kind?: string };
+  signature?: { alg?: string; value?: string; payload_version?: number };
+  [key: string]: unknown;
+}
+
+/** Buyer-scoped `GET /stats/me`. Shared demo key = shared public identity. */
+export interface BuyerStats {
+  scope?: string;
+  tasks?: { total?: number; settled?: number };
+  private_spend?: { enabled?: boolean; trust?: string };
+  north_star?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ChatCompletionResponse {
+  id: string;
+  object?: string;
+  created?: number;
+  model: string;
+  choices: Array<{
+    index?: number;
+    message: ChatMessage;
+    finish_reason?: string | null;
+  }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  xfuel?: Receipt;
 }
 
 /** One entry of the OpenAI-compatible `GET /v1/models` list. */
@@ -450,14 +528,20 @@ export interface ModelsResponse {
 // ─── Error Types ────────────────────────────────────────────────────────────
 
 export class XFuelApiError extends Error {
+  readonly challenge?: X402Challenge;
+  readonly body?: unknown;
+
   constructor(
     message: string,
     public readonly status: number,
     public readonly code: string,
     public readonly details?: string[],
+    extras?: { challenge?: X402Challenge; body?: unknown },
   ) {
     super(message);
     this.name = 'XFuelApiError';
+    this.challenge = extras?.challenge;
+    this.body = extras?.body;
   }
 }
 
@@ -563,22 +647,32 @@ export class XFuelClient {
 
   private normalizeError(error: AxiosError): XFuelApiError {
     const data = error.response?.data as
-      | { error?: string; message?: string; details?: string[] }
+      | {
+          error?: string;
+          message?: string;
+          details?: string[];
+          accepts?: unknown;
+          x402Version?: number;
+        }
       | undefined;
 
-    const details = data?.details;
+    const details = Array.isArray(data?.details) ? data.details : undefined;
     const detailSuffix =
-      Array.isArray(details) && details.length > 0
-        ? `: ${details.join('; ')}`
-        : '';
+      details && details.length > 0 ? `: ${details.join('; ')}` : '';
     const message =
       (data?.message ?? data?.error ?? error.message) + detailSuffix;
+
+    const challenge =
+      data && Array.isArray(data.accepts) && data.accepts.length > 0
+        ? (data as X402Challenge)
+        : undefined;
 
     return new XFuelApiError(
       message,
       error.response?.status ?? 0,
       data?.error ?? 'network_error',
       details,
+      { challenge, body: data },
     );
   }
 
@@ -603,7 +697,7 @@ export class XFuelClient {
    * The payer is agent-side and signs the payment; the SDK never holds keys.
    *
    * @param params  task request (typically `payment: { rail: 'usdc' }`)
-   * @param payer   an X402Payer (e.g. `createMockPayer()` for dev, `createSignerPayer(fn)` for prod)
+   * @param payer   an X402Payer. `createMockPayer()` is local-mock only; hosted Coinbase x402 rejects it.
    * @see docs/payments-x402.md
    */
   async submitTaskWithPayment(
@@ -738,8 +832,8 @@ export class XFuelClient {
    * Third parties can recompute payment binding from this payload without trusting
    * the HTML page. Prefer this over scraping the shareable UI.
    */
-  async getReceipt(taskId: string): Promise<Record<string, unknown>> {
-    const { data } = await this.http.get<Record<string, unknown>>(
+  async getReceipt(taskId: string): Promise<Receipt> {
+    const { data } = await this.http.get<Receipt>(
       `/receipt/${encodeURIComponent(taskId)}`,
       { params: { format: 'json' } },
     );
@@ -762,8 +856,8 @@ export class XFuelClient {
    * Buyer-only usage stats (`GET /stats/me`) — requires the same API key used on tasks.
    * Returns Private Spend scope when enabled on the gateway.
    */
-  async getMyStats(): Promise<Record<string, unknown>> {
-    const { data } = await this.http.get<Record<string, unknown>>('/stats/me');
+  async getMyStats(): Promise<BuyerStats> {
+    const { data } = await this.http.get<BuyerStats>('/stats/me');
     return data;
   }
 
@@ -838,6 +932,26 @@ export class XFuelClient {
    */
   async listModels(): Promise<ModelsResponse> {
     const { data } = await this.http.get<ModelsResponse>('/v1/models');
+    return data;
+  }
+
+  /**
+   * Free OpenAI-compatible submit (`POST /v1/chat/completions`). This is the
+   * first-hour path: signed receipt, no wallet. Paid USDC is `submitInference`.
+   */
+  async chatCompletions(body: {
+    model?: string;
+    messages: ChatMessage[];
+    max_tokens?: number;
+    temperature?: number;
+    tools?: ToolDefinition[];
+    tool_choice?: TaskRequestParams['tool_choice'];
+    proof_tier?: string;
+  }): Promise<ChatCompletionResponse> {
+    const { data } = await this.http.post<ChatCompletionResponse>(
+      '/v1/chat/completions',
+      body,
+    );
     return data;
   }
 
