@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import { ethers } from 'ethers';
 import { computePaymentCommitment, computeInferenceBinding } from './payment-binding.js';
 import { resolveModelCommitment } from './model-commitment.js';
 import { selectTier } from './tier-policy.js';
@@ -254,17 +253,15 @@ function outputHashOf(task) {
   if (explicit) return { value: explicit, kind: 'committed' };
   if (task.result == null) return null;
 
+  // Fallback only when the pipeline did not store a 32-byte commitment.
+  // Hash the acting output, not the `{ provider, outputHash, usage }` envelope.
   const result = task.result;
-  if (typeof result === 'string') {
-    return { value: ethers.keccak256(ethers.toUtf8Bytes(result)), kind: 'committed' };
-  }
-  if (result.tool_calls || result.content != null) {
-    const acting = result.tool_calls
+  const acting = typeof result === 'string'
+    ? result
+    : (result.tool_calls
       ? JSON.stringify({ content: result.content || null, tool_calls: result.tool_calls })
-      : String(result.content ?? '');
-    return { value: ethers.keccak256(ethers.toUtf8Bytes(acting)), kind: 'committed' };
-  }
-  const serialized = JSON.stringify(result);
+      : (result.content != null ? String(result.content) : null));
+  const serialized = acting != null ? acting : JSON.stringify(result);
   const digest = '0x' + crypto.createHash('sha256').update(serialized).digest('hex');
   return { value: digest, kind: 'sha256_of_output' };
 }
