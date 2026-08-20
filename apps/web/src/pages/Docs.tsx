@@ -95,8 +95,8 @@ const operators: DocLink[] = [
     external: true,
   },
   {
-    title: 'Hosted testnet',
-    description: 'Public API at api-testnet.xfuel.app.',
+    title: 'Hosted API',
+    description: 'Public beta at api.xfuel.app (api-testnet is the same box).',
     href: `${GITHUB}/docs/HOSTED_TESTNET_ENDPOINT.md`,
     meta: 'demo',
     external: true,
@@ -161,12 +161,12 @@ export default function Docs() {
           <h1>Build on XFuel</h1>
           <p>
             First hour is OpenAI <code>/v1</code> — no wallet. Paid USDC on Base is a second door.
-            Apache-2.0. Hostname says testnet; paying it is mainnet.
+            Apache-2.0. Public beta at <code>api.xfuel.app</code>. Paying it is mainnet USDC.
           </p>
         </header>
 
         <nav className="docs-rail" aria-label="Quick links">
-          <a href="https://api-testnet.xfuel.app/health" target="_blank" rel="noreferrer">
+          <a href="https://api.xfuel.app/health" target="_blank" rel="noreferrer">
             API health
           </a>
           <a href="https://github.com/XFuel-Lab/xfuel-protocol" target="_blank" rel="noreferrer">
@@ -194,7 +194,7 @@ export default function Docs() {
             This does not spend USDC.
           </p>
           <pre className="docs-code">
-            <code>{`curl -sS https://api-testnet.xfuel.app/v1/chat/completions \\
+            <code>{`curl -sS https://api.xfuel.app/v1/chat/completions \\
   -H "X-API-Key: xfuel-demo" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`}</code>

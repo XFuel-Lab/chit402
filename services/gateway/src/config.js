@@ -328,7 +328,7 @@ const config = {
     nodeEnv: process.env.NODE_ENV || 'development',
     // Canonical public base URL for building absolute, shareable links (the
     // `verify_url` / receipt link). Set this when the server sits behind a proxy
-    // or CDN (e.g. https://api-testnet.xfuel.app) so links aren't derived from the
+    // or CDN (e.g. https://api.xfuel.app) so links aren't derived from the
     // internal host. When unset, links are derived from the request host.
     publicBaseUrl: process.env.PUBLIC_BASE_URL || null,
   },

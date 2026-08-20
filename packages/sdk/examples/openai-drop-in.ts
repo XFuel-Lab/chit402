@@ -20,7 +20,7 @@
  */
 
 const {
-  XFUEL_API_URL = 'https://api-testnet.xfuel.app', // hosted testnet demo; override with http://localhost:3002 for local dev
+  XFUEL_API_URL = 'https://api.xfuel.app', // hosted public beta; override with http://localhost:3002 for local dev
   XFUEL_API_KEY = 'xfuel-demo', // shared public demo key (rate-limited); bring your own for higher limits
   // Resolves to the best live chat model in the hub catalog. GET /v1/models lists
   // the concrete ids (e.g. theta/glm_5_2) — retired names are rejected, not remapped.

@@ -25,7 +25,7 @@ cd packages/sdk
 npx tsx examples/flagship-demo.ts
 ```
 
-Public test gateway: `https://api-testnet.xfuel.app` (demo key `xfuel-demo`, rate-limited).  
+Public beta gateway: `https://api.xfuel.app` (alias `api-testnet.xfuel.app`; demo key `xfuel-demo`, rate-limited).  
 Windows: use `curl.exe` for raw HTTP — PowerShell `curl` is not real curl.
 
 Status: `GET /task-status?task_id=`  

@@ -9,14 +9,14 @@ Companion docs: [DEMO_SHOT_LIST.md](./DEMO_SHOT_LIST.md) · [DEMO_COMMANDS.md](.
 
 ## Recording Checklist (do this first)
 
-- [ ] Gateway healthy: `curl.exe -sS https://api-testnet.xfuel.app/health` → `"status":"ok"`
+- [ ] Gateway healthy: `curl.exe -sS https://api.xfuel.app/health` → `"status":"ok"`
 - [ ] Pre-run once: `cd packages/sdk; npx tsx examples/flagship-demo.ts` — save the printed `verify_url` (and wait for nullifier if you want Tier-2 on the first take)
 - [ ] Browser tabs: homepage · that receipt URL · Basescan verifier · (optional) Sepolia payment tx
 - [ ] Terminal font large; film **flagship output**, not curl soup
 - [ ] Mic check; speak at conversational pace (~140–150 wpm)
 - [ ] Screen record 1080p / 30fps; leave 2–3s of silence at head and tail for edits
 - [ ] Do **not** demo `zkgpt` mock or ZAN mock facilitator as live proofs
-- [ ] Honesty line ready: *Money + proofs on Base mainnet (USDC via x402). Hostname is still api-testnet.*
+- [ ] Honesty line ready: *Money + proofs on Base mainnet (USDC via x402). Public beta at api.xfuel.app.*
 
 ---
 
@@ -46,7 +46,7 @@ Honest status (as of recording):
 Proofs and payments live on Base mainnet (USDC via x402 / CDP).
 Tier-2 attests settlement metadata + output commitment — not black-box model correctness.
 
-Try it: https://api-testnet.xfuel.app
+Try it: https://api.xfuel.app
 Docs: https://xfuel.app · https://github.com/seeharn/xfuel-protocol
 Design partners: DM or email hello@xfuel.app
 
@@ -67,7 +67,7 @@ Design partners: DM or email hello@xfuel.app
 | **0:22–0:38** | Browser: open printed `verify_url`. Circle Tier-1: route, model, amounts, signature / signed tier. | Here's the Tier-1 signed receipt — route, model, cost, and output hash. Default. Free. Shareable. No login. |
 | **0:38–0:55** | Same terminal as proof/nullifier lines appear, or refresh receipt for tier `settlement`. | When it matters, we attach a Tier-2 SP1 settlement proof — fees, payment binding, output commitment, single-use nullifier. This proves settlement, not that a black-box model ran correctly. |
 | **0:55–1:10** | Basescan: `https://basescan.org/address/0x9373499645292715a2275A78eD65B14215C41c06` — Contract / Read Contract. Optional cut: payment `explorer_url` from receipt (Base mainnet). | The verifier lives on Base mainnet — ZKVerifierSP1. Payments settle in USDC via x402 (CDP facilitator) on Base. |
-| **1:10–1:20** | Split: receipt + Basescan, or docs CTA card. | Route any model. Prove every dollar. Try the demo at api-testnet.xfuel.app — docs on xfuel.app. Design partners: DM us. |
+| **1:10–1:20** | Split: receipt + Basescan, or docs CTA card. | Route any model. Prove every dollar. Try the demo at api.xfuel.app — docs on xfuel.app. Design partners: DM us. |
 
 **Hard cut length:** drop the 0:00–0:08 opening metaphor if you need ≤60s; start on the curl and keep the honesty + CTA.
 
@@ -85,7 +85,7 @@ Design partners: DM or email hello@xfuel.app
 >
 > The verifier lives on Base mainnet — ZKVerifierSP1. Proofs settle here. Payments settle in USDC via x402 on Base (CDP facilitator).
 >
-> Route any model. Prove every dollar. Try the demo at api-testnet.xfuel.app — docs on xfuel.app. Design partners: DM us.
+> Route any model. Prove every dollar. Try the demo at api.xfuel.app — docs on xfuel.app. Design partners: DM us.
 
 **Word count:** ~175 · **Target pace:** ~140 wpm → ~75s spoken.
 
@@ -166,7 +166,7 @@ Optional soft music: use `scripts/demo-ffmpeg.sh` from Git Bash with `--music be
 | 0:38 | `Tier 2 — SP1 settlement proof` |
 | 0:55 | `ZKVerifierSP1 · Base mainnet` |
 | 1:05 | `Payments: Base mainnet (x402 USDC)` |
-| 1:12 | `Try: api-testnet.xfuel.app` |
+| 1:12 | `Try: api.xfuel.app` |
 
 ---
 
@@ -182,6 +182,6 @@ Optional soft music: use `scripts/demo-ffmpeg.sh` from Git Bash with `--music be
 
 ## CTA variants (pick one ending)
 
-1. **Builder:** “Clone the SDK, point `baseURL` at api-testnet.xfuel.app, and open the receipt.”
+1. **Builder:** “Clone the SDK, point `baseURL` at api.xfuel.app, and open the receipt.”
 2. **Design partner:** “Building agent payments or verifiable compute? DM us — we’re onboarding design partners.”
 3. **Docs:** “Full API, OpenAI drop-in, and runtime state linked in the description.”

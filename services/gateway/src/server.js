@@ -131,8 +131,8 @@ const LLMS_TXT = `# XFuel Protocol
 
 > Swap one baseURL. Every call comes back with a public receipt that names the
 > model, the hub, and the cost. /v1 is unmetered (demo key, rate-limited).
-> USDC on Base is a separate paid door. Hostname says testnet; paying this
-> host moves real USDC on Base mainnet.
+> USDC on Base is a separate paid door. This host is the public beta; paying
+> it moves real USDC on Base mainnet. Canonical: api.xfuel.app.
 
 ## Start here (OpenAI-compatible — no wallet)
 
@@ -289,7 +289,7 @@ const RELAYER_ADDRESSES = new Set(
 
 // ─── Public Demo Mode ─────────────────────────────────────────────────────────
 //
-// Powers the hosted testnet endpoint (api-testnet.xfuel.app). When
+// Powers the hosted public-beta endpoint (api.xfuel.app). When
 // M2M_DEMO_MODE=true, a single shared PUBLIC demo key is accepted so anything —
 // the SDK, a plain OpenAI client — works out of the box. Demo requests get an
 // aggressive per-IP dual window (per-minute + per-day) and the OpenAI gateway
@@ -391,7 +391,7 @@ export function createApp() {
   // ── Global middleware ────────────────────────────────────────────────────
 
   // Security headers (lightweight; avoids a helmet dependency). Hardens the
-  // hosted testnet against MIME-sniffing, clickjacking and referrer leakage.
+  // hosted public beta against MIME-sniffing, clickjacking and referrer leakage.
   app.disable('x-powered-by');
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');

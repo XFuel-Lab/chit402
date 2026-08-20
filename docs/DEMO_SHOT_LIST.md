@@ -47,7 +47,7 @@ npx tsx examples/flagship-demo.ts
 | 0:22–0:38 | Tier-1 | Open `verify_url` | Route · amounts · signed |
 | 0:38–0:55 | Tier-2 | Nullifier line / receipt tier `settlement` | Nullifier · fees |
 | 0:55–1:10 | Verifier | Basescan `ZKVerifierSP1` (+ optional Sepolia pay tx) | Address · Base |
-| 1:10–1:20 | CTA | End card | `api-testnet.xfuel.app` |
+| 1:10–1:20 | CTA | End card | `api.xfuel.app` |
 
 ---
 

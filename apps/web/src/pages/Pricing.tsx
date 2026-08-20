@@ -18,7 +18,7 @@ export default function Pricing() {
             They attest which model ran, not that a dollar moved. The receipt price line is
             “not charged” — do not read the $0.01 floor as a bill.{' '}
             <code>payment.rail</code> is <code>unmetered</code>. The API is{' '}
-            <code>https://api-testnet.xfuel.app/v1</code>, not <code>xfuel.app/v1</code>.
+            <code>https://api.xfuel.app/v1</code>, not <code>xfuel.app/v1</code>.
           </p>
         </div>
 
@@ -28,13 +28,13 @@ export default function Pricing() {
             <li>Cost-plus: measured provider COGS + 10% (<code>fee_bps=1000</code>)</li>
             <li>Floor $0.01 (USDC 6 decimals: amount <code>10000</code>)</li>
             <li>Tier-2 SP1 proof: opt-in +$0.08, or automatic above ~$2 provider COGS</li>
-            <li>HTTP 402 without an x402 payment. Real mainnet USDC despite the testnet hostname</li>
+            <li>HTTP 402 without an x402 payment. Real USDC on Base mainnet. Public beta, not play money.</li>
           </ul>
         </div>
 
         <p style={{ color: '#8a8a9a', fontSize: '0.95rem' }}>
           Live quotes: <code>POST /task-quote</code> or{' '}
-          <a href="https://api-testnet.xfuel.app/.well-known/x402">/.well-known/x402</a>.
+          <a href="https://api.xfuel.app/.well-known/x402">/.well-known/x402</a>.
           We are not the cheapest aggregator. Cheapness is not the pitch.
         </p>
       </div>

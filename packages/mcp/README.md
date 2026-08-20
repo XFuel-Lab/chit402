@@ -5,9 +5,9 @@ MCP server for XFuel.
 **First hour:** `list_models` then `chat_completions` — that is unmetered `POST /v1/chat/completions`.
 `submit_inference` is the **paid** `/task-request` door and returns 402 without a payer. It is not unmetered.
 
-Zero config talks to https://api-testnet.xfuel.app with the public demo key.
+Zero config talks to https://api.xfuel.app with the public demo key.
 
-The hostname says testnet. **Paying that host moves real USDC on Base mainnet.** Do not set `XFUEL_PAYER_PRIVATE_KEY` unless you mean to.
+Public beta. **Paying that host moves real USDC on Base mainnet.** Do not set `XFUEL_PAYER_PRIVATE_KEY` unless you mean to.
 
 npm: `xfuel-mcp` · Registry: `io.github.XFuel-Lab/xfuel-mcp`
 

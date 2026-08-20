@@ -34,7 +34,7 @@ function withCleanEnv<T>(fn: () => T): T {
   }
 }
 
-test('defaults to stdio + hosted testnet demo when nothing is set', () => {
+test('defaults to stdio + hosted public beta when nothing is set', () => {
   withCleanEnv(() => {
     const { config, action } = parseArgs([]);
     assert.equal(action, undefined);

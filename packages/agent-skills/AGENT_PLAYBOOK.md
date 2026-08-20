@@ -19,7 +19,7 @@ Do not claim Tier 2 proves black-box model correctness. Tier 3 (zkLLM) is an act
 
 ```
 npm install xfuel-sdk
-export XFUEL_API_URL=https://api-testnet.xfuel.app
+export XFUEL_API_URL=https://api.xfuel.app
 export XFUEL_API_KEY=xfuel-demo
 ```
 

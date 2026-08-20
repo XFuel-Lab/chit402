@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom';
 import { type CSSProperties } from 'react';
+import { API_V1 } from '../apiHost';
 
-const SNIPPET = `curl -sS https://api-testnet.xfuel.app/v1/chat/completions \\
+const SNIPPET = `curl -sS ${API_V1}/chat/completions \\
   -H "X-API-Key: xfuel-demo" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`;
@@ -9,7 +10,7 @@ const SNIPPET = `curl -sS https://api-testnet.xfuel.app/v1/chat/completions \\
 const OPENAI = `import OpenAI from 'openai';
 const client = new OpenAI({
   apiKey: 'xfuel-demo',
-  baseURL: 'https://api-testnet.xfuel.app/v1',
+  baseURL: '${API_V1}',
 });`;
 
 export default function Home() {

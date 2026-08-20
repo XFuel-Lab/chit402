@@ -3,7 +3,7 @@
 REST API for agents and applications. Submit tasks, retrieve proofs, send A2A messages, and poll status.
 
 Server: `services/gateway` (default port 3002).  
-Hosted testnet: `https://api-testnet.xfuel.app`.  
+Hosted: `https://api.xfuel.app` (alias `https://api-testnet.xfuel.app`).  
 As-deployed notes: [RUNTIME_STATE.md](./RUNTIME_STATE.md).
 
 ## Quick start
@@ -62,7 +62,7 @@ Submit an AI task.
 Optional raw HTTP — on **Windows PowerShell use `curl.exe`** (plain `curl` is not real curl):
 
 ```bash
-curl -X POST https://api-testnet.xfuel.app/task-request \
+curl -X POST https://api.xfuel.app/task-request \
   -H "Content-Type: application/json" \
   -H "X-API-Key: xfuel-demo" \
   -d '{

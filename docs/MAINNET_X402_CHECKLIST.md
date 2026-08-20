@@ -54,7 +54,7 @@ Do **not** put CDP secrets in git. Rotate if leaked.
 ```bash
 # From services/gateway with prod env loaded:
 # 1) Health shows base + x402 enabled
-curl.exe -s https://api-testnet.xfuel.app/health   # or your prod host
+curl.exe -s https://api.xfuel.app/health   # or your prod host
 
 # 2) Paid task without payment → 402 challenge with network=base
 # 3) Agent signs EIP-3009 USDC auth (xfuel-sdk onchain payer) and retries

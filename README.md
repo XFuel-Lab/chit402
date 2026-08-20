@@ -7,7 +7,7 @@ Providers are pluggable (OpenAI-compatible APIs, neoclouds, optional DePIN GPUs)
 To learn more about the protocol design, read the [whitepaper](WHITEPAPER.md). For live endpoints and what is real vs mock today, see [runtime state](docs/RUNTIME_STATE.md). Full documentation hub: [docs/](docs/README.md).
 
 **Live app:** https://xfuel.app  
-**Public API:** https://api-testnet.xfuel.app
+**Public API:** https://api.xfuel.app
 
 ## Table of Contents
 

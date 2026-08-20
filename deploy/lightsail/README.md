@@ -1,6 +1,8 @@
 # Lightsail gateway ops
 
-Canonical way to run `https://api-testnet.xfuel.app` — **not** PM2, **not** `/opt/.../theta-bridge`.
+Canonical way to run `https://api.xfuel.app` (alias `api-testnet.xfuel.app`) — **not** PM2, **not** `/opt/.../theta-bridge`.
+
+To add a hostname: [docs/API_HOSTNAME.md](../../docs/API_HOSTNAME.md). Same box, same static IP. Do not create a new instance.
 
 ## Layout
 
@@ -70,7 +72,7 @@ curl -sS http://127.0.0.1:3002/health
 # PASS: revenue_split is an object (usdc-base-splits / buckets)
 # FAIL: revenue_split string "30% BBB / 30% LP / ..."  → still old process
 
-curl -sS https://api-testnet.xfuel.app/task-quote \
+curl -sS https://api.xfuel.app/task-quote \
   -H 'content-type: application/json' -H 'X-API-Key: xfuel-demo' \
   -d '{"model_id":"xfuel/auto","amount":"10000"}'
 # PASS: "network":"base"
@@ -88,7 +90,7 @@ sudo systemctl status xfuel-api --no-pager
 Then verify from a workstation — one command, and it exits non-zero on any failure:
 
 ```bash
-node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app
+node scripts/dev/_verify_deploy.mjs https://api.xfuel.app
 ```
 
 It checks that the build actually deployed, signing is on, the quote prices the model that will

@@ -40,7 +40,7 @@
 import { XFuelClient, ChainId, createMockPayer, type X402Payer } from '../src/index.js';
 
 const {
-  XFUEL_API_URL = 'https://api-testnet.xfuel.app', // hosted testnet demo; override with http://localhost:3002 for local dev
+  XFUEL_API_URL = 'https://api.xfuel.app', // hosted public beta; override with http://localhost:3002 for local dev
   XFUEL_API_KEY,
   XFUEL_SENDER = '0x000000000000000000000000000000000000dEaD',
   XFUEL_MODEL = 'xfuel/auto',

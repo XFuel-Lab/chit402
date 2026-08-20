@@ -16,8 +16,9 @@ You should already have:
 
 If either is missing, reply on that channel before you start.
 
-Gateway: `https://api-testnet.xfuel.app`  
-The hostname still says testnet. **Payments on this host are real USDC on Base mainnet.** Treat the key like a credential.
+Gateway: `https://api.xfuel.app`  
+Alias (same box): `https://api-testnet.xfuel.app`  
+This is the public beta. **Payments on this host are real USDC on Base mainnet.** Treat the key like a credential.
 
 ---
 
@@ -30,7 +31,7 @@ import OpenAI from 'openai';
 
 const client = new OpenAI({
   apiKey: process.env.XFUEL_API_KEY, // the partner key we sent
-  baseURL: 'https://api-testnet.xfuel.app/v1',
+  baseURL: 'https://api.xfuel.app/v1',
 });
 
 const res = await client.chat.completions.create({
@@ -51,7 +52,7 @@ Same swap works in LangChain, the Vercel AI SDK, Eliza, Cursor, or anything else
 new ChatOpenAI({
   model: 'xfuel/auto',
   apiKey: process.env.XFUEL_API_KEY,
-  configuration: { baseURL: 'https://api-testnet.xfuel.app/v1' },
+  configuration: { baseURL: 'https://api.xfuel.app/v1' },
 });
 ```
 
@@ -67,12 +68,12 @@ Every response carries the same artifact two ways:
 |-------|-----------------|
 | Headers | `x-xfuel-task-id`, `x-xfuel-provider`, `x-xfuel-verify-url` |
 | Body | `xfuel` on the chat completion (OpenAI clients ignore it) |
-| Public page | `https://api-testnet.xfuel.app/receipt/<task_id>` — no auth, shareable |
+| Public page | `https://api.xfuel.app/receipt/<task_id>` — no auth, shareable |
 
 Open the verify URL. Then fetch JSON you can keep in your own logs:
 
 ```bash
-curl -sS "https://api-testnet.xfuel.app/receipt/<task_id>?format=json"
+curl -sS "https://api.xfuel.app/receipt/<task_id>?format=json"
 ```
 
 On Windows PowerShell use `curl.exe`, not `curl`.
@@ -91,7 +92,7 @@ Fields that matter on a first pass:
 Auditor pack (policy + totals, **no prompts or raw outputs**):
 
 ```text
-https://api-testnet.xfuel.app/receipt/<task_id>?format=auditor
+https://api.xfuel.app/receipt/<task_id>?format=auditor
 ```
 
 From the SDK, once you add it: `client.getReceipt(taskId)` and `client.getAuditorExport(taskId)`.
@@ -103,7 +104,7 @@ An unmetered receipt attests **which model and provider ran**. It does not attes
 ## 3. Your usage, not the network's
 
 ```bash
-curl -sS https://api-testnet.xfuel.app/stats/me \
+curl -sS https://api.xfuel.app/stats/me \
   -H "Authorization: Bearer $XFUEL_API_KEY"
 ```
 
@@ -113,7 +114,7 @@ Or, in Node:
 import { XFuelClient } from 'xfuel-sdk';
 
 const client = new XFuelClient({
-  baseUrl: 'https://api-testnet.xfuel.app',
+  baseUrl: 'https://api.xfuel.app',
   apiKey: process.env.XFUEL_API_KEY,
 });
 const mine = await client.getMyStats();
@@ -140,7 +141,7 @@ import { XFuelClient } from 'xfuel-sdk';
 import { createEip3009Payer } from 'xfuel-sdk/onchain'; // needs a wallet; ethers peer dep
 
 const client = new XFuelClient({
-  baseUrl: 'https://api-testnet.xfuel.app',
+  baseUrl: 'https://api.xfuel.app',
   apiKey: process.env.XFUEL_API_KEY,
 });
 
@@ -178,7 +179,7 @@ We do not claim a signed receipt or an SP1 proof verifies black-box model correc
 
 **Daily free-tier ceiling.** Unmetered `/v1` stops once your key has burned about **$1 of provider cost in a UTC day** (`402`, code `free_tier_exhausted`, `Retry-After` until midnight UTC). That is enough to try the receipt, not enough to farm the public demo. Need more? Use the paid `/task-request` path, or ping us before a heavy session and we will raise the ceiling.
 
-**Hostname vs money.** `api-testnet.xfuel.app` settles **mainnet USDC**. A quote that looks like play money is not.
+**Hostname vs money.** `api.xfuel.app` is the public beta and settles **mainnet USDC**. A quote that looks like play money is not.
 
 **`xfuel/auto` is not one price.** It resolves per request. Agent-shaped calls (tools, long loops) land on a different model than a five-word hello. Name a model from `GET /v1/models` if you need a price you can predict without quoting. Each model’s `pricing` block is on that list.
 
