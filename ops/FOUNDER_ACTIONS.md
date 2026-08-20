@@ -2,7 +2,7 @@
 
 Internal. Not linked from the site, AGENTS.md, or the docs hub. Do not send to partners.
 
-Last updated: 2026-08-20 · Public host `api.xfuel.app` · site live · first-hour path is the product. Publish `xfuel-sdk@0.5.5` then `xfuel-mcp@0.3.1` so npm defaults match the host. Then outreach (item 4).
+Last updated: 2026-08-20 · Public host `api.xfuel.app` · site live · `xfuel-sdk@0.5.5` and `xfuel-mcp@0.3.1` on npm. First-hour path is the product. Remaining founder work is outreach (item 4).
 
 ## How to use
 
