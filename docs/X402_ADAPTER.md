@@ -66,11 +66,11 @@ Cataloging requires three steps:
    - `extensions.bazaar.info.input.type` and `info.output.type`
    - Service metadata: `serviceName: "XFuel"`, `tags`, `iconUrl`
 
-2. **A paying client echoes that extension in the PaymentPayload**  
-   x402-compatible SDKs (xfuel-sdk, @x402/axios, etc.) automatically echo the bazaar extension when present. No client-side configuration needed.
+2. **The settle body sent to CDP must carry `paymentPayload.resource` and echo `extensions.bazaar`**  
+   Advertising the extension on the 402 is not enough. CDP indexes the *settle* payload, not the challenge. The gateway attaches both from the bound challenge when it calls `/verify` and `/settle` (so a listing trigger does not depend on an SDK bump). `xfuel-sdk` also echoes them on `X-PAYMENT` when the 402 includes them.
 
 3. **One successful settlement through the CDP Facilitator**  
-   After the first paid `/task-request` settles through `https://api.cdp.coinbase.com/platform/v2/x402`, the service is cataloged. A small ~$0.01 payment is sufficient.
+   After the first paid `/task-request` settles through `https://api.cdp.coinbase.com/platform/v2/x402` *with* `paymentPayload.resource` set, the service is cataloged. A small ~$0.01 payment is sufficient. Search can lag up to ~10 minutes (CDP catalog cache). Inspect gateway logs for `x402 bazaar extension-responses` (`processing` vs `rejected`).
 
 ### Manual Listing Trigger (Post-Deploy)
 
@@ -112,10 +112,11 @@ Common cataloging failures (per spec):
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Not listed | No settlement yet | Send one paid request through CDP |
+| Not listed | Settle payload lacked `resource` | Deploy the facilitator echo; re-run one paid `/task-request` |
+| Not listed | No settlement yet, or catalog cache | Wait ~10 min; search by `payTo` as well as `query=xfuel` |
 | Listed with wrong URL | Relative resource URL | Ensure `PUBLIC_BASE_URL` is set |
-| Missing from search | `bazaar` extension missing | Check 402 includes `extensions.bazaar` |
-| Rejected by facilitator | Schema violation | Check `info.input.type` / `info.output.type` present |
+| Missing from search | `bazaar` extension missing or non-conformant | 402 `info.input` must be `{type,method,bodyType,body}` plus a `schema` |
+| Rejected by facilitator | Schema violation | Check logs for `EXTENSION-RESPONSES` `bazaar.rejectedReason` |
 
 The 402 JSON can be inspected without paying:
 

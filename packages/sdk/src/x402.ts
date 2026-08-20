@@ -18,6 +18,8 @@ export interface X402Accept {
   mimeType?: string;
   description?: string;
   extra?: { taskId?: string; nonce?: string; expiresAt?: number | null };
+  /** Bazaar / other x402 extensions advertised on this accept. */
+  extensions?: Record<string, unknown>;
 }
 
 /** The body of a 402 Payment Required response from `POST /task-request`. */
@@ -56,6 +58,16 @@ export function selectAccept(challenge: X402Challenge): X402Accept {
   return accepts.find((a) => a.scheme === 'exact') ?? accepts[0];
 }
 
+/** Fields CDP Bazaar needs echoed from the 402 into the X-PAYMENT blob. */
+function catalogEcho(challenge: X402Challenge, accept: X402Accept): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (accept.resource) out.resource = accept.resource;
+  const extensions = accept.extensions
+    ?? (challenge as X402Challenge & { extensions?: Record<string, unknown> }).extensions;
+  if (extensions) out.extensions = extensions;
+  return out;
+}
+
 /**
  * Dev/test payer. Produces a structured X-PAYMENT blob that echoes the challenge
  * (nonce/amount/payTo). Works only against a **local mock facilitator**.
@@ -79,6 +91,7 @@ export function createMockPayer(opts: { from?: string } = {}): X402Payer {
       from: opts.from ?? '0xMockPayer',
       nonce,
       mock: true,
+      ...catalogEcho(challenge, a),
     });
     return { header, nonce };
   };
@@ -117,6 +130,7 @@ export function createSignerPayer(
       payTo: a.payTo ?? null,
       nonce,
       authorization,
+      ...catalogEcho(challenge, a),
     });
     return { header, nonce };
   };

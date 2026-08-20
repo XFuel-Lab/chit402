@@ -14,13 +14,98 @@ import {
 //   2. A paying client echoes that extension in the PaymentPayload
 //   3. One successful settlement through the CDP Facilitator
 //
-// This file handles step 1. See docs/X402_ADAPTER.md for the full flow.
+// This file handles step 1 and persists the extension on the bound challenge
+// so x402-facilitator.js can echo it on settle (step 2) even if the buyer
+// SDK omits it. See docs/X402_ADAPTER.md.
 
 /** Bazaar extension key per spec */
 export const BAZAAR_EXTENSION_KEY = 'bazaar';
 
+/** Example POST /task-request body advertised to Bazaar buyers. */
+export const TASK_REQUEST_BODY_EXAMPLE = {
+  message_type: 'inference_request',
+  chain_id: 'base',
+  sender: '0xYourWalletAddress',
+  model_id: 'xfuel/auto',
+  messages: [{ role: 'user', content: 'Hello' }],
+  max_tokens: 500,
+  payment: { rail: 'usdc' },
+};
+
+/** JSON Schema for that body — lives on bazaar.schema, not on info.input. */
+const TASK_REQUEST_BODY_SCHEMA = {
+  type: 'object',
+  properties: {
+    message_type: {
+      type: 'string',
+      enum: ['inference_request'],
+      description: 'Task type; only inference_request is supported via x402',
+    },
+    chain_id: {
+      type: 'string',
+      description: 'Settlement chain; "base" for USDC settlement',
+    },
+    amount: {
+      type: 'string',
+      description: 'Gross task value in USDC base units (6 decimals); min 10000 ($0.01)',
+    },
+    sender: {
+      type: 'string',
+      description: '0x address that owns/pays for the task',
+    },
+    model_id: {
+      type: 'string',
+      description: 'Model id from GET /v1/models; xfuel/auto routes automatically',
+    },
+    input_hash: {
+      type: 'string',
+      description: 'keccak256 of your input (optional; for proof binding)',
+    },
+    messages: {
+      type: 'array',
+      description: 'OpenAI-style chat messages array',
+      items: {
+        type: 'object',
+        properties: {
+          role: { type: 'string', enum: ['system', 'user', 'assistant'] },
+          content: { type: 'string' },
+        },
+        required: ['role', 'content'],
+      },
+    },
+    max_tokens: {
+      type: 'integer',
+      description: 'Output token budget (default 500)',
+    },
+    payment: {
+      type: 'object',
+      properties: {
+        rail: { type: 'string', enum: ['usdc'], description: 'Payment rail; use "usdc"' },
+      },
+    },
+  },
+  required: ['message_type', 'chain_id', 'sender'],
+};
+
+const TASK_REQUEST_OUTPUT_EXAMPLE = {
+  task_id: 'ai-task-12345',
+  status: 'accepted',
+  payment_rail: 'usdc',
+  payment_ref: 'base:0x...',
+  verify_url: 'https://api.xfuel.app/receipt/ai-task-12345',
+  gross_amount: '50000',
+  fee_amount: '250',
+  net_amount: '49750',
+};
+
 /**
  * Build the bazaar discovery extension for XFuel's /task-request resource.
+ *
+ * Shape matches `@x402/extensions` `declareDiscoveryExtension({ method:'POST',
+ * bodyType:'json', input, output })`: `info.input` is `{ type, method, bodyType,
+ * body }` and a Draft 2020-12 `schema` validates that `info`. CDP rejects
+ * declarations that put `inputSchema` on `info.input` (additionalProperties:
+ * false) or omit `schema` entirely.
  *
  * @param {Object} opts
  * @param {string} [opts.method='POST']  HTTP method
@@ -35,104 +120,49 @@ export function buildBazaarExtension(opts = {}) {
         input: {
           type: 'http',
           method,
-          // JSON-Schema of the /task-request body (usdc rail). Agents can call
-          // this after discovery. Matches TASK_REQUEST_INPUT_SCHEMA in x402-discovery.js.
-          inputSchema: {
-            type: 'object',
-            properties: {
-              message_type: {
-                type: 'string',
-                enum: ['inference_request'],
-                description: 'Task type; only inference_request is supported via x402',
-              },
-              chain_id: {
-                type: 'string',
-                example: 'base',
-                description: 'Settlement chain; "base" for USDC settlement',
-              },
-              amount: {
-                type: 'string',
-                description: 'Gross task value in smallest unit (wei); min 10000',
-              },
-              sender: {
-                type: 'string',
-                description: '0x address that owns/pays for the task',
-              },
-              model_id: {
-                type: 'string',
-                example: 'xfuel/auto',
-                description: 'Model id from GET /v1/models; xfuel/auto routes automatically',
-              },
-              input_hash: {
-                type: 'string',
-                description: 'keccak256 of your input (optional; for proof binding)',
-              },
-              messages: {
-                type: 'array',
-                description: 'OpenAI-style chat messages array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    role: { type: 'string', enum: ['system', 'user', 'assistant'] },
-                    content: { type: 'string' },
-                  },
-                  required: ['role', 'content'],
-                },
-              },
-              max_tokens: {
-                type: 'integer',
-                description: 'Output token budget (default 500)',
-              },
-              payment: {
-                type: 'object',
-                properties: {
-                  rail: { type: 'string', enum: ['usdc'], description: 'Payment rail; use "usdc"' },
-                },
-              },
-            },
-            required: ['message_type', 'chain_id', 'sender'],
-          },
-          example: {
-            message_type: 'inference_request',
-            chain_id: 'base',
-            sender: '0xYourWalletAddress',
-            model_id: 'xfuel/auto',
-            messages: [{ role: 'user', content: 'Hello' }],
-            max_tokens: 500,
-            payment: { rail: 'usdc' },
-          },
+          bodyType: 'json',
+          body: TASK_REQUEST_BODY_EXAMPLE,
         },
         output: {
           type: 'json',
-          // Matches TASK_REQUEST_OUTPUT_SCHEMA in x402-discovery.js
-          schema: {
+          example: TASK_REQUEST_OUTPUT_EXAMPLE,
+        },
+      },
+      schema: {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: {
+          input: {
             type: 'object',
             properties: {
-              task_id: { type: 'string', description: 'Unique task identifier' },
-              status: { type: 'string', enum: ['accepted'], description: 'Task status' },
-              payment_rail: { type: 'string', enum: ['usdc'], description: 'Settlement rail' },
-              payment_ref: { type: ['string', 'null'], description: 'network:txHash settlement reference' },
-              verify_url: { type: 'string', description: 'Public, no-auth receipt page' },
-              gross_amount: { type: 'string', description: 'Total charged (USDC base units)' },
-              fee_amount: { type: 'string', description: 'Protocol fee (USDC base units)' },
-              net_amount: { type: 'string', description: 'Amount after fee (USDC base units)' },
+              type: { type: 'string', const: 'http' },
+              method: { type: 'string', enum: ['POST', 'PUT', 'PATCH'] },
+              bodyType: { type: 'string', enum: ['json', 'form-data', 'text'] },
+              body: TASK_REQUEST_BODY_SCHEMA,
             },
-            required: ['task_id', 'status', 'verify_url'],
+            required: ['type', 'method', 'bodyType', 'body'],
+            additionalProperties: false,
           },
-          example: {
-            task_id: 'ai-task-12345',
-            status: 'accepted',
-            payment_rail: 'usdc',
-            payment_ref: 'base:0x...',
-            verify_url: 'https://api.xfuel.app/receipt/ai-task-12345',
-            gross_amount: '50000',
-            fee_amount: '250',
-            net_amount: '49750',
+          output: {
+            type: 'object',
+            properties: {
+              type: { type: 'string' },
+              example: { type: 'object' },
+            },
+            required: ['type'],
           },
         },
+        required: ['input'],
       },
     },
   };
+}
+
+/** v1 discovery fallback: PaymentRequirements.outputSchema = bazaar info. */
+export function v1OutputSchemaFromBazaar(extensions) {
+  const info = extensions?.[BAZAAR_EXTENSION_KEY]?.info;
+  if (!info?.input) return undefined;
+  return { input: info.input, output: info.output };
 }
 
 /**
@@ -313,13 +343,6 @@ export function buildPaymentChallenge(p, opts = {}) {
   // requests to the same route pattern into a single discovery entry."
   const routeTemplate = baseUrl ? `${baseUrl}/task-request` : '/task-request';
 
-  const store = opts.store === undefined ? challengeStore : opts.store;
-  let expiresAt = null;
-  if (store) {
-    const rec = store.put(nonce, { taskId: p.taskId, amount, asset, network, payTo, resource });
-    expiresAt = rec.expiresAt;
-  }
-
   // Service metadata for CDP Bazaar (on the resource object per spec)
   const serviceName = 'XFuel';
   const tags = ['inference', 'receipt', 'x402', 'ai', 'verifiable'];
@@ -333,6 +356,31 @@ export function buildPaymentChallenge(p, opts = {}) {
 
   // Build the accepts entry with bazaar extension
   const includeBazaar = p.includeBazaar !== false;
+  const extensions = includeBazaar ? buildBazaarExtension({ method: 'POST' }) : undefined;
+  // v1 facilitators catalog via paymentRequirements.outputSchema.
+  const outputSchema = v1OutputSchemaFromBazaar(extensions);
+
+  const store = opts.store === undefined ? challengeStore : opts.store;
+  let expiresAt = null;
+  if (store) {
+    // Persist bazaar fields so settleViaFacilitator can echo them on the
+    // PaymentPayload even when the buyer SDK omits them (xfuel-sdk before
+    // this change). CDP will not catalog a settle that lacks resource.
+    const rec = store.put(nonce, {
+      taskId: p.taskId,
+      amount,
+      asset,
+      network,
+      payTo,
+      resource,
+      description,
+      mimeType: 'application/json',
+      extensions,
+      outputSchema,
+    });
+    expiresAt = rec.expiresAt;
+  }
+
   const acceptsEntry = {
     scheme: 'exact',
     network,
@@ -349,7 +397,7 @@ export function buildPaymentChallenge(p, opts = {}) {
     iconUrl,
     extra: { taskId: p.taskId, nonce, expiresAt },
     // CDP Bazaar extension — required for cataloging
-    ...(includeBazaar ? { extensions: buildBazaarExtension({ method: 'POST' }) } : {}),
+    ...(extensions ? { extensions } : {}),
   };
 
   return {

@@ -76,27 +76,47 @@ export function decodePaymentHeader(header) {
 }
 
 /**
+ * Absolute catalog URL for CDP Bazaar. Relative paths are not catalogable
+ * (`paymentPayload.resource` must name the paid endpoint).
+ * @param {string|{url?:string}|undefined} resource
+ * @returns {string|undefined}
+ */
+export function catalogResourceUrl(resource) {
+  if (!resource) return undefined;
+  const url = typeof resource === 'string' ? resource : resource.url;
+  if (typeof url === 'string' && /^https?:\/\//i.test(url)) return url;
+  return undefined;
+}
+
+/**
  * Build the x402 `PaymentRequirements` object the facilitator validates against.
  * The `asset`/`extra` (EIP-712 name+version) must match what the payer signed.
+ *
+ * `outputSchema` is the v1 Bazaar discovery field (info.input / info.output).
+ * CDP's v2 path reads `paymentPayload.extensions.bazaar` instead; we send both.
  */
-export function toPaymentRequirements({ network, amount, payTo, resource, taskId, maxTimeoutSeconds } = {}) {
+export function toPaymentRequirements({
+  network, amount, payTo, resource, taskId, maxTimeoutSeconds, description, outputSchema,
+} = {}) {
   const { asset, name, version } = usdcFor(network);
-  return {
+  const req = {
     scheme: 'exact',
     network,
     maxAmountRequired: String(amount),
     resource: resource || `/x402/task/${taskId || 'task'}`,
-    description: taskId ? `XFuel task ${taskId}` : 'XFuel task',
+    description: description || (taskId ? `XFuel task ${taskId}` : 'XFuel task'),
     mimeType: 'application/json',
     payTo,
     maxTimeoutSeconds: Number(maxTimeoutSeconds) || 120,
     asset,
     extra: { name, version },
   };
+  if (outputSchema) req.outputSchema = outputSchema;
+  return req;
 }
 
 /** Translate the XFuel X-PAYMENT blob → standard x402 `PaymentPayload` (exact scheme). */
-export function toPaymentPayload(decoded, { network } = {}) {
+export function toPaymentPayload(decoded, { network, resource, extensions } = {}) {
   if (!decoded) throw new Error('x402: X-PAYMENT header could not be decoded');
   const auth = decoded.authorization || {};
   // Support both the enveloped shape ({ message, signature }) and a flat one.
@@ -105,7 +125,7 @@ export function toPaymentPayload(decoded, { network } = {}) {
   if (!signature || !msg || !msg.from) {
     throw new Error('x402: X-PAYMENT missing signature or authorization');
   }
-  return {
+  const payload = {
     x402Version: 1,
     scheme: decoded.scheme || 'exact',
     network: network || decoded.network,
@@ -121,6 +141,40 @@ export function toPaymentPayload(decoded, { network } = {}) {
       },
     },
   };
+  // CDP catalogs only when settle carries paymentPayload.resource (absolute URL)
+  // plus the echoed bazaar extension. Prefer the bound challenge — the SDK
+  // header may omit both (it did, through the first paid listing attempt).
+  const resourceUrl = catalogResourceUrl(resource) || catalogResourceUrl(decoded.resource);
+  if (resourceUrl) payload.resource = resourceUrl;
+  const ext = (extensions && typeof extensions === 'object')
+    ? extensions
+    : (decoded.extensions && typeof decoded.extensions === 'object' ? decoded.extensions : null);
+  if (ext) payload.extensions = ext;
+  return payload;
+}
+
+/** Decode CDP/x402 EXTENSION-RESPONSES (JSON or base64-JSON). */
+export function parseExtensionResponses(headers) {
+  if (!headers || typeof headers.get !== 'function') return null;
+  const raw = headers.get('extension-responses')
+    || headers.get('EXTENSION-RESPONSES')
+    || headers.get('x-extension-responses');
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { /* maybe base64 */ }
+  try { return JSON.parse(Buffer.from(raw, 'base64').toString('utf8')); } catch { return { _raw: String(raw).slice(0, 240) }; }
+}
+
+function logBazaarResponses(path, extensionResponses, paymentPayload) {
+  const bazaar = extensionResponses?.bazaar;
+  logger.info(
+    {
+      path,
+      resource: paymentPayload?.resource,
+      bazaarStatus: bazaar?.status || (extensionResponses ? 'present' : 'header_absent'),
+      rejectedReason: bazaar?.rejectedReason,
+    },
+    'x402 bazaar extension-responses',
+  );
 }
 
 async function callFacilitator(path, { gateway, apiKey, body, timeoutMs }) {
@@ -141,7 +195,13 @@ async function callFacilitator(path, { gateway, apiKey, body, timeoutMs }) {
   const text = await res.text();
   let data = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw: text }; }
-  return { ok: res.ok, status: res.status, data, elapsedMs: Date.now() - t0 };
+  return {
+    ok: res.ok,
+    status: res.status,
+    data,
+    elapsedMs: Date.now() - t0,
+    extensionResponses: parseExtensionResponses(res.headers),
+  };
 }
 
 /** Resolve PaymentRequirements from the bound challenge, falling back to the decoded blob. */
@@ -152,7 +212,17 @@ function requirementsFrom(challenge, decoded) {
     payTo: challenge?.payTo ?? decoded?.payTo,
     resource: challenge?.resource,
     taskId: challenge?.taskId,
+    description: challenge?.description,
+    outputSchema: challenge?.outputSchema,
   });
+}
+
+function payloadOpts(challenge, decoded, paymentRequirements) {
+  return {
+    network: paymentRequirements.network,
+    resource: challenge?.resource || decoded?.resource,
+    extensions: challenge?.extensions || decoded?.extensions,
+  };
 }
 
 /**
@@ -165,12 +235,12 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
   const paymentRequirements = requirementsFrom(challenge, decoded);
   let paymentPayload;
   try {
-    paymentPayload = toPaymentPayload(decoded, { network: paymentRequirements.network });
+    paymentPayload = toPaymentPayload(decoded, payloadOpts(challenge, decoded, paymentRequirements));
   } catch {
     return { valid: false, reason: 'payment_payload_invalid' };
   }
   try {
-    const { ok, status, data, elapsedMs } = await callFacilitator('/verify', {
+    const { ok, status, data, elapsedMs, extensionResponses } = await callFacilitator('/verify', {
       gateway, apiKey, timeoutMs: 15000,
       body: { x402Version: 1, paymentPayload, paymentRequirements },
     });
@@ -191,6 +261,7 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
       );
       return { valid: false, reason: `facilitator_http_${status}` };
     }
+    logBazaarResponses('/verify', extensionResponses, paymentPayload);
     if (!data.isValid) {
       logger.warn(
         {
@@ -221,12 +292,12 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
   const paymentRequirements = requirementsFrom(challenge, decoded);
   let paymentPayload;
   try {
-    paymentPayload = toPaymentPayload(decoded, { network: paymentRequirements.network });
+    paymentPayload = toPaymentPayload(decoded, payloadOpts(challenge, decoded, paymentRequirements));
   } catch {
     return { settled: false, reason: 'payment_payload_invalid' };
   }
   try {
-    const { ok, status, data, elapsedMs } = await callFacilitator('/settle', {
+    const { ok, status, data, elapsedMs, extensionResponses } = await callFacilitator('/settle', {
       gateway, apiKey, timeoutMs: 30000,
       body: { x402Version: 1, paymentPayload, paymentRequirements },
     });
@@ -247,12 +318,14 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
       );
       return { settled: false, reason: `facilitator_http_${status}` };
     }
+    logBazaarResponses('/settle', extensionResponses, paymentPayload);
     const settled = !!data.success;
     return {
       settled,
       txRef: data.transaction || data.txHash || null,
       payer: data.payer || null,
       reason: data.errorReason,
+      bazaarStatus: extensionResponses?.bazaar?.status || null,
     };
   } catch (err) {
     logger.warn({ err: err.message }, 'x402 facilitator settle failed');

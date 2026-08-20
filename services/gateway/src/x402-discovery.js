@@ -44,7 +44,7 @@ const TASK_REQUEST_INPUT_SCHEMA = {
   properties: {
     message_type: { type: 'string', enum: ['inference_request'] },
     chain_id: { type: 'string', example: 'theta' },
-    amount: { type: 'string', description: 'gross task value in smallest unit (wei); min 10000' },
+    amount: { type: 'string', description: 'gross task value in USDC base units (6 decimals); min 10000 ($0.01)' },
     sender: { type: 'string', description: '0x address that owns/pays for the task' },
     model_id: { type: 'string', example: 'xfuel/auto', description: 'live catalog id; list via GET /v1/models' },
     input_hash: { type: 'string', description: 'keccak256 of your input' },
