@@ -95,7 +95,7 @@ win is.
 Not started here deliberately: this touches payment correctness and ships a breaking SDK change, and
 splitting it across an unattended session is how you get a half-migrated payment path. The
 assessment is the deliverable; the sequencing decision is a founder call
-([FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md)).
+(operator checklist — not in the public docs hub).
 
 ## Reproducing
 

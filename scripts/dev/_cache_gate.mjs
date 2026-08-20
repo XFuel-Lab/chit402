@@ -47,4 +47,4 @@ console.log(`session-affinity gate: ${priced.length ? 'condition 1 met for some 
 if (priced.length) {
   console.log(`  models: ${priced.map((r) => r.id).join(', ')}`);
 }
-console.log('condition 2 (provider exposes an affinity key): unanswered — see docs/FOUNDER_ACTIONS.md');
+console.log('condition 2 (provider exposes an affinity key): unanswered — operator decision');

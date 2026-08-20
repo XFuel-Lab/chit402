@@ -3,7 +3,7 @@
 Canonical company strategy. When messaging, GTM, or eng backlog disagree with this file, update this file (or amend in writing) — do not silently fork.
 
 Status: active · Last updated: 2026-08-06  
-Related: [POSITIONING.md](./POSITIONING.md) · [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md) · [adr/0005-provider-float-cogs.md](./adr/0005-provider-float-cogs.md) · [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md) · [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md) · [RUNTIME_STATE.md](./RUNTIME_STATE.md) · [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md)
+Related: [POSITIONING.md](./POSITIONING.md) · [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md) · [adr/0005-provider-float-cogs.md](./adr/0005-provider-float-cogs.md) · [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md) · [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md) · [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 
 ## Company job
 
@@ -104,7 +104,7 @@ Agents never hold TFUEL/AKT to use XFuel. Provider tokens stay back-office.
 | **P2** | Refill bots / runbooks from Safe → provider accounts | Manual refill no longer weekly bottleneck |
 | **P3** | Pass-through where providers accept x402/USDC natively | Less float inventory for those tiers |
 
-Parallel (founder/ops — [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md)): design partners, Private Spend enable, guest v2 payment binding, Safe for `X402_PAY_TO`, counsel on Web2 collect-and-forward, Tier-3 timebox accept.
+Parallel (founder/ops, not in the public docs hub): design partners, Private Spend enable, guest v2 payment binding, Safe for `X402_PAY_TO`, counsel on Web2 collect-and-forward, Tier-3 timebox accept.
 
 Live truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md). Seed gates: [SEED_READINESS.md](./SEED_READINESS.md).
 

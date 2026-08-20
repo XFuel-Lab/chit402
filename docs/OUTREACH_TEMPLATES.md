@@ -90,9 +90,9 @@ partner permanently.
 
 Send the partner key, a Slack/Telegram invite, and
 [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) — that file is the partner
-artifact (base-URL swap, receipt, stats, paid path). Do not send FOUNDER_ACTIONS or this
-templates file. Daily cap and trust notes live in the onboarding doc so you do not have
-to restate them. The prover is kept live during onboarding.
+artifact (base-URL swap, receipt, stats, paid path). Do not send the operator tracker or
+this templates file. Daily cap and trust notes live in the onboarding doc so you do not
+have to restate them. The prover is kept live during onboarding.
 
 Hi `[Name]` — you're in.
 

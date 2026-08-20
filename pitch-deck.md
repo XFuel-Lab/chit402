@@ -43,7 +43,7 @@ Token-light: USDC fees to protocol Safe / Splits v2 on Base. Downstream policy s
 
 - `ZKVerifierSP1` live on Base mainnet
 - Public gateway: api.xfuel.app
-- Tier 1 + Tier 2 live; x402 on Base Sepolia
+- Tier 1 + Tier 2 live; x402 on Base mainnet
 - SDK + MCP published
 
 Details: [docs/RUNTIME_STATE.md](docs/RUNTIME_STATE.md)

@@ -96,7 +96,7 @@ const operators: DocLink[] = [
   },
   {
     title: 'Hosted API',
-    description: 'Public beta at api.xfuel.app (api-testnet is the same box).',
+    description: 'Public beta at api.xfuel.app.',
     href: `${GITHUB}/docs/HOSTED_TESTNET_ENDPOINT.md`,
     meta: 'demo',
     external: true,

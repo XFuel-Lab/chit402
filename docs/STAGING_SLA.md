@@ -3,7 +3,7 @@
 Partner-facing reliability targets for the demo / staging gateway and SP1 prover.
 
 Status: draft targets · Last updated: 2026-08-05  
-Related: [RUNTIME_STATE.md](./RUNTIME_STATE.md), [deploy/ecs/README.md](../deploy/ecs/README.md), [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md).
+Related: [RUNTIME_STATE.md](./RUNTIME_STATE.md), [deploy/ecs/README.md](../deploy/ecs/README.md).
 
 ## Scope
 

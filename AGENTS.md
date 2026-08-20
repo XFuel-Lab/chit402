@@ -14,7 +14,6 @@ Provider COGS floats: [docs/PROVIDER_FLOAT_TREASURY.md](docs/PROVIDER_FLOAT_TREA
 Pricing: [docs/PRICING_STRATEGY.md](docs/PRICING_STRATEGY.md) · [docs/SPEND_INTELLIGENCE_THESIS.md](docs/SPEND_INTELLIGENCE_THESIS.md).  
 Mainnet USDC go-live: [docs/MAINNET_X402_CHECKLIST.md](docs/MAINNET_X402_CHECKLIST.md).  
 Privacy thesis (Private Spend): [docs/PRIVATE_SPEND_THESIS.md](docs/PRIVATE_SPEND_THESIS.md).  
-**Your open actions:** [docs/FOUNDER_ACTIONS.md](docs/FOUNDER_ACTIONS.md).  
 Design partners: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).  
 Seed scaffold: [docs/SEED_READINESS.md](docs/SEED_READINESS.md).
 

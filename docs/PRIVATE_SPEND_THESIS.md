@@ -90,4 +90,4 @@ Ship Private Spend as a **named product mode**, not a blog footnote. It differen
 | TEE / content privacy | Not in v0 — compose later |
 | Metered OpenAI path via x402 | Still Phase 1 unmetered — use `/task-request` for paid Private Spend |
 
-Founder enablement: [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md).
+Founder enablement is operator-only (not in the public docs hub).
