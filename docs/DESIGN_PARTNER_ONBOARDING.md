@@ -17,8 +17,7 @@ You should already have:
 If either is missing, reply on that channel before you start.
 
 Gateway: `https://api.xfuel.app`  
-Alias (same box): `https://api-testnet.xfuel.app`  
-This is the public beta. **Payments on this host are real USDC on Base mainnet.** Treat the key like a credential.
+Public beta. **Payments on this host are real USDC on Base mainnet.** Treat the key like a credential.
 
 ---
 

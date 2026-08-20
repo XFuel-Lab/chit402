@@ -3,7 +3,7 @@
 REST API for agents and applications. Submit tasks, retrieve proofs, send A2A messages, and poll status.
 
 Server: `services/gateway` (default port 3002).  
-Hosted: `https://api.xfuel.app` (alias `https://api-testnet.xfuel.app`).  
+Hosted: `https://api.xfuel.app`.  
 As-deployed notes: [RUNTIME_STATE.md](./RUNTIME_STATE.md).
 
 ## Quick start

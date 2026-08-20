@@ -63,7 +63,7 @@ cd ../mcp
 npm publish --access public --auth-type=web
 ```
 
-See [../sdk/PUBLISHING.md](../sdk/PUBLISHING.md). Publish **xfuel-sdk@0.5.4** before this package.
+See [../sdk/PUBLISHING.md](../sdk/PUBLISHING.md). Publish **xfuel-sdk@0.5.5** first, then this package (`0.3.1`). `xfuel-sdk@^0.5.4` accepts 0.5.5.
 
 ## Docs
 

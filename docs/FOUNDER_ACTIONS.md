@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-20 · Public Base mainnet x402 live · SDK `0.5.4` · MCP `0.3.0` published · xfuel.app live. First-hour path is the product. Remaining: finish `api.xfuel.app` TLS on the existing box, merge the hostname copy PR, then outreach (item 4).
+Last updated: 2026-08-20 · Public host `api.xfuel.app` · site live · first-hour path is the product. Publish `xfuel-sdk@0.5.5` then `xfuel-mcp@0.3.1` so npm defaults match the host. Then outreach (item 4).
 
 ## How to use
 

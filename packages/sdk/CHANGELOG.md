@@ -3,6 +3,11 @@
 All notable changes to the XFuel SDK are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.5.5 — Default host is `api.xfuel.app`
+
+### Changed
+- `DEFAULT_BASE_URL` is `https://api.xfuel.app` (same Lightsail process as the old `api-testnet` name).
+
 ## 0.5.4 — First-hour path is `/v1`; ESM default import; honest 402
 
 ### Added

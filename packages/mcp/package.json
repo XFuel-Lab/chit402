@@ -1,6 +1,6 @@
 {
   "name": "xfuel-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "mcpName": "io.github.XFuel-Lab/xfuel-mcp",
   "description": "First-party MCP server for XFuel — chat_completions (unmetered /v1), paid task submit, quotes, and settlement proofs. Runs over stdio or streamable HTTP.",
   "type": "module",

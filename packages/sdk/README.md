@@ -3,7 +3,7 @@
 TypeScript / JavaScript client for the XFuel M2M API.
 
 npm: `xfuel-sdk` · License: Apache-2.0  
-Hosted demo: https://api.xfuel.app (alias https://api-testnet.xfuel.app)
+Hosted demo: https://api.xfuel.app
 
 Public beta. **Payments on that host are real USDC on Base mainnet** via Coinbase x402. Do not point a real wallet at it unless you mean to pay.
 

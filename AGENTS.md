@@ -20,12 +20,7 @@ Seed scaffold: [docs/SEED_READINESS.md](docs/SEED_READINESS.md).
 
 ## Try the demo
 
-```
-cd packages/sdk
-npx tsx examples/flagship-demo.ts
-```
-
-Public beta gateway: `https://api.xfuel.app` (alias `api-testnet.xfuel.app`; demo key `xfuel-demo`, rate-limited).  
+Public gateway: `https://api.xfuel.app` (demo key `xfuel-demo`, rate-limited). First hour is `POST /v1/chat/completions` — no wallet. Working copy: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).  
 Windows: use `curl.exe` for raw HTTP — PowerShell `curl` is not real curl.
 
 Status: `GET /task-status?task_id=`  

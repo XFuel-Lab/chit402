@@ -3,7 +3,7 @@
   "name": "io.github.XFuel-Lab/xfuel-mcp",
   "title": "XFuel",
   "description": "Generate text via chat_completions (unmetered /v1), or pay per task in USDC on Base. Fetch/verify settlement proofs.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "websiteUrl": "https://github.com/XFuel-Lab/xfuel-protocol/tree/main/xfuel-mcp#readme",
   "repository": {
     "url": "https://github.com/XFuel-Lab/xfuel-protocol",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "xfuel-mcp",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "transport": {
         "type": "stdio"
       },
