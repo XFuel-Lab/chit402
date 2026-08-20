@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-20 · Public Base mainnet x402 live · SDK `0.5.4` · MCP `0.3.0` published · xfuel.app live. First-hour path is the product. Remaining founder work is outreach (item 4) and optional `api.xfuel.app` DNS.
+Last updated: 2026-08-20 · Public Base mainnet x402 live · SDK `0.5.4` · MCP `0.3.0` published · xfuel.app live. First-hour path is the product. Remaining: finish `api.xfuel.app` TLS on the existing box, merge the hostname copy PR, then outreach (item 4).
 
 ## How to use
 
@@ -65,7 +65,7 @@ the deploy will look like an outage:
 Then verify from your machine — one command, no JSON quoting:
 
 ```powershell
-node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app
+node scripts/dev/_verify_deploy.mjs https://api.xfuel.app
 ```
 
 Twelve checks: the build is actually deployed, signing is on, the quote names the model it priced,

@@ -136,7 +136,7 @@ is enabled on the hosted endpoint (`X402_ENABLED=true`, `X402_FACILITATOR_PROVID
 against the Coinbase CDP facilitator, `X402_NETWORK=base`, `X402_PROOF_BINDING=true`).
 An unpaid `usdc` request returns a bound 402 challenge; a retry with a valid
 `X-PAYMENT` (+ nonce) is verified and settled, and `payment_rail="usdc"` +
-`payment_ref` are attached to the task. The host is still named `api-testnet`, but the
+`payment_ref` are attached to the task. The host is `api.xfuel.app` (public beta); the
 money is real — see `docs/RUNTIME_STATE.md`. Base Sepolia is the rollback path. ZAN is
 optional, not required, and not a blocker. Always trust the `payment_rail` field in the
 status response. For

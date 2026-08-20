@@ -1,14 +1,15 @@
 # Hosted endpoint
 
-Public gateway: `https://api-testnet.xfuel.app`  
+Public gateway: `https://api.xfuel.app`  
+Alias (same box): `https://api-testnet.xfuel.app`  
 Demo key: `xfuel-demo` (rate-limited). Use the partner key if we sent you one.
 
-The hostname still says testnet. **Payments on this host are real USDC on Base mainnet.**
+This is the **public beta**. Payments on this host are **real USDC on Base mainnet.**
 
 **Try it:** [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) — OpenAI `baseURL` swap, receipt, paid path. Do not start here and also there; that page is the working copy.
 
 ```powershell
-curl.exe -sS https://api-testnet.xfuel.app/health
+curl.exe -sS https://api.xfuel.app/health
 ```
 
 macOS / Linux: `curl` is fine. PowerShell must use `curl.exe`.

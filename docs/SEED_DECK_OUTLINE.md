@@ -40,7 +40,7 @@ Use [STRATEGY.md](./STRATEGY.md) language: crypto routing machine + proof receip
 | Artifact | Value |
 |----------|-------|
 | Verifier (Base) | `0x9373499645292715a2275A78eD65B14215C41c06` |
-| Public API | `https://api-testnet.xfuel.app` |
+| Public API | `https://api.xfuel.app` |
 | Paid tasks (7d) | `[from /stats north_star.paid_tasks_7d]` |
 | USDC fees (7d) | `[from /stats north_star.usdc_fees_7d]` |
 | Design partners | `[N named]` |

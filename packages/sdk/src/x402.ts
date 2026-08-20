@@ -60,7 +60,7 @@ export function selectAccept(challenge: X402Challenge): X402Accept {
  * Dev/test payer. Produces a structured X-PAYMENT blob that echoes the challenge
  * (nonce/amount/payTo). Works only against a **local mock facilitator**.
  *
- * The hosted demo (`api-testnet.xfuel.app`) uses Coinbase x402 on Base mainnet
+ * The hosted demo (`api.xfuel.app`) uses Coinbase x402 on Base mainnet
  * and rejects this payload with `payment_payload_invalid`. Do not use it there.
  * Use `createEip3009Payer` from `xfuel-sdk/onchain` only when you intend to
  * spend real USDC.

@@ -4,7 +4,7 @@
  * The first hour is a free /v1 base-URL swap — see docs/DESIGN_PARTNER_ONBOARDING.md.
  * This example is the optional upgrade: settle a task and inspect your own numbers.
  *
- *   XFUEL_API_URL=https://api-testnet.xfuel.app \
+ *   XFUEL_API_URL=https://api.xfuel.app \
  *   XFUEL_API_KEY=<your-partner-key> \
  *   npx tsx examples/private-spend-budget.ts
  *
@@ -14,7 +14,7 @@
 import { XFuelClient, ChainId, createMockPayer, type X402Payer } from '../src/index.js';
 
 const {
-  XFUEL_API_URL = 'https://api-testnet.xfuel.app',
+  XFUEL_API_URL = 'https://api.xfuel.app',
   XFUEL_API_KEY,
   XFUEL_SENDER = '0x000000000000000000000000000000000000dEaD',
   XFUEL_MODEL = 'xfuel/auto',

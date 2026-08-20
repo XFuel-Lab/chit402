@@ -50,10 +50,10 @@ export type ChainId = (typeof ChainId)[keyof typeof ChainId];
 
 /**
  * Default endpoint the SDK talks to when no `baseUrl` is given: XFuel's hosted
- * **testnet** demo API. Point at your own deployment (or `http://localhost:3002`)
- * for production / local dev.
+ * public-beta API. `https://api-testnet.xfuel.app` is a permanent alias of the
+ * same box. Point at your own deployment (or `http://localhost:3002`) for local.
  */
-export const DEFAULT_BASE_URL = 'https://api-testnet.xfuel.app';
+export const DEFAULT_BASE_URL = 'https://api.xfuel.app';
 
 /**
  * Shared PUBLIC demo key used against {@link DEFAULT_BASE_URL} when no `apiKey`
@@ -548,7 +548,7 @@ export class XFuelApiError extends Error {
 // ─── Client Options ─────────────────────────────────────────────────────────
 
 export interface XFuelClientOptions {
-  /** API base URL. Defaults to {@link DEFAULT_BASE_URL} (hosted testnet demo). */
+  /** API base URL. Defaults to {@link DEFAULT_BASE_URL} (hosted public beta). */
   baseUrl?: string;
   /** API key (sent as `X-API-Key`). Defaults to {@link PUBLIC_DEMO_API_KEY}. */
   apiKey?: string;

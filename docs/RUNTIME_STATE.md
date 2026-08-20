@@ -4,9 +4,10 @@ As-deployed source of truth. When in-repo config disagrees with this file, this 
 
 Last updated: 2026-08-17
 
-> **Live as of 2026-08-16.** `api-testnet.xfuel.app` is on `main` @ `6173086`. SDK `0.5.3`
-> (receipt payload v3). Verified after the pull+restart; re-verify after flipping rolling:
-> `node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app`.
+> **Live as of 2026-08-20.** Public host is `api.xfuel.app` (alias `api-testnet.xfuel.app`, same
+> Lightsail box). Site 404/`/v1` explainer shipped in #197. SDK `0.5.4` on npm still defaults to
+> the alias until `0.5.5`. Re-verify:
+> `node scripts/dev/_verify_deploy.mjs https://api.xfuel.app`.
 > Theta EdgeCloud is unset (`THETA_EDGE_URL` missing); AkashML is the live inference path. **SP1
 > prover is running.**
 
@@ -65,7 +66,7 @@ Demo gateway:
 - Host: Lightsail `35.180.10.142`
 - App: **systemd `xfuel-api`** → `/home/ubuntu/xfuel-protocol/services/gateway` → `node src/server.js` (port 3002)
 - Install / recover: [deploy/lightsail/README.md](../deploy/lightsail/README.md)
-- Public: https://api-testnet.xfuel.app
+- Public: https://api.xfuel.app (alias https://api-testnet.xfuel.app — same box)
 - **Do not** use `/opt/xfuel-protocol/backend/theta-bridge` or PM2 `xfuel-m2m` (legacy)
 - Health fingerprint: `fee_config.revenue_split.model === "usdc-base-splits-v2"` (not the legacy `30% BBB` string)
 
@@ -82,7 +83,7 @@ x402:
 | Signed receipt | Real |
 | SP1 settlement proof | Real (via AWS prover URL) |
 | USDC / x402 Base Sepolia | Real (optional / rollback) |
-| USDC / x402 Base mainnet | **Real** (public `api-testnet.xfuel.app`, 2026-08-06) |
+| USDC / x402 Base mainnet | **Real** (public `api.xfuel.app`, 2026-08-06; was named `api-testnet`) |
 | Payment binding in-proof | Partial (server-attested; guest v2 pending) |
 | zkLLM Verified Inference | Active build |
 | `services/zkgpt-prover` mock | Dev-only — never demo as a proof |

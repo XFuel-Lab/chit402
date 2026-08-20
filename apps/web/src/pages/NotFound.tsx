@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { API_V1 } from '../apiHost';
 
 export default function NotFound() {
   return (
@@ -9,7 +10,7 @@ export default function NotFound() {
           <h1>No page here</h1>
           <p>
             You are on the public site, not the API. Start at the homepage, or call{' '}
-            <code>https://api-testnet.xfuel.app/v1</code> for completions.
+            <code>{API_V1}</code> for completions.
           </p>
         </header>
         <p>

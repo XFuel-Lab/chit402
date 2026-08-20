@@ -22,10 +22,10 @@
       "environmentVariables": [
         {
           "name": "XFUEL_API_URL",
-          "description": "XFuel API base URL. Defaults to the hosted testnet demo.",
+          "description": "XFuel API base URL. Defaults to the hosted public beta.",
           "isRequired": false,
           "format": "string",
-          "default": "https://api-testnet.xfuel.app"
+          "default": "https://api.xfuel.app"
         },
         {
           "name": "XFUEL_API_KEY",

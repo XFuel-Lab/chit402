@@ -7,7 +7,7 @@ Live beta: Tier-1 receipts + Tier-2 SP1 on Base; 755+ tests; Audit Phase 1 prep.
 ## Quick wins
 
 - Clarify [README.md](README.md) or [WHITEPAPER.md](WHITEPAPER.md)
-- Report issues against https://xfuel.app or https://api-testnet.xfuel.app
+- Report issues against https://xfuel.app or https://api.xfuel.app
 - Review open PRs; flag gas or trust-boundary issues in `contracts/core/`
 - Suggest Base / x402 / agent ecosystem outreach (non-code)
 

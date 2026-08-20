@@ -86,7 +86,7 @@ function pickPrivateKey(): string | undefined {
   return undefined;
 }
 
-const XFUEL_API_URL = process.env.XFUEL_API_URL || 'https://api-testnet.xfuel.app';
+const XFUEL_API_URL = process.env.XFUEL_API_URL || 'https://api.xfuel.app';
 const XFUEL_API_KEY = process.env.XFUEL_API_KEY;
 // xfuel/auto resolves to the best live chat model in the hub catalog, so this
 // never goes stale. `GET /v1/models` lists the concrete ids (e.g. theta/glm_5_2).

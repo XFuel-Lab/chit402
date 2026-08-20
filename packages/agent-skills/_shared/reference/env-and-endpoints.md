@@ -7,7 +7,7 @@ of duplicating config details.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `XFUEL_API_URL` | Base URL of the M2M API server | `https://api-testnet.xfuel.app` (hosted testnet demo; use `http://localhost:3002` for self-host) |
+| `XFUEL_API_URL` | Base URL of the M2M API server | `https://api.xfuel.app` (hosted public beta; alias `api-testnet.xfuel.app`; use `http://localhost:3002` for self-host) |
 | `XFUEL_API_KEY` | M2M API key (sent as `X-API-Key`) | `xfuel-demo` (shared public demo key, rate-limited; bring your own for higher limits) |
 
 The SDK defaults to the hosted testnet demo endpoint + public demo key, so

@@ -2,7 +2,7 @@
  * Configuration resolution for xfuel-mcp.
  *
  * Precedence (highest first): CLI flags → environment variables → sensible
- * defaults (XFuel hosted testnet demo + public demo key). Nothing is required.
+ * defaults (XFuel hosted public beta + public demo key). Nothing is required.
  */
 import { DEFAULT_BASE_URL, PUBLIC_DEMO_API_KEY } from 'xfuel-sdk';
 
@@ -19,7 +19,7 @@ submit_inference is the paid M2M door (POST /task-request). It requires model + 
 
 pay_with_usdc spends real USDC on Base mainnet. It is only listed if the operator set XFUEL_PAYER_PRIVATE_KEY.
 
-Amounts are USDC 6 decimals (10000 = $0.01), not wei. The hostname api-testnet.xfuel.app still says testnet; paying it moves mainnet USDC.`;
+Amounts are USDC 6 decimals (10000 = $0.01), not wei. api.xfuel.app is the public beta; paying it moves mainnet USDC.`;
 
 export type TransportKind = 'stdio' | 'http';
 
@@ -71,7 +71,7 @@ TRANSPORT
   --port <n>              HTTP port (default 3033; http only)
 
 XFUEL API
-  --api-url <url>         XFuel API base URL (default: hosted testnet demo)
+  --api-url <url>         XFuel API base URL (default: hosted public beta)
   --api-key <key>         API key / X-API-Key (default: public demo key "xfuel-demo")
 
 MISC
@@ -84,7 +84,7 @@ ENVIRONMENT (CLI flags take precedence)
   XFUEL_PAYER_PRIVATE_KEY  enables the pay_with_usdc tool (env only; never a flag)
 
 EXAMPLES
-  npx xfuel-mcp                         # stdio, hosted testnet demo
+  npx xfuel-mcp                         # stdio, hosted public beta
   npx xfuel-mcp --http --port 3033      # streamable HTTP on :3033
   XFUEL_API_KEY=sk_live... npx xfuel-mcp
 `;

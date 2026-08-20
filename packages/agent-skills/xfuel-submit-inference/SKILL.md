@@ -16,7 +16,7 @@ proof-backed receipt. Prefer the SDK over raw HTTP. Money + proofs live on Base.
 
 ## Prerequisites
 
-- `XFUEL_API_URL` (default `https://api-testnet.xfuel.app`; use `http://localhost:3002` to self-host) and `XFUEL_API_KEY` (defaults to the public demo key `xfuel-demo`).
+- `XFUEL_API_URL` (default `https://api.xfuel.app`; use `http://localhost:3002` to self-host) and `XFUEL_API_KEY` (defaults to the public demo key `xfuel-demo`).
 - `xfuel-sdk` installed (`npm install xfuel-sdk`). See
   `../_shared/reference/env-and-endpoints.md`.
 

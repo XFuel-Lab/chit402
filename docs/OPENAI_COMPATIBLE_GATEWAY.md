@@ -12,7 +12,7 @@ Example: `packages/sdk/examples/openai-drop-in.ts` (`npm run example:openai`)
 - `POST /v1/chat/completions` — streaming and non-streaming
 
 Base URL: `${XFUEL_API_URL}/v1`  
-Hosted: `https://api-testnet.xfuel.app/v1`  
+Hosted: `https://api.xfuel.app/v1` (alias `https://api-testnet.xfuel.app/v1`)  
 Local: `http://localhost:3002/v1`
 
 ## Auth
@@ -40,7 +40,7 @@ import OpenAI from 'openai';
 
 const client = new OpenAI({
   apiKey: process.env.XFUEL_API_KEY,
-  baseURL: 'https://api-testnet.xfuel.app/v1',
+  baseURL: 'https://api.xfuel.app/v1',
 });
 
 const res = await client.chat.completions.create({

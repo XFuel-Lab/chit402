@@ -9,7 +9,7 @@ Related: [RUNTIME_STATE.md](./RUNTIME_STATE.md), [deploy/ecs/README.md](../deplo
 
 | Surface | Host | Notes |
 |---------|------|-------|
-| Gateway (M2M + OpenAI `/v1`) | Lightsail `api-testnet.xfuel.app` | PM2 `xfuel-m2m` |
+| Gateway (M2M + OpenAI `/v1`) | Lightsail `api.xfuel.app` (alias `api-testnet`) | systemd `xfuel-api` |
 | SP1 prover | AWS ECS `xfuel-sp1-prover` + ALB | Ingress locked to Lightsail IP |
 | Verifier | Base mainnet `ZKVerifierSP1` | Always-on contract |
 
@@ -28,7 +28,7 @@ This is **staging / design-partner** SLA — not a paid production enterprise SL
 
 ## Hardening checklist (ops)
 
-- [ ] External uptime monitor on `https://api-testnet.xfuel.app/health` (or staging host)
+- [ ] External uptime monitor on `https://api.xfuel.app/health` (or staging host)
 - [ ] Alert on PM2 process exit / 5xx spike
 - [ ] Confirm ALB security group still only allows Lightsail egress IP
 - [ ] ECS task desired count ≥ 1 when partners are proving; scale to 0 only with notice

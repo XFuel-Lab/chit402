@@ -2,7 +2,7 @@
 
 **Primary path for the video: the flagship SDK demo.** One script = pay → settle → SP1 proof → shareable receipt.
 
-Public gateway: `https://api-testnet.xfuel.app`  
+Public gateway: `https://api.xfuel.app`  
 Verifier (Base mainnet): `0x9373499645292715a2275A78eD65B14215C41c06`  
 Truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 
@@ -15,7 +15,7 @@ Curl / OpenAI one-shots are **optional B-roll** (appendix below). Do not make th
 ### Preflight
 
 ```powershell
-curl.exe -sS https://api-testnet.xfuel.app/health | python -m json.tool
+curl.exe -sS https://api.xfuel.app/health | python -m json.tool
 ```
 
 Expect `"status": "ok"`.
@@ -43,7 +43,7 @@ What it prints (film this):
 4. SP1 proof → nullifier (polls briefly)
 5. **Hero line:** one public `verify_url`
 
-Open that URL in the browser → Tier-1 receipt; proof tier becomes `settlement` once the nullifier attaches. Then cut to Basescan verifier. Say the honesty line: *Money + proofs on Base mainnet (USDC via x402). Hostname is still api-testnet.*
+Open that URL in the browser → Tier-1 receipt; proof tier becomes `settlement` once the nullifier attaches. Then cut to Basescan verifier. Say the honesty line: *Money + proofs on Base mainnet (USDC via x402). Public beta at api.xfuel.app.*
 
 ### Live USDC vs dry run
 
@@ -57,7 +57,7 @@ Open that URL in the browser → Tier-1 receipt; proof tier becomes `settlement`
 # flagship loads that automatically. Or:
 $env:XFUEL_PAYER_PK = "0xYOUR_64_HEX_KEY"
 # optional overrides:
-# $env:XFUEL_API_URL = "https://api-testnet.xfuel.app"
+# $env:XFUEL_API_URL = "https://api.xfuel.app"
 # $env:XFUEL_API_KEY = "xfuel-demo"
 ```
 
@@ -95,6 +95,6 @@ Only if you insist. On PowerShell always use `curl.exe` (never bare `curl`), and
 | What | Where |
 |------|--------|
 | Receipt (Tier-1 → Tier-2) | Printed `verify_url` |
-| Proof JSON | `https://api-testnet.xfuel.app/prove-result?task_id={id}` (needs `X-API-Key: xfuel-demo`) |
+| Proof JSON | `https://api.xfuel.app/prove-result?task_id={id}` (needs `X-API-Key: xfuel-demo`) |
 | Verifier | https://basescan.org/address/0x9373499645292715a2275A78eD65B14215C41c06 |
 | Payment tx | Receipt `payment.explorer_url` (Sepolia when live paid) |

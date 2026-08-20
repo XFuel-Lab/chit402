@@ -23,7 +23,7 @@ what it cost — that either lives in your own logs, which attest nothing, or no
 
 XFuel is an OpenAI-compatible gateway that returns a **signed receipt for every call**: model,
 provider, token counts, output hash, cost. Tamper-evident, verifiable with our SDK or your own
-HMAC check. Two minutes to try — change `baseURL` to `https://api-testnet.xfuel.app/v1` and keep
+HMAC check. Two minutes to try — change `baseURL` to `https://api.xfuel.app/v1` and keep
 everything else. No wallet, no signup call, receipts are free.
 
 Looking for **3 design partners** to run real agent traffic through it and push on the receipt
@@ -31,7 +31,7 @@ schema before it sets.
 
 Worth 20 minutes this week?
 
-— `[You]` · https://xfuel.app · https://api-testnet.xfuel.app
+— `[You]` · https://xfuel.app · https://api.xfuel.app
 
 ---
 

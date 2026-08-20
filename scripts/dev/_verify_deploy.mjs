@@ -10,7 +10,7 @@
  * `/health` returns 200 and chat completions come back — while still serving
  * mocks, unsigned receipts, and underpriced agent work.
  *
- *   node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app
+ *   node scripts/dev/_verify_deploy.mjs https://api.xfuel.app
  *   node scripts/dev/_verify_deploy.mjs http://127.0.0.1:3002 my-api-key
  *
  * Exits non-zero if any check fails, so it can gate a deploy script.

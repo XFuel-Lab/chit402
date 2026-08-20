@@ -1,6 +1,26 @@
 # Lightsail gateway ops
 
-Canonical way to run `https://api-testnet.xfuel.app` — **not** PM2, **not** `/opt/.../theta-bridge`.
+Canonical way to run `https://api.xfuel.app` (alias `api-testnet.xfuel.app`) — **not** PM2, **not** `/opt/.../theta-bridge`.
+
+DNS for `*.xfuel.app` is at Namecheap. Extra API names are A records to this instance’s static IP. TLS is terminated on the box (Caddy or nginx + certbot), not on Vercel. Add a new name to the existing site block and cert; do not stand up a second proxy or instance.
+
+```bash
+sudo ss -tlnp | grep -E ':443|:80'
+systemctl is-active caddy nginx
+sudo certbot certificates
+```
+
+Caddy — both names on one site:
+
+```
+api.xfuel.app, api-testnet.xfuel.app {
+    reverse_proxy 127.0.0.1:3002
+}
+```
+
+certbot + nginx — expand the existing cert (`-d api-testnet.xfuel.app -d api.xfuel.app`), add `server_name`, reload.
+
+Receipt links: `PUBLIC_BASE_URL=https://api.xfuel.app` in `.env`, then `sudo systemctl restart xfuel-api`. Do not rotate `RECEIPT_SIGNING_SECRET`.
 
 ## Layout
 
@@ -70,7 +90,7 @@ curl -sS http://127.0.0.1:3002/health
 # PASS: revenue_split is an object (usdc-base-splits / buckets)
 # FAIL: revenue_split string "30% BBB / 30% LP / ..."  → still old process
 
-curl -sS https://api-testnet.xfuel.app/task-quote \
+curl -sS https://api.xfuel.app/task-quote \
   -H 'content-type: application/json' -H 'X-API-Key: xfuel-demo' \
   -d '{"model_id":"xfuel/auto","amount":"10000"}'
 # PASS: "network":"base"
@@ -88,7 +108,7 @@ sudo systemctl status xfuel-api --no-pager
 Then verify from a workstation — one command, and it exits non-zero on any failure:
 
 ```bash
-node scripts/dev/_verify_deploy.mjs https://api-testnet.xfuel.app
+node scripts/dev/_verify_deploy.mjs https://api.xfuel.app
 ```
 
 It checks that the build actually deployed, signing is on, the quote prices the model that will
