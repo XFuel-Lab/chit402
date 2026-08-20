@@ -4,7 +4,12 @@ import {
   verifyViaFacilitator,
   settleViaFacilitator,
   defaultFacilitatorUrlForNetwork,
+  toCaip2Network,
+  fromCaip2Network,
+  usdcFor,
 } from './x402-facilitator.js';
+
+export { toCaip2Network, fromCaip2Network, usdcFor };
 
 // ─── CDP Bazaar Discovery Extension ──────────────────────────────────────────
 // Per https://docs.x402.org/extensions/bazaar: the bazaar extension makes a
@@ -297,14 +302,24 @@ export function priceTaskUSDC(task = {}, opts = {}) {
 
 // ─── Challenge ───────────────────────────────────────────────────────────────
 /**
- * Build a machine-parseable x402 "Payment Required" challenge for a task and
+ * Encode a PaymentRequired body for the v2 `PAYMENT-REQUIRED` response header.
+ * @param {Object} body
+ * @returns {string} base64(JSON)
+ */
+export function encodePaymentRequiredHeader(body) {
+  return Buffer.from(JSON.stringify(body), 'utf8').toString('base64');
+}
+
+/**
+ * Build a machine-parseable x402 v2 "Payment Required" challenge for a task and
  * record it in the store (bound to amount/asset/network/resource + a nonce) so
- * verify/settle can enforce it. Shape follows the x402 `accepts` convention.
+ * verify/settle can enforce it.
  *
- * CDP Bazaar cataloging (https://docs.x402.org/extensions/bazaar):
- *   - `resource` MUST be an absolute https:// URL for the catalog key
- *   - `extensions.bazaar` MUST be present with info.input.type / info.output.type
- *   - `routeTemplate` is the stable catalog key (not per-task)
+ * CDP Bazaar cataloging (https://docs.cdp.coinbase.com/x402/bazaar):
+ *   - Public HTTPS resource must return 402 (not 401) with this body
+ *   - Top-level `resource` object + `extensions.bazaar`
+ *   - `accepts[0]` uses CAIP-2 network, USDC contract `asset`, and `amount`
+ *   - `PAYMENT-REQUIRED` header carries the same JSON (base64)
  *
  * @param {Object} p
  * @param {string} p.taskId
@@ -312,67 +327,57 @@ export function priceTaskUSDC(task = {}, opts = {}) {
  * @param {string} [p.resource]         absolute resource URL (required for bazaar)
  * @param {string} [p.baseUrl]          base URL for building absolute links (e.g. https://api.xfuel.app)
  * @param {string} [p.payTo]
- * @param {string} [p.network]          base | solana
- * @param {string} [p.asset]            default USDC
+ * @param {string} [p.network]          base | base-sepolia | eip155:8453 | …
  * @param {string} [p.description]
  * @param {boolean} [p.includeBazaar=true]  include the bazaar discovery extension
  * @param {Object} [opts]
  * @param {ChallengeStore|null} [opts.store]  store to record into (default module store; null to skip)
- * @returns {{ status:number, body:Object }}
+ * @returns {{ status:number, body:Object, headers:Record<string,string> }}
  */
 export function buildPaymentChallenge(p, opts = {}) {
   if (!p || !p.taskId) throw new Error('taskId is required');
   if (!p.maxAmountRequired) throw new Error('maxAmountRequired is required');
 
-  const network = p.network || process.env.X402_NETWORK || 'base';
-  const asset = p.asset || process.env.X402_ASSET || 'USDC';
+  // Internal short name for facilitator USDC lookup + challenge store.
+  const network = fromCaip2Network(p.network || process.env.X402_NETWORK || 'base');
+  const wireNetwork = toCaip2Network(network);
+  const { asset: assetAddress, name: eip712Name, version: eip712Version } = usdcFor(network);
   const payTo = p.payTo || process.env.X402_PAY_TO || null;
   const amount = String(p.maxAmountRequired);
   const nonce = crypto.randomBytes(16).toString('hex');
+  const maxTimeoutSeconds = Math.max(30, Math.floor((opts.ttlMs || DEFAULT_TTL_MS) / 1000));
 
-  // Build the absolute resource URL for CDP Bazaar cataloging.
-  // Per the spec, `resource` must be an absolute https:// URL for the catalog key.
-  // We use /task-request as the routeTemplate (the single catalogable endpoint)
-  // rather than a per-task path like /x402/task/{taskId}.
+  // Absolute URL for CDP Bazaar catalog key — always /task-request, never per-task.
   const baseUrl = p.baseUrl ? String(p.baseUrl).replace(/\/$/, '') : '';
   const resourcePath = '/task-request';
-  const resource = p.resource || (baseUrl ? `${baseUrl}${resourcePath}` : resourcePath);
+  const resourceUrl = p.resource || (baseUrl ? `${baseUrl}${resourcePath}` : resourcePath);
 
-  // The routeTemplate is the catalog key — one entry for the service, not per-task.
-  // Per spec: "Facilitators use routeTemplate as the catalog key, consolidating all
-  // requests to the same route pattern into a single discovery entry."
-  const routeTemplate = baseUrl ? `${baseUrl}/task-request` : '/task-request';
-
-  // Service metadata for CDP Bazaar (on the resource object per spec)
   const serviceName = 'XFuel';
   const tags = ['inference', 'receipt', 'x402', 'ai', 'verifiable'];
   const iconUrl = 'https://xfuel.app/xfuel-icon.svg';
-
-  // CDP Bazaar description: must explain what the service does
   const description = p.description ||
     'Paid inference on Base USDC via x402; returns a signed receipt + verify_url. ' +
     'Unmetered OpenAI path is POST /v1/chat/completions (not this resource). ' +
     'Paying this host is real Base mainnet USDC.';
 
-  // Build the accepts entry with bazaar extension
   const includeBazaar = p.includeBazaar !== false;
   const extensions = includeBazaar ? buildBazaarExtension({ method: 'POST' }) : undefined;
-  // v1 facilitators catalog via paymentRequirements.outputSchema.
+  // v1 facilitators still catalog via paymentRequirements.outputSchema on settle.
   const outputSchema = v1OutputSchemaFromBazaar(extensions);
 
   const store = opts.store === undefined ? challengeStore : opts.store;
   let expiresAt = null;
   if (store) {
     // Persist bazaar fields so settleViaFacilitator can echo them on the
-    // PaymentPayload even when the buyer SDK omits them (xfuel-sdk before
-    // this change). CDP will not catalog a settle that lacks resource.
+    // PaymentPayload even when the buyer SDK omits them. CDP will not catalog
+    // a settle that lacks paymentPayload.resource.
     const rec = store.put(nonce, {
       taskId: p.taskId,
       amount,
-      asset,
-      network,
+      asset: assetAddress,
+      network, // short name for usdcFor / facilitator
       payTo,
-      resource,
+      resource: resourceUrl,
       description,
       mimeType: 'application/json',
       extensions,
@@ -381,31 +386,45 @@ export function buildPaymentChallenge(p, opts = {}) {
     expiresAt = rec.expiresAt;
   }
 
+  // x402 v2 PaymentRequired — resource + extensions are top-level (not on accepts).
   const acceptsEntry = {
     scheme: 'exact',
-    network,
-    asset,
+    network: wireNetwork,
+    amount,
+    // Compat for older xfuel-sdk readers that still look at maxAmountRequired.
     maxAmountRequired: amount,
-    resource,
-    routeTemplate,
+    asset: assetAddress,
     payTo,
-    mimeType: 'application/json',
-    description,
-    // Service metadata (spec: set on the resource object for Bazaar)
-    serviceName,
-    tags: tags.slice(0, 5), // spec: ≤5 tags
-    iconUrl,
-    extra: { taskId: p.taskId, nonce, expiresAt },
-    // CDP Bazaar extension — required for cataloging
+    maxTimeoutSeconds,
+    extra: {
+      name: eip712Name,
+      version: eip712Version,
+      taskId: p.taskId,
+      nonce,
+      expiresAt,
+    },
+  };
+
+  const body = {
+    x402Version: 2,
+    error: 'Payment required',
+    resource: {
+      url: resourceUrl,
+      description,
+      mimeType: 'application/json',
+      serviceName,
+      tags: tags.slice(0, 5),
+      iconUrl,
+    },
+    accepts: [acceptsEntry],
     ...(extensions ? { extensions } : {}),
   };
 
   return {
     status: 402,
-    body: {
-      x402Version: 1,
-      error: 'payment_required',
-      accepts: [acceptsEntry],
+    body,
+    headers: {
+      'PAYMENT-REQUIRED': encodePaymentRequiredHeader(body),
     },
   };
 }

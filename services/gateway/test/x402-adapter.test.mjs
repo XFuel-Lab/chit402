@@ -15,23 +15,37 @@ import {
 } from '../src/x402-adapter.js';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 
-test('buildPaymentChallenge produces a valid x402 accepts payload', () => {
-  const { status, body } = buildPaymentChallenge({
+test('buildPaymentChallenge produces a valid x402 v2 PaymentRequired', () => {
+  const { status, body, headers } = buildPaymentChallenge({
     taskId: 'task-1',
     maxAmountRequired: '1000000',
     network: 'base',
     payTo: '0xabc',
+    baseUrl: 'https://api.xfuel.app',
   });
   assert.equal(status, 402);
-  assert.equal(body.x402Version, 1);
+  assert.equal(body.x402Version, 2);
+  assert.equal(body.resource.url, 'https://api.xfuel.app/task-request');
+  assert.equal(body.resource.serviceName, 'XFuel');
   assert.equal(body.accepts.length, 1);
   const a = body.accepts[0];
   assert.equal(a.scheme, 'exact');
-  assert.equal(a.network, 'base');
+  assert.equal(a.network, 'eip155:8453');
+  assert.equal(a.amount, '1000000');
   assert.equal(a.maxAmountRequired, '1000000');
+  assert.equal(a.asset, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
   assert.equal(a.payTo, '0xabc');
+  assert.equal(typeof a.maxTimeoutSeconds, 'number');
+  assert.equal(a.extra.name, 'USD Coin');
+  assert.equal(a.extra.version, '2');
   assert.equal(a.extra.taskId, 'task-1');
   assert.match(a.extra.nonce, /^[0-9a-f]{32}$/);
+  assert.ok(body.extensions?.[BAZAAR_EXTENSION_KEY]);
+  assert.ok(!a.extensions, 'bazaar is top-level, not on accepts');
+  assert.ok(headers['PAYMENT-REQUIRED']);
+  const decoded = JSON.parse(Buffer.from(headers['PAYMENT-REQUIRED'], 'base64').toString('utf8'));
+  assert.equal(decoded.x402Version, 2);
+  assert.equal(decoded.resource.url, body.resource.url);
 });
 
 // ─── CDP Bazaar Extension Tests ─────────────────────────────────────────────
@@ -76,11 +90,10 @@ test('buildPaymentChallenge: includes bazaar extension by default', () => {
     baseUrl: 'https://api.xfuel.app',
   });
 
-  const a = body.accepts[0];
-  assert.ok(a.extensions, 'extensions object is present');
-  assert.ok(a.extensions[BAZAAR_EXTENSION_KEY], 'bazaar extension is present');
+  assert.ok(body.extensions, 'extensions object is present at top level');
+  assert.ok(body.extensions[BAZAAR_EXTENSION_KEY], 'bazaar extension is present');
 
-  const bazaar = a.extensions[BAZAAR_EXTENSION_KEY];
+  const bazaar = body.extensions[BAZAAR_EXTENSION_KEY];
   assert.ok(bazaar.info.input.type, 'info.input.type is present');
   assert.ok(bazaar.info.output.type, 'info.output.type is present');
 });
@@ -92,18 +105,12 @@ test('buildPaymentChallenge: uses absolute resource URL for bazaar cataloging', 
     baseUrl: 'https://api.xfuel.app',
   });
 
-  const a = body.accepts[0];
-
-  // Resource URL must be absolute https:// (per spec)
-  assert.equal(a.resource, 'https://api.xfuel.app/task-request',
-    'resource is absolute URL pointing to /task-request');
-
-  // routeTemplate is the catalog key — NOT per-task
-  assert.equal(a.routeTemplate, 'https://api.xfuel.app/task-request',
-    'routeTemplate is the stable catalog key');
+  // Resource URL must be absolute https:// (per spec) on the top-level object
+  assert.equal(body.resource.url, 'https://api.xfuel.app/task-request',
+    'resource.url is absolute URL pointing to /task-request');
 
   // Should NOT contain the taskId in the resource URL (that would create per-task catalog entries)
-  assert.ok(!a.resource.includes('task-abc'), 'resource URL does not contain taskId');
+  assert.ok(!body.resource.url.includes('task-abc'), 'resource URL does not contain taskId');
 });
 
 test('buildPaymentChallenge: falls back to relative path when no baseUrl', () => {
@@ -112,9 +119,7 @@ test('buildPaymentChallenge: falls back to relative path when no baseUrl', () =>
     maxAmountRequired: '50000',
   });
 
-  const a = body.accepts[0];
-  assert.equal(a.resource, '/task-request', 'resource is relative /task-request');
-  assert.equal(a.routeTemplate, '/task-request', 'routeTemplate is relative');
+  assert.equal(body.resource.url, '/task-request', 'resource.url is relative /task-request');
 });
 
 test('buildPaymentChallenge: includes service metadata for bazaar', () => {
@@ -124,20 +129,20 @@ test('buildPaymentChallenge: includes service metadata for bazaar', () => {
     baseUrl: 'https://api.xfuel.app',
   });
 
-  const a = body.accepts[0];
+  const r = body.resource;
 
   // Per spec: serviceName ≤32 chars
-  assert.equal(a.serviceName, 'XFuel', 'serviceName is XFuel');
-  assert.ok(a.serviceName.length <= 32, 'serviceName ≤32 chars');
+  assert.equal(r.serviceName, 'XFuel', 'serviceName is XFuel');
+  assert.ok(r.serviceName.length <= 32, 'serviceName ≤32 chars');
 
   // Per spec: tags ≤5 items
-  assert.ok(Array.isArray(a.tags), 'tags is an array');
-  assert.ok(a.tags.length <= 5, 'tags ≤5 items');
-  assert.ok(a.tags.includes('inference'), 'tags includes inference');
-  assert.ok(a.tags.includes('x402'), 'tags includes x402');
+  assert.ok(Array.isArray(r.tags), 'tags is an array');
+  assert.ok(r.tags.length <= 5, 'tags ≤5 items');
+  assert.ok(r.tags.includes('inference'), 'tags includes inference');
+  assert.ok(r.tags.includes('x402'), 'tags includes x402');
 
   // Per spec: iconUrl must be absolute https://
-  assert.ok(a.iconUrl.startsWith('https://'), 'iconUrl is absolute https');
+  assert.ok(r.iconUrl.startsWith('https://'), 'iconUrl is absolute https');
 });
 
 test('buildPaymentChallenge: description mentions real USDC settlement', () => {
@@ -147,13 +152,13 @@ test('buildPaymentChallenge: description mentions real USDC settlement', () => {
     baseUrl: 'https://api.xfuel.app',
   });
 
-  const a = body.accepts[0];
+  const d = body.resource.description;
 
   // Description must explain the service (per spec) and mention it's real USDC
-  assert.ok(a.description.includes('USDC'), 'description mentions USDC');
-  assert.ok(a.description.includes('x402'), 'description mentions x402');
-  assert.ok(a.description.includes('receipt'), 'description mentions receipt');
-  assert.ok(a.description.includes('verify_url'), 'description mentions verify_url');
+  assert.ok(d.includes('USDC'), 'description mentions USDC');
+  assert.ok(d.includes('x402'), 'description mentions x402');
+  assert.ok(d.includes('receipt'), 'description mentions receipt');
+  assert.ok(d.includes('verify_url'), 'description mentions verify_url');
 });
 
 test('buildPaymentChallenge: stores bazaar fields on the bound challenge', () => {
@@ -169,6 +174,7 @@ test('buildPaymentChallenge: stores bazaar fields on the bound challenge', () =>
   const nonce = body.accepts[0].extra.nonce;
   const stored = store.get(nonce);
   assert.equal(stored.resource, 'https://api.xfuel.app/task-request');
+  assert.equal(stored.network, 'base', 'store keeps short network name for facilitator');
   assert.ok(stored.extensions?.[BAZAAR_EXTENSION_KEY], 'stored challenge keeps bazaar');
   assert.equal(stored.extensions[BAZAAR_EXTENSION_KEY].info.input.bodyType, 'json');
   assert.equal(stored.outputSchema.input.bodyType, 'json');
@@ -182,8 +188,7 @@ test('buildPaymentChallenge: can disable bazaar extension', () => {
     includeBazaar: false,
   });
 
-  const a = body.accepts[0];
-  assert.ok(!a.extensions, 'no extensions when includeBazaar=false');
+  assert.ok(!body.extensions, 'no extensions when includeBazaar=false');
 });
 
 test('buildPaymentChallenge requires taskId and amount', () => {

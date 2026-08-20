@@ -29,6 +29,7 @@ import {
 import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, proofOutcomeOf } from './receipt.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest } from './x402-discovery.js';
+import { buildPaymentChallenge } from './x402-adapter.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
 import { apiKeyHashFromReq } from './buyer-attr.js';
@@ -510,40 +511,67 @@ export function createApp() {
 
   // ── Auth middleware ─────────────────────────────────────────────────────
 
-  function authenticate(req, res, next) {
+  function isAuthorised(req) {
     // Dev / open mode when no keys are configured
-    if (AUTHORISED_KEYS.size === 0 && RELAYER_ADDRESSES.size === 0) {
-      return next();
-    }
+    if (AUTHORISED_KEYS.size === 0 && RELAYER_ADDRESSES.size === 0) return true;
 
-    // 1. API key
     const apiKey = req.headers['x-api-key'];
     if (apiKey && AUTHORISED_KEYS.has(apiKey)) {
       req.authMethod = 'api_key';
-      return next();
+      return true;
     }
-
-    // 1b. Shared public demo key (rate-limited hard in rateLimit()).
     if (DEMO_MODE && apiKey && apiKey === DEMO_API_KEY) {
       req.authMethod = 'demo_key';
       req.isDemo = true;
-      return next();
+      return true;
     }
-
-    // 2. Relayer ECDSA signature
     if (verifyRelayerSignature(req)) {
       req.authMethod = 'relayer_sig';
-      return next();
+      return true;
     }
+    return false;
+  }
 
+  function authenticate(req, res, next) {
+    if (isAuthorised(req)) return next();
     return res.status(401).json({
       error: 'unauthorized',
       message: 'Provide a valid X-API-Key header or X-Signature relayer authentication.',
     });
   }
 
-  // Apply rate-limit + auth to all API routes
-  app.use('/task-request',  rateLimit, authenticate);
+  /** x402 v2 402 with PAYMENT-REQUIRED header (CDP Bazaar / validate require this). */
+  function sendPaymentRequired(res, body, headers = {}) {
+    const pr = headers['PAYMENT-REQUIRED']
+      || Buffer.from(JSON.stringify(body), 'utf8').toString('base64');
+    res.set('PAYMENT-REQUIRED', pr);
+    const exposed = res.get('Access-Control-Expose-Headers') || '';
+    if (!/PAYMENT-REQUIRED/i.test(exposed)) {
+      res.set('Access-Control-Expose-Headers', exposed
+        ? `${exposed}, PAYMENT-REQUIRED`
+        : 'PAYMENT-REQUIRED');
+    }
+    return res.status(402).json(body);
+  }
+
+  /** Public discovery 402 for CDP re-fetch / validate (no API key, never fulfills). */
+  function publicTaskRequestChallenge(req) {
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+    const x = config.x402;
+    const { body, headers } = buildPaymentChallenge({
+      taskId: `x402-discovery-${req.id || Date.now()}`,
+      maxAmountRequired: String(x.usdcPriceDefault || '10000'),
+      network: x.network,
+      payTo: x.payTo,
+      baseUrl,
+    });
+    return { body, headers };
+  }
+
+  // Apply rate-limit + auth to API routes. /task-request is rate-limited but
+  // NOT auth-gated: CDP Bazaar re-fetches the resource unauthenticated and
+  // requires HTTP 402 (not 401). Fulfillment still requires a key below.
+  app.use('/task-request',  rateLimit);
   app.use('/task-quote',    rateLimit, authenticate);
   app.use('/prove-result',  rateLimit, authenticate);
   app.use('/a2a-message',   rateLimit, authenticate);
@@ -552,11 +580,24 @@ export function createApp() {
   app.use('/webhook',       rateLimit, authenticate);
   app.use('/erc8004/validate', rateLimit, authenticate);
 
+  // GET /task-request — public x402 discovery probe (CDP validate uses GET or POST)
+  app.get('/task-request', (req, res) => {
+    const { body, headers } = publicTaskRequestChallenge(req);
+    return sendPaymentRequired(res, body, headers);
+  });
+
   // ═══════════════════════════════════════════════════════════════════════
   // POST /task-request — Submit an AI intent
   // ═══════════════════════════════════════════════════════════════════════
 
   app.post('/task-request', async (req, res) => {
+    // Unauthenticated callers only ever see the discovery 402 — never a free
+    // serve, never fulfillment. API key is required once work is done.
+    if (!isAuthorised(req)) {
+      const { body, headers } = publicTaskRequestChallenge(req);
+      return sendPaymentRequired(res, body, headers);
+    }
+
     try {
       const {
         message_type,       // required – one of MESSAGE_TYPES
@@ -693,7 +734,7 @@ export function createApp() {
                 baseUrl: handshakeBaseUrl,
               });
               if (hs.kind === 'challenge') {
-                return res.status(402).json(hs.body);
+                return sendPaymentRequired(res, hs.body);
               }
               if (hs.kind === 'settled') {
                 if (decision.pending) {
@@ -742,7 +783,7 @@ export function createApp() {
             const handshakeBaseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
             const decision = await runX402Handshake(req, { taskId: `x402-${req.id}`, baseUrl: handshakeBaseUrl });
             if (decision.kind === 'challenge') {
-              return res.status(402).json(decision.body);
+              return sendPaymentRequired(res, decision.body);
             }
             if (decision.kind === 'settled') {
               paymentRail = 'usdc';

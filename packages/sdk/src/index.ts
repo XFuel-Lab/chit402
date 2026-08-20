@@ -13,9 +13,12 @@ import {
 export {
   type X402Accept,
   type X402Challenge,
+  type X402ResourceInfo,
   type X402PaymentAuthorization,
   type X402Payer,
   selectAccept,
+  acceptAmount,
+  challengeResourceUrl,
   createMockPayer,
   createSignerPayer,
 } from './x402.js';

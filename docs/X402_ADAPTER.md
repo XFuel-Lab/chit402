@@ -57,74 +57,70 @@ GET https://api.cdp.coinbase.com/platform/v2/x402/discovery/search?query=xfuel
 
 ### How Bazaar Cataloging Works
 
-Cataloging requires three steps:
+Cataloging requires:
 
-1. **Server advertises a spec-conformant bazaar extension on the 402 (PaymentRequired)**  
-   The gateway's `buildPaymentChallenge()` includes:
-   - An absolute `resource` URL: `https://api.xfuel.app/task-request`
-   - A `routeTemplate` as the catalog key (not per-task)
-   - `extensions.bazaar.info.input.type` and `info.output.type`
-   - Service metadata: `serviceName: "XFuel"`, `tags`, `iconUrl`
+1. **Public HTTPS resource returns 402 (not 401)**  
+   CDP re-fetches `POST`/`GET https://api.xfuel.app/task-request` **without** an API key after settle. Auth must not run before the challenge. The key is required for fulfillment only.
 
-2. **The settle body sent to CDP must carry `paymentPayload.resource` and echo `extensions.bazaar`**  
-   Advertising the extension on the 402 is not enough. CDP indexes the *settle* payload, not the challenge. The gateway attaches both from the bound challenge when it calls `/verify` and `/settle` (so a listing trigger does not depend on an SDK bump). `xfuel-sdk` also echoes them on `X-PAYMENT` when the 402 includes them.
+2. **x402 v2 PaymentRequired** on that 402 (and `GET /.well-known/x402`):
+   - `x402Version: 2`
+   - Top-level `resource: { url, description, mimeType, serviceName, tags, iconUrl }`
+   - `accepts[0]`: `network: eip155:8453`, `asset` = Base USDC address, `amount` (atomic), `maxTimeoutSeconds`, `extra: { name, version }`
+   - Top-level `extensions.bazaar` with `info.input` = `{ type, method, bodyType, body }` + Draft 2020-12 `schema`
+   - `PAYMENT-REQUIRED` response header (base64 of the same JSON)
 
-3. **One successful settlement through the CDP Facilitator**  
-   After the first paid `/task-request` settles through `https://api.cdp.coinbase.com/platform/v2/x402` *with* `paymentPayload.resource` set, the service is cataloged. A small ~$0.01 payment is sufficient. Search can lag up to ~10 minutes (CDP catalog cache). Inspect gateway logs for `x402 bazaar extension-responses` (`processing` vs `rejected`).
+3. **Settle body carries `paymentPayload.resource` + echoed bazaar**  
+   The gateway attaches both from the bound challenge on `/verify` and `/settle`.
+
+4. **One successful CDP settle**, then expect `bazaarStatus=success` (or `processing` then a catalog hit within ~15 min).
+
+### Validate before paying
+
+```bash
+curl -sS -X POST https://api.cdp.coinbase.com/platform/v2/x402/validate \
+  -H 'Content-Type: application/json' \
+  -d '{"resource":"https://api.xfuel.app/task-request","method":"POST"}'
+```
+
+Want `valid: true` and `simulation.outcome: "accepted"`. Do not pay until that lands.
 
 ### Manual Listing Trigger (Post-Deploy)
 
-After deploying, trigger the initial listing with a minimal paid request:
+After deploying, confirm validate is green, then one ~$0.01 paid request (API key + payer):
 
 ```bash
-# Prerequisites: XFUEL_PAYER_PRIVATE_KEY set in an agent or SDK client
-# This is a real Base mainnet USDC payment
-
-curl -X POST https://api.xfuel.app/task-request \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: <your-key>" \
-  -H "X-PAYMENT: <signed-payment-from-sdk>" \
-  -d '{
-    "message_type": "inference_request",
-    "chain_id": "base",
-    "sender": "0xYourAddress",
-    "model_id": "xfuel/auto",
-    "messages": [{"role":"user","content":"hi"}],
-    "payment": {"rail": "usdc"}
-  }'
+# Prerequisites: XFUEL_PAYER_PRIVATE_KEY / DEPLOYER_PRIVATE_KEY set
+cd packages/sdk
+XFUEL_API_URL=https://api.xfuel.app XFUEL_API_KEY=xfuel-demo XFUEL_AMOUNT=10000 \
+  npx tsx examples/flagship-demo.ts
 ```
-
-Or use the SDK's `pay_with_usdc` MCP tool if `XFUEL_PAYER_PRIVATE_KEY` is set.
 
 ### Verify Listing
 
-After settlement, search for XFuel:
-
 ```bash
 curl "https://api.cdp.coinbase.com/platform/v2/x402/discovery/search?query=xfuel"
+curl "https://api.cdp.coinbase.com/platform/v2/x402/discovery/merchant?payTo=<X402_PAY_TO>"
 ```
 
-Expected: XFuel appears with `resource: "https://api.xfuel.app/task-request"` and the bazaar metadata.
+Expected: XFuel with `resource: "https://api.xfuel.app/task-request"`.
 
 ### Troubleshooting
 
-Common cataloging failures (per spec):
-
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Not listed | Settle payload lacked `resource` | Deploy the facilitator echo; re-run one paid `/task-request` |
-| Not listed | No settlement yet, or catalog cache | Wait ~10 min; search by `payTo` as well as `query=xfuel` |
-| Listed with wrong URL | Relative resource URL | Ensure `PUBLIC_BASE_URL` is set |
-| Missing from search | `bazaar` extension missing or non-conformant | 402 `info.input` must be `{type,method,bodyType,body}` plus a `schema` |
-| Rejected by facilitator | Schema violation | Check logs for `EXTENSION-RESPONSES` `bazaar.rejectedReason` |
+| validate `returns_402` fails with 401 | Auth before x402 | Public challenge path; key only for fulfillment |
+| validate wants v2 fields | Still advertising v1 | `eip155:8453`, `amount`, top-level `resource` + `extensions` |
+| Not listed after settle | Settle lacked `resource` | Facilitator echo from bound challenge |
+| `bazaarStatus=processing` forever | CDP indexer lag / probe 401 | Fix public 402 first; do not re-pay until validate is green |
+| Rejected | Schema violation | Logs: `EXTENSION-RESPONSES` `bazaar.rejectedReason` |
 
-The 402 JSON can be inspected without paying:
+Inspect the live 402 without paying:
 
 ```bash
-curl -X POST https://api.xfuel.app/task-request \
-  -H "Content-Type: application/json" \
-  -d '{"message_type":"inference_request","chain_id":"base","sender":"0x0"}' \
-  | jq '.accepts[0] | {resource, routeTemplate, serviceName, extensions}'
+curl -sS -D - -X POST https://api.xfuel.app/task-request \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+# Expect HTTP 402 + PAYMENT-REQUIRED header (no X-API-Key)
 ```
 
 ## Related

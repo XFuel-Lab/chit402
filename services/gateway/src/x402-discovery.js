@@ -1,25 +1,18 @@
 import config from './config.js';
-import { isX402Enabled, defaultRail } from './x402-adapter.js';
+import { isX402Enabled, defaultRail, toCaip2Network, usdcFor } from './x402-adapter.js';
 import { defaultFacilitatorUrlForNetwork } from './x402-facilitator.js';
 import { describePricing } from './pricing.js';
 
 /**
  * x402 Bazaar discovery manifest.
  *
- * The x402 "Bazaar" (Coinbase CDP + the x402.org reference) is a discovery layer:
- * a facilitator exposes `GET /discovery/resources`, and a resource server becomes
- * discoverable by describing its 402-payable route(s) in the bazaar shape
- * (`accepts`-style payment requirements + human/machine metadata). See
- * https://docs.x402.org/extensions/bazaar.
+ * Served at `GET /.well-known/x402`. Describes the one paid resource —
+ * `POST /task-request` — in the x402 v2 / CDP Bazaar shape (CAIP-2 network,
+ * USDC contract address, `amount`). The OpenAI path (`/v1/*`) is intentionally
+ * not listed: it is unmetered in Phase 1.
  *
- * XFuel settles USDC through a standard x402 facilitator (default: the public
- * Base-Sepolia reference), so this manifest self-describes our one paid resource —
- * `POST /task-request` with `payment.rail="usdc"` — in that shape. It is served
- * publicly (no auth) at `GET /.well-known/x402` so agents, crawlers, and Bazaar
- * tooling can find and price XFuel without any XFuel-specific integration.
- *
- * The OpenAI-compatible path (`/v1/chat/completions`) is intentionally NOT listed
- * as an x402 resource: it is unmetered in Phase 1 (see docs/OPENAI_COMPATIBLE_GATEWAY.md).
+ * Cataloging itself happens when CDP settles a payment that carries
+ * `paymentPayload.resource` + `extensions.bazaar` — see docs/X402_ADAPTER.md.
  */
 
 /** Minimal JSON-schema of the /task-request 202 response (for discovery consumers). */
@@ -43,7 +36,7 @@ const TASK_REQUEST_INPUT_SCHEMA = {
   type: 'object',
   properties: {
     message_type: { type: 'string', enum: ['inference_request'] },
-    chain_id: { type: 'string', example: 'theta' },
+    chain_id: { type: 'string', example: 'base' },
     amount: { type: 'string', description: 'gross task value in USDC base units (6 decimals); min 10000 ($0.01)' },
     sender: { type: 'string', description: '0x address that owns/pays for the task' },
     model_id: { type: 'string', example: 'xfuel/auto', description: 'live catalog id; list via GET /v1/models' },
@@ -67,29 +60,25 @@ export function buildX402Manifest(baseUrl = '') {
     x.facilitatorProvider === 'x402'
       ? x.facilitatorUrl || defaultFacilitatorUrlForNetwork(x.network)
       : x.gatewayUrl || null;
+  const wireNetwork = toCaip2Network(x.network);
+  const { asset, name, version } = usdcFor(x.network);
 
   return {
-    x402Version: 1,
+    x402Version: 2,
     name: 'XFuel Protocol',
     description:
       'Paid inference on Base (USDC via x402). POST /task-request returns a signed ' +
       'receipt and public verify_url. Optional SP1 settlement proof on demand. ' +
       'The unmetered OpenAI path is POST /v1/chat/completions (not this resource). ' +
-      'Hostname may say testnet; this rail is Base mainnet USDC.',
-    // Whether this node is currently accepting the USDC/x402 rail. When false, the
-    // resource is still described (so tooling can plan) but requests settle via TFUEL.
+      'Paying this host is real Base mainnet USDC.',
     x402_enabled: isX402Enabled(),
     default_rail: defaultRail(),
-    // How a call is priced, before anyone spends anything. `accepts` below can
-    // only carry a single `maxAmountRequired`, which for a metered resource is
-    // the floor rather than the price — an agent reading only that field would
-    // budget $0.01 for a call that meters to more.
     pricing: describePricing(),
     facilitator: {
       protocol: x.facilitatorProvider, // 'x402' (standard) | 'zan'
       url: facilitatorUrl,
-      network: x.network,
-      asset: x.asset,
+      network: wireNetwork,
+      asset,
     },
     resources: [
       {
@@ -100,17 +89,17 @@ export function buildX402Manifest(baseUrl = '') {
           'Submit a verifiable AI inference task. Pay per task in USDC (x402, exact scheme, ' +
           'EIP-3009 on Base). Returns a task_id, a signed receipt, and a public verify_url; ' +
           'poll /task-status and fetch /prove-result for the SP1 settlement proof.',
-        // x402 payment requirements (mirrors the 402 challenge `accepts` entry).
         accepts: [
           {
             scheme: 'exact',
-            network: x.network,
-            asset: x.asset,
+            network: wireNetwork,
+            amount: x.usdcPriceDefault,
             maxAmountRequired: x.usdcPriceDefault,
+            asset,
             payTo: x.payTo,
+            maxTimeoutSeconds: 120,
             mimeType: 'application/json',
-            // The `exact` scheme wants one number, but the resource is metered:
-            // this is the per-settlement floor, not what a given call costs.
+            extra: { name, version },
             description:
               'Minimum per settlement. The charged amount is metered per request — '
               + 'see `pricing` on this manifest and POST /task-quote for an exact figure.',
@@ -121,7 +110,6 @@ export function buildX402Manifest(baseUrl = '') {
         docs: base ? `${base}/llms.txt` : '/llms.txt',
       },
     ],
-    // Pointers for agents that discover us here (progressive disclosure).
     links: {
       agent_manifest: base ? `${base}/llms.txt` : '/llms.txt',
       openai_models: base ? `${base}/v1/models` : '/v1/models',

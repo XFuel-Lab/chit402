@@ -59,8 +59,23 @@ const USDC_NETWORKS = {
   base: { asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', name: 'USD Coin', version: '2' },
 };
 
-function usdcFor(network) {
-  const known = USDC_NETWORKS[network] || {};
+/** Short name (`base`) ←→ CAIP-2 (`eip155:8453`). CDP Bazaar indexes the CAIP-2 form. */
+export function toCaip2Network(network) {
+  const n = String(network || '').toLowerCase();
+  if (n === 'base' || n === 'eip155:8453') return 'eip155:8453';
+  if (n === 'base-sepolia' || n === 'eip155:84532') return 'eip155:84532';
+  return network || 'eip155:8453';
+}
+
+export function fromCaip2Network(network) {
+  const n = String(network || '').toLowerCase();
+  if (n === 'eip155:8453' || n === 'base') return 'base';
+  if (n === 'eip155:84532' || n === 'base-sepolia') return 'base-sepolia';
+  return network || 'base';
+}
+
+export function usdcFor(network) {
+  const known = USDC_NETWORKS[fromCaip2Network(network)] || {};
   return {
     asset: process.env.X402_ASSET_ADDRESS || known.asset || null,
     name: process.env.X402_EIP712_NAME || known.name || 'USD Coin',
@@ -98,10 +113,11 @@ export function catalogResourceUrl(resource) {
 export function toPaymentRequirements({
   network, amount, payTo, resource, taskId, maxTimeoutSeconds, description, outputSchema,
 } = {}) {
-  const { asset, name, version } = usdcFor(network);
+  const shortNet = fromCaip2Network(network);
+  const { asset, name, version } = usdcFor(shortNet);
   const req = {
     scheme: 'exact',
-    network,
+    network: shortNet,
     maxAmountRequired: String(amount),
     resource: resource || `/x402/task/${taskId || 'task'}`,
     description: description || (taskId ? `XFuel task ${taskId}` : 'XFuel task'),

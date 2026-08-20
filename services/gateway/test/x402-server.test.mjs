@@ -132,10 +132,11 @@ test('full 402 loop against mock facilitator: challenge ? settle ? replay-reject
     const challenge = await runX402Handshake(reqNoPay, { taskId: 'x402-req-1', cfg });
     assert.equal(challenge.kind, 'challenge');
     const accept = challenge.body.accepts[0];
-    assert.equal(challenge.body.x402Version, 1);
+    assert.equal(challenge.body.x402Version, 2);
+    assert.equal(accept.amount, '50000');
     assert.equal(accept.maxAmountRequired, '50000');
     assert.equal(accept.payTo, '0xtreasury');
-    assert.equal(accept.network, 'base');
+    assert.equal(accept.network, 'eip155:8453');
     const nonce = accept.extra.nonce;
     assert.match(nonce, /^[0-9a-f]{32}$/);
 
