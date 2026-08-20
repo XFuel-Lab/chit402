@@ -15,8 +15,10 @@ export default function Pricing() {
           <h2 style={{ fontSize: '1.1rem', marginBottom: '0.75rem' }}>/v1 — try without a wallet</h2>
           <p style={{ color: '#8a8a9a' }}>
             Demo key <code>xfuel-demo</code>: 15/min, 150/day per IP. Receipts are still signed.
-            They attest which model ran, not that a dollar moved. <code>payment.rail</code> is{' '}
-            <code>unmetered</code>.
+            They attest which model ran, not that a dollar moved. The receipt price line is
+            “not charged” — do not read the $0.01 floor as a bill.{' '}
+            <code>payment.rail</code> is <code>unmetered</code>. The API is{' '}
+            <code>https://api-testnet.xfuel.app/v1</code>, not <code>xfuel.app/v1</code>.
           </p>
         </div>
 
