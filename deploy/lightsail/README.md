@@ -2,7 +2,25 @@
 
 Canonical way to run `https://api.xfuel.app` (alias `api-testnet.xfuel.app`) — **not** PM2, **not** `/opt/.../theta-bridge`.
 
-To add a hostname: [docs/API_HOSTNAME.md](../../docs/API_HOSTNAME.md). Same box, same static IP. Do not create a new instance.
+DNS for `*.xfuel.app` is at Namecheap. Extra API names are A records to this instance’s static IP. TLS is terminated on the box (Caddy or nginx + certbot), not on Vercel. Add a new name to the existing site block and cert; do not stand up a second proxy or instance.
+
+```bash
+sudo ss -tlnp | grep -E ':443|:80'
+systemctl is-active caddy nginx
+sudo certbot certificates
+```
+
+Caddy — both names on one site:
+
+```
+api.xfuel.app, api-testnet.xfuel.app {
+    reverse_proxy 127.0.0.1:3002
+}
+```
+
+certbot + nginx — expand the existing cert (`-d api-testnet.xfuel.app -d api.xfuel.app`), add `server_name`, reload.
+
+Receipt links: `PUBLIC_BASE_URL=https://api.xfuel.app` in `.env`, then `sudo systemctl restart xfuel-api`. Do not rotate `RECEIPT_SIGNING_SECRET`.
 
 ## Layout
 

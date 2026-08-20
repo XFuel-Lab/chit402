@@ -6,8 +6,6 @@ Demo key: `xfuel-demo` (rate-limited). Use the partner key if we sent you one.
 
 This is the **public beta**. Payments on this host are **real USDC on Base mainnet.**
 
-Cutover / DNS / TLS (founder): [API_HOSTNAME.md](./API_HOSTNAME.md).
-
 **Try it:** [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) — OpenAI `baseURL` swap, receipt, paid path. Do not start here and also there; that page is the working copy.
 
 ```powershell

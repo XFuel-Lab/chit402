@@ -67,7 +67,6 @@ Demo gateway:
 - App: **systemd `xfuel-api`** → `/home/ubuntu/xfuel-protocol/services/gateway` → `node src/server.js` (port 3002)
 - Install / recover: [deploy/lightsail/README.md](../deploy/lightsail/README.md)
 - Public: https://api.xfuel.app (alias https://api-testnet.xfuel.app — same box)
-- Hostname cutover: [API_HOSTNAME.md](./API_HOSTNAME.md) — DNS + TLS, no new instance
 - **Do not** use `/opt/xfuel-protocol/backend/theta-bridge` or PM2 `xfuel-m2m` (legacy)
 - Health fingerprint: `fee_config.revenue_split.model === "usdc-base-splits-v2"` (not the legacy `30% BBB` string)
 

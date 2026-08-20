@@ -11,7 +11,7 @@ https://xfuel.app · https://api.xfuel.app
 | You are… | Open |
 |----------|------|
 | A design partner / builder | [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) |
-| Checking the public host | [HOSTED_TESTNET_ENDPOINT.md](./HOSTED_TESTNET_ENDPOINT.md) · [RUNTIME_STATE.md](./RUNTIME_STATE.md) · [API_HOSTNAME.md](./API_HOSTNAME.md) |
+| Checking the public host | [HOSTED_TESTNET_ENDPOINT.md](./HOSTED_TESTNET_ENDPOINT.md) · [RUNTIME_STATE.md](./RUNTIME_STATE.md) |
 | The founder | [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md) · [STRATEGY.md](./STRATEGY.md) · [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md) |
 
 Everything else is reference. Do not send partners this index.

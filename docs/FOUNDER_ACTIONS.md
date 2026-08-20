@@ -2,13 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-20 · Public Base mainnet x402 live · SDK `0.5.4` · MCP `0.3.0` published · xfuel.app live. First-hour path is the product. **Today:** DNS + TLS for `api.xfuel.app` on the existing Lightsail box ([API_HOSTNAME.md](./API_HOSTNAME.md)) — no new instance. Then outreach (item 4).
-
-## Do today — hostname (before outreach)
-
-`api-testnet.xfuel.app` is a misleading name, not a second environment. Add `api.xfuel.app` as a DNS A record to **the same** static IP (`35.180.10.142`), put the new name on the existing Caddy/nginx cert, keep the alias. Do not create a new Lightsail instance. Step-by-step: [API_HOSTNAME.md](./API_HOSTNAME.md).
-
-After `curl.exe -sS https://api.xfuel.app/health` is green: merge the hostname copy PR, set `PUBLIC_BASE_URL=https://api.xfuel.app` on the box, publish `xfuel-sdk@0.5.5`. Until that publish, npm `0.5.4` still defaults to the alias, which is fine.
+Last updated: 2026-08-20 · Public Base mainnet x402 live · SDK `0.5.4` · MCP `0.3.0` published · xfuel.app live. First-hour path is the product. Remaining: finish `api.xfuel.app` TLS on the existing box, merge the hostname copy PR, then outreach (item 4).
 
 ## How to use
 
