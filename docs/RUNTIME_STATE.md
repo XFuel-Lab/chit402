@@ -2,11 +2,11 @@
 
 As-deployed source of truth. When in-repo config disagrees with this file, this file wins.
 
-Last updated: 2026-08-17
+Last updated: 2026-08-20
 
-> **Live as of 2026-08-20.** Public host is `api.xfuel.app` (alias `api-testnet.xfuel.app`, same
-> Lightsail box). Site 404/`/v1` explainer shipped in #197. SDK `0.5.4` on npm still defaults to
-> the alias until `0.5.5`. Re-verify:
+> **Live as of 2026-08-20.** Public host is `https://api.xfuel.app` (same Lightsail box as the
+> `api-testnet` alias). Site `/v1` explainer + catch-all shipped. npm defaults catch up in
+> `xfuel-sdk@0.5.5` / `xfuel-mcp@0.3.1`. Re-verify:
 > `node scripts/dev/_verify_deploy.mjs https://api.xfuel.app`.
 > Theta EdgeCloud is unset (`THETA_EDGE_URL` missing); AkashML is the live inference path. **SP1
 > prover is running.**

@@ -34,7 +34,7 @@ baseURL = ${XFUEL_API_URL}/v1
 
 `GET /v1/models`, `POST /v1/chat/completions` (streaming supported). Receipts in `x-xfuel-*` headers and `xfuel` body field. Docs: [OPENAI_COMPATIBLE_GATEWAY.md](../../docs/OPENAI_COMPATIBLE_GATEWAY.md).
 
-## Flow 0b — MCP (after `xfuel-mcp@0.3.0` is on npm)
+## Flow 0b — MCP
 
 ```
 npx xfuel-mcp
@@ -43,8 +43,6 @@ npx xfuel-mcp
 `list_models` then `chat_completions` with `messages`. That is the same unmetered `/v1` door.
 Do not call `submit_inference` to try a prompt (402 without a payer).
 `pay_with_usdc` is only listed if you set `XFUEL_PAYER_PRIVATE_KEY` — it spends real USDC on Base.
-
-Until 0.3.0 is published, use Flow 0 (REST), not the npm MCP package.
 
 ## Flow 1 — Submit inference
 

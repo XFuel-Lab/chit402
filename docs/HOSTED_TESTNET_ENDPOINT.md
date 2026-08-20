@@ -1,12 +1,11 @@
 # Hosted endpoint
 
 Public gateway: `https://api.xfuel.app`  
-Alias (same box): `https://api-testnet.xfuel.app`  
 Demo key: `xfuel-demo` (rate-limited). Use the partner key if we sent you one.
 
-This is the **public beta**. Payments on this host are **real USDC on Base mainnet.**
+Public beta. Payments on this host are **real USDC on Base mainnet.** Filename is historical.
 
-**Try it:** [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) — OpenAI `baseURL` swap, receipt, paid path. Do not start here and also there; that page is the working copy.
+**Try it:** [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md). That page is the working copy — do not start here and also there.
 
 ```powershell
 curl.exe -sS https://api.xfuel.app/health

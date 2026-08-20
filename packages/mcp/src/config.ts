@@ -10,7 +10,7 @@ export const SERVER_NAME = 'xfuel-mcp-server';
 // Keep in lockstep with package.json / server.json (registry listing) so the
 // version reported over MCP, on /health, and in the static server card matches
 // the published npm package.
-export const SERVER_VERSION = '0.3.0';
+export const SERVER_VERSION = '0.3.1';
 
 /** Handshake text so a first-hour client does not need GitHub. */
 export const SERVER_INSTRUCTIONS = `XFuel first-hour: call list_models, then chat_completions to generate text (POST /v1/chat/completions). Default model xfuel/auto. The demo key xfuel-demo is shared and rate-limited (15/min, 150/day). That path is unmetered.

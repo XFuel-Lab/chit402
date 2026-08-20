@@ -57,19 +57,14 @@ npm run dev
 
 ## Try the demo
 
-One command against the hosted testnet (USDC on Base Sepolia → shareable receipt):
+First hour is unmetered OpenAI `/v1` on `https://api.xfuel.app` (demo key `xfuel-demo`). No wallet. Working copy: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).
 
-```powershell
-cd packages/sdk
-npx tsx examples/flagship-demo.ts
 ```
-
-Or install the SDK in your own project:
-
-```bash
 npm install xfuel-sdk
 npx xfuel-mcp
 ```
+
+`flagship-demo.ts` is the **paid** `/task-request` path (402 without a payer). Do not start there.
 
 - TypeScript SDK — [packages/sdk](packages/sdk/README.md)
 - MCP server — [packages/mcp](packages/mcp/README.md)
@@ -100,4 +95,4 @@ Reporting policy: [SECURITY.md](SECURITY.md).
 
 ---
 
-MIT License — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE).
