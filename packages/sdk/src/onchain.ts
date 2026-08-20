@@ -30,7 +30,7 @@ import {
   type Provider,
   type Signer,
 } from 'ethers';
-import { createSignerPayer, type X402Payer, type X402Accept } from './x402.js';
+import { createSignerPayer, acceptAmount, type X402Payer, type X402Accept } from './x402.js';
 import type { PaymentBinding, ProofResponse } from './index.js';
 import { canonicalReceiptPayload } from './receipt.js';
 
@@ -974,7 +974,19 @@ export const USDC_NETWORKS: Record<
     name: 'USD Coin',
     version: '2',
   },
+  'eip155:8453': {
+    chainId: 8453,
+    usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    name: 'USD Coin',
+    version: '2',
+  },
   'base-sepolia': {
+    chainId: 84532,
+    usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+    name: 'USDC',
+    version: '2',
+  },
+  'eip155:84532': {
     chainId: 84532,
     usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
     name: 'USDC',
@@ -1038,7 +1050,7 @@ export function createEip3009Payer(signer: Signer, opts: Eip3009PayerOptions = {
     const message = {
       from,
       to: accept.payTo,
-      value: accept.maxAmountRequired,
+      value: acceptAmount(accept),
       validAfter: 0,
       validBefore: now + (opts.validForSeconds ?? 3600),
       // EIP-3009 nonce (random bytes32) — distinct from the x402 challenge nonce.

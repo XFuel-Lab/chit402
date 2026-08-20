@@ -52,12 +52,15 @@ test('an unpaid /v1 call is refused with a 402, not served for free', async () =
   assert.equal(res.status, 402);
   const body = await res.json();
 
-  // An x402 client reads this half...
-  assert.equal(body.x402Version, 1);
+  // An x402 client reads this half (v2: CAIP-2 network + amount; maxAmountRequired kept for compat)...
+  assert.equal(body.x402Version, 2);
   assert.ok(Array.isArray(body.accepts) && body.accepts.length === 1);
   assert.equal(body.accepts[0].scheme, 'exact');
   assert.equal(body.accepts[0].payTo, '0xtreasury');
+  assert.equal(body.accepts[0].network, 'eip155:84532');
+  assert.equal(body.accepts[0].amount, body.accepts[0].maxAmountRequired);
   assert.match(body.accepts[0].extra.nonce, /^[0-9a-f]{32}$/);
+  assert.equal(typeof body.resource, 'object');
 
   // ...and a plain OpenAI client reads this half.
   assert.equal(body.error.type, 'payment_required');

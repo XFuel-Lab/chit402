@@ -216,7 +216,9 @@ test('full x402 handshake via the standard facilitator: challenge → settle →
     const challenge = await runX402Handshake(reqNoPay, { taskId: 'x402-bs-1', cfg });
     assert.equal(challenge.kind, 'challenge');
     const accept = challenge.body.accepts[0];
-    assert.equal(accept.network, 'base-sepolia');
+    assert.equal(challenge.body.x402Version, 2);
+    assert.equal(accept.network, 'eip155:84532');
+    assert.equal(accept.amount, '50000');
     assert.equal(accept.maxAmountRequired, '50000');
     const nonce = accept.extra.nonce;
 
@@ -246,5 +248,5 @@ test('x402 handshake defaults to the public facilitator when no URL is configure
   const reqNoPay = { headers: {}, body: { payment: { rail: 'usdc' } } };
   const challenge = await runX402Handshake(reqNoPay, { taskId: 't', cfg });
   assert.equal(challenge.kind, 'challenge');
-  assert.equal(challenge.body.accepts[0].network, 'base-sepolia');
+  assert.equal(challenge.body.accepts[0].network, 'eip155:84532');
 });

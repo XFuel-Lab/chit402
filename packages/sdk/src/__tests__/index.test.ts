@@ -529,10 +529,13 @@ describe('XFuelClient', () => {
     it('createSignerPayer echoes bazaar extensions from the 402', async () => {
       const withBazaar: X402Challenge = {
         ...challenge,
+        resource: { url: 'https://api.xfuel.app/task-request' },
+        extensions: { bazaar: { info: { input: { type: 'http', method: 'POST', bodyType: 'json', body: {} } } } },
         accepts: [{
           ...challenge.accepts[0],
-          resource: 'https://api.xfuel.app/task-request',
-          extensions: { bazaar: { info: { input: { type: 'http', method: 'POST', bodyType: 'json', body: {} } } } },
+          amount: '50000',
+          network: 'eip155:8453',
+          asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
         }],
       };
       const payer = createSignerPayer(async () => ({ sig: '0x1' }));
@@ -540,6 +543,7 @@ describe('XFuelClient', () => {
       const decoded = JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
       expect(decoded.resource).toBe('https://api.xfuel.app/task-request');
       expect(decoded.extensions.bazaar.info.input.bodyType).toBe('json');
+      expect(decoded.amount).toBe('50000');
     });
 
     it('createSignerPayer rejects a non-function argument', () => {
