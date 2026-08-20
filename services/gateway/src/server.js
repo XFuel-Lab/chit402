@@ -685,9 +685,12 @@ export function createApp() {
             } else {
               const handshakeTaskId = decision.pending?.taskId || `x402-${req.id}`;
               const handshakeAmount = decision.pending ? decision.amount : null;
+              // Pass the public base URL for CDP Bazaar cataloging (absolute resource URLs)
+              const handshakeBaseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
               const hs = await runX402Handshake(req, {
                 taskId: handshakeTaskId,
                 amount: handshakeAmount,
+                baseUrl: handshakeBaseUrl,
               });
               if (hs.kind === 'challenge') {
                 return res.status(402).json(hs.body);
@@ -735,7 +738,9 @@ export function createApp() {
               }
             }
           } else {
-            const decision = await runX402Handshake(req, { taskId: `x402-${req.id}` });
+            // Pass the public base URL for CDP Bazaar cataloging (absolute resource URLs)
+            const handshakeBaseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+            const decision = await runX402Handshake(req, { taskId: `x402-${req.id}`, baseUrl: handshakeBaseUrl });
             if (decision.kind === 'challenge') {
               return res.status(402).json(decision.body);
             }

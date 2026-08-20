@@ -10,6 +10,8 @@ import {
   fallbackToTfuel,
   priceTaskUSDC,
   ChallengeStore,
+  buildBazaarExtension,
+  BAZAAR_EXTENSION_KEY,
 } from '../src/x402-adapter.js';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 
@@ -30,6 +32,136 @@ test('buildPaymentChallenge produces a valid x402 accepts payload', () => {
   assert.equal(a.payTo, '0xabc');
   assert.equal(a.extra.taskId, 'task-1');
   assert.match(a.extra.nonce, /^[0-9a-f]{32}$/);
+});
+
+// ─── CDP Bazaar Extension Tests ─────────────────────────────────────────────
+
+test('buildBazaarExtension: produces a spec-conformant bazaar extension', () => {
+  const ext = buildBazaarExtension({ method: 'POST' });
+
+  // Must have the bazaar key
+  assert.ok(ext[BAZAAR_EXTENSION_KEY], 'bazaar extension key is present');
+
+  const bazaar = ext[BAZAAR_EXTENSION_KEY];
+  assert.ok(bazaar.info, 'info is present');
+  assert.ok(bazaar.info.input, 'info.input is present');
+  assert.ok(bazaar.info.output, 'info.output is present');
+
+  // Per spec: info.input.type must be present
+  assert.equal(bazaar.info.input.type, 'http', 'info.input.type is http');
+  assert.equal(bazaar.info.input.method, 'POST', 'info.input.method is POST');
+
+  // Per spec: info.output.type must be present when output is present
+  assert.equal(bazaar.info.output.type, 'json', 'info.output.type is json');
+
+  // Input schema should match /task-request body
+  assert.ok(bazaar.info.input.inputSchema, 'inputSchema is present');
+  assert.ok(bazaar.info.input.inputSchema.properties.message_type, 'inputSchema has message_type');
+  assert.ok(bazaar.info.input.inputSchema.properties.sender, 'inputSchema has sender');
+  assert.ok(bazaar.info.input.inputSchema.properties.model_id, 'inputSchema has model_id');
+
+  // Output schema should describe the task-request response
+  assert.ok(bazaar.info.output.schema, 'output schema is present');
+  assert.ok(bazaar.info.output.schema.properties.task_id, 'output schema has task_id');
+  assert.ok(bazaar.info.output.schema.properties.verify_url, 'output schema has verify_url');
+});
+
+test('buildPaymentChallenge: includes bazaar extension by default', () => {
+  const { body } = buildPaymentChallenge({
+    taskId: 'task-1',
+    maxAmountRequired: '50000',
+    baseUrl: 'https://api.xfuel.app',
+  });
+
+  const a = body.accepts[0];
+  assert.ok(a.extensions, 'extensions object is present');
+  assert.ok(a.extensions[BAZAAR_EXTENSION_KEY], 'bazaar extension is present');
+
+  const bazaar = a.extensions[BAZAAR_EXTENSION_KEY];
+  assert.ok(bazaar.info.input.type, 'info.input.type is present');
+  assert.ok(bazaar.info.output.type, 'info.output.type is present');
+});
+
+test('buildPaymentChallenge: uses absolute resource URL for bazaar cataloging', () => {
+  const { body } = buildPaymentChallenge({
+    taskId: 'task-abc',
+    maxAmountRequired: '50000',
+    baseUrl: 'https://api.xfuel.app',
+  });
+
+  const a = body.accepts[0];
+
+  // Resource URL must be absolute https:// (per spec)
+  assert.equal(a.resource, 'https://api.xfuel.app/task-request',
+    'resource is absolute URL pointing to /task-request');
+
+  // routeTemplate is the catalog key — NOT per-task
+  assert.equal(a.routeTemplate, 'https://api.xfuel.app/task-request',
+    'routeTemplate is the stable catalog key');
+
+  // Should NOT contain the taskId in the resource URL (that would create per-task catalog entries)
+  assert.ok(!a.resource.includes('task-abc'), 'resource URL does not contain taskId');
+});
+
+test('buildPaymentChallenge: falls back to relative path when no baseUrl', () => {
+  const { body } = buildPaymentChallenge({
+    taskId: 'task-xyz',
+    maxAmountRequired: '50000',
+  });
+
+  const a = body.accepts[0];
+  assert.equal(a.resource, '/task-request', 'resource is relative /task-request');
+  assert.equal(a.routeTemplate, '/task-request', 'routeTemplate is relative');
+});
+
+test('buildPaymentChallenge: includes service metadata for bazaar', () => {
+  const { body } = buildPaymentChallenge({
+    taskId: 'task-1',
+    maxAmountRequired: '50000',
+    baseUrl: 'https://api.xfuel.app',
+  });
+
+  const a = body.accepts[0];
+
+  // Per spec: serviceName ≤32 chars
+  assert.equal(a.serviceName, 'XFuel', 'serviceName is XFuel');
+  assert.ok(a.serviceName.length <= 32, 'serviceName ≤32 chars');
+
+  // Per spec: tags ≤5 items
+  assert.ok(Array.isArray(a.tags), 'tags is an array');
+  assert.ok(a.tags.length <= 5, 'tags ≤5 items');
+  assert.ok(a.tags.includes('inference'), 'tags includes inference');
+  assert.ok(a.tags.includes('x402'), 'tags includes x402');
+
+  // Per spec: iconUrl must be absolute https://
+  assert.ok(a.iconUrl.startsWith('https://'), 'iconUrl is absolute https');
+});
+
+test('buildPaymentChallenge: description mentions real USDC settlement', () => {
+  const { body } = buildPaymentChallenge({
+    taskId: 'task-1',
+    maxAmountRequired: '50000',
+    baseUrl: 'https://api.xfuel.app',
+  });
+
+  const a = body.accepts[0];
+
+  // Description must explain the service (per spec) and mention it's real USDC
+  assert.ok(a.description.includes('USDC'), 'description mentions USDC');
+  assert.ok(a.description.includes('x402'), 'description mentions x402');
+  assert.ok(a.description.includes('receipt'), 'description mentions receipt');
+  assert.ok(a.description.includes('verify_url'), 'description mentions verify_url');
+});
+
+test('buildPaymentChallenge: can disable bazaar extension', () => {
+  const { body } = buildPaymentChallenge({
+    taskId: 'task-1',
+    maxAmountRequired: '50000',
+    includeBazaar: false,
+  });
+
+  const a = body.accepts[0];
+  assert.ok(!a.extensions, 'no extensions when includeBazaar=false');
 });
 
 test('buildPaymentChallenge requires taskId and amount', () => {
