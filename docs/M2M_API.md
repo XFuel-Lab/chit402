@@ -57,7 +57,7 @@ Submit an AI task.
 | `callback_url` | no | Per-task webhook |
 | `callback_secret` | no | HMAC secret for per-task webhook |
 
-**Easiest path:** from `packages/sdk`, run `npx tsx examples/flagship-demo.ts` (see [HOSTED_TESTNET_ENDPOINT.md](./HOSTED_TESTNET_ENDPOINT.md)).
+**First hour** is unmetered `/v1` — [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md). `flagship-demo.ts` is the paid `/task-request` path (402 without a payer).
 
 Optional raw HTTP — on **Windows PowerShell use `curl.exe`** (plain `curl` is not real curl):
 

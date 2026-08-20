@@ -2,7 +2,7 @@
 
 What “Seed-ready / A-” means after Sprints 1–4. Not an offer — planning only.
 
-Related: [FUNDRAISING_STRUCTURE.md](./FUNDRAISING_STRUCTURE.md), [AUDIT_READINESS_CHECKLIST.md](./AUDIT_READINESS_CHECKLIST.md), [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md).
+Related: [FUNDRAISING_STRUCTURE.md](./FUNDRAISING_STRUCTURE.md), [AUDIT_READINESS_CHECKLIST.md](./AUDIT_READINESS_CHECKLIST.md).
 
 ## Seed gate (from fundraising structure)
 

@@ -93,7 +93,7 @@ x402:
 
 - SP1 guest v2 needed for in-proof payment binding (`payment_binding.in_proof === true`)
 - Tier-3 on-chain verify / E2E still in progress (see Verified Inference handoff)
-- Private Spend v0 code path shipped (flag off by default) — enable with `PRIVATE_SPEND_ENABLED=true`; see [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md) and [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md)
+- Private Spend v0 code path shipped (flag off by default) — enable with `PRIVATE_SPEND_ENABLED=true`; see [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md)
 - Auditor export: `GET /receipt/:taskId?format=auditor` — [RECEIPT_SCHEMA_V2.md](./RECEIPT_SCHEMA_V2.md)
 - Tier-3 posture: [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) (narrow SKU)
 - Seed scaffold: [SEED_READINESS.md](./SEED_READINESS.md) — design partners + counsel still open

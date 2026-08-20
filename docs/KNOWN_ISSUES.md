@@ -292,7 +292,7 @@ call ($0.0094) that is **5.3x the entire fee**, on every proof, with no config-l
 Batching AI tasks requires extending the guest program's `Batch` branch to accept
 `ai_tasks`, which changes the ELF and therefore the **vKey** — so it also needs the new vKey
 registered in `ZKVerifierSP1` on Base. That is the "Guest v2 ELF + vKey" item already parked
-under Later in [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md), and it is now on the critical path
+under Later in the operator tracker, and it is now on the critical path
 for Tier-2 economics rather than a nice-to-have.
 
 Until then Tier-2 is solvent only as an opt-in flat charge, or gated at a COGS threshold high
@@ -626,7 +626,7 @@ any time with `scripts/dev/_cache_gate.mjs`. (2) *The provider must expose somet
 **unanswered**, and it is AkashML's to answer, not ours to engineer around: they document no
 affinity key, and the `cache_salt` / `prompt_cache_key` we already send is unconfirmed. Until (2)
 lands there is nothing to build — pinning to a provider we cannot address inside is a no-op. The
-question is queued in [FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md).
+question is queued with the operator.
 
 One consolation on the accounting: because cached reads are unreported, `costOfUsage` bills every
 prompt token fresh, so measured COGS is an **upper bound**. We understate our own margin rather than
@@ -703,7 +703,7 @@ be quoted and must not be the one place the inflation survives. A row with no ti
 placed relative to the fix and is treated as untrusted. `STATS_FEE_TRUST_FROM=all` opts out.
 
 Current `/stats` fee figures are now safe to quote — including in
-[FOUNDER_ACTIONS.md](./FOUNDER_ACTIONS.md) item 10 (seed deck) — with the caveat that they are a
+the seed-deck item — with the caveat that they are a
 post-2026-08-12 window, not lifetime totals.
 
 ### `X402_COST_PLUS` priced nothing (fixed 2026-08-15)

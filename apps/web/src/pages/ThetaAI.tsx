@@ -660,7 +660,7 @@ export default function ThetaAI() {
   const generateCurl = useCallback((_preset: PresetHook) => {
     // EdgeCloud presets are optional GPU routing. Settlement home is USDC on Base.
     // Never ship bare bash `curl` — PowerShell aliases curl → Invoke-WebRequest.
-    return `# XFuel public demo (USDC on Base Sepolia → shareable receipt)
+    return `# XFuel public demo — first hour is /v1 (no wallet). Paid path below is 402 without a payer.
 # From repo: packages/sdk
 npx tsx examples/flagship-demo.ts
 
@@ -824,8 +824,8 @@ npx tsx examples/flagship-demo.ts
           <h1 style={styles.heroTitle}>Optional GPU hub (EdgeCloud)</h1>
           <p style={styles.heroSubtitle}>
             Theta EdgeCloud is an optional compute provider — not the settlement home.
-            Money and proofs settle in <strong>USDC via x402 on Base</strong>. For the public
-            end-to-end demo, use Docs → Try the demo (<code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>flagship-demo.ts</code>).
+            Money and proofs settle in <strong>USDC via x402 on Base</strong>. First hour is
+            Docs → Try the demo (unmetered <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>/v1</code>, no wallet).
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '0.75rem', marginTop: '1rem' }}>
             <button

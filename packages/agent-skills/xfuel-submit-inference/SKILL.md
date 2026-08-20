@@ -27,7 +27,7 @@ proof-backed receipt. Prefer the SDK over raw HTTP. Money + proofs live on Base.
 | `model` | yes (inference) | Live catalog id, e.g. `xfuel/auto` or `theta/glm_5_2` (list via `GET /v1/models`). Retired `llama-*` names are rejected, not remapped. Maps to SDK `modelId`. |
 | `input` | recommended | Prompt/string. You compute `input_hash = keccak256(input)` (the SDK takes `input_hash`, not the raw input). |
 | `sender` | yes | Caller address (settlement attribution). |
-| `amount` | no | Gross fee in wei (min `10000`). Default `1000000`. |
+| `amount` | no | Gross fee in USDC 6 decimals (`10000` = $0.01). Default `1000000` ($1.00). |
 | `chain_id` | no | `base` (default) \| `theta` \| `bittensor` \| `akash` \| `osmosis`. `base` = settlement home; others are routing / optional-rail hints. |
 | `proof_system` | no | `sp1` (default settlement proof). `zkgpt` is a retired/dev scaffold — not the Tier-3 path. |
 | `callback_url` | no | Webhook to receive the `TaskSettled` event instead of polling. |
