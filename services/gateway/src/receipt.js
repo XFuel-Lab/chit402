@@ -588,7 +588,9 @@ export function renderReceiptHtml(receipt) {
   const pr = receipt.proof;
   const b = receipt.binding;
   const title = `XFuel receipt · ${shortHash(receipt.task_id, 12, 6)}`;
-  const desc = `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} · ${p.rail.toUpperCase()} · ${formatUsdc(p.gross_amount) || p.gross_amount}`;
+  const desc = p.rail === 'unmetered'
+    ? `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} · UNMETERED · not charged`
+    : `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} · ${p.rail.toUpperCase()} · ${formatUsdc(p.gross_amount) || p.gross_amount}`;
 
   const refHtml = p.ref
     ? (p.explorer_url
@@ -735,7 +737,9 @@ export function renderReceiptHtml(receipt) {
       ${row('Rail', `<span class="badge ${p.rail === 'usdc' ? 'ok' : 'pending'}">${esc(p.rail.toUpperCase())}</span>`)}
       ${row('Settlement', p.collected ? '<span class="badge ok">collected</span>' : (p.collects_on === 'next_request' ? '<span class="badge pending">bill pending</span>' : '<span class="muted">not collected</span>'))}
       ${row('Settlement ref', refHtml)}
-      ${row('Price', usdcCell(p.gross_amount))}
+      ${p.rail === 'unmetered'
+        ? row('Price', '<span class="muted">not charged</span> <span class="muted">unmetered /v1</span>')
+        : row('Price', usdcCell(p.gross_amount))}
       ${p.basis ? row('Basis', `${esc(p.basis)}${p.floor_applied ? ' · floor applied' : ''}`) : ''}
       ${p.platform_fee != null ? row('Platform fee (10%)', usdcCell(p.platform_fee)) : ''}
       ${row('Protocol fee', `${usdcCell(p.fee_amount)} <span class="muted">(${esc(p.protocol_fee_bps ?? p.fee_bps)} bps)</span>`)}

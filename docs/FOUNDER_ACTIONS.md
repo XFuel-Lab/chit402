@@ -2,7 +2,7 @@
 
 Things only you (founder / ops / counsel) can do. Engineering tracks the rest in sprints.
 
-Last updated: 2026-08-19 · Public Base mainnet x402 live · SDK `0.5.4` · **Waiting on you (outreach tomorrow):** publish `xfuel-mcp@0.3.0` (WebAuthn), redeploy gateway (`/llms.txt` + health hide null token buckets), deploy `apps/web` to xfuel.app. Until those three are live, first-hour bots still see the old lies. DNS rename (`api.xfuel.app`) can wait if the banner is up.
+Last updated: 2026-08-20 · Public Base mainnet x402 live · SDK `0.5.4` · MCP `0.3.0` published · xfuel.app live. First-hour path is the product. Remaining founder work is outreach (item 4) and optional `api.xfuel.app` DNS.
 
 ## How to use
 

@@ -32,7 +32,7 @@ export default function Home() {
             We do not route to OpenAI, Groq, Together, or Fireworks on the public catalog.
           </p>
           <div style={styles.heroCta}>
-            <Link to="/docs" className="btn btn-primary">Try /v1</Link>
+            <Link to="/v1" className="btn btn-primary">Try /v1</Link>
             <Link to="/pricing" className="btn btn-secondary">Pricing</Link>
             <a href="https://github.com/XFuel-Lab/xfuel-protocol" className="btn btn-secondary" target="_blank" rel="noreferrer">
               GitHub
@@ -41,7 +41,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section style={{ padding: '1rem 0 3rem' }}>
+      <section id="try" style={{ padding: '1rem 0 3rem' }}>
         <div className="container" style={{ maxWidth: 720 }}>
           <h2 style={{ marginBottom: '0.75rem' }}>Try it</h2>
           <p style={{ color: '#8a8a9a', marginBottom: '1rem' }}>

@@ -302,6 +302,20 @@ test('proofOutcomeOf: a skip or empty proof object is pending, not valid', async
   assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: { error: 'nope' } }), 'regenerable');
 });
 
+test('renderReceiptHtml: unmetered /v1 does not print the $0.01 floor as a price', () => {
+  const html = renderReceiptHtml(buildReceipt({
+    taskId: 'openai-free',
+    status: 'completed',
+    intent: { paymentRail: 'unmetered', amount: '10000', model: 'xfuel/auto' },
+    result: { provider: 'akash-network', usage: { prompt_tokens: 8, completion_tokens: 5 } },
+    sp1Proof: null,
+  }));
+  assert.match(html, /not charged/);
+  assert.match(html, /UNMETERED/);
+  assert.ok(!html.includes('$0.01'), html);
+  assert.ok(!html.includes('>10000<'), html);
+});
+
 test('outputHashOf prefers result.outputHash over hashing the result envelope', async () => {
   const { buildReceipt } = await import('../src/receipt.js');
   const hash = '0x' + '11'.repeat(32);

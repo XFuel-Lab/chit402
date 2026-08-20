@@ -11,6 +11,8 @@ import Staking from './pages/Staking';
 import Treasury from './pages/Treasury';
 import Docs from './pages/Docs';
 import Pricing from './pages/Pricing';
+import GatewayV1 from './pages/GatewayV1';
+import NotFound from './pages/NotFound';
 import Community from './pages/Community';
 import Grants from './pages/Grants';
 import EscrowAdmin from './pages/EscrowAdmin';
@@ -24,6 +26,8 @@ export default function App() {
         <Route path="docs" element={<Docs />} />
         <Route path="pricing" element={<Pricing />} />
         <Route path="security" element={<Security />} />
+        <Route path="v1" element={<GatewayV1 />} />
+        <Route path="v1/*" element={<GatewayV1 />} />
         {/* Legacy protocol pages — not in nav. Kept so old links do not 404. */}
         <Route path="bridge" element={<Bridge />} />
         <Route path="dashboard" element={<Dashboard />} />
@@ -39,6 +43,7 @@ export default function App() {
         <Route path="believers" element={<Navigate to="/" replace />} />
         <Route path="angels" element={<Navigate to="/" replace />} />
         <Route path="escrow-admin" element={<EscrowAdmin />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
   );
