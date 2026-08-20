@@ -6,6 +6,135 @@ import {
   defaultFacilitatorUrlForNetwork,
 } from './x402-facilitator.js';
 
+// ─── CDP Bazaar Discovery Extension ──────────────────────────────────────────
+// Per https://docs.x402.org/extensions/bazaar: the bazaar extension makes a
+// resource discoverable via CDP Bazaar / facilitator `/discovery/resources`.
+// Cataloging requires:
+//   1. Server advertises a spec-conformant bazaar extension on the 402
+//   2. A paying client echoes that extension in the PaymentPayload
+//   3. One successful settlement through the CDP Facilitator
+//
+// This file handles step 1. See docs/X402_ADAPTER.md for the full flow.
+
+/** Bazaar extension key per spec */
+export const BAZAAR_EXTENSION_KEY = 'bazaar';
+
+/**
+ * Build the bazaar discovery extension for XFuel's /task-request resource.
+ *
+ * @param {Object} opts
+ * @param {string} [opts.method='POST']  HTTP method
+ * @returns {Object} extensions object to spread into the 402 accepts entry
+ */
+export function buildBazaarExtension(opts = {}) {
+  const method = opts.method || 'POST';
+
+  return {
+    [BAZAAR_EXTENSION_KEY]: {
+      info: {
+        input: {
+          type: 'http',
+          method,
+          // JSON-Schema of the /task-request body (usdc rail). Agents can call
+          // this after discovery. Matches TASK_REQUEST_INPUT_SCHEMA in x402-discovery.js.
+          inputSchema: {
+            type: 'object',
+            properties: {
+              message_type: {
+                type: 'string',
+                enum: ['inference_request'],
+                description: 'Task type; only inference_request is supported via x402',
+              },
+              chain_id: {
+                type: 'string',
+                example: 'base',
+                description: 'Settlement chain; "base" for USDC settlement',
+              },
+              amount: {
+                type: 'string',
+                description: 'Gross task value in smallest unit (wei); min 10000',
+              },
+              sender: {
+                type: 'string',
+                description: '0x address that owns/pays for the task',
+              },
+              model_id: {
+                type: 'string',
+                example: 'xfuel/auto',
+                description: 'Model id from GET /v1/models; xfuel/auto routes automatically',
+              },
+              input_hash: {
+                type: 'string',
+                description: 'keccak256 of your input (optional; for proof binding)',
+              },
+              messages: {
+                type: 'array',
+                description: 'OpenAI-style chat messages array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    role: { type: 'string', enum: ['system', 'user', 'assistant'] },
+                    content: { type: 'string' },
+                  },
+                  required: ['role', 'content'],
+                },
+              },
+              max_tokens: {
+                type: 'integer',
+                description: 'Output token budget (default 500)',
+              },
+              payment: {
+                type: 'object',
+                properties: {
+                  rail: { type: 'string', enum: ['usdc'], description: 'Payment rail; use "usdc"' },
+                },
+              },
+            },
+            required: ['message_type', 'chain_id', 'sender'],
+          },
+          example: {
+            message_type: 'inference_request',
+            chain_id: 'base',
+            sender: '0xYourWalletAddress',
+            model_id: 'xfuel/auto',
+            messages: [{ role: 'user', content: 'Hello' }],
+            max_tokens: 500,
+            payment: { rail: 'usdc' },
+          },
+        },
+        output: {
+          type: 'json',
+          // Matches TASK_REQUEST_OUTPUT_SCHEMA in x402-discovery.js
+          schema: {
+            type: 'object',
+            properties: {
+              task_id: { type: 'string', description: 'Unique task identifier' },
+              status: { type: 'string', enum: ['accepted'], description: 'Task status' },
+              payment_rail: { type: 'string', enum: ['usdc'], description: 'Settlement rail' },
+              payment_ref: { type: ['string', 'null'], description: 'network:txHash settlement reference' },
+              verify_url: { type: 'string', description: 'Public, no-auth receipt page' },
+              gross_amount: { type: 'string', description: 'Total charged (USDC base units)' },
+              fee_amount: { type: 'string', description: 'Protocol fee (USDC base units)' },
+              net_amount: { type: 'string', description: 'Amount after fee (USDC base units)' },
+            },
+            required: ['task_id', 'status', 'verify_url'],
+          },
+          example: {
+            task_id: 'ai-task-12345',
+            status: 'accepted',
+            payment_rail: 'usdc',
+            payment_ref: 'base:0x...',
+            verify_url: 'https://api.xfuel.app/receipt/ai-task-12345',
+            gross_amount: '50000',
+            fee_amount: '250',
+            net_amount: '49750',
+          },
+        },
+      },
+    },
+  };
+}
+
 /**
  * XFuel ⇄ ZAN x402 adapter.
  *
@@ -142,14 +271,21 @@ export function priceTaskUSDC(task = {}, opts = {}) {
  * record it in the store (bound to amount/asset/network/resource + a nonce) so
  * verify/settle can enforce it. Shape follows the x402 `accepts` convention.
  *
+ * CDP Bazaar cataloging (https://docs.x402.org/extensions/bazaar):
+ *   - `resource` MUST be an absolute https:// URL for the catalog key
+ *   - `extensions.bazaar` MUST be present with info.input.type / info.output.type
+ *   - `routeTemplate` is the stable catalog key (not per-task)
+ *
  * @param {Object} p
  * @param {string} p.taskId
  * @param {string} p.maxAmountRequired  smallest-unit string (USDC 6dp)
- * @param {string} [p.resource]
+ * @param {string} [p.resource]         absolute resource URL (required for bazaar)
+ * @param {string} [p.baseUrl]          base URL for building absolute links (e.g. https://api.xfuel.app)
  * @param {string} [p.payTo]
  * @param {string} [p.network]          base | solana
  * @param {string} [p.asset]            default USDC
  * @param {string} [p.description]
+ * @param {boolean} [p.includeBazaar=true]  include the bazaar discovery extension
  * @param {Object} [opts]
  * @param {ChallengeStore|null} [opts.store]  store to record into (default module store; null to skip)
  * @returns {{ status:number, body:Object }}
@@ -161,9 +297,21 @@ export function buildPaymentChallenge(p, opts = {}) {
   const network = p.network || process.env.X402_NETWORK || 'base';
   const asset = p.asset || process.env.X402_ASSET || 'USDC';
   const payTo = p.payTo || process.env.X402_PAY_TO || null;
-  const resource = p.resource || `/x402/task/${p.taskId}`;
   const amount = String(p.maxAmountRequired);
   const nonce = crypto.randomBytes(16).toString('hex');
+
+  // Build the absolute resource URL for CDP Bazaar cataloging.
+  // Per the spec, `resource` must be an absolute https:// URL for the catalog key.
+  // We use /task-request as the routeTemplate (the single catalogable endpoint)
+  // rather than a per-task path like /x402/task/{taskId}.
+  const baseUrl = p.baseUrl ? String(p.baseUrl).replace(/\/$/, '') : '';
+  const resourcePath = '/task-request';
+  const resource = p.resource || (baseUrl ? `${baseUrl}${resourcePath}` : resourcePath);
+
+  // The routeTemplate is the catalog key — one entry for the service, not per-task.
+  // Per spec: "Facilitators use routeTemplate as the catalog key, consolidating all
+  // requests to the same route pattern into a single discovery entry."
+  const routeTemplate = baseUrl ? `${baseUrl}/task-request` : '/task-request';
 
   const store = opts.store === undefined ? challengeStore : opts.store;
   let expiresAt = null;
@@ -172,24 +320,44 @@ export function buildPaymentChallenge(p, opts = {}) {
     expiresAt = rec.expiresAt;
   }
 
+  // Service metadata for CDP Bazaar (on the resource object per spec)
+  const serviceName = 'XFuel';
+  const tags = ['inference', 'receipt', 'x402', 'ai', 'verifiable'];
+  const iconUrl = 'https://xfuel.app/xfuel-icon.svg';
+
+  // CDP Bazaar description: must explain what the service does
+  const description = p.description ||
+    'Paid inference on Base USDC via x402; returns a signed receipt + verify_url. ' +
+    'Unmetered OpenAI path is POST /v1/chat/completions (not this resource). ' +
+    'Paying this host is real Base mainnet USDC.';
+
+  // Build the accepts entry with bazaar extension
+  const includeBazaar = p.includeBazaar !== false;
+  const acceptsEntry = {
+    scheme: 'exact',
+    network,
+    asset,
+    maxAmountRequired: amount,
+    resource,
+    routeTemplate,
+    payTo,
+    mimeType: 'application/json',
+    description,
+    // Service metadata (spec: set on the resource object for Bazaar)
+    serviceName,
+    tags: tags.slice(0, 5), // spec: ≤5 tags
+    iconUrl,
+    extra: { taskId: p.taskId, nonce, expiresAt },
+    // CDP Bazaar extension — required for cataloging
+    ...(includeBazaar ? { extensions: buildBazaarExtension({ method: 'POST' }) } : {}),
+  };
+
   return {
     status: 402,
     body: {
       x402Version: 1,
       error: 'payment_required',
-      accepts: [
-        {
-          scheme: 'exact',
-          network,
-          asset,
-          maxAmountRequired: amount,
-          resource,
-          payTo,
-          mimeType: 'application/json',
-          description: p.description || `XFuel task ${p.taskId}`,
-          extra: { taskId: p.taskId, nonce, expiresAt },
-        },
-      ],
+      accepts: [acceptsEntry],
     },
   };
 }
