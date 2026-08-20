@@ -523,6 +523,23 @@ describe('XFuelClient', () => {
       const decoded = JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
       expect(decoded.authorization).toEqual({ sig: '0xdeadbeef', v: 27 });
       expect(decoded.nonce).toBe('nonce-abc');
+      expect(decoded.resource).toBe('/x402/task/x402-req1');
+    });
+
+    it('createSignerPayer echoes bazaar extensions from the 402', async () => {
+      const withBazaar: X402Challenge = {
+        ...challenge,
+        accepts: [{
+          ...challenge.accepts[0],
+          resource: 'https://api.xfuel.app/task-request',
+          extensions: { bazaar: { info: { input: { type: 'http', method: 'POST', bodyType: 'json', body: {} } } } },
+        }],
+      };
+      const payer = createSignerPayer(async () => ({ sig: '0x1' }));
+      const { header } = await payer(withBazaar);
+      const decoded = JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
+      expect(decoded.resource).toBe('https://api.xfuel.app/task-request');
+      expect(decoded.extensions.bazaar.info.input.bodyType).toBe('json');
     });
 
     it('createSignerPayer rejects a non-function argument', () => {

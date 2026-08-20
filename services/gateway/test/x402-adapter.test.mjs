@@ -54,16 +54,19 @@ test('buildBazaarExtension: produces a spec-conformant bazaar extension', () => 
   // Per spec: info.output.type must be present when output is present
   assert.equal(bazaar.info.output.type, 'json', 'info.output.type is json');
 
-  // Input schema should match /task-request body
-  assert.ok(bazaar.info.input.inputSchema, 'inputSchema is present');
-  assert.ok(bazaar.info.input.inputSchema.properties.message_type, 'inputSchema has message_type');
-  assert.ok(bazaar.info.input.inputSchema.properties.sender, 'inputSchema has sender');
-  assert.ok(bazaar.info.input.inputSchema.properties.model_id, 'inputSchema has model_id');
+  // Official POST body discovery: type/method/bodyType/body — NOT inputSchema on info.input
+  assert.equal(bazaar.info.input.bodyType, 'json', 'info.input.bodyType is json');
+  assert.equal(bazaar.info.input.body.model_id, 'xfuel/auto');
+  assert.equal(bazaar.info.input.body.payment.rail, 'usdc');
+  assert.ok(!('inputSchema' in bazaar.info.input), 'info.input has no inputSchema (additionalProperties: false)');
 
-  // Output schema should describe the task-request response
-  assert.ok(bazaar.info.output.schema, 'output schema is present');
-  assert.ok(bazaar.info.output.schema.properties.task_id, 'output schema has task_id');
-  assert.ok(bazaar.info.output.schema.properties.verify_url, 'output schema has verify_url');
+  // schema must validate info (CDP rejects extensions that omit schema)
+  assert.ok(bazaar.schema, 'schema is present');
+  assert.deepEqual(bazaar.schema.properties.input.required, ['type', 'method', 'bodyType', 'body']);
+  assert.equal(bazaar.schema.properties.input.additionalProperties, false);
+  assert.ok(bazaar.schema.properties.input.properties.body.properties.message_type);
+  assert.ok(bazaar.info.output.example.task_id);
+  assert.ok(bazaar.info.output.example.verify_url);
 });
 
 test('buildPaymentChallenge: includes bazaar extension by default', () => {
@@ -151,6 +154,25 @@ test('buildPaymentChallenge: description mentions real USDC settlement', () => {
   assert.ok(a.description.includes('x402'), 'description mentions x402');
   assert.ok(a.description.includes('receipt'), 'description mentions receipt');
   assert.ok(a.description.includes('verify_url'), 'description mentions verify_url');
+});
+
+test('buildPaymentChallenge: stores bazaar fields on the bound challenge', () => {
+  const store = new ChallengeStore();
+  const { body } = buildPaymentChallenge(
+    {
+      taskId: 'task-store',
+      maxAmountRequired: '10000',
+      baseUrl: 'https://api.xfuel.app',
+    },
+    { store },
+  );
+  const nonce = body.accepts[0].extra.nonce;
+  const stored = store.get(nonce);
+  assert.equal(stored.resource, 'https://api.xfuel.app/task-request');
+  assert.ok(stored.extensions?.[BAZAAR_EXTENSION_KEY], 'stored challenge keeps bazaar');
+  assert.equal(stored.extensions[BAZAAR_EXTENSION_KEY].info.input.bodyType, 'json');
+  assert.equal(stored.outputSchema.input.bodyType, 'json');
+  assert.ok(stored.description.includes('USDC'));
 });
 
 test('buildPaymentChallenge: can disable bazaar extension', () => {

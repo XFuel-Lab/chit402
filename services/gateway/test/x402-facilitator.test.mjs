@@ -4,10 +4,13 @@ import {
   decodePaymentHeader,
   toPaymentRequirements,
   toPaymentPayload,
+  catalogResourceUrl,
+  parseExtensionResponses,
   verifyViaFacilitator,
   settleViaFacilitator,
   DEFAULT_FACILITATOR_URL,
 } from '../src/x402-facilitator.js';
+import { buildBazaarExtension } from '../src/x402-adapter.js';
 import { runX402Handshake } from '../src/x402-server.js';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 
@@ -100,6 +103,66 @@ test('toPaymentPayload reshapes the XFuel blob into the standard exact-scheme pa
   assert.equal(p.payload.authorization.value, '50000');
   assert.equal(p.payload.authorization.validAfter, '0');
   assert.match(p.payload.authorization.nonce, /^0x[0-9a-f]{64}$/);
+  assert.equal(p.resource, undefined, 'no catalog resource without an absolute URL');
+  assert.equal(p.extensions, undefined);
+});
+
+test('toPaymentPayload attaches absolute resource + bazaar extension for CDP cataloging', () => {
+  const decoded = decodePaymentHeader(makePaymentHeader());
+  const extensions = buildBazaarExtension({ method: 'POST' });
+  const p = toPaymentPayload(decoded, {
+    network: 'base',
+    resource: 'https://api.xfuel.app/task-request',
+    extensions,
+  });
+  assert.equal(p.resource, 'https://api.xfuel.app/task-request');
+  assert.equal(p.extensions.bazaar.info.input.bodyType, 'json');
+});
+
+test('toPaymentPayload prefers challenge resource over a relative header resource', () => {
+  const decoded = decodePaymentHeader(makePaymentHeader());
+  decoded.resource = '/task-request';
+  const p = toPaymentPayload(decoded, {
+    network: 'base',
+    resource: 'https://api.xfuel.app/task-request',
+  });
+  assert.equal(p.resource, 'https://api.xfuel.app/task-request');
+});
+
+test('catalogResourceUrl accepts only absolute http(s) URLs', () => {
+  assert.equal(catalogResourceUrl('https://api.xfuel.app/task-request'), 'https://api.xfuel.app/task-request');
+  assert.equal(catalogResourceUrl({ url: 'https://api.xfuel.app/task-request' }), 'https://api.xfuel.app/task-request');
+  assert.equal(catalogResourceUrl('/task-request'), undefined);
+  assert.equal(catalogResourceUrl(undefined), undefined);
+});
+
+test('parseExtensionResponses decodes JSON and base64-JSON headers', () => {
+  const json = { bazaar: { status: 'processing' } };
+  assert.deepEqual(
+    parseExtensionResponses(new Headers({ 'EXTENSION-RESPONSES': JSON.stringify(json) })),
+    json,
+  );
+  const b64 = Buffer.from(JSON.stringify(json), 'utf8').toString('base64');
+  assert.deepEqual(
+    parseExtensionResponses(new Headers({ 'extension-responses': b64 })),
+    json,
+  );
+  assert.equal(parseExtensionResponses(new Headers()), null);
+});
+
+test('toPaymentRequirements forwards v1 outputSchema', () => {
+  const outputSchema = { input: { type: 'http', method: 'POST', bodyType: 'json', body: {} } };
+  const r = toPaymentRequirements({
+    network: 'base-sepolia',
+    amount: '10000',
+    payTo: '0xtreasury',
+    resource: 'https://api.xfuel.app/task-request',
+    description: 'Paid inference on Base USDC via x402',
+    outputSchema,
+  });
+  assert.equal(r.resource, 'https://api.xfuel.app/task-request');
+  assert.equal(r.description, 'Paid inference on Base USDC via x402');
+  assert.deepEqual(r.outputSchema, outputSchema);
 });
 
 test('toPaymentPayload throws on a header missing signature/authorization', () => {
