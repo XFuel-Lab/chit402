@@ -456,6 +456,75 @@ export function parseExtensionResponses(headers) {
   try { return JSON.parse(Buffer.from(raw, 'base64').toString('utf8')); } catch { return { _raw: String(raw).slice(0, 240) }; }
 }
 
+/**
+ * Slugify a CDP invalidMessage for inclusion in the 402 reason string.
+ * Produces a URL-safe, human-readable slug for debugging (e.g. Bankr tweets).
+ *
+ * Example:
+ *   "invalid signature: public key recovery code 171 is not in the valid range [27, 34]"
+ *   → "recovery_code_171_not_in_valid_range_27_34"
+ *
+ * Rules:
+ * - Remove common prefixes ("invalid signature:", "invalid:", etc.)
+ * - Replace spaces with underscores, lowercase
+ * - Remove special characters except underscores and alphanumerics
+ * - Filter out long hex strings (signatures) — anything 0x + 20+ hex chars
+ * - Truncate to maxLen chars (default 80)
+ * - If result is empty or too short after filtering, return null
+ *
+ * @param {string|undefined} msg - The invalidMessage from CDP
+ * @param {number} [maxLen=80] - Max length of the slug
+ * @returns {string|null} - Slugified message or null if unusable
+ */
+export function slugifyInvalidMessage(msg, maxLen = 80) {
+  if (!msg || typeof msg !== 'string') return null;
+
+  let s = msg;
+
+  // Remove common unhelpful prefixes (case-insensitive)
+  s = s.replace(/^invalid\s+signature:\s*/i, '');
+  s = s.replace(/^invalid:\s*/i, '');
+  s = s.replace(/^error:\s*/i, '');
+
+  // Remove long hex strings (signatures, hashes) — 0x followed by 20+ hex chars
+  s = s.replace(/0x[0-9a-fA-F]{20,}/g, '');
+
+  // Remove standalone long hex strings without 0x prefix (40+ hex chars likely a hash/sig)
+  s = s.replace(/\b[0-9a-fA-F]{40,}\b/g, '');
+
+  // Lowercase and replace non-alphanumeric (except spaces) with spaces
+  s = s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
+
+  // Collapse multiple spaces into single space, trim
+  s = s.replace(/\s+/g, ' ').trim();
+
+  // Replace spaces with underscores
+  s = s.replace(/\s/g, '_');
+
+  // Remove leading/trailing underscores
+  s = s.replace(/^_+|_+$/g, '');
+
+  // Collapse multiple underscores
+  s = s.replace(/_+/g, '_');
+
+  // If too short (less than 5 chars), not useful
+  if (s.length < 5) return null;
+
+  // Truncate to maxLen, but try to break at an underscore
+  if (s.length > maxLen) {
+    const truncated = s.slice(0, maxLen);
+    const lastUnderscore = truncated.lastIndexOf('_');
+    // If there's an underscore in the last 20 chars, break there for cleaner output
+    if (lastUnderscore > maxLen - 20) {
+      s = truncated.slice(0, lastUnderscore);
+    } else {
+      s = truncated;
+    }
+  }
+
+  return s || null;
+}
+
 function logBazaarResponses(path, extensionResponses, paymentPayload) {
   const bazaar = extensionResponses?.bazaar;
   logger.info(
@@ -605,6 +674,7 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
     });
     if (!ok) {
       const cdpReason = data.invalidReason || data.errorReason || data.errorMessage || data.errorType;
+      const cdpInvalidMessage = data.invalidMessage;
       // Log authorization field details on HTTP 400 for debugging (no secrets)
       const authDiag = authorizationDiagnostics(paymentPayload);
       logger.warn(
@@ -616,6 +686,7 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
           amount: paymentRequirements.amount || paymentRequirements.maxAmountRequired,
           correlationId: data.correlationId,
           invalidReason: cdpReason,
+          invalidMessage: cdpInvalidMessage,
           errKeys: Object.keys(data || {}),
           rawSnippet: typeof data._raw === 'string' ? data._raw.slice(0, 240) : JSON.stringify(data).slice(0, 240),
           // Bankr float-string debugging: authorization field details (no secrets)
@@ -623,12 +694,18 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
         },
         'x402 facilitator verify HTTP error',
       );
-      // Surface the actual CDP invalidReason when available (Bankr #2 debugging).
+      // Surface the actual CDP invalidReason and invalidMessage when available.
       // Before: always returned generic `facilitator_http_400`.
-      // After: returns `facilitator_http_400:amount_required` when CDP tells us why.
-      const reason = cdpReason
-        ? `facilitator_http_${status}:${String(cdpReason).replace(/\s+/g, '_').slice(0, 50)}`
-        : `facilitator_http_${status}`;
+      // After: returns `facilitator_http_400:invalid_exact_evm_payload_signature:recovery_code_171_not_in_27_34`
+      // when CDP provides both invalidReason and invalidMessage.
+      let reason = `facilitator_http_${status}`;
+      if (cdpReason) {
+        reason += `:${String(cdpReason).replace(/\s+/g, '_').slice(0, 50)}`;
+      }
+      const msgSlug = slugifyInvalidMessage(cdpInvalidMessage);
+      if (msgSlug) {
+        reason += `:${msgSlug}`;
+      }
       return { valid: false, reason };
     }
     logBazaarResponses('/verify', extensionResponses, paymentPayload);
@@ -687,6 +764,7 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
     });
     if (!ok) {
       const cdpReason = data.invalidReason || data.errorReason || data.errorMessage || data.errorType;
+      const cdpInvalidMessage = data.invalidMessage;
       // Log authorization field details on HTTP 400 for debugging (no secrets)
       const authDiag = authorizationDiagnostics(paymentPayload);
       logger.warn(
@@ -698,6 +776,7 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
           amount: paymentRequirements.amount || paymentRequirements.maxAmountRequired,
           correlationId: data.correlationId,
           invalidReason: cdpReason,
+          invalidMessage: cdpInvalidMessage,
           errKeys: Object.keys(data || {}),
           rawSnippet: typeof data._raw === 'string' ? data._raw.slice(0, 240) : JSON.stringify(data).slice(0, 240),
           // Bankr float-string debugging: authorization field details (no secrets)
@@ -705,10 +784,18 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
         },
         'x402 facilitator settle HTTP error',
       );
-      // Surface the actual CDP invalidReason when available (Bankr #2 debugging).
-      const reason = cdpReason
-        ? `facilitator_http_${status}:${String(cdpReason).replace(/\s+/g, '_').slice(0, 50)}`
-        : `facilitator_http_${status}`;
+      // Surface the actual CDP invalidReason and invalidMessage when available.
+      // Before: always returned generic `facilitator_http_400`.
+      // After: returns `facilitator_http_400:invalid_exact_evm_payload_signature:recovery_code_171_not_in_27_34`
+      // when CDP provides both invalidReason and invalidMessage.
+      let reason = `facilitator_http_${status}`;
+      if (cdpReason) {
+        reason += `:${String(cdpReason).replace(/\s+/g, '_').slice(0, 50)}`;
+      }
+      const msgSlug = slugifyInvalidMessage(cdpInvalidMessage);
+      if (msgSlug) {
+        reason += `:${msgSlug}`;
+      }
       return { settled: false, reason };
     }
     logBazaarResponses('/settle', extensionResponses, paymentPayload);
