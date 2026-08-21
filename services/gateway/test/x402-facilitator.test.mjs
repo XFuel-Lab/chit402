@@ -1496,6 +1496,7 @@ import {
   normalizeIntegerString,
   normalizeNonce,
   normalizeAuthorizationPayload,
+  slugifyInvalidMessage,
 } from '../src/x402-facilitator.js';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1968,6 +1969,318 @@ test('v2 verifyViaFacilitator sends coerced integer strings to mock facilitator'
       receivedPayload.payload.authorization.nonce, '0x' + 'cd'.repeat(32),
       'nonce must be 0x-prefixed in facilitator body'
     );
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CDP invalidMessage slug surfacing (2026-08-21 PR: Bankr recovery code 171)
+// When CDP returns invalidMessage (e.g. "invalid signature: public key recovery
+// code 171 is not in the valid range [27, 34]"), we slugify and append it to the
+// 402 reason so Bankr can echo it in tweets for debugging.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ────────────────────────────────────────────────────────────────────────────
+// slugifyInvalidMessage unit tests
+// ────────────────────────────────────────────────────────────────────────────
+
+test('slugifyInvalidMessage: recovery code example from Bankr incident', () => {
+  // This is THE example from the task:
+  // "invalid signature: public key recovery code 171 is not in the valid range [27, 34]"
+  // Expected slug: something like "recovery_code_171_not_in_valid_range_27_34"
+  const msg = 'invalid signature: public key recovery code 171 is not in the valid range [27, 34]';
+  const slug = slugifyInvalidMessage(msg);
+
+  assert.ok(slug, 'must produce a slug');
+  assert.match(slug, /recovery_code_171/, 'must include recovery code number');
+  assert.match(slug, /27/, 'must include range start');
+  assert.match(slug, /34/, 'must include range end');
+  assert.ok(!slug.includes(' '), 'must not contain spaces');
+  assert.ok(slug.length <= 80, 'must be <= 80 chars');
+});
+
+test('slugifyInvalidMessage: removes "invalid signature:" prefix', () => {
+  const slug = slugifyInvalidMessage('invalid signature: some error message');
+  assert.ok(slug, 'must produce a slug');
+  assert.ok(!slug.startsWith('invalid'), 'must remove prefix');
+  assert.match(slug, /some_error_message/, 'must keep message content');
+});
+
+test('slugifyInvalidMessage: removes "invalid:" prefix', () => {
+  const slug = slugifyInvalidMessage('invalid: bad request');
+  assert.ok(slug, 'must produce a slug');
+  assert.ok(!slug.startsWith('invalid'), 'must remove prefix');
+  assert.match(slug, /bad_request/, 'must keep message content');
+});
+
+test('slugifyInvalidMessage: removes "error:" prefix', () => {
+  const slug = slugifyInvalidMessage('error: something went wrong');
+  assert.ok(slug, 'must produce a slug');
+  assert.ok(!slug.startsWith('error'), 'must remove prefix');
+  assert.match(slug, /something_went_wrong/, 'must keep message content');
+});
+
+test('slugifyInvalidMessage: replaces spaces with underscores', () => {
+  const slug = slugifyInvalidMessage('some error with spaces');
+  assert.equal(slug, 'some_error_with_spaces');
+});
+
+test('slugifyInvalidMessage: removes special characters', () => {
+  const slug = slugifyInvalidMessage('error [code]: value (test)');
+  assert.ok(slug, 'must produce a slug');
+  assert.ok(!slug.includes('['), 'must remove brackets');
+  assert.ok(!slug.includes(']'), 'must remove brackets');
+  assert.ok(!slug.includes('('), 'must remove parens');
+  assert.ok(!slug.includes(')'), 'must remove parens');
+  assert.ok(!slug.includes(':'), 'must remove colon');
+});
+
+test('slugifyInvalidMessage: removes long hex strings (signatures)', () => {
+  // A signature is typically 0x + 130 hex chars (65 bytes)
+  const sig = '0x' + 'ab'.repeat(65);
+  const msg = `invalid signature: ${sig} is malformed`;
+  const slug = slugifyInvalidMessage(msg);
+
+  assert.ok(slug, 'must produce a slug');
+  assert.ok(!slug.includes('ab'), 'must remove hex signature');
+  assert.match(slug, /malformed/, 'must keep other content');
+});
+
+test('slugifyInvalidMessage: removes long hex strings without 0x prefix', () => {
+  const hash = 'ab'.repeat(32);  // 64 chars (typical hash)
+  const msg = `hash ${hash} not found`;
+  const slug = slugifyInvalidMessage(msg);
+
+  assert.ok(slug, 'must produce a slug');
+  assert.ok(!slug.includes('ab'), 'must remove hex hash');
+  assert.match(slug, /hash/, 'must keep word "hash"');
+  assert.match(slug, /not_found/, 'must keep other content');
+});
+
+test('slugifyInvalidMessage: keeps short hex values', () => {
+  // Short hex like "0x1a" or single bytes should be kept
+  const slug = slugifyInvalidMessage('value 0x1a is invalid');
+  assert.ok(slug, 'must produce a slug');
+  assert.match(slug, /0x1a|1a/, 'may keep short hex');
+});
+
+test('slugifyInvalidMessage: truncates to 80 chars max', () => {
+  const longMsg = 'this is a very long error message that exceeds eighty characters and should be truncated properly without breaking words';
+  const slug = slugifyInvalidMessage(longMsg);
+
+  assert.ok(slug, 'must produce a slug');
+  assert.ok(slug.length <= 80, `must be <= 80 chars, got ${slug.length}`);
+});
+
+test('slugifyInvalidMessage: returns null for empty/null/undefined', () => {
+  assert.equal(slugifyInvalidMessage(null), null);
+  assert.equal(slugifyInvalidMessage(undefined), null);
+  assert.equal(slugifyInvalidMessage(''), null);
+});
+
+test('slugifyInvalidMessage: returns null for very short messages', () => {
+  // Messages shorter than 5 chars after processing are not useful
+  assert.equal(slugifyInvalidMessage('ab'), null);
+  assert.equal(slugifyInvalidMessage('...'), null);
+});
+
+test('slugifyInvalidMessage: lowercase output', () => {
+  const slug = slugifyInvalidMessage('UPPERCASE Error MESSAGE');
+  assert.equal(slug, 'uppercase_error_message');
+});
+
+test('slugifyInvalidMessage: collapses multiple underscores', () => {
+  const slug = slugifyInvalidMessage('error: : : multiple  spaces');
+  assert.ok(slug, 'must produce a slug');
+  assert.ok(!slug.includes('__'), 'must collapse multiple underscores');
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// verifyViaFacilitator invalidMessage integration tests
+// ────────────────────────────────────────────────────────────────────────────
+
+test('verifyViaFacilitator surfaces CDP invalidMessage slug in reason (Bankr recovery code)', async () => {
+  // This is THE regression test for the Bankr incident:
+  // CDP returns { invalidReason: "invalid_exact_evm_payload_signature",
+  //               invalidMessage: "invalid signature: public key recovery code 171 is not in the valid range [27, 34]" }
+  // Gateway reason must include both: facilitator_http_400:invalid_exact_evm_payload_signature:recovery_code_171_...
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        error: 'invalid_request',
+        invalidReason: 'invalid_exact_evm_payload_signature',
+        invalidMessage: 'invalid signature: public key recovery code 171 is not in the valid range [27, 34]',
+      }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    const header = makePaymentHeader();
+    const r = await verifyViaFacilitator(header, { gateway: url });
+
+    assert.equal(r.valid, false);
+    // Must include HTTP status
+    assert.match(r.reason, /facilitator_http_400/, 'must include HTTP status');
+    // Must include invalidReason
+    assert.match(r.reason, /invalid_exact_evm_payload_signature/, 'must include invalidReason');
+    // Must include invalidMessage slug with recovery code
+    assert.match(r.reason, /recovery_code_171/, 'must include recovery code from invalidMessage');
+    // Should be structured as facilitator_http_400:reason:slug
+    const parts = r.reason.split(':');
+    assert.ok(parts.length >= 3, 'reason must have at least 3 colon-separated parts');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('verifyViaFacilitator keeps current behavior when invalidMessage is absent', async () => {
+  // When CDP only returns invalidReason without invalidMessage, behavior unchanged
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        error: 'invalid_request',
+        invalidReason: 'amount_required',
+        // No invalidMessage field
+      }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    const header = makePaymentHeader();
+    const r = await verifyViaFacilitator(header, { gateway: url });
+
+    assert.equal(r.valid, false);
+    // Must include HTTP status and invalidReason
+    assert.match(r.reason, /facilitator_http_400:amount_required/, 'must include status:reason');
+    // Should NOT have a third part (no invalidMessage slug)
+    const parts = r.reason.split(':');
+    assert.equal(parts.length, 2, 'reason should have exactly 2 parts when no invalidMessage');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('verifyViaFacilitator handles invalidMessage without invalidReason', async () => {
+  // Edge case: CDP returns invalidMessage but no invalidReason
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        error: 'invalid_request',
+        // No invalidReason
+        invalidMessage: 'something went wrong with the signature',
+      }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    const header = makePaymentHeader();
+    const r = await verifyViaFacilitator(header, { gateway: url });
+
+    assert.equal(r.valid, false);
+    // Must include HTTP status
+    assert.match(r.reason, /facilitator_http_400/, 'must include HTTP status');
+    // Should include the invalidMessage slug even without invalidReason
+    assert.match(r.reason, /something_went_wrong/, 'must include invalidMessage slug');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// settleViaFacilitator invalidMessage integration tests
+// ────────────────────────────────────────────────────────────────────────────
+
+test('settleViaFacilitator surfaces CDP invalidMessage slug in reason', async () => {
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        error: 'invalid_request',
+        invalidReason: 'invalid_exact_evm_payload_signature',
+        invalidMessage: 'invalid signature: public key recovery code 171 is not in the valid range [27, 34]',
+      }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    const header = makePaymentHeader();
+    const r = await settleViaFacilitator(header, { gateway: url });
+
+    assert.equal(r.settled, false);
+    // Must include HTTP status
+    assert.match(r.reason, /facilitator_http_400/, 'must include HTTP status');
+    // Must include invalidReason
+    assert.match(r.reason, /invalid_exact_evm_payload_signature/, 'must include invalidReason');
+    // Must include invalidMessage slug with recovery code
+    assert.match(r.reason, /recovery_code_171/, 'must include recovery code from invalidMessage');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('settleViaFacilitator keeps current behavior when invalidMessage is absent', async () => {
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        error: 'invalid_request',
+        invalidReason: 'insufficient_funds',
+      }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    const header = makePaymentHeader();
+    const r = await settleViaFacilitator(header, { gateway: url });
+
+    assert.equal(r.settled, false);
+    assert.match(r.reason, /facilitator_http_400:insufficient_funds/, 'must include status:reason');
+    const parts = r.reason.split(':');
+    assert.equal(parts.length, 2, 'reason should have exactly 2 parts when no invalidMessage');
   } finally {
     await new Promise((r) => server.close(r));
   }
