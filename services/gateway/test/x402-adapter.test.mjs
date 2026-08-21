@@ -39,7 +39,8 @@ test('buildPaymentChallenge produces a valid x402 v2 PaymentRequired', () => {
   assert.equal(a.extra.name, 'USD Coin');
   assert.equal(a.extra.version, '2');
   assert.equal(a.extra.taskId, 'task-1');
-  assert.match(a.extra.nonce, /^[0-9a-f]{32}$/);
+  // EIP-3009 nonce must be bytes32: 0x + 64 hex chars. Per Section 3.5.
+  assert.match(a.extra.nonce, /^0x[0-9a-f]{64}$/);
   assert.ok(body.extensions?.[BAZAAR_EXTENSION_KEY]);
   assert.ok(!a.extensions, 'bazaar is top-level, not on accepts');
   assert.ok(headers['PAYMENT-REQUIRED']);
@@ -266,6 +267,33 @@ test('ChallengeStore: put/get, spend, replay, expiry', () => {
   assert.equal(expired.get('n2'), null, 'expired challenge not returned');
 });
 
+test('ChallengeStore: accepts both 0x-prefixed and raw nonces (backward compat)', () => {
+  const store = new ChallengeStore({ ttlMs: 60000 });
+  // EIP-3009 bytes32 nonce: 0x + 64 hex chars
+  const fullNonce = '0x' + 'ab'.repeat(32);
+  const rawNonce = 'ab'.repeat(32);
+
+  // Store with 0x prefix (new behavior), lookup with raw (CDP clients may strip 0x)
+  store.put(fullNonce, { taskId: 't1', amount: '10000' });
+  assert.equal(store.get(fullNonce).amount, '10000', 'lookup with 0x prefix');
+  assert.equal(store.get(rawNonce).amount, '10000', 'lookup with raw nonce finds 0x-prefixed');
+  assert.equal(store.isSpent(rawNonce), false);
+
+  // markSpent with raw variant marks both
+  store.markSpent(rawNonce);
+  assert.equal(store.isSpent(fullNonce), true, 'spent status checks all variants');
+  assert.equal(store.isSpent(rawNonce), true, 'raw nonce also marked spent');
+  assert.equal(store.get(fullNonce), null, 'markSpent deletes all variants');
+  assert.equal(store.get(rawNonce), null, 'raw lookup also returns null after markSpent');
+
+  // Store with raw 64-char nonce (client echoes without 0x), lookup with 0x prefix
+  const rawNonce2 = 'cd'.repeat(32);  // 64-char raw hex
+  const fullNonce2 = '0x' + rawNonce2;
+  store.put(rawNonce2, { taskId: 't2', amount: '20000' });
+  assert.equal(store.get(rawNonce2).amount, '20000', 'lookup with raw 64-char nonce');
+  assert.equal(store.get(fullNonce2).amount, '20000', 'lookup with 0x prefix finds raw 64-char');
+});
+
 test('buildPaymentChallenge records into the store with nonce + expiry', () => {
   const store = new ChallengeStore();
   const { body } = buildPaymentChallenge(
@@ -273,7 +301,8 @@ test('buildPaymentChallenge records into the store with nonce + expiry', () => {
     { store }
   );
   const { nonce, expiresAt } = body.accepts[0].extra;
-  assert.match(nonce, /^[0-9a-f]{32}$/);
+  // EIP-3009 nonce must be bytes32: 0x + 64 hex chars. Per Section 3.5.
+  assert.match(nonce, /^0x[0-9a-f]{64}$/);
   assert.ok(expiresAt > Date.now());
   const stored = store.get(nonce);
   assert.equal(stored.amount, '50000');

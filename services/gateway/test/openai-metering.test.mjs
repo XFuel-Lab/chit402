@@ -59,7 +59,8 @@ test('an unpaid /v1 call is refused with a 402, not served for free', async () =
   assert.equal(body.accepts[0].payTo, '0xtreasury');
   assert.equal(body.accepts[0].network, 'eip155:84532');
   assert.equal(body.accepts[0].amount, body.accepts[0].maxAmountRequired);
-  assert.match(body.accepts[0].extra.nonce, /^[0-9a-f]{32}$/);
+  // EIP-3009 nonce must be bytes32: 0x + 64 hex chars. Per Section 3.5.
+  assert.match(body.accepts[0].extra.nonce, /^0x[0-9a-f]{64}$/);
   assert.equal(typeof body.resource, 'object');
 
   // ...and a plain OpenAI client reads this half.
