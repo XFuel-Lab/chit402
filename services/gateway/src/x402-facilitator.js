@@ -109,15 +109,25 @@ export function catalogResourceUrl(resource) {
  *
  * `outputSchema` is the v1 Bazaar discovery field (info.input / info.output).
  * CDP's v2 path reads `paymentPayload.extensions.bazaar` instead; we send both.
+ *
+ * For v2 (CDP-native clients like Bankr), the network must stay in CAIP-2 format
+ * (`eip155:8453`) to match what the payer signed. For v1 (XFuel SDK / ZAN
+ * facilitator), we use the short form (`base`) for backward compatibility.
+ *
+ * @param {1|2} [opts.x402Version=1] - Protocol version; v2 preserves CAIP-2 network
  */
 export function toPaymentRequirements({
   network, amount, payTo, resource, taskId, maxTimeoutSeconds, description, outputSchema,
+  x402Version = 1,
 } = {}) {
   const shortNet = fromCaip2Network(network);
   const { asset, name, version } = usdcFor(shortNet);
+  // For v2 (CDP-native), use CAIP-2 network to match what the payer signed.
+  // For v1 (XFuel SDK / ZAN), use short form for backward compatibility.
+  const wireNetwork = x402Version === 2 ? toCaip2Network(network) : shortNet;
   const req = {
     scheme: 'exact',
-    network: shortNet,
+    network: wireNetwork,
     maxAmountRequired: String(amount),
     resource: resource || `/x402/task/${taskId || 'task'}`,
     description: description || (taskId ? `XFuel task ${taskId}` : 'XFuel task'),
@@ -268,8 +278,12 @@ async function callFacilitator(path, { gateway, apiKey, body, timeoutMs }) {
  * When the challenge binding fails (e.g. nonce not found), we must still build
  * valid requirements from the decoded blob — otherwise the facilitator gets
  * undefined values and returns HTTP 400. Per Section 3.5.
+ *
+ * @param {Object|null} challenge - Bound challenge from the store
+ * @param {Object|null} decoded - Decoded payment header blob
+ * @param {1|2} [x402Version=1] - Protocol version; v2 preserves CAIP-2 network
  */
-function requirementsFrom(challenge, decoded) {
+function requirementsFrom(challenge, decoded, x402Version = 1) {
   // CDP-native v2: read from decoded.accepted; v1: read from top-level
   const accepted = decoded?.accepted || {};
   const network = challenge?.network || accepted.network || decoded?.network;
@@ -284,6 +298,7 @@ function requirementsFrom(challenge, decoded) {
     taskId: challenge?.taskId,
     description: challenge?.description,
     outputSchema: challenge?.outputSchema,
+    x402Version,
   });
 }
 
@@ -309,9 +324,10 @@ function payloadOpts(challenge, decoded, paymentRequirements, x402Version) {
 export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, challenge, x402Version } = {}) {
   const decoded = decodePaymentHeader(paymentHeader);
   if (!decoded) return { valid: false, reason: 'payment_header_undecodable' };
-  const paymentRequirements = requirementsFrom(challenge, decoded);
   // Use the client's protocol version — v2 for CDP-native clients like Bankr.
   const wireVersion = x402Version === 2 ? 2 : 1;
+  // For v2, paymentRequirements.network must be CAIP-2 format to match what the payer signed.
+  const paymentRequirements = requirementsFrom(challenge, decoded, wireVersion);
   let paymentPayload;
   try {
     paymentPayload = toPaymentPayload(decoded, payloadOpts(challenge, decoded, paymentRequirements, wireVersion));
@@ -381,9 +397,10 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
 export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, challenge, x402Version } = {}) {
   const decoded = decodePaymentHeader(paymentHeader);
   if (!decoded) return { settled: false, reason: 'payment_header_undecodable' };
-  const paymentRequirements = requirementsFrom(challenge, decoded);
   // Use the client's protocol version — v2 for CDP-native clients like Bankr.
   const wireVersion = x402Version === 2 ? 2 : 1;
+  // For v2, paymentRequirements.network must be CAIP-2 format to match what the payer signed.
+  const paymentRequirements = requirementsFrom(challenge, decoded, wireVersion);
   let paymentPayload;
   try {
     paymentPayload = toPaymentPayload(decoded, payloadOpts(challenge, decoded, paymentRequirements, wireVersion));

@@ -140,6 +140,50 @@ test('toPaymentRequirements maps Base Sepolia USDC address + EIP-712 domain', ()
   assert.equal(typeof r.maxTimeoutSeconds, 'number');
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// v2 CAIP-2 network format fix (Bankr invalid_network)
+// CDP v2 facilitator rejects short network 'base'; it wants CAIP-2 'eip155:8453'.
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('toPaymentRequirements v1 uses short network form for backward compatibility', () => {
+  // v1 (XFuel SDK / ZAN path) keeps short form
+  const r = toPaymentRequirements({
+    network: 'eip155:8453', amount: '50000', payTo: '0xtreasury', taskId: 't1',
+    x402Version: 1,
+  });
+  assert.equal(r.network, 'base', 'v1 must use short form for backward compatibility');
+});
+
+test('toPaymentRequirements v2 uses CAIP-2 network format (invalid_network fix)', () => {
+  // v2 (CDP-native like Bankr) must use CAIP-2 to match what the payer signed.
+  // Before this fix: network was 'base', CDP rejected with invalid_network.
+  const r = toPaymentRequirements({
+    network: 'eip155:8453', amount: '50000', payTo: '0xtreasury', taskId: 't1',
+    x402Version: 2,
+  });
+  assert.equal(r.network, 'eip155:8453', 'v2 must use CAIP-2 network format');
+  // Asset lookup still works (uses short form internally)
+  assert.equal(r.asset, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 'Base mainnet USDC');
+});
+
+test('toPaymentRequirements v2 converts short form to CAIP-2', () => {
+  // Even if the input is short form, v2 must emit CAIP-2
+  const r = toPaymentRequirements({
+    network: 'base', amount: '50000', payTo: '0xtreasury', taskId: 't1',
+    x402Version: 2,
+  });
+  assert.equal(r.network, 'eip155:8453', 'v2 converts short form to CAIP-2');
+});
+
+test('toPaymentRequirements v2 handles Base Sepolia CAIP-2', () => {
+  const r = toPaymentRequirements({
+    network: 'eip155:84532', amount: '50000', payTo: '0xtreasury', taskId: 't1',
+    x402Version: 2,
+  });
+  assert.equal(r.network, 'eip155:84532', 'v2 preserves Base Sepolia CAIP-2');
+  assert.equal(r.asset, '0x036CbD53842c5426634e7929541eC2318f3dCF7e', 'Base Sepolia USDC');
+});
+
 test('toPaymentPayload reshapes the XFuel blob into the standard exact-scheme payload (v1)', () => {
   const decoded = decodePaymentHeader(makePaymentHeader());
   const p = toPaymentPayload(decoded, { network: 'base-sepolia' });
@@ -605,10 +649,11 @@ test('verifyViaFacilitator builds valid requirements from CDP v2 decoded.accepte
       receivedRequirements.payTo, '0xbankrtreasury',
       'payTo must be extracted from decoded.accepted.payTo, not undefined'
     );
-    // Network should be converted to short form
+    // For v2, network MUST be CAIP-2 format to match what the payer signed.
+    // CDP facilitator rejects short form 'base' with invalid_network.
     assert.equal(
-      receivedRequirements.network, 'base-sepolia',
-      'network must be extracted and converted from decoded.accepted.network'
+      receivedRequirements.network, 'eip155:84532',
+      'v2 paymentRequirements.network must be CAIP-2 (eip155:84532), not short form'
     );
   } finally {
     await new Promise((r) => server.close(r));
@@ -663,6 +708,100 @@ test('verifyViaFacilitator surfaces CDP invalidReason in error (not just facilit
     // After the fix: reason should include the CDP invalidReason
     assert.match(r.reason, /amount_required/, 'must surface CDP invalidReason in error');
     assert.match(r.reason, /facilitator_http_400/, 'must still include HTTP status');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// v2 CAIP-2 network format fix (Bankr invalid_network)
+// The CDP facilitator rejects short network 'base' with invalid_network.
+// This test verifies that v2 paths send CAIP-2 format to the facilitator.
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('v2 verifyViaFacilitator sends CAIP-2 network to facilitator (invalid_network fix)', async () => {
+  // This is THE regression test for the Bankr invalid_network bug.
+  // The CDP facilitator must receive eip155:8453, not 'base'.
+  let receivedRequirements = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body);
+      receivedRequirements = parsed.paymentRequirements;
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ isValid: true, payer: '0xbankrwallet' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    // CDP-native v2 header with Base mainnet CAIP-2 network
+    const header = makeCdpNativePaymentHeader({
+      network: 'eip155:8453',  // Base mainnet CAIP-2
+      amount: '100000',
+      payTo: '0xtreasury',
+      from: '0xbankrwallet',
+    });
+
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+    assert.equal(r.valid, true);
+
+    // CRITICAL: The facilitator must receive CAIP-2 network, not short form.
+    // Before this fix: receivedRequirements.network was 'base' → CDP rejected with invalid_network
+    // After this fix: receivedRequirements.network is 'eip155:8453' → CDP accepts
+    assert.ok(receivedRequirements, 'facilitator must receive paymentRequirements');
+    assert.equal(
+      receivedRequirements.network, 'eip155:8453',
+      'v2 MUST send CAIP-2 network to CDP facilitator (invalid_network fix)'
+    );
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('v1 verifyViaFacilitator sends short network for backward compatibility', async () => {
+  // v1 path (XFuel SDK) must still send short form for backward compatibility
+  let receivedRequirements = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body);
+      receivedRequirements = parsed.paymentRequirements;
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ isValid: true, payer: '0xsdkuser' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    // XFuel SDK v1 header
+    const header = makePaymentHeader({
+      network: 'base-sepolia',
+      from: '0xsdkuser',
+    });
+
+    // x402Version: 1 (default) for XFuel SDK
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 1 });
+    assert.equal(r.valid, true);
+
+    // v1 must use short form for backward compatibility
+    assert.ok(receivedRequirements, 'facilitator must receive paymentRequirements');
+    assert.equal(
+      receivedRequirements.network, 'base-sepolia',
+      'v1 must use short network form for backward compatibility'
+    );
   } finally {
     await new Promise((r) => server.close(r));
   }
