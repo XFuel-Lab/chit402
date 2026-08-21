@@ -54,7 +54,11 @@ export function extractPaymentHeader(req) {
 /**
  * Recover the challenge nonce the client is paying against. Supports both:
  *   - v1: X-Payment-Nonce header, or `nonce` field inside X-Payment blob
- *   - v2: PAYMENT-NONCE header, or `nonce` field inside PAYMENT-SIGNATURE blob
+ *   - v2: PAYMENT-NONCE header, or nonce in the PAYMENT-SIGNATURE blob
+ *
+ * CDP-native v2 clients may echo the challenge nonce in `accepted.extra.nonce`
+ * (the same location we put it in the 402 challenge) instead of a separate header.
+ * Per Section 3.5: binding preserves nonce from issued 402.
  */
 export function extractPaymentNonce(req) {
   // v1: explicit X-Payment-Nonce header
@@ -68,9 +72,20 @@ export function extractPaymentNonce(req) {
   // Try to extract nonce from the payment header blob (either v1 or v2)
   const { header } = extractPaymentHeader(req);
   if (header && typeof header === 'string') {
-    try { const j = JSON.parse(header); if (j?.nonce) return String(j.nonce); } catch { /* not json */ }
+    // Try raw JSON
+    try {
+      const j = JSON.parse(header);
+      // Top-level nonce (v1 XFuel SDK)
+      if (j?.nonce) return String(j.nonce);
+      // CDP-native v2: nonce echoed in accepted.extra.nonce
+      if (j?.accepted?.extra?.nonce) return String(j.accepted.extra.nonce);
+    } catch { /* not raw json — try base64 */ }
+
+    // Try base64-JSON
     const b = decodeBase64Json(header);
     if (b?.nonce) return String(b.nonce);
+    // CDP-native v2: nonce echoed in accepted.extra.nonce
+    if (b?.accepted?.extra?.nonce) return String(b.accepted.extra.nonce);
   }
   return null;
 }
