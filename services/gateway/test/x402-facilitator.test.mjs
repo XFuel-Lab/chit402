@@ -91,10 +91,10 @@ test('toPaymentRequirements maps Base Sepolia USDC address + EIP-712 domain', ()
   assert.equal(typeof r.maxTimeoutSeconds, 'number');
 });
 
-test('toPaymentPayload reshapes the XFuel blob into the standard exact-scheme payload', () => {
+test('toPaymentPayload reshapes the XFuel blob into the standard exact-scheme payload (v1)', () => {
   const decoded = decodePaymentHeader(makePaymentHeader());
   const p = toPaymentPayload(decoded, { network: 'base-sepolia' });
-  assert.equal(p.x402Version, 1);
+  assert.equal(p.x402Version, 1, 'defaults to v1');
   assert.equal(p.scheme, 'exact');
   assert.equal(p.network, 'base-sepolia');
   assert.equal(p.payload.signature, '0x' + '11'.repeat(65));
@@ -105,6 +105,14 @@ test('toPaymentPayload reshapes the XFuel blob into the standard exact-scheme pa
   assert.match(p.payload.authorization.nonce, /^0x[0-9a-f]{64}$/);
   assert.equal(p.resource, undefined, 'no catalog resource without an absolute URL');
   assert.equal(p.extensions, undefined);
+});
+
+test('toPaymentPayload uses x402Version: 2 for CDP-native v2 clients', () => {
+  const decoded = decodePaymentHeader(makePaymentHeader());
+  const p = toPaymentPayload(decoded, { network: 'base', x402Version: 2 });
+  assert.equal(p.x402Version, 2, 'v2 for CDP-native clients');
+  assert.equal(p.scheme, 'exact');
+  assert.equal(p.network, 'base');
 });
 
 test('toPaymentPayload attaches absolute resource + bazaar extension for CDP cataloging', () => {
@@ -206,7 +214,7 @@ test('verifyViaFacilitator surfaces facilitator rejection', async () => {
   }
 });
 
-test('full x402 handshake via the standard facilitator: challenge → settle → replay-rejected', async () => {
+test('full x402 handshake via the standard facilitator (v1 X-PAYMENT): challenge → settle → replay-rejected', async () => {
   const { url, close } = await startMockFacilitator();
   try {
     const cfg = cfgX402(url);
@@ -234,6 +242,38 @@ test('full x402 handshake via the standard facilitator: challenge → settle →
 
     // Step 3: replay the same nonce → rejected (spent).
     const replay = await runX402Handshake(reqPay, { taskId: 'x402-bs-1', cfg });
+    assert.equal(replay.kind, 'failed');
+    assert.equal(replay.reason, 'payment_replayed');
+  } finally {
+    await close();
+  }
+});
+
+test('full x402 handshake via the standard facilitator (v2 PAYMENT-SIGNATURE): CDP-native buyer', async () => {
+  // CDP-native buyers like Bankr send PAYMENT-SIGNATURE header.
+  const { url, close } = await startMockFacilitator();
+  try {
+    const cfg = cfgX402(url);
+
+    // Step 1: no payment header → 402 challenge
+    const reqNoPay = { headers: {}, body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' } };
+    const challenge = await runX402Handshake(reqNoPay, { taskId: 'x402-v2-fac', cfg });
+    assert.equal(challenge.kind, 'challenge');
+    assert.equal(challenge.body.x402Version, 2);
+    const nonce = challenge.body.accepts[0].extra.nonce;
+
+    // Step 2: retry with PAYMENT-SIGNATURE + PAYMENT-NONCE → verify + settle via facilitator
+    const header = makePaymentHeader({ nonce });
+    const reqPayV2 = {
+      headers: { 'payment-signature': header, 'payment-nonce': nonce },
+      body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' },
+    };
+    const settled = await runX402Handshake(reqPayV2, { taskId: 'x402-v2-fac', cfg });
+    assert.equal(settled.kind, 'settled', 'v2 PAYMENT-SIGNATURE settles');
+    assert.match(settled.paymentRef, /^base-sepolia:0x/);
+
+    // Step 3: replay → rejected
+    const replay = await runX402Handshake(reqPayV2, { taskId: 'x402-v2-fac', cfg });
     assert.equal(replay.kind, 'failed');
     assert.equal(replay.reason, 'payment_replayed');
   } finally {
