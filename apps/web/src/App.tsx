@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Home from './pages/Home';
 import Docs from './pages/Docs';
@@ -10,17 +10,15 @@ import Security from './pages/Security';
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Layout />}>
-        <Route index element={<Home />} />
-        <Route path="docs" element={<Docs />} />
-        <Route path="pricing" element={<Pricing />} />
-        <Route path="security" element={<Security />} />
-        <Route path="v1" element={<GatewayV1 />} />
-        <Route path="v1/*" element={<GatewayV1 />} />
-        {/* Funding rounds pulled from the public UI (not open); redirect legacy links home. */}
-        <Route path="believers" element={<Navigate to="/" replace />} />
-        <Route path="angels" element={<Navigate to="/" replace />} />
-        {/* Catch-all: branded 404 for all unknown routes including gated legacy pages. */}
+      {/* Layout wrapper (no path) ensures all routes render within the shell. */}
+      <Route element={<Layout />}>
+        <Route path="/" element={<Home />} />
+        <Route path="/docs" element={<Docs />} />
+        <Route path="/pricing" element={<Pricing />} />
+        <Route path="/security" element={<Security />} />
+        <Route path="/v1" element={<GatewayV1 />} />
+        <Route path="/v1/*" element={<GatewayV1 />} />
+        {/* Catch-all: branded 404 for ALL unknown paths including gated legacy pages. */}
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
