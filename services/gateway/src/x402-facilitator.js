@@ -59,6 +59,145 @@ const USDC_NETWORKS = {
   base: { asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', name: 'USD Coin', version: '2' },
 };
 
+// ════════════════════════════════════════════════════════════════════════════════
+// Authorization field normalization (Bankr float-string fix, 2026-08-21 PR)
+//
+// CDP /verify returns `invalid_payload` when authorization fields arrive as float
+// strings (e.g. `"1787321234.927"` or `"10000.0"`). Bankr and other CDP clients
+// JSON-stringify JS numbers, so `Date.now()/1000` becomes a float string.
+//
+// This normalizes authorization fields before sending to CDP:
+// - Integer-equivalent floats ("10000.0") → integer string ("10000")
+// - JSON numbers (1787321234) → integer string ("1787321234")
+// - Nonzero fractional values → fail closed with specific reason (not sent to CDP)
+// - Nonce: 64-hex without 0x → prefix 0x; 32-hex (16 bytes) → fail (EIP-3009 needs bytes32)
+// ════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Coerce a value to an integer string. Accepts:
+ * - Integer strings ("1234") → pass through
+ * - Float strings with .0 ("1234.0", "1234.000") → coerce to "1234"
+ * - JSON numbers (1234) → coerce to "1234"
+ *
+ * @throws {Error} If the value has a nonzero fractional part
+ * @returns {{ value: string, coerced: boolean }}
+ */
+export function normalizeIntegerString(value, fieldName) {
+  if (value === null || value === undefined) {
+    return { value: '0', coerced: true };
+  }
+  const str = String(value);
+
+  // Fast path: already an integer string (no decimal point)
+  if (/^-?\d+$/.test(str)) {
+    // If it was a number, it was coerced; if it was already a string, no coercion
+    return { value: str, coerced: typeof value === 'number' };
+  }
+
+  // Float string: check if it's integer-equivalent
+  if (/^-?\d+\.0*$/.test(str)) {
+    // "1234.0" or "1234.000" → "1234"
+    const intPart = str.split('.')[0];
+    return { value: intPart, coerced: true };
+  }
+
+  // Check for nonzero fractional part
+  const floatMatch = str.match(/^(-?\d+)\.(\d+)$/);
+  if (floatMatch) {
+    const fractional = floatMatch[2];
+    // If fractional part is all zeros, it's integer-equivalent (handled above)
+    // If fractional part has nonzero digits, fail closed
+    if (/[1-9]/.test(fractional)) {
+      throw new Error(
+        `authorization_${fieldName}_must_be_integer_string:received_${str.slice(0, 20)}`
+      );
+    }
+    // All zeros (shouldn't reach here, but handle it)
+    return { value: floatMatch[1], coerced: true };
+  }
+
+  // Not a recognizable numeric format - pass through as-is (CDP will validate)
+  return { value: str, coerced: false };
+}
+
+/**
+ * Normalize an EIP-3009 nonce to a 0x-prefixed 64-character hex string (bytes32).
+ *
+ * - 64 hex without 0x → prefix 0x
+ * - 66 hex with 0x → pass through
+ * - 32 hex (16 bytes) → fail closed (EIP-3009 needs bytes32)
+ *
+ * @returns {{ nonce: string, coerced: boolean, has0x: boolean, hexLen: number }}
+ * @throws {Error} If nonce is 32-hex (bytes16 instead of bytes32)
+ */
+export function normalizeNonce(nonce) {
+  if (!nonce || typeof nonce !== 'string') {
+    return { nonce, coerced: false, has0x: false, hexLen: 0 };
+  }
+
+  const has0x = nonce.startsWith('0x') || nonce.startsWith('0X');
+  const hexPart = has0x ? nonce.slice(2) : nonce;
+  const hexLen = hexPart.length;
+
+  // 32 hex chars = 16 bytes (bytes16) — EIP-3009 needs bytes32 (32 bytes = 64 hex)
+  if (hexLen === 32 && /^[0-9a-fA-F]+$/.test(hexPart)) {
+    throw new Error(
+      'authorization_nonce_must_be_bytes32:received_32_hex_chars_(bytes16)'
+    );
+  }
+
+  // 64 hex chars without 0x prefix → prefix it
+  if (!has0x && hexLen === 64 && /^[0-9a-fA-F]+$/.test(hexPart)) {
+    return { nonce: '0x' + hexPart, coerced: true, has0x: false, hexLen: 64 };
+  }
+
+  // Already 0x-prefixed or other format — pass through
+  return { nonce, coerced: false, has0x, hexLen };
+}
+
+/**
+ * Normalize authorization fields in a CDP-native v2 payload.
+ * Coerces integer-equivalent floats and validates nonce format.
+ *
+ * @param {Object} payload - The payload object { signature, authorization }
+ * @returns {{ normalizedPayload: Object, coercions: Object }}
+ * @throws {Error} If validation fails (fractional values, bytes16 nonce)
+ */
+export function normalizeAuthorizationPayload(payload) {
+  if (!payload?.authorization) {
+    return { normalizedPayload: payload, coercions: {} };
+  }
+
+  const auth = payload.authorization;
+  const coercions = {};
+
+  // Normalize numeric fields: value, validAfter, validBefore
+  const valueResult = normalizeIntegerString(auth.value, 'value');
+  const validAfterResult = normalizeIntegerString(auth.validAfter, 'validAfter');
+  const validBeforeResult = normalizeIntegerString(auth.validBefore, 'validBefore');
+
+  if (valueResult.coerced) coercions.value = { from: auth.value, to: valueResult.value };
+  if (validAfterResult.coerced) coercions.validAfter = { from: auth.validAfter, to: validAfterResult.value };
+  if (validBeforeResult.coerced) coercions.validBefore = { from: auth.validBefore, to: validBeforeResult.value };
+
+  // Normalize nonce
+  const nonceResult = normalizeNonce(auth.nonce);
+  if (nonceResult.coerced) coercions.nonce = { from: auth.nonce, to: nonceResult.nonce };
+
+  const normalizedPayload = {
+    ...payload,
+    authorization: {
+      ...auth,
+      value: valueResult.value,
+      validAfter: validAfterResult.value,
+      validBefore: validBeforeResult.value,
+      nonce: nonceResult.nonce,
+    },
+  };
+
+  return { normalizedPayload, coercions };
+}
+
 /** Short name (`base`) ←→ CAIP-2 (`eip155:8453`). CDP Bazaar indexes the CAIP-2 form. */
 export function toCaip2Network(network) {
   const n = String(network || '').toLowerCase();
@@ -226,10 +365,17 @@ export function toPaymentPayload(decoded, { network, resource, extensions, x402V
       extra: { name: incomingExtra.name, version: incomingExtra.version },
     };
 
+    // Normalize authorization fields (Bankr float-string fix):
+    // - Coerce integer-equivalent floats ("1787321234.927" → error, "10000.0" → "10000")
+    // - Coerce JSON numbers to integer strings
+    // - Validate nonce format (64-hex without 0x → prefix, 32-hex → error)
+    // This throws with a specific reason if validation fails (fail closed, not sent to CDP).
+    const { normalizedPayload } = normalizeAuthorizationPayload(decoded.payload);
+
     const result = {
       x402Version: 2,
       accepted: slimAccepted,
-      payload: decoded.payload,  // Already spec-shaped: { signature, authorization }
+      payload: normalizedPayload,  // Normalized: { signature, authorization }
     };
 
     // CDP catalogs only when settle carries paymentPayload.resource (absolute URL)
@@ -323,6 +469,36 @@ function logBazaarResponses(path, extensionResponses, paymentPayload) {
   );
 }
 
+/**
+ * Extract authorization diagnostics from paymentPayload for logging on HTTP 400.
+ * Does NOT log secrets (signature, raw header).
+ * @returns {Object} Diagnostic info: from, to, value, validAfter, validBefore, nonce format
+ */
+function authorizationDiagnostics(paymentPayload) {
+  // v2: paymentPayload.payload.authorization, v1: paymentPayload.payload.authorization
+  const auth = paymentPayload?.payload?.authorization;
+  if (!auth) return { authPresent: false };
+
+  // Analyze nonce format
+  const nonce = auth.nonce;
+  let nonceFormat = { has0x: false, hexLen: 0 };
+  if (nonce && typeof nonce === 'string') {
+    nonceFormat.has0x = nonce.startsWith('0x') || nonce.startsWith('0X');
+    const hexPart = nonceFormat.has0x ? nonce.slice(2) : nonce;
+    nonceFormat.hexLen = hexPart.length;
+  }
+
+  return {
+    authPresent: true,
+    from: auth.from,
+    to: auth.to,
+    value: auth.value,
+    validAfter: auth.validAfter,
+    validBefore: auth.validBefore,
+    nonceFormat,
+  };
+}
+
 async function callFacilitator(path, { gateway, apiKey, body, timeoutMs }) {
   const headers = { 'Content-Type': 'application/json' };
   const url = `${gateway.replace(/\/$/, '')}${path}`;
@@ -414,8 +590,13 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
   let paymentPayload;
   try {
     paymentPayload = toPaymentPayload(decoded, payloadOpts(challenge, decoded, paymentRequirements, wireVersion));
-  } catch {
-    return { valid: false, reason: 'payment_payload_invalid' };
+  } catch (payloadErr) {
+    // Surface specific normalization errors (e.g. fractional validAfter, bytes16 nonce)
+    // so Bankr sees a clear reason, not generic "payment_payload_invalid".
+    const reason = payloadErr?.message?.startsWith('authorization_')
+      ? payloadErr.message
+      : 'payment_payload_invalid';
+    return { valid: false, reason };
   }
   try {
     const { ok, status, data, elapsedMs, extensionResponses } = await callFacilitator('/verify', {
@@ -424,6 +605,8 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
     });
     if (!ok) {
       const cdpReason = data.invalidReason || data.errorReason || data.errorMessage || data.errorType;
+      // Log authorization field details on HTTP 400 for debugging (no secrets)
+      const authDiag = authorizationDiagnostics(paymentPayload);
       logger.warn(
         {
           status,
@@ -435,6 +618,8 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
           invalidReason: cdpReason,
           errKeys: Object.keys(data || {}),
           rawSnippet: typeof data._raw === 'string' ? data._raw.slice(0, 240) : JSON.stringify(data).slice(0, 240),
+          // Bankr float-string debugging: authorization field details (no secrets)
+          authorization: authDiag,
         },
         'x402 facilitator verify HTTP error',
       );
@@ -487,8 +672,13 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
   let paymentPayload;
   try {
     paymentPayload = toPaymentPayload(decoded, payloadOpts(challenge, decoded, paymentRequirements, wireVersion));
-  } catch {
-    return { settled: false, reason: 'payment_payload_invalid' };
+  } catch (payloadErr) {
+    // Surface specific normalization errors (e.g. fractional validAfter, bytes16 nonce)
+    // so Bankr sees a clear reason, not generic "payment_payload_invalid".
+    const reason = payloadErr?.message?.startsWith('authorization_')
+      ? payloadErr.message
+      : 'payment_payload_invalid';
+    return { settled: false, reason };
   }
   try {
     const { ok, status, data, elapsedMs, extensionResponses } = await callFacilitator('/settle', {
@@ -497,6 +687,8 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
     });
     if (!ok) {
       const cdpReason = data.invalidReason || data.errorReason || data.errorMessage || data.errorType;
+      // Log authorization field details on HTTP 400 for debugging (no secrets)
+      const authDiag = authorizationDiagnostics(paymentPayload);
       logger.warn(
         {
           status,
@@ -508,6 +700,8 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
           invalidReason: cdpReason,
           errKeys: Object.keys(data || {}),
           rawSnippet: typeof data._raw === 'string' ? data._raw.slice(0, 240) : JSON.stringify(data).slice(0, 240),
+          // Bankr float-string debugging: authorization field details (no secrets)
+          authorization: authDiag,
         },
         'x402 facilitator settle HTTP error',
       );
