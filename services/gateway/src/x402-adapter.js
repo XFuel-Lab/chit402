@@ -233,6 +233,24 @@ export function fallbackToTfuel() {
 // verify/settle can reject amount tampering, expired challenges, and replays.
 // In-memory by design for Phase 0 (single-process); swap for Redis when the
 // server path scales horizontally.
+
+/**
+ * Normalize a nonce for store lookups. After 2026-08-21 challenges emit 0x-prefixed
+ * bytes32 nonces; older in-flight challenges may still have raw hex. Accept both.
+ * @param {string|null} nonce
+ * @returns {string[]} - Array of possible keys: [normalized, alternateForm] or [nonce] if no normalization needed
+ */
+function nonceVariants(nonce) {
+  if (!nonce || typeof nonce !== 'string') return [];
+  const trimmed = nonce.trim();
+  // If it has 0x prefix, also try without
+  if (trimmed.startsWith('0x')) {
+    return [trimmed, trimmed.slice(2)];
+  }
+  // If no 0x prefix, also try with 0x prefix (padded to 64 hex chars for old short nonces)
+  return [trimmed, '0x' + trimmed.padStart(64, '0')];
+}
+
 export class ChallengeStore {
   constructor({ ttlMs = DEFAULT_TTL_MS } = {}) {
     this.ttlMs = ttlMs;
@@ -247,23 +265,35 @@ export class ChallengeStore {
   }
 
   get(nonce) {
-    const c = this.map.get(nonce);
-    if (!c) return null;
-    if (Date.now() > c.expiresAt) {
-      this.map.delete(nonce);
-      return null;
+    // Try the exact nonce first, then alternate forms for backward compat.
+    for (const key of nonceVariants(nonce)) {
+      const c = this.map.get(key);
+      if (c) {
+        if (Date.now() > c.expiresAt) {
+          this.map.delete(key);
+          return null;
+        }
+        return c;
+      }
     }
-    return c;
+    return null;
   }
 
   isSpent(nonce) {
-    return this.spent.has(nonce);
+    // Check all variants for spent status.
+    for (const key of nonceVariants(nonce)) {
+      if (this.spent.has(key)) return true;
+    }
+    return false;
   }
 
   markSpent(nonce) {
     if (nonce) {
+      // Mark the exact nonce and delete all variants from the map.
       this.spent.add(nonce);
-      this.map.delete(nonce);
+      for (const key of nonceVariants(nonce)) {
+        this.map.delete(key);
+      }
     }
   }
 
@@ -344,7 +374,10 @@ export function buildPaymentChallenge(p, opts = {}) {
   const { asset: assetAddress, name: eip712Name, version: eip712Version } = usdcFor(network);
   const payTo = p.payTo || process.env.X402_PAY_TO || null;
   const amount = String(p.maxAmountRequired);
-  const nonce = crypto.randomBytes(16).toString('hex');
+  // EIP-3009 nonce must be bytes32: 0x + 64 hex chars. CDP-native clients that
+  // sign accepts[0].extra.nonce as the authorization nonce need this format.
+  // Per Section 3.5 challenge binding.
+  const nonce = '0x' + crypto.randomBytes(32).toString('hex');
   const maxTimeoutSeconds = Math.max(30, Math.floor((opts.ttlMs || DEFAULT_TTL_MS) / 1000));
 
   // Absolute URL for CDP Bazaar catalog key — always /task-request, never per-task.

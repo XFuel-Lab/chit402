@@ -442,6 +442,182 @@ test('XFuel SDK v1 paymentPayload has top-level scheme/network (NOT accepted) fo
   assert.equal(p.payload.authorization.to, '0xtreasury');
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Bankr fat accepted slimming fix (2026-08-21 PR: invalid_payload on CDP /verify)
+// CDP-native clients echo the 402 accepts[0] verbatim into their PaymentPayload.
+// Our 402 includes challenge-binding fields CDP rejects: maxAmountRequired,
+// extra.taskId, extra.expiresAt, extra.nonce. toPaymentPayload must slim these.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Build a Bankr-shaped CDP v2 header that echoes our fat 402 accepts[0] verbatim.
+ * This is what causes CDP to return `invalid_payload` — extra fields it doesn't expect.
+ */
+function makeBankrFatAcceptedHeader({
+  network = 'eip155:8453',
+  amount = '100000',
+  payTo = '0xtreasury',
+  from = '0xbankrwallet',
+  challengeNonce = '0x' + 'ab'.repeat(32),  // Our EIP-3009 bytes32 challenge nonce
+  resourceUrl = 'https://api.xfuel.app/task-request',
+} = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  // This is what Bankr sends: echoes our 402 accepts[0] into accepted, including
+  // the fields CDP doesn't want: maxAmountRequired, extra.taskId, extra.expiresAt, extra.nonce
+  const blob = {
+    x402Version: 2,
+    resource: {
+      url: resourceUrl,
+      description: 'XFuel paid inference',
+      mimeType: 'application/json',
+    },
+    accepted: {
+      scheme: 'exact',
+      network,
+      amount,
+      // FAT FIELD 1: maxAmountRequired (v1 compat, CDP v2 rejects)
+      maxAmountRequired: amount,
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      payTo,
+      maxTimeoutSeconds: 120,
+      extra: {
+        name: 'USD Coin',
+        version: '2',
+        // FAT FIELD 2: taskId (challenge binding, CDP rejects)
+        taskId: 'task-bankr-123',
+        // FAT FIELD 3: expiresAt (challenge binding, CDP rejects)
+        expiresAt: now + 120000,
+        // FAT FIELD 4: nonce (challenge binding, CDP rejects)
+        nonce: challengeNonce,
+      },
+    },
+    payload: {
+      signature: '0x' + '33'.repeat(65),
+      authorization: {
+        from,
+        to: payTo,
+        value: amount,
+        validAfter: '0',
+        validBefore: String(now + 3600),
+        nonce: '0x' + 'cd'.repeat(32),  // Authorization nonce (different from challenge nonce)
+      },
+    },
+    extensions: {},
+  };
+  return Buffer.from(JSON.stringify(blob), 'utf8').toString('base64');
+}
+
+test('toPaymentPayload slims Bankr fat accepted to spec fields only (invalid_payload fix)', () => {
+  // This is THE regression test for the Bankr invalid_payload error.
+  // Bankr echoes our 402 accepts[0] into accepted, including fields CDP rejects:
+  //   - maxAmountRequired (v1 compat)
+  //   - extra.taskId, extra.expiresAt, extra.nonce (challenge binding)
+  // toPaymentPayload must slim these before sending to CDP /verify.
+  const decoded = decodePaymentHeader(makeBankrFatAcceptedHeader({
+    network: 'eip155:8453',
+    amount: '100000',
+    payTo: '0xtreasury',
+    challengeNonce: '0x' + 'ab'.repeat(32),
+  }));
+
+  // Verify the header has the fat fields
+  assert.equal(decoded.accepted.maxAmountRequired, '100000', 'header has maxAmountRequired');
+  assert.equal(decoded.accepted.extra.taskId, 'task-bankr-123', 'header has extra.taskId');
+  assert.ok(decoded.accepted.extra.expiresAt, 'header has extra.expiresAt');
+  assert.equal(decoded.accepted.extra.nonce, '0x' + 'ab'.repeat(32), 'header has extra.nonce');
+
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+
+  // CRITICAL: Verify fat fields are removed
+  assert.strictEqual(p.accepted.maxAmountRequired, undefined,
+    'maxAmountRequired must be stripped for CDP v2');
+  assert.strictEqual(p.accepted.extra.taskId, undefined,
+    'extra.taskId must be stripped (challenge binding)');
+  assert.strictEqual(p.accepted.extra.expiresAt, undefined,
+    'extra.expiresAt must be stripped (challenge binding)');
+  assert.strictEqual(p.accepted.extra.nonce, undefined,
+    'extra.nonce must be stripped (challenge binding stays in our store)');
+
+  // Verify spec fields are preserved
+  assert.equal(p.accepted.scheme, 'exact', 'scheme preserved');
+  assert.equal(p.accepted.network, 'eip155:8453', 'network preserved');
+  assert.equal(p.accepted.amount, '100000', 'amount preserved');
+  assert.equal(p.accepted.asset, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 'asset preserved');
+  assert.equal(p.accepted.payTo, '0xtreasury', 'payTo preserved');
+  assert.equal(p.accepted.maxTimeoutSeconds, 120, 'maxTimeoutSeconds preserved');
+
+  // Verify EIP-712 domain extra fields are preserved
+  assert.equal(p.accepted.extra.name, 'USD Coin', 'extra.name (EIP-712) preserved');
+  assert.equal(p.accepted.extra.version, '2', 'extra.version (EIP-712) preserved');
+
+  // Verify only allowed keys exist on accepted
+  const allowedAcceptedKeys = ['scheme', 'network', 'amount', 'asset', 'payTo', 'maxTimeoutSeconds', 'extra'];
+  for (const key of Object.keys(p.accepted)) {
+    assert.ok(allowedAcceptedKeys.includes(key), `accepted should not have key: ${key}`);
+  }
+
+  // Verify only allowed keys exist on extra
+  const allowedExtraKeys = ['name', 'version'];
+  for (const key of Object.keys(p.accepted.extra)) {
+    assert.ok(allowedExtraKeys.includes(key), `extra should not have key: ${key}`);
+  }
+});
+
+test('v2 verifyViaFacilitator slims Bankr fat accepted before sending to facilitator', async () => {
+  // Integration test: verify the slimmed accepted is actually sent to the facilitator.
+  let receivedPayload = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body);
+      receivedPayload = parsed.paymentPayload;
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ isValid: true, payer: '0xbankrwallet' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    // Bankr-shaped header with fat accepted
+    const header = makeBankrFatAcceptedHeader({
+      network: 'eip155:8453',
+      amount: '100000',
+      payTo: '0xtreasury',
+      from: '0xbankrwallet',
+    });
+
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+    assert.equal(r.valid, true, 'Bankr fat accepted must verify after slimming');
+
+    // Verify the fat fields were stripped before sending
+    assert.ok(receivedPayload, 'facilitator must receive paymentPayload');
+    assert.ok(receivedPayload.accepted, 'paymentPayload.accepted required');
+
+    // Fat fields must be stripped
+    assert.strictEqual(receivedPayload.accepted.maxAmountRequired, undefined,
+      'maxAmountRequired must not reach facilitator');
+    assert.strictEqual(receivedPayload.accepted.extra.taskId, undefined,
+      'extra.taskId must not reach facilitator');
+    assert.strictEqual(receivedPayload.accepted.extra.expiresAt, undefined,
+      'extra.expiresAt must not reach facilitator');
+    assert.strictEqual(receivedPayload.accepted.extra.nonce, undefined,
+      'extra.nonce must not reach facilitator');
+
+    // Spec fields must be preserved
+    assert.equal(receivedPayload.accepted.amount, '100000');
+    assert.equal(receivedPayload.accepted.extra.name, 'USD Coin');
+    assert.equal(receivedPayload.accepted.extra.version, '2');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
 test('verifyViaFacilitator: happy path against the mock (x402 shape)', async () => {
   const { url, close } = await startMockFacilitator();
   try {

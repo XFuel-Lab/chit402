@@ -200,17 +200,35 @@ export function toPaymentPayload(decoded, { network, resource, extensions, x402V
   // Per https://github.com/coinbase/x402/blob/main/specs/x402-specification-v2.md:
   //   PaymentPayload = { x402Version, accepted, payload, resource?, extensions? }
   // CDP's /verify schema rejects payloads with top-level scheme/network (v1 shape).
+  //
+  // IMPORTANT: Slim `accepted` to spec fields only before sending to CDP /verify.
+  // Bankr and other CDP-native clients echo the entire 402 accepts[0] into their
+  // PaymentPayload.accepted, which includes our challenge-binding fields that CDP
+  // rejects: `maxAmountRequired`, `extra.taskId`, `extra.expiresAt`, `extra.nonce`.
+  // Per Section 3.5 challenge binding stays in our store; CDP only sees EIP-712 extra.
   // ────────────────────────────────────────────────────────────────────────────
   if (isCdpNativeV2 && x402Version === 2) {
     // Start with the incoming accepted; fill in any missing fields from challenge.
     const acceptedFromHeader = decoded.accepted || {};
-    const acceptedMerged = { ...acceptedFromHeader };
-    // Override network if provided (e.g., from challenge binding).
-    if (network) acceptedMerged.network = network;
+
+    // Slim `accepted` to spec fields only: scheme, network, amount, asset, payTo,
+    // maxTimeoutSeconds, extra (only name+version for EIP-712 domain). Remove
+    // maxAmountRequired and challenge-binding extra fields (taskId, expiresAt, nonce).
+    const incomingExtra = acceptedFromHeader.extra || {};
+    const slimAccepted = {
+      scheme: acceptedFromHeader.scheme,
+      network: network || acceptedFromHeader.network,
+      amount: acceptedFromHeader.amount,
+      asset: acceptedFromHeader.asset,
+      payTo: acceptedFromHeader.payTo,
+      maxTimeoutSeconds: acceptedFromHeader.maxTimeoutSeconds,
+      // Only forward EIP-712 domain fields; drop taskId/expiresAt/nonce (challenge binding).
+      extra: { name: incomingExtra.name, version: incomingExtra.version },
+    };
 
     const result = {
       x402Version: 2,
-      accepted: acceptedMerged,
+      accepted: slimAccepted,
       payload: decoded.payload,  // Already spec-shaped: { signature, authorization }
     };
 

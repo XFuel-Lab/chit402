@@ -181,7 +181,8 @@ test('full 402 loop against mock facilitator: challenge ? settle ? replay-reject
     assert.equal(accept.payTo, '0xtreasury');
     assert.equal(accept.network, 'eip155:8453');
     const nonce = accept.extra.nonce;
-    assert.match(nonce, /^[0-9a-f]{32}$/);
+    // EIP-3009 nonce must be bytes32: 0x + 64 hex chars. Per Section 3.5.
+    assert.match(nonce, /^0x[0-9a-f]{64}$/);
 
     // Step 2: retry with X-PAYMENT + nonce ? verify + settle
     const reqPay = {
@@ -216,7 +217,8 @@ test('full 402 loop against mock facilitator (v2 PAYMENT-SIGNATURE): CDP-native 
     assert.equal(challenge.body.x402Version, 2, 'challenge is still v2');
     const accept = challenge.body.accepts[0];
     const nonce = accept.extra.nonce;
-    assert.match(nonce, /^[0-9a-f]{32}$/);
+    // EIP-3009 nonce must be bytes32: 0x + 64 hex chars. Per Section 3.5.
+    assert.match(nonce, /^0x[0-9a-f]{64}$/);
 
     // Step 2: retry with PAYMENT-SIGNATURE + PAYMENT-NONCE → verify + settle (v2 path)
     const reqPayV2 = {
