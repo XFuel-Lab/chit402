@@ -257,12 +257,29 @@ async function callFacilitator(path, { gateway, apiKey, body, timeoutMs }) {
   };
 }
 
-/** Resolve PaymentRequirements from the bound challenge, falling back to the decoded blob. */
+/**
+ * Resolve PaymentRequirements from the bound challenge, falling back to the decoded blob.
+ *
+ * CDP-native v2 blobs put network/amount/payTo on `accepted`, not at the top level:
+ *   { accepted: { network, amount, payTo, ... }, payload: { ... } }
+ * XFuel SDK v1 blobs put them at the top level:
+ *   { network, amount, payTo, authorization: { ... } }
+ *
+ * When the challenge binding fails (e.g. nonce not found), we must still build
+ * valid requirements from the decoded blob — otherwise the facilitator gets
+ * undefined values and returns HTTP 400. Per Section 3.5.
+ */
 function requirementsFrom(challenge, decoded) {
+  // CDP-native v2: read from decoded.accepted; v1: read from top-level
+  const accepted = decoded?.accepted || {};
+  const network = challenge?.network || accepted.network || decoded?.network;
+  const amount = challenge?.amount ?? accepted.amount ?? decoded?.amount;
+  const payTo = challenge?.payTo ?? accepted.payTo ?? decoded?.payTo;
+
   return toPaymentRequirements({
-    network: challenge?.network || decoded?.network,
-    amount: challenge?.amount ?? decoded?.amount,
-    payTo: challenge?.payTo ?? decoded?.payTo,
+    network,
+    amount,
+    payTo,
     resource: challenge?.resource,
     taskId: challenge?.taskId,
     description: challenge?.description,
@@ -307,6 +324,7 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
       body: { x402Version: wireVersion, paymentPayload, paymentRequirements },
     });
     if (!ok) {
+      const cdpReason = data.invalidReason || data.errorReason || data.errorMessage || data.errorType;
       logger.warn(
         {
           status,
@@ -315,13 +333,19 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
           payTo: paymentRequirements.payTo,
           amount: paymentRequirements.maxAmountRequired,
           correlationId: data.correlationId,
-          invalidReason: data.invalidReason || data.errorReason || data.errorMessage || data.errorType,
+          invalidReason: cdpReason,
           errKeys: Object.keys(data || {}),
           rawSnippet: typeof data._raw === 'string' ? data._raw.slice(0, 240) : JSON.stringify(data).slice(0, 240),
         },
         'x402 facilitator verify HTTP error',
       );
-      return { valid: false, reason: `facilitator_http_${status}` };
+      // Surface the actual CDP invalidReason when available (Bankr #2 debugging).
+      // Before: always returned generic `facilitator_http_400`.
+      // After: returns `facilitator_http_400:amount_required` when CDP tells us why.
+      const reason = cdpReason
+        ? `facilitator_http_${status}:${String(cdpReason).replace(/\s+/g, '_').slice(0, 50)}`
+        : `facilitator_http_${status}`;
+      return { valid: false, reason };
     }
     logBazaarResponses('/verify', extensionResponses, paymentPayload);
     if (!data.isValid) {
@@ -372,6 +396,7 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
       body: { x402Version: wireVersion, paymentPayload, paymentRequirements },
     });
     if (!ok) {
+      const cdpReason = data.invalidReason || data.errorReason || data.errorMessage || data.errorType;
       logger.warn(
         {
           status,
@@ -380,13 +405,17 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
           payTo: paymentRequirements.payTo,
           amount: paymentRequirements.maxAmountRequired,
           correlationId: data.correlationId,
-          invalidReason: data.invalidReason || data.errorReason || data.errorMessage || data.errorType,
+          invalidReason: cdpReason,
           errKeys: Object.keys(data || {}),
           rawSnippet: typeof data._raw === 'string' ? data._raw.slice(0, 240) : JSON.stringify(data).slice(0, 240),
         },
         'x402 facilitator settle HTTP error',
       );
-      return { settled: false, reason: `facilitator_http_${status}` };
+      // Surface the actual CDP invalidReason when available (Bankr #2 debugging).
+      const reason = cdpReason
+        ? `facilitator_http_${status}:${String(cdpReason).replace(/\s+/g, '_').slice(0, 50)}`
+        : `facilitator_http_${status}`;
+      return { settled: false, reason };
     }
     logBazaarResponses('/settle', extensionResponses, paymentPayload);
     const settled = !!data.success;

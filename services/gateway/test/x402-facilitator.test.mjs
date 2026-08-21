@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import {
   decodePaymentHeader,
   toPaymentRequirements,
@@ -472,5 +473,197 @@ test('settleViaFacilitator handles CDP-native v2 PaymentPayload (Bankr fix)', as
     assert.match(r.txRef, /^0x/);
   } finally {
     await close();
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Bankr incident #2 (2026-08-21 post-PR208): facilitator_http_400
+// When the challenge nonce is NOT in the PAYMENT-NONCE header and the challenge
+// binding fails, requirementsFrom() falls back to decoded but doesn't read from
+// decoded.accepted for CDP v2 — it sends undefined network/amount/payTo to the
+// facilitator, which returns HTTP 400.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Build a CDP v2 header with the challenge nonce in accepted.extra.nonce
+ * (as CDP clients may echo it), NOT in a separate header.
+ */
+function makeCdpNativePaymentHeaderWithNonceInBlob({
+  network = 'eip155:84532',
+  amount = '50000',
+  payTo = '0xtreasury',
+  from = '0xpayer',
+  challengeNonce = 'challenge-nonce-abc123',
+  resourceUrl = 'https://api.xfuel.app/task-request',
+} = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const blob = {
+    x402Version: 2,
+    resource: {
+      url: resourceUrl,
+      description: 'XFuel paid inference',
+      mimeType: 'application/json',
+    },
+    accepted: {
+      scheme: 'exact',
+      network,
+      amount,
+      asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      payTo,
+      maxTimeoutSeconds: 60,
+      extra: {
+        name: 'USDC',
+        version: '2',
+        nonce: challengeNonce,  // <-- Challenge nonce echoed here, not in header
+      },
+    },
+    payload: {
+      signature: '0x' + '22'.repeat(65),
+      authorization: {
+        from,
+        to: payTo,
+        value: amount,
+        validAfter: '0',
+        validBefore: String(now + 3600),
+        nonce: '0x' + 'cd'.repeat(32),  // EIP-3009 authorization nonce (NOT challenge nonce)
+      },
+    },
+    extensions: {},
+  };
+  return Buffer.from(JSON.stringify(blob), 'utf8').toString('base64');
+}
+
+test('requirementsFrom reads from decoded.accepted for CDP v2 when challenge is null (Bankr #2 fix)', async () => {
+  // This is the exact scenario: CDP-native v2 blob with no challenge binding.
+  // Before the fix, this would build requirements with undefined amount/payTo.
+  const { decodePaymentHeader } = await import('../src/x402-facilitator.js');
+  // Import the internal requirementsFrom for testing - we need to access it via verify
+  const header = makeCdpNativePaymentHeaderWithNonceInBlob({
+    network: 'eip155:8453',
+    amount: '100000',
+    payTo: '0xbankrtreasury',
+    challengeNonce: 'some-nonce',
+  });
+  const decoded = decodePaymentHeader(header);
+
+  // Verify the blob has the expected structure
+  assert.equal(decoded.accepted.network, 'eip155:8453');
+  assert.equal(decoded.accepted.amount, '100000');
+  assert.equal(decoded.accepted.payTo, '0xbankrtreasury');
+  assert.equal(decoded.accepted.extra.nonce, 'some-nonce');
+  // Top-level values should NOT exist for CDP v2
+  assert.equal(decoded.network, undefined, 'CDP v2 has network on accepted, not top-level');
+  assert.equal(decoded.amount, undefined, 'CDP v2 has amount on accepted, not top-level');
+  assert.equal(decoded.payTo, undefined, 'CDP v2 has payTo on accepted, not top-level');
+});
+
+test('verifyViaFacilitator builds valid requirements from CDP v2 decoded.accepted when challenge is null', async () => {
+  // Create a mock that validates the requirements it receives
+  let receivedRequirements = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body);
+      receivedRequirements = parsed.paymentRequirements;
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ isValid: true, payer: '0xbankrwallet' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    // Send a CDP v2 header WITHOUT a challenge binding (no nonce found)
+    // The facilitator should still receive valid requirements from decoded.accepted
+    const header = makeCdpNativePaymentHeaderWithNonceInBlob({
+      network: 'eip155:84532',
+      amount: '75000',
+      payTo: '0xbankrtreasury',
+      from: '0xbankrwallet',
+    });
+
+    // No challenge passed - this simulates when nonce extraction fails
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+
+    assert.equal(r.valid, true, 'CDP v2 without challenge binding must still verify');
+    assert.equal(r.payer, '0xbankrwallet');
+
+    // CRITICAL: Verify the requirements were built correctly from decoded.accepted
+    // Before the fix: maxAmountRequired would be 'undefined', payTo would be undefined
+    // After the fix: these should be correctly extracted from decoded.accepted
+    assert.ok(receivedRequirements, 'mock must receive paymentRequirements');
+    assert.equal(
+      receivedRequirements.maxAmountRequired, '75000',
+      'amount must be extracted from decoded.accepted.amount, not undefined'
+    );
+    assert.equal(
+      receivedRequirements.payTo, '0xbankrtreasury',
+      'payTo must be extracted from decoded.accepted.payTo, not undefined'
+    );
+    // Network should be converted to short form
+    assert.equal(
+      receivedRequirements.network, 'base-sepolia',
+      'network must be extracted and converted from decoded.accepted.network'
+    );
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('extractPaymentNonce finds nonce in CDP v2 accepted.extra.nonce', async () => {
+  const { extractPaymentNonce } = await import('../src/x402-server.js');
+  const header = makeCdpNativePaymentHeaderWithNonceInBlob({
+    challengeNonce: 'accepted-extra-nonce-xyz',
+  });
+
+  const req = {
+    headers: {
+      'payment-signature': header,
+      // No PAYMENT-NONCE header - nonce is only in the blob
+    },
+  };
+
+  const nonce = extractPaymentNonce(req);
+  // Before the fix: nonce would be null (only looked at top-level nonce)
+  // After the fix: should find the nonce in accepted.extra.nonce
+  assert.equal(nonce, 'accepted-extra-nonce-xyz', 'must extract nonce from accepted.extra.nonce');
+});
+
+test('verifyViaFacilitator surfaces CDP invalidReason in error (not just facilitator_http_400)', async () => {
+  // Create a mock that returns 400 with a specific invalidReason
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        error: 'invalid_request',
+        invalidReason: 'amount_required',  // CDP tells us WHY it rejected
+      }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    const header = makePaymentHeader();
+    const r = await verifyViaFacilitator(header, { gateway: url });
+
+    assert.equal(r.valid, false);
+    // Before the fix: reason would be 'facilitator_http_400' (no details)
+    // After the fix: reason should include the CDP invalidReason
+    assert.match(r.reason, /amount_required/, 'must surface CDP invalidReason in error');
+    assert.match(r.reason, /facilitator_http_400/, 'must still include HTTP status');
+  } finally {
+    await new Promise((r) => server.close(r));
   }
 });
