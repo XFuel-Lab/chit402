@@ -107,14 +107,20 @@ export function catalogResourceUrl(resource) {
  * Build the x402 `PaymentRequirements` object the facilitator validates against.
  * The `asset`/`extra` (EIP-712 name+version) must match what the payer signed.
  *
- * `outputSchema` is the v1 Bazaar discovery field (info.input / info.output).
- * CDP's v2 path reads `paymentPayload.extensions.bazaar` instead; we send both.
+ * v1 (XFuel SDK / ZAN): includes `maxAmountRequired`, `resource`, `description`,
+ * `mimeType`, `outputSchema` per the ZAN/testnet schema.
  *
- * For v2 (CDP-native clients like Bankr), the network must stay in CAIP-2 format
- * (`eip155:8453`) to match what the payer signed. For v1 (XFuel SDK / ZAN
- * facilitator), we use the short form (`base`) for backward compatibility.
+ * v2 (CDP-native like Bankr): per x402 spec section 5.1.2, PaymentRequirements has:
+ *   - scheme (string)
+ *   - network (CAIP-2, e.g. eip155:8453)
+ *   - amount (string, atomic units) — NOT maxAmountRequired
+ *   - asset (string)
+ *   - payTo (string)
+ *   - maxTimeoutSeconds (number)
+ *   - extra (optional, for exact EVM: { name, version })
+ * v2 does NOT have: maxAmountRequired, resource, description, mimeType, outputSchema.
  *
- * @param {1|2} [opts.x402Version=1] - Protocol version; v2 preserves CAIP-2 network
+ * @param {1|2} [opts.x402Version=1] - Protocol version; v2 uses `amount` + CAIP-2 network
  */
 export function toPaymentRequirements({
   network, amount, payTo, resource, taskId, maxTimeoutSeconds, description, outputSchema,
@@ -125,6 +131,22 @@ export function toPaymentRequirements({
   // For v2 (CDP-native), use CAIP-2 network to match what the payer signed.
   // For v1 (XFuel SDK / ZAN), use short form for backward compatibility.
   const wireNetwork = x402Version === 2 ? toCaip2Network(network) : shortNet;
+
+  // v2 (CDP-native): minimal spec shape — `amount`, no v1 discovery fields.
+  // Per https://github.com/coinbase/x402/blob/main/specs/x402-specification-v2.md 5.1.2/7.1
+  if (x402Version === 2) {
+    return {
+      scheme: 'exact',
+      network: wireNetwork,
+      amount: String(amount),
+      asset,
+      payTo,
+      maxTimeoutSeconds: Number(maxTimeoutSeconds) || 120,
+      extra: { name, version },
+    };
+  }
+
+  // v1 (XFuel SDK / ZAN): includes discovery fields for backward compatibility.
   const req = {
     scheme: 'exact',
     network: wireNetwork,
@@ -390,7 +412,7 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
           elapsedMs,
           network: paymentRequirements.network,
           payTo: paymentRequirements.payTo,
-          amount: paymentRequirements.maxAmountRequired,
+          amount: paymentRequirements.amount || paymentRequirements.maxAmountRequired,
           correlationId: data.correlationId,
           invalidReason: cdpReason,
           errKeys: Object.keys(data || {}),
@@ -413,7 +435,7 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
           invalidReason: data.invalidReason,
           network: paymentRequirements.network,
           payTo: paymentRequirements.payTo,
-          amount: paymentRequirements.maxAmountRequired,
+          amount: paymentRequirements.amount || paymentRequirements.maxAmountRequired,
           asset: paymentRequirements.asset,
         },
         'x402 facilitator verify rejected',
@@ -463,7 +485,7 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
           elapsedMs,
           network: paymentRequirements.network,
           payTo: paymentRequirements.payTo,
-          amount: paymentRequirements.maxAmountRequired,
+          amount: paymentRequirements.amount || paymentRequirements.maxAmountRequired,
           correlationId: data.correlationId,
           invalidReason: cdpReason,
           errKeys: Object.keys(data || {}),

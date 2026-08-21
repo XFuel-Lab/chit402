@@ -164,6 +164,9 @@ test('toPaymentRequirements v2 uses CAIP-2 network format (invalid_network fix)'
   assert.equal(r.network, 'eip155:8453', 'v2 must use CAIP-2 network format');
   // Asset lookup still works (uses short form internally)
   assert.equal(r.asset, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 'Base mainnet USDC');
+  // v2 uses `amount`, not `maxAmountRequired` (per x402 spec section 5.1.2)
+  assert.equal(r.amount, '50000', 'v2 must use `amount` field');
+  assert.equal(r.maxAmountRequired, undefined, 'v2 must NOT have maxAmountRequired');
 });
 
 test('toPaymentRequirements v2 converts short form to CAIP-2', () => {
@@ -173,6 +176,8 @@ test('toPaymentRequirements v2 converts short form to CAIP-2', () => {
     x402Version: 2,
   });
   assert.equal(r.network, 'eip155:8453', 'v2 converts short form to CAIP-2');
+  assert.equal(r.amount, '50000', 'v2 uses `amount`');
+  assert.equal(r.maxAmountRequired, undefined, 'v2 does NOT have maxAmountRequired');
 });
 
 test('toPaymentRequirements v2 handles Base Sepolia CAIP-2', () => {
@@ -182,6 +187,8 @@ test('toPaymentRequirements v2 handles Base Sepolia CAIP-2', () => {
   });
   assert.equal(r.network, 'eip155:84532', 'v2 preserves Base Sepolia CAIP-2');
   assert.equal(r.asset, '0x036CbD53842c5426634e7929541eC2318f3dCF7e', 'Base Sepolia USDC');
+  assert.equal(r.amount, '50000', 'v2 uses `amount`');
+  assert.equal(r.maxAmountRequired, undefined, 'v2 does NOT have maxAmountRequired');
 });
 
 test('toPaymentPayload reshapes the XFuel blob into the standard exact-scheme payload (v1)', () => {
@@ -737,12 +744,17 @@ test('verifyViaFacilitator builds valid requirements from CDP v2 decoded.accepte
     assert.equal(r.payer, '0xbankrwallet');
 
     // CRITICAL: Verify the requirements were built correctly from decoded.accepted
-    // Before the fix: maxAmountRequired would be 'undefined', payTo would be undefined
-    // After the fix: these should be correctly extracted from decoded.accepted
+    // Before the fix: amount field would be missing (v1 uses maxAmountRequired), payTo undefined
+    // After the fix: v2 uses `amount` and values are correctly extracted from decoded.accepted
     assert.ok(receivedRequirements, 'mock must receive paymentRequirements');
+    // v2 uses `amount`, NOT `maxAmountRequired` (per x402 spec section 5.1.2)
     assert.equal(
-      receivedRequirements.maxAmountRequired, '75000',
-      'amount must be extracted from decoded.accepted.amount, not undefined'
+      receivedRequirements.amount, '75000',
+      'v2 must use `amount` field extracted from decoded.accepted.amount'
+    );
+    assert.equal(
+      receivedRequirements.maxAmountRequired, undefined,
+      'v2 must NOT have maxAmountRequired (v1-only field)'
     );
     assert.equal(
       receivedRequirements.payTo, '0xbankrtreasury',
@@ -754,6 +766,10 @@ test('verifyViaFacilitator builds valid requirements from CDP v2 decoded.accepte
       receivedRequirements.network, 'eip155:84532',
       'v2 paymentRequirements.network must be CAIP-2 (eip155:84532), not short form'
     );
+    // v2 does NOT have v1 discovery fields
+    assert.equal(receivedRequirements.resource, undefined, 'v2 has no resource');
+    assert.equal(receivedRequirements.description, undefined, 'v2 has no description');
+    assert.equal(receivedRequirements.mimeType, undefined, 'v2 has no mimeType');
   } finally {
     await new Promise((r) => server.close(r));
   }
@@ -1056,6 +1072,237 @@ test('XFuel SDK v1 paymentPayload still uses top-level scheme/network for ZAN/te
     assert.equal(receivedPayload.scheme, 'exact', 'v1 has top-level scheme');
     assert.equal(receivedPayload.network, 'base-sepolia', 'v1 has top-level network');
     assert.equal(receivedPayload.accepted, undefined, 'v1 does NOT have accepted field');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// v2 PaymentRequirements shape fix (PR 212 — Bankr 'paymentRequirements' is invalid)
+// CDP's /verify endpoint returns 400 when paymentRequirements has v1 fields:
+//   'paymentRequirements'_is_invalid:_must_match_one_of_...
+// v2 uses `amount` (not maxAmountRequired) and omits resource/description/mimeType.
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('toPaymentRequirements v2 has spec-compliant shape (amount, no v1 discovery fields)', () => {
+  // This is THE unit test for the paymentRequirements v2 shape fix.
+  // Per https://github.com/coinbase/x402/blob/main/specs/x402-specification-v2.md 5.1.2/7.1:
+  //   v2 PaymentRequirements REQUIRED: scheme, network (CAIP-2), amount, asset, payTo, maxTimeoutSeconds
+  //   v2 PaymentRequirements OPTIONAL: extra (for EIP-712 domain)
+  //   v2 does NOT have: maxAmountRequired, resource, description, mimeType, outputSchema
+  const r = toPaymentRequirements({
+    network: 'eip155:8453',
+    amount: '100000',
+    payTo: '0xtreasury',
+    resource: 'https://api.xfuel.app/task-request',  // v1-only, should be ignored for v2
+    taskId: 't1',
+    description: 'Some task',  // v1-only, should be ignored for v2
+    outputSchema: { input: {} },  // v1-only, should be ignored for v2
+    x402Version: 2,
+  });
+
+  // v2 REQUIRED fields
+  assert.equal(r.scheme, 'exact', 'v2 has scheme');
+  assert.equal(r.network, 'eip155:8453', 'v2 uses CAIP-2 network');
+  assert.equal(r.amount, '100000', 'v2 uses `amount` field');
+  assert.equal(r.asset, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 'v2 has asset');
+  assert.equal(r.payTo, '0xtreasury', 'v2 has payTo');
+  assert.equal(typeof r.maxTimeoutSeconds, 'number', 'v2 has maxTimeoutSeconds');
+  assert.deepEqual(r.extra, { name: 'USD Coin', version: '2' }, 'v2 has EIP-712 domain in extra');
+
+  // v2 does NOT have v1 fields (they should be undefined, not present)
+  assert.strictEqual(r.maxAmountRequired, undefined, 'v2 must NOT have maxAmountRequired');
+  assert.strictEqual(r.resource, undefined, 'v2 must NOT have resource');
+  assert.strictEqual(r.description, undefined, 'v2 must NOT have description');
+  assert.strictEqual(r.mimeType, undefined, 'v2 must NOT have mimeType');
+  assert.strictEqual(r.outputSchema, undefined, 'v2 must NOT have outputSchema');
+
+  // Verify no extra keys exist
+  const allowedKeys = ['scheme', 'network', 'amount', 'asset', 'payTo', 'maxTimeoutSeconds', 'extra'];
+  const actualKeys = Object.keys(r);
+  for (const key of actualKeys) {
+    assert.ok(allowedKeys.includes(key), `v2 PaymentRequirements should not have key: ${key}`);
+  }
+});
+
+test('toPaymentRequirements v1 still has discovery fields for backward compatibility', () => {
+  // v1 (XFuel SDK / ZAN) keeps maxAmountRequired, resource, description, mimeType
+  const r = toPaymentRequirements({
+    network: 'base-sepolia',
+    amount: '50000',
+    payTo: '0xtreasury',
+    resource: 'https://api.xfuel.app/task-request',
+    taskId: 't1',
+    description: 'Some task',
+    x402Version: 1,
+  });
+
+  // v1 has maxAmountRequired (NOT amount)
+  assert.equal(r.maxAmountRequired, '50000', 'v1 uses maxAmountRequired');
+  assert.strictEqual(r.amount, undefined, 'v1 does NOT have `amount` field');
+
+  // v1 has discovery fields
+  assert.equal(r.resource, 'https://api.xfuel.app/task-request', 'v1 has resource');
+  assert.equal(r.description, 'Some task', 'v1 has description');
+  assert.equal(r.mimeType, 'application/json', 'v1 has mimeType');
+
+  // v1 uses short network form
+  assert.equal(r.network, 'base-sepolia', 'v1 uses short network form');
+});
+
+test('v2 verifyViaFacilitator sends spec-compliant paymentRequirements (amount, no v1 fields)', async () => {
+  // This is THE integration test for the paymentRequirements v2 shape fix.
+  // The body posted to CDP /verify must have v2 paymentRequirements (amount, no maxAmountRequired).
+  // Before this fix: CDP rejected with 'paymentRequirements'_is_invalid because we sent maxAmountRequired.
+  let receivedBody = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      receivedBody = JSON.parse(body);
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ isValid: true, payer: '0xbankrwallet' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    // Bankr-shaped CDP-native v2 PAYMENT-SIGNATURE header
+    const header = makeCdpNativePaymentHeader({
+      network: 'eip155:8453',
+      amount: '100000',
+      payTo: '0xtreasury',
+      from: '0xbankrwallet',
+      resourceUrl: 'https://api.xfuel.app/v1/chat/completions',
+    });
+
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+    assert.equal(r.valid, true, 'v2 must verify');
+
+    // Verify the FULL body posted to the facilitator
+    assert.ok(receivedBody, 'facilitator must receive body');
+    assert.equal(receivedBody.x402Version, 2, 'body.x402Version = 2');
+
+    // paymentPayload: v2 spec shape with `accepted` (already fixed in PR 211)
+    const pp = receivedBody.paymentPayload;
+    assert.ok(pp, 'body.paymentPayload required');
+    assert.ok(pp.accepted, 'paymentPayload.accepted required for v2');
+    assert.strictEqual(pp.scheme, undefined, 'paymentPayload must NOT have top-level scheme');
+    assert.strictEqual(pp.network, undefined, 'paymentPayload must NOT have top-level network');
+
+    // paymentRequirements: v2 spec shape with `amount` (THIS PR's fix)
+    const pr = receivedBody.paymentRequirements;
+    assert.ok(pr, 'body.paymentRequirements required');
+    assert.equal(pr.scheme, 'exact', 'paymentRequirements.scheme');
+    assert.equal(pr.network, 'eip155:8453', 'paymentRequirements.network (CAIP-2)');
+    assert.equal(pr.amount, '100000', 'paymentRequirements.amount (v2 field)');
+    assert.equal(pr.payTo, '0xtreasury', 'paymentRequirements.payTo');
+
+    // v2 does NOT have v1 fields
+    assert.strictEqual(pr.maxAmountRequired, undefined, 'v2 must NOT have maxAmountRequired');
+    assert.strictEqual(pr.resource, undefined, 'v2 must NOT have resource');
+    assert.strictEqual(pr.description, undefined, 'v2 must NOT have description');
+    assert.strictEqual(pr.mimeType, undefined, 'v2 must NOT have mimeType');
+    assert.strictEqual(pr.outputSchema, undefined, 'v2 must NOT have outputSchema');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('v2 settleViaFacilitator sends spec-compliant paymentRequirements (amount, no v1 fields)', async () => {
+  // Same validation for the settle path
+  let receivedBody = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      receivedBody = JSON.parse(body);
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ success: true, transaction: '0x123abc', payer: '0xbankrwallet' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    const header = makeCdpNativePaymentHeader({
+      network: 'eip155:8453',
+      amount: '100000',
+      payTo: '0xtreasury',
+      from: '0xbankrwallet',
+    });
+
+    const r = await settleViaFacilitator(header, { gateway: url, x402Version: 2 });
+    assert.equal(r.settled, true, 'v2 must settle');
+
+    // paymentRequirements: v2 spec shape
+    const pr = receivedBody.paymentRequirements;
+    assert.ok(pr, 'body.paymentRequirements required');
+    assert.equal(pr.amount, '100000', 'paymentRequirements.amount (v2 field)');
+    assert.strictEqual(pr.maxAmountRequired, undefined, 'v2 must NOT have maxAmountRequired');
+    assert.strictEqual(pr.resource, undefined, 'v2 must NOT have resource');
+    assert.strictEqual(pr.description, undefined, 'v2 must NOT have description');
+    assert.strictEqual(pr.mimeType, undefined, 'v2 must NOT have mimeType');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('v1 verifyViaFacilitator sends legacy paymentRequirements (maxAmountRequired, discovery fields)', async () => {
+  // v1 path must NOT change - it uses maxAmountRequired and discovery fields for backward compat.
+  let receivedBody = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      receivedBody = JSON.parse(body);
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ isValid: true, payer: '0xsdkuser' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    // XFuel SDK v1 header
+    const header = makePaymentHeader({
+      network: 'base-sepolia',
+      from: '0xsdkuser',
+    });
+    const challenge = {
+      network: 'base-sepolia',
+      amount: '50000',
+      payTo: '0xtreasury',
+      taskId: 't1',
+      resource: 'https://api.xfuel.app/task-request',
+      description: 'XFuel task',
+    };
+
+    const r = await verifyViaFacilitator(header, { gateway: url, challenge, x402Version: 1 });
+    assert.equal(r.valid, true);
+
+    // paymentRequirements: v1 shape (backward compatibility)
+    const pr = receivedBody.paymentRequirements;
+    assert.ok(pr, 'body.paymentRequirements required');
+    assert.equal(pr.maxAmountRequired, '50000', 'v1 uses maxAmountRequired');
+    assert.strictEqual(pr.amount, undefined, 'v1 does NOT have `amount` field');
+    assert.equal(pr.resource, 'https://api.xfuel.app/task-request', 'v1 has resource');
+    assert.equal(pr.description, 'XFuel task', 'v1 has description');
+    assert.equal(pr.mimeType, 'application/json', 'v1 has mimeType');
+    assert.equal(pr.network, 'base-sepolia', 'v1 uses short network form');
   } finally {
     await new Promise((r) => server.close(r));
   }
