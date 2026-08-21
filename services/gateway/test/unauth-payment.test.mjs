@@ -43,7 +43,10 @@ delete process.env.THETA_EDGE_URL;
 delete process.env.THETA_EDGECLOUD_API_KEY;
 
 // Create a tracked mock facilitator that records settle calls (for regression tests)
+// NOTE: facilitatorSettleCalls MUST be declared BEFORE createTrackedMockFacilitator() is called
+// to avoid Temporal Dead Zone issues when the closure references it.
 import http from 'node:http';
+let facilitatorSettleCalls = [];  // Track settle calls for regression tests
 function createTrackedMockFacilitator() {
   const server = http.createServer((req, res) => {
     let body = '';
@@ -119,7 +122,6 @@ const AKASH_MODELS = {
 };
 
 let inferenceCalls = [];
-let facilitatorSettleCalls = [];  // Track settle calls for regression tests
 let server;
 let base;
 
