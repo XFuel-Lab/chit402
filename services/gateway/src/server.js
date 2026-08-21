@@ -8,7 +8,7 @@ import { initAIListener, getAIListener } from './ai-listener.js';
 import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
-import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel } from './x402-server.js';
+import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
@@ -592,9 +592,15 @@ export function createApp() {
   // ═══════════════════════════════════════════════════════════════════════
 
   app.post('/task-request', async (req, res) => {
-    // Unauthenticated callers only ever see the discovery 402 — never a free
-    // serve, never fulfillment. API key is required once work is done.
-    if (!isAuthorised(req)) {
+    // Check for payment header first — a CDP-native caller (Bankr, Bazaar) may
+    // send PAYMENT-SIGNATURE or X-PAYMENT without an API key. If they have a
+    // payment header, run the handshake; only return a discovery 402 if there
+    // is no payment header AND no authorization. Per ADR 0008 rolling settlement:
+    // keyed callers still get the fronted first call when no payment is present.
+    const { header: paymentHeader } = extractPaymentHeader(req);
+    const isAuth = isAuthorised(req);
+    if (!isAuth && !paymentHeader) {
+      // Unauthenticated + no payment header → discovery 402 (never free serve)
       const { body, headers } = publicTaskRequestChallenge(req);
       return sendPaymentRequired(res, body, headers);
     }
@@ -712,7 +718,11 @@ export function createApp() {
         if (rail === 'usdc' && config.x402.enabled) {
           if (rollingEnabled()) {
             const payerId = payerBucket(req, apiKeyHashFromReq(req));
-            const hasPayment = !!req.headers?.['x-payment'];
+            // Check both v1 (X-PAYMENT) and v2 (PAYMENT-SIGNATURE) headers.
+            // PR 205 added PAYMENT-SIGNATURE support to the handshake, but rolling
+            // hasPayment was still checking only X-PAYMENT — so a CDP-native buyer
+            // looked like "no payment" and was fronted instead of settled.
+            const hasPayment = !!paymentHeader;
             ceilingQuote = await quoteResolved(req.body);
             const decision = rollingDecision({
               payerId,
