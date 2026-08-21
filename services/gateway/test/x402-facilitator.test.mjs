@@ -42,6 +42,54 @@ function makePaymentHeader({
   return Buffer.from(JSON.stringify(blob), 'utf8').toString('base64');
 }
 
+/**
+ * Build a CDP-native v2 PAYMENT-SIGNATURE header the way Bankr and other CDP
+ * clients send it: a spec-compliant PaymentPayload with { payload: { authorization, signature } }.
+ *
+ * This is the exact shape that caused paymentPayloadInvalid before the fix:
+ * CDP-native clients put the auth data at decoded.payload.authorization, not decoded.authorization.message.
+ */
+function makeCdpNativePaymentHeader({
+  network = 'eip155:84532',
+  amount = '50000',
+  payTo = '0xtreasury',
+  from = '0xpayer',
+  nonce = '0x' + 'cd'.repeat(32),
+  resourceUrl = 'https://api.xfuel.app/task-request',
+} = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const blob = {
+    x402Version: 2,
+    resource: {
+      url: resourceUrl,
+      description: 'XFuel paid inference',
+      mimeType: 'application/json',
+    },
+    accepted: {
+      scheme: 'exact',
+      network,
+      amount,
+      asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      payTo,
+      maxTimeoutSeconds: 60,
+      extra: { name: 'USDC', version: '2' },
+    },
+    payload: {
+      signature: '0x' + '22'.repeat(65),
+      authorization: {
+        from,
+        to: payTo,
+        value: amount,
+        validAfter: '0',
+        validBefore: String(now + 3600),
+        nonce,
+      },
+    },
+    extensions: {},
+  };
+  return Buffer.from(JSON.stringify(blob), 'utf8').toString('base64');
+}
+
 function cfgX402(url, over = {}) {
   return {
     enabled: true,
@@ -177,6 +225,72 @@ test('toPaymentPayload throws on a header missing signature/authorization', () =
   assert.throws(() => toPaymentPayload({ scheme: 'exact' }, {}), /missing signature/);
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// CDP-native v2 PaymentPayload tests (Bankr incident fix)
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('toPaymentPayload handles CDP-native v2 PaymentPayload shape (Bankr fix)', () => {
+  // This is the exact shape that caused paymentPayloadInvalid before the fix:
+  // CDP-native clients put auth at decoded.payload.authorization, not decoded.authorization.message.
+  const decoded = decodePaymentHeader(makeCdpNativePaymentHeader({ from: '0xbankr' }));
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+
+  assert.equal(p.x402Version, 2, 'v2 for CDP-native');
+  assert.equal(p.scheme, 'exact');
+  assert.equal(p.network, 'eip155:84532', 'network from accepted');
+  assert.equal(p.payload.signature, '0x' + '22'.repeat(65));
+  assert.equal(p.payload.authorization.from, '0xbankr');
+  assert.equal(p.payload.authorization.to, '0xtreasury');
+  assert.equal(p.payload.authorization.value, '50000');
+  assert.equal(p.resource, 'https://api.xfuel.app/task-request', 'resource from header');
+});
+
+test('toPaymentPayload extracts network from CDP-native accepted field', () => {
+  const decoded = decodePaymentHeader(makeCdpNativePaymentHeader({ network: 'eip155:8453' }));
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+  assert.equal(p.network, 'eip155:8453', 'network from accepted.network');
+});
+
+test('toPaymentPayload prefers opts.network over CDP-native accepted.network', () => {
+  const decoded = decodePaymentHeader(makeCdpNativePaymentHeader({ network: 'eip155:84532' }));
+  const p = toPaymentPayload(decoded, { network: 'base', x402Version: 2 });
+  assert.equal(p.network, 'base', 'opts.network wins');
+});
+
+test('toPaymentPayload extracts resource from CDP-native resource object', () => {
+  const decoded = decodePaymentHeader(makeCdpNativePaymentHeader({
+    resourceUrl: 'https://api.example.com/premium',
+  }));
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+  assert.equal(p.resource, 'https://api.example.com/premium');
+});
+
+test('toPaymentPayload prefers opts.resource over CDP-native header resource', () => {
+  const decoded = decodePaymentHeader(makeCdpNativePaymentHeader({
+    resourceUrl: 'https://header.example.com/resource',
+  }));
+  const p = toPaymentPayload(decoded, {
+    resource: 'https://challenge.example.com/resource',
+    x402Version: 2,
+  });
+  assert.equal(p.resource, 'https://challenge.example.com/resource', 'opts.resource wins');
+});
+
+test('toPaymentPayload handles CDP-native v2 with extensions', () => {
+  const decoded = decodePaymentHeader(makeCdpNativePaymentHeader());
+  decoded.extensions = { bazaar: { info: { input: { type: 'http' } } } };
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+  assert.deepEqual(p.extensions, decoded.extensions, 'extensions passed through');
+});
+
+test('toPaymentPayload still works with XFuel SDK v1 shape after CDP-native fix', () => {
+  // Regression: ensure the v1 path still works after adding CDP-native v2 support
+  const decoded = decodePaymentHeader(makePaymentHeader({ from: '0xsdk-user' }));
+  const p = toPaymentPayload(decoded, { network: 'base-sepolia' });
+  assert.equal(p.payload.authorization.from, '0xsdk-user');
+  assert.equal(p.x402Version, 1);
+});
+
 test('verifyViaFacilitator: happy path against the mock (x402 shape)', async () => {
   const { url, close } = await startMockFacilitator();
   try {
@@ -289,4 +403,74 @@ test('x402 handshake defaults to the public facilitator when no URL is configure
   const challenge = await runX402Handshake(reqNoPay, { taskId: 't', cfg });
   assert.equal(challenge.kind, 'challenge');
   assert.equal(challenge.body.accepts[0].network, 'eip155:84532');
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CDP-native v2 PaymentPayload handshake test (Bankr incident fix)
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('full x402 handshake with CDP-native v2 PaymentPayload shape (Bankr fix)', async () => {
+  // This is the exact scenario that caused paymentPayloadInvalid: a CDP-native
+  // client sends a spec-shaped PaymentPayload with { payload: { authorization, signature } },
+  // not the XFuel SDK shape { authorization: { message, signature } }.
+  const { url, close } = await startMockFacilitator();
+  try {
+    const cfg = cfgX402(url);
+
+    // Step 1: get a challenge
+    const reqNoPay = { headers: {}, body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' } };
+    const challenge = await runX402Handshake(reqNoPay, { taskId: 'bankr-fix-test', cfg });
+    assert.equal(challenge.kind, 'challenge');
+    const challengeNonce = challenge.body.accepts[0].extra.nonce;
+
+    // Step 2: retry with a CDP-native v2 PaymentPayload (the shape Bankr sends)
+    const header = makeCdpNativePaymentHeader({
+      nonce: '0x' + challengeNonce.replace(/^0x/, '').padStart(64, '0'),
+      from: '0xbankrwallet',
+    });
+    const reqPayV2 = {
+      headers: { 'payment-signature': header, 'payment-nonce': challengeNonce },
+      body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' },
+    };
+    const settled = await runX402Handshake(reqPayV2, { taskId: 'bankr-fix-test', cfg });
+
+    // Before the fix: kind='failed', reason='payment_payload_invalid'
+    // After the fix: kind='settled'
+    assert.equal(settled.kind, 'settled', 'CDP-native v2 PaymentPayload must settle (Bankr fix)');
+    assert.match(settled.paymentRef, /^base-sepolia:0x/);
+  } finally {
+    await close();
+  }
+});
+
+test('verifyViaFacilitator handles CDP-native v2 PaymentPayload (Bankr fix)', async () => {
+  const { url, close } = await startMockFacilitator();
+  try {
+    const header = makeCdpNativePaymentHeader({ from: '0xbankrwallet' });
+    const challenge = { network: 'base-sepolia', amount: '50000', payTo: '0xtreasury', taskId: 't1' };
+    const r = await verifyViaFacilitator(header, { gateway: url, challenge, x402Version: 2 });
+
+    // Before the fix: valid=false, reason='payment_payload_invalid'
+    // After the fix: valid=true
+    assert.equal(r.valid, true, 'CDP-native v2 PaymentPayload must verify (Bankr fix)');
+    assert.equal(r.payer, '0xbankrwallet');
+  } finally {
+    await close();
+  }
+});
+
+test('settleViaFacilitator handles CDP-native v2 PaymentPayload (Bankr fix)', async () => {
+  const { url, close } = await startMockFacilitator();
+  try {
+    const header = makeCdpNativePaymentHeader({ from: '0xbankrwallet' });
+    const challenge = { network: 'base-sepolia', amount: '50000', payTo: '0xtreasury', taskId: 't1' };
+    const r = await settleViaFacilitator(header, { gateway: url, challenge, x402Version: 2 });
+
+    // Before the fix: settled=false, reason='payment_payload_invalid'
+    // After the fix: settled=true
+    assert.equal(r.settled, true, 'CDP-native v2 PaymentPayload must settle (Bankr fix)');
+    assert.match(r.txRef, /^0x/);
+  } finally {
+    await close();
+  }
 });
