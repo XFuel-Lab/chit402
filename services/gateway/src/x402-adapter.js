@@ -510,7 +510,8 @@ export async function verifyPayment(paymentHeader, opts = {}) {
   const challenge = bind.challenge;
 
   if (provider === 'x402') {
-    return verifyViaFacilitator(paymentHeader, { gateway, apiKey, challenge });
+    // Pass client x402 version (1 for X-PAYMENT, 2 for PAYMENT-SIGNATURE) to the facilitator.
+    return verifyViaFacilitator(paymentHeader, { gateway, apiKey, challenge, x402Version: opts.x402Version });
   }
 
   try {
@@ -564,7 +565,8 @@ export async function settlePayment(paymentHeader, opts = {}) {
   const nonce = opts.nonce || challenge?.nonce || null;
 
   if (provider === 'x402') {
-    const r = await settleViaFacilitator(paymentHeader, { gateway, apiKey, challenge });
+    // Pass client x402 version (1 for X-PAYMENT, 2 for PAYMENT-SIGNATURE) to the facilitator.
+    const r = await settleViaFacilitator(paymentHeader, { gateway, apiKey, challenge, x402Version: opts.x402Version });
     if (r.settled && store && nonce) store.markSpent(nonce);
     return r;
   }

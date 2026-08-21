@@ -33,17 +33,43 @@ function decodeBase64Json(s) {
 }
 
 /**
- * Recover the challenge nonce the client is paying against. Accepts an explicit
- * `X-Payment-Nonce` header, or a `nonce` field inside a JSON / base64-JSON
- * `X-Payment` blob.
+ * Read the payment header from a request. Supports both:
+ *   - v1: X-PAYMENT header (XFuel SDK, legacy)
+ *   - v2: PAYMENT-SIGNATURE header (CDP-native clients like Bankr)
+ *
+ * @returns {{ header: string|null, version: 1|2|null }}
+ */
+export function extractPaymentHeader(req) {
+  // v1 (XFuel SDK): X-PAYMENT
+  const v1 = req.headers?.['x-payment'];
+  if (v1 && typeof v1 === 'string') return { header: v1, version: 1 };
+
+  // v2 (CDP-native): PAYMENT-SIGNATURE
+  const v2 = req.headers?.['payment-signature'];
+  if (v2 && typeof v2 === 'string') return { header: v2, version: 2 };
+
+  return { header: null, version: null };
+}
+
+/**
+ * Recover the challenge nonce the client is paying against. Supports both:
+ *   - v1: X-Payment-Nonce header, or `nonce` field inside X-Payment blob
+ *   - v2: PAYMENT-NONCE header, or `nonce` field inside PAYMENT-SIGNATURE blob
  */
 export function extractPaymentNonce(req) {
-  const explicit = req.headers?.['x-payment-nonce'];
-  if (explicit && typeof explicit === 'string') return explicit.trim();
-  const p = req.headers?.['x-payment'];
-  if (p && typeof p === 'string') {
-    try { const j = JSON.parse(p); if (j?.nonce) return String(j.nonce); } catch { /* not json */ }
-    const b = decodeBase64Json(p);
+  // v1: explicit X-Payment-Nonce header
+  const explicitV1 = req.headers?.['x-payment-nonce'];
+  if (explicitV1 && typeof explicitV1 === 'string') return explicitV1.trim();
+
+  // v2: explicit PAYMENT-NONCE header
+  const explicitV2 = req.headers?.['payment-nonce'];
+  if (explicitV2 && typeof explicitV2 === 'string') return explicitV2.trim();
+
+  // Try to extract nonce from the payment header blob (either v1 or v2)
+  const { header } = extractPaymentHeader(req);
+  if (header && typeof header === 'string') {
+    try { const j = JSON.parse(header); if (j?.nonce) return String(j.nonce); } catch { /* not json */ }
+    const b = decodeBase64Json(header);
     if (b?.nonce) return String(b.nonce);
   }
   return null;
@@ -280,7 +306,9 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
     store: challengeStore,
     network: cfg.network,
   };
-  const paymentHeader = req.headers?.['x-payment'];
+  // Accept both v1 (X-PAYMENT) and v2 (PAYMENT-SIGNATURE) headers.
+  // CDP-native buyers like Bankr send PAYMENT-SIGNATURE; the XFuel SDK sends X-PAYMENT.
+  const { header: paymentHeader, version: clientVersion } = extractPaymentHeader(req);
 
   // Step 1 — no payment yet: issue a bound 402 challenge.
   // The challenge includes the CDP Bazaar extension for discovery cataloging.
@@ -302,7 +330,8 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
 
   // Step 2 — payment present: verify (binding) then settle (marks nonce spent).
   const nonce = extractPaymentNonce(req);
-  const bound = { ...gwOpts, nonce };
+  // Pass the client x402 version so the facilitator client sends the right protocol.
+  const bound = { ...gwOpts, nonce, x402Version: clientVersion };
 
   const v = await verifyPayment(paymentHeader, bound);
   if (!v.valid) return { kind: 'failed', reason: v.reason || 'verify_failed' };

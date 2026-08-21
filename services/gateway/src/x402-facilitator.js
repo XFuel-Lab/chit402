@@ -131,18 +131,30 @@ export function toPaymentRequirements({
   return req;
 }
 
-/** Translate the XFuel X-PAYMENT blob → standard x402 `PaymentPayload` (exact scheme). */
-export function toPaymentPayload(decoded, { network, resource, extensions } = {}) {
-  if (!decoded) throw new Error('x402: X-PAYMENT header could not be decoded');
+/**
+ * Translate the payment blob → standard x402 `PaymentPayload` (exact scheme).
+ * Accepts both v1 (X-PAYMENT / XFuel SDK) and v2 (PAYMENT-SIGNATURE / CDP-native) headers.
+ *
+ * @param {Object} decoded - Decoded payment header blob
+ * @param {Object} opts
+ * @param {string} [opts.network]
+ * @param {string} [opts.resource]
+ * @param {Object} [opts.extensions]
+ * @param {1|2} [opts.x402Version=1] - Protocol version (1 for X-PAYMENT, 2 for PAYMENT-SIGNATURE)
+ */
+export function toPaymentPayload(decoded, { network, resource, extensions, x402Version = 1 } = {}) {
+  if (!decoded) throw new Error('x402: payment header could not be decoded');
   const auth = decoded.authorization || {};
   // Support both the enveloped shape ({ message, signature }) and a flat one.
   const msg = auth.message || auth;
   const signature = auth.signature || decoded.signature;
   if (!signature || !msg || !msg.from) {
-    throw new Error('x402: X-PAYMENT missing signature or authorization');
+    throw new Error('x402: payment header missing signature or authorization');
   }
+  // Use the client's protocol version (v2 for CDP-native like Bankr, v1 for XFuel SDK).
+  const wireVersion = x402Version === 2 ? 2 : 1;
   const payload = {
-    x402Version: 1,
+    x402Version: wireVersion,
     scheme: decoded.scheme || 'exact',
     network: network || decoded.network,
     payload: {
@@ -233,32 +245,41 @@ function requirementsFrom(challenge, decoded) {
   });
 }
 
-function payloadOpts(challenge, decoded, paymentRequirements) {
+function payloadOpts(challenge, decoded, paymentRequirements, x402Version) {
   return {
     network: paymentRequirements.network,
     resource: challenge?.resource || decoded?.resource,
     extensions: challenge?.extensions || decoded?.extensions,
+    x402Version: x402Version ?? 1,
   };
 }
 
 /**
  * Verify a payment via the standard x402 facilitator. Idempotent (does not settle).
+ * @param {string} paymentHeader - The payment header (X-PAYMENT or PAYMENT-SIGNATURE)
+ * @param {Object} opts
+ * @param {string} opts.gateway - Facilitator URL
+ * @param {string} [opts.apiKey] - API key for CDP facilitator
+ * @param {Object} [opts.challenge] - Bound challenge from the 402 response
+ * @param {1|2} [opts.x402Version=1] - Protocol version (1 for X-PAYMENT, 2 for PAYMENT-SIGNATURE)
  * @returns {Promise<{valid:boolean, payer?:string, reason?:string}>}
  */
-export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, challenge } = {}) {
+export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, challenge, x402Version } = {}) {
   const decoded = decodePaymentHeader(paymentHeader);
   if (!decoded) return { valid: false, reason: 'payment_header_undecodable' };
   const paymentRequirements = requirementsFrom(challenge, decoded);
+  // Use the client's protocol version — v2 for CDP-native clients like Bankr.
+  const wireVersion = x402Version === 2 ? 2 : 1;
   let paymentPayload;
   try {
-    paymentPayload = toPaymentPayload(decoded, payloadOpts(challenge, decoded, paymentRequirements));
+    paymentPayload = toPaymentPayload(decoded, payloadOpts(challenge, decoded, paymentRequirements, wireVersion));
   } catch {
     return { valid: false, reason: 'payment_payload_invalid' };
   }
   try {
     const { ok, status, data, elapsedMs, extensionResponses } = await callFacilitator('/verify', {
       gateway, apiKey, timeoutMs: 15000,
-      body: { x402Version: 1, paymentPayload, paymentRequirements },
+      body: { x402Version: wireVersion, paymentPayload, paymentRequirements },
     });
     if (!ok) {
       logger.warn(
@@ -300,22 +321,30 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
 /**
  * Settle a verified payment via the standard x402 facilitator (broadcasts the
  * USDC transferWithAuthorization on-chain).
+ * @param {string} paymentHeader - The payment header (X-PAYMENT or PAYMENT-SIGNATURE)
+ * @param {Object} opts
+ * @param {string} opts.gateway - Facilitator URL
+ * @param {string} [opts.apiKey] - API key for CDP facilitator
+ * @param {Object} [opts.challenge] - Bound challenge from the 402 response
+ * @param {1|2} [opts.x402Version=1] - Protocol version (1 for X-PAYMENT, 2 for PAYMENT-SIGNATURE)
  * @returns {Promise<{settled:boolean, txRef?:string, payer?:string, reason?:string}>}
  */
-export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, challenge } = {}) {
+export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, challenge, x402Version } = {}) {
   const decoded = decodePaymentHeader(paymentHeader);
   if (!decoded) return { settled: false, reason: 'payment_header_undecodable' };
   const paymentRequirements = requirementsFrom(challenge, decoded);
+  // Use the client's protocol version — v2 for CDP-native clients like Bankr.
+  const wireVersion = x402Version === 2 ? 2 : 1;
   let paymentPayload;
   try {
-    paymentPayload = toPaymentPayload(decoded, payloadOpts(challenge, decoded, paymentRequirements));
+    paymentPayload = toPaymentPayload(decoded, payloadOpts(challenge, decoded, paymentRequirements, wireVersion));
   } catch {
     return { settled: false, reason: 'payment_payload_invalid' };
   }
   try {
     const { ok, status, data, elapsedMs, extensionResponses } = await callFacilitator('/settle', {
       gateway, apiKey, timeoutMs: 30000,
-      body: { x402Version: 1, paymentPayload, paymentRequirements },
+      body: { x402Version: wireVersion, paymentPayload, paymentRequirements },
     });
     if (!ok) {
       logger.warn(

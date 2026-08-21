@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   resolveRail,
   extractPaymentNonce,
+  extractPaymentHeader,
   priceUSDC,
   runX402Handshake,
 } from '../src/x402-server.js';
@@ -114,11 +115,53 @@ test('handshake amount override prices the challenge, not the current body', asy
   }
 });
 
-test('extractPaymentNonce: explicit header, json blob, base64 blob', () => {
+test('extractPaymentHeader: v1 X-PAYMENT and v2 PAYMENT-SIGNATURE', () => {
+  // v1: X-PAYMENT (XFuel SDK)
+  const v1 = extractPaymentHeader({ headers: { 'x-payment': 'v1-blob' } });
+  assert.equal(v1.header, 'v1-blob');
+  assert.equal(v1.version, 1);
+
+  // v2: PAYMENT-SIGNATURE (CDP-native like Bankr)
+  const v2 = extractPaymentHeader({ headers: { 'payment-signature': 'v2-blob' } });
+  assert.equal(v2.header, 'v2-blob');
+  assert.equal(v2.version, 2);
+
+  // v1 takes precedence when both are present (shouldn't happen, but be predictable)
+  const both = extractPaymentHeader({ headers: { 'x-payment': 'v1', 'payment-signature': 'v2' } });
+  assert.equal(both.header, 'v1');
+  assert.equal(both.version, 1);
+
+  // No payment header
+  const none = extractPaymentHeader({ headers: {} });
+  assert.equal(none.header, null);
+  assert.equal(none.version, null);
+});
+
+test('extractPaymentNonce: v1 explicit header, v2 explicit header, json blob, base64 blob', () => {
+  // v1: X-Payment-Nonce
   assert.equal(extractPaymentNonce({ headers: { 'x-payment-nonce': 'abc' } }), 'abc');
+
+  // v2: PAYMENT-NONCE (CDP-native)
+  assert.equal(extractPaymentNonce({ headers: { 'payment-nonce': 'v2-nonce' } }), 'v2-nonce');
+
+  // v1 header takes precedence
+  assert.equal(extractPaymentNonce({ headers: { 'x-payment-nonce': 'v1', 'payment-nonce': 'v2' } }), 'v1');
+
+  // v1: nonce in X-PAYMENT JSON blob
   assert.equal(extractPaymentNonce({ headers: { 'x-payment': JSON.stringify({ nonce: 'n1' }) } }), 'n1');
+
+  // v2: nonce in PAYMENT-SIGNATURE JSON blob
+  assert.equal(extractPaymentNonce({ headers: { 'payment-signature': JSON.stringify({ nonce: 'v2json' }) } }), 'v2json');
+
+  // v1: nonce in X-PAYMENT base64 blob
   const b64 = Buffer.from(JSON.stringify({ nonce: 'n2' }), 'utf8').toString('base64');
   assert.equal(extractPaymentNonce({ headers: { 'x-payment': b64 } }), 'n2');
+
+  // v2: nonce in PAYMENT-SIGNATURE base64 blob
+  const b64v2 = Buffer.from(JSON.stringify({ nonce: 'v2b64' }), 'utf8').toString('base64');
+  assert.equal(extractPaymentNonce({ headers: { 'payment-signature': b64v2 } }), 'v2b64');
+
+  // No headers
   assert.equal(extractPaymentNonce({ headers: {} }), null);
 });
 
@@ -159,7 +202,108 @@ test('full 402 loop against mock facilitator: challenge ? settle ? replay-reject
   }
 });
 
-test('handshake surfaces facilitator rejection (? caller falls back to TFUEL)', async () => {
+test('full 402 loop against mock facilitator (v2 PAYMENT-SIGNATURE): CDP-native buyer', async () => {
+  // This is the Bankr case: CDP-native client sends PAYMENT-SIGNATURE, not X-PAYMENT.
+  // The challenge still returns x402Version: 2, and the paid retry must succeed.
+  const { url, close } = await startMockFacilitator();
+  try {
+    const cfg = cfgFor(url);
+
+    // Step 1: no payment header → 402 challenge (same as v1)
+    const reqNoPay = { headers: {}, body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' } };
+    const challenge = await runX402Handshake(reqNoPay, { taskId: 'x402-v2-1', cfg });
+    assert.equal(challenge.kind, 'challenge');
+    assert.equal(challenge.body.x402Version, 2, 'challenge is still v2');
+    const accept = challenge.body.accepts[0];
+    const nonce = accept.extra.nonce;
+    assert.match(nonce, /^[0-9a-f]{32}$/);
+
+    // Step 2: retry with PAYMENT-SIGNATURE + PAYMENT-NONCE → verify + settle (v2 path)
+    const reqPayV2 = {
+      headers: { 'payment-signature': 'CDP-V2-PAYMENT-BLOB', 'payment-nonce': nonce },
+      body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' },
+    };
+    const settled = await runX402Handshake(reqPayV2, { taskId: 'x402-v2-1', cfg });
+    assert.equal(settled.kind, 'settled', 'v2 PAYMENT-SIGNATURE retry settles');
+    assert.match(settled.paymentRef, /^base:0x/);
+    assert.equal(settled.settledAmount, '50000');
+
+    // Step 3: replay the same nonce → rejected (spent)
+    const replay = await runX402Handshake(reqPayV2, { taskId: 'x402-v2-1', cfg });
+    assert.equal(replay.kind, 'failed');
+    assert.equal(replay.reason, 'payment_replayed');
+  } finally {
+    await close();
+  }
+});
+
+test('v2 PAYMENT-SIGNATURE retry is seen as a payment, not re-challenged as unpaid', async () => {
+  // This is the exact Bankr bug: they send PAYMENT-SIGNATURE but the old code
+  // only read X-PAYMENT, so they got a 402 challenge instead of settlement.
+  const { url, close } = await startMockFacilitator();
+  try {
+    const cfg = cfgFor(url);
+
+    // Get a challenge
+    const challenge = await runX402Handshake(
+      { headers: {}, body: { payment: { rail: 'usdc' } } },
+      { taskId: 'x402-bankr', cfg },
+    );
+    const nonce = challenge.body.accepts[0].extra.nonce;
+
+    // A v2 client sends PAYMENT-SIGNATURE, not X-PAYMENT
+    const v2Pay = {
+      headers: { 'payment-signature': 'SIGNED-PAYMENT', 'payment-nonce': nonce },
+      body: { payment: { rail: 'usdc' } },
+    };
+    const result = await runX402Handshake(v2Pay, { taskId: 'x402-bankr', cfg });
+
+    // Must NOT be a challenge (which was the bug)
+    assert.notEqual(result.kind, 'challenge', 'v2 payment must not be re-challenged');
+    assert.equal(result.kind, 'settled', 'v2 payment must settle');
+  } finally {
+    await close();
+  }
+});
+
+test('malformed payment header still fails closed', async () => {
+  const { url, close } = await startMockFacilitator({ valid: false });
+  try {
+    const cfg = cfgFor(url);
+
+    // Get a challenge
+    const challenge = await runX402Handshake(
+      { headers: {}, body: { payment: { rail: 'usdc' } } },
+      { taskId: 'x402-malformed', cfg },
+    );
+    const nonce = challenge.body.accepts[0].extra.nonce;
+
+    // v1 malformed
+    const v1Bad = {
+      headers: { 'x-payment': 'INVALID', 'x-payment-nonce': nonce },
+      body: {},
+    };
+    const r1 = await runX402Handshake(v1Bad, { taskId: 'x402-malformed', cfg });
+    assert.equal(r1.kind, 'failed');
+
+    // v2 malformed (fresh challenge needed since nonce was spent checking v1)
+    const challenge2 = await runX402Handshake(
+      { headers: {}, body: { payment: { rail: 'usdc' } } },
+      { taskId: 'x402-malformed-2', cfg },
+    );
+    const nonce2 = challenge2.body.accepts[0].extra.nonce;
+    const v2Bad = {
+      headers: { 'payment-signature': 'INVALID', 'payment-nonce': nonce2 },
+      body: {},
+    };
+    const r2 = await runX402Handshake(v2Bad, { taskId: 'x402-malformed-2', cfg });
+    assert.equal(r2.kind, 'failed');
+  } finally {
+    await close();
+  }
+});
+
+test('handshake surfaces facilitator rejection (→ caller falls back to TFUEL)', async () => {
   const { url, close } = await startMockFacilitator({ valid: false });
   try {
     const cfg = cfgFor(url);
