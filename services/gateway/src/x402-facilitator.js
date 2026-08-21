@@ -142,36 +142,81 @@ export function toPaymentRequirements({
 }
 
 /**
- * Translate the payment blob → standard x402 `PaymentPayload` (exact scheme).
+ * Translate the payment blob → standard x402 `PaymentPayload`.
  * Accepts both v1 (X-PAYMENT / XFuel SDK) and v2 (PAYMENT-SIGNATURE / CDP-native) headers.
  *
- * v1 (XFuel SDK) shape:
+ * v1 (XFuel SDK) shape - needs reshape for ZAN/testnet facilitator:
  *   { authorization: { message: { from, to, ... }, signature }, ... }
+ *   → Output: { x402Version, scheme, network, payload: { signature, authorization } }
  *
- * v2 (CDP-native) shape - already a spec-compliant PaymentPayload:
- *   { x402Version: 2, payload: { authorization: { from, to, ... }, signature }, accepted, resource?, ... }
+ * v2 (CDP-native) shape - already spec-compliant, preserve structure:
+ *   { x402Version: 2, accepted: { scheme, network, ... }, payload: { signature, authorization }, resource?, ... }
+ *   → Output: preserve with `accepted` (NOT top-level scheme/network) per CDP v2 schema.
+ *
+ * CDP v2 /verify rejects PaymentPayload with top-level `scheme`/`network`:
+ *   400 'paymentPayload'_is_invalid:_must_match_one_of_[x402V2PaymentPayload...
+ * The v2 schema requires `accepted` as a required field; scheme/network live INSIDE accepted.
  *
  * @param {Object} decoded - Decoded payment header blob
  * @param {Object} opts
- * @param {string} [opts.network]
- * @param {string} [opts.resource]
- * @param {Object} [opts.extensions]
+ * @param {string} [opts.network] - Override network (v1) or merge into accepted (v2)
+ * @param {string} [opts.resource] - Preferred resource URL (from bound challenge)
+ * @param {Object} [opts.extensions] - Preferred extensions (from bound challenge)
  * @param {1|2} [opts.x402Version=1] - Protocol version (1 for X-PAYMENT, 2 for PAYMENT-SIGNATURE)
  */
 export function toPaymentPayload(decoded, { network, resource, extensions, x402Version = 1 } = {}) {
   if (!decoded) throw new Error('x402: payment header could not be decoded');
 
   // CDP-native v2: the header is already a spec-shaped PaymentPayload with
-  // { payload: { authorization: { from, to, ... }, signature }, ... }.
+  // { accepted: { scheme, network, ... }, payload: { authorization, signature }, ... }.
   // Bankr and other CDP-native clients send this shape directly.
   const cdpPayload = decoded.payload;
   const isCdpNativeV2 = cdpPayload?.authorization?.from && cdpPayload?.signature;
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // CDP-native v2: preserve the spec-compliant shape with `accepted` at top level.
+  // Per https://github.com/coinbase/x402/blob/main/specs/x402-specification-v2.md:
+  //   PaymentPayload = { x402Version, accepted, payload, resource?, extensions? }
+  // CDP's /verify schema rejects payloads with top-level scheme/network (v1 shape).
+  // ────────────────────────────────────────────────────────────────────────────
+  if (isCdpNativeV2 && x402Version === 2) {
+    // Start with the incoming accepted; fill in any missing fields from challenge.
+    const acceptedFromHeader = decoded.accepted || {};
+    const acceptedMerged = { ...acceptedFromHeader };
+    // Override network if provided (e.g., from challenge binding).
+    if (network) acceptedMerged.network = network;
+
+    const result = {
+      x402Version: 2,
+      accepted: acceptedMerged,
+      payload: decoded.payload,  // Already spec-shaped: { signature, authorization }
+    };
+
+    // CDP catalogs only when settle carries paymentPayload.resource (absolute URL)
+    // plus the echoed bazaar extension. Prefer the bound challenge.
+    const resourceUrl = catalogResourceUrl(resource) || catalogResourceUrl(decoded.resource);
+    if (resourceUrl) {
+      // CDP expects resource as an object { url, description?, mimeType? } in v2.
+      // If decoded.resource is already an object, merge; url from opts/challenge wins.
+      const decodedRes = (typeof decoded.resource === 'object') ? decoded.resource : {};
+      result.resource = { ...decodedRes, url: resourceUrl };
+    }
+    const ext = (extensions && typeof extensions === 'object')
+      ? extensions
+      : (decoded.extensions && typeof decoded.extensions === 'object' ? decoded.extensions : null);
+    if (ext) result.extensions = ext;
+    return result;
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // XFuel SDK v1 / ZAN path: reshape into { scheme, network, payload } at top level.
+  // This is the legacy shape the testnet facilitator and ZAN adapter expect.
+  // ────────────────────────────────────────────────────────────────────────────
   let msg;
   let signature;
 
   if (isCdpNativeV2) {
-    // CDP-native v2: extract from decoded.payload
+    // CDP-native v2 blob but caller requested v1 wire format (shouldn't happen normally).
     msg = cdpPayload.authorization;
     signature = cdpPayload.signature;
   } else {
@@ -184,11 +229,10 @@ export function toPaymentPayload(decoded, { network, resource, extensions, x402V
   if (!signature || !msg || !msg.from) {
     throw new Error('x402: payment header missing signature or authorization');
   }
-  // Use the client's protocol version (v2 for CDP-native like Bankr, v1 for XFuel SDK).
+
   const wireVersion = x402Version === 2 ? 2 : 1;
-  // CDP-native v2 puts network/scheme on `accepted`; XFuel SDK v1 puts them at the top level.
   const accepted = decoded.accepted || {};
-  const payload = {
+  const v1Payload = {
     x402Version: wireVersion,
     scheme: accepted.scheme || decoded.scheme || 'exact',
     network: network || accepted.network || decoded.network,
@@ -204,16 +248,15 @@ export function toPaymentPayload(decoded, { network, resource, extensions, x402V
       },
     },
   };
-  // CDP catalogs only when settle carries paymentPayload.resource (absolute URL)
-  // plus the echoed bazaar extension. Prefer the bound challenge — the SDK
-  // header may omit both (it did, through the first paid listing attempt).
+
+  // CDP catalogs only when settle carries paymentPayload.resource (absolute URL).
   const resourceUrl = catalogResourceUrl(resource) || catalogResourceUrl(decoded.resource);
-  if (resourceUrl) payload.resource = resourceUrl;
+  if (resourceUrl) v1Payload.resource = resourceUrl;
   const ext = (extensions && typeof extensions === 'object')
     ? extensions
     : (decoded.extensions && typeof decoded.extensions === 'object' ? decoded.extensions : null);
-  if (ext) payload.extensions = ext;
-  return payload;
+  if (ext) v1Payload.extensions = ext;
+  return v1Payload;
 }
 
 /** Decode CDP/x402 EXTENSION-RESPONSES (JSON or base64-JSON). */

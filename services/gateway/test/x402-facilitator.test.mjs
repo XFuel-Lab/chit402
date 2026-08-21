@@ -200,12 +200,15 @@ test('toPaymentPayload reshapes the XFuel blob into the standard exact-scheme pa
   assert.equal(p.extensions, undefined);
 });
 
-test('toPaymentPayload uses x402Version: 2 for CDP-native v2 clients', () => {
+test('toPaymentPayload uses x402Version: 2 for XFuel SDK blob with v2 flag (v1 shape, v2 wire)', () => {
+  // XFuel SDK v1 blob reshaped for v2 wire format (keeps top-level scheme/network).
+  // This is NOT the same as a CDP-native v2 blob (which has `accepted`).
   const decoded = decodePaymentHeader(makePaymentHeader());
   const p = toPaymentPayload(decoded, { network: 'base', x402Version: 2 });
-  assert.equal(p.x402Version, 2, 'v2 for CDP-native clients');
-  assert.equal(p.scheme, 'exact');
-  assert.equal(p.network, 'base');
+  assert.equal(p.x402Version, 2, 'v2 for wire format');
+  // v1 SDK blobs don't have `accepted`, so the v1 reshape path is used.
+  assert.equal(p.scheme, 'exact', 'v1 SDK blob → top-level scheme');
+  assert.equal(p.network, 'base', 'v1 SDK blob → top-level network');
 });
 
 test('toPaymentPayload attaches absolute resource + bazaar extension for CDP cataloging', () => {
@@ -274,32 +277,49 @@ test('toPaymentPayload throws on a header missing signature/authorization', () =
 // CDP-native v2 PaymentPayload tests (Bankr incident fix)
 // ══════════════════════════════════════════════════════════════════════════════
 
-test('toPaymentPayload handles CDP-native v2 PaymentPayload shape (Bankr fix)', () => {
-  // This is the exact shape that caused paymentPayloadInvalid before the fix:
-  // CDP-native clients put auth at decoded.payload.authorization, not decoded.authorization.message.
+test('toPaymentPayload handles CDP-native v2 PaymentPayload shape (Bankr fix, schema fix)', () => {
+  // CDP-native v2: must preserve the spec shape with `accepted` at top level.
+  // CDP's /verify schema REJECTS payloads with top-level scheme/network (v1 shape).
+  // Per https://github.com/coinbase/x402/blob/main/specs/x402-specification-v2.md:
+  //   PaymentPayload = { x402Version, accepted, payload, resource?, extensions? }
   const decoded = decodePaymentHeader(makeCdpNativePaymentHeader({ from: '0xbankr' }));
   const p = toPaymentPayload(decoded, { x402Version: 2 });
 
   assert.equal(p.x402Version, 2, 'v2 for CDP-native');
-  assert.equal(p.scheme, 'exact');
-  assert.equal(p.network, 'eip155:84532', 'network from accepted');
+
+  // CRITICAL: CDP v2 requires `accepted` at top level, NOT top-level scheme/network.
+  // Before this fix: p.scheme='exact', p.network='eip155:84532' → CDP rejected with schema error.
+  // After this fix: p.accepted.scheme='exact', p.accepted.network='eip155:84532' → CDP accepts.
+  assert.equal(p.scheme, undefined, 'CDP v2 must NOT have top-level scheme');
+  assert.equal(p.network, undefined, 'CDP v2 must NOT have top-level network');
+  assert.ok(p.accepted, 'CDP v2 must have `accepted` field');
+  assert.equal(p.accepted.scheme, 'exact', 'scheme in accepted');
+  assert.equal(p.accepted.network, 'eip155:84532', 'network in accepted');
+
+  // Payload preserved from header
   assert.equal(p.payload.signature, '0x' + '22'.repeat(65));
   assert.equal(p.payload.authorization.from, '0xbankr');
   assert.equal(p.payload.authorization.to, '0xtreasury');
   assert.equal(p.payload.authorization.value, '50000');
-  assert.equal(p.resource, 'https://api.xfuel.app/task-request', 'resource from header');
+
+  // Resource as object for v2
+  assert.equal(p.resource.url, 'https://api.xfuel.app/task-request', 'resource.url from header');
 });
 
-test('toPaymentPayload extracts network from CDP-native accepted field', () => {
+test('toPaymentPayload preserves network in CDP-native accepted field', () => {
   const decoded = decodePaymentHeader(makeCdpNativePaymentHeader({ network: 'eip155:8453' }));
   const p = toPaymentPayload(decoded, { x402Version: 2 });
-  assert.equal(p.network, 'eip155:8453', 'network from accepted.network');
+  // CDP v2: network stays in accepted, NOT at top level
+  assert.equal(p.network, undefined, 'no top-level network for CDP v2');
+  assert.equal(p.accepted.network, 'eip155:8453', 'network in accepted');
 });
 
-test('toPaymentPayload prefers opts.network over CDP-native accepted.network', () => {
+test('toPaymentPayload merges opts.network into CDP-native accepted', () => {
   const decoded = decodePaymentHeader(makeCdpNativePaymentHeader({ network: 'eip155:84532' }));
-  const p = toPaymentPayload(decoded, { network: 'base', x402Version: 2 });
-  assert.equal(p.network, 'base', 'opts.network wins');
+  const p = toPaymentPayload(decoded, { network: 'eip155:8453', x402Version: 2 });
+  // CDP v2: opts.network overrides accepted.network but stays in accepted
+  assert.equal(p.network, undefined, 'no top-level network for CDP v2');
+  assert.equal(p.accepted.network, 'eip155:8453', 'opts.network merged into accepted');
 });
 
 test('toPaymentPayload extracts resource from CDP-native resource object', () => {
@@ -307,7 +327,8 @@ test('toPaymentPayload extracts resource from CDP-native resource object', () =>
     resourceUrl: 'https://api.example.com/premium',
   }));
   const p = toPaymentPayload(decoded, { x402Version: 2 });
-  assert.equal(p.resource, 'https://api.example.com/premium');
+  // CDP v2: resource is an object with url property
+  assert.equal(p.resource.url, 'https://api.example.com/premium');
 });
 
 test('toPaymentPayload prefers opts.resource over CDP-native header resource', () => {
@@ -318,7 +339,8 @@ test('toPaymentPayload prefers opts.resource over CDP-native header resource', (
     resource: 'https://challenge.example.com/resource',
     x402Version: 2,
   });
-  assert.equal(p.resource, 'https://challenge.example.com/resource', 'opts.resource wins');
+  // CDP v2: resource is an object, opts.resource URL takes precedence
+  assert.equal(p.resource.url, 'https://challenge.example.com/resource', 'opts.resource wins');
 });
 
 test('toPaymentPayload handles CDP-native v2 with extensions', () => {
@@ -328,12 +350,89 @@ test('toPaymentPayload handles CDP-native v2 with extensions', () => {
   assert.deepEqual(p.extensions, decoded.extensions, 'extensions passed through');
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// CDP v2 PaymentPayload schema validation (Bankr paymentPayload schema error fix)
+// CDP's /verify endpoint returns 400 'paymentPayload'_is_invalid when it receives
+// a payload with top-level scheme/network instead of the spec-required `accepted` field.
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('CDP-native v2 paymentPayload has correct schema for CDP /verify (no top-level scheme/network)', () => {
+  // This is THE regression test for the paymentPayload schema error:
+  //   400 'paymentPayload'_is_invalid:_must_match_one_of_[x402V2PaymentPayload...
+  //
+  // Per https://github.com/coinbase/x402/blob/main/specs/x402-specification-v2.md:
+  // v2 PaymentPayload REQUIRED fields: x402Version, accepted, payload
+  // v2 PaymentPayload OPTIONAL fields: resource, extensions
+  // v2 PaymentPayload does NOT have top-level scheme or network.
+  const decoded = decodePaymentHeader(makeCdpNativePaymentHeader({
+    network: 'eip155:8453',
+    amount: '100000',
+    payTo: '0xtreasury',
+    from: '0xbankrwallet',
+  }));
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+
+  // Schema validation: required fields present
+  assert.equal(p.x402Version, 2, 'x402Version required');
+  assert.ok(p.accepted, 'accepted field required for CDP v2');
+  assert.ok(p.payload, 'payload field required');
+
+  // Schema validation: scheme/network MUST NOT be at top level
+  assert.strictEqual(p.scheme, undefined, 'top-level scheme breaks CDP v2 schema');
+  assert.strictEqual(p.network, undefined, 'top-level network breaks CDP v2 schema');
+
+  // Schema validation: scheme/network live INSIDE accepted
+  assert.equal(p.accepted.scheme, 'exact');
+  assert.equal(p.accepted.network, 'eip155:8453');
+  assert.equal(p.accepted.amount, '100000');
+  assert.equal(p.accepted.payTo, '0xtreasury');
+
+  // payload preserved from header (spec shape)
+  assert.equal(p.payload.signature, '0x' + '22'.repeat(65));
+  assert.equal(p.payload.authorization.from, '0xbankrwallet');
+});
+
+test('CDP-native v2 paymentPayload resource is object (not string) per CDP v2 schema', () => {
+  // CDP v2 schema expects resource as { url, description?, mimeType? }, not string.
+  const decoded = decodePaymentHeader(makeCdpNativePaymentHeader({
+    resourceUrl: 'https://api.xfuel.app/task-request',
+  }));
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+
+  assert.equal(typeof p.resource, 'object', 'resource must be object for CDP v2');
+  assert.equal(p.resource.url, 'https://api.xfuel.app/task-request');
+  assert.equal(p.resource.description, 'XFuel paid inference', 'description from header');
+  assert.equal(p.resource.mimeType, 'application/json', 'mimeType from header');
+});
+
 test('toPaymentPayload still works with XFuel SDK v1 shape after CDP-native fix', () => {
   // Regression: ensure the v1 path still works after adding CDP-native v2 support
   const decoded = decodePaymentHeader(makePaymentHeader({ from: '0xsdk-user' }));
   const p = toPaymentPayload(decoded, { network: 'base-sepolia' });
   assert.equal(p.payload.authorization.from, '0xsdk-user');
   assert.equal(p.x402Version, 1);
+});
+
+test('XFuel SDK v1 paymentPayload has top-level scheme/network (NOT accepted) for ZAN/testnet', () => {
+  // XFuel SDK v1 / ZAN path uses top-level scheme/network (different from CDP v2).
+  // This is the legacy shape the testnet facilitator and ZAN adapter expect.
+  const decoded = decodePaymentHeader(makePaymentHeader({
+    network: 'base-sepolia',
+    amount: '50000',
+    payTo: '0xtreasury',
+    from: '0xsdk-user',
+  }));
+  const p = toPaymentPayload(decoded, { network: 'base-sepolia' });
+
+  // v1 schema: top-level scheme/network (NOT in accepted)
+  assert.equal(p.x402Version, 1);
+  assert.equal(p.scheme, 'exact', 'v1 has top-level scheme');
+  assert.equal(p.network, 'base-sepolia', 'v1 has top-level network');
+  assert.equal(p.accepted, undefined, 'v1 does NOT have accepted field');
+
+  // payload reshaped from SDK authorization
+  assert.equal(p.payload.authorization.from, '0xsdk-user');
+  assert.equal(p.payload.authorization.to, '0xtreasury');
 });
 
 test('verifyViaFacilitator: happy path against the mock (x402 shape)', async () => {
@@ -802,6 +901,161 @@ test('v1 verifyViaFacilitator sends short network for backward compatibility', a
       receivedRequirements.network, 'base-sepolia',
       'v1 must use short network form for backward compatibility'
     );
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CDP paymentPayload schema fix (Bankr schema error: 'paymentPayload'_is_invalid)
+// CDP's /verify endpoint returns 400 schema error when paymentPayload has
+// top-level scheme/network instead of the spec-required `accepted` field.
+// This is THE regression test proving the fix works.
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('verifyViaFacilitator sends CDP v2 paymentPayload with accepted field (schema fix)', async () => {
+  // This is THE regression test for the paymentPayload schema error:
+  //   400 'paymentPayload'_is_invalid:_must_match_one_of_[x402V2PaymentPayload...
+  //
+  // Before this fix: paymentPayload had top-level scheme/network → CDP rejected
+  // After this fix: paymentPayload has `accepted` field → CDP accepts
+  let receivedPayload = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body);
+      receivedPayload = parsed.paymentPayload;
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ isValid: true, payer: '0xbankrwallet' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    // CDP-native v2 header (the shape Bankr sends)
+    const header = makeCdpNativePaymentHeader({
+      network: 'eip155:8453',
+      amount: '100000',
+      payTo: '0xtreasury',
+      from: '0xbankrwallet',
+    });
+
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+    assert.equal(r.valid, true);
+
+    // CRITICAL: Verify the paymentPayload has the correct CDP v2 schema.
+    // This is what was broken - we were sending top-level scheme/network.
+    assert.ok(receivedPayload, 'facilitator must receive paymentPayload');
+    assert.equal(receivedPayload.x402Version, 2, 'x402Version required');
+
+    // CDP v2 schema: `accepted` field REQUIRED, top-level scheme/network FORBIDDEN
+    assert.ok(receivedPayload.accepted, 'CDP v2 paymentPayload MUST have accepted field');
+    assert.strictEqual(
+      receivedPayload.scheme, undefined,
+      'CDP v2 paymentPayload MUST NOT have top-level scheme (causes schema error)'
+    );
+    assert.strictEqual(
+      receivedPayload.network, undefined,
+      'CDP v2 paymentPayload MUST NOT have top-level network (causes schema error)'
+    );
+
+    // Verify accepted contains the correct values
+    assert.equal(receivedPayload.accepted.scheme, 'exact');
+    assert.equal(receivedPayload.accepted.network, 'eip155:8453');
+    assert.equal(receivedPayload.accepted.amount, '100000');
+    assert.equal(receivedPayload.accepted.payTo, '0xtreasury');
+
+    // Verify payload is preserved (signature + authorization)
+    assert.ok(receivedPayload.payload, 'paymentPayload.payload required');
+    assert.equal(receivedPayload.payload.authorization.from, '0xbankrwallet');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('settleViaFacilitator sends CDP v2 paymentPayload with accepted field (schema fix)', async () => {
+  // Same schema validation for settle path
+  let receivedPayload = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body);
+      receivedPayload = parsed.paymentPayload;
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ success: true, transaction: '0x123abc', payer: '0xbankrwallet' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    const header = makeCdpNativePaymentHeader({
+      network: 'eip155:8453',
+      amount: '100000',
+      payTo: '0xtreasury',
+      from: '0xbankrwallet',
+    });
+
+    const r = await settleViaFacilitator(header, { gateway: url, x402Version: 2 });
+    assert.equal(r.settled, true);
+
+    // CDP v2 schema validation on settle path
+    assert.ok(receivedPayload, 'facilitator must receive paymentPayload');
+    assert.ok(receivedPayload.accepted, 'CDP v2 paymentPayload MUST have accepted field');
+    assert.strictEqual(receivedPayload.scheme, undefined, 'no top-level scheme');
+    assert.strictEqual(receivedPayload.network, undefined, 'no top-level network');
+    assert.equal(receivedPayload.accepted.network, 'eip155:8453');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('XFuel SDK v1 paymentPayload still uses top-level scheme/network for ZAN/testnet', async () => {
+  // v1 SDK path must NOT change - it uses top-level scheme/network for backward compat.
+  let receivedPayload = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body);
+      receivedPayload = parsed.paymentPayload;
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ isValid: true, payer: '0xsdkuser' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    // XFuel SDK v1 header (NOT CDP-native)
+    const header = makePaymentHeader({
+      network: 'base-sepolia',
+      from: '0xsdkuser',
+    });
+
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 1 });
+    assert.equal(r.valid, true);
+
+    // v1 SDK: top-level scheme/network for backward compatibility
+    assert.ok(receivedPayload, 'facilitator must receive paymentPayload');
+    assert.equal(receivedPayload.scheme, 'exact', 'v1 has top-level scheme');
+    assert.equal(receivedPayload.network, 'base-sepolia', 'v1 has top-level network');
+    assert.equal(receivedPayload.accepted, undefined, 'v1 does NOT have accepted field');
   } finally {
     await new Promise((r) => server.close(r));
   }
