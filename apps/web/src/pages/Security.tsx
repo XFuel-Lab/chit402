@@ -88,7 +88,7 @@ export default function Security() {
         </div>
 
         <div style={{ textAlign: 'center', fontSize: '0.85rem', color: '#8a8a9a' }}>
-          <Link to="/community" style={{ color: '#00d4ff' }}>Community</Link>
+          <a href="https://github.com/XFuel-Lab/xfuel-protocol" target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>GitHub</a>
           {' · '}
           <Link to="/docs" style={{ color: '#00d4ff' }}>Docs</Link>
         </div>
