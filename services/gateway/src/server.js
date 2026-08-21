@@ -91,6 +91,96 @@ const VALID_MESSAGE_TYPES = new Set(Object.values(MESSAGE_TYPES));
 const VALID_CHAIN_IDS     = new Set(Object.values(CHAIN_IDS));
 
 /**
+ * Validate a /task-request body BEFORE any payment settlement runs.
+ *
+ * Returns an array of validation error strings. Empty array means valid.
+ * This function MUST be called before any x402 handshake/settlement code
+ * to prevent charging for requests we will refuse to fulfill.
+ *
+ * @param {Object} body  The request body (or {} if empty/null)
+ * @returns {string[]} Validation errors (empty if valid)
+ */
+function validateTaskRequestBody(body = {}) {
+  const {
+    message_type,
+    chain_id,
+    amount,
+    sender,
+    model_id,
+    output_hash,
+    input_hash,
+    subnet_id,
+    fee_bps,
+    tools,
+    max_tokens,
+    proof_system,
+    callback_url,
+  } = body;
+
+  const errors = [];
+
+  if (!message_type || !VALID_MESSAGE_TYPES.has(message_type)) {
+    errors.push(
+      `message_type is required and must be one of: ${[...VALID_MESSAGE_TYPES].join(', ')}`
+    );
+  }
+  if (!chain_id || !VALID_CHAIN_IDS.has(chain_id)) {
+    errors.push(
+      `chain_id is required and must be one of: ${[...VALID_CHAIN_IDS].join(', ')}`
+    );
+  }
+  if (!amount || BigInt(amount || 0) < BigInt(MIN_TASK_AMOUNT)) {
+    errors.push(
+      `amount is required and must be >= ${MIN_TASK_AMOUNT} (dust protection)`
+    );
+  }
+  if (!sender) {
+    errors.push('sender is required');
+  }
+
+  // Type-specific validation (mirrors main.rs validate_ai_task constraints)
+  if (message_type === MESSAGE_TYPES.INFERENCE_REQUEST && !model_id) {
+    errors.push('model_id is required for INFERENCE_REQUEST');
+  }
+  if (message_type === MESSAGE_TYPES.COMPUTE_RESULT && !output_hash) {
+    errors.push('output_hash is required for COMPUTE_RESULT');
+  }
+  if (message_type === MESSAGE_TYPES.DATA_ATTESTATION && !input_hash) {
+    errors.push('input_hash is required for DATA_ATTESTATION');
+  }
+  if (chain_id === CHAIN_IDS.BITTENSOR && !subnet_id && message_type !== MESSAGE_TYPES.CAPABILITY_QUERY) {
+    errors.push('subnet_id is required for Bittensor routing (except CAPABILITY_QUERY)');
+  }
+  if (fee_bps !== undefined && (fee_bps < MIN_FEE_BPS || fee_bps > MAX_FEE_BPS)) {
+    errors.push(`fee_bps must be between ${MIN_FEE_BPS} and ${MAX_FEE_BPS}`);
+  }
+  // Same contract as /v1/chat/completions — a caller should not have to learn
+  // two tool schemas to move from the free surface to the paid one.
+  if (tools !== undefined && tools !== null
+    && (!Array.isArray(tools) || tools.some((t) => t?.type !== 'function' || !t.function?.name))) {
+    errors.push('tools must be an array of {type:"function", function:{name,...}}');
+  }
+  if (max_tokens !== undefined && max_tokens !== null
+    && (!Number.isInteger(max_tokens) || max_tokens < 1)) {
+    errors.push('max_tokens must be a positive integer');
+  }
+  const PROOF_SYSTEMS = new Set(['sp1', 'zkgpt']);
+  if (proof_system !== undefined && proof_system !== null && proof_system !== '' && !PROOF_SYSTEMS.has(proof_system)) {
+    errors.push(`proof_system must be one of: ${[...PROOF_SYSTEMS].join(', ')}`);
+  }
+  if (callback_url) {
+    try {
+      const u = new URL(callback_url);
+      if (!/^https?:$/.test(u.protocol)) errors.push('callback_url must use http or https');
+    } catch {
+      errors.push('callback_url must be a valid absolute URL');
+    }
+  }
+
+  return errors;
+}
+
+/**
  * Chains advertised on /health — only those actually served.
  * Keep CHAIN_IDS / VALID_CHAIN_IDS wide so inbound A2A still accepts legacy labels.
  * Akash is listed for AkashML compute; Osmosis only when Cosmos IBC listeners are on.
@@ -605,6 +695,20 @@ export function createApp() {
       return sendPaymentRequired(res, body, headers);
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    // CRITICAL: Validate body BEFORE any payment settlement can run.
+    //
+    // Root cause of Bankr incident (2026-08-21): a CDP-native buyer sent
+    // PAYMENT-SIGNATURE with an empty body. The gateway settled $0.01 USDC
+    // before returning 400 validation_error. The fix: validation runs FIRST,
+    // OUTSIDE the try block that contains settlement code, so an invalid body
+    // returns 400 WITHOUT calling the facilitator settle endpoint.
+    // ════════════════════════════════════════════════════════════════════════
+    const validationErrors = validateTaskRequestBody(req.body || {});
+    if (validationErrors.length > 0) {
+      return res.status(400).json({ error: 'validation_error', details: validationErrors });
+    }
+
     try {
       const {
         message_type,       // required – one of MESSAGE_TYPES
@@ -634,72 +738,6 @@ export function createApp() {
         a2a_message_id,     // optional – link this task to an A2A message id
         correlation_id,     // optional – free-form swarm / session correlation
       } = req.body || {};
-
-      // ── Validation ────────────────────────────────────────────────────
-
-      const errors = [];
-
-      if (!message_type || !VALID_MESSAGE_TYPES.has(message_type)) {
-        errors.push(
-          `message_type is required and must be one of: ${[...VALID_MESSAGE_TYPES].join(', ')}`
-        );
-      }
-      if (!chain_id || !VALID_CHAIN_IDS.has(chain_id)) {
-        errors.push(
-          `chain_id is required and must be one of: ${[...VALID_CHAIN_IDS].join(', ')}`
-        );
-      }
-      if (!amount || BigInt(amount || 0) < BigInt(MIN_TASK_AMOUNT)) {
-        errors.push(
-          `amount is required and must be >= ${MIN_TASK_AMOUNT} (dust protection)`
-        );
-      }
-      if (!sender) {
-        errors.push('sender is required');
-      }
-
-      // Type-specific validation (mirrors main.rs validate_ai_task constraints)
-      if (message_type === MESSAGE_TYPES.INFERENCE_REQUEST && !model_id) {
-        errors.push('model_id is required for INFERENCE_REQUEST');
-      }
-      if (message_type === MESSAGE_TYPES.COMPUTE_RESULT && !output_hash) {
-        errors.push('output_hash is required for COMPUTE_RESULT');
-      }
-      if (message_type === MESSAGE_TYPES.DATA_ATTESTATION && !input_hash) {
-        errors.push('input_hash is required for DATA_ATTESTATION');
-      }
-      if (chain_id === CHAIN_IDS.BITTENSOR && !subnet_id && message_type !== MESSAGE_TYPES.CAPABILITY_QUERY) {
-        errors.push('subnet_id is required for Bittensor routing (except CAPABILITY_QUERY)');
-      }
-      if (fee_bps !== undefined && (fee_bps < MIN_FEE_BPS || fee_bps > MAX_FEE_BPS)) {
-        errors.push(`fee_bps must be between ${MIN_FEE_BPS} and ${MAX_FEE_BPS}`);
-      }
-      // Same contract as /v1/chat/completions — a caller should not have to learn
-      // two tool schemas to move from the free surface to the paid one.
-      if (tools !== undefined && tools !== null
-        && (!Array.isArray(tools) || tools.some((t) => t?.type !== 'function' || !t.function?.name))) {
-        errors.push('tools must be an array of {type:"function", function:{name,...}}');
-      }
-      if (max_tokens !== undefined && max_tokens !== null
-        && (!Number.isInteger(max_tokens) || max_tokens < 1)) {
-        errors.push('max_tokens must be a positive integer');
-      }
-      const PROOF_SYSTEMS = new Set(['sp1', 'zkgpt']);
-      if (proof_system !== undefined && proof_system !== null && proof_system !== '' && !PROOF_SYSTEMS.has(proof_system)) {
-        errors.push(`proof_system must be one of: ${[...PROOF_SYSTEMS].join(', ')}`);
-      }
-      if (callback_url) {
-        try {
-          const u = new URL(callback_url);
-          if (!/^https?:$/.test(u.protocol)) errors.push('callback_url must use http or https');
-        } catch {
-          errors.push('callback_url must be a valid absolute URL');
-        }
-      }
-
-      if (errors.length > 0) {
-        return res.status(400).json({ error: 'validation_error', details: errors });
-      }
 
       // ── Payment rail (USDC via x402 default; legacy tfuel only if opted in) ─
       // Buyer settlement is USDC on Base (ADR 0002). TFUEL is not a buyer rail
