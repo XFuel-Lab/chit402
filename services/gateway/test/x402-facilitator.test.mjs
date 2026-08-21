@@ -1483,3 +1483,492 @@ test('v1 verifyViaFacilitator sends legacy paymentRequirements (maxAmountRequire
     await new Promise((r) => server.close(r));
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Bankr float-string fix (2026-08-21 PR: invalid_payload on CDP /verify)
+// Bankr JSON-stringifies JS numbers so validAfter/validBefore/value arrive as
+// float strings (e.g. "1787321234.927" or "10000.0"). CDP rejects these with
+// invalid_payload. The fix coerces integer-equivalent floats and fails closed
+// on nonzero fractional values.
+// ══════════════════════════════════════════════════════════════════════════════
+
+import {
+  normalizeIntegerString,
+  normalizeNonce,
+  normalizeAuthorizationPayload,
+} from '../src/x402-facilitator.js';
+
+// ────────────────────────────────────────────────────────────────────────────
+// normalizeIntegerString tests
+// ────────────────────────────────────────────────────────────────────────────
+
+test('normalizeIntegerString: integer string passes through', () => {
+  const r = normalizeIntegerString('1234', 'value');
+  assert.equal(r.value, '1234');
+  assert.equal(r.coerced, false);
+});
+
+test('normalizeIntegerString: JSON number coerced to integer string', () => {
+  const r = normalizeIntegerString(1787321234, 'validAfter');
+  assert.equal(r.value, '1787321234');
+  assert.equal(r.coerced, true, 'JSON number must be coerced');
+});
+
+test('normalizeIntegerString: float string with .0 coerced to integer string', () => {
+  // This is THE Bankr scenario: Date.now()/1000 stringified as "1787321234.0"
+  const r = normalizeIntegerString('10000.0', 'value');
+  assert.equal(r.value, '10000', '"10000.0" → "10000"');
+  assert.equal(r.coerced, true);
+});
+
+test('normalizeIntegerString: float string with .000 coerced to integer string', () => {
+  const r = normalizeIntegerString('1787321234.000', 'validAfter');
+  assert.equal(r.value, '1787321234', '"1787321234.000" → "1787321234"');
+  assert.equal(r.coerced, true);
+});
+
+test('normalizeIntegerString: "0.0" coerced to "0"', () => {
+  const r = normalizeIntegerString('0.0', 'validAfter');
+  assert.equal(r.value, '0', '"0.0" → "0"');
+  assert.equal(r.coerced, true);
+});
+
+test('normalizeIntegerString: float string with nonzero fraction throws', () => {
+  // This is THE failure case: Date.now()/1000 with real fractional part
+  assert.throws(
+    () => normalizeIntegerString('1787321234.927', 'validAfter'),
+    /authorization_validAfter_must_be_integer_string/,
+    'nonzero fractional part must fail closed'
+  );
+});
+
+test('normalizeIntegerString: "0.1" throws (nonzero fraction)', () => {
+  assert.throws(
+    () => normalizeIntegerString('0.1', 'value'),
+    /authorization_value_must_be_integer_string/
+  );
+});
+
+test('normalizeIntegerString: negative integer string passes through', () => {
+  const r = normalizeIntegerString('-1234', 'value');
+  assert.equal(r.value, '-1234');
+  assert.equal(r.coerced, false);
+});
+
+test('normalizeIntegerString: null/undefined defaults to "0"', () => {
+  assert.equal(normalizeIntegerString(null, 'value').value, '0');
+  assert.equal(normalizeIntegerString(undefined, 'value').value, '0');
+});
+
+test('normalizeIntegerString: zero passes through', () => {
+  const r = normalizeIntegerString('0', 'validAfter');
+  assert.equal(r.value, '0');
+  assert.equal(r.coerced, false);
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// normalizeNonce tests
+// ────────────────────────────────────────────────────────────────────────────
+
+test('normalizeNonce: 64-hex without 0x gets prefixed', () => {
+  const hex64 = 'ab'.repeat(32);
+  const r = normalizeNonce(hex64);
+  assert.equal(r.nonce, '0x' + hex64, '64-hex without 0x → 0x-prefixed');
+  assert.equal(r.coerced, true);
+  assert.equal(r.has0x, false);
+  assert.equal(r.hexLen, 64);
+});
+
+test('normalizeNonce: 0x-prefixed 64-hex passes through', () => {
+  const hex64 = '0x' + 'ab'.repeat(32);
+  const r = normalizeNonce(hex64);
+  assert.equal(r.nonce, hex64);
+  assert.equal(r.coerced, false);
+  assert.equal(r.has0x, true);
+  assert.equal(r.hexLen, 64);
+});
+
+test('normalizeNonce: 32-hex (bytes16) throws — EIP-3009 needs bytes32', () => {
+  const hex32 = 'ab'.repeat(16);  // 32 hex chars = 16 bytes (bytes16)
+  assert.throws(
+    () => normalizeNonce(hex32),
+    /authorization_nonce_must_be_bytes32:received_32_hex_chars_\(bytes16\)/,
+    '32-hex (bytes16) must fail closed'
+  );
+});
+
+test('normalizeNonce: 0x-prefixed 32-hex (bytes16) throws', () => {
+  const hex32 = '0x' + 'ab'.repeat(16);
+  assert.throws(
+    () => normalizeNonce(hex32),
+    /authorization_nonce_must_be_bytes32/,
+    '0x-prefixed bytes16 must also fail'
+  );
+});
+
+test('normalizeNonce: non-hex string passes through unchanged', () => {
+  const nonce = 'challenge-nonce-abc123';
+  const r = normalizeNonce(nonce);
+  assert.equal(r.nonce, nonce);
+  assert.equal(r.coerced, false);
+});
+
+test('normalizeNonce: null/undefined passes through', () => {
+  const r = normalizeNonce(null);
+  assert.equal(r.nonce, null);
+  assert.equal(r.coerced, false);
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// normalizeAuthorizationPayload tests
+// ────────────────────────────────────────────────────────────────────────────
+
+test('normalizeAuthorizationPayload: coerces Bankr-shaped float validAfter', () => {
+  // This is THE Bankr payload: float-string validAfter from Date.now()/1000
+  const payload = {
+    signature: '0x' + '11'.repeat(65),
+    authorization: {
+      from: '0xbankrwallet',
+      to: '0xtreasury',
+      value: '100000.0',       // <-- float string with .0
+      validAfter: '1787321234.0',  // <-- float string with .0
+      validBefore: '1787324834',   // integer string
+      nonce: '0x' + 'ab'.repeat(32),
+    },
+  };
+
+  const { normalizedPayload, coercions } = normalizeAuthorizationPayload(payload);
+
+  // value and validAfter must be coerced
+  assert.equal(normalizedPayload.authorization.value, '100000', 'value coerced');
+  assert.equal(normalizedPayload.authorization.validAfter, '1787321234', 'validAfter coerced');
+  assert.equal(normalizedPayload.authorization.validBefore, '1787324834', 'validBefore unchanged');
+
+  // Coercions tracked
+  assert.ok(coercions.value, 'value coercion tracked');
+  assert.equal(coercions.value.from, '100000.0');
+  assert.equal(coercions.value.to, '100000');
+  assert.ok(coercions.validAfter, 'validAfter coercion tracked');
+  assert.equal(coercions.validAfter.from, '1787321234.0');
+  assert.equal(coercions.validAfter.to, '1787321234');
+  assert.equal(coercions.validBefore, undefined, 'validBefore not coerced');
+});
+
+test('normalizeAuthorizationPayload: throws on fractional validAfter', () => {
+  const payload = {
+    signature: '0x' + '11'.repeat(65),
+    authorization: {
+      from: '0xbankrwallet',
+      to: '0xtreasury',
+      value: '100000',
+      validAfter: '1787321234.927',  // <-- nonzero fractional part
+      validBefore: '1787324834',
+      nonce: '0x' + 'ab'.repeat(32),
+    },
+  };
+
+  assert.throws(
+    () => normalizeAuthorizationPayload(payload),
+    /authorization_validAfter_must_be_integer_string:received_1787321234\.927/,
+    'fractional validAfter must fail closed'
+  );
+});
+
+test('normalizeAuthorizationPayload: throws on bytes16 nonce', () => {
+  const payload = {
+    signature: '0x' + '11'.repeat(65),
+    authorization: {
+      from: '0xbankrwallet',
+      to: '0xtreasury',
+      value: '100000',
+      validAfter: '0',
+      validBefore: '1787324834',
+      nonce: 'ab'.repeat(16),  // <-- 32 hex chars (bytes16)
+    },
+  };
+
+  assert.throws(
+    () => normalizeAuthorizationPayload(payload),
+    /authorization_nonce_must_be_bytes32/,
+    'bytes16 nonce must fail closed'
+  );
+});
+
+test('normalizeAuthorizationPayload: prefixes 64-hex nonce without 0x', () => {
+  const payload = {
+    signature: '0x' + '11'.repeat(65),
+    authorization: {
+      from: '0xbankrwallet',
+      to: '0xtreasury',
+      value: '100000',
+      validAfter: '0',
+      validBefore: '1787324834',
+      nonce: 'cd'.repeat(32),  // <-- 64 hex chars without 0x
+    },
+  };
+
+  const { normalizedPayload, coercions } = normalizeAuthorizationPayload(payload);
+
+  assert.equal(normalizedPayload.authorization.nonce, '0x' + 'cd'.repeat(32), 'nonce 0x-prefixed');
+  assert.ok(coercions.nonce, 'nonce coercion tracked');
+  assert.equal(coercions.nonce.from, 'cd'.repeat(32));
+  assert.equal(coercions.nonce.to, '0x' + 'cd'.repeat(32));
+});
+
+test('normalizeAuthorizationPayload: handles JSON number value (from JS number)', () => {
+  const payload = {
+    signature: '0x' + '11'.repeat(65),
+    authorization: {
+      from: '0xbankrwallet',
+      to: '0xtreasury',
+      value: 100000,  // <-- JSON number, not string
+      validAfter: 0,  // <-- JSON number
+      validBefore: 1787324834,  // <-- JSON number
+      nonce: '0x' + 'ab'.repeat(32),
+    },
+  };
+
+  const { normalizedPayload, coercions } = normalizeAuthorizationPayload(payload);
+
+  assert.equal(normalizedPayload.authorization.value, '100000', 'value coerced to string');
+  assert.equal(normalizedPayload.authorization.validAfter, '0', 'validAfter coerced to string');
+  assert.equal(normalizedPayload.authorization.validBefore, '1787324834', 'validBefore coerced to string');
+  assert.ok(coercions.value, 'value coercion tracked');
+  assert.ok(coercions.validAfter, 'validAfter coercion tracked');
+  assert.ok(coercions.validBefore, 'validBefore coercion tracked');
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// toPaymentPayload integration tests (Bankr float-string fix)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build a Bankr-shaped CDP v2 header with float-string validAfter/value.
+ * This is the exact shape that caused invalid_payload on CDP.
+ */
+function makeBankrFloatHeader({
+  network = 'eip155:8453',
+  amount = '100000',
+  payTo = '0xtreasury',
+  from = '0xbankrwallet',
+  value = '100000.0',       // <-- float string
+  validAfter = '1787321234.0',  // <-- float string (Bankr's Date.now()/1000)
+  validBefore = '1787324834',
+  nonce = '0x' + 'ab'.repeat(32),
+} = {}) {
+  const blob = {
+    x402Version: 2,
+    resource: { url: 'https://api.xfuel.app/task-request' },
+    accepted: {
+      scheme: 'exact',
+      network,
+      amount,
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      payTo,
+      maxTimeoutSeconds: 120,
+      extra: { name: 'USD Coin', version: '2' },
+    },
+    payload: {
+      signature: '0x' + '33'.repeat(65),
+      authorization: {
+        from,
+        to: payTo,
+        value,
+        validAfter,
+        validBefore,
+        nonce,
+      },
+    },
+    extensions: {},
+  };
+  return Buffer.from(JSON.stringify(blob), 'utf8').toString('base64');
+}
+
+test('toPaymentPayload coerces Bankr float-string validAfter/value in v2 path', () => {
+  // This is THE regression test for the Bankr invalid_payload error.
+  // Before this fix: CDP rejected with invalid_payload because validAfter="1787321234.0"
+  // After this fix: validAfter="1787321234" (integer string), CDP accepts
+  const header = makeBankrFloatHeader({
+    value: '100000.0',
+    validAfter: '1787321234.0',
+  });
+  const decoded = decodePaymentHeader(header);
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+
+  // Verify the authorization fields are coerced to integer strings
+  assert.equal(
+    p.payload.authorization.value, '100000',
+    'value "100000.0" → "100000"'
+  );
+  assert.equal(
+    p.payload.authorization.validAfter, '1787321234',
+    'validAfter "1787321234.0" → "1787321234" (Bankr fix)'
+  );
+});
+
+test('toPaymentPayload coerces JSON number validAfter in v2 path', () => {
+  // Bankr may also send JSON numbers (not strings) for timestamps
+  const blob = {
+    x402Version: 2,
+    accepted: {
+      scheme: 'exact',
+      network: 'eip155:8453',
+      amount: '100000',
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      payTo: '0xtreasury',
+      maxTimeoutSeconds: 120,
+      extra: { name: 'USD Coin', version: '2' },
+    },
+    payload: {
+      signature: '0x' + '33'.repeat(65),
+      authorization: {
+        from: '0xbankrwallet',
+        to: '0xtreasury',
+        value: 100000,  // <-- JSON number
+        validAfter: 1787321234,  // <-- JSON number
+        validBefore: 1787324834,  // <-- JSON number
+        nonce: '0x' + 'ab'.repeat(32),
+      },
+    },
+  };
+  const decoded = blob;
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+
+  assert.equal(p.payload.authorization.value, '100000', 'JSON number → string');
+  assert.equal(p.payload.authorization.validAfter, '1787321234', 'JSON number → string');
+  assert.equal(p.payload.authorization.validBefore, '1787324834', 'JSON number → string');
+});
+
+test('toPaymentPayload throws on fractional validAfter with specific reason', () => {
+  const header = makeBankrFloatHeader({
+    validAfter: '1787321234.927',  // <-- nonzero fractional part
+  });
+  const decoded = decodePaymentHeader(header);
+
+  assert.throws(
+    () => toPaymentPayload(decoded, { x402Version: 2 }),
+    /authorization_validAfter_must_be_integer_string:received_1787321234\.927/,
+    'must fail closed with specific reason'
+  );
+});
+
+test('toPaymentPayload throws on fractional value with specific reason', () => {
+  const header = makeBankrFloatHeader({
+    value: '100000.5',  // <-- fractional USDC (not valid)
+  });
+  const decoded = decodePaymentHeader(header);
+
+  assert.throws(
+    () => toPaymentPayload(decoded, { x402Version: 2 }),
+    /authorization_value_must_be_integer_string:received_100000\.5/,
+    'must fail closed with specific reason'
+  );
+});
+
+test('toPaymentPayload throws on bytes16 nonce with specific reason', () => {
+  const header = makeBankrFloatHeader({
+    nonce: 'ab'.repeat(16),  // <-- 32 hex chars (bytes16)
+  });
+  const decoded = decodePaymentHeader(header);
+
+  assert.throws(
+    () => toPaymentPayload(decoded, { x402Version: 2 }),
+    /authorization_nonce_must_be_bytes32:received_32_hex_chars_\(bytes16\)/,
+    'must fail closed with specific reason'
+  );
+});
+
+test('toPaymentPayload prefixes 64-hex nonce without 0x', () => {
+  const header = makeBankrFloatHeader({
+    nonce: 'cd'.repeat(32),  // <-- 64 hex chars without 0x
+  });
+  const decoded = decodePaymentHeader(header);
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+
+  assert.equal(
+    p.payload.authorization.nonce, '0x' + 'cd'.repeat(32),
+    '64-hex without 0x → 0x-prefixed'
+  );
+});
+
+test('verifyViaFacilitator returns specific reason for fractional validAfter', async () => {
+  // This tests the full flow: fractional validAfter → not sent to CDP, specific reason returned
+  const header = makeBankrFloatHeader({
+    validAfter: '1787321234.927',
+  });
+
+  // No mock server needed — the payload validation fails before HTTP call
+  const r = await verifyViaFacilitator(header, { gateway: 'http://unused.test', x402Version: 2 });
+
+  assert.equal(r.valid, false);
+  assert.match(
+    r.reason,
+    /authorization_validAfter_must_be_integer_string/,
+    'must return specific reason, not generic payment_payload_invalid'
+  );
+});
+
+test('settleViaFacilitator returns specific reason for bytes16 nonce', async () => {
+  const header = makeBankrFloatHeader({
+    nonce: 'ab'.repeat(16),  // <-- bytes16
+  });
+
+  const r = await settleViaFacilitator(header, { gateway: 'http://unused.test', x402Version: 2 });
+
+  assert.equal(r.settled, false);
+  assert.match(
+    r.reason,
+    /authorization_nonce_must_be_bytes32/,
+    'must return specific reason'
+  );
+});
+
+test('v2 verifyViaFacilitator sends coerced integer strings to mock facilitator', async () => {
+  // This is THE integration test: verify the coerced payload is actually sent to CDP
+  let receivedPayload = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body);
+      receivedPayload = parsed.paymentPayload;
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ isValid: true, payer: '0xbankrwallet' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    // Bankr-shaped header with float-string validAfter/value
+    const header = makeBankrFloatHeader({
+      value: '100000.0',
+      validAfter: '1787321234.0',
+      nonce: 'cd'.repeat(32),  // 64-hex without 0x
+    });
+
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+    assert.equal(r.valid, true, 'Bankr float-string header must verify after coercion');
+
+    // Verify the coerced values were sent to the facilitator
+    assert.ok(receivedPayload, 'facilitator must receive paymentPayload');
+    assert.equal(
+      receivedPayload.payload.authorization.value, '100000',
+      'value must be coerced integer string in facilitator body'
+    );
+    assert.equal(
+      receivedPayload.payload.authorization.validAfter, '1787321234',
+      'validAfter must be coerced integer string in facilitator body'
+    );
+    assert.equal(
+      receivedPayload.payload.authorization.nonce, '0x' + 'cd'.repeat(32),
+      'nonce must be 0x-prefixed in facilitator body'
+    );
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
