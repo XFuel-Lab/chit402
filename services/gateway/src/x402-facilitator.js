@@ -135,6 +135,12 @@ export function toPaymentRequirements({
  * Translate the payment blob → standard x402 `PaymentPayload` (exact scheme).
  * Accepts both v1 (X-PAYMENT / XFuel SDK) and v2 (PAYMENT-SIGNATURE / CDP-native) headers.
  *
+ * v1 (XFuel SDK) shape:
+ *   { authorization: { message: { from, to, ... }, signature }, ... }
+ *
+ * v2 (CDP-native) shape - already a spec-compliant PaymentPayload:
+ *   { x402Version: 2, payload: { authorization: { from, to, ... }, signature }, accepted, resource?, ... }
+ *
  * @param {Object} decoded - Decoded payment header blob
  * @param {Object} opts
  * @param {string} [opts.network]
@@ -144,19 +150,38 @@ export function toPaymentRequirements({
  */
 export function toPaymentPayload(decoded, { network, resource, extensions, x402Version = 1 } = {}) {
   if (!decoded) throw new Error('x402: payment header could not be decoded');
-  const auth = decoded.authorization || {};
-  // Support both the enveloped shape ({ message, signature }) and a flat one.
-  const msg = auth.message || auth;
-  const signature = auth.signature || decoded.signature;
+
+  // CDP-native v2: the header is already a spec-shaped PaymentPayload with
+  // { payload: { authorization: { from, to, ... }, signature }, ... }.
+  // Bankr and other CDP-native clients send this shape directly.
+  const cdpPayload = decoded.payload;
+  const isCdpNativeV2 = cdpPayload?.authorization?.from && cdpPayload?.signature;
+
+  let msg;
+  let signature;
+
+  if (isCdpNativeV2) {
+    // CDP-native v2: extract from decoded.payload
+    msg = cdpPayload.authorization;
+    signature = cdpPayload.signature;
+  } else {
+    // XFuel SDK v1: extract from decoded.authorization.message + decoded.authorization.signature
+    const auth = decoded.authorization || {};
+    msg = auth.message || auth;
+    signature = auth.signature || decoded.signature;
+  }
+
   if (!signature || !msg || !msg.from) {
     throw new Error('x402: payment header missing signature or authorization');
   }
   // Use the client's protocol version (v2 for CDP-native like Bankr, v1 for XFuel SDK).
   const wireVersion = x402Version === 2 ? 2 : 1;
+  // CDP-native v2 puts network/scheme on `accepted`; XFuel SDK v1 puts them at the top level.
+  const accepted = decoded.accepted || {};
   const payload = {
     x402Version: wireVersion,
-    scheme: decoded.scheme || 'exact',
-    network: network || decoded.network,
+    scheme: accepted.scheme || decoded.scheme || 'exact',
+    network: network || accepted.network || decoded.network,
     payload: {
       signature,
       authorization: {
