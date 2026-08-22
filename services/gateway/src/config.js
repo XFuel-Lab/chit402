@@ -48,6 +48,10 @@ const config = {
   // x402 / USDC payment rail (ADR 0001 / 0002). Default rail is USDC on Base.
   // Optional TFUEL fallback only if X402_FALLBACK_TFUEL=true. Payer is agent-side.
   // See docs/X402_ADAPTER.md.
+  //
+  // Dual-network support (2026-08-22): 402 advertises both Base (CDP) and Solana (PayAI).
+  // A Solana-walleted agent can sign the Solana accepts[1] entry and settle USDC on
+  // Solana mainnet via PayAI. Base remains the default/primary network.
   x402: {
     enabled: process.env.X402_ENABLED === 'true',
     // Server default rail when a request omits payment.rail.
@@ -68,6 +72,20 @@ const config = {
     network: process.env.X402_NETWORK || 'base-sepolia',    // base-sepolia | base
     asset: process.env.X402_ASSET || 'USDC',
     challengeTtlMs: parseInt(process.env.X402_CHALLENGE_TTL_MS, 10) || 120000,
+
+    // ── Solana as second payment network (PayAI facilitator) ────────────────────
+    // When enabled, 402 advertises BOTH Base (primary) and Solana payment options.
+    // Solana payments route to PayAI; Base payments stay on CDP. Fail closed.
+    solana: {
+      enabled: process.env.X402_SOLANA_ENABLED === 'true',
+      // Solana USDC treasury address (SPL token account). REQUIRED when solana.enabled=true.
+      // This is the Associated Token Account (ATA) that receives USDC, not a wallet address.
+      payTo: process.env.X402_SOLANA_PAY_TO || null,
+      // PayAI facilitator URL. Default: https://facilitator.payai.network
+      facilitatorUrl: process.env.X402_SOLANA_FACILITATOR_URL || 'https://facilitator.payai.network',
+      // Network: solana (mainnet) or solana-devnet
+      network: process.env.X402_SOLANA_NETWORK || 'solana',
+    },
     // Phase 2: bind the x402 payment_ref into the SP1 proof so it attests BOTH
     // computation AND payment. Flag-gated (default off). When on, the backend
     // computes a deterministic payment commitment and threads it to the prover;

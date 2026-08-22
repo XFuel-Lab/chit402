@@ -327,6 +327,7 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
 
   // Step 1 — no payment yet: issue a bound 402 challenge.
   // The challenge includes the CDP Bazaar extension for discovery cataloging.
+  // Dual-network (2026-08-22): include Solana accepts entry when cfg.solana.enabled.
   if (!paymentHeader) {
     const charge = amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg);
     const { body: challengeBody } = buildPaymentChallenge(
@@ -337,6 +338,12 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
         asset: cfg.asset,
         payTo: cfg.payTo,
         baseUrl,  // Required for absolute resource URL (CDP Bazaar cataloging)
+        // Solana as second payment network (optional)
+        solana: cfg.solana?.enabled ? {
+          enabled: true,
+          payTo: cfg.solana.payTo,
+          network: cfg.solana.network,
+        } : undefined,
       },
       { store: challengeStore },
     );
@@ -344,6 +351,7 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
   }
 
   // Step 2 — payment present: verify (binding) then settle (marks nonce spent).
+  // The challenge network determines the facilitator route (CDP for Base, PayAI for Solana).
   const nonce = extractPaymentNonce(req);
   // Pass the client x402 version so the facilitator client sends the right protocol.
   const bound = { ...gwOpts, nonce, x402Version: clientVersion };
@@ -351,17 +359,19 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
   const v = await verifyPayment(paymentHeader, bound);
   if (!v.valid) return { kind: 'failed', reason: v.reason || 'verify_failed' };
 
-  // Read the amount bound to this challenge BEFORE settling — settle marks the
-  // nonce spent and drops the record. Verify is idempotent and does not.
-  const boundAmount = (nonce ? challengeStore.get(nonce)?.amount : null)
+  // Read the challenge BEFORE settling — settle marks the nonce spent and drops the record.
+  // Verify is idempotent and does not.
+  const challenge = nonce ? challengeStore.get(nonce) : null;
+  const boundAmount = challenge?.amount
     ?? (amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg));
+  const settledNetwork = challenge?.network || cfg.network;
 
   const s = await settlePayment(paymentHeader, bound);
   if (!s.settled) return { kind: 'failed', reason: s.reason || 'settle_failed' };
 
   return {
     kind: 'settled',
-    paymentRef: `${cfg.network}:${s.txRef}`,
+    paymentRef: `${settledNetwork}:${s.txRef}`,
     settledAmount: String(boundAmount),
   };
 }

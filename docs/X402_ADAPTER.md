@@ -3,7 +3,9 @@
 Flag-gated USDC payment rail for the gateway (`X402_ENABLED`).
 
 - Module: `services/gateway/src/x402-adapter.js`
-- Facilitator: standard x402 (default) or ZAN
+- Facilitators:
+  - **Base** (default): CDP (`https://api.cdp.coinbase.com/platform/v2/x402`) or standard x402
+  - **Solana** (optional): PayAI (`https://facilitator.payai.network`)
 - CDP JWT auth: `services/gateway/src/cdp-jwt.js`
 - Mock (dev): `services/gateway/src/x402-mock-facilitator.js`
 - Tests: `services/gateway/test/x402-*.test.mjs`
@@ -38,12 +40,32 @@ CDP_API_KEY_SECRET=...
 If `X402_FACILITATOR_URL` is unset and `X402_NETWORK=base`, the gateway defaults to  
 `https://api.cdp.coinbase.com/platform/v2/x402` and authenticates with a per-request EdDSA JWT. Full checklist: [MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md).
 
+## Solana mainnet (PayAI facilitator, optional)
+
+```
+X402_SOLANA_ENABLED=true
+X402_SOLANA_PAY_TO=<Solana_USDC_ATA>
+X402_SOLANA_FACILITATOR_URL=https://facilitator.payai.network
+X402_SOLANA_NETWORK=solana
+```
+
+When enabled, the 402 challenge includes a second `accepts` entry for Solana USDC.
+Solana payments are verified and settled via PayAI. Base remains the default network.
+
+- Network identifiers: `solana` (short) or `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` (CAIP-2)
+- Asset: Solana USDC mint `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`
+- `X402_SOLANA_PAY_TO` must be an Associated Token Account (ATA) for USDC
+
 ## Flow
 
 1. Client calls a paid route without payment → `402` challenge  
-2. Agent signs USDC authorization and retries with payment header  
-3. Gateway verifies / settles via facilitator  
-4. Task proceeds; `payment_ref` recorded on the receipt  
+   - Challenge `accepts[]` may list multiple networks (Base + Solana) when Solana is enabled
+2. Agent picks a network and signs USDC authorization:
+   - **Base**: EIP-3009 `transferWithAuthorization` → CDP facilitator
+   - **Solana**: SPL Token authorization → PayAI facilitator
+3. Agent retries with `X-PAYMENT` header  
+4. Gateway routes to the appropriate facilitator based on the network in the payment
+5. Facilitator verifies / settles; task proceeds; `payment_ref` recorded on the receipt  
 
 Payment binding into the SP1 proof is flag-gated (`X402_PROOF_BINDING`); in-proof field activates on SP1 guest v2.
 
