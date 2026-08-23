@@ -120,6 +120,24 @@ test('buildPaymentChallenge: uses absolute resource URL for bazaar cataloging', 
   assert.ok(!body.resource.url.includes('task-abc'), 'resource URL does not contain taskId');
 });
 
+test('buildPaymentChallenge: /v1/chat/completions resource catalogs OpenAI bazaar body', () => {
+  const { body, headers } = buildPaymentChallenge({
+    taskId: 'openai-1',
+    maxAmountRequired: '10000',
+    baseUrl: 'https://api.xfuel.app',
+    resource: 'https://api.xfuel.app/v1/chat/completions',
+  });
+
+  assert.equal(body.resource.url, 'https://api.xfuel.app/v1/chat/completions');
+  assert.ok(!body.resource.url.includes('/task-request'));
+  const bazaarBody = body.extensions?.bazaar?.info?.input?.body;
+  assert.equal(bazaarBody.model, 'xfuel/auto');
+  assert.ok(Array.isArray(bazaarBody.messages));
+  assert.ok(!bazaarBody.message_type);
+  const decoded = JSON.parse(Buffer.from(headers['PAYMENT-REQUIRED'], 'base64').toString('utf8'));
+  assert.equal(decoded.resource.url, body.resource.url);
+});
+
 test('buildPaymentChallenge: falls back to relative path when no baseUrl', () => {
   const { body } = buildPaymentChallenge({
     taskId: 'task-xyz',

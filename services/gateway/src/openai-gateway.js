@@ -149,7 +149,8 @@ async function meterV1Request(req, res, { taskId, isAuthorised = null } = {}) {
   if (body.max_tokens != null || MAX_TOKENS_CAP > 0) body.max_tokens = clampMaxTokens(body.max_tokens);
 
   const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
-  const decision = await runX402Handshake(req, { taskId, body, baseUrl });
+  const resource = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
+  const decision = await runX402Handshake(req, { taskId, body, baseUrl, resource });
 
   if (decision.kind === 'settled') {
     return { halted: false, payment: { ref: decision.paymentRef, amount: decision.settledAmount } };
