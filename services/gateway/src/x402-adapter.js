@@ -10,6 +10,7 @@ import {
   isSolanaNetwork,
   isEvmNetwork,
   PAYAI_FACILITATOR_URL,
+  PAYAI_DEFAULT_FEE_PAYER,
   SOLANA_NETWORKS,
 } from './x402-facilitator.js';
 
@@ -464,16 +465,17 @@ export function buildPaymentChallenge(p, opts = {}) {
   // ── Solana accepts entry (optional, second network) ─────────────────────────
   // When Solana is enabled, add a second accepts entry for Solana USDC.
   // Solana uses Ed25519 signatures — no EIP-712 domain. PayAI handles verification.
+  // feePayer is REQUIRED by @x402/svm ExactSvmScheme — PayAI's facilitator pays tx fees.
   if (solanaEnabled) {
     const solNetwork = fromCaip2Network(p.solana.network || 'solana');
     const solWireNetwork = toCaip2Network(solNetwork);
-    const { asset: solAsset } = usdcFor(solNetwork);
+    const { asset: solAsset, feePayer: solFeePayer } = usdcFor(solNetwork);
     const solPayTo = p.solana.payTo;
     // Solana nonce: 32 random bytes as base58 (PayAI spec) or hex. PayAI accepts both.
     // Using hex for consistency with the store key format.
     const solNonce = '0x' + crypto.randomBytes(32).toString('hex');
 
-    // Store the Solana challenge binding
+    // Store the Solana challenge binding (include feePayer for toPaymentRequirements)
     if (store) {
       const solRec = store.put(solNonce, {
         taskId: p.taskId,
@@ -481,6 +483,7 @@ export function buildPaymentChallenge(p, opts = {}) {
         asset: solAsset,
         network: solNetwork,
         payTo: solPayTo,
+        feePayer: solFeePayer,  // Forwarded to toPaymentRequirements for PayAI /verify
         resource: resourceUrl,
         description,
         mimeType: 'application/json',
@@ -500,6 +503,9 @@ export function buildPaymentChallenge(p, opts = {}) {
       payTo: solPayTo,
       maxTimeoutSeconds,
       extra: {
+        // feePayer is REQUIRED by @x402/svm. PayAI GET /supported advertises this account
+        // as the fee payer for Solana mainnet. Without it, ExactSvmScheme throws.
+        feePayer: solFeePayer,
         taskId: p.taskId,
         nonce: solNonce,
         expiresAt,
