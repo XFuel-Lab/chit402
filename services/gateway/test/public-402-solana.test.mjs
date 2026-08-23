@@ -59,7 +59,12 @@ function createMockFacilitator() {
       const { port } = server.address();
       resolve({
         url: `http://127.0.0.1:${port}`,
-        close: () => new Promise((r) => server.close(r)),
+        close: () => {
+          if (typeof server.closeAllConnections === 'function') {
+            server.closeAllConnections();
+          }
+          return new Promise((r) => server.close(r));
+        },
       });
     });
   });
@@ -107,6 +112,10 @@ before(async () => {
 
 after(async () => {
   globalThis.fetch = realFetch;
+  // Force-close all connections to prevent hanging on keep-alive sockets
+  if (typeof server.closeAllConnections === 'function') {
+    server.closeAllConnections();
+  }
   await new Promise((resolve) => server.close(resolve));
   await closeFac();
   fs.rmSync(tmp, { recursive: true, force: true });

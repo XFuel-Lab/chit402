@@ -2285,3 +2285,405 @@ test('settleViaFacilitator keeps current behavior when invalidMessage is absent'
     await new Promise((r) => server.close(r));
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Solana SVM x402 support (2026-08-23 PR: PayAI facilitator)
+// Solana payments use { transaction: "<base64>" } instead of EVM's { authorization, signature }.
+// The gateway must:
+// 1. Accept SVM { transaction } blobs in toPaymentPayload (passthrough to PayAI)
+// 2. Include feePayer in Solana accepts.extra and paymentRequirements.extra
+// 3. NOT include EVM name/version in Solana paymentRequirements.extra
+// 4. Still fail closed for EVM — missing signature/authorization must throw
+// ══════════════════════════════════════════════════════════════════════════════
+
+import {
+  isSolanaNetwork,
+  isEvmNetwork,
+  PAYAI_DEFAULT_FEE_PAYER,
+} from '../src/x402-facilitator.js';
+
+/**
+ * Build an SVM (Solana) v2 PAYMENT-SIGNATURE header the way @x402/svm sends it:
+ * { payload: { transaction: "<base64 partially-signed versioned tx>" } }
+ * This is NOT the same as EVM's { payload: { authorization, signature } }.
+ */
+function makeSvmPaymentHeader({
+  network = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+  amount = '50000',
+  payTo = 'CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww',
+  feePayer = 'CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww',
+  transaction = 'AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',  // Dummy base64 versioned tx
+  resourceUrl = 'https://api.xfuel.app/task-request',
+} = {}) {
+  const blob = {
+    x402Version: 2,
+    resource: {
+      url: resourceUrl,
+      description: 'XFuel paid inference',
+      mimeType: 'application/json',
+    },
+    accepted: {
+      scheme: 'exact',
+      network,
+      amount,
+      asset: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',  // Solana USDC mint
+      payTo,
+      maxTimeoutSeconds: 60,
+      extra: { feePayer },  // Solana extra has feePayer, NOT name/version
+    },
+    payload: {
+      transaction,  // SVM uses a partially-signed Solana versioned tx, NOT authorization/signature
+    },
+    extensions: {},
+  };
+  return Buffer.from(JSON.stringify(blob), 'utf8').toString('base64');
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Network detection tests
+// ────────────────────────────────────────────────────────────────────────────
+
+test('isSolanaNetwork detects Solana mainnet and devnet', () => {
+  // Short names
+  assert.equal(isSolanaNetwork('solana'), true);
+  assert.equal(isSolanaNetwork('solana-devnet'), true);
+  // CAIP-2 identifiers
+  assert.equal(isSolanaNetwork('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'), true);
+  assert.equal(isSolanaNetwork('solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'), true);
+  // Not Solana
+  assert.equal(isSolanaNetwork('base'), false);
+  assert.equal(isSolanaNetwork('eip155:8453'), false);
+  assert.equal(isSolanaNetwork(null), false);
+});
+
+test('isEvmNetwork detects Base and other EIP-155 chains', () => {
+  assert.equal(isEvmNetwork('base'), true);
+  assert.equal(isEvmNetwork('base-sepolia'), true);
+  assert.equal(isEvmNetwork('eip155:8453'), true);
+  assert.equal(isEvmNetwork('eip155:84532'), true);
+  // Not EVM
+  assert.equal(isEvmNetwork('solana'), false);
+  assert.equal(isEvmNetwork('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'), false);
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Solana accepts feePayer tests
+// ────────────────────────────────────────────────────────────────────────────
+
+test('usdcFor returns feePayer for Solana networks', async () => {
+  const { usdcFor } = await import('../src/x402-facilitator.js');
+  const solanaInfo = usdcFor('solana');
+  assert.equal(solanaInfo.asset, 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'Solana USDC mint');
+  assert.equal(solanaInfo.feePayer, PAYAI_DEFAULT_FEE_PAYER, 'feePayer from PayAI /supported');
+  // No EIP-712 domain for Solana
+  assert.equal(solanaInfo.name, undefined, 'Solana has no EIP-712 name');
+  assert.equal(solanaInfo.version, undefined, 'Solana has no EIP-712 version');
+});
+
+test('usdcFor returns name/version (no feePayer) for EVM networks', async () => {
+  const { usdcFor } = await import('../src/x402-facilitator.js');
+  const evmInfo = usdcFor('base');
+  assert.equal(evmInfo.asset, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 'Base USDC');
+  assert.equal(evmInfo.name, 'USD Coin', 'EIP-712 name');
+  assert.equal(evmInfo.version, '2', 'EIP-712 version');
+  // No feePayer for EVM
+  assert.equal(evmInfo.feePayer, undefined, 'EVM has no feePayer');
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// toPaymentRequirements Solana feePayer tests
+// ────────────────────────────────────────────────────────────────────────────
+
+test('toPaymentRequirements v2 includes feePayer for Solana (not name/version)', () => {
+  // This is THE regression test: Solana paymentRequirements must have feePayer, NOT name/version.
+  // Before this fix: extra was { name: undefined, version: undefined } → PayAI rejected.
+  // After this fix: extra is { feePayer: "Cj..." } → PayAI accepts.
+  const r = toPaymentRequirements({
+    network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+    amount: '50000',
+    payTo: 'CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww',
+    x402Version: 2,
+  });
+
+  assert.equal(r.scheme, 'exact');
+  assert.equal(r.network, 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp', 'CAIP-2 Solana network');
+  assert.equal(r.amount, '50000');
+  assert.equal(r.asset, 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'Solana USDC mint');
+
+  // CRITICAL: Solana extra must have feePayer, NOT EVM's name/version
+  assert.ok(r.extra.feePayer, 'Solana paymentRequirements.extra must have feePayer');
+  assert.equal(r.extra.feePayer, PAYAI_DEFAULT_FEE_PAYER, 'feePayer from PayAI /supported');
+  assert.equal(r.extra.name, undefined, 'Solana must NOT have EIP-712 name');
+  assert.equal(r.extra.version, undefined, 'Solana must NOT have EIP-712 version');
+});
+
+test('toPaymentRequirements v2 forwards feePayer override for Solana', () => {
+  // When feePayer is explicitly passed (from challenge), use it instead of default.
+  const customFeePayer = 'CustomFeePayer111111111111111111111111111111';
+  const r = toPaymentRequirements({
+    network: 'solana',
+    amount: '50000',
+    payTo: 'SomeOwnerPubkey',
+    x402Version: 2,
+    feePayer: customFeePayer,
+  });
+
+  assert.equal(r.extra.feePayer, customFeePayer, 'must use override feePayer from challenge');
+});
+
+test('toPaymentRequirements v2 still uses name/version for EVM (not feePayer)', () => {
+  // Regression: EVM paymentRequirements must NOT change after adding Solana support.
+  const r = toPaymentRequirements({
+    network: 'eip155:8453',
+    amount: '100000',
+    payTo: '0xtreasury',
+    x402Version: 2,
+  });
+
+  assert.equal(r.network, 'eip155:8453', 'CAIP-2 EVM network');
+  assert.equal(r.extra.name, 'USD Coin', 'EVM must have EIP-712 name');
+  assert.equal(r.extra.version, '2', 'EVM must have EIP-712 version');
+  assert.equal(r.extra.feePayer, undefined, 'EVM must NOT have feePayer');
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// toPaymentPayload SVM passthrough tests
+// ────────────────────────────────────────────────────────────────────────────
+
+test('toPaymentPayload accepts SVM { transaction } blob and does not throw', () => {
+  // This is THE regression test for symptom #1:
+  // Before this fix: SVM blobs threw "payment header missing signature or authorization"
+  // After this fix: SVM blobs pass through to PayAI unchanged
+  const header = makeSvmPaymentHeader();
+  const decoded = decodePaymentHeader(header);
+
+  // Must NOT throw
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+
+  // Verify the SVM structure is preserved
+  assert.equal(p.x402Version, 2);
+  assert.ok(p.accepted, 'SVM paymentPayload must have accepted');
+  assert.equal(p.accepted.network, 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp');
+  assert.ok(p.payload, 'SVM paymentPayload must have payload');
+  assert.ok(p.payload.transaction, 'SVM payload must have transaction');
+  assert.equal(typeof p.payload.transaction, 'string', 'transaction must be base64 string');
+  // Must NOT have authorization/signature (EVM-only)
+  assert.equal(p.payload.authorization, undefined, 'SVM must NOT have authorization');
+  assert.equal(p.payload.signature, undefined, 'SVM must NOT have signature');
+});
+
+test('toPaymentPayload SVM slims accepted to spec fields (feePayer, no name/version)', () => {
+  // Ensure Solana accepted.extra is slimmed correctly: feePayer yes, name/version no.
+  const header = makeSvmPaymentHeader({
+    feePayer: 'PayAIFeePayer1111111111111111111111111111111',
+  });
+  const decoded = decodePaymentHeader(header);
+  // Add some extra fields that should be stripped
+  decoded.accepted.maxAmountRequired = '50000';  // v1 compat, should be stripped
+  decoded.accepted.extra.taskId = 'task-123';    // challenge binding, should be stripped
+  decoded.accepted.extra.nonce = '0x' + 'ab'.repeat(32);  // challenge binding, should be stripped
+
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+
+  // Spec fields preserved
+  assert.equal(p.accepted.scheme, 'exact');
+  assert.equal(p.accepted.network, 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp');
+  assert.equal(p.accepted.amount, '50000');
+  assert.equal(p.accepted.payTo, 'CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww');
+
+  // Solana extra: feePayer yes, name/version no, challenge-binding fields no
+  assert.equal(p.accepted.extra.feePayer, 'PayAIFeePayer1111111111111111111111111111111');
+  assert.equal(p.accepted.extra.name, undefined, 'no EIP-712 name for Solana');
+  assert.equal(p.accepted.extra.version, undefined, 'no EIP-712 version for Solana');
+  assert.equal(p.accepted.extra.taskId, undefined, 'taskId stripped (challenge binding)');
+  assert.equal(p.accepted.extra.nonce, undefined, 'nonce stripped (challenge binding)');
+
+  // Fat fields stripped
+  assert.equal(p.accepted.maxAmountRequired, undefined, 'maxAmountRequired stripped');
+});
+
+test('toPaymentPayload SVM preserves resource URL for PayAI cataloging', () => {
+  const header = makeSvmPaymentHeader({
+    resourceUrl: 'https://api.xfuel.app/task-request',
+  });
+  const decoded = decodePaymentHeader(header);
+
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+
+  assert.ok(p.resource, 'SVM paymentPayload must have resource');
+  assert.equal(p.resource.url, 'https://api.xfuel.app/task-request');
+});
+
+test('toPaymentPayload SVM prefers opts.resource over header resource', () => {
+  const header = makeSvmPaymentHeader({
+    resourceUrl: 'https://header.example.com/resource',
+  });
+  const decoded = decodePaymentHeader(header);
+
+  const p = toPaymentPayload(decoded, {
+    resource: 'https://challenge.example.com/resource',
+    x402Version: 2,
+  });
+
+  assert.equal(p.resource.url, 'https://challenge.example.com/resource', 'opts.resource wins');
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// EVM fail-closed tests (Base must still reject garbage headers)
+// ────────────────────────────────────────────────────────────────────────────
+
+test('toPaymentPayload still throws for EVM headers missing signature/authorization', () => {
+  // Regression: EVM payments must still fail closed when signature/authorization is missing.
+  // The SVM passthrough must NOT break EVM validation.
+  const decoded = {
+    x402Version: 2,
+    accepted: { scheme: 'exact', network: 'eip155:8453', amount: '100000' },
+    payload: {},  // Empty payload — no signature, no authorization, no transaction
+  };
+
+  assert.throws(
+    () => toPaymentPayload(decoded, { x402Version: 2 }),
+    /payment header missing signature or authorization/,
+    'EVM with empty payload must fail closed'
+  );
+});
+
+test('toPaymentPayload throws for garbage EVM headers (signature but no authorization)', () => {
+  const decoded = {
+    x402Version: 2,
+    accepted: { scheme: 'exact', network: 'eip155:8453', amount: '100000' },
+    payload: { signature: '0x' + '11'.repeat(65) },  // Signature but no authorization
+  };
+
+  assert.throws(
+    () => toPaymentPayload(decoded, { x402Version: 2 }),
+    /payment header missing signature or authorization/,
+    'EVM with signature but no authorization must fail closed'
+  );
+});
+
+test('toPaymentPayload throws for garbage EVM headers (authorization but no signature)', () => {
+  const decoded = {
+    x402Version: 2,
+    accepted: { scheme: 'exact', network: 'eip155:8453', amount: '100000' },
+    payload: {
+      authorization: { from: '0xpayer', to: '0xtreasury', value: '100000' },
+      // No signature
+    },
+  };
+
+  assert.throws(
+    () => toPaymentPayload(decoded, { x402Version: 2 }),
+    /payment header missing signature or authorization/,
+    'EVM with authorization but no signature must fail closed'
+  );
+});
+
+test('toPaymentPayload throws for malformed SVM headers (empty transaction)', () => {
+  // SVM with empty/missing transaction should fall through to EVM path and fail.
+  const decoded = {
+    x402Version: 2,
+    accepted: { scheme: 'exact', network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp', amount: '50000' },
+    payload: { transaction: '' },  // Empty transaction
+  };
+
+  // Empty transaction is not SVM, so it falls through to EVM path and fails.
+  assert.throws(
+    () => toPaymentPayload(decoded, { x402Version: 2 }),
+    /payment header missing signature or authorization/,
+    'SVM with empty transaction must fail closed'
+  );
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// verifyViaFacilitator SVM integration tests
+// ────────────────────────────────────────────────────────────────────────────
+
+test('verifyViaFacilitator sends SVM payload to mock PayAI unchanged', async () => {
+  // This verifies the full flow: SVM header → toPaymentPayload passthrough → facilitator
+  let receivedPayload = null;
+  let receivedRequirements = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body);
+      receivedPayload = parsed.paymentPayload;
+      receivedRequirements = parsed.paymentRequirements;
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ isValid: true, payer: 'SolanaPayerPubkey' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    const header = makeSvmPaymentHeader({
+      transaction: 'AQAAAAAAAAAAAAAAAAAAAAABAgMEBQY=',  // Arbitrary base64
+      feePayer: 'TestFeePayer11111111111111111111111111111111',
+    });
+
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+    assert.equal(r.valid, true, 'SVM payload must verify');
+
+    // paymentPayload: SVM structure preserved
+    assert.ok(receivedPayload, 'facilitator must receive paymentPayload');
+    assert.equal(receivedPayload.x402Version, 2);
+    assert.ok(receivedPayload.payload.transaction, 'SVM transaction must reach facilitator');
+    assert.equal(receivedPayload.payload.transaction, 'AQAAAAAAAAAAAAAAAAAAAAABAgMEBQY=');
+    assert.equal(receivedPayload.payload.authorization, undefined, 'no EVM authorization');
+    assert.equal(receivedPayload.payload.signature, undefined, 'no EVM signature');
+
+    // paymentPayload.accepted: feePayer yes, name/version no
+    assert.ok(receivedPayload.accepted.extra.feePayer, 'feePayer in accepted.extra');
+    assert.equal(receivedPayload.accepted.extra.name, undefined, 'no EIP-712 name');
+    assert.equal(receivedPayload.accepted.extra.version, undefined, 'no EIP-712 version');
+
+    // paymentRequirements: Solana feePayer in extra
+    assert.ok(receivedRequirements, 'facilitator must receive paymentRequirements');
+    assert.ok(receivedRequirements.extra.feePayer, 'feePayer in requirements.extra');
+    assert.equal(receivedRequirements.extra.name, undefined, 'no EIP-712 name in requirements');
+    assert.equal(receivedRequirements.extra.version, undefined, 'no EIP-712 version in requirements');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('settleViaFacilitator sends SVM payload to mock PayAI unchanged', async () => {
+  let receivedPayload = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body);
+      receivedPayload = parsed.paymentPayload;
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ success: true, transaction: 'SolTxSig123', payer: 'SolanaPayerPubkey' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    const header = makeSvmPaymentHeader({
+      transaction: 'AQAAAAAAAAAAAAAAAAAAAAABAgMEBQY=',
+    });
+
+    const r = await settleViaFacilitator(header, { gateway: url, x402Version: 2 });
+    assert.equal(r.settled, true, 'SVM payload must settle');
+    assert.equal(r.txRef, 'SolTxSig123', 'Solana tx signature returned');
+
+    // Verify SVM payload was sent unchanged
+    assert.ok(receivedPayload.payload.transaction, 'SVM transaction must reach facilitator');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});

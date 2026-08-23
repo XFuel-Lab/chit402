@@ -41,6 +41,13 @@ export const CDP_FACILITATOR_URL = 'https://api.cdp.coinbase.com/platform/v2/x40
 /** PayAI facilitator (Solana-first, multi-network; supports v1 and v2). */
 export const PAYAI_FACILITATOR_URL = 'https://facilitator.payai.network';
 
+/**
+ * PayAI Solana feePayer — the account that pays transaction fees for USDC transfers.
+ * From PayAI GET /supported: extra.feePayer for solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp.
+ * Override via X402_SOLANA_FEE_PAYER env for custom facilitators.
+ */
+export const PAYAI_DEFAULT_FEE_PAYER = 'CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww';
+
 // ════════════════════════════════════════════════════════════════════════════════
 // Network type detection
 // ════════════════════════════════════════════════════════════════════════════════
@@ -292,18 +299,20 @@ export function fromCaip2Network(network) {
  * Get USDC token info for a network.
  *
  * For EVM networks: returns asset address + EIP-712 domain (name, version).
- * For Solana networks: returns asset (mint address) only — no EIP-712 domain.
+ * For Solana networks: returns asset (mint address) + feePayer — no EIP-712 domain.
  *
  * @param {string} network - Short name or CAIP-2 identifier
- * @returns {{ asset: string|null, name?: string, version?: string }}
+ * @returns {{ asset: string|null, name?: string, version?: string, feePayer?: string }}
  */
 export function usdcFor(network) {
   const shortNet = fromCaip2Network(network);
   const known = USDC_NETWORKS[shortNet] || {};
   // Solana: no EIP-712 domain — PayAI handles Ed25519 signatures natively.
+  // feePayer is required by @x402/svm ExactSvmScheme — PayAI's facilitator pays tx fees.
   if (isSolanaNetwork(shortNet)) {
     return {
       asset: process.env.X402_SOLANA_ASSET_ADDRESS || known.asset || null,
+      feePayer: process.env.X402_SOLANA_FEE_PAYER || PAYAI_DEFAULT_FEE_PAYER,
     };
   }
   // EVM: include EIP-712 domain for EIP-3009 signature verification.
@@ -336,32 +345,46 @@ export function catalogResourceUrl(resource) {
 
 /**
  * Build the x402 `PaymentRequirements` object the facilitator validates against.
- * The `asset`/`extra` (EIP-712 name+version) must match what the payer signed.
+ * The `asset`/`extra` must match what the payer signed.
+ *
+ * For EVM networks: `extra` contains EIP-712 domain { name, version }.
+ * For Solana networks: `extra` contains { feePayer } — PayAI's transaction fee payer.
  *
  * v1 (XFuel SDK / ZAN): includes `maxAmountRequired`, `resource`, `description`,
  * `mimeType`, `outputSchema` per the ZAN/testnet schema.
  *
  * v2 (CDP-native like Bankr): per x402 spec section 5.1.2, PaymentRequirements has:
  *   - scheme (string)
- *   - network (CAIP-2, e.g. eip155:8453)
+ *   - network (CAIP-2, e.g. eip155:8453 or solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp)
  *   - amount (string, atomic units) — NOT maxAmountRequired
  *   - asset (string)
  *   - payTo (string)
  *   - maxTimeoutSeconds (number)
- *   - extra (optional, for exact EVM: { name, version })
+ *   - extra (optional, for EVM: { name, version }, for Solana: { feePayer })
  * v2 does NOT have: maxAmountRequired, resource, description, mimeType, outputSchema.
  *
  * @param {1|2} [opts.x402Version=1] - Protocol version; v2 uses `amount` + CAIP-2 network
+ * @param {string} [opts.feePayer] - Override feePayer for Solana (from challenge or PayAI /supported)
  */
 export function toPaymentRequirements({
   network, amount, payTo, resource, taskId, maxTimeoutSeconds, description, outputSchema,
   x402Version = 1,
+  feePayer: feePayerOverride,
 } = {}) {
   const shortNet = fromCaip2Network(network);
-  const { asset, name, version } = usdcFor(shortNet);
+  const usdcInfo = usdcFor(shortNet);
+  const { asset, name, version, feePayer: defaultFeePayer } = usdcInfo;
   // For v2 (CDP-native), use CAIP-2 network to match what the payer signed.
   // For v1 (XFuel SDK / ZAN), use short form for backward compatibility.
   const wireNetwork = x402Version === 2 ? toCaip2Network(network) : shortNet;
+
+  // Build network-appropriate extra field:
+  // - Solana: { feePayer } — required by @x402/svm, PayAI facilitator pays tx fees
+  // - EVM: { name, version } — EIP-712 domain for EIP-3009 signature verification
+  const isSolana = isSolanaNetwork(shortNet);
+  const extra = isSolana
+    ? { feePayer: feePayerOverride || defaultFeePayer }
+    : { name, version };
 
   // v2 (CDP-native): minimal spec shape — `amount`, no v1 discovery fields.
   // Per https://github.com/coinbase/x402/blob/main/specs/x402-specification-v2.md 5.1.2/7.1
@@ -373,7 +396,7 @@ export function toPaymentRequirements({
       asset,
       payTo,
       maxTimeoutSeconds: Number(maxTimeoutSeconds) || 120,
-      extra: { name, version },
+      extra,
     };
   }
 
@@ -388,23 +411,40 @@ export function toPaymentRequirements({
     payTo,
     maxTimeoutSeconds: Number(maxTimeoutSeconds) || 120,
     asset,
-    extra: { name, version },
+    extra,
   };
   if (outputSchema) req.outputSchema = outputSchema;
   return req;
 }
 
 /**
+ * True if decoded blob is an SVM (Solana) payment with a partially-signed transaction.
+ * SVM payments use { transaction: "<base64 versioned tx>" } instead of EVM's { authorization, signature }.
+ * @x402/svm ExactSvmScheme produces this shape; PayAI /verify and /settle accept it unchanged.
+ */
+function isSvmPaymentPayload(decoded) {
+  // SVM v2: { payload: { transaction: "..." } } or { transaction: "..." }
+  const tx = decoded?.payload?.transaction || decoded?.transaction;
+  return typeof tx === 'string' && tx.length > 0;
+}
+
+/**
  * Translate the payment blob → standard x402 `PaymentPayload`.
- * Accepts both v1 (X-PAYMENT / XFuel SDK) and v2 (PAYMENT-SIGNATURE / CDP-native) headers.
+ * Accepts v1 (X-PAYMENT / XFuel SDK), v2 (PAYMENT-SIGNATURE / CDP-native), and SVM (Solana) headers.
  *
  * v1 (XFuel SDK) shape - needs reshape for ZAN/testnet facilitator:
  *   { authorization: { message: { from, to, ... }, signature }, ... }
  *   → Output: { x402Version, scheme, network, payload: { signature, authorization } }
  *
- * v2 (CDP-native) shape - already spec-compliant, preserve structure:
+ * v2 (CDP-native EVM) shape - already spec-compliant, preserve structure:
  *   { x402Version: 2, accepted: { scheme, network, ... }, payload: { signature, authorization }, resource?, ... }
  *   → Output: preserve with `accepted` (NOT top-level scheme/network) per CDP v2 schema.
+ *
+ * SVM (Solana) shape - passthrough to PayAI unchanged:
+ *   { x402Version: 2, accepted: { scheme, network, ... }, payload: { transaction: "<base64>" }, ... }
+ *   → Output: preserve structure; PayAI /verify and /settle accept it directly.
+ *   The `transaction` field is a base64-encoded partially-signed Solana versioned transaction.
+ *   @x402/svm ExactSvmScheme produces this; do NOT try to extract authorization/signature.
  *
  * CDP v2 /verify rejects PaymentPayload with top-level `scheme`/`network`:
  *   400 'paymentPayload'_is_invalid:_must_match_one_of_[x402V2PaymentPayload...
@@ -419,6 +459,49 @@ export function toPaymentRequirements({
  */
 export function toPaymentPayload(decoded, { network, resource, extensions, x402Version = 1 } = {}) {
   if (!decoded) throw new Error('x402: payment header could not be decoded');
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // SVM (Solana) passthrough: { payload: { transaction: "<base64>" } }
+  // @x402/svm clients send a partially-signed versioned transaction that PayAI
+  // /verify and /settle accept unchanged. Do NOT try to extract authorization.
+  // Per x402 SVM spec, the transaction blob IS the payment — forward it as-is.
+  // ────────────────────────────────────────────────────────────────────────────
+  if (isSvmPaymentPayload(decoded) && x402Version === 2) {
+    const acceptedFromHeader = decoded.accepted || {};
+
+    // Slim `accepted` to spec fields only — same as EVM path but no EIP-712 domain.
+    // Solana extra has feePayer, not name/version.
+    const incomingExtra = acceptedFromHeader.extra || {};
+    const slimAccepted = {
+      scheme: acceptedFromHeader.scheme,
+      network: network || acceptedFromHeader.network,
+      amount: acceptedFromHeader.amount,
+      asset: acceptedFromHeader.asset,
+      payTo: acceptedFromHeader.payTo,
+      maxTimeoutSeconds: acceptedFromHeader.maxTimeoutSeconds,
+      // Solana: forward feePayer (from PayAI /supported or challenge); no name/version.
+      extra: incomingExtra.feePayer ? { feePayer: incomingExtra.feePayer } : {},
+    };
+
+    // Payload is the transaction blob — forward unchanged.
+    const result = {
+      x402Version: 2,
+      accepted: slimAccepted,
+      payload: decoded.payload,  // { transaction: "<base64>" }
+    };
+
+    // Resource for PayAI cataloging (same pattern as EVM).
+    const resourceUrl = catalogResourceUrl(resource) || catalogResourceUrl(decoded.resource);
+    if (resourceUrl) {
+      const decodedRes = (typeof decoded.resource === 'object') ? decoded.resource : {};
+      result.resource = { ...decodedRes, url: resourceUrl };
+    }
+    const ext = (extensions && typeof extensions === 'object')
+      ? extensions
+      : (decoded.extensions && typeof decoded.extensions === 'object' ? decoded.extensions : null);
+    if (ext) result.extensions = ext;
+    return result;
+  }
 
   // CDP-native v2: the header is already a spec-shaped PaymentPayload with
   // { accepted: { scheme, network, ... }, payload: { authorization, signature }, ... }.
@@ -443,18 +526,25 @@ export function toPaymentPayload(decoded, { network, resource, extensions, x402V
     const acceptedFromHeader = decoded.accepted || {};
 
     // Slim `accepted` to spec fields only: scheme, network, amount, asset, payTo,
-    // maxTimeoutSeconds, extra (only name+version for EIP-712 domain). Remove
-    // maxAmountRequired and challenge-binding extra fields (taskId, expiresAt, nonce).
+    // maxTimeoutSeconds, extra. Remove maxAmountRequired and challenge-binding
+    // extra fields (taskId, expiresAt, nonce).
+    // EVM: extra contains EIP-712 domain { name, version }.
+    // Solana: extra contains { feePayer } — PayAI's transaction fee payer.
     const incomingExtra = acceptedFromHeader.extra || {};
+    const acceptedNetwork = network || acceptedFromHeader.network;
+    const isSolanaAccepted = isSolanaNetwork(acceptedNetwork);
     const slimAccepted = {
       scheme: acceptedFromHeader.scheme,
-      network: network || acceptedFromHeader.network,
+      network: acceptedNetwork,
       amount: acceptedFromHeader.amount,
       asset: acceptedFromHeader.asset,
       payTo: acceptedFromHeader.payTo,
       maxTimeoutSeconds: acceptedFromHeader.maxTimeoutSeconds,
-      // Only forward EIP-712 domain fields; drop taskId/expiresAt/nonce (challenge binding).
-      extra: { name: incomingExtra.name, version: incomingExtra.version },
+      // Network-appropriate extra: feePayer for Solana, name+version for EVM.
+      // Drop taskId/expiresAt/nonce (challenge binding) for both.
+      extra: isSolanaAccepted
+        ? (incomingExtra.feePayer ? { feePayer: incomingExtra.feePayer } : {})
+        : { name: incomingExtra.name, version: incomingExtra.version },
     };
 
     // Normalize authorization fields (Bankr float-string fix):
@@ -505,7 +595,10 @@ export function toPaymentPayload(decoded, { network, resource, extensions, x402V
   }
 
   if (!signature || !msg || !msg.from) {
-    throw new Error('x402: payment header missing signature or authorization');
+    // This branch is for EVM payments (EIP-3009). SVM payments with { transaction }
+    // are handled earlier by isSvmPaymentPayload(). If we reach here with neither
+    // EVM authorization nor SVM transaction, the payment header is malformed.
+    throw new Error('x402: payment header missing signature or authorization (EVM) or transaction (SVM)');
   }
 
   const wireVersion = x402Version === 2 ? 2 : 1;
@@ -699,6 +792,9 @@ async function callFacilitator(path, { gateway, apiKey, body, timeoutMs }) {
  * valid requirements from the decoded blob — otherwise the facilitator gets
  * undefined values and returns HTTP 400. Per Section 3.5.
  *
+ * For Solana payments, forward feePayer from the challenge or decoded.accepted.extra
+ * to toPaymentRequirements so PayAI /verify receives it.
+ *
  * @param {Object|null} challenge - Bound challenge from the store
  * @param {Object|null} decoded - Decoded payment header blob
  * @param {1|2} [x402Version=1] - Protocol version; v2 preserves CAIP-2 network
@@ -709,6 +805,8 @@ function requirementsFrom(challenge, decoded, x402Version = 1) {
   const network = challenge?.network || accepted.network || decoded?.network;
   const amount = challenge?.amount ?? accepted.amount ?? decoded?.amount;
   const payTo = challenge?.payTo ?? accepted.payTo ?? decoded?.payTo;
+  // Solana: forward feePayer from challenge (stored from 402 issue) or incoming blob.
+  const feePayer = challenge?.feePayer ?? accepted.extra?.feePayer;
 
   return toPaymentRequirements({
     network,
@@ -719,6 +817,7 @@ function requirementsFrom(challenge, decoded, x402Version = 1) {
     description: challenge?.description,
     outputSchema: challenge?.outputSchema,
     x402Version,
+    feePayer,  // Solana-only; ignored by EVM path (uses name/version from usdcFor)
   });
 }
 
