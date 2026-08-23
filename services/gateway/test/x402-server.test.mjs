@@ -321,9 +321,18 @@ test('handshake surfaces facilitator rejection (→ caller falls back to TFUEL)'
   }
 });
 
-test('gateway_not_configured is reported (? caller returns 503)', async () => {
-  const cfg = cfgFor(null, { gatewayUrl: null, apiKey: null });
-  const reqPay = { headers: { 'x-payment': 'BLOB', 'x-payment-nonce': 'x' }, body: {} };
+test('gateway_not_configured is reported (→ caller returns 503)', async () => {
+  // The gateway configuration check happens after challenge binding is verified.
+  // So to test gateway_not_configured, we need a valid nonce that exists in the store.
+  // We do this by first getting a 402 challenge (which stores the nonce), then
+  // using that nonce in a payment request with a misconfigured gateway.
+  const cfg = cfgFor(null, { gatewayUrl: null, apiKey: null, facilitatorProvider: 'zan' });
+  const reqNoPayment = { headers: {}, body: {} };
+  const challenge = await runX402Handshake(reqNoPayment, { taskId: 't', cfg });
+  assert.equal(challenge.kind, 'challenge', 'should get 402 challenge first');
+  const nonce = challenge.body.accepts[0].extra.nonce;
+
+  const reqPay = { headers: { 'x-payment': 'BLOB', 'x-payment-nonce': nonce }, body: {} };
   const decision = await runX402Handshake(reqPay, { taskId: 't', cfg });
   assert.equal(decision.kind, 'failed');
   assert.equal(decision.reason, 'gateway_not_configured');
