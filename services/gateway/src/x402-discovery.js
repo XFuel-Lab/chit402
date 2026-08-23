@@ -4,14 +4,20 @@ import { defaultFacilitatorUrlForNetwork, PAYAI_FACILITATOR_URL, PAYAI_DEFAULT_F
 import { describePricing } from './pricing.js';
 
 /**
- * x402 Bazaar discovery manifest.
+ * x402 discovery documents.
  *
- * Served at `GET /.well-known/x402`. Describes the paid resources:
- * - `POST /v1/chat/completions` — OpenAI-compatible chat (recommended for agent callers)
- * - `POST /task-request` — M2M task request (lower-level, returns task_id for polling)
+ * - `GET /.well-known/x402` — CDP Bazaar / agent manifest (`buildX402Manifest`).
+ * - `GET /openapi.json` — x402scan OpenAPI 3.1 (`buildOpenApiSpec`). x402scan
+ *   ignores `/.well-known/x402` and registers from this document.
  *
- * Dual-network support (2026-08-23): when X402_SOLANA_ENABLED, advertises
- * both Base (CDP facilitator) and Solana (PayAI facilitator) payment options.
+ * Paid resources (chat first — that is the public door):
+ * - `POST /v1/chat/completions` — OpenAI-compatible chat (recommended for agents)
+ * - `POST /task-request` — M2M task request (lower-level, returns task_id)
+ *
+ * Dual-network support (2026-08-23): when X402_SOLANA_ENABLED, the bazaar
+ * manifest advertises Base (CDP) and Solana (PayAI). OpenAPI `x-payment-info`
+ * stays `{ protocols: [{ x402: {} }] }` + decimal USD; runtime 402 `accepts[].amount`
+ * remains USDC base units (`10000` = $0.01).
  *
  * Cataloging itself happens when CDP settles a payment that carries
  * `paymentPayload.resource` + `extensions.bazaar` — see docs/X402_ADAPTER.md.
@@ -256,4 +262,103 @@ export function buildX402Manifest(baseUrl = '') {
   };
 }
 
-export default { buildX402Manifest };
+/**
+ * x402scan / AgentCash discovery document (OpenAPI 3.1).
+ *
+ * Decimal USD in `x-payment-info.price.amount` (`"0.01"`). Runtime 402
+ * `accepts[].amount` stays atomic USDC (`"10000"`). Do not swap those encodings.
+ *
+ * @param {string} baseUrl  resolved public base URL; '' → omit `servers`
+ */
+export function buildOpenApiSpec(baseUrl = '') {
+  const base = baseUrl ? String(baseUrl).replace(/\/$/, '') : '';
+  const x = config.x402;
+  const solanaEnabled = x.solana?.enabled && x.solana?.payTo;
+  const ownershipProofs = [x.payTo, solanaEnabled ? x.solana.payTo : null].filter(Boolean);
+
+  const paymentInfo = {
+    price: { mode: 'fixed', currency: 'USD', amount: '0.01' },
+    protocols: [{ x402: {} }],
+  };
+
+  const chatPost = {
+    operationId: 'chatCompletions',
+    summary: 'OpenAI-compatible chat completions (public x402 door)',
+    description:
+      'Pay per request in USDC (x402, exact scheme). Returns a standard OpenAI '
+      + 'chat.completion plus an XFuel receipt with verify_url. Unauthenticated '
+      + 'calls receive HTTP 402 before body validation. Demo key xfuel-demo skips payment.',
+    tags: ['Chat'],
+    'x-payment-info': paymentInfo,
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': { schema: CHAT_COMPLETIONS_INPUT_SCHEMA },
+      },
+    },
+    responses: {
+      200: {
+        description: 'Chat completion with XFuel receipt',
+        content: {
+          'application/json': { schema: CHAT_COMPLETIONS_OUTPUT_SCHEMA },
+        },
+      },
+      402: { description: 'Payment Required' },
+    },
+  };
+
+  const taskPost = {
+    operationId: 'taskRequest',
+    summary: 'M2M verifiable inference task (lower-level)',
+    description:
+      'Submit a verifiable AI inference task. Returns task_id for polling. '
+      + 'Agents should prefer POST /v1/chat/completions.',
+    tags: ['Tasks'],
+    'x-payment-info': paymentInfo,
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': { schema: TASK_REQUEST_INPUT_SCHEMA },
+      },
+    },
+    responses: {
+      200: {
+        description: 'Task accepted',
+        content: {
+          'application/json': { schema: TASK_REQUEST_OUTPUT_SCHEMA },
+        },
+      },
+      402: { description: 'Payment Required' },
+    },
+  };
+
+  const spec = {
+    openapi: '3.1.0',
+    info: {
+      title: 'XFuel',
+      version: '1.0.0',
+      description:
+        'XFuel is the crypto control plane for AI compute: settle in USDC on Base (x402), '
+        + 'route across pluggable providers, return tiered proof receipts.',
+      'x-guidance':
+        'Use POST /v1/chat/completions with an OpenAI-compatible JSON body '
+        + '({ model, messages }). Unauthenticated callers get HTTP 402 with x402 '
+        + 'payment requirements (USDC, $0.01 floor; Base and Solana when enabled). '
+        + 'Retry with X-PAYMENT or PAYMENT-SIGNATURE. Demo key xfuel-demo skips '
+        + 'payment. POST /task-request is a lower-level M2M alternative that returns '
+        + 'task_id for polling — do not treat it as the public door.',
+    },
+    'x-discovery': {
+      ownershipProofs,
+    },
+    paths: {
+      '/v1/chat/completions': { post: chatPost },
+      '/task-request': { post: taskPost },
+    },
+  };
+
+  if (base) spec.servers = [{ url: base }];
+  return spec;
+}
+
+export default { buildX402Manifest, buildOpenApiSpec };

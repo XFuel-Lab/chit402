@@ -28,7 +28,7 @@ import {
 } from './rolling-settlement.js';
 import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, proofOutcomeOf } from './receipt.js';
 import { buildValidationRecord } from './erc8004.js';
-import { buildX402Manifest } from './x402-discovery.js';
+import { buildX402Manifest, buildOpenApiSpec } from './x402-discovery.js';
 import { buildPaymentChallenge } from './x402-adapter.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
@@ -253,9 +253,12 @@ const LLMS_TXT = `# XFuel Protocol
 - submit_inference = POST /task-request (paid, 402 without a payer).
 - pay_with_usdc is only listed if XFUEL_PAYER_PRIVATE_KEY is set.
 
-## Discovery (x402 Bazaar)
+## Discovery (x402scan + Bazaar)
 
-- GET  /.well-known/x402  : paid resource is POST /task-request only. /v1 is not listed.
+- GET  /openapi.json      : OpenAPI 3.1 with x-payment-info. Public door is POST /v1/chat/completions.
+- GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
+- POST /v1/chat/completions : paid. Unauth → 402 (even on {}). Demo key xfuel-demo skips payment.
+- POST /task-request      : lower-level M2M paid route (not the public door).
 
 ## SDK
 
@@ -1847,6 +1850,18 @@ export function createApp() {
     }
   });
 
+  // GET /openapi.json — x402scan OpenAPI-first discovery (public, no auth).
+  // x402scan ignores /.well-known/x402 and registers from this document.
+  app.get('/openapi.json', rateLimit, (req, res) => {
+    try {
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+      res.json(buildOpenApiSpec(baseUrl));
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /openapi.json error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
   // ═══════════════════════════════════════════════════════════════════════
   // GET /health — Server health and aggregate metrics
   // ═══════════════════════════════════════════════════════════════════════
@@ -2005,7 +2020,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /.well-known/x402, GET /v1/models, GET /v1/models/:id, POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /.well-known/x402, GET /openapi.json, GET /v1/models, GET /v1/models/:id, POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 
