@@ -49,6 +49,33 @@ export const PAYAI_FACILITATOR_URL = 'https://facilitator.payai.network';
 export const PAYAI_DEFAULT_FEE_PAYER = 'CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww';
 
 // ════════════════════════════════════════════════════════════════════════════════
+// Facilitator timeouts by network
+//
+// Solana facilitators (Dexter, PayAI) do on-chain simulation before returning,
+// which can take 30-60s under load. EVM facilitators (CDP) are faster.
+// Per 2026-08-23 bugfix: 15s was too short for Solana /verify.
+// ════════════════════════════════════════════════════════════════════════════════
+
+/** Facilitator timeout configuration (ms). */
+export const FACILITATOR_TIMEOUTS = {
+  evm: { verify: 15000, settle: 30000 },
+  solana: { verify: 45000, settle: 45000 },
+};
+
+/**
+ * Get the appropriate timeout for a facilitator call based on network.
+ * @param {'verify'|'settle'} operation
+ * @param {string} network - Network identifier (short name or CAIP-2)
+ * @returns {number} Timeout in milliseconds
+ */
+export function facilitatorTimeout(operation, network) {
+  const timeouts = isSolanaNetwork(network)
+    ? FACILITATOR_TIMEOUTS.solana
+    : FACILITATOR_TIMEOUTS.evm;
+  return timeouts[operation] || FACILITATOR_TIMEOUTS.evm.verify;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
 // Network type detection
 // ════════════════════════════════════════════════════════════════════════════════
 
@@ -858,9 +885,13 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
       : 'payment_payload_invalid';
     return { valid: false, reason };
   }
+  // Network-aware timeout: Solana facilitators (Dexter, PayAI) do on-chain
+  // simulation and need longer timeouts than EVM/CDP. Per 2026-08-23 bugfix.
+  const verifyTimeoutMs = facilitatorTimeout('verify', paymentRequirements.network);
+  const t0 = Date.now();
   try {
     const { ok, status, data, elapsedMs, extensionResponses } = await callFacilitator('/verify', {
-      gateway, apiKey, timeoutMs: 15000,
+      gateway, apiKey, timeoutMs: verifyTimeoutMs,
       body: { x402Version: wireVersion, paymentPayload, paymentRequirements },
     });
     if (!ok) {
@@ -914,7 +945,21 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
     }
     return { valid: !!data.isValid, payer: data.payer || null, reason: data.invalidReason };
   } catch (err) {
-    logger.warn({ err: err.message }, 'x402 facilitator verify failed');
+    // Log gateway host (not secrets), elapsedMs, and network for debugging.
+    // Per 2026-08-23 bugfix: previous catch only logged err.message.
+    const elapsedMs = Date.now() - t0;
+    let gatewayHost = null;
+    try { gatewayHost = new URL(gateway).host; } catch { /* invalid URL */ }
+    logger.warn(
+      {
+        err: err.message,
+        gatewayHost,
+        elapsedMs,
+        timeoutMs: verifyTimeoutMs,
+        network: paymentRequirements.network,
+      },
+      'x402 facilitator verify failed',
+    );
     return { valid: false, reason: 'facilitator_error' };
   }
 }
@@ -948,9 +993,13 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
       : 'payment_payload_invalid';
     return { settled: false, reason };
   }
+  // Network-aware timeout: Solana facilitators (Dexter, PayAI) do on-chain
+  // simulation and need longer timeouts than EVM/CDP. Per 2026-08-23 bugfix.
+  const settleTimeoutMs = facilitatorTimeout('settle', paymentRequirements.network);
+  const t0 = Date.now();
   try {
     const { ok, status, data, elapsedMs, extensionResponses } = await callFacilitator('/settle', {
-      gateway, apiKey, timeoutMs: 30000,
+      gateway, apiKey, timeoutMs: settleTimeoutMs,
       body: { x402Version: wireVersion, paymentPayload, paymentRequirements },
     });
     if (!ok) {
@@ -999,7 +1048,21 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
       bazaarStatus: extensionResponses?.bazaar?.status || null,
     };
   } catch (err) {
-    logger.warn({ err: err.message }, 'x402 facilitator settle failed');
+    // Log gateway host (not secrets), elapsedMs, and network for debugging.
+    // Per 2026-08-23 bugfix: previous catch only logged err.message.
+    const elapsedMs = Date.now() - t0;
+    let gatewayHost = null;
+    try { gatewayHost = new URL(gateway).host; } catch { /* invalid URL */ }
+    logger.warn(
+      {
+        err: err.message,
+        gatewayHost,
+        elapsedMs,
+        timeoutMs: settleTimeoutMs,
+        network: paymentRequirements.network,
+      },
+      'x402 facilitator settle failed',
+    );
     return { settled: false, reason: 'facilitator_error' };
   }
 }

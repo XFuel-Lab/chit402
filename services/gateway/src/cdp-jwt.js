@@ -65,8 +65,39 @@ export function generateCdpJwt({
 }
 
 /**
+ * CDP host patterns. CDP JWT should ONLY be minted for these hosts.
+ * Other facilitators (Dexter, PayAI) do not accept CDP JWTs.
+ */
+const CDP_HOST_PATTERNS = [
+  'api.cdp.coinbase.com',
+  /\.cdp\.coinbase\.com$/,
+];
+
+/**
+ * True if the host is a Coinbase CDP host that accepts CDP JWTs.
+ * @param {string} host - hostname (e.g. 'api.cdp.coinbase.com', 'x402.dexter.cash')
+ * @returns {boolean}
+ */
+export function isCdpHost(host) {
+  if (!host || typeof host !== 'string') return false;
+  const h = host.toLowerCase();
+  for (const pattern of CDP_HOST_PATTERNS) {
+    if (typeof pattern === 'string' && h === pattern) return true;
+    if (pattern instanceof RegExp && pattern.test(h)) return true;
+  }
+  return false;
+}
+
+/**
  * Resolve Authorization bearer for a facilitator request.
- * Preference: CDP JWT (when CDP_API_KEY_ID/SECRET set) → static apiKey → null.
+ *
+ * CDP JWT is ONLY minted when:
+ *   1. CDP_API_KEY_ID and CDP_API_KEY_SECRET are set, AND
+ *   2. The target URL host is a CDP host (api.cdp.coinbase.com or *.cdp.coinbase.com)
+ *
+ * For non-CDP facilitators (Dexter, PayAI, etc.), returns the static apiKey if
+ * provided, otherwise null. Sending a CDP JWT to non-CDP facilitators is incorrect
+ * and may cause them to reject or mishandle the request.
  *
  * @param {{ apiKey?: string|null, method: string, url: string }} opts
  * @returns {Promise<string|null>}
@@ -74,8 +105,12 @@ export function generateCdpJwt({
 export async function resolveFacilitatorBearer({ apiKey, method, url } = {}) {
   const id = process.env.CDP_API_KEY_ID || null;
   const secret = process.env.CDP_API_KEY_SECRET || null;
-  if (id && secret) {
-    const u = new URL(url);
+  const u = new URL(url);
+
+  // Only mint CDP JWT for CDP hosts. Per 2026-08-23 bugfix:
+  // Sending a CDP JWT to Dexter/PayAI is incorrect — they don't accept it,
+  // and the signed host in the JWT doesn't match Coinbase's expected audience.
+  if (id && secret && isCdpHost(u.host)) {
     return generateCdpJwt({
       apiKeyId: id,
       apiKeySecret: secret,
@@ -84,5 +119,7 @@ export async function resolveFacilitatorBearer({ apiKey, method, url } = {}) {
       requestPath: u.pathname,
     });
   }
+
+  // Non-CDP facilitator: use explicit apiKey if provided, otherwise no auth.
   return apiKey || null;
 }
