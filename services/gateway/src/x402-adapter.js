@@ -424,11 +424,10 @@ export function buildPaymentChallenge(p, opts = {}) {
   const solanaEnabled = p.solana?.enabled && p.solana?.payTo;
   const description = p.description || (solanaEnabled
     ? 'OpenAI-compatible paid inference via x402 USDC; accepts Base (primary) and Solana. ' +
-      'Returns a signed receipt + verify_url. Unmetered OpenAI path is POST /v1/chat/completions. ' +
+      'POST /v1/chat/completions is the recommended surface. Returns signed receipt + verify_url. ' +
       'Paying this host is real mainnet USDC.'
-    : 'OpenAI-compatible paid inference on Base USDC via x402; returns a signed receipt + verify_url. ' +
-      'Unmetered OpenAI path is POST /v1/chat/completions (not this resource). ' +
-      'Paying this host is real Base mainnet USDC.');
+    : 'OpenAI-compatible paid inference on Base USDC via x402. POST /v1/chat/completions is the ' +
+      'recommended surface. Returns a signed receipt + verify_url. Paying this host is real Base mainnet USDC.');
 
   const includeBazaar = p.includeBazaar !== false;
   // When Solana is enabled, use the Solana example body for PayAI discoverability.

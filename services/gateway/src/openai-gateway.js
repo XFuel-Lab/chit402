@@ -19,7 +19,7 @@ import {
 } from './edgecloud-infer.js';
 import { inferAkashML, akashmlApiKey } from './akashml-infer.js';
 import { normalizeUsage, messagesToText } from './usage.js';
-import { runX402Handshake } from './x402-server.js';
+import { runX402Handshake, extractPaymentHeader } from './x402-server.js';
 import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
@@ -63,7 +63,7 @@ function clampMaxTokens(requested) {
   return Math.min(n, MAX_TOKENS_CAP);
 }
 
-// ─── x402 metering for /v1 (opt-in) ──────────────────────────────────────────
+// ─── x402 metering for /v1 ───────────────────────────────────────────────────
 
 /**
  * The demo key and any explicitly listed key skip payment. Without this,
@@ -76,6 +76,30 @@ function meteringExempt(req) {
   if (!key) return false;
   if (key === (process.env.M2M_DEMO_API_KEY || 'xfuel-demo')) return true;
   return (config.x402?.meterV1ExemptKeys || []).includes(key);
+}
+
+/**
+ * Send a 402 with PAYMENT-REQUIRED header (CDP Bazaar / validate require this).
+ * Shapes the body for both x402 clients (reads `accepts`) and OpenAI clients
+ * (reads `error.message`).
+ */
+function sendV1PaymentRequired(res, body, headers = {}) {
+  const pr = headers['PAYMENT-REQUIRED']
+    || Buffer.from(JSON.stringify(body), 'utf8').toString('base64');
+  res.set('PAYMENT-REQUIRED', pr);
+  const exposed = res.get('Access-Control-Expose-Headers') || '';
+  if (!/PAYMENT-REQUIRED/i.test(exposed)) {
+    res.set('Access-Control-Expose-Headers',
+      exposed ? `${exposed}, PAYMENT-REQUIRED` : 'PAYMENT-REQUIRED');
+  }
+  return res.status(402).json({
+    ...body,
+    error: {
+      message: 'Payment required. Retry with an X-PAYMENT or PAYMENT-SIGNATURE header for the amount in `accepts[0]`.',
+      type: 'payment_required',
+      code: 'payment_required',
+    },
+  });
 }
 
 /**
@@ -98,32 +122,41 @@ function meteringExempt(req) {
  * @returns {Promise<{halted:boolean, payment?:{ref:string, amount:string}|null}>}
  *   `halted` → a 402 has already been written; the handler must return.
  */
-async function meterV1Request(req, res, { taskId }) {
-  if (!config.x402?.meterV1 || !config.x402?.enabled) return { halted: false, payment: null };
+async function meterV1Request(req, res, { taskId, isAuthorised = null } = {}) {
+  // When isAuthorised is passed, we use it to determine if the request is exempt.
+  // Otherwise, fall back to the config-gated behavior for backward compat.
+  const useIsAuth = typeof isAuthorised === 'function';
+  if (!useIsAuth) {
+    // Legacy config-gated path
+    if (!config.x402?.meterV1 || !config.x402?.enabled) return { halted: false, payment: null };
+  } else {
+    // x402 must be enabled for paid requests
+    if (!config.x402?.enabled) return { halted: false, payment: null };
+  }
+  // Demo key and explicitly exempt keys always free
   if (meteringExempt(req)) return { halted: false, payment: null };
+  // A request with an explicit key that passes authorization is free.
+  // Open mode (no M2M_API_KEYS configured) does NOT bypass payment - the caller
+  // must present a valid key. This separates dev convenience from production billing.
+  if (useIsAuth) {
+    const key = req.headers['x-api-key']
+      || (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (key && isAuthorised(req)) return { halted: false, payment: null };
+  }
+  // No valid auth and not exempt → must pay
 
   const body = { ...(req.body || {}) };
   if (body.max_tokens != null || MAX_TOKENS_CAP > 0) body.max_tokens = clampMaxTokens(body.max_tokens);
 
-  const decision = await runX402Handshake(req, { taskId, body });
+  const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+  const decision = await runX402Handshake(req, { taskId, body, baseUrl });
 
   if (decision.kind === 'settled') {
     return { halted: false, payment: { ref: decision.paymentRef, amount: decision.settledAmount } };
   }
 
   if (decision.kind === 'challenge') {
-    // One body serving two clients: an x402 caller reads `accepts`, an OpenAI
-    // client reads `error.message`. The spec's `error` is an informational
-    // string, so shaping it as an OpenAI error object costs the x402 caller
-    // nothing and makes the failure legible to everyone else.
-    res.status(402).json({
-      ...decision.body,
-      error: {
-        message: 'Payment required. Retry with an X-PAYMENT header for the amount in `accepts[0]`.',
-        type: 'payment_required',
-        code: 'payment_required',
-      },
-    });
+    sendV1PaymentRequired(res, decision.body);
     return { halted: true };
   }
 
@@ -909,10 +942,19 @@ function priceForCatalogModel(m) {
   return publishedPrice(m.id, rateForModel(m));
 }
 
-export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
-  const chain = [openAiErrorShape, bearerToApiKey, rateLimit, authenticate].filter(Boolean);
+export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorised } = {}) {
+  // Base middleware chain for all /v1 routes (no auth — that's route-specific)
+  const baseChain = [openAiErrorShape, bearerToApiKey, rateLimit].filter(Boolean);
+  // Routes that require authentication use the full chain
+  const authChain = [...baseChain, authenticate].filter(Boolean);
 
-  app.use('/v1', ...chain);
+  // /v1/chat/completions: NO auth middleware — handled inline (402 for unauth, free for demo key)
+  // Other /v1 routes: auth middleware applies normally
+  app.use('/v1/models', ...authChain);
+  app.use('/v1/images', ...authChain);
+  app.use('/v1/audio', ...authChain);
+  // Base chain for /v1/chat/completions (no authenticate)
+  app.use('/v1/chat', ...baseChain);
 
   // ── GET /v1/models ───────────────────────────────────────────────────────
   app.get('/v1/models', async (req, res) => {
@@ -1017,10 +1059,12 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate } = {}) {
 
     // Charge before serving. The task id is minted here so the 402 challenge and
     // the receipt name the same resource.
+    // Unauthenticated requests → 402 with both Base + Solana accepts.
+    // Demo key (xfuel-demo) and valid API keys → free.
     const taskId = `openai-${crypto.randomUUID()}`;
     let metering;
     try {
-      metering = await meterV1Request(req, res, { taskId });
+      metering = await meterV1Request(req, res, { taskId, isAuthorised });
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /v1/chat/completions metering error');
       return res.status(500).json({ error: { message: 'payment processing failed', type: 'server_error', code: null } });

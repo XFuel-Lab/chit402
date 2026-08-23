@@ -1998,7 +1998,7 @@ export function createApp() {
   // Shares the rate-limit + auth middleware (accepts Authorization: Bearer).
   // ═══════════════════════════════════════════════════════════════════════
 
-  registerOpenAIRoutes(app, { rateLimit, authenticate });
+  registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorised });
 
   // ── 404 fallback ────────────────────────────────────────────────────────
 

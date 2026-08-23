@@ -6,10 +6,9 @@ import { describePricing } from './pricing.js';
 /**
  * x402 Bazaar discovery manifest.
  *
- * Served at `GET /.well-known/x402`. Describes the one paid resource —
- * `POST /task-request` — in the x402 v2 / CDP Bazaar shape (CAIP-2 network,
- * USDC contract address, `amount`). The OpenAI path (`/v1/*`) is intentionally
- * not listed: it is unmetered in Phase 1.
+ * Served at `GET /.well-known/x402`. Describes the paid resources:
+ * - `POST /v1/chat/completions` — OpenAI-compatible chat (recommended for agent callers)
+ * - `POST /task-request` — M2M task request (lower-level, returns task_id for polling)
  *
  * Dual-network support (2026-08-23): when X402_SOLANA_ENABLED, advertises
  * both Base (CDP facilitator) and Solana (PayAI facilitator) payment options.
@@ -52,6 +51,70 @@ const TASK_REQUEST_INPUT_SCHEMA = {
   required: ['message_type', 'chain_id', 'amount', 'sender'],
 };
 
+/** Minimal JSON-schema of the OpenAI chat completions request body. */
+const CHAT_COMPLETIONS_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    model: { type: 'string', example: 'xfuel/auto', description: 'Model id; xfuel/auto routes to best available' },
+    messages: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          role: { type: 'string', enum: ['system', 'user', 'assistant'] },
+          content: { type: 'string' },
+        },
+        required: ['role', 'content'],
+      },
+    },
+    max_tokens: { type: 'integer', description: 'Maximum tokens to generate' },
+    temperature: { type: 'number', minimum: 0, maximum: 2 },
+    stream: { type: 'boolean', default: false },
+  },
+  required: ['messages'],
+};
+
+/** Minimal JSON-schema of the OpenAI chat completions response. */
+const CHAT_COMPLETIONS_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', example: 'chatcmpl-abc123' },
+    object: { type: 'string', enum: ['chat.completion'] },
+    created: { type: 'integer', description: 'Unix timestamp' },
+    model: { type: 'string' },
+    choices: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          index: { type: 'integer' },
+          message: {
+            type: 'object',
+            properties: {
+              role: { type: 'string' },
+              content: { type: 'string' },
+            },
+          },
+          finish_reason: { type: 'string' },
+        },
+      },
+    },
+    usage: {
+      type: 'object',
+      properties: {
+        prompt_tokens: { type: 'integer' },
+        completion_tokens: { type: 'integer' },
+        total_tokens: { type: 'integer' },
+      },
+    },
+    xfuel: {
+      type: 'object',
+      description: 'XFuel receipt with verify_url, payment_ref, task_id',
+    },
+  },
+  required: ['id', 'choices', 'xfuel'],
+};
+
 /**
  * Build the x402 discovery manifest for this node.
  * @param {string} baseUrl  resolved public base URL (absolute links); '' → relative
@@ -75,11 +138,10 @@ export function buildX402Manifest(baseUrl = '') {
   // Description leads with "OpenAI-compatible" for Bazaar search discoverability.
   const description = solanaEnabled
     ? 'OpenAI-compatible paid inference via x402 USDC; accepts Base (primary) and Solana. ' +
-      'POST /task-request returns a signed receipt + verify_url. Optional SP1 settlement proof. ' +
-      'The unmetered OpenAI path is POST /v1/chat/completions. Paying this host is real mainnet USDC.'
-    : 'OpenAI-compatible paid inference on Base (USDC via x402). POST /task-request returns a signed ' +
-      'receipt and public verify_url. Optional SP1 settlement proof on demand. ' +
-      'The unmetered OpenAI path is POST /v1/chat/completions (not this resource). ' +
+      'POST /v1/chat/completions is the recommended surface for agents. ' +
+      'Returns signed receipt + verify_url. Paying this host is real mainnet USDC.'
+    : 'OpenAI-compatible paid inference on Base (USDC via x402). POST /v1/chat/completions is ' +
+      'the recommended surface for agents. Returns a signed receipt + verify_url. ' +
       'Paying this host is real Base mainnet USDC.';
 
   // Tags for Bazaar search: llm, openai-compatible, chat-completions for discoverability
@@ -152,6 +214,22 @@ export function buildX402Manifest(baseUrl = '') {
       asset,
     },
     resources: [
+      {
+        type: 'http',
+        resource: `${base}/v1/chat/completions`,
+        method: 'POST',
+        serviceName,
+        tags: tags.slice(0, 6),
+        iconUrl,
+        description:
+          'OpenAI-compatible chat completions. Pay per request in USDC (x402, exact scheme). ' +
+          'Returns standard OpenAI response + XFuel receipt with verify_url. ' +
+          'Demo key (xfuel-demo) bypasses payment for testing.',
+        accepts,
+        input: CHAT_COMPLETIONS_INPUT_SCHEMA,
+        outputSchema: CHAT_COMPLETIONS_OUTPUT_SCHEMA,
+        docs: base ? `${base}/llms.txt` : '/llms.txt',
+      },
       {
         type: 'http',
         resource: `${base}/task-request`,
