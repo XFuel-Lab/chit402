@@ -657,6 +657,13 @@ export function createApp() {
       network: x.network,
       payTo: x.payTo,
       baseUrl,
+      // Dual-network (2026-08-22): include Solana accepts entry when solana.enabled.
+      // Per Section 3.5 — mirrors runX402Handshake; fail closed when payTo missing.
+      solana: x.solana?.enabled ? {
+        enabled: true,
+        payTo: x.solana.payTo,
+        network: x.solana.network,
+      } : undefined,
     });
     return { body, headers };
   }
