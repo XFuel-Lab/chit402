@@ -35,7 +35,7 @@ if (files.length === 0) {
 // also gets a hard cap so a stuck worker is killed rather than left running.
 const { status, error, signal } = spawnSync(
   process.execPath,
-  ['--test', '--test-timeout=120000', ...process.argv.slice(2), ...files],
+  ['--test', '--test-timeout=120000', '--test-force-exit', ...process.argv.slice(2), ...files],
   { stdio: 'inherit', cwd: gatewayDir, timeout: 10 * 60 * 1000, killSignal: 'SIGKILL' },
 );
 

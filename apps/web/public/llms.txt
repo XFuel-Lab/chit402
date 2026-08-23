@@ -1,0 +1,51 @@
+# XFuel Protocol
+
+> Swap one baseURL. Every call comes back with a public receipt that names the
+> model, the hub, and the cost. /v1 is unmetered (demo key, rate-limited).
+> USDC on Base is a separate paid door. This host is the public beta; paying
+> it moves real USDC on Base mainnet. Canonical: api.xfuel.app.
+
+## Start here (OpenAI-compatible — no wallet)
+
+- POST /v1/chat/completions : OpenAI chat completions. Demo key: xfuel-demo.
+- GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Not OpenAI/Groq/Together.
+- POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
+- Auth: "Authorization: Bearer <key>" or "X-API-Key: <key>".
+- Point any OpenAI client's baseURL at this host + /v1. Receipt in x-xfuel-*
+  headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
+- proof_outcome may be pending on the chat body — poll GET /task-status.
+
+## Paid door (USDC / x402)
+
+- POST /task-request      : paid task. 402 without X-PAYMENT. Real USDC.
+- Networks: Base mainnet (default, CDP facilitator) or Solana mainnet (PayAI).
+  The 402 challenge lists both; your wallet picks the network.
+- POST /task-quote        : forecast only (not an invoice).
+- GET  /task-status       : status + proof outcome (also works for /v1 task ids).
+- GET  /prove-result      : SP1 settlement proof when requested / above COGS gate.
+- GET  /health            : status, demo limits, floats. Token buckets with null
+  addresses are post-TGE, not live.
+- GET  /stats             : public-safe usage.
+
+## MCP
+
+- npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
+- submit_inference = POST /task-request (paid, 402 without a payer).
+- pay_with_usdc is only listed if XFUEL_PAYER_PRIVATE_KEY is set.
+
+## Discovery (x402 Bazaar)
+
+- GET  /.well-known/x402  : paid resource is POST /task-request only. /v1 is not listed.
+
+## SDK
+
+- npm install xfuel-sdk — client.chatCompletions() is the free path.
+- createMockPayer() is for a local mock facilitator only. This host rejects it.
+
+## Docs
+
+- Protocol map: AGENTS.md
+- Agent Playbook: skills/AGENT_PLAYBOOK.md
+- OpenAI gateway: docs/OPENAI_COMPATIBLE_GATEWAY.md
+- Full REST API: docs/M2M_API.md
+- Payments (x402): docs/payments-x402.md

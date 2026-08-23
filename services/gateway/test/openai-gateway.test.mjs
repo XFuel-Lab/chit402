@@ -1,12 +1,13 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-// Honest catalog seed (no live Theta poll / no Llama fiction) for deterministic tests.
+// Config reads these at import time — set before server.js loads (ESM hoists static imports).
 process.env.HUB_CATALOG_OFFLINE = 'true';
+process.env.X402_ENABLED = 'false';
 
-import { createApp } from '../src/server.js';
-import { resetHubCatalogCache } from '../src/hub-catalog.js';
-import { openAiErrorShape } from '../src/openai-gateway.js';
+const { createApp } = await import('../src/server.js');
+const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
+const { openAiErrorShape } = await import('../src/openai-gateway.js');
 
 // Spin the real Express app on an ephemeral port and exercise the
 // OpenAI-compatible routes over HTTP. No provider keys are set, so
@@ -29,6 +30,8 @@ before(async () => {
 });
 
 after(async () => {
+  if (!server) return;
+  if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
 });
 
