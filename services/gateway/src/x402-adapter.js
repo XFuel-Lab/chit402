@@ -31,11 +31,22 @@ export { toCaip2Network, fromCaip2Network, usdcFor, isSolanaNetwork, isEvmNetwor
 /** Bazaar extension key per spec */
 export const BAZAAR_EXTENSION_KEY = 'bazaar';
 
-/** Example POST /task-request body advertised to Bazaar buyers. */
+/** Example POST /task-request body advertised to Bazaar buyers (EVM/Base). */
 export const TASK_REQUEST_BODY_EXAMPLE = {
   message_type: 'inference_request',
   chain_id: 'base',
   sender: '0xYourWalletAddress',
+  model_id: 'xfuel/auto',
+  messages: [{ role: 'user', content: 'Hello' }],
+  max_tokens: 500,
+  payment: { rail: 'usdc' },
+};
+
+/** Example POST /task-request body advertised to Solana/PayAI buyers. */
+export const TASK_REQUEST_BODY_EXAMPLE_SOLANA = {
+  message_type: 'inference_request',
+  chain_id: 'base',  // Routing chain; payment network is separate (Solana)
+  sender: 'YourSolanaWalletPubkey',  // Base58 Solana address
   model_id: 'xfuel/auto',
   messages: [{ role: 'user', content: 'Hello' }],
   max_tokens: 500,
@@ -119,10 +130,12 @@ const TASK_REQUEST_OUTPUT_EXAMPLE = {
  *
  * @param {Object} opts
  * @param {string} [opts.method='POST']  HTTP method
+ * @param {Object} [opts.exampleBody]    Custom example body (default: TASK_REQUEST_BODY_EXAMPLE)
  * @returns {Object} extensions object to spread into the 402 accepts entry
  */
 export function buildBazaarExtension(opts = {}) {
   const method = opts.method || 'POST';
+  const exampleBody = opts.exampleBody || TASK_REQUEST_BODY_EXAMPLE;
 
   return {
     [BAZAAR_EXTENSION_KEY]: {
@@ -131,7 +144,7 @@ export function buildBazaarExtension(opts = {}) {
           type: 'http',
           method,
           bodyType: 'json',
-          body: TASK_REQUEST_BODY_EXAMPLE,
+          body: exampleBody,
         },
         output: {
           type: 'json',
@@ -401,21 +414,27 @@ export function buildPaymentChallenge(p, opts = {}) {
   const resourceUrl = p.resource || (baseUrl ? `${baseUrl}${resourcePath}` : resourcePath);
 
   const serviceName = 'XFuel';
-  const tags = ['inference', 'receipt', 'x402', 'ai', 'verifiable'];
+  // Per task: tags llm, openai-compatible, chat-completions help Bazaar search
+  // queries "inference", "llm", "chat completions", "openai" find XFuel.
+  const tags = ['llm', 'openai-compatible', 'chat-completions', 'inference', 'receipt', 'verifiable'];
   const iconUrl = 'https://xfuel.app/xfuel-icon.svg';
 
   // Update description when both networks are available.
+  // Lead with "OpenAI-compatible" for Bazaar search discoverability.
   const solanaEnabled = p.solana?.enabled && p.solana?.payTo;
   const description = p.description || (solanaEnabled
-    ? 'Paid inference via x402 USDC; accepts Base (primary) and Solana. ' +
+    ? 'OpenAI-compatible paid inference via x402 USDC; accepts Base (primary) and Solana. ' +
       'Returns a signed receipt + verify_url. Unmetered OpenAI path is POST /v1/chat/completions. ' +
       'Paying this host is real mainnet USDC.'
-    : 'Paid inference on Base USDC via x402; returns a signed receipt + verify_url. ' +
+    : 'OpenAI-compatible paid inference on Base USDC via x402; returns a signed receipt + verify_url. ' +
       'Unmetered OpenAI path is POST /v1/chat/completions (not this resource). ' +
       'Paying this host is real Base mainnet USDC.');
 
   const includeBazaar = p.includeBazaar !== false;
-  const extensions = includeBazaar ? buildBazaarExtension({ method: 'POST' }) : undefined;
+  // When Solana is enabled, use the Solana example body for PayAI discoverability.
+  // PayAI indexes the bazaar extension and shows the example to Solana buyers.
+  const exampleBody = solanaEnabled ? TASK_REQUEST_BODY_EXAMPLE_SOLANA : TASK_REQUEST_BODY_EXAMPLE;
+  const extensions = includeBazaar ? buildBazaarExtension({ method: 'POST', exampleBody }) : undefined;
   // v1 facilitators still catalog via paymentRequirements.outputSchema on settle.
   const outputSchema = v1OutputSchemaFromBazaar(extensions);
 

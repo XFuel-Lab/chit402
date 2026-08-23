@@ -142,11 +142,13 @@ test('buildPaymentChallenge: includes service metadata for bazaar', () => {
   assert.equal(r.serviceName, 'XFuel', 'serviceName is XFuel');
   assert.ok(r.serviceName.length <= 32, 'serviceName ≤32 chars');
 
-  // Per spec: tags ≤5 items
+  // Per spec: tags ≤5 items. Tags now include llm, openai-compatible, chat-completions
+  // for Bazaar search discoverability (PR: catalog metadata + dual-rail discovery).
   assert.ok(Array.isArray(r.tags), 'tags is an array');
   assert.ok(r.tags.length <= 5, 'tags ≤5 items');
   assert.ok(r.tags.includes('inference'), 'tags includes inference');
-  assert.ok(r.tags.includes('x402'), 'tags includes x402');
+  assert.ok(r.tags.includes('llm'), 'tags includes llm');
+  assert.ok(r.tags.includes('openai-compatible'), 'tags includes openai-compatible');
 
   // Per spec: iconUrl must be absolute https://
   assert.ok(r.iconUrl.startsWith('https://'), 'iconUrl is absolute https');
