@@ -235,9 +235,11 @@ const LLMS_TXT = `# XFuel Protocol
   headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
 - proof_outcome may be pending on the chat body — poll GET /task-status.
 
-## Paid door (USDC / x402 on Base mainnet)
+## Paid door (USDC / x402)
 
 - POST /task-request      : paid task. 402 without X-PAYMENT. Real USDC.
+- Networks: Base mainnet (default, CDP facilitator) or Solana mainnet (PayAI).
+  The 402 challenge lists both; your wallet picks the network.
 - POST /task-quote        : forecast only (not an invoice).
 - GET  /task-status       : status + proof outcome (also works for /v1 task ids).
 - GET  /prove-result      : SP1 settlement proof when requested / above COGS gate.

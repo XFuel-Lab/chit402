@@ -38,12 +38,61 @@ export const DEFAULT_FACILITATOR_URL = 'https://x402.org/facilitator';
 /** Coinbase CDP hosted facilitator (Base mainnet + multi-network; requires CDP JWT). */
 export const CDP_FACILITATOR_URL = 'https://api.cdp.coinbase.com/platform/v2/x402';
 
+/** PayAI facilitator (Solana-first, multi-network; supports v1 and v2). */
+export const PAYAI_FACILITATOR_URL = 'https://facilitator.payai.network';
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Network type detection
+// ════════════════════════════════════════════════════════════════════════════════
+
+/** Solana network identifiers (v1 short name → CAIP-2). */
+export const SOLANA_NETWORKS = {
+  'solana': 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',        // Solana mainnet
+  'solana-devnet': 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',  // Solana devnet
+};
+
+/** Reverse map: CAIP-2 → short name. Includes lowercase variants for case-insensitive lookup. */
+const SOLANA_CAIP2_TO_SHORT = Object.fromEntries([
+  ...Object.entries(SOLANA_NETWORKS).map(([k, v]) => [v, k]),
+  ...Object.entries(SOLANA_NETWORKS).map(([k, v]) => [v.toLowerCase(), k]),
+]);
+
+/**
+ * True if this network is a Solana network (mainnet or devnet).
+ * Supports both short names (solana, solana-devnet) and CAIP-2 identifiers.
+ * @param {string} network - Short name or CAIP-2 identifier
+ */
+export function isSolanaNetwork(network) {
+  if (!network) return false;
+  const n = String(network);
+  const nLower = n.toLowerCase();
+  // Check short names (case-insensitive)
+  if (nLower in SOLANA_NETWORKS) return true;
+  // Check CAIP-2 (exact match first, then lowercase)
+  if (n in SOLANA_CAIP2_TO_SHORT) return true;
+  if (nLower in SOLANA_CAIP2_TO_SHORT) return true;
+  return false;
+}
+
+/**
+ * True if this network is an EVM network (Base, etc.).
+ * EVM networks use EIP-155 CAIP-2 format (eip155:chainId).
+ */
+export function isEvmNetwork(network) {
+  const n = String(network || '').toLowerCase();
+  if (n.startsWith('eip155:')) return true;
+  if (n === 'base' || n === 'base-sepolia') return true;
+  return false;
+}
+
 /**
  * Pick facilitator URL from network when X402_FACILITATOR_URL is unset.
  * `base` → CDP mainnet; `base-sepolia` → public x402.org testnet.
+ * `solana` / `solana-devnet` → PayAI facilitator.
  */
 export function defaultFacilitatorUrlForNetwork(network) {
   const n = String(network || '').toLowerCase();
+  if (isSolanaNetwork(n)) return PAYAI_FACILITATOR_URL;
   if (n === 'base' || n === 'eip155:8453') return CDP_FACILITATOR_URL;
   return DEFAULT_FACILITATOR_URL;
 }
@@ -53,10 +102,17 @@ export function defaultFacilitatorUrlForNetwork(network) {
  * the client signer used (see the SDK's USDC_NETWORKS) or the facilitator will
  * recover the wrong signer and reject the payment. Override via env for other
  * deployments (X402_ASSET_ADDRESS / X402_EIP712_NAME / X402_EIP712_VERSION).
+ *
+ * Solana USDC: SPL token mint address. No EIP-712 domain — Solana uses Ed25519 signatures.
+ * The PayAI facilitator handles Solana signature verification natively.
  */
 const USDC_NETWORKS = {
+  // EVM networks (EIP-712 domain for EIP-3009 signatures)
   'base-sepolia': { asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', name: 'USDC', version: '2' },
   base: { asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', name: 'USD Coin', version: '2' },
+  // Solana networks (SPL token mint address, no EIP-712 domain)
+  solana: { asset: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' },
+  'solana-devnet': { asset: 'Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr' },  // devnet USDC
 };
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -198,23 +254,59 @@ export function normalizeAuthorizationPayload(payload) {
   return { normalizedPayload, coercions };
 }
 
-/** Short name (`base`) ←→ CAIP-2 (`eip155:8453`). CDP Bazaar indexes the CAIP-2 form. */
+/**
+ * Short name (`base`, `solana`) ←→ CAIP-2 (`eip155:8453`, `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`).
+ * CDP/PayAI Bazaar indexes the CAIP-2 form.
+ */
 export function toCaip2Network(network) {
-  const n = String(network || '').toLowerCase();
-  if (n === 'base' || n === 'eip155:8453') return 'eip155:8453';
-  if (n === 'base-sepolia' || n === 'eip155:84532') return 'eip155:84532';
-  return network || 'eip155:8453';
+  if (!network) return 'eip155:8453';
+  const n = String(network);
+  const nLower = n.toLowerCase();
+  // EVM networks (lowercase compare)
+  if (nLower === 'base' || nLower === 'eip155:8453') return 'eip155:8453';
+  if (nLower === 'base-sepolia' || nLower === 'eip155:84532') return 'eip155:84532';
+  // Solana networks: short name → CAIP-2
+  if (nLower in SOLANA_NETWORKS) return SOLANA_NETWORKS[nLower];
+  // Already CAIP-2 (exact match or lowercase match in reverse map)
+  if (n in SOLANA_CAIP2_TO_SHORT) return n;
+  if (nLower in SOLANA_CAIP2_TO_SHORT) return n;  // Preserve original case
+  return network;
 }
 
 export function fromCaip2Network(network) {
-  const n = String(network || '').toLowerCase();
-  if (n === 'eip155:8453' || n === 'base') return 'base';
-  if (n === 'eip155:84532' || n === 'base-sepolia') return 'base-sepolia';
-  return network || 'base';
+  if (!network) return 'base';
+  const n = String(network);
+  const nLower = n.toLowerCase();
+  // EVM networks (lowercase compare)
+  if (nLower === 'eip155:8453' || nLower === 'base') return 'base';
+  if (nLower === 'eip155:84532' || nLower === 'base-sepolia') return 'base-sepolia';
+  // Solana networks: CAIP-2 → short name
+  if (n in SOLANA_CAIP2_TO_SHORT) return SOLANA_CAIP2_TO_SHORT[n];
+  if (nLower in SOLANA_CAIP2_TO_SHORT) return SOLANA_CAIP2_TO_SHORT[nLower];
+  // Already short form
+  if (nLower in SOLANA_NETWORKS) return nLower;
+  return network;
 }
 
+/**
+ * Get USDC token info for a network.
+ *
+ * For EVM networks: returns asset address + EIP-712 domain (name, version).
+ * For Solana networks: returns asset (mint address) only — no EIP-712 domain.
+ *
+ * @param {string} network - Short name or CAIP-2 identifier
+ * @returns {{ asset: string|null, name?: string, version?: string }}
+ */
 export function usdcFor(network) {
-  const known = USDC_NETWORKS[fromCaip2Network(network)] || {};
+  const shortNet = fromCaip2Network(network);
+  const known = USDC_NETWORKS[shortNet] || {};
+  // Solana: no EIP-712 domain — PayAI handles Ed25519 signatures natively.
+  if (isSolanaNetwork(shortNet)) {
+    return {
+      asset: process.env.X402_SOLANA_ASSET_ADDRESS || known.asset || null,
+    };
+  }
+  // EVM: include EIP-712 domain for EIP-3009 signature verification.
   return {
     asset: process.env.X402_ASSET_ADDRESS || known.asset || null,
     name: process.env.X402_EIP712_NAME || known.name || 'USD Coin',

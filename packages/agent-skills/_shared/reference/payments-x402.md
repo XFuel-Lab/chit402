@@ -1,8 +1,11 @@
 # Payments: USDC via x402 (default) + TFUEL (secondary)
 
-XFuel's default, recommended payment rail is **USDC via x402**. **TFUEL/TDROP on
-Theta remains fully supported** as a secondary rail for Theta-native flows. Every
-payment-bearing skill accepts a `payment` object; when omitted, the server default
+XFuel's default, recommended payment rail is **USDC via x402**. Two networks are
+supported: **Base mainnet** (default, CDP facilitator) and **Solana mainnet**
+(PayAI facilitator). The 402 challenge advertises both networks when Solana is
+enabled; your wallet picks the network. **TFUEL/TDROP on Theta remains fully
+supported** as a secondary rail for Theta-native flows. Every payment-bearing
+skill accepts a `payment` object; when omitted, the server default
 (`X402_DEFAULT_RAIL`) applies.
 
 ## The `payment` parameter
@@ -11,8 +14,9 @@ payment-bearing skill accepts a `payment` object; when omitted, the server defau
 {
   "rail": "usdc",              // "usdc" (default) | "tfuel"
   "asset": "USDC",             // usdc only
-  "network": "base",           // usdc only: "base" (mainnet, LIVE today) | "base-sepolia" | "solana"
-                               // Take this from POST /task-quote rather than hardcoding.
+  "network": "base",           // usdc only: "base" (mainnet, default) | "base-sepolia" | "solana"
+                               // Base uses CDP facilitator; Solana uses PayAI facilitator.
+                               // Take this from the 402 challenge rather than hardcoding.
   "maxAmount": "50000"         // smallest unit: USDC = 6dp (50000 = $0.05), TFUEL = wei
 }
 ```
@@ -30,11 +34,15 @@ POST /task-quote { model_id?, amount? }
 
 ```
 1. POST /task-request { ..., payment: { rail: "usdc", network: "base", maxAmount } }
-2. ← 402 Payment Required + body.accepts[] { scheme:"exact", network, asset, maxAmountRequired, payTo, extra:{ nonce, expiresAt } }
-3. Agent-side payer signs USDC on Base (mainnet today) for the challenge → produces the X-PAYMENT header
+2. ← 402 Payment Required + body.accepts[] (may contain multiple networks: Base + Solana)
+   Each entry: { scheme:"exact", network, asset, maxAmountRequired, payTo, extra:{ nonce, expiresAt } }
+3. Agent-side payer picks a network from accepts[] and signs USDC authorization:
+   - Base: EIP-3009 transferWithAuthorization (CDP facilitator)
+   - Solana: SPL Token transfer authorization (PayAI facilitator)
 4. Retry POST /task-request with headers  X-PAYMENT: <blob>  and  X-PAYMENT-NONCE: <extra.nonce>
    (the nonce may instead be embedded as a `nonce` field inside a JSON / base64-JSON X-PAYMENT blob)
-5. Server verifies + settles via the facilitator (binds nonce/amount, rejects replays) → { task_id, payment_rail:"usdc", payment_ref }
+5. Server verifies + settles via the appropriate facilitator (CDP for Base, PayAI for Solana)
+   Binds nonce/amount, rejects replays → { task_id, payment_rail:"usdc", payment_ref }
 6. Poll /task-status or await the TaskSettled webhook → both expose { payment_rail, payment_ref }
 ```
 
@@ -130,6 +138,10 @@ and `docs/X402_ADAPTER.md`.
 | `X402_FALLBACK_TFUEL` | If `usdc` requested but facilitator unavailable: `true` → fall back to TFUEL; `false` → `503`. |
 | `ZAN_X402_GATEWAY_URL` / `ZAN_X402_API_KEY` | Optional ZAN facilitator (only when `X402_FACILITATOR_PROVIDER=zan`). |
 | `X402_PAY_TO` / `X402_ASSET` | Base treasury + asset defaults. |
+| `X402_SOLANA_ENABLED` | Enable Solana as a second payment network (PayAI facilitator). |
+| `X402_SOLANA_PAY_TO` | Solana USDC treasury ATA address. Required when Solana is enabled. |
+| `X402_SOLANA_FACILITATOR_URL` | PayAI facilitator URL. Default: `https://facilitator.payai.network`. |
+| `X402_SOLANA_NETWORK` | Solana network. Default: `solana` (mainnet). |
 
 **Status — LIVE on Base mainnet:** the server-side 402 handshake on `POST /task-request`
 is enabled on the hosted endpoint (`X402_ENABLED=true`, `X402_FACILITATOR_PROVIDER=cdp`
@@ -139,7 +151,13 @@ An unpaid `usdc` request returns a bound 402 challenge; a retry with a valid
 `payment_ref` are attached to the task. The host is `api.xfuel.app` (public beta); the
 money is real — see `docs/RUNTIME_STATE.md`. Base Sepolia is the rollback path. ZAN is
 optional, not required, and not a blocker. Always trust the `payment_rail` field in the
-status response. For
-local/CI, run the mock facilitator (`services/gateway/src/x402-mock-facilitator.js`);
+status response.
+
+**Solana (optional):** when `X402_SOLANA_ENABLED=true` and `X402_SOLANA_PAY_TO` is set,
+the 402 challenge includes a second `accepts` entry for Solana USDC. Solana payments are
+verified and settled via PayAI (`https://facilitator.payai.network`). Base remains the
+default; Solana is an optional second rail for Solana-native agents.
+
+For local/CI, run the mock facilitator (`services/gateway/src/x402-mock-facilitator.js`);
 the full loop is covered by `services/gateway/test/x402-server.test.mjs`. See
 [`docs/RUNTIME_STATE.md`](../../../../docs/RUNTIME_STATE.md) for as-deployed config.

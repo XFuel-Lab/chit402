@@ -7,9 +7,13 @@ import {
   toCaip2Network,
   fromCaip2Network,
   usdcFor,
+  isSolanaNetwork,
+  isEvmNetwork,
+  PAYAI_FACILITATOR_URL,
+  SOLANA_NETWORKS,
 } from './x402-facilitator.js';
 
-export { toCaip2Network, fromCaip2Network, usdcFor };
+export { toCaip2Network, fromCaip2Network, usdcFor, isSolanaNetwork, isEvmNetwork };
 
 // ─── CDP Bazaar Discovery Extension ──────────────────────────────────────────
 // Per https://docs.x402.org/extensions/bazaar: the bazaar extension makes a
@@ -351,15 +355,25 @@ export function encodePaymentRequiredHeader(body) {
  *   - `accepts[0]` uses CAIP-2 network, USDC contract `asset`, and `amount`
  *   - `PAYMENT-REQUIRED` header carries the same JSON (base64)
  *
+ * Dual-network support (2026-08-22):
+ *   - When `p.solana` is provided and enabled, adds a second accepts entry for Solana USDC
+ *   - Base (EVM) stays as accepts[0] (primary); Solana is accepts[1]
+ *   - Each network has its own nonce, payTo, and facilitator
+ *   - Incoming payment's accepted.network determines which facilitator to use
+ *
  * @param {Object} p
  * @param {string} p.taskId
  * @param {string} p.maxAmountRequired  smallest-unit string (USDC 6dp)
  * @param {string} [p.resource]         absolute resource URL (required for bazaar)
  * @param {string} [p.baseUrl]          base URL for building absolute links (e.g. https://api.xfuel.app)
- * @param {string} [p.payTo]
+ * @param {string} [p.payTo]            Base USDC treasury address
  * @param {string} [p.network]          base | base-sepolia | eip155:8453 | …
  * @param {string} [p.description]
  * @param {boolean} [p.includeBazaar=true]  include the bazaar discovery extension
+ * @param {Object} [p.solana]           Solana payment config (optional, second network)
+ * @param {boolean} [p.solana.enabled]  whether to include Solana accepts entry
+ * @param {string} [p.solana.payTo]     Solana USDC treasury (ATA address)
+ * @param {string} [p.solana.network]   solana | solana-devnet (default: solana)
  * @param {Object} [opts]
  * @param {ChallengeStore|null} [opts.store]  store to record into (default module store; null to skip)
  * @returns {{ status:number, body:Object, headers:Record<string,string> }}
@@ -388,10 +402,16 @@ export function buildPaymentChallenge(p, opts = {}) {
   const serviceName = 'XFuel';
   const tags = ['inference', 'receipt', 'x402', 'ai', 'verifiable'];
   const iconUrl = 'https://xfuel.app/xfuel-icon.svg';
-  const description = p.description ||
-    'Paid inference on Base USDC via x402; returns a signed receipt + verify_url. ' +
-    'Unmetered OpenAI path is POST /v1/chat/completions (not this resource). ' +
-    'Paying this host is real Base mainnet USDC.';
+
+  // Update description when both networks are available.
+  const solanaEnabled = p.solana?.enabled && p.solana?.payTo;
+  const description = p.description || (solanaEnabled
+    ? 'Paid inference via x402 USDC; accepts Base (primary) and Solana. ' +
+      'Returns a signed receipt + verify_url. Unmetered OpenAI path is POST /v1/chat/completions. ' +
+      'Paying this host is real mainnet USDC.'
+    : 'Paid inference on Base USDC via x402; returns a signed receipt + verify_url. ' +
+      'Unmetered OpenAI path is POST /v1/chat/completions (not this resource). ' +
+      'Paying this host is real Base mainnet USDC.');
 
   const includeBazaar = p.includeBazaar !== false;
   const extensions = includeBazaar ? buildBazaarExtension({ method: 'POST' }) : undefined;
@@ -420,7 +440,8 @@ export function buildPaymentChallenge(p, opts = {}) {
   }
 
   // x402 v2 PaymentRequired — resource + extensions are top-level (not on accepts).
-  const acceptsEntry = {
+  // accepts[0]: Base (EVM) — primary network
+  const baseAcceptsEntry = {
     scheme: 'exact',
     network: wireNetwork,
     amount,
@@ -438,6 +459,55 @@ export function buildPaymentChallenge(p, opts = {}) {
     },
   };
 
+  const accepts = [baseAcceptsEntry];
+
+  // ── Solana accepts entry (optional, second network) ─────────────────────────
+  // When Solana is enabled, add a second accepts entry for Solana USDC.
+  // Solana uses Ed25519 signatures — no EIP-712 domain. PayAI handles verification.
+  if (solanaEnabled) {
+    const solNetwork = fromCaip2Network(p.solana.network || 'solana');
+    const solWireNetwork = toCaip2Network(solNetwork);
+    const { asset: solAsset } = usdcFor(solNetwork);
+    const solPayTo = p.solana.payTo;
+    // Solana nonce: 32 random bytes as base58 (PayAI spec) or hex. PayAI accepts both.
+    // Using hex for consistency with the store key format.
+    const solNonce = '0x' + crypto.randomBytes(32).toString('hex');
+
+    // Store the Solana challenge binding
+    if (store) {
+      const solRec = store.put(solNonce, {
+        taskId: p.taskId,
+        amount,
+        asset: solAsset,
+        network: solNetwork,
+        payTo: solPayTo,
+        resource: resourceUrl,
+        description,
+        mimeType: 'application/json',
+        extensions,
+        outputSchema,
+        facilitator: 'payai', // Route to PayAI for Solana
+      });
+      // expiresAt is already set from the Base entry
+    }
+
+    const solanaAcceptsEntry = {
+      scheme: 'exact',
+      network: solWireNetwork,
+      amount,
+      maxAmountRequired: amount,
+      asset: solAsset,
+      payTo: solPayTo,
+      maxTimeoutSeconds,
+      extra: {
+        taskId: p.taskId,
+        nonce: solNonce,
+        expiresAt,
+      },
+    };
+    accepts.push(solanaAcceptsEntry);
+  }
+
   const body = {
     x402Version: 2,
     error: 'Payment required',
@@ -449,7 +519,7 @@ export function buildPaymentChallenge(p, opts = {}) {
       tags: tags.slice(0, 5),
       iconUrl,
     },
-    accepts: [acceptsEntry],
+    accepts,
     ...(extensions ? { extensions } : {}),
   };
 
@@ -473,13 +543,41 @@ function resolveProvider(opts = {}) {
   return p === 'x402' ? 'x402' : 'zan';
 }
 
+/**
+ * Resolve the facilitator gateway for a payment.
+ *
+ * Dual-network routing (2026-08-22):
+ *   - Solana payments → PayAI facilitator (https://facilitator.payai.network)
+ *   - Base/EVM payments → CDP facilitator or network-aware default
+ *   - The challenge.network or opts.network determines the route
+ *   - If the challenge was stored with `facilitator: 'payai'`, use PayAI
+ *
+ * @param {Object} opts
+ * @param {string} [opts.network] - Network from the payment blob
+ * @param {Object} [opts.challenge] - Bound challenge from the store
+ * @returns {{ provider: string, gateway: string, apiKey: string|null }}
+ */
 function resolveGateway(opts = {}) {
   const provider = resolveProvider(opts);
+
+  // Determine network from challenge (bound) or opts (from payment blob)
+  const network = opts.challenge?.network || opts.network || process.env.X402_NETWORK || 'base-sepolia';
+
+  // ── Solana payments route to PayAI ──────────────────────────────────────────
+  // If the challenge was explicitly marked for PayAI, or the network is Solana.
+  const isPayAI = opts.challenge?.facilitator === 'payai' || isSolanaNetwork(network);
+  if (isPayAI) {
+    return {
+      provider: 'x402', // PayAI speaks standard x402 protocol
+      gateway: opts.gatewayUrl
+        || process.env.X402_SOLANA_FACILITATOR_URL
+        || PAYAI_FACILITATOR_URL,
+      apiKey: opts.apiKey || null, // PayAI free tier needs no key
+    };
+  }
+
+  // ── EVM payments route to CDP/network-aware default ─────────────────────────
   if (provider === 'x402') {
-    const network = opts.network
-      || opts.challenge?.network
-      || process.env.X402_NETWORK
-      || 'base-sepolia';
     return {
       provider,
       // Public testnet facilitator (Base Sepolia) needs no API key.
