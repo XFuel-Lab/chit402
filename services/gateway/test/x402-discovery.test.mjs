@@ -9,6 +9,10 @@ test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () =>
   assert.equal(m.x402Version, 2);
   assert.equal(m.name, 'XFuel Protocol');
   assert.equal(typeof m.description, 'string');
+  assert.ok(Array.isArray(m.tags), 'manifest tags is an array');
+  assert.ok(m.tags.length <= 5, 'manifest tags ≤5 items');
+  assert.ok(m.tags.includes('llm'), 'manifest tags includes llm');
+  assert.ok(!m.tags.includes('x402'), 'manifest tags omits legacy x402 tag');
   assert.equal(typeof m.x402_enabled, 'boolean');
   assert.ok(['usdc', 'tfuel'].includes(m.default_rail));
 

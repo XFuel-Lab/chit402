@@ -144,9 +144,9 @@ export function buildX402Manifest(baseUrl = '') {
       'the recommended surface for agents. Returns a signed receipt + verify_url. ' +
       'Paying this host is real Base mainnet USDC.';
 
-  // Tags for Bazaar search: llm, openai-compatible, chat-completions for discoverability
+  // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.
   const serviceName = 'XFuel';
-  const tags = ['llm', 'openai-compatible', 'chat-completions', 'inference', 'receipt', 'verifiable'];
+  const tags = ['llm', 'openai-compatible', 'chat-completions', 'inference'];
   const iconUrl = 'https://xfuel.app/xfuel-icon.svg';
 
   // Build accepts array: Base (primary) + Solana (optional)
@@ -200,7 +200,7 @@ export function buildX402Manifest(baseUrl = '') {
     x402Version: 2,
     name: 'XFuel Protocol',
     serviceName,
-    tags: tags.slice(0, 6),
+    tags,
     iconUrl,
     description,
     x402_enabled: isX402Enabled(),
@@ -219,7 +219,7 @@ export function buildX402Manifest(baseUrl = '') {
         resource: `${base}/v1/chat/completions`,
         method: 'POST',
         serviceName,
-        tags: tags.slice(0, 6),
+        tags,
         iconUrl,
         description:
           'OpenAI-compatible chat completions. Pay per request in USDC (x402, exact scheme). ' +
@@ -235,7 +235,7 @@ export function buildX402Manifest(baseUrl = '') {
         resource: `${base}/task-request`,
         method: 'POST',
         serviceName,
-        tags: tags.slice(0, 6),
+        tags,
         iconUrl,
         description:
           'Submit a verifiable AI inference task. Pay per task in USDC (x402, exact scheme). ' +

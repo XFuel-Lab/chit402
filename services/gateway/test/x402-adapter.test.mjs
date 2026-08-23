@@ -149,6 +149,9 @@ test('buildPaymentChallenge: includes service metadata for bazaar', () => {
   assert.ok(r.tags.includes('inference'), 'tags includes inference');
   assert.ok(r.tags.includes('llm'), 'tags includes llm');
   assert.ok(r.tags.includes('openai-compatible'), 'tags includes openai-compatible');
+  assert.ok(r.tags.includes('chat-completions'), 'tags includes chat-completions');
+  assert.ok(!r.tags.includes('x402'), 'tags omits legacy x402 tag');
+  assert.ok(!r.tags.includes('ai'), 'tags omits legacy ai tag');
 
   // Per spec: iconUrl must be absolute https://
   assert.ok(r.iconUrl.startsWith('https://'), 'iconUrl is absolute https');

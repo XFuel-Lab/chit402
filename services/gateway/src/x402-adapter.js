@@ -414,9 +414,8 @@ export function buildPaymentChallenge(p, opts = {}) {
   const resourceUrl = p.resource || (baseUrl ? `${baseUrl}${resourcePath}` : resourcePath);
 
   const serviceName = 'XFuel';
-  // Per task: tags llm, openai-compatible, chat-completions help Bazaar search
-  // queries "inference", "llm", "chat completions", "openai" find XFuel.
-  const tags = ['llm', 'openai-compatible', 'chat-completions', 'inference', 'receipt', 'verifiable'];
+  // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.
+  const tags = ['llm', 'openai-compatible', 'chat-completions', 'inference'];
   const iconUrl = 'https://xfuel.app/xfuel-icon.svg';
 
   // Update description when both networks are available.
@@ -540,7 +539,7 @@ export function buildPaymentChallenge(p, opts = {}) {
       description,
       mimeType: 'application/json',
       serviceName,
-      tags: tags.slice(0, 5),
+      tags,
       iconUrl,
     },
     accepts,
