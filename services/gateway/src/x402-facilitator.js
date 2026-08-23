@@ -397,6 +397,7 @@ export function toPaymentRequirements({
   network, amount, payTo, resource, taskId, maxTimeoutSeconds, description, outputSchema,
   x402Version = 1,
   feePayer: feePayerOverride,
+  memo,  // SVM: client's memo for Memo ix matching (optional per spec, but required if tx has Memo ix)
 } = {}) {
   const shortNet = fromCaip2Network(network);
   const usdcInfo = usdcFor(shortNet);
@@ -406,11 +407,15 @@ export function toPaymentRequirements({
   const wireNetwork = x402Version === 2 ? toCaip2Network(network) : shortNet;
 
   // Build network-appropriate extra field:
-  // - Solana: { feePayer } — required by @x402/svm, PayAI facilitator pays tx fees
+  // - Solana: { feePayer, memo? } — feePayer required; memo optional but needed for Path 1 static
+  //   validation when the transaction contains a Memo ix (per x402 SVM spec).
   // - EVM: { name, version } — EIP-712 domain for EIP-3009 signature verification
   const isSolana = isSolanaNetwork(shortNet);
   const extra = isSolana
-    ? { feePayer: feePayerOverride || defaultFeePayer }
+    ? {
+        feePayer: feePayerOverride || defaultFeePayer,
+        ...(memo !== undefined ? { memo } : {}),
+      }
     : { name, version };
 
   // v2 (CDP-native): minimal spec shape — `amount`, no v1 discovery fields.
@@ -497,7 +502,9 @@ export function toPaymentPayload(decoded, { network, resource, extensions, x402V
     const acceptedFromHeader = decoded.accepted || {};
 
     // Slim `accepted` to spec fields only — same as EVM path but no EIP-712 domain.
-    // Solana extra has feePayer, not name/version.
+    // Solana extra: feePayer (required), memo (optional but needed for Path 1 static validation).
+    // Per x402 SVM spec: "If extra.memo is present, facilitator MUST require exactly one Memo ix
+    // matching it." Dropping memo when the tx contains a Memo ix forces Path 2 (simulation).
     const incomingExtra = acceptedFromHeader.extra || {};
     const slimAccepted = {
       scheme: acceptedFromHeader.scheme,
@@ -506,8 +513,11 @@ export function toPaymentPayload(decoded, { network, resource, extensions, x402V
       asset: acceptedFromHeader.asset,
       payTo: acceptedFromHeader.payTo,
       maxTimeoutSeconds: acceptedFromHeader.maxTimeoutSeconds,
-      // Solana: forward feePayer (from PayAI /supported or challenge); no name/version.
-      extra: incomingExtra.feePayer ? { feePayer: incomingExtra.feePayer } : {},
+      // Solana: forward feePayer + memo; drop challenge-binding fields (taskId, nonce, expiresAt).
+      extra: {
+        ...(incomingExtra.feePayer ? { feePayer: incomingExtra.feePayer } : {}),
+        ...(incomingExtra.memo !== undefined ? { memo: incomingExtra.memo } : {}),
+      },
     };
 
     // Payload is the transaction blob — forward unchanged.
@@ -834,6 +844,10 @@ function requirementsFrom(challenge, decoded, x402Version = 1) {
   const payTo = challenge?.payTo ?? accepted.payTo ?? decoded?.payTo;
   // Solana: forward feePayer from challenge (stored from 402 issue) or incoming blob.
   const feePayer = challenge?.feePayer ?? accepted.extra?.feePayer;
+  // Solana: forward memo from client blob for Path 1 static Memo ix validation.
+  // Per x402 SVM spec: "If extra.memo is present, facilitator MUST require exactly one
+  // Memo ix matching it." Dropping memo forces Path 2 (simulation) on some facilitators.
+  const memo = accepted.extra?.memo;
 
   return toPaymentRequirements({
     network,
@@ -845,6 +859,7 @@ function requirementsFrom(challenge, decoded, x402Version = 1) {
     outputSchema: challenge?.outputSchema,
     x402Version,
     feePayer,  // Solana-only; ignored by EVM path (uses name/version from usdcFor)
+    memo,      // Solana-only; enables Path 1 static Memo validation
   });
 }
 

@@ -2814,3 +2814,101 @@ test('verifyViaFacilitator: uses EVM timeout for EVM network (unchanged from bef
     await new Promise((r) => server.close(r));
   }
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// SVM extra.memo forwarding (2026-08-23 bugfix)
+// Per x402 SVM spec: "If extra.memo is present, facilitator MUST require exactly
+// one Memo ix matching it." Dropping memo when the tx contains a Memo ix forces
+// Path 2 (simulation), hitting facilitator quotas (Dexter 429 incident).
+// ────────────────────────────────────────────────────────────────────────────
+
+test('toPaymentPayload SVM forwards extra.memo when client provides it', () => {
+  // This is THE regression test for the Dexter 429 incident:
+  // Before fix: extra.memo was stripped → forced Path 2 → hit Dexter quota
+  // After fix: extra.memo is forwarded → Path 1 static validation → fast, no quota
+  const header = makeSvmPaymentHeader({
+    feePayer: 'TestFeePayer11111111111111111111111111111111',
+  });
+  const decoded = decodePaymentHeader(header);
+  // Simulate what the private client does: inject memo before createPaymentPayload
+  decoded.accepted.extra.memo = '0xdeadbeef1234567890';  // Challenge nonce as memo
+
+  const p = toPaymentPayload(decoded, { x402Version: 2 });
+
+  // CRITICAL: memo must be forwarded for Path 1 static validation
+  assert.equal(p.accepted.extra.memo, '0xdeadbeef1234567890', 'memo MUST be forwarded');
+  // feePayer still present
+  assert.equal(p.accepted.extra.feePayer, 'TestFeePayer11111111111111111111111111111111');
+  // Challenge-binding fields still stripped
+  assert.equal(p.accepted.extra.taskId, undefined, 'taskId still stripped');
+});
+
+test('toPaymentRequirements v2 includes memo for Solana when provided', () => {
+  // paymentRequirements.extra.memo must match what's in the transaction's Memo ix
+  const r = toPaymentRequirements({
+    network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+    amount: '50000',
+    payTo: 'SomeOwnerPubkey',
+    x402Version: 2,
+    feePayer: 'TestFeePayer',
+    memo: '0xdeadbeef1234567890',
+  });
+
+  assert.equal(r.extra.feePayer, 'TestFeePayer', 'feePayer present');
+  assert.equal(r.extra.memo, '0xdeadbeef1234567890', 'memo forwarded to requirements');
+});
+
+test('toPaymentRequirements v2 omits memo when not provided (backward compat)', () => {
+  // When client doesn't send memo, requirements.extra should not have it
+  const r = toPaymentRequirements({
+    network: 'solana',
+    amount: '50000',
+    payTo: 'SomeOwnerPubkey',
+    x402Version: 2,
+    feePayer: 'TestFeePayer',
+    // NO memo
+  });
+
+  assert.equal(r.extra.feePayer, 'TestFeePayer', 'feePayer present');
+  assert.equal(r.extra.memo, undefined, 'memo absent when not provided');
+});
+
+test('verifyViaFacilitator forwards memo to facilitator in both payload and requirements', async () => {
+  let receivedPayload = null;
+  let receivedRequirements = null;
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body);
+      receivedPayload = parsed.paymentPayload;
+      receivedRequirements = parsed.paymentRequirements;
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ isValid: true, payer: 'SolanaPayerPubkey' }));
+    });
+  });
+  const url = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve(`http://127.0.0.1:${server.address().port}`);
+    });
+  });
+
+  try {
+    const header = makeSvmPaymentHeader({
+      feePayer: 'TestFeePayer11111111111111111111111111111111',
+    });
+    const decoded = decodePaymentHeader(header);
+    decoded.accepted.extra.memo = 'challengeNonce123';  // Client-injected memo
+    const headerWithMemo = Buffer.from(JSON.stringify(decoded), 'utf8').toString('base64');
+
+    const r = await verifyViaFacilitator(headerWithMemo, { gateway: url, x402Version: 2 });
+    assert.equal(r.valid, true, 'verify succeeds');
+
+    // CRITICAL: Both payload and requirements must have memo for Path 1
+    assert.equal(receivedPayload.accepted.extra.memo, 'challengeNonce123', 'payload.accepted.extra.memo forwarded');
+    assert.equal(receivedRequirements.extra.memo, 'challengeNonce123', 'requirements.extra.memo forwarded');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
