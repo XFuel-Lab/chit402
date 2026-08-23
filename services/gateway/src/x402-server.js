@@ -299,14 +299,15 @@ export async function resolvePricingModel(body = {}) {
  *   { kind:'failed', reason }      → verify/settle failed; caller decides fallback vs error
  *
  * @param {Object} req  Express-like request ({ headers, body })
- * @param {{ taskId:string, cfg?:Object, body?:Object, baseUrl?:string }} opts
+ * @param {{ taskId:string, cfg?:Object, body?:Object, baseUrl?:string, resource?:string }} opts
  *   `body` prices something other than `req.body` verbatim — `/v1` caps `max_tokens`
  *   before serving, and quoting the uncapped figure would bill for output the
  *   caller cannot receive.
  *   `baseUrl` is the public base URL for building absolute resource links (required
  *   for CDP Bazaar cataloging). Example: https://api.xfuel.app
+ *   `resource` is the absolute catalog URL for this challenge (default: /task-request).
  */
-export async function runX402Handshake(req, { taskId, cfg = config.x402, body = null, amount = null, baseUrl = null } = {}) {
+export async function runX402Handshake(req, { taskId, cfg = config.x402, body = null, amount = null, baseUrl = null, resource = null } = {}) {
   const priceBody = body || req.body;
   // For the standard x402 facilitator, the URL comes from cfg.facilitatorUrl
   // (falling back to the adapter's public-reference default when null).
@@ -338,6 +339,7 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
         asset: cfg.asset,
         payTo: cfg.payTo,
         baseUrl,  // Required for absolute resource URL (CDP Bazaar cataloging)
+        resource,
         // Solana as second payment network (optional)
         solana: cfg.solana?.enabled ? {
           enabled: true,

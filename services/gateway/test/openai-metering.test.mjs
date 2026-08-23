@@ -66,6 +66,13 @@ test('an unpaid /v1 call is refused with a 402, not served for free', async () =
   // ...and a plain OpenAI client reads this half.
   assert.equal(body.error.type, 'payment_required');
   assert.match(body.error.message, /X-PAYMENT/);
+
+  // CDP Bazaar keys listings off resource.url — must catalog /v1, not /task-request.
+  assert.match(body.resource.url, /\/v1\/chat\/completions/);
+  assert.ok(!body.resource.url.includes('/task-request'));
+  const bazaarBody = body.extensions?.bazaar?.info?.input?.body;
+  assert.ok(bazaarBody?.messages, 'bazaar example is OpenAI chat-completions shape');
+  assert.ok(!bazaarBody?.message_type, 'bazaar example is not /task-request schema');
 });
 
 test('the 402 is priced from the request, not a flat figure', async () => {

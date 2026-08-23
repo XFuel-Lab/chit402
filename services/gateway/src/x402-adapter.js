@@ -42,6 +42,13 @@ export const TASK_REQUEST_BODY_EXAMPLE = {
   payment: { rail: 'usdc' },
 };
 
+/** Example POST /v1/chat/completions body advertised to Bazaar buyers. */
+export const CHAT_COMPLETIONS_BODY_EXAMPLE = {
+  model: 'xfuel/auto',
+  messages: [{ role: 'user', content: 'Hello' }],
+  max_tokens: 500,
+};
+
 /** Example POST /task-request body advertised to Solana/PayAI buyers. */
 export const TASK_REQUEST_BODY_EXAMPLE_SOLANA = {
   message_type: 'inference_request',
@@ -108,6 +115,36 @@ const TASK_REQUEST_BODY_SCHEMA = {
   required: ['message_type', 'chain_id', 'sender'],
 };
 
+/** JSON Schema for OpenAI chat-completions POST body (bazaar.schema). */
+const CHAT_COMPLETIONS_BODY_SCHEMA = {
+  type: 'object',
+  properties: {
+    model: {
+      type: 'string',
+      description: 'Model id from GET /v1/models; xfuel/auto routes automatically',
+    },
+    messages: {
+      type: 'array',
+      description: 'OpenAI-style chat messages array',
+      items: {
+        type: 'object',
+        properties: {
+          role: { type: 'string', enum: ['system', 'user', 'assistant'] },
+          content: { type: 'string' },
+        },
+        required: ['role', 'content'],
+      },
+    },
+    max_tokens: {
+      type: 'integer',
+      description: 'Output token budget',
+    },
+    temperature: { type: 'number', minimum: 0, maximum: 2 },
+    stream: { type: 'boolean' },
+  },
+  required: ['messages'],
+};
+
 const TASK_REQUEST_OUTPUT_EXAMPLE = {
   task_id: 'ai-task-12345',
   status: 'accepted',
@@ -117,6 +154,20 @@ const TASK_REQUEST_OUTPUT_EXAMPLE = {
   gross_amount: '50000',
   fee_amount: '250',
   net_amount: '49750',
+};
+
+const CHAT_COMPLETIONS_OUTPUT_EXAMPLE = {
+  id: 'chatcmpl-abc123',
+  object: 'chat.completion',
+  created: 1700000000,
+  model: 'xfuel/auto',
+  choices: [{
+    index: 0,
+    message: { role: 'assistant', content: 'Hello!' },
+    finish_reason: 'stop',
+  }],
+  usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+  xfuel: { verify_url: 'https://api.xfuel.app/receipt/openai-abc123' },
 };
 
 /**
@@ -131,11 +182,15 @@ const TASK_REQUEST_OUTPUT_EXAMPLE = {
  * @param {Object} opts
  * @param {string} [opts.method='POST']  HTTP method
  * @param {Object} [opts.exampleBody]    Custom example body (default: TASK_REQUEST_BODY_EXAMPLE)
+ * @param {Object} [opts.bodySchema]     JSON Schema for example body (default: TASK_REQUEST_BODY_SCHEMA)
+ * @param {Object} [opts.outputExample]  Example response (default: TASK_REQUEST_OUTPUT_EXAMPLE)
  * @returns {Object} extensions object to spread into the 402 accepts entry
  */
 export function buildBazaarExtension(opts = {}) {
   const method = opts.method || 'POST';
   const exampleBody = opts.exampleBody || TASK_REQUEST_BODY_EXAMPLE;
+  const bodySchema = opts.bodySchema || TASK_REQUEST_BODY_SCHEMA;
+  const outputExample = opts.outputExample || TASK_REQUEST_OUTPUT_EXAMPLE;
 
   return {
     [BAZAAR_EXTENSION_KEY]: {
@@ -148,7 +203,7 @@ export function buildBazaarExtension(opts = {}) {
         },
         output: {
           type: 'json',
-          example: TASK_REQUEST_OUTPUT_EXAMPLE,
+          example: outputExample,
         },
       },
       schema: {
@@ -161,7 +216,7 @@ export function buildBazaarExtension(opts = {}) {
               type: { type: 'string', const: 'http' },
               method: { type: 'string', enum: ['POST', 'PUT', 'PATCH'] },
               bodyType: { type: 'string', enum: ['json', 'form-data', 'text'] },
-              body: TASK_REQUEST_BODY_SCHEMA,
+              body: bodySchema,
             },
             required: ['type', 'method', 'bodyType', 'body'],
             additionalProperties: false,
@@ -408,10 +463,11 @@ export function buildPaymentChallenge(p, opts = {}) {
   const nonce = '0x' + crypto.randomBytes(32).toString('hex');
   const maxTimeoutSeconds = Math.max(30, Math.floor((opts.ttlMs || DEFAULT_TTL_MS) / 1000));
 
-  // Absolute URL for CDP Bazaar catalog key — always /task-request, never per-task.
+  // Absolute URL for CDP Bazaar catalog key — per paid surface, never per-task.
   const baseUrl = p.baseUrl ? String(p.baseUrl).replace(/\/$/, '') : '';
-  const resourcePath = '/task-request';
+  const resourcePath = p.resourcePath || '/task-request';
   const resourceUrl = p.resource || (baseUrl ? `${baseUrl}${resourcePath}` : resourcePath);
+  const isV1Chat = resourceUrl.includes('/v1/chat/completions');
 
   const serviceName = 'XFuel';
   // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.
@@ -429,10 +485,22 @@ export function buildPaymentChallenge(p, opts = {}) {
       'recommended surface. Returns a signed receipt + verify_url. Paying this host is real Base mainnet USDC.');
 
   const includeBazaar = p.includeBazaar !== false;
-  // When Solana is enabled, use the Solana example body for PayAI discoverability.
-  // PayAI indexes the bazaar extension and shows the example to Solana buyers.
-  const exampleBody = solanaEnabled ? TASK_REQUEST_BODY_EXAMPLE_SOLANA : TASK_REQUEST_BODY_EXAMPLE;
-  const extensions = includeBazaar ? buildBazaarExtension({ method: 'POST', exampleBody }) : undefined;
+  let bazaarOpts;
+  if (isV1Chat) {
+    bazaarOpts = {
+      method: 'POST',
+      exampleBody: CHAT_COMPLETIONS_BODY_EXAMPLE,
+      bodySchema: CHAT_COMPLETIONS_BODY_SCHEMA,
+      outputExample: CHAT_COMPLETIONS_OUTPUT_EXAMPLE,
+    };
+  } else {
+    // When Solana is enabled, use the Solana example body for PayAI discoverability.
+    bazaarOpts = {
+      method: 'POST',
+      exampleBody: solanaEnabled ? TASK_REQUEST_BODY_EXAMPLE_SOLANA : TASK_REQUEST_BODY_EXAMPLE,
+    };
+  }
+  const extensions = includeBazaar ? buildBazaarExtension(bazaarOpts) : undefined;
   // v1 facilitators still catalog via paymentRequirements.outputSchema on settle.
   const outputSchema = v1OutputSchemaFromBazaar(extensions);
 

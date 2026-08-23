@@ -1,13 +1,15 @@
 # XFuel Protocol
 
 > Swap one baseURL. Every call comes back with a public receipt that names the
-> model, the hub, and the cost. /v1 is unmetered (demo key, rate-limited).
-> USDC on Base is a separate paid door. This host is the public beta; paying
-> it moves real USDC on Base mainnet. Canonical: api.xfuel.app.
+> model, the hub, and the cost. Unauthenticated POST /v1/chat/completions is
+> $0.01 x402 on Base (CDP) and Solana (PayAI). Bearer xfuel-demo and valid API
+> keys stay free/unmetered. /task-request is the other paid door. Paying
+> api.xfuel.app moves real mainnet USDC. Canonical: api.xfuel.app.
 
-## Start here (OpenAI-compatible — no wallet)
+## Start here (OpenAI-compatible)
 
-- POST /v1/chat/completions : OpenAI chat completions. Demo key: xfuel-demo.
+- POST /v1/chat/completions : OpenAI chat completions. Unauthenticated → 402
+  x402 ($0.01 USDC on Base or Solana). Demo key xfuel-demo → free/unmetered.
 - GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Not OpenAI/Groq/Together.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - Auth: "Authorization: Bearer <key>" or "X-API-Key: <key>".
@@ -17,7 +19,7 @@
 
 ## Paid door (USDC / x402)
 
-- POST /task-request      : paid task. 402 without X-PAYMENT. Real USDC.
+- POST /task-request      : paid M2M task. 402 without X-PAYMENT. Real USDC.
 - Networks: Base mainnet (default, CDP facilitator) or Solana mainnet (PayAI).
   The 402 challenge lists both; your wallet picks the network.
 - POST /task-quote        : forecast only (not an invoice).
@@ -35,11 +37,11 @@
 
 ## Discovery (x402 Bazaar)
 
-- GET  /.well-known/x402  : paid resource is POST /task-request only. /v1 is not listed.
+- GET  /.well-known/x402  : POST /v1/chat/completions (recommended) and POST /task-request.
 
 ## SDK
 
-- npm install xfuel-sdk — client.chatCompletions() is the free path.
+- npm install xfuel-sdk — client.chatCompletions() with x402 for unauthenticated calls.
 - createMockPayer() is for a local mock facilitator only. This host rejects it.
 
 ## Docs
