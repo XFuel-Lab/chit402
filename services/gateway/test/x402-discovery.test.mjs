@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildX402Manifest } from '../src/x402-discovery.js';
+import { buildX402Manifest, buildOpenApiSpec } from '../src/x402-discovery.js';
 import { buildPaymentChallenge, BAZAAR_EXTENSION_KEY } from '../src/x402-adapter.js';
 
 test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () => {
@@ -102,4 +102,40 @@ test('buildX402Manifest: trims a trailing slash on the base URL', () => {
   const m = buildX402Manifest('https://api-testnet.xfuel.app/');
   const taskResource = m.resources.find((r) => r.resource.includes('/task-request'));
   assert.equal(taskResource.resource, 'https://api-testnet.xfuel.app/task-request');
+});
+
+test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info', () => {
+  const spec = buildOpenApiSpec('https://api.xfuel.app');
+
+  assert.equal(spec.openapi, '3.1.0');
+  assert.equal(spec.info.title, 'XFuel');
+  assert.equal(typeof spec.info.version, 'string');
+  assert.equal(typeof spec.info['x-guidance'], 'string');
+  assert.match(spec.info['x-guidance'], /\/v1\/chat\/completions/);
+  assert.ok(!/public door is POST \/task-request/i.test(spec.info['x-guidance']));
+  assert.deepEqual(spec.servers, [{ url: 'https://api.xfuel.app' }]);
+
+  const pathKeys = Object.keys(spec.paths);
+  assert.deepEqual(pathKeys, ['/v1/chat/completions', '/task-request'],
+    'chat completions is the public door; task-request is second');
+
+  const chat = spec.paths['/v1/chat/completions'].post;
+  const task = spec.paths['/task-request'].post;
+  for (const op of [chat, task]) {
+    assert.ok(op.responses[402] || op.responses['402'], 'paid op declares 402');
+    assert.equal(op['x-payment-info'].price.mode, 'fixed');
+    assert.equal(op['x-payment-info'].price.currency, 'USD');
+    assert.equal(op['x-payment-info'].price.amount, '0.01',
+      'OpenAPI price is decimal USD, not atomic 10000');
+    assert.deepEqual(op['x-payment-info'].protocols, [{ x402: {} }]);
+    assert.equal(op.requestBody.content['application/json'].schema.type, 'object');
+  }
+  assert.ok(chat.requestBody.content['application/json'].schema.required.includes('messages'));
+  assert.ok(task.requestBody.content['application/json'].schema.required.includes('sender'));
+});
+
+test('buildOpenApiSpec: omits servers when no base URL is known', () => {
+  const spec = buildOpenApiSpec('');
+  assert.equal(spec.servers, undefined);
+  assert.ok(spec.paths['/v1/chat/completions']);
 });

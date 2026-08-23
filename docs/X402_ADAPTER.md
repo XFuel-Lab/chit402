@@ -145,6 +145,27 @@ curl -sS -D - -X POST https://api.xfuel.app/task-request \
 # Expect HTTP 402 + PAYMENT-REQUIRED header (no X-API-Key)
 ```
 
+## x402scan listing
+
+x402scan ignores `GET /.well-known/x402`. After deploy, register the origin at
+[x402scan.com/resources/register](https://www.x402scan.com/resources/register)
+with origin `api.xfuel.app`. The scanner fetches `GET /openapi.json` and probes
+`POST /v1/chat/completions` (must 402 on `{}` before body validation).
+
+```bash
+curl -sS https://api.xfuel.app/openapi.json | jq '.paths | keys'
+# ["/v1/chat/completions", "/task-request"]
+
+curl -sS -D - -X POST https://api.xfuel.app/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+# Expect HTTP 402 + PAYMENT-REQUIRED (amount "10000"). Demo key xfuel-demo skips payment.
+```
+
+OpenAPI `x-payment-info.price.amount` is decimal USD (`"0.01"`). Runtime 402
+`accepts[].amount` stays atomic USDC (`"10000"`). Do not swap those encodings.
+Do not make `/task-request` the public door.
+
 ## Related
 
 - [M2M_API.md](./M2M_API.md)

@@ -21,7 +21,8 @@ npm test
 | `POST /task-request` | M2M inference / tasks (+ x402) |
 | `GET/POST /v1/*` | OpenAI-compatible gateway |
 | `GET /receipt/:taskId` | Public receipt / `verify_url` |
-| `/.well-known/x402` | x402 discovery |
+| `GET /openapi.json` | x402scan OpenAPI (chat first) |
+| `/.well-known/x402` | x402 Bazaar discovery |
 
 ## Revenue (token-light)
 

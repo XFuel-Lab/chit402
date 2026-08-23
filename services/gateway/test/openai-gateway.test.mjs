@@ -35,6 +35,21 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
+test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => {
+  const res = await fetch(`${base}/openapi.json`);
+  assert.equal(res.status, 200);
+  const spec = await res.json();
+  assert.equal(spec.openapi, '3.1.0');
+  assert.equal(spec.info.title, 'XFuel');
+  assert.equal(typeof spec.info['x-guidance'], 'string');
+  assert.deepEqual(Object.keys(spec.paths), ['/v1/chat/completions', '/task-request']);
+  const chat = spec.paths['/v1/chat/completions'].post;
+  assert.ok(chat.responses[402] || chat.responses['402']);
+  assert.equal(chat['x-payment-info'].price.amount, '0.01');
+  assert.deepEqual(chat['x-payment-info'].protocols, [{ x402: {} }]);
+  assert.equal(chat.requestBody.content['application/json'].schema.type, 'object');
+});
+
 test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   const res = await fetch(`${base}/llms.txt`);
   assert.equal(res.status, 200);

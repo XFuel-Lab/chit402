@@ -1006,6 +1006,24 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
 
   // ── POST /v1/chat/completions ──────────────────────────────────────────────
   app.post('/v1/chat/completions', async (req, res) => {
+    // Unauth probes (no payment) must 402 before body validation so x402scan
+    // can list this route. A payment header still waits until after validation
+    // so we never settle then 400 (Bankr 2026-08-21). Demo key xfuel-demo skips
+    // payment via meteringExempt.
+    const { header: paymentHeader } = extractPaymentHeader(req);
+    const taskId = `openai-${crypto.randomUUID()}`;
+    let metering = { halted: false, payment: null };
+
+    if (!paymentHeader) {
+      try {
+        metering = await meterV1Request(req, res, { taskId, isAuthorised });
+      } catch (err) {
+        logger.error({ err, reqId: req.id }, 'POST /v1/chat/completions metering error');
+        return res.status(500).json({ error: { message: 'payment processing failed', type: 'server_error', code: null } });
+      }
+      if (metering.halted) return undefined;
+    }
+
     const { model, messages, max_tokens, temperature, stream, tools, tool_choice } = req.body || {};
 
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -1058,19 +1076,16 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
     const created = Math.floor(Date.now() / 1000);
     const fb = allowFallback(req);
 
-    // Charge before serving. The task id is minted here so the 402 challenge and
-    // the receipt name the same resource.
-    // Unauthenticated requests → 402 with both Base + Solana accepts.
-    // Demo key (xfuel-demo) and valid API keys → free.
-    const taskId = `openai-${crypto.randomUUID()}`;
-    let metering;
-    try {
-      metering = await meterV1Request(req, res, { taskId, isAuthorised });
-    } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /v1/chat/completions metering error');
-      return res.status(500).json({ error: { message: 'payment processing failed', type: 'server_error', code: null } });
+    // Payment present: settle only after the body is valid (Bankr: don't settle then 400).
+    if (paymentHeader) {
+      try {
+        metering = await meterV1Request(req, res, { taskId, isAuthorised });
+      } catch (err) {
+        logger.error({ err, reqId: req.id }, 'POST /v1/chat/completions metering error');
+        return res.status(500).json({ error: { message: 'payment processing failed', type: 'server_error', code: null } });
+      }
+      if (metering.halted) return undefined;
     }
-    if (metering.halted) return undefined;
 
     // A call that settled pays its own COGS; only unmetered traffic draws on the
     // free allowance (ADR 0006 — receipts are free, compute is not). Checked

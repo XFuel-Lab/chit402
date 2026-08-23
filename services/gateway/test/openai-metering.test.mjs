@@ -47,6 +47,41 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
+test('unauth POST /v1/chat/completions with {} is 402, not 400', async () => {
+  const res = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+  assert.equal(res.status, 402, 'x402scan probes {} and must 402 before body validation');
+  const body = await res.json();
+  assert.equal(body.x402Version, 2);
+  assert.equal(body.accepts[0].amount, '10000', 'runtime 402 amount stays atomic USDC');
+  assert.match(body.resource.url, /\/v1\/chat\/completions/);
+  assert.ok(!body.resource.url.includes('/task-request'));
+});
+
+test('demo key + empty body skips payment and then 400s on validation', async () => {
+  const res = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
+    body: '{}',
+  });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.error.type, 'invalid_request_error');
+  assert.equal(body.error.param, 'messages');
+});
+
+test('payment header + empty body is 400, not settle-then-400', async () => {
+  const res = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-payment': 'not-a-payload' },
+    body: '{}',
+  });
+  assert.equal(res.status, 400, 'invalid body must 400 before handshake/settle');
+});
+
 test('an unpaid /v1 call is refused with a 402, not served for free', async () => {
   const res = await chat();
   assert.equal(res.status, 402);
