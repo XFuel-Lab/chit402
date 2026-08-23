@@ -552,6 +552,11 @@ function resolveProvider(opts = {}) {
  *   - The challenge.network or opts.network determines the route
  *   - If the challenge was stored with `facilitator: 'payai'`, use PayAI
  *
+ * IMPORTANT (2026-08-23 bugfix): For Solana payments, opts.gatewayUrl is IGNORED.
+ * The caller (runX402Handshake) passes cfg.facilitatorUrl (the Base CDP URL) as
+ * opts.gatewayUrl, which is correct for EVM but wrong for Solana. Solana payments
+ * must use X402_SOLANA_FACILITATOR_URL or the PayAI default — never the CDP URL.
+ *
  * @param {Object} opts
  * @param {string} [opts.network] - Network from the payment blob
  * @param {Object} [opts.challenge] - Bound challenge from the store
@@ -565,12 +570,13 @@ function resolveGateway(opts = {}) {
 
   // ── Solana payments route to PayAI ──────────────────────────────────────────
   // If the challenge was explicitly marked for PayAI, or the network is Solana.
+  // NOTE: opts.gatewayUrl is NOT used here. It comes from cfg.facilitatorUrl (Base CDP)
+  // and would incorrectly route Solana payments to the EVM facilitator.
   const isPayAI = opts.challenge?.facilitator === 'payai' || isSolanaNetwork(network);
   if (isPayAI) {
     return {
       provider: 'x402', // PayAI speaks standard x402 protocol
-      gateway: opts.gatewayUrl
-        || process.env.X402_SOLANA_FACILITATOR_URL
+      gateway: process.env.X402_SOLANA_FACILITATOR_URL
         || PAYAI_FACILITATOR_URL,
       apiKey: opts.apiKey || null, // PayAI free tier needs no key
     };
@@ -629,16 +635,21 @@ function checkBinding(opts) {
  * @returns {Promise<{valid:boolean, txRef?:string, reason?:string}>}
  */
 export async function verifyPayment(paymentHeader, opts = {}) {
-  const { provider, gateway, apiKey } = resolveGateway(opts);
+  if (!paymentHeader) return { valid: false, reason: 'missing_payment_header' };
+
+  // Look up the challenge FIRST so resolveGateway can determine the network.
+  // This is critical for dual-network routing: Solana payments need the
+  // challenge.network or challenge.facilitator to route to PayAI, not CDP.
+  const bind = checkBinding(opts);
+  if (!bind.ok) return { valid: false, reason: bind.reason };
+  const challenge = bind.challenge;
+
+  // Pass the resolved challenge to resolveGateway for network-aware routing.
+  const { provider, gateway, apiKey } = resolveGateway({ ...opts, challenge });
   // ZAN gateway requires an API key; the standard x402 public facilitator does not.
   if (!gateway || (provider === 'zan' && !apiKey)) {
     return { valid: false, reason: 'gateway_not_configured' };
   }
-  if (!paymentHeader) return { valid: false, reason: 'missing_payment_header' };
-
-  const bind = checkBinding(opts);
-  if (!bind.ok) return { valid: false, reason: bind.reason };
-  const challenge = bind.challenge;
 
   if (provider === 'x402') {
     // Pass client x402 version (1 for X-PAYMENT, 2 for PAYMENT-SIGNATURE) to the facilitator.
@@ -683,17 +694,22 @@ export async function verifyPayment(paymentHeader, opts = {}) {
  * @returns {Promise<{settled:boolean, txRef?:string, reason?:string}>}
  */
 export async function settlePayment(paymentHeader, opts = {}) {
-  const { provider, gateway, apiKey } = resolveGateway(opts);
-  if (!gateway || (provider === 'zan' && !apiKey)) {
-    return { settled: false, reason: 'gateway_not_configured' };
-  }
   if (!paymentHeader) return { settled: false, reason: 'missing_payment_header' };
 
+  // Look up the challenge FIRST so resolveGateway can determine the network.
+  // This is critical for dual-network routing: Solana payments need the
+  // challenge.network or challenge.facilitator to route to PayAI, not CDP.
   const bind = checkBinding(opts);
   if (!bind.ok) return { settled: false, reason: bind.reason };
   const challenge = bind.challenge;
   const store = opts.store === undefined ? challengeStore : opts.store;
   const nonce = opts.nonce || challenge?.nonce || null;
+
+  // Pass the resolved challenge to resolveGateway for network-aware routing.
+  const { provider, gateway, apiKey } = resolveGateway({ ...opts, challenge });
+  if (!gateway || (provider === 'zan' && !apiKey)) {
+    return { settled: false, reason: 'gateway_not_configured' };
+  }
 
   if (provider === 'x402') {
     // Pass client x402 version (1 for X-PAYMENT, 2 for PAYMENT-SIGNATURE) to the facilitator.
