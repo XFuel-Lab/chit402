@@ -144,12 +144,12 @@ export function buildX402Manifest(baseUrl = '') {
 
   // Description leads with "OpenAI-compatible" for Bazaar search discoverability.
   const description = solanaEnabled
-    ? 'OpenAI-compatible paid inference via x402 USDC; accepts Base (primary) and Solana. ' +
+    ? 'OpenAI-compatible paid inference via x402 USDC on Base and Solana ($0.01). ' +
       'POST /v1/chat/completions is the recommended surface for agents. ' +
-      'Returns signed receipt + verify_url. Paying this host is real mainnet USDC.'
-    : 'OpenAI-compatible paid inference on Base (USDC via x402). POST /v1/chat/completions is ' +
-      'the recommended surface for agents. Returns a signed receipt + verify_url. ' +
-      'Paying this host is real Base mainnet USDC.';
+      'Returns signed receipt + public verify_url. Paying this host is real mainnet USDC.'
+    : 'OpenAI-compatible paid inference via x402 USDC on Base ($0.01). POST /v1/chat/completions is ' +
+      'the recommended surface for agents. Returns signed receipt + public verify_url. ' +
+      'Paying this host is real mainnet USDC.';
 
   // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.
   const serviceName = 'XFuel';
@@ -229,9 +229,9 @@ export function buildX402Manifest(baseUrl = '') {
         tags,
         iconUrl,
         description:
-          'OpenAI-compatible chat completions. Pay per request in USDC (x402, exact scheme). ' +
-          'Returns standard OpenAI response + XFuel receipt with verify_url. ' +
-          'Demo key (xfuel-demo) bypasses payment for testing.',
+          'OpenAI-compatible chat completions. Pay per request in USDC on Base and Solana '
+          + '($0.01 floor, x402 exact scheme). Returns standard OpenAI response + signed '
+          + 'XFuel receipt with public verify_url.',
         accepts,
         input: CHAT_COMPLETIONS_INPUT_SCHEMA,
         outputSchema: CHAT_COMPLETIONS_OUTPUT_SCHEMA,
@@ -245,9 +245,9 @@ export function buildX402Manifest(baseUrl = '') {
         tags,
         iconUrl,
         description:
-          'Submit a verifiable AI inference task. Pay per task in USDC (x402, exact scheme). ' +
-          'Returns a task_id, a signed receipt, and a public verify_url; ' +
-          'poll /task-status and fetch /prove-result for the SP1 settlement proof.',
+          'Submit a verifiable AI inference task. Pay per task in USDC on Base and Solana '
+          + '($0.01 floor, x402 exact scheme). Returns a task_id, signed receipt, and public '
+          + 'verify_url; poll /task-status and fetch /prove-result for the SP1 settlement proof.',
         accepts,
         input: TASK_REQUEST_INPUT_SCHEMA,
         outputSchema: TASK_REQUEST_OUTPUT_SCHEMA,
@@ -286,9 +286,9 @@ export function buildOpenApiSpec(baseUrl = '') {
     operationId: 'chatCompletions',
     summary: 'OpenAI-compatible chat completions (public x402 door)',
     description:
-      'Pay per request in USDC (x402, exact scheme). Returns a standard OpenAI '
-      + 'chat.completion plus an XFuel receipt with verify_url. Unauthenticated '
-      + 'calls receive HTTP 402 before body validation. Demo key xfuel-demo skips payment.',
+      'Pay per request in USDC on Base and Solana ($0.01 floor, x402 exact scheme). '
+      + 'Returns a standard OpenAI chat.completion plus a signed XFuel receipt with public '
+      + 'verify_url. Unauthenticated calls receive HTTP 402 before body validation.',
     tags: ['Chat'],
     'x-payment-info': paymentInfo,
     requestBody: {
@@ -345,9 +345,8 @@ export function buildOpenApiSpec(baseUrl = '') {
         'Use POST /v1/chat/completions with an OpenAI-compatible JSON body '
         + '({ model, messages }). Unauthenticated callers get HTTP 402 with x402 '
         + 'payment requirements (USDC, $0.01 floor; Base and Solana when enabled). '
-        + 'Retry with X-PAYMENT or PAYMENT-SIGNATURE. Demo key xfuel-demo skips '
-        + 'payment. POST /task-request is a lower-level M2M alternative that returns '
-        + 'task_id for polling — do not treat it as the public door.',
+        + 'Retry with X-PAYMENT or PAYMENT-SIGNATURE. POST /task-request is a lower-level '
+        + 'M2M alternative that returns task_id for polling — do not treat it as the public door.',
     },
     'x-discovery': {
       ownershipProofs,

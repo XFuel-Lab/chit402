@@ -230,7 +230,7 @@ const LLMS_TXT = `# XFuel Protocol
 ## Start here (OpenAI-compatible)
 
 - POST /v1/chat/completions : OpenAI chat completions. Unauthenticated GET or
-  POST {} → 402 x402 ($0.01 USDC on Base or Solana). Demo key xfuel-demo skips payment.
+  POST {} → 402 x402 ($0.01 USDC on Base or Solana). Returns signed receipt + public verify_url.
 - GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - Auth: "Authorization: Bearer <key>" or "X-API-Key: <key>".
@@ -260,7 +260,7 @@ const LLMS_TXT = `# XFuel Protocol
 
 - GET  /openapi.json      : OpenAPI 3.1 with x-payment-info. Public door is POST /v1/chat/completions.
 - GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
-- POST /v1/chat/completions : paid. Unauth GET or POST {} → 402. Demo key xfuel-demo skips payment.
+- POST /v1/chat/completions : paid ($0.01 USDC on Base or Solana). Unauth GET or POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).
 
 ## SDK
