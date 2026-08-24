@@ -171,8 +171,9 @@ test('buildPaymentChallenge: includes service metadata for bazaar', () => {
   assert.ok(!r.tags.includes('x402'), 'tags omits legacy x402 tag');
   assert.ok(!r.tags.includes('ai'), 'tags omits legacy ai tag');
 
-  // Per spec: iconUrl must be absolute https://
+  // Per spec: iconUrl must be absolute https:// and a real image, not the SPA.
   assert.ok(r.iconUrl.startsWith('https://'), 'iconUrl is absolute https');
+  assert.equal(r.iconUrl, 'https://api.xfuel.app/xfuel-icon.svg');
 });
 
 test('buildPaymentChallenge: description mentions real USDC settlement', () => {

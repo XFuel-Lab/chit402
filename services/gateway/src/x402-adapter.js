@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import logger from './logger.js';
+import { XFUEL_ICON_URL } from './xfuel-icon.js';
 import {
   verifyViaFacilitator,
   settleViaFacilitator,
@@ -472,7 +473,7 @@ export function buildPaymentChallenge(p, opts = {}) {
   const serviceName = 'XFuel';
   // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.
   const tags = ['llm', 'openai-compatible', 'chat-completions', 'inference'];
-  const iconUrl = 'https://xfuel.app/xfuel-icon.svg';
+  const iconUrl = XFUEL_ICON_URL;
 
   // Update description when both networks are available.
   // Lead with "OpenAI-compatible" for Bazaar search discoverability.

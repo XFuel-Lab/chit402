@@ -949,12 +949,11 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
   // Routes that require authentication use the full chain
   const authChain = [...baseChain, authenticate].filter(Boolean);
 
-  // /v1/chat/completions: NO auth middleware — handled inline (402 for unauth, free for demo key)
-  // Other /v1 routes: auth middleware applies normally
-  app.use('/v1/models', ...authChain);
+  // /v1/models is the seat catalog — public, no key. Images/audio stay keyed.
+  // /v1/chat/completions: NO auth middleware — 402 for unauth, demo key skips payment
+  app.use('/v1/models', ...baseChain);
   app.use('/v1/images', ...authChain);
   app.use('/v1/audio', ...authChain);
-  // Base chain for /v1/chat/completions (no authenticate)
   app.use('/v1/chat', ...baseChain);
 
   // ── GET /v1/models ───────────────────────────────────────────────────────
@@ -1004,25 +1003,44 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
   app.get('/v1/models/:hub/:alias', (req, res) => getModelById(req, res, `${req.params.hub}/${req.params.alias}`));
   app.get('/v1/models/:id', (req, res) => getModelById(req, res, req.params.id));
 
+  async function maybeMeterUnauthChat(req, res) {
+    const { header: paymentHeader } = extractPaymentHeader(req);
+    const taskId = `openai-${crypto.randomUUID()}`;
+    let metering = { halted: false, payment: null };
+    if (!paymentHeader) {
+      try {
+        metering = await meterV1Request(req, res, { taskId, isAuthorised });
+      } catch (err) {
+        logger.error({ err, reqId: req.id }, `${req.method} /v1/chat/completions metering error`);
+        res.status(500).json({ error: { message: 'payment processing failed', type: 'server_error', code: null } });
+        return { halted: true, taskId, metering, paymentHeader };
+      }
+    }
+    return { halted: metering.halted, taskId, metering, paymentHeader };
+  }
+
+  // GET /v1/chat/completions — same unauth 402 as POST {}. Not a second receipt.
+  app.get('/v1/chat/completions', async (req, res) => {
+    const { halted } = await maybeMeterUnauthChat(req, res);
+    if (halted) return undefined;
+    res.set('Allow', 'POST');
+    return res.status(405).json({
+      error: {
+        message: 'Method not allowed. POST /v1/chat/completions with a JSON body.',
+        type: 'invalid_request_error',
+        code: 'method_not_allowed',
+      },
+    });
+  });
+
   // ── POST /v1/chat/completions ──────────────────────────────────────────────
   app.post('/v1/chat/completions', async (req, res) => {
     // Unauth probes (no payment) must 402 before body validation so x402scan
     // can list this route. A payment header still waits until after validation
     // so we never settle then 400 (Bankr 2026-08-21). Demo key xfuel-demo skips
-    // payment via meteringExempt.
-    const { header: paymentHeader } = extractPaymentHeader(req);
-    const taskId = `openai-${crypto.randomUUID()}`;
-    let metering = { halted: false, payment: null };
-
-    if (!paymentHeader) {
-      try {
-        metering = await meterV1Request(req, res, { taskId, isAuthorised });
-      } catch (err) {
-        logger.error({ err, reqId: req.id }, 'POST /v1/chat/completions metering error');
-        return res.status(500).json({ error: { message: 'payment processing failed', type: 'server_error', code: null } });
-      }
-      if (metering.halted) return undefined;
-    }
+    // payment via meteringExempt. GET uses the same helper so probes match POST {}.
+    const { halted, taskId, metering, paymentHeader } = await maybeMeterUnauthChat(req, res);
+    if (halted) return undefined;
 
     const { model, messages, max_tokens, temperature, stream, tools, tool_choice } = req.body || {};
 

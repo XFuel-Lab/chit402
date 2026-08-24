@@ -3,10 +3,15 @@
     {
       "source": "/llms.txt",
       "headers": [{ "key": "Content-Type", "value": "text/plain; charset=utf-8" }]
+    },
+    {
+      "source": "/xfuel-icon.svg",
+      "headers": [{ "key": "Content-Type", "value": "image/svg+xml; charset=utf-8" }]
     }
   ],
   "rewrites": [
     { "source": "/llms.txt", "destination": "/llms.txt" },
+    { "source": "/xfuel-icon.svg", "destination": "/xfuel-icon.svg" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

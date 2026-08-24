@@ -5,10 +5,14 @@
   "env": {
     "VITE_MAINTENANCE": "false"
   },
-  "rewrites": [
+  "headers": [
     {
-      "source": "/(.*)",
-      "destination": "/index.html"
+      "source": "/xfuel-icon.svg",
+      "headers": [{ "key": "Content-Type", "value": "image/svg+xml; charset=utf-8" }]
     }
+  ],
+  "rewrites": [
+    { "source": "/xfuel-icon.svg", "destination": "/xfuel-icon.svg" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
