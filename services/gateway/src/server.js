@@ -30,6 +30,7 @@ import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml,
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest, buildOpenApiSpec } from './x402-discovery.js';
 import { buildPaymentChallenge } from './x402-adapter.js';
+import { XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
 import { apiKeyHashFromReq } from './buyer-attr.js';
@@ -221,14 +222,16 @@ function tier2Gate() {
 const LLMS_TXT = `# XFuel Protocol
 
 > Swap one baseURL. Every call comes back with a public receipt that names the
-> model, the hub, and the cost. /v1 is unmetered (demo key, rate-limited).
-> USDC on Base is a separate paid door. This host is the public beta; paying
-> it moves real USDC on Base mainnet. Canonical: api.xfuel.app.
+> model, the hub, and the cost. Unauthenticated POST /v1/chat/completions is
+> $0.01 x402 on Base (CDP) and Solana (PayAI). Bearer xfuel-demo and valid API
+> keys skip payment. /task-request is the other paid door. Paying
+> api.xfuel.app moves real mainnet USDC. Canonical: api.xfuel.app.
 
-## Start here (OpenAI-compatible — no wallet)
+## Start here (OpenAI-compatible)
 
-- POST /v1/chat/completions : OpenAI chat completions. Demo key: xfuel-demo.
-- GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Not OpenAI/Groq/Together.
+- POST /v1/chat/completions : OpenAI chat completions. Unauthenticated GET or
+  POST {} → 402 x402 ($0.01 USDC on Base or Solana). Demo key xfuel-demo skips payment.
+- GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - Auth: "Authorization: Bearer <key>" or "X-API-Key: <key>".
 - Point any OpenAI client's baseURL at this host + /v1. Receipt in x-xfuel-*
@@ -237,7 +240,7 @@ const LLMS_TXT = `# XFuel Protocol
 
 ## Paid door (USDC / x402)
 
-- POST /task-request      : paid task. 402 without X-PAYMENT. Real USDC.
+- POST /task-request      : paid M2M task. 402 without X-PAYMENT. Real USDC.
 - Networks: Base mainnet (default, CDP facilitator) or Solana mainnet (PayAI).
   The 402 challenge lists both; your wallet picks the network.
 - POST /task-quote        : forecast only (not an invoice).
@@ -257,12 +260,12 @@ const LLMS_TXT = `# XFuel Protocol
 
 - GET  /openapi.json      : OpenAPI 3.1 with x-payment-info. Public door is POST /v1/chat/completions.
 - GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
-- POST /v1/chat/completions : paid. Unauth → 402 (even on {}). Demo key xfuel-demo skips payment.
+- POST /v1/chat/completions : paid. Unauth GET or POST {} → 402. Demo key xfuel-demo skips payment.
 - POST /task-request      : lower-level M2M paid route (not the public door).
 
 ## SDK
 
-- npm install xfuel-sdk — client.chatCompletions() is the free path.
+- npm install xfuel-sdk — client.chatCompletions() with x402 for unauthenticated calls.
 - createMockPayer() is for a local mock facilitator only. This host rejects it.
 
 ## Docs
@@ -1833,6 +1836,12 @@ export function createApp() {
     res.type('text/plain; charset=utf-8').send(LLMS_TXT);
   });
 
+  // Real SVG. Apex xfuel.app/xfuel-icon.svg currently 307s into the marketing SPA.
+  app.get('/xfuel-icon.svg', (_req, res) => {
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.type('image/svg+xml; charset=utf-8').send(XFUEL_ICON_SVG);
+  });
+
   // ═══════════════════════════════════════════════════════════════════════
   // GET /.well-known/x402 — x402 Bazaar discovery manifest (public, no auth)
   // Self-describes XFuel's USDC/x402-payable resource(s) in the bazaar shape so
@@ -2020,7 +2029,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /.well-known/x402, GET /openapi.json, GET /v1/models, GET /v1/models/:id, POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 

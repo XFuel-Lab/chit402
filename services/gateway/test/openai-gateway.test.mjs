@@ -60,6 +60,19 @@ test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   assert.match(body, /xfuel-sdk/);
   assert.match(body, /npx xfuel-mcp/);
   assert.match(body, /Base mainnet/);
+  assert.match(body, /\$0\.01/);
+  assert.doesNotMatch(body, /unmetered/i);
+  assert.doesNotMatch(body, /free path/i);
+});
+
+test('GET /xfuel-icon.svg is a real SVG, not HTML', async () => {
+  const res = await fetch(`${base}/xfuel-icon.svg`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type') ?? '', /image\/svg\+xml/);
+  const body = await res.text();
+  assert.match(body, /<svg[\s>]/);
+  assert.match(body, /xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
+  assert.doesNotMatch(body, /<!DOCTYPE html>/i);
 });
 
 test('GET /v1/models lists live hub catalog in OpenAI shape', async () => {
@@ -75,6 +88,8 @@ test('GET /v1/models lists live hub catalog in OpenAI shape', async () => {
   const first = body.data[0];
   assert.equal(first.object, 'model');
   assert.equal(typeof first.id, 'string');
+  assert.equal(typeof first.hub, 'string');
+  assert.ok(first.availability && typeof first.availability.status === 'string');
   assert.ok(first.modality);
 });
 
@@ -92,6 +107,13 @@ test('GET /v1/models/:id → 200 known, 404 unknown / retired', async () => {
   assert.equal(unknown.status, 404);
   const unknownBody = await unknown.json();
   assert.ok(unknownBody.error.code);
+});
+
+test('GET /v1/chat/completions is not 404 (x402 off → 405, not missing)', async () => {
+  const res = await fetch(`${base}/v1/chat/completions`);
+  assert.notEqual(res.status, 404);
+  assert.equal(res.status, 405);
+  assert.match(res.headers.get('allow') ?? '', /POST/);
 });
 
 test('POST /v1/chat/completions returns an OpenAI completion + XFuel receipt', async () => {

@@ -35,9 +35,16 @@ test('demo key is accepted (via Authorization: Bearer)', async () => {
   assert.equal(res.status, 200);
 });
 
-test('no key is rejected when not in open mode', async () => {
+test('GET /v1/models is public — no key required to see seats', async () => {
   const res = await fetch(`${base}/v1/models`);
-  assert.equal(res.status, 401);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.object, 'list');
+  assert.ok(Array.isArray(body.data) && body.data.length >= 1);
+  const m = body.data[0];
+  assert.equal(typeof m.id, 'string');
+  assert.equal(typeof m.hub, 'string');
+  assert.equal(typeof m.availability.status, 'string');
 });
 
 test('private key is accepted and NOT subject to the demo limit', async () => {

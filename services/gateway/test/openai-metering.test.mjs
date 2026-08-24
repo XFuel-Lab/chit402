@@ -61,6 +61,36 @@ test('unauth POST /v1/chat/completions with {} is 402, not 400', async () => {
   assert.ok(!body.resource.url.includes('/task-request'));
 });
 
+test('unauth GET /v1/chat/completions is the same 402 as POST {}', async () => {
+  const getRes = await fetch(`${base}/v1/chat/completions`);
+  const postRes = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+  assert.equal(getRes.status, 402);
+  assert.equal(postRes.status, 402);
+  const getBody = await getRes.json();
+  const postBody = await postRes.json();
+  assert.equal(getBody.x402Version, postBody.x402Version);
+  assert.equal(getBody.accepts[0].amount, postBody.accepts[0].amount);
+  assert.equal(getBody.accepts[0].amount, '10000');
+  assert.equal(getBody.accepts.length, postBody.accepts.length);
+  assert.match(getBody.resource.url, /\/v1\/chat\/completions/);
+  assert.equal(new URL(getBody.resource.url).pathname, new URL(postBody.resource.url).pathname);
+});
+
+test('GET /v1/models without a key returns the catalog, not 401 or 402', async () => {
+  const res = await fetch(`${base}/v1/models`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.object, 'list');
+  const m = body.data[0];
+  assert.equal(typeof m.id, 'string');
+  assert.equal(typeof m.hub, 'string');
+  assert.equal(typeof m.availability.status, 'string');
+});
+
 test('demo key + empty body skips payment and then 400s on validation', async () => {
   const res = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
@@ -165,6 +195,8 @@ test('an exempt call still reports usage and stays marked unmetered', async () =
   // what matters is that it names no settlement.
   assert.equal(body.xfuel.payment.rail, 'unmetered');
   assert.ok(!body.xfuel.payment.ref);
+  assert.equal(body.xfuel.payment.collected, false);
+  assert.equal(body.xfuel.schema, 'xfuel.receipt.v3');
 });
 
 test('the receipt names the provider that served', async () => {
