@@ -364,16 +364,24 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
   // Read the challenge BEFORE settling — settle marks the nonce spent and drops the record.
   // Verify is idempotent and does not.
   const challenge = nonce ? challengeStore.get(nonce) : null;
-  const boundAmount = challenge?.amount
-    ?? (amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg));
+  let boundAmount;
+  try {
+    boundAmount = challenge?.amount
+      ?? (amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg));
+  } catch (err) {
+    // Never fail a request whose payment already verified — fall back to floor.
+    boundAmount = String(cfg.usdcFloor ?? cfg.usdcPriceDefault ?? '10000');
+    logger.warn({ err: err.message, taskId }, 'x402: priceUSDCResolved failed after verify; using floor');
+  }
   const settledNetwork = challenge?.network || cfg.network;
 
   const s = await settlePayment(paymentHeader, bound);
   if (!s.settled) return { kind: 'failed', reason: s.reason || 'settle_failed' };
 
+  const txRef = s.txRef || 'unknown';
   return {
     kind: 'settled',
-    paymentRef: `${settledNetwork}:${s.txRef}`,
+    paymentRef: `${settledNetwork}:${txRef}`,
     settledAmount: String(boundAmount),
   };
 }

@@ -479,11 +479,11 @@ export function buildPaymentChallenge(p, opts = {}) {
   // Lead with "OpenAI-compatible" for Bazaar search discoverability.
   const solanaEnabled = p.solana?.enabled && p.solana?.payTo;
   const description = p.description || (solanaEnabled
-    ? 'OpenAI-compatible paid inference via x402 USDC; accepts Base (primary) and Solana. ' +
-      'POST /v1/chat/completions is the recommended surface. Returns signed receipt + verify_url. ' +
+    ? 'OpenAI-compatible paid inference via x402 USDC on Base and Solana ($0.01). ' +
+      'POST /v1/chat/completions is the recommended surface. Returns signed receipt + public verify_url. ' +
       'Paying this host is real mainnet USDC.'
-    : 'OpenAI-compatible paid inference on Base USDC via x402. POST /v1/chat/completions is the ' +
-      'recommended surface. Returns a signed receipt + verify_url. Paying this host is real Base mainnet USDC.');
+    : 'OpenAI-compatible paid inference via x402 USDC on Base ($0.01). POST /v1/chat/completions is the ' +
+      'recommended surface. Returns signed receipt + public verify_url. Paying this host is real mainnet USDC.');
 
   const includeBazaar = p.includeBazaar !== false;
   let bazaarOpts;

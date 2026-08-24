@@ -145,31 +145,36 @@ async function meterV1Request(req, res, { taskId, isAuthorised = null } = {}) {
   }
   // No valid auth and not exempt → must pay
 
-  const body = { ...(req.body || {}) };
-  if (body.max_tokens != null || MAX_TOKENS_CAP > 0) body.max_tokens = clampMaxTokens(body.max_tokens);
+  try {
+    const body = { ...(req.body || {}) };
+    if (body.max_tokens != null || MAX_TOKENS_CAP > 0) body.max_tokens = clampMaxTokens(body.max_tokens);
 
-  const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
-  const resource = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
-  const decision = await runX402Handshake(req, { taskId, body, baseUrl, resource });
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+    const resource = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
+    const decision = await runX402Handshake(req, { taskId, body, baseUrl, resource });
 
-  if (decision.kind === 'settled') {
-    return { halted: false, payment: { ref: decision.paymentRef, amount: decision.settledAmount } };
-  }
+    if (decision.kind === 'settled') {
+      return { halted: false, payment: { ref: decision.paymentRef, amount: decision.settledAmount } };
+    }
 
-  if (decision.kind === 'challenge') {
-    sendV1PaymentRequired(res, decision.body);
+    if (decision.kind === 'challenge') {
+      sendV1PaymentRequired(res, decision.body);
+      return { halted: true };
+    }
+
+    logger.warn({ reqId: req.id, reason: decision.reason }, 'openai-gateway: x402 payment failed');
+    res.status(402).json({
+      error: {
+        message: `Payment could not be settled: ${decision.reason}`,
+        type: 'payment_required',
+        code: decision.reason || 'settle_failed',
+      },
+    });
     return { halted: true };
+  } catch (err) {
+    logger.error({ err, reqId: req.id }, 'openai-gateway: x402 metering error');
+    return { halted: true, payment: null, meteringError: err };
   }
-
-  logger.warn({ reqId: req.id, reason: decision.reason }, 'openai-gateway: x402 payment failed');
-  res.status(402).json({
-    error: {
-      message: `Payment could not be settled: ${decision.reason}`,
-      type: 'payment_required',
-      code: decision.reason || 'settle_failed',
-    },
-  });
-  return { halted: true };
 }
 
 function calcFee(grossAmount, feeBps = GATEWAY_FEE_BPS) {
@@ -642,6 +647,7 @@ function registerTaskAndProve({
   model, messages, content, provider, toolCalls = null,
   proveAllowed = true, apiKeyHash = null, privateSpend = false,
   usage = null, payment = null, deferProve = false,
+  status = 'completed', failureReason = null,
 }) {
   const taskId = providedTaskId || `openai-${crypto.randomUUID()}`;
   let aiListener = null;
@@ -688,8 +694,9 @@ function registerTaskAndProve({
       apiKeyHash: apiKeyHash || null,
       privateSpend: !!privateSpend,
       privacyMode: privateSpend ? 'vendor_blind' : null,
+      ...(failureReason ? { failureReason } : {}),
     },
-    status: 'completed',
+    status,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     feeAmount,
@@ -852,12 +859,99 @@ function buildReceipt({
 
 function setReceiptHeaders(res, receipt) {
   res.setHeader('x-xfuel-task-id', receipt.task_id);
-  res.setHeader('x-xfuel-provider', receipt.compute.provider);
-  res.setHeader('x-xfuel-compute-real', String(receipt.compute.real));
+  if (receipt.compute?.provider) res.setHeader('x-xfuel-provider', receipt.compute.provider);
+  if (receipt.compute) res.setHeader('x-xfuel-compute-real', String(receipt.compute.real));
   res.setHeader('x-xfuel-payment-rail', receipt.payment.rail);
   res.setHeader('x-xfuel-proof-status', receipt.proof.status);
   res.setHeader('x-xfuel-proof-url', receipt.proof.links.proof);
   if (receipt.verify_url) res.setHeader('x-xfuel-verify-url', receipt.verify_url);
+}
+
+/**
+ * Register a paid /v1 task immediately after x402 settlement so a downstream
+ * failure never leaves money moved with no durable task or public receipt.
+ */
+function registerPaidV1Shell({
+  taskId, payment, model, messages, apiKeyHash, privateSpend,
+}) {
+  return registerTaskAndProve({
+    taskId,
+    model: model || 'xfuel/auto',
+    messages,
+    content: '',
+    provider: null,
+    proveAllowed: false,
+    deferProve: true,
+    apiKeyHash,
+    privateSpend,
+    payment,
+    status: 'processing',
+  });
+}
+
+/**
+ * When inference or receipt assembly fails after USDC settled, still return a
+ * signed receipt and a non-500 status. Never swallow collected payment as
+ * a generic server_error without task_id / payment.ref.
+ */
+function respondPaidV1Failure(res, {
+  task, taskId, payment, baseUrl, privateSpend = false,
+  statusCode = 503, message, code = 'inference_failed',
+  requestedModel = null, resolvedModel = null,
+}) {
+  if (task) {
+    task.status = 'failed';
+    task.updatedAt = Date.now();
+    if (message) task.meta = { ...(task.meta || {}), failureReason: message };
+  }
+  const receipt = buildReceipt({
+    task,
+    taskId,
+    provider: task?.meta?.provider || 'none',
+    mock: true,
+    proverConfigured: !!getSP1Prover(),
+    proveAllowed: false,
+    mockReason: message,
+    baseUrl,
+    privateSpend,
+    payment,
+    requestedModel,
+    resolvedModel,
+  });
+  setReceiptHeaders(res, receipt);
+  return res.status(statusCode).json({
+    error: {
+      message: message || 'Inference could not be completed after payment was collected.',
+      type: statusCode >= 500 ? 'server_error' : 'invalid_request_error',
+      code,
+    },
+    task_id: taskId,
+    payment_ref: payment?.ref || null,
+    xfuel: receipt,
+  });
+}
+
+/**
+ * Metering threw after handshake — respond without a bare 500 when we already
+ * know payment moved (should be rare; settlement path is defensive).
+ */
+function respondMeteringFailure(res, { taskId, payment, task, baseUrl, privateSpend = false }) {
+  if (payment?.ref) {
+    return respondPaidV1Failure(res, {
+      task, taskId, payment, baseUrl, privateSpend,
+      statusCode: 503,
+      message: 'Payment was collected but the gateway could not finish processing this request.',
+      code: 'post_settle_processing_failed',
+    });
+  }
+  return res.status(503).json({
+    error: {
+      message: 'Payment processing could not be completed. Retry with a fresh 402 challenge.',
+      type: 'server_error',
+      code: 'payment_processing_failed',
+    },
+    task_id: taskId,
+  });
 }
 
 // ─── Bearer → X-API-Key shim ──────────────────────────────────────────────────
@@ -1008,12 +1102,14 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
     const taskId = `openai-${crypto.randomUUID()}`;
     let metering = { halted: false, payment: null };
     if (!paymentHeader) {
-      try {
-        metering = await meterV1Request(req, res, { taskId, isAuthorised });
-      } catch (err) {
-        logger.error({ err, reqId: req.id }, `${req.method} /v1/chat/completions metering error`);
-        res.status(500).json({ error: { message: 'payment processing failed', type: 'server_error', code: null } });
-        return { halted: true, taskId, metering, paymentHeader };
+      metering = await meterV1Request(req, res, { taskId, isAuthorised });
+      if (metering.meteringError) {
+        return respondMeteringFailure(res, {
+          taskId,
+          payment: metering.payment,
+          task: null,
+          baseUrl: baseUrlFromReq(req, config.service.publicBaseUrl),
+        });
       }
     }
     return { halted: metering.halted, taskId, metering, paymentHeader };
@@ -1039,7 +1135,7 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
     // can list this route. A payment header still waits until after validation
     // so we never settle then 400 (Bankr 2026-08-21). Demo key xfuel-demo skips
     // payment via meteringExempt. GET uses the same helper so probes match POST {}.
-    const { halted, taskId, metering, paymentHeader } = await maybeMeterUnauthChat(req, res);
+    let { halted, taskId, metering, paymentHeader } = await maybeMeterUnauthChat(req, res);
     if (halted) return undefined;
 
     const { model, messages, max_tokens, temperature, stream, tools, tool_choice } = req.body || {};
@@ -1093,16 +1189,34 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
     const id = `chatcmpl-${crypto.randomUUID()}`;
     const created = Math.floor(Date.now() / 1000);
     const fb = allowFallback(req);
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+    const privateSpend = !!config.privateSpend?.enabled;
+    const apiKeyHash = apiKeyHashFromReq(req);
+    let paidTask = null;
 
     // Payment present: settle only after the body is valid (Bankr: don't settle then 400).
     if (paymentHeader) {
-      try {
-        metering = await meterV1Request(req, res, { taskId, isAuthorised });
-      } catch (err) {
-        logger.error({ err, reqId: req.id }, 'POST /v1/chat/completions metering error');
-        return res.status(500).json({ error: { message: 'payment processing failed', type: 'server_error', code: null } });
+      metering = await meterV1Request(req, res, { taskId, isAuthorised });
+      if (metering.meteringError) {
+        return respondMeteringFailure(res, {
+          taskId,
+          payment: metering.payment,
+          task: paidTask,
+          baseUrl,
+          privateSpend,
+        });
       }
       if (metering.halted) return undefined;
+      if (metering.payment) {
+        ({ task: paidTask } = registerPaidV1Shell({
+          taskId,
+          payment: metering.payment,
+          model: model || 'xfuel/auto',
+          messages,
+          apiKeyHash,
+          privateSpend,
+        }));
+      }
     }
 
     // A call that settled pays its own COGS; only unmetered traffic draws on the
@@ -1157,18 +1271,44 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
         max_tokens: clampMaxTokens(max_tokens),
         temperature,
         allowFallback: fb,
-        cacheNs: cacheNamespace(apiKeyHashFromReq(req)),
+        cacheNs: cacheNamespace(apiKeyHash),
         tools: wantsTools ? tools : null,
         tool_choice: wantsTools ? tool_choice : null,
       });
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /v1/chat/completions inference error');
+      if (metering.payment) {
+        return respondPaidV1Failure(res, {
+          task: paidTask,
+          taskId,
+          payment: metering.payment,
+          baseUrl,
+          privateSpend,
+          requestedModel: model,
+          message: 'Inference failed after payment was collected.',
+          code: 'inference_failed',
+        });
+      }
       return res.status(500).json({
         error: { message: 'inference failed', type: 'server_error', code: null },
       });
     }
 
     if (inference.error) {
+      if (metering.payment) {
+        return respondPaidV1Failure(res, {
+          task: paidTask,
+          taskId,
+          payment: metering.payment,
+          baseUrl,
+          privateSpend,
+          statusCode: inference.error.status || 503,
+          message: inference.error.message,
+          code: inference.error.code || 'inference_failed',
+          requestedModel: model,
+          resolvedModel: inference.resolvedModel,
+        });
+      }
       return res.status(inference.error.status || 400).json({
         error: {
           message: inference.error.message,
@@ -1180,7 +1320,6 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
 
     const echoModel = inference.resolvedModel || model || 'xfuel/auto';
     const { content, provider, mock, toolCalls } = inference;
-    const privateSpend = !!config.privateSpend?.enabled;
 
     // Prefer the provider's own usage. Estimating from visible text understates
     // reasoning models badly — they bill hidden reasoning tokens, so a 2-word answer
@@ -1189,20 +1328,42 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
     const { source, ...counts } = normalizeUsage(inference.raw, { messages, output: content });
     const usage = { ...counts, xfuel_source: source };
 
-    const { proverConfigured, task } = registerTaskAndProve({
-      taskId,
-      model: echoModel,
-      messages,
-      content,
-      toolCalls,
-      provider,
-      proveAllowed: false,
-      deferProve: true,
-      apiKeyHash: apiKeyHashFromReq(req),
-      privateSpend,
-      usage: { ...counts, source },
-      payment: metering.payment,
-    });
+    let task;
+    let proverConfigured;
+    if (paidTask) {
+      task = paidTask;
+      task.status = 'completed';
+      task.updatedAt = Date.now();
+      task.intent.modelId = echoModel;
+      task.meta.provider = provider;
+      task.outputHash = ethers.keccak256(ethers.toUtf8Bytes(
+        toolCalls ? JSON.stringify({ content: content || null, tool_calls: toolCalls }) : (content ?? ''),
+      ));
+      task.result = {
+        provider,
+        outputHash: task.outputHash,
+        content_hash: task.outputHash,
+        usage,
+        ...(toolCalls ? { tool_calls: toolCalls } : {}),
+      };
+      task.usage = { ...counts, source };
+      proverConfigured = !!getSP1Prover();
+    } else {
+      ({ proverConfigured, task } = registerTaskAndProve({
+        taskId,
+        model: echoModel,
+        messages,
+        content,
+        toolCalls,
+        provider,
+        proveAllowed: false,
+        deferProve: true,
+        apiKeyHash,
+        privateSpend,
+        usage: { ...counts, source },
+        payment: metering.payment,
+      }));
+    }
 
     // Must precede buildReceipt — the receipt reads provider_cogs off task.meta.
     // A mock cost us nothing, so it neither burns float nor spends the allowance.
@@ -1216,7 +1377,6 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
     });
     startTaskProof(task, proveAllowed);
 
-    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
     const receipt = buildReceipt({
       task, taskId, provider, mock, proverConfigured, proveAllowed,
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
