@@ -27,8 +27,8 @@ export default function Home() {
             Swap one baseURL. Every call comes back with a public receipt that names the model, the hub, and the cost.
           </p>
           <p style={styles.heroDescription}>
-            <code>/v1</code> is unmetered with the demo key (rate-limited). USDC on Base is a separate paid door.
-            Signed receipt by default (HMAC). On-chain SP1 proof on demand — not on every free call.
+            <code>POST /v1/chat/completions</code> is $0.01 USDC on Base and Solana. Signed receipt (HMAC).
+            Demo key <code>xfuel-demo</code> skips payment (rate-limited). On-chain SP1 proof on demand — not on every call.
             Live routes today are <strong>Theta</strong> and <strong>Akash</strong>, plus the <code>xfuel/auto</code> alias.
             We do not route to OpenAI, Groq, Together, or Fireworks on the public catalog.
           </p>
@@ -58,8 +58,8 @@ export default function Home() {
         <div className="container">
           <div className="grid grid-3">
             <div className="card">
-              <h3>Unmetered /v1</h3>
-              <p>Chat, models, images, audio. Receipt in the <code>xfuel</code> body field. No wallet.</p>
+              <h3>POST /v1/chat/completions</h3>
+              <p>$0.01 USDC on Base and Solana. Signed receipt. HTTP 402 without payment. Demo key <code>xfuel-demo</code> skips the charge.</p>
             </div>
             <div className="card">
               <h3>Paid /task-request</h3>

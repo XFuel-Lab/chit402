@@ -58,7 +58,7 @@ const builders: DocLink[] = [
   },
   {
     title: 'TypeScript SDK',
-    description: 'chatCompletions is the free path. npm xfuel-sdk.',
+    description: 'chatCompletions is POST /v1/chat/completions. npm xfuel-sdk.',
     href: `${GITHUB}/packages/sdk/README.md`,
     meta: '0.5.5',
     external: true,
