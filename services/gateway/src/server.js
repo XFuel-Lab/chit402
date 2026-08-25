@@ -1,6 +1,8 @@
 import express from 'express';
 import crypto from 'crypto';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { ethers } from 'ethers';
 import config from './config.js';
 import logger from './logger.js';
@@ -52,6 +54,7 @@ import { getFloatManager } from './provider-float.js';
  *   GET   /task-status     Query task status / ProofOutcome
  *   POST  /v1/agents/register  Bind agentWallet + paid receipt → integer agent_id
  *   GET   /.well-known/agent-card.json  A2A v1.0 agent card
+ *   GET   /.well-known/x402list.txt     x402-list domain verification (public, text/plain)
  *   GET   /receipt/:taskId Public, no-auth verifiable receipt (HTML + ?format=json)
  *   PUT   /webhook         Register a webhook for TaskSettled events (HMAC-signed)
  *   GET   /webhook         List registered webhooks
@@ -67,6 +70,11 @@ import { getFloatManager } from './provider-float.js';
  */
 
 // ─── Constants ───────────────────────────────────────────────────────────────
+
+const X402LIST_TXT = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), 'x402list.txt'),
+  'utf8',
+);
 
 const AI_TASK_FEE_BPS = parseInt(process.env.AI_TASK_FEE_BPS) || 50;   // 0.5%
 const MAX_FEE_BPS     = 100;  // 1.0%
@@ -1896,6 +1904,10 @@ export function createApp() {
   // XFuel-specific integration. See docs/DISTRIBUTION.md and src/x402-discovery.js.
   // ═══════════════════════════════════════════════════════════════════════
 
+  app.get('/.well-known/x402list.txt', (_req, res) => {
+    res.type('text/plain; charset=utf-8').send(X402LIST_TXT);
+  });
+
   app.get('/.well-known/agent-card.json', rateLimit, (req, res) => {
     try {
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
@@ -2125,7 +2137,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 
