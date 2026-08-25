@@ -20,6 +20,8 @@ npm test
 |------|------|
 | `POST /task-request` | M2M inference / tasks (+ x402) |
 | `GET/POST /v1/*` | OpenAI-compatible gateway |
+| `POST /v1/agents/register` | Bind agentWallet + collected receipt → `agent_id` |
+| `GET /.well-known/agent-card.json` | A2A v1.0 agent card |
 | `GET /receipt/:taskId` | Public receipt / `verify_url` |
 | `GET /openapi.json` | x402scan OpenAPI (chat first) |
 | `/.well-known/x402` | x402 Bazaar discovery |

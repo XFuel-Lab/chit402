@@ -26,11 +26,15 @@ import {
   applyPaymentToOwedTask,
   configureRollingLedger,
 } from './rolling-settlement.js';
-import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, proofOutcomeOf } from './receipt.js';
+import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, proofOutcomeOf, verifyReceiptHmac } from './receipt.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest, buildOpenApiSpec } from './x402-discovery.js';
 import { buildPaymentChallenge } from './x402-adapter.js';
 import { XFUEL_ICON_SVG } from './xfuel-icon.js';
+import { buildAgentCard } from './agent-card.js';
+import { AgentRegistry, registerAgent } from './agent-registry.js';
+import { UsageSettledLedger } from './usage-settled.js';
+import { aawpReaders } from './agent-wallet.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
 import { apiKeyHashFromReq } from './buyer-attr.js';
@@ -46,6 +50,8 @@ import { getFloatManager } from './provider-float.js';
  *   POST  /a2a-message     Send an A2A (Agent-to-Agent) message with optional escrow
  *   POST  /a2a-settle-fair-exchange  Settle an A2A bid via Fair Exchange (PAS signature)
  *   GET   /task-status     Query task status / ProofOutcome
+ *   POST  /v1/agents/register  Bind agentWallet + paid receipt → integer agent_id
+ *   GET   /.well-known/agent-card.json  A2A v1.0 agent card
  *   GET   /receipt/:taskId Public, no-auth verifiable receipt (HTML + ?format=json)
  *   PUT   /webhook         Register a webhook for TaskSettled events (HMAC-signed)
  *   GET   /webhook         List registered webhooks
@@ -231,6 +237,7 @@ const LLMS_TXT = `# XFuel Protocol
 
 - POST /v1/chat/completions : OpenAI chat completions. Unauthenticated GET or
   POST {} → 402 x402 ($0.01 USDC on Base or Solana). Returns signed receipt + public verify_url.
+- POST /v1/agents/register  : bind agentWallet + collected HMAC-valid receipt → integer agent_id.
 - GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - Auth: "Authorization: Bearer <key>" or "X-API-Key: <key>".
@@ -254,12 +261,14 @@ const LLMS_TXT = `# XFuel Protocol
 
 - npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
 - submit_inference = POST /task-request (paid, 402 without a payer).
-- pay_with_usdc is only listed if XFUEL_PAYER_PRIVATE_KEY is set.
+- register_agent = POST /v1/agents/register (needs a collected receipt + agentWallet).
 
 ## Discovery (x402scan + Bazaar)
 
 - GET  /openapi.json      : OpenAPI 3.1 with x-payment-info. Public door is POST /v1/chat/completions.
 - GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
+- GET  /.well-known/agent-card.json : A2A v1.0 card (200).
+- POST /v1/agents/register : bind agentWallet + collected HMAC-valid receipt → agent_id.
 - POST /v1/chat/completions : paid ($0.01 USDC on Base or Solana). Unauth GET or POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).
 
@@ -467,6 +476,18 @@ export function createApp() {
     dir: payersDir,
     persist: !!config.taskStore?.persist,
   });
+
+  const agentsDir = process.env.AGENTS_DIR
+    || (config.taskStore?.dir ? path.join(config.taskStore.dir, '..', 'agents') : null);
+  const agentRegistry = new AgentRegistry({
+    dir: agentsDir,
+    persist: !!config.taskStore?.persist,
+  });
+  const usageSettled = new UsageSettledLedger({
+    dir: agentsDir,
+    persist: !!config.taskStore?.persist,
+  });
+  const aawp = aawpReaders(config.erc8004?.rpcUrl || config.settlement?.rpcUrl);
 
   // AkashML publishes no capacity signal and serves all live inference, so
   // without this an outage there is discovered by failing a customer's call.
@@ -685,6 +706,7 @@ export function createApp() {
   app.use('/task-status',   rateLimit, authenticate);
   app.use('/webhook',       rateLimit, authenticate);
   app.use('/erc8004/validate', rateLimit, authenticate);
+  app.use('/v1/agents', rateLimit);
 
   // GET /task-request — public x402 discovery probe (CDP validate uses GET or POST)
   app.get('/task-request', (req, res) => {
@@ -1391,6 +1413,69 @@ export function createApp() {
     }
   });
 
+  function recordA2AMessage({
+    message_type,
+    sender_chain,
+    recipient_chain,
+    payload_hash,
+    escrow_amount = '0',
+    ttl,
+    sender_address,
+    sender_identity,
+    recipient_address = null,
+    ibc_channel = null,
+    parent_task_id = null,
+    correlation_id = null,
+    relayFee = '0',
+  }) {
+    const messageId = `a2a-${crypto.randomUUID()}`;
+    const nonce = ++_a2aNonce;
+    const a2aMessage = {
+      messageId,
+      msgType: message_type,
+      senderChain: sender_chain,
+      recipientChain: recipient_chain,
+      payloadHash: payload_hash,
+      escrowAmount: String(escrow_amount || '0'),
+      nonce,
+      ttl,
+      timestamp: Math.floor(Date.now() / 1000),
+      verified: false,
+      senderAddress: sender_address,
+      senderIdentity: sender_identity,
+      recipientAddress: recipient_address || null,
+      ibcChannel: ibc_channel || null,
+      relayFee,
+      parentTaskId: parent_task_id || null,
+      correlationId: correlation_id || null,
+    };
+    _a2aMessages.set(messageId, a2aMessage);
+    _generateA2AProof(a2aMessage).catch((err) => {
+      logger.error({ err, messageId }, 'A2A proof generation failed');
+    });
+    return {
+      message_id: messageId,
+      status: 'accepted',
+      message_type,
+      sender_chain,
+      recipient_chain,
+      payload_hash,
+      escrow_amount: String(escrow_amount || '0'),
+      relay_fee: relayFee,
+      relay_fee_info: '0.1% on escrowed amount → USDC on Base (X402_PAY_TO / Splits v2)',
+      nonce,
+      ttl,
+      timestamp: a2aMessage.timestamp,
+      parent_task_id: parent_task_id || null,
+      correlation_id: correlation_id || null,
+      _links: { status: `/task-status?message_id=${messageId}` },
+      next: {
+        hint: 'Link a follow-on inference with parent_task_id + a2a_message_id on /task-request',
+        a2a_message_id: messageId,
+      },
+    };
+  }
+
   // ═══════════════════════════════════════════════════════════════════════
   // POST /a2a-message — Send an A2A (Agent-to-Agent) message with escrow
   // ═══════════════════════════════════════════════════════════════════════
@@ -1469,71 +1554,33 @@ export function createApp() {
         relayFee = ((escrow * 10n) / 10000n).toString(); // 10 BPS
       }
 
-      // ── Build message record ──────────────────────────────────────────
-
-      const messageId = `a2a-${crypto.randomUUID()}`;
-      const nonce     = ++_a2aNonce;
-
-      const a2aMessage = {
-        messageId,
-        msgType:         message_type,
-        senderChain:     sender_chain,
-        recipientChain:  recipient_chain,
-        payloadHash:     payload_hash,
-        escrowAmount:    escrow.toString(),
-        nonce,
-        ttl,
-        timestamp:       Math.floor(Date.now() / 1000),
-        verified:        false,
-        senderAddress:   sender_address,
-        senderIdentity:  sender_identity,
-        recipientAddress: recipient_address || null,
-        ibcChannel:      ibc_channel || null,
-        relayFee,
-        parentTaskId:    parent_task_id || null,
-        correlationId:   correlation_id || null,
-      };
-
-      _a2aMessages.set(messageId, a2aMessage);
-
-      // Fire-and-forget: generate SP1 A2AMessage proof asynchronously
-      _generateA2AProof(a2aMessage).catch(err => {
-        logger.error({ err, messageId }, 'A2A proof generation failed');
-      });
-
-      logger.info({
-        reqId: req.id,
-        messageId,
-        msgType:        message_type,
-        senderChain:    sender_chain,
-        recipientChain: recipient_chain,
-        escrow:         escrow.toString(),
-        relayFee,
-      }, 'A2A message accepted');
-
-      return res.status(202).json({
-        message_id:      messageId,
-        status:          'accepted',
+      const accepted = recordA2AMessage({
         message_type,
         sender_chain,
         recipient_chain,
         payload_hash,
-        escrow_amount:   escrow.toString(),
-        relay_fee:       relayFee,
-        relay_fee_info:  '0.1% on escrowed amount → USDC on Base (X402_PAY_TO / Splits v2)',
-        nonce,
+        escrow_amount: escrow.toString(),
         ttl,
-        timestamp:       a2aMessage.timestamp,
-        parent_task_id:  parent_task_id || null,
-        correlation_id:  correlation_id || null,
-        _links: {
-          status: `/task-status?message_id=${messageId}`,
-        },
-        next: {
-          hint: 'Link a follow-on inference with parent_task_id + a2a_message_id on /task-request',
-          a2a_message_id: messageId,
-        },
+        sender_address,
+        sender_identity,
+        recipient_address,
+        ibc_channel,
+        parent_task_id,
+        correlation_id,
+        relayFee,
       });
+
+      logger.info({
+        reqId: req.id,
+        messageId: accepted.message_id,
+        msgType: message_type,
+        senderChain: sender_chain,
+        recipientChain: recipient_chain,
+        escrow: escrow.toString(),
+        relayFee,
+      }, 'A2A message accepted');
+
+      return res.status(202).json(accepted);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /a2a-message error');
       return res.status(500).json({ error: 'internal', message: err.message });
@@ -1849,6 +1896,16 @@ export function createApp() {
   // XFuel-specific integration. See docs/DISTRIBUTION.md and src/x402-discovery.js.
   // ═══════════════════════════════════════════════════════════════════════
 
+  app.get('/.well-known/agent-card.json', rateLimit, (req, res) => {
+    try {
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+      res.type('application/a2a+json').json(buildAgentCard(baseUrl));
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /.well-known/agent-card.json error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
   app.get('/.well-known/x402', rateLimit, (req, res) => {
     try {
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
@@ -2022,6 +2079,45 @@ export function createApp() {
   // Shares the rate-limit + auth middleware (accepts Authorization: Bearer).
   // ═══════════════════════════════════════════════════════════════════════
 
+  async function loadReceiptJson(taskId) {
+    try {
+      const aiListener = getAIListener();
+      const task = _findTask(aiListener, taskId);
+      if (!task) return null;
+      return buildReceipt(task, {
+        baseUrl: config.service.publicBaseUrl || '',
+        signingSecret: config.receipts?.signingSecret,
+        viPolicy: config.verifiedInference,
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  app.post('/v1/agents/register', async (req, res) => {
+    try {
+      const result = await registerAgent(req.body || {}, {
+        registry: agentRegistry,
+        ledger: usageSettled,
+        loadReceipt: loadReceiptJson,
+        verify: (receipt) => verifyReceiptHmac(receipt, config.receipts?.signingSecret),
+        apiKey: req.headers['x-api-key'] || null,
+        walletOpts: { provider: aawp.provider, identity: aawp.identity },
+        postA2A: (fields) => recordA2AMessage(fields),
+      });
+      if (!result.ok) {
+        return res.status(result.status).json({
+          error: result.error,
+          message: result.message,
+        });
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /v1/agents/register error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
   registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorised });
 
   // ── 404 fallback ────────────────────────────────────────────────────────
@@ -2029,7 +2125,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 

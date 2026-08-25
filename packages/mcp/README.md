@@ -7,7 +7,7 @@ MCP server for XFuel.
 
 Zero config talks to https://api.xfuel.app with the public demo key.
 
-Public beta. **Paying that host moves real USDC on Base mainnet.** Do not set `XFUEL_PAYER_PRIVATE_KEY` unless you mean to.
+Public beta. **Paying that host moves real USDC on Base mainnet.** MCP does not take a human private key to pay.
 
 npm: `xfuel-mcp` · Registry: `io.github.XFuel-Lab/xfuel-mcp`
 
@@ -40,7 +40,7 @@ Claude / Cursor stdio config:
 | `chat_completions` | Generate text (unmetered `/v1`). Required: `messages`. Default model `xfuel/auto`. |
 | `list_models` | Live catalog — hub, modality, pricing, availability |
 | `submit_inference` | Paid `/task-request`. 402 without a payer. Pass `messages` or `input`. Amount is USDC 6dp (`10000` = $0.01). |
-| `pay_with_usdc` | Listed **only** if `XFUEL_PAYER_PRIVATE_KEY` is set. Spends real USDC on Base. |
+| `register_agent` | `POST /v1/agents/register` — bind an AAWP / smart-account `agentWallet` + collected receipt → `agent_id`. |
 | `get_task_status` | Status / fees — task ids also come from `chat_completions` |
 | `get_proof` / `verify_proof` | Settlement proof + binding checks |
 | `quote_task` / `get_health` | Pricing / health |

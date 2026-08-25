@@ -17,7 +17,7 @@ const TOOLS: Array<{ name: string; description: string }> = [
   { name: 'chat_completions', description: 'Unmetered OpenAI-compatible chat (POST /v1/chat/completions). Required: messages.' },
   { name: 'list_models', description: 'List routable inference models (hub, pricing, availability).' },
   { name: 'submit_inference', description: 'Paid POST /task-request. 402 without a payer. Not the demo path.' },
-  { name: 'pay_with_usdc', description: 'Spends real USDC on Base. Only listed when a payer key is set.' },
+  { name: 'register_agent', description: 'POST /v1/agents/register. Bind agentWallet + collected receipt → agent_id.' },
   { name: 'get_task_status', description: 'Poll a task (from chat_completions or submit_inference) to a terminal status.' },
   { name: 'get_proof', description: 'Fetch the SP1 ZK settlement proof + fee/revenue split for a settled task.' },
   { name: 'verify_proof', description: 'Verify proof integrity + payment binding; optional on-chain nullifier (replay) read.' },
@@ -39,7 +39,7 @@ export function buildServerCard(config: McpConfig, mcpEndpoint: string) {
     name: 'io.github.XFuel-Lab/xfuel-mcp',
     title: 'XFuel',
     description:
-      'Generate text via chat_completions (unmetered /v1), or submit a paid USDC task. ' +
+      'Generate text via chat_completions, submit a paid USDC task, or register_agent. ' +
       'Every call yields a public verify_url receipt. Hostname may say testnet; paying is Base mainnet USDC.',
     version: SERVER_VERSION,
     websiteUrl: 'https://github.com/XFuel-Lab/xfuel-protocol/tree/main/xfuel-mcp#readme',

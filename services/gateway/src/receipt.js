@@ -313,6 +313,26 @@ function signReceiptPayload(receipt, secret) {
 }
 
 /**
+ * Verify a receipt HMAC. Needs the verify key, not a signing helper.
+ * @param {object} receipt
+ * @param {string} secret
+ * @returns {{ checked: boolean, valid: boolean|null, expected?: string, recomputed?: string, reason?: string }}
+ */
+export function verifyReceiptHmac(receipt, secret) {
+  if (!secret || typeof secret !== 'string') {
+    return { checked: false, valid: null, reason: 'no_verify_key' };
+  }
+  const sig = receipt?.signature?.value;
+  if (!sig) return { checked: false, valid: null, reason: 'no_signature' };
+  const digest = crypto.createHmac('sha256', secret).update(canonicalSignedPayload(receipt)).digest('hex');
+  const recomputed = `sha256=${digest}`;
+  const a = Buffer.from(String(sig).toLowerCase());
+  const b = Buffer.from(recomputed.toLowerCase());
+  const valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+  return { checked: true, valid, expected: String(sig), recomputed };
+}
+
+/**
  * Private Spend privacy block on the public receipt.
  * @returns {{ mode: string, trust: string, notes: string } | null}
  */
@@ -962,4 +982,5 @@ export default {
   baseUrlFromReq,
   privacyOf,
   lineageOf,
+  verifyReceiptHmac,
 };

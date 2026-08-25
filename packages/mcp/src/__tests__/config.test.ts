@@ -15,7 +15,6 @@ const ENV_KEYS = [
   'XFUEL_MCP_AUTH_TOKEN',
   'XFUEL_RPC_URL',
   'ZK_VERIFIER_ADDRESS',
-  'XFUEL_PAYER_PRIVATE_KEY',
 ];
 
 function withCleanEnv<T>(fn: () => T): T {
@@ -45,17 +44,17 @@ test('defaults to stdio + hosted public beta when nothing is set', () => {
     assert.equal(config.httpAuthToken, undefined);
     assert.equal(config.rpcUrl, undefined);
     assert.equal(config.zkVerifierAddress, undefined);
-    assert.equal(config.payerPrivateKey, undefined);
+    assert.equal('payerPrivateKey' in config, false);
   });
 });
 
-test('payer private key is read from env only (enables pay_with_usdc)', () => {
+test('does not read a human payer-key path from env or flags', () => {
   withCleanEnv(() => {
-    process.env.XFUEL_PAYER_PRIVATE_KEY = '0xdeadbeef';
-    assert.equal(parseArgs([]).config.payerPrivateKey, '0xdeadbeef');
-    // Not exposed as a CLI flag — an unknown flag must not set it.
-    delete process.env.XFUEL_PAYER_PRIVATE_KEY;
-    assert.equal(parseArgs(['--payer-private-key', '0x1234']).config.payerPrivateKey, undefined);
+    const parsed = parseArgs(['--payer-private-key', '0x1234']);
+    assert.equal('payerPrivateKey' in parsed.config, false);
+    const json = JSON.stringify(parsed.config);
+    assert.doesNotMatch(json, /payerPrivateKey/);
+    assert.doesNotMatch(json, /0x1234/);
   });
 });
 

@@ -6,11 +6,11 @@
  * Each tool wraps official `xfuel-sdk` so behaviour matches the SDK.
  */
 import { z } from 'zod';
-import { Wallet, Contract, JsonRpcProvider, keccak256, toUtf8Bytes } from 'ethers';
+import { Contract, JsonRpcProvider, keccak256, toUtf8Bytes } from 'ethers';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { XFuelClient, ChainId, PUBLIC_DEMO_API_KEY } from 'xfuel-sdk';
 import type { TaskQuoteParams } from 'xfuel-sdk';
-import { XFuelOnChain, createEip3009Payer } from 'xfuel-sdk/onchain';
+import { XFuelOnChain } from 'xfuel-sdk/onchain';
 import type { McpConfig } from './config.js';
 import { ok, fail, describeError } from './format.js';
 
@@ -156,8 +156,8 @@ Args:
   - messages / input (optional): the prompt. Required for live routing.
   - max_tokens, temperature (optional)
 
-Poll get_task_status(task_id). For agent-side USDC settlement use pay_with_usdc
-(only listed when XFUEL_PAYER_PRIVATE_KEY is set).`,
+Poll get_task_status(task_id). Pay the live $0.01 door at POST /v1/chat/completions
+from the agent's wallet — MCP does not take a human private key.`,
       inputSchema: {
         model: z.string().min(1).describe('Live catalog id from list_models, e.g. "xfuel/auto" or "theta/glm_5_2"'),
         sender: z.string().min(1).describe('0x address that owns/pays for the task'),
@@ -209,89 +209,68 @@ Poll get_task_status(task_id). For agent-side USDC settlement use pay_with_usdc
     },
   );
 
-  // ── pay_with_usdc ──────────────────────────────────────────────────────────
-  // Hidden unless XFUEL_PAYER_PRIVATE_KEY is set. First-hour clients never see
-  // a tool that can spend real USDC on Base.
-  if (config.payerPrivateKey) {
+  // ── register_agent ─────────────────────────────────────────────────────
   server.registerTool(
-    'pay_with_usdc',
+    'register_agent',
     {
-      title: 'SPENDS REAL USDC ON BASE — submit + pay',
-      description: `SPENDS REAL USDC ON BASE via x402. Only listed because XFUEL_PAYER_PRIVATE_KEY is set.
-Do not call this to try a demo prompt — use chat_completions.
+      title: 'Register agent identity',
+      description: `POST /v1/agents/register. Binds an AAWP official or smart-account agentWallet
+to an integer agent_id using a collected HMAC-valid receipt (task_id from a paid
+POST /v1/chat/completions). Demo receipts do not qualify. API key is not a wallet.
+Does not accept a human private key.
 
-The server signs an EIP-3009 authorization. Pass messages or input so a model actually runs.
-
-Amount is USDC 6 decimals (10000 = $0.01), not wei.`,
+Returns agent_id (required later by POST /erc8004/validate) and validate_score.`,
       inputSchema: {
-        model: z.string().min(1).describe('Live catalog id from list_models'),
-        amount: z
+        agent_wallet: z
           .string()
-          .regex(AMOUNT_RE, 'amount must be an integer string (USDC 6 decimals)')
-          .describe(USDC_AMOUNT),
-        sender: z.string().optional().describe('0x address that owns the task (default: payer wallet)'),
-        chain_id: z.enum(CHAIN_IDS).default('base').describe('Settlement / routing hint (default base)'),
-        messages: z.array(chatMessageSchema).optional().describe('Chat messages for live routing'),
-        input: z.string().optional().describe('Raw prompt for live routing'),
-        max_tokens: z.number().int().positive().optional().describe('Output budget'),
-        input_hash: z.string().optional().describe('keccak256 of your input'),
-        memo: z.string().optional().describe('Free-form note — NOT the prompt'),
-        max_gpu_hours: z.string().optional().describe('Compute budget hint'),
-        subnet_id: z.number().int().optional().describe('Bittensor subnet id'),
-        callback_url: z.string().url().optional().describe('Webhook for signed TaskSettled event'),
+          .regex(ADDRESS_RE, 'agent_wallet must be a 0x address')
+          .describe('AAWP official or smart-account address. Not an API key.'),
+        task_id: z.string().min(1).describe('Collected receipt task_id from a paid chat completion'),
+        request_hash: z
+          .string()
+          .regex(REQUEST_HASH_RE, 'request_hash must be a 0x-prefixed 32-byte hex string')
+          .optional()
+          .describe('Optional ERC-8004 request hash'),
       },
       annotations: {
-        title: 'SPENDS REAL USDC ON BASE',
+        title: 'Register agent identity',
         readOnlyHint: false,
-        destructiveHint: true,
+        destructiveHint: false,
         idempotentHint: false,
         openWorldHint: true,
       },
     },
     async (args) => {
-      if (!config.payerPrivateKey) {
-        return fail(
-          'pay_with_usdc is not configured: start the server with XFUEL_PAYER_PRIVATE_KEY. ' +
-            'For unpaid/TFUEL settlement use submit_inference instead.',
-        );
-      }
-      let wallet: Wallet;
       try {
-        wallet = new Wallet(config.payerPrivateKey);
-      } catch {
-        return fail('XFUEL_PAYER_PRIVATE_KEY is not a valid private key.');
-      }
-      try {
-        // Cast across ethers copies (MCP vs SDK node_modules): createEip3009Payer
-        // duck-types the signer (signTypedData + getAddress), so this is safe.
-        const signer = wallet as unknown as Parameters<typeof createEip3009Payer>[0];
-        const payer = createEip3009Payer(signer, { from: wallet.address });
-        const res = await client.submitInference(args.model, args.sender ?? wallet.address, args.amount, {
-          chain_id: args.chain_id as ChainId,
-          messages: args.messages,
-          input: args.input,
-          max_tokens: args.max_tokens,
-          input_hash: args.input_hash,
-          memo: args.memo,
-          max_gpu_hours: args.max_gpu_hours,
-          subnet_id: args.subnet_id,
-          callback_url: args.callback_url,
-          payment: { rail: 'usdc' },
-          payer,
+        const url = `${config.apiUrl.replace(/\/$/, '')}/v1/agents/register`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(config.apiKey ? { 'X-API-Key': config.apiKey } : {}),
+          },
+          body: JSON.stringify({
+            agentWallet: args.agent_wallet,
+            task_id: args.task_id,
+            request_hash: args.request_hash,
+          }),
         });
-        const rail = res.payment_rail ?? 'usdc';
+        const data = (await res.json()) as Record<string, unknown>;
+        if (!res.ok) {
+          return fail(
+            `register_agent HTTP ${res.status}: ${String(data.message || data.error || 'request failed')}`,
+          );
+        }
         return ok(
-          res as unknown as Record<string, unknown>,
-          `Submitted+paid task ${res.task_id} (status: ${res.status}, rail: ${rail}` +
-            `${rail === 'tfuel' ? ' — server has x402 disabled, fell back to TFUEL' : ` via x402, ref: ${res.payment_ref ?? 'n/a'}`}).\n` +
-            `Verify/share: ${verifyUrlOf(res, config.apiUrl)}`,
+          data,
+          `Registered agent_id=${String(data.agent_id)} wallet=${String(data.agentWallet)}` +
+            (data.validate_score != null ? ` score=${String(data.validate_score)}` : ''),
         );
       } catch (err) {
         return fail(describeError(err));
       }
     },
   );
-  }
 
   // ── get_task_status ──────────────────────────────────────────────────────
   server.registerTool(
