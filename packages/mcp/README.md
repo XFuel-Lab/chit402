@@ -41,6 +41,7 @@ Claude / Cursor stdio config:
 | `list_models` | Live catalog — hub, modality, pricing, availability |
 | `submit_inference` | Paid `/task-request`. 402 without a payer. Pass `messages` or `input`. Amount is USDC 6dp (`10000` = $0.01). |
 | `register_agent` | `POST /v1/agents/register` — bind an AAWP / smart-account `agentWallet` + collected receipt → `agent_id`. |
+| `get_agent_book` | Possession-gated last-N collected spend for one `agent_id`. Not a public index. |
 | `get_task_status` | Status / fees — task ids also come from `chat_completions` |
 | `get_proof` / `verify_proof` | Settlement proof + binding checks |
 | `quote_task` / `get_health` | Pricing / health |

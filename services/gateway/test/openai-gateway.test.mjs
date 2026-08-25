@@ -42,8 +42,14 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
   assert.equal(spec.openapi, '3.1.0');
   assert.equal(spec.info.title, 'XFuel');
   assert.equal(typeof spec.info['x-guidance'], 'string');
-  assert.deepEqual(Object.keys(spec.paths), ['/v1/chat/completions', '/task-request', '/v1/agents/register']);
+  assert.deepEqual(Object.keys(spec.paths), [
+    '/v1/chat/completions',
+    '/task-request',
+    '/v1/agents/register',
+    '/v1/agents/{agent_id}/book',
+  ]);
   assert.equal(spec.paths['/v1/agents/register'].post['x-payment-info'], undefined);
+  assert.equal(spec.paths['/v1/agents/{agent_id}/book'].post['x-payment-info'], undefined);
   const chat = spec.paths['/v1/chat/completions'].post;
   assert.ok(chat.responses[402] || chat.responses['402']);
   assert.equal(chat['x-payment-info'].price.amount, '0.01');

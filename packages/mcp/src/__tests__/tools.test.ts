@@ -12,6 +12,7 @@ const CORE_TOOLS = [
   'chat_completions',
   'submit_inference',
   'register_agent',
+  'get_agent_book',
   'get_task_status',
   'get_proof',
   'verify_proof',
@@ -57,13 +58,13 @@ test('SERVER_VERSION matches package.json', () => {
   assert.equal(SERVER_VERSION, pkg.version);
 });
 
-test('fourteen tools; pay_with_usdc is absent', () => {
+test('fifteen tools; pay_with_usdc is absent', () => {
   const handlers = captureTools({});
   for (const name of CORE_TOOLS) {
     assert.ok(handlers.has(name), `missing tool: ${name}`);
   }
   assert.equal(handlers.has('pay_with_usdc'), false);
-  assert.equal(handlers.size, 14);
+  assert.equal(handlers.size, 15);
 });
 
 test('a payer-key config field does not add pay_with_usdc', () => {
@@ -131,6 +132,37 @@ test('verify_model_commitment without RPC + registry returns a clear "not config
   const res = await handlers.get('verify_model_commitment')!({ model: 'llama-3-70b:q4_k_m' });
   assert.equal(res.isError, true);
   assert.match(res.content[0].text, /MODEL_REGISTRY_ADDRESS/);
+});
+
+test('get_agent_book POSTs session to /v1/agents/:id/book', async () => {
+  const originalFetch = globalThis.fetch;
+  let seen: { url: string; body: unknown } | null = null;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    seen = { url: String(url), body: JSON.parse(String(init?.body || '{}')) };
+    return new Response(JSON.stringify({
+      agent_id: 7,
+      limit: 50,
+      entries: [],
+      totals: { count: 0, usdc_sum: '0', by_rail: {} },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }) as typeof fetch;
+  try {
+    const handlers = captureTools({});
+    const res = await handlers.get('get_agent_book')!({
+      agent_id: 7,
+      session: 'held-by-the-founder',
+    });
+    assert.equal(res.isError, undefined);
+    assert.match(res.content[0].text, /agent_id=7/);
+    assert.ok(seen);
+    assert.match(seen!.url, /\/v1\/agents\/7\/book$/);
+    assert.deepEqual(seen!.body, { session: 'held-by-the-founder' });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('register_agent POSTs agentWallet + task_id', async () => {

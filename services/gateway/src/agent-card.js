@@ -63,6 +63,15 @@ export function buildAgentCard(baseUrl = '') {
         examples: ['POST /v1/agents/register with { agentWallet, task_id }'],
       },
       {
+        id: 'agent-book',
+        name: 'Agent spend book',
+        description:
+          'GET|POST /v1/agents/:agent_id/book returns last-N collected spend for that agent_id. '
+          + 'Possession-gated (register session or HMAC). Not a public index.',
+        tags: ['identity', 'spend'],
+        examples: ['POST /v1/agents/1/book with { session }'],
+      },
+      {
         id: 'erc8004-validate',
         name: 'ERC-8004 validate',
         description:

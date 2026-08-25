@@ -119,10 +119,17 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
   assert.deepEqual(spec.servers, [{ url: 'https://api.xfuel.app' }]);
 
   const pathKeys = Object.keys(spec.paths);
-  assert.deepEqual(pathKeys, ['/v1/chat/completions', '/task-request', '/v1/agents/register'],
-    'chat completions is the public door; task-request is second; register is identity');
+  assert.deepEqual(pathKeys, [
+    '/v1/chat/completions',
+    '/task-request',
+    '/v1/agents/register',
+    '/v1/agents/{agent_id}/book',
+  ], 'chat completions is the public door; task-request is second; register is identity; book is possession-gated');
   assert.equal(spec.paths['/v1/agents/register'].post['x-payment-info'], undefined,
     'register is not the $0.01 paid door');
+  assert.equal(spec.paths['/v1/agents/{agent_id}/book'].post['x-payment-info'], undefined,
+    'book is not the $0.01 paid door');
+  assert.equal(spec.paths['/v1/agents/{agent_id}/book'].get['x-payment-info'], undefined);
 
   const chat = spec.paths['/v1/chat/completions'].post;
   const task = spec.paths['/task-request'].post;

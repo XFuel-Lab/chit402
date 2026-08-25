@@ -36,6 +36,7 @@ import { XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger } from './usage-settled.js';
+import { readAgentBook, claimFromRequest, bindBookVerifier } from './agent-book.js';
 import { aawpReaders } from './agent-wallet.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
@@ -53,6 +54,7 @@ import { getFloatManager } from './provider-float.js';
  *   POST  /a2a-settle-fair-exchange  Settle an A2A bid via Fair Exchange (PAS signature)
  *   GET   /task-status     Query task status / ProofOutcome
  *   POST  /v1/agents/register  Bind agentWallet + paid receipt → integer agent_id
+ *   GET|POST /v1/agents/:agent_id/book  Possession-gated last-N collected spend
  *   GET   /.well-known/agent-card.json  A2A v1.0 agent card
  *   GET   /.well-known/x402list.txt     x402-list domain verification (public, text/plain)
  *   GET   /receipt/:taskId Public, no-auth verifiable receipt (HTML + ?format=json)
@@ -246,6 +248,7 @@ const LLMS_TXT = `# XFuel Protocol
 - POST /v1/chat/completions : OpenAI chat completions. Unauthenticated GET or
   POST {} → 402 x402 ($0.01 USDC on Base or Solana). Returns signed receipt + public verify_url.
 - POST /v1/agents/register  : bind agentWallet + collected HMAC-valid receipt → integer agent_id.
+- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id. Not a public index.
 - GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - Auth: "Authorization: Bearer <key>" or "X-API-Key: <key>".
@@ -270,6 +273,7 @@ const LLMS_TXT = `# XFuel Protocol
 - npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
 - submit_inference = POST /task-request (paid, 402 without a payer).
 - register_agent = POST /v1/agents/register (needs a collected receipt + agentWallet).
+- get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; not a public scoreboard).
 
 ## Discovery (x402scan + Bazaar)
 
@@ -277,6 +281,7 @@ const LLMS_TXT = `# XFuel Protocol
 - GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
 - GET  /.well-known/agent-card.json : A2A v1.0 card (200).
 - POST /v1/agents/register : bind agentWallet + collected HMAC-valid receipt → agent_id.
+- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend. Not a public index.
 - POST /v1/chat/completions : paid ($0.01 USDC on Base or Solana). Unauth GET or POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).
 
@@ -496,6 +501,7 @@ export function createApp() {
     persist: !!config.taskStore?.persist,
   });
   const aawp = aawpReaders(config.erc8004?.rpcUrl || config.settlement?.rpcUrl);
+  const verifyBook = bindBookVerifier(agentRegistry);
 
   // AkashML publishes no capacity signal and serves all live inference, so
   // without this an outage there is discovered by failing a customer's call.
@@ -2130,6 +2136,25 @@ export function createApp() {
     }
   });
 
+  function sendAgentBook(req, res) {
+    try {
+      const result = readAgentBook(req.params.agent_id, claimFromRequest(req), {
+        ledger: usageSettled,
+        verify: verifyBook,
+      });
+      if (result.body == null) {
+        return res.status(result.status).end();
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'agent book error');
+      return res.status(403).end();
+    }
+  }
+
+  app.get('/v1/agents/:agent_id/book', sendAgentBook);
+  app.post('/v1/agents/:agent_id/book', sendAgentBook);
+
   registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorised });
 
   // ── 404 fallback ────────────────────────────────────────────────────────
@@ -2137,7 +2162,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 
