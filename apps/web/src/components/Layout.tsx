@@ -65,10 +65,11 @@ export default function Layout() {
         }}
       >
         Public beta. The API is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>api.xfuel.app</code>.
-        {' '}Paying <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>/task-request</code> moves{' '}
-        <strong>real USDC on Base mainnet</strong>.
-        {' '}The free path is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>/v1</code> with key{' '}
-        <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>xfuel-demo</code>. Do not send funds unless you mean to.
+        {' '}<code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>POST /v1/chat/completions</code>
+        {' '}is <strong>$0.01 USDC on Base and Solana</strong>, signed receipt.
+        {' '}Paying this host moves real mainnet USDC. Demo key{' '}
+        <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>xfuel-demo</code> skips payment.
+        {' '}Do not send funds unless you mean to.
       </div>
 
       <main style={{ flex: 1 }}>

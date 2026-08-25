@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "test": "node --test test/seo.test.mjs",
     "sync:community": "node scripts/sync-community-stats.mjs"
   },
   "dependencies": {

@@ -824,8 +824,9 @@ npx tsx examples/flagship-demo.ts
           <h1 style={styles.heroTitle}>Optional GPU hub (EdgeCloud)</h1>
           <p style={styles.heroSubtitle}>
             Theta EdgeCloud is an optional compute provider — not the settlement home.
-            Money and proofs settle in <strong>USDC via x402 on Base</strong>. First hour is
-            Docs → Try the demo (unmetered <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>/v1</code>, no wallet).
+            Money and proofs settle in <strong>USDC via x402 on Base</strong>. Public door is{' '}
+            <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85em' }}>POST /v1/chat/completions</code>
+            {' '}at $0.01 USDC on Base and Solana (Docs → Try the demo).
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '0.75rem', marginTop: '1rem' }}>
             <button
