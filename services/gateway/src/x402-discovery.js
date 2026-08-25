@@ -106,10 +106,118 @@ const AGENTS_REGISTER_OUTPUT_SCHEMA = {
   properties: {
     agent_id: { type: 'integer', description: 'Integer id for POST /erc8004/validate' },
     agentWallet: { type: 'string' },
+    session: {
+      type: 'string',
+      description: 'Possession secret for GET|POST /v1/agents/{agent_id}/book. Not an API key and not a wallet.',
+    },
     task_id: { type: 'string' },
     validate_score: { type: ['integer', 'null'] },
   },
   required: ['agent_id', 'agentWallet'],
+};
+
+const AGENTS_BOOK_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    session: {
+      type: 'string',
+      description: 'Possession secret issued by POST /v1/agents/register. Not an API key.',
+    },
+    proof: {
+      type: 'string',
+      description: 'HMAC-SHA256 over agent_id + window using the register session. Format sha256=<hex>.',
+    },
+    limit: {
+      type: 'integer',
+      description: 'Last-N rows. Default 50, hard max 200.',
+      default: 50,
+      maximum: 200,
+    },
+  },
+};
+
+const AGENTS_BOOK_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    agent_id: { type: 'integer' },
+    limit: { type: 'integer' },
+    entries: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string' },
+          payment: {
+            type: 'object',
+            properties: {
+              ref: { type: 'string' },
+              rail: { type: 'string' },
+              amount: { type: ['string', 'null'] },
+            },
+          },
+          collected_at: { type: 'string' },
+          route: {
+            type: 'object',
+            properties: {
+              model: { type: 'string' },
+              hub: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+    totals: {
+      type: 'object',
+      properties: {
+        count: { type: 'integer' },
+        usdc_sum: { type: 'string' },
+        by_rail: { type: 'object' },
+      },
+    },
+  },
+  required: ['agent_id', 'limit', 'entries', 'totals'],
+};
+
+const AGENTS_BOOK_OP = {
+  operationId: 'getAgentBook',
+  summary: 'Possession-gated agent spend book',
+  description:
+    'Last-N collected UsageSettled rows for this agent_id. Possession-gated: '
+    + 'present the register session or HMAC over agent_id + window. '
+    + 'Unauth or wrong proof returns 401/403 with an empty body. '
+    + 'Not a public index. Only collected rows appear. '
+    + 'This route is not the $0.01 paid door — that stays POST /v1/chat/completions.',
+  tags: ['Agents'],
+  parameters: [
+    {
+      name: 'agent_id',
+      in: 'path',
+      required: true,
+      schema: { type: 'integer' },
+    },
+    {
+      name: 'limit',
+      in: 'query',
+      required: false,
+      schema: { type: 'integer', default: 50, maximum: 200 },
+    },
+  ],
+  requestBody: {
+    required: false,
+    content: {
+      'application/json': { schema: AGENTS_BOOK_INPUT_SCHEMA },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Last-N collected spend for this agent_id',
+      content: {
+        'application/json': { schema: AGENTS_BOOK_OUTPUT_SCHEMA },
+      },
+    },
+    401: { description: 'No possession proof. Empty body.' },
+    403: { description: 'Wrong proof or unknown agent_id. Empty body.' },
+  },
 };
 
 /** Minimal JSON-schema of the OpenAI chat completions response. */
@@ -380,6 +488,8 @@ export function buildOpenApiSpec(baseUrl = '') {
         + 'payment requirements (USDC, $0.01 floor; Base and Solana when enabled). '
         + 'Retry with X-PAYMENT or PAYMENT-SIGNATURE. POST /v1/agents/register binds an '
         + 'agentWallet to an integer agent_id using a collected HMAC-valid receipt. '
+        + 'GET|POST /v1/agents/{agent_id}/book is a possession-gated last-N collected '
+        + 'spend pack for that agent_id — not a public index. '
         + 'POST /task-request is a lower-level M2M alternative that returns task_id for '
         + 'polling — do not treat it as the public door.',
     },
@@ -416,6 +526,10 @@ export function buildOpenApiSpec(baseUrl = '') {
             409: { description: 'Duplicate payment.ref or task_id' },
           },
         },
+      },
+      '/v1/agents/{agent_id}/book': {
+        get: { ...AGENTS_BOOK_OP, operationId: 'getAgentBook' },
+        post: { ...AGENTS_BOOK_OP, operationId: 'postAgentBook' },
       },
     },
   };

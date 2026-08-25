@@ -19,6 +19,8 @@ submit_inference is the paid M2M door (POST /task-request). It requires model + 
 
 register_agent is POST /v1/agents/register. It binds an AAWP official or smart-account agentWallet to an integer agent_id using a collected HMAC-valid receipt. Demo receipts do not qualify. Do not paste a human private key.
 
+get_agent_book is GET|POST /v1/agents/:agent_id/book. Possession-gated last-N collected spend for that agent_id. Not a public index. Do not paste a human private key.
+
 Amounts are USDC 6 decimals (10000 = $0.01), not wei. api.xfuel.app is the public beta; paying it moves mainnet USDC.`;
 
 export type TransportKind = 'stdio' | 'http';

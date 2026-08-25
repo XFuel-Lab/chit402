@@ -96,6 +96,8 @@ test('register issues an integer agent_id', async () => {
   assert.equal(result.body.a2a.status, 'accepted');
   assert.equal(result.body.usage_settled.collected, true);
   assert.equal(result.body.usage_settled.agent_id, result.body.agent_id);
+  assert.equal(typeof result.body.session, 'string');
+  assert.ok(result.body.session.length >= 32);
 });
 
 test('demo/unmetered receipt does not ledger-credit and does not register', async () => {
@@ -181,6 +183,7 @@ test('buildAgentCard is A2A v1.0', () => {
   assert.ok(card.skills.length >= 1);
   assert.ok(card.skills.every((s) => Array.isArray(s.tags) && s.tags.length));
   assert.ok(card.skills.some((s) => s.id === 'register-agent'));
+  assert.ok(card.skills.some((s) => s.id === 'agent-book'));
   assert.doesNotMatch(JSON.stringify(card), /unmetered/i);
   assert.doesNotMatch(JSON.stringify(card), /free path/i);
 });
@@ -214,6 +217,7 @@ test('GET /.well-known/agent-card.json returns A2A v1.0 card (200)', async () =>
   assert.equal(card.supportedInterfaces[0].protocolVersion, '1.0');
   assert.ok(Array.isArray(card.skills));
   assert.ok(card.skills.some((s) => s.id === 'register-agent'));
+  assert.ok(card.skills.some((s) => s.id === 'agent-book'));
 });
 
 test('POST /v1/agents/register without task_id / wallet is 400', async () => {
@@ -230,12 +234,17 @@ test('POST /v1/agents/register without task_id / wallet is 400', async () => {
 test('GET /llms.txt and /openapi.json mention register honestly', async () => {
   const llms = await (await fetch(`${base}/llms.txt`)).text();
   assert.match(llms, /\/v1\/agents\/register/);
+  assert.match(llms, /\/v1\/agents\/:agent_id\/book/);
+  assert.match(llms, /possession-gated/);
   assert.match(llms, /agent-card\.json/);
   assert.doesNotMatch(llms, /unmetered/i);
   assert.doesNotMatch(llms, /XFUEL_PAYER_PRIVATE_KEY/);
 
   const spec = await (await fetch(`${base}/openapi.json`)).json();
   assert.ok(spec.paths['/v1/agents/register']);
+  assert.ok(spec.paths['/v1/agents/{agent_id}/book']);
+  assert.match(spec.paths['/v1/agents/{agent_id}/book'].post.description, /possession-gated/i);
+  assert.equal(spec.paths['/v1/agents/{agent_id}/book'].post['x-payment-info'], undefined);
   assert.equal(spec.paths['/v1/chat/completions'].post['x-payment-info'].price.amount, '0.01');
 });
 

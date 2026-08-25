@@ -18,6 +18,7 @@ const TOOLS: Array<{ name: string; description: string }> = [
   { name: 'list_models', description: 'List routable inference models (hub, pricing, availability).' },
   { name: 'submit_inference', description: 'Paid POST /task-request. 402 without a payer. Not the demo path.' },
   { name: 'register_agent', description: 'POST /v1/agents/register. Bind agentWallet + collected receipt → agent_id.' },
+  { name: 'get_agent_book', description: 'Possession-gated last-N collected spend for one agent_id. Not a public index.' },
   { name: 'get_task_status', description: 'Poll a task (from chat_completions or submit_inference) to a terminal status.' },
   { name: 'get_proof', description: 'Fetch the SP1 ZK settlement proof + fee/revenue split for a settled task.' },
   { name: 'verify_proof', description: 'Verify proof integrity + payment binding; optional on-chain nullifier (replay) read.' },

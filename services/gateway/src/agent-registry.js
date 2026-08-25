@@ -7,12 +7,18 @@
 
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { keccak256, toUtf8Bytes } from 'ethers';
 import logger from './logger.js';
 import { bindAgentWallet } from './agent-wallet.js';
 import { readAndVerifyReceipt } from './receipt-oracle.js';
 import { receiptQualifiesForLedger } from './usage-settled.js';
 import { buildValidationRecord } from './erc8004.js';
+
+/** Per-identity possession secret. Issued at register; used to HMAC the book. */
+function issueSession() {
+  return crypto.randomBytes(32).toString('hex');
+}
 
 export class AgentRegistry {
   /**
@@ -93,6 +99,7 @@ export class AgentRegistry {
       const row = this.byId.get(existingId);
       if (fields.taskId) row.task_id = fields.taskId;
       if (fields.paymentRef) row.payment_ref = fields.paymentRef;
+      if (!row.session) row.session = issueSession();
       row.updated_at = new Date().toISOString();
       this._save();
       return { created: false, identity: row };
@@ -105,6 +112,7 @@ export class AgentRegistry {
       official: !!fields.official,
       task_id: fields.taskId || null,
       payment_ref: fields.paymentRef || null,
+      session: issueSession(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -251,6 +259,7 @@ export async function registerAgent(body = {}, {
       agent_id: identity.agent_id,
       agentWallet: identity.agentWallet,
       wallet_kind: identity.wallet_kind,
+      session: identity.session,
       task_id: oracle.receipt.task_id,
       payment: {
         ref: oracle.receipt.payment.ref,

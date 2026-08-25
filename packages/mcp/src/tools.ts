@@ -272,6 +272,71 @@ Returns agent_id (required later by POST /erc8004/validate) and validate_score.`
     },
   );
 
+  // ── get_agent_book ─────────────────────────────────────────────────────
+  server.registerTool(
+    'get_agent_book',
+    {
+      title: 'Get agent spend book',
+      description: `GET|POST /v1/agents/:agent_id/book. Possession-gated last-N collected
+UsageSettled rows for that agent_id (task_id, payment.ref, rail, amount,
+collected_at, route). Demo / unmetered rows never appear. Default N=50, max 200.
+Totals: count, USDC sum, by rail. Not a public index. API key is not possession.
+Does not accept a human private key.
+
+Pass the session issued by register_agent (or an HMAC over agent_id + window
+using that session). Unauth or wrong proof returns 401/403 with an empty body.`,
+      inputSchema: {
+        agent_id: z.number().int().positive().describe('Integer agent_id from register_agent'),
+        session: z
+          .string()
+          .min(1)
+          .describe('Possession secret issued at register. Not an API key and not a wallet.'),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .max(200)
+          .optional()
+          .describe('Last-N rows. Default 50, hard max 200.'),
+      },
+      annotations: {
+        title: 'Get agent spend book',
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const url = `${config.apiUrl.replace(/\/$/, '')}/v1/agents/${args.agent_id}/book`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(config.apiKey ? { 'X-API-Key': config.apiKey } : {}),
+          },
+          body: JSON.stringify({
+            session: args.session,
+            limit: args.limit,
+          }),
+        });
+        const text = await res.text();
+        if (!res.ok) {
+          return fail(`get_agent_book HTTP ${res.status}`);
+        }
+        const data = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+        const totals = data.totals as { count?: number; usdc_sum?: string } | undefined;
+        return ok(
+          data,
+          `Book agent_id=${args.agent_id} count=${String(totals?.count ?? 0)} usdc_sum=${String(totals?.usdc_sum ?? '0')}`,
+        );
+      } catch (err) {
+        return fail(describeError(err));
+      }
+    },
+  );
+
   // ── get_task_status ──────────────────────────────────────────────────────
   server.registerTool(
     'get_task_status',

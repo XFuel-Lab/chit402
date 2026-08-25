@@ -11,6 +11,26 @@ import logger from './logger.js';
 
 const UNMETERED_RAILS = new Set(['unmetered', 'demo', 'free']);
 
+export const BOOK_DEFAULT_LIMIT = 50;
+export const BOOK_MAX_LIMIT = 200;
+
+/** Default 50, hard max 200. Non-positive / non-numeric → default. */
+export function clampBookLimit(limit) {
+  const n = Number(limit);
+  if (!Number.isFinite(n) || n <= 0) return BOOK_DEFAULT_LIMIT;
+  return Math.min(Math.floor(n), BOOK_MAX_LIMIT);
+}
+
+function amountOf(payment) {
+  if (payment.gross_amount != null && payment.gross_amount !== '') {
+    return String(payment.gross_amount);
+  }
+  if (payment.net_amount != null && payment.net_amount !== '') {
+    return String(payment.net_amount);
+  }
+  return null;
+}
+
 /**
  * True only for a collected USDC (or Solana USDC) receipt that may be ledgered.
  * @param {object} receipt
@@ -120,17 +140,45 @@ export class UsageSettledLedger {
       return { ok: false, reason: 'duplicate task_id', code: 'duplicate_task' };
     }
 
+    const payment = receipt.payment || {};
+    const route = receipt.route || {};
     const entry = {
       task_id: taskId,
       payment_ref: paymentRef,
       payer: payer || null,
       agent_id: agentId != null ? Number(agentId) : null,
       collected: true,
-      rail: String(receipt.payment.rail || 'usdc'),
+      rail: String(payment.rail || 'usdc'),
+      amount: amountOf(payment),
+      collected_at: payment.collected_at || new Date().toISOString(),
       recorded_at: new Date().toISOString(),
+      model: route.model || null,
+      hub: route.hub || route.provider || null,
     };
     this._index(entry);
     return { ok: true, entry };
+  }
+
+  /**
+   * Last-N collected rows for one agent_id. Newest first.
+   * Demo / unmetered / collected:false never qualify.
+   * @param {number|string} agentId
+   * @param {{ limit?: number }} [opts]
+   */
+  listByAgent(agentId, { limit = 50 } = {}) {
+    const id = Number(agentId);
+    const n = clampBookLimit(limit);
+    const rows = [];
+    if (!Number.isInteger(id) || id < 1) return rows;
+    for (let i = this.entries.length - 1; i >= 0 && rows.length < n; i--) {
+      const e = this.entries[i];
+      if (Number(e.agent_id) !== id) continue;
+      if (e.collected !== true) continue;
+      const rail = String(e.rail || '').toLowerCase();
+      if (UNMETERED_RAILS.has(rail)) continue;
+      rows.push(e);
+    }
+    return rows;
   }
 }
 
