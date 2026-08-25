@@ -66,6 +66,29 @@ test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   assert.doesNotMatch(body, /free path/i);
 });
 
+test('GET /.well-known/x402list.txt is the x402-list domain proof', async () => {
+  const res = await fetch(`${base}/.well-known/x402list.txt`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type') ?? '', /text\/plain/);
+  const body = await res.text();
+  assert.match(body, /^x402list-verify-nNJp3v2Qz1oVuWVxqpuOcDbL8O8nepV_fz480CVRjAU$/m);
+  assert.doesNotMatch(body, /request_id/i);
+});
+
+test('GET /.well-known/x402 and agent-card.json still serve after x402list', async () => {
+  const x402 = await fetch(`${base}/.well-known/x402`);
+  assert.equal(x402.status, 200);
+  const manifest = await x402.json();
+  assert.equal(manifest.x402Version, 2);
+  assert.ok(Array.isArray(manifest.resources));
+
+  const card = await fetch(`${base}/.well-known/agent-card.json`);
+  assert.equal(card.status, 200);
+  const body = await card.json();
+  assert.equal(body.name, 'XFuel');
+  assert.ok(Array.isArray(body.skills));
+});
+
 test('GET /xfuel-icon.svg is a real SVG, not HTML', async () => {
   const res = await fetch(`${base}/xfuel-icon.svg`);
   assert.equal(res.status, 200);
