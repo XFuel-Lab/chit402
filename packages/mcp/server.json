@@ -53,13 +53,6 @@
           "description": "ZKVerifierSP1 contract address (paired with XFUEL_RPC_URL).",
           "isRequired": false,
           "format": "string"
-        },
-        {
-          "name": "XFUEL_PAYER_PRIVATE_KEY",
-          "description": "Funded payer private key that enables the pay_with_usdc tool. Moves USDC - keep secret; use a low-balance wallet.",
-          "isRequired": false,
-          "isSecret": true,
-          "format": "string"
         }
       ]
     }

@@ -81,6 +81,37 @@ const CHAT_COMPLETIONS_INPUT_SCHEMA = {
   required: ['messages'],
 };
 
+/** Register body — identity bind, not a paid door. */
+const AGENTS_REGISTER_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    agentWallet: {
+      type: 'string',
+      description: 'AAWP official or smart-account address. Not an API key and not a secret.',
+    },
+    task_id: {
+      type: 'string',
+      description: 'Collected HMAC-valid receipt id from POST /v1/chat/completions (or GET /receipt/:id).',
+    },
+    request_hash: {
+      type: 'string',
+      description: 'Optional 0x 32-byte hash for POST /erc8004/validate. Derived when omitted.',
+    },
+  },
+  required: ['agentWallet', 'task_id'],
+};
+
+const AGENTS_REGISTER_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    agent_id: { type: 'integer', description: 'Integer id for POST /erc8004/validate' },
+    agentWallet: { type: 'string' },
+    task_id: { type: 'string' },
+    validate_score: { type: ['integer', 'null'] },
+  },
+  required: ['agent_id', 'agentWallet'],
+};
+
 /** Minimal JSON-schema of the OpenAI chat completions response. */
 const CHAT_COMPLETIONS_OUTPUT_SCHEMA = {
   type: 'object',
@@ -256,6 +287,8 @@ export function buildX402Manifest(baseUrl = '') {
     ],
     links: {
       agent_manifest: base ? `${base}/llms.txt` : '/llms.txt',
+      agent_card: base ? `${base}/.well-known/agent-card.json` : '/.well-known/agent-card.json',
+      agents_register: base ? `${base}/v1/agents/register` : '/v1/agents/register',
       openai_models: base ? `${base}/v1/models` : '/v1/models',
       quote: base ? `${base}/task-quote` : '/task-quote',
       docs: 'https://github.com/XFuel-Lab/xfuel-protocol/blob/main/docs/M2M_API.md',
@@ -345,8 +378,10 @@ export function buildOpenApiSpec(baseUrl = '') {
         'Use POST /v1/chat/completions with an OpenAI-compatible JSON body '
         + '({ model, messages }). Unauthenticated callers get HTTP 402 with x402 '
         + 'payment requirements (USDC, $0.01 floor; Base and Solana when enabled). '
-        + 'Retry with X-PAYMENT or PAYMENT-SIGNATURE. POST /task-request is a lower-level '
-        + 'M2M alternative that returns task_id for polling — do not treat it as the public door.',
+        + 'Retry with X-PAYMENT or PAYMENT-SIGNATURE. POST /v1/agents/register binds an '
+        + 'agentWallet to an integer agent_id using a collected HMAC-valid receipt. '
+        + 'POST /task-request is a lower-level M2M alternative that returns task_id for '
+        + 'polling — do not treat it as the public door.',
     },
     'x-discovery': {
       ownershipProofs,
@@ -354,6 +389,34 @@ export function buildOpenApiSpec(baseUrl = '') {
     paths: {
       '/v1/chat/completions': { post: chatPost },
       '/task-request': { post: taskPost },
+      '/v1/agents/register': {
+        post: {
+          operationId: 'registerAgent',
+          summary: 'Register an agent identity',
+          description:
+            'Bind an AAWP official or smart-account agentWallet to an integer agent_id. '
+            + 'Requires a collected HMAC-valid receipt (task_id). Demo receipts do not qualify. '
+            + 'This route is not the $0.01 paid door — that stays POST /v1/chat/completions.',
+          tags: ['Agents'],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: AGENTS_REGISTER_INPUT_SCHEMA },
+            },
+          },
+          responses: {
+            200: {
+              description: 'Registered identity + validate_score',
+              content: {
+                'application/json': { schema: AGENTS_REGISTER_OUTPUT_SCHEMA },
+              },
+            },
+            400: { description: 'Invalid wallet, missing task_id, or HMAC failed' },
+            403: { description: 'Receipt does not qualify (demo / not collected)' },
+            409: { description: 'Duplicate payment.ref or task_id' },
+          },
+        },
+      },
     },
   };
 

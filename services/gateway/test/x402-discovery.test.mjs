@@ -97,6 +97,8 @@ test('buildX402Manifest: emits root-relative links when no base URL is known', (
   assert.equal(chatResource.resource, '/v1/chat/completions');
   assert.equal(taskResource.resource, '/task-request');
   assert.equal(m.links.agent_manifest, '/llms.txt');
+  assert.equal(m.links.agent_card, '/.well-known/agent-card.json');
+  assert.equal(m.links.agents_register, '/v1/agents/register');
 });
 
 test('buildX402Manifest: trims a trailing slash on the base URL', () => {
@@ -117,8 +119,10 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
   assert.deepEqual(spec.servers, [{ url: 'https://api.xfuel.app' }]);
 
   const pathKeys = Object.keys(spec.paths);
-  assert.deepEqual(pathKeys, ['/v1/chat/completions', '/task-request'],
-    'chat completions is the public door; task-request is second');
+  assert.deepEqual(pathKeys, ['/v1/chat/completions', '/task-request', '/v1/agents/register'],
+    'chat completions is the public door; task-request is second; register is identity');
+  assert.equal(spec.paths['/v1/agents/register'].post['x-payment-info'], undefined,
+    'register is not the $0.01 paid door');
 
   const chat = spec.paths['/v1/chat/completions'].post;
   const task = spec.paths['/task-request'].post;

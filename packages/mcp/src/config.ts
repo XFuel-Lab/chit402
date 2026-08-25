@@ -13,11 +13,11 @@ export const SERVER_NAME = 'xfuel-mcp-server';
 export const SERVER_VERSION = '0.3.1';
 
 /** Handshake text so a first-hour client does not need GitHub. */
-export const SERVER_INSTRUCTIONS = `XFuel first-hour: call list_models, then chat_completions to generate text (POST /v1/chat/completions). Default model xfuel/auto. The demo key xfuel-demo is shared and rate-limited (15/min, 150/day). That path is unmetered.
+export const SERVER_INSTRUCTIONS = `XFuel first-hour: call list_models, then chat_completions to generate text (POST /v1/chat/completions). Default model xfuel/auto. The demo key xfuel-demo is shared and rate-limited (15/min, 150/day).
 
-submit_inference is the paid M2M door (POST /task-request). It requires model + sender + amount, forwards messages/input when provided, and returns HTTP 402 without a payer. It is not unmetered.
+submit_inference is the paid M2M door (POST /task-request). It requires model + sender + amount, forwards messages/input when provided, and returns HTTP 402 without a payer.
 
-pay_with_usdc spends real USDC on Base mainnet. It is only listed if the operator set XFUEL_PAYER_PRIVATE_KEY.
+register_agent is POST /v1/agents/register. It binds an AAWP official or smart-account agentWallet to an integer agent_id using a collected HMAC-valid receipt. Demo receipts do not qualify. Do not paste a human private key.
 
 Amounts are USDC 6 decimals (10000 = $0.01), not wei. api.xfuel.app is the public beta; paying it moves mainnet USDC.`;
 
@@ -44,14 +44,6 @@ export interface McpConfig {
   erc8004RegistryAddress?: string;
   /** Optional ProviderStaking address (paired with rpcUrl) for provider stake/slash reads. */
   providerStakingAddress?: string;
-  /**
-   * Optional payer private key that enables the `pay_with_usdc` tool. When unset,
-   * the tool returns a clear "not configured" message and every other tool still
-   * works zero-config. Read from env ONLY (never a CLI flag) so keys don't land
-   * in shell history / process listings. The USDC network is taken from the
-   * server's x402 challenge, so no network config is needed here.
-   */
-  payerPrivateKey?: string;
 }
 
 export interface ParsedArgs {
@@ -81,7 +73,6 @@ MISC
 ENVIRONMENT (CLI flags take precedence)
   XFUEL_API_URL, XFUEL_API_KEY, XFUEL_MCP_TRANSPORT, XFUEL_MCP_PORT,
   XFUEL_MCP_AUTH_TOKEN, XFUEL_RPC_URL, ZK_VERIFIER_ADDRESS, MODEL_REGISTRY_ADDRESS
-  XFUEL_PAYER_PRIVATE_KEY  enables the pay_with_usdc tool (env only; never a flag)
 
 EXAMPLES
   npx xfuel-mcp                         # stdio, hosted public beta
@@ -154,7 +145,6 @@ export function parseArgs(argv: string[]): ParsedArgs {
       modelRegistryAddress: process.env.MODEL_REGISTRY_ADDRESS || undefined,
       erc8004RegistryAddress: process.env.ERC8004_VALIDATION_REGISTRY || undefined,
       providerStakingAddress: process.env.PROVIDER_STAKING_ADDRESS || undefined,
-      payerPrivateKey: process.env.XFUEL_PAYER_PRIVATE_KEY || undefined,
     },
   };
 }
