@@ -1,6 +1,6 @@
 # OpenAI-Compatible Gateway
 
-XFuel exposes the standard OpenAI HTTP surface. Point any OpenAI-compatible client at XFuel by changing `baseURL`. Every response carries a verifiable-compute receipt.
+XFuel is the book: this agent spent Y on this job, and you hold hub, model, and amount. The call surface is standard OpenAI HTTP. Signed receipt is table stakes — every response carries one.
 
 Source: `services/gateway/src/openai-gateway.js`  
 Example: `packages/sdk/examples/openai-drop-in.ts` (`npm run example:openai`)

@@ -62,7 +62,7 @@ const TASK_REQUEST_INPUT_SCHEMA = {
 const CHAT_COMPLETIONS_INPUT_SCHEMA = {
   type: 'object',
   properties: {
-    model: { type: 'string', example: 'xfuel/auto', description: 'Model id; xfuel/auto routes to best available' },
+    model: { type: 'string', example: 'xfuel/auto', description: 'Model id; xfuel/auto aliases to a live catalog route (Theta or Akash)' },
     messages: {
       type: 'array',
       items: {
@@ -480,14 +480,16 @@ export function buildOpenApiSpec(baseUrl = '') {
       title: 'XFuel',
       version: '1.0.0',
       description:
-        'XFuel is the crypto control plane for AI compute: settle in USDC on Base (x402), '
-        + 'route across pluggable providers, return tiered proof receipts.',
+        'XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. '
+        + 'Not a smart router. Not a model shop. POST /v1/chat/completions is $0.01 USDC on '
+        + 'Base and Solana. GET|POST /v1/agents/{agent_id}/book is possession-gated last-N collected spend.',
       'x-guidance':
-        'Use POST /v1/chat/completions with an OpenAI-compatible JSON body '
+        'XFuel is the book: this agent spent Y on this job; you hold hub, model, and amount. '
+        + 'Use POST /v1/chat/completions with an OpenAI-compatible JSON body '
         + '({ model, messages }). Unauthenticated callers get HTTP 402 with x402 '
         + 'payment requirements (USDC, $0.01 floor; Base and Solana when enabled). '
-        + 'Retry with X-PAYMENT or PAYMENT-SIGNATURE. POST /v1/agents/register binds an '
-        + 'agentWallet to an integer agent_id using a collected HMAC-valid receipt. '
+        + 'Retry with X-PAYMENT or PAYMENT-SIGNATURE. POST /v1/agents/register is fail-closed: '
+        + 'it binds an agentWallet to an integer agent_id using a collected HMAC-valid receipt. '
         + 'GET|POST /v1/agents/{agent_id}/book is a possession-gated last-N collected '
         + 'spend pack for that agent_id — not a public index. '
         + 'POST /task-request is a lower-level M2M alternative that returns task_id for '
@@ -504,7 +506,7 @@ export function buildOpenApiSpec(baseUrl = '') {
           operationId: 'registerAgent',
           summary: 'Register an agent identity',
           description:
-            'Bind an AAWP official or smart-account agentWallet to an integer agent_id. '
+            'Fail-closed. Bind an AAWP official or smart-account agentWallet to an integer agent_id. '
             + 'Requires a collected HMAC-valid receipt (task_id). Demo receipts do not qualify. '
             + 'This route is not the $0.01 paid door — that stays POST /v1/chat/completions.',
           tags: ['Agents'],

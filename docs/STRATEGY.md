@@ -7,7 +7,7 @@ Related: [POSITIONING.md](./POSITIONING.md) · [PROVIDER_FLOAT_TREASURY.md](./PR
 
 ## Company job
 
-XFuel is the **crypto control plane for AI compute**: agents fund a USDC budget on Base, we **route** across DePIN and frontier providers, and every dollar comes back as a **tiered proof receipt**.
+XFuel is the **book**: this agent spent Y on this job, and you hold **hub, model, and amount**. Not a smart router. Not a model shop. Agents pay in USDC on Base and Solana; live routes today are Theta and Akash; signed receipt is table stakes.
 
 We are not:
 
@@ -18,7 +18,7 @@ We are not:
 
 ## One line
 
-**Route any model. Prove every dollar.**
+**XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.**
 
 Privacy add (when Private Spend is live): *Spend without briefing the frontier lab.*
 
@@ -26,7 +26,7 @@ Locked copy and guardrails: [POSITIONING.md](./POSITIONING.md).
 
 ## Elevator
 
-AI agents are starting to spend money on their own. Keys and opaque invoices fail; cheap DePIN GPUs fragment supply further. XFuel is the crypto routing machine: one USDC budget via x402 on Base, route to whatever compute wins on price and policy, return a verifiable receipt — signed by default, SP1 settlement proof on demand, Verified Inference for open-weight authenticity when it matters.
+AI agents are starting to spend money on their own. Keys and opaque invoices fail. XFuel is the book: pay per call in USDC via x402 on Base and Solana, and you hold hub, model, and amount. Signed receipt is table stakes — HMAC by default, SP1 settlement proof on demand, Verified Inference for open-weight authenticity when it matters. Not a smart router. Not a model shop.
 
 ## Why this wins (market)
 

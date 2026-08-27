@@ -6,7 +6,7 @@ Status: active · Last updated: 2026-08-07
 
 ## One sentence
 
-Sell **budgets + receipts + optional settlement proofs** (crypto routing machine) to teams already building agents that hold USDC on Base and speak (or will speak) x402.
+Sell **the book** (this agent spent Y on this job; you hold hub, model, and amount) to teams already building agents that hold USDC on Base and speak (or will speak) x402. Signed receipt is table stakes. Not a smart router. Not a model shop.
 
 ## GTM motions (from STRATEGY)
 

@@ -5,7 +5,7 @@ Convert each section into a slide. Keep claims aligned with [docs/POSITIONING.md
 ## 1. Title
 
 XFuel Protocol  
-Verifiable settlement and payments for AI compute
+The book. This agent spent Y on this job. You hold hub, model, and amount.
 
 ## 2. Problem
 
@@ -13,12 +13,12 @@ Agents buy inference with API keys and opaque invoices. No shared receipt. No cr
 
 ## 3. Solution
 
-Route any model → pay USDC via x402 on Base → get a verifiable receipt  
-(signed by default; on-chain SP1 proof on demand)
+XFuel is the book: this agent spent Y on this job. You hold hub, model, and amount.  
+Pay USDC via x402 on Base and Solana. Signed receipt is table stakes; on-chain SP1 proof on demand. Not a smart router. Not a model shop.
 
 ## 4. How it works
 
-Agent submits task → gateway routes to best provider → USDC settles on Base → signed receipt (Tier 1) or SP1 proof on `ZKVerifierSP1` (Tier 2)
+Agent submits task → you hold hub, model, and amount → USDC settles on Base or Solana → signed receipt (table stakes) or SP1 proof on `ZKVerifierSP1` (Tier 2)
 
 ## 5. Trust tiers
 

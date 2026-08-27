@@ -4,7 +4,7 @@ Paste into Pitch / Gamma / slides. Do **not** invent volume numbers — pull fro
 
 Related: [STRATEGY.md](./STRATEGY.md), [SEED_READINESS.md](./SEED_READINESS.md), [POSITIONING.md](./POSITIONING.md), [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
 
-Use [STRATEGY.md](./STRATEGY.md) language: crypto routing machine + proof receipts; DePIN as supply; tiers as ladder.
+Use [STRATEGY.md](./STRATEGY.md) language: XFuel is the book (hub, model, amount); DePIN as supply; tiers as ladder. Not a smart router. Not a model shop.
 
 ---
 
@@ -21,11 +21,11 @@ Use [STRATEGY.md](./STRATEGY.md) language: crypto routing machine + proof receip
 **Payments commoditized (x402). The clearing layer did not.**
 
 - Coinbase / Stripe / platforms own rails; GPU markets own supply
-- XFuel is the crypto routing machine above both: route → settle USDC on Base → verifiable receipt
+- XFuel is the book above both: this agent spent Y on this job; you hold hub, model, and amount
 
 ## Slide 3 — Product
 
-**Route any model. Prove every dollar.**  
+**XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.**  
 *(When Private Spend live: Spend without briefing the frontier lab.)*
 
 | Layer | What |

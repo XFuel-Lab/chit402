@@ -64,9 +64,10 @@ export default function Layout() {
           borderBottom: '1px solid rgba(245,158,11,0.25)',
         }}
       >
-        Public beta. The API is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>api.xfuel.app</code>.
+        XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.
+        {' '}The API is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>api.xfuel.app</code>.
         {' '}<code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>POST /v1/chat/completions</code>
-        {' '}is <strong>$0.01 USDC on Base and Solana</strong>, signed receipt.
+        {' '}is <strong>$0.01 USDC on Base and Solana</strong>.
         {' '}Paying this host moves real mainnet USDC. Demo key{' '}
         <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>xfuel-demo</code> skips payment.
         {' '}Do not send funds unless you mean to.
@@ -80,7 +81,7 @@ export default function Layout() {
         <div className="container" style={styles.footerInner}>
           <div style={styles.footerBrand}>
             <strong style={{ color: '#f0f0f5' }}>XFuel</strong>
-            <span style={{ color: '#55556a', fontSize: '0.85rem' }}>Receipts for routed AI compute. Apache-2.0.</span>
+            <span style={{ color: '#55556a', fontSize: '0.85rem' }}>The book: hub, model, amount. Apache-2.0.</span>
           </div>
           <div style={styles.footerLinks}>
             <a href="https://github.com/XFuel-Lab/xfuel-protocol" target="_blank" rel="noreferrer">GitHub</a>

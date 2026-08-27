@@ -1,6 +1,6 @@
 # Design Partner Onboarding
 
-You are in. This page is the working copy: swap one URL, get a signed receipt on every call, tell us what broke.
+You are in. XFuel is the book: this agent spent Y on this job, and you hold hub, model, and amount. Signed receipt is table stakes. This page is the working copy — tell us what broke.
 
 Two surfaces, both live on the same host:
 

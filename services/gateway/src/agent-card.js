@@ -17,11 +17,12 @@ export function buildAgentCard(baseUrl = '') {
   return {
     name: 'XFuel',
     description:
-      'Crypto control plane for AI compute. Paid door is POST /v1/chat/completions '
-      + 'at $0.01 USDC on Base (eip155:8453) and Solana. Register an agent identity '
-      + 'at POST /v1/agents/register with a collected HMAC-valid receipt and an '
-      + 'AAWP official or smart-account agentWallet. Returns integer agent_id for '
-      + 'POST /erc8004/validate. POST /a2a-message is the HTTP+JSON A2A surface.',
+      'XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. '
+      + 'Not a smart router. Not a model shop. Paid door is POST /v1/chat/completions '
+      + 'at $0.01 USDC on Base (eip155:8453) and Solana. GET|POST /v1/agents/:agent_id/book '
+      + 'is possession-gated last-N collected spend. POST /v1/agents/register is fail-closed: '
+      + 'collected HMAC-valid receipt plus an AAWP official or smart-account agentWallet. '
+      + 'Returns integer agent_id for POST /erc8004/validate. POST /a2a-message is the HTTP+JSON A2A surface.',
     supportedInterfaces: [
       {
         url: abs('/a2a-message'),
@@ -57,8 +58,9 @@ export function buildAgentCard(baseUrl = '') {
         id: 'register-agent',
         name: 'Register agent identity',
         description:
-          'POST /v1/agents/register binds an AAWP official or smart-account agentWallet '
-          + 'to an integer agent_id using a collected HMAC-valid receipt.',
+          'POST /v1/agents/register is fail-closed: bind an AAWP official or smart-account '
+          + 'agentWallet to an integer agent_id using a collected HMAC-valid receipt. '
+          + 'Demo receipts do not qualify.',
         tags: ['identity', 'erc8004', 'a2a'],
         examples: ['POST /v1/agents/register with { agentWallet, task_id }'],
       },
