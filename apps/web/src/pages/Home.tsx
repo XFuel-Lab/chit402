@@ -22,12 +22,14 @@ export default function Home() {
             <span className="badge badge-cyan">Public demo</span>
             <span style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>Theta + Akash · Base receipts</span>
           </div>
-          <h1 style={styles.heroTitle}>XFuel</h1>
+          <h1 style={styles.heroTitle}>XFuel is the book.</h1>
           <p style={styles.heroSubtitle}>
-            Swap one baseURL. Every call comes back with a public receipt that names the model, the hub, and the cost.
+            This agent spent Y on this job. You hold hub, model, and amount.
           </p>
           <p style={styles.heroDescription}>
-            <code>POST /v1/chat/completions</code> is $0.01 USDC on Base and Solana. Signed receipt (HMAC).
+            <code>POST /v1/chat/completions</code> is $0.01 USDC on Base and Solana.
+            Signed receipt (HMAC) is table stakes — we have it too.
+            <code>GET|POST /v1/agents/:agent_id/book</code> is possession-gated last-N collected spend.
             Demo key <code>xfuel-demo</code> skips payment (rate-limited). On-chain SP1 proof on demand — not on every call.
             Live routes today are <strong>Theta</strong> and <strong>Akash</strong>, plus the <code>xfuel/auto</code> alias.
             We do not route to OpenAI, Groq, Together, or Fireworks on the public catalog.
@@ -66,8 +68,8 @@ export default function Home() {
               <p>USDC via x402 on Base mainnet. HTTP 402 without payment. Do not use a mock payer on this host.</p>
             </div>
             <div className="card">
-              <h3>What a receipt attests</h3>
-              <p>Which model and hub ran, tokens, cost, output hash. Not that a black-box LLM computed correctly.</p>
+              <h3>GET|POST /v1/agents/:agent_id/book</h3>
+              <p>This agent spent Y on this job. You hold hub, model, and amount. Possession-gated (register session or HMAC). Not a public index. Signed receipt is table stakes.</p>
             </div>
           </div>
         </div>

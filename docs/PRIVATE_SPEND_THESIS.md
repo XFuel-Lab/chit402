@@ -52,7 +52,7 @@ That telemetry is asymmetric power: pricing, rate limits, product steering, and 
 
 ## Positioning line (when v0 is live)
 
-Keep: *Route any model. Prove every dollar.*  
+Keep: *XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.*  
 Add: *Spend without briefing the frontier lab.*
 
 ## Trust boundary (must stay in docs)

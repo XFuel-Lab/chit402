@@ -39,7 +39,7 @@ So the sequencing is: analytics is the hook, automated re-routing is the product
 | Act on it — re-route the next call | Requires being in the settlement path |
 | Prove the saving cryptographically | Requires issuing the receipt |
 
-This slots directly under the existing positioning: *Route any model. Prove every dollar.* Spend Intelligence is what makes the second half literal.
+This slots directly under the existing positioning: *XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.* Spend Intelligence is what makes the amount half literal.
 
 ## Why we are unusually well positioned
 

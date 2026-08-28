@@ -6,9 +6,11 @@ As-deployed reality: [docs/RUNTIME_STATE.md](../../docs/RUNTIME_STATE.md).
 
 ## Mental model
 
-1. Submit a task → router picks a provider  
-2. Settle → USDC via x402 on Base (default)  
-3. Receive a receipt → Tier 1 signed (default) or Tier 2 SP1 settlement proof  
+XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.
+
+1. `POST /v1/chat/completions` — $0.01 USDC on Base and Solana  
+2. `GET|POST /v1/agents/:agent_id/book` — possession-gated last-N collected spend  
+3. Signed receipt is table stakes (HMAC); SP1 settlement proof is on demand  
 4. Optional → A2A / swarm coordination  
 
 Skills never hold private keys. USDC payers are agent-side.

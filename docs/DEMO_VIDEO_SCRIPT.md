@@ -1,6 +1,6 @@
 # XFuel Demo Video — Script (60–90s)
 
-Locked line: **Route any model. Prove every dollar.**  
+Locked line: **XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.**  
 As-deployed truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md) · Messaging: [POSITIONING.md](./POSITIONING.md)
 
 Companion docs: [DEMO_SHOT_LIST.md](./DEMO_SHOT_LIST.md) · [DEMO_COMMANDS.md](./DEMO_COMMANDS.md) · [`scripts/demo-ffmpeg.sh`](../scripts/demo-ffmpeg.sh)
@@ -62,12 +62,12 @@ Design partners: DM or email hello@xfuel.app
 
 | Time | On screen | Voiceover (exact) |
 |------|-----------|-------------------|
-| **0:00–0:08** | Homepage hero (`xfuel.app`) or terminal title card: *Route any model. Prove every dollar.* | Agents are starting to spend money on their own. Today that means API keys and invoices you hope are honest. XFuel gives the agent a budget instead — and a receipt you can verify. |
+| **0:00–0:08** | Homepage hero (`xfuel.app`) or terminal title card: *XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.* | Agents are starting to spend money on their own. Today that means API keys and invoices you hope are honest. XFuel gives the agent a budget instead — and a receipt you can verify. |
 | **0:08–0:22** | Terminal: run `npx tsx examples/flagship-demo.ts`. Highlight quote → pay+submit → `task_id`. | One call — pay, route, settle. Same budget model your agents need. No API-key handoff. |
 | **0:22–0:38** | Browser: open printed `verify_url`. Circle Tier-1: route, model, amounts, signature / signed tier. | Here's the Tier-1 signed receipt — route, model, cost, and output hash. Default. Free. Shareable. No login. |
 | **0:38–0:55** | Same terminal as proof/nullifier lines appear, or refresh receipt for tier `settlement`. | When it matters, we attach a Tier-2 SP1 settlement proof — fees, payment binding, output commitment, single-use nullifier. This proves settlement, not that a black-box model ran correctly. |
 | **0:55–1:10** | Basescan: `https://basescan.org/address/0x9373499645292715a2275A78eD65B14215C41c06` — Contract / Read Contract. Optional cut: payment `explorer_url` from receipt (Base mainnet). | The verifier lives on Base mainnet — ZKVerifierSP1. Payments settle in USDC via x402 (CDP facilitator) on Base. |
-| **1:10–1:20** | Split: receipt + Basescan, or docs CTA card. | Route any model. Prove every dollar. Try the demo at api.xfuel.app — docs on xfuel.app. Design partners: DM us. |
+| **1:10–1:20** | Split: receipt + Basescan, or docs CTA card. | XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. Try the demo at api.xfuel.app — docs on xfuel.app. Design partners: DM us. |
 
 **Hard cut length:** drop the 0:00–0:08 opening metaphor if you need ≤60s; start on the curl and keep the honesty + CTA.
 
@@ -85,7 +85,7 @@ Design partners: DM or email hello@xfuel.app
 >
 > The verifier lives on Base mainnet — ZKVerifierSP1. Proofs settle here. Payments settle in USDC via x402 on Base (CDP facilitator).
 >
-> Route any model. Prove every dollar. Try the demo at api.xfuel.app — docs on xfuel.app. Design partners: DM us.
+> XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. Try the demo at api.xfuel.app — docs on xfuel.app. Design partners: DM us.
 
 **Word count:** ~175 · **Target pace:** ~140 wpm → ~75s spoken.
 
@@ -106,7 +106,7 @@ Tier-2 proving can eat a minute — lean into that; don’t pretend the receipt 
 | **1:30–1:50** | Open receipt (~1:36) | Here’s the shareable receipt. Tier-1 signed fields — route, model, cost, output hash — plus the Tier-2 proof once it lands. No login. Anyone can open this link. |
 | **1:50–2:05** | Scroll receipt / payment | Payments are USDC via x402 on Base mainnet. Proofs live on Base mainnet. |
 | **2:05–2:20** | Basescan (verifier / output commitment) | ZKVerifierSP1 on Base mainnet — this is where settlement proofs anchor. Output commitment, nullifier, on-chain verify home. |
-| **2:20–end** | CTA / end card | Route any model. Prove every dollar. Try flagship-demo from packages/sdk — or start at xfuel.app. Design partners: DM us. |
+| **2:20–end** | CTA / end card | XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. Try flagship-demo from packages/sdk — or start at xfuel.app. Design partners: DM us. |
 
 ### Continuous take (aligned to the table; ~2:15 if you include the cold open)
 
@@ -122,7 +122,7 @@ Tier-2 proving can eat a minute — lean into that; don’t pretend the receipt 
 >
 > *(2:05)* ZKVerifierSP1 on Base mainnet — this is where settlement proofs anchor. Output commitment, nullifier, on-chain verify home.
 >
-> *(2:20)* Route any model. Prove every dollar. Try flagship-demo from packages/sdk — or start at xfuel.app. Design partners: DM us.
+> *(2:20)* XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. Try flagship-demo from packages/sdk — or start at xfuel.app. Design partners: DM us.
 
 ### Edit tips for this take
 

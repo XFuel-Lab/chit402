@@ -6,13 +6,15 @@ Company strategy (GTM, rails, build sequence): [STRATEGY.md](./STRATEGY.md).
 
 ## One line
 
-Route any model. Prove every dollar.
+XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.
+
+Not a smart router. Not a model shop.
 
 Privacy add (when Private Spend v0 is live): Spend without briefing the frontier lab.
 
 ## Elevator
 
-AI agents are starting to spend money on their own. Today that means handing over API keys and hoping the invoice is honest. XFuel is the crypto routing machine: give an agent a USDC budget instead of keys, route each task to the best available provider (DePIN or frontier), settle via x402 on Base, and return a verifiable receipt — signed by default, or an on-chain SP1 settlement proof on demand.
+AI agents are starting to spend money on their own. Today that means handing over API keys and hoping the invoice is honest. XFuel is the book: this agent spent Y on this job, and you hold hub, model, and amount. Pay per call in USDC on Base and Solana (`POST /v1/chat/completions` at $0.01). `GET|POST /v1/agents/:agent_id/book` is possession-gated last-N collected spend. Signed receipt is table stakes — HMAC by default, on-chain SP1 settlement proof on demand.
 
 Private Spend (product mode, see [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md)): buyer pays XFuel; providers see gateway traffic, not the end-customer’s spend topology. Do not claim prompt confidentiality unless a TEE/confidential route is used.
 
@@ -37,23 +39,26 @@ Crypto-native agent teams on Base (USDC / x402). See [BEACHHEAD_ICP.md](./BEACHH
 
 ## Why us, in one claim
 
-**Availability through routing, without losing the audit trail.** Not "decentralised GPUs are
-cheaper" — measured against live rates, DePIN beats hyperscalers and loses to the best aggregator
+**The book: hub, model, and amount — held by the buyer, not the hub.** Not "decentralised GPUs are
+cheaper" — measured against live rates, DePIN beats hyperscalers and loses to the cheapest aggregator
 routes, so we are ~25–30% *above* the floor on our own baseline model
 ([PRICING_STRATEGY.md](./PRICING_STRATEGY.md)). Cheapness is not ours to claim and it is not
 defensible if it were: anyone can reprice.
 
-What is ours is that a call which fails on one provider completes on another, and the receipt names
-which one actually ran. Provider capacity failures are not hypothetical — ~2.5% of calls in our own
-model evaluation returned HTTP 504 `queue_timeout`, across two different models
-([MODEL_QUALITY_EVAL.md](./MODEL_QUALITY_EVAL.md)). Every other vendor in this space shows spend and
-declines to show provenance.
+What is ours is that you can show "this agent spent Y on this job" with hub, model, and amount — not
+a smart-router scoreboard and not a model shop catalog. A call which fails on one hub can complete
+on another, and the book names which one actually ran. Provider capacity failures are not
+hypothetical — ~2.5% of calls in our own model evaluation returned HTTP 504 `queue_timeout`, across
+two different models ([MODEL_QUALITY_EVAL.md](./MODEL_QUALITY_EVAL.md)). Every other vendor in this
+space shows spend and declines to show provenance.
 
 ## Guardrails
 
-Say: verifiable settlement over any provider; failover across hubs with an attested route; crypto
-routing machine; money and proofs on Base; signed free, proof on demand; budgets instead of API keys.  
-Do not say: Theta-centric / DePIN hub as identity; **DePIN / XFuel is cheaper** (it is not the price
+Say: XFuel is the book; this agent spent Y on this job; you hold hub, model, and amount; not a smart
+router; not a model shop; $0.01 USDC on Base and Solana; possession-gated book; register fail-closed;
+signed receipt is table stakes; money and proofs on Base; proof on demand; budgets instead of API keys.  
+Do not say: best available provider; smart router; crypto control plane as the lead; swap one
+baseURL as the hero; Theta-centric / DePIN hub as identity; **DePIN / XFuel is cheaper** (it is not the price
 floor, and a saving claim needs a named baseline and must be allowed to print negative); TFUEL as
 default buyer rail; every task is ZK-proven by default; retired sale rounds are open; ZK alone means
 prompts are private.

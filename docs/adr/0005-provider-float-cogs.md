@@ -22,7 +22,7 @@ ADR 0001 already distinguished pass-through (crypto-native) vs collect-and-forwa
 
 - Eng builds Float Manager + quote float-gate + receipt COGS (see STRATEGY P0–P3).
 - Ops prefunds EdgeCloud / Akash / credits; reconciles burn vs x402 intake.
-- Product story stays: crypto routing machine with proof receipts; DePIN is invisible supply.
+- Product story stays: XFuel is the book (hub, model, amount); signed receipt is table stakes; DePIN is invisible supply.
 - Explicitly rejected: per-task atomic cross-token settlement; Theta/Akash as money home.
 
 ## Links

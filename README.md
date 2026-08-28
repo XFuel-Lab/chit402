@@ -1,8 +1,8 @@
 # XFuel Protocol
 
-XFuel is the verifiable settlement and payments layer for AI compute. Agents and applications submit inference tasks; XFuel routes each task to the best available provider, settles fees in **USDC via x402 on Base**, and returns a verifiable receipt — signed by default, or an on-chain SP1 settlement proof on demand.
+XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.
 
-Providers are pluggable (OpenAI-compatible APIs, neoclouds, optional DePIN GPUs). Money and proofs live on Base. Trust is tiered so cost tracks value at risk: signed receipt → SP1 settlement proof → Verified Inference (zkLLM, active build).
+`POST /v1/chat/completions` is **$0.01 USDC on Base and Solana**. `GET|POST /v1/agents/:agent_id/book` is possession-gated last-N collected spend. Signed receipt is table stakes (HMAC); SP1 settlement proof is on demand. Live routes today are Theta and Akash. Demo key `xfuel-demo` skips payment (rate-limited). Register is fail-closed: a collected HMAC-valid receipt plus an AAWP official or smart-account `agentWallet`.
 
 To learn more about the protocol design, read the [whitepaper](WHITEPAPER.md). For live endpoints and what is real vs mock today, see [runtime state](docs/RUNTIME_STATE.md). Full documentation hub: [docs/](docs/README.md).
 

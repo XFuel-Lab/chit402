@@ -7,7 +7,7 @@ Entry point for agents and automation.
 3. [docs/POSITIONING.md](docs/POSITIONING.md) — messaging  
 4. [WHITEPAPER.md](WHITEPAPER.md) — design  
 
-XFuel is the crypto control plane for AI compute: settle in USDC on Base (x402), route across pluggable providers (DePIN + frontier), return tiered proof receipts (signed → SP1 on Base → Verified Inference build).
+XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. Not a smart router. Not a model shop. `POST /v1/chat/completions` is $0.01 USDC on Base and Solana. `GET|POST /v1/agents/:agent_id/book` is possession-gated. Signed receipt is table stakes.
 
 Beachhead: crypto-native agent teams — [docs/BEACHHEAD_ICP.md](docs/BEACHHEAD_ICP.md).  
 Provider COGS floats: [docs/PROVIDER_FLOAT_TREASURY.md](docs/PROVIDER_FLOAT_TREASURY.md) · [ADR 0005](docs/adr/0005-provider-float-cogs.md). 

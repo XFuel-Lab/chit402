@@ -28,6 +28,13 @@ function assertPaidDoorCopy(label, text) {
   assert.doesNotMatch(text, /unmetered/i, `${label} must not say unmetered`);
   assert.doesNotMatch(text, /free path/i, `${label} must not say free path`);
   assert.doesNotMatch(text, /Base \(primary\)/i, `${label} must not rank Base as primary`);
+  assert.doesNotMatch(text, /best available provider/i, `${label} must not claim best available provider`);
+  assert.doesNotMatch(text, /Swap one baseURL/i, `${label} must not hero a baseURL swap`);
+  assert.doesNotMatch(text, /crypto control plane/i, `${label} must not lead with crypto control plane`);
+  assert.doesNotMatch(text, /Not a smart router/, `${label} must not say Not a smart router`);
+  assert.doesNotMatch(text, /Not a model shop/, `${label} must not say Not a model shop`);
+  assert.match(text, /the book/i, `${label} leads with the book`);
+  assert.match(text, /hub, model, and amount/i, `${label} names hub, model, and amount`);
   assert.match(text, /\$0\.01 USDC/, `${label} names $0.01 USDC`);
   assert.match(text, /Base and Solana/, `${label} names Base and Solana`);
   assert.match(text, /\/v1\/chat\/completions/, `${label} names POST /v1/chat/completions`);
@@ -59,4 +66,40 @@ test('shared layout and homepage copy do not call paid /v1 unmetered or a free p
     assert.doesNotMatch(source, /Base \(primary\)/i, `${label} must not rank Base as primary`);
     assert.match(source, /\$0\.01 USDC on Base and Solana/, `${label} names the public door`);
   }
+});
+
+test('homepage title and hero lead with the book, not a router', () => {
+  const title = html.match(/<title>([^<]*)<\/title>/i)?.[1] ?? '';
+  assert.match(title, /the book/i, 'title leads with the book');
+  assert.match(title, /Hub, model, amount/i, 'title names hub, model, amount');
+  assert.doesNotMatch(title, /receipt for every routed/i, 'title does not hero the receipt');
+  assert.doesNotMatch(title, /best available provider/i);
+
+  const home = readFileSync(join(root, 'src/pages/Home.tsx'), 'utf8');
+  assert.match(home, /XFuel is the book/);
+  assert.match(home, /This agent spent Y on this job/);
+  assert.match(home, /You hold hub, model, and amount/);
+  assert.doesNotMatch(home, /Not a smart router/);
+  assert.doesNotMatch(home, /Not a model shop/);
+  assert.doesNotMatch(home, /best available provider/i);
+  assert.doesNotMatch(home, /Swap one baseURL/);
+  assert.doesNotMatch(home, /crypto control plane/i);
+
+  assert.doesNotMatch(html, /Not a smart router/);
+  assert.doesNotMatch(html, /Not a model shop/);
+
+  const llms = readFileSync(join(root, 'public/llms.txt'), 'utf8');
+  assert.doesNotMatch(llms, /Not a smart router/);
+  assert.doesNotMatch(llms, /Not a model shop/);
+});
+
+test('README first paragraph leads with the book', () => {
+  const readme = readFileSync(join(root, '../../README.md'), 'utf8').replace(/\r\n/g, '\n');
+  const firstPara = readme.split(/\n\n/)[1] ?? '';
+  assert.match(firstPara, /XFuel is the book/);
+  assert.match(firstPara, /You hold hub, model, and amount/);
+  assert.doesNotMatch(firstPara, /best available provider/i);
+  assert.doesNotMatch(firstPara, /crypto control plane/i);
+  assert.doesNotMatch(firstPara, /Not a smart router/);
+  assert.doesNotMatch(firstPara, /Not a model shop/);
 });

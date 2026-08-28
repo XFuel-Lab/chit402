@@ -177,6 +177,12 @@ test('bindAgentWallet rejects a detectable EOA', async () => {
 test('buildAgentCard is A2A v1.0', () => {
   const card = buildAgentCard('https://api.xfuel.app');
   assert.equal(card.name, 'XFuel');
+  assert.match(card.description, /XFuel is the book/);
+  assert.match(card.description, /hub, model, and amount/);
+  assert.match(card.description, /fail-closed/);
+  assert.doesNotMatch(card.description, /crypto control plane/i);
+  assert.doesNotMatch(card.description, /Not a smart router/);
+  assert.doesNotMatch(card.description, /Not a model shop/);
   assert.equal(card.version, '1.0.0');
   assert.equal(card.supportedInterfaces[0].protocolVersion, '1.0');
   assert.equal(card.supportedInterfaces[0].protocolBinding, 'HTTP+JSON');
@@ -233,14 +239,24 @@ test('POST /v1/agents/register without task_id / wallet is 400', async () => {
 
 test('GET /llms.txt and /openapi.json mention register honestly', async () => {
   const llms = await (await fetch(`${base}/llms.txt`)).text();
+  assert.match(llms, /XFuel is the book/);
+  assert.match(llms, /hub, model/);
   assert.match(llms, /\/v1\/agents\/register/);
+  assert.match(llms, /fail-closed/);
   assert.match(llms, /\/v1\/agents\/:agent_id\/book/);
   assert.match(llms, /possession-gated/);
+  assert.match(llms, /x402list\.txt/);
   assert.match(llms, /agent-card\.json/);
   assert.doesNotMatch(llms, /unmetered/i);
   assert.doesNotMatch(llms, /XFUEL_PAYER_PRIVATE_KEY/);
+  assert.doesNotMatch(llms, /Swap one baseURL/);
+  assert.doesNotMatch(llms, /crypto control plane/i);
+  assert.doesNotMatch(llms, /Not a smart router/);
+  assert.doesNotMatch(llms, /Not a model shop/);
 
   const spec = await (await fetch(`${base}/openapi.json`)).json();
+  assert.doesNotMatch(spec.info.description, /Not a smart router/);
+  assert.doesNotMatch(spec.info.description, /Not a model shop/);
   assert.ok(spec.paths['/v1/agents/register']);
   assert.ok(spec.paths['/v1/agents/{agent_id}/book']);
   assert.match(spec.paths['/v1/agents/{agent_id}/book'].post.description, /possession-gated/i);

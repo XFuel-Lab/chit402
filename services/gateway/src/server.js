@@ -237,17 +237,19 @@ function tier2Gate() {
 
 const LLMS_TXT = `# XFuel Protocol
 
-> Swap one baseURL. Every call comes back with a public receipt that names the
-> model, the hub, and the cost. Unauthenticated POST /v1/chat/completions is
-> $0.01 x402 on Base (CDP) and Solana (PayAI). Bearer xfuel-demo and valid API
-> keys skip payment. /task-request is the other paid door. Paying
+> XFuel is the book. This agent spent Y on this job. You hold hub, model,
+> and amount. Unauthenticated POST
+> /v1/chat/completions is $0.01 x402 on Base (CDP) and Solana (PayAI).
+> Bearer xfuel-demo and valid API keys skip payment. GET|POST
+> /v1/agents/:agent_id/book is possession-gated. POST /v1/agents/register
+> is fail-closed. /task-request is the other paid door. Paying
 > api.xfuel.app moves real mainnet USDC. Canonical: api.xfuel.app.
 
 ## Start here (OpenAI-compatible)
 
 - POST /v1/chat/completions : OpenAI chat completions. Unauthenticated GET or
   POST {} → 402 x402 ($0.01 USDC on Base or Solana). Returns signed receipt + public verify_url.
-- POST /v1/agents/register  : bind agentWallet + collected HMAC-valid receipt → integer agent_id.
+- POST /v1/agents/register  : fail-closed. Bind agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id. Not a public index.
 - GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
@@ -279,8 +281,9 @@ const LLMS_TXT = `# XFuel Protocol
 
 - GET  /openapi.json      : OpenAPI 3.1 with x-payment-info. Public door is POST /v1/chat/completions.
 - GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
+- GET  /.well-known/x402list.txt : x402-list domain verification token (public, text/plain).
 - GET  /.well-known/agent-card.json : A2A v1.0 card (200).
-- POST /v1/agents/register : bind agentWallet + collected HMAC-valid receipt → agent_id.
+- POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend. Not a public index.
 - POST /v1/chat/completions : paid ($0.01 USDC on Base or Solana). Unauth GET or POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).
