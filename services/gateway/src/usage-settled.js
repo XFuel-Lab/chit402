@@ -196,6 +196,30 @@ export class UsageSettledLedger {
     }
     return rows;
   }
+
+  /**
+   * Prepaid-ceiling spent: sum of all collected amounts for one agent_id.
+   * Demo / unmetered / collected:false never count. Not last-N limited.
+   * @param {number|string} agentId
+   * @returns {bigint}
+   */
+  sumCollectedByAgent(agentId) {
+    const id = Number(agentId);
+    let sum = 0n;
+    if (!Number.isInteger(id) || id < 1) return sum;
+    for (const e of this.entries) {
+      if (Number(e.agent_id) !== id) continue;
+      if (e.collected !== true) continue;
+      const rail = String(e.rail || '').toLowerCase();
+      if (UNMETERED_RAILS.has(rail)) continue;
+      try {
+        sum += BigInt(String(e.amount ?? '0').trim() || '0');
+      } catch {
+        /* skip malformed */
+      }
+    }
+    return sum;
+  }
 }
 
 /**
@@ -208,9 +232,10 @@ export class UsageSettledLedger {
  *   ledger: UsageSettledLedger,
  *   registry: { allocate: Function, get: Function },
  *   payer?: string|null,
+ *   agentId?: number|string|null,
  * }} deps
  */
-export function recordCollectedSpend(receipt, { ledger, registry, payer = null } = {}) {
+export function recordCollectedSpend(receipt, { ledger, registry, payer = null, agentId = null } = {}) {
   if (!ledger || !registry || typeof registry.allocate !== 'function') {
     return { ok: false, reason: 'ledger and registry.allocate required', code: 'misconfigured' };
   }
@@ -229,10 +254,18 @@ export function recordCollectedSpend(receipt, { ledger, registry, payer = null }
     };
   }
 
-  const identity = registry.allocate({
-    taskId: receipt.task_id,
-    paymentRef: receipt.payment.ref,
-  });
+  // Reuse a bookable agent_id when the caller presents possession (session).
+  // Do not re-allocate an existing live book row.
+  let identity = null;
+  if (agentId != null && typeof registry.get === 'function') {
+    identity = registry.get(agentId);
+  }
+  if (!identity) {
+    identity = registry.allocate({
+      taskId: receipt.task_id,
+      paymentRef: receipt.payment.ref,
+    });
+  }
   const credited = ledger.append(receipt, {
     payer,
     agentId: identity.agent_id,

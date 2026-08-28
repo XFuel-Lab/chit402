@@ -134,6 +134,12 @@ const AGENTS_BOOK_INPUT_SCHEMA = {
       default: 50,
       maximum: 200,
     },
+    budget: {
+      type: ['string', 'null'],
+      description:
+        'Prepaid budget Y in USDC atomic units (10000 = $0.01). Null clears (unlimited). '
+        + 'Possession-gated set. Absent = read only.',
+    },
   },
 };
 
@@ -175,16 +181,51 @@ const AGENTS_BOOK_OUTPUT_SCHEMA = {
         by_rail: { type: 'object' },
       },
     },
+    window: {
+      type: 'string',
+      description: 'Cap window. prepaid_ceiling = sum of collected until Y is raised.',
+      enum: ['prepaid_ceiling'],
+    },
+    cap: {
+      type: ['string', 'null'],
+      description: 'Budget Y in USDC atomic units. Null = unlimited.',
+    },
+    spent: {
+      type: 'string',
+      description: 'Sum of collected amounts for this agent_id under prepaid_ceiling.',
+    },
+    remaining: {
+      type: ['string', 'null'],
+      description: 'max(0, Y − spent). Null when unlimited.',
+    },
+    allowance: {
+      type: 'object',
+      description: 'Signed remaining-allowance (HMAC over agent_id + remaining + as_of). Verify only.',
+      properties: {
+        agent_id: { type: 'integer' },
+        remaining: { type: ['string', 'null'] },
+        as_of: { type: 'string' },
+        signature: {
+          type: 'object',
+          properties: {
+            alg: { type: 'string' },
+            value: { type: 'string' },
+          },
+        },
+      },
+    },
   },
-  required: ['agent_id', 'limit', 'entries', 'totals'],
+  required: ['agent_id', 'limit', 'entries', 'totals', 'window', 'cap', 'spent', 'remaining'],
 };
 
 const AGENTS_BOOK_OP = {
   operationId: 'getAgentBook',
   summary: 'Possession-gated agent spend book',
   description:
-    'Last-N collected UsageSettled rows for this agent_id. Possession-gated: '
+    'Last-N collected UsageSettled rows for this agent_id, plus budget Y (cap), spent, '
+    + 'and remaining under a prepaid ceiling. Possession-gated: '
     + 'present the register session or HMAC over agent_id + window. '
+    + 'POST with { session, budget } sets Y (null = unlimited). '
     + 'Unauth or wrong proof returns 401/403 with an empty body. '
     + 'Not a public index. Only collected rows appear. '
     + 'This route is not the $0.01 paid door — that stays POST /v1/chat/completions.',
@@ -211,7 +252,7 @@ const AGENTS_BOOK_OP = {
   },
   responses: {
     200: {
-      description: 'Last-N collected spend for this agent_id',
+      description: 'Last-N collected spend + cap / spent / remaining for this agent_id',
       content: {
         'application/json': { schema: AGENTS_BOOK_OUTPUT_SCHEMA },
       },
@@ -525,7 +566,8 @@ export function buildOpenApiSpec(baseUrl = '') {
         'XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. '
         + 'POST /v1/chat/completions is $0.01 USDC on '
         + 'Base and Solana. POST /a2a-message is the same $0.01 door. '
-        + 'GET|POST /v1/agents/{agent_id}/book is possession-gated last-N collected spend.',
+        + 'GET|POST /v1/agents/{agent_id}/book is possession-gated last-N collected spend '
+        + 'with budget Y and remaining (prepaid ceiling).',
       'x-guidance':
         'XFuel is the book: this agent spent Y on this job; you hold hub, model, and amount. '
         + 'Use POST /v1/chat/completions with an OpenAI-compatible JSON body '
@@ -535,7 +577,7 @@ export function buildOpenApiSpec(baseUrl = '') {
         + 'Retry with X-PAYMENT or PAYMENT-SIGNATURE. POST /v1/agents/register is fail-closed: '
         + 'it binds an agentWallet to an integer agent_id using a collected HMAC-valid receipt. '
         + 'GET|POST /v1/agents/{agent_id}/book is a possession-gated last-N collected '
-        + 'spend pack for that agent_id — not a public index. '
+        + 'spend pack with budget Y / remaining for that agent_id — not a public index. '
         + 'POST /task-request is a lower-level M2M alternative that returns task_id for '
         + 'polling — do not treat it as the public door.',
     },

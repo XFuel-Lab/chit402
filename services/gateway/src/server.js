@@ -36,7 +36,7 @@ import { XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger } from './usage-settled.js';
-import { readAgentBook, claimFromRequest, bindBookVerifier } from './agent-book.js';
+import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget } from './agent-book.js';
 import { aawpReaders } from './agent-wallet.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
@@ -54,7 +54,7 @@ import { getFloatManager } from './provider-float.js';
  *   POST  /a2a-settle-fair-exchange  Settle an A2A bid via Fair Exchange (PAS signature)
  *   GET   /task-status     Query task status / ProofOutcome
  *   POST  /v1/agents/register  Bind agentWallet + paid receipt → integer agent_id
- *   GET|POST /v1/agents/:agent_id/book  Possession-gated last-N collected spend
+ *   GET|POST /v1/agents/:agent_id/book  Possession-gated last-N + budget Y / remaining
  *   GET   /.well-known/agent-card.json  A2A v1.0 agent card
  *   GET   /.well-known/x402list.txt     x402-list domain verification (public, text/plain)
  *   GET   /receipt/:taskId Public, no-auth verifiable receipt (HTML + ?format=json)
@@ -242,7 +242,8 @@ const LLMS_TXT = `# XFuel Protocol
 > /v1/chat/completions is $0.01 x402 on Base (CDP) and Solana (PayAI).
 > POST /a2a-message is the same $0.01 door (A2A card URL). Bearer xfuel-demo
 > and valid API keys skip payment. GET|POST
-> /v1/agents/:agent_id/book is possession-gated. POST /v1/agents/register
+> /v1/agents/:agent_id/book is possession-gated (last-N spend + budget Y /
+> remaining under prepaid_ceiling). POST /v1/agents/register
 > is fail-closed. /task-request is the other paid door. Paying
 > api.xfuel.app moves real mainnet USDC. Canonical: api.xfuel.app.
 
@@ -252,7 +253,7 @@ const LLMS_TXT = `# XFuel Protocol
   POST {} → 402 x402 ($0.01 USDC on Base or Solana). Returns signed receipt + public verify_url.
 - POST /a2a-message         : A2A card URL. Same $0.01 x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
 - POST /v1/agents/register  : fail-closed. Bind agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
-- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id. Not a public index.
+- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
 - GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - Auth: "Authorization: Bearer <key>" or "X-API-Key: <key>".
@@ -277,7 +278,7 @@ const LLMS_TXT = `# XFuel Protocol
 - npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
 - submit_inference = POST /task-request (paid, 402 without a payer).
 - register_agent = POST /v1/agents/register (needs a collected receipt + agentWallet).
-- get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; not a public scoreboard).
+- get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; budget Y + remaining; not a public scoreboard).
 
 ## Discovery (x402scan + Bazaar)
 
@@ -286,7 +287,7 @@ const LLMS_TXT = `# XFuel Protocol
 - GET  /.well-known/x402list.txt : x402-list domain verification token (public, text/plain).
 - GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message ($0.01).
 - POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
-- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend. Not a public index.
+- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
 - POST /v1/chat/completions : paid ($0.01 USDC on Base or Solana). Unauth GET or POST {} → 402.
 - POST /a2a-message       : same $0.01 paid door as /v1 (A2A card URL). Unauth POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).
@@ -2037,9 +2038,20 @@ export function createApp() {
 
   function sendAgentBook(req, res) {
     try {
-      const result = readAgentBook(req.params.agent_id, claimFromRequest(req), {
+      const claim = claimFromRequest(req);
+      if (req.method === 'POST' && claim.budget !== undefined) {
+        const set = setAgentBudget(req.params.agent_id, claim, {
+          registry: agentRegistry,
+          verify: verifyBook,
+        });
+        if (set.status !== 200) {
+          return res.status(set.status).end();
+        }
+      }
+      const result = readAgentBook(req.params.agent_id, claim, {
         ledger: usageSettled,
         verify: verifyBook,
+        registry: agentRegistry,
       });
       if (result.body == null) {
         return res.status(result.status).end();

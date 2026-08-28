@@ -21,7 +21,8 @@ export function buildAgentCard(baseUrl = '') {
       + 'Paid door is POST /v1/chat/completions '
       + 'at $0.01 USDC on Base (eip155:8453) and Solana. POST /a2a-message is the same $0.01 door '
       + '(A2A HTTP+JSON URL). GET|POST /v1/agents/:agent_id/book '
-      + 'is possession-gated last-N collected spend. POST /v1/agents/register is fail-closed: '
+      + 'is possession-gated last-N collected spend with budget Y and remaining '
+      + '(prepaid ceiling). POST /v1/agents/register is fail-closed: '
       + 'collected HMAC-valid receipt plus an AAWP official or smart-account agentWallet. '
       + 'Returns integer agent_id for POST /erc8004/validate.',
     supportedInterfaces: [
@@ -79,11 +80,15 @@ export function buildAgentCard(baseUrl = '') {
         id: 'agent-book',
         name: 'Agent spend book',
         description:
-          'GET|POST /v1/agents/:agent_id/book returns last-N collected spend for that agent_id. '
-          + 'Possession-gated (register session or HMAC). Not a public index. '
-          + 'You hold hub, model, and amount.',
+          'GET|POST /v1/agents/:agent_id/book returns last-N collected spend for that agent_id, '
+          + 'plus budget Y (cap), spent, and remaining under a prepaid ceiling. '
+          + 'Possession-gated (register session or HMAC). Set budget with POST { session, budget }. '
+          + 'Not a public index. You hold hub, model, and amount.',
         tags: ['identity', 'spend'],
-        examples: ['POST /v1/agents/1/book with { session }'],
+        examples: [
+          'POST /v1/agents/1/book with { session }',
+          'POST /v1/agents/1/book with { session, budget: "10000" }',
+        ],
       },
       {
         id: 'erc8004-validate',

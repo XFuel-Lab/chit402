@@ -25,6 +25,11 @@ import { publishedPrice } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
 import { freeTierBucket, checkFreeAllowance, recordFreeSpend, usd as cogsUsd } from './free-tier.js';
 import { recordCollectedSpend } from './usage-settled.js';
+import {
+  resolveBookableAgent,
+  remainingBlocksDoor,
+  capViewOf,
+} from './agent-book.js';
 
 /**
  * XFuel OpenAI-compatible gateway.
@@ -120,13 +125,19 @@ function sendV1PaymentRequired(res, body, headers = {}) {
  * A plain OpenAI SDK cannot satisfy a 402, which is why this is opt-in. Callers
  * that speak x402 (the XFuel SDK, x402-fetch wrappers) retry with `X-PAYMENT`.
  *
+ * When the request already names a bookable agent_id (session) and remaining
+ * is below the $0.01 floor, fail closed BEFORE runX402Handshake — never take
+ * payment then refuse.
+ *
  * @returns {Promise<{halted:boolean, payment?:{ref:string, amount:string}|null}>}
- *   `halted` → a 402 has already been written; the handler must return.
+ *   `halted` → a 402/403 has already been written; the handler must return.
  */
 async function meterV1Request(req, res, {
   taskId,
   isAuthorised = null,
   resourcePath = '/v1/chat/completions',
+  ledger = null,
+  registry = null,
 } = {}) {
   // When isAuthorised is passed, we use it to determine if the request is exempt.
   // Otherwise, fall back to the config-gated behavior for backward compat.
@@ -138,7 +149,7 @@ async function meterV1Request(req, res, {
     // x402 must be enabled for paid requests
     if (!config.x402?.enabled) return { halted: false, payment: null };
   }
-  // Demo key and explicitly exempt keys always free
+  // Demo key and explicitly exempt keys always free — never burn budget Y.
   if (meteringExempt(req)) return { halted: false, payment: null };
   // A request with an explicit key that passes authorization is free.
   // Open mode (no M2M_API_KEYS configured) does NOT bypass payment - the caller
@@ -149,6 +160,28 @@ async function meterV1Request(req, res, {
     if (key && isAuthorised(req)) return { halted: false, payment: null };
   }
   // No valid auth and not exempt → must pay
+
+  // Per-agent prepaid ceiling: reject before settle when remaining < door floor.
+  const bookable = resolveBookableAgent(req, registry);
+  if (bookable && ledger && typeof ledger.sumCollectedByAgent === 'function') {
+    const spent = ledger.sumCollectedByAgent(bookable.agent_id);
+    const caps = capViewOf(bookable, spent);
+    if (remainingBlocksDoor(caps.remaining)) {
+      res.status(403).json({
+        error: {
+          message: 'Agent budget remaining is below the $0.01 door floor',
+          type: 'budget_exhausted',
+          code: 'budget_exhausted',
+          agent_id: bookable.agent_id,
+          window: caps.window,
+          cap: caps.cap,
+          spent: caps.spent,
+          remaining: caps.remaining,
+        },
+      });
+      return { halted: true };
+    }
+  }
 
   try {
     const body = { ...(req.body || {}) };
@@ -877,14 +910,14 @@ function setReceiptHeaders(res, receipt) {
 /**
  * On collected settle: append hub/model/amount under a bookable agent_id.
  * Session is possession for GET|POST book — returned once here, not on public GET /receipt.
- * Do not wait for POST /v1/agents/register.
+ * Do not wait for POST /v1/agents/register. Reuse agent_id when session is presented.
  */
-function withBookSpend(receipt, { ledger, registry } = {}) {
+function withBookSpend(receipt, { ledger, registry, agentId = null } = {}) {
   if (!ledger || !registry || !receipt?.payment?.collected || !receipt?.payment?.ref) {
     return receipt;
   }
   try {
-    const recorded = recordCollectedSpend(receipt, { ledger, registry });
+    const recorded = recordCollectedSpend(receipt, { ledger, registry, agentId });
     if (!recorded.ok) {
       logger.warn(
         { reason: recorded.reason, code: recorded.code, taskId: receipt.task_id },
@@ -940,7 +973,7 @@ function respondPaidV1Failure(res, {
   task, taskId, payment, baseUrl, privateSpend = false,
   statusCode = 503, message, code = 'inference_failed',
   requestedModel = null, resolvedModel = null,
-  ledger = null, registry = null,
+  ledger = null, registry = null, agentId = null, req = null,
 }) {
   if (task) {
     task.status = 'failed';
@@ -961,7 +994,8 @@ function respondPaidV1Failure(res, {
     requestedModel,
     resolvedModel,
   });
-  receipt = withBookSpend(receipt, { ledger, registry });
+  const reuseId = agentId ?? resolveBookableAgent(req, registry)?.agent_id ?? null;
+  receipt = withBookSpend(receipt, { ledger, registry, agentId: reuseId });
   setReceiptHeaders(res, receipt);
   return res.status(statusCode).json({
     error: {
@@ -979,7 +1013,7 @@ function respondPaidV1Failure(res, {
  * Metering threw after handshake — respond without a bare 500 when we already
  * know payment moved (should be rare; settlement path is defensive).
  */
-function respondMeteringFailure(res, { taskId, payment, task, baseUrl, privateSpend = false, ledger = null, registry = null }) {
+function respondMeteringFailure(res, { taskId, payment, task, baseUrl, privateSpend = false, ledger = null, registry = null, req = null }) {
   if (payment?.ref) {
     return respondPaidV1Failure(res, {
       task, taskId, payment, baseUrl, privateSpend,
@@ -988,6 +1022,7 @@ function respondMeteringFailure(res, { taskId, payment, task, baseUrl, privateSp
       code: 'post_settle_processing_failed',
       ledger,
       registry,
+      req,
     });
   }
   return res.status(503).json({
@@ -1098,7 +1133,14 @@ export function registerOpenAIRoutes(app, {
   app.use('/v1/audio', ...authChain);
   app.use('/v1/chat', ...baseChain);
 
-  const bookSpend = (receipt) => withBookSpend(receipt, { ledger, registry });
+  const bookSpend = (receipt, req = null) => {
+    const identity = resolveBookableAgent(req, registry);
+    return withBookSpend(receipt, {
+      ledger,
+      registry,
+      agentId: identity?.agent_id ?? null,
+    });
+  };
 
   // ── GET /v1/models ───────────────────────────────────────────────────────
   app.get('/v1/models', async (req, res) => {
@@ -1152,7 +1194,9 @@ export function registerOpenAIRoutes(app, {
     const taskId = `openai-${crypto.randomUUID()}`;
     let metering = { halted: false, payment: null };
     if (!paymentHeader) {
-      metering = await meterV1Request(req, res, { taskId, isAuthorised, resourcePath });
+      metering = await meterV1Request(req, res, {
+        taskId, isAuthorised, resourcePath, ledger, registry,
+      });
       if (metering.meteringError) {
         return respondMeteringFailure(res, {
           taskId,
@@ -1161,6 +1205,7 @@ export function registerOpenAIRoutes(app, {
           baseUrl: baseUrlFromReq(req, config.service.publicBaseUrl),
           ledger,
           registry,
+          req,
         });
       }
     }
@@ -1237,7 +1282,9 @@ export function registerOpenAIRoutes(app, {
 
     // Payment present: settle only after the body is valid (Bankr: don't settle then 400).
     if (paymentHeader) {
-      metering = await meterV1Request(req, res, { taskId, isAuthorised, resourcePath });
+      metering = await meterV1Request(req, res, {
+        taskId, isAuthorised, resourcePath, ledger, registry,
+      });
       if (metering.meteringError) {
         return respondMeteringFailure(res, {
           taskId,
@@ -1247,6 +1294,7 @@ export function registerOpenAIRoutes(app, {
           privateSpend,
           ledger,
           registry,
+          req,
         });
       }
       if (metering.halted) return undefined;
@@ -1332,6 +1380,7 @@ export function registerOpenAIRoutes(app, {
           code: 'inference_failed',
           ledger,
           registry,
+          req,
         });
       }
       return res.status(500).json({
@@ -1354,6 +1403,7 @@ export function registerOpenAIRoutes(app, {
           resolvedModel: inference.resolvedModel,
           ledger,
           registry,
+          req,
         });
       }
       return res.status(inference.error.status || 400).json({
@@ -1429,7 +1479,7 @@ export function registerOpenAIRoutes(app, {
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
-    }));
+    }), req);
 
     setReceiptHeaders(res, receipt);
 
