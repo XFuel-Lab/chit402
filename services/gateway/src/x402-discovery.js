@@ -13,6 +13,7 @@ import { describePricing } from './pricing.js';
  *
  * Paid resources (chat first — that is the public door):
  * - `POST /v1/chat/completions` — OpenAI-compatible chat (recommended for agents)
+ * - `POST /a2a-message` — A2A card URL; same $0.01 handshake + fulfillment as /v1
  * - `POST /task-request` — M2M task request (lower-level, returns task_id)
  *
  * Dual-network support (2026-08-23): when X402_SOLANA_ENABLED, the bazaar
@@ -370,7 +371,22 @@ export function buildX402Manifest(baseUrl = '') {
         description:
           'OpenAI-compatible chat completions. Pay per request in USDC on Base and Solana '
           + '($0.01 floor, x402 exact scheme). Returns standard OpenAI response + signed '
-          + 'XFuel receipt with public verify_url.',
+          + 'XFuel receipt with public verify_url. You hold hub, model, and amount.',
+        accepts,
+        input: CHAT_COMPLETIONS_INPUT_SCHEMA,
+        outputSchema: CHAT_COMPLETIONS_OUTPUT_SCHEMA,
+        docs: base ? `${base}/llms.txt` : '/llms.txt',
+      },
+      {
+        type: 'http',
+        resource: `${base}/a2a-message`,
+        method: 'POST',
+        serviceName,
+        tags,
+        iconUrl,
+        description:
+          'A2A card URL. Same $0.01 x402 floor and chat fulfillment as /v1/chat/completions. '
+          + 'You hold hub, model, and amount. Unauthenticated POST {} returns HTTP 402.',
         accepts,
         input: CHAT_COMPLETIONS_INPUT_SCHEMA,
         outputSchema: CHAT_COMPLETIONS_OUTPUT_SCHEMA,
@@ -449,6 +465,32 @@ export function buildOpenApiSpec(baseUrl = '') {
     },
   };
 
+  const a2aPost = {
+    operationId: 'a2aMessage',
+    summary: 'A2A paid door (same $0.01 as /v1)',
+    description:
+      'A2A card URL. Same $0.01 USDC x402 floor and chat fulfillment as POST /v1/chat/completions. '
+      + 'You hold hub, model, and amount. Unauthenticated POST {} returns HTTP 402. '
+      + 'Collected rows are bookable via GET|POST /v1/agents/{agent_id}/book.',
+    tags: ['A2A'],
+    'x-payment-info': paymentInfo,
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': { schema: CHAT_COMPLETIONS_INPUT_SCHEMA },
+      },
+    },
+    responses: {
+      200: {
+        description: 'Chat completion with XFuel receipt (same shape as /v1)',
+        content: {
+          'application/json': { schema: CHAT_COMPLETIONS_OUTPUT_SCHEMA },
+        },
+      },
+      402: { description: 'Payment Required' },
+    },
+  };
+
   const taskPost = {
     operationId: 'taskRequest',
     summary: 'M2M verifiable inference task (lower-level)',
@@ -482,11 +524,13 @@ export function buildOpenApiSpec(baseUrl = '') {
       description:
         'XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. '
         + 'POST /v1/chat/completions is $0.01 USDC on '
-        + 'Base and Solana. GET|POST /v1/agents/{agent_id}/book is possession-gated last-N collected spend.',
+        + 'Base and Solana. POST /a2a-message is the same $0.01 door. '
+        + 'GET|POST /v1/agents/{agent_id}/book is possession-gated last-N collected spend.',
       'x-guidance':
         'XFuel is the book: this agent spent Y on this job; you hold hub, model, and amount. '
         + 'Use POST /v1/chat/completions with an OpenAI-compatible JSON body '
-        + '({ model, messages }). Unauthenticated callers get HTTP 402 with x402 '
+        + '({ model, messages }). POST /a2a-message is the A2A card URL with the same $0.01 floor. '
+        + 'Unauthenticated callers get HTTP 402 with x402 '
         + 'payment requirements (USDC, $0.01 floor; Base and Solana when enabled). '
         + 'Retry with X-PAYMENT or PAYMENT-SIGNATURE. POST /v1/agents/register is fail-closed: '
         + 'it binds an agentWallet to an integer agent_id using a collected HMAC-valid receipt. '
@@ -500,6 +544,7 @@ export function buildOpenApiSpec(baseUrl = '') {
     },
     paths: {
       '/v1/chat/completions': { post: chatPost },
+      '/a2a-message': { post: a2aPost },
       '/task-request': { post: taskPost },
       '/v1/agents/register': {
         post: {

@@ -22,8 +22,8 @@ test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () =>
   assert.ok(['x402', 'zan'].includes(m.facilitator.protocol));
   assert.match(m.facilitator.network, /^eip155:/);
 
-  // Two paid resources: /v1/chat/completions (OpenAI-compatible) and /task-request (M2M)
-  assert.equal(m.resources.length, 2);
+  // Two paid resources historically; A2A card URL is the same $0.01 door as /v1
+  assert.equal(m.resources.length, 3);
 
   // First resource: /v1/chat/completions (OpenAI-compatible)
   const chatResource = m.resources.find((r) => r.resource.includes('/v1/chat/completions'));
@@ -34,7 +34,13 @@ test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () =>
   assert.equal(chatResource.accepts[0].scheme, 'exact');
   assert.ok(chatResource.input.required.includes('messages'));
 
-  // Second resource: /task-request (M2M)
+  const a2aResource = m.resources.find((r) => r.resource.includes('/a2a-message'));
+  assert.ok(a2aResource, 'a2a-message resource exists');
+  assert.equal(a2aResource.method, 'POST');
+  assert.equal(a2aResource.accepts[0].amount, chatResource.accepts[0].amount);
+  assert.ok(a2aResource.input.required.includes('messages'));
+
+  // Third resource: /task-request (M2M)
   const taskResource = m.resources.find((r) => r.resource.includes('/task-request'));
   assert.ok(taskResource, 'task-request resource exists');
   assert.equal(taskResource.type, 'http');
@@ -91,10 +97,12 @@ test('402 challenge includes top-level bazaar extension for CDP cataloging', () 
 
 test('buildX402Manifest: emits root-relative links when no base URL is known', () => {
   const m = buildX402Manifest('');
-  // Both resources use root-relative paths
+  // Resources use root-relative paths
   const chatResource = m.resources.find((r) => r.resource.includes('/v1/chat/completions'));
+  const a2aResource = m.resources.find((r) => r.resource.includes('/a2a-message'));
   const taskResource = m.resources.find((r) => r.resource.includes('/task-request'));
   assert.equal(chatResource.resource, '/v1/chat/completions');
+  assert.equal(a2aResource.resource, '/a2a-message');
   assert.equal(taskResource.resource, '/task-request');
   assert.equal(m.links.agent_manifest, '/llms.txt');
   assert.equal(m.links.agent_card, '/.well-known/agent-card.json');
@@ -128,10 +136,11 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
   const pathKeys = Object.keys(spec.paths);
   assert.deepEqual(pathKeys, [
     '/v1/chat/completions',
+    '/a2a-message',
     '/task-request',
     '/v1/agents/register',
     '/v1/agents/{agent_id}/book',
-  ], 'chat completions is the public door; task-request is second; register is identity; book is possession-gated');
+  ], 'chat completions is the public door; a2a is same $0.01; task-request is M2M; register is identity; book is possession-gated');
   assert.equal(spec.paths['/v1/agents/register'].post['x-payment-info'], undefined,
     'register is not the $0.01 paid door');
   assert.equal(spec.paths['/v1/agents/{agent_id}/book'].post['x-payment-info'], undefined,
@@ -139,8 +148,9 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
   assert.equal(spec.paths['/v1/agents/{agent_id}/book'].get['x-payment-info'], undefined);
 
   const chat = spec.paths['/v1/chat/completions'].post;
+  const a2a = spec.paths['/a2a-message'].post;
   const task = spec.paths['/task-request'].post;
-  for (const op of [chat, task]) {
+  for (const op of [chat, a2a, task]) {
     assert.ok(op.responses[402] || op.responses['402'], 'paid op declares 402');
     assert.equal(op['x-payment-info'].price.mode, 'fixed');
     assert.equal(op['x-payment-info'].price.currency, 'USD');
@@ -150,6 +160,8 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
     assert.equal(op.requestBody.content['application/json'].schema.type, 'object');
   }
   assert.ok(chat.requestBody.content['application/json'].schema.required.includes('messages'));
+  assert.ok(a2a.requestBody.content['application/json'].schema.required.includes('messages'));
+  assert.match(a2a.description, /hub, model, and amount/);
   assert.ok(task.requestBody.content['application/json'].schema.required.includes('sender'));
 });
 
