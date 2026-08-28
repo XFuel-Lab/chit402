@@ -94,7 +94,7 @@ test('homepage title and hero lead with the book, not a router', () => {
 });
 
 test('README first paragraph leads with the book', () => {
-  const readme = readFileSync(join(root, '../../README.md'), 'utf8');
+  const readme = readFileSync(join(root, '../../README.md'), 'utf8').replace(/\r\n/g, '\n');
   const firstPara = readme.split(/\n\n/)[1] ?? '';
   assert.match(firstPara, /XFuel is the book/);
   assert.match(firstPara, /You hold hub, model, and amount/);
