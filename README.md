@@ -1,6 +1,6 @@
 # XFuel Protocol
 
-XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. Not a smart router. Not a model shop.
+XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.
 
 `POST /v1/chat/completions` is **$0.01 USDC on Base and Solana**. `GET|POST /v1/agents/:agent_id/book` is possession-gated last-N collected spend. Signed receipt is table stakes (HMAC); SP1 settlement proof is on demand. Live routes today are Theta and Akash. Demo key `xfuel-demo` skips payment (rate-limited). Register is fail-closed: a collected HMAC-valid receipt plus an AAWP official or smart-account `agentWallet`.
 

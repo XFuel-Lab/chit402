@@ -181,6 +181,8 @@ test('buildAgentCard is A2A v1.0', () => {
   assert.match(card.description, /hub, model, and amount/);
   assert.match(card.description, /fail-closed/);
   assert.doesNotMatch(card.description, /crypto control plane/i);
+  assert.doesNotMatch(card.description, /Not a smart router/);
+  assert.doesNotMatch(card.description, /Not a model shop/);
   assert.equal(card.version, '1.0.0');
   assert.equal(card.supportedInterfaces[0].protocolVersion, '1.0');
   assert.equal(card.supportedInterfaces[0].protocolBinding, 'HTTP+JSON');
@@ -249,8 +251,12 @@ test('GET /llms.txt and /openapi.json mention register honestly', async () => {
   assert.doesNotMatch(llms, /XFUEL_PAYER_PRIVATE_KEY/);
   assert.doesNotMatch(llms, /Swap one baseURL/);
   assert.doesNotMatch(llms, /crypto control plane/i);
+  assert.doesNotMatch(llms, /Not a smart router/);
+  assert.doesNotMatch(llms, /Not a model shop/);
 
   const spec = await (await fetch(`${base}/openapi.json`)).json();
+  assert.doesNotMatch(spec.info.description, /Not a smart router/);
+  assert.doesNotMatch(spec.info.description, /Not a model shop/);
   assert.ok(spec.paths['/v1/agents/register']);
   assert.ok(spec.paths['/v1/agents/{agent_id}/book']);
   assert.match(spec.paths['/v1/agents/{agent_id}/book'].post.description, /possession-gated/i);

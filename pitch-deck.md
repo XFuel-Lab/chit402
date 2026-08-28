@@ -14,7 +14,7 @@ Agents buy inference with API keys and opaque invoices. No shared receipt. No cr
 ## 3. Solution
 
 XFuel is the book: this agent spent Y on this job. You hold hub, model, and amount.  
-Pay USDC via x402 on Base and Solana. Signed receipt is table stakes; on-chain SP1 proof on demand. Not a smart router. Not a model shop.
+Pay USDC via x402 on Base and Solana. Signed receipt is table stakes; on-chain SP1 proof on demand.
 
 ## 4. How it works
 

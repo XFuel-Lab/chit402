@@ -31,6 +31,8 @@ function assertPaidDoorCopy(label, text) {
   assert.doesNotMatch(text, /best available provider/i, `${label} must not claim best available provider`);
   assert.doesNotMatch(text, /Swap one baseURL/i, `${label} must not hero a baseURL swap`);
   assert.doesNotMatch(text, /crypto control plane/i, `${label} must not lead with crypto control plane`);
+  assert.doesNotMatch(text, /Not a smart router/, `${label} must not say Not a smart router`);
+  assert.doesNotMatch(text, /Not a model shop/, `${label} must not say Not a model shop`);
   assert.match(text, /the book/i, `${label} leads with the book`);
   assert.match(text, /hub, model, and amount/i, `${label} names hub, model, and amount`);
   assert.match(text, /\$0\.01 USDC/, `${label} names $0.01 USDC`);
@@ -77,11 +79,18 @@ test('homepage title and hero lead with the book, not a router', () => {
   assert.match(home, /XFuel is the book/);
   assert.match(home, /This agent spent Y on this job/);
   assert.match(home, /You hold hub, model, and amount/);
-  assert.match(home, /Not a smart router/);
-  assert.match(home, /Not a model shop/);
+  assert.doesNotMatch(home, /Not a smart router/);
+  assert.doesNotMatch(home, /Not a model shop/);
   assert.doesNotMatch(home, /best available provider/i);
   assert.doesNotMatch(home, /Swap one baseURL/);
   assert.doesNotMatch(home, /crypto control plane/i);
+
+  assert.doesNotMatch(html, /Not a smart router/);
+  assert.doesNotMatch(html, /Not a model shop/);
+
+  const llms = readFileSync(join(root, 'public/llms.txt'), 'utf8');
+  assert.doesNotMatch(llms, /Not a smart router/);
+  assert.doesNotMatch(llms, /Not a model shop/);
 });
 
 test('README first paragraph leads with the book', () => {
@@ -91,6 +100,6 @@ test('README first paragraph leads with the book', () => {
   assert.match(firstPara, /You hold hub, model, and amount/);
   assert.doesNotMatch(firstPara, /best available provider/i);
   assert.doesNotMatch(firstPara, /crypto control plane/i);
-  assert.match(firstPara, /Not a smart router/);
-  assert.match(firstPara, /Not a model shop/);
+  assert.doesNotMatch(firstPara, /Not a smart router/);
+  assert.doesNotMatch(firstPara, /Not a model shop/);
 });

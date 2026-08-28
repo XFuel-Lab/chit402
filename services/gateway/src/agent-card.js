@@ -18,7 +18,7 @@ export function buildAgentCard(baseUrl = '') {
     name: 'XFuel',
     description:
       'XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. '
-      + 'Not a smart router. Not a model shop. Paid door is POST /v1/chat/completions '
+      + 'Paid door is POST /v1/chat/completions '
       + 'at $0.01 USDC on Base (eip155:8453) and Solana. GET|POST /v1/agents/:agent_id/book '
       + 'is possession-gated last-N collected spend. POST /v1/agents/register is fail-closed: '
       + 'collected HMAC-valid receipt plus an AAWP official or smart-account agentWallet. '

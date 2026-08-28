@@ -238,7 +238,7 @@ function tier2Gate() {
 const LLMS_TXT = `# XFuel Protocol
 
 > XFuel is the book. This agent spent Y on this job. You hold hub, model,
-> and amount. Not a smart router. Not a model shop. Unauthenticated POST
+> and amount. Unauthenticated POST
 > /v1/chat/completions is $0.01 x402 on Base (CDP) and Solana (PayAI).
 > Bearer xfuel-demo and valid API keys skip payment. GET|POST
 > /v1/agents/:agent_id/book is possession-gated. POST /v1/agents/register

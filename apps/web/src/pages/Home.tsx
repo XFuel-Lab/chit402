@@ -25,7 +25,6 @@ export default function Home() {
           <h1 style={styles.heroTitle}>XFuel is the book.</h1>
           <p style={styles.heroSubtitle}>
             This agent spent Y on this job. You hold hub, model, and amount.
-            Not a smart router. Not a model shop.
           </p>
           <p style={styles.heroDescription}>
             <code>POST /v1/chat/completions</code> is $0.01 USDC on Base and Solana.

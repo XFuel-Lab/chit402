@@ -39,7 +39,7 @@ The product is settlement and proof. Providers (OpenAI-compatible APIs, neocloud
 
 ## 1. Introduction
 
-AI agents increasingly buy inference with API keys and opaque invoices. XFuel replaces that with a spend book: pay per task in USDC, and you hold hub, model, and amount — a receipt that can be shared and verified. Not a smart router. Not a model shop.
+AI agents increasingly buy inference with API keys and opaque invoices. XFuel replaces that with a spend book: pay per task in USDC, and you hold hub, model, and amount — a receipt that can be shared and verified.
 
 Design principles:
 

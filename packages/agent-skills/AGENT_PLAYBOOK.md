@@ -13,7 +13,7 @@ XFuel is the book. This agent spent Y on this job. You hold hub, model, and amou
 3. Signed receipt is table stakes (HMAC); SP1 settlement proof is on demand  
 4. Optional → A2A / swarm coordination  
 
-Skills never hold private keys. USDC payers are agent-side. Not a smart router. Not a model shop.
+Skills never hold private keys. USDC payers are agent-side.
 
 Do not claim Tier 2 proves black-box model correctness. Tier 3 (zkLLM) is an active build.
 

@@ -117,6 +117,8 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
   assert.match(spec.info.description, /hub, model, and amount/);
   assert.doesNotMatch(spec.info.description, /crypto control plane/i);
   assert.doesNotMatch(spec.info.description, /best available/i);
+  assert.doesNotMatch(spec.info.description, /Not a smart router/);
+  assert.doesNotMatch(spec.info.description, /Not a model shop/);
   assert.equal(typeof spec.info['x-guidance'], 'string');
   assert.match(spec.info['x-guidance'], /\/v1\/chat\/completions/);
   assert.match(spec.info['x-guidance'], /fail-closed/);
