@@ -56,6 +56,7 @@ export class AgentRegistry {
       const snap = JSON.parse(fs.readFileSync(this._file(), 'utf8'));
       this.nextId = Number(snap.nextId) || 1;
       for (const row of snap.identities || []) {
+        if (row.budget === undefined) row.budget = null;
         this.byId.set(Number(row.agent_id), row);
         if (row.agentWallet) this.byWallet.set(String(row.agentWallet).toLowerCase(), Number(row.agent_id));
       }
@@ -91,9 +92,54 @@ export class AgentRegistry {
   }
 
   /**
+   * Resolve identity by possession session. Timing-safe compare.
+   * @param {string|null|undefined} session
+   */
+  getBySession(session) {
+    if (!session) return null;
+    const want = Buffer.from(String(session));
+    for (const row of this.byId.values()) {
+      if (!row?.session) continue;
+      const have = Buffer.from(String(row.session));
+      if (want.length === have.length && crypto.timingSafeEqual(want, have)) return row;
+    }
+    return null;
+  }
+
+  /**
+   * Set prepaid budget Y in USDC atomic units (10000 = $0.01).
+   * Null/absent clears the cap (unlimited). allocate() itself has no budget.
+   * @param {number|string} agentId
+   * @param {string|number|bigint|null|undefined} budget
+   */
+  setBudget(agentId, budget) {
+    const id = Number(agentId);
+    const row = this.byId.get(id);
+    if (!row || !Number.isInteger(id) || id < 1) {
+      return { ok: false, reason: 'unknown agent_id' };
+    }
+    if (budget === null || budget === undefined || budget === '') {
+      row.budget = null;
+    } else {
+      let n;
+      try {
+        n = BigInt(String(budget).trim());
+      } catch {
+        return { ok: false, reason: 'invalid budget' };
+      }
+      if (n < 0n) return { ok: false, reason: 'invalid budget' };
+      row.budget = n.toString();
+    }
+    row.updated_at = new Date().toISOString();
+    this._save();
+    return { ok: true, identity: row };
+  }
+
+  /**
    * Allocate a bookable agent_id + session without a wallet.
    * Used on collected /v1 and /a2a-message settle so UsageSettled can
    * land under an id the book can read before POST /v1/agents/register.
+   * Budget is unset (unlimited) — set via setBudget under possession.
    * @param {{ taskId?: string, paymentRef?: string }} [fields]
    */
   allocate(fields = {}) {
@@ -106,6 +152,7 @@ export class AgentRegistry {
       task_id: fields.taskId || null,
       payment_ref: fields.paymentRef || null,
       session: issueSession(),
+      budget: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -170,6 +217,7 @@ export class AgentRegistry {
       task_id: fields.taskId || null,
       payment_ref: fields.paymentRef || null,
       session: issueSession(),
+      budget: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
