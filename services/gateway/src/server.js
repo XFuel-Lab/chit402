@@ -50,7 +50,7 @@ import { getFloatManager } from './provider-float.js';
  *   POST  /task-request    Submit an AI intent (COMPUTE_BID, INFERENCE_REQUEST, …)
  *   POST  /task-quote      Price a task (USDC via x402 default; legacy tfuel optional)
  *   GET   /prove-result    Retrieve ZK settlement proof for a completed task
- *   POST  /a2a-message     Send an A2A (Agent-to-Agent) message with optional escrow
+ *   POST  /a2a-message     A2A card URL — same $0.01 x402 + chat as /v1
  *   POST  /a2a-settle-fair-exchange  Settle an A2A bid via Fair Exchange (PAS signature)
  *   GET   /task-status     Query task status / ProofOutcome
  *   POST  /v1/agents/register  Bind agentWallet + paid receipt → integer agent_id
@@ -240,7 +240,8 @@ const LLMS_TXT = `# XFuel Protocol
 > XFuel is the book. This agent spent Y on this job. You hold hub, model,
 > and amount. Unauthenticated POST
 > /v1/chat/completions is $0.01 x402 on Base (CDP) and Solana (PayAI).
-> Bearer xfuel-demo and valid API keys skip payment. GET|POST
+> POST /a2a-message is the same $0.01 door (A2A card URL). Bearer xfuel-demo
+> and valid API keys skip payment. GET|POST
 > /v1/agents/:agent_id/book is possession-gated. POST /v1/agents/register
 > is fail-closed. /task-request is the other paid door. Paying
 > api.xfuel.app moves real mainnet USDC. Canonical: api.xfuel.app.
@@ -249,6 +250,7 @@ const LLMS_TXT = `# XFuel Protocol
 
 - POST /v1/chat/completions : OpenAI chat completions. Unauthenticated GET or
   POST {} → 402 x402 ($0.01 USDC on Base or Solana). Returns signed receipt + public verify_url.
+- POST /a2a-message         : A2A card URL. Same $0.01 x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
 - POST /v1/agents/register  : fail-closed. Bind agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id. Not a public index.
 - GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Public, no key.
@@ -282,10 +284,11 @@ const LLMS_TXT = `# XFuel Protocol
 - GET  /openapi.json      : OpenAPI 3.1 with x-payment-info. Public door is POST /v1/chat/completions.
 - GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
 - GET  /.well-known/x402list.txt : x402-list domain verification token (public, text/plain).
-- GET  /.well-known/agent-card.json : A2A v1.0 card (200).
+- GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message ($0.01).
 - POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend. Not a public index.
 - POST /v1/chat/completions : paid ($0.01 USDC on Base or Solana). Unauth GET or POST {} → 402.
+- POST /a2a-message       : same $0.01 paid door as /v1 (A2A card URL). Unauth POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).
 
 ## SDK
@@ -712,13 +715,13 @@ export function createApp() {
     return { body, headers };
   }
 
-  // Apply rate-limit + auth to API routes. /task-request is rate-limited but
-  // NOT auth-gated: CDP Bazaar re-fetches the resource unauthenticated and
-  // requires HTTP 402 (not 401). Fulfillment still requires a key below.
+  // Apply rate-limit + auth to API routes. /task-request and /a2a-message are
+  // rate-limited but NOT auth-gated: unauth callers must get HTTP 402 (not 401).
+  // /a2a-message reuses the /v1 chat handshake + fulfillment (same $0.01).
   app.use('/task-request',  rateLimit);
   app.use('/task-quote',    rateLimit, authenticate);
   app.use('/prove-result',  rateLimit, authenticate);
-  app.use('/a2a-message',   rateLimit, authenticate);
+  app.use('/a2a-message',   rateLimit);
   app.use('/a2a-settle-fair-exchange', rateLimit, authenticate);
   app.use('/task-status',   rateLimit, authenticate);
   app.use('/webhook',       rateLimit, authenticate);
@@ -1493,116 +1496,9 @@ export function createApp() {
     };
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // POST /a2a-message — Send an A2A (Agent-to-Agent) message with escrow
-  // ═══════════════════════════════════════════════════════════════════════
-
-  app.post('/a2a-message', async (req, res) => {
-    try {
-      const {
-        message_type,       // required – one of MESSAGE_TYPES
-        sender_chain,       // required – origin chain
-        recipient_chain,    // required – destination chain
-        payload_hash,       // required – SHA-256 of payload
-        escrow_amount,      // optional – escrowed TFUEL / AKT / TAO (string)
-        ttl,                // required – time-to-live in seconds (1-86400)
-        sender_address,     // required – sender agent address
-        sender_identity,    // required – agent identity commitment (hex)
-        recipient_address,  // optional – recipient agent address
-        ibc_channel,        // optional – explicit IBC channel
-        parent_task_id,     // optional – prior inference task in a receipt chain
-        correlation_id,     // optional – swarm / session correlation
-      } = req.body || {};
-
-      // ── Validation ────────────────────────────────────────────────────
-
-      const errors = [];
-
-      if (!message_type || !VALID_MESSAGE_TYPES.has(message_type)) {
-        errors.push(
-          `message_type must be one of: ${[...VALID_MESSAGE_TYPES].join(', ')}`
-        );
-      }
-      if (!sender_chain || !VALID_CHAIN_IDS.has(sender_chain)) {
-        errors.push(`sender_chain must be one of: ${[...VALID_CHAIN_IDS].join(', ')}`);
-      }
-      if (!recipient_chain || !VALID_CHAIN_IDS.has(recipient_chain)) {
-        errors.push(`recipient_chain must be one of: ${[...VALID_CHAIN_IDS].join(', ')}`);
-      }
-      if (!payload_hash || payload_hash.length < 8) {
-        errors.push('payload_hash is required (hex string, >= 8 chars)');
-      }
-      if (!ttl || ttl < 1 || ttl > MAX_TTL_SECONDS) {
-        errors.push(`ttl is required and must be between 1 and ${MAX_TTL_SECONDS}`);
-      }
-      if (!sender_address) {
-        errors.push('sender_address is required');
-      }
-      if (!sender_identity) {
-        errors.push('sender_identity (agent identity commitment) is required');
-      }
-
-      // Escrow validation per message type
-      // (mirrors _validate_escrow_for_msg_type in main.rs)
-      const escrow = BigInt(escrow_amount || '0');
-      if (message_type === MESSAGE_TYPES.COMPUTE_BID && escrow <= 0n) {
-        errors.push('COMPUTE_BID requires a non-zero escrow_amount');
-      }
-      if (message_type === MESSAGE_TYPES.INFERENCE_REQUEST && escrow <= 0n) {
-        errors.push('INFERENCE_REQUEST requires a non-zero escrow_amount (budget)');
-      }
-      if (message_type === MESSAGE_TYPES.CAPABILITY_QUERY && escrow > 0n) {
-        errors.push('CAPABILITY_QUERY must have zero escrow_amount');
-      }
-
-      // Cross-chain messages require IBC channel (mirrors main.rs)
-      if (sender_chain !== recipient_chain && !ibc_channel) {
-        errors.push('ibc_channel is required for cross-chain A2A messages');
-      }
-
-      if (errors.length > 0) {
-        return res.status(400).json({ error: 'validation_error', details: errors });
-      }
-
-      // ── A2A relay fee (0.1% on escrow) ─────
-
-      let relayFee = '0';
-      if (escrow > 0n) {
-        relayFee = ((escrow * 10n) / 10000n).toString(); // 10 BPS
-      }
-
-      const accepted = recordA2AMessage({
-        message_type,
-        sender_chain,
-        recipient_chain,
-        payload_hash,
-        escrow_amount: escrow.toString(),
-        ttl,
-        sender_address,
-        sender_identity,
-        recipient_address,
-        ibc_channel,
-        parent_task_id,
-        correlation_id,
-        relayFee,
-      });
-
-      logger.info({
-        reqId: req.id,
-        messageId: accepted.message_id,
-        msgType: message_type,
-        senderChain: sender_chain,
-        recipientChain: recipient_chain,
-        escrow: escrow.toString(),
-        relayFee,
-      }, 'A2A message accepted');
-
-      return res.status(202).json(accepted);
-    } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /a2a-message error');
-      return res.status(500).json({ error: 'internal', message: err.message });
-    }
-  });
+  // POST /a2a-message — paid door (same $0.01 x402 + chat fulfillment as /v1).
+  // Registered in registerOpenAIRoutes. Legacy CosmWasm/IBC escrow handler removed.
+  // recordA2AMessage remains for register's postA2A side-effect only.
 
   // ═══════════════════════════════════════════════════════════════════════
   // POST /a2a-settle-fair-exchange — Settle A2A bid via Fair Exchange (Phase 1 PAS)
@@ -2158,7 +2054,9 @@ export function createApp() {
   app.get('/v1/agents/:agent_id/book', sendAgentBook);
   app.post('/v1/agents/:agent_id/book', sendAgentBook);
 
-  registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorised });
+  registerOpenAIRoutes(app, {
+    rateLimit, authenticate, isAuthorised, ledger: usageSettled, registry: agentRegistry,
+  });
 
   // ── 404 fallback ────────────────────────────────────────────────────────
 

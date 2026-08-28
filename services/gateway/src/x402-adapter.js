@@ -468,7 +468,8 @@ export function buildPaymentChallenge(p, opts = {}) {
   const baseUrl = p.baseUrl ? String(p.baseUrl).replace(/\/$/, '') : '';
   const resourcePath = p.resourcePath || '/task-request';
   const resourceUrl = p.resource || (baseUrl ? `${baseUrl}${resourcePath}` : resourcePath);
-  const isV1Chat = resourceUrl.includes('/v1/chat/completions');
+  const isV1Chat = resourceUrl.includes('/v1/chat/completions')
+    || resourceUrl.includes('/a2a-message');
 
   const serviceName = 'XFuel';
   // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.

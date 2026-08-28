@@ -19,10 +19,11 @@ export function buildAgentCard(baseUrl = '') {
     description:
       'XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. '
       + 'Paid door is POST /v1/chat/completions '
-      + 'at $0.01 USDC on Base (eip155:8453) and Solana. GET|POST /v1/agents/:agent_id/book '
+      + 'at $0.01 USDC on Base (eip155:8453) and Solana. POST /a2a-message is the same $0.01 door '
+      + '(A2A HTTP+JSON URL). GET|POST /v1/agents/:agent_id/book '
       + 'is possession-gated last-N collected spend. POST /v1/agents/register is fail-closed: '
       + 'collected HMAC-valid receipt plus an AAWP official or smart-account agentWallet. '
-      + 'Returns integer agent_id for POST /erc8004/validate. POST /a2a-message is the HTTP+JSON A2A surface.',
+      + 'Returns integer agent_id for POST /erc8004/validate.',
     supportedInterfaces: [
       {
         url: abs('/a2a-message'),
@@ -50,9 +51,19 @@ export function buildAgentCard(baseUrl = '') {
         name: 'Paid chat completions',
         description:
           'OpenAI-compatible POST /v1/chat/completions. $0.01 USDC on Base and Solana. '
-          + 'Unauthenticated GET or POST {} returns HTTP 402.',
+          + 'Unauthenticated GET or POST {} returns HTTP 402. You hold hub, model, and amount.',
         tags: ['llm', 'openai-compatible', 'x402', 'usdc'],
         examples: ['POST /v1/chat/completions with { model, messages }'],
+      },
+      {
+        id: 'a2a-message',
+        name: 'A2A paid door',
+        description:
+          'POST /a2a-message is the A2A card URL. Same $0.01 x402 floor and chat fulfillment as '
+          + '/v1/chat/completions. You hold hub, model, and amount. Unauthenticated POST {} returns HTTP 402. '
+          + 'Collected rows are bookable via GET|POST /v1/agents/:agent_id/book.',
+        tags: ['a2a', 'x402', 'usdc', 'llm'],
+        examples: ['POST /a2a-message with { model, messages } — same body as /v1/chat/completions'],
       },
       {
         id: 'register-agent',
@@ -69,7 +80,8 @@ export function buildAgentCard(baseUrl = '') {
         name: 'Agent spend book',
         description:
           'GET|POST /v1/agents/:agent_id/book returns last-N collected spend for that agent_id. '
-          + 'Possession-gated (register session or HMAC). Not a public index.',
+          + 'Possession-gated (register session or HMAC). Not a public index. '
+          + 'You hold hub, model, and amount.',
         tags: ['identity', 'spend'],
         examples: ['POST /v1/agents/1/book with { session }'],
       },
@@ -80,14 +92,6 @@ export function buildAgentCard(baseUrl = '') {
           'POST /erc8004/validate turns a settled receipt into a score (0–100) for a registered agent_id.',
         tags: ['erc8004', 'validation'],
         examples: ['POST /erc8004/validate with { task_id, request_hash, agent_id }'],
-      },
-      {
-        id: 'a2a-message',
-        name: 'A2A message',
-        description:
-          'POST /a2a-message sends an agent-to-agent message (message_type, chains, payload_hash, ttl, sender_address, sender_identity).',
-        tags: ['a2a'],
-        examples: ['POST /a2a-message with capability_query and zero escrow'],
       },
       {
         id: 'models',

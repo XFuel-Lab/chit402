@@ -2,7 +2,9 @@
  * Registered agent identity: integer agent_id + bound agentWallet.
  *
  * A qualifying HMAC-valid collected receipt is required. Demo / unmetered /
- * collected:false never creates an identity and never writes UsageSettled.
+ * collected:false never creates an identity. UsageSettled is written on
+ * collected /v1 and /a2a-message settle (not deferred to register); register
+ * binds a wallet onto that bookable agent_id when the row already exists.
  */
 
 import fs from 'fs';
@@ -86,6 +88,61 @@ export class AgentRegistry {
   getByWallet(wallet) {
     const id = this.byWallet.get(String(wallet).toLowerCase());
     return id != null ? this.get(id) : null;
+  }
+
+  /**
+   * Allocate a bookable agent_id + session without a wallet.
+   * Used on collected /v1 and /a2a-message settle so UsageSettled can
+   * land under an id the book can read before POST /v1/agents/register.
+   * @param {{ taskId?: string, paymentRef?: string }} [fields]
+   */
+  allocate(fields = {}) {
+    const agentId = this.nextId++;
+    const row = {
+      agent_id: agentId,
+      agentWallet: null,
+      wallet_kind: null,
+      official: false,
+      task_id: fields.taskId || null,
+      payment_ref: fields.paymentRef || null,
+      session: issueSession(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    this.byId.set(agentId, row);
+    this._save();
+    return row;
+  }
+
+  /**
+   * Bind an AAWP wallet onto an existing agent_id (from settle allocate).
+   * @param {number|string} agentId
+   * @param {{ agentWallet: string, kind?: string, official?: boolean, taskId?: string, paymentRef?: string }} fields
+   */
+  bindWallet(agentId, fields) {
+    const id = Number(agentId);
+    const row = this.byId.get(id);
+    if (!row || !Number.isInteger(id) || id < 1) {
+      return { ok: false, reason: 'unknown agent_id' };
+    }
+    const key = String(fields.agentWallet).toLowerCase();
+    const existingWalletId = this.byWallet.get(key);
+    if (existingWalletId != null && existingWalletId !== id) {
+      return { ok: false, reason: 'wallet already bound to another agent_id' };
+    }
+    if (row.agentWallet && String(row.agentWallet).toLowerCase() !== key) {
+      return { ok: false, reason: 'agent_id already bound to another wallet' };
+    }
+    row.agentWallet = fields.agentWallet;
+    row.wallet_kind = fields.kind || row.wallet_kind;
+    row.official = !!fields.official;
+    if (fields.taskId) row.task_id = fields.taskId;
+    if (fields.paymentRef) row.payment_ref = fields.paymentRef;
+    if (!row.session) row.session = issueSession();
+    row.updated_at = new Date().toISOString();
+    this.byWallet.set(key, id);
+    this._save();
+    return { ok: true, identity: row };
   }
 
   /**
@@ -197,28 +254,55 @@ export async function registerAgent(body = {}, {
   }
 
   const existingRef = ledger.findByRef(oracle.receipt.payment.ref);
-  if (existingRef) {
+  const existingTask = ledger.findByTask(oracle.receipt.task_id);
+
+  // Settle already ledgered this receipt under a bookable agent_id — bind wallet
+  // onto that id. Do not append again. Cross-task same payment.ref still 409s.
+  if (existingRef && existingRef.task_id !== oracle.receipt.task_id) {
     return { ok: false, status: 409, error: 'duplicate_ref', message: 'duplicate payment.ref' };
   }
-  const existingTask = ledger.findByTask(oracle.receipt.task_id);
-  if (existingTask) {
+  if (existingTask && existingTask.payment_ref !== oracle.receipt.payment.ref) {
     return { ok: false, status: 409, error: 'duplicate_task', message: 'duplicate task_id' };
   }
 
-  const { identity } = registry.upsert({
-    agentWallet: bound.address,
-    kind: bound.kind,
-    official: bound.official,
-    taskId: oracle.receipt.task_id,
-    paymentRef: oracle.receipt.payment.ref,
-  });
+  let identity;
+  let creditedEntry;
 
-  const credited = ledger.append(oracle.receipt, {
-    payer: payer || bound.address,
-    agentId: identity.agent_id,
-  });
-  if (!credited.ok) {
-    return { ok: false, status: 409, error: credited.code, message: credited.reason };
+  if (existingTask || existingRef) {
+    const entry = existingTask || existingRef;
+    if (typeof registry.bindWallet !== 'function') {
+      return { ok: false, status: 503, error: 'service_unavailable', message: 'registry.bindWallet is not configured' };
+    }
+    const boundId = registry.bindWallet(entry.agent_id, {
+      agentWallet: bound.address,
+      kind: bound.kind,
+      official: bound.official,
+      taskId: oracle.receipt.task_id,
+      paymentRef: oracle.receipt.payment.ref,
+    });
+    if (!boundId.ok) {
+      return { ok: false, status: 409, error: 'bind_failed', message: boundId.reason };
+    }
+    identity = boundId.identity;
+    creditedEntry = entry;
+  } else {
+    // Legacy / offline receipts that never hit the settle append path.
+    const upserted = registry.upsert({
+      agentWallet: bound.address,
+      kind: bound.kind,
+      official: bound.official,
+      taskId: oracle.receipt.task_id,
+      paymentRef: oracle.receipt.payment.ref,
+    });
+    identity = upserted.identity;
+    const credited = ledger.append(oracle.receipt, {
+      payer: payer || bound.address,
+      agentId: identity.agent_id,
+    });
+    if (!credited.ok) {
+      return { ok: false, status: 409, error: credited.code, message: credited.reason };
+    }
+    creditedEntry = credited.entry;
   }
 
   const hash = requestHashOf({
@@ -266,7 +350,7 @@ export async function registerAgent(body = {}, {
         rail: oracle.receipt.payment.rail,
         collected: true,
       },
-      usage_settled: credited.entry,
+      usage_settled: creditedEntry,
       validation,
       validate_score: validation?.response ?? null,
       a2a,

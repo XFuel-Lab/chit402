@@ -24,6 +24,7 @@ import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
 import { freeTierBucket, checkFreeAllowance, recordFreeSpend, usd as cogsUsd } from './free-tier.js';
+import { recordCollectedSpend } from './usage-settled.js';
 
 /**
  * XFuel OpenAI-compatible gateway.
@@ -122,7 +123,11 @@ function sendV1PaymentRequired(res, body, headers = {}) {
  * @returns {Promise<{halted:boolean, payment?:{ref:string, amount:string}|null}>}
  *   `halted` → a 402 has already been written; the handler must return.
  */
-async function meterV1Request(req, res, { taskId, isAuthorised = null } = {}) {
+async function meterV1Request(req, res, {
+  taskId,
+  isAuthorised = null,
+  resourcePath = '/v1/chat/completions',
+} = {}) {
   // When isAuthorised is passed, we use it to determine if the request is exempt.
   // Otherwise, fall back to the config-gated behavior for backward compat.
   const useIsAuth = typeof isAuthorised === 'function';
@@ -150,7 +155,8 @@ async function meterV1Request(req, res, { taskId, isAuthorised = null } = {}) {
     if (body.max_tokens != null || MAX_TOKENS_CAP > 0) body.max_tokens = clampMaxTokens(body.max_tokens);
 
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
-    const resource = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
+    const path = resourcePath.startsWith('/') ? resourcePath : `/${resourcePath}`;
+    const resource = `${baseUrl.replace(/\/$/, '')}${path}`;
     const decision = await runX402Handshake(req, { taskId, body, baseUrl, resource });
 
     if (decision.kind === 'settled') {
@@ -865,6 +871,42 @@ function setReceiptHeaders(res, receipt) {
   res.setHeader('x-xfuel-proof-status', receipt.proof.status);
   res.setHeader('x-xfuel-proof-url', receipt.proof.links.proof);
   if (receipt.verify_url) res.setHeader('x-xfuel-verify-url', receipt.verify_url);
+  if (receipt.agent_id != null) res.setHeader('x-xfuel-agent-id', String(receipt.agent_id));
+}
+
+/**
+ * On collected settle: append hub/model/amount under a bookable agent_id.
+ * Session is possession for GET|POST book — returned once here, not on public GET /receipt.
+ * Do not wait for POST /v1/agents/register.
+ */
+function withBookSpend(receipt, { ledger, registry } = {}) {
+  if (!ledger || !registry || !receipt?.payment?.collected || !receipt?.payment?.ref) {
+    return receipt;
+  }
+  try {
+    const recorded = recordCollectedSpend(receipt, { ledger, registry });
+    if (!recorded.ok) {
+      logger.warn(
+        { reason: recorded.reason, code: recorded.code, taskId: receipt.task_id },
+        'openai-gateway: UsageSettled append failed',
+      );
+      return receipt;
+    }
+    return {
+      ...receipt,
+      agent_id: recorded.agent_id,
+      session: recorded.session,
+      usage_settled: {
+        agent_id: recorded.agent_id,
+        hub: recorded.entry.hub,
+        model: recorded.entry.model,
+        amount: recorded.entry.amount,
+      },
+    };
+  } catch (err) {
+    logger.warn({ err: err.message, taskId: receipt.task_id }, 'openai-gateway: UsageSettled append threw');
+    return receipt;
+  }
 }
 
 /**
@@ -898,13 +940,14 @@ function respondPaidV1Failure(res, {
   task, taskId, payment, baseUrl, privateSpend = false,
   statusCode = 503, message, code = 'inference_failed',
   requestedModel = null, resolvedModel = null,
+  ledger = null, registry = null,
 }) {
   if (task) {
     task.status = 'failed';
     task.updatedAt = Date.now();
     if (message) task.meta = { ...(task.meta || {}), failureReason: message };
   }
-  const receipt = buildReceipt({
+  let receipt = buildReceipt({
     task,
     taskId,
     provider: task?.meta?.provider || 'none',
@@ -918,6 +961,7 @@ function respondPaidV1Failure(res, {
     requestedModel,
     resolvedModel,
   });
+  receipt = withBookSpend(receipt, { ledger, registry });
   setReceiptHeaders(res, receipt);
   return res.status(statusCode).json({
     error: {
@@ -935,13 +979,15 @@ function respondPaidV1Failure(res, {
  * Metering threw after handshake — respond without a bare 500 when we already
  * know payment moved (should be rare; settlement path is defensive).
  */
-function respondMeteringFailure(res, { taskId, payment, task, baseUrl, privateSpend = false }) {
+function respondMeteringFailure(res, { taskId, payment, task, baseUrl, privateSpend = false, ledger = null, registry = null }) {
   if (payment?.ref) {
     return respondPaidV1Failure(res, {
       task, taskId, payment, baseUrl, privateSpend,
       statusCode: 503,
       message: 'Payment was collected but the gateway could not finish processing this request.',
       code: 'post_settle_processing_failed',
+      ledger,
+      registry,
     });
   }
   return res.status(503).json({
@@ -1037,18 +1083,22 @@ function priceForCatalogModel(m) {
   return publishedPrice(m.id, rateForModel(m));
 }
 
-export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorised } = {}) {
+export function registerOpenAIRoutes(app, {
+  rateLimit, authenticate, isAuthorised, ledger = null, registry = null,
+} = {}) {
   // Base middleware chain for all /v1 routes (no auth — that's route-specific)
   const baseChain = [openAiErrorShape, bearerToApiKey, rateLimit].filter(Boolean);
   // Routes that require authentication use the full chain
   const authChain = [...baseChain, authenticate].filter(Boolean);
 
   // /v1/models is the seat catalog — public, no key. Images/audio stay keyed.
-  // /v1/chat/completions: NO auth middleware — 402 for unauth, demo key skips payment
+  // /v1/chat/completions + /a2a-message: NO auth — 402 for unauth; demo key skips payment
   app.use('/v1/models', ...baseChain);
   app.use('/v1/images', ...authChain);
   app.use('/v1/audio', ...authChain);
   app.use('/v1/chat', ...baseChain);
+
+  const bookSpend = (receipt) => withBookSpend(receipt, { ledger, registry });
 
   // ── GET /v1/models ───────────────────────────────────────────────────────
   app.get('/v1/models', async (req, res) => {
@@ -1097,45 +1147,36 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
   app.get('/v1/models/:hub/:alias', (req, res) => getModelById(req, res, `${req.params.hub}/${req.params.alias}`));
   app.get('/v1/models/:id', (req, res) => getModelById(req, res, req.params.id));
 
-  async function maybeMeterUnauthChat(req, res) {
+  async function maybeMeterUnauthChat(req, res, resourcePath = '/v1/chat/completions') {
     const { header: paymentHeader } = extractPaymentHeader(req);
     const taskId = `openai-${crypto.randomUUID()}`;
     let metering = { halted: false, payment: null };
     if (!paymentHeader) {
-      metering = await meterV1Request(req, res, { taskId, isAuthorised });
+      metering = await meterV1Request(req, res, { taskId, isAuthorised, resourcePath });
       if (metering.meteringError) {
         return respondMeteringFailure(res, {
           taskId,
           payment: metering.payment,
           task: null,
           baseUrl: baseUrlFromReq(req, config.service.publicBaseUrl),
+          ledger,
+          registry,
         });
       }
     }
     return { halted: metering.halted, taskId, metering, paymentHeader };
   }
 
-  // GET /v1/chat/completions — same unauth 402 as POST {}. Not a second receipt.
-  app.get('/v1/chat/completions', async (req, res) => {
-    const { halted } = await maybeMeterUnauthChat(req, res);
-    if (halted) return undefined;
-    res.set('Allow', 'POST');
-    return res.status(405).json({
-      error: {
-        message: 'Method not allowed. POST /v1/chat/completions with a JSON body.',
-        type: 'invalid_request_error',
-        code: 'method_not_allowed',
-      },
-    });
-  });
-
-  // ── POST /v1/chat/completions ──────────────────────────────────────────────
-  app.post('/v1/chat/completions', async (req, res) => {
+  /**
+   * Shared paid-chat handler for POST /v1/chat/completions and POST /a2a-message.
+   * Same floor, rails, receipt, and UsageSettled row — only the 402 resource URL differs.
+   */
+  async function handlePaidChatPost(req, res, resourcePath = '/v1/chat/completions') {
     // Unauth probes (no payment) must 402 before body validation so x402scan
     // can list this route. A payment header still waits until after validation
     // so we never settle then 400 (Bankr 2026-08-21). Demo key xfuel-demo skips
     // payment via meteringExempt. GET uses the same helper so probes match POST {}.
-    let { halted, taskId, metering, paymentHeader } = await maybeMeterUnauthChat(req, res);
+    let { halted, taskId, metering, paymentHeader } = await maybeMeterUnauthChat(req, res, resourcePath);
     if (halted) return undefined;
 
     const { model, messages, max_tokens, temperature, stream, tools, tool_choice } = req.body || {};
@@ -1196,7 +1237,7 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
 
     // Payment present: settle only after the body is valid (Bankr: don't settle then 400).
     if (paymentHeader) {
-      metering = await meterV1Request(req, res, { taskId, isAuthorised });
+      metering = await meterV1Request(req, res, { taskId, isAuthorised, resourcePath });
       if (metering.meteringError) {
         return respondMeteringFailure(res, {
           taskId,
@@ -1204,6 +1245,8 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
           task: paidTask,
           baseUrl,
           privateSpend,
+          ledger,
+          registry,
         });
       }
       if (metering.halted) return undefined;
@@ -1287,6 +1330,8 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
           requestedModel: model,
           message: 'Inference failed after payment was collected.',
           code: 'inference_failed',
+          ledger,
+          registry,
         });
       }
       return res.status(500).json({
@@ -1307,6 +1352,8 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
           code: inference.error.code || 'inference_failed',
           requestedModel: model,
           resolvedModel: inference.resolvedModel,
+          ledger,
+          registry,
         });
       }
       return res.status(inference.error.status || 400).json({
@@ -1377,12 +1424,12 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
     });
     startTaskProof(task, proveAllowed);
 
-    const receipt = buildReceipt({
+    const receipt = bookSpend(buildReceipt({
       task, taskId, provider, mock, proverConfigured, proveAllowed,
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
-    });
+    }));
 
     setReceiptHeaders(res, receipt);
 
@@ -1409,7 +1456,25 @@ export function registerOpenAIRoutes(app, { rateLimit, authenticate, isAuthorise
       usage,
       xfuel: receipt,
     });
+  }
+
+  // GET /v1/chat/completions — same unauth 402 as POST {}. Not a second receipt.
+  app.get('/v1/chat/completions', async (req, res) => {
+    const { halted } = await maybeMeterUnauthChat(req, res, '/v1/chat/completions');
+    if (halted) return undefined;
+    res.set('Allow', 'POST');
+    return res.status(405).json({
+      error: {
+        message: 'Method not allowed. POST /v1/chat/completions with a JSON body.',
+        type: 'invalid_request_error',
+        code: 'method_not_allowed',
+      },
+    });
   });
+
+  // Same handshake + fulfillment: /v1 door and A2A card URL. Same $0.01. No second door.
+  app.post('/v1/chat/completions', (req, res) => handlePaidChatPost(req, res, '/v1/chat/completions'));
+  app.post('/a2a-message', ...baseChain, (req, res) => handlePaidChatPost(req, res, '/a2a-message'));
 
   // ── POST /v1/images/generations ────────────────────────────────────────────
   app.post('/v1/images/generations', async (req, res) => {

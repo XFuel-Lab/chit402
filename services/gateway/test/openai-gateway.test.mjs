@@ -44,6 +44,7 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
   assert.equal(typeof spec.info['x-guidance'], 'string');
   assert.deepEqual(Object.keys(spec.paths), [
     '/v1/chat/completions',
+    '/a2a-message',
     '/task-request',
     '/v1/agents/register',
     '/v1/agents/{agent_id}/book',
@@ -55,6 +56,10 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
   assert.equal(chat['x-payment-info'].price.amount, '0.01');
   assert.deepEqual(chat['x-payment-info'].protocols, [{ x402: {} }]);
   assert.equal(chat.requestBody.content['application/json'].schema.type, 'object');
+  const a2a = spec.paths['/a2a-message'].post;
+  assert.ok(a2a.responses[402] || a2a.responses['402']);
+  assert.equal(a2a['x-payment-info'].price.amount, '0.01');
+  assert.match(a2a.description, /hub, model, and amount/);
 });
 
 test('GET /llms.txt serves a public agent manifest (no auth)', async () => {

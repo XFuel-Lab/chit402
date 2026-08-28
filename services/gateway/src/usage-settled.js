@@ -2,7 +2,9 @@
  * UsageSettled — append-only record of collected USDC receipts.
  *
  * Dedup on payment.ref and task_id. Demo / unmetered / collected:false
- * write nothing.
+ * write nothing. Collected /v1 and /a2a-message settles append here
+ * immediately (hub, model, amount + bookable agent_id) — do not wait
+ * for POST /v1/agents/register.
  */
 
 import fs from 'fs';
@@ -28,6 +30,15 @@ function amountOf(payment) {
   if (payment.net_amount != null && payment.net_amount !== '') {
     return String(payment.net_amount);
   }
+  return null;
+}
+
+/** Hub for the book: explicit route.hub, else model prefix, else provider. */
+export function hubOf(route = {}) {
+  if (route.hub) return String(route.hub);
+  const model = route.model != null ? String(route.model) : '';
+  if (model.includes('/')) return model.split('/')[0] || null;
+  if (route.provider) return String(route.provider);
   return null;
 }
 
@@ -126,6 +137,7 @@ export class UsageSettledLedger {
   /**
    * Append a collected receipt. Returns { ok, entry } or { ok:false, reason, code }.
    * Non-qualifying receipts are refused and write nothing.
+   * Prefer a positive agent_id so GET|POST book can list the row.
    */
   append(receipt, { payer = null, agentId = null } = {}) {
     const q = receiptQualifiesForLedger(receipt);
@@ -142,18 +154,22 @@ export class UsageSettledLedger {
 
     const payment = receipt.payment || {};
     const route = receipt.route || {};
+    const id = agentId != null ? Number(agentId) : null;
+    if (!Number.isInteger(id) || id < 1) {
+      return { ok: false, reason: 'agent_id required for a bookable row', code: 'invalid_agent' };
+    }
     const entry = {
       task_id: taskId,
       payment_ref: paymentRef,
       payer: payer || null,
-      agent_id: agentId != null ? Number(agentId) : null,
+      agent_id: id,
       collected: true,
       rail: String(payment.rail || 'usdc'),
       amount: amountOf(payment),
       collected_at: payment.collected_at || new Date().toISOString(),
       recorded_at: new Date().toISOString(),
       model: route.model || null,
-      hub: route.hub || route.provider || null,
+      hub: hubOf(route),
     };
     this._index(entry);
     return { ok: true, entry };
@@ -180,6 +196,57 @@ export class UsageSettledLedger {
     }
     return rows;
   }
+}
+
+/**
+ * Record a collected /v1 or /a2a-message settle into UsageSettled.
+ * Allocates agent_id + session up front so GET|POST book can read the row
+ * without POST /v1/agents/register. Idempotent on payment.ref / task_id.
+ *
+ * @param {object} receipt
+ * @param {{
+ *   ledger: UsageSettledLedger,
+ *   registry: { allocate: Function, get: Function },
+ *   payer?: string|null,
+ * }} deps
+ */
+export function recordCollectedSpend(receipt, { ledger, registry, payer = null } = {}) {
+  if (!ledger || !registry || typeof registry.allocate !== 'function') {
+    return { ok: false, reason: 'ledger and registry.allocate required', code: 'misconfigured' };
+  }
+  const q = receiptQualifiesForLedger(receipt);
+  if (!q.ok) return { ok: false, reason: q.reason, code: 'not_qualifying' };
+
+  const existing = ledger.findByRef(receipt.payment.ref) || ledger.findByTask(receipt.task_id);
+  if (existing) {
+    const identity = typeof registry.get === 'function' ? registry.get(existing.agent_id) : null;
+    return {
+      ok: true,
+      entry: existing,
+      agent_id: existing.agent_id,
+      session: identity?.session || null,
+      duplicate: true,
+    };
+  }
+
+  const identity = registry.allocate({
+    taskId: receipt.task_id,
+    paymentRef: receipt.payment.ref,
+  });
+  const credited = ledger.append(receipt, {
+    payer,
+    agentId: identity.agent_id,
+  });
+  if (!credited.ok) {
+    return { ok: false, reason: credited.reason, code: credited.code };
+  }
+  return {
+    ok: true,
+    entry: credited.entry,
+    agent_id: identity.agent_id,
+    session: identity.session,
+    duplicate: false,
+  };
 }
 
 let _ledger = null;

@@ -174,6 +174,26 @@ test('bindAgentWallet rejects a detectable EOA', async () => {
   assert.match(res.reason, /EOA/i);
 });
 
+test('register claims an already-ledgered settle without re-append', async () => {
+  const receipt = collectedReceipt({ task_id: 'task-pre', ref: 'base:0xpre' });
+  const d = deps({ [receipt.task_id]: receipt });
+  const pre = d.registry.allocate({ taskId: receipt.task_id, paymentRef: receipt.payment.ref });
+  const appended = d.ledger.append(receipt, { agentId: pre.agent_id });
+  assert.equal(appended.ok, true);
+  assert.equal(d.ledger.entries.length, 1);
+
+  const result = await registerAgent(
+    { agentWallet: WALLET, task_id: receipt.task_id },
+    d,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.agent_id, pre.agent_id);
+  assert.equal(result.body.session, pre.session);
+  assert.equal(d.ledger.entries.length, 1, 'register must not double-append');
+  assert.equal(result.body.usage_settled.amount, '10000');
+});
+
 test('buildAgentCard is A2A v1.0', () => {
   const card = buildAgentCard('https://api.xfuel.app');
   assert.equal(card.name, 'XFuel');
