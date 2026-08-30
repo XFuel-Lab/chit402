@@ -82,8 +82,15 @@ test('resolveCatalogModel maps xfuel/auto to a chat model', () => {
   assert.ok(r.model.hub === 'theta' || r.model.hub === 'akash');
 });
 
-test('resolveCatalogModel accepts bare alias', () => {
+test('resolveCatalogModel bare qwen3 prefers live Akash Qwen, not theta', () => {
   const r = resolveCatalogModel('qwen3', [...CATALOG_SEED]);
+  assert.equal(r.ok, true);
+  assert.equal(r.model.id, 'akash/Qwen/Qwen3.8-27B');
+  assert.equal(r.model.hub, 'akash');
+});
+
+test('resolveCatalogModel explicit theta/qwen3 stays Theta', () => {
+  const r = resolveCatalogModel('theta/qwen3', [...CATALOG_SEED]);
   assert.equal(r.ok, true);
   assert.equal(r.model.id, 'theta/qwen3');
 });
