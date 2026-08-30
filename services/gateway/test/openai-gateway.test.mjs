@@ -128,7 +128,7 @@ test('GET /v1/models lists live hub catalog in OpenAI shape', async () => {
   assert.ok(first.modality);
 });
 
-test('GET /v1/models/:id → 200 known, 404 unknown / retired', async () => {
+test('GET /v1/models/:id → 200 known, 400 unknown / retired (with live ids)', async () => {
   const known = await fetch(`${base}/v1/models/theta%2Fqwen3`);
   assert.equal(known.status, 200);
   const knownBody = await known.json();
@@ -136,12 +136,16 @@ test('GET /v1/models/:id → 200 known, 404 unknown / retired', async () => {
   assert.equal(knownBody.modality, 'chat');
 
   const retired = await fetch(`${base}/v1/models/llama-3-70b`);
-  assert.equal(retired.status, 404);
+  assert.equal(retired.status, 400);
+  const retiredBody = await retired.json();
+  assert.equal(retiredBody.error.code, 'model_retired');
 
   const unknown = await fetch(`${base}/v1/models/does-not-exist`);
-  assert.equal(unknown.status, 404);
+  assert.equal(unknown.status, 400);
   const unknownBody = await unknown.json();
   assert.ok(unknownBody.error.code);
+  assert.ok(Array.isArray(unknownBody.error.available));
+  assert.ok(unknownBody.error.available.includes('theta/qwen3'));
 });
 
 test('GET /v1/chat/completions is not 404 (x402 off → 405, not missing)', async () => {
@@ -214,7 +218,7 @@ test('POST /v1/chat/completions rejects retired llama fiction', async () => {
       messages: [{ role: 'user', content: 'hi' }],
     }),
   });
-  assert.equal(res.status, 404);
+  assert.equal(res.status, 400);
   const body = await res.json();
   assert.equal(body.error.code, 'model_retired');
 });
