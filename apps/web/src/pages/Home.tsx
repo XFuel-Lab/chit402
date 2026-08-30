@@ -39,6 +39,7 @@ export default function Home() {
           <div style={styles.heroCta}>
             <Link to="/v1" className="btn btn-primary">Try /v1</Link>
             <Link to="/pricing" className="btn btn-secondary">Pricing</Link>
+            <Link to="/book-bot" className="btn btn-secondary">Book bot</Link>
             <a href="https://github.com/XFuel-Lab/xfuel-protocol" className="btn btn-secondary" target="_blank" rel="noreferrer">
               GitHub
             </a>

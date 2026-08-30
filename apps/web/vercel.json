@@ -5,12 +5,22 @@
       "headers": [{ "key": "Content-Type", "value": "text/plain; charset=utf-8" }]
     },
     {
+      "source": "/robots.txt",
+      "headers": [{ "key": "Content-Type", "value": "text/plain; charset=utf-8" }]
+    },
+    {
+      "source": "/sitemap.xml",
+      "headers": [{ "key": "Content-Type", "value": "application/xml; charset=utf-8" }]
+    },
+    {
       "source": "/xfuel-icon.svg",
       "headers": [{ "key": "Content-Type", "value": "image/svg+xml; charset=utf-8" }]
     }
   ],
   "rewrites": [
     { "source": "/llms.txt", "destination": "/llms.txt" },
+    { "source": "/robots.txt", "destination": "/robots.txt" },
+    { "source": "/sitemap.xml", "destination": "/sitemap.xml" },
     { "source": "/xfuel-icon.svg", "destination": "/xfuel-icon.svg" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
