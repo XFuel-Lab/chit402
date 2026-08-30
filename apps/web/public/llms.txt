@@ -12,6 +12,14 @@
 > is fail-closed. /task-request is the other paid door. Paying
 > api.xfuel.app moves real mainnet USDC. Canonical: api.xfuel.app.
 
+## Money pages (xfuel.app)
+
+- /agent-shop : Live catalog — Theta + Akash + xfuel/auto. GET /v1/models shows what's live.
+- /book       : Possession-gated last-N collected spend. This agent spent Y on this job.
+- /book-bot   : Paste-into-bot prompt. Your SEO bot spent it. You hold the book.
+- /v1         : Not the API — points you to api.xfuel.app/v1.
+- /pricing    : $0.01 USDC on Base and Solana. Cost-plus for /task-request.
+
 ## Start here (OpenAI-compatible)
 
 - POST /v1/chat/completions : OpenAI chat completions. Unauthenticated GET or

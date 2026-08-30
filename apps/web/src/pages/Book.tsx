@@ -86,6 +86,7 @@ export default function Book() {
 
         <nav style={{ marginTop: '2rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
           <Link to="/v1" className="btn btn-primary btn-sm">/v1 gateway →</Link>
+          <Link to="/book-bot" className="btn btn-secondary btn-sm">Book bot</Link>
           <Link to="/agent-shop" className="btn btn-secondary btn-sm">Agent shop</Link>
           <Link to="/" className="btn btn-secondary btn-sm">Home</Link>
         </nav>

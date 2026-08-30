@@ -95,6 +95,7 @@ export default function AgentShop() {
 
         <nav style={{ marginTop: '2rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
           <Link to="/book" className="btn btn-primary btn-sm">The book →</Link>
+          <Link to="/book-bot" className="btn btn-secondary btn-sm">Book bot</Link>
           <Link to="/v1" className="btn btn-secondary btn-sm">/v1 gateway</Link>
           <Link to="/" className="btn btn-secondary btn-sm">Home</Link>
         </nav>
