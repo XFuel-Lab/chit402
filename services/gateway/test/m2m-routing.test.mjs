@@ -20,11 +20,12 @@ import { buildReceipt } from '../src/receipt.js';
 import { resolveCatalogModel, requestShape } from '../src/hub-catalog.js';
 
 const CATALOG = [
-  { id: 'akash/zai-org/GLM-5.2', alias: 'zai-org/GLM-5.2', hub: 'akash', modality: 'chat' },
+  { id: 'akash/zai-org/GLM-5.3', alias: 'zai-org/GLM-5.3', hub: 'akash', modality: 'chat' },
   { id: 'akash/meta-llama/Llama-3.3-70B-Instruct', alias: 'meta-llama/Llama-3.3-70B-Instruct', hub: 'akash', modality: 'chat' },
+  { id: 'akash/deepseek-ai/DeepSeek-V4-Flash-0731', alias: 'deepseek-ai/DeepSeek-V4-Flash-0731', hub: 'akash', modality: 'chat' },
   { id: 'akash/openai/gpt-oss-120b', alias: 'openai/gpt-oss-120b', hub: 'akash', modality: 'chat' },
   { id: 'theta/qwen3', alias: 'qwen3', hub: 'theta', modality: 'chat' },
-  { id: 'theta/glm_5_2', alias: 'glm_5_2', hub: 'theta', modality: 'chat' },
+  { id: 'theta/glm_5_3', alias: 'glm_5_3', hub: 'theta', modality: 'chat' },
 ];
 
 test('xfuel/auto resolves to a concrete hub model, never passed through raw', () => {
@@ -46,11 +47,11 @@ test('scoping auto to one hub keeps the evidence-led ordering within it', () => 
   assert.equal(theta.model.id, 'theta/qwen3');
 
   const akash = resolveCatalogModel('xfuel/auto', CATALOG.filter((m) => m.hub === 'akash'), { shape: 'agent' });
-  assert.equal(akash.model.id, 'akash/zai-org/GLM-5.2');
+  assert.equal(akash.model.id, 'akash/zai-org/GLM-5.3');
 });
 
 // ── `xfuel/auto` routes on the shape of the request ──────────────────────────
-// One fixed default cannot serve both workloads. GLM-5.2 is the only model that
+// One fixed default cannot serve both workloads. GLM is the only family that
 // completes an agent loop (6/6 against Llama's 0/6), but it is a reasoning model
 // that returns nothing below max_tokens=256 and burns ~110 output tokens to say
 // one word — so making it the blanket default breaks short completions and bills
@@ -73,7 +74,7 @@ test('a plain completion is not agent work', () => {
 
 test('agent-shaped auto resolves to the model that completes loops', () => {
   const res = resolveCatalogModel('xfuel/auto', CATALOG, { modality: 'chat', shape: 'agent' });
-  assert.equal(res.model.id, 'akash/zai-org/GLM-5.2');
+  assert.equal(res.model.id, 'akash/zai-org/GLM-5.3');
 });
 
 test('a short completion does not get routed to the reasoning model', () => {
@@ -105,7 +106,7 @@ test('an unknown XFUEL_AUTO_MODEL falls back rather than failing every request',
   try {
     const res = resolveCatalogModel('xfuel/auto', CATALOG, { modality: 'chat', shape: 'agent' });
     assert.equal(res.ok, true);
-    assert.equal(res.model.id, 'akash/zai-org/GLM-5.2');
+    assert.equal(res.model.id, 'akash/zai-org/GLM-5.3');
   } finally {
     delete process.env.XFUEL_AUTO_MODEL;
   }

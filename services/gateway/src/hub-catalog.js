@@ -41,11 +41,14 @@ const DEFAULT_AKASHML_BASE = 'https://api.akashml.com/v1';
  * @property {string} [workload_type]
  */
 
-/** Offline / fetch-failure seed — honest Theta + AkashML chat aliases only. */
+/** Offline / fetch-failure seed — honest Theta + AkashML rows only (no invented vendors). */
 export const CATALOG_SEED = Object.freeze([
   seedRow('theta', 'qwen3', 'Qwen3', 'chat', 'completions'),
-  seedRow('theta', 'glm_5_2', 'GLM 5.2', 'chat', 'completions'),
-  seedRow('akash', 'zai-org/GLM-5.2', 'GLM 5.2 (AkashML)', 'chat', 'completions'),
+  seedRow('theta', 'glm_5_3', 'GLM 5.3', 'chat', 'completions'),
+  seedRow('akash', 'zai-org/GLM-5.3', 'GLM-5.3', 'chat', 'completions'),
+  seedRow('akash', 'meta-llama/Llama-3.3-70B-Instruct', 'Llama 3.3 70B Instruct', 'chat', 'completions'),
+  seedRow('akash', 'deepseek-ai/DeepSeek-V4-Flash-0731', 'DeepSeek V4 Flash 0731', 'chat', 'completions'),
+  seedRow('akash', 'openai/gpt-oss-120b', 'GPT OSS 120B', 'chat', 'completions'),
   seedRow('theta', 'whisper', 'Whisper', 'audio', 'stt'),
   seedRow('theta', 'stable_diffusion_xl_turbo', 'Stable Diffusion XL Turbo', 'image', 'predict'),
   seedRow('theta', 'llava', 'LLaVA', 'vision', 'predict'),
@@ -124,7 +127,7 @@ export function classifyThetaService(svc) {
   if (alias === 'esrgan' || alias === 'image_to_image') modality = 'image_ops';
   if (alias === 'whisper') modality = 'audio';
   if (alias === 'stable_diffusion_xl_turbo' || alias.startsWith('flux')) modality = 'image';
-  if (alias === 'qwen3' || alias === 'glm_5_2' || alias.includes('llama')) modality = 'chat';
+  if (alias === 'qwen3' || /^glm_5_\d/.test(alias) || alias.includes('llama')) modality = 'chat';
 
   return { modality, default_prediction: predName, input_vars: vars, cost };
 }
@@ -370,10 +373,14 @@ export function requestShape(req = {}) {
  * What `xfuel/auto` should resolve to, per request shape. Evidence-led — see
  * docs/MODEL_QUALITY_EVAL.md.
  *
+ * Entries are preference keys, not a promise that the exact string is listed
+ * today. `pickAutoPreference` matches them onto live catalog rows (exact id,
+ * then family — so GLM-5.2 → current live Akash GLM when the hub ships 5.3).
+ *
  * There is no single right default, because the two workloads want opposite
  * things and picking one model punishes the other:
  *
- *   - **Agent loops.** Over 18 runs of a dependent-tool-call loop, GLM-5.2
+ *   - **Agent loops.** Over 18 runs of a dependent-tool-call loop, GLM
  *     completed 6/6, GPT-OSS-120B 3/6, and Llama 3.3 70B **0/6** — Llama makes
  *     three correct tool calls, then abandons the loop and emits Python
  *     describing what it would have done. A default that cannot finish an agent
@@ -385,28 +392,160 @@ export function requestShape(req = {}) {
  *     Making it the blanket default breaks every caller sending a small budget
  *     and bills ~37x the output tokens for a one-word answer. Llama answers the
  *     same prompt in 3 tokens at `max_tokens=16`, and swept the single-turn
- *     primitives 27/27.
+ *     primitives 27/27. DeepSeek V4 Flash is cheap long-context after Llama.
  *
  * So route on the shape of the request rather than paying one of those costs on
  * every call. `XFUEL_AUTO_MODEL` overrides both without a code change.
+ * This is not a Grok-vs-Kimi picker — only families we actually list from hubs.
  *
  * @param {'agent'|'simple'} [shape]
- * @returns {string[]} catalog ids, best first
+ * @returns {string[]} preference keys, best first
  */
 export function autoPreferenceFor(shape) {
   return shape === 'agent'
     ? [
-        'akash/zai-org/GLM-5.2',
+        'akash/zai-org/GLM',
         'akash/openai/gpt-oss-120b',
         'theta/qwen3',
         'akash/meta-llama/Llama-3.3-70B-Instruct',
       ]
     : [
         'akash/meta-llama/Llama-3.3-70B-Instruct',
+        'akash/deepseek-ai/DeepSeek',
         'akash/openai/gpt-oss-120b',
         'theta/qwen3',
-        'akash/zai-org/GLM-5.2',
+        'akash/zai-org/GLM',
       ];
+}
+
+/**
+ * Names people type that are not hub-native ids. Each maps onto a live catalog
+ * row only — never invents Moonshot/xAI/OpenAI rows we do not serve.
+ * @type {Record<string, { re: RegExp, preferHub?: string }>}
+ */
+const TYPED_ALIASES = Object.freeze({
+  deepseek: { re: /deepseek/i, preferHub: 'akash' },
+  'deepseek-chat': { re: /deepseek/i, preferHub: 'akash' },
+  'llama-3.3': { re: /llama-3\.3/i, preferHub: 'akash' },
+  'llama-3.3-70b': { re: /llama-3\.3-70b/i, preferHub: 'akash' },
+  'gpt-oss': { re: /gpt-oss-120b/i, preferHub: 'akash' },
+  'gpt-oss-120b': { re: /gpt-oss-120b/i, preferHub: 'akash' },
+  glm: { re: /(?:zai-org\/)?GLM-\d|glm_\d/i, preferHub: 'akash' },
+  'glm-5.3': { re: /GLM-5\.3|glm_5_3(?!_flash)/i, preferHub: 'akash' },
+  qwen: { re: /qwen/i, preferHub: 'theta' },
+  qwen3: { re: /(?:^|\/)qwen3$/i, preferHub: 'theta' },
+});
+
+/**
+ * Famous model names we do not serve. Refuse loudly — never bait-and-switch onto Llama.
+ * If a hub later lists one of these as a real row, exact/id match still wins first.
+ */
+const NO_BAIT_SWITCH = Object.freeze(new Set([
+  'gpt-4o', 'gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo',
+  'grok', 'grok-2', 'grok-3',
+  'kimi', 'kimi-k2', 'kimi-k2.5', 'kimi-k2.7', 'kimi-k3', 'moonshot',
+  'claude', 'claude-3', 'claude-3.5', 'claude-4', 'claude-opus', 'claude-sonnet',
+]));
+
+/** Chat rows an agent can name (excludes the xfuel/auto alias). */
+export function liveCatalogIds(models) {
+  return (models || [])
+    .filter((m) => m && m.hub !== 'xfuel' && m.id)
+    .map((m) => m.id);
+}
+
+function notFound(requested, models) {
+  const available = liveCatalogIds(models);
+  const sample = available.slice(0, 12).join(', ');
+  return {
+    ok: false,
+    reason: 'model_not_found',
+    requested,
+    available,
+    hint: `Unknown model '${requested}'. Live hub ids: ${sample}${available.length > 12 ? ', …' : ''}. GET /v1/models for the full list.`,
+  };
+}
+
+/**
+ * Score a GLM-ish id so newer minor versions sort higher (5.3 > 5.2 > 5).
+ * Flash / lite variants sort below the full model of the same version.
+ */
+function glmSortKey(idOrAlias) {
+  const s = String(idOrAlias || '');
+  const m = s.match(/GLM[_-]?(\d+)(?:\.(\d+))?/i) || s.match(/glm_(\d+)_(\d+)/i);
+  if (!m) return 0;
+  const major = Number(m[1]) || 0;
+  const minor = Number(m[2]) || 0;
+  const flash = /flash|lite/i.test(s) ? 0 : 1;
+  return major * 1_000_000 + minor * 1_000 + flash;
+}
+
+/**
+ * Match an auto-preference key onto a live catalog row.
+ * Exact id first; family prefixes (`…/GLM`, `…/DeepSeek`) pick the newest live sibling.
+ * @param {string} pref
+ * @param {CatalogModel[]} live
+ * @returns {CatalogModel|null}
+ */
+export function pickAutoPreference(pref, live) {
+  if (!pref || !Array.isArray(live)) return null;
+  const exact = live.find((m) => m.id === pref);
+  if (exact) return exact;
+
+  // Family prefix: akash/zai-org/GLM → akash/zai-org/GLM-5.3 (not GLM-5.2 fiction)
+  if (/\/GLM$/i.test(pref) || /\/DeepSeek$/i.test(pref)) {
+    const hub = pref.startsWith('akash/') ? 'akash' : pref.startsWith('theta/') ? 'theta' : null;
+    const stem = pref.replace(/^akash\//, '').replace(/^theta\//, '');
+    const hits = live.filter((m) => {
+      if (hub && m.hub !== hub) return false;
+      if (m.modality && m.modality !== 'chat') return false;
+      const hay = `${m.id} ${m.alias || ''}`;
+      if (/\/GLM$/i.test(pref)) return /(?:zai-org\/)?GLM-\d|glm_\d/i.test(hay) && !/_flash$/i.test(m.alias || '');
+      return new RegExp(stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(hay);
+    });
+    if (!hits.length) return null;
+    if (/\/GLM$/i.test(pref)) {
+      hits.sort((a, b) => glmSortKey(b.alias || b.id) - glmSortKey(a.alias || a.id));
+    }
+    return hits[0];
+  }
+
+  // Concrete id missing (e.g. still listing GLM-5.2 while hub serves 5.3): same family on same hub.
+  const glmConcrete = pref.match(/^(akash|theta)\/(.+)$/);
+  if (glmConcrete && /GLM-\d|glm_\d/i.test(pref)) {
+    return pickAutoPreference(`${glmConcrete[1]}/GLM`, live.filter((m) => /GLM|glm_/i.test(m.id)));
+  }
+
+  return null;
+}
+
+/**
+ * Map a typed alias (deepseek, llama-3.3, …) onto one live row, or null.
+ * @param {string} name
+ * @param {CatalogModel[]} models
+ * @returns {CatalogModel|null}
+ */
+export function resolveTypedAlias(name, models) {
+  const key = String(name || '').trim().toLowerCase();
+  const rule = TYPED_ALIASES[key];
+  if (!rule) return null;
+  const chat = (models || []).filter((m) => m.hub !== 'xfuel' && (!m.modality || m.modality === 'chat'));
+  const hits = chat.filter((m) => rule.re.test(m.id) || rule.re.test(m.alias || ''));
+  if (!hits.length) return null;
+  if (rule.preferHub) {
+    const preferred = hits.filter((m) => m.hub === rule.preferHub);
+    if (preferred.length) {
+      if (/glm/i.test(key)) preferred.sort((a, b) => glmSortKey(b.alias || b.id) - glmSortKey(a.alias || a.id));
+      return preferred[0];
+    }
+  }
+  if (/glm/i.test(key)) hits.sort((a, b) => glmSortKey(b.alias || b.id) - glmSortKey(a.alias || a.id));
+  // Prefer theta bare qwen3 over Akash Qwen3.x when both match loosely
+  if (key === 'qwen' || key === 'qwen3') {
+    const theta = hits.find((m) => m.hub === 'theta' && (m.alias === 'qwen3' || m.id === 'theta/qwen3'));
+    if (theta) return theta;
+  }
+  return hits[0];
 }
 
 /**
@@ -436,22 +575,24 @@ export function isRoutable(m) {
 
 /**
  * Resolve a client model id to a catalog row.
- * Accepts hub/alias, bare alias (theta preferred, then any hub), or xfuel/auto.
+ * Accepts hub/alias, bare alias (theta preferred, then any hub), typed names
+ * people send (`deepseek`, `llama-3.3`, …), or xfuel/auto.
  *
  * A failed hub poll drops that hub's models from `models` entirely, so the
  * preference lists degrade to the other hub on an outage with no explicit
- * failover logic.
+ * failover logic. Unknown names 400 with live ids — never silent Llama remap.
  *
  * @param {string} modelId
  * @param {CatalogModel[]} models
  * @param {{ modality?: Modality, shape?: 'agent'|'simple' }} [opts]
  *   `shape` steers `xfuel/auto` only — 'agent' when the request carries tools or a
  *   tool-result turn. See `autoPreferenceFor`.
- * @returns {{ ok: true, model: CatalogModel, requested: string } | { ok: false, reason: string, requested: string }}
+ * @returns {{ ok: true, model: CatalogModel, requested: string } | { ok: false, reason: string, requested: string, hint?: string, available?: string[] }}
  */
 export function resolveCatalogModel(modelId, models, opts = {}) {
   const requested = String(modelId || '').trim() || 'xfuel/auto';
   const modality = opts.modality || null;
+  const lower = requested.toLowerCase();
 
   if (requested === 'xfuel/auto' || requested === 'auto' || requested === 'xfuel-auto') {
     // Never auto-route to a model the hub says has no workers. `theta/qwen3` sits
@@ -468,33 +609,34 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
     const live = routable.length ? routable : models;
     const chat = live.find((m) => m.hub !== 'xfuel' && m.modality === 'chat');
     const order = autoPreferenceFor(opts.shape);
-    const pick = (id) => live.find((m) => m.id === id);
 
     const override = (process.env.XFUEL_AUTO_MODEL || '').trim();
     const preferred =
       // An explicit override is an instruction, not a preference: honour it even
       // if capacity is unknown or zero, and let it fail loudly if it is wrong.
       (override ? models.find((m) => m.id === override || m.alias === override) : null) ||
-      order.map(pick).find(Boolean) ||
+      order.map((pref) => pickAutoPreference(pref, live)).find(Boolean) ||
       chat;
     if (!preferred) return { ok: false, reason: 'no_chat_models', requested };
     return { ok: true, model: preferred, requested };
   }
 
-  // Reject known-fiction legacy names — do not remap to qwen.
+  // Reject known-fiction legacy names — do not remap to qwen / Llama.
   const legacy = new Set([
     'llama-3-70b', 'llama-3.1-8b', 'llama-3.1-70b', 'llama-3.1-405b',
     'llama_3_1_70b', 'llama_3_1_8b', 'default-llm',
   ]);
-  if (legacy.has(requested)) {
+  if (legacy.has(lower)) {
     return {
       ok: false,
       reason: 'model_retired',
       requested,
-      hint: 'Use a live hub id from GET /v1/models (e.g. theta/qwen3, theta/glm_5_2, akash/zai-org/GLM-5.2).',
+      available: liveCatalogIds(models),
+      hint: 'Use a live hub id from GET /v1/models (e.g. theta/qwen3, akash/zai-org/GLM-5.3, akash/meta-llama/Llama-3.3-70B-Instruct).',
     };
   }
 
+  // Exact catalog id / hub-native alias first (so a future hub row for kimi wins).
   let hit = models.find((m) => m.id === requested);
   if (!hit && !requested.includes('/')) {
     hit = models.find((m) => m.alias === requested && m.hub === 'theta')
@@ -505,7 +647,18 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
     hit = models.find((m) => m.hub === 'akash' && m.alias === requested)
       || models.find((m) => m.id === `akash/${requested}`);
   }
-  if (!hit) return { ok: false, reason: 'model_not_found', requested };
+
+  // Typed names people send → live rows only.
+  if (!hit) {
+    hit = resolveTypedAlias(requested, models);
+  }
+
+  // Famous vendors we do not list: refuse, never bait-and-switch onto Llama.
+  if (!hit && NO_BAIT_SWITCH.has(lower)) {
+    return notFound(requested, models);
+  }
+
+  if (!hit) return notFound(requested, models);
 
   if (modality && hit.modality !== modality && hit.hub !== 'xfuel') {
     // Allow vision models on chat only if explicitly chat-shaped
