@@ -45,6 +45,8 @@ const DEFAULT_AKASHML_BASE = 'https://api.akashml.com/v1';
 export const CATALOG_SEED = Object.freeze([
   seedRow('theta', 'qwen3', 'Qwen3', 'chat', 'completions'),
   seedRow('theta', 'glm_5_3', 'GLM 5.3', 'chat', 'completions'),
+  seedRow('akash', 'Qwen/Qwen3.8-27B', 'Qwen3.8 27B', 'chat', 'completions'),
+  seedRow('akash', 'Qwen/Qwen3.6-35B-A3B', 'Qwen3.6 35B A3B', 'chat', 'completions'),
   seedRow('akash', 'zai-org/GLM-5.3', 'GLM-5.3', 'chat', 'completions'),
   seedRow('akash', 'meta-llama/Llama-3.3-70B-Instruct', 'Llama 3.3 70B Instruct', 'chat', 'completions'),
   seedRow('akash', 'deepseek-ai/DeepSeek-V4-Flash-0731', 'DeepSeek V4 Flash 0731', 'chat', 'completions'),
@@ -56,6 +58,29 @@ export const CATALOG_SEED = Object.freeze([
   seedRow('theta', 'esrgan', 'ESRGAN', 'image_ops', 'predict'),
   seedRow('theta', 'image_to_image', 'Image to Image', 'image_ops', 'stylize'),
 ]);
+
+/** Preferred live Akash Qwen rows for bare `qwen` / `qwen3` (2026-08-30). */
+const AKASH_QWEN_PREFERRED = Object.freeze([
+  'akash/Qwen/Qwen3.8-27B',
+  'akash/Qwen/Qwen3.6-35B-A3B',
+]);
+
+/**
+ * Short aliases must not land on theta/qwen3 (live 409 / no workers). Prefer
+ * the measured Akash chat rows, then any other non-Theta qwen.
+ * @param {CatalogModel[]} models
+ * @returns {CatalogModel|null}
+ */
+export function pickLiveAkashQwen(models) {
+  const chat = (models || []).filter(
+    (m) => m && m.hub === 'akash' && (!m.modality || m.modality === 'chat'),
+  );
+  for (const id of AKASH_QWEN_PREFERRED) {
+    const hit = chat.find((m) => m.id === id);
+    if (hit) return hit;
+  }
+  return chat.find((m) => /qwen/i.test(m.id) || /qwen/i.test(m.alias || '')) || null;
+}
 
 function seedRow(hub, alias, name, modality, defaultPrediction) {
   return Object.freeze({
@@ -402,18 +427,22 @@ export function requestShape(req = {}) {
  * @returns {string[]} preference keys, best first
  */
 export function autoPreferenceFor(shape) {
+  // Do not list theta/qwen3: it often reports workers yet answers 409. Prefer
+  // live Akash Qwen / Llama. Explicit `theta/qwen3` still resolves for named calls.
   return shape === 'agent'
     ? [
         'akash/zai-org/GLM',
         'akash/openai/gpt-oss-120b',
-        'theta/qwen3',
+        'akash/Qwen/Qwen3.8-27B',
+        'akash/Qwen/Qwen3.6-35B-A3B',
         'akash/meta-llama/Llama-3.3-70B-Instruct',
       ]
     : [
         'akash/meta-llama/Llama-3.3-70B-Instruct',
         'akash/deepseek-ai/DeepSeek',
         'akash/openai/gpt-oss-120b',
-        'theta/qwen3',
+        'akash/Qwen/Qwen3.8-27B',
+        'akash/Qwen/Qwen3.6-35B-A3B',
         'akash/zai-org/GLM',
       ];
 }
@@ -432,8 +461,8 @@ const TYPED_ALIASES = Object.freeze({
   'gpt-oss-120b': { re: /gpt-oss-120b/i, preferHub: 'akash' },
   glm: { re: /(?:zai-org\/)?GLM-\d|glm_\d/i, preferHub: 'akash' },
   'glm-5.3': { re: /GLM-5\.3|glm_5_3(?!_flash)/i, preferHub: 'akash' },
-  qwen: { re: /qwen/i, preferHub: 'theta' },
-  qwen3: { re: /(?:^|\/)qwen3$/i, preferHub: 'theta' },
+  qwen: { re: /qwen/i, preferHub: 'akash' },
+  qwen3: { re: /qwen/i, preferHub: 'akash' },
 });
 
 /**
@@ -529,6 +558,10 @@ export function resolveTypedAlias(name, models) {
   const key = String(name || '').trim().toLowerCase();
   const rule = TYPED_ALIASES[key];
   if (!rule) return null;
+  // Bare qwen / qwen3 → live Akash Qwen only. Never theta/qwen3 (explicit id still works).
+  if (key === 'qwen' || key === 'qwen3') {
+    return pickLiveAkashQwen(models);
+  }
   const chat = (models || []).filter((m) => m.hub !== 'xfuel' && (!m.modality || m.modality === 'chat'));
   const hits = chat.filter((m) => rule.re.test(m.id) || rule.re.test(m.alias || ''));
   if (!hits.length) return null;
@@ -540,11 +573,6 @@ export function resolveTypedAlias(name, models) {
     }
   }
   if (/glm/i.test(key)) hits.sort((a, b) => glmSortKey(b.alias || b.id) - glmSortKey(a.alias || a.id));
-  // Prefer theta bare qwen3 over Akash Qwen3.x when both match loosely
-  if (key === 'qwen' || key === 'qwen3') {
-    const theta = hits.find((m) => m.hub === 'theta' && (m.alias === 'qwen3' || m.id === 'theta/qwen3'));
-    if (theta) return theta;
-  }
   return hits[0];
 }
 
@@ -575,7 +603,7 @@ export function isRoutable(m) {
 
 /**
  * Resolve a client model id to a catalog row.
- * Accepts hub/alias, bare alias (theta preferred, then any hub), typed names
+ * Accepts hub/alias, bare alias (theta preferred except qwen/qwen3 → Akash), typed names
  * people send (`deepseek`, `llama-3.3`, …), or xfuel/auto.
  *
  * A failed hub poll drops that hub's models from `models` entirely, so the
@@ -595,12 +623,9 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
   const lower = requested.toLowerCase();
 
   if (requested === 'xfuel/auto' || requested === 'auto' || requested === 'xfuel-auto') {
-    // Never auto-route to a model the hub says has no workers. `theta/qwen3` sits
-    // third in the non-agent order and has had zero capacity — so an Akash outage,
-    // the one time failover matters, would have picked a model that answers every
-    // request with a 409. An explicit request for it still resolves; only the
-    // automatic choice is filtered, because the caller did not name this model and
-    // has no way to know it is dead.
+    // Never auto-route to a model the hub says has no workers. theta/qwen3 is
+    // also omitted from autoPreferenceFor — it often reports workers yet 409s.
+    // Explicit `theta/qwen3` still resolves; only the automatic choice is filtered.
     // If health has ruled out everything, route as though we knew nothing. A
     // provider-wide outage would otherwise turn every request into
     // `no_chat_models` — refusing to try is strictly worse than trying and
@@ -637,8 +662,11 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
   }
 
   // Exact catalog id / hub-native alias first (so a future hub row for kimi wins).
+  // Bare `qwen` / `qwen3` must not match theta alias=qwen3 before Akash preference.
   let hit = models.find((m) => m.id === requested);
-  if (!hit && !requested.includes('/')) {
+  if (!hit && (lower === 'qwen' || lower === 'qwen3')) {
+    hit = resolveTypedAlias(requested, models);
+  } else if (!hit && !requested.includes('/')) {
     hit = models.find((m) => m.alias === requested && m.hub === 'theta')
       || models.find((m) => m.alias === requested);
   }

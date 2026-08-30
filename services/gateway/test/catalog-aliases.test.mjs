@@ -47,14 +47,64 @@ test('typed aliases people send map onto live hub rows only', () => {
     'gpt-oss-120b': 'akash/openai/gpt-oss-120b',
     glm: 'akash/zai-org/GLM-5.3',
     'glm-5.3': 'akash/zai-org/GLM-5.3',
-    qwen: 'theta/qwen3',
-    qwen3: 'theta/qwen3',
+    qwen: 'akash/Qwen/Qwen3.8-27B',
+    qwen3: 'akash/Qwen/Qwen3.8-27B',
   };
   for (const [name, id] of Object.entries(cases)) {
     const r = resolveCatalogModel(name, LIVE, { modality: 'chat' });
     assert.equal(r.ok, true, name);
     assert.equal(r.model.id, id, name);
   }
+});
+
+test('qwen / qwen3 stamp Akash hub id — never alias as hub, never theta/qwen3', () => {
+  for (const name of ['qwen', 'qwen3']) {
+    const r = resolveCatalogModel(name, LIVE, { modality: 'chat' });
+    assert.equal(r.ok, true, name);
+    assert.equal(r.model.id, 'akash/Qwen/Qwen3.8-27B', name);
+    assert.equal(r.model.hub, 'akash', name);
+    assert.equal(r.model.alias, 'Qwen/Qwen3.8-27B', name);
+    assert.notEqual(r.model.hub, 'qwen', name);
+    assert.notEqual(r.model.id, 'theta/qwen3', name);
+  }
+});
+
+test('explicit theta/qwen3 stays Theta (named miss stays named)', () => {
+  const r = resolveCatalogModel('theta/qwen3', LIVE, { modality: 'chat' });
+  assert.equal(r.ok, true);
+  assert.equal(r.model.id, 'theta/qwen3');
+  assert.equal(r.model.hub, 'theta');
+});
+
+test('qwen falls back to Akash 3.6 when 3.8 is absent', () => {
+  const without38 = LIVE.filter((m) => m.id !== 'akash/Qwen/Qwen3.8-27B');
+  const r = resolveCatalogModel('qwen', without38, { modality: 'chat' });
+  assert.equal(r.ok, true);
+  assert.equal(r.model.id, 'akash/Qwen/Qwen3.6-35B-A3B');
+});
+
+test('qwen never remaps onto theta even when Theta is the only qwen left', () => {
+  const thetaOnly = LIVE.filter((m) => m.hub === 'theta' || m.hub === 'xfuel');
+  assert.ok(thetaOnly.some((m) => m.id === 'theta/qwen3'));
+  const r = resolveCatalogModel('qwen3', thetaOnly, { modality: 'chat' });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'model_not_found');
+});
+
+test('xfuel/auto does not pick theta/qwen3 when Akash Qwen or Llama is live', () => {
+  // Even if Theta lies with capacity>0, auto preferences skip it.
+  const withLie = LIVE.map((m) => (
+    m.id === 'theta/qwen3' ? { ...m, capacity: 99 } : m
+  ));
+  const simple = resolveCatalogModel('xfuel/auto', withLie, { modality: 'chat', shape: 'simple' });
+  assert.equal(simple.model.id, 'akash/meta-llama/Llama-3.3-70B-Instruct');
+  assert.notEqual(simple.model.id, 'theta/qwen3');
+
+  const noLlamaNoGlm = withLie.filter(
+    (m) => !/Llama|GLM|DeepSeek|gpt-oss/i.test(m.id),
+  );
+  const next = resolveCatalogModel('xfuel/auto', noLlamaNoGlm, { modality: 'chat', shape: 'simple' });
+  assert.equal(next.model.id, 'akash/Qwen/Qwen3.8-27B');
 });
 
 test('receipt stamp stays hub + native id — alias is never the hub', () => {
