@@ -27,6 +27,8 @@ export default function Home() {
             This agent spent Y on this job. You hold hub, model, and amount.
           </p>
           <p style={styles.heroDescription}>
+            No account. No API key. A wallet that can pay the 402 is enough.
+            Register is only to hold the book after a collected receipt.
             <code>POST /v1/chat/completions</code> is $0.01 USDC on Base and Solana.
             Signed receipt (HMAC) is table stakes — we have it too.
             <code>GET|POST /v1/agents/:agent_id/book</code> is possession-gated last-N collected spend.

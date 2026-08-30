@@ -353,12 +353,14 @@ test('card / llms / openapi mention book budget Y + remaining', async () => {
   const card = await (await fetch(`${base}/.well-known/agent-card.json`)).json();
   assert.match(JSON.stringify(card), /budget Y/i);
   assert.match(JSON.stringify(card), /remaining/i);
+  assert.match(JSON.stringify(card), /No account/);
   assert.doesNotMatch(JSON.stringify(card), /Not a smart router/);
   assert.doesNotMatch(JSON.stringify(card), /Not a model shop/);
 
   const llms = await (await fetch(`${base}/llms.txt`)).text();
   assert.match(llms, /budget Y/i);
   assert.match(llms, /remaining/i);
+  assert.match(llms, /No account\. No API key/);
   assert.doesNotMatch(llms, /Not a smart router/);
   assert.doesNotMatch(llms, /Not a model shop/);
 
@@ -366,6 +368,7 @@ test('card / llms / openapi mention book budget Y + remaining', async () => {
   assert.match(spec.paths['/v1/agents/{agent_id}/book'].post.description, /budget Y/i);
   assert.match(spec.paths['/v1/agents/{agent_id}/book'].post.description, /remaining/i);
   assert.ok(spec.paths['/v1/agents/{agent_id}/book'].post.requestBody.content['application/json'].schema.properties.budget);
+  assert.match(spec.info.description, /No account/);
   assert.doesNotMatch(spec.info.description, /Not a smart router/);
   assert.doesNotMatch(spec.info.description, /Not a model shop/);
 });

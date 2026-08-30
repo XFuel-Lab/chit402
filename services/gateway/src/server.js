@@ -238,7 +238,9 @@ function tier2Gate() {
 const LLMS_TXT = `# XFuel Protocol
 
 > XFuel is the book. This agent spent Y on this job. You hold hub, model,
-> and amount. Unauthenticated POST
+> and amount. No account. No API key. A wallet that can pay the 402 is
+> enough. Register is only to hold the book after a collected receipt.
+> Unauthenticated POST
 > /v1/chat/completions is $0.01 x402 on Base (CDP) and Solana (PayAI).
 > POST /a2a-message is the same $0.01 door (A2A card URL). Bearer xfuel-demo
 > and valid API keys skip payment. GET|POST
@@ -256,7 +258,8 @@ const LLMS_TXT = `# XFuel Protocol
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
 - GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
-- Auth: "Authorization: Bearer <key>" or "X-API-Key: <key>".
+- No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
+- Optional key (skips payment): "Authorization: Bearer <key>" or "X-API-Key: <key>".
 - Point any OpenAI client's baseURL at this host + /v1. Receipt in x-xfuel-*
   headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
 - proof_outcome may be pending on the chat body — poll GET /task-status.
