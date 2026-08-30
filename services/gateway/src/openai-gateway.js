@@ -697,7 +697,7 @@ function registerTaskAndProve({
   usage = null, payment = null, deferProve = false,
   status = 'completed', failureReason = null,
 }) {
-  const taskId = providedTaskId || `openai-${crypto.randomUUID()}`;
+  const taskId = providedTaskId || `xfuel-${crypto.randomUUID()}`;
   let aiListener = null;
   try {
     aiListener = getAIListener();
@@ -735,7 +735,7 @@ function registerTaskAndProve({
     },
     meta: {
       chain: 'base',
-      txHash: `openai-${taskId}`,
+      txHash: `gateway-${taskId}`,
       height: 0,
       source: 'openai-gateway',
       provider,
@@ -1201,7 +1201,7 @@ export function registerOpenAIRoutes(app, {
 
   async function maybeMeterUnauthChat(req, res, resourcePath = '/v1/chat/completions') {
     const { header: paymentHeader } = extractPaymentHeader(req);
-    const taskId = `openai-${crypto.randomUUID()}`;
+    const taskId = `xfuel-${crypto.randomUUID()}`;
     let metering = { halted: false, payment: null };
     if (!paymentHeader) {
       metering = await meterV1Request(req, res, {

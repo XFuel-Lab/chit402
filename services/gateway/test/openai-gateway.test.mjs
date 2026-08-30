@@ -8,6 +8,7 @@ process.env.X402_ENABLED = 'false';
 const { createApp } = await import('../src/server.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 const { openAiErrorShape } = await import('../src/openai-gateway.js');
+const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
 
 // Spin the real Express app on an ephemeral port and exercise the
 // OpenAI-compatible routes over HTTP. No provider keys are set, so
@@ -19,6 +20,7 @@ let base;
 
 before(async () => {
   resetHubCatalogCache();
+  await initAIListener();
   const app = createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
@@ -167,13 +169,16 @@ test('POST /v1/chat/completions returns an OpenAI completion + XFuel receipt', a
   assert.equal(res.status, 200);
 
   // Verification receipt is mirrored in headers.
-  assert.equal(typeof res.headers.get('x-xfuel-task-id'), 'string');
+  const taskIdHdr = res.headers.get('x-xfuel-task-id');
+  assert.equal(typeof taskIdHdr, 'string');
+  assert.match(taskIdHdr, /^xfuel-[0-9a-f-]{36}$/i);
   assert.ok(['pending', 'unavailable', 'skipped'].includes(res.headers.get('x-xfuel-proof-status')));
   // Shareable proof link is present as a header and points at the receipt page.
   const verifyHeader = res.headers.get('x-xfuel-verify-url');
   assert.equal(typeof verifyHeader, 'string');
   assert.ok(verifyHeader.includes('/receipt/'));
-  assert.ok(verifyHeader.includes(res.headers.get('x-xfuel-task-id')));
+  assert.ok(verifyHeader.includes(taskIdHdr));
+  assert.ok(!verifyHeader.includes('/receipt/openai-'));
 
   const body = await res.json();
   assert.equal(body.object, 'chat.completion');
@@ -182,6 +187,9 @@ test('POST /v1/chat/completions returns an OpenAI completion + XFuel receipt', a
   assert.equal(typeof body.choices[0].message.content, 'string');
   assert.equal(body.choices[0].finish_reason, 'stop');
   assert.ok(body.usage.total_tokens >= 1);
+
+  assert.match(body.xfuel.task_id, /^xfuel-/);
+  assert.equal(body.xfuel.task_id, taskIdHdr);
 
   // Honest receipt: no provider keys in test → mock compute, proof skipped.
   assert.equal(body.xfuel.compute.real, false);
@@ -195,6 +203,47 @@ test('POST /v1/chat/completions returns an OpenAI completion + XFuel receipt', a
   assert.ok(body.xfuel.verify_url.endsWith(`/receipt/${body.xfuel.task_id}`));
   assert.equal(body.xfuel.proof.links.receipt, body.xfuel.verify_url);
   assert.equal(body.xfuel.verify_url, verifyHeader);
+
+  // Public receipt chrome uses the real task id — no openai- shop invoice prefix.
+  const receiptHtml = await fetch(`${base}/receipt/${body.xfuel.task_id}`);
+  assert.equal(receiptHtml.status, 200);
+  const html = await receiptHtml.text();
+  assert.match(html, new RegExp(`<title>XFuel receipt · ${body.xfuel.task_id}</title>`));
+  assert.doesNotMatch(html, /openai/i);
+});
+
+test('GET /receipt/openai-* still 200 for pre-cutover task ids', async () => {
+  const legacyId = 'openai-11111111-2222-3333-4444-555555555555';
+  getAIListener().activeTasks.set(legacyId, {
+    taskId: legacyId,
+    status: 'completed',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    intent: {
+      type: 'inference_request',
+      paymentRail: 'usdc',
+      amount: '10000',
+      modelId: 'theta/qwen3',
+      chain: 'base',
+    },
+    meta: { chain: 'base', provider: 'theta-edgecloud' },
+    feeAmount: '50',
+    netAmount: '9950',
+    feeBps: 50,
+    result: { provider: 'theta-edgecloud' },
+    sp1Proof: null,
+  });
+
+  const res = await fetch(`${base}/receipt/${legacyId}`);
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, new RegExp(`<title>XFuel receipt · ${legacyId}</title>`));
+  assert.match(html, new RegExp(`class="taskid">${legacyId}<`));
+
+  const json = await fetch(`${base}/receipt/${legacyId}?format=json`);
+  assert.equal(json.status, 200);
+  const body = await json.json();
+  assert.equal(body.task_id, legacyId);
 });
 
 test('POST /v1/chat/completions rejects a bad body with an OpenAI error', async () => {

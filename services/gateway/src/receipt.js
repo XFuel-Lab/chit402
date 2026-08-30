@@ -607,7 +607,7 @@ export function renderReceiptHtml(receipt) {
   const p = receipt.payment;
   const pr = receipt.proof;
   const b = receipt.binding;
-  const title = `XFuel receipt · ${shortHash(receipt.task_id, 12, 6)}`;
+  const title = `XFuel receipt · ${receipt.task_id}`;
   const desc = p.rail === 'unmetered'
     ? `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} · UNMETERED · not charged`
     : `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} · ${p.rail.toUpperCase()} · ${formatUsdc(p.gross_amount) || p.gross_amount}`;

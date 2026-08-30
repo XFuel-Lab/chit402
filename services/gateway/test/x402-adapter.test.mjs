@@ -122,7 +122,7 @@ test('buildPaymentChallenge: uses absolute resource URL for bazaar cataloging', 
 
 test('buildPaymentChallenge: /v1/chat/completions resource catalogs OpenAI bazaar body', () => {
   const { body, headers } = buildPaymentChallenge({
-    taskId: 'openai-1',
+    taskId: 'xfuel-1',
     maxAmountRequired: '10000',
     baseUrl: 'https://api.xfuel.app',
     resource: 'https://api.xfuel.app/v1/chat/completions',
