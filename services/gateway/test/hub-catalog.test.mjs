@@ -52,17 +52,17 @@ test('mapThetaService builds hub-prefixed id', () => {
 
 test('mapAkashService builds akash/<nativeId> id', () => {
   const m = mapAkashService({
-    id: 'zai-org/GLM-5.2',
-    name: 'GLM 5.2',
+    id: 'zai-org/GLM-5.3',
+    name: 'GLM-5.3',
     created: 1_700_000_100,
-    owned_by: 'akash-network',
+    owned_by: 'akashml',
     pricing: { input: '0.1', output: '0.2' },
   });
-  assert.equal(m.id, 'akash/zai-org/GLM-5.2');
+  assert.equal(m.id, 'akash/zai-org/GLM-5.3');
   assert.equal(m.hub, 'akash');
-  assert.equal(m.alias, 'zai-org/GLM-5.2');
+  assert.equal(m.alias, 'zai-org/GLM-5.3');
   assert.equal(m.modality, 'chat');
-  assert.equal(m.owned_by, 'akash-network');
+  assert.equal(m.owned_by, 'akashml');
 });
 
 test('resolveCatalogModel rejects retired llama fiction', () => {
@@ -89,10 +89,10 @@ test('resolveCatalogModel accepts bare alias', () => {
 });
 
 test('resolveCatalogModel accepts akash hub id', () => {
-  const r = resolveCatalogModel('akash/zai-org/GLM-5.2', [...CATALOG_SEED]);
+  const r = resolveCatalogModel('akash/zai-org/GLM-5.3', [...CATALOG_SEED]);
   assert.equal(r.ok, true);
   assert.equal(r.model.hub, 'akash');
-  assert.equal(r.model.alias, 'zai-org/GLM-5.2');
+  assert.equal(r.model.alias, 'zai-org/GLM-5.3');
 });
 
 test('getHubCatalog offline seed includes xfuel/auto + modalities + akash', async () => {
@@ -137,7 +137,7 @@ test('getHubCatalog merges Theta + AkashML via fetchFn', async () => {
           return {
             object: 'list',
             data: [
-              { id: 'zai-org/GLM-5.2', name: 'GLM 5.2', created: 1, owned_by: 'akash-network' },
+              { id: 'zai-org/GLM-5.3', name: 'GLM-5.3', created: 1, owned_by: 'akashml' },
             ],
           };
         },
@@ -149,7 +149,7 @@ test('getHubCatalog merges Theta + AkashML via fetchFn', async () => {
   assert.match(source, /theta-live/);
   assert.match(source, /akash-live/);
   assert.ok(models.some((m) => m.id === 'theta/glm_5_2'));
-  assert.ok(models.some((m) => m.id === 'akash/zai-org/GLM-5.2'));
+  assert.ok(models.some((m) => m.id === 'akash/zai-org/GLM-5.3'));
 });
 
 // -- Live capacity ------------------------------------------------------------
@@ -174,7 +174,7 @@ test('mapThetaService reads live worker count as capacity', () => {
   assert.equal(mapThetaService(svc('sdxl', { default: 39 })).capacity, 39);
   // The case that 409s.
   assert.equal(mapThetaService(svc('qwen3', {})).capacity, 0);
-  // Absent is unknown, not zero ó AkashML publishes no equivalent, and reading
+  // Absent is unknown, not zero ù AkashML publishes no equivalent, and reading
   // silence as "down" would take a working hub offline.
   assert.equal(mapThetaService(svc('qwen3', undefined)).capacity, null);
 });
@@ -188,15 +188,15 @@ test('hasCapacity: only a hub that reports none counts as down', () => {
 
 test('xfuel/auto never routes to a model the hub says is empty', () => {
   // theta/qwen3 sits third in the non-agent preference order, so this is not
-  // hypothetical: an Akash outage ó the one time failover matters ó used to pick
+  // hypothetical: an Akash outage ù the one time failover matters ù used to pick
   // a model that answers every request with a 409.
   const models = [
     { id: 'theta/qwen3', hub: 'theta', modality: 'chat', capacity: 0 },
-    { id: 'akash/zai-org/GLM-5.2', hub: 'akash', modality: 'chat', capacity: null },
+    { id: 'akash/zai-org/GLM-5.3', hub: 'akash', modality: 'chat', capacity: null },
   ];
   const res = resolveCatalogModel('xfuel/auto', models);
   assert.equal(res.ok, true);
-  assert.equal(res.model.id, 'akash/zai-org/GLM-5.2');
+  assert.equal(res.model.id, 'akash/zai-org/GLM-5.3');
 });
 
 test('an explicit request for an empty model still resolves', () => {
@@ -220,6 +220,6 @@ test('/v1/models publishes availability so an agent can avoid a dead model', () 
   assert.equal(at('theta/qwen3').status, 'no_capacity');
   assert.equal(at('theta/glm_5_2').status, 'available');
   assert.equal(at('theta/glm_5_2').workers, 1);
-  // Not "down" ó Akash simply does not report capacity.
+  // Not "down" ù Akash simply does not report capacity.
   assert.equal(at('akash/x').status, 'unknown');
 });

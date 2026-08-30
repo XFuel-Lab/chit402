@@ -40,7 +40,8 @@ import {
  *   POST /v1/images/generations  → image (+ receipt)
  *   POST /v1/audio/transcriptions → STT (+ receipt)
  *
- * Model ids are hub-prefixed (theta/qwen3, akash/zai-org/GLM-5.2). No silent Llama→Qwen remap.
+ * Model ids are hub-prefixed (theta/qwen3, akash/zai-org/GLM-5.3). Typed aliases
+ * (deepseek, llama-3.3, …) map onto live hub rows only — never silent vendor remap.
  * OPENAI_GATEWAY_ALLOW_FALLBACK=false → hard-fail when preferred hub fails.
  */
 
@@ -265,6 +266,11 @@ async function runChatInference({
     shape: requestShape({ tools, messages }),
   });
   if (!resolved.ok) {
+    const available = resolved.available || [];
+    const detail = resolved.hint
+      || (available.length
+        ? `Model '${resolved.requested}' is not available. Live ids: ${available.slice(0, 12).join(', ')}`
+        : `Model '${resolved.requested}' is not available (${resolved.reason})`);
     return {
       content: '',
       provider: 'none',
@@ -272,9 +278,12 @@ async function runChatInference({
       resolvedModel: resolved.requested,
       raw: resolved,
       error: {
-        status: resolved.reason === 'model_retired' || resolved.reason === 'model_not_found' ? 404 : 400,
+        // Unknown / retired names are a bad request with the live list — not a
+        // silent Llama remap and not a 404 that hides what we actually serve.
+        status: 400,
         code: resolved.reason,
-        message: resolved.hint || `Model '${resolved.requested}' is not available (${resolved.reason})`,
+        message: detail,
+        ...(available.length ? { available } : {}),
       },
     };
   }
@@ -1163,11 +1172,12 @@ export function registerOpenAIRoutes(app, {
     const { models } = await getHubCatalog();
     const resolved = resolveCatalogModel(id, models);
     if (!resolved.ok) {
-      return res.status(404).json({
+      return res.status(400).json({
         error: {
           message: resolved.hint || `The model '${id}' does not exist`,
           type: 'invalid_request_error',
           code: resolved.reason || 'model_not_found',
+          ...(resolved.available ? { available: resolved.available } : {}),
         },
       });
     }

@@ -75,7 +75,9 @@ export const DEFAULT_RATE = { in: 300_000, out: 900_000 };
  */
 export const DEFAULT_RATE_CARD = Object.freeze({
   'zai-org/GLM-5.2': { in: 3_000_000, out: 9_000_000 },
+  'zai-org/GLM-5.3': { in: 3_000_000, out: 9_000_000 },
   'theta/glm_5_2': { in: 3_000_000, out: 9_000_000 },
+  'theta/glm_5_3': { in: 3_000_000, out: 9_000_000 },
 });
 
 /** Hub prefixes the catalog adds, stripped before matching so one row covers both spellings. */
