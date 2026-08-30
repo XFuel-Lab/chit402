@@ -304,7 +304,7 @@ test('proofOutcomeOf: a skip or empty proof object is pending, not valid', async
 
 test('renderReceiptHtml: unmetered /v1 does not print the $0.01 floor as a price', () => {
   const html = renderReceiptHtml(buildReceipt({
-    taskId: 'openai-free',
+    taskId: 'xfuel-free',
     status: 'completed',
     intent: { paymentRail: 'unmetered', amount: '10000', model: 'xfuel/auto' },
     result: { provider: 'akash-network', usage: { prompt_tokens: 8, completion_tokens: 5 } },
@@ -312,15 +312,32 @@ test('renderReceiptHtml: unmetered /v1 does not print the $0.01 floor as a price
   }));
   assert.match(html, /not charged/);
   assert.match(html, /UNMETERED/);
+  assert.match(html, /<title>XFuel receipt · xfuel-free<\/title>/);
+  assert.doesNotMatch(html, /openai/i);
   assert.ok(!html.includes('$0.01'), html);
   assert.ok(!html.includes('>10000<'), html);
+});
+
+test('renderReceiptHtml: historical openai-* task ids still render (no rewrite)', () => {
+  // Pre-cutover receipts were minted as openai-<uuid>. Lookup and chrome must
+  // still work; we do not rename stored ids.
+  const taskId = 'openai-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const html = renderReceiptHtml(buildReceipt({
+    taskId,
+    status: 'completed',
+    intent: { paymentRail: 'usdc', amount: '10000', model: 'theta/qwen3' },
+    result: { provider: 'theta-edgecloud' },
+    sp1Proof: null,
+  }));
+  assert.match(html, new RegExp(`<title>XFuel receipt · ${taskId}</title>`));
+  assert.match(html, new RegExp(`class="taskid">${taskId}<`));
 });
 
 test('outputHashOf prefers result.outputHash over hashing the result envelope', async () => {
   const { buildReceipt } = await import('../src/receipt.js');
   const hash = '0x' + '11'.repeat(32);
   const r = buildReceipt({
-    taskId: 'openai-hash-check',
+    taskId: 'xfuel-hash-check',
     status: 'completed',
     intent: { paymentRail: 'unmetered', amount: '0' },
     result: { provider: 'theta-edgecloud', outputHash: hash, content_hash: hash, usage: { prompt_tokens: 3 } },

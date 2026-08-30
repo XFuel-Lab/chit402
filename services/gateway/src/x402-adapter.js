@@ -168,7 +168,7 @@ const CHAT_COMPLETIONS_OUTPUT_EXAMPLE = {
     finish_reason: 'stop',
   }],
   usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-  xfuel: { verify_url: 'https://api.xfuel.app/receipt/openai-abc123' },
+  xfuel: { verify_url: 'https://api.xfuel.app/receipt/xfuel-abc123' },
 };
 
 /**
