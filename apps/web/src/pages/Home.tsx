@@ -58,6 +58,25 @@ export default function Home() {
         </div>
       </section>
 
+      <section style={{ padding: '0 0 2rem' }}>
+        <div className="container" style={{ maxWidth: 720 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <Link to="/agent-shop" style={styles.moneyLink}>
+              <span style={styles.moneyLinkTitle}>Your SEO bot spent it. You hold the book.</span>
+              <span style={styles.moneyLinkMeta}>/agent-shop</span>
+            </Link>
+            <Link to="/book" style={styles.moneyLink}>
+              <span style={styles.moneyLinkTitle}>This agent spent Y on this job.</span>
+              <span style={styles.moneyLinkMeta}>/book</span>
+            </Link>
+            <Link to="/v1" style={styles.moneyLink}>
+              <span style={styles.moneyLinkTitle}>OpenAI drop-in. Wallet pays. You hold the book.</span>
+              <span style={styles.moneyLinkMeta}>/v1</span>
+            </Link>
+          </div>
+        </div>
+      </section>
+
       <section style={{ padding: '0 0 3rem' }}>
         <div className="container">
           <div className="grid grid-3">
@@ -119,5 +138,26 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: 'center',
     gap: '1rem',
     flexWrap: 'wrap' as const,
+  },
+  moneyLink: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '1rem 1.25rem',
+    background: 'rgba(255,255,255,0.02)',
+    border: '1px solid rgba(255,255,255,0.06)',
+    borderRadius: '8px',
+    textDecoration: 'none',
+    transition: 'all 0.2s',
+  },
+  moneyLinkTitle: {
+    color: '#f0f0f5',
+    fontWeight: 500,
+    fontSize: '1rem',
+  },
+  moneyLinkMeta: {
+    color: '#00d4ff',
+    fontSize: '0.85rem',
+    fontFamily: 'var(--font-mono)',
   },
 };
