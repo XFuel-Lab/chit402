@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { API_V1 } from '../apiHost';
 
@@ -18,6 +19,10 @@ const response = await client.chat.completions.create({
 });`;
 
 export default function GatewayV1() {
+  useEffect(() => {
+    document.title = 'Pay /v1/chat/completions in $0.01 USDC | XFuel';
+  }, []);
+
   return (
     <div className="page docs-page">
       <div className="container" style={{ maxWidth: 720 }}>

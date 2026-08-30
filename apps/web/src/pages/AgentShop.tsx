@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { API_V1 } from '../apiHost';
 
@@ -18,6 +19,10 @@ const response = await client.chat.completions.create({
 });`;
 
 export default function AgentShop() {
+  useEffect(() => {
+    document.title = 'The till for an agent shop | XFuel';
+  }, []);
+
   return (
     <div className="page docs-page">
       <div className="container" style={{ maxWidth: 720 }}>

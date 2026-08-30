@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { API_V1 } from '../apiHost';
 
@@ -7,6 +8,10 @@ const SNIPPET = `curl -sS ${API_V1}/chat/completions \\
   -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`;
 
 export default function Book() {
+  useEffect(() => {
+    document.title = 'The book: this agent spent Y on this job | XFuel';
+  }, []);
+
   return (
     <div className="page docs-page">
       <div className="container" style={{ maxWidth: 720 }}>

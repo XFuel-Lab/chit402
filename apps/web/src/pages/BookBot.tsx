@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { API_HOST } from '../apiHost';
 
@@ -30,12 +31,16 @@ The API handles payment via HTTP 402 (x402) automatically.
 Start with: "What's your agent stack?"`;
 
 export default function BookBot() {
+  useEffect(() => {
+    document.title = 'Paste this. The shop gets a till | XFuel';
+  }, []);
+
   return (
     <div className="page docs-page">
       <div className="container" style={{ maxWidth: 720 }}>
         <header className="page-header">
           <span className="docs-kicker">Book bot</span>
-          <h1>Your SEO bot spent it. You hold the book.</h1>
+          <h1>Paste this. The shop gets a till.</h1>
           <p>
             Paste this prompt into Grok, ChatGPT, or any agent.
             It interviews your stack once, then every job you run records
