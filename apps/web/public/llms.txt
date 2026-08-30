@@ -1,22 +1,28 @@
 # XFuel Protocol
 
 > XFuel is the book. This agent spent Y on this job. You hold hub, model,
-> and amount. Unauthenticated POST
+> and amount. No account. No API key. A wallet that can pay the 402 is
+> enough. Register is only to hold the book after a collected receipt.
+> Unauthenticated POST
 > /v1/chat/completions is $0.01 x402 on Base (CDP) and Solana (PayAI).
-> Bearer xfuel-demo and valid API keys skip payment. GET|POST
-> /v1/agents/:agent_id/book is possession-gated. POST /v1/agents/register
+> POST /a2a-message is the same $0.01 door (A2A card URL). Bearer xfuel-demo
+> and valid API keys skip payment. GET|POST
+> /v1/agents/:agent_id/book is possession-gated (last-N spend + budget Y /
+> remaining under prepaid_ceiling). POST /v1/agents/register
 > is fail-closed. /task-request is the other paid door. Paying
 > api.xfuel.app moves real mainnet USDC. Canonical: api.xfuel.app.
 
 ## Start here (OpenAI-compatible)
 
 - POST /v1/chat/completions : OpenAI chat completions. Unauthenticated GET or
-  POST {} → 402 x402 ($0.01 USDC on Base or Solana). Demo key xfuel-demo skips payment.
+  POST {} → 402 x402 ($0.01 USDC on Base or Solana). Returns signed receipt + public verify_url.
+- POST /a2a-message         : A2A card URL. Same $0.01 x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
 - POST /v1/agents/register  : fail-closed. Bind agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
-- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id. Not a public index.
+- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
 - GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
-- Auth: "Authorization: Bearer <key>" or "X-API-Key: <key>".
+- No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
+- Optional key (skips payment): "Authorization: Bearer <key>" or "X-API-Key: <key>".
 - Point any OpenAI client's baseURL at this host + /v1. Receipt in x-xfuel-*
   headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
 - proof_outcome may be pending on the chat body — poll GET /task-status.
@@ -38,17 +44,18 @@
 - npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
 - submit_inference = POST /task-request (paid, 402 without a payer).
 - register_agent = POST /v1/agents/register (needs a collected receipt + agentWallet).
-- get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; not a public scoreboard).
+- get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; budget Y + remaining; not a public scoreboard).
 
 ## Discovery (x402scan + Bazaar)
 
 - GET  /openapi.json      : OpenAPI 3.1 with x-payment-info. Public door is POST /v1/chat/completions.
 - GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
 - GET  /.well-known/x402list.txt : x402-list domain verification token (public, text/plain).
-- GET  /.well-known/agent-card.json : A2A v1.0 card (200).
+- GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message ($0.01).
 - POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
-- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend. Not a public index.
-- POST /v1/chat/completions : paid. Unauth GET or POST {} → 402. Demo key xfuel-demo skips payment.
+- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
+- POST /v1/chat/completions : paid ($0.01 USDC on Base or Solana). Unauth GET or POST {} → 402.
+- POST /a2a-message       : same $0.01 paid door as /v1 (A2A card URL). Unauth POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).
 
 ## SDK

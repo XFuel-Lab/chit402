@@ -57,7 +57,15 @@ npm run dev
 
 ## Try the demo
 
-First hour is unmetered OpenAI `/v1` on `https://api.xfuel.app` (demo key `xfuel-demo`). No wallet. Working copy: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).
+No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
+
+```bash
+curl.exe -sS -D - -X POST https://api.xfuel.app/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Unauthenticated `/v1` returns HTTP 402 ($0.01 USDC on Base and Solana). Demo key `xfuel-demo` skips payment (rate-limited). Working copy: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).
 
 ```
 npm install xfuel-sdk

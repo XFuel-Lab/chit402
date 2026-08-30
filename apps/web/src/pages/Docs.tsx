@@ -160,7 +160,8 @@ export default function Docs() {
           <span className="docs-kicker">Documentation</span>
           <h1>Build on XFuel</h1>
           <p>
-            First hour is OpenAI <code>/v1</code> — no wallet. Paid USDC on Base is a second door.
+            No account. No API key. A wallet that can pay the 402 is enough.
+            Register is only to hold the book after a collected receipt.
             Apache-2.0. Public beta at <code>api.xfuel.app</code>. Paying it is mainnet USDC.
           </p>
         </header>

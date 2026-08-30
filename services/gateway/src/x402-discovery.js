@@ -484,7 +484,8 @@ export function buildOpenApiSpec(baseUrl = '') {
     operationId: 'chatCompletions',
     summary: 'OpenAI-compatible chat completions (public x402 door)',
     description:
-      'Pay per request in USDC on Base and Solana ($0.01 floor, x402 exact scheme). '
+      'No account. No API key. A wallet that can pay the 402 is enough. '
+      + 'Pay per request in USDC on Base and Solana ($0.01 floor, x402 exact scheme). '
       + 'Returns a standard OpenAI chat.completion plus a signed XFuel receipt with public '
       + 'verify_url. Unauthenticated calls receive HTTP 402 before body validation.',
     tags: ['Chat'],
@@ -511,6 +512,7 @@ export function buildOpenApiSpec(baseUrl = '') {
     summary: 'A2A paid door (same $0.01 as /v1)',
     description:
       'A2A card URL. Same $0.01 USDC x402 floor and chat fulfillment as POST /v1/chat/completions. '
+      + 'No account. No API key. A wallet that can pay the 402 is enough. '
       + 'You hold hub, model, and amount. Unauthenticated POST {} returns HTTP 402. '
       + 'Collected rows are bookable via GET|POST /v1/agents/{agent_id}/book.',
     tags: ['A2A'],
@@ -564,12 +566,16 @@ export function buildOpenApiSpec(baseUrl = '') {
       version: '1.0.0',
       description:
         'XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. '
+        + 'No account. No API key. A wallet that can pay the 402 is enough. '
+        + 'Register is only to hold the book after a collected receipt. '
         + 'POST /v1/chat/completions is $0.01 USDC on '
         + 'Base and Solana. POST /a2a-message is the same $0.01 door. '
         + 'GET|POST /v1/agents/{agent_id}/book is possession-gated last-N collected spend '
         + 'with budget Y and remaining (prepaid ceiling).',
       'x-guidance':
         'XFuel is the book: this agent spent Y on this job; you hold hub, model, and amount. '
+        + 'No account. No API key. A wallet that can pay the 402 is enough. '
+        + 'Register is only to hold the book after a collected receipt. '
         + 'Use POST /v1/chat/completions with an OpenAI-compatible JSON body '
         + '({ model, messages }). POST /a2a-message is the A2A card URL with the same $0.01 floor. '
         + 'Unauthenticated callers get HTTP 402 with x402 '
