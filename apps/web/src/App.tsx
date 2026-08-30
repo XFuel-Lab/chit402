@@ -6,6 +6,8 @@ import Pricing from './pages/Pricing';
 import GatewayV1 from './pages/GatewayV1';
 import NotFound from './pages/NotFound';
 import Security from './pages/Security';
+import AgentShop from './pages/AgentShop';
+import Book from './pages/Book';
 
 export default function App() {
   return (
@@ -18,6 +20,8 @@ export default function App() {
         <Route path="/security" element={<Security />} />
         <Route path="/v1" element={<GatewayV1 />} />
         <Route path="/v1/*" element={<GatewayV1 />} />
+        <Route path="/agent-shop" element={<AgentShop />} />
+        <Route path="/book" element={<Book />} />
         {/* Catch-all: branded 404 for ALL unknown paths including gated legacy pages. */}
         <Route path="*" element={<NotFound />} />
       </Route>
