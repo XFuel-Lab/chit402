@@ -37,6 +37,7 @@ import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger } from './usage-settled.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget } from './agent-book.js';
+import { ingestForeignX402 } from './foreign-x402-ingest.js';
 import { aawpReaders } from './agent-wallet.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
@@ -282,6 +283,7 @@ const LLMS_TXT = `# XFuel Protocol
 - submit_inference = POST /task-request (paid, 402 without a payer).
 - register_agent = POST /v1/agents/register (needs a collected receipt + agentWallet).
 - get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; budget Y + remaining; not a public scoreboard).
+- ingest_foreign_x402 = POST /v1/agents/:agent_id/book/ingest (record agent's arbitrary x402 spend to a foreign endpoint).
 
 ## Discovery (x402scan + Bazaar)
 
@@ -291,6 +293,7 @@ const LLMS_TXT = `# XFuel Protocol
 - GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message ($0.01).
 - POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
+- POST /v1/agents/:agent_id/book/ingest : foreign x402 ingest. Record spend to another shop (not XFuel). Requires possession + 402 context. Naked tx rejected.
 - POST /v1/chat/completions : paid ($0.01 USDC on Base or Solana). Unauth GET or POST {} → 402.
 - POST /a2a-message       : same $0.01 paid door as /v1 (A2A card URL). Unauth POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).
@@ -2069,6 +2072,39 @@ export function createApp() {
   app.get('/v1/agents/:agent_id/book', sendAgentBook);
   app.post('/v1/agents/:agent_id/book', sendAgentBook);
 
+  // POST /v1/agents/:agent_id/book/ingest — Foreign x402 book ingest
+  // Per Section 2: Record an agent's arbitrary x402 spend to a foreign endpoint.
+  // Requires possession (session), the 402 payment required, and payment response.
+  // Demo keys never write. HMAC on foreign row means "we recorded this."
+  app.post('/v1/agents/:agent_id/book/ingest', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const session = body.session || req.headers['x-xfuel-session'] || null;
+      const apiKey = req.headers['x-api-key'] || null;
+      const isDemo = apiKey === 'xfuel-demo' || String(apiKey).startsWith('xfuel-demo');
+
+      const result = await ingestForeignX402(body, {
+        ledger: usageSettled,
+        registry: agentRegistry,
+        agentId: req.params.agent_id,
+        session,
+        signingSecret: config.receipts?.signingSecret,
+        isDemo,
+      });
+
+      if (!result.ok) {
+        return res.status(result.status).json({
+          error: result.error,
+          message: result.message,
+        });
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /v1/agents/:agent_id/book/ingest error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
   registerOpenAIRoutes(app, {
     rateLimit, authenticate, isAuthorised, ledger: usageSettled, registry: agentRegistry,
   });
@@ -2078,7 +2114,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 

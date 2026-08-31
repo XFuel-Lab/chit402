@@ -218,6 +218,78 @@ const AGENTS_BOOK_OUTPUT_SCHEMA = {
   required: ['agent_id', 'limit', 'entries', 'totals', 'window', 'cap', 'spent', 'remaining'],
 };
 
+/** Foreign x402 book ingest input schema. */
+const AGENTS_BOOK_INGEST_INPUT_SCHEMA = {
+  type: 'object',
+  required: ['payment_required', 'payment_response', 'session'],
+  properties: {
+    session: {
+      type: 'string',
+      description: 'Possession secret issued by POST /v1/agents/register. Required.',
+    },
+    payment_required: {
+      type: 'object',
+      required: ['resource', 'amount', 'payTo'],
+      description: 'The 402 PAYMENT-REQUIRED (or equivalent) from the foreign endpoint.',
+      properties: {
+        resource: { type: 'string', description: 'The foreign 402 resource URL paid.' },
+        amount: { type: 'string', description: 'Amount in atomic USDC (e.g. 10000 = $0.01).' },
+        payTo: { type: 'string', description: 'The payTo address from the 402 challenge.' },
+        network: { type: 'string', description: 'Network (e.g. base, solana). Defaults to base.' },
+        asset: { type: 'string', description: 'Asset type (e.g. USDC).' },
+      },
+    },
+    payment_response: {
+      type: 'object',
+      required: ['tx', 'payer'],
+      description: 'The PAYMENT-RESPONSE (or equivalent) proving the payment.',
+      properties: {
+        tx: { type: 'string', description: 'Transaction hash / settlement ref.' },
+        payer: { type: 'string', description: 'Payer address.' },
+        network: { type: 'string', description: 'Network the payment was made on.' },
+      },
+    },
+  },
+};
+
+/** Foreign x402 book ingest output schema. */
+const AGENTS_BOOK_INGEST_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    task_id: { type: 'string', description: 'Synthetic task_id for this ingest.' },
+    agent_id: { type: 'integer' },
+    payment: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string', description: 'Payment reference (network:tx).' },
+        rail: { type: 'string' },
+        amount: { type: 'string' },
+        collected: { type: 'boolean' },
+      },
+    },
+    route: {
+      type: 'object',
+      properties: {
+        hub: { type: 'string', description: 'Extracted host from resource URL.' },
+        model: { type: 'string', description: 'Extracted path from resource URL.' },
+        resource: { type: 'string', description: 'Original foreign 402 resource URL.' },
+      },
+    },
+    foreign_x402: { type: 'boolean', description: 'Always true for ingest.' },
+    recorded_at: { type: 'string' },
+    signature: {
+      type: 'object',
+      nullable: true,
+      description: 'HMAC means "XFuel recorded this" — not merchant attestation.',
+      properties: {
+        alg: { type: 'string' },
+        scope: { type: 'string', enum: ['recorded'] },
+        value: { type: 'string' },
+      },
+    },
+  },
+};
+
 const AGENTS_BOOK_OP = {
   operationId: 'getAgentBook',
   summary: 'Possession-gated agent spend book',
@@ -625,6 +697,45 @@ export function buildOpenApiSpec(baseUrl = '') {
       '/v1/agents/{agent_id}/book': {
         get: { ...AGENTS_BOOK_OP, operationId: 'getAgentBook' },
         post: { ...AGENTS_BOOK_OP, operationId: 'postAgentBook' },
+      },
+      '/v1/agents/{agent_id}/book/ingest': {
+        post: {
+          operationId: 'ingestForeignX402',
+          summary: 'Ingest a foreign x402 payment into the book',
+          description:
+            'Record an agent\'s arbitrary x402 spend to a foreign endpoint. Requires possession (session), '
+            + 'the 402 payment required (resource, amount, payTo), and payment response (tx, payer, network). '
+            + 'Naked tx hash is rejected — must have 402 context. Demo keys never write. '
+            + 'HMAC on a foreign row means "XFuel recorded this" — not merchant attestation. '
+            + 'Per whitepaper §2: XFuel does NOT settle foreign payments (CDP/PayAI stay verify+settle).',
+          tags: ['Agents'],
+          parameters: [
+            {
+              name: 'agent_id',
+              in: 'path',
+              required: true,
+              schema: { type: 'integer' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: AGENTS_BOOK_INGEST_INPUT_SCHEMA },
+            },
+          },
+          responses: {
+            201: {
+              description: 'Foreign x402 payment recorded in the book.',
+              content: {
+                'application/json': { schema: AGENTS_BOOK_INGEST_OUTPUT_SCHEMA },
+              },
+            },
+            400: { description: 'Invalid input, missing required fields, or naked tx hash rejected.' },
+            401: { description: 'No possession proof (session required).' },
+            403: { description: 'Demo key or session does not match agent_id.' },
+            409: { description: 'Duplicate transaction (replay protection).' },
+          },
+        },
       },
     },
   };
