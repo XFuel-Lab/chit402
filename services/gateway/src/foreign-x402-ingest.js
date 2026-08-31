@@ -14,7 +14,46 @@
 
 import crypto from 'crypto';
 import logger from './logger.js';
-import { verifyPayment } from './x402-adapter.js';
+
+/**
+ * Build a verify function that checks if a tx exists on-chain.
+ * Uses the provider's getTransactionReceipt to confirm the tx is mined.
+ *
+ * @param {{ getTransactionReceipt: Function }} provider
+ * @returns {Function} verify function for ingestForeignX402
+ */
+export function buildOnChainVerify(provider) {
+  if (!provider || typeof provider.getTransactionReceipt !== 'function') {
+    return null;
+  }
+
+  return async function verifyOnChain({ paymentRef, payer, amount, payTo, network }) {
+    if (!paymentRef) {
+      return { valid: false, reason: 'paymentRef required' };
+    }
+
+    // Extract tx hash from paymentRef (format: "network:txHash")
+    const parts = paymentRef.split(':');
+    const txHash = parts.length > 1 ? parts.slice(1).join(':') : paymentRef;
+
+    if (!txHash || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+      return { valid: false, reason: 'invalid tx hash format' };
+    }
+
+    try {
+      const receipt = await provider.getTransactionReceipt(txHash);
+      if (!receipt) {
+        return { valid: false, reason: 'transaction not found on-chain' };
+      }
+      if (receipt.status === 0) {
+        return { valid: false, reason: 'transaction reverted' };
+      }
+      return { valid: true, txHash, blockNumber: receipt.blockNumber };
+    } catch (err) {
+      throw new Error(`on-chain verification failed: ${err.message}`);
+    }
+  };
+}
 
 /**
  * Replay-protection store for foreign x402 tx hashes.
@@ -294,29 +333,44 @@ export async function ingestForeignX402(body = {}, {
     }
   }
 
-  // Verify the payment on-chain via facilitator (optional but recommended)
-  // For MVP, we trust the submitted tx + payer if we can't verify
-  if (verify && typeof verify === 'function') {
-    try {
-      const verification = await verify({
-        paymentHeader: null,
-        paymentRef,
-        payer: paymentResponse.payer,
-        amount: paymentRequired.amount,
-        payTo: paymentRequired.payTo,
-        network,
-      });
-      if (verification && verification.valid === false) {
-        return {
-          ok: false,
-          status: 400,
-          error: 'payment_invalid',
-          message: verification.reason || 'Payment verification failed',
-        };
-      }
-    } catch (err) {
-      logger.warn({ err: err.message, paymentRef }, 'foreign-x402: verification failed, proceeding with trust');
-    }
+  // Verify the payment on-chain via facilitator — FAIL CLOSED.
+  // Per whitepaper §2: verify on-chain, do not settle. No row without verification.
+  if (!verify || typeof verify !== 'function') {
+    return {
+      ok: false,
+      status: 502,
+      error: 'verify_unavailable',
+      message: 'Payment verification is not configured — cannot ingest without on-chain verify',
+    };
+  }
+
+  let verification;
+  try {
+    verification = await verify({
+      paymentHeader: null,
+      paymentRef,
+      payer: paymentResponse.payer,
+      amount: paymentRequired.amount,
+      payTo: paymentRequired.payTo,
+      network,
+    });
+  } catch (err) {
+    logger.warn({ err: err.message, paymentRef }, 'foreign-x402: verification threw — rejecting (fail closed)');
+    return {
+      ok: false,
+      status: 502,
+      error: 'verify_failed',
+      message: `Payment verification failed: ${err.message}`,
+    };
+  }
+
+  if (!verification || verification.valid !== true) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'payment_invalid',
+      message: verification?.reason || 'Payment verification did not confirm valid',
+    };
   }
 
   // Generate synthetic task id
@@ -405,4 +459,5 @@ export default {
   buildForeignReceipt,
   generateForeignTaskId,
   resetForeignTxNullifier,
+  buildOnChainVerify,
 };

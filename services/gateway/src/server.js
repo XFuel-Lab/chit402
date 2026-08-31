@@ -37,7 +37,7 @@ import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger } from './usage-settled.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget } from './agent-book.js';
-import { ingestForeignX402 } from './foreign-x402-ingest.js';
+import { ingestForeignX402, buildOnChainVerify } from './foreign-x402-ingest.js';
 import { aawpReaders } from './agent-wallet.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
@@ -2076,12 +2076,21 @@ export function createApp() {
   // Per Section 2: Record an agent's arbitrary x402 spend to a foreign endpoint.
   // Requires possession (session), the 402 payment required, and payment response.
   // Demo keys never write. HMAC on foreign row means "we recorded this."
+  // FAIL CLOSED: verify on-chain required — no row without verification.
   app.post('/v1/agents/:agent_id/book/ingest', async (req, res) => {
     try {
       const body = req.body || {};
       const session = body.session || req.headers['x-xfuel-session'] || null;
       const apiKey = req.headers['x-api-key'] || null;
       const isDemo = apiKey === 'xfuel-demo' || String(apiKey).startsWith('xfuel-demo');
+
+      // Build verify lazily — provider may not be initialized at app creation time
+      let verify = null;
+      try {
+        verify = buildOnChainVerify(getProvider());
+      } catch {
+        // Provider not initialized — verify stays null, ingestForeignX402 will reject
+      }
 
       const result = await ingestForeignX402(body, {
         ledger: usageSettled,
@@ -2090,6 +2099,7 @@ export function createApp() {
         session,
         signingSecret: config.receipts?.signingSecret,
         isDemo,
+        verify,
       });
 
       if (!result.ok) {

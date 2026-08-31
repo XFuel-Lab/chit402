@@ -34,6 +34,15 @@ function makeSession() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+/** Mock verify that always returns valid: true */
+const verifyOk = async () => ({ valid: true });
+
+/** Mock verify that always returns valid: false */
+const verifyFail = async () => ({ valid: false, reason: 'mock rejection' });
+
+/** Mock verify that throws */
+const verifyThrows = async () => { throw new Error('verify exploded'); };
+
 function setupDeps() {
   const registry = new AgentRegistry();
   const ledger = new UsageSettledLedger();
@@ -83,7 +92,7 @@ test('validatePaymentResponse requires tx and payer (no naked tx)', () => {
 
 // ─── Integration tests ────────────────────────────────────────────────────────
 
-test('happy path: foreign x402 → book row', async () => {
+test('happy path: foreign x402 → book row (with valid verify)', async () => {
   const { registry, ledger, identity } = setupDeps();
 
   const result = await ingestForeignX402({
@@ -103,6 +112,7 @@ test('happy path: foreign x402 → book row', async () => {
     registry,
     agentId: identity.agent_id,
     session: identity.session,
+    verify: verifyOk,
   });
 
   assert.equal(result.ok, true);
@@ -126,7 +136,7 @@ test('happy path: foreign x402 → book row', async () => {
   assert.equal(entry.model, '/v1/chat/completions');
 });
 
-test('reject naked tx hash (no payer)', async () => {
+test('reject naked tx hash (no payer) — fails before verify', async () => {
   const { registry, ledger, identity } = setupDeps();
 
   const result = await ingestForeignX402({
@@ -144,6 +154,7 @@ test('reject naked tx hash (no payer)', async () => {
     registry,
     agentId: identity.agent_id,
     session: identity.session,
+    verify: verifyOk,
   });
 
   assert.equal(result.ok, false);
@@ -153,7 +164,7 @@ test('reject naked tx hash (no payer)', async () => {
   assert.equal(ledger.entries.length, 0);
 });
 
-test('reject naked tx hash (no payment_required context)', async () => {
+test('reject naked tx hash (no payment_required context) — fails before verify', async () => {
   const { registry, ledger, identity } = setupDeps();
 
   const result = await ingestForeignX402({
@@ -167,6 +178,7 @@ test('reject naked tx hash (no payment_required context)', async () => {
     registry,
     agentId: identity.agent_id,
     session: identity.session,
+    verify: verifyOk,
   });
 
   assert.equal(result.ok, false);
@@ -193,13 +205,13 @@ test('reject replay (same tx twice)', async () => {
   };
 
   const first = await ingestForeignX402(body, {
-    ledger, registry, agentId: identity.agent_id, session: identity.session,
+    ledger, registry, agentId: identity.agent_id, session: identity.session, verify: verifyOk,
   });
   assert.equal(first.ok, true);
   assert.equal(ledger.entries.length, 1);
 
   const second = await ingestForeignX402(body, {
-    ledger, registry, agentId: identity.agent_id, session: identity.session,
+    ledger, registry, agentId: identity.agent_id, session: identity.session, verify: verifyOk,
   });
   assert.equal(second.ok, false);
   assert.equal(second.status, 409);
@@ -207,7 +219,7 @@ test('reject replay (same tx twice)', async () => {
   assert.equal(ledger.entries.length, 1, 'replay should not add');
 });
 
-test('demo key never writes to book', async () => {
+test('demo key never writes to book (rejects before verify)', async () => {
   const { registry, ledger, identity } = setupDeps();
 
   const result = await ingestForeignX402({
@@ -226,6 +238,7 @@ test('demo key never writes to book', async () => {
     registry,
     agentId: identity.agent_id,
     session: identity.session,
+    verify: verifyOk,
     isDemo: true,
   });
 
@@ -236,7 +249,7 @@ test('demo key never writes to book', async () => {
   assert.equal(ledger.entries.length, 0);
 });
 
-test('possession-gated: wrong session rejected', async () => {
+test('possession-gated: wrong session rejected (before verify)', async () => {
   const { registry, ledger, identity } = setupDeps();
 
   const result = await ingestForeignX402({
@@ -255,6 +268,7 @@ test('possession-gated: wrong session rejected', async () => {
     registry,
     agentId: identity.agent_id,
     session: 'wrong-session-value',
+    verify: verifyOk,
   });
 
   assert.equal(result.ok, false);
@@ -263,7 +277,7 @@ test('possession-gated: wrong session rejected', async () => {
   assert.equal(ledger.entries.length, 0);
 });
 
-test('possession-gated: no session rejected', async () => {
+test('possession-gated: no session rejected (before verify)', async () => {
   const { registry, ledger, identity } = setupDeps();
 
   const result = await ingestForeignX402({
@@ -280,6 +294,7 @@ test('possession-gated: no session rejected', async () => {
     ledger,
     registry,
     agentId: identity.agent_id,
+    verify: verifyOk,
   });
 
   assert.equal(result.ok, false);
@@ -288,7 +303,7 @@ test('possession-gated: no session rejected', async () => {
   assert.equal(ledger.entries.length, 0);
 });
 
-test('possession-gated: session for different agent_id rejected', async () => {
+test('possession-gated: session for different agent_id rejected (before verify)', async () => {
   const registry = new AgentRegistry();
   const ledger = new UsageSettledLedger();
   const identity1 = registry.allocate({ taskId: 'agent1' });
@@ -310,6 +325,7 @@ test('possession-gated: session for different agent_id rejected', async () => {
     registry,
     agentId: identity2.agent_id,
     session: identity1.session,
+    verify: verifyOk,
   });
 
   assert.equal(result.ok, false);
@@ -318,7 +334,7 @@ test('possession-gated: session for different agent_id rejected', async () => {
   assert.match(result.message, /does not match/i);
 });
 
-test('house self-pay is allowed if real on-chain tx', async () => {
+test('house self-pay is allowed if real on-chain tx (with valid verify)', async () => {
   const { registry, ledger, identity } = setupDeps();
 
   const result = await ingestForeignX402({
@@ -338,12 +354,155 @@ test('house self-pay is allowed if real on-chain tx', async () => {
     registry,
     agentId: identity.agent_id,
     session: identity.session,
+    verify: verifyOk,
   });
 
   assert.equal(result.ok, true);
   assert.equal(result.status, 201);
   assert.equal(result.body.route.hub, 'api.xfuel.app');
   assert.equal(ledger.entries.length, 1);
+});
+
+// ─── Verification fail-closed tests ───────────────────────────────────────────
+
+test('FAIL CLOSED: verify unavailable → 502, no book row', async () => {
+  const { registry, ledger, identity } = setupDeps();
+
+  const result = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://api.grokbot.app/v1/chat',
+      amount: '10000',
+      payTo: '0xTreasury',
+    },
+    payment_response: {
+      tx: '0xnoverify',
+      payer: WALLET_A,
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    // verify NOT provided
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 502);
+  assert.equal(result.error, 'verify_unavailable');
+  assert.match(result.message, /not configured/i);
+  assert.equal(ledger.entries.length, 0, 'no row without verify');
+});
+
+test('FAIL CLOSED: verify throws → 502, no book row', async () => {
+  const { registry, ledger, identity } = setupDeps();
+
+  const result = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://api.grokbot.app/v1/chat',
+      amount: '10000',
+      payTo: '0xTreasury',
+    },
+    payment_response: {
+      tx: '0xverifythrows',
+      payer: WALLET_A,
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyThrows,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 502);
+  assert.equal(result.error, 'verify_failed');
+  assert.match(result.message, /exploded/i);
+  assert.equal(ledger.entries.length, 0, 'no row when verify throws');
+});
+
+test('FAIL CLOSED: verify returns valid: false → 400, no book row', async () => {
+  const { registry, ledger, identity } = setupDeps();
+
+  const result = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://api.grokbot.app/v1/chat',
+      amount: '10000',
+      payTo: '0xTreasury',
+    },
+    payment_response: {
+      tx: '0xverifyrejects',
+      payer: WALLET_A,
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyFail,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 400);
+  assert.equal(result.error, 'payment_invalid');
+  assert.match(result.message, /mock rejection/i);
+  assert.equal(ledger.entries.length, 0, 'no row when verify fails');
+});
+
+test('FAIL CLOSED: only valid: true writes a row', async () => {
+  const { registry, ledger, identity } = setupDeps();
+
+  // First: verify returns undefined (not explicit valid: true)
+  const resultUndef = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://api.grokbot.app/v1/chat',
+      amount: '10000',
+      payTo: '0xTreasury',
+    },
+    payment_response: {
+      tx: '0xverifyundef',
+      payer: WALLET_A,
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: async () => ({}), // returns {}, not { valid: true }
+  });
+
+  assert.equal(resultUndef.ok, false);
+  assert.equal(resultUndef.status, 400);
+  assert.equal(resultUndef.error, 'payment_invalid');
+  assert.equal(ledger.entries.length, 0, 'no row without explicit valid: true');
+
+  // Second: verify returns valid: true
+  const resultValid = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://api.grokbot.app/v1/chat',
+      amount: '10000',
+      payTo: '0xTreasury',
+    },
+    payment_response: {
+      tx: '0xverifyok',
+      payer: WALLET_A,
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyOk,
+  });
+
+  assert.equal(resultValid.ok, true);
+  assert.equal(resultValid.status, 201);
+  assert.equal(ledger.entries.length, 1, 'row written only with valid: true');
 });
 
 // ─── HTTP route tests ─────────────────────────────────────────────────────────
