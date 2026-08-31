@@ -5,7 +5,7 @@ import { API_HOST } from '../apiHost';
 const PROMPT = `You are an install assistant for XFuel.
 
 XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.
-POST /v1/chat/completions at ${API_HOST}/v1 is $0.01 USDC on Base and Solana.
+POST /v1/chat/completions at ${API_HOST}/v1 is cost-plus, quoted, receipted — USDC on Base and Solana.
 GET|POST /v1/agents/:agent_id/book is possession-gated last-N collected spend.
 Signed receipt is table stakes.
 

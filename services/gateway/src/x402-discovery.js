@@ -13,13 +13,13 @@ import { describePricing } from './pricing.js';
  *
  * Paid resources (chat first — that is the public door):
  * - `POST /v1/chat/completions` — OpenAI-compatible chat (recommended for agents)
- * - `POST /a2a-message` — A2A card URL; same $0.01 handshake + fulfillment as /v1
+ * - `POST /a2a-message` — A2A card URL; same x402 handshake + fulfillment as /v1
  * - `POST /task-request` — M2M task request (lower-level, returns task_id)
  *
  * Dual-network support (2026-08-23): when X402_SOLANA_ENABLED, the bazaar
  * manifest advertises Base (CDP) and Solana (PayAI). OpenAPI `x-payment-info`
  * stays `{ protocols: [{ x402: {} }] }` + decimal USD; runtime 402 `accepts[].amount`
- * remains USDC base units (`10000` = $0.01).
+ * remains USDC base units (`10000`).
  *
  * Cataloging itself happens when CDP settles a payment that carries
  * `paymentPayload.resource` + `extensions.bazaar` — see docs/X402_ADAPTER.md.
@@ -47,7 +47,7 @@ const TASK_REQUEST_INPUT_SCHEMA = {
   properties: {
     message_type: { type: 'string', enum: ['inference_request'] },
     chain_id: { type: 'string', example: 'base' },
-    amount: { type: 'string', description: 'gross task value in USDC base units (6 decimals); min 10000 ($0.01)' },
+    amount: { type: 'string', description: 'gross task value in USDC base units (6 decimals)' },
     sender: { type: 'string', description: '0x address that owns/pays for the task' },
     model_id: { type: 'string', example: 'xfuel/auto', description: 'live catalog id; list via GET /v1/models' },
     input_hash: { type: 'string', description: 'keccak256 of your input' },
@@ -137,7 +137,7 @@ const AGENTS_BOOK_INPUT_SCHEMA = {
     budget: {
       type: ['string', 'null'],
       description:
-        'Prepaid budget Y in USDC atomic units (10000 = $0.01). Null clears (unlimited). '
+        'Prepaid budget Y in USDC atomic units (6 decimals). Null clears (unlimited). '
         + 'Possession-gated set. Absent = read only.',
     },
   },
@@ -233,7 +233,7 @@ const AGENTS_BOOK_INGEST_INPUT_SCHEMA = {
       description: 'The 402 PAYMENT-REQUIRED (or equivalent) from the foreign endpoint.',
       properties: {
         resource: { type: 'string', description: 'The foreign 402 resource URL paid.' },
-        amount: { type: 'string', description: 'Amount in atomic USDC (e.g. 10000 = $0.01).' },
+        amount: { type: 'string', description: 'Amount in atomic USDC (6 decimals).' },
         payTo: { type: 'string', description: 'The payTo address from the 402 challenge.' },
         network: { type: 'string', description: 'Network (e.g. base, solana). Defaults to base.' },
         asset: { type: 'string', description: 'Asset type (e.g. USDC).' },
@@ -300,7 +300,7 @@ const AGENTS_BOOK_OP = {
     + 'POST with { session, budget } sets Y (null = unlimited). '
     + 'Unauth or wrong proof returns 401/403 with an empty body. '
     + 'Not a public index. Only collected rows appear. '
-    + 'This route is not the $0.01 paid door — that stays POST /v1/chat/completions.',
+    + 'This route is not the paid door — that stays POST /v1/chat/completions.',
   tags: ['Agents'],
   parameters: [
     {
@@ -673,7 +673,7 @@ export function buildOpenApiSpec(baseUrl = '') {
           description:
             'Fail-closed. Bind an AAWP official or smart-account agentWallet to an integer agent_id. '
             + 'Requires a collected HMAC-valid receipt (task_id). Demo receipts do not qualify. '
-            + 'This route is not the $0.01 paid door — that stays POST /v1/chat/completions.',
+            + 'This route is not the paid door — that stays POST /v1/chat/completions.',
           tags: ['Agents'],
           requestBody: {
             required: true,
@@ -946,6 +946,64 @@ export function buildOpenApiSpec(baseUrl = '') {
             400: { description: 'Session mismatch.' },
             401: { description: 'No possession proof.' },
             403: { description: 'Demo key or wrong proof.' },
+          },
+        },
+      },
+      '/receipt/{taskId}': {
+        get: {
+          operationId: 'getReceipt',
+          summary: 'Public receipt (no auth)',
+          description:
+            'Public, no-auth verifiable receipt. Returns HTML by default (shareable link), '
+            + 'JSON via ?format=json or Accept: application/json (for agents), or auditor '
+            + 'selective disclosure via ?format=auditor. Anyone can independently verify "paid + proven" '
+            + 'using the verify_url. No secrets exposed (no proof bytes, no raw output, no keys).',
+          tags: ['Receipts'],
+          parameters: [
+            { name: 'taskId', in: 'path', required: true, schema: { type: 'string' } },
+            {
+              name: 'format',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['json', 'auditor'] },
+              description: 'Response format: json (machine), auditor (policy + totals), or HTML (default)',
+            },
+          ],
+          responses: {
+            200: { description: 'Receipt (HTML or JSON based on Accept or ?format)' },
+            404: { description: 'Task not found' },
+          },
+        },
+      },
+      '/receipt/by-tx': {
+        get: {
+          operationId: 'getReceiptByTx',
+          summary: 'Lookup receipt by transaction signature',
+          description:
+            'Redirect to the canonical /receipt/{taskId} URL given a payment transaction signature. '
+            + 'Supports Solana tx signatures and Base transaction hashes. Enables receipt lookup '
+            + 'when the caller has the tx but not the task ID.',
+          tags: ['Receipts'],
+          parameters: [
+            {
+              name: 'tx',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Transaction signature (Solana) or transaction hash (Base)',
+            },
+            {
+              name: 'format',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['json', 'auditor'] },
+              description: 'Format to pass through to the redirect target',
+            },
+          ],
+          responses: {
+            302: { description: 'Redirect to /receipt/{taskId}' },
+            400: { description: 'Missing tx query parameter' },
+            404: { description: 'No task found for this transaction' },
           },
         },
       },

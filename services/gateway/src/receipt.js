@@ -610,7 +610,7 @@ export function renderReceiptHtml(receipt) {
   const title = `XFuel receipt · ${receipt.task_id}`;
   const desc = p.rail === 'unmetered'
     ? `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} · UNMETERED · not charged`
-    : `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} · ${p.rail.toUpperCase()} · ${formatUsdc(p.gross_amount) || p.gross_amount}`;
+    : `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} receipt · ${p.rail.toUpperCase()} · verify_url`;
 
   const refHtml = p.ref
     ? (p.explorer_url
