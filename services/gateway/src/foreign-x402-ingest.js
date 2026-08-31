@@ -2,34 +2,79 @@
  * Foreign x402 Book Ingest — record an agent's arbitrary x402 spend.
  *
  * An agent paid someone else's 402 endpoint (not XFuel's). We verify the
- * payment on-chain, nullify/replay-protect the tx, and write a possession-
- * gated book row: hub=host, model=path, amount=atomic USDC.
+ * USDC transfer on-chain (read the Transfer event, match payer/payTo/amount),
+ * then write a possession-gated book row: hub=host, model=path, amount.
  *
  * Per whitepaper §2: HMAC on a foreign row means "we recorded this," not
  * merchant attestation — unless they later send an offer-receipt.
+ *
+ * FAIL CLOSED: No row appends unless the USDC transfer on that `tx` matches
+ * `payer`, `payTo`, `amount`, and `asset`. If we cannot read the transfer, 503.
  *
  * XFuel does NOT settle foreign payments. CDP/PayAI stay verify+settle.
  * AgentCash stays the signer/wallet. We do NOT become a wallet or Agent402.
  */
 
 import crypto from 'crypto';
+import { ethers } from 'ethers';
 import logger from './logger.js';
 
+/** ERC-20 Transfer event topic (keccak256 of Transfer(address,address,uint256)) */
+const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+/** Known USDC contract addresses by network. */
+const USDC_ADDRESSES = {
+  base: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  'base-sepolia': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+  'eip155:8453': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  'eip155:84532': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+};
+
+/** Networks that use Solana rail (not EVM). */
+const SOLANA_NETWORKS = new Set(['solana', 'solana-devnet', 'solana-mainnet']);
+
 /**
- * Build a verify function that checks if a tx exists on-chain.
- * Uses the provider's getTransactionReceipt to confirm the tx is mined.
+ * Determine the rail from the network.
+ * @param {string} network
+ * @returns {'usdc'|'solana'}
+ */
+export function railFromNetwork(network) {
+  const n = String(network || '').toLowerCase();
+  if (SOLANA_NETWORKS.has(n) || n.startsWith('solana')) return 'solana';
+  return 'usdc';
+}
+
+/**
+ * True if network is EVM-based (can verify via getTransactionReceipt).
+ */
+export function isEvmNetwork(network) {
+  const n = String(network || '').toLowerCase();
+  return !SOLANA_NETWORKS.has(n) && !n.startsWith('solana');
+}
+
+/**
+ * Build a verify function that reads the actual USDC Transfer event on-chain.
+ * Verifies: tx succeeded, Transfer from payer → payTo for >= amount on USDC contract.
  *
- * @param {{ getTransactionReceipt: Function }} provider
- * @returns {Function} verify function for ingestForeignX402
+ * @param {{ getTransactionReceipt: Function }} provider - EVM provider
+ * @returns {Function|null} verify function for ingestForeignX402, or null if unavailable
  */
 export function buildOnChainVerify(provider) {
   if (!provider || typeof provider.getTransactionReceipt !== 'function') {
     return null;
   }
 
-  return async function verifyOnChain({ paymentRef, payer, amount, payTo, network }) {
+  return async function verifyUsdcTransfer({ paymentRef, payer, amount, payTo, network }) {
     if (!paymentRef) {
       return { valid: false, reason: 'paymentRef required' };
+    }
+    if (!payer || !payTo || amount == null) {
+      return { valid: false, reason: 'payer, payTo, and amount are required' };
+    }
+
+    // Solana networks need a Solana provider, which we don't have
+    if (!isEvmNetwork(network)) {
+      throw new Error(`Solana transfer verification not yet supported (network: ${network})`);
     }
 
     // Extract tx hash from paymentRef (format: "network:txHash")
@@ -40,41 +85,79 @@ export function buildOnChainVerify(provider) {
       return { valid: false, reason: 'invalid tx hash format' };
     }
 
-    try {
-      const receipt = await provider.getTransactionReceipt(txHash);
-      if (!receipt) {
-        return { valid: false, reason: 'transaction not found on-chain' };
-      }
-      if (receipt.status === 0) {
-        return { valid: false, reason: 'transaction reverted' };
-      }
-      return { valid: true, txHash, blockNumber: receipt.blockNumber };
-    } catch (err) {
-      throw new Error(`on-chain verification failed: ${err.message}`);
+    // Resolve expected USDC contract for this network
+    const netKey = String(network || 'base').toLowerCase();
+    const usdcAddress = USDC_ADDRESSES[netKey];
+    if (!usdcAddress) {
+      throw new Error(`unknown USDC address for network: ${network}`);
     }
+
+    let receipt;
+    try {
+      receipt = await provider.getTransactionReceipt(txHash);
+    } catch (err) {
+      throw new Error(`failed to fetch tx receipt: ${err.message}`);
+    }
+
+    if (!receipt) {
+      return { valid: false, reason: 'transaction not found on-chain' };
+    }
+    if (receipt.status === 0) {
+      return { valid: false, reason: 'transaction reverted' };
+    }
+
+    // Parse logs for ERC-20 Transfer events from the USDC contract
+    const expectedAmount = BigInt(String(amount));
+    const expectedFrom = String(payer).toLowerCase();
+    const expectedTo = String(payTo).toLowerCase();
+    const usdcLower = usdcAddress.toLowerCase();
+
+    let foundTransfer = false;
+    let transferredAmount = 0n;
+
+    for (const log of receipt.logs || []) {
+      // Must be from the USDC contract
+      if (log.address?.toLowerCase() !== usdcLower) continue;
+      // Must be a Transfer event
+      if (log.topics?.[0] !== ERC20_TRANSFER_TOPIC) continue;
+      if (log.topics.length < 3) continue;
+
+      // Decode indexed params: topics[1] = from, topics[2] = to
+      const from = '0x' + log.topics[1].slice(26).toLowerCase();
+      const to = '0x' + log.topics[2].slice(26).toLowerCase();
+
+      // Decode data: amount (uint256)
+      const value = BigInt(log.data || '0');
+
+      // Check match
+      if (from === expectedFrom && to === expectedTo) {
+        transferredAmount += value;
+        foundTransfer = true;
+      }
+    }
+
+    if (!foundTransfer) {
+      return {
+        valid: false,
+        reason: `no USDC Transfer from ${payer} to ${payTo} found in tx`,
+      };
+    }
+
+    if (transferredAmount < expectedAmount) {
+      return {
+        valid: false,
+        reason: `transferred ${transferredAmount} < expected ${expectedAmount}`,
+      };
+    }
+
+    return {
+      valid: true,
+      txHash,
+      blockNumber: receipt.blockNumber,
+      verifiedAmount: transferredAmount.toString(),
+    };
   };
 }
-
-/**
- * Replay-protection store for foreign x402 tx hashes.
- * In-memory for MVP; same pattern as challengeStore in x402-adapter.
- */
-class ForeignTxNullifier {
-  constructor() {
-    this.spent = new Set();
-  }
-
-  isSpent(txRef) {
-    return this.spent.has(String(txRef).toLowerCase());
-  }
-
-  markSpent(txRef) {
-    this.spent.add(String(txRef).toLowerCase());
-    return true;
-  }
-}
-
-const foreignTxNullifier = new ForeignTxNullifier();
 
 /**
  * Extract hub (host) and model (path) from a resource URL.
@@ -149,6 +232,7 @@ export function validatePaymentResponse(paymentResponse) {
  * @param {string} params.taskId - Synthetic task id for this ingest
  * @param {object} params.paymentRequired - { resource, amount, payTo, network?, asset? }
  * @param {object} params.paymentResponse - { tx, payer, network }
+ * @param {string} params.rail - 'usdc' or 'solana'
  * @param {string} [params.signingSecret] - HMAC signing secret
  * @returns {object} Receipt-like object for ledger append
  */
@@ -156,6 +240,7 @@ export function buildForeignReceipt({
   taskId,
   paymentRequired,
   paymentResponse,
+  rail,
   signingSecret = null,
 }) {
   const route = extractRouteFromResource(paymentRequired.resource);
@@ -170,7 +255,7 @@ export function buildForeignReceipt({
     proof_outcome: 'signed',
     foreign_x402: true,
     payment: {
-      rail: 'usdc',
+      rail: rail || railFromNetwork(network),
       ref: paymentRef,
       collected: true,
       gross_amount: amount,
@@ -307,20 +392,13 @@ export async function ingestForeignX402(body = {}, {
     };
   }
 
-  // Build payment ref and check replay
+  // Build payment ref and determine rail
   const network = paymentResponse.network || paymentRequired.network || 'base';
   const paymentRef = `${network}:${paymentResponse.tx}`;
+  const rail = railFromNetwork(network);
 
-  if (foreignTxNullifier.isSpent(paymentRef)) {
-    return {
-      ok: false,
-      status: 409,
-      error: 'duplicate_tx',
-      message: 'This transaction has already been recorded',
-    };
-  }
-
-  // Also check against the ledger for any existing entry with this ref
+  // Replay protection: ledger.findByRef is the persistent source of truth.
+  // Per whitepaper: nullify tx via ledger ref + persist, not in-memory Set.
   if (ledger && typeof ledger.findByRef === 'function') {
     const existing = ledger.findByRef(paymentRef);
     if (existing) {
@@ -376,15 +454,16 @@ export async function ingestForeignX402(body = {}, {
   // Generate synthetic task id
   const taskId = generateForeignTaskId();
 
-  // Build the foreign receipt
+  // Build the foreign receipt with correct rail for network
   const receipt = buildForeignReceipt({
     taskId,
     paymentRequired,
     paymentResponse,
+    rail,
     signingSecret,
   });
 
-  // Append to ledger
+  // Append to ledger — this is the nullification; ledger dedupes by payment.ref
   if (!ledger || typeof ledger.append !== 'function') {
     return {
       ok: false,
@@ -408,13 +487,11 @@ export async function ingestForeignX402(body = {}, {
     };
   }
 
-  // Mark tx as spent for replay protection
-  foreignTxNullifier.markSpent(paymentRef);
-
   logger.info({
     taskId,
     agentId: id,
     paymentRef,
+    rail,
     amount: paymentRequired.amount,
     hub: receipt.route.hub,
     model: receipt.route.model,
@@ -428,7 +505,7 @@ export async function ingestForeignX402(body = {}, {
       agent_id: id,
       payment: {
         ref: paymentRef,
-        rail: 'usdc',
+        rail,
         amount: paymentRequired.amount,
         collected: true,
       },
@@ -444,13 +521,6 @@ export async function ingestForeignX402(body = {}, {
   };
 }
 
-/**
- * Reset the foreign tx nullifier (for testing).
- */
-export function resetForeignTxNullifier() {
-  foreignTxNullifier.spent.clear();
-}
-
 export default {
   ingestForeignX402,
   validatePaymentRequired,
@@ -458,6 +528,7 @@ export default {
   extractRouteFromResource,
   buildForeignReceipt,
   generateForeignTaskId,
-  resetForeignTxNullifier,
   buildOnChainVerify,
+  railFromNetwork,
+  isEvmNetwork,
 };

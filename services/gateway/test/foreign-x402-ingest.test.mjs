@@ -25,7 +25,7 @@ const {
   validatePaymentRequired,
   validatePaymentResponse,
   extractRouteFromResource,
-  resetForeignTxNullifier,
+  railFromNetwork,
 } = await import('../src/foreign-x402-ingest.js');
 
 const WALLET_A = '0x1111111111111111111111111111111111111111';
@@ -49,10 +49,6 @@ function setupDeps() {
   const identity = registry.allocate({ taskId: 'initial' });
   return { registry, ledger, identity };
 }
-
-beforeEach(() => {
-  resetForeignTxNullifier();
-});
 
 // ─── Unit tests ───────────────────────────────────────────────────────────────
 
@@ -88,6 +84,18 @@ test('validatePaymentResponse requires tx and payer (no naked tx)', () => {
   assert.equal(validatePaymentResponse({ tx: '0xabc' }).ok, false, 'naked tx rejected');
   assert.equal(validatePaymentResponse({ payer: '0x123' }).ok, false);
   assert.equal(validatePaymentResponse({ tx: '0xabc', payer: '0x123' }).ok, true);
+});
+
+test('railFromNetwork: EVM → usdc, Solana → solana', () => {
+  assert.equal(railFromNetwork('base'), 'usdc');
+  assert.equal(railFromNetwork('base-sepolia'), 'usdc');
+  assert.equal(railFromNetwork('eip155:8453'), 'usdc');
+  assert.equal(railFromNetwork(null), 'usdc');
+  assert.equal(railFromNetwork(''), 'usdc');
+  assert.equal(railFromNetwork('solana'), 'solana');
+  assert.equal(railFromNetwork('solana-devnet'), 'solana');
+  assert.equal(railFromNetwork('solana-mainnet'), 'solana');
+  assert.equal(railFromNetwork('SOLANA'), 'solana', 'case insensitive');
 });
 
 // ─── Integration tests ────────────────────────────────────────────────────────
@@ -134,6 +142,40 @@ test('happy path: foreign x402 → book row (with valid verify)', async () => {
   assert.equal(entry.payment_ref, 'base:0xabc123def456');
   assert.equal(entry.hub, 'api.grokbot.app');
   assert.equal(entry.model, '/v1/chat/completions');
+});
+
+test('Solana network sets rail to solana, not usdc', async () => {
+  const { registry, ledger, identity } = setupDeps();
+
+  // Mock verify that would throw for Solana (real impl does) — but we use verifyOk to bypass
+  // since the test is about rail detection, not actual Solana verification.
+  const result = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://api.solana-shop.io/infer',
+      amount: '5000',
+      payTo: 'SoLanaTreasuryAddress123',
+    },
+    payment_response: {
+      tx: '3vZ9Y9X...solana-sig',
+      payer: 'SolanaPayerAddress456',
+      network: 'solana',
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyOk,  // bypassing actual Solana verification for rail detection test
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 201);
+  assert.equal(result.body.payment.rail, 'solana', 'Solana network → solana rail');
+  assert.equal(result.body.payment.ref, 'solana:3vZ9Y9X...solana-sig');
+
+  const entry = ledger.entries[0];
+  assert.equal(entry.rail, 'solana');
 });
 
 test('reject naked tx hash (no payer) — fails before verify', async () => {
@@ -187,7 +229,7 @@ test('reject naked tx hash (no payment_required context) — fails before verify
   assert.equal(ledger.entries.length, 0);
 });
 
-test('reject replay (same tx twice)', async () => {
+test('reject replay (same tx twice) — ledger is nullifier', async () => {
   const { registry, ledger, identity } = setupDeps();
 
   const body = {
@@ -215,7 +257,7 @@ test('reject replay (same tx twice)', async () => {
   });
   assert.equal(second.ok, false);
   assert.equal(second.status, 409);
-  assert.equal(second.error, 'duplicate_tx');
+  assert.equal(second.error, 'duplicate_ref', 'replay blocked by ledger findByRef');
   assert.equal(ledger.entries.length, 1, 'replay should not add');
 });
 
