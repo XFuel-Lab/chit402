@@ -1,0 +1,359 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xfuel.app/schemas/receipt.xfuel.v2.schema.json",
+  "title": "XFuel Receipt v2",
+  "description": "Public, verifiable receipt for routed AI inference. Third parties can verify payment binding and output commitment without calling the XFuel API.",
+  "type": "object",
+  "required": [
+    "schema",
+    "task_id",
+    "status",
+    "verify_url",
+    "route",
+    "payment",
+    "output",
+    "signature"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "xfuel.receipt.v2",
+      "description": "Schema version identifier."
+    },
+    "task_id": {
+      "type": "string",
+      "description": "Unique task identifier. Frozen field.",
+      "x-frozen": true
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "routing", "proving", "completed", "failed"],
+      "description": "Task lifecycle status."
+    },
+    "proof_outcome": {
+      "type": "string",
+      "enum": ["pending", "valid", "invalid", "regenerable"],
+      "description": "Settlement proof state."
+    },
+    "verify_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Canonical public receipt URL. Shareable, no auth required."
+    },
+    "created_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "route": {
+      "type": "object",
+      "required": ["model", "provider"],
+      "properties": {
+        "message_type": {
+          "type": ["string", "null"],
+          "description": "Request type (inference_request, chat, etc.)."
+        },
+        "model": {
+          "type": "string",
+          "description": "Model identifier that served the request. Frozen field.",
+          "x-frozen": true
+        },
+        "model_commitment": {
+          "type": ["object", "null"],
+          "description": "PoMA model authenticity commitment.",
+          "properties": {
+            "commitment": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{64}$",
+              "description": "keccak256 commitment to model weights/version."
+            },
+            "model_id": { "type": ["string", "null"] },
+            "version": { "type": ["integer", "null"] },
+            "scheme": { "type": ["integer", "null"] }
+          }
+        },
+        "provider": {
+          "type": "string",
+          "description": "Compute provider hub (theta-edgecloud, akash-network, etc.). Frozen field.",
+          "x-frozen": true
+        },
+        "chain_id": {
+          "type": ["string", "null"],
+          "description": "Settlement chain (base, base-sepolia, solana)."
+        }
+      }
+    },
+    "payment": {
+      "type": "object",
+      "required": ["rail", "gross_amount"],
+      "properties": {
+        "rail": {
+          "type": "string",
+          "enum": ["usdc", "tfuel", "unmetered"],
+          "description": "Payment rail."
+        },
+        "ref": {
+          "type": ["string", "null"],
+          "description": "Settlement reference (network:txHash). Frozen field when present.",
+          "x-frozen": true
+        },
+        "explorer_url": {
+          "type": ["string", "null"],
+          "format": "uri",
+          "description": "Block explorer link for the settlement transaction."
+        },
+        "gross_amount": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Total charged in USDC atomic units (6 decimals). Frozen field.",
+          "x-frozen": true
+        },
+        "fee_amount": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Protocol fee in USDC atomic units."
+        },
+        "net_amount": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Amount after protocol fee."
+        },
+        "protocol_fee_bps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000,
+          "description": "Protocol fee in basis points (50 = 0.5%)."
+        },
+        "platform_fee_bps": {
+          "type": ["integer", "null"],
+          "description": "Cost-plus platform fee in basis points."
+        },
+        "platform_fee": {
+          "type": ["string", "null"],
+          "description": "Platform fee in USDC atomic units."
+        },
+        "basis": {
+          "type": ["string", "null"],
+          "enum": ["cost_plus", "flat", null],
+          "description": "Pricing basis for this charge."
+        },
+        "floor_applied": {
+          "type": ["boolean", "null"],
+          "description": "True when the floor price was applied."
+        },
+        "collected": {
+          "type": "boolean",
+          "description": "True when payment was settled."
+        },
+        "collects_on": {
+          "type": "string",
+          "enum": ["this_request", "next_request"],
+          "description": "Rolling settlement: when this charge settles."
+        }
+      }
+    },
+    "provider_cogs": {
+      "type": ["object", "null"],
+      "description": "Provider cost of goods sold (what XFuel paid to serve).",
+      "properties": {
+        "provider": { "type": ["string", "null"] },
+        "float_id": { "type": ["string", "null"] },
+        "currency": { "type": ["string", "null"] },
+        "estimated": { "type": ["string", "null"] },
+        "actual": {
+          "type": ["string", "null"],
+          "description": "Measured COGS in atomic units."
+        },
+        "basis": {
+          "type": ["string", "null"],
+          "enum": ["measured", "estimated", null]
+        }
+      }
+    },
+    "usage": {
+      "type": ["object", "null"],
+      "description": "Token usage for this request.",
+      "properties": {
+        "prompt_tokens": { "type": ["integer", "null"] },
+        "completion_tokens": { "type": ["integer", "null"] },
+        "total_tokens": { "type": ["integer", "null"] },
+        "source": { "type": ["string", "null"] }
+      }
+    },
+    "proof": {
+      "type": "object",
+      "required": ["tier"],
+      "properties": {
+        "system": {
+          "type": "string",
+          "enum": ["sp1", "risc0", "none"],
+          "description": "Proof system."
+        },
+        "tier": {
+          "type": "string",
+          "enum": ["signed", "settlement", "inference"],
+          "description": "Assurance tier: signed (HMAC), settlement (SP1), inference (TEE/ZK)."
+        },
+        "outcome": {
+          "type": "string",
+          "enum": ["pending", "valid", "invalid", "regenerable"]
+        },
+        "has_proof": {
+          "type": "boolean",
+          "description": "True when SP1 proof bytes are present."
+        },
+        "nullifier": {
+          "type": ["string", "null"],
+          "pattern": "^0x[0-9a-fA-F]{64}$",
+          "description": "Single-use nullifier anchored on-chain. Frozen field when present.",
+          "x-frozen": true
+        },
+        "proving_time_ms": {
+          "type": ["integer", "null"]
+        },
+        "attests": {
+          "type": "string",
+          "description": "Honest scope note: what the proof does and does not attest."
+        }
+      }
+    },
+    "binding": {
+      "type": ["object", "null"],
+      "description": "Payment binding for third-party verification.",
+      "properties": {
+        "present": { "type": "boolean" },
+        "in_proof": {
+          "type": "boolean",
+          "description": "True when binding is committed in the SP1 proof."
+        },
+        "rail": { "type": ["string", "null"] },
+        "amount": {
+          "type": "string",
+          "description": "Bound amount in atomic units."
+        },
+        "covers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["payment", "settlement", "model", "inference"]
+          },
+          "description": "What the binding attests."
+        },
+        "model_commitment": {
+          "type": ["string", "null"],
+          "pattern": "^0x[0-9a-fA-F]{64}$"
+        },
+        "output_hash": {
+          "type": ["string", "null"],
+          "pattern": "^0x[0-9a-fA-F]{64}$"
+        },
+        "expected_commitment": {
+          "type": ["string", "null"],
+          "pattern": "^0x[0-9a-fA-F]{64}$",
+          "description": "Commitment stored on the receipt."
+        },
+        "recomputed_commitment": {
+          "type": ["string", "null"],
+          "pattern": "^0x[0-9a-fA-F]{64}$",
+          "description": "Commitment recomputed by verifier."
+        },
+        "matches": {
+          "type": "boolean",
+          "description": "True when expected == recomputed (verification passed)."
+        }
+      }
+    },
+    "output": {
+      "type": ["object", "null"],
+      "required": ["hash"],
+      "properties": {
+        "hash": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]{64}$",
+          "description": "Commitment to the model output (keccak256 or SHA-256). Frozen field.",
+          "x-frozen": true
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["committed", "sha256_of_output"],
+          "description": "How the hash was derived."
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "required": ["alg", "value"],
+      "properties": {
+        "alg": {
+          "type": "string",
+          "enum": ["HMAC-SHA256"],
+          "description": "Signature algorithm."
+        },
+        "payload_version": {
+          "type": "integer",
+          "description": "Canonical payload version (3 for v2 receipts)."
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^sha256=[0-9a-fA-F]{64}$",
+          "description": "HMAC signature over canonical payload."
+        },
+        "signed_fields": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Fields covered by the signature."
+        }
+      }
+    },
+    "verified_inference": {
+      "type": ["object", "null"],
+      "description": "Tier-3 verified inference metadata (TEE/ZK)."
+    },
+    "privacy": {
+      "type": ["object", "null"],
+      "description": "Private Spend metadata.",
+      "properties": {
+        "mode": { "type": "string" },
+        "trust": { "type": "string" },
+        "notes": { "type": "string" }
+      }
+    },
+    "lineage": {
+      "type": ["object", "null"],
+      "description": "Multi-hop / A2A receipt chain."
+    },
+    "links": {
+      "type": "object",
+      "properties": {
+        "self": { "type": "string", "format": "uri" },
+        "json": { "type": "string", "format": "uri" },
+        "status": { "type": "string", "format": "uri" },
+        "proof": { "type": "string", "format": "uri" }
+      }
+    },
+    "agent_id": {
+      "type": ["integer", "null"],
+      "description": "Registered agent identity (when bound). Frozen field when present.",
+      "x-frozen": true
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "frozen_fields": {
+      "description": "Fields marked x-frozen are immutable once set. Third parties can verify these without trusting XFuel.",
+      "enum": [
+        "task_id",
+        "route.model",
+        "route.provider",
+        "payment.ref",
+        "payment.gross_amount",
+        "proof.nullifier",
+        "output.hash",
+        "agent_id"
+      ]
+    }
+  }
+}

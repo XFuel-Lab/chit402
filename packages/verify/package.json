@@ -1,0 +1,62 @@
+{
+  "name": "@xfuel/verify",
+  "version": "0.1.0",
+  "description": "Offline verification for XFuel receipts — verify payment binding and output hash without calling the XFuel API",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "xfuel-verify": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/XFuel-Lab/xfuel-protocol/tree/main/packages/verify#readme",
+  "bugs": {
+    "url": "https://github.com/XFuel-Lab/xfuel-protocol/issues"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "xfuel",
+    "verify",
+    "receipt",
+    "x402",
+    "usdc",
+    "base",
+    "offline",
+    "zk"
+  ],
+  "author": "XFuel Protocol",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XFuel-Lab/xfuel-protocol.git",
+    "directory": "packages/verify"
+  },
+  "dependencies": {
+    "ethers": "^6.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  }
+}

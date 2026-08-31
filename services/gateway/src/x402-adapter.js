@@ -13,6 +13,7 @@ import {
   PAYAI_FACILITATOR_URL,
   PAYAI_DEFAULT_FEE_PAYER,
   SOLANA_NETWORKS,
+  decodePaymentHeader,
 } from './x402-facilitator.js';
 
 export { toCaip2Network, fromCaip2Network, usdcFor, isSolanaNetwork, isEvmNetwork };
@@ -696,7 +697,14 @@ function resolveGateway(opts = {}) {
 
 /**
  * Resolve + validate the challenge bound to this payment (if binding requested).
- * @returns {{ ok:true, challenge:Object|null }|{ ok:false, reason:string }}
+ *
+ * For Solana payments via PayAI, the facilitator can verify payments independently
+ * even without a matching XFuel challenge. This enables receipts for payments where:
+ *   - The challenge expired before the payer responded
+ *   - The payer used a different client that didn't echo our nonce
+ *   - The payment was made directly without going through our 402 flow
+ *
+ * @returns {{ ok:true, challenge:Object|null, unbound?:boolean }|{ ok:false, reason:string }}
  */
 function checkBinding(opts) {
   const store = opts.store === undefined ? challengeStore : opts.store;
@@ -711,7 +719,14 @@ function checkBinding(opts) {
   let challenge = opts.challenge || null;
   if (store) {
     const stored = store.get(nonce);
-    if (!stored) return { ok: false, reason: 'challenge_expired_or_unknown' };
+    if (!stored) {
+      // Challenge not found. For Solana payments, proceed anyway and let the
+      // facilitator verify the payment on-chain. The receipt will be created
+      // without a pre-bound amount (uses floor or facilitator-reported amount).
+      // This enables receipts for payments made without our 402 handshake.
+      logger.info({ nonce: nonce?.slice(0, 16) }, 'x402: challenge not found, proceeding unbound');
+      return { ok: true, challenge: null, unbound: true };
+    }
     challenge = stored;
   }
   return { ok: true, challenge };
@@ -723,9 +738,12 @@ function checkBinding(opts) {
  * (with a store), enforces expiry + replay + amount binding by forwarding the
  * expected values. Idempotent — does NOT mark spent (settle does).
  *
+ * For unbound payments (challenge not found), the network is extracted from the
+ * payment header to enable Solana routing even without a stored challenge.
+ *
  * @param {string} paymentHeader  X-PAYMENT header value from the client
  * @param {Object} [opts]  { gatewayUrl, apiKey, store, nonce, challenge }
- * @returns {Promise<{valid:boolean, txRef?:string, reason?:string}>}
+ * @returns {Promise<{valid:boolean, txRef?:string, reason?:string, unbound?:boolean}>}
  */
 export async function verifyPayment(paymentHeader, opts = {}) {
   if (!paymentHeader) return { valid: false, reason: 'missing_payment_header' };
@@ -736,9 +754,23 @@ export async function verifyPayment(paymentHeader, opts = {}) {
   const bind = checkBinding(opts);
   if (!bind.ok) return { valid: false, reason: bind.reason };
   const challenge = bind.challenge;
+  const unbound = !!bind.unbound;
+
+  // For unbound payments (no matching challenge), extract network from the payment header
+  // so Solana payments can still route to PayAI correctly.
+  let networkFromHeader = null;
+  if (!challenge) {
+    const decoded = decodePaymentHeader(paymentHeader);
+    networkFromHeader = decoded?.accepted?.network || decoded?.network || null;
+  }
 
   // Pass the resolved challenge to resolveGateway for network-aware routing.
-  const { provider, gateway, apiKey } = resolveGateway({ ...opts, challenge });
+  // For unbound payments, pass the network extracted from the header.
+  const { provider, gateway, apiKey } = resolveGateway({
+    ...opts,
+    challenge,
+    network: networkFromHeader || opts.network,
+  });
   // ZAN gateway requires an API key; the standard x402 public facilitator does not.
   if (!gateway || (provider === 'zan' && !apiKey)) {
     return { valid: false, reason: 'gateway_not_configured' };
@@ -746,7 +778,8 @@ export async function verifyPayment(paymentHeader, opts = {}) {
 
   if (provider === 'x402') {
     // Pass client x402 version (1 for X-PAYMENT, 2 for PAYMENT-SIGNATURE) to the facilitator.
-    return verifyViaFacilitator(paymentHeader, { gateway, apiKey, challenge, x402Version: opts.x402Version });
+    const result = await verifyViaFacilitator(paymentHeader, { gateway, apiKey, challenge, x402Version: opts.x402Version });
+    return { ...result, unbound };
   }
 
   try {
@@ -782,9 +815,13 @@ export async function verifyPayment(paymentHeader, opts = {}) {
  * Settle a verified x402 payment via the facilitator (broadcast/capture) and
  * mark the challenge nonce spent (replay protection). Call after verifyPayment.
  *
+ * For unbound payments (challenge not found), settlement proceeds with the
+ * facilitator determining validity. This enables receipts for Solana payments
+ * made without our 402 handshake.
+ *
  * @param {string} paymentHeader
  * @param {Object} [opts]  { gatewayUrl, apiKey, store, nonce, challenge }
- * @returns {Promise<{settled:boolean, txRef?:string, reason?:string}>}
+ * @returns {Promise<{settled:boolean, txRef?:string, reason?:string, unbound?:boolean}>}
  */
 export async function settlePayment(paymentHeader, opts = {}) {
   if (!paymentHeader) return { settled: false, reason: 'missing_payment_header' };
@@ -795,11 +832,23 @@ export async function settlePayment(paymentHeader, opts = {}) {
   const bind = checkBinding(opts);
   if (!bind.ok) return { settled: false, reason: bind.reason };
   const challenge = bind.challenge;
+  const unbound = !!bind.unbound;
   const store = opts.store === undefined ? challengeStore : opts.store;
   const nonce = opts.nonce || challenge?.nonce || null;
 
+  // For unbound payments (no matching challenge), extract network from the payment header
+  let networkFromHeader = null;
+  if (!challenge) {
+    const decoded = decodePaymentHeader(paymentHeader);
+    networkFromHeader = decoded?.accepted?.network || decoded?.network || null;
+  }
+
   // Pass the resolved challenge to resolveGateway for network-aware routing.
-  const { provider, gateway, apiKey } = resolveGateway({ ...opts, challenge });
+  const { provider, gateway, apiKey } = resolveGateway({
+    ...opts,
+    challenge,
+    network: networkFromHeader || opts.network,
+  });
   if (!gateway || (provider === 'zan' && !apiKey)) {
     return { settled: false, reason: 'gateway_not_configured' };
   }
@@ -808,7 +857,7 @@ export async function settlePayment(paymentHeader, opts = {}) {
     // Pass client x402 version (1 for X-PAYMENT, 2 for PAYMENT-SIGNATURE) to the facilitator.
     const r = await settleViaFacilitator(paymentHeader, { gateway, apiKey, challenge, x402Version: opts.x402Version });
     if (r.settled && store && nonce) store.markSpent(nonce);
-    return r;
+    return { ...r, unbound };
   }
 
   try {

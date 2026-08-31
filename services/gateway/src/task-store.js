@@ -46,6 +46,7 @@ export class PersistentTaskStore extends Map {
     this.retentionMs = retentionMs;
     this._flushTimer = null;
     this._gcTimer = null;
+    this._refIndex = new Map();
 
     if (this.persist) {
       try {
@@ -64,6 +65,53 @@ export class PersistentTaskStore extends Map {
       // the process open on its own.
       this._gcTimer = setInterval(() => this.gcPersisted(), 3600_000);
       this._gcTimer.unref?.();
+      // Rebuild the payment ref index from persisted snapshots on startup.
+      this._rebuildRefIndex();
+    }
+  }
+
+  /**
+   * Rebuild the payment ref → taskId index from persisted snapshots.
+   * Called once on startup when persistence is enabled.
+   */
+  _rebuildRefIndex() {
+    if (!this.persist) return;
+    let files;
+    try {
+      files = fs.readdirSync(this.dir);
+    } catch {
+      return;
+    }
+    for (const f of files) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        const snap = JSON.parse(fs.readFileSync(path.join(this.dir, f), 'utf8'));
+        if (snap?.taskId) {
+          this._indexPaymentRef(snap);
+        }
+      } catch {
+        // Skip unreadable files.
+      }
+    }
+    logger.info({ indexSize: this._refIndex.size }, 'task-store: rebuilt payment ref index');
+  }
+
+  /**
+   * Index a task's payment ref(s) for reverse lookup.
+   * Supports both `intent.paymentRef` and Solana tx signatures.
+   */
+  _indexPaymentRef(task) {
+    if (!task?.taskId) return;
+    const ref = task.intent?.paymentRef;
+    if (ref && typeof ref === 'string') {
+      // Index the full ref (network:txHash)
+      this._refIndex.set(ref, task.taskId);
+      // Also index just the tx hash/signature for Solana lookups
+      const colonIdx = ref.indexOf(':');
+      if (colonIdx > 0) {
+        const txOnly = ref.slice(colonIdx + 1);
+        if (txOnly) this._refIndex.set(txOnly, task.taskId);
+      }
     }
   }
 
@@ -92,10 +140,11 @@ export class PersistentTaskStore extends Map {
     }
   }
 
-  /** Write-through: keep the live reference and persist a snapshot. */
+  /** Write-through: keep the live reference, persist a snapshot, and index payment ref. */
   set(taskId, task) {
     super.set(taskId, task);
     this._writeSnapshot(task);
+    this._indexPaymentRef(task);
     return this;
   }
 
@@ -104,6 +153,55 @@ export class PersistentTaskStore extends Map {
     const live = super.get(taskId);
     if (live !== undefined) return live;
     return this._readSnapshot(taskId);
+  }
+
+  /**
+   * Look up a task by payment ref (tx signature or network:txHash).
+   * Returns the task object or undefined if not found.
+   * This enables receipt lookup by Solana tx signature when task ID is unknown.
+   */
+  getByPaymentRef(ref) {
+    if (!ref || typeof ref !== 'string') return undefined;
+    const taskId = this._refIndex.get(ref);
+    if (taskId) return this.get(taskId);
+    // Try scanning persisted snapshots if not in index (fallback for pre-index tasks)
+    if (this.persist) {
+      const task = this._scanForPaymentRef(ref);
+      if (task) {
+        this._indexPaymentRef(task);
+        return task;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Scan persisted snapshots for a task with the given payment ref.
+   * Expensive fallback for tasks created before the index existed.
+   */
+  _scanForPaymentRef(ref) {
+    if (!this.persist) return undefined;
+    let files;
+    try {
+      files = fs.readdirSync(this.dir);
+    } catch {
+      return undefined;
+    }
+    for (const f of files) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        const snap = JSON.parse(fs.readFileSync(path.join(this.dir, f), 'utf8'));
+        const taskRef = snap?.intent?.paymentRef;
+        if (!taskRef) continue;
+        // Match full ref or just the tx part
+        if (taskRef === ref) return snap;
+        const colonIdx = taskRef.indexOf(':');
+        if (colonIdx > 0 && taskRef.slice(colonIdx + 1) === ref) return snap;
+      } catch {
+        // Skip unreadable files.
+      }
+    }
+    return undefined;
   }
 
   /**

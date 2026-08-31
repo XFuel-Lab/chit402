@@ -2,7 +2,7 @@
 
 XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.
 
-`POST /v1/chat/completions` is **$0.01 USDC on Base and Solana**. `GET|POST /v1/agents/:agent_id/book` is possession-gated last-N collected spend. Signed receipt is table stakes (HMAC); SP1 settlement proof is on demand. Live routes today are Theta and Akash. Demo key `xfuel-demo` skips payment (rate-limited). Register is fail-closed: a collected HMAC-valid receipt plus an AAWP official or smart-account `agentWallet`.
+`POST /v1/chat/completions` returns a signed receipt: hub, model, amount, verify_url. Cost-plus, quoted, receipted — pay USDC on Base or Solana. `GET|POST /v1/agents/:agent_id/book` is possession-gated last-N collected spend. Signed receipt is table stakes (HMAC); SP1 settlement proof is on demand. Live routes today are Theta and Akash. Demo key `xfuel-demo` skips payment (rate-limited). Register is fail-closed: a collected HMAC-valid receipt plus an AAWP official or smart-account `agentWallet`.
 
 To learn more about the protocol design, read the [whitepaper](WHITEPAPER.md). For live endpoints and what is real vs mock today, see [runtime state](docs/RUNTIME_STATE.md). Full documentation hub: [docs/](docs/README.md).
 
@@ -65,7 +65,7 @@ curl.exe -sS -D - -X POST https://api.xfuel.app/v1/chat/completions \
   -d '{}'
 ```
 
-Unauthenticated `/v1` returns HTTP 402 ($0.01 USDC on Base and Solana). Demo key `xfuel-demo` skips payment (rate-limited). Working copy: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).
+Unauthenticated `/v1` returns HTTP 402 with payment requirements (USDC on Base or Solana). The receipt prices the next call. Demo key `xfuel-demo` skips payment (rate-limited). Working copy: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).
 
 ```
 npm install xfuel-sdk
