@@ -1,5 +1,5 @@
 {
-  "buildCommand": "cd apps/web && npm install && tsc -b && npx vite build",
+  "buildCommand": "cd apps/web && npm install && tsc -b && npx vite build && node scripts/prerender-titles.mjs",
   "outputDirectory": "apps/web/dist",
   "installCommand": "npm install --legacy-peer-deps",
   "env": {
@@ -9,10 +9,39 @@
     {
       "source": "/xfuel-icon.svg",
       "headers": [{ "key": "Content-Type", "value": "image/svg+xml; charset=utf-8" }]
+    },
+    {
+      "source": "/favicon.ico",
+      "headers": [{ "key": "Content-Type", "value": "image/x-icon" }]
+    },
+    {
+      "source": "/og-image.png",
+      "headers": [{ "key": "Content-Type", "value": "image/png" }]
+    },
+    {
+      "source": "/robots.txt",
+      "headers": [{ "key": "Content-Type", "value": "text/plain; charset=utf-8" }]
+    },
+    {
+      "source": "/sitemap.xml",
+      "headers": [{ "key": "Content-Type", "value": "application/xml; charset=utf-8" }]
+    },
+    {
+      "source": "/llms.txt",
+      "headers": [{ "key": "Content-Type", "value": "text/plain; charset=utf-8" }]
     }
   ],
   "rewrites": [
     { "source": "/xfuel-icon.svg", "destination": "/xfuel-icon.svg" },
+    { "source": "/favicon.ico", "destination": "/favicon.ico" },
+    { "source": "/og-image.png", "destination": "/og-image.png" },
+    { "source": "/robots.txt", "destination": "/robots.txt" },
+    { "source": "/sitemap.xml", "destination": "/sitemap.xml" },
+    { "source": "/llms.txt", "destination": "/llms.txt" },
+    { "source": "/agent-shop", "destination": "/agent-shop/index.html" },
+    { "source": "/book", "destination": "/book/index.html" },
+    { "source": "/book-bot", "destination": "/book-bot/index.html" },
+    { "source": "/v1", "destination": "/v1/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
