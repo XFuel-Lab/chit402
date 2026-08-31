@@ -138,8 +138,10 @@ export class UsageSettledLedger {
    * Append a collected receipt. Returns { ok, entry } or { ok:false, reason, code }.
    * Non-qualifying receipts are refused and write nothing.
    * Prefer a positive agent_id so GET|POST book can list the row.
+   * @param {object} receipt
+   * @param {{ payer?: string|null, agentId?: number|null, parentRef?: string|null }} [opts]
    */
-  append(receipt, { payer = null, agentId = null } = {}) {
+  append(receipt, { payer = null, agentId = null, parentRef = null } = {}) {
     const q = receiptQualifiesForLedger(receipt);
     if (!q.ok) return { ok: false, reason: q.reason, code: 'not_qualifying' };
 
@@ -170,6 +172,7 @@ export class UsageSettledLedger {
       recorded_at: new Date().toISOString(),
       model: route.model || null,
       hub: hubOf(route),
+      parent_ref: parentRef || null,
     };
     this._index(entry);
     return { ok: true, entry };
@@ -198,6 +201,39 @@ export class UsageSettledLedger {
   }
 
   /**
+   * Walk lineage for a task: ancestors (via parent_ref) and descendants.
+   * Returns { ancestors: [...], descendants: [...], root, self, depth }.
+   * A2A disputes need this: A→B→inference is one row-chain.
+   * @param {string} taskId
+   * @returns {{ ancestors: object[], descendants: object[], root: object|null, self: object|null, depth: number }}
+   */
+  lineageOf(taskId) {
+    const self = this.findByTask(taskId);
+    if (!self) return { ancestors: [], descendants: [], root: null, self: null, depth: 0 };
+
+    const ancestors = [];
+    let current = self;
+    while (current?.parent_ref) {
+      const parent = this.findByRef(current.parent_ref) || this.findByTask(current.parent_ref);
+      if (!parent) break;
+      ancestors.push(parent);
+      current = parent;
+    }
+    const root = ancestors.length > 0 ? ancestors[ancestors.length - 1] : self;
+
+    const descendants = [];
+    const selfRef = self.payment_ref;
+    const selfTaskId = self.task_id;
+    for (const e of this.entries) {
+      if (e.parent_ref === selfRef || e.parent_ref === selfTaskId) {
+        descendants.push(e);
+      }
+    }
+
+    return { ancestors, descendants, root, self, depth: ancestors.length };
+  }
+
+  /**
    * Prepaid-ceiling spent: sum of all collected amounts for one agent_id.
    * Demo / unmetered / collected:false never count. Not last-N limited.
    * @param {number|string} agentId
@@ -220,6 +256,43 @@ export class UsageSettledLedger {
     }
     return sum;
   }
+
+  /**
+   * Sum of collected amounts for one agent_id today (UTC midnight to now).
+   * For daily cap enforcement.
+   * @param {number|string} agentId
+   * @returns {bigint}
+   */
+  sumCollectedByAgentToday(agentId) {
+    const id = Number(agentId);
+    let sum = 0n;
+    if (!Number.isInteger(id) || id < 1) return sum;
+
+    const now = new Date();
+    const todayStart = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      0, 0, 0, 0,
+    ));
+
+    for (const e of this.entries) {
+      if (Number(e.agent_id) !== id) continue;
+      if (e.collected !== true) continue;
+      const rail = String(e.rail || '').toLowerCase();
+      if (UNMETERED_RAILS.has(rail)) continue;
+
+      const collectedAt = new Date(e.collected_at || e.recorded_at);
+      if (collectedAt < todayStart) continue;
+
+      try {
+        sum += BigInt(String(e.amount ?? '0').trim() || '0');
+      } catch {
+        /* skip malformed */
+      }
+    }
+    return sum;
+  }
 }
 
 /**
@@ -233,9 +306,10 @@ export class UsageSettledLedger {
  *   registry: { allocate: Function, get: Function },
  *   payer?: string|null,
  *   agentId?: number|string|null,
+ *   parentRef?: string|null,
  * }} deps
  */
-export function recordCollectedSpend(receipt, { ledger, registry, payer = null, agentId = null } = {}) {
+export function recordCollectedSpend(receipt, { ledger, registry, payer = null, agentId = null, parentRef = null } = {}) {
   if (!ledger || !registry || typeof registry.allocate !== 'function') {
     return { ok: false, reason: 'ledger and registry.allocate required', code: 'misconfigured' };
   }
@@ -269,6 +343,7 @@ export function recordCollectedSpend(receipt, { ledger, registry, payer = null, 
   const credited = ledger.append(receipt, {
     payer,
     agentId: identity.agent_id,
+    parentRef,
   });
   if (!credited.ok) {
     return { ok: false, reason: credited.reason, code: credited.code };

@@ -1,0 +1,65 @@
+{
+  "name": "xfuel-sidecar",
+  "version": "0.1.0",
+  "description": "XFuel sidecar — emit XFuel receipts from any OpenAI-compatible upstream, not just api.xfuel.app. System of record, not cheapest hop.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/worker.js"
+    }
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "worker",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test src/__tests__/*.test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "xfuel",
+    "ai",
+    "agents",
+    "usdc",
+    "x402",
+    "sidecar",
+    "receipt",
+    "openrouter",
+    "openai"
+  ],
+  "author": "XFuel Protocol",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XFuel-Lab/xfuel-protocol.git",
+    "directory": "packages/sidecar"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "openai": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "openai": {
+      "optional": true
+    }
+  }
+}
