@@ -107,6 +107,32 @@ export class AgentRegistry {
   }
 
   /**
+   * Rotate the possession session for an agent. The old session becomes invalid;
+   * a new session is issued. The book (UsageSettled entries) is NOT dropped —
+   * entries are tied to agent_id, not session. Possession sanity: key rotation
+   * must not drop the book.
+   *
+   * @param {number|string} agentId
+   * @param {string} oldSession - The current session (must match to rotate)
+   * @returns {{ ok: boolean, session?: string, reason?: string }}
+   */
+  rotateSession(agentId, oldSession) {
+    const id = Number(agentId);
+    const row = this.byId.get(id);
+    if (!row || !Number.isInteger(id) || id < 1) {
+      return { ok: false, reason: 'unknown agent_id' };
+    }
+    if (!oldSession || row.session !== oldSession) {
+      return { ok: false, reason: 'session mismatch' };
+    }
+    row.session = issueSession();
+    row.session_rotated_at = new Date().toISOString();
+    row.updated_at = new Date().toISOString();
+    this._save();
+    return { ok: true, session: row.session };
+  }
+
+  /**
    * Set prepaid budget Y in USDC atomic units (10000 = $0.01).
    * Null/absent clears the cap (unlimited). allocate() itself has no budget.
    * @param {number|string} agentId

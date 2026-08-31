@@ -737,6 +737,218 @@ export function buildOpenApiSpec(baseUrl = '') {
           },
         },
       },
+      '/v1/agents/{agent_id}/book/lineage/{task_id}': {
+        get: {
+          operationId: 'getBookLineage',
+          summary: 'Query lineage for a task',
+          description:
+            'Walk A→B→inference row-chain. A2A disputes need this. Returns ancestors (via parent_ref), '
+            + 'descendants, root, and self. Possession-gated.',
+          tags: ['Agents'],
+          parameters: [
+            { name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } },
+            { name: 'task_id', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            200: { description: 'Lineage for the task.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Wrong proof, unknown agent_id, or task not owned.' },
+          },
+        },
+      },
+      '/v1/agents/{agent_id}/book/policy': {
+        get: {
+          operationId: 'getBookPolicy',
+          summary: 'Get current policy for agent',
+          description: 'Returns daily_cap, model_allowlist, kill_switch. Possession-gated.',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          responses: {
+            200: { description: 'Current policy.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Wrong proof or unknown agent_id.' },
+          },
+        },
+        post: {
+          operationId: 'setBookPolicy',
+          summary: 'Set policy for agent',
+          description:
+            'Caps as rows. Set daily_cap (max $/day), model_allowlist (only these models), '
+            + 'or kill_switch (block all spend). Demo keys cannot write policy rows.',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    policy_type: { type: 'string', enum: ['daily_cap', 'model_allowlist', 'kill_switch'] },
+                    value: { description: 'Policy value (null to clear)' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: 'Policy updated.' },
+            400: { description: 'Invalid policy type or value.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Demo key or wrong proof.' },
+          },
+        },
+      },
+      '/v1/agents/{agent_id}/book/assign': {
+        get: {
+          operationId: 'listBookAssignments',
+          summary: 'List assignments for agent',
+          description: 'List all slice assignments created by this agent. Possession-gated.',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          responses: {
+            200: { description: 'List of assignments.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Wrong proof or unknown agent_id.' },
+          },
+        },
+        post: {
+          operationId: 'createBookAssignment',
+          summary: 'Create a slice assignment',
+          description:
+            'Grant read or collect access to a slice of the book to another party. '
+            + 'Slice defined by from_date, to_date, task_ids, or limit. Demo keys cannot create.',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    grant_type: { type: 'string', enum: ['read', 'collect'], default: 'read' },
+                    grantee: { type: 'string', nullable: true },
+                    slice: {
+                      type: 'object',
+                      properties: {
+                        from_date: { type: 'string', format: 'date-time' },
+                        to_date: { type: 'string', format: 'date-time' },
+                        task_ids: { type: 'array', items: { type: 'string' } },
+                        limit: { type: 'integer' },
+                      },
+                    },
+                    expires_at: { type: 'string', format: 'date-time', nullable: true },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            201: { description: 'Assignment created. Contains token for grantee access.' },
+            400: { description: 'Invalid slice or grant_type.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Demo key or wrong proof.' },
+          },
+        },
+      },
+      '/v1/agents/{agent_id}/book/assign/{assignment_id}': {
+        delete: {
+          operationId: 'revokeBookAssignment',
+          summary: 'Revoke an assignment',
+          description: 'Revoke a previously created assignment. Possession-gated.',
+          tags: ['Agents'],
+          parameters: [
+            { name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } },
+            { name: 'assignment_id', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            200: { description: 'Assignment revoked.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Wrong proof or unknown agent_id.' },
+            404: { description: 'Assignment not found.' },
+          },
+        },
+      },
+      '/v1/book/slice': {
+        get: {
+          operationId: 'readBookSlice',
+          summary: 'Read a slice by assignment token',
+          description:
+            'Read entries from a slice using an assignment token. Token IS the access credential. '
+            + 'Does not require possession — the token was issued by the possession holder.',
+          tags: ['Agents'],
+          parameters: [{ name: 'token', in: 'query', required: true, schema: { type: 'string' } }],
+          responses: {
+            200: { description: 'Slice entries.' },
+            401: { description: 'Token required.' },
+            403: { description: 'Invalid or expired token.' },
+          },
+        },
+      },
+      '/v1/agents/{agent_id}/book/dispute': {
+        get: {
+          operationId: 'listBookDisputes',
+          summary: 'List disputes for agent',
+          description: 'List all disputes filed by this agent. Possession-gated.',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          responses: {
+            200: { description: 'List of disputes.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Wrong proof or unknown agent_id.' },
+          },
+        },
+        post: {
+          operationId: 'fileBookDispute',
+          summary: 'File a dispute',
+          description:
+            'File a dispute for a task. claim_type: output_missing, wrong_model, double_charge. '
+            + 'Rechecks payment binding + output hash. Outcome: refund, partial, or stand. '
+            + 'For A2A, lineage is the evidence pack. Demo keys cannot file disputes.',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['task_id', 'claim_type'],
+                  properties: {
+                    task_id: { type: 'string' },
+                    claim_type: { type: 'string', enum: ['output_missing', 'wrong_model', 'double_charge'] },
+                    evidence: { type: 'object', description: 'e.g. { requested_model: "..." } for wrong_model' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            201: { description: 'Dispute filed and auto-adjudicated if possible.' },
+            400: { description: 'Invalid claim_type or missing task_id.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Demo key or wrong proof.' },
+          },
+        },
+      },
+      '/v1/agents/{agent_id}/book/rotate': {
+        post: {
+          operationId: 'rotateBookSession',
+          summary: 'Rotate session',
+          description:
+            'Rotate the possession session. Old session becomes invalid. Book (entries) stays — '
+            + 'tied to agent_id, not session. Possession sanity: key rotation must not drop the book.',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          responses: {
+            200: { description: 'New session issued.' },
+            400: { description: 'Session mismatch.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Demo key or wrong proof.' },
+          },
+        },
+      },
     },
   };
 

@@ -83,6 +83,9 @@ function rowOf(entry) {
     if (entry.model) row.route.model = entry.model;
     if (entry.hub) row.route.hub = entry.hub;
   }
+  if (entry.parent_ref) {
+    row.parent_ref = entry.parent_ref;
+  }
   return row;
 }
 
@@ -327,6 +330,58 @@ export function setAgentBudget(agentId, claim = {}, { registry, verify } = {}) {
     return { status: 403, body: null };
   }
   return { status: 200, identity: result.identity };
+}
+
+/**
+ * Query lineage for a task. Possession-gated: only if the task belongs to the agent_id.
+ *
+ * @param {number|string} agentId
+ * @param {string} taskId
+ * @param {{ session?: string|null, proof?: string|null }} claim
+ * @param {{
+ *   ledger: { findByTask: Function, lineageOf: Function },
+ *   verify: Function,
+ * }} deps
+ */
+export function queryLineage(agentId, taskId, claim = {}, { ledger, verify } = {}) {
+  const session = claim.session ? String(claim.session) : null;
+  const proof = claim.proof ? String(claim.proof) : null;
+  if (!session && !proof) {
+    return { status: 401, body: null };
+  }
+
+  const id = Number(agentId);
+  if (!Number.isInteger(id) || id < 1) {
+    return { status: 403, body: null };
+  }
+  if (typeof verify !== 'function' || !ledger) {
+    return { status: 403, body: null };
+  }
+
+  const window = clampBookLimit(50);
+  const checked = verify({ agentId: id, window, session, proof });
+  if (!checked || checked.checked !== true || checked.valid !== true) {
+    return { status: 403, body: null };
+  }
+
+  const entry = ledger.findByTask(String(taskId));
+  if (!entry || entry.agent_id !== id) {
+    return { status: 403, body: null };
+  }
+
+  const lineage = ledger.lineageOf(String(taskId));
+  return {
+    status: 200,
+    body: {
+      agent_id: id,
+      task_id: String(taskId),
+      self: lineage.self ? rowOf(lineage.self) : null,
+      ancestors: lineage.ancestors.map(rowOf),
+      descendants: lineage.descendants.map(rowOf),
+      root: lineage.root ? rowOf(lineage.root) : null,
+      depth: lineage.ancestors.length,
+    },
+  };
 }
 
 /**
