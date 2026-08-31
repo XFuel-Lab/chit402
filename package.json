@@ -112,7 +112,7 @@
     "@vitejs/plugin-react": "^5.1.4",
     "autoprefixer": "^10.5.4",
     "chai": "^4.3.10",
-    "cypress": "^15.20.0",
+    "cypress": "^15.21.1",
     "dotenv": "^17.2.3",
     "eslint": "^10.8.1",
     "eslint-plugin-react-hooks": "^7.0.1",
