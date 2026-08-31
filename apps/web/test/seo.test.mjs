@@ -103,3 +103,22 @@ test('README first paragraph leads with the book', () => {
   assert.doesNotMatch(firstPara, /Not a smart router/);
   assert.doesNotMatch(firstPara, /Not a model shop/);
 });
+
+import { existsSync } from 'node:fs';
+
+test('prerendered money pages have unique crawler titles (after build)', { skip: !existsSync(join(root, 'dist')) }, () => {
+  const expectedTitles = {
+    'agent-shop': 'The till for an agent shop | XFuel',
+    'book': 'The book: this agent spent Y on this job | XFuel',
+    'book-bot': 'Paste this. The shop gets a till | XFuel',
+    'v1': 'Pay /v1/chat/completions in $0.01 USDC | XFuel',
+  };
+  
+  for (const [route, expectedTitle] of Object.entries(expectedTitles)) {
+    const filePath = join(root, 'dist', route, 'index.html');
+    assert.ok(existsSync(filePath), `${route}/index.html exists`);
+    const content = readFileSync(filePath, 'utf8');
+    const title = content.match(/<title>([^<]*)<\/title>/i)?.[1] ?? '';
+    assert.equal(title, expectedTitle, `/${route} has correct crawler title`);
+  }
+});
