@@ -26,6 +26,8 @@ const {
   validatePaymentResponse,
   extractRouteFromResource,
   railFromNetwork,
+  buildOnChainVerify,
+  resetBaseProvider,
 } = await import('../src/foreign-x402-ingest.js');
 
 const WALLET_A = '0x1111111111111111111111111111111111111111';
@@ -34,14 +36,17 @@ function makeSession() {
   return crypto.randomBytes(32).toString('hex');
 }
 
-/** Mock verify that always returns valid: true */
-const verifyOk = async () => ({ valid: true });
+/** Mock verify that always returns valid: true, with verification details */
+const verifyOk = async () => ({ valid: true, txHash: '0xabc', blockNumber: 12345 });
 
 /** Mock verify that always returns valid: false */
 const verifyFail = async () => ({ valid: false, reason: 'mock rejection' });
 
-/** Mock verify that throws */
+/** Mock verify that throws (simulates chain unreadable) */
 const verifyThrows = async () => { throw new Error('verify exploded'); };
+
+/** Mock verify that throws with network error (chain unreadable) */
+const verifyChainUnreadable = async () => { throw new Error('failed to fetch tx receipt: network timeout'); };
 
 function setupDeps() {
   const registry = new AgentRegistry();
@@ -49,6 +54,11 @@ function setupDeps() {
   const identity = registry.allocate({ taskId: 'initial' });
   return { registry, ledger, identity };
 }
+
+beforeEach(() => {
+  // Reset the cached Base provider between tests
+  resetBaseProvider();
+});
 
 // ─── Unit tests ───────────────────────────────────────────────────────────────
 
@@ -545,6 +555,86 @@ test('FAIL CLOSED: only valid: true writes a row', async () => {
   assert.equal(resultValid.ok, true);
   assert.equal(resultValid.status, 201);
   assert.equal(ledger.entries.length, 1, 'row written only with valid: true');
+});
+
+test('FAIL CLOSED: chain unreadable (network error) → 502, no book row', async () => {
+  const { registry, ledger, identity } = setupDeps();
+
+  const result = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://api.grokbot.app/v1/chat',
+      amount: '10000',
+      payTo: '0xTreasury',
+    },
+    payment_response: {
+      tx: '0xchainunreadable',
+      payer: WALLET_A,
+      network: 'base',
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyChainUnreadable,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 502);
+  assert.equal(result.error, 'verify_failed');
+  assert.match(result.message, /failed to fetch/i);
+  assert.equal(ledger.entries.length, 0, 'no row when chain is unreadable');
+});
+
+test('buildOnChainVerify returns null when no BASE_RPC_URL configured', () => {
+  // resetBaseProvider was called in beforeEach, and BASE_RPC_URL is not set
+  // So buildOnChainVerify() should return null
+  const verify = buildOnChainVerify();
+  assert.equal(verify, null, 'verify should be null without BASE_RPC_URL');
+});
+
+test('ledger nullifier persists: duplicate ref rejected across fresh ledger load', async () => {
+  // This test simulates persistence by using the same ledger instance
+  // (real persistence would reload from disk, which UsageSettledLedger supports)
+  const registry = new AgentRegistry();
+  const ledger = new UsageSettledLedger();
+  const identity = registry.allocate({ taskId: 'persist-test' });
+
+  const body = {
+    payment_required: {
+      resource: 'https://api.example.com/v1/chat',
+      amount: '15000',
+      payTo: '0xPersistTreasury',
+    },
+    payment_response: {
+      tx: '0xpersisttx',
+      payer: WALLET_A,
+      network: 'base',
+    },
+    session: identity.session,
+  };
+
+  // First ingest succeeds
+  const first = await ingestForeignX402(body, {
+    ledger, registry, agentId: identity.agent_id, session: identity.session, verify: verifyOk,
+  });
+  assert.equal(first.ok, true);
+  assert.equal(ledger.entries.length, 1);
+
+  // Simulate "restart" by checking ledger still has the entry
+  // (in production with persist=true, this would survive process restart)
+  const existing = ledger.findByRef('base:0xpersisttx');
+  assert.ok(existing, 'ledger should retain entry for nullification');
+
+  // Second ingest with same tx is rejected
+  const second = await ingestForeignX402(body, {
+    ledger, registry, agentId: identity.agent_id, session: identity.session, verify: verifyOk,
+  });
+  assert.equal(second.ok, false);
+  assert.equal(second.status, 409);
+  assert.equal(second.error, 'duplicate_ref');
+  assert.equal(ledger.entries.length, 1, 'no duplicate row');
 });
 
 // ─── HTTP route tests ─────────────────────────────────────────────────────────

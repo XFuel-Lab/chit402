@@ -37,7 +37,7 @@ import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger } from './usage-settled.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget } from './agent-book.js';
-import { ingestForeignX402, buildOnChainVerify } from './foreign-x402-ingest.js';
+import { ingestForeignX402, buildOnChainVerify, getBaseProvider } from './foreign-x402-ingest.js';
 import { aawpReaders } from './agent-wallet.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
@@ -2077,6 +2077,7 @@ export function createApp() {
   // Requires possession (session), the 402 payment required, and payment response.
   // Demo keys never write. HMAC on foreign row means "we recorded this."
   // FAIL CLOSED: verify on-chain required — no row without verification.
+  // Uses Base provider (config.settlement.rpcUrl / BASE_RPC_URL) to read USDC Transfer.
   app.post('/v1/agents/:agent_id/book/ingest', async (req, res) => {
     try {
       const body = req.body || {};
@@ -2084,13 +2085,9 @@ export function createApp() {
       const apiKey = req.headers['x-api-key'] || null;
       const isDemo = apiKey === 'xfuel-demo' || String(apiKey).startsWith('xfuel-demo');
 
-      // Build verify lazily — provider may not be initialized at app creation time
-      let verify = null;
-      try {
-        verify = buildOnChainVerify(getProvider());
-      } catch {
-        // Provider not initialized — verify stays null, ingestForeignX402 will reject
-      }
+      // Build verify from Base provider (reads USDC Transfer events on-chain).
+      // If BASE_RPC_URL not configured, verify is null → ingestForeignX402 returns 502.
+      const verify = buildOnChainVerify();
 
       const result = await ingestForeignX402(body, {
         ledger: usageSettled,

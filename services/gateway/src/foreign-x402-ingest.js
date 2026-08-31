@@ -18,6 +18,7 @@
 import crypto from 'crypto';
 import { ethers } from 'ethers';
 import logger from './logger.js';
+import config from './config.js';
 
 /** ERC-20 Transfer event topic (keccak256 of Transfer(address,address,uint256)) */
 const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -52,15 +53,49 @@ export function isEvmNetwork(network) {
   return !SOLANA_NETWORKS.has(n) && !n.startsWith('solana');
 }
 
+/** Cached Base provider for on-chain verification. Lazily created. */
+let baseProvider = null;
+
+/**
+ * Get or create the Base provider for on-chain USDC verification.
+ * Uses config.settlement.rpcUrl (BASE_RPC_URL env var).
+ * Returns null if no RPC URL is configured.
+ */
+export function getBaseProvider() {
+  if (baseProvider) return baseProvider;
+
+  const rpcUrl = config.settlement?.rpcUrl;
+  if (!rpcUrl) {
+    logger.warn('foreign-x402: BASE_RPC_URL not configured — on-chain verification unavailable');
+    return null;
+  }
+
+  try {
+    baseProvider = new ethers.JsonRpcProvider(rpcUrl, undefined, {
+      staticNetwork: true,
+      batchMaxCount: 1,
+    });
+    logger.info({ rpcUrl: rpcUrl.replace(/\/\/[^@]+@/, '//***@') }, 'foreign-x402: Base provider initialized');
+    return baseProvider;
+  } catch (err) {
+    logger.error({ err: err.message }, 'foreign-x402: failed to create Base provider');
+    return null;
+  }
+}
+
 /**
  * Build a verify function that reads the actual USDC Transfer event on-chain.
  * Verifies: tx succeeded, Transfer from payer → payTo for >= amount on USDC contract.
  *
- * @param {{ getTransactionReceipt: Function }} provider - EVM provider
+ * If no provider is passed, uses the Base provider from config.settlement.rpcUrl.
+ *
+ * @param {{ getTransactionReceipt: Function }|null} [provider] - EVM provider (optional)
  * @returns {Function|null} verify function for ingestForeignX402, or null if unavailable
  */
-export function buildOnChainVerify(provider) {
-  if (!provider || typeof provider.getTransactionReceipt !== 'function') {
+export function buildOnChainVerify(provider = null) {
+  // Use provided provider or fall back to Base provider from config
+  const p = provider || getBaseProvider();
+  if (!p || typeof p.getTransactionReceipt !== 'function') {
     return null;
   }
 
@@ -94,7 +129,7 @@ export function buildOnChainVerify(provider) {
 
     let receipt;
     try {
-      receipt = await provider.getTransactionReceipt(txHash);
+      receipt = await p.getTransactionReceipt(txHash);
     } catch (err) {
       throw new Error(`failed to fetch tx receipt: ${err.message}`);
     }
@@ -157,6 +192,13 @@ export function buildOnChainVerify(provider) {
       verifiedAmount: transferredAmount.toString(),
     };
   };
+}
+
+/**
+ * Reset the Base provider (for testing).
+ */
+export function resetBaseProvider() {
+  baseProvider = null;
 }
 
 /**
@@ -529,6 +571,8 @@ export default {
   buildForeignReceipt,
   generateForeignTaskId,
   buildOnChainVerify,
+  getBaseProvider,
+  resetBaseProvider,
   railFromNetwork,
   isEvmNetwork,
 };
