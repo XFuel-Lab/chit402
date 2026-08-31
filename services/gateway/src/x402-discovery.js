@@ -643,7 +643,10 @@ export function buildOpenApiSpec(baseUrl = '') {
         + 'POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. '
         + 'USDC on Base or Solana. POST /a2a-message is the same paid door. '
         + 'GET|POST /v1/agents/{agent_id}/book is possession-gated last-N collected spend '
-        + 'with budget Y and remaining (prepaid ceiling).',
+        + 'with budget Y and remaining (prepaid ceiling). '
+        + 'Private Spend: registered sessions get vendor_blind by default. '
+        + 'Replaceable Signer: receipts carry dual signatures (primary + co_signature); '
+        + 'verify offline via docs/VERIFY_ALGORITHM.md.',
       'x-guidance':
         'XFuel is the book: this agent spent Y on this job; you hold hub, model, and amount. '
         + 'No account. No API key. A wallet that can pay the 402 is enough. '
@@ -656,6 +659,8 @@ export function buildOpenApiSpec(baseUrl = '') {
         + 'it binds an agentWallet to an integer agent_id using a collected HMAC-valid receipt. '
         + 'GET|POST /v1/agents/{agent_id}/book is a possession-gated last-N collected '
         + 'spend pack with budget Y / remaining for that agent_id — not a public index. '
+        + 'Private Spend is default for registered sessions (X-XFuel-Session header). '
+        + 'Receipts carry dual signatures; co_signature enables verify if XFuel disappears. '
         + 'POST /task-request is a lower-level M2M alternative that returns task_id for '
         + 'polling — do not treat it as the public door.',
     },
