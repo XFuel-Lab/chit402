@@ -15,7 +15,7 @@ const ROUTE_CONTENT = {
   '/agent-shop': {
     title: 'The till for an agent shop | XFuel',
     h1: 'Your SEO bot spent it. You hold the book.',
-    lede: 'XFuel is the till for an agent shop. Paste https://api.xfuel.app/v1 as the OpenAI baseURL, pay the HTTP 402 in $0.01 USDC on Base or Solana, and you hold the book. We are the till, not the Chief of SEO. Show the client the book, not a screenshot.',
+    lede: 'XFuel is the till for an agent shop. Paste https://api.xfuel.app/v1 as the OpenAI baseURL, pay the HTTP 402 in USDC on Base or Solana (cost-plus, quoted, receipted), and you hold the book. We are the till, not the Chief of SEO. Show the client the book, not a screenshot.',
   },
   '/book': {
     title: 'The book: this agent spent Y on this job | XFuel',
@@ -28,9 +28,9 @@ const ROUTE_CONTENT = {
     lede: 'Paste this prompt into Grok, ChatGPT, or any agent. It interviews your stack once, then every job you run records agent / job / $Y / settled y/n by pointing your OpenAI baseURL at https://api.xfuel.app/v1.',
   },
   '/v1': {
-    title: 'Pay /v1/chat/completions in $0.01 USDC | XFuel',
+    title: 'Pay /v1/chat/completions | XFuel',
     h1: 'OpenAI drop-in. Wallet pays. You hold the book.',
-    lede: 'Exact product: baseURL https://api.xfuel.app/v1. POST /v1/chat/completions is $0.01 USDC on Base and Solana. Without payment or a demo key, the gateway returns HTTP 402.',
+    lede: 'Exact product: baseURL https://api.xfuel.app/v1. POST /v1/chat/completions is cost-plus, quoted, receipted — USDC on Base and Solana. Without payment or a demo key, the gateway returns HTTP 402.',
   },
 };
 

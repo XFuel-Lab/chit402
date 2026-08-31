@@ -33,11 +33,11 @@ function assertPaidDoorCopy(label, text) {
   assert.doesNotMatch(text, /crypto control plane/i, `${label} must not lead with crypto control plane`);
   assert.doesNotMatch(text, /Not a smart router/, `${label} must not say Not a smart router`);
   assert.doesNotMatch(text, /Not a model shop/, `${label} must not say Not a model shop`);
+  assert.doesNotMatch(text, /\$0\.01/, `${label} must not lead with $0.01 price`);
   assert.match(text, /the book/i, `${label} leads with the book`);
   assert.match(text, /hub, model, and amount/i, `${label} names hub, model, and amount`);
-  assert.match(text, /\$0\.01 USDC/, `${label} names $0.01 USDC`);
-  assert.match(text, /Base and Solana/, `${label} names Base and Solana`);
-  assert.match(text, /\/v1\/chat\/completions/, `${label} names POST /v1/chat/completions`);
+  assert.match(text, /USDC/i, `${label} names USDC`);
+  assert.match(text, /Base and Solana/i, `${label} names Base and Solana`);
 }
 
 test('homepage meta description describes paid /v1 and does not say unmetered', () => {
@@ -52,7 +52,7 @@ test('homepage twitter:description matches the paid /v1 door', () => {
   assertPaidDoorCopy('twitter:description', metaContent(html, 'name', 'twitter:description'));
 });
 
-test('shared layout and homepage copy do not call paid /v1 unmetered or a free path', () => {
+test('shared layout and homepage copy do not call paid /v1 unmetered, a free path, or lead with $0.01', () => {
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
   const home = readFileSync(join(root, 'src/pages/Home.tsx'), 'utf8');
   const pricing = readFileSync(join(root, 'src/pages/Pricing.tsx'), 'utf8');
@@ -64,7 +64,9 @@ test('shared layout and homepage copy do not call paid /v1 unmetered or a free p
     assert.doesNotMatch(source, /unmetered/i, `${label} must not say unmetered`);
     assert.doesNotMatch(source, /free path/i, `${label} must not say free path`);
     assert.doesNotMatch(source, /Base \(primary\)/i, `${label} must not rank Base as primary`);
-    assert.match(source, /\$0\.01 USDC on Base and Solana/, `${label} names the public door`);
+    assert.doesNotMatch(source, /\$0\.01/, `${label} must not lead with $0.01 price`);
+    assert.match(source, /USDC on Base (and|or) Solana/i, `${label} names USDC rails`);
+    assert.match(source, /cost-plus.*quoted.*receipted/i, `${label} uses cost-plus language`);
   }
 });
 
@@ -111,7 +113,7 @@ test('prerendered money pages have unique crawler titles (after build)', { skip:
     'agent-shop': 'The till for an agent shop | XFuel',
     'book': 'The book: this agent spent Y on this job | XFuel',
     'book-bot': 'Paste this. The shop gets a till | XFuel',
-    'v1': 'Pay /v1/chat/completions in $0.01 USDC | XFuel',
+    'v1': 'Pay /v1/chat/completions | XFuel',
   };
   
   for (const [route, expectedTitle] of Object.entries(expectedTitles)) {
@@ -120,5 +122,6 @@ test('prerendered money pages have unique crawler titles (after build)', { skip:
     const content = readFileSync(filePath, 'utf8');
     const title = content.match(/<title>([^<]*)<\/title>/i)?.[1] ?? '';
     assert.equal(title, expectedTitle, `/${route} has correct crawler title`);
+    assert.doesNotMatch(content, /\$0\.01/, `/${route} must not contain $0.01`);
   }
 });

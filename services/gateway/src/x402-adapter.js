@@ -77,7 +77,7 @@ const TASK_REQUEST_BODY_SCHEMA = {
     },
     amount: {
       type: 'string',
-      description: 'Gross task value in USDC base units (6 decimals); min 10000 ($0.01)',
+      description: 'Gross task value in USDC base units (6 decimals)',
     },
     sender: {
       type: 'string',
@@ -481,11 +481,12 @@ export function buildPaymentChallenge(p, opts = {}) {
   // Lead with "OpenAI-compatible" for Bazaar search discoverability.
   const solanaEnabled = p.solana?.enabled && p.solana?.payTo;
   const description = p.description || (solanaEnabled
-    ? 'OpenAI-compatible paid inference via x402 USDC on Base and Solana ($0.01). ' +
+    ? 'OpenAI-compatible paid inference via x402 USDC on Base and Solana. Cost-plus, quoted, receipted. ' +
       'POST /v1/chat/completions is the recommended surface. Returns signed receipt + public verify_url. ' +
       'Paying this host is real mainnet USDC.'
-    : 'OpenAI-compatible paid inference via x402 USDC on Base ($0.01). POST /v1/chat/completions is the ' +
-      'recommended surface. Returns signed receipt + public verify_url. Paying this host is real mainnet USDC.');
+    : 'OpenAI-compatible paid inference via x402 USDC on Base. Cost-plus, quoted, receipted. ' +
+      'POST /v1/chat/completions is the recommended surface. Returns signed receipt + public verify_url. ' +
+      'Paying this host is real mainnet USDC.');
 
   const includeBazaar = p.includeBazaar !== false;
   let bazaarOpts;

@@ -58,6 +58,8 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
     '/v1/book/slice',
     '/v1/agents/{agent_id}/book/dispute',
     '/v1/agents/{agent_id}/book/rotate',
+    '/receipt/{taskId}',
+    '/receipt/by-tx',
   ]);
   assert.equal(spec.paths['/v1/agents/register'].post['x-payment-info'], undefined);
   assert.equal(spec.paths['/v1/agents/{agent_id}/book'].post['x-payment-info'], undefined);

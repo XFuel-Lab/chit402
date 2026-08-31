@@ -54,7 +54,7 @@ import { getFloatManager } from './provider-float.js';
  *   POST  /task-request    Submit an AI intent (COMPUTE_BID, INFERENCE_REQUEST, …)
  *   POST  /task-quote      Price a task (USDC via x402 default; legacy tfuel optional)
  *   GET   /prove-result    Retrieve ZK settlement proof for a completed task
- *   POST  /a2a-message     A2A card URL — same $0.01 x402 + chat as /v1
+ *   POST  /a2a-message     A2A card URL — same x402 + chat as /v1
  *   POST  /a2a-settle-fair-exchange  Settle an A2A bid via Fair Exchange (PAS signature)
  *   GET   /task-status     Query task status / ProofOutcome
  *   POST  /v1/agents/register  Bind agentWallet + paid receipt → integer agent_id
@@ -754,7 +754,7 @@ export function createApp() {
 
   // Apply rate-limit + auth to API routes. /task-request and /a2a-message are
   // rate-limited but NOT auth-gated: unauth callers must get HTTP 402 (not 401).
-  // /a2a-message reuses the /v1 chat handshake + fulfillment (same $0.01).
+  // /a2a-message reuses the /v1 chat handshake + fulfillment (same x402 floor).
   app.use('/task-request',  rateLimit);
   app.use('/task-quote',    rateLimit, authenticate);
   app.use('/prove-result',  rateLimit, authenticate);
@@ -1533,7 +1533,7 @@ export function createApp() {
     };
   }
 
-  // POST /a2a-message — paid door (same $0.01 x402 + chat fulfillment as /v1).
+  // POST /a2a-message — paid door (same x402 + chat fulfillment as /v1).
   // Registered in registerOpenAIRoutes. Legacy CosmWasm/IBC escrow handler removed.
   // recordA2AMessage remains for register's postA2A side-effect only.
 
@@ -2501,7 +2501,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 

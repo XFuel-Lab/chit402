@@ -20,7 +20,7 @@ const response = await client.chat.completions.create({
 
 export default function GatewayV1() {
   useEffect(() => {
-    document.title = 'Pay /v1/chat/completions in $0.01 USDC | XFuel';
+    document.title = 'Pay /v1/chat/completions | XFuel';
   }, []);
 
   return (
@@ -48,7 +48,7 @@ export default function GatewayV1() {
         <section className="docs-section">
           <h2>How does HTTP 402 / x402 work on api.xfuel.app?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
-            POST <code>/v1/chat/completions</code> is $0.01 USDC on Base and Solana. Without
+            POST <code>/v1/chat/completions</code> is cost-plus, quoted, receipted — USDC on Base and Solana. Without
             payment or a demo key, the gateway returns HTTP 402 Payment Required. Pay the 402
             with a wallet that holds USDC on Base or Solana. Demo key <code>xfuel-demo</code>{' '}
             skips payment (15/min, 150/day per IP). Paying this host moves real mainnet USDC.

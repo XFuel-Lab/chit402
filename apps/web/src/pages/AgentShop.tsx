@@ -31,8 +31,8 @@ export default function AgentShop() {
           <h1>Your SEO bot spent it. You hold the book.</h1>
           <p>
             XFuel is the till for an agent shop. Paste{' '}
-            <a href={API_V1}>{API_V1}</a> as the OpenAI baseURL, pay the HTTP 402 in $0.01 USDC
-            on Base or Solana, and you hold the book. We are the till, not the Chief of SEO.
+            <a href={API_V1}>{API_V1}</a> as the OpenAI baseURL, pay the HTTP 402 in USDC
+            on Base or Solana (cost-plus, quoted, receipted), and you hold the book. We are the till, not the Chief of SEO.
             Show the client the book, not a screenshot. Demo key <code>xfuel-demo</code> is free
             (15/min, 150/day). HMAC-signed receipts are table stakes.
             Book is possession-gated <code>GET|POST /v1/agents/:agent_id/book</code>.
