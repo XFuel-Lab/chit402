@@ -50,9 +50,11 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
     '/task-request',
     '/v1/agents/register',
     '/v1/agents/{agent_id}/book',
+    '/v1/agents/{agent_id}/book/ingest',
   ]);
   assert.equal(spec.paths['/v1/agents/register'].post['x-payment-info'], undefined);
   assert.equal(spec.paths['/v1/agents/{agent_id}/book'].post['x-payment-info'], undefined);
+  assert.equal(spec.paths['/v1/agents/{agent_id}/book/ingest'].post['x-payment-info'], undefined);
   const chat = spec.paths['/v1/chat/completions'].post;
   assert.ok(chat.responses[402] || chat.responses['402']);
   assert.equal(chat['x-payment-info'].price.amount, '0.01');

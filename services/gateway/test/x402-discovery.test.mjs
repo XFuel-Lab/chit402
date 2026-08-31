@@ -140,12 +140,15 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
     '/task-request',
     '/v1/agents/register',
     '/v1/agents/{agent_id}/book',
-  ], 'chat completions is the public door; a2a is same $0.01; task-request is M2M; register is identity; book is possession-gated');
+    '/v1/agents/{agent_id}/book/ingest',
+  ], 'chat completions is the public door; a2a is same $0.01; task-request is M2M; register is identity; book is possession-gated; ingest is foreign x402');
   assert.equal(spec.paths['/v1/agents/register'].post['x-payment-info'], undefined,
     'register is not the $0.01 paid door');
   assert.equal(spec.paths['/v1/agents/{agent_id}/book'].post['x-payment-info'], undefined,
     'book is not the $0.01 paid door');
   assert.equal(spec.paths['/v1/agents/{agent_id}/book'].get['x-payment-info'], undefined);
+  assert.equal(spec.paths['/v1/agents/{agent_id}/book/ingest'].post['x-payment-info'], undefined,
+    'ingest is not the $0.01 paid door');
 
   const chat = spec.paths['/v1/chat/completions'].post;
   const a2a = spec.paths['/a2a-message'].post;
