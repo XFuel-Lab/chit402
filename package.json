@@ -96,7 +96,7 @@
     "@nomiclabs/hardhat-etherscan": "^3.1.8",
     "@openzeppelin/contracts": "^5.6.1",
     "@openzeppelin/contracts-upgradeable": "^5.6.1",
-    "@openzeppelin/hardhat-upgrades": "^3.9.1",
+    "@openzeppelin/hardhat-upgrades": "^4.1.0",
     "@testing-library/dom": "^10.4.1",
     "@typechain/ethers-v6": "^0.5.1",
     "@typechain/hardhat": "^9.1.0",
