@@ -39,8 +39,9 @@ function truncateDescription(text, maxLen = 155) {
   return text.slice(0, maxLen - 3).replace(/\s+\S*$/, '') + '...';
 }
 
-function transformHtml(html, { title, h1, lede }) {
+function transformHtml(html, route, { title, h1, lede }) {
   const description = truncateDescription(lede);
+  const canonicalUrl = `https://www.xfuel.app${route}`;
   
   let result = html
     .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`)
@@ -65,17 +66,16 @@ function transformHtml(html, { title, h1, lede }) {
       `<meta name="twitter:description" content="${description}" />`
     );
 
+  const canonicalLink = `<link rel="canonical" href="${canonicalUrl}" />`;
+  result = result.replace(/<\/head>/, `  ${canonicalLink}\n</head>`);
+
   const crawlerBlock = `
   <noscript>
     <article style="max-width:640px;margin:2rem auto;padding:1rem;font-family:system-ui,sans-serif;">
       <h1>${h1}</h1>
       <p>${lede}</p>
     </article>
-  </noscript>
-  <div id="crawler-content" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true">
-    <h1>${h1}</h1>
-    <p>${lede}</p>
-  </div>`;
+  </noscript>`;
 
   result = result.replace(
     /<div id="root"><\/div>/,
@@ -95,7 +95,7 @@ for (const [route, content] of Object.entries(ROUTE_CONTENT)) {
     mkdirSync(routeDir, { recursive: true });
   }
   
-  const newHtml = transformHtml(indexHtml, content);
+  const newHtml = transformHtml(indexHtml, route, content);
   writeFileSync(routeHtml, newHtml);
   console.log(`✓ Generated ${route}/index.html`);
   console.log(`  Title: "${content.title}"`);
