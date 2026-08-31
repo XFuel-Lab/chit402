@@ -36,7 +36,10 @@ import { XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger } from './usage-settled.js';
-import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget } from './agent-book.js';
+import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage } from './agent-book.js';
+import { BookPolicyStore, POLICY_TYPES, enforcePolicy } from './book-policy.js';
+import { BookAssignmentStore, GRANT_TYPES, readSliceByToken } from './book-assign.js';
+import { BookDisputeStore, CLAIM_TYPES, OUTCOME_TYPES, fileAndAdjudicate } from './book-dispute.js';
 import { ingestForeignX402, buildOnChainVerify, getBaseProvider } from './foreign-x402-ingest.js';
 import { aawpReaders } from './agent-wallet.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
@@ -277,6 +280,20 @@ const LLMS_TXT = `# XFuel Protocol
   addresses are post-TGE, not live.
 - GET  /stats             : public-safe usage.
 
+## Book (possession-gated spend ledger)
+
+The book is NOT a router. GET /v1/agents/:agent_id/book is the product.
+POST /v1/chat/completions is bait. A holder can prove: lineage, policy, assignment, dispute.
+
+- GET|POST /v1/agents/:agent_id/book : last-N collected spend + budget Y / remaining. Possession-gated.
+- GET /v1/agents/:agent_id/book/lineage/:task_id : walk A→B→inference. A2A disputes need this.
+- GET|POST /v1/agents/:agent_id/book/policy : caps as rows. daily_cap, model_allowlist, kill_switch.
+- GET|POST /v1/agents/:agent_id/book/assign : grant read/collect of a slice to another owner.
+- GET /v1/book/slice?token= : read a slice by assignment token (no possession needed).
+- POST /v1/agents/:agent_id/book/dispute : file a dispute. claim_type: output_missing, wrong_model, double_charge.
+- POST /v1/agents/:agent_id/book/rotate : rotate session. Old session invalid, book stays (tied to agent_id).
+- POST /v1/agents/:agent_id/book/ingest : record agent's arbitrary x402 spend to a foreign endpoint.
+
 ## MCP
 
 - npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
@@ -510,6 +527,18 @@ export function createApp() {
     persist: !!config.taskStore?.persist,
   });
   const usageSettled = new UsageSettledLedger({
+    dir: agentsDir,
+    persist: !!config.taskStore?.persist,
+  });
+  const bookPolicy = new BookPolicyStore({
+    dir: agentsDir,
+    persist: !!config.taskStore?.persist,
+  });
+  const bookAssignments = new BookAssignmentStore({
+    dir: agentsDir,
+    persist: !!config.taskStore?.persist,
+  });
+  const bookDisputes = new BookDisputeStore({
     dir: agentsDir,
     persist: !!config.taskStore?.persist,
   });
@@ -2112,6 +2141,313 @@ export function createApp() {
     }
   });
 
+  // GET /v1/agents/:agent_id/book/lineage/:task_id — Possession-gated lineage query
+  // Per whitepaper: A→B→inference is one row-chain. A2A disputes need this.
+  app.get('/v1/agents/:agent_id/book/lineage/:task_id', (req, res) => {
+    try {
+      const claim = claimFromRequest(req);
+      const result = queryLineage(req.params.agent_id, req.params.task_id, claim, {
+        ledger: usageSettled,
+        verify: verifyBook,
+      });
+      if (result.body == null) {
+        return res.status(result.status).end();
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'book lineage error');
+      return res.status(403).end();
+    }
+  });
+
+  // POST /v1/agents/:agent_id/book/policy — Possession-gated policy management
+  // Set daily_cap, model_allowlist, kill_switch. Demo keys never write policy rows.
+  app.post('/v1/agents/:agent_id/book/policy', (req, res) => {
+    try {
+      const body = req.body || {};
+      const claim = claimFromRequest(req);
+      const apiKey = req.headers['x-api-key'] || null;
+      const isDemo = apiKey === 'xfuel-demo' || String(apiKey).startsWith('xfuel-demo');
+
+      if (isDemo) {
+        return res.status(403).json({ error: 'demo_rejected', message: 'Demo keys cannot write policy rows' });
+      }
+
+      const session = claim.session;
+      const proof = claim.proof;
+      if (!session && !proof) {
+        return res.status(401).end();
+      }
+
+      const id = Number(req.params.agent_id);
+      const checked = verifyBook({ agentId: id, window: 50, session, proof });
+      if (!checked || checked.checked !== true || checked.valid !== true) {
+        return res.status(403).end();
+      }
+
+      const { policy_type, value } = body;
+      if (!policy_type) {
+        const current = bookPolicy.get(id);
+        return res.json({ agent_id: id, policy: current });
+      }
+
+      const result = bookPolicy.set(id, policy_type, value);
+      if (!result.ok) {
+        return res.status(400).json({ error: 'policy_error', message: result.reason });
+      }
+      return res.json({ agent_id: id, policy: result.policy });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'book policy error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // GET /v1/agents/:agent_id/book/policy — Get current policy
+  app.get('/v1/agents/:agent_id/book/policy', (req, res) => {
+    try {
+      const claim = claimFromRequest(req);
+      const session = claim.session;
+      const proof = claim.proof;
+      if (!session && !proof) {
+        return res.status(401).end();
+      }
+
+      const id = Number(req.params.agent_id);
+      const checked = verifyBook({ agentId: id, window: 50, session, proof });
+      if (!checked || checked.checked !== true || checked.valid !== true) {
+        return res.status(403).end();
+      }
+
+      const current = bookPolicy.get(id);
+      return res.json({ agent_id: id, policy: current });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'book policy get error');
+      return res.status(403).end();
+    }
+  });
+
+  // POST /v1/agents/:agent_id/book/assign — Create an assignment (grant read/collect of slice)
+  // Possession-gated. Does not leak public agent list.
+  app.post('/v1/agents/:agent_id/book/assign', (req, res) => {
+    try {
+      const body = req.body || {};
+      const claim = claimFromRequest(req);
+      const apiKey = req.headers['x-api-key'] || null;
+      const isDemo = apiKey === 'xfuel-demo' || String(apiKey).startsWith('xfuel-demo');
+
+      if (isDemo) {
+        return res.status(403).json({ error: 'demo_rejected', message: 'Demo keys cannot create assignments' });
+      }
+
+      const session = claim.session;
+      const proof = claim.proof;
+      if (!session && !proof) {
+        return res.status(401).end();
+      }
+
+      const id = Number(req.params.agent_id);
+      const checked = verifyBook({ agentId: id, window: 50, session, proof });
+      if (!checked || checked.checked !== true || checked.valid !== true) {
+        return res.status(403).end();
+      }
+
+      const result = bookAssignments.create(id, {
+        grant_type: body.grant_type || GRANT_TYPES.READ,
+        grantee: body.grantee || null,
+        slice: body.slice || {},
+        expires_at: body.expires_at || null,
+      });
+      if (!result.ok) {
+        return res.status(400).json({ error: 'assign_error', message: result.reason });
+      }
+      return res.status(201).json(result.assignment);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'book assign error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // GET /v1/agents/:agent_id/book/assign — List assignments for agent (possession-gated)
+  app.get('/v1/agents/:agent_id/book/assign', (req, res) => {
+    try {
+      const claim = claimFromRequest(req);
+      const session = claim.session;
+      const proof = claim.proof;
+      if (!session && !proof) {
+        return res.status(401).end();
+      }
+
+      const id = Number(req.params.agent_id);
+      const checked = verifyBook({ agentId: id, window: 50, session, proof });
+      if (!checked || checked.checked !== true || checked.valid !== true) {
+        return res.status(403).end();
+      }
+
+      const assignments = bookAssignments.listByAgent(id);
+      return res.json({ agent_id: id, assignments });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'book assign list error');
+      return res.status(403).end();
+    }
+  });
+
+  // DELETE /v1/agents/:agent_id/book/assign/:assignment_id — Revoke assignment
+  app.delete('/v1/agents/:agent_id/book/assign/:assignment_id', (req, res) => {
+    try {
+      const claim = claimFromRequest(req);
+      const session = claim.session;
+      const proof = claim.proof;
+      if (!session && !proof) {
+        return res.status(401).end();
+      }
+
+      const id = Number(req.params.agent_id);
+      const checked = verifyBook({ agentId: id, window: 50, session, proof });
+      if (!checked || checked.checked !== true || checked.valid !== true) {
+        return res.status(403).end();
+      }
+
+      const result = bookAssignments.revoke(id, req.params.assignment_id);
+      if (!result.ok) {
+        return res.status(404).json({ error: 'not_found', message: result.reason });
+      }
+      return res.json(result.assignment);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'book assign revoke error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // GET /v1/book/slice — Read a slice by assignment token (no possession needed)
+  // Token IS the access credential. Does not leak agent list.
+  app.get('/v1/book/slice', (req, res) => {
+    try {
+      const token = req.query.token || req.headers['x-xfuel-assign-token'] || null;
+      if (!token) {
+        return res.status(401).json({ error: 'unauthorized', message: 'Assignment token required' });
+      }
+
+      const result = readSliceByToken(token, {
+        assignments: bookAssignments,
+        ledger: usageSettled,
+      });
+      if (result.body == null) {
+        return res.status(result.status).end();
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'book slice error');
+      return res.status(403).end();
+    }
+  });
+
+  // POST /v1/agents/:agent_id/book/dispute — File a dispute (possession-gated)
+  // Claim types: output_missing, wrong_model, double_charge
+  // Outcome: refund, partial, or stand
+  app.post('/v1/agents/:agent_id/book/dispute', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const claim = claimFromRequest(req);
+      const apiKey = req.headers['x-api-key'] || null;
+      const isDemo = apiKey === 'xfuel-demo' || String(apiKey).startsWith('xfuel-demo');
+
+      if (isDemo) {
+        return res.status(403).json({ error: 'demo_rejected', message: 'Demo keys cannot file disputes' });
+      }
+
+      const session = claim.session;
+      const proof = claim.proof;
+      if (!session && !proof) {
+        return res.status(401).end();
+      }
+
+      const id = Number(req.params.agent_id);
+      const checked = verifyBook({ agentId: id, window: 50, session, proof });
+      if (!checked || checked.checked !== true || checked.valid !== true) {
+        return res.status(403).end();
+      }
+
+      const result = await fileAndAdjudicate({
+        agent_id: id,
+        task_id: body.task_id,
+        claim_type: body.claim_type,
+        evidence: body.evidence || {},
+      }, {
+        disputes: bookDisputes,
+        ledger: usageSettled,
+        loadReceipt: loadReceiptJson,
+        verifyReceipt: (r) => verifyReceiptHmac(r, config.receipts?.signingSecret),
+      });
+
+      if (!result.ok) {
+        return res.status(400).json({ error: 'dispute_error', message: result.reason, existing: result.existing });
+      }
+      return res.status(201).json(result);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'book dispute error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // GET /v1/agents/:agent_id/book/dispute — List disputes for agent (possession-gated)
+  app.get('/v1/agents/:agent_id/book/dispute', (req, res) => {
+    try {
+      const claim = claimFromRequest(req);
+      const session = claim.session;
+      const proof = claim.proof;
+      if (!session && !proof) {
+        return res.status(401).end();
+      }
+
+      const id = Number(req.params.agent_id);
+      const checked = verifyBook({ agentId: id, window: 50, session, proof });
+      if (!checked || checked.checked !== true || checked.valid !== true) {
+        return res.status(403).end();
+      }
+
+      const disputes = bookDisputes.listByAgent(id);
+      return res.json({ agent_id: id, disputes });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'book dispute list error');
+      return res.status(403).end();
+    }
+  });
+
+  // POST /v1/agents/:agent_id/book/rotate — Rotate session (possession sanity)
+  // Old session becomes invalid. Book (entries) stays — tied to agent_id not session.
+  app.post('/v1/agents/:agent_id/book/rotate', (req, res) => {
+    try {
+      const body = req.body || {};
+      const claim = claimFromRequest(req);
+      const apiKey = req.headers['x-api-key'] || null;
+      const isDemo = apiKey === 'xfuel-demo' || String(apiKey).startsWith('xfuel-demo');
+
+      if (isDemo) {
+        return res.status(403).json({ error: 'demo_rejected', message: 'Demo keys cannot rotate sessions' });
+      }
+
+      const session = claim.session;
+      if (!session) {
+        return res.status(401).end();
+      }
+
+      const id = Number(req.params.agent_id);
+      const checked = verifyBook({ agentId: id, window: 50, session, proof: null });
+      if (!checked || checked.checked !== true || checked.valid !== true) {
+        return res.status(403).end();
+      }
+
+      const result = agentRegistry.rotateSession(id, session);
+      if (!result.ok) {
+        return res.status(400).json({ error: 'rotate_error', message: result.reason });
+      }
+      return res.json({ agent_id: id, session: result.session, rotated_at: new Date().toISOString() });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'book rotate error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
   registerOpenAIRoutes(app, {
     rateLimit, authenticate, isAuthorised, ledger: usageSettled, registry: agentRegistry,
   });
@@ -2121,7 +2457,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 
