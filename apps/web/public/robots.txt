@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://xfuel.app/sitemap.xml
+Sitemap: https://www.xfuel.app/sitemap.xml
