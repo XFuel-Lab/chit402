@@ -1,0 +1,23 @@
+# XFuel Sidecar Cloudflare Worker
+#
+# Deploy:
+#   cd packages/sidecar/worker
+#   wrangler deploy
+#
+# Your OpenAI client then points at your worker:
+#   const openai = new OpenAI({ baseURL: 'https://xfuel-sidecar.<your-subdomain>.workers.dev/v1' });
+
+name = "xfuel-sidecar"
+main = "../src/worker.ts"
+compatibility_date = "2024-12-01"
+
+[vars]
+# Upstream provider base URL (no trailing /v1 — worker adds it)
+UPSTREAM_BASE_URL = "https://openrouter.ai/api"
+
+# XFuel API for verify_url construction (optional)
+XFUEL_BASE_URL = "https://api.xfuel.app"
+
+# To add secrets (HMAC key, upstream API key):
+#   wrangler secret put XFUEL_SIGNING_SECRET
+#   wrangler secret put UPSTREAM_API_KEY
