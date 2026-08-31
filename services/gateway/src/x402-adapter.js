@@ -801,12 +801,12 @@ export async function verifyPayment(paymentHeader, opts = {}) {
       }),
       signal: AbortSignal.timeout(15000),
     });
-    if (!res.ok) return { valid: false, reason: `gateway_http_${res.status}` };
+    if (!res.ok) return { valid: false, reason: `gateway_http_${res.status}`, unbound };
     const data = await res.json();
-    return { valid: !!data.valid, txRef: data.txRef || data.transaction || null, reason: data.reason };
+    return { valid: !!data.valid, txRef: data.txRef || data.transaction || null, reason: data.reason, unbound };
   } catch (err) {
     logger.warn({ err: err.message }, 'x402 verifyPayment failed');
-    return { valid: false, reason: 'gateway_error' };
+    return { valid: false, reason: 'gateway_error', unbound };
   }
 }
 
