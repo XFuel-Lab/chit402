@@ -15,6 +15,14 @@
     {
       "source": "/xfuel-icon.svg",
       "headers": [{ "key": "Content-Type", "value": "image/svg+xml; charset=utf-8" }]
+    },
+    {
+      "source": "/favicon.ico",
+      "headers": [{ "key": "Content-Type", "value": "image/x-icon" }]
+    },
+    {
+      "source": "/og-image.png",
+      "headers": [{ "key": "Content-Type", "value": "image/png" }]
     }
   ],
   "rewrites": [
@@ -22,6 +30,8 @@
     { "source": "/robots.txt", "destination": "/robots.txt" },
     { "source": "/sitemap.xml", "destination": "/sitemap.xml" },
     { "source": "/xfuel-icon.svg", "destination": "/xfuel-icon.svg" },
+    { "source": "/favicon.ico", "destination": "/favicon.ico" },
+    { "source": "/og-image.png", "destination": "/og-image.png" },
     { "source": "/agent-shop", "destination": "/agent-shop/index.html" },
     { "source": "/book", "destination": "/book/index.html" },
     { "source": "/book-bot", "destination": "/book-bot/index.html" },
