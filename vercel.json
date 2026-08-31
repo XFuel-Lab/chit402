@@ -1,5 +1,5 @@
 {
-  "buildCommand": "cd apps/web && npm install && tsc -b && npx vite build",
+  "buildCommand": "cd apps/web && npm install && tsc -b && npx vite build && node scripts/prerender-titles.mjs",
   "outputDirectory": "apps/web/dist",
   "installCommand": "npm install --legacy-peer-deps",
   "env": {
