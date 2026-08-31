@@ -253,8 +253,8 @@ const LLMS_TXT = `# XFuel Protocol
 ## Start here (OpenAI-compatible)
 
 - POST /v1/chat/completions : OpenAI chat completions. Unauthenticated GET or
-  POST {} → 402 x402 ($0.01 USDC on Base or Solana). Returns signed receipt + public verify_url.
-- POST /a2a-message         : A2A card URL. Same $0.01 x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
+  POST {} → 402 x402 (USDC on Base or Solana). Returns signed receipt + public verify_url.
+- POST /a2a-message         : A2A card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
 - POST /v1/agents/register  : fail-closed. Bind agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
 - GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Public, no key.
@@ -291,12 +291,12 @@ const LLMS_TXT = `# XFuel Protocol
 - GET  /openapi.json      : OpenAPI 3.1 with x-payment-info. Public door is POST /v1/chat/completions.
 - GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
 - GET  /.well-known/x402list.txt : x402-list domain verification token (public, text/plain).
-- GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message ($0.01).
+- GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message.
 - POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
 - POST /v1/agents/:agent_id/book/ingest : foreign x402 ingest. Record spend to another shop (not XFuel). Requires possession + 402 context. Naked tx rejected.
-- POST /v1/chat/completions : paid ($0.01 USDC on Base or Solana). Unauth GET or POST {} → 402.
-- POST /a2a-message       : same $0.01 paid door as /v1 (A2A card URL). Unauth POST {} → 402.
+- POST /v1/chat/completions : paid (USDC on Base or Solana). Unauth GET or POST {} → 402.
+- POST /a2a-message       : same paid door as /v1 (A2A card URL). Unauth POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).
 
 ## SDK

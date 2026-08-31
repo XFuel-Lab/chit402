@@ -557,7 +557,7 @@ export function buildOpenApiSpec(baseUrl = '') {
     summary: 'OpenAI-compatible chat completions (public x402 door)',
     description:
       'No account. No API key. A wallet that can pay the 402 is enough. '
-      + 'Pay per request in USDC on Base and Solana ($0.01 floor, x402 exact scheme). '
+        + 'Pay per request in USDC on Base or Solana (x402 exact scheme). '
       + 'Returns a standard OpenAI chat.completion plus a signed XFuel receipt with public '
       + 'verify_url. Unauthenticated calls receive HTTP 402 before body validation.',
     tags: ['Chat'],
@@ -581,9 +581,9 @@ export function buildOpenApiSpec(baseUrl = '') {
 
   const a2aPost = {
     operationId: 'a2aMessage',
-    summary: 'A2A paid door (same $0.01 as /v1)',
+    summary: 'A2A paid door (same x402 as /v1)',
     description:
-      'A2A card URL. Same $0.01 USDC x402 floor and chat fulfillment as POST /v1/chat/completions. '
+      'A2A card URL. Same x402 floor and chat fulfillment as POST /v1/chat/completions. '
       + 'No account. No API key. A wallet that can pay the 402 is enough. '
       + 'You hold hub, model, and amount. Unauthenticated POST {} returns HTTP 402. '
       + 'Collected rows are bookable via GET|POST /v1/agents/{agent_id}/book.',
@@ -640,8 +640,8 @@ export function buildOpenApiSpec(baseUrl = '') {
         'XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. '
         + 'No account. No API key. A wallet that can pay the 402 is enough. '
         + 'Register is only to hold the book after a collected receipt. '
-        + 'POST /v1/chat/completions is $0.01 USDC on '
-        + 'Base and Solana. POST /a2a-message is the same $0.01 door. '
+        + 'POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. '
+        + 'USDC on Base or Solana. POST /a2a-message is the same paid door. '
         + 'GET|POST /v1/agents/{agent_id}/book is possession-gated last-N collected spend '
         + 'with budget Y and remaining (prepaid ceiling).',
       'x-guidance':
@@ -649,9 +649,9 @@ export function buildOpenApiSpec(baseUrl = '') {
         + 'No account. No API key. A wallet that can pay the 402 is enough. '
         + 'Register is only to hold the book after a collected receipt. '
         + 'Use POST /v1/chat/completions with an OpenAI-compatible JSON body '
-        + '({ model, messages }). POST /a2a-message is the A2A card URL with the same $0.01 floor. '
+        + '({ model, messages }). POST /a2a-message is the A2A card URL with the same x402 floor. '
         + 'Unauthenticated callers get HTTP 402 with x402 '
-        + 'payment requirements (USDC, $0.01 floor; Base and Solana when enabled). '
+        + 'payment requirements (USDC; Base and Solana when enabled). '
         + 'Retry with X-PAYMENT or PAYMENT-SIGNATURE. POST /v1/agents/register is fail-closed: '
         + 'it binds an agentWallet to an integer agent_id using a collected HMAC-valid receipt. '
         + 'GET|POST /v1/agents/{agent_id}/book is a possession-gated last-N collected '
