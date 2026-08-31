@@ -295,6 +295,20 @@ POST /v1/chat/completions is bait. A holder can prove: lineage, policy, assignme
 - POST /v1/agents/:agent_id/book/rotate : rotate session. Old session invalid, book stays (tied to agent_id).
 - POST /v1/agents/:agent_id/book/ingest : record agent's arbitrary x402 spend to a foreign endpoint.
 
+## Private Spend (default for registered sessions)
+
+Registered/possession sessions get vendor_blind mode by default. Providers see
+gateway-pooled credentials, not end-customer topology. Demo keys never qualify.
+Pass X-XFuel-Session header with a valid register session to enable.
+
+## Replaceable Signer (verifiable without XFuel)
+
+Receipts can carry two signatures: primary (signature) and co-signer (co_signature).
+Either validates the receipt. If XFuel disappears, the co-signer's key still works.
+- docs/VERIFY_ALGORITHM.md : plain-language + runnable verify code (offline).
+- scripts/verify-receipt.mjs : standalone verification script.
+- binding.in_proof:true means the commitment is on-chain via SP1 (escape hatch).
+
 ## MCP
 
 - npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
@@ -543,6 +557,26 @@ export function createApp() {
     dir: agentsDir,
     persist: !!config.taskStore?.persist,
   });
+
+  /**
+   * Private Spend default for possession sessions. Registered agents get
+   * vendor-blind mode automatically — providers see gateway-pooled credentials,
+   * not end-customer topology. Demo keys never qualify.
+   * @param {object} req - Express request
+   * @returns {boolean}
+   */
+  function isPrivateSpendSession(req) {
+    const key = req.headers['x-api-key']
+      || (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (!key) return false;
+    if (key === (process.env.M2M_DEMO_API_KEY || 'xfuel-demo')) return false;
+    if (String(key).startsWith('xfuel-demo')) return false;
+    const session = req.body?.session || req.headers['x-xfuel-session'] || null;
+    if (!session) return false;
+    const identity = agentRegistry.getBySession(String(session));
+    return !!identity;
+  }
+
   const aawp = aawpReaders(config.erc8004?.rpcUrl || config.settlement?.rpcUrl);
   const verifyBook = bindBookVerifier(agentRegistry);
 
@@ -1094,8 +1128,8 @@ export function createApp() {
         providerCogs: null,
         // Buyer attribution (hash only) for Private Spend /stats/me
         apiKeyHash: apiKeyHashFromReq(req),
-        privateSpend: !!config.privateSpend?.enabled,
-        privacyMode: config.privateSpend?.enabled ? 'vendor_blind' : null,
+        privateSpend: !!config.privateSpend?.enabled || isPrivateSpendSession(req),
+        privacyMode: (config.privateSpend?.enabled || isPrivateSpendSession(req)) ? 'vendor_blind' : null,
         // Multi-hop / A2A receipt lineage (Sprint 3)
         parentTaskId: parent_task_id || null,
         a2aMessageId: a2a_message_id || null,
@@ -1326,6 +1360,7 @@ export function createApp() {
       const receipt = buildReceipt(task, {
         baseUrl,
         signingSecret: config.receipts?.signingSecret,
+        coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
       });
 
@@ -1803,6 +1838,7 @@ export function createApp() {
       const receipt = buildReceipt(task, {
         baseUrl,
         signingSecret: config.receipts?.signingSecret,
+        coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
       });
 
@@ -2084,6 +2120,7 @@ export function createApp() {
       return buildReceipt(task, {
         baseUrl: config.service.publicBaseUrl || '',
         signingSecret: config.receipts?.signingSecret,
+        coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
       });
     } catch {

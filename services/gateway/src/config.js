@@ -119,8 +119,14 @@ const config = {
   // Tier-1 HMAC signature over the payment-bound tuple (PBR) so a third party can
   // detect tampering. Off by default → receipt JSON is unchanged. Dedicated secret
   // (NOT reused from WEBHOOK_SECRET) so enabling webhooks never implies signing.
+  //
+  // Replaceable Signer: coSignerSecret adds a second attestor slot. When set,
+  // receipts carry both `signature` (primary) and `co_signature` (partner/auditor).
+  // Either validates the receipt. If XFuel disappears, the co-signer's key still
+  // works. See docs/VERIFY_ALGORITHM.md for the offline verify path.
   receipts: {
     signingSecret: process.env.RECEIPT_SIGNING_SECRET || null,
+    coSignerSecret: process.env.RECEIPT_CO_SIGNER_SECRET || null,
   },
 
   // Private Spend v0 — vendor-blind routing mode. Buyer pays XFuel; providers see

@@ -86,6 +86,30 @@ function meteringExempt(req) {
 }
 
 /**
+ * True if the request has a valid possession session (registered agent).
+ * Private Spend is the default for registered/possession sessions — providers
+ * see gateway-pooled credentials, not end-customer topology.
+ *
+ * Demo keys never qualify (they should not silently get privacy they did not pay for).
+ *
+ * @param {object} req - Express request
+ * @param {{ getBySession?: Function }|null} registry - AgentRegistry instance
+ * @returns {boolean}
+ */
+function isPrivateSpendSession(req, registry) {
+  if (!registry || typeof registry.getBySession !== 'function') return false;
+  const key = req.headers['x-api-key']
+    || (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  if (!key) return false;
+  if (key === (process.env.M2M_DEMO_API_KEY || 'xfuel-demo')) return false;
+  if (String(key).startsWith('xfuel-demo')) return false;
+  const session = req.body?.session || req.headers['x-xfuel-session'] || null;
+  if (!session) return false;
+  const identity = registry.getBySession(String(session));
+  return !!identity;
+}
+
+/**
  * Send a 402 with PAYMENT-REQUIRED header (CDP Bazaar / validate require this).
  * Shapes the body for both x402 clients (reads `accepts`) and OpenAI clients
  * (reads `error.message`).
@@ -853,6 +877,7 @@ function buildReceipt({
     ? buildSignedReceipt(task, {
         baseUrl,
         signingSecret: config.receipts?.signingSecret,
+        coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
       })
     : { task_id: taskId, verify_url: verifyUrl, route: {}, payment: {}, proof: {} };
@@ -1286,7 +1311,7 @@ export function registerOpenAIRoutes(app, {
     const created = Math.floor(Date.now() / 1000);
     const fb = allowFallback(req);
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
-    const privateSpend = !!config.privateSpend?.enabled;
+    const privateSpend = !!config.privateSpend?.enabled || isPrivateSpendSession(req, registry);
     const apiKeyHash = apiKeyHashFromReq(req);
     let paidTask = null;
 
@@ -1560,7 +1585,7 @@ export function registerOpenAIRoutes(app, {
       proofTier: req.body?.proof_tier ?? req.body?.xfuel?.proof_tier,
       minCogs: config.verifiedInference?.tier2MinCogs,
     });
-    const privateSpend = !!config.privateSpend?.enabled;
+    const privateSpend = !!config.privateSpend?.enabled || isPrivateSpendSession(req, registry);
     const content = inference.url || JSON.stringify(inference.raw?.output || {});
     const { taskId, proverConfigured, task } = registerTaskAndProve({
       model: inference.resolvedModel,
@@ -1623,7 +1648,7 @@ export function registerOpenAIRoutes(app, {
       proofTier: req.body?.proof_tier ?? req.body?.xfuel?.proof_tier,
       minCogs: config.verifiedInference?.tier2MinCogs,
     });
-    const privateSpend = !!config.privateSpend?.enabled;
+    const privateSpend = !!config.privateSpend?.enabled || isPrivateSpendSession(req, registry);
     const { taskId, proverConfigured, task } = registerTaskAndProve({
       model: inference.resolvedModel,
       messages: [{ role: 'user', content: String(audioUrl) }],

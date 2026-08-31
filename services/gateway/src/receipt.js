@@ -295,13 +295,19 @@ export function canonicalSignedPayload(receipt) {
   ]);
 }
 
-/** HMAC-SHA256 signature over the canonical signed payload. */
-function signReceiptPayload(receipt, secret) {
+/**
+ * HMAC-SHA256 signature over the canonical signed payload.
+ * @param {object} receipt
+ * @param {string} secret
+ * @param {{ role?: string }} [opts] - role defaults to 'primary'; use 'co_signer' for secondary
+ */
+function signReceiptPayload(receipt, secret, { role = 'primary' } = {}) {
   const value = crypto.createHmac('sha256', secret).update(canonicalSignedPayload(receipt)).digest('hex');
   return {
     alg: 'HMAC-SHA256',
     payload_version: 3,
     value: `sha256=${value}`,
+    role,
     signed_fields: [
       'task_id', 'payment.rail', 'payment.ref', 'payment.gross_amount',
       'payment.net_amount', 'payment.fee_amount', 'payment.protocol_fee_bps',
@@ -313,23 +319,55 @@ function signReceiptPayload(receipt, secret) {
 }
 
 /**
- * Verify a receipt HMAC. Needs the verify key, not a signing helper.
+ * Verify a receipt HMAC against a single secret.
  * @param {object} receipt
  * @param {string} secret
+ * @param {{ sigField?: string }} [opts] - which signature field to check ('signature' or 'co_signature')
  * @returns {{ checked: boolean, valid: boolean|null, expected?: string, recomputed?: string, reason?: string }}
  */
-export function verifyReceiptHmac(receipt, secret) {
+export function verifyReceiptHmac(receipt, secret, { sigField = 'signature' } = {}) {
   if (!secret || typeof secret !== 'string') {
     return { checked: false, valid: null, reason: 'no_verify_key' };
   }
-  const sig = receipt?.signature?.value;
+  const sigObj = receipt?.[sigField];
+  const sig = sigObj?.value;
   if (!sig) return { checked: false, valid: null, reason: 'no_signature' };
   const digest = crypto.createHmac('sha256', secret).update(canonicalSignedPayload(receipt)).digest('hex');
   const recomputed = `sha256=${digest}`;
   const a = Buffer.from(String(sig).toLowerCase());
   const b = Buffer.from(recomputed.toLowerCase());
   const valid = a.length === b.length && crypto.timingSafeEqual(a, b);
-  return { checked: true, valid, expected: String(sig), recomputed };
+  return { checked: true, valid, expected: String(sig), recomputed, role: sigObj?.role || null };
+}
+
+/**
+ * Verify a receipt against multiple secrets (replaceable signer).
+ * Returns valid if ANY secret verifies EITHER the primary or co_signature.
+ * This is the offline verify path for when XFuel disappears — the co-signer's
+ * key still works. See docs/VERIFY_ALGORITHM.md.
+ *
+ * @param {object} receipt
+ * @param {string[]} secrets - array of secrets to try (primary, co-signer, etc.)
+ * @returns {{ checked: boolean, valid: boolean, validatedBy?: string, reason?: string }}
+ */
+export function verifyReceiptMultiKey(receipt, secrets) {
+  if (!Array.isArray(secrets) || secrets.length === 0) {
+    return { checked: false, valid: false, reason: 'no_verify_keys' };
+  }
+  const sigFields = ['signature', 'co_signature'].filter(f => receipt?.[f]?.value);
+  if (sigFields.length === 0) {
+    return { checked: false, valid: false, reason: 'no_signature' };
+  }
+  for (const secret of secrets) {
+    if (!secret || typeof secret !== 'string') continue;
+    for (const field of sigFields) {
+      const result = verifyReceiptHmac(receipt, secret, { sigField: field });
+      if (result.valid) {
+        return { checked: true, valid: true, validatedBy: field };
+      }
+    }
+  }
+  return { checked: true, valid: false, reason: 'all_keys_failed' };
 }
 
 /**
@@ -417,11 +455,12 @@ export function usageOf(task) {
 /**
  * Build the public receipt JSON for a task.
  * @param {object} task     Listener task (from aiListener.activeTasks).
- * @param {object} [opts]   { baseUrl, signingSecret } — signingSecret enables the Tier-1
- *                          signed receipt (HMAC over the payment-bound tuple). Omit to keep
- *                          the receipt byte-compatible with the unsigned form.
+ * @param {object} [opts]   { baseUrl, signingSecret, coSignerSecret } — signingSecret enables
+ *                          the Tier-1 signed receipt (HMAC over the payment-bound tuple).
+ *                          coSignerSecret adds a second attestor (replaceable signer) so
+ *                          treasuries can verify even if XFuel disappears.
  */
-export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolicy = null } = {}) {
+export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null } = {}) {
   const outcome = proofOutcomeOf(task);
   const feeBps = task.feeBps || 50;
   // Buyer default is USDC (ADR 0002). Legacy tfuel rail only when explicitly set.
@@ -523,7 +562,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, viPolic
         },
   };
 
-  if (signingSecret) receipt.signature = signReceiptPayload(receipt, signingSecret);
+  if (signingSecret) receipt.signature = signReceiptPayload(receipt, signingSecret, { role: 'primary' });
+  if (coSignerSecret) receipt.co_signature = signReceiptPayload(receipt, coSignerSecret, { role: 'co_signer' });
   return receipt;
 }
 
@@ -983,4 +1023,6 @@ export default {
   privacyOf,
   lineageOf,
   verifyReceiptHmac,
+  verifyReceiptMultiKey,
+  canonicalSignedPayload,
 };
