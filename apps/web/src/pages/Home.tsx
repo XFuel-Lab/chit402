@@ -29,12 +29,11 @@ export default function Home() {
           <p style={styles.heroDescription}>
             No account. No API key. A wallet that can pay the 402 is enough.
             Register is only to hold the book after a collected receipt.
-            <code>POST /v1/chat/completions</code> is $0.01 USDC on Base and Solana.
-            Signed receipt (HMAC) is table stakes — we have it too.
+            <code>POST /v1/chat/completions</code> returns a signed receipt: hub, model, amount, verify_url.
+            Cost-plus, quoted, receipted — pay USDC on Base or Solana.
             <code>GET|POST /v1/agents/:agent_id/book</code> is possession-gated last-N collected spend.
             Demo key <code>xfuel-demo</code> skips payment (rate-limited). On-chain SP1 proof on demand — not on every call.
             Live routes today are <strong>Theta</strong> and <strong>Akash</strong>, plus the <code>xfuel/auto</code> alias.
-            We do not route to OpenAI, Groq, Together, or Fireworks on the public catalog.
           </p>
           <div style={styles.heroCta}>
             <Link to="/v1" className="btn btn-primary">Try /v1</Link>
@@ -83,7 +82,7 @@ export default function Home() {
           <div className="grid grid-3">
             <div className="card">
               <h3>POST /v1/chat/completions</h3>
-              <p>$0.01 USDC on Base and Solana. Signed receipt. HTTP 402 without payment. Demo key <code>xfuel-demo</code> skips the charge.</p>
+              <p>USDC on Base and Solana. Signed receipt with verify_url. HTTP 402 without payment. Demo key <code>xfuel-demo</code> skips the charge.</p>
             </div>
             <div className="card">
               <h3>Paid /task-request</h3>

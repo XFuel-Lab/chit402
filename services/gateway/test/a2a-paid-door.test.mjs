@@ -192,15 +192,16 @@ test('recordCollectedSpend appends hub/model/amount under bookable agent_id with
   assert.equal(book.body.entries[0].route.hub, 'theta');
 });
 
-test('agent-card skill describes a2a as $0.01 book lead', async () => {
+test('agent-card skill describes a2a as book lead with verify_url', async () => {
   const res = await fetch(`${base}/.well-known/agent-card.json`);
   assert.equal(res.status, 200);
   const card = await res.json();
   assert.equal(card.supportedInterfaces[0].url.includes('/a2a-message'), true);
   const skill = card.skills.find((s) => s.id === 'a2a-message');
   assert.ok(skill);
-  assert.match(skill.description, /\$0\.01/);
+  assert.match(skill.description, /verify_url/);
   assert.match(skill.description, /hub, model, and amount/);
   assert.doesNotMatch(JSON.stringify(card), /Not a smart router/);
   assert.doesNotMatch(JSON.stringify(card), /Not a model shop/);
+  assert.doesNotMatch(JSON.stringify(card), /\$0\.01/); // No fixed price in public copy
 });

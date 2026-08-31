@@ -20,11 +20,11 @@ export function buildAgentCard(baseUrl = '') {
       'XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. '
       + 'No account. No API key. A wallet that can pay the 402 is enough. '
       + 'Register is only to hold the book after a collected receipt. '
-      + 'Paid door is POST /v1/chat/completions '
-      + 'at $0.01 USDC on Base (eip155:8453) and Solana. POST /a2a-message is the same $0.01 door '
-      + '(A2A HTTP+JSON URL). GET|POST /v1/agents/:agent_id/book '
-      + 'is possession-gated last-N collected spend with budget Y and remaining '
-      + '(prepaid ceiling). POST /v1/agents/register is fail-closed: '
+      + 'POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. '
+      + 'Cost-plus, quoted, receipted — USDC on Base (eip155:8453) or Solana. '
+      + 'POST /a2a-message is the same paid door (A2A HTTP+JSON URL). '
+      + 'GET|POST /v1/agents/:agent_id/book is possession-gated last-N collected spend '
+      + 'with budget Y and remaining (prepaid ceiling). POST /v1/agents/register is fail-closed: '
       + 'collected HMAC-valid receipt plus an AAWP official or smart-account agentWallet. '
       + 'Returns integer agent_id for POST /erc8004/validate.',
     supportedInterfaces: [
@@ -53,7 +53,8 @@ export function buildAgentCard(baseUrl = '') {
         id: 'chat-completions',
         name: 'Paid chat completions',
         description:
-          'OpenAI-compatible POST /v1/chat/completions. $0.01 USDC on Base and Solana. '
+          'OpenAI-compatible POST /v1/chat/completions. Returns a signed receipt: hub, model, '
+          + 'amount, verify_url. Cost-plus, quoted, receipted — USDC on Base or Solana. '
           + 'No account. No API key. A wallet that can pay the 402 is enough. '
           + 'Unauthenticated GET or POST {} returns HTTP 402. You hold hub, model, and amount.',
         tags: ['llm', 'openai-compatible', 'x402', 'usdc'],
@@ -63,8 +64,9 @@ export function buildAgentCard(baseUrl = '') {
         id: 'a2a-message',
         name: 'A2A paid door',
         description:
-          'POST /a2a-message is the A2A card URL. Same $0.01 x402 floor and chat fulfillment as '
-          + '/v1/chat/completions. No account. No API key. A wallet that can pay the 402 is enough. '
+          'POST /a2a-message is the A2A card URL. Same x402 floor and chat fulfillment as '
+          + '/v1/chat/completions. Returns a signed receipt: hub, model, amount, verify_url. '
+          + 'No account. No API key. A wallet that can pay the 402 is enough. '
           + 'You hold hub, model, and amount. Unauthenticated POST {} returns HTTP 402. '
           + 'Collected rows are bookable via GET|POST /v1/agents/:agent_id/book.',
         tags: ['a2a', 'x402', 'usdc', 'llm'],

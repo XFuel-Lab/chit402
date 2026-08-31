@@ -367,15 +367,19 @@ test('verify + settle against mock facilitator (happy path + replay)', async () 
   }
 });
 
-test('verify rejects unknown/expired challenge before hitting gateway', async () => {
+test('verify proceeds unbound when challenge is unknown (allows Solana PayAI memos)', async () => {
+  // When a nonce is provided but not in the store, verification proceeds to the
+  // facilitator rather than failing early. This enables Solana payments where
+  // PayAI uses a different memo format (commons-x402-*) than our nonce.
   const { url, close } = await startMockFacilitator();
   try {
     const store = new ChallengeStore();
     const r = await verifyPayment('X-PAYMENT-blob', {
       gatewayUrl: url, apiKey: 'k', store, nonce: 'deadbeef',
     });
-    assert.equal(r.valid, false);
-    assert.equal(r.reason, 'challenge_expired_or_unknown');
+    // Facilitator is called and confirms the payment is valid
+    assert.equal(r.valid, true);
+    assert.equal(r.unbound, true); // Marked as unbound since challenge wasn't found
   } finally {
     await close();
   }

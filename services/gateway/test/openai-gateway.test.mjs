@@ -83,7 +83,9 @@ test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   assert.match(body, /xfuel-sdk/);
   assert.match(body, /npx xfuel-mcp/);
   assert.match(body, /Base mainnet/);
-  assert.match(body, /\$0\.01/);
+  assert.match(body, /USDC/);
+  assert.match(body, /verify_url/);
+  assert.doesNotMatch(body, /\$0\.01/); // No fixed price in public copy
   assert.doesNotMatch(body, /unmetered/i);
   assert.doesNotMatch(body, /free path/i);
 });

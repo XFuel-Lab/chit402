@@ -244,9 +244,9 @@ const LLMS_TXT = `# XFuel Protocol
 > XFuel is the book. This agent spent Y on this job. You hold hub, model,
 > and amount. No account. No API key. A wallet that can pay the 402 is
 > enough. Register is only to hold the book after a collected receipt.
-> Unauthenticated POST
-> /v1/chat/completions is $0.01 x402 on Base (CDP) and Solana (PayAI).
-> POST /a2a-message is the same $0.01 door (A2A card URL). Bearer xfuel-demo
+> POST /v1/chat/completions returns a signed receipt: hub, model, amount,
+> verify_url. Cost-plus, quoted, receipted — x402 USDC on Base (CDP) or
+> Solana (PayAI). POST /a2a-message is the same paid door (A2A card URL). Bearer xfuel-demo
 > and valid API keys skip payment. GET|POST
 > /v1/agents/:agent_id/book is possession-gated (last-N spend + budget Y /
 > remaining under prepaid_ceiling). POST /v1/agents/register
@@ -256,13 +256,14 @@ const LLMS_TXT = `# XFuel Protocol
 ## Start here (OpenAI-compatible)
 
 - POST /v1/chat/completions : OpenAI chat completions. Unauthenticated GET or
-  POST {} → 402 x402 ($0.01 USDC on Base or Solana). Returns signed receipt + public verify_url.
-- POST /a2a-message         : A2A card URL. Same $0.01 x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
+  POST {} → 402 x402 (USDC on Base or Solana). Returns signed receipt + public verify_url.
+- POST /a2a-message         : A2A card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
 - POST /v1/agents/register  : fail-closed. Bind agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
 - GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
-- No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
+- No account. No API key. A wallet that can pay the 402 is enough.
+- Signed receipt: hub, model, amount, verify_url. Cost-plus, quoted, receipted.
 - Optional key (skips payment): "Authorization: Bearer <key>" or "X-API-Key: <key>".
 - Point any OpenAI client's baseURL at this host + /v1. Receipt in x-xfuel-*
   headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
@@ -307,12 +308,12 @@ POST /v1/chat/completions is bait. A holder can prove: lineage, policy, assignme
 - GET  /openapi.json      : OpenAPI 3.1 with x-payment-info. Public door is POST /v1/chat/completions.
 - GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
 - GET  /.well-known/x402list.txt : x402-list domain verification token (public, text/plain).
-- GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message ($0.01).
+- GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message.
 - POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
 - POST /v1/agents/:agent_id/book/ingest : foreign x402 ingest. Record spend to another shop (not XFuel). Requires possession + 402 context. Naked tx rejected.
-- POST /v1/chat/completions : paid ($0.01 USDC on Base or Solana). Unauth GET or POST {} → 402.
-- POST /a2a-message       : same $0.01 paid door as /v1 (A2A card URL). Unauth POST {} → 402.
+- POST /v1/chat/completions : paid (USDC on Base or Solana). Unauth GET or POST {} → 402.
+- POST /a2a-message       : same paid door as /v1 (A2A card URL). Unauth POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).
 
 ## SDK
@@ -1737,11 +1738,54 @@ export function createApp() {
   // point is that anyone can independently verify "paid + proven". It exposes no
   // secrets (no proof bytes, no raw output, no keys) — see src/receipt.js.
 
+  // GET /receipt/by-tx?tx=<signature> — lookup by payment ref (Solana tx signature)
+  // This enables receipt lookup when the caller has the tx but not the task ID.
+  app.get('/receipt/by-tx', rateLimit, (req, res) => {
+    try {
+      const tx = req.query.tx;
+      if (!tx) {
+        return res.status(400).json({
+          error: 'validation_error',
+          message: 'tx query parameter is required',
+        });
+      }
+      const aiListener = getAIListener();
+      const task = _findTaskByPaymentRef(aiListener, tx);
+      const fmt = String(req.query.format || '').toLowerCase();
+      const wantsJson = fmt === 'json' || req.accepts(['html', 'json']) === 'json';
+
+      if (!task) {
+        if (wantsJson) {
+          return res.status(404).json({
+            error: 'not_found',
+            message: `No receipt found for tx ${tx}`,
+            tx,
+          });
+        }
+        return res.status(404).type('html').send(renderReceiptNotFound(tx));
+      }
+
+      // Redirect to canonical verify_url so the URL shape is consistent
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+      const canonicalUrl = `${baseUrl}/receipt/${task.taskId}${fmt ? `?format=${fmt}` : ''}`;
+      return res.redirect(302, canonicalUrl);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /receipt/by-tx error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
   app.get('/receipt/:taskId', rateLimit, (req, res) => {
     try {
       const { taskId } = req.params;
       const aiListener = getAIListener();
-      const task = _findTask(aiListener, taskId);
+      // Support ?tx=<signature> query param as fallback lookup for Solana payments
+      const txFallback = req.query.tx;
+      let task = _findTask(aiListener, taskId);
+      // If primary lookup fails and tx param provided, try payment ref lookup
+      if (!task && txFallback) {
+        task = _findTaskByPaymentRef(aiListener, txFallback);
+      }
       const fmt = String(req.query.format || '').toLowerCase();
       const wantsAuditor = fmt === 'auditor' || fmt === 'audit';
       const wantsJson = wantsAuditor
@@ -2481,12 +2525,44 @@ const _a2aMessages = new Map();
 
 /**
  * Look up a task across the listener's active tasks map.
+ * Supports lookup by taskId or payment ref (tx signature).
  * @param {Object}  aiListener  AIListener instance
  * @param {string}  taskId      task id to find
+ * @param {string}  [paymentRef] optional payment ref (tx signature) for reverse lookup
  * @returns {Object|null}
  */
-function _findTask(aiListener, taskId) {
-  return aiListener.activeTasks.get(taskId) || null;
+function _findTask(aiListener, taskId, paymentRef = null) {
+  // Primary lookup by taskId
+  const byId = aiListener.activeTasks.get(taskId);
+  if (byId) return byId;
+  // Secondary lookup by payment ref (enables Solana tx signature lookups)
+  if (paymentRef && typeof aiListener.activeTasks.getByPaymentRef === 'function') {
+    return aiListener.activeTasks.getByPaymentRef(paymentRef) || null;
+  }
+  return null;
+}
+
+/**
+ * Look up a task by payment ref (tx signature) only.
+ * Used when the caller has a tx but not a task ID.
+ * @param {Object}  aiListener  AIListener instance
+ * @param {string}  paymentRef  payment ref (tx signature) to find
+ * @returns {Object|null}
+ */
+function _findTaskByPaymentRef(aiListener, paymentRef) {
+  if (!paymentRef) return null;
+  if (typeof aiListener.activeTasks.getByPaymentRef === 'function') {
+    return aiListener.activeTasks.getByPaymentRef(paymentRef) || null;
+  }
+  // Fallback: scan all tasks
+  for (const task of aiListener.activeTasks.values()) {
+    const ref = task?.intent?.paymentRef;
+    if (!ref) continue;
+    if (ref === paymentRef) return task;
+    const colonIdx = ref.indexOf(':');
+    if (colonIdx > 0 && ref.slice(colonIdx + 1) === paymentRef) return task;
+  }
+  return null;
 }
 
 /**
