@@ -2,7 +2,7 @@
 
 XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.
 
-`POST /v1/chat/completions` returns a signed receipt: hub, model, amount, verify_url. Cost-plus, quoted, receipted — pay USDC on Base or Solana. `GET|POST /v1/agents/:agent_id/book` is possession-gated last-N collected spend. Signed receipt is table stakes (HMAC); SP1 settlement proof is on demand. Live routes today are Theta and Akash. Demo key `xfuel-demo` skips payment (rate-limited). Register is fail-closed: a collected HMAC-valid receipt plus an AAWP official or smart-account `agentWallet`.
+`POST /v1/chat/completions` returns a signed receipt: hub, model, amount, verify_url. Cost-plus, quoted, receipted — pay USDC on Base or Solana. `GET|POST /v1/agents/:agent_id/book` is possession-gated last-N collected spend. Signed receipt is table stakes (HMAC); SP1 settlement proof is on demand. The product is the collected row — sidecar + ingest if you already pay a provider; without a collected USDC `payment.ref` the receipt is client-attested only. Demo key `xfuel-demo` skips payment (rate-limited). Register is fail-closed: a collected HMAC-valid receipt plus an AAWP official or smart-account `agentWallet`.
 
 To learn more about the protocol design, read the [whitepaper](WHITEPAPER.md). For live endpoints and what is real vs mock today, see [runtime state](docs/RUNTIME_STATE.md). Full documentation hub: [docs/](docs/README.md).
 
