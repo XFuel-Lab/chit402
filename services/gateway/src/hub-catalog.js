@@ -485,13 +485,12 @@ export function liveCatalogIds(models) {
 
 function notFound(requested, models) {
   const available = liveCatalogIds(models);
-  const sample = available.slice(0, 12).join(', ');
   return {
     ok: false,
     reason: 'model_not_found',
     requested,
     available,
-    hint: `Unknown model '${requested}'. Live hub ids: ${sample}${available.length > 12 ? ', …' : ''}. GET /v1/models for the full list.`,
+    hint: `Unknown model '${requested}'. Use xfuel/auto for automatic routing, or GET /v1/models for the full list of available model ids.`,
   };
 }
 
@@ -622,7 +621,7 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
   const modality = opts.modality || null;
   const lower = requested.toLowerCase();
 
-  if (requested === 'xfuel/auto' || requested === 'auto' || requested === 'xfuel-auto') {
+  if (requested === 'xfuel/auto' || lower === 'auto' || lower === 'xfuel-auto' || lower === 'default') {
     // Never auto-route to a model the hub says has no workers. theta/qwen3 is
     // also omitted from autoPreferenceFor — it often reports workers yet 409s.
     // Explicit `theta/qwen3` still resolves; only the automatic choice is filtered.
@@ -657,7 +656,7 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
       reason: 'model_retired',
       requested,
       available: liveCatalogIds(models),
-      hint: 'Use a live hub id from GET /v1/models (e.g. theta/qwen3, akash/zai-org/GLM-5.3, akash/meta-llama/Llama-3.3-70B-Instruct).',
+      hint: 'Use xfuel/auto for automatic routing, or GET /v1/models for the full list of available model ids.',
     };
   }
 

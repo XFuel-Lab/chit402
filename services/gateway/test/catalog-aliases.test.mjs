@@ -153,11 +153,14 @@ test('gpt-4o and grok refuse — no bait-and-switch onto Llama', () => {
   }
 });
 
-test('unknown name lists live ids', () => {
+test('unknown name lists live ids and vendor-neutral hint', () => {
   const r = resolveCatalogModel('totally-made-up', LIVE);
   assert.equal(r.ok, false);
   assert.deepEqual(r.available, liveCatalogIds(LIVE));
-  assert.match(r.hint, /Live hub ids/);
+  assert.match(r.hint, /xfuel\/auto/);
+  assert.match(r.hint, /GET \/v1\/models/);
+  assert.ok(!r.hint.includes('theta/'), 'hint must not name vendor-prefixed examples');
+  assert.ok(!r.hint.includes('akash/'), 'hint must not name vendor-prefixed examples');
 });
 
 test('autoPreferenceFor agent first key resolves against live catalog', () => {
@@ -172,4 +175,29 @@ test('do not invent a Kimi row when Akash has not listed one', () => {
   assert.ok(!LIVE.some((m) => /kimi|moonshot/i.test(m.id)));
   const r = resolveCatalogModel('kimi-k2.7', LIVE);
   assert.equal(r.ok, false);
+});
+
+test('"default" alias routes to xfuel/auto (Bankr 2026-09-01)', () => {
+  const r = resolveCatalogModel('default', LIVE, { modality: 'chat' });
+  assert.equal(r.ok, true, 'default should resolve to a model');
+  assert.notEqual(r.model.id, 'xfuel/auto', 'should resolve to concrete model, not alias');
+  assert.equal(r.model.hub, 'akash', 'default should route to a live hub');
+});
+
+test('empty and missing model ids route to xfuel/auto', () => {
+  for (const input of ['', null, undefined]) {
+    const r = resolveCatalogModel(input, LIVE, { modality: 'chat' });
+    assert.equal(r.ok, true, `input=${JSON.stringify(input)} should resolve`);
+    assert.notEqual(r.model.id, 'xfuel/auto', 'should resolve to concrete model');
+    assert.ok(r.model.hub === 'akash' || r.model.hub === 'theta', 'should route to a real hub');
+  }
+});
+
+test('model_retired hint is vendor-neutral', () => {
+  const r = resolveCatalogModel('llama-3-70b', LIVE, { modality: 'chat' });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'model_retired');
+  assert.match(r.hint, /xfuel\/auto/);
+  assert.ok(!r.hint.includes('theta/'), 'retired hint must not name vendor-prefixed examples');
+  assert.ok(!r.hint.includes('akash/'), 'retired hint must not name vendor-prefixed examples');
 });

@@ -290,11 +290,8 @@ async function runChatInference({
     shape: requestShape({ tools, messages }),
   });
   if (!resolved.ok) {
-    const available = resolved.available || [];
     const detail = resolved.hint
-      || (available.length
-        ? `Model '${resolved.requested}' is not available. Live ids: ${available.slice(0, 12).join(', ')}`
-        : `Model '${resolved.requested}' is not available (${resolved.reason})`);
+      || `Model '${resolved.requested}' is not available. Use xfuel/auto for automatic routing, or GET /v1/models for available ids.`;
     return {
       content: '',
       provider: 'none',
@@ -302,12 +299,9 @@ async function runChatInference({
       resolvedModel: resolved.requested,
       raw: resolved,
       error: {
-        // Unknown / retired names are a bad request with the live list — not a
-        // silent Llama remap and not a 404 that hides what we actually serve.
         status: 400,
         code: resolved.reason,
         message: detail,
-        ...(available.length ? { available } : {}),
       },
     };
   }
@@ -330,8 +324,8 @@ async function runChatInference({
       error: {
         status: 400,
         code: 'tools_unsupported_on_hub',
-        message: `${resolvedModel} runs on Theta EdgeCloud, whose on-demand API has no tools `
-          + 'parameter. Use an akash/* model for tool calling (e.g. akash/meta-llama/Llama-3.3-70B-Instruct).',
+        message: `${resolvedModel} does not support the tools parameter. `
+          + 'Use xfuel/auto or GET /v1/models to find a model that supports tool calling.',
       },
     };
   }
@@ -526,13 +520,13 @@ async function runImageInference({ model, prompt, allowFallback: fb }) {
     };
   }
   const cat = resolved.model;
-  // AkashML is chat-only — do not call Theta for an akash hub image id.
+  // This model/hub is chat-only — cannot generate images.
   if (cat.hub === 'akash') {
     return {
       error: {
         status: 400,
         code: 'modality_unsupported',
-        message: `${cat.id} is AkashML chat-only; use a theta/* image model`,
+        message: `${cat.id} is chat-only and cannot generate images. GET /v1/models?modality=image for image models.`,
       },
       resolvedModel: cat.id,
     };
@@ -607,13 +601,13 @@ async function runTranscriptionInference({ model, audioUrl, allowFallback: fb })
   if (!audioUrl) {
     return { error: { status: 400, code: 'invalid_request', message: 'audio_url (or file URL) is required' } };
   }
-  // AkashML is chat-only.
+  // This model/hub is chat-only — cannot transcribe audio.
   if (cat.hub === 'akash') {
     return {
       error: {
         status: 400,
         code: 'modality_unsupported',
-        message: `${cat.id} is AkashML chat-only; use theta/whisper for STT`,
+        message: `${cat.id} is chat-only and cannot transcribe audio. GET /v1/models?modality=audio for audio models.`,
       },
     };
   }
