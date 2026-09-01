@@ -29,7 +29,7 @@ const ROUTE_CONTENT = {
   },
   '/v1': {
     title: 'Pay /v1/chat/completions | XFuel',
-    h1: 'OpenAI drop-in. Wallet pays. You hold the book.',
+    h1: 'Bot drop-in. Wallet pays. You hold the book.',
     lede: 'Exact product: baseURL https://api.xfuel.app/v1. POST /v1/chat/completions is cost-plus, quoted, receipted — USDC on Base and Solana. Without payment or a demo key, the gateway returns HTTP 402.',
   },
 };
