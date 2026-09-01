@@ -7,11 +7,18 @@ const SNIPPET = `curl -sS ${API_V1}/chat/completions \\
   -H "Content-Type: application/json" \\
   -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`;
 
-const OPENAI = `import OpenAI from 'openai';
-const client = new OpenAI({
-  apiKey: 'xfuel-demo',
-  baseURL: '${API_V1}',
-});`;
+const FETCH = `const res = await fetch('${API_V1}/chat/completions', {
+  method: 'POST',
+  headers: {
+    'X-API-Key': 'xfuel-demo',
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    model: 'xfuel/auto',
+    messages: [{ role: 'user', content: 'Say hello in 5 words.' }],
+  }),
+});
+const data = await res.json();`;
 
 export default function Home() {
   return (
@@ -20,7 +27,7 @@ export default function Home() {
         <div className="container" style={{ textAlign: 'center' }}>
           <div style={styles.heroBadge}>
             <span className="badge badge-cyan">Public demo</span>
-            <span style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>Theta + Akash · Base receipts</span>
+            <span style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>USDC receipts on Base</span>
           </div>
           <h1 style={styles.heroTitle}>XFuel is the book.</h1>
           <p style={styles.heroSubtitle}>
@@ -53,8 +60,8 @@ export default function Home() {
             Demo key <code>xfuel-demo</code> — 15 requests/min, 150/day per IP. Windows: use <code>curl.exe</code>.
           </p>
           <pre className="docs-code"><code>{SNIPPET}</code></pre>
-          <p style={{ color: '#8a8a9a', margin: '1.25rem 0 0.5rem' }}>Or any OpenAI client:</p>
-          <pre className="docs-code"><code>{OPENAI}</code></pre>
+          <p style={{ color: '#8a8a9a', margin: '1.25rem 0 0.5rem' }}>Or any chat-completions client:</p>
+          <pre className="docs-code"><code>{FETCH}</code></pre>
         </div>
       </section>
 
@@ -70,7 +77,7 @@ export default function Home() {
               <span style={styles.moneyLinkMeta}>/book</span>
             </Link>
             <Link to="/v1" style={styles.moneyLink}>
-              <span style={styles.moneyLinkTitle}>OpenAI drop-in. Wallet pays. You hold the book.</span>
+              <span style={styles.moneyLinkTitle}>Bot drop-in. Wallet pays. You hold the book.</span>
               <span style={styles.moneyLinkMeta}>/v1</span>
             </Link>
           </div>

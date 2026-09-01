@@ -7,16 +7,18 @@ const SNIPPET = `curl -sS ${API_V1}/chat/completions \\
   -H "Content-Type: application/json" \\
   -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`;
 
-const OPENAI = `import OpenAI from 'openai';
-const client = new OpenAI({
-  apiKey: 'xfuel-demo',
-  baseURL: '${API_V1}',
+const FETCH = `const res = await fetch('${API_V1}/chat/completions', {
+  method: 'POST',
+  headers: {
+    'X-API-Key': 'xfuel-demo',
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    model: 'xfuel/auto',
+    messages: [{ role: 'user', content: 'Say hello in 5 words.' }],
+  }),
 });
-
-const response = await client.chat.completions.create({
-  model: 'xfuel/auto',
-  messages: [{ role: 'user', content: 'Say hello in 5 words.' }],
-});`;
+const data = await res.json();`;
 
 export default function GatewayV1() {
   useEffect(() => {
@@ -28,7 +30,7 @@ export default function GatewayV1() {
       <div className="container" style={{ maxWidth: 720 }}>
         <header className="page-header">
           <span className="docs-kicker">/v1</span>
-          <h1>OpenAI drop-in. Wallet pays. You hold the book.</h1>
+          <h1>Bot drop-in. Wallet pays. You hold the book.</h1>
           <p>
             Exact product: baseURL <a href={API_V1}>{API_V1}</a>.
             Steal engineers pointing at Agent402 / tx402 / qntx (llm.qntx.fun) by being the named host.
@@ -38,7 +40,7 @@ export default function GatewayV1() {
         <section className="docs-section">
           <h2>What is the exact baseURL for /v1/chat/completions?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
-            <code>{API_V1}</code>. Point any OpenAI client at this baseURL. The endpoint is{' '}
+            <code>{API_V1}</code>. Point any chat-completions client at this baseURL. The endpoint is{' '}
             <code>{API_V1}/chat/completions</code>. This is{' '}
             <code>api.xfuel.app</code>, not <code>xfuel.app</code>. The site you are reading
             is the docs. The gateway is <code>api.xfuel.app</code>.
@@ -56,12 +58,12 @@ export default function GatewayV1() {
         </section>
 
         <section className="docs-section">
-          <h2>How do I point an OpenAI client at XFuel?</h2>
+          <h2>How do I call /v1/chat/completions?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7, marginBottom: '1rem' }}>
-            Set <code>baseURL: '{API_V1}'</code> and <code>apiKey</code> to your key or{' '}
-            <code>xfuel-demo</code>. The OpenAI SDK works unchanged.
+            POST to <code>{API_V1}/chat/completions</code> with your key or{' '}
+            <code>xfuel-demo</code>. Any HTTP client or bot framework works.
           </p>
-          <pre className="docs-code"><code>{OPENAI}</code></pre>
+          <pre className="docs-code"><code>{FETCH}</code></pre>
         </section>
 
         <section className="docs-section">

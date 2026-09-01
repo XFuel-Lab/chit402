@@ -1555,6 +1555,328 @@ export function registerOpenAIRoutes(app, {
   app.post('/v1/chat/completions', (req, res) => handlePaidChatPost(req, res, '/v1/chat/completions'));
   app.post('/a2a-message', ...baseChain, (req, res) => handlePaidChatPost(req, res, '/a2a-message'));
 
+  // ── POST /v1/responses ─────────────────────────────────────────────────────
+  // Responses API drop-in: same x402 + signed receipt as /v1/chat/completions.
+  // Accepts: { model, input (string | message[]), max_output_tokens }.
+  // Returns: Responses-shaped output + XFuel receipt (hub, model, amount, verify_url).
+  // Stateless one-shot — no store, previous_response_id, or server memory.
+
+  /**
+   * Convert Responses API `input` to chat-completions `messages`.
+   * @param {string | Array} input - string prompt or array of message objects
+   * @returns {Array} messages array for chat completions
+   */
+  function responsesInputToMessages(input) {
+    if (typeof input === 'string') {
+      return [{ role: 'user', content: input }];
+    }
+    if (!Array.isArray(input)) return [];
+    return input.map((m) => {
+      if (typeof m === 'string') return { role: 'user', content: m };
+      return { role: m.role || 'user', content: m.content || '' };
+    });
+  }
+
+  /**
+   * Convert chat completion content to Responses API output format.
+   * @param {string} content - assistant response text
+   * @param {Array|null} toolCalls - tool calls if any
+   * @returns {{ output: Array, output_text: string }}
+   */
+  function toResponsesOutput(content, toolCalls = null) {
+    const outputItems = [];
+    if (toolCalls && toolCalls.length > 0) {
+      for (const tc of toolCalls) {
+        outputItems.push({
+          type: 'function_call',
+          id: tc.id,
+          call_id: tc.id,
+          name: tc.function?.name,
+          arguments: tc.function?.arguments || '{}',
+        });
+      }
+    }
+    outputItems.push({
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: content || '' }],
+    });
+    return {
+      output: outputItems,
+      output_text: content || '',
+    };
+  }
+
+  app.use('/v1/responses', ...baseChain);
+
+  // GET /v1/responses — same unauth 402 as POST {}
+  app.get('/v1/responses', async (req, res) => {
+    const { halted } = await maybeMeterUnauthChat(req, res, '/v1/responses');
+    if (halted) return undefined;
+    res.set('Allow', 'POST');
+    return res.status(405).json({
+      error: {
+        message: 'Method not allowed. POST /v1/responses with a JSON body.',
+        type: 'invalid_request_error',
+        code: 'method_not_allowed',
+      },
+    });
+  });
+
+  // POST /v1/responses — Responses API drop-in with x402 + signed receipt
+  app.post('/v1/responses', async (req, res) => {
+    // Unauth probes (no payment) must 402 before body validation
+    let { halted, taskId, metering, paymentHeader } = await maybeMeterUnauthChat(req, res, '/v1/responses');
+    if (halted) return undefined;
+
+    const { model, input, max_output_tokens, temperature, tools, tool_choice } = req.body || {};
+
+    // Convert input to messages
+    const messages = responsesInputToMessages(input);
+    if (!messages || messages.length === 0) {
+      return res.status(400).json({
+        error: {
+          message: '`input` is required and must be a non-empty string or array of messages',
+          type: 'invalid_request_error',
+          param: 'input',
+          code: null,
+        },
+      });
+    }
+
+    // Validate message structure
+    const badMsg = messages.find((m) => {
+      if (!m || typeof m.role !== 'string') return true;
+      if (typeof m.content === 'string') return false;
+      if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) return false;
+      return true;
+    });
+    if (badMsg) {
+      return res.status(400).json({
+        error: {
+          message: 'each message requires a string `role` and string `content`',
+          type: 'invalid_request_error',
+          param: 'input',
+          code: null,
+        },
+      });
+    }
+
+    // Validate tools if provided
+    if (tools !== undefined && (!Array.isArray(tools) || tools.some((t) => t?.type !== 'function' || !t.function?.name))) {
+      return res.status(400).json({
+        error: { message: '`tools` must be an array of {type:"function", function:{name,...}}', type: 'invalid_request_error', param: 'tools', code: null },
+      });
+    }
+    const wantsTools = Array.isArray(tools) && tools.length > 0;
+
+    const id = `resp_${crypto.randomUUID()}`;
+    const created = Math.floor(Date.now() / 1000);
+    const fb = allowFallback(req);
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+    const privateSpend = !!config.privateSpend?.enabled || isPrivateSpendSession(req, registry);
+    const apiKeyHash = apiKeyHashFromReq(req);
+    let paidTask = null;
+
+    // Payment present: settle only after the body is valid
+    if (paymentHeader) {
+      metering = await meterV1Request(req, res, {
+        taskId, isAuthorised, resourcePath: '/v1/responses', ledger, registry,
+      });
+      if (metering.meteringError) {
+        return respondMeteringFailure(res, {
+          taskId,
+          payment: metering.payment,
+          task: paidTask,
+          baseUrl,
+          privateSpend,
+          ledger,
+          registry,
+          req,
+        });
+      }
+      if (metering.halted) return undefined;
+      if (metering.payment) {
+        ({ task: paidTask } = registerPaidV1Shell({
+          taskId,
+          payment: metering.payment,
+          model: model || 'xfuel/auto',
+          messages,
+          apiKeyHash,
+          privateSpend,
+        }));
+      }
+    }
+
+    // Free tier check for unmetered requests
+    const freeBucket = metering.payment ? null : freeTierBucket(req, apiKeyHashFromReq(req));
+    if (freeBucket) {
+      const allowance = checkFreeAllowance(freeBucket);
+      if (!allowance.allowed) {
+        const global = allowance.scope === 'global';
+        logger.warn(
+          {
+            reqId: req.id,
+            scope: allowance.scope,
+            spentUsd: cogsUsd(allowance.spent),
+            limitUsd: cogsUsd(allowance.limit),
+          },
+          'openai-gateway: free allowance exhausted (responses)',
+        );
+        res.set('Retry-After', String(allowance.retryAfterSec));
+        return res.status(402).json({
+          error: {
+            message: global
+              ? `The shared free tier is exhausted for today. It resets at ${allowance.resetAt}. Use a metered key.`
+              : `Free allowance exhausted. It resets at ${allowance.resetAt}. Use a metered key.`,
+            type: 'payment_required',
+            code: global ? 'free_tier_capacity' : 'free_tier_exhausted',
+          },
+        });
+      }
+    }
+
+    let inference;
+    try {
+      inference = await runChatInference({
+        model: model || 'xfuel/auto',
+        messages,
+        max_tokens: clampMaxTokens(max_output_tokens),
+        temperature,
+        allowFallback: fb,
+        cacheNs: cacheNamespace(apiKeyHash),
+        tools: wantsTools ? tools : null,
+        tool_choice: wantsTools ? tool_choice : null,
+      });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /v1/responses inference error');
+      if (metering.payment) {
+        return respondPaidV1Failure(res, {
+          task: paidTask,
+          taskId,
+          payment: metering.payment,
+          baseUrl,
+          privateSpend,
+          requestedModel: model,
+          message: 'Inference failed after payment was collected.',
+          code: 'inference_failed',
+          ledger,
+          registry,
+          req,
+        });
+      }
+      return res.status(500).json({
+        error: { message: 'inference failed', type: 'server_error', code: null },
+      });
+    }
+
+    if (inference.error) {
+      if (metering.payment) {
+        return respondPaidV1Failure(res, {
+          task: paidTask,
+          taskId,
+          payment: metering.payment,
+          baseUrl,
+          privateSpend,
+          statusCode: inference.error.status || 503,
+          message: inference.error.message,
+          code: inference.error.code || 'inference_failed',
+          requestedModel: model,
+          resolvedModel: inference.resolvedModel,
+          ledger,
+          registry,
+          req,
+        });
+      }
+      return res.status(inference.error.status || 400).json({
+        error: {
+          message: inference.error.message,
+          type: 'invalid_request_error',
+          code: inference.error.code,
+        },
+      });
+    }
+
+    const echoModel = inference.resolvedModel || model || 'xfuel/auto';
+    const { content, provider, mock, toolCalls } = inference;
+
+    // Usage from provider
+    const { source, ...counts } = normalizeUsage(inference.raw, { messages, output: content });
+    const usage = { ...counts, xfuel_source: source };
+
+    let task;
+    let proverConfigured;
+    if (paidTask) {
+      task = paidTask;
+      task.status = 'completed';
+      task.updatedAt = Date.now();
+      task.intent.modelId = echoModel;
+      task.meta.provider = provider;
+      task.outputHash = ethers.keccak256(ethers.toUtf8Bytes(
+        toolCalls ? JSON.stringify({ content: content || null, tool_calls: toolCalls }) : (content ?? ''),
+      ));
+      task.result = {
+        provider,
+        outputHash: task.outputHash,
+        content_hash: task.outputHash,
+        usage,
+        ...(toolCalls ? { tool_calls: toolCalls } : {}),
+      };
+      task.usage = { ...counts, source };
+      proverConfigured = !!getSP1Prover();
+    } else {
+      ({ proverConfigured, task } = registerTaskAndProve({
+        taskId,
+        model: echoModel,
+        messages,
+        content,
+        toolCalls,
+        provider,
+        proveAllowed: false,
+        deferProve: true,
+        apiKeyHash,
+        privateSpend,
+        usage: { ...counts, source },
+        payment: metering.payment,
+      }));
+    }
+
+    // Account for COGS
+    const cogs = mock ? 0n : await accountForCogs({ task, modelId: echoModel, usage: counts, provider });
+    if (freeBucket) recordFreeSpend(freeBucket, cogs);
+    const proveAllowed = settlementProofAllowed({
+      apiKey: req.headers['x-api-key'],
+      cogs,
+      proofTier: req.body?.proof_tier ?? req.body?.xfuel?.proof_tier,
+      minCogs: config.verifiedInference?.tier2MinCogs,
+    });
+    startTaskProof(task, proveAllowed);
+
+    const receipt = bookSpend(buildReceipt({
+      task, taskId, provider, mock, proverConfigured, proveAllowed,
+      mockReason: inference.raw?.reason, baseUrl, privateSpend,
+      payment: metering.payment,
+      requestedModel: model, resolvedModel: echoModel,
+    }), req);
+
+    setReceiptHeaders(res, receipt);
+
+    // Build Responses-shaped output
+    const { output, output_text } = toResponsesOutput(content, toolCalls);
+
+    return res.json({
+      id,
+      object: 'response',
+      created_at: created,
+      model: echoModel,
+      status: 'completed',
+      output,
+      output_text,
+      usage,
+      xfuel: receipt,
+    });
+  });
+
   // ── POST /v1/images/generations ────────────────────────────────────────────
   app.post('/v1/images/generations', async (req, res) => {
     const { model, prompt, n } = req.body || {};
