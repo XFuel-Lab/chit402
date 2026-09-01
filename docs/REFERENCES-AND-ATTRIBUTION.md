@@ -25,6 +25,5 @@ Prover-side upgrade candidate (GKR IVC folding). No on-chain verifier change req
 
 ## Related
 
-- [VERIFIED_INFERENCE_HANDOFF.md](./VERIFIED_INFERENCE_HANDOFF.md)
 - [adr/0003-verified-inference-cleanroom.md](./adr/0003-verified-inference-cleanroom.md)
 - [adr/0004-zkllm-prover-stack.md](./adr/0004-zkllm-prover-stack.md)

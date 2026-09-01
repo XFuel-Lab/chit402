@@ -77,11 +77,10 @@ npx xfuel-mcp
 - TypeScript SDK — [packages/sdk](packages/sdk/README.md)
 - MCP server — [packages/mcp](packages/mcp/README.md)
 - Agent playbook — [packages/agent-skills](packages/agent-skills/AGENT_PLAYBOOK.md)
-- Hosted endpoint — [docs/HOSTED_TESTNET_ENDPOINT.md](docs/HOSTED_TESTNET_ENDPOINT.md)
 
 **Windows note:** if you use raw HTTP, call `curl.exe` — PowerShell’s `curl` is not real curl.
 
-API reference: [M2M API](docs/M2M_API.md) · OpenAI gateway: [docs here](docs/OPENAI_COMPATIBLE_GATEWAY.md) · Payments: [x402 adapter](docs/X402_ADAPTER.md).
+API reference: [M2M API](docs/M2M_API.md) · Chat completions: [docs here](docs/CHAT_COMPLETIONS_GATEWAY.md) · Payments: [x402 adapter](docs/X402_ADAPTER.md).
 
 ## Documentation
 

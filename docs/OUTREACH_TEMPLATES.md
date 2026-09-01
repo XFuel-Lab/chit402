@@ -21,7 +21,7 @@ Most teams running agents can answer that from a provider invoice at the account
 nowhere near the per-call level. Which model actually served it, which provider, how many tokens,
 what it cost — that either lives in your own logs, which attest nothing, or nowhere.
 
-XFuel is an OpenAI-compatible gateway that returns a **signed receipt for every call**: model,
+XFuel is a chat-completions gateway that returns a **signed receipt for every call**: model,
 provider, token counts, output hash, cost. Tamper-evident, verifiable with our SDK or your own
 HMAC check. Two minutes to try — change `baseURL` to `https://api.xfuel.app/v1` and keep
 everything else. No wallet, no signup call, receipts are free.
@@ -50,7 +50,7 @@ and returns a signed receipt per call naming the model, the provider, the tokens
 so spend reconciles against something better than a screenshot. Optional SP1 settlement proof
 on-chain when a receipt needs to stand up to an auditor rather than a colleague.
 
-OpenAI-compatible, so it is a base-URL swap. You can see the receipt before touching a wallet —
+Chat-completions compatible, so it is a base-URL swap. You can see the receipt before touching a wallet —
 the free surface returns the same signed artifact.
 
 Open to 20 minutes?

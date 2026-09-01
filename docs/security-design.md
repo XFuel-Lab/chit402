@@ -1,7 +1,7 @@
 # Security Design
 
 Defense-in-depth for settlement, proofs, and the agent gateway.  
-Audit scope: WHITEPAPER §11.5. Readiness: [AUDIT_READINESS_CHECKLIST.md](./AUDIT_READINESS_CHECKLIST.md).
+Audit scope: WHITEPAPER §11.5.
 
 ## Trust ladder
 

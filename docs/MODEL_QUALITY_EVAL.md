@@ -63,7 +63,7 @@ to claim the models are interchangeable everywhere.
 
 ~2.5% of calls failed on provider capacity, not on model behaviour, spread across two different
 models. This is independent support for routing and failover being the product — the argument in
-[PRICING_STRATEGY.md](./PRICING_STRATEGY.md) that our position is "availability through routing,
+[POSITIONING.md](./POSITIONING.md) that our position is "availability through routing,
 without losing the audit trail" rather than "DePIN is cheaper". It also means a single-model default
 inherits that model's queue depth, so whichever default is chosen needs a fallback that is not the
 same hub.

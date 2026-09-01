@@ -35,4 +35,4 @@ Fees land at `X402_PAY_TO` / `REVENUE_SPLIT_ADDRESS` on Base. See `src/revenue-s
 
 - [`docs/M2M_API.md`](../../docs/M2M_API.md)
 - [`docs/X402_ADAPTER.md`](../../docs/X402_ADAPTER.md)
-- [`docs/OPENAI_COMPATIBLE_GATEWAY.md`](../../docs/OPENAI_COMPATIBLE_GATEWAY.md)
+- [`docs/CHAT_COMPLETIONS_GATEWAY.md`](../../docs/CHAT_COMPLETIONS_GATEWAY.md)

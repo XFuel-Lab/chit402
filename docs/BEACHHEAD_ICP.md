@@ -12,7 +12,7 @@ Sell **the book** (this agent spent Y on this job; you hold hub, model, and amou
 
 | # | Motion | Who | Offer |
 |---|--------|-----|-------|
-| 1 | Framework embed | Eliza / MCP authors | OpenAI baseURL → XFuel; USDC budget + verify_url |
+| 1 | Framework embed | Eliza / MCP authors | Chat-completions baseURL → XFuel; USDC budget + verify_url |
 | 2 | Launchpad sidecars | Virtuals agent teams | Escape siloed compute credits; DePIN + proofs |
 | 3 | Swarm operators | Olas / Theoriq / ACP runners | A2A lineage + multi-hop spend receipts |
 | 4 | Compute co-sell | Akash / Theta BD | Cheap GPUs ↔ Base agent demand |
@@ -25,7 +25,7 @@ Full strategy: [STRATEGY.md](./STRATEGY.md). Hunt targets below.
 | Role | Why they care |
 |------|----------------|
 | Agent / protocol founder | Needs spend control without sharing org API keys |
-| Platform eng on agent frameworks | Wants OpenAI-compatible drop-in + payment rail |
+| Platform eng on agent frameworks | Wants chat-completions drop-in + payment rail |
 | Crypto product lead | Needs auditable USDC spend for investors / treasury |
 
 ## Who does not buy (yet)
@@ -41,7 +41,7 @@ Enterprises that only pay fiat invoices, teams that need confidential prompts da
 
 ## Must-have product surface
 
-- OpenAI-compatible `/v1` + `/task-request`
+- Chat-completions `/v1` + `/task-request`
 - x402 USDC on Base (testnet now → mainnet per [MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md))
 - Signed receipt + public verify URL
 - SDK + MCP install path `< 1 day`
@@ -90,7 +90,7 @@ Contacts below are **public X / LinkedIn / org channels** researched 2026-08-07 
 | 2 | Cloudflare Agents (x402 / paid MCP) | Org: [@Cloudflare](https://x.com/Cloudflare) · Agents docs lead signal: Rita Kozlov (VP Dev Platform) [LinkedIn](https://www.linkedin.com/in/ritakozlov) · [agents x402 docs](https://developers.cloudflare.com/agents/tools/payments/x402/) | todo | Rita is too senior for a cold design-partner ask — use Discord/community + builders shipping paid MCP on Workers. Angle: spend audit / `verify_url` for agent wallets that already pay 402. |
 | 3 | Base Builder Code / base.dev agent apps | [Base Builders](https://base.org) / Farcaster Base channels; Builder Code docs on base.dev | todo | Hunt **app teams** shipping agent UIs, not Base Corp. Attribution + spend transparency. |
 | 4 | Virtuals Protocol (Base agent commerce) | Jansen Teng (co-founder/CEO) [@ethermage](https://x.com/ethermage) · [LinkedIn](https://www.linkedin.com/in/jansenteng) · org [@virtuals_io](https://x.com/virtuals_io) · co-founder Tiew Wee Kee (Weekee) | todo | **High fit if** you reach an **agent team / ACP integrator**, not tokenomics. Pitch: USDC budgets + receipts for agents that already hold wallets on Base. Hard-pass if conversation becomes launchpad-only. |
-| 5 | ElizaOS / Eliza Labs (framework) | Shaw Walters [@shawmakesmagic](https://x.com/shawmakesmagic) · org/framework still building open-source | todo | **Careful (2026-08):** token/foundation wind-down — do **not** pitch tokenomics. Pitch **plugin authors / teams still routing LLM spend** via ElizaOS: OpenAI `baseURL` swap + USDC budget. Prefer Discord/plugin maintainers over founder cold-DM this week. |
+| 5 | ElizaOS / Eliza Labs (framework) | Shaw Walters [@shawmakesmagic](https://x.com/shawmakesmagic) · org/framework still building open-source | todo | **Careful (2026-08):** token/foundation wind-down — do **not** pitch tokenomics. Pitch **plugin authors / teams still routing LLM spend** via ElizaOS: chat-completions `baseURL` swap + USDC budget. Prefer Discord/plugin maintainers over founder cold-DM this week. |
 | 6 | Olas / Valory (multi-agent) | David Minarsch [@david_enim](https://x.com/david_enim) · Valory/Olas · [olas.network](https://olas.network) | todo | Multi-agent spend + A2A lineage. Better: **operators running live Olas services**, not only CEO. |
 | 7 | Bankr (onchain agent tooling on Base) | Product [@bankrbot](https://x.com/bankrbot) · lead [@0xDeployer](https://x.com/0xDeployer) · [bankr.bot](https://bankr.bot/) · Base docs skill | todo | **Top cold target.** Agents that already pay for compute/tools; Coinbase Ventures / Base ecosystem adjacency. Pitch: budgets + receipts instead of opaque API burn. |
 | 8 | MCP server authors (LLM proxies) | Hunt via [mcp.so](https://mcp.so) / Glama / npm `mcp` — pick 2–3 servers that wrap OpenAI/Anthropic | todo | “Your users need USDC budgets + receipts.” Contact = GitHub maintainers listed on the repo. |
@@ -103,7 +103,7 @@ Suggested hunt pools: x402 Discord, Base Builders, Cloudflare Agents Discord, ET
 
 ## Outreach script (short)
 
-> We’re XFuel — budgets + USDC settlement + receipts for agents on Base (x402). Looking for 3 design partners to run real tasks through our gateway and stress Private Spend (vendor-blind routing). You get early access + influence on the receipt schema. 30 min install via SDK or OpenAI base URL swap.
+> We’re XFuel — budgets + USDC settlement + receipts for agents on Base (x402). Looking for 3 design partners to run real tasks through our gateway and stress Private Spend (vendor-blind routing). You get early access + influence on the receipt schema. 30 min install via SDK or chat-completions base URL swap.
 
 ## Success metrics (Sprint 1–3)
 

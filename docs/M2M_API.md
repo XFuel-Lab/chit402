@@ -154,7 +154,7 @@ Events currently include `TaskSettled`, `A2ASettled`.
 - `POST /a2a-message` — agent-to-agent message with optional escrow
 - `POST /a2a-settle-fair-exchange` — Fair Exchange / PAS settlement
 
-### OpenAI surface
+### Chat completions surface
 
 Same server: `/v1/models`, `/v1/chat/completions`, `/llms.txt`.  
 See [OPENAI_COMPATIBLE_GATEWAY.md](./OPENAI_COMPATIBLE_GATEWAY.md).
@@ -171,8 +171,7 @@ Fees settle to `X402_PAY_TO` / Splits v2 (token-light). See [ADR 0001](./adr/000
 
 ## Related
 
-- [OPENAI_COMPATIBLE_GATEWAY.md](./OPENAI_COMPATIBLE_GATEWAY.md)
+- [CHAT_COMPLETIONS_GATEWAY.md](./CHAT_COMPLETIONS_GATEWAY.md)
 - [X402_ADAPTER.md](./X402_ADAPTER.md)
-- [HOSTED_TESTNET_ENDPOINT.md](./HOSTED_TESTNET_ENDPOINT.md)
 - SDK: `packages/sdk`
 - MCP: `packages/mcp`

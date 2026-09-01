@@ -1,3 +1,0 @@
-# Demo
-
-Merged into [HOSTED_TESTNET_ENDPOINT.md](./HOSTED_TESTNET_ENDPOINT.md).

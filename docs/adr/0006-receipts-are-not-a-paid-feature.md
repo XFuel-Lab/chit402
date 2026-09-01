@@ -1,7 +1,7 @@
 # ADR 0006 — Receipts Are Not a Paid Feature
 
 Status: Proposed (founder decision, tracker item 17). Date: 2026-08-13.
-Related: [ADR 0001](./0001-usdc-revenue-and-router-verifier-positioning.md), [ADR 0002](./0002-base-settlement-home.md), [PRICING_STRATEGY.md](../PRICING_STRATEGY.md), [SPEND_INTELLIGENCE_THESIS.md](../SPEND_INTELLIGENCE_THESIS.md), [BEACHHEAD_ICP.md](../BEACHHEAD_ICP.md).
+Related: [ADR 0001](./0001-usdc-revenue-and-router-verifier-positioning.md), [ADR 0002](./0002-base-settlement-home.md), [SPEND_INTELLIGENCE_THESIS.md](../SPEND_INTELLIGENCE_THESIS.md), [BEACHHEAD_ICP.md](../BEACHHEAD_ICP.md).
 
 ## Context
 

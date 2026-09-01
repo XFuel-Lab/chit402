@@ -2,7 +2,7 @@
 
 Not legal advice. Engage qualified counsel before a public sale, token distribution, or broad retail marketing.
 
-Fundraising shape: [FUNDRAISING_STRUCTURE.md](./FUNDRAISING_STRUCTURE.md) (equity-first SAFE).
+Fundraising shape: equity-first SAFE.
 
 ## Documents (counsel draft / approve)
 
@@ -32,7 +32,6 @@ Must match live product:
 
 - [ ] Bug bounty public — [bug-bounty.md](./bug-bounty.md)
 - [ ] Security contact — [SECURITY.md](../SECURITY.md)
-- [ ] Audit readiness — [AUDIT_READINESS_CHECKLIST.md](./AUDIT_READINESS_CHECKLIST.md)
 
 ## Before mainnet revenue
 

@@ -4,7 +4,7 @@ Sprint 4 decision — Verified Inference / zkLLM posture for the next two quarte
 
 Date: 2026-08-05  
 Status: **Narrow + timebox** (not pause, not company identity)  
-Related: [VERIFIED_INFERENCE_HANDOFF.md](./VERIFIED_INFERENCE_HANDOFF.md), [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md), founder/VC strategy.
+Related: [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md), founder/VC strategy.
 
 ## Decision
 

@@ -1,7 +1,10 @@
 # ADR 0004 — zkLLM Prover Stack
 
-Status: Accepted. Date: 2026-07-18.  
+Status: Accepted for Tier-3 on-demand proof. Not company identity. Not on GTM roadmap.  
+Date: 2026-07-18.  
 Related: [ADR 0003](./0003-verified-inference-cleanroom.md), [VERIFIED_INFERENCE_TIERS.md](../VERIFIED_INFERENCE_TIERS.md), `services/zkllm-prover/`.
+
+> **Current reading (2026-09):** zkLLM is a technical capability for open-weight model authenticity, available on demand. It is not XFuel's identity, not the product, and not part of GTM messaging. The product is the book (possession + lineage of spend receipts). Lead with signed receipts (Tier-1) and SP1 settlement proofs (Tier-2), not zkLLM.
 
 ## Context
 
@@ -16,7 +19,7 @@ Tier-3 needs a self-owned ZK prover. Mainstream open LLMs are decoder-only trans
 
 ## Resume / make-or-break
 
-See [VERIFIED_INFERENCE_HANDOFF.md](../VERIFIED_INFERENCE_HANDOFF.md) and the build-spec resume section: SP1-compat spike (`services/sp1-inference-spike`) decides wrap path C1 vs C2; then RAM bench, on-chain verify, E2E.
+See the build-spec resume section: SP1-compat spike (`services/sp1-inference-spike`) decides wrap path C1 vs C2; then RAM bench, on-chain verify, E2E.
 
 ## Consequences
 

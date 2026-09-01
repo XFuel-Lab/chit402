@@ -63,7 +63,7 @@ The Core Layer is a minimal hub on Base:
 | `SP1ProofHooks` | Nullifiers, fee commitments, public-value encoding |
 | Gateway | Off-chain routing, payments, proving, receipts (`services/gateway`) |
 
-Circuits are independent modules (inference, A2A, bridge, zkML, DePIN, and others). They emit intents and consume settlement events. Catalog: [circuits guide](docs/CIRCUITS.md).
+Circuits are independent modules (inference, A2A, bridge, zkML, DePIN, and others). They emit intents and consume settlement events.
 
 **Flow:** users and agents → gateway → providers; USDC fee on Base; optional SP1 proof → `ZKVerifierSP1`.
 
@@ -112,7 +112,7 @@ See [ADR 0001 — USDC revenue](docs/adr/0001-usdc-revenue-and-router-verifier-p
 
 When XF launches on Base, holders lock XF for veXF (Curve-style, up to 3× for a 3-year lock) and vote on circuit priority, fee parameters, treasury policy, large spends, and emergency pause. Implemented in `veXFGovernance.sol`.
 
-Fundraising today is equity-first (SAFE). See [fundraising structure](docs/FUNDRAISING_STRUCTURE.md).
+Fundraising today is equity-first (SAFE).
 
 ---
 
@@ -142,8 +142,7 @@ Allocation is forward-looking (community, strategic, ecosystem, team, treasury, 
 
 **Later:** extended circuit audits; veXF live post-TGE; optional cross-chain proof relay; additional provider tiers.
 
-Build history: [CHANGELOG](CHANGELOG.md).  
-Tier-3 status: [Verified Inference handoff](docs/VERIFIED_INFERENCE_HANDOFF.md).
+Build history: [CHANGELOG](CHANGELOG.md).
 
 ---
 
@@ -152,7 +151,6 @@ Tier-3 status: [Verified Inference handoff](docs/VERIFIED_INFERENCE_HANDOFF.md).
 - [Runtime state](docs/RUNTIME_STATE.md) — as-deployed endpoints
 - [Positioning](docs/POSITIONING.md) — messaging
 - [Architecture decisions](docs/adr/) — ADRs
-- [Circuits](docs/CIRCUITS.md) — circuit catalog
 - [Technical specifications](docs/Technical-Specifications.md) — gas / benchmarks
 - [References and attribution](docs/REFERENCES-AND-ATTRIBUTION.md) — research credits
 

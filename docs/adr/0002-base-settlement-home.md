@@ -1,7 +1,7 @@
 # ADR 0002 — Base Settlement Home
 
 Status: Accepted. Date: 2026-07-16.  
-Related: [ADR 0001](./0001-usdc-revenue-and-router-verifier-positioning.md), [FUNDRAISING_STRUCTURE.md](../FUNDRAISING_STRUCTURE.md).
+Related: [ADR 0001](./0001-usdc-revenue-and-router-verifier-positioning.md).
 
 ## Context
 
@@ -13,7 +13,7 @@ ADR 0001 moved fee currency to USDC on Base. Ops reality also requires Base for 
 2. Proof home = Base (`ZKVerifierSP1` on Sepolia → mainnet). Prior Theta verifier addresses are archive.
 3. Token home (deferred) = Base when XF / veXF launch; same-chain buyback later.
 4. Theta = optional GPU / EdgeCloud provider only. Solidity names like `ThetaInferenceCircuit` may remain as modules.
-5. Canonical docs must not claim Theta as settlement home. Gateway identity is `xfuel-gateway`. Equity-first fundraising — see [FUNDRAISING_STRUCTURE.md](../FUNDRAISING_STRUCTURE.md).
+5. Canonical docs must not claim Theta as settlement home. Gateway identity is `xfuel-gateway`.
 
 ## Consequences
 

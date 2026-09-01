@@ -4,7 +4,6 @@ Self-owned, model-agnostic ZK prover for XFuel Verified Inference (Tier-3). Clea
 
 CPU-only / RAM-bound. Not “zkGPT.” Op-first + config-driven for open-weight decoder transformers (Llama, Mistral, Qwen, …). Closed models stay on signed / TEE tiers.
 
-Handoff: [docs/VERIFIED_INFERENCE_HANDOFF.md](../../docs/VERIFIED_INFERENCE_HANDOFF.md).  
 Build plan: [docs/TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md](../../docs/TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md).
 
 ## Crate
