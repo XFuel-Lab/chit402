@@ -297,7 +297,7 @@ for Tier-2 economics rather than a nice-to-have.
 
 Until then Tier-2 is solvent only as an opt-in flat charge, or gated at a COGS threshold high
 enough that 10% of provider cost covers a whole unbatched proof (~$2.00 of COGS at K=4). See
-[PRICING_STRATEGY.md](./PRICING_STRATEGY.md).
+[ADR 0009](./adr/0009-cost-plus-pricing.md).
 
 Two related exposures. The measured request used `.compressed()`, not the Groth16 wrap
 `ZKVerifierSP1` verifies on Base, so on-chain settlement costs more than $0.050 by an

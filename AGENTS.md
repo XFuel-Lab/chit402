@@ -11,11 +11,10 @@ XFuel is the book. This agent spent Y on this job. You hold hub, model, and amou
 
 Beachhead: crypto-native agent teams — [docs/BEACHHEAD_ICP.md](docs/BEACHHEAD_ICP.md).  
 Provider COGS floats: [docs/PROVIDER_FLOAT_TREASURY.md](docs/PROVIDER_FLOAT_TREASURY.md) · [ADR 0005](docs/adr/0005-provider-float-cogs.md). 
-Pricing: [docs/PRICING_STRATEGY.md](docs/PRICING_STRATEGY.md) · [docs/SPEND_INTELLIGENCE_THESIS.md](docs/SPEND_INTELLIGENCE_THESIS.md).  
+Pricing: [docs/SPEND_INTELLIGENCE_THESIS.md](docs/SPEND_INTELLIGENCE_THESIS.md) · [docs/adr/0009-cost-plus-pricing.md](docs/adr/0009-cost-plus-pricing.md).  
 Mainnet USDC go-live: [docs/MAINNET_X402_CHECKLIST.md](docs/MAINNET_X402_CHECKLIST.md).  
 Privacy thesis (Private Spend): [docs/PRIVATE_SPEND_THESIS.md](docs/PRIVATE_SPEND_THESIS.md).  
-Design partners: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).  
-Seed scaffold: [docs/SEED_READINESS.md](docs/SEED_READINESS.md).
+Design partners: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).
 
 ## Try the demo
 
@@ -23,11 +22,10 @@ Public gateway: `https://api.xfuel.app` (demo key `xfuel-demo`, rate-limited). F
 Windows: use `curl.exe` for raw HTTP — PowerShell `curl` is not real curl.
 
 Status: `GET /task-status?task_id=`  
-OpenAI: `POST /v1/chat/completions`, `GET /v1/models`, `GET /llms.txt`
+Chat completions: `POST /v1/chat/completions`, `GET /v1/models`, `GET /llms.txt`
 
-- [docs/HOSTED_TESTNET_ENDPOINT.md](docs/HOSTED_TESTNET_ENDPOINT.md)
 - [docs/M2M_API.md](docs/M2M_API.md)
-- [docs/OPENAI_COMPATIBLE_GATEWAY.md](docs/OPENAI_COMPATIBLE_GATEWAY.md)
+- [docs/CHAT_COMPLETIONS_GATEWAY.md](docs/CHAT_COMPLETIONS_GATEWAY.md)
 - [docs/X402_ADAPTER.md](docs/X402_ADAPTER.md)
 - [packages/agent-skills/AGENT_PLAYBOOK.md](packages/agent-skills/AGENT_PLAYBOOK.md)
 

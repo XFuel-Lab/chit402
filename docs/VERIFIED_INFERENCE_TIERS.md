@@ -1,7 +1,6 @@
 # Verified Inference — Trust Tiers
 
-XFuel prices trust to value at risk. Spec: [TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md](./TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md).  
-Handoff: [VERIFIED_INFERENCE_HANDOFF.md](./VERIFIED_INFERENCE_HANDOFF.md).
+XFuel prices trust to value at risk. Spec: [TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md](./TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md).
 
 ## Ladder
 

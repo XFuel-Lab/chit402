@@ -1,7 +1,7 @@
 # ADR 0007 — Spot-Check Assurance: Pool the Statistics, Not the Sample
 
 Status: Proposed. Date: 2026-08-13.
-Related: [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [ADR 0003](./0003-verified-inference-cleanroom.md), [ADR 0004](./0004-zkllm-prover-stack.md), [PRICING_STRATEGY.md](../PRICING_STRATEGY.md), [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
+Related: [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [ADR 0003](./0003-verified-inference-cleanroom.md), [ADR 0004](./0004-zkllm-prover-stack.md), [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
 
 ## Context
 
@@ -74,8 +74,8 @@ The resolution is to change the unit the claim is made about.
    otherwise. The unit of the claim is a rate over a sample, and the tier's language has to
    say so.
 5. **Sell it as an assurance tier, not a SKU.** Measured willingness to pay for verifiability
-   is 10–20%, not a multiple, and nobody in the market charges an attestation line item
-   ([PRICING_STRATEGY.md](../PRICING_STRATEGY.md)). Expect it to earn its keep as
+   is 10–20%, not a multiple, and nobody in the market charges an attestation line item.
+   Expect it to earn its keep as
    differentiation and retention before it is a revenue line. This is consistent with ADR
    0006: the *receipt* is free; a higher assurance level behind it is what carries price.
 6. **A mismatch is a signal, not a verdict.** Non-determinism guarantees false positives, so

@@ -42,6 +42,5 @@ Default embargo: 90 days from report (may shorten if actively exploited).
 ## Resources
 
 - [docs/bug-bounty.md](docs/bug-bounty.md)
-- [docs/AUDIT_READINESS_CHECKLIST.md](docs/AUDIT_READINESS_CHECKLIST.md)
 - [docs/security-design.md](docs/security-design.md)
 - [WHITEPAPER.md](WHITEPAPER.md)

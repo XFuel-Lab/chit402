@@ -3,10 +3,9 @@
 Internal product thesis. Not a marketing claim until the gates below are cleared.
 
 > **Superseded in two places (2026-08-12).** This doc argues for **flat per-model-class pricing** and
-> for **prepaid credits as the budgeting primitive**. Neither survived.
-> [PRICING_STRATEGY.md](./PRICING_STRATEGY.md) is now the source of truth on both: pricing is
-> **metered against a per-model rate card with a floor** (shipped, `src/pricing.js`), because fixed
-> class prices fail the savings test they were meant to enable. And prepaid credits are ruled out as
+> for **prepaid credits as the budgeting primitive**. Neither survived. Pricing is now
+> **cost-plus** (measured COGS + 10%, `src/pricing.js`, [ADR 0009](./adr/0009-cost-plus-pricing.md)),
+> because fixed class prices fail the savings test they were meant to enable. And prepaid credits are ruled out as
 > a primary model in [POSITIONING.md](./POSITIONING.md) — deposit-and-draw sells a promise about
 > supply we do not own, so a provider price shock lands on us rather than repricing the next call.
 > Enterprise BYOK is the one exception. Everything else here — the two-product split, the moat
@@ -89,7 +88,7 @@ Consequences, ranked:
 
 ### Recommendation: flat price per model class, plus tiered assurance
 
-Full schedule, market benchmarks and open decisions: **[PRICING_STRATEGY.md](./PRICING_STRATEGY.md)**. The headline from competitive research is that the framing decides the ceiling — a router that resells tokens tops out near a **5%** take rate (OpenRouter, Requesty, Eden AI all converged there; Akash tried 20% and abolished it in March 2026), whereas a per-call agent API anchors at **$0.01** and keeps its margin. We must not be benchmarked as a router.
+The headline from competitive research is that the framing decides the ceiling — a router that resells tokens tops out near a **5%** take rate (OpenRouter, Requesty, Eden AI all converged there; Akash tried 20% and abolished it in March 2026), whereas a per-call agent API anchors at **$0.01** and keeps its margin. We must not be benchmarked as a router. See [ADR 0009](./adr/0009-cost-plus-pricing.md).
 
 A **single** flat price makes Spend Intelligence pointless for the buyer — if every model costs $0.01, "route cheaper" saves them nothing and the entire gain accrues to us. **Pass-through** destroys the incentive alignment above. Flat-per-model-class resolves both:
 

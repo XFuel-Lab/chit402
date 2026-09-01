@@ -2,7 +2,7 @@
 
 Status: **Accepted — live on `api-testnet.xfuel.app` since 2026-08-15.** Date: 2026-08-14.
 `X402_COST_PLUS` still exists and still defaults off, so the rate card remains one restart away.
-Related: [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [ADR 0007](./0007-spot-check-assurance.md), [ADR 0008](./0008-rolling-settlement.md), [PRICING_STRATEGY.md](../PRICING_STRATEGY.md), [KNOWN_ISSUES.md](../KNOWN_ISSUES.md), [VERIFIED_INFERENCE_TIERS.md](../VERIFIED_INFERENCE_TIERS.md).
+Related: [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [ADR 0007](./0007-spot-check-assurance.md), [ADR 0008](./0008-rolling-settlement.md), [KNOWN_ISSUES.md](../KNOWN_ISSUES.md), [VERIFIED_INFERENCE_TIERS.md](../VERIFIED_INFERENCE_TIERS.md).
 
 ## Context
 
@@ -88,7 +88,7 @@ therefore the base fee divided by batch size, and nothing else:
 | 20 (host max) | $0.0025 | 27% of the fee |
 
 Break-even is batch 6. This supersedes the ~$0.007 self-hosted estimate in
-`PRICING_STRATEGY.md`, which was low by about 7x and led to the conclusion that proofs were
+prior estimates, which were low by about 7x and led to the conclusion that proofs were
 "cheap enough to give away".
 
 **Batch 1 is not a tuning problem — AI-task proofs cannot be batched.**

@@ -34,7 +34,7 @@ Env matrix: [`_shared/reference/env-and-endpoints.md`](./_shared/reference/env-a
 baseURL = ${XFUEL_API_URL}/v1
 ```
 
-`GET /v1/models`, `POST /v1/chat/completions` (streaming supported). Receipts in `x-xfuel-*` headers and `xfuel` body field. Docs: [OPENAI_COMPATIBLE_GATEWAY.md](../../docs/OPENAI_COMPATIBLE_GATEWAY.md).
+`GET /v1/models`, `POST /v1/chat/completions` (streaming supported). Receipts in `x-xfuel-*` headers and `xfuel` body field. Docs: [CHAT_COMPLETIONS_GATEWAY.md](../../docs/CHAT_COMPLETIONS_GATEWAY.md).
 
 ## Flow 0b — MCP
 

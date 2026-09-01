@@ -1,6 +1,6 @@
 # Tier-3 — Verifiable Inference Build Spec
 
-Master plan for Verified Inference. Agent brief: [VERIFIED_INFERENCE_HANDOFF.md](./VERIFIED_INFERENCE_HANDOFF.md).  
+Master plan for Verified Inference.  
 ADRs: [0003](./adr/0003-verified-inference-cleanroom.md), [0004](./adr/0004-zkllm-prover-stack.md).  
 Tiers: [VERIFIED_INFERENCE_TIERS.md](./VERIFIED_INFERENCE_TIERS.md).
 

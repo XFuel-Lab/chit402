@@ -5,12 +5,11 @@ Contact: security@xfuel.app
 
 Last updated: 2026-08-10
 
-> **No cash bounty is offered today.** XFuel is pre-audit and pre-funding, so we
-> do not advertise reward amounts we cannot commit to paying. We recognise valid
-> reports publicly (with your consent) and credit you in the fix. A funded bounty
-> will launch alongside the first external audit — see
-> [AUDIT_READINESS_CHECKLIST.md](./AUDIT_READINESS_CHECKLIST.md). Until then,
-> please report anyway: safe harbour below applies in full.
+> **No cash bounty is offered today.** XFuel is pre-audit, so we do not advertise
+> reward amounts we cannot commit to paying. We recognise valid reports publicly
+> (with your consent) and credit you in the fix. A funded bounty will launch
+> alongside the first external audit. Until then, please report anyway: safe
+> harbour below applies in full.
 
 ## Scope
 

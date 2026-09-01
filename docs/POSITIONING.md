@@ -41,9 +41,7 @@ Crypto-native agent teams on Base (USDC / x402). See [BEACHHEAD_ICP.md](./BEACHH
 
 **The book: hub, model, and amount — held by the buyer, not the hub.** Not "decentralised GPUs are
 cheaper" — measured against live rates, DePIN beats hyperscalers and loses to the cheapest aggregator
-routes, so we are ~25–30% *above* the floor on our own baseline model
-([PRICING_STRATEGY.md](./PRICING_STRATEGY.md)). Cheapness is not ours to claim and it is not
-defensible if it were: anyone can reprice.
+routes. Cheapness is not ours to claim and it is not defensible if it were: anyone can reprice.
 
 What is ours is that you can show "this agent spent Y on this job" with hub, model, and amount — not
 a smart-router scoreboard and not a model shop catalog. A call which fails on one hub can complete
@@ -66,5 +64,4 @@ prompts are private.
 **Never sell:** an uptime SLA, prepaid credits as the primary model, or a fixed monthly compute
 plan. All three sell a promise about supply we do not own — a provider price or capacity shock lands
 entirely on us, and the GPU market is exactly where such shocks come from. Per-task settlement means
-a supply shock reprices the next call instead of stranding a commitment. Enterprise BYOK is the one
-acceptable exception ([PRICING_STRATEGY.md](./PRICING_STRATEGY.md)).
+a supply shock reprices the next call instead of stranding a commitment.

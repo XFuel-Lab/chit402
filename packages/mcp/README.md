@@ -69,5 +69,5 @@ See [../sdk/PUBLISHING.md](../sdk/PUBLISHING.md). Publish **xfuel-sdk@0.5.5** fi
 ## Docs
 
 - [docs/M2M_API.md](../../docs/M2M_API.md)
-- [docs/OPENAI_COMPATIBLE_GATEWAY.md](../../docs/OPENAI_COMPATIBLE_GATEWAY.md)
+- [docs/CHAT_COMPLETIONS_GATEWAY.md](../../docs/CHAT_COMPLETIONS_GATEWAY.md)
 - [Agent playbook](../agent-skills/AGENT_PLAYBOOK.md)

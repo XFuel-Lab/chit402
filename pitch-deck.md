@@ -54,7 +54,7 @@ Settlement + payments + tiered proof on Base, provider-agnostic routing, self-ow
 
 ## 10. Ask
 
-Equity-first raise (SAFE + token warrant). See [docs/FUNDRAISING_STRUCTURE.md](docs/FUNDRAISING_STRUCTURE.md).
+Equity-first raise (SAFE + token warrant).
 
 ## 11. Links
 
