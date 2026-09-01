@@ -152,5 +152,6 @@ test('asking a Theta model for tools fails loudly — its API has no tools param
   assert.equal(res.status, 400);
   const body = await res.json();
   assert.equal(body.error.code, 'tools_unsupported_on_hub');
-  assert.match(body.error.message, /akash/, 'should point at a hub that does support tools');
+  assert.match(body.error.message, /xfuel\/auto/, 'should point at auto-routing for tool support');
+  assert.match(body.error.message, /GET \/v1\/models/, 'should point at catalog');
 });
