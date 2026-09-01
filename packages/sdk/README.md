@@ -27,7 +27,7 @@ Examples live in the [repo](https://github.com/XFuel-Lab/xfuel-protocol/tree/mai
 
 ## First hour — no wallet
 
-The free path is OpenAI-compatible `/v1`. Swap `baseURL` on any OpenAI client, or:
+The free path is `/v1` chat completions. Swap `baseURL` on any chat-completions client, or:
 
 ```ts
 import { XFuelClient } from 'xfuel-sdk';

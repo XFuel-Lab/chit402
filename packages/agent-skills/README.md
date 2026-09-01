@@ -6,7 +6,7 @@ Start here: [AGENT_PLAYBOOK.md](./AGENT_PLAYBOOK.md).
 Protocol map: [AGENTS.md](../../AGENTS.md).  
 As-deployed: [docs/RUNTIME_STATE.md](../../docs/RUNTIME_STATE.md).
 
-OpenAI drop-in: point `baseURL` at `${XFUEL_API_URL}/v1` — see [docs/OPENAI_COMPATIBLE_GATEWAY.md](../../docs/OPENAI_COMPATIBLE_GATEWAY.md).
+Chat completions drop-in: point `baseURL` at `${XFUEL_API_URL}/v1` — see [docs/CHAT_COMPLETIONS_GATEWAY.md](../../docs/CHAT_COMPLETIONS_GATEWAY.md).
 
 ## Skills
 
