@@ -22,7 +22,7 @@
 
 ## Start here (chat completions)
 
-- POST /v1/chat/completions : OpenAI chat completions. Unauthenticated GET or
+- POST /v1/chat/completions : Chat completions. Unauthenticated GET or
   POST {} → 402 x402 (USDC on Base or Solana). Returns signed receipt + public verify_url.
 - POST /a2a-message         : A2A card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
 - POST /v1/agents/register  : fail-closed. Bind agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
