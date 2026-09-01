@@ -22,8 +22,8 @@ test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () =>
   assert.ok(['x402', 'zan'].includes(m.facilitator.protocol));
   assert.match(m.facilitator.network, /^eip155:/);
 
-  // Two paid resources historically; A2A card URL is the same $0.01 door as /v1
-  assert.equal(m.resources.length, 3);
+  // Paid resources: chat completions, responses, a2a-message, task-request
+  assert.equal(m.resources.length, 4);
 
   // First resource: /v1/chat/completions (OpenAI-compatible)
   const chatResource = m.resources.find((r) => r.resource.includes('/v1/chat/completions'));
@@ -136,6 +136,7 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
   const pathKeys = Object.keys(spec.paths);
   assert.deepEqual(pathKeys, [
     '/v1/chat/completions',
+    '/v1/responses',
     '/a2a-message',
     '/task-request',
     '/v1/agents/register',
@@ -150,7 +151,7 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
     '/v1/agents/{agent_id}/book/rotate',
     '/receipt/{taskId}',
     '/receipt/by-tx',
-  ], 'chat completions is the public door; a2a is same floor; task-request is M2M; register is identity; book is possession-gated; ingest is foreign x402; lineage/policy/assign/dispute/rotate are book extensions; receipt endpoints are public verification');
+  ], 'chat completions is the public door; responses is the same floor; a2a is same floor; task-request is M2M; register is identity; book is possession-gated; ingest is foreign x402; lineage/policy/assign/dispute/rotate are book extensions; receipt endpoints are public verification');
   assert.equal(spec.paths['/v1/agents/register'].post['x-payment-info'], undefined,
     'register is not the paid door');
   assert.equal(spec.paths['/v1/agents/{agent_id}/book'].post['x-payment-info'], undefined,

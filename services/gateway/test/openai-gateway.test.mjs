@@ -46,6 +46,7 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
   assert.equal(typeof spec.info['x-guidance'], 'string');
   assert.deepEqual(Object.keys(spec.paths), [
     '/v1/chat/completions',
+    '/v1/responses',
     '/a2a-message',
     '/task-request',
     '/v1/agents/register',

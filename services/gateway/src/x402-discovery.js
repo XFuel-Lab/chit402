@@ -82,6 +82,82 @@ const CHAT_COMPLETIONS_INPUT_SCHEMA = {
   required: ['messages'],
 };
 
+/** Minimal JSON-schema of the Responses API request body. */
+const RESPONSES_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    model: { type: 'string', example: 'xfuel/auto', description: 'Model id; xfuel/auto aliases to a live catalog route' },
+    input: {
+      oneOf: [
+        { type: 'string', description: 'A single prompt string' },
+        {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              role: { type: 'string', enum: ['system', 'user', 'assistant'] },
+              content: { type: 'string' },
+            },
+            required: ['role', 'content'],
+          },
+          description: 'Array of message objects',
+        },
+      ],
+      description: 'Prompt string or array of messages',
+    },
+    max_output_tokens: { type: 'integer', description: 'Maximum tokens to generate' },
+    temperature: { type: 'number', minimum: 0, maximum: 2 },
+  },
+  required: ['input'],
+};
+
+/** Minimal JSON-schema of the Responses API response. */
+const RESPONSES_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', example: 'resp_abc123' },
+    object: { type: 'string', enum: ['response'] },
+    created_at: { type: 'integer', description: 'Unix timestamp' },
+    model: { type: 'string' },
+    status: { type: 'string', enum: ['completed', 'failed'] },
+    output: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', enum: ['message', 'function_call'] },
+          role: { type: 'string' },
+          content: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                type: { type: 'string' },
+                text: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+      description: 'Array of output items (message, function_call)',
+    },
+    output_text: { type: 'string', description: 'Convenience field: plain text of the response' },
+    usage: {
+      type: 'object',
+      properties: {
+        prompt_tokens: { type: 'integer' },
+        completion_tokens: { type: 'integer' },
+        total_tokens: { type: 'integer' },
+      },
+    },
+    xfuel: {
+      type: 'object',
+      description: 'XFuel receipt with verify_url, payment_ref, task_id',
+    },
+  },
+  required: ['id', 'object', 'output', 'xfuel'],
+};
+
 /** Register body — identity bind, not a paid door. */
 const AGENTS_REGISTER_INPUT_SCHEMA = {
   type: 'object',
@@ -492,6 +568,22 @@ export function buildX402Manifest(baseUrl = '') {
       },
       {
         type: 'http',
+        resource: `${base}/v1/responses`,
+        method: 'POST',
+        serviceName,
+        tags,
+        iconUrl,
+        description:
+          'Responses API (bot drop-in). Same x402 + signed receipt as /v1/chat/completions. '
+          + 'Accepts input (string or message array), max_output_tokens. '
+          + 'Returns Responses-shaped output + XFuel receipt with verify_url. Stateless one-shot.',
+        accepts,
+        input: RESPONSES_INPUT_SCHEMA,
+        outputSchema: RESPONSES_OUTPUT_SCHEMA,
+        docs: base ? `${base}/llms.txt` : '/llms.txt',
+      },
+      {
+        type: 'http',
         resource: `${base}/a2a-message`,
         method: 'POST',
         serviceName,
@@ -631,6 +723,33 @@ export function buildOpenApiSpec(baseUrl = '') {
     },
   };
 
+  const responsesPost = {
+    operationId: 'responses',
+    summary: 'Responses API (public x402 door)',
+    description:
+      'Responses API drop-in. Same x402 + signed receipt as /v1/chat/completions. '
+        + 'No account. No API key. A wallet that can pay the 402 is enough. '
+        + 'Accepts input (string or message array), max_output_tokens. '
+        + 'Returns Responses-shaped output + XFuel receipt with verify_url. Stateless one-shot.',
+    tags: ['Chat'],
+    'x-payment-info': paymentInfo,
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': { schema: RESPONSES_INPUT_SCHEMA },
+      },
+    },
+    responses: {
+      200: {
+        description: 'Responses output with XFuel receipt',
+        content: {
+          'application/json': { schema: RESPONSES_OUTPUT_SCHEMA },
+        },
+      },
+      402: { description: 'Payment Required' },
+    },
+  };
+
   const spec = {
     openapi: '3.1.0',
     info: {
@@ -669,6 +788,7 @@ export function buildOpenApiSpec(baseUrl = '') {
     },
     paths: {
       '/v1/chat/completions': { post: chatPost },
+      '/v1/responses': { post: responsesPost },
       '/a2a-message': { post: a2aPost },
       '/task-request': { post: taskPost },
       '/v1/agents/register': {

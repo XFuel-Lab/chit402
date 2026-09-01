@@ -61,6 +61,17 @@ export function buildAgentCard(baseUrl = '') {
         examples: ['POST /v1/chat/completions with { model, messages }'],
       },
       {
+        id: 'responses',
+        name: 'Paid responses API',
+        description:
+          'POST /v1/responses (bot drop-in). Same x402 + signed receipt as /v1/chat/completions. '
+          + 'Accepts input (string or message array), max_output_tokens. '
+          + 'Returns Responses-shaped output + XFuel receipt with verify_url. '
+          + 'Stateless one-shot. Unauthenticated → HTTP 402.',
+        tags: ['llm', 'responses-api', 'x402', 'usdc'],
+        examples: ['POST /v1/responses with { model, input: "Hello" }'],
+      },
+      {
         id: 'a2a-message',
         name: 'A2A paid door',
         description:

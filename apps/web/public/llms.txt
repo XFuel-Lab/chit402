@@ -20,10 +20,13 @@
 - /v1         : Not the API — points you to api.xfuel.app/v1.
 - /pricing    : USDC on Base and Solana. Cost-plus, quoted, receipted.
 
-## Start here (chat completions)
+## Start here (chat completions / responses)
 
 - POST /v1/chat/completions : Chat completions. Unauthenticated GET or
   POST {} → 402 x402 (USDC on Base or Solana). Returns signed receipt + public verify_url.
+- POST /v1/responses        : Responses API (bot drop-in). Same x402 + signed receipt as
+  /v1/chat/completions. Accepts input (string or message array), max_output_tokens.
+  Returns Responses-shaped output + XFuel receipt. Stateless one-shot. Unauth → 402.
 - POST /a2a-message         : A2A card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
 - POST /v1/agents/register  : fail-closed. Bind agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
