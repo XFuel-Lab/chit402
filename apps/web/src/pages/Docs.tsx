@@ -43,9 +43,9 @@ const builders: DocLink[] = [
     external: true,
   },
   {
-    title: 'OpenAI-compatible gateway',
+    title: 'Chat completions gateway',
     description: 'Drop-in /v1 models and chat completions with receipts.',
-    href: `${GITHUB}/docs/OPENAI_COMPATIBLE_GATEWAY.md`,
+    href: `${GITHUB}/docs/CHAT_COMPLETIONS_GATEWAY.md`,
     meta: '/v1',
     external: true,
   },

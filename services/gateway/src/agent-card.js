@@ -53,7 +53,7 @@ export function buildAgentCard(baseUrl = '') {
         id: 'chat-completions',
         name: 'Paid chat completions',
         description:
-          'OpenAI-compatible POST /v1/chat/completions. Returns a signed receipt: hub, model, '
+          'POST /v1/chat/completions (bot drop-in). Returns a signed receipt: hub, model, '
           + 'amount, verify_url. Cost-plus, quoted, receipted — USDC on Base or Solana. '
           + 'No account. No API key. A wallet that can pay the 402 is enough. '
           + 'Unauthenticated GET or POST {} returns HTTP 402. You hold hub, model, and amount.',

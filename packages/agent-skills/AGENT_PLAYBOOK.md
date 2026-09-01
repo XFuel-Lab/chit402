@@ -28,7 +28,7 @@ export XFUEL_API_KEY=xfuel-demo
 Self-host: `cd services/gateway && npm run m2m-server` (port 3002).  
 Env matrix: [`_shared/reference/env-and-endpoints.md`](./_shared/reference/env-and-endpoints.md).
 
-## Flow 0 — OpenAI-compatible
+## Flow 0 — Chat completions
 
 ```
 baseURL = ${XFUEL_API_URL}/v1

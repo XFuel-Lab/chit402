@@ -33,7 +33,7 @@ export default function Home() {
             Cost-plus, quoted, receipted — pay USDC on Base or Solana.
             <code>GET|POST /v1/agents/:agent_id/book</code> is possession-gated last-N collected spend.
             Demo key <code>xfuel-demo</code> skips payment (rate-limited). On-chain SP1 proof on demand — not on every call.
-            Live routes today are <strong>Theta</strong> and <strong>Akash</strong>, plus the <code>xfuel/auto</code> alias.
+            <code>GET /v1/models</code> shows the live catalog. <code>xfuel/auto</code> picks the best available route.
           </p>
           <div style={styles.heroCta}>
             <Link to="/v1" className="btn btn-primary">Try /v1</Link>

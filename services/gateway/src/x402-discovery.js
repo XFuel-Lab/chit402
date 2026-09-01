@@ -12,7 +12,7 @@ import { describePricing } from './pricing.js';
  *   ignores `/.well-known/x402` and registers from this document.
  *
  * Paid resources (chat first — that is the public door):
- * - `POST /v1/chat/completions` — OpenAI-compatible chat (recommended for agents)
+ * - `POST /v1/chat/completions` — Chat completions (recommended for agents)
  * - `POST /a2a-message` — A2A card URL; same x402 handshake + fulfillment as /v1
  * - `POST /task-request` — M2M task request (lower-level, returns task_id)
  *
@@ -395,12 +395,12 @@ export function buildX402Manifest(baseUrl = '') {
   const solWireNetwork = solNetwork ? toCaip2Network(solNetwork) : null;
   const solUsdcInfo = solNetwork ? usdcFor(solNetwork) : null;
 
-  // Description leads with "OpenAI-compatible" for Bazaar search discoverability.
+  // Description for Bazaar search discoverability.
   const description = solanaEnabled
-    ? 'OpenAI-compatible paid inference via x402 USDC on Base and Solana. ' +
+    ? 'Paid inference via x402 USDC on Base and Solana. ' +
       'POST /v1/chat/completions is the recommended surface. Returns signed receipt: ' +
       'hub, model, amount, verify_url. Cost-plus, quoted, receipted. Real mainnet USDC.'
-    : 'OpenAI-compatible paid inference via x402 USDC on Base. POST /v1/chat/completions is ' +
+    : 'Paid inference via x402 USDC on Base. POST /v1/chat/completions is ' +
       'the recommended surface. Returns signed receipt: hub, model, amount, verify_url. ' +
       'Cost-plus, quoted, receipted. Real mainnet USDC.';
 
@@ -482,8 +482,8 @@ export function buildX402Manifest(baseUrl = '') {
         tags,
         iconUrl,
         description:
-          'OpenAI-compatible chat completions. Cost-plus, quoted, receipted — pay USDC on Base or '
-          + 'Solana (x402 exact scheme). Returns standard OpenAI response + signed XFuel receipt '
+          'Chat completions (bot drop-in). Cost-plus, quoted, receipted — pay USDC on Base or '
+          + 'Solana (x402 exact scheme). Returns standard chat completion response + signed XFuel receipt '
           + 'with public verify_url. You hold hub, model, and amount.',
         accepts,
         input: CHAT_COMPLETIONS_INPUT_SCHEMA,
@@ -554,7 +554,7 @@ export function buildOpenApiSpec(baseUrl = '') {
 
   const chatPost = {
     operationId: 'chatCompletions',
-    summary: 'OpenAI-compatible chat completions (public x402 door)',
+    summary: 'Chat completions (public x402 door)',
     description:
       'No account. No API key. A wallet that can pay the 402 is enough. '
         + 'Pay per request in USDC on Base or Solana (x402 exact scheme). '
@@ -651,7 +651,7 @@ export function buildOpenApiSpec(baseUrl = '') {
         'XFuel is the book: this agent spent Y on this job; you hold hub, model, and amount. '
         + 'No account. No API key. A wallet that can pay the 402 is enough. '
         + 'Register is only to hold the book after a collected receipt. '
-        + 'Use POST /v1/chat/completions with an OpenAI-compatible JSON body '
+        + 'Use POST /v1/chat/completions with a standard chat-completions JSON body '
         + '({ model, messages }). POST /a2a-message is the A2A card URL with the same x402 floor. '
         + 'Unauthenticated callers get HTTP 402 with x402 '
         + 'payment requirements (USDC; Base and Solana when enabled). '

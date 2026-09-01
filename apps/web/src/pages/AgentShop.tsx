@@ -71,9 +71,8 @@ export default function AgentShop() {
         <section className="docs-section">
           <h2>Which models does the shop actually buy?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
-            Live routes today are <strong>Theta</strong> and <strong>Akash</strong>, plus the{' '}
-            <code>xfuel/auto</code> alias. We do not route to OpenAI, Groq, Together, or Fireworks
-            on the public catalog.
+            <code>GET /v1/models</code> shows the live catalog. <code>xfuel/auto</code> picks the
+            best available route. We do not proxy to third-party SaaS providers on the public catalog.
           </p>
         </section>
 

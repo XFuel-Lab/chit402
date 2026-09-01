@@ -253,9 +253,9 @@ const LLMS_TXT = `# XFuel Protocol
 > is fail-closed. /task-request is the other paid door. Paying
 > api.xfuel.app moves real mainnet USDC. Canonical: api.xfuel.app.
 
-## Start here (OpenAI-compatible)
+## Start here (chat completions)
 
-- POST /v1/chat/completions : OpenAI chat completions. Unauthenticated GET or
+- POST /v1/chat/completions : Chat completions. Unauthenticated GET or
   POST {} → 402 x402 (USDC on Base or Solana). Returns signed receipt + public verify_url.
 - POST /a2a-message         : A2A card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
 - POST /v1/agents/register  : fail-closed. Bind agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
@@ -339,7 +339,7 @@ Either validates the receipt. If XFuel disappears, the co-signer's key still wor
 
 - Protocol map: AGENTS.md
 - Agent Playbook: skills/AGENT_PLAYBOOK.md
-- OpenAI gateway: docs/OPENAI_COMPATIBLE_GATEWAY.md
+- Chat completions gateway: docs/CHAT_COMPLETIONS_GATEWAY.md
 - Full REST API: docs/M2M_API.md
 - Payments (x402): docs/payments-x402.md
 `;

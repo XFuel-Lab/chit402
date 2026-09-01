@@ -19,7 +19,7 @@ npm test
 | Path | Role |
 |------|------|
 | `POST /task-request` | M2M inference / tasks (+ x402) |
-| `GET/POST /v1/*` | OpenAI-compatible gateway |
+| `GET/POST /v1/*` | Chat completions gateway |
 | `POST /v1/agents/register` | Bind agentWallet + collected receipt → `agent_id` |
 | `GET /.well-known/agent-card.json` | A2A v1.0 agent card |
 | `GET /.well-known/x402list.txt` | x402-list domain verification (text/plain) |

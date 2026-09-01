@@ -157,7 +157,7 @@ Events currently include `TaskSettled`, `A2ASettled`.
 ### Chat completions surface
 
 Same server: `/v1/models`, `/v1/chat/completions`, `/llms.txt`.  
-See [OPENAI_COMPATIBLE_GATEWAY.md](./OPENAI_COMPATIBLE_GATEWAY.md).
+See [CHAT_COMPLETIONS_GATEWAY.md](./CHAT_COMPLETIONS_GATEWAY.md).
 
 ### GET /health
 

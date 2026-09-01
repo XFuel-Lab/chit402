@@ -478,13 +478,12 @@ export function buildPaymentChallenge(p, opts = {}) {
   const iconUrl = XFUEL_ICON_URL;
 
   // Update description when both networks are available.
-  // Lead with "OpenAI-compatible" for Bazaar search discoverability.
   const solanaEnabled = p.solana?.enabled && p.solana?.payTo;
   const description = p.description || (solanaEnabled
-    ? 'OpenAI-compatible paid inference via x402 USDC on Base and Solana. Cost-plus, quoted, receipted. ' +
+    ? 'Paid inference via x402 USDC on Base and Solana. Cost-plus, quoted, receipted. ' +
       'POST /v1/chat/completions is the recommended surface. Returns signed receipt + public verify_url. ' +
       'Paying this host is real mainnet USDC.'
-    : 'OpenAI-compatible paid inference via x402 USDC on Base. Cost-plus, quoted, receipted. ' +
+    : 'Paid inference via x402 USDC on Base. Cost-plus, quoted, receipted. ' +
       'POST /v1/chat/completions is the recommended surface. Returns signed receipt + public verify_url. ' +
       'Paying this host is real mainnet USDC.');
 

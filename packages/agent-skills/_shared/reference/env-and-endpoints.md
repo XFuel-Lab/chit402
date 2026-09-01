@@ -11,7 +11,7 @@ of duplicating config details.
 | `XFUEL_API_KEY` | M2M API key (sent as `X-API-Key`) | `xfuel-demo` (shared public demo key, rate-limited; bring your own for higher limits) |
 
 The SDK defaults to `https://api.xfuel.app` + the public demo key, so
-`new XFuelClient()` works with zero config. The OpenAI-compatible surface
+`new XFuelClient()` works with zero config. The chat-completions surface
 (`GET /v1/models`, `POST /v1/chat/completions`) lives on the same server.
 
 ## Optional environment (on-chain reads)
@@ -35,8 +35,8 @@ The SDK defaults to `https://api.xfuel.app` + the public demo key, so
 | POST | `/a2a-settle-fair-exchange` | xfuel-a2a-bid |
 | PUT/GET/DELETE | `/webhook` | (event subscription) |
 | GET | `/health` | (diagnostics; includes `demo` limits when demo mode is on) |
-| GET | `/v1/models` | OpenAI-compatible model list |
-| POST | `/v1/chat/completions` | OpenAI-compatible chat (streaming + non-streaming) |
+| GET | `/v1/models` | Model list (chat-completions format) |
+| POST | `/v1/chat/completions` | Chat completions (streaming + non-streaming) |
 
 ## Conventions
 
