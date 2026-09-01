@@ -14,7 +14,7 @@ process.env.X402_ENABLED = 'true';
 process.env.X402_METER_V1 = 'true';
 process.env.X402_PAY_TO = '0xBasetreasury';
 process.env.X402_NETWORK = 'base';
-process.env.X402_USDC_PRICE_DEFAULT = '10000';
+process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.X402_SOLANA_ENABLED = 'true';
 process.env.X402_SOLANA_PAY_TO = 'SolanaATAaddress123456789012345678901234';
 process.env.X402_SOLANA_NETWORK = 'solana';
@@ -341,7 +341,7 @@ test('GET /v1/agents is not a public list', async () => {
   assert.doesNotMatch(JSON.stringify(body), /scoreboard/i);
 });
 
-test('unauth GET/POST {} /v1/chat/completions is 402, amount 10000, both rails', async () => {
+test('unauth GET/POST {} /v1/chat/completions is 402, amount 2000, both rails', async () => {
   const getRes = await fetch(`${base}/v1/chat/completions`);
   const postRes = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
@@ -352,8 +352,8 @@ test('unauth GET/POST {} /v1/chat/completions is 402, amount 10000, both rails',
   assert.equal(postRes.status, 402);
   const getBody = await getRes.json();
   const postBody = await postRes.json();
-  assert.equal(getBody.accepts[0].amount, '10000');
-  assert.equal(postBody.accepts[0].amount, '10000');
+  assert.equal(getBody.accepts[0].amount, '2000');
+  assert.equal(postBody.accepts[0].amount, '2000');
   assert.equal(getBody.accepts.length, 2);
   assert.equal(postBody.accepts.length, 2);
   const nets = postBody.accepts.map((a) => a.network);

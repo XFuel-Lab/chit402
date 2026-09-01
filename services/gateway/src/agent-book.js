@@ -20,7 +20,7 @@ export const BOOK_HMAC_PREFIX = 'xfuel-book';
 export const ALLOWANCE_HMAC_PREFIX = 'xfuel-allowance';
 /** Cap spend window id — prepaid ceiling on collected sum (not calendar-month). */
 export const CAP_WINDOW = 'prepaid_ceiling';
-/** $0.01 door floor in USDC atomic units. */
+/** Hop floor in USDC atomic units ($0.002). */
 export const DOOR_FLOOR_UNITS = BigInt(DEFAULT_FLOOR_UNITS);
 
 /** Canonical HMAC payload: agent_id + window. */
@@ -237,7 +237,7 @@ export function resolveBookableAgent(req, registry) {
 }
 
 /**
- * True when remaining is known and below the $0.01 door floor.
+ * True when remaining is known and below the $0.002 hop floor.
  * @param {string|null|undefined} remaining
  */
 export function remainingBlocksDoor(remaining) {

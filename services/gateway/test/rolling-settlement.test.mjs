@@ -47,7 +47,7 @@ test('measured pricing charges what ran, not the max_tokens ceiling', () => {
 
 test('the floor still applies, because settlement itself costs a facilitator fee', () => {
   const q = quoteUsage({ prompt_tokens: 5, completion_tokens: 5 }, null, {});
-  assert.equal(q.amount, '10000');
+  assert.equal(q.amount, '2000');
   assert.equal(q.floor_applied, true);
 });
 

@@ -370,7 +370,7 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
       ?? (amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg));
   } catch (err) {
     // Never fail a request whose payment already verified — fall back to floor.
-    boundAmount = String(cfg.usdcFloor ?? cfg.usdcPriceDefault ?? '10000');
+    boundAmount = String(cfg.usdcFloor ?? cfg.usdcPriceDefault ?? '2000');
     logger.warn({ err: err.message, taskId }, 'x402: priceUSDCResolved failed after verify; using floor');
   }
   const settledNetwork = challenge?.network || cfg.network;

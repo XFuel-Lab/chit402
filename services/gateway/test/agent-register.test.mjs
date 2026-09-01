@@ -45,7 +45,7 @@ function collectedReceipt(over = {}) {
       collected: true,
       net_amount: '9950',
       fee_amount: '50',
-      gross_amount: '10000',
+      gross_amount: '2000',
     },
     route: { model: 'xfuel/auto', provider: 'mock' },
     output: { hash: '0x' + 'ab'.repeat(32) },
@@ -191,7 +191,7 @@ test('register claims an already-ledgered settle without re-append', async () =>
   assert.equal(result.body.agent_id, pre.agent_id);
   assert.equal(result.body.session, pre.session);
   assert.equal(d.ledger.entries.length, 1, 'register must not double-append');
-  assert.equal(result.body.usage_settled.amount, '10000');
+  assert.equal(result.body.usage_settled.amount, '2000');
 });
 
 test('buildAgentCard is A2A v1.0', () => {
@@ -281,7 +281,7 @@ test('GET /llms.txt and /openapi.json mention register honestly', async () => {
   assert.ok(spec.paths['/v1/agents/{agent_id}/book']);
   assert.match(spec.paths['/v1/agents/{agent_id}/book'].post.description, /possession-gated/i);
   assert.equal(spec.paths['/v1/agents/{agent_id}/book'].post['x-payment-info'], undefined);
-  assert.equal(spec.paths['/v1/chat/completions'].post['x-payment-info'].price.amount, '0.01');
+  assert.equal(spec.paths['/v1/chat/completions'].post['x-payment-info'].price.amount, '0.002');
 });
 
 test('packages/mcp has no XFUEL_PAYER_PRIVATE_KEY', () => {

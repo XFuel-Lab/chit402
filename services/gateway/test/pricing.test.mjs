@@ -49,10 +49,10 @@ test('tool definitions count as prompt tokens', () => {
 });
 
 test('a chat-sized prompt stays at the floor', () => {
-  // 750 in / 105 out meters to well under a cent — the floor is what keeps a
-  // small call above the cost of settling it.
+  // 750 in / 105 out meters to well under the $0.002 floor — the floor is what
+  // keeps a small call above the cost of settling it.
   const q = quoteTask({ messages: promptOf(750), max_tokens: 105 });
-  assert.equal(q.amount, '10000');
+  assert.equal(q.amount, '2000');
   assert.equal(q.floor_applied, true);
 });
 
@@ -401,7 +401,7 @@ test('the rate card publishes our price only, because it does not track cost', (
 test('every published price names the floor and the Tier-2 surcharge', () => {
   for (const costPlus of [true, false]) {
     const p = publishedPrice('akash/zai-org/GLM-5.2', GLM_RATE, { costPlus });
-    assert.equal(p.min_charge_usd, 0.01, `costPlus=${costPlus}`);
+    assert.equal(p.min_charge_usd, 0.002, `costPlus=${costPlus}`);
     assert.equal(p.tier2_proof_usd, DEFAULT_TIER2_PROOF_UNITS / 1_000_000, `costPlus=${costPlus}`);
     assert.equal(p.currency, 'USDC');
   }
@@ -422,5 +422,5 @@ test('discovery points at the exact-quote endpoint, since per-token rates are no
   const d = describePricing({ costPlus: true });
   assert.equal(d.per_model_rates, '/v1/models');
   assert.match(d.quote_endpoint, /task-quote/);
-  assert.equal(d.min_charge_usd, 0.01);
+  assert.equal(d.min_charge_usd, 0.002);
 });

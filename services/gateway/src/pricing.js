@@ -35,8 +35,19 @@ import { estimateTokens, messagesToText } from './usage.js';
 /** USDC has 6 decimals; rate-card entries are base units per 1,000,000 tokens. */
 const PER_MILLION = 1_000_000;
 
-/** $0.01. Below this a settled task cannot cover its own facilitator fee. */
-export const DEFAULT_FLOOR_UNITS = 10_000;
+/**
+ * Hop floor: $0.002 (2000 atomic USDC). Below this a settled task cannot cover
+ * its own facilitator fee. CDP charges $0.001/settle after 1k free; collecting
+ * less than $0.002 onchain loses money after house + margin.
+ */
+export const DEFAULT_FLOOR_UNITS = 2_000;
+
+/**
+ * Ingest stamp fee: $0.0001 (100 atomic USDC). A nominal write fee for
+ * possession-gated book ingest, debited from prepaid budget via HMAC — NOT
+ * an on-chain exact settle (that would cost more than it collects).
+ */
+export const STAMP_FEE_UNITS = 100;
 
 /**
  * Retail rate card, base units per million tokens. Deliberately above COGS
@@ -382,14 +393,14 @@ export function quoteFromCogs(cogsBaseUnits, cfg = {}) {
   const cogs = toBaseUnits(cogsBaseUnits);
 
   // Round the fee up. Truncating means we absorb the rounding on every call,
-  // and at a $0.01 floor most calls are small enough for that to be the whole
+  // and at a $0.002 floor most calls are small enough for that to be the whole
   // margin.
   const fee = (cogs * bps + 9_999n) / 10_000n;
   const metered = cogs + fee;
   const inference = metered < floor ? floor : metered;
 
   // Added *after* the floor, never absorbed by it. A floor-priced call that asks
-  // for a proof would otherwise buy a $0.050 proof inside a $0.01 payment.
+  // for a proof would otherwise buy a $0.050 proof inside a $0.002 payment.
   const proof = cfg.tier2 ? tier2ProofUnits(cfg) : 0n;
 
   return {
@@ -601,6 +612,7 @@ export default {
   DEFAULT_RATE,
   DEFAULT_RATE_CARD,
   DEFAULT_FLOOR_UNITS,
+  STAMP_FEE_UNITS,
   DEFAULT_PLATFORM_FEE_BPS,
   DEFAULT_TIER2_PROOF_UNITS,
   DEFAULT_MAX_OUTPUT_TOKENS,

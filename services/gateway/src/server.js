@@ -86,7 +86,7 @@ const AI_TASK_FEE_BPS = parseInt(process.env.AI_TASK_FEE_BPS) || 50;   // 0.5%
 const MAX_FEE_BPS     = 100;  // 1.0%
 const MIN_FEE_BPS     = 50;   // 0.5%
 const FEE_DENOMINATOR = 10000;
-const MIN_TASK_AMOUNT  = '10000'; // dust threshold (matches main.rs / ai-listener.js)
+const MIN_TASK_AMOUNT  = '2000'; // dust threshold ($0.002 hop floor)
 const MAX_TTL_SECONDS  = 86400;   // 24 h
 
 /** Allowed message types — sync with main.rs, ai-listener.js */
