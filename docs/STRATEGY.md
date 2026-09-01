@@ -7,7 +7,7 @@ Related: [POSITIONING.md](./POSITIONING.md) · [PROVIDER_FLOAT_TREASURY.md](./PR
 
 ## Company job
 
-XFuel is the **book**: this agent spent Y on this job, and you hold **hub, model, and amount**. Not a smart router. Not a model shop. Agents pay in USDC on Base and Solana; live routes today are Theta and Akash; signed receipt is table stakes.
+XFuel is the **book**: this agent spent Y on this job, and you hold **hub, model, and amount**. Not a smart router. Not a model shop. Agents pay in USDC on Base and Solana; signed receipt is table stakes.
 
 We are not:
 
