@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { API_V1 } from '../apiHost';
+import { getHostConfig } from '../hostConfig';
 
 const SNIPPET = `curl -sS ${API_V1}/chat/completions \\
   -H "X-API-Key: xfuel-demo" \\
@@ -21,9 +22,11 @@ const FETCH = `const res = await fetch('${API_V1}/chat/completions', {
 const data = await res.json();`;
 
 export default function GatewayV1() {
+  const config = getHostConfig();
+  
   useEffect(() => {
-    document.title = 'Pay /v1/chat/completions | XFuel';
-  }, []);
+    document.title = `Pay /v1/chat/completions | ${config.name}`;
+  }, [config.name]);
 
   return (
     <div className="page docs-page">

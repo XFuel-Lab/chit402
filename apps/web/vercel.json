@@ -26,9 +26,9 @@
     }
   ],
   "rewrites": [
-    { "source": "/llms.txt", "destination": "/llms.txt" },
-    { "source": "/robots.txt", "destination": "/robots.txt" },
-    { "source": "/sitemap.xml", "destination": "/sitemap.xml" },
+    { "source": "/llms.txt", "destination": "/api/llms.txt" },
+    { "source": "/robots.txt", "destination": "/api/robots.txt" },
+    { "source": "/sitemap.xml", "destination": "/api/sitemap.xml" },
     { "source": "/xfuel-icon.svg", "destination": "/xfuel-icon.svg" },
     { "source": "/favicon.ico", "destination": "/favicon.ico" },
     { "source": "/og-image.png", "destination": "/og-image.png" },
