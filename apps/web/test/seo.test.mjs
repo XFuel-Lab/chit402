@@ -125,3 +125,39 @@ test('prerendered money pages have unique crawler titles (after build)', { skip:
     assert.doesNotMatch(content, /\$0\.01/, `/${route} must not contain $0.01`);
   }
 });
+
+test('Chit home page has correct copy and Bankr receipt link', () => {
+  const chitHome = readFileSync(join(root, 'src/pages/ChitHome.tsx'), 'utf8');
+  assert.match(chitHome, /The chit x402 doesn't leave you/, 'ChitHome has tagline');
+  assert.match(chitHome, /A receipt you still hold if the agent wallet moves/, 'ChitHome has lead copy');
+  assert.match(chitHome, /Hub, model, amount — you hold the book/, 'ChitHome mentions the book');
+  assert.match(chitHome, /api\.xfuel\.app\/receipt\/xfuel-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e/, 'ChitHome has Bankr receipt link');
+  assert.match(chitHome, /config\.parent/, 'ChitHome references parent dynamically');
+  assert.match(chitHome, /USDC on Base and Solana/, 'ChitHome names USDC rails');
+  assert.doesNotMatch(chitHome, /\$0\.01/, 'ChitHome must not lead with $0.01');
+  assert.doesNotMatch(chitHome, /OpenAI/i, 'ChitHome must not mention OpenAI');
+  assert.doesNotMatch(chitHome, /ticker/i, 'ChitHome must not mention ticker');
+});
+
+test('host config has correct Chit SEO values', () => {
+  const hostConfig = readFileSync(join(root, 'src/hostConfig.ts'), 'utf8');
+  assert.match(hostConfig, /title:.*Chit.*receipt you still hold/i, 'Chit SEO title mentions receipt');
+  assert.match(hostConfig, /x402 receipt that doesn/, 'Chit description has tagline');
+  assert.match(hostConfig, /chit402\.com/, 'Config has chit402.com domain');
+  assert.match(hostConfig, /@chit402/, 'Config has @chit402 Twitter handle');
+  assert.doesNotMatch(hostConfig, /OpenAI/i, 'Config must not mention OpenAI');
+});
+
+test('Layout supports dual branding for Chit and XFuel', () => {
+  const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
+  assert.match(layout, /isChitHost/, 'Layout checks for Chit host');
+  assert.match(layout, /Chit is the product/, 'Layout has Chit banner copy');
+  assert.match(layout, /config\.parent/, 'Layout references parent dynamically');
+  assert.match(layout, /config\.name/, 'Layout uses dynamic brand name');
+});
+
+test('App routes home page based on host', () => {
+  const app = readFileSync(join(root, 'src/App.tsx'), 'utf8');
+  assert.match(app, /import ChitHome/, 'App imports ChitHome');
+  assert.match(app, /isChitHost\(\) \? <ChitHome/, 'App conditionally renders ChitHome');
+});
