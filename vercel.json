@@ -7,6 +7,18 @@
   },
   "redirects": [
     {
+      "source": "/",
+      "has": [{ "type": "host", "value": "xfuel.app" }],
+      "destination": "https://www.chit402.com/",
+      "permanent": true
+    },
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "www.xfuel.app" }],
+      "destination": "https://www.chit402.com/",
+      "permanent": true
+    },
+    {
       "source": "/:path*",
       "has": [{ "type": "host", "value": "xfuel.app" }],
       "destination": "https://www.chit402.com/:path*",
