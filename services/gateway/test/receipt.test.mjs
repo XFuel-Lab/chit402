@@ -312,7 +312,7 @@ test('renderReceiptHtml: unmetered /v1 does not print the $0.01 floor as a price
   }));
   assert.match(html, /not charged/);
   assert.match(html, /UNMETERED/);
-  assert.match(html, /<title>XFuel receipt · xfuel-free<\/title>/);
+  assert.match(html, /<title>Chit receipt · xfuel-free<\/title>/);
   assert.doesNotMatch(html, /openai/i);
   assert.ok(!html.includes('$0.01'), html);
   assert.ok(!html.includes('>10000<'), html);
@@ -329,7 +329,7 @@ test('renderReceiptHtml: historical openai-* task ids still render (no rewrite)'
     result: { provider: 'theta-edgecloud' },
     sp1Proof: null,
   }));
-  assert.match(html, new RegExp(`<title>XFuel receipt · ${taskId}</title>`));
+  assert.match(html, new RegExp(`<title>Chit receipt · ${taskId}</title>`));
   assert.match(html, new RegExp(`class="taskid">${taskId}<`));
 });
 

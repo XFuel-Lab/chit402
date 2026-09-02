@@ -383,7 +383,7 @@ export function privacyOf(task) {
   if (!mode) return null;
   const notes =
     mode === 'vendor_blind'
-      ? 'Buyer paid XFuel; provider saw gateway-pooled credentials, not the end-customer identity. Does not encrypt prompts — use a confidential/TEE route for content privacy.'
+      ? 'Buyer paid Chit; provider saw gateway-pooled credentials, not the end-customer identity. Does not encrypt prompts — use a confidential/TEE route for content privacy.'
       : mode === 'content_tee'
         ? 'Routed via a confidential/TEE-class provider tier (attested content path when configured). Settlement privacy is separate — see Private Spend.'
         : 'Privacy mode recorded on task.';
@@ -647,7 +647,7 @@ export function renderReceiptHtml(receipt) {
   const p = receipt.payment;
   const pr = receipt.proof;
   const b = receipt.binding;
-  const title = `XFuel receipt · ${receipt.task_id}`;
+  const title = `Chit receipt · ${receipt.task_id}`;
   const desc = p.rail === 'unmetered'
     ? `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} · UNMETERED · not charged`
     : `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} receipt · ${p.rail.toUpperCase()} · verify_url`;
@@ -773,7 +773,7 @@ export function renderReceiptHtml(receipt) {
 <body>
   <div class="wrap">
     <header>
-      <div class="brand">XFuel<span>·</span>receipt</div>
+      <div class="brand">Chit<span>·</span>receipt</div>
       <div>${badge(pr.outcome, b ? b.matches : undefined)}</div>
     </header>
 
@@ -838,7 +838,7 @@ export function renderReceiptNotFound(taskId) {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>XFuel receipt · not found</title>
+<title>Chit receipt · not found</title>
 <meta name="robots" content="noindex" />
 <style>
   :root { color-scheme: dark; }
@@ -852,7 +852,7 @@ export function renderReceiptNotFound(taskId) {
 </head>
 <body>
   <div class="wrap">
-    <div class="brand">XFuel<span>·</span>receipt</div>
+    <div class="brand">Chit<span>·</span>receipt</div>
     <h1>Receipt not found</h1>
     <p class="muted">No task with id <code>${esc(taskId)}</code> is known to this node.
     Settled receipts are persisted and remain resolvable; check the id, or the
@@ -960,7 +960,7 @@ export function renderAuditorHtml(exportDoc) {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>XFuel auditor export · ${esc(shortHash(e.task_id, 12, 6))}</title>
+<title>Chit auditor export · ${esc(shortHash(e.task_id, 12, 6))}</title>
 <meta name="robots" content="noindex" />
 <style>
   :root { color-scheme: dark; }
@@ -981,7 +981,7 @@ export function renderAuditorHtml(exportDoc) {
 </head>
 <body>
   <div class="wrap">
-    <div class="brand">XFuel<span>·</span>auditor export</div>
+    <div class="brand">Chit<span>·</span>auditor export</div>
     <p class="muted">Selective disclosure — policy + totals only. No prompts or raw outputs.</p>
     <p><span class="badge ${ok ? 'ok' : 'bad'}">${ok ? 'in policy' : 'policy check failed'}</span></p>
     <section class="card">

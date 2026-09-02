@@ -472,7 +472,7 @@ async function runChatInference({
     const reason = providerConfigured
       ? 'Provider(s) configured but returned no result (likely transient capacity). Retry shortly.'
       : 'No DePIN provider is configured (set THETA_EDGECLOUD_API_KEY, AKASHML_API_KEY, or a fallback tier).';
-    const content = `[XFuel mock] ${reason} Echoing prompt: ${messagesToText(messages).slice(0, 200)}`;
+    const content = `[Chit mock] ${reason} Echoing prompt: ${messagesToText(messages).slice(0, 200)}`;
     return { content, provider: 'mock', mock: true, resolvedModel, raw: { mock: true, providerConfigured, reason } };
   }
 
@@ -619,7 +619,7 @@ async function runTranscriptionInference({ model, audioUrl, allowFallback: fb })
       mock: true,
       provider: 'mock',
       resolvedModel: cat.id,
-      text: '[XFuel mock] transcription — set THETA_EDGECLOUD_API_KEY',
+      text: '[Chit mock] transcription — set THETA_EDGECLOUD_API_KEY',
       raw: {},
     };
   }
@@ -884,7 +884,7 @@ function buildReceipt({
       real: !mock,
       note: mock
         ? `Response is a mock (compute.real=false). ${mockReason || 'No DePIN provider configured — set a provider key to route real compute.'}`
-        : `Routed to ${provider} via the XFuel provider-agnostic router.`,
+        : `Routed to ${provider} via the Chit provider-agnostic router.`,
     },
     route: {
       ...signed.route,

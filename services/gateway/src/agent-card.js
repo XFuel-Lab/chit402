@@ -15,9 +15,9 @@ export function buildAgentCard(baseUrl = '') {
   const abs = (p) => (base ? `${base}${p}` : p);
 
   return {
-    name: 'XFuel',
+    name: 'Chit',
     description:
-      'XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. '
+      'Chit is the book. This agent spent Y on this job. You hold hub, model, and amount. '
       + 'No account. No API key. A wallet that can pay the 402 is enough. '
       + 'Register is only to hold the book after a collected receipt. '
       + 'POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. '
@@ -35,8 +35,8 @@ export function buildAgentCard(baseUrl = '') {
       },
     ],
     provider: {
-      organization: 'XFuel',
-      url: 'https://xfuel.app',
+      organization: 'Chit',
+      url: 'https://chit402.com',
     },
     version: '1.0.0',
     documentationUrl: abs('/llms.txt'),
@@ -66,7 +66,7 @@ export function buildAgentCard(baseUrl = '') {
         description:
           'POST /v1/responses (bot drop-in). Same x402 + signed receipt as /v1/chat/completions. '
           + 'Accepts input (string or message array), max_output_tokens. '
-          + 'Returns Responses-shaped output + XFuel receipt with verify_url. '
+          + 'Returns Responses-shaped output + Chit receipt with verify_url. '
           + 'Stateless one-shot. Unauthenticated → HTTP 402.',
         tags: ['llm', 'responses-api', 'x402', 'usdc'],
         examples: ['POST /v1/responses with { model, input: "Hello" }'],
