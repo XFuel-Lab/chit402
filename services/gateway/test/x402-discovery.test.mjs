@@ -167,8 +167,8 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
     assert.ok(op.responses[402] || op.responses['402'], 'paid op declares 402');
     assert.equal(op['x-payment-info'].price.mode, 'fixed');
     assert.equal(op['x-payment-info'].price.currency, 'USD');
-    assert.equal(op['x-payment-info'].price.amount, '0.01',
-      'OpenAPI price is decimal USD, not atomic 10000');
+    assert.equal(op['x-payment-info'].price.amount, '0.002',
+      'OpenAPI price is decimal USD, not atomic 2000');
     assert.deepEqual(op['x-payment-info'].protocols, [{ x402: {} }]);
     assert.equal(op.requestBody.content['application/json'].schema.type, 'object');
   }

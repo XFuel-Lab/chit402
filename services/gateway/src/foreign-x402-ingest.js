@@ -19,6 +19,7 @@ import crypto from 'crypto';
 import { ethers } from 'ethers';
 import logger from './logger.js';
 import config from './config.js';
+import { STAMP_FEE_UNITS } from './pricing.js';
 
 /** ERC-20 Transfer event topic (keccak256 of Transfer(address,address,uint256)) */
 const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -493,6 +494,40 @@ export async function ingestForeignX402(body = {}, {
     };
   }
 
+  // ─── Stamp Fee Debit ───────────────────────────────────────────────────────
+  // Debit $0.0001 (STAMP_FEE_UNITS) from prepaid budget. This is a book-write
+  // fee via HMAC/prepaid, NOT an on-chain exact settle (which would cost more
+  // than the fee itself). If budget is set and insufficient, reject.
+  const stampFee = BigInt(STAMP_FEE_UNITS); // 100 atomic = $0.0001
+  if (identity.budget != null && identity.budget !== '') {
+    let budget;
+    try {
+      budget = BigInt(String(identity.budget).trim());
+    } catch {
+      return {
+        ok: false,
+        status: 400,
+        error: 'invalid_budget',
+        message: 'Agent budget is not a valid number',
+      };
+    }
+    if (budget < stampFee) {
+      return {
+        ok: false,
+        status: 402,
+        error: 'insufficient_budget',
+        message: `Insufficient prepaid budget for ingest stamp fee ($0.0001). Budget: ${budget}, required: ${stampFee}`,
+      };
+    }
+    // Debit stamp fee from budget
+    const newBudget = budget - stampFee;
+    if (typeof registry.setBudget === 'function') {
+      registry.setBudget(id, newBudget.toString());
+      logger.info({ agentId: id, stampFee: stampFee.toString(), newBudget: newBudget.toString() },
+        'foreign-x402: stamp fee debited from prepaid budget');
+    }
+  }
+
   // Generate synthetic task id
   const taskId = generateForeignTaskId();
 
@@ -559,6 +594,7 @@ export async function ingestForeignX402(body = {}, {
       foreign_x402: true,
       recorded_at: appended.entry.recorded_at,
       signature: receipt.signature || null,
+      stamp_fee: stampFee.toString(),
     },
   };
 }

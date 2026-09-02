@@ -14,7 +14,7 @@ process.env.X402_ENABLED = 'true';
 process.env.X402_METER_V1 = 'true';
 process.env.X402_PAY_TO = '0xBasetreasury';
 process.env.X402_NETWORK = 'base';
-process.env.X402_USDC_PRICE_DEFAULT = '10000';
+process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.TASK_STORE_PERSIST = 'false';
 
 const { createApp } = await import('../src/server.js');
@@ -736,4 +736,109 @@ test('GET /openapi.json includes /v1/agents/{agent_id}/book/ingest', async () =>
 test('GET /llms.txt mentions book/ingest', async () => {
   const llms = await (await fetch(`${base}/llms.txt`)).text();
   assert.match(llms, /\/v1\/agents\/:agent_id\/book\/ingest/);
+});
+
+// ─── Stamp Fee Tests ─────────────────────────────────────────────────────────
+
+test('ingest debits $0.0001 stamp fee from prepaid budget', async () => {
+  const { registry, ledger, identity } = setupDeps();
+  // Set a budget of 1000 atomic (more than the 100 stamp fee)
+  registry.setBudget(identity.agent_id, '1000');
+
+  const result = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://api.shop.io/v1/infer',
+      amount: '5000',
+      payTo: '0xShopTreasury',
+    },
+    payment_response: {
+      tx: '0xstamptest123',
+      payer: WALLET_A,
+      network: 'base',
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyOk,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 201);
+  assert.equal(result.body.stamp_fee, '100');
+
+  // Budget should be reduced from 1000 to 900
+  const updated = registry.get(identity.agent_id);
+  assert.equal(updated.budget, '900');
+});
+
+test('ingest with insufficient budget returns 402', async () => {
+  const { registry, ledger, identity } = setupDeps();
+  // Set a budget of 50 atomic (less than the 100 stamp fee)
+  registry.setBudget(identity.agent_id, '50');
+
+  const result = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://api.shop.io/v1/infer',
+      amount: '5000',
+      payTo: '0xShopTreasury',
+    },
+    payment_response: {
+      tx: '0xinsufficient123',
+      payer: WALLET_A,
+      network: 'base',
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyOk,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 402);
+  assert.equal(result.error, 'insufficient_budget');
+  assert.match(result.message, /stamp fee/i);
+
+  // Budget should be unchanged
+  const unchanged = registry.get(identity.agent_id);
+  assert.equal(unchanged.budget, '50');
+});
+
+test('ingest without budget set (unlimited) does not debit stamp fee', async () => {
+  const { registry, ledger, identity } = setupDeps();
+  // Budget is null/unset by default — unlimited
+
+  const result = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://api.shop.io/v1/infer',
+      amount: '5000',
+      payTo: '0xShopTreasury',
+    },
+    payment_response: {
+      tx: '0xunlimited123',
+      payer: WALLET_A,
+      network: 'base',
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyOk,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 201);
+  // Still reports the stamp fee amount
+  assert.equal(result.body.stamp_fee, '100');
+
+  // Budget remains null (unlimited)
+  const unchanged = registry.get(identity.agent_id);
+  assert.equal(unchanged.budget, null);
 });

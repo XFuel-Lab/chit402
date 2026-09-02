@@ -7,7 +7,7 @@ process.env.X402_ENABLED = 'true';
 process.env.X402_METER_V1 = 'true';
 process.env.X402_PAY_TO = '0xtreasury';
 process.env.X402_NETWORK = 'base-sepolia';
-process.env.X402_USDC_PRICE_DEFAULT = '10000';
+process.env.X402_USDC_PRICE_DEFAULT = '2000';
 
 const { createApp } = await import('../src/server.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
@@ -50,7 +50,7 @@ test('unauth POST /v1/responses with {} is 402, not 400 (x402scan probe)', async
   assert.equal(res.status, 402, 'x402scan probes {} and must 402 before body validation');
   const body = await res.json();
   assert.equal(body.x402Version, 2);
-  assert.equal(body.accepts[0].amount, '10000', 'runtime 402 amount stays atomic USDC');
+  assert.equal(body.accepts[0].amount, '2000', 'runtime 402 amount stays atomic USDC');
   assert.match(body.resource.url, /\/v1\/responses/);
 });
 

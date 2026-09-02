@@ -671,7 +671,7 @@ describe('XFuelClient', () => {
       const challenge = {
         x402Version: 1,
         error: 'payment_required',
-        accepts: [{ scheme: 'exact', network: 'base', asset: 'USDC', maxAmountRequired: '10000' }],
+        accepts: [{ scheme: 'exact', network: 'base', asset: 'USDC', maxAmountRequired: '2000' }],
       };
       const err = await (responseRejected as (e: unknown) => Promise<unknown>)({
         message: 'Request failed with status code 402',
@@ -680,7 +680,7 @@ describe('XFuelClient', () => {
       }).catch((e: unknown) => e) as XFuelApiError;
       expect(err).toBeInstanceOf(XFuelApiError);
       expect(err.code).toBe('payment_required');
-      expect(err.challenge?.accepts?.[0].maxAmountRequired).toBe('10000');
+      expect(err.challenge?.accepts?.[0].maxAmountRequired).toBe('2000');
     });
 
     it('has correct name and properties', () => {

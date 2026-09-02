@@ -133,7 +133,7 @@ export class AgentRegistry {
   }
 
   /**
-   * Set prepaid budget Y in USDC atomic units (10000 = $0.01).
+   * Set prepaid budget Y in USDC atomic units (2000 = $0.002).
    * Null/absent clears the cap (unlimited). allocate() itself has no budget.
    * @param {number|string} agentId
    * @param {string|number|bigint|null|undefined} budget

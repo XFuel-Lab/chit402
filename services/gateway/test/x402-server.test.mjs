@@ -45,14 +45,14 @@ test('priceUSDC: hand-set model price wins, otherwise the floor', () => {
 test('priceUSDC: the buyer cannot name the price with payment.maxAmount', () => {
   // This used to return the buyer's own figure verbatim, so a 68k-token job
   // could be settled for one base unit. maxAmount is a ceiling they choose to
-  // meet or decline ? never an instruction to us.
-  const cfg = { usdcPriceDefault: '10000' };
-  assert.equal(priceUSDC({ payment: { maxAmount: '1' } }, cfg), '10000');
-  assert.equal(priceUSDC({ payment: { maxAmount: '999999999' } }, cfg), '10000');
+  // meet or decline — never an instruction to us.
+  const cfg = { usdcPriceDefault: '2000' };
+  assert.equal(priceUSDC({ payment: { maxAmount: '1' } }, cfg), '2000');
+  assert.equal(priceUSDC({ payment: { maxAmount: '999999999' } }, cfg), '2000');
 });
 
 test('priceUSDC: a large prompt is priced above the floor, a ping is not', () => {
-  const cfg = { usdcPriceDefault: '10000' };
+  const cfg = { usdcPriceDefault: '2000' };
   // ~68k prompt tokens (the measured median agent call) at the default card.
   const agent = priceUSDC(
     { messages: [{ role: 'user', content: 'x'.repeat(272_000) }], max_tokens: 250 },
@@ -61,24 +61,24 @@ test('priceUSDC: a large prompt is priced above the floor, a ping is not', () =>
   assert.ok(Number(agent) > 20_000, `median agent call should clear $0.02, got ${agent}`);
 
   const ping = priceUSDC({ messages: [{ role: 'user', content: 'hello' }], max_tokens: 16 }, cfg);
-  assert.equal(ping, '10000', 'a ping falls back to the floor');
+  assert.equal(ping, '2000', 'a ping falls back to the floor');
 });
 
 test('settled gross cannot be restated by the paid retry (receipt integrity)', async () => {
-  // The exploit this guards: the buyer pays a $0.01 challenge, then declares a
+  // The exploit this guards: the buyer pays a $0.002 challenge, then declares a
   // $1.00 `amount` on the retry and mints a signed receipt claiming $1.00 gross.
   // Gross must come from the challenge the payment was bound to. See
-  // docs/KNOWN_ISSUES.md ? our own flagship demo did exactly this.
+  // docs/KNOWN_ISSUES.md — our own flagship demo did exactly this.
   const { url, close } = await startMockFacilitator();
   try {
-    const cfg = cfgFor(url, { usdcPriceDefault: '10000' });
+    const cfg = cfgFor(url, { usdcPriceDefault: '2000' });
 
     const challenge = await runX402Handshake(
       { headers: {}, body: { payment: { rail: 'usdc' } } },
       { taskId: 'x402-integrity', cfg },
     );
     const accept = challenge.body.accepts[0];
-    assert.equal(accept.maxAmountRequired, '10000', 'challenge priced at $0.01');
+    assert.equal(accept.maxAmountRequired, '2000', 'challenge priced at $0.002');
 
     const settled = await runX402Handshake({
       headers: { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': accept.extra.nonce },
@@ -87,7 +87,7 @@ test('settled gross cannot be restated by the paid retry (receipt integrity)', a
     }, { taskId: 'x402-integrity', cfg });
 
     assert.equal(settled.kind, 'settled');
-    assert.equal(settled.settledAmount, '10000', 'gross is the bound challenge amount, not the declaration');
+    assert.equal(settled.settledAmount, '2000', 'gross is the bound challenge amount, not the declaration');
   } finally {
     await close();
   }
@@ -96,7 +96,7 @@ test('settled gross cannot be restated by the paid retry (receipt integrity)', a
 test('handshake amount override prices the challenge, not the current body', async () => {
   const { url, close } = await startMockFacilitator();
   try {
-    const cfg = cfgFor(url, { usdcPriceDefault: '10000' });
+    const cfg = cfgFor(url, { usdcPriceDefault: '2000' });
     const challenge = await runX402Handshake(
       { headers: {}, body: { payment: { rail: 'usdc' } } },
       { taskId: 'x402-rolling', cfg, amount: '20240' },
@@ -441,12 +441,12 @@ const withCostPlus = async (on, fn) => {
 
 test('X402_COST_PLUS actually changes the quote, not just the advertised price', async () => {
   await primeCatalog();
-  const cfg = { usdcPriceDefault: '10000', usdcPrices: {} };
+  const cfg = { usdcPriceDefault: '2000', usdcPrices: {} };
 
   const card = await withCostPlus(false, () => priceUSDCResolved(agentBody(), cfg));
   const plus = await withCostPlus(true, () => priceUSDCResolved(agentBody(), cfg));
 
-  assert.notEqual(plus, card, 'the flag changed nothing ? cost-plus is not wired');
+  assert.notEqual(plus, card, 'the flag changed nothing — cost-plus is not wired');
 
   // Exact, and derived from the published rate rather than a copied constant, so
   // this pins the wiring (right model, right tokens, right function) without
@@ -456,7 +456,7 @@ test('X402_COST_PLUS actually changes the quote, not just the advertised price',
     { prompt_tokens: promptTokensFor(agentBody()), completion_tokens: 15_000 },
     { input: GLM_IN, output: GLM_OUT, cachedInput: null, perRequest: 0 },
   );
-  assert.equal(plus, quoteFromCogs(cogs, { usdcFloor: '10000' }).amount);
+  assert.equal(plus, quoteFromCogs(cogs, { usdcFloor: '2000' }).amount);
 
   // And it is the ~47% cut ADR 0009 promised, not a rounding difference.
   const cut = 1 - Number(plus) / Number(card);
@@ -465,7 +465,7 @@ test('X402_COST_PLUS actually changes the quote, not just the advertised price',
 
 test('an opt-in proof is charged for at quote time', async () => {
   await primeCatalog();
-  const cfg = { usdcPriceDefault: '10000', usdcPrices: {} };
+  const cfg = { usdcPriceDefault: '2000', usdcPrices: {} };
 
   const plain = await withCostPlus(true, () => priceUSDCResolved(agentBody(), cfg));
   const proved = await withCostPlus(true, () =>
@@ -483,7 +483,7 @@ test('an opt-in proof is charged for at quote time', async () => {
 
 test('a model with no published rate falls back to the card, never to the floor', async () => {
   await primeCatalog();
-  const cfg = { usdcPriceDefault: '10000', usdcPrices: {} };
+  const cfg = { usdcPriceDefault: '2000', usdcPrices: {} };
   const body = agentBody({ model_id: 'theta/glm_5_2' });
 
   const plus = await withCostPlus(true, () => priceUSDCResolved(body, cfg));
@@ -499,7 +499,7 @@ test('a model with no published rate falls back to the card, never to the floor'
 test('a cost-plus quote publishes a breakdown that rebuilds the price', async () => {
   await primeCatalog();
   const { quoteResolved } = await import('../src/x402-server.js');
-  const cfg = { usdcPriceDefault: '10000', usdcPrices: {} };
+  const cfg = { usdcPriceDefault: '2000', usdcPrices: {} };
 
   const q = await withCostPlus(true, () =>
     quoteResolved(agentBody({ proof_tier: 'settlement' }), cfg));
@@ -523,7 +523,7 @@ test('a cost-plus quote publishes a breakdown that rebuilds the price', async ()
 test('TEE / spot-check / zk-full do not add the $0.08 settlement-proof surcharge', async () => {
   await primeCatalog();
   const { priceUSDCResolved, wantsSettlementProof } = await import('../src/x402-server.js');
-  const cfg = { usdcPriceDefault: '10000', usdcPrices: {} };
+  const cfg = { usdcPriceDefault: '2000', usdcPrices: {} };
 
   assert.equal(wantsSettlementProof({ proof_tier: 'settlement' }), true);
   for (const t of ['signed', 'tee', 'zk-spotcheck', 'zk-full', 'spotcheck', undefined]) {
@@ -547,7 +547,7 @@ test('advertised basis (/.well-known/x402) and /task-quote agree under cost-plus
   await primeCatalog();
   const { quoteResolved } = await import('../src/x402-server.js');
   const { buildX402Manifest } = await import('../src/x402-discovery.js');
-  const cfg = { usdcPriceDefault: '10000', usdcPrices: {} };
+  const cfg = { usdcPriceDefault: '2000', usdcPrices: {} };
 
   await withCostPlus(true, async () => {
     const advertised = buildX402Manifest('https://example.test').pricing.basis;
@@ -561,7 +561,7 @@ test('X402_USDC_PRICES wins even under cost-plus', async () => {
   await primeCatalog();
   const { priceUSDCResolved } = await import('../src/x402-server.js');
   const cfg = {
-    usdcPriceDefault: '10000',
+    usdcPriceDefault: '2000',
     usdcPrices: { 'akash/zai-org/GLM-5.2': '77777' },
   };
   const priced = await withCostPlus(true, () => priceUSDCResolved(agentBody(), cfg));

@@ -10,7 +10,7 @@ process.env.X402_ENABLED = 'true';
 process.env.X402_METER_V1 = 'true';
 process.env.X402_PAY_TO = '0xtreasury';
 process.env.X402_NETWORK = 'base-sepolia';
-process.env.X402_USDC_PRICE_DEFAULT = '10000';
+process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.X402_METER_V1_EXEMPT_KEYS = 'partner-key-1';
 // The hosted demo caps output. Set here so the quote can be checked against it.
 process.env.OPENAI_GATEWAY_MAX_TOKENS_CAP = '512';
@@ -56,7 +56,7 @@ test('unauth POST /v1/chat/completions with {} is 402, not 400', async () => {
   assert.equal(res.status, 402, 'x402scan probes {} and must 402 before body validation');
   const body = await res.json();
   assert.equal(body.x402Version, 2);
-  assert.equal(body.accepts[0].amount, '10000', 'runtime 402 amount stays atomic USDC');
+  assert.equal(body.accepts[0].amount, '2000', 'runtime 402 amount stays atomic USDC');
   assert.match(body.resource.url, /\/v1\/chat\/completions/);
   assert.ok(!body.resource.url.includes('/task-request'));
 });
@@ -74,7 +74,7 @@ test('unauth GET /v1/chat/completions is the same 402 as POST {}', async () => {
   const postBody = await postRes.json();
   assert.equal(getBody.x402Version, postBody.x402Version);
   assert.equal(getBody.accepts[0].amount, postBody.accepts[0].amount);
-  assert.equal(getBody.accepts[0].amount, '10000');
+  assert.equal(getBody.accepts[0].amount, '2000');
   assert.equal(getBody.accepts.length, postBody.accepts.length);
   assert.match(getBody.resource.url, /\/v1\/chat\/completions/);
   assert.equal(new URL(getBody.resource.url).pathname, new URL(postBody.resource.url).pathname);
@@ -151,7 +151,7 @@ test('the 402 is priced from the request, not a flat figure', async () => {
   const smallAmount = Number((await small.json()).accepts[0].maxAmountRequired);
   const largeAmount = Number((await large.json()).accepts[0].maxAmountRequired);
 
-  assert.equal(smallAmount, 10_000, 'a ping pays the floor');
+  assert.equal(smallAmount, 2_000, 'a ping pays the floor');
   assert.ok(largeAmount > 20_000, `a median agent call should clear $0.02, got ${largeAmount}`);
 });
 

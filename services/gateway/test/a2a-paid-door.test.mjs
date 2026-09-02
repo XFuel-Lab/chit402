@@ -1,7 +1,7 @@
 /**
  * A2A paid door = same $0.01 x402 + chat fulfillment as /v1.
  *
- * Unauth POST /a2a-message {} → 402 (not 401), amount 10000, Base+Solana.
+ * Unauth POST /a2a-message {} → 402 (not 401), amount 2000, Base+Solana.
  * Collected settle appends UsageSettled (hub, model, amount) under a bookable
  * agent_id without waiting for register.
  */
@@ -20,7 +20,7 @@ process.env.X402_ENABLED = 'true';
 process.env.X402_METER_V1 = 'true';
 process.env.X402_PAY_TO = '0xBasetreasury';
 process.env.X402_NETWORK = 'base';
-process.env.X402_USDC_PRICE_DEFAULT = '10000';
+process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.X402_SOLANA_ENABLED = 'true';
 process.env.X402_SOLANA_PAY_TO = 'SolanaATAaddress123456789012345678901234';
 process.env.X402_SOLANA_NETWORK = 'solana';
@@ -109,7 +109,7 @@ test('hubOf prefers route.hub then model prefix', () => {
   assert.equal(hubOf({ provider: 'akashml' }), 'akashml');
 });
 
-test('unauth POST /a2a-message {} is 402 amount 10000 Base+Solana not 401', async () => {
+test('unauth POST /a2a-message {} is 402 amount 2000 Base+Solana not 401', async () => {
   const res = await fetch(`${base}/a2a-message`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -118,7 +118,7 @@ test('unauth POST /a2a-message {} is 402 amount 10000 Base+Solana not 401', asyn
   assert.equal(res.status, 402, 'must 402 not 401');
   const body = await res.json();
   assert.equal(body.x402Version, 2);
-  assert.equal(body.accepts[0].amount, '10000');
+  assert.equal(body.accepts[0].amount, '2000');
   assert.equal(body.accepts.length, 2);
   const nets = body.accepts.map((a) => a.network);
   assert.ok(nets.some((n) => String(n).startsWith('eip155:')));

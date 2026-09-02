@@ -59,7 +59,7 @@ export interface ToolContext {
 const CHAIN_IDS = ['base', 'theta', 'bittensor', 'akash', 'osmosis', 'persistence'] as const;
 const AMOUNT_RE = /^\d+$/;
 const USDC_AMOUNT =
-  'USDC smallest unit, 6 decimals (10000 = $0.01). Not wei. Minimum 10000.';
+  'USDC smallest unit, 6 decimals (2000 = $0.002). Not wei. Minimum 2000.';
 const chatMessageSchema = z.object({
   role: z.string().describe('system | user | assistant | tool'),
   content: z.string().nullable().describe('Message text'),
@@ -152,7 +152,7 @@ do not send a prompt to the model.
 Args:
   - model (string): live catalog id from list_models
   - sender (string): 0x address that owns/pays for the task
-  - amount (string): USDC 6 decimals; 10000 = $0.01; minimum 10000
+  - amount (string): USDC 6 decimals; 2000 = $0.002; minimum 2000
   - messages / input (optional): the prompt. Required for live routing.
   - max_tokens, temperature (optional)
 
@@ -502,7 +502,7 @@ Unmetered chat_completions does not need this quote.`,
           .string()
           .regex(AMOUNT_RE, 'amount must be an integer string (USDC 6 decimals)')
           .optional()
-          .describe('USDC 6 decimals (10000 = $0.01). Legacy TFUEL quotes still echo this field.'),
+          .describe('USDC 6 decimals (2000 = $0.002). Legacy TFUEL quotes still echo this field.'),
         messages: z.array(z.unknown()).optional().describe('Chat messages to forecast (same as the request you will submit)'),
         max_tokens: z.number().int().positive().optional().describe('Output budget to forecast'),
         tools: z.array(z.unknown()).optional().describe('Tool definitions (counted as prompt tokens)'),

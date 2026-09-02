@@ -31,7 +31,7 @@ process.env.X402_ENABLED = 'true';
 process.env.X402_PAY_TO = '0xBasetreasury';
 process.env.X402_NETWORK = 'base';
 process.env.X402_FACILITATOR_PROVIDER = 'zan';
-process.env.X402_USDC_PRICE_DEFAULT = '10000';
+process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.HUB_CATALOG_OFFLINE = 'false';
 process.env.TASK_STORE_PERSIST = 'false';
 process.env.TASK_STORE_DIR = path.join(tmp, 'tasks-sol');
@@ -159,7 +159,7 @@ test('POST /task-request (no payment) → 402 with dual accepts', async () => {
     body: JSON.stringify({
       message_type: 'inference_request',
       chain_id: 'base',
-      amount: '10000',
+      amount: '2000',
       sender: '0x0000000000000000000000000000000000000001',
       model_id: 'akash/test-model',
       messages: [{ role: 'user', content: 'test' }],
@@ -208,7 +208,7 @@ test('dual accepts are mirrored in handshake path (runX402Handshake parity)', as
     body: JSON.stringify({
       message_type: 'inference_request',
       chain_id: 'base',
-      amount: '10000',
+      amount: '2000',
       sender: '0x0000000000000000000000000000000000000001',
       model_id: 'akash/test-model',
       messages: [{ role: 'user', content: 'test' }],

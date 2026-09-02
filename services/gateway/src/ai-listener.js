@@ -77,7 +77,7 @@ const TASK_STATUS = {
 // fees for the same task whenever AI_TASK_FEE_BPS was configured.
 const AI_TASK_FEE_BPS = Math.min(Math.max(parseInt(process.env.AI_TASK_FEE_BPS, 10) || 50, 50), 100);
 const FEE_DENOMINATOR = 10000;
-const MIN_TASK_AMOUNT = '10000'; // Minimum task value to process (avoid dust)
+const MIN_TASK_AMOUNT = '2000'; // Minimum task value to process ($0.002 hop floor)
 
 /**
  * May an inference request be answered with a synthetic result?

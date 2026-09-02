@@ -19,7 +19,7 @@ process.env.X402_FACILITATOR_PROVIDER = 'zan';
 process.env.X402_PAY_TO = '0xtreasury';
 process.env.X402_NETWORK = 'base';
 process.env.X402_FACILITATOR_API_KEY = 'testkey';
-process.env.X402_USDC_PRICE_DEFAULT = '10000';
+process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.HUB_CATALOG_OFFLINE = 'false';
 process.env.TASK_STORE_PERSIST = 'true';
 process.env.TASK_STORE_DIR = path.join(tmp, 'tasks');
@@ -92,7 +92,7 @@ function stubFetch(url, init) {
 const bodyOf = (over = {}) => ({
   message_type: 'inference_request',
   chain_id: 'base',
-  amount: '10000',
+  amount: '2000',
   sender: '0x0000000000000000000000000000000000000001',
   model_id: 'akash/zai-org/GLM-5.2',
   messages: [{ role: 'user', content: 'Reply with one word.' }],

@@ -20,7 +20,7 @@ process.env.X402_ENABLED = 'true';
 process.env.X402_METER_V1 = 'true';
 process.env.X402_PAY_TO = '0xBasetreasury';
 process.env.X402_NETWORK = 'base';
-process.env.X402_USDC_PRICE_DEFAULT = '10000';
+process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.X402_SOLANA_ENABLED = 'true';
 process.env.X402_SOLANA_PAY_TO = 'SolanaATAaddress123456789012345678901234';
 process.env.X402_SOLANA_NETWORK = 'solana';
@@ -180,7 +180,7 @@ test('no cap → settle + book unchanged (unlimited)', () => {
       rail: 'usdc',
       ref: 'base:0xnocap1',
       collected: true,
-      gross_amount: '10000',
+      gross_amount: '2000',
     },
     route: { model: 'akash/x', hub: 'akash' },
   };
@@ -197,7 +197,7 @@ test('no cap → settle + book unchanged (unlimited)', () => {
   assert.equal(book.status, 200);
   assert.equal(book.body.window, CAP_WINDOW);
   assert.equal(book.body.cap, null);
-  assert.equal(book.body.spent, '10000');
+  assert.equal(book.body.spent, '2000');
   assert.equal(book.body.remaining, null);
   assert.equal(book.body.entries.length, 1);
   assert.ok(book.body.allowance);
@@ -211,7 +211,7 @@ test('no cap → settle + book unchanged (unlimited)', () => {
   assert.equal(checked.valid, true);
 });
 
-test('prepaid_ceiling: Y=10000, one $0.01 → remaining 0', () => {
+test('prepaid_ceiling: Y=2000, one $0.002 → remaining 0', () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   const recorded = recordCollectedSpend({
@@ -220,14 +220,14 @@ test('prepaid_ceiling: Y=10000, one $0.01 → remaining 0', () => {
       rail: 'solana',
       ref: 'solana:0xcap1',
       collected: true,
-      gross_amount: '10000',
+      gross_amount: '2000',
     },
     route: { model: 'akash/x', hub: 'akash' },
   }, { ledger, registry });
 
   const set = setAgentBudget(recorded.agent_id, {
     session: recorded.session,
-    budget: '10000',
+    budget: '2000',
   }, { registry, verify: bindBookVerifier(registry) });
   assert.equal(set.status, 200);
 
@@ -237,8 +237,8 @@ test('prepaid_ceiling: Y=10000, one $0.01 → remaining 0', () => {
     registry,
   });
   assert.equal(book.status, 200);
-  assert.equal(book.body.cap, '10000');
-  assert.equal(book.body.spent, '10000');
+  assert.equal(book.body.cap, '2000');
+  assert.equal(book.body.spent, '2000');
   assert.equal(book.body.remaining, '0');
   assert.equal(book.body.window, CAP_WINDOW);
 
@@ -246,7 +246,7 @@ test('prepaid_ceiling: Y=10000, one $0.01 → remaining 0', () => {
   assert.equal(view.remaining, '0');
 });
 
-test('Y=10000 spent: next paid call fails closed — no second ledger row, no second payment', async () => {
+test('Y=2000 spent: next paid call fails closed — no second ledger row, no second payment', async () => {
   const first = await settlePaid('/v1/chat/completions');
   assert.ok(first.res.status < 500, `first settle status ${first.res.status}`);
   assert.equal(first.settles, 1);
@@ -258,13 +258,13 @@ test('Y=10000 spent: next paid call fails closed — no second ledger row, no se
   const setRes = await fetch(`${base}/v1/agents/${agentId}/book`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session, budget: '10000' }),
+    body: JSON.stringify({ session, budget: '2000' }),
   });
   assert.equal(setRes.status, 200);
   const book = await setRes.json();
   assert.equal(book.remaining, '0');
-  assert.equal(book.cap, '10000');
-  assert.equal(book.spent, '10000');
+  assert.equal(book.cap, '2000');
+  assert.equal(book.spent, '2000');
   const entriesBefore = book.entries.length;
 
   const nonce = await issueChallenge('/v1/chat/completions');
@@ -291,7 +291,7 @@ test('Y=10000 spent: next paid call fails closed — no second ledger row, no se
     body: JSON.stringify({ session }),
   })).json();
   assert.equal(bookAgain.entries.length, entriesBefore, 'no second ledger row');
-  assert.equal(bookAgain.spent, '10000');
+  assert.equal(bookAgain.spent, '2000');
 });
 
 test('demo does not burn Y', async () => {
@@ -303,11 +303,11 @@ test('demo does not burn Y', async () => {
       rail: 'usdc',
       ref: 'base:0xdemocap',
       collected: true,
-      gross_amount: '10000',
+      gross_amount: '2000',
     },
     route: { model: 'theta/qwen3', hub: 'theta' },
   }, { ledger, registry });
-  registry.setBudget(recorded.agent_id, '10000');
+  registry.setBudget(recorded.agent_id, '2000');
   assert.equal(
     capViewOf(registry.get(recorded.agent_id), ledger.sumCollectedByAgent(recorded.agent_id)).remaining,
     '0',
@@ -332,7 +332,7 @@ test('demo does not burn Y', async () => {
   assert.ok(rail === 'unmetered' || rail === 'demo' || body.xfuel?.payment?.collected === false);
 });
 
-test('/v1 and /a2a-message unauth {} still 402 amount 10000 both rails', async () => {
+test('/v1 and /a2a-message unauth {} still 402 amount 2000 both rails', async () => {
   for (const path of ['/v1/chat/completions', '/a2a-message']) {
     const res = await fetch(`${base}${path}`, {
       method: 'POST',
@@ -341,7 +341,7 @@ test('/v1 and /a2a-message unauth {} still 402 amount 10000 both rails', async (
     });
     assert.equal(res.status, 402, path);
     const body = await res.json();
-    assert.equal(body.accepts[0].amount, '10000', path);
+    assert.equal(body.accepts[0].amount, '2000', path);
     assert.equal(body.accepts.length, 2, path);
     const nets = body.accepts.map((a) => a.network);
     assert.ok(nets.some((n) => String(n).startsWith('eip155:')), path);

@@ -97,7 +97,7 @@ const config = {
     //   usdcPriceDefault — legacy name for the floor a metered quote cannot go below
     //   usdcPrices       — hand-set flat price for a specific model, overrides the card
     //   rateCard         — retail base units per 1M tokens, per model family
-    usdcPriceDefault: process.env.X402_USDC_PRICE_DEFAULT || '10000', // $0.01
+    usdcPriceDefault: process.env.X402_USDC_PRICE_DEFAULT || '2000', // $0.002
     usdcFloor: process.env.X402_USDC_FLOOR || null,
     // Charge for /v1/chat/completions. Default OFF: turning it on makes the
     // OpenAI-compatible surface reply 402 to any client that cannot pay, which
@@ -160,7 +160,7 @@ const config = {
     // does not change until someone chooses it.
     //
     // Why they exist: the amount thresholds move whenever we reprice. tier2Min is
-    // 10000 — the same value as the $0.01 price floor — so on the amount basis
+    // 2000 — the same value as the $0.002 price floor — so on the amount basis
     // essentially every paid call sits at the settlement floor. A Tier-2 proof
     // costs a fixed ~$0.050 per Succinct request (measured 2026-08-14, base fee
     // 0.341064 PROVE), against a 10% fee of $0.0094 on a median call. Bundling a

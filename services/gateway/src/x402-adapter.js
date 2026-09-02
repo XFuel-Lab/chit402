@@ -282,7 +282,7 @@ export function v1OutputSchemaFromBazaar(extensions) {
  *   X402_NETWORK=base                   (base | solana)
  *   X402_ASSET=USDC
  *   X402_CHALLENGE_TTL_MS=120000
- *   X402_USDC_PRICE_DEFAULT=10000       (smallest unit, USDC 6dp; 10000 = $0.01)
+ *   X402_USDC_PRICE_DEFAULT=2000        (smallest unit, USDC 6dp; 2000 = $0.002)
  *   X402_USDC_PRICES={"llama-3-70b":"50000"}   (JSON model→price override)
  */
 
@@ -387,7 +387,7 @@ export const challengeStore = new ChallengeStore();
 /**
  * Price a task in USDC smallest units (6dp string). Config-driven for Phase 1:
  * per-model overrides via X402_USDC_PRICES (JSON) or an injected `prices` map,
- * else X402_USDC_PRICE_DEFAULT, else 10000 ($0.01).
+ * else X402_USDC_PRICE_DEFAULT, else 2000 ($0.002).
  *
  * @param {{ model?: string, serviceType?: number }} task
  * @param {{ prices?: Record<string,string>, default?: string }} [opts]
@@ -399,7 +399,7 @@ export function priceTaskUSDC(task = {}, opts = {}) {
     try { envPrices = JSON.parse(process.env.X402_USDC_PRICES); } catch { envPrices = {}; }
   }
   const prices = { ...envPrices, ...(opts.prices || {}) };
-  const fallback = String(opts.default || process.env.X402_USDC_PRICE_DEFAULT || '10000');
+  const fallback = String(opts.default || process.env.X402_USDC_PRICE_DEFAULT || '2000');
   const key = task.model || (task.serviceType != null ? `service:${task.serviceType}` : null);
   const raw = (key && prices[key] != null) ? prices[key] : fallback;
   return String(raw);

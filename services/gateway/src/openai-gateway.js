@@ -57,7 +57,7 @@ function allowFallback(req) {
 const GATEWAY_FEE_BPS = parseInt(process.env.AI_TASK_FEE_BPS, 10) || 50; // 0.5%
 const FEE_DENOMINATOR = 10000n;
 /** Accounting amount for the proof/fee record when the OpenAI call is unmetered. */
-const GATEWAY_TASK_AMOUNT = process.env.OPENAI_GATEWAY_TASK_AMOUNT || '10000';
+const GATEWAY_TASK_AMOUNT = process.env.OPENAI_GATEWAY_TASK_AMOUNT || '2000';
 
 /** Hard cap on max_tokens (0 = uncapped). Set on the hosted demo to gate spend. */
 const MAX_TOKENS_CAP = parseInt(process.env.OPENAI_GATEWAY_MAX_TOKENS_CAP, 10) || 0;
@@ -151,7 +151,7 @@ function sendV1PaymentRequired(res, body, headers = {}) {
  * that speak x402 (the XFuel SDK, x402-fetch wrappers) retry with `X-PAYMENT`.
  *
  * When the request already names a bookable agent_id (session) and remaining
- * is below the $0.01 floor, fail closed BEFORE runX402Handshake — never take
+ * is below the $0.002 hop floor, fail closed BEFORE runX402Handshake — never take
  * payment then refuse.
  *
  * @returns {Promise<{halted:boolean, payment?:{ref:string, amount:string}|null}>}
@@ -194,7 +194,7 @@ async function meterV1Request(req, res, {
     if (remainingBlocksDoor(caps.remaining)) {
       res.status(403).json({
         error: {
-          message: 'Agent budget remaining is below the $0.01 door floor',
+          message: 'Agent budget remaining is below the hop floor',
           type: 'budget_exhausted',
           code: 'budget_exhausted',
           agent_id: bookable.agent_id,

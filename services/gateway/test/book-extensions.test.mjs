@@ -18,7 +18,7 @@ process.env.X402_ENABLED = 'true';
 process.env.X402_METER_V1 = 'true';
 process.env.X402_PAY_TO = '0xBasetreasury';
 process.env.X402_NETWORK = 'base';
-process.env.X402_USDC_PRICE_DEFAULT = '10000';
+process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.TASK_STORE_PERSIST = 'false';
 process.env.RECEIPT_SIGNING_SECRET = 'test-book-ext-secret';
 

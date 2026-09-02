@@ -19,7 +19,7 @@ import { describePricing } from './pricing.js';
  * Dual-network support (2026-08-23): when X402_SOLANA_ENABLED, the bazaar
  * manifest advertises Base (CDP) and Solana (PayAI). OpenAPI `x-payment-info`
  * stays `{ protocols: [{ x402: {} }] }` + decimal USD; runtime 402 `accepts[].amount`
- * remains USDC base units (`10000`).
+ * remains USDC base units (`2000`).
  *
  * Cataloging itself happens when CDP settles a payment that carries
  * `paymentPayload.resource` + `extensions.bazaar` — see docs/X402_ADAPTER.md.
@@ -628,8 +628,8 @@ export function buildX402Manifest(baseUrl = '') {
 /**
  * x402scan / AgentCash discovery document (OpenAPI 3.1).
  *
- * Decimal USD in `x-payment-info.price.amount` (`"0.01"`). Runtime 402
- * `accepts[].amount` stays atomic USDC (`"10000"`). Do not swap those encodings.
+ * Decimal USD in `x-payment-info.price.amount` (`"0.002"`). Runtime 402
+ * `accepts[].amount` stays atomic USDC (`"2000"`). Do not swap those encodings.
  *
  * @param {string} baseUrl  resolved public base URL; '' → omit `servers`
  */
@@ -640,7 +640,7 @@ export function buildOpenApiSpec(baseUrl = '') {
   const ownershipProofs = [x.payTo, solanaEnabled ? x.solana.payTo : null].filter(Boolean);
 
   const paymentInfo = {
-    price: { mode: 'fixed', currency: 'USD', amount: '0.01' },
+    price: { mode: 'fixed', currency: 'USD', amount: '0.002' },
     protocols: [{ x402: {} }],
   };
 

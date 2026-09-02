@@ -159,7 +159,7 @@ test('GET /openapi.json includes /v1/responses with x-payment-info', async () =>
   assert.ok(spec.paths['/v1/responses'], '/v1/responses should be in OpenAPI paths');
   const responses = spec.paths['/v1/responses'].post;
   assert.ok(responses.responses[402] || responses.responses['402']);
-  assert.equal(responses['x-payment-info'].price.amount, '0.01');
+  assert.equal(responses['x-payment-info'].price.amount, '0.002');
   assert.deepEqual(responses['x-payment-info'].protocols, [{ x402: {} }]);
   assert.match(responses.description, /Responses API/);
 });

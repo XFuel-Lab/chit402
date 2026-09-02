@@ -21,7 +21,7 @@ register_agent is POST /v1/agents/register. It binds an AAWP official or smart-a
 
 get_agent_book is GET|POST /v1/agents/:agent_id/book. Possession-gated last-N collected spend for that agent_id. Not a public index. Do not paste a human private key.
 
-Amounts are USDC 6 decimals (10000 = $0.01), not wei. api.xfuel.app is the public beta; paying it moves mainnet USDC.`;
+Amounts are USDC 6 decimals (2000 = $0.002), not wei. api.xfuel.app is the public beta; paying it moves mainnet USDC.`;
 
 export type TransportKind = 'stdio' | 'http';
 

@@ -276,7 +276,7 @@ test('defaultRail / fallbackToTfuel reflect env (usdc default)', () => {
 });
 
 test('priceTaskUSDC: default, per-model override, explicit default', () => {
-  assert.equal(priceTaskUSDC({ model: 'unknown' }), '10000'); // env default ($0.01)
+  assert.equal(priceTaskUSDC({ model: 'unknown' }), '2000'); // env default ($0.002)
   assert.equal(priceTaskUSDC({ model: 'llama-3-70b' }, { prices: { 'llama-3-70b': '50000' } }), '50000');
   assert.equal(priceTaskUSDC({}, { default: '123' }), '123');
   assert.equal(priceTaskUSDC({ serviceType: 0 }, { prices: { 'service:0': '777' } }), '777');
