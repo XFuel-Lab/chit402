@@ -157,7 +157,7 @@ test('renderStatsHtml: renders a standalone page with the headline numbers', () 
   const s = computeUsageStats([task(), task({ status: 'completed' })], { now: NOW });
   const html = renderStatsHtml(s);
   assert.match(html, /<!doctype html>/i);
-  assert.match(html, /XFuel/);
+  assert.match(html, /Chit/);
   assert.match(html, /network activity|Tasks total/);
   assert.match(html, /\?format=json/); // link to machine-readable view
 });

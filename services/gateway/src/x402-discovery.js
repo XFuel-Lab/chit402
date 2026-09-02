@@ -152,7 +152,7 @@ const RESPONSES_OUTPUT_SCHEMA = {
     },
     xfuel: {
       type: 'object',
-      description: 'XFuel receipt with verify_url, payment_ref, task_id',
+      description: 'Chit receipt with verify_url, payment_ref, task_id',
     },
   },
   required: ['id', 'object', 'output', 'xfuel'],
@@ -356,7 +356,7 @@ const AGENTS_BOOK_INGEST_OUTPUT_SCHEMA = {
     signature: {
       type: 'object',
       nullable: true,
-      description: 'HMAC means "XFuel recorded this" — not merchant attestation.',
+      description: 'HMAC means "Chit recorded this" — not merchant attestation.',
       properties: {
         alg: { type: 'string' },
         scope: { type: 'string', enum: ['recorded'] },
@@ -445,7 +445,7 @@ const CHAT_COMPLETIONS_OUTPUT_SCHEMA = {
     },
     xfuel: {
       type: 'object',
-      description: 'XFuel receipt with verify_url, payment_ref, task_id',
+      description: 'Chit receipt with verify_url, payment_ref, task_id',
     },
   },
   required: ['id', 'choices', 'xfuel'],
@@ -481,7 +481,7 @@ export function buildX402Manifest(baseUrl = '') {
       'Cost-plus, quoted, receipted. Real mainnet USDC.';
 
   // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.
-  const serviceName = 'XFuel';
+  const serviceName = 'Chit';
   const tags = ['llm', 'openai-compatible', 'chat-completions', 'inference'];
   const iconUrl = XFUEL_ICON_URL;
 
@@ -534,7 +534,7 @@ export function buildX402Manifest(baseUrl = '') {
 
   return {
     x402Version: 2,
-    name: 'XFuel Protocol',
+    name: 'Chit Protocol',
     serviceName,
     tags,
     iconUrl,
@@ -559,7 +559,7 @@ export function buildX402Manifest(baseUrl = '') {
         iconUrl,
         description:
           'Chat completions (bot drop-in). Cost-plus, quoted, receipted — pay USDC on Base or '
-          + 'Solana (x402 exact scheme). Returns standard chat completion response + signed XFuel receipt '
+          + 'Solana (x402 exact scheme). Returns standard chat completion response + signed Chit receipt '
           + 'with public verify_url. You hold hub, model, and amount.',
         accepts,
         input: CHAT_COMPLETIONS_INPUT_SCHEMA,
@@ -576,7 +576,7 @@ export function buildX402Manifest(baseUrl = '') {
         description:
           'Responses API (bot drop-in). Same x402 + signed receipt as /v1/chat/completions. '
           + 'Accepts input (string or message array), max_output_tokens. '
-          + 'Returns Responses-shaped output + XFuel receipt with verify_url. Stateless one-shot.',
+          + 'Returns Responses-shaped output + Chit receipt with verify_url. Stateless one-shot.',
         accepts,
         input: RESPONSES_INPUT_SCHEMA,
         outputSchema: RESPONSES_OUTPUT_SCHEMA,
@@ -650,7 +650,7 @@ export function buildOpenApiSpec(baseUrl = '') {
     description:
       'No account. No API key. A wallet that can pay the 402 is enough. '
         + 'Pay per request in USDC on Base or Solana (x402 exact scheme). '
-      + 'Returns a standard OpenAI chat.completion plus a signed XFuel receipt with public '
+      + 'Returns a standard OpenAI chat.completion plus a signed Chit receipt with public '
       + 'verify_url. Unauthenticated calls receive HTTP 402 before body validation.',
     tags: ['Chat'],
     'x-payment-info': paymentInfo,
@@ -662,7 +662,7 @@ export function buildOpenApiSpec(baseUrl = '') {
     },
     responses: {
       200: {
-        description: 'Chat completion with XFuel receipt',
+        description: 'Chat completion with Chit receipt',
         content: {
           'application/json': { schema: CHAT_COMPLETIONS_OUTPUT_SCHEMA },
         },
@@ -689,7 +689,7 @@ export function buildOpenApiSpec(baseUrl = '') {
     },
     responses: {
       200: {
-        description: 'Chat completion with XFuel receipt (same shape as /v1)',
+        description: 'Chat completion with Chit receipt (same shape as /v1)',
         content: {
           'application/json': { schema: CHAT_COMPLETIONS_OUTPUT_SCHEMA },
         },
@@ -730,7 +730,7 @@ export function buildOpenApiSpec(baseUrl = '') {
       'Responses API drop-in. Same x402 + signed receipt as /v1/chat/completions. '
         + 'No account. No API key. A wallet that can pay the 402 is enough. '
         + 'Accepts input (string or message array), max_output_tokens. '
-        + 'Returns Responses-shaped output + XFuel receipt with verify_url. Stateless one-shot.',
+        + 'Returns Responses-shaped output + Chit receipt with verify_url. Stateless one-shot.',
     tags: ['Chat'],
     'x-payment-info': paymentInfo,
     requestBody: {
@@ -741,7 +741,7 @@ export function buildOpenApiSpec(baseUrl = '') {
     },
     responses: {
       200: {
-        description: 'Responses output with XFuel receipt',
+        description: 'Responses output with Chit receipt',
         content: {
           'application/json': { schema: RESPONSES_OUTPUT_SCHEMA },
         },
@@ -753,10 +753,10 @@ export function buildOpenApiSpec(baseUrl = '') {
   const spec = {
     openapi: '3.1.0',
     info: {
-      title: 'XFuel',
+      title: 'Chit',
       version: '1.0.0',
       description:
-        'XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. '
+        'Chit is the book. This agent spent Y on this job. You hold hub, model, and amount. '
         + 'No account. No API key. A wallet that can pay the 402 is enough. '
         + 'Register is only to hold the book after a collected receipt. '
         + 'POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. '
@@ -767,7 +767,7 @@ export function buildOpenApiSpec(baseUrl = '') {
         + 'Replaceable Signer: receipts carry dual signatures (primary + co_signature); '
         + 'verify offline via docs/VERIFY_ALGORITHM.md.',
       'x-guidance':
-        'XFuel is the book: this agent spent Y on this job; you hold hub, model, and amount. '
+        'Chit is the book: this agent spent Y on this job; you hold hub, model, and amount. '
         + 'No account. No API key. A wallet that can pay the 402 is enough. '
         + 'Register is only to hold the book after a collected receipt. '
         + 'Use POST /v1/chat/completions with a standard chat-completions JSON body '
@@ -779,7 +779,7 @@ export function buildOpenApiSpec(baseUrl = '') {
         + 'GET|POST /v1/agents/{agent_id}/book is a possession-gated last-N collected '
         + 'spend pack with budget Y / remaining for that agent_id — not a public index. '
         + 'Private Spend is default for registered sessions (X-XFuel-Session header). '
-        + 'Receipts carry dual signatures; co_signature enables verify if XFuel disappears. '
+        + 'Receipts carry dual signatures; co_signature enables verify if Chit disappears. '
         + 'POST /task-request is a lower-level M2M alternative that returns task_id for '
         + 'polling — do not treat it as the public door.',
     },
@@ -831,8 +831,8 @@ export function buildOpenApiSpec(baseUrl = '') {
             'Record an agent\'s arbitrary x402 spend to a foreign endpoint. Requires possession (session), '
             + 'the 402 payment required (resource, amount, payTo), and payment response (tx, payer, network). '
             + 'Naked tx hash is rejected — must have 402 context. Demo keys never write. '
-            + 'HMAC on a foreign row means "XFuel recorded this" — not merchant attestation. '
-            + 'Per whitepaper §2: XFuel does NOT settle foreign payments (CDP/PayAI stay verify+settle).',
+            + 'HMAC on a foreign row means "Chit recorded this" — not merchant attestation. '
+            + 'Per whitepaper §2: Chit does NOT settle foreign payments (CDP/PayAI stay verify+settle).',
           tags: ['Agents'],
           parameters: [
             {

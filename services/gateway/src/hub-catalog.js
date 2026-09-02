@@ -106,7 +106,7 @@ const AUTO_MODEL = Object.freeze({
   owned_by: 'xfuel',
   hub: 'xfuel',
   alias: 'auto',
-  name: 'XFuel Auto (policy → best live chat hub model)',
+  name: 'Chit Auto (policy → best live chat hub model)',
   modality: 'chat',
   default_prediction: 'completions',
   input_vars: null,

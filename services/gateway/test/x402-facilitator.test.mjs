@@ -67,7 +67,7 @@ function makeCdpNativePaymentHeader({
     x402Version: 2,
     resource: {
       url: resourceUrl,
-      description: 'XFuel paid inference',
+      description: 'Chit paid inference',
       mimeType: 'application/json',
     },
     accepted: {
@@ -412,7 +412,7 @@ test('CDP-native v2 paymentPayload resource is object (not string) per CDP v2 sc
 
   assert.equal(typeof p.resource, 'object', 'resource must be object for CDP v2');
   assert.equal(p.resource.url, 'https://api.xfuel.app/task-request');
-  assert.equal(p.resource.description, 'XFuel paid inference', 'description from header');
+  assert.equal(p.resource.description, 'Chit paid inference', 'description from header');
   assert.equal(p.resource.mimeType, 'application/json', 'mimeType from header');
 });
 
@@ -472,7 +472,7 @@ function makeBankrFatAcceptedHeader({
     x402Version: 2,
     resource: {
       url: resourceUrl,
-      description: 'XFuel paid inference',
+      description: 'Chit paid inference',
       mimeType: 'application/json',
     },
     accepted: {
@@ -831,7 +831,7 @@ function makeCdpNativePaymentHeaderWithNonceInBlob({
     x402Version: 2,
     resource: {
       url: resourceUrl,
-      description: 'XFuel paid inference',
+      description: 'Chit paid inference',
       mimeType: 'application/json',
     },
     accepted: {
@@ -1468,7 +1468,7 @@ test('v1 verifyViaFacilitator sends legacy paymentRequirements (maxAmountRequire
       payTo: '0xtreasury',
       taskId: 't1',
       resource: 'https://api.xfuel.app/task-request',
-      description: 'XFuel task',
+      description: 'Chit task',
     };
 
     const r = await verifyViaFacilitator(header, { gateway: url, challenge, x402Version: 1 });
@@ -1480,7 +1480,7 @@ test('v1 verifyViaFacilitator sends legacy paymentRequirements (maxAmountRequire
     assert.equal(pr.maxAmountRequired, '50000', 'v1 uses maxAmountRequired');
     assert.strictEqual(pr.amount, undefined, 'v1 does NOT have `amount` field');
     assert.equal(pr.resource, 'https://api.xfuel.app/task-request', 'v1 has resource');
-    assert.equal(pr.description, 'XFuel task', 'v1 has description');
+    assert.equal(pr.description, 'Chit task', 'v1 has description');
     assert.equal(pr.mimeType, 'application/json', 'v1 has mimeType');
     assert.equal(pr.network, 'base-sepolia', 'v1 uses short network form');
   } finally {
@@ -2321,7 +2321,7 @@ function makeSvmPaymentHeader({
     x402Version: 2,
     resource: {
       url: resourceUrl,
-      description: 'XFuel paid inference',
+      description: 'Chit paid inference',
       mimeType: 'application/json',
     },
     accepted: {

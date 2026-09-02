@@ -252,7 +252,7 @@ export function renderStatsHtml(stats) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>XFuel · network activity</title>
+  <title>Chit · network activity</title>
   <meta name="robots" content="noindex" />
   <style>
     :root { color-scheme: dark; }
@@ -283,7 +283,7 @@ export function renderStatsHtml(stats) {
 <body>
   <div class="wrap">
     <header>
-      <div class="brand">XFuel<span>·</span>activity</div>
+      <div class="brand">Chit<span>·</span>activity</div>
       <div class="gen">as of ${esc(stats.generated_at)}</div>
     </header>
     <h1>Verifiable settlement for AI compute — live network activity</h1>

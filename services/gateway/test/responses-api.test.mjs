@@ -40,7 +40,7 @@ test('GET /v1/responses is 405 (not 404), method not allowed', async () => {
   assert.equal(body.error.code, 'method_not_allowed');
 });
 
-test('POST /v1/responses with string input returns Responses-shaped output + XFuel receipt', async () => {
+test('POST /v1/responses with string input returns Responses-shaped output + Chit receipt', async () => {
   const res = await fetch(`${base}/v1/responses`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-key' },
@@ -82,7 +82,7 @@ test('POST /v1/responses with string input returns Responses-shaped output + XFu
   // Usage
   assert.ok(body.usage.total_tokens >= 1);
 
-  // XFuel receipt
+  // Chit receipt
   assert.match(body.xfuel.task_id, /^xfuel-/);
   assert.equal(body.xfuel.task_id, taskIdHdr);
   assert.equal(body.xfuel.compute.real, false); // No provider keys in test → mock

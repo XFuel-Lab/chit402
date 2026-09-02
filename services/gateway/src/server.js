@@ -239,9 +239,9 @@ function tier2Gate() {
 // Served at GET /llms.txt (llmstxt.org convention). Keep concise; deep detail
 // lives in the linked docs so agents can progressively disclose.
 
-const LLMS_TXT = `# XFuel Protocol
+const LLMS_TXT = `# Chit Protocol
 
-> XFuel is the book. This agent spent Y on this job. You hold hub, model,
+> Chit is the book. This agent spent Y on this job. You hold hub, model,
 > and amount. No account. No API key. A wallet that can pay the 402 is
 > enough. Register is only to hold the book after a collected receipt.
 > POST /v1/chat/completions returns a signed receipt: hub, model, amount,
@@ -301,10 +301,10 @@ Registered/possession sessions get vendor_blind mode by default. Providers see
 gateway-pooled credentials, not end-customer topology. Demo keys never qualify.
 Pass X-XFuel-Session header with a valid register session to enable.
 
-## Replaceable Signer (verifiable without XFuel)
+## Replaceable Signer (verifiable without Chit)
 
 Receipts can carry two signatures: primary (signature) and co-signer (co_signature).
-Either validates the receipt. If XFuel disappears, the co-signer's key still works.
+Either validates the receipt. If Chit disappears, the co-signer's key still works.
 - docs/VERIFY_ALGORITHM.md : plain-language + runnable verify code (offline).
 - scripts/verify-receipt.mjs : standalone verification script.
 - binding.in_proof:true means the commitment is on-chain via SP1 (escape hatch).
@@ -325,7 +325,7 @@ Either validates the receipt. If XFuel disappears, the co-signer's key still wor
 - GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message.
 - POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
-- POST /v1/agents/:agent_id/book/ingest : foreign x402 ingest. Record spend to another shop (not XFuel). Requires possession + 402 context. Naked tx rejected.
+- POST /v1/agents/:agent_id/book/ingest : foreign x402 ingest. Record spend to another shop (not Chit). Requires possession + 402 context. Naked tx rejected.
 - POST /v1/chat/completions : paid (USDC on Base or Solana). Unauth GET or POST {} → 402.
 - POST /a2a-message       : same paid door as /v1 (A2A card URL). Unauth POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).
@@ -1421,8 +1421,8 @@ export function createApp() {
         adapter_address: adapterAddress,
         submit,
         submitted,
-        note: 'ERC-8004 score: 0=failed, 100=passed. The tag conveys the XFuel assurance tier. ' +
-          'Submit `submit.data` from the XFuel validator address (or SUBMITTER_ROLE on the adapter).',
+        note: 'ERC-8004 score: 0=failed, 100=passed. The tag conveys the Chit assurance tier. ' +
+          'Submit `submit.data` from the Chit validator address (or SUBMITTER_ROLE on the adapter).',
       });
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /erc8004/validate error');

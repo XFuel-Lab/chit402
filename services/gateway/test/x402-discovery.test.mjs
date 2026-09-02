@@ -7,7 +7,7 @@ test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () =>
   const m = buildX402Manifest('https://api-testnet.xfuel.app');
 
   assert.equal(m.x402Version, 2);
-  assert.equal(m.name, 'XFuel Protocol');
+  assert.equal(m.name, 'Chit Protocol');
   assert.equal(typeof m.description, 'string');
   assert.ok(Array.isArray(m.tags), 'manifest tags is an array');
   assert.ok(m.tags.length <= 5, 'manifest tags ≤5 items');
@@ -119,9 +119,9 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
   const spec = buildOpenApiSpec('https://api.xfuel.app');
 
   assert.equal(spec.openapi, '3.1.0');
-  assert.equal(spec.info.title, 'XFuel');
+  assert.equal(spec.info.title, 'Chit');
   assert.equal(typeof spec.info.version, 'string');
-  assert.match(spec.info.description, /XFuel is the book/);
+  assert.match(spec.info.description, /Chit is the book/);
   assert.match(spec.info.description, /hub, model, and amount/);
   assert.doesNotMatch(spec.info.description, /crypto control plane/i);
   assert.doesNotMatch(spec.info.description, /best available/i);
