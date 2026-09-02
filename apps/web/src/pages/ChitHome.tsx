@@ -1,8 +1,8 @@
 import { type CSSProperties } from 'react';
+import { Link } from 'react-router-dom';
 import { getHostConfig } from '../hostConfig';
 
 const BANKR_RECEIPT = 'https://api.xfuel.app/receipt/xfuel-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e';
-const API_ENDPOINT = 'https://api.xfuel.app/v1';
 
 export default function ChitHome() {
   const config = getHostConfig();
@@ -36,14 +36,9 @@ export default function ChitHome() {
             >
               View a live receipt (Bankr)
             </a>
-            <a
-              href={API_ENDPOINT}
-              className="btn btn-secondary"
-              target="_blank"
-              rel="noreferrer"
-            >
+            <Link to="/v1" className="btn btn-secondary">
               Point your bot at the wire
-            </a>
+            </Link>
             <a
               href={config.githubUrl}
               className="btn btn-secondary"

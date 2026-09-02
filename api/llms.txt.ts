@@ -1,0 +1,173 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+
+const CHIT_LLMS = `# Chit — the x402 receipt that doesn't leave you
+
+> Chit is the receipt. A chit you still hold if the agent wallet moves.
+> Hub, model, amount — you hold the book. POST /v1/chat/completions
+> returns a signed receipt: hub, model, amount, verify_url.
+> Cost-plus, quoted, receipted — pay x402 USDC on Base or Solana.
+> The wire is api.xfuel.app/v1. Chit is the product. XFuel Lab is the parent.
+
+## Money pages (chit402.com)
+
+- /         : A receipt you still hold if the agent wallet moves.
+- /v1       : Not the API — points you to api.xfuel.app/v1.
+
+## Start here (chat completions / responses)
+
+- POST /v1/chat/completions : Chat completions. Unauthenticated GET or
+  POST {} → 402 x402 (USDC on Base or Solana). Returns signed receipt + public verify_url.
+- POST /v1/responses        : Responses API (bot drop-in). Same x402 + signed receipt as
+  /v1/chat/completions. Accepts input (string or message array), max_output_tokens.
+  Returns Responses-shaped output + receipt. Stateless one-shot. Unauth → 402.
+- POST /a2a-message         : A2A card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
+- POST /v1/agents/register  : fail-closed. Bind agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
+- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
+- GET  /v1/models           : live catalog. Public, no key.
+- No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
+- Optional key (skips payment): "Authorization: Bearer <key>" or "X-API-Key: <key>".
+- Point any chat-completions client's baseURL at api.xfuel.app + /v1. Receipt in x-xfuel-*
+  headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
+
+## Paid door (USDC / x402)
+
+- POST /task-request      : paid M2M task. 402 without X-PAYMENT. Real USDC.
+- Networks: Base mainnet (default, CDP facilitator) or Solana mainnet (PayAI).
+  The 402 challenge lists both; your wallet picks the network.
+- POST /task-quote        : forecast only (not an invoice).
+- GET  /task-status       : status + proof outcome (also works for /v1 task ids).
+- GET  /prove-result      : SP1 settlement proof when requested / above COGS gate.
+- GET  /health            : status, demo limits, floats.
+- GET  /stats             : public-safe usage.
+
+## MCP
+
+- npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
+- submit_inference = POST /task-request (paid, 402 without a payer).
+- register_agent = POST /v1/agents/register (needs a collected receipt + agentWallet).
+- get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; budget Y + remaining; not a public scoreboard).
+
+## Discovery (x402scan + Bazaar)
+
+- GET  /openapi.json      : OpenAPI 3.1 with x-payment-info. Public door is POST /v1/chat/completions.
+- GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
+- GET  /.well-known/x402list.txt : x402-list domain verification token (public, text/plain).
+- GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message.
+- POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
+- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
+- POST /v1/chat/completions : paid (USDC on Base or Solana). Unauth GET or POST {} → 402.
+- POST /a2a-message       : same paid door as /v1 (A2A card URL). Unauth POST {} → 402.
+- POST /task-request      : lower-level M2M paid route (not the public door).
+
+## SDK
+
+- npm install xfuel-sdk — client.chatCompletions() with x402 for unauthenticated calls.
+- createMockPayer() is for a local mock facilitator only. This host rejects it.
+
+## Docs
+
+- Protocol map: AGENTS.md
+- Agent Playbook: skills/AGENT_PLAYBOOK.md
+- Chat completions gateway: docs/CHAT_COMPLETIONS_GATEWAY.md
+- Full REST API: docs/M2M_API.md
+- Payments (x402): docs/payments-x402.md
+`;
+
+const XFUEL_LLMS = `# XFuel Protocol
+
+> XFuel is the book. This agent spent Y on this job. You hold hub, model,
+> and amount. No account. No API key. A wallet that can pay the 402 is
+> enough. Register is only to hold the book after a collected receipt.
+> POST /v1/chat/completions returns a signed receipt: hub, model, amount,
+> verify_url. Cost-plus, quoted, receipted — pay x402 USDC on Base (CDP) or
+> Solana (PayAI). POST /a2a-message is the same paid door (A2A card URL).
+> Bearer xfuel-demo and valid API keys skip payment. GET|POST
+> /v1/agents/:agent_id/book is possession-gated (last-N spend + budget Y /
+> remaining under prepaid_ceiling). POST /v1/agents/register
+> is fail-closed. /task-request is the other paid door. Paying
+> api.xfuel.app moves real mainnet USDC. Canonical: api.xfuel.app.
+
+## Money pages (xfuel.app)
+
+- /agent-shop : Live catalog — Theta + Akash + xfuel/auto. GET /v1/models shows what's live.
+- /book       : Possession-gated last-N collected spend. This agent spent Y on this job.
+- /book-bot   : Paste-into-bot prompt. Your SEO bot spent it. You hold the book.
+- /v1         : Not the API — points you to api.xfuel.app/v1.
+- /pricing    : USDC on Base and Solana. Cost-plus, quoted, receipted.
+
+## Start here (chat completions / responses)
+
+- POST /v1/chat/completions : Chat completions. Unauthenticated GET or
+  POST {} → 402 x402 (USDC on Base or Solana). Returns signed receipt + public verify_url.
+- POST /v1/responses        : Responses API (bot drop-in). Same x402 + signed receipt as
+  /v1/chat/completions. Accepts input (string or message array), max_output_tokens.
+  Returns Responses-shaped output + XFuel receipt. Stateless one-shot. Unauth → 402.
+- POST /a2a-message         : A2A v1.0 card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
+- POST /v1/agents/register  : fail-closed. Bind agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
+- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
+- GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Public, no key.
+- POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
+- No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
+- Optional key (skips payment): "Authorization: Bearer <key>" or "X-API-Key: <key>".
+- Point any OpenAI client's baseURL at this host + /v1. Receipt in x-xfuel-*
+  headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
+- proof_outcome may be pending on the chat body — poll GET /task-status.
+
+## Paid door (USDC / x402)
+
+- POST /task-request      : paid M2M task. 402 without X-PAYMENT. Real USDC.
+- Networks: Base mainnet (default, CDP facilitator) or Solana mainnet (PayAI).
+  The 402 challenge lists both; your wallet picks the network.
+- POST /task-quote        : forecast only (not an invoice).
+- GET  /task-status       : status + proof outcome (also works for /v1 task ids).
+- GET  /prove-result      : SP1 settlement proof when requested / above COGS gate.
+- GET  /health            : status, demo limits, floats. Token buckets with null
+  addresses are post-TGE, not live.
+- GET  /stats             : public-safe usage.
+
+## MCP
+
+- npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
+- submit_inference = POST /task-request (paid, 402 without a payer).
+- register_agent = POST /v1/agents/register (needs a collected receipt + agentWallet).
+- get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; budget Y + remaining; not a public scoreboard).
+
+## Discovery (x402scan + Bazaar)
+
+- GET  /openapi.json      : OpenAPI 3.1 with x-payment-info. Public door is POST /v1/chat/completions.
+- GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
+- GET  /.well-known/x402list.txt : x402-list domain verification token (public, text/plain).
+- GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message.
+- POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
+- GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
+- POST /v1/chat/completions : paid (USDC on Base or Solana). Unauth GET or POST {} → 402.
+- POST /a2a-message       : same paid door as /v1 (A2A card URL). Unauth POST {} → 402.
+- POST /task-request      : lower-level M2M paid route (not the public door).
+
+## SDK
+
+- npm install xfuel-sdk — client.chatCompletions() with x402 for unauthenticated calls.
+- createMockPayer() is for a local mock facilitator only. This host rejects it.
+
+## Docs
+
+- Protocol map: AGENTS.md
+- Agent Playbook: skills/AGENT_PLAYBOOK.md
+- Chat completions gateway: docs/CHAT_COMPLETIONS_GATEWAY.md
+- Full REST API: docs/M2M_API.md
+- Payments (x402): docs/payments-x402.md
+`;
+
+function isChitHost(host: string): boolean {
+  const h = host.toLowerCase();
+  return h === 'chit402.com' || h === 'www.chit402.com' || h.endsWith('.chit402.com');
+}
+
+export default function handler(req: VercelRequest, res: VercelResponse) {
+  const host = (req.headers.host || req.headers['x-forwarded-host'] || '') as string;
+  const content = isChitHost(host) ? CHIT_LLMS : XFUEL_LLMS;
+  
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.status(200).send(content);
+}

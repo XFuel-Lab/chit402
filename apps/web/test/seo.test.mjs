@@ -89,10 +89,13 @@ test('homepage title and hero lead with the book, not a router', () => {
 
   assert.doesNotMatch(html, /Not a smart router/);
   assert.doesNotMatch(html, /Not a model shop/);
+});
 
-  const llms = readFileSync(join(root, 'public/llms.txt'), 'utf8');
-  assert.doesNotMatch(llms, /Not a smart router/);
-  assert.doesNotMatch(llms, /Not a model shop/);
+test('llms.txt API route does not contain prohibited copy', () => {
+  const llmsApi = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8');
+  assert.doesNotMatch(llmsApi, /Not a smart router/);
+  assert.doesNotMatch(llmsApi, /Not a model shop/);
+  assert.match(llmsApi, /XFuel.*the book|Chit.*receipt/i, 'llms.txt API has brand copy');
 });
 
 test('README first paragraph leads with the book', () => {
