@@ -46,14 +46,32 @@ export function buildVerifyUrl(baseUrl, taskId) {
 }
 
 /**
- * Resolve the public base URL for building absolute links. Prefers an explicitly
- * configured canonical URL (PUBLIC_BASE_URL — correct behind a proxy/CDN), else
- * derives it from the request's protocol + host. Returns '' if neither is known.
+ * Resolve the public base URL for building absolute links.
+ *
+ * Priority:
+ *   1. If the request Host matches an allowed public host, use that host
+ *      (enables serving receipts from multiple domains with correct URLs)
+ *   2. Else use the explicitly configured canonical URL (PUBLIC_BASE_URL)
+ *   3. Else derive from the request's protocol + host
+ *   4. Else return '' (relative URLs)
+ *
+ * @param {object} req - Express request object
+ * @param {string|null} configuredBase - PUBLIC_BASE_URL fallback
+ * @param {string[]} [allowedHosts] - PUBLIC_HOSTS list (lowercase hostnames)
  */
-export function baseUrlFromReq(req, configuredBase) {
+export function baseUrlFromReq(req, configuredBase, allowedHosts = []) {
+  const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
+  const reqHostLower = reqHost ? reqHost.toLowerCase().split(':')[0] : null;
+
+  if (reqHostLower && Array.isArray(allowedHosts) && allowedHosts.length > 0) {
+    if (allowedHosts.includes(reqHostLower)) {
+      const proto = req.protocol || 'https';
+      return `${proto}://${reqHost}`;
+    }
+  }
+
   if (configuredBase) return String(configuredBase).replace(/\/$/, '');
-  const host = typeof req?.get === 'function' ? req.get('host') : null;
-  return host ? `${req.protocol}://${host}` : '';
+  return reqHost ? `${req.protocol}://${reqHost}` : '';
 }
 
 /** Build an explorer URL from a `payment_ref` like "base-sepolia:0xabc…", or null. */
@@ -589,6 +607,15 @@ function row(label, valueHtml) {
   return `<div class="row"><span class="k">${esc(label)}</span><span class="v">${valueHtml}</span></div>`;
 }
 
+/**
+ * Strip the internal `xfuel-` prefix from a task_id for human-readable display.
+ * The underlying id and URL path remain unchanged; this is display-only.
+ */
+function displayTaskId(taskId) {
+  if (!taskId || typeof taskId !== 'string') return taskId || '';
+  return taskId.startsWith('xfuel-') ? taskId.slice(6) : taskId;
+}
+
 /** USDC 6dp integer string → partner-readable dollars. Tiny COGS keeps extra decimals. */
 function formatUsdc(units) {
   if (units == null || units === '') return null;
@@ -647,7 +674,7 @@ export function renderReceiptHtml(receipt) {
   const p = receipt.payment;
   const pr = receipt.proof;
   const b = receipt.binding;
-  const title = `Chit receipt · ${receipt.task_id}`;
+  const title = 'Chit receipt';
   const desc = p.rail === 'unmetered'
     ? `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} · UNMETERED · not charged`
     : `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} receipt · ${p.rail.toUpperCase()} · verify_url`;
@@ -778,7 +805,7 @@ export function renderReceiptHtml(receipt) {
     </header>
 
     <h1>Task</h1>
-    <div class="taskid">${esc(receipt.task_id)}</div>
+    <div class="taskid">${esc(displayTaskId(receipt.task_id))}</div>
 
     <section class="card">
       <h2>Route</h2>
@@ -960,7 +987,7 @@ export function renderAuditorHtml(exportDoc) {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Chit auditor export · ${esc(shortHash(e.task_id, 12, 6))}</title>
+<title>Chit auditor export</title>
 <meta name="robots" content="noindex" />
 <style>
   :root { color-scheme: dark; }
@@ -986,7 +1013,7 @@ export function renderAuditorHtml(exportDoc) {
     <p><span class="badge ${ok ? 'ok' : 'bad'}">${ok ? 'in policy' : 'policy check failed'}</span></p>
     <section class="card">
       <h2>Task</h2>
-      ${row('Task id', `<code>${esc(e.task_id)}</code>`)}
+      ${row('Task id', `<code>${esc(displayTaskId(e.task_id))}</code>`)}
       ${row('Status', esc(e.status))}
       ${row('Proof outcome', esc(e.proof_outcome))}
     </section>

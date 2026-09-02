@@ -767,7 +767,7 @@ export function createApp() {
 
   /** Public discovery 402 for CDP re-fetch / validate (no API key, never fulfills). */
   function publicTaskRequestChallenge(req) {
-    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const x = config.x402;
     const { body, headers } = buildPaymentChallenge({
       taskId: `x402-discovery-${req.id || Date.now()}`,
@@ -904,7 +904,7 @@ export function createApp() {
               const handshakeTaskId = decision.pending?.taskId || `x402-${req.id}`;
               const handshakeAmount = decision.pending ? decision.amount : null;
               // Pass the public base URL for CDP Bazaar cataloging (absolute resource URLs)
-              const handshakeBaseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+              const handshakeBaseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
               const hs = await runX402Handshake(req, {
                 taskId: handshakeTaskId,
                 amount: handshakeAmount,
@@ -957,7 +957,7 @@ export function createApp() {
             }
           } else {
             // Pass the public base URL for CDP Bazaar cataloging (absolute resource URLs)
-            const handshakeBaseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+            const handshakeBaseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
             const decision = await runX402Handshake(req, { taskId: `x402-${req.id}`, baseUrl: handshakeBaseUrl });
             if (decision.kind === 'challenge') {
               return sendPaymentRequired(res, decision.body);
@@ -1187,7 +1187,7 @@ export function createApp() {
         feeBps: appliedBps,
       }, 'Task request accepted');
 
-      const verifyUrl = buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl), effectiveTaskId);
+      const verifyUrl = buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts), effectiveTaskId);
 
       return res.status(202).json({
         task_id:       effectiveTaskId,
@@ -1356,7 +1356,7 @@ export function createApp() {
         return res.status(404).json({ error: 'not_found', message: `Task ${task_id} not found` });
       }
 
-      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       const receipt = buildReceipt(task, {
         baseUrl,
         signingSecret: config.receipts?.signingSecret,
@@ -1477,7 +1477,7 @@ export function createApp() {
         task_id:        task.taskId,
         status:         task.status,
         proof_outcome:  proofOutcomeOf(task),
-        verify_url:     buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl), task.taskId),
+        verify_url:     buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts), task.taskId),
         sp1_proof:      task.sp1Proof || null,
         // Phase 2 (flag-gated): x402 payment commitment bound into the proof.
         payment_binding: task.sp1Proof?.paymentBinding || null,
@@ -1701,7 +1701,7 @@ export function createApp() {
           task_id:        task.taskId,
           status:         task.status,
           proof_outcome:  proofOutcome,
-          verify_url:     buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl), task.taskId),
+          verify_url:     buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts), task.taskId),
           proof_system:   task.intent?.proofSystem || 'sp1', // 'sp1' | 'zkgpt' — which prover ran; proof data is in sp1_proof for both
           message_type:   task.intent?.type,
           chain_id:       task.meta?.chain,
@@ -1801,7 +1801,7 @@ export function createApp() {
       }
 
       // Redirect to canonical verify_url so the URL shape is consistent
-      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       const canonicalUrl = `${baseUrl}/receipt/${task.taskId}${fmt ? `?format=${fmt}` : ''}`;
       return res.redirect(302, canonicalUrl);
     } catch (err) {
@@ -1834,7 +1834,7 @@ export function createApp() {
         return res.status(404).type('html').send(renderReceiptNotFound(taskId));
       }
 
-      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       const receipt = buildReceipt(task, {
         baseUrl,
         signingSecret: config.receipts?.signingSecret,
@@ -1931,7 +1931,7 @@ export function createApp() {
 
   app.get('/.well-known/agent-card.json', rateLimit, (req, res) => {
     try {
-      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       res.type('application/a2a+json').json(buildAgentCard(baseUrl));
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /.well-known/agent-card.json error');
@@ -1941,7 +1941,7 @@ export function createApp() {
 
   app.get('/.well-known/x402', rateLimit, (req, res) => {
     try {
-      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       res.json(buildX402Manifest(baseUrl));
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /.well-known/x402 error');
@@ -1953,7 +1953,7 @@ export function createApp() {
   // x402scan ignores /.well-known/x402 and registers from this document.
   app.get('/openapi.json', rateLimit, (req, res) => {
     try {
-      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       res.json(buildOpenApiSpec(baseUrl));
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /openapi.json error');

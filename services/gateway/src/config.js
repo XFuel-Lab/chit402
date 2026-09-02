@@ -355,6 +355,14 @@ const config = {
     // or CDN (e.g. https://api.xfuel.app) so links aren't derived from the
     // internal host. When unset, links are derived from the request host.
     publicBaseUrl: process.env.PUBLIC_BASE_URL || null,
+    // Allowed public hostnames for host-aware URL construction (comma-separated).
+    // When the request Host header matches one of these, that host is used for
+    // absolute links (verify_url, receipt self-links) instead of PUBLIC_BASE_URL.
+    // This enables serving the same receipts from multiple domains (e.g. both
+    // api.xfuel.app and api.chit402.com) with correct self-referential URLs.
+    // Example: PUBLIC_HOSTS=api.chit402.com,api.xfuel.app,api-testnet.xfuel.app
+    publicHosts: (process.env.PUBLIC_HOSTS || '')
+      .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
   },
 
   // Task/receipt persistence. Tasks (and thus the public `verify_url` receipt) are
