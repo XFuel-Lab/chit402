@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Home from './pages/Home';
+import ChitHome from './pages/ChitHome';
 import Docs from './pages/Docs';
 import Pricing from './pages/Pricing';
 import GatewayV1 from './pages/GatewayV1';
@@ -9,13 +10,18 @@ import Security from './pages/Security';
 import AgentShop from './pages/AgentShop';
 import Book from './pages/Book';
 import BookBot from './pages/BookBot';
+import { isChitHost } from './hostConfig';
+
+function HomePage() {
+  return isChitHost() ? <ChitHome /> : <Home />;
+}
 
 export default function App() {
   return (
     <Routes>
       {/* Layout wrapper (no path) ensures all routes render within the shell. */}
       <Route element={<Layout />}>
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={<HomePage />} />
         <Route path="/docs" element={<Docs />} />
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/security" element={<Security />} />
