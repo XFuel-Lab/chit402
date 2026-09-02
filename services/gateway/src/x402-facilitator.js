@@ -438,7 +438,7 @@ export function toPaymentRequirements({
     network: wireNetwork,
     maxAmountRequired: String(amount),
     resource: resource || `/x402/task/${taskId || 'task'}`,
-    description: description || (taskId ? `XFuel task ${taskId}` : 'XFuel task'),
+    description: description || (taskId ? `Chit task ${taskId}` : 'Chit task'),
     mimeType: 'application/json',
     payTo,
     maxTimeoutSeconds: Number(maxTimeoutSeconds) || 120,

@@ -7,7 +7,7 @@
 export const XFUEL_ICON_URL = 'https://api.xfuel.app/xfuel-icon.svg';
 
 export const XFUEL_ICON_SVG = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="XFuel">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Chit">
   <circle cx="16" cy="16" r="14" fill="#0b0b12" stroke="url(#xfuel-g)" stroke-width="2.5"/>
   <path d="M10 16l4 4 8-8" fill="none" stroke="#00d4ff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
   <defs>

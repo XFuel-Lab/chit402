@@ -42,7 +42,7 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
   assert.equal(res.status, 200);
   const spec = await res.json();
   assert.equal(spec.openapi, '3.1.0');
-  assert.equal(spec.info.title, 'XFuel');
+  assert.equal(spec.info.title, 'Chit');
   assert.equal(typeof spec.info['x-guidance'], 'string');
   assert.deepEqual(Object.keys(spec.paths), [
     '/v1/chat/completions',
@@ -81,7 +81,7 @@ test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type') ?? '', /text\/plain/);
   const body = await res.text();
-  assert.match(body, /# XFuel Protocol/);
+  assert.match(body, /# Chit Protocol/);
   assert.match(body, /\/v1\/chat\/completions/);
   assert.match(body, /xfuel-sdk/);
   assert.match(body, /npx xfuel-mcp/);
@@ -112,7 +112,7 @@ test('GET /.well-known/x402 and agent-card.json still serve after x402list', asy
   const card = await fetch(`${base}/.well-known/agent-card.json`);
   assert.equal(card.status, 200);
   const body = await card.json();
-  assert.equal(body.name, 'XFuel');
+  assert.equal(body.name, 'Chit');
   assert.ok(Array.isArray(body.skills));
 });
 
@@ -171,7 +171,7 @@ test('GET /v1/chat/completions is not 404 (x402 off → 405, not missing)', asyn
   assert.match(res.headers.get('allow') ?? '', /POST/);
 });
 
-test('POST /v1/chat/completions returns an OpenAI completion + XFuel receipt', async () => {
+test('POST /v1/chat/completions returns an OpenAI completion + Chit receipt', async () => {
   const res = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-key' },
@@ -222,7 +222,7 @@ test('POST /v1/chat/completions returns an OpenAI completion + XFuel receipt', a
   const receiptHtml = await fetch(`${base}/receipt/${body.xfuel.task_id}`);
   assert.equal(receiptHtml.status, 200);
   const html = await receiptHtml.text();
-  assert.match(html, new RegExp(`<title>XFuel receipt · ${body.xfuel.task_id}</title>`));
+  assert.match(html, new RegExp(`<title>Chit receipt · ${body.xfuel.task_id}</title>`));
   assert.doesNotMatch(html, /openai/i);
 });
 
@@ -251,7 +251,7 @@ test('GET /receipt/openai-* still 200 for pre-cutover task ids', async () => {
   const res = await fetch(`${base}/receipt/${legacyId}`);
   assert.equal(res.status, 200);
   const html = await res.text();
-  assert.match(html, new RegExp(`<title>XFuel receipt · ${legacyId}</title>`));
+  assert.match(html, new RegExp(`<title>Chit receipt · ${legacyId}</title>`));
   assert.match(html, new RegExp(`class="taskid">${legacyId}<`));
 
   const json = await fetch(`${base}/receipt/${legacyId}?format=json`);

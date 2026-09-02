@@ -49,6 +49,6 @@ test('GET /stats returns a standalone HTML dashboard by default', async () => {
   assert.match(res.headers.get('content-type') ?? '', /text\/html/);
   const html = await res.text();
   assert.match(html, /<!doctype html>/i);
-  assert.match(html, /XFuel/);
+  assert.match(html, /Chit/);
   assert.match(html, /\?format=json/);
 });

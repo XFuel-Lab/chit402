@@ -32,7 +32,7 @@ test('buildPaymentChallenge produces a valid x402 v2 PaymentRequired', () => {
   assert.equal(status, 402);
   assert.equal(body.x402Version, 2);
   assert.equal(body.resource.url, 'https://api.xfuel.app/task-request');
-  assert.equal(body.resource.serviceName, 'XFuel');
+  assert.equal(body.resource.serviceName, 'Chit');
   assert.equal(body.accepts.length, 1);
   const a = body.accepts[0];
   assert.equal(a.scheme, 'exact');
@@ -157,7 +157,7 @@ test('buildPaymentChallenge: includes service metadata for bazaar', () => {
   const r = body.resource;
 
   // Per spec: serviceName ≤32 chars
-  assert.equal(r.serviceName, 'XFuel', 'serviceName is XFuel');
+  assert.equal(r.serviceName, 'Chit', 'serviceName is Chit');
   assert.ok(r.serviceName.length <= 32, 'serviceName ≤32 chars');
 
   // Per spec: tags ≤5 items. Tags now include llm, openai-compatible, chat-completions
