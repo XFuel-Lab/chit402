@@ -5,6 +5,20 @@
   "env": {
     "VITE_MAINTENANCE": "false"
   },
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "xfuel.app" }],
+      "destination": "https://www.chit402.com/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "www.xfuel.app" }],
+      "destination": "https://www.chit402.com/:path*",
+      "permanent": true
+    }
+  ],
   "headers": [
     {
       "source": "/xfuel-icon.svg",
