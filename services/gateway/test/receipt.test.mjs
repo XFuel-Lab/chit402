@@ -113,6 +113,32 @@ test('baseUrlFromReq: prefers configured base, else derives from request', () =>
   assert.equal(baseUrlFromReq({}, null), '');
 });
 
+test('baseUrlFromReq: uses request host when it matches allowedHosts', () => {
+  const chitReq = { protocol: 'https', get: (h) => (h === 'host' ? 'api.chit402.com' : null) };
+  const xfuelReq = { protocol: 'https', get: (h) => (h === 'host' ? 'api.xfuel.app' : null) };
+  const unknownReq = { protocol: 'https', get: (h) => (h === 'host' ? 'unknown.example.com' : null) };
+  const allowedHosts = ['api.chit402.com', 'api.xfuel.app', 'api-testnet.xfuel.app'];
+
+  // Request host in allowed list → use request host
+  assert.equal(baseUrlFromReq(chitReq, 'https://api.xfuel.app', allowedHosts), 'https://api.chit402.com');
+  assert.equal(baseUrlFromReq(xfuelReq, 'https://api.xfuel.app', allowedHosts), 'https://api.xfuel.app');
+
+  // Request host NOT in allowed list → fall back to configured base
+  assert.equal(baseUrlFromReq(unknownReq, 'https://api.xfuel.app', allowedHosts), 'https://api.xfuel.app');
+
+  // No allowed hosts → fall back to configured base
+  assert.equal(baseUrlFromReq(chitReq, 'https://api.xfuel.app', []), 'https://api.xfuel.app');
+  assert.equal(baseUrlFromReq(chitReq, 'https://api.xfuel.app', null), 'https://api.xfuel.app');
+
+  // Request host with port in allowed list → still matches (port stripped for comparison)
+  const chitReqWithPort = { protocol: 'https', get: (h) => (h === 'host' ? 'api.chit402.com:443' : null) };
+  assert.equal(baseUrlFromReq(chitReqWithPort, 'https://api.xfuel.app', allowedHosts), 'https://api.chit402.com:443');
+
+  // Case-insensitive host matching
+  const upperReq = { protocol: 'https', get: (h) => (h === 'host' ? 'API.CHIT402.COM' : null) };
+  assert.equal(baseUrlFromReq(upperReq, 'https://api.xfuel.app', allowedHosts), 'https://API.CHIT402.COM');
+});
+
 test('buildReceipt: binding mismatch is detected (tampered commitment)', () => {
   const task = usdcTask();
   task.sp1Proof.paymentBinding.commitment = '0x' + '00'.repeat(32);
@@ -159,6 +185,24 @@ test('renderReceiptHtml: shareable page includes key fields + escapes hostile in
   // The injected script tag must be escaped, not rendered.
   assert.ok(!html.includes('<script>alert(1)</script>'));
   assert.ok(html.includes('&lt;script&gt;'));
+});
+
+test('renderReceiptHtml: title is "Chit receipt" without task_id, xfuel- prefix stripped in display', () => {
+  const xfuelTask = {
+    taskId: 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587',
+    status: 'completed',
+    intent: { paymentRail: 'usdc', amount: '10000', model: 'theta/qwen3' },
+  };
+  const html = renderReceiptHtml(buildReceipt(xfuelTask));
+
+  // Title must be just "Chit receipt" without the task_id
+  assert.match(html, /<title>Chit receipt<\/title>/);
+  assert.match(html, /og:title.*content="Chit receipt"/);
+
+  // The displayed task ID should have the xfuel- prefix stripped
+  assert.ok(html.includes('247049dd-0075-4372-b7f7-508c62b9b587'), 'UUID portion should be displayed');
+  // Should NOT show "xfuel-" in the task display div (but may appear in links/URLs)
+  assert.ok(!html.includes('class="taskid">xfuel-'), 'xfuel- prefix should be stripped from display');
 });
 
 test('renderReceiptNotFound: escapes the task id', () => {
@@ -312,15 +356,18 @@ test('renderReceiptHtml: unmetered /v1 does not print the $0.01 floor as a price
   }));
   assert.match(html, /not charged/);
   assert.match(html, /UNMETERED/);
-  assert.match(html, /<title>Chit receipt · xfuel-free<\/title>/);
+  // Title is just "Chit receipt" (never includes task_id)
+  assert.match(html, /<title>Chit receipt<\/title>/);
+  // xfuel- prefix stripped, displays just "free" in taskid div
+  assert.ok(html.includes('class="taskid">free<'));
   assert.doesNotMatch(html, /openai/i);
   assert.ok(!html.includes('$0.01'), html);
   assert.ok(!html.includes('>10000<'), html);
 });
 
-test('renderReceiptHtml: historical openai-* task ids still render (no rewrite)', () => {
+test('renderReceiptHtml: historical openai-* task ids still render (no prefix stripping)', () => {
   // Pre-cutover receipts were minted as openai-<uuid>. Lookup and chrome must
-  // still work; we do not rename stored ids.
+  // still work; we do not rename stored ids. Only xfuel- prefix is stripped.
   const taskId = 'openai-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const html = renderReceiptHtml(buildReceipt({
     taskId,
@@ -329,7 +376,9 @@ test('renderReceiptHtml: historical openai-* task ids still render (no rewrite)'
     result: { provider: 'theta-edgecloud' },
     sp1Proof: null,
   }));
-  assert.match(html, new RegExp(`<title>Chit receipt · ${taskId}</title>`));
+  // Title is just "Chit receipt" (never includes task_id)
+  assert.match(html, /<title>Chit receipt<\/title>/);
+  // openai-* prefix is NOT stripped (only xfuel- is)
   assert.match(html, new RegExp(`class="taskid">${taskId}<`));
 });
 

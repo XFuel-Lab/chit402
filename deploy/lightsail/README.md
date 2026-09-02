@@ -10,17 +10,19 @@ systemctl is-active caddy nginx
 sudo certbot certificates
 ```
 
-Caddy — both names on one site:
+Caddy — all names on one site (add `api.chit402.com` for Chit branding):
 
 ```
-api.xfuel.app, api-testnet.xfuel.app {
+api.chit402.com, api.xfuel.app, api-testnet.xfuel.app {
     reverse_proxy 127.0.0.1:3002
 }
 ```
 
+**Do not** point apex `chit402.com` at this API box — that belongs to the marketing site.
+
 certbot + nginx — expand the existing cert (`-d api-testnet.xfuel.app -d api.xfuel.app`), add `server_name`, reload.
 
-Receipt links: `PUBLIC_BASE_URL=https://api.xfuel.app` in `.env`, then `sudo systemctl restart xfuel-api`. Do not rotate `RECEIPT_SIGNING_SECRET`.
+Receipt links: Set `PUBLIC_HOSTS=api.chit402.com,api.xfuel.app,api-testnet.xfuel.app` in `.env` so receipts use the incoming Host header when it matches an allowed host (enables correct self-links from both `api.chit402.com` and `api.xfuel.app`). Optionally keep `PUBLIC_BASE_URL=https://api.xfuel.app` as a fallback for requests from unrecognized hosts. Then `sudo systemctl restart xfuel-api`. Do not rotate `RECEIPT_SIGNING_SECRET`.
 
 ## Layout
 

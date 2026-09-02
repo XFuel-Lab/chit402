@@ -212,7 +212,7 @@ async function meterV1Request(req, res, {
     const body = { ...(req.body || {}) };
     if (body.max_tokens != null || MAX_TOKENS_CAP > 0) body.max_tokens = clampMaxTokens(body.max_tokens);
 
-    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const path = resourcePath.startsWith('/') ? resourcePath : `/${resourcePath}`;
     const resource = `${baseUrl.replace(/\/$/, '')}${path}`;
     const decision = await runX402Handshake(req, { taskId, body, baseUrl, resource });
@@ -1231,7 +1231,7 @@ export function registerOpenAIRoutes(app, {
           taskId,
           payment: metering.payment,
           task: null,
-          baseUrl: baseUrlFromReq(req, config.service.publicBaseUrl),
+          baseUrl: baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts),
           ledger,
           registry,
           req,
@@ -1304,7 +1304,7 @@ export function registerOpenAIRoutes(app, {
     const id = `chatcmpl-${crypto.randomUUID()}`;
     const created = Math.floor(Date.now() / 1000);
     const fb = allowFallback(req);
-    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const privateSpend = !!config.privateSpend?.enabled || isPrivateSpendSession(req, registry);
     const apiKeyHash = apiKeyHashFromReq(req);
     let paidTask = null;
@@ -1673,7 +1673,7 @@ export function registerOpenAIRoutes(app, {
     const id = `resp_${crypto.randomUUID()}`;
     const created = Math.floor(Date.now() / 1000);
     const fb = allowFallback(req);
-    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const privateSpend = !!config.privateSpend?.enabled || isPrivateSpendSession(req, registry);
     const apiKeyHash = apiKeyHashFromReq(req);
     let paidTask = null;
@@ -1912,7 +1912,7 @@ export function registerOpenAIRoutes(app, {
       apiKeyHash: apiKeyHashFromReq(req),
       privateSpend,
     });
-    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const receipt = buildReceipt({
       task,
       taskId,
@@ -1974,7 +1974,7 @@ export function registerOpenAIRoutes(app, {
       apiKeyHash: apiKeyHashFromReq(req),
       privateSpend,
     });
-    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl);
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const receipt = buildReceipt({
       task,
       taskId,
