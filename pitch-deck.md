@@ -1,10 +1,10 @@
-# XFuel — Pitch Deck Outline
+# Chit402 — Pitch Deck Outline
 
 Convert each section into a slide. Keep claims aligned with [docs/POSITIONING.md](docs/POSITIONING.md) and [WHITEPAPER.md](WHITEPAPER.md).
 
 ## 1. Title
 
-XFuel Protocol  
+Chit402  
 The book. This agent spent Y on this job. You hold hub, model, and amount.
 
 ## 2. Problem
@@ -13,7 +13,7 @@ Agents buy inference with API keys and opaque invoices. No shared receipt. No cr
 
 ## 3. Solution
 
-XFuel is the book: this agent spent Y on this job. You hold hub, model, and amount.  
+Chit402 is the book: this agent spent Y on this job. You hold hub, model, and amount.  
 Pay USDC via x402 on Base and Solana. Signed receipt is table stakes; on-chain SP1 proof on demand.
 
 ## 4. How it works

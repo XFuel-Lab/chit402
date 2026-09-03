@@ -1,6 +1,6 @@
 # Contributing
 
-XFuel is the verifiable settlement and payments layer for AI compute: route inference, settle USDC on Base via x402, return tiered receipts. Money and proofs live on Base ([ADR 0002](docs/adr/0002-base-settlement-home.md)).
+Chit402 is the verifiable settlement and payments layer for AI compute: route inference, settle USDC on Base via x402, return tiered receipts. Money and proofs live on Base ([ADR 0002](docs/adr/0002-base-settlement-home.md)).
 
 Live beta: Tier-1 receipts + Tier-2 SP1 on Base; 755+ tests; Audit Phase 1 prep.
 

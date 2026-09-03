@@ -1,4 +1,4 @@
-# XFuel Protocol — Whitepaper
+# Chit402 — Whitepaper
 
 **Version 2.6 · July 2026**
 
@@ -10,7 +10,7 @@ This document describes protocol design. For live endpoints and what is real ver
 
 ## Abstract
 
-XFuel is a modular settlement layer for AI compute. Agents and applications submit inference tasks; XFuel routes each task to a configured provider, settles fees in USDC via x402 on Base, and returns a verifiable receipt.
+Chit402 is a modular settlement layer for AI compute. Agents and applications submit inference tasks; Chit routes each task to a configured provider, settles fees in USDC via x402 on Base, and returns a verifiable receipt.
 
 Trust is tiered:
 
@@ -39,7 +39,7 @@ The product is settlement and proof. Providers (OpenAI-compatible APIs, neocloud
 
 ## 1. Introduction
 
-AI agents increasingly buy inference with API keys and opaque invoices. XFuel replaces that with a spend book: pay per task in USDC, and you hold hub, model, and amount — a receipt that can be shared and verified.
+AI agents increasingly buy inference with API keys and opaque invoices. Chit402 replaces that with a spend book: pay per task in USDC, and you hold hub, model, and amount — a receipt that can be shared and verified.
 
 Design principles:
 
@@ -71,7 +71,7 @@ Circuits are independent modules (inference, A2A, bridge, zkML, DePIN, and other
 
 ## 3. Trust tiers
 
-1. **Signed receipt** (default, live) — route, model, cost, and output hash, signed by XFuel.
+1. **Signed receipt** (default, live) — route, model, cost, and output hash, signed by Chit.
 2. **SP1 settlement proof** (on demand, live) — fee correctness, payment binding, output-hash commitment, and a single-use nullifier on Base (~25s, ~270K gas).
 3. **Verified Inference** (active build) — proves that an exact open-weight model ran on the input via the self-owned zkLLM prover.
 
@@ -154,4 +154,4 @@ Build history: [CHANGELOG](CHANGELOG.md).
 - [Technical specifications](docs/Technical-Specifications.md) — gas / benchmarks
 - [References and attribution](docs/REFERENCES-AND-ATTRIBUTION.md) — research credits
 
-https://xfuel.app · https://github.com/XFuel-Lab/xfuel-protocol
+https://chit402.com · https://github.com/XFuel-Lab/xfuel-protocol

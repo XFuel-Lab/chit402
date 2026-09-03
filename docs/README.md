@@ -1,8 +1,8 @@
-# XFuel Documentation
+# Chit402 Documentation
 
 Verifiable settlement and payments for AI compute — USDC via x402 on Base, tiered proofs, provider-agnostic routing.
 
-https://xfuel.app · https://api.xfuel.app
+https://chit402.com · https://api.xfuel.app
 
 ---
 

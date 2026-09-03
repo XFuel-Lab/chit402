@@ -1,8 +1,8 @@
-# XFuel Receipt v2 — Semantics
+# Chit402 Receipt v2 — Semantics
 
 > Public, frozen, offline-verifiable.
 
-This document defines the semantics of `receipt.xfuel.v2` — a receipt schema designed so **any third party can verify payment binding and output commitment without calling the XFuel API**.
+This document defines the semantics of `receipt.xfuel.v2` — a receipt schema designed so **any third party can verify payment binding and output commitment without calling the Chit402 API**.
 
 Schema: [`receipt.xfuel.v2.schema.json`](./receipt.xfuel.v2.schema.json)
 
@@ -137,13 +137,13 @@ A `receipt.xfuel.v2` receipt can serve as an **x402 settlement-receipt extension
 }
 ```
 
-The x402 facilitator (CDP or PayAI) settles the payment; the XFuel receipt attests what the payment bought.
+The x402 facilitator (CDP or PayAI) settles the payment; the Chit402 receipt attests what the payment bought.
 
 ---
 
 ## 5. ERC-8004 Validation Registry Payload
 
-XFuel receipts integrate with [ERC-8004 Validation Registry](https://eips.ethereum.org/EIPS/eip-8004) for agent identity validation:
+Chit402 receipts integrate with [ERC-8004 Validation Registry](https://eips.ethereum.org/EIPS/eip-8004) for agent identity validation:
 
 ```json
 {
@@ -183,7 +183,7 @@ The gateway currently emits `xfuel.receipt.v3`. The v2 spec is a **documentation
 
 ---
 
-## 7. Verification Without XFuel
+## 7. Verification Without Chit
 
 The goal: **anyone can verify a receipt without calling `api.xfuel.app`**.
 
