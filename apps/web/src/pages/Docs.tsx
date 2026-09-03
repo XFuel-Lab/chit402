@@ -1,4 +1,6 @@
 import { Link } from 'react-router-dom';
+import { getApiHost, getApiV1 } from '../apiHost';
+import { getHostConfig } from '../hostConfig';
 
 const GITHUB = 'https://github.com/XFuel-Lab/xfuel-protocol/blob/main';
 
@@ -79,29 +81,31 @@ const builders: DocLink[] = [
   },
 ];
 
-const operators: DocLink[] = [
-  {
-    title: 'Deployment',
-    description: 'Base verifier, gateway, manifests.',
-    href: `${GITHUB}/docs/DEPLOYMENT.md`,
-    meta: 'deploy',
-    external: true,
-  },
-  {
-    title: 'Testing',
-    description: 'Contract matrix, gateway tests, zkLLM cargo tests.',
-    href: `${GITHUB}/docs/TESTING.md`,
-    meta: '755+',
-    external: true,
-  },
-  {
-    title: 'Hosted API',
-    description: 'Public beta at api.xfuel.app.',
-    href: `${GITHUB}/docs/HOSTED_TESTNET_ENDPOINT.md`,
-    meta: 'demo',
-    external: true,
-  },
-];
+function getOperators(apiDomain: string): DocLink[] {
+  return [
+    {
+      title: 'Deployment',
+      description: 'Base verifier, gateway, manifests.',
+      href: `${GITHUB}/docs/DEPLOYMENT.md`,
+      meta: 'deploy',
+      external: true,
+    },
+    {
+      title: 'Testing',
+      description: 'Contract matrix, gateway tests, zkLLM cargo tests.',
+      href: `${GITHUB}/docs/TESTING.md`,
+      meta: '755+',
+      external: true,
+    },
+    {
+      title: 'Hosted API',
+      description: `Public beta at ${apiDomain}.`,
+      href: `${GITHUB}/docs/HOSTED_TESTNET_ENDPOINT.md`,
+      meta: 'demo',
+      external: true,
+    },
+  ];
+}
 
 const auditors: DocLink[] = [
   {
@@ -152,22 +156,37 @@ function DocSection({ title, items }: { title: string; items: DocLink[] }) {
   );
 }
 
+function getSnippet(apiV1: string) {
+  return `curl -sS ${apiV1}/chat/completions \\
+  -H "X-API-Key: xfuel-demo" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`;
+}
+
 export default function Docs() {
+  const config = getHostConfig();
+  const productName = config.name;
+  const apiHost = getApiHost();
+  const apiV1 = getApiV1();
+  const apiDomain = config.apiDomain;
+  const operators = getOperators(apiDomain);
+  const SNIPPET = getSnippet(apiV1);
+
   return (
     <div className="page docs-page">
       <div className="container">
         <header className="page-header">
           <span className="docs-kicker">Documentation</span>
-          <h1>Build on XFuel</h1>
+          <h1>Build on {productName}</h1>
           <p>
             No account. No API key. A wallet that can pay the 402 is enough.
             Register is only to hold the book after a collected receipt.
-            Apache-2.0. Public beta at <code>api.xfuel.app</code>. Paying it is mainnet USDC.
+            Apache-2.0. Public beta at <code>{apiDomain}</code>. Paying it is mainnet USDC.
           </p>
         </header>
 
         <nav className="docs-rail" aria-label="Quick links">
-          <a href="https://api.xfuel.app/health" target="_blank" rel="noreferrer">
+          <a href={`${apiHost}/health`} target="_blank" rel="noreferrer">
             API health
           </a>
           <a href="https://github.com/XFuel-Lab/xfuel-protocol" target="_blank" rel="noreferrer">
@@ -191,14 +210,11 @@ export default function Docs() {
         <div className="docs-panel">
           <h2>Try the demo (no wallet)</h2>
           <p>
-            Unmetered <code>/v1</code> with the public demo key. Receipt comes back on the response.
+            Demo key <code>xfuel-demo</code> with <code>/v1</code>. Receipt comes back on the response.
             This does not spend USDC.
           </p>
           <pre className="docs-code">
-            <code>{`curl -sS https://api.xfuel.app/v1/chat/completions \\
-  -H "X-API-Key: xfuel-demo" \\
-  -H "Content-Type: application/json" \\
-  -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`}</code>
+            <code>{SNIPPET}</code>
           </pre>
           <p style={{ marginTop: '0.75rem' }}>SDK (same door):</p>
           <pre className="docs-code">

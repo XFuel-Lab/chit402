@@ -1,11 +1,13 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { API_HOST } from '../apiHost';
+import { getApiHost, getApiV1 } from '../apiHost';
+import { getHostConfig } from '../hostConfig';
 
-const PROMPT = `You are an install assistant for XFuel.
+function getPrompt(productName: string, apiHost: string) {
+  return `You are an install assistant for ${productName}.
 
-XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.
-POST /v1/chat/completions at ${API_HOST}/v1 is cost-plus, quoted, receipted — USDC on Base and Solana.
+${productName} is the book. This agent spent Y on this job. You hold hub, model, and amount.
+POST /v1/chat/completions at ${apiHost}/v1 is cost-plus, quoted, receipted — USDC on Base and Solana.
 GET|POST /v1/agents/:agent_id/book is possession-gated last-N collected spend.
 Signed receipt is table stakes.
 
@@ -14,7 +16,7 @@ Interview me once about my stack:
 2. Do you use OpenAI SDK, LangChain, or raw HTTP?
 3. Where does your agent run? (local, cloud, CI, etc.)
 
-Then give me the one-liner to point my OpenAI client's baseURL at ${API_HOST}/v1.
+Then give me the one-liner to point my OpenAI client's baseURL at ${apiHost}/v1.
 
 After that, every job I run should record:
 - agent_id (from POST /v1/agents/register)
@@ -29,11 +31,18 @@ Do not ask me to send USDC manually.
 The API handles payment via HTTP 402 (x402) automatically.
 
 Start with: "What's your agent stack?"`;
+}
 
 export default function BookBot() {
+  const config = getHostConfig();
+  const productName = config.name;
+  const apiHost = getApiHost();
+  const apiV1 = getApiV1();
+  const PROMPT = getPrompt(productName, apiHost);
+
   useEffect(() => {
-    document.title = 'Paste this. The shop gets a till | XFuel';
-  }, []);
+    document.title = `Paste this. The shop gets a till | ${productName}`;
+  }, [productName]);
 
   return (
     <div className="page docs-page">
@@ -45,7 +54,7 @@ export default function BookBot() {
             Paste this prompt into Grok, ChatGPT, or any agent.
             It interviews your stack once, then every job you run records
             agent / job / $Y / settled y/n by pointing your OpenAI baseURL at{' '}
-            <code>{API_HOST}/v1</code>.
+            <code>{apiV1}</code>.
           </p>
         </header>
 
@@ -75,7 +84,7 @@ export default function BookBot() {
           <p style={{ color: '#8a8a9a' }}>
             Theta EdgeCloud + Akash Network + <code>xfuel/auto</code>.
             We do not route to OpenAI, Groq, Together, or Fireworks on the public catalog.
-            <code>{API_HOST}/v1/models</code> shows what's live.
+            <code>{apiV1}/models</code> shows what's live.
           </p>
         </div>
 

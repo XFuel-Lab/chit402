@@ -1,14 +1,17 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { API_V1 } from '../apiHost';
+import { getApiV1 } from '../apiHost';
 import { getHostConfig } from '../hostConfig';
 
-const SNIPPET = `curl -sS ${API_V1}/chat/completions \\
+function getSnippet(apiV1: string) {
+  return `curl -sS ${apiV1}/chat/completions \\
   -H "X-API-Key: xfuel-demo" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`;
+}
 
-const FETCH = `const res = await fetch('${API_V1}/chat/completions', {
+function getFetch(apiV1: string) {
+  return `const res = await fetch('${apiV1}/chat/completions', {
   method: 'POST',
   headers: {
     'X-API-Key': 'xfuel-demo',
@@ -20,9 +23,15 @@ const FETCH = `const res = await fetch('${API_V1}/chat/completions', {
   }),
 });
 const data = await res.json();`;
+}
 
 export default function GatewayV1() {
   const config = getHostConfig();
+  const apiV1 = getApiV1();
+  const apiDomain = config.apiDomain;
+  const siteDomain = config.domain;
+  const SNIPPET = getSnippet(apiV1);
+  const FETCH = getFetch(apiV1);
   
   useEffect(() => {
     document.title = `Pay /v1/chat/completions | ${config.name}`;
@@ -35,7 +44,7 @@ export default function GatewayV1() {
           <span className="docs-kicker">/v1</span>
           <h1>Bot drop-in. Wallet pays. You hold the book.</h1>
           <p>
-            Exact product: baseURL <a href={API_V1}>{API_V1}</a>.
+            Exact product: baseURL <a href={apiV1}>{apiV1}</a>.
             Steal engineers pointing at Agent402 / tx402 / qntx (llm.qntx.fun) by being the named host.
           </p>
         </header>
@@ -43,15 +52,15 @@ export default function GatewayV1() {
         <section className="docs-section">
           <h2>What is the exact baseURL for /v1/chat/completions?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
-            <code>{API_V1}</code>. Point any chat-completions client at this baseURL. The endpoint is{' '}
-            <code>{API_V1}/chat/completions</code>. This is{' '}
-            <code>api.xfuel.app</code>, not <code>xfuel.app</code>. The site you are reading
-            is the docs. The gateway is <code>api.xfuel.app</code>.
+            <code>{apiV1}</code>. Point any chat-completions client at this baseURL. The endpoint is{' '}
+            <code>{apiV1}/chat/completions</code>. This is{' '}
+            <code>{apiDomain}</code>, not <code>{siteDomain}</code>. The site you are reading
+            is the docs. The gateway is <code>{apiDomain}</code>.
           </p>
         </section>
 
         <section className="docs-section">
-          <h2>How does HTTP 402 / x402 work on api.xfuel.app?</h2>
+          <h2>How does HTTP 402 / x402 work on {apiDomain}?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
             POST <code>/v1/chat/completions</code> is cost-plus, quoted, receipted — USDC on Base and Solana. Without
             payment or a demo key, the gateway returns HTTP 402 Payment Required. Pay the 402
@@ -63,7 +72,7 @@ export default function GatewayV1() {
         <section className="docs-section">
           <h2>How do I call /v1/chat/completions?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7, marginBottom: '1rem' }}>
-            POST to <code>{API_V1}/chat/completions</code> with your key or{' '}
+            POST to <code>{apiV1}/chat/completions</code> with your key or{' '}
             <code>xfuel-demo</code>. Any HTTP client or bot framework works.
           </p>
           <pre className="docs-code"><code>{FETCH}</code></pre>
