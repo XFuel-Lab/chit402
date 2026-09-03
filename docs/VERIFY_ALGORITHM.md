@@ -234,3 +234,115 @@ With `in_proof: true`, add:
 
 5. **Nullifier is anchored** — single-use, cannot be replayed.
 6. **Commitment is on-chain** — survives XFuel entirely.
+
+## 10. ECDSA issuer signature (public-key verification)
+
+Every receipt also carries an `issuer_signature` using ES256 (ECDSA with P-256
+and SHA-256). Unlike HMAC, this can be verified with just the public key — no
+shared secret required.
+
+### Signature structure
+
+```json
+{
+  "alg": "ES256",
+  "payload_version": 3,
+  "value": "<base64url-encoded signature>",
+  "kid": "<key id from JWKS>",
+  "jwks_uri": "/.well-known/jwks.json",
+  "signed_fields": [ ... ]
+}
+```
+
+### Verification steps
+
+1. Fetch the receipt: `GET /receipt/:taskId?format=json`
+2. Fetch the JWKS: `GET /.well-known/jwks.json`
+3. Find the key in `jwks.keys` where `kid` matches `receipt.issuer_signature.kid`
+4. Build the canonical payload (same as section 3)
+5. Verify: `ES256(publicKey, canonicalPayload) == issuer_signature.value`
+
+### Runnable code (Node.js)
+
+```javascript
+#!/usr/bin/env node
+// verify-ecdsa.mjs — public-key receipt verification
+// Usage: node verify-ecdsa.mjs <receipt.json> <jwks.json>
+
+import { createPublicKey, verify } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+
+function canonicalPayload(r) {
+  return JSON.stringify([
+    r.task_id,
+    r.payment?.rail ?? null,
+    r.payment?.ref ?? null,
+    r.payment?.gross_amount ?? null,
+    r.payment?.net_amount ?? null,
+    r.payment?.fee_amount ?? null,
+    r.payment?.protocol_fee_bps ?? r.payment?.fee_bps ?? null,
+    r.payment?.platform_fee ?? null,
+    r.payment?.platform_fee_bps ?? null,
+    r.provider_cogs?.actual ?? null,
+    r.route?.model ?? null,
+    r.route?.model_commitment?.commitment ?? null,
+    r.route?.provider ?? null,
+    r.output?.hash ?? null,
+    r.binding?.expected_commitment ?? null,
+  ]);
+}
+
+function verifyEcdsa(receipt, jwks) {
+  const sig = receipt?.issuer_signature;
+  if (!sig?.value) return { valid: false, reason: 'no_issuer_signature' };
+  
+  const jwk = jwks.keys.find(k => k.kid === sig.kid && k.alg === 'ES256');
+  if (!jwk) return { valid: false, reason: 'no_matching_key' };
+  
+  const publicKey = createPublicKey({ key: jwk, format: 'jwk' });
+  const signature = Buffer.from(sig.value, 'base64url');
+  const payload = canonicalPayload(receipt);
+  
+  const valid = verify('sha256', Buffer.from(payload, 'utf8'), {
+    key: publicKey,
+    dsaEncoding: 'ieee-p1363',
+  }, signature);
+  
+  return { valid, kid: sig.kid };
+}
+
+const [,, receiptPath, jwksPath] = process.argv;
+if (!receiptPath || !jwksPath) {
+  console.error('Usage: node verify-ecdsa.mjs <receipt.json> <jwks.json>');
+  process.exit(1);
+}
+
+const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+const jwks = JSON.parse(readFileSync(jwksPath, 'utf8'));
+
+const result = verifyEcdsa(receipt, jwks);
+console.log(JSON.stringify(result, null, 2));
+process.exit(result.valid ? 0 : 1);
+```
+
+### Using the SDK
+
+```javascript
+import { verifyReceiptEcdsaWithJwks } from 'xfuel-sdk';
+
+// Fetch receipt and JWKS
+const receipt = await fetch('https://api.chit402.com/receipt/chit-xxx?format=json').then(r => r.json());
+const jwks = await fetch('https://api.chit402.com/.well-known/jwks.json').then(r => r.json());
+
+const result = verifyReceiptEcdsaWithJwks(receipt, jwks);
+// { checked: true, valid: true, kid: '...' }
+```
+
+### Why both HMAC and ECDSA?
+
+- **HMAC** (shared secret) is for treasury/auditor verification where the
+  verifier holds the secret. It's the "replaceable signer" escape hatch.
+- **ECDSA** (public key) is for any downstream agent that wants to verify
+  without needing an HMAC secret. Fetch the JWKS, verify the signature.
+
+Both cover the same canonical payload, so both attest the same fields.

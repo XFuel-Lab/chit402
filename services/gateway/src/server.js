@@ -28,7 +28,7 @@ import {
   applyPaymentToOwedTask,
   configureRollingLedger,
 } from './rolling-settlement.js';
-import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptHmac } from './receipt.js';
+import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptHmac, verifyOriginHandoff, verifyDestAck } from './receipt.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest, buildOpenApiSpec } from './x402-discovery.js';
 import { buildPaymentChallenge } from './x402-adapter.js';
@@ -46,6 +46,7 @@ import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
 import { apiKeyHashFromReq } from './buyer-attr.js';
 import { getFloatManager } from './provider-float.js';
+import { getJwks, initIssuerKey } from './issuer-key.js';
 
 /**
  * XFuel M2M API Server — agent gateway for verifiable AI compute settlement.
@@ -309,6 +310,22 @@ Either validates the receipt. If Chit disappears, the co-signer's key still work
 - scripts/verify-receipt.mjs : standalone verification script.
 - binding.in_proof:true means the commitment is on-chain via SP1 (escape hatch).
 
+## Issuer Signature (public-key verification)
+
+Every receipt also carries issuer_signature (ES256/ECDSA). Unlike HMAC, this can
+be verified with just the public key — no shared secret required.
+
+Verify steps:
+1. GET /receipt/:taskId?format=json → receipt with issuer_signature.value, .kid
+2. GET /.well-known/jwks.json → { keys: [{ kty, crv, x, y, kid, alg, use }] }
+3. Match receipt.issuer_signature.kid to JWKS key
+4. ES256 verify: canonicalPayload(receipt) against issuer_signature.value (base64url)
+
+The canonical payload is a JSON array of signed fields in a fixed order (same
+as HMAC). See canonicalSignedPayload in SDK or receipt.js.
+
+SDK: verifyReceiptEcdsaWithJwks(receipt, jwks) → { checked, valid, kid }
+
 ## MCP
 
 - npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
@@ -322,6 +339,7 @@ Either validates the receipt. If Chit disappears, the co-signer's key still work
 - GET  /openapi.json      : OpenAPI 3.1 with x-payment-info. Public door is POST /v1/chat/completions.
 - GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
 - GET  /.well-known/x402list.txt : x402-list domain verification token (public, text/plain).
+- GET  /.well-known/jwks.json : JWKS for receipt issuer signature (ES256/ECDSA). Public-key verify.
 - GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message.
 - POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
@@ -1870,6 +1888,198 @@ export function createApp() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // POST /receipt/:taskId/handoff/origin — Attach origin delegation to a receipt
+  //   Origin holder signs: "chit.handoff.origin|<taskId>|<destAddress>|<timestamp>"
+  //   Enables proving "who handed off" in a thread, not just that payment happened.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  app.post('/receipt/:taskId/handoff/origin', rateLimit, (req, res) => {
+    try {
+      const { taskId: rawTaskId } = req.params;
+      const taskId = normalizeTaskIdForLookup(rawTaskId);
+      const { origin_address, dest_address, timestamp, signature } = req.body || {};
+
+      if (!origin_address || !dest_address || !timestamp || !signature) {
+        return res.status(400).json({
+          error: 'validation_error',
+          message: 'Required fields: origin_address, dest_address, timestamp, signature',
+        });
+      }
+
+      const aiListener = getAIListener();
+      let task = _findTask(aiListener, taskId);
+      if (!task) {
+        return res.status(404).json({ error: 'not_found', message: `Task ${rawTaskId} not found` });
+      }
+
+      // Reject if handoff origin already exists (immutable once set)
+      if (task.handoff?.origin) {
+        return res.status(409).json({
+          error: 'already_exists',
+          message: 'Origin handoff already attached to this receipt',
+        });
+      }
+
+      // Verify the signature
+      const verification = verifyOriginHandoff({
+        taskId,
+        originAddress: origin_address,
+        destAddress: dest_address,
+        timestamp: Number(timestamp),
+        signature,
+      });
+
+      if (!verification.valid) {
+        return res.status(403).json({
+          error: 'signature_invalid',
+          message: `Origin signature verification failed: ${verification.reason}`,
+          recovered_address: verification.recoveredAddress || null,
+        });
+      }
+
+      // Attach handoff to task (additive — no existing data overwritten)
+      const now = Date.now();
+      task.handoff = task.handoff || {};
+      task.handoff.origin = {
+        address: verification.recoveredAddress,
+        destAddress: dest_address,
+        timestamp: Number(timestamp),
+        signature,
+        createdAt: now,
+      };
+      task.updatedAt = now;
+
+      // Persist the updated task (write-through to disk)
+      aiListener.activeTasks.set(taskId, task);
+
+      logger.info({ reqId: req.id, taskId, origin: verification.recoveredAddress, dest: dest_address }, 'Handoff origin attached');
+
+      return res.status(200).json({
+        status: 'origin_attached',
+        task_id: taskId,
+        handoff: {
+          origin: {
+            address: verification.recoveredAddress,
+            dest_address,
+            timestamp: Number(timestamp),
+            created_at: now,
+          },
+          status: 'pending_dest_ack',
+        },
+      });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /receipt/:taskId/handoff/origin error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // POST /receipt/:taskId/handoff/dest — Attach destination acknowledgment
+  //   Dest wallet signs: "chit.handoff.dest.ack|<taskId>|<originAddress>|<timestamp>"
+  //   Requires origin handoff to exist first.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  app.post('/receipt/:taskId/handoff/dest', rateLimit, (req, res) => {
+    try {
+      const { taskId: rawTaskId } = req.params;
+      const taskId = normalizeTaskIdForLookup(rawTaskId);
+      const { dest_address, timestamp, signature } = req.body || {};
+
+      if (!dest_address || !timestamp || !signature) {
+        return res.status(400).json({
+          error: 'validation_error',
+          message: 'Required fields: dest_address, timestamp, signature',
+        });
+      }
+
+      const aiListener = getAIListener();
+      let task = _findTask(aiListener, taskId);
+      if (!task) {
+        return res.status(404).json({ error: 'not_found', message: `Task ${rawTaskId} not found` });
+      }
+
+      // Require origin handoff to exist first
+      if (!task.handoff?.origin) {
+        return res.status(400).json({
+          error: 'precondition_failed',
+          message: 'Origin handoff must be attached before destination acknowledgment',
+        });
+      }
+
+      // Reject if dest ack already exists (immutable once set)
+      if (task.handoff?.dest) {
+        return res.status(409).json({
+          error: 'already_exists',
+          message: 'Destination acknowledgment already attached to this receipt',
+        });
+      }
+
+      // Verify dest_address matches the destination in origin handoff
+      const originDest = task.handoff.origin.destAddress;
+      if (dest_address.toLowerCase() !== originDest.toLowerCase()) {
+        return res.status(403).json({
+          error: 'address_mismatch',
+          message: `Destination address ${dest_address} does not match origin delegation ${originDest}`,
+        });
+      }
+
+      // Verify the signature
+      const verification = verifyDestAck({
+        taskId,
+        originAddress: task.handoff.origin.address,
+        destAddress: dest_address,
+        timestamp: Number(timestamp),
+        signature,
+      });
+
+      if (!verification.valid) {
+        return res.status(403).json({
+          error: 'signature_invalid',
+          message: `Destination signature verification failed: ${verification.reason}`,
+          recovered_address: verification.recoveredAddress || null,
+        });
+      }
+
+      // Attach dest acknowledgment to task
+      const now = Date.now();
+      task.handoff.dest = {
+        address: verification.recoveredAddress,
+        timestamp: Number(timestamp),
+        signature,
+        createdAt: now,
+      };
+      task.updatedAt = now;
+
+      // Persist the updated task
+      aiListener.activeTasks.set(taskId, task);
+
+      logger.info({ reqId: req.id, taskId, origin: task.handoff.origin.address, dest: verification.recoveredAddress }, 'Handoff complete');
+
+      return res.status(200).json({
+        status: 'handoff_complete',
+        task_id: taskId,
+        handoff: {
+          origin: {
+            address: task.handoff.origin.address,
+            dest_address: task.handoff.origin.destAddress,
+            timestamp: task.handoff.origin.timestamp,
+            created_at: task.handoff.origin.createdAt,
+          },
+          dest: {
+            address: verification.recoveredAddress,
+            timestamp: Number(timestamp),
+            created_at: now,
+          },
+          status: 'complete',
+        },
+      });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /receipt/:taskId/handoff/dest error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // PUT /webhook — Register (or update) a webhook for settlement events
   // GET /webhook — List registered webhooks
   // DELETE /webhook — Remove a webhook by id or url
@@ -1934,6 +2144,14 @@ export function createApp() {
 
   app.get('/.well-known/x402list.txt', (_req, res) => {
     res.type('text/plain; charset=utf-8').send(X402LIST_TXT);
+  });
+
+  // JWKS endpoint for receipt ECDSA signature verification.
+  // Agents GET this to verify issuer_signature on receipts without needing an HMAC secret.
+  // Verify steps: GET /receipt/:taskId?format=json → GET /.well-known/jwks.json → verify ES256 sig.
+  app.get('/.well-known/jwks.json', (_req, res) => {
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.json(getJwks());
   });
 
   app.get('/.well-known/agent-card.json', rateLimit, (req, res) => {
@@ -2545,7 +2763,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /xfuel-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 
@@ -2696,6 +2914,11 @@ export async function startServer() {
       logger.warn({ err }, 'SP1 prover init skipped (proofs disabled for M2M tasks)');
     }
   }
+
+  // Initialize the issuer ECDSA key for receipt signing.
+  // If ISSUER_PRIVATE_KEY is not set, an ephemeral key is generated (dev/test).
+  const { kid } = initIssuerKey();
+  logger.info({ kid }, 'Issuer ECDSA key initialized (JWKS at /.well-known/jwks.json)');
 
   const app = createApp();
 
