@@ -473,14 +473,30 @@ const RELAYER_ADDRESSES = new Set(
 
 // ─── Public Demo Mode ─────────────────────────────────────────────────────────
 //
-// Powers the hosted public-beta endpoint (api.xfuel.app). When
+// Powers the hosted public-beta endpoint (api.chit402.com). When
 // M2M_DEMO_MODE=true, a single shared PUBLIC demo key is accepted so anything —
 // the SDK, a plain OpenAI client — works out of the box. Demo requests get an
 // aggressive per-IP dual window (per-minute + per-day) and the OpenAI gateway
 // caps max_tokens (OPENAI_GATEWAY_MAX_TOKENS_CAP). Private keys in M2M_API_KEYS
 // bypass the demo limits and use the normal limiter.
 const DEMO_MODE         = process.env.M2M_DEMO_MODE === 'true';
-const DEMO_API_KEY      = process.env.M2M_DEMO_API_KEY || 'xfuel-demo';
+const DEMO_API_KEY      = process.env.M2M_DEMO_API_KEY || 'chit402-demo';
+
+/**
+ * Check if a key is the demo key or a demo key prefix variant.
+ * Accepts both 'chit402-demo' (public) and 'xfuel-demo' (legacy/internal).
+ * @param {string|null|undefined} key
+ * @returns {boolean}
+ */
+function isDemoKey(key) {
+  if (!key) return false;
+  const k = String(key);
+  if (k === DEMO_API_KEY) return true;
+  // Legacy and prefix variants
+  if (k === 'xfuel-demo' || k === 'chit402-demo') return true;
+  if (k.startsWith('xfuel-demo') || k.startsWith('chit402-demo')) return true;
+  return false;
+}
 const DEMO_RATE_PER_MIN = parseInt(process.env.M2M_DEMO_RATE_PER_MIN, 10) || 15;
 const DEMO_RATE_PER_DAY = parseInt(process.env.M2M_DEMO_RATE_PER_DAY, 10) || 150;
 
@@ -587,8 +603,7 @@ export function createApp() {
     const key = req.headers['x-api-key']
       || (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
     if (!key) return false;
-    if (key === (process.env.M2M_DEMO_API_KEY || 'xfuel-demo')) return false;
-    if (String(key).startsWith('xfuel-demo')) return false;
+    if (isDemoKey(key)) return false;
     const session = req.body?.session || req.headers['x-xfuel-session'] || null;
     if (!session) return false;
     const identity = agentRegistry.getBySession(String(session));
@@ -2424,7 +2439,7 @@ export function createApp() {
       const body = req.body || {};
       const session = body.session || req.headers['x-xfuel-session'] || null;
       const apiKey = req.headers['x-api-key'] || null;
-      const isDemo = apiKey === 'xfuel-demo' || String(apiKey).startsWith('xfuel-demo');
+      const isDemo = isDemoKey(apiKey);
 
       // Build verify from Base provider (reads USDC Transfer events on-chain).
       // If BASE_RPC_URL not configured, verify is null → ingestForeignX402 returns 502.
@@ -2479,7 +2494,7 @@ export function createApp() {
       const body = req.body || {};
       const claim = claimFromRequest(req);
       const apiKey = req.headers['x-api-key'] || null;
-      const isDemo = apiKey === 'xfuel-demo' || String(apiKey).startsWith('xfuel-demo');
+      const isDemo = isDemoKey(apiKey);
 
       if (isDemo) {
         return res.status(403).json({ error: 'demo_rejected', message: 'Demo keys cannot write policy rows' });
@@ -2545,7 +2560,7 @@ export function createApp() {
       const body = req.body || {};
       const claim = claimFromRequest(req);
       const apiKey = req.headers['x-api-key'] || null;
-      const isDemo = apiKey === 'xfuel-demo' || String(apiKey).startsWith('xfuel-demo');
+      const isDemo = isDemoKey(apiKey);
 
       if (isDemo) {
         return res.status(403).json({ error: 'demo_rejected', message: 'Demo keys cannot create assignments' });
@@ -2661,7 +2676,7 @@ export function createApp() {
       const body = req.body || {};
       const claim = claimFromRequest(req);
       const apiKey = req.headers['x-api-key'] || null;
-      const isDemo = apiKey === 'xfuel-demo' || String(apiKey).startsWith('xfuel-demo');
+      const isDemo = isDemoKey(apiKey);
 
       if (isDemo) {
         return res.status(403).json({ error: 'demo_rejected', message: 'Demo keys cannot file disputes' });
@@ -2732,7 +2747,7 @@ export function createApp() {
       const body = req.body || {};
       const claim = claimFromRequest(req);
       const apiKey = req.headers['x-api-key'] || null;
-      const isDemo = apiKey === 'xfuel-demo' || String(apiKey).startsWith('xfuel-demo');
+      const isDemo = isDemoKey(apiKey);
 
       if (isDemo) {
         return res.status(403).json({ error: 'demo_rejected', message: 'Demo keys cannot rotate sessions' });

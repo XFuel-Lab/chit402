@@ -1,0 +1,59 @@
+{
+  "name": "chit402-verify",
+  "version": "0.1.0",
+  "description": "Chit402 receipt verification — verify payment binding and output commitment offline.",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "bin": {
+    "chit402-verify": "./cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "require": "./index.cjs"
+    }
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "index.js",
+    "index.cjs",
+    "index.d.ts",
+    "cli.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "keywords": [
+    "chit402",
+    "verify",
+    "receipt",
+    "x402",
+    "usdc",
+    "base",
+    "offline",
+    "zk"
+  ],
+  "author": "XFuel Lab",
+  "license": "Apache-2.0",
+  "homepage": "https://chit402.com",
+  "bugs": {
+    "url": "https://github.com/XFuel-Lab/chit402/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XFuel-Lab/chit402.git",
+    "directory": "packages/aliases/chit402-verify"
+  },
+  "dependencies": {
+    "@xfuel/verify": "^0.1.0"
+  }
+}

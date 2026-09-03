@@ -68,7 +68,7 @@ export const DEFAULT_BASE_URL = 'https://api.xfuel.app';
  * is provided. It is heavily rate-limited per IP — bring your own key
  * (`X-API-Key`) for higher limits and production use.
  */
-export const PUBLIC_DEMO_API_KEY = 'xfuel-demo';
+export const PUBLIC_DEMO_API_KEY = 'chit402-demo';
 
 // ─── Request Types ──────────────────────────────────────────────────────────
 

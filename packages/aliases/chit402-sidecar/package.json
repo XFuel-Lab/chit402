@@ -1,0 +1,69 @@
+{
+  "name": "chit402-sidecar",
+  "version": "0.1.0",
+  "description": "Chit402 sidecar — emit receipts from any OpenAI-compatible provider. System of record, not cheapest hop.",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "require": "./index.cjs"
+    },
+    "./worker": {
+      "types": "./worker.d.ts",
+      "import": "./worker.js"
+    }
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "index.js",
+    "index.cjs",
+    "index.d.ts",
+    "worker.js",
+    "worker.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "keywords": [
+    "chit402",
+    "ai",
+    "agents",
+    "sidecar",
+    "receipt",
+    "openrouter",
+    "openai"
+  ],
+  "author": "XFuel Lab",
+  "license": "Apache-2.0",
+  "homepage": "https://chit402.com",
+  "bugs": {
+    "url": "https://github.com/XFuel-Lab/chit402/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XFuel-Lab/chit402.git",
+    "directory": "packages/aliases/chit402-sidecar"
+  },
+  "dependencies": {
+    "xfuel-sidecar": "^0.1.0"
+  },
+  "peerDependencies": {
+    "openai": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "openai": {
+      "optional": true
+    }
+  }
+}
