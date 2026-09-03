@@ -16,19 +16,22 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { verifyReceipt, verifyBinding, type XFuelReceipt } from './index.js';
+import { verifyReceipt, verifyBinding, type XFuelReceipt, type Jwks } from './index.js';
 
 const HELP = `
-xfuel-verify — Offline verification for XFuel receipts
+xfuel-verify — Offline verification for Chit402 receipts
 
 Usage:
   xfuel-verify <receipt.json>           Verify binding locally
+  xfuel-verify <receipt.json> --jwks-file <jwks.json>
+                                        Verify issuer signature with JWKS
   xfuel-verify <receipt.json> --check-nullifier
                                         Also verify nullifier on-chain
   xfuel-verify - < receipt.json         Read from stdin
   xfuel-verify --help                   Show this help
 
 Options:
+  --jwks-file <path>  JWKS file for issuer signature verification (no network)
   --check-nullifier   Query Base RPC for nullifier anchor (requires network)
   --rpc <url>         Custom RPC URL (default: https://mainnet.base.org)
   --json              Output JSON instead of human-readable
@@ -40,19 +43,30 @@ Exit codes:
   2 = partial verification (binding ok, nullifier not checked)
   3 = input error
 
+Network behavior:
+  By default, no network requests are made. Network is only used when:
+  - --check-nullifier is passed (queries Base RPC for on-chain anchor)
+
+  JWKS must be provided as a local file (--jwks-file). The CLI does not
+  automatically fetch JWKS from a URL to ensure offline verification.
+
 Examples:
   # Local binding verification (no network)
   xfuel-verify my-receipt.json
 
+  # Verify issuer signature with JWKS file
+  xfuel-verify my-receipt.json --jwks-file issuer-jwks.json
+
   # Full verification including on-chain nullifier
-  xfuel-verify my-receipt.json --check-nullifier
+  xfuel-verify my-receipt.json --jwks-file issuer-jwks.json --check-nullifier
 
   # Pipe from curl
-  curl -s https://api.xfuel.app/receipt/task-123?format=json | xfuel-verify -
+  curl -s https://api.chit402.com/receipt/task-123?format=json | xfuel-verify -
 `;
 
 function parseArgs(args: string[]): {
   file: string | null;
+  jwksFile: string | null;
   checkNullifier: boolean;
   rpcUrl: string | null;
   json: boolean;
@@ -61,6 +75,7 @@ function parseArgs(args: string[]): {
 } {
   const result = {
     file: null as string | null,
+    jwksFile: null as string | null,
     checkNullifier: false,
     rpcUrl: null as string | null,
     json: false,
@@ -74,6 +89,8 @@ function parseArgs(args: string[]): {
       result.help = true;
     } else if (arg === '--check-nullifier') {
       result.checkNullifier = true;
+    } else if (arg === '--jwks-file' && args[i + 1]) {
+      result.jwksFile = args[++i];
     } else if (arg === '--rpc' && args[i + 1]) {
       result.rpcUrl = args[++i];
     } else if (arg === '--json') {
@@ -127,7 +144,20 @@ async function main(): Promise<number> {
     return 3;
   }
 
+  // Load JWKS if provided
+  let jwks: Jwks | undefined;
+  if (args.jwksFile) {
+    try {
+      const jwksContent = readFileSync(args.jwksFile, 'utf8');
+      jwks = JSON.parse(jwksContent) as Jwks;
+    } catch (err) {
+      console.error(`Error reading JWKS file: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+  }
+
   const result = await verifyReceipt(receipt, {
+    jwks,
     checkNullifier: args.checkNullifier,
     rpcUrl: args.rpcUrl || undefined,
   });
@@ -136,7 +166,7 @@ async function main(): Promise<number> {
     console.log(JSON.stringify(result, null, 2));
   } else if (!args.quiet || result.overall === 'failed') {
     console.log('');
-    console.log(`  XFuel Receipt Verification`);
+    console.log(`  Chit402 Receipt Verification`);
     console.log(`  ─────────────────────────────────────────────────`);
     console.log(`  Receipt ID:    ${result.receipt_id}`);
     console.log(`  Hub:           ${result.hub || '—'}`);
@@ -154,6 +184,21 @@ async function main(): Promise<number> {
       console.log(`  Covers:        ${result.binding.covers.join(', ')}`);
     } else {
       console.log(`  Status:        No binding (${result.binding.reason})`);
+    }
+    console.log('');
+    console.log(`  Issuer Signature`);
+    console.log(`  ─────────────────────────────────────────────────`);
+    if (result.issuer_signature.checked) {
+      console.log(`  Kid:           ${result.issuer_signature.kid || '—'}`);
+      console.log(`  Valid:         ${result.issuer_signature.valid ? '✓ YES' : '✗ NO'}`);
+      if (!result.issuer_signature.valid && result.issuer_signature.reason) {
+        console.log(`  Reason:        ${result.issuer_signature.reason}`);
+      }
+    } else {
+      console.log(`  Status:        ${result.issuer_signature.reason || 'Not checked'}`);
+      if (receipt.issuer_signature && !args.jwksFile) {
+        console.log(`                 (receipt has signature — pass --jwks-file to verify)`);
+      }
     }
     console.log('');
     console.log(`  Nullifier`);

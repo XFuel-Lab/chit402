@@ -1,10 +1,11 @@
 /**
  * Offline receipt verification tests.
  *
- * Tests that third parties can verify XFuel receipts without calling the API.
+ * Tests that third parties can verify Chit402 receipts without calling the API.
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { createPrivateKey, createPublicKey, sign } from 'node:crypto';
 
 // Build the package first
 import { execSync } from 'node:child_process';
@@ -24,9 +25,54 @@ try {
 // Import from built dist
 const {
   verifyBinding,
+  verifyIssuerSignature,
+  verifyIssuerSignatureWithJwks,
+  canonicalIssuerPayload,
   computePaymentCommitment,
   computeInferenceBinding,
 } = await import('../dist/index.js');
+
+// Test ES256 key pair (P-256/secp256r1) - generated for testing only
+const TEST_PRIVATE_KEY_JWK = {
+  kty: 'EC',
+  x: 'V1xKWqioBmw69_jnYTbv2Gy--J38UWU4Obd2m7OtWVw',
+  y: '4dRM8qoYJ45L3qq4jaUSKISao55tum8ZfwbJUu_w09M',
+  crv: 'P-256',
+  d: 'XqAuVfmVw0T3ivTRLyBdgJk4YS9Pda00sx32nT1zDiA',
+  kid: 'test-key-1',
+  alg: 'ES256',
+};
+
+const TEST_PUBLIC_KEY_JWK = {
+  kty: 'EC',
+  x: 'V1xKWqioBmw69_jnYTbv2Gy--J38UWU4Obd2m7OtWVw',
+  y: '4dRM8qoYJ45L3qq4jaUSKISao55tum8ZfwbJUu_w09M',
+  crv: 'P-256',
+  kid: 'test-key-1',
+  alg: 'ES256',
+};
+
+// Generate a different valid key for "wrong key" tests
+import { generateKeyPairSync } from 'node:crypto';
+const { publicKey: wrongPubKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+const WRONG_PUBLIC_KEY_JWK = {
+  ...wrongPubKey.export({ format: 'jwk' }),
+  kid: 'wrong-key',
+  alg: 'ES256',
+};
+
+/**
+ * Sign a receipt with the test private key.
+ */
+function signReceipt(receipt) {
+  const privateKey = createPrivateKey({ key: TEST_PRIVATE_KEY_JWK, format: 'jwk' });
+  const payload = canonicalIssuerPayload(receipt);
+  const signature = sign('sha256', Buffer.from(payload, 'utf8'), {
+    key: privateKey,
+    dsaEncoding: 'ieee-p1363',
+  });
+  return signature.toString('base64url');
+}
 
 describe('computePaymentCommitment', () => {
   test('computes deterministic commitment', () => {
@@ -239,5 +285,171 @@ describe('verifyBinding', () => {
     assert.equal(result.verified, true);
     assert.equal(result.matches, true);
     assert.deepEqual(result.covers, ['payment', 'settlement', 'model', 'inference']);
+  });
+});
+
+describe('verifyIssuerSignature (ES256)', () => {
+  test('verifies valid ES256 signature', () => {
+    const receipt = {
+      task_id: 'xfuel-issuer-test',
+      status: 'completed',
+      payment: { rail: 'usdc', ref: 'base:0x123', gross_amount: '10000' },
+      route: { model: 'test/model', provider: 'test-hub' },
+      output: { hash: '0x' + 'ab'.repeat(32) },
+    };
+
+    // Sign the receipt
+    const signatureValue = signReceipt(receipt);
+    receipt.issuer_signature = {
+      alg: 'ES256',
+      value: signatureValue,
+      kid: 'test-key-1',
+    };
+
+    const result = verifyIssuerSignature(receipt, TEST_PUBLIC_KEY_JWK);
+
+    assert.equal(result.checked, true);
+    assert.equal(result.valid, true);
+    assert.equal(result.kid, 'test-key-1');
+  });
+
+  test('rejects signature with wrong key', () => {
+    const receipt = {
+      task_id: 'xfuel-wrong-key',
+      status: 'completed',
+      payment: { rail: 'usdc' },
+    };
+
+    const signatureValue = signReceipt(receipt);
+    // Use no kid to avoid kid mismatch check, force signature verification
+    receipt.issuer_signature = {
+      alg: 'ES256',
+      value: signatureValue,
+    };
+
+    // Use a key without kid too so verification happens
+    const wrongKeyNoKid = { ...WRONG_PUBLIC_KEY_JWK };
+    delete wrongKeyNoKid.kid;
+
+    const result = verifyIssuerSignature(receipt, wrongKeyNoKid);
+
+    assert.equal(result.checked, true);
+    assert.equal(result.valid, false);
+  });
+
+  test('rejects tampered receipt', () => {
+    const receipt = {
+      task_id: 'xfuel-tampered-sig',
+      status: 'completed',
+      payment: { rail: 'usdc', gross_amount: '10000' },
+    };
+
+    const signatureValue = signReceipt(receipt);
+    receipt.issuer_signature = {
+      alg: 'ES256',
+      value: signatureValue,
+      kid: 'test-key-1',
+    };
+
+    // Tamper with the receipt after signing
+    receipt.payment.gross_amount = '99999';
+
+    const result = verifyIssuerSignature(receipt, TEST_PUBLIC_KEY_JWK);
+
+    assert.equal(result.checked, true);
+    assert.equal(result.valid, false);
+  });
+
+  test('returns not checked when no signature present', () => {
+    const receipt = {
+      task_id: 'xfuel-no-sig',
+      status: 'completed',
+    };
+
+    const result = verifyIssuerSignature(receipt, TEST_PUBLIC_KEY_JWK);
+
+    assert.equal(result.checked, false);
+    assert.equal(result.valid, false);
+    assert.equal(result.reason, 'no_issuer_signature');
+  });
+
+  test('rejects kid mismatch', () => {
+    const receipt = {
+      task_id: 'xfuel-kid-mismatch',
+      status: 'completed',
+    };
+
+    const signatureValue = signReceipt(receipt);
+    receipt.issuer_signature = {
+      alg: 'ES256',
+      value: signatureValue,
+      kid: 'different-kid',
+    };
+
+    const result = verifyIssuerSignature(receipt, TEST_PUBLIC_KEY_JWK);
+
+    assert.equal(result.checked, false);
+    assert.equal(result.valid, false);
+    assert.equal(result.reason, 'kid_mismatch');
+  });
+});
+
+describe('verifyIssuerSignatureWithJwks', () => {
+  test('finds matching key by kid and verifies', () => {
+    const receipt = {
+      task_id: 'xfuel-jwks-test',
+      status: 'completed',
+      payment: { rail: 'usdc' },
+    };
+
+    const signatureValue = signReceipt(receipt);
+    receipt.issuer_signature = {
+      alg: 'ES256',
+      value: signatureValue,
+      kid: 'test-key-1',
+    };
+
+    const jwks = {
+      keys: [WRONG_PUBLIC_KEY_JWK, TEST_PUBLIC_KEY_JWK],
+    };
+
+    const result = verifyIssuerSignatureWithJwks(receipt, jwks);
+
+    assert.equal(result.checked, true);
+    assert.equal(result.valid, true);
+  });
+
+  test('returns no_matching_key when kid not in JWKS', () => {
+    const receipt = {
+      task_id: 'xfuel-no-key',
+      status: 'completed',
+      issuer_signature: {
+        alg: 'ES256',
+        value: 'dummy',
+        kid: 'nonexistent-key',
+      },
+    };
+
+    const jwks = {
+      keys: [TEST_PUBLIC_KEY_JWK],
+    };
+
+    const result = verifyIssuerSignatureWithJwks(receipt, jwks);
+
+    assert.equal(result.checked, false);
+    assert.equal(result.reason, 'no_matching_key');
+  });
+
+  test('returns empty_jwks for empty key set', () => {
+    const receipt = {
+      task_id: 'xfuel-empty-jwks',
+      status: 'completed',
+      issuer_signature: { alg: 'ES256', value: 'dummy' },
+    };
+
+    const result = verifyIssuerSignatureWithJwks(receipt, { keys: [] });
+
+    assert.equal(result.checked, false);
+    assert.equal(result.reason, 'empty_jwks');
   });
 });

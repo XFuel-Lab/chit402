@@ -43,11 +43,18 @@
     "openrouter",
     "openai"
   ],
-  "author": "Chit402 / XFuel Labs",
+  "author": "XFuel Lab",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/XFuel-Lab/chit402/tree/main/packages/sidecar#readme",
+  "bugs": {
+    "url": "https://github.com/XFuel-Lab/chit402/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/XFuel-Lab/xfuel-protocol.git",
+    "url": "https://github.com/XFuel-Lab/chit402.git",
     "directory": "packages/sidecar"
   },
   "dependencies": {},

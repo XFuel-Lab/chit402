@@ -30,9 +30,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/XFuel-Lab/xfuel-protocol/tree/main/packages/sdk#readme",
+  "homepage": "https://github.com/XFuel-Lab/chit402/tree/main/packages/sdk#readme",
   "bugs": {
-    "url": "https://github.com/XFuel-Lab/xfuel-protocol/issues"
+    "url": "https://github.com/XFuel-Lab/chit402/issues"
   },
   "scripts": {
     "build": "tsc",
@@ -65,11 +65,11 @@
     "bittensor",
     "akash"
   ],
-  "author": "Chit402 / XFuel Labs",
+  "author": "XFuel Lab",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/XFuel-Lab/xfuel-protocol.git",
+    "url": "https://github.com/XFuel-Lab/chit402.git",
     "directory": "packages/sdk"
   },
   "dependencies": {

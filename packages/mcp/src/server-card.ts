@@ -38,16 +38,16 @@ const TOOLS: Array<{ name: string; description: string }> = [
 export function buildServerCard(config: McpConfig, mcpEndpoint: string) {
   return {
     name: 'io.github.XFuel-Lab/xfuel-mcp',
-    title: 'XFuel',
+    title: 'Chit402',
     description:
       'Generate text via chat_completions, submit a paid USDC task, or register_agent. ' +
       'Every call yields a public verify_url receipt. Hostname may say testnet; paying is Base mainnet USDC.',
     version: SERVER_VERSION,
-    websiteUrl: 'https://github.com/XFuel-Lab/xfuel-protocol/tree/main/xfuel-mcp#readme',
+    websiteUrl: 'https://github.com/XFuel-Lab/chit402/tree/main/packages/mcp#readme',
     repository: {
-      url: 'https://github.com/XFuel-Lab/xfuel-protocol',
+      url: 'https://github.com/XFuel-Lab/chit402',
       source: 'github',
-      subfolder: 'xfuel-mcp',
+      subfolder: 'packages/mcp',
     },
     transport: { type: 'streamable-http', url: mcpEndpoint },
     capabilities: { tools: true, resources: false, prompts: false },
