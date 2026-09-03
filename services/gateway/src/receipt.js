@@ -850,6 +850,12 @@ export function renderReceiptHtml(receipt) {
   .badge.warn { background: #33260f; color: #f0b866; border: 1px solid #5a411d; }
   .badge.bad { background: #331414; color: #f08c8c; border: 1px solid #5a1d1d; }
   .scopebox { font-size: 12.5px; color: #8b95a7; border-left: 2px solid #2a3346; padding: 4px 0 4px 12px; margin-top: 6px; }
+  .share-row { display: flex; align-items: center; gap: 10px; margin: 16px 0 8px; }
+  .copy-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; background: #1a2332; border: 1px solid #2a3346; border-radius: 8px; color: #aab2c0; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+  .copy-btn:hover { background: #222d3f; border-color: #3a4a5f; color: #cfd6e4; }
+  .copy-btn:active { transform: scale(0.98); }
+  .copy-btn.copied { background: #10331f; border-color: #1d5a37; color: #6ee7a8; }
+  .copy-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
   footer { margin-top: 28px; font-size: 12px; color: #6b7488; text-align: center; }
   footer a { color: #7a869c; }
 </style>
@@ -860,6 +866,14 @@ export function renderReceiptHtml(receipt) {
       <div class="brand">Chit</div>
       <div>${badge(pr.outcome, b ? b.matches : undefined)}</div>
     </header>
+
+    <div class="share-row">
+      <button class="copy-btn" id="copyLink" type="button" title="Copy receipt link">
+        <svg id="copyIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        <svg id="checkIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><polyline points="20 6 9 17 4 12"/></svg>
+        <span id="copyText">Copy link</span>
+      </button>
+    </div>
 
     <h1>Task</h1>
     <div class="taskid">${esc(displayTaskId(receipt.task_id))}</div>
@@ -908,9 +922,49 @@ export function renderReceiptHtml(receipt) {
       <a href="${esc(receipt.links.proof)}">proof</a> ·
       <a href="${esc(receipt.links.status)}">status</a><br />
       ${receipt.signature?.value ? `Signed ${esc(receipt.signature.alg)} · payload v${esc(receipt.signature.payload_version)} · ` : ''}
-      Signed receipt for routed AI compute — model, hub, and cost. HMAC by default; SP1 on demand.
+      Signed receipt for routed AI compute — model, hub, and cost. HMAC by default; SP1 on demand.<br />
+      XFuel Lab
     </footer>
   </div>
+  <script>
+    (function() {
+      var btn = document.getElementById('copyLink');
+      var copyIcon = document.getElementById('copyIcon');
+      var checkIcon = document.getElementById('checkIcon');
+      var copyText = document.getElementById('copyText');
+      if (!btn) return;
+      btn.addEventListener('click', function() {
+        var url = window.location.href;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(showCopied, fallbackCopy);
+        } else {
+          fallbackCopy();
+        }
+        function fallbackCopy() {
+          var ta = document.createElement('textarea');
+          ta.value = url;
+          ta.style.position = 'fixed';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); showCopied(); } catch(e) {}
+          document.body.removeChild(ta);
+        }
+        function showCopied() {
+          btn.classList.add('copied');
+          copyIcon.style.display = 'none';
+          checkIcon.style.display = 'block';
+          copyText.textContent = 'Copied!';
+          setTimeout(function() {
+            btn.classList.remove('copied');
+            copyIcon.style.display = 'block';
+            checkIcon.style.display = 'none';
+            copyText.textContent = 'Copy link';
+          }, 2000);
+        }
+      });
+    })();
+  </script>
 </body>
 </html>`;
 }
