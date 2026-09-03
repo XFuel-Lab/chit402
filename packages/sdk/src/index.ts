@@ -25,7 +25,12 @@ export {
 export {
   canonicalReceiptPayload,
   verifyReceiptSignature,
+  verifyReceiptEcdsa,
+  verifyReceiptEcdsaWithJwks,
   type ReceiptSignatureCheck,
+  type ReceiptEcdsaCheck,
+  type Es256Jwk,
+  type Jwks,
 } from './receipt.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────

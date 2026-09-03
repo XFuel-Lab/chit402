@@ -8,7 +8,7 @@
  * services/gateway/src/receipt.js.
  */
 
-import { createHmac } from 'node:crypto';
+import { createHmac, createPublicKey, verify, KeyObject } from 'node:crypto';
 
 export interface ReceiptSignatureCheck {
   /** Whether a signature was present to check. */
@@ -81,4 +81,115 @@ export function verifyReceiptSignature(
     expected: sig.value,
     recomputed,
   };
+}
+
+/** Result of ECDSA signature verification. */
+export interface ReceiptEcdsaCheck {
+  /** Whether an issuer signature was present to check. */
+  checked: boolean;
+  /** True if the ECDSA signature is valid. */
+  valid: boolean;
+  /** Key ID from the signature. */
+  kid?: string;
+  /** Reason for failure when valid=false. */
+  reason?: string;
+}
+
+/** JWK public key for ES256 verification. */
+export interface Es256Jwk {
+  kty: 'EC';
+  crv: 'P-256';
+  x: string;
+  y: string;
+  kid?: string;
+  alg?: string;
+  use?: string;
+}
+
+/** JWKS (JSON Web Key Set) structure. */
+export interface Jwks {
+  keys: Es256Jwk[];
+}
+
+/**
+ * Verify a receipt's ECDSA issuer signature against a JWK (public key).
+ * This is the public-key verification path — no shared secret required.
+ *
+ * Verification steps:
+ *   1. GET /receipt/:taskId?format=json → receipt.issuer_signature
+ *   2. GET /.well-known/jwks.json → find key matching issuer_signature.kid
+ *   3. ES256 verify canonicalReceiptPayload(receipt) against the signature
+ *
+ * @param receipt - Receipt JSON with issuer_signature
+ * @param jwk - JWK public key { kty: 'EC', crv: 'P-256', x, y }
+ */
+export function verifyReceiptEcdsa(
+  receipt: Record<string, unknown>,
+  jwk: Es256Jwk,
+): ReceiptEcdsaCheck {
+  const sig = (receipt as { issuer_signature?: { value?: string; alg?: string; kid?: string } }).issuer_signature;
+  if (!sig || !sig.value) {
+    return { checked: false, valid: false, reason: 'no_issuer_signature' };
+  }
+  if (sig.alg !== 'ES256') {
+    return { checked: false, valid: false, reason: `unsupported_alg: ${sig.alg}` };
+  }
+  if (!jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256') {
+    return { checked: false, valid: false, reason: 'invalid_jwk' };
+  }
+  if (sig.kid && jwk.kid && sig.kid !== jwk.kid) {
+    return { checked: false, valid: false, reason: 'kid_mismatch' };
+  }
+
+  try {
+    // JWK structure validated above; cast to satisfy Node crypto's expected type
+    const jwkInput = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y } as const;
+    const publicKey: KeyObject = createPublicKey({ key: jwkInput, format: 'jwk' });
+    const signature = Buffer.from(sig.value, 'base64url');
+    const payload = canonicalReceiptPayload(receipt);
+    const valid = verify('sha256', Buffer.from(payload, 'utf8'), {
+      key: publicKey,
+      dsaEncoding: 'ieee-p1363',
+    }, signature);
+    return { checked: true, valid, kid: sig.kid };
+  } catch (err) {
+    return { checked: true, valid: false, kid: sig.kid, reason: `verify_error: ${(err as Error).message}` };
+  }
+}
+
+/**
+ * Verify a receipt's ECDSA issuer signature against a JWKS (key set).
+ * Finds the matching key by kid and verifies.
+ *
+ * @param receipt - Receipt JSON with issuer_signature
+ * @param jwks - JWKS with keys array
+ */
+export function verifyReceiptEcdsaWithJwks(
+  receipt: Record<string, unknown>,
+  jwks: Jwks,
+): ReceiptEcdsaCheck {
+  const sig = (receipt as { issuer_signature?: { value?: string; kid?: string } }).issuer_signature;
+  if (!sig || !sig.value) {
+    return { checked: false, valid: false, reason: 'no_issuer_signature' };
+  }
+  if (!jwks || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
+    return { checked: false, valid: false, reason: 'empty_jwks' };
+  }
+
+  // Find matching key by kid, or try all ES256 keys if no kid on signature
+  const candidates = sig.kid
+    ? jwks.keys.filter(k => k.kid === sig.kid && k.alg === 'ES256')
+    : jwks.keys.filter(k => k.alg === 'ES256');
+
+  if (candidates.length === 0) {
+    return { checked: false, valid: false, reason: 'no_matching_key' };
+  }
+
+  for (const jwk of candidates) {
+    const result = verifyReceiptEcdsa(receipt, jwk);
+    if (result.valid) {
+      return result;
+    }
+  }
+  return { checked: true, valid: false, reason: 'signature_invalid' };
 }

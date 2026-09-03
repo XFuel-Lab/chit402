@@ -9,13 +9,19 @@ import {
   createSignerPayer,
   selectAccept,
   verifyReceiptSignature,
+  verifyReceiptEcdsa,
+  verifyReceiptEcdsaWithJwks,
+  canonicalReceiptPayload,
   type TaskRequestResponse,
   type TaskStatusResponse,
   type ProofResponse,
   type A2AMessageResponse,
   type HealthResponse,
   type X402Challenge,
+  type Es256Jwk,
+  type Jwks,
 } from '../index.js';
+import { generateKeyPairSync, sign } from 'node:crypto';
 
 // ── Mock axios ────────────────────────────────────────────────────────────────
 jest.mock('axios');
@@ -701,6 +707,242 @@ describe('XFuelClient', () => {
   describe('verifyReceiptSignature', () => {
     it('is exported from the main package (no ethers import)', () => {
       expect(verifyReceiptSignature({ task_id: 'x' }, 'secret').checked).toBe(false);
+    });
+  });
+});
+
+// ── ECDSA Receipt Verification Tests ──────────────────────────────────────────
+
+describe('ECDSA Receipt Verification', () => {
+  // Generate a test P-256 key pair for signing
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwkPublic = publicKey.export({ format: 'jwk' }) as { kty: string; crv: string; x: string; y: string };
+  const testKid = 'test-key-id';
+  const testJwk: Es256Jwk = {
+    kty: 'EC' as const,
+    crv: 'P-256' as const,
+    x: jwkPublic.x,
+    y: jwkPublic.y,
+    kid: testKid,
+    alg: 'ES256',
+    use: 'sig',
+  };
+  const testJwks: Jwks = { keys: [testJwk] };
+
+  // Helper to create a signed receipt
+  function createSignedReceipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    const receipt: Record<string, unknown> = {
+      task_id: 'xfuel-test-ecdsa-001',
+      payment: {
+        rail: 'usdc',
+        ref: 'base:0xabc123',
+        gross_amount: '100000',
+        net_amount: '99500',
+        fee_amount: '500',
+        protocol_fee_bps: 50,
+        platform_fee: '9400',
+        platform_fee_bps: 1000,
+      },
+      provider_cogs: { actual: '85000' },
+      route: {
+        model: 'test-model',
+        model_commitment: { commitment: '0xcommit' },
+        provider: 'test-provider',
+      },
+      output: { hash: '0xoutput123' },
+      binding: { expected_commitment: '0xbinding456' },
+      ...overrides,
+    };
+
+    // Sign the canonical payload
+    const payload = canonicalReceiptPayload(receipt);
+    const signature = sign('sha256', Buffer.from(payload, 'utf8'), {
+      key: privateKey,
+      dsaEncoding: 'ieee-p1363',
+    });
+
+    receipt.issuer_signature = {
+      alg: 'ES256',
+      payload_version: 3,
+      value: signature.toString('base64url'),
+      kid: testKid,
+      jwks_uri: '/.well-known/jwks.json',
+      signed_fields: ['task_id', 'payment.rail', '...'],
+    };
+
+    return receipt;
+  }
+
+  describe('verifyReceiptEcdsa', () => {
+    it('validates a correctly signed receipt', () => {
+      const receipt = createSignedReceipt();
+      const result = verifyReceiptEcdsa(receipt, testJwk);
+
+      expect(result.checked).toBe(true);
+      expect(result.valid).toBe(true);
+      expect(result.kid).toBe(testKid);
+    });
+
+    it('rejects a tampered receipt', () => {
+      const receipt = createSignedReceipt();
+      // Tamper with the receipt after signing
+      (receipt.payment as Record<string, unknown>).gross_amount = '999999';
+
+      const result = verifyReceiptEcdsa(receipt, testJwk);
+
+      expect(result.checked).toBe(true);
+      expect(result.valid).toBe(false);
+    });
+
+    it('rejects a receipt signed with a different key', () => {
+      const receipt = createSignedReceipt();
+
+      // Generate a different key
+      const { publicKey: otherPub } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+      const otherJwk = otherPub.export({ format: 'jwk' }) as { kty: string; crv: string; x: string; y: string };
+      const wrongJwk: Es256Jwk = {
+        kty: 'EC' as const,
+        crv: 'P-256' as const,
+        x: otherJwk.x,
+        y: otherJwk.y,
+        kid: testKid, // Same kid to test crypto verification, not kid mismatch
+        alg: 'ES256',
+        use: 'sig',
+      };
+
+      const result = verifyReceiptEcdsa(receipt, wrongJwk);
+
+      expect(result.checked).toBe(true);
+      expect(result.valid).toBe(false);
+    });
+
+    it('returns error for missing issuer_signature', () => {
+      const receipt = { task_id: 'no-sig' };
+      const result = verifyReceiptEcdsa(receipt, testJwk);
+
+      expect(result.checked).toBe(false);
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('no_issuer_signature');
+    });
+
+    it('returns error for mismatched kid', () => {
+      const receipt = createSignedReceipt();
+      const wrongKidJwk: Es256Jwk = { ...testJwk, kid: 'different-kid' };
+
+      const result = verifyReceiptEcdsa(receipt, wrongKidJwk);
+
+      expect(result.checked).toBe(false);
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('kid_mismatch');
+    });
+
+    it('returns error for invalid JWK', () => {
+      const receipt = createSignedReceipt();
+      const invalidJwk = { kty: 'RSA', n: 'abc' } as unknown as Es256Jwk;
+
+      const result = verifyReceiptEcdsa(receipt, invalidJwk);
+
+      expect(result.checked).toBe(false);
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('invalid_jwk');
+    });
+
+    it('returns error for unsupported algorithm', () => {
+      const receipt = createSignedReceipt();
+      (receipt.issuer_signature as Record<string, unknown>).alg = 'RS256';
+
+      const result = verifyReceiptEcdsa(receipt, testJwk);
+
+      expect(result.checked).toBe(false);
+      expect(result.valid).toBe(false);
+      expect(result.reason).toContain('unsupported_alg');
+    });
+  });
+
+  describe('verifyReceiptEcdsaWithJwks', () => {
+    it('finds matching key by kid and validates', () => {
+      const receipt = createSignedReceipt();
+      const result = verifyReceiptEcdsaWithJwks(receipt, testJwks);
+
+      expect(result.checked).toBe(true);
+      expect(result.valid).toBe(true);
+      expect(result.kid).toBe(testKid);
+    });
+
+    it('returns error when no matching key in JWKS', () => {
+      const receipt = createSignedReceipt();
+      const emptyJwks: Jwks = { keys: [] };
+
+      const result = verifyReceiptEcdsaWithJwks(receipt, emptyJwks);
+
+      expect(result.checked).toBe(false);
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('empty_jwks');
+    });
+
+    it('returns error when kid does not match any key', () => {
+      const receipt = createSignedReceipt();
+      const { publicKey: otherPub } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+      const otherJwk = otherPub.export({ format: 'jwk' }) as { kty: string; crv: string; x: string; y: string };
+      const noMatchJwks: Jwks = {
+        keys: [{
+          kty: 'EC' as const,
+          crv: 'P-256' as const,
+          x: otherJwk.x,
+          y: otherJwk.y,
+          kid: 'other-kid',
+          alg: 'ES256',
+          use: 'sig',
+        }],
+      };
+
+      const result = verifyReceiptEcdsaWithJwks(receipt, noMatchJwks);
+
+      expect(result.checked).toBe(false);
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('no_matching_key');
+    });
+
+    it('returns signature_invalid when key matches but signature is wrong', () => {
+      const receipt = createSignedReceipt();
+      // Tamper after signing
+      (receipt.route as Record<string, unknown>).provider = 'evil-provider';
+
+      const result = verifyReceiptEcdsaWithJwks(receipt, testJwks);
+
+      expect(result.checked).toBe(true);
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('signature_invalid');
+    });
+  });
+
+  describe('canonicalReceiptPayload', () => {
+    it('produces stable JSON array of signed fields', () => {
+      const receipt = {
+        task_id: 'test-1',
+        payment: { rail: 'usdc', ref: 'base:0x1', gross_amount: '100', net_amount: '90', fee_amount: '10', protocol_fee_bps: 50, platform_fee: '5', platform_fee_bps: 1000 },
+        provider_cogs: { actual: '80' },
+        route: { model: 'm', model_commitment: { commitment: '0xc' }, provider: 'p' },
+        output: { hash: '0xh' },
+        binding: { expected_commitment: '0xb' },
+      };
+
+      const payload = canonicalReceiptPayload(receipt);
+      const parsed = JSON.parse(payload);
+
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed).toEqual([
+        'test-1', 'usdc', 'base:0x1', '100', '90', '10', 50, '5', 1000, '80', 'm', '0xc', 'p', '0xh', '0xb',
+      ]);
+    });
+
+    it('uses null for missing fields', () => {
+      const receipt = { task_id: 'minimal' };
+      const payload = canonicalReceiptPayload(receipt);
+      const parsed = JSON.parse(payload);
+
+      expect(parsed[0]).toBe('minimal');
+      expect(parsed.slice(1).every((v: unknown) => v === null)).toBe(true);
     });
   });
 });
