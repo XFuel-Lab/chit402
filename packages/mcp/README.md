@@ -27,7 +27,7 @@ Claude / Cursor stdio config:
     "xfuel": {
       "command": "npx",
       "args": ["-y", "xfuel-mcp"],
-      "env": { "XFUEL_API_KEY": "xfuel-demo" }
+      "env": { "XFUEL_API_KEY": "chit402-demo" }
     }
   }
 }

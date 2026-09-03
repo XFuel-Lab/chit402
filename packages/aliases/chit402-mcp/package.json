@@ -1,0 +1,49 @@
+{
+  "name": "chit402-mcp",
+  "version": "0.4.0",
+  "mcpName": "io.github.XFuel-Lab/chit402-mcp",
+  "description": "Chit402 MCP server — chat completions, task submit, quotes, and receipts for AI agents.",
+  "type": "module",
+  "main": "./index.js",
+  "bin": {
+    "chit402-mcp": "./bin.js"
+  },
+  "files": [
+    "index.js",
+    "bin.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "keywords": [
+    "chit402",
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "agents",
+    "inference",
+    "receipts"
+  ],
+  "author": "XFuel Lab",
+  "license": "Apache-2.0",
+  "homepage": "https://chit402.com",
+  "bugs": {
+    "url": "https://github.com/XFuel-Lab/chit402/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XFuel-Lab/chit402.git",
+    "directory": "packages/aliases/chit402-mcp"
+  },
+  "dependencies": {
+    "xfuel-mcp": "^0.4.0"
+  }
+}

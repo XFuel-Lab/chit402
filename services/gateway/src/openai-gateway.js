@@ -70,6 +70,26 @@ function clampMaxTokens(requested) {
   return Math.min(n, MAX_TOKENS_CAP);
 }
 
+// ─── Demo key helper ─────────────────────────────────────────────────────────
+
+const DEMO_API_KEY = process.env.M2M_DEMO_API_KEY || 'chit402-demo';
+
+/**
+ * Check if a key is the demo key or a demo key prefix variant.
+ * Accepts both 'chit402-demo' (public) and 'xfuel-demo' (legacy/internal).
+ * @param {string|null|undefined} key
+ * @returns {boolean}
+ */
+function isDemoKey(key) {
+  if (!key) return false;
+  const k = String(key);
+  if (k === DEMO_API_KEY) return true;
+  // Legacy and prefix variants
+  if (k === 'xfuel-demo' || k === 'chit402-demo') return true;
+  if (k.startsWith('xfuel-demo') || k.startsWith('chit402-demo')) return true;
+  return false;
+}
+
 // ─── x402 metering for /v1 ───────────────────────────────────────────────────
 
 /**
@@ -81,7 +101,7 @@ function meteringExempt(req) {
   const key = req.headers['x-api-key']
     || (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
   if (!key) return false;
-  if (key === (process.env.M2M_DEMO_API_KEY || 'xfuel-demo')) return true;
+  if (isDemoKey(key)) return true;
   return (config.x402?.meterV1ExemptKeys || []).includes(key);
 }
 
@@ -101,8 +121,7 @@ function isPrivateSpendSession(req, registry) {
   const key = req.headers['x-api-key']
     || (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
   if (!key) return false;
-  if (key === (process.env.M2M_DEMO_API_KEY || 'xfuel-demo')) return false;
-  if (String(key).startsWith('xfuel-demo')) return false;
+  if (isDemoKey(key)) return false;
   const session = req.body?.session || req.headers['x-xfuel-session'] || null;
   if (!session) return false;
   const identity = registry.getBySession(String(session));

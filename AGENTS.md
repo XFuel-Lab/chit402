@@ -18,7 +18,7 @@ Design partners: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARD
 
 ## Try the demo
 
-Public gateway: `https://api.chit402.com` (alias: `https://api.xfuel.app`; demo key `xfuel-demo`, rate-limited). First hour is `POST /v1/chat/completions` — no wallet. Working copy: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).  
+Public gateway: `https://api.chit402.com` (demo key `chit402-demo`, rate-limited). First hour is `POST /v1/chat/completions` — no wallet. Working copy: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).  
 Windows: use `curl.exe` for raw HTTP — PowerShell `curl` is not real curl.
 
 Status: `GET /task-status?task_id=`  
@@ -30,8 +30,8 @@ Chat completions: `POST /v1/chat/completions`, `GET /v1/models`, `GET /llms.txt`
 - [packages/agent-skills/AGENT_PLAYBOOK.md](packages/agent-skills/AGENT_PLAYBOOK.md)
 
 ```
-npm install xfuel-sdk
-npx xfuel-mcp
+npm install chit402-sdk
+npx chit402-mcp
 ```
 
 ## Contracts (Base)

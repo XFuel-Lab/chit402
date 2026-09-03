@@ -32,7 +32,7 @@ The free path is `/v1` chat completions. Swap `baseURL` on any chat-completions 
 ```ts
 import { XFuelClient } from 'xfuel-sdk';
 
-const client = new XFuelClient(); // demo host + public `xfuel-demo` key
+const client = new XFuelClient(); // demo host + public `chit402-demo` key
 
 const chat = await client.chatCompletions({
   model: 'xfuel/auto',
