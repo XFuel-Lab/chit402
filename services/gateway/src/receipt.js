@@ -665,12 +665,12 @@ function row(label, valueHtml) {
 }
 
 /**
- * Strip the internal `xfuel-` prefix from a task_id for human-readable display.
+ * Rewrite the internal `xfuel-` prefix to `chit-` for human-readable display.
  * The underlying id and URL path remain unchanged; this is display-only.
  */
 function displayTaskId(taskId) {
   if (!taskId || typeof taskId !== 'string') return taskId || '';
-  return taskId.startsWith('xfuel-') ? taskId.slice(6) : taskId;
+  return taskId.startsWith('xfuel-') ? 'chit-' + taskId.slice(6) : taskId;
 }
 
 /** USDC 6dp integer string → partner-readable dollars. Tiny COGS keeps extra decimals. */
@@ -731,7 +731,7 @@ export function renderReceiptHtml(receipt) {
   const p = receipt.payment;
   const pr = receipt.proof;
   const b = receipt.binding;
-  const title = 'Chit receipt';
+  const title = 'Chit';
   const desc = p.rail === 'unmetered'
     ? `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} · UNMETERED · not charged`
     : `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} receipt · ${p.rail.toUpperCase()} · verify_url`;
@@ -857,7 +857,7 @@ export function renderReceiptHtml(receipt) {
 <body>
   <div class="wrap">
     <header>
-      <div class="brand">Chit<span>·</span>receipt</div>
+      <div class="brand">Chit</div>
       <div>${badge(pr.outcome, b ? b.matches : undefined)}</div>
     </header>
 
@@ -922,7 +922,7 @@ export function renderReceiptNotFound(taskId) {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Chit receipt · not found</title>
+<title>Chit · not found</title>
 <meta name="robots" content="noindex" />
 <style>
   :root { color-scheme: dark; }
@@ -936,7 +936,7 @@ export function renderReceiptNotFound(taskId) {
 </head>
 <body>
   <div class="wrap">
-    <div class="brand">Chit<span>·</span>receipt</div>
+    <div class="brand">Chit</div>
     <h1>Receipt not found</h1>
     <p class="muted">No task with id <code>${esc(taskId)}</code> is known to this node.
     Settled receipts are persisted and remain resolvable; check the id, or the

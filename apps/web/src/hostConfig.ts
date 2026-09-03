@@ -30,7 +30,7 @@ const CHIT_CONFIG: HostConfig = {
   tagline: 'The chit x402 doesn\'t leave you.',
   parent: 'XFuel Lab',
   domain: 'chit402.com',
-  apiDomain: 'api.xfuel.app',
+  apiDomain: 'api.chit402.com',
   ogImage: 'https://chit402.com/og-image.png',
   twitterHandle: '@chit402',
   githubUrl: 'https://github.com/XFuel-Lab/xfuel-protocol',

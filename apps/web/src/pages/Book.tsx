@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { API_V1 } from '../apiHost';
+import { getHostConfig } from '../hostConfig';
 
 const SNIPPET = `curl -sS ${API_V1}/chat/completions \\
   -H "X-API-Key: xfuel-demo" \\
@@ -9,7 +10,8 @@ const SNIPPET = `curl -sS ${API_V1}/chat/completions \\
 
 export default function Book() {
   useEffect(() => {
-    document.title = 'The book: this agent spent Y on this job | XFuel';
+    const config = getHostConfig();
+    document.title = `The book: this agent spent Y on this job | ${config.name}`;
   }, []);
 
   return (

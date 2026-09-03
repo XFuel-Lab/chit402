@@ -5,7 +5,7 @@
  * defaultInputModes, defaultOutputModes, skills (tags required).
  */
 
-import { XFUEL_ICON_URL } from './xfuel-icon.js';
+import { buildIconUrl } from './xfuel-icon.js';
 
 /**
  * @param {string} [baseUrl]
@@ -40,7 +40,7 @@ export function buildAgentCard(baseUrl = '') {
     },
     version: '1.0.0',
     documentationUrl: abs('/llms.txt'),
-    iconUrl: XFUEL_ICON_URL,
+    iconUrl: buildIconUrl(base),
     capabilities: {
       streaming: false,
       pushNotifications: false,

@@ -25,7 +25,7 @@ export default function ChitHome() {
             Hub, model, amount — you hold the book.
             <code>POST /v1/chat/completions</code> returns a signed receipt.
             Cost-plus, quoted, receipted — USDC on Base and Solana.
-            The wire is <code>api.xfuel.app/v1</code>.
+            The wire is <code>api.chit402.com/v1</code>.
           </p>
           <div style={styles.heroCta}>
             <a
@@ -76,7 +76,7 @@ export default function ChitHome() {
           <p style={{ color: '#8a8a9a', fontSize: '0.95rem' }}>
             Chit is the product. <strong style={{ color: '#f0f0f5' }}>{config.parent}</strong> is the parent.
             <br />
-            The wire is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9em' }}>api.xfuel.app/v1</code> — unchanged.
+            The wire is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9em' }}>api.chit402.com/v1</code> (alias: api.xfuel.app/v1).
           </p>
         </div>
       </section>

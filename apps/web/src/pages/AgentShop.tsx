@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { API_V1 } from '../apiHost';
+import { getHostConfig } from '../hostConfig';
 
 const SNIPPET = `curl -sS ${API_V1}/chat/completions \\
   -H "X-API-Key: xfuel-demo" \\
@@ -22,7 +23,8 @@ const data = await res.json();`;
 
 export default function AgentShop() {
   useEffect(() => {
-    document.title = 'The till for an agent shop | XFuel';
+    const config = getHostConfig();
+    document.title = `The till for an agent shop | ${config.name}`;
   }, []);
 
   return (
