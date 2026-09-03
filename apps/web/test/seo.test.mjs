@@ -182,3 +182,99 @@ test('App routes home page based on host', () => {
   assert.match(app, /import ChitHome/, 'App imports ChitHome');
   assert.match(app, /isChitHost\(\) \? <ChitHome/, 'App conditionally renders ChitHome');
 });
+
+test('middleware CHIT_SEO uses Chit402 titles (not Chit)', () => {
+  const middleware = readFileSync(join(root, '../../middleware.ts'), 'utf8');
+  
+  assert.match(
+    middleware,
+    /title:\s*['"]Chit402 — A receipt you still hold if the agent wallet moves\.['"]/,
+    'middleware CHIT_SEO title uses Chit402'
+  );
+  assert.match(
+    middleware,
+    /ogTitle:\s*['"]Chit402 — A receipt you still hold\.['"]/,
+    'middleware CHIT_SEO ogTitle uses Chit402'
+  );
+  assert.match(
+    middleware,
+    /description:\s*['"]Chit402: the x402 receipt/,
+    'middleware CHIT_SEO description starts with Chit402'
+  );
+});
+
+test('middleware CHIT_V1_SEO uses Chit402 suffix (not | Chit)', () => {
+  const middleware = readFileSync(join(root, '../../middleware.ts'), 'utf8');
+  
+  assert.match(
+    middleware,
+    /title:\s*['"]Pay \/v1\/chat\/completions \| Chit402['"]/,
+    'middleware CHIT_V1_SEO title ends with | Chit402'
+  );
+  assert.match(
+    middleware,
+    /ogTitle:\s*['"]Pay \/v1\/chat\/completions \| Chit402['"]/,
+    'middleware CHIT_V1_SEO ogTitle ends with | Chit402'
+  );
+  assert.doesNotMatch(
+    middleware,
+    /title:\s*['"]Pay \/v1\/chat\/completions \| Chit['"]/,
+    'middleware CHIT_V1_SEO title does not use old | Chit'
+  );
+});
+
+test('middleware SEO constants do not contain "By XFuel Lab"', () => {
+  const middleware = readFileSync(join(root, '../../middleware.ts'), 'utf8');
+  
+  const seoSection = middleware.match(/const CHIT_SEO[\s\S]*?const CHIT_V1_SEO_FULL[\s\S]*?^};/m)?.[0] ?? '';
+  assert.ok(seoSection.length > 100, 'extracted SEO constants section');
+  
+  assert.doesNotMatch(
+    seoSection,
+    /By XFuel Lab/,
+    'middleware SEO constants do not contain "By XFuel Lab"'
+  );
+});
+
+test('middleware transformHtml produces Chit402 crawler output for homepage', () => {
+  const sampleHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Old Title</title>
+  <meta name="description" content="Old description" />
+  <meta property="og:title" content="Old OG Title" />
+  <meta property="og:description" content="Old OG description" />
+  <meta property="og:url" content="https://example.com" />
+  <meta property="og:image" content="https://example.com/og.png" />
+  <meta name="twitter:title" content="Old Twitter Title" />
+  <meta name="twitter:description" content="Old Twitter description" />
+</head>
+<body>
+  <div id="root"></div>
+</body>
+</html>`;
+
+  const middleware = readFileSync(join(root, '../../middleware.ts'), 'utf8');
+  
+  const chitSeoTitleMatch = middleware.match(/const CHIT_SEO[\s\S]*?title:\s*['"]([^'"]+)['"]/);
+  const chitSeoTitle = chitSeoTitleMatch?.[1] ?? '';
+  assert.ok(chitSeoTitle.startsWith('Chit402'), 'CHIT_SEO title starts with Chit402');
+  
+  const chitSeoOgTitleMatch = middleware.match(/const CHIT_SEO[\s\S]*?ogTitle:\s*['"]([^'"]+)['"]/);
+  const chitSeoOgTitle = chitSeoOgTitleMatch?.[1] ?? '';
+  assert.ok(chitSeoOgTitle.startsWith('Chit402'), 'CHIT_SEO ogTitle starts with Chit402');
+  
+  const chitSeoDescMatch = middleware.match(/const CHIT_SEO[\s\S]*?description:\s*['"]([^'"]+)['"]/);
+  const chitSeoDesc = chitSeoDescMatch?.[1] ?? '';
+  assert.ok(chitSeoDesc.startsWith('Chit402'), 'CHIT_SEO description starts with Chit402');
+  assert.ok(!chitSeoDesc.includes('By XFuel Lab'), 'CHIT_SEO description does not contain By XFuel Lab');
+  
+  const simulated = sampleHtml
+    .replace(/<title>[^<]*<\/title>/, `<title>${chitSeoTitle}</title>`)
+    .replace(/<meta property="og:title" content="[^"]*" \/>/, `<meta property="og:title" content="${chitSeoOgTitle}" />`)
+    .replace(/<meta name="twitter:title" content="[^"]*" \/>/, `<meta name="twitter:title" content="${chitSeoOgTitle}" />`);
+  
+  assert.match(simulated, /<title>Chit402/, 'transformed title starts with Chit402');
+  assert.match(simulated, /og:title" content="Chit402/, 'transformed og:title starts with Chit402');
+  assert.match(simulated, /twitter:title" content="Chit402/, 'transformed twitter:title starts with Chit402');
+});
