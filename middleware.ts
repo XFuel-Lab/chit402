@@ -7,18 +7,18 @@ export const config = {
 };
 
 const CHIT_SEO = {
-  title: 'Chit — A receipt you still hold if the agent wallet moves.',
-  description: 'Chit: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book. By XFuel Lab.',
-  ogTitle: 'Chit — A receipt you still hold.',
-  ogDescription: 'Chit: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book. By XFuel Lab.',
+  title: 'Chit402 — A receipt you still hold if the agent wallet moves.',
+  description: 'Chit402: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book.',
+  ogTitle: 'Chit402 — A receipt you still hold.',
+  ogDescription: 'Chit402: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book.',
   ogImage: 'https://www.chit402.com/og-image.png',
   domain: 'www.chit402.com',
 };
 
 const CHIT_V1_SEO = {
-  title: 'Pay /v1/chat/completions | Chit',
+  title: 'Pay /v1/chat/completions | Chit402',
   description: 'Bot drop-in. Wallet pays. You hold the book. The wire is api.chit402.com/v1.',
-  ogTitle: 'Pay /v1/chat/completions | Chit',
+  ogTitle: 'Pay /v1/chat/completions | Chit402',
   ogDescription: 'Bot drop-in. Wallet pays. You hold the book. The wire is api.chit402.com/v1.',
   ogImage: 'https://www.chit402.com/og-image.png',
   domain: 'www.chit402.com',
@@ -42,14 +42,14 @@ interface SeoConfig {
 
 const CHIT_HOME_SEO: SeoConfig = {
   ...CHIT_SEO,
-  h1: 'Chit — the x402 receipt that doesn\'t leave you.',
-  lede: 'A receipt you still hold if the agent wallet moves. Hub, model, amount — you hold the book. POST /v1/chat/completions returns a signed receipt. Cost-plus, quoted, receipted — USDC on Base and Solana. The wire is api.chit402.com/v1. By XFuel Lab.',
+  h1: 'Chit402 — the x402 receipt that doesn\'t leave you.',
+  lede: 'A receipt you still hold if the agent wallet moves. Hub, model, amount — you hold the book. POST /v1/chat/completions returns a signed receipt. Cost-plus, quoted, receipted — USDC on Base and Solana. The wire is api.chit402.com/v1.',
 };
 
 const CHIT_V1_SEO_FULL: SeoConfig = {
   ...CHIT_V1_SEO,
   h1: 'Bot drop-in. Wallet pays. You hold the book.',
-  lede: 'Exact product: baseURL https://api.chit402.com/v1. POST /v1/chat/completions is cost-plus, quoted, receipted — USDC on Base and Solana. Without payment or a demo key, the gateway returns HTTP 402. By XFuel Lab.',
+  lede: 'Exact product: baseURL https://api.chit402.com/v1. POST /v1/chat/completions is cost-plus, quoted, receipted — USDC on Base and Solana. Without payment or a demo key, the gateway returns HTTP 402.',
 };
 
 function transformHtml(html: string, seo: SeoConfig, pathname: string): string {
