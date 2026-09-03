@@ -6,12 +6,12 @@ const CHIT_LLMS = `# Chit — the x402 receipt that doesn't leave you
 > Hub, model, amount — you hold the book. POST /v1/chat/completions
 > returns a signed receipt: hub, model, amount, verify_url.
 > Cost-plus, quoted, receipted — pay x402 USDC on Base or Solana.
-> The wire is api.xfuel.app/v1. Chit is the product. XFuel Lab is the parent.
+> The wire is api.chit402.com/v1 (alias: api.xfuel.app/v1). Chit is the product. XFuel Lab is the parent.
 
 ## Money pages (chit402.com)
 
 - /         : A receipt you still hold if the agent wallet moves.
-- /v1       : Not the API — points you to api.xfuel.app/v1.
+- /v1       : Not the API — points you to api.chit402.com/v1.
 
 ## Start here (chat completions / responses)
 
@@ -26,7 +26,7 @@ const CHIT_LLMS = `# Chit — the x402 receipt that doesn't leave you
 - GET  /v1/models           : live catalog. Public, no key.
 - No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
 - Optional key (skips payment): "Authorization: Bearer <key>" or "X-API-Key: <key>".
-- Point any chat-completions client's baseURL at api.xfuel.app + /v1. Receipt in x-xfuel-*
+- Point any chat-completions client's baseURL at api.chit402.com + /v1. Receipt in x-xfuel-*
   headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
 
 ## Paid door (USDC / x402)

@@ -14,7 +14,7 @@ test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () =>
   assert.ok(m.tags.includes('llm'), 'manifest tags includes llm');
   assert.ok(!m.tags.includes('x402'), 'manifest tags omits legacy x402 tag');
   assert.equal(typeof m.x402_enabled, 'boolean');
-  assert.equal(m.iconUrl, 'https://api.xfuel.app/xfuel-icon.svg');
+  assert.equal(m.iconUrl, 'https://api-testnet.xfuel.app/xfuel-icon.svg', 'iconUrl matches baseUrl host');
   assert.ok(['usdc', 'tfuel'].includes(m.default_rail));
 
   // Facilitator block reflects config.

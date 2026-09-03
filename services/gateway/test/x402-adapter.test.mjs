@@ -172,8 +172,9 @@ test('buildPaymentChallenge: includes service metadata for bazaar', () => {
   assert.ok(!r.tags.includes('ai'), 'tags omits legacy ai tag');
 
   // Per spec: iconUrl must be absolute https:// and a real image, not the SPA.
+  // iconUrl is now host-aware: it matches the baseUrl host.
   assert.ok(r.iconUrl.startsWith('https://'), 'iconUrl is absolute https');
-  assert.equal(r.iconUrl, 'https://api.xfuel.app/xfuel-icon.svg');
+  assert.equal(r.iconUrl, 'https://api.xfuel.app/xfuel-icon.svg', 'iconUrl matches baseUrl host');
 });
 
 test('buildPaymentChallenge: description mentions real USDC settlement', () => {
