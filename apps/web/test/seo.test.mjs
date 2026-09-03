@@ -159,10 +159,14 @@ test('host config has correct Chit SEO values', () => {
   const hostConfig = readFileSync(join(root, 'src/hostConfig.ts'), 'utf8');
   assert.match(hostConfig, /title:.*Chit402.*receipt you still hold/i, 'Chit SEO title uses Chit402 for listings');
   assert.match(hostConfig, /ogTitle:.*Chit402/i, 'Chit ogTitle uses Chit402 for listings');
+  assert.match(hostConfig, /description:.*Chit402:/i, 'Chit description starts with Chit402');
+  assert.match(hostConfig, /ogDescription:.*Chit402:/i, 'Chit ogDescription starts with Chit402');
   assert.match(hostConfig, /x402 receipt that doesn/, 'Chit description has tagline');
   assert.match(hostConfig, /chit402\.com/, 'Config has chit402.com domain');
   assert.match(hostConfig, /@chit402/, 'Config has @chit402 Twitter handle');
+  assert.match(hostConfig, /githubUrl:.*chit402/i, 'Config has chit402 GitHub URL');
   assert.doesNotMatch(hostConfig, /OpenAI/i, 'Config must not mention OpenAI');
+  assert.doesNotMatch(hostConfig, /By XFuel Lab/i, 'Chit SEO metadata must not mix parent branding');
 });
 
 test('Layout supports dual branding for Chit and XFuel', () => {

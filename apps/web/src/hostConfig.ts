@@ -33,12 +33,12 @@ const CHIT_CONFIG: HostConfig = {
   apiDomain: 'api.chit402.com',
   ogImage: 'https://www.chit402.com/og-image.png',
   twitterHandle: '@chit402',
-  githubUrl: 'https://github.com/XFuel-Lab/xfuel-protocol',
+  githubUrl: 'https://github.com/XFuel-Lab/chit402',
   seo: {
     title: 'Chit402 — A receipt you still hold if the agent wallet moves.',
-    description: 'Chit: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book. By XFuel Lab.',
+    description: 'Chit402: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book.',
     ogTitle: 'Chit402 — A receipt you still hold.',
-    ogDescription: 'Chit: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book. By XFuel Lab.',
+    ogDescription: 'Chit402: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book.',
   },
 };
 
