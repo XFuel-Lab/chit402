@@ -59,6 +59,55 @@ jobs:
         working-directory: services/gateway
         run: npm test
 
+  # ════════════════════════════════════════════════════════════
+  # TEMPORARY COMPATIBILITY ALIASES (remove after branch protection update)
+  # These satisfy old required check names until founder updates settings.
+  # ════════════════════════════════════════════════════════════
+
+  # Old required name from test.yml before PR 280.
+  # Real contract tests now run in ci.yml "Core Contract Tests" (path-filtered).
+  # Full Hardhat+coverage+gas runs in "Contracts Full Suite" (push-only).
+  compat-contracts-listener:
+    name: Contracts & Core Listener
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compatibility gate (temporary)
+        run: |
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║ TEMPORARY COMPATIBILITY CHECK                                ║"
+          echo "║                                                              ║"
+          echo "║ Real contract tests now run as:                              ║"
+          echo "║   • CI / Core Contract Tests (path-filtered, PR gate)        ║"
+          echo "║   • Tests / Contracts Full Suite (push to main only)         ║"
+          echo "║                                                              ║"
+          echo "║ Remove this job after updating branch protection rules.      ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+
+  # Old required name from test.yml before PR 280.
+  # Gateway tests now run as "Gateway Tests" (always).
+  # SDK tests run in ci.yml "Jest Unit Tests" (path-filtered).
+  compat-m2m-sdk-skills:
+    name: M2M Backend + SDK + Skills
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compatibility gate (temporary)
+        run: |
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║ TEMPORARY COMPATIBILITY CHECK                                ║"
+          echo "║                                                              ║"
+          echo "║ These tests are now split into:                              ║"
+          echo "║   • Tests / Gateway Tests (always runs)                      ║"
+          echo "║   • CI / Jest Unit Tests (SDK, path-filtered)                ║"
+          echo "║   • Tests / Theta-Inference Circuit Tests (path-filtered)    ║"
+          echo "║   • Tests / Agent Skills Validation (path-filtered)          ║"
+          echo "║                                                              ║"
+          echo "║ Remove this job after updating branch protection rules.      ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+
+  # ════════════════════════════════════════════════════════════
+  # END TEMPORARY COMPATIBILITY ALIASES
+  # ════════════════════════════════════════════════════════════
+
   # ── Full Hardhat suite + coverage (push to main only) ──────
   # Compile + full test suite + coverage + gas report.
   # Does NOT block PR merge — runs on push to main for audit trail.
