@@ -29,9 +29,9 @@ const CHIT_CONFIG: HostConfig = {
   name: 'Chit',
   tagline: 'The chit x402 doesn\'t leave you.',
   parent: 'XFuel Lab',
-  domain: 'chit402.com',
+  domain: 'www.chit402.com',
   apiDomain: 'api.chit402.com',
-  ogImage: 'https://chit402.com/og-image.png',
+  ogImage: 'https://www.chit402.com/og-image.png',
   twitterHandle: '@chit402',
   githubUrl: 'https://github.com/XFuel-Lab/xfuel-protocol',
   seo: {
