@@ -28,7 +28,7 @@ import {
   applyPaymentToOwedTask,
   configureRollingLedger,
 } from './rolling-settlement.js';
-import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, proofOutcomeOf, verifyReceiptHmac } from './receipt.js';
+import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptHmac } from './receipt.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest, buildOpenApiSpec } from './x402-discovery.js';
 import { buildPaymentChallenge } from './x402-adapter.js';
@@ -1187,7 +1187,8 @@ export function createApp() {
         feeBps: appliedBps,
       }, 'Task request accepted');
 
-      const verifyUrl = buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts), effectiveTaskId);
+      const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
+      const verifyUrl = buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts), effectiveTaskId, { reqHost });
 
       return res.status(202).json({
         task_id:       effectiveTaskId,
@@ -1473,11 +1474,12 @@ export function createApp() {
         feeBps,
       );
 
+      const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
       const proofPayload = {
         task_id:        task.taskId,
         status:         task.status,
         proof_outcome:  proofOutcomeOf(task),
-        verify_url:     buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts), task.taskId),
+        verify_url:     buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts), task.taskId, { reqHost }),
         sp1_proof:      task.sp1Proof || null,
         // Phase 2 (flag-gated): x402 payment commitment bound into the proof.
         payment_binding: task.sp1Proof?.paymentBinding || null,
@@ -1696,12 +1698,13 @@ export function createApp() {
         }
 
         const proofOutcome = proofOutcomeOf(task);
+        const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
 
         return res.json({
           task_id:        task.taskId,
           status:         task.status,
           proof_outcome:  proofOutcome,
-          verify_url:     buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts), task.taskId),
+          verify_url:     buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts), task.taskId, { reqHost }),
           proof_system:   task.intent?.proofSystem || 'sp1', // 'sp1' | 'zkgpt' — which prover ran; proof data is in sp1_proof for both
           message_type:   task.intent?.type,
           chain_id:       task.meta?.chain,
@@ -1812,8 +1815,10 @@ export function createApp() {
 
   app.get('/receipt/:taskId', rateLimit, (req, res) => {
     try {
-      const { taskId } = req.params;
+      const { taskId: rawTaskId } = req.params;
       const aiListener = getAIListener();
+      // Normalize chit-<uuid> → xfuel-<uuid> for storage lookup (stored IDs use xfuel- prefix)
+      const taskId = normalizeTaskIdForLookup(rawTaskId);
       // Support ?tx=<signature> query param as fallback lookup for Solana payments
       const txFallback = req.query.tx;
       let task = _findTask(aiListener, taskId);
@@ -1829,17 +1834,19 @@ export function createApp() {
 
       if (!task) {
         if (wantsJson) {
-          return res.status(404).json({ error: 'not_found', message: `Task ${taskId} not found`, task_id: taskId });
+          return res.status(404).json({ error: 'not_found', message: `Task ${rawTaskId} not found`, task_id: rawTaskId });
         }
-        return res.status(404).type('html').send(renderReceiptNotFound(taskId));
+        return res.status(404).type('html').send(renderReceiptNotFound(rawTaskId));
       }
 
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
       const receipt = buildReceipt(task, {
         baseUrl,
         signingSecret: config.receipts?.signingSecret,
         coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
+        reqHost,
       });
 
       if (wantsAuditor) {

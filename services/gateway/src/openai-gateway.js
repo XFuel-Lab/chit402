@@ -855,6 +855,7 @@ async function accountForCogs({ task, modelId, usage, provider }) {
 function buildReceipt({
   task, taskId, provider, mock, proverConfigured, proveAllowed = true, mockReason,
   baseUrl = '', privateSpend = false, payment = null, requestedModel = null, resolvedModel = null,
+  reqHost = null,
 }) {
   // pending  → proof generating; unavailable → no prover; gated → cost-gated for
   // this key (signed receipt only); skipped → mock response (nothing to prove).
@@ -865,7 +866,7 @@ function buildReceipt({
       : !proveAllowed
         ? 'gated'
         : 'pending';
-  const verifyUrl = buildVerifyUrl(baseUrl, taskId);
+  const verifyUrl = buildVerifyUrl(baseUrl, taskId, { reqHost });
 
   const signed = task
     ? buildSignedReceipt(task, {
@@ -873,6 +874,7 @@ function buildReceipt({
         signingSecret: config.receipts?.signingSecret,
         coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
+        reqHost,
       })
     : { task_id: taskId, verify_url: verifyUrl, route: {}, payment: {}, proof: {} };
 
@@ -1008,6 +1010,7 @@ function respondPaidV1Failure(res, {
     task.updatedAt = Date.now();
     if (message) task.meta = { ...(task.meta || {}), failureReason: message };
   }
+  const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
   let receipt = buildReceipt({
     task,
     taskId,
@@ -1021,6 +1024,7 @@ function respondPaidV1Failure(res, {
     payment,
     requestedModel,
     resolvedModel,
+    reqHost,
   });
   const reuseId = agentId ?? resolveBookableAgent(req, registry)?.agent_id ?? null;
   receipt = withBookSpend(receipt, { ledger, registry, agentId: reuseId });
@@ -1503,11 +1507,13 @@ export function registerOpenAIRoutes(app, {
     });
     startTaskProof(task, proveAllowed);
 
+    const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
     const receipt = bookSpend(buildReceipt({
       task, taskId, provider, mock, proverConfigured, proveAllowed,
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
+      reqHost,
     }), req);
 
     setReceiptHeaders(res, receipt);
@@ -1852,11 +1858,13 @@ export function registerOpenAIRoutes(app, {
     });
     startTaskProof(task, proveAllowed);
 
+    const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
     const receipt = bookSpend(buildReceipt({
       task, taskId, provider, mock, proverConfigured, proveAllowed,
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
+      reqHost,
     }), req);
 
     setReceiptHeaders(res, receipt);
@@ -1913,6 +1921,7 @@ export function registerOpenAIRoutes(app, {
       privateSpend,
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+    const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
     const receipt = buildReceipt({
       task,
       taskId,
@@ -1924,6 +1933,7 @@ export function registerOpenAIRoutes(app, {
       privateSpend,
       requestedModel: model,
       resolvedModel: inference.resolvedModel,
+      reqHost,
     });
     setReceiptHeaders(res, receipt);
 
@@ -1975,6 +1985,7 @@ export function registerOpenAIRoutes(app, {
       privateSpend,
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+    const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
     const receipt = buildReceipt({
       task,
       taskId,
@@ -1986,6 +1997,7 @@ export function registerOpenAIRoutes(app, {
       privateSpend,
       requestedModel: model || 'theta/whisper',
       resolvedModel: inference.resolvedModel,
+      reqHost,
     });
     setReceiptHeaders(res, receipt);
     return res.json({

@@ -7,6 +7,9 @@ import {
   explorerUrlForRef,
   buildVerifyUrl,
   baseUrlFromReq,
+  normalizeTaskIdForLookup,
+  preferredPathPrefix,
+  taskIdWithPreferredPrefix,
 } from '../src/receipt.js';
 import { computePaymentCommitment, computeInferenceBinding } from '../src/payment-binding.js';
 import crypto from 'crypto';
@@ -103,6 +106,83 @@ test('buildVerifyUrl: absolute with base, relative without, trims trailing slash
   assert.equal(buildVerifyUrl('https://api-testnet.xfuel.app', TASK_ID), `https://api-testnet.xfuel.app/receipt/${TASK_ID}`);
   assert.equal(buildVerifyUrl('https://api-testnet.xfuel.app/', TASK_ID), `https://api-testnet.xfuel.app/receipt/${TASK_ID}`);
   assert.equal(buildVerifyUrl('', TASK_ID), `/receipt/${TASK_ID}`);
+});
+
+// ── Chit path alias tests ────────────────────────────────────────────────────
+
+test('normalizeTaskIdForLookup: chit- prefix maps to xfuel-', () => {
+  assert.equal(normalizeTaskIdForLookup('chit-247049dd-0075-4372-b7f7-508c62b9b587'), 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587');
+  assert.equal(normalizeTaskIdForLookup('xfuel-247049dd-0075-4372-b7f7-508c62b9b587'), 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587');
+  assert.equal(normalizeTaskIdForLookup('openai-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'), 'openai-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+  assert.equal(normalizeTaskIdForLookup('task-abc123'), 'task-abc123');
+  assert.equal(normalizeTaskIdForLookup(null), null);
+  assert.equal(normalizeTaskIdForLookup(''), '');
+});
+
+test('preferredPathPrefix: chit- on api.chit402.com, xfuel- otherwise', () => {
+  assert.equal(preferredPathPrefix('api.chit402.com'), 'chit-');
+  assert.equal(preferredPathPrefix('api.chit402.com:443'), 'chit-');
+  assert.equal(preferredPathPrefix('API.CHIT402.COM'), 'chit-');
+  assert.equal(preferredPathPrefix('api.xfuel.app'), 'xfuel-');
+  assert.equal(preferredPathPrefix('api-testnet.xfuel.app'), 'xfuel-');
+  assert.equal(preferredPathPrefix('localhost:3001'), 'xfuel-');
+  assert.equal(preferredPathPrefix(null), 'xfuel-');
+  assert.equal(preferredPathPrefix(''), 'xfuel-');
+});
+
+test('taskIdWithPreferredPrefix: swaps xfuel- to chit- when preferred', () => {
+  assert.equal(taskIdWithPreferredPrefix('xfuel-247049dd-0075-4372-b7f7-508c62b9b587', 'chit-'), 'chit-247049dd-0075-4372-b7f7-508c62b9b587');
+  assert.equal(taskIdWithPreferredPrefix('xfuel-247049dd-0075-4372-b7f7-508c62b9b587', 'xfuel-'), 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587');
+  assert.equal(taskIdWithPreferredPrefix('openai-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'chit-'), 'openai-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+  assert.equal(taskIdWithPreferredPrefix('task-abc123', 'chit-'), 'task-abc123');
+  assert.equal(taskIdWithPreferredPrefix(null, 'chit-'), null);
+});
+
+test('buildVerifyUrl: uses chit- prefix when reqHost is api.chit402.com', () => {
+  const xfuelTaskId = 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587';
+  assert.equal(
+    buildVerifyUrl('https://api.chit402.com', xfuelTaskId, { reqHost: 'api.chit402.com' }),
+    'https://api.chit402.com/receipt/chit-247049dd-0075-4372-b7f7-508c62b9b587'
+  );
+  assert.equal(
+    buildVerifyUrl('https://api.xfuel.app', xfuelTaskId, { reqHost: 'api.xfuel.app' }),
+    'https://api.xfuel.app/receipt/xfuel-247049dd-0075-4372-b7f7-508c62b9b587'
+  );
+  assert.equal(
+    buildVerifyUrl('https://api-testnet.xfuel.app', xfuelTaskId, { reqHost: null }),
+    'https://api-testnet.xfuel.app/receipt/xfuel-247049dd-0075-4372-b7f7-508c62b9b587'
+  );
+  assert.equal(
+    buildVerifyUrl('https://api.chit402.com', xfuelTaskId),
+    'https://api.chit402.com/receipt/xfuel-247049dd-0075-4372-b7f7-508c62b9b587'
+  );
+});
+
+test('buildReceipt: uses chit- prefix in verify_url and links when reqHost is api.chit402.com', () => {
+  const xfuelTask = {
+    taskId: 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587',
+    status: 'completed',
+    intent: { paymentRail: 'usdc', amount: '10000', model: 'theta/qwen3' },
+    result: { provider: 'theta-edgecloud' },
+  };
+  const r = buildReceipt(xfuelTask, { baseUrl: 'https://api.chit402.com', reqHost: 'api.chit402.com' });
+  assert.equal(r.verify_url, 'https://api.chit402.com/receipt/chit-247049dd-0075-4372-b7f7-508c62b9b587');
+  assert.equal(r.links.self, 'https://api.chit402.com/receipt/chit-247049dd-0075-4372-b7f7-508c62b9b587');
+  assert.equal(r.links.json, 'https://api.chit402.com/receipt/chit-247049dd-0075-4372-b7f7-508c62b9b587?format=json');
+  assert.equal(r.task_id, 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587');
+});
+
+test('buildReceipt: keeps xfuel- prefix when reqHost is api.xfuel.app', () => {
+  const xfuelTask = {
+    taskId: 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587',
+    status: 'completed',
+    intent: { paymentRail: 'usdc', amount: '10000', model: 'theta/qwen3' },
+    result: { provider: 'theta-edgecloud' },
+  };
+  const r = buildReceipt(xfuelTask, { baseUrl: 'https://api.xfuel.app', reqHost: 'api.xfuel.app' });
+  assert.equal(r.verify_url, 'https://api.xfuel.app/receipt/xfuel-247049dd-0075-4372-b7f7-508c62b9b587');
+  assert.equal(r.links.self, 'https://api.xfuel.app/receipt/xfuel-247049dd-0075-4372-b7f7-508c62b9b587');
+  assert.equal(r.task_id, 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587');
 });
 
 test('baseUrlFromReq: prefers configured base, else derives from request', () => {
