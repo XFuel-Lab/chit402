@@ -17,6 +17,11 @@ const ROUTE_CONTENT = {
     h1: 'Your SEO bot spent it. You hold the book.',
     lede: 'Chit is the till for an agent shop. Paste https://api.chit402.com/v1 as the OpenAI baseURL, pay the HTTP 402 in USDC on Base or Solana (cost-plus, quoted, receipted), and you hold the book. We are the till, not the Chief of SEO. Show the client the book, not a screenshot.',
   },
+  '/docs': {
+    title: 'Chit — A receipt you still hold if the agent wallet moves.',
+    h1: 'Build on Chit',
+    lede: 'Chit: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book. No account. No API key. A wallet that can pay the 402 is enough. Public beta at api.chit402.com. USDC on Base and Solana.',
+  },
   '/book': {
     title: 'The book: this agent spent Y on this job | Chit',
     h1: 'This agent spent Y on this job.',
@@ -42,6 +47,7 @@ function truncateDescription(text, maxLen = 155) {
 function transformHtml(html, route, { title, h1, lede }) {
   const description = truncateDescription(lede);
   const canonicalUrl = `https://www.chit402.com${route}`;
+  const ogImage = 'https://chit402.com/og-image.png';
   
   let result = html
     .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`)
@@ -56,6 +62,10 @@ function transformHtml(html, route, { title, h1, lede }) {
     .replace(
       /<meta property="og:description" content="[^"]*" \/>/,
       `<meta property="og:description" content="${description}" />`
+    )
+    .replace(
+      /<meta property="og:image" content="[^"]*" \/>/,
+      `<meta property="og:image" content="${ogImage}" />`
     )
     .replace(
       /<meta name="twitter:title" content="[^"]*" \/>/,
@@ -102,4 +112,4 @@ for (const [route, content] of Object.entries(ROUTE_CONTENT)) {
   console.log(`  H1: "${content.h1}"`);
 }
 
-console.log('\n✅ Prerender complete: 4 route-specific HTML files with crawler content.');
+console.log('\n✅ Prerender complete: 5 route-specific HTML files with crawler content.');
