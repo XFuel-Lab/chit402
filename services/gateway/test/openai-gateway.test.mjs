@@ -219,11 +219,11 @@ test('POST /v1/chat/completions returns an OpenAI completion + Chit receipt', as
   assert.equal(body.xfuel.verify_url, verifyHeader);
 
   // Public receipt chrome uses the real task id — no openai- shop invoice prefix.
-  // Title is just "Chit receipt" (task_id not appended), and xfuel- prefix stripped in display.
+  // Title is just "Chit" (task_id not appended), and xfuel- prefix becomes chit- in display.
   const receiptHtml = await fetch(`${base}/receipt/${body.xfuel.task_id}`);
   assert.equal(receiptHtml.status, 200);
   const html = await receiptHtml.text();
-  assert.match(html, /<title>Chit receipt<\/title>/);
+  assert.match(html, /<title>Chit<\/title>/);
   assert.doesNotMatch(html, /openai/i);
 });
 
@@ -252,8 +252,8 @@ test('GET /receipt/openai-* still 200 for pre-cutover task ids', async () => {
   const res = await fetch(`${base}/receipt/${legacyId}`);
   assert.equal(res.status, 200);
   const html = await res.text();
-  // Title is just "Chit receipt" (task_id not appended)
-  assert.match(html, /<title>Chit receipt<\/title>/);
+  // Title is just "Chit" (task_id not appended)
+  assert.match(html, /<title>Chit<\/title>/);
   // openai-* prefix is NOT stripped (only xfuel- is)
   assert.match(html, new RegExp(`class="taskid">${legacyId}<`));
 
