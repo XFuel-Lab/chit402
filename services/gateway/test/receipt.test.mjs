@@ -536,3 +536,33 @@ test('buildReceipt: issuer_signature has ES256 alg and JWKS uri', () => {
   assert.ok(r.issuer_signature.kid, 'kid present');
   assert.ok(r.issuer_signature.value, 'signature value present');
 });
+
+// ── Issuer signature verification correctness tests ─────────────────────────
+
+test('renderReceiptHtml: valid issuer signature shows "verified" badge', () => {
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  assert.ok(r.issuer_signature?.value, 'issuer_signature must be present');
+  const html = renderReceiptHtml(r);
+  assert.match(html, /<span class="badge ok">verified<\/span>/, 'verified badge must appear for valid signature');
+  assert.ok(!html.includes('badge bad">not verified'), 'must NOT show "not verified" badge for valid signature');
+});
+
+test('renderReceiptHtml: tampered receipt shows "not verified" badge (truthful)', () => {
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  assert.ok(r.issuer_signature?.value, 'issuer_signature must be present before tampering');
+  
+  // Tamper with a canonically signed field AFTER the signature was computed
+  r.payment.gross_amount = '9999999';
+  
+  const html = renderReceiptHtml(r);
+  assert.match(html, /<span class="badge bad">not verified<\/span>/, 'not verified badge must appear for tampered receipt');
+  assert.ok(!html.includes('badge ok">verified'), 'must NOT show "verified" badge for tampered receipt');
+});
+
+test('renderReceiptHtml: receipt without issuer_signature shows "unsigned"', () => {
+  const r = buildReceipt(usdcTask());
+  delete r.issuer_signature;
+  const html = renderReceiptHtml(r);
+  assert.match(html, /<span class="muted">unsigned<\/span>/, 'unsigned badge must appear when no issuer_signature');
+  assert.ok(!html.includes('badge ok">verified'), 'must NOT show verified badge when unsigned');
+});

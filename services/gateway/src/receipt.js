@@ -830,6 +830,7 @@ function proofWhyMissing(receipt) {
 
 /**
  * Server-side verification of issuer signature for honest HTML display.
+ * Uses module-scope ESM imports (verifyWithJwk, getIssuerPublicKeyJwk).
  * Returns verification result; never throws.
  */
 function verifyIssuerForHtml(receipt) {
@@ -838,13 +839,10 @@ function verifyIssuerForHtml(receipt) {
     return { verified: false, reason: 'no_issuer_signature' };
   }
   try {
-    const { getIssuerPublicKeyJwk } = require('./issuer-key.js');
     const jwk = getIssuerPublicKeyJwk();
     if (!jwk || jwk.kid !== sig.kid) {
       return { verified: false, reason: 'kid_mismatch' };
     }
-    const { verifyWithJwk } = require('./issuer-key.js');
-    const { canonicalSignedPayload } = require('./receipt.js');
     const payload = canonicalSignedPayload(receipt);
     const valid = verifyWithJwk(payload, sig.value, jwk);
     return { verified: valid, reason: valid ? 'verified' : 'signature_invalid' };
@@ -1054,7 +1052,7 @@ export function renderReceiptHtml(receipt) {
       <h2>Verification</h2>
       ${row('Issuer signature', issuerVerified.verified
         ? '<span class="badge ok">verified</span>'
-        : (issuerSig?.value ? '<span class="badge pending">public key available</span>' : '<span class="muted">unsigned</span>'))}
+        : (issuerSig?.value ? '<span class="badge bad">not verified</span>' : '<span class="muted">unsigned</span>'))}
       ${issuerSig?.alg ? row('Algorithm', `<code>${esc(issuerSig.alg)}</code>`) : ''}
       ${issuerSig?.kid ? row('Key ID', `<code>${esc(shortHash(issuerSig.kid, 8, 6))}</code>`) : ''}
       ${jwksUrl ? row('JWKS', `<a href="${esc(jwksUrl)}" target="_blank" rel="noopener">${esc(issuerSig.jwks_uri)} ↗</a>`) : ''}
