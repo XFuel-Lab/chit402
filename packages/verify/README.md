@@ -48,9 +48,24 @@ curl -s https://api.xfuel.app/receipt/task-123?format=json | npx xfuel-verify -
 | Check | Requires Network? | Description |
 |-------|-------------------|-------------|
 | Payment binding | No | Recompute commitment from receipt fields |
+| Issuer signature | No | ES256/JWKS verification (requires JWKS file) |
 | Output hash | No | Hash is on the receipt |
 | On-chain settlement | Yes | Query Base RPC for tx |
 | Nullifier anchor | Yes | Query ZKVerifierSP1 contract |
+
+## Issuer Signature Verification (ES256/JWKS)
+
+Receipts may include an `issuer_signature` signed with ES256 (P-256). Verify it offline:
+
+```bash
+# Download JWKS once (or obtain from trusted source)
+curl -o issuer-jwks.json https://api.chit402.com/.well-known/jwks.json
+
+# Verify receipt with JWKS file (no network during verification)
+npx xfuel-verify receipt.json --jwks-file issuer-jwks.json
+```
+
+The CLI does **not** automatically fetch JWKS to ensure offline verification. You must explicitly provide a JWKS file. Exit code 1 (failed) is returned if the signature is invalid or tampered.
 
 ## Frozen Fields
 

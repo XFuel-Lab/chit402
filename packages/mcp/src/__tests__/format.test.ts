@@ -59,7 +59,7 @@ test('describeError includes API error details when present', () => {
 test('describeError maps a transport failure (status 0 / network_error) to a connectivity hint', () => {
   const err = new XFuelApiError('connect ECONNREFUSED', 0, 'network_error');
   const msg = describeError(err);
-  assert.match(msg, /could not reach the XFuel API/);
+  assert.match(msg, /could not reach the Chit402 API/);
   assert.match(msg, /XFUEL_API_URL/);
 });
 

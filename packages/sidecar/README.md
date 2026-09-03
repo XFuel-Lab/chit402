@@ -39,7 +39,7 @@ const openai = new OpenAI({
   fetch: createSidecarFetch({
     signingSecret: process.env.XFUEL_SIGNING_SECRET,
     onReceipt: (receipt) => {
-      console.log('XFuel receipt:', receipt.task_id);
+      console.log('Chit402 receipt:', receipt.task_id);
       console.log('  Hub:', receipt.route.hub);
       console.log('  Model:', receipt.route.model);
       console.log('  Output hash:', receipt.output?.hash);
@@ -275,7 +275,7 @@ If a payment is claimed (`X-PAYMENT` header present), the sidecar fails closed o
 | `payment.ref` | x402 transaction hash (if paid) |
 | `signature` | HMAC tamper-evidence (client-signed, not merchant) |
 
-The sidecar receipt is **client-attested**, not merchant-attested. It proves *you recorded this call*. To make it merchant-attested, ingest it to the XFuel book where on-chain verification runs.
+The sidecar receipt is **client-attested**, not merchant-attested. It proves *you recorded this call*. To make it merchant-attested, ingest it to the Chit402 book where on-chain verification runs.
 
 ---
 

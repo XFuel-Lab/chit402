@@ -13,7 +13,7 @@ export const SERVER_NAME = 'xfuel-mcp-server';
 export const SERVER_VERSION = '0.4.0';
 
 /** Handshake text so a first-hour client does not need GitHub. */
-export const SERVER_INSTRUCTIONS = `XFuel first-hour: call list_models, then chat_completions to generate text (POST /v1/chat/completions). Default model xfuel/auto. The demo key xfuel-demo is shared and rate-limited (15/min, 150/day).
+export const SERVER_INSTRUCTIONS = `Chit402 first-hour: call list_models, then chat_completions to generate text (POST /v1/chat/completions). Default model xfuel/auto. The demo key xfuel-demo is shared and rate-limited (15/min, 150/day).
 
 submit_inference is the paid M2M door (POST /task-request). It requires model + sender + amount, forwards messages/input when provided, and returns HTTP 402 without a payer.
 
@@ -21,7 +21,7 @@ register_agent is POST /v1/agents/register. It binds an AAWP official or smart-a
 
 get_agent_book is GET|POST /v1/agents/:agent_id/book. Possession-gated last-N collected spend for that agent_id. Not a public index. Do not paste a human private key.
 
-Amounts are USDC 6 decimals (2000 = $0.002), not wei. api.xfuel.app is the public beta; paying it moves mainnet USDC.`;
+Amounts are USDC 6 decimals (2000 = $0.002), not wei. api.chit402.com (alias: api.xfuel.app) is the public beta; paying it moves mainnet USDC.`;
 
 export type TransportKind = 'stdio' | 'http';
 
@@ -54,7 +54,7 @@ export interface ParsedArgs {
   action?: 'help' | 'version';
 }
 
-const HELP = `xfuel-mcp — Model Context Protocol server for the XFuel Protocol
+const HELP = `xfuel-mcp — Model Context Protocol server for Chit402
 
 USAGE
   xfuel-mcp [options]
@@ -64,8 +64,8 @@ TRANSPORT
   --http                  Serve over streamable HTTP (for remote / shared use)
   --port <n>              HTTP port (default 3033; http only)
 
-XFUEL API
-  --api-url <url>         XFuel API base URL (default: hosted public beta)
+CHIT402 API
+  --api-url <url>         Chit402 API base URL (default: hosted public beta)
   --api-key <key>         API key / X-API-Key (default: public demo key "xfuel-demo")
 
 MISC
