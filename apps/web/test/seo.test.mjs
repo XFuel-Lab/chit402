@@ -116,6 +116,7 @@ test('prerendered money pages have unique crawler titles (after build)', { skip:
     'agent-shop': 'The till for an agent shop | Chit',
     'book': 'The book: this agent spent Y on this job | Chit',
     'book-bot': 'Paste this. The shop gets a till | Chit',
+    'docs': 'Chit — A receipt you still hold if the agent wallet moves.',
     'v1': 'Pay /v1/chat/completions | Chit',
   };
   

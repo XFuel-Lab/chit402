@@ -7,7 +7,7 @@ function isChitHost(host: string): boolean {
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
   const host = (req.headers.host || req.headers['x-forwarded-host'] || '') as string;
-  const domain = isChitHost(host) ? 'chit402.com' : 'www.xfuel.app';
+  const domain = isChitHost(host) ? 'www.chit402.com' : 'www.xfuel.app';
   
   const content = `User-agent: *
 Allow: /
