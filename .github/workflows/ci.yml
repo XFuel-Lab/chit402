@@ -31,59 +31,96 @@ jobs:
               - 'packages/sdk/**'
 
   # ── SDK unit tests (Jest + TypeScript) ─────────────────────
-  # Runs on push to main, or on PRs that touch packages/sdk/.
+  # Always creates a check. Runs real tests only when packages/sdk/** changes.
   jest:
-    name: Jest Unit Tests (SDK)
+    name: Jest Unit Tests
     runs-on: ubuntu-latest
     needs: changes
-    if: >-
-      github.event_name == 'push' ||
-      needs.changes.outputs.sdk == 'true'
     steps:
+      - name: No SDK changes — skipped
+        if: needs.changes.outputs.sdk != 'true' && github.event_name != 'push'
+        run: echo "No SDK changes detected; skipping Jest tests."
+
       - uses: actions/checkout@v7
+        if: needs.changes.outputs.sdk == 'true' || github.event_name == 'push'
 
       - uses: actions/setup-node@v7
+        if: needs.changes.outputs.sdk == 'true' || github.event_name == 'push'
         with:
           node-version: '22.x'
           cache: 'npm'
 
-      - run: npm ci
+      - name: Install root dependencies
+        if: needs.changes.outputs.sdk == 'true' || github.event_name == 'push'
+        run: npm ci
 
       - name: Install SDK test dependencies
+        if: needs.changes.outputs.sdk == 'true' || github.event_name == 'push'
         run: npm ci --prefix packages/sdk
 
       - name: Run Jest unit tests (xfuel-sdk)
+        if: needs.changes.outputs.sdk == 'true' || github.event_name == 'push'
         run: npm test --prefix packages/sdk -- --ci --coverage=false
 
+  # ════════════════════════════════════════════════════════════
+  # TEMPORARY COMPATIBILITY ALIAS (remove after branch protection update)
+  # Satisfies branch protection requiring PR 280's name "Jest Unit Tests (SDK)".
+  # ════════════════════════════════════════════════════════════
+  compat-jest-sdk:
+    name: Jest Unit Tests (SDK)
+    runs-on: ubuntu-latest
+    needs: jest
+    steps:
+      - name: Compatibility gate (temporary)
+        run: |
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║ TEMPORARY COMPATIBILITY CHECK                                ║"
+          echo "║                                                              ║"
+          echo "║ Real SDK tests run as: CI / Jest Unit Tests                  ║"
+          echo "║ This alias satisfies branch protection requiring the         ║"
+          echo "║ PR 280 name 'Jest Unit Tests (SDK)'.                         ║"
+          echo "║                                                              ║"
+          echo "║ Remove this job after updating branch protection rules.      ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+
   # ── Solidity compile + core contract tests ──────────────────
-  # Runs on push to main, or on PRs that touch contracts/core-layer/test paths.
+  # Always creates a check. Runs real tests only when contracts/core-layer/test paths change.
   contracts-core:
     name: Core Contract Tests
     runs-on: ubuntu-latest
     needs: changes
-    if: >-
-      github.event_name == 'push' ||
-      needs.changes.outputs.contracts == 'true'
     steps:
+      - name: No contract changes — skipped
+        if: needs.changes.outputs.contracts != 'true' && github.event_name != 'push'
+        run: echo "No contract/listener changes detected; skipping core tests."
+
       - uses: actions/checkout@v7
+        if: needs.changes.outputs.contracts == 'true' || github.event_name == 'push'
 
       - uses: actions/setup-node@v7
+        if: needs.changes.outputs.contracts == 'true' || github.event_name == 'push'
         with:
           node-version: '20'
           cache: 'npm'
 
-      - run: npm ci
+      - name: Install dependencies
+        if: needs.changes.outputs.contracts == 'true' || github.event_name == 'push'
+        run: npm ci
 
       - name: Compile contracts
+        if: needs.changes.outputs.contracts == 'true' || github.event_name == 'push'
         run: npx hardhat compile
 
       - name: Generate TypeChain types
+        if: needs.changes.outputs.contracts == 'true' || github.event_name == 'push'
         run: npm run typechain
 
       - name: Core listener (node:test)
+        if: needs.changes.outputs.contracts == 'true' || github.event_name == 'push'
         run: npm run test:contracts:core:listener
 
       - name: Core contracts + security (Hardhat)
+        if: needs.changes.outputs.contracts == 'true' || github.event_name == 'push'
         run: npm run test:contracts:core:solidity
 
   # ── Cypress E2E: no active specs ────────────────────────────
