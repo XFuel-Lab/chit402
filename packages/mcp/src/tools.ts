@@ -85,7 +85,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): void {
     'chat_completions',
     {
       title: 'Chat completions (unmetered /v1)',
-      description: `Generate text via XFuel's OpenAI-compatible POST /v1/chat/completions.
+      description: `Generate text via Chit402's OpenAI-compatible POST /v1/chat/completions.
 This is the first-hour / demo path. With the demo key it is unmetered (rate-limited).
 It is NOT submit_inference and does NOT spend USDC.
 
@@ -342,7 +342,7 @@ using that session). Unauth or wrong proof returns 401/403 with an empty body.`,
     'get_task_status',
     {
       title: 'Get task status',
-      description: `Get the current status of an XFuel task, including proof outcome and fee breakdown.
+      description: `Get the current status of a Chit402 task, including proof outcome and fee breakdown.
 
 Args:
   - task_id (string): from chat_completions (xfuel.task_id) or submit_inference
@@ -546,8 +546,8 @@ Unmetered chat_completions does not need this quote.`,
   server.registerTool(
     'get_health',
     {
-      title: 'Get XFuel API health',
-      description: `Check the connected XFuel API's health and configuration (fee config, supported
+      title: 'Get Chit402 API health',
+      description: `Check the connected Chit402 API's health and configuration (fee config, supported
 chains, message types, demo limits). Useful for discovery/diagnostics.
 
 Args: none.
@@ -555,7 +555,7 @@ Args: none.
 Returns JSON: the /health payload (status, server, version, fee_config, chains, message_types, …).`,
       inputSchema: {},
       annotations: {
-        title: 'Get XFuel API health',
+        title: 'Get Chit402 API health',
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
@@ -615,13 +615,13 @@ Bring your own XFUEL_API_KEY for buyer-scoped stats.`,
     'list_models',
     {
       title: 'List routable models',
-      description: `List models XFuel can route (GET /v1/models). Call first, then pass an id to
+      description: `List models Chit402 can route (GET /v1/models). Call first, then pass an id to
 chat_completions (unmetered) or submit_inference (paid).
 
 Rows include hub, modality, pricing, availability. Unmetered vs paid is the TOOL
 (chat_completions vs submit_inference), not a per-id flag. No side effects.
 
-Returns OpenAI {object,data} plus XFuel extras on each row.`,
+Returns OpenAI {object,data} plus Chit402 extras on each row.`,
       inputSchema: {},
       annotations: {
         title: 'List routable models',
@@ -651,7 +651,7 @@ Returns OpenAI {object,data} plus XFuel extras on each row.`,
     {
       title: 'Verify model authenticity (PoMA)',
       description: `Look up a model's on-chain authenticity commitment and (optionally) check a claimed
-commitment against it — the anti-downgrade check for XFuel Verified Inference (Tier-3).
+commitment against it — the anti-downgrade check for Chit402 Verified Inference (Tier-3).
 Reads the ModelRegistry on Base; requires the server to be started with XFUEL_RPC_URL +
 MODEL_REGISTRY_ADDRESS.
 
@@ -765,7 +765,7 @@ tiers_available, note } }.`,
           amount: args.amount,
         });
 
-        // Tier-1/Tier-2 are live for every XFuel task; Tier-3 is roadmap.
+        // Tier-1/Tier-2 are live for every Chit402 task; Tier-3 is roadmap.
         const tiers_available = ['signed', 'settlement'];
         let model_registered: boolean | null = null;
         let model_commitment: string | null = null;
@@ -824,7 +824,7 @@ tiers_available, note } }.`,
     {
       title: 'Read an ERC-8004 validation record',
       description: `Read an ERC-8004 Validation Registry record by requestHash — the on-chain verdict a
-validator (e.g. XFuel) posted for an agent task. Lets an agent independently check "was this
+validator (e.g. Chit402) posted for an agent task. Lets an agent independently check "was this
 task independently validated, by whom, and did it pass?" before trusting/paying a counterparty.
 Read-only.
 
@@ -902,7 +902,7 @@ Returns JSON: { request_hash, validator_address, agent_id, response, passed, res
     'get_provider_stake',
     {
       title: 'Read a provider stake + slash history',
-      description: `Read an XFuel Verified Inference provider's economic security: how much it has staked,
+      description: `Read a Chit402 Verified Inference provider's economic security: how much it has staked,
 whether it's an active provider, and how many times it's been slashed for a failed spot-check.
 Lets an agent "shop on trust" — check a counterparty's skin-in-the-game before paying.
 Read-only. See docs/VERIFIED_INFERENCE_TIERS.md.

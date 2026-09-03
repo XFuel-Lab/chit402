@@ -1,7 +1,7 @@
 {
   "name": "xfuel-sdk",
-  "version": "0.5.5",
-  "description": "XFuel M2M SDK — USDC/x402 on Base, tiered receipts, SP1 proofs. Submit AI tasks, pay, prove, verify.",
+  "version": "0.6.0",
+  "description": "Chit402 SDK — USDC/x402 on Base, tiered receipts, SP1 proofs. Submit AI tasks, pay, prove, verify.",
   "main": "./index.cjs",
   "types": "dist/index.d.ts",
   "exports": {
@@ -30,9 +30,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/XFuel-Lab/xfuel-protocol/tree/main/packages/sdk#readme",
+  "homepage": "https://github.com/XFuel-Lab/chit402/tree/main/packages/sdk#readme",
   "bugs": {
-    "url": "https://github.com/XFuel-Lab/xfuel-protocol/issues"
+    "url": "https://github.com/XFuel-Lab/chit402/issues"
   },
   "scripts": {
     "build": "tsc",
@@ -50,6 +50,7 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [
+    "chit402",
     "xfuel",
     "ai",
     "agents",
@@ -64,11 +65,11 @@
     "bittensor",
     "akash"
   ],
-  "author": "XFuel Protocol",
+  "author": "XFuel Lab",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/XFuel-Lab/xfuel-protocol.git",
+    "url": "https://github.com/XFuel-Lab/chit402.git",
     "directory": "packages/sdk"
   },
   "dependencies": {

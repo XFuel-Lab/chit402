@@ -1,7 +1,7 @@
 {
   "name": "xfuel-sidecar",
   "version": "0.1.0",
-  "description": "XFuel sidecar — emit XFuel receipts from any OpenAI-compatible upstream, not just api.xfuel.app. System of record, not cheapest hop.",
+  "description": "Chit402 sidecar — emit receipts from any OpenAI-compatible upstream, not just api.chit402.com. System of record, not cheapest hop.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -32,6 +32,7 @@
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
+    "chit402",
     "xfuel",
     "ai",
     "agents",
@@ -42,11 +43,18 @@
     "openrouter",
     "openai"
   ],
-  "author": "XFuel Protocol",
+  "author": "XFuel Lab",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/XFuel-Lab/chit402/tree/main/packages/sidecar#readme",
+  "bugs": {
+    "url": "https://github.com/XFuel-Lab/chit402/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/XFuel-Lab/xfuel-protocol.git",
+    "url": "https://github.com/XFuel-Lab/chit402.git",
     "directory": "packages/sidecar"
   },
   "dependencies": {},

@@ -1,15 +1,15 @@
 # xfuel-mcp
 
-MCP server for XFuel.
+MCP server for Chit402.
 
 **First hour:** `list_models` then `chat_completions` — that is unmetered `POST /v1/chat/completions`.
 `submit_inference` is the **paid** `/task-request` door and returns 402 without a payer. It is not unmetered.
 
-Zero config talks to https://api.xfuel.app with the public demo key.
+Zero config talks to https://api.chit402.com (alias: https://api.xfuel.app) with the public demo key.
 
 Public beta. **Paying that host moves real USDC on Base mainnet.** MCP does not take a human private key to pay.
 
-npm: `xfuel-mcp` · Registry: `io.github.XFuel-Lab/xfuel-mcp`
+npm: `xfuel-mcp` · Registry: `io.github.XFuel-Lab/xfuel-mcp` · Docs: https://chit402.com
 
 ## Run
 
@@ -64,7 +64,7 @@ cd ../mcp
 npm publish --access public --auth-type=web
 ```
 
-See [../sdk/PUBLISHING.md](../sdk/PUBLISHING.md). Publish **xfuel-sdk@0.5.5** first, then this package (`0.3.1`). `xfuel-sdk@^0.5.4` accepts 0.5.5.
+See [../sdk/PUBLISHING.md](../sdk/PUBLISHING.md). Publish **xfuel-sdk@0.6.0** first, then this package (`0.4.0`). `xfuel-sdk@^0.6.0` is required.
 
 ## Docs
 

@@ -1,16 +1,18 @@
 /**
- * @xfuel/verify — Offline verification for XFuel receipts.
+ * @xfuel/verify — Offline verification for Chit402 receipts.
  *
- * Verify payment binding and output commitment WITHOUT calling the XFuel API.
+ * Verify payment binding and output commitment WITHOUT calling the Chit402 API.
  * Third parties use this to confirm:
  *   1. The receipt's payment binding matches on-chain settlement
  *   2. The output hash commitment is correct
- *   3. (Optional) The SP1 nullifier is anchored on-chain
+ *   3. The issuer signature is valid (ES256/JWKS)
+ *   4. (Optional) The SP1 nullifier is anchored on-chain
  *
  * See docs/specs/RECEIPT_V2_SEMANTICS.md for the verification algorithm.
  */
 
 import { JsonRpcProvider, Contract, keccak256, toUtf8Bytes } from 'ethers';
+import { createPublicKey, verify, type KeyObject } from 'node:crypto';
 import {
   computePaymentCommitment,
   computeInferenceBinding,
@@ -39,7 +41,7 @@ const ZK_VERIFIER_ABI = [
   'function usedNullifiers(bytes32) view returns (bool)',
 ];
 
-/** XFuel receipt (v2/v3 compatible). */
+/** Chit402 receipt (v2/v3 compatible). */
 export interface XFuelReceipt {
   schema?: string;
   task_id: string;
@@ -58,6 +60,14 @@ export interface XFuelReceipt {
     ref?: string | null;
     gross_amount?: string;
     net_amount?: string;
+    fee_amount?: string;
+    fee_bps?: number;
+    protocol_fee_bps?: number;
+    platform_fee?: string;
+    platform_fee_bps?: number;
+  };
+  provider_cogs?: {
+    actual?: string;
   };
   output?: {
     hash?: string;
@@ -82,6 +92,39 @@ export interface XFuelReceipt {
     alg?: string;
     value?: string;
   };
+  issuer_signature?: {
+    alg?: string;
+    value?: string;
+    kid?: string;
+  };
+}
+
+/** JWK public key for ES256 verification. */
+export interface Es256Jwk {
+  kty: 'EC';
+  crv: 'P-256';
+  x: string;
+  y: string;
+  kid?: string;
+  alg?: string;
+  use?: string;
+}
+
+/** JWKS (JSON Web Key Set) structure. */
+export interface Jwks {
+  keys: Es256Jwk[];
+}
+
+/** Result of ECDSA signature verification. */
+export interface IssuerSignatureVerification {
+  /** Whether an issuer signature was present to check. */
+  checked: boolean;
+  /** True if the ECDSA signature is valid. */
+  valid: boolean;
+  /** Key ID from the signature. */
+  kid?: string;
+  /** Reason for failure when valid=false. */
+  reason?: string;
 }
 
 export interface BindingVerification {
@@ -103,6 +146,7 @@ export interface NullifierVerification {
 export interface ReceiptVerification {
   receipt_id: string;
   binding: BindingVerification;
+  issuer_signature: IssuerSignatureVerification;
   nullifier: NullifierVerification;
   output_hash: string | null;
   hub: string | null;
@@ -111,6 +155,129 @@ export interface ReceiptVerification {
   tx: string | null;
   overall: 'verified' | 'partial' | 'failed';
   errors: string[];
+}
+
+/**
+ * Canonical, order-stable payload an issuer signature covers.
+ * MUST match `canonicalSignedPayload` in services/gateway/src/receipt.js exactly.
+ *
+ * Signed fields (15 total):
+ *   1. task_id
+ *   2. payment.rail
+ *   3. payment.ref
+ *   4. payment.gross_amount
+ *   5. payment.net_amount
+ *   6. payment.fee_amount
+ *   7. payment.protocol_fee_bps ?? payment.fee_bps
+ *   8. payment.platform_fee
+ *   9. payment.platform_fee_bps
+ *  10. provider_cogs.actual
+ *  11. route.model
+ *  12. route.model_commitment.commitment
+ *  13. route.provider
+ *  14. output.hash
+ *  15. binding.expected_commitment
+ */
+export function canonicalIssuerPayload(receipt: XFuelReceipt): string {
+  return JSON.stringify([
+    receipt.task_id ?? null,
+    receipt.payment?.rail ?? null,
+    receipt.payment?.ref ?? null,
+    receipt.payment?.gross_amount ?? null,
+    receipt.payment?.net_amount ?? null,
+    receipt.payment?.fee_amount ?? null,
+    receipt.payment?.protocol_fee_bps ?? receipt.payment?.fee_bps ?? null,
+    receipt.payment?.platform_fee ?? null,
+    receipt.payment?.platform_fee_bps ?? null,
+    receipt.provider_cogs?.actual ?? null,
+    receipt.route?.model ?? null,
+    receipt.route?.model_commitment?.commitment ?? null,
+    receipt.route?.provider ?? null,
+    receipt.output?.hash ?? null,
+    receipt.binding?.expected_commitment ?? null,
+  ]);
+}
+
+/**
+ * Verify a receipt's ES256 issuer signature against a JWK (public key).
+ * This is the public-key verification path — no shared secret required.
+ *
+ * Verification steps:
+ *   1. GET /receipt/:taskId?format=json → receipt.issuer_signature
+ *   2. GET /.well-known/jwks.json → find key matching issuer_signature.kid
+ *   3. ES256 verify canonicalIssuerPayload(receipt) against the signature
+ *
+ * @param receipt - Receipt JSON with issuer_signature
+ * @param jwk - JWK public key { kty: 'EC', crv: 'P-256', x, y }
+ */
+export function verifyIssuerSignature(
+  receipt: XFuelReceipt,
+  jwk: Es256Jwk,
+): IssuerSignatureVerification {
+  const sig = receipt.issuer_signature;
+  if (!sig || !sig.value) {
+    return { checked: false, valid: false, reason: 'no_issuer_signature' };
+  }
+  if (sig.alg !== 'ES256') {
+    return { checked: false, valid: false, reason: `unsupported_alg: ${sig.alg}` };
+  }
+  if (!jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256') {
+    return { checked: false, valid: false, reason: 'invalid_jwk' };
+  }
+  if (sig.kid && jwk.kid && sig.kid !== jwk.kid) {
+    return { checked: false, valid: false, reason: 'kid_mismatch' };
+  }
+
+  try {
+    const jwkInput = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y } as const;
+    const publicKey: KeyObject = createPublicKey({ key: jwkInput, format: 'jwk' });
+    const signature = Buffer.from(sig.value, 'base64url');
+    const payload = canonicalIssuerPayload(receipt);
+    const valid = verify('sha256', Buffer.from(payload, 'utf8'), {
+      key: publicKey,
+      dsaEncoding: 'ieee-p1363',
+    }, signature);
+    return { checked: true, valid, kid: sig.kid };
+  } catch (err) {
+    return { checked: true, valid: false, kid: sig.kid, reason: `verify_error: ${(err as Error).message}` };
+  }
+}
+
+/**
+ * Verify a receipt's ES256 issuer signature against a JWKS (key set).
+ * Finds the matching key by kid and verifies.
+ *
+ * @param receipt - Receipt JSON with issuer_signature
+ * @param jwks - JWKS with keys array
+ */
+export function verifyIssuerSignatureWithJwks(
+  receipt: XFuelReceipt,
+  jwks: Jwks,
+): IssuerSignatureVerification {
+  const sig = receipt.issuer_signature;
+  if (!sig || !sig.value) {
+    return { checked: false, valid: false, reason: 'no_issuer_signature' };
+  }
+  if (!jwks || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
+    return { checked: false, valid: false, reason: 'empty_jwks' };
+  }
+
+  // Find matching key by kid, or try all ES256 keys if no kid on signature
+  const candidates = sig.kid
+    ? jwks.keys.filter(k => k.kid === sig.kid && k.alg === 'ES256')
+    : jwks.keys.filter(k => k.alg === 'ES256');
+
+  if (candidates.length === 0) {
+    return { checked: false, valid: false, reason: 'no_matching_key' };
+  }
+
+  for (const jwk of candidates) {
+    const result = verifyIssuerSignature(receipt, jwk);
+    if (result.valid) {
+      return result;
+    }
+  }
+  return { checked: true, valid: false, reason: 'signature_invalid' };
 }
 
 /**
@@ -246,32 +413,9 @@ export async function verifyNullifier(
 
 /**
  * Canonical signed payload for HMAC verification.
- * Matches services/gateway/src/receipt.js:canonicalSignedPayload
+ * Alias of canonicalIssuerPayload — both must produce identical bytes.
  */
-export function canonicalSignedPayload(receipt: XFuelReceipt): string {
-  return JSON.stringify([
-    receipt.task_id ?? null,
-    receipt.payment?.rail ?? null,
-    receipt.payment?.ref ?? null,
-    receipt.payment?.gross_amount ?? null,
-    receipt.payment?.net_amount ?? null,
-    // fee_amount not directly available, use null
-    null,
-    // protocol_fee_bps
-    null,
-    // platform_fee
-    null,
-    // platform_fee_bps
-    null,
-    // provider_cogs.actual
-    null,
-    receipt.route?.model ?? null,
-    receipt.route?.model_commitment?.commitment ?? null,
-    receipt.route?.provider ?? null,
-    receipt.output?.hash ?? null,
-    receipt.binding?.expected_commitment ?? null,
-  ]);
-}
+export const canonicalSignedPayload = canonicalIssuerPayload;
 
 /**
  * Hash the canonical payload (for ERC-8004 response_hash).
@@ -281,15 +425,17 @@ export function hashCanonicalPayload(receipt: XFuelReceipt): string {
 }
 
 /**
- * Full receipt verification — binding + optional nullifier check.
+ * Full receipt verification — binding + issuer signature + optional nullifier check.
  *
- * @param receipt The XFuel receipt JSON
+ * @param receipt The Chit402 receipt JSON
+ * @param options.jwks JWKS for issuer signature verification (no network fetch)
  * @param options.checkNullifier Whether to verify nullifier on-chain (requires network)
  * @param options.rpcUrl RPC URL for on-chain checks
  */
 export async function verifyReceipt(
   receipt: XFuelReceipt,
   options: {
+    jwks?: Jwks;
     checkNullifier?: boolean;
     rpcUrl?: string;
     verifierAddress?: string;
@@ -301,6 +447,28 @@ export async function verifyReceipt(
   const binding = verifyBinding(receipt);
   if (!binding.matches && binding.expected) {
     errors.push('Payment binding mismatch');
+  }
+
+  // Verify issuer signature if JWKS provided
+  let issuer_signature: IssuerSignatureVerification;
+  if (options.jwks) {
+    issuer_signature = verifyIssuerSignatureWithJwks(receipt, options.jwks);
+    if (issuer_signature.checked && !issuer_signature.valid) {
+      errors.push(`Issuer signature invalid: ${issuer_signature.reason}`);
+    }
+  } else if (receipt.issuer_signature) {
+    issuer_signature = {
+      checked: false,
+      valid: false,
+      kid: receipt.issuer_signature.kid,
+      reason: 'JWKS not provided — pass jwks option to verify issuer signature',
+    };
+  } else {
+    issuer_signature = {
+      checked: false,
+      valid: false,
+      reason: 'No issuer signature present on receipt',
+    };
   }
 
   // Verify nullifier on-chain if requested
@@ -331,14 +499,34 @@ export async function verifyReceipt(
   const tx = receipt.payment?.ref ?? null;
   const output_hash = receipt.output?.hash ?? null;
 
-  // Determine overall status
+  // Determine overall status with strict signature semantics:
+  // - If JWKS provided and signature invalid/kid mismatch/no matching key → 'failed'
+  // - If receipt has issuer_signature but no JWKS provided → 'partial' (cannot verify)
+  // - Unsigned receipts can be 'partial' or 'verified' based on binding
   let overall: 'verified' | 'partial' | 'failed';
-  if (binding.matches && (!options.checkNullifier || nullifier.anchored)) {
-    overall = 'verified';
-  } else if (binding.matches || (nullifier.verified && nullifier.anchored)) {
+
+  // Check for signature verification failure (JWKS provided but signature invalid)
+  const jwksProvided = !!options.jwks;
+  const hasIssuerSig = !!receipt.issuer_signature;
+  const issuerSigInvalid = jwksProvided && hasIssuerSig && !issuer_signature.valid;
+
+  // Binding failure
+  const bindingFailed = binding.expected && !binding.matches;
+
+  if (issuerSigInvalid || bindingFailed) {
+    // JWKS provided but signature invalid, OR binding mismatch → failed
+    overall = 'failed';
+  } else if (hasIssuerSig && !jwksProvided) {
+    // Receipt has signature but no JWKS provided → partial (cannot verify signature)
     overall = 'partial';
-  } else if (!binding.expected && !receipt.proof?.nullifier) {
-    // No binding to verify (unmetered/demo) — not a failure
+  } else if (binding.matches && (!options.checkNullifier || nullifier.anchored)) {
+    // Binding matches, signature OK (or no signature), nullifier OK → verified
+    overall = 'verified';
+  } else if (binding.matches || issuer_signature.valid || (nullifier.verified && nullifier.anchored)) {
+    // At least one check passed → partial
+    overall = 'partial';
+  } else if (!binding.expected && !receipt.proof?.nullifier && !hasIssuerSig) {
+    // No binding/sig/nullifier to verify (unmetered/demo) → partial
     overall = 'partial';
   } else {
     overall = 'failed';
@@ -347,6 +535,7 @@ export async function verifyReceipt(
   return {
     receipt_id: receipt.task_id,
     binding,
+    issuer_signature,
     nullifier,
     output_hash,
     hub,
@@ -360,10 +549,13 @@ export async function verifyReceipt(
 
 export default {
   verifyBinding,
+  verifyIssuerSignature,
+  verifyIssuerSignatureWithJwks,
   verifyNullifier,
   verifyReceipt,
   computePaymentCommitment,
   computeInferenceBinding,
+  canonicalIssuerPayload,
   canonicalSignedPayload,
   hashCanonicalPayload,
   ZK_VERIFIER_ADDRESS,

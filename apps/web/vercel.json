@@ -31,6 +31,10 @@
       "headers": [{ "key": "Content-Type", "value": "image/svg+xml; charset=utf-8" }]
     },
     {
+      "source": "/chit402-icon.svg",
+      "headers": [{ "key": "Content-Type", "value": "image/svg+xml; charset=utf-8" }]
+    },
+    {
       "source": "/favicon.ico",
       "headers": [{ "key": "Content-Type", "value": "image/x-icon" }]
     },

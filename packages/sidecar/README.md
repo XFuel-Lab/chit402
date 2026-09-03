@@ -1,19 +1,21 @@
-# XFuel Sidecar
+# xfuel-sidecar
 
 **System of record, not cheapest hop.** The book survives losing the route.
 
-Emit XFuel-shaped receipts from any OpenAI-compatible upstream — OpenRouter, Groq, Together, or your own endpoint. The sidecar does not need to win the route; it stamps the receipt while the call happens.
+Emit Chit402-shaped receipts from any OpenAI-compatible upstream — OpenRouter, Groq, Together, or your own endpoint. The sidecar does not need to win the route; it stamps the receipt while the call happens.
+
+npm: `xfuel-sidecar` · License: Apache-2.0 · Docs: https://chit402.com
 
 ## Why
 
-If your book only exists when traffic goes through `api.xfuel.app`, any provider that adds a signed invoice eats XFuel. The sidecar ensures every inference call — wherever it routes — produces the same receipt schema:
+If your book only exists when traffic goes through `api.chit402.com`, any provider that adds a signed invoice eats Chit. The sidecar ensures every inference call — wherever it routes — produces the same receipt schema:
 
 - `hub` — who served it (e.g., `openrouter.ai`, `api.groq.com`)
 - `model` — what model ran
 - `amount` — USDC cost (atomic, 6 decimals)
 - `output_hash` — commitment to the response
 - `payment_ref` — x402 transaction binding (if present)
-- `verify_url` — works even if XFuel did not run the model
+- `verify_url` — works even if Chit402 did not run the model
 
 ## Install
 
@@ -37,7 +39,7 @@ const openai = new OpenAI({
   fetch: createSidecarFetch({
     signingSecret: process.env.XFUEL_SIGNING_SECRET,
     onReceipt: (receipt) => {
-      console.log('XFuel receipt:', receipt.task_id);
+      console.log('Chit402 receipt:', receipt.task_id);
       console.log('  Hub:', receipt.route.hub);
       console.log('  Model:', receipt.route.model);
       console.log('  Output hash:', receipt.output?.hash);
@@ -137,9 +139,9 @@ Supports:
 
 ---
 
-## Ingest to XFuel Book
+## Ingest to Chit402 Book
 
-After wrapping a call, post the receipt to XFuel's possession-gated book:
+After wrapping a call, post the receipt to Chit402's possession-gated book:
 
 ```ts
 import { ingestToBook, registerAgent } from 'xfuel-sidecar';
@@ -171,7 +173,7 @@ await ingestToBook(
 );
 ```
 
-**Note:** Ingest requires a real on-chain USDC transfer. XFuel verifies the payment before adding it to the book. Uncollected (metered-by-provider-key) calls create local receipts but cannot be ingested until payment is verified.
+**Note:** Ingest requires a real on-chain USDC transfer. Chit402 verifies the payment before adding it to the book. Uncollected (metered-by-provider-key) calls create local receipts but cannot be ingested until payment is verified.
 
 ---
 
@@ -273,7 +275,7 @@ If a payment is claimed (`X-PAYMENT` header present), the sidecar fails closed o
 | `payment.ref` | x402 transaction hash (if paid) |
 | `signature` | HMAC tamper-evidence (client-signed, not merchant) |
 
-The sidecar receipt is **client-attested**, not merchant-attested. It proves *you recorded this call*. To make it merchant-attested, ingest it to the XFuel book where on-chain verification runs.
+The sidecar receipt is **client-attested**, not merchant-attested. It proves *you recorded this call*. To make it merchant-attested, ingest it to the Chit402 book where on-chain verification runs.
 
 ---
 

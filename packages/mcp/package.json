@@ -1,8 +1,8 @@
 {
   "name": "xfuel-mcp",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "mcpName": "io.github.XFuel-Lab/xfuel-mcp",
-  "description": "First-party MCP server for XFuel — chat_completions (unmetered /v1), paid task submit, quotes, and settlement proofs. Runs over stdio or streamable HTTP.",
+  "description": "Official MCP server for Chit402 — chat completions (unmetered /v1), paid task submit, quotes, and settlement proofs. Runs over stdio or streamable HTTP.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -31,6 +31,7 @@
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
   },
   "keywords": [
+    "chit402",
     "xfuel",
     "mcp",
     "model-context-protocol",
@@ -38,26 +39,25 @@
     "depin",
     "zk",
     "sp1",
-    "theta",
     "inference",
     "agent-tools"
   ],
-  "author": "XFuel Protocol",
+  "author": "XFuel Lab",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/XFuel-Lab/xfuel-protocol/tree/main/xfuel-mcp#readme",
+  "homepage": "https://github.com/XFuel-Lab/chit402/tree/main/packages/mcp#readme",
   "bugs": {
-    "url": "https://github.com/XFuel-Lab/xfuel-protocol/issues"
+    "url": "https://github.com/XFuel-Lab/chit402/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/XFuel-Lab/xfuel-protocol.git",
-    "directory": "xfuel-mcp"
+    "url": "https://github.com/XFuel-Lab/chit402.git",
+    "directory": "packages/mcp"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "ethers": "^6.16.0",
     "express": "^5.2.1",
-    "xfuel-sdk": "^0.5.4",
+    "xfuel-sdk": "^0.6.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -41,7 +41,7 @@ export function fail(message: string): ToolResult {
 /** Turn any thrown value into a concise, actionable message. */
 export function describeError(err: unknown): string {
   if (err instanceof XFuelApiError) {
-    const base = `XFuel API ${err.status || ''} ${err.code}: ${err.message}`.replace(/\s+/g, ' ').trim();
+    const base = `Chit402 API ${err.status || ''} ${err.code}: ${err.message}`.replace(/\s+/g, ' ').trim();
     const details = err.details?.length ? ` (${err.details.join('; ')})` : '';
     // Code-specific checks first — several of these carry status 0, so they must
     // precede the generic status-0 (network) branch below.
@@ -53,7 +53,7 @@ export function describeError(err: unknown): string {
     }
     // Transport-level failures surface as status 0 / network_error in the SDK.
     if (err.status === 0 || err.code === 'network_error') {
-      return `${base}${details} — could not reach the XFuel API (network/timeout). Check XFUEL_API_URL and connectivity.`;
+      return `${base}${details} — could not reach the Chit402 API (network/timeout). Check XFUEL_API_URL and connectivity.`;
     }
     if (err.status === 400 || err.code === 'validation_error') {
       return `${base}${details} — invalid request; fix the flagged fields and retry.`;
@@ -61,7 +61,7 @@ export function describeError(err: unknown): string {
     if (err.status === 401) return `${base}${details} — check XFUEL_API_KEY.`;
     if (err.status === 429) return `${base}${details} — rate limited; slow down or use a private API key.`;
     if (err.status === 404) return `${base}${details} — resource not found (check the task_id).`;
-    if (err.status >= 500) return `${base}${details} — the XFuel API had a server error; retry shortly.`;
+    if (err.status >= 500) return `${base}${details} — the Chit402 API had a server error; retry shortly.`;
     return `${base}${details}`;
   }
   if (err instanceof Error) return err.message;
