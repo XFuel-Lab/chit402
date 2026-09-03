@@ -1,6 +1,6 @@
 import config from './config.js';
 import { isX402Enabled, defaultRail, toCaip2Network, usdcFor } from './x402-adapter.js';
-import { XFUEL_ICON_URL } from './xfuel-icon.js';
+import { buildIconUrl } from './xfuel-icon.js';
 import { defaultFacilitatorUrlForNetwork, PAYAI_FACILITATOR_URL, PAYAI_DEFAULT_FEE_PAYER } from './x402-facilitator.js';
 import { describePricing } from './pricing.js';
 
@@ -483,7 +483,7 @@ export function buildX402Manifest(baseUrl = '') {
   // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.
   const serviceName = 'Chit';
   const tags = ['llm', 'openai-compatible', 'chat-completions', 'inference'];
-  const iconUrl = XFUEL_ICON_URL;
+  const iconUrl = buildIconUrl(base);
 
   // Build accepts array: Base (primary) + Solana (optional)
   const accepts = [

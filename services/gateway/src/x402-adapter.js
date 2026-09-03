@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import logger from './logger.js';
-import { XFUEL_ICON_URL } from './xfuel-icon.js';
+import { buildIconUrl } from './xfuel-icon.js';
 import {
   verifyViaFacilitator,
   settleViaFacilitator,
@@ -475,7 +475,7 @@ export function buildPaymentChallenge(p, opts = {}) {
   const serviceName = 'Chit';
   // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.
   const tags = ['llm', 'openai-compatible', 'chat-completions', 'inference'];
-  const iconUrl = XFUEL_ICON_URL;
+  const iconUrl = buildIconUrl(baseUrl);
 
   // Update description when both networks are available.
   const solanaEnabled = p.solana?.enabled && p.solana?.payTo;

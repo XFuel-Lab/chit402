@@ -76,7 +76,7 @@ export default function Layout() {
           }}
         >
           Chit is the product. {config.parent} is the parent.
-          {' '}The wire is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>api.xfuel.app/v1</code>.
+          {' '}The wire is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>api.chit402.com/v1</code>.
         </div>
       ) : (
         <div
