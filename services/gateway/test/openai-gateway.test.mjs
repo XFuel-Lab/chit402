@@ -42,7 +42,7 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
   assert.equal(res.status, 200);
   const spec = await res.json();
   assert.equal(spec.openapi, '3.1.0');
-  assert.equal(spec.info.title, 'Chit');
+  assert.equal(spec.info.title, 'Chit402', 'OpenAPI title is Chit402 (public/searchable name)');
   assert.equal(typeof spec.info['x-guidance'], 'string');
   assert.deepEqual(Object.keys(spec.paths), [
     '/v1/chat/completions',
@@ -112,7 +112,7 @@ test('GET /.well-known/x402 and agent-card.json still serve after x402list', asy
   const card = await fetch(`${base}/.well-known/agent-card.json`);
   assert.equal(card.status, 200);
   const body = await card.json();
-  assert.equal(body.name, 'Chit');
+  assert.equal(body.name, 'Chit402', 'agent-card name is Chit402');
   assert.ok(Array.isArray(body.skills));
 });
 

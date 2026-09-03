@@ -7,14 +7,16 @@ test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () =>
   const m = buildX402Manifest('https://api-testnet.xfuel.app');
 
   assert.equal(m.x402Version, 2);
-  assert.equal(m.name, 'Chit Protocol');
+  assert.equal(m.name, 'Chit402', 'manifest name is Chit402 (public/searchable name)');
+  assert.equal(m.serviceName, 'Chit402', 'serviceName is Chit402 (public/searchable name)');
   assert.equal(typeof m.description, 'string');
   assert.ok(Array.isArray(m.tags), 'manifest tags is an array');
   assert.ok(m.tags.length <= 5, 'manifest tags ≤5 items');
   assert.ok(m.tags.includes('llm'), 'manifest tags includes llm');
   assert.ok(!m.tags.includes('x402'), 'manifest tags omits legacy x402 tag');
   assert.equal(typeof m.x402_enabled, 'boolean');
-  assert.equal(m.iconUrl, 'https://api-testnet.xfuel.app/xfuel-icon.svg', 'iconUrl matches baseUrl host');
+  assert.equal(m.iconUrl, 'https://api-testnet.xfuel.app/chit402-icon.svg', 'iconUrl uses Chit402 icon');
+  assert.ok(!m.iconUrl.includes('xfuel-icon'), 'iconUrl does not contain legacy xfuel-icon');
   assert.ok(['usdc', 'tfuel'].includes(m.default_rail));
 
   // Facilitator block reflects config.
@@ -119,7 +121,7 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
   const spec = buildOpenApiSpec('https://api.xfuel.app');
 
   assert.equal(spec.openapi, '3.1.0');
-  assert.equal(spec.info.title, 'Chit');
+  assert.equal(spec.info.title, 'Chit402', 'OpenAPI title is Chit402 (public/searchable name)');
   assert.equal(typeof spec.info.version, 'string');
   assert.match(spec.info.description, /Chit is the book/);
   assert.match(spec.info.description, /hub, model, and amount/);
@@ -182,4 +184,33 @@ test('buildOpenApiSpec: omits servers when no base URL is known', () => {
   const spec = buildOpenApiSpec('');
   assert.equal(spec.servers, undefined);
   assert.ok(spec.paths['/v1/chat/completions']);
+});
+
+// ── Chit402 naming law tests ─────────────────────────────────────────────────
+
+test('buildX402Manifest: all serviceName values are Chit402 (per naming law)', () => {
+  const m = buildX402Manifest('https://api.chit402.com');
+  assert.equal(m.serviceName, 'Chit402');
+  for (const resource of m.resources) {
+    assert.equal(resource.serviceName, 'Chit402',
+      `resource ${resource.resource} serviceName is Chit402`);
+  }
+});
+
+test('buildX402Manifest: iconUrl uses chit402-icon.svg, not xfuel-icon.svg', () => {
+  const m = buildX402Manifest('https://api.chit402.com');
+  assert.equal(m.iconUrl, 'https://api.chit402.com/chit402-icon.svg');
+  assert.ok(!m.iconUrl.includes('xfuel-icon'), 'no legacy xfuel-icon in manifest iconUrl');
+  for (const resource of m.resources) {
+    assert.ok(!resource.iconUrl.includes('xfuel-icon'),
+      `resource ${resource.resource} iconUrl has no legacy xfuel-icon`);
+    assert.ok(resource.iconUrl.includes('chit402-icon'),
+      `resource ${resource.resource} iconUrl uses chit402-icon`);
+  }
+});
+
+test('buildOpenApiSpec: no xfuel-icon reference in OpenAPI spec', () => {
+  const spec = buildOpenApiSpec('https://api.chit402.com');
+  const specStr = JSON.stringify(spec);
+  assert.ok(!specStr.includes('xfuel-icon'), 'no xfuel-icon in OpenAPI spec');
 });
