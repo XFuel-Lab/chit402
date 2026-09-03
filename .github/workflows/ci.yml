@@ -62,6 +62,27 @@ jobs:
         if: needs.changes.outputs.sdk == 'true' || github.event_name == 'push'
         run: npm test --prefix packages/sdk -- --ci --coverage=false
 
+  # ════════════════════════════════════════════════════════════
+  # TEMPORARY COMPATIBILITY ALIAS (remove after branch protection update)
+  # Satisfies branch protection requiring PR 280's name "Jest Unit Tests (SDK)".
+  # ════════════════════════════════════════════════════════════
+  compat-jest-sdk:
+    name: Jest Unit Tests (SDK)
+    runs-on: ubuntu-latest
+    needs: jest
+    steps:
+      - name: Compatibility gate (temporary)
+        run: |
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║ TEMPORARY COMPATIBILITY CHECK                                ║"
+          echo "║                                                              ║"
+          echo "║ Real SDK tests run as: CI / Jest Unit Tests                  ║"
+          echo "║ This alias satisfies branch protection requiring the         ║"
+          echo "║ PR 280 name 'Jest Unit Tests (SDK)'.                         ║"
+          echo "║                                                              ║"
+          echo "║ Remove this job after updating branch protection rules.      ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+
   # ── Solidity compile + core contract tests ──────────────────
   # Always creates a check. Runs real tests only when contracts/core-layer/test paths change.
   contracts-core:
