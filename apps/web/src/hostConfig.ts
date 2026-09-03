@@ -35,9 +35,9 @@ const CHIT_CONFIG: HostConfig = {
   twitterHandle: '@chit402',
   githubUrl: 'https://github.com/XFuel-Lab/xfuel-protocol',
   seo: {
-    title: 'Chit — A receipt you still hold if the agent wallet moves.',
+    title: 'Chit402 — A receipt you still hold if the agent wallet moves.',
     description: 'Chit: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book. By XFuel Lab.',
-    ogTitle: 'Chit — A receipt you still hold.',
+    ogTitle: 'Chit402 — A receipt you still hold.',
     ogDescription: 'Chit: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book. By XFuel Lab.',
   },
 };
