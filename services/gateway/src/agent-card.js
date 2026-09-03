@@ -15,7 +15,7 @@ export function buildAgentCard(baseUrl = '') {
   const abs = (p) => (base ? `${base}${p}` : p);
 
   return {
-    name: 'Chit',
+    name: 'Chit402',
     description:
       'Chit is the book. This agent spent Y on this job. You hold hub, model, and amount. '
       + 'No account. No API key. A wallet that can pay the 402 is enough. '
@@ -35,7 +35,7 @@ export function buildAgentCard(baseUrl = '') {
       },
     ],
     provider: {
-      organization: 'Chit',
+      organization: 'Chit402',
       url: 'https://chit402.com',
     },
     version: '1.0.0',

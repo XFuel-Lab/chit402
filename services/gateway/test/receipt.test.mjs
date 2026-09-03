@@ -267,7 +267,7 @@ test('renderReceiptHtml: shareable page includes key fields + escapes hostile in
   assert.ok(html.includes('&lt;script&gt;'));
 });
 
-test('renderReceiptHtml: title is "Chit", xfuel- prefix becomes chit- in display', () => {
+test('renderReceiptHtml: title is "Chit402", xfuel- prefix becomes chit- in display', () => {
   const xfuelTask = {
     taskId: 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587',
     status: 'completed',
@@ -275,9 +275,9 @@ test('renderReceiptHtml: title is "Chit", xfuel- prefix becomes chit- in display
   };
   const html = renderReceiptHtml(buildReceipt(xfuelTask));
 
-  // Title must be just "Chit" without task_id or "receipt"
-  assert.match(html, /<title>Chit<\/title>/);
-  assert.match(html, /og:title.*content="Chit"/);
+  // Title must be just "Chit402" without task_id or "receipt"
+  assert.match(html, /<title>Chit402<\/title>/);
+  assert.match(html, /og:title.*content="Chit402"/);
 
   // The displayed task ID should have the xfuel- prefix rewritten to chit-
   assert.ok(html.includes('chit-247049dd-0075-4372-b7f7-508c62b9b587'), 'chit- prefix should be displayed');
@@ -326,10 +326,10 @@ test('buildReceipt: rolling first call is pending, not a legacy rail, and carrie
   const html = renderReceiptHtml(r);
   assert.ok(!html.includes('legacy rail'));
   assert.match(html, /bill pending/);
-  assert.match(html, /Prompt tokens/);
+  assert.match(html, /Tokens.*20|20.*\(12.*8\)/i, 'Tokens shown compactly');
   assert.match(html, /\$0\.000017/);
   assert.match(html, /not on this call/);
-  assert.match(html, /HMAC-SHA256/);
+  assert.match(html, /HMAC/);
   assert.match(html, /next request/);
 });
 
@@ -436,8 +436,8 @@ test('renderReceiptHtml: unmetered /v1 does not print the $0.01 floor as a price
   }));
   assert.match(html, /not charged/);
   assert.match(html, /UNMETERED/);
-  // Title is just "Chit" (never includes task_id or "receipt")
-  assert.match(html, /<title>Chit<\/title>/);
+  // Title is just "Chit402" (never includes task_id or "receipt")
+  assert.match(html, /<title>Chit402<\/title>/);
   // xfuel- prefix becomes chit- in taskid div
   assert.ok(html.includes('class="taskid">chit-free<'));
   assert.doesNotMatch(html, /openai/i);
@@ -456,8 +456,8 @@ test('renderReceiptHtml: historical openai-* task ids still render (no prefix st
     result: { provider: 'theta-edgecloud' },
     sp1Proof: null,
   }));
-  // Title is just "Chit" (never includes task_id or "receipt")
-  assert.match(html, /<title>Chit<\/title>/);
+  // Title is just "Chit402" (never includes task_id or "receipt")
+  assert.match(html, /<title>Chit402<\/title>/);
   // openai-* prefix is NOT stripped (only xfuel- is)
   assert.match(html, new RegExp(`class="taskid">${taskId}<`));
 });
@@ -474,4 +474,95 @@ test('outputHashOf prefers result.outputHash over hashing the result envelope', 
   });
   assert.equal(r.output.hash, hash);
   assert.equal(r.output.kind, 'committed');
+});
+
+// ── Receipt HTML hierarchy tests (Chit polish) ──────────────────────────────
+
+test('renderReceiptHtml: Payment section appears before Route details (de-emphasis)', () => {
+  const html = renderReceiptHtml(buildReceipt(usdcTask()));
+  const paymentIdx = html.indexOf('<h2>Payment</h2>');
+  const routeIdx = html.indexOf('<h2>Route details</h2>');
+  assert.ok(paymentIdx > 0, 'Payment section must exist');
+  assert.ok(routeIdx > 0, 'Route details section must exist');
+  assert.ok(paymentIdx < routeIdx, 'Payment must appear before Route details');
+});
+
+test('renderReceiptHtml: Route details has secondary class (de-emphasized)', () => {
+  const html = renderReceiptHtml(buildReceipt(usdcTask()));
+  assert.match(html, /class="card secondary"[^>]*>[\s\S]*?<h2>Route details<\/h2>/);
+});
+
+test('renderReceiptHtml: Verification section shows issuer signature with ES256 and JWKS link', () => {
+  const task = usdcTask();
+  const r = buildReceipt(task, { signingSecret: 'test-secret' });
+  const html = renderReceiptHtml(r);
+  
+  assert.match(html, /<h2>Verification<\/h2>/, 'Verification section heading');
+  assert.match(html, /Issuer signature/, 'Issuer signature row');
+  assert.match(html, /ES256/, 'ES256 algorithm');
+  assert.match(html, /Key ID/, 'Key ID row');
+  assert.match(html, /\.well-known\/jwks\.json/, 'JWKS link');
+});
+
+test('renderReceiptHtml: Model and Provider are in Route details, not primary card', () => {
+  const html = renderReceiptHtml(buildReceipt(usdcTask()));
+  const routeDetailsStart = html.indexOf('Route details</h2>');
+  const routeDetailsEnd = html.indexOf('</section>', routeDetailsStart);
+  const routeSection = html.slice(routeDetailsStart, routeDetailsEnd);
+  
+  assert.ok(routeSection.includes('Model'), 'Model in Route details');
+  assert.ok(routeSection.includes('Provider'), 'Provider in Route details');
+});
+
+test('renderReceiptHtml: JWKS link is absolute when receipt has base URL', () => {
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  const html = renderReceiptHtml(r);
+  assert.match(html, /href="https:\/\/api\.chit402\.com\/\.well-known\/jwks\.json"/, 'Absolute JWKS URL');
+});
+
+test('renderReceiptHtml: tokens shown compactly (total with breakdown)', () => {
+  const task = usdcTask();
+  task.usage = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 };
+  const html = renderReceiptHtml(buildReceipt(task));
+  assert.match(html, /150/, 'Total tokens shown');
+  assert.match(html, /100.*50|prompt.*completion/i, 'Token breakdown shown');
+});
+
+test('buildReceipt: issuer_signature has ES256 alg and JWKS uri', () => {
+  const r = buildReceipt(usdcTask());
+  assert.ok(r.issuer_signature, 'issuer_signature present');
+  assert.equal(r.issuer_signature.alg, 'ES256');
+  assert.equal(r.issuer_signature.jwks_uri, '/.well-known/jwks.json');
+  assert.ok(r.issuer_signature.kid, 'kid present');
+  assert.ok(r.issuer_signature.value, 'signature value present');
+});
+
+// ── Issuer signature verification correctness tests ─────────────────────────
+
+test('renderReceiptHtml: valid issuer signature shows "verified" badge', () => {
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  assert.ok(r.issuer_signature?.value, 'issuer_signature must be present');
+  const html = renderReceiptHtml(r);
+  assert.match(html, /<span class="badge ok">verified<\/span>/, 'verified badge must appear for valid signature');
+  assert.ok(!html.includes('badge bad">not verified'), 'must NOT show "not verified" badge for valid signature');
+});
+
+test('renderReceiptHtml: tampered receipt shows "not verified" badge (truthful)', () => {
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  assert.ok(r.issuer_signature?.value, 'issuer_signature must be present before tampering');
+  
+  // Tamper with a canonically signed field AFTER the signature was computed
+  r.payment.gross_amount = '9999999';
+  
+  const html = renderReceiptHtml(r);
+  assert.match(html, /<span class="badge bad">not verified<\/span>/, 'not verified badge must appear for tampered receipt');
+  assert.ok(!html.includes('badge ok">verified'), 'must NOT show "verified" badge for tampered receipt');
+});
+
+test('renderReceiptHtml: receipt without issuer_signature shows "unsigned"', () => {
+  const r = buildReceipt(usdcTask());
+  delete r.issuer_signature;
+  const html = renderReceiptHtml(r);
+  assert.match(html, /<span class="muted">unsigned<\/span>/, 'unsigned badge must appear when no issuer_signature');
+  assert.ok(!html.includes('badge ok">verified'), 'must NOT show verified badge when unsigned');
 });

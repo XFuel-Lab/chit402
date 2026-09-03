@@ -481,7 +481,8 @@ export function buildX402Manifest(baseUrl = '') {
       'Cost-plus, quoted, receipted. Real mainnet USDC.';
 
   // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.
-  const serviceName = 'Chit';
+  // Per naming law: Chit402 is the public/searchable name; Chit is spoken shorthand only.
+  const serviceName = 'Chit402';
   const tags = ['llm', 'openai-compatible', 'chat-completions', 'inference'];
   const iconUrl = buildIconUrl(base);
 
@@ -534,7 +535,7 @@ export function buildX402Manifest(baseUrl = '') {
 
   return {
     x402Version: 2,
-    name: 'Chit Protocol',
+    name: 'Chit402',
     serviceName,
     tags,
     iconUrl,
@@ -753,7 +754,7 @@ export function buildOpenApiSpec(baseUrl = '') {
   const spec = {
     openapi: '3.1.0',
     info: {
-      title: 'Chit',
+      title: 'Chit402',
       version: '1.0.0',
       description:
         'Chit is the book. This agent spent Y on this job. You hold hub, model, and amount. '
