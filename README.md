@@ -7,7 +7,7 @@ Chit402 is the book. This agent spent Y on this job. You hold hub, model, and am
 To learn more about the protocol design, read the [whitepaper](WHITEPAPER.md). For live endpoints and what is real vs mock today, see [runtime state](docs/RUNTIME_STATE.md). Full documentation hub: [docs/](docs/README.md).
 
 **Live app:** https://chit402.com  
-**Public API:** https://api.xfuel.app
+**Public API:** https://api.chit402.com (alias: https://api.xfuel.app)
 
 ## Table of Contents
 
@@ -28,8 +28,8 @@ Install **Node.js 20+** and **npm 10+**. A Rust toolchain is required if you bui
 Clone the repository, install dependencies, compile contracts, and run the test suite:
 
 ```bash
-git clone https://github.com/XFuel-Lab/xfuel-protocol.git
-cd xfuel-protocol
+git clone https://github.com/XFuel-Lab/chit402.git
+cd chit402
 npm install
 npx hardhat compile
 npx hardhat test
@@ -60,12 +60,12 @@ npm run dev
 No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
 
 ```bash
-curl.exe -sS -D - -X POST https://api.xfuel.app/v1/chat/completions \
+curl.exe -sS -D - -X POST https://api.chit402.com/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
 
-Unauthenticated `/v1` returns HTTP 402 with payment requirements (USDC on Base or Solana). The receipt prices the next call. Demo key `xfuel-demo` skips payment (rate-limited). Working copy: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).
+`api.xfuel.app` also works (same box). Unauthenticated `/v1` returns HTTP 402 with payment requirements (USDC on Base or Solana). The receipt prices the next call. Demo key `xfuel-demo` skips payment (rate-limited). Working copy: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).
 
 ```
 npm install xfuel-sdk
