@@ -22,17 +22,19 @@ export default function SeoHead({ title, description }: SeoHeadProps) {
     setMeta('meta[name="description"]', finalDescription);
     setMeta('meta[property="og:title"]', title ?? config.seo.ogTitle);
     setMeta('meta[property="og:description"]', description ?? config.seo.ogDescription);
+    const pageUrl = `https://${config.domain}${window.location.pathname}`;
+    setMeta('meta[property="og:url"]', pageUrl);
     setMeta('meta[property="og:image"]', config.ogImage);
     setMeta('meta[name="twitter:title"]', title ?? config.seo.ogTitle);
     setMeta('meta[name="twitter:description"]', description ?? config.seo.ogDescription);
 
     const canonical = document.querySelector('link[rel="canonical"]');
     if (canonical) {
-      canonical.setAttribute('href', `https://${config.domain}${window.location.pathname}`);
+      canonical.setAttribute('href', pageUrl);
     } else {
       const link = document.createElement('link');
       link.rel = 'canonical';
-      link.href = `https://${config.domain}${window.location.pathname}`;
+      link.href = pageUrl;
       document.head.appendChild(link);
     }
   }, [finalTitle, finalDescription, config, title, description]);

@@ -47,7 +47,7 @@ function truncateDescription(text, maxLen = 155) {
 function transformHtml(html, route, { title, h1, lede }) {
   const description = truncateDescription(lede);
   const canonicalUrl = `https://www.chit402.com${route}`;
-  const ogImage = 'https://chit402.com/og-image.png';
+  const ogImage = 'https://www.chit402.com/og-image.png';
   
   let result = html
     .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`)
@@ -62,6 +62,10 @@ function transformHtml(html, route, { title, h1, lede }) {
     .replace(
       /<meta property="og:description" content="[^"]*" \/>/,
       `<meta property="og:description" content="${description}" />`
+    )
+    .replace(
+      /<meta property="og:url" content="[^"]*" \/>/,
+      `<meta property="og:url" content="${canonicalUrl}" />`
     )
     .replace(
       /<meta property="og:image" content="[^"]*" \/>/,
