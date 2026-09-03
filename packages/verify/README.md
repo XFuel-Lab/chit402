@@ -1,6 +1,8 @@
 # @xfuel/verify
 
-Offline verification for XFuel receipts — verify payment binding and output commitment without calling the XFuel API.
+Offline verification for Chit402 receipts — verify payment binding and output commitment without calling the API.
+
+npm: `@xfuel/verify` · License: Apache-2.0 · Docs: https://chit402.com
 
 ## Installation
 
@@ -16,7 +18,7 @@ npm install @xfuel/verify
 import { verifyReceipt, verifyBinding, verifyNullifier } from '@xfuel/verify';
 
 // Verify a receipt offline (binding only, no network)
-const receipt = { /* XFuel receipt JSON */ };
+const receipt = { /* Chit402 receipt JSON */ };
 const result = verifyBinding(receipt);
 console.log(result.matches); // true if binding verified
 
