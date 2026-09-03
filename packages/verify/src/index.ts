@@ -413,32 +413,9 @@ export async function verifyNullifier(
 
 /**
  * Canonical signed payload for HMAC verification.
- * Matches services/gateway/src/receipt.js:canonicalSignedPayload
+ * Alias of canonicalIssuerPayload — both must produce identical bytes.
  */
-export function canonicalSignedPayload(receipt: XFuelReceipt): string {
-  return JSON.stringify([
-    receipt.task_id ?? null,
-    receipt.payment?.rail ?? null,
-    receipt.payment?.ref ?? null,
-    receipt.payment?.gross_amount ?? null,
-    receipt.payment?.net_amount ?? null,
-    // fee_amount not directly available, use null
-    null,
-    // protocol_fee_bps
-    null,
-    // platform_fee
-    null,
-    // platform_fee_bps
-    null,
-    // provider_cogs.actual
-    null,
-    receipt.route?.model ?? null,
-    receipt.route?.model_commitment?.commitment ?? null,
-    receipt.route?.provider ?? null,
-    receipt.output?.hash ?? null,
-    receipt.binding?.expected_commitment ?? null,
-  ]);
-}
+export const canonicalSignedPayload = canonicalIssuerPayload;
 
 /**
  * Hash the canonical payload (for ERC-8004 response_hash).

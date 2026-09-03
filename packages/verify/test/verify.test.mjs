@@ -29,6 +29,7 @@ const {
   verifyIssuerSignature,
   verifyIssuerSignatureWithJwks,
   canonicalIssuerPayload,
+  canonicalSignedPayload,
   computePaymentCommitment,
   computeInferenceBinding,
 } = await import('../dist/index.js');
@@ -515,6 +516,11 @@ describe('canonicalIssuerPayload with fee/COGS fields', () => {
     const parsed = JSON.parse(payload);
 
     assert.equal(parsed[6], 250); // should use fee_bps
+  });
+
+  test('canonicalSignedPayload is identical to canonicalIssuerPayload', () => {
+    const receipt = { task_id: 't', payment: { fee_amount: '100', protocol_fee_bps: 50, platform_fee: '10', platform_fee_bps: 5 }, provider_cogs: { actual: '80' } };
+    assert.equal(canonicalSignedPayload(receipt), canonicalIssuerPayload(receipt));
   });
 
   test('verifies signature with all fee/COGS fields present', () => {
