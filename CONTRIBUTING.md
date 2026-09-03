@@ -16,8 +16,8 @@ Live beta: Tier-1 receipts + Tier-2 SP1 on Base; 755+ tests; Audit Phase 1 prep.
 Prerequisites: Node.js 20+, npm 10+, Rust (for SP1 / zkLLM / CosmWasm).
 
 ```
-git clone https://github.com/YOUR_USERNAME/xfuel-protocol.git
-cd xfuel-protocol
+git clone https://github.com/YOUR_USERNAME/chit402.git
+cd chit402
 npm install
 npx hardhat compile
 npx hardhat test
