@@ -52,6 +52,18 @@ test('homepage twitter:description matches the paid /v1 door', () => {
   assertPaidDoorCopy('twitter:description', metaContent(html, 'name', 'twitter:description'));
 });
 
+test('homepage listing-visible branding uses Chit402 for x402scan', () => {
+  const title = html.match(/<title>([^<]*)<\/title>/i)?.[1] ?? '';
+  const ogTitle = metaContent(html, 'property', 'og:title');
+  const twitterTitle = metaContent(html, 'name', 'twitter:title');
+  const favicon = html.match(/<link[^>]+rel="icon"[^>]+href="([^"]*)"/i)?.[1] ?? '';
+
+  assert.match(title, /^Chit402/, 'homepage title starts with Chit402 for x402scan listing');
+  assert.match(ogTitle, /^Chit402/, 'og:title starts with Chit402 for x402scan listing');
+  assert.match(twitterTitle, /^Chit402/, 'twitter:title starts with Chit402 for social cards');
+  assert.equal(favicon, '/chit402-icon.svg', 'favicon uses chit402-icon.svg for x402scan listing');
+});
+
 test('shared layout and homepage copy do not call paid /v1 unmetered, a free path, or lead with $0.01', () => {
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
   const home = readFileSync(join(root, 'src/pages/Home.tsx'), 'utf8');
@@ -116,7 +128,7 @@ test('prerendered money pages have unique crawler titles (after build)', { skip:
     'agent-shop': 'The till for an agent shop | Chit',
     'book': 'The book: this agent spent Y on this job | Chit',
     'book-bot': 'Paste this. The shop gets a till | Chit',
-    'docs': 'Chit — A receipt you still hold if the agent wallet moves.',
+    'docs': 'Chit402 — A receipt you still hold if the agent wallet moves.',
     'v1': 'Pay /v1/chat/completions | Chit',
   };
   
@@ -145,11 +157,16 @@ test('Chit home page has correct copy and Bankr receipt link', () => {
 
 test('host config has correct Chit SEO values', () => {
   const hostConfig = readFileSync(join(root, 'src/hostConfig.ts'), 'utf8');
-  assert.match(hostConfig, /title:.*Chit.*receipt you still hold/i, 'Chit SEO title mentions receipt');
+  assert.match(hostConfig, /title:.*Chit402.*receipt you still hold/i, 'Chit SEO title uses Chit402 for listings');
+  assert.match(hostConfig, /ogTitle:.*Chit402/i, 'Chit ogTitle uses Chit402 for listings');
+  assert.match(hostConfig, /description:.*Chit402:/i, 'Chit description starts with Chit402');
+  assert.match(hostConfig, /ogDescription:.*Chit402:/i, 'Chit ogDescription starts with Chit402');
   assert.match(hostConfig, /x402 receipt that doesn/, 'Chit description has tagline');
   assert.match(hostConfig, /chit402\.com/, 'Config has chit402.com domain');
   assert.match(hostConfig, /@chit402/, 'Config has @chit402 Twitter handle');
+  assert.match(hostConfig, /githubUrl:.*chit402/i, 'Config has chit402 GitHub URL');
   assert.doesNotMatch(hostConfig, /OpenAI/i, 'Config must not mention OpenAI');
+  assert.doesNotMatch(hostConfig, /By XFuel Lab/i, 'Chit SEO metadata must not mix parent branding');
 });
 
 test('Layout supports dual branding for Chit and XFuel', () => {

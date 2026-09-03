@@ -18,7 +18,7 @@ const ROUTE_CONTENT = {
     lede: 'Chit is the till for an agent shop. Paste https://api.chit402.com/v1 as the OpenAI baseURL, pay the HTTP 402 in USDC on Base or Solana (cost-plus, quoted, receipted), and you hold the book. We are the till, not the Chief of SEO. Show the client the book, not a screenshot.',
   },
   '/docs': {
-    title: 'Chit — A receipt you still hold if the agent wallet moves.',
+    title: 'Chit402 — A receipt you still hold if the agent wallet moves.',
     h1: 'Build on Chit',
     lede: 'Chit: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book. No account. No API key. A wallet that can pay the 402 is enough. Public beta at api.chit402.com. USDC on Base and Solana.',
   },
