@@ -26,15 +26,9 @@ export function buildIconUrl(baseUrl) {
 export const XFUEL_ICON_URL = CHIT402_ICON_URL;
 
 export const CHIT402_ICON_SVG = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Chit402">
-  <circle cx="16" cy="16" r="14" fill="#0b0b12" stroke="url(#chit402-g)" stroke-width="2.5"/>
-  <path d="M10 16l4 4 8-8" fill="none" stroke="#00d4ff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <defs>
-    <linearGradient id="chit402-g" x1="0" y1="0" x2="32" y2="32">
-      <stop stop-color="#00d4ff"/>
-      <stop offset="1" stop-color="#8b5cf6"/>
-    </linearGradient>
-  </defs>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Chit402">
+  <rect width="64" height="64" rx="8" fill="#0b0b12"/>
+  <text x="32" y="40" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="14" font-weight="700" fill="#00d4ff">Chit402</text>
 </svg>
 `;
 
