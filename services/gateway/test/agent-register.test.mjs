@@ -196,7 +196,10 @@ test('register claims an already-ledgered settle without re-append', async () =>
 
 test('buildAgentCard is A2A v1.0', () => {
   const card = buildAgentCard('https://api.xfuel.app');
-  assert.equal(card.name, 'Chit');
+  assert.equal(card.name, 'Chit402', 'agent-card name is Chit402 (public/searchable name)');
+  assert.equal(card.provider.organization, 'Chit402', 'provider organization is Chit402');
+  assert.ok(!card.iconUrl.includes('xfuel-icon'), 'iconUrl does not contain legacy xfuel-icon');
+  assert.ok(card.iconUrl.includes('chit402-icon'), 'iconUrl uses chit402-icon');
   assert.match(card.description, /Chit is the book/);
   assert.match(card.description, /hub, model, and amount/);
   assert.match(card.description, /fail-closed/);
@@ -239,7 +242,7 @@ test('GET /.well-known/agent-card.json returns A2A v1.0 card (200)', async () =>
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type') ?? '', /application\/(a2a\+)?json/);
   const card = await res.json();
-  assert.equal(card.name, 'Chit');
+  assert.equal(card.name, 'Chit402', 'agent-card name is Chit402');
   assert.equal(card.supportedInterfaces[0].protocolVersion, '1.0');
   assert.ok(Array.isArray(card.skills));
   assert.ok(card.skills.some((s) => s.id === 'register-agent'));

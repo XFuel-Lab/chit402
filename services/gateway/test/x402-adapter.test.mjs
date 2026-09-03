@@ -173,8 +173,10 @@ test('buildPaymentChallenge: includes service metadata for bazaar', () => {
 
   // Per spec: iconUrl must be absolute https:// and a real image, not the SPA.
   // iconUrl is now host-aware: it matches the baseUrl host.
+  // Per naming law: uses chit402-icon.svg (no legacy xfuel-icon).
   assert.ok(r.iconUrl.startsWith('https://'), 'iconUrl is absolute https');
-  assert.equal(r.iconUrl, 'https://api.xfuel.app/xfuel-icon.svg', 'iconUrl matches baseUrl host');
+  assert.equal(r.iconUrl, 'https://api.xfuel.app/chit402-icon.svg', 'iconUrl uses Chit402 icon');
+  assert.ok(!r.iconUrl.includes('xfuel-icon'), 'iconUrl has no legacy xfuel-icon');
 });
 
 test('buildPaymentChallenge: description mentions real USDC settlement', () => {
