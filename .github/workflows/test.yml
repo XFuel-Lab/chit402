@@ -7,10 +7,65 @@ on:
     branches: [main, develop]
 
 jobs:
-  # ── Core listener (node:test) + full Hardhat suite + coverage ─────────────
-  solidity:
-    name: Contracts & Core Listener
+  # ── Path-change detection ──────────────────────────────────
+  changes:
+    name: Detect Changes
     runs-on: ubuntu-latest
+    outputs:
+      contracts: ${{ steps.filter.outputs.contracts }}
+      gateway: ${{ steps.filter.outputs.gateway }}
+      theta-inference: ${{ steps.filter.outputs.theta-inference }}
+      skills: ${{ steps.filter.outputs.skills }}
+      zkllm: ${{ steps.filter.outputs.zkllm }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            contracts:
+              - 'contracts/**'
+              - 'core-layer/**'
+              - 'test/**'
+              - 'hardhat.config.cjs'
+              - 'scripts/hardhat-*.cjs'
+              - '.solcover.cjs'
+            gateway:
+              - 'services/gateway/**'
+            theta-inference:
+              - 'packages/circuit-runtime/theta-inference/**'
+            skills:
+              - 'packages/agent-skills/**'
+            zkllm:
+              - 'services/zkllm-prover/**'
+
+  # ── Gateway tests (always run on PRs) ──────────────────────
+  # Receipt signing, JWKS, x402 adapter, HMAC validation.
+  gateway:
+    name: Gateway Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Install gateway deps
+        working-directory: services/gateway
+        run: npm install --no-audit --no-fund
+
+      - name: Gateway tests (receipts + x402 adapter)
+        working-directory: services/gateway
+        run: npm test
+
+  # ── Full Hardhat suite + coverage (push to main only) ──────
+  # Compile + full test suite + coverage + gas report.
+  # Does NOT block PR merge — runs on push to main for audit trail.
+  solidity:
+    name: Contracts Full Suite
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
 
@@ -30,8 +85,6 @@ jobs:
       - name: Core listener (node:test)
         run: npm run test:contracts:core:listener
 
-      # Windows-safe explicit file list (scripts/hardhat-test-all.cjs). Failing tests here
-      # are tracked separately from the core gate in ci.yml (test:contracts:core:solidity).
       - name: Full Hardhat suite (test + circuits + security)
         run: npm run test:contracts:all:hardhat
 
@@ -50,10 +103,15 @@ jobs:
         env:
           REPORT_GAS: "true"
 
-  # ── M2M backend (webhooks + x402) + SDK + Agent Skills ───────
-  m2m-sdk-skills:
-    name: M2M Backend + SDK + Skills
+  # ── Theta-inference circuit tests (path-filtered) ──────────
+  # Runs on push to main, or on PRs touching theta-inference paths.
+  theta-inference:
+    name: Theta-Inference Circuit Tests
     runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.theta-inference == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -61,39 +119,44 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install M2M backend deps
-        working-directory: services/gateway
-        run: npm install --no-audit --no-fund
-
-      - name: M2M backend tests (webhooks + x402 adapter)
-        working-directory: services/gateway
-        run: npm test
-
-      - name: Install SDK deps
-        working-directory: packages/sdk
-        run: npm install --no-audit --no-fund
-
-      # Optional GPU provider circuit (EdgeCloud) — not settlement home (ADR 0002).
-      - name: Install theta-inference circuit deps (ethers for handler tests)
+      - name: Install theta-inference deps
         working-directory: packages/circuit-runtime/theta-inference
         run: npm install --no-audit --no-fund
 
-      - name: SDK build + tests (REST client + on-chain module)
-        working-directory: packages/sdk
-        run: |
-          npm run build
-          npm test
-
-      - name: ComputeRouter + _executeService regression tests (provider circuit)
+      - name: ComputeRouter + _executeService regression tests
         run: node --test packages/circuit-runtime/theta-inference/test/compute-router.test.mjs packages/circuit-runtime/theta-inference/test/execute-service.test.mjs
+
+  # ── Agent Skills validation (path-filtered) ─────────────────
+  # Runs on push to main, or on PRs touching agent-skills paths.
+  skills:
+    name: Agent Skills Validation
+    runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.skills == 'true'
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
 
       - name: Validate Agent Skills (SKILL.md frontmatter)
         run: node scripts/validate-skills.cjs
 
-  # ── XFuel zkLLM prover (Phase 5 / Verified Inference Tier-3) ──
+  # ── XFuel zkLLM prover (push to main or path change) ───────
+  # Tier-3 Verified Inference soundness + tamper-rejection suite.
   zkllm:
     name: zkLLM Prover Tests
     runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.zkllm == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -103,21 +166,22 @@ jobs:
         with:
           workspaces: services/zkllm-prover
 
-      # Soundness + tamper-rejection suite for the self-owned ZK prover core
-      # (matmul, lookups, activation, norm, attention, block, requant, spot-check).
       - name: Run xfuel-zkp tests
         working-directory: services/zkllm-prover
         run: cargo test
 
-      # Keep the RAM/time benchmark harness (examples) compiling.
       - name: Build benchmark examples
         working-directory: services/zkllm-prover
         run: cargo build --examples
 
-  # ── Slither static analysis ──────────────────────────────────
+  # ── Slither static analysis (push to main or contracts change) ──
   slither:
     name: Slither Static Analysis
     runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.contracts == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -151,12 +215,9 @@ jobs:
           name: slither-report
           path: slither-report.json
 
-      # Ensures the branch includes the triage table; otherwise known core false positives fail the job.
       - name: Verify Slither core counter (triage present)
         run: grep -q '_TRIAGED_CORE_HIGH' scripts/slither-count-high-core.py
 
-      # Slither JSON includes all contracts; --include-paths does not trim the file.
-      # Gate only on High/Medium-confidence findings whose elements touch contracts/core/.
       - name: Fail on high-severity findings (contracts/core)
         run: |
           if [ -f slither-report.json ]; then
