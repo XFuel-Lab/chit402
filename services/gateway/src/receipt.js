@@ -35,14 +35,67 @@ const EXPLORERS = {
 };
 
 /**
+ * Normalize a task ID from a URL path for storage/lookup.
+ * Converts `chit-<uuid>` to `xfuel-<uuid>` so paths like /receipt/chit-<uuid>
+ * resolve to the same stored task. Stored task_id always uses the xfuel- prefix.
+ *
+ * @param {string} taskId - task ID from URL path (may have chit- or xfuel- prefix)
+ * @returns {string} normalized task ID with xfuel- prefix (or unchanged if no recognized prefix)
+ */
+export function normalizeTaskIdForLookup(taskId) {
+  if (!taskId || typeof taskId !== 'string') return taskId;
+  if (taskId.startsWith('chit-')) {
+    return 'xfuel-' + taskId.slice(5);
+  }
+  return taskId;
+}
+
+/**
+ * Determine the preferred task ID path prefix based on the request hostname.
+ * When Host is api.chit402.com, prefer 'chit-' prefix in URLs; otherwise 'xfuel-'.
+ *
+ * @param {string|null} reqHost - request Host header (may include port)
+ * @returns {'chit-'|'xfuel-'} preferred prefix for receipt URLs
+ */
+export function preferredPathPrefix(reqHost) {
+  if (!reqHost || typeof reqHost !== 'string') return 'xfuel-';
+  const host = reqHost.toLowerCase().split(':')[0];
+  if (host === 'api.chit402.com') return 'chit-';
+  return 'xfuel-';
+}
+
+/**
+ * Convert a stored task ID to display form with the preferred prefix.
+ * Stored IDs use xfuel-<uuid>; display may use chit-<uuid> on chit402.com.
+ *
+ * @param {string} storedTaskId - stored task ID (xfuel-<uuid> or legacy format)
+ * @param {'chit-'|'xfuel-'} preferredPrefix - preferred prefix for display
+ * @returns {string} task ID with preferred prefix (or unchanged if not xfuel- prefixed)
+ */
+export function taskIdWithPreferredPrefix(storedTaskId, preferredPrefix) {
+  if (!storedTaskId || typeof storedTaskId !== 'string') return storedTaskId;
+  if (preferredPrefix === 'chit-' && storedTaskId.startsWith('xfuel-')) {
+    return 'chit-' + storedTaskId.slice(6);
+  }
+  return storedTaskId;
+}
+
+/**
  * Canonical, shareable proof link for a task: the public `/receipt/:taskId` page.
  * Absolute when a base URL is known, otherwise a root-relative path. This is the
  * single `verify_url` threaded consistently across every surface (M2M API,
  * OpenAI gateway, SDK, MCP) so an agent always gets one link it can share.
+ *
+ * @param {string} baseUrl - base URL for absolute links (e.g. 'https://api.xfuel.app')
+ * @param {string} taskId - stored task ID (xfuel-<uuid>)
+ * @param {{ reqHost?: string }} [opts] - options for host-aware prefix selection
+ * @returns {string} verify URL with appropriate prefix based on host
  */
-export function buildVerifyUrl(baseUrl, taskId) {
+export function buildVerifyUrl(baseUrl, taskId, { reqHost = null } = {}) {
   const base = baseUrl ? String(baseUrl).replace(/\/$/, '') : '';
-  return `${base}/receipt/${taskId}`;
+  const prefix = preferredPathPrefix(reqHost);
+  const displayId = taskIdWithPreferredPrefix(taskId, prefix);
+  return `${base}/receipt/${displayId}`;
 }
 
 /**
@@ -473,12 +526,13 @@ export function usageOf(task) {
 /**
  * Build the public receipt JSON for a task.
  * @param {object} task     Listener task (from aiListener.activeTasks).
- * @param {object} [opts]   { baseUrl, signingSecret, coSignerSecret } — signingSecret enables
+ * @param {object} [opts]   { baseUrl, signingSecret, coSignerSecret, reqHost } — signingSecret enables
  *                          the Tier-1 signed receipt (HMAC over the payment-bound tuple).
  *                          coSignerSecret adds a second attestor (replaceable signer) so
  *                          treasuries can verify even if XFuel disappears.
+ *                          reqHost enables host-aware URL prefix selection (chit- on api.chit402.com).
  */
-export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null } = {}) {
+export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null, reqHost = null } = {}) {
   const outcome = proofOutcomeOf(task);
   const feeBps = task.feeBps || 50;
   // Buyer default is USDC (ADR 0002). Legacy tfuel rail only when explicitly set.
@@ -496,12 +550,15 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   const usage = usageOf(task);
   const rollingFronted = !!(task.meta?.rolling?.fronted && !paymentRef && paymentRail === 'usdc');
 
+  const prefix = preferredPathPrefix(reqHost);
+  const displayTaskId = taskIdWithPreferredPrefix(task.taskId, prefix);
+
   const receipt = {
     schema: 'xfuel.receipt.v3',
     task_id: task.taskId,
     status: task.status,
     proof_outcome: outcome,
-    verify_url: buildVerifyUrl(base, task.taskId),
+    verify_url: buildVerifyUrl(base, task.taskId, { reqHost }),
     created_at: task.createdAt || null,
     updated_at: task.updatedAt || null,
     route: {
@@ -567,14 +624,14 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     output: output ? { hash: output.value, kind: output.kind } : null,
     links: base
       ? {
-          self: `${base}/receipt/${task.taskId}`,
-          json: `${base}/receipt/${task.taskId}?format=json`,
+          self: `${base}/receipt/${displayTaskId}`,
+          json: `${base}/receipt/${displayTaskId}?format=json`,
           status: `${base}/task-status?task_id=${task.taskId}`,
           proof: `${base}/prove-result?task_id=${task.taskId}`,
         }
       : {
-          self: `/receipt/${task.taskId}`,
-          json: `/receipt/${task.taskId}?format=json`,
+          self: `/receipt/${displayTaskId}`,
+          json: `/receipt/${displayTaskId}?format=json`,
           status: `/task-status?task_id=${task.taskId}`,
           proof: `/prove-result?task_id=${task.taskId}`,
         },
@@ -1047,6 +1104,9 @@ export default {
   explorerUrlForRef,
   buildVerifyUrl,
   baseUrlFromReq,
+  normalizeTaskIdForLookup,
+  preferredPathPrefix,
+  taskIdWithPreferredPrefix,
   privacyOf,
   lineageOf,
   verifyReceiptHmac,
