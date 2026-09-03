@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { verifyMessage, getAddress, keccak256, toUtf8Bytes } from 'ethers';
 import { computePaymentCommitment, computeInferenceBinding } from './payment-binding.js';
 import { resolveModelCommitment } from './model-commitment.js';
 import { selectTier } from './tier-policy.js';
@@ -621,6 +622,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     privacy: privacyOf(task),
     // Multi-hop / A2A lineage (additive; null when single-hop)
     lineage: lineageOf(task),
+    // Receipt handoff: wallet-move delegation (additive; null when no handoff)
+    handoff: handoffOf(task),
     output: output ? { hash: output.value, kind: output.kind } : null,
     links: base
       ? {
@@ -802,6 +805,22 @@ export function renderReceiptHtml(receipt) {
       </section>`
     : '';
 
+  const ho = receipt.handoff;
+  const handoffBlock = ho
+    ? `<section class="card">
+        <h2>Handoff <span class="scope">wallet-move delegation</span></h2>
+        ${row('Status', ho.status === 'complete'
+          ? '<span class="badge ok">complete</span>'
+          : '<span class="badge pending">pending destination ack</span>')}
+        ${row('Origin', ho.origin?.address ? `<code>${esc(shortHash(ho.origin.address, 10, 8))}</code>` : '<span class="muted">—</span>')}
+        ${row('Destination', ho.origin?.dest_address ? `<code>${esc(shortHash(ho.origin.dest_address, 10, 8))}</code>` : '<span class="muted">—</span>')}
+        ${row('Delegated at', ho.origin?.created_at ? esc(new Date(ho.origin.created_at).toISOString()) : '<span class="muted">—</span>')}
+        ${ho.dest?.address ? row('Acknowledged by', `<code>${esc(shortHash(ho.dest.address, 10, 8))}</code>`) : ''}
+        ${ho.dest?.created_at ? row('Acknowledged at', esc(new Date(ho.dest.created_at).toISOString())) : ''}
+        <p class="muted" style="margin:8px 0 0;font-size:12px">Origin signature delegates receipt possession to destination. Verify against JSON.</p>
+      </section>`
+    : '';
+
   const outputRow = receipt.output
     ? row(receipt.output.kind === 'committed' ? 'Output commitment' : 'Output hash (SHA-256)', `<code>${esc(shortHash(receipt.output.hash, 12, 10))}</code>`)
     : '';
@@ -916,6 +935,7 @@ export function renderReceiptHtml(receipt) {
     ${cogsBlock}
     ${privacyBlock}
     ${lineageBlock}
+    ${handoffBlock}
 
     <footer>
       Machine-readable: <a href="${esc(receipt.links.json)}">JSON</a> ·
@@ -1149,6 +1169,124 @@ export function renderAuditorHtml(exportDoc) {
 </html>`;
 }
 
+// ─── Receipt Handoff (wallet-move delegation) ───────────────────────────────
+// Enables proving possession transfer: origin holder delegates to a dest wallet,
+// dest wallet acknowledges. Both signatures are stored on the receipt and verifiable
+// by any agent from the JSON against the two public keys.
+
+/**
+ * Build the canonical message the ORIGIN holder signs to delegate possession.
+ * EIP-191 personal_sign over: "chit.handoff.origin|<taskId>|<destAddress>|<timestamp>"
+ * @param {string} taskId
+ * @param {string} destAddress - checksummed destination wallet address
+ * @param {number} timestamp - Unix timestamp (seconds)
+ */
+export function canonicalOriginHandoffMessage(taskId, destAddress, timestamp) {
+  return `chit.handoff.origin|${taskId}|${getAddress(destAddress)}|${timestamp}`;
+}
+
+/**
+ * Build the canonical message the DESTINATION wallet signs to acknowledge.
+ * EIP-191 personal_sign over: "chit.handoff.dest.ack|<taskId>|<originAddress>|<timestamp>"
+ * @param {string} taskId
+ * @param {string} originAddress - checksummed origin wallet address
+ * @param {number} timestamp - Unix timestamp (seconds)
+ */
+export function canonicalDestAckMessage(taskId, originAddress, timestamp) {
+  return `chit.handoff.dest.ack|${taskId}|${getAddress(originAddress)}|${timestamp}`;
+}
+
+/**
+ * Verify an origin delegation signature.
+ * @param {object} params
+ * @param {string} params.taskId
+ * @param {string} params.originAddress - claimed origin address
+ * @param {string} params.destAddress - destination address in the delegation
+ * @param {number} params.timestamp - Unix timestamp
+ * @param {string} params.signature - EIP-191 personal_sign signature
+ * @returns {{ valid: boolean, recoveredAddress?: string, reason?: string }}
+ */
+export function verifyOriginHandoff({ taskId, originAddress, destAddress, timestamp, signature }) {
+  if (!taskId || !originAddress || !destAddress || !timestamp || !signature) {
+    return { valid: false, reason: 'missing_required_fields' };
+  }
+  try {
+    const message = canonicalOriginHandoffMessage(taskId, destAddress, timestamp);
+    const recovered = verifyMessage(message, signature);
+    const normalizedOrigin = getAddress(originAddress);
+    const normalizedRecovered = getAddress(recovered);
+    if (normalizedRecovered.toLowerCase() !== normalizedOrigin.toLowerCase()) {
+      return { valid: false, recoveredAddress: normalizedRecovered, reason: 'signer_mismatch' };
+    }
+    return { valid: true, recoveredAddress: normalizedRecovered };
+  } catch (err) {
+    return { valid: false, reason: `verification_error: ${err.message}` };
+  }
+}
+
+/**
+ * Verify a destination acknowledgment signature.
+ * @param {object} params
+ * @param {string} params.taskId
+ * @param {string} params.originAddress - origin address from the delegation
+ * @param {string} params.destAddress - claimed destination address
+ * @param {number} params.timestamp - Unix timestamp
+ * @param {string} params.signature - EIP-191 personal_sign signature
+ * @returns {{ valid: boolean, recoveredAddress?: string, reason?: string }}
+ */
+export function verifyDestAck({ taskId, originAddress, destAddress, timestamp, signature }) {
+  if (!taskId || !originAddress || !destAddress || !timestamp || !signature) {
+    return { valid: false, reason: 'missing_required_fields' };
+  }
+  try {
+    const message = canonicalDestAckMessage(taskId, originAddress, timestamp);
+    const recovered = verifyMessage(message, signature);
+    const normalizedDest = getAddress(destAddress);
+    const normalizedRecovered = getAddress(recovered);
+    if (normalizedRecovered.toLowerCase() !== normalizedDest.toLowerCase()) {
+      return { valid: false, recoveredAddress: normalizedRecovered, reason: 'signer_mismatch' };
+    }
+    return { valid: true, recoveredAddress: normalizedRecovered };
+  } catch (err) {
+    return { valid: false, reason: `verification_error: ${err.message}` };
+  }
+}
+
+/**
+ * Extract handoff block from task metadata (if present).
+ * Returns null if no handoff, or a structured block with origin/dest info.
+ * @param {object} task
+ */
+export function handoffOf(task) {
+  const h = task?.handoff || task?.meta?.handoff;
+  if (!h || typeof h !== 'object') return null;
+  if (!h.origin) return null;
+
+  const result = {
+    origin: {
+      address: h.origin.address || null,
+      dest_address: h.origin.destAddress || h.origin.dest_address || null,
+      timestamp: h.origin.timestamp || null,
+      signature: h.origin.signature || null,
+      created_at: h.origin.createdAt || h.origin.created_at || null,
+    },
+    dest: null,
+    status: 'pending_dest_ack',
+  };
+
+  if (h.dest && h.dest.address) {
+    result.dest = {
+      address: h.dest.address || null,
+      timestamp: h.dest.timestamp || null,
+      signature: h.dest.signature || null,
+      created_at: h.dest.createdAt || h.dest.created_at || null,
+    };
+    result.status = 'complete';
+  }
+
+  return result;
+}
+
 export default {
   buildReceipt,
   buildAuditorExport,
@@ -1166,4 +1304,9 @@ export default {
   verifyReceiptHmac,
   verifyReceiptMultiKey,
   canonicalSignedPayload,
+  canonicalOriginHandoffMessage,
+  canonicalDestAckMessage,
+  verifyOriginHandoff,
+  verifyDestAck,
+  handoffOf,
 };
