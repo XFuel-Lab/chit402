@@ -472,7 +472,7 @@ export function buildPaymentChallenge(p, opts = {}) {
   const isV1Chat = resourceUrl.includes('/v1/chat/completions')
     || resourceUrl.includes('/a2a-message');
 
-  const serviceName = 'Chit';
+  const serviceName = 'Chit402';
   // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.
   const tags = ['llm', 'openai-compatible', 'chat-completions', 'inference'];
   const iconUrl = buildIconUrl(baseUrl);
