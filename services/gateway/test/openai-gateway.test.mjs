@@ -223,7 +223,7 @@ test('POST /v1/chat/completions returns an OpenAI completion + Chit receipt', as
   const receiptHtml = await fetch(`${base}/receipt/${body.xfuel.task_id}`);
   assert.equal(receiptHtml.status, 200);
   const html = await receiptHtml.text();
-  assert.match(html, /<title>Chit<\/title>/);
+  assert.match(html, /<title>Chit402<\/title>/);
   assert.doesNotMatch(html, /openai/i);
 });
 
@@ -252,8 +252,8 @@ test('GET /receipt/openai-* still 200 for pre-cutover task ids', async () => {
   const res = await fetch(`${base}/receipt/${legacyId}`);
   assert.equal(res.status, 200);
   const html = await res.text();
-  // Title is just "Chit" (task_id not appended)
-  assert.match(html, /<title>Chit<\/title>/);
+  // Title is just "Chit402" (task_id not appended)
+  assert.match(html, /<title>Chit402<\/title>/);
   // openai-* prefix is NOT stripped (only xfuel- is)
   assert.match(html, new RegExp(`class="taskid">${legacyId}<`));
 

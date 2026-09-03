@@ -267,7 +267,7 @@ test('renderReceiptHtml: shareable page includes key fields + escapes hostile in
   assert.ok(html.includes('&lt;script&gt;'));
 });
 
-test('renderReceiptHtml: title is "Chit", xfuel- prefix becomes chit- in display', () => {
+test('renderReceiptHtml: title is "Chit402", xfuel- prefix becomes chit- in display', () => {
   const xfuelTask = {
     taskId: 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587',
     status: 'completed',
@@ -275,9 +275,9 @@ test('renderReceiptHtml: title is "Chit", xfuel- prefix becomes chit- in display
   };
   const html = renderReceiptHtml(buildReceipt(xfuelTask));
 
-  // Title must be just "Chit" without task_id or "receipt"
-  assert.match(html, /<title>Chit<\/title>/);
-  assert.match(html, /og:title.*content="Chit"/);
+  // Title must be just "Chit402" without task_id or "receipt"
+  assert.match(html, /<title>Chit402<\/title>/);
+  assert.match(html, /og:title.*content="Chit402"/);
 
   // The displayed task ID should have the xfuel- prefix rewritten to chit-
   assert.ok(html.includes('chit-247049dd-0075-4372-b7f7-508c62b9b587'), 'chit- prefix should be displayed');
@@ -436,8 +436,8 @@ test('renderReceiptHtml: unmetered /v1 does not print the $0.01 floor as a price
   }));
   assert.match(html, /not charged/);
   assert.match(html, /UNMETERED/);
-  // Title is just "Chit" (never includes task_id or "receipt")
-  assert.match(html, /<title>Chit<\/title>/);
+  // Title is just "Chit402" (never includes task_id or "receipt")
+  assert.match(html, /<title>Chit402<\/title>/);
   // xfuel- prefix becomes chit- in taskid div
   assert.ok(html.includes('class="taskid">chit-free<'));
   assert.doesNotMatch(html, /openai/i);
@@ -456,8 +456,8 @@ test('renderReceiptHtml: historical openai-* task ids still render (no prefix st
     result: { provider: 'theta-edgecloud' },
     sp1Proof: null,
   }));
-  // Title is just "Chit" (never includes task_id or "receipt")
-  assert.match(html, /<title>Chit<\/title>/);
+  // Title is just "Chit402" (never includes task_id or "receipt")
+  assert.match(html, /<title>Chit402<\/title>/);
   // openai-* prefix is NOT stripped (only xfuel- is)
   assert.match(html, new RegExp(`class="taskid">${taskId}<`));
 });
