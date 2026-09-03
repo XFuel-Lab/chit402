@@ -1,18 +1,24 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { API_V1 } from '../apiHost';
+import { getApiV1 } from '../apiHost';
 import { getHostConfig } from '../hostConfig';
 
-const SNIPPET = `curl -sS ${API_V1}/chat/completions \\
+function getSnippet(apiV1: string) {
+  return `curl -sS ${apiV1}/chat/completions \\
   -H "X-API-Key: xfuel-demo" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`;
+}
 
 export default function Book() {
+  const config = getHostConfig();
+  const productName = config.name;
+  const apiV1 = getApiV1();
+  const SNIPPET = getSnippet(apiV1);
+
   useEffect(() => {
-    const config = getHostConfig();
-    document.title = `The book: this agent spent Y on this job | ${config.name}`;
-  }, []);
+    document.title = `The book: this agent spent Y on this job | ${productName}`;
+  }, [productName]);
 
   return (
     <div className="page docs-page">
@@ -21,7 +27,7 @@ export default function Book() {
           <span className="docs-kicker">The Book</span>
           <h1>This agent spent Y on this job.</h1>
           <p>
-            XFuel is the book. Differentiator vs Hive / ComputeSeal / Paid.ai: a held book of
+            {productName} is the book. Differentiator vs Hive / ComputeSeal / Paid.ai: a held book of
             hub + model + amount after collected USDC, not a FinOps CSV. Demo never writes the
             book. SP1 on demand, not every call. Receipt attests settlement and output hash,
             not black-box correctness.
@@ -29,7 +35,7 @@ export default function Book() {
         </header>
 
         <section className="docs-section">
-          <h2>What is the XFuel book?</h2>
+          <h2>What is the {productName} book?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
             The book is the last-N collected spend for an agent session. Each entry records the
             hub, the model, and the amount in USDC. The payer holds the book—no dashboard export,
@@ -50,7 +56,7 @@ export default function Book() {
         <section className="docs-section">
           <h2>How is the book different from Hive, ComputeSeal, or Paid.ai?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
-            Hive, ComputeSeal, and Paid.ai export a FinOps CSV or billing dashboard. XFuel
+            Hive, ComputeSeal, and Paid.ai export a FinOps CSV or billing dashboard. {productName}{' '}
             returns a possession-gated API endpoint where you hold the book—hub, model, amount—
             after USDC is collected. The book is held, not mailed. The receipt is HMAC-signed.
           </p>

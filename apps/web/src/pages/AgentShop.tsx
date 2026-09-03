@@ -1,14 +1,17 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { API_V1 } from '../apiHost';
+import { getApiV1 } from '../apiHost';
 import { getHostConfig } from '../hostConfig';
 
-const SNIPPET = `curl -sS ${API_V1}/chat/completions \\
+function getSnippet(apiV1: string) {
+  return `curl -sS ${apiV1}/chat/completions \\
   -H "X-API-Key: xfuel-demo" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`;
+}
 
-const FETCH = `const res = await fetch('${API_V1}/chat/completions', {
+function getFetch(apiV1: string) {
+  return `const res = await fetch('${apiV1}/chat/completions', {
   method: 'POST',
   headers: {
     'X-API-Key': 'xfuel-demo',
@@ -20,12 +23,18 @@ const FETCH = `const res = await fetch('${API_V1}/chat/completions', {
   }),
 });
 const data = await res.json();`;
+}
 
 export default function AgentShop() {
+  const config = getHostConfig();
+  const productName = config.name;
+  const apiV1 = getApiV1();
+  const SNIPPET = getSnippet(apiV1);
+  const FETCH = getFetch(apiV1);
+
   useEffect(() => {
-    const config = getHostConfig();
-    document.title = `The till for an agent shop | ${config.name}`;
-  }, []);
+    document.title = `The till for an agent shop | ${productName}`;
+  }, [productName]);
 
   return (
     <div className="page docs-page">
@@ -34,8 +43,8 @@ export default function AgentShop() {
           <span className="docs-kicker">Agent Shop</span>
           <h1>Your SEO bot spent it. You hold the book.</h1>
           <p>
-            XFuel is the till for an agent shop. POST to{' '}
-            <a href={API_V1}>{API_V1}/chat/completions</a>, pay the HTTP 402 in USDC
+            {productName} is the till for an agent shop. POST to{' '}
+            <a href={apiV1}>{apiV1}/chat/completions</a>, pay the HTTP 402 in USDC
             on Base or Solana (cost-plus, quoted, receipted), and you hold the book. We are the till, not the Chief of SEO.
             Show the client the book, not a screenshot. Demo key <code>xfuel-demo</code> is free
             (15/min, 150/day). HMAC-signed receipts are table stakes.
@@ -46,7 +55,7 @@ export default function AgentShop() {
         <section className="docs-section">
           <h2>How do I set up an agent shop till in four minutes?</h2>
           <ol style={{ color: '#8a8a9a', paddingLeft: '1.2rem', lineHeight: 1.8 }}>
-            <li>POST to <code>{API_V1}/chat/completions</code>.</li>
+            <li>POST to <code>{apiV1}/chat/completions</code>.</li>
             <li>Use the demo key <code>xfuel-demo</code> to verify the connection (free, rate-limited).</li>
             <li>Switch to a wallet-backed key to pay the 402 in USDC on Base or Solana.</li>
             <li>Call <code>GET /v1/agents/:agent_id/book</code> to retrieve the spend log for your client.</li>
@@ -64,10 +73,10 @@ export default function AgentShop() {
         </section>
 
         <section className="docs-section">
-          <h2>Does XFuel replace my Grok Bot or Cursor loop?</h2>
+          <h2>Does {productName} replace my Grok Bot or Cursor loop?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
-            No. XFuel is the till, not the agent. Keep your orchestration. Point it at
-            <code> {API_V1}</code> instead of the provider directly. The receipt and the book
+            No. {productName} is the till, not the agent. Keep your orchestration. Point it at
+            <code> {apiV1}</code> instead of the provider directly. The receipt and the book
             are what you get—verifiable spend, not a replacement for your workflow.
           </p>
         </section>
