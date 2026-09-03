@@ -7,10 +7,38 @@ on:
     branches: [main, master, develop]
 
 jobs:
-  # ── Frontend unit tests (Jest + TypeScript) ─────────────────
-  jest:
-    name: Jest Unit Tests
+  # ── Path-change detection ──────────────────────────────────
+  changes:
+    name: Detect Changes
     runs-on: ubuntu-latest
+    outputs:
+      contracts: ${{ steps.filter.outputs.contracts }}
+      sdk: ${{ steps.filter.outputs.sdk }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            contracts:
+              - 'contracts/**'
+              - 'core-layer/**'
+              - 'test/**'
+              - 'hardhat.config.cjs'
+              - 'scripts/hardhat-*.cjs'
+              - '.solcover.cjs'
+            sdk:
+              - 'packages/sdk/**'
+
+  # ── SDK unit tests (Jest + TypeScript) ─────────────────────
+  # Runs on push to main, or on PRs that touch packages/sdk/.
+  jest:
+    name: Jest Unit Tests (SDK)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.sdk == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -28,9 +56,14 @@ jobs:
         run: npm test --prefix packages/sdk -- --ci --coverage=false
 
   # ── Solidity compile + core contract tests ──────────────────
+  # Runs on push to main, or on PRs that touch contracts/core-layer/test paths.
   contracts-core:
     name: Core Contract Tests
     runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.contracts == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -69,4 +102,3 @@ jobs:
   #     - run: npm run dev &
   #     - run: npm run test:e2e:headless
   #       env: { CYPRESS_baseUrl: 'http://localhost:3000' }
-
