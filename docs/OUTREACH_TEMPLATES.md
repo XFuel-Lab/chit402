@@ -21,7 +21,7 @@ Most teams running agents can answer that from a provider invoice at the account
 nowhere near the per-call level. Which model actually served it, which provider, how many tokens,
 what it cost — that either lives in your own logs, which attest nothing, or nowhere.
 
-XFuel is a chat-completions gateway that returns a **signed receipt for every call**: model,
+Chit402 is a chat-completions gateway that returns a **signed receipt for every call**: model,
 provider, token counts, output hash, cost. Tamper-evident, verifiable with our SDK or your own
 HMAC check. Two minutes to try — change `baseURL` to `https://api.xfuel.app/v1` and keep
 everything else. No wallet, no signup call, receipts are free.
@@ -31,7 +31,7 @@ schema before it sets.
 
 Worth 20 minutes this week?
 
-— `[You]` · https://xfuel.app · https://api.xfuel.app
+— `[You]` · https://chit402.com · https://api.xfuel.app
 
 ---
 
@@ -45,7 +45,7 @@ Here the payment rail is a feature rather than a hurdle, so it can lead.
 Hi `[Name]` — saw `[project / post / hackathon]`.
 
 If `[project]`'s agents spend from a shared treasury, you have the reporting problem twice: what
-was spent, and proof for whoever asks. XFuel settles agent inference in USDC on Base over x402
+was spent, and proof for whoever asks. Chit402 settles agent inference in USDC on Base over x402
 and returns a signed receipt per call naming the model, the provider, the tokens and the cost —
 so spend reconciles against something better than a screenshot. Optional SP1 settlement proof
 on-chain when a receipt needs to stand up to an auditor rather than a colleague.
@@ -55,7 +55,7 @@ the free surface returns the same signed artifact.
 
 Open to 20 minutes?
 
-— `[You]` · https://xfuel.app
+— `[You]` · https://chit402.com
 
 ---
 

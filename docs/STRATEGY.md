@@ -1,4 +1,4 @@
-# XFuel Strategy — Build-From Source
+# Chit402 Strategy — Build-From Source
 
 Canonical company strategy. When messaging, GTM, or eng backlog disagree with this file, update this file (or amend in writing) — do not silently fork.
 
@@ -7,7 +7,7 @@ Related: [POSITIONING.md](./POSITIONING.md) · [PROVIDER_FLOAT_TREASURY.md](./PR
 
 ## Company job
 
-XFuel is the **book**: this agent spent Y on this job, and you hold **hub, model, and amount**. Not a smart router. Not a model shop. The product is the collected spend receipt — possession + lineage for the principal who funds the agent. Agents pay in USDC on Base; signed receipt is table stakes.
+Chit402 is the **book**: this agent spent Y on this job, and you hold **hub, model, and amount**. Not a smart router. Not a model shop. The product is the collected spend receipt — possession + lineage for the principal who funds the agent. Agents pay in USDC on Base; signed receipt is table stakes.
 
 The product is the collected row — sidecar + ingest if you already pay a provider. Without a collected USDC `payment.ref` the receipt is client-attested only.
 
@@ -19,7 +19,7 @@ We are not:
 
 ## One line
 
-**XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.**
+**Chit402 is the book. This agent spent Y on this job. You hold hub, model, and amount.**
 
 Privacy add (when Private Spend is live): *Spend without briefing the frontier lab.*
 
@@ -27,7 +27,7 @@ Locked copy and guardrails: [POSITIONING.md](./POSITIONING.md).
 
 ## Elevator
 
-AI agents are starting to spend money on their own. Keys and opaque invoices fail. XFuel is the book: pay per call in USDC via x402 on Base, and you hold hub, model, and amount. Signed receipt is table stakes — HMAC by default, SP1 settlement proof on demand. The wire is chat-completions; any Grok-class or dePIN agent can point `baseURL` here and get a receipt.
+AI agents are starting to spend money on their own. Keys and opaque invoices fail. Chit402 is the book: pay per call in USDC via x402 on Base, and you hold hub, model, and amount. Signed receipt is table stakes — HMAC by default, SP1 settlement proof on demand. The wire is chat-completions; any Grok-class or dePIN agent can point `baseURL` here and get a receipt.
 
 ## ICP
 

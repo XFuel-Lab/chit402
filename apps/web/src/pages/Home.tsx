@@ -29,7 +29,7 @@ export default function Home() {
             <span className="badge badge-cyan">Public demo</span>
             <span style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>USDC receipts on Base</span>
           </div>
-          <h1 style={styles.heroTitle}>XFuel is the book.</h1>
+          <h1 style={styles.heroTitle}>Chit402 is the book.</h1>
           <p style={styles.heroSubtitle}>
             This agent spent Y on this job. You hold hub, model, and amount.
           </p>

@@ -1,6 +1,6 @@
-# XFuel Agent Skills
+# Chit402 Agent Skills
 
-XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount. Installable skills so agents can submit inference, read the possession-gated book, verify settlement proofs, pay USDC via x402, and coordinate A2A / swarms.
+Chit402 is the book. This agent spent Y on this job. You hold hub, model, and amount. Installable skills so agents can submit inference, read the possession-gated book, verify settlement proofs, pay USDC via x402, and coordinate A2A / swarms.
 
 Start here: [AGENT_PLAYBOOK.md](./AGENT_PLAYBOOK.md).  
 Protocol map: [AGENTS.md](../../AGENTS.md).  

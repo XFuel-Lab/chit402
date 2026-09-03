@@ -1,15 +1,15 @@
-# XFuel Receipt Verification Algorithm
+# Chit402 Receipt Verification Algorithm
 
-This document describes how to verify an XFuel receipt offline, without
-trusting the XFuel API. Use this when:
+This document describes how to verify a Chit402 receipt offline, without
+trusting the Chit402 API. Use this when:
 
-- XFuel is down or unreachable
+- Chit402 is down or unreachable
 - You want independent verification
-- You hold a co-signer key and XFuel has ceased operations
+- You hold a co-signer key and Chit has ceased operations
 
 ## 1. What a receipt attests
 
-A signed XFuel receipt attests:
+A signed Chit402 receipt attests:
 
 | Field | Meaning |
 |-------|---------|
@@ -32,7 +32,7 @@ with any field invalidates the signature.
 
 A receipt may carry one or both:
 
-- `signature` — primary XFuel attestation
+- `signature` — primary Chit attestation
 - `co_signature` — second attestor (partner/auditor key)
 
 Each signature block:
@@ -48,7 +48,7 @@ Each signature block:
 ```
 
 Either signature validates the receipt. If you hold the co-signer secret and
-XFuel has disappeared, verify against `co_signature`.
+Chit has disappeared, verify against `co_signature`.
 
 ## 3. Canonical payload
 
@@ -211,7 +211,7 @@ nullifier. In this case:
 3. Compare with `receipt.binding.expected_commitment`
 
 The SP1 verifier contract address is in `deploy/manifests/`. This is the
-**escape hatch**: even if XFuel and all co-signers disappear, an `in_proof`
+**escape hatch**: even if Chit and all co-signers disappear, an `in_proof`
 receipt can be verified purely on-chain.
 
 ## 8. Security notes
@@ -221,7 +221,7 @@ receipt can be verified purely on-chain.
 - **Constant-time compare** the HMAC digests to prevent timing attacks.
 - **Check `in_proof`** for highest assurance — it's the on-chain escape hatch.
 
-## 9. What can be proven if XFuel disappears
+## 9. What can be proven if Chit disappears
 
 With this algorithm and either the primary or co-signer secret:
 
@@ -233,7 +233,7 @@ With this algorithm and either the primary or co-signer secret:
 With `in_proof: true`, add:
 
 5. **Nullifier is anchored** — single-use, cannot be replayed.
-6. **Commitment is on-chain** — survives XFuel entirely.
+6. **Commitment is on-chain** — survives Chit entirely.
 
 ## 10. ECDSA issuer signature (public-key verification)
 
