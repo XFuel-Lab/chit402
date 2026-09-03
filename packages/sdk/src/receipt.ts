@@ -8,7 +8,7 @@
  * services/gateway/src/receipt.js.
  */
 
-import { createHmac, createPublicKey, verify } from 'node:crypto';
+import { createHmac, createPublicKey, verify, KeyObject } from 'node:crypto';
 
 export interface ReceiptSignatureCheck {
   /** Whether a signature was present to check. */
@@ -142,7 +142,9 @@ export function verifyReceiptEcdsa(
   }
 
   try {
-    const publicKey = createPublicKey({ key: jwk as JsonWebKey, format: 'jwk' });
+    // JWK structure validated above; cast to satisfy Node crypto's expected type
+    const jwkInput = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y } as const;
+    const publicKey: KeyObject = createPublicKey({ key: jwkInput, format: 'jwk' });
     const signature = Buffer.from(sig.value, 'base64url');
     const payload = canonicalReceiptPayload(receipt);
     const valid = verify('sha256', Buffer.from(payload, 'utf8'), {

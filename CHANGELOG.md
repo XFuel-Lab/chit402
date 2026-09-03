@@ -10,6 +10,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **ECDSA issuer signature on receipts:** Receipts now include an ES256 (P-256) public-key signature in `issuer_signature` that downstream agents can verify against the published JWKS at `GET /.well-known/jwks.json`. HMAC signatures remain for backward compatibility. SDK exports `verifyReceiptEcdsa()` and `verifyReceiptEcdsaWithJwks()` for verification. See `docs/VERIFY_ALGORITHM.md` §10.
 - **x402scan listing:** `GET /openapi.json` (OpenAPI 3.1 with `info.x-guidance`, `x-payment-info`, `responses.402`). Public door is `POST /v1/chat/completions`; `POST /task-request` is second. Unauth `POST /v1/chat/completions` with `{}` returns 402 before body validation. Demo key `xfuel-demo` still skips payment. Runtime 402 amounts stay `"10000"`.
 
 ### Changed
