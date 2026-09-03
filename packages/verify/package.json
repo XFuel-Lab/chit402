@@ -1,7 +1,7 @@
 {
   "name": "@xfuel/verify",
   "version": "0.1.0",
-  "description": "Offline verification for XFuel receipts — verify payment binding and output hash without calling the XFuel API",
+  "description": "Offline verification for Chit402 receipts — verify payment binding and output hash without calling the API",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
@@ -36,6 +36,7 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [
+    "chit402",
     "xfuel",
     "verify",
     "receipt",
@@ -45,7 +46,7 @@
     "offline",
     "zk"
   ],
-  "author": "XFuel Protocol",
+  "author": "Chit402 / XFuel Labs",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

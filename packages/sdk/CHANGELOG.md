@@ -1,7 +1,22 @@
 # Changelog — xfuel-sdk
 
-All notable changes to the XFuel SDK are documented here. This project adheres to
+All notable changes to the Chit402 SDK are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
+
+## 0.6.0 — ES256/JWKS receipt verification + Chit402 public cutover
+
+### Added
+- **`verifyReceiptEcdsa`** — ES256 ECDSA signature verification for receipt issuer signatures.
+  Verify a receipt's `issuer_signature` against a JWK public key without a shared secret.
+- **`verifyReceiptEcdsaWithJwks`** — Verify a receipt against a JWKS (JSON Web Key Set),
+  automatically finding the matching key by `kid`.
+- **`Es256Jwk` / `Jwks` types** — TypeScript interfaces for ES256 JWK and JWKS structures.
+- **`ReceiptEcdsaCheck` type** — Return type for ECDSA verification results.
+
+### Changed
+- **Chit402 branding** — Package description and README now reference Chit402.
+  Package name remains `xfuel-sdk` for compatibility.
+- **API endpoints** — Docs now reference https://api.chit402.com (alias: https://api.xfuel.app).
 
 ## 0.5.5 — Default host is `api.xfuel.app`
 
