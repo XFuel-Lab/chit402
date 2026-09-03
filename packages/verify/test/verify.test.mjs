@@ -25,6 +25,7 @@ try {
 // Import from built dist
 const {
   verifyBinding,
+  verifyReceipt,
   verifyIssuerSignature,
   verifyIssuerSignatureWithJwks,
   canonicalIssuerPayload,
@@ -451,5 +452,324 @@ describe('verifyIssuerSignatureWithJwks', () => {
 
     assert.equal(result.checked, false);
     assert.equal(result.reason, 'empty_jwks');
+  });
+});
+
+describe('canonicalIssuerPayload with fee/COGS fields', () => {
+  test('includes all 15 signed fields in canonical order', () => {
+    const receipt = {
+      task_id: 'task-full-fields',
+      payment: {
+        rail: 'usdc',
+        ref: 'base:0x123abc',
+        gross_amount: '100000',
+        net_amount: '90000',
+        fee_amount: '5000',
+        protocol_fee_bps: 500,
+        platform_fee: '3000',
+        platform_fee_bps: 300,
+      },
+      provider_cogs: {
+        actual: '85000',
+      },
+      route: {
+        model: 'theta/glm-4',
+        model_commitment: { commitment: '0x' + 'ab'.repeat(32) },
+        provider: 'theta-edgecloud',
+      },
+      output: { hash: '0x' + 'cd'.repeat(32) },
+      binding: { expected_commitment: '0x' + 'ef'.repeat(32) },
+    };
+
+    const payload = canonicalIssuerPayload(receipt);
+    const parsed = JSON.parse(payload);
+
+    assert.equal(parsed.length, 15);
+    assert.equal(parsed[0], 'task-full-fields');
+    assert.equal(parsed[1], 'usdc');
+    assert.equal(parsed[2], 'base:0x123abc');
+    assert.equal(parsed[3], '100000');
+    assert.equal(parsed[4], '90000');
+    assert.equal(parsed[5], '5000'); // fee_amount
+    assert.equal(parsed[6], 500); // protocol_fee_bps
+    assert.equal(parsed[7], '3000'); // platform_fee
+    assert.equal(parsed[8], 300); // platform_fee_bps
+    assert.equal(parsed[9], '85000'); // provider_cogs.actual
+    assert.equal(parsed[10], 'theta/glm-4');
+    assert.equal(parsed[11], '0x' + 'ab'.repeat(32));
+    assert.equal(parsed[12], 'theta-edgecloud');
+    assert.equal(parsed[13], '0x' + 'cd'.repeat(32));
+    assert.equal(parsed[14], '0x' + 'ef'.repeat(32));
+  });
+
+  test('uses fee_bps fallback when protocol_fee_bps is missing', () => {
+    const receipt = {
+      task_id: 'task-fee-bps',
+      payment: {
+        rail: 'usdc',
+        fee_bps: 250, // legacy field
+      },
+    };
+
+    const payload = canonicalIssuerPayload(receipt);
+    const parsed = JSON.parse(payload);
+
+    assert.equal(parsed[6], 250); // should use fee_bps
+  });
+
+  test('verifies signature with all fee/COGS fields present', () => {
+    const receipt = {
+      task_id: 'task-full-verify',
+      status: 'completed',
+      payment: {
+        rail: 'usdc',
+        ref: 'base:0xabc',
+        gross_amount: '50000',
+        net_amount: '45000',
+        fee_amount: '2500',
+        protocol_fee_bps: 500,
+        platform_fee: '1500',
+        platform_fee_bps: 300,
+      },
+      provider_cogs: {
+        actual: '42000',
+      },
+      route: {
+        model: 'openai/gpt-4',
+        model_commitment: { commitment: '0x' + '11'.repeat(32) },
+        provider: 'openrouter',
+      },
+      output: { hash: '0x' + '22'.repeat(32) },
+      binding: { expected_commitment: '0x' + '33'.repeat(32) },
+    };
+
+    const signatureValue = signReceipt(receipt);
+    receipt.issuer_signature = {
+      alg: 'ES256',
+      value: signatureValue,
+      kid: 'test-key-1',
+    };
+
+    const result = verifyIssuerSignature(receipt, TEST_PUBLIC_KEY_JWK);
+
+    assert.equal(result.checked, true);
+    assert.equal(result.valid, true);
+  });
+
+  test('tampered fee_amount invalidates signature', () => {
+    const receipt = {
+      task_id: 'task-tamper-fee-amount',
+      status: 'completed',
+      payment: {
+        rail: 'usdc',
+        fee_amount: '5000',
+        protocol_fee_bps: 500,
+        platform_fee: '3000',
+        platform_fee_bps: 300,
+      },
+      provider_cogs: { actual: '10000' },
+    };
+
+    const signatureValue = signReceipt(receipt);
+    receipt.issuer_signature = { alg: 'ES256', value: signatureValue, kid: 'test-key-1' };
+
+    // Tamper with fee_amount
+    receipt.payment.fee_amount = '9999';
+
+    const result = verifyIssuerSignature(receipt, TEST_PUBLIC_KEY_JWK);
+    assert.equal(result.valid, false);
+  });
+
+  test('tampered protocol_fee_bps invalidates signature', () => {
+    const receipt = {
+      task_id: 'task-tamper-protocol-fee',
+      status: 'completed',
+      payment: {
+        rail: 'usdc',
+        fee_amount: '5000',
+        protocol_fee_bps: 500,
+        platform_fee: '3000',
+        platform_fee_bps: 300,
+      },
+      provider_cogs: { actual: '10000' },
+    };
+
+    const signatureValue = signReceipt(receipt);
+    receipt.issuer_signature = { alg: 'ES256', value: signatureValue, kid: 'test-key-1' };
+
+    // Tamper with protocol_fee_bps
+    receipt.payment.protocol_fee_bps = 999;
+
+    const result = verifyIssuerSignature(receipt, TEST_PUBLIC_KEY_JWK);
+    assert.equal(result.valid, false);
+  });
+
+  test('tampered platform_fee invalidates signature', () => {
+    const receipt = {
+      task_id: 'task-tamper-platform-fee',
+      status: 'completed',
+      payment: {
+        rail: 'usdc',
+        fee_amount: '5000',
+        protocol_fee_bps: 500,
+        platform_fee: '3000',
+        platform_fee_bps: 300,
+      },
+      provider_cogs: { actual: '10000' },
+    };
+
+    const signatureValue = signReceipt(receipt);
+    receipt.issuer_signature = { alg: 'ES256', value: signatureValue, kid: 'test-key-1' };
+
+    // Tamper with platform_fee
+    receipt.payment.platform_fee = '9999';
+
+    const result = verifyIssuerSignature(receipt, TEST_PUBLIC_KEY_JWK);
+    assert.equal(result.valid, false);
+  });
+
+  test('tampered provider_cogs.actual invalidates signature', () => {
+    const receipt = {
+      task_id: 'task-tamper-cogs',
+      status: 'completed',
+      payment: {
+        rail: 'usdc',
+        fee_amount: '5000',
+        protocol_fee_bps: 500,
+        platform_fee: '3000',
+        platform_fee_bps: 300,
+      },
+      provider_cogs: { actual: '10000' },
+    };
+
+    const signatureValue = signReceipt(receipt);
+    receipt.issuer_signature = { alg: 'ES256', value: signatureValue, kid: 'test-key-1' };
+
+    // Tamper with provider_cogs.actual
+    receipt.provider_cogs.actual = '99999';
+
+    const result = verifyIssuerSignature(receipt, TEST_PUBLIC_KEY_JWK);
+    assert.equal(result.valid, false);
+  });
+});
+
+describe('verifyReceipt overall status semantics', () => {
+  test('overall=partial when receipt has issuer_signature but no JWKS provided', async () => {
+    const receipt = {
+      task_id: 'task-sig-no-jwks',
+      status: 'completed',
+      payment: { rail: 'usdc' },
+      issuer_signature: { alg: 'ES256', value: 'some-sig', kid: 'key-1' },
+    };
+
+    const result = await verifyReceipt(receipt, {}); // No JWKS
+
+    assert.equal(result.overall, 'partial');
+    assert.equal(result.issuer_signature.checked, false);
+    assert.ok(result.issuer_signature.reason.includes('JWKS not provided'));
+  });
+
+  test('overall=failed when JWKS provided but signature invalid', async () => {
+    const receipt = {
+      task_id: 'task-invalid-sig',
+      status: 'completed',
+      payment: { rail: 'usdc' },
+    };
+
+    // Sign with test key
+    const signatureValue = signReceipt(receipt);
+    receipt.issuer_signature = { alg: 'ES256', value: signatureValue, kid: 'test-key-1' };
+
+    // Tamper with receipt after signing
+    receipt.payment.rail = 'tfuel';
+
+    const jwks = { keys: [TEST_PUBLIC_KEY_JWK] };
+    const result = await verifyReceipt(receipt, { jwks });
+
+    assert.equal(result.overall, 'failed');
+    assert.equal(result.issuer_signature.valid, false);
+  });
+
+  test('overall=failed when JWKS provided but no matching key', async () => {
+    const receipt = {
+      task_id: 'task-no-match',
+      status: 'completed',
+      payment: { rail: 'usdc' },
+      issuer_signature: { alg: 'ES256', value: 'some-sig', kid: 'nonexistent-key' },
+    };
+
+    const jwks = { keys: [TEST_PUBLIC_KEY_JWK] }; // kid='test-key-1', not 'nonexistent-key'
+    const result = await verifyReceipt(receipt, { jwks });
+
+    assert.equal(result.overall, 'failed');
+  });
+
+  test('overall=verified when unsigned receipt has valid binding', async () => {
+    const taskId = 'task-unsigned';
+    const paymentRef = 'base:0x' + 'ab'.repeat(32);
+    const amount = '10000';
+
+    const { commitment } = computePaymentCommitment({
+      paymentRef,
+      taskId,
+      rail: 'usdc',
+      amount,
+    });
+
+    const receipt = {
+      task_id: taskId,
+      status: 'completed',
+      payment: { rail: 'usdc', ref: paymentRef, net_amount: amount },
+      binding: { expected_commitment: commitment, amount, rail: 'usdc', covers: ['payment'] },
+      // No issuer_signature
+    };
+
+    const result = await verifyReceipt(receipt, {});
+
+    assert.equal(result.overall, 'verified');
+  });
+
+  test('overall=verified when signed receipt with valid JWKS and binding', async () => {
+    const taskId = 'task-signed-valid';
+    const paymentRef = 'base:0x' + 'cd'.repeat(32);
+    const amount = '20000';
+
+    const { commitment } = computePaymentCommitment({
+      paymentRef,
+      taskId,
+      rail: 'usdc',
+      amount,
+    });
+
+    const receipt = {
+      task_id: taskId,
+      status: 'completed',
+      payment: { rail: 'usdc', ref: paymentRef, net_amount: amount },
+      binding: { expected_commitment: commitment, amount, rail: 'usdc', covers: ['payment'] },
+    };
+
+    // Sign
+    const signatureValue = signReceipt(receipt);
+    receipt.issuer_signature = { alg: 'ES256', value: signatureValue, kid: 'test-key-1' };
+
+    const jwks = { keys: [TEST_PUBLIC_KEY_JWK] };
+    const result = await verifyReceipt(receipt, { jwks });
+
+    assert.equal(result.overall, 'verified');
+    assert.equal(result.issuer_signature.valid, true);
+    assert.equal(result.binding.matches, true);
+  });
+
+  test('overall=partial for unmetered receipt with no binding or signature', async () => {
+    const receipt = {
+      task_id: 'task-unmetered',
+      status: 'completed',
+      payment: { rail: 'unmetered' },
+      // No binding, no signature
+    };
+
+    const result = await verifyReceipt(receipt, {});
+
+    assert.equal(result.overall, 'partial');
   });
 });

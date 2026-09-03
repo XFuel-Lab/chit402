@@ -41,7 +41,7 @@ const ZK_VERIFIER_ABI = [
   'function usedNullifiers(bytes32) view returns (bool)',
 ];
 
-/** XFuel receipt (v2/v3 compatible). */
+/** Chit402 receipt (v2/v3 compatible). */
 export interface XFuelReceipt {
   schema?: string;
   task_id: string;
@@ -60,6 +60,14 @@ export interface XFuelReceipt {
     ref?: string | null;
     gross_amount?: string;
     net_amount?: string;
+    fee_amount?: string;
+    fee_bps?: number;
+    protocol_fee_bps?: number;
+    platform_fee?: string;
+    platform_fee_bps?: number;
+  };
+  provider_cogs?: {
+    actual?: string;
   };
   output?: {
     hash?: string;
@@ -151,7 +159,24 @@ export interface ReceiptVerification {
 
 /**
  * Canonical, order-stable payload an issuer signature covers.
- * MUST match `canonicalSignedPayload` in services/gateway/src/receipt.js.
+ * MUST match `canonicalSignedPayload` in services/gateway/src/receipt.js exactly.
+ *
+ * Signed fields (15 total):
+ *   1. task_id
+ *   2. payment.rail
+ *   3. payment.ref
+ *   4. payment.gross_amount
+ *   5. payment.net_amount
+ *   6. payment.fee_amount
+ *   7. payment.protocol_fee_bps ?? payment.fee_bps
+ *   8. payment.platform_fee
+ *   9. payment.platform_fee_bps
+ *  10. provider_cogs.actual
+ *  11. route.model
+ *  12. route.model_commitment.commitment
+ *  13. route.provider
+ *  14. output.hash
+ *  15. binding.expected_commitment
  */
 export function canonicalIssuerPayload(receipt: XFuelReceipt): string {
   return JSON.stringify([
@@ -160,11 +185,11 @@ export function canonicalIssuerPayload(receipt: XFuelReceipt): string {
     receipt.payment?.ref ?? null,
     receipt.payment?.gross_amount ?? null,
     receipt.payment?.net_amount ?? null,
-    null, // fee_amount
-    null, // protocol_fee_bps
-    null, // platform_fee
-    null, // platform_fee_bps
-    null, // provider_cogs.actual
+    receipt.payment?.fee_amount ?? null,
+    receipt.payment?.protocol_fee_bps ?? receipt.payment?.fee_bps ?? null,
+    receipt.payment?.platform_fee ?? null,
+    receipt.payment?.platform_fee_bps ?? null,
+    receipt.provider_cogs?.actual ?? null,
     receipt.route?.model ?? null,
     receipt.route?.model_commitment?.commitment ?? null,
     receipt.route?.provider ?? null,
@@ -497,17 +522,34 @@ export async function verifyReceipt(
   const tx = receipt.payment?.ref ?? null;
   const output_hash = receipt.output?.hash ?? null;
 
-  // Determine overall status
-  // 'verified' requires: binding matches + issuer sig valid (if sig present and JWKS provided)
+  // Determine overall status with strict signature semantics:
+  // - If JWKS provided and signature invalid/kid mismatch/no matching key → 'failed'
+  // - If receipt has issuer_signature but no JWKS provided → 'partial' (cannot verify)
+  // - Unsigned receipts can be 'partial' or 'verified' based on binding
   let overall: 'verified' | 'partial' | 'failed';
-  const issuerOk = !receipt.issuer_signature || !options.jwks || issuer_signature.valid;
 
-  if (binding.matches && issuerOk && (!options.checkNullifier || nullifier.anchored)) {
+  // Check for signature verification failure (JWKS provided but signature invalid)
+  const jwksProvided = !!options.jwks;
+  const hasIssuerSig = !!receipt.issuer_signature;
+  const issuerSigInvalid = jwksProvided && hasIssuerSig && !issuer_signature.valid;
+
+  // Binding failure
+  const bindingFailed = binding.expected && !binding.matches;
+
+  if (issuerSigInvalid || bindingFailed) {
+    // JWKS provided but signature invalid, OR binding mismatch → failed
+    overall = 'failed';
+  } else if (hasIssuerSig && !jwksProvided) {
+    // Receipt has signature but no JWKS provided → partial (cannot verify signature)
+    overall = 'partial';
+  } else if (binding.matches && (!options.checkNullifier || nullifier.anchored)) {
+    // Binding matches, signature OK (or no signature), nullifier OK → verified
     overall = 'verified';
   } else if (binding.matches || issuer_signature.valid || (nullifier.verified && nullifier.anchored)) {
+    // At least one check passed → partial
     overall = 'partial';
-  } else if (!binding.expected && !receipt.proof?.nullifier && !receipt.issuer_signature) {
-    // No binding/sig to verify (unmetered/demo) — not a failure
+  } else if (!binding.expected && !receipt.proof?.nullifier && !hasIssuerSig) {
+    // No binding/sig/nullifier to verify (unmetered/demo) → partial
     overall = 'partial';
   } else {
     overall = 'failed';
