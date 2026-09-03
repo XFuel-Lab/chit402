@@ -13,24 +13,24 @@ const distDir = join(__dirname, '..', 'dist');
 
 const ROUTE_CONTENT = {
   '/agent-shop': {
-    title: 'The till for an agent shop | XFuel',
+    title: 'The till for an agent shop | Chit',
     h1: 'Your SEO bot spent it. You hold the book.',
-    lede: 'XFuel is the till for an agent shop. Paste https://api.xfuel.app/v1 as the OpenAI baseURL, pay the HTTP 402 in USDC on Base or Solana (cost-plus, quoted, receipted), and you hold the book. We are the till, not the Chief of SEO. Show the client the book, not a screenshot.',
+    lede: 'Chit is the till for an agent shop. Paste https://api.chit402.com/v1 as the OpenAI baseURL, pay the HTTP 402 in USDC on Base or Solana (cost-plus, quoted, receipted), and you hold the book. We are the till, not the Chief of SEO. Show the client the book, not a screenshot.',
   },
   '/book': {
-    title: 'The book: this agent spent Y on this job | XFuel',
+    title: 'The book: this agent spent Y on this job | Chit',
     h1: 'This agent spent Y on this job.',
-    lede: 'XFuel is the book. Differentiator vs Hive / ComputeSeal / Paid.ai: a held book of hub + model + amount after collected USDC, not a FinOps CSV. Demo never writes the book.',
+    lede: 'Chit is the book. Differentiator vs Hive / ComputeSeal / Paid.ai: a held book of hub + model + amount after collected USDC, not a FinOps CSV. Demo never writes the book.',
   },
   '/book-bot': {
-    title: 'Paste this. The shop gets a till | XFuel',
+    title: 'Paste this. The shop gets a till | Chit',
     h1: 'Paste this. The shop gets a till.',
-    lede: 'Paste this prompt into Grok, ChatGPT, or any agent. It interviews your stack once, then every job you run records agent / job / $Y / settled y/n by pointing your OpenAI baseURL at https://api.xfuel.app/v1.',
+    lede: 'Paste this prompt into Grok, ChatGPT, or any agent. It interviews your stack once, then every job you run records agent / job / $Y / settled y/n by pointing your OpenAI baseURL at https://api.chit402.com/v1.',
   },
   '/v1': {
-    title: 'Pay /v1/chat/completions | XFuel',
+    title: 'Pay /v1/chat/completions | Chit',
     h1: 'Bot drop-in. Wallet pays. You hold the book.',
-    lede: 'Exact product: baseURL https://api.xfuel.app/v1. POST /v1/chat/completions is cost-plus, quoted, receipted — USDC on Base and Solana. Without payment or a demo key, the gateway returns HTTP 402.',
+    lede: 'Exact product: baseURL https://api.chit402.com/v1. POST /v1/chat/completions is cost-plus, quoted, receipted — USDC on Base and Solana. Without payment or a demo key, the gateway returns HTTP 402.',
   },
 };
 
@@ -41,7 +41,7 @@ function truncateDescription(text, maxLen = 155) {
 
 function transformHtml(html, route, { title, h1, lede }) {
   const description = truncateDescription(lede);
-  const canonicalUrl = `https://www.xfuel.app${route}`;
+  const canonicalUrl = `https://www.chit402.com${route}`;
   
   let result = html
     .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`)

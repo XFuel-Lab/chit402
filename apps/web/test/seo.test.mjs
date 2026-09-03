@@ -113,10 +113,10 @@ import { existsSync } from 'node:fs';
 
 test('prerendered money pages have unique crawler titles (after build)', { skip: !existsSync(join(root, 'dist')) }, () => {
   const expectedTitles = {
-    'agent-shop': 'The till for an agent shop | XFuel',
-    'book': 'The book: this agent spent Y on this job | XFuel',
-    'book-bot': 'Paste this. The shop gets a till | XFuel',
-    'v1': 'Pay /v1/chat/completions | XFuel',
+    'agent-shop': 'The till for an agent shop | Chit',
+    'book': 'The book: this agent spent Y on this job | Chit',
+    'book-bot': 'Paste this. The shop gets a till | Chit',
+    'v1': 'Pay /v1/chat/completions | Chit',
   };
   
   for (const [route, expectedTitle] of Object.entries(expectedTitles)) {

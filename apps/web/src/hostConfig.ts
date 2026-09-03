@@ -61,7 +61,7 @@ const XFUEL_CONFIG: HostConfig = {
 };
 
 function detectBrand(): HostBrand {
-  if (typeof window === 'undefined') return 'xfuel';
+  if (typeof window === 'undefined') return 'chit';
   const host = window.location.hostname.toLowerCase();
   if (host === 'chit402.com' || host === 'www.chit402.com' || host.endsWith('.chit402.com')) {
     return 'chit';

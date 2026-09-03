@@ -9,6 +9,6 @@ export function getApiV1(): string {
   return `${getApiHost()}/v1`;
 }
 
-/** Static fallback for XFuel door (used in prerender / SSG). */
-export const API_HOST = 'https://api.xfuel.app';
+/** Static fallback for Chit door (used in prerender / SSG). */
+export const API_HOST = 'https://api.chit402.com';
 export const API_V1 = `${API_HOST}/v1`;
