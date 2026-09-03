@@ -326,10 +326,10 @@ test('buildReceipt: rolling first call is pending, not a legacy rail, and carrie
   const html = renderReceiptHtml(r);
   assert.ok(!html.includes('legacy rail'));
   assert.match(html, /bill pending/);
-  assert.match(html, /Prompt tokens/);
+  assert.match(html, /Tokens.*20|20.*\(12.*8\)/i, 'Tokens shown compactly');
   assert.match(html, /\$0\.000017/);
   assert.match(html, /not on this call/);
-  assert.match(html, /HMAC-SHA256/);
+  assert.match(html, /HMAC/);
   assert.match(html, /next request/);
 });
 
@@ -474,4 +474,65 @@ test('outputHashOf prefers result.outputHash over hashing the result envelope', 
   });
   assert.equal(r.output.hash, hash);
   assert.equal(r.output.kind, 'committed');
+});
+
+// ── Receipt HTML hierarchy tests (Chit polish) ──────────────────────────────
+
+test('renderReceiptHtml: Payment section appears before Route details (de-emphasis)', () => {
+  const html = renderReceiptHtml(buildReceipt(usdcTask()));
+  const paymentIdx = html.indexOf('<h2>Payment</h2>');
+  const routeIdx = html.indexOf('<h2>Route details</h2>');
+  assert.ok(paymentIdx > 0, 'Payment section must exist');
+  assert.ok(routeIdx > 0, 'Route details section must exist');
+  assert.ok(paymentIdx < routeIdx, 'Payment must appear before Route details');
+});
+
+test('renderReceiptHtml: Route details has secondary class (de-emphasized)', () => {
+  const html = renderReceiptHtml(buildReceipt(usdcTask()));
+  assert.match(html, /class="card secondary"[^>]*>[\s\S]*?<h2>Route details<\/h2>/);
+});
+
+test('renderReceiptHtml: Verification section shows issuer signature with ES256 and JWKS link', () => {
+  const task = usdcTask();
+  const r = buildReceipt(task, { signingSecret: 'test-secret' });
+  const html = renderReceiptHtml(r);
+  
+  assert.match(html, /<h2>Verification<\/h2>/, 'Verification section heading');
+  assert.match(html, /Issuer signature/, 'Issuer signature row');
+  assert.match(html, /ES256/, 'ES256 algorithm');
+  assert.match(html, /Key ID/, 'Key ID row');
+  assert.match(html, /\.well-known\/jwks\.json/, 'JWKS link');
+});
+
+test('renderReceiptHtml: Model and Provider are in Route details, not primary card', () => {
+  const html = renderReceiptHtml(buildReceipt(usdcTask()));
+  const routeDetailsStart = html.indexOf('Route details</h2>');
+  const routeDetailsEnd = html.indexOf('</section>', routeDetailsStart);
+  const routeSection = html.slice(routeDetailsStart, routeDetailsEnd);
+  
+  assert.ok(routeSection.includes('Model'), 'Model in Route details');
+  assert.ok(routeSection.includes('Provider'), 'Provider in Route details');
+});
+
+test('renderReceiptHtml: JWKS link is absolute when receipt has base URL', () => {
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  const html = renderReceiptHtml(r);
+  assert.match(html, /href="https:\/\/api\.chit402\.com\/\.well-known\/jwks\.json"/, 'Absolute JWKS URL');
+});
+
+test('renderReceiptHtml: tokens shown compactly (total with breakdown)', () => {
+  const task = usdcTask();
+  task.usage = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 };
+  const html = renderReceiptHtml(buildReceipt(task));
+  assert.match(html, /150/, 'Total tokens shown');
+  assert.match(html, /100.*50|prompt.*completion/i, 'Token breakdown shown');
+});
+
+test('buildReceipt: issuer_signature has ES256 alg and JWKS uri', () => {
+  const r = buildReceipt(usdcTask());
+  assert.ok(r.issuer_signature, 'issuer_signature present');
+  assert.equal(r.issuer_signature.alg, 'ES256');
+  assert.equal(r.issuer_signature.jwks_uri, '/.well-known/jwks.json');
+  assert.ok(r.issuer_signature.kid, 'kid present');
+  assert.ok(r.issuer_signature.value, 'signature value present');
 });

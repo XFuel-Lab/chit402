@@ -828,6 +828,31 @@ function proofWhyMissing(receipt) {
   return bits.join(' ');
 }
 
+/**
+ * Server-side verification of issuer signature for honest HTML display.
+ * Returns verification result; never throws.
+ */
+function verifyIssuerForHtml(receipt) {
+  const sig = receipt?.issuer_signature;
+  if (!sig || !sig.value || sig.alg !== 'ES256') {
+    return { verified: false, reason: 'no_issuer_signature' };
+  }
+  try {
+    const { getIssuerPublicKeyJwk } = require('./issuer-key.js');
+    const jwk = getIssuerPublicKeyJwk();
+    if (!jwk || jwk.kid !== sig.kid) {
+      return { verified: false, reason: 'kid_mismatch' };
+    }
+    const { verifyWithJwk } = require('./issuer-key.js');
+    const { canonicalSignedPayload } = require('./receipt.js');
+    const payload = canonicalSignedPayload(receipt);
+    const valid = verifyWithJwk(payload, sig.value, jwk);
+    return { verified: valid, reason: valid ? 'verified' : 'signature_invalid' };
+  } catch {
+    return { verified: false, reason: 'verification_error' };
+  }
+}
+
 /** Render a clean, standalone, shareable HTML receipt page. */
 export function renderReceiptHtml(receipt) {
   const p = receipt.payment;
@@ -848,10 +873,23 @@ export function renderReceiptHtml(receipt) {
 
   const usage = receipt.usage;
   const usageRows = usage
-    ? `${row('Prompt tokens', esc(usage.prompt_tokens ?? '—'))}
-      ${row('Completion tokens', esc(usage.completion_tokens ?? '—'))}
-      ${usage.total_tokens != null ? row('Total tokens', esc(usage.total_tokens)) : ''}`
+    ? `${row('Tokens', `${esc(usage.total_tokens ?? '—')} <span class="muted">(${esc(usage.prompt_tokens ?? 0)}→${esc(usage.completion_tokens ?? 0)})</span>`)}`
     : '';
+
+  const issuerSig = receipt.issuer_signature;
+  const issuerVerified = verifyIssuerForHtml(receipt);
+  const jwksUrl = (() => {
+    if (!issuerSig?.jwks_uri) return null;
+    const selfUrl = receipt.links?.self;
+    if (selfUrl && selfUrl.startsWith('http')) {
+      try {
+        return new URL(issuerSig.jwks_uri, selfUrl.replace(/\/receipt\/.*$/, '')).href;
+      } catch {
+        return issuerSig.jwks_uri;
+      }
+    }
+    return issuerSig.jwks_uri;
+  })();
 
   const bindingBlock = b
     ? `<section class="card">
@@ -953,9 +991,12 @@ export function renderReceiptHtml(receipt) {
   .taskid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: #cfd6e4; word-break: break-all; }
   .card { background: #131824; border: 1px solid #222a3a; border-radius: 12px; padding: 18px 20px; margin: 14px 0; }
   .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: #8b95a7; margin: 0 0 12px; font-weight: 600; }
+  .card.secondary { background: #0f1318; border-color: #1a2028; }
+  .card.secondary h2 { font-size: 11px; color: #5b6370; }
   .scope { text-transform: none; letter-spacing: 0; font-weight: 400; color: #6b7488; font-size: 11px; margin-left: 6px; }
   .row { display: flex; justify-content: space-between; gap: 16px; padding: 6px 0; border-top: 1px solid #1b2231; }
   .row:first-of-type { border-top: 0; }
+  .row.compact { padding: 4px 0; font-size: 13px; }
   .k { color: #8b95a7; }
   .v { text-align: right; word-break: break-word; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: #0e1420; padding: 2px 6px; border-radius: 6px; color: #cbd3e1; }
@@ -997,18 +1038,6 @@ export function renderReceiptHtml(receipt) {
     <div class="taskid">${esc(displayTaskId(receipt.task_id))}</div>
 
     <section class="card">
-      <h2>Route</h2>
-      ${row('Status', esc(receipt.status))}
-      ${row('Type', esc(receipt.route.message_type) || '<span class="muted">—</span>')}
-      ${row('Model', esc(receipt.route.model) || '<span class="muted">—</span>')}
-      ${modelCommitmentRow}
-      ${row('Provider', esc(receipt.route.provider) || '<span class="muted">—</span>')}
-      ${row('Chain', esc(receipt.route.chain_id) || '<span class="muted">—</span>')}
-      ${usageRows}
-      ${outputRow}
-    </section>
-
-    <section class="card">
       <h2>Payment</h2>
       ${row('Rail', `<span class="badge ${p.rail === 'usdc' ? 'ok' : 'pending'}">${esc(p.rail.toUpperCase())}</span>`)}
       ${row('Settlement', p.collected ? '<span class="badge ok">collected</span>' : (p.collects_on === 'next_request' ? '<span class="badge pending">bill pending</span>' : '<span class="muted">not collected</span>'))}
@@ -1022,12 +1051,30 @@ export function renderReceiptHtml(receipt) {
     </section>
 
     <section class="card">
-      <h2>Proof</h2>
-      ${row('Signed receipt', receipt.signature?.value ? `<span class="badge ok">${esc(receipt.signature.alg || 'HMAC-SHA256')}</span>` : '<span class="muted">unsigned</span>')}
+      <h2>Verification</h2>
+      ${row('Issuer signature', issuerVerified.verified
+        ? '<span class="badge ok">verified</span>'
+        : (issuerSig?.value ? '<span class="badge pending">public key available</span>' : '<span class="muted">unsigned</span>'))}
+      ${issuerSig?.alg ? row('Algorithm', `<code>${esc(issuerSig.alg)}</code>`) : ''}
+      ${issuerSig?.kid ? row('Key ID', `<code>${esc(shortHash(issuerSig.kid, 8, 6))}</code>`) : ''}
+      ${jwksUrl ? row('JWKS', `<a href="${esc(jwksUrl)}" target="_blank" rel="noopener">${esc(issuerSig.jwks_uri)} ↗</a>`) : ''}
+      ${receipt.signature?.value ? row('HMAC attestation', `<span class="badge ok">${esc(receipt.signature.alg || 'HMAC-SHA256')}</span>`) : ''}
       ${row('On-chain SP1', pr.has_proof ? '<span class="badge ok">yes</span>' : '<span class="muted">not on this call</span>')}
       ${pr.nullifier ? row('Nullifier', `<code>${esc(shortHash(pr.nullifier, 12, 10))}</code>`) : ''}
       ${pr.proving_time_ms != null ? row('Proving time', `${esc(pr.proving_time_ms)} ms`) : ''}
       ${pr.has_proof ? `<div class="scopebox">${esc(pr.attests)}</div>` : `<p class="muted" style="margin:8px 0 0;font-size:12px">${esc(proofWhyMissing(receipt))}</p>`}
+    </section>
+
+    <section class="card secondary">
+      <h2>Route details</h2>
+      ${row('Status', esc(receipt.status))}
+      ${row('Model', esc(receipt.route.model) || '<span class="muted">—</span>')}
+      ${row('Provider', esc(receipt.route.provider) || '<span class="muted">—</span>')}
+      ${usageRows}
+      ${outputRow}
+      ${modelCommitmentRow}
+      ${receipt.route.chain_id ? row('Chain', esc(receipt.route.chain_id)) : ''}
+      ${receipt.route.message_type ? row('Type', esc(receipt.route.message_type)) : ''}
     </section>
 
     ${bindingBlock}
