@@ -369,40 +369,62 @@ Agent verify steps:
    (`session.proof.signature` + typed data, or `session.proof.lookup_uri`)
    lets you recover the payer without trusting Chit as sole attestor.
 
-Privileged acts (handoff, read_private, redeem) require a fresh prove-key
-after those session checks:
+Privileged acts (handoff, read_private, redeem) require a prove-key
+SessionAct after those session checks. **Schema is locked** (PR 303):
+same EIP-712 `SessionAct` types, same child JWS trust fields
+(`session_act`, inherited settlement, `kind`/`action`, `target_agent`).
+What follows is **transport only**.
+
+`SessionAct` types are **stable** — clients may sign without fetching a
+challenge. Same Chit402 / Base 8453 domain as AuthorizeSession.
+Fields: `delegationHash` (bytes32), `nonce` (bytes32), `action` (string),
+`resource` (string), `deadline` (uint256), `targetAgent` (address; zero
+= self), `payloadHash` (bytes32; zero if unused). secp256k1 only.
+Challenge responses still publish the full `types` map for the
+interactive path; `/act` error bodies also echo `types` + `domain`.
+
+Two transports, same verify:
+
+**A — challenge → act** (interactive):
 
 1. `POST /v1/sessions/:delegation_hash/challenge` → `{ challenge_id, nonce,
-   expires_at, resources[] }` (TTL 2–5 min). Published proof includes the
-   full EIP-712 `types` map.
-2. Agent signs EIP-712 `SessionAct` (same Chit402 / Base 8453 domain as
-   AuthorizeSession): `delegationHash`, `nonce`, `action`, `resource`
-   (receipt/task id), `deadline`, `targetAgent` (handoff recipient; zero
-   means self), `payloadHash` (zero if unused). secp256k1 only. Full
-   `types` map is published on the challenge and must be in the proof.
+   expires_at, resources[], types, domain }` (TTL 2–5 min).
+2. Agent signs `SessionAct` with the issued nonce and a deadline that
+   does not outlive `expires_at`.
 3. `POST /v1/sessions/:delegation_hash/act` with
    `{ action, resource, signature, challenge_id }` (and `target_agent`
    when the act hands entitlement to someone new).
-4. Gateway verifies: session JWS binds `agent_pubkey` + `delegation_hash`;
-   session is active (not expired/revoked); SessionAct recovers to
-   `agent_pubkey`; nonce is unused (one-shot); then execute. Challenge
-   every act — no capability-token shortcut in v1.
+4. Gateway verifies: session binds `agent_pubkey` + `delegation_hash`;
+   session is active; SessionAct recovers to `agent_pubkey`; challenge
+   nonce unused; then execute. Challenge-every-act on this path.
+
+**B — 1-shot** (no prior `/challenge`):
+
+1. Client generates a fresh `nonce` (bytes32) and `deadline` (unix
+   seconds, not expired, not more than 5 minutes ahead).
+2. Agent signs the same `SessionAct` types (delegationHash from the
+   bound session; action/resource/targetAgent/payloadHash as the act).
+3. `POST /v1/sessions/:delegation_hash/act` with
+   `{ action, resource, signature, nonce, deadline, target_agent?,
+   payload_hash? }`.
+4. Gateway verifies typed data matches the signed message, recovers
+   `agent_pubkey`, checks nonce unused (same spent set as challenge
+   nonces), deadline window sane, session active; then execute.
+
+No capability-token shortcut in v1.
 
 Child handoff receipts are a distinct row. Genesis JWS is never re-signed.
 Signed child claims (source of truth) include:
 
 - `kind` / `action` (`session_handoff` / `handoff`) — not only the outer envelope
 - `session_act` — EIP-712 `SessionAct` types + domain + message + signature
-  + challenge nonce, so a verifier recovers that `agent_pubkey` authorized
+  + nonce, so a verifier recovers that `agent_pubkey` authorized
   the act without trusting Chit logs
 - `target_agent` — destination of the entitlement (may differ from
   `session.agent_pubkey`, the authorizing key)
 - `settlement.kind = inherited` + `settlement.parent_receipt_id` —
   child JWS does **not** re-claim parent `payment.ref`, `gross_amount`,
   or `provider_cogs.actual`. Accounting agents must not sum those twice.
-
-1-shot client-generated nonce (no prior `/challenge`) is a follow-up;
-this flow still issues a challenge per act.
 
 `max_cumulative_spend` is atomic USDC (`decimals: 6`, `unit: atomic_usdc`) —
 same scale as `payment.gross_amount`.

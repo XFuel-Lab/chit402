@@ -1,9 +1,13 @@
 /**
  * Prove-key execution v1 — SessionAct is the *act* side of session-delegation.
  *
- * AuthorizeSession binds agent_pubkey at settle. Privileged acts require a
- * fresh challenge and an EIP-712 SessionAct recovered to that agent_pubkey
- * (secp256k1, Base). No capability-token shortcut in v1.
+ * AuthorizeSession binds agent_pubkey at settle. Privileged acts require an
+ * EIP-712 SessionAct recovered to that agent_pubkey (secp256k1, Base).
+ *
+ * Transport (schema unchanged):
+ *   - challenge → act: server issues nonce + deadline (TTL 2–5 min)
+ *   - 1-shot: client supplies nonce + deadline on POST /act (same types)
+ * Replay: unused nonce, deadline in window, session active. No capability token.
  *
  * Actions: handoff | read_private | redeem (redeem may 501 after verify).
  */
@@ -50,16 +54,31 @@ export const SESSION_ACT_TYPES = {
   ],
 };
 
-/** Challenge TTL: lock is ~2–5 min. Default 3 min. */
+/** Challenge / 1-shot deadline TTL: lock is ~2–5 min. Default 3 min. */
 export const CHALLENGE_TTL_SEC_DEFAULT = 180;
 export const CHALLENGE_TTL_SEC_MIN = 120;
 export const CHALLENGE_TTL_SEC_MAX = 300;
+/** 1-shot client deadline may not sit more than this many seconds ahead of now. */
+export const ONESHOT_DEADLINE_MAX_SEC = CHALLENGE_TTL_SEC_MAX;
 
 export function clampChallengeTtlSec(value) {
   if (value == null || value === '') return CHALLENGE_TTL_SEC_DEFAULT;
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return CHALLENGE_TTL_SEC_DEFAULT;
   return Math.min(CHALLENGE_TTL_SEC_MAX, Math.max(CHALLENGE_TTL_SEC_MIN, Math.floor(n)));
+}
+
+/**
+ * 1-shot deadline window: not expired, not more than CHALLENGE_TTL_SEC_MAX ahead.
+ * Challenge path keeps its own expires_at bound (deadline_after_challenge).
+ */
+export function checkOneshotDeadlineWindow(deadline, now = null) {
+  const clock = nowSec(now);
+  const dl = Number(deadline);
+  if (!Number.isFinite(dl)) return { ok: false, reason: 'missing_deadline' };
+  if (clock > dl) return { ok: false, reason: 'deadline_expired' };
+  if (dl > clock + ONESHOT_DEADLINE_MAX_SEC) return { ok: false, reason: 'deadline_too_far' };
+  return { ok: true };
 }
 
 function toUint(value, field) {
@@ -479,6 +498,22 @@ export class SessionActChallengeStore {
     return { ok: true, challenge: row };
   }
 
+  /**
+   * Persist a client-generated 1-shot nonce (same spent set as challenge nonces).
+   */
+  consumeNonce(nonce) {
+    if (!nonce) return { ok: false, reason: 'invalid_nonce' };
+    let key;
+    try {
+      key = normalizeSessionNonce(nonce).toLowerCase();
+    } catch {
+      return { ok: false, reason: 'invalid_nonce' };
+    }
+    if (this.spent.has(key)) return { ok: false, reason: 'nonce_reused' };
+    this.spent.add(key);
+    return { ok: true, nonce: key };
+  }
+
   /** Test helper — force a challenge past expiry without waiting. */
   expire(challengeId, { now = null } = {}) {
     const row = this.peek(challengeId);
@@ -507,7 +542,8 @@ export function _resetSessionActStore() {
 }
 
 /**
- * Reconstruct typed data from a live challenge + act body.
+ * Reconstruct typed data from a live challenge + act body, or from a 1-shot
+ * body that already carries nonce + deadline (same SessionAct fields).
  */
 export function typedDataFromActRequest(proof, challenge, { verifyingContract = null, issuerUri = null } = {}) {
   const signature = proof?.signature || proof?.sig || null;
@@ -520,15 +556,20 @@ export function typedDataFromActRequest(proof, challenge, { verifyingContract = 
       message: proof.message,
     };
   }
-  if (!typedData && challenge) {
+  const oneshotReady = !challenge
+    && proof?.nonce
+    && proof?.deadline != null
+    && proof?.action
+    && (proof?.resource != null && String(proof.resource).trim() !== '');
+  if (!typedData && (challenge || oneshotReady)) {
     try {
       typedData = buildSessionActTypedData({
-        delegationHash: proof?.delegation_hash || proof?.delegationHash || challenge.delegation_hash,
-        nonce: proof?.nonce || challenge.nonce,
+        delegationHash: proof?.delegation_hash || proof?.delegationHash || challenge?.delegation_hash,
+        nonce: proof?.nonce || challenge?.nonce,
         action: proof?.action,
-        resource: proof?.resource || challenge.resource,
-        deadline: proof?.deadline ?? challenge.expires_at,
-        targetAgent: proof?.target_agent || proof?.targetAgent || challenge.target_agent,
+        resource: proof?.resource || challenge?.resource,
+        deadline: proof?.deadline ?? challenge?.expires_at,
+        targetAgent: proof?.target_agent || proof?.targetAgent || challenge?.target_agent,
         payloadHash: proof?.payload_hash || proof?.payloadHash,
         domain: { verifyingContract, issuerUri, ...(proof?.domain || {}) },
       });
@@ -543,14 +584,15 @@ export function typedDataFromActRequest(proof, challenge, { verifyingContract = 
 }
 
 /**
- * Full prove-key gate: bound session + active + SessionAct + one-shot nonce.
- * Consumes the challenge only after crypto succeeds.
+ * Full prove-key gate: bound session + active + SessionAct + unused nonce.
+ * Challenge path consumes the issued challenge after crypto succeeds.
+ * 1-shot path (no challenge): client nonce + deadline, same types, same spent set.
  *
  * @param {object} opts
  * @param {object|null} opts.session
  * @param {boolean} [opts.revoked]
- * @param {object|null} opts.challenge  live challenge row (from getLive)
- * @param {object} opts.proof  { action, resource, signature, typed_data? }
+ * @param {object|null} opts.challenge  live challenge row (from getLive); omit for 1-shot
+ * @param {object} opts.proof  { action, resource, signature, typed_data?, nonce?, deadline? }
  * @param {string} opts.delegationHash
  * @param {string|null} [opts.verifyingContract]
  * @param {string|null} [opts.issuerUri]
@@ -573,29 +615,49 @@ export function acceptSessionAct({
   const active = sessionIsActive(session, { now, revoked });
   if (!active.ok) return { ok: false, reason: active.reason };
 
-  if (!challenge) {
-    return { ok: false, reason: 'challenge_not_found' };
+  const oneshot = !challenge
+    && proof?.nonce != null
+    && proof?.deadline != null;
+  if (!challenge && !oneshot) {
+    return { ok: false, reason: 'challenge_or_nonce_required' };
   }
-  if (store?.isSpent(challenge.challenge_id, challenge.nonce)) {
-    return { ok: false, reason: 'nonce_reused' };
-  }
-  if (nowSec(now) > Number(challenge.expires_at)) {
-    return { ok: false, reason: 'challenge_expired' };
-  }
-  if (!hashesEqual(challenge.delegation_hash, bound.delegation_hash)) {
-    return { ok: false, reason: 'delegation_hash_mismatch' };
+
+  if (challenge) {
+    if (store?.isSpent(challenge.challenge_id, challenge.nonce)) {
+      return { ok: false, reason: 'nonce_reused' };
+    }
+    if (nowSec(now) > Number(challenge.expires_at)) {
+      return { ok: false, reason: 'challenge_expired' };
+    }
+    if (!hashesEqual(challenge.delegation_hash, bound.delegation_hash)) {
+      return { ok: false, reason: 'delegation_hash_mismatch' };
+    }
   }
 
   const action = normalizeSessionActAction(proof?.action);
-  const resource = String(proof?.resource ?? challenge.resource ?? '').trim();
+  const resource = String(proof?.resource ?? challenge?.resource ?? '').trim();
   if (!action) return { ok: false, reason: 'action_required' };
   if (!resource) return { ok: false, reason: 'resource_required' };
+
+  let clientNonce = null;
+  if (oneshot) {
+    try {
+      clientNonce = normalizeSessionNonce(proof.nonce);
+    } catch {
+      return { ok: false, reason: 'invalid_nonce' };
+    }
+    if (store?.isSpent(null, clientNonce)) {
+      return { ok: false, reason: 'nonce_reused' };
+    }
+  }
 
   const rebuilt = typedDataFromActRequest(
     {
       ...proof,
       action,
       resource,
+      nonce: oneshot ? clientNonce : (proof?.nonce || challenge?.nonce),
+      deadline: oneshot ? proof.deadline : (proof?.deadline ?? challenge?.expires_at),
       target_agent: proof?.target_agent || proof?.targetAgent || bound.agent_pubkey,
     },
     challenge,
@@ -606,7 +668,7 @@ export function acceptSessionAct({
   const verified = verifySessionAct(rebuilt.typedData, rebuilt.signature, {
     expectedAgent: bound.agent_pubkey,
     expectedDelegationHash: bound.delegation_hash,
-    expectedNonce: challenge.nonce,
+    expectedNonce: oneshot ? clientNonce : challenge.nonce,
     expectedAction: action,
     expectedResource: resource,
     verifyingContract,
@@ -616,14 +678,24 @@ export function acceptSessionAct({
     return { ok: false, reason: verified.reason, agent_pubkey: verified.agent_pubkey };
   }
 
-  // Deadline cannot outlive the challenge that issued the nonce.
-  if (Number(verified.deadline) > Number(challenge.expires_at)) {
-    return { ok: false, reason: 'deadline_after_challenge' };
+  if (challenge) {
+    // Deadline cannot outlive the challenge that issued the nonce.
+    if (Number(verified.deadline) > Number(challenge.expires_at)) {
+      return { ok: false, reason: 'deadline_after_challenge' };
+    }
+  } else {
+    const window = checkOneshotDeadlineWindow(verified.deadline, now);
+    if (!window.ok) return { ok: false, reason: window.reason };
   }
 
   if (store) {
-    const consumed = store.consume(challenge.challenge_id, { now });
-    if (!consumed.ok) return { ok: false, reason: consumed.reason };
+    if (challenge) {
+      const consumed = store.consume(challenge.challenge_id, { now });
+      if (!consumed.ok) return { ok: false, reason: consumed.reason };
+    } else {
+      const consumed = store.consumeNonce(clientNonce);
+      if (!consumed.ok) return { ok: false, reason: consumed.reason };
+    }
   }
 
   return {
@@ -635,7 +707,8 @@ export function acceptSessionAct({
     action: verified.action,
     resource: verified.resource,
     nonce: verified.nonce,
-    challenge_id: challenge.challenge_id,
+    challenge_id: challenge?.challenge_id || null,
+    oneshot,
     typed_data: jsonSafeTypedData({
       ...rebuilt.typedData,
       domain: verified.domain,
@@ -648,7 +721,7 @@ export function acceptSessionAct({
       typedData: rebuilt.typedData,
       signature: rebuilt.signature,
       verified,
-      challengeId: challenge.challenge_id,
+      challengeId: challenge?.challenge_id || null,
     }),
   };
 }
@@ -675,9 +748,11 @@ export default {
   SESSION_ACT_ZERO_ADDRESS,
   SESSION_ACT_ZERO_BYTES32,
   CHALLENGE_TTL_SEC_DEFAULT,
+  ONESHOT_DEADLINE_MAX_SEC,
   buildSessionActTypedData,
   verifySessionAct,
   acceptSessionAct,
+  checkOneshotDeadlineWindow,
   sessionBindsAgent,
   sessionIsActive,
   publicSessionActProof,

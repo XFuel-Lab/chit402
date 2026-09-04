@@ -2,6 +2,7 @@
  * Prove-key execution v1 — SessionAct (act side of session-delegation).
  *
  * Challenge → EIP-712 SessionAct → handoff / read_private / redeem.
+ * 1-shot: client nonce + deadline on POST /act (same types, no /challenge).
  * secp256k1, Base 8453. Genesis JWS never re-signed.
  */
 import { test, describe, before, after } from 'node:test';
@@ -29,9 +30,11 @@ const {
   CHALLENGE_TTL_SEC_DEFAULT,
   CHALLENGE_TTL_SEC_MIN,
   CHALLENGE_TTL_SEC_MAX,
+  ONESHOT_DEADLINE_MAX_SEC,
   buildSessionActTypedData,
   verifySessionAct,
   acceptSessionAct,
+  checkOneshotDeadlineWindow,
   sessionBindsAgent,
   sessionIsActive,
   SessionActChallengeStore,
@@ -235,6 +238,128 @@ describe('EIP-712 SessionAct', () => {
     });
     assert.equal(revoked.ok, false);
     assert.equal(revoked.reason, 'session_revoked');
+  });
+
+  test('1-shot acceptSessionAct succeeds; reused client nonce fails', async () => {
+    const store = new SessionActChallengeStore();
+    const { session } = await bindSession();
+    const nonce = uniqueNonce();
+    const deadline = nowSec() + 120;
+    const { typed, signature } = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce,
+      expires_at: deadline,
+    }, { action: 'handoff', resource: 'xfuel-oneshot-unit' });
+
+    const first = acceptSessionAct({
+      session,
+      proof: {
+        action: 'handoff',
+        resource: 'xfuel-oneshot-unit',
+        signature,
+        nonce,
+        deadline,
+        typed_data: typed,
+      },
+      delegationHash: session.delegation_hash,
+      store,
+    });
+    assert.equal(first.ok, true);
+    assert.equal(first.oneshot, true);
+    assert.equal(first.challenge_id, null);
+    assert.equal(first.nonce, nonce);
+    assert.ok(first.proof.types.SessionAct);
+    assert.equal(first.proof.nonce, nonce);
+
+    const second = acceptSessionAct({
+      session,
+      proof: {
+        action: 'handoff',
+        resource: 'xfuel-oneshot-unit',
+        signature,
+        nonce,
+        deadline,
+        typed_data: typed,
+      },
+      delegationHash: session.delegation_hash,
+      store,
+    });
+    assert.equal(second.ok, false);
+    assert.equal(second.reason, 'nonce_reused');
+  });
+
+  test('1-shot expired deadline and deadline_too_far fail; wrong key is signer_mismatch', async () => {
+    const store = new SessionActChallengeStore();
+    const { session } = await bindSession();
+    const expiredDeadline = nowSec() - 30;
+    const expiredNonce = uniqueNonce();
+    const expired = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce: expiredNonce,
+      expires_at: expiredDeadline,
+    }, { action: 'handoff', resource: 'xfuel-oneshot-exp' });
+    const expiredAct = acceptSessionAct({
+      session,
+      proof: {
+        action: 'handoff',
+        resource: 'xfuel-oneshot-exp',
+        signature: expired.signature,
+        nonce: expiredNonce,
+        deadline: expiredDeadline,
+        typed_data: expired.typed,
+      },
+      delegationHash: session.delegation_hash,
+      store,
+    });
+    assert.equal(expiredAct.ok, false);
+    assert.equal(expiredAct.reason, 'deadline_expired');
+
+    const farDeadline = nowSec() + ONESHOT_DEADLINE_MAX_SEC + 120;
+    const farNonce = uniqueNonce();
+    const far = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce: farNonce,
+      expires_at: farDeadline,
+    }, { action: 'handoff', resource: 'xfuel-oneshot-far' });
+    const farAct = acceptSessionAct({
+      session,
+      proof: {
+        action: 'handoff',
+        resource: 'xfuel-oneshot-far',
+        signature: far.signature,
+        nonce: farNonce,
+        deadline: farDeadline,
+        typed_data: far.typed,
+      },
+      delegationHash: session.delegation_hash,
+      store,
+    });
+    assert.equal(farAct.ok, false);
+    assert.equal(farAct.reason, 'deadline_too_far');
+    assert.equal(checkOneshotDeadlineWindow(farDeadline).ok, false);
+
+    const nonce = uniqueNonce();
+    const deadline = nowSec() + 120;
+    const wrong = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce,
+      expires_at: deadline,
+    }, { action: 'handoff', resource: 'xfuel-oneshot-key', signer: OTHER });
+    const rejected = acceptSessionAct({
+      session,
+      proof: {
+        action: 'handoff',
+        resource: 'xfuel-oneshot-key',
+        signature: wrong.signature,
+        nonce,
+        deadline,
+        typed_data: wrong.typed,
+      },
+      delegationHash: session.delegation_hash,
+      store,
+    });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.reason, 'signer_mismatch');
   });
 
   test('sessionBindsAgent requires agent_pubkey + delegation_hash', () => {
@@ -733,5 +858,212 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     const deniedBody = await denied.json();
     assert.equal(deniedBody.reason, 'signer_mismatch');
     assert.notEqual(deniedBody.error, 'not_implemented');
+  });
+
+  test('1-shot /act handoff succeeds; child JWS has session_act + inherited settle', async () => {
+    const { session } = await putBoundSession();
+    const listener = getAIListener();
+    const parent = usdcTask({
+      taskId: 'xfuel-http-oneshot-parent',
+      meta: {
+        payerWallet: PAYER.address,
+        providerCogs: { provider: 'theta-edgecloud', actual: '2000', basis: 'measured' },
+      },
+    });
+    listener.activeTasks.set(parent.taskId, parent);
+    const genesis = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    const genesisJws = genesis.issuer_signature.jws;
+    assert.equal(decodeReceiptClaims(genesis).provider_cogs.actual, '2000');
+
+    const nonce = uniqueNonce();
+    const deadline = nowSec() + 180;
+    const { typed, signature } = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce,
+      expires_at: deadline,
+    }, { action: 'handoff', resource: parent.taskId });
+
+    const actRes = await fetch(`${base}/v1/sessions/${session.delegation_hash}/act`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'handoff',
+        resource: parent.taskId,
+        signature,
+        nonce,
+        deadline,
+        typed_data: typed,
+      }),
+    });
+    assert.equal(actRes.status, 201);
+    const body = await actRes.json();
+    assert.equal(body.status, 'session_handoff');
+    assert.equal(body.parent_receipt_id, parent.taskId);
+    assert.ok(body.task_id.startsWith('xfuel-'));
+    const claims = decodeReceiptClaims(body.receipt);
+    assert.equal(claims.kind, 'session_handoff');
+    assert.equal(claims.action, 'handoff');
+    assert.equal(claims.settlement.kind, 'inherited');
+    assert.equal(claims.settlement.parent_receipt_id, parent.taskId);
+    assert.equal(claims.payment.ref, null);
+    assert.equal(claims.payment.gross_amount, null);
+    assert.equal(claims.provider_cogs.actual, null);
+    assert.equal(claims.target_agent, AGENT.address);
+    assert.ok(claims.session_act);
+    assert.ok(claims.session_act.types.SessionAct);
+    assert.ok(claims.session_act.types.SessionAct.find((f) => f.name === 'targetAgent'));
+    assert.ok(claims.session_act.signature);
+    assert.equal(claims.session_act.nonce, nonce);
+    assert.equal(claims.session_act.message.action, 'handoff');
+    assert.equal(claims.session_act.message.resource, parent.taskId);
+    assert.equal(claims.session_act.message.deadline, String(deadline));
+    assert.ok(body.proof.types.SessionAct);
+    assert.equal(body.proof.nonce, nonce);
+
+    const parentAgain = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    assert.equal(parentAgain.issuer_signature.jws, genesisJws);
+  });
+
+  test('1-shot reused client nonce / expired deadline / wrong key fail; /act errors publish types', async () => {
+    const { session } = await putBoundSession();
+    const listener = getAIListener();
+    const parent = usdcTask({ taskId: 'xfuel-http-oneshot-fail' });
+    listener.activeTasks.set(parent.taskId, parent);
+
+    const missing = await fetch(`${base}/v1/sessions/${session.delegation_hash}/act`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'handoff', resource: parent.taskId }),
+    });
+    assert.equal(missing.status, 400);
+    const missingBody = await missing.json();
+    assert.equal(missingBody.reason, 'challenge_or_nonce_required');
+    assert.ok(missingBody.types.SessionAct);
+    assert.equal(missingBody.primaryType, 'SessionAct');
+    assert.equal(missingBody.domain.chainId, 8453);
+    assert.equal(missingBody.domain.name, 'Chit402');
+    assert.ok(missingBody.types.SessionAct.find((f) => f.name === 'targetAgent'));
+    assert.ok(missingBody.types.SessionAct.find((f) => f.name === 'payloadHash'));
+
+    const nonce = uniqueNonce();
+    const deadline = nowSec() + 180;
+    const ok = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce,
+      expires_at: deadline,
+    }, { action: 'handoff', resource: parent.taskId });
+    const first = await fetch(`${base}/v1/sessions/${session.delegation_hash}/act`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'handoff',
+        resource: parent.taskId,
+        signature: ok.signature,
+        nonce,
+        deadline,
+        typed_data: ok.typed,
+      }),
+    });
+    assert.equal(first.status, 201);
+    const reuse = await fetch(`${base}/v1/sessions/${session.delegation_hash}/act`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'handoff',
+        resource: parent.taskId,
+        signature: ok.signature,
+        nonce,
+        deadline,
+        typed_data: ok.typed,
+      }),
+    });
+    assert.equal(reuse.status, 403);
+    const reuseBody = await reuse.json();
+    assert.equal(reuseBody.reason, 'nonce_reused');
+    assert.ok(reuseBody.types.SessionAct);
+
+    const expNonce = uniqueNonce();
+    const expDeadline = nowSec() - 10;
+    const late = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce: expNonce,
+      expires_at: expDeadline,
+    }, { action: 'handoff', resource: parent.taskId });
+    const expRes = await fetch(`${base}/v1/sessions/${session.delegation_hash}/act`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'handoff',
+        resource: parent.taskId,
+        signature: late.signature,
+        nonce: expNonce,
+        deadline: expDeadline,
+        typed_data: late.typed,
+      }),
+    });
+    assert.equal(expRes.status, 403);
+    assert.equal((await expRes.json()).reason, 'deadline_expired');
+
+    const badNonce = uniqueNonce();
+    const badDeadline = nowSec() + 120;
+    const wrong = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce: badNonce,
+      expires_at: badDeadline,
+    }, { action: 'handoff', resource: parent.taskId, signer: OTHER });
+    const wrongRes = await fetch(`${base}/v1/sessions/${session.delegation_hash}/act`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'handoff',
+        resource: parent.taskId,
+        signature: wrong.signature,
+        nonce: badNonce,
+        deadline: badDeadline,
+        typed_data: wrong.typed,
+      }),
+    });
+    assert.equal(wrongRes.status, 403);
+    assert.equal((await wrongRes.json()).reason, 'signer_mismatch');
+  });
+
+  test('1-shot without typed_data still verifies from nonce+deadline fields', async () => {
+    const { session } = await putBoundSession();
+    const listener = getAIListener();
+    const parent = usdcTask({ taskId: 'xfuel-http-oneshot-bare' });
+    listener.activeTasks.set(parent.taskId, parent);
+
+    const nonce = uniqueNonce();
+    const deadline = nowSec() + 180;
+    const { typed, signature } = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce,
+      expires_at: deadline,
+    }, { action: 'handoff', resource: parent.taskId, targetAgent: OTHER.address });
+
+    const actRes = await fetch(`${base}/v1/sessions/${session.delegation_hash}/act`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'handoff',
+        resource: parent.taskId,
+        signature,
+        nonce,
+        deadline,
+        target_agent: OTHER.address,
+      }),
+    });
+    assert.equal(actRes.status, 201);
+    const body = await actRes.json();
+    const claims = decodeReceiptClaims(body.receipt);
+    assert.equal(claims.kind, 'session_handoff');
+    assert.equal(claims.action, 'handoff');
+    assert.equal(claims.agent_pubkey, OTHER.address);
+    assert.equal(claims.target_agent, OTHER.address);
+    assert.equal(claims.session.agent_pubkey, AGENT.address);
+    assert.equal(claims.session_act.message.targetAgent, OTHER.address);
+    assert.equal(claims.session_act.nonce, nonce);
+    assert.equal(claims.settlement.kind, 'inherited');
+    assert.equal(typed.message.targetAgent, OTHER.address);
   });
 });
