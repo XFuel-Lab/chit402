@@ -616,6 +616,11 @@ test('buildReceipt: omits inactive extension fields and documents provider_cogs 
   assert.equal(withCogs.provider_cogs.decimals, 6);
   assert.equal(withCogs.provider_cogs.unit, 'atomic_usdc');
   assert.equal(withCogs.provider_cogs.actual, '2000');
+
+  const claims = decodeReceiptClaims(withCogs);
+  assert.equal(claims.provider_cogs.actual, '2000');
+  assert.equal(claims.provider_cogs.decimals, 6);
+  assert.equal(claims.provider_cogs.unit, 'atomic_usdc');
 });
 
 // ── Issuer signature verification correctness tests ─────────────────────────

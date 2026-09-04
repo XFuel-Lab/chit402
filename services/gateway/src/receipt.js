@@ -144,7 +144,12 @@ export function mergeReceiptView(receipt) {
       : null,
     caller_binding: claims.caller_binding ?? null,
     provider_cogs: claims.provider_cogs?.actual != null && receipt.provider_cogs
-      ? { ...receipt.provider_cogs, actual: claims.provider_cogs.actual }
+      ? {
+          ...receipt.provider_cogs,
+          actual: claims.provider_cogs.actual,
+          decimals: claims.provider_cogs.decimals ?? USDC_ATOMIC_DECIMALS,
+          unit: claims.provider_cogs.unit ?? 'atomic_usdc',
+        }
       : receipt.provider_cogs ?? null,
   };
 }
@@ -522,6 +527,8 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     },
     provider_cogs: {
       actual: view.provider_cogs?.actual ?? null,
+      decimals: USDC_ATOMIC_DECIMALS,
+      unit: 'atomic_usdc',
     },
     route: {
       model: view.route?.model ?? null,
