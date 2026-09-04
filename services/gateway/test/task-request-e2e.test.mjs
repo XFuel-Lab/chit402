@@ -34,6 +34,7 @@ const { createApp } = await import('../src/server.js');
 const { initAIListener } = await import('../src/ai-listener.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 const { priceUSDCResolved, resolvePricingModel } = await import('../src/x402-server.js');
+const { mergeReceiptView } = await import('../src/receipt.js');
 
 const SERVED_TEXT = 'PONG from the stubbed provider';
 const realFetch = globalThis.fetch;
@@ -162,7 +163,7 @@ test('a default paid request reaches a real provider instead of the mock', async
   assert.equal(inferenceCalls.length, 1, 'the provider must actually be called');
   assert.ok(!status.result?.mock, 'result must not be a mock');
   assert.equal(status.result.content, SERVED_TEXT);
-  assert.equal(receipt.route.provider, 'akash-network');
+  assert.equal(mergeReceiptView(receipt).route.provider, 'akash-network');
 });
 
 test('xfuel/auto is resolved before it reaches the provider', async () => {
@@ -190,7 +191,7 @@ test('the paid path routes tool work to the model that finishes loops', async ()
 test('the receipt attests the model that served, not the alias requested', async () => {
   const { receipt } = await run({ model_id: 'xfuel/auto' });
 
-  assert.equal(receipt.route.model, 'akash/meta-llama/Llama-3.3-70B-Instruct');
+  assert.equal(mergeReceiptView(receipt).route.model, 'akash/meta-llama/Llama-3.3-70B-Instruct');
   assert.ok(receipt.issuer_signature, 'the paid path receipt must have issuer_signature');
 });
 
@@ -199,7 +200,7 @@ test('an explicit hub-prefixed model routes to that model', async () => {
   const { receipt } = await run({ model_id: 'akash/zai-org/GLM-5.2' });
 
   assert.equal(inferenceCalls[0].model, 'zai-org/GLM-5.2');
-  assert.equal(receipt.route.model, 'akash/zai-org/GLM-5.2');
+  assert.equal(mergeReceiptView(receipt).route.model, 'akash/zai-org/GLM-5.2');
 });
 
 test('naming a provider still routes there', async () => {
@@ -218,7 +219,7 @@ test('a model nobody serves fails the task rather than minting a mock receipt', 
   assert.equal(status.status, 'failed');
   assert.ok(!status.result?.mock);
   // Nothing served, so the receipt must not name a compute source.
-  assert.equal(receipt.route.provider, null);
+  assert.equal(mergeReceiptView(receipt).route.provider, null);
   // And the caller has to be told why, or 'failed' is indistinguishable from an
   // upstream outage they should retry.
   assert.equal(status.error?.code, 'model_not_found');
@@ -289,7 +290,7 @@ test('when every provider declines, the task fails instead of serving a mock', a
     assert.equal(status.status, 'failed');
     assert.ok(!status.result?.mock, 'a paid task must never be answered with a mock');
     assert.equal(status.error?.code, 'no_provider_available');
-    assert.equal(receipt.route.provider, null);
+    assert.equal(mergeReceiptView(receipt).route.provider, null);
   } finally {
     providerDown = false;
   }

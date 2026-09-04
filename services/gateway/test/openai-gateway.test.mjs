@@ -210,7 +210,7 @@ test('POST /v1/chat/completions returns an OpenAI completion + Chit receipt', as
   assert.equal(body.xfuel.proof.status, 'skipped');
   // `/v1` now shares receipt.js's canonical proof note rather than keeping its own
   // wording. Assert the disclaimer that must survive any rewording, not the prose.
-  assert.match(body.xfuel.proof.attests, /does NOT attest that the provider computed the model correctly/i);
+  assert.equal(body.xfuel.proof.attestation_scope.model_computation, false);
   assert.ok(body.xfuel.proof.links.proof.includes(body.xfuel.task_id));
   // Canonical shareable proof link is present in the body + proof links.
   assert.equal(typeof body.xfuel.verify_url, 'string');

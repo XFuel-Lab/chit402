@@ -26,6 +26,7 @@ const {
   verifyReceiptJwsWithJwks,
   callerBindingOf,
   canonicalSignedPayload,
+  mergeReceiptView,
 } = await import('../src/receipt.js');
 const { createApp } = await import('../src/server.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
@@ -139,7 +140,7 @@ describe('Receipt ECDSA Signing', () => {
     assert.equal(receipt.issuer_signature.payload_version, 5);
     assert.ok(receipt.issuer_signature.jws, 'should have compact JWS');
     assert.ok(receipt.issuer_signature.kid, 'should have kid');
-    assert.equal(receipt.issuer_signature.jwks_uri, '/.well-known/jwks.json');
+    assert.equal(receipt.issuer_signature.jwks_uri, 'https://api.test/.well-known/jwks.json');
     
     // JWS should have 3 parts
     const parts = receipt.issuer_signature.jws.split('.');
@@ -432,11 +433,11 @@ describe('Standard Library Compatibility (jose)', () => {
     assert.ok(payload.iat, 'iat claim present');
     assert.equal(payload.payload_version, 5);
     
-    // Verify signed claims match the receipt
-    assert.equal(payload.payment.rail, receipt.payment.rail);
-    assert.equal(payload.payment.ref, receipt.payment.ref);
-    assert.equal(payload.route.model, receipt.route.model);
-    assert.equal(payload.route.provider, receipt.route.provider);
+      const view = mergeReceiptView(receipt);
+    assert.equal(payload.payment.rail, view.payment.rail);
+    assert.equal(payload.payment.ref, view.payment.ref);
+    assert.equal(payload.route.model, view.route.model);
+    assert.equal(payload.route.provider, view.route.provider);
   });
   
   test('jose rejects tampered JWS', async () => {
@@ -568,9 +569,10 @@ describe('Caller/Payer Binding', () => {
       apiKeyHash: 'test-api-key-hash',
     });
 
-    assert.ok(receipt.caller_binding, 'receipt should have caller_binding');
-    assert.equal(receipt.caller_binding.payer_wallet, payer);
-    assert.equal(receipt.caller_binding.api_key_hash, 'test-api-key-hash');
+    const binding = mergeReceiptView(receipt).caller_binding;
+    assert.ok(binding, 'caller_binding should be in JWS claims');
+    assert.equal(binding.payer_wallet, payer);
+    assert.equal(binding.api_key_hash, 'test-api-key-hash');
   });
 
   test('caller_binding is included in JWS claims', () => {
@@ -587,7 +589,7 @@ describe('Caller/Payer Binding', () => {
     assert.equal(payload.caller_binding.api_key_hash, 'test-api-key-hash');
   });
 
-  test('tampering with caller_binding invalidates signature', () => {
+  test('tampering signed claims in JWS invalidates verification', () => {
     const payer = '0x1234567890123456789012345678901234567890';
     const receipt = buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
@@ -598,13 +600,17 @@ describe('Caller/Payer Binding', () => {
     let result = verifyReceiptEcdsa(receipt, jwk);
     assert.equal(result.valid, true, 'original should verify');
 
+    const parts = receipt.issuer_signature.jws.split('.');
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    payload.caller_binding.payer_wallet = '0xabcdef1234567890abcdef1234567890abcdef12';
+    const tamperedJws = `${parts[0]}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.${parts[2]}`;
     const tampered = {
       ...receipt,
-      caller_binding: { ...receipt.caller_binding, payer_wallet: '0xabcdef1234567890abcdef1234567890abcdef12' },
+      issuer_signature: { ...receipt.issuer_signature, jws: tamperedJws },
     };
 
     result = verifyReceiptEcdsa(tampered, jwk);
-    assert.equal(result.valid, false, 'tampered payer_wallet should fail verification');
+    assert.equal(result.valid, false, 'tampered JWS payer_wallet should fail verification');
   });
 
   test('hmac signed_fields includes caller_binding fields', () => {

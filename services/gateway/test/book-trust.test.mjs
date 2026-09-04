@@ -12,6 +12,7 @@ import {
   verifyReceiptHmac,
   verifyReceiptMultiKey,
   canonicalSignedPayload,
+  mergeReceiptView,
   privacyOf,
 } from '../src/receipt.js';
 import { AgentRegistry } from '../src/agent-registry.js';
@@ -348,14 +349,15 @@ describe('Offline Verification', () => {
     };
 
     const receipt = buildReceipt(task, { signingSecret: SECRET });
+    const view = mergeReceiptView(receipt);
 
     // The canonical payload should be a JSON array (for HMAC backward compat)
     const payload = canonicalSignedPayload(receipt);
     const parsed = JSON.parse(payload);
     assert.ok(Array.isArray(parsed), 'canonical payload is an array');
     assert.equal(parsed[0], receipt.task_id);
-    assert.equal(parsed[1], receipt.payment.rail);
-    assert.equal(parsed[2], receipt.payment.ref);
+    assert.equal(parsed[1], view.payment.rail);
+    assert.equal(parsed[2], view.payment.ref);
 
     // Verify HMAC with the secret
     const result = verifyReceiptHmac(receipt, SECRET, { sigField: 'hmac_attestation' });
@@ -384,8 +386,11 @@ describe('Offline Verification', () => {
 
     const receipt = buildReceipt(task, { signingSecret: SECRET });
 
-    // Tamper with the amount
-    receipt.payment.gross_amount = '999999';
+    // Tamper signed claims inside the JWS (outer envelope has no payment mirror)
+    const parts = receipt.issuer_signature.jws.split('.');
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    payload.payment.gross_amount = '999999';
+    receipt.issuer_signature.jws = `${parts[0]}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.${parts[2]}`;
 
     const result = verifyReceiptHmac(receipt, SECRET, { sigField: 'hmac_attestation' });
     assert.equal(result.valid, false);

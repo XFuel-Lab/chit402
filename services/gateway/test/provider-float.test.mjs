@@ -7,7 +7,7 @@ import {
   normalizeProviderId,
   resetFloatManagerForTests,
 } from '../src/provider-float.js';
-import { buildReceipt, providerCogsOf } from '../src/receipt.js';
+import { buildReceipt, providerCogsOf, mergeReceiptView } from '../src/receipt.js';
 
 test('parseFloatsJson loads enabled floats', () => {
   const map = parseFloatsJson(JSON.stringify({
@@ -140,10 +140,11 @@ test('buildReceipt emits provider_cogs from task.meta', () => {
   const cogs = providerCogsOf(task);
   assert.equal(cogs.provider, 'theta-edgecloud');
   const r = buildReceipt(task, { baseUrl: 'https://api-testnet.xfuel.app' });
-  assert.equal(r.payment.rail, 'usdc');
+  const v = mergeReceiptView(r);
+  assert.equal(v.payment.rail, 'usdc');
   assert.equal(r.provider_cogs.currency, 'USDC');
   assert.equal(r.provider_cogs.estimated, '7000');
-  assert.equal(r.route.provider, 'theta-edgecloud');
+  assert.equal(v.route.provider, 'theta-edgecloud');
 });
 
 test('buildReceipt defaults payment rail to usdc (not tfuel)', () => {
@@ -153,7 +154,7 @@ test('buildReceipt defaults payment rail to usdc (not tfuel)', () => {
     intent: { type: 'inference_request' },
     meta: {},
   });
-  assert.equal(r.payment.rail, 'usdc');
+  assert.equal(mergeReceiptView(r).payment.rail, 'usdc');
 });
 
 test('resetFloatManagerForTests clears singleton', () => {

@@ -5,7 +5,7 @@ import logger from './logger.js';
 import { getAIListener } from './ai-listener.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { settlementProofAllowed } from './prove-gate.js';
-import { buildVerifyUrl, baseUrlFromReq, buildReceipt as buildSignedReceipt } from './receipt.js';
+import { buildVerifyUrl, baseUrlFromReq, buildReceipt as buildSignedReceipt, mergeReceiptView } from './receipt.js';
 import { apiKeyHashFromReq, cacheNamespace } from './buyer-attr.js';
 import { getHubCatalog, resolveCatalogModel, requestShape, toOpenAIList } from './hub-catalog.js';
 import { recordSuccess, recordFailure } from './provider-health.js';
@@ -896,7 +896,9 @@ function buildReceipt({
         viPolicy: config.verifiedInference,
         reqHost,
       })
-    : { task_id: taskId, verify_url: verifyUrl, route: {}, payment: {}, proof: {} };
+    : { task_id: taskId, verify_url: verifyUrl, proof: {} };
+
+  const view = mergeReceiptView(signed);
 
   return {
     ...signed,
@@ -908,15 +910,8 @@ function buildReceipt({
         ? `Response is a mock (compute.real=false). ${mockReason || 'No DePIN provider configured — set a provider key to route real compute.'}`
         : `Routed to ${provider} via the Chit provider-agnostic router.`,
     },
-    route: {
-      ...signed.route,
-      // What the caller asked for vs what served. `route.model` is signed and
-      // stays as the canonical builder set it.
-      requested: requestedModel || 'xfuel/auto',
-      resolved: resolvedModel || signed.route?.model || null,
-    },
     payment: {
-      ...signed.payment,
+      ...view.payment,
       note: payment
         ? 'Settled over x402 before the request was served.'
         : 'This call was not charged. /v1 is metered only when X402_METER_V1 is on, and '
@@ -924,6 +919,14 @@ function buildReceipt({
           + 'daily provider-cost allowance (FREE_TIER_DAILY_COGS_USD); see provider_cogs for '
           + 'what this one cost to serve.',
     },
+    route: {
+      ...view.route,
+      // What the caller asked for vs what served. Signed model is in issuer_signature.jws.
+      requested: requestedModel || 'xfuel/auto',
+      resolved: resolvedModel || view.route?.model || null,
+    },
+    output: view.output,
+    caller_binding: view.caller_binding,
     privacy: privateSpend
       ? {
           mode: 'vendor_blind',
@@ -947,10 +950,11 @@ function buildReceipt({
 }
 
 function setReceiptHeaders(res, receipt) {
+  const view = mergeReceiptView(receipt);
   res.setHeader('x-xfuel-task-id', receipt.task_id);
   if (receipt.compute?.provider) res.setHeader('x-xfuel-provider', receipt.compute.provider);
   if (receipt.compute) res.setHeader('x-xfuel-compute-real', String(receipt.compute.real));
-  res.setHeader('x-xfuel-payment-rail', receipt.payment.rail);
+  res.setHeader('x-xfuel-payment-rail', view.payment?.rail || 'usdc');
   res.setHeader('x-xfuel-proof-status', receipt.proof.status);
   res.setHeader('x-xfuel-proof-url', receipt.proof.links.proof);
   if (receipt.verify_url) res.setHeader('x-xfuel-verify-url', receipt.verify_url);

@@ -30,6 +30,147 @@ const PROOF_SCOPE_NOTE =
   'nullifier. It does NOT attest that the provider computed the model correctly ' +
   '(that is Tier-2 proof-of-inference, roadmap).';
 
+/** Normalize task timestamps to Unix seconds (JSON + JWS `iat`). */
+export function toUnixSeconds(ts) {
+  if (ts == null || ts === '') return null;
+  if (typeof ts === 'string' && Number.isNaN(Number(ts))) {
+    const parsed = Date.parse(ts);
+    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
+  }
+  const n = Number(ts);
+  if (!Number.isFinite(n)) return null;
+  return n > 1e12 ? Math.floor(n / 1000) : Math.floor(n);
+}
+
+/** Absolute JWKS URL for isolated sandboxes; relative only when base is unknown. */
+export function buildJwksUri(baseUrl = '') {
+  const path = '/.well-known/jwks.json';
+  const base = baseUrl ? String(baseUrl).replace(/\/$/, '') : '';
+  return base ? `${base}${path}` : path;
+}
+
+/** Decode signed claims from issuer_signature.jws (no signature check). */
+export function decodeReceiptClaims(receipt) {
+  const jws = receipt?.issuer_signature?.jws;
+  if (!jws || typeof jws !== 'string') return null;
+  const parts = jws.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Merge envelope metadata with JWS claims for display, HMAC verify, and legacy callers.
+ * Signed fields are taken from the JWS payload — never trust top-level copies on slim receipts.
+ */
+export function mergeReceiptView(receipt) {
+  if (receipt?.payment) return receipt;
+
+  const claims = decodeReceiptClaims(receipt);
+  if (!claims) {
+    const paymentMeta = receipt.payment_meta || {};
+    const routeMeta = receipt.route_meta || {};
+    return {
+      ...receipt,
+      payment: {
+        rail: 'usdc',
+        ref: null,
+        gross_amount: '0',
+        net_amount: '0',
+        fee_amount: '0',
+        fee_bps: 50,
+        protocol_fee_bps: 50,
+        explorer_url: paymentMeta.explorer_url ?? null,
+        tier2_proof: paymentMeta.tier2_proof ?? null,
+        floor_applied: paymentMeta.floor_applied ?? null,
+        basis: paymentMeta.basis ?? null,
+        collected: paymentMeta.collected ?? false,
+        collects_on: paymentMeta.collects_on ?? 'this_request',
+      },
+      route: {
+        message_type: routeMeta.message_type ?? null,
+        chain_id: routeMeta.chain_id ?? null,
+        model: null,
+        provider: null,
+        model_commitment: routeMeta.model_commitment ?? null,
+      },
+      output: receipt.output?.hash ? receipt.output : null,
+      caller_binding: null,
+      proof: receipt.proof || {},
+    };
+  }
+
+  const paymentMeta = receipt.payment_meta || {};
+  const routeMeta = receipt.route_meta || {};
+
+  return {
+    ...receipt,
+    payment: {
+      rail: claims.payment?.rail ?? null,
+      ref: claims.payment?.ref ?? null,
+      gross_amount: claims.payment?.gross_amount ?? null,
+      net_amount: claims.payment?.net_amount ?? null,
+      fee_amount: claims.payment?.fee_amount ?? null,
+      fee_bps: claims.payment?.protocol_fee_bps ?? null,
+      protocol_fee_bps: claims.payment?.protocol_fee_bps ?? null,
+      platform_fee: claims.payment?.platform_fee ?? null,
+      platform_fee_bps: claims.payment?.platform_fee_bps ?? null,
+      explorer_url: paymentMeta.explorer_url ?? explorerUrlForRef(claims.payment?.ref),
+      tier2_proof: paymentMeta.tier2_proof ?? null,
+      floor_applied: paymentMeta.floor_applied ?? null,
+      basis: paymentMeta.basis ?? null,
+      collected: paymentMeta.collected ?? !!claims.payment?.ref,
+      collects_on: paymentMeta.collects_on ?? 'this_request',
+    },
+    route: {
+      message_type: routeMeta.message_type ?? null,
+      chain_id: routeMeta.chain_id ?? null,
+      model: claims.route?.model ?? null,
+      provider: claims.route?.provider ?? null,
+      model_commitment: routeMeta.model_commitment ?? (
+        claims.route?.model_commitment
+          ? { commitment: claims.route.model_commitment }
+          : null
+      ),
+    },
+    output: claims.output?.hash
+      ? { hash: claims.output.hash, kind: receipt.output?.kind ?? 'committed' }
+      : null,
+    caller_binding: claims.caller_binding ?? null,
+    provider_cogs: claims.provider_cogs?.actual != null && receipt.provider_cogs
+      ? { ...receipt.provider_cogs, actual: claims.provider_cogs.actual }
+      : receipt.provider_cogs ?? null,
+  };
+}
+
+/** Machine-readable proof scope flags (JSON). Prose lives on HTML only. */
+export function proofScopeOf(task, vi, outcome) {
+  const tier = vi?.tier || proofTierOf(task);
+  const hasProof = !!task.sp1Proof?.proof;
+  const nullifier = task.sp1Proof?.nullifier || null;
+  const settlementProof = hasSettlementProof(task);
+  return {
+    system: task.intent?.proofSystem || 'sp1',
+    tier,
+    zkp_tier: tier,
+    outcome,
+    has_proof: hasProof,
+    nullifier,
+    nullifier_enforced: !!(nullifier && settlementProof),
+    proving_time_ms: task.sp1Proof?.provingTimeMs || null,
+    attestation_scope: {
+      settlement_metadata: hasProof || tier === 'settlement',
+      output_hash_commitment: true,
+      payment_binding: true,
+      model_computation: tier === 'inference',
+      on_chain_nullifier: !!(nullifier && settlementProof),
+    },
+  };
+}
+
 /** Block-explorer base per EVM network used in `payment_ref` ("<network>:<txHash>"). */
 const EXPLORERS = {
   'base-sepolia': 'https://sepolia.basescan.org/tx/',
@@ -348,41 +489,44 @@ function outputHashOf(task) {
  * for self-containment.
  * 
  * @param {object} receipt
+ * @param {{ iat?: number|null }} [opts]
  * @returns {object} JWT claims object
  */
-export function canonicalSignedClaims(receipt) {
+export function canonicalSignedClaims(receipt, { iat = null } = {}) {
+  const view = mergeReceiptView(receipt);
+  const issuedAt = iat ?? toUnixSeconds(receipt.created_at) ?? Math.floor(Date.now() / 1000);
   return {
-    task_id: receipt.task_id,
+    task_id: view.task_id,
     iss: 'chit402',
-    iat: Math.floor(Date.now() / 1000),
+    iat: issuedAt,
     payment: {
-      rail: receipt.payment?.rail ?? null,
-      ref: receipt.payment?.ref ?? null,
-      gross_amount: receipt.payment?.gross_amount ?? null,
-      net_amount: receipt.payment?.net_amount ?? null,
-      fee_amount: receipt.payment?.fee_amount ?? null,
-      protocol_fee_bps: receipt.payment?.protocol_fee_bps ?? receipt.payment?.fee_bps ?? null,
-      platform_fee: receipt.payment?.platform_fee ?? null,
-      platform_fee_bps: receipt.payment?.platform_fee_bps ?? null,
+      rail: view.payment?.rail ?? null,
+      ref: view.payment?.ref ?? null,
+      gross_amount: view.payment?.gross_amount ?? null,
+      net_amount: view.payment?.net_amount ?? null,
+      fee_amount: view.payment?.fee_amount ?? null,
+      protocol_fee_bps: view.payment?.protocol_fee_bps ?? view.payment?.fee_bps ?? null,
+      platform_fee: view.payment?.platform_fee ?? null,
+      platform_fee_bps: view.payment?.platform_fee_bps ?? null,
     },
     provider_cogs: {
-      actual: receipt.provider_cogs?.actual ?? null,
+      actual: view.provider_cogs?.actual ?? null,
     },
     route: {
-      model: receipt.route?.model ?? null,
-      model_commitment: receipt.route?.model_commitment?.commitment ?? null,
-      provider: receipt.route?.provider ?? null,
+      model: view.route?.model ?? null,
+      model_commitment: view.route?.model_commitment?.commitment ?? null,
+      provider: view.route?.provider ?? null,
     },
     output: {
-      hash: receipt.output?.hash ?? null,
+      hash: view.output?.hash ?? null,
     },
     binding: {
-      expected_commitment: receipt.binding?.expected_commitment ?? null,
+      expected_commitment: view.binding?.expected_commitment ?? null,
     },
     caller_binding: {
-      payer_wallet: receipt.caller_binding?.payer_wallet ?? null,
-      agent_pubkey: receipt.caller_binding?.agent_pubkey ?? null,
-      api_key_hash: receipt.caller_binding?.api_key_hash ?? null,
+      payer_wallet: view.caller_binding?.payer_wallet ?? null,
+      agent_pubkey: view.caller_binding?.agent_pubkey ?? null,
+      api_key_hash: view.caller_binding?.api_key_hash ?? null,
     },
     payload_version: 5,
   };
@@ -397,25 +541,26 @@ export function canonicalSignedClaims(receipt) {
  * This legacy array format is kept only for HMAC backward compatibility.
  */
 export function canonicalSignedPayload(receipt) {
+  const view = mergeReceiptView(receipt);
   return JSON.stringify([
-    receipt.task_id,
-    receipt.payment?.rail ?? null,
-    receipt.payment?.ref ?? null,
-    receipt.payment?.gross_amount ?? null,
-    receipt.payment?.net_amount ?? null,
-    receipt.payment?.fee_amount ?? null,
-    receipt.payment?.protocol_fee_bps ?? receipt.payment?.fee_bps ?? null,
-    receipt.payment?.platform_fee ?? null,
-    receipt.payment?.platform_fee_bps ?? null,
-    receipt.provider_cogs?.actual ?? null,
-    receipt.route?.model ?? null,
-    receipt.route?.model_commitment?.commitment ?? null,
-    receipt.route?.provider ?? null,
-    receipt.output?.hash ?? null,
-    receipt.binding?.expected_commitment ?? null,
-    receipt.caller_binding?.payer_wallet ?? null,
-    receipt.caller_binding?.agent_pubkey ?? null,
-    receipt.caller_binding?.api_key_hash ?? null,
+    view.task_id,
+    view.payment?.rail ?? null,
+    view.payment?.ref ?? null,
+    view.payment?.gross_amount ?? null,
+    view.payment?.net_amount ?? null,
+    view.payment?.fee_amount ?? null,
+    view.payment?.protocol_fee_bps ?? view.payment?.fee_bps ?? null,
+    view.payment?.platform_fee ?? null,
+    view.payment?.platform_fee_bps ?? null,
+    view.provider_cogs?.actual ?? null,
+    view.route?.model ?? null,
+    view.route?.model_commitment?.commitment ?? null,
+    view.route?.provider ?? null,
+    view.output?.hash ?? null,
+    view.binding?.expected_commitment ?? null,
+    view.caller_binding?.payer_wallet ?? null,
+    view.caller_binding?.agent_pubkey ?? null,
+    view.caller_binding?.api_key_hash ?? null,
   ]);
 }
 
@@ -460,17 +605,18 @@ function signReceiptPayload(receipt, secret, { role = 'attestor' } = {}) {
  * Payload: Object with named claims (task_id, payment, route, etc.)
  * 
  * @param {object} receipt
+ * @param {{ baseUrl?: string, iat?: number|null }} [opts]
  * @returns {{ alg: string, payload_version: number, jws: string, kid: string, jwks_uri: string }}
  */
-function signReceiptEcdsa(receipt) {
-  const claims = canonicalSignedClaims(receipt);
+function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
+  const claims = canonicalSignedClaims(receipt, { iat });
   const { jws, kid } = signJws(claims);
   return {
     alg: 'ES256',
     payload_version: 5,
     jws,
     kid,
-    jwks_uri: '/.well-known/jwks.json',
+    jwks_uri: buildJwksUri(baseUrl),
   };
 }
 
@@ -562,11 +708,12 @@ export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {})
   }
 
   if (validateClaims && result.payload) {
-    if (result.payload.task_id !== receipt.task_id) {
+    const view = mergeReceiptView(receipt);
+    if (result.payload.task_id !== view.task_id) {
       return { checked: true, valid: false, reason: 'task_id_mismatch' };
     }
     const signedBinding = result.payload.caller_binding || {};
-    const receiptBinding = receipt.caller_binding || {};
+    const receiptBinding = view.caller_binding || {};
     if ((signedBinding.payer_wallet ?? null) !== (receiptBinding.payer_wallet ?? null)
       || (signedBinding.agent_pubkey ?? null) !== (receiptBinding.agent_pubkey ?? null)
       || (signedBinding.api_key_hash ?? null) !== (receiptBinding.api_key_hash ?? null)) {
@@ -601,11 +748,12 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
   }
 
   if (validateClaims && jwsResult.payload) {
-    if (jwsResult.payload.task_id !== receipt.task_id) {
+    const view = mergeReceiptView(receipt);
+    if (jwsResult.payload.task_id !== view.task_id) {
       return { checked: true, valid: false, reason: 'task_id_mismatch' };
     }
     const signedBinding = jwsResult.payload.caller_binding || {};
-    const receiptBinding = receipt.caller_binding || {};
+    const receiptBinding = view.caller_binding || {};
     if ((signedBinding.payer_wallet ?? null) !== (receiptBinding.payer_wallet ?? null)
       || (signedBinding.agent_pubkey ?? null) !== (receiptBinding.agent_pubkey ?? null)
       || (signedBinding.api_key_hash ?? null) !== (receiptBinding.api_key_hash ?? null)) {
@@ -845,35 +993,33 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
 
   const prefix = preferredPathPrefix(reqHost);
   const displayTaskId = taskIdWithPreferredPrefix(task.taskId, prefix);
+  const createdAt = toUnixSeconds(task.createdAt);
+  const updatedAt = toUnixSeconds(task.updatedAt);
 
-  const receipt = {
+  const routeProvider = (() => {
+    const fromResult = task.result?.provider || task.result?.routedTo || task.routedTo || null;
+    if (task.result?.mock) return fromResult || 'mock';
+    if (fromResult) return fromResult;
+    if (task.status !== 'completed' && !providerCogs) return null;
+    return providerCogs?.provider || task.meta?.provider || null;
+  })();
+
+  const routeModel = task.result?.model || task.intent?.model || task.intent?.modelId || null;
+
+  // Full draft used for signing — signed fields are stripped from the public JSON envelope.
+  const draft = {
     schema: 'xfuel.receipt.v4',
     task_id: task.taskId,
     status: task.status,
     proof_outcome: outcome,
     verify_url: buildVerifyUrl(base, task.taskId, { reqHost }),
-    created_at: task.createdAt || null,
-    updated_at: task.updatedAt || null,
+    created_at: createdAt,
+    updated_at: updatedAt,
     route: {
       message_type: task.intent?.type || null,
-      // The model that served, falling back to what was asked for. A receipt
-      // attesting `xfuel/auto` names an XFuel alias, not a model anyone can check.
-      model: task.result?.model || task.intent?.model || task.intent?.modelId || null,
+      model: routeModel,
       model_commitment: modelCommitment,
-      // Prefer actual compute source over float-book label (float can say
-      // theta-edgecloud while result is still mock / another tier).
-      provider: (() => {
-        const fromResult = task.result?.provider || task.result?.routedTo || task.routedTo || null;
-        if (task.result?.mock) return fromResult || 'mock';
-        if (fromResult) return fromResult;
-        // Nothing served, so there is no compute source to name. `meta.provider`
-        // carries the float default, and attesting it on a failed task would
-        // credit a provider that never ran.
-        if (task.status !== 'completed' && !providerCogs) return null;
-        // A COGS record is evidence of a real burn against that float, so it
-        // outranks the treasury default label.
-        return providerCogs?.provider || task.meta?.provider || null;
-      })(),
+      provider: routeProvider,
       chain_id: task.meta?.chain || task.intent?.chainId || null,
     },
     payment: {
@@ -883,11 +1029,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       gross_amount: task.intent?.amount || '0',
       fee_amount: task.feeAmount || '0',
       net_amount: task.netAmount || '0',
-      // Protocol split of gross (ADR 0001). Kept as `fee_bps` for older clients.
       fee_bps: feeBps,
       protocol_fee_bps: feeBps,
-      // Cost-plus platform fee (ADR 0009). Signed separately so a buyer can
-      // recompute max(floor, cogs × 1.10) without confusing it with the 50 bps split.
       platform_fee_bps: pricing?.fee_bps ?? null,
       platform_fee: pricing?.platform_fee != null ? String(pricing.platform_fee) : null,
       tier2_proof: pricing?.tier2_proof && pricing.tier2_proof !== '0' ? String(pricing.tier2_proof) : null,
@@ -896,29 +1039,15 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       collected: !!paymentRef,
       collects_on: rollingFronted ? 'next_request' : 'this_request',
     },
-    // ADR 0005 — provider COGS from prepaid float (not a second buyer rail).
     provider_cogs: providerCogs,
     usage,
-    proof: {
-      system: task.intent?.proofSystem || 'sp1',
-      tier: vi?.tier || proofTierOf(task),
-      outcome,
-      has_proof: !!task.sp1Proof?.proof,
-      nullifier: task.sp1Proof?.nullifier || null,
-      proving_time_ms: task.sp1Proof?.provingTimeMs || null,
-      attests: PROOF_SCOPE_NOTE,
-    },
+    proof: proofScopeOf(task, vi, outcome),
     verified_inference: vi,
     binding: verifyBinding(task),
-    // Private Spend v0 — vendor-blind mode (gateway-trusted). Never claim prompt privacy here.
     privacy: privacyOf(task),
-    // Multi-hop / A2A lineage (additive; null when single-hop)
     lineage: lineageOf(task),
-    // Receipt handoff: wallet-move delegation (additive; null when no handoff)
     handoff: handoffOf(task),
     output: output ? { hash: output.value, kind: output.kind } : null,
-    // Caller identity binding (who paid). Real wallet address when known from x402 settlement.
-    // Never a symbolic label like "openai-gateway" — use null when identity is unknown.
     caller_binding: callerBindingOf(task, { apiKeyHash, agentId, agentPubkey, payerWallet }),
     links: base
       ? {
@@ -935,16 +1064,56 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
         },
   };
 
-  // Issuer ECDSA signature (public-key verifiable, no shared secret needed).
-  // This is the PRIMARY verification path. Any agent can verify against JWKS.
-  receipt.issuer_signature = signReceiptEcdsa(receipt);
+  const issuer_signature = signReceiptEcdsa(draft, { baseUrl: base, iat: createdAt });
+  const hmac_attestation = signingSecret
+    ? signReceiptPayload(draft, signingSecret, { role: 'attestor' })
+    : null;
+  const co_attestation = coSignerSecret
+    ? signReceiptPayload(draft, coSignerSecret, { role: 'co_attestor' })
+    : null;
 
-  // HMAC signatures are secondary (attestor role), kept for internal/compat use only.
-  // The public verification path is the ES256 issuer_signature with JWKS.
-  if (signingSecret) receipt.hmac_attestation = signReceiptPayload(receipt, signingSecret, { role: 'attestor' });
-  if (coSignerSecret) receipt.co_attestation = signReceiptPayload(receipt, coSignerSecret, { role: 'co_attestor' });
-  
-  return receipt;
+  // Slim envelope: signed payment/route/output/caller fields live only in issuer_signature.jws.
+  const envelope = {
+    schema: draft.schema,
+    task_id: draft.task_id,
+    status: draft.status,
+    proof_outcome: draft.proof_outcome,
+    verify_url: draft.verify_url,
+    created_at: draft.created_at,
+    updated_at: draft.updated_at,
+    verification: {
+      source_of_truth: 'issuer_signature.jws',
+      jwks_uri: issuer_signature.jwks_uri,
+    },
+    route_meta: {
+      message_type: draft.route.message_type,
+      chain_id: draft.route.chain_id,
+      model_commitment: draft.route.model_commitment,
+    },
+    payment_meta: {
+      explorer_url: draft.payment.explorer_url,
+      tier2_proof: draft.payment.tier2_proof,
+      floor_applied: draft.payment.floor_applied,
+      basis: draft.payment.basis,
+      collected: draft.payment.collected,
+      collects_on: draft.payment.collects_on,
+    },
+    provider_cogs: draft.provider_cogs,
+    usage: draft.usage,
+    proof: draft.proof,
+    verified_inference: draft.verified_inference,
+    binding: draft.binding,
+    privacy: draft.privacy,
+    lineage: draft.lineage,
+    handoff: draft.handoff,
+    output: draft.output ? { kind: draft.output.kind } : null,
+    links: draft.links,
+    issuer_signature,
+    ...(hmac_attestation && { hmac_attestation }),
+    ...(co_attestation && { co_attestation }),
+  };
+
+  return envelope;
 }
 
 // ─── HTML rendering ──────────────────────────────────────────────────────────
@@ -1050,7 +1219,7 @@ function verifyIssuerForHtml(receipt) {
     if (!result.valid) {
       return { verified: false, reason: result.reason || 'signature_invalid' };
     }
-    if (result.payload?.task_id !== receipt.task_id) {
+    if (result.payload?.task_id !== mergeReceiptView(receipt).task_id) {
       return { verified: false, reason: 'task_id_mismatch' };
     }
     return { verified: true, reason: 'verified' };
@@ -1061,9 +1230,10 @@ function verifyIssuerForHtml(receipt) {
 
 /** Render a clean, standalone, shareable HTML receipt page. */
 export function renderReceiptHtml(receipt) {
-  const p = receipt.payment;
-  const pr = receipt.proof;
-  const b = receipt.binding;
+  const view = mergeReceiptView(receipt);
+  const p = view.payment;
+  const pr = view.proof;
+  const b = view.binding;
   const title = 'Chit402';
   const desc = p.rail === 'unmetered'
     ? `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} · UNMETERED · not charged`
@@ -1084,18 +1254,20 @@ export function renderReceiptHtml(receipt) {
 
   const issuerSig = receipt.issuer_signature;
   const issuerVerified = verifyIssuerForHtml(receipt);
-  const jwksUrl = (() => {
-    if (!issuerSig?.jwks_uri) return null;
-    const selfUrl = receipt.links?.self;
-    if (selfUrl && selfUrl.startsWith('http')) {
-      try {
-        return new URL(issuerSig.jwks_uri, selfUrl.replace(/\/receipt\/.*$/, '')).href;
-      } catch {
-        return issuerSig.jwks_uri;
+  const jwksUrl = issuerSig?.jwks_uri?.startsWith('http')
+    ? issuerSig.jwks_uri
+    : (() => {
+      if (!issuerSig?.jwks_uri) return null;
+      const selfUrl = receipt.links?.self;
+      if (selfUrl && selfUrl.startsWith('http')) {
+        try {
+          return new URL(issuerSig.jwks_uri, selfUrl.replace(/\/receipt\/.*$/, '')).href;
+        } catch {
+          return issuerSig.jwks_uri;
+        }
       }
-    }
-    return issuerSig.jwks_uri;
-  })();
+      return issuerSig.jwks_uri;
+    })();
 
   const bindingBlock = b
     ? `<section class="card">
@@ -1108,11 +1280,11 @@ export function renderReceiptHtml(receipt) {
       </section>`
     : `<section class="card">
         <h2>Payment binding</h2>
-        <p class="muted">${esc(bindingCopy(receipt))}</p>
+        <p class="muted">${esc(bindingCopy(view))}</p>
       </section>`;
 
-  const cogs = receipt.provider_cogs;
-  const cogsProvider = cogs?.provider || receipt.route?.provider;
+  const cogs = view.provider_cogs;
+  const cogsProvider = cogs?.provider || view.route?.provider;
   const cogsBlock = cogs
     ? `<section class="card">
         <h2>Provider cost <span class="scope">what we paid to serve this</span></h2>
@@ -1164,11 +1336,11 @@ export function renderReceiptHtml(receipt) {
       </section>`
     : '';
 
-  const outputRow = receipt.output
-    ? row(receipt.output.kind === 'committed' ? 'Output commitment' : 'Output hash (SHA-256)', `<code>${esc(shortHash(receipt.output.hash, 12, 10))}</code>`)
+  const outputRow = view.output
+    ? row(view.output.kind === 'committed' ? 'Output commitment' : 'Output hash (SHA-256)', `<code>${esc(shortHash(view.output.hash, 12, 10))}</code>`)
     : '';
 
-  const mc = receipt.route.model_commitment;
+  const mc = view.route.model_commitment;
   const modelCommitmentRow = mc && mc.commitment
     ? row('Model commitment <span class="scope">PoMA</span>',
         `<code>${esc(shortHash(mc.commitment, 12, 10))}</code>${mc.version != null ? ` <span class="muted">v${esc(mc.version)}</span>` : ''}`)
@@ -1268,19 +1440,19 @@ export function renderReceiptHtml(receipt) {
       ${row('On-chain SP1', pr.has_proof ? '<span class="badge ok">yes</span>' : '<span class="muted">not on this call</span>')}
       ${pr.nullifier ? row('Nullifier', `<code>${esc(shortHash(pr.nullifier, 12, 10))}</code>`) : ''}
       ${pr.proving_time_ms != null ? row('Proving time', `${esc(pr.proving_time_ms)} ms`) : ''}
-      ${pr.has_proof ? `<div class="scopebox">${esc(pr.attests)}</div>` : `<p class="muted" style="margin:8px 0 0;font-size:12px">${esc(proofWhyMissing(receipt))}</p>`}
+      ${pr.has_proof ? `<div class="scopebox">${esc(PROOF_SCOPE_NOTE)}</div>` : `<p class="muted" style="margin:8px 0 0;font-size:12px">${esc(proofWhyMissing(view))}</p>`}
     </section>
 
     <section class="card secondary">
       <h2>Route details</h2>
-      ${row('Status', esc(receipt.status))}
-      ${row('Model', esc(receipt.route.model) || '<span class="muted">—</span>')}
-      ${row('Provider', esc(receipt.route.provider) || '<span class="muted">—</span>')}
+      ${row('Status', esc(view.status))}
+      ${row('Model', esc(view.route.model) || '<span class="muted">—</span>')}
+      ${row('Provider', esc(view.route.provider) || '<span class="muted">—</span>')}
       ${usageRows}
       ${outputRow}
       ${modelCommitmentRow}
-      ${receipt.route.chain_id ? row('Chain', esc(receipt.route.chain_id)) : ''}
-      ${receipt.route.message_type ? row('Type', esc(receipt.route.message_type)) : ''}
+      ${view.route.chain_id ? row('Chain', esc(view.route.chain_id)) : ''}
+      ${view.route.message_type ? row('Type', esc(view.route.message_type)) : ''}
     </section>
 
     ${bindingBlock}
@@ -1382,6 +1554,7 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
   if (!receipt || !receipt.task_id) {
     throw new Error('buildAuditorExport: receipt with task_id required');
   }
+  const view = mergeReceiptView(receipt);
   const defaultPolicy = {
     max_fee_bps: 100,
     allowed_rails: ['usdc', 'tfuel', 'unmetered'],
@@ -1389,15 +1562,15 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
     notes: 'Default XFuel audit policy — override via AUDITOR_POLICY_JSON on gateway',
   };
   const pol = policy || defaultPolicy;
-  const feeBps = Number(receipt.payment?.fee_bps ?? 0);
-  const rail = (receipt.payment?.rail || '').toLowerCase();
+  const feeBps = Number(view.payment?.fee_bps ?? 0);
+  const rail = (view.payment?.rail || '').toLowerCase();
   const checks = {
     fee_bps_within_cap: feeBps <= Number(pol.max_fee_bps ?? 100),
     rail_allowed: Array.isArray(pol.allowed_rails)
       ? pol.allowed_rails.map((r) => String(r).toLowerCase()).includes(rail)
       : true,
-    binding_ok: receipt.binding == null ? null : !!receipt.binding.matches,
-    privacy_vendor_blind: receipt.privacy?.mode === 'vendor_blind',
+    binding_ok: view.binding == null ? null : !!view.binding.matches,
+    privacy_vendor_blind: view.privacy?.mode === 'vendor_blind',
   };
   const in_policy = Object.values(checks).every((v) => v === true || v === null);
 
@@ -1412,29 +1585,30 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
     checks,
     in_policy,
     totals: {
-      rail: receipt.payment?.rail || null,
-      gross_amount: receipt.payment?.gross_amount || null,
-      fee_amount: receipt.payment?.fee_amount || null,
-      net_amount: receipt.payment?.net_amount || null,
-      fee_bps: receipt.payment?.fee_bps ?? null,
-      payment_ref: receipt.payment?.ref || null,
-      explorer_url: receipt.payment?.explorer_url || null,
+      rail: view.payment?.rail || null,
+      gross_amount: view.payment?.gross_amount || null,
+      fee_amount: view.payment?.fee_amount || null,
+      net_amount: view.payment?.net_amount || null,
+      fee_bps: view.payment?.fee_bps ?? null,
+      payment_ref: view.payment?.ref || null,
+      explorer_url: view.payment?.explorer_url || null,
     },
     route_summary: {
-      message_type: receipt.route?.message_type || null,
-      model: receipt.route?.model || null,
-      provider: receipt.route?.provider || null,
-      chain_id: receipt.route?.chain_id || null,
-      // model commitment hash only — no weights / prompts
-      model_commitment: receipt.route?.model_commitment?.commitment || null,
+      message_type: view.route?.message_type || null,
+      model: view.route?.model || null,
+      provider: view.route?.provider || null,
+      chain_id: view.route?.chain_id || null,
+      model_commitment: view.route?.model_commitment?.commitment || null,
     },
     proof_summary: {
-      tier: receipt.proof?.tier || null,
-      has_proof: !!receipt.proof?.has_proof,
-      nullifier: receipt.proof?.nullifier || null,
-      attests: receipt.proof?.attests || null,
+      tier: view.proof?.tier || null,
+      zkp_tier: view.proof?.zkp_tier || null,
+      has_proof: !!view.proof?.has_proof,
+      nullifier: view.proof?.nullifier || null,
+      nullifier_enforced: !!view.proof?.nullifier_enforced,
+      attestation_scope: view.proof?.attestation_scope || null,
     },
-    binding: receipt.binding
+    binding: view.binding
       ? {
           matches: receipt.binding.matches,
           in_proof: receipt.binding.in_proof,
@@ -1444,7 +1618,7 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
       : null,
     privacy: receipt.privacy || null,
     lineage: receipt.lineage || null,
-    output_hash: receipt.output?.hash || null,
+    output_hash: view.output?.hash || null,
     redacted: [
       'prompts',
       'messages',
@@ -1686,6 +1860,11 @@ export default {
   taskIdWithPreferredPrefix,
   privacyOf,
   lineageOf,
+  decodeReceiptClaims,
+  mergeReceiptView,
+  toUnixSeconds,
+  buildJwksUri,
+  proofScopeOf,
   callerBindingOf,
   verifyReceiptHmac,
   verifyReceiptMultiKey,
