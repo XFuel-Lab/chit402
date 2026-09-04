@@ -156,6 +156,7 @@ export function mergeReceiptView(receipt) {
       payment: {
         rail: 'usdc',
         ref: null,
+        network: paymentMeta.network ?? null,
         gross_amount: '0',
         net_amount: '0',
         fee_amount: '0',
@@ -199,6 +200,7 @@ export function mergeReceiptView(receipt) {
     payment: {
       rail: claims.payment?.rail ?? null,
       ref: claims.payment?.ref ?? null,
+      network: paymentMeta.network ?? claims.payment?.network ?? networkFromPaymentRef(claims.payment?.ref),
       gross_amount: claims.payment?.gross_amount ?? null,
       net_amount: claims.payment?.net_amount ?? null,
       fee_amount: claims.payment?.fee_amount ?? null,
@@ -274,11 +276,16 @@ export function proofScopeOf(task, vi, outcome) {
   };
 }
 
-/** Block-explorer base per EVM network used in `payment_ref` ("<network>:<txHash>"). */
+/** Block-explorer base per network used in `payment_ref` ("<network>:<txHash>"). */
 const EXPLORERS = {
   'base-sepolia': 'https://sepolia.basescan.org/tx/',
   base: 'https://basescan.org/tx/',
+  solana: 'https://solscan.io/tx/',
+  'solana-devnet': 'https://solscan.io/tx/?cluster=devnet',
 };
+
+/** Base58 alphabet (no 0, O, I, l) — Solana pubkeys/signatures. */
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
 /**
  * Normalize a task ID from a URL path for storage/lookup.
@@ -373,6 +380,13 @@ export function baseUrlFromReq(req, configuredBase, allowedHosts = []) {
   return reqHost ? `${req.protocol}://${reqHost}` : '';
 }
 
+/** Settlement network prefix from `payment_ref` ("<network>:<txHash>"), or null. */
+export function networkFromPaymentRef(paymentRef) {
+  if (!paymentRef || typeof paymentRef !== 'string') return null;
+  const idx = paymentRef.indexOf(':');
+  return idx > 0 ? paymentRef.slice(0, idx) : null;
+}
+
 /** Build an explorer URL from a `payment_ref` like "base-sepolia:0xabc…", or null. */
 export function explorerUrlForRef(paymentRef) {
   if (!paymentRef || typeof paymentRef !== 'string') return null;
@@ -381,8 +395,16 @@ export function explorerUrlForRef(paymentRef) {
   const network = paymentRef.slice(0, idx);
   const tx = paymentRef.slice(idx + 1);
   const base = EXPLORERS[network];
-  if (!base || !/^0x[0-9a-fA-F]{6,}$/.test(tx)) return null;
-  return base + tx;
+  if (!base || !tx) return null;
+  if (network === 'base' || network === 'base-sepolia') {
+    if (!/^0x[0-9a-fA-F]{6,}$/.test(tx)) return null;
+    return base + tx;
+  }
+  if (network === 'solana' || network === 'solana-devnet') {
+    if (!isValidSolanaAddress(tx) && !isValidSolanaSignature(tx)) return null;
+    return base + tx;
+  }
+  return null;
 }
 
 /**
@@ -1064,10 +1086,7 @@ export function providerCogsOf(task) {
 export function callerBindingOf(task, opts = {}) {
   // Extract actual payer wallet from x402 settlement data or explicit opts.
   // opts.payerWallet is wired from the settlement/payment-binding path in buildReceipt.
-  let payerWallet = null;
-  if (isValidEvmAddress(opts.payerWallet)) {
-    try { payerWallet = getAddress(opts.payerWallet); } catch { payerWallet = null; }
-  }
+  let payerWallet = normalizePayerWallet(opts.payerWallet);
   if (!payerWallet) payerWallet = extractPayerWallet(task);
 
   // Agent public key from registration (if task was from a registered agent)
@@ -1102,10 +1121,11 @@ export function callerBindingOf(task, opts = {}) {
 
 /**
  * Extract the actual payer wallet address from task settlement data.
- * Returns a valid EVM address (0x...) or null. Never returns symbolic labels.
- * 
+ * Returns a valid EVM (0x…) or Solana (base58) address, or null.
+ * Never returns symbolic labels.
+ *
  * @param {object} task
- * @returns {string|null} Checksummed EVM address or null
+ * @returns {string|null}
  */
 function extractPayerWallet(task) {
   // Priority: explicit sender from x402 settlement > agent wallet > null
@@ -1126,15 +1146,24 @@ function extractPayerWallet(task) {
   ];
 
   for (const candidate of candidates) {
-    if (isValidEvmAddress(candidate)) {
-      try {
-        return getAddress(candidate);
-      } catch {
-        return null;
-      }
-    }
+    const normalized = normalizePayerWallet(candidate);
+    if (normalized) return normalized;
   }
 
+  return null;
+}
+
+/**
+ * Normalize a payer wallet from x402 verify/settle (EVM checksum or Solana base58).
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+function normalizePayerWallet(value) {
+  if (!value || typeof value !== 'string' || isSymbolicLabel(value)) return null;
+  if (isValidEvmAddress(value)) {
+    try { return getAddress(value); } catch { return null; }
+  }
+  if (isValidSolanaAddress(value)) return value;
   return null;
 }
 
@@ -1146,6 +1175,32 @@ function extractPayerWallet(task) {
 function isValidEvmAddress(value) {
   if (!value || typeof value !== 'string') return false;
   return /^0x[0-9a-fA-F]{40}$/.test(value);
+}
+
+/**
+ * Check if a string looks like a valid Solana wallet pubkey (base58, 32–44 chars).
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isValidSolanaAddress(value) {
+  if (!value || typeof value !== 'string') return false;
+  if (value.startsWith('0x')) return false;
+  if (value.length < 32 || value.length > 44) return false;
+  for (const ch of value) {
+    if (!BASE58_ALPHABET.includes(ch)) return false;
+  }
+  return true;
+}
+
+/** Solana tx signatures are longer base58 strings (typically 87–88 chars). */
+function isValidSolanaSignature(value) {
+  if (!value || typeof value !== 'string') return false;
+  if (value.startsWith('0x')) return false;
+  if (value.length < 64 || value.length > 128) return false;
+  for (const ch of value) {
+    if (!BASE58_ALPHABET.includes(ch)) return false;
+  }
+  return true;
 }
 
 /**
@@ -1246,6 +1301,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     payment: {
       rail: paymentRail,
       ref: paymentRef,
+      network: networkFromPaymentRef(paymentRef),
       explorer_url: explorerUrlForRef(paymentRef),
       gross_amount: task.intent?.amount || '0',
       fee_amount: task.feeAmount || '0',
@@ -1345,6 +1401,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       model_commitment: draft.route.model_commitment,
     },
     payment_meta: {
+      network: draft.payment.network,
       explorer_url: draft.payment.explorer_url,
       tier2_proof: draft.payment.tier2_proof,
       floor_applied: draft.payment.floor_applied,
@@ -1440,11 +1497,18 @@ function badge(outcome, bindingMatches) {
   return '<span class="badge bad">Invalid</span>';
 }
 
+function settlementNetworkLabel(paymentRef) {
+  const network = networkFromPaymentRef(paymentRef);
+  if (network === 'solana' || network === 'solana-devnet') return 'Solana';
+  return 'Base';
+}
+
 function bindingCopy(view) {
   const p = view.payment;
   const payerWallet = view.caller_binding?.payer_wallet ?? null;
   if (payerWallet) {
-    return `Payer wallet ${payerWallet} is bound in the issuer-signed receipt (caller_binding.payer_wallet). Buyer settlement is USDC on Base.`;
+    const chain = settlementNetworkLabel(p?.ref);
+    return `Payer wallet ${payerWallet} is bound in the issuer-signed receipt (caller_binding.payer_wallet). Buyer settlement is USDC on ${chain}.`;
   }
   if (p?.rail === 'unmetered') {
     return 'Nothing settled — this was the free path. The receipt attests which model and provider ran, not a dollar.';
@@ -2253,6 +2317,7 @@ export default {
   normalizeTaskIdForLookup,
   preferredPathPrefix,
   taskIdWithPreferredPrefix,
+  networkFromPaymentRef,
   privacyOf,
   lineageOf,
   decodeReceiptClaims,
