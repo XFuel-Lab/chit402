@@ -15,6 +15,52 @@ import {
   USDC_ATOMIC_DECIMALS as SESSION_USDC_DECIMALS,
   USDC_ATOMIC_UNIT as SESSION_USDC_UNIT,
 } from './session-delegation.js';
+import {
+  SESSION_ACT_ACTIONS,
+  sessionActClaimOf,
+  resolveSessionActTarget,
+} from './session-act.js';
+
+export const SETTLEMENT_KIND_INHERITED = 'inherited';
+export const SETTLEMENT_KIND_SETTLED = 'settled';
+export const SETTLEMENT_KIND_UNSETTLED = 'unsettled';
+export const RECEIPT_KIND_SESSION_HANDOFF = 'session_handoff';
+
+export function isInheritedSettlement(view) {
+  if (!view || typeof view !== 'object') return false;
+  if (view.settlement?.kind === SETTLEMENT_KIND_INHERITED) return true;
+  if (view.kind === RECEIPT_KIND_SESSION_HANDOFF) return true;
+  if (view.parent_receipt_id) return true;
+  return false;
+}
+
+export function settlementOf(view) {
+  const parentId = view?.parent_receipt_id ?? view?.settlement?.parent_receipt_id ?? null;
+  if (isInheritedSettlement(view) || parentId) {
+    return {
+      kind: SETTLEMENT_KIND_INHERITED,
+      parent_receipt_id: parentId,
+    };
+  }
+  if (view?.payment?.ref) {
+    return { kind: SETTLEMENT_KIND_SETTLED, parent_receipt_id: null };
+  }
+  return { kind: SETTLEMENT_KIND_UNSETTLED, parent_receipt_id: null };
+}
+
+export function actionOf(view) {
+  if (view?.action) return String(view.action);
+  if (view?.kind === RECEIPT_KIND_SESSION_HANDOFF || view?.parent_receipt_id) {
+    return SESSION_ACT_ACTIONS.HANDOFF;
+  }
+  return null;
+}
+
+export function kindOf(view) {
+  if (view?.kind) return view.kind;
+  if (view?.parent_receipt_id) return RECEIPT_KIND_SESSION_HANDOFF;
+  return null;
+}
 
 /**
  * Public verifiable-receipt builder + renderer.
@@ -92,6 +138,11 @@ export function mergeReceiptView(receipt) {
       delegation_hash: claims.delegation_hash ?? claims.session?.delegation_hash ?? null,
       session_expiry: claims.session_expiry ?? claims.session?.session_expiry ?? null,
       parent_receipt_id: claims.parent_receipt_id ?? receipt.parent_receipt_id ?? null,
+      kind: claims.kind ?? receipt.kind ?? null,
+      action: claims.action ?? receipt.action ?? null,
+      settlement: claims.settlement ?? receipt.settlement ?? null,
+      target_agent: claims.target_agent ?? receipt.target_agent ?? null,
+      session_act: claims.session_act ?? receipt.session_act ?? null,
       caller_binding: receipt.caller_binding ?? claims.caller_binding ?? null,
     };
   }
@@ -131,6 +182,11 @@ export function mergeReceiptView(receipt) {
       delegation_hash: receipt.delegation_hash ?? receipt.session?.delegation_hash ?? null,
       session_expiry: receipt.session_expiry ?? receipt.session?.session_expiry ?? null,
       parent_receipt_id: receipt.parent_receipt_id ?? null,
+      kind: receipt.kind ?? null,
+      action: receipt.action ?? null,
+      settlement: receipt.settlement ?? null,
+      target_agent: receipt.target_agent ?? null,
+      session_act: receipt.session_act ?? null,
       proof: receipt.proof || {},
     };
   }
@@ -177,6 +233,11 @@ export function mergeReceiptView(receipt) {
     delegation_hash: claims.delegation_hash ?? claims.session?.delegation_hash ?? null,
     session_expiry: claims.session_expiry ?? claims.session?.session_expiry ?? null,
     parent_receipt_id: claims.parent_receipt_id ?? receipt.parent_receipt_id ?? null,
+    kind: claims.kind ?? receipt.kind ?? null,
+    action: claims.action ?? receipt.action ?? null,
+    settlement: claims.settlement ?? receipt.settlement ?? null,
+    target_agent: claims.target_agent ?? receipt.target_agent ?? null,
+    session_act: claims.session_act ?? receipt.session_act ?? null,
     provider_cogs: claims.provider_cogs?.actual != null && receipt.provider_cogs
       ? {
           ...receipt.provider_cogs,
@@ -545,22 +606,49 @@ function outputHashOf(task) {
 export function canonicalSignedClaims(receipt, { iat = null } = {}) {
   const view = mergeReceiptView(receipt);
   const issuedAt = iat ?? toUnixSeconds(receipt.created_at) ?? Math.floor(Date.now() / 1000);
+  const inherited = isInheritedSettlement(view);
+  const kind = kindOf(view);
+  const action = actionOf(view);
+  const settlement = settlementOf(view);
+  const sessionAct = sessionActClaimOf(view.session_act);
+  const rawTarget = view.target_agent
+    || sessionAct?.message?.targetAgent
+    || (kind === RECEIPT_KIND_SESSION_HANDOFF
+      ? (view.agent_pubkey || view.caller_binding?.agent_pubkey || view.session?.agent_pubkey)
+      : null);
+  const resolvedTarget = rawTarget
+    ? resolveSessionActTarget(rawTarget, view.session?.agent_pubkey || view.agent_pubkey)
+    : null;
+  const targetAgent = resolvedTarget && resolvedTarget !== '0x0000000000000000000000000000000000000000'
+    ? resolvedTarget
+    : null;
   return {
     task_id: view.task_id,
     iss: 'chit402',
     iat: issuedAt,
-    payment: {
-      rail: view.payment?.rail ?? null,
-      ref: view.payment?.ref ?? null,
-      gross_amount: view.payment?.gross_amount ?? null,
-      net_amount: view.payment?.net_amount ?? null,
-      fee_amount: view.payment?.fee_amount ?? null,
-      protocol_fee_bps: view.payment?.protocol_fee_bps ?? view.payment?.fee_bps ?? null,
-      platform_fee: view.payment?.platform_fee ?? null,
-      platform_fee_bps: view.payment?.platform_fee_bps ?? null,
-    },
+    payment: inherited
+      ? {
+          rail: view.payment?.rail ?? null,
+          ref: null,
+          gross_amount: null,
+          net_amount: null,
+          fee_amount: null,
+          protocol_fee_bps: null,
+          platform_fee: null,
+          platform_fee_bps: null,
+        }
+      : {
+          rail: view.payment?.rail ?? null,
+          ref: view.payment?.ref ?? null,
+          gross_amount: view.payment?.gross_amount ?? null,
+          net_amount: view.payment?.net_amount ?? null,
+          fee_amount: view.payment?.fee_amount ?? null,
+          protocol_fee_bps: view.payment?.protocol_fee_bps ?? view.payment?.fee_bps ?? null,
+          platform_fee: view.payment?.platform_fee ?? null,
+          platform_fee_bps: view.payment?.platform_fee_bps ?? null,
+        },
     provider_cogs: {
-      actual: view.provider_cogs?.actual ?? null,
+      actual: inherited ? null : (view.provider_cogs?.actual ?? null),
       decimals: USDC_ATOMIC_DECIMALS,
       unit: 'atomic_usdc',
     },
@@ -577,14 +665,27 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     },
     caller_binding: {
       payer_wallet: view.caller_binding?.payer_wallet ?? null,
-      agent_pubkey: view.caller_binding?.agent_pubkey ?? view.session?.agent_pubkey ?? view.agent_pubkey ?? null,
+      agent_pubkey: targetAgent
+        || view.caller_binding?.agent_pubkey
+        || view.agent_pubkey
+        || view.session?.agent_pubkey
+        || null,
       api_key_hash: view.caller_binding?.api_key_hash ?? null,
     },
-    agent_pubkey: view.session?.agent_pubkey ?? view.agent_pubkey ?? view.caller_binding?.agent_pubkey ?? null,
+    agent_pubkey: targetAgent
+      || view.agent_pubkey
+      || view.session?.agent_pubkey
+      || view.caller_binding?.agent_pubkey
+      || null,
+    target_agent: targetAgent,
     delegation_hash: view.session?.delegation_hash ?? view.delegation_hash ?? null,
     session_expiry: view.session?.session_expiry ?? view.session_expiry ?? null,
     session: view.session ? publicSessionBlock(view.session) : null,
     parent_receipt_id: view.parent_receipt_id ?? null,
+    kind,
+    action,
+    settlement,
+    session_act: sessionAct,
     payload_version: 5,
   };
 }
@@ -678,6 +779,11 @@ function sessionIdentity(claims) {
     claims?.delegation_hash ?? claims?.session?.delegation_hash ?? null,
     claims?.session_expiry ?? claims?.session?.session_expiry ?? null,
     claims?.parent_receipt_id ?? null,
+    claims?.kind ?? null,
+    claims?.action ?? null,
+    claims?.target_agent ?? null,
+    claims?.session_act?.signature ?? null,
+    claims?.session_act?.nonce ?? null,
   ]);
 }
 
@@ -1161,7 +1267,13 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     }),
     session: sessionOf(task),
     parent_receipt_id: task.parentReceiptId || task.meta?.parentReceiptId || task.meta?.parent_receipt_id || null,
-    kind: task.kind || task.meta?.kind || (task.parentReceiptId || task.meta?.parentReceiptId ? 'session_handoff' : null),
+    kind: task.kind || task.meta?.kind || (task.parentReceiptId || task.meta?.parentReceiptId ? RECEIPT_KIND_SESSION_HANDOFF : null),
+    action: task.action || task.meta?.action || ((task.kind || task.meta?.kind) === RECEIPT_KIND_SESSION_HANDOFF || task.parentReceiptId ? SESSION_ACT_ACTIONS.HANDOFF : null),
+    settlement: task.meta?.settlement || ((task.parentReceiptId || task.meta?.parentReceiptId)
+      ? { kind: SETTLEMENT_KIND_INHERITED, parent_receipt_id: task.parentReceiptId || task.meta?.parentReceiptId || task.meta?.parent_receipt_id }
+      : null),
+    target_agent: task.meta?.targetAgent || task.meta?.target_agent || task.targetAgent || null,
+    session_act: task.meta?.sessionAct || task.meta?.session_act || task.sessionAct || null,
     links: base
       ? {
           self: `${base}/receipt/${displayTaskId}`,
@@ -1249,7 +1361,10 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     envelope.links = { ...envelope.links, session_status: sessionPointer.status_uri };
   }
   if (draft.parent_receipt_id) envelope.parent_receipt_id = draft.parent_receipt_id;
-  if (draft.kind === 'session_handoff') envelope.kind = 'session_handoff';
+  if (draft.kind === RECEIPT_KIND_SESSION_HANDOFF) envelope.kind = RECEIPT_KIND_SESSION_HANDOFF;
+  if (draft.kind === RECEIPT_KIND_SESSION_HANDOFF && isInheritedSettlement(draft) && envelope.provider_cogs) {
+    delete envelope.provider_cogs;
+  }
   if (hmacRaw) envelope.hmac_attestation = publicHmacAttestation(hmacRaw);
   if (coRaw) envelope.co_attestation = publicHmacAttestation(coRaw);
 
@@ -1485,7 +1600,14 @@ export function renderReceiptHtml(receipt) {
         ${sess.allowed_routes ? row('Routes', `<code>${esc(sess.allowed_routes)}</code>`) : ''}
         ${sess.proof?.lookup_uri ? row('Proof lookup', `<a href="${esc(sess.proof.lookup_uri)}">${esc(sess.proof.lookup_uri)}</a>`) : ''}
         ${view.parent_receipt_id ? row('Parent receipt', `<code>${esc(view.parent_receipt_id)}</code>`) : ''}
-        <p class="muted" style="margin:8px 0 0;font-size:12px">JWS is the source of truth. Verify iat inside the session window; high-value redemption may query session status / revocations.</p>
+        ${view.kind ? row('Kind', `<code>${esc(view.kind)}</code>`) : ''}
+        ${view.action ? row('Action', `<code>${esc(view.action)}</code>`) : ''}
+        ${view.target_agent ? row('Target agent', `<code>${esc(shortHash(view.target_agent, 10, 8))}</code>`) : ''}
+        ${view.session_act?.nonce ? row('SessionAct nonce', `<code>${esc(shortHash(view.session_act.nonce, 12, 10))}</code>`) : ''}
+        ${view.settlement?.kind === SETTLEMENT_KIND_INHERITED
+          ? row('Settlement', `<span class="badge pending">inherited</span> from <code>${esc(view.settlement.parent_receipt_id || view.parent_receipt_id || '')}</code>`)
+          : ''}
+        <p class="muted" style="margin:8px 0 0;font-size:12px">JWS is the source of truth. Verify iat inside the session window; recover SessionAct from signed claims (types + signature + nonce) without trusting Chit logs.</p>
       </section>`
     : '';
 
@@ -1587,7 +1709,9 @@ export function renderReceiptHtml(receipt) {
     <section class="card">
       <h2>Payment</h2>
       ${row('Rail', `<span class="badge ${p.rail === 'usdc' ? 'ok' : 'pending'}">${esc(p.rail.toUpperCase())}</span>`)}
-      ${row('Settlement', p.collected ? '<span class="badge ok">collected</span>' : (p.collects_on === 'next_request' ? '<span class="badge pending">bill pending</span>' : '<span class="muted">not collected</span>'))}
+      ${row('Settlement', view.settlement?.kind === SETTLEMENT_KIND_INHERITED
+        ? `<span class="badge pending">inherited</span> from <code>${esc(view.settlement.parent_receipt_id || view.parent_receipt_id || '')}</code>`
+        : (p.collected ? '<span class="badge ok">collected</span>' : (p.collects_on === 'next_request' ? '<span class="badge pending">bill pending</span>' : '<span class="muted">not collected</span>')))}
       ${row('Settlement ref', refHtml)}
       ${p.rail === 'unmetered'
         ? row('Price', '<span class="muted">not charged</span> <span class="muted">unmetered /v1</span>')
@@ -2002,9 +2126,21 @@ export function verifyReceiptJws(receipt, jwk) {
 /**
  * Issue a child session-handoff receipt. Genesis task + JWS are left untouched.
  *
+ * Child JWS does not re-claim parent settlement (payment.ref / gross_amount /
+ * provider_cogs). Those stay on the parent; child flags settlement.kind=inherited.
+ * When SessionAct is supplied, its signature + nonce + types live in signed claims.
+ *
  * @param {object} parentTask
  * @param {object} session - verified session record from acceptDelegationProof
- * @param {{ baseUrl?: string, signingSecret?: string, coSignerSecret?: string, reqHost?: string, childTaskId?: string }} [opts]
+ * @param {{
+ *   baseUrl?: string,
+ *   signingSecret?: string,
+ *   coSignerSecret?: string,
+ *   reqHost?: string,
+ *   childTaskId?: string,
+ *   sessionAct?: object|null,
+ *   targetAgent?: string|null,
+ * }} [opts]
  * @returns {{ childTask: object, receipt: object }}
  */
 export function issueSessionHandoffReceipt(parentTask, session, {
@@ -2013,6 +2149,8 @@ export function issueSessionHandoffReceipt(parentTask, session, {
   coSignerSecret = null,
   reqHost = null,
   childTaskId = null,
+  sessionAct = null,
+  targetAgent = null,
 } = {}) {
   if (!parentTask?.taskId) {
     throw new Error('parent task is required');
@@ -2020,30 +2158,54 @@ export function issueSessionHandoffReceipt(parentTask, session, {
   if (!session?.delegation_hash || !session?.agent_pubkey) {
     throw new Error('verified session delegation is required');
   }
+  const actClaim = sessionActClaimOf(sessionAct);
+  const entitled = resolveSessionActTarget(
+    targetAgent
+      || actClaim?.message?.targetAgent
+      || sessionAct?.target_agent
+      || sessionAct?.message?.targetAgent,
+    session.agent_pubkey,
+  );
   const childId = childTaskId || `xfuel-${crypto.randomUUID()}`;
   const now = Date.now();
+  const parentIntent = parentTask.intent || {};
   const childTask = {
     taskId: childId,
-    kind: 'session_handoff',
+    kind: RECEIPT_KIND_SESSION_HANDOFF,
+    action: SESSION_ACT_ACTIONS.HANDOFF,
     parentReceiptId: parentTask.taskId,
     status: parentTask.status || 'completed',
     createdAt: now,
     updatedAt: now,
-    intent: { ...(parentTask.intent || {}) },
+    intent: {
+      type: parentIntent.type || null,
+      model: parentIntent.model || parentIntent.modelId || null,
+      paymentRail: parentIntent.paymentRail || 'usdc',
+      chainId: parentIntent.chainId || null,
+      // Settlement amounts stay on the genesis receipt — do not re-claim.
+    },
     meta: {
-      ...(parentTask.meta || {}),
       parentReceiptId: parentTask.taskId,
       parent_receipt_id: parentTask.taskId,
-      kind: 'session_handoff',
+      kind: RECEIPT_KIND_SESSION_HANDOFF,
+      action: SESSION_ACT_ACTIONS.HANDOFF,
+      settlement: {
+        kind: SETTLEMENT_KIND_INHERITED,
+        parent_receipt_id: parentTask.taskId,
+      },
       session,
-      agentPubkey: session.agent_pubkey,
+      sessionAct: actClaim,
+      targetAgent: entitled,
+      agentPubkey: entitled,
       payerWallet: session.payer_wallet || parentTask.meta?.payerWallet || null,
+      chain: parentTask.meta?.chain || null,
+      provider: parentTask.meta?.provider || null,
     },
-    feeAmount: parentTask.feeAmount,
-    netAmount: parentTask.netAmount,
+    feeAmount: null,
+    netAmount: null,
     feeBps: parentTask.feeBps,
     result: parentTask.result || null,
-    usage: parentTask.usage || null,
+    usage: null,
     outputHash: parentTask.outputHash || parentTask.result?.outputHash || null,
     sp1Proof: null,
     issuerSignature: null,
@@ -2053,7 +2215,7 @@ export function issueSessionHandoffReceipt(parentTask, session, {
     signingSecret,
     coSignerSecret,
     reqHost,
-    agentPubkey: session.agent_pubkey,
+    agentPubkey: entitled,
     payerWallet: session.payer_wallet || null,
     persistSignature: true,
   });
@@ -2090,6 +2252,10 @@ export default {
   proofScopeOf,
   callerBindingOf,
   issueSessionHandoffReceipt,
+  isInheritedSettlement,
+  settlementOf,
+  SETTLEMENT_KIND_INHERITED,
+  RECEIPT_KIND_SESSION_HANDOFF,
   verifyReceiptHmac,
   verifyReceiptMultiKey,
   verifyReceiptEcdsa,

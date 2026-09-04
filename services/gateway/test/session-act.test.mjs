@@ -24,6 +24,8 @@ const {
   SESSION_ACT_PRIMARY,
   SESSION_ACT_TYPES,
   SESSION_ACT_ACTIONS,
+  SESSION_ACT_ZERO_ADDRESS,
+  SESSION_ACT_ZERO_BYTES32,
   CHALLENGE_TTL_SEC_DEFAULT,
   CHALLENGE_TTL_SEC_MIN,
   CHALLENGE_TTL_SEC_MAX,
@@ -102,13 +104,22 @@ function usdcTask(over = {}) {
   };
 }
 
-async function signAct(challenge, { action, resource, signer = AGENT, deadline = null } = {}) {
+async function signAct(challenge, {
+  action,
+  resource,
+  signer = AGENT,
+  deadline = null,
+  targetAgent = null,
+  payloadHash = null,
+} = {}) {
   const typed = buildSessionActTypedData({
     delegationHash: challenge.delegation_hash,
     nonce: challenge.nonce,
     action,
     resource,
     deadline: deadline ?? challenge.expires_at,
+    targetAgent,
+    payloadHash,
   });
   const signature = await signer.signTypedData(typed.domain, typed.types, typed.message);
   return { typed, signature };
@@ -134,6 +145,10 @@ describe('EIP-712 SessionAct', () => {
     assert.ok(SESSION_ACT_TYPES.SessionAct.find((f) => f.name === 'action'));
     assert.ok(SESSION_ACT_TYPES.SessionAct.find((f) => f.name === 'resource'));
     assert.ok(SESSION_ACT_TYPES.SessionAct.find((f) => f.name === 'deadline'));
+    assert.ok(SESSION_ACT_TYPES.SessionAct.find((f) => f.name === 'targetAgent'));
+    assert.ok(SESSION_ACT_TYPES.SessionAct.find((f) => f.name === 'payloadHash'));
+    assert.equal(typed.message.targetAgent, SESSION_ACT_ZERO_ADDRESS);
+    assert.equal(typed.message.payloadHash, SESSION_ACT_ZERO_BYTES32);
     assert.equal(clampChallengeTtlSec(60), CHALLENGE_TTL_SEC_MIN);
     assert.equal(clampChallengeTtlSec(9999), CHALLENGE_TTL_SEC_MAX);
     assert.equal(clampChallengeTtlSec(null), CHALLENGE_TTL_SEC_DEFAULT);
@@ -324,13 +339,93 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     assert.ok(body.task_id.startsWith('xfuel-'));
     assert.notEqual(body.task_id, parent.taskId);
     assert.equal(body.receipt.parent_receipt_id, parent.taskId);
-    assert.equal(decodeReceiptClaims(body.receipt).agent_pubkey, AGENT.address);
-    assert.equal(decodeReceiptClaims(body.receipt).parent_receipt_id, parent.taskId);
+    const childClaims = decodeReceiptClaims(body.receipt);
+    assert.equal(childClaims.agent_pubkey, AGENT.address);
+    assert.equal(childClaims.parent_receipt_id, parent.taskId);
+    assert.equal(childClaims.kind, 'session_handoff');
+    assert.equal(childClaims.action, 'handoff');
+    assert.equal(childClaims.settlement.kind, 'inherited');
+    assert.equal(childClaims.settlement.parent_receipt_id, parent.taskId);
+    assert.equal(childClaims.payment.ref, null);
+    assert.equal(childClaims.payment.gross_amount, null);
+    assert.equal(childClaims.provider_cogs.actual, null);
+    assert.equal(childClaims.target_agent, AGENT.address);
+    assert.ok(childClaims.session_act);
+    assert.ok(childClaims.session_act.types.SessionAct);
+    assert.ok(childClaims.session_act.types.SessionAct.find((f) => f.name === 'targetAgent'));
+    assert.ok(childClaims.session_act.signature);
+    assert.equal(childClaims.session_act.nonce, ch.nonce);
+    assert.equal(childClaims.session_act.message.action, 'handoff');
+    assert.equal(childClaims.session_act.message.resource, parent.taskId);
     assert.ok(body.proof.types.SessionAct);
     assert.equal(body.proof.agent_key_type, 'secp256k1');
+    assert.equal('provider_cogs' in body.receipt, false);
 
     const parentAgain = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
     assert.equal(parentAgain.issuer_signature.jws, genesisJws, 'genesis JWS must not be re-signed');
+    const parentClaims = decodeReceiptClaims(parentAgain);
+    assert.equal(parentClaims.payment.ref, parent.intent.paymentRef);
+    assert.equal(parentClaims.payment.gross_amount, '100000');
+    assert.notEqual(parentClaims.kind, 'session_handoff');
+  });
+
+  test('handoff to a new targetAgent binds destination in child JWS; settlement stays inherited', async () => {
+    const { session } = await putBoundSession();
+    const listener = getAIListener();
+    const parent = usdcTask({
+      taskId: 'xfuel-http-handoff-target',
+      meta: {
+        payerWallet: PAYER.address,
+        providerCogs: { provider: 'theta-edgecloud', actual: '2000', basis: 'measured' },
+      },
+    });
+    listener.activeTasks.set(parent.taskId, parent);
+    const genesis = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    assert.equal(decodeReceiptClaims(genesis).provider_cogs.actual, '2000');
+    assert.equal(decodeReceiptClaims(genesis).payment.gross_amount, '100000');
+
+    const { json: ch } = await challengeFor(session, {
+      resource: parent.taskId,
+      action: 'handoff',
+      target_agent: OTHER.address,
+    });
+    const { typed, signature } = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce: ch.nonce,
+      expires_at: ch.expires_at,
+    }, { action: 'handoff', resource: parent.taskId, targetAgent: OTHER.address });
+
+    const actRes = await fetch(`${base}/v1/sessions/${session.delegation_hash}/act`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'handoff',
+        resource: parent.taskId,
+        signature,
+        challenge_id: ch.challenge_id,
+        typed_data: typed,
+        target_agent: OTHER.address,
+      }),
+    });
+    assert.equal(actRes.status, 201);
+    const body = await actRes.json();
+    const claims = decodeReceiptClaims(body.receipt);
+    assert.equal(claims.kind, 'session_handoff');
+    assert.equal(claims.action, 'handoff');
+    assert.equal(claims.agent_pubkey, OTHER.address);
+    assert.equal(claims.target_agent, OTHER.address);
+    assert.equal(claims.caller_binding.agent_pubkey, OTHER.address);
+    assert.equal(claims.session.agent_pubkey, AGENT.address);
+    assert.equal(claims.session_act.message.targetAgent, OTHER.address);
+    assert.equal(claims.session_act.nonce, ch.nonce);
+    assert.ok(claims.session_act.signature);
+    assert.ok(claims.session_act.types.SessionAct.find((f) => f.name === 'targetAgent'));
+    assert.equal(claims.settlement.kind, 'inherited');
+    assert.equal(claims.settlement.parent_receipt_id, parent.taskId);
+    assert.equal(claims.payment.ref, null);
+    assert.equal(claims.payment.gross_amount, null);
+    assert.equal(claims.provider_cogs.actual, null);
+    assert.equal(decodeReceiptClaims(genesis).provider_cogs.actual, '2000');
   });
 
   test('handoff rejects a session whose payer is not the parent receipt payer', async () => {

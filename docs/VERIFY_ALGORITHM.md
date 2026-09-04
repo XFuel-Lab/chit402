@@ -377,13 +377,32 @@ after those session checks:
    full EIP-712 `types` map.
 2. Agent signs EIP-712 `SessionAct` (same Chit402 / Base 8453 domain as
    AuthorizeSession): `delegationHash`, `nonce`, `action`, `resource`
-   (receipt/task id), `deadline`. secp256k1 only.
+   (receipt/task id), `deadline`, `targetAgent` (handoff recipient; zero
+   means self), `payloadHash` (zero if unused). secp256k1 only. Full
+   `types` map is published on the challenge and must be in the proof.
 3. `POST /v1/sessions/:delegation_hash/act` with
-   `{ action, resource, signature, challenge_id }`.
+   `{ action, resource, signature, challenge_id }` (and `target_agent`
+   when the act hands entitlement to someone new).
 4. Gateway verifies: session JWS binds `agent_pubkey` + `delegation_hash`;
    session is active (not expired/revoked); SessionAct recovers to
    `agent_pubkey`; nonce is unused (one-shot); then execute. Challenge
    every act — no capability-token shortcut in v1.
+
+Child handoff receipts are a distinct row. Genesis JWS is never re-signed.
+Signed child claims (source of truth) include:
+
+- `kind` / `action` (`session_handoff` / `handoff`) — not only the outer envelope
+- `session_act` — EIP-712 `SessionAct` types + domain + message + signature
+  + challenge nonce, so a verifier recovers that `agent_pubkey` authorized
+  the act without trusting Chit logs
+- `target_agent` — destination of the entitlement (may differ from
+  `session.agent_pubkey`, the authorizing key)
+- `settlement.kind = inherited` + `settlement.parent_receipt_id` —
+  child JWS does **not** re-claim parent `payment.ref`, `gross_amount`,
+  or `provider_cogs.actual`. Accounting agents must not sum those twice.
+
+1-shot client-generated nonce (no prior `/challenge`) is a follow-up;
+this flow still issues a challenge per act.
 
 `max_cumulative_spend` is atomic USDC (`decimals: 6`, `unit: atomic_usdc`) —
 same scale as `payment.gross_amount`.

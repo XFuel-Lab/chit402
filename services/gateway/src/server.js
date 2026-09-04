@@ -45,6 +45,8 @@ import {
   SESSION_ACT_ACTION_LIST,
   SESSION_ACT_TYPES,
   SESSION_ACT_PRIMARY,
+  SESSION_ACT_ZERO_ADDRESS,
+  SESSION_ACT_ZERO_BYTES32,
   buildSessionActTypedData,
   acceptSessionAct,
   getSessionActStore,
@@ -365,9 +367,13 @@ Agent verification flow (recommended):
    proof. Do not amend the receipt.
 9. Privileged acts (handoff, read_private, redeem): prove-key SessionAct.
    POST /v1/sessions/:delegation_hash/challenge → agent signs EIP-712
-   SessionAct (delegationHash, nonce, action, resource, deadline) with the
-   bound agent_pubkey (secp256k1, Base) → POST /v1/sessions/:delegation_hash/act.
-   Challenge every act. No capability-token shortcut.
+   SessionAct (delegationHash, nonce, action, resource, deadline,
+   targetAgent, payloadHash) with the bound agent_pubkey (secp256k1, Base)
+   → POST /v1/sessions/:delegation_hash/act.
+   Child handoff JWS embeds SessionAct (types + signature + nonce) in
+   signed claims; kind/action are signed; settlement is inherited from
+   parent_receipt_id (do not sum parent payment.ref / gross_amount /
+   provider_cogs twice). Challenge every act. No capability-token shortcut.
 
 provider_cogs.actual and provider_cogs.usd_mark are atomic USDC integers
 (decimals: 6, unit: atomic_usdc). Same scale as payment.gross_amount — e.g.
@@ -720,6 +726,8 @@ export function createApp() {
         types: req.body?.types,
         nonce: req.body?.nonce,
         deadline: req.body?.deadline,
+        target_agent: req.body?.target_agent || req.body?.targetAgent,
+        payload_hash: req.body?.payload_hash || req.body?.payloadHash,
         delegation_hash: hash,
       },
       delegationHash: hash,
@@ -729,7 +737,7 @@ export function createApp() {
     });
   }
 
-  function issueChildHandoff(req, parent, session) {
+  function issueChildHandoff(req, parent, session, sessionAct = null) {
     const parentJws = parent.issuerSignature?.jws || parent.issuer_signature?.jws || null;
     const baseUrl = sessionIssuerUri(req);
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
@@ -738,6 +746,8 @@ export function createApp() {
       signingSecret: config.receipts?.signingSecret,
       coSignerSecret: config.receipts?.coSignerSecret,
       reqHost,
+      sessionAct: sessionAct?.proof || sessionAct,
+      targetAgent: sessionAct?.target_agent || sessionAct?.proof?.message?.targetAgent || null,
     });
     const aiListener = getAIListener();
     aiListener.activeTasks.set(childTask.taskId, childTask);
@@ -870,7 +880,7 @@ export function createApp() {
           },
         };
       }
-      const { childTask, receipt } = issueChildHandoff(req, parent, accepted.session);
+      const { childTask, receipt } = issueChildHandoff(req, parent, accepted.session, accepted);
       logger.info({
         reqId: req.id,
         parent: parent.taskId,
@@ -2614,6 +2624,8 @@ export function createApp() {
               action: req.body?.action || SESSION_ACT_ACTIONS.HANDOFF,
               resource: hint,
               deadline: challenge.expires_at,
+              targetAgent: req.body?.target_agent || req.body?.targetAgent || session.agent_pubkey,
+              payloadHash: req.body?.payload_hash || req.body?.payloadHash,
               domain: sessionDomainOpts(req),
             });
           } catch {
@@ -2630,6 +2642,8 @@ export function createApp() {
             action: '',
             resource: '',
             deadline: String(challenge.expires_at),
+            targetAgent: session.agent_pubkey || SESSION_ACT_ZERO_ADDRESS,
+            payloadHash: SESSION_ACT_ZERO_BYTES32,
           },
         };
       return res.status(200).json({
