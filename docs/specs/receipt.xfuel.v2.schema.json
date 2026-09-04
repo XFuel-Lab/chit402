@@ -32,7 +32,7 @@
     },
     "proof_outcome": {
       "type": "string",
-      "enum": ["pending", "valid", "invalid", "regenerable"],
+      "enum": ["pending", "valid", "invalid", "regenerable", "not_applicable"],
       "description": "Settlement proof state."
     },
     "verify_url": {
