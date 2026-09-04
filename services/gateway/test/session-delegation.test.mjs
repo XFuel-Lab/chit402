@@ -421,6 +421,9 @@ describe('Genesis immutability + child handoff', () => {
     assert.equal(childClaims.payment.gross_amount, null);
     assert.equal(childClaims.provider_cogs.actual, null);
     assert.equal(childClaims.session_act, null);
+    assert.equal(child.proof_outcome, 'not_applicable');
+    assert.equal(child.proof.outcome, 'not_applicable');
+    assert.equal(child.proof.has_proof, false);
 
     const again = buildReceipt(parent, { persistSignature: true });
     assert.equal(again.issuer_signature.jws, genesisJws, 'parent genesis JWS stays frozen');

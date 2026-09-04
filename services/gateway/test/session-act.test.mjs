@@ -515,6 +515,9 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     assert.ok(body.proof.types.SessionAct);
     assert.equal(body.proof.agent_key_type, 'secp256k1');
     assert.equal('provider_cogs' in body.receipt, false);
+    assert.equal(body.receipt.proof_outcome, 'not_applicable');
+    assert.equal(body.receipt.proof.outcome, 'not_applicable');
+    assert.equal(body.receipt.proof.has_proof, false);
 
     const parentAgain = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
     assert.equal(parentAgain.issuer_signature.jws, genesisJws, 'genesis JWS must not be re-signed');
@@ -949,6 +952,9 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     assert.equal(claims.session_act.message.deadline, String(deadline));
     assert.ok(body.proof.types.SessionAct);
     assert.equal(body.proof.nonce, nonce);
+    assert.equal(body.receipt.proof_outcome, 'not_applicable');
+    assert.equal(body.receipt.proof.outcome, 'not_applicable');
+    assert.equal(body.receipt.proof.has_proof, false);
 
     const parentAgain = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
     assert.equal(parentAgain.issuer_signature.jws, genesisJws);

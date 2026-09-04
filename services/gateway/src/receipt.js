@@ -463,10 +463,20 @@ export function hasSettlementProof(task) {
   return !!(p && p.proof && !p.error && !p.skipped);
 }
 
+/** True when this task inherits settlement from a parent (child handoff). No SP1 run. */
+function isInheritedSettlementTask(task) {
+  if (!task || typeof task !== 'object') return false;
+  if (task.meta?.settlement?.kind === SETTLEMENT_KIND_INHERITED) return true;
+  if (task.kind === RECEIPT_KIND_SESSION_HANDOFF || task.meta?.kind === RECEIPT_KIND_SESSION_HANDOFF) return true;
+  if (task.parentReceiptId || task.meta?.parentReceiptId || task.meta?.parent_receipt_id) return true;
+  return false;
+}
+
 /** True when no Tier-2 SP1 proof was scheduled for this task (signed receipt only). */
 export function proofNotExpected(task) {
   if (task?.intent?.proveAllowed === false) return true;
   if (task?.sp1Proof?.skipped) return true;
+  if (isInheritedSettlementTask(task)) return true;
   return false;
 }
 
