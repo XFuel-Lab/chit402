@@ -565,6 +565,13 @@ export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {})
     if (result.payload.task_id !== receipt.task_id) {
       return { checked: true, valid: false, reason: 'task_id_mismatch' };
     }
+    const signedBinding = result.payload.caller_binding || {};
+    const receiptBinding = receipt.caller_binding || {};
+    if ((signedBinding.payer_wallet ?? null) !== (receiptBinding.payer_wallet ?? null)
+      || (signedBinding.agent_pubkey ?? null) !== (receiptBinding.agent_pubkey ?? null)
+      || (signedBinding.api_key_hash ?? null) !== (receiptBinding.api_key_hash ?? null)) {
+      return { checked: true, valid: false, reason: 'caller_binding_mismatch' };
+    }
   }
 
   return { checked: true, valid: true, kid: sig.kid, payload: result.payload };
@@ -596,6 +603,13 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
   if (validateClaims && jwsResult.payload) {
     if (jwsResult.payload.task_id !== receipt.task_id) {
       return { checked: true, valid: false, reason: 'task_id_mismatch' };
+    }
+    const signedBinding = jwsResult.payload.caller_binding || {};
+    const receiptBinding = receipt.caller_binding || {};
+    if ((signedBinding.payer_wallet ?? null) !== (receiptBinding.payer_wallet ?? null)
+      || (signedBinding.agent_pubkey ?? null) !== (receiptBinding.agent_pubkey ?? null)
+      || (signedBinding.api_key_hash ?? null) !== (receiptBinding.api_key_hash ?? null)) {
+      return { checked: true, valid: false, reason: 'caller_binding_mismatch' };
     }
   }
 
