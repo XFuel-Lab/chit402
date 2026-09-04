@@ -6,6 +6,14 @@ import { selectTier } from './tier-policy.js';
 import { verifyAttestation, attestationNonce } from './tee-attestation.js';
 import { buildSpotCheckRecord } from './spotcheck.js';
 import { signJws, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk } from './issuer-key.js';
+import {
+  sessionOf,
+  publicSessionBlock,
+  verifySessionWindow,
+  AGENT_KEY_TYPE_SECP256K1,
+  USDC_ATOMIC_DECIMALS as SESSION_USDC_DECIMALS,
+  USDC_ATOMIC_UNIT as SESSION_USDC_UNIT,
+} from './session-delegation.js';
 
 /**
  * Public verifiable-receipt builder + renderer.
@@ -70,7 +78,20 @@ export function decodeReceiptClaims(receipt) {
  * Signed fields are taken from the JWS payload — never trust top-level copies on slim receipts.
  */
 export function mergeReceiptView(receipt) {
-  if (receipt?.payment) return receipt;
+  if (receipt?.payment) {
+    if (receipt.session || receipt.agent_pubkey || receipt.parent_receipt_id) return receipt;
+    const claims = decodeReceiptClaims(receipt);
+    if (!claims?.session && !claims?.agent_pubkey && !claims?.parent_receipt_id) return receipt;
+    return {
+      ...receipt,
+      session: claims.session ?? receipt.session ?? null,
+      agent_pubkey: claims.agent_pubkey ?? claims.session?.agent_pubkey ?? receipt.agent_pubkey ?? null,
+      delegation_hash: claims.delegation_hash ?? claims.session?.delegation_hash ?? null,
+      session_expiry: claims.session_expiry ?? claims.session?.session_expiry ?? null,
+      parent_receipt_id: claims.parent_receipt_id ?? receipt.parent_receipt_id ?? null,
+      caller_binding: receipt.caller_binding ?? claims.caller_binding ?? null,
+    };
+  }
 
   const claims = decodeReceiptClaims(receipt);
   if (!claims) {
@@ -101,7 +122,12 @@ export function mergeReceiptView(receipt) {
         model_commitment: routeMeta.model_commitment ?? null,
       },
       output: receipt.output?.hash ? receipt.output : null,
-      caller_binding: null,
+      caller_binding: receipt.caller_binding ?? null,
+      session: receipt.session ?? null,
+      agent_pubkey: receipt.agent_pubkey ?? receipt.session?.agent_pubkey ?? null,
+      delegation_hash: receipt.delegation_hash ?? receipt.session?.delegation_hash ?? null,
+      session_expiry: receipt.session_expiry ?? receipt.session?.session_expiry ?? null,
+      parent_receipt_id: receipt.parent_receipt_id ?? null,
       proof: receipt.proof || {},
     };
   }
@@ -143,6 +169,11 @@ export function mergeReceiptView(receipt) {
       ? { hash: claims.output.hash, kind: receipt.output?.kind ?? 'committed' }
       : null,
     caller_binding: claims.caller_binding ?? null,
+    session: claims.session ?? receipt.session ?? null,
+    agent_pubkey: claims.agent_pubkey ?? claims.session?.agent_pubkey ?? receipt.agent_pubkey ?? null,
+    delegation_hash: claims.delegation_hash ?? claims.session?.delegation_hash ?? null,
+    session_expiry: claims.session_expiry ?? claims.session?.session_expiry ?? null,
+    parent_receipt_id: claims.parent_receipt_id ?? receipt.parent_receipt_id ?? null,
     provider_cogs: claims.provider_cogs?.actual != null && receipt.provider_cogs
       ? { ...receipt.provider_cogs, actual: claims.provider_cogs.actual }
       : receipt.provider_cogs ?? null,
@@ -528,9 +559,14 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     },
     caller_binding: {
       payer_wallet: view.caller_binding?.payer_wallet ?? null,
-      agent_pubkey: view.caller_binding?.agent_pubkey ?? null,
+      agent_pubkey: view.caller_binding?.agent_pubkey ?? view.session?.agent_pubkey ?? view.agent_pubkey ?? null,
       api_key_hash: view.caller_binding?.api_key_hash ?? null,
     },
+    agent_pubkey: view.session?.agent_pubkey ?? view.agent_pubkey ?? view.caller_binding?.agent_pubkey ?? null,
+    delegation_hash: view.session?.delegation_hash ?? view.delegation_hash ?? null,
+    session_expiry: view.session?.session_expiry ?? view.session_expiry ?? null,
+    session: view.session ? publicSessionBlock(view.session) : null,
+    parent_receipt_id: view.parent_receipt_id ?? null,
     payload_version: 5,
   };
 }
@@ -731,6 +767,10 @@ export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {})
       || (signedBinding.api_key_hash ?? null) !== (receiptBinding.api_key_hash ?? null)) {
       return { checked: true, valid: false, reason: 'caller_binding_mismatch' };
     }
+    const window = verifySessionWindow(result.payload);
+    if (window.checked && !window.valid) {
+      return { checked: true, valid: false, reason: window.reason, payload: result.payload };
+    }
   }
 
   return { checked: true, valid: true, kid: sig.kid, payload: result.payload };
@@ -770,6 +810,10 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
       || (signedBinding.agent_pubkey ?? null) !== (receiptBinding.agent_pubkey ?? null)
       || (signedBinding.api_key_hash ?? null) !== (receiptBinding.api_key_hash ?? null)) {
       return { checked: true, valid: false, reason: 'caller_binding_mismatch' };
+    }
+    const window = verifySessionWindow(jwsResult.payload);
+    if (window.checked && !window.valid) {
+      return { checked: true, valid: false, reason: window.reason, payload: jwsResult.payload };
     }
   }
 
@@ -870,6 +914,7 @@ export function callerBindingOf(task, opts = {}) {
   const rawAgentPubkey = task?.meta?.agentPubkey
     || task?.meta?.agent_pubkey
     || task?.intent?.agentPubkey
+    || task?.meta?.session?.agent_pubkey
     || opts.agentPubkey
     || null;
   const agentPubkey = (rawAgentPubkey && !isSymbolicLabel(rawAgentPubkey)) ? rawAgentPubkey : null;
@@ -988,7 +1033,7 @@ export function usageOf(task) {
  *                          apiKeyHash, agentId, agentPubkey, payerWallet enable caller binding for
  *                          entitlement verification (who is entitled to this receipt).
  */
-export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null, reqHost = null, apiKeyHash = null, agentId = null, agentPubkey = null, payerWallet = null } = {}) {
+export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null, reqHost = null, apiKeyHash = null, agentId = null, agentPubkey = null, payerWallet = null, persistSignature = false } = {}) {
   const outcome = proofOutcomeOf(task);
   const feeBps = task.feeBps || 50;
   // Buyer default is USDC (ADR 0002). Legacy tfuel rail only when explicitly set.
@@ -1063,7 +1108,15 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     lineage: lineageOf(task),
     handoff: handoffOf(task),
     output: output ? { hash: output.value, kind: output.kind } : null,
-    caller_binding: callerBindingOf(task, { apiKeyHash, agentId, agentPubkey, payerWallet }),
+    caller_binding: callerBindingOf(task, {
+      apiKeyHash,
+      agentId,
+      agentPubkey: agentPubkey || sessionOf(task)?.agent_pubkey || null,
+      payerWallet: payerWallet || sessionOf(task)?.payer_wallet || null,
+    }),
+    session: sessionOf(task),
+    parent_receipt_id: task.parentReceiptId || task.meta?.parentReceiptId || task.meta?.parent_receipt_id || null,
+    kind: task.kind || task.meta?.kind || (task.parentReceiptId || task.meta?.parentReceiptId ? 'session_handoff' : null),
     links: base
       ? {
           self: `${base}/receipt/${displayTaskId}`,
@@ -1080,7 +1133,21 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   };
 
   const jwks_uri = buildJwksUri(base);
-  const issuer_signature = signReceiptEcdsa(draft, { baseUrl: base, iat: createdAt });
+  // Genesis JWS is issued once and cached on the task. NEVER re-sign the same
+  // receipt id — late assign is a distinct child handoff receipt.
+  let issuer_signature = task.issuerSignature || task.issuer_signature || null;
+  if (issuer_signature?.jws) {
+    const cachedClaims = decodeReceiptClaims({ issuer_signature });
+    if (cachedClaims?.task_id && cachedClaims.task_id !== draft.task_id) {
+      issuer_signature = null;
+    }
+  }
+  if (!issuer_signature?.jws) {
+    issuer_signature = signReceiptEcdsa(draft, { baseUrl: base, iat: createdAt });
+    if (persistSignature && task && typeof task === 'object') {
+      task.issuerSignature = issuer_signature;
+    }
+  }
   const hmacRaw = signingSecret
     ? signReceiptPayload(draft, signingSecret, { role: 'attestor' })
     : null;
@@ -1128,6 +1195,9 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   if (draft.lineage) envelope.lineage = draft.lineage;
   if (draft.handoff) envelope.handoff = draft.handoff;
   if (draft.output) envelope.output = { kind: draft.output.kind };
+  if (draft.session) envelope.session = publicSessionBlock(draft.session);
+  if (draft.parent_receipt_id) envelope.parent_receipt_id = draft.parent_receipt_id;
+  if (draft.kind === 'session_handoff') envelope.kind = 'session_handoff';
   if (hmacRaw) envelope.hmac_attestation = publicHmacAttestation(hmacRaw);
   if (coRaw) envelope.co_attestation = publicHmacAttestation(coRaw);
 
@@ -1339,6 +1409,23 @@ export function renderReceiptHtml(receipt) {
       </section>`
     : '';
 
+  const sess = view.session;
+  const sessionBlock = sess
+    ? `<section class="card">
+        <h2>Session <span class="scope">agent_pubkey delegation</span></h2>
+        ${row('Agent pubkey', sess.agent_pubkey ? `<code>${esc(shortHash(sess.agent_pubkey, 10, 8))}</code>` : '<span class="muted">—</span>')}
+        ${row('Key type', `<code>${esc(sess.agent_key_type || AGENT_KEY_TYPE_SECP256K1)}</code>`)}
+        ${row('Delegation', sess.delegation_hash ? `<code>${esc(shortHash(sess.delegation_hash, 12, 10))}</code>` : '<span class="muted">—</span>')}
+        ${row('Session expiry', sess.session_expiry != null ? esc(new Date(Number(sess.session_expiry) * 1000).toISOString()) : '<span class="muted">—</span>')}
+        ${sess.valid_after != null ? row('Valid after', esc(new Date(Number(sess.valid_after) * 1000).toISOString())) : ''}
+        ${sess.max_cumulative_spend != null ? row('Max spend', `${usdcCell(sess.max_cumulative_spend)} <span class="muted">${esc(sess.unit || SESSION_USDC_UNIT)} · ${esc(String(sess.decimals ?? SESSION_USDC_DECIMALS))}dp</span>`) : ''}
+        ${sess.allowed_routes ? row('Routes', `<code>${esc(sess.allowed_routes)}</code>`) : ''}
+        ${sess.proof?.lookup_uri ? row('Proof lookup', `<a href="${esc(sess.proof.lookup_uri)}">${esc(sess.proof.lookup_uri)}</a>`) : ''}
+        ${view.parent_receipt_id ? row('Parent receipt', `<code>${esc(view.parent_receipt_id)}</code>`) : ''}
+        <p class="muted" style="margin:8px 0 0;font-size:12px">JWS is the source of truth. Verify iat inside the session window; high-value redemption may query session status / revocations.</p>
+      </section>`
+    : '';
+
   const ho = receipt.handoff;
   const handoffBlock = ho
     ? `<section class="card">
@@ -1478,6 +1565,7 @@ export function renderReceiptHtml(receipt) {
     ${cogsBlock}
     ${privacyBlock}
     ${lineageBlock}
+    ${sessionBlock}
     ${handoffBlock}
 
     <footer>
@@ -1849,13 +1937,66 @@ export function verifyReceiptJws(receipt, jwk) {
 }
 
 /**
- * Verify a receipt's compact JWS token against a JWKS (key set).
- * Finds the matching key by kid from the JWS header and verifies.
+ * Issue a child session-handoff receipt. Genesis task + JWS are left untouched.
  *
- * @param {object} receipt - Receipt JSON with issuer_signature.jws
- * @param {{ keys: object[] }} jwks - JWKS with keys array
- * @returns {{ checked: boolean, valid: boolean, payload?: object, kid?: string, reason?: string }}
+ * @param {object} parentTask
+ * @param {object} session - verified session record from acceptDelegationProof
+ * @param {{ baseUrl?: string, signingSecret?: string, coSignerSecret?: string, reqHost?: string, childTaskId?: string }} [opts]
+ * @returns {{ childTask: object, receipt: object }}
  */
+export function issueSessionHandoffReceipt(parentTask, session, {
+  baseUrl = '',
+  signingSecret = null,
+  coSignerSecret = null,
+  reqHost = null,
+  childTaskId = null,
+} = {}) {
+  if (!parentTask?.taskId) {
+    throw new Error('parent task is required');
+  }
+  if (!session?.delegation_hash || !session?.agent_pubkey) {
+    throw new Error('verified session delegation is required');
+  }
+  const childId = childTaskId || `xfuel-${crypto.randomUUID()}`;
+  const now = Date.now();
+  const childTask = {
+    taskId: childId,
+    kind: 'session_handoff',
+    parentReceiptId: parentTask.taskId,
+    status: parentTask.status || 'completed',
+    createdAt: now,
+    updatedAt: now,
+    intent: { ...(parentTask.intent || {}) },
+    meta: {
+      ...(parentTask.meta || {}),
+      parentReceiptId: parentTask.taskId,
+      parent_receipt_id: parentTask.taskId,
+      kind: 'session_handoff',
+      session,
+      agentPubkey: session.agent_pubkey,
+      payerWallet: session.payer_wallet || parentTask.meta?.payerWallet || null,
+    },
+    feeAmount: parentTask.feeAmount,
+    netAmount: parentTask.netAmount,
+    feeBps: parentTask.feeBps,
+    result: parentTask.result || null,
+    usage: parentTask.usage || null,
+    outputHash: parentTask.outputHash || parentTask.result?.outputHash || null,
+    sp1Proof: null,
+    issuerSignature: null,
+  };
+  const receipt = buildReceipt(childTask, {
+    baseUrl,
+    signingSecret,
+    coSignerSecret,
+    reqHost,
+    agentPubkey: session.agent_pubkey,
+    payerWallet: session.payer_wallet || null,
+    persistSignature: true,
+  });
+  return { childTask, receipt };
+}
+
 export function verifyReceiptJwsWithJwks(receipt, jwks) {
   const sig = receipt?.issuer_signature;
   if (!sig || !sig.jws) {
@@ -1885,6 +2026,7 @@ export default {
   buildJwksUri,
   proofScopeOf,
   callerBindingOf,
+  issueSessionHandoffReceipt,
   verifyReceiptHmac,
   verifyReceiptMultiKey,
   verifyReceiptEcdsa,

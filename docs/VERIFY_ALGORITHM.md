@@ -346,3 +346,26 @@ const result = verifyReceiptEcdsaWithJwks(receipt, jwks);
   without needing an HMAC secret. Fetch the JWKS, verify the signature.
 
 Both cover the same canonical payload, so both attest the same fields.
+
+## 11. Session delegation (agent_pubkey v1)
+
+Reusable EIP-712 `AuthorizeSession` on Base (`chainId` 8453, secp256k1). The
+receipt JWS is born bound — `agent_pubkey`, `delegation_hash`, `session_expiry`.
+Late assign is a **child** receipt (`parent_receipt_id`); the genesis JWS is
+never re-signed.
+
+Agent verify steps:
+
+1. `GET /.well-known/jwks.json` → verify `issuer_signature.jws` (ES256).
+2. Decode claims. Confirm `caller_binding.payer_wallet` against `payment.ref`
+   on Base (USDC).
+3. If `session` is present: `iat` must fall in `valid_after`..`session_expiry`.
+   No new payer signature is required.
+4. Optional (high-value): `GET /v1/sessions/:delegation_hash` or
+   `GET /.well-known/revocations`. Do not amend the receipt.
+5. Agent proves possession of `agent_pubkey` (secp256k1). Delegation proof
+   (`session.proof.signature` + typed data, or `session.proof.lookup_uri`)
+   lets you recover the payer without trusting Chit as sole attestor.
+
+`max_cumulative_spend` is atomic USDC (`decimals: 6`, `unit: atomic_usdc`) —
+same scale as `payment.gross_amount`.
