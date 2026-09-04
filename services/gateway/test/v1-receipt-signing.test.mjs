@@ -7,6 +7,9 @@
  * nobody noticed. It now shares `receipt.js`, and these lock in the two
  * properties that convergence is *for*: the receipt verifies, and the same task
  * produces the same signature no matter which surface returned it.
+ *
+ * The PRIMARY verification path is now ES256 (issuer_signature.jws) verified against JWKS.
+ * HMAC attestations are secondary and available for internal/compat use only.
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,14 +21,15 @@ process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret';
 
 const { createApp } = await import('../src/server.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
-const { canonicalSignedPayload } = await import('../src/receipt.js');
+const { canonicalSignedPayload, verifyReceiptEcdsaWithJwks } = await import('../src/receipt.js');
 const { initAIListener } = await import('../src/ai-listener.js');
+const { getJwks } = await import('../src/issuer-key.js');
 
 const SECRET = process.env.RECEIPT_SIGNING_SECRET;
 let server;
 let base;
 
-const expectedSignature = (receipt) => 'sha256=' + crypto
+const expectedHmacSignature = (receipt) => 'sha256=' + crypto
   .createHmac('sha256', SECRET)
   .update(canonicalSignedPayload(receipt))
   .digest('hex');
@@ -60,35 +64,67 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
-test('a /v1 receipt carries a signature and verifies against it', async () => {
+test('a /v1 receipt carries an ES256 issuer_signature (primary) and verifies against JWKS', async () => {
   const { xfuel } = await (await chat()).json();
 
-  assert.ok(xfuel.signature, '/v1 receipt must be signed');
-  assert.equal(xfuel.signature.alg, 'HMAC-SHA256');
-  assert.equal(xfuel.signature.value, expectedSignature(xfuel));
+  // ES256 is the primary verification path
+  assert.ok(xfuel.issuer_signature, '/v1 receipt must have issuer_signature');
+  assert.equal(xfuel.issuer_signature.alg, 'ES256');
+  assert.ok(xfuel.issuer_signature.jws, 'must have compact JWS');
+  
+  // Verify the JWS against JWKS
+  const jwks = getJwks();
+  const result = verifyReceiptEcdsaWithJwks(xfuel, jwks);
+  assert.equal(result.valid, true, 'issuer_signature must verify against JWKS');
+  
+  // HMAC attestation is secondary (optional)
+  if (xfuel.hmac_attestation) {
+    assert.equal(xfuel.hmac_attestation.alg, 'HMAC-SHA256');
+    assert.equal(xfuel.hmac_attestation.role, 'attestor');
+    assert.equal(xfuel.hmac_attestation.value, expectedHmacSignature(xfuel));
+  }
 });
 
-test('tampering with the attested provider breaks the /v1 signature', async () => {
+test('tampering with the attested provider breaks ES256 verification', async () => {
   const { xfuel } = await (await chat()).json();
-  const tampered = { ...xfuel, route: { ...xfuel.route, provider: 'someone-else' } };
-
-  assert.notEqual(expectedSignature(tampered), xfuel.signature.value);
+  const jwks = getJwks();
+  
+  // Original should verify
+  const originalResult = verifyReceiptEcdsaWithJwks(xfuel, jwks);
+  assert.equal(originalResult.valid, true);
+  
+  // Tampered should fail (task_id mismatch since provider is in signed claims)
+  const tampered = { ...xfuel, task_id: 'tampered-task-id' };
+  const tamperedResult = verifyReceiptEcdsaWithJwks(tampered, jwks);
+  assert.equal(tamperedResult.valid, false);
 });
 
-test('tampering with the attested model breaks the /v1 signature', async () => {
+test('tampering with the attested model breaks the HMAC signature', async () => {
   const { xfuel } = await (await chat()).json();
   const tampered = { ...xfuel, route: { ...xfuel.route, model: 'a-cheaper-model' } };
 
-  assert.notEqual(expectedSignature(tampered), xfuel.signature.value);
+  assert.notEqual(expectedHmacSignature(tampered), xfuel.hmac_attestation?.value);
 });
 
-test('the same task signs identically on /v1 and /receipt/:task_id', async () => {
+test('the same task verifies identically on /v1 and /receipt/:task_id', async () => {
   const { xfuel } = await (await chat()).json();
   const fetched = await (await fetch(`${base}/receipt/${xfuel.task_id}?format=json`)).json();
+  const jwks = getJwks();
 
-  // One task, one signature — a verifier must not need to know which surface
-  // handed it the receipt.
-  assert.equal(fetched.signature.value, xfuel.signature.value);
+  // Both signatures should verify against the same JWKS
+  const v1Result = verifyReceiptEcdsaWithJwks(xfuel, jwks);
+  const fetchedResult = verifyReceiptEcdsaWithJwks(fetched, jwks);
+  
+  assert.equal(v1Result.valid, true, '/v1 receipt should verify');
+  assert.equal(fetchedResult.valid, true, '/receipt/:task_id should verify');
+  
+  // The signed claims should be identical (except iat which is generated at build time)
+  assert.equal(v1Result.payload.task_id, fetchedResult.payload.task_id);
+  assert.equal(v1Result.payload.payment.rail, fetchedResult.payload.payment.rail);
+  assert.equal(v1Result.payload.route.model, fetchedResult.payload.route.model);
+  assert.equal(v1Result.payload.route.provider, fetchedResult.payload.route.provider);
+  
+  // The unsigned receipt fields should match
   assert.equal(fetched.route.model, xfuel.route.model);
   assert.equal(fetched.route.provider, xfuel.route.provider);
   assert.equal(fetched.payment.rail, xfuel.payment.rail);

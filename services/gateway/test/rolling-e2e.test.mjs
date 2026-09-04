@@ -177,7 +177,7 @@ test('second 402 equals measured cost-plus, not the rate card', async () => {
   const recomputed = quoteFromCogs(owed.provider_cogs.actual);
   assert.equal(recomputed.amount, owed.payment.gross_amount);
   assert.equal(owed.payment.platform_fee_bps, 1000);
-  assert.equal(owed.signature.payload_version, 4);
+  assert.equal(owed.issuer_signature.payload_version, 5);
 });
 
 test('a first call whose ceiling exceeds $1 still prepays', async () => {

@@ -28,13 +28,13 @@ const WALLET = '0x1111111111111111111111111111111111111111';
 
 function sign(receipt, secret = VERIFY_KEY) {
   const value = crypto.createHmac('sha256', secret).update(canonicalSignedPayload(receipt)).digest('hex');
-  receipt.signature = { alg: 'HMAC-SHA256', payload_version: 3, value: `sha256=${value}` };
+  receipt.hmac_attestation = { alg: 'HMAC-SHA256', payload_version: 5, value: `sha256=${value}`, role: 'attestor' };
   return receipt;
 }
 
 function collectedReceipt(over = {}) {
   return sign({
-    schema: 'xfuel.receipt.v3',
+    schema: 'xfuel.receipt.v4',
     task_id: over.task_id || 'task-paid-1',
     status: 'completed',
     proof_outcome: 'valid',
@@ -56,7 +56,7 @@ function collectedReceipt(over = {}) {
 
 function demoReceipt() {
   return sign({
-    schema: 'xfuel.receipt.v3',
+    schema: 'xfuel.receipt.v4',
     task_id: 'task-demo-1',
     status: 'completed',
     proof_outcome: 'valid',
@@ -73,7 +73,7 @@ function deps(receipts, extra = {}) {
     registry: new AgentRegistry(),
     ledger: new UsageSettledLedger(),
     loadReceipt: async (id) => store.get(id) || null,
-    verify: (r) => verifyReceiptHmac(r, VERIFY_KEY),
+    verify: (r) => verifyReceiptHmac(r, VERIFY_KEY, { sigField: 'hmac_attestation' }),
     bindWallet: async (w) => ({ ok: true, address: w, kind: 'aawp', official: true }),
     postA2A: async (fields) => ({ message_id: 'a2a-test', status: 'accepted', ...fields }),
     ...extra,
@@ -146,7 +146,7 @@ test('duplicate payment.ref is rejected', async () => {
 
 test('HMAC fail is rejected', async () => {
   const receipt = collectedReceipt();
-  receipt.signature.value = 'sha256=' + '00'.repeat(32);
+  receipt.hmac_attestation.value = 'sha256=' + '00'.repeat(32);
   const d = deps({ [receipt.task_id]: receipt });
   const result = await registerAgent(
     { agentWallet: WALLET, task_id: receipt.task_id },

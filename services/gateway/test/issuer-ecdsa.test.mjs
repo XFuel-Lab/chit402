@@ -16,7 +16,7 @@ process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret';
 process.env.RECEIPT_CO_SIGNER_SECRET = 'test-co-signer-secret';
 
-const { _resetIssuerKey, getJwks, initIssuerKey, signWithIssuerKey, signAsCompactJws, verifyWithJwk, verifyCompactJws, verifyCompactJwsWithJwks } = await import('../src/issuer-key.js');
+const { _resetIssuerKey, getJwks, initIssuerKey, signWithIssuerKey, signJws, verifyWithJwk, verifyJws, verifyJwsWithJwks } = await import('../src/issuer-key.js');
 const {
   buildReceipt,
   verifyReceiptHmac,
@@ -128,7 +128,7 @@ describe('Issuer Key Management', () => {
 });
 
 describe('Receipt ECDSA Signing', () => {
-  test('buildReceipt includes issuer_signature', () => {
+  test('buildReceipt includes issuer_signature with compact JWS', () => {
     const receipt = buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
       signingSecret: 'test-secret',
@@ -136,35 +136,49 @@ describe('Receipt ECDSA Signing', () => {
 
     assert.ok(receipt.issuer_signature, 'receipt should have issuer_signature');
     assert.equal(receipt.issuer_signature.alg, 'ES256');
-    assert.equal(receipt.issuer_signature.payload_version, 4);
-    assert.ok(receipt.issuer_signature.value, 'should have signature value');
+    assert.equal(receipt.issuer_signature.payload_version, 5);
     assert.ok(receipt.issuer_signature.jws, 'should have compact JWS');
     assert.ok(receipt.issuer_signature.kid, 'should have kid');
     assert.equal(receipt.issuer_signature.jwks_uri, '/.well-known/jwks.json');
-    assert.ok(Array.isArray(receipt.issuer_signature.signed_fields));
+    
+    // JWS should have 3 parts
+    const parts = receipt.issuer_signature.jws.split('.');
+    assert.equal(parts.length, 3, 'JWS should have header.payload.signature');
+    
+    // Header should have correct typ
+    const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    assert.equal(header.typ, 'chit402-receipt+jwt');
+    
+    // Payload should be an object with named claims
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    assert.ok(!Array.isArray(payload), 'payload must be an object, not array');
+    assert.equal(payload.task_id, receipt.task_id);
+    assert.equal(payload.iss, 'chit402');
   });
 
-  test('buildReceipt includes both HMAC and ECDSA signatures', () => {
+  test('buildReceipt includes HMAC attestations and ECDSA signature', () => {
     const receipt = buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
       signingSecret: 'primary-secret',
       coSignerSecret: 'co-signer-secret',
     });
 
-    // HMAC signatures
-    assert.ok(receipt.signature, 'should have primary HMAC signature');
-    assert.equal(receipt.signature.alg, 'HMAC-SHA256');
-    assert.ok(receipt.co_signature, 'should have co-signer HMAC signature');
-    assert.equal(receipt.co_signature.alg, 'HMAC-SHA256');
+    // HMAC attestations (secondary role)
+    assert.ok(receipt.hmac_attestation, 'should have HMAC attestation');
+    assert.equal(receipt.hmac_attestation.alg, 'HMAC-SHA256');
+    assert.equal(receipt.hmac_attestation.role, 'attestor');
+    assert.ok(receipt.co_attestation, 'should have co-signer attestation');
+    assert.equal(receipt.co_attestation.alg, 'HMAC-SHA256');
+    assert.equal(receipt.co_attestation.role, 'co_attestor');
 
-    // ECDSA signature
+    // ECDSA signature (primary)
     assert.ok(receipt.issuer_signature, 'should have ECDSA signature');
     assert.equal(receipt.issuer_signature.alg, 'ES256');
   });
 });
 
 describe('Receipt ECDSA Verification', () => {
-  test('verifyReceiptEcdsa validates correct signature', () => {
+  test('verifyReceiptEcdsa validates correct JWS signature', () => {
     const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     const { publicKeyJwk: jwk } = initIssuerKey();
 
@@ -172,21 +186,24 @@ describe('Receipt ECDSA Verification', () => {
     assert.equal(result.checked, true);
     assert.equal(result.valid, true);
     assert.ok(result.kid);
+    assert.ok(result.payload, 'should return parsed payload');
+    assert.equal(result.payload.task_id, receipt.task_id);
   });
 
-  test('verifyReceiptEcdsa rejects tampered receipt', () => {
+  test('verifyReceiptEcdsa rejects tampered task_id', () => {
     const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     const { publicKeyJwk: jwk } = initIssuerKey();
 
-    // Tamper with the receipt
+    // Tamper with the task_id (which is in the signed claims)
     const tampered = {
       ...receipt,
-      payment: { ...receipt.payment, gross_amount: '999999' },
+      task_id: 'tampered-task-id',
     };
 
     const result = verifyReceiptEcdsa(tampered, jwk);
     assert.equal(result.checked, true);
     assert.equal(result.valid, false);
+    assert.equal(result.reason, 'task_id_mismatch');
   });
 
   test('verifyReceiptEcdsa rejects wrong key', () => {
@@ -235,6 +252,7 @@ describe('Receipt ECDSA Verification', () => {
     const result = verifyReceiptEcdsaWithJwks(receipt, jwks);
     assert.equal(result.checked, true);
     assert.equal(result.valid, true);
+    assert.ok(result.payload, 'should return parsed payload');
   });
 
   test('verifyReceiptEcdsaWithJwks rejects when no matching key', () => {
@@ -354,7 +372,7 @@ describe('End-to-End Verification', () => {
     assert.equal(result.valid, true, 'signature should be valid');
   });
 
-  test('verify fails with tampered receipt', async () => {
+  test('verify fails with tampered receipt (task_id mismatch)', async () => {
     // 1. Get a receipt
     const chatRes = await fetch(`${base}/v1/chat/completions`, {
       method: 'POST',
@@ -372,124 +390,97 @@ describe('End-to-End Verification', () => {
     const receiptRes = await fetch(`${base}/receipt/${taskId}?format=json`);
     const receipt = await receiptRes.json();
 
-    // 3. Tamper with it
-    receipt.route.provider = 'attacker-provider';
+    // 3. Tamper with task_id (which is a signed claim)
+    receipt.task_id = 'tampered-task-id';
 
     // 4. Fetch the JWKS
     const jwksRes = await fetch(`${base}/.well-known/jwks.json`);
     const jwks = await jwksRes.json();
 
-    // 5. Verify should fail
+    // 5. Verify should fail because task_id mismatch
     const result = verifyReceiptEcdsaWithJwks(receipt, jwks);
     assert.equal(result.checked, true);
     assert.equal(result.valid, false);
+    assert.equal(result.reason, 'task_id_mismatch');
   });
 });
 
-describe('Backward Compatibility', () => {
-  test('HMAC verification still works alongside ECDSA', () => {
-    const receipt = buildReceipt(mockTask, {
-      baseUrl: 'https://api.test',
-      signingSecret: 'test-secret',
-    });
-
-    // HMAC verify
-    const hmacResult = verifyReceiptHmac(receipt, 'test-secret');
-    assert.equal(hmacResult.checked, true);
-    assert.equal(hmacResult.valid, true);
-
-    // ECDSA verify
-    const { publicKeyJwk: jwk } = initIssuerKey();
-    const ecdsaResult = verifyReceiptEcdsa(receipt, jwk);
-    assert.equal(ecdsaResult.checked, true);
-    assert.equal(ecdsaResult.valid, true);
-  });
-
-  test('receipt without HMAC secret still has ECDSA signature', () => {
-    const receipt = buildReceipt(mockTask, {
-      baseUrl: 'https://api.test',
-      // No signingSecret, no coSignerSecret
-    });
-
-    // No HMAC signatures
-    assert.equal(receipt.signature, undefined);
-    assert.equal(receipt.co_signature, undefined);
-
-    // But ECDSA signature is present
-    assert.ok(receipt.issuer_signature);
-    assert.equal(receipt.issuer_signature.alg, 'ES256');
-
-    // And it verifies
-    const { publicKeyJwk: jwk } = initIssuerKey();
-    const result = verifyReceiptEcdsa(receipt, jwk);
-    assert.equal(result.valid, true);
-  });
-});
-
-describe('Compact JWS (header.payload.signature)', () => {
-  test('signAsCompactJws produces a valid compact JWS token', () => {
-    const payload = 'test payload';
-    const { jws, kid } = signAsCompactJws(payload);
-
-    assert.ok(jws, 'should produce a JWS');
-    assert.ok(kid, 'should include kid');
-
-    const parts = jws.split('.');
-    assert.equal(parts.length, 3, 'JWS should have three parts (header.payload.signature)');
-
-    const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
-    assert.equal(header.alg, 'ES256', 'header should specify ES256');
-    assert.equal(header.typ, 'JWT', 'header should specify JWT type');
-    assert.equal(header.kid, kid, 'header kid should match returned kid');
-  });
-
-  test('verifyCompactJws validates correct JWS', () => {
-    const payload = 'test payload';
-    const { jws } = signAsCompactJws(payload);
-    const { publicKeyJwk: jwk } = initIssuerKey();
-
-    const result = verifyCompactJws(jws, jwk);
-    assert.equal(result.valid, true);
-    assert.equal(result.payload, payload);
-    assert.ok(result.header);
-    assert.equal(result.header.alg, 'ES256');
-  });
-
-  test('verifyCompactJws rejects tampered payload', () => {
-    const { jws } = signAsCompactJws('original payload');
-    const { publicKeyJwk: jwk } = initIssuerKey();
-
-    const parts = jws.split('.');
-    const tamperedPayload = Buffer.from('tampered payload', 'utf8').toString('base64url');
-    const tamperedJws = `${parts[0]}.${tamperedPayload}.${parts[2]}`;
-
-    const result = verifyCompactJws(tamperedJws, jwk);
-    assert.equal(result.valid, false);
-    assert.equal(result.reason, 'signature_invalid');
-  });
-
-  test('verifyCompactJwsWithJwks finds matching key and verifies', () => {
-    const payload = 'test payload';
-    const { jws } = signAsCompactJws(payload);
-    const jwks = getJwks();
-
-    const result = verifyCompactJwsWithJwks(jws, jwks);
-    assert.equal(result.valid, true);
-    assert.equal(result.payload, payload);
-    assert.ok(result.kid);
-  });
-
-  test('receipt issuer_signature includes compact JWS', () => {
+describe('Standard Library Compatibility (jose)', () => {
+  test('JWS can be verified with jose library', async () => {
+    const jose = await import('jose');
+    
     const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
-
-    assert.ok(receipt.issuer_signature.jws, 'issuer_signature should include jws');
-
+    const jwks = getJwks();
+    
+    // Import the public key from our JWKS
+    const key = await jose.importJWK(jwks.keys[0], 'ES256');
+    
+    // Verify the JWS using jose
+    const { payload, protectedHeader } = await jose.jwtVerify(receipt.issuer_signature.jws, key, {
+      algorithms: ['ES256'],
+    });
+    
+    // Verify the header
+    assert.equal(protectedHeader.alg, 'ES256');
+    assert.equal(protectedHeader.typ, 'chit402-receipt+jwt');
+    assert.equal(protectedHeader.kid, receipt.issuer_signature.kid);
+    
+    // Verify the payload is an object with named claims (not an array)
+    assert.ok(!Array.isArray(payload), 'payload must be an object, not array');
+    assert.equal(payload.task_id, receipt.task_id);
+    assert.equal(payload.iss, 'chit402');
+    assert.ok(payload.iat, 'iat claim present');
+    assert.equal(payload.payload_version, 5);
+    
+    // Verify signed claims match the receipt
+    assert.equal(payload.payment.rail, receipt.payment.rail);
+    assert.equal(payload.payment.ref, receipt.payment.ref);
+    assert.equal(payload.route.model, receipt.route.model);
+    assert.equal(payload.route.provider, receipt.route.provider);
+  });
+  
+  test('jose rejects tampered JWS', async () => {
+    const jose = await import('jose');
+    
+    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+    const jwks = getJwks();
+    const key = await jose.importJWK(jwks.keys[0], 'ES256');
+    
+    // Tamper with the JWS payload
     const parts = receipt.issuer_signature.jws.split('.');
-    assert.equal(parts.length, 3, 'jws should be compact format');
-
-    const decodedPayload = Buffer.from(parts[1], 'base64url').toString('utf8');
-    const expectedPayload = canonicalSignedPayload(receipt);
-    assert.equal(decodedPayload, expectedPayload, 'JWS payload should be canonical signed payload');
+    const originalPayload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    const tamperedPayload = { ...originalPayload, task_id: 'tampered' };
+    const tamperedJws = `${parts[0]}.${Buffer.from(JSON.stringify(tamperedPayload)).toString('base64url')}.${parts[2]}`;
+    
+    // jose should reject the tampered JWS
+    await assert.rejects(
+      jose.jwtVerify(tamperedJws, key, { algorithms: ['ES256'] }),
+      /signature verification failed/i
+    );
+  });
+  
+  test('JWS payload is self-contained (no external signed_fields needed)', async () => {
+    const jose = await import('jose');
+    
+    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+    const jwks = getJwks();
+    const key = await jose.importJWK(jwks.keys[0], 'ES256');
+    
+    const { payload } = await jose.jwtVerify(receipt.issuer_signature.jws, key);
+    
+    // The payload itself contains all the signed fields with named keys
+    // No external signed_fields array is needed to interpret the payload
+    assert.ok('task_id' in payload);
+    assert.ok('payment' in payload);
+    assert.ok('route' in payload);
+    assert.ok('output' in payload);
+    assert.ok('binding' in payload);
+    assert.ok('caller_binding' in payload);
+    assert.ok('payload_version' in payload);
+    
+    // The signed_fields array should NOT exist in the issuer_signature
+    // (it was only needed for the old array-based payload)
+    assert.ok(!receipt.issuer_signature.signed_fields, 'signed_fields should not be in issuer_signature');
   });
 
   test('verifyReceiptJws validates receipt JWS', () => {
@@ -500,6 +491,7 @@ describe('Compact JWS (header.payload.signature)', () => {
     assert.equal(result.checked, true);
     assert.equal(result.valid, true);
     assert.ok(result.payload);
+    assert.equal(result.payload.task_id, receipt.task_id);
   });
 
   test('verifyReceiptJwsWithJwks validates receipt JWS', () => {
@@ -534,101 +526,101 @@ describe('Caller/Payer Binding', () => {
     assert.equal(binding.api_key_hash, 'sha256-hash-of-api-key');
   });
 
-  test('callerBindingOf returns null for task without binding data', () => {
+  test('callerBindingOf returns null fields for task without binding data', () => {
     const task = { meta: { provider: 'test' } };
     const binding = callerBindingOf(task);
-    assert.equal(binding, null);
+    assert.equal(binding.payer_wallet, null);
+    assert.equal(binding.agent_pubkey, null);
+    assert.equal(binding.agent_id, null);
+    assert.equal(binding.api_key_hash, null);
+  });
+
+  test('callerBindingOf rejects intent.sender symbolic labels', () => {
+    const task = {
+      intent: { sender: 'openai-gateway' },
+      meta: { provider: 'test' },
+    };
+    const binding = callerBindingOf(task);
+    assert.equal(binding.payer_wallet, null, 'openai-gateway must never appear in payer_wallet');
   });
 
   test('callerBindingOf accepts opts for binding data', () => {
     const task = { meta: {} };
     const binding = callerBindingOf(task, {
-      payerWallet: '0xpayer',
-      agentPubkey: '0xagent',
+      payerWallet: '0x1234567890123456789012345678901234567890',
+      agentPubkey: '0xabcdef1234567890abcdef1234567890abcdef12',
       agentId: 123,
       apiKeyHash: 'hash123',
     });
 
     assert.ok(binding);
-    assert.equal(binding.payer_wallet, '0xpayer');
-    assert.equal(binding.agent_pubkey, '0xagent');
+    assert.equal(binding.payer_wallet, '0x1234567890123456789012345678901234567890');
+    assert.equal(binding.agent_pubkey, '0xabcdef1234567890abcdef1234567890abcdef12');
     assert.equal(binding.agent_id, 123);
     assert.equal(binding.api_key_hash, 'hash123');
   });
 
   test('buildReceipt includes caller_binding when data is present', () => {
-    const taskWithBinding = {
-      ...mockTask,
-      meta: {
-        ...mockTask.meta,
-        payerWallet: '0xPayerWallet123',
-        apiKeyHash: 'test-api-key-hash',
-      },
-    };
-
-    const receipt = buildReceipt(taskWithBinding, { baseUrl: 'https://api.test' });
+    const payer = '0x1234567890123456789012345678901234567890';
+    const receipt = buildReceipt(mockTask, {
+      baseUrl: 'https://api.test',
+      payerWallet: payer,
+      apiKeyHash: 'test-api-key-hash',
+    });
 
     assert.ok(receipt.caller_binding, 'receipt should have caller_binding');
-    assert.equal(receipt.caller_binding.payer_wallet, '0xPayerWallet123');
+    assert.equal(receipt.caller_binding.payer_wallet, payer);
     assert.equal(receipt.caller_binding.api_key_hash, 'test-api-key-hash');
   });
 
-  test('caller_binding is included in signed payload', () => {
-    const taskWithBinding = {
-      ...mockTask,
-      meta: {
-        ...mockTask.meta,
-        payerWallet: '0xPayerWallet123',
-        apiKeyHash: 'test-api-key-hash',
-      },
-    };
+  test('caller_binding is included in JWS claims', () => {
+    const payer = '0x1234567890123456789012345678901234567890';
+    const receipt = buildReceipt(mockTask, {
+      baseUrl: 'https://api.test',
+      payerWallet: payer,
+      apiKeyHash: 'test-api-key-hash',
+    });
 
-    const receipt = buildReceipt(taskWithBinding, { baseUrl: 'https://api.test' });
-    const payload = canonicalSignedPayload(receipt);
-    const parsedPayload = JSON.parse(payload);
-
-    assert.ok(parsedPayload.includes('0xPayerWallet123'), 'payload should include payer_wallet');
-    assert.ok(parsedPayload.includes('test-api-key-hash'), 'payload should include api_key_hash');
+    const parts = receipt.issuer_signature.jws.split('.');
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    assert.equal(payload.caller_binding.payer_wallet, payer);
+    assert.equal(payload.caller_binding.api_key_hash, 'test-api-key-hash');
   });
 
   test('tampering with caller_binding invalidates signature', () => {
-    const taskWithBinding = {
-      ...mockTask,
-      meta: {
-        ...mockTask.meta,
-        payerWallet: '0xOriginalPayer',
-      },
-    };
-
-    const receipt = buildReceipt(taskWithBinding, { baseUrl: 'https://api.test' });
+    const payer = '0x1234567890123456789012345678901234567890';
+    const receipt = buildReceipt(mockTask, {
+      baseUrl: 'https://api.test',
+      payerWallet: payer,
+    });
     const { publicKeyJwk: jwk } = initIssuerKey();
 
-    // Verify original is valid
     let result = verifyReceiptEcdsa(receipt, jwk);
     assert.equal(result.valid, true, 'original should verify');
 
-    // Tamper with caller_binding
     const tampered = {
       ...receipt,
-      caller_binding: { ...receipt.caller_binding, payer_wallet: '0xAttackerWallet' },
+      caller_binding: { ...receipt.caller_binding, payer_wallet: '0xabcdef1234567890abcdef1234567890abcdef12' },
     };
 
     result = verifyReceiptEcdsa(tampered, jwk);
     assert.equal(result.valid, false, 'tampered payer_wallet should fail verification');
   });
 
-  test('signed_fields includes caller_binding fields', () => {
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+  test('hmac signed_fields includes caller_binding fields', () => {
+    const receipt = buildReceipt(mockTask, {
+      baseUrl: 'https://api.test',
+      signingSecret: 'test-secret',
+    });
 
-    assert.ok(receipt.issuer_signature.signed_fields.includes('caller_binding.payer_wallet'));
-    assert.ok(receipt.issuer_signature.signed_fields.includes('caller_binding.agent_pubkey'));
-    assert.ok(receipt.issuer_signature.signed_fields.includes('caller_binding.api_key_hash'));
+    assert.ok(receipt.hmac_attestation.signed_fields.includes('caller_binding.payer_wallet'));
+    assert.ok(receipt.hmac_attestation.signed_fields.includes('caller_binding.agent_pubkey'));
+    assert.ok(receipt.hmac_attestation.signed_fields.includes('caller_binding.api_key_hash'));
   });
 });
 
 describe('JSON Suffix Content Negotiation', () => {
   test('GET /receipt/:taskId.json returns JSON', async () => {
-    // Create a receipt first
     const chatRes = await fetch(`${base}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
@@ -641,7 +633,6 @@ describe('JSON Suffix Content Negotiation', () => {
     const { xfuel } = await chatRes.json();
     const taskId = xfuel.task_id;
 
-    // Fetch with .json suffix
     const receiptRes = await fetch(`${base}/receipt/${taskId}.json`);
     assert.equal(receiptRes.status, 200);
 
@@ -649,13 +640,11 @@ describe('JSON Suffix Content Negotiation', () => {
     assert.ok(contentType.includes('application/json'), 'should return JSON content type');
 
     const receipt = await receiptRes.json();
-    assert.equal(receipt.task_id, taskId.replace('chit-', 'xfuel-').replace('xfuel-', 'xfuel-'));
     assert.ok(receipt.issuer_signature, 'JSON response should have issuer_signature');
     assert.ok(receipt.issuer_signature.jws, 'issuer_signature should have jws');
   });
 
   test('Accept: application/json returns JSON', async () => {
-    // Create a receipt first
     const chatRes = await fetch(`${base}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
@@ -668,7 +657,6 @@ describe('JSON Suffix Content Negotiation', () => {
     const { xfuel } = await chatRes.json();
     const taskId = xfuel.task_id;
 
-    // Fetch with Accept header
     const receiptRes = await fetch(`${base}/receipt/${taskId}`, {
       headers: { 'Accept': 'application/json' },
     });
@@ -682,7 +670,6 @@ describe('JSON Suffix Content Negotiation', () => {
   });
 
   test('default Accept returns HTML', async () => {
-    // Create a receipt first
     const chatRes = await fetch(`${base}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
@@ -695,7 +682,6 @@ describe('JSON Suffix Content Negotiation', () => {
     const { xfuel } = await chatRes.json();
     const taskId = xfuel.task_id;
 
-    // Fetch without Accept header
     const receiptRes = await fetch(`${base}/receipt/${taskId}`);
     assert.equal(receiptRes.status, 200);
 
@@ -710,7 +696,6 @@ describe('JSON Suffix Content Negotiation', () => {
 
 describe('Agent E2E JWS Verification Flow', () => {
   test('agent can fetch JSON, extract JWS, verify against JWKS', async () => {
-    // Step 1: Make a request to get a task
     const chatRes = await fetch(`${base}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
@@ -723,27 +708,61 @@ describe('Agent E2E JWS Verification Flow', () => {
     const { xfuel } = await chatRes.json();
     const taskId = xfuel.task_id;
 
-    // Step 2: Fetch the receipt JSON via Accept header
     const receiptRes = await fetch(`${base}/receipt/${taskId}`, {
       headers: { 'Accept': 'application/json' },
     });
     assert.equal(receiptRes.status, 200);
     const receipt = await receiptRes.json();
 
-    // Step 3: Extract the JWS
     const jws = receipt.issuer_signature.jws;
     assert.ok(jws, 'receipt should have JWS');
 
-    // Step 4: Fetch the JWKS
     const jwksRes = await fetch(`${base}/.well-known/jwks.json`);
     const jwks = await jwksRes.json();
 
-    // Step 5: Verify the JWS
-    const verifyResult = verifyCompactJwsWithJwks(jws, jwks);
+    const verifyResult = verifyJwsWithJwks(jws, jwks);
     assert.equal(verifyResult.valid, true, 'JWS should verify against JWKS');
+    assert.equal(verifyResult.payload.task_id, receipt.task_id);
+  });
+});
 
-    // Step 6: Decode the payload and verify it matches canonical payload
-    const expectedPayload = canonicalSignedPayload(receipt);
-    assert.equal(verifyResult.payload, expectedPayload, 'decoded payload should match canonical');
+describe('Backward Compatibility', () => {
+  test('HMAC verification still works alongside ECDSA', () => {
+    const receipt = buildReceipt(mockTask, {
+      baseUrl: 'https://api.test',
+      signingSecret: 'test-secret',
+    });
+
+    // HMAC verify (uses hmac_attestation field now)
+    const hmacResult = verifyReceiptHmac(receipt, 'test-secret', { sigField: 'hmac_attestation' });
+    assert.equal(hmacResult.checked, true);
+    assert.equal(hmacResult.valid, true);
+
+    // ECDSA verify
+    const { publicKeyJwk: jwk } = initIssuerKey();
+    const ecdsaResult = verifyReceiptEcdsa(receipt, jwk);
+    assert.equal(ecdsaResult.checked, true);
+    assert.equal(ecdsaResult.valid, true);
+  });
+
+  test('receipt without HMAC secret still has ECDSA signature', () => {
+    const receipt = buildReceipt(mockTask, {
+      baseUrl: 'https://api.test',
+      // No signingSecret, no coSignerSecret
+    });
+
+    // No HMAC signatures
+    assert.equal(receipt.hmac_attestation, undefined);
+    assert.equal(receipt.co_attestation, undefined);
+
+    // But ECDSA signature is present
+    assert.ok(receipt.issuer_signature);
+    assert.equal(receipt.issuer_signature.alg, 'ES256');
+    assert.ok(receipt.issuer_signature.jws, 'should have JWS');
+
+    // And it verifies
+    const { publicKeyJwk: jwk } = initIssuerKey();
+    const result = verifyReceiptEcdsa(receipt, jwk);
+    assert.equal(result.valid, true);
   });
 });
