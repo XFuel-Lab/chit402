@@ -61,13 +61,15 @@ function usdcTask(over = {}) {
   };
 }
 
-test('explorerUrlForRef: base-sepolia, base, unknown, tfuel-null', () => {
+test('explorerUrlForRef: base-sepolia, base, solana, unknown', () => {
   const tx = '0x' + 'ab'.repeat(32);
   assert.equal(explorerUrlForRef(`base-sepolia:${tx}`), `https://sepolia.basescan.org/tx/${tx}`);
   assert.equal(explorerUrlForRef(`base:${tx}`), `https://basescan.org/tx/${tx}`);
-  assert.equal(explorerUrlForRef(`solana:${tx}`), null);
+  const solSig = '5'.repeat(87);
+  assert.equal(explorerUrlForRef(`solana:${solSig}`), `https://solscan.io/tx/${solSig}`);
   assert.equal(explorerUrlForRef(null), null);
   assert.equal(explorerUrlForRef('base-sepolia:not-a-hash'), null);
+  assert.equal(explorerUrlForRef(`solana:${tx}`), null, 'EVM hash is not a Solana signature');
 });
 
 test('buildReceipt: USDC task is proven, priced, and independently binding-verified', () => {
@@ -722,6 +724,29 @@ test('buildReceipt: caller_binding.payer_wallet rejects non-address values', () 
   });
   const r2 = buildReceipt(taskWithInvalid);
   assert.equal(mergeReceiptView(r2).caller_binding.payer_wallet, null, 'invalid addresses must be rejected');
+});
+
+test('buildReceipt: caller_binding stamps Solana payer_wallet from settlement', () => {
+  const solanaPayer = 'E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh';
+  const solSig = '5'.repeat(87);
+  const task = usdcTask({
+    intent: {
+      ...usdcTask().intent,
+      paymentRef: `solana:${solSig}`,
+    },
+    meta: {
+      ...usdcTask().meta,
+      payerWallet: solanaPayer,
+      chain: 'solana',
+    },
+  });
+  const r = buildReceipt(task, { payerWallet: solanaPayer, persistSignature: true });
+  const view = mergeReceiptView(r);
+  assert.equal(view.caller_binding.payer_wallet, solanaPayer);
+  assert.equal(view.payment.network, 'solana');
+  assert.equal(view.payment.explorer_url, `https://solscan.io/tx/${solSig}`);
+  const claims = decodeReceiptClaims(r);
+  assert.equal(claims.caller_binding.payer_wallet, solanaPayer);
 });
 
 test('buildReceipt: caller_binding includes agent_pubkey when present', () => {
