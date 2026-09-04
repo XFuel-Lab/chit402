@@ -106,6 +106,6 @@ account for it.
 
 Third-party verify without trusting HTML: `GET /receipt/:taskId?format=json` or SDK `client.getReceipt(taskId)` + `verifyPaymentBinding`.
 
-When a reusable session is bound at settle, the JWS also stamps `agent_pubkey`, `delegation_hash`, and `session_expiry` (secp256k1, Base). Verify: JWKS → JWS → payer on-chain → `iat` inside the session window → optional `GET /v1/sessions/:delegation_hash` / `/.well-known/revocations` → agent proves `agent_pubkey`. Late assign is a child receipt (`parent_receipt_id`); the genesis JWS is never re-signed. See [VERIFY_ALGORITHM.md](./VERIFY_ALGORITHM.md) §11.
+When a reusable session is bound at settle, the JWS also stamps `agent_pubkey`, `delegation_hash`, and `session_expiry` (secp256k1, Base). Verify: JWKS → JWS → payer on-chain → `iat` inside the session window → optional `GET /v1/sessions/:delegation_hash` / `/.well-known/revocations` → agent proves `agent_pubkey` via EIP-712 `SessionAct` (`POST /v1/sessions/:delegation_hash/challenge` then `/act`) for privileged acts. Late assign is a child receipt (`parent_receipt_id`); the genesis JWS is never re-signed. See [VERIFY_ALGORITHM.md](./VERIFY_ALGORITHM.md) §11.
 
 API surface: [M2M_API.md](./M2M_API.md).
