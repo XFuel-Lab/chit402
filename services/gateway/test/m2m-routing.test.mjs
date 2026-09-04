@@ -16,7 +16,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildReceipt } from '../src/receipt.js';
+import { buildReceipt, mergeReceiptView } from '../src/receipt.js';
 import { resolveCatalogModel, requestShape } from '../src/hub-catalog.js';
 
 const CATALOG = [
@@ -127,8 +127,8 @@ test('receipt names the model that served, not the xfuel/auto alias asked for', 
     meta: { chain: 'base' },
   }, { baseUrl: 'https://api-testnet.xfuel.app' });
 
-  assert.equal(r.route.model, 'meta-llama/Llama-3.3-70B-Instruct');
-  assert.equal(r.route.provider, 'akash-network');
+  assert.equal(mergeReceiptView(r).route.model, 'meta-llama/Llama-3.3-70B-Instruct');
+  assert.equal(mergeReceiptView(r).route.provider, 'akash-network');
 });
 
 test('a failed task attests no provider, even when a float default is set', () => {
@@ -141,7 +141,7 @@ test('a failed task attests no provider, even when a float default is set', () =
     meta: { chain: 'base', provider: 'theta-edgecloud' },
   }, { baseUrl: 'https://api-testnet.xfuel.app' });
 
-  assert.equal(r.route.provider, null);
+  assert.equal(mergeReceiptView(r).route.provider, null);
 });
 
 test('a real COGS burn outranks the float default label', () => {
@@ -156,7 +156,7 @@ test('a real COGS burn outranks the float default label', () => {
     },
   }, { baseUrl: 'https://api-testnet.xfuel.app' });
 
-  assert.equal(r.route.provider, 'akash-network');
+  assert.equal(mergeReceiptView(r).route.provider, 'akash-network');
 });
 
 test('a mock result is still reported as mock, never as a real provider', () => {
@@ -168,5 +168,5 @@ test('a mock result is still reported as mock, never as a real provider', () => 
     meta: { chain: 'base', provider: 'theta-edgecloud' },
   }, { baseUrl: 'https://api-testnet.xfuel.app' });
 
-  assert.equal(r.route.provider, 'theta-edge-mock');
+  assert.equal(mergeReceiptView(r).route.provider, 'theta-edge-mock');
 });

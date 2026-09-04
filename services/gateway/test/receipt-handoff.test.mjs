@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { Wallet } from 'ethers';
 import {
   buildReceipt,
+  mergeReceiptView,
   renderReceiptHtml,
   canonicalOriginHandoffMessage,
   canonicalDestAckMessage,
@@ -438,7 +439,8 @@ describe('Backwards Compatibility', () => {
     assert.ok(receipt.issuer_signature);
     assert.equal(receipt.handoff, null);
     assert.equal(receipt.status, 'completed');
-    assert.ok(receipt.payment);
+    assert.ok(receipt.verification?.source_of_truth);
+    assert.ok(mergeReceiptView(receipt).payment);
   });
 
   test('receipt JSON schema is stable (v3)', () => {
@@ -484,7 +486,8 @@ describe('Backwards Compatibility', () => {
 
     // All existing fields still present
     assert.ok(receipt.task_id);
-    assert.ok(receipt.payment);
+    assert.ok(receipt.verification?.source_of_truth);
+    assert.ok(mergeReceiptView(receipt).payment);
     assert.ok(receipt.privacy);
     assert.ok(receipt.issuer_signature);
 

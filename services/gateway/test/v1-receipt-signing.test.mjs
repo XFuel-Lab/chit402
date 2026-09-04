@@ -21,7 +21,7 @@ process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret';
 
 const { createApp } = await import('../src/server.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
-const { canonicalSignedPayload, verifyReceiptEcdsaWithJwks } = await import('../src/receipt.js');
+const { canonicalSignedPayload, verifyReceiptEcdsaWithJwks, mergeReceiptView } = await import('../src/receipt.js');
 const { initAIListener } = await import('../src/ai-listener.js');
 const { getJwks } = await import('../src/issuer-key.js');
 
@@ -124,11 +124,12 @@ test('the same task verifies identically on /v1 and /receipt/:task_id', async ()
   assert.equal(v1Result.payload.route.model, fetchedResult.payload.route.model);
   assert.equal(v1Result.payload.route.provider, fetchedResult.payload.route.provider);
   
-  // The unsigned receipt fields should match
-  assert.equal(fetched.route.model, xfuel.route.model);
-  assert.equal(fetched.route.provider, xfuel.route.provider);
-  assert.equal(fetched.payment.rail, xfuel.payment.rail);
-  assert.equal(fetched.output?.hash, xfuel.output?.hash);
+  // The unsigned receipt fields should match (xfuel merges JWS claims for display)
+  const fetchedView = mergeReceiptView(fetched);
+  assert.equal(fetchedView.route.model, xfuel.route.model);
+  assert.equal(fetchedView.route.provider, xfuel.route.provider);
+  assert.equal(fetchedView.payment.rail, xfuel.payment.rail);
+  assert.equal(fetchedView.output?.hash, xfuel.output?.hash);
 });
 
 test('the /v1 receipt keeps the fields OpenAI-surface clients already read', async () => {

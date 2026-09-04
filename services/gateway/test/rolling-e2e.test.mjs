@@ -36,6 +36,7 @@ const { createApp } = await import('../src/server.js');
 const { initAIListener } = await import('../src/ai-listener.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 const { quoteFromCogs, quoteUsage } = await import('../src/pricing.js');
+const { mergeReceiptView } = await import('../src/receipt.js');
 
 const SERVED_TEXT = 'PONG from the stubbed provider';
 const USAGE = { prompt_tokens: 10_000, completion_tokens: 1_000, total_tokens: 11_000 };
@@ -118,7 +119,7 @@ async function waitComplete(taskId) {
     status = await (await realFetch(`${base}/task-status?task_id=${taskId}`)).json();
     if (['completed', 'failed', 'fee_collected'].includes(status.status)) {
       receipt = await (await realFetch(`${base}/receipt/${taskId}?format=json`)).json();
-      if (receipt.provider_cogs?.actual || receipt.payment?.platform_fee != null) break;
+      if (receipt.provider_cogs?.actual || mergeReceiptView(receipt).payment?.platform_fee != null) break;
     }
   }
   return { status, receipt };
@@ -171,12 +172,13 @@ test('second 402 equals measured cost-plus, not the rate card', async () => {
   assert.equal(secondDone.status.status, 'completed');
 
   const owed = await (await realFetch(`${base}/receipt/${first.task_id}?format=json`)).json();
-  assert.ok(owed.payment.ref, 'settlement attaches to the owed task, not the new one');
-  assert.equal(owed.payment.gross_amount, expected);
+  const owedView = mergeReceiptView(owed);
+  assert.ok(owedView.payment.ref, 'settlement attaches to the owed task, not the new one');
+  assert.equal(owedView.payment.gross_amount, expected);
 
   const recomputed = quoteFromCogs(owed.provider_cogs.actual);
-  assert.equal(recomputed.amount, owed.payment.gross_amount);
-  assert.equal(owed.payment.platform_fee_bps, 1000);
+  assert.equal(recomputed.amount, owedView.payment.gross_amount);
+  assert.equal(owedView.payment.platform_fee_bps, 1000);
   assert.equal(owed.issuer_signature.payload_version, 5);
 });
 

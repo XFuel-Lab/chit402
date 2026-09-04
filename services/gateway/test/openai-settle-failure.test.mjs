@@ -26,6 +26,7 @@ process.env.ZAN_X402_GATEWAY_URL = facUrl;
 const { createApp } = await import('../src/server.js');
 const { initAIListener } = await import('../src/ai-listener.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
+const { mergeReceiptView } = await import('../src/receipt.js');
 
 let server;
 let base;
@@ -88,9 +89,10 @@ test('settle then hub failure returns receipt, not 500', async () => {
   const receiptRes = await fetch(`${base}/receipt/${taskId}?format=json`);
   assert.equal(receiptRes.status, 200);
   const publicReceipt = await receiptRes.json();
+  const publicView = mergeReceiptView(publicReceipt);
   assert.equal(publicReceipt.schema, 'xfuel.receipt.v4');
-  assert.equal(publicReceipt.payment.collected, true);
-  assert.equal(publicReceipt.payment.ref, body.xfuel.payment.ref);
+  assert.equal(publicView.payment.collected, true);
+  assert.equal(publicView.payment.ref, body.xfuel.payment.ref);
 });
 
 test('settle then hub failure does not use payment processing failed', async () => {
