@@ -413,6 +413,14 @@ describe('Genesis immutability + child handoff', () => {
     assert.equal(childClaims.agent_pubkey, AGENT.address);
     assert.equal(childClaims.delegation_hash, accepted.session.delegation_hash);
     assert.equal(childClaims.caller_binding.payer_wallet, PAYER.address);
+    assert.equal(childClaims.kind, 'session_handoff');
+    assert.equal(childClaims.action, 'handoff');
+    assert.equal(childClaims.settlement.kind, 'inherited');
+    assert.equal(childClaims.settlement.parent_receipt_id, 'xfuel-parent-genesis');
+    assert.equal(childClaims.payment.ref, null);
+    assert.equal(childClaims.payment.gross_amount, null);
+    assert.equal(childClaims.provider_cogs.actual, null);
+    assert.equal(childClaims.session_act, null);
 
     const again = buildReceipt(parent, { persistSignature: true });
     assert.equal(again.issuer_signature.jws, genesisJws, 'parent genesis JWS stays frozen');

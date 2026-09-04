@@ -34,6 +34,10 @@ export const SESSION_ACT_ACTION_LIST = Object.freeze([
   SESSION_ACT_ACTIONS.REDEEM,
 ]);
 
+/** Sentinel address — "self" / unset target. Resolved to the bound agent on accept. */
+export const SESSION_ACT_ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+export const SESSION_ACT_ZERO_BYTES32 = `0x${'00'.repeat(32)}`;
+
 export const SESSION_ACT_TYPES = {
   SessionAct: [
     { name: 'delegationHash', type: 'bytes32' },
@@ -41,6 +45,8 @@ export const SESSION_ACT_TYPES = {
     { name: 'action', type: 'string' },
     { name: 'resource', type: 'string' },
     { name: 'deadline', type: 'uint256' },
+    { name: 'targetAgent', type: 'address' },
+    { name: 'payloadHash', type: 'bytes32' },
   ],
 };
 
@@ -91,6 +97,33 @@ function hashesEqual(a, b) {
   } catch {
     return String(a).toLowerCase() === String(b).toLowerCase();
   }
+}
+
+export function isZeroAddress(value) {
+  if (!value) return true;
+  try {
+    return getAddress(value) === SESSION_ACT_ZERO_ADDRESS;
+  } catch {
+    return String(value).toLowerCase() === SESSION_ACT_ZERO_ADDRESS;
+  }
+}
+
+/**
+ * Normalize a SessionAct target. Empty / zero means "self" when `fallback` is set.
+ */
+export function resolveSessionActTarget(value, fallback = null) {
+  if (value && isAddress(value) && !isZeroAddress(value)) {
+    return getAddress(value);
+  }
+  if (fallback && isAddress(fallback) && !isZeroAddress(fallback)) {
+    return getAddress(fallback);
+  }
+  return SESSION_ACT_ZERO_ADDRESS;
+}
+
+export function normalizePayloadHash(value) {
+  if (!value) return SESSION_ACT_ZERO_BYTES32;
+  return normalizeSessionNonce(value);
 }
 
 /**
@@ -157,6 +190,8 @@ export function isKnownSessionAct(action) {
  * @param {string} params.action
  * @param {string} params.resource
  * @param {number|string} params.deadline
+ * @param {string} [params.targetAgent]  recipient of a handoff; zero/omit = self
+ * @param {string} [params.payloadHash]  keccak256 of extra payload; zero if unused
  * @param {{ verifyingContract?: string, issuerUri?: string, chainId?: number }} [params.domain]
  */
 export function buildSessionActTypedData(params) {
@@ -167,6 +202,8 @@ export function buildSessionActTypedData(params) {
   const resource = String(params.resource ?? '').trim();
   if (!resource) throw new Error('resource is required');
   const deadline = toUint(params.deadline, 'deadline');
+  const targetAgent = resolveSessionActTarget(params.targetAgent ?? params.target_agent);
+  const payloadHash = normalizePayloadHash(params.payloadHash ?? params.payload_hash);
   const domain = sessionEip712Domain(params.domain || {});
   return {
     domain,
@@ -178,6 +215,8 @@ export function buildSessionActTypedData(params) {
       action,
       resource,
       deadline,
+      targetAgent,
+      payloadHash,
     },
   };
 }
@@ -226,11 +265,17 @@ export function verifySessionAct(typedData, signature, {
         return { valid: false, reason: 'signer_mismatch', agent_pubkey: recovered };
       }
     }
+    const actFields = (types.SessionAct || []).map((f) => f.name);
+    if (!actFields.includes('targetAgent') || !actFields.includes('payloadHash')) {
+      return { valid: false, reason: 'missing_session_act_types', agent_pubkey: recovered };
+    }
     const delegationHash = msg.delegationHash ? normalizeSessionNonce(msg.delegationHash) : null;
     const nonce = msg.nonce ? normalizeSessionNonce(msg.nonce) : null;
     const action = normalizeSessionActAction(msg.action);
     const resource = String(msg.resource ?? '').trim();
     const deadline = Number(msg.deadline);
+    const targetAgent = resolveSessionActTarget(msg.targetAgent);
+    const payloadHash = normalizePayloadHash(msg.payloadHash);
     if (expectedDelegationHash && (!delegationHash || !hashesEqual(delegationHash, expectedDelegationHash))) {
       return { valid: false, reason: 'delegation_hash_mismatch', agent_pubkey: recovered };
     }
@@ -259,9 +304,15 @@ export function verifySessionAct(typedData, signature, {
       action,
       resource,
       deadline,
+      target_agent: targetAgent,
+      payload_hash: payloadHash,
       domain,
       types: jsonSafeTypedData(types),
-      message: jsonSafeTypedData(msg),
+      message: jsonSafeTypedData({
+        ...msg,
+        targetAgent,
+        payloadHash,
+      }),
     };
   } catch (err) {
     return { valid: false, reason: `verification_error: ${err.message}` };
@@ -271,11 +322,17 @@ export function verifySessionAct(typedData, signature, {
 /**
  * Published SessionAct proof block (full types map — required for verify).
  */
-export function publicSessionActProof({ typedData, signature, verified = null } = {}) {
+export function publicSessionActProof({
+  typedData,
+  signature,
+  verified = null,
+  challengeId = null,
+} = {}) {
   const td = jsonSafeTypedData(typedData) || {};
   const domain = verified?.domain || td.domain || sessionEip712Domain();
   const types = verified?.types || td.types || SESSION_ACT_TYPES;
   const message = verified?.message || td.message || null;
+  const nonce = verified?.nonce || message?.nonce || td.nonce || null;
   return jsonSafeTypedData({
     type: 'eip712',
     primary_type: SESSION_ACT_PRIMARY,
@@ -285,7 +342,37 @@ export function publicSessionActProof({ typedData, signature, verified = null } 
     types,
     domain,
     message,
-    signature: signature || null,
+    signature: signature || td.signature || null,
+    nonce,
+    challenge_id: challengeId || td.challenge_id || null,
+  });
+}
+
+/**
+ * Normalize a SessionAct proof for signed receipt claims.
+ * Verifiers recover agent_pubkey from signature + types/domain/message
+ * without trusting Chit logs. Full EIP-712 types map is required (Bankr).
+ */
+export function sessionActClaimOf(sessionAct) {
+  if (!sessionAct || typeof sessionAct !== 'object') return null;
+  if (sessionAct.types?.SessionAct && (sessionAct.message || sessionAct.signature)) {
+    return publicSessionActProof({
+      typedData: sessionAct,
+      signature: sessionAct.signature,
+      verified: sessionAct.message ? {
+        domain: sessionAct.domain,
+        types: sessionAct.types,
+        message: sessionAct.message,
+        nonce: sessionAct.nonce || sessionAct.message?.nonce || null,
+      } : null,
+      challengeId: sessionAct.challenge_id || null,
+    });
+  }
+  return publicSessionActProof({
+    typedData: sessionAct.typed_data || sessionAct.typedData || sessionAct,
+    signature: sessionAct.signature,
+    verified: sessionAct.verified || null,
+    challengeId: sessionAct.challenge_id || null,
   });
 }
 
@@ -441,6 +528,8 @@ export function typedDataFromActRequest(proof, challenge, { verifyingContract = 
         action: proof?.action,
         resource: proof?.resource || challenge.resource,
         deadline: proof?.deadline ?? challenge.expires_at,
+        targetAgent: proof?.target_agent || proof?.targetAgent || challenge.target_agent,
+        payloadHash: proof?.payload_hash || proof?.payloadHash,
         domain: { verifyingContract, issuerUri, ...(proof?.domain || {}) },
       });
     } catch (err) {
@@ -503,7 +592,12 @@ export function acceptSessionAct({
   if (!resource) return { ok: false, reason: 'resource_required' };
 
   const rebuilt = typedDataFromActRequest(
-    { ...proof, action, resource },
+    {
+      ...proof,
+      action,
+      resource,
+      target_agent: proof?.target_agent || proof?.targetAgent || bound.agent_pubkey,
+    },
     challenge,
     { verifyingContract, issuerUri },
   );
@@ -548,10 +642,13 @@ export function acceptSessionAct({
       types: verified.types || SESSION_ACT_TYPES,
     }),
     signature: rebuilt.signature,
+    target_agent: resolveSessionActTarget(verified.target_agent, bound.agent_pubkey),
+    payload_hash: verified.payload_hash || SESSION_ACT_ZERO_BYTES32,
     proof: publicSessionActProof({
       typedData: rebuilt.typedData,
       signature: rebuilt.signature,
       verified,
+      challengeId: challenge.challenge_id,
     }),
   };
 }
@@ -575,6 +672,8 @@ export default {
   SESSION_ACT_TYPES,
   SESSION_ACT_ACTIONS,
   SESSION_ACT_ACTION_LIST,
+  SESSION_ACT_ZERO_ADDRESS,
+  SESSION_ACT_ZERO_BYTES32,
   CHALLENGE_TTL_SEC_DEFAULT,
   buildSessionActTypedData,
   verifySessionAct,
@@ -582,6 +681,8 @@ export default {
   sessionBindsAgent,
   sessionIsActive,
   publicSessionActProof,
+  sessionActClaimOf,
+  resolveSessionActTarget,
   receiptBindsSession,
   SessionActChallengeStore,
   getSessionActStore,

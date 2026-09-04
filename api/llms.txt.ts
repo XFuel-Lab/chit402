@@ -60,7 +60,7 @@ const CHIT_LLMS = `# Chit — the x402 receipt that doesn't leave you
 - POST /task-request      : lower-level M2M paid route (not the public door).
 - GET  /v1/sessions/:delegation_hash : session status (active / expired / revoked).
 - POST /v1/sessions/:delegation_hash/challenge : one-shot prove-key nonce (TTL 2–5 min).
-- POST /v1/sessions/:delegation_hash/act : SessionAct (handoff | read_private | redeem). After session checks, the agent signs EIP-712 SessionAct with the bound agent_pubkey (secp256k1, Base). Challenge every privileged act.
+- POST /v1/sessions/:delegation_hash/act : SessionAct (handoff | read_private | redeem). After session checks, the agent signs EIP-712 SessionAct (delegationHash, nonce, action, resource, deadline, targetAgent, payloadHash) with the bound agent_pubkey (secp256k1, Base). Challenge every privileged act. Child handoff JWS embeds SessionAct + kind/action; settlement is inherited from parent_receipt_id.
 
 ## SDK
 
