@@ -138,6 +138,12 @@ const config = {
       if (!Number.isFinite(n)) return 24 * 60 * 60;
       return Math.min(24 * 60 * 60, Math.max(60 * 60, n));
     })(),
+    // Prove-key v1 challenge TTL (seconds). Lock is ~2–5 min.
+    actChallengeTtlSec: (() => {
+      const n = parseInt(process.env.SESSION_ACT_CHALLENGE_TTL_SEC, 10);
+      if (!Number.isFinite(n)) return 180;
+      return Math.min(300, Math.max(120, n));
+    })(),
   },
 
   // Private Spend v0 — vendor-blind routing mode. Buyer pays XFuel; providers see

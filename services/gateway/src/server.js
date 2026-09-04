@@ -28,7 +28,7 @@ import {
   applyPaymentToOwedTask,
   configureRollingLedger,
 } from './rolling-settlement.js';
-import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptHmac, verifyOriginHandoff, verifyDestAck, issueSessionHandoffReceipt } from './receipt.js';
+import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptHmac, verifyOriginHandoff, verifyDestAck, issueSessionHandoffReceipt, mergeReceiptView, decodeReceiptClaims } from './receipt.js';
 import {
   getSessionStore,
   bindSessionFromRequest,
@@ -39,6 +39,17 @@ import {
   SESSION_CHAIN_ID,
   AGENT_KEY_TYPE_SECP256K1,
 } from './session-delegation.js';
+import {
+  SESSION_ACT_ACTIONS,
+  SESSION_ACT_ACTION_LIST,
+  SESSION_ACT_TYPES,
+  SESSION_ACT_PRIMARY,
+  buildSessionActTypedData,
+  acceptSessionAct,
+  getSessionActStore,
+  isKnownSessionAct,
+  receiptBindsSession,
+} from './session-act.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest, buildOpenApiSpec } from './x402-discovery.js';
 import { buildPaymentChallenge } from './x402-adapter.js';
@@ -46,7 +57,7 @@ import { CHIT402_ICON_SVG, XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger } from './usage-settled.js';
-import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage } from './agent-book.js';
+import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook } from './agent-book.js';
 import { BookPolicyStore, POLICY_TYPES, enforcePolicy } from './book-policy.js';
 import { BookAssignmentStore, GRANT_TYPES, readSliceByToken } from './book-assign.js';
 import { BookDisputeStore, CLAIM_TYPES, OUTCOME_TYPES, fileAndAdjudicate } from './book-dispute.js';
@@ -351,7 +362,11 @@ Agent verification flow (recommended):
    GET /.well-known/revocations. Revoke is payer-signed RevokeSession
    (pinned Chit402 / Base domain); unseen grants need the AuthorizeSession
    proof. Do not amend the receipt.
-9. Agent proves possession of agent_pubkey (secp256k1) out of band
+9. Privileged acts (handoff, read_private, redeem): prove-key SessionAct.
+   POST /v1/sessions/:delegation_hash/challenge → agent signs EIP-712
+   SessionAct (delegationHash, nonce, action, resource, deadline) with the
+   bound agent_pubkey (secp256k1, Base) → POST /v1/sessions/:delegation_hash/act.
+   Challenge every act. No capability-token shortcut.
 
 provider_cogs.actual and provider_cogs.usd_mark are atomic USDC integers
 (decimals: 6, unit: atomic_usdc). Same scale as payment.gross_amount — e.g.
@@ -382,6 +397,8 @@ SDK: verifyReceiptEcdsaWithJwks(receipt, jwks) → { checked, valid, kid }
 - GET  /.well-known/jwks.json : JWKS for receipt issuer signature (ES256/ECDSA). Public-key verify.
 - GET  /.well-known/revocations : session-delegation revocations (delegation_hash list).
 - GET  /v1/sessions/:delegation_hash : session status (active / expired / revoked).
+- POST /v1/sessions/:delegation_hash/challenge : one-shot prove-key nonce (TTL 2–5 min).
+- POST /v1/sessions/:delegation_hash/act : SessionAct (handoff | read_private | redeem).
 - GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message.
 - POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
@@ -638,12 +655,255 @@ export function createApp() {
       || (config.taskStore?.dir ? path.join(config.taskStore.dir, '..', 'sessions') : null),
     persist: !!config.taskStore?.persist,
   });
+  const sessionActStore = getSessionActStore({
+    ttlSec: config.sessionDelegation?.actChallengeTtlSec,
+  });
   const sessionIssuerUri = (req) => baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
   const sessionDomainOpts = (req) => ({
     verifyingContract: config.sessionDelegation?.verifyingContract,
     issuerUri: sessionIssuerUri(req),
     chainId: SESSION_CHAIN_ID,
   });
+
+  function sessionActHttpError(reason) {
+    const map = {
+      session_not_bound: 404,
+      unknown_session: 404,
+      challenge_not_found: 404,
+      resource_not_found: 404,
+      session_revoked: 403,
+      session_expired: 403,
+      session_not_yet_valid: 403,
+      signer_mismatch: 403,
+      nonce_reused: 403,
+      challenge_expired: 403,
+      deadline_expired: 403,
+      deadline_after_challenge: 403,
+      delegation_hash_mismatch: 403,
+      nonce_mismatch: 403,
+      action_mismatch: 403,
+      resource_mismatch: 403,
+      resource_not_bound_to_session: 403,
+    };
+    const status = map[reason] || (String(reason || '').startsWith('verification_error') ? 403 : 400);
+    return {
+      status,
+      error: status === 404 ? 'not_found' : (status === 403 ? 'forbidden' : 'validation_error'),
+      reason,
+    };
+  }
+
+  function proveKeyFromRequest(req, delegationHash, { action = null, resource = null } = {}) {
+    const hash = delegationHash || req.params?.delegation_hash || req.body?.delegation_hash;
+    const session = sessionStore.get(hash);
+    if (!session) {
+      return { ok: false, reason: 'unknown_session' };
+    }
+    const challengeId = req.body?.challenge_id || req.body?.challengeId || req.headers['x-xfuel-session-challenge'];
+    const live = sessionActStore.getLive(challengeId, {
+      expectedDelegationHash: hash,
+    });
+    if (!live.ok) return { ok: false, reason: live.reason };
+    return acceptSessionAct({
+      session,
+      revoked: sessionStore.isRevoked(hash),
+      challenge: live.challenge,
+      proof: {
+        action: action || req.body?.action,
+        resource: resource || req.body?.resource,
+        signature: req.body?.signature || req.body?.sig,
+        typed_data: req.body?.typed_data || req.body?.typedData,
+        message: req.body?.message,
+        domain: req.body?.domain,
+        types: req.body?.types,
+        nonce: req.body?.nonce,
+        deadline: req.body?.deadline,
+        delegation_hash: hash,
+      },
+      delegationHash: hash,
+      verifyingContract: config.sessionDelegation?.verifyingContract,
+      issuerUri: sessionIssuerUri(req),
+      store: sessionActStore,
+    });
+  }
+
+  function issueChildHandoff(req, parent, session) {
+    const parentJws = parent.issuerSignature?.jws || parent.issuer_signature?.jws || null;
+    const baseUrl = sessionIssuerUri(req);
+    const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
+    const { childTask, receipt } = issueSessionHandoffReceipt(parent, session, {
+      baseUrl,
+      signingSecret: config.receipts?.signingSecret,
+      coSignerSecret: config.receipts?.coSignerSecret,
+      reqHost,
+    });
+    const aiListener = getAIListener();
+    aiListener.activeTasks.set(childTask.taskId, childTask);
+    if (parentJws && parent.issuerSignature?.jws && parent.issuerSignature.jws !== parentJws) {
+      parent.issuerSignature = { ...parent.issuerSignature, jws: parentJws };
+    }
+    return { childTask, receipt, parentJws };
+  }
+
+  function executeReadPrivate(req, accepted) {
+    const resource = accepted.resource;
+    const aiListener = getAIListener();
+    const taskId = normalizeTaskIdForLookup(resource);
+    const task = _findTask(aiListener, taskId) || _findTask(aiListener, resource);
+    if (task) {
+      const receipt = buildReceipt(task, {
+        baseUrl: sessionIssuerUri(req),
+        signingSecret: config.receipts?.signingSecret,
+        coSignerSecret: config.receipts?.coSignerSecret,
+        reqHost: typeof req?.get === 'function' ? req.get('host') : null,
+        persistSignature: true,
+      });
+      const claims = decodeReceiptClaims(receipt);
+      const view = mergeReceiptView(receipt);
+      if (!receiptBindsSession(claims || view, accepted.session)) {
+        return {
+          status: 403,
+          body: {
+            error: 'forbidden',
+            reason: 'resource_not_bound_to_session',
+            message: 'Receipt is not bound to this session',
+          },
+        };
+      }
+      return {
+        status: 200,
+        body: {
+          action: SESSION_ACT_ACTIONS.READ_PRIVATE,
+          resource,
+          private: {
+            session: view.session || claims?.session || null,
+            caller_binding: view.caller_binding || claims?.caller_binding || null,
+            payment: view.payment || null,
+            output: view.output || null,
+            agent_pubkey: view.agent_pubkey || claims?.agent_pubkey || null,
+            delegation_hash: view.delegation_hash || claims?.delegation_hash || null,
+            session_expiry: view.session_expiry || claims?.session_expiry || null,
+            parent_receipt_id: view.parent_receipt_id || claims?.parent_receipt_id || null,
+          },
+          proof: accepted.proof,
+        },
+      };
+    }
+
+    const identity = typeof agentRegistry?.getByWallet === 'function'
+      ? agentRegistry.getByWallet(accepted.agent_pubkey)
+      : null;
+    const wantsBook = resource === 'book'
+      || resource === 'slice'
+      || (identity && String(resource) === String(identity.agent_id));
+    if (identity && wantsBook) {
+      const entries = usageSettled.listByAgent(identity.agent_id, { limit: 20 });
+      const spent = typeof usageSettled.sumCollectedByAgent === 'function'
+        ? usageSettled.sumCollectedByAgent(identity.agent_id)
+        : 0n;
+      return {
+        status: 200,
+        body: {
+          action: SESSION_ACT_ACTIONS.READ_PRIVATE,
+          resource,
+          book: packBook(entries, identity.agent_id, 20, {
+            identity,
+            spent,
+            session: identity.session || null,
+          }),
+          proof: accepted.proof,
+        },
+      };
+    }
+
+    return {
+      status: 404,
+      body: {
+        error: 'not_found',
+        reason: 'resource_not_found',
+        message: 'No receipt or book slice for this SessionAct resource',
+      },
+    };
+  }
+
+  function executeSessionAct(req, accepted) {
+    const action = accepted.action;
+    if (action === SESSION_ACT_ACTIONS.HANDOFF) {
+      const taskId = normalizeTaskIdForLookup(accepted.resource);
+      const aiListener = getAIListener();
+      const parent = _findTask(aiListener, taskId) || _findTask(aiListener, accepted.resource);
+      if (!parent) {
+        return {
+          status: 404,
+          body: {
+            error: 'not_found',
+            reason: 'resource_not_found',
+            message: `Task ${accepted.resource} not found`,
+          },
+        };
+      }
+      if (parent.kind === 'session_handoff' || parent.meta?.kind === 'session_handoff') {
+        return {
+          status: 400,
+          body: {
+            error: 'validation_error',
+            message: 'Cannot handoff a child session receipt; assign from the genesis receipt',
+          },
+        };
+      }
+      const { childTask, receipt } = issueChildHandoff(req, parent, accepted.session);
+      logger.info({
+        reqId: req.id,
+        parent: parent.taskId,
+        child: childTask.taskId,
+        delegation: accepted.delegation_hash,
+      }, 'Prove-key session handoff child receipt issued');
+      return {
+        status: 201,
+        body: {
+          status: 'session_handoff',
+          action: SESSION_ACT_ACTIONS.HANDOFF,
+          parent_receipt_id: parent.taskId,
+          task_id: childTask.taskId,
+          receipt,
+          proof: accepted.proof,
+        },
+      };
+    }
+
+    if (action === SESSION_ACT_ACTIONS.READ_PRIVATE) {
+      return executeReadPrivate(req, accepted);
+    }
+
+    if (action === SESSION_ACT_ACTIONS.REDEEM) {
+      // Collect/book redeem is not wired to session-delegation agent_pubkey in v1.
+      // Prove-key verify has already succeeded (nonce consumed) before this stub.
+      return {
+        status: 501,
+        body: {
+          error: 'not_implemented',
+          action: SESSION_ACT_ACTIONS.REDEEM,
+          reason: 'not_implemented',
+          verified: true,
+          agent_key_type: AGENT_KEY_TYPE_SECP256K1,
+          agent_pubkey: accepted.agent_pubkey,
+          delegation_hash: accepted.delegation_hash,
+          resource: accepted.resource,
+          message: 'SessionAct redeem is not implemented in v1; collect stays GET|POST /v1/agents/:agent_id/book',
+          proof: accepted.proof,
+        },
+      };
+    }
+
+    return {
+      status: 400,
+      body: {
+        error: 'validation_error',
+        reason: 'unknown_action',
+        message: `Unknown SessionAct action; v1 supports ${SESSION_ACT_ACTION_LIST.join(', ')}`,
+      },
+    };
+  }
 
   /**
    * Private Spend default for possession sessions. Registered agents get
@@ -2205,6 +2465,8 @@ export function createApp() {
   // ═══════════════════════════════════════════════════════════════════════
   // POST /receipt/:taskId/session/handoff — late assign (child receipt)
   // Genesis JWS is never re-signed. Child references parent_receipt_id.
+  // Prove-key (challenge_id + SessionAct) is the privileged path; AuthorizeSession
+  // bind remains for locked session-delegation v1 late-assign.
   // ═══════════════════════════════════════════════════════════════════════
   app.post('/receipt/:taskId/session/handoff', rateLimit, (req, res) => {
     try {
@@ -2221,7 +2483,28 @@ export function createApp() {
           message: 'Cannot handoff a child session receipt; assign from the genesis receipt',
         });
       }
-      const parentJws = parent.issuerSignature?.jws || parent.issuer_signature?.jws || null;
+
+      const challengeId = req.body?.challenge_id || req.body?.challengeId;
+      if (challengeId && (req.body?.signature || req.body?.sig)) {
+        const hash = req.body?.delegation_hash
+          || req.params?.delegation_hash
+          || sessionActStore.peek(challengeId)?.delegation_hash;
+        const accepted = proveKeyFromRequest(req, hash, {
+          action: SESSION_ACT_ACTIONS.HANDOFF,
+          resource: parent.taskId,
+        });
+        if (!accepted.ok) {
+          const err = sessionActHttpError(accepted.reason);
+          return res.status(err.status).json({
+            error: err.error,
+            reason: accepted.reason,
+            message: 'SessionAct prove-key failed for handoff',
+          });
+        }
+        const executed = executeSessionAct(req, { ...accepted, action: SESSION_ACT_ACTIONS.HANDOFF, resource: parent.taskId });
+        return res.status(executed.status).json(executed.body);
+      }
+
       const bind = bindSessionFromRequest(req, {
         expectedPayer: parent.meta?.payerWallet || parent.meta?.session?.payer_wallet || null,
         issuerUri: sessionIssuerUri(req),
@@ -2232,21 +2515,10 @@ export function createApp() {
         return res.status(400).json({
           error: 'session_delegation_invalid',
           reason: bind.error?.reason || 'missing_delegation_proof',
-          message: 'Child handoff requires a valid AuthorizeSession proof',
+          message: 'Child handoff requires a valid AuthorizeSession proof or SessionAct prove-key',
         });
       }
-      const baseUrl = sessionIssuerUri(req);
-      const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-      const { childTask, receipt } = issueSessionHandoffReceipt(parent, bind.session, {
-        baseUrl,
-        signingSecret: config.receipts?.signingSecret,
-        coSignerSecret: config.receipts?.coSignerSecret,
-        reqHost,
-      });
-      aiListener.activeTasks.set(childTask.taskId, childTask);
-      if (parentJws && parent.issuerSignature?.jws && parent.issuerSignature.jws !== parentJws) {
-        parent.issuerSignature = { ...parent.issuerSignature, jws: parentJws };
-      }
+      const { childTask, receipt } = issueChildHandoff(req, parent, bind.session);
       logger.info({
         reqId: req.id,
         parent: parent.taskId,
@@ -2269,6 +2541,131 @@ export function createApp() {
     const hash = req.params.delegation_hash;
     const body = sessionStore.status(hash);
     return res.status(body.found ? 200 : 404).json(body);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // POST /v1/sessions/:delegation_hash/challenge — one-shot prove-key nonce
+  // POST /v1/sessions/:delegation_hash/act — SessionAct then execute
+  // ═══════════════════════════════════════════════════════════════════════
+  app.post('/v1/sessions/:delegation_hash/challenge', rateLimit, (req, res) => {
+    try {
+      const hash = req.params.delegation_hash;
+      const session = sessionStore.get(hash);
+      if (!session) {
+        return res.status(404).json({
+          error: 'not_found',
+          reason: 'unknown_session',
+          message: 'Session is unknown; bind AuthorizeSession at settle first',
+        });
+      }
+      if (sessionStore.isRevoked(hash)) {
+        return res.status(403).json({
+          error: 'forbidden',
+          reason: 'session_revoked',
+          message: 'Session is revoked',
+        });
+      }
+      const now = Math.floor(Date.now() / 1000);
+      if (session.valid_until != null && now > Number(session.valid_until)) {
+        return res.status(403).json({
+          error: 'forbidden',
+          reason: 'session_expired',
+          message: 'Session is expired',
+        });
+      }
+      if (!session.agent_pubkey || !session.delegation_hash) {
+        return res.status(404).json({
+          error: 'not_found',
+          reason: 'session_not_bound',
+          message: 'Session JWS does not bind agent_pubkey + delegation_hash',
+        });
+      }
+      const hint = req.body?.resource || req.query?.resource || null;
+      const challenge = sessionActStore.issue(session.delegation_hash, {
+        resource: hint,
+        resources: req.body?.resources,
+      });
+      const domain = sessionEip712Domain(sessionDomainOpts(req));
+      const typed = hint
+        ? (() => {
+          try {
+            return buildSessionActTypedData({
+              delegationHash: session.delegation_hash,
+              nonce: challenge.nonce,
+              action: req.body?.action || SESSION_ACT_ACTIONS.HANDOFF,
+              resource: hint,
+              deadline: challenge.expires_at,
+              domain: sessionDomainOpts(req),
+            });
+          } catch {
+            return null;
+          }
+        })()
+        : {
+          domain,
+          types: SESSION_ACT_TYPES,
+          primaryType: SESSION_ACT_PRIMARY,
+          message: {
+            delegationHash: session.delegation_hash,
+            nonce: challenge.nonce,
+            action: '',
+            resource: '',
+            deadline: String(challenge.expires_at),
+          },
+        };
+      return res.status(200).json({
+        challenge_id: challenge.challenge_id,
+        nonce: challenge.nonce,
+        expires_at: challenge.expires_at,
+        resources: challenge.resources,
+        agent_key_type: AGENT_KEY_TYPE_SECP256K1,
+        chain_id: SESSION_CHAIN_ID,
+        types: SESSION_ACT_TYPES,
+        primaryType: SESSION_ACT_PRIMARY,
+        domain,
+        typed_data: typed,
+      });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /v1/sessions/:delegation_hash/challenge error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  app.post('/v1/sessions/:delegation_hash/act', rateLimit, (req, res) => {
+    try {
+      const hash = req.params.delegation_hash;
+      const action = req.body?.action;
+      if (action && !isKnownSessionAct(action) && !(req.body?.signature || req.body?.sig)) {
+        return res.status(400).json({
+          error: 'validation_error',
+          reason: 'unknown_action',
+          message: `Unknown SessionAct action; v1 supports ${SESSION_ACT_ACTION_LIST.join(', ')}`,
+        });
+      }
+      const accepted = proveKeyFromRequest(req, hash);
+      if (!accepted.ok) {
+        const err = sessionActHttpError(accepted.reason);
+        return res.status(err.status).json({
+          error: err.error,
+          reason: accepted.reason,
+          message: 'SessionAct prove-key failed',
+        });
+      }
+      if (!isKnownSessionAct(accepted.action)) {
+        return res.status(400).json({
+          error: 'validation_error',
+          reason: 'unknown_action',
+          verified: true,
+          message: `Unknown SessionAct action; v1 supports ${SESSION_ACT_ACTION_LIST.join(', ')}`,
+          proof: accepted.proof,
+        });
+      }
+      const executed = executeSessionAct(req, accepted);
+      return res.status(executed.status).json(executed.body);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /v1/sessions/:delegation_hash/act error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
   });
 
   app.post('/v1/sessions/revoke', rateLimit, (req, res) => {
@@ -3062,7 +3459,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/:delegation_hash/challenge, POST /v1/sessions/:delegation_hash/act, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 

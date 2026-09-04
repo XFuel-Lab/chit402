@@ -58,6 +58,9 @@ const CHIT_LLMS = `# Chit — the x402 receipt that doesn't leave you
 - POST /v1/chat/completions : paid (USDC on Base or Solana). Unauth GET or POST {} → 402.
 - POST /a2a-message       : same paid door as /v1 (A2A card URL). Unauth POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).
+- GET  /v1/sessions/:delegation_hash : session status (active / expired / revoked).
+- POST /v1/sessions/:delegation_hash/challenge : one-shot prove-key nonce (TTL 2–5 min).
+- POST /v1/sessions/:delegation_hash/act : SessionAct (handoff | read_private | redeem). After session checks, the agent signs EIP-712 SessionAct with the bound agent_pubkey (secp256k1, Base). Challenge every privileged act.
 
 ## SDK
 

@@ -369,5 +369,21 @@ Agent verify steps:
    (`session.proof.signature` + typed data, or `session.proof.lookup_uri`)
    lets you recover the payer without trusting Chit as sole attestor.
 
+Privileged acts (handoff, read_private, redeem) require a fresh prove-key
+after those session checks:
+
+1. `POST /v1/sessions/:delegation_hash/challenge` → `{ challenge_id, nonce,
+   expires_at, resources[] }` (TTL 2–5 min). Published proof includes the
+   full EIP-712 `types` map.
+2. Agent signs EIP-712 `SessionAct` (same Chit402 / Base 8453 domain as
+   AuthorizeSession): `delegationHash`, `nonce`, `action`, `resource`
+   (receipt/task id), `deadline`. secp256k1 only.
+3. `POST /v1/sessions/:delegation_hash/act` with
+   `{ action, resource, signature, challenge_id }`.
+4. Gateway verifies: session JWS binds `agent_pubkey` + `delegation_hash`;
+   session is active (not expired/revoked); SessionAct recovers to
+   `agent_pubkey`; nonce is unused (one-shot); then execute. Challenge
+   every act — no capability-token shortcut in v1.
+
 `max_cumulative_spend` is atomic USDC (`decimals: 6`, `unit: atomic_usdc`) —
 same scale as `payment.gross_amount`.
