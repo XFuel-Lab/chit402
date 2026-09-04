@@ -237,7 +237,7 @@ async function meterV1Request(req, res, {
     const decision = await runX402Handshake(req, { taskId, body, baseUrl, resource });
 
     if (decision.kind === 'settled') {
-      return { halted: false, payment: { ref: decision.paymentRef, amount: decision.settledAmount } };
+      return { halted: false, payment: { ref: decision.paymentRef, amount: decision.settledAmount, payer: decision.payerWallet } };
     }
 
     if (decision.kind === 'challenge') {
@@ -777,6 +777,7 @@ function registerTaskAndProve({
       source: 'openai-gateway',
       provider,
       apiKeyHash: apiKeyHash || null,
+      payerWallet: payment?.payer || null,
       privateSpend: !!privateSpend,
       privacyMode: privateSpend ? 'vendor_blind' : null,
       ...(failureReason ? { failureReason } : {}),

@@ -5,7 +5,7 @@ import { resolveModelCommitment } from './model-commitment.js';
 import { selectTier } from './tier-policy.js';
 import { verifyAttestation, attestationNonce } from './tee-attestation.js';
 import { buildSpotCheckRecord } from './spotcheck.js';
-import { signWithIssuerKey, verifyWithJwk, getIssuerPublicKeyJwk } from './issuer-key.js';
+import { signWithIssuerKey, signAsCompactJws, verifyWithJwk, verifyCompactJws, verifyCompactJwsWithJwks, getIssuerPublicKeyJwk } from './issuer-key.js';
 
 /**
  * Public verifiable-receipt builder + renderer.
@@ -347,6 +347,13 @@ function outputHashOf(task) {
  * Payload version 2 adds `route.provider` so the attested compute source is tamper-evident
  * (required once multi-provider routing is live). Older verifiers that omit the field will
  * not validate new signatures — see docs/RECEIPT_SCHEMA_V2.md.
+ *
+ * Payload version 4 adds `caller_binding` for payer/agent entitlement verification:
+ *   - payer_wallet: the wallet that settled via x402 (from payment header)
+ *   - agent_pubkey: the registered agent's public key (from agent registry)
+ *   - api_key_hash: SHA-256 of the API key used (never raw key)
+ * When present, verification proves entitlement binding — not only that inference ran,
+ * but who is entitled to the receipt / settlement.
  */
 export function canonicalSignedPayload(receipt) {
   return JSON.stringify([
@@ -365,6 +372,9 @@ export function canonicalSignedPayload(receipt) {
     receipt.route?.provider ?? null,
     receipt.output?.hash ?? null,
     receipt.binding?.expected_commitment ?? null,
+    receipt.caller_binding?.payer_wallet ?? null,
+    receipt.caller_binding?.agent_pubkey ?? null,
+    receipt.caller_binding?.api_key_hash ?? null,
   ]);
 }
 
@@ -378,7 +388,7 @@ function signReceiptPayload(receipt, secret, { role = 'primary' } = {}) {
   const value = crypto.createHmac('sha256', secret).update(canonicalSignedPayload(receipt)).digest('hex');
   return {
     alg: 'HMAC-SHA256',
-    payload_version: 3,
+    payload_version: 4,
     value: `sha256=${value}`,
     role,
     signed_fields: [
@@ -387,6 +397,7 @@ function signReceiptPayload(receipt, secret, { role = 'primary' } = {}) {
       'payment.platform_fee', 'payment.platform_fee_bps', 'provider_cogs.actual',
       'route.model', 'route.model_commitment.commitment', 'route.provider',
       'output.hash', 'binding.expected_commitment',
+      'caller_binding.payer_wallet', 'caller_binding.agent_pubkey', 'caller_binding.api_key_hash',
     ],
   };
 }
@@ -394,16 +405,25 @@ function signReceiptPayload(receipt, secret, { role = 'primary' } = {}) {
 /**
  * ECDSA (ES256) signature over the canonical signed payload.
  * Unlike HMAC, this can be verified with just the public key (from JWKS).
+ *
+ * Returns both:
+ *   - `value`: raw signature (base64url, for backward compatibility)
+ *   - `jws`: compact JWS token (header.payload.signature) — the raw preimage
+ *     an agent can independently verify against JWKS without reconstructing
+ *     the canonical payload. This is the primary verification path for agents.
+ *
  * @param {object} receipt
- * @returns {{ alg: string, payload_version: number, value: string, kid: string, jwks_uri: string, signed_fields: string[] }}
+ * @returns {{ alg: string, payload_version: number, value: string, jws: string, kid: string, jwks_uri: string, signed_fields: string[] }}
  */
 function signReceiptEcdsa(receipt) {
   const payload = canonicalSignedPayload(receipt);
   const { value, kid } = signWithIssuerKey(payload);
+  const { jws } = signAsCompactJws(payload);
   return {
     alg: 'ES256',
-    payload_version: 3,
+    payload_version: 4,
     value,
+    jws,
     kid,
     jwks_uri: '/.well-known/jwks.json',
     signed_fields: [
@@ -412,6 +432,7 @@ function signReceiptEcdsa(receipt) {
       'payment.platform_fee', 'payment.platform_fee_bps', 'provider_cogs.actual',
       'route.model', 'route.model_commitment.commitment', 'route.provider',
       'output.hash', 'binding.expected_commitment',
+      'caller_binding.payer_wallet', 'caller_binding.agent_pubkey', 'caller_binding.api_key_hash',
     ],
   };
 }
@@ -621,13 +642,15 @@ export function usageOf(task) {
 /**
  * Build the public receipt JSON for a task.
  * @param {object} task     Listener task (from aiListener.activeTasks).
- * @param {object} [opts]   { baseUrl, signingSecret, coSignerSecret, reqHost } — signingSecret enables
- *                          the Tier-1 signed receipt (HMAC over the payment-bound tuple).
+ * @param {object} [opts]   { baseUrl, signingSecret, coSignerSecret, reqHost, apiKeyHash, agentId, agentPubkey, payerWallet }
+ *                          signingSecret enables the Tier-1 signed receipt (HMAC over the payment-bound tuple).
  *                          coSignerSecret adds a second attestor (replaceable signer) so
  *                          treasuries can verify even if XFuel disappears.
  *                          reqHost enables host-aware URL prefix selection (chit- on api.chit402.com).
+ *                          apiKeyHash, agentId, agentPubkey, payerWallet enable caller binding for
+ *                          entitlement verification (who is entitled to this receipt).
  */
-export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null, reqHost = null } = {}) {
+export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null, reqHost = null, apiKeyHash = null, agentId = null, agentPubkey = null, payerWallet = null } = {}) {
   const outcome = proofOutcomeOf(task);
   const feeBps = task.feeBps || 50;
   // Buyer default is USDC (ADR 0002). Legacy tfuel rail only when explicitly set.
@@ -719,6 +742,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     // Receipt handoff: wallet-move delegation (additive; null when no handoff)
     handoff: handoffOf(task),
     output: output ? { hash: output.value, kind: output.kind } : null,
+    // Caller/payer binding for entitlement verification (who paid / who is entitled)
+    caller_binding: callerBindingOf(task, { apiKeyHash, agentId, agentPubkey, payerWallet }),
     links: base
       ? {
           self: `${base}/receipt/${displayTaskId}`,
@@ -739,6 +764,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   
   // Issuer ECDSA signature (public-key verifiable, no shared secret needed).
   // Always added so any agent can verify against the JWKS without HMAC secrets.
+  // Includes `jws`: compact JWS token (header.payload.signature) for independent verification.
   receipt.issuer_signature = signReceiptEcdsa(receipt);
   
   return receipt;
@@ -1431,6 +1457,95 @@ export function handoffOf(task) {
   return result;
 }
 
+/**
+ * Build caller/payer binding block for entitlement verification.
+ *
+ * When present and signed, verification proves WHO is entitled to this receipt:
+ *   - payer_wallet: the wallet that settled via x402 (from payment header / intent)
+ *   - agent_pubkey: the registered agent's public key (from agent registry)
+ *   - agent_id: the numeric agent ID (from agent registry)
+ *   - api_key_hash: SHA-256 of the API key used (never raw key)
+ *
+ * These fields are included in the canonical signed payload, so any tampering
+ * (e.g., substituting a different payer_wallet) invalidates the signature.
+ *
+ * @param {object} task
+ * @param {object} [opts] - { apiKeyHash, agentId, agentPubkey }
+ * @returns {object|null} caller_binding block or null if no binding data
+ */
+export function callerBindingOf(task, opts = {}) {
+  const payerWallet =
+    task?.meta?.payerWallet
+    || task?.meta?.payer
+    || task?.intent?.sender
+    || task?.intent?.payer
+    || opts.payerWallet
+    || null;
+
+  const agentPubkey =
+    task?.meta?.agentPubkey
+    || task?.meta?.agent_pubkey
+    || opts.agentPubkey
+    || null;
+
+  const agentId =
+    task?.meta?.agentId
+    || task?.meta?.agent_id
+    || opts.agentId
+    || null;
+
+  const apiKeyHash =
+    task?.meta?.apiKeyHash
+    || task?.meta?.api_key_hash
+    || opts.apiKeyHash
+    || null;
+
+  if (!payerWallet && !agentPubkey && !agentId && !apiKeyHash) {
+    return null;
+  }
+
+  return {
+    payer_wallet: payerWallet,
+    agent_pubkey: agentPubkey,
+    agent_id: agentId != null ? Number(agentId) : null,
+    api_key_hash: apiKeyHash,
+  };
+}
+
+/**
+ * Verify a receipt's compact JWS token against a JWK (public key).
+ * This is the primary agent verification path — decode the JWS and verify.
+ *
+ * @param {object} receipt - Receipt JSON with issuer_signature.jws
+ * @param {object} jwk - JWK public key { kty: 'EC', crv: 'P-256', x, y }
+ * @returns {{ checked: boolean, valid: boolean, payload?: string, kid?: string, reason?: string }}
+ */
+export function verifyReceiptJws(receipt, jwk) {
+  const sig = receipt?.issuer_signature;
+  if (!sig || !sig.jws) {
+    return { checked: false, valid: false, reason: 'no_jws' };
+  }
+  const result = verifyCompactJws(sig.jws, jwk);
+  return { checked: true, ...result };
+}
+
+/**
+ * Verify a receipt's compact JWS token against a JWKS (key set).
+ * Finds the matching key by kid from the JWS header and verifies.
+ *
+ * @param {object} receipt - Receipt JSON with issuer_signature.jws
+ * @param {{ keys: object[] }} jwks - JWKS with keys array
+ * @returns {{ checked: boolean, valid: boolean, payload?: string, kid?: string, reason?: string }}
+ */
+export function verifyReceiptJwsWithJwks(receipt, jwks) {
+  const sig = receipt?.issuer_signature;
+  if (!sig || !sig.jws) {
+    return { checked: false, valid: false, reason: 'no_jws' };
+  }
+  const result = verifyCompactJwsWithJwks(sig.jws, jwks);
+  return { checked: true, ...result };
+}
+
 export default {
   buildReceipt,
   buildAuditorExport,
@@ -1449,6 +1564,9 @@ export default {
   verifyReceiptMultiKey,
   verifyReceiptEcdsa,
   verifyReceiptEcdsaWithJwks,
+  verifyReceiptJws,
+  verifyReceiptJwsWithJwks,
+  callerBindingOf,
   canonicalSignedPayload,
   canonicalOriginHandoffMessage,
   canonicalDestAckMessage,

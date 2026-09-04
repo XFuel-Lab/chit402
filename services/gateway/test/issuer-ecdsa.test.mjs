@@ -16,12 +16,15 @@ process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret';
 process.env.RECEIPT_CO_SIGNER_SECRET = 'test-co-signer-secret';
 
-const { _resetIssuerKey, getJwks, initIssuerKey, signWithIssuerKey, verifyWithJwk } = await import('../src/issuer-key.js');
+const { _resetIssuerKey, getJwks, initIssuerKey, signWithIssuerKey, signAsCompactJws, verifyWithJwk, verifyCompactJws, verifyCompactJwsWithJwks } = await import('../src/issuer-key.js');
 const {
   buildReceipt,
   verifyReceiptHmac,
   verifyReceiptEcdsa,
   verifyReceiptEcdsaWithJwks,
+  verifyReceiptJws,
+  verifyReceiptJwsWithJwks,
+  callerBindingOf,
   canonicalSignedPayload,
 } = await import('../src/receipt.js');
 const { createApp } = await import('../src/server.js');
@@ -133,8 +136,9 @@ describe('Receipt ECDSA Signing', () => {
 
     assert.ok(receipt.issuer_signature, 'receipt should have issuer_signature');
     assert.equal(receipt.issuer_signature.alg, 'ES256');
-    assert.equal(receipt.issuer_signature.payload_version, 3);
+    assert.equal(receipt.issuer_signature.payload_version, 4);
     assert.ok(receipt.issuer_signature.value, 'should have signature value');
+    assert.ok(receipt.issuer_signature.jws, 'should have compact JWS');
     assert.ok(receipt.issuer_signature.kid, 'should have kid');
     assert.equal(receipt.issuer_signature.jwks_uri, '/.well-known/jwks.json');
     assert.ok(Array.isArray(receipt.issuer_signature.signed_fields));
@@ -419,5 +423,327 @@ describe('Backward Compatibility', () => {
     const { publicKeyJwk: jwk } = initIssuerKey();
     const result = verifyReceiptEcdsa(receipt, jwk);
     assert.equal(result.valid, true);
+  });
+});
+
+describe('Compact JWS (header.payload.signature)', () => {
+  test('signAsCompactJws produces a valid compact JWS token', () => {
+    const payload = 'test payload';
+    const { jws, kid } = signAsCompactJws(payload);
+
+    assert.ok(jws, 'should produce a JWS');
+    assert.ok(kid, 'should include kid');
+
+    const parts = jws.split('.');
+    assert.equal(parts.length, 3, 'JWS should have three parts (header.payload.signature)');
+
+    const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    assert.equal(header.alg, 'ES256', 'header should specify ES256');
+    assert.equal(header.typ, 'JWT', 'header should specify JWT type');
+    assert.equal(header.kid, kid, 'header kid should match returned kid');
+  });
+
+  test('verifyCompactJws validates correct JWS', () => {
+    const payload = 'test payload';
+    const { jws } = signAsCompactJws(payload);
+    const { publicKeyJwk: jwk } = initIssuerKey();
+
+    const result = verifyCompactJws(jws, jwk);
+    assert.equal(result.valid, true);
+    assert.equal(result.payload, payload);
+    assert.ok(result.header);
+    assert.equal(result.header.alg, 'ES256');
+  });
+
+  test('verifyCompactJws rejects tampered payload', () => {
+    const { jws } = signAsCompactJws('original payload');
+    const { publicKeyJwk: jwk } = initIssuerKey();
+
+    const parts = jws.split('.');
+    const tamperedPayload = Buffer.from('tampered payload', 'utf8').toString('base64url');
+    const tamperedJws = `${parts[0]}.${tamperedPayload}.${parts[2]}`;
+
+    const result = verifyCompactJws(tamperedJws, jwk);
+    assert.equal(result.valid, false);
+    assert.equal(result.reason, 'signature_invalid');
+  });
+
+  test('verifyCompactJwsWithJwks finds matching key and verifies', () => {
+    const payload = 'test payload';
+    const { jws } = signAsCompactJws(payload);
+    const jwks = getJwks();
+
+    const result = verifyCompactJwsWithJwks(jws, jwks);
+    assert.equal(result.valid, true);
+    assert.equal(result.payload, payload);
+    assert.ok(result.kid);
+  });
+
+  test('receipt issuer_signature includes compact JWS', () => {
+    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+
+    assert.ok(receipt.issuer_signature.jws, 'issuer_signature should include jws');
+
+    const parts = receipt.issuer_signature.jws.split('.');
+    assert.equal(parts.length, 3, 'jws should be compact format');
+
+    const decodedPayload = Buffer.from(parts[1], 'base64url').toString('utf8');
+    const expectedPayload = canonicalSignedPayload(receipt);
+    assert.equal(decodedPayload, expectedPayload, 'JWS payload should be canonical signed payload');
+  });
+
+  test('verifyReceiptJws validates receipt JWS', () => {
+    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+    const { publicKeyJwk: jwk } = initIssuerKey();
+
+    const result = verifyReceiptJws(receipt, jwk);
+    assert.equal(result.checked, true);
+    assert.equal(result.valid, true);
+    assert.ok(result.payload);
+  });
+
+  test('verifyReceiptJwsWithJwks validates receipt JWS', () => {
+    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+    const jwks = getJwks();
+
+    const result = verifyReceiptJwsWithJwks(receipt, jwks);
+    assert.equal(result.checked, true);
+    assert.equal(result.valid, true);
+    assert.ok(result.payload);
+    assert.ok(result.kid);
+  });
+});
+
+describe('Caller/Payer Binding', () => {
+  test('callerBindingOf extracts binding from task meta', () => {
+    const task = {
+      meta: {
+        payerWallet: '0x1234567890123456789012345678901234567890',
+        agentPubkey: '0xabcdef1234567890abcdef1234567890abcdef12',
+        agentId: 42,
+        apiKeyHash: 'sha256-hash-of-api-key',
+      },
+    };
+
+    const binding = callerBindingOf(task);
+
+    assert.ok(binding, 'should return binding');
+    assert.equal(binding.payer_wallet, '0x1234567890123456789012345678901234567890');
+    assert.equal(binding.agent_pubkey, '0xabcdef1234567890abcdef1234567890abcdef12');
+    assert.equal(binding.agent_id, 42);
+    assert.equal(binding.api_key_hash, 'sha256-hash-of-api-key');
+  });
+
+  test('callerBindingOf returns null for task without binding data', () => {
+    const task = { meta: { provider: 'test' } };
+    const binding = callerBindingOf(task);
+    assert.equal(binding, null);
+  });
+
+  test('callerBindingOf accepts opts for binding data', () => {
+    const task = { meta: {} };
+    const binding = callerBindingOf(task, {
+      payerWallet: '0xpayer',
+      agentPubkey: '0xagent',
+      agentId: 123,
+      apiKeyHash: 'hash123',
+    });
+
+    assert.ok(binding);
+    assert.equal(binding.payer_wallet, '0xpayer');
+    assert.equal(binding.agent_pubkey, '0xagent');
+    assert.equal(binding.agent_id, 123);
+    assert.equal(binding.api_key_hash, 'hash123');
+  });
+
+  test('buildReceipt includes caller_binding when data is present', () => {
+    const taskWithBinding = {
+      ...mockTask,
+      meta: {
+        ...mockTask.meta,
+        payerWallet: '0xPayerWallet123',
+        apiKeyHash: 'test-api-key-hash',
+      },
+    };
+
+    const receipt = buildReceipt(taskWithBinding, { baseUrl: 'https://api.test' });
+
+    assert.ok(receipt.caller_binding, 'receipt should have caller_binding');
+    assert.equal(receipt.caller_binding.payer_wallet, '0xPayerWallet123');
+    assert.equal(receipt.caller_binding.api_key_hash, 'test-api-key-hash');
+  });
+
+  test('caller_binding is included in signed payload', () => {
+    const taskWithBinding = {
+      ...mockTask,
+      meta: {
+        ...mockTask.meta,
+        payerWallet: '0xPayerWallet123',
+        apiKeyHash: 'test-api-key-hash',
+      },
+    };
+
+    const receipt = buildReceipt(taskWithBinding, { baseUrl: 'https://api.test' });
+    const payload = canonicalSignedPayload(receipt);
+    const parsedPayload = JSON.parse(payload);
+
+    assert.ok(parsedPayload.includes('0xPayerWallet123'), 'payload should include payer_wallet');
+    assert.ok(parsedPayload.includes('test-api-key-hash'), 'payload should include api_key_hash');
+  });
+
+  test('tampering with caller_binding invalidates signature', () => {
+    const taskWithBinding = {
+      ...mockTask,
+      meta: {
+        ...mockTask.meta,
+        payerWallet: '0xOriginalPayer',
+      },
+    };
+
+    const receipt = buildReceipt(taskWithBinding, { baseUrl: 'https://api.test' });
+    const { publicKeyJwk: jwk } = initIssuerKey();
+
+    // Verify original is valid
+    let result = verifyReceiptEcdsa(receipt, jwk);
+    assert.equal(result.valid, true, 'original should verify');
+
+    // Tamper with caller_binding
+    const tampered = {
+      ...receipt,
+      caller_binding: { ...receipt.caller_binding, payer_wallet: '0xAttackerWallet' },
+    };
+
+    result = verifyReceiptEcdsa(tampered, jwk);
+    assert.equal(result.valid, false, 'tampered payer_wallet should fail verification');
+  });
+
+  test('signed_fields includes caller_binding fields', () => {
+    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+
+    assert.ok(receipt.issuer_signature.signed_fields.includes('caller_binding.payer_wallet'));
+    assert.ok(receipt.issuer_signature.signed_fields.includes('caller_binding.agent_pubkey'));
+    assert.ok(receipt.issuer_signature.signed_fields.includes('caller_binding.api_key_hash'));
+  });
+});
+
+describe('JSON Suffix Content Negotiation', () => {
+  test('GET /receipt/:taskId.json returns JSON', async () => {
+    // Create a receipt first
+    const chatRes = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
+      body: JSON.stringify({
+        model: 'theta/qwen3',
+        messages: [{ role: 'user', content: 'test json suffix' }],
+        max_tokens: 1,
+      }),
+    });
+    const { xfuel } = await chatRes.json();
+    const taskId = xfuel.task_id;
+
+    // Fetch with .json suffix
+    const receiptRes = await fetch(`${base}/receipt/${taskId}.json`);
+    assert.equal(receiptRes.status, 200);
+
+    const contentType = receiptRes.headers.get('content-type');
+    assert.ok(contentType.includes('application/json'), 'should return JSON content type');
+
+    const receipt = await receiptRes.json();
+    assert.equal(receipt.task_id, taskId.replace('chit-', 'xfuel-').replace('xfuel-', 'xfuel-'));
+    assert.ok(receipt.issuer_signature, 'JSON response should have issuer_signature');
+    assert.ok(receipt.issuer_signature.jws, 'issuer_signature should have jws');
+  });
+
+  test('Accept: application/json returns JSON', async () => {
+    // Create a receipt first
+    const chatRes = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
+      body: JSON.stringify({
+        model: 'theta/qwen3',
+        messages: [{ role: 'user', content: 'test accept header' }],
+        max_tokens: 1,
+      }),
+    });
+    const { xfuel } = await chatRes.json();
+    const taskId = xfuel.task_id;
+
+    // Fetch with Accept header
+    const receiptRes = await fetch(`${base}/receipt/${taskId}`, {
+      headers: { 'Accept': 'application/json' },
+    });
+    assert.equal(receiptRes.status, 200);
+
+    const contentType = receiptRes.headers.get('content-type');
+    assert.ok(contentType.includes('application/json'), 'should return JSON content type');
+
+    const receipt = await receiptRes.json();
+    assert.ok(receipt.issuer_signature.jws, 'JSON response should have JWS');
+  });
+
+  test('default Accept returns HTML', async () => {
+    // Create a receipt first
+    const chatRes = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
+      body: JSON.stringify({
+        model: 'theta/qwen3',
+        messages: [{ role: 'user', content: 'test default html' }],
+        max_tokens: 1,
+      }),
+    });
+    const { xfuel } = await chatRes.json();
+    const taskId = xfuel.task_id;
+
+    // Fetch without Accept header
+    const receiptRes = await fetch(`${base}/receipt/${taskId}`);
+    assert.equal(receiptRes.status, 200);
+
+    const contentType = receiptRes.headers.get('content-type');
+    assert.ok(contentType.includes('text/html'), 'should return HTML content type');
+
+    const html = await receiptRes.text();
+    assert.ok(html.includes('<!doctype html>'), 'should be HTML document');
+    assert.ok(html.includes('Chit402'), 'should include Chit402 branding');
+  });
+});
+
+describe('Agent E2E JWS Verification Flow', () => {
+  test('agent can fetch JSON, extract JWS, verify against JWKS', async () => {
+    // Step 1: Make a request to get a task
+    const chatRes = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
+      body: JSON.stringify({
+        model: 'theta/qwen3',
+        messages: [{ role: 'user', content: 'agent verification test' }],
+        max_tokens: 1,
+      }),
+    });
+    const { xfuel } = await chatRes.json();
+    const taskId = xfuel.task_id;
+
+    // Step 2: Fetch the receipt JSON via Accept header
+    const receiptRes = await fetch(`${base}/receipt/${taskId}`, {
+      headers: { 'Accept': 'application/json' },
+    });
+    assert.equal(receiptRes.status, 200);
+    const receipt = await receiptRes.json();
+
+    // Step 3: Extract the JWS
+    const jws = receipt.issuer_signature.jws;
+    assert.ok(jws, 'receipt should have JWS');
+
+    // Step 4: Fetch the JWKS
+    const jwksRes = await fetch(`${base}/.well-known/jwks.json`);
+    const jwks = await jwksRes.json();
+
+    // Step 5: Verify the JWS
+    const verifyResult = verifyCompactJwsWithJwks(jws, jwks);
+    assert.equal(verifyResult.valid, true, 'JWS should verify against JWKS');
+
+    // Step 6: Decode the payload and verify it matches canonical payload
+    const expectedPayload = canonicalSignedPayload(receipt);
+    assert.equal(verifyResult.payload, expectedPayload, 'decoded payload should match canonical');
   });
 });

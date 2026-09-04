@@ -315,15 +315,28 @@ Either validates the receipt. If Chit disappears, the co-signer's key still work
 Every receipt also carries issuer_signature (ES256/ECDSA). Unlike HMAC, this can
 be verified with just the public key — no shared secret required.
 
-Verify steps:
+**Compact JWS (raw preimage)**: issuer_signature.jws is the complete compact
+JWS token (header.payload.signature) that an agent can independently verify
+against the JWKS. No need to reconstruct the canonical payload.
+
+**Caller binding**: When payer_wallet, agent_pubkey, or api_key_hash are known,
+they are included in caller_binding and signed. Tampering fails verification.
+
+Agent verification flow (recommended):
+1. GET /receipt/:taskId (Accept: application/json) → receipt JSON
+   - Or: GET /receipt/:taskId.json (or ?format=json)
+2. Extract issuer_signature.jws (compact JWS: header.payload.signature)
+3. GET /.well-known/jwks.json → { keys: [{ kty, crv, x, y, kid, alg, use }] }
+4. Verify JWS against JWKS with ES256 (any standard JWT library)
+5. Decode payload → canonical signed fields array (includes caller_binding)
+
+Legacy verification (raw signature):
 1. GET /receipt/:taskId?format=json → receipt with issuer_signature.value, .kid
-2. GET /.well-known/jwks.json → { keys: [{ kty, crv, x, y, kid, alg, use }] }
-3. Match receipt.issuer_signature.kid to JWKS key
+2. GET /.well-known/jwks.json
+3. Match issuer_signature.kid to JWKS key
 4. ES256 verify: canonicalPayload(receipt) against issuer_signature.value (base64url)
 
-The canonical payload is a JSON array of signed fields in a fixed order (same
-as HMAC). See canonicalSignedPayload in SDK or receipt.js.
-
+SDK: verifyReceiptJwsWithJwks(receipt, jwks) → { checked, valid, payload, kid }
 SDK: verifyReceiptEcdsaWithJwks(receipt, jwks) → { checked, valid, kid }
 
 ## MCP
@@ -910,6 +923,7 @@ export function createApp() {
       let paymentRail = config.x402?.defaultRail || 'usdc';
       let paymentRef = null;
       let settledAmount = null;
+      let payerWallet = null;
       let rollingMeta = null;
       let ceilingQuote = null;
       {
@@ -973,6 +987,7 @@ export function createApp() {
                   paymentRail = 'usdc';
                   paymentRef = hs.paymentRef;
                   settledAmount = hs.settledAmount;
+                  payerWallet = hs.payerWallet || null;
                 }
               } else {
                 if (decision.pending) markSettleFailed(payerId, hs.reason);
@@ -999,6 +1014,7 @@ export function createApp() {
               paymentRail = 'usdc';
               paymentRef = decision.paymentRef;
               settledAmount = decision.settledAmount || null;
+              payerWallet = decision.payerWallet || null;
             } else {
               if (decision.reason === 'gateway_not_configured') {
                 return res.status(503).json({ error: 'x402_unavailable', reason: decision.reason });
@@ -1161,6 +1177,8 @@ export function createApp() {
         providerCogs: null,
         // Buyer attribution (hash only) for Private Spend /stats/me
         apiKeyHash: apiKeyHashFromReq(req),
+        // Payer wallet from x402 settlement (for caller_binding entitlement proof)
+        payerWallet,
         privateSpend: !!config.privateSpend?.enabled || isPrivateSpendSession(req),
         privacyMode: (config.privateSpend?.enabled || isPrivateSpendSession(req)) ? 'vendor_blind' : null,
         // Multi-hop / A2A receipt lineage (Sprint 3)
@@ -1803,11 +1821,18 @@ export function createApp() {
   // ═══════════════════════════════════════════════════════════════════════
   // GET /receipt/:taskId — PUBLIC, no-auth verifiable receipt.
   //   • HTML by default (clean, shareable page for a browser / link unfurl)
-  //   • JSON via `?format=json` or `Accept: application/json` (for agents)
+  //   • JSON via `?format=json`, `.json` suffix, or `Accept: application/json` (for agents)
   //   • Auditor selective disclosure via `?format=auditor` (policy + totals; no prompts)
   // Rate-limited (per-IP) but intentionally NOT behind authenticate — the whole
   // point is that anyone can independently verify "paid + proven". It exposes no
   // secrets (no proof bytes, no raw output, no keys) — see src/receipt.js.
+  //
+  // Agent verification flow (design partner requirement):
+  //   1. GET /receipt/:taskId with Accept: application/json → receipt with issuer_signature.jws
+  //   2. GET /.well-known/jwks.json → { keys: [{ kty, crv, x, y, kid, alg, use }] }
+  //   3. Verify issuer_signature.jws (compact JWS: header.payload.signature) against JWKS
+  //   4. Decode JWS payload → canonical signed fields array (same fields as HMAC)
+  //   5. caller_binding (when present) proves payer wallet / agent entitlement binding
 
   // GET /receipt/by-tx?tx=<signature> — lookup by payment ref (Solana tx signature)
   // This enables receipt lookup when the caller has the tx but not the task ID.
@@ -1848,7 +1873,15 @@ export function createApp() {
 
   app.get('/receipt/:taskId', rateLimit, (req, res) => {
     try {
-      const { taskId: rawTaskId } = req.params;
+      let { taskId: rawTaskId } = req.params;
+
+      // Support .json suffix for content negotiation (e.g., /receipt/chit-abc.json)
+      // Strips the suffix and forces JSON response format.
+      const jsonSuffix = rawTaskId && rawTaskId.endsWith('.json');
+      if (jsonSuffix) {
+        rawTaskId = rawTaskId.slice(0, -5);
+      }
+
       const aiListener = getAIListener();
       // Normalize chit-<uuid> → xfuel-<uuid> for storage lookup (stored IDs use xfuel- prefix)
       const taskId = normalizeTaskIdForLookup(rawTaskId);
@@ -1861,7 +1894,8 @@ export function createApp() {
       }
       const fmt = String(req.query.format || '').toLowerCase();
       const wantsAuditor = fmt === 'auditor' || fmt === 'audit';
-      const wantsJson = wantsAuditor
+      const wantsJson = jsonSuffix
+        || wantsAuditor
         || fmt === 'json'
         || req.accepts(['html', 'json']) === 'json';
 

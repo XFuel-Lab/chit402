@@ -383,5 +383,6 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
     kind: 'settled',
     paymentRef: `${settledNetwork}:${txRef}`,
     settledAmount: String(boundAmount),
+    payerWallet: s.payer || v.payer || null,
   };
 }
