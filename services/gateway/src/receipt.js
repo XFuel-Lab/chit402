@@ -784,7 +784,6 @@ function sessionIdentity(claims) {
     claims?.target_agent ?? null,
     claims?.session_act?.signature ?? null,
     claims?.session_act?.nonce ?? null,
-    claims?.settlement?.kind ?? null,
   ]);
 }
 
