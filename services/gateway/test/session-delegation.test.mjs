@@ -237,6 +237,22 @@ describe('EIP-712 AuthorizeSession / RevokeSession', () => {
     assert.equal(replay.delegation_hash, accepted.session.delegation_hash);
     assert.equal(replay.payer_wallet, PAYER.address);
   });
+
+  test('proof.types round-trip through viem/ethers typed-data verify', async () => {
+    const { typed, signature } = await signAuthorize();
+    const accepted = acceptDelegationProof({ signature, typed_data: typed });
+    assert.equal(accepted.ok, true);
+    const proof = accepted.session.proof;
+    assert.ok(proof.types?.AuthorizeSession);
+    const recovered = verifyAuthorizeSession({
+      domain: proof.domain,
+      types: proof.types,
+      primaryType: proof.primaryType,
+      message: proof.message,
+    }, proof.signature);
+    assert.equal(recovered.valid, true);
+    assert.equal(recovered.delegation_hash, accepted.session.delegation_hash);
+  });
 });
 
 describe('Bind-at-settle JWS claims', () => {
@@ -265,7 +281,14 @@ describe('Bind-at-settle JWS claims', () => {
     assert.equal(claims.session.max_cumulative_spend, '1000000');
     assert.ok(claims.session.proof.signature);
     assert.ok(claims.session.proof.lookup_uri.includes('/v1/sessions/'));
-    assert.equal(receipt.session.agent_pubkey, AGENT.address);
+    assert.deepEqual(claims.session.proof.types, AUTHORIZE_SESSION_TYPES);
+    assert.equal(claims.session.proof.primaryType, 'AuthorizeSession');
+    assert.equal(claims.session.proof.types.AuthorizeSession.find((f) => f.name === 'validAfter').type, 'uint256');
+    assert.equal(claims.session.proof.types.AuthorizeSession.find((f) => f.name === 'maxCumulativeSpend').type, 'uint256');
+    assert.equal(mergeReceiptView(receipt).session.agent_pubkey, AGENT.address);
+    assert.equal(receipt.delegation_hash, accepted.session.delegation_hash);
+    assert.ok(receipt.links.session_status.includes('/v1/sessions/'));
+    assert.equal(receipt.session, undefined, 'outer envelope must not mirror full session block');
 
     const jwks = getJwks();
     const verified = verifyReceiptEcdsaWithJwks(receipt, jwks);
