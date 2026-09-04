@@ -658,7 +658,13 @@ export function acceptSessionAct({
       resource,
       nonce: oneshot ? clientNonce : (proof?.nonce || challenge?.nonce),
       deadline: oneshot ? proof.deadline : (proof?.deadline ?? challenge?.expires_at),
-      target_agent: proof?.target_agent || proof?.targetAgent || bound.agent_pubkey,
+      // URL / session bind supplies delegationHash; do not mint a random one.
+      delegation_hash: proof?.delegation_hash || proof?.delegationHash || bound.delegation_hash,
+      // 1-shot schema default is zero address (self). Do not fill agent_pubkey
+      // or a signature over the locked default fails recovery. Challenge path
+      // still falls back to the published challenge / bound agent.
+      target_agent: proof?.target_agent || proof?.targetAgent
+        || (oneshot ? SESSION_ACT_ZERO_ADDRESS : (challenge?.target_agent || bound.agent_pubkey)),
     },
     challenge,
     { verifyingContract, issuerUri },

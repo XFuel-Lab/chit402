@@ -362,6 +362,36 @@ describe('EIP-712 SessionAct', () => {
     assert.equal(rejected.reason, 'signer_mismatch');
   });
 
+  test('1-shot without typed_data or target_agent recovers zero=self default', async () => {
+    const store = new SessionActChallengeStore();
+    const { session } = await bindSession();
+    const nonce = uniqueNonce();
+    const deadline = nowSec() + 120;
+    const { typed, signature } = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce,
+      expires_at: deadline,
+    }, { action: 'handoff', resource: 'xfuel-oneshot-zero' });
+    assert.equal(typed.message.targetAgent, SESSION_ACT_ZERO_ADDRESS);
+
+    const accepted = acceptSessionAct({
+      session,
+      proof: {
+        action: 'handoff',
+        resource: 'xfuel-oneshot-zero',
+        signature,
+        nonce,
+        deadline,
+      },
+      delegationHash: session.delegation_hash,
+      store,
+    });
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.oneshot, true);
+    assert.equal(accepted.target_agent, AGENT.address);
+    assert.equal(accepted.proof.message.targetAgent, SESSION_ACT_ZERO_ADDRESS);
+  });
+
   test('sessionBindsAgent requires agent_pubkey + delegation_hash', () => {
     assert.equal(sessionBindsAgent(null).ok, false);
     assert.equal(sessionBindsAgent({ agent_pubkey: AGENT.address }).ok, false);
@@ -1071,5 +1101,43 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     assert.equal(claims.session_act.nonce, nonce);
     assert.equal(claims.settlement.kind, 'inherited');
     assert.equal(typed.message.targetAgent, OTHER.address);
+  });
+
+  test('1-shot without typed_data or target_agent signs zero=self and succeeds', async () => {
+    const { session } = await putBoundSession();
+    const listener = getAIListener();
+    const parent = usdcTask({ taskId: 'xfuel-http-oneshot-zero' });
+    listener.activeTasks.set(parent.taskId, parent);
+
+    const nonce = uniqueNonce();
+    const deadline = nowSec() + 180;
+    const { typed, signature } = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce,
+      expires_at: deadline,
+    }, { action: 'handoff', resource: parent.taskId });
+    assert.equal(typed.message.targetAgent, SESSION_ACT_ZERO_ADDRESS);
+
+    const actRes = await fetch(`${base}/v1/sessions/${session.delegation_hash}/act`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'handoff',
+        resource: parent.taskId,
+        signature,
+        nonce,
+        deadline,
+      }),
+    });
+    assert.equal(actRes.status, 201);
+    const body = await actRes.json();
+    const claims = decodeReceiptClaims(body.receipt);
+    assert.equal(claims.kind, 'session_handoff');
+    assert.equal(claims.action, 'handoff');
+    assert.equal(claims.agent_pubkey, AGENT.address);
+    assert.equal(claims.target_agent, AGENT.address);
+    assert.equal(claims.session_act.message.targetAgent, SESSION_ACT_ZERO_ADDRESS);
+    assert.equal(claims.session_act.nonce, nonce);
+    assert.equal(claims.settlement.kind, 'inherited');
   });
 });
