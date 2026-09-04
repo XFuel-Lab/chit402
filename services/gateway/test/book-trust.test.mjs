@@ -285,7 +285,8 @@ describe('in_proof / nullifier Path', () => {
 
     const receipt = buildReceipt(task, {});
     // Without proof, binding is not present (needs sp1Proof.paymentBinding)
-    assert.equal(receipt.binding, null);
+    assert.equal(receipt.binding, undefined);
+    assert.equal('binding' in receipt, false);
   });
 
   test('receipt.proof.tier is settlement when has_proof is true', () => {

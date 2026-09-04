@@ -103,7 +103,8 @@ test('buildReceipt: USDC task is proven, priced, and independently binding-verif
   assert.equal(v.output.kind, 'committed');
   assert.equal(v.output.hash, '0x' + 'ab'.repeat(32));
 
-  assert.equal(r.issuer_signature.jwks_uri, 'https://api-testnet.xfuel.app/.well-known/jwks.json');
+  assert.equal(r.verification.jwks_uri, 'https://api-testnet.xfuel.app/.well-known/jwks.json');
+  assert.equal(r.issuer_signature.jwks_uri, undefined, 'jwks_uri is canonical on verification only');
 
   const claims = decodeReceiptClaims(r);
   assert.equal(claims.iat, r.created_at, 'wrapper created_at matches JWS iat (seconds)');
@@ -250,7 +251,8 @@ test('buildReceipt: TFUEL task has no binding and no explorer link', () => {
   const v = mergeReceiptView(r);
   assert.equal(v.payment.rail, 'tfuel');
   assert.equal(v.payment.explorer_url, null);
-  assert.equal(r.binding, null);
+  assert.equal(r.binding, undefined);
+  assert.equal('binding' in r, false);
 });
 
 test('buildReceipt: mock compute wins over float provider label', () => {
@@ -337,7 +339,8 @@ test('buildReceipt: rolling first call is pending, not a legacy rail, and carrie
   assert.equal(r.usage.prompt_tokens, 12);
   assert.equal(r.usage.completion_tokens, 8);
   assert.equal(r.proof.has_proof, false);
-  assert.equal(r.binding, null);
+  assert.equal(r.binding, undefined);
+  assert.equal('binding' in r, false);
 
   const html = renderReceiptHtml(r);
   assert.ok(!html.includes('legacy rail'));
@@ -392,9 +395,7 @@ test('buildReceipt: hmac_attestation is absent by default and valid HMAC when a 
   assert.equal(r.hmac_attestation.alg, 'HMAC-SHA256');
   assert.equal(r.hmac_attestation.payload_version, 5);
   assert.equal(r.schema, 'xfuel.receipt.v4');
-  assert.ok(r.hmac_attestation.signed_fields.includes('provider_cogs.actual'));
-  assert.ok(r.hmac_attestation.signed_fields.includes('payment.platform_fee_bps'));
-  assert.ok(r.hmac_attestation.signed_fields.includes('caller_binding.payer_wallet'));
+  assert.equal(r.hmac_attestation.signed_fields, undefined, 'public HMAC omits signed_fields');
   assert.equal(r.hmac_attestation.role, 'attestor');
 
   // Recompute the HMAC over the same canonical payload → must match.
@@ -541,7 +542,8 @@ test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compa
   const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
   assert.ok(r.issuer_signature, 'issuer_signature present');
   assert.equal(r.issuer_signature.alg, 'ES256');
-  assert.equal(r.issuer_signature.jwks_uri, 'https://api.chit402.com/.well-known/jwks.json');
+  assert.equal(r.verification.jwks_uri, 'https://api.chit402.com/.well-known/jwks.json');
+  assert.equal(r.issuer_signature.jwks_uri, undefined);
   assert.ok(r.issuer_signature.kid, 'kid present');
   assert.ok(r.issuer_signature.jws, 'compact JWS present');
   assert.equal(r.issuer_signature.payload_version, 5);
@@ -555,6 +557,7 @@ test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compa
   assert.equal(header.alg, 'ES256');
   assert.equal(header.typ, 'chit402-receipt+jwt');
   assert.equal(header.kid, r.issuer_signature.kid);
+  assert.equal(header.jku, 'https://api.chit402.com/.well-known/jwks.json');
   
   // Payload should be an object with named claims (not an array)
   const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
@@ -564,6 +567,28 @@ test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compa
   assert.equal(payload.iss, 'chit402');
   assert.ok(payload.iat, 'iat claim present');
   assert.equal(payload.payload_version, 5);
+});
+
+test('buildReceipt: omits inactive extension fields and documents provider_cogs units', () => {
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api-testnet.xfuel.app' });
+  assert.equal('verified_inference' in r, false);
+  assert.equal('privacy' in r, false);
+  assert.equal('lineage' in r, false);
+  assert.equal('handoff' in r, false);
+  assert.ok(r.binding, 'active binding is retained');
+
+  const withCogs = buildReceipt(usdcTask({
+    meta: {
+      providerCogs: {
+        provider: 'theta-edgecloud',
+        actual: '2000',
+        basis: 'measured',
+      },
+    },
+  }));
+  assert.equal(withCogs.provider_cogs.decimals, 6);
+  assert.equal(withCogs.provider_cogs.unit, 'atomic_usdc');
+  assert.equal(withCogs.provider_cogs.actual, '2000');
 });
 
 // ── Issuer signature verification correctness tests ─────────────────────────

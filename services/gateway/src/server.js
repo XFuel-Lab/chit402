@@ -326,9 +326,14 @@ Agent verification flow (recommended):
 1. GET /receipt/:taskId (Accept: application/json) → receipt JSON
    - Or: GET /receipt/:taskId.json (or ?format=json)
 2. Extract issuer_signature.jws (compact JWS: header.payload.signature)
-3. GET /.well-known/jwks.json → { keys: [{ kty, crv, x, y, kid, alg, use }] }
+3. JWKS URL: receipt.verification.jwks_uri (absolute) or JWS header jku
+   GET /.well-known/jwks.json → { keys: [{ kty, crv, x, y, kid, alg, use }] }
 4. Verify JWS against JWKS with ES256 (any standard JWT library)
-5. Decode payload → canonical signed fields array (includes caller_binding)
+5. Decode payload → named claims object (includes caller_binding)
+
+provider_cogs.actual and provider_cogs.usd_mark are atomic USDC integers
+(decimals: 6, unit: atomic_usdc). Same scale as payment.gross_amount — e.g.
+2000 = $0.002. Do not guess the denomination.
 
 Legacy verification (raw signature):
 1. GET /receipt/:taskId?format=json → receipt with issuer_signature.value, .kid

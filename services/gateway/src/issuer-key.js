@@ -119,9 +119,10 @@ function b64urlJson(obj) {
  * Payload: object with named claims
  * 
  * @param {object} payload - Object payload (will be JSON serialized)
+ * @param {{ jku?: string|null }} [opts] - Optional absolute JWKS URL (RFC 7515 jku)
  * @returns {{ jws: string, kid: string }} - Compact JWS and key ID
  */
-export function signJws(payload) {
+export function signJws(payload, { jku = null } = {}) {
   const { privateKey, kid } = initIssuerKey();
   
   const header = {
@@ -129,6 +130,9 @@ export function signJws(payload) {
     typ: 'chit402-receipt+jwt',
     kid,
   };
+  if (jku && typeof jku === 'string' && jku.startsWith('http')) {
+    header.jku = jku;
+  }
   
   const signingInput = `${b64urlJson(header)}.${b64urlJson(payload)}`;
   const signature = crypto.sign('sha256', Buffer.from(signingInput, 'utf8'), {
