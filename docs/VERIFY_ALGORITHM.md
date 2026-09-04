@@ -362,7 +362,9 @@ Agent verify steps:
 3. If `session` is present: `iat` must fall in `valid_after`..`session_expiry`.
    No new payer signature is required.
 4. Optional (high-value): `GET /v1/sessions/:delegation_hash` or
-   `GET /.well-known/revocations`. Do not amend the receipt.
+   `GET /.well-known/revocations`. Revoke is payer-signed `RevokeSession` on
+   the pinned Chit402 / Base domain; unseen grants need the original
+   AuthorizeSession proof. Do not amend the receipt.
 5. Agent proves possession of `agent_pubkey` (secp256k1). Delegation proof
    (`session.proof.signature` + typed data, or `session.proof.lookup_uri`)
    lets you recover the payer without trusting Chit as sole attestor.

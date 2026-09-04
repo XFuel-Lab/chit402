@@ -35,6 +35,7 @@ import {
   verifyRevokeSession,
   buildRevokeTypedData,
   sessionEip712Domain,
+  resolveRevokeExpectedPayer,
   SESSION_CHAIN_ID,
   AGENT_KEY_TYPE_SECP256K1,
 } from './session-delegation.js';
@@ -347,7 +348,9 @@ Agent verification flow (recommended):
 6. Confirm payer_wallet on-chain via payment.ref (Base USDC)
 7. If session is present: receipt iat must fall in valid_after..session_expiry
 8. Optional (high-value): GET /v1/sessions/:delegation_hash or
-   GET /.well-known/revocations — do not amend the receipt
+   GET /.well-known/revocations. Revoke is payer-signed RevokeSession
+   (pinned Chit402 / Base domain); unseen grants need the AuthorizeSession
+   proof. Do not amend the receipt.
 9. Agent proves possession of agent_pubkey (secp256k1) out of band
 
 provider_cogs.actual and provider_cogs.usd_mark are atomic USDC integers
@@ -1165,11 +1168,21 @@ export function createApp() {
           store: sessionStore,
         });
         if (bind.error) {
-          return res.status(400).json({
-            error: 'session_delegation_invalid',
-            reason: bind.error.reason,
-            message: 'AuthorizeSession proof failed; receipt would not be bound at settle',
-          });
+          // x402 may already have settled. Do not 400 without a task_id /
+          // signed receipt — drop the session and continue unbound.
+          if (paymentRef || settledAmount) {
+            logger.warn({
+              reqId: req.id,
+              reason: bind.error.reason,
+              paymentRef,
+            }, 'session-delegation: invalid proof after settle — issuing unbound receipt');
+          } else {
+            return res.status(400).json({
+              error: 'session_delegation_invalid',
+              reason: bind.error.reason,
+              message: 'AuthorizeSession proof failed; receipt would not be bound at settle',
+            });
+          }
         }
         if (bind.bound) boundSession = bind.session;
       }
@@ -2289,9 +2302,26 @@ export function createApp() {
           message: 'RevokeSession typed_data + signature required',
         });
       }
-      const session = sessionStore.get(typedData.message?.delegationHash || proof.delegation_hash);
+      const delegationHash = typedData.message?.delegationHash || proof.delegation_hash;
+      const session = sessionStore.get(delegationHash);
+      const who = resolveRevokeExpectedPayer({
+        storedSession: session,
+        authorizeProof: proof.authorize || proof.authorize_proof || proof.session_delegation || null,
+        expectedDelegationHash: delegationHash,
+        verifyingContract: config.sessionDelegation?.verifyingContract,
+      });
+      if (!who.ok) {
+        return res.status(who.reason === 'unknown_session' ? 404 : 403).json({
+          error: who.reason === 'unknown_session' ? 'unknown_session' : 'signature_invalid',
+          reason: who.reason,
+          message: who.reason === 'unknown_session'
+            ? 'Session is unknown; include the original AuthorizeSession proof to revoke before first bind'
+            : 'RevokeSession is not authorized for this delegation',
+        });
+      }
       const verified = verifyRevokeSession(typedData, signature, {
-        expectedPayer: session?.payer_wallet || proof.payer_wallet || null,
+        expectedPayer: who.expectedPayer,
+        verifyingContract: config.sessionDelegation?.verifyingContract,
       });
       if (!verified.valid) {
         return res.status(403).json({
@@ -2311,7 +2341,12 @@ export function createApp() {
         agent_pubkey: verified.agent_pubkey,
         payer_wallet: verified.payer_wallet,
         nonce: verified.nonce,
-        proof: { type: 'eip712', primary_type: 'RevokeSession', signature, typed_data: typedData },
+        proof: {
+          type: 'eip712',
+          primary_type: 'RevokeSession',
+          signature,
+          typed_data: { ...typedData, domain: verified.domain || typedData.domain },
+        },
       });
       return res.status(200).json({
         status: 'revoked',

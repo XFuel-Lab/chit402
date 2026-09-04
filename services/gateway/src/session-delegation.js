@@ -31,6 +31,9 @@ export const SESSION_VERIFYING_CONTRACT_DEFAULT =
 
 export const AGENT_KEY_TYPE_SECP256K1 = 'secp256k1';
 
+export const SESSION_EIP712_NAME = 'Chit402';
+export const SESSION_EIP712_VERSION = '1';
+
 export const AUTHORIZE_SESSION_PRIMARY = 'AuthorizeSession';
 export const REVOKE_SESSION_PRIMARY = 'RevokeSession';
 
@@ -74,11 +77,121 @@ export function sessionEip712Domain(opts = {}) {
     SESSION_VERIFYING_CONTRACT_DEFAULT,
   );
   return {
-    name: 'Chit402',
-    version: '1',
+    name: SESSION_EIP712_NAME,
+    version: SESSION_EIP712_VERSION,
     chainId,
     verifyingContract,
   };
+}
+
+/**
+ * Pin a client-supplied EIP-712 domain to the Chit402 / Base session v1
+ * separator. Omitted fields are filled. A present-but-wrong name, version,
+ * chainId, or verifyingContract is rejected — a Base signature over a
+ * different domain must not bind or revoke.
+ *
+ * @param {object|null|undefined} domain
+ * @param {{ verifyingContract?: string|null }} [opts]
+ * @returns {{ ok: true, domain: object } | { ok: false, reason: string }}
+ */
+export function canonicalizeSessionDomain(domain, { verifyingContract = null } = {}) {
+  const expected = sessionEip712Domain({ verifyingContract: verifyingContract || undefined });
+  const incoming = domain && typeof domain === 'object' ? domain : {};
+
+  if (incoming.chainId != null && Number(incoming.chainId) !== SESSION_CHAIN_ID) {
+    return { ok: false, reason: 'chain_id_not_base' };
+  }
+  if (incoming.name != null && String(incoming.name) !== SESSION_EIP712_NAME) {
+    return { ok: false, reason: 'domain_name_mismatch' };
+  }
+  if (incoming.version != null && String(incoming.version) !== SESSION_EIP712_VERSION) {
+    return { ok: false, reason: 'domain_version_mismatch' };
+  }
+  if (incoming.verifyingContract != null) {
+    if (!isAddress(incoming.verifyingContract)) {
+      return { ok: false, reason: 'verifying_contract_mismatch' };
+    }
+    if (getAddress(incoming.verifyingContract) !== expected.verifyingContract) {
+      return { ok: false, reason: 'verifying_contract_mismatch' };
+    }
+  }
+
+  return {
+    ok: true,
+    domain: {
+      name: SESSION_EIP712_NAME,
+      version: SESSION_EIP712_VERSION,
+      chainId: SESSION_CHAIN_ID,
+      verifyingContract: expected.verifyingContract,
+    },
+  };
+}
+
+/** True when the settled x402 payer is the AuthorizeSession signer. */
+export function sessionMatchesSettledPayer(session, settledPayer) {
+  if (!session?.payer_wallet || !settledPayer) return false;
+  try {
+    return getAddress(session.payer_wallet) === getAddress(settledPayer);
+  } catch {
+    return String(session.payer_wallet).toLowerCase() === String(settledPayer).toLowerCase();
+  }
+}
+
+/**
+ * Who is allowed to revoke. Never trust a caller-supplied payer_wallet.
+ * Stored session payer wins; otherwise the original AuthorizeSession proof
+ * must recover the payer (early revoke before first bind).
+ *
+ * @param {{
+ *   storedSession?: object|null,
+ *   authorizeProof?: object|null,
+ *   expectedDelegationHash?: string|null,
+ *   verifyingContract?: string|null,
+ * }} [opts]
+ */
+export function resolveRevokeExpectedPayer({
+  storedSession = null,
+  authorizeProof = null,
+  expectedDelegationHash = null,
+  verifyingContract = null,
+} = {}) {
+  if (storedSession?.payer_wallet && isAddress(storedSession.payer_wallet)) {
+    if (expectedDelegationHash && storedSession.delegation_hash) {
+      if (normalizeSessionNonce(storedSession.delegation_hash)
+        !== normalizeSessionNonce(expectedDelegationHash)) {
+        return { ok: false, reason: 'delegation_hash_mismatch' };
+      }
+    }
+    return { ok: true, expectedPayer: getAddress(storedSession.payer_wallet), source: 'store' };
+  }
+  if (authorizeProof) {
+    const signature = authorizeProof.signature || authorizeProof.sig || null;
+    let typedData = authorizeProof.typed_data || authorizeProof.typedData || null;
+    if (!typedData && authorizeProof.message) {
+      typedData = {
+        domain: authorizeProof.domain || sessionEip712Domain({ verifyingContract }),
+        types: authorizeProof.types || AUTHORIZE_SESSION_TYPES,
+        primaryType: authorizeProof.primaryType || AUTHORIZE_SESSION_PRIMARY,
+        message: authorizeProof.message,
+      };
+    }
+    if (!typedData || !signature) {
+      return { ok: false, reason: 'missing_authorize_proof' };
+    }
+    // Crypto only — window/expiry does not block a payer from revoking.
+    const verified = verifyAuthorizeSession(typedData, signature, { verifyingContract });
+    if (!verified.valid) {
+      return { ok: false, reason: verified.reason || 'authorize_proof_invalid' };
+    }
+    if (expectedDelegationHash && verified.delegation_hash) {
+      if (normalizeSessionNonce(verified.delegation_hash)
+        !== normalizeSessionNonce(expectedDelegationHash)) {
+        return { ok: false, reason: 'delegation_hash_mismatch' };
+      }
+    }
+    return { ok: true, expectedPayer: verified.payer_wallet, source: 'authorize_proof' };
+  }
+  return { ok: false, reason: 'unknown_session' };
 }
 
 /** keccak256 of the issuer URI, used as EIP-712 domain salt when a URI is known. */
@@ -229,6 +342,7 @@ export function jsonSafeTypedData(typedData) {
  *
  * @param {object} typedData
  * @param {string} signature
+ * @param {{ verifyingContract?: string|null }} [opts]
  * @returns {{
  *   valid: boolean,
  *   payer_wallet?: string,
@@ -243,15 +357,16 @@ export function jsonSafeTypedData(typedData) {
  *   reason?: string,
  * }}
  */
-export function verifyAuthorizeSession(typedData, signature) {
+export function verifyAuthorizeSession(typedData, signature, { verifyingContract = null } = {}) {
   if (!typedData || !signature) {
     return { valid: false, reason: 'missing_typed_data_or_signature' };
   }
   try {
-    const domain = typedData.domain || {};
-    if (Number(domain.chainId) !== SESSION_CHAIN_ID) {
-      return { valid: false, reason: 'chain_id_not_base' };
+    const pinned = canonicalizeSessionDomain(typedData.domain, { verifyingContract });
+    if (!pinned.ok) {
+      return { valid: false, reason: pinned.reason };
     }
+    const domain = pinned.domain;
     const msg = typedData.message || {};
     if ((msg.agentKeyType || AGENT_KEY_TYPE_SECP256K1) !== AGENT_KEY_TYPE_SECP256K1) {
       return { valid: false, reason: 'unsupported_agent_key_type' };
@@ -281,6 +396,7 @@ export function verifyAuthorizeSession(typedData, signature) {
       max_cumulative_spend: String(msg.maxCumulativeSpend),
       allowed_routes: canonicalizeAllowedRoutes(msg.allowedRoutes),
       nonce: normalizeSessionNonce(msg.nonce),
+      domain,
     };
   } catch (err) {
     return { valid: false, reason: `verification_error: ${err.message}` };
@@ -292,17 +408,21 @@ export function verifyAuthorizeSession(typedData, signature) {
  *
  * @param {object} typedData
  * @param {string} signature
- * @param {{ expectedPayer?: string }} [opts]
+ * @param {{ expectedPayer?: string|null, verifyingContract?: string|null }} [opts]
  */
-export function verifyRevokeSession(typedData, signature, { expectedPayer = null } = {}) {
+export function verifyRevokeSession(typedData, signature, {
+  expectedPayer = null,
+  verifyingContract = null,
+} = {}) {
   if (!typedData || !signature) {
     return { valid: false, reason: 'missing_typed_data_or_signature' };
   }
   try {
-    const domain = typedData.domain || {};
-    if (Number(domain.chainId) !== SESSION_CHAIN_ID) {
-      return { valid: false, reason: 'chain_id_not_base' };
+    const pinned = canonicalizeSessionDomain(typedData.domain, { verifyingContract });
+    if (!pinned.ok) {
+      return { valid: false, reason: pinned.reason };
     }
+    const domain = pinned.domain;
     const msg = typedData.message || {};
     const recovered = getAddress(verifyTypedData(
       domain,
@@ -310,8 +430,10 @@ export function verifyRevokeSession(typedData, signature, { expectedPayer = null
       msg,
       signature,
     ));
-    if (expectedPayer && getAddress(expectedPayer) !== recovered) {
-      return { valid: false, reason: 'signer_mismatch', payer_wallet: recovered };
+    if (expectedPayer) {
+      if (!isAddress(expectedPayer) || getAddress(expectedPayer) !== recovered) {
+        return { valid: false, reason: 'signer_mismatch', payer_wallet: recovered };
+      }
     }
     return {
       valid: true,
@@ -319,6 +441,7 @@ export function verifyRevokeSession(typedData, signature, { expectedPayer = null
       agent_pubkey: isAddress(msg.agentPubkey) ? getAddress(msg.agentPubkey) : null,
       nonce: msg.nonce ? normalizeSessionNonce(msg.nonce) : null,
       delegation_hash: msg.delegationHash ? normalizeSessionNonce(msg.delegationHash) : null,
+      domain,
     };
   } catch (err) {
     return { valid: false, reason: `verification_error: ${err.message}` };
@@ -493,7 +616,7 @@ export function acceptDelegationProof(proof, {
     typedData = { ...typedData, domain: { ...typedData.domain, chainId: SESSION_CHAIN_ID } };
   }
 
-  const verified = verifyAuthorizeSession(typedData, signature);
+  const verified = verifyAuthorizeSession(typedData, signature, { verifyingContract });
   if (!verified.valid) {
     return { ok: false, reason: verified.reason };
   }
@@ -514,6 +637,14 @@ export function acceptDelegationProof(proof, {
     ? `${String(issuerUri).replace(/\/$/, '')}/v1/sessions/${verified.delegation_hash}`
     : `/v1/sessions/${verified.delegation_hash}`;
 
+  // Publish the pinned domain used to hash delegation_hash — not the
+  // client-submitted (possibly omitted-fields) domain.
+  const pinnedTyped = jsonSafeTypedData({
+    ...typedData,
+    domain: verified.domain || canonicalizeSessionDomain(typedData.domain, { verifyingContract }).domain,
+    message: typedData.message,
+  });
+
   return {
     ok: true,
     session: {
@@ -533,12 +664,12 @@ export function acceptDelegationProof(proof, {
         type: 'eip712',
         primary_type: AUTHORIZE_SESSION_PRIMARY,
         signature,
-        domain: jsonSafeTypedData(typedData)?.domain || typedData.domain,
-        message: jsonSafeTypedData(typedData)?.message || typedData.message,
+        domain: pinnedTyped.domain,
+        message: pinnedTyped.message,
         lookup_uri: lookupUri,
       },
     },
-    typed_data: typedData,
+    typed_data: pinnedTyped,
   };
 }
 
@@ -761,9 +892,14 @@ export function _resetSessionStore() {
 export default {
   SESSION_CHAIN_ID,
   SESSION_VERIFYING_CONTRACT_DEFAULT,
+  SESSION_EIP712_NAME,
+  SESSION_EIP712_VERSION,
   AGENT_KEY_TYPE_SECP256K1,
   AUTHORIZE_SESSION_TYPES,
   REVOKE_SESSION_TYPES,
+  canonicalizeSessionDomain,
+  sessionMatchesSettledPayer,
+  resolveRevokeExpectedPayer,
   buildAuthorizeTypedData,
   buildRevokeTypedData,
   delegationHashOf,
