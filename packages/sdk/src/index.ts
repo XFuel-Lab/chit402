@@ -289,7 +289,7 @@ export interface TaskQuoteResponse {
 export interface TaskStatusResponse {
   task_id: string;
   status: string;
-  proof_outcome: 'pending' | 'valid' | 'regenerable' | 'invalid';
+  proof_outcome: 'pending' | 'valid' | 'regenerable' | 'invalid' | 'not_applicable';
   message_type: string;
   chain_id: string;
   gross_amount: string;
@@ -345,7 +345,7 @@ export interface TaskError {
 export interface ProofResponse {
   task_id: string;
   status: string;
-  proof_outcome: 'pending' | 'valid' | 'regenerable' | 'invalid';
+  proof_outcome: 'pending' | 'valid' | 'regenerable' | 'invalid' | 'not_applicable';
   /** Canonical shareable proof link — the public `/receipt/:taskId` page (no auth). */
   verify_url?: string;
   /** Phase 2 (flag-gated): x402 payment commitment bound into the proof, or null. */
