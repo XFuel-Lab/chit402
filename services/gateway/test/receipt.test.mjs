@@ -434,6 +434,27 @@ test('proofOutcomeOf: skipped or gated tasks are not_applicable; in-flight stays
   assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: {} }), 'pending');
   assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: { proof: '0xab' } }), 'valid');
   assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: { error: 'nope' } }), 'regenerable');
+  assert.equal(proofOutcomeOf({
+    status: 'completed',
+    kind: 'session_handoff',
+    parentReceiptId: 'xfuel-parent',
+    sp1Proof: null,
+  }), 'not_applicable');
+});
+
+test('buildReceipt: child session handoff uses not_applicable proof outcome on outer envelope', async () => {
+  const { issueSessionHandoffReceipt } = await import('../src/receipt.js');
+  const parent = usdcTask({ taskId: 'xfuel-parent-proof-na' });
+  const { receipt: child } = issueSessionHandoffReceipt(parent, {
+    delegation_hash: '0x' + 'cd'.repeat(32),
+    agent_pubkey: '0x' + 'ab'.repeat(20),
+    payer_wallet: '0x' + '12'.repeat(20),
+    session_expiry: Math.floor(Date.now() / 1000) + 3600,
+    nonce: '0x' + 'ef'.repeat(32),
+  }, { childTaskId: 'xfuel-child-proof-na' });
+  assert.equal(child.proof_outcome, 'not_applicable');
+  assert.equal(child.proof.outcome, 'not_applicable');
+  assert.equal(child.proof.has_proof, false);
 });
 
 test('buildReceipt: signed-tier receipt without SP1 uses not_applicable proof outcome', () => {
