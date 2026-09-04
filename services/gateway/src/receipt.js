@@ -9,6 +9,7 @@ import { signJws, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk } from './
 import {
   sessionOf,
   publicSessionBlock,
+  outerSessionPointer,
   verifySessionWindow,
   AGENT_KEY_TYPE_SECP256K1,
   USDC_ATOMIC_DECIMALS as SESSION_USDC_DECIMALS,
@@ -79,7 +80,9 @@ export function decodeReceiptClaims(receipt) {
  */
 export function mergeReceiptView(receipt) {
   if (receipt?.payment) {
-    if (receipt.session || receipt.agent_pubkey || receipt.parent_receipt_id) return receipt;
+    // OpenAI /v1 surface adds payment presentation fields. Signed session fields
+    // always come from the JWS — never trust a mirrored outer session block.
+    if (receipt.session?.agent_pubkey || receipt.agent_pubkey) return receipt;
     const claims = decodeReceiptClaims(receipt);
     if (!claims?.session && !claims?.agent_pubkey && !claims?.parent_receipt_id) return receipt;
     return {
@@ -1240,7 +1243,11 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   if (draft.lineage) envelope.lineage = draft.lineage;
   if (draft.handoff) envelope.handoff = draft.handoff;
   if (draft.output) envelope.output = { kind: draft.output.kind };
-  if (draft.session) envelope.session = publicSessionBlock(draft.session);
+  const sessionPointer = outerSessionPointer(draft.session, base);
+  if (sessionPointer) {
+    envelope.delegation_hash = sessionPointer.delegation_hash;
+    envelope.links = { ...envelope.links, session_status: sessionPointer.status_uri };
+  }
   if (draft.parent_receipt_id) envelope.parent_receipt_id = draft.parent_receipt_id;
   if (draft.kind === 'session_handoff') envelope.kind = 'session_handoff';
   if (hmacRaw) envelope.hmac_attestation = publicHmacAttestation(hmacRaw);

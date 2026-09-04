@@ -663,6 +663,8 @@ export function acceptDelegationProof(proof, {
       proof: {
         type: 'eip712',
         primary_type: AUTHORIZE_SESSION_PRIMARY,
+        primaryType: AUTHORIZE_SESSION_PRIMARY,
+        types: jsonSafeTypedData(typedData)?.types || typedData.types || AUTHORIZE_SESSION_TYPES,
         signature,
         domain: pinnedTyped.domain,
         message: pinnedTyped.message,
@@ -705,11 +707,12 @@ export function sessionOf(task, opts = {}) {
 }
 
 /**
- * Public session block on a receipt envelope (JWS remains source of truth).
+ * Full session block for signed JWS claims (includes EIP-712 proof + types).
  * @param {object} session
  */
 export function publicSessionBlock(session) {
   if (!session) return null;
+  const proof = session.proof || null;
   return jsonSafeTypedData({
     agent_pubkey: session.agent_pubkey,
     agent_key_type: session.agent_key_type || AGENT_KEY_TYPE_SECP256K1,
@@ -722,8 +725,32 @@ export function publicSessionBlock(session) {
     unit: session.unit || USDC_ATOMIC_UNIT,
     allowed_routes: session.allowed_routes,
     nonce: session.nonce,
-    proof: session.proof || null,
+    proof: proof ? {
+      ...proof,
+      types: proof.types || AUTHORIZE_SESSION_TYPES,
+      primaryType: proof.primaryType || proof.primary_type || AUTHORIZE_SESSION_PRIMARY,
+    } : null,
   });
+}
+
+/**
+ * Minimal session pointers on the unauthenticated outer receipt envelope.
+ * Full session + proof live only in issuer_signature.jws.
+ *
+ * @param {object} session
+ * @param {string} [baseUrl]
+ */
+export function outerSessionPointer(session, baseUrl = '') {
+  if (!session?.delegation_hash) return null;
+  const base = baseUrl ? String(baseUrl).replace(/\/$/, '') : '';
+  const statusUri = session.proof?.lookup_uri
+    || (base
+      ? `${base}/v1/sessions/${session.delegation_hash}`
+      : `/v1/sessions/${session.delegation_hash}`);
+  return {
+    delegation_hash: session.delegation_hash,
+    status_uri: statusUri,
+  };
 }
 
 /**
@@ -911,6 +938,7 @@ export default {
   acceptDelegationProof,
   sessionOf,
   publicSessionBlock,
+  outerSessionPointer,
   SessionDelegationStore,
   getSessionStore,
 };
