@@ -175,7 +175,12 @@ export function mergeReceiptView(receipt) {
     session_expiry: claims.session_expiry ?? claims.session?.session_expiry ?? null,
     parent_receipt_id: claims.parent_receipt_id ?? receipt.parent_receipt_id ?? null,
     provider_cogs: claims.provider_cogs?.actual != null && receipt.provider_cogs
-      ? { ...receipt.provider_cogs, actual: claims.provider_cogs.actual }
+      ? {
+          ...receipt.provider_cogs,
+          actual: claims.provider_cogs.actual,
+          decimals: claims.provider_cogs.decimals ?? USDC_ATOMIC_DECIMALS,
+          unit: claims.provider_cogs.unit ?? 'atomic_usdc',
+        }
       : receipt.provider_cogs ?? null,
   };
 }
@@ -394,10 +399,18 @@ export function hasSettlementProof(task) {
   return !!(p && p.proof && !p.error && !p.skipped);
 }
 
+/** True when no Tier-2 SP1 proof was scheduled for this task (signed receipt only). */
+export function proofNotExpected(task) {
+  if (task?.intent?.proveAllowed === false) return true;
+  if (task?.sp1Proof?.skipped) return true;
+  return false;
+}
+
 export function proofOutcomeOf(task) {
   if (task?.sp1Proof?.error) return 'regenerable';
   if (hasSettlementProof(task)) return 'valid';
   if (task?.status === 'failed') return 'invalid';
+  if (proofNotExpected(task)) return 'not_applicable';
   return 'pending';
 }
 
@@ -545,6 +558,8 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     },
     provider_cogs: {
       actual: view.provider_cogs?.actual ?? null,
+      decimals: USDC_ATOMIC_DECIMALS,
+      unit: 'atomic_usdc',
     },
     route: {
       model: view.route?.model ?? null,
@@ -1258,12 +1273,17 @@ function badge(outcome, bindingMatches) {
     return `<span class="badge ok">Proven${esc(bind)}</span>`;
   }
   if (outcome === 'pending') return '<span class="badge pending">Proof pending</span>';
+  if (outcome === 'not_applicable') return '<span class="badge ok">Signed</span>';
   if (outcome === 'regenerable') return '<span class="badge pending">Signed</span>';
   return '<span class="badge bad">Invalid</span>';
 }
 
-function bindingCopy(receipt) {
-  const p = receipt.payment;
+function bindingCopy(view) {
+  const p = view.payment;
+  const payerWallet = view.caller_binding?.payer_wallet ?? null;
+  if (payerWallet) {
+    return `Payer wallet ${payerWallet} is bound in the issuer-signed receipt (caller_binding.payer_wallet). Buyer settlement is USDC on Base.`;
+  }
   if (p?.rail === 'unmetered') {
     return 'Nothing settled — this was the free path. The receipt attests which model and provider ran, not a dollar.';
   }
@@ -1367,10 +1387,16 @@ export function renderReceiptHtml(receipt) {
         ${row('Recomputed commitment', `<code>${esc(shortHash(b.recomputed_commitment, 12, 10))}</code>`)}
         ${row('Match', b.matches ? '<span class="badge ok">✓ matches</span>' : '<span class="badge bad">✗ mismatch</span>')}
       </section>`
-    : `<section class="card">
-        <h2>Payment binding</h2>
-        <p class="muted">${esc(bindingCopy(view))}</p>
-      </section>`;
+    : (view.caller_binding?.payer_wallet
+        ? `<section class="card">
+            <h2>Payment binding <span class="scope">signed caller binding</span></h2>
+            ${row('Payer wallet', `<code>${esc(view.caller_binding.payer_wallet)}</code>`)}
+            <p class="muted" style="margin:8px 0 0;font-size:12px">${esc(bindingCopy(view))}</p>
+          </section>`
+        : `<section class="card">
+            <h2>Payment binding</h2>
+            <p class="muted">${esc(bindingCopy(view))}</p>
+          </section>`);
 
   const cogs = view.provider_cogs;
   const cogsProvider = cogs?.provider || view.route?.provider;

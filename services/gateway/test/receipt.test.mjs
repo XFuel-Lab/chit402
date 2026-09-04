@@ -426,13 +426,40 @@ test('signed cost-plus fields recompute to gross', async () => {
   assert.equal(recomputed.amount, v.payment.gross_amount);
 });
 
-test('proofOutcomeOf: a skip or empty proof object is pending, not valid', async () => {
+test('proofOutcomeOf: skipped or gated tasks are not_applicable; in-flight stays pending', async () => {
   const { proofOutcomeOf } = await import('../src/receipt.js');
   assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: null }), 'pending');
-  assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: { skipped: true } }), 'pending');
+  assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: { skipped: true } }), 'not_applicable');
+  assert.equal(proofOutcomeOf({ status: 'completed', intent: { proveAllowed: false } }), 'not_applicable');
   assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: {} }), 'pending');
   assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: { proof: '0xab' } }), 'valid');
   assert.equal(proofOutcomeOf({ status: 'completed', sp1Proof: { error: 'nope' } }), 'regenerable');
+});
+
+test('buildReceipt: signed-tier receipt without SP1 uses not_applicable proof outcome', () => {
+  const task = usdcTask({
+    intent: { ...usdcTask().intent, proveAllowed: false },
+    sp1Proof: { skipped: true, reason: 'proving_gated' },
+  });
+  const r = buildReceipt(task);
+  assert.equal(r.proof_outcome, 'not_applicable');
+  assert.equal(r.proof.outcome, 'not_applicable');
+  assert.equal(r.proof.has_proof, false);
+  assert.equal(r.proof.tier, 'signed');
+});
+
+test('renderReceiptHtml: caller_binding payer_wallet shows bound address, not "not recorded"', () => {
+  const payer = '0x1234567890123456789012345678901234567890';
+  const base = usdcTask();
+  const task = usdcTask({
+    intent: { ...base.intent, proveAllowed: false },
+    sp1Proof: { skipped: true, reason: 'proving_gated' },
+  });
+  const r = buildReceipt(task, { payerWallet: payer });
+  const html = renderReceiptHtml(r);
+  assert.ok(html.includes(payer), 'payer wallet should appear in HTML');
+  assert.ok(!html.includes('Payment binding was not recorded'), 'stale unbound copy must not appear');
+  assert.match(html, /signed caller binding/i);
 });
 
 test('renderReceiptHtml: unmetered /v1 does not print the $0.01 floor as a price', () => {
@@ -589,6 +616,11 @@ test('buildReceipt: omits inactive extension fields and documents provider_cogs 
   assert.equal(withCogs.provider_cogs.decimals, 6);
   assert.equal(withCogs.provider_cogs.unit, 'atomic_usdc');
   assert.equal(withCogs.provider_cogs.actual, '2000');
+
+  const claims = decodeReceiptClaims(withCogs);
+  assert.equal(claims.provider_cogs.actual, '2000');
+  assert.equal(claims.provider_cogs.decimals, 6);
+  assert.equal(claims.provider_cogs.unit, 'atomic_usdc');
 });
 
 // ── Issuer signature verification correctness tests ─────────────────────────
