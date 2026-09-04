@@ -27,6 +27,9 @@ const {
   verifySessionWindow,
   acceptDelegationProof,
   sessionOf,
+  sessionMatchesSettledPayer,
+  resolveRevokeExpectedPayer,
+  canonicalizeSessionDomain,
   SessionDelegationStore,
 } = await import('../src/session-delegation.js');
 const {
@@ -176,6 +179,41 @@ describe('EIP-712 AuthorizeSession / RevokeSession', () => {
     const ok = verifyAuthorizeSession(typed, signature);
     assert.equal(ok.delegation_hash, hash);
     assert.match(hash, /^0x[0-9a-fA-F]{64}$/);
+  });
+
+  test('EIP-712 domain is pinned to Chit402 / 1 / verifyingContract', async () => {
+    const { typed, signature } = await signAuthorize();
+    const wrongName = {
+      ...typed,
+      domain: { ...typed.domain, name: 'NotChit402' },
+    };
+    const evilSig = await PAYER.signTypedData(wrongName.domain, wrongName.types, wrongName.message);
+    const rejected = verifyAuthorizeSession(wrongName, evilSig);
+    assert.equal(rejected.valid, false);
+    assert.equal(rejected.reason, 'domain_name_mismatch');
+
+    const wrongContract = {
+      ...typed,
+      domain: { ...typed.domain, verifyingContract: '0x0000000000000000000000000000000000000001' },
+    };
+    const contractSig = await PAYER.signTypedData(
+      wrongContract.domain, wrongContract.types, wrongContract.message,
+    );
+    const rejectedContract = verifyAuthorizeSession(wrongContract, contractSig);
+    assert.equal(rejectedContract.valid, false);
+    assert.equal(rejectedContract.reason, 'verifying_contract_mismatch');
+
+    const pinned = canonicalizeSessionDomain(typed.domain);
+    assert.equal(pinned.ok, true);
+    assert.equal(pinned.domain.name, 'Chit402');
+    assert.equal(pinned.domain.version, '1');
+    assert.equal(pinned.domain.chainId, 8453);
+
+    const canonical = verifyAuthorizeSession(
+      { ...typed, domain: { chainId: 8453 } },
+      signature,
+    );
+    assert.equal(canonical.valid, true);
   });
 });
 
@@ -381,6 +419,62 @@ describe('Revoke status store', () => {
     }), { persistSignature: true });
     assert.equal(after.issuer_signature.jws, jws, 'revoke must not re-sign or amend genesis');
   });
+
+  test('unseen revoke requires AuthorizeSession payer, not a caller-supplied wallet', async () => {
+    const { typed, signature } = await signAuthorize({ nonce: `0x${'77'.repeat(32)}` });
+    const accepted = acceptDelegationProof({ signature, typed_data: typed });
+    const revokeTd = buildRevokeTypedData({
+      agentPubkey: AGENT.address,
+      nonce: accepted.session.nonce,
+      delegationHash: accepted.session.delegation_hash,
+    });
+    const strangerSig = await OTHER.signTypedData(revokeTd.domain, revokeTd.types, revokeTd.message);
+    const strangerOk = verifyRevokeSession(revokeTd, strangerSig);
+    assert.equal(strangerOk.valid, true, 'crypto recovers some signer');
+
+    const unknown = resolveRevokeExpectedPayer({
+      expectedDelegationHash: accepted.session.delegation_hash,
+    });
+    assert.equal(unknown.ok, false);
+    assert.equal(unknown.reason, 'unknown_session');
+
+    const spoof = resolveRevokeExpectedPayer({
+      expectedDelegationHash: accepted.session.delegation_hash,
+      authorizeProof: { payer_wallet: OTHER.address },
+    });
+    assert.equal(spoof.ok, false);
+
+    const viaProof = resolveRevokeExpectedPayer({
+      expectedDelegationHash: accepted.session.delegation_hash,
+      authorizeProof: { signature, typed_data: typed },
+    });
+    assert.equal(viaProof.ok, true);
+    assert.equal(viaProof.expectedPayer, PAYER.address);
+
+    const strangerBlocked = verifyRevokeSession(revokeTd, strangerSig, {
+      expectedPayer: viaProof.expectedPayer,
+    });
+    assert.equal(strangerBlocked.valid, false);
+    assert.equal(strangerBlocked.reason, 'signer_mismatch');
+
+    const payerSig = await PAYER.signTypedData(revokeTd.domain, revokeTd.types, revokeTd.message);
+    const payerOk = verifyRevokeSession(revokeTd, payerSig, {
+      expectedPayer: viaProof.expectedPayer,
+    });
+    assert.equal(payerOk.valid, true);
+  });
+
+  test('sessionMatchesSettledPayer is checksum-insensitive and rejects a stranger', () => {
+    assert.equal(sessionMatchesSettledPayer(
+      { payer_wallet: PAYER.address },
+      PAYER.address.toLowerCase(),
+    ), true);
+    assert.equal(sessionMatchesSettledPayer(
+      { payer_wallet: PAYER.address },
+      OTHER.address,
+    ), false);
+    assert.equal(sessionMatchesSettledPayer({ payer_wallet: PAYER.address }, null), false);
+  });
 });
 
 describe('HTTP session status + revoke + child handoff', () => {
@@ -438,7 +532,11 @@ describe('HTTP session status + revoke + child handoff', () => {
     const revokeRes = await fetch(`${base}/v1/sessions/revoke`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ signature: revokeSig, typed_data: revokeTd }),
+      body: JSON.stringify({
+        signature: revokeSig,
+        typed_data: revokeTd,
+        authorize: { signature, typed_data: typed },
+      }),
     });
     assert.equal(revokeRes.status, 200);
     const revokeBody = await revokeRes.json();
@@ -505,5 +603,41 @@ describe('HTTP session status + revoke + child handoff', () => {
     assert.equal(body.xfuel.session.agent_key_type, 'secp256k1');
     assert.equal(body.xfuel.session.decimals, 6);
     assert.equal(body.xfuel.session.unit, 'atomic_usdc');
+  });
+
+  test('stranger cannot revoke an unseen session even with a valid RevokeSession sig', async () => {
+    const { typed, signature } = await signAuthorize({ nonce: `0x${'88'.repeat(32)}` });
+    const accepted = acceptDelegationProof({ signature, typed_data: typed });
+    const revokeTd = buildRevokeTypedData({
+      agentPubkey: AGENT.address,
+      nonce: accepted.session.nonce,
+      delegationHash: accepted.session.delegation_hash,
+    });
+    const strangerSig = await OTHER.signTypedData(revokeTd.domain, revokeTd.types, revokeTd.message);
+    const unseen = await fetch(`${base}/v1/sessions/revoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        signature: strangerSig,
+        typed_data: revokeTd,
+        payer_wallet: OTHER.address,
+      }),
+    });
+    assert.equal(unseen.status, 404);
+    const unseenBody = await unseen.json();
+    assert.equal(unseenBody.reason, 'unknown_session');
+
+    const mismatch = await fetch(`${base}/v1/sessions/revoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        signature: strangerSig,
+        typed_data: revokeTd,
+        authorize: { signature, typed_data: typed },
+      }),
+    });
+    assert.equal(mismatch.status, 403);
+    const mismatchBody = await mismatch.json();
+    assert.equal(mismatchBody.reason, 'signer_mismatch');
   });
 });

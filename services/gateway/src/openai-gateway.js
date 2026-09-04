@@ -6,7 +6,7 @@ import { getAIListener } from './ai-listener.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { settlementProofAllowed } from './prove-gate.js';
 import { buildVerifyUrl, baseUrlFromReq, buildReceipt as buildSignedReceipt, mergeReceiptView } from './receipt.js';
-import { bindSessionFromRequest } from './session-delegation.js';
+import { bindSessionFromRequest, sessionMatchesSettledPayer } from './session-delegation.js';
 import { apiKeyHashFromReq, cacheNamespace } from './buyer-attr.js';
 import { getHubCatalog, resolveCatalogModel, requestShape, toOpenAIList } from './hub-catalog.js';
 import { recordSuccess, recordFailure } from './provider-health.js';
@@ -779,7 +779,7 @@ function registerTaskAndProve({
       source: 'openai-gateway',
       provider,
       apiKeyHash: apiKeyHash || null,
-      payerWallet: session?.payer_wallet || payment?.payer || null,
+      payerWallet: payment?.payer || session?.payer_wallet || null,
       session: session || null,
       agentPubkey: session?.agent_pubkey || null,
       privateSpend: !!privateSpend,
@@ -1386,17 +1386,14 @@ export function registerOpenAIRoutes(app, {
       }
       if (metering.halted) return undefined;
       if (metering.payment) {
-        if (boundSession && metering.payment.payer) {
-          const settledPayer = String(metering.payment.payer).toLowerCase();
-          if (settledPayer !== String(boundSession.payer_wallet).toLowerCase()) {
-            return res.status(400).json({
-              error: {
-                message: 'session delegation payer does not match x402 payer',
-                type: 'invalid_request_error',
-                code: 'session_delegation_payer_mismatch',
-              },
-            });
-          }
+        if (boundSession && metering.payment.payer
+          && !sessionMatchesSettledPayer(boundSession, metering.payment.payer)) {
+          logger.warn({
+            reqId: req.id,
+            sessionPayer: boundSession.payer_wallet,
+            settledPayer: metering.payment.payer,
+          }, 'session-delegation: dropping session — payer mismatch after settle');
+          boundSession = null;
         }
         ({ task: paidTask } = registerPaidV1Shell({
           taskId,
@@ -1792,6 +1789,15 @@ export function registerOpenAIRoutes(app, {
       }
       if (metering.halted) return undefined;
       if (metering.payment) {
+        if (boundSession && metering.payment.payer
+          && !sessionMatchesSettledPayer(boundSession, metering.payment.payer)) {
+          logger.warn({
+            reqId: req.id,
+            sessionPayer: boundSession.payer_wallet,
+            settledPayer: metering.payment.payer,
+          }, 'session-delegation: dropping session — payer mismatch after settle');
+          boundSession = null;
+        }
         ({ task: paidTask } = registerPaidV1Shell({
           taskId,
           payment: metering.payment,
