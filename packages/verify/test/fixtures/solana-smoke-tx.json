@@ -1,0 +1,63 @@
+{
+  "blockTime": 1788532862,
+  "meta": {
+    "err": null,
+    "preTokenBalances": [
+      {
+        "accountIndex": 2,
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "owner": "58Qo8QTJ1Sd4aXSygwAeBLNL3VrXRmfUCceB6b5RJCx6",
+        "uiTokenAmount": { "amount": "2428281" }
+      },
+      {
+        "accountIndex": 3,
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "owner": "E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh",
+        "uiTokenAmount": { "amount": "948000" }
+      }
+    ],
+    "postTokenBalances": [
+      {
+        "accountIndex": 2,
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "owner": "58Qo8QTJ1Sd4aXSygwAeBLNL3VrXRmfUCceB6b5RJCx6",
+        "uiTokenAmount": { "amount": "2430281" }
+      },
+      {
+        "accountIndex": 3,
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "owner": "E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh",
+        "uiTokenAmount": { "amount": "946000" }
+      }
+    ]
+  },
+  "transaction": {
+    "message": {
+      "accountKeys": [
+        { "pubkey": "CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww", "signer": true },
+        { "pubkey": "E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh", "signer": true },
+        { "pubkey": "6nrw46LjwSVeyCTRQYJ4KBaCsZqjM4ZqajsPhdWcG97C", "signer": false },
+        { "pubkey": "AG7Fkh8zhsrEM8FZdeEz25d4ehCsyifSZRVg778MFBxF", "signer": false }
+      ],
+      "instructions": [
+        {
+          "program": "spl-token",
+          "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "parsed": {
+            "type": "transferChecked",
+            "info": {
+              "authority": "E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh",
+              "destination": "6nrw46LjwSVeyCTRQYJ4KBaCsZqjM4ZqajsPhdWcG97C",
+              "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+              "source": "AG7Fkh8zhsrEM8FZdeEz25d4ehCsyifSZRVg778MFBxF",
+              "tokenAmount": { "amount": "2000", "decimals": 6 }
+            }
+          }
+        }
+      ]
+    },
+    "signatures": [
+      "2SRc9yppZtsLBJMDEiTgSMs743ZCdWmZiL1hM5FFX9x98LkTDzUx84Sxomt6bbhL4oCo6LK7j5uSjLnHPs1GVLRN"
+    ]
+  }
+}

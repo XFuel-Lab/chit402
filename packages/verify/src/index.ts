@@ -19,19 +19,78 @@ import {
   type PaymentCommitmentInput,
   type InferenceBindingInput,
 } from './binding.js';
+import {
+  verifyBasePayer,
+  parseBasePaymentRef,
+  isEvmAddress,
+  sumUsdcTransfersFromPayer,
+  fetchBaseTransactionReceipt,
+  USDC_ADDRESSES,
+  ERC20_TRANSFER_TOPIC,
+  BASE_RPC_URL,
+  type BasePayerVerification,
+  type BaseReceiptFetcher,
+} from './base-payer.js';
+import {
+  verifySolanaPayer,
+  parseSolanaPaymentRef,
+  isSolanaBase58Pubkey,
+  extractUsdcTransfersFromTx,
+  inferUsdcOutflowFromBalances,
+  fetchSolanaTransaction,
+  SOLANA_RPC_URL,
+  SOLANA_USDC_MINT_MAINNET,
+  SOLANA_USDC_MINT_DEVNET,
+  type SolanaPayerVerification,
+  type SolanaRpcFetcher,
+  type SolanaRpcGetTransactionResult,
+} from './solana-payer.js';
+import {
+  verifyPayerBinding,
+  receiptPayerClaimsFromEnvelope,
+  decodeJwsPayload,
+  type PayerBindingVerification,
+  type ReceiptPayerClaims,
+  type PayerRail,
+} from './payer.js';
 
 export {
   computePaymentCommitment,
   computeInferenceBinding,
   type PaymentCommitmentInput,
   type InferenceBindingInput,
+  verifyBasePayer,
+  parseBasePaymentRef,
+  isEvmAddress,
+  sumUsdcTransfersFromPayer,
+  fetchBaseTransactionReceipt,
+  USDC_ADDRESSES,
+  ERC20_TRANSFER_TOPIC,
+  BASE_RPC_URL,
+  type BasePayerVerification,
+  type BaseReceiptFetcher,
+  verifySolanaPayer,
+  parseSolanaPaymentRef,
+  isSolanaBase58Pubkey,
+  extractUsdcTransfersFromTx,
+  inferUsdcOutflowFromBalances,
+  fetchSolanaTransaction,
+  SOLANA_RPC_URL,
+  SOLANA_USDC_MINT_MAINNET,
+  SOLANA_USDC_MINT_DEVNET,
+  type SolanaPayerVerification,
+  type SolanaRpcFetcher,
+  type SolanaRpcGetTransactionResult,
+  verifyPayerBinding,
+  receiptPayerClaimsFromEnvelope,
+  decodeJwsPayload,
+  type PayerBindingVerification,
+  type ReceiptPayerClaims,
+  type PayerRail,
 };
 
 /** ZKVerifierSP1 contract on Base mainnet. */
 export const ZK_VERIFIER_ADDRESS = '0x9373499645292715a2275A78eD65B14215C41c06';
-
-/** Default Base mainnet RPC. */
-export const BASE_RPC_URL = 'https://mainnet.base.org';
 
 /** Base Sepolia testnet RPC. */
 export const BASE_SEPOLIA_RPC_URL = 'https://sepolia.base.org';
@@ -96,7 +155,16 @@ export interface XFuelReceipt {
     alg?: string;
     value?: string;
     kid?: string;
+    jws?: string;
   };
+  caller_binding?: {
+    payer_wallet?: string | null;
+    agent_pubkey?: string | null;
+    api_key_hash?: string | null;
+  } | null;
+  payment_meta?: {
+    network?: string;
+  } | null;
 }
 
 /** JWK public key for ES256 verification. */
@@ -143,10 +211,18 @@ export interface NullifierVerification {
   reason?: string;
 }
 
+export interface PayerVerification {
+  checked: boolean;
+  valid: boolean;
+  rail?: PayerRail;
+  reason?: string;
+}
+
 export interface ReceiptVerification {
   receipt_id: string;
   binding: BindingVerification;
   issuer_signature: IssuerSignatureVerification;
+  payer: PayerVerification;
   nullifier: NullifierVerification;
   output_hash: string | null;
   hub: string | null;
@@ -432,13 +508,22 @@ export function hashCanonicalPayload(receipt: XFuelReceipt): string {
  * @param options.checkNullifier Whether to verify nullifier on-chain (requires network)
  * @param options.rpcUrl RPC URL for on-chain checks
  */
+/** Extract JWS claims for payer binding when present. */
+export function receiptPayerClaims(receipt: XFuelReceipt): ReceiptPayerClaims {
+  return receiptPayerClaimsFromEnvelope(receipt);
+}
+
 export async function verifyReceipt(
   receipt: XFuelReceipt,
   options: {
     jwks?: Jwks;
     checkNullifier?: boolean;
+    checkPayer?: boolean;
     rpcUrl?: string;
+    solanaRpcUrl?: string;
     verifierAddress?: string;
+    fetchSolanaTransaction?: SolanaRpcFetcher;
+    fetchBaseReceipt?: BaseReceiptFetcher;
   } = {},
 ): Promise<ReceiptVerification> {
   const errors: string[] = [];
@@ -468,6 +553,38 @@ export async function verifyReceipt(
       checked: false,
       valid: false,
       reason: 'No issuer signature present on receipt',
+    };
+  }
+
+  // Verify payer on-chain when requested (Base USDC or Solana USDC)
+  let payer: PayerVerification;
+  if (options.checkPayer) {
+    const payerResult = await verifyPayerBinding(receiptPayerClaims(receipt), {
+      rpcUrl: options.rpcUrl,
+      solanaRpcUrl: options.solanaRpcUrl,
+      fetchSolanaTransaction: options.fetchSolanaTransaction,
+      fetchBaseReceipt: options.fetchBaseReceipt,
+    });
+    payer = {
+      checked: payerResult.checked,
+      valid: payerResult.valid,
+      rail: payerResult.rail,
+      reason: payerResult.reason,
+    };
+    if (payerResult.checked && !payerResult.valid) {
+      errors.push(`Payer binding mismatch: ${payerResult.reason}`);
+    }
+  } else if (receipt.caller_binding?.payer_wallet && receipt.payment?.ref) {
+    payer = {
+      checked: false,
+      valid: false,
+      reason: 'On-chain payer check not requested — pass checkPayer: true',
+    };
+  } else {
+    payer = {
+      checked: false,
+      valid: false,
+      reason: 'No payer_wallet or payment.ref to verify',
     };
   }
 
@@ -512,17 +629,27 @@ export async function verifyReceipt(
 
   // Binding failure
   const bindingFailed = binding.expected && !binding.matches;
+  const payerFailed = options.checkPayer && payer.checked && !payer.valid;
 
-  if (issuerSigInvalid || bindingFailed) {
+  if (issuerSigInvalid || bindingFailed || payerFailed) {
     // JWKS provided but signature invalid, OR binding mismatch → failed
     overall = 'failed';
   } else if (hasIssuerSig && !jwksProvided) {
     // Receipt has signature but no JWKS provided → partial (cannot verify signature)
     overall = 'partial';
-  } else if (binding.matches && (!options.checkNullifier || nullifier.anchored)) {
+  } else if (
+    binding.matches
+    && (!options.checkPayer || payer.valid)
+    && (!options.checkNullifier || nullifier.anchored)
+  ) {
     // Binding matches, signature OK (or no signature), nullifier OK → verified
     overall = 'verified';
-  } else if (binding.matches || issuer_signature.valid || (nullifier.verified && nullifier.anchored)) {
+  } else if (
+    binding.matches
+    || issuer_signature.valid
+    || (options.checkPayer && payer.valid)
+    || (nullifier.verified && nullifier.anchored)
+  ) {
     // At least one check passed → partial
     overall = 'partial';
   } else if (!binding.expected && !receipt.proof?.nullifier && !hasIssuerSig) {
@@ -536,6 +663,7 @@ export async function verifyReceipt(
     receipt_id: receipt.task_id,
     binding,
     issuer_signature,
+    payer,
     nullifier,
     output_hash,
     hub,
@@ -552,7 +680,13 @@ export default {
   verifyIssuerSignature,
   verifyIssuerSignatureWithJwks,
   verifyNullifier,
+  verifyPayerBinding,
+  verifySolanaPayer,
+  verifyBasePayer,
   verifyReceipt,
+  receiptPayerClaims,
+  receiptPayerClaimsFromEnvelope,
+  decodeJwsPayload,
   computePaymentCommitment,
   computeInferenceBinding,
   canonicalIssuerPayload,
@@ -561,4 +695,5 @@ export default {
   ZK_VERIFIER_ADDRESS,
   BASE_RPC_URL,
   BASE_SEPOLIA_RPC_URL,
+  SOLANA_RPC_URL,
 };

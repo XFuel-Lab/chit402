@@ -359,7 +359,7 @@ Agent verification flow (recommended):
    GET /.well-known/jwks.json → { keys: [{ kty, crv, x, y, kid, alg, use }] }
 4. Verify JWS against JWKS with ES256 (any standard JWT library)
 5. Decode payload → named claims object (includes caller_binding)
-6. Confirm payer_wallet on-chain via payment.ref (Base USDC)
+6. Confirm payer_wallet on-chain via payment.ref (Base or Solana USDC)
 7. If session is present: receipt iat must fall in valid_after..session_expiry
 8. Optional (high-value): GET /v1/sessions/:delegation_hash or
    GET /.well-known/revocations. Revoke is payer-signed RevokeSession

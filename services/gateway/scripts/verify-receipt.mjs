@@ -14,6 +14,7 @@
  *   1 — receipt is invalid or no signature found
  *
  * See docs/VERIFY_ALGORITHM.md for the full specification.
+ * For on-chain payer match (Base/Solana): scripts/verify-receipt-payer.mjs
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
