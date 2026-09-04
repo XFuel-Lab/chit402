@@ -28,7 +28,16 @@ import {
   applyPaymentToOwedTask,
   configureRollingLedger,
 } from './rolling-settlement.js';
-import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptHmac, verifyOriginHandoff, verifyDestAck } from './receipt.js';
+import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptHmac, verifyOriginHandoff, verifyDestAck, issueSessionHandoffReceipt } from './receipt.js';
+import {
+  getSessionStore,
+  bindSessionFromRequest,
+  verifyRevokeSession,
+  buildRevokeTypedData,
+  sessionEip712Domain,
+  SESSION_CHAIN_ID,
+  AGENT_KEY_TYPE_SECP256K1,
+} from './session-delegation.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest, buildOpenApiSpec } from './x402-discovery.js';
 import { buildPaymentChallenge } from './x402-adapter.js';
@@ -322,6 +331,11 @@ against the JWKS. No need to reconstruct the canonical payload.
 **Caller binding**: When payer_wallet, agent_pubkey, or api_key_hash are known,
 they are included in caller_binding and signed. Tampering fails verification.
 
+**Session delegation (v1, secp256k1)**: A reusable EIP-712 AuthorizeSession
+grant (Base chainId 8453) binds agent_pubkey at settle. Receipt JWS stamps
+agent_pubkey, delegation_hash, session_expiry. Late assign is a child handoff
+receipt (parent_receipt_id) — genesis JWS is never re-signed.
+
 Agent verification flow (recommended):
 1. GET /receipt/:taskId (Accept: application/json) → receipt JSON
    - Or: GET /receipt/:taskId.json (or ?format=json)
@@ -330,6 +344,11 @@ Agent verification flow (recommended):
    GET /.well-known/jwks.json → { keys: [{ kty, crv, x, y, kid, alg, use }] }
 4. Verify JWS against JWKS with ES256 (any standard JWT library)
 5. Decode payload → named claims object (includes caller_binding)
+6. Confirm payer_wallet on-chain via payment.ref (Base USDC)
+7. If session is present: receipt iat must fall in valid_after..session_expiry
+8. Optional (high-value): GET /v1/sessions/:delegation_hash or
+   GET /.well-known/revocations — do not amend the receipt
+9. Agent proves possession of agent_pubkey (secp256k1) out of band
 
 provider_cogs.actual and provider_cogs.usd_mark are atomic USDC integers
 (decimals: 6, unit: atomic_usdc). Same scale as payment.gross_amount — e.g.
@@ -358,6 +377,8 @@ SDK: verifyReceiptEcdsaWithJwks(receipt, jwks) → { checked, valid, kid }
 - GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
 - GET  /.well-known/x402list.txt : x402-list domain verification token (public, text/plain).
 - GET  /.well-known/jwks.json : JWKS for receipt issuer signature (ES256/ECDSA). Public-key verify.
+- GET  /.well-known/revocations : session-delegation revocations (delegation_hash list).
+- GET  /v1/sessions/:delegation_hash : session status (active / expired / revoked).
 - GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message.
 - POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
@@ -608,6 +629,17 @@ export function createApp() {
   const bookDisputes = new BookDisputeStore({
     dir: agentsDir,
     persist: !!config.taskStore?.persist,
+  });
+  const sessionStore = getSessionStore({
+    dir: process.env.SESSION_DELEGATION_DIR
+      || (config.taskStore?.dir ? path.join(config.taskStore.dir, '..', 'sessions') : null),
+    persist: !!config.taskStore?.persist,
+  });
+  const sessionIssuerUri = (req) => baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+  const sessionDomainOpts = (req) => ({
+    verifyingContract: config.sessionDelegation?.verifyingContract,
+    issuerUri: sessionIssuerUri(req),
+    chainId: SESSION_CHAIN_ID,
   });
 
   /**
@@ -1122,6 +1154,26 @@ export function createApp() {
       const { feeAmount, netAmount, feeBps: appliedBps } =
         calculateTaskFee(grossAmount, effectiveFeeBps);
 
+      // ── Session delegation (bind-at-settle) ───────────────────────────
+      // Proof rides alongside x402/payment auth. Receipt JWS is born bound.
+      let boundSession = null;
+      {
+        const bind = bindSessionFromRequest(req, {
+          expectedPayer: payerWallet,
+          issuerUri: sessionIssuerUri(req),
+          verifyingContract: config.sessionDelegation?.verifyingContract,
+          store: sessionStore,
+        });
+        if (bind.error) {
+          return res.status(400).json({
+            error: 'session_delegation_invalid',
+            reason: bind.error.reason,
+            message: 'AuthorizeSession proof failed; receipt would not be bound at settle',
+          });
+        }
+        if (bind.bound) boundSession = bind.session;
+      }
+
       // ── Build intent for ai-listener processing ───────────────────────
 
       const intent = {
@@ -1183,7 +1235,9 @@ export function createApp() {
         // Buyer attribution (hash only) for Private Spend /stats/me
         apiKeyHash: apiKeyHashFromReq(req),
         // Payer wallet from x402 settlement (for caller_binding entitlement proof)
-        payerWallet,
+        payerWallet: boundSession?.payer_wallet || payerWallet,
+        session: boundSession,
+        agentPubkey: boundSession?.agent_pubkey || null,
         privateSpend: !!config.privateSpend?.enabled || isPrivateSpendSession(req),
         privacyMode: (config.privateSpend?.enabled || isPrivateSpendSession(req)) ? 'vendor_blind' : null,
         // Multi-hop / A2A receipt lineage (Sprint 3)
@@ -1419,6 +1473,7 @@ export function createApp() {
         signingSecret: config.receipts?.signingSecret,
         coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
+        persistSignature: true,
       });
 
       let record;
@@ -1919,6 +1974,7 @@ export function createApp() {
         coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
         reqHost,
+        persistSignature: true,
       });
 
       if (wantsAuditor) {
@@ -2134,6 +2190,142 @@ export function createApp() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // POST /receipt/:taskId/session/handoff — late assign (child receipt)
+  // Genesis JWS is never re-signed. Child references parent_receipt_id.
+  // ═══════════════════════════════════════════════════════════════════════
+  app.post('/receipt/:taskId/session/handoff', rateLimit, (req, res) => {
+    try {
+      const { taskId: rawTaskId } = req.params;
+      const taskId = normalizeTaskIdForLookup(rawTaskId);
+      const aiListener = getAIListener();
+      const parent = _findTask(aiListener, taskId);
+      if (!parent) {
+        return res.status(404).json({ error: 'not_found', message: `Task ${rawTaskId} not found` });
+      }
+      if (parent.kind === 'session_handoff' || parent.meta?.kind === 'session_handoff') {
+        return res.status(400).json({
+          error: 'validation_error',
+          message: 'Cannot handoff a child session receipt; assign from the genesis receipt',
+        });
+      }
+      const parentJws = parent.issuerSignature?.jws || parent.issuer_signature?.jws || null;
+      const bind = bindSessionFromRequest(req, {
+        expectedPayer: parent.meta?.payerWallet || parent.meta?.session?.payer_wallet || null,
+        issuerUri: sessionIssuerUri(req),
+        verifyingContract: config.sessionDelegation?.verifyingContract,
+        store: sessionStore,
+      });
+      if (!bind.bound) {
+        return res.status(400).json({
+          error: 'session_delegation_invalid',
+          reason: bind.error?.reason || 'missing_delegation_proof',
+          message: 'Child handoff requires a valid AuthorizeSession proof',
+        });
+      }
+      const baseUrl = sessionIssuerUri(req);
+      const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
+      const { childTask, receipt } = issueSessionHandoffReceipt(parent, bind.session, {
+        baseUrl,
+        signingSecret: config.receipts?.signingSecret,
+        coSignerSecret: config.receipts?.coSignerSecret,
+        reqHost,
+      });
+      aiListener.activeTasks.set(childTask.taskId, childTask);
+      if (parentJws && parent.issuerSignature?.jws && parent.issuerSignature.jws !== parentJws) {
+        parent.issuerSignature = { ...parent.issuerSignature, jws: parentJws };
+      }
+      logger.info({
+        reqId: req.id,
+        parent: parent.taskId,
+        child: childTask.taskId,
+        delegation: bind.session.delegation_hash,
+      }, 'Session handoff child receipt issued');
+      return res.status(201).json({
+        status: 'session_handoff',
+        parent_receipt_id: parent.taskId,
+        task_id: childTask.taskId,
+        receipt,
+      });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /receipt/:taskId/session/handoff error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  app.get('/v1/sessions/:delegation_hash', rateLimit, (req, res) => {
+    const hash = req.params.delegation_hash;
+    const body = sessionStore.status(hash);
+    return res.status(body.found ? 200 : 404).json(body);
+  });
+
+  app.post('/v1/sessions/revoke', rateLimit, (req, res) => {
+    try {
+      const proof = req.body || {};
+      const signature = proof.signature || proof.sig;
+      let typedData = proof.typed_data || proof.typedData || null;
+      if (!typedData && proof.message) {
+        typedData = {
+          domain: proof.domain || sessionEip712Domain(sessionDomainOpts(req)),
+          types: proof.types,
+          primaryType: proof.primaryType || 'RevokeSession',
+          message: proof.message,
+        };
+      }
+      if (!typedData && proof.delegation_hash) {
+        try {
+          typedData = buildRevokeTypedData({
+            agentPubkey: proof.agent_pubkey || proof.agentPubkey,
+            nonce: proof.nonce,
+            delegationHash: proof.delegation_hash || proof.delegationHash,
+            domain: sessionDomainOpts(req),
+          });
+        } catch (err) {
+          return res.status(400).json({ error: 'validation_error', message: err.message });
+        }
+      }
+      if (!typedData || !signature) {
+        return res.status(400).json({
+          error: 'validation_error',
+          message: 'RevokeSession typed_data + signature required',
+        });
+      }
+      const session = sessionStore.get(typedData.message?.delegationHash || proof.delegation_hash);
+      const verified = verifyRevokeSession(typedData, signature, {
+        expectedPayer: session?.payer_wallet || proof.payer_wallet || null,
+      });
+      if (!verified.valid) {
+        return res.status(403).json({
+          error: 'signature_invalid',
+          reason: verified.reason,
+          message: 'RevokeSession signature verification failed',
+        });
+      }
+      const hash = verified.delegation_hash
+        || typedData.message?.delegationHash
+        || proof.delegation_hash;
+      if (!hash) {
+        return res.status(400).json({ error: 'validation_error', message: 'delegation_hash required' });
+      }
+      const row = sessionStore.revoke({
+        delegation_hash: hash,
+        agent_pubkey: verified.agent_pubkey,
+        payer_wallet: verified.payer_wallet,
+        nonce: verified.nonce,
+        proof: { type: 'eip712', primary_type: 'RevokeSession', signature, typed_data: typedData },
+      });
+      return res.status(200).json({
+        status: 'revoked',
+        delegation_hash: row.delegation_hash,
+        revoked_at: row.revoked_at,
+        agent_key_type: AGENT_KEY_TYPE_SECP256K1,
+      });
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /v1/sessions/revoke error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   // PUT /webhook — Register (or update) a webhook for settlement events
   // GET /webhook — List registered webhooks
   // DELETE /webhook — Remove a webhook by id or url
@@ -2212,6 +2404,16 @@ export function createApp() {
   app.get('/.well-known/jwks.json', (_req, res) => {
     res.set('Cache-Control', 'public, max-age=3600');
     res.json(getJwks());
+  });
+
+  app.get('/.well-known/revocations', rateLimit, (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      schema: 'xfuel.session.revocations.v1',
+      chain_id: SESSION_CHAIN_ID,
+      agent_key_type: AGENT_KEY_TYPE_SECP256K1,
+      revocations: sessionStore.listRevocations(),
+    });
   });
 
   app.get('/.well-known/agent-card.json', rateLimit, (req, res) => {
@@ -2407,6 +2609,7 @@ export function createApp() {
         signingSecret: config.receipts?.signingSecret,
         coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
+        persistSignature: true,
       });
     } catch {
       return null;
@@ -2816,6 +3019,7 @@ export function createApp() {
 
   registerOpenAIRoutes(app, {
     rateLimit, authenticate, isAuthorised, ledger: usageSettled, registry: agentRegistry,
+    sessionStore,
   });
 
   // ── 404 fallback ────────────────────────────────────────────────────────
@@ -2823,7 +3027,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 

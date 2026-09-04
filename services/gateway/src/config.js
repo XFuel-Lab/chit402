@@ -129,6 +129,17 @@ const config = {
     coSignerSecret: process.env.RECEIPT_CO_SIGNER_SECRET || null,
   },
 
+  // Session-delegation v1 (Bankr lock 2026-09-04). Reusable EIP-712 agent_pubkey
+  // grants on Base (8453). TTL is the receipt JWS window; revoke is out-of-band.
+  sessionDelegation: {
+    verifyingContract: process.env.SESSION_VERIFYING_CONTRACT || '0x0000000000000000000000000000000000000402',
+    defaultTtlSec: (() => {
+      const n = parseInt(process.env.SESSION_TTL_SEC, 10);
+      if (!Number.isFinite(n)) return 24 * 60 * 60;
+      return Math.min(24 * 60 * 60, Math.max(60 * 60, n));
+    })(),
+  },
+
   // Private Spend v0 — vendor-blind routing mode. Buyer pays XFuel; providers see
   // gateway-pooled credentials only. See docs/PRIVATE_SPEND_THESIS.md.
   privateSpend: {

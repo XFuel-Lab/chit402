@@ -6,6 +6,7 @@ import { getAIListener } from './ai-listener.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { settlementProofAllowed } from './prove-gate.js';
 import { buildVerifyUrl, baseUrlFromReq, buildReceipt as buildSignedReceipt, mergeReceiptView } from './receipt.js';
+import { bindSessionFromRequest } from './session-delegation.js';
 import { apiKeyHashFromReq, cacheNamespace } from './buyer-attr.js';
 import { getHubCatalog, resolveCatalogModel, requestShape, toOpenAIList } from './hub-catalog.js';
 import { recordSuccess, recordFailure } from './provider-health.js';
@@ -733,6 +734,7 @@ function registerTaskAndProve({
   proveAllowed = true, apiKeyHash = null, privateSpend = false,
   usage = null, payment = null, deferProve = false,
   status = 'completed', failureReason = null,
+  session = null,
 }) {
   const taskId = providedTaskId || `xfuel-${crypto.randomUUID()}`;
   let aiListener = null;
@@ -777,7 +779,9 @@ function registerTaskAndProve({
       source: 'openai-gateway',
       provider,
       apiKeyHash: apiKeyHash || null,
-      payerWallet: payment?.payer || null,
+      payerWallet: session?.payer_wallet || payment?.payer || null,
+      session: session || null,
+      agentPubkey: session?.agent_pubkey || null,
       privateSpend: !!privateSpend,
       privacyMode: privateSpend ? 'vendor_blind' : null,
       ...(failureReason ? { failureReason } : {}),
@@ -895,6 +899,7 @@ function buildReceipt({
         coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
         reqHost,
+        persistSignature: true,
       })
     : { task_id: taskId, verify_url: verifyUrl, proof: {} };
 
@@ -927,6 +932,11 @@ function buildReceipt({
     },
     output: view.output,
     caller_binding: view.caller_binding,
+    session: view.session ?? signed.session ?? null,
+    agent_pubkey: view.agent_pubkey ?? view.session?.agent_pubkey ?? null,
+    delegation_hash: view.delegation_hash ?? view.session?.delegation_hash ?? null,
+    session_expiry: view.session_expiry ?? view.session?.session_expiry ?? null,
+    parent_receipt_id: view.parent_receipt_id ?? signed.parent_receipt_id ?? null,
     privacy: privateSpend
       ? {
           mode: 'vendor_blind',
@@ -1001,7 +1011,7 @@ function withBookSpend(receipt, { ledger, registry, agentId = null } = {}) {
  * failure never leaves money moved with no durable task or public receipt.
  */
 function registerPaidV1Shell({
-  taskId, payment, model, messages, apiKeyHash, privateSpend,
+  taskId, payment, model, messages, apiKeyHash, privateSpend, session = null,
 }) {
   return registerTaskAndProve({
     taskId,
@@ -1014,6 +1024,7 @@ function registerPaidV1Shell({
     apiKeyHash,
     privateSpend,
     payment,
+    session,
     status: 'processing',
   });
 }
@@ -1176,6 +1187,7 @@ function priceForCatalogModel(m) {
 
 export function registerOpenAIRoutes(app, {
   rateLimit, authenticate, isAuthorised, ledger = null, registry = null,
+  sessionStore = null,
 } = {}) {
   // Base middleware chain for all /v1 routes (no auth — that's route-specific)
   const baseChain = [openAiErrorShape, bearerToApiKey, rateLimit].filter(Boolean);
@@ -1337,6 +1349,24 @@ export function registerOpenAIRoutes(app, {
     const apiKeyHash = apiKeyHashFromReq(req);
     let paidTask = null;
 
+    // Bind-at-settle: verify AuthorizeSession before money moves. Payer match
+    // is checked after settle when x402 returns the wallet.
+    const sessionBind = bindSessionFromRequest(req, {
+      issuerUri: baseUrl,
+      verifyingContract: config.sessionDelegation?.verifyingContract,
+      store: sessionStore,
+    });
+    if (sessionBind.error) {
+      return res.status(400).json({
+        error: {
+          message: `session delegation invalid: ${sessionBind.error.reason}`,
+          type: 'invalid_request_error',
+          code: 'session_delegation_invalid',
+        },
+      });
+    }
+    let boundSession = sessionBind.session || null;
+
     // Payment present: settle only after the body is valid (Bankr: don't settle then 400).
     if (paymentHeader) {
       metering = await meterV1Request(req, res, {
@@ -1356,6 +1386,18 @@ export function registerOpenAIRoutes(app, {
       }
       if (metering.halted) return undefined;
       if (metering.payment) {
+        if (boundSession && metering.payment.payer) {
+          const settledPayer = String(metering.payment.payer).toLowerCase();
+          if (settledPayer !== String(boundSession.payer_wallet).toLowerCase()) {
+            return res.status(400).json({
+              error: {
+                message: 'session delegation payer does not match x402 payer',
+                type: 'invalid_request_error',
+                code: 'session_delegation_payer_mismatch',
+              },
+            });
+          }
+        }
         ({ task: paidTask } = registerPaidV1Shell({
           taskId,
           payment: metering.payment,
@@ -1363,6 +1405,7 @@ export function registerOpenAIRoutes(app, {
           messages,
           apiKeyHash,
           privateSpend,
+          session: boundSession,
         }));
       }
     }
@@ -1490,6 +1533,11 @@ export function registerOpenAIRoutes(app, {
       task.updatedAt = Date.now();
       task.intent.modelId = echoModel;
       task.meta.provider = provider;
+      if (boundSession) {
+        task.meta.session = boundSession;
+        task.meta.agentPubkey = boundSession.agent_pubkey;
+        if (boundSession.payer_wallet) task.meta.payerWallet = boundSession.payer_wallet;
+      }
       task.outputHash = ethers.keccak256(ethers.toUtf8Bytes(
         toolCalls ? JSON.stringify({ content: content || null, tool_calls: toolCalls }) : (content ?? ''),
       ));
@@ -1516,6 +1564,7 @@ export function registerOpenAIRoutes(app, {
         privateSpend,
         usage: { ...counts, source },
         payment: metering.payment,
+        session: boundSession,
       }));
     }
 
@@ -1708,6 +1757,22 @@ export function registerOpenAIRoutes(app, {
     const apiKeyHash = apiKeyHashFromReq(req);
     let paidTask = null;
 
+    const sessionBind = bindSessionFromRequest(req, {
+      issuerUri: baseUrl,
+      verifyingContract: config.sessionDelegation?.verifyingContract,
+      store: sessionStore,
+    });
+    if (sessionBind.error) {
+      return res.status(400).json({
+        error: {
+          message: `session delegation invalid: ${sessionBind.error.reason}`,
+          type: 'invalid_request_error',
+          code: 'session_delegation_invalid',
+        },
+      });
+    }
+    let boundSession = sessionBind.session || null;
+
     // Payment present: settle only after the body is valid
     if (paymentHeader) {
       metering = await meterV1Request(req, res, {
@@ -1734,6 +1799,7 @@ export function registerOpenAIRoutes(app, {
           messages,
           apiKeyHash,
           privateSpend,
+          session: boundSession,
         }));
       }
     }
@@ -1842,6 +1908,11 @@ export function registerOpenAIRoutes(app, {
       task.updatedAt = Date.now();
       task.intent.modelId = echoModel;
       task.meta.provider = provider;
+      if (boundSession) {
+        task.meta.session = boundSession;
+        task.meta.agentPubkey = boundSession.agent_pubkey;
+        if (boundSession.payer_wallet) task.meta.payerWallet = boundSession.payer_wallet;
+      }
       task.outputHash = ethers.keccak256(ethers.toUtf8Bytes(
         toolCalls ? JSON.stringify({ content: content || null, tool_calls: toolCalls }) : (content ?? ''),
       ));
@@ -1868,6 +1939,7 @@ export function registerOpenAIRoutes(app, {
         privateSpend,
         usage: { ...counts, source },
         payment: metering.payment,
+        session: boundSession,
       }));
     }
 
