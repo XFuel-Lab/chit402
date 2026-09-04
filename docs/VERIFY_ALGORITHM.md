@@ -358,7 +358,21 @@ Agent verify steps:
 
 1. `GET /.well-known/jwks.json` → verify `issuer_signature.jws` (ES256).
 2. Decode claims. Confirm `caller_binding.payer_wallet` against `payment.ref`
-   on Base (USDC).
+   on-chain (USDC). Rail-specific steps:
+
+   **Base** (`base:0x…` or `eip155:8453:0x…`): fetch the tx receipt on Base
+   RPC. Parse the USDC `Transfer` event (`0x833589…` on mainnet). The `from`
+   address must equal `caller_binding.payer_wallet` and the amount must be ≥
+   `payment.gross_amount` (atomic, 6 dp). EIP-3009
+   `transferWithAuthorization` records the authorizing wallet as `from`.
+
+   **Solana** (`solana:<sig>`): fetch the settled tx via Solana RPC (or
+   Solscan). Confirm a USDC SPL transfer (`EPjFWdd5…` mint, 6 dp) of
+   `payment.gross_amount` where `caller_binding.payer_wallet` is the
+   `authority` on `transferChecked` (x402 exact-svm). The payer may also
+   co-sign the versioned tx; balance deltas on their USDC ATA are accepted
+   as a fallback. Set `SOLANA_RPC_URL` to override the default public RPC
+   (`https://api.mainnet-beta.solana.com`).
 3. If `session` is present: `iat` must fall in `valid_after`..`session_expiry`.
    No new payer signature is required.
 4. Optional (high-value): `GET /v1/sessions/:delegation_hash` or
@@ -428,3 +442,34 @@ Signed child claims (source of truth) include:
 
 `max_cumulative_spend` is atomic USDC (`decimals: 6`, `unit: atomic_usdc`) —
 same scale as `payment.gross_amount`.
+
+### Runnable code (Node.js — Solana payer match)
+
+```javascript
+#!/usr/bin/env node
+// verify-solana-payer.mjs — offline Solana payer verification
+// Usage: node verify-solana-payer.mjs <receipt.json>
+
+import { readFileSync } from 'node:fs';
+import {
+  verifyPayerBinding,
+  receiptPayerClaimsFromEnvelope,
+} from '@xfuel/verify';
+
+const receipt = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const claims = receiptPayerClaimsFromEnvelope(receipt);
+// SOLANA_RPC_URL env overrides default https://api.mainnet-beta.solana.com
+const result = await verifyPayerBinding(claims);
+console.log(JSON.stringify(result, null, 2));
+process.exit(result.valid ? 0 : 1);
+```
+
+Gateway copy (no npm install):
+
+```bash
+node services/gateway/scripts/verify-receipt-payer.mjs receipt.json
+```
+
+Full agent path: JWKS → JWS → payer on-chain (Base or Solana) → session window
+→ optional revocation lookup → SessionAct for privileged acts (Base only; no
+Solana SessionAct in v1).

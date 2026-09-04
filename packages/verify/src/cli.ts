@@ -33,6 +33,8 @@ Usage:
 Options:
   --jwks-file <path>  JWKS file for issuer signature verification (no network)
   --check-nullifier   Query Base RPC for nullifier anchor (requires network)
+  --check-payer       Query Base or Solana RPC to confirm payer_wallet on-chain
+  --solana-rpc <url>  Solana RPC URL (default: https://api.mainnet-beta.solana.com or SOLANA_RPC_URL)
   --rpc <url>         Custom RPC URL (default: https://mainnet.base.org)
   --json              Output JSON instead of human-readable
   --quiet             Only output errors
@@ -46,9 +48,12 @@ Exit codes:
 Network behavior:
   By default, no network requests are made. Network is only used when:
   - --check-nullifier is passed (queries Base RPC for on-chain anchor)
+  - --check-payer is passed (queries Base or Solana RPC for USDC settlement)
 
   JWKS must be provided as a local file (--jwks-file). The CLI does not
   automatically fetch JWKS from a URL to ensure offline verification.
+
+  Solana payer verify uses SOLANA_RPC_URL when set, else the public mainnet RPC.
 
 Examples:
   # Local binding verification (no network)
@@ -68,7 +73,9 @@ function parseArgs(args: string[]): {
   file: string | null;
   jwksFile: string | null;
   checkNullifier: boolean;
+  checkPayer: boolean;
   rpcUrl: string | null;
+  solanaRpcUrl: string | null;
   json: boolean;
   quiet: boolean;
   help: boolean;
@@ -77,7 +84,9 @@ function parseArgs(args: string[]): {
     file: null as string | null,
     jwksFile: null as string | null,
     checkNullifier: false,
+    checkPayer: false,
     rpcUrl: null as string | null,
+    solanaRpcUrl: null as string | null,
     json: false,
     quiet: false,
     help: false,
@@ -89,10 +98,14 @@ function parseArgs(args: string[]): {
       result.help = true;
     } else if (arg === '--check-nullifier') {
       result.checkNullifier = true;
+    } else if (arg === '--check-payer') {
+      result.checkPayer = true;
     } else if (arg === '--jwks-file' && args[i + 1]) {
       result.jwksFile = args[++i];
     } else if (arg === '--rpc' && args[i + 1]) {
       result.rpcUrl = args[++i];
+    } else if (arg === '--solana-rpc' && args[i + 1]) {
+      result.solanaRpcUrl = args[++i];
     } else if (arg === '--json') {
       result.json = true;
     } else if (arg === '--quiet' || arg === '-q') {
@@ -159,7 +172,9 @@ async function main(): Promise<number> {
   const result = await verifyReceipt(receipt, {
     jwks,
     checkNullifier: args.checkNullifier,
+    checkPayer: args.checkPayer,
     rpcUrl: args.rpcUrl || undefined,
+    solanaRpcUrl: args.solanaRpcUrl || undefined,
   });
 
   if (args.json) {
@@ -198,6 +213,21 @@ async function main(): Promise<number> {
       console.log(`  Status:        ${result.issuer_signature.reason || 'Not checked'}`);
       if (receipt.issuer_signature && !args.jwksFile) {
         console.log(`                 (receipt has signature — pass --jwks-file to verify)`);
+      }
+    }
+    console.log('');
+    console.log(`  Payer (on-chain)`);
+    console.log(`  ─────────────────────────────────────────────────`);
+    if (result.payer.checked) {
+      console.log(`  Rail:          ${result.payer.rail || '—'}`);
+      console.log(`  Valid:         ${result.payer.valid ? '✓ YES' : '✗ NO'}`);
+      if (!result.payer.valid && result.payer.reason) {
+        console.log(`  Reason:        ${result.payer.reason}`);
+      }
+    } else {
+      console.log(`  Status:        ${result.payer.reason || 'Not checked'}`);
+      if (receipt.caller_binding?.payer_wallet && receipt.payment?.ref && !args.checkPayer) {
+        console.log(`                 (pass --check-payer to verify on-chain)`);
       }
     }
     console.log('');
