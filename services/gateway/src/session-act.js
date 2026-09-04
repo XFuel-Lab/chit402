@@ -50,8 +50,9 @@ export const CHALLENGE_TTL_SEC_MIN = 120;
 export const CHALLENGE_TTL_SEC_MAX = 300;
 
 export function clampChallengeTtlSec(value) {
+  if (value == null || value === '') return CHALLENGE_TTL_SEC_DEFAULT;
   const n = Number(value);
-  if (!Number.isFinite(n)) return CHALLENGE_TTL_SEC_DEFAULT;
+  if (!Number.isFinite(n) || n <= 0) return CHALLENGE_TTL_SEC_DEFAULT;
   return Math.min(CHALLENGE_TTL_SEC_MAX, Math.max(CHALLENGE_TTL_SEC_MIN, Math.floor(n)));
 }
 
@@ -360,6 +361,9 @@ export class SessionActChallengeStore {
    * Look up a live (unspent, unexpired) challenge.
    */
   getLive(challengeId, { now = null, expectedDelegationHash = null } = {}) {
+    if (this.isSpent(challengeId)) {
+      return { ok: false, reason: 'nonce_reused' };
+    }
     const row = this.peek(challengeId);
     if (!row) return { ok: false, reason: 'challenge_not_found' };
     if (this.isSpent(row.challenge_id, row.nonce)) {
