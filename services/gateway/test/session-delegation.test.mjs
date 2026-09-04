@@ -215,6 +215,28 @@ describe('EIP-712 AuthorizeSession / RevokeSession', () => {
     );
     assert.equal(canonical.valid, true);
   });
+
+  test('published proof domain is the pinned separator used for delegation_hash', async () => {
+    const { typed, signature } = await signAuthorize({ nonce: `0x${'99'.repeat(32)}` });
+    const omitted = { ...typed, domain: { chainId: 8453 } };
+    const accepted = acceptDelegationProof({ signature, typed_data: omitted });
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.session.proof.domain.name, 'Chit402');
+    assert.equal(accepted.session.proof.domain.version, '1');
+    assert.equal(accepted.session.proof.domain.chainId, 8453);
+    assert.equal(
+      accepted.session.proof.domain.verifyingContract,
+      SESSION_VERIFYING_CONTRACT_DEFAULT,
+    );
+    const replay = verifyAuthorizeSession({
+      domain: accepted.session.proof.domain,
+      types: AUTHORIZE_SESSION_TYPES,
+      message: accepted.session.proof.message,
+    }, accepted.session.proof.signature);
+    assert.equal(replay.valid, true);
+    assert.equal(replay.delegation_hash, accepted.session.delegation_hash);
+    assert.equal(replay.payer_wallet, PAYER.address);
+  });
 });
 
 describe('Bind-at-settle JWS claims', () => {

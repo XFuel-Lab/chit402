@@ -2341,7 +2341,12 @@ export function createApp() {
         agent_pubkey: verified.agent_pubkey,
         payer_wallet: verified.payer_wallet,
         nonce: verified.nonce,
-        proof: { type: 'eip712', primary_type: 'RevokeSession', signature, typed_data: typedData },
+        proof: {
+          type: 'eip712',
+          primary_type: 'RevokeSession',
+          signature,
+          typed_data: { ...typedData, domain: verified.domain || typedData.domain },
+        },
       });
       return res.status(200).json({
         status: 'revoked',

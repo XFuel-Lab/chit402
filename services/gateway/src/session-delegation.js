@@ -396,6 +396,7 @@ export function verifyAuthorizeSession(typedData, signature, { verifyingContract
       max_cumulative_spend: String(msg.maxCumulativeSpend),
       allowed_routes: canonicalizeAllowedRoutes(msg.allowedRoutes),
       nonce: normalizeSessionNonce(msg.nonce),
+      domain,
     };
   } catch (err) {
     return { valid: false, reason: `verification_error: ${err.message}` };
@@ -440,6 +441,7 @@ export function verifyRevokeSession(typedData, signature, {
       agent_pubkey: isAddress(msg.agentPubkey) ? getAddress(msg.agentPubkey) : null,
       nonce: msg.nonce ? normalizeSessionNonce(msg.nonce) : null,
       delegation_hash: msg.delegationHash ? normalizeSessionNonce(msg.delegationHash) : null,
+      domain,
     };
   } catch (err) {
     return { valid: false, reason: `verification_error: ${err.message}` };
@@ -635,6 +637,14 @@ export function acceptDelegationProof(proof, {
     ? `${String(issuerUri).replace(/\/$/, '')}/v1/sessions/${verified.delegation_hash}`
     : `/v1/sessions/${verified.delegation_hash}`;
 
+  // Publish the pinned domain used to hash delegation_hash — not the
+  // client-submitted (possibly omitted-fields) domain.
+  const pinnedTyped = jsonSafeTypedData({
+    ...typedData,
+    domain: verified.domain || canonicalizeSessionDomain(typedData.domain, { verifyingContract }).domain,
+    message: typedData.message,
+  });
+
   return {
     ok: true,
     session: {
@@ -654,12 +664,12 @@ export function acceptDelegationProof(proof, {
         type: 'eip712',
         primary_type: AUTHORIZE_SESSION_PRIMARY,
         signature,
-        domain: jsonSafeTypedData(typedData)?.domain || typedData.domain,
-        message: jsonSafeTypedData(typedData)?.message || typedData.message,
+        domain: pinnedTyped.domain,
+        message: pinnedTyped.message,
         lookup_uri: lookupUri,
       },
     },
-    typed_data: typedData,
+    typed_data: pinnedTyped,
   };
 }
 
