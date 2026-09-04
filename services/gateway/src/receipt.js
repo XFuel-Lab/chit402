@@ -669,6 +669,33 @@ function publicHmacAttestation(attestation) {
  * @param {{ baseUrl?: string, iat?: number|null }} [opts]
  * @returns {{ alg: string, payload_version: number, jws: string, kid: string }}
  */
+function sessionIdentity(claims) {
+  return JSON.stringify([
+    claims?.agent_pubkey ?? claims?.session?.agent_pubkey ?? claims?.caller_binding?.agent_pubkey ?? null,
+    claims?.delegation_hash ?? claims?.session?.delegation_hash ?? null,
+    claims?.session_expiry ?? claims?.session?.session_expiry ?? null,
+    claims?.parent_receipt_id ?? null,
+  ]);
+}
+
+function settlementIdentity(claims) {
+  return JSON.stringify([
+    claims?.payment?.ref ?? null,
+    claims?.payment?.gross_amount ?? null,
+    claims?.payment?.net_amount ?? null,
+    claims?.provider_cogs?.actual ?? null,
+    claims?.route?.model ?? null,
+    claims?.route?.provider ?? null,
+    claims?.output?.hash ?? null,
+  ]);
+}
+
+/** Keep genesis JWS when session fields would change; allow re-sign for rolling payment. */
+function sessionClaimsFrozen(cachedClaims, draft) {
+  if (sessionIdentity(cachedClaims) !== sessionIdentity(draft)) return true;
+  return settlementIdentity(cachedClaims) === settlementIdentity(draft);
+}
+
 function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
   const claims = canonicalSignedClaims(receipt, { iat });
   const jwksUri = buildJwksUri(baseUrl);
@@ -1148,12 +1175,15 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   };
 
   const jwks_uri = buildJwksUri(base);
-  // Genesis JWS is issued once and cached on the task. NEVER re-sign the same
-  // receipt id — late assign is a distinct child handoff receipt.
+  // Session/parent fields are frozen on the first JWS for this task_id.
+  // Payment/route may still re-sign (rolling settlement attaches the ref later).
+  // Late session assign is a child receipt — never mutate genesis session claims.
   let issuer_signature = task.issuerSignature || task.issuer_signature || null;
   if (issuer_signature?.jws) {
     const cachedClaims = decodeReceiptClaims({ issuer_signature });
     if (cachedClaims?.task_id && cachedClaims.task_id !== draft.task_id) {
+      issuer_signature = null;
+    } else if (cachedClaims && !sessionClaimsFrozen(cachedClaims, draft)) {
       issuer_signature = null;
     }
   }

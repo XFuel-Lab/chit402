@@ -211,10 +211,17 @@ function toUint(value, field) {
   try {
     const n = BigInt(value);
     if (n < 0n) throw new Error('negative');
-    return n;
+    // Decimal string — JSON-safe and accepted by ethers uint256.
+    return n.toString();
   } catch {
     throw new Error(`${field} must be a non-negative integer (atomic USDC / unix seconds)`);
   }
+}
+
+/** Strip BigInt from a typed-data message so it can live in a JWS / HTTP body. */
+export function jsonSafeTypedData(typedData) {
+  if (!typedData || typeof typedData !== 'object') return typedData;
+  return JSON.parse(JSON.stringify(typedData, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
 }
 
 /**
@@ -526,8 +533,8 @@ export function acceptDelegationProof(proof, {
         type: 'eip712',
         primary_type: AUTHORIZE_SESSION_PRIMARY,
         signature,
-        domain: typedData.domain,
-        message: typedData.message,
+        domain: jsonSafeTypedData(typedData)?.domain || typedData.domain,
+        message: jsonSafeTypedData(typedData)?.message || typedData.message,
         lookup_uri: lookupUri,
       },
     },
@@ -572,20 +579,20 @@ export function sessionOf(task, opts = {}) {
  */
 export function publicSessionBlock(session) {
   if (!session) return null;
-  return {
+  return jsonSafeTypedData({
     agent_pubkey: session.agent_pubkey,
     agent_key_type: session.agent_key_type || AGENT_KEY_TYPE_SECP256K1,
     delegation_hash: session.delegation_hash,
-    session_expiry: session.session_expiry,
-    valid_after: session.valid_after,
-    valid_until: session.valid_until,
-    max_cumulative_spend: session.max_cumulative_spend,
+    session_expiry: session.session_expiry != null ? Number(session.session_expiry) : null,
+    valid_after: session.valid_after != null ? Number(session.valid_after) : null,
+    valid_until: session.valid_until != null ? Number(session.valid_until) : null,
+    max_cumulative_spend: session.max_cumulative_spend != null ? String(session.max_cumulative_spend) : null,
     decimals: session.decimals ?? USDC_ATOMIC_DECIMALS,
     unit: session.unit || USDC_ATOMIC_UNIT,
     allowed_routes: session.allowed_routes,
     nonce: session.nonce,
     proof: session.proof || null,
-  };
+  });
 }
 
 /**
