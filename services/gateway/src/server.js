@@ -36,6 +36,7 @@ import {
   buildRevokeTypedData,
   sessionEip712Domain,
   resolveRevokeExpectedPayer,
+  sessionMatchesSettledPayer,
   SESSION_CHAIN_ID,
   AGENT_KEY_TYPE_SECP256K1,
 } from './session-delegation.js';
@@ -684,6 +685,7 @@ export function createApp() {
       action_mismatch: 403,
       resource_mismatch: 403,
       resource_not_bound_to_session: 403,
+      payer_mismatch: 403,
     };
     const status = map[reason] || (String(reason || '').startsWith('verification_error') ? 403 : 400);
     return {
@@ -848,6 +850,20 @@ export function createApp() {
           body: {
             error: 'validation_error',
             message: 'Cannot handoff a child session receipt; assign from the genesis receipt',
+          },
+        };
+      }
+      const parentPayer = parent.meta?.payerWallet
+        || parent.meta?.session?.payer_wallet
+        || parent.meta?.payer_wallet
+        || null;
+      if (parentPayer && !sessionMatchesSettledPayer(accepted.session, parentPayer)) {
+        return {
+          status: 403,
+          body: {
+            error: 'forbidden',
+            reason: 'payer_mismatch',
+            message: 'Session payer does not match the parent receipt payer',
           },
         };
       }
