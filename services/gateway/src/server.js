@@ -366,14 +366,19 @@ Agent verification flow (recommended):
    (pinned Chit402 / Base domain); unseen grants need the AuthorizeSession
    proof. Do not amend the receipt.
 9. Privileged acts (handoff, read_private, redeem): prove-key SessionAct.
-   POST /v1/sessions/:delegation_hash/challenge → agent signs EIP-712
-   SessionAct (delegationHash, nonce, action, resource, deadline,
-   targetAgent, payloadHash) with the bound agent_pubkey (secp256k1, Base)
-   → POST /v1/sessions/:delegation_hash/act.
-   Child handoff JWS embeds SessionAct (types + signature + nonce) in
-   signed claims; kind/action are signed; settlement is inherited from
-   parent_receipt_id (do not sum parent payment.ref / gross_amount /
-   provider_cogs twice). Challenge every act. No capability-token shortcut.
+   Types are stable (VERIFY_ALGORITHM §11): SessionAct = delegationHash,
+   nonce, action, resource, deadline, targetAgent, payloadHash. Same
+   Chit402 / Base 8453 domain as AuthorizeSession. secp256k1 only.
+   Transport A — challenge: POST /v1/sessions/:delegation_hash/challenge
+   → sign → POST /act { action, resource, signature, challenge_id }.
+   Transport B — 1-shot: client generates nonce + deadline, signs the
+   same types, POST /act { action, resource, signature, nonce, deadline,
+   target_agent?, payload_hash? }. No prior /challenge. Replay: unused
+   nonce, deadline in the 2–5 min window, session active, recovers to
+   agent_pubkey. Child handoff JWS embeds SessionAct (types + signature
+   + nonce) in signed claims; kind/action are signed; settlement is
+   inherited from parent_receipt_id (do not sum parent payment.ref /
+   gross_amount / provider_cogs twice). No capability-token shortcut.
 
 provider_cogs.actual and provider_cogs.usd_mark are atomic USDC integers
 (decimals: 6, unit: atomic_usdc). Same scale as payment.gross_amount — e.g.
@@ -404,8 +409,8 @@ SDK: verifyReceiptEcdsaWithJwks(receipt, jwks) → { checked, valid, kid }
 - GET  /.well-known/jwks.json : JWKS for receipt issuer signature (ES256/ECDSA). Public-key verify.
 - GET  /.well-known/revocations : session-delegation revocations (delegation_hash list).
 - GET  /v1/sessions/:delegation_hash : session status (active / expired / revoked).
-- POST /v1/sessions/:delegation_hash/challenge : one-shot prove-key nonce (TTL 2–5 min).
-- POST /v1/sessions/:delegation_hash/act : SessionAct (handoff | read_private | redeem).
+- POST /v1/sessions/:delegation_hash/challenge : interactive prove-key nonce (TTL 2–5 min). Publishes SessionAct types.
+- POST /v1/sessions/:delegation_hash/act : SessionAct (handoff | read_private | redeem). Accepts challenge_id OR client nonce+deadline (1-shot). Types are stable — see VERIFY_ALGORITHM §11.
 - GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message.
 - POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
@@ -686,6 +691,9 @@ export function createApp() {
       challenge_expired: 403,
       deadline_expired: 403,
       deadline_after_challenge: 403,
+      deadline_too_far: 403,
+      challenge_or_nonce_required: 400,
+      invalid_nonce: 400,
       delegation_hash_mismatch: 403,
       nonce_mismatch: 403,
       action_mismatch: 403,
@@ -701,6 +709,16 @@ export function createApp() {
     };
   }
 
+  function sessionActTypesHint(req) {
+    return {
+      types: SESSION_ACT_TYPES,
+      primaryType: SESSION_ACT_PRIMARY,
+      domain: sessionEip712Domain(sessionDomainOpts(req)),
+      agent_key_type: AGENT_KEY_TYPE_SECP256K1,
+      chain_id: SESSION_CHAIN_ID,
+    };
+  }
+
   function proveKeyFromRequest(req, delegationHash, { action = null, resource = null } = {}) {
     const hash = delegationHash || req.params?.delegation_hash || req.body?.delegation_hash;
     const session = sessionStore.get(hash);
@@ -708,33 +726,40 @@ export function createApp() {
       return { ok: false, reason: 'unknown_session' };
     }
     const challengeId = req.body?.challenge_id || req.body?.challengeId || req.headers['x-xfuel-session-challenge'];
-    const live = sessionActStore.getLive(challengeId, {
-      expectedDelegationHash: hash,
-    });
-    if (!live.ok) return { ok: false, reason: live.reason };
-    return acceptSessionAct({
+    const proof = {
+      action: action || req.body?.action,
+      resource: resource || req.body?.resource,
+      signature: req.body?.signature || req.body?.sig,
+      typed_data: req.body?.typed_data || req.body?.typedData,
+      message: req.body?.message,
+      domain: req.body?.domain,
+      types: req.body?.types,
+      nonce: req.body?.nonce,
+      deadline: req.body?.deadline,
+      target_agent: req.body?.target_agent || req.body?.targetAgent,
+      payload_hash: req.body?.payload_hash || req.body?.payloadHash,
+      delegation_hash: hash,
+    };
+    const acceptOpts = {
       session,
       revoked: sessionStore.isRevoked(hash),
-      challenge: live.challenge,
-      proof: {
-        action: action || req.body?.action,
-        resource: resource || req.body?.resource,
-        signature: req.body?.signature || req.body?.sig,
-        typed_data: req.body?.typed_data || req.body?.typedData,
-        message: req.body?.message,
-        domain: req.body?.domain,
-        types: req.body?.types,
-        nonce: req.body?.nonce,
-        deadline: req.body?.deadline,
-        target_agent: req.body?.target_agent || req.body?.targetAgent,
-        payload_hash: req.body?.payload_hash || req.body?.payloadHash,
-        delegation_hash: hash,
-      },
+      proof,
       delegationHash: hash,
       verifyingContract: config.sessionDelegation?.verifyingContract,
       issuerUri: sessionIssuerUri(req),
       store: sessionActStore,
-    });
+    };
+    if (challengeId) {
+      const live = sessionActStore.getLive(challengeId, {
+        expectedDelegationHash: hash,
+      });
+      if (!live.ok) return { ok: false, reason: live.reason };
+      return acceptSessionAct({ ...acceptOpts, challenge: live.challenge });
+    }
+    if (proof.nonce != null && proof.deadline != null && proof.signature) {
+      return acceptSessionAct({ ...acceptOpts, challenge: null });
+    }
+    return { ok: false, reason: 'challenge_or_nonce_required' };
   }
 
   function issueChildHandoff(req, parent, session, sessionAct = null) {
@@ -2514,7 +2539,11 @@ export function createApp() {
       }
 
       const challengeId = req.body?.challenge_id || req.body?.challengeId;
-      if (challengeId && (req.body?.signature || req.body?.sig)) {
+      const oneshot = !challengeId
+        && req.body?.nonce
+        && req.body?.deadline != null
+        && (req.body?.signature || req.body?.sig);
+      if ((challengeId || oneshot) && (req.body?.signature || req.body?.sig)) {
         const hash = req.body?.delegation_hash
           || req.params?.delegation_hash
           || sessionActStore.peek(challengeId)?.delegation_hash;
@@ -2573,8 +2602,10 @@ export function createApp() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  // POST /v1/sessions/:delegation_hash/challenge — one-shot prove-key nonce
+  // POST /v1/sessions/:delegation_hash/challenge — interactive prove-key nonce
   // POST /v1/sessions/:delegation_hash/act — SessionAct then execute
+  //   body is either { action, resource, signature, challenge_id } or
+  //   1-shot { action, resource, signature, nonce, deadline, target_agent?, payload_hash? }
   // ═══════════════════════════════════════════════════════════════════════
   app.post('/v1/sessions/:delegation_hash/challenge', rateLimit, (req, res) => {
     try {
@@ -2681,7 +2712,10 @@ export function createApp() {
         return res.status(err.status).json({
           error: err.error,
           reason: accepted.reason,
-          message: 'SessionAct prove-key failed',
+          message: accepted.reason === 'challenge_or_nonce_required'
+            ? 'POST /act accepts challenge_id or client nonce+deadline (1-shot). SessionAct types are stable.'
+            : 'SessionAct prove-key failed',
+          ...sessionActTypesHint(req),
         });
       }
       if (!isKnownSessionAct(accepted.action)) {
