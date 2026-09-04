@@ -333,6 +333,82 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     assert.equal(parentAgain.issuer_signature.jws, genesisJws, 'genesis JWS must not be re-signed');
   });
 
+  test('handoff rejects a session whose payer is not the parent receipt payer', async () => {
+    const { session } = await putBoundSession();
+    const listener = getAIListener();
+    const strangerParent = usdcTask({
+      taskId: 'xfuel-http-stranger-parent',
+      meta: { payerWallet: OTHER.address },
+    });
+    listener.activeTasks.set(strangerParent.taskId, strangerParent);
+    const genesis = await (await fetch(`${base}/receipt/${strangerParent.taskId}?format=json`)).json();
+    const genesisJws = genesis.issuer_signature.jws;
+
+    const { json: ch } = await challengeFor(session, { resource: strangerParent.taskId, action: 'handoff' });
+    const { typed, signature } = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce: ch.nonce,
+      expires_at: ch.expires_at,
+    }, { action: 'handoff', resource: strangerParent.taskId });
+
+    const actRes = await fetch(`${base}/v1/sessions/${session.delegation_hash}/act`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'handoff',
+        resource: strangerParent.taskId,
+        signature,
+        challenge_id: ch.challenge_id,
+        typed_data: typed,
+      }),
+    });
+    assert.equal(actRes.status, 403);
+    assert.equal((await actRes.json()).reason, 'payer_mismatch');
+
+    const parentAgain = await (await fetch(`${base}/receipt/${strangerParent.taskId}?format=json`)).json();
+    assert.equal(parentAgain.issuer_signature.jws, genesisJws);
+    assert.equal(listener.activeTasks.has('xfuel-http-stranger-parent'), true);
+  });
+
+  test('handoff does not treat a Solana parent payer as an EVM mismatch', async () => {
+    const { session } = await putBoundSession();
+    const listener = getAIListener();
+    const solanaPayer = '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU';
+    const parent = usdcTask({
+      taskId: 'xfuel-http-solana-parent',
+      meta: { payerWallet: solanaPayer, chain: 'solana' },
+    });
+    listener.activeTasks.set(parent.taskId, parent);
+    const genesis = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    const genesisJws = genesis.issuer_signature.jws;
+
+    const { json: ch } = await challengeFor(session, { resource: parent.taskId, action: 'handoff' });
+    const { typed, signature } = await signAct({
+      delegation_hash: session.delegation_hash,
+      nonce: ch.nonce,
+      expires_at: ch.expires_at,
+    }, { action: 'handoff', resource: parent.taskId });
+
+    const actRes = await fetch(`${base}/v1/sessions/${session.delegation_hash}/act`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'handoff',
+        resource: parent.taskId,
+        signature,
+        challenge_id: ch.challenge_id,
+        typed_data: typed,
+      }),
+    });
+    assert.equal(actRes.status, 201);
+    const body = await actRes.json();
+    assert.equal(body.status, 'session_handoff');
+    assert.equal(body.parent_receipt_id, parent.taskId);
+    assert.ok(body.task_id.startsWith('xfuel-'));
+    const parentAgain = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    assert.equal(parentAgain.issuer_signature.jws, genesisJws);
+  });
+
   test('wrong key / reused nonce / expired challenge / revoked session fail', async () => {
     const { session, typed: authTyped, signature: authSig } = await putBoundSession();
     const listener = getAIListener();
