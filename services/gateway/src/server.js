@@ -857,7 +857,10 @@ export function createApp() {
         || parent.meta?.session?.payer_wallet
         || parent.meta?.payer_wallet
         || null;
-      if (parentPayer && !sessionMatchesSettledPayer(accepted.session, parentPayer)) {
+      // Same gate as AuthorizeSession late-assign: only EVM payers bind.
+      // Solana / non-address parent payers are skipped (isAddress false).
+      if (parentPayer && ethers.isAddress(parentPayer)
+        && !sessionMatchesSettledPayer(accepted.session, parentPayer)) {
         return {
           status: 403,
           body: {
