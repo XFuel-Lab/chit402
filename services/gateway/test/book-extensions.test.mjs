@@ -33,7 +33,7 @@ const WALLET_A = '0x1111111111111111111111111111111111111111';
 
 function collectedReceipt(over = {}) {
   return {
-    schema: 'xfuel.receipt.v3',
+    schema: 'xfuel.receipt.v4',
     task_id: over.task_id || 'task-paid-1',
     status: 'completed',
     proof_outcome: 'valid',

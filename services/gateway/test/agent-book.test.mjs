@@ -37,13 +37,13 @@ const WALLET_B = '0x2222222222222222222222222222222222222222';
 
 function sign(receipt, secret = VERIFY_KEY) {
   const value = crypto.createHmac('sha256', secret).update(canonicalSignedPayload(receipt)).digest('hex');
-  receipt.signature = { alg: 'HMAC-SHA256', payload_version: 3, value: `sha256=${value}` };
+  receipt.hmac_attestation = { alg: 'HMAC-SHA256', payload_version: 5, value: `sha256=${value}`, role: 'attestor' };
   return receipt;
 }
 
 function collectedReceipt(over = {}) {
   return sign({
-    schema: 'xfuel.receipt.v3',
+    schema: 'xfuel.receipt.v4',
     task_id: over.task_id || 'task-paid-1',
     status: 'completed',
     proof_outcome: 'valid',
@@ -71,7 +71,7 @@ function deps(receipts, extra = {}) {
     registry,
     ledger,
     loadReceipt: async (id) => store.get(id) || null,
-    verify: (r) => verifyReceiptHmac(r, VERIFY_KEY),
+    verify: (r) => verifyReceiptHmac(r, VERIFY_KEY, { sigField: 'hmac_attestation' }),
     bindWallet: async (w) => ({ ok: true, address: w, kind: 'aawp', official: true }),
     postA2A: async (fields) => ({ message_id: 'a2a-test', status: 'accepted', ...fields }),
     ...extra,

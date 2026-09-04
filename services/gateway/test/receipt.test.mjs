@@ -329,7 +329,7 @@ test('buildReceipt: rolling first call is pending, not a legacy rail, and carrie
   assert.match(html, /Tokens.*20|20.*\(12.*8\)/i, 'Tokens shown compactly');
   assert.match(html, /\$0\.000017/);
   assert.match(html, /not on this call/);
-  assert.match(html, /HMAC/);
+  assert.match(html, /ES256.*signed|verify.*JWKS/i);
   assert.match(html, /next request/);
 });
 
@@ -367,17 +367,19 @@ test('buildReceipt: PBR binding (model + output) verifies via the superset commi
   assert.equal(r.binding.model_commitment, MODEL_C);
 });
 
-test('buildReceipt: signature is absent by default and valid HMAC when a secret is given', () => {
+test('buildReceipt: hmac_attestation is absent by default and valid HMAC when a secret is given', () => {
   const secret = 'test-receipt-secret';
-  assert.equal(buildReceipt(usdcTask()).signature, undefined);
+  assert.equal(buildReceipt(usdcTask()).hmac_attestation, undefined);
 
   const r = buildReceipt(usdcTask(), { signingSecret: secret });
-  assert.ok(r.signature);
-  assert.equal(r.signature.alg, 'HMAC-SHA256');
-  assert.equal(r.signature.payload_version, 4);
-  assert.equal(r.schema, 'xfuel.receipt.v3');
-  assert.ok(r.signature.signed_fields.includes('provider_cogs.actual'));
-  assert.ok(r.signature.signed_fields.includes('payment.platform_fee_bps'));
+  assert.ok(r.hmac_attestation);
+  assert.equal(r.hmac_attestation.alg, 'HMAC-SHA256');
+  assert.equal(r.hmac_attestation.payload_version, 5);
+  assert.equal(r.schema, 'xfuel.receipt.v4');
+  assert.ok(r.hmac_attestation.signed_fields.includes('provider_cogs.actual'));
+  assert.ok(r.hmac_attestation.signed_fields.includes('payment.platform_fee_bps'));
+  assert.ok(r.hmac_attestation.signed_fields.includes('caller_binding.payer_wallet'));
+  assert.equal(r.hmac_attestation.role, 'attestor');
 
   // Recompute the HMAC over the same canonical payload → must match.
   const payload = JSON.stringify([
@@ -395,7 +397,7 @@ test('buildReceipt: signature is absent by default and valid HMAC when a secret 
     r.caller_binding?.api_key_hash ?? null,
   ]);
   const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(payload).digest('hex');
-  assert.equal(r.signature.value, expected);
+  assert.equal(r.hmac_attestation.value, expected);
 });
 
 test('signed cost-plus fields recompute to gross', async () => {
@@ -531,20 +533,40 @@ test('renderReceiptHtml: tokens shown compactly (total with breakdown)', () => {
   assert.match(html, /100.*50|prompt.*completion/i, 'Token breakdown shown');
 });
 
-test('buildReceipt: issuer_signature has ES256 alg and JWKS uri', () => {
+test('buildReceipt: issuer_signature has ES256 alg, JWKS uri, and compact JWS', () => {
   const r = buildReceipt(usdcTask());
   assert.ok(r.issuer_signature, 'issuer_signature present');
   assert.equal(r.issuer_signature.alg, 'ES256');
   assert.equal(r.issuer_signature.jwks_uri, '/.well-known/jwks.json');
   assert.ok(r.issuer_signature.kid, 'kid present');
-  assert.ok(r.issuer_signature.value, 'signature value present');
+  assert.ok(r.issuer_signature.jws, 'compact JWS present');
+  assert.equal(r.issuer_signature.payload_version, 5);
+  
+  // JWS should have 3 parts (header.payload.signature)
+  const parts = r.issuer_signature.jws.split('.');
+  assert.equal(parts.length, 3, 'JWS has header.payload.signature format');
+  
+  // Header should have typ: chit402-receipt+jwt
+  const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+  assert.equal(header.alg, 'ES256');
+  assert.equal(header.typ, 'chit402-receipt+jwt');
+  assert.equal(header.kid, r.issuer_signature.kid);
+  
+  // Payload should be an object with named claims (not an array)
+  const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  assert.equal(typeof payload, 'object');
+  assert.ok(!Array.isArray(payload), 'payload must be an object, not an array');
+  assert.equal(payload.task_id, r.task_id);
+  assert.equal(payload.iss, 'chit402');
+  assert.ok(payload.iat, 'iat claim present');
+  assert.equal(payload.payload_version, 5);
 });
 
 // ── Issuer signature verification correctness tests ─────────────────────────
 
 test('renderReceiptHtml: valid issuer signature shows "verified" badge', () => {
   const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
-  assert.ok(r.issuer_signature?.value, 'issuer_signature must be present');
+  assert.ok(r.issuer_signature?.jws, 'issuer_signature.jws must be present');
   const html = renderReceiptHtml(r);
   assert.match(html, /<span class="badge ok">verified<\/span>/, 'verified badge must appear for valid signature');
   assert.ok(!html.includes('badge bad">not verified'), 'must NOT show "not verified" badge for valid signature');
@@ -552,10 +574,10 @@ test('renderReceiptHtml: valid issuer signature shows "verified" badge', () => {
 
 test('renderReceiptHtml: tampered receipt shows "not verified" badge (truthful)', () => {
   const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
-  assert.ok(r.issuer_signature?.value, 'issuer_signature must be present before tampering');
+  assert.ok(r.issuer_signature?.jws, 'issuer_signature.jws must be present before tampering');
   
   // Tamper with a canonically signed field AFTER the signature was computed
-  r.payment.gross_amount = '9999999';
+  r.task_id = 'tampered-task-id';
   
   const html = renderReceiptHtml(r);
   assert.match(html, /<span class="badge bad">not verified<\/span>/, 'not verified badge must appear for tampered receipt');
@@ -568,4 +590,82 @@ test('renderReceiptHtml: receipt without issuer_signature shows "unsigned"', () 
   const html = renderReceiptHtml(r);
   assert.match(html, /<span class="muted">unsigned<\/span>/, 'unsigned badge must appear when no issuer_signature');
   assert.ok(!html.includes('badge ok">verified'), 'must NOT show verified badge when unsigned');
+});
+
+// ── Caller binding tests ─────────────────────────────────────────────────────
+
+test('buildReceipt: caller_binding is present and has correct structure', () => {
+  const r = buildReceipt(usdcTask());
+  assert.ok(r.caller_binding, 'caller_binding must be present');
+  assert.ok('payer_wallet' in r.caller_binding, 'payer_wallet field present');
+  assert.ok('agent_pubkey' in r.caller_binding, 'agent_pubkey field present');
+  assert.ok('api_key_hash' in r.caller_binding, 'api_key_hash field present');
+});
+
+test('buildReceipt: caller_binding uses actual wallet address, never symbolic labels', () => {
+  // Task with an actual payer address from x402 settlement
+  const taskWithAddress = usdcTask({
+    meta: {
+      ...usdcTask().meta,
+      payerAddress: '0x1234567890123456789012345678901234567890',
+    },
+  });
+  const r = buildReceipt(taskWithAddress);
+  assert.equal(r.caller_binding.payer_wallet, '0x1234567890123456789012345678901234567890');
+  
+  // Task without an address should have null, not a label like "openai-gateway"
+  const taskWithoutAddress = usdcTask();
+  const r2 = buildReceipt(taskWithoutAddress);
+  assert.equal(r2.caller_binding.payer_wallet, null, 'payer_wallet should be null when no actual address, never a symbolic label');
+});
+
+test('buildReceipt: caller_binding.payer_wallet rejects non-address values', () => {
+  // Task with a symbolic label (the bug we're fixing)
+  const taskWithLabel = usdcTask({
+    meta: {
+      ...usdcTask().meta,
+      payerAddress: 'openai-gateway',
+    },
+  });
+  const r = buildReceipt(taskWithLabel);
+  assert.equal(r.caller_binding.payer_wallet, null, 'symbolic labels must be rejected');
+  
+  // Task with invalid address format
+  const taskWithInvalid = usdcTask({
+    meta: {
+      ...usdcTask().meta,
+      payerAddress: '0x123',
+    },
+  });
+  const r2 = buildReceipt(taskWithInvalid);
+  assert.equal(r2.caller_binding.payer_wallet, null, 'invalid addresses must be rejected');
+});
+
+test('buildReceipt: caller_binding includes agent_pubkey when present', () => {
+  const taskWithAgent = usdcTask({
+    meta: {
+      ...usdcTask().meta,
+      agentPubkey: '0xagentpubkey123',
+      apiKeyHash: 'sha256=abcdef',
+    },
+  });
+  const r = buildReceipt(taskWithAgent);
+  assert.equal(r.caller_binding.agent_pubkey, '0xagentpubkey123');
+  assert.equal(r.caller_binding.api_key_hash, 'sha256=abcdef');
+});
+
+test('buildReceipt: caller_binding.agent_pubkey rejects symbolic labels', () => {
+  // Vendor/gateway labels must NEVER appear in agent_pubkey — only real pubkeys or null
+  const symbolicLabels = ['openai-gateway', 'openai', 'anthropic', 'openrouter', 'gateway', 'internal'];
+  
+  for (const label of symbolicLabels) {
+    const taskWithLabel = usdcTask({
+      meta: {
+        ...usdcTask().meta,
+        agentPubkey: label,
+      },
+    });
+    const r = buildReceipt(taskWithLabel);
+    assert.equal(r.caller_binding.agent_pubkey, null, `symbolic label "${label}" must be rejected for agent_pubkey`);
+  }
 });

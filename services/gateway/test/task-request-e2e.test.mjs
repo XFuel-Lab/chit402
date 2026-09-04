@@ -191,7 +191,7 @@ test('the receipt attests the model that served, not the alias requested', async
   const { receipt } = await run({ model_id: 'xfuel/auto' });
 
   assert.equal(receipt.route.model, 'akash/meta-llama/Llama-3.3-70B-Instruct');
-  assert.ok(receipt.signature, 'the paid path receipt must be signed');
+  assert.ok(receipt.issuer_signature, 'the paid path receipt must have issuer_signature');
 });
 
 test('an explicit hub-prefixed model routes to that model', async () => {

@@ -435,7 +435,7 @@ describe('Backwards Compatibility', () => {
     const receipt = buildReceipt(task, { signingSecret: 'test-secret' });
 
     assert.ok(receipt.task_id);
-    assert.ok(receipt.signature);
+    assert.ok(receipt.issuer_signature);
     assert.equal(receipt.handoff, null);
     assert.equal(receipt.status, 'completed');
     assert.ok(receipt.payment);
@@ -449,7 +449,7 @@ describe('Backwards Compatibility', () => {
     };
 
     const receipt = buildReceipt(task, {});
-    assert.equal(receipt.schema, 'xfuel.receipt.v3');
+    assert.equal(receipt.schema, 'xfuel.receipt.v4');
   });
 
   test('handoff is additive — does not remove existing fields', () => {
@@ -486,7 +486,7 @@ describe('Backwards Compatibility', () => {
     assert.ok(receipt.task_id);
     assert.ok(receipt.payment);
     assert.ok(receipt.privacy);
-    assert.ok(receipt.signature);
+    assert.ok(receipt.issuer_signature);
 
     // Handoff is added
     assert.ok(receipt.handoff);

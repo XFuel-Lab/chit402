@@ -104,51 +104,56 @@ describe('Replaceable Signer', () => {
     result: { model: 'test-model' },
   };
 
-  test('buildReceipt adds co_signature when coSignerSecret provided', () => {
+  test('buildReceipt adds co_attestation when coSignerSecret provided', () => {
     const receipt = buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
       signingSecret: PRIMARY_SECRET,
       coSignerSecret: CO_SIGNER_SECRET,
     });
 
-    // Primary signature present
-    assert.ok(receipt.signature, 'should have signature');
-    assert.equal(receipt.signature.alg, 'HMAC-SHA256');
-    assert.equal(receipt.signature.role, 'primary');
-    assert.ok(receipt.signature.value.startsWith('sha256='));
+    // Primary HMAC attestation present (secondary to ES256 issuer_signature)
+    assert.ok(receipt.hmac_attestation, 'should have hmac_attestation');
+    assert.equal(receipt.hmac_attestation.alg, 'HMAC-SHA256');
+    assert.equal(receipt.hmac_attestation.role, 'attestor');
+    assert.ok(receipt.hmac_attestation.value.startsWith('sha256='));
 
-    // Co-signature present
-    assert.ok(receipt.co_signature, 'should have co_signature');
-    assert.equal(receipt.co_signature.alg, 'HMAC-SHA256');
-    assert.equal(receipt.co_signature.role, 'co_signer');
-    assert.ok(receipt.co_signature.value.startsWith('sha256='));
+    // Co-attestation present
+    assert.ok(receipt.co_attestation, 'should have co_attestation');
+    assert.equal(receipt.co_attestation.alg, 'HMAC-SHA256');
+    assert.equal(receipt.co_attestation.role, 'co_attestor');
+    assert.ok(receipt.co_attestation.value.startsWith('sha256='));
 
-    // Signatures are different (different secrets)
-    assert.notEqual(receipt.signature.value, receipt.co_signature.value);
+    // Attestations are different (different secrets)
+    assert.notEqual(receipt.hmac_attestation.value, receipt.co_attestation.value);
+    
+    // ES256 issuer_signature is the primary verification path
+    assert.ok(receipt.issuer_signature, 'issuer_signature is primary');
+    assert.equal(receipt.issuer_signature.alg, 'ES256');
+    assert.ok(receipt.issuer_signature.jws, 'has compact JWS');
   });
 
-  test('verifyReceiptHmac validates primary signature', () => {
+  test('verifyReceiptHmac validates hmac_attestation', () => {
     const receipt = buildReceipt(mockTask, {
       signingSecret: PRIMARY_SECRET,
       coSignerSecret: CO_SIGNER_SECRET,
     });
 
-    const result = verifyReceiptHmac(receipt, PRIMARY_SECRET);
+    const result = verifyReceiptHmac(receipt, PRIMARY_SECRET, { sigField: 'hmac_attestation' });
     assert.equal(result.checked, true);
     assert.equal(result.valid, true);
-    assert.equal(result.role, 'primary');
+    assert.equal(result.role, 'attestor');
   });
 
-  test('verifyReceiptHmac validates co_signature with sigField option', () => {
+  test('verifyReceiptHmac validates co_attestation with sigField option', () => {
     const receipt = buildReceipt(mockTask, {
       signingSecret: PRIMARY_SECRET,
       coSignerSecret: CO_SIGNER_SECRET,
     });
 
-    const result = verifyReceiptHmac(receipt, CO_SIGNER_SECRET, { sigField: 'co_signature' });
+    const result = verifyReceiptHmac(receipt, CO_SIGNER_SECRET, { sigField: 'co_attestation' });
     assert.equal(result.checked, true);
     assert.equal(result.valid, true);
-    assert.equal(result.role, 'co_signer');
+    assert.equal(result.role, 'co_attestor');
   });
 
   test('verifyReceiptHmac fails with wrong secret', () => {
@@ -156,26 +161,26 @@ describe('Replaceable Signer', () => {
       signingSecret: PRIMARY_SECRET,
     });
 
-    const result = verifyReceiptHmac(receipt, 'wrong-secret');
+    const result = verifyReceiptHmac(receipt, 'wrong-secret', { sigField: 'hmac_attestation' });
     assert.equal(result.checked, true);
     assert.equal(result.valid, false);
   });
 
-  test('verifyReceiptMultiKey succeeds if any key matches any signature', () => {
+  test('verifyReceiptMultiKey succeeds if any key matches any HMAC attestation', () => {
     const receipt = buildReceipt(mockTask, {
       signingSecret: PRIMARY_SECRET,
       coSignerSecret: CO_SIGNER_SECRET,
     });
 
-    // Primary key validates
+    // Primary key validates hmac_attestation
     const r1 = verifyReceiptMultiKey(receipt, [PRIMARY_SECRET]);
     assert.equal(r1.valid, true);
-    assert.equal(r1.validatedBy, 'signature');
+    assert.equal(r1.validatedBy, 'hmac_attestation');
 
-    // Co-signer key validates
+    // Co-signer key validates co_attestation
     const r2 = verifyReceiptMultiKey(receipt, [CO_SIGNER_SECRET]);
     assert.equal(r2.valid, true);
-    assert.equal(r2.validatedBy, 'co_signature');
+    assert.equal(r2.validatedBy, 'co_attestation');
 
     // Either key in array validates
     const r3 = verifyReceiptMultiKey(receipt, ['wrong', CO_SIGNER_SECRET]);
@@ -187,7 +192,7 @@ describe('Replaceable Signer', () => {
     assert.equal(r4.reason, 'all_keys_failed');
   });
 
-  test('verifyReceiptMultiKey fails with no signatures', () => {
+  test('verifyReceiptMultiKey fails with no HMAC attestations', () => {
     const receipt = buildReceipt(mockTask, {});
 
     const result = verifyReceiptMultiKey(receipt, [PRIMARY_SECRET]);
@@ -313,7 +318,8 @@ describe('in_proof / nullifier Path', () => {
     const receipt = buildReceipt(task, { signingSecret: 'test-secret' });
     assert.equal(receipt.proof.tier, 'signed');
     assert.equal(receipt.proof.has_proof, false);
-    assert.ok(receipt.signature, 'signed receipt has signature');
+    assert.ok(receipt.issuer_signature, 'signed receipt has issuer_signature');
+    assert.ok(receipt.hmac_attestation, 'signed receipt has hmac_attestation');
   });
 });
 
@@ -343,7 +349,7 @@ describe('Offline Verification', () => {
 
     const receipt = buildReceipt(task, { signingSecret: SECRET });
 
-    // The canonical payload should be a JSON array
+    // The canonical payload should be a JSON array (for HMAC backward compat)
     const payload = canonicalSignedPayload(receipt);
     const parsed = JSON.parse(payload);
     assert.ok(Array.isArray(parsed), 'canonical payload is an array');
@@ -351,16 +357,16 @@ describe('Offline Verification', () => {
     assert.equal(parsed[1], receipt.payment.rail);
     assert.equal(parsed[2], receipt.payment.ref);
 
-    // Verify with the secret
-    const result = verifyReceiptHmac(receipt, SECRET);
+    // Verify HMAC with the secret
+    const result = verifyReceiptHmac(receipt, SECRET, { sigField: 'hmac_attestation' });
     assert.equal(result.valid, true);
 
     // Verify with wrong secret fails
-    const wrongResult = verifyReceiptHmac(receipt, 'wrong-secret');
+    const wrongResult = verifyReceiptHmac(receipt, 'wrong-secret', { sigField: 'hmac_attestation' });
     assert.equal(wrongResult.valid, false);
   });
 
-  test('tampered receipt fails verification', () => {
+  test('tampered receipt fails HMAC verification', () => {
     const task = {
       taskId: 'tamper-1',
       status: 'completed',
@@ -381,7 +387,7 @@ describe('Offline Verification', () => {
     // Tamper with the amount
     receipt.payment.gross_amount = '999999';
 
-    const result = verifyReceiptHmac(receipt, SECRET);
+    const result = verifyReceiptHmac(receipt, SECRET, { sigField: 'hmac_attestation' });
     assert.equal(result.valid, false);
   });
 });

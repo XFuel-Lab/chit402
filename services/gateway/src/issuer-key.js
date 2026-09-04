@@ -89,6 +89,7 @@ function computeJwkThumbprint(jwk) {
 /**
  * Sign a message with the issuer's private key (ES256).
  * Returns the raw signature as base64url (R || S, 64 bytes for P-256).
+ * @deprecated Use signJws() for standard-library-compatible signatures.
  */
 export function signWithIssuerKey(message) {
   const { privateKey, kid } = initIssuerKey();
@@ -100,135 +101,140 @@ export function signWithIssuerKey(message) {
 }
 
 /**
- * Build a compact JWS (JSON Web Signature) token: header.payload.signature
- * This is the raw, independently-verifiable preimage an agent can fetch and
- * verify against the JWKS without needing to reconstruct the canonical payload.
- *
- * @param {string} payload - The payload to sign (canonical signed payload JSON string)
- * @returns {{ jws: string, kid: string }} - Compact JWS token and key ID
+ * Base64url encode a JSON object.
+ * @param {object} obj
+ * @returns {string}
  */
-export function signAsCompactJws(payload) {
-  const { privateKey, kid } = initIssuerKey();
+function b64urlJson(obj) {
+  return Buffer.from(JSON.stringify(obj), 'utf8').toString('base64url');
+}
 
+/**
+ * Sign an object payload as a compact JWS (ES256).
+ * 
+ * Creates a standard JWS that can be verified by jose, jsonwebtoken, pyjwt, etc.
+ * The payload is a JSON object (not an array), making it self-describing.
+ * 
+ * Header: { alg: 'ES256', typ: 'chit402-receipt+jwt', kid }
+ * Payload: object with named claims
+ * 
+ * @param {object} payload - Object payload (will be JSON serialized)
+ * @returns {{ jws: string, kid: string }} - Compact JWS and key ID
+ */
+export function signJws(payload) {
+  const { privateKey, kid } = initIssuerKey();
+  
   const header = {
     alg: 'ES256',
-    typ: 'JWT',
+    typ: 'chit402-receipt+jwt',
     kid,
   };
-
-  const headerB64 = Buffer.from(JSON.stringify(header), 'utf8').toString('base64url');
-  const payloadB64 = Buffer.from(payload, 'utf8').toString('base64url');
-  const signingInput = `${headerB64}.${payloadB64}`;
-
+  
+  const signingInput = `${b64urlJson(header)}.${b64urlJson(payload)}`;
   const signature = crypto.sign('sha256', Buffer.from(signingInput, 'utf8'), {
     key: privateKey,
     dsaEncoding: 'ieee-p1363',
   });
-  const signatureB64 = signature.toString('base64url');
-
-  return {
-    jws: `${headerB64}.${payloadB64}.${signatureB64}`,
-    kid,
-  };
+  
+  const jws = `${signingInput}.${signature.toString('base64url')}`;
+  return { jws, kid };
 }
 
 /**
- * Verify a compact JWS token against a JWK public key.
- *
+ * Verify a compact JWS against a JWK.
+ * Parses the JWS, verifies the ES256 signature, returns the payload.
+ * 
  * @param {string} jws - Compact JWS (header.payload.signature)
- * @param {object} jwk - JWK public key { kty: 'EC', crv: 'P-256', x, y }
- * @returns {{ valid: boolean, payload?: string, header?: object, reason?: string }}
+ * @param {object} jwk - JWK with kty: 'EC', crv: 'P-256', x, y
+ * @returns {{ valid: boolean, payload?: object, header?: object, reason?: string }}
  */
-export function verifyCompactJws(jws, jwk) {
+export function verifyJws(jws, jwk) {
   if (!jws || typeof jws !== 'string') {
-    return { valid: false, reason: 'missing_jws' };
+    return { valid: false, reason: 'invalid_jws' };
   }
-
-  const parts = jws.split('.');
-  if (parts.length !== 3) {
-    return { valid: false, reason: 'invalid_jws_format' };
-  }
-
-  const [headerB64, payloadB64, signatureB64] = parts;
-
-  let header;
-  try {
-    header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
-  } catch {
-    return { valid: false, reason: 'invalid_header' };
-  }
-
-  if (header.alg !== 'ES256') {
-    return { valid: false, reason: `unsupported_alg: ${header.alg}` };
-  }
-
   if (!jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256') {
     return { valid: false, reason: 'invalid_jwk' };
   }
-
+  
+  const parts = jws.split('.');
+  if (parts.length !== 3) {
+    return { valid: false, reason: 'malformed_jws' };
+  }
+  
+  const [headerB64, payloadB64, signatureB64] = parts;
+  
+  let header, payload;
+  try {
+    header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
+    payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+  } catch {
+    return { valid: false, reason: 'json_parse_error' };
+  }
+  
+  if (header.alg !== 'ES256') {
+    return { valid: false, reason: `unsupported_alg: ${header.alg}` };
+  }
+  
   if (header.kid && jwk.kid && header.kid !== jwk.kid) {
     return { valid: false, reason: 'kid_mismatch' };
   }
-
-  const signingInput = `${headerB64}.${payloadB64}`;
-
+  
   try {
     const publicKey = crypto.createPublicKey({ key: jwk, format: 'jwk' });
     const signature = Buffer.from(signatureB64, 'base64url');
+    const signingInput = `${headerB64}.${payloadB64}`;
     const valid = crypto.verify('sha256', Buffer.from(signingInput, 'utf8'), {
       key: publicKey,
       dsaEncoding: 'ieee-p1363',
     }, signature);
-
+    
     if (valid) {
-      const payload = Buffer.from(payloadB64, 'base64url').toString('utf8');
       return { valid: true, payload, header };
     }
     return { valid: false, reason: 'signature_invalid' };
-  } catch {
-    return { valid: false, reason: 'verification_error' };
+  } catch (err) {
+    return { valid: false, reason: `verification_error: ${err.message}` };
   }
 }
 
 /**
- * Verify a compact JWS token against a JWKS (key set).
- * Finds the matching key by kid and verifies.
- *
- * @param {string} jws - Compact JWS (header.payload.signature)
+ * Verify a compact JWS against a JWKS (key set).
+ * Finds matching key by kid and verifies.
+ * 
+ * @param {string} jws - Compact JWS
  * @param {{ keys: object[] }} jwks - JWKS with keys array
- * @returns {{ valid: boolean, payload?: string, header?: object, kid?: string, reason?: string }}
+ * @returns {{ valid: boolean, payload?: object, header?: object, kid?: string, reason?: string }}
  */
-export function verifyCompactJwsWithJwks(jws, jwks) {
+export function verifyJwsWithJwks(jws, jwks) {
   if (!jws || typeof jws !== 'string') {
-    return { valid: false, reason: 'missing_jws' };
+    return { valid: false, reason: 'invalid_jws' };
   }
-
   if (!jwks || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
     return { valid: false, reason: 'empty_jwks' };
   }
-
+  
   const parts = jws.split('.');
   if (parts.length !== 3) {
-    return { valid: false, reason: 'invalid_jws_format' };
+    return { valid: false, reason: 'malformed_jws' };
   }
-
+  
   let header;
   try {
     header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
   } catch {
-    return { valid: false, reason: 'invalid_header' };
+    return { valid: false, reason: 'header_parse_error' };
   }
-
+  
   const candidates = header.kid
     ? jwks.keys.filter(k => k.kid === header.kid && k.alg === 'ES256')
     : jwks.keys.filter(k => k.alg === 'ES256');
-
+  
   if (candidates.length === 0) {
     return { valid: false, reason: 'no_matching_key' };
   }
-
+  
   for (const jwk of candidates) {
-    const result = verifyCompactJws(jws, jwk);
+    const result = verifyJws(jws, jwk);
     if (result.valid) {
       return { ...result, kid: jwk.kid };
     }
@@ -306,11 +312,11 @@ export function _resetIssuerKey() {
 export default {
   initIssuerKey,
   signWithIssuerKey,
-  signAsCompactJws,
+  signJws,
   verifyWithIssuerKey,
   verifyWithJwk,
-  verifyCompactJws,
-  verifyCompactJwsWithJwks,
+  verifyJws,
+  verifyJwsWithJwks,
   getJwks,
   getIssuerPublicKeyJwk,
   getIssuerKid,

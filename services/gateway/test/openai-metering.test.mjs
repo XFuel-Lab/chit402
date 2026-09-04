@@ -196,7 +196,7 @@ test('an exempt call still reports usage and stays marked unmetered', async () =
   assert.equal(body.xfuel.payment.rail, 'unmetered');
   assert.ok(!body.xfuel.payment.ref);
   assert.equal(body.xfuel.payment.collected, false);
-  assert.equal(body.xfuel.schema, 'xfuel.receipt.v3');
+  assert.equal(body.xfuel.schema, 'xfuel.receipt.v4');
 });
 
 test('the receipt names the provider that served', async () => {

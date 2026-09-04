@@ -1,6 +1,6 @@
 /**
  * Post-settle /v1 failures must never return a bare HTTP 500 without a receipt.
- * USDC that moved must yield xfuel.receipt.v3 with payment.collected true and a
+ * USDC that moved must yield xfuel.receipt.v4 with payment.collected true and a
  * public GET /receipt/:taskId — even when inference or hub routing fails.
  */
 import { test, before, after } from 'node:test';
@@ -79,7 +79,7 @@ test('settle then hub failure returns receipt, not 500', async () => {
   assert.notEqual(res.status, 500, 'settled payment must not surface as bare 500');
   const body = await res.json();
   assert.ok(body.xfuel, 'response must include xfuel receipt block');
-  assert.equal(body.xfuel.schema, 'xfuel.receipt.v3');
+  assert.equal(body.xfuel.schema, 'xfuel.receipt.v4');
   assert.equal(body.xfuel.payment.collected, true);
   assert.ok(body.xfuel.payment.ref, 'receipt must name payment ref');
   assert.ok(body.task_id || body.xfuel.task_id, 'response must name task_id');
@@ -88,7 +88,7 @@ test('settle then hub failure returns receipt, not 500', async () => {
   const receiptRes = await fetch(`${base}/receipt/${taskId}?format=json`);
   assert.equal(receiptRes.status, 200);
   const publicReceipt = await receiptRes.json();
-  assert.equal(publicReceipt.schema, 'xfuel.receipt.v3');
+  assert.equal(publicReceipt.schema, 'xfuel.receipt.v4');
   assert.equal(publicReceipt.payment.collected, true);
   assert.equal(publicReceipt.payment.ref, body.xfuel.payment.ref);
 });
