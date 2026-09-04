@@ -143,6 +143,8 @@ test('buildReceipt emits provider_cogs from task.meta', () => {
   const v = mergeReceiptView(r);
   assert.equal(v.payment.rail, 'usdc');
   assert.equal(r.provider_cogs.currency, 'USDC');
+  assert.equal(r.provider_cogs.decimals, 6);
+  assert.equal(r.provider_cogs.unit, 'atomic_usdc');
   assert.equal(r.provider_cogs.estimated, '7000');
   assert.equal(v.route.provider, 'theta-edgecloud');
 });

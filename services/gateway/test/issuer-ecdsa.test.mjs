@@ -140,7 +140,8 @@ describe('Receipt ECDSA Signing', () => {
     assert.equal(receipt.issuer_signature.payload_version, 5);
     assert.ok(receipt.issuer_signature.jws, 'should have compact JWS');
     assert.ok(receipt.issuer_signature.kid, 'should have kid');
-    assert.equal(receipt.issuer_signature.jwks_uri, 'https://api.test/.well-known/jwks.json');
+    assert.equal(receipt.verification.jwks_uri, 'https://api.test/.well-known/jwks.json');
+    assert.equal(receipt.issuer_signature.jwks_uri, undefined);
     
     // JWS should have 3 parts
     const parts = receipt.issuer_signature.jws.split('.');
@@ -613,15 +614,15 @@ describe('Caller/Payer Binding', () => {
     assert.equal(result.valid, false, 'tampered JWS payer_wallet should fail verification');
   });
 
-  test('hmac signed_fields includes caller_binding fields', () => {
+  test('hmac attestation omits signed_fields from public JSON', () => {
     const receipt = buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
       signingSecret: 'test-secret',
     });
 
-    assert.ok(receipt.hmac_attestation.signed_fields.includes('caller_binding.payer_wallet'));
-    assert.ok(receipt.hmac_attestation.signed_fields.includes('caller_binding.agent_pubkey'));
-    assert.ok(receipt.hmac_attestation.signed_fields.includes('caller_binding.api_key_hash'));
+    assert.ok(receipt.hmac_attestation);
+    assert.equal(receipt.hmac_attestation.signed_fields, undefined);
+    assert.ok(receipt.hmac_attestation.value.startsWith('sha256='));
   });
 });
 

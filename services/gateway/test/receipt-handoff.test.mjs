@@ -262,9 +262,10 @@ describe('buildReceipt with handoff', () => {
     sp1Proof: null,
   };
 
-  test('buildReceipt includes null handoff when not present', () => {
+  test('buildReceipt omits handoff when not present', () => {
     const receipt = buildReceipt(baseTask, {});
-    assert.equal(receipt.handoff, null);
+    assert.equal(receipt.handoff, undefined);
+    assert.equal('handoff' in receipt, false);
     assert.equal(receipt.task_id, baseTask.taskId);
   });
 
@@ -437,7 +438,7 @@ describe('Backwards Compatibility', () => {
 
     assert.ok(receipt.task_id);
     assert.ok(receipt.issuer_signature);
-    assert.equal(receipt.handoff, null);
+    assert.equal(receipt.handoff, undefined);
     assert.equal(receipt.status, 'completed');
     assert.ok(receipt.verification?.source_of_truth);
     assert.ok(mergeReceiptView(receipt).payment);

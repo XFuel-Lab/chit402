@@ -24,6 +24,9 @@ import { signJws, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk } from './
  * stated on the receipt so we never overclaim (see docs/POSITIONING.md §2).
  */
 
+/** USDC atomic scale — payment.gross_amount and provider_cogs.actual share this unit. */
+export const USDC_ATOMIC_DECIMALS = 6;
+
 const PROOF_SCOPE_NOTE =
   'The SP1 proof attests settlement metadata (correct fee split, payment binding) ' +
   'and a commitment to the output hash — anchored on-chain with a single-use ' +
@@ -592,6 +595,13 @@ function signReceiptPayload(receipt, secret, { role = 'attestor' } = {}) {
   };
 }
 
+/** Public HMAC block — omits internal signed_fields list (verify uses canonical payload). */
+function publicHmacAttestation(attestation) {
+  if (!attestation) return null;
+  const { signed_fields: _omit, ...rest } = attestation;
+  return rest;
+}
+
 /**
  * ES256 issuer signature as a compact JWS.
  * 
@@ -606,17 +616,19 @@ function signReceiptPayload(receipt, secret, { role = 'attestor' } = {}) {
  * 
  * @param {object} receipt
  * @param {{ baseUrl?: string, iat?: number|null }} [opts]
- * @returns {{ alg: string, payload_version: number, jws: string, kid: string, jwks_uri: string }}
+ * @returns {{ alg: string, payload_version: number, jws: string, kid: string }}
  */
 function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
   const claims = canonicalSignedClaims(receipt, { iat });
-  const { jws, kid } = signJws(claims);
+  const jwksUri = buildJwksUri(baseUrl);
+  const { jws, kid } = signJws(claims, {
+    jku: jwksUri.startsWith('http') ? jwksUri : null,
+  });
   return {
     alg: 'ES256',
     payload_version: 5,
     jws,
     kid,
-    jwks_uri: buildJwksUri(baseUrl),
   };
 }
 
@@ -815,7 +827,10 @@ export function providerCogsOf(task) {
   return {
     provider: c.provider || null,
     float_id: c.float_id || c.floatId || null,
-    currency: c.currency || null,
+    currency: c.currency || 'USDC',
+    // Atomic USDC integers — same scale as payment.gross_amount (6 decimals; 2000 = $0.002).
+    decimals: USDC_ATOMIC_DECIMALS,
+    unit: 'atomic_usdc',
     estimated: c.estimated != null ? String(c.estimated) : null,
     actual: c.actual != null ? String(c.actual) : null,
     // Whether `actual` is real tokens at the provider's published rate
@@ -1064,15 +1079,17 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
         },
   };
 
+  const jwks_uri = buildJwksUri(base);
   const issuer_signature = signReceiptEcdsa(draft, { baseUrl: base, iat: createdAt });
-  const hmac_attestation = signingSecret
+  const hmacRaw = signingSecret
     ? signReceiptPayload(draft, signingSecret, { role: 'attestor' })
     : null;
-  const co_attestation = coSignerSecret
+  const coRaw = coSignerSecret
     ? signReceiptPayload(draft, coSignerSecret, { role: 'co_attestor' })
     : null;
 
   // Slim envelope: signed payment/route/output/caller fields live only in issuer_signature.jws.
+  // Inactive extension blocks are omitted entirely (not null).
   const envelope = {
     schema: draft.schema,
     task_id: draft.task_id,
@@ -1083,7 +1100,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     updated_at: draft.updated_at,
     verification: {
       source_of_truth: 'issuer_signature.jws',
-      jwks_uri: issuer_signature.jwks_uri,
+      jwks_uri,
     },
     route_meta: {
       message_type: draft.route.message_type,
@@ -1098,20 +1115,21 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       collected: draft.payment.collected,
       collects_on: draft.payment.collects_on,
     },
-    provider_cogs: draft.provider_cogs,
-    usage: draft.usage,
     proof: draft.proof,
-    verified_inference: draft.verified_inference,
-    binding: draft.binding,
-    privacy: draft.privacy,
-    lineage: draft.lineage,
-    handoff: draft.handoff,
-    output: draft.output ? { kind: draft.output.kind } : null,
     links: draft.links,
     issuer_signature,
-    ...(hmac_attestation && { hmac_attestation }),
-    ...(co_attestation && { co_attestation }),
   };
+
+  if (draft.provider_cogs) envelope.provider_cogs = draft.provider_cogs;
+  if (draft.usage) envelope.usage = draft.usage;
+  if (draft.verified_inference) envelope.verified_inference = draft.verified_inference;
+  if (draft.binding) envelope.binding = draft.binding;
+  if (draft.privacy) envelope.privacy = draft.privacy;
+  if (draft.lineage) envelope.lineage = draft.lineage;
+  if (draft.handoff) envelope.handoff = draft.handoff;
+  if (draft.output) envelope.output = { kind: draft.output.kind };
+  if (hmacRaw) envelope.hmac_attestation = publicHmacAttestation(hmacRaw);
+  if (coRaw) envelope.co_attestation = publicHmacAttestation(coRaw);
 
   return envelope;
 }
@@ -1254,19 +1272,20 @@ export function renderReceiptHtml(receipt) {
 
   const issuerSig = receipt.issuer_signature;
   const issuerVerified = verifyIssuerForHtml(receipt);
-  const jwksUrl = issuerSig?.jwks_uri?.startsWith('http')
-    ? issuerSig.jwks_uri
+  const jwksUri = receipt.verification?.jwks_uri || null;
+  const jwksUrl = jwksUri?.startsWith('http')
+    ? jwksUri
     : (() => {
-      if (!issuerSig?.jwks_uri) return null;
+      if (!jwksUri) return null;
       const selfUrl = receipt.links?.self;
       if (selfUrl && selfUrl.startsWith('http')) {
         try {
-          return new URL(issuerSig.jwks_uri, selfUrl.replace(/\/receipt\/.*$/, '')).href;
+          return new URL(jwksUri, selfUrl.replace(/\/receipt\/.*$/, '')).href;
         } catch {
-          return issuerSig.jwks_uri;
+          return jwksUri;
         }
       }
-      return issuerSig.jwks_uri;
+      return jwksUri;
     })();
 
   const bindingBlock = b
@@ -1435,7 +1454,7 @@ export function renderReceiptHtml(receipt) {
         : (issuerSig?.jws ? '<span class="badge bad">not verified</span>' : '<span class="muted">unsigned</span>'))}
       ${issuerSig?.alg ? row('Algorithm', `<code>${esc(issuerSig.alg)}</code>`) : ''}
       ${issuerSig?.kid ? row('Key ID', `<code>${esc(shortHash(issuerSig.kid, 8, 6))}</code>`) : ''}
-      ${jwksUrl ? row('JWKS', `<a href="${esc(jwksUrl)}" target="_blank" rel="noopener">${esc(issuerSig.jwks_uri)} ↗</a>`) : ''}
+      ${jwksUrl ? row('JWKS', `<a href="${esc(jwksUrl)}" target="_blank" rel="noopener">${esc(jwksUri)} ↗</a>`) : ''}
       ${receipt.hmac_attestation?.value ? row('HMAC attestation', `<span class="badge pending">${esc(receipt.hmac_attestation.alg || 'HMAC-SHA256')}</span> <span class="muted">secondary</span>`) : ''}
       ${row('On-chain SP1', pr.has_proof ? '<span class="badge ok">yes</span>' : '<span class="muted">not on this call</span>')}
       ${pr.nullifier ? row('Nullifier', `<code>${esc(shortHash(pr.nullifier, 12, 10))}</code>`) : ''}
