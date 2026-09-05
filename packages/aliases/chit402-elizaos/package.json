@@ -1,0 +1,50 @@
+{
+  "name": "chit402-elizaos",
+  "version": "0.1.0",
+  "description": "Chit402 ElizaOS plugin — re-export of @xfuel/plugin-elizaos.",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "keywords": [
+    "chit402",
+    "elizaos",
+    "eliza",
+    "ai-agents",
+    "receipts"
+  ],
+  "author": "XFuel Lab",
+  "license": "Apache-2.0",
+  "homepage": "https://chit402.com",
+  "bugs": {
+    "url": "https://github.com/XFuel-Lab/chit402/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XFuel-Lab/chit402.git",
+    "directory": "packages/aliases/chit402-elizaos"
+  },
+  "dependencies": {
+    "@xfuel/plugin-elizaos": "^0.1.0"
+  }
+}
