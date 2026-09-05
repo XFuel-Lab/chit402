@@ -1,0 +1,72 @@
+{
+  "name": "@xfuel/plugin-elizaos",
+  "version": "0.1.0",
+  "description": "Chit402 ElizaOS plugin — TEXT_SMALL/LARGE with signed receipts, verify_url, and CHIT_BOOK spend context.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "test": "node --import tsx --test src/__tests__/*.test.ts",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "chit402",
+    "xfuel",
+    "elizaos",
+    "eliza",
+    "ai-agents",
+    "usdc",
+    "x402",
+    "receipts",
+    "verify_url"
+  ],
+  "author": "XFuel Lab",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/XFuel-Lab/chit402/tree/main/packages/plugin-elizaos#readme",
+  "bugs": {
+    "url": "https://github.com/XFuel-Lab/chit402/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XFuel-Lab/chit402.git",
+    "directory": "packages/plugin-elizaos"
+  },
+  "dependencies": {
+    "xfuel-sdk": "^0.6.0"
+  },
+  "peerDependencies": {
+    "@elizaos/core": ">=1.6.0",
+    "ethers": "^6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ethers": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@elizaos/core": "^1.7.2",
+    "@types/node": "^20.17.0",
+    "ethers": "^6.16.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3"
+  }
+}
