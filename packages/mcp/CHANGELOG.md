@@ -3,6 +3,19 @@
 All notable changes to the Chit402 MCP server are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.1 — MCP book + receipt door
+
+### Added
+- **`verify_receipt`** — offline receipt verification via `@xfuel/verify` (default prove-it path).
+- **`get_book`** — alias of `get_agent_book` for Eliza / Cursor clients.
+- **Top-level `verify_url`** on receipt-bearing tools (`structuredContent` + summary text).
+- **`CHIT402_*` / `CHIT_*` env aliases** for API URL and key (xfuel names still accepted).
+- **`budget` on book tools** — optional prepaid ceiling Y (USDC 6dp).
+- **`npm run smoke`** — local tool-registration smoke script.
+
+### Changed
+- Book / receipt tools documented as the product path; SP1 tools remain optional Tier-2.
+
 ## 0.4.0 — Chit402 public cutover
 
 ### Changed

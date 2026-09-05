@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { XFuelClient } from 'xfuel-sdk';
+import { PUBLIC_DEMO_API_KEY } from 'xfuel-sdk';
 import type { McpConfig } from '../config.js';
 import { SERVER_VERSION } from '../config.js';
 import { registerTools } from '../tools.js';
@@ -13,6 +14,8 @@ const CORE_TOOLS = [
   'submit_inference',
   'register_agent',
   'get_agent_book',
+  'get_book',
+  'verify_receipt',
   'get_task_status',
   'get_proof',
   'verify_proof',
@@ -43,7 +46,7 @@ function captureTools(
   };
   const fullConfig: McpConfig = {
     apiUrl: 'https://api-testnet.xfuel.app',
-    apiKey: 'xfuel-demo',
+    apiKey: 'chit402-demo',
     transport: 'stdio',
     port: 3033,
     ...config,
@@ -58,13 +61,13 @@ test('SERVER_VERSION matches package.json', () => {
   assert.equal(SERVER_VERSION, pkg.version);
 });
 
-test('fifteen tools; pay_with_usdc is absent', () => {
+test('seventeen tools; pay_with_usdc is absent', () => {
   const handlers = captureTools({});
   for (const name of CORE_TOOLS) {
     assert.ok(handlers.has(name), `missing tool: ${name}`);
   }
   assert.equal(handlers.has('pay_with_usdc'), false);
-  assert.equal(handlers.size, 15);
+  assert.equal(handlers.size, 17);
 });
 
 test('a payer-key config field does not add pay_with_usdc', () => {
@@ -101,6 +104,11 @@ test('chat_completions forwards messages and surfaces the receipt', async () => 
   assert.match(res.content[0].text, /Hello there friend today/);
   assert.match(res.content[0].text, /rail=unmetered/);
   assert.match(res.content[0].text, /task_id=openai-abc/);
+  assert.match(res.content[0].text, /Verify\/share: https:\/\/api-testnet\.xfuel\.app\/receipt\/openai-abc/);
+  assert.equal(
+    (res.structuredContent as { verify_url?: string }).verify_url,
+    'https://api-testnet.xfuel.app/receipt/openai-abc',
+  );
 });
 
 test('get_validation_status without RPC + registry returns a clear "not configured" error', async () => {
@@ -132,6 +140,63 @@ test('verify_model_commitment without RPC + registry returns a clear "not config
   const res = await handlers.get('verify_model_commitment')!({ model: 'llama-3-70b:q4_k_m' });
   assert.equal(res.isError, true);
   assert.match(res.content[0].text, /MODEL_REGISTRY_ADDRESS/);
+});
+
+test('get_book is an alias of get_agent_book', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({
+      agent_id: 3,
+      entries: [],
+      totals: { count: 0, usdc_sum: '0', by_rail: {} },
+    }), { status: 200 })) as typeof fetch;
+  try {
+    const handlers = captureTools({});
+    const res = await handlers.get('get_book')!({ agent_id: 3, session: 'sess' });
+    assert.equal(res.isError, undefined);
+    assert.match(res.content[0].text, /agent_id=3/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('verify_receipt requires task_id or verify_url', async () => {
+  const handlers = captureTools({}, {});
+  const res = await handlers.get('verify_receipt')!({});
+  assert.equal(res.isError, true);
+  assert.match(res.content[0].text, /task_id or verify_url/);
+});
+
+test('verify_receipt loads receipt via task_id', async () => {
+  const handlers = captureTools(
+    {},
+    {
+      getReceipt: async () =>
+        ({
+          task_id: 'paid-1',
+          status: 'fee_collected',
+          verify_url: 'https://api-testnet.xfuel.app/receipt/paid-1',
+        }) as never,
+    },
+  );
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL) => {
+    if (String(url).includes('jwks.json')) {
+      return new Response(JSON.stringify({ keys: [] }), { status: 200 });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }) as typeof fetch;
+  try {
+    const res = await handlers.get('verify_receipt')!({ task_id: 'paid-1', fetch_jwks: true });
+    assert.equal(res.isError, undefined);
+    assert.match(res.content[0].text, /overall=/);
+    assert.equal(
+      (res.structuredContent as { verify_url?: string }).verify_url,
+      'https://api-testnet.xfuel.app/receipt/paid-1',
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('get_agent_book POSTs session to /v1/agents/:id/book', async () => {
@@ -210,7 +275,7 @@ test('quote_task warns when priced_model is null', async () => {
 
 test('get_my_stats warns that the demo key is shared', async () => {
   const handlers = captureTools(
-    { apiKey: 'xfuel-demo' },
+    { apiKey: PUBLIC_DEMO_API_KEY },
     { getMyStats: async () => ({ north_star: { paid_tasks_7d: 21, usdc_fees_7d: '50' } }) as never },
   );
   const res = await handlers.get('get_my_stats')!({});
