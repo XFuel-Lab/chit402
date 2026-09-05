@@ -54,6 +54,8 @@
     { "source": "/book", "destination": "/book/index.html" },
     { "source": "/book-bot", "destination": "/book-bot/index.html" },
     { "source": "/docs", "destination": "/docs/index.html" },
+    { "source": "/docs/chit-in-15-lines", "destination": "/docs/chit-in-15-lines/index.html" },
+    { "source": "/docs/eliza", "destination": "/docs/eliza/index.html" },
     { "source": "/v1", "destination": "/v1/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]

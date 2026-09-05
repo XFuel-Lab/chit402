@@ -81,7 +81,7 @@ test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type') ?? '', /text\/plain/);
   const body = await res.text();
-  assert.match(body, /# Chit Protocol/);
+  assert.match(body, /# Chit402/);
   assert.match(body, /\/v1\/chat\/completions/);
   assert.match(body, /xfuel-sdk/);
   assert.match(body, /npx xfuel-mcp/);

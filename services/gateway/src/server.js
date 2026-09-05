@@ -264,19 +264,21 @@ function tier2Gate() {
 // Served at GET /llms.txt (llmstxt.org convention). Keep concise; deep detail
 // lives in the linked docs so agents can progressively disclose.
 
-const LLMS_TXT = `# Chit Protocol
+const LLMS_TXT = `# Chit402
 
-> Chit is the book. This agent spent Y on this job. You hold hub, model,
-> and amount. No account. No API key. A wallet that can pay the 402 is
-> enough. Register is only to hold the book after a collected receipt.
-> POST /v1/chat/completions returns a signed receipt: hub, model, amount,
-> verify_url. Cost-plus, quoted, receipted — x402 USDC on Base (CDP) or
-> Solana (PayAI). POST /a2a-message is the same paid door (A2A card URL). Bearer xfuel-demo
-> and valid API keys skip payment. GET|POST
-> /v1/agents/:agent_id/book is possession-gated (last-N spend + budget Y /
-> remaining under prepaid_ceiling). POST /v1/agents/register
-> is fail-closed. /task-request is the other paid door. Paying
-> api.xfuel.app moves real mainnet USDC. Canonical: api.xfuel.app.
+> Give an agent a USDC budget. Keep the receipt when the wallet moves.
+> Hub, model, amount — you hold the book. No account. No API key. A wallet
+> that can pay the 402 is enough. Register is only to hold the book after
+> a collected receipt. POST /v1/chat/completions returns a signed receipt:
+> hub, model, amount, verify_url. Cost-plus, quoted, receipted — x402 USDC
+> on Base (CDP) or Solana (PayAI). Demo key chit402-demo skips payment
+> (rate-limited). Paying api.chit402.com moves real mainnet USDC.
+
+## Proof objects
+
+- Live receipt: https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e
+- Thread: https://x.com/chit402/status/2096153417588588555
+- Chit in 15 lines: https://www.chit402.com/docs/chit-in-15-lines
 
 ## Start here (chat completions)
 
@@ -426,6 +428,7 @@ SDK: verifyReceiptEcdsaWithJwks(receipt, jwks) → { checked, valid, kid }
 
 ## Docs
 
+- Chit in 15 lines: https://www.chit402.com/docs/chit-in-15-lines
 - Protocol map: AGENTS.md
 - Agent Playbook: skills/AGENT_PLAYBOOK.md
 - Chat completions gateway: docs/CHAT_COMPLETIONS_GATEWAY.md

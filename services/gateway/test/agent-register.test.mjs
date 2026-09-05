@@ -262,7 +262,9 @@ test('POST /v1/agents/register without task_id / wallet is 400', async () => {
 
 test('GET /llms.txt and /openapi.json mention register honestly', async () => {
   const llms = await (await fetch(`${base}/llms.txt`)).text();
-  assert.match(llms, /Chit is the book/);
+  assert.match(llms, /# Chit402/);
+  assert.match(llms, /Give an agent a USDC budget/);
+  assert.match(llms, /you hold the book/i);
   assert.match(llms, /hub, model/);
   assert.match(llms, /\/v1\/agents\/register/);
   assert.match(llms, /fail-closed/);

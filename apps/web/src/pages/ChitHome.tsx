@@ -2,7 +2,8 @@ import { type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { getHostConfig } from '../hostConfig';
 
-const BANKR_RECEIPT = 'https://api.xfuel.app/receipt/xfuel-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e';
+const LIVE_RECEIPT =
+  'https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e';
 
 export default function ChitHome() {
   const config = getHostConfig();
@@ -14,39 +15,31 @@ export default function ChitHome() {
           <div style={styles.heroBadge}>
             <span className="badge badge-cyan">By {config.parent}</span>
           </div>
-          <h1 style={styles.heroTitle}>Chit</h1>
-          <p style={styles.heroSubtitle}>
-            The chit x402 doesn't leave you.
-          </p>
+          <h1 style={styles.heroTitle}>Chit402</h1>
           <p style={styles.heroLead}>
-            A receipt you still hold if the agent wallet moves.
+            Give an agent a USDC budget. Keep the receipt when the wallet moves.
           </p>
           <p style={styles.heroDescription}>
-            Hub, model, amount — you hold the book.
-            <code>POST /v1/chat/completions</code> returns a signed receipt.
-            Cost-plus, quoted, receipted — USDC on Base and Solana.
-            The wire is <code>api.chit402.com/v1</code>.
+            The product is the book — hub, model, amount — not a router.
+            <code>POST /v1/chat/completions</code> returns a signed receipt with{' '}
+            <code>verify_url</code>. Cost-plus, quoted, receipted — USDC on Base and Solana.
+            Wire: <code>api.chit402.com/v1</code>.
           </p>
           <div style={styles.heroCta}>
             <a
-              href={BANKR_RECEIPT}
+              href={LIVE_RECEIPT}
               className="btn btn-primary"
               target="_blank"
               rel="noreferrer"
             >
-              View a live receipt (Bankr)
+              View live receipt
             </a>
-            <Link to="/v1" className="btn btn-secondary">
-              Point your bot at the wire
+            <Link to="/docs/chit-in-15-lines" className="btn btn-secondary">
+              Chit in 15 lines
             </Link>
-            <a
-              href={config.githubUrl}
-              className="btn btn-secondary"
-              target="_blank"
-              rel="noreferrer"
-            >
-              GitHub
-            </a>
+            <Link to="/docs/eliza" className="btn btn-secondary">
+              Eliza plugin
+            </Link>
           </div>
         </div>
       </section>
@@ -57,11 +50,11 @@ export default function ChitHome() {
           <div className="grid grid-3" style={{ gap: '1.5rem' }}>
             <div className="card">
               <h3>Signed receipt</h3>
-              <p>Every call returns a signed receipt with hub, model, amount, and verify_url. You hold the proof.</p>
+              <p>Every call returns hub, model, amount, and verify_url. You hold the proof — not the agent wallet.</p>
             </div>
             <div className="card">
               <h3>Portable</h3>
-              <p>The receipt doesn't live in the agent's wallet. It lives with you. Move wallets, keep receipts.</p>
+              <p>Move wallets, keep receipts. The book is possession-gated after a collected USDC payment.</p>
             </div>
             <div className="card">
               <h3>Cost-plus</h3>
@@ -74,9 +67,16 @@ export default function ChitHome() {
       <section style={{ padding: '2rem 0 4rem' }}>
         <div className="container" style={{ maxWidth: 720, textAlign: 'center' }}>
           <p style={{ color: '#8a8a9a', fontSize: '0.95rem' }}>
-            Chit is the product. <strong style={{ color: '#f0f0f5' }}>{config.parent}</strong> is the parent.
-            <br />
-            The wire is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9em' }}>api.chit402.com/v1</code> (alias: api.xfuel.app/v1).
+            Chit402 is the product. <strong style={{ color: '#f0f0f5' }}>{config.parent}</strong> is the parent.
+            {' '}
+            <a
+              href={config.githubUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: '#00d4ff' }}
+            >
+              GitHub
+            </a>
           </p>
         </div>
       </section>
@@ -102,19 +102,15 @@ const styles: Record<string, CSSProperties> = {
     lineHeight: 1.1,
     marginBottom: '0.5rem',
   },
-  heroSubtitle: {
-    fontSize: '1.5rem',
-    color: '#c4c4d4',
-    marginBottom: '0.5rem',
+  heroLead: {
+    fontSize: '1.35rem',
+    color: '#f0f0f5',
+    marginBottom: '1.25rem',
+    fontWeight: 600,
     maxWidth: 640,
     marginLeft: 'auto',
     marginRight: 'auto',
-  },
-  heroLead: {
-    fontSize: '1.15rem',
-    color: '#00d4ff',
-    marginBottom: '1.5rem',
-    fontWeight: 500,
+    lineHeight: 1.4,
   },
   heroDescription: {
     fontSize: '1rem',

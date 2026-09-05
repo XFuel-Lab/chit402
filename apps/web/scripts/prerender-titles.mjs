@@ -22,6 +22,16 @@ const ROUTE_CONTENT = {
     h1: 'Build on Chit',
     lede: 'Chit: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book. No account. No API key. A wallet that can pay the 402 is enough. Public beta at api.chit402.com. USDC on Base and Solana.',
   },
+  '/docs/chit-in-15-lines': {
+    title: 'Chit in 15 lines | Chit402',
+    h1: 'Chit in 15 lines',
+    lede: 'Point any chat-completions client at https://api.chit402.com/v1. Demo key chit402-demo skips payment — no wallet, no USDC. Paid calls return a collected receipt with verify_url.',
+  },
+  '/docs/eliza': {
+    title: 'Eliza plugin | Chit402',
+    h1: 'Eliza plugin',
+    lede: 'Coming soon: @xfuel/plugin-elizaos — route Eliza agent LLM spend through Chit402 with USDC budget and collected verify_url receipts.',
+  },
   '/book': {
     title: 'The book: this agent spent Y on this job | Chit',
     h1: 'This agent spent Y on this job.',
@@ -116,4 +126,4 @@ for (const [route, content] of Object.entries(ROUTE_CONTENT)) {
   console.log(`  H1: "${content.h1}"`);
 }
 
-console.log('\n✅ Prerender complete: 5 route-specific HTML files with crawler content.');
+console.log(`\n✅ Prerender complete: ${Object.keys(ROUTE_CONTENT).length} route-specific HTML files with crawler content.`);

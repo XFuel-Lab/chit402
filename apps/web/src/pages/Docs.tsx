@@ -10,9 +10,17 @@ type DocLink = {
   href: string;
   meta: string;
   external?: boolean;
+  internal?: boolean;
 };
 
 const startHere: DocLink[] = [
+  {
+    title: 'Chit in 15 lines',
+    description: 'OpenAI baseURL at api.chit402.com/v1. Demo key — no USDC. Paid → SDK / Eliza.',
+    href: '/docs/chit-in-15-lines',
+    meta: 'quickstart',
+    internal: true,
+  },
   {
     title: 'Runtime state',
     description: 'As-deployed endpoints, real vs mock, current blockers.',
@@ -64,6 +72,13 @@ const builders: DocLink[] = [
     href: `${GITHUB}/packages/sdk/README.md`,
     meta: '0.5.5',
     external: true,
+  },
+  {
+    title: 'Eliza plugin',
+    description: 'Coming: @xfuel/plugin-elizaos — USDC budget + verify_url for Eliza agents.',
+    href: '/docs/eliza',
+    meta: 'framework',
+    internal: true,
   },
   {
     title: 'MCP server',
@@ -136,21 +151,31 @@ function DocSection({ title, items }: { title: string; items: DocLink[] }) {
     <section className="docs-section">
       <h2 className="docs-section-title">{title}</h2>
       <div className="docs-list">
-        {items.map((item) => (
-          <a
-            key={item.title}
-            href={item.href}
-            className="docs-row"
-            target={item.external ? '_blank' : undefined}
-            rel={item.external ? 'noreferrer' : undefined}
-          >
-            <div>
-              <div className="docs-row-title">{item.title}</div>
-              <p className="docs-row-desc">{item.description}</p>
-            </div>
-            <span className="docs-row-meta">{item.meta}</span>
-          </a>
-        ))}
+        {items.map((item) =>
+          item.internal ? (
+            <Link key={item.title} to={item.href} className="docs-row">
+              <div>
+                <div className="docs-row-title">{item.title}</div>
+                <p className="docs-row-desc">{item.description}</p>
+              </div>
+              <span className="docs-row-meta">{item.meta}</span>
+            </Link>
+          ) : (
+            <a
+              key={item.title}
+              href={item.href}
+              className="docs-row"
+              target={item.external ? '_blank' : undefined}
+              rel={item.external ? 'noreferrer' : undefined}
+            >
+              <div>
+                <div className="docs-row-title">{item.title}</div>
+                <p className="docs-row-desc">{item.description}</p>
+              </div>
+              <span className="docs-row-meta">{item.meta}</span>
+            </a>
+          ),
+        )}
       </div>
     </section>
   );
