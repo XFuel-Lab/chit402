@@ -1,9 +1,10 @@
 /**
- * XFuel MCP tools.
+ * Chit402 MCP tools (xfuel-mcp).
  *
  * First-hour path: chat_completions (unmetered POST /v1/chat/completions).
- * Paid loop: submit_inference → get_task_status → get_proof → verify_proof.
- * Each tool wraps official `xfuel-sdk` so behaviour matches the SDK.
+ * Book path: register_agent → get_book / get_agent_book (possession-gated).
+ * Receipt path: verify_receipt (offline binding) or verify_proof (SP1 settlement).
+ * Each tool wraps official `xfuel-sdk` where applicable.
  */
 import { z } from 'zod';
 import { Contract, JsonRpcProvider, keccak256, toUtf8Bytes } from 'ethers';
@@ -12,6 +13,9 @@ import { XFuelClient, ChainId, PUBLIC_DEMO_API_KEY } from 'xfuel-sdk';
 import type { TaskQuoteParams } from 'xfuel-sdk';
 import { XFuelOnChain } from 'xfuel-sdk/onchain';
 import type { McpConfig } from './config.js';
+import { fetchAgentBook } from './agent-book.js';
+import { verifyUrlOf, withReceiptFields } from './receipt-fields.js';
+import { runVerifyReceipt } from './verify-receipt.js';
 import { ok, fail, describeError } from './format.js';
 
 /**
@@ -65,18 +69,48 @@ const chatMessageSchema = z.object({
   content: z.string().nullable().describe('Message text'),
 });
 
-/**
- * The shareable public receipt link for a task. Prefer the server-provided
- * `verify_url`; fall back to constructing it from the configured API URL so a tool
- * always surfaces one link an agent (or its user) can open/share.
- */
-function verifyUrlOf(res: { task_id?: string; verify_url?: string }, apiUrl: string): string {
-  if (res.verify_url) return res.verify_url;
-  const base = apiUrl.replace(/\/$/, '');
-  return res.task_id ? `${base}/receipt/${res.task_id}` : '';
-}
+const agentBookInputSchema = {
+  agent_id: z.number().int().positive().describe('Integer agent_id from register_agent'),
+  session: z
+    .string()
+    .min(1)
+    .describe('Possession secret issued at register. Not an API key and not a wallet.'),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(200)
+    .optional()
+    .describe('Last-N rows. Default 50, hard max 200.'),
+  budget: z
+    .string()
+    .regex(AMOUNT_RE, 'budget must be USDC 6dp integer string')
+    .nullable()
+    .optional()
+    .describe(
+      'Optional prepaid ceiling Y in USDC 6dp (10000 = $0.01). Omit to read only; null clears unlimited.',
+    ),
+};
 
-/** Register every XFuel tool on `server`. */
+const agentBookAnnotations = {
+  title: 'Get agent spend book',
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+} as const;
+
+const agentBookDescription = `GET|POST /v1/agents/:agent_id/book. Possession-gated last-N collected
+UsageSettled rows for that agent_id (task_id, payment.ref, rail, amount,
+collected_at, route). Demo / unmetered rows never appear. Default N=50, max 200.
+Totals: count, USDC sum, by rail. Response includes caps (budget Y, spent, remaining)
+when set. Not a public index. API key is not possession.
+Does not accept a human private key.
+
+Pass the session issued by register_agent (or an HMAC over agent_id + window
+using that session). Unauth or wrong proof returns 401/403 with an empty body.`;
+
+/** Register every Chit402 tool on `server`. */
 export function registerTools(server: McpServer, ctx: ToolContext): void {
   const { client, config } = ctx;
 
@@ -94,9 +128,9 @@ Args:
   - model (optional): catalog id from list_models (default xfuel/auto)
   - max_tokens, temperature (optional)
 
-Returns the completion plus xfuel.task_id, xfuel.payment.rail (usually unmetered),
-and xfuel.verify_url. proof_outcome may still be pending — poll get_task_status
-if you need the later SP1 proof. Do not wait in this tool.`,
+Returns the completion plus top-level task_id and verify_url (also under xfuel).
+proof_outcome may still be pending — use verify_receipt for offline binding checks.
+Do not wait in this tool.`,
       inputSchema: {
         messages: z
           .array(chatMessageSchema)
@@ -124,12 +158,14 @@ if you need the later SP1 proof. Do not wait in this tool.`,
         });
         const xf = res.xfuel;
         const text = res.choices?.[0]?.message?.content ?? '';
+        const structured = withReceiptFields(res as unknown as Record<string, unknown>, config.apiUrl);
+        const link = verifyUrlOf(structured, config.apiUrl);
         return ok(
-          res as unknown as Record<string, unknown>,
+          structured,
           `chat_completions model=${res.model} rail=${xf?.payment?.rail ?? 'unmetered'}` +
-            (xf?.task_id ? ` task_id=${xf.task_id}` : '') +
+            (structured.task_id ? ` task_id=${String(structured.task_id)}` : '') +
             `\n${text}` +
-            (xf?.verify_url ? `\nVerify/share: ${xf.verify_url}` : ''),
+            (link ? `\nVerify/share: ${link}` : ''),
         );
       } catch (err) {
         return fail(describeError(err));
@@ -199,7 +235,7 @@ from the agent's wallet — MCP does not take a human private key.`,
           callback_url: args.callback_url,
         });
         return ok(
-          res as unknown as Record<string, unknown>,
+          withReceiptFields(res as unknown as Record<string, unknown>, config.apiUrl),
           `Submitted task ${res.task_id} (status: ${res.status}, rail: ${res.payment_rail ?? 'tfuel'}).\n` +
             `Verify/share: ${verifyUrlOf(res, config.apiUrl)}`,
         );
@@ -272,69 +308,78 @@ Returns agent_id (required later by POST /erc8004/validate) and validate_score.`
     },
   );
 
-  // ── get_agent_book ─────────────────────────────────────────────────────
+  // ── get_agent_book / get_book (same handler) ─────────────────────────────
+  const handleAgentBook = async (args: {
+    agent_id: number;
+    session: string;
+    limit?: number;
+    budget?: string | null;
+  }) => fetchAgentBook(config, args);
+
   server.registerTool(
     'get_agent_book',
     {
       title: 'Get agent spend book',
-      description: `GET|POST /v1/agents/:agent_id/book. Possession-gated last-N collected
-UsageSettled rows for that agent_id (task_id, payment.ref, rail, amount,
-collected_at, route). Demo / unmetered rows never appear. Default N=50, max 200.
-Totals: count, USDC sum, by rail. Not a public index. API key is not possession.
-Does not accept a human private key.
+      description: agentBookDescription,
+      inputSchema: agentBookInputSchema,
+      annotations: agentBookAnnotations,
+    },
+    handleAgentBook,
+  );
 
-Pass the session issued by register_agent (or an HMAC over agent_id + window
-using that session). Unauth or wrong proof returns 401/403 with an empty body.`,
+  server.registerTool(
+    'get_book',
+    {
+      title: 'Get agent spend book (alias)',
+      description: `${agentBookDescription}\n\nAlias of get_agent_book for Eliza / Cursor clients.`,
+      inputSchema: agentBookInputSchema,
+      annotations: { ...agentBookAnnotations, title: 'Get agent spend book (alias)' },
+    },
+    handleAgentBook,
+  );
+
+  // ── verify_receipt (offline binding; default path) ───────────────────────
+  server.registerTool(
+    'verify_receipt',
+    {
+      title: 'Verify receipt offline',
+      description: `Fetch GET /receipt/:task_id?format=json and verify payment binding locally
+via @xfuel/verify — no trust in HTML, no private keys. This is the default "prove it"
+path for agents holding hub, model, amount, verify_url.
+
+Args:
+  - task_id (preferred) or verify_url — one required
+  - fetch_jwks (default true): load /.well-known/jwks.json for issuer signature check
+  - check_payer (default false): on-chain USDC payer match (Base or Solana RPC)
+  - check_nullifier (default false): SP1 nullifier anchor read (optional Tier-2)
+
+Returns { verify_url, receipt, verification: { overall, binding, issuer_signature, … } }.
+overall is verified | partial | failed. Unmetered demo receipts may be partial (no binding).`,
       inputSchema: {
-        agent_id: z.number().int().positive().describe('Integer agent_id from register_agent'),
-        session: z
-          .string()
-          .min(1)
-          .describe('Possession secret issued at register. Not an API key and not a wallet.'),
-        limit: z
-          .number()
-          .int()
-          .positive()
-          .max(200)
-          .optional()
-          .describe('Last-N rows. Default 50, hard max 200.'),
+        task_id: z.string().min(1).optional().describe('Task id from chat_completions or a paid call'),
+        verify_url: z.string().url().optional().describe('Public receipt URL (alternative to task_id)'),
+        fetch_jwks: z
+          .boolean()
+          .default(true)
+          .describe('Fetch issuer JWKS from the API for ES256 signature verification'),
+        check_payer: z
+          .boolean()
+          .default(false)
+          .describe('Confirm caller_binding.payer_wallet on-chain (needs RPC)'),
+        check_nullifier: z
+          .boolean()
+          .default(false)
+          .describe('Check SP1 nullifier on-chain (needs XFUEL_RPC_URL + ZK_VERIFIER_ADDRESS)'),
       },
       annotations: {
-        title: 'Get agent spend book',
+        title: 'Verify receipt offline',
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: true,
       },
     },
-    async (args) => {
-      try {
-        const url = `${config.apiUrl.replace(/\/$/, '')}/v1/agents/${args.agent_id}/book`;
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(config.apiKey ? { 'X-API-Key': config.apiKey } : {}),
-          },
-          body: JSON.stringify({
-            session: args.session,
-            limit: args.limit,
-          }),
-        });
-        const text = await res.text();
-        if (!res.ok) {
-          return fail(`get_agent_book HTTP ${res.status}`);
-        }
-        const data = text ? (JSON.parse(text) as Record<string, unknown>) : {};
-        const totals = data.totals as { count?: number; usdc_sum?: string } | undefined;
-        return ok(
-          data,
-          `Book agent_id=${args.agent_id} count=${String(totals?.count ?? 0)} usdc_sum=${String(totals?.usdc_sum ?? '0')}`,
-        );
-      } catch (err) {
-        return fail(describeError(err));
-      }
-    },
+    async (args) => runVerifyReceipt(client, config, args),
   );
 
   // ── get_task_status ──────────────────────────────────────────────────────
@@ -367,7 +412,7 @@ is one of 'pending' | 'valid' | 'regenerable' | 'invalid'.`,
       try {
         const res = await client.getTaskStatus(args.task_id);
         return ok(
-          res as unknown as Record<string, unknown>,
+          withReceiptFields(res as unknown as Record<string, unknown>, config.apiUrl),
           `Task ${res.task_id}: status=${res.status}, proof=${res.proof_outcome}.\n` +
             `Verify/share: ${verifyUrlOf(res, config.apiUrl)}`,
         );
@@ -409,7 +454,7 @@ settled yet — poll get_task_status until proof_outcome is 'valid'.`,
       try {
         const res = await client.getProof(args.task_id);
         return ok(
-          res as unknown as Record<string, unknown>,
+          withReceiptFields(res as unknown as Record<string, unknown>, config.apiUrl),
           `Proof for ${res.task_id}: outcome=${res.proof_outcome}, nullifier=${res.sp1_proof?.nullifier ?? 'n/a'}.\n` +
             `Verify/share: ${verifyUrlOf(res, config.apiUrl)}`,
         );
@@ -581,7 +626,7 @@ Returns JSON: the /health payload (status, server, version, fee_config, chains, 
     {
       title: 'Get buyer usage stats (Private Spend)',
       description: `Fetch usage for the configured API key (GET /stats/me).
-The public demo key xfuel-demo is SHARED — numbers are not this client.
+The public demo key chit402-demo is SHARED — numbers are not this client.
 Bring your own XFUEL_API_KEY for buyer-scoped stats.`,
       inputSchema: {},
       annotations: {
@@ -598,7 +643,7 @@ Bring your own XFUEL_API_KEY for buyer-scoped stats.`,
         const ns = (res as { north_star?: { paid_tasks_7d?: number; usdc_fees_7d?: string } }).north_star;
         const shared =
           !config.apiKey || config.apiKey === PUBLIC_DEMO_API_KEY
-            ? 'SHARED demo key (xfuel-demo) — not this client. '
+            ? 'SHARED demo key (chit402-demo) — not this client. '
             : '';
         return ok(
           res,
