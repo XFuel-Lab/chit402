@@ -1281,6 +1281,8 @@ export function createApp() {
       let paymentRef = null;
       let settledAmount = null;
       let payerWallet = null;
+      let payTo = null;
+      let paymentAsset = null;
       let rollingMeta = null;
       let ceilingQuote = null;
       {
@@ -1345,6 +1347,8 @@ export function createApp() {
                   paymentRef = hs.paymentRef;
                   settledAmount = hs.settledAmount;
                   payerWallet = hs.payerWallet || null;
+                  payTo = hs.payTo || null;
+                  paymentAsset = hs.asset || null;
                 }
               } else {
                 if (decision.pending) markSettleFailed(payerId, hs.reason);
@@ -1372,6 +1376,8 @@ export function createApp() {
               paymentRef = decision.paymentRef;
               settledAmount = decision.settledAmount || null;
               payerWallet = decision.payerWallet || null;
+              payTo = decision.payTo || null;
+              paymentAsset = decision.asset || null;
             } else {
               if (decision.reason === 'gateway_not_configured') {
                 return res.status(503).json({ error: 'x402_unavailable', reason: decision.reason });
@@ -1566,6 +1572,8 @@ export function createApp() {
         apiKeyHash: apiKeyHashFromReq(req),
         // Payer wallet from x402 settlement (for caller_binding entitlement proof)
         payerWallet: boundSession?.payer_wallet || payerWallet,
+        payTo: payTo || null,
+        paymentAsset: paymentAsset || null,
         session: boundSession,
         agentPubkey: boundSession?.agent_pubkey || null,
         privateSpend: !!config.privateSpend?.enabled || isPrivateSpendSession(req),
