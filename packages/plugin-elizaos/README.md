@@ -2,7 +2,7 @@
 
 Minimal first-party [ElizaOS](https://docs.elizaos.ai/) plugin for **Chit402** — the spend book, not a cheaper LLM router.
 
-Routes `TEXT_SMALL` / `TEXT_LARGE` through Chit’s OpenAI-compatible API, caches signed receipts (`verify_url` + HMAC/JWS fields), and exposes a `CHIT_BOOK` provider for last-N spend context.
+Routes `TEXT_SMALL` / `TEXT_LARGE` through Chit’s OpenAI-compatible API, caches signed receipts (`verify_url` + HMAC/JWS fields), exposes a `CHIT_BOOK` provider for last-N spend context, and ships **Eliza actions** to register an agent identity and show the possession-gated book on demand.
 
 Differentiation vs `@elizaos/plugin-x402` / BlockRun / OpenRelay: **verify_url + signed receipt + agent book**, not “can pay 402.”
 
@@ -46,9 +46,20 @@ Production (real USDC on Base — handles HTTP 402 via `createEip3009Payer` from
     "CHIT_API_URL": "https://api.chit402.com",
     "CHIT_API_KEY": "your-partner-key",
     "CHIT_PAYER_PK": "0x…",
-    "CHIT_NETWORK": "base",
+    "CHIT_NETWORK": "base"
+  }
+}
+```
+
+After the first **paid** inference, run the `REGISTER_CHIT_AGENT` action (or say “register my chit agent”) — the plugin calls `POST /v1/agents/register` and stores `agent_id` + possession `session` on the runtime. You no longer need to hand-paste `CHIT_AGENT_ID` / `CHIT_BOOK_SESSION` every session.
+
+Optional manual override (CI / cold start):
+
+```json
+{
+  "settings": {
     "CHIT_AGENT_ID": "7",
-    "CHIT_BOOK_SESSION": "session-from-register_agent"
+    "CHIT_BOOK_SESSION": "session-from-register"
   }
 }
 ```
@@ -78,6 +89,25 @@ Keep `@elizaos/plugin-openai` (or `@elizaos/plugin-ollama`) **below** Chit prior
 - **Production:** `CHIT_PAYER_PK` set → `submitInference()` + `createEip3009Payer()` (402 handshake, collected USDC row + `verify_url`).
 
 Tier-2 SP1 proofs are **not** enabled on every call (default signed receipts only).
+
+## Design-partner demo path (door #4)
+
+1. **Install** `@xfuel/plugin-elizaos` (or alias `chit402-elizaos`) on your Eliza character with `CHIT_API_KEY` + `CHIT_PAYER_PK`.
+2. **Inference** — trigger `TEXT_SMALL` / `TEXT_LARGE` (paid path). Each call logs `verify_url` and caches the receipt on the runtime.
+3. **Register** — invoke action **`REGISTER_CHIT_AGENT`** (similes: `REGISTER_AGENT`, `CHIT_REGISTER`). Binds your payer wallet + latest paid `task_id` via `POST /v1/agents/register`; stores `agent_id` + possession `session` in character settings.
+4. **Show book** — invoke action **`SHOW_CHIT_BOOK`** (similes: `CHIT_BOOK`, `SHOW_BOOK`, `SPEND_BOOK`). Returns “this agent spent Y; here is the row” with `verify_url` lines from `POST /v1/agents/:id/book`. Before register, falls back to the runtime receipt cache with a clear note.
+
+Example user prompts:
+
+- “Register my chit agent” → `REGISTER_CHIT_AGENT`
+- “Show my chit spend book” → `SHOW_CHIT_BOOK`
+
+## Actions
+
+| Action | Purpose |
+|--------|---------|
+| `REGISTER_CHIT_AGENT` | `POST /v1/agents/register` — persist `agent_id` + `session` on runtime |
+| `SHOW_CHIT_BOOK` | Possession-gated book fetch + human-readable spend / verify_url rows |
 
 ## Provider: `CHIT_BOOK`
 

@@ -1,4 +1,5 @@
 import { ModelType, type Plugin } from './eliza-types.js';
+import { chit402Actions } from './actions.js';
 import { resolveConfig } from './config.js';
 import { handleChitText } from './models.js';
 import { chitBookProvider } from './provider.js';
@@ -32,6 +33,7 @@ export const chit402Plugin: Plugin = {
     );
   },
   providers: [chitBookProvider],
+  actions: chit402Actions,
   models: {
     [ModelType.TEXT_SMALL]: async (runtime, params) =>
       handleChitText(runtime, params, 'small'),
@@ -44,6 +46,8 @@ export default chit402Plugin;
 
 export { resolveConfig } from './config.js';
 export { handleChitText, buildMessages } from './models.js';
+export { chit402Actions, registerChitAgentAction, showChitBookAction } from './actions.js';
+export { fetchAgentBook, registerAgent } from './gateway.js';
 export { chitBookProvider } from './provider.js';
 export {
   formatCachedBook,
@@ -60,5 +64,6 @@ export {
   recordReceiptSpend,
   resetRuntimeState,
   setRuntimeState,
+  persistRegistration,
 } from './state.js';
 export type { CachedReceipt, ChitPluginConfig, RuntimeState } from './types.js';

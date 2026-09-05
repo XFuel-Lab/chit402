@@ -15,6 +15,7 @@ export interface IAgentRuntime {
   character: Character;
   logger?: LoggerLike;
   getSetting(key: string): string | boolean | number | null;
+  setSetting?(key: string, value: string): Promise<void> | void;
 }
 
 export interface Memory {
@@ -44,6 +45,33 @@ export interface GenerateTextParams {
   stream?: boolean;
 }
 
+export interface ActionResult {
+  success: boolean;
+  text?: string;
+  data?: Record<string, unknown>;
+  error?: string;
+}
+
+export type ActionHandler = (
+  runtime: IAgentRuntime,
+  message: Memory,
+  state?: State,
+) => Promise<ActionResult | void | undefined>;
+
+export type ActionValidator = (
+  runtime: IAgentRuntime,
+  message: Memory,
+  state?: State,
+) => Promise<boolean>;
+
+export interface Action {
+  name: string;
+  description: string;
+  similes?: string[];
+  validate: ActionValidator;
+  handler: ActionHandler;
+}
+
 export interface Plugin {
   name: string;
   description: string;
@@ -51,6 +79,7 @@ export interface Plugin {
   config?: Record<string, string | undefined>;
   init?: (config: Record<string, string>, runtime: IAgentRuntime) => Promise<void>;
   providers?: Provider[];
+  actions?: Action[];
   models?: Record<
     string,
     (runtime: IAgentRuntime, params: GenerateTextParams) => Promise<string>

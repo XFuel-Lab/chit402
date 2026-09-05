@@ -58,6 +58,32 @@ export function setRuntimeState(runtime: IAgentRuntime, state: RuntimeState): vo
   runtimeStates.set(runtime, state);
 }
 
+/** Persist register response so CHIT_BOOK / SHOW_CHIT_BOOK work in-session without env paste. */
+export async function persistRegistration(
+  runtime: IAgentRuntime,
+  state: RuntimeState,
+  agentId: number,
+  session: string,
+): Promise<void> {
+  state.config.agentId = agentId;
+  state.config.bookSession = session;
+
+  if (!runtime.character.settings) {
+    runtime.character.settings = {};
+  }
+  runtime.character.settings.CHIT_AGENT_ID = String(agentId);
+  runtime.character.settings.CHIT_BOOK_SESSION = session;
+  runtime.character.settings.XFUEL_AGENT_ID = String(agentId);
+  runtime.character.settings.XFUEL_BOOK_SESSION = session;
+
+  if (runtime.setSetting) {
+    await runtime.setSetting('CHIT_AGENT_ID', String(agentId));
+    await runtime.setSetting('CHIT_BOOK_SESSION', session);
+    await runtime.setSetting('XFUEL_AGENT_ID', String(agentId));
+    await runtime.setSetting('XFUEL_BOOK_SESSION', session);
+  }
+}
+
 export function recordReceiptSpend(state: RuntimeState, grossMicro: string | undefined): void {
   const usd = grossMicro ? Number(grossMicro) / 1_000_000 : 0;
   if (Number.isFinite(usd) && usd > 0) {
