@@ -10,8 +10,15 @@ const CHIT_LLMS = `# Chit — the x402 receipt that doesn't leave you
 
 ## Money pages (chit402.com)
 
-- /         : A receipt you still hold if the agent wallet moves.
+- /         : Give an agent a USDC budget. Keep the receipt when the wallet moves.
+- /docs/chit-in-15-lines : OpenAI baseURL swap + demo key chit402-demo (no USDC).
+- /docs/eliza : Eliza plugin stub (coming: @xfuel/plugin-elizaos).
 - /v1       : Not the API — points you to api.chit402.com/v1.
+
+## Proof objects
+
+- Live receipt: https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e
+- Thread: https://x.com/chit402/status/2096153417588588555
 
 ## Start here (chat completions / responses)
 
@@ -69,6 +76,7 @@ const CHIT_LLMS = `# Chit — the x402 receipt that doesn't leave you
 
 ## Docs
 
+- Chit in 15 lines: https://www.chit402.com/docs/chit-in-15-lines
 - Protocol map: AGENTS.md
 - Agent Playbook: skills/AGENT_PLAYBOOK.md
 - Chat completions gateway: docs/CHAT_COMPLETIONS_GATEWAY.md

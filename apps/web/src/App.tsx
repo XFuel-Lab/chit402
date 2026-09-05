@@ -2,7 +2,9 @@ import { Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Home from './pages/Home';
 import ChitHome from './pages/ChitHome';
+import ChitIn15Lines from './pages/ChitIn15Lines';
 import Docs from './pages/Docs';
+import ElizaPlugin from './pages/ElizaPlugin';
 import Pricing from './pages/Pricing';
 import GatewayV1 from './pages/GatewayV1';
 import NotFound from './pages/NotFound';
@@ -23,6 +25,8 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<HomePage />} />
         <Route path="/docs" element={<Docs />} />
+        <Route path="/docs/chit-in-15-lines" element={<ChitIn15Lines />} />
+        <Route path="/docs/eliza" element={<ElizaPlugin />} />
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/security" element={<Security />} />
         <Route path="/v1" element={<GatewayV1 />} />

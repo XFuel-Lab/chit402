@@ -23,6 +23,16 @@ const CHIT_SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://www.chit402.com/docs/chit-in-15-lines</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://www.chit402.com/docs/eliza</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://www.chit402.com/docs</loc>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>

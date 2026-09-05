@@ -142,16 +142,17 @@ test('prerendered money pages have unique crawler titles (after build)', { skip:
   }
 });
 
-test('Chit home page has correct copy and Bankr receipt link', () => {
+test('Chit home page has locked hero copy and three door CTAs', () => {
   const chitHome = readFileSync(join(root, 'src/pages/ChitHome.tsx'), 'utf8');
-  assert.match(chitHome, /The chit x402 doesn't leave you/, 'ChitHome has tagline');
-  assert.match(chitHome, /A receipt you still hold if the agent wallet moves/, 'ChitHome has lead copy');
-  assert.match(chitHome, /Hub, model, amount — you hold the book/, 'ChitHome mentions the book');
-  assert.match(chitHome, /api\.xfuel\.app\/receipt\/xfuel-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e/, 'ChitHome has Bankr receipt link');
+  assert.match(chitHome, /Give an agent a USDC budget\. Keep the receipt when the wallet moves\./, 'ChitHome has locked hero');
+  assert.match(chitHome, /Chit402/, 'ChitHome uses Chit402 public name');
+  assert.match(chitHome, /api\.chit402\.com\/receipt\/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e/, 'ChitHome has live receipt link');
+  assert.match(chitHome, /\/docs\/chit-in-15-lines/, 'ChitHome links to 15-lines page');
+  assert.match(chitHome, /\/docs\/eliza/, 'ChitHome links to Eliza stub');
   assert.match(chitHome, /config\.parent/, 'ChitHome references parent dynamically');
   assert.match(chitHome, /USDC on Base and Solana/, 'ChitHome names USDC rails');
   assert.doesNotMatch(chitHome, /\$0\.01/, 'ChitHome must not lead with $0.01');
-  assert.doesNotMatch(chitHome, /OpenAI/i, 'ChitHome must not mention OpenAI');
+  assert.doesNotMatch(chitHome, /The chit x402 doesn't leave you/, 'ChitHome demotes poetry tagline');
   assert.doesNotMatch(chitHome, /ticker/i, 'ChitHome must not mention ticker');
 });
 
@@ -177,10 +178,20 @@ test('Layout supports dual branding for Chit and XFuel', () => {
   assert.match(layout, /config\.name/, 'Layout uses dynamic brand name');
 });
 
-test('App routes home page based on host', () => {
+test('Chit in 15 lines page documents OpenAI baseURL and demo key', () => {
+  const page = readFileSync(join(root, 'src/pages/ChitIn15Lines.tsx'), 'utf8');
+  assert.match(page, /api\.chit402\.com\/v1/, '15-lines page names baseURL');
+  assert.match(page, /chit402-demo/, '15-lines page names demo key');
+  assert.match(page, /OpenAI SDK may strip unknown/, '15-lines page warns about SDK field stripping');
+  assert.match(page, /verify_url/, '15-lines page mentions verify_url');
+});
+
+test('App routes docs subpages', () => {
   const app = readFileSync(join(root, 'src/App.tsx'), 'utf8');
   assert.match(app, /import ChitHome/, 'App imports ChitHome');
   assert.match(app, /isChitHost\(\) \? <ChitHome/, 'App conditionally renders ChitHome');
+  assert.match(app, /chit-in-15-lines/, 'App routes 15-lines page');
+  assert.match(app, /\/docs\/eliza/, 'App routes Eliza stub');
 });
 
 test('middleware CHIT_SEO uses Chit402 titles (not Chit)', () => {
