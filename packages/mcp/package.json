@@ -1,6 +1,6 @@
 {
   "name": "xfuel-mcp",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "mcpName": "io.github.XFuel-Lab/xfuel-mcp",
   "description": "Official MCP server for Chit402 — chat completions (unmetered /v1), paid task submit, quotes, and settlement proofs. Runs over stdio or streamable HTTP.",
   "type": "module",
@@ -26,7 +26,8 @@
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "test": "node --import tsx --test src/__tests__/config.test.ts src/__tests__/format.test.ts src/__tests__/tools.test.ts",
+    "test": "node --import tsx --test src/__tests__/config.test.ts src/__tests__/format.test.ts src/__tests__/receipt-fields.test.ts src/__tests__/tools.test.ts",
+    "smoke": "node --import tsx scripts/smoke.mjs",
     "prepublishOnly": "npm run build && npm test",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
   },
@@ -55,6 +56,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@xfuel/verify": "file:../verify",
     "ethers": "^6.16.0",
     "express": "^5.2.1",
     "xfuel-sdk": "^0.6.0",

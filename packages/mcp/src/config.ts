@@ -10,16 +10,18 @@ export const SERVER_NAME = 'xfuel-mcp-server';
 // Keep in lockstep with package.json / server.json (registry listing) so the
 // version reported over MCP, on /health, and in the static server card matches
 // the published npm package.
-export const SERVER_VERSION = '0.4.0';
+export const SERVER_VERSION = '0.4.1';
 
 /** Handshake text so a first-hour client does not need GitHub. */
-export const SERVER_INSTRUCTIONS = `Chit402 first-hour: call list_models, then chat_completions to generate text (POST /v1/chat/completions). Default model xfuel/auto. The demo key xfuel-demo is shared and rate-limited (15/min, 150/day).
+export const SERVER_INSTRUCTIONS = `Chit402 first-hour: call list_models, then chat_completions to generate text (POST /v1/chat/completions). Default model xfuel/auto. The demo key chit402-demo is shared and rate-limited (15/min, 150/day).
 
 submit_inference is the paid M2M door (POST /task-request). It requires model + sender + amount, forwards messages/input when provided, and returns HTTP 402 without a payer.
 
 register_agent is POST /v1/agents/register. It binds an AAWP official or smart-account agentWallet to an integer agent_id using a collected HMAC-valid receipt. Demo receipts do not qualify. Do not paste a human private key.
 
-get_agent_book is GET|POST /v1/agents/:agent_id/book. Possession-gated last-N collected spend for that agent_id. Not a public index. Do not paste a human private key.
+get_book / get_agent_book is GET|POST /v1/agents/:agent_id/book. Possession-gated last-N collected spend for that agent_id. Not a public index. Do not paste a human private key.
+
+verify_receipt fetches /receipt/:task_id?format=json and checks binding offline (@xfuel/verify). Prefer this over get_proof for the default "prove it" flow. get_proof / verify_proof are optional Tier-2 SP1 settlement checks.
 
 Amounts are USDC 6 decimals (2000 = $0.002), not wei. api.chit402.com (alias: api.xfuel.app) is the public beta; paying it moves mainnet USDC.`;
 
@@ -66,15 +68,17 @@ TRANSPORT
 
 CHIT402 API
   --api-url <url>         Chit402 API base URL (default: hosted public beta)
-  --api-key <key>         API key / X-API-Key (default: public demo key "xfuel-demo")
+  --api-key <key>         API key / X-API-Key (default: public demo key "chit402-demo")
 
 MISC
   -h, --help              Show this help
   -v, --version           Print version
 
 ENVIRONMENT (CLI flags take precedence)
-  XFUEL_API_URL, XFUEL_API_KEY, XFUEL_MCP_TRANSPORT, XFUEL_MCP_PORT,
-  XFUEL_MCP_AUTH_TOKEN, XFUEL_RPC_URL, ZK_VERIFIER_ADDRESS, MODEL_REGISTRY_ADDRESS
+  XFUEL_API_URL / CHIT402_API_URL / CHIT_API_URL
+  XFUEL_API_KEY / CHIT402_API_KEY / CHIT_API_KEY
+  XFUEL_MCP_TRANSPORT, XFUEL_MCP_PORT, XFUEL_MCP_AUTH_TOKEN,
+  XFUEL_RPC_URL, ZK_VERIFIER_ADDRESS, MODEL_REGISTRY_ADDRESS
 
 EXAMPLES
   npx xfuel-mcp                         # stdio, hosted public beta
@@ -91,6 +95,21 @@ function envTransport(): TransportKind | undefined {
   return t === 'http' || t === 'stdio' ? t : undefined;
 }
 
+/** First non-empty env among Chit402 / xfuel aliases (xfuel wins when both set). */
+function envApiUrl(): string | undefined {
+  return process.env.XFUEL_API_URL
+    || process.env.CHIT402_API_URL
+    || process.env.CHIT_API_URL
+    || undefined;
+}
+
+function envApiKey(): string | undefined {
+  return process.env.XFUEL_API_KEY
+    || process.env.CHIT402_API_KEY
+    || process.env.CHIT_API_KEY
+    || undefined;
+}
+
 /**
  * Parse argv + env into a resolved config. Pure (except reading process.env),
  * so it is unit-testable. `argv` should exclude the node/script prefix.
@@ -98,8 +117,8 @@ function envTransport(): TransportKind | undefined {
 export function parseArgs(argv: string[]): ParsedArgs {
   let transport: TransportKind = envTransport() ?? 'stdio';
   let port = Number(process.env.XFUEL_MCP_PORT) || 3033;
-  let apiUrl = process.env.XFUEL_API_URL || DEFAULT_BASE_URL;
-  let apiKey = process.env.XFUEL_API_KEY || PUBLIC_DEMO_API_KEY;
+  let apiUrl = envApiUrl() || DEFAULT_BASE_URL;
+  let apiKey = envApiKey() || PUBLIC_DEMO_API_KEY;
   let action: 'help' | 'version' | undefined;
 
   for (let i = 0; i < argv.length; i++) {

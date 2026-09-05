@@ -10,6 +10,10 @@ import { parseArgs } from '../config.js';
 const ENV_KEYS = [
   'XFUEL_API_URL',
   'XFUEL_API_KEY',
+  'CHIT402_API_URL',
+  'CHIT402_API_KEY',
+  'CHIT_API_URL',
+  'CHIT_API_KEY',
   'XFUEL_MCP_TRANSPORT',
   'XFUEL_MCP_PORT',
   'XFUEL_MCP_AUTH_TOKEN',
@@ -105,6 +109,25 @@ test('--help and --version short-circuit with an action', () => {
     assert.equal(parseArgs(['-h']).action, 'help');
     assert.equal(parseArgs(['--version']).action, 'version');
     assert.equal(parseArgs(['-v']).action, 'version');
+  });
+});
+
+test('CHIT402 / CHIT env aliases resolve when XFUEL vars are unset', () => {
+  withCleanEnv(() => {
+    process.env.CHIT402_API_URL = 'https://api.chit402.com';
+    process.env.CHIT402_API_KEY = 'chit402-demo';
+    const { config } = parseArgs([]);
+    assert.equal(config.apiUrl, 'https://api.chit402.com');
+    assert.equal(config.apiKey, 'chit402-demo');
+  });
+});
+
+test('XFUEL env vars take precedence over CHIT402 aliases', () => {
+  withCleanEnv(() => {
+    process.env.XFUEL_API_URL = 'https://api.xfuel.app';
+    process.env.CHIT402_API_URL = 'https://api.chit402.com';
+    const { config } = parseArgs([]);
+    assert.equal(config.apiUrl, 'https://api.xfuel.app');
   });
 });
 
