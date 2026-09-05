@@ -1,6 +1,6 @@
 {
   "name": "@xfuel/plugin-elizaos",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Chit402 ElizaOS plugin — TEXT_SMALL/LARGE with signed receipts, verify_url, and CHIT_BOOK spend context.",
   "type": "module",
   "main": "./dist/index.js",
