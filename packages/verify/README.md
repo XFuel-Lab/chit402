@@ -48,14 +48,32 @@ curl -s https://api.xfuel.app/receipt/task-123?format=json | npx xfuel-verify -
 | Check | Requires Network? | Description |
 |-------|-------------------|-------------|
 | Payment binding | No | Recompute commitment from receipt fields |
-| Issuer signature | No | ES256/JWKS verification (requires JWKS file) |
+| Issuer signature | No | ES256 verification — pinned `issuer_jwk` on receipt, or JWKS file |
 | Output hash | No | Hash is on the receipt |
 | On-chain settlement | Yes | Query Base RPC for tx |
 | Nullifier anchor | Yes | Query ZKVerifierSP1 contract |
 
-## Issuer Signature Verification (ES256/JWKS)
+## Issuer Signature Verification (ES256)
 
-Receipts may include an `issuer_signature` signed with ES256 (P-256). Verify it offline:
+Receipts include an `issuer_signature` signed with ES256 (P-256). Verify offline:
+
+### Pin-first (receipts with `issuer_signature.issuer_jwk`)
+
+Newer receipts pin the issuer public key directly in the receipt. No JWKS file needed:
+
+```bash
+# Offline verify — uses pinned issuer_jwk from the receipt
+npx xfuel-verify receipt.json
+```
+
+```typescript
+import { verifyReceipt } from '@xfuel/verify';
+
+const result = await verifyReceipt(receipt); // no jwks option required
+console.log(result.issuer_signature.valid); // true when signature intact
+```
+
+### Legacy JWKS file (older receipts without pin)
 
 ```bash
 # Download JWKS once (or obtain from trusted source)
@@ -65,7 +83,7 @@ curl -o issuer-jwks.json https://api.chit402.com/.well-known/jwks.json
 npx xfuel-verify receipt.json --jwks-file issuer-jwks.json
 ```
 
-The CLI does **not** automatically fetch JWKS to ensure offline verification. You must explicitly provide a JWKS file. Exit code 1 (failed) is returned if the signature is invalid or tampered.
+The CLI does **not** automatically fetch JWKS to ensure offline verification. For pinned receipts, `--jwks-file` is optional. Exit code 1 (failed) is returned if the signature is invalid or tampered.
 
 ## Frozen Fields
 

@@ -48,7 +48,7 @@ curl -s https://api.chit402.com/receipt/task-123?format=json | npx chit402-verif
 | Check | Requires Network? | Description |
 |-------|-------------------|-------------|
 | Payment binding | No | Recompute commitment from receipt fields |
-| Issuer signature | No | ES256/JWKS verification |
+| Issuer signature | No | ES256 — pinned `issuer_jwk` on receipt, or JWKS file |
 | Output hash | No | Hash is on the receipt |
 | On-chain settlement | Yes | Query Base RPC for tx |
 | Nullifier anchor | Yes | Query ZKVerifierSP1 contract |

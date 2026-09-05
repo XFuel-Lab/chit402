@@ -1,6 +1,6 @@
 {
   "name": "chit402-verify",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Chit402 receipt verification — verify payment binding and output commitment offline.",
   "main": "./index.js",
   "types": "./index.d.ts",
@@ -54,6 +54,6 @@
     "directory": "packages/aliases/chit402-verify"
   },
   "dependencies": {
-    "@xfuel/verify": "^0.1.0"
+    "@xfuel/verify": "^0.1.1"
   }
 }
