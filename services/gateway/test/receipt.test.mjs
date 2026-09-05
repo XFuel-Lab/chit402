@@ -596,7 +596,7 @@ test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compa
   assert.equal(r.issuer_signature.jwks_uri, undefined);
   assert.ok(r.issuer_signature.kid, 'kid present');
   assert.ok(r.issuer_signature.jws, 'compact JWS present');
-  assert.equal(r.issuer_signature.payload_version, 5);
+  assert.equal(r.issuer_signature.payload_version, 6);
   
   // JWS should have 3 parts (header.payload.signature)
   const parts = r.issuer_signature.jws.split('.');
@@ -616,7 +616,7 @@ test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compa
   assert.equal(payload.task_id, r.task_id);
   assert.equal(payload.iss, 'chit402');
   assert.ok(payload.iat, 'iat claim present');
-  assert.equal(payload.payload_version, 5);
+  assert.equal(payload.payload_version, 6);
 });
 
 test('buildReceipt: omits inactive extension fields and documents provider_cogs units', () => {
@@ -777,4 +777,72 @@ test('buildReceipt: caller_binding.agent_pubkey rejects symbolic labels', () => 
     const r = buildReceipt(taskWithLabel);
     assert.equal(mergeReceiptView(r).caller_binding.agent_pubkey, null, `symbolic label "${label}" must be rejected for agent_pubkey`);
   }
+});
+
+test('buildReceipt: pins issuer_jwk for offline verify (no live JWKS)', () => {
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  assert.ok(r.issuer_signature.issuer_jwk, 'issuer_jwk pinned at sign time');
+  assert.equal(r.issuer_signature.issuer_jwk.kid, r.issuer_signature.kid);
+  assert.equal(r.issuer_signature.issuer_jwk.alg, 'ES256');
+  assert.equal(r.verification.issuer_jwk_pin, r.issuer_signature.kid);
+  assert.equal(r.verification.offline_key_source, 'issuer_signature.issuer_jwk');
+});
+
+test('verifyReceiptEcdsaWithJwks: verifies with pin only (empty JWKS rejected after pin path)', async () => {
+  const { verifyReceiptEcdsaWithJwks } = await import('../src/receipt.js');
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  const ok = verifyReceiptEcdsaWithJwks(r, { keys: [] });
+  assert.equal(ok.valid, true, 'pinned issuer_jwk verifies without live JWKS');
+});
+
+test('verifyReceiptEcdsaWithJwks: tampered JWS fails with pin only', async () => {
+  const { verifyReceiptEcdsaWithJwks } = await import('../src/receipt.js');
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  const parts = r.issuer_signature.jws.split('.');
+  const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  payload.payment.gross_amount = '9999999';
+  const tampered = {
+    ...r,
+    issuer_signature: {
+      ...r.issuer_signature,
+      jws: `${parts[0]}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.${parts[2]}`,
+    },
+  };
+  const bad = verifyReceiptEcdsaWithJwks(tampered, { keys: [] });
+  assert.equal(bad.valid, false);
+});
+
+test('buildReceipt: collected settle binds payer, payee, asset, ref in JWS', () => {
+  const payer = '0x1111111111111111111111111111111111111111';
+  const payee = '0x2222222222222222222222222222222222222222';
+  const task = usdcTask({
+    meta: {
+      payerWallet: payer,
+      payTo: payee,
+      paymentAsset: 'USDC',
+    },
+  });
+  const r = buildReceipt(task, { baseUrl: 'https://api.chit402.com', payerWallet: payer, payTo: payee });
+  const v = mergeReceiptView(r);
+  assert.equal(v.payment.ref, task.intent.paymentRef);
+  assert.equal(v.payment.asset, 'USDC');
+  assert.equal(v.payment.payee, payee);
+  assert.equal(v.caller_binding.payer_wallet, payer);
+
+  const claims = decodeReceiptClaims(r);
+  assert.equal(claims.payment.ref, task.intent.paymentRef);
+  assert.equal(claims.payment.asset, 'USDC');
+  assert.equal(claims.payment.payee, payee);
+  assert.equal(claims.caller_binding.payer_wallet, payer);
+});
+
+test('renderReceiptHtml: shows settle bind rows when present', () => {
+  const payer = '0x1111111111111111111111111111111111111111';
+  const payee = '0x2222222222222222222222222222222222222222';
+  const task = usdcTask({ meta: { payerWallet: payer, payTo: payee } });
+  const html = renderReceiptHtml(buildReceipt(task, { payerWallet: payer, payTo: payee }));
+  assert.match(html, /Payer/);
+  assert.match(html, /Payee/);
+  assert.match(html, /Asset/);
+  assert.match(html, /pinned in receipt/);
 });

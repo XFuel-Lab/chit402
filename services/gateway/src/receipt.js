@@ -107,6 +107,25 @@ export function buildJwksUri(baseUrl = '') {
   return base ? `${base}${path}` : path;
 }
 
+/** Current JWS payload version for newly issued receipts. */
+export const RECEIPT_PAYLOAD_VERSION = 6;
+
+/**
+ * Public verifying key pinned at sign time (RFC 7638 kid + ES256 JWK).
+ * Offline verify uses this instead of fetching live JWKS when present.
+ * @param {object} receipt
+ * @returns {object|null}
+ */
+export function resolvePinnedIssuerJwk(receipt) {
+  const jwk = receipt?.issuer_signature?.issuer_jwk;
+  if (!jwk || typeof jwk !== 'object' || jwk.kty !== 'EC' || jwk.crv !== 'P-256') {
+    return null;
+  }
+  const kid = receipt?.issuer_signature?.kid;
+  if (kid && jwk.kid && kid !== jwk.kid) return null;
+  return jwk;
+}
+
 /** Decode signed claims from issuer_signature.jws (no signature check). */
 export function decodeReceiptClaims(receipt) {
   const jws = receipt?.issuer_signature?.jws;
@@ -208,6 +227,8 @@ export function mergeReceiptView(receipt) {
       protocol_fee_bps: claims.payment?.protocol_fee_bps ?? null,
       platform_fee: claims.payment?.platform_fee ?? null,
       platform_fee_bps: claims.payment?.platform_fee_bps ?? null,
+      asset: claims.payment?.asset ?? null,
+      payee: claims.payment?.payee ?? null,
       explorer_url: paymentMeta.explorer_url ?? explorerUrlForRef(claims.payment?.ref),
       tier2_proof: paymentMeta.tier2_proof ?? null,
       floor_applied: paymentMeta.floor_applied ?? null,
@@ -672,6 +693,8 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
       : {
           rail: view.payment?.rail ?? null,
           ref: view.payment?.ref ?? null,
+          asset: view.payment?.asset ?? null,
+          payee: view.payment?.payee ?? null,
           gross_amount: view.payment?.gross_amount ?? null,
           net_amount: view.payment?.net_amount ?? null,
           fee_amount: view.payment?.fee_amount ?? null,
@@ -718,7 +741,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     action,
     settlement,
     session_act: sessionAct,
-    payload_version: 5,
+    payload_version: RECEIPT_PAYLOAD_VERSION,
   };
 }
 
@@ -824,10 +847,13 @@ function settlementIdentity(claims) {
     claims?.payment?.ref ?? null,
     claims?.payment?.gross_amount ?? null,
     claims?.payment?.net_amount ?? null,
+    claims?.payment?.asset ?? null,
+    claims?.payment?.payee ?? null,
     claims?.provider_cogs?.actual ?? null,
     claims?.route?.model ?? null,
     claims?.route?.provider ?? null,
     claims?.output?.hash ?? null,
+    claims?.caller_binding?.payer_wallet ?? null,
   ]);
 }
 
@@ -843,11 +869,13 @@ function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
   const { jws, kid } = signJws(claims, {
     jku: jwksUri.startsWith('http') ? jwksUri : null,
   });
+  const issuer_jwk = getIssuerPublicKeyJwk();
   return {
     alg: 'ES256',
-    payload_version: 5,
+    payload_version: RECEIPT_PAYLOAD_VERSION,
     jws,
     kid,
+    issuer_jwk,
   };
 }
 
@@ -943,6 +971,12 @@ export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {})
     if (result.payload.task_id !== view.task_id) {
       return { checked: true, valid: false, reason: 'task_id_mismatch' };
     }
+    const signedPayment = result.payload.payment || {};
+    const receiptPayment = view.payment || {};
+    if ((signedPayment.payee ?? null) !== (receiptPayment.payee ?? null)
+      || (signedPayment.asset ?? null) !== (receiptPayment.asset ?? null)) {
+      return { checked: true, valid: false, reason: 'settlement_bind_mismatch' };
+    }
     const signedBinding = result.payload.caller_binding || {};
     const receiptBinding = view.caller_binding || {};
     if ((signedBinding.payer_wallet ?? null) !== (receiptBinding.payer_wallet ?? null)
@@ -973,6 +1007,12 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
   if (!sig || !sig.jws) {
     return { checked: false, valid: false, reason: 'no_issuer_signature' };
   }
+
+  const pinned = resolvePinnedIssuerJwk(receipt);
+  if (pinned) {
+    return verifyReceiptEcdsa(receipt, pinned, { validateClaims });
+  }
+
   if (!jwks || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
     return { checked: false, valid: false, reason: 'empty_jwks' };
   }
@@ -986,6 +1026,12 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
     const view = mergeReceiptView(receipt);
     if (jwsResult.payload.task_id !== view.task_id) {
       return { checked: true, valid: false, reason: 'task_id_mismatch' };
+    }
+    const signedPayment = jwsResult.payload.payment || {};
+    const receiptPayment = view.payment || {};
+    if ((signedPayment.payee ?? null) !== (receiptPayment.payee ?? null)
+      || (signedPayment.asset ?? null) !== (receiptPayment.asset ?? null)) {
+      return { checked: true, valid: false, reason: 'settlement_bind_mismatch' };
     }
     const signedBinding = jwsResult.payload.caller_binding || {};
     const receiptBinding = view.caller_binding || {};
@@ -1137,6 +1183,7 @@ function extractPayerWallet(task) {
     task?.meta?.senderAddress,
     task?.meta?.sender_address,
     task?.intent?.payerAddress,
+    task?.intent?.payerWallet,
     task?.intent?.senderAddress,
     task?.intent?.payer,
     task?.x402?.sender,
@@ -1164,6 +1211,49 @@ function normalizePayerWallet(value) {
     try { return getAddress(value); } catch { return null; }
   }
   if (isValidSolanaAddress(value)) return value;
+  return null;
+}
+
+/** Normalize payee (payTo) — same rules as payer wallet addresses. */
+function normalizePayee(value) {
+  return normalizePayerWallet(value);
+}
+
+/**
+ * Settlement asset label for collected USDC rails (e.g. USDC).
+ * @param {object} task
+ * @returns {string|null}
+ */
+export function paymentAssetOf(task) {
+  const explicit = task?.meta?.paymentAsset
+    || task?.meta?.payment_asset
+    || task?.meta?.asset
+    || task?.x402?.asset
+    || null;
+  if (explicit && typeof explicit === 'string') return explicit;
+  const rail = task?.intent?.paymentRail || 'usdc';
+  if (rail === 'usdc' || String(rail).startsWith('solana')) return 'USDC';
+  return null;
+}
+
+/**
+ * Settlement payee (x402 payTo / treasury recipient).
+ * @param {object} task
+ * @param {{ payTo?: string|null }} [opts]
+ * @returns {string|null}
+ */
+export function payeeOf(task, opts = {}) {
+  const candidates = [
+    opts.payTo,
+    task?.meta?.payTo,
+    task?.meta?.pay_to,
+    task?.x402?.payTo,
+    task?.intent?.payTo,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizePayee(candidate);
+    if (normalized) return normalized;
+  }
   return null;
 }
 
@@ -1241,7 +1331,7 @@ export function usageOf(task) {
 /**
  * Build the public receipt JSON for a task.
  * @param {object} task     Listener task (from aiListener.activeTasks).
- * @param {object} [opts]   { baseUrl, signingSecret, coSignerSecret, reqHost, apiKeyHash, agentId, agentPubkey, payerWallet }
+ * @param {object} [opts]   { baseUrl, signingSecret, coSignerSecret, reqHost, apiKeyHash, agentId, agentPubkey, payerWallet, payTo }
  *                          signingSecret enables the Tier-1 signed receipt (HMAC over the payment-bound tuple).
  *                          coSignerSecret adds a second attestor (replaceable signer) so
  *                          treasuries can verify even if XFuel disappears.
@@ -1249,7 +1339,7 @@ export function usageOf(task) {
  *                          apiKeyHash, agentId, agentPubkey, payerWallet enable caller binding for
  *                          entitlement verification (who is entitled to this receipt).
  */
-export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null, reqHost = null, apiKeyHash = null, agentId = null, agentPubkey = null, payerWallet = null, persistSignature = false } = {}) {
+export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null, reqHost = null, apiKeyHash = null, agentId = null, agentPubkey = null, payerWallet = null, payTo = null, persistSignature = false } = {}) {
   const outcome = proofOutcomeOf(task);
   const feeBps = task.feeBps || 50;
   // Buyer default is USDC (ADR 0002). Legacy tfuel rail only when explicitly set.
@@ -1303,6 +1393,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       ref: paymentRef,
       network: networkFromPaymentRef(paymentRef),
       explorer_url: explorerUrlForRef(paymentRef),
+      asset: paymentRef ? paymentAssetOf(task) : null,
+      payee: paymentRef ? payeeOf(task, { payTo }) : null,
       gross_amount: task.intent?.amount || '0',
       fee_amount: task.feeAmount || '0',
       net_amount: task.netAmount || '0',
@@ -1330,6 +1422,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       agentId,
       agentPubkey: agentPubkey || sessionOf(task)?.agent_pubkey || null,
       payerWallet: payerWallet || sessionOf(task)?.payer_wallet || null,
+      payTo,
     }),
     session: sessionOf(task),
     parent_receipt_id: task.parentReceiptId || task.meta?.parentReceiptId || task.meta?.parent_receipt_id || null,
@@ -1394,6 +1487,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     verification: {
       source_of_truth: 'issuer_signature.jws',
       jwks_uri,
+      issuer_jwk_pin: issuer_signature.kid,
+      offline_key_source: 'issuer_signature.issuer_jwk',
     },
     route_meta: {
       message_type: draft.route.message_type,
@@ -1545,8 +1640,8 @@ function verifyIssuerForHtml(receipt) {
     return { verified: false, reason: 'no_issuer_signature' };
   }
   try {
-    const jwk = getIssuerPublicKeyJwk();
-    if (!jwk || jwk.kid !== sig.kid) {
+    const jwk = resolvePinnedIssuerJwk(receipt) || getIssuerPublicKeyJwk();
+    if (!jwk || (sig.kid && jwk.kid !== sig.kid)) {
       return { verified: false, reason: 'kid_mismatch' };
     }
     const result = verifyJws(sig.jws, jwk);
@@ -1787,6 +1882,9 @@ export function renderReceiptHtml(receipt) {
         ? `<span class="badge pending">inherited</span> from <code>${esc(view.settlement.parent_receipt_id || view.parent_receipt_id || '')}</code>`
         : (p.collected ? '<span class="badge ok">collected</span>' : (p.collects_on === 'next_request' ? '<span class="badge pending">bill pending</span>' : '<span class="muted">not collected</span>')))}
       ${row('Settlement ref', refHtml)}
+      ${p.asset ? row('Asset', `<code>${esc(p.asset)}</code>`) : ''}
+      ${p.payee ? row('Payee', `<code>${esc(shortHash(p.payee, 10, 8))}</code>`) : ''}
+      ${view.caller_binding?.payer_wallet ? row('Payer', `<code>${esc(shortHash(view.caller_binding.payer_wallet, 10, 8))}</code>`) : ''}
       ${p.rail === 'unmetered'
         ? row('Price', '<span class="muted">not charged</span> <span class="muted">unmetered /v1</span>')
         : row('Price', usdcCell(p.gross_amount))}
@@ -1802,7 +1900,8 @@ export function renderReceiptHtml(receipt) {
         : (issuerSig?.jws ? '<span class="badge bad">not verified</span>' : '<span class="muted">unsigned</span>'))}
       ${issuerSig?.alg ? row('Algorithm', `<code>${esc(issuerSig.alg)}</code>`) : ''}
       ${issuerSig?.kid ? row('Key ID', `<code>${esc(shortHash(issuerSig.kid, 8, 6))}</code>`) : ''}
-      ${jwksUrl ? row('JWKS', `<a href="${esc(jwksUrl)}" target="_blank" rel="noopener">${esc(jwksUri)} ↗</a>`) : ''}
+      ${issuerSig?.issuer_jwk ? row('Offline key', '<span class="badge ok">pinned in receipt</span>') : ''}
+      ${jwksUrl ? row('JWKS', `<a href="${esc(jwksUrl)}" target="_blank" rel="noopener">${esc(jwksUri)} ↗</a> <span class="muted">live convenience</span>`) : ''}
       ${receipt.hmac_attestation?.value ? row('HMAC attestation', `<span class="badge pending">${esc(receipt.hmac_attestation.alg || 'HMAC-SHA256')}</span> <span class="muted">secondary</span>`) : ''}
       ${row('On-chain SP1', pr.has_proof ? '<span class="badge ok">yes</span>' : '<span class="muted">not on this call</span>')}
       ${pr.nullifier ? row('Nullifier', `<code>${esc(shortHash(pr.nullifier, 12, 10))}</code>`) : ''}
@@ -1833,7 +1932,7 @@ export function renderReceiptHtml(receipt) {
       Machine-readable: <a href="${esc(receipt.links.json)}">JSON</a> ·
       <a href="${esc(receipt.links.proof)}">proof</a> ·
       <a href="${esc(receipt.links.status)}">status</a><br />
-      ES256 signed receipt · payload v${esc(receipt.issuer_signature?.payload_version || 5)} · verify via <a href="${esc(jwksUrl || '/.well-known/jwks.json')}">JWKS</a><br />
+      ES256 signed receipt · payload v${esc(receipt.issuer_signature?.payload_version || RECEIPT_PAYLOAD_VERSION)} · verify via pinned <code>issuer_signature.issuer_jwk</code> or <a href="${esc(jwksUrl || '/.well-known/jwks.json')}">JWKS</a><br />
       XFuel Lab
     </footer>
   </div>
@@ -2301,6 +2400,11 @@ export function verifyReceiptJwsWithJwks(receipt, jwks) {
   if (!sig || !sig.jws) {
     return { checked: false, valid: false, reason: 'no_jws' };
   }
+  const pinned = resolvePinnedIssuerJwk(receipt);
+  if (pinned) {
+    const result = verifyJws(sig.jws, pinned);
+    return { checked: true, ...result, kid: pinned.kid };
+  }
   const result = verifyJwsWithJwks(sig.jws, jwks);
   return { checked: true, ...result };
 }
@@ -2324,6 +2428,10 @@ export default {
   mergeReceiptView,
   toUnixSeconds,
   buildJwksUri,
+  RECEIPT_PAYLOAD_VERSION,
+  resolvePinnedIssuerJwk,
+  paymentAssetOf,
+  payeeOf,
   proofScopeOf,
   callerBindingOf,
   issueSessionHandoffReceipt,

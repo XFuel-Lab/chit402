@@ -53,6 +53,7 @@ import {
   type ReceiptPayerClaims,
   type PayerRail,
 } from './payer.js';
+import { resolvePinnedIssuerJwk, verifyIssuerJws } from './jws.js';
 
 export {
   computePaymentCommitment,
@@ -124,7 +125,12 @@ export interface XFuelReceipt {
     protocol_fee_bps?: number;
     platform_fee?: string;
     platform_fee_bps?: number;
+    asset?: string | null;
+    payee?: string | null;
   };
+  payment_meta?: {
+    network?: string;
+  } | null;
   provider_cogs?: {
     actual?: string;
   };
@@ -156,14 +162,19 @@ export interface XFuelReceipt {
     value?: string;
     kid?: string;
     jws?: string;
+    issuer_jwk?: Es256Jwk;
+    payload_version?: number;
+  };
+  verification?: {
+    source_of_truth?: string;
+    jwks_uri?: string;
+    issuer_jwk_pin?: string;
+    offline_key_source?: string;
   };
   caller_binding?: {
     payer_wallet?: string | null;
     agent_pubkey?: string | null;
     api_key_hash?: string | null;
-  } | null;
-  payment_meta?: {
-    network?: string;
   } | null;
 }
 
@@ -331,7 +342,41 @@ export function verifyIssuerSignatureWithJwks(
   jwks: Jwks,
 ): IssuerSignatureVerification {
   const sig = receipt.issuer_signature;
-  if (!sig || !sig.value) {
+  if (!sig) {
+    return { checked: false, valid: false, reason: 'no_issuer_signature' };
+  }
+
+  const pinned = resolvePinnedIssuerJwk(receipt);
+  if (pinned && sig.jws) {
+    const jwsResult = verifyIssuerJws(sig.jws, pinned);
+    return {
+      checked: true,
+      valid: jwsResult.valid,
+      kid: pinned.kid || sig.kid,
+      reason: jwsResult.reason,
+    };
+  }
+
+  if (sig.jws) {
+    if (!jwks || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
+      return { checked: false, valid: false, reason: 'empty_jwks' };
+    }
+    const candidates = sig.kid
+      ? jwks.keys.filter(k => k.kid === sig.kid && k.alg === 'ES256')
+      : jwks.keys.filter(k => k.alg === 'ES256');
+    if (candidates.length === 0) {
+      return { checked: false, valid: false, reason: 'no_matching_key' };
+    }
+    for (const jwk of candidates) {
+      const jwsResult = verifyIssuerJws(sig.jws, jwk);
+      if (jwsResult.valid) {
+        return { checked: true, valid: true, kid: jwk.kid || sig.kid };
+      }
+    }
+    return { checked: true, valid: false, reason: 'signature_invalid' };
+  }
+
+  if (!sig.value) {
     return { checked: false, valid: false, reason: 'no_issuer_signature' };
   }
   if (!jwks || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
@@ -534,9 +579,21 @@ export async function verifyReceipt(
     errors.push('Payment binding mismatch');
   }
 
-  // Verify issuer signature if JWKS provided
+  // Verify issuer signature — pinned JWK in receipt, optional JWKS file, or legacy detached sig
   let issuer_signature: IssuerSignatureVerification;
-  if (options.jwks) {
+  const pinned = resolvePinnedIssuerJwk(receipt);
+  if (pinned && receipt.issuer_signature?.jws) {
+    const jwsResult = verifyIssuerJws(receipt.issuer_signature.jws, pinned);
+    issuer_signature = {
+      checked: true,
+      valid: jwsResult.valid,
+      kid: pinned.kid || receipt.issuer_signature.kid,
+      reason: jwsResult.reason,
+    };
+    if (!jwsResult.valid) {
+      errors.push(`Issuer signature invalid: ${jwsResult.reason}`);
+    }
+  } else if (options.jwks) {
     issuer_signature = verifyIssuerSignatureWithJwks(receipt, options.jwks);
     if (issuer_signature.checked && !issuer_signature.valid) {
       errors.push(`Issuer signature invalid: ${issuer_signature.reason}`);
@@ -546,7 +603,9 @@ export async function verifyReceipt(
       checked: false,
       valid: false,
       kid: receipt.issuer_signature.kid,
-      reason: 'JWKS not provided — pass jwks option to verify issuer signature',
+      reason: receipt.issuer_signature.jws
+        ? 'No pinned issuer_jwk and JWKS not provided — pass jwks option or use a receipt with issuer_signature.issuer_jwk'
+        : 'JWKS not provided — pass jwks option to verify issuer signature',
     };
   } else {
     issuer_signature = {
@@ -625,7 +684,8 @@ export async function verifyReceipt(
   // Check for signature verification failure (JWKS provided but signature invalid)
   const jwksProvided = !!options.jwks;
   const hasIssuerSig = !!receipt.issuer_signature;
-  const issuerSigInvalid = jwksProvided && hasIssuerSig && !issuer_signature.valid;
+  const hasPinnedJwk = !!pinned && !!receipt.issuer_signature?.jws;
+  const issuerSigInvalid = (jwksProvided || hasPinnedJwk) && hasIssuerSig && !issuer_signature.valid;
 
   // Binding failure
   const bindingFailed = binding.expected && !binding.matches;
@@ -634,8 +694,8 @@ export async function verifyReceipt(
   if (issuerSigInvalid || bindingFailed || payerFailed) {
     // JWKS provided but signature invalid, OR binding mismatch → failed
     overall = 'failed';
-  } else if (hasIssuerSig && !jwksProvided) {
-    // Receipt has signature but no JWKS provided → partial (cannot verify signature)
+  } else if (hasIssuerSig && !jwksProvided && !hasPinnedJwk) {
+    // Receipt has signature but no offline key material → partial
     overall = 'partial';
   } else if (
     binding.matches
@@ -675,10 +735,17 @@ export async function verifyReceipt(
   };
 }
 
+export {
+  resolvePinnedIssuerJwk,
+  verifyIssuerJws,
+} from './jws.js';
+
 export default {
   verifyBinding,
   verifyIssuerSignature,
   verifyIssuerSignatureWithJwks,
+  verifyIssuerJws,
+  resolvePinnedIssuerJwk,
   verifyNullifier,
   verifyPayerBinding,
   verifySolanaPayer,
