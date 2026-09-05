@@ -1,6 +1,6 @@
 {
   "name": "@xfuel/verify",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Offline verification for Chit402 receipts — verify payment binding and output hash without calling the API",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

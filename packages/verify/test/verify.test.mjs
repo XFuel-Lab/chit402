@@ -780,63 +780,104 @@ describe('verifyReceipt overall status semantics', () => {
   });
 
   test('verifyReceipt verifies JWS with pinned issuer_jwk and no JWKS file', async () => {
-    const { generateKeyPairSync, sign, createHash } = await import('node:crypto');
-    const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
-    const jwkExport = publicKey.export({ format: 'jwk' });
-    const canonical = JSON.stringify({ crv: jwkExport.crv, kty: jwkExport.kty, x: jwkExport.x, y: jwkExport.y });
-    const kid = createHash('sha256').update(canonical).digest('base64url');
-    const issuer_jwk = { ...jwkExport, kid, alg: 'ES256', use: 'sig', kty: 'EC', crv: 'P-256' };
-
-    const payload = {
-      task_id: 'xfuel-pin-test',
-      iss: 'chit402',
-      iat: 1,
-      payload_version: 6,
-      payment: {
-        rail: 'usdc',
-        ref: 'base:0xabc',
-        asset: 'USDC',
-        payee: '0x2222222222222222222222222222222222222222',
-        gross_amount: '1000',
-        net_amount: '900',
-        fee_amount: '100',
-        protocol_fee_bps: 50,
-        platform_fee: null,
-        platform_fee_bps: null,
-      },
-      caller_binding: {
-        payer_wallet: '0x1111111111111111111111111111111111111111',
-        agent_pubkey: null,
-        api_key_hash: null,
-      },
-    };
-    const header = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid };
-    const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
-    const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
-    const signingInput = `${headerB64}.${payloadB64}`;
-    const signature = sign('sha256', Buffer.from(signingInput), {
-      key: privateKey,
-      dsaEncoding: 'ieee-p1363',
-    }).toString('base64url');
-    const jws = `${signingInput}.${signature}`;
-
-    const receipt = {
-      task_id: 'xfuel-pin-test',
-      status: 'completed',
-      payment: {
-        rail: 'usdc',
-        ref: 'base:0xabc',
-        asset: 'USDC',
-        payee: '0x2222222222222222222222222222222222222222',
-        gross_amount: '1000',
-        net_amount: '900',
-      },
-      caller_binding: { payer_wallet: '0x1111111111111111111111111111111111111111' },
-      issuer_signature: { alg: 'ES256', jws, kid, issuer_jwk, payload_version: 6 },
-    };
-
+    const receipt = await buildPinnedJwsReceipt();
     const result = await verifyReceipt(receipt, {});
     assert.equal(result.issuer_signature.valid, true);
+    assert.equal(result.issuer_signature.checked, true);
+    assert.equal(result.overall, 'partial');
+  });
+
+  test('pinned receipt fails when JWS is tampered', async () => {
+    const receipt = await buildPinnedJwsReceipt();
+    const parts = receipt.issuer_signature.jws.split('.');
+    parts[2] = parts[2].slice(0, -1) + (parts[2].endsWith('A') ? 'B' : 'A');
+    receipt.issuer_signature.jws = parts.join('.');
+
+    const result = await verifyReceipt(receipt, {});
+    assert.equal(result.issuer_signature.valid, false);
+    assert.equal(result.overall, 'failed');
+  });
+
+  test('legacy receipt without issuer_jwk still verifies with JWKS option', async () => {
+    const receipt = {
+      task_id: 'xfuel-legacy-jwks',
+      status: 'completed',
+      payment: { rail: 'usdc' },
+    };
+
+    const signatureValue = signReceipt(receipt);
+    receipt.issuer_signature = {
+      alg: 'ES256',
+      value: signatureValue,
+      kid: 'test-key-1',
+      // no issuer_jwk — legacy detached signature
+    };
+
+    const jwks = { keys: [TEST_PUBLIC_KEY_JWK] };
+    const result = await verifyReceipt(receipt, { jwks });
+
+    assert.equal(result.issuer_signature.valid, true);
+    assert.equal(result.issuer_signature.checked, true);
     assert.equal(result.overall, 'partial');
   });
 });
+
+/**
+ * Build a receipt with pinned issuer_jwk + compact JWS (no JWKS file needed).
+ */
+async function buildPinnedJwsReceipt() {
+  const { generateKeyPairSync, sign, createHash } = await import('node:crypto');
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwkExport = publicKey.export({ format: 'jwk' });
+  const canonical = JSON.stringify({ crv: jwkExport.crv, kty: jwkExport.kty, x: jwkExport.x, y: jwkExport.y });
+  const kid = createHash('sha256').update(canonical).digest('base64url');
+  const issuer_jwk = { ...jwkExport, kid, alg: 'ES256', use: 'sig', kty: 'EC', crv: 'P-256' };
+
+  const payload = {
+    task_id: 'xfuel-pin-test',
+    iss: 'chit402',
+    iat: 1,
+    payload_version: 6,
+    payment: {
+      rail: 'usdc',
+      ref: 'base:0xabc',
+      asset: 'USDC',
+      payee: '0x2222222222222222222222222222222222222222',
+      gross_amount: '1000',
+      net_amount: '900',
+      fee_amount: '100',
+      protocol_fee_bps: 50,
+      platform_fee: null,
+      platform_fee_bps: null,
+    },
+    caller_binding: {
+      payer_wallet: '0x1111111111111111111111111111111111111111',
+      agent_pubkey: null,
+      api_key_hash: null,
+    },
+  };
+  const header = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid };
+  const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signingInput = `${headerB64}.${payloadB64}`;
+  const signature = sign('sha256', Buffer.from(signingInput), {
+    key: privateKey,
+    dsaEncoding: 'ieee-p1363',
+  }).toString('base64url');
+  const jws = `${signingInput}.${signature}`;
+
+  return {
+    task_id: 'xfuel-pin-test',
+    status: 'completed',
+    payment: {
+      rail: 'usdc',
+      ref: 'base:0xabc',
+      asset: 'USDC',
+      payee: '0x2222222222222222222222222222222222222222',
+      gross_amount: '1000',
+      net_amount: '900',
+    },
+    caller_binding: { payer_wallet: '0x1111111111111111111111111111111111111111' },
+    issuer_signature: { alg: 'ES256', jws, kid, issuer_jwk, payload_version: 6 },
+  };
+}

@@ -50,8 +50,9 @@ Network behavior:
   - --check-nullifier is passed (queries Base RPC for on-chain anchor)
   - --check-payer is passed (queries Base or Solana RPC for USDC settlement)
 
-  JWKS must be provided as a local file (--jwks-file). The CLI does not
-  automatically fetch JWKS from a URL to ensure offline verification.
+  JWKS must be provided as a local file (--jwks-file) for legacy receipts without
+  issuer_signature.issuer_jwk. The CLI does not automatically fetch JWKS from a URL.
+  Pinned receipts (issuer_jwk present) verify offline without --jwks-file.
 
   Solana payer verify uses SOLANA_RPC_URL when set, else the public mainnet RPC.
 
@@ -212,7 +213,10 @@ async function main(): Promise<number> {
     } else {
       console.log(`  Status:        ${result.issuer_signature.reason || 'Not checked'}`);
       if (receipt.issuer_signature && !args.jwksFile) {
-        console.log(`                 (receipt has signature — pass --jwks-file to verify)`);
+        const hasPin = receipt.issuer_signature.issuer_jwk && receipt.issuer_signature.jws;
+        console.log(hasPin
+          ? `                 (pinned issuer_jwk on receipt — signature verified offline)`
+          : `                 (receipt has signature — pass --jwks-file to verify)`);
       }
     }
     console.log('');
