@@ -137,7 +137,7 @@ describe('Receipt ECDSA Signing', () => {
 
     assert.ok(receipt.issuer_signature, 'receipt should have issuer_signature');
     assert.equal(receipt.issuer_signature.alg, 'ES256');
-    assert.equal(receipt.issuer_signature.payload_version, 5);
+    assert.equal(receipt.issuer_signature.payload_version, 6);
     assert.ok(receipt.issuer_signature.jws, 'should have compact JWS');
     assert.ok(receipt.issuer_signature.kid, 'should have kid');
     assert.equal(receipt.verification.jwks_uri, 'https://api.test/.well-known/jwks.json');
@@ -259,6 +259,8 @@ describe('Receipt ECDSA Verification', () => {
 
   test('verifyReceiptEcdsaWithJwks rejects when no matching key', () => {
     const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+    // Legacy receipts without pin fall back to JWKS lookup.
+    delete receipt.issuer_signature.issuer_jwk;
 
     // Generate a JWKS with a different kid - should fail to find matching key
     const { publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -280,6 +282,7 @@ describe('Receipt ECDSA Verification', () => {
 
   test('verifyReceiptEcdsaWithJwks rejects wrong key with matching kid', () => {
     const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+    delete receipt.issuer_signature.issuer_jwk;
 
     // Generate a JWKS with a wrong key but matching kid
     const { publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -432,7 +435,7 @@ describe('Standard Library Compatibility (jose)', () => {
     assert.equal(payload.task_id, receipt.task_id);
     assert.equal(payload.iss, 'chit402');
     assert.ok(payload.iat, 'iat claim present');
-    assert.equal(payload.payload_version, 5);
+    assert.equal(payload.payload_version, 6);
     
       const view = mergeReceiptView(receipt);
     assert.equal(payload.payment.rail, view.payment.rail);
@@ -505,6 +508,14 @@ describe('Standard Library Compatibility (jose)', () => {
     assert.equal(result.valid, true);
     assert.ok(result.payload);
     assert.ok(result.kid);
+  });
+
+  test('verifyReceiptJwsWithJwks validates with pinned issuer_jwk only', () => {
+    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+    const result = verifyReceiptJwsWithJwks(receipt, { keys: [] });
+    assert.equal(result.checked, true);
+    assert.equal(result.valid, true);
+    assert.ok(receipt.issuer_signature.issuer_jwk);
   });
 });
 

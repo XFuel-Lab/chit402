@@ -238,7 +238,7 @@ async function meterV1Request(req, res, {
     const decision = await runX402Handshake(req, { taskId, body, baseUrl, resource });
 
     if (decision.kind === 'settled') {
-      return { halted: false, payment: { ref: decision.paymentRef, amount: decision.settledAmount, payer: decision.payerWallet } };
+      return { halted: false, payment: { ref: decision.paymentRef, amount: decision.settledAmount, payer: decision.payerWallet, payTo: decision.payTo, asset: decision.asset } };
     }
 
     if (decision.kind === 'challenge') {
@@ -780,6 +780,8 @@ function registerTaskAndProve({
       provider,
       apiKeyHash: apiKeyHash || null,
       payerWallet: payment?.payer || session?.payer_wallet || null,
+      payTo: payment?.payTo || null,
+      paymentAsset: payment?.asset || null,
       session: session || null,
       agentPubkey: session?.agent_pubkey || null,
       privateSpend: !!privateSpend,
