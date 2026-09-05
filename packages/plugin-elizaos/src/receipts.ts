@@ -81,30 +81,63 @@ export function formatCachedBook(receipts: CachedReceipt[], limit: number): stri
   return [header, ...lines, footer].join('\n');
 }
 
-/** Format possession-gated book API JSON for prompt injection. */
-export function formatRemoteBook(data: Record<string, unknown>, limit: number): string {
-  const rows = Array.isArray(data.rows) ? data.rows.slice(0, limit) : [];
+function verifyUrlForTask(apiUrl: string | undefined, taskId: string, row?: Record<string, unknown>): string {
+  const fromRow = row?.verify_url ?? row?.verifyUrl;
+  if (typeof fromRow === 'string' && fromRow.trim()) return fromRow;
+  if (apiUrl) return `${apiUrl.replace(/\/$/, '')}/receipt/${taskId}`;
+  return `receipt/${taskId}`;
+}
+
+/** Format possession-gated book API JSON for prompt injection or SHOW_CHIT_BOOK replies. */
+export function formatRemoteBook(
+  data: Record<string, unknown>,
+  limit: number,
+  apiUrl?: string,
+): string {
+  const entries = Array.isArray(data.entries)
+    ? data.entries.slice(0, limit)
+    : Array.isArray(data.rows)
+      ? data.rows.slice(0, limit)
+      : [];
   const totals = data.totals as { count?: number; usdc_sum?: string } | undefined;
-  const budget = data.budget as { cap?: string; spent?: string; remaining?: string } | undefined;
-  const lines: string[] = ['Chit402 possession-gated spend book:'];
-  if (budget) {
+  const cap = data.cap as string | null | undefined;
+  const spent = data.spent as string | undefined;
+  const remaining = data.remaining as string | undefined;
+  const agentId = data.agent_id;
+
+  const spentMicro = totals?.usdc_sum ?? spent ?? '0';
+  const spentUsd = usdcMicroToUsd(spentMicro);
+  const count = totals?.count ?? entries.length;
+
+  const lines: string[] = [
+    `Chit402 possession-gated spend book (agent_id=${agentId ?? '?'}):`,
+    `This agent spent $${spentUsd.toFixed(4)} across ${count} collected row${count === 1 ? '' : 's'}.`,
+  ];
+
+  if (cap != null || remaining != null || spent != null) {
     lines.push(
-      `Budget cap=${budget.cap ?? '?'} spent=${budget.spent ?? '?'} remaining=${budget.remaining ?? '?'}`,
+      `Cap: ${cap ?? 'unlimited'} | spent: ${spent ?? spentMicro} micro-USDC | remaining: ${remaining ?? '?'}`,
     );
   }
-  if (totals) {
-    lines.push(`Totals: count=${totals.count ?? 0} usdc_sum=${totals.usdc_sum ?? '0'}`);
+
+  for (const entry of entries) {
+    const row = entry as Record<string, unknown>;
+    const taskId = String(row.task_id ?? row.taskId ?? '?');
+    const route = row.route as { model?: string; hub?: string } | undefined;
+    const model = route?.model ?? String(row.model ?? '?');
+    const hub = route?.hub ? ` hub=${route.hub}` : '';
+    const payment = row.payment as { amount?: string; gross_amount?: string } | undefined;
+    const amountMicro = payment?.amount ?? payment?.gross_amount ?? '0';
+    const usd = usdcMicroToUsd(amountMicro);
+    const amount = usd > 0 ? `$${usd.toFixed(4)}` : '(unmetered)';
+    const verify = verifyUrlForTask(apiUrl, taskId, row);
+    lines.push(`- ${taskId} | ${model}${hub} | ${amount} | ${verify}`);
   }
-  for (const row of rows) {
-    const r = row as Record<string, unknown>;
-    const taskId = String(r.task_id ?? r.taskId ?? '?');
-    const verify = String(r.verify_url ?? r.verifyUrl ?? '');
-    const model = String((r.route as { model?: string } | undefined)?.model ?? r.model ?? '?');
-    const amount = String((r.payment as { gross_amount?: string } | undefined)?.gross_amount ?? r.amount ?? '?');
-    lines.push(`- ${taskId} | ${model} | ${amount} micro-USDC | ${verify}`);
-  }
-  if (rows.length === 0) {
+
+  if (entries.length === 0) {
     lines.push('(no collected rows yet)');
   }
+
+  lines.push('Here is the row — each line includes verify_url for offline binding.');
   return lines.join('\n');
 }

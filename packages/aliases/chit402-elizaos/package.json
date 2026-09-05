@@ -1,6 +1,6 @@
 {
   "name": "chit402-elizaos",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Chit402 ElizaOS plugin — re-export of @xfuel/plugin-elizaos.",
   "type": "module",
   "main": "./index.js",
@@ -45,6 +45,6 @@
     "directory": "packages/aliases/chit402-elizaos"
   },
   "dependencies": {
-    "@xfuel/plugin-elizaos": "^0.1.1"
+    "@xfuel/plugin-elizaos": "^0.1.2"
   }
 }

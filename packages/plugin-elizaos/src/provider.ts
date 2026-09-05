@@ -1,29 +1,7 @@
 import type { IAgentRuntime, Memory, Provider, State } from './eliza-types.js';
+import { fetchAgentBook } from './gateway.js';
 import { formatCachedBook, formatRemoteBook } from './receipts.js';
 import { getRuntimeState } from './state.js';
-
-async function fetchRemoteBook(
-  apiUrl: string,
-  apiKey: string,
-  agentId: number,
-  session: string,
-  limit: number,
-): Promise<Record<string, unknown>> {
-  const url = `${apiUrl.replace(/\/$/, '')}/v1/agents/${agentId}/book`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(apiKey ? { 'X-API-Key': apiKey } : {}),
-    },
-    body: JSON.stringify({ session, limit }),
-  });
-  if (!res.ok) {
-    throw new Error(`Chit402 book HTTP ${res.status}`);
-  }
-  const text = await res.text();
-  return text ? (JSON.parse(text) as Record<string, unknown>) : {};
-}
 
 export const chitBookProvider: Provider = {
   name: 'CHIT_BOOK',
@@ -36,14 +14,12 @@ export const chitBookProvider: Provider = {
 
     if (config.agentId && config.bookSession) {
       try {
-        const remote = await fetchRemoteBook(
-          config.apiUrl,
-          config.apiKey,
-          config.agentId,
-          config.bookSession,
+        const remote = await fetchAgentBook(config.apiUrl, config.apiKey, {
+          agent_id: config.agentId,
+          session: config.bookSession,
           limit,
-        );
-        const text = formatRemoteBook(remote, limit);
+        });
+        const text = formatRemoteBook(remote, limit, config.apiUrl);
         return {
           text,
           data: { source: 'book_api', agent_id: config.agentId, ...remote },
