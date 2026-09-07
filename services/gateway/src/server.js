@@ -316,7 +316,8 @@ POST /v1/chat/completions is bait. A holder can prove: lineage, policy, assignme
 
 - GET|POST /v1/agents/:agent_id/book : last-N collected spend + budget Y / remaining. Possession-gated.
 - GET /v1/agents/:agent_id/book/lineage/:task_id : walk A→B→inference. A2A disputes need this.
-- GET|POST /v1/agents/:agent_id/book/policy : caps as rows. daily_cap, hourly_cap, model_allowlist, kill_switch, require_payment_ref, tier2_above.
+- GET|POST /v1/agents/:agent_id/book/policy : caps as rows. daily_cap, hourly_cap, model_allowlist, kill_switch, require_payment_ref, tier2_above. Live policy_blocked rows appear on the book when a cap trips mid-burn (no USDC charge).
+- Intent grouping: pass X-XFuel-Intent (or body intent_id) + X-XFuel-Attempt on chat/completions so retries share one intent bill.
 - GET|POST /v1/agents/:agent_id/book/export : possession-gated CSV / JSON audit pack / print HTML. format=csv|json|html.
 - GET|POST /v1/agents/:agent_id/book/assign : grant read/collect of a slice to another owner.
 - GET /v1/book/slice?token= : read a slice by assignment token (no possession needed).
