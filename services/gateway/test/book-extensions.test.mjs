@@ -291,7 +291,7 @@ describe('Book Export', () => {
     });
     assert.equal(result.status, 200);
     assert.equal(result.contentType, 'text/csv; charset=utf-8');
-    assert.match(result.body, /task_id,collected_at,hub,model,amount/);
+    assert.match(result.body, /task_id,evidence,collected_at,hub,model,amount/);
     assert.match(result.body, /export-t1/);
     assert.match(result.body, /theta\/qwen3/);
   });

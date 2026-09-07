@@ -29,9 +29,21 @@ Caps sit on the book the principal holds — not inside the router.
 
 Possession-gated. Query/body: `format=csv|json|html`, optional `limit` (max 200).
 
-- **csv** — `task_id,collected_at,hub,model,amount,payment_ref,rail,verify_url,explorer_url`
-- **json** — `chit402.book_audit.v1` pack with per-row `auditor_url` (`?format=auditor`)
+- **csv** — `task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,verify_url,explorer_url`
+- **json** — `chit402.book_audit.v1` pack with per-row `evidence` (`collected` | `UNVERIFIED` | `policy_blocked`) and `auditor_url` (`?format=auditor`)
 - **html** — print-friendly page; use browser Print to PDF
+
+### Evidence status (ellie-v2)
+
+Book and export never treat missing possession evidence as zero payment. Each row carries `evidence`:
+
+| Value | Meaning |
+|-------|---------|
+| `collected` | Proven `payment.ref` + settle amount on the ledger row |
+| `UNVERIFIED` | Payer / `payment.ref` / amount cannot be proven — `amount` is null, excluded from totals |
+| `policy_blocked` | Policy hop with no USDC collected |
+
+Export reads **ledger rows only** (UsageSettled) — not live wallet scrape or task-store re-derivation.
 
 ### On-chain attestations (v1)
 

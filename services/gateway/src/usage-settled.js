@@ -13,6 +13,42 @@ import logger from './logger.js';
 
 const UNMETERED_RAILS = new Set(['unmetered', 'demo', 'free']);
 
+/** Book/export evidence — never treat missing possession proof as zero payment. */
+export const BOOK_EVIDENCE = {
+  COLLECTED: 'collected',
+  UNVERIFIED: 'UNVERIFIED',
+  POLICY_BLOCKED: 'policy_blocked',
+};
+
+/**
+ * Derive export evidence for one ledger row.
+ * When payer / payment.ref / amount cannot be proven, render UNVERIFIED — never invent a settle amount.
+ * @param {object} entry
+ * @returns {'collected'|'UNVERIFIED'|'policy_blocked'}
+ */
+export function deriveEvidence(entry) {
+  if (!entry || typeof entry !== 'object') return BOOK_EVIDENCE.UNVERIFIED;
+  if (entry.event === 'policy_blocked' || entry.evidence === BOOK_EVIDENCE.POLICY_BLOCKED) {
+    return BOOK_EVIDENCE.POLICY_BLOCKED;
+  }
+  if (entry.evidence === BOOK_EVIDENCE.UNVERIFIED) {
+    return BOOK_EVIDENCE.UNVERIFIED;
+  }
+  const ref = entry.payment_ref != null ? String(entry.payment_ref).trim() : '';
+  if (!ref) return BOOK_EVIDENCE.UNVERIFIED;
+  const amount = entry.amount;
+  if (amount == null || String(amount).trim() === '') return BOOK_EVIDENCE.UNVERIFIED;
+  return BOOK_EVIDENCE.COLLECTED;
+}
+
+/** True when a row may be summed in cap/totals (proven collected USDC). */
+export function entryQualifiesForTotals(entry) {
+  if (deriveEvidence(entry) !== BOOK_EVIDENCE.COLLECTED) return false;
+  const rail = String(entry.rail || '').toLowerCase();
+  if (UNMETERED_RAILS.has(rail)) return false;
+  return entry.collected === true;
+}
+
 export const BOOK_DEFAULT_LIMIT = 50;
 export const BOOK_MAX_LIMIT = 200;
 
@@ -178,6 +214,7 @@ export class UsageSettledLedger {
       payer: payer || null,
       agent_id: id,
       collected: true,
+      evidence: BOOK_EVIDENCE.COLLECTED,
       rail: String(payment.rail || 'usdc'),
       amount: amountOf(payment),
       collected_at: payment.collected_at || new Date().toISOString(),
@@ -236,6 +273,7 @@ export class UsageSettledLedger {
       payer: null,
       agent_id: id,
       collected: false,
+      evidence: BOOK_EVIDENCE.POLICY_BLOCKED,
       event: 'policy_blocked',
       policy_code: String(policyCode || 'policy_blocked'),
       reason: String(reason || 'policy blocked'),
@@ -299,7 +337,11 @@ export class UsageSettledLedger {
     for (let i = this.entries.length - 1; i >= 0 && rows.length < n; i--) {
       const e = this.entries[i];
       if (Number(e.agent_id) !== id) continue;
-      if (e.event === 'policy_blocked') {
+      if (e.event === 'policy_blocked' || deriveEvidence(e) === BOOK_EVIDENCE.POLICY_BLOCKED) {
+        rows.push(e);
+        continue;
+      }
+      if (deriveEvidence(e) === BOOK_EVIDENCE.UNVERIFIED) {
         rows.push(e);
         continue;
       }
@@ -379,11 +421,9 @@ export class UsageSettledLedger {
     if (!Number.isInteger(id) || id < 1) return sum;
     for (const e of this.entries) {
       if (Number(e.agent_id) !== id) continue;
-      if (e.collected !== true) continue;
-      const rail = String(e.rail || '').toLowerCase();
-      if (UNMETERED_RAILS.has(rail)) continue;
+      if (!entryQualifiesForTotals(e)) continue;
       try {
-        sum += BigInt(String(e.amount ?? '0').trim() || '0');
+        sum += BigInt(String(e.amount).trim());
       } catch {
         /* skip malformed */
       }
@@ -412,15 +452,13 @@ export class UsageSettledLedger {
 
     for (const e of this.entries) {
       if (Number(e.agent_id) !== id) continue;
-      if (e.collected !== true) continue;
-      const rail = String(e.rail || '').toLowerCase();
-      if (UNMETERED_RAILS.has(rail)) continue;
+      if (!entryQualifiesForTotals(e)) continue;
 
       const collectedAt = new Date(e.collected_at || e.recorded_at);
       if (collectedAt < todayStart) continue;
 
       try {
-        sum += BigInt(String(e.amount ?? '0').trim() || '0');
+        sum += BigInt(String(e.amount).trim());
       } catch {
         /* skip malformed */
       }
@@ -450,15 +488,13 @@ export class UsageSettledLedger {
 
     for (const e of this.entries) {
       if (Number(e.agent_id) !== id) continue;
-      if (e.collected !== true) continue;
-      const rail = String(e.rail || '').toLowerCase();
-      if (UNMETERED_RAILS.has(rail)) continue;
+      if (!entryQualifiesForTotals(e)) continue;
 
       const collectedAt = new Date(e.collected_at || e.recorded_at);
       if (collectedAt < hourStart) continue;
 
       try {
-        sum += BigInt(String(e.amount ?? '0').trim() || '0');
+        sum += BigInt(String(e.amount).trim());
       } catch {
         /* skip malformed */
       }
@@ -477,15 +513,76 @@ export class UsageSettledLedger {
 
     for (const e of this.entries) {
       if (Number(e.agent_id) !== id) continue;
-      if (e.collected !== true) continue;
-      const rail = String(e.rail || '').toLowerCase();
-      if (UNMETERED_RAILS.has(rail)) continue;
-      if (!e.payment_ref) {
+      if (deriveEvidence(e) === BOOK_EVIDENCE.UNVERIFIED) {
         return { has_gap: true, task_id: e.task_id || null };
       }
     }
     return { has_gap: false };
   }
+}
+
+/**
+ * Write a book/ledger row at x402 settle time (before inference completes).
+ * Stable task_id bound to payment.ref; payer_wallet stored when present.
+ * Idempotent on payment.ref / task_id via recordCollectedSpend.
+ *
+ * @param {{
+ *   taskId: string,
+ *   paymentRef: string,
+ *   amount?: string|null,
+ *   payer?: string|null,
+ *   model?: string|null,
+ *   hub?: string|null,
+ *   rail?: string|null,
+ *   ledger: UsageSettledLedger,
+ *   registry: { allocate: Function, get: Function },
+ *   agentId?: number|string|null,
+ *   parentRef?: string|null,
+ *   intentId?: string|null,
+ *   attemptIndex?: number|null,
+ * }} row
+ */
+export function recordSettleBookRow({
+  taskId,
+  paymentRef,
+  amount = null,
+  payer = null,
+  model = null,
+  hub = null,
+  rail = 'usdc',
+  ledger,
+  registry,
+  agentId = null,
+  parentRef = null,
+  intentId = null,
+  attemptIndex = null,
+} = {}) {
+  if (!taskId || !paymentRef) {
+    return { ok: false, reason: 'taskId and paymentRef required', code: 'invalid_settle_row' };
+  }
+  const receipt = {
+    task_id: String(taskId),
+    payment: {
+      rail: String(rail || 'usdc'),
+      ref: String(paymentRef),
+      collected: true,
+      gross_amount: amount != null ? String(amount) : null,
+      collected_at: new Date().toISOString(),
+    },
+    route: {
+      model: model || null,
+      hub: hub || (model && String(model).includes('/') ? String(model).split('/')[0] : null),
+    },
+  };
+  return recordCollectedSpend(receipt, {
+    ledger,
+    registry,
+    payer,
+    agentId,
+    parentRef,
+    intentId,
+    attemptIndex,
+  });
 }
 
 /**

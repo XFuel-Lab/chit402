@@ -25,7 +25,7 @@ import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
 import { freeTierBucket, checkFreeAllowance, recordFreeSpend, usd as cogsUsd } from './free-tier.js';
-import { recordCollectedSpend } from './usage-settled.js';
+import { recordCollectedSpend, recordSettleBookRow } from './usage-settled.js';
 import {
   resolveBookableAgent,
   remainingBlocksDoor,
@@ -1028,10 +1028,14 @@ function setReceiptHeaders(res, receipt) {
  * Session is possession for GET|POST book — returned once here, not on public GET /receipt.
  * Do not wait for POST /v1/agents/register. Reuse agent_id when session is presented.
  */
-function withBookSpend(receipt, { ledger, registry, agentId = null, intentId = null, attemptIndex = null } = {}) {
+function withBookSpend(receipt, { ledger, registry, agentId = null, intentId = null, attemptIndex = null, payer = null } = {}) {
   if (!ledger || !registry || !receipt?.payment?.collected || !receipt?.payment?.ref) {
     return receipt;
   }
+  const settledPayer = payer
+    || receipt?.caller_binding?.payer_wallet
+    || receipt?.payment?.payer
+    || null;
   try {
     const recorded = recordCollectedSpend(receipt, {
       ledger,
@@ -1039,6 +1043,7 @@ function withBookSpend(receipt, { ledger, registry, agentId = null, intentId = n
       agentId,
       intentId,
       attemptIndex,
+      payer: settledPayer,
     });
     if (!recorded.ok) {
       logger.warn(
@@ -1061,6 +1066,49 @@ function withBookSpend(receipt, { ledger, registry, agentId = null, intentId = n
   } catch (err) {
     logger.warn({ err: err.message, taskId: receipt.task_id }, 'openai-gateway: UsageSettled append threw');
     return receipt;
+  }
+}
+
+/**
+ * Write UsageSettled at x402 settle time so a book row exists even if inference fails later.
+ * Export reads ledger rows only — not live wallet scrape.
+ */
+function writeSettleBookRow({
+  taskId, payment, model, req, ledger, registry, boundSession, agentId = null,
+}) {
+  if (!ledger || !registry || !payment?.ref) return null;
+  const bookable = agentId != null && typeof registry.get === 'function'
+    ? registry.get(agentId)
+    : resolveBookableAgent(req, registry);
+  const resolvedAgentId = bookable?.agent_id ?? agentId ?? null;
+  const intentMeta = req ? extractIntentMeta(req) : {};
+  const intentFields = resolveIntentFields(intentMeta, ledger, resolvedAgentId);
+  const echoModel = model || 'xfuel/auto';
+  try {
+    const recorded = recordSettleBookRow({
+      taskId,
+      paymentRef: payment.ref,
+      amount: payment.amount,
+      payer: payment.payer || boundSession?.payer_wallet || null,
+      model: echoModel,
+      hub: echoModel.includes('/') ? echoModel.split('/')[0] : null,
+      ledger,
+      registry,
+      agentId: resolvedAgentId,
+      intentId: intentFields.intent_id,
+      attemptIndex: intentFields.attempt_index,
+    });
+    if (!recorded.ok) {
+      logger.warn(
+        { reason: recorded.reason, code: recorded.code, taskId, paymentRef: payment.ref },
+        'openai-gateway: settle-time UsageSettled append failed',
+      );
+      return null;
+    }
+    return recorded;
+  } catch (err) {
+    logger.warn({ err: err.message, taskId }, 'openai-gateway: settle-time UsageSettled append threw');
+    return null;
   }
 }
 
@@ -1475,6 +1523,16 @@ export function registerOpenAIRoutes(app, {
           privateSpend,
           session: boundSession,
         }));
+        writeSettleBookRow({
+          taskId,
+          payment: metering.payment,
+          model: model || 'xfuel/auto',
+          req,
+          ledger,
+          registry,
+          boundSession,
+          agentId: resolveBookableAgent(req, registry)?.agent_id ?? null,
+        });
       }
     }
 
@@ -1878,6 +1936,16 @@ export function registerOpenAIRoutes(app, {
           privateSpend,
           session: boundSession,
         }));
+        writeSettleBookRow({
+          taskId,
+          payment: metering.payment,
+          model: model || 'xfuel/auto',
+          req,
+          ledger,
+          registry,
+          boundSession,
+          agentId: resolveBookableAgent(req, registry)?.agent_id ?? null,
+        });
       }
     }
 

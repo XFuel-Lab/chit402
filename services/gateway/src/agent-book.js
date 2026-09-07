@@ -11,11 +11,12 @@
  */
 
 import crypto from 'crypto';
-import { clampBookLimit, BOOK_MAX_LIMIT } from './usage-settled.js';
+import { clampBookLimit, BOOK_MAX_LIMIT, deriveEvidence, BOOK_EVIDENCE, entryQualifiesForTotals } from './usage-settled.js';
 import { DEFAULT_FLOOR_UNITS } from './pricing.js';
 import { buildVerifyUrl, explorerUrlForRef } from './receipt.js';
 
 export { clampBookLimit, BOOK_DEFAULT_LIMIT, BOOK_MAX_LIMIT } from './usage-settled.js';
+export { deriveEvidence, BOOK_EVIDENCE } from './usage-settled.js';
 
 export const BOOK_HMAC_PREFIX = 'xfuel-book';
 export const ALLOWANCE_HMAC_PREFIX = 'xfuel-allowance';
@@ -70,13 +71,16 @@ function addAmount(acc, v) {
 }
 
 function rowOf(entry) {
-  const isBlocked = entry.event === 'policy_blocked';
+  const evidence = deriveEvidence(entry);
+  const isBlocked = evidence === BOOK_EVIDENCE.POLICY_BLOCKED;
+  const isUnverified = evidence === BOOK_EVIDENCE.UNVERIFIED;
   const row = {
     task_id: entry.task_id,
+    evidence,
     payment: {
-      ref: entry.payment_ref,
-      rail: entry.rail,
-      amount: entry.amount ?? null,
+      ref: entry.payment_ref ?? null,
+      rail: entry.rail ?? null,
+      amount: isUnverified ? null : (entry.amount ?? null),
     },
     collected_at: entry.collected_at || entry.recorded_at || null,
   };
@@ -99,6 +103,10 @@ function rowOf(entry) {
     row.policy_code = entry.policy_code || 'policy_blocked';
     row.reason = entry.reason || null;
     row.collected = false;
+  } else if (isUnverified) {
+    row.collected = false;
+  } else {
+    row.collected = true;
   }
   return row;
 }
@@ -110,7 +118,10 @@ function rowOf(entry) {
 export function totalsOf(entries) {
   const byRail = {};
   let usdcSum = 0n;
+  let count = 0;
   for (const e of entries) {
+    if (!entryQualifiesForTotals(e)) continue;
+    count += 1;
     const rail = String(e.rail || 'usdc').toLowerCase();
     if (!byRail[rail]) byRail[rail] = { count: 0, amount: 0n };
     byRail[rail].count += 1;
@@ -122,7 +133,7 @@ export function totalsOf(entries) {
     by_rail[rail] = { count: v.count, amount: v.amount.toString() };
   }
   return {
-    count: entries.length,
+    count,
     usdc_sum: usdcSum.toString(),
     by_rail,
   };
@@ -143,14 +154,15 @@ export function groupEntriesByIntent(entries) {
     const attempt = {
       task_id: e.task_id,
       attempt_index: e.attempt_index ?? null,
-      collected: e.collected === true,
+      evidence: deriveEvidence(e),
+      collected: e.collected === true && deriveEvidence(e) === BOOK_EVIDENCE.COLLECTED,
       event: e.event || null,
-      amount: e.amount ?? null,
+      amount: deriveEvidence(e) === BOOK_EVIDENCE.UNVERIFIED ? null : (e.amount ?? null),
       policy_code: e.policy_code || null,
     };
     intents[id].attempts.push(attempt);
-    if (e.event === 'policy_blocked') intents[id].blocked_count += 1;
-    else if (e.collected === true) intents[id].collected_count += 1;
+    if (deriveEvidence(e) === BOOK_EVIDENCE.POLICY_BLOCKED) intents[id].blocked_count += 1;
+    else if (deriveEvidence(e) === BOOK_EVIDENCE.COLLECTED) intents[id].collected_count += 1;
   }
   return intents;
 }
@@ -226,7 +238,7 @@ export function packBook(entries, agentId, limit, extra = {}) {
     agent_id: Number(agentId),
     limit,
     entries: entries.map(rowOf),
-    totals: totalsOf(entries.filter((e) => e.collected === true)),
+    totals: totalsOf(entries),
     intents: Object.keys(intents).length > 0 ? intents : undefined,
     window: caps.window,
     cap: caps.cap,
@@ -474,7 +486,7 @@ export function bindBookVerifier(registry) {
  * @param {string} baseUrl — gateway public base for verify_url
  */
 export function buildBookExportCsv(entries, agentId, baseUrl) {
-  const header = 'task_id,collected_at,hub,model,amount,payment_ref,rail,verify_url,explorer_url';
+  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,verify_url,explorer_url';
   const lines = [header];
   for (const e of entries) {
     const row = rowOf(e);
@@ -482,10 +494,11 @@ export function buildBookExportCsv(entries, agentId, baseUrl) {
     const explorerUrl = explorerUrlForRef(row.payment.ref) || '';
     const cols = [
       row.task_id,
+      row.evidence,
       row.collected_at || '',
       row.route?.hub || '',
       row.route?.model || '',
-      row.payment.amount || '',
+      row.payment.amount ?? '',
       row.payment.ref || '',
       row.payment.rail || '',
       verifyUrl,
@@ -516,6 +529,7 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
     const row = rowOf(e);
     return {
       task_id: row.task_id,
+      evidence: row.evidence,
       collected_at: row.collected_at,
       hub: row.route?.hub || null,
       model: row.route?.model || null,
@@ -537,6 +551,7 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
     rows,
     attestation_note:
       'On-chain attestation is payment.ref + verify_url + issuer JWS on each receipt. '
+      + 'Rows with evidence=UNVERIFIED lack proven payer/payment.ref/amount — never treat as zero payment. '
       + 'Verify offline; no separate attestation chain in v1.',
   };
 }
@@ -549,6 +564,7 @@ export function renderBookAuditHtml(pack) {
   const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const rows = (pack.rows || []).map((r) => `
     <tr>
+      <td>${esc(r.evidence)}</td>
       <td>${esc(r.collected_at)}</td>
       <td>${esc(r.hub)}</td>
       <td><code>${esc(r.model)}</code></td>
@@ -574,7 +590,7 @@ export function renderBookAuditHtml(pack) {
 <h1>Chit402 book audit — agent ${esc(pack.agent_id)}</h1>
 <p class="meta">Exported ${esc(pack.exported_at)} · ${esc(pack.row_count)} rows · schema ${esc(pack.schema)}</p>
 <table>
-  <thead><tr><th>Time</th><th>Hub</th><th>Model</th><th>Amount (µUSDC)</th><th>Payment</th><th>Links</th></tr></thead>
+  <thead><tr><th>Evidence</th><th>Time</th><th>Hub</th><th>Model</th><th>Amount (µUSDC)</th><th>Payment</th><th>Links</th></tr></thead>
   <tbody>${rows}</tbody>
 </table>
 <p class="note">${esc(pack.attestation_note)}</p>
