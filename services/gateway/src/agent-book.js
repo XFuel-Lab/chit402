@@ -70,6 +70,7 @@ function addAmount(acc, v) {
 }
 
 function rowOf(entry) {
+  const isBlocked = entry.event === 'policy_blocked';
   const row = {
     task_id: entry.task_id,
     payment: {
@@ -86,6 +87,18 @@ function rowOf(entry) {
   }
   if (entry.parent_ref) {
     row.parent_ref = entry.parent_ref;
+  }
+  if (entry.intent_id) {
+    row.intent_id = entry.intent_id;
+  }
+  if (entry.attempt_index != null) {
+    row.attempt_index = entry.attempt_index;
+  }
+  if (isBlocked) {
+    row.event = 'policy_blocked';
+    row.policy_code = entry.policy_code || 'policy_blocked';
+    row.reason = entry.reason || null;
+    row.collected = false;
   }
   return row;
 }
@@ -113,6 +126,33 @@ export function totalsOf(entries) {
     usdc_sum: usdcSum.toString(),
     by_rail,
   };
+}
+
+/**
+ * Group book rows by intent_id for treasury view.
+ * @param {object[]} entries — raw ledger entries
+ */
+export function groupEntriesByIntent(entries) {
+  const intents = {};
+  for (const e of entries) {
+    const id = e.intent_id;
+    if (!id) continue;
+    if (!intents[id]) {
+      intents[id] = { intent_id: id, attempts: [], collected_count: 0, blocked_count: 0 };
+    }
+    const attempt = {
+      task_id: e.task_id,
+      attempt_index: e.attempt_index ?? null,
+      collected: e.collected === true,
+      event: e.event || null,
+      amount: e.amount ?? null,
+      policy_code: e.policy_code || null,
+    };
+    intents[id].attempts.push(attempt);
+    if (e.event === 'policy_blocked') intents[id].blocked_count += 1;
+    else if (e.collected === true) intents[id].collected_count += 1;
+  }
+  return intents;
 }
 
 /**
@@ -181,11 +221,13 @@ function packAllowance(agentId, remaining, session) {
 export function packBook(entries, agentId, limit, extra = {}) {
   const spent = extra.spent != null ? extra.spent : 0n;
   const caps = capViewOf(extra.identity || null, spent);
+  const intents = groupEntriesByIntent(entries);
   const body = {
     agent_id: Number(agentId),
     limit,
     entries: entries.map(rowOf),
-    totals: totalsOf(entries),
+    totals: totalsOf(entries.filter((e) => e.collected === true)),
+    intents: Object.keys(intents).length > 0 ? intents : undefined,
     window: caps.window,
     cap: caps.cap,
     spent: caps.spent,
@@ -387,6 +429,8 @@ export function queryLineage(agentId, taskId, claim = {}, { ledger, verify } = {
       descendants: lineage.descendants.map(rowOf),
       root: lineage.root ? rowOf(lineage.root) : null,
       depth: lineage.ancestors.length,
+      intent_id: lineage.intent_id || null,
+      intent_attempts: (lineage.intent_attempts || []).map(rowOf),
     },
   };
 }

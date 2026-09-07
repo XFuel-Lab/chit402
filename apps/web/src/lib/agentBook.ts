@@ -40,6 +40,26 @@ export interface BookEntry {
   route?: BookRoute;
   collected_at: string | null;
   parent_ref?: string;
+  intent_id?: string;
+  attempt_index?: number;
+  event?: 'policy_blocked';
+  policy_code?: string;
+  reason?: string;
+  collected?: boolean;
+}
+
+export interface IntentGroup {
+  intent_id: string;
+  attempts: Array<{
+    task_id: string;
+    attempt_index: number | null;
+    collected: boolean;
+    event: string | null;
+    amount: string | null;
+    policy_code: string | null;
+  }>;
+  collected_count: number;
+  blocked_count: number;
 }
 
 export interface BookTotals {
@@ -53,6 +73,7 @@ export interface AgentBookResponse {
   limit: number;
   entries: BookEntry[];
   totals: BookTotals;
+  intents?: Record<string, IntentGroup>;
   window: string;
   cap: string | null;
   spent: string;

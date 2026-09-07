@@ -139,9 +139,21 @@ export class UsageSettledLedger {
    * Non-qualifying receipts are refused and write nothing.
    * Prefer a positive agent_id so GET|POST book can list the row.
    * @param {object} receipt
-   * @param {{ payer?: string|null, agentId?: number|null, parentRef?: string|null }} [opts]
+   * @param {{
+   *   payer?: string|null,
+   *   agentId?: number|null,
+   *   parentRef?: string|null,
+   *   intentId?: string|null,
+   *   attemptIndex?: number|null,
+   * }} [opts]
    */
-  append(receipt, { payer = null, agentId = null, parentRef = null } = {}) {
+  append(receipt, {
+    payer = null,
+    agentId = null,
+    parentRef = null,
+    intentId = null,
+    attemptIndex = null,
+  } = {}) {
     const q = receiptQualifiesForLedger(receipt);
     if (!q.ok) return { ok: false, reason: q.reason, code: 'not_qualifying' };
 
@@ -173,9 +185,104 @@ export class UsageSettledLedger {
       model: route.model || null,
       hub: hubOf(route),
       parent_ref: parentRef || null,
+      intent_id: intentId || null,
+      attempt_index: attemptIndex != null ? Number(attemptIndex) : null,
     };
     this._index(entry);
     return { ok: true, entry };
+  }
+
+  /**
+   * Record a policy-blocked hop (no USDC collected). Visible on GET book.
+   * @param {{
+   *   agentId: number,
+   *   taskId: string,
+   *   policyCode: string,
+   *   reason: string,
+   *   model?: string|null,
+   *   hub?: string|null,
+   *   intentId?: string|null,
+   *   attemptIndex?: number|null,
+   * }} row
+   */
+  recordPolicyBlocked({
+    agentId,
+    taskId,
+    policyCode,
+    reason,
+    model = null,
+    hub = null,
+    intentId = null,
+    attemptIndex = null,
+  }) {
+    const id = Number(agentId);
+    if (!Number.isInteger(id) || id < 1) {
+      return { ok: false, reason: 'invalid agent_id', code: 'invalid_agent' };
+    }
+    const tid = String(taskId || '').trim();
+    if (!tid) {
+      return { ok: false, reason: 'task_id required', code: 'task_required' };
+    }
+    if (this.byTask.has(tid)) {
+      const existing = this.byTask.get(tid);
+      if (existing?.event === 'policy_blocked') {
+        return { ok: true, entry: existing, duplicate: true };
+      }
+      return { ok: false, reason: 'duplicate task_id', code: 'duplicate_task' };
+    }
+    const entry = {
+      task_id: tid,
+      payment_ref: null,
+      payer: null,
+      agent_id: id,
+      collected: false,
+      event: 'policy_blocked',
+      policy_code: String(policyCode || 'policy_blocked'),
+      reason: String(reason || 'policy blocked'),
+      rail: null,
+      amount: null,
+      collected_at: new Date().toISOString(),
+      recorded_at: new Date().toISOString(),
+      model: model || null,
+      hub: hub || null,
+      parent_ref: null,
+      intent_id: intentId || null,
+      attempt_index: attemptIndex != null ? Number(attemptIndex) : null,
+    };
+    this._index(entry);
+    return { ok: true, entry, duplicate: false };
+  }
+
+  /** Count book rows (collected + policy_blocked) for one intent under an agent. */
+  countAttemptsForIntent(intentId, agentId) {
+    const id = Number(agentId);
+    const intent = String(intentId || '').trim();
+    if (!intent || !Number.isInteger(id) || id < 1) return 0;
+    let count = 0;
+    for (const e of this.entries) {
+      if (Number(e.agent_id) !== id) continue;
+      if (e.intent_id !== intent) continue;
+      if (e.collected === true || e.event === 'policy_blocked') count += 1;
+    }
+    return count;
+  }
+
+  /**
+   * All rows sharing an intent_id for one agent (newest last).
+   * @param {string} intentId
+   * @param {number|string} agentId
+   */
+  intentAttempts(intentId, agentId) {
+    const id = Number(agentId);
+    const intent = String(intentId || '').trim();
+    const rows = [];
+    if (!intent || !Number.isInteger(id) || id < 1) return rows;
+    for (const e of this.entries) {
+      if (Number(e.agent_id) !== id) continue;
+      if (e.intent_id !== intent) continue;
+      if (e.collected === true || e.event === 'policy_blocked') rows.push(e);
+    }
+    return rows;
   }
 
   /**
@@ -192,6 +299,10 @@ export class UsageSettledLedger {
     for (let i = this.entries.length - 1; i >= 0 && rows.length < n; i--) {
       const e = this.entries[i];
       if (Number(e.agent_id) !== id) continue;
+      if (e.event === 'policy_blocked') {
+        rows.push(e);
+        continue;
+      }
       if (e.collected !== true) continue;
       const rail = String(e.rail || '').toLowerCase();
       if (UNMETERED_RAILS.has(rail)) continue;
@@ -209,7 +320,17 @@ export class UsageSettledLedger {
    */
   lineageOf(taskId) {
     const self = this.findByTask(taskId);
-    if (!self) return { ancestors: [], descendants: [], root: null, self: null, depth: 0 };
+    if (!self) {
+      return {
+        ancestors: [],
+        descendants: [],
+        root: null,
+        self: null,
+        depth: 0,
+        intent_id: null,
+        intent_attempts: [],
+      };
+    }
 
     const ancestors = [];
     let current = self;
@@ -230,7 +351,20 @@ export class UsageSettledLedger {
       }
     }
 
-    return { ancestors, descendants, root, self, depth: ancestors.length };
+    let intent_attempts = [];
+    if (self.intent_id) {
+      intent_attempts = this.intentAttempts(self.intent_id, self.agent_id);
+    }
+
+    return {
+      ancestors,
+      descendants,
+      root,
+      self,
+      depth: ancestors.length,
+      intent_id: self.intent_id || null,
+      intent_attempts,
+    };
   }
 
   /**
@@ -366,9 +500,19 @@ export class UsageSettledLedger {
  *   payer?: string|null,
  *   agentId?: number|string|null,
  *   parentRef?: string|null,
+ *   intentId?: string|null,
+ *   attemptIndex?: number|null,
  * }} deps
  */
-export function recordCollectedSpend(receipt, { ledger, registry, payer = null, agentId = null, parentRef = null } = {}) {
+export function recordCollectedSpend(receipt, {
+  ledger,
+  registry,
+  payer = null,
+  agentId = null,
+  parentRef = null,
+  intentId = null,
+  attemptIndex = null,
+} = {}) {
   if (!ledger || !registry || typeof registry.allocate !== 'function') {
     return { ok: false, reason: 'ledger and registry.allocate required', code: 'misconfigured' };
   }
@@ -403,6 +547,8 @@ export function recordCollectedSpend(receipt, { ledger, registry, payer = null, 
     payer,
     agentId: identity.agent_id,
     parentRef,
+    intentId,
+    attemptIndex,
   });
   if (!credited.ok) {
     return { ok: false, reason: credited.reason, code: credited.code };

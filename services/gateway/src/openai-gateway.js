@@ -32,6 +32,7 @@ import {
   capViewOf,
 } from './agent-book.js';
 import { enforcePolicy } from './book-policy.js';
+import { extractIntentMeta, resolveIntentFields } from './intent-meta.js';
 
 /**
  * XFuel OpenAI-compatible gateway.
@@ -249,12 +250,27 @@ async function meterV1Request(req, res, {
       { policy: bookPolicy, ledger },
     );
     if (!policyCheck.allowed) {
+      const intentMeta = extractIntentMeta(req);
+      const intentFields = resolveIntentFields(intentMeta, ledger, bookable.agent_id);
+      if (ledger && typeof ledger.recordPolicyBlocked === 'function') {
+        ledger.recordPolicyBlocked({
+          agentId: bookable.agent_id,
+          taskId,
+          policyCode: policyCheck.code || 'policy_blocked',
+          reason: policyCheck.reason || 'policy blocked',
+          model: req.body?.model || null,
+          hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
+          intentId: intentFields.intent_id,
+          attemptIndex: intentFields.attempt_index,
+        });
+      }
       res.status(403).json({
         error: {
           message: policyCheck.reason,
-          type: 'policy_violation',
+          type: 'policy_blocked',
           code: policyCheck.code,
           agent_id: bookable.agent_id,
+          intent_id: intentFields.intent_id,
           ...policyCheck,
         },
       });
@@ -1012,12 +1028,18 @@ function setReceiptHeaders(res, receipt) {
  * Session is possession for GET|POST book — returned once here, not on public GET /receipt.
  * Do not wait for POST /v1/agents/register. Reuse agent_id when session is presented.
  */
-function withBookSpend(receipt, { ledger, registry, agentId = null } = {}) {
+function withBookSpend(receipt, { ledger, registry, agentId = null, intentId = null, attemptIndex = null } = {}) {
   if (!ledger || !registry || !receipt?.payment?.collected || !receipt?.payment?.ref) {
     return receipt;
   }
   try {
-    const recorded = recordCollectedSpend(receipt, { ledger, registry, agentId });
+    const recorded = recordCollectedSpend(receipt, {
+      ledger,
+      registry,
+      agentId,
+      intentId,
+      attemptIndex,
+    });
     if (!recorded.ok) {
       logger.warn(
         { reason: recorded.reason, code: recorded.code, taskId: receipt.task_id },
@@ -1098,7 +1120,15 @@ function respondPaidV1Failure(res, {
     reqHost,
   });
   const reuseId = agentId ?? resolveBookableAgent(req, registry)?.agent_id ?? null;
-  receipt = withBookSpend(receipt, { ledger, registry, agentId: reuseId });
+  const intentMeta = req ? extractIntentMeta(req) : {};
+  const intentFields = resolveIntentFields(intentMeta, ledger, reuseId);
+  receipt = withBookSpend(receipt, {
+    ledger,
+    registry,
+    agentId: reuseId,
+    intentId: intentFields.intent_id,
+    attemptIndex: intentFields.attempt_index,
+  });
   setReceiptHeaders(res, receipt);
   return res.status(statusCode).json({
     error: {
@@ -1239,10 +1269,15 @@ export function registerOpenAIRoutes(app, {
 
   const bookSpend = (receipt, req = null) => {
     const identity = resolveBookableAgent(req, registry);
+    const agentId = identity?.agent_id ?? null;
+    const intentMeta = req ? extractIntentMeta(req) : {};
+    const intentFields = resolveIntentFields(intentMeta, ledger, agentId);
     return withBookSpend(receipt, {
       ledger,
       registry,
-      agentId: identity?.agent_id ?? null,
+      agentId,
+      intentId: intentFields.intent_id,
+      attemptIndex: intentFields.attempt_index,
     });
   };
 

@@ -709,13 +709,19 @@ export default function Book() {
 
             <section className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
-                <h3>Last {book.entries.length} collected rows</h3>
+                <h3>Last {book.entries.length} book rows</h3>
                 <span className="badge badge-cyan">agent {book.agent_id}</span>
               </div>
 
+              {book.intents && Object.keys(book.intents).length > 0 && (
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                  {Object.keys(book.intents).length} intent group{Object.keys(book.intents).length === 1 ? '' : 's'} — retries share one bill when <code>intent_id</code> is set.
+                </p>
+              )}
+
               {book.entries.length === 0 ? (
                 <p style={{ color: 'var(--text-secondary)' }}>
-                  Possession verified, but no collected spend rows yet. Paid calls (USDC via 402) appear here; demo never writes.
+                  Possession verified, but no spend rows yet. Paid calls (USDC via 402) and policy blocks appear here; demo never writes.
                 </p>
               ) : (
                 <div className="book-table-wrap">
@@ -723,6 +729,7 @@ export default function Book() {
                     <thead>
                       <tr>
                         <th>Time</th>
+                        <th>Intent</th>
                         <th>Hub</th>
                         <th>Model</th>
                         <th>Amount</th>
@@ -734,23 +741,39 @@ export default function Book() {
                       {book.entries.map((row) => {
                         const verifyUrl = verifyUrlFor(row.task_id, apiHost);
                         const amount = row.payment.amount;
+                        const isBlocked = row.event === 'policy_blocked';
                         return (
-                          <tr key={row.task_id}>
+                          <tr key={row.task_id} style={isBlocked ? { opacity: 0.85 } : undefined}>
                             <td data-label="Time">{formatCollectedAt(row.collected_at)}</td>
+                            <td data-label="Intent">
+                              {row.intent_id ? (
+                                <span className="badge badge-secondary" title={row.intent_id}>
+                                  {row.intent_id.slice(0, 8)}
+                                  {row.attempt_index != null ? ` #${row.attempt_index}` : ''}
+                                </span>
+                              ) : '—'}
+                              {isBlocked && (
+                                <span className="badge" style={{ marginLeft: '0.35rem', background: 'var(--danger, #dc2626)', color: '#fff' }}>
+                                  {row.policy_code || 'policy_blocked'}
+                                </span>
+                              )}
+                            </td>
                             <td data-label="Hub">{row.route?.hub ?? '—'}</td>
                             <td data-label="Model" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}>
                               {row.route?.model ?? '—'}
                             </td>
                             <td data-label="Amount" style={{ fontFamily: 'var(--font-mono)' }}>
-                              ${formatUsdc(amount)}
+                              {isBlocked ? '—' : `$${formatUsdc(amount)}`}
                             </td>
                             <td data-label="Payment" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
-                              {summarizePaymentRef(row.payment.ref, row.payment.rail)}
+                              {isBlocked ? row.reason ?? 'blocked' : summarizePaymentRef(row.payment.ref, row.payment.rail)}
                             </td>
                             <td data-label="Receipt">
-                              <a href={verifyUrl} target="_blank" rel="noopener noreferrer">
-                                verify
-                              </a>
+                              {isBlocked ? '—' : (
+                                <a href={verifyUrl} target="_blank" rel="noopener noreferrer">
+                                  verify
+                                </a>
+                              )}
                             </td>
                           </tr>
                         );

@@ -78,6 +78,15 @@ const CHAT_COMPLETIONS_INPUT_SCHEMA = {
     max_tokens: { type: 'integer', description: 'Maximum tokens to generate' },
     temperature: { type: 'number', minimum: 0, maximum: 2 },
     stream: { type: 'boolean', default: false },
+    intent_id: {
+      type: 'string',
+      description: 'Groups retries/attempts under one treasury intent bill. Prefer explicit. Header: X-XFuel-Intent.',
+    },
+    attempt_index: {
+      type: 'integer',
+      minimum: 0,
+      description: 'Zero-based attempt within intent_id. Header: X-XFuel-Attempt.',
+    },
   },
   required: ['messages'],
 };
@@ -246,6 +255,39 @@ const AGENTS_BOOK_OUTPUT_SCHEMA = {
               hub: { type: 'string' },
             },
           },
+          intent_id: {
+            type: 'string',
+            description: 'Groups retries/attempts under one treasury intent bill.',
+          },
+          attempt_index: {
+            type: 'integer',
+            description: 'Zero-based attempt index within intent_id.',
+          },
+          parent_ref: { type: 'string' },
+          event: {
+            type: 'string',
+            enum: ['policy_blocked'],
+            description: 'Present on non-charge policy blocks (collected=false).',
+          },
+          policy_code: {
+            type: 'string',
+            description: 'Which policy rule blocked the hop (e.g. hourly_cap_exceeded, kill_switch).',
+          },
+          reason: { type: 'string' },
+          collected: { type: 'boolean' },
+        },
+      },
+    },
+    intents: {
+      type: 'object',
+      description: 'Rows grouped by intent_id when present (treasury view).',
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          intent_id: { type: 'string' },
+          attempts: { type: 'array' },
+          collected_count: { type: 'integer' },
+          blocked_count: { type: 'integer' },
         },
       },
     },
