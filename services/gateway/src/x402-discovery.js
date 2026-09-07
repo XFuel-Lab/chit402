@@ -239,6 +239,12 @@ const AGENTS_BOOK_OUTPUT_SCHEMA = {
         type: 'object',
         properties: {
           task_id: { type: 'string' },
+          evidence: {
+            type: 'string',
+            enum: ['collected', 'UNVERIFIED', 'policy_blocked'],
+            description:
+              'Possession/settlement evidence. UNVERIFIED when payer/payment.ref/amount cannot be proven — never treated as zero payment.',
+          },
           payment: {
             type: 'object',
             properties: {
@@ -976,7 +982,9 @@ export function buildOpenApiSpec(baseUrl = '') {
           operationId: 'exportBookGet',
           summary: 'Export book for accounting / audit',
           description:
-            'Possession-gated export of collected rows. format=csv (default), json (audit pack), or html (print to PDF).',
+            'Possession-gated export of ledger rows (not live wallet scrape). '
+            + 'format=csv (default), json (audit pack), or html (print to PDF). '
+            + 'Each row includes evidence: collected | UNVERIFIED | policy_blocked.',
           tags: ['Agents'],
           parameters: [
             { name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } },
