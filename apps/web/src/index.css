@@ -235,6 +235,7 @@ h3 { font-size: 1.15rem; font-weight: 600; }
 .badge-cyan { background: rgba(0, 212, 255, 0.15); color: var(--accent-cyan); }
 .badge-purple { background: rgba(139, 92, 246, 0.15); color: var(--accent-purple); }
 .badge-orange { background: rgba(245, 158, 11, 0.15); color: var(--accent-orange); }
+.badge-secondary { background: rgba(255, 255, 255, 0.08); color: var(--text-secondary); }
 
 .stat-value {
   font-size: 2rem; font-weight: 800;
@@ -368,6 +369,52 @@ select.input {
 }
 .book-blurb summary:hover { color: var(--accent-cyan); }
 
+.book-evidence-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+.book-evidence-chip { font-size: 0.72rem; white-space: nowrap; }
+.book-evidence-danger {
+  background: rgba(220, 38, 38, 0.18);
+  color: #f87171;
+}
+.book-replay-badge {
+  font-size: 0.72rem;
+  text-decoration: none;
+}
+.book-replay-badge:hover { filter: brightness(1.1); }
+.book-replay-parent {
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  color: var(--accent-cyan);
+  text-decoration: none;
+}
+.book-replay-parent:hover { text-decoration: underline; }
+.book-receipt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+.book-copy-verify { padding: 0.2rem 0.5rem; font-size: 0.72rem; }
+.book-correction-hint {
+  margin-left: 0.25rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.book-inflow-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+.book-inflow-form {
+  display: grid;
+  gap: 0.65rem;
+  max-width: 22rem;
+}
+
 @media (max-width: 768px) {
   h1 { font-size: 1.75rem; }
   h2 { font-size: 1.35rem; }
@@ -377,6 +424,7 @@ select.input {
   .header-burger { display: flex !important; }
   .book-budget-strip { grid-template-columns: 1fr; }
   .book-session-row { flex-direction: column; }
+  .book-inflow-grid { grid-template-columns: 1fr; }
   .book-table thead { display: none; }
   .book-table tr {
     display: block;

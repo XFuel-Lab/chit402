@@ -109,3 +109,91 @@ export function formatCollectedAt(iso) {
     minute: '2-digit',
   });
 }
+
+/** Book row evidence enum (gateway deriveEvidence). */
+export const BOOK_EVIDENCE = {
+  COLLECTED: 'collected',
+  RECORDED_BY_SETTLE: 'RECORDED_BY_SETTLE',
+  ARRIVAL_UNVERIFIED: 'ARRIVAL_UNVERIFIED',
+  INFLOW_CLAIMED: 'inflow_claimed',
+  UNVERIFIED: 'UNVERIFIED',
+  POLICY_BLOCKED: 'policy_blocked',
+};
+
+/** Resolve evidence for a book row (API field or legacy event fallback). */
+export function resolveRowEvidence(row) {
+  if (row?.evidence) return String(row.evidence);
+  if (row?.event === 'policy_blocked') return BOOK_EVIDENCE.POLICY_BLOCKED;
+  if (row?.inflow_claim) return BOOK_EVIDENCE.INFLOW_CLAIMED;
+  if (row?.collected === false && row?.payment?.amount == null) return BOOK_EVIDENCE.UNVERIFIED;
+  return BOOK_EVIDENCE.COLLECTED;
+}
+
+/** Human-readable label for an evidence chip. */
+export function evidenceLabel(evidence) {
+  switch (evidence) {
+    case BOOK_EVIDENCE.COLLECTED:
+      return 'Collected';
+    case BOOK_EVIDENCE.RECORDED_BY_SETTLE:
+      return 'Recorded at settle';
+    case BOOK_EVIDENCE.ARRIVAL_UNVERIFIED:
+      return 'Arrival unverified';
+    case BOOK_EVIDENCE.INFLOW_CLAIMED:
+      return 'Inflow claimed';
+    case BOOK_EVIDENCE.UNVERIFIED:
+      return 'Unverified';
+    case BOOK_EVIDENCE.POLICY_BLOCKED:
+      return 'Policy blocked';
+    default:
+      return evidence || 'Unknown';
+  }
+}
+
+/** Badge tone for evidence chips (maps to .badge-* classes). */
+export function evidenceBadgeTone(evidence) {
+  switch (evidence) {
+    case BOOK_EVIDENCE.COLLECTED:
+      return 'green';
+    case BOOK_EVIDENCE.RECORDED_BY_SETTLE:
+      return 'cyan';
+    case BOOK_EVIDENCE.INFLOW_CLAIMED:
+      return 'purple';
+    case BOOK_EVIDENCE.ARRIVAL_UNVERIFIED:
+    case BOOK_EVIDENCE.UNVERIFIED:
+      return 'orange';
+    case BOOK_EVIDENCE.POLICY_BLOCKED:
+      return 'danger';
+    default:
+      return 'secondary';
+  }
+}
+
+/** Short tooltip for evidence status. */
+export function evidenceHint(evidence) {
+  switch (evidence) {
+    case BOOK_EVIDENCE.COLLECTED:
+      return 'Proven payment.ref + settle amount + ingress receipt';
+    case BOOK_EVIDENCE.RECORDED_BY_SETTLE:
+      return 'Recorded at settle cutoff — excluded from totals until ingress';
+    case BOOK_EVIDENCE.ARRIVAL_UNVERIFIED:
+      return 'No ingress receipt at cutoff — amount omitted, not zero';
+    case BOOK_EVIDENCE.INFLOW_CLAIMED:
+      return 'Signed bucket/allocation claim — no payment.ref';
+    case BOOK_EVIDENCE.UNVERIFIED:
+      return 'Payer or amount cannot be proven — not treated as zero';
+    case BOOK_EVIDENCE.POLICY_BLOCKED:
+      return 'Policy hop with no USDC collected';
+    default:
+      return '';
+  }
+}
+
+/** Canonical parent task_id for replay badge linking. */
+export function replayParentTaskId(row) {
+  if (row?.replay_of) return String(row.replay_of);
+  if (row?.replay_events?.length) {
+    const first = row.replay_events[0];
+    if (first?.replay_of) return String(first.replay_of);
+  }
+  return row?.task_id ? String(row.task_id) : null;
+}
