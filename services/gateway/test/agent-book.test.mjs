@@ -126,7 +126,6 @@ test('book with session returns last-N collected rows for that agent_id only', a
   assert.equal(book.body.totals.usdc_sum, '30000');
   assert.equal(book.body.totals.by_rail.usdc.count, 1);
   assert.equal(book.body.totals.by_rail.solana.count, 1);
-  assert.ok(!JSON.stringify(book.body).includes(WALLET_A), 'pack does not name the payer');
   const first = book.body.entries.find((e) => e.task_id === 'task-a');
   assert.equal(first.payment.ref, 'base:0xa');
   assert.equal(first.payment.rail, 'usdc');
@@ -134,6 +133,7 @@ test('book with session returns last-N collected rows for that agent_id only', a
   assert.equal(first.route.model, 'theta/glm');
   assert.equal(first.route.hub, 'theta');
   assert.ok(first.collected_at);
+  assert.equal(first.payer_wallet, WALLET_A, 'payer_wallet on book row for offline bind proof');
 });
 
 test('HMAC over agent_id + window is valid possession', async () => {

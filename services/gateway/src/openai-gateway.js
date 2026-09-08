@@ -1056,11 +1056,17 @@ function withBookSpend(receipt, { ledger, registry, agentId = null, intentId = n
       ...receipt,
       agent_id: recorded.agent_id,
       session: recorded.session,
+      settlement_status: recorded.settlement_status || 'settled',
+      idempotent_replay: recorded.idempotent_replay === true,
+      replay_of: recorded.replay_of || null,
       usage_settled: {
         agent_id: recorded.agent_id,
         hub: recorded.entry.hub,
         model: recorded.entry.model,
         amount: recorded.entry.amount,
+        settlement_status: recorded.settlement_status || 'settled',
+        idempotent_replay: recorded.idempotent_replay === true,
+        replay_of: recorded.replay_of || null,
       },
     };
   } catch (err) {

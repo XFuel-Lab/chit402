@@ -102,6 +102,13 @@ function rowOf(entry) {
   if (entry.attempt_index != null) {
     row.attempt_index = entry.attempt_index;
   }
+  if (entry.payer) {
+    row.payer_wallet = entry.payer;
+  }
+  if (entry.replay_events?.length) {
+    row.replay_events = entry.replay_events;
+    row.replay_count = entry.replay_events.length;
+  }
   if (isRecordedBySettle) {
     row.recorded_by = 'settle';
     row.arrival_status = entry.arrival_status || 'pending';
@@ -510,7 +517,7 @@ export function bindBookVerifier(registry) {
  * @param {string} baseUrl — gateway public base for verify_url
  */
 export function buildBookExportCsv(entries, agentId, baseUrl) {
-  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,verify_url,explorer_url';
+  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,replay_count,verify_url,explorer_url';
   const lines = [header];
   for (const e of entries) {
     const row = rowOf(e);
@@ -526,6 +533,10 @@ export function buildBookExportCsv(entries, agentId, baseUrl) {
       row.payment.ref || '',
       row.payment.rail || '',
       row.bucket || '',
+      row.payer_wallet || '',
+      row.intent_id || '',
+      row.attempt_index ?? '',
+      row.replay_count ?? '',
       verifyUrl,
       explorerUrl,
     ].map(csvEscape);
@@ -562,6 +573,11 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
       payment_ref: row.payment.ref,
       rail: row.payment.rail,
       bucket: row.bucket || null,
+      payer_wallet: row.payer_wallet || null,
+      intent_id: row.intent_id || null,
+      attempt_index: row.attempt_index ?? null,
+      replay_count: row.replay_count ?? null,
+      replay_events: row.replay_events || null,
       arrival_status: row.arrival_status || null,
       omission_rule: row.omission_rule || null,
       ingress_receipt: row.ingress_receipt || null,

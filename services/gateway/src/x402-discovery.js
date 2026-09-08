@@ -187,6 +187,24 @@ const AGENTS_REGISTER_INPUT_SCHEMA = {
   required: ['agentWallet', 'task_id'],
 };
 
+const SETTLEMENT_REPLAY_FIELDS = {
+  settlement_status: {
+    type: 'string',
+    enum: ['settled', 'idempotent_replay'],
+    description:
+      'Treasury settlement outcome. idempotent_replay = same payment.ref / receipt resubmitted; '
+      + 'one canonical row, no second USDC charge.',
+  },
+  idempotent_replay: {
+    type: 'boolean',
+    description: 'True when this request matched an existing settled row (replay, not a new collect).',
+  },
+  replay_of: {
+    type: ['string', 'null'],
+    description: 'task_id of the canonical settled row when settlement_status=idempotent_replay.',
+  },
+};
+
 const AGENTS_REGISTER_OUTPUT_SCHEMA = {
   type: 'object',
   properties: {
@@ -198,6 +216,7 @@ const AGENTS_REGISTER_OUTPUT_SCHEMA = {
     },
     task_id: { type: 'string' },
     validate_score: { type: ['integer', 'null'] },
+    ...SETTLEMENT_REPLAY_FIELDS,
   },
   required: ['agent_id', 'agentWallet'],
 };
@@ -271,6 +290,26 @@ const AGENTS_BOOK_OUTPUT_SCHEMA = {
           attempt_index: {
             type: 'integer',
             description: 'Zero-based attempt index within intent_id.',
+          },
+          payer_wallet: {
+            type: ['string', 'null'],
+            description: 'On-chain payer bound at settle (↔ payment.ref). Survives session rotate.',
+          },
+          replay_count: {
+            type: 'integer',
+            description: 'Count of idempotent replay submissions for this canonical row.',
+          },
+          replay_events: {
+            type: 'array',
+            description: 'Audit trail of idempotent replays (each links replay_of → task_id).',
+            items: {
+              type: 'object',
+              properties: {
+                at: { type: 'string' },
+                settlement_status: { type: 'string', enum: ['idempotent_replay'] },
+                replay_of: { type: 'string' },
+              },
+            },
           },
           parent_ref: { type: 'string' },
           event: {
@@ -1323,7 +1362,8 @@ export function buildOpenApiSpec(baseUrl = '') {
           summary: 'Rotate session',
           description:
             'Rotate the possession session. Old session becomes invalid. Book (entries) stays — '
-            + 'tied to agent_id, not session. Possession sanity: key rotation must not drop the book.',
+            + 'tied to agent_id, not session. payer_wallet ↔ payment.ref bindings on ledger rows '
+            + 'and public /receipt/:taskId survive rotate without dashboard trust.',
           tags: ['Agents'],
           parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
           responses: {

@@ -30,6 +30,28 @@ export const ARRIVAL_STATUS = {
   UNVERIFIED: 'unverified',
 };
 
+/** Treasury settlement outcome on collect / register replay. */
+export const SETTLEMENT_STATUS = {
+  SETTLED: 'settled',
+  IDEMPOTENT_REPLAY: 'idempotent_replay',
+};
+
+/**
+ * Record an idempotent replay audit event on the canonical ledger row.
+ * Does not double-count amounts — replay_events are evidence only.
+ * @param {object} entry — existing ledger row (mutated in place)
+ */
+export function noteIdempotentReplay(entry) {
+  if (!entry || typeof entry !== 'object') return entry;
+  if (!Array.isArray(entry.replay_events)) entry.replay_events = [];
+  entry.replay_events.push({
+    at: new Date().toISOString(),
+    settlement_status: SETTLEMENT_STATUS.IDEMPOTENT_REPLAY,
+    replay_of: entry.task_id,
+  });
+  return entry;
+}
+
 /**
  * True when a ledger row carries ingress / arrival evidence.
  * @param {object} entry
@@ -819,6 +841,7 @@ export function recordCollectedSpend(receipt, {
     if (ingress) {
       ledger._applyArrival(existing, ingress);
     }
+    noteIdempotentReplay(existing);
     const identity = typeof registry.get === 'function' ? registry.get(existing.agent_id) : null;
     return {
       ok: true,
@@ -826,6 +849,9 @@ export function recordCollectedSpend(receipt, {
       agent_id: existing.agent_id,
       session: identity?.session || null,
       duplicate: true,
+      idempotent_replay: true,
+      settlement_status: SETTLEMENT_STATUS.IDEMPOTENT_REPLAY,
+      replay_of: existing.task_id,
     };
   }
 
@@ -857,6 +883,9 @@ export function recordCollectedSpend(receipt, {
     agent_id: identity.agent_id,
     session: identity.session,
     duplicate: false,
+    idempotent_replay: false,
+    settlement_status: SETTLEMENT_STATUS.SETTLED,
+    replay_of: null,
   };
 }
 
