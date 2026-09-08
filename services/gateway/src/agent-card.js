@@ -17,11 +17,9 @@ export function buildAgentCard(baseUrl = '') {
   return {
     name: 'Chit402',
     description:
-      'Chit is the book. This agent spent Y on this job. You hold hub, model, and amount. '
-      + 'No account. No API key. A wallet that can pay the 402 is enough. '
-      + 'Register is only to hold the book after a collected receipt. '
-      + 'POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. '
-      + 'Cost-plus, quoted, receipted — USDC on Base (eip155:8453) or Solana. '
+      'Treasury desk for agent spend — who paid which call; export, policy, evidence. '
+      + 'Possession book for principals. POST /v1/chat/completions returns a signed receipt: '
+      + 'hub, model, amount, verify_url. Cost-plus, quoted, receipted — USDC on Base (eip155:8453) or Solana. '
       + 'POST /a2a-message is the same paid door (A2A HTTP+JSON URL). '
       + 'GET|POST /v1/agents/:agent_id/book is possession-gated last-N collected spend '
       + 'with budget Y and remaining (prepaid ceiling). POST /v1/agents/register is fail-closed: '

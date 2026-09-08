@@ -17,13 +17,13 @@ export default function ChitHome() {
           </div>
           <h1 style={styles.heroTitle}>Chit402</h1>
           <p style={styles.heroLead}>
-            Give an agent a USDC budget. Keep the receipt when the wallet moves.
+            Who paid which call — export, policy, evidence.
           </p>
           <p style={styles.heroDescription}>
-            Principals: pay once, register, then hold the book — hub, model, amount — not a router
-            dashboard. <code>POST /v1/chat/completions</code> returns a signed receipt with{' '}
-            <code>verify_url</code>. Cost-plus, quoted, receipted — USDC on Base and Solana.
-            Wire: <code>api.chit402.com/v1</code>.
+            Treasury desk and possession book for agent spend — not a router dashboard.
+            <code>POST /v1/chat/completions</code> returns a signed receipt with hub, model,
+            amount, and <code>verify_url</code>. Cost-plus, quoted, receipted — USDC on Base and
+            Solana. Wire: <code>api.chit402.com/v1</code>.
           </p>
           <div style={styles.heroCta}>
             <Link to="/book" className="btn btn-primary">

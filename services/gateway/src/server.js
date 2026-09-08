@@ -266,14 +266,13 @@ function tier2Gate() {
 // Served at GET /llms.txt (llmstxt.org convention). Keep concise; deep detail
 // lives in the linked docs so agents can progressively disclose.
 
-const LLMS_TXT = `# Chit402
+const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 
-> Give an agent a USDC budget. Keep the receipt when the wallet moves.
-> Hub, model, amount — you hold the book. No account. No API key. A wallet
-> that can pay the 402 is enough. Register is only to hold the book after
-> a collected receipt. POST /v1/chat/completions returns a signed receipt:
-> hub, model, amount, verify_url. Cost-plus, quoted, receipted — x402 USDC
-> on Base (CDP) or Solana (PayAI). Demo key chit402-demo skips payment
+> Who paid which call — export, policy, evidence. Possession book for agent spend.
+> POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url.
+> Cost-plus, quoted, receipted — x402 USDC on Base (CDP) or Solana (PayAI).
+> No account. No API key. A wallet that can pay the 402 is enough. Register is only
+> to hold the possession book after a collected receipt. Demo key chit402-demo skips payment
 > (rate-limited). Paying api.chit402.com moves real mainnet USDC.
 
 ## Proof objects
