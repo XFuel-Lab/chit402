@@ -17,10 +17,15 @@ import {
   setBookPolicy,
   summarizePaymentRef,
   verifyUrlFor,
+  replayParentTaskId,
+  resolveRowEvidence,
+  BOOK_EVIDENCE,
   type ModelMixItem,
   type PolicyType,
 } from '../lib/agentBook';
 import BookEscrowPanel from '../components/BookEscrowPanel';
+import BookInflowPanel from '../components/BookInflowPanel';
+import BookEvidenceChip from '../components/BookEvidenceChip';
 import PrivateSpendCallout from '../components/PrivateSpendCallout';
 import {
   clearBookCredentials,
@@ -63,6 +68,26 @@ function budgetPct(spent: string, cap: string | null): number {
   } catch {
     return 0;
   }
+}
+
+function CopyVerifyButton({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard blocked */
+    }
+  };
+
+  return (
+    <button type="button" className="btn btn-secondary btn-sm book-copy-verify" onClick={() => void handleCopy()}>
+      {copied ? 'Copied' : 'Copy link'}
+    </button>
+  );
 }
 
 export default function Book() {
@@ -204,6 +229,10 @@ export default function Book() {
     }
     void loadPolicy(agentId, session);
   }, [agentIdInput, apiV1, loadPolicy, sessionInput]);
+
+  const reloadBook = useCallback(() => {
+    void loadBook();
+  }, [loadBook]);
 
   const burnRate = useMemo(
     () => (book ? computeBurnRate(book.entries, 24) : null),
@@ -497,6 +526,13 @@ export default function Book() {
               session={sessionInput.trim()}
             />
 
+            <BookInflowPanel
+              apiV1={apiV1}
+              agentId={book.agent_id}
+              session={sessionInput.trim()}
+              onSuccess={reloadBook}
+            />
+
             {book.cap != null && (
               <div className="card" style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
@@ -639,9 +675,20 @@ export default function Book() {
                 <code>verify_url</code> and per-receipt <code>?format=auditor</code> selective disclosure.
                 On-chain attestation = <code>payment.ref</code> + issuer JWS — verify offline.
               </p>
+              <details style={{ marginBottom: '0.75rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>Column legend (CSV)</summary>
+                <ul style={{ marginTop: '0.5rem', paddingLeft: '1.25rem', lineHeight: 1.6 }}>
+                  <li><code>evidence</code> — collected, RECORDED_BY_SETTLE, ARRIVAL_UNVERIFIED, inflow_claimed, UNVERIFIED, policy_blocked</li>
+                  <li><code>amount</code> — USDC atomic (null when unverified / arrival omitted)</li>
+                  <li><code>payment_ref</code> / <code>rail</code> — on-chain attestation</li>
+                  <li><code>bucket</code> — inflow allocation bucket when no ref</li>
+                  <li><code>replay_count</code> — idempotent resubmits (never double-counted)</li>
+                  <li><code>verify_url</code> — stranger-safe receipt page</li>
+                </ul>
+              </details>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <button type="button" className="btn btn-primary btn-sm" onClick={() => void handleExport('csv')}>
-                  Download CSV
+                  Download audit pack (CSV)
                 </button>
                 <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleExport('json')}>
                   JSON audit pack
@@ -729,6 +776,7 @@ export default function Book() {
                     <thead>
                       <tr>
                         <th>Time</th>
+                        <th>Evidence</th>
                         <th>Intent</th>
                         <th>Hub</th>
                         <th>Model</th>
@@ -740,11 +788,45 @@ export default function Book() {
                     <tbody>
                       {book.entries.map((row) => {
                         const verifyUrl = verifyUrlFor(row.task_id, apiHost);
+                        const evidence = resolveRowEvidence(row);
                         const amount = row.payment.amount;
-                        const isBlocked = row.event === 'policy_blocked';
+                        const isBlocked = evidence === BOOK_EVIDENCE.POLICY_BLOCKED;
+                        const hideAmount = isBlocked
+                          || evidence === BOOK_EVIDENCE.UNVERIFIED
+                          || evidence === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED;
+                        const isInflow = evidence === BOOK_EVIDENCE.INFLOW_CLAIMED;
+                        const replayCount = row.replay_count ?? 0;
+                        const isReplay = row.idempotent_replay === true || !!row.replay_of;
+                        const parentTaskId = replayParentTaskId(row);
+                        const parentVerifyUrl = parentTaskId ? verifyUrlFor(parentTaskId, apiHost) : verifyUrl;
+                        const rowAnchor = `row-${row.task_id}`;
+
                         return (
-                          <tr key={row.task_id} style={isBlocked ? { opacity: 0.85 } : undefined}>
+                          <tr key={row.task_id} id={rowAnchor} style={isBlocked ? { opacity: 0.85 } : undefined}>
                             <td data-label="Time">{formatCollectedAt(row.collected_at)}</td>
+                            <td data-label="Evidence">
+                              <div className="book-evidence-cell">
+                                <BookEvidenceChip row={row} />
+                                {(replayCount > 0 || isReplay) && (
+                                  <a
+                                    href={parentVerifyUrl}
+                                    className="badge badge-cyan book-replay-badge"
+                                    title="Idempotent replay — canonical row, not double-counted"
+                                  >
+                                    Replay{replayCount > 0 ? ` ×${replayCount}` : ''}
+                                  </a>
+                                )}
+                                {row.replay_of && row.replay_of !== row.task_id && (
+                                  <a
+                                    href={verifyUrlFor(row.replay_of, apiHost)}
+                                    className="book-replay-parent"
+                                    title="Parent canonical row"
+                                  >
+                                    → {row.replay_of.slice(0, 10)}…
+                                  </a>
+                                )}
+                              </div>
+                            </td>
                             <td data-label="Intent">
                               {row.intent_id ? (
                                 <span className="badge badge-secondary" title={row.intent_id}>
@@ -752,27 +834,37 @@ export default function Book() {
                                   {row.attempt_index != null ? ` #${row.attempt_index}` : ''}
                                 </span>
                               ) : '—'}
-                              {isBlocked && (
-                                <span className="badge" style={{ marginLeft: '0.35rem', background: 'var(--danger, #dc2626)', color: '#fff' }}>
-                                  {row.policy_code || 'policy_blocked'}
-                                </span>
-                              )}
                             </td>
                             <td data-label="Hub">{row.route?.hub ?? '—'}</td>
                             <td data-label="Model" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}>
                               {row.route?.model ?? '—'}
                             </td>
                             <td data-label="Amount" style={{ fontFamily: 'var(--font-mono)' }}>
-                              {isBlocked ? '—' : `$${formatUsdc(amount)}`}
+                              {hideAmount ? '—' : `$${formatUsdc(amount)}`}
+                              {isInflow && row.inflow_corrections?.length ? (
+                                <span
+                                  className="book-correction-hint"
+                                  title={`${row.inflow_corrections.length} append-only correction(s)`}
+                                >
+                                  †{row.inflow_corrections.length}
+                                </span>
+                              ) : null}
                             </td>
                             <td data-label="Payment" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
-                              {isBlocked ? row.reason ?? 'blocked' : summarizePaymentRef(row.payment.ref, row.payment.rail)}
+                              {isBlocked ? row.reason ?? 'blocked' : (
+                                isInflow
+                                  ? `${row.bucket || row.inflow_claim?.bucket || 'patron'} (inflow)`
+                                  : summarizePaymentRef(row.payment.ref ?? '—', row.payment.rail ?? '—')
+                              )}
                             </td>
                             <td data-label="Receipt">
                               {isBlocked ? '—' : (
-                                <a href={verifyUrl} target="_blank" rel="noopener noreferrer">
-                                  verify
-                                </a>
+                                <div className="book-receipt-actions">
+                                  <a href={verifyUrl} target="_blank" rel="noopener noreferrer">
+                                    verify
+                                  </a>
+                                  <CopyVerifyButton url={verifyUrl} />
+                                </div>
                               )}
                             </td>
                           </tr>
