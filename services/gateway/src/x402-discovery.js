@@ -241,9 +241,12 @@ const AGENTS_BOOK_OUTPUT_SCHEMA = {
           task_id: { type: 'string' },
           evidence: {
             type: 'string',
-            enum: ['collected', 'UNVERIFIED', 'policy_blocked'],
+            enum: ['collected', 'RECORDED_BY_SETTLE', 'ARRIVAL_UNVERIFIED', 'inflow_claimed', 'UNVERIFIED', 'policy_blocked'],
             description:
-              'Possession/settlement evidence. UNVERIFIED when payer/payment.ref/amount cannot be proven — never treated as zero payment.',
+              'Possession/settlement evidence. RECORDED_BY_SETTLE = recorder accepted at settle cutoff; '
+              + 'ARRIVAL_UNVERIFIED = explicit omission when ingress_receipt missing at cutoff; '
+              + 'inflow_claimed = signed bucket/allocation without payment.ref; '
+              + 'UNVERIFIED when payer/payment.ref/amount cannot be proven — never treated as zero payment.',
           },
           payment: {
             type: 'object',
@@ -281,6 +284,37 @@ const AGENTS_BOOK_OUTPUT_SCHEMA = {
           },
           reason: { type: 'string' },
           collected: { type: 'boolean' },
+          recorded_by: {
+            type: 'string',
+            enum: ['settle'],
+            description: 'Present on RECORDED_BY_SETTLE rows.',
+          },
+          arrival_status: {
+            type: 'string',
+            enum: ['pending', 'confirmed', 'unverified'],
+            description: 'Arrival sub-state on settle-time rows.',
+          },
+          omission_rule: {
+            type: 'string',
+            description: 'Explicit omission when evidence=ARRIVAL_UNVERIFIED (e.g. no_ingress_receipt_at_cutoff).',
+          },
+          ingress_receipt: {
+            type: 'object',
+            description: 'Ingress / arrival evidence promoting RECORDED_BY_SETTLE → collected.',
+            properties: {
+              ref: { type: 'string' },
+              confirmed_at: { type: 'string' },
+            },
+          },
+          bucket: { type: 'string', description: 'Revenue bucket on inflow_claimed rows.' },
+          inflow_claim: {
+            type: 'object',
+            description: 'Signed bucket/allocation claim for unaffiliated inflows (no payment.ref).',
+          },
+          inflow_corrections: {
+            type: 'array',
+            description: 'Append-only corrections to inflow_claim — never scrape-later.',
+          },
         },
       },
     },
@@ -872,6 +906,82 @@ export function buildOpenApiSpec(baseUrl = '') {
         get: { ...AGENTS_BOOK_OP, operationId: 'getAgentBook' },
         post: { ...AGENTS_BOOK_OP, operationId: 'postAgentBook' },
       },
+      '/v1/agents/{agent_id}/book/inflow': {
+        post: {
+          operationId: 'recordBookInflow',
+          summary: 'Record unaffiliated inflow (no payment.ref)',
+          description:
+            'Patron-style inflow without a payment object. Writes a settle-time signed bucket/allocation '
+            + 'claim on the book row. Possession-gated. Demo keys never write. '
+            + 'Corrections via POST /book/inflow/correct (append-only).',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['allocation'],
+                  properties: {
+                    session: { type: 'string' },
+                    bucket: { type: 'string', default: 'patron' },
+                    allocation: { type: 'string', description: 'USDC atomic units' },
+                    task_id: { type: 'string' },
+                    model: { type: 'string' },
+                    hub: { type: 'string' },
+                    inflow_claim: { type: 'object', description: 'Pre-signed claim (optional)' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            201: { description: 'Inflow row recorded.' },
+            400: { description: 'Invalid allocation.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Demo key or invalid inflow_claim signature.' },
+            409: { description: 'Duplicate task_id.' },
+          },
+        },
+      },
+      '/v1/agents/{agent_id}/book/inflow/correct': {
+        post: {
+          operationId: 'correctBookInflow',
+          summary: 'Append-only correction to an inflow row',
+          description:
+            'Revise bucket/allocation on an inflow_claimed row via append-only correction. '
+            + 'Never scrape-later. Possession-gated.',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['task_id', 'reason'],
+                  properties: {
+                    session: { type: 'string' },
+                    task_id: { type: 'string' },
+                    bucket: { type: 'string' },
+                    allocation: { type: 'string' },
+                    reason: { type: 'string' },
+                    correction: { type: 'object' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: 'Correction appended.' },
+            400: { description: 'Missing reason or invalid correction.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Demo key or invalid correction signature.' },
+            404: { description: 'Inflow row not found.' },
+          },
+        },
+      },
       '/v1/agents/{agent_id}/book/ingest': {
         post: {
           operationId: 'ingestForeignX402',
@@ -984,7 +1094,7 @@ export function buildOpenApiSpec(baseUrl = '') {
           description:
             'Possession-gated export of ledger rows (not live wallet scrape). '
             + 'format=csv (default), json (audit pack), or html (print to PDF). '
-            + 'Each row includes evidence: collected | UNVERIFIED | policy_blocked.',
+            + 'Each row includes evidence: collected | RECORDED_BY_SETTLE | ARRIVAL_UNVERIFIED | inflow_claimed | UNVERIFIED | policy_blocked.',
           tags: ['Agents'],
           parameters: [
             { name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } },

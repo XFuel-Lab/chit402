@@ -74,13 +74,17 @@ function rowOf(entry) {
   const evidence = deriveEvidence(entry);
   const isBlocked = evidence === BOOK_EVIDENCE.POLICY_BLOCKED;
   const isUnverified = evidence === BOOK_EVIDENCE.UNVERIFIED;
+  const isArrivalUnverified = evidence === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED;
+  const isRecordedBySettle = evidence === BOOK_EVIDENCE.RECORDED_BY_SETTLE;
+  const isInflow = evidence === BOOK_EVIDENCE.INFLOW_CLAIMED;
+  const hideAmount = isUnverified || isArrivalUnverified;
   const row = {
     task_id: entry.task_id,
     evidence,
     payment: {
       ref: entry.payment_ref ?? null,
       rail: entry.rail ?? null,
-      amount: isUnverified ? null : (entry.amount ?? null),
+      amount: hideAmount ? null : (entry.amount ?? null),
     },
     collected_at: entry.collected_at || entry.recorded_at || null,
   };
@@ -98,12 +102,30 @@ function rowOf(entry) {
   if (entry.attempt_index != null) {
     row.attempt_index = entry.attempt_index;
   }
+  if (isRecordedBySettle) {
+    row.recorded_by = 'settle';
+    row.arrival_status = entry.arrival_status || 'pending';
+    if (entry.ingress_receipt) row.ingress_receipt = entry.ingress_receipt;
+  }
+  if (isArrivalUnverified) {
+    row.arrival_status = 'unverified';
+    row.omission_rule = 'no_ingress_receipt_at_cutoff';
+  }
+  if (isInflow && entry.inflow_claim) {
+    row.inflow_claim = entry.inflow_claim;
+    row.bucket = entry.bucket || entry.inflow_claim.bucket;
+    if (entry.inflow_corrections?.length) {
+      row.inflow_corrections = entry.inflow_corrections;
+    }
+  }
   if (isBlocked) {
     row.event = 'policy_blocked';
     row.policy_code = entry.policy_code || 'policy_blocked';
     row.reason = entry.reason || null;
     row.collected = false;
-  } else if (isUnverified) {
+  } else if (hideAmount) {
+    row.collected = false;
+  } else if (isRecordedBySettle) {
     row.collected = false;
   } else {
     row.collected = true;
@@ -157,12 +179,14 @@ export function groupEntriesByIntent(entries) {
       evidence: deriveEvidence(e),
       collected: e.collected === true && deriveEvidence(e) === BOOK_EVIDENCE.COLLECTED,
       event: e.event || null,
-      amount: deriveEvidence(e) === BOOK_EVIDENCE.UNVERIFIED ? null : (e.amount ?? null),
+      amount: (deriveEvidence(e) === BOOK_EVIDENCE.UNVERIFIED
+        || deriveEvidence(e) === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED) ? null : (e.amount ?? null),
       policy_code: e.policy_code || null,
     };
     intents[id].attempts.push(attempt);
     if (deriveEvidence(e) === BOOK_EVIDENCE.POLICY_BLOCKED) intents[id].blocked_count += 1;
-    else if (deriveEvidence(e) === BOOK_EVIDENCE.COLLECTED) intents[id].collected_count += 1;
+    else if (deriveEvidence(e) === BOOK_EVIDENCE.COLLECTED
+      || deriveEvidence(e) === BOOK_EVIDENCE.INFLOW_CLAIMED) intents[id].collected_count += 1;
   }
   return intents;
 }
@@ -486,7 +510,7 @@ export function bindBookVerifier(registry) {
  * @param {string} baseUrl — gateway public base for verify_url
  */
 export function buildBookExportCsv(entries, agentId, baseUrl) {
-  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,verify_url,explorer_url';
+  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,verify_url,explorer_url';
   const lines = [header];
   for (const e of entries) {
     const row = rowOf(e);
@@ -501,6 +525,7 @@ export function buildBookExportCsv(entries, agentId, baseUrl) {
       row.payment.amount ?? '',
       row.payment.ref || '',
       row.payment.rail || '',
+      row.bucket || '',
       verifyUrl,
       explorerUrl,
     ].map(csvEscape);
@@ -536,6 +561,12 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
       amount: row.payment.amount,
       payment_ref: row.payment.ref,
       rail: row.payment.rail,
+      bucket: row.bucket || null,
+      arrival_status: row.arrival_status || null,
+      omission_rule: row.omission_rule || null,
+      ingress_receipt: row.ingress_receipt || null,
+      inflow_claim: row.inflow_claim || null,
+      inflow_corrections: row.inflow_corrections || null,
       verify_url: buildVerifyUrl(baseUrl, row.task_id),
       auditor_url: `${buildVerifyUrl(baseUrl, row.task_id)}?format=auditor`,
       explorer_url: explorerUrlForRef(row.payment.ref),
@@ -552,6 +583,9 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
     attestation_note:
       'On-chain attestation is payment.ref + verify_url + issuer JWS on each receipt. '
       + 'Rows with evidence=UNVERIFIED lack proven payer/payment.ref/amount — never treat as zero payment. '
+      + 'RECORDED_BY_SETTLE rows show the recorder claim at settle cutoff; promote to collected with ingress_receipt. '
+      + 'ARRIVAL_UNVERIFIED rows are explicit omission at cutoff (no ingress_receipt) — visible, amount null, excluded from totals. '
+      + 'inflow_claimed rows carry a signed bucket/allocation (no payment.ref) — corrections are append-only. '
       + 'Verify offline; no separate attestation chain in v1.',
   };
 }

@@ -16,15 +16,38 @@ const UNMETERED_RAILS = new Set(['unmetered', 'demo', 'free']);
 /** Book/export evidence — never treat missing possession proof as zero payment. */
 export const BOOK_EVIDENCE = {
   COLLECTED: 'collected',
+  RECORDED_BY_SETTLE: 'RECORDED_BY_SETTLE',
+  ARRIVAL_UNVERIFIED: 'ARRIVAL_UNVERIFIED',
+  INFLOW_CLAIMED: 'inflow_claimed',
   UNVERIFIED: 'UNVERIFIED',
   POLICY_BLOCKED: 'policy_blocked',
 };
 
+/** Arrival sub-state on settle-time rows (recorder ≠ arrival). */
+export const ARRIVAL_STATUS = {
+  PENDING: 'pending',
+  CONFIRMED: 'confirmed',
+  UNVERIFIED: 'unverified',
+};
+
+/**
+ * True when a ledger row carries ingress / arrival evidence.
+ * @param {object} entry
+ */
+export function hasArrivalEvidence(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  if (entry.arrival_status === ARRIVAL_STATUS.CONFIRMED) return true;
+  const ingress = entry.ingress_receipt;
+  if (!ingress || typeof ingress !== 'object') return false;
+  const ref = ingress.ref != null ? String(ingress.ref).trim() : '';
+  return !!ref;
+}
+
 /**
  * Derive export evidence for one ledger row.
- * When payer / payment.ref / amount cannot be proven, render UNVERIFIED — never invent a settle amount.
+ * Recorder-accepted-by-cutoff ≠ arrival-complete — silence must not read as exclusion.
  * @param {object} entry
- * @returns {'collected'|'UNVERIFIED'|'policy_blocked'}
+ * @returns {string}
  */
 export function deriveEvidence(entry) {
   if (!entry || typeof entry !== 'object') return BOOK_EVIDENCE.UNVERIFIED;
@@ -34,19 +57,51 @@ export function deriveEvidence(entry) {
   if (entry.evidence === BOOK_EVIDENCE.UNVERIFIED) {
     return BOOK_EVIDENCE.UNVERIFIED;
   }
+  if (entry.inflow_claim && typeof entry.inflow_claim === 'object') {
+    return BOOK_EVIDENCE.INFLOW_CLAIMED;
+  }
   const ref = entry.payment_ref != null ? String(entry.payment_ref).trim() : '';
   if (!ref) return BOOK_EVIDENCE.UNVERIFIED;
   const amount = entry.amount;
   if (amount == null || String(amount).trim() === '') return BOOK_EVIDENCE.UNVERIFIED;
+  if (hasArrivalEvidence(entry)) return BOOK_EVIDENCE.COLLECTED;
+  if (entry.arrival_status === ARRIVAL_STATUS.UNVERIFIED) {
+    return BOOK_EVIDENCE.ARRIVAL_UNVERIFIED;
+  }
+  if (entry.recorded_by === 'settle') {
+    return BOOK_EVIDENCE.RECORDED_BY_SETTLE;
+  }
   return BOOK_EVIDENCE.COLLECTED;
 }
 
 /** True when a row may be summed in cap/totals (proven collected USDC). */
 export function entryQualifiesForTotals(entry) {
-  if (deriveEvidence(entry) !== BOOK_EVIDENCE.COLLECTED) return false;
+  const evidence = deriveEvidence(entry);
+  if (evidence === BOOK_EVIDENCE.INFLOW_CLAIMED) {
+    const rail = String(entry.rail || 'usdc').toLowerCase();
+    if (UNMETERED_RAILS.has(rail)) return false;
+    return entry.collected === true;
+  }
+  if (evidence !== BOOK_EVIDENCE.COLLECTED) return false;
   const rail = String(entry.rail || '').toLowerCase();
   if (UNMETERED_RAILS.has(rail)) return false;
   return entry.collected === true;
+}
+
+/** True when a row counts toward prepaid_ceiling / daily / hourly caps. */
+export function entryQualifiesForCap(entry) {
+  const evidence = deriveEvidence(entry);
+  if (evidence === BOOK_EVIDENCE.POLICY_BLOCKED || evidence === BOOK_EVIDENCE.UNVERIFIED) {
+    return false;
+  }
+  if (evidence === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED) return false;
+  if (evidence === BOOK_EVIDENCE.INFLOW_CLAIMED || evidence === BOOK_EVIDENCE.COLLECTED
+    || evidence === BOOK_EVIDENCE.RECORDED_BY_SETTLE) {
+    const rail = String(entry.rail || 'usdc').toLowerCase();
+    if (UNMETERED_RAILS.has(rail)) return false;
+    return entry.collected === true;
+  }
+  return false;
 }
 
 export const BOOK_DEFAULT_LIMIT = 50;
@@ -208,6 +263,8 @@ export class UsageSettledLedger {
     if (!Number.isInteger(id) || id < 1) {
       return { ok: false, reason: 'agent_id required for a bookable row', code: 'invalid_agent' };
     }
+    const ingress = payment.ingress_receipt || payment.arrival_receipt || null;
+    const arrivalConfirmed = ingress && (ingress.ref || ingress.confirmed_at);
     const entry = {
       task_id: taskId,
       payment_ref: paymentRef,
@@ -215,6 +272,8 @@ export class UsageSettledLedger {
       agent_id: id,
       collected: true,
       evidence: BOOK_EVIDENCE.COLLECTED,
+      arrival_status: arrivalConfirmed ? ARRIVAL_STATUS.CONFIRMED : null,
+      ingress_receipt: arrivalConfirmed ? ingress : null,
       rail: String(payment.rail || 'usdc'),
       amount: amountOf(payment),
       collected_at: payment.collected_at || new Date().toISOString(),
@@ -227,6 +286,105 @@ export class UsageSettledLedger {
     };
     this._index(entry);
     return { ok: true, entry };
+  }
+
+  /**
+   * Promote a settle-time row when ingress / arrival evidence arrives.
+   * @param {object} entry — existing ledger row (mutated in place)
+   * @param {object|null} ingressReceipt
+   */
+  _applyArrival(entry, ingressReceipt) {
+    if (!entry || !ingressReceipt || typeof ingressReceipt !== 'object') return;
+    entry.ingress_receipt = ingressReceipt;
+    entry.arrival_status = ARRIVAL_STATUS.CONFIRMED;
+    entry.evidence = BOOK_EVIDENCE.COLLECTED;
+  }
+
+  /**
+   * Append an unaffiliated inflow row (no payment.ref). Settle-time signed allocation claim.
+   * @param {{
+   *   agentId: number,
+   *   taskId: string,
+   *   bucket: string,
+   *   allocation: string,
+   *   inflowClaim: object,
+   *   model?: string|null,
+   *   hub?: string|null,
+   *   intentId?: string|null,
+   *   attemptIndex?: number|null,
+   * }} row
+   */
+  appendInflow({
+    agentId,
+    taskId,
+    bucket,
+    allocation,
+    inflowClaim,
+    model = null,
+    hub = null,
+    intentId = null,
+    attemptIndex = null,
+  }) {
+    const id = Number(agentId);
+    if (!Number.isInteger(id) || id < 1) {
+      return { ok: false, reason: 'invalid agent_id', code: 'invalid_agent' };
+    }
+    const tid = String(taskId || '').trim();
+    if (!tid) {
+      return { ok: false, reason: 'task_id required', code: 'task_required' };
+    }
+    if (this.byTask.has(tid)) {
+      return { ok: false, reason: 'duplicate task_id', code: 'duplicate_task' };
+    }
+    const alloc = String(allocation || '').trim();
+    if (!alloc) {
+      return { ok: false, reason: 'allocation required', code: 'invalid_allocation' };
+    }
+    const entry = {
+      task_id: tid,
+      payment_ref: null,
+      payer: null,
+      agent_id: id,
+      collected: true,
+      evidence: BOOK_EVIDENCE.INFLOW_CLAIMED,
+      recorded_by: 'inflow',
+      inflow_claim: inflowClaim,
+      inflow_corrections: [],
+      bucket: String(bucket || 'patron'),
+      amount: alloc,
+      rail: 'usdc',
+      collected_at: inflowClaim?.as_of || new Date().toISOString(),
+      recorded_at: new Date().toISOString(),
+      model: model || null,
+      hub: hub || null,
+      parent_ref: null,
+      intent_id: intentId || null,
+      attempt_index: attemptIndex != null ? Number(attemptIndex) : null,
+    };
+    this._index(entry);
+    return { ok: true, entry };
+  }
+
+  /**
+   * Append-only correction to an inflow row. Never mutates the original claim.
+   * @param {string} taskId
+   * @param {number} agentId
+   * @param {object} correction
+   */
+  appendInflowCorrection(taskId, agentId, correction) {
+    const entry = this.findByTask(String(taskId));
+    const id = Number(agentId);
+    if (!entry || Number(entry.agent_id) !== id) {
+      return { ok: false, reason: 'inflow row not found', code: 'not_found' };
+    }
+    if (!entry.inflow_claim) {
+      return { ok: false, reason: 'not an inflow row', code: 'not_inflow' };
+    }
+    if (!Array.isArray(entry.inflow_corrections)) entry.inflow_corrections = [];
+    entry.inflow_corrections.push(correction);
+    if (correction.bucket) entry.bucket = String(correction.bucket);
+    if (correction.allocation) entry.amount = String(correction.allocation);
+    return { ok: true, entry, correction };
   }
 
   /**
@@ -345,6 +503,12 @@ export class UsageSettledLedger {
         rows.push(e);
         continue;
       }
+      if (deriveEvidence(e) === BOOK_EVIDENCE.RECORDED_BY_SETTLE
+        || deriveEvidence(e) === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED
+        || deriveEvidence(e) === BOOK_EVIDENCE.INFLOW_CLAIMED) {
+        rows.push(e);
+        continue;
+      }
       if (e.collected !== true) continue;
       const rail = String(e.rail || '').toLowerCase();
       if (UNMETERED_RAILS.has(rail)) continue;
@@ -421,7 +585,7 @@ export class UsageSettledLedger {
     if (!Number.isInteger(id) || id < 1) return sum;
     for (const e of this.entries) {
       if (Number(e.agent_id) !== id) continue;
-      if (!entryQualifiesForTotals(e)) continue;
+      if (!entryQualifiesForCap(e)) continue;
       try {
         sum += BigInt(String(e.amount).trim());
       } catch {
@@ -452,7 +616,7 @@ export class UsageSettledLedger {
 
     for (const e of this.entries) {
       if (Number(e.agent_id) !== id) continue;
-      if (!entryQualifiesForTotals(e)) continue;
+      if (!entryQualifiesForCap(e)) continue;
 
       const collectedAt = new Date(e.collected_at || e.recorded_at);
       if (collectedAt < todayStart) continue;
@@ -488,7 +652,7 @@ export class UsageSettledLedger {
 
     for (const e of this.entries) {
       if (Number(e.agent_id) !== id) continue;
-      if (!entryQualifiesForTotals(e)) continue;
+      if (!entryQualifiesForCap(e)) continue;
 
       const collectedAt = new Date(e.collected_at || e.recorded_at);
       if (collectedAt < hourStart) continue;
@@ -574,7 +738,7 @@ export function recordSettleBookRow({
       hub: hub || (model && String(model).includes('/') ? String(model).split('/')[0] : null),
     },
   };
-  return recordCollectedSpend(receipt, {
+  const result = recordCollectedSpend(receipt, {
     ledger,
     registry,
     payer,
@@ -583,6 +747,38 @@ export function recordSettleBookRow({
     intentId,
     attemptIndex,
   });
+  if (!result.ok) return result;
+  if (result.entry && !result.duplicate) {
+    result.entry.recorded_by = 'settle';
+    result.entry.evidence = BOOK_EVIDENCE.RECORDED_BY_SETTLE;
+    result.entry.arrival_status = ARRIVAL_STATUS.PENDING;
+    result.entry.ingress_receipt = null;
+  }
+  return result;
+}
+
+/**
+ * Mark a settle-time row as arrival-unverified at cutoff (explicit omission).
+ * Silence must not read as exclusion — row stays visible with ARRIVAL_UNVERIFIED.
+ * @param {UsageSettledLedger} ledger
+ * @param {string} taskId
+ * @param {number} agentId
+ */
+export function markArrivalUnverified(ledger, taskId, agentId) {
+  const entry = ledger.findByTask(String(taskId));
+  const id = Number(agentId);
+  if (!entry || Number(entry.agent_id) !== id) {
+    return { ok: false, reason: 'row not found', code: 'not_found' };
+  }
+  if (entry.recorded_by !== 'settle') {
+    return { ok: false, reason: 'not a settle-time row', code: 'not_settle_row' };
+  }
+  if (hasArrivalEvidence(entry)) {
+    return { ok: false, reason: 'arrival already confirmed', code: 'already_confirmed' };
+  }
+  entry.arrival_status = ARRIVAL_STATUS.UNVERIFIED;
+  entry.evidence = BOOK_EVIDENCE.ARRIVAL_UNVERIFIED;
+  return { ok: true, entry };
 }
 
 /**
@@ -618,6 +814,11 @@ export function recordCollectedSpend(receipt, {
 
   const existing = ledger.findByRef(receipt.payment.ref) || ledger.findByTask(receipt.task_id);
   if (existing) {
+    const payment = receipt.payment || {};
+    const ingress = payment.ingress_receipt || payment.arrival_receipt || null;
+    if (ingress) {
+      ledger._applyArrival(existing, ingress);
+    }
     const identity = typeof registry.get === 'function' ? registry.get(existing.agent_id) : null;
     return {
       ok: true,

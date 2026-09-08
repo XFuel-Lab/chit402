@@ -29,19 +29,26 @@ Caps sit on the book the principal holds — not inside the router.
 
 Possession-gated. Query/body: `format=csv|json|html`, optional `limit` (max 200).
 
-- **csv** — `task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,verify_url,explorer_url`
-- **json** — `chit402.book_audit.v1` pack with per-row `evidence` (`collected` | `UNVERIFIED` | `policy_blocked`) and `auditor_url` (`?format=auditor`)
+- **csv** — `task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,verify_url,explorer_url`
+- **json** — `chit402.book_audit.v1` pack with per-row `evidence` (`collected` | `RECORDED_BY_SETTLE` | `ARRIVAL_UNVERIFIED` | `inflow_claimed` | `UNVERIFIED` | `policy_blocked`) and `auditor_url` (`?format=auditor`)
 - **html** — print-friendly page; use browser Print to PDF
 
-### Evidence status (ellie-v2)
+### Evidence status (greenspan + ellie-v2)
 
 Book and export never treat missing possession evidence as zero payment. Each row carries `evidence`:
 
 | Value | Meaning |
 |-------|---------|
-| `collected` | Proven `payment.ref` + settle amount on the ledger row |
+| `collected` | Proven `payment.ref` + settle amount + `ingress_receipt` (arrival confirmed) |
+| `RECORDED_BY_SETTLE` | Recorder accepted at settle cutoff (`recorded_by: settle`) — amount shown, excluded from totals until ingress |
+| `ARRIVAL_UNVERIFIED` | Explicit omission at cutoff when `ingress_receipt` is absent — row visible, `amount` null, excluded from totals |
+| `inflow_claimed` | Signed `bucket` / `allocation` claim (no `payment.ref`) — patron-style inflow; corrections append-only |
 | `UNVERIFIED` | Payer / `payment.ref` / amount cannot be proven — `amount` is null, excluded from totals |
 | `policy_blocked` | Policy hop with no USDC collected |
+
+**Ingress receipt:** attach `payment.ingress_receipt` (or `payment.arrival_receipt`) with at least `ref` or `confirmed_at` to promote `RECORDED_BY_SETTLE` → `collected`. At cutoff, call `markArrivalUnverified` or rely on explicit `omission_rule: no_ingress_receipt_at_cutoff` for `ARRIVAL_UNVERIFIED` rows — silence must not read as exclusion.
+
+**Unaffiliated inflow:** `POST /v1/agents/:agent_id/book/inflow` writes a settle-time signed `inflow_claim` (`bucket`, `allocation`). Revise only via `POST .../book/inflow/correct` (append-only `inflow_corrections`).
 
 Export reads **ledger rows only** (UsageSettled) — not live wallet scrape or task-store re-derivation.
 
