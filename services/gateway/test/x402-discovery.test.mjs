@@ -123,8 +123,9 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
   assert.equal(spec.openapi, '3.1.0');
   assert.equal(spec.info.title, 'Chit402', 'OpenAPI title is Chit402 (public/searchable name)');
   assert.equal(typeof spec.info.version, 'string');
-  assert.match(spec.info.description, /Chit is the book/);
-  assert.match(spec.info.description, /hub, model, and amount/);
+  assert.match(spec.info.description, /treasury desk/i);
+  assert.match(spec.info.description, /who paid which call/i);
+  assert.match(spec.info.description, /verify_url/);
   assert.doesNotMatch(spec.info.description, /crypto control plane/i);
   assert.doesNotMatch(spec.info.description, /best available/i);
   assert.doesNotMatch(spec.info.description, /Not a smart router/);

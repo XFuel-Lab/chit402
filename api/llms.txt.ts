@@ -1,16 +1,15 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-const CHIT_LLMS = `# Chit — the x402 receipt that doesn't leave you
+const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 
-> Chit is the receipt. A chit you still hold if the agent wallet moves.
-> Hub, model, amount — you hold the book. POST /v1/chat/completions
-> returns a signed receipt: hub, model, amount, verify_url.
+> Who paid which call — export, policy, evidence. Possession book for agent spend.
+> POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url.
 > Cost-plus, quoted, receipted — pay x402 USDC on Base or Solana.
 > The wire is api.chit402.com/v1 (alias: api.xfuel.app/v1). Chit is the product. XFuel Lab is the parent.
 
 ## Money pages (chit402.com)
 
-- /         : Give an agent a USDC budget. Keep the receipt when the wallet moves.
+- /         : Treasury desk — who paid which call. Export, policy, evidence. https://chit402.com/book
 - /docs/chit-in-15-lines : OpenAI baseURL swap + demo key chit402-demo (no USDC).
 - /docs/eliza : Eliza plugin stub (coming: @xfuel/plugin-elizaos).
 - /v1       : Not the API — points you to api.chit402.com/v1.

@@ -594,12 +594,12 @@ export function buildX402Manifest(baseUrl = '') {
 
   // Description for Bazaar search discoverability.
   const description = solanaEnabled
-    ? 'Paid inference via x402 USDC on Base and Solana. ' +
-      'POST /v1/chat/completions is the recommended surface. Returns signed receipt: ' +
-      'hub, model, amount, verify_url. Cost-plus, quoted, receipted. Real mainnet USDC.'
-    : 'Paid inference via x402 USDC on Base. POST /v1/chat/completions is ' +
-      'the recommended surface. Returns signed receipt: hub, model, amount, verify_url. ' +
-      'Cost-plus, quoted, receipted. Real mainnet USDC.';
+    ? 'Treasury desk and possession book for agent spend. Who paid which call — export, policy, evidence. '
+      + 'POST /v1/chat/completions is the x402 USDC door on Base and Solana. Each call returns a signed receipt: '
+      + 'hub, model, amount, verify_url. Cost-plus, quoted, receipted. Real mainnet USDC.'
+    : 'Treasury desk and possession book for agent spend. Who paid which call — export, policy, evidence. '
+      + 'POST /v1/chat/completions is the x402 USDC door on Base. Each call returns a signed receipt: '
+      + 'hub, model, amount, verify_url. Cost-plus, quoted, receipted. Real mainnet USDC.';
 
   // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.
   // Per naming law: Chit402 is the public/searchable name; Chit is spoken shorthand only.
@@ -878,20 +878,18 @@ export function buildOpenApiSpec(baseUrl = '') {
       title: 'Chit402',
       version: '1.0.0',
       description:
-        'Chit is the book. This agent spent Y on this job. You hold hub, model, and amount. '
-        + 'No account. No API key. A wallet that can pay the 402 is enough. '
-        + 'Register is only to hold the book after a collected receipt. '
-        + 'POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. '
-        + 'USDC on Base or Solana. POST /a2a-message is the same paid door. '
-        + 'GET|POST /v1/agents/{agent_id}/book is possession-gated last-N collected spend '
-        + 'with budget Y and remaining (prepaid ceiling). '
-        + 'Private Spend: registered sessions get vendor_blind by default. '
-        + 'Replaceable Signer: receipts carry dual signatures (primary + co_signature); '
-        + 'verify offline via docs/VERIFY_ALGORITHM.md.',
+      'Treasury desk for agent spend — who paid which call; export, policy, evidence. '
+      + 'Possession book for principals. POST /v1/chat/completions returns a signed receipt: '
+      + 'hub, model, amount, verify_url. USDC on Base or Solana. POST /a2a-message is the same paid door. '
+      + 'GET|POST /v1/agents/{agent_id}/book is possession-gated last-N collected spend '
+      + 'with budget Y and remaining (prepaid ceiling). '
+      + 'Private Spend: registered sessions get vendor_blind by default. '
+      + 'Replaceable Signer: receipts carry dual signatures (primary + co_signature); '
+      + 'verify offline via docs/VERIFY_ALGORITHM.md.',
       'x-guidance':
-        'Chit is the book: this agent spent Y on this job; you hold hub, model, and amount. '
-        + 'No account. No API key. A wallet that can pay the 402 is enough. '
-        + 'Register is only to hold the book after a collected receipt. '
+        'Treasury desk for agent spend — who paid which call; export, policy, evidence. '
+        + 'Possession book for principals. No account. No API key. A wallet that can pay the 402 is enough. '
+        + 'Register is only to hold the possession book after a collected receipt. '
         + 'Use POST /v1/chat/completions with a standard chat-completions JSON body '
         + '({ model, messages }). POST /a2a-message is the A2A card URL with the same x402 floor. '
         + 'Unauthenticated callers get HTTP 402 with x402 '

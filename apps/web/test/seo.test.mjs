@@ -34,10 +34,11 @@ function assertPaidDoorCopy(label, text) {
   assert.doesNotMatch(text, /Not a smart router/, `${label} must not say Not a smart router`);
   assert.doesNotMatch(text, /Not a model shop/, `${label} must not say Not a model shop`);
   assert.doesNotMatch(text, /\$0\.01/, `${label} must not lead with $0.01 price`);
-  assert.match(text, /the book/i, `${label} leads with the book`);
-  assert.match(text, /hub, model, and amount/i, `${label} names hub, model, and amount`);
-  assert.match(text, /USDC/i, `${label} names USDC`);
-  assert.match(text, /Base and Solana/i, `${label} names Base and Solana`);
+  assert.doesNotMatch(text, /wallet moves/i, `${label} must not lead with wallet-move`);
+  assert.doesNotMatch(text, /receipt you still hold/i, `${label} must not lead with receipt-you-still-hold`);
+  assert.match(text, /treasury desk|possession book/i, `${label} leads with treasury desk or possession book`);
+  assert.match(text, /who paid which call/i, `${label} names who paid which call`);
+  assert.match(text, /export.*policy.*evidence/i, `${label} names export, policy, evidence`);
 }
 
 test('homepage meta description describes paid /v1 and does not say unmetered', () => {
@@ -82,15 +83,15 @@ test('shared layout and homepage copy do not call paid /v1 unmetered, a free pat
   }
 });
 
-test('homepage title and hero lead with the book, not a router', () => {
+test('homepage title and hero lead with treasury desk, not wallet-move', () => {
   const title = html.match(/<title>([^<]*)<\/title>/i)?.[1] ?? '';
-  assert.match(title, /the book/i, 'title leads with the book');
-  assert.match(title, /Hub, model, amount/i, 'title names hub, model, amount');
-  assert.doesNotMatch(title, /receipt for every routed/i, 'title does not hero the receipt');
+  assert.match(title, /treasury desk for agent spend/i, 'title leads with treasury desk');
+  assert.doesNotMatch(title, /wallet moves/i, 'title does not lead with wallet-move');
+  assert.doesNotMatch(title, /receipt you still hold/i, 'title does not lead with receipt-you-still-hold');
   assert.doesNotMatch(title, /best available provider/i);
 
   const home = readFileSync(join(root, 'src/pages/Home.tsx'), 'utf8');
-  assert.match(home, /XFuel is the book/);
+  assert.match(home, /Chit402 is the book/);
   assert.match(home, /This agent spent Y on this job/);
   assert.match(home, /You hold hub, model, and amount/);
   assert.doesNotMatch(home, /Not a smart router/);
@@ -107,13 +108,13 @@ test('llms.txt API route does not contain prohibited copy', () => {
   const llmsApi = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8');
   assert.doesNotMatch(llmsApi, /Not a smart router/);
   assert.doesNotMatch(llmsApi, /Not a model shop/);
-  assert.match(llmsApi, /XFuel.*the book|Chit.*receipt/i, 'llms.txt API has brand copy');
+  assert.match(llmsApi, /treasury desk|possession book/i, 'llms.txt API has treasury desk copy');
 });
 
 test('README first paragraph leads with the book', () => {
   const readme = readFileSync(join(root, '../../README.md'), 'utf8').replace(/\r\n/g, '\n');
   const firstPara = readme.split(/\n\n/)[1] ?? '';
-  assert.match(firstPara, /XFuel is the book/);
+  assert.match(firstPara, /Chit402 is the book/);
   assert.match(firstPara, /You hold hub, model, and amount/);
   assert.doesNotMatch(firstPara, /best available provider/i);
   assert.doesNotMatch(firstPara, /crypto control plane/i);
@@ -128,7 +129,7 @@ test('prerendered money pages have unique crawler titles (after build)', { skip:
     'agent-shop': 'The till for an agent shop | Chit',
     'book': 'The book: this agent spent Y on this job | Chit',
     'book-bot': 'Paste this. The shop gets a till | Chit',
-    'docs': 'Chit402 — A receipt you still hold if the agent wallet moves.',
+    'docs': 'Chit402 — treasury desk for agent spend',
     'v1': 'Pay /v1/chat/completions | Chit',
   };
   
@@ -144,7 +145,7 @@ test('prerendered money pages have unique crawler titles (after build)', { skip:
 
 test('Chit home page has locked hero copy and three door CTAs', () => {
   const chitHome = readFileSync(join(root, 'src/pages/ChitHome.tsx'), 'utf8');
-  assert.match(chitHome, /Give an agent a USDC budget\. Keep the receipt when the wallet moves\./, 'ChitHome has locked hero');
+  assert.match(chitHome, /Who paid which call — export, policy, evidence\./, 'ChitHome has locked hero');
   assert.match(chitHome, /Chit402/, 'ChitHome uses Chit402 public name');
   assert.match(chitHome, /api\.chit402\.com\/receipt\/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e/, 'ChitHome has live receipt link');
   assert.match(chitHome, /\/docs\/chit-in-15-lines/, 'ChitHome links to 15-lines page');
@@ -152,17 +153,17 @@ test('Chit home page has locked hero copy and three door CTAs', () => {
   assert.match(chitHome, /config\.parent/, 'ChitHome references parent dynamically');
   assert.match(chitHome, /USDC on Base and Solana/, 'ChitHome names USDC rails');
   assert.doesNotMatch(chitHome, /\$0\.01/, 'ChitHome must not lead with $0.01');
-  assert.doesNotMatch(chitHome, /The chit x402 doesn't leave you/, 'ChitHome demotes poetry tagline');
+  assert.doesNotMatch(chitHome, /wallet moves/i, 'ChitHome must not lead with wallet-move');
   assert.doesNotMatch(chitHome, /ticker/i, 'ChitHome must not mention ticker');
 });
 
 test('host config has correct Chit SEO values', () => {
   const hostConfig = readFileSync(join(root, 'src/hostConfig.ts'), 'utf8');
-  assert.match(hostConfig, /title:.*Chit402.*receipt you still hold/i, 'Chit SEO title uses Chit402 for listings');
-  assert.match(hostConfig, /ogTitle:.*Chit402/i, 'Chit ogTitle uses Chit402 for listings');
-  assert.match(hostConfig, /description:.*Chit402:/i, 'Chit description starts with Chit402');
-  assert.match(hostConfig, /ogDescription:.*Chit402:/i, 'Chit ogDescription starts with Chit402');
-  assert.match(hostConfig, /x402 receipt that doesn/, 'Chit description has tagline');
+  assert.match(hostConfig, /title:.*treasury desk for agent spend/i, 'Chit SEO title uses treasury desk for listings');
+  assert.match(hostConfig, /ogTitle:.*treasury desk for agent spend/i, 'Chit ogTitle uses treasury desk for listings');
+  assert.match(hostConfig, /description:.*Who paid which call/i, 'Chit description leads with who paid which call');
+  assert.match(hostConfig, /ogDescription:.*Possession book for agent spend/i, 'Chit ogDescription names possession book');
+  assert.doesNotMatch(hostConfig, /wallet moves/i, 'Chit SEO must not lead with wallet-move');
   assert.match(hostConfig, /chit402\.com/, 'Config has chit402.com domain');
   assert.match(hostConfig, /@chit402/, 'Config has @chit402 Twitter handle');
   assert.match(hostConfig, /githubUrl:.*chit402/i, 'Config has chit402 GitHub URL');
@@ -199,19 +200,20 @@ test('middleware CHIT_SEO uses Chit402 titles (not Chit)', () => {
   
   assert.match(
     middleware,
-    /title:\s*['"]Chit402 — A receipt you still hold if the agent wallet moves\.['"]/,
-    'middleware CHIT_SEO title uses Chit402'
+    /title:\s*['"]Chit402 — treasury desk for agent spend['"]/,
+    'middleware CHIT_SEO title uses treasury desk'
   );
   assert.match(
     middleware,
-    /ogTitle:\s*['"]Chit402 — A receipt you still hold\.['"]/,
-    'middleware CHIT_SEO ogTitle uses Chit402'
+    /ogTitle:\s*['"]Chit402 — treasury desk for agent spend['"]/,
+    'middleware CHIT_SEO ogTitle uses treasury desk'
   );
   assert.match(
     middleware,
-    /description:\s*['"]Chit402: the x402 receipt/,
-    'middleware CHIT_SEO description starts with Chit402'
+    /description:\s*['"]Who paid which call — export, policy, evidence\. Possession book for agent spend\.['"]/,
+    'middleware CHIT_SEO description uses locked copy'
   );
+  assert.doesNotMatch(middleware, /wallet moves/i, 'middleware must not lead with wallet-move');
 });
 
 test('middleware CHIT_V1_SEO uses Chit402 suffix (not | Chit)', () => {
@@ -277,7 +279,7 @@ test('middleware transformHtml produces Chit402 crawler output for homepage', ()
   
   const chitSeoDescMatch = middleware.match(/const CHIT_SEO[\s\S]*?description:\s*['"]([^'"]+)['"]/);
   const chitSeoDesc = chitSeoDescMatch?.[1] ?? '';
-  assert.ok(chitSeoDesc.startsWith('Chit402'), 'CHIT_SEO description starts with Chit402');
+  assert.ok(chitSeoDesc.startsWith('Who paid which call'), 'CHIT_SEO description starts with who paid which call');
   assert.ok(!chitSeoDesc.includes('By XFuel Lab'), 'CHIT_SEO description does not contain By XFuel Lab');
   
   const simulated = sampleHtml

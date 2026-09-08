@@ -263,8 +263,8 @@ test('buildAgentCard is A2A v1.0', () => {
   assert.equal(card.provider.organization, 'Chit402', 'provider organization is Chit402');
   assert.ok(!card.iconUrl.includes('xfuel-icon'), 'iconUrl does not contain legacy xfuel-icon');
   assert.ok(card.iconUrl.includes('chit402-icon'), 'iconUrl uses chit402-icon');
-  assert.match(card.description, /Chit is the book/);
-  assert.match(card.description, /hub, model, and amount/);
+  assert.match(card.description, /treasury desk/i);
+  assert.match(card.description, /who paid which call/i);
   assert.match(card.description, /fail-closed/);
   assert.doesNotMatch(card.description, /crypto control plane/i);
   assert.doesNotMatch(card.description, /Not a smart router/);
@@ -326,8 +326,9 @@ test('POST /v1/agents/register without task_id / wallet is 400', async () => {
 test('GET /llms.txt and /openapi.json mention register honestly', async () => {
   const llms = await (await fetch(`${base}/llms.txt`)).text();
   assert.match(llms, /# Chit402/);
-  assert.match(llms, /Give an agent a USDC budget/);
-  assert.match(llms, /you hold the book/i);
+  assert.match(llms, /treasury desk for agent spend/i);
+  assert.match(llms, /Who paid which call/i);
+  assert.match(llms, /possession book/i);
   assert.match(llms, /hub, model/);
   assert.match(llms, /\/v1\/agents\/register/);
   assert.match(llms, /fail-closed/);

@@ -7,10 +7,10 @@ export const config = {
 };
 
 const CHIT_SEO = {
-  title: 'Chit402 — A receipt you still hold if the agent wallet moves.',
-  description: 'Chit402: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book.',
-  ogTitle: 'Chit402 — A receipt you still hold.',
-  ogDescription: 'Chit402: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book.',
+  title: 'Chit402 — treasury desk for agent spend',
+  description: 'Who paid which call — export, policy, evidence. Possession book for agent spend.',
+  ogTitle: 'Chit402 — treasury desk for agent spend',
+  ogDescription: 'Who paid which call — export, policy, evidence. Possession book for agent spend.',
   ogImage: 'https://www.chit402.com/og-image.png',
   domain: 'www.chit402.com',
 };
@@ -42,8 +42,8 @@ interface SeoConfig {
 
 const CHIT_HOME_SEO: SeoConfig = {
   ...CHIT_SEO,
-  h1: 'Chit402 — the x402 receipt that doesn\'t leave you.',
-  lede: 'A receipt you still hold if the agent wallet moves. Hub, model, amount — you hold the book. POST /v1/chat/completions returns a signed receipt. Cost-plus, quoted, receipted — USDC on Base and Solana. The wire is api.chit402.com/v1.',
+  h1: 'Chit402 — treasury desk for agent spend',
+  lede: 'Who paid which call — export, policy, evidence. Possession book for agent spend. POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. Cost-plus, quoted, receipted — USDC on Base and Solana. The wire is api.chit402.com/v1.',
 };
 
 const CHIT_V1_SEO_FULL: SeoConfig = {

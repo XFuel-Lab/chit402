@@ -35,10 +35,10 @@ const CHIT_CONFIG: HostConfig = {
   twitterHandle: '@chit402',
   githubUrl: 'https://github.com/XFuel-Lab/chit402',
   seo: {
-    title: 'Chit402 — A receipt you still hold if the agent wallet moves.',
-    description: 'Chit402: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book.',
-    ogTitle: 'Chit402 — A receipt you still hold.',
-    ogDescription: 'Chit402: the x402 receipt that doesn\'t leave you. Hub, model, amount — you hold the book.',
+    title: 'Chit402 — treasury desk for agent spend',
+    description: 'Who paid which call — export, policy, evidence. Possession book for agent spend.',
+    ogTitle: 'Chit402 — treasury desk for agent spend',
+    ogDescription: 'Who paid which call — export, policy, evidence. Possession book for agent spend.',
   },
 };
 
