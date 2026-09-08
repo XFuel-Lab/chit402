@@ -14,7 +14,7 @@ import { keccak256, toUtf8Bytes } from 'ethers';
 import logger from './logger.js';
 import { bindAgentWallet } from './agent-wallet.js';
 import { readAndVerifyReceipt } from './receipt-oracle.js';
-import { receiptQualifiesForLedger } from './usage-settled.js';
+import { receiptQualifiesForLedger, noteIdempotentReplay, SETTLEMENT_STATUS } from './usage-settled.js';
 import { buildValidationRecord } from './erc8004.js';
 
 /** Per-identity possession secret. Issued at register; used to HMAC the book. */
@@ -344,6 +344,7 @@ export async function registerAgent(body = {}, {
 
   if (existingTask || existingRef) {
     const entry = existingTask || existingRef;
+    noteIdempotentReplay(entry);
     if (typeof registry.bindWallet !== 'function') {
       return { ok: false, status: 503, error: 'service_unavailable', message: 'registry.bindWallet is not configured' };
     }
@@ -424,6 +425,11 @@ export async function registerAgent(body = {}, {
         rail: oracle.receipt.payment.rail,
         collected: true,
       },
+      settlement_status: existingTask || existingRef
+        ? SETTLEMENT_STATUS.IDEMPOTENT_REPLAY
+        : SETTLEMENT_STATUS.SETTLED,
+      idempotent_replay: !!(existingTask || existingRef),
+      replay_of: existingTask || existingRef ? creditedEntry.task_id : null,
       usage_settled: creditedEntry,
       validation,
       validate_score: validation?.response ?? null,
