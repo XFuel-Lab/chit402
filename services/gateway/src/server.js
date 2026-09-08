@@ -61,6 +61,7 @@ import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger } from './usage-settled.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
+import { recordBookInflow, correctBookInflow } from './book-inflow.js';
 import { BookPolicyStore, POLICY_TYPES, enforcePolicy } from './book-policy.js';
 import { BookAssignmentStore, GRANT_TYPES, readSliceByToken } from './book-assign.js';
 import { BookDisputeStore, CLAIM_TYPES, OUTCOME_TYPES, fileAndAdjudicate } from './book-dispute.js';
@@ -324,7 +325,7 @@ POST /v1/chat/completions is bait. A holder can prove: lineage, policy, assignme
 - POST /v1/agents/:agent_id/book/dispute : file a dispute. claim_type: output_missing, wrong_model, double_charge.
 - POST /v1/agents/:agent_id/book/escrow : ledger escrow helper (open|release|clawback|status). High-value jobs beside the book.
 - POST /v1/agents/:agent_id/book/rotate : rotate session. Old session invalid, book stays (tied to agent_id).
-- POST /v1/agents/:agent_id/book/ingest : record agent's arbitrary x402 spend to a foreign endpoint.
+- POST /v1/agents/:agent_id/book/inflow : unaffiliated inflow (signed bucket/allocation, no payment.ref). POST .../inflow/correct for append-only corrections.
 
 ## Private Spend (default for registered sessions)
 
@@ -3205,6 +3206,52 @@ export function createApp() {
 
   app.get('/v1/agents/:agent_id/book', sendAgentBook);
   app.post('/v1/agents/:agent_id/book', sendAgentBook);
+
+  // POST /v1/agents/:agent_id/book/inflow — Unaffiliated inflow (no payment.ref)
+  app.post('/v1/agents/:agent_id/book/inflow', (req, res) => {
+    try {
+      const claim = claimFromRequest(req);
+      const apiKey = req.headers['x-api-key'] || null;
+      const isDemo = isDemoKey(apiKey);
+      const result = recordBookInflow(req.params.agent_id, req.body || {}, {
+        ledger: usageSettled,
+        registry: agentRegistry,
+        verify: verifyBook,
+        isDemo,
+        claim,
+      });
+      if (result.body == null) {
+        return res.status(result.status).end();
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /v1/agents/:agent_id/book/inflow error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // POST /v1/agents/:agent_id/book/inflow/correct — Append-only inflow correction
+  app.post('/v1/agents/:agent_id/book/inflow/correct', (req, res) => {
+    try {
+      const claim = claimFromRequest(req);
+      const apiKey = req.headers['x-api-key'] || null;
+      const isDemo = isDemoKey(apiKey);
+      const result = correctBookInflow(req.params.agent_id, req.body || {}, {
+        ledger: usageSettled,
+        registry: agentRegistry,
+        verify: verifyBook,
+        isDemo,
+        claim,
+      });
+      if (result.body == null) {
+        return res.status(result.status).end();
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'POST /v1/agents/:agent_id/book/inflow/correct error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
 
   // POST /v1/agents/:agent_id/book/ingest — Foreign x402 book ingest
   // Per Section 2: Record an agent's arbitrary x402 spend to a foreign endpoint.
