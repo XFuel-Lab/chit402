@@ -7,6 +7,12 @@ const {
   computeBurnRate,
   computeModelMix,
   summarizePaymentRef,
+  resolveRowEvidence,
+  evidenceLabel,
+  evidenceBadgeTone,
+  evidenceHint,
+  replayParentTaskId,
+  BOOK_EVIDENCE,
 } = await import('../src/lib/agentBookCore.mjs');
 
 test('formatUsdc renders atomic units', () => {
@@ -59,4 +65,27 @@ test('summarizePaymentRef truncates long refs', () => {
   assert.equal(short, 'usdc:base:0xabc');
   const long = summarizePaymentRef('base:0x' + 'a'.repeat(40), 'usdc');
   assert.ok(long.includes('…'));
+});
+
+test('resolveRowEvidence prefers API field and legacy fallbacks', () => {
+  assert.equal(resolveRowEvidence({ evidence: 'inflow_claimed' }), 'inflow_claimed');
+  assert.equal(resolveRowEvidence({ event: 'policy_blocked' }), 'policy_blocked');
+  assert.equal(resolveRowEvidence({ collected: false, payment: { amount: null } }), 'UNVERIFIED');
+  assert.equal(resolveRowEvidence({ payment: { amount: '1' } }), 'collected');
+});
+
+test('evidenceLabel and evidenceBadgeTone map known statuses', () => {
+  assert.equal(evidenceLabel(BOOK_EVIDENCE.RECORDED_BY_SETTLE), 'Recorded at settle');
+  assert.equal(evidenceBadgeTone(BOOK_EVIDENCE.COLLECTED), 'green');
+  assert.equal(evidenceBadgeTone(BOOK_EVIDENCE.POLICY_BLOCKED), 'danger');
+  assert.ok(evidenceHint(BOOK_EVIDENCE.INFLOW_CLAIMED).includes('bucket'));
+});
+
+test('replayParentTaskId resolves canonical task', () => {
+  assert.equal(replayParentTaskId({ task_id: 'a', replay_of: 'parent-1' }), 'parent-1');
+  assert.equal(
+    replayParentTaskId({ task_id: 'a', replay_events: [{ replay_of: 'a' }] }),
+    'a',
+  );
+  assert.equal(replayParentTaskId({ task_id: 'solo' }), 'solo');
 });

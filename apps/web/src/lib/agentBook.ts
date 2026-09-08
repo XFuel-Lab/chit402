@@ -1,11 +1,17 @@
 import { getApiHost } from '../apiHost';
 import {
+  BOOK_EVIDENCE,
   USDC_DECIMALS,
   computeBurnRate,
   computeModelMix,
+  evidenceBadgeTone,
+  evidenceHint,
+  evidenceLabel,
   formatCollectedAt,
   formatUsdc,
   parseUsdcInput,
+  replayParentTaskId,
+  resolveRowEvidence,
   summarizePaymentRef,
   verifyUrlFor,
   type BurnRate,
@@ -13,12 +19,18 @@ import {
 } from './agentBookCore.mjs';
 
 export {
+  BOOK_EVIDENCE,
   USDC_DECIMALS,
   computeBurnRate,
   computeModelMix,
+  evidenceBadgeTone,
+  evidenceHint,
+  evidenceLabel,
   formatCollectedAt,
   formatUsdc,
   parseUsdcInput,
+  replayParentTaskId,
+  resolveRowEvidence,
   summarizePaymentRef,
   verifyUrlFor,
 };
@@ -34,8 +46,38 @@ export interface BookRoute {
   hub?: string;
 }
 
+export type BookEvidence =
+  | 'collected'
+  | 'RECORDED_BY_SETTLE'
+  | 'ARRIVAL_UNVERIFIED'
+  | 'inflow_claimed'
+  | 'UNVERIFIED'
+  | 'policy_blocked';
+
+export interface BookReplayEvent {
+  at?: string;
+  settlement_status?: 'idempotent_replay';
+  replay_of?: string;
+}
+
+export interface BookInflowClaim {
+  bucket: string;
+  allocation: string;
+  as_of: string;
+  signature: { alg: string; value: string };
+}
+
+export interface BookInflowCorrection {
+  bucket: string;
+  allocation: string;
+  reason: string;
+  as_of: string;
+  signature: { alg: string; value: string };
+}
+
 export interface BookEntry {
   task_id: string;
+  evidence?: BookEvidence;
   payment: BookPayment;
   route?: BookRoute;
   collected_at: string | null;
@@ -46,6 +88,16 @@ export interface BookEntry {
   policy_code?: string;
   reason?: string;
   collected?: boolean;
+  payer_wallet?: string | null;
+  replay_count?: number;
+  replay_events?: BookReplayEvent[];
+  idempotent_replay?: boolean;
+  replay_of?: string | null;
+  bucket?: string;
+  inflow_claim?: BookInflowClaim;
+  inflow_corrections?: BookInflowCorrection[];
+  recorded_by?: 'settle';
+  arrival_status?: string;
 }
 
 export interface IntentGroup {
@@ -371,5 +423,142 @@ export async function bookEscrowAction(
     checks: data.checks as object | undefined,
     dispute: data.dispute as object | undefined,
     disclaimer: typeof data.disclaimer === 'string' ? data.disclaimer : undefined,
+  };
+}
+
+export interface BookInflowParams {
+  bucket?: string;
+  allocation: string;
+  task_id?: string;
+  hub?: string;
+  model?: string;
+  intent_id?: string;
+  attempt_index?: number;
+}
+
+export interface BookInflowCorrectParams {
+  task_id: string;
+  bucket?: string;
+  allocation?: string;
+  reason: string;
+}
+
+/** POST /v1/agents/:agent_id/book/inflow — signed bucket/allocation claim. */
+export async function claimBookInflow(
+  apiV1: string,
+  auth: { agentId: number; session: string },
+  params: BookInflowParams,
+): Promise<
+  | { ok: true; data: { agent_id: number; task_id: string; bucket: string; allocation: string } }
+  | { ok: false; error: BookFetchError | 'inflow'; message?: string; status?: number }
+> {
+  const url = `${apiV1.replace(/\/$/, '')}/agents/${auth.agentId}/book/inflow`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-XFuel-Session': auth.session,
+      },
+      body: JSON.stringify({
+        session: auth.session,
+        bucket: params.bucket || 'patron',
+        allocation: params.allocation,
+        task_id: params.task_id,
+        hub: params.hub,
+        model: params.model,
+        intent_id: params.intent_id,
+        attempt_index: params.attempt_index,
+      }),
+    });
+  } catch {
+    return { ok: false, error: 'network' };
+  }
+
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    if (!res.ok) return { ok: false, error: 'network', status: res.status };
+  }
+
+  if (res.status === 401) return { ok: false, error: 'unauth', status: 401 };
+  if (res.status === 403) return { ok: false, error: 'forbidden', status: 403 };
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: 'inflow',
+      message: typeof data.message === 'string' ? data.message : 'Inflow claim failed',
+      status: res.status,
+    };
+  }
+
+  return {
+    ok: true,
+    data: {
+      agent_id: Number(data.agent_id),
+      task_id: String(data.task_id),
+      bucket: String(data.bucket),
+      allocation: String(data.allocation),
+    },
+  };
+}
+
+/** POST /v1/agents/:agent_id/book/inflow/correct — append-only correction. */
+export async function correctBookInflow(
+  apiV1: string,
+  auth: { agentId: number; session: string },
+  params: BookInflowCorrectParams,
+): Promise<
+  | { ok: true; data: { agent_id: number; task_id: string; allocation: string } }
+  | { ok: false; error: BookFetchError | 'inflow'; message?: string; status?: number }
+> {
+  const url = `${apiV1.replace(/\/$/, '')}/agents/${auth.agentId}/book/inflow/correct`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-XFuel-Session': auth.session,
+      },
+      body: JSON.stringify({
+        session: auth.session,
+        task_id: params.task_id,
+        bucket: params.bucket,
+        allocation: params.allocation,
+        reason: params.reason,
+      }),
+    });
+  } catch {
+    return { ok: false, error: 'network' };
+  }
+
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    if (!res.ok) return { ok: false, error: 'network', status: res.status };
+  }
+
+  if (res.status === 401) return { ok: false, error: 'unauth', status: 401 };
+  if (res.status === 403) return { ok: false, error: 'forbidden', status: 403 };
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: 'inflow',
+      message: typeof data.message === 'string' ? data.message : 'Inflow correction failed',
+      status: res.status,
+    };
+  }
+
+  return {
+    ok: true,
+    data: {
+      agent_id: Number(data.agent_id),
+      task_id: String(data.task_id),
+      allocation: String(data.allocation),
+    },
   };
 }
