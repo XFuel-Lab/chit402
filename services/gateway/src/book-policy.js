@@ -12,6 +12,8 @@
  *   kill_switch         — all spend blocked when set
  *   require_payment_ref — block new spend when ledger rows lack payment.ref
  *   tier2_above         — spend at/above $X requires Tier-2 proof_tier on the request
+ *   approval_ttl        — seconds after which high-blast SessionAct needs a fresh challenge
+ *   risk_tiers          — optional override: { high: string[], low: string[] } for SessionAct actions
  *
  * Policy rows are stored separately from usage rows. Possession holder writes them;
  * gateway enforces them. Demo never writes policy rows.
@@ -20,6 +22,7 @@
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { normalizeSessionActAction } from './session-act.js';
 
 export const POLICY_TYPES = {
   DAILY_CAP: 'daily_cap',
@@ -28,7 +31,18 @@ export const POLICY_TYPES = {
   KILL_SWITCH: 'kill_switch',
   REQUIRE_PAYMENT_REF: 'require_payment_ref',
   TIER2_ABOVE: 'tier2_above',
+  APPROVAL_TTL: 'approval_ttl',
+  RISK_TIERS: 'risk_tiers',
 };
+
+/** Default SessionAct risk classification when risk_tiers is unset. */
+export const DEFAULT_RISK_TIERS = Object.freeze({
+  high: Object.freeze(['handoff', 'redeem']),
+  low: Object.freeze(['read_private']),
+});
+
+export const APPROVAL_TTL_SEC_MIN = 60;
+export const APPROVAL_TTL_SEC_MAX = 604800; // 7 days
 
 export class BookPolicyStore {
   /**
@@ -153,6 +167,20 @@ export class BookPolicyStore {
           return { ok: false, reason: 'invalid tier2_above value' };
         }
         policy[policyType] = { threshold: threshold.toString() };
+      } else if (policyType === POLICY_TYPES.APPROVAL_TTL) {
+        const seconds = clampApprovalTtlSec(value);
+        if (seconds == null) return { ok: false, reason: 'invalid approval_ttl value' };
+        policy[policyType] = { seconds };
+      } else if (policyType === POLICY_TYPES.RISK_TIERS) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+          return { ok: false, reason: 'risk_tiers must be an object with high/low arrays' };
+        }
+        const high = Array.isArray(value.high) ? value.high.map((a) => normalizeSessionActAction(a)).filter(Boolean) : [];
+        const low = Array.isArray(value.low) ? value.low.map((a) => normalizeSessionActAction(a)).filter(Boolean) : [];
+        if (!high.length && !low.length) {
+          return { ok: false, reason: 'risk_tiers requires at least one high or low action' };
+        }
+        policy[policyType] = { high, low };
       }
     }
 
@@ -198,6 +226,146 @@ function nextHourUTC() {
     0, 0, 0,
   ));
   return next.toISOString();
+}
+
+export function clampApprovalTtlSec(value) {
+  if (value == null || value === '') return null;
+  const raw = typeof value === 'object' && value != null && value.seconds != null
+    ? value.seconds
+    : value;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const sec = Math.floor(n);
+  if (sec < APPROVAL_TTL_SEC_MIN || sec > APPROVAL_TTL_SEC_MAX) return null;
+  return sec;
+}
+
+function riskTiersOf(policy) {
+  const custom = policy?.[POLICY_TYPES.RISK_TIERS];
+  if (custom && (custom.high?.length || custom.low?.length)) {
+    return {
+      high: (custom.high || []).map((a) => normalizeSessionActAction(a)),
+      low: (custom.low || []).map((a) => normalizeSessionActAction(a)),
+    };
+  }
+  return {
+    high: [...DEFAULT_RISK_TIERS.high],
+    low: [...DEFAULT_RISK_TIERS.low],
+  };
+}
+
+/**
+ * Classify a SessionAct action as high-blast or low-blast.
+ * @param {string} action
+ * @param {object|null} policyRow
+ * @returns {'high'|'low'|'unknown'}
+ */
+export function classifySessionActRisk(action, policyRow = null) {
+  const act = normalizeSessionActAction(action);
+  if (!act) return 'unknown';
+  const tiers = riskTiersOf(policyRow);
+  if (tiers.high.includes(act)) return 'high';
+  if (tiers.low.includes(act)) return 'low';
+  return 'unknown';
+}
+
+function approvalTtlSecOf(policyRow) {
+  if (!policyRow?.[POLICY_TYPES.APPROVAL_TTL]) return null;
+  return clampApprovalTtlSec(policyRow[POLICY_TYPES.APPROVAL_TTL].seconds
+    ?? policyRow[POLICY_TYPES.APPROVAL_TTL]);
+}
+
+/**
+ * In-memory store: last high-blast SessionAct approval per delegation_hash.
+ */
+export class SessionActApprovalStore {
+  constructor() {
+    /** @type {Map<string, number>} delegation_hash → unix sec */
+    this.byDelegation = new Map();
+  }
+
+  _key(delegationHash) {
+    return String(delegationHash || '').toLowerCase();
+  }
+
+  getLastHighBlastAt(delegationHash) {
+    const at = this.byDelegation.get(this._key(delegationHash));
+    return at != null ? Number(at) : null;
+  }
+
+  recordHighBlast(delegationHash, now = null) {
+    const clock = now != null ? Math.floor(Number(now)) : Math.floor(Date.now() / 1000);
+    this.byDelegation.set(this._key(delegationHash), clock);
+    return clock;
+  }
+
+  /** Test helper */
+  clear() {
+    this.byDelegation.clear();
+  }
+}
+
+let _approvalStore = null;
+
+export function getSessionActApprovalStore() {
+  if (!_approvalStore) _approvalStore = new SessionActApprovalStore();
+  return _approvalStore;
+}
+
+export function resetSessionActApprovalStore() {
+  _approvalStore = null;
+}
+
+/**
+ * Enforce approval_ttl for high-blast SessionAct before nonce consumption.
+ *
+ * @param {number|string} agentId
+ * @param {string} action
+ * @param {{ hasFreshChallenge?: boolean, delegationHash?: string|null, now?: number|null }} ctx
+ * @param {{ policy?: BookPolicyStore, approvalStore?: SessionActApprovalStore }} deps
+ */
+export function enforceSessionActApproval(agentId, action, ctx = {}, { policy, approvalStore } = {}) {
+  if (!policy) return { allowed: true };
+
+  const id = Number(agentId);
+  const p = policy.get(id);
+  const ttlSec = approvalTtlSecOf(p);
+  if (!ttlSec) return { allowed: true };
+
+  const risk = classifySessionActRisk(action, p);
+  if (risk !== 'high') return { allowed: true };
+
+  if (ctx.hasFreshChallenge) {
+    return { allowed: true, refreshOnSuccess: true, risk };
+  }
+
+  const hash = ctx.delegationHash;
+  const store = approvalStore || getSessionActApprovalStore();
+  const lastAt = hash ? store.getLastHighBlastAt(hash) : null;
+  const clock = ctx.now != null ? Math.floor(Number(ctx.now)) : Math.floor(Date.now() / 1000);
+
+  if (lastAt == null) {
+    return {
+      allowed: false,
+      reason: 'high-blast SessionAct requires a fresh challenge before first approval',
+      code: 'approval_ttl_expired',
+      risk,
+      approval_ttl_sec: ttlSec,
+    };
+  }
+
+  if (clock - lastAt <= ttlSec) {
+    return { allowed: true, refreshOnSuccess: true, risk };
+  }
+
+  return {
+    allowed: false,
+    reason: `high-blast SessionAct approval expired after ${ttlSec}s — request a fresh challenge`,
+    code: 'approval_ttl_expired',
+    risk,
+    approval_ttl_sec: ttlSec,
+    last_approval_at: lastAt,
+  };
 }
 
 function tier2ProofRequested(proofTier) {
@@ -330,7 +498,13 @@ export function resetBookPolicyStore() {
 export default {
   BookPolicyStore,
   POLICY_TYPES,
+  DEFAULT_RISK_TIERS,
   enforcePolicy,
+  enforceSessionActApproval,
+  classifySessionActRisk,
+  SessionActApprovalStore,
   getBookPolicyStore,
   resetBookPolicyStore,
+  getSessionActApprovalStore,
+  resetSessionActApprovalStore,
 };

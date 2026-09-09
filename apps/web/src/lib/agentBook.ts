@@ -167,6 +167,8 @@ export interface BookPolicy {
   kill_switch?: boolean;
   require_payment_ref?: boolean;
   tier2_above?: { threshold: string };
+  approval_ttl?: { seconds: number };
+  risk_tiers?: { high: string[]; low: string[] };
   created_at?: string;
   updated_at?: string;
 }
@@ -182,7 +184,9 @@ export type PolicyType =
   | 'model_allowlist'
   | 'kill_switch'
   | 'require_payment_ref'
-  | 'tier2_above';
+  | 'tier2_above'
+  | 'approval_ttl'
+  | 'risk_tiers';
 
 /** GET /v1/agents/:agent_id/book/policy */
 export async function fetchBookPolicy(
