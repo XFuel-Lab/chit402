@@ -118,6 +118,7 @@ export default function Book() {
   const [modelAllowlistDraft, setModelAllowlistDraft] = useState('');
   const [tier2AboveDraft, setTier2AboveDraft] = useState('');
   const [requirePaymentRef, setRequirePaymentRef] = useState(false);
+  const [approvalTtlDraft, setApprovalTtlDraft] = useState('');
   const [exportMessage, setExportMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -135,6 +136,7 @@ export default function Book() {
     setModelAllowlistDraft(p?.model_allowlist?.join(', ') || '');
     setTier2AboveDraft(p?.tier2_above?.threshold ? formatUsdc(p.tier2_above.threshold) : '');
     setRequirePaymentRef(!!p?.require_payment_ref);
+    setApprovalTtlDraft(p?.approval_ttl?.seconds != null ? String(p.approval_ttl.seconds) : '');
   }, [apiV1]);
 
   useEffect(() => {
@@ -325,6 +327,19 @@ export default function Book() {
       return;
     }
     updates.push({ type: 'tier2_above', value: tier2Parsed });
+
+    const ttlTrim = approvalTtlDraft.trim();
+    let approvalTtlValue: number | null = null;
+    if (ttlTrim) {
+      const parsed = Number(ttlTrim);
+      if (!Number.isFinite(parsed) || parsed < 60 || parsed > 604800) {
+        setPolicySaving(false);
+        setPolicyMessage('Approval TTL: enter seconds between 60 and 604800, or leave empty to clear.');
+        return;
+      }
+      approvalTtlValue = Math.floor(parsed);
+    }
+    updates.push({ type: 'approval_ttl', value: approvalTtlValue });
 
     for (const u of updates) {
       const result = await setBookPolicy(apiV1, { agentId, session, policyType: u.type, value: u.value });
@@ -647,6 +662,22 @@ export default function Book() {
                     onChange={(e) => setTier2AboveDraft(e.target.value)}
                   />
                 </label>
+                <label className="book-field">
+                  <span className="book-field-label">SessionAct approval TTL (seconds)</span>
+                  <input
+                    className="input"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="empty = no re-challenge window"
+                    value={approvalTtlDraft}
+                    onChange={(e) => setApprovalTtlDraft(e.target.value)}
+                  />
+                </label>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', margin: 0 }}>
+                  High-blast acts (<code>handoff</code>, <code>redeem</code>) need a fresh challenge after TTL.
+                  Low-blast (<code>read_private</code>) is unaffected. Blocked hops appear as{' '}
+                  <code>policy_blocked</code> on this book.
+                </p>
               </div>
               <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <button

@@ -62,7 +62,14 @@ import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger } from './usage-settled.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
 import { recordBookInflow, correctBookInflow } from './book-inflow.js';
-import { BookPolicyStore, POLICY_TYPES, enforcePolicy } from './book-policy.js';
+import {
+  BookPolicyStore,
+  POLICY_TYPES,
+  enforcePolicy,
+  enforceSessionActApproval,
+  getSessionActApprovalStore,
+  classifySessionActRisk,
+} from './book-policy.js';
 import { BookAssignmentStore, GRANT_TYPES, readSliceByToken } from './book-assign.js';
 import { BookDisputeStore, CLAIM_TYPES, OUTCOME_TYPES, fileAndAdjudicate } from './book-dispute.js';
 import { BookEscrowStore, handleEscrowAction } from './book-escrow.js';
@@ -316,7 +323,7 @@ POST /v1/chat/completions is bait. A holder can prove: lineage, policy, assignme
 
 - GET|POST /v1/agents/:agent_id/book : last-N collected spend + budget Y / remaining. Possession-gated.
 - GET /v1/agents/:agent_id/book/lineage/:task_id : walk A→B→inference. A2A disputes need this.
-- GET|POST /v1/agents/:agent_id/book/policy : caps as rows. daily_cap, hourly_cap, model_allowlist, kill_switch, require_payment_ref, tier2_above. Live policy_blocked rows appear on the book when a cap trips mid-burn (no USDC charge).
+- GET|POST /v1/agents/:agent_id/book/policy : caps as rows. daily_cap, hourly_cap, model_allowlist, kill_switch, require_payment_ref, tier2_above, approval_ttl, risk_tiers. Live policy_blocked rows appear on the book when a cap trips mid-burn (no USDC charge).
 - Intent grouping: pass X-XFuel-Intent (or body intent_id) + X-XFuel-Attempt on chat/completions so retries share one intent bill.
 - GET|POST /v1/agents/:agent_id/book/export : possession-gated CSV / JSON audit pack / print HTML. format=csv|json|html.
 - GET|POST /v1/agents/:agent_id/book/assign : grant read/collect of a slice to another owner.
@@ -681,6 +688,7 @@ export function createApp() {
   const sessionActStore = getSessionActStore({
     ttlSec: config.sessionDelegation?.actChallengeTtlSec,
   });
+  const sessionActApprovalStore = getSessionActApprovalStore();
   const sessionIssuerUri = (req) => baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
   const sessionDomainOpts = (req) => ({
     verifyingContract: config.sessionDelegation?.verifyingContract,
@@ -771,6 +779,58 @@ export function createApp() {
       return acceptSessionAct({ ...acceptOpts, challenge: null });
     }
     return { ok: false, reason: 'challenge_or_nonce_required' };
+  }
+
+  function resolveAgentForSession(session) {
+    if (!session?.agent_pubkey || typeof agentRegistry?.getByWallet !== 'function') return null;
+    return agentRegistry.getByWallet(session.agent_pubkey);
+  }
+
+  /**
+   * Pre-check approval_ttl before SessionAct nonce consumption.
+   * Records policy_blocked on the agent book when high-blast approval expired.
+   */
+  function gateSessionActApproval(req, { action, delegationHash, session = null } = {}) {
+    const hash = delegationHash || req.params?.delegation_hash || req.body?.delegation_hash;
+    const bound = session || (hash ? sessionStore.get(hash) : null);
+    if (!bound || !action) return { allowed: true };
+
+    const identity = resolveAgentForSession(bound);
+    if (!identity) return { allowed: true };
+
+    const challengeId = req.body?.challenge_id || req.body?.challengeId
+      || req.headers['x-xfuel-session-challenge'];
+    const check = enforceSessionActApproval(
+      identity.agent_id,
+      action,
+      {
+        hasFreshChallenge: !!challengeId,
+        delegationHash: hash,
+      },
+      { policy: bookPolicy, approvalStore: sessionActApprovalStore },
+    );
+    if (check.allowed) return check;
+
+    const taskId = `policy-sa-${crypto.randomBytes(8).toString('hex')}`;
+    if (usageSettled && typeof usageSettled.recordPolicyBlocked === 'function') {
+      usageSettled.recordPolicyBlocked({
+        agentId: identity.agent_id,
+        taskId,
+        policyCode: check.code || 'approval_ttl_expired',
+        reason: check.reason || 'SessionAct approval expired',
+      });
+    }
+    return { ...check, allowed: false, agent_id: identity.agent_id, task_id: taskId };
+  }
+
+  function recordSessionActApproval(accepted) {
+    if (!accepted?.delegation_hash || !accepted?.action) return;
+    const identity = resolveAgentForSession(accepted.session);
+    const policyRow = identity ? bookPolicy.get(identity.agent_id) : null;
+    const risk = classifySessionActRisk(accepted.action, policyRow);
+    if (risk === 'high') {
+      sessionActApprovalStore.recordHighBlast(accepted.delegation_hash);
+    }
   }
 
   function issueChildHandoff(req, parent, session, sessionAct = null) {
@@ -2582,6 +2642,21 @@ export function createApp() {
         const hash = req.body?.delegation_hash
           || req.params?.delegation_hash
           || sessionActStore.peek(challengeId)?.delegation_hash;
+        const approvalGate = gateSessionActApproval(req, {
+          action: SESSION_ACT_ACTIONS.HANDOFF,
+          delegationHash: hash,
+        });
+        if (!approvalGate.allowed) {
+          return res.status(403).json({
+            error: 'policy_blocked',
+            type: 'policy_blocked',
+            code: approvalGate.code || 'approval_ttl_expired',
+            reason: approvalGate.reason,
+            message: approvalGate.reason,
+            agent_id: approvalGate.agent_id,
+            task_id: approvalGate.task_id,
+          });
+        }
         const accepted = proveKeyFromRequest(req, hash, {
           action: SESSION_ACT_ACTIONS.HANDOFF,
           resource: parent.taskId,
@@ -2595,6 +2670,9 @@ export function createApp() {
           });
         }
         const executed = executeSessionAct(req, { ...accepted, action: SESSION_ACT_ACTIONS.HANDOFF, resource: parent.taskId });
+        if (executed.status >= 200 && executed.status < 300) {
+          recordSessionActApproval(accepted);
+        }
         return res.status(executed.status).json(executed.body);
       }
 
@@ -2741,6 +2819,20 @@ export function createApp() {
           message: `Unknown SessionAct action; v1 supports ${SESSION_ACT_ACTION_LIST.join(', ')}`,
         });
       }
+      const actionHint = action || req.body?.action;
+      const approvalGate = gateSessionActApproval(req, { action: actionHint, delegationHash: hash });
+      if (!approvalGate.allowed) {
+        return res.status(403).json({
+          error: 'policy_blocked',
+          type: 'policy_blocked',
+          code: approvalGate.code || 'approval_ttl_expired',
+          reason: approvalGate.reason,
+          message: approvalGate.reason,
+          agent_id: approvalGate.agent_id,
+          task_id: approvalGate.task_id,
+          ...sessionActTypesHint(req),
+        });
+      }
       const accepted = proveKeyFromRequest(req, hash);
       if (!accepted.ok) {
         const err = sessionActHttpError(accepted.reason);
@@ -2763,6 +2855,9 @@ export function createApp() {
         });
       }
       const executed = executeSessionAct(req, accepted);
+      if (executed.status >= 200 && executed.status < 300) {
+        recordSessionActApproval(accepted);
+      }
       return res.status(executed.status).json(executed.body);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /v1/sessions/:delegation_hash/act error');
@@ -3312,7 +3407,8 @@ export function createApp() {
   });
 
   // POST /v1/agents/:agent_id/book/policy — Possession-gated policy management
-  // Set daily_cap, hourly_cap, model_allowlist, kill_switch, require_payment_ref, tier2_above.
+  // Set daily_cap, hourly_cap, model_allowlist, kill_switch, require_payment_ref, tier2_above,
+  // approval_ttl, risk_tiers.
   app.post('/v1/agents/:agent_id/book/policy', (req, res) => {
     try {
       const body = req.body || {};

@@ -25,7 +25,15 @@ process.env.RECEIPT_SIGNING_SECRET = 'test-book-ext-secret';
 const { AgentRegistry } = await import('../src/agent-registry.js');
 const { UsageSettledLedger, recordCollectedSpend } = await import('../src/usage-settled.js');
 const { readAgentBook, bindBookVerifier, queryLineage, exportAgentBook, buildBookExportCsv, buildBookAuditPack } = await import('../src/agent-book.js');
-const { BookPolicyStore, POLICY_TYPES, enforcePolicy } = await import('../src/book-policy.js');
+const {
+  BookPolicyStore,
+  POLICY_TYPES,
+  DEFAULT_RISK_TIERS,
+  enforcePolicy,
+  enforceSessionActApproval,
+  classifySessionActRisk,
+  SessionActApprovalStore,
+} = await import('../src/book-policy.js');
 const { BookAssignmentStore, GRANT_TYPES, filterBySlice, readSliceByToken } = await import('../src/book-assign.js');
 const { BookDisputeStore, CLAIM_TYPES, OUTCOME_TYPES, fileAndAdjudicate, recheckDispute } = await import('../src/book-dispute.js');
 
@@ -267,6 +275,83 @@ describe('Caps as Rows', () => {
 
     const below = enforcePolicy(1, { amount: '40000' }, { policy });
     assert.equal(below.allowed, true);
+  });
+
+  test('set and get policy: approval_ttl', () => {
+    const policy = new BookPolicyStore();
+    const result = policy.set(1, POLICY_TYPES.APPROVAL_TTL, 3600);
+    assert.equal(result.ok, true);
+    assert.equal(result.policy.approval_ttl.seconds, 3600);
+
+    const bad = policy.set(1, POLICY_TYPES.APPROVAL_TTL, 10);
+    assert.equal(bad.ok, false);
+  });
+
+  test('set and get policy: risk_tiers override', () => {
+    const policy = new BookPolicyStore();
+    const result = policy.set(1, POLICY_TYPES.RISK_TIERS, {
+      high: ['handoff'],
+      low: ['read_private', 'redeem'],
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.policy.risk_tiers.high, ['handoff']);
+    assert.deepEqual(result.policy.risk_tiers.low, ['read_private', 'redeem']);
+  });
+
+  test('classifySessionActRisk uses defaults and custom tiers', () => {
+    assert.equal(classifySessionActRisk('handoff'), 'high');
+    assert.equal(classifySessionActRisk('read_private'), 'low');
+    assert.equal(classifySessionActRisk('redeem'), 'high');
+    assert.equal(classifySessionActRisk('unknown_act'), 'unknown');
+    assert.deepEqual(DEFAULT_RISK_TIERS.high, ['handoff', 'redeem']);
+
+    const policy = new BookPolicyStore();
+    policy.set(1, POLICY_TYPES.RISK_TIERS, { high: ['redeem'], low: ['handoff', 'read_private'] });
+    const row = policy.get(1);
+    assert.equal(classifySessionActRisk('handoff', row), 'low');
+    assert.equal(classifySessionActRisk('redeem', row), 'high');
+  });
+
+  test('enforceSessionActApproval: low-blast unaffected; high-blast needs challenge after TTL', () => {
+    const policy = new BookPolicyStore();
+    const approvals = new SessionActApprovalStore();
+    policy.set(1, POLICY_TYPES.APPROVAL_TTL, 120);
+    const now = 1_700_000_000;
+
+    const low = enforceSessionActApproval(1, 'read_private', { delegationHash: '0x' + 'aa'.repeat(32), now }, { policy, approvalStore: approvals });
+    assert.equal(low.allowed, true);
+
+    const firstHigh = enforceSessionActApproval(1, 'handoff', {
+      delegationHash: '0x' + 'bb'.repeat(32),
+      hasFreshChallenge: false,
+      now,
+    }, { policy, approvalStore: approvals });
+    assert.equal(firstHigh.allowed, false);
+    assert.equal(firstHigh.code, 'approval_ttl_expired');
+
+    const challenged = enforceSessionActApproval(1, 'handoff', {
+      delegationHash: '0x' + 'bb'.repeat(32),
+      hasFreshChallenge: true,
+      now,
+    }, { policy, approvalStore: approvals });
+    assert.equal(challenged.allowed, true);
+
+    approvals.recordHighBlast('0x' + 'bb'.repeat(32), now - 30);
+    const within = enforceSessionActApproval(1, 'handoff', {
+      delegationHash: '0x' + 'bb'.repeat(32),
+      hasFreshChallenge: false,
+      now,
+    }, { policy, approvalStore: approvals });
+    assert.equal(within.allowed, true);
+
+    approvals.recordHighBlast('0x' + 'bb'.repeat(32), now - 200);
+    const expired = enforceSessionActApproval(1, 'handoff', {
+      delegationHash: '0x' + 'bb'.repeat(32),
+      hasFreshChallenge: false,
+      now,
+    }, { policy, approvalStore: approvals });
+    assert.equal(expired.allowed, false);
+    assert.equal(expired.code, 'approval_ttl_expired');
   });
 });
 
