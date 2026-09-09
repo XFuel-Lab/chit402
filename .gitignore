@@ -46,7 +46,6 @@ coverage.json
 !.env.example
 !.env.benchmark.example
 !env.example
-!env.docker.example
 
 # SECURITY: Never commit files with real credentials
 ENV_LOCAL_REFERENCE.md
