@@ -155,13 +155,14 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
     '/v1/book/slice',
     '/v1/agents/{agent_id}/book/dispute',
     '/v1/agents/{agent_id}/book/escrow',
+    '/v1/agents/{agent_id}/book/webhook',
     '/v1/agents/{agent_id}/book/rotate',
     '/receipt/{taskId}',
     '/receipt/by-tx',
     '/public/specimens/hemei-stranger-export.csv',
     '/public/specimens/hemei-stranger-export.json',
     '/public/specimens/hemei-path-rotate-observe.json',
-  ], 'chat completions is the public door; responses is the same floor; a2a is same floor; task-request is M2M; register is identity; book is possession-gated; ingest is foreign x402; lineage/policy/assign/dispute/escrow/rotate are book extensions; receipt endpoints are public verification; specimens are stranger-auditable fixtures');
+  ], 'chat completions is the public door; responses is the same floor; a2a is same floor; task-request is M2M; register is identity; book is possession-gated; ingest is foreign x402; lineage/policy/assign/dispute/escrow/webhook/rotate are book extensions; receipt endpoints are public verification; specimens are stranger-auditable fixtures');
   assert.equal(spec.paths['/v1/agents/register'].post['x-payment-info'], undefined,
     'register is not the paid door');
   assert.equal(spec.paths['/v1/agents/{agent_id}/book'].post['x-payment-info'], undefined,
@@ -171,6 +172,8 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
     'ingest is not the paid door');
   assert.equal(spec.paths['/v1/agents/{agent_id}/book/escrow'].post['x-payment-info'], undefined,
     'escrow is not the paid door');
+  assert.equal(spec.paths['/v1/agents/{agent_id}/book/webhook'].put['x-payment-info'], undefined,
+    'book webhook is not the paid door');
 
   const chat = spec.paths['/v1/chat/completions'].post;
   const a2a = spec.paths['/a2a-message'].post;

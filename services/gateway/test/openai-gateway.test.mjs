@@ -62,6 +62,7 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
     '/v1/book/slice',
     '/v1/agents/{agent_id}/book/dispute',
     '/v1/agents/{agent_id}/book/escrow',
+    '/v1/agents/{agent_id}/book/webhook',
     '/v1/agents/{agent_id}/book/rotate',
     '/receipt/{taskId}',
     '/receipt/by-tx',
@@ -73,6 +74,7 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
   assert.equal(spec.paths['/v1/agents/{agent_id}/book'].post['x-payment-info'], undefined);
   assert.equal(spec.paths['/v1/agents/{agent_id}/book/ingest'].post['x-payment-info'], undefined);
   assert.equal(spec.paths['/v1/agents/{agent_id}/book/escrow'].post['x-payment-info'], undefined);
+  assert.equal(spec.paths['/v1/agents/{agent_id}/book/webhook'].put['x-payment-info'], undefined);
   const chat = spec.paths['/v1/chat/completions'].post;
   assert.ok(chat.responses[402] || chat.responses['402']);
   assert.equal(chat['x-payment-info'].price.amount, '0.002');
