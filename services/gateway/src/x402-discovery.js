@@ -1431,6 +1431,48 @@ export function buildOpenApiSpec(baseUrl = '') {
           },
         },
       },
+      '/public/specimens/hemei-stranger-export.csv': {
+        get: {
+          operationId: 'getHemeiStrangerExportCsv',
+          summary: 'Redacted book export CSV specimen (stranger-auditable)',
+          description:
+            'Public, unauthenticated redacted CSV matching /v1/agents/{agent_id}/book/export shape. '
+            + 'No live session tokens. See docs/product/hemei-stranger-specimens.md.',
+          tags: ['Specimens'],
+          responses: {
+            200: { description: 'Redacted CSV export specimen.' },
+            404: { description: 'Unknown specimen.' },
+          },
+        },
+      },
+      '/public/specimens/hemei-stranger-export.json': {
+        get: {
+          operationId: 'getHemeiStrangerExportJson',
+          summary: 'Redacted book audit pack JSON specimen (stranger-auditable)',
+          description:
+            'Public chit402.book_audit.v1 specimen with evidence, inflow_claim, and payment_ref fields. '
+            + 'No live session tokens. See docs/product/hemei-stranger-specimens.md.',
+          tags: ['Specimens'],
+          responses: {
+            200: { description: 'Redacted JSON audit pack specimen.' },
+            404: { description: 'Unknown specimen.' },
+          },
+        },
+      },
+      '/public/specimens/hemei-path-rotate-observe.json': {
+        get: {
+          operationId: 'getHemeiPathRotateObserve',
+          summary: 'Path-rotate observation fixture',
+          description:
+            'Observation-only JSON proving payer_wallet ↔ payment.ref survive session rotate. '
+            + 'POST /book/rotate remains possession-gated. See docs/product/hemei-stranger-specimens.md.',
+          tags: ['Specimens'],
+          responses: {
+            200: { description: 'Path-rotate observe fixture.' },
+            404: { description: 'Unknown specimen.' },
+          },
+        },
+      },
     },
   };
 

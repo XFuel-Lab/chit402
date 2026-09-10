@@ -111,10 +111,19 @@ import { getJwks, initIssuerKey } from './issuer-key.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
+const GATEWAY_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 const X402LIST_TXT = readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), 'x402list.txt'),
+  path.join(GATEWAY_SRC_DIR, 'x402list.txt'),
   'utf8',
 );
+
+/** Public redacted specimens (hemei stranger-auditable gaps A+B). No session tokens. */
+const PUBLIC_SPECIMENS = {
+  'hemei-stranger-export.csv': { type: 'text/csv; charset=utf-8' },
+  'hemei-stranger-export.json': { type: 'application/json; charset=utf-8' },
+  'hemei-path-rotate-observe.json': { type: 'application/json; charset=utf-8' },
+};
+const PUBLIC_SPECIMENS_DIR = path.join(GATEWAY_SRC_DIR, '../public/specimens');
 
 const AI_TASK_FEE_BPS = parseInt(process.env.AI_TASK_FEE_BPS) || 50;   // 0.5%
 const MAX_FEE_BPS     = 100;  // 1.0%
@@ -3002,6 +3011,23 @@ export function createApp() {
 
   app.get('/llms.txt', (_req, res) => {
     res.type('text/plain; charset=utf-8').send(LLMS_TXT);
+  });
+
+  // GET /public/specimens/:name — redacted stranger-auditable fixtures (no auth).
+  app.get('/public/specimens/:name', rateLimit, (req, res) => {
+    const name = path.basename(String(req.params.name || ''));
+    const meta = PUBLIC_SPECIMENS[name];
+    if (!meta) {
+      return res.status(404).json({ error: 'not_found', message: 'Unknown specimen' });
+    }
+    try {
+      const body = readFileSync(path.join(PUBLIC_SPECIMENS_DIR, name), 'utf8');
+      res.set('Cache-Control', 'public, max-age=3600');
+      return res.type(meta.type).send(body);
+    } catch (err) {
+      logger.error({ err, specimen: name, reqId: req.id }, 'GET /public/specimens error');
+      return res.status(500).json({ error: 'internal', message: 'Specimen unavailable' });
+    }
   });
 
   // Chit402-native icon for directory/search surfaces.
