@@ -59,8 +59,9 @@ import { buildPaymentChallenge } from './x402-adapter.js';
 import { CHIT402_ICON_SVG, XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
-import { UsageSettledLedger } from './usage-settled.js';
+import { UsageSettledLedger, setBookRowWrittenHook } from './usage-settled.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
+import { getBookWebhookRegistry, scheduleBookWebhook, manageBookWebhook } from './book-webhook.js';
 import { recordBookInflow, correctBookInflow } from './book-inflow.js';
 import {
   BookPolicyStore,
@@ -672,6 +673,12 @@ export function createApp() {
   const usageSettled = new UsageSettledLedger({
     dir: agentsDir,
     persist: !!config.taskStore?.persist,
+  });
+  setBookRowWrittenHook((entry) => {
+    scheduleBookWebhook(entry, {
+      registry: getBookWebhookRegistry(),
+      baseUrl: config.service.publicBaseUrl || 'https://api.chit402.com',
+    });
   });
   const bookPolicy = new BookPolicyStore({
     dir: agentsDir,
@@ -3869,6 +3876,29 @@ export function createApp() {
     }
   });
 
+  function sendBookWebhook(req, res) {
+    try {
+      const claim = claimFromRequest(req);
+      const result = manageBookWebhook(req.params.agent_id, req.method, claim, req.body || {}, {
+        verify: verifyBook,
+        registry: getBookWebhookRegistry(),
+      });
+      if (result.body == null) {
+        return res.status(result.status).end();
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'book webhook error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  }
+
+  // PUT|POST|GET|DELETE /v1/agents/:agent_id/book/webhook — treasury desk push (possession-gated)
+  app.put('/v1/agents/:agent_id/book/webhook', sendBookWebhook);
+  app.post('/v1/agents/:agent_id/book/webhook', sendBookWebhook);
+  app.get('/v1/agents/:agent_id/book/webhook', sendBookWebhook);
+  app.delete('/v1/agents/:agent_id/book/webhook', sendBookWebhook);
+
   registerOpenAIRoutes(app, {
     rateLimit, authenticate, isAuthorised, ledger: usageSettled, registry: agentRegistry,
     sessionStore,
@@ -3880,7 +3910,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/export, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/escrow, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/:delegation_hash/challenge, POST /v1/sessions/:delegation_hash/act, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/export, PUT|POST|GET|DELETE /v1/agents/:agent_id/book/webhook, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/escrow, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/:delegation_hash/challenge, POST /v1/sessions/:delegation_hash/act, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 
