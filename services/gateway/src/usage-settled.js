@@ -11,6 +11,22 @@ import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
 
+/** Optional async hook when a new book row is indexed (not on load/replay). */
+let bookRowWrittenHook = null;
+export function setBookRowWrittenHook(fn) {
+  bookRowWrittenHook = typeof fn === 'function' ? fn : null;
+}
+
+function emitBookRowWritten(entry) {
+  if (bookRowWrittenHook) {
+    try {
+      bookRowWrittenHook(entry);
+    } catch (err) {
+      logger.warn({ err: err.message, taskId: entry?.task_id }, 'book row written hook failed');
+    }
+  }
+}
+
 const UNMETERED_RAILS = new Set(['unmetered', 'demo', 'free']);
 
 /** Book/export evidence — never treat missing possession proof as zero payment. */
@@ -226,7 +242,7 @@ export class UsageSettledLedger {
     }
   }
 
-  _index(row, { persist = true } = {}) {
+  _index(row, { persist = true, notify = true } = {}) {
     this.entries.push(row);
     if (row.payment_ref) this.byRef.set(String(row.payment_ref), row);
     if (row.task_id) this.byTask.set(String(row.task_id), row);
@@ -236,6 +252,9 @@ export class UsageSettledLedger {
       } catch (err) {
         logger.warn({ err: err.message }, 'usage-settled: append failed');
       }
+    }
+    if (notify && persist) {
+      emitBookRowWritten(row);
     }
   }
 

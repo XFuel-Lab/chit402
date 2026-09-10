@@ -487,6 +487,74 @@ const AGENTS_BOOK_INGEST_OUTPUT_SCHEMA = {
   },
 };
 
+const AGENTS_BOOK_WEBHOOK_INPUT_SCHEMA = {
+  type: 'object',
+  required: ['url'],
+  properties: {
+    url: {
+      type: 'string',
+      format: 'uri',
+      description: 'HTTPS treasury desk endpoint. localhost/http allowed only in NODE_ENV=test.',
+    },
+    secret: {
+      type: 'string',
+      description: 'Optional shared HMAC secret. Omitted → server generates one (returned once as secret_once).',
+    },
+    events: {
+      type: 'array',
+      items: { type: 'string', enum: ['settle', 'inflow', 'policy_blocked', 'collected'] },
+      description: 'Subset of book events to push. Default: all.',
+    },
+  },
+};
+
+const AGENTS_BOOK_WEBHOOK_CONFIG_SCHEMA = {
+  type: 'object',
+  properties: {
+    agent_id: { type: 'integer' },
+    enabled: { type: 'boolean' },
+    url_host: { type: 'string', description: 'Registered URL host (full URL never echoed on GET).' },
+    url_path: { type: 'string', description: 'Registered URL path + query.' },
+    events: {
+      type: 'array',
+      items: { type: 'string', enum: ['settle', 'inflow', 'policy_blocked', 'collected'] },
+    },
+    has_secret: { type: 'boolean' },
+    deliveries: { type: 'integer' },
+    failures: { type: 'integer' },
+    lastStatus: { type: ['integer', 'null'] },
+    lastError: { type: ['string', 'null'] },
+  },
+};
+
+const BOOK_WEBHOOK_ENVELOPE_SCHEMA = {
+  type: 'object',
+  description: 'Signed push envelope (schema chit402.book_webhook.v1). HMAC-SHA256 over raw JSON body.',
+  properties: {
+    schema: { type: 'string', enum: ['chit402.book_webhook.v1'] },
+    delivery_id: { type: 'string', description: 'Idempotency key for treasury desk dedupe.' },
+    event: { type: 'string', enum: ['settle', 'inflow', 'policy_blocked', 'collected'] },
+    agent_id: { type: 'integer' },
+    task_id: { type: 'string' },
+    receipt_id: { type: 'string', description: 'Same as task_id.' },
+    evidence: { type: 'string' },
+    collected_at: { type: ['string', 'null'] },
+    hub: { type: ['string', 'null'] },
+    model: { type: ['string', 'null'] },
+    amount: { type: ['string', 'null'] },
+    payment_ref: { type: ['string', 'null'] },
+    rail: { type: ['string', 'null'] },
+    bucket: { type: ['string', 'null'] },
+    payer_wallet: { type: ['string', 'null'] },
+    intent_id: { type: ['string', 'null'] },
+    attempt_index: { type: ['integer', 'null'] },
+    replay_count: { type: ['integer', 'null'] },
+    verify_url: { type: 'string' },
+    explorer_url: { type: ['string', 'null'] },
+    emitted_at: { type: 'string' },
+  },
+};
+
 const AGENTS_BOOK_OP = {
   operationId: 'getAgentBook',
   summary: 'Possession-gated agent spend book',
@@ -1352,6 +1420,104 @@ export function buildOpenApiSpec(baseUrl = '') {
             401: { description: 'No possession proof.' },
             403: { description: 'Demo key or wrong proof.' },
             404: { description: 'Escrow not found.' },
+          },
+        },
+      },
+      '/v1/agents/{agent_id}/book/webhook': {
+        get: {
+          operationId: 'getBookWebhook',
+          summary: 'Get treasury webhook config (redacted)',
+          description:
+            'Possession-gated read of the per-agent book webhook. Returns url_host, enabled, events, '
+            + 'and delivery stats — never the full URL or secret after create. '
+            + 'Register once; rows push automatically (not request-per-row).',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          responses: {
+            200: {
+              description: 'Webhook config or null if unset.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      agent_id: { type: 'integer' },
+                      webhook: { ...AGENTS_BOOK_WEBHOOK_CONFIG_SCHEMA, nullable: true },
+                      supported_events: {
+                        type: 'array',
+                        items: { type: 'string' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Wrong proof or unknown agent_id.' },
+          },
+        },
+        put: {
+          operationId: 'putBookWebhook',
+          summary: 'Register or update treasury webhook',
+          description:
+            'Possession-gated PUT of HTTPS webhook URL + optional secret/events filter. '
+            + 'When a book row lands (settle, inflow, policy_blocked, collected), the gateway POSTs '
+            + 'a signed chit402.book_webhook.v1 envelope. Headers: X-Chit-Signature (alias X-XFuel-Signature).',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: AGENTS_BOOK_WEBHOOK_INPUT_SCHEMA } },
+          },
+          responses: {
+            200: {
+              description: 'Webhook registered. secret_once present only when server generated the secret.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      agent_id: { type: 'integer' },
+                      webhook: AGENTS_BOOK_WEBHOOK_CONFIG_SCHEMA,
+                      secret_once: { type: 'string', description: 'Shown once when auto-generated.' },
+                      supported_events: { type: 'array', items: { type: 'string' } },
+                    },
+                  },
+                },
+              },
+            },
+            400: { description: 'Invalid URL, event, or non-HTTPS.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Wrong proof or unknown agent_id.' },
+          },
+        },
+        post: {
+          operationId: 'postBookWebhook',
+          summary: 'Register or update treasury webhook (POST)',
+          description: 'Same as PUT; session in body or X-XFuel-Session header.',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: AGENTS_BOOK_WEBHOOK_INPUT_SCHEMA } },
+          },
+          responses: {
+            200: { description: 'Webhook registered.' },
+            400: { description: 'Invalid URL or events.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Wrong proof or unknown agent_id.' },
+          },
+        },
+        delete: {
+          operationId: 'deleteBookWebhook',
+          summary: 'Clear treasury webhook',
+          description: 'Possession-gated DELETE — stops push delivery for this agent_id.',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          responses: {
+            200: { description: 'Webhook removed.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Wrong proof or unknown agent_id.' },
           },
         },
       },
