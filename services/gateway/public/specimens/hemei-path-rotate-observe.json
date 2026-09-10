@@ -1,0 +1,40 @@
+{
+  "schema": "chit402.path_rotate_observe.v1",
+  "specimen": true,
+  "description": "Observation-only fixture proving payer_wallet ↔ payment.ref bindings survive session path-rotation. POST /v1/agents/:agent_id/book/rotate remains possession-gated — this file does not expose session tokens.",
+  "agent_id": 0,
+  "parent_receipt": {
+    "task_id": "chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e",
+    "wire_task_id": "xfuel-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e",
+    "payment_ref": "base:0x1f840073f8a55a7d0fe8ae0fe50bc99e4c8e9da5a946ec68c11e1b19c90cfe03",
+    "payer_wallet": "0xREDACTED…c90cfe03",
+    "amount": "2000",
+    "verify_url": "https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e"
+  },
+  "path_rotate": {
+    "path_label": "POST /v1/agents/{agent_id}/book/rotate",
+    "rotated_at": "2026-09-10T00:00:00.000Z",
+    "session_rotated": true,
+    "ledger_rows_unchanged": true,
+    "note": "Old possession session invalid after rotate; ledger bindings stay on agent_id."
+  },
+  "before_rotate": {
+    "payer_wallet": "0xREDACTED…c90cfe03",
+    "payment_ref": "base:0x1f840073f8a55a7d0fe8ae0fe50bc99e4c8e9da5a946ec68c11e1b19c90cfe03",
+    "totals_usdc_sum": "2000"
+  },
+  "after_rotate": {
+    "payer_wallet": "0xREDACTED…c90cfe03",
+    "payment_ref": "base:0x1f840073f8a55a7d0fe8ae0fe50bc99e4c8e9da5a946ec68c11e1b19c90cfe03",
+    "totals_usdc_sum": "2000",
+    "verify_url": "https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e",
+    "verify_url_resolves": true,
+    "verify_url_note": "Public GET /receipt/:taskId requires no session — settlement proof is receipt + chain, not possession."
+  },
+  "acceptance_source": "services/gateway/test/nak-nanaz-acceptance.test.mjs — describe B) Path-rotation prove",
+  "possession_gates_unchanged": [
+    "GET|POST /v1/agents/:agent_id/book",
+    "GET|POST /v1/agents/:agent_id/book/export",
+    "POST /v1/agents/:agent_id/book/rotate"
+  ]
+}
