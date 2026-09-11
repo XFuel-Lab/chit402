@@ -228,6 +228,41 @@ function nextHourUTC() {
   return next.toISOString();
 }
 
+/** Current UTC clock-hour start (joinable period id for hourly_cap). */
+export function currentHourStartUTC() {
+  const now = new Date();
+  return new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    now.getUTCHours(),
+    0, 0, 0,
+  )).toISOString();
+}
+
+/** Current UTC calendar-day start (joinable period id for daily_cap). */
+export function currentDayStartUTC() {
+  const now = new Date();
+  return new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    0, 0, 0, 0,
+  )).toISOString();
+}
+
+function capBlockSnapshot(policyKey, spent, cap, periodStart) {
+  const limit = BigInt(cap);
+  const spentBn = BigInt(spent);
+  return {
+    policy_key: policyKey,
+    spent_atomic: spentBn.toString(),
+    cap_atomic: limit.toString(),
+    period_start: periodStart,
+    remaining: (limit > spentBn ? limit - spentBn : 0n).toString(),
+  };
+}
+
 export function clampApprovalTtlSec(value) {
   if (value == null || value === '') return null;
   const raw = typeof value === 'object' && value != null && value.seconds != null
@@ -429,13 +464,19 @@ export function enforcePolicy(agentId, spend = {}, { policy, ledger } = {}) {
     const spendAmount = spend.amount ? BigInt(String(spend.amount)) : 0n;
 
     if (spentHour + spendAmount > limit) {
+      const snapshot = capBlockSnapshot(
+        POLICY_TYPES.HOURLY_CAP,
+        spentHour,
+        limit,
+        currentHourStartUTC(),
+      );
       return {
         allowed: false,
         reason: 'hourly cap exceeded',
         code: 'hourly_cap_exceeded',
-        spent_hour: spentHour.toString(),
-        hourly_cap: limit.toString(),
-        remaining: (limit > spentHour ? limit - spentHour : 0n).toString(),
+        ...snapshot,
+        spent_hour: snapshot.spent_atomic,
+        hourly_cap: snapshot.cap_atomic,
       };
     }
   }
@@ -455,13 +496,19 @@ export function enforcePolicy(agentId, spend = {}, { policy, ledger } = {}) {
     const spendAmount = spend.amount ? BigInt(String(spend.amount)) : 0n;
 
     if (spentToday + spendAmount > limit) {
+      const snapshot = capBlockSnapshot(
+        POLICY_TYPES.DAILY_CAP,
+        spentToday,
+        limit,
+        currentDayStartUTC(),
+      );
       return {
         allowed: false,
         reason: 'daily cap exceeded',
         code: 'daily_cap_exceeded',
-        spent_today: spentToday.toString(),
-        daily_cap: limit.toString(),
-        remaining: (limit > spentToday ? limit - spentToday : 0n).toString(),
+        ...snapshot,
+        spent_today: snapshot.spent_atomic,
+        daily_cap: snapshot.cap_atomic,
       };
     }
   }

@@ -78,8 +78,10 @@ const {
   bindBookVerifier,
   queryLineage,
   groupEntriesByIntent,
+  buildBookExportCsv,
+  buildBookAuditPack,
 } = await import('../src/agent-book.js');
-const { BookPolicyStore, POLICY_TYPES } = await import('../src/book-policy.js');
+const { BookPolicyStore, POLICY_TYPES, enforcePolicy, currentHourStartUTC } = await import('../src/book-policy.js');
 const { extractIntentMeta, resolveIntentFields } = await import('../src/intent-meta.js');
 const { createApp } = await import('../src/server.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
@@ -320,7 +322,7 @@ describe('policy_blocked mid-burn', () => {
     assert.equal(blockedRow.collected, false);
   });
 
-  test('hourly cap mid-sequence: policy_blocked without charge', async () => {
+  test('hourly cap mid-sequence: policy_blocked without charge + counter fields', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
     const policy = new BookPolicyStore();
@@ -329,13 +331,25 @@ describe('policy_blocked mid-burn', () => {
     });
     policy.set(recorded.agent_id, POLICY_TYPES.HOURLY_CAP, '60000');
 
+    const policyCheck = enforcePolicy(recorded.agent_id, { amount: '20000' }, { policy, ledger });
+    assert.equal(policyCheck.allowed, false);
+    assert.equal(policyCheck.code, 'hourly_cap_exceeded');
+    assert.equal(policyCheck.policy_key, POLICY_TYPES.HOURLY_CAP);
+    assert.equal(policyCheck.spent_atomic, '50000');
+    assert.equal(policyCheck.cap_atomic, '60000');
+    assert.equal(policyCheck.period_start, currentHourStartUTC());
+
     ledger.recordPolicyBlocked({
       agentId: recorded.agent_id,
       taskId: 'cap-block-task',
-      policyCode: 'hourly_cap_exceeded',
-      reason: 'hourly cap exceeded',
+      policyCode: policyCheck.code,
+      reason: policyCheck.reason,
       model: 'theta/qwen3',
       hub: 'theta',
+      policyKey: policyCheck.policy_key,
+      spentAtomic: policyCheck.spent_atomic,
+      capAtomic: policyCheck.cap_atomic,
+      periodStart: policyCheck.period_start,
     });
 
     const book = readAgentBook(recorded.agent_id, { session: recorded.session }, {
@@ -346,6 +360,22 @@ describe('policy_blocked mid-burn', () => {
     const blocked = book.body.entries.find((e) => e.event === 'policy_blocked');
     assert.ok(blocked);
     assert.equal(blocked.policy_code, 'hourly_cap_exceeded');
+    assert.equal(blocked.policy_key, 'hourly_cap');
+    assert.equal(blocked.spent_atomic, '50000');
+    assert.equal(blocked.cap_atomic, '60000');
+    assert.equal(blocked.period_start, currentHourStartUTC());
     assert.equal(book.body.spent, '50000', 'blocked hop must not increase spent');
+
+    const entries = ledger.listByAgent(recorded.agent_id);
+    const csv = buildBookExportCsv(entries, recorded.agent_id, 'https://api.chit402.com');
+    assert.match(csv, /policy_key,spent_atomic,cap_atomic,period_start/);
+    assert.match(csv, /hourly_cap,50000,60000/);
+
+    const pack = buildBookAuditPack(entries, recorded.agent_id, 'https://api.chit402.com');
+    const auditRow = pack.rows.find((r) => r.task_id === 'cap-block-task');
+    assert.equal(auditRow.policy_key, 'hourly_cap');
+    assert.equal(auditRow.spent_atomic, '50000');
+    assert.equal(auditRow.cap_atomic, '60000');
+    assert.equal(auditRow.period_start, currentHourStartUTC());
   });
 });

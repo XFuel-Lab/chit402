@@ -322,6 +322,22 @@ const AGENTS_BOOK_OUTPUT_SCHEMA = {
             description: 'Which policy rule blocked the hop (e.g. hourly_cap_exceeded, kill_switch).',
           },
           reason: { type: 'string' },
+          policy_key: {
+            type: 'string',
+            description: 'Cap policy type when blocked by hourly_cap or daily_cap (e.g. hourly_cap).',
+          },
+          spent_atomic: {
+            type: 'string',
+            description: 'USDC atomic spent in the cap period at block time (collected rows only).',
+          },
+          cap_atomic: {
+            type: 'string',
+            description: 'USDC atomic cap limit for policy_key at block time.',
+          },
+          period_start: {
+            type: 'string',
+            description: 'UTC period start (ISO8601) joinable across policy_blocked rows.',
+          },
           collected: { type: 'boolean' },
           recorded_by: {
             type: 'string',
@@ -581,6 +597,12 @@ const BOOK_WEBHOOK_ENVELOPE_SCHEMA = {
     replay_count: { type: ['integer', 'null'] },
     verify_url: { type: 'string' },
     explorer_url: { type: ['string', 'null'] },
+    policy_code: { type: ['string', 'null'] },
+    reason: { type: ['string', 'null'] },
+    policy_key: { type: ['string', 'null'] },
+    spent_atomic: { type: ['string', 'null'] },
+    cap_atomic: { type: ['string', 'null'] },
+    period_start: { type: ['string', 'null'] },
     emitted_at: { type: 'string' },
   },
 };
