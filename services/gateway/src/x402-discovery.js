@@ -527,6 +527,36 @@ const AGENTS_BOOK_WEBHOOK_CONFIG_SCHEMA = {
   },
 };
 
+const PUBLIC_PULL_EXPORT_ENVELOPE_SCHEMA = {
+  type: 'object',
+  description:
+    'Signed pull-export envelope (schema chit402.book_pull_export.v1). ES256 JWS over canonical claims; verify via /.well-known/jwks.json.',
+  properties: {
+    schema: { type: 'string', enum: ['chit402.book_pull_export.v1'] },
+    slug: { type: 'string', description: 'Stable pull-export slug (e.g. hemei-treasury).' },
+    agent_id: { type: 'integer', description: 'Scoped agent id for treasury desk row (house-published).' },
+    format: { type: 'string', enum: ['json', 'csv'] },
+    exported_at: { type: 'string', format: 'date-time' },
+    specimen: { type: 'boolean', description: 'True when document is a redacted house specimen, not a live private book.' },
+    verify_jwks: { type: 'string', description: 'JWKS URL for issuer_signature verification.' },
+    document_media_type: { type: 'string' },
+    document: {
+      description: 'chit402.book_audit.v1 object (format=json) or CSV string (format=csv).',
+    },
+    issuer_signature: {
+      type: 'object',
+      properties: {
+        alg: { type: 'string', enum: ['ES256'] },
+        typ: { type: 'string', enum: ['chit402-pull-export+jwt'] },
+        kid: { type: 'string' },
+        jws: { type: 'string' },
+        issuer_jwk: { type: 'object', description: 'Pinned public key (offline verify).' },
+      },
+    },
+    pull_note: { type: ['string', 'null'] },
+  },
+};
+
 const BOOK_WEBHOOK_ENVELOPE_SCHEMA = {
   type: 'object',
   description: 'Signed push envelope (schema chit402.book_webhook.v1). HMAC-SHA256 over raw JSON body.',
@@ -1636,6 +1666,43 @@ export function buildOpenApiSpec(baseUrl = '') {
           responses: {
             200: { description: 'Path-rotate observe fixture.' },
             404: { description: 'Unknown specimen.' },
+          },
+        },
+      },
+      '/public/export/{slug}': {
+        get: {
+          operationId: 'getPublicPullExport',
+          summary: 'Signed public pull-export for treasury desks',
+          description:
+            'Stranger-GET signed envelope for next-wake treasury pull (hemei test3). '
+            + 'Document matches /v1/agents/{agent_id}/book/export columns. '
+            + 'Verify issuer_signature.jws against GET /.well-known/jwks.json (re-fetch ~2h). '
+            + 'Possession-gated /book/export unchanged. See docs/product/public-pull-export.md.',
+          tags: ['Specimens'],
+          parameters: [
+            {
+              name: 'slug',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', enum: ['hemei-treasury'] },
+              description: 'Stable pull-export slug.',
+            },
+            {
+              name: 'format',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['json', 'csv'], default: 'json' },
+              description: 'Document shape inside the signed envelope.',
+            },
+          ],
+          responses: {
+            200: {
+              description: 'Signed pull-export envelope (chit402.book_pull_export.v1).',
+              content: {
+                'application/json': { schema: PUBLIC_PULL_EXPORT_ENVELOPE_SCHEMA },
+              },
+            },
+            404: { description: 'Unknown pull-export slug.' },
           },
         },
       },

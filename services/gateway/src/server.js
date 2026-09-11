@@ -81,6 +81,7 @@ import { resolveSplit, describeSplit } from './revenue-split.js';
 import { apiKeyHashFromReq } from './buyer-attr.js';
 import { getFloatManager } from './provider-float.js';
 import { getJwks, initIssuerKey } from './issuer-key.js';
+import { buildPublicPullExport, isKnownPullExportSlug } from './public-pull-export.js';
 
 /**
  * XFuel M2M API Server — agent gateway for verifiable AI compute settlement.
@@ -3034,6 +3035,24 @@ export function createApp() {
     } catch (err) {
       logger.error({ err, specimen: name, reqId: req.id }, 'GET /public/specimens error');
       return res.status(500).json({ error: 'internal', message: 'Specimen unavailable' });
+    }
+  });
+
+  // GET /public/export/:slug — signed pull-export for treasury desks (no session).
+  app.get('/public/export/:slug', rateLimit, (req, res) => {
+    const slug = path.basename(String(req.params.slug || ''));
+    if (!isKnownPullExportSlug(slug)) {
+      return res.status(404).json({ error: 'not_found', message: 'Unknown pull-export slug' });
+    }
+    const format = String(req.query.format || 'json').toLowerCase() === 'csv' ? 'csv' : 'json';
+    try {
+      const baseUrl = baseUrlFromReq(req);
+      const envelope = buildPublicPullExport(slug, { format, baseUrl });
+      res.set('Cache-Control', 'public, max-age=3600');
+      return res.type('application/json; charset=utf-8').json(envelope);
+    } catch (err) {
+      logger.error({ err, slug, reqId: req.id }, 'GET /public/export error');
+      return res.status(500).json({ error: 'internal', message: 'Pull-export unavailable' });
     }
   });
 
