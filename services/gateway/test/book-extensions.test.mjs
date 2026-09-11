@@ -221,6 +221,10 @@ describe('Caps as Rows', () => {
     const bigSpend = enforcePolicy(recorded.agent_id, { amount: '20000' }, { policy, ledger });
     assert.equal(bigSpend.allowed, false);
     assert.equal(bigSpend.code, 'hourly_cap_exceeded');
+    assert.equal(bigSpend.policy_key, 'hourly_cap');
+    assert.equal(bigSpend.spent_atomic, '40000');
+    assert.equal(bigSpend.cap_atomic, '50000');
+    assert.ok(bigSpend.period_start);
   });
 
   test('set and get policy: require_payment_ref', () => {

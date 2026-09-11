@@ -439,6 +439,10 @@ export class UsageSettledLedger {
    *   hub?: string|null,
    *   intentId?: string|null,
    *   attemptIndex?: number|null,
+   *   policyKey?: string|null,
+   *   spentAtomic?: string|null,
+   *   capAtomic?: string|null,
+   *   periodStart?: string|null,
    * }} row
    */
   recordPolicyBlocked({
@@ -450,6 +454,10 @@ export class UsageSettledLedger {
     hub = null,
     intentId = null,
     attemptIndex = null,
+    policyKey = null,
+    spentAtomic = null,
+    capAtomic = null,
+    periodStart = null,
   }) {
     const id = Number(agentId);
     if (!Number.isInteger(id) || id < 1) {
@@ -485,6 +493,10 @@ export class UsageSettledLedger {
       parent_ref: null,
       intent_id: intentId || null,
       attempt_index: attemptIndex != null ? Number(attemptIndex) : null,
+      policy_key: policyKey || null,
+      spent_atomic: spentAtomic != null ? String(spentAtomic) : null,
+      cap_atomic: capAtomic != null ? String(capAtomic) : null,
+      period_start: periodStart || null,
     };
     this._index(entry);
     return { ok: true, entry, duplicate: false };

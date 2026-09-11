@@ -87,6 +87,10 @@ export interface BookEntry {
   event?: 'policy_blocked';
   policy_code?: string;
   reason?: string;
+  policy_key?: string;
+  spent_atomic?: string;
+  cap_atomic?: string;
+  period_start?: string;
   collected?: boolean;
   payer_wallet?: string | null;
   replay_count?: number;

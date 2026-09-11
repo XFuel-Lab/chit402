@@ -262,6 +262,10 @@ async function meterV1Request(req, res, {
           hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
           intentId: intentFields.intent_id,
           attemptIndex: intentFields.attempt_index,
+          policyKey: policyCheck.policy_key || null,
+          spentAtomic: policyCheck.spent_atomic ?? null,
+          capAtomic: policyCheck.cap_atomic ?? null,
+          periodStart: policyCheck.period_start || null,
         });
       }
       res.status(403).json({

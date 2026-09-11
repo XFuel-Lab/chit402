@@ -130,6 +130,10 @@ function rowOf(entry) {
     row.policy_code = entry.policy_code || 'policy_blocked';
     row.reason = entry.reason || null;
     row.collected = false;
+    if (entry.policy_key) row.policy_key = entry.policy_key;
+    if (entry.spent_atomic != null) row.spent_atomic = String(entry.spent_atomic);
+    if (entry.cap_atomic != null) row.cap_atomic = String(entry.cap_atomic);
+    if (entry.period_start) row.period_start = entry.period_start;
   } else if (hideAmount) {
     row.collected = false;
   } else if (isRecordedBySettle) {
@@ -189,6 +193,10 @@ export function groupEntriesByIntent(entries) {
       amount: (deriveEvidence(e) === BOOK_EVIDENCE.UNVERIFIED
         || deriveEvidence(e) === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED) ? null : (e.amount ?? null),
       policy_code: e.policy_code || null,
+      policy_key: e.policy_key || null,
+      spent_atomic: e.spent_atomic != null ? String(e.spent_atomic) : null,
+      cap_atomic: e.cap_atomic != null ? String(e.cap_atomic) : null,
+      period_start: e.period_start || null,
     };
     intents[id].attempts.push(attempt);
     if (deriveEvidence(e) === BOOK_EVIDENCE.POLICY_BLOCKED) intents[id].blocked_count += 1;
@@ -517,7 +525,7 @@ export function bindBookVerifier(registry) {
  * @param {string} baseUrl — gateway public base for verify_url
  */
 export function buildBookExportCsv(entries, agentId, baseUrl) {
-  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,replay_count,verify_url,explorer_url';
+  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,policy_code,reason,policy_key,spent_atomic,cap_atomic,period_start,replay_count,verify_url,explorer_url';
   const lines = [header];
   for (const e of entries) {
     const row = rowOf(e);
@@ -536,6 +544,12 @@ export function buildBookExportCsv(entries, agentId, baseUrl) {
       row.payer_wallet || '',
       row.intent_id || '',
       row.attempt_index ?? '',
+      row.policy_code || '',
+      row.reason || '',
+      row.policy_key || '',
+      row.spent_atomic ?? '',
+      row.cap_atomic ?? '',
+      row.period_start || '',
       row.replay_count ?? '',
       verifyUrl,
       explorerUrl,
@@ -583,6 +597,12 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
       ingress_receipt: row.ingress_receipt || null,
       inflow_claim: row.inflow_claim || null,
       inflow_corrections: row.inflow_corrections || null,
+      policy_code: row.policy_code || null,
+      reason: row.reason || null,
+      policy_key: row.policy_key || null,
+      spent_atomic: row.spent_atomic ?? null,
+      cap_atomic: row.cap_atomic ?? null,
+      period_start: row.period_start || null,
       verify_url: buildVerifyUrl(baseUrl, row.task_id),
       auditor_url: `${buildVerifyUrl(baseUrl, row.task_id)}?format=auditor`,
       explorer_url: explorerUrlForRef(row.payment.ref),

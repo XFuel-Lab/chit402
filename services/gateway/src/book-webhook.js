@@ -238,6 +238,10 @@ export function buildBookWebhookEnvelope(entry, baseUrl, { deliveryId = null } =
     envelope.policy_code = entry.policy_code || 'policy_blocked';
     envelope.reason = entry.reason || null;
     envelope.collected = false;
+    if (entry.policy_key) envelope.policy_key = entry.policy_key;
+    if (entry.spent_atomic != null) envelope.spent_atomic = String(entry.spent_atomic);
+    if (entry.cap_atomic != null) envelope.cap_atomic = String(entry.cap_atomic);
+    if (entry.period_start) envelope.period_start = entry.period_start;
   } else if (entry.inflow_claim) {
     envelope.inflow_claim = entry.inflow_claim;
     envelope.collected = entry.collected === true;

@@ -838,6 +838,14 @@ export default function Book() {
                             <td data-label="Evidence">
                               <div className="book-evidence-cell">
                                 <BookEvidenceChip row={row} />
+                                {isBlocked && row.policy_key && row.spent_atomic != null && row.cap_atomic != null && (
+                                  <span
+                                    className="badge badge-secondary book-policy-cap-badge"
+                                    title={row.period_start ? `Period ${row.period_start}` : row.policy_key}
+                                  >
+                                    {row.policy_key}: {row.spent_atomic}/{row.cap_atomic}
+                                  </span>
+                                )}
                                 {(replayCount > 0 || isReplay) && (
                                   <a
                                     href={parentVerifyUrl}
