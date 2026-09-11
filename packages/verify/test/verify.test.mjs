@@ -790,7 +790,9 @@ describe('verifyReceipt overall status semantics', () => {
   test('pinned receipt fails when JWS is tampered', async () => {
     const receipt = await buildPinnedJwsReceipt();
     const parts = receipt.issuer_signature.jws.split('.');
-    parts[2] = parts[2].slice(0, -1) + (parts[2].endsWith('A') ? 'B' : 'A');
+    const mid = Math.floor(parts[2].length / 2);
+    // Last base64url char can decode identically (~29%); middle char always corrupts bytes.
+    parts[2] = parts[2].slice(0, mid) + (parts[2][mid] === 'A' ? 'B' : 'A') + parts[2].slice(mid + 1);
     receipt.issuer_signature.jws = parts.join('.');
 
     const result = await verifyReceipt(receipt, {});
