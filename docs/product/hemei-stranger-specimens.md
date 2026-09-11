@@ -39,3 +39,14 @@ curl -sf -o /dev/null -w '%{http_code}\n' \
 ```
 
 Gateway unit test: `services/gateway/test/hemei-stranger-specimens.test.mjs`.
+
+## Test(3) — signed pull-export (treasury next-wake)
+
+For hemei test(3), poll the **stable signed pull-export** (JWKS-verifiable envelope) instead of raw specimens:
+
+| Format | URL |
+|--------|-----|
+| JSON document | `https://api.chit402.com/public/export/hemei-treasury` |
+| CSV document | `https://api.chit402.com/public/export/hemei-treasury?format=csv` |
+
+Verify instructions: [public-pull-export.md](public-pull-export.md). Gateway test: `services/gateway/test/hemei-public-pull-export.test.mjs`.
