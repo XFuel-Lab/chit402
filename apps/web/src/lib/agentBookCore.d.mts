@@ -3,6 +3,8 @@ export const USDC_DECIMALS: number;
 export function formatUsdc(units: string | number | bigint | null | undefined): string;
 export function parseUsdcInput(input: string): string | null;
 export function verifyUrlFor(taskId: string, apiHost: string): string;
+export function auditorVerifyUrlFor(taskId: string, apiHost: string): string;
+export function formatPayerWallet(wallet: string | null | undefined): string | null;
 export function summarizePaymentRef(ref: string, rail: string): string;
 
 export interface BurnRate {

@@ -7,6 +7,9 @@ const {
   computeBurnRate,
   computeModelMix,
   summarizePaymentRef,
+  verifyUrlFor,
+  auditorVerifyUrlFor,
+  formatPayerWallet,
   resolveRowEvidence,
   evidenceLabel,
   evidenceBadgeTone,
@@ -58,6 +61,20 @@ test('computeModelMix groups by hub and model', () => {
   assert.equal(mix.length, 2);
   assert.equal(mix[0].model, 'theta/glm');
   assert.equal(mix[0].pct, 75);
+});
+
+test('verifyUrlFor and auditorVerifyUrlFor build receipt URLs', () => {
+  const host = 'https://api.chit402.com';
+  assert.equal(verifyUrlFor('task-1', host), 'https://api.chit402.com/receipt/task-1');
+  assert.equal(auditorVerifyUrlFor('task-1', host), 'https://api.chit402.com/receipt/task-1?format=auditor');
+});
+
+test('formatPayerWallet shortens long addresses', () => {
+  const long = '0x' + 'a'.repeat(40);
+  const short = formatPayerWallet(long);
+  assert.ok(short.includes('…'));
+  assert.equal(formatPayerWallet('0xabc'), '0xabc');
+  assert.equal(formatPayerWallet(null), null);
 });
 
 test('summarizePaymentRef truncates long refs', () => {
