@@ -17,6 +17,8 @@ import {
   setBookPolicy,
   summarizePaymentRef,
   verifyUrlFor,
+  auditorVerifyUrlFor,
+  formatPayerWallet,
   replayParentTaskId,
   resolveRowEvidence,
   BOOK_EVIDENCE,
@@ -406,8 +408,9 @@ export default function Book() {
           <h2 style={{ fontSize: '1.05rem', marginBottom: '0.75rem' }}>Hold the book</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem', maxWidth: '40rem' }}>
             Enter <code>agent_id</code> and the possession <code>session</code> from{' '}
-            <code>POST /v1/agents/register</code> (issued after a collected receipt). Sent as{' '}
-            <code>X-XFuel-Session</code> — same credential the API already expects.
+            <code>POST /v1/agents/register</code> (issued after a collected receipt). The book API
+            accepts <code>session</code> in the POST body (this page) — same possession secret agents
+            use on chat completions.
           </p>
           <form onSubmit={handleSubmit} className="book-access-form">
             <label className="book-field">
@@ -533,21 +536,6 @@ export default function Book() {
               </div>
             </section>
 
-            <PrivateSpendCallout />
-
-            <BookEscrowPanel
-              apiV1={apiV1}
-              agentId={book.agent_id}
-              session={sessionInput.trim()}
-            />
-
-            <BookInflowPanel
-              apiV1={apiV1}
-              agentId={book.agent_id}
-              session={sessionInput.trim()}
-              onSuccess={reloadBook}
-            />
-
             {book.cap != null && (
               <div className="card" style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
@@ -559,179 +547,6 @@ export default function Book() {
                 </div>
               </div>
             )}
-
-            <section className="card" style={{ marginBottom: '1.5rem' }}>
-              <h3 style={{ marginBottom: '0.75rem' }}>Set budget Y</h3>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '0.75rem' }}>
-                POST with <code>budget</code> in USDC (6 dp). Raising Y lifts the prepaid ceiling; spent does not reset.
-              </p>
-              <div className="book-budget-form">
-                <input
-                  className="input"
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="USDC amount (empty = unlimited)"
-                  value={budgetDraft}
-                  onChange={(e) => setBudgetDraft(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  disabled={budgetSaving}
-                  onClick={() => void handleSetBudget(false)}
-                >
-                  {budgetSaving ? 'Saving…' : 'Set budget'}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  disabled={budgetSaving}
-                  onClick={() => void handleSetBudget(true)}
-                >
-                  Clear (unlimited)
-                </button>
-              </div>
-              {budgetMessage && (
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.75rem' }}>{budgetMessage}</p>
-              )}
-            </section>
-
-            <section className="card" style={{ marginBottom: '1.5rem' }}>
-              <h3 style={{ marginBottom: '0.75rem' }}>Book policy</h3>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '0.75rem' }}>
-                Caps sit on the book you hold — not inside the router. Possession-gated via{' '}
-                <code>POST /v1/agents/:agent_id/book/policy</code>. Demo keys cannot write policy.
-              </p>
-              <div className="book-policy-form" style={{ display: 'grid', gap: '0.75rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={killSwitch}
-                    onChange={(e) => setKillSwitch(e.target.checked)}
-                  />
-                  Kill switch — block all metered spend
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={requirePaymentRef}
-                    onChange={(e) => setRequirePaymentRef(e.target.checked)}
-                  />
-                  Require payment ref — pause spend when ledger rows lack <code>payment.ref</code>
-                </label>
-                <label className="book-field">
-                  <span className="book-field-label">Daily cap (USDC, UTC midnight reset)</span>
-                  <input
-                    className="input"
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="empty = no daily cap"
-                    value={dailyCapDraft}
-                    onChange={(e) => setDailyCapDraft(e.target.value)}
-                  />
-                </label>
-                <label className="book-field">
-                  <span className="book-field-label">Hourly cap (USDC, clock hour UTC)</span>
-                  <input
-                    className="input"
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="empty = no hourly cap"
-                    value={hourlyCapDraft}
-                    onChange={(e) => setHourlyCapDraft(e.target.value)}
-                  />
-                </label>
-                <label className="book-field">
-                  <span className="book-field-label">Model allowlist (comma-separated)</span>
-                  <input
-                    className="input"
-                    type="text"
-                    placeholder="e.g. theta/qwen3, akash/llama"
-                    value={modelAllowlistDraft}
-                    onChange={(e) => setModelAllowlistDraft(e.target.value)}
-                  />
-                </label>
-                <label className="book-field">
-                  <span className="book-field-label">Tier-2 above (USDC) — require <code>proof_tier</code> at/above</span>
-                  <input
-                    className="input"
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="empty = no tier-2 floor"
-                    value={tier2AboveDraft}
-                    onChange={(e) => setTier2AboveDraft(e.target.value)}
-                  />
-                </label>
-                <label className="book-field">
-                  <span className="book-field-label">SessionAct approval TTL (seconds)</span>
-                  <input
-                    className="input"
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="empty = no re-challenge window"
-                    value={approvalTtlDraft}
-                    onChange={(e) => setApprovalTtlDraft(e.target.value)}
-                  />
-                </label>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', margin: 0 }}>
-                  High-blast acts (<code>handoff</code>, <code>redeem</code>) need a fresh challenge after TTL.
-                  Low-blast (<code>read_private</code>) is unaffected. Blocked hops appear as{' '}
-                  <code>policy_blocked</code> on this book.
-                </p>
-              </div>
-              <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  disabled={policySaving}
-                  onClick={() => void handleSavePolicy()}
-                >
-                  {policySaving ? 'Saving…' : 'Save policy'}
-                </button>
-                {policy?.updated_at && (
-                  <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', alignSelf: 'center' }}>
-                    last updated {formatCollectedAt(policy.updated_at)}
-                  </span>
-                )}
-              </div>
-              {policyMessage && (
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.75rem' }}>{policyMessage}</p>
-              )}
-            </section>
-
-            <section className="card" style={{ marginBottom: '1.5rem' }}>
-              <h3 style={{ marginBottom: '0.75rem' }}>Accounting export</h3>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '0.75rem' }}>
-                Download collected rows for funds, DAOs, or design partners. Each row links to{' '}
-                <code>verify_url</code> and per-receipt <code>?format=auditor</code> selective disclosure.
-                On-chain attestation = <code>payment.ref</code> + issuer JWS — verify offline.
-              </p>
-              <details style={{ marginBottom: '0.75rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>Column legend (CSV)</summary>
-                <ul style={{ marginTop: '0.5rem', paddingLeft: '1.25rem', lineHeight: 1.6 }}>
-                  <li><code>evidence</code> — collected, RECORDED_BY_SETTLE, ARRIVAL_UNVERIFIED, inflow_claimed, UNVERIFIED, policy_blocked</li>
-                  <li><code>amount</code> — USDC atomic (null when unverified / arrival omitted)</li>
-                  <li><code>payment_ref</code> / <code>rail</code> — on-chain attestation</li>
-                  <li><code>bucket</code> — inflow allocation bucket when no ref</li>
-                  <li><code>replay_count</code> — idempotent resubmits (never double-counted)</li>
-                  <li><code>verify_url</code> — stranger-safe receipt page</li>
-                </ul>
-              </details>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <button type="button" className="btn btn-primary btn-sm" onClick={() => void handleExport('csv')}>
-                  Download audit pack (CSV)
-                </button>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleExport('json')}>
-                  JSON audit pack
-                </button>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleExport('html')}>
-                  Print audit (HTML)
-                </button>
-              </div>
-              {exportMessage && (
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.75rem' }}>{exportMessage}</p>
-              )}
-            </section>
 
             <div className="grid grid-2" style={{ marginBottom: '1.5rem' }}>
               <section className="card">
@@ -785,7 +600,7 @@ export default function Book() {
               </section>
             </div>
 
-            <section className="card">
+            <section className="card" style={{ marginBottom: '1.5rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
                 <h3>Last {book.entries.length} book rows</h3>
                 <span className="badge badge-cyan">agent {book.agent_id}</span>
@@ -812,13 +627,14 @@ export default function Book() {
                         <th>Hub</th>
                         <th>Model</th>
                         <th>Amount</th>
-                        <th>Payment</th>
+                        <th>Payer ↔ tx</th>
                         <th>Receipt</th>
                       </tr>
                     </thead>
                     <tbody>
                       {book.entries.map((row) => {
                         const verifyUrl = verifyUrlFor(row.task_id, apiHost);
+                        const auditorUrl = auditorVerifyUrlFor(row.task_id, apiHost);
                         const evidence = resolveRowEvidence(row);
                         const amount = row.payment.amount;
                         const isBlocked = evidence === BOOK_EVIDENCE.POLICY_BLOCKED;
@@ -831,6 +647,7 @@ export default function Book() {
                         const parentTaskId = replayParentTaskId(row);
                         const parentVerifyUrl = parentTaskId ? verifyUrlFor(parentTaskId, apiHost) : verifyUrl;
                         const rowAnchor = `row-${row.task_id}`;
+                        const payerShort = formatPayerWallet(row.payer_wallet);
 
                         return (
                           <tr key={row.task_id} id={rowAnchor} style={isBlocked ? { opacity: 0.85 } : undefined}>
@@ -889,11 +706,18 @@ export default function Book() {
                                 </span>
                               ) : null}
                             </td>
-                            <td data-label="Payment" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
+                            <td data-label="Payer ↔ tx" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
                               {isBlocked ? row.reason ?? 'blocked' : (
-                                isInflow
-                                  ? `${row.bucket || row.inflow_claim?.bucket || 'patron'} (inflow)`
-                                  : summarizePaymentRef(row.payment.ref ?? '—', row.payment.rail ?? '—')
+                                <div className="book-payer-tx">
+                                  {payerShort && (
+                                    <span title={row.payer_wallet || undefined}>{payerShort}</span>
+                                  )}
+                                  <span className="book-tx-ref">
+                                    {isInflow
+                                      ? `${row.bucket || row.inflow_claim?.bucket || 'patron'} (inflow)`
+                                      : summarizePaymentRef(row.payment.ref ?? '—', row.payment.rail ?? '—')}
+                                  </span>
+                                </div>
                               )}
                             </td>
                             <td data-label="Receipt">
@@ -901,6 +725,9 @@ export default function Book() {
                                 <div className="book-receipt-actions">
                                   <a href={verifyUrl} target="_blank" rel="noopener noreferrer">
                                     verify
+                                  </a>
+                                  <a href={auditorUrl} target="_blank" rel="noopener noreferrer" title="Offline auditor pack (?format=auditor)">
+                                    offline
                                   </a>
                                   <CopyVerifyButton url={verifyUrl} />
                                 </div>
@@ -914,6 +741,210 @@ export default function Book() {
                 </div>
               )}
             </section>
+
+            <section className="card" style={{ marginBottom: '1.5rem' }}>
+              <h3 style={{ marginBottom: '0.75rem' }}>Set budget Y</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '0.75rem' }}>
+                POST with <code>budget</code> in USDC (6 dp). Raising Y lifts the prepaid ceiling; spent does not reset.
+              </p>
+              <div className="book-budget-form">
+                <input
+                  className="input"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="USDC amount (empty = unlimited)"
+                  value={budgetDraft}
+                  onChange={(e) => setBudgetDraft(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={budgetSaving}
+                  onClick={() => void handleSetBudget(false)}
+                >
+                  {budgetSaving ? 'Saving…' : 'Set budget'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={budgetSaving}
+                  onClick={() => void handleSetBudget(true)}
+                >
+                  Clear (unlimited)
+                </button>
+              </div>
+              {budgetMessage && (
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.75rem' }}>{budgetMessage}</p>
+              )}
+            </section>
+
+            <details className="book-treasury-advanced card" style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem' }}>
+              <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+                Treasury advanced — policy, export, escrow, inflow
+              </summary>
+              <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                {book.private_spend?.enabled && <PrivateSpendCallout />}
+
+                <BookEscrowPanel
+                  apiV1={apiV1}
+                  agentId={book.agent_id}
+                  session={sessionInput.trim()}
+                />
+
+                <BookInflowPanel
+                  apiV1={apiV1}
+                  agentId={book.agent_id}
+                  session={sessionInput.trim()}
+                  onSuccess={reloadBook}
+                />
+
+            <section className="card" style={{ marginBottom: 0 }}>
+              <h3 style={{ marginBottom: '0.75rem' }}>Book policy</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '0.75rem' }}>
+                Caps sit on the book you hold — not inside the router. Possession-gated via{' '}
+                <code>POST /v1/agents/:agent_id/book/policy</code>. Demo keys cannot write policy.
+              </p>
+              <div className="book-policy-form" style={{ display: 'grid', gap: '0.75rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={killSwitch}
+                    onChange={(e) => setKillSwitch(e.target.checked)}
+                  />
+                  Kill switch — block all metered spend
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={requirePaymentRef}
+                    onChange={(e) => setRequirePaymentRef(e.target.checked)}
+                  />
+                  Require payment ref — pause spend when ledger rows lack <code>payment.ref</code>
+                </label>
+                <label className="book-field">
+                  <span className="book-field-label">Daily cap (USDC, UTC midnight reset)</span>
+                  <input
+                    className="input"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="empty = no daily cap"
+                    value={dailyCapDraft}
+                    onChange={(e) => setDailyCapDraft(e.target.value)}
+                  />
+                </label>
+                <label className="book-field">
+                  <span className="book-field-label">Hourly cap (USDC, clock hour UTC)</span>
+                  <input
+                    className="input"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="empty = no hourly cap"
+                    value={hourlyCapDraft}
+                    onChange={(e) => setHourlyCapDraft(e.target.value)}
+                  />
+                </label>
+                <label className="book-field">
+                  <span className="book-field-label">Model allowlist (comma-separated)</span>
+                  <input
+                    className="input"
+                    type="text"
+                    placeholder="e.g. theta/qwen3, akash/llama"
+                    value={modelAllowlistDraft}
+                    onChange={(e) => setModelAllowlistDraft(e.target.value)}
+                  />
+                </label>
+                <details style={{ fontSize: '0.88rem' }}>
+                  <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                    Proof tier &amp; SessionAct (beyond principal v1)
+                  </summary>
+                  <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.75rem' }}>
+                    <label className="book-field">
+                      <span className="book-field-label">Tier-2 above (USDC) — require <code>proof_tier</code> at/above</span>
+                      <input
+                        className="input"
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="empty = no tier-2 floor"
+                        value={tier2AboveDraft}
+                        onChange={(e) => setTier2AboveDraft(e.target.value)}
+                      />
+                    </label>
+                    <label className="book-field">
+                      <span className="book-field-label">SessionAct approval TTL (seconds)</span>
+                      <input
+                        className="input"
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="empty = no re-challenge window"
+                        value={approvalTtlDraft}
+                        onChange={(e) => setApprovalTtlDraft(e.target.value)}
+                      />
+                    </label>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', margin: 0 }}>
+                      High-blast acts (<code>handoff</code>, <code>redeem</code>) need a fresh challenge after TTL.
+                      Low-blast (<code>read_private</code>) is unaffected.
+                    </p>
+                  </div>
+                </details>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', margin: 0 }}>
+                  Blocked hops appear as <code>policy_blocked</code> on this book.
+                </p>
+              </div>
+              <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={policySaving}
+                  onClick={() => void handleSavePolicy()}
+                >
+                  {policySaving ? 'Saving…' : 'Save policy'}
+                </button>
+                {policy?.updated_at && (
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', alignSelf: 'center' }}>
+                    last updated {formatCollectedAt(policy.updated_at)}
+                  </span>
+                )}
+              </div>
+              {policyMessage && (
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.75rem' }}>{policyMessage}</p>
+              )}
+            </section>
+
+            <section className="card" style={{ marginBottom: '1.5rem' }}>
+              <h3 style={{ marginBottom: '0.75rem' }}>Accounting export</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '0.75rem' }}>
+                Download collected rows for funds, DAOs, or design partners. Each row links to{' '}
+                <code>verify_url</code> and per-receipt <code>?format=auditor</code> selective disclosure.
+                On-chain attestation = <code>payment.ref</code> + issuer JWS — verify offline.
+              </p>
+              <details style={{ marginBottom: '0.75rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>Column legend (CSV)</summary>
+                <ul style={{ marginTop: '0.5rem', paddingLeft: '1.25rem', lineHeight: 1.6 }}>
+                  <li><code>evidence</code> — collected, RECORDED_BY_SETTLE, ARRIVAL_UNVERIFIED, inflow_claimed, UNVERIFIED, policy_blocked</li>
+                  <li><code>amount</code> — USDC atomic (null when unverified / arrival omitted)</li>
+                  <li><code>payment_ref</code> / <code>rail</code> — on-chain attestation</li>
+                  <li><code>bucket</code> — inflow allocation bucket when no ref</li>
+                  <li><code>replay_count</code> — idempotent resubmits (never double-counted)</li>
+                  <li><code>verify_url</code> — stranger-safe receipt page</li>
+                </ul>
+              </details>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => void handleExport('csv')}>
+                  Download audit pack (CSV)
+                </button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleExport('json')}>
+                  JSON audit pack
+                </button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleExport('html')}>
+                  Print audit (HTML)
+                </button>
+              </div>
+              {exportMessage && (
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.75rem' }}>{exportMessage}</p>
+              )}
+            </section>
+              </div>
+            </details>
           </>
         )}
 

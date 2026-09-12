@@ -340,6 +340,10 @@ select.input {
 }
 .book-budget-form .input { flex: 1; min-width: 12rem; max-width: 16rem; }
 .book-model-mix { display: flex; flex-direction: column; gap: 0.85rem; }
+.book-payer-tx { display: flex; flex-direction: column; gap: 0.2rem; }
+.book-tx-ref { color: var(--text-muted); }
+.book-treasury-advanced > summary { list-style: none; }
+.book-treasury-advanced > summary::-webkit-details-marker { display: none; }
 .book-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .book-table {
   width: 100%;

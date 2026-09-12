@@ -39,6 +39,20 @@ export function verifyUrlFor(taskId, apiHost) {
   return `${base}/receipt/${encodeURIComponent(taskId)}`;
 }
 
+/** Offline auditor pack URL (selective disclosure, no possession). */
+export function auditorVerifyUrlFor(taskId, apiHost) {
+  return `${verifyUrlFor(taskId, apiHost)}?format=auditor`;
+}
+
+/** Shorten payer wallet for table display. */
+export function formatPayerWallet(wallet) {
+  if (wallet == null || wallet === '') return null;
+  const w = String(wallet).trim();
+  if (!w) return null;
+  if (w.length <= 16) return w;
+  return `${w.slice(0, 8)}…${w.slice(-6)}`;
+}
+
 /** Shorten a payment ref for table display. */
 export function summarizePaymentRef(ref, rail) {
   const raw = `${rail}:${ref}`;
