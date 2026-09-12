@@ -1,6 +1,7 @@
 /**
  * Hemei test(3): public signed pull-export GET /public/export/:slug → 200 + JWKS-verifiable JWS.
  */
+import crypto from 'node:crypto';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -13,8 +14,10 @@ const { initAIListener } = await import('../src/ai-listener.js');
 const { _resetIssuerKey, getJwks, initIssuerKey } = await import('../src/issuer-key.js');
 const {
   PUBLIC_PULL_EXPORT_SCHEMA,
+  DOCUMENT_SHA256_RULE_BY_FORMAT,
   verifyPublicPullExport,
   documentDigest,
+  documentSha256Rule,
 } = await import('../src/public-pull-export.js');
 
 let server;
@@ -46,7 +49,8 @@ test('GET /public/export/hemei-treasury → 200 signed JSON envelope (no auth)',
   const res = await fetch(`${base}/public/export/hemei-treasury`);
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type') ?? '', /application\/json/);
-  const envelope = await res.json();
+  const rawBody = await res.text();
+  const envelope = JSON.parse(rawBody);
 
   assert.equal(envelope.schema, PUBLIC_PULL_EXPORT_SCHEMA);
   assert.equal(envelope.slug, 'hemei-treasury');
@@ -58,6 +62,8 @@ test('GET /public/export/hemei-treasury → 200 signed JSON envelope (no auth)',
   assert.ok(envelope.issuer_signature?.jws);
   assert.equal(envelope.issuer_signature.typ, 'chit402-pull-export+jwt');
   assert.ok(envelope.verify_jwks.includes('/.well-known/jwks.json'));
+  assert.equal(envelope.document_sha256_rule, DOCUMENT_SHA256_RULE_BY_FORMAT.json);
+  assert.equal(envelope.document_sha256_rule, documentSha256Rule('json'));
 
   const jwks = getJwks();
   const verified = verifyPublicPullExport(envelope, jwks);
@@ -65,6 +71,10 @@ test('GET /public/export/hemei-treasury → 200 signed JSON envelope (no auth)',
 
   const expectedDigest = documentDigest(envelope.document, 'json');
   assert.equal(verified.payload.document_sha256, expectedDigest);
+
+  const documentSlice = extractJsonValueAfterKey(rawBody);
+  const servedDigest = digestUtf8(documentSlice);
+  assert.equal(verified.payload.document_sha256, servedDigest, 'json hash must match served document slice');
 });
 
 test('GET /public/export/hemei-treasury?format=csv → signed envelope with CSV document', async () => {
@@ -75,13 +85,88 @@ test('GET /public/export/hemei-treasury?format=csv → signed envelope with CSV 
   assert.equal(envelope.format, 'csv');
   assert.equal(envelope.document_media_type, 'text/csv; charset=utf-8');
   assert.match(envelope.document, /task_id,evidence,collected_at/);
+  assert.equal(envelope.document_sha256_rule, DOCUMENT_SHA256_RULE_BY_FORMAT.csv);
+  assert.equal(envelope.document_sha256_rule, documentSha256Rule('csv'));
 
   const jwks = getJwks();
   const verified = verifyPublicPullExport(envelope, jwks);
   assert.equal(verified.valid, true, verified.reason || 'verify failed');
+
+  const expectedDigest = documentDigest(envelope.document, 'csv');
+  assert.equal(verified.payload.document_sha256, expectedDigest);
+  assert.equal(verified.payload.document_sha256, digestUtf8(envelope.document));
 });
 
 test('GET unknown pull-export slug → 404', async () => {
   const res = await fetch(`${base}/public/export/not-a-real-slug`);
   assert.equal(res.status, 404);
 });
+
+function digestUtf8(text) {
+  return crypto.createHash('sha256').update(Buffer.from(String(text), 'utf8')).digest('hex');
+}
+
+/**
+ * Extract the raw JSON substring for the first top-level "document" property value.
+ * @param {string} body
+ */
+function extractJsonValueAfterKey(body) {
+  const key = '"document"';
+  const idx = body.indexOf(key);
+  assert.ok(idx >= 0, 'response body must contain document key');
+  let i = idx + key.length;
+  while (i < body.length && (body[i] === ' ' || body[i] === '\n' || body[i] === '\r' || body[i] === '\t')) {
+    i += 1;
+  }
+  assert.equal(body[i], ':', 'expected colon after document key');
+  i += 1;
+  while (i < body.length && (body[i] === ' ' || body[i] === '\n' || body[i] === '\r' || body[i] === '\t')) {
+    i += 1;
+  }
+  const start = i;
+  if (body[i] === '"') {
+    i += 1;
+    while (i < body.length) {
+      if (body[i] === '\\') {
+        i += 2;
+        continue;
+      }
+      if (body[i] === '"') {
+        return body.slice(start, i + 1);
+      }
+      i += 1;
+    }
+    throw new Error('unterminated document string in response');
+  }
+  if (body[i] !== '{') {
+    throw new Error('expected document object in json pull-export');
+  }
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (; i < body.length; i += 1) {
+    const ch = body[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return body.slice(start, i + 1);
+    }
+  }
+  throw new Error('unterminated document object in response');
+}

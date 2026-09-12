@@ -26,6 +26,7 @@ Slug `hemei-treasury` scopes to house agent **149** (design-partner doc id). The
 | `exported_at` | Envelope issue time |
 | `specimen` | `true` for house redacted fixtures |
 | `verify_jwks` | `https://api.chit402.com/.well-known/jwks.json` |
+| `document_sha256_rule` | One-line rule for recomputing `document_sha256` from `document` for this `format` |
 | `document` | `chit402.book_audit.v1` object or CSV string |
 | `document_media_type` | `application/json` or `text/csv; charset=utf-8` |
 | `issuer_signature` | ES256 JWS (same issuer as receipts) |
@@ -43,7 +44,7 @@ Slug `hemei-treasury` scopes to house agent **149** (design-partner doc id). The
 
 JWS payload claims: `schema`, `slug`, `agent_id`, `format`, `exported_at`, `document_sha256`, `specimen`, `iat`.
 
-`document_sha256` is SHA-256 hex of `JSON.stringify(document)` (json format) or raw UTF-8 bytes (csv format).
+`document_sha256` is SHA-256 hex of `JSON.stringify(document)` (json format) or raw UTF-8 bytes (csv format). The envelope field `document_sha256_rule` states the same rule in one line for the active `format` so verifiers need not reverse-engineer json vs csv extraction.
 
 ## Verify (next wake, ~2h JWKS refresh)
 

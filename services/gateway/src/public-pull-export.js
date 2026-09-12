@@ -17,6 +17,23 @@ export const PUBLIC_PULL_EXPORT_SCHEMA = 'chit402.book_pull_export.v1';
 
 const PULL_EXPORT_JWT_TYP = 'chit402-pull-export+jwt';
 
+/** One-line hash extraction rules for strangers (format-specific; matches `documentDigest`). */
+export const DOCUMENT_SHA256_RULE_BY_FORMAT = Object.freeze({
+  json:
+    'SHA-256 hex of UTF-8 bytes of the JSON value of envelope.document as serialized in the response body (the literal document slice).',
+  csv:
+    'SHA-256 hex of UTF-8 bytes of the envelope.document string (the decoded CSV text).',
+});
+
+/**
+ * @param {'json'|'csv'} format
+ * @returns {string}
+ */
+export function documentSha256Rule(format) {
+  const fmt = format === 'csv' ? 'csv' : 'json';
+  return DOCUMENT_SHA256_RULE_BY_FORMAT[fmt];
+}
+
 const GATEWAY_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SPECIMENS_DIR = path.join(GATEWAY_SRC_DIR, '../public/specimens');
 
@@ -121,6 +138,7 @@ export function buildPublicPullExport(slug, { format = 'json', baseUrl = '' } = 
     exported_at,
     specimen: meta.specimen === true,
     verify_jwks: buildJwksUri(baseUrl),
+    document_sha256_rule: documentSha256Rule(fmt),
     document_media_type: fmt === 'csv' ? 'text/csv; charset=utf-8' : 'application/json',
     document,
     issuer_signature: {
@@ -165,9 +183,11 @@ export function verifyPublicPullExport(envelope, jwks) {
 
 export default {
   PUBLIC_PULL_EXPORT_SCHEMA,
+  DOCUMENT_SHA256_RULE_BY_FORMAT,
   PUBLIC_PULL_EXPORTS,
   isKnownPullExportSlug,
   documentDigest,
+  documentSha256Rule,
   canonicalPullExportClaims,
   loadPublishedExportDocument,
   buildPublicPullExport,
