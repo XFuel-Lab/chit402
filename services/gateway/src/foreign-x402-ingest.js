@@ -20,6 +20,7 @@ import { ethers } from 'ethers';
 import logger from './logger.js';
 import config from './config.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
+import { buildVerifyUrl, explorerUrlForRef, networkFromPaymentRef } from './receipt.js';
 
 /** ERC-20 Transfer event topic (keccak256 of Transfer(address,address,uint256)) */
 const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -56,6 +57,18 @@ export function isEvmNetwork(network) {
 
 /** Cached Base provider for on-chain verification. Lazily created. */
 let baseProvider = null;
+
+/** @type {Function|null} Test-only override for HTTP integration tests (NODE_ENV=test). */
+let foreignIngestVerifyOverride = null;
+
+export function setForeignIngestVerifyForTests(fn) {
+  foreignIngestVerifyOverride = typeof fn === 'function' ? fn : null;
+}
+
+export function resolveForeignIngestVerify(provider = null) {
+  if (foreignIngestVerifyOverride) return foreignIngestVerifyOverride;
+  return buildOnChainVerify(provider);
+}
 
 /**
  * Get or create the Base provider for on-chain USDC verification.
@@ -268,6 +281,108 @@ export function validatePaymentResponse(paymentResponse) {
 }
 
 /**
+ * Coalesce x402-shaped or minimal foreign-invoice bodies into payment_required + payment_response.
+ * Minimal invoice: amount, payer, tx or payment_ref, payTo, plus resource | service_url | hub (+ optional model).
+ *
+ * @param {object} body
+ * @returns {{ ok: boolean, paymentRequired?: object, paymentResponse?: object, reason?: string }}
+ */
+export function normalizeIngestInput(body = {}) {
+  if (!body || typeof body !== 'object') {
+    return { ok: false, reason: 'body required' };
+  }
+
+  const existingRequired = body.payment_required || body.paymentRequired;
+  const existingResponse = body.payment_response || body.paymentResponse;
+  if (existingRequired && existingResponse) {
+    return { ok: true, paymentRequired: existingRequired, paymentResponse: existingResponse };
+  }
+
+  const inv = body.foreign_invoice || body.foreign_settle || body.invoice;
+  const flat = inv && typeof inv === 'object' ? inv : body;
+
+  const amount = flat.amount;
+  const payer = flat.payer;
+  const payTo = flat.payTo || flat.pay_to;
+  let tx = flat.tx || flat.payment_ref;
+  let network = flat.network || 'base';
+
+  if (amount == null || amount === '' || !payer || !payTo || !tx) {
+    return {
+      ok: false,
+      reason: 'foreign invoice requires amount, payer, payTo, and tx or payment_ref',
+    };
+  }
+
+  if (String(tx).includes(':')) {
+    const idx = String(tx).indexOf(':');
+    network = String(tx).slice(0, idx) || network;
+    tx = String(tx).slice(idx + 1);
+  }
+
+  let resource = flat.resource || flat.service_url || flat.serviceUrl;
+  const hub = flat.hub;
+  const model = flat.model;
+  if (!resource && hub) {
+    const host = String(hub).replace(/^https?:\/\//, '').replace(/\/$/, '');
+    const path = model
+      ? (String(model).startsWith('/') ? String(model) : `/${model}`)
+      : '/';
+    resource = `https://${host}${path}`;
+  }
+  if (!resource) {
+    return {
+      ok: false,
+      reason: 'foreign invoice requires resource, service_url, or hub (route context)',
+    };
+  }
+
+  return {
+    ok: true,
+    paymentRequired: {
+      resource,
+      amount: String(amount),
+      payTo,
+      network,
+      asset: flat.asset || 'USDC',
+    },
+    paymentResponse: {
+      tx: String(tx),
+      payer: String(payer),
+      network,
+    },
+  };
+}
+
+/**
+ * Public receipt view for GET /receipt/:taskId on foreign-ingest rows (ledger snapshot).
+ */
+export function buildPublicForeignIngestReceipt(snapshot, { baseUrl = '', reqHost = null } = {}) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  const taskId = snapshot.task_id;
+  if (!taskId) return null;
+  const verifyUrl = buildVerifyUrl(baseUrl, taskId, { reqHost });
+  const payment = snapshot.payment || {};
+  const ref = payment.ref || null;
+  return {
+    ...snapshot,
+    verify_url: verifyUrl,
+    links: {
+      self: verifyUrl,
+      explorer: explorerUrlForRef(ref),
+    },
+    payment: {
+      ...payment,
+      network: payment.network || networkFromPaymentRef(ref),
+      explorer_url: explorerUrlForRef(ref),
+    },
+    attestation_note:
+      'Foreign ingest: Chit402 verified and recorded this payment — we did not execute the inference hop.',
+    evidence: 'foreign_ingest',
+  };
+}
+
+/**
  * Build a synthetic receipt for a foreign x402 payment.
  * This is NOT a merchant-attested receipt — HMAC means "XFuel recorded this."
  *
@@ -297,6 +412,7 @@ export function buildForeignReceipt({
     status: 'completed',
     proof_outcome: 'signed',
     foreign_x402: true,
+    source: 'foreign_ingest',
     payment: {
       rail: rail || railFromNetwork(network),
       ref: paymentRef,
@@ -360,6 +476,8 @@ export async function ingestForeignX402(body = {}, {
   session = null,
   signingSecret = null,
   isDemo = false,
+  baseUrl = '',
+  reqHost = null,
 } = {}) {
   // Demo keys never write to the book
   if (isDemo) {
@@ -411,8 +529,17 @@ export async function ingestForeignX402(body = {}, {
     };
   }
 
-  // Validate payment_required (the 402 context — not naked tx)
-  const paymentRequired = body.payment_required || body.paymentRequired;
+  const normalized = normalizeIngestInput(body);
+  if (!normalized.ok) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'invalid_ingest_payload',
+      message: normalized.reason,
+    };
+  }
+
+  const paymentRequired = normalized.paymentRequired;
   const reqValid = validatePaymentRequired(paymentRequired);
   if (!reqValid.ok) {
     return {
@@ -423,8 +550,7 @@ export async function ingestForeignX402(body = {}, {
     };
   }
 
-  // Validate payment_response (the payment — not naked tx)
-  const paymentResponse = body.payment_response || body.paymentResponse;
+  const paymentResponse = normalized.paymentResponse;
   const respValid = validatePaymentResponse(paymentResponse);
   if (!respValid.ok) {
     return {
@@ -574,12 +700,15 @@ export async function ingestForeignX402(body = {}, {
     model: receipt.route.model,
   }, 'foreign-x402: ingested');
 
+  const verifyUrl = buildVerifyUrl(baseUrl, taskId, { reqHost });
+
   return {
     ok: true,
     status: 201,
     body: {
       task_id: taskId,
       agent_id: id,
+      verify_url: verifyUrl,
       payment: {
         ref: paymentRef,
         rail,
@@ -592,6 +721,8 @@ export async function ingestForeignX402(body = {}, {
         resource: paymentRequired.resource,
       },
       foreign_x402: true,
+      source: 'foreign_ingest',
+      evidence: 'foreign_ingest',
       recorded_at: appended.entry.recorded_at,
       signature: receipt.signature || null,
       stamp_fee: stampFee.toString(),
@@ -601,10 +732,12 @@ export async function ingestForeignX402(body = {}, {
 
 export default {
   ingestForeignX402,
+  normalizeIngestInput,
   validatePaymentRequired,
   validatePaymentResponse,
   extractRouteFromResource,
   buildForeignReceipt,
+  buildPublicForeignIngestReceipt,
   generateForeignTaskId,
   buildOnChainVerify,
   getBaseProvider,

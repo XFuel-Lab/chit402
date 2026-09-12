@@ -74,7 +74,7 @@ import {
 import { BookAssignmentStore, GRANT_TYPES, readSliceByToken } from './book-assign.js';
 import { BookDisputeStore, CLAIM_TYPES, OUTCOME_TYPES, fileAndAdjudicate } from './book-dispute.js';
 import { BookEscrowStore, handleEscrowAction } from './book-escrow.js';
-import { ingestForeignX402, buildOnChainVerify, getBaseProvider } from './foreign-x402-ingest.js';
+import { ingestForeignX402, getBaseProvider, buildPublicForeignIngestReceipt, resolveForeignIngestVerify } from './foreign-x402-ingest.js';
 import { aawpReaders } from './agent-wallet.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
@@ -2381,22 +2381,42 @@ export function createApp() {
         rawTaskId = rawTaskId.slice(0, -5);
       }
 
-      const aiListener = getAIListener();
-      // Normalize chit-<uuid> → xfuel-<uuid> for storage lookup (stored IDs use xfuel- prefix)
-      const taskId = normalizeTaskIdForLookup(rawTaskId);
-      // Support ?tx=<signature> query param as fallback lookup for Solana payments
-      const txFallback = req.query.tx;
-      let task = _findTask(aiListener, taskId);
-      // If primary lookup fails and tx param provided, try payment ref lookup
-      if (!task && txFallback) {
-        task = _findTaskByPaymentRef(aiListener, txFallback);
-      }
       const fmt = String(req.query.format || '').toLowerCase();
       const wantsAuditor = fmt === 'auditor' || fmt === 'audit';
       const wantsJson = jsonSuffix
         || wantsAuditor
         || fmt === 'json'
         || req.accepts(['html', 'json']) === 'json';
+
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
+
+      // Normalize chit-<uuid> → xfuel-<uuid> for storage lookup (stored IDs use xfuel- prefix)
+      const taskId = normalizeTaskIdForLookup(rawTaskId);
+
+      const ledgerRow = usageSettled.findByTask(taskId) || usageSettled.findByTask(rawTaskId);
+      const foreignReceipt = ledgerRow?.receipt_snapshot
+        ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl, reqHost })
+        : null;
+      if (foreignReceipt) {
+        if (wantsAuditor) {
+          const exportDoc = buildAuditorExport(foreignReceipt, { policy: null });
+          if (String(req.query.view || '') === 'html') {
+            return res.type('html').send(renderAuditorHtml(exportDoc));
+          }
+          return res.json(exportDoc);
+        }
+        if (wantsJson) return res.json(foreignReceipt);
+        return res.type('html').send(renderReceiptHtml(foreignReceipt));
+      }
+
+      const aiListener = getAIListener();
+      // Support ?tx=<signature> query param as fallback lookup for Solana payments
+      const txFallback = req.query.tx;
+      let task = _findTask(aiListener, taskId);
+      if (!task && txFallback) {
+        task = _findTaskByPaymentRef(aiListener, txFallback);
+      }
 
       if (!task) {
         if (wantsJson) {
@@ -2405,8 +2425,6 @@ export function createApp() {
         return res.status(404).type('html').send(renderReceiptNotFound(rawTaskId));
       }
 
-      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-      const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
       const receipt = buildReceipt(task, {
         baseUrl,
         signingSecret: config.receipts?.signingSecret,
@@ -3414,7 +3432,9 @@ export function createApp() {
 
       // Build verify from Base provider (reads USDC Transfer events on-chain).
       // If BASE_RPC_URL not configured, verify is null → ingestForeignX402 returns 502.
-      const verify = buildOnChainVerify();
+      const verify = resolveForeignIngestVerify();
+      const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
 
       const result = await ingestForeignX402(body, {
         ledger: usageSettled,
@@ -3424,6 +3444,8 @@ export function createApp() {
         signingSecret: config.receipts?.signingSecret,
         isDemo,
         verify,
+        baseUrl,
+        reqHost,
       });
 
       if (!result.ok) {
@@ -3939,6 +3961,8 @@ export function createApp() {
     logger.error({ err }, 'Unhandled Express error');
     res.status(500).json({ error: 'internal', message: 'Internal server error' });
   });
+
+  app.locals.__test = { usageSettled, agentRegistry };
 
   return app;
 }
