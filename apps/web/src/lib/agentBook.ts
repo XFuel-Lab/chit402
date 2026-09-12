@@ -14,6 +14,8 @@ import {
   resolveRowEvidence,
   summarizePaymentRef,
   verifyUrlFor,
+  auditorVerifyUrlFor,
+  formatPayerWallet,
   type BurnRate,
   type ModelMixItem,
 } from './agentBookCore.mjs';
@@ -33,6 +35,8 @@ export {
   resolveRowEvidence,
   summarizePaymentRef,
   verifyUrlFor,
+  auditorVerifyUrlFor,
+  formatPayerWallet,
 };
 
 export interface BookPayment {
