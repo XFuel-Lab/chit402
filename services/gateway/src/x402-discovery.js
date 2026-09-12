@@ -555,6 +555,11 @@ const PUBLIC_PULL_EXPORT_ENVELOPE_SCHEMA = {
     exported_at: { type: 'string', format: 'date-time' },
     specimen: { type: 'boolean', description: 'True when document is a redacted house specimen, not a live private book.' },
     verify_jwks: { type: 'string', description: 'JWKS URL for issuer_signature verification.' },
+    document_sha256_rule: {
+      type: 'string',
+      description:
+        'How to recompute document_sha256 from envelope.document for this format (matches signed JWS claim).',
+    },
     document_media_type: { type: 'string' },
     document: {
       description: 'chit402.book_audit.v1 object (format=json) or CSV string (format=csv).',
