@@ -434,7 +434,10 @@ const AGENTS_BOOK_OUTPUT_SCHEMA = {
 /** Foreign x402 book ingest input schema. */
 const AGENTS_BOOK_INGEST_INPUT_SCHEMA = {
   type: 'object',
-  required: ['payment_required', 'payment_response', 'session'],
+  required: ['session'],
+  description:
+    'Either full x402 context (payment_required + payment_response) or a minimal foreign_invoice '
+    + '(amount, payer, payTo, tx/payment_ref, plus resource | service_url | hub).',
   properties: {
     session: {
       type: 'string',
@@ -460,6 +463,24 @@ const AGENTS_BOOK_INGEST_INPUT_SCHEMA = {
         tx: { type: 'string', description: 'Transaction hash / settlement ref.' },
         payer: { type: 'string', description: 'Payer address.' },
         network: { type: 'string', description: 'Network the payment was made on.' },
+      },
+    },
+    foreign_invoice: {
+      type: 'object',
+      description:
+        'Minimal PayBox / external-wallet settle proof when you do not have the full 402 envelopes.',
+      required: ['amount', 'payer', 'payTo'],
+      properties: {
+        amount: { type: 'string', description: 'Atomic USDC (6 decimals).' },
+        payer: { type: 'string' },
+        payTo: { type: 'string' },
+        tx: { type: 'string', description: 'Settlement tx hash (or use payment_ref).' },
+        payment_ref: { type: 'string', description: 'network:tx form or bare tx hash.' },
+        network: { type: 'string', default: 'base' },
+        resource: { type: 'string', description: 'Foreign service URL (preferred route context).' },
+        service_url: { type: 'string' },
+        hub: { type: 'string', description: 'Host when resource omitted.' },
+        model: { type: 'string', description: 'Path when only hub is known.' },
       },
     },
   },
@@ -488,7 +509,10 @@ const AGENTS_BOOK_INGEST_OUTPUT_SCHEMA = {
         resource: { type: 'string', description: 'Original foreign 402 resource URL.' },
       },
     },
+    verify_url: { type: 'string', description: 'Public GET /receipt/:task_id — same chrome as native stamps.' },
     foreign_x402: { type: 'boolean', description: 'Always true for ingest.' },
+    source: { type: 'string', enum: ['foreign_ingest'], description: 'Chit recorded spend executed elsewhere.' },
+    evidence: { type: 'string', enum: ['foreign_ingest'], description: 'Book/export evidence — not a native completion hop.' },
     recorded_at: { type: 'string' },
     signature: {
       type: 'object',
@@ -1147,13 +1171,13 @@ export function buildOpenApiSpec(baseUrl = '') {
       '/v1/agents/{agent_id}/book/ingest': {
         post: {
           operationId: 'ingestForeignX402',
-          summary: 'Ingest a foreign x402 payment into the book',
+          summary: 'Ingest foreign settle / x402 spend into the book',
           description:
-            'Record an agent\'s arbitrary x402 spend to a foreign endpoint. Requires possession (session), '
-            + 'the 402 payment required (resource, amount, payTo), and payment response (tx, payer, network). '
-            + 'Naked tx hash is rejected — must have 402 context. Demo keys never write. '
-            + 'HMAC on a foreign row means "Chit recorded this" — not merchant attestation. '
-            + 'Per whitepaper §2: Chit does NOT settle foreign payments (CDP/PayAI stay verify+settle).',
+            'Spent elsewhere → stamp here. Record PayBox, MoonPay, or other x402 shop spend on the possession book. '
+            + 'Requires session. Accepts full x402 envelopes (payment_required + payment_response) or minimal foreign_invoice '
+            + '(amount, payer, payTo, tx/payment_ref, resource or hub). Naked tx without payer is rejected. '
+            + 'On-chain USDC verify required (fail closed). Returns verify_url like native completions. '
+            + 'source/evidence foreign_ingest — Chit did not execute the hop. Demo keys never write.',
           tags: ['Agents'],
           parameters: [
             {

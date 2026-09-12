@@ -12,9 +12,11 @@ Agents **keep ACP** for agent commerce and wallet flows. Route **inference spend
 
 ACP settle and Chit inference receipt are complementary, not competing products.
 
-## Optional — foreign x402 ingest
+## Optional — foreign / PayBox ingest
 
-When inference already paid another x402 shop, a registered principal can record the row:
+**Spent elsewhere → stamp here** — complementary to PayBox/x402, not competing. See [foreign-paybox-ingest.md](./foreign-paybox-ingest.md).
+
+When inference already paid another x402 shop (or PayBox settle), a registered principal can record the row:
 
 ```http
 POST /v1/agents/:agent_id/book/ingest

@@ -22,13 +22,17 @@ const { AgentRegistry } = await import('../src/agent-registry.js');
 const { UsageSettledLedger } = await import('../src/usage-settled.js');
 const {
   ingestForeignX402,
+  normalizeIngestInput,
   validatePaymentRequired,
   validatePaymentResponse,
   extractRouteFromResource,
   railFromNetwork,
   buildOnChainVerify,
+  buildPublicForeignIngestReceipt,
+  setForeignIngestVerifyForTests,
   resetBaseProvider,
 } = await import('../src/foreign-x402-ingest.js');
+const { BOOK_EVIDENCE } = await import('../src/usage-settled.js');
 
 const WALLET_A = '0x1111111111111111111111111111111111111111';
 
@@ -88,6 +92,26 @@ test('validatePaymentRequired requires resource, amount, payTo', () => {
   assert.equal(validatePaymentRequired({ resource: 'x', amount: '10000', payTo: '0x123' }).ok, true);
 });
 
+test('normalizeIngestInput: minimal foreign_invoice coalesces to x402 shape', () => {
+  const n = normalizeIngestInput({
+    foreign_invoice: {
+      amount: '25000',
+      payer: WALLET_A,
+      payTo: '0xPayBoxTreasury',
+      payment_ref: 'base:0xdeadbeef',
+      hub: 'paybox.example.com',
+      model: '/v1/infer',
+    },
+  });
+  assert.equal(n.ok, true);
+  assert.equal(n.paymentRequired.amount, '25000');
+  assert.equal(n.paymentRequired.payTo, '0xPayBoxTreasury');
+  assert.equal(n.paymentRequired.resource, 'https://paybox.example.com/v1/infer');
+  assert.equal(n.paymentResponse.tx, '0xdeadbeef');
+  assert.equal(n.paymentResponse.payer, WALLET_A);
+  assert.equal(n.paymentResponse.network, 'base');
+});
+
 test('validatePaymentResponse requires tx and payer (no naked tx)', () => {
   assert.equal(validatePaymentResponse(null).ok, false);
   assert.equal(validatePaymentResponse({}).ok, false);
@@ -143,6 +167,9 @@ test('happy path: foreign x402 → book row (with valid verify)', async () => {
   assert.equal(result.body.route.hub, 'api.grokbot.app');
   assert.equal(result.body.route.model, '/v1/chat/completions');
   assert.equal(result.body.foreign_x402, true);
+  assert.equal(result.body.source, 'foreign_ingest');
+  assert.equal(result.body.evidence, 'foreign_ingest');
+  assert.ok(result.body.verify_url?.endsWith(`/receipt/${result.body.task_id}`));
   assert.ok(result.body.recorded_at);
 
   // Verify it's in the ledger
@@ -152,6 +179,44 @@ test('happy path: foreign x402 → book row (with valid verify)', async () => {
   assert.equal(entry.payment_ref, 'base:0xabc123def456');
   assert.equal(entry.hub, 'api.grokbot.app');
   assert.equal(entry.model, '/v1/chat/completions');
+  assert.equal(entry.evidence, BOOK_EVIDENCE.FOREIGN_INGEST);
+  assert.ok(entry.receipt_snapshot?.foreign_x402);
+});
+
+test('minimal foreign_invoice ingest → book row with verify_url', async () => {
+  const { registry, ledger, identity } = setupDeps();
+
+  const result = await ingestForeignX402({
+    foreign_invoice: {
+      amount: '9900',
+      payer: WALLET_A,
+      payTo: '0xMoonPaySink',
+      tx: '0xminimaltx',
+      hub: 'api.moonpay.example',
+      model: '/paybox/settle',
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyOk,
+    baseUrl: 'https://api.chit402.com',
+    reqHost: 'api.chit402.com',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.body.payment.amount, '9900');
+  assert.equal(result.body.route.hub, 'api.moonpay.example');
+  assert.match(result.body.verify_url, /^https:\/\/api\.chit402\.com\/receipt\/foreign-x402-/);
+
+  const publicView = buildPublicForeignIngestReceipt(ledger.entries[0].receipt_snapshot, {
+    baseUrl: 'https://api.chit402.com',
+    reqHost: 'api.chit402.com',
+  });
+  assert.equal(publicView.evidence, 'foreign_ingest');
+  assert.equal(publicView.verify_url, result.body.verify_url);
 });
 
 test('Solana network sets rail to solana, not usdc', async () => {
@@ -235,7 +300,7 @@ test('reject naked tx hash (no payment_required context) — fails before verify
 
   assert.equal(result.ok, false);
   assert.equal(result.status, 400);
-  assert.equal(result.error, 'invalid_payment_required');
+  assert.equal(result.error, 'invalid_ingest_payload');
   assert.equal(ledger.entries.length, 0);
 });
 
@@ -641,11 +706,13 @@ test('ledger nullifier persists: duplicate ref rejected across fresh ledger load
 
 let server;
 let base;
+let httpApp;
 
 before(async () => {
-  const app = createApp();
+  setForeignIngestVerifyForTests(verifyOk);
+  httpApp = createApp();
   await new Promise((resolve) => {
-    server = app.listen(0, () => {
+    server = httpApp.listen(0, () => {
       const { port } = server.address();
       base = `http://127.0.0.1:${port}`;
       resolve();
@@ -654,6 +721,7 @@ before(async () => {
 });
 
 after(async () => {
+  setForeignIngestVerifyForTests(null);
   if (!server) return;
   if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
@@ -736,6 +804,44 @@ test('GET /openapi.json includes /v1/agents/{agent_id}/book/ingest', async () =>
 test('GET /llms.txt mentions book/ingest', async () => {
   const llms = await (await fetch(`${base}/llms.txt`)).text();
   assert.match(llms, /\/v1\/agents\/:agent_id\/book\/ingest/);
+});
+
+test('smoke fixture: ingest row verify_url resolves on GET /receipt', async () => {
+  const hooks = httpApp.locals.__test;
+  assert.ok(hooks?.usageSettled && hooks?.agentRegistry, 'test hooks on app.locals');
+  const identity = hooks.agentRegistry.allocate({ taskId: 'foreign-ingest-smoke' });
+
+  const seeded = await ingestForeignX402({
+    foreign_invoice: {
+      amount: '5000',
+      payer: WALLET_A,
+      payTo: '0xExternalPayBox',
+      tx: '0xsmokeverifytx',
+      hub: 'external.shop',
+      model: '/v1/run',
+    },
+    session: identity.session,
+  }, {
+    ledger: hooks.usageSettled,
+    registry: hooks.agentRegistry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyOk,
+    baseUrl: base,
+  });
+  assert.equal(seeded.ok, true);
+
+  const receiptRes = await fetch(`${base}/receipt/${seeded.body.task_id}?format=json`, {
+    headers: { Accept: 'application/json' },
+  });
+  const receiptBody = await receiptRes.json();
+  assert.equal(receiptRes.status, 200, JSON.stringify(receiptBody));
+  const receipt = receiptBody;
+  assert.equal(receipt.task_id, seeded.body.task_id);
+  assert.equal(receipt.foreign_x402, true);
+  assert.equal(receipt.evidence, 'foreign_ingest');
+  assert.equal(receipt.payment.ref, 'base:0xsmokeverifytx');
+  assert.equal(receipt.verify_url, `${base}/receipt/${seeded.body.task_id}`);
 });
 
 // ─── Stamp Fee Tests ─────────────────────────────────────────────────────────

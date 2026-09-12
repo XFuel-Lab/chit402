@@ -32,6 +32,8 @@ const UNMETERED_RAILS = new Set(['unmetered', 'demo', 'free']);
 /** Book/export evidence — never treat missing possession proof as zero payment. */
 export const BOOK_EVIDENCE = {
   COLLECTED: 'collected',
+  /** On-chain verified spend recorded via POST book/ingest — Chit did not execute the hop. */
+  FOREIGN_INGEST: 'foreign_ingest',
   RECORDED_BY_SETTLE: 'RECORDED_BY_SETTLE',
   ARRIVAL_UNVERIFIED: 'ARRIVAL_UNVERIFIED',
   INFLOW_CLAIMED: 'inflow_claimed',
@@ -95,6 +97,9 @@ export function deriveEvidence(entry) {
   if (entry.evidence === BOOK_EVIDENCE.UNVERIFIED) {
     return BOOK_EVIDENCE.UNVERIFIED;
   }
+  if (entry.evidence === BOOK_EVIDENCE.FOREIGN_INGEST || entry.source === 'foreign_ingest') {
+    return BOOK_EVIDENCE.FOREIGN_INGEST;
+  }
   if (entry.inflow_claim && typeof entry.inflow_claim === 'object') {
     return BOOK_EVIDENCE.INFLOW_CLAIMED;
   }
@@ -120,7 +125,9 @@ export function entryQualifiesForTotals(entry) {
     if (UNMETERED_RAILS.has(rail)) return false;
     return entry.collected === true;
   }
-  if (evidence !== BOOK_EVIDENCE.COLLECTED) return false;
+  if (evidence !== BOOK_EVIDENCE.COLLECTED && evidence !== BOOK_EVIDENCE.FOREIGN_INGEST) {
+    return false;
+  }
   const rail = String(entry.rail || '').toLowerCase();
   if (UNMETERED_RAILS.has(rail)) return false;
   return entry.collected === true;
@@ -134,6 +141,7 @@ export function entryQualifiesForCap(entry) {
   }
   if (evidence === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED) return false;
   if (evidence === BOOK_EVIDENCE.INFLOW_CLAIMED || evidence === BOOK_EVIDENCE.COLLECTED
+    || evidence === BOOK_EVIDENCE.FOREIGN_INGEST
     || evidence === BOOK_EVIDENCE.RECORDED_BY_SETTLE) {
     const rail = String(entry.rail || 'usdc').toLowerCase();
     if (UNMETERED_RAILS.has(rail)) return false;
@@ -325,6 +333,22 @@ export class UsageSettledLedger {
       intent_id: intentId || null,
       attempt_index: attemptIndex != null ? Number(attemptIndex) : null,
     };
+    if (receipt.foreign_x402 === true) {
+      entry.foreign_x402 = true;
+      entry.source = receipt.source || 'foreign_ingest';
+      entry.evidence = BOOK_EVIDENCE.FOREIGN_INGEST;
+      entry.receipt_snapshot = {
+        schema: receipt.schema,
+        task_id: receipt.task_id,
+        status: receipt.status,
+        proof_outcome: receipt.proof_outcome,
+        foreign_x402: true,
+        source: entry.source,
+        payment: receipt.payment,
+        route: receipt.route,
+        signature: receipt.signature || null,
+      };
+    }
     this._index(entry);
     return { ok: true, entry };
   }
