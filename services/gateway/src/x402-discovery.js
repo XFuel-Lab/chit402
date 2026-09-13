@@ -265,7 +265,7 @@ const AGENTS_BOOK_OUTPUT_SCHEMA = {
           task_id: { type: 'string' },
           evidence: {
             type: 'string',
-            enum: ['collected', 'foreign_ingest', 'RECORDED_BY_SETTLE', 'ARRIVAL_UNVERIFIED', 'inflow_claimed', 'UNVERIFIED', 'policy_blocked'],
+            enum: ['collected', 'foreign_ingest', 'RECORDED_BY_SETTLE', 'ARRIVAL_UNVERIFIED', 'inflow_claimed', 'UNVERIFIED', 'policy_blocked', 'a2a_escrow'],
             description:
               'Possession/settlement evidence. RECORDED_BY_SETTLE = recorder accepted at settle cutoff; '
               + 'ARRIVAL_UNVERIFIED = explicit omission when ingress_receipt missing at cutoff; '
@@ -1328,7 +1328,7 @@ export function buildOpenApiSpec(baseUrl = '') {
           description:
             'Possession-gated export of ledger rows (not live wallet scrape). '
             + 'format=csv (default), json (audit pack), or html (print to PDF). '
-            + 'Each row includes evidence: collected | RECORDED_BY_SETTLE | ARRIVAL_UNVERIFIED | inflow_claimed | UNVERIFIED | policy_blocked.',
+            + 'Each row includes evidence: collected | RECORDED_BY_SETTLE | ARRIVAL_UNVERIFIED | inflow_claimed | UNVERIFIED | policy_blocked | a2a_escrow.',
           tags: ['Agents'],
           parameters: [
             { name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } },
@@ -1548,6 +1548,74 @@ export function buildOpenApiSpec(baseUrl = '') {
             401: { description: 'No possession proof.' },
             403: { description: 'Demo key or wrong proof.' },
             404: { description: 'Escrow not found.' },
+          },
+        },
+      },
+      '/v1/agents/{agent_id}/book/a2a-escrow': {
+        get: {
+          operationId: 'listBookA2aEscrowJobs',
+          summary: 'List A2A escrow jobs',
+          description:
+            'List agent-to-agent escrow jobs for the principal (possession holder). '
+            + 'Thin v1 on ledger escrow + machine dispute — not on-chain hold.',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          responses: {
+            200: { description: 'Jobs for this agent.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Wrong proof or unknown agent_id.' },
+          },
+        },
+        post: {
+          operationId: 'bookA2aEscrow',
+          summary: 'A2A escrow + machine dispute',
+          description:
+            'Possession-gated A2A job flow: open (job_spec_hash + parties), fund (ledger hold), '
+            + 'submit (fulfillment receipt / output commitment), release, clawback, or metered challenge. '
+            + 'Each phase appends an exportable book row. Demo keys rejected. '
+            + 'See docs/product/a2a-escrow-dispute-v1.md.',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['action'],
+                  properties: {
+                    action: {
+                      type: 'string',
+                      enum: ['open', 'fund', 'submit', 'release', 'clawback', 'challenge', 'status'],
+                    },
+                    job_id: { type: 'string' },
+                    job_spec_hash: { type: 'string', description: '32-byte hex commitment to job spec (open).' },
+                    amount: { type: 'string', description: 'USDC atomic units (open).' },
+                    parties: {
+                      type: 'object',
+                      properties: {
+                        principal_agent_id: { type: 'integer' },
+                        counterparty_agent_id: { type: 'integer' },
+                      },
+                    },
+                    task_id: { type: 'string', description: 'Collected payment task (fund).' },
+                    fulfillment_receipt_id: { type: 'string', description: 'Fulfillment task id (submit).' },
+                    output_commitment: { type: 'string', description: 'Output hash commitment (submit).' },
+                    claim_type: { type: 'string', enum: ['output_missing', 'wrong_model', 'double_charge'] },
+                    evidence: { type: 'object' },
+                    expires_at: { type: 'string', format: 'date-time' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: 'Action completed.' },
+            201: { description: 'Job opened or funded.' },
+            400: { description: 'Invalid action or checks failed.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Demo key or wrong proof.' },
+            404: { description: 'Job not found.' },
           },
         },
       },

@@ -62,6 +62,7 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
     '/v1/book/slice',
     '/v1/agents/{agent_id}/book/dispute',
     '/v1/agents/{agent_id}/book/escrow',
+    '/v1/agents/{agent_id}/book/a2a-escrow',
     '/v1/agents/{agent_id}/book/webhook',
     '/v1/agents/{agent_id}/book/rotate',
     '/receipt/{taskId}',

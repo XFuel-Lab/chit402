@@ -438,6 +438,108 @@ export async function bookEscrowAction(
   };
 }
 
+export interface BookA2aJobRecord {
+  job_id: string;
+  job_spec_hash: string;
+  amount: string;
+  principal_agent_id: number;
+  counterparty_agent_id: number;
+  status: string;
+  task_id?: string | null;
+  escrow_id?: string | null;
+  fulfillment_receipt_id?: string | null;
+  output_commitment?: string | null;
+  verify_url?: string | null;
+  challenge_count?: number;
+}
+
+export type A2aEscrowAction =
+  | 'open'
+  | 'fund'
+  | 'submit'
+  | 'release'
+  | 'clawback'
+  | 'challenge'
+  | 'status';
+
+export interface A2aEscrowActionParams {
+  action: A2aEscrowAction;
+  job_id?: string;
+  job_spec_hash?: string;
+  amount?: string;
+  parties?: { principal_agent_id: number; counterparty_agent_id: number };
+  task_id?: string;
+  fulfillment_receipt_id?: string;
+  output_commitment?: string;
+  claim_type?: 'output_missing' | 'wrong_model' | 'double_charge';
+  evidence?: Record<string, unknown>;
+}
+
+export type A2aEscrowActionResult =
+  | { ok: true; job?: BookA2aJobRecord; escrow?: BookEscrowRecord; dispute?: object; meter?: object; disclaimer?: string }
+  | { ok: false; error: BookFetchError | 'a2a_escrow'; message?: string; status?: number; job?: BookA2aJobRecord };
+
+/** POST /v1/agents/:agent_id/book/a2a-escrow with possession session. */
+export async function bookA2aEscrowAction(
+  apiV1: string,
+  auth: { agentId: number; session: string },
+  params: A2aEscrowActionParams,
+): Promise<A2aEscrowActionResult> {
+  const url = `${apiV1.replace(/\/$/, '')}/agents/${auth.agentId}/book/a2a-escrow`;
+  const body: Record<string, unknown> = { session: auth.session, action: params.action };
+  if (params.job_id) body.job_id = params.job_id;
+  if (params.job_spec_hash) body.job_spec_hash = params.job_spec_hash;
+  if (params.amount) body.amount = params.amount;
+  if (params.parties) body.parties = params.parties;
+  if (params.task_id) body.task_id = params.task_id;
+  if (params.fulfillment_receipt_id) body.fulfillment_receipt_id = params.fulfillment_receipt_id;
+  if (params.output_commitment) body.output_commitment = params.output_commitment;
+  if (params.claim_type) body.claim_type = params.claim_type;
+  if (params.evidence) body.evidence = params.evidence;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-XFuel-Session': auth.session,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, error: 'network' };
+  }
+
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    if (!res.ok) return { ok: false, error: 'network', status: res.status };
+  }
+
+  if (res.status === 401) return { ok: false, error: 'unauth', status: 401 };
+  if (res.status === 403) return { ok: false, error: 'forbidden', status: 403 };
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: 'a2a_escrow',
+      message: typeof data.message === 'string' ? data.message : 'A2A escrow request failed',
+      status: res.status,
+      job: data.job as BookA2aJobRecord | undefined,
+    };
+  }
+
+  return {
+    ok: true,
+    job: data.job as BookA2aJobRecord | undefined,
+    escrow: data.escrow as BookEscrowRecord | undefined,
+    dispute: data.dispute as object | undefined,
+    meter: data.meter as object | undefined,
+    disclaimer: typeof data.disclaimer === 'string' ? data.disclaimer : undefined,
+  };
+}
+
 export interface BookInflowParams {
   bucket?: string;
   allocation: string;

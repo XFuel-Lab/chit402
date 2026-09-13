@@ -155,6 +155,7 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
     '/v1/book/slice',
     '/v1/agents/{agent_id}/book/dispute',
     '/v1/agents/{agent_id}/book/escrow',
+    '/v1/agents/{agent_id}/book/a2a-escrow',
     '/v1/agents/{agent_id}/book/webhook',
     '/v1/agents/{agent_id}/book/rotate',
     '/receipt/{taskId}',
@@ -173,6 +174,8 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
     'ingest is not the paid door');
   assert.equal(spec.paths['/v1/agents/{agent_id}/book/escrow'].post['x-payment-info'], undefined,
     'escrow is not the paid door');
+  assert.equal(spec.paths['/v1/agents/{agent_id}/book/a2a-escrow'].post['x-payment-info'], undefined,
+    'a2a-escrow is not the paid door');
   assert.equal(spec.paths['/v1/agents/{agent_id}/book/webhook'].put['x-payment-info'], undefined,
     'book webhook is not the paid door');
 
