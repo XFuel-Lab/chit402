@@ -10,6 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
 
 /** Optional async hook when a new book row is indexed (not on load/replay). */
 let bookRowWrittenHook = null;
@@ -333,6 +334,12 @@ export class UsageSettledLedger {
       intent_id: intentId || null,
       attempt_index: attemptIndex != null ? Number(attemptIndex) : null,
     };
+    if (receipt.fulfillment && typeof receipt.fulfillment === 'object') {
+      entry.fulfillment = receipt.fulfillment;
+      entry.job_kind = receipt.fulfillment.intent?.job_kind ?? null;
+    } else if (receipt.route?.job_kind) {
+      entry.job_kind = receipt.route.job_kind;
+    }
     if (receipt.foreign_x402 === true) {
       entry.foreign_x402 = true;
       entry.source = receipt.source || 'foreign_ingest';
@@ -346,6 +353,7 @@ export class UsageSettledLedger {
         source: entry.source,
         payment: receipt.payment,
         route: receipt.route,
+        fulfillment: receipt.fulfillment || null,
         signature: receipt.signature || null,
       };
     }

@@ -137,7 +137,7 @@ describe('Receipt ECDSA Signing', () => {
 
     assert.ok(receipt.issuer_signature, 'receipt should have issuer_signature');
     assert.equal(receipt.issuer_signature.alg, 'ES256');
-    assert.equal(receipt.issuer_signature.payload_version, 6);
+    assert.equal(receipt.issuer_signature.payload_version, 7);
     assert.ok(receipt.issuer_signature.jws, 'should have compact JWS');
     assert.ok(receipt.issuer_signature.kid, 'should have kid');
     assert.equal(receipt.verification.jwks_uri, 'https://api.test/.well-known/jwks.json');
@@ -435,7 +435,7 @@ describe('Standard Library Compatibility (jose)', () => {
     assert.equal(payload.task_id, receipt.task_id);
     assert.equal(payload.iss, 'chit402');
     assert.ok(payload.iat, 'iat claim present');
-    assert.equal(payload.payload_version, 6);
+    assert.equal(payload.payload_version, 7);
     
       const view = mergeReceiptView(receipt);
     assert.equal(payload.payment.rail, view.payment.rail);

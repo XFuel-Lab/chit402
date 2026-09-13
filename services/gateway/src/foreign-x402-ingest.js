@@ -21,6 +21,10 @@ import logger from './logger.js';
 import config from './config.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
 import { buildVerifyUrl, explorerUrlForRef, networkFromPaymentRef } from './receipt.js';
+import {
+  buildFulfillmentEnvelope,
+  fulfillmentFieldsFromIngestBody,
+} from './fulfillment-receipt.js';
 
 /** ERC-20 Transfer event topic (keccak256 of Transfer(address,address,uint256)) */
 const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -295,10 +299,15 @@ export function normalizeIngestInput(body = {}) {
   const existingRequired = body.payment_required || body.paymentRequired;
   const existingResponse = body.payment_response || body.paymentResponse;
   if (existingRequired && existingResponse) {
-    return { ok: true, paymentRequired: existingRequired, paymentResponse: existingResponse };
+    return {
+      ok: true,
+      paymentRequired: existingRequired,
+      paymentResponse: existingResponse,
+      fulfillmentMeta: fulfillmentFieldsFromIngestBody(body),
+    };
   }
 
-  const inv = body.foreign_invoice || body.foreign_settle || body.invoice;
+  const inv = body.fulfillment_invoice || body.foreign_invoice || body.foreign_settle || body.invoice;
   const flat = inv && typeof inv === 'object' ? inv : body;
 
   const amount = flat.amount;
@@ -351,6 +360,7 @@ export function normalizeIngestInput(body = {}) {
       payer: String(payer),
       network,
     },
+    fulfillmentMeta: fulfillmentFieldsFromIngestBody(body),
   };
 }
 
@@ -400,11 +410,25 @@ export function buildForeignReceipt({
   paymentResponse,
   rail,
   signingSecret = null,
+  fulfillmentMeta = null,
 }) {
   const route = extractRouteFromResource(paymentRequired.resource);
   const amount = String(paymentRequired.amount);
   const network = paymentResponse.network || paymentRequired.network || 'base';
   const paymentRef = `${network}:${paymentResponse.tx}`;
+  const meta = fulfillmentMeta && typeof fulfillmentMeta === 'object' ? fulfillmentMeta : {};
+  const fulfillment = buildFulfillmentEnvelope({
+    jobKind: meta.jobKind,
+    resource: paymentRequired.resource,
+    intentId: meta.intentId,
+    attemptIndex: meta.attemptIndex,
+    payerWallet: paymentResponse.payer,
+    paymentRef,
+    outputCommitment: meta.outputCommitment,
+    deliverableHash: meta.deliverableHash,
+    omitDeliverable: meta.omitDeliverable,
+    defaultJobKind: 'other',
+  });
 
   const receipt = {
     schema: 'xfuel.receipt.v3',
@@ -429,7 +453,9 @@ export function buildForeignReceipt({
       hub: route.hub,
       provider: route.hub,
       resource: paymentRequired.resource,
+      job_kind: fulfillment.intent.job_kind,
     },
+    fulfillment,
   };
 
   if (signingSecret) {
@@ -540,6 +566,7 @@ export async function ingestForeignX402(body = {}, {
   }
 
   const paymentRequired = normalized.paymentRequired;
+  const fulfillmentMeta = normalized.fulfillmentMeta || fulfillmentFieldsFromIngestBody(body);
   const reqValid = validatePaymentRequired(paymentRequired);
   if (!reqValid.ok) {
     return {
@@ -664,6 +691,7 @@ export async function ingestForeignX402(body = {}, {
     paymentResponse,
     rail,
     signingSecret,
+    fulfillmentMeta,
   });
 
   // Append to ledger — this is the nullification; ledger dedupes by payment.ref
@@ -679,6 +707,8 @@ export async function ingestForeignX402(body = {}, {
   const appended = ledger.append(receipt, {
     payer: paymentResponse.payer,
     agentId: id,
+    intentId: fulfillmentMeta.intentId || null,
+    attemptIndex: fulfillmentMeta.attemptIndex ?? null,
   });
 
   if (!appended.ok) {
@@ -719,10 +749,12 @@ export async function ingestForeignX402(body = {}, {
         hub: receipt.route.hub,
         model: receipt.route.model,
         resource: paymentRequired.resource,
+        job_kind: receipt.fulfillment?.intent?.job_kind ?? null,
       },
       foreign_x402: true,
       source: 'foreign_ingest',
       evidence: 'foreign_ingest',
+      fulfillment: receipt.fulfillment || null,
       recorded_at: appended.entry.recorded_at,
       signature: receipt.signature || null,
       stamp_fee: stampFee.toString(),

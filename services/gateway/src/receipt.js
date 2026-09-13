@@ -20,6 +20,7 @@ import {
   sessionActClaimOf,
   resolveSessionActTarget,
 } from './session-act.js';
+import { buildFulfillmentEnvelope, OUTPUT_COMMITMENT_STATUS } from './fulfillment-receipt.js';
 
 export const SETTLEMENT_KIND_INHERITED = 'inherited';
 export const SETTLEMENT_KIND_SETTLED = 'settled';
@@ -108,7 +109,7 @@ export function buildJwksUri(baseUrl = '') {
 }
 
 /** Current JWS payload version for newly issued receipts. */
-export const RECEIPT_PAYLOAD_VERSION = 6;
+export const RECEIPT_PAYLOAD_VERSION = 7;
 
 /**
  * Public verifying key pinned at sign time (RFC 7638 kid + ES256 JWK).
@@ -163,6 +164,7 @@ export function mergeReceiptView(receipt) {
       target_agent: claims.target_agent ?? receipt.target_agent ?? null,
       session_act: claims.session_act ?? receipt.session_act ?? null,
       caller_binding: receipt.caller_binding ?? claims.caller_binding ?? null,
+      fulfillment: claims.fulfillment ?? receipt.fulfillment ?? null,
     };
   }
 
@@ -269,6 +271,7 @@ export function mergeReceiptView(receipt) {
           unit: claims.provider_cogs.unit ?? 'atomic_usdc',
         }
       : receipt.provider_cogs ?? null,
+    fulfillment: claims.fulfillment ?? receipt.fulfillment ?? null,
   };
 }
 
@@ -620,7 +623,7 @@ function committedHash(value) {
  * (`keccak256` of the acting output). Do not SHA-256 the whole `result` object
  * when `result.outputHash` is present — that was two hashes for one task.
  */
-function outputHashOf(task) {
+export function outputHashOf(task) {
   const explicit = committedHash(
     task.outputHash
     || task.meta?.outputHash
@@ -642,6 +645,37 @@ function outputHashOf(task) {
   const serialized = acting != null ? acting : JSON.stringify(result);
   const digest = '0x' + crypto.createHash('sha256').update(serialized).digest('hex');
   return { value: digest, kind: 'sha256_of_output' };
+}
+
+/**
+ * Fulfillment v1 envelope for a listener task or receipt snapshot.
+ * @param {object} task
+ * @param {{ payerWallet?: string|null, paymentRef?: string|null, jobKind?: string|null, resource?: string|null }} [opts]
+ */
+export function fulfillmentEnvelopeOf(task, {
+  payerWallet = null,
+  paymentRef = null,
+  jobKind = null,
+  resource = null,
+} = {}) {
+  const output = outputHashOf(task);
+  const routeResource = resource
+    ?? task?.route?.resource
+    ?? task?.meta?.resource
+    ?? null;
+  const session = sessionOf(task);
+  return buildFulfillmentEnvelope({
+    jobKind: jobKind ?? task?.meta?.job_kind ?? task?.job_kind ?? null,
+    resource: routeResource,
+    intentId: task?.meta?.intent_id ?? task?.meta?.intentId ?? task?.intent_id ?? null,
+    attemptIndex: task?.meta?.attempt_index ?? task?.meta?.attemptIndex ?? task?.attempt_index ?? null,
+    payerWallet: payerWallet ?? session?.payer_wallet ?? task?.meta?.payer_wallet ?? null,
+    delegationHash: session?.delegation_hash ?? task?.meta?.delegation_hash ?? null,
+    paymentRef: paymentRef ?? task?.intent?.paymentRef ?? task?.payment?.ref ?? null,
+    outputHash: output?.value ?? task?.output?.hash ?? null,
+    outputCommitment: task?.fulfillment?.output_commitment ?? null,
+    defaultJobKind: 'completions',
+  });
 }
 
 /**
@@ -675,6 +709,18 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
   const targetAgent = resolvedTarget && resolvedTarget !== '0x0000000000000000000000000000000000000000'
     ? resolvedTarget
     : null;
+  const fulfillment = view.fulfillment ?? buildFulfillmentEnvelope({
+    jobKind: view.intent?.job_kind ?? view.route?.job_kind ?? null,
+    resource: view.intent?.resource ?? view.route?.resource ?? null,
+    intentId: view.intent?.intent_id ?? null,
+    attemptIndex: view.intent?.attempt_index ?? null,
+    payerWallet: view.caller_binding?.payer_wallet ?? view.authorization?.payer_wallet ?? null,
+    delegationHash: view.delegation_hash ?? view.session?.delegation_hash ?? null,
+    paymentRef: view.payment?.ref ?? null,
+    outputHash: view.output?.hash ?? null,
+    outputCommitment: view.output_commitment ?? null,
+    defaultJobKind: view.foreign_x402 ? 'other' : 'completions',
+  });
   return {
     task_id: view.task_id,
     iss: 'chit402',
@@ -741,6 +787,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     action,
     settlement,
     session_act: sessionAct,
+    fulfillment,
     payload_version: RECEIPT_PAYLOAD_VERSION,
   };
 }
@@ -1356,6 +1403,11 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   const pricing = task.meta?.pricing || null;
   const usage = usageOf(task);
   const rollingFronted = !!(task.meta?.rolling?.fronted && !paymentRef && paymentRail === 'usdc');
+  const fulfillment = fulfillmentEnvelopeOf(task, {
+    payerWallet: payerWallet || sessionOf(task)?.payer_wallet || null,
+    paymentRef,
+    resource: task.meta?.resource || null,
+  });
 
   const prefix = preferredPathPrefix(reqHost);
   const displayTaskId = taskIdWithPreferredPrefix(task.taskId, prefix);
@@ -1417,6 +1469,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     lineage: lineageOf(task),
     handoff: handoffOf(task),
     output: output ? { hash: output.value, kind: output.kind } : null,
+    fulfillment,
     caller_binding: callerBindingOf(task, {
       apiKeyHash,
       agentId,
@@ -1517,6 +1570,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   if (draft.lineage) envelope.lineage = draft.lineage;
   if (draft.handoff) envelope.handoff = draft.handoff;
   if (draft.output) envelope.output = { kind: draft.output.kind };
+  if (draft.fulfillment) envelope.fulfillment = draft.fulfillment;
   const sessionPointer = outerSessionPointer(draft.session, base);
   if (sessionPointer) {
     envelope.delegation_hash = sessionPointer.delegation_hash;
@@ -1796,6 +1850,20 @@ export function renderReceiptHtml(receipt) {
       </section>`
     : '';
 
+  const fulfillment = view.fulfillment;
+  const fulfillmentBlock = fulfillment
+    ? `<section class="card">
+        <h2>Fulfillment <span class="scope">paid job</span></h2>
+        ${row('Job kind', esc(fulfillment.intent?.job_kind || '—'))}
+        ${fulfillment.intent?.resource ? row('Resource', `<code>${esc(fulfillment.intent.resource)}</code>`) : ''}
+        ${fulfillment.intent?.intent_id ? row('Intent', `<code>${esc(fulfillment.intent.intent_id)}</code>${fulfillment.intent.attempt_index != null ? ` · attempt ${esc(fulfillment.intent.attempt_index)}` : ''}`) : ''}
+        ${fulfillment.authorization?.payer_wallet ? row('Payer', `<code>${esc(shortHash(fulfillment.authorization.payer_wallet, 10, 8))}</code>`) : ''}
+        ${fulfillment.output_commitment?.status === OUTPUT_COMMITMENT_STATUS.COMMITTED && fulfillment.output_commitment.hash
+          ? row('Deliverable', `<code>${esc(shortHash(fulfillment.output_commitment.hash, 12, 10))}</code>`)
+          : row('Deliverable', `<span class="badge pending">${esc(fulfillment.output_commitment?.omission_rule || 'UNVERIFIED')}</span>`)}
+      </section>`
+    : '';
+
   const outputRow = view.output
     ? row(view.output.kind === 'committed' ? 'Output commitment' : 'Output hash (SHA-256)', `<code>${esc(shortHash(view.output.hash, 12, 10))}</code>`)
     : '';
@@ -1927,6 +1995,7 @@ export function renderReceiptHtml(receipt) {
     ${lineageBlock}
     ${sessionBlock}
     ${handoffBlock}
+    ${fulfillmentBlock}
 
     <footer>
       Machine-readable: <a href="${esc(receipt.links.json)}">JSON</a> ·

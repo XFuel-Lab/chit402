@@ -596,7 +596,7 @@ test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compa
   assert.equal(r.issuer_signature.jwks_uri, undefined);
   assert.ok(r.issuer_signature.kid, 'kid present');
   assert.ok(r.issuer_signature.jws, 'compact JWS present');
-  assert.equal(r.issuer_signature.payload_version, 6);
+  assert.equal(r.issuer_signature.payload_version, 7);
   
   // JWS should have 3 parts (header.payload.signature)
   const parts = r.issuer_signature.jws.split('.');
@@ -616,7 +616,7 @@ test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compa
   assert.equal(payload.task_id, r.task_id);
   assert.equal(payload.iss, 'chit402');
   assert.ok(payload.iat, 'iat claim present');
-  assert.equal(payload.payload_version, 6);
+  assert.equal(payload.payload_version, 7);
 });
 
 test('buildReceipt: omits inactive extension fields and documents provider_cogs units', () => {

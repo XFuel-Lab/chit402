@@ -14,6 +14,7 @@ import crypto from 'crypto';
 import { clampBookLimit, BOOK_MAX_LIMIT, deriveEvidence, BOOK_EVIDENCE, entryQualifiesForTotals } from './usage-settled.js';
 import { DEFAULT_FLOOR_UNITS } from './pricing.js';
 import { buildVerifyUrl, explorerUrlForRef } from './receipt.js';
+import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
 
 export { clampBookLimit, BOOK_DEFAULT_LIMIT, BOOK_MAX_LIMIT } from './usage-settled.js';
 export { deriveEvidence, BOOK_EVIDENCE } from './usage-settled.js';
@@ -102,6 +103,8 @@ function rowOf(entry) {
   if (entry.attempt_index != null) {
     row.attempt_index = entry.attempt_index;
   }
+  const fulfillmentRow = bookFulfillmentRowOf(entry);
+  if (fulfillmentRow) row.fulfillment = fulfillmentRow;
   if (entry.payer) {
     row.payer_wallet = entry.payer;
   }

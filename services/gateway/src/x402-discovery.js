@@ -3,6 +3,11 @@ import { isX402Enabled, defaultRail, toCaip2Network, usdcFor } from './x402-adap
 import { buildIconUrl } from './xfuel-icon.js';
 import { defaultFacilitatorUrlForNetwork, PAYAI_FACILITATOR_URL, PAYAI_DEFAULT_FEE_PAYER } from './x402-facilitator.js';
 import { describePricing } from './pricing.js';
+import {
+  FULFILLMENT_OPENAPI_SCHEMA,
+  OUTPUT_COMMITMENT_OPENAPI_SCHEMA,
+  FULFILLMENT_JOB_KINDS,
+} from './fulfillment-receipt.js';
 
 /**
  * x402 discovery documents.
@@ -260,7 +265,7 @@ const AGENTS_BOOK_OUTPUT_SCHEMA = {
           task_id: { type: 'string' },
           evidence: {
             type: 'string',
-            enum: ['collected', 'RECORDED_BY_SETTLE', 'ARRIVAL_UNVERIFIED', 'inflow_claimed', 'UNVERIFIED', 'policy_blocked'],
+            enum: ['collected', 'foreign_ingest', 'RECORDED_BY_SETTLE', 'ARRIVAL_UNVERIFIED', 'inflow_claimed', 'UNVERIFIED', 'policy_blocked'],
             description:
               'Possession/settlement evidence. RECORDED_BY_SETTLE = recorder accepted at settle cutoff; '
               + 'ARRIVAL_UNVERIFIED = explicit omission when ingress_receipt missing at cutoff; '
@@ -369,6 +374,17 @@ const AGENTS_BOOK_OUTPUT_SCHEMA = {
           inflow_corrections: {
             type: 'array',
             description: 'Append-only corrections to inflow_claim — never scrape-later.',
+          },
+          fulfillment: {
+            type: 'object',
+            description: 'Paid job summary (job_kind, resource, output_commitment).',
+            properties: {
+              job_kind: { type: 'string', enum: [...FULFILLMENT_JOB_KINDS] },
+              resource: { type: ['string', 'null'] },
+              intent_id: { type: ['string', 'null'] },
+              attempt_index: { type: ['integer', 'null'] },
+              output_commitment: OUTPUT_COMMITMENT_OPENAPI_SCHEMA,
+            },
           },
         },
       },
@@ -481,8 +497,38 @@ const AGENTS_BOOK_INGEST_INPUT_SCHEMA = {
         service_url: { type: 'string' },
         hub: { type: 'string', description: 'Host when resource omitted.' },
         model: { type: 'string', description: 'Path when only hub is known.' },
+        job_kind: { type: 'string', enum: [...FULFILLMENT_JOB_KINDS] },
+        deliverable_hash: { type: 'string', description: 'Precomputed deliverable commitment (0x… or sha256:…).' },
+        deliverable: { type: 'string', description: 'Raw deliverable; gateway hashes to output_commitment.' },
+        output_commitment: OUTPUT_COMMITMENT_OPENAPI_SCHEMA,
+        intent_id: { type: 'string' },
+        attempt_index: { type: 'integer' },
+        omit_deliverable: { type: 'boolean', description: 'Explicit UNVERIFIED output at stamp time.' },
       },
     },
+    fulfillment_invoice: {
+      type: 'object',
+      description: 'Alias for foreign_invoice with fulfillment fields (job_kind, output_commitment).',
+      required: ['amount', 'payer', 'payTo'],
+      properties: {
+        amount: { type: 'string' },
+        payer: { type: 'string' },
+        payTo: { type: 'string' },
+        tx: { type: 'string' },
+        payment_ref: { type: 'string' },
+        network: { type: 'string', default: 'base' },
+        resource: { type: 'string' },
+        service_url: { type: 'string' },
+        hub: { type: 'string' },
+        model: { type: 'string' },
+        job_kind: { type: 'string', enum: [...FULFILLMENT_JOB_KINDS] },
+        deliverable_hash: { type: 'string' },
+        output_commitment: OUTPUT_COMMITMENT_OPENAPI_SCHEMA,
+        intent_id: { type: 'string' },
+        attempt_index: { type: 'integer' },
+      },
+    },
+    fulfillment: FULFILLMENT_OPENAPI_SCHEMA,
   },
 };
 
@@ -513,6 +559,7 @@ const AGENTS_BOOK_INGEST_OUTPUT_SCHEMA = {
     foreign_x402: { type: 'boolean', description: 'Always true for ingest.' },
     source: { type: 'string', enum: ['foreign_ingest'], description: 'Chit recorded spend executed elsewhere.' },
     evidence: { type: 'string', enum: ['foreign_ingest'], description: 'Book/export evidence — not a native completion hop.' },
+    fulfillment: FULFILLMENT_OPENAPI_SCHEMA,
     recorded_at: { type: 'string' },
     signature: {
       type: 'object',
