@@ -228,3 +228,16 @@ test('buildOpenApiSpec: no xfuel-icon reference in OpenAPI spec', () => {
   const specStr = JSON.stringify(spec);
   assert.ok(!specStr.includes('xfuel-icon'), 'no xfuel-icon in OpenAPI spec');
 });
+
+test('buildOpenApiSpec: book ingest documents fulfillment_invoice + job_kind', () => {
+  const spec = buildOpenApiSpec('https://api.chit402.com');
+  const ingest = spec.paths['/v1/agents/{agent_id}/book/ingest'].post;
+  const schema = ingest.requestBody.content['application/json'].schema;
+  assert.ok(schema.properties.fulfillment_invoice);
+  assert.ok(schema.properties.fulfillment);
+  assert.ok(schema.properties.foreign_invoice.properties.job_kind);
+  const outSchema = ingest.responses['201'].content['application/json'].schema;
+  assert.ok(outSchema.properties.fulfillment);
+  const specStr = JSON.stringify(spec);
+  assert.match(specStr, /missing_deliverable_at_stamp|output_commitment/);
+});
