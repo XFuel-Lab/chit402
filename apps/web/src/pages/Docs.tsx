@@ -60,6 +60,13 @@ const builders: DocLink[] = [
     external: true,
   },
   {
+    title: 'A2A escrow + machine dispute',
+    description: 'Agent↔agent job_spec_hash flow on the book — open, fund, submit, release or challenge.',
+    href: `${GITHUB}/docs/product/a2a-escrow-dispute-v1.md`,
+    meta: 'book',
+    external: true,
+  },
+  {
     title: 'M2M API',
     description: 'REST task submit, status, webhooks, quotes.',
     href: `${GITHUB}/docs/M2M_API.md`,

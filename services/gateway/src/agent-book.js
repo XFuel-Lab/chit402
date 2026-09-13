@@ -74,6 +74,7 @@ function addAmount(acc, v) {
 function rowOf(entry) {
   const evidence = deriveEvidence(entry);
   const isBlocked = evidence === BOOK_EVIDENCE.POLICY_BLOCKED;
+  const isA2aEscrow = evidence === BOOK_EVIDENCE.A2A_ESCROW;
   const isUnverified = evidence === BOOK_EVIDENCE.UNVERIFIED;
   const isArrivalUnverified = evidence === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED;
   const isRecordedBySettle = evidence === BOOK_EVIDENCE.RECORDED_BY_SETTLE;
@@ -137,6 +138,11 @@ function rowOf(entry) {
     if (entry.spent_atomic != null) row.spent_atomic = String(entry.spent_atomic);
     if (entry.cap_atomic != null) row.cap_atomic = String(entry.cap_atomic);
     if (entry.period_start) row.period_start = entry.period_start;
+  } else if (isA2aEscrow && entry.a2a_escrow) {
+    row.event = 'a2a_escrow';
+    row.a2a_escrow = entry.a2a_escrow;
+    row.collected = false;
+    if (entry.a2a_escrow.verify_url) row.verify_url = entry.a2a_escrow.verify_url;
   } else if (hideAmount) {
     row.collected = false;
   } else if (isRecordedBySettle) {

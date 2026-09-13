@@ -7,6 +7,7 @@
  * for POST /v1/agents/register.
  */
 
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
@@ -40,6 +41,8 @@ export const BOOK_EVIDENCE = {
   INFLOW_CLAIMED: 'inflow_claimed',
   UNVERIFIED: 'UNVERIFIED',
   POLICY_BLOCKED: 'policy_blocked',
+  /** A2A escrow / machine dispute phase row — exportable, non-spend. */
+  A2A_ESCROW: 'a2a_escrow',
 };
 
 /** Arrival sub-state on settle-time rows (recorder ≠ arrival). */
@@ -95,6 +98,9 @@ export function deriveEvidence(entry) {
   if (entry.event === 'policy_blocked' || entry.evidence === BOOK_EVIDENCE.POLICY_BLOCKED) {
     return BOOK_EVIDENCE.POLICY_BLOCKED;
   }
+  if (entry.event === 'a2a_escrow' || entry.evidence === BOOK_EVIDENCE.A2A_ESCROW) {
+    return BOOK_EVIDENCE.A2A_ESCROW;
+  }
   if (entry.evidence === BOOK_EVIDENCE.UNVERIFIED) {
     return BOOK_EVIDENCE.UNVERIFIED;
   }
@@ -137,7 +143,8 @@ export function entryQualifiesForTotals(entry) {
 /** True when a row counts toward prepaid_ceiling / daily / hourly caps. */
 export function entryQualifiesForCap(entry) {
   const evidence = deriveEvidence(entry);
-  if (evidence === BOOK_EVIDENCE.POLICY_BLOCKED || evidence === BOOK_EVIDENCE.UNVERIFIED) {
+  if (evidence === BOOK_EVIDENCE.POLICY_BLOCKED || evidence === BOOK_EVIDENCE.UNVERIFIED
+    || evidence === BOOK_EVIDENCE.A2A_ESCROW) {
     return false;
   }
   if (evidence === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED) return false;
@@ -534,6 +541,68 @@ export class UsageSettledLedger {
     return { ok: true, entry, duplicate: false };
   }
 
+  /**
+   * Append an exportable A2A escrow phase row (non-spend audit).
+   * @param {{
+   *   agentId: number,
+   *   jobId: string,
+   *   phase: string,
+   *   job: object,
+   *   verifyUrl?: string|null,
+   *   meterUnits?: string|null,
+   *   challengeIndex?: number|null,
+   * }} row
+   */
+  recordA2aEscrowEvent({
+    agentId,
+    jobId,
+    phase,
+    job,
+    verifyUrl = null,
+    meterUnits = null,
+    challengeIndex = null,
+  }) {
+    const id = Number(agentId);
+    if (!Number.isInteger(id) || id < 1) {
+      return { ok: false, reason: 'invalid agent_id', code: 'invalid_agent' };
+    }
+    const tid = `a2aesc-${String(jobId).replace(/[^a-zA-Z0-9-]/g, '')}-${String(phase)}-${crypto.randomBytes(4).toString('hex')}`;
+    if (this.byTask.has(tid)) {
+      return { ok: true, entry: this.byTask.get(tid), duplicate: true };
+    }
+    const entry = {
+      task_id: tid,
+      payment_ref: job?.task_id ? `a2a_job:${job.task_id}` : null,
+      payer: null,
+      agent_id: id,
+      collected: false,
+      evidence: BOOK_EVIDENCE.A2A_ESCROW,
+      event: 'a2a_escrow',
+      a2a_escrow: {
+        job_id: jobId,
+        phase: String(phase),
+        job_spec_hash: job?.job_spec_hash || null,
+        amount: job?.amount || null,
+        counterparty_agent_id: job?.counterparty_agent_id ?? null,
+        fulfillment_receipt_id: job?.fulfillment_receipt_id || null,
+        output_commitment: job?.output_commitment || null,
+        escrow_id: job?.escrow_id || null,
+        meter_units: meterUnits != null ? String(meterUnits) : null,
+        challenge_index: challengeIndex != null ? Number(challengeIndex) : null,
+        verify_url: verifyUrl || null,
+      },
+      rail: null,
+      amount: null,
+      collected_at: new Date().toISOString(),
+      recorded_at: new Date().toISOString(),
+      model: null,
+      hub: null,
+      parent_ref: job?.task_id || null,
+    };
+    this._index(entry);
+    return { ok: true, entry, duplicate: false };
+  }
+
   /** Count book rows (collected + policy_blocked) for one intent under an agent. */
   countAttemptsForIntent(intentId, agentId) {
     const id = Number(agentId);
@@ -581,6 +650,10 @@ export class UsageSettledLedger {
       const e = this.entries[i];
       if (Number(e.agent_id) !== id) continue;
       if (e.event === 'policy_blocked' || deriveEvidence(e) === BOOK_EVIDENCE.POLICY_BLOCKED) {
+        rows.push(e);
+        continue;
+      }
+      if (e.event === 'a2a_escrow' || deriveEvidence(e) === BOOK_EVIDENCE.A2A_ESCROW) {
         rows.push(e);
         continue;
       }

@@ -26,6 +26,7 @@ import {
   type PolicyType,
 } from '../lib/agentBook';
 import BookEscrowPanel from '../components/BookEscrowPanel';
+import BookA2AEscrowPanel from '../components/BookA2AEscrowPanel';
 import BookInflowPanel from '../components/BookInflowPanel';
 import BookEvidenceChip from '../components/BookEvidenceChip';
 import PrivateSpendCallout from '../components/PrivateSpendCallout';
@@ -780,12 +781,18 @@ export default function Book() {
 
             <details className="book-treasury-advanced card" style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem' }}>
               <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
-                Treasury advanced — policy, export, escrow, inflow
+                Treasury advanced — policy, export, escrow, A2A, inflow
               </summary>
               <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                 {book.private_spend?.enabled && <PrivateSpendCallout />}
 
                 <BookEscrowPanel
+                  apiV1={apiV1}
+                  agentId={book.agent_id}
+                  session={sessionInput.trim()}
+                />
+
+                <BookA2AEscrowPanel
                   apiV1={apiV1}
                   agentId={book.agent_id}
                   session={sessionInput.trim()}
