@@ -43,6 +43,7 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
   const spec = await res.json();
   assert.equal(spec.openapi, '3.1.0');
   assert.equal(spec.info.title, 'Chit402', 'OpenAPI title is Chit402 (public/searchable name)');
+  assert.match(spec.info.description, /www\.chit402\.com\/trust/);
   assert.equal(typeof spec.info['x-guidance'], 'string');
   assert.deepEqual(Object.keys(spec.paths), [
     '/v1/chat/completions',
@@ -100,6 +101,7 @@ test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   assert.match(body, /Base mainnet/);
   assert.match(body, /USDC/);
   assert.match(body, /verify_url/);
+  assert.match(body, /www\.chit402\.com\/trust/);
   assert.doesNotMatch(body, /\$0\.01/); // No fixed price in public copy
   assert.doesNotMatch(body, /unmetered/i);
   assert.doesNotMatch(body, /free path/i);

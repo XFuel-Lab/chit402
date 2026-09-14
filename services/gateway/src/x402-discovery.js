@@ -1081,7 +1081,8 @@ export function buildOpenApiSpec(baseUrl = '') {
       + 'with budget Y and remaining (prepaid ceiling). '
       + 'Private Spend: registered sessions get vendor_blind by default. '
       + 'Replaceable Signer: receipts carry dual signatures (primary + co_signature); '
-      + 'verify offline via docs/VERIFY_ALGORITHM.md.',
+      + 'verify offline via docs/VERIFY_ALGORITHM.md. '
+      + 'Issuer trust (pin JWKS + kid OOB): https://www.chit402.com/trust.',
       'x-guidance':
         'Treasury desk for agent spend — who paid which call; export, policy, evidence. '
         + 'Possession book for principals. No account. No API key. A wallet that can pay the 402 is enough. '
@@ -1095,8 +1096,9 @@ export function buildOpenApiSpec(baseUrl = '') {
         + 'GET|POST /v1/agents/{agent_id}/book is a possession-gated last-N collected '
         + 'spend pack with budget Y / remaining for that agent_id — not a public index. '
         + 'Private Spend is default for registered sessions (X-XFuel-Session header). '
-        + 'Receipts carry dual signatures; co_signature enables verify if Chit disappears. '
-        + 'POST /task-request is a lower-level M2M alternative that returns task_id for '
+      + 'Receipts carry dual signatures; co_signature enables verify if Chit disappears. '
+      + 'Issuer trust (pin JWKS + kid OOB): https://www.chit402.com/trust '
+      + 'POST /task-request is a lower-level M2M alternative that returns task_id for '
         + 'polling — do not treat it as the public door.',
     },
     'x-discovery': {
