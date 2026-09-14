@@ -1081,7 +1081,8 @@ export function buildOpenApiSpec(baseUrl = '') {
       + 'with budget Y and remaining (prepaid ceiling). '
       + 'Private Spend: registered sessions get vendor_blind by default. '
       + 'Replaceable Signer: receipts carry dual signatures (primary + co_signature); '
-      + 'verify offline via docs/VERIFY_ALGORITHM.md.',
+      + 'verify offline via docs/VERIFY_ALGORITHM.md. '
+      + 'Issuer trust (pin JWKS + kid OOB): https://www.chit402.com/trust.',
       'x-guidance':
         'Treasury desk for agent spend — who paid which call; export, policy, evidence. '
         + 'Possession book for principals. No account. No API key. A wallet that can pay the 402 is enough. '
