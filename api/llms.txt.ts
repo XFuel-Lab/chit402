@@ -9,6 +9,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 
 ## Money pages (chit402.com)
 
+- /trust    : Issuer trust — pin JWKS + kid, rotation policy, receipt verify steps. https://www.chit402.com/trust
 - /         : Treasury desk — who paid which call. Export, policy, evidence. https://chit402.com/book
 - /docs/chit-in-15-lines : OpenAI baseURL swap + demo key chit402-demo (no USDC).
 - /docs/eliza : Eliza plugin stub (coming: @xfuel/plugin-elizaos).

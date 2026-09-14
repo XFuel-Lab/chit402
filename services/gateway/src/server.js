@@ -296,6 +296,7 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 
 ## Proof objects
 
+- Issuer trust (pin JWKS + kid): https://www.chit402.com/trust
 - Live receipt: https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e
 - Thread: https://x.com/chit402/status/2096153417588588555
 - Chit in 15 lines: https://www.chit402.com/docs/chit-in-15-lines
@@ -452,6 +453,7 @@ SDK: verifyReceiptEcdsaWithJwks(receipt, jwks) → { checked, valid, kid }
 
 ## Docs
 
+- Issuer trust: https://www.chit402.com/trust
 - Chit in 15 lines: https://www.chit402.com/docs/chit-in-15-lines
 - Protocol map: AGENTS.md
 - Agent Playbook: skills/AGENT_PLAYBOOK.md

@@ -14,6 +14,7 @@ import Pricing from './pages/Pricing';
 import GatewayV1 from './pages/GatewayV1';
 import NotFound from './pages/NotFound';
 import Security from './pages/Security';
+import IssuerTrust from './pages/IssuerTrust';
 import AgentShop from './pages/AgentShop';
 import Book from './pages/Book';
 import BookBot from './pages/BookBot';
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="/docs/theoriq" element={<SwarmPlatforms />} />
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/security" element={<Security />} />
+        <Route path="/trust" element={<IssuerTrust />} />
         <Route path="/v1" element={<GatewayV1 />} />
         <Route path="/v1/*" element={<GatewayV1 />} />
         <Route path="/agent-shop" element={<AgentShop />} />

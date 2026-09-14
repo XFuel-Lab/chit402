@@ -193,6 +193,22 @@ test('App routes docs subpages', () => {
   assert.match(app, /isChitHost\(\) \? <ChitHome/, 'App conditionally renders ChitHome');
   assert.match(app, /chit-in-15-lines/, 'App routes 15-lines page');
   assert.match(app, /\/docs\/eliza/, 'App routes Eliza stub');
+  assert.match(app, /\/trust/, 'App routes issuer trust page');
+});
+
+test('issuer trust page publishes JWKS URLs, kid, and rotation policy', () => {
+  const page = readFileSync(join(root, 'src/pages/IssuerTrust.tsx'), 'utf8');
+  assert.match(page, /api\.chit402\.com\/\.well-known\/jwks\.json/);
+  assert.match(page, /api\.xfuel\.app\/\.well-known\/jwks\.json/);
+  assert.match(page, /IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q/);
+  assert.match(page, /RFC 7638/);
+  assert.match(page, /issuer_jwk.*not an independent trust root/is);
+  assert.match(page, /private key.*never/i);
+});
+
+test('llms.txt API route links issuer trust page', () => {
+  const llmsApi = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8');
+  assert.match(llmsApi, /www\.chit402\.com\/trust/);
 });
 
 test('middleware CHIT_SEO uses Chit402 titles (not Chit)', () => {

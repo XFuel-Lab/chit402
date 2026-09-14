@@ -1095,8 +1095,9 @@ export function buildOpenApiSpec(baseUrl = '') {
         + 'GET|POST /v1/agents/{agent_id}/book is a possession-gated last-N collected '
         + 'spend pack with budget Y / remaining for that agent_id — not a public index. '
         + 'Private Spend is default for registered sessions (X-XFuel-Session header). '
-        + 'Receipts carry dual signatures; co_signature enables verify if Chit disappears. '
-        + 'POST /task-request is a lower-level M2M alternative that returns task_id for '
+      + 'Receipts carry dual signatures; co_signature enables verify if Chit disappears. '
+      + 'Issuer trust (pin JWKS + kid OOB): https://www.chit402.com/trust '
+      + 'POST /task-request is a lower-level M2M alternative that returns task_id for '
         + 'polling — do not treat it as the public door.',
     },
     'x-discovery': {

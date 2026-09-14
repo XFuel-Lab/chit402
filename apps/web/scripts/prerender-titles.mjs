@@ -82,6 +82,12 @@ const ROUTE_CONTENT = {
     h1: 'Private Spend',
     lede: 'vendor_blind mode for possession sessions. Providers see gateway traffic, not buyer topology. Gateway-trusted — not prompt encryption.',
   },
+  '/trust': {
+    title: 'Issuer trust — pin JWKS + kid | Chit402',
+    h1: 'Issuer trust',
+    lede:
+      'Public pin for Chit402 receipt signatures: JWKS URLs, current ES256 kid (RFC 7638 thumbprint), rotation rules, and offline verify steps. Private key never published.',
+  },
   '/book': {
     title: 'Principal book — spend dashboard | Chit',
     h1: 'This agent spent Y on this job.',
