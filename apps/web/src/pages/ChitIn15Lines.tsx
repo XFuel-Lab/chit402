@@ -50,9 +50,9 @@ export default function ChitIn15Lines() {
           <span className="docs-kicker">Quickstart</span>
           <h1>Chit in 15 lines</h1>
           <p>
-            Point any chat-completions client at <code>{apiV1}</code>. Demo key{' '}
-            <code>chit402-demo</code> skips payment — no wallet, no USDC. Paid calls return a
-            collected receipt with <code>verify_url</code>.
+            Chit is the possession book: after USDC settle you hold hub, model, amount, and{' '}
+            <code>verify_url</code>. Point any chat-completions client at <code>{apiV1}</code> as the
+            drop-in install path. Demo key <code>chit402-demo</code> skips payment — no wallet, no USDC.
           </p>
         </header>
 

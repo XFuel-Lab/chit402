@@ -75,7 +75,7 @@ const builders: DocLink[] = [
   },
   {
     title: 'Chat completions gateway',
-    description: 'Drop-in /v1 models and chat completions with receipts.',
+    description: 'Drop-in /v1 — pay, then hold the receipt.',
     href: `${GITHUB}/docs/CHAT_COMPLETIONS_GATEWAY.md`,
     meta: '/v1',
     external: true,
@@ -117,7 +117,7 @@ const builders: DocLink[] = [
   },
   {
     title: 'Virtuals ACP',
-    description: 'Keep ACP settle; route inference through Chit for the receipt book.',
+    description: 'Keep ACP settle; send inference spend through Chit for the receipt book.',
     href: '/docs/acp',
     meta: 'ACP',
     internal: true,

@@ -9,7 +9,7 @@ export default function PrivateSpendDocs() {
           <span className="docs-kicker">Product</span>
           <h1>Private Spend</h1>
           <p>
-            Vendor-blind routing for registered principals. Spend without briefing the frontier lab
+            Vendor-blind fulfillment for registered principals. Spend without briefing the frontier lab
             on your buyer topology — gateway-trusted, not prompt encryption.
           </p>
         </header>

@@ -115,9 +115,10 @@ export function buildAgentCard(baseUrl = '') {
       },
       {
         id: 'models',
-        name: 'Model catalog',
-        description: 'GET /v1/models lists the live catalog. Public, no key.',
-        tags: ['catalog', 'openai-compatible'],
+        name: 'Live model ids',
+        description:
+          'GET /v1/models lists OpenAI-shaped model ids for the drop-in /v1 door (install path, not the product). Public, no key.',
+        tags: ['openai-compatible', 'drop-in'],
         examples: ['GET /v1/models'],
       },
     ],

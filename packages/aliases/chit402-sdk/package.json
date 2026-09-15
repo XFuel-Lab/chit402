@@ -1,7 +1,7 @@
 {
   "name": "chit402-sdk",
   "version": "0.6.0",
-  "description": "Chit402 SDK — OpenAI-compatible client for receipted AI inference. USDC via x402 on Base.",
+  "description": "Chit402 SDK — OpenAI-compatible client; signed spend receipt after USDC settle (x402 on Base or Solana).",
   "main": "./index.cjs",
   "module": "./index.mjs",
   "types": "./index.d.ts",

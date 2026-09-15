@@ -60,7 +60,7 @@ const ROUTE_CONTENT = {
   '/docs/acp': {
     title: 'Virtuals ACP | Chit402',
     h1: 'Virtuals ACP',
-    lede: 'Keep ACP settle for agent commerce; route inference through Chit for hub, model, amount, verify_url.',
+    lede: 'Keep ACP settle for agent commerce; send inference spend through Chit for hub, model, amount, verify_url.',
   },
   '/docs/swarm-platforms': {
     title: 'Olas + Theoriq | Chit402',

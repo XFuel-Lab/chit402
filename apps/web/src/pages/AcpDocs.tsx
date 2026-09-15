@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import { getApiV1 } from '../apiHost';
 
 const preferredPath = `// Preferred: keep ACP settle for agent commerce;
-// route inference spend through Chit for the receipt book.
+// send inference spend through Chit for the signed receipt book.
 
 const client = new OpenAI({
   baseURL: '${getApiV1()}',
@@ -46,8 +46,8 @@ export default function AcpDocs() {
           <span className="docs-kicker">Platform</span>
           <h1>Virtuals ACP</h1>
           <p>
-            Agents keep ACP for agent commerce. Route inference through Chit for the spend receipt
-            — hub, model, amount, <code>verify_url</code>. No fork of ACP required.
+            Agents keep ACP for agent commerce. Send inference spend through Chit for the signed
+            receipt — hub, model, amount, <code>verify_url</code>. No fork of ACP required.
           </p>
         </header>
 

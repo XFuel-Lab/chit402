@@ -37,7 +37,7 @@ npx hardhat test
 
 ### Agent gateway
 
-The agent-facing API (routing, payments, proving, receipts) runs from `services/gateway`:
+The agent-facing API (settlement, payments, proving, receipts) runs from `services/gateway`:
 
 ```bash
 cd services/gateway
