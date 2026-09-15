@@ -1,7 +1,7 @@
 ---
 name: openclaw-chit402
 description: >-
-  Route inference through Chit402 (api.chit402.com/v1), pay USDC on Base via x402,
+  Send inference spend through Chit402 (api.chit402.com/v1), pay USDC on Base via x402,
   and return verify_url so the principal holds the spend row. Use for stamped
   agent inference with budget caps — not cheaper routing.
 homepage: https://chit402.com/docs/openclaw

@@ -1,6 +1,6 @@
 # chit402-mcp
 
-MCP server for Chit402 — receipted AI inference for agents.
+MCP server for Chit402 — OpenAI-compatible door; signed spend receipt after USDC settle.
 
 **First hour:** `list_models` then `chat_completions` — that is unmetered `/v1`.
 `submit_inference` is the **paid** door and returns 402 without a payer.

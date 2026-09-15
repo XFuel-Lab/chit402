@@ -1,6 +1,6 @@
 # chit402-sdk
 
-OpenAI-compatible TypeScript client for Chit402 — receipted AI inference with USDC settlement on Base.
+OpenAI-compatible TypeScript client for Chit402 — signed spend receipt after USDC settle (x402 on Base or Solana).
 
 npm: `chit402-sdk` · License: Apache-2.0  
 Docs: https://chit402.com · API: https://api.chit402.com

@@ -81,8 +81,9 @@ export default function GatewayV1() {
         <section className="docs-section">
           <h2>Which models can I pass today?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
-            <code>GET /v1/models</code> shows the live catalog. <code>xfuel/auto</code> picks the
-            best available route. We do not proxy to third-party SaaS providers on the public catalog.
+            <code>GET /v1/models</code> is the drop-in model id list (install path, not the product).
+            Wire hubs Theta and Akash sit behind the door; <code>xfuel/auto</code> picks one for fulfillment.
+            We do not proxy to third-party SaaS providers on that list.
           </p>
         </section>
 

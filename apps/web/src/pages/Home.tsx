@@ -40,7 +40,8 @@ export default function Home() {
             Cost-plus, quoted, receipted — pay USDC on Base or Solana.
             <code>GET|POST /v1/agents/:agent_id/book</code> is possession-gated last-N collected spend.
             Demo key <code>xfuel-demo</code> skips payment (rate-limited). On-chain SP1 proof on demand — not on every call.
-            <code>GET /v1/models</code> shows the live catalog. <code>xfuel/auto</code> picks the best available route.
+            Drop-in model ids: <code>GET /v1/models</code> lists wire hubs (Theta, Akash) behind the{' '}
+            <code>/v1</code> door. <code>xfuel/auto</code> picks a hub for fulfillment — the product is the signed receipt.
           </p>
           <div style={styles.heroCta}>
             <Link to="/v1" className="btn btn-primary">Try /v1</Link>

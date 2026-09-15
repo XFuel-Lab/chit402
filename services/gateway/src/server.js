@@ -308,7 +308,7 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 - POST /a2a-message         : A2A card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
 - POST /v1/agents/register  : fail-closed. Bind agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
-- GET  /v1/models           : live catalog (Theta + Akash + xfuel/auto). Public, no key.
+- GET  /v1/models           : drop-in model id list (install path, not the product). Wire hubs Theta + Akash; xfuel/auto. Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - No account. No API key. A wallet that can pay the 402 is enough.
 - Signed receipt: hub, model, amount, verify_url. Cost-plus, quoted, receipted.
