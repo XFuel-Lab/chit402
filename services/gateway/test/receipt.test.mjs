@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildReceipt,
   renderReceiptHtml,
+  CHIT402_OG_IMAGE_URL,
   renderReceiptNotFound,
   explorerUrlForRef,
   buildVerifyUrl,
@@ -281,6 +282,11 @@ test('renderReceiptHtml: shareable page includes key fields + escapes hostile in
   assert.ok(html.includes(TASK_ID));
   assert.match(html, /Proven/);
   assert.match(html, /og:title/);
+  assert.match(html, new RegExp(`property="og:image" content="${CHIT402_OG_IMAGE_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+  assert.match(html, /property="og:image:width" content="1200"/);
+  assert.match(html, /property="og:image:height" content="630"/);
+  assert.match(html, /name="twitter:card" content="summary_large_image"/);
+  assert.match(html, new RegExp(`name="twitter:image" content="${CHIT402_OG_IMAGE_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
   // The injected script tag must be escaped, not rendered.
   assert.ok(!html.includes('<script>alert(1)</script>'));
   assert.ok(html.includes('&lt;script&gt;'));

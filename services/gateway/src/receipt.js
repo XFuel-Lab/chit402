@@ -22,6 +22,9 @@ import {
 } from './session-act.js';
 import { buildFulfillmentEnvelope, OUTPUT_COMMITMENT_STATUS } from './fulfillment-receipt.js';
 
+/** Canonical brand OG image for share previews (absolute www URL for api.chit402.com crawlers). */
+export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
+
 export const SETTLEMENT_KIND_INHERITED = 'inherited';
 export const SETTLEMENT_KIND_SETTLED = 'settled';
 export const SETTLEMENT_KIND_UNSETTLED = 'unsettled';
@@ -1884,6 +1887,11 @@ export function renderReceiptHtml(receipt) {
 <meta property="og:title" content="${esc(title)}" />
 <meta property="og:description" content="${esc(desc)}" />
 <meta property="og:type" content="website" />
+<meta property="og:image" content="${esc(CHIT402_OG_IMAGE_URL)}" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="${esc(CHIT402_OG_IMAGE_URL)}" />
 <meta name="robots" content="noindex" />
 <style>
   :root { color-scheme: dark; }
