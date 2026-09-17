@@ -177,6 +177,14 @@ test('do not invent a Kimi row when Akash has not listed one', () => {
   assert.equal(r.ok, false);
 });
 
+test('chit/auto resolves like xfuel/auto', () => {
+  const xfuel = resolveCatalogModel('xfuel/auto', LIVE, { modality: 'chat', shape: 'agent' });
+  const chit = resolveCatalogModel('chit/auto', LIVE, { modality: 'chat', shape: 'agent' });
+  assert.equal(xfuel.ok, true);
+  assert.equal(chit.ok, true);
+  assert.equal(chit.model.id, xfuel.model.id);
+});
+
 test('"default" alias routes to xfuel/auto (Bankr 2026-09-01)', () => {
   const r = resolveCatalogModel('default', LIVE, { modality: 'chat' });
   assert.equal(r.ok, true, 'default should resolve to a model');

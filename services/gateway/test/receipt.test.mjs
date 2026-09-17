@@ -15,6 +15,8 @@ import {
   decodeReceiptClaims,
   toUnixSeconds,
   canonicalSignedPayload,
+  displayRouteModel,
+  isAutoRouteAlias,
 } from '../src/receipt.js';
 import { computePaymentCommitment, computeInferenceBinding } from '../src/payment-binding.js';
 import crypto from 'crypto';
@@ -290,6 +292,42 @@ test('renderReceiptHtml: shareable page includes key fields + escapes hostile in
   // The injected script tag must be escaped, not rendered.
   assert.ok(!html.includes('<script>alert(1)</script>'));
   assert.ok(html.includes('&lt;script&gt;'));
+});
+
+test('displayRouteModel: auto aliases become chit/auto; served hub ids pass through', () => {
+  for (const alias of ['xfuel/auto', 'chit/auto', 'auto', 'xfuel-auto', 'chit-auto', 'default']) {
+    assert.equal(displayRouteModel(alias), 'chit/auto', alias);
+    assert.equal(isAutoRouteAlias(alias), true, alias);
+  }
+  assert.equal(displayRouteModel('akash/meta-llama/Llama-3.3-70B-Instruct'), 'akash/meta-llama/Llama-3.3-70B-Instruct');
+  assert.equal(isAutoRouteAlias('theta/qwen3'), false);
+});
+
+test('renderReceiptHtml: route chrome hides xfuel auto alias and footer brand', () => {
+  const failed = renderReceiptHtml(buildReceipt({
+    taskId: 'xfuel-d0e1f963-dc24-4eb2-aa64-cda0e1851f75',
+    status: 'failed',
+    intent: { paymentRail: 'usdc', amount: '10000', modelId: 'xfuel/auto' },
+    sp1Proof: null,
+  }));
+  assert.match(failed, /Route details[\s\S]*chit\/auto/);
+  assert.ok(!failed.includes('xfuel/auto'), 'wire alias must not appear in HTML chrome');
+  assert.ok(!failed.includes('XFuel'), 'XFuel brand must not appear in HTML chrome');
+  assert.equal(mergeReceiptView(buildReceipt({
+    taskId: 'xfuel-wire',
+    status: 'failed',
+    intent: { modelId: 'xfuel/auto', paymentRail: 'usdc', amount: '1' },
+  })).route.model, 'xfuel/auto', 'signed JSON keeps wire model id');
+
+  const served = renderReceiptHtml(buildReceipt({
+    taskId: 'xfuel-served',
+    status: 'completed',
+    intent: { modelId: 'xfuel/auto', paymentRail: 'usdc', amount: '10000' },
+    result: { model: 'akash/zai-org/GLM-5.2', provider: 'akash-network' },
+    sp1Proof: null,
+  }));
+  assert.ok(served.includes('akash/zai-org/GLM-5.2'));
+  assert.ok(!served.includes('xfuel/auto'));
 });
 
 test('renderReceiptHtml: title is "Chit402", xfuel- prefix becomes chit- in display', () => {
