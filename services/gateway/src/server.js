@@ -80,6 +80,7 @@ import { aawpReaders } from './agent-wallet.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import {
   computeDoorMetrics,
+  computePublicDoorAggregate,
   doorMetricsAuthResult,
   extractDoorMetricsToken,
 } from './door-metrics.js';
@@ -3263,13 +3264,41 @@ export function createApp() {
             ? store.allSnapshots()
             : [...store.values()];
         } catch { /* listener not initialised — report zeros */ }
-        _statsCache = { at: now, data: computeUsageStats(tasks, { now }) };
+        const stats = computeUsageStats(tasks, { now });
+        stats.door = computePublicDoorAggregate(tasks, { now });
+        _statsCache = { at: now, data: stats };
       }
 
       if (wantsJson) return res.json(_statsCache.data);
       return res.type('html').send(renderStatsHtml(_statsCache.data));
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /stats error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // GET /stats/door — public-safe door traffic aggregates (homepage chip).
+  // Same door filter as private /v1/internal/door-metrics, but counts only.
+  // No wallets, txs, task ids, status/network splits. Rate-limited, no auth.
+  let _doorPublicCache = { at: 0, data: null };
+  const DOOR_PUBLIC_TTL_MS = 15_000;
+
+  app.get('/stats/door', rateLimit, (req, res) => {
+    try {
+      const now = Date.now();
+      if (!_doorPublicCache.data || now - _doorPublicCache.at > DOOR_PUBLIC_TTL_MS) {
+        let tasks = [];
+        try {
+          const store = getAIListener().activeTasks;
+          tasks = typeof store.allSnapshots === 'function'
+            ? store.allSnapshots()
+            : [...store.values()];
+        } catch { /* listener not initialised — report zeros */ }
+        _doorPublicCache = { at: now, data: computePublicDoorAggregate(tasks, { now }) };
+      }
+      return res.json(_doorPublicCache.data);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /stats/door error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
   });
@@ -4099,7 +4128,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/export, PUT|POST|GET|DELETE /v1/agents/:agent_id/book/webhook, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/escrow, GET|POST /v1/agents/:agent_id/book/a2a-escrow, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/:delegation_hash/challenge, POST /v1/sessions/:delegation_hash/act, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/export, PUT|POST|GET|DELETE /v1/agents/:agent_id/book/webhook, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/escrow, GET|POST /v1/agents/:agent_id/book/a2a-escrow, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/:delegation_hash/challenge, POST /v1/sessions/:delegation_hash/act, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/door, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 
