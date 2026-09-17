@@ -403,7 +403,12 @@ const config = {
   retry: {
     maxRetries: parseInt(process.env.MAX_RETRIES) || 3,
     delayMs: parseInt(process.env.RETRY_DELAY_MS) || 5000
-  }
+  },
+
+  // Private house ops — not on public OpenAPI. Fail closed when unset.
+  internal: {
+    doorMetricsToken: process.env.DOOR_METRICS_TOKEN || null,
+  },
 };
 
 /**

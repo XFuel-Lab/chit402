@@ -78,6 +78,11 @@ import { BookA2aJobStore, handleA2aJobAction } from './book-a2a-escrow.js';
 import { ingestForeignX402, getBaseProvider, buildPublicForeignIngestReceipt, resolveForeignIngestVerify } from './foreign-x402-ingest.js';
 import { aawpReaders } from './agent-wallet.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
+import {
+  computeDoorMetrics,
+  doorMetricsAuthResult,
+  extractDoorMetricsToken,
+} from './door-metrics.js';
 import { resolveSplit, describeSplit } from './revenue-split.js';
 import { apiKeyHashFromReq } from './buyer-attr.js';
 import { getFloatManager } from './provider-float.js';
@@ -3296,6 +3301,37 @@ export function createApp() {
       return res.json(data);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /stats/me error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // GET /v1/internal/door-metrics — private house door traffic (stamped receipts).
+  // Auth: DOOR_METRICS_TOKEN via Authorization: Bearer or X-Door-Metrics-Token.
+  // Off when unset (503). Not listed on public OpenAPI. See docs/ops/DOOR_METRICS.md.
+
+  let _doorMetricsCache = { at: 0, data: null };
+  const DOOR_METRICS_TTL_MS = 15_000;
+
+  app.get('/v1/internal/door-metrics', rateLimit, (req, res) => {
+    const auth = doorMetricsAuthResult(config.internal?.doorMetricsToken, extractDoorMetricsToken(req));
+    if (!auth.ok) {
+      return res.status(auth.status).json({ error: auth.error, message: auth.message });
+    }
+    try {
+      const now = Date.now();
+      if (!_doorMetricsCache.data || now - _doorMetricsCache.at > DOOR_METRICS_TTL_MS) {
+        let tasks = [];
+        try {
+          const store = getAIListener().activeTasks;
+          tasks = typeof store.allSnapshots === 'function'
+            ? store.allSnapshots()
+            : [...store.values()];
+        } catch { /* listener not initialised — report zeros */ }
+        _doorMetricsCache = { at: now, data: computeDoorMetrics(tasks, { now }) };
+      }
+      return res.json(_doorMetricsCache.data);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /v1/internal/door-metrics error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
   });
