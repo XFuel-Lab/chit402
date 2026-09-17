@@ -171,8 +171,51 @@ export function computeDoorMetrics(tasks = [], { now = Date.now() } = {}) {
 }
 
 
+const SERIES_DAYS = 30;
+
+/** UTC calendar day key YYYY-MM-DD from epoch ms. */
+function utcDayKey(ms) {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
 /**
- * Public-safe door traffic aggregates for marketing / homepage chip.
+ * Build SERIES_DAYS UTC day buckets ending on `now`'s UTC day (inclusive).
+ * Counts only — no wallets, txs, or task ids.
+ * @param {Array<object>} doorTasks - already filtered by isDoorTrafficTask
+ * @param {number} now
+ * @returns {Array<{ day: string, stamped_receipts: number, unique_payers: number }>}
+ */
+export function buildPublicDoorSeries(doorTasks, now = Date.now()) {
+  const endKey = utcDayKey(now);
+  const endUtc = Date.parse(`${endKey}T00:00:00.000Z`);
+  /** @type {Map<string, { stamped: number, payers: Set<string> }>} */
+  const buckets = new Map();
+  for (let i = SERIES_DAYS - 1; i >= 0; i -= 1) {
+    const dayMs = endUtc - i * DAY_MS;
+    buckets.set(utcDayKey(dayMs), { stamped: 0, payers: new Set() });
+  }
+
+  const windowStart = endUtc - (SERIES_DAYS - 1) * DAY_MS;
+  for (const t of doorTasks) {
+    const at = Number(t.createdAt) || 0;
+    if (!at || at < windowStart || at > now) continue;
+    const key = utcDayKey(at);
+    const bucket = buckets.get(key);
+    if (!bucket) continue;
+    bucket.stamped += 1;
+    const payer = callerBindingOf(t).payer_wallet;
+    if (payer) bucket.payers.add(String(payer).toLowerCase());
+  }
+
+  return [...buckets.entries()].map(([day, b]) => ({
+    day,
+    stamped_receipts: b.stamped,
+    unique_payers: b.payers.size,
+  }));
+}
+
+/**
+ * Public-safe door traffic aggregates for the Activity page (and /stats.door).
  * Counts only — no wallets, tx refs, task ids, status splits, or network splits.
  * Same door filter as computeDoorMetrics / isDoorTrafficTask.
  *
@@ -202,6 +245,7 @@ export function computePublicDoorAggregate(tasks = [], { now = Date.now() } = {}
     stamped_receipts_7d: stamped7d,
     stamped_receipts_24h: stamped24h,
     unique_payers_7d: payers7d.size,
+    series_30d: buildPublicDoorSeries(doorTasks, now),
     definition:
       'USDC x402 stamped receipts via openai-gateway (POST /v1, /v1/responses, POST /a2a-message)',
     window_anchor: 'task.createdAt',
@@ -212,6 +256,7 @@ export default {
   isDoorTrafficTask,
   computeDoorMetrics,
   computePublicDoorAggregate,
+  buildPublicDoorSeries,
   networkBucketFromPaymentRef,
   extractDoorMetricsToken,
   doorMetricsAuthResult,

@@ -88,6 +88,11 @@ const ROUTE_CONTENT = {
     lede:
       'Public pin for Chit402 receipt signatures: JWKS URLs, current ES256 kid (RFC 7638 thumbprint), rotation rules, and offline verify steps. Private key never published.',
   },
+  '/activity': {
+    title: 'Activity — door receipts | Chit402',
+    h1: 'Door traffic',
+    lede: 'Public door traffic for Chit402: signed USDC x402 receipts, unique payers, and protocol fees. Counts only from GET /stats/door — not a chain explorer or vanity scoreboard.',
+  },
   '/book': {
     title: 'Principal book — spend dashboard | Chit',
     h1: 'This agent spent Y on this job.',

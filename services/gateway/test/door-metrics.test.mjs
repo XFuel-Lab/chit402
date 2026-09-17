@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   computeDoorMetrics,
   computePublicDoorAggregate,
+  buildPublicDoorSeries,
   isDoorTrafficTask,
   networkBucketFromPaymentRef,
   doorMetricsAuthResult,
@@ -123,6 +124,13 @@ test('computePublicDoorAggregate: 7d/24h counts and unique payers only — no le
   assert.equal(pub.stamped_receipts_24h, 3);
   assert.equal(pub.unique_payers_7d, 2);
   assert.equal(typeof pub.definition, 'string');
+  assert.ok(Array.isArray(pub.series_30d), 'series_30d must be an array');
+  assert.equal(pub.series_30d.length, 30, 'series_30d is ~30 daily buckets');
+  assert.equal(typeof pub.series_30d[0].day, 'string');
+  assert.equal(typeof pub.series_30d[0].stamped_receipts, 'number');
+  assert.equal(typeof pub.series_30d[0].unique_payers, 'number');
+  const seriesSum = pub.series_30d.reduce((n, d) => n + d.stamped_receipts, 0);
+  assert.equal(seriesSum, 4, 'series includes 7d tasks plus 10d-old within 30d');
 
   const raw = JSON.stringify(pub);
   assert.ok(!raw.includes(SOLANA_PAYER), 'must not leak solana payer');
@@ -132,4 +140,25 @@ test('computePublicDoorAggregate: 7d/24h counts and unique payers only — no le
   assert.ok(!('by_network' in pub), 'no network split on public aggregate');
   assert.ok(!('outcome' in pub), 'no failed/debug outcome split on public aggregate');
   assert.ok(!('by_status' in pub), 'no status split on public aggregate');
+});
+
+test('buildPublicDoorSeries: 30 UTC day buckets, counts only', () => {
+  const tasks = [
+    doorTask({ taskId: 'd1', createdAt: hoursAgo(2), meta: { source: 'openai-gateway', payerWallet: SOLANA_PAYER } }),
+    doorTask({ taskId: 'd2', createdAt: hoursAgo(26), meta: { source: 'openai-gateway', payerWallet: EVM_PAYER } }),
+    doorTask({ taskId: 'd3', createdAt: hoursAgo(24 * 5), meta: { source: 'openai-gateway', payerWallet: SOLANA_PAYER } }),
+    doorTask({ taskId: 'old', createdAt: hoursAgo(24 * 40) }),
+  ];
+  const doorTasks = tasks.filter(isDoorTrafficTask);
+  const series = buildPublicDoorSeries(doorTasks, NOW);
+  assert.equal(series.length, 30);
+  assert.equal(series[series.length - 1].day, '2026-09-20');
+  assert.ok(series.every((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.day)));
+  assert.ok(series.every((d) => typeof d.stamped_receipts === 'number' && typeof d.unique_payers === 'number'));
+  const sum = series.reduce((n, d) => n + d.stamped_receipts, 0);
+  assert.equal(sum, 3);
+  const raw = JSON.stringify(series);
+  assert.ok(!raw.includes(SOLANA_PAYER));
+  assert.ok(!raw.includes(EVM_PAYER));
+  assert.ok(!raw.includes('d1'));
 });

@@ -1,6 +1,5 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import { getApiHost } from '../apiHost';
 import { getHostConfig } from '../hostConfig';
 
 const LIVE_RECEIPT =
@@ -8,27 +7,6 @@ const LIVE_RECEIPT =
 
 export default function ChitHome() {
   const config = getHostConfig();
-  const [doorReceipts7d, setDoorReceipts7d] = useState<number | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`${getApiHost()}/stats/door`, { cache: 'no-store' });
-        if (!res.ok) return;
-        const body = await res.json();
-        const n = body?.stamped_receipts_7d;
-        if (!cancelled && typeof n === 'number' && Number.isFinite(n)) {
-          setDoorReceipts7d(n);
-        }
-      } catch {
-        /* fail soft — chip stays hidden */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   return (
     <div className="page">
@@ -41,11 +19,6 @@ export default function ChitHome() {
           <p style={styles.heroLead}>
             Who paid which call — export, policy, evidence.
           </p>
-          {doorReceipts7d != null && (
-            <p style={styles.doorChip} aria-live="polite">
-              {doorReceipts7d.toLocaleString()} signed door receipts · last 7d
-            </p>
-          )}
           <p style={styles.heroDescription}>
             Treasury desk and possession book for agent spend — not a router dashboard.
             <code>POST /v1/chat/completions</code> returns a signed receipt with hub, model,
@@ -142,6 +115,10 @@ export default function ChitHome() {
             >
               GitHub
             </a>
+            {' · '}
+            <Link to="/activity" style={{ color: '#00d4ff' }}>
+              Activity
+            </Link>
           </p>
         </div>
       </section>
@@ -176,18 +153,6 @@ const styles: Record<string, CSSProperties> = {
     marginLeft: 'auto',
     marginRight: 'auto',
     lineHeight: 1.4,
-  },
-  doorChip: {
-    display: 'inline-block',
-    margin: '0 auto 1.25rem',
-    padding: '0.4rem 0.9rem',
-    borderRadius: 999,
-    border: '1px solid rgba(0, 212, 255, 0.35)',
-    background: 'rgba(0, 212, 255, 0.08)',
-    color: '#7ee7ff',
-    fontSize: '0.9rem',
-    fontWeight: 600,
-    letterSpacing: '0.01em',
   },
   heroDescription: {
     fontSize: '1rem',
