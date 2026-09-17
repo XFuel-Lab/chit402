@@ -45,6 +45,50 @@ function makePaymentHeader({ nonce, chainId = 84532, payTo = '0xtreasury' }) {
   return Buffer.from(JSON.stringify(blob), 'utf8').toString('base64');
 }
 
+/** x402 v2 / @x402/evm ExactEvmScheme: challenge nonce in accepted.extra, EIP-3009 nonce in payload.authorization. */
+function makeExactEvmV2PaymentHeader({
+  challengeNonce,
+  authNonce = '0x' + 'cd'.repeat(32),
+  chainId = 84532,
+  network = 'eip155:84532',
+  amount = '50000',
+  payTo = '0xtreasury',
+  asset = USDC_SEPOLIA,
+  from = '0x1111111111111111111111111111111111111111',
+} = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const blob = {
+    x402Version: 2,
+    resource: { url: 'https://api.chit402.com/v1/chat/completions', mimeType: 'application/json' },
+    accepted: {
+      scheme: 'exact',
+      network,
+      amount,
+      asset,
+      payTo,
+      maxTimeoutSeconds: 60,
+      extra: {
+        name: 'USDC',
+        version: '2',
+        nonce: challengeNonce,
+      },
+    },
+    payload: {
+      signature: '0x' + '22'.repeat(65),
+      authorization: {
+        from,
+        to: payTo,
+        value: amount,
+        validAfter: '0',
+        validBefore: String(now + 3600),
+        nonce: authNonce,
+      },
+    },
+    extensions: {},
+  };
+  return Buffer.from(JSON.stringify(blob), 'utf8').toString('base64');
+}
+
 let mockServer;
 let mockUrl;
 /** @type {object|null} */
@@ -155,6 +199,62 @@ test('cross-batch replay: same content_hash, wrong payment nonce rejected', () =
   assert.equal(check.reason, 'issuance_bind_nonce_mismatch');
 });
 
+test('ExactEvmScheme v2: challenge echo + distinct EIP-3009 auth nonce accepted', () => {
+  const challengeNonce = '0x' + 'aa'.repeat(32);
+  const authNonce = '0x' + 'cd'.repeat(32);
+  const stored = {
+    required: true,
+    chain_id: 84532,
+    settlement_contract: USDC_SEPOLIA,
+    content_hash: CONTENT_A,
+    nonce: null,
+  };
+  const header = makeExactEvmV2PaymentHeader({ challengeNonce, authNonce, chainId: 84532 });
+  const check = verifyIssuanceBindAtSettle({
+    storedBind: stored,
+    paymentHeader: header,
+    challengeNonce,
+    settlementContract: USDC_SEPOLIA,
+  });
+  assert.equal(check.ok, true);
+  assert.equal(check.bind.nonce, authNonce);
+  assert.equal(
+    check.commitment,
+    computeIssuanceCommitment({
+      chain_id: 84532,
+      settlement_contract: USDC_SEPOLIA,
+      nonce: authNonce,
+      content_hash: CONTENT_A,
+    }),
+  );
+});
+
+test('ExactEvmScheme v2: wrong challenge echo rejected (cross-batch)', () => {
+  const nonceChallenge = '0x' + 'dd'.repeat(32);
+  const nonceEcho = '0x' + 'ee'.repeat(32);
+  const authNonce = '0x' + 'cd'.repeat(32);
+  const stored = {
+    required: true,
+    chain_id: 84532,
+    settlement_contract: USDC_SEPOLIA,
+    content_hash: CONTENT_A,
+    nonce: nonceChallenge,
+  };
+  const header = makeExactEvmV2PaymentHeader({
+    challengeNonce: nonceEcho,
+    authNonce,
+    chainId: 84532,
+  });
+  const check = verifyIssuanceBindAtSettle({
+    storedBind: stored,
+    paymentHeader: header,
+    challengeNonce: nonceChallenge,
+    settlementContract: USDC_SEPOLIA,
+  });
+  assert.equal(check.ok, false);
+  assert.equal(check.reason, 'issuance_bind_nonce_mismatch');
+});
+
 test('cross-batch replay: wrong settlement contract rejected', () => {
   const nonce = '0x' + 'ff'.repeat(32);
   const wrongContract = '0x0000000000000000000000000000000000000001';
@@ -251,6 +351,42 @@ test('runX402Handshake: successful bind stamps commitment + dispute window', asy
   assert.equal(settled.issuance_commitment.bind.content_hash, CONTENT_B);
   assert.equal(settled.dispute_window.anchor_block, 42);
   assert.equal(settled.dispute_window.closes_at, 1_700_000_000 + 3600);
+});
+
+test('runX402Handshake: ExactEvmScheme v2 PAYMENT-SIGNATURE bind settles', async () => {
+  const taskId = 'task-bind-v2';
+  const body = {
+    model_id: 'test/model',
+    issuance_bind: {
+      chain_id: 84532,
+      settlement_contract: USDC_SEPOLIA,
+      content_hash: CONTENT_B,
+    },
+  };
+  const ch = await runX402Handshake({ body, headers: {} }, {
+    taskId,
+    cfg: testCfg,
+    body,
+    baseUrl: 'https://api.chit402.com',
+    l1Anchor: { chain_id: 8453, block_number: 42, timestamp: 1_700_000_000 },
+  });
+  assert.equal(ch.kind, 'challenge');
+  const challengeNonce = ch.body.accepts[0].extra.nonce;
+  const authNonce = '0x' + 'ab'.repeat(32);
+  const header = makeExactEvmV2PaymentHeader({ challengeNonce, authNonce, chainId: 84532 });
+
+  const settled = await runX402Handshake({
+    body,
+    headers: { 'payment-signature': header, 'payment-nonce': challengeNonce },
+  }, {
+    taskId,
+    cfg: testCfg,
+    body,
+    baseUrl: 'https://api.chit402.com',
+    l1Anchor: { chain_id: 8453, block_number: 42, timestamp: 1_700_000_000 },
+  });
+  assert.equal(settled.kind, 'settled');
+  assert.equal(settled.issuance_commitment.bind.nonce, authNonce);
 });
 
 test('dispute within window vs after window', async () => {
