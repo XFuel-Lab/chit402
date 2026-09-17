@@ -1190,7 +1190,7 @@ class AIListener {
 
       // "Auto, but on this hub" — a named provider narrows the auto pick rather
       // than being ignored or overriding a concretely named model.
-      const isAuto = !requested || ['xfuel/auto', 'auto', 'xfuel-auto'].includes(String(requested).trim());
+      const isAuto = !requested || ['xfuel/auto', 'chit/auto', 'auto', 'xfuel-auto', 'chit-auto'].includes(String(requested).trim());
       const hub = preferredHub === 'akash-network' ? 'akash'
         : preferredHub === 'theta-edgecloud' ? 'theta'
         : null;

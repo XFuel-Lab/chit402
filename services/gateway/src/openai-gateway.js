@@ -578,7 +578,7 @@ async function runChatInference({
 async function runImageInference({ model, prompt, allowFallback: fb }) {
   const { models } = await getHubCatalog();
   let modelId = model || 'xfuel/auto';
-  if (modelId === 'xfuel/auto' || modelId === 'auto' || modelId === 'xfuel-auto') {
+  if (modelId === 'xfuel/auto' || modelId === 'chit/auto' || modelId === 'auto' || modelId === 'xfuel-auto' || modelId === 'chit-auto') {
     const img = models.find((m) => m.modality === 'image');
     if (!img) {
       return { error: { status: 404, code: 'model_not_found', message: 'No image models in catalog' } };
@@ -658,7 +658,7 @@ async function runImageInference({ model, prompt, allowFallback: fb }) {
 async function runTranscriptionInference({ model, audioUrl, allowFallback: fb }) {
   const { models } = await getHubCatalog();
   let modelId = model || 'theta/whisper';
-  if (modelId === 'xfuel/auto' || modelId === 'auto') {
+  if (modelId === 'xfuel/auto' || modelId === 'chit/auto' || modelId === 'auto' || modelId === 'xfuel-auto' || modelId === 'chit-auto') {
     const w = models.find((m) => m.modality === 'audio') || models.find((m) => m.alias === 'whisper');
     if (!w) return { error: { status: 404, code: 'model_not_found', message: 'No audio models in catalog' } };
     modelId = w.id;

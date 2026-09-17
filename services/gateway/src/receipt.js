@@ -1628,6 +1628,40 @@ function displayTaskId(taskId) {
   return taskId.startsWith('xfuel-') ? 'chit-' + taskId.slice(6) : taskId;
 }
 
+/** Wire-compat auto-route ids that must not appear in public receipt chrome. */
+export function isAutoRouteAlias(model) {
+  if (model == null || model === '') return false;
+  const lower = String(model).trim().toLowerCase();
+  return (
+    lower === 'xfuel/auto'
+    || lower === 'chit/auto'
+    || lower === 'auto'
+    || lower === 'xfuel-auto'
+    || lower === 'chit-auto'
+    || lower === 'default'
+  );
+}
+
+/**
+ * Human-facing model label for receipt HTML (signed JSON keeps wire ids).
+ * Served hub models pass through; unresolved auto aliases become `chit/auto`.
+ */
+export function displayRouteModel(model) {
+  if (model == null || model === '') return model;
+  if (isAutoRouteAlias(model)) return 'chit/auto';
+  return String(model);
+}
+
+/** Human-facing provider label for receipt HTML (no internal gateway names). */
+export function displayRouteProvider(provider) {
+  if (provider == null || provider === '') return provider;
+  const s = String(provider);
+  if (isSymbolicLabel(s)) return null;
+  const lower = s.toLowerCase();
+  if (lower === 'xfuel' || lower === 'xfuel-gateway') return null;
+  return s;
+}
+
 /** USDC 6dp integer string → partner-readable dollars. Tiny COGS keeps extra decimals. */
 function formatUsdc(units) {
   if (units == null || units === '') return null;
@@ -1784,7 +1818,9 @@ export function renderReceiptHtml(receipt) {
           </section>`);
 
   const cogs = view.provider_cogs;
-  const cogsProvider = cogs?.provider || view.route?.provider;
+  const cogsProvider = displayRouteProvider(cogs?.provider || view.route?.provider);
+  const routeModelLabel = displayRouteModel(view.route.model);
+  const routeProviderLabel = displayRouteProvider(view.route.provider);
   const cogsBlock = cogs
     ? `<section class="card">
         <h2>Provider cost <span class="scope">what we paid to serve this</span></h2>
@@ -1995,8 +2031,8 @@ export function renderReceiptHtml(receipt) {
     <section class="card secondary">
       <h2>Route details</h2>
       ${row('Status', esc(view.status))}
-      ${row('Model', esc(view.route.model) || '<span class="muted">—</span>')}
-      ${row('Provider', esc(view.route.provider) || '<span class="muted">—</span>')}
+      ${row('Model', esc(routeModelLabel) || '<span class="muted">—</span>')}
+      ${row('Provider', esc(routeProviderLabel) || '<span class="muted">—</span>')}
       ${usageRows}
       ${outputRow}
       ${modelCommitmentRow}
@@ -2017,7 +2053,7 @@ export function renderReceiptHtml(receipt) {
       <a href="${esc(receipt.links.proof)}">proof</a> ·
       <a href="${esc(receipt.links.status)}">status</a><br />
       ES256 signed receipt · payload v${esc(receipt.issuer_signature?.payload_version || RECEIPT_PAYLOAD_VERSION)} · verify via pinned <code>issuer_signature.issuer_jwk</code> or <a href="${esc(jwksUrl || '/.well-known/jwks.json')}">JWKS</a><br />
-      XFuel Lab
+      Chit402
     </footer>
   </div>
   <script>

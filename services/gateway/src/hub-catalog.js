@@ -621,7 +621,14 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
   const modality = opts.modality || null;
   const lower = requested.toLowerCase();
 
-  if (requested === 'xfuel/auto' || lower === 'auto' || lower === 'xfuel-auto' || lower === 'default') {
+  if (
+    requested === 'xfuel/auto'
+    || lower === 'chit/auto'
+    || lower === 'chit-auto'
+    || lower === 'auto'
+    || lower === 'xfuel-auto'
+    || lower === 'default'
+  ) {
     // Never auto-route to a model the hub says has no workers. theta/qwen3 is
     // also omitted from autoPreferenceFor — it often reports workers yet 409s.
     // Explicit `theta/qwen3` still resolves; only the automatic choice is filtered.
