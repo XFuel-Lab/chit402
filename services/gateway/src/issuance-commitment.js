@@ -132,8 +132,26 @@ function domainChainId(domain) {
 }
 
 /**
+ * Challenge nonce echoed by the payer (402 accepts[0].extra.nonce binding).
+ * v2 ExactEvmScheme / CDP clients put this on `accepted.extra.nonce`, not in EIP-3009 auth.
+ */
+export function extractPaymentChallengeNonce(paymentHeader) {
+  if (!paymentHeader) return null;
+  const decoded = decodePaymentHeader(paymentHeader);
+  if (!decoded) return null;
+  if (decoded.accepted?.extra?.nonce != null && decoded.accepted.extra.nonce !== '') {
+    return normalizeAuthNonce(decoded.accepted.extra.nonce);
+  }
+  if (decoded.nonce != null && decoded.nonce !== '') {
+    return normalizeAuthNonce(decoded.nonce);
+  }
+  return null;
+}
+
+/**
  * Extract EIP-3009 authorization fields from an x402 payment header blob.
- * @returns {{ chain_id: number|null, settlement_contract: string|null, nonce: string|null, to: string|null }|null}
+ * Uses the signed `transferWithAuthorization` message nonce (payload.authorization for v2).
+ * @returns {{ chain_id: number|null, settlement_contract: string|null, nonce: string|null, to: string|null, challenge_nonce: string|null }|null}
  */
 export function extractEvmAuthorizationFromPayment(paymentHeader) {
   if (!paymentHeader) return null;
@@ -151,19 +169,34 @@ export function extractEvmAuthorizationFromPayment(paymentHeader) {
     domain = auth.domain || domain;
   }
 
-  if (decoded.accepted?.extra?.nonce && !message?.nonce) {
-    message = { ...(message || {}), nonce: decoded.accepted.extra.nonce };
+  const challenge_nonce = extractPaymentChallengeNonce(paymentHeader);
+  let authNonce = normalizeAuthNonce(message?.nonce);
+  if (!authNonce && challenge_nonce) {
+    // v1 XFuel SDK: top-level / message nonce is the EIP-3009 bytes32.
+    authNonce = challenge_nonce;
+  }
+  if (!authNonce) {
+    authNonce = normalizeAuthNonce(decoded.nonce);
   }
 
-  const nonce = normalizeAuthNonce(message?.nonce ?? decoded.nonce);
+  const accepted = decoded.accepted;
+  if (authNonce && accepted && domainChainId(domain) == null) {
+    const chainFromNetwork = normalizeChainId(accepted.network);
+    if (chainFromNetwork) {
+      domain = { ...(domain || {}), chainId: chainFromNetwork };
+    }
+  }
+
   const to = message?.to ? normalizeSettlementContract(message.to) : null;
-  const chain_id = domainChainId(domain);
+  const chain_id = domainChainId(domain)
+    ?? (accepted?.network ? normalizeChainId(accepted.network) : null);
 
   return {
     chain_id,
     settlement_contract: null,
-    nonce,
+    nonce: authNonce,
     to,
+    challenge_nonce,
   };
 }
 
@@ -184,19 +217,31 @@ export function verifyIssuanceBindAtSettle({
   });
   if (!merged.ok) return { ok: false, reason: merged.reason };
 
-  const bind = merged.bind;
+  const expectedChallengeNonce = merged.bind.nonce;
   const auth = extractEvmAuthorizationFromPayment(paymentHeader);
   if (!auth?.nonce) {
     return { ok: false, reason: 'issuance_bind_auth_missing_nonce' };
   }
 
-  if (auth.nonce.toLowerCase() !== bind.nonce.toLowerCase()) {
+  const paymentChallengeNonce = auth.challenge_nonce
+    ?? extractPaymentChallengeNonce(paymentHeader);
+  if (paymentChallengeNonce) {
+    if (paymentChallengeNonce.toLowerCase() !== expectedChallengeNonce.toLowerCase()) {
+      return { ok: false, reason: 'issuance_bind_nonce_mismatch' };
+    }
+  } else if (auth.nonce.toLowerCase() !== expectedChallengeNonce.toLowerCase()) {
+    // v1: no accepted.extra echo — EIP-3009 nonce must match the issued challenge nonce.
     return { ok: false, reason: 'issuance_bind_nonce_mismatch' };
   }
 
+  const bind = {
+    ...merged.bind,
+    nonce: auth.nonce,
+  };
+
   if (storedBind.nonce && normalizeAuthNonce(storedBind.nonce)) {
     const clientNonce = normalizeAuthNonce(storedBind.nonce);
-    if (clientNonce.toLowerCase() !== bind.nonce.toLowerCase()) {
+    if (clientNonce.toLowerCase() !== expectedChallengeNonce.toLowerCase()) {
       return { ok: false, reason: 'issuance_bind_client_nonce_mismatch' };
     }
   }

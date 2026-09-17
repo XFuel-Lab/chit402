@@ -419,13 +419,9 @@ export async function runX402Handshake(req, {
   }
   const settledNetwork = challenge?.network || cfg.network;
 
-  const s = await settlePayment(paymentHeader, bound);
-  if (!s.settled) return { kind: 'failed', reason: s.reason || 'settle_failed' };
-
-  let issuance_commitment = null;
-  let dispute_window = null;
+  let bindCheck = null;
   if (challenge?.issuance_bind?.required) {
-    const bindCheck = verifyIssuanceBindAtSettle({
+    bindCheck = verifyIssuanceBindAtSettle({
       storedBind: challenge.issuance_bind,
       paymentHeader,
       challengeNonce: nonce,
@@ -434,6 +430,14 @@ export async function runX402Handshake(req, {
     if (!bindCheck.ok) {
       return { kind: 'failed', reason: bindCheck.reason };
     }
+  }
+
+  const s = await settlePayment(paymentHeader, bound);
+  if (!s.settled) return { kind: 'failed', reason: s.reason || 'settle_failed' };
+
+  let issuance_commitment = null;
+  let dispute_window = null;
+  if (bindCheck?.ok) {
     issuance_commitment = buildIssuanceCommitmentPublic(bindCheck.bind, bindCheck.commitment);
     issuance_commitment.authorization = bindCheck.authorization;
   }
