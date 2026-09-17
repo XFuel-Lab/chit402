@@ -49,3 +49,27 @@ Sample shape (counts only — no wallets or tx refs):
 ```
 
 Public `/stats` remains aggregate and marketing-safe; this route is for internal ops (e.g. morning brief bots) and must stay token-gated.
+
+## Public aggregates (marketing-safe)
+
+Homepage / ops dashboards that need a **count-only** door signal should use the public endpoints — never the token-gated internal route from the website.
+
+- `GET /stats/door` — thin JSON: `stamped_receipts_7d`, `stamped_receipts_24h`, `unique_payers_7d` (counts only).
+- `GET /stats?format=json` — same payload under the additive `door` key (does not change existing `/stats` fields).
+
+```bash
+curl -sS https://api.chit402.com/stats/door | jq .
+```
+
+```json
+{
+  "stamped_receipts_7d": 12,
+  "stamped_receipts_24h": 3,
+  "unique_payers_7d": 8,
+  "definition": "USDC x402 stamped receipts via openai-gateway (POST /v1, /v1/responses, POST /a2a-message)",
+  "window_anchor": "task.createdAt"
+}
+```
+
+No wallets, payment refs, task ids, status/outcome splits, or network splits. The Chit home chip (`apps/web/src/pages/ChitHome.tsx`) reads `/stats/door` and fails soft if the fetch fails.
+

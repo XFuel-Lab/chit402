@@ -170,9 +170,48 @@ export function computeDoorMetrics(tasks = [], { now = Date.now() } = {}) {
   };
 }
 
+
+/**
+ * Public-safe door traffic aggregates for marketing / homepage chip.
+ * Counts only — no wallets, tx refs, task ids, status splits, or network splits.
+ * Same door filter as computeDoorMetrics / isDoorTrafficTask.
+ *
+ * @param {Array<object>} tasks
+ * @param {{ now?: number }} [opts]
+ */
+export function computePublicDoorAggregate(tasks = [], { now = Date.now() } = {}) {
+  const doorTasks = tasks.filter(isDoorTrafficTask);
+  let stamped7d = 0;
+  let stamped24h = 0;
+  const payers7d = new Set();
+
+  for (const t of doorTasks) {
+    const at = Number(t.createdAt) || 0;
+    if (!at) continue;
+    const age = now - at;
+    if (age > WINDOW_7D_MS) continue;
+
+    stamped7d += 1;
+    if (age <= WINDOW_24H_MS) stamped24h += 1;
+
+    const payer = callerBindingOf(t).payer_wallet;
+    if (payer) payers7d.add(String(payer).toLowerCase());
+  }
+
+  return {
+    stamped_receipts_7d: stamped7d,
+    stamped_receipts_24h: stamped24h,
+    unique_payers_7d: payers7d.size,
+    definition:
+      'USDC x402 stamped receipts via openai-gateway (POST /v1, /v1/responses, POST /a2a-message)',
+    window_anchor: 'task.createdAt',
+  };
+}
+
 export default {
   isDoorTrafficTask,
   computeDoorMetrics,
+  computePublicDoorAggregate,
   networkBucketFromPaymentRef,
   extractDoorMetricsToken,
   doorMetricsAuthResult,

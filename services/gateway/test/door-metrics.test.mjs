@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   computeDoorMetrics,
+  computePublicDoorAggregate,
   isDoorTrafficTask,
   networkBucketFromPaymentRef,
   doorMetricsAuthResult,
@@ -97,4 +98,38 @@ test('doorMetricsAuthResult accepts matching bearer token', () => {
 test('extractDoorMetricsToken reads Bearer and custom header', () => {
   assert.equal(extractDoorMetricsToken({ headers: { authorization: 'Bearer abc' } }), 'abc');
   assert.equal(extractDoorMetricsToken({ headers: { 'x-door-metrics-token': 'xyz' } }), 'xyz');
+});
+
+test('computePublicDoorAggregate: 7d/24h counts and unique payers only — no leakage', () => {
+  const tasks = [
+    doorTask({ taskId: 'p1', createdAt: hoursAgo(2), meta: { source: 'openai-gateway', payerWallet: SOLANA_PAYER } }),
+    doorTask({
+      taskId: 'p2',
+      createdAt: hoursAgo(2),
+      intent: {
+        sender: 'openai-gateway',
+        paymentRail: 'usdc',
+        paymentRef: 'base:0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+      },
+      meta: { source: 'openai-gateway', payerWallet: EVM_PAYER },
+    }),
+    doorTask({ taskId: 'p3', status: 'failed', createdAt: hoursAgo(2), meta: { source: 'openai-gateway', payerWallet: SOLANA_PAYER } }),
+    doorTask({ taskId: 'old', createdAt: hoursAgo(24 * 10) }),
+    doorTask({ taskId: 'm2m', meta: { source: 'ai_task' }, intent: { sender: 'ai_task', paymentRail: 'usdc', paymentRef: 'base:0x1' } }),
+  ];
+
+  const pub = computePublicDoorAggregate(tasks, { now: NOW });
+  assert.equal(pub.stamped_receipts_7d, 3);
+  assert.equal(pub.stamped_receipts_24h, 3);
+  assert.equal(pub.unique_payers_7d, 2);
+  assert.equal(typeof pub.definition, 'string');
+
+  const raw = JSON.stringify(pub);
+  assert.ok(!raw.includes(SOLANA_PAYER), 'must not leak solana payer');
+  assert.ok(!raw.includes(EVM_PAYER), 'must not leak evm payer');
+  assert.ok(!raw.includes('p1'), 'must not leak task ids');
+  assert.ok(!raw.includes('0xdeadbeef'), 'must not leak paymentRef / tx');
+  assert.ok(!('by_network' in pub), 'no network split on public aggregate');
+  assert.ok(!('outcome' in pub), 'no failed/debug outcome split on public aggregate');
+  assert.ok(!('by_status' in pub), 'no status split on public aggregate');
 });
