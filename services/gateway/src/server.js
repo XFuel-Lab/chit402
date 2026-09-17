@@ -3277,7 +3277,7 @@ export function createApp() {
     }
   });
 
-  // GET /stats/door — public-safe door traffic aggregates (homepage chip).
+  // GET /stats/door — public-safe door traffic aggregates (Activity page + sparklines).
   // Same door filter as private /v1/internal/door-metrics, but counts only.
   // No wallets, txs, task ids, status/network splits. Rate-limited, no auth.
   let _doorPublicCache = { at: 0, data: null };

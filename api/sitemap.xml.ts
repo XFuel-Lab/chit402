@@ -23,6 +23,11 @@ const CHIT_SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://www.chit402.com/activity</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.75</priority>
+  </url>
+  <url>
     <loc>https://www.chit402.com/agent-shop</loc>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>

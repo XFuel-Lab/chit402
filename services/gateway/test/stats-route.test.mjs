@@ -78,6 +78,11 @@ test('GET /stats/door returns public-safe door shape', async () => {
   assert.equal(typeof body.stamped_receipts_24h, 'number');
   assert.equal(typeof body.unique_payers_7d, 'number');
   assert.ok(body.definition);
+  assert.ok(Array.isArray(body.series_30d), 'series_30d present for Activity sparklines');
+  assert.equal(body.series_30d.length, 30);
+  assert.equal(typeof body.series_30d[0].day, 'string');
+  assert.equal(typeof body.series_30d[0].stamped_receipts, 'number');
+  assert.equal(typeof body.series_30d[0].unique_payers, 'number');
   assert.ok(!('by_network' in body));
   assert.ok(!('windows' in body), 'must not expose private door-metrics windows shape');
   const raw = JSON.stringify(body);

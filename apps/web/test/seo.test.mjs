@@ -194,6 +194,7 @@ test('App routes docs subpages', () => {
   assert.match(app, /chit-in-15-lines/, 'App routes 15-lines page');
   assert.match(app, /\/docs\/eliza/, 'App routes Eliza stub');
   assert.match(app, /\/trust/, 'App routes issuer trust page');
+  assert.match(app, /\/activity/, 'App routes Activity page');
 });
 
 test('issuer trust page publishes JWKS URLs, kid, and rotation policy', () => {
