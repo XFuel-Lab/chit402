@@ -1,10 +1,19 @@
 import config from './config.js';
+import logger from './logger.js';
 import {
   buildPaymentChallenge,
   verifyPayment,
   settlePayment,
   challengeStore,
 } from './x402-adapter.js';
+import {
+  parseIssuanceBindFromBody,
+  issuanceBindForChallenge,
+  verifyIssuanceBindAtSettle,
+  buildIssuanceCommitmentPublic,
+  buildDisputeWindow,
+  fetchBaseL1Anchor,
+} from './issuance-commitment.js';
 import { quoteTask, quoteFromCogs, costPlusEnabled, promptTokensFor, quotedMaxOutputTokens } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { normalizeRequestedTier } from './tier-policy.js';
@@ -307,8 +316,20 @@ export async function resolvePricingModel(body = {}) {
  *   for CDP Bazaar cataloging). Example: https://api.xfuel.app
  *   `resource` is the absolute catalog URL for this challenge (default: /task-request).
  */
-export async function runX402Handshake(req, { taskId, cfg = config.x402, body = null, amount = null, baseUrl = null, resource = null } = {}) {
+export async function runX402Handshake(req, {
+  taskId,
+  cfg = config.x402,
+  body = null,
+  amount = null,
+  baseUrl = null,
+  resource = null,
+  l1Anchor = null,
+} = {}) {
   const priceBody = body || req.body;
+  const bindParse = parseIssuanceBindFromBody(priceBody);
+  if (bindParse.requested && !bindParse.ok) {
+    return { kind: 'failed', reason: bindParse.reason };
+  }
   // For the standard x402 facilitator, the URL comes from cfg.facilitatorUrl
   // (falling back to the adapter's public-reference default when null).
   const provider = (cfg.facilitatorProvider || 'zan').toLowerCase() === 'x402' ? 'x402' : 'zan';
@@ -331,6 +352,13 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
   // Dual-network (2026-08-22): include Solana accepts entry when cfg.solana.enabled.
   if (!paymentHeader) {
     const charge = amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg);
+    let issuance_bind = null;
+    if (bindParse.requested && bindParse.ok) {
+      issuance_bind = {
+        required: true,
+        ...bindParse.bind,
+      };
+    }
     const { body: challengeBody } = buildPaymentChallenge(
       {
         taskId,
@@ -340,6 +368,7 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
         payTo: cfg.payTo,
         baseUrl,  // Required for absolute resource URL (CDP Bazaar cataloging)
         resource,
+        issuance_bind,
         // Solana as second payment network (optional)
         solana: cfg.solana?.enabled ? {
           enabled: true,
@@ -349,6 +378,21 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
       },
       { store: challengeStore },
     );
+    if (bindParse.requested && bindParse.ok && challengeBody?.accepts?.[0]?.extra?.nonce) {
+      const stored = issuanceBindForChallenge(bindParse.bind, {
+        challengeNonce: challengeBody.accepts[0].extra.nonce,
+        settlementContract: challengeBody.accepts[0].asset,
+      });
+      if (!stored.ok) {
+        return { kind: 'failed', reason: stored.reason };
+      }
+      const nonce = challengeBody.accepts[0].extra.nonce;
+      const rec = challengeStore.get(nonce);
+      if (rec) {
+        rec.issuance_bind = { required: true, ...stored.bind };
+        challengeStore.put(nonce, rec);
+      }
+    }
     return { kind: 'challenge', body: challengeBody };
   }
 
@@ -378,6 +422,44 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
   const s = await settlePayment(paymentHeader, bound);
   if (!s.settled) return { kind: 'failed', reason: s.reason || 'settle_failed' };
 
+  let issuance_commitment = null;
+  let dispute_window = null;
+  if (challenge?.issuance_bind?.required) {
+    const bindCheck = verifyIssuanceBindAtSettle({
+      storedBind: challenge.issuance_bind,
+      paymentHeader,
+      challengeNonce: nonce,
+      settlementContract: challenge.asset,
+    });
+    if (!bindCheck.ok) {
+      return { kind: 'failed', reason: bindCheck.reason };
+    }
+    issuance_commitment = buildIssuanceCommitmentPublic(bindCheck.bind, bindCheck.commitment);
+    issuance_commitment.authorization = bindCheck.authorization;
+  }
+
+  if (issuance_commitment) {
+    let anchor;
+    try {
+      anchor = await fetchBaseL1Anchor(l1Anchor);
+    } catch (err) {
+      logger.warn({ err: err.message, taskId }, 'x402: dispute window anchor failed');
+      return { kind: 'failed', reason: 'dispute_window_anchor_failed' };
+    }
+    try {
+      dispute_window = buildDisputeWindow({
+        chainId: anchor.chain_id,
+        anchorBlock: anchor.block_number,
+        anchorTimestamp: anchor.timestamp,
+        durationSec: cfg.issuanceDisputeWindowSec,
+        anchorSource: anchor.anchor_source || null,
+      });
+    } catch (err) {
+      logger.warn({ err: err.message, taskId }, 'x402: dispute window build failed');
+      return { kind: 'failed', reason: 'dispute_window_anchor_failed' };
+    }
+  }
+
   const txRef = s.txRef || 'unknown';
   return {
     kind: 'settled',
@@ -386,5 +468,7 @@ export async function runX402Handshake(req, { taskId, cfg = config.x402, body = 
     payerWallet: s.payer || v.payer || null,
     payTo: challenge?.payTo || null,
     asset: challenge?.asset || 'USDC',
+    issuance_commitment,
+    dispute_window,
   };
 }

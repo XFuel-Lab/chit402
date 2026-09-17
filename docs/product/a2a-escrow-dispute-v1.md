@@ -36,6 +36,14 @@ Possession-gated (session or book proof). Demo keys rejected.
 
 See OpenAPI `bookA2aEscrow` and gateway `llms.txt`.
 
+## Issuance-commitment bind + L1 dispute window
+
+When a paid door request includes `issuance_bind` (`chain_id`, `settlement_contract`,
+`content_hash`), x402 settle fail-closes unless the payment authorization matches the
+challenge nonce and USDC settlement contract. The signed receipt and book row carry
+`issuance_commitment` plus an L1-timestamped `dispute_window` (Base home chain).
+`POST /v1/agents/:agent_id/book/dispute` and A2A `challenge` respect that window.
+
 ## Honest limits
 
 - Ledger escrow ≠ smart-contract hold; refunds are treasury/float instructions.

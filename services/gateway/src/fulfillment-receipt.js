@@ -169,6 +169,7 @@ export function buildFulfillmentEnvelope(params = {}) {
     payer_wallet: params.payerWallet ?? params.payer_wallet ?? null,
     delegation_hash: params.delegationHash ?? params.delegation_hash ?? null,
     payment_ref: params.paymentRef ?? params.payment_ref ?? null,
+    issuance_commitment: params.issuanceCommitment ?? params.issuance_commitment ?? null,
   };
 
   return {

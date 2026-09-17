@@ -292,7 +292,18 @@ async function meterV1Request(req, res, {
     const decision = await runX402Handshake(req, { taskId, body, baseUrl, resource });
 
     if (decision.kind === 'settled') {
-      return { halted: false, payment: { ref: decision.paymentRef, amount: decision.settledAmount, payer: decision.payerWallet, payTo: decision.payTo, asset: decision.asset } };
+      return {
+        halted: false,
+        payment: {
+          ref: decision.paymentRef,
+          amount: decision.settledAmount,
+          payer: decision.payerWallet,
+          payTo: decision.payTo,
+          asset: decision.asset,
+          issuance_commitment: decision.issuance_commitment || null,
+          dispute_window: decision.dispute_window || null,
+        },
+      };
     }
 
     if (decision.kind === 'challenge') {
@@ -836,6 +847,8 @@ function registerTaskAndProve({
       payerWallet: payment?.payer || session?.payer_wallet || null,
       payTo: payment?.payTo || null,
       paymentAsset: payment?.asset || null,
+      issuanceCommitment: payment?.issuance_commitment || null,
+      disputeWindow: payment?.dispute_window || null,
       session: session || null,
       agentPubkey: session?.agent_pubkey || null,
       privateSpend: !!privateSpend,
@@ -1085,6 +1098,8 @@ function withBookSpend(receipt, { ledger, registry, agentId = null, intentId = n
  */
 function writeSettleBookRow({
   taskId, payment, model, req, ledger, registry, boundSession, agentId = null,
+  issuanceCommitment = null,
+  disputeWindow = null,
 }) {
   if (!ledger || !registry || !payment?.ref) return null;
   const bookable = agentId != null && typeof registry.get === 'function'
@@ -1107,6 +1122,8 @@ function writeSettleBookRow({
       agentId: resolvedAgentId,
       intentId: intentFields.intent_id,
       attemptIndex: intentFields.attempt_index,
+      issuanceCommitment: issuanceCommitment ?? payment?.issuance_commitment ?? null,
+      disputeWindow: disputeWindow ?? payment?.dispute_window ?? null,
     });
     if (!recorded.ok) {
       logger.warn(

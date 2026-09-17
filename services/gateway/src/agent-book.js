@@ -106,6 +106,8 @@ function rowOf(entry) {
   }
   const fulfillmentRow = bookFulfillmentRowOf(entry);
   if (fulfillmentRow) row.fulfillment = fulfillmentRow;
+  if (entry.issuance_commitment) row.issuance_commitment = entry.issuance_commitment;
+  if (entry.dispute_window) row.dispute_window = entry.dispute_window;
   if (entry.payer) {
     row.payer_wallet = entry.payer;
   }

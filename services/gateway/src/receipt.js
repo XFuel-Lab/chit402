@@ -677,6 +677,7 @@ export function fulfillmentEnvelopeOf(task, {
     paymentRef: paymentRef ?? task?.intent?.paymentRef ?? task?.payment?.ref ?? null,
     outputHash: output?.value ?? task?.output?.hash ?? null,
     outputCommitment: task?.fulfillment?.output_commitment ?? null,
+    issuanceCommitment: task?.meta?.issuanceCommitment ?? task?.issuance_commitment ?? null,
     defaultJobKind: 'completions',
   });
 }
@@ -791,6 +792,8 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     settlement,
     session_act: sessionAct,
     fulfillment,
+    issuance_commitment: view.issuance_commitment ?? view.meta?.issuanceCommitment ?? null,
+    dispute_window: view.dispute_window ?? view.meta?.disputeWindow ?? null,
     payload_version: RECEIPT_PAYLOAD_VERSION,
   };
 }
@@ -1489,6 +1492,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       : null),
     target_agent: task.meta?.targetAgent || task.meta?.target_agent || task.targetAgent || null,
     session_act: task.meta?.sessionAct || task.meta?.session_act || task.sessionAct || null,
+    issuance_commitment: task.meta?.issuanceCommitment || null,
+    dispute_window: task.meta?.disputeWindow || null,
     links: base
       ? {
           self: `${base}/receipt/${displayTaskId}`,
@@ -1574,6 +1579,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   if (draft.handoff) envelope.handoff = draft.handoff;
   if (draft.output) envelope.output = { kind: draft.output.kind };
   if (draft.fulfillment) envelope.fulfillment = draft.fulfillment;
+  if (draft.issuance_commitment) envelope.issuance_commitment = draft.issuance_commitment;
+  if (draft.dispute_window) envelope.dispute_window = draft.dispute_window;
   const sessionPointer = outerSessionPointer(draft.session, base);
   if (sessionPointer) {
     envelope.delegation_hash = sessionPointer.delegation_hash;

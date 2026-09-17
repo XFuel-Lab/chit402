@@ -22,6 +22,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { isDisputeWindowOpen } from './issuance-commitment.js';
 
 export const CLAIM_TYPES = {
   OUTPUT_MISSING: 'output_missing',
@@ -336,10 +337,38 @@ function normalizeModel(model) {
  *   verifyReceipt?: Function,
  * }} deps
  */
-export async function fileAndAdjudicate(claim, { disputes, ledger, loadReceipt, verifyReceipt } = {}) {
+export async function fileAndAdjudicate(claim, { disputes, ledger, loadReceipt, verifyReceipt, l1Timestamp = null } = {}) {
   const filed = disputes.file(claim);
   if (!filed.ok) {
     return filed;
+  }
+
+  let receipt = null;
+  if (loadReceipt) {
+    try {
+      receipt = await loadReceipt(filed.dispute.task_id);
+    } catch {
+      receipt = null;
+    }
+  }
+
+  const disputeWindow = receipt?.dispute_window ?? receipt?.meta?.disputeWindow ?? null;
+  if (disputeWindow) {
+    const windowCheck = isDisputeWindowOpen(disputeWindow, { l1Timestamp });
+    if (!windowCheck.open) {
+      const resolved = disputes.resolve(filed.dispute.dispute_id, {
+        outcome: OUTCOME_TYPES.STAND,
+        reason: `dispute_window: ${windowCheck.reason}`,
+        amount: null,
+      });
+      return {
+        ok: false,
+        reason: windowCheck.reason,
+        dispute: resolved.dispute || filed.dispute,
+        checks: { dispute_window: { checked: true, valid: false, reason: windowCheck.reason } },
+        auto_adjudicated: true,
+      };
+    }
   }
 
   const recheck = await recheckDispute(filed.dispute, { ledger, loadReceipt, verifyReceipt });

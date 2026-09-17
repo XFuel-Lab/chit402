@@ -878,6 +878,8 @@ export function recordSettleBookRow({
   parentRef = null,
   intentId = null,
   attemptIndex = null,
+  issuanceCommitment = null,
+  disputeWindow = null,
 } = {}) {
   if (!taskId || !paymentRef) {
     return { ok: false, reason: 'taskId and paymentRef required', code: 'invalid_settle_row' };
@@ -911,6 +913,8 @@ export function recordSettleBookRow({
     result.entry.evidence = BOOK_EVIDENCE.RECORDED_BY_SETTLE;
     result.entry.arrival_status = ARRIVAL_STATUS.PENDING;
     result.entry.ingress_receipt = null;
+    if (issuanceCommitment) result.entry.issuance_commitment = issuanceCommitment;
+    if (disputeWindow) result.entry.dispute_window = disputeWindow;
   }
   return result;
 }

@@ -524,6 +524,7 @@ export function buildPaymentChallenge(p, opts = {}) {
       mimeType: 'application/json',
       extensions,
       outputSchema,
+      issuance_bind: p.issuance_bind || null,
     });
     expiresAt = rec.expiresAt;
   }

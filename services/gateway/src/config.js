@@ -72,6 +72,8 @@ const config = {
     network: process.env.X402_NETWORK || 'base-sepolia',    // base-sepolia | base
     asset: process.env.X402_ASSET || 'USDC',
     challengeTtlMs: parseInt(process.env.X402_CHALLENGE_TTL_MS, 10) || 120000,
+    issuanceDisputeWindowSec: parseInt(process.env.X402_ISSUANCE_DISPUTE_WINDOW_SEC, 10)
+      || (7 * 24 * 60 * 60),
 
     // ── Solana as second payment network (PayAI facilitator) ────────────────────
     // When enabled, 402 advertises BOTH Base (primary) and Solana payment options.
