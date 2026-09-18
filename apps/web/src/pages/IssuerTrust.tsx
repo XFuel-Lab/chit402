@@ -128,6 +128,10 @@ export default function IssuerTrust() {
         </div>
 
         <p style={{ textAlign: 'center', fontSize: '0.85rem', color: '#8a8a9a', marginTop: '2rem' }}>
+          <Link to="/walkthrough/402signal" style={{ color: '#00d4ff' }}>
+            Paired walkthrough (402Signal)
+          </Link>
+          {' · '}
           <Link to="/docs/chit-in-15-lines" style={{ color: '#00d4ff' }}>
             Chit in 15 lines
           </Link>

@@ -15,6 +15,7 @@ import GatewayV1 from './pages/GatewayV1';
 import NotFound from './pages/NotFound';
 import Security from './pages/Security';
 import IssuerTrust from './pages/IssuerTrust';
+import PairedWalkthrough402Signal from './pages/PairedWalkthrough402Signal';
 import AgentShop from './pages/AgentShop';
 import Book from './pages/Book';
 import BookBot from './pages/BookBot';
@@ -49,6 +50,7 @@ export default function App() {
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/security" element={<Security />} />
         <Route path="/trust" element={<IssuerTrust />} />
+        <Route path="/walkthrough/402signal" element={<PairedWalkthrough402Signal />} />
         <Route path="/v1" element={<GatewayV1 />} />
         <Route path="/v1/*" element={<GatewayV1 />} />
         <Route path="/agent-shop" element={<AgentShop />} />

@@ -58,6 +58,7 @@
     { "source": "/docs/chit-in-15-lines", "destination": "/docs/chit-in-15-lines/index.html" },
     { "source": "/docs/eliza", "destination": "/docs/eliza/index.html" },
     { "source": "/docs/private-spend", "destination": "/docs/private-spend/index.html" },
+    { "source": "/walkthrough/402signal", "destination": "/walkthrough/402signal/index.html" },
     { "source": "/v1", "destination": "/v1/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]

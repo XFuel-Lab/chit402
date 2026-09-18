@@ -18,6 +18,11 @@ const CHIT_SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
     <priority>0.85</priority>
   </url>
   <url>
+    <loc>https://www.chit402.com/walkthrough/402signal</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://www.chit402.com/book</loc>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>

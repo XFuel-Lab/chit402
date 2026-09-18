@@ -88,6 +88,12 @@ const ROUTE_CONTENT = {
     lede:
       'Public pin for Chit402 receipt signatures: JWKS URLs, current ES256 kid (RFC 7638 thumbprint), rotation rules, and offline verify steps. Private key never published.',
   },
+  '/walkthrough/402signal': {
+    title: 'Paired walkthrough — Chit402 × 402Signal | Chit402',
+    h1: 'Paired walkthrough',
+    lede:
+      'Two separate builder examples: 402Signal before-sign route guard on synthetic payTo change (no wallet), and Chit402 after-settle issuer-signed receipt evidence with a live production receipt. Not one purchase.',
+  },
   '/activity': {
     title: 'Activity — door receipts | Chit402',
     h1: 'Door traffic',

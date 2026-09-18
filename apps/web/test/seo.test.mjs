@@ -205,6 +205,35 @@ test('issuer trust page publishes JWKS URLs, kid, and rotation policy', () => {
   assert.match(page, /RFC 7638/);
   assert.match(page, /issuer_jwk.*not an independent trust root/is);
   assert.match(page, /private key.*never/i);
+  assert.match(page, /\/walkthrough\/402signal/, 'trust page links paired walkthrough');
+});
+
+test('paired walkthrough page frames separate Chit402 and 402Signal examples', () => {
+  const page = readFileSync(join(root, 'src/pages/PairedWalkthrough402Signal.tsx'), 'utf8');
+  const prerender = readFileSync(join(root, 'scripts/prerender-titles.mjs'), 'utf8');
+  const app = readFileSync(join(root, 'src/App.tsx'), 'utf8');
+  const sitemap = readFileSync(join(root, '../../api/sitemap.xml.ts'), 'utf8');
+
+  assert.match(app, /\/walkthrough\/402signal/);
+  assert.match(prerender, /'\/walkthrough\/402signal'/);
+  assert.match(prerender, /Paired walkthrough — Chit402 × 402Signal \| Chit402/);
+  assert.match(sitemap, /www\.chit402\.com\/walkthrough\/402signal/);
+
+  assert.match(page, /production_evidence: true/);
+  assert.match(page, /production_evidence: false/);
+  assert.match(
+    page,
+    /chit-b8dc8457-c2a1-4926-8803-9ed50d601093/,
+    'Example A uses locked live receipt id',
+  );
+  assert.match(page, /Issuer-signed settlement evidence/);
+  assert.match(page, /Synthetic payTo-change refusal/);
+  assert.match(page, /ROUTE_GUARD_VERSION = '0\.7\.6'/);
+  assert.match(page, /402signal\.com\/developers\/test-buyer/);
+  assert.match(page, /two separate examples/is);
+  assert.match(page, /Link to="\/trust"/);
+  assert.match(page, /Not a partnership claim/);
+  assert.doesNotMatch(page, /Bankr/i);
 });
 
 test('llms.txt API route links issuer trust page', () => {
