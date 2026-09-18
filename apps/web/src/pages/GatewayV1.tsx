@@ -4,25 +4,22 @@ import { getApiV1 } from '../apiHost';
 import { getHostConfig } from '../hostConfig';
 
 function getSnippet(apiV1: string) {
-  return `curl -sS ${apiV1}/chat/completions \\
-  -H "X-API-Key: xfuel-demo" \\
+  return `curl -sS -D - ${apiV1}/chat/completions \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`;
+  -d '{}'
+# → HTTP 402 + PAYMENT-REQUIRED (USDC on Base or Solana)`;
 }
 
 function getFetch(apiV1: string) {
   return `const res = await fetch('${apiV1}/chat/completions', {
   method: 'POST',
-  headers: {
-    'X-API-Key': 'xfuel-demo',
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
     model: 'xfuel/auto',
     messages: [{ role: 'user', content: 'Say hello in 5 words.' }],
   }),
 });
-const data = await res.json();`;
+// Pay the 402 with x402 (chit402-sdk, wallet payer, or Eliza plugin)`;
 }
 
 export default function GatewayV1() {
@@ -63,17 +60,17 @@ export default function GatewayV1() {
           <h2>How does HTTP 402 / x402 work on {apiDomain}?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
             POST <code>/v1/chat/completions</code> is cost-plus, quoted, receipted — USDC on Base and Solana. Without
-            payment or a demo key, the gateway returns HTTP 402 Payment Required. Pay the 402
-            with a wallet that holds USDC on Base or Solana. Demo key <code>xfuel-demo</code>{' '}
-            skips payment (15/min, 150/day per IP). Paying this host moves real mainnet USDC.
+            x402 payment, the gateway returns HTTP 402 Payment Required. Pay the 402
+            with a wallet that holds USDC on Base or Solana. Paying this host moves real mainnet USDC.
+            There is no public demo key.
           </p>
         </section>
 
         <section className="docs-section">
           <h2>How do I call /v1/chat/completions?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7, marginBottom: '1rem' }}>
-            POST to <code>{apiV1}/chat/completions</code> with your key or{' '}
-            <code>xfuel-demo</code>. Any HTTP client or bot framework works.
+            POST to <code>{apiV1}/chat/completions</code> with an x402-capable client. Any HTTP client or bot framework works
+            once it can satisfy the 402.
           </p>
           <pre className="docs-code"><code>{FETCH}</code></pre>
         </section>
@@ -98,19 +95,17 @@ export default function GatewayV1() {
         </section>
 
         <section className="docs-section">
-          <h2>What is the difference between xfuel-demo and a paid call?</h2>
+          <h2>Partner API keys</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
-            Demo key <code>xfuel-demo</code> skips payment and is rate-limited (15/min, 150/day).
-            Demo never writes to the book. Paid calls collect USDC, return a signed receipt,
-            and record the spend in the possession-gated book.
+            Design partners may receive a private <code>X-API-Key</code> that skips payment for integration.
+            Public <code>xfuel-demo</code> / <code>chit402-demo</code> keys no longer grant free completions.
           </p>
         </section>
 
         <section className="docs-section" style={{ marginTop: '2rem' }}>
-          <h2>Try the demo</h2>
+          <h2>Probe the 402</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7, marginBottom: '1rem' }}>
-            Demo key <code>xfuel-demo</code> — 15 requests/min, 150/day per IP. Windows: use{' '}
-            <code>curl.exe</code>.
+            Windows: use <code>curl.exe</code>.
           </p>
           <pre className="docs-code"><code>{SNIPPET}</code></pre>
         </section>
@@ -118,7 +113,7 @@ export default function GatewayV1() {
         <nav style={{ marginTop: '2rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
           <Link to="/book" className="btn btn-primary btn-sm">The book →</Link>
           <Link to="/agent-shop" className="btn btn-secondary btn-sm">Agent shop</Link>
-          <Link to="/" className="btn btn-secondary btn-sm">Home</Link>
+          <Link to="/docs/chit-in-15-lines" className="btn btn-secondary btn-sm">Drop-in door</Link>
         </nav>
       </div>
     </div>

@@ -2,9 +2,9 @@
  * Configuration resolution for xfuel-mcp.
  *
  * Precedence (highest first): CLI flags → environment variables → sensible
- * defaults (XFuel hosted public beta + public demo key). Nothing is required.
+ * defaults (XFuel hosted public beta; no default API key — x402 or partner key).
  */
-import { DEFAULT_BASE_URL, PUBLIC_DEMO_API_KEY } from 'xfuel-sdk';
+import { DEFAULT_BASE_URL } from 'xfuel-sdk';
 
 export const SERVER_NAME = 'xfuel-mcp-server';
 // Keep in lockstep with package.json / server.json (registry listing) so the
@@ -13,7 +13,7 @@ export const SERVER_NAME = 'xfuel-mcp-server';
 export const SERVER_VERSION = '0.4.1';
 
 /** Handshake text so a first-hour client does not need GitHub. */
-export const SERVER_INSTRUCTIONS = `Chit402 first-hour: call list_models, then chat_completions to generate text (POST /v1/chat/completions). Default model xfuel/auto. The demo key chit402-demo is shared and rate-limited (15/min, 150/day).
+export const SERVER_INSTRUCTIONS = `Chit402: call list_models, then chat_completions (POST /v1/chat/completions). Default model xfuel/auto. Hosted gateway is live paid — satisfy HTTP 402 (x402 USDC) or set a partner API key.
 
 submit_inference is the paid M2M door (POST /task-request). It requires model + sender + amount, forwards messages/input when provided, and returns HTTP 402 without a payer.
 
@@ -68,7 +68,7 @@ TRANSPORT
 
 CHIT402 API
   --api-url <url>         Chit402 API base URL (default: hosted public beta)
-  --api-key <key>         API key / X-API-Key (default: public demo key "chit402-demo")
+  --api-key <key>         Partner API key / X-API-Key (optional; omit for x402-paid calls)
 
 MISC
   -h, --help              Show this help
@@ -118,7 +118,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let transport: TransportKind = envTransport() ?? 'stdio';
   let port = Number(process.env.XFUEL_MCP_PORT) || 3033;
   let apiUrl = envApiUrl() || DEFAULT_BASE_URL;
-  let apiKey = envApiKey() || PUBLIC_DEMO_API_KEY;
+  let apiKey = envApiKey() || '';
   let action: 'help' | 'version' | undefined;
 
   for (let i = 0; i < argv.length; i++) {

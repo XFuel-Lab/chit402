@@ -24,7 +24,7 @@ process.env.HUB_CATALOG_OFFLINE = 'false';
 process.env.TASK_STORE_PERSIST = 'true';
 process.env.TASK_STORE_DIR = path.join(tmp, 'tasks');
 process.env.PAYERS_LEDGER_DIR = path.join(tmp, 'payers');
-process.env.M2M_DEMO_MODE = 'true';
+process.env.M2M_API_KEYS = 'rolling-e2e-partner';
 delete process.env.THETA_EDGE_URL;
 delete process.env.THETA_EDGECLOUD_API_KEY;
 
@@ -105,7 +105,7 @@ const post = (over = {}, headers = {}) => realFetch(`${base}/task-request`, {
   method: 'POST',
   headers: {
     'content-type': 'application/json',
-    'x-api-key': 'xfuel-demo',
+    'x-api-key': 'rolling-e2e-partner',
     ...headers,
   },
   body: JSON.stringify(bodyOf(over)),

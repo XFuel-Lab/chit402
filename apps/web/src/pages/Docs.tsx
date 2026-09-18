@@ -15,10 +15,10 @@ type DocLink = {
 
 const startHere: DocLink[] = [
   {
-    title: 'Chit in 15 lines',
-    description: 'OpenAI baseURL at api.chit402.com/v1. Demo key — no USDC. Paid → SDK / Eliza.',
+    title: 'Drop-in door',
+    description: 'OpenAI-compatible baseURL at api.chit402.com/v1. Paid x402 — SDK / Eliza for verify_url.',
     href: '/docs/chit-in-15-lines',
-    meta: 'quickstart',
+    meta: 'install',
     internal: true,
   },
   {
@@ -238,10 +238,10 @@ function DocSection({ title, items }: { title: string; items: DocLink[] }) {
 }
 
 function getSnippet(apiV1: string) {
-  return `curl -sS ${apiV1}/chat/completions \\
-  -H "X-API-Key: chit402-demo" \\
+  return `curl -sS -D - ${apiV1}/chat/completions \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`;
+  -d '{}'
+# → HTTP 402 + PAYMENT-REQUIRED (USDC on Base or Solana)`;
 }
 
 export default function Docs() {
@@ -289,23 +289,22 @@ export default function Docs() {
         <DocSection title="Auditors" items={auditors} />
 
         <div className="docs-panel">
-          <h2>Try the demo (no wallet)</h2>
+          <h2>Probe the paid door</h2>
           <p>
-            Demo key <code>chit402-demo</code> with <code>/v1</code>. Receipt comes back on the response.
-            This does not spend USDC.
+            Unauthenticated <code>POST /v1/chat/completions</code> returns HTTP 402. Settle USDC,
+            then retry with <code>X-PAYMENT</code> for a signed receipt with <code>verify_url</code>.
           </p>
           <pre className="docs-code">
             <code>{SNIPPET}</code>
           </pre>
-          <p style={{ marginTop: '0.75rem' }}>SDK (same door):</p>
+          <p style={{ marginTop: '0.75rem' }}>SDK (x402 payer):</p>
           <pre className="docs-code">
             <code>{`npm install chit402-sdk
 # client.chatCompletions({ model: 'xfuel/auto', messages: [...] })`}</code>
           </pre>
           <p style={{ marginTop: '0.75rem', fontSize: '0.9rem', opacity: 0.85 }}>
-            Paid path is <code>POST /task-request</code> (402 without x402). Do not use{' '}
+            Lower-level M2M path: <code>POST /task-request</code>. Do not use{' '}
             <code>createMockPayer</code> against this host. Windows: <code>curl.exe</code>.
-            Demo key is rate-limited (15/min, 150/day).
           </p>
           <div className="docs-actions">
             <a

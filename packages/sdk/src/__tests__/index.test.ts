@@ -197,12 +197,12 @@ describe('XFuelClient', () => {
       );
     });
 
-    it('uses default baseURL (hosted public beta) + public demo key when none provided', () => {
+    it('uses default baseURL without an API key when none provided', () => {
       new XFuelClient();
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           baseURL: 'https://api.xfuel.app',
-          headers: expect.objectContaining({ 'X-API-Key': 'chit402-demo' }),
+          headers: expect.not.objectContaining({ 'X-API-Key': expect.anything() }),
         }),
       );
     });

@@ -96,15 +96,15 @@ function isDemoKey(key) {
 // ─── x402 metering for /v1 ───────────────────────────────────────────────────
 
 /**
- * The demo key and any explicitly listed key skip payment. Without this,
- * enabling metering would 402 the public testnet gateway and every quickstart
- * that points at it.
+ * Partner / ops keys listed in X402_METER_V1_EXEMPT_KEYS skip /v1 metering.
+ * Public demo keys (chit402-demo, xfuel-demo, prefixes) do not — they must pay
+ * like an unauthenticated caller or present a real partner key.
  */
 function meteringExempt(req) {
   const key = req.headers['x-api-key']
     || (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
   if (!key) return false;
-  if (isDemoKey(key)) return true;
+  if (isDemoKey(key)) return false;
   return (config.x402?.meterV1ExemptKeys || []).includes(key);
 }
 
@@ -197,7 +197,7 @@ async function meterV1Request(req, res, {
     // x402 must be enabled for paid requests
     if (!config.x402?.enabled) return { halted: false, payment: null };
   }
-  // Demo key and explicitly exempt keys always free — never burn budget Y.
+  // Explicitly exempt partner keys skip metering; demo keys do not.
   if (meteringExempt(req)) return { halted: false, payment: null };
   // A request with an explicit key that passes authorization is free.
   // Open mode (no M2M_API_KEYS configured) does NOT bypass payment - the caller
@@ -205,7 +205,7 @@ async function meterV1Request(req, res, {
   if (useIsAuth) {
     const key = req.headers['x-api-key']
       || (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
-    if (key && isAuthorised(req)) return { halted: false, payment: null };
+    if (key && !isDemoKey(key) && isAuthorised(req)) return { halted: false, payment: null };
   }
   // No valid auth and not exempt → must pay
 
@@ -1336,7 +1336,7 @@ export function registerOpenAIRoutes(app, {
   const authChain = [...baseChain, authenticate].filter(Boolean);
 
   // /v1/models is the seat catalog — public, no key. Images/audio stay keyed.
-  // /v1/chat/completions + /a2a-message: NO auth — 402 for unauth; demo key skips payment
+  // /v1/chat/completions + /a2a-message: NO auth middleware — 402 without x402 payment
   app.use('/v1/models', ...baseChain);
   app.use('/v1/images', ...authChain);
   app.use('/v1/audio', ...authChain);
@@ -1434,8 +1434,8 @@ export function registerOpenAIRoutes(app, {
   async function handlePaidChatPost(req, res, resourcePath = '/v1/chat/completions') {
     // Unauth probes (no payment) must 402 before body validation so x402scan
     // can list this route. A payment header still waits until after validation
-    // so we never settle then 400 (Bankr 2026-08-21). Demo key xfuel-demo skips
-    // payment via meteringExempt. GET uses the same helper so probes match POST {}.
+    // so we never settle then 400 (Bankr 2026-08-21). GET uses the same helper
+    // so probes match POST {}.
     let { halted, taskId, metering, paymentHeader } = await maybeMeterUnauthChat(req, res, resourcePath);
     if (halted) return undefined;
 

@@ -25,7 +25,7 @@ After that, every job I run should record:
 - settled y/n (from proof_outcome)
 
 Catalog: Theta + Akash + xfuel/auto only.
-Demo key xfuel-demo never writes the book.
+Unmetered / demo traffic never writes the book.
 Do not claim we route to OpenAI, Groq, or Fireworks.
 Do not ask me to send USDC manually.
 The API handles payment via HTTP 402 (x402) automatically.
@@ -65,7 +65,7 @@ export default function BookBot() {
           </pre>
           <p style={{ color: '#8a8a9a', marginTop: '0.75rem', fontSize: '0.9rem' }}>
             Copy this prompt into Grok Bot, ChatGPT, Claude, or any assistant.
-            Demo key <code>xfuel-demo</code> skips payment but never writes the book.
+            Only collected USDC receipts write the possession book.
           </p>
         </div>
 

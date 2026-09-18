@@ -294,7 +294,7 @@ test('Y=2000 spent: next paid call fails closed — no second ledger row, no sec
   assert.equal(bookAgain.spent, '2000');
 });
 
-test('demo does not burn Y', async () => {
+test('demo key cannot bypass prepaid cap (must pay or hit budget gate)', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   const recorded = recordCollectedSpend({
@@ -322,14 +322,9 @@ test('demo does not burn Y', async () => {
     },
     body: JSON.stringify(chatBody),
   });
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 403);
   const body = await res.json();
-  assert.equal(body.xfuel?.payment?.collected, false);
-  // In-process demo does not touch the unit ledger above; HTTP demo must not
-  // append UsageSettled. Re-check via book on a fresh settle path is covered
-  // by collected:false never appearing — assert receipt rail/demo shape:
-  const rail = String(body.xfuel?.payment?.rail || '').toLowerCase();
-  assert.ok(rail === 'unmetered' || rail === 'demo' || body.xfuel?.payment?.collected === false);
+  assert.equal(body.error?.code, 'budget_exhausted');
 });
 
 test('/v1 and /a2a-message unauth {} still 402 amount 2000 both rails', async () => {

@@ -206,14 +206,14 @@ export default function Register() {
           <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7 }}>
             Only HMAC-valid receipts with <code>payment.collected: true</code> and a real{' '}
             <code>payment.ref</code> (USDC on Base or Solana). The demo key{' '}
-            <code>chit402-demo</code> skips payment and never registers. Wrong possession after
+            Public demo keys never register. Wrong possession after
             register returns 401/403 on the book — not a public scoreboard.
           </p>
         </section>
 
         <nav style={{ marginTop: '2rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
           <Link to="/book" className="btn btn-secondary btn-sm">Principal book</Link>
-          <Link to="/docs/chit-in-15-lines" className="btn btn-secondary btn-sm">Chit in 15 lines</Link>
+          <Link to="/docs/chit-in-15-lines" className="btn btn-secondary btn-sm">Drop-in door</Link>
           <Link to="/" className="btn btn-secondary btn-sm">Home</Link>
         </nav>
       </div>

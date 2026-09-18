@@ -41,7 +41,7 @@ export default function ChitHome() {
               View live receipt
             </a>
             <Link to="/docs/chit-in-15-lines" className="btn btn-secondary">
-              Chit in 15 lines
+              Drop-in door
             </Link>
             <Link to="/docs/eliza" className="btn btn-secondary">
               Eliza plugin

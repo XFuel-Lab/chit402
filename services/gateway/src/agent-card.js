@@ -127,7 +127,7 @@ export function buildAgentCard(baseUrl = '') {
         apiKeySecurityScheme: {
           location: 'header',
           name: 'X-API-Key',
-          description: 'API key. Not a wallet. Demo key xfuel-demo skips payment on chat; it does not qualify register.',
+          description: 'Optional partner API key. Not a wallet. Public demo keys do not skip payment; they do not qualify register.',
         },
       },
     },

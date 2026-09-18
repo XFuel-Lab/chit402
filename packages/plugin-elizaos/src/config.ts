@@ -2,7 +2,7 @@ import type { IAgentRuntime } from './eliza-types.js';
 import type { ChitPluginConfig } from './types.js';
 
 const DEFAULT_API_URL = 'https://api.chit402.com';
-const DEFAULT_API_KEY = 'chit402-demo';
+const DEFAULT_API_KEY = '';
 const DEFAULT_MODEL = 'xfuel/auto';
 
 function readString(

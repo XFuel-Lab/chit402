@@ -20,6 +20,7 @@ process.env.AKASHML_API_KEY = 'akml-test-key';
 // with routing. Payment is covered by the x402 suites; this file is about what
 // actually serves the request.
 process.env.X402_ENABLED = 'false';
+process.env.M2M_API_KEYS = 'task-e2e-partner';
 // Same reasoning: this file stubs both catalog endpoints at `fetch`, so offline mode
 // would short-circuit the stub and hand back the seed instead. The seed carries
 // Akash's GLM but not its Llama, so `xfuel/auto` on a simple shape silently resolves
@@ -106,7 +107,7 @@ function stubFetch(url, init) {
 
 const post = (body) => realFetch(`${base}/task-request`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
+  headers: { 'content-type': 'application/json', 'x-api-key': 'task-e2e-partner' },
   body: JSON.stringify({
     message_type: 'inference_request',
     chain_id: 'base',
@@ -336,7 +337,7 @@ test('an unresolvable model is quoted, not thrown on — routing rejects it late
 test('the /task-quote preview reports which model the price is for', async () => {
   const res = await realFetch(`${base}/task-quote`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
+    headers: { 'content-type': 'application/json', 'x-api-key': 'task-e2e-partner' },
     body: JSON.stringify({ model_id: 'xfuel/auto', ...MEDIAN_AGENT, tools: AGENT_TOOLS }),
   });
   const { rails } = await res.json();

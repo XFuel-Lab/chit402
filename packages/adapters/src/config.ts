@@ -4,7 +4,7 @@ export const DEFAULT_CHIT_BASE_URL = 'https://api.chit402.com/v1';
 /** Gateway origin without /v1 — used to build receipt URLs. */
 export const DEFAULT_CHIT_API_URL = 'https://api.chit402.com';
 
-/** Shared demo key — rate-limited, no USDC spent. */
+/** @deprecated Public demo keys no longer grant free completions. */
 export const DEFAULT_CHIT_DEMO_KEY = 'chit402-demo';
 
 const ENV_ALIASES = {
@@ -55,6 +55,6 @@ export function resolveChitConfig(options: ResolveChitConfigOptions = {}): ChitC
   return {
     baseURL,
     apiUrl,
-    apiKey: options.apiKey ?? envKey ?? DEFAULT_CHIT_DEMO_KEY,
+    apiKey: options.apiKey ?? envKey ?? '',
   };
 }
