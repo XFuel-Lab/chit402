@@ -16,7 +16,7 @@ const chitNavLinks = [
   { to: '/register', label: 'Register' },
   { to: '/activity', label: 'Activity' },
   { to: '/docs', label: 'Docs' },
-  { to: '/docs/chit-in-15-lines', label: 'Drop-in door' },
+  { to: '/trust', label: 'Trust' },
 ];
 
 export default function Layout() {
@@ -81,7 +81,7 @@ export default function Layout() {
           }}
         >
           Chit is the product. {config.parent} is the parent.
-          {' '}The wire is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>api.chit402.com/v1</code>.
+          {' '}Possession book — who paid which call; hold <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>verify_url</code>.
         </div>
       ) : (
         <div

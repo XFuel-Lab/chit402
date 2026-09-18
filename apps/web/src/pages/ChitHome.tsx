@@ -21,33 +21,27 @@ export default function ChitHome() {
           </p>
           <p style={styles.heroDescription}>
             Treasury desk and possession book for agent spend — not a router dashboard.
-            <code>POST /v1/chat/completions</code> returns a signed receipt with hub, model,
-            amount, and <code>verify_url</code>. Cost-plus, quoted, receipted — USDC on Base and
-            Solana. Wire: <code>api.chit402.com/v1</code>.
+            Every collected call returns hub, model, amount, and a public{' '}
+            <code>verify_url</code> you can export, policy, and evidence-pack.
+            Cost-plus, quoted, receipted — USDC on Base and Solana.
           </p>
           <div style={styles.heroCta}>
             <Link to="/book" className="btn btn-primary">
               Open the book
             </Link>
-            <Link to="/register" className="btn btn-primary">
-              Register agent
-            </Link>
             <a
               href={LIVE_RECEIPT}
-              className="btn btn-secondary"
+              className="btn btn-primary"
               target="_blank"
               rel="noreferrer"
             >
               View live receipt
             </a>
-            <Link to="/docs/chit-in-15-lines" className="btn btn-secondary">
-              Drop-in door
+            <Link to="/docs" className="btn btn-primary">
+              Docs
             </Link>
-            <Link to="/docs/eliza" className="btn btn-secondary">
-              Eliza plugin
-            </Link>
-            <Link to="/docs/framework-adapters" className="btn btn-secondary">
-              Framework adapters
+            <Link to="/register" className="btn btn-secondary">
+              Register agent
             </Link>
           </div>
         </div>
@@ -55,9 +49,21 @@ export default function ChitHome() {
 
       <section style={{ padding: '2rem 0' }}>
         <div className="container" style={{ maxWidth: 720 }}>
-          <h2 style={{ marginBottom: '1rem', textAlign: 'center', fontSize: '1.25rem' }}>
-            Integration doors
+          <h2 style={{ marginBottom: '0.5rem', textAlign: 'center', fontSize: '1.25rem' }}>
+            Install paths
           </h2>
+          <p
+            style={{
+              textAlign: 'center',
+              color: '#8a8a9a',
+              fontSize: '0.95rem',
+              marginBottom: '1.25rem',
+              lineHeight: 1.6,
+            }}
+          >
+            Same possession book — pick a door. OpenAI-compatible wire:{' '}
+            <code>api.chit402.com/v1</code>.
+          </p>
           <div
             style={{
               display: 'flex',
@@ -66,6 +72,15 @@ export default function ChitHome() {
               justifyContent: 'center',
             }}
           >
+            <Link to="/docs/chit-in-15-lines" className="btn btn-secondary btn-sm">
+              Drop-in door
+            </Link>
+            <Link to="/docs/eliza" className="btn btn-secondary btn-sm">
+              Eliza plugin
+            </Link>
+            <Link to="/docs/framework-adapters" className="btn btn-secondary btn-sm">
+              Framework adapters
+            </Link>
             <Link to="/docs/cloudflare" className="btn btn-secondary btn-sm">
               Cloudflare
             </Link>
@@ -115,6 +130,10 @@ export default function ChitHome() {
             >
               GitHub
             </a>
+            {' · '}
+            <Link to="/trust" style={{ color: '#00d4ff' }}>
+              Trust
+            </Link>
             {' · '}
             <Link to="/activity" style={{ color: '#00d4ff' }}>
               Activity

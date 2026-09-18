@@ -129,7 +129,7 @@ export default function IssuerTrust() {
 
         <p style={{ textAlign: 'center', fontSize: '0.85rem', color: '#8a8a9a', marginTop: '2rem' }}>
           <Link to="/docs/chit-in-15-lines" style={{ color: '#00d4ff' }}>
-            Chit in 15 lines
+            Drop-in door
           </Link>
           {' · '}
           <a

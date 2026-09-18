@@ -67,7 +67,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 - POST /task-request      : lower-level M2M paid route (not the public door).
 - GET  /v1/sessions/:delegation_hash : session status (active / expired / revoked).
 - POST /v1/sessions/:delegation_hash/challenge : interactive prove-key nonce (TTL 2–5 min). Publishes SessionAct types.
-- POST /v1/sessions/:delegation_hash/act : SessionAct (handoff | read_private | redeem). Types are stable (delegationHash, nonce, action, resource, deadline, targetAgent, payloadHash — Chit402 / Base 8453). Body is `{ action, resource, signature, challenge_id }` or 1-shot `{ action, resource, signature, nonce, deadline, target_agent?, payload_hash? }`. Child handoff JWS embeds SessionAct + kind/action; settlement is inherited from parent_receipt_id.
+- POST /v1/sessions/:delegation_hash/act : SessionAct (handoff | read_private | redeem). Types are stable (delegationHash, nonce, action, resource, deadline, targetAgent, payloadHash — Chit402 / Base 8453). Body is { action, resource, signature, challenge_id } or 1-shot { action, resource, signature, nonce, deadline, target_agent?, payload_hash? }. Child handoff JWS embeds SessionAct + kind/action; settlement is inherited from parent_receipt_id.
 
 ## SDK
 

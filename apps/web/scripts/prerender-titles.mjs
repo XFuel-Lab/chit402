@@ -19,8 +19,8 @@ const ROUTE_CONTENT = {
   },
   '/docs': {
     title: 'Chit402 — treasury desk for agent spend',
-    h1: 'Build on Chit',
-    lede: 'Treasury desk for agent spend — who paid which call; export, policy, evidence. Possession book for principals. No account. No API key. A wallet that can pay the 402 is enough. Public beta at api.chit402.com. USDC on Base and Solana.',
+    h1: 'Build on Chit402',
+    lede: 'Possession book first — who paid which call; hold verify_url; export, policy, evidence. Install doors (OpenAI /v1, Eliza, ACP, MCP, and peers) are equal-weight paths into the same book. Public beta at api.chit402.com. USDC on Base and Solana.',
   },
   '/docs/chit-in-15-lines': {
     title: 'Drop-in door (OpenAI-compatible) | Chit402',

@@ -61,7 +61,7 @@ export default function SwarmPlatforms() {
             Virtuals ACP
           </Link>
           <Link to="/docs/chit-in-15-lines" className="btn btn-secondary btn-sm">
-            Chit in 15 lines
+            Drop-in door
           </Link>
         </div>
       </div>

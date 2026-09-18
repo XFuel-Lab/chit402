@@ -98,7 +98,7 @@ export default function FrameworkAdapters() {
 
         <div className="docs-actions">
           <Link to="/docs/chit-in-15-lines" className="btn btn-primary btn-sm">
-            Chit in 15 lines
+            Drop-in door
           </Link>
           <Link to="/docs/eliza" className="btn btn-secondary btn-sm">
             Eliza plugin

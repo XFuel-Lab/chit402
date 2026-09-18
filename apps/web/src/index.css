@@ -103,6 +103,46 @@ h3 { font-size: 1.15rem; font-weight: 600; }
 .docs-section {
   margin-bottom: 2.75rem;
 }
+.docs-door-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15.5rem, 1fr));
+  gap: 1rem;
+}
+.docs-door-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1.15rem 1.25rem;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  text-decoration: none;
+  color: inherit;
+  min-height: 8.5rem;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.docs-door-card:hover {
+  opacity: 1;
+  border-color: rgba(0, 212, 255, 0.35);
+  background: rgba(255, 255, 255, 0.02);
+}
+.docs-door-card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.docs-door-card-desc {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  flex: 1;
+}
+.docs-door-card-meta {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
 .docs-section-title {
   font-size: 0.8rem;
   font-weight: 600;
