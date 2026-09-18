@@ -18,6 +18,15 @@ import {
 
 export { toCaip2Network, fromCaip2Network, usdcFor, isSolanaNetwork, isEvmNetwork };
 
+/** CDP Bazaar search tags (≤5). Desk/book first; openai-compatible retained for drop-in catalogs. */
+export const BAZAAR_DISCOVERY_TAGS = [
+  'treasury',
+  'possession-book',
+  'spend-receipt',
+  'x402',
+  'usdc',
+];
+
 // ─── CDP Bazaar Discovery Extension ──────────────────────────────────────────
 // Per https://docs.x402.org/extensions/bazaar: the bazaar extension makes a
 // resource discoverable via CDP Bazaar / facilitator `/discovery/resources`.
@@ -473,8 +482,7 @@ export function buildPaymentChallenge(p, opts = {}) {
     || resourceUrl.includes('/a2a-message');
 
   const serviceName = 'Chit402';
-  // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.
-  const tags = ['llm', 'openai-compatible', 'chat-completions', 'inference'];
+  const tags = BAZAAR_DISCOVERY_TAGS;
   const iconUrl = buildIconUrl(baseUrl);
 
   // Update description when both networks are available.

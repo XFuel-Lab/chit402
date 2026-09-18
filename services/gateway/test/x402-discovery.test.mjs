@@ -12,8 +12,11 @@ test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () =>
   assert.equal(typeof m.description, 'string');
   assert.ok(Array.isArray(m.tags), 'manifest tags is an array');
   assert.ok(m.tags.length <= 5, 'manifest tags ≤5 items');
-  assert.ok(m.tags.includes('llm'), 'manifest tags includes llm');
-  assert.ok(!m.tags.includes('x402'), 'manifest tags omits legacy x402 tag');
+  assert.ok(m.tags.includes('treasury'), 'manifest tags leads with treasury desk');
+  assert.ok(m.tags.includes('possession-book'), 'manifest tags includes possession-book');
+  assert.ok(m.tags.includes('x402'), 'manifest tags includes x402');
+  assert.ok(!m.tags.includes('inference'), 'manifest tags demotes inference-only story');
+  assert.ok(!m.tags.includes('llm'), 'manifest tags demotes llm-only story');
   assert.equal(typeof m.x402_enabled, 'boolean');
   assert.equal(m.iconUrl, 'https://api-testnet.xfuel.app/chit402-icon.svg', 'iconUrl uses Chit402 icon');
   assert.ok(!m.iconUrl.includes('xfuel-icon'), 'iconUrl does not contain legacy xfuel-icon');
@@ -109,6 +112,9 @@ test('buildX402Manifest: emits root-relative links when no base URL is known', (
   assert.equal(m.links.agent_manifest, '/llms.txt');
   assert.equal(m.links.agent_card, '/.well-known/agent-card.json');
   assert.equal(m.links.agents_register, '/v1/agents/register');
+  assert.equal(m.links.agent_book, '/llms.txt');
+  assert.equal(m.links.book_ingest, '/openapi.json');
+  assert.match(m.links.foreign_ingest_docs, /foreign-paybox-ingest/);
 });
 
 test('buildX402Manifest: trims a trailing slash on the base URL', () => {
@@ -235,6 +241,8 @@ test('buildOpenApiSpec: no xfuel-icon reference in OpenAPI spec', () => {
 test('buildOpenApiSpec: book ingest documents fulfillment_invoice + job_kind', () => {
   const spec = buildOpenApiSpec('https://api.chit402.com');
   const ingest = spec.paths['/v1/agents/{agent_id}/book/ingest'].post;
+  assert.equal(ingest.summary, 'Spent elsewhere → stamp here');
+  assert.deepEqual(ingest.tags, ['Book', 'Discovery']);
   const schema = ingest.requestBody.content['application/json'].schema;
   assert.ok(schema.properties.fulfillment_invoice);
   assert.ok(schema.properties.fulfillment);

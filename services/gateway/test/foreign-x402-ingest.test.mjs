@@ -804,6 +804,8 @@ test('GET /openapi.json includes /v1/agents/{agent_id}/book/ingest', async () =>
 test('GET /llms.txt mentions book/ingest', async () => {
   const llms = await (await fetch(`${base}/llms.txt`)).text();
   assert.match(llms, /\/v1\/agents\/:agent_id\/book\/ingest/);
+  assert.match(llms, /Foreign ingest/i);
+  assert.match(llms, /spent elsewhere → stamp here/i);
 });
 
 test('smoke fixture: ingest row verify_url resolves on GET /receipt', async () => {

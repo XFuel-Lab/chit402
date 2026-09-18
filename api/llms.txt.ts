@@ -47,12 +47,28 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 - GET  /health            : status, demo limits, floats.
 - GET  /stats             : public-safe usage.
 
+## Book (possession-gated spend ledger)
+
+The book is NOT a router. GET /v1/agents/:agent_id/book is the product.
+POST /v1/chat/completions is bait. Wire: api.chit402.com (same paths as below).
+
+- GET|POST /v1/agents/:agent_id/book : last-N collected spend + budget Y / remaining. Possession-gated.
+- GET /v1/agents/:agent_id/book/lineage/:task_id : walk A→B→inference for disputes.
+
+## Foreign ingest (possession-gated — not a public 402 door)
+
+Spent elsewhere → stamp here. Record PayBox / other x402 shop spend on the possession book.
+
+- POST /v1/agents/:agent_id/book/ingest : foreign x402 ingest. Requires register session (401 without possession; not HTTP 402). On-chain USDC verify (fail closed). evidence foreign_ingest. Returns verify_url like native completions. Naked tx rejected.
+- MCP: ingest_foreign_x402 (= same path). OpenAPI on api.chit402.com/openapi.json (Book · Discovery). Docs: docs/doors/foreign-paybox-ingest.md
+
 ## MCP
 
 - npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
 - submit_inference = POST /task-request (paid, 402 without a payer).
 - register_agent = POST /v1/agents/register (needs a collected receipt + agentWallet).
 - get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; budget Y + remaining; not a public scoreboard).
+- ingest_foreign_x402 = POST /v1/agents/:agent_id/book/ingest (spent elsewhere → stamp here; possession-gated; not a 402 settle).
 
 ## Discovery (x402scan + Bazaar)
 
@@ -62,6 +78,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 - GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message.
 - POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
+- POST /v1/agents/:agent_id/book/ingest : foreign x402 ingest (spent elsewhere → stamp here). Possession + on-chain verify. Not a paid 402 door.
 - POST /v1/chat/completions : paid (USDC on Base or Solana). Unauth GET or POST {} → 402.
 - POST /a2a-message       : same paid door as /v1 (A2A card URL). Unauth POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).

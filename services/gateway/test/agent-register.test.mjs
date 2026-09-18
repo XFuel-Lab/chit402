@@ -276,7 +276,10 @@ test('buildAgentCard is A2A v1.0', () => {
   assert.ok(card.skills.every((s) => Array.isArray(s.tags) && s.tags.length));
   assert.ok(card.skills.some((s) => s.id === 'register-agent'));
   assert.ok(card.skills.some((s) => s.id === 'agent-book'));
-  assert.doesNotMatch(JSON.stringify(card), /unmetered/i);
+  assert.ok(card.skills.some((s) => s.id === 'foreign-ingest'));
+  const ingestSkill = card.skills.find((s) => s.id === 'foreign-ingest');
+  assert.match(ingestSkill.description, /spent elsewhere → stamp here/i);
+  assert.ok(ingestSkill.tags.includes('possession'));
   assert.doesNotMatch(JSON.stringify(card), /free path/i);
 });
 
@@ -310,6 +313,7 @@ test('GET /.well-known/agent-card.json returns A2A v1.0 card (200)', async () =>
   assert.ok(Array.isArray(card.skills));
   assert.ok(card.skills.some((s) => s.id === 'register-agent'));
   assert.ok(card.skills.some((s) => s.id === 'agent-book'));
+  assert.ok(card.skills.some((s) => s.id === 'foreign-ingest'));
 });
 
 test('POST /v1/agents/register without task_id / wallet is 400', async () => {

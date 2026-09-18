@@ -104,6 +104,14 @@ test('homepage title and hero lead with treasury desk, not wallet-move', () => {
   assert.doesNotMatch(html, /Not a model shop/);
 });
 
+test('llms.txt API route documents foreign ingest on www', () => {
+  const llmsApi = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8');
+  const chitBlock = llmsApi.match(/const CHIT_LLMS = `([\s\S]*?)`;\s*\nconst XFUEL_LLMS/m)?.[1] ?? '';
+  assert.match(chitBlock, /Foreign ingest/i);
+  assert.match(chitBlock, /\/v1\/agents\/:agent_id\/book\/ingest/);
+  assert.match(chitBlock, /spent elsewhere → stamp here/i);
+});
+
 test('llms.txt API route does not contain prohibited copy', () => {
   const llmsApi = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8');
   assert.doesNotMatch(llmsApi, /Not a smart router/);
