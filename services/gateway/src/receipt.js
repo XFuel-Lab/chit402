@@ -21,8 +21,9 @@ import {
   resolveSessionActTarget,
 } from './session-act.js';
 import { buildFulfillmentEnvelope, OUTPUT_COMMITMENT_STATUS } from './fulfillment-receipt.js';
+import { buildReceiptOgMeta, buildReceiptOgImageUrl } from './receipt-og-meta.js';
 
-/** Canonical brand OG image for share previews (absolute www URL for api.chit402.com crawlers). */
+/** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
 
 export const SETTLEMENT_KIND_INHERITED = 'inherited';
@@ -1763,10 +1764,11 @@ export function renderReceiptHtml(receipt) {
   const p = view.payment;
   const pr = view.proof;
   const b = view.binding;
-  const title = 'Chit402';
-  const desc = p.rail === 'unmetered'
-    ? `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} · UNMETERED · not charged`
-    : `${pr.outcome === 'valid' ? 'Proven' : 'Signed'} receipt · ${p.rail.toUpperCase()} · verify_url`;
+  const og = buildReceiptOgMeta(receipt, view);
+  const title = og.title;
+  const desc = og.description;
+  const ogImage = og.imageUrl || buildReceiptOgImageUrl(receipt) || CHIT402_OG_IMAGE_URL;
+  const pageUrl = receipt.links?.self || receipt.verify_url || null;
 
   const refHtml = p.ref
     ? (p.explorer_url
@@ -1932,11 +1934,11 @@ export function renderReceiptHtml(receipt) {
 <meta property="og:title" content="${esc(title)}" />
 <meta property="og:description" content="${esc(desc)}" />
 <meta property="og:type" content="website" />
-<meta property="og:image" content="${esc(CHIT402_OG_IMAGE_URL)}" />
+${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta property="og:image" content="${esc(ogImage)}" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:image" content="${esc(CHIT402_OG_IMAGE_URL)}" />
+<meta name="twitter:image" content="${esc(ogImage)}" />
 <meta name="robots" content="noindex" />
 <style>
   :root { color-scheme: dark; }

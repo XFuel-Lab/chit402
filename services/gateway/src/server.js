@@ -29,6 +29,7 @@ import {
   configureRollingLedger,
 } from './rolling-settlement.js';
 import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptMultiKey, verifyOriginHandoff, verifyDestAck, issueSessionHandoffReceipt, mergeReceiptView, decodeReceiptClaims } from './receipt.js';
+import { renderReceiptOgPng } from './receipt-og.js';
 import {
   getSessionStore,
   bindSessionFromRequest,
@@ -2384,6 +2385,44 @@ export function createApp() {
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt/by-tx error');
       return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  app.get('/receipt/:taskId/og.png', rateLimit, async (req, res) => {
+    try {
+      const rawTaskId = req.params.taskId;
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
+      const taskId = normalizeTaskIdForLookup(rawTaskId);
+
+      const ledgerRow = usageSettled.findByTask(taskId) || usageSettled.findByTask(rawTaskId);
+      const foreignReceipt = ledgerRow?.receipt_snapshot
+        ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl, reqHost })
+        : null;
+
+      let receipt = foreignReceipt;
+      if (!receipt) {
+        const aiListener = getAIListener();
+        const task = _findTask(aiListener, taskId);
+        if (!task) {
+          return res.status(404).type('text/plain').send('not found');
+        }
+        receipt = buildReceipt(task, {
+          baseUrl,
+          signingSecret: config.receipts?.signingSecret,
+          coSignerSecret: config.receipts?.coSignerSecret,
+          viPolicy: config.verifiedInference,
+          reqHost,
+          persistSignature: true,
+        });
+      }
+
+      const png = await renderReceiptOgPng(receipt);
+      res.set('Cache-Control', 'public, max-age=3600, immutable');
+      return res.type('png').send(png);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /receipt/:taskId/og.png error');
+      return res.status(500).type('text/plain').send('internal error');
     }
   });
 

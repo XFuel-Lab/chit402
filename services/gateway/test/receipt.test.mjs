@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {
   buildReceipt,
   renderReceiptHtml,
-  CHIT402_OG_IMAGE_URL,
   renderReceiptNotFound,
   explorerUrlForRef,
   buildVerifyUrl,
@@ -284,11 +283,13 @@ test('renderReceiptHtml: shareable page includes key fields + escapes hostile in
   assert.ok(html.includes(TASK_ID));
   assert.match(html, /Proven/);
   assert.match(html, /og:title/);
-  assert.match(html, new RegExp(`property="og:image" content="${CHIT402_OG_IMAGE_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+  assert.match(html, /property="og:title" content="1\.00 USDC · task-abc123"/);
+  assert.match(html, /property="og:description" content="Base USDC · collected"/);
+  assert.match(html, /property="og:image" content="\/receipt\/[^"]+\/og\.png"/);
   assert.match(html, /property="og:image:width" content="1200"/);
   assert.match(html, /property="og:image:height" content="630"/);
   assert.match(html, /name="twitter:card" content="summary_large_image"/);
-  assert.match(html, new RegExp(`name="twitter:image" content="${CHIT402_OG_IMAGE_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+  assert.match(html, /name="twitter:image" content="\/receipt\/[^"]+\/og\.png"/);
   // The injected script tag must be escaped, not rendered.
   assert.ok(!html.includes('<script>alert(1)</script>'));
   assert.ok(html.includes('&lt;script&gt;'));
@@ -330,7 +331,7 @@ test('renderReceiptHtml: route chrome hides xfuel auto alias and footer brand', 
   assert.ok(!served.includes('xfuel/auto'));
 });
 
-test('renderReceiptHtml: title is "Chit402", xfuel- prefix becomes chit- in display', () => {
+test('renderReceiptHtml: og:title includes amount and short id; xfuel- prefix becomes chit- in display', () => {
   const xfuelTask = {
     taskId: 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587',
     status: 'completed',
@@ -338,9 +339,9 @@ test('renderReceiptHtml: title is "Chit402", xfuel- prefix becomes chit- in disp
   };
   const html = renderReceiptHtml(buildReceipt(xfuelTask));
 
-  // Title must be just "Chit402" without task_id or "receipt"
-  assert.match(html, /<title>Chit402<\/title>/);
-  assert.match(html, /og:title.*content="Chit402"/);
+  assert.match(html, /<title>0\.01 USDC · chit-247049dd…<\/title>/);
+  assert.match(html, /property="og:title" content="0\.01 USDC · chit-247049dd…"/);
+  assert.match(html, /property="og:image" content="[^"]+\/og\.png"/);
 
   // The displayed task ID should have the xfuel- prefix rewritten to chit-
   assert.ok(html.includes('chit-247049dd-0075-4372-b7f7-508c62b9b587'), 'chit- prefix should be displayed');
@@ -539,8 +540,7 @@ test('renderReceiptHtml: unmetered /v1 does not print the $0.01 floor as a price
   }));
   assert.match(html, /not charged/);
   assert.match(html, /UNMETERED/);
-  // Title is just "Chit402" (never includes task_id or "receipt")
-  assert.match(html, /<title>Chit402<\/title>/);
+  assert.match(html, /<title>Chit receipt · UNMETERED · chit-free<\/title>/);
   // xfuel- prefix becomes chit- in taskid div
   assert.ok(html.includes('class="taskid">chit-free<'));
   assert.doesNotMatch(html, /openai/i);
@@ -559,8 +559,7 @@ test('renderReceiptHtml: historical openai-* task ids still render (no prefix st
     result: { provider: 'theta-edgecloud' },
     sp1Proof: null,
   }));
-  // Title is just "Chit402" (never includes task_id or "receipt")
-  assert.match(html, /<title>Chit402<\/title>/);
+  assert.match(html, /<title>0\.01 USDC · openai-aaaaaaaa-bbbb…<\/title>/);
   // openai-* prefix is NOT stripped (only xfuel- is)
   assert.match(html, new RegExp(`class="taskid">${taskId}<`));
 });
