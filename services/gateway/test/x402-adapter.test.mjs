@@ -160,15 +160,14 @@ test('buildPaymentChallenge: includes service metadata for bazaar', () => {
   assert.equal(r.serviceName, 'Chit402', 'serviceName is Chit402');
   assert.ok(r.serviceName.length <= 32, 'serviceName ≤32 chars');
 
-  // Per spec: tags ≤5 items. Tags now include llm, openai-compatible, chat-completions
-  // for Bazaar search discoverability (PR: catalog metadata + dual-rail discovery).
+  // Per spec: tags ≤5 items. Desk/book tags for Bazaar search (shared with /.well-known/x402).
   assert.ok(Array.isArray(r.tags), 'tags is an array');
   assert.ok(r.tags.length <= 5, 'tags ≤5 items');
-  assert.ok(r.tags.includes('inference'), 'tags includes inference');
-  assert.ok(r.tags.includes('llm'), 'tags includes llm');
-  assert.ok(r.tags.includes('openai-compatible'), 'tags includes openai-compatible');
-  assert.ok(r.tags.includes('chat-completions'), 'tags includes chat-completions');
-  assert.ok(!r.tags.includes('x402'), 'tags omits legacy x402 tag');
+  assert.ok(r.tags.includes('treasury'), 'tags includes treasury');
+  assert.ok(r.tags.includes('possession-book'), 'tags includes possession-book');
+  assert.ok(r.tags.includes('x402'), 'tags includes x402');
+  assert.ok(r.tags.includes('usdc'), 'tags includes usdc');
+  assert.ok(!r.tags.includes('inference'), 'tags demotes inference-only story');
   assert.ok(!r.tags.includes('ai'), 'tags omits legacy ai tag');
 
   // Per spec: iconUrl must be absolute https:// and a real image, not the SPA.

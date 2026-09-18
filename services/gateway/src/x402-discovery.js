@@ -1,5 +1,5 @@
 import config from './config.js';
-import { isX402Enabled, defaultRail, toCaip2Network, usdcFor } from './x402-adapter.js';
+import { isX402Enabled, defaultRail, toCaip2Network, usdcFor, BAZAAR_DISCOVERY_TAGS } from './x402-adapter.js';
 import { buildIconUrl } from './xfuel-icon.js';
 import { defaultFacilitatorUrlForNetwork, PAYAI_FACILITATOR_URL, PAYAI_DEFAULT_FEE_PAYER } from './x402-facilitator.js';
 import { describePricing } from './pricing.js';
@@ -797,10 +797,9 @@ export function buildX402Manifest(baseUrl = '') {
       + 'POST /v1/chat/completions is the x402 USDC door on Base. Each call returns a signed receipt: '
       + 'hub, model, amount, verify_url. Cost-plus, quoted, receipted. Real mainnet USDC.';
 
-  // Per CDP Bazaar spec: tags ≤5. Search tags only — no x402/ai/receipt/verifiable extras.
-  // Per naming law: Chit402 is the public/searchable name; Chit is spoken shorthand only.
+  // Per CDP Bazaar spec: tags ≤5. Per naming law: Chit402 is the public/searchable name.
   const serviceName = 'Chit402';
-  const tags = ['llm', 'openai-compatible', 'chat-completions', 'inference'];
+  const tags = BAZAAR_DISCOVERY_TAGS;
   const iconUrl = buildIconUrl(base);
 
   // Build accepts array: Base (primary) + Solana (optional)
@@ -876,9 +875,9 @@ export function buildX402Manifest(baseUrl = '') {
         tags,
         iconUrl,
         description:
-          'Chat completions (bot drop-in). Cost-plus, quoted, receipted — pay USDC on Base or '
-          + 'Solana (x402 exact scheme). Returns standard chat completion response + signed Chit receipt '
-          + 'with public verify_url. You hold hub, model, and amount.',
+          'Signed spend receipt on every call — hub, model, amount, public verify_url (who paid which call). '
+          + 'OpenAI-compatible chat completions door. Cost-plus, quoted, receipted — pay USDC on Base or '
+          + 'Solana (x402 exact scheme). Returns completion + signed Chit receipt. You hold hub, model, and amount.',
         accepts,
         input: CHAT_COMPLETIONS_INPUT_SCHEMA,
         outputSchema: CHAT_COMPLETIONS_OUTPUT_SCHEMA,
@@ -892,9 +891,9 @@ export function buildX402Manifest(baseUrl = '') {
         tags,
         iconUrl,
         description:
-          'Responses API (bot drop-in). Same x402 + signed receipt as /v1/chat/completions. '
-          + 'Accepts input (string or message array), max_output_tokens. '
-          + 'Returns Responses-shaped output + Chit receipt with verify_url. Stateless one-shot.',
+          'Signed spend receipt — hub, model, amount, verify_url — same treasury desk as /v1/chat/completions. '
+          + 'Responses API shape. Accepts input (string or message array), max_output_tokens. '
+          + 'x402 USDC on Base or Solana. Stateless one-shot.',
         accepts,
         input: RESPONSES_INPUT_SCHEMA,
         outputSchema: RESPONSES_OUTPUT_SCHEMA,
@@ -908,8 +907,8 @@ export function buildX402Manifest(baseUrl = '') {
         tags,
         iconUrl,
         description:
-          'A2A card URL. Same x402 floor and chat fulfillment as /v1/chat/completions. '
-          + 'Returns signed receipt: hub, model, amount, verify_url. Unauthenticated POST {} returns HTTP 402.',
+          'A2A card URL. Same signed receipt floor as /v1/chat/completions — hub, model, amount, verify_url. '
+          + 'x402 USDC. Collected rows land on the possession book. Unauthenticated POST {} returns HTTP 402.',
         accepts,
         input: CHAT_COMPLETIONS_INPUT_SCHEMA,
         outputSchema: CHAT_COMPLETIONS_OUTPUT_SCHEMA,
@@ -923,9 +922,9 @@ export function buildX402Manifest(baseUrl = '') {
         tags,
         iconUrl,
         description:
-          'Submit a verifiable AI inference task. Cost-plus, quoted, receipted — pay USDC on Base or '
-          + 'Solana (x402 exact scheme). Returns a task_id, signed receipt, and public verify_url; '
-          + 'poll /task-status and fetch /prove-result for the SP1 settlement proof.',
+          'M2M paid task with signed receipt and public verify_url (who paid which job). '
+          + 'Cost-plus, quoted, receipted — pay USDC on Base or Solana (x402 exact scheme). '
+          + 'Returns task_id + verify_url; poll /task-status and /prove-result for SP1 proof when requested.',
         accepts,
         input: TASK_REQUEST_INPUT_SCHEMA,
         outputSchema: TASK_REQUEST_OUTPUT_SCHEMA,
@@ -936,9 +935,15 @@ export function buildX402Manifest(baseUrl = '') {
       agent_manifest: base ? `${base}/llms.txt` : '/llms.txt',
       agent_card: base ? `${base}/.well-known/agent-card.json` : '/.well-known/agent-card.json',
       agents_register: base ? `${base}/v1/agents/register` : '/v1/agents/register',
+      agent_book: base ? `${base}/llms.txt` : '/llms.txt',
+      book_ingest: base
+        ? `${base}/openapi.json`
+        : '/openapi.json',
       openai_models: base ? `${base}/v1/models` : '/v1/models',
       quote: base ? `${base}/task-quote` : '/task-quote',
       docs: 'https://github.com/XFuel-Lab/chit402/blob/main/docs/M2M_API.md',
+      foreign_ingest_docs:
+        'https://github.com/XFuel-Lab/chit402/blob/main/docs/doors/foreign-paybox-ingest.md',
     },
   };
 }
@@ -1220,14 +1225,15 @@ export function buildOpenApiSpec(baseUrl = '') {
       '/v1/agents/{agent_id}/book/ingest': {
         post: {
           operationId: 'ingestForeignX402',
-          summary: 'Ingest foreign settle / x402 spend into the book',
+          summary: 'Spent elsewhere → stamp here',
           description:
             'Spent elsewhere → stamp here. Record PayBox, MoonPay, or other x402 shop spend on the possession book. '
-            + 'Requires session. Accepts full x402 envelopes (payment_required + payment_response) or minimal foreign_invoice '
+            + 'Possession-gated (401 without session — not a public 402 settle). Accepts full x402 envelopes '
+            + '(payment_required + payment_response) or minimal foreign_invoice '
             + '(amount, payer, payTo, tx/payment_ref, resource or hub). Naked tx without payer is rejected. '
             + 'On-chain USDC verify required (fail closed). Returns verify_url like native completions. '
             + 'source/evidence foreign_ingest — Chit did not execute the hop. Demo keys never write.',
-          tags: ['Agents'],
+          tags: ['Book', 'Discovery'],
           parameters: [
             {
               name: 'agent_id',

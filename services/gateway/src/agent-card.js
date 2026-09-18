@@ -99,10 +99,23 @@ export function buildAgentCard(baseUrl = '') {
           + 'plus budget Y (cap), spent, and remaining under a prepaid ceiling. '
           + 'Possession-gated (register session or HMAC). Set budget with POST { session, budget }. '
           + 'Not a public index. You hold hub, model, and amount.',
-        tags: ['identity', 'spend'],
+        tags: ['possession', 'treasury', 'spend'],
         examples: [
           'POST /v1/agents/1/book with { session }',
           'POST /v1/agents/1/book with { session, budget: "10000" }',
+        ],
+      },
+      {
+        id: 'foreign-ingest',
+        name: 'Foreign x402 book stamp',
+        description:
+          'POST /v1/agents/:agent_id/book/ingest — spent elsewhere → stamp here. '
+          + 'Record x402 spend at another shop on the possession book. Possession-gated (401 without session; '
+          + 'not a public 402 settle). On-chain USDC verify (fail closed). evidence foreign_ingest. '
+          + 'Returns verify_url like native completions. See GET /openapi.json and llms.txt Foreign ingest.',
+        tags: ['possession', 'ingest', 'treasury'],
+        examples: [
+          'POST /v1/agents/1/book/ingest with { session, foreign_invoice: { amount, payer, payTo, tx, hub } }',
         ],
       },
       {

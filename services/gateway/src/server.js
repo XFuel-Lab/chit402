@@ -353,6 +353,13 @@ POST /v1/chat/completions is bait. A holder can prove: lineage, policy, assignme
 - POST /v1/agents/:agent_id/book/rotate : rotate session. Old session invalid, book stays (tied to agent_id).
 - POST /v1/agents/:agent_id/book/inflow : unaffiliated inflow (signed bucket/allocation, no payment.ref). POST .../inflow/correct for append-only corrections.
 
+## Foreign ingest (possession-gated — not a public 402 door)
+
+Spent elsewhere → stamp here. Record PayBox / other x402 shop spend on the possession book.
+
+- POST /v1/agents/:agent_id/book/ingest : foreign x402 ingest. Requires register session (401 without possession; not HTTP 402). On-chain USDC verify (fail closed). evidence foreign_ingest. Returns verify_url like native completions. Naked tx rejected.
+- MCP: ingest_foreign_x402 (= same path). OpenAPI: GET /openapi.json (Book · Discovery). Docs: docs/doors/foreign-paybox-ingest.md
+
 ## Private Spend (default for registered sessions)
 
 Registered/possession sessions get vendor_blind mode by default. Providers see
