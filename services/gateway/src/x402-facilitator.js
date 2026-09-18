@@ -1,4 +1,5 @@
 import logger from './logger.js';
+import { getAddress } from 'ethers';
 import { resolveFacilitatorBearer } from './cdp-jwt.js';
 
 /**
@@ -355,6 +356,27 @@ export function decodePaymentHeader(header) {
   if (!header || typeof header !== 'string') return null;
   try { return JSON.parse(header); } catch { /* not raw json — try base64 */ }
   try { return JSON.parse(Buffer.from(header, 'base64').toString('utf8')); } catch { return null; }
+}
+
+/**
+ * Payer wallet from a verified payment header (EIP-3009 authorization.from).
+ * Fallback when facilitator verify/settle omit `payer` but the authorization is present.
+ * @param {string|null|undefined} header
+ * @returns {string|null} checksummed EVM address or null
+ */
+export function payerFromPaymentHeader(header) {
+  const decoded = decodePaymentHeader(header);
+  if (!decoded) return null;
+  const from = decoded.payload?.authorization?.from
+    ?? decoded.authorization?.message?.from
+    ?? null;
+  if (!from || typeof from !== 'string') return null;
+  if (!/^0x[0-9a-fA-F]{40}$/.test(from)) return null;
+  try {
+    return getAddress(from);
+  } catch {
+    return null;
+  }
 }
 
 /**
