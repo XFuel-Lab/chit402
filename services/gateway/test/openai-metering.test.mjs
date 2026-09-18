@@ -91,16 +91,15 @@ test('GET /v1/models without a key returns the catalog, not 401 or 402', async (
   assert.equal(typeof m.availability.status, 'string');
 });
 
-test('demo key + empty body skips payment and then 400s on validation', async () => {
+test('demo key + empty body is 402 like unauth (no free path)', async () => {
   const res = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
     body: '{}',
   });
-  assert.equal(res.status, 400);
+  assert.equal(res.status, 402);
   const body = await res.json();
-  assert.equal(body.error.type, 'invalid_request_error');
-  assert.equal(body.error.param, 'messages');
+  assert.equal(body.error.type, 'payment_required');
 });
 
 test('payment header + empty body is 400, not settle-then-400', async () => {
@@ -171,12 +170,11 @@ test('the quote charges for the capped output, not the output that was asked for
   );
 });
 
-test('the demo key stays exempt, so the public gateway keeps working', async () => {
+test('the public demo key is refused with 402 (paid door only)', async () => {
   const res = await chat({ 'x-api-key': 'xfuel-demo' });
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 402);
   const body = await res.json();
-  assert.equal(body.object, 'chat.completion');
-  assert.ok(body.usage.total_tokens > 0);
+  assert.equal(body.error.type, 'payment_required');
 });
 
 test('an explicitly exempted key is not charged', async () => {
@@ -184,15 +182,12 @@ test('an explicitly exempted key is not charged', async () => {
   assert.equal(res.status, 200);
 });
 
-test('an exempt call still reports usage and stays marked unmetered', async () => {
-  const res = await chat({ 'x-api-key': 'xfuel-demo' });
+test('an exempt partner call still reports usage and stays marked unmetered', async () => {
+  const res = await chat({ 'x-api-key': 'partner-key-1' });
   const body = await res.json();
   assert.ok(['provider', 'estimate'].includes(body.usage.xfuel_source));
   assert.equal(typeof body.usage.prompt_tokens, 'number');
   assert.ok(body.xfuel, 'receipt is still attached');
-  // The receipt must not claim a rail that carried no money. `ref` is explicitly
-  // null rather than absent now that /v1 shares the canonical receipt shape —
-  // what matters is that it names no settlement.
   assert.equal(body.xfuel.payment.rail, 'unmetered');
   assert.ok(!body.xfuel.payment.ref);
   assert.equal(body.xfuel.payment.collected, false);
@@ -200,9 +195,7 @@ test('an exempt call still reports usage and stays marked unmetered', async () =
 });
 
 test('the receipt names the provider that served', async () => {
-  // route.provider is what makes the compute source tamper-evident once the
-  // receipt is signed; it was being dropped from the /v1 receipt entirely.
-  const res = await chat({ 'x-api-key': 'xfuel-demo' });
+  const res = await chat({ 'x-api-key': 'partner-key-1' });
   const body = await res.json();
   assert.ok(body.xfuel.route.provider, 'route.provider must be present');
   assert.equal(body.xfuel.route.provider, body.xfuel.compute.provider);

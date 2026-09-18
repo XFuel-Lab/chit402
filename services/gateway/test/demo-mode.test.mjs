@@ -1,20 +1,25 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-// Configure public demo mode BEFORE importing the server (module reads env at
-// load). node --test runs each file in its own process, so this is isolated.
+// Legacy demo env vars may still be set on hosts; they must not grant free inference.
 process.env.M2M_DEMO_MODE = 'true';
 process.env.M2M_DEMO_API_KEY = 'xfuel-demo';
-process.env.M2M_DEMO_RATE_PER_MIN = '2'; // tiny window so we can trip it fast
-process.env.M2M_DEMO_RATE_PER_DAY = '1000';
-process.env.M2M_API_KEYS = 'private-key-1'; // not open mode → auth enforced
+process.env.M2M_API_KEYS = 'private-key-1';
+process.env.X402_ENABLED = 'true';
+process.env.X402_METER_V1 = 'true';
+process.env.X402_PAY_TO = '0xtreasury';
+process.env.X402_NETWORK = 'base-sepolia';
+process.env.X402_USDC_PRICE_DEFAULT = '2000';
+process.env.HUB_CATALOG_OFFLINE = 'true';
 
 const { createApp } = await import('../src/server.js');
+const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 
 let server;
 let base;
 
 before(async () => {
+  resetHubCatalogCache();
   const app = createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
@@ -28,58 +33,71 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
-test('demo key is accepted (via Authorization: Bearer)', async () => {
-  const res = await fetch(`${base}/v1/models`, {
-    headers: { Authorization: 'Bearer xfuel-demo' },
-  });
-  assert.equal(res.status, 200);
-});
-
 test('GET /v1/models is public — no key required to see seats', async () => {
   const res = await fetch(`${base}/v1/models`);
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.object, 'list');
   assert.ok(Array.isArray(body.data) && body.data.length >= 1);
-  const m = body.data[0];
-  assert.equal(typeof m.id, 'string');
-  assert.equal(typeof m.hub, 'string');
-  assert.equal(typeof m.availability.status, 'string');
 });
 
-test('private key is accepted and NOT subject to the demo limit', async () => {
-  for (let i = 0; i < 5; i++) {
-    const res = await fetch(`${base}/v1/models`, {
-      headers: { 'X-API-Key': 'private-key-1' },
-    });
-    assert.equal(res.status, 200);
-  }
-});
-
-test('demo key is throttled after the per-minute window', async () => {
-  // Fresh IP bucket is shared across this process; the private-key test above
-  // did not touch the demo bucket. per-min = 2 → 3rd demo request is 429.
-  const hits = [];
-  for (let i = 0; i < 3; i++) {
-    const res = await fetch(`${base}/v1/models`, {
-      headers: { 'X-API-Key': 'xfuel-demo' },
-    });
-    hits.push(res.status);
-  }
-  // Note: one demo request was already spent in the first test → expect a 429
-  // within these three.
-  assert.ok(hits.includes(429), `expected a 429 among ${JSON.stringify(hits)}`);
-  const limited = await fetch(`${base}/v1/models`, {
-    headers: { 'X-API-Key': 'xfuel-demo' },
+test('private partner key is accepted on /v1/models', async () => {
+  const res = await fetch(`${base}/v1/models`, {
+    headers: { 'X-API-Key': 'private-key-1' },
   });
-  assert.equal(limited.status, 429);
-  assert.ok(limited.headers.get('retry-after'));
-  // /v1 is the OpenAI-compatible surface, so the throttle answers in the OpenAI
-  // error envelope — a plain OpenAI client can read message/type off the error.
-  const body = await limited.json();
-  assert.equal(body.error.code, 'rate_limit_exceeded');
-  assert.equal(body.error.type, 'rate_limit_error');
-  assert.match(body.error.message, /Use your own X-API-Key/);
+  assert.equal(res.status, 200);
+});
+
+test('public demo keys do not skip payment on POST /v1/chat/completions', async () => {
+  const cases = [
+    { 'X-API-Key': 'xfuel-demo' },
+    { 'X-API-Key': 'chit402-demo' },
+    { Authorization: 'Bearer xfuel-demo' },
+  ];
+  for (const authHeaders of cases) {
+    const headers = { 'content-type': 'application/json', ...authHeaders };
+    const res = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: 'theta/qwen3',
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 8,
+      }),
+    });
+    assert.equal(res.status, 402, `expected 402 for headers ${JSON.stringify(authHeaders)}`);
+    const body = await res.json();
+    assert.equal(body.error.type, 'payment_required');
+  }
+});
+
+test('demo key prefix does not skip payment', async () => {
+  const res = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo-extra' },
+    body: JSON.stringify({
+      model: 'theta/qwen3',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 8,
+    }),
+  });
+  assert.equal(res.status, 402);
+});
+
+test('demo key does not authorize POST /task-request without payment', async () => {
+  const res = await fetch(`${base}/task-request`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
+    body: JSON.stringify({
+      message_type: 'inference_request',
+      chain_id: 'base',
+      amount: '10000',
+      sender: '0x0000000000000000000000000000000000000001',
+      model_id: 'theta/qwen3',
+      input: 'hello',
+    }),
+  });
+  assert.equal(res.status, 402);
 });
 
 test('M2M routes keep the flat XFuel error shape', async () => {

@@ -23,9 +23,9 @@ const ROUTE_CONTENT = {
     lede: 'Treasury desk for agent spend — who paid which call; export, policy, evidence. Possession book for principals. No account. No API key. A wallet that can pay the 402 is enough. Public beta at api.chit402.com. USDC on Base and Solana.',
   },
   '/docs/chit-in-15-lines': {
-    title: 'Chit in 15 lines | Chit402',
-    h1: 'Chit in 15 lines',
-    lede: 'Point any chat-completions client at https://api.chit402.com/v1. Demo key chit402-demo skips payment — no wallet, no USDC. Paid calls return a collected receipt with verify_url.',
+    title: 'Drop-in door (OpenAI-compatible) | Chit402',
+    h1: 'Drop-in door (OpenAI-compatible)',
+    lede: 'Chit is the possession book after USDC settle. This page is the wire-compat install at https://api.chit402.com/v1 — paid x402 door only, no public demo key.',
   },
   '/docs/eliza': {
     title: 'Eliza plugin | Chit402',

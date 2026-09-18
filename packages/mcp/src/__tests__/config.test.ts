@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_BASE_URL, PUBLIC_DEMO_API_KEY } from 'xfuel-sdk';
+import { DEFAULT_BASE_URL } from 'xfuel-sdk';
 import { parseArgs } from '../config.js';
 
 /**
@@ -44,7 +44,7 @@ test('defaults to stdio + hosted public beta when nothing is set', () => {
     assert.equal(config.transport, 'stdio');
     assert.equal(config.port, 3033);
     assert.equal(config.apiUrl, DEFAULT_BASE_URL);
-    assert.equal(config.apiKey, PUBLIC_DEMO_API_KEY);
+    assert.equal(config.apiKey, '');
     assert.equal(config.httpAuthToken, undefined);
     assert.equal(config.rpcUrl, undefined);
     assert.equal(config.zkVerifierAddress, undefined);

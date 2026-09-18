@@ -297,8 +297,8 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 > POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url.
 > Cost-plus, quoted, receipted — x402 USDC on Base (CDP) or Solana (PayAI).
 > No account. No API key. A wallet that can pay the 402 is enough. Register is only
-> to hold the possession book after a collected receipt. Demo key chit402-demo skips payment
-> (rate-limited). Paying api.chit402.com moves real mainnet USDC.
+> to hold the possession book after a collected receipt. Paying api.chit402.com moves
+> real mainnet USDC. Trials are live paid — no public demo key.
 
 ## Proof objects
 
@@ -1241,17 +1241,13 @@ export function createApp() {
   // ── Auth middleware ─────────────────────────────────────────────────────
 
   function isAuthorised(req) {
-    // Dev / open mode when no keys are configured
-    if (AUTHORISED_KEYS.size === 0 && RELAYER_ADDRESSES.size === 0) return true;
-
     const apiKey = req.headers['x-api-key'];
+    if (apiKey && isDemoKey(apiKey)) return false;
+
+    // Dev / open mode when no keys are configured (demo keys never qualify — above)
+    if (AUTHORISED_KEYS.size === 0 && RELAYER_ADDRESSES.size === 0) return true;
     if (apiKey && AUTHORISED_KEYS.has(apiKey)) {
       req.authMethod = 'api_key';
-      return true;
-    }
-    if (DEMO_MODE && apiKey && apiKey === DEMO_API_KEY) {
-      req.authMethod = 'demo_key';
-      req.isDemo = true;
       return true;
     }
     if (verifyRelayerSignature(req)) {

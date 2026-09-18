@@ -7,7 +7,7 @@ Live host: **https://api.chit402.com**
 - `Authorization: Bearer <CHIT_API_KEY>`
 - or `X-API-Key: <CHIT_API_KEY>`
 
-Demo key `chit402-demo`: unmetered `POST /v1/chat/completions` (signed receipt, no USDC).
+`POST /v1/chat/completions` without payment returns HTTP 402 (x402 USDC). No public demo key.
 Partner keys + wallet: collected USDC row with `payment.ref`.
 
 ## Public paid door — chat completions

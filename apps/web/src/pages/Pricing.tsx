@@ -16,7 +16,7 @@ export default function Pricing() {
           <p style={{ color: '#8a8a9a' }}>
             <code>POST /v1/chat/completions</code> is cost-plus, quoted, receipted — USDC on Base and Solana. HTTP 402
             without payment. Signed receipt names the model, the hub, and the cost.
-            Demo key <code>xfuel-demo</code> skips payment: 15/min, 150/day per IP.
+            No public demo key — every completion is paid via x402 or a partner key.
             The API is <code>https://api.xfuel.app/v1</code>, not <code>xfuel.app/v1</code>.
           </p>
         </div>

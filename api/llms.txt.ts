@@ -11,7 +11,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 
 - /trust    : Issuer trust — pin JWKS + kid, rotation policy, receipt verify steps. https://www.chit402.com/trust
 - /         : Treasury desk — who paid which call. Export, policy, evidence. https://chit402.com/book
-- /docs/chit-in-15-lines : OpenAI baseURL swap + demo key chit402-demo (no USDC).
+- /docs/chit-in-15-lines : OpenAI-compatible drop-in door at api.chit402.com/v1 (paid x402 only).
 - /docs/eliza : Eliza plugin stub (coming: @xfuel/plugin-elizaos).
 - /v1       : Not the API — points you to api.chit402.com/v1.
 
@@ -32,7 +32,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
 - GET  /v1/models           : drop-in model id list (install path, not the product). Wire hubs behind the door. Public, no key.
 - No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
-- Optional key (skips payment): "Authorization: Bearer <key>" or "X-API-Key: <key>".
+- Partner key (when issued): "Authorization: Bearer <key>" or "X-API-Key: <key>". No public demo key.
 - Point any chat-completions client's baseURL at api.chit402.com + /v1. Receipt in x-xfuel-*
   headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
 
@@ -76,7 +76,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 
 ## Docs
 
-- Chit in 15 lines: https://www.chit402.com/docs/chit-in-15-lines
+- Drop-in door: https://www.chit402.com/docs/chit-in-15-lines
 - Protocol map: AGENTS.md
 - Agent Playbook: skills/AGENT_PLAYBOOK.md
 - Chat completions gateway: docs/CHAT_COMPLETIONS_GATEWAY.md
@@ -92,7 +92,7 @@ const XFUEL_LLMS = `# XFuel Protocol
 > POST /v1/chat/completions returns a signed receipt: hub, model, amount,
 > verify_url. Cost-plus, quoted, receipted — pay x402 USDC on Base (CDP) or
 > Solana (PayAI). POST /a2a-message is the same paid door (A2A card URL).
-> Bearer xfuel-demo and valid API keys skip payment. GET|POST
+> Partner API keys may skip payment when configured. GET|POST
 > /v1/agents/:agent_id/book is possession-gated (last-N spend + budget Y /
 > remaining under prepaid_ceiling). POST /v1/agents/register
 > is fail-closed. /task-request is the other paid door. Paying
@@ -119,7 +119,7 @@ const XFUEL_LLMS = `# XFuel Protocol
 - GET  /v1/models           : drop-in model id list (install path, not the product). Wire hubs Theta + Akash; xfuel/auto. Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
-- Optional key (skips payment): "Authorization: Bearer <key>" or "X-API-Key: <key>".
+- Partner key (when issued): "Authorization: Bearer <key>" or "X-API-Key: <key>". No public demo key.
 - Point any OpenAI client's baseURL at this host + /v1. Receipt in x-xfuel-*
   headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
 - proof_outcome may be pending on the chat body — poll GET /task-status.

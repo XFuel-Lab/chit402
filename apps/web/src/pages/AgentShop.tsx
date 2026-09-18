@@ -4,25 +4,22 @@ import { getApiV1 } from '../apiHost';
 import { getHostConfig } from '../hostConfig';
 
 function getSnippet(apiV1: string) {
-  return `curl -sS ${apiV1}/chat/completions \\
-  -H "X-API-Key: xfuel-demo" \\
+  return `curl -sS -D - ${apiV1}/chat/completions \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`;
+  -d '{}'
+# → HTTP 402 — pay USDC, retry with X-PAYMENT`;
 }
 
 function getFetch(apiV1: string) {
   return `const res = await fetch('${apiV1}/chat/completions', {
   method: 'POST',
-  headers: {
-    'X-API-Key': 'xfuel-demo',
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
     model: 'xfuel/auto',
     messages: [{ role: 'user', content: 'Say hello in 5 words.' }],
   }),
 });
-const data = await res.json();`;
+// Use chit402-sdk or wallet payer to satisfy 402`;
 }
 
 export default function AgentShop() {
@@ -46,8 +43,7 @@ export default function AgentShop() {
             {productName} is the till for an agent shop. POST to{' '}
             <a href={apiV1}>{apiV1}/chat/completions</a>, pay the HTTP 402 in USDC
             on Base or Solana (cost-plus, quoted, receipted), and you hold the book. We are the till, not the Chief of SEO.
-            Show the client the book, not a screenshot. Demo key <code>xfuel-demo</code> is free
-            (15/min, 150/day). HMAC-signed receipts are table stakes.
+            Show the client the book, not a screenshot. HMAC-signed receipts are table stakes.
             Book is possession-gated <code>GET|POST /v1/agents/:agent_id/book</code>.
           </p>
         </header>
@@ -56,8 +52,8 @@ export default function AgentShop() {
           <h2>How do I set up an agent shop till in four minutes?</h2>
           <ol style={{ color: '#8a8a9a', paddingLeft: '1.2rem', lineHeight: 1.8 }}>
             <li>POST to <code>{apiV1}/chat/completions</code>.</li>
-            <li>Use the demo key <code>xfuel-demo</code> to verify the connection (free, rate-limited).</li>
-            <li>Switch to a wallet-backed key to pay the 402 in USDC on Base or Solana.</li>
+            <li>Probe the 402 with <code>curl</code> (empty body) to read payment requirements.</li>
+            <li>Pay the 402 in USDC on Base or Solana (SDK, Eliza, or wallet payer).</li>
             <li>Call <code>GET /v1/agents/:agent_id/book</code> to retrieve the spend log for your client.</li>
           </ol>
         </section>
@@ -100,9 +96,8 @@ export default function AgentShop() {
         </section>
 
         <section className="docs-section">
-          <h2>How do I try the till with the demo key?</h2>
+          <h2>How do I probe the till?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7, marginBottom: '1rem' }}>
-            Demo key <code>xfuel-demo</code> skips payment. 15 requests/min, 150/day per IP.
             Windows: use <code>curl.exe</code>.
           </p>
           <pre className="docs-code"><code>{SNIPPET}</code></pre>

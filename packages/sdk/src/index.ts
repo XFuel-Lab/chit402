@@ -64,9 +64,9 @@ export type ChainId = (typeof ChainId)[keyof typeof ChainId];
 export const DEFAULT_BASE_URL = 'https://api.xfuel.app';
 
 /**
- * Shared PUBLIC demo key used against {@link DEFAULT_BASE_URL} when no `apiKey`
- * is provided. It is heavily rate-limited per IP — bring your own key
- * (`X-API-Key`) for higher limits and production use.
+ * @deprecated Public demo keys no longer grant free completions on the hosted
+ * gateway. Use x402 payment or a partner `apiKey`. Kept for backwards-compat
+ * imports only — do not send this value in production.
  */
 export const PUBLIC_DEMO_API_KEY = 'chit402-demo';
 
@@ -558,7 +558,7 @@ export class XFuelApiError extends Error {
 export interface XFuelClientOptions {
   /** API base URL. Defaults to {@link DEFAULT_BASE_URL} (hosted public beta). */
   baseUrl?: string;
-  /** API key (sent as `X-API-Key`). Defaults to {@link PUBLIC_DEMO_API_KEY}. */
+  /** Optional partner API key (sent as `X-API-Key`). Omit for x402-paid calls. */
   apiKey?: string;
   /** Max automatic retries on 429 / 5xx (default: 3) */
   maxRetries?: number;
@@ -597,7 +597,7 @@ export class XFuelClient {
   constructor(options: XFuelClientOptions = {}) {
     const {
       baseUrl = DEFAULT_BASE_URL,
-      apiKey = PUBLIC_DEMO_API_KEY,
+      apiKey,
       maxRetries = 3,
       retryBaseMs = 1000,
       timeoutMs = 30_000,

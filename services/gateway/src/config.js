@@ -103,7 +103,7 @@ const config = {
     usdcFloor: process.env.X402_USDC_FLOOR || null,
     // Charge for /v1/chat/completions. Default OFF: turning it on makes the
     // OpenAI-compatible surface reply 402 to any client that cannot pay, which
-    // is a breaking change for plain OpenAI SDKs. The demo key stays exempt.
+    // is a breaking change for plain OpenAI SDKs. Public demo keys are not exempt.
     meterV1: process.env.X402_METER_V1 === 'true',
     meterV1ExemptKeys: (process.env.X402_METER_V1_EXEMPT_KEYS || '')
       .split(',').map((s) => s.trim()).filter(Boolean),

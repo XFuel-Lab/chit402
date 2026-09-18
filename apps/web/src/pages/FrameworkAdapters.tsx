@@ -8,7 +8,7 @@ import { createChitChatOpenAI } from 'chit402-adapters/langchain';
 import { extractReceipt } from 'chit402-adapters/receipt';
 
 const llm = await createChitChatOpenAI({
-  apiKey: process.env.CHIT_API_KEY ?? 'chit402-demo',
+  apiKey: process.env.CHIT_API_KEY, // optional partner key; omit for x402-paid /v1
   model: 'xfuel/auto',
 });
 
@@ -34,7 +34,7 @@ const receipt = extractReceipt(body, 'https://api.chit402.com', response.headers
 console.log(text, receipt.verify_url);`;
 
 const envExample = `# CHIT_API_URL=https://api.chit402.com
-# CHIT_API_KEY=chit402-demo
+# CHIT_API_KEY=<partner-key>
 # CHIT_MAX_USD_PER_CALL=0.10
 # CHIT_MAX_USD_SESSION=1.00`;
 
@@ -69,7 +69,7 @@ export default function FrameworkAdapters() {
         <div className="docs-panel">
           <h2>LangChain</h2>
           <p>
-            Factory for <code>ChatOpenAI</code> pointed at Chit. Demo key skips USDC; paid calls
+            Factory for <code>ChatOpenAI</code> pointed at Chit. Paid x402 calls
             return a signed receipt.
           </p>
           <pre className="docs-code">

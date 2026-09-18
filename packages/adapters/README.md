@@ -24,7 +24,7 @@ import { createChitChatOpenAI } from '@xfuel/adapters/langchain';
 import { extractReceipt } from '@xfuel/adapters/receipt';
 
 const llm = await createChitChatOpenAI({
-  apiKey: process.env.CHIT_API_KEY ?? 'chit402-demo',
+  apiKey: process.env.CHIT_API_KEY, // partner key or omit for x402-paid /v1
   model: 'xfuel/auto',
 });
 

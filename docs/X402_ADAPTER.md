@@ -159,7 +159,7 @@ curl -sS https://api.xfuel.app/openapi.json | jq '.paths | keys'
 curl -sS -D - -X POST https://api.xfuel.app/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{}'
-# Expect HTTP 402 + PAYMENT-REQUIRED (amount "10000"). Demo key xfuel-demo skips payment.
+# Expect HTTP 402 + PAYMENT-REQUIRED (amount "10000"). Public demo keys do not skip payment.
 ```
 
 OpenAPI `x-payment-info.price.amount` is decimal USD (`"0.01"`). Runtime 402

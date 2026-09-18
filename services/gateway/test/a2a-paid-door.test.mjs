@@ -146,15 +146,15 @@ test('unauth POST /a2a-message {} matches /v1 floor and rails', async () => {
   );
 });
 
-test('demo key on /a2a-message skips payment then 400s on empty body', async () => {
+test('demo key on /a2a-message is 402 on empty body (no free path)', async () => {
   const res = await fetch(`${base}/a2a-message`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
     body: '{}',
   });
-  assert.equal(res.status, 400);
+  assert.equal(res.status, 402);
   const body = await res.json();
-  assert.equal(body.error?.type || body.error, body.error?.type ? 'invalid_request_error' : body.error);
+  assert.equal(body.error.type, 'payment_required');
 });
 
 test('recordCollectedSpend appends hub/model/amount under bookable agent_id without register', () => {

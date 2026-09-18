@@ -179,12 +179,13 @@ test('Layout supports dual branding for Chit and XFuel', () => {
   assert.match(layout, /config\.name/, 'Layout uses dynamic brand name');
 });
 
-test('Chit in 15 lines page documents OpenAI baseURL and demo key', () => {
+test('Drop-in door page documents paid install path (not whole product)', () => {
   const page = readFileSync(join(root, 'src/pages/ChitIn15Lines.tsx'), 'utf8');
-  assert.match(page, /api\.chit402\.com\/v1/, '15-lines page names baseURL');
-  assert.match(page, /chit402-demo/, '15-lines page names demo key');
-  assert.match(page, /OpenAI SDK may strip unknown/, '15-lines page warns about SDK field stripping');
-  assert.match(page, /verify_url/, '15-lines page mentions verify_url');
+  assert.match(page, /api\.chit402\.com\/v1/, 'drop-in page names baseURL');
+  assert.doesNotMatch(page, /chit402-demo/, 'drop-in page does not advertise demo key');
+  assert.match(page, /possession book/i, 'drop-in page separates book from install');
+  assert.match(page, /OpenAI SDK may strip unknown/, 'drop-in page warns about SDK field stripping');
+  assert.match(page, /verify_url/, 'drop-in page mentions verify_url');
 });
 
 test('App routes docs subpages', () => {

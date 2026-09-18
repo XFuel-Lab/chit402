@@ -9,7 +9,7 @@ const characterExample = `{
   "plugins": ["@xfuel/plugin-elizaos"],
   "settings": {
     "CHIT_API_URL": "https://api.chit402.com",
-    "CHIT_API_KEY": "chit402-demo",
+    "CHIT_API_KEY": "<partner-key-or-omit-for-x402>",
     "CHIT_MAX_USD_PER_CALL": "0.05",
     "CHIT_MAX_USD_SESSION": "1.00"
   }

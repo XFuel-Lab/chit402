@@ -87,26 +87,22 @@ test('an unpaid /v1/responses call is refused with 402', async () => {
   assert.match(body.resource.url, /\/v1\/responses/);
 });
 
-test('demo key skips payment for /v1/responses', async () => {
+test('demo key does not skip payment for /v1/responses', async () => {
   const res = await responses({ 'x-api-key': 'xfuel-demo' });
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 402);
   const body = await res.json();
-  assert.equal(body.object, 'response');
-  assert.ok(body.output.length > 0);
-  assert.ok(body.xfuel.task_id);
-  assert.equal(body.xfuel.payment.rail, 'unmetered');
+  assert.equal(body.error.type, 'payment_required');
 });
 
-test('demo key + empty body skips payment and then 400s on validation', async () => {
+test('demo key + empty body is 402, not a free validation path', async () => {
   const res = await fetch(`${base}/v1/responses`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': 'xfuel-demo' },
     body: '{}',
   });
-  assert.equal(res.status, 400);
+  assert.equal(res.status, 402);
   const body = await res.json();
-  assert.equal(body.error.type, 'invalid_request_error');
-  assert.equal(body.error.param, 'input');
+  assert.equal(body.error.type, 'payment_required');
 });
 
 test('payment header + empty body is 400, not settle-then-400', async () => {

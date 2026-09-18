@@ -2,23 +2,20 @@ import { Link } from 'react-router-dom';
 import { type CSSProperties } from 'react';
 import { API_V1 } from '../apiHost';
 
-const SNIPPET = `curl -sS ${API_V1}/chat/completions \\
-  -H "X-API-Key: xfuel-demo" \\
+const SNIPPET = `curl -sS -D - ${API_V1}/chat/completions \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in 5 words."}],"max_tokens":32}'`;
+  -d '{}'
+# → HTTP 402 + PAYMENT-REQUIRED`;
 
 const FETCH = `const res = await fetch('${API_V1}/chat/completions', {
   method: 'POST',
-  headers: {
-    'X-API-Key': 'xfuel-demo',
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
     model: 'xfuel/auto',
     messages: [{ role: 'user', content: 'Say hello in 5 words.' }],
   }),
 });
-const data = await res.json();`;
+// 402 until X-PAYMENT / x402 settle — use chit402-sdk or wallet payer`;
 
 export default function Home() {
   return (
@@ -26,7 +23,7 @@ export default function Home() {
       <section style={styles.hero}>
         <div className="container" style={{ textAlign: 'center' }}>
           <div style={styles.heroBadge}>
-            <span className="badge badge-cyan">Public demo</span>
+            <span className="badge badge-cyan">Live paid</span>
             <span style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>USDC receipts on Base</span>
           </div>
           <h1 style={styles.heroTitle}>Chit402 is the book.</h1>
@@ -39,7 +36,7 @@ export default function Home() {
             <code>POST /v1/chat/completions</code> returns a signed receipt: hub, model, amount, verify_url.
             Cost-plus, quoted, receipted — pay USDC on Base or Solana.
             <code>GET|POST /v1/agents/:agent_id/book</code> is possession-gated last-N collected spend.
-            Demo key <code>xfuel-demo</code> skips payment (rate-limited). On-chain SP1 proof on demand — not on every call.
+            On-chain SP1 proof on demand — not on every call.
             Drop-in model ids: <code>GET /v1/models</code> lists wire hubs (Theta, Akash) behind the{' '}
             <code>/v1</code> door. <code>xfuel/auto</code> picks a hub for fulfillment — the product is the signed receipt.
           </p>
@@ -58,7 +55,7 @@ export default function Home() {
         <div className="container" style={{ maxWidth: 720 }}>
           <h2 style={{ marginBottom: '0.75rem' }}>Try it</h2>
           <p style={{ color: '#8a8a9a', marginBottom: '1rem' }}>
-            Demo key <code>xfuel-demo</code> — 15 requests/min, 150/day per IP. Windows: use <code>curl.exe</code>.
+            Unauthenticated calls return HTTP 402. Windows: use <code>curl.exe</code>.
           </p>
           <pre className="docs-code"><code>{SNIPPET}</code></pre>
           <p style={{ color: '#8a8a9a', margin: '1.25rem 0 0.5rem' }}>Or any chat-completions client:</p>
@@ -90,7 +87,7 @@ export default function Home() {
           <div className="grid grid-3">
             <div className="card">
               <h3>POST /v1/chat/completions</h3>
-              <p>USDC on Base and Solana. Signed receipt with verify_url. HTTP 402 without payment. Demo key <code>xfuel-demo</code> skips the charge.</p>
+              <p>USDC on Base and Solana. Signed receipt with verify_url. HTTP 402 without payment.</p>
             </div>
             <div className="card">
               <h3>Paid /task-request</h3>

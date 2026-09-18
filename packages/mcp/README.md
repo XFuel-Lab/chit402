@@ -6,7 +6,7 @@ MCP server for Chit402 — returns the **book** and **verify_url**, not another 
 **Book:** `register_agent` → `get_book` / `get_agent_book` (possession-gated last-N spend).
 **Prove it:** `verify_receipt` (offline binding via `@xfuel/verify`). SP1 tools (`get_proof`, `verify_proof`) are optional Tier-2.
 
-Zero config talks to https://api.chit402.com (alias: https://api.xfuel.app) with demo key `chit402-demo`.
+Zero config talks to https://api.chit402.com (alias: https://api.xfuel.app). Hosted `/v1` is live paid — set a partner `CHIT402_API_KEY` or use x402.
 
 Public beta. **Paying that host moves real USDC on Base or Solana.** MCP does not take a human private key — the payer stays client-side (Eliza plugin, wallet, etc.).
 

@@ -5,29 +5,13 @@ import { getHostConfig } from '../hostConfig';
 
 const GITHUB = 'https://github.com/XFuel-Lab/chit402/blob/main';
 
-const curlExample = (apiV1: string) => `curl -sS ${apiV1}/chat/completions \\
-  -H "X-API-Key: chit402-demo" \\
-  -H "Content-Type: application/json" \\
-  -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello in five words."}],"max_tokens":32}'`;
+const sdkPaidExample = `import { XFuelClient } from 'xfuel-sdk';
 
-const openAiExample = `import OpenAI from 'openai';
-
-const client = new OpenAI({
-  baseURL: 'https://api.chit402.com/v1',
-  apiKey: 'chit402-demo', // shared demo — no USDC spent
+// Pay USDC on Base or Solana via x402; hold verify_url on the response.
+const client = new XFuelClient({
+  baseUrl: 'https://api.chit402.com',
+  // apiKey: optional partner key — omit to pay per call with your wallet payer
 });
-
-const res = await client.chat.completions.create({
-  model: 'xfuel/auto',
-  messages: [{ role: 'user', content: 'Say hello in five words.' }],
-  max_tokens: 32,
-});
-
-console.log(res.choices[0]?.message?.content);`;
-
-const sdkExample = `import { XFuelClient } from 'xfuel-sdk';
-
-const client = new XFuelClient(); // api.chit402.com + chit402-demo
 
 const chat = await client.chatCompletions({
   model: 'xfuel/auto',
@@ -35,7 +19,22 @@ const chat = await client.chatCompletions({
 });
 
 console.log(chat.choices[0].message.content);
-console.log(chat.xfuel?.verify_url); // signed receipt — demo, no USDC`;
+console.log(chat.xfuel?.verify_url); // signed receipt after settle`;
+
+const openAiExample = `import OpenAI from 'openai';
+
+// Wire-compat install: same paths as OpenAI, but you must satisfy HTTP 402 (x402 USDC).
+const client = new OpenAI({
+  baseURL: 'https://api.chit402.com/v1',
+  apiKey: 'unused', // OpenAI SDK requires a string; payment is X-PAYMENT / wallet, not this field
+});
+
+// Plain OpenAI SDK cannot pay 402 — use chit402-sdk, Eliza plugin, or x402-fetch.`;
+
+const curlExample = (apiV1: string) => `curl -sS ${apiV1}/chat/completions \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"xfuel/auto","messages":[{"role":"user","content":"Say hello."}],"max_tokens":32}'
+# → HTTP 402 + PAYMENT-REQUIRED. Retry with X-PAYMENT after USDC settle.`;
 
 export default function ChitIn15Lines() {
   const config = getHostConfig();
@@ -47,63 +46,30 @@ export default function ChitIn15Lines() {
     <div className="page docs-page">
       <div className="container" style={{ maxWidth: 720 }}>
         <header className="page-header">
-          <span className="docs-kicker">Quickstart</span>
-          <h1>Chit in 15 lines</h1>
+          <span className="docs-kicker">Install path</span>
+          <h1>Drop-in door (OpenAI-compatible)</h1>
           <p>
-            Chit is the possession book: after USDC settle you hold hub, model, amount, and{' '}
-            <code>verify_url</code>. Point any chat-completions client at <code>{apiV1}</code> as the
-            drop-in install path. Demo key <code>chit402-demo</code> skips payment — no wallet, no USDC.
+            <strong>Chit is the possession book</strong> — after USDC settle you hold hub, model,
+            amount, and <code>verify_url</code>; register to keep <code>/book</code>. This page is
+            only the wire-compat install: point a chat-completions client at{' '}
+            <code>{apiV1}</code>. Trials are live paid — no public demo key.
           </p>
         </header>
 
         <div className="docs-panel">
-          <h2>OpenAI SDK</h2>
+          <h2>Paid path (product)</h2>
           <p>
-            Swap <code>baseURL</code> and use the demo key. This path does not spend USDC.
+            <code>POST /v1/chat/completions</code> without payment returns HTTP 402. Pay USDC on
+            Base or Solana; the response includes a signed receipt with{' '}
+            <code>verify_url</code>. Use the SDK x402 payer or the{' '}
+            <Link to="/docs/eliza" style={{ color: '#00d4ff' }}>Eliza plugin</Link>.
           </p>
           <pre className="docs-code">
-            <code>{openAiExample}</code>
+            <code>{sdkPaidExample}</code>
           </pre>
           <p style={styles.note}>
-            <strong>Honest caveat:</strong> the OpenAI SDK may strip unknown response fields. The
-            signed receipt (<code>verify_url</code>, hub, model, amount) lives in{' '}
-            <code>x-xfuel-*</code> headers and the <code>xfuel</code> body field. For a typed
-            receipt in JS, use the SDK below or read headers from a raw <code>fetch</code>.
-          </p>
-        </div>
-
-        <div className="docs-panel">
-          <h2>Chit402 SDK (receipt in the response)</h2>
-          <p>
-            <code>npm install chit402-sdk</code> (alias of <code>xfuel-sdk</code>). Returns{' '}
-            <code>xfuel.verify_url</code> on the response object.
-          </p>
-          <pre className="docs-code">
-            <code>{sdkExample}</code>
-          </pre>
-        </div>
-
-        <div className="docs-panel">
-          <h2>curl (no SDK)</h2>
-          <pre className="docs-code">
-            <code>{curlExample(apiV1)}</code>
-          </pre>
-          <p style={styles.note}>
-            Demo key is rate-limited (15/min, 150/day per IP). Windows: use <code>curl.exe</code>.
-          </p>
-        </div>
-
-        <div className="docs-panel">
-          <h2>Paid path (real USDC)</h2>
-          <p>
-            Unauthenticated <code>POST /v1/chat/completions</code> returns HTTP 402. Pay USDC on
-            Base or Solana; the response includes a collected receipt with{' '}
-            <code>verify_url</code>. Use the SDK x402 payer, or the{' '}
-            <Link to="/docs/eliza" style={{ color: '#00d4ff' }}>Eliza plugin</Link> when it ships.
-          </p>
-          <p style={styles.note}>
-            Register (<code>POST /v1/agents/register</code>) binds a collected receipt to an agent
-            wallet so you can hold the book. Demo receipts do not qualify.
+            Register (<code>POST /v1/agents/register</code>) binds a <em>collected</em> receipt to
+            an agent wallet so you can hold the book. Unmetered receipts do not qualify.
           </p>
           <div className="docs-actions">
             <a
@@ -122,13 +88,40 @@ export default function ChitIn15Lines() {
             >
               View live receipt
             </a>
-            <Link to="/" className="btn btn-secondary btn-sm">
-              Home
-            </Link>
           </div>
         </div>
 
+        <div className="docs-panel">
+          <h2>OpenAI SDK (shape only)</h2>
+          <p>
+            Swap <code>baseURL</code> to <code>{apiV1}</code> if you already use the OpenAI client
+            — but you still need an x402-capable payer; this SDK alone will stop at 402.
+          </p>
+          <pre className="docs-code">
+            <code>{openAiExample}</code>
+          </pre>
+          <p style={styles.note}>
+            <strong>Honest caveat:</strong> the OpenAI SDK may strip unknown response fields. The
+            signed receipt (<code>verify_url</code>, hub, model, amount) lives in{' '}
+            <code>x-xfuel-*</code> headers and the <code>xfuel</code> body field. Prefer{' '}
+            <code>chit402-sdk</code> for a typed <code>verify_url</code>.
+          </p>
+        </div>
+
+        <div className="docs-panel">
+          <h2>curl (402 probe)</h2>
+          <pre className="docs-code">
+            <code>{curlExample(apiV1)}</code>
+          </pre>
+          <p style={styles.note}>
+            Windows: use <code>curl.exe</code> for raw HTTP — PowerShell <code>curl</code> is not
+            real curl.
+          </p>
+        </div>
+
         <p style={{ textAlign: 'center', color: '#8a8a9a', fontSize: '0.9rem', marginTop: '2rem' }}>
+          <Link to="/docs" style={{ color: '#8a8a9a' }}>Docs index</Link>
+          {' · '}
           {config.name} · wire <code>{config.apiDomain}/v1</code>
         </p>
       </div>

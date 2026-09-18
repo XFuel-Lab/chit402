@@ -16,7 +16,7 @@ const chitNavLinks = [
   { to: '/register', label: 'Register' },
   { to: '/activity', label: 'Activity' },
   { to: '/docs', label: 'Docs' },
-  { to: '/docs/chit-in-15-lines', label: '15 lines' },
+  { to: '/docs/chit-in-15-lines', label: 'Drop-in door' },
 ];
 
 export default function Layout() {
@@ -98,9 +98,7 @@ export default function Layout() {
           {' '}The API is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>api.xfuel.app</code>.
           {' '}<code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>POST /v1/chat/completions</code>
           {' '}is <strong>cost-plus, quoted, receipted</strong> — USDC on Base and Solana.
-          {' '}Paying this host moves real mainnet USDC. Demo key{' '}
-          <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>xfuel-demo</code> skips payment.
-          {' '}Do not send funds unless you mean to.
+          {' '}Paying this host moves real mainnet USDC. Do not send funds unless you mean to.
         </div>
       )}
 
