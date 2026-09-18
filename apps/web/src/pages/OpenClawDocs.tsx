@@ -62,7 +62,7 @@ export default function OpenClawDocs() {
 
         <div className="docs-actions">
           <Link to="/docs/chit-in-15-lines" className="btn btn-primary btn-sm">
-            Chit in 15 lines
+            Drop-in door
           </Link>
           <a
             href="https://docs.openclaw.ai/tools/creating-skills"

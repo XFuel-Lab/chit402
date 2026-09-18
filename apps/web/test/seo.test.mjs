@@ -127,7 +127,7 @@ import { existsSync } from 'node:fs';
 test('prerendered money pages have unique crawler titles (after build)', { skip: !existsSync(join(root, 'dist')) }, () => {
   const expectedTitles = {
     'agent-shop': 'The till for an agent shop | Chit',
-    'book': 'The book: this agent spent Y on this job | Chit',
+    'book': 'Principal book — spend dashboard | Chit',
     'book-bot': 'Paste this. The shop gets a till | Chit',
     'docs': 'Chit402 — treasury desk for agent spend',
     'v1': 'Pay /v1/chat/completions | Chit',
@@ -143,18 +143,54 @@ test('prerendered money pages have unique crawler titles (after build)', { skip:
   }
 });
 
-test('Chit home page has locked hero copy and three door CTAs', () => {
+test('Chit home page has locked hero copy and book-first CTAs', () => {
   const chitHome = readFileSync(join(root, 'src/pages/ChitHome.tsx'), 'utf8');
   assert.match(chitHome, /Who paid which call — export, policy, evidence\./, 'ChitHome has locked hero');
   assert.match(chitHome, /Chit402/, 'ChitHome uses Chit402 public name');
   assert.match(chitHome, /api\.chit402\.com\/receipt\/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e/, 'ChitHome has live receipt link');
-  assert.match(chitHome, /\/docs\/chit-in-15-lines/, 'ChitHome links to 15-lines page');
+  assert.match(chitHome, /Open the book/, 'ChitHome primary CTA opens book');
+  assert.match(chitHome, /View live receipt/, 'ChitHome primary CTA shows live receipt');
+  assert.match(chitHome, /to="\/docs"/, 'ChitHome primary CTA links to docs');
+  assert.match(chitHome, /Install paths/, 'ChitHome demotes wire to install paths');
+  assert.match(chitHome, /api\.chit402\.com\/v1/, 'ChitHome names wire under install paths');
+  assert.match(chitHome, /\/docs\/chit-in-15-lines/, 'ChitHome links to drop-in door page');
   assert.match(chitHome, /\/docs\/eliza/, 'ChitHome links to Eliza stub');
   assert.match(chitHome, /config\.parent/, 'ChitHome references parent dynamically');
   assert.match(chitHome, /USDC on Base and Solana/, 'ChitHome names USDC rails');
+  assert.doesNotMatch(chitHome, /POST \/v1\/chat\/completions/, 'ChitHome hero must not lead with POST /v1');
   assert.doesNotMatch(chitHome, /\$0\.01/, 'ChitHome must not lead with $0.01');
   assert.doesNotMatch(chitHome, /wallet moves/i, 'ChitHome must not lead with wallet-move');
   assert.doesNotMatch(chitHome, /ticker/i, 'ChitHome must not mention ticker');
+});
+
+test('Chit primary nav has Trust and no Drop-in door', () => {
+  const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
+  assert.match(layout, /to: '\/trust', label: 'Trust'/, 'Chit nav includes Trust');
+  assert.doesNotMatch(
+    layout,
+    /chitNavLinks[\s\S]*Drop-in door/,
+    'Drop-in door is not in Chit primary nav',
+  );
+});
+
+test('Docs hub leads with book and peer-equal Doors grid', () => {
+  const docs = readFileSync(join(root, 'src/pages/Docs.tsx'), 'utf8');
+  assert.match(docs, /possession book/i, 'Docs intro leads with possession book');
+  assert.match(docs, /docs-door-grid/, 'Docs has peer door grid');
+  assert.match(docs, /DocDoorGrid/, 'Docs renders door cards');
+  const doorsBlock = docs.match(/const doors[\s\S]*?];/)?.[0] ?? '';
+  assert.match(doorsBlock, /Drop-in door/, 'Doors grid includes drop-in');
+  assert.match(doorsBlock, /Eliza plugin/, 'Doors grid includes Eliza');
+  const dropInIdx = doorsBlock.indexOf('Drop-in door');
+  const elizaIdx = doorsBlock.indexOf('Eliza plugin');
+  assert.ok(dropInIdx >= 0 && elizaIdx >= 0, 'door entries exist');
+});
+
+test('llms.txt API route has no nested backticks in CHIT_LLMS template', () => {
+  const llmsApi = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8');
+  const chitBlock = llmsApi.match(/const CHIT_LLMS = `([\s\S]*?)`;\s*\nconst XFUEL_LLMS/m)?.[1] ?? '';
+  assert.ok(chitBlock.length > 100, 'CHIT_LLMS block present');
+  assert.doesNotMatch(chitBlock, /` \{ action/, 'no nested backticks that break the handler bundle');
 });
 
 test('host config has correct Chit SEO values', () => {
