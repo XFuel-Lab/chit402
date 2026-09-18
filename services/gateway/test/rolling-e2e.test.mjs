@@ -24,7 +24,9 @@ process.env.HUB_CATALOG_OFFLINE = 'false';
 process.env.TASK_STORE_PERSIST = 'true';
 process.env.TASK_STORE_DIR = path.join(tmp, 'tasks');
 process.env.PAYERS_LEDGER_DIR = path.join(tmp, 'payers');
-process.env.M2M_API_KEYS = 'rolling-e2e-partner';
+const PARTNER_KEY = 'rolling-e2e-partner';
+process.env.M2M_API_KEYS = `${PARTNER_KEY},rolling-e2e-whale`;
+const m2mAuthHeaders = { 'x-api-key': PARTNER_KEY };
 delete process.env.THETA_EDGE_URL;
 delete process.env.THETA_EDGECLOUD_API_KEY;
 
@@ -105,7 +107,7 @@ const post = (over = {}, headers = {}) => realFetch(`${base}/task-request`, {
   method: 'POST',
   headers: {
     'content-type': 'application/json',
-    'x-api-key': 'rolling-e2e-partner',
+    ...m2mAuthHeaders,
     ...headers,
   },
   body: JSON.stringify(bodyOf(over)),
@@ -116,9 +118,13 @@ async function waitComplete(taskId) {
   let receipt;
   for (let i = 0; i < 80; i++) {
     await new Promise((r) => setTimeout(r, 50));
-    status = await (await realFetch(`${base}/task-status?task_id=${taskId}`)).json();
+    status = await (await realFetch(`${base}/task-status?task_id=${taskId}`, {
+      headers: m2mAuthHeaders,
+    })).json();
     if (['completed', 'failed', 'fee_collected'].includes(status.status)) {
-      receipt = await (await realFetch(`${base}/receipt/${taskId}?format=json`)).json();
+      receipt = await (await realFetch(`${base}/receipt/${taskId}?format=json`, {
+        headers: m2mAuthHeaders,
+      })).json();
       if (receipt.provider_cogs?.actual || mergeReceiptView(receipt).payment?.platform_fee != null) break;
     }
   }
@@ -171,7 +177,9 @@ test('second 402 equals measured cost-plus, not the rate card', async () => {
   const secondDone = await waitComplete(paid.task_id);
   assert.equal(secondDone.status.status, 'completed');
 
-  const owed = await (await realFetch(`${base}/receipt/${first.task_id}?format=json`)).json();
+  const owed = await (await realFetch(`${base}/receipt/${first.task_id}?format=json`, {
+    headers: m2mAuthHeaders,
+  })).json();
   const owedView = mergeReceiptView(owed);
   assert.ok(owedView.payment.ref, 'settlement attaches to the owed task, not the new one');
   assert.equal(owedView.payment.gross_amount, expected);
@@ -183,7 +191,8 @@ test('second 402 equals measured cost-plus, not the rate card', async () => {
 });
 
 test('a first call whose ceiling exceeds $1 still prepays', async () => {
-  const big = await post({ max_tokens: 250_000 }, { 'x-api-key': 'whale-key' });
+  // Fresh payer bucket — the rolling test above leaves ledger state on PARTNER_KEY.
+  const big = await post({ max_tokens: 250_000 }, { 'x-api-key': 'rolling-e2e-whale' });
   const challenge = await big.json();
   assert.equal(big.status, 402, JSON.stringify(challenge));
   assert.ok(BigInt(challenge.accepts[0].maxAmountRequired) > 1_000_000n, 'prepay for a >$1 ceiling');

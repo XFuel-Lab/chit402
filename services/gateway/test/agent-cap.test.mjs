@@ -322,9 +322,10 @@ test('demo key cannot bypass prepaid cap (must pay or hit budget gate)', async (
     },
     body: JSON.stringify(chatBody),
   });
-  assert.equal(res.status, 403);
   const body = await res.json();
-  assert.equal(body.error?.code, 'budget_exhausted');
+  assert.equal(res.status, 402, 'demo key must fail at payment, not bypass cap with a free hop');
+  assert.equal(body.error?.type, 'payment_required');
+  assert.ok(!body.choices, 'must not return a chat completion');
 });
 
 test('/v1 and /a2a-message unauth {} still 402 amount 2000 both rails', async () => {

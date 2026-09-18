@@ -20,7 +20,9 @@ process.env.AKASHML_API_KEY = 'akml-test-key';
 // with routing. Payment is covered by the x402 suites; this file is about what
 // actually serves the request.
 process.env.X402_ENABLED = 'false';
-process.env.M2M_API_KEYS = 'task-e2e-partner';
+const PARTNER_KEY = 'task-e2e-partner';
+process.env.M2M_API_KEYS = PARTNER_KEY;
+const m2mAuthHeaders = { 'x-api-key': PARTNER_KEY };
 // Same reasoning: this file stubs both catalog endpoints at `fetch`, so offline mode
 // would short-circuit the stub and hand back the seed instead. The seed carries
 // Akash's GLM but not its Llama, so `xfuel/auto` on a simple shape silently resolves
@@ -107,7 +109,7 @@ function stubFetch(url, init) {
 
 const post = (body) => realFetch(`${base}/task-request`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json', 'x-api-key': 'task-e2e-partner' },
+  headers: { 'content-type': 'application/json', ...m2mAuthHeaders },
   body: JSON.stringify({
     message_type: 'inference_request',
     chain_id: 'base',
@@ -130,10 +132,14 @@ async function run(body = {}) {
   let status;
   for (let i = 0; i < 60; i++) {
     await new Promise((r) => setTimeout(r, 50));
-    status = await (await realFetch(`${base}/task-status?task_id=${taskId}`)).json();
+    status = await (await realFetch(`${base}/task-status?task_id=${taskId}`, {
+      headers: m2mAuthHeaders,
+    })).json();
     if (['completed', 'failed', 'fee_collected'].includes(status.status)) break;
   }
-  const receipt = await (await realFetch(`${base}/receipt/${taskId}?format=json`)).json();
+  const receipt = await (await realFetch(`${base}/receipt/${taskId}?format=json`, {
+    headers: m2mAuthHeaders,
+  })).json();
   return { taskId, status, receipt };
 }
 
@@ -337,7 +343,7 @@ test('an unresolvable model is quoted, not thrown on — routing rejects it late
 test('the /task-quote preview reports which model the price is for', async () => {
   const res = await realFetch(`${base}/task-quote`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-api-key': 'task-e2e-partner' },
+    headers: { 'content-type': 'application/json', ...m2mAuthHeaders },
     body: JSON.stringify({ model_id: 'xfuel/auto', ...MEDIAN_AGENT, tools: AGENT_TOOLS }),
   });
   const { rails } = await res.json();
