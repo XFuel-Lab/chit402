@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import {
   decodePaymentHeader,
+  payerFromPaymentHeader,
   toPaymentRequirements,
   toPaymentPayload,
   catalogResourceUrl,
@@ -94,6 +95,22 @@ function makeCdpNativePaymentHeader({
   };
   return Buffer.from(JSON.stringify(blob), 'utf8').toString('base64');
 }
+
+test('payerFromPaymentHeader: CDP v2 payload.authorization.from', () => {
+  const header = makeCdpNativePaymentHeader({ from: '0x1111111111111111111111111111111111111111' });
+  assert.equal(
+    payerFromPaymentHeader(header),
+    '0x1111111111111111111111111111111111111111',
+  );
+});
+
+test('payerFromPaymentHeader: v1 authorization.message.from', () => {
+  const header = makePaymentHeader({ from: '0x2222222222222222222222222222222222222222' });
+  assert.equal(
+    payerFromPaymentHeader(header),
+    '0x2222222222222222222222222222222222222222',
+  );
+});
 
 function cfgX402(url, over = {}) {
   return {

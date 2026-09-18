@@ -17,7 +17,7 @@ const {
   normalizeIngestInput,
 } = await import('../src/foreign-x402-ingest.js');
 
-const { buildReceipt, RECEIPT_PAYLOAD_VERSION } = await import('../src/receipt.js');
+const { buildReceipt, RECEIPT_PAYLOAD_VERSION, mergeReceiptView, decodeReceiptClaims } = await import('../src/receipt.js');
 const { UsageSettledLedger } = await import('../src/usage-settled.js');
 
 describe('fulfillment-receipt v1', () => {
@@ -122,6 +122,32 @@ describe('fulfillment-receipt v1', () => {
     assert.equal(receipt.fulfillment.output_commitment.hash, outputHash);
     assert.equal(receipt.verify_url, 'https://api.chit402.com/receipt/task-fulfill-1');
     assert.equal(receipt.issuer_signature.payload_version, RECEIPT_PAYLOAD_VERSION);
+  });
+
+  test('buildReceipt: fulfillment.authorization.payer_wallet matches settle meta.payerWallet', () => {
+    const payer = '0x1111111111111111111111111111111111111111';
+    const paymentRef = 'base:0x' + 'ab'.repeat(32);
+    const outputHash = '0x' + 'cd'.repeat(32);
+    const receipt = buildReceipt({
+      taskId: 'task-fulfill-payer',
+      status: 'completed',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      intent: { paymentRail: 'usdc', paymentRef, amount: '10000', model: 'gpt-test' },
+      meta: { payerWallet: payer },
+      result: { content: 'hello', outputHash, model: 'gpt-test', provider: 'mock' },
+      feeBps: 50,
+      feeAmount: '50',
+      netAmount: '9950',
+    }, { baseUrl: 'https://api.chit402.com', persistSignature: false });
+    const view = mergeReceiptView(receipt);
+    assert.equal(view.caller_binding.payer_wallet, payer);
+    assert.equal(view.fulfillment.authorization.payer_wallet, payer);
+    assert.equal(view.fulfillment.authorization.payment_ref, paymentRef);
+    const claims = decodeReceiptClaims(receipt);
+    assert.equal(claims.caller_binding.payer_wallet, payer);
+    assert.equal(claims.fulfillment.authorization.payer_wallet, payer);
+    assert.equal(claims.fulfillment.authorization.payment_ref, paymentRef);
   });
 
   test('buildPublicForeignIngestReceipt preserves fulfillment for stranger verify', () => {

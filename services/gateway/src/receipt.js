@@ -667,12 +667,14 @@ export function fulfillmentEnvelopeOf(task, {
     ?? task?.meta?.resource
     ?? null;
   const session = sessionOf(task);
+  let resolvedPayer = payerWallet ?? session?.payer_wallet ?? null;
+  if (!resolvedPayer) resolvedPayer = extractPayerWallet(task);
   return buildFulfillmentEnvelope({
     jobKind: jobKind ?? task?.meta?.job_kind ?? task?.job_kind ?? null,
     resource: routeResource,
     intentId: task?.meta?.intent_id ?? task?.meta?.intentId ?? task?.intent_id ?? null,
     attemptIndex: task?.meta?.attempt_index ?? task?.meta?.attemptIndex ?? task?.attempt_index ?? null,
-    payerWallet: payerWallet ?? session?.payer_wallet ?? task?.meta?.payer_wallet ?? null,
+    payerWallet: resolvedPayer,
     delegationHash: session?.delegation_hash ?? task?.meta?.delegation_hash ?? null,
     paymentRef: paymentRef ?? task?.intent?.paymentRef ?? task?.payment?.ref ?? null,
     outputHash: output?.value ?? task?.output?.hash ?? null,

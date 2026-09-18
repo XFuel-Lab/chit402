@@ -18,6 +18,7 @@ import { quoteTask, quoteFromCogs, costPlusEnabled, promptTokensFor, quotedMaxOu
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { normalizeRequestedTier } from './tier-policy.js';
 import { getHubCatalog, resolveCatalogModel, requestShape } from './hub-catalog.js';
+import { payerFromPaymentHeader } from './x402-facilitator.js';
 
 /**
  * Server-side x402 handshake glue for POST /task-request.
@@ -465,11 +466,12 @@ export async function runX402Handshake(req, {
   }
 
   const txRef = s.txRef || 'unknown';
+  const payerWallet = s.payer || v.payer || payerFromPaymentHeader(paymentHeader) || null;
   return {
     kind: 'settled',
     paymentRef: `${settledNetwork}:${txRef}`,
     settledAmount: String(boundAmount),
-    payerWallet: s.payer || v.payer || null,
+    payerWallet,
     payTo: challenge?.payTo || null,
     asset: challenge?.asset || 'USDC',
     issuance_commitment,
