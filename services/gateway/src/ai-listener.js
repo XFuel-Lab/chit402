@@ -5,7 +5,7 @@ import config from './config.js';
 import logger from './logger.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { getZkGPTProver, isZkGPTProverConfigured } from './zkgpt-prover-client.js';
-import { buildPaymentBinding } from './payment-binding.js';
+import { buildPaymentBinding, finalizePaymentBindingForProof } from './payment-binding.js';
 import { proveGatedReason } from './prove-gate.js';
 import { createTaskStore } from './task-store.js';
 import { getFloatManager, normalizeProviderId } from './provider-float.js';
@@ -1914,19 +1914,13 @@ class AIListener {
             amount: task.intent.amount,
           }, 'Generating SP1 ZK proof for AI task settlement');
           proofResult = await sp1Prover.generateProof(proofRequest, true);
-          const bindingInProof =
-            paymentBinding &&
-            (proofResult.publicValuesVersion === 2 ||
-              proofResult.aiPublicValuesAbi != null);
           task.sp1Proof = {
             proof: proofResult.proof,
             publicInputs: proofResult.publicInputs,
             nullifier: proofResult.nullifier,
             provingTimeMs: proofResult.provingTimeMs,
             timestamp: Date.now(),
-            paymentBinding: paymentBinding
-              ? { ...paymentBinding, in_proof: !!bindingInProof }
-              : null,
+            paymentBinding: finalizePaymentBindingForProof(paymentBinding, proofResult),
             publicValuesVersion: proofResult.publicValuesVersion ?? null,
             aiPublicValuesAbi: proofResult.aiPublicValuesAbi ?? null,
           };

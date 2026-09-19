@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use base64::Engine;
 use xfuel_sp1_hooks::{
-    encode_ai_task_public_values_v2, u256_be32_from_u128, PublicValuesVersion,
+    encode_ai_task_public_values_v2, resolve_public_values_version as resolve_pv_version,
+    u256_be32_from_u128, PublicValuesVersion,
     PAYMENT_RAIL_USDC,
 };
 
@@ -535,21 +536,19 @@ fn parse_message_type(s: &str) -> MessageType {
     }
 }
 
+fn sp1_public_values_v2_flag() -> bool {
+    std::env::var("SP1_PUBLIC_VALUES_V2")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 /// True when the host should use v2 public values (payment binding in-circuit).
 /// Requires `SP1_PUBLIC_VALUES_V2=true` AND a non-zero payment_commitment on the request.
 fn resolve_public_values_version(req: &ProofRequest) -> u8 {
-    let v2_flag = std::env::var("SP1_PUBLIC_VALUES_V2")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    if !v2_flag {
-        return PublicValuesVersion::V1 as u8;
-    }
-    match &req.payment_commitment {
-        Some(c) if !c.is_empty() && c != "0x0" && c != "0x0000000000000000000000000000000000000000000000000000000000000000" => {
-            PublicValuesVersion::V2 as u8
-        }
-        _ => PublicValuesVersion::V1 as u8,
-    }
+    resolve_pv_version(
+        sp1_public_values_v2_flag(),
+        req.payment_commitment.as_deref(),
+    )
 }
 
 fn parse_ai_task_batch(
@@ -1104,7 +1103,16 @@ async fn main() -> Result<()> {
             use tower_http::cors::CorsLayer;
 
             let app = Router::new()
-                .route("/health", get(|| async { "OK" }))
+                .route(
+                    "/health",
+                    get(|| async {
+                        axum::Json(serde_json::json!({
+                            "status": "ok",
+                            "guest_version": "5.1",
+                            "public_values_v2_enabled": sp1_public_values_v2_flag(),
+                        }))
+                    }),
+                )
                 .route(
                     "/healthz",
                     get({
@@ -1129,6 +1137,8 @@ async fn main() -> Result<()> {
                                     code,
                                     axum::Json(serde_json::json!({
                                         "status": status,
+                                        "guest_version": "5.1",
+                                        "public_values_v2_enabled": sp1_public_values_v2_flag(),
                                         "uptime_seconds": uptime,
                                         "proofs_served": proofs,
                                         "errors": errors,

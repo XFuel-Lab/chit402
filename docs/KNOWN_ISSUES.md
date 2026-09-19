@@ -34,7 +34,7 @@ Runtime truth: [RUNTIME_STATE.md](./RUNTIME_STATE.md)
 | ~~Assurance tier selected from buyer-declared `amount`~~ | High | **Fixed 2026-08-11** — tier floors now read settled gross |
 | Provider COGS burns a flat 70% of quote, measured ~21x off actual | High | Open — [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) |
 | ~~Base mainnet x402 facilitator not wired on live demo host~~ | — | **Resolved 2026-08-06** — public `api-testnet` on Base + CDP |
-| Payment binding is server-attested (`in_proof: false`) until SP1 guest v2 | Medium | Guest rebuild + new programVKey required |
+| Payment binding is server-attested (`in_proof: false`) until prover v2 is activated in prod | Medium | Redeploy prover with `SP1_PUBLIC_VALUES_V2=true` + register v2 `programVKey` on Base |
 | **`/v1` never measured COGS, so the busiest surface spent provider money with no record of it** | **High** | **Fixed** 2026-08-13 — `/v1` measures and burns like `/task-request`; the subsidy is capped and reported. See below |
 | **The spot-check sampler would flag ~1 in 5 honest re-executions as slashable** | **High** | Open — **dormant, do not enable.** `buildSpotCheckRecord` compares output hashes for byte equality; measured self-disagreement on our default model is 21%. See below |
 | OpenAI-compatible `/v1` path is **unmetered** (Phase 1) | Medium | **By decision** as of 2026-08-13 — [ADR 0006](./adr/0006-receipts-are-not-a-paid-feature.md) keeps it free as the funnel. Paid path = `/task-request` + x402 |

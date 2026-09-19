@@ -26,5 +26,5 @@ Gateway points at the prover with `SP1_PROVER_URL`. Production ALB accepts the d
 ## Notes
 
 - Proofs attest settlement metadata + commitments — not black-box inference correctness  
-- Guest v2 unlocks in-proof payment binding (`X402_PROOF_BINDING`)  
+- Guest v5.1: in-proof x402 payment binding when `SP1_PUBLIC_VALUES_V2=true` + `X402_PROOF_BINDING` — [tier2-in-proof-binding-smoke.md](../../docs/product/tier2-in-proof-binding-smoke.md)  
 - Scattered historical status / phase markdown in this folder is non-canonical; prefer this README + RUNTIME_STATE  

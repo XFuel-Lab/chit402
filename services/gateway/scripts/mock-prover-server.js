@@ -143,6 +143,13 @@ const server = http.createServer(async (req, res) => {
       res.end(buf);
     } else {
       jsonProofs++;
+      let payload = {};
+      try { payload = JSON.parse(body); } catch { /* ignore */ }
+      const payCommit = payload.payment_commitment;
+      const v2 =
+        payCommit &&
+        String(payCommit).replace(/^0x/i, '').replace(/0/g, '') !== '';
+      const abiWord = v2 ? '0x' + 'aa'.repeat(416) : null;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         proof: proof.toString('base64'),
@@ -150,6 +157,13 @@ const server = http.createServer(async (req, res) => {
         nullifier: '0x' + nullifiers[0].toString('hex'),
         batch_size: batchSize,
         proving_time_ms: provingTimeMs,
+        ...(v2
+          ? {
+              public_values_version: 2,
+              payment_commitment: payCommit,
+              ai_public_values_abi: abiWord,
+            }
+          : {}),
       }));
     }
     return;

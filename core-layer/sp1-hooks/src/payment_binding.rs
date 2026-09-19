@@ -35,6 +35,33 @@ impl PublicValuesVersion {
             _ => None,
         }
     }
+
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Host-side layout selection: v2 only when the ops flag is on AND the request carries a
+/// non-zero payment commitment (mirrors `sp1-prover/host` `/prove` wiring).
+pub fn resolve_public_values_version(
+    v2_flag: bool,
+    payment_commitment_hex: Option<&str>,
+) -> u8 {
+    if !v2_flag {
+        return PublicValuesVersion::V1.as_u8();
+    }
+    match payment_commitment_hex {
+        Some(c) if is_nonzero_hex32(c) => PublicValuesVersion::V2.as_u8(),
+        _ => PublicValuesVersion::V1.as_u8(),
+    }
+}
+
+fn is_nonzero_hex32(s: &str) -> bool {
+    let stripped = s.strip_prefix("0x").unwrap_or(s);
+    if stripped.is_empty() {
+        return false;
+    }
+    stripped.chars().any(|c| c != '0')
 }
 
 /// Keccak-256 (Ethereum precompile semantics).
@@ -188,5 +215,27 @@ mod tests {
     fn zero_commitment_means_unbound() {
         assert!(is_zero_bytes32(&[0u8; 32]));
         assert!(!is_zero_bytes32(&[1u8; 32]));
+    }
+
+    #[test]
+    fn resolve_public_values_version_requires_flag_and_commitment() {
+        let zero = "0x0000000000000000000000000000000000000000000000000000000000000000";
+        let nz = "0x0000000000000000000000000000000000000000000000000000000000000001";
+        assert_eq!(
+            resolve_public_values_version(false, Some(nz)),
+            PublicValuesVersion::V1.as_u8()
+        );
+        assert_eq!(
+            resolve_public_values_version(true, None),
+            PublicValuesVersion::V1.as_u8()
+        );
+        assert_eq!(
+            resolve_public_values_version(true, Some(zero)),
+            PublicValuesVersion::V1.as_u8()
+        );
+        assert_eq!(
+            resolve_public_values_version(true, Some(nz)),
+            PublicValuesVersion::V2.as_u8()
+        );
     }
 }

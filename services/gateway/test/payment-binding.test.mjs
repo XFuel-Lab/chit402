@@ -13,6 +13,7 @@ import {
   computePaymentCommitment,
   computeInferenceBinding,
   buildPaymentBinding,
+  finalizePaymentBindingForProof,
 } from '../src/payment-binding.js';
 
 const taskFixture = (over = {}) => ({
@@ -65,13 +66,16 @@ test('buildPaymentBinding returns null for non-USDC or missing ref', () => {
   assert.equal(buildPaymentBinding(taskFixture({ intent: { paymentRail: 'usdc', paymentRef: null } }), cfg), null);
 });
 
+const MODEL_C = '0x' + 'ab'.repeat(32);
+const OUTPUT_H = '0x' + 'cd'.repeat(32);
+
 test('buildPaymentBinding produces a bound descriptor for USDC tasks', () => {
   const cfg = { proofBinding: true };
   const binding = buildPaymentBinding(taskFixture(), cfg);
   assert.ok(binding);
   assert.equal(binding.version, 2);
   assert.equal(binding.rail, 'usdc');
-  assert.equal(binding.in_proof, false); // pending SP1 guest v2 activation
+  assert.equal(binding.in_proof, false); // finalized after SP1 v2 proof
   assert.match(binding.commitment, /^0x[0-9a-f]{64}$/);
   assert.match(binding.payment_ref_hash, /^0x[0-9a-f]{64}$/);
   assert.equal(binding.amount, '950000000000000000');
@@ -84,8 +88,40 @@ test('buildPaymentBinding produces a bound descriptor for USDC tasks', () => {
   assert.deepEqual(binding.covers, ['payment', 'settlement']);
 });
 
-const MODEL_C = '0x' + 'ab'.repeat(32);
-const OUTPUT_H = '0x' + 'cd'.repeat(32);
+test('finalizePaymentBindingForProof sets in_proof when prover returns v2 metadata', () => {
+  const cfg = { proofBinding: true };
+  const binding = buildPaymentBinding(taskFixture(), cfg);
+  const finalized = finalizePaymentBindingForProof(binding, {
+    publicValuesVersion: 2,
+    paymentCommitment: binding.commitment,
+    aiPublicValuesAbi: '0x' + 'ab'.repeat(416),
+  });
+  assert.equal(finalized.in_proof, true);
+  assert.equal(finalized.public_values_version, 2);
+});
+
+test('finalizePaymentBindingForProof stays false when commitment mismatches', () => {
+  const cfg = { proofBinding: true };
+  const binding = buildPaymentBinding(taskFixture(), cfg);
+  const finalized = finalizePaymentBindingForProof(binding, {
+    publicValuesVersion: 2,
+    paymentCommitment: '0x' + '11'.repeat(32),
+  });
+  assert.equal(finalized.in_proof, false);
+});
+
+test('finalizePaymentBindingForProof stays false for PBR covers even with v2 proof', () => {
+  const cfg = { proofBinding: true };
+  const binding = buildPaymentBinding(
+    taskFixture({ modelCommitment: MODEL_C, outputHash: OUTPUT_H }),
+    cfg,
+  );
+  const finalized = finalizePaymentBindingForProof(binding, {
+    publicValuesVersion: 2,
+    paymentCommitment: binding.commitment,
+  });
+  assert.equal(finalized.in_proof, false);
+});
 
 test('computeInferenceBinding matches the 6-field abi.encodePacked formula', () => {
   const paymentRef = 'base:0xdeadbeef';

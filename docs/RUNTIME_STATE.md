@@ -28,7 +28,7 @@ Last updated: 2026-08-20
 - Pricing basis: **cost-plus** — measured provider COGS + 10% (`X402_COST_PLUS` on, `X402_PLATFORM_FEE_BPS=1000`), Tier-2 opt-in at a flat $0.08, $0.01 floor. [ADR 0009](./adr/0009-cost-plus-pricing.md). Live values: `GET /.well-known/x402` → `pricing`
 - Rolling settlement: **on** (`X402_ROLLING_SETTLEMENT=true`) — `/task-request` charges the previous call's measured bill. `/v1` stays free (ADR 0006). You pay for the last call; `/task-quote` is a forecast. [ADR 0008](./adr/0008-rolling-settlement.md). Confirm at `GET /health` → `rolling_settlement.enabled`
 - Tier 3 Verified Inference (zkLLM): active build — RAM-bound, CPU-only
-- Payment binding: server-attested today; in-proof after SP1 guest v2
+- Payment binding: **guest v5.1 shipped in repo** — live `in_proof` after prover redeploy + `SP1_PUBLIC_VALUES_V2=true` + gateway `X402_PROOF_BINDING=true` (see [tier2-in-proof-binding-smoke.md](./product/tier2-in-proof-binding-smoke.md))
 - **Public Base mainnet x402:** Real (2026-08-06) — flagship smoke `ai-task-1-1786004600540` / tx `0x066caacc…db70`
 
 ## Base cutover
@@ -84,14 +84,14 @@ x402:
 | SP1 settlement proof | Real (via AWS prover URL) |
 | USDC / x402 Base Sepolia | Real (optional / rollback) |
 | USDC / x402 Base mainnet | **Real** (public `api.xfuel.app`, 2026-08-06; was named `api-testnet`) |
-| Payment binding in-proof | Partial (server-attested; guest v2 pending) |
+| Payment binding in-proof | Code live (guest v5.1); prod `in_proof` pending ops taps below |
 | zkLLM Verified Inference | Active build |
 | `services/zkgpt-prover` mock | Dev-only — never demo as a proof |
 | ZAN mock facilitator | Dev-only |
 
 ## Blockers
 
-- SP1 guest v2 needed for in-proof payment binding (`payment_binding.in_proof === true`)
+- **In-proof binding ops:** rebuild/redeploy SP1 prover, `SP1_PUBLIC_VALUES_V2=true`, gateway `X402_PROOF_BINDING=true`, Base `ZKVerifierSP1` programVKey for v2 public values — see [tier2-in-proof-binding-smoke.md](./product/tier2-in-proof-binding-smoke.md)
 - Tier-3 on-chain verify / E2E still in progress (see Verified Inference handoff)
 - Private Spend v0 code path shipped (flag off by default) — enable with `PRIVATE_SPEND_ENABLED=true`; see [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md)
 - Auditor export: `GET /receipt/:taskId?format=auditor` — [RECEIPT_SCHEMA_V2.md](./RECEIPT_SCHEMA_V2.md)
