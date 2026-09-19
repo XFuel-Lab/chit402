@@ -23,7 +23,7 @@ cd services/sp1-prover
 
 ## Docker (guest v5.1 + in-proof payment binding)
 
-Build context must be the **repository root** so `core-layer/sp1-hooks` is available to the workspace `Cargo.toml`.
+Build context must be the **repository root** so `core-layer/sp1-hooks` can be copied into the image. The Dockerfile vendors it at `/app/core-layer/sp1-hooks` and rewrites workspace paths in the copied `Cargo.toml` (repo sources stay unchanged).
 
 ```bash
 # from repo root
