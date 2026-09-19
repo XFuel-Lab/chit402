@@ -46,15 +46,17 @@ RUN cargo prove --version && \
 # Set working directory
 WORKDIR /app
 
-# Build context is the REPO ROOT (not services/sp1-prover/), because the workspace
-# Cargo.toml references ../core-layer/sp1-hooks → /core-layer/sp1-hooks from /app.
+# Build context is the REPO ROOT (not services/sp1-prover/). Cargo workspace members
+# must live under the workspace root (/app); vendor hooks in-tree and rewrite paths
+# in the copied Cargo.toml only (source tree unchanged).
 # Build from repo root:
 #   docker build -f services/sp1-prover/Dockerfile -t xfuel-sp1-prover:guest-v51 .
 COPY services/sp1-prover/Cargo.toml /app/Cargo.toml
 COPY services/sp1-prover/rust-toolchain.toml /app/rust-toolchain.toml
 COPY services/sp1-prover/program /app/program
 COPY services/sp1-prover/host /app/host
-COPY core-layer/sp1-hooks /core-layer/sp1-hooks
+COPY core-layer/sp1-hooks /app/core-layer/sp1-hooks
+RUN sed -i 's|\.\./core-layer/sp1-hooks|core-layer/sp1-hooks|g' /app/Cargo.toml
 
 # Build the guest program first (uses SP1 toolchain)
 RUN cd /app/program && \
