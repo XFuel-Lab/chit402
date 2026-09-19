@@ -95,8 +95,8 @@ const ROUTE_CONTENT = {
   },
   '/book': {
     title: 'Principal book — spend dashboard | Chit',
-    h1: 'This agent spent Y on this job.',
-    lede: 'Possession-gated spend dashboard for the principal who funds agents. Budget cap, burn rate, model mix, and last-N collected rows from GET|POST /v1/agents/:agent_id/book. Not a public index.',
+    h1: 'Who paid which call — spend ledger for your agents.',
+    lede: 'Specimen book on first visit (not live money), then possession-gated last-N rows from GET|POST /v1/agents/:agent_id/book for the treasury desk that funds agents.',
   },
   '/register': {
     title: 'Register agent — hold the book | Chit402',
