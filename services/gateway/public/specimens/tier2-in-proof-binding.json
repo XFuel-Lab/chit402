@@ -1,0 +1,37 @@
+{
+  "schema": "chit402.tier2_in_proof_binding.v1",
+  "specimen": true,
+  "updated_at": "2026-09-19",
+  "product_note": "Tier-2 SP1 proves fee/nullifier/payment-binding consistency — not model execution. Do not conflate with zkML / Tier-3.",
+  "guest": {
+    "version": "5.1",
+    "public_values_version": 2,
+    "in_circuit_check": "keccak256(abi.encodePacked(paymentRefHash, taskIdHash, paymentRail, netAmount)) === paymentCommitment"
+  },
+  "payment_binding_when_active": {
+    "version": 2,
+    "rail": "usdc",
+    "in_proof": true,
+    "covers": ["payment", "settlement"],
+    "commitment": "0x…recomputed from payment_ref + task_id + net_amount…",
+    "payment_ref_hash": "0x…keccak256(utf8 payment_ref)…",
+    "amount": "1990",
+    "public_values_version": 2
+  },
+  "payment_binding_before_activation": {
+    "in_proof": false,
+    "note": "Server-attested metadata only until prover runs guest v2 with SP1_PUBLIC_VALUES_V2=true"
+  },
+  "tier1_public_receipt": {
+    "verify_url": "https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e",
+    "json": "https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e?format=json",
+    "basescan_settlement": "https://basescan.org/tx/0x1f840073f8a55a7d0fe8ae0fe50bc99e4c8e9da5a946ec68c11e1b19c90cfe03"
+  },
+  "smoke_doc": "docs/product/tier2-in-proof-binding-smoke.md",
+  "ops_taps": [
+    "Rebuild/redeploy SP1 prover image with guest v5.1",
+    "Register new programVKey on ZKVerifierSP1 (Base admin)",
+    "SP1_PUBLIC_VALUES_V2=true on prover",
+    "X402_PROOF_BINDING=true on gateway"
+  ]
+}

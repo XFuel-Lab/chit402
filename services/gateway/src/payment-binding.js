@@ -155,10 +155,63 @@ export function buildPaymentBinding(task, x402Cfg) {
     payment_ref_hash: paymentRefHash,
     amount: String(amount),
     covers: ['payment', 'settlement'],
-    // false until the SP1 guest commits the v2 layout (new programVKey). Until then
-    // this is server-attested settlement metadata, not yet proven in-circuit.
+    // Set by finalizePaymentBindingForProof once the SP1 guest returns v2 public values.
     in_proof: false,
   };
 }
 
-export default { PAYMENT_RAIL, computePaymentCommitment, computeInferenceBinding, buildPaymentBinding };
+const ZERO32_NORM = '0'.repeat(64);
+
+function normHex32(h) {
+  if (h == null) return null;
+  return String(h).toLowerCase().replace(/^0x/, '');
+}
+
+/**
+ * Merge server-attested binding metadata with SP1 prover v2 fields.
+ * Guest v5.1 verifies the payment-only commitment (4-field formula), not PBR / inference binding.
+ *
+ * @param {null | object} binding       From buildPaymentBinding
+ * @param {null | object} proofResult   SP1 client result (publicValuesVersion, paymentCommitment, …)
+ * @returns {null | object}
+ */
+export function finalizePaymentBindingForProof(binding, proofResult) {
+  if (!binding) return null;
+  if (!proofResult) return { ...binding, in_proof: false };
+
+  const pv = proofResult.publicValuesVersion ?? proofResult.public_values_version ?? null;
+  const abi = proofResult.aiPublicValuesAbi ?? proofResult.ai_public_values_abi ?? null;
+  const payCommit = proofResult.paymentCommitment ?? proofResult.payment_commitment ?? null;
+
+  const v2Layout =
+    pv === 2 ||
+    pv === '2' ||
+    (abi != null && String(abi).replace(/^0x/i, '').length > 0);
+
+  if (!v2Layout) return { ...binding, in_proof: false };
+
+  // PBR (model + output) uses a different commitment formula — guest v2 does not prove it yet.
+  if (Array.isArray(binding.covers) && binding.covers.includes('model')) {
+    return { ...binding, in_proof: false };
+  }
+
+  const expected = normHex32(binding.commitment);
+  const got = normHex32(payCommit);
+  if (got && expected && got !== expected && got !== ZERO32_NORM) {
+    return { ...binding, in_proof: false };
+  }
+
+  return {
+    ...binding,
+    in_proof: true,
+    public_values_version: pv != null ? Number(pv) : 2,
+  };
+}
+
+export default {
+  PAYMENT_RAIL,
+  computePaymentCommitment,
+  computeInferenceBinding,
+  buildPaymentBinding,
+  finalizePaymentBindingForProof,
+};

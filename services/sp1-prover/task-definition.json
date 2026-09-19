@@ -24,6 +24,10 @@
         {
           "name": "RUST_LOG",
           "value": "info"
+        },
+        {
+          "name": "SP1_PUBLIC_VALUES_V2",
+          "value": "false"
         }
       ],
       "secrets": [

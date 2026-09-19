@@ -10,8 +10,8 @@ pub mod payment_binding;
 
 pub use payment_binding::{
     compute_payment_commitment, compute_payment_commitment_u128, encode_ai_task_public_values_v2,
-    is_zero_bytes32, keccak256, u256_be32_from_le_bytes, u256_be32_from_u128,
-    PublicValuesVersion, PAYMENT_RAIL_TFUEL, PAYMENT_RAIL_USDC,
+    is_zero_bytes32, keccak256, resolve_public_values_version, u256_be32_from_le_bytes,
+    u256_be32_from_u128, PublicValuesVersion, PAYMENT_RAIL_TFUEL, PAYMENT_RAIL_USDC,
 };
 
 use serde::{Deserialize, Serialize};

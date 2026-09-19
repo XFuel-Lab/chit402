@@ -83,7 +83,7 @@ Live verifier on Base mainnet:
 ZKVerifierSP1 = 0x9373499645292715a2275A78eD65B14215C41c06
 ```
 
-Payment binding (x402 `payment_ref` to task) is server-attested today. In-proof binding activates with the SP1 guest v2 public-values layout (`SP1ProofHooks.encodeAITaskPublicValuesV2`).
+Payment binding (x402 `payment_ref` to task) is enforced in the SP1 guest v5.1 v2 layout (`paymentCommitment` + in-circuit verify). Production `in_proof` requires prover redeploy and Base vKey registration — see `docs/product/tier2-in-proof-binding-smoke.md`.
 
 Gas benchmarks: [technical specifications](docs/Technical-Specifications.md).
 
