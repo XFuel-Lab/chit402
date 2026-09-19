@@ -1,48 +1,78 @@
 import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
+import { getApiV1 } from '../apiHost';
 import { getHostConfig } from '../hostConfig';
+import LiveReceiptCard from '../components/LiveReceiptCard';
+import { LIVE_RECEIPT_VERIFY_URL } from '../lib/liveReceiptSpecimen';
 
-const LIVE_RECEIPT =
-  'https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e';
+const apiV1 = 'https://api.chit402.com/v1';
+
+const dropInSnippet = `import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: '${apiV1}',
+  apiKey: process.env.CHIT402_API_KEY ?? 'YOUR_KEY', // partner key, or pay HTTP 402 USDC
+});
+
+const res = await client.chat.completions.create({
+  model: 'xfuel/auto',
+  messages: [{ role: 'user', content: 'Say hello in five words.' }],
+  max_tokens: 32,
+});
+// → signed receipt + verify_url (headers / xfuel field — see drop-in docs)`;
 
 export default function ChitHome() {
   const config = getHostConfig();
+  const resolvedApiV1 = getApiV1();
 
   return (
     <div className="page">
       <section style={styles.hero}>
-        <div className="container" style={{ textAlign: 'center' }}>
-          <div style={styles.heroBadge}>
-            <span className="badge badge-cyan">By {config.parent}</span>
+        <div className="container chit-hero-wrap">
+          <div className="chit-hero-grid">
+            <div className="chit-hero-copy">
+              <div style={styles.heroBadge}>
+                <span className="badge badge-cyan">By {config.parent}</span>
+              </div>
+              <h1 style={styles.heroTitle}>Who paid which call — and you still hold it.</h1>
+              <p style={styles.heroLead}>
+                Treasury desk and spend ledger for agent teams — not a router dashboard.
+              </p>
+              <p style={styles.heroDescription}>
+                Every collected inference returns hub, model, amount, and a verify link you can
+                export, policy, and evidence-pack. After you see the row, the possession book keeps
+                last-N spend for the principal who funds the agent.
+              </p>
+              <div style={styles.heroCta}>
+                <Link to="/book" className="btn btn-primary">
+                  Open the book
+                </Link>
+                <a
+                  href={LIVE_RECEIPT_VERIFY_URL}
+                  className="btn btn-secondary"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Verify live receipt
+                </a>
+                <Link to="/docs/chit-in-15-lines" className="btn btn-secondary">
+                  Drop-in docs
+                </Link>
+              </div>
+            </div>
+            <LiveReceiptCard />
           </div>
-          <h1 style={styles.heroTitle}>Chit402</h1>
-          <p style={styles.heroLead}>
-            Who paid which call — export, policy, evidence.
-          </p>
-          <p style={styles.heroDescription}>
-            Treasury desk and possession book for agent spend — not a router dashboard.
-            Every collected call returns hub, model, amount, and a public{' '}
-            <code>verify_url</code> you can export, policy, and evidence-pack.
-            Cost-plus, quoted, receipted — USDC on Base and Solana.
-          </p>
-          <div style={styles.heroCta}>
-            <Link to="/book" className="btn btn-primary">
-              Open the book
-            </Link>
-            <a
-              href={LIVE_RECEIPT}
-              className="btn btn-primary"
-              target="_blank"
-              rel="noreferrer"
-            >
-              View live receipt
-            </a>
-            <Link to="/docs" className="btn btn-primary">
-              Docs
-            </Link>
-            <Link to="/register" className="btn btn-secondary">
-              Register agent
-            </Link>
+
+          <div className="chit-ninety-door card">
+            <h2 style={styles.ninetyTitle}>90-second door</h2>
+            <p style={styles.ninetyLead}>
+              One install path: OpenAI-compatible <code>{resolvedApiV1}</code> → pay the HTTP 402
+              (USDC on Base or Solana) or your partner <code>X-API-Key</code> → signed receipt →{' '}
+              <a href={LIVE_RECEIPT_VERIFY_URL} target="_blank" rel="noreferrer">public verify</a>.
+            </p>
+            <pre className="docs-code chit-ninety-code">
+              <code>{dropInSnippet.replace(apiV1, resolvedApiV1)}</code>
+            </pre>
           </div>
         </div>
       </section>
@@ -50,7 +80,7 @@ export default function ChitHome() {
       <section style={{ padding: '2rem 0' }}>
         <div className="container" style={{ maxWidth: 720 }}>
           <h2 style={{ marginBottom: '0.5rem', textAlign: 'center', fontSize: '1.25rem' }}>
-            Install paths
+            Also works
           </h2>
           <p
             style={{
@@ -61,8 +91,7 @@ export default function ChitHome() {
               lineHeight: 1.6,
             }}
           >
-            Same possession book — pick a door. OpenAI-compatible wire:{' '}
-            <code>api.chit402.com/v1</code>.
+            Same possession book — secondary adapters and orchestration stacks.
           </p>
           <div
             style={{
@@ -72,14 +101,8 @@ export default function ChitHome() {
               justifyContent: 'center',
             }}
           >
-            <Link to="/docs/chit-in-15-lines" className="btn btn-secondary btn-sm">
-              Drop-in door
-            </Link>
             <Link to="/docs/eliza" className="btn btn-secondary btn-sm">
               Eliza plugin
-            </Link>
-            <Link to="/docs/framework-adapters" className="btn btn-secondary btn-sm">
-              Framework adapters
             </Link>
             <Link to="/docs/cloudflare" className="btn btn-secondary btn-sm">
               Cloudflare
@@ -93,25 +116,28 @@ export default function ChitHome() {
             <Link to="/docs/swarm-platforms" className="btn btn-secondary btn-sm">
               Olas + Theoriq
             </Link>
+            <Link to="/docs/framework-adapters" className="btn btn-secondary btn-sm">
+              Framework adapters
+            </Link>
           </div>
         </div>
       </section>
 
       <section style={{ padding: '1rem 0 3rem' }}>
         <div className="container" style={{ maxWidth: 720 }}>
-          <h2 style={{ marginBottom: '1.5rem', textAlign: 'center' }}>The receipt stays with you</h2>
+          <h2 style={{ marginBottom: '1.5rem', textAlign: 'center' }}>The row stays with you</h2>
           <div className="grid grid-3" style={{ gap: '1.5rem' }}>
             <div className="card">
-              <h3>Signed receipt</h3>
-              <p>Every call returns hub, model, amount, and verify_url. You hold the proof — not the agent wallet.</p>
+              <h3>Spend ledger</h3>
+              <p>Hub, model, and amount on every collected call — signed and stranger-verifiable.</p>
             </div>
             <div className="card">
               <h3>Portable</h3>
-              <p>Move wallets, keep receipts. The book is possession-gated after a collected USDC payment.</p>
+              <p>Move wallets, keep receipts. Register after USDC settle to hold the possession book.</p>
             </div>
             <div className="card">
-              <h3>Cost-plus</h3>
-              <p>Quoted before the call. Receipted after. USDC on Base and Solana. No surprises.</p>
+              <h3>Quoted settle</h3>
+              <p>HTTP 402 quotes before the call. USDC on Base and Solana. Receipt after settle.</p>
             </div>
           </div>
         </div>
@@ -147,44 +173,49 @@ export default function ChitHome() {
 
 const styles: Record<string, CSSProperties> = {
   hero: {
-    padding: '5rem 0 3rem',
+    padding: '4rem 0 2.5rem',
     background: 'radial-gradient(ellipse at 50% 0%, rgba(0,212,255,0.08) 0%, transparent 60%)',
   },
   heroBadge: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
     gap: '0.75rem',
-    marginBottom: '1.5rem',
+    marginBottom: '1.25rem',
   },
   heroTitle: {
-    fontSize: '4rem',
+    fontSize: 'clamp(2rem, 4vw, 2.75rem)',
     fontWeight: 800,
-    lineHeight: 1.1,
-    marginBottom: '0.5rem',
+    lineHeight: 1.15,
+    marginBottom: '0.75rem',
   },
   heroLead: {
-    fontSize: '1.35rem',
+    fontSize: '1.2rem',
     color: '#f0f0f5',
-    marginBottom: '1.25rem',
+    marginBottom: '1rem',
     fontWeight: 600,
-    maxWidth: 640,
-    marginLeft: 'auto',
-    marginRight: 'auto',
     lineHeight: 1.4,
   },
   heroDescription: {
     fontSize: '1rem',
     color: '#8a8a9a',
-    maxWidth: 640,
-    margin: '0 auto 2rem',
+    maxWidth: '36rem',
+    marginBottom: '1.5rem',
     lineHeight: 1.7,
   },
   heroCta: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: '1rem',
+    gap: '0.75rem',
     flexWrap: 'wrap' as const,
+  },
+  ninetyTitle: {
+    fontSize: '1.1rem',
+    marginBottom: '0.5rem',
+  },
+  ninetyLead: {
+    color: '#8a8a9a',
+    fontSize: '0.92rem',
+    lineHeight: 1.65,
+    marginBottom: '0.85rem',
   },
 };

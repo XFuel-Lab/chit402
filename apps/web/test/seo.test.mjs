@@ -151,16 +151,22 @@ test('prerendered money pages have unique crawler titles (after build)', { skip:
   }
 });
 
-test('Chit home page has locked hero copy and book-first CTAs', () => {
+test('Chit home page has principal-first hero, live receipt row, and 90s door', () => {
   const chitHome = readFileSync(join(root, 'src/pages/ChitHome.tsx'), 'utf8');
-  assert.match(chitHome, /Who paid which call — export, policy, evidence\./, 'ChitHome has locked hero');
-  assert.match(chitHome, /Chit402/, 'ChitHome uses Chit402 public name');
-  assert.match(chitHome, /api\.chit402\.com\/receipt\/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e/, 'ChitHome has live receipt link');
+  const receiptCard = readFileSync(join(root, 'src/components/LiveReceiptCard.tsx'), 'utf8');
+  const liveSpecimen = readFileSync(join(root, 'src/lib/liveReceiptSpecimen.ts'), 'utf8');
+  assert.match(chitHome, /Who paid which call — and you still hold it\./, 'ChitHome leads principal-first');
+  assert.match(chitHome, /Treasury desk and spend ledger/, 'ChitHome names treasury desk');
+  assert.match(chitHome, /LiveReceiptCard/, 'ChitHome renders live receipt card');
+  assert.match(liveSpecimen, /chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96/, 'Live receipt specimen id locked');
+  assert.match(receiptCard, /LIVE_RECEIPT_HUB/, 'Live receipt card shows hub');
+  assert.match(receiptCard, /Verify receipt/, 'Live receipt card links verify');
   assert.match(chitHome, /Open the book/, 'ChitHome primary CTA opens book');
-  assert.match(chitHome, /View live receipt/, 'ChitHome primary CTA shows live receipt');
-  assert.match(chitHome, /to="\/docs"/, 'ChitHome primary CTA links to docs');
-  assert.match(chitHome, /Install paths/, 'ChitHome demotes wire to install paths');
-  assert.match(chitHome, /api\.chit402\.com\/v1/, 'ChitHome names wire under install paths');
+  assert.match(chitHome, /Verify live receipt/, 'ChitHome links live verify');
+  assert.match(chitHome, /90-second door/, 'ChitHome surfaces 90s door above fold');
+  assert.match(chitHome, /baseURL/, 'ChitHome shows OpenAI baseURL install');
+  assert.match(chitHome, /Also works/, 'ChitHome demotes adapters to Also works');
+  assert.match(chitHome, /api\.chit402\.com\/v1/, 'ChitHome names wire in 90s door');
   assert.match(chitHome, /\/docs\/chit-in-15-lines/, 'ChitHome links to drop-in door page');
   assert.match(chitHome, /\/docs\/eliza/, 'ChitHome links to Eliza stub');
   assert.match(chitHome, /config\.parent/, 'ChitHome references parent dynamically');
@@ -169,6 +175,15 @@ test('Chit home page has locked hero copy and book-first CTAs', () => {
   assert.doesNotMatch(chitHome, /\$0\.01/, 'ChitHome must not lead with $0.01');
   assert.doesNotMatch(chitHome, /wallet moves/i, 'ChitHome must not lead with wallet-move');
   assert.doesNotMatch(chitHome, /ticker/i, 'ChitHome must not mention ticker');
+  assert.doesNotMatch(chitHome, /prompt confidentiality/i, 'ChitHome must not claim prompt confidentiality');
+});
+
+test('Book page shows specimen banner and rows before possession', () => {
+  const book = readFileSync(join(root, 'src/pages/Book.tsx'), 'utf8');
+  const specimen = readFileSync(join(root, 'src/lib/bookSpecimen.ts'), 'utf8');
+  assert.match(book, /BookSpecimenPanel/, 'Book renders specimen panel');
+  assert.match(specimen, /Specimen — not live money/, 'Specimen banner copy locked');
+  assert.doesNotMatch(book, /You get nothing without the session/, 'Book must not be lock-only on first visit');
 });
 
 test('Chit primary nav has Trust and no Drop-in door', () => {

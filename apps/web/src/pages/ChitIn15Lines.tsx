@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
 import { getApiV1 } from '../apiHost';
 import { getHostConfig } from '../hostConfig';
+import { LIVE_RECEIPT_VERIFY_URL } from '../lib/liveReceiptSpecimen';
 
 const GITHUB = 'https://github.com/XFuel-Lab/chit402/blob/main';
 
@@ -39,8 +40,7 @@ const curlExample = (apiV1: string) => `curl -sS ${apiV1}/chat/completions \\
 export default function ChitIn15Lines() {
   const config = getHostConfig();
   const apiV1 = getApiV1();
-  const liveReceipt =
-    'https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e';
+  const liveReceipt = LIVE_RECEIPT_VERIFY_URL;
 
   return (
     <div className="page docs-page">

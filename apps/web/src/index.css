@@ -443,6 +443,88 @@ select.input {
   align-items: center;
 }
 .book-copy-verify { padding: 0.2rem 0.5rem; font-size: 0.72rem; }
+
+.chit-hero-wrap { max-width: 1040px; }
+.chit-hero-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2rem;
+  align-items: start;
+  margin-bottom: 2rem;
+}
+@media (min-width: 900px) {
+  .chit-hero-grid { grid-template-columns: 1.05fr 0.95fr; align-items: center; }
+}
+.chit-ninety-door {
+  padding: 1.25rem 1.35rem;
+  margin-top: 0.5rem;
+}
+.chit-ninety-code {
+  margin: 0;
+  font-size: 0.78rem;
+  max-height: 11rem;
+  overflow: auto;
+}
+.live-receipt-card {
+  text-align: left;
+  border-color: rgba(0, 212, 255, 0.22);
+  box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.06);
+}
+.live-receipt-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.live-receipt-card-lede {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  margin: 0 0 1rem;
+}
+.live-receipt-rows { margin: 0; }
+.live-receipt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.45rem 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.9rem;
+}
+.live-receipt-row:first-of-type { border-top: 0; }
+.live-receipt-row dt {
+  margin: 0;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.live-receipt-row dd { margin: 0; text-align: right; }
+.live-receipt-mono {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  word-break: break-word;
+  max-width: 14rem;
+}
+.live-receipt-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.book-specimen-panel { margin-bottom: 1.5rem; }
+.book-specimen-banner p {
+  margin: 0.65rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  max-width: 42rem;
+}
+.book-specimen-foot {
+  margin: 1rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+.muted-specimen { color: var(--text-muted); font-size: 0.82rem; }
 .book-correction-hint {
   margin-left: 0.25rem;
   font-size: 0.72rem;

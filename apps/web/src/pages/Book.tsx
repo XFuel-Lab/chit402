@@ -29,6 +29,7 @@ import BookEscrowPanel from '../components/BookEscrowPanel';
 import BookA2AEscrowPanel from '../components/BookA2AEscrowPanel';
 import BookInflowPanel from '../components/BookInflowPanel';
 import BookEvidenceChip from '../components/BookEvidenceChip';
+import BookSpecimenPanel from '../components/BookSpecimenPanel';
 import PrivateSpendCallout from '../components/PrivateSpendCallout';
 import {
   clearBookCredentials,
@@ -397,13 +398,15 @@ export default function Book() {
       <div className="container">
         <header className="page-header">
           <span className="docs-kicker">Principal book</span>
-          <h1>This agent spent Y on this job.</h1>
+          <h1>Who paid which call — spend ledger for your agents.</h1>
           <p>
-            Possession-gated spend dashboard for the principal who funds agents. Last-N collected
-            rows from <code>GET|POST /v1/agents/:agent_id/book</code> — not a public index. Demo
-            never writes the book.
+            Last-N collected rows for the treasury desk that funds agents — possession-gated via{' '}
+            <code>GET|POST /v1/agents/:agent_id/book</code>, not a public index. The specimen below
+            shows the shape; your session loads live money.
           </p>
         </header>
+
+        {loadState !== 'ready' && <BookSpecimenPanel />}
 
         <section className="card book-access-card">
           <h2 style={{ fontSize: '1.05rem', marginBottom: '0.75rem' }}>Hold the book</h2>
@@ -482,14 +485,14 @@ export default function Book() {
           </form>
         </section>
 
-        {!hasCredentials && loadState === 'idle' && !credentialHint && (
+        {!hasCredentials && loadState === 'idle' && credentialHint && (
           <section className="card book-state-card">
-            <span className="badge badge-purple">No possession</span>
-            <h3 style={{ marginTop: '0.75rem' }}>You get nothing without the session</h3>
+            <span className="badge badge-purple">Possession required</span>
+            <h3 style={{ marginTop: '0.75rem' }}>Paste session to load your book</h3>
             <p style={{ color: 'var(--text-secondary)', marginTop: '0.5rem', maxWidth: '36rem' }}>
-              The book is not a public scoreboard. Register after a paid call, then paste{' '}
-              <code>agent_id</code> and <code>session</code> above. Wrong or missing possession
-              returns 401/403 with an empty body.
+              Live money stays fail-closed — wrong or missing possession returns 401/403. Register
+              after a collected USDC call, then paste <code>agent_id</code> and <code>session</code>{' '}
+              above.
             </p>
           </section>
         )}
