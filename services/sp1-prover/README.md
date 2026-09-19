@@ -21,6 +21,17 @@ cd services/sp1-prover
 # see script/ for build helpers on your OS
 ```
 
+## Docker (guest v5.1 + in-proof payment binding)
+
+Build context must be the **repository root** so `core-layer/sp1-hooks` is available to the workspace `Cargo.toml`.
+
+```bash
+# from repo root
+docker build -f services/sp1-prover/Dockerfile -t xfuel-sp1-prover:guest-v51 .
+```
+
+Runtime: set `SP1_PUBLIC_VALUES_V2=true` when serving v2 public values (see `env.example`). Product semantics are unchanged; only the image build layout is fixed.
+
 Gateway points at the prover with `SP1_PROVER_URL`. Production ALB accepts the demo Lightsail IP only.
 
 ## Notes
