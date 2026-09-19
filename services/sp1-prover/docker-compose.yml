@@ -3,8 +3,8 @@ version: '3.8'
 services:
   sp1-prover:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: services/sp1-prover/Dockerfile
     container_name: sp1-prover
     ports:
       - "8080:8080"

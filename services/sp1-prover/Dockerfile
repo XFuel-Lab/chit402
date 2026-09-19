@@ -46,10 +46,15 @@ RUN cargo prove --version && \
 # Set working directory
 WORKDIR /app
 
-# Copy the prover code
-COPY program /app/program
-COPY host /app/host
-COPY Cargo.toml /app/Cargo.toml
+# Build context is the REPO ROOT (not services/sp1-prover/), because the workspace
+# Cargo.toml references ../core-layer/sp1-hooks → /core-layer/sp1-hooks from /app.
+# Build from repo root:
+#   docker build -f services/sp1-prover/Dockerfile -t xfuel-sp1-prover:guest-v51 .
+COPY services/sp1-prover/Cargo.toml /app/Cargo.toml
+COPY services/sp1-prover/rust-toolchain.toml /app/rust-toolchain.toml
+COPY services/sp1-prover/program /app/program
+COPY services/sp1-prover/host /app/host
+COPY core-layer/sp1-hooks /core-layer/sp1-hooks
 
 # Build the guest program first (uses SP1 toolchain)
 RUN cd /app/program && \
@@ -60,7 +65,7 @@ RUN cd /app && \
     cargo build --release --package deposit-proof-host
 
 # Copy entrypoint script for AWS Secrets Manager integration
-COPY entrypoint.sh /app/entrypoint.sh
+COPY services/sp1-prover/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 # Expose port for HTTP API
