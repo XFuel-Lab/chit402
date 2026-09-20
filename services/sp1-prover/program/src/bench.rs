@@ -217,8 +217,8 @@ mod benchmarks {
             ChainId::Theta => {}
         }
 
-        // Minimum task amount
-        let min_task = U256::from_u64(10000);
+        // Minimum task amount (matches gateway MIN_TASK_AMOUNT / hop floor)
+        let min_task = U256::from_u64(2000);
         assert!(gross.gte(&min_task));
 
         // Nullifier generation

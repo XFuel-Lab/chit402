@@ -1040,8 +1040,8 @@ fn validate_ai_task(
     }
 
     // ── Minimum task amount check ────────────────────────────────────────
-    // Minimum: 10000 units (dust protection, matches ai-listener.js MIN_TASK_AMOUNT)
-    let min_task = U256::from_u64(10000);
+    // Minimum: 2000 atomic USDC ($0.002 hop floor; matches gateway MIN_TASK_AMOUNT)
+    let min_task = U256::from_u64(2000);
     assert!(
         private_inputs.gross_amount.gte(&min_task),
         "Task amount below minimum threshold"

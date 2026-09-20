@@ -856,9 +856,10 @@ mod tests {
 
     #[test]
     fn test_minimum_task_amount() {
-        let min_task = U256::from_u64(10_000);
-        let below_min = U256::from_u64(9_999);
-        let at_min = U256::from_u64(10_000);
+        // Aligned with services/gateway MIN_TASK_AMOUNT (2000 atomic USDC, $0.002 hop floor)
+        let min_task = U256::from_u64(2_000);
+        let below_min = U256::from_u64(1_999);
+        let at_min = U256::from_u64(2_000);
 
         assert!(below_min.lt(&min_task), "Below-minimum amount must be rejected");
         assert!(at_min.gte(&min_task), "At-minimum amount must be accepted");
@@ -866,11 +867,11 @@ mod tests {
 
     #[test]
     fn test_fee_on_minimum_amount() {
-        let gross = U256::from_u64(10_000);
+        let gross = U256::from_u64(2_000);
         let (fee, net) = calculate_task_fee(&gross, 50);
-        // 10,000 * 50 / 10000 = 50
-        assert_eq!(fee.as_u128(), 50);
-        assert_eq!(net.as_u128(), 9_950);
+        // 2,000 * 50 / 10000 = 10
+        assert_eq!(fee.as_u128(), 10);
+        assert_eq!(net.as_u128(), 1_990);
     }
 
     // ════════════════════════════════════════════════════════════════════
