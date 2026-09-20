@@ -49,6 +49,11 @@ const SPECIMENS = [
     contentType: /application\/json/,
     schema: 'chit402.path_rotate_observe.v1',
   },
+  {
+    path: '/public/specimens/tier2-in-proof-binding.json',
+    contentType: /application\/json/,
+    schema: 'chit402.tier2_in_proof_binding.v1',
+  },
 ];
 
 for (const specimen of SPECIMENS) {

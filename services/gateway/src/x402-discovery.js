@@ -1843,6 +1843,21 @@ export function buildOpenApiSpec(baseUrl = '') {
           },
         },
       },
+      '/public/specimens/tier2-in-proof-binding.json': {
+        get: {
+          operationId: 'getTier2InProofBindingSpecimen',
+          summary: 'Tier-2 in-proof payment binding specimen (settlement metadata)',
+          description:
+            'Public chit402.tier2_in_proof_binding.v1 specimen describing Tier-2 SP1 payment-binding '
+            + 'and settlement metadata — not zkML or Tier-3 verified inference. '
+            + 'See docs/product/tier2-in-proof-binding-smoke.md.',
+          tags: ['Specimens'],
+          responses: {
+            200: { description: 'Tier-2 in-proof binding specimen.' },
+            404: { description: 'Unknown specimen.' },
+          },
+        },
+      },
       '/public/export/{slug}': {
         get: {
           operationId: 'getPublicPullExport',
