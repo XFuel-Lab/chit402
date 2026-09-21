@@ -14,6 +14,7 @@ import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolv
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
+import { resolvePrivateSpendContext } from './private-desk-attest.js';
 import { proveAllowedForKey, proofAvailability, refreshProverProbe } from './prove-gate.js';
 import { getHubCatalog } from './hub-catalog.js';
 import { startHealthProbes, healthSnapshot } from './provider-health.js';
@@ -1696,8 +1697,18 @@ export function createApp() {
         paymentAsset: paymentAsset || null,
         session: boundSession,
         agentPubkey: boundSession?.agent_pubkey || null,
-        privateSpend: !!config.privateSpend?.enabled || isPrivateSpendSession(req),
-        privacyMode: (config.privateSpend?.enabled || isPrivateSpendSession(req)) ? 'vendor_blind' : null,
+        ...(() => {
+          const privacyCtx = resolvePrivateSpendContext(req, {
+            privateSpendCfg: config.privateSpend,
+            isPrivateSpendSession,
+          });
+          return {
+            privateSpend: privacyCtx.privateSpend,
+            privacyMode: privacyCtx.privateSpend ? 'vendor_blind' : null,
+            privacyProduct: privacyCtx.product,
+            privacyAttest: privacyCtx.privateAttest ? 'tier2' : null,
+          };
+        })(),
         // Multi-hop / A2A receipt lineage (Sprint 3)
         parentTaskId: parent_task_id || null,
         a2aMessageId: a2a_message_id || null,

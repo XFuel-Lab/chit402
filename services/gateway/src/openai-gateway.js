@@ -5,7 +5,16 @@ import logger from './logger.js';
 import { getAIListener } from './ai-listener.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { settlementProofAllowed } from './prove-gate.js';
-import { buildVerifyUrl, baseUrlFromReq, buildReceipt as buildSignedReceipt, mergeReceiptView } from './receipt.js';
+import {
+  buildVerifyUrl, baseUrlFromReq, buildReceipt as buildSignedReceipt, mergeReceiptView, privacyOf,
+} from './receipt.js';
+import {
+  resolvePrivateSpendContext,
+  bodyForPrivacyPricing,
+  attestPreflightError,
+  attestProofGateError,
+  PRIVACY_PRODUCT_ATTEST,
+} from './private-desk-attest.js';
 import { bindSessionFromRequest, sessionMatchesSettledPayer } from './session-delegation.js';
 import { apiKeyHashFromReq, cacheNamespace } from './buyer-attr.js';
 import { getHubCatalog, resolveCatalogModel, requestShape, toOpenAIList } from './hub-catalog.js';
@@ -119,6 +128,13 @@ function meteringExempt(req) {
  * @param {{ getBySession?: Function }|null} registry - AgentRegistry instance
  * @returns {boolean}
  */
+function privacyFromReq(req, registry) {
+  return resolvePrivateSpendContext(req, {
+    privateSpendCfg: config.privateSpend,
+    isPrivateSpendSession: (r) => isPrivateSpendSession(r, registry),
+  });
+}
+
 function isPrivateSpendSession(req, registry) {
   if (!registry || typeof registry.getBySession !== 'function') return false;
   const key = req.headers['x-api-key']
@@ -285,11 +301,16 @@ async function meterV1Request(req, res, {
   try {
     const body = { ...(req.body || {}) };
     if (body.max_tokens != null || MAX_TOKENS_CAP > 0) body.max_tokens = clampMaxTokens(body.max_tokens);
+    const privacyCtx = resolvePrivateSpendContext(req, {
+      privateSpendCfg: config.privateSpend,
+      isPrivateSpendSession: (r) => isPrivateSpendSession(r, registry),
+    });
+    const pricedBody = bodyForPrivacyPricing(body, privacyCtx);
 
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const path = resourcePath.startsWith('/') ? resourcePath : `/${resourcePath}`;
     const resource = `${baseUrl.replace(/\/$/, '')}${path}`;
-    const decision = await runX402Handshake(req, { taskId, body, baseUrl, resource });
+    const decision = await runX402Handshake(req, { taskId, body: pricedBody, baseUrl, resource });
 
     if (decision.kind === 'settled') {
       return {
@@ -793,10 +814,42 @@ function startTaskProof(task, proveAllowed) {
   });
 }
 
+/** Private + Attest: prove synchronously and fail closed without in_proof. */
+async function ensureAttestProof(task, privacyCtx) {
+  if (!privacyCtx?.privateAttest || !task) return null;
+  task.intent = task.intent || {};
+  task.intent.proveAllowed = true;
+  task.intent.proofTier = 'settlement';
+  task.meta = task.meta || {};
+  task.meta.privacyProduct = PRIVACY_PRODUCT_ATTEST;
+  task.meta.privacyAttest = 'tier2';
+  let aiListener;
+  try {
+    aiListener = getAIListener();
+  } catch {
+    return attestProofGateError(task, privacyCtx);
+  }
+  if (!getSP1Prover() || typeof aiListener._generateTaskProof !== 'function') {
+    return attestProofGateError(task, privacyCtx);
+  }
+  try {
+    await aiListener._generateTaskProof(task);
+  } catch (err) {
+    logger.warn({ err: err.message, taskId: task.taskId }, 'OpenAI gateway: attest proof failed');
+    task.sp1Proof = {
+      ...(task.sp1Proof || {}),
+      error: err.message,
+      timestamp: Date.now(),
+    };
+  }
+  return attestProofGateError(task, privacyCtx);
+}
+
 function registerTaskAndProve({
   taskId: providedTaskId,
   model, messages, content, provider, toolCalls = null,
   proveAllowed = true, apiKeyHash = null, privateSpend = false,
+  privacyProduct = null, privacyAttest = null,
   usage = null, payment = null, deferProve = false,
   status = 'completed', failureReason = null,
   session = null,
@@ -853,6 +906,8 @@ function registerTaskAndProve({
       agentPubkey: session?.agent_pubkey || null,
       privateSpend: !!privateSpend,
       privacyMode: privateSpend ? 'vendor_blind' : null,
+      privacyProduct: privacyProduct || (privateSpend ? 'private_desk' : null),
+      privacyAttest: privacyAttest || null,
       ...(failureReason ? { failureReason } : {}),
     },
     status,
@@ -1006,13 +1061,25 @@ function buildReceipt({
     delegation_hash: view.delegation_hash ?? view.session?.delegation_hash ?? null,
     session_expiry: view.session_expiry ?? view.session?.session_expiry ?? null,
     parent_receipt_id: view.parent_receipt_id ?? signed.parent_receipt_id ?? null,
-    privacy: privateSpend
-      ? {
+    privacy: task
+      ? (privacyOf(task) ?? (privateSpend
+        ? {
           mode: 'vendor_blind',
+          product: 'private_desk',
+          label: 'Private Desk',
           trust: 'gateway',
           notes: 'Provider saw gateway-pooled credentials, not end-customer identity. Not prompt-confidential.',
         }
-      : signed.privacy ?? null,
+        : null))
+      : (privateSpend
+        ? {
+          mode: 'vendor_blind',
+          product: 'private_desk',
+          label: 'Private Desk',
+          trust: 'gateway',
+          notes: 'Provider saw gateway-pooled credentials, not end-customer identity. Not prompt-confidential.',
+        }
+        : signed.privacy ?? null),
     proof: {
       ...signed.proof,
       status: proofStatus, // pending | unavailable | gated | skipped
@@ -1144,7 +1211,8 @@ function writeSettleBookRow({
  * failure never leaves money moved with no durable task or public receipt.
  */
 function registerPaidV1Shell({
-  taskId, payment, model, messages, apiKeyHash, privateSpend, session = null,
+  taskId, payment, model, messages, apiKeyHash, privateSpend, privacyProduct = null,
+  privacyAttest = null, session = null,
 }) {
   return registerTaskAndProve({
     taskId,
@@ -1156,6 +1224,8 @@ function registerPaidV1Shell({
     deferProve: true,
     apiKeyHash,
     privateSpend,
+    privacyProduct,
+    privacyAttest,
     payment,
     session,
     status: 'processing',
@@ -1491,9 +1561,27 @@ export function registerOpenAIRoutes(app, {
     const created = Math.floor(Date.now() / 1000);
     const fb = allowFallback(req);
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-    const privateSpend = !!config.privateSpend?.enabled || isPrivateSpendSession(req, registry);
+    const privacyCtx = privacyFromReq(req, registry);
+    const privateSpend = privacyCtx.privateSpend;
     const apiKeyHash = apiKeyHashFromReq(req);
+    const apiKey = req.headers['x-api-key']
+      || (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim()
+      || null;
     let paidTask = null;
+
+    const attestPreflight = attestPreflightError(privacyCtx, {
+      proverConfigured: !!getSP1Prover(),
+      apiKey,
+    });
+    if (attestPreflight) {
+      return res.status(attestPreflight.status).json({
+        error: {
+          message: attestPreflight.message,
+          type: attestPreflight.status >= 500 ? 'server_error' : 'invalid_request_error',
+          code: attestPreflight.code,
+        },
+      });
+    }
 
     // Bind-at-settle: verify AuthorizeSession before money moves. Payer match
     // is checked after settle when x402 returns the wallet.
@@ -1548,6 +1636,8 @@ export function registerOpenAIRoutes(app, {
           messages,
           apiKeyHash,
           privateSpend,
+          privacyProduct: privacyCtx.product,
+          privacyAttest: privacyCtx.privateAttest ? 'tier2' : null,
           session: boundSession,
         }));
         writeSettleBookRow({
@@ -1715,6 +1805,8 @@ export function registerOpenAIRoutes(app, {
         deferProve: true,
         apiKeyHash,
         privateSpend,
+        privacyProduct: privacyCtx.product,
+        privacyAttest: privacyCtx.privateAttest ? 'tier2' : null,
         usage: { ...counts, source },
         payment: metering.payment,
         session: boundSession,
@@ -1725,13 +1817,43 @@ export function registerOpenAIRoutes(app, {
     // A mock cost us nothing, so it neither burns float nor spends the allowance.
     const cogs = mock ? 0n : await accountForCogs({ task, modelId: echoModel, usage: counts, provider });
     if (freeBucket) recordFreeSpend(freeBucket, cogs);
-    const proveAllowed = settlementProofAllowed({
-      apiKey: req.headers['x-api-key'],
+    const proveAllowed = privacyCtx.privateAttest || settlementProofAllowed({
+      apiKey,
       cogs,
-      proofTier: req.body?.proof_tier ?? req.body?.xfuel?.proof_tier,
+      proofTier: req.body?.proof_tier ?? req.body?.xfuel?.proof_tier ?? (privacyCtx.privateAttest ? 'settlement' : null),
       minCogs: config.verifiedInference?.tier2MinCogs,
     });
-    startTaskProof(task, proveAllowed);
+    if (privacyCtx.privateAttest) {
+      const attestErr = await ensureAttestProof(task, privacyCtx);
+      if (attestErr) {
+        if (metering.payment) {
+          return respondPaidV1Failure(res, {
+            task,
+            taskId,
+            payment: metering.payment,
+            baseUrl,
+            privateSpend,
+            statusCode: attestErr.status,
+            message: attestErr.message,
+            code: attestErr.code,
+            requestedModel: model,
+            resolvedModel: echoModel,
+            ledger,
+            registry,
+            req,
+          });
+        }
+        return res.status(attestErr.status).json({
+          error: {
+            message: attestErr.message,
+            type: 'server_error',
+            code: attestErr.code,
+          },
+        });
+      }
+    } else {
+      startTaskProof(task, proveAllowed);
+    }
 
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
     const receipt = bookSpend(buildReceipt({
@@ -1906,7 +2028,8 @@ export function registerOpenAIRoutes(app, {
     const created = Math.floor(Date.now() / 1000);
     const fb = allowFallback(req);
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-    const privateSpend = !!config.privateSpend?.enabled || isPrivateSpendSession(req, registry);
+    const privacyCtx = privacyFromReq(req, registry);
+    const privateSpend = privacyCtx.privateSpend;
     const apiKeyHash = apiKeyHashFromReq(req);
     let paidTask = null;
 
@@ -1961,6 +2084,8 @@ export function registerOpenAIRoutes(app, {
           messages,
           apiKeyHash,
           privateSpend,
+          privacyProduct: privacyCtx.product,
+          privacyAttest: privacyCtx.privateAttest ? 'tier2' : null,
           session: boundSession,
         }));
         writeSettleBookRow({
@@ -2177,7 +2302,8 @@ export function registerOpenAIRoutes(app, {
       proofTier: req.body?.proof_tier ?? req.body?.xfuel?.proof_tier,
       minCogs: config.verifiedInference?.tier2MinCogs,
     });
-    const privateSpend = !!config.privateSpend?.enabled || isPrivateSpendSession(req, registry);
+    const privacyCtx = privacyFromReq(req, registry);
+    const privateSpend = privacyCtx.privateSpend;
     const content = inference.url || JSON.stringify(inference.raw?.output || {});
     const { taskId, proverConfigured, task } = registerTaskAndProve({
       model: inference.resolvedModel,
@@ -2242,7 +2368,8 @@ export function registerOpenAIRoutes(app, {
       proofTier: req.body?.proof_tier ?? req.body?.xfuel?.proof_tier,
       minCogs: config.verifiedInference?.tier2MinCogs,
     });
-    const privateSpend = !!config.privateSpend?.enabled || isPrivateSpendSession(req, registry);
+    const privacyCtx = privacyFromReq(req, registry);
+    const privateSpend = privacyCtx.privateSpend;
     const { taskId, proverConfigured, task } = registerTaskAndProve({
       model: inference.resolvedModel,
       messages: [{ role: 'user', content: String(audioUrl) }],

@@ -43,6 +43,26 @@ export default function Pricing() {
             pass-through plus that routing fee. Network fees on your chain are yours. Without
             payment or a partner key, <code>POST {apiV1}/chat/completions</code> returns HTTP 402.
           </p>
+          <p style={styles.clarityBody}>
+            Possession-gated book ingest uses a volume stamp of about{' '}
+            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>$0.0001–0.0002</strong> debited
+            from prepaid budget (not an on-chain exact settle).
+          </p>
+          <p style={styles.clarityBody}>
+            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>Private Desk</strong> — vendor-blind
+            routing at the same <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>cost + 1%</strong>{' '}
+            door; Tier-1 signed receipt with <code>privacy.mode=vendor_blind</code>. Gateway-trusted spend
+            privacy — not prompt-private, not trustless ZK. Request with{' '}
+            <code>xfuel.privacy_product: private_desk</code> (or enable Private Spend on your gateway
+            allowlist).
+          </p>
+          <p style={styles.clarityBody}>
+            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>Private + Attest</strong> — Desk plus
+            mandatory Tier-2 SP1 at <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>+$0.10</strong>{' '}
+            (<code>tier2_proof</code> itemized on the receipt). Request with{' '}
+            <code>xfuel.privacy_product: private_attest</code>. Proving may be allowlist-gated in
+            production — the API fails closed if Tier-2 is unavailable.
+          </p>
         </section>
 
         <div className="grid grid-3" style={{ gap: '1.25rem', marginBottom: '2rem' }}>
@@ -88,11 +108,15 @@ export default function Pricing() {
           <ul style={styles.list}>
             <li>
               <strong style={{ color: '#d0d0dc' }}>Tier-2 SP1 proof</strong> — $0.10 per proof (on
-              demand; not on every call)
+              demand; required for Private + Attest)
             </li>
             <li>
-              <strong style={{ color: '#d0d0dc' }}>Private Spend</strong> — ~1% when shipped (not
-              live as the default path today)
+              <strong style={{ color: '#d0d0dc' }}>Private Desk</strong> — cost + 1% vendor-blind routing
+              (allowlist / explicit product; not the default public door)
+            </li>
+            <li>
+              <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong> — Desk + $0.10 Tier-2
+              (fail closed if proving unavailable)
             </li>
             <li>
               <strong style={{ color: '#d0d0dc' }}>Spend guarantee</strong> — parked; not available

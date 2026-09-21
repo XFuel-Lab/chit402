@@ -19,6 +19,7 @@ import { estimateCogsFromRequest } from './provider-rates.js';
 import { normalizeRequestedTier } from './tier-policy.js';
 import { getHubCatalog, resolveCatalogModel, requestShape } from './hub-catalog.js';
 import { payerFromPaymentHeader } from './x402-facilitator.js';
+import { parsePrivacyProduct, PRIVACY_PRODUCT_ATTEST } from './private-desk-attest.js';
 
 /**
  * Server-side x402 handshake glue for POST /task-request.
@@ -203,6 +204,7 @@ export async function quoteResolved(body = {}, cfg = config.x402) {
  * on a cheap call is a $0.050 cost against a few cents of fee.
  */
 export function wantsSettlementProof(body = {}) {
+  if (parsePrivacyProduct(body) === PRIVACY_PRODUCT_ATTEST) return true;
   const requested = normalizeRequestedTier(
     body?.proof_tier ?? body?.proofTier ?? body?.intent?.proofTier ?? body?.intent?.proof_tier ?? null,
   );
