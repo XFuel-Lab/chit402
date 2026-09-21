@@ -2033,6 +2033,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
         : row('Price', usdcCell(p.gross_amount))}
       ${p.basis ? row('Basis', `${esc(p.basis)}${p.floor_applied ? ' · floor applied' : ''}`) : ''}
       ${p.platform_fee != null ? row(`Platform fee (${esc((p.platform_fee_bps ?? 0) / 100)}%)`, usdcCell(p.platform_fee)) : ''}
+      ${p.tier2_proof ? row('Tier-2 proof (SP1)', usdcCell(p.tier2_proof)) : ''}
       ${row('Protocol fee', `${usdcCell(p.fee_amount)} <span class="muted">(${esc(p.protocol_fee_bps ?? p.fee_bps)} bps)</span>`)}
     </section>
 

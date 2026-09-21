@@ -29,7 +29,7 @@ import {
 } from './edgecloud-infer.js';
 import { inferAkashML, akashmlApiKey } from './akashml-infer.js';
 import { normalizeUsage, messagesToText } from './usage.js';
-import { runX402Handshake, extractPaymentHeader, priceUSDCResolved } from './x402-server.js';
+import { runX402Handshake, extractPaymentHeader, priceUSDCResolved, quoteResolved } from './x402-server.js';
 import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
@@ -133,6 +133,25 @@ function privacyFromReq(req, registry) {
     privateSpendCfg: config.privateSpend,
     isPrivateSpendSession: (r) => isPrivateSpendSession(r, registry),
   });
+}
+
+async function attachQuotedPricing(task, req, privacyCtx) {
+  if (!task) return;
+  try {
+    const body = { ...(req.body || {}) };
+    if (body.max_tokens != null || MAX_TOKENS_CAP > 0) body.max_tokens = clampMaxTokens(body.max_tokens);
+    const quote = await quoteResolved(bodyForPrivacyPricing(body, privacyCtx));
+    task.meta = task.meta || {};
+    task.meta.pricing = {
+      platform_fee: quote.platform_fee,
+      fee_bps: quote.fee_bps,
+      tier2_proof: quote.tier2_proof,
+      floor_applied: quote.floor_applied,
+      basis: quote.basis,
+    };
+  } catch (err) {
+    logger.warn({ err: err.message, taskId: task.taskId }, 'openai-gateway: quote snapshot for receipt failed');
+  }
 }
 
 function isPrivateSpendSession(req, registry) {
@@ -1640,6 +1659,7 @@ export function registerOpenAIRoutes(app, {
           privacyAttest: privacyCtx.privateAttest ? 'tier2' : null,
           session: boundSession,
         }));
+        await attachQuotedPricing(paidTask, req, privacyCtx);
         writeSettleBookRow({
           taskId,
           payment: metering.payment,
