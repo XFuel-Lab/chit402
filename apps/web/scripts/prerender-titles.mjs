@@ -94,10 +94,10 @@ const ROUTE_CONTENT = {
     lede: 'Public door traffic for Chit402: signed USDC x402 receipts, unique payers, and protocol fees. Counts only from GET /stats/door — not a chain explorer or vanity scoreboard.',
   },
   '/pricing': {
-    title: 'Pricing — from $0.002 USDC per hop | Chit402',
+    title: 'Pricing — standard receipt $0.002 USDC | Chit402',
     h1: 'Pay for a collected hop.',
     lede:
-      'Cost-plus 1% on provider COGS, quoted, receipted on POST /v1/chat/completions at api.chit402.com. Hop floor $0.002 USDC (amount 2000); volume stamp ~$0.0001; Tier-2 proof +$0.10 opt-in. USDC on Base and Solana.',
+      'Cost-plus, quoted, receipted on POST /v1/chat/completions at api.chit402.com. Standard signed receipt $0.002 USDC (amount 2000) every hop; provider routing cost + 1%. Tier-2 proof $0.10 opt-in. USDC on Base and Solana; signed receipt and verify_url included.',
   },
   '/book': {
     title: 'Principal book — spend dashboard | Chit',

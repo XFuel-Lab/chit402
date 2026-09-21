@@ -45,7 +45,7 @@ export default function ChitHome() {
               </p>
               <p style={styles.pricingChip}>
                 <Link to="/pricing" style={styles.pricingChipLink}>
-                  From $0.002 / hop · cost-plus · receipt included
+                  Standard receipt $0.002 · routing cost + 1%
                 </Link>
               </p>
               <div style={styles.heroCta}>
