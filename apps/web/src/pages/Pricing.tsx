@@ -4,9 +4,9 @@ import SeoHead from '../components/SeoHead';
 import { getApiV1 } from '../apiHost';
 
 const PRICING_SEO = {
-  title: 'Pricing — from $0.002 USDC per hop | Chit402',
+  title: 'Pricing — standard receipt $0.002 USDC | Chit402',
   description:
-    'Cost-plus 1% on provider COGS, quoted, receipted on POST /v1/chat/completions. Hop floor $0.002 USDC; volume stamp ~$0.0001. USDC on Base and Solana.',
+    'Cost-plus, quoted, receipted on POST /v1/chat/completions. Standard signed receipt $0.002 USDC every hop; provider routing is cost + 1%. USDC on Base and Solana.',
 };
 
 export default function Pricing() {
@@ -20,34 +20,28 @@ export default function Pricing() {
           <span className="docs-kicker">Pricing</span>
           <h1>Pay for a collected hop.</h1>
           <p>
-            Chit is the book — not a router shop. Every call is cost-plus on provider COGS, quoted,
-            receipted — USDC on Base and Solana.
+            Chit is the book — not a router shop. The standard receipt and provider routing are priced
+            separately from hub COGS — quoted, receipted — USDC on Base and Solana.
           </p>
         </header>
 
-        <section style={styles.clarityBar} aria-labelledby="hop-floor-heading">
-          <p style={styles.clarityLabel}>Per hop (Chit desk fee)</p>
-          <h2 id="hop-floor-heading" style={styles.clarityAmount}>
-            From $0.002 USDC per hop
+        <section style={styles.clarityBar} aria-labelledby="standard-receipt-heading">
+          <p style={styles.clarityLabel}>Standard receipt (every hop)</p>
+          <h2 id="standard-receipt-heading" style={styles.clarityAmount}>
+            $0.002 USDC
           </h2>
           <p style={styles.clarityBody}>
-            One hop covers the treasury desk: HTTP 402 quote, USDC settle on Base or Solana, and a
-            signed receipt with <code>verify_url</code> you can verify offline. Provider COGS is
-            billed at{' '}
-            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>cost-plus 100 bps (1%)</strong>
-            {' '}— approximately <code>max(provider × 1.01, hop floor)</code>. The floor covers
-            facilitator settle; the 1% is the door on measured hub cost. Receipts are included.
+            One flat stamp for the treasury desk: HTTP 402 quote, USDC settle on Base or Solana, and a
+            signed receipt with <code>verify_url</code> you can verify offline. Bigger jobs do not
+            make the receipt harder or more expensive — the standard receipt stays $0.002 unless our
+            unit cost changes.
           </p>
           <p style={styles.clarityBody}>
-            Possession-gated book ingest uses a volume stamp of about{' '}
-            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>$0.0001–0.0002</strong> debited
-            from prepaid budget (not an on-chain exact settle). Optional Tier-2 SP1 settlement proof:{' '}
-            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>+$0.10</strong> flat, opt-in.
-          </p>
-          <p style={styles.clarityBody}>
-            Hub, model, and upstream inference USDC are separate from this floor. Network fees on
-            your chain are yours. Without payment or a partner key,{' '}
-            <code>POST {apiV1}/chat/completions</code> returns HTTP 402.
+            Provider inference is billed at{' '}
+            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>cost + 1%</strong>
+            {' '}(platform fee 100 bps on provider COGS). Hub, model, and upstream USDC are
+            pass-through plus that routing fee. Network fees on your chain are yours. Without
+            payment or a partner key, <code>POST {apiV1}/chat/completions</code> returns HTTP 402.
           </p>
         </section>
 
@@ -66,7 +60,7 @@ export default function Pricing() {
           <div className="card">
             <h3 style={styles.cardTitle}>Separate from Chit</h3>
             <ul style={styles.list}>
-              <li>Provider / hub inference price (pass-through COGS)</li>
+              <li>Provider / hub inference price (pass-through COGS + 1% routing)</li>
               <li>Your wallet and chain network costs</li>
               <li>Partner key billing (if you use one instead of x402)</li>
             </ul>
@@ -75,8 +69,8 @@ export default function Pricing() {
             <h3 style={styles.cardTitle}>How quoting works</h3>
             <ul style={styles.list}>
               <li>
-                First request without payment → HTTP 402 with atomic USDC amount (floor{' '}
-                <code>2000</code> = $0.002)
+                First request without payment → HTTP 402 with atomic USDC amount (standard receipt{' '}
+                <code>2000</code> = $0.002, plus provider COGS + 1% when applicable)
               </li>
               <li>Retry with <code>X-PAYMENT</code> after USDC settle, or send a partner API key</li>
               <li>
@@ -88,6 +82,28 @@ export default function Pricing() {
             </ul>
           </div>
         </div>
+
+        <section className="card" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
+          <h2 style={{ fontSize: '1.1rem', marginBottom: '0.65rem' }}>Value-add (optional)</h2>
+          <ul style={styles.list}>
+            <li>
+              <strong style={{ color: '#d0d0dc' }}>Tier-2 SP1 proof</strong> — $0.10 per proof (on
+              demand; not on every call)
+            </li>
+            <li>
+              <strong style={{ color: '#d0d0dc' }}>Private Spend</strong> — ~1% when shipped (not
+              live as the default path today)
+            </li>
+            <li>
+              <strong style={{ color: '#d0d0dc' }}>Spend guarantee</strong> — parked; not available
+              to buy yet
+            </li>
+          </ul>
+          <p style={{ ...styles.muted, marginTop: '0.85rem' }}>
+            Volume and premier stamp houses win because the receipt is flat and boring — high
+            throughput does not inflate the per-hop stamp.
+          </p>
+        </section>
 
         <div className="card" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
           <h2 style={{ fontSize: '1.1rem', marginBottom: '0.65rem' }}>Public door</h2>

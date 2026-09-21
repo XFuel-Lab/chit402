@@ -81,8 +81,11 @@ test('shared layout and homepage copy do not call paid /v1 unmetered, a free pat
     assert.match(source, /USDC on Base (and|or) Solana/i, `${label} names USDC rails`);
     assert.match(source, /cost-plus.*quoted.*receipted/i, `${label} uses cost-plus language`);
   }
-  assert.match(pricing, /\$0\.002/, 'Pricing page states hop floor');
+  assert.match(pricing, /\$0\.002/, 'Pricing page states standard receipt');
+  assert.match(pricing, /cost \+ 1%/, 'Pricing page states routing cost + 1%');
   assert.match(pricing, /api\.chit402\.com|getApiV1/, 'Pricing names Chit public door');
+  assert.doesNotMatch(pricing, /hop floor/i, 'Pricing must not frame receipt as hop floor');
+  assert.doesNotMatch(pricing, /1000 bps|10%/, 'Pricing must not show legacy 10% routing');
   assert.doesNotMatch(pricing, /amount <code>10000<\/code>/, 'Pricing must not show legacy $0.01 floor');
 });
 
@@ -174,7 +177,7 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(chitHome, /\/docs\/eliza/, 'ChitHome links to Eliza stub');
   assert.match(chitHome, /config\.parent/, 'ChitHome references parent dynamically');
   assert.match(chitHome, /USDC on Base and Solana/, 'ChitHome names USDC rails');
-  assert.match(chitHome, /From \$0\.002 \/ hop/, 'ChitHome surfaces pricing chip');
+  assert.match(chitHome, /Standard receipt \$0\.002 · routing cost \+ 1%/, 'ChitHome surfaces pricing chip');
   assert.match(chitHome, /to="\/pricing"/, 'ChitHome links to pricing page');
   assert.doesNotMatch(chitHome, /POST \/v1\/chat\/completions/, 'ChitHome hero must not lead with POST /v1');
   assert.doesNotMatch(chitHome, /\$0\.01/, 'ChitHome must not lead with $0.01');
