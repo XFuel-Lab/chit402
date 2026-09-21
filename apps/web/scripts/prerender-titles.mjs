@@ -93,6 +93,12 @@ const ROUTE_CONTENT = {
     h1: 'Door traffic',
     lede: 'Public door traffic for Chit402: signed USDC x402 receipts, unique payers, and protocol fees. Counts only from GET /stats/door — not a chain explorer or vanity scoreboard.',
   },
+  '/pricing': {
+    title: 'Pricing — from $0.002 USDC per hop | Chit402',
+    h1: 'Pay for a collected hop.',
+    lede:
+      'Cost-plus, quoted, receipted on POST /v1/chat/completions at api.chit402.com. Hop floor $0.002 USDC (amount 2000); provider hub price and network fees are separate. USDC on Base and Solana; signed receipt and verify_url included on every hop.',
+  },
   '/book': {
     title: 'Principal book — spend dashboard | Chit',
     h1: 'Who paid which call — spend ledger for your agents.',

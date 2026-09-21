@@ -43,6 +43,11 @@ export default function ChitHome() {
                 export, policy, and evidence-pack. After you see the row, the possession book keeps
                 last-N spend for the principal who funds the agent.
               </p>
+              <p style={styles.pricingChip}>
+                <Link to="/pricing" style={styles.pricingChipLink}>
+                  From $0.002 / hop · cost-plus · receipt included
+                </Link>
+              </p>
               <div style={styles.heroCta}>
                 <Link to="/book" className="btn btn-primary">
                   Open the book
@@ -199,8 +204,22 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '1rem',
     color: '#8a8a9a',
     maxWidth: '36rem',
-    marginBottom: '1.5rem',
+    marginBottom: '1rem',
     lineHeight: 1.7,
+  },
+  pricingChip: {
+    marginBottom: '1.25rem',
+    fontSize: '0.92rem',
+  },
+  pricingChipLink: {
+    display: 'inline-block',
+    padding: '0.35rem 0.75rem',
+    borderRadius: '999px',
+    border: '1px solid rgba(0,212,255,0.35)',
+    background: 'rgba(0,212,255,0.06)',
+    color: '#a5f3fc',
+    textDecoration: 'none',
+    fontWeight: 600,
   },
   heroCta: {
     display: 'flex',
