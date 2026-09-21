@@ -42,8 +42,8 @@ settlement proof. Reasoning tokens are not added on top of `completion_tokens`,
 because providers already fold them in. Pricing uses the **resolved** model, not the
 requested alias.
 
-The signed receipt proves the 10%: `provider_cogs.actual`, `payment.platform_fee_bps`
-(1000), and `payment.protocol_fee_bps` (50, ADR 0001 split of gross) are all in the
+The signed receipt proves the cost-plus fee: `provider_cogs.actual`, `payment.platform_fee_bps`
+(live default **100** since 2026-09-21; was 1000), and `payment.protocol_fee_bps` (50, ADR 0001 split of gross) are all in the
 HMAC payload. A buyer recomputes `max(floor, cogs × 1.10)` and matches `gross_amount`.
 When payment lands on the next request, `payment.ref` is written onto the **owed**
 task, not the new one.

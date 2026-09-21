@@ -43,9 +43,9 @@ const PER_MILLION = 1_000_000;
 export const DEFAULT_FLOOR_UNITS = 2_000;
 
 /**
- * Ingest stamp fee: $0.0001 (100 atomic USDC). A nominal write fee for
- * possession-gated book ingest, debited from prepaid budget via HMAC — NOT
- * an on-chain exact settle (that would cost more than it collects).
+ * Ingest stamp fee: ~$0.0001–0.0002 volume stamp (100 atomic USDC default).
+ * A nominal write fee for possession-gated book ingest, debited from prepaid
+ * budget via HMAC — NOT an on-chain exact settle (that would cost more than it collects).
  */
 export const STAMP_FEE_UNITS = 100;
 
@@ -273,8 +273,8 @@ export function quoteUsage(usage = {}, model = null, cfg = {}) {
   };
 }
 
-/** Platform fee on measured provider cost, in basis points. 1000 = 10%. */
-export const DEFAULT_PLATFORM_FEE_BPS = 1000;
+/** Platform fee on measured provider cost, in basis points. 100 = 1%. */
+export const DEFAULT_PLATFORM_FEE_BPS = 100;
 
 /**
  * Is cost-plus pricing on? Off unless explicitly enabled.
@@ -310,21 +310,21 @@ export function platformFeeBps(cfg = {}) {
 }
 
 /**
- * Flat charge for an opt-in Tier-2 SP1 settlement proof. $0.08.
+ * Flat charge for an opt-in Tier-2 SP1 settlement proof. $0.10.
  *
  * Flat because the cost is flat: measured 2026-08-14, a Succinct request costs a
  * fixed 0.341064 PROVE (≈$0.050) whose *variable* component is $8.6 × 10⁻¹² — the
  * circuit is byte-identical whether the job was $0.01 or $1.00, so a percentage
  * would undercharge small jobs and overcharge large ones for the same work.
  *
- * $0.08 is 1.6x measured cost. The headroom is not margin greed, it is FX: proof
+ * $0.10 is 2x measured cost. The headroom is not margin greed, it is FX: proof
  * cost is denominated in PROVE, which sits at its all-time low, and this price
  * breaks even up to roughly PROVE $0.235. Above that it needs revisiting.
  *
  * It cannot be amortised down yet. AI-task proofs are unbatchable until Guest v2
  * (see docs/KNOWN_ISSUES.md), so every proof is one full-price request.
  */
-export const DEFAULT_TIER2_PROOF_UNITS = 80_000;
+export const DEFAULT_TIER2_PROOF_UNITS = 100_000;
 
 /** Flat Tier-2 surcharge in base units. `0n` gives proofs away. */
 export function tier2ProofUnits(cfg = {}) {
@@ -369,7 +369,7 @@ function toBaseUnits(v) {
  * list. No competitor attests COGS, so none can offer that.
  *
  * The floor still applies, for the same reason it does everywhere else: a
- * settlement costs a facilitator fee, so 10% of a tenth of a cent nets negative.
+ * settlement costs a facilitator fee, so 1% of a tenth of a cent nets negative.
  * On small calls the floor *is* the price and the percentage never binds.
  *
  * @param {bigint|number|string} cogsBaseUnits measured or estimated provider
@@ -420,7 +420,7 @@ export function quoteFromCogs(cogsBaseUnits, cfg = {}) {
  * Cost-plus and the Tier-2 thresholds are only safe together. `VI_TIER2_MIN_USDC`
  * defaults to 10000 — the same value as the price floor — so on the settled-amount
  * basis essentially every paid call sits at the settlement floor. Combined with a
- * 10% fee that is $0.0094 collected against a $0.050 proof: a loss on every call,
+ * 1% fee that is $0.00094 collected against a $0.050 proof: a loss on every call,
  * from two settings that each look reasonable alone.
  *
  * Called once at startup. Warns rather than throws, because refusing to boot over
@@ -529,7 +529,7 @@ export function publishedPrice(modelId, providerRate, cfg = {}) {
       }
       : {}),
     note: `Provider cost plus ${bps / 100}%. The receipt signs \`provider_cogs.actual\` and `
-      + 'the platform fee, so a buyer can recompute `max(floor, cogs × 1.10)` against gross. '
+      + 'the platform fee, so a buyer can recompute `max(floor, cogs + fee)` against gross. '
       + 'Under rolling settlement that charge is collected on the next request.',
   };
 }
@@ -569,7 +569,7 @@ export function checkPricingConfig(vi = {}) {
 
   const warnings = [];
   const proofCost = 50_000n; // measured, base units
-  const feeOnMedian = 9_400n; // 10% of a median agent call's COGS
+  const feeOnMedian = 940n; // 1% of a median agent call's COGS
 
   const usingCogsGate = String(vi.tier2MinCogs ?? '').trim() !== '';
   const settlementOn = vi.available?.settlement !== false;

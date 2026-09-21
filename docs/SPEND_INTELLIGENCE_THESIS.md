@@ -4,7 +4,7 @@ Internal product thesis. Not a marketing claim until the gates below are cleared
 
 > **Superseded in two places (2026-08-12).** This doc argues for **flat per-model-class pricing** and
 > for **prepaid credits as the budgeting primitive**. Neither survived. Pricing is now
-> **cost-plus** (measured COGS + 10%, `src/pricing.js`, [ADR 0009](./adr/0009-cost-plus-pricing.md)),
+> **cost-plus** (measured COGS + 1% live since 2026-09-21, `src/pricing.js`, [ADR 0009](./adr/0009-cost-plus-pricing.md)),
 > because fixed class prices fail the savings test they were meant to enable. And prepaid credits are ruled out as
 > a primary model in [POSITIONING.md](./POSITIONING.md) — deposit-and-draw sells a promise about
 > supply we do not own, so a provider price shock lands on us rather than repricing the next call.

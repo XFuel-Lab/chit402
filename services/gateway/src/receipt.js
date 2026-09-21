@@ -22,6 +22,7 @@ import {
 } from './session-act.js';
 import { buildFulfillmentEnvelope, OUTPUT_COMMITMENT_STATUS } from './fulfillment-receipt.js';
 import { buildReceiptOgMeta, buildReceiptOgImageUrl } from './receipt-og-meta.js';
+import { tier2ProofUnits } from './pricing.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -1723,7 +1724,7 @@ function proofWhyMissing(receipt) {
   if (pr?.has_proof) return '';
   const cogs = formatUsdc(receipt.provider_cogs?.actual);
   const bits = [
-    'On-chain SP1 proofs are opt-in ($0.08) or automatic above $2.00 of provider cost.',
+    `On-chain SP1 proofs are opt-in ($${(Number(tier2ProofUnits()) / 1_000_000).toFixed(2)}) or automatic above $2.00 of provider cost.`,
     cogs ? `This call cost ${cogs} to serve.` : null,
     'The signed receipt above does not depend on the prover.',
   ].filter(Boolean);
@@ -2012,7 +2013,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
         ? row('Price', '<span class="muted">not charged</span> <span class="muted">unmetered /v1</span>')
         : row('Price', usdcCell(p.gross_amount))}
       ${p.basis ? row('Basis', `${esc(p.basis)}${p.floor_applied ? ' · floor applied' : ''}`) : ''}
-      ${p.platform_fee != null ? row('Platform fee (10%)', usdcCell(p.platform_fee)) : ''}
+      ${p.platform_fee != null ? row(`Platform fee (${esc((p.platform_fee_bps ?? 0) / 100)}%)`, usdcCell(p.platform_fee)) : ''}
       ${row('Protocol fee', `${usdcCell(p.fee_amount)} <span class="muted">(${esc(p.protocol_fee_bps ?? p.fee_bps)} bps)</span>`)}
     </section>
 

@@ -74,6 +74,12 @@ v0 is **gateway-trusted**. Do not market it as trustless privacy.
 - Never forward buyer org metadata in provider request headers
 - Log policy: no prompt bodies in long-term storage by default when Private Spend is on
 
+## Pricing (when shipped as a product line)
+
+Private Spend is **not** a separate live fee cut in gateway pricing today. When billed as a named mode
+(alongside the 1% cost-plus door), the intended surcharge is **~1% on provider COGS** — same shape as
+the public desk fee, not a new meter invented in code until the product is wired end-to-end.
+
 ## Decision
 
 Ship Private Spend as a **named product mode**, not a blog footnote. It differentiates XFuel from OpenRouter-class routers and complements settlement proofs without waiting on Tier-3 zkLLM.

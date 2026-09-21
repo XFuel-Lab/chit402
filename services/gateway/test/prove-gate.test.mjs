@@ -149,7 +149,7 @@ test('/health does not claim a proof for every settled task', async () => {
 
 test('/health publishes the Tier-2 gate so a partner can see why no proof appeared', async () => {
   await refreshProverProbe(prover(true));
-  const tier2 = { basis: 'provider_cogs', min_cogs_usd: 2, min_amount_usd: 0.01, opt_in_price_usd: 0.08 };
+  const tier2 = { basis: 'provider_cogs', min_cogs_usd: 2, min_amount_usd: 0.01, opt_in_price_usd: 0.1 };
   assert.deepEqual(proofAvailability(true, { tier2 }).tier2, tier2);
   assert.equal(proofAvailability(true).tier2, undefined, 'omitted when not supplied');
 });

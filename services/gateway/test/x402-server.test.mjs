@@ -473,7 +473,7 @@ test('an opt-in proof is charged for at quote time', async () => {
 
   // A requested tier raises the floor past tier2MinCogs, so without this an
   // opt-in proof is a fixed ~$0.050 cost against a few cents of fee.
-  assert.equal(BigInt(proved) - BigInt(plain), 80_000n, 'the flat $0.08 proof price');
+  assert.equal(BigInt(proved) - BigInt(plain), 100_000n, 'the flat $0.10 proof price');
 
   // `signed` is not a proof and must not be charged as one.
   const signed = await withCostPlus(true, () =>
@@ -513,14 +513,14 @@ test('a cost-plus quote publishes a breakdown that rebuilds the price', async ()
     BigInt(q.provider_cogs) + BigInt(q.platform_fee) + BigInt(q.tier2_proof),
     BigInt(q.amount),
   );
-  assert.equal(BigInt(q.platform_fee), (BigInt(q.provider_cogs) * 1000n + 9_999n) / 10_000n);
+  assert.equal(BigInt(q.platform_fee), (BigInt(q.provider_cogs) * 100n + 9_999n) / 10_000n);
 
   // And the rate we publish is the provider's, not the rate card's $3.00/$9.00.
   assert.deepEqual(q.rate, { in: 1_400_000, out: 4_400_000 });
   assert.equal(q.priced_model, 'akash/zai-org/GLM-5.2');
 });
 
-test('TEE / spot-check / zk-full do not add the $0.08 settlement-proof surcharge', async () => {
+test('TEE / spot-check / zk-full do not add the $0.10 settlement-proof surcharge', async () => {
   await primeCatalog();
   const { priceUSDCResolved, wantsSettlementProof } = await import('../src/x402-server.js');
   const cfg = { usdcPriceDefault: '2000', usdcPrices: {} };

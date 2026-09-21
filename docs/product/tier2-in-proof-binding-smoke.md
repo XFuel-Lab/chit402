@@ -34,7 +34,7 @@ Rollback: unset `SP1_PUBLIC_VALUES_V2`; v1 layout + existing vKey keep working.
 Public specimen shape (no live Tier-2 proof required):  
 `GET https://api.chit402.com/public/specimens/tier2-in-proof-binding.json`
 
-Live path (opt-in Tier-2 + $0.08 proof line when cost-plus is on):
+Live path (opt-in Tier-2 + $0.10 proof line when cost-plus is on):
 
 ```bash
 export CHIT402_BASE_URL=https://api.chit402.com

@@ -197,12 +197,12 @@ test('cost-plus is off unless explicitly enabled', () => {
   }
 });
 
-test('a median agent call prices at COGS plus 10%', () => {
+test('a median agent call prices at COGS plus 1%', () => {
   const q = quoteFromCogs(MEDIAN_AGENT_COGS);
   assert.equal(q.basis, 'cost_plus');
   assert.equal(q.provider_cogs, '94000');
-  assert.equal(q.platform_fee, '9400');
-  assert.equal(q.amount, '103400');
+  assert.equal(q.platform_fee, '940');
+  assert.equal(q.amount, '94940');
   assert.equal(q.floor_applied, false);
 });
 
@@ -231,11 +231,11 @@ test('the charge is cost-proportional, so no per-model row is needed', () => {
 });
 
 test('the fee rounds up, so we never absorb the rounding', () => {
-  // 105 base units at 10% is 10.5 — truncating would hand back half a unit on
+  // 105 base units at 1% is 1.05 — truncating would hand back fractional units on
   // every call, which at floor-adjacent sizes is most of the margin.
   const q = quoteFromCogs(105n, { usdcFloor: 0 });
-  assert.equal(q.platform_fee, '11');
-  assert.equal(q.amount, '116');
+  assert.equal(q.platform_fee, '2');
+  assert.equal(q.amount, '107');
 });
 
 test('the fee rate is configurable without touching the floor', () => {
@@ -281,8 +281,8 @@ test('an opt-in Tier-2 proof is a flat charge on top, above the floor', () => {
 
 test('a proof is only charged when it was asked for', () => {
   assert.equal(quoteFromCogs(MEDIAN_AGENT_COGS).tier2_proof, '0');
-  assert.equal(quoteFromCogs(MEDIAN_AGENT_COGS).amount, '103400');
-  assert.equal(quoteFromCogs(MEDIAN_AGENT_COGS, { tier2: true }).amount, '183400');
+  assert.equal(quoteFromCogs(MEDIAN_AGENT_COGS).amount, '94940');
+  assert.equal(quoteFromCogs(MEDIAN_AGENT_COGS, { tier2: true }).amount, '194940');
 });
 
 test('the proof price covers its measured cost', () => {
@@ -328,7 +328,7 @@ test('the config check stays quiet while cost-plus is off', () => {
 
 test('cost-plus is a large price cut against the rate card it replaces', () => {
   // The GLM-5.2 row charges $0.195 for the same call cost-plus prices at
-  // $0.1034 — the competitive argument for the change, pinned so a rate-card
+  // $0.09494 — the competitive argument for the change, pinned so a rate-card
   // edit cannot quietly undo it.
   const card = Number(quoteTask({ model_id: 'zai-org/GLM-5.2', messages: promptOf(20_000), max_tokens: 15_000 }).amount);
   const costPlus = Number(quoteFromCogs(MEDIAN_AGENT_COGS).amount);
@@ -354,14 +354,14 @@ test('cost-plus publishes the provider rate and our price, so the fee is checkab
   assert.equal(p.provider_cost_per_million.output, 4.4);
   // A buyer must be able to multiply the published cost by the published fee
   // and land exactly on the published price.
-  assert.equal(p.price_per_million.input, 1.54);
-  assert.equal(p.price_per_million.output, 4.84);
+  assert.equal(p.price_per_million.input, 1.414);
+  assert.equal(p.price_per_million.output, 4.444);
 });
 
 test('a published cached-read rate carries the same markup, and an absent one is not invented', () => {
   const withCache = publishedPrice('akash/zai-org/GLM-5.2', GLM_RATE, { costPlus: true });
   assert.equal(withCache.provider_cost_per_million.cached_input, 0.26);
-  assert.equal(withCache.price_per_million.cached_input, 0.286);
+  assert.equal(withCache.price_per_million.cached_input, 0.2626);
 
   // Theta publishes no cached-read rate on any service. Absent must not read as free.
   const noCache = publishedPrice('theta/glm_5_2', { ...GLM_RATE, cachedInput: null }, { costPlus: true });
@@ -378,7 +378,7 @@ test('a per-artefact model publishes a marked-up per-request price, not just the
   }, { costPlus: true });
 
   assert.equal(p.provider_per_request_usd, 0.01);
-  assert.equal(p.price_per_request_usd, 0.011);
+  assert.equal(p.price_per_request_usd, 0.0101);
 });
 
 test('cost-plus admits it cannot quote a model the provider prices nowhere', () => {
