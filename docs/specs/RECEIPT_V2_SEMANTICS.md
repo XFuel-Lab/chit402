@@ -118,7 +118,7 @@ When `proof.has_proof === true` and `proof.nullifier` is present:
 | **Tier-2: Settlement** | `settlement` | Payment binding + output hash anchored on-chain via SP1 | Check nullifier on-chain |
 | **Tier-3: Inference** | `inference` | TEE attestation or ZK proof of correct model execution | Attestation / ZK verify |
 
-Most receipts are Tier-1 (HMAC) by default. Tier-2 SP1 proofs are opt-in ($0.08) or automatic above $2.00 COGS.
+Most receipts are Tier-1 (HMAC) by default. Tier-2 SP1 proofs are opt-in ($0.10) or automatic above $2.00 COGS.
 
 ---
 

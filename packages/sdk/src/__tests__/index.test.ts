@@ -288,7 +288,7 @@ describe('XFuelClient', () => {
   describe('quoteTask', () => {
     it('POSTs /task-quote with the request shape the gateway actually prices', async () => {
       mockPost.mockResolvedValueOnce({
-        data: { recommended: 'usdc', default_rail: 'usdc', rails: { usdc: { amount: '103400' } } },
+        data: { recommended: 'usdc', default_rail: 'usdc', rails: { usdc: { amount: '94940' } } },
       });
       const client = makeClient();
       const messages = [{ role: 'user' as const, content: 'hi' }];
@@ -740,8 +740,8 @@ describe('ECDSA Receipt Verification', () => {
         net_amount: '99500',
         fee_amount: '500',
         protocol_fee_bps: 50,
-        platform_fee: '9400',
-        platform_fee_bps: 1000,
+        platform_fee: '940',
+        platform_fee_bps: 100,
       },
       provider_cogs: { actual: '85000' },
       route: {
@@ -920,7 +920,7 @@ describe('ECDSA Receipt Verification', () => {
     it('produces stable JSON array of signed fields', () => {
       const receipt = {
         task_id: 'test-1',
-        payment: { rail: 'usdc', ref: 'base:0x1', gross_amount: '100', net_amount: '90', fee_amount: '10', protocol_fee_bps: 50, platform_fee: '5', platform_fee_bps: 1000 },
+        payment: { rail: 'usdc', ref: 'base:0x1', gross_amount: '100', net_amount: '90', fee_amount: '10', protocol_fee_bps: 50, platform_fee: '5', platform_fee_bps: 100 },
         provider_cogs: { actual: '80' },
         route: { model: 'm', model_commitment: { commitment: '0xc' }, provider: 'p' },
         output: { hash: '0xh' },
@@ -932,7 +932,7 @@ describe('ECDSA Receipt Verification', () => {
 
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed).toEqual([
-        'test-1', 'usdc', 'base:0x1', '100', '90', '10', 50, '5', 1000, '80', 'm', '0xc', 'p', '0xh', '0xb',
+        'test-1', 'usdc', 'base:0x1', '100', '90', '10', 50, '5', 100, '80', 'm', '0xc', 'p', '0xh', '0xb',
       ]);
     });
 

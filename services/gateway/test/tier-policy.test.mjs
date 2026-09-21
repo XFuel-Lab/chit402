@@ -71,7 +71,7 @@ test('COGS thresholds take precedence over amount thresholds when both apply', (
   // amount basis it earns a settlement proof that costs 5x the fee it collected.
   // On COGS it does not, which is the whole point of the re-basing.
   const p = policy({ tier2MinCogs: TIER2_MIN_COGS });
-  const r = selectTier({ intent: { amount: '103400' }, cogs: '94000' }, p);
+  const r = selectTier({ intent: { amount: '94940' }, cogs: '94000' }, p);
   assert.equal(r.tier, 'signed');
   assert.match(r.reason, /provider cogs/);
 });
@@ -88,7 +88,7 @@ test('a price cut cannot downgrade assurance once thresholds are COGS-based', ()
   // cannot, because COGS did not change.
   const p = policy({ tier2MinCogs: '90000' });
   const card = selectTier({ intent: { amount: '195000' }, cogs: '94000' }, p);
-  const costPlus = selectTier({ intent: { amount: '103400' }, cogs: '94000' }, p);
+  const costPlus = selectTier({ intent: { amount: '94940' }, cogs: '94000' }, p);
   assert.equal(card.tier, costPlus.tier);
 });
 

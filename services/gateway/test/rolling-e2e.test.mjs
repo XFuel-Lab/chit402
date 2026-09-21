@@ -186,7 +186,7 @@ test('second 402 equals measured cost-plus, not the rate card', async () => {
 
   const recomputed = quoteFromCogs(owed.provider_cogs.actual);
   assert.equal(recomputed.amount, owedView.payment.gross_amount);
-  assert.equal(owedView.payment.platform_fee_bps, 1000);
+  assert.equal(owedView.payment.platform_fee_bps, 100);
   assert.equal(owed.issuer_signature.payload_version, 7);
 });
 

@@ -730,7 +730,7 @@ one pricing model while the challenge charges another.
 
 The tests that missed it asserted that `quoteFromCogs` computed the right number. The tests that
 replace them assert what a caller is quoted, including that the flag changes it at all, that an
-opt-in proof adds its $0.08, and that the published breakdown adds back up to the amount charged.
+opt-in proof adds its $0.10, and that the published breakdown adds back up to the amount charged.
 The general lesson: a pricing test that never crosses the surface a buyer touches proves the
 arithmetic, not the price.
 

@@ -6,7 +6,7 @@ import { getApiV1 } from '../apiHost';
 const PRICING_SEO = {
   title: 'Pricing — from $0.002 USDC per hop | Chit402',
   description:
-    'Cost-plus, quoted, receipted on POST /v1/chat/completions. Hop floor $0.002 USDC; provider hub price is separate. USDC on Base and Solana.',
+    'Cost-plus 1% on provider COGS, quoted, receipted on POST /v1/chat/completions. Hop floor $0.002 USDC; volume stamp ~$0.0001. USDC on Base and Solana.',
 };
 
 export default function Pricing() {
@@ -20,8 +20,8 @@ export default function Pricing() {
           <span className="docs-kicker">Pricing</span>
           <h1>Pay for a collected hop.</h1>
           <p>
-            The Chit floor and markup are separate from hub and provider price. Start without a
-            subscription — every call is cost-plus, quoted, receipted — USDC on Base and Solana.
+            Chit is the book — not a router shop. Every call is cost-plus on provider COGS, quoted,
+            receipted — USDC on Base and Solana.
           </p>
         </header>
 
@@ -33,9 +33,16 @@ export default function Pricing() {
           <p style={styles.clarityBody}>
             One hop covers the treasury desk: HTTP 402 quote, USDC settle on Base or Solana, and a
             signed receipt with <code>verify_url</code> you can verify offline. Provider COGS is
-            billed at <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>cost-plus 1000 bps (10%)</strong>
-            {' '}— approximately <code>max(provider × 1.10, hop floor)</code>. Receipts are included;
-            we are not a cheap-GPU shop.
+            billed at{' '}
+            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>cost-plus 100 bps (1%)</strong>
+            {' '}— approximately <code>max(provider × 1.01, hop floor)</code>. The floor covers
+            facilitator settle; the 1% is the door on measured hub cost. Receipts are included.
+          </p>
+          <p style={styles.clarityBody}>
+            Possession-gated book ingest uses a volume stamp of about{' '}
+            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>$0.0001–0.0002</strong> debited
+            from prepaid budget (not an on-chain exact settle). Optional Tier-2 SP1 settlement proof:{' '}
+            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>+$0.10</strong> flat, opt-in.
           </p>
           <p style={styles.clarityBody}>
             Hub, model, and upstream inference USDC are separate from this floor. Network fees on
@@ -105,8 +112,8 @@ export default function Pricing() {
         </div>
 
         <p style={styles.footnote}>
-          Legacy measured-task wire (<code>/task-request</code> on the XFuel gateway) uses the same
-          cost-plus fee basis on a different path — prefer <code>{apiV1}</code> for new installs.
+          Legacy measured-task wire (<code>/task-request</code>) uses the same cost-plus fee basis on
+          a different path — prefer <code>{apiV1}</code> for new installs.
         </p>
       </div>
     </div>

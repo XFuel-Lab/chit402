@@ -2,7 +2,7 @@
 
 As-deployed source of truth. When in-repo config disagrees with this file, this file wins.
 
-Last updated: 2026-08-20
+Last updated: 2026-09-21
 
 > **Live as of 2026-08-20.** Public host is `https://api.xfuel.app` (same Lightsail box as the
 > `api-testnet` alias). Site `/v1` explainer + catch-all shipped. npm defaults catch up in
@@ -11,9 +11,10 @@ Last updated: 2026-08-20
 > Theta EdgeCloud is unset (`THETA_EDGE_URL` missing); AkashML is the live inference path. **SP1
 > prover is running.**
 
-> **Pricing: cost-plus, live since 2026-08-15.** `X402_COST_PLUS` is on with
-> `X402_PLATFORM_FEE_BPS=1000` and `VI_TIER2_MIN_COGS=2000000`, so a median agent call quotes
-> **$0.1059** rather than the $0.2062 the rate card charged. `/.well-known/x402` publishes
+> **Pricing: cost-plus, live since 2026-08-15; fee cut 2026-09-21.** `X402_COST_PLUS` is on with
+> `X402_PLATFORM_FEE_BPS=100` (1% on provider COGS) and `VI_TIER2_MIN_COGS=2000000`. Hop floor
+> **$0.002** (`DEFAULT_FLOOR_UNITS=2000`) unchanged. Tier-2 opt-in **$0.10** (`X402_TIER2_PROOF_UNITS=100000`).
+> `/.well-known/x402` publishes
 > `basis: cost_plus`, and the verifier confirms the advertised basis is the one `/task-quote`
 > actually uses — that check exists because the flag was enabled once earlier the same day against
 > a build where it moved only the advertised price, and the gateway published $1.54/$4.84 per
@@ -25,7 +26,7 @@ Last updated: 2026-08-20
 - Settlement home: Base (USDC via x402) — [ADR 0002](./adr/0002-base-settlement-home.md)
 - Tier 1 signed receipt: live (default)
 - Tier 2 SP1 settlement proof: **running** (2026-08-15). Gated at `VI_TIER2_MIN_COGS=2000000` — $2.00 of provider COGS, or an explicit `proof_tier` — because a proof costs a fixed ~$0.050 per Succinct request and AI-task proofs cannot be batched until guest v2
-- Pricing basis: **cost-plus** — measured provider COGS + 10% (`X402_COST_PLUS` on, `X402_PLATFORM_FEE_BPS=1000`), Tier-2 opt-in at a flat $0.08, $0.01 floor. [ADR 0009](./adr/0009-cost-plus-pricing.md). Live values: `GET /.well-known/x402` → `pricing`
+- Pricing basis: **cost-plus** — measured provider COGS + 1% (`X402_COST_PLUS` on, `X402_PLATFORM_FEE_BPS=100`), Tier-2 opt-in at a flat $0.10, **$0.002 hop floor**. Book ingest stamp ~$0.0001 (budget debit, not exact settle). [ADR 0009](./adr/0009-cost-plus-pricing.md). Live values: `GET /.well-known/x402` → `pricing`
 - Rolling settlement: **on** (`X402_ROLLING_SETTLEMENT=true`) — `/task-request` charges the previous call's measured bill. `/v1` stays free (ADR 0006). You pay for the last call; `/task-quote` is a forecast. [ADR 0008](./adr/0008-rolling-settlement.md). Confirm at `GET /health` → `rolling_settlement.enabled`
 - Tier 3 Verified Inference (zkLLM): active build — RAM-bound, CPU-only
 - Payment binding: **guest v5.1 shipped in repo** — live `in_proof` after prover redeploy + `SP1_PUBLIC_VALUES_V2=true` + gateway `X402_PROOF_BINDING=true` (see [tier2-in-proof-binding-smoke.md](./product/tier2-in-proof-binding-smoke.md))

@@ -13,7 +13,7 @@
  * docs/DESIGN_PARTNER_ONBOARDING.md. Rolling settlement means the *first*
  * paid call from a new payer has no settlement ref (the bill lands on the next
  * request). A short prompt will not mint an on-chain proof unless you pass
- * `proof_tier: 'settlement'` (opt-in $0.08); automatic proofs need ≥ $2.00 of
+ * `proof_tier: 'settlement'` (opt-in $0.10); automatic proofs need ≥ $2.00 of
  * provider cost.
  *
  * ─── Run it ──────────────────────────────────────────────────────────────────

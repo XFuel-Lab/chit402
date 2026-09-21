@@ -648,7 +648,7 @@ export async function ingestForeignX402(body = {}, {
   }
 
   // ─── Stamp Fee Debit ───────────────────────────────────────────────────────
-  // Debit $0.0001 (STAMP_FEE_UNITS) from prepaid budget. This is a book-write
+  // Debit ~$0.0001 volume stamp (STAMP_FEE_UNITS=100; not an exact on-chain settle) from prepaid budget. This is a book-write
   // fee via HMAC/prepaid, NOT an on-chain exact settle (which would cost more
   // than the fee itself). If budget is set and insufficient, reject.
   const stampFee = BigInt(STAMP_FEE_UNITS); // 100 atomic = $0.0001

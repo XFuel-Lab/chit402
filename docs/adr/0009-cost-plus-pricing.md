@@ -1,6 +1,10 @@
 # ADR 0009 — Cost-Plus Pricing, and What It Does Not Cover
 
 Status: **Accepted — live on `api-testnet.xfuel.app` since 2026-08-15.** Date: 2026-08-14.
+
+**Amendment 2026-09-21 (signed):** Live platform fee **100 bps (1%)**, default `X402_PLATFORM_FEE_BPS=100`.
+Tier-2 opt-in flat **$0.10** (`X402_TIER2_PROOF_UNITS=100000`). Hop floor **$0.002** unchanged.
+Historical sections below still describe the original 10% / $0.08 decision context.
 `X402_COST_PLUS` still exists and still defaults off, so the rate card remains one restart away.
 Related: [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [ADR 0007](./0007-spot-check-assurance.md), [ADR 0008](./0008-rolling-settlement.md), [KNOWN_ISSUES.md](../KNOWN_ISSUES.md), [VERIFIED_INFERENCE_TIERS.md](../VERIFIED_INFERENCE_TIERS.md).
 

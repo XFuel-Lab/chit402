@@ -367,7 +367,7 @@ test('buildReceipt: rolling first call is pending, not a legacy rail, and carrie
     meta: {
       chain: 'base',
       rolling: { fronted: true, recorded: true },
-      pricing: { basis: 'cost_plus', floor_applied: true, platform_fee: '2', fee_bps: 1000 },
+      pricing: { basis: 'cost_plus', floor_applied: true, platform_fee: '2', fee_bps: 100 },
       providerCogs: {
         provider: 'akash-network',
         float_id: 'akash-network',
@@ -465,7 +465,7 @@ test('signed cost-plus fields recompute to gross', async () => {
   const v = mergeReceiptView(r);
 
   assert.equal(v.payment.protocol_fee_bps, 50);
-  assert.equal(v.payment.platform_fee_bps, 1000);
+  assert.equal(v.payment.platform_fee_bps, 100);
   assert.equal(v.payment.platform_fee, quote.platform_fee);
   assert.equal(r.provider_cogs.actual, '10000');
 

@@ -97,7 +97,7 @@ const ROUTE_CONTENT = {
     title: 'Pricing — from $0.002 USDC per hop | Chit402',
     h1: 'Pay for a collected hop.',
     lede:
-      'Cost-plus, quoted, receipted on POST /v1/chat/completions at api.chit402.com. Hop floor $0.002 USDC (amount 2000); provider hub price and network fees are separate. USDC on Base and Solana; signed receipt and verify_url included on every hop.',
+      'Cost-plus 1% on provider COGS, quoted, receipted on POST /v1/chat/completions at api.chit402.com. Hop floor $0.002 USDC (amount 2000); volume stamp ~$0.0001; Tier-2 proof +$0.10 opt-in. USDC on Base and Solana.',
   },
   '/book': {
     title: 'Principal book — spend dashboard | Chit',

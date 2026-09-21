@@ -105,9 +105,9 @@ https://api.xfuel.app/receipt/<task_id>?format=auditor
 The chat-completions path is demo traffic. USDC settlement is the product, on `POST /task-request`, once the receipt is useful enough to put a budget behind.
 
 - Rail: USDC via x402 on **Base mainnet**
-- Price: measured provider cost + 10%, itemised on the receipt
+- Price: measured provider cost + 1%, itemised on the receipt
 - You pay for the **last** call. The first call from a new payer is served unpaid; the next request collects the measured bill.
-- Optional on-chain SP1 settlement proof: **+$0.08**, opt-in (`proof_tier: "settlement"`)
+- Optional on-chain SP1 settlement proof: **+$0.10**, opt-in (`proof_tier: "settlement"`)
 
 ```js
 import { XFuelClient } from 'xfuel-sdk';
