@@ -16,6 +16,7 @@ const chitNavLinks = [
   { to: '/register', label: 'Register' },
   { to: '/activity', label: 'Activity' },
   { to: '/docs', label: 'Docs' },
+  { to: '/pricing', label: 'Pricing' },
   { to: '/trust', label: 'Trust' },
 ];
 
@@ -118,7 +119,10 @@ export default function Layout() {
             <a href={config.githubUrl} target="_blank" rel="noreferrer">GitHub</a>
             <a href={`https://twitter.com/${config.twitterHandle.replace('@', '')}`} target="_blank" rel="noreferrer">Twitter</a>
             {isChit ? (
-              <NavLink to="/activity">Activity</NavLink>
+              <>
+                <NavLink to="/pricing">Pricing</NavLink>
+                <NavLink to="/activity">Activity</NavLink>
+              </>
             ) : (
               <>
                 <NavLink to="/docs">Docs</NavLink>
