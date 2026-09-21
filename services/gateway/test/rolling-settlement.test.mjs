@@ -140,16 +140,16 @@ test('a served call becomes the next request\'s charge, and settling clears it',
     model: 'zai-org/GLM-5.2',
     taskId: 'task-1',
   });
-  assert.equal(pending.amount, '11000');
+  assert.equal(pending.amount, '10100');
   assert.equal(pending.provider_cogs, '10000');
   assert.equal(pending.taskId, 'task-1');
 
   const decision = rollingDecision({ payerId: PAYER, hasPayment: false, ceiling: '0' });
   assert.equal(decision.action, 'settle_first');
-  assert.equal(decision.amount, '11000');
+  assert.equal(decision.amount, '10100');
 
   const cleared = markSettled(PAYER);
-  assert.equal(cleared.amount, '11000');
+  assert.equal(cleared.amount, '10100');
   assert.equal(getPending(PAYER), null);
 });
 
@@ -161,7 +161,7 @@ test('recordPending prices with quoteFromCogs, never the rate card', () => {
     {},
   );
   const pending = recordPending(PAYER, { cogs: 10_000n, usage: { prompt_tokens: 1000, completion_tokens: 1000 } });
-  assert.equal(pending.amount, '11000');
+  assert.equal(pending.amount, '10100');
   assert.notEqual(pending.amount, card.amount);
 });
 
@@ -169,33 +169,33 @@ test('a failed settlement keeps the debt so the next request is challenged again
   process.env.X402_USDC_FLOOR = '0';
   recordPending(PAYER, { cogs: 10_000n });
   const still = markSettleFailed(PAYER, 'insufficient_funds');
-  assert.equal(still.amount, '11000');
+  assert.equal(still.amount, '10100');
   assert.equal(still.attempts, 1);
-  assert.equal(getPending(PAYER).amount, '11000');
+  assert.equal(getPending(PAYER).amount, '10100');
 });
 
 test('two pending charges for one payer keeps the larger rather than losing the debt', () => {
   process.env.X402_USDC_FLOOR = '0';
   recordPending(PAYER, { cogs: 10_000n });
   recordPending(PAYER, { cogs: 1n });
-  assert.equal(getPending(PAYER).amount, '11000');
+  assert.equal(getPending(PAYER).amount, '10100');
 });
 
 test('debts are tracked per payer, not globally', () => {
   process.env.X402_USDC_FLOOR = '0';
   recordPending('key:a', { cogs: 3_000n });
   assert.equal(getPending('key:b'), null);
-  assert.equal(getPending('key:a').amount, '3300');
+  assert.equal(getPending('key:a').amount, '3030');
 });
 
 test('applyPaymentToOwedTask stamps the settlement on the work that was owed', () => {
-  const task = { taskId: 'owed-1', intent: { amount: '11000' }, meta: { rolling: { fronted: true } } };
-  applyPaymentToOwedTask(task, { paymentRef: 'base:0xabc', settledAmount: '11000', protocolFeeBps: 50 });
+  const task = { taskId: 'owed-1', intent: { amount: '10100' }, meta: { rolling: { fronted: true } } };
+  applyPaymentToOwedTask(task, { paymentRef: 'base:0xabc', settledAmount: '10100', protocolFeeBps: 50 });
   assert.equal(task.intent.paymentRef, 'base:0xabc');
   assert.equal(task.intent.paymentRail, 'usdc');
-  assert.equal(task.intent.amount, '11000');
-  assert.equal(task.feeAmount, '55');
-  assert.equal(task.netAmount, '10945');
+  assert.equal(task.intent.amount, '10100');
+  assert.equal(task.feeAmount, '50');
+  assert.equal(task.netAmount, '10050');
   assert.equal(task.meta.rolling.settled, true);
 });
 
@@ -206,12 +206,12 @@ test('a restart does not forgive an invoice', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xfuel-payers-'));
   configureRollingLedger({ dir, persist: true });
   recordPending(PAYER, { cogs: 10_000n, taskId: 'task-persist' });
-  assert.equal(getPending(PAYER).amount, '11000');
+  assert.equal(getPending(PAYER).amount, '10100');
 
   resetRollingSettlement({ wipePersist: false });
   const revived = getPending(PAYER);
   assert.ok(revived, 'pending charge must survive a restart');
-  assert.equal(revived.amount, '11000');
+  assert.equal(revived.amount, '10100');
   assert.equal(revived.taskId, 'task-persist');
 
   resetRollingSettlement({ wipePersist: true });
@@ -232,7 +232,7 @@ test('status reports uncollected money, which is the number that matters', () =>
   assert.equal(s.enabled, true);
   assert.equal(s.payers_owing, 1);
   assert.equal(s.settled_calls, 1);
-  assert.equal(s.unsettled_usd, '0.011000');
+  assert.equal(s.unsettled_usd, '0.010100');
 });
 
 test('status says so plainly when the feature is off', () => {
