@@ -1117,14 +1117,31 @@ export function privacyOf(task) {
       ? 'content_tee'
       : null);
   if (!mode) return null;
+  const product = task?.meta?.privacyProduct
+    || (task?.meta?.privacyAttest === 'tier2' ? 'private_attest' : null)
+    || (mode === 'vendor_blind' ? 'private_desk' : null);
+  const attest = task?.meta?.privacyAttest
+    || (product === 'private_attest' ? 'tier2' : null);
+  const label = product === 'private_attest'
+    ? 'Private + Attest'
+    : product === 'private_desk'
+      ? 'Private Desk'
+      : null;
   const notes =
     mode === 'vendor_blind'
-      ? 'Buyer paid Chit; provider saw gateway-pooled credentials, not the end-customer identity. Does not encrypt prompts — use a confidential/TEE route for content privacy.'
+      ? (attest === 'tier2'
+        ? 'Private + Attest: vendor-blind routing plus mandatory Tier-2 SP1 settlement proof (payment_binding.in_proof when live). '
+          + 'Third parties can verify spend facts without prompts or org topology. Not prompt-confidential; not trustless ZK for content.'
+        : 'Private Desk: buyer paid Chit; provider saw gateway-pooled credentials, not the end-customer identity. '
+          + 'Tier-1 signed receipt only — gateway-trusted, not trustless. Does not encrypt prompts.')
       : mode === 'content_tee'
         ? 'Routed via a confidential/TEE-class provider tier (attested content path when configured). Settlement privacy is separate — see Private Spend.'
         : 'Privacy mode recorded on task.';
   return {
     mode,
+    product,
+    attest: attest === 'tier2' ? 'tier2' : undefined,
+    label,
     trust: mode === 'content_tee' ? 'tee_provider' : 'gateway',
     notes,
   };
@@ -1842,8 +1859,10 @@ export function renderReceiptHtml(receipt) {
   const privacy = receipt.privacy;
   const privacyBlock = privacy
     ? `<section class="card">
-        <h2>Privacy <span class="scope">${esc(privacy.mode)}</span></h2>
+        <h2>${privacy.label ? esc(privacy.label) : 'Privacy'} <span class="scope">${esc(privacy.mode)}</span></h2>
+        ${privacy.label ? row('Product', esc(privacy.label)) : ''}
         ${row('Mode', esc(privacy.mode))}
+        ${privacy.attest ? row('Attest', esc(privacy.attest)) : ''}
         ${row('Trust', esc(privacy.trust || 'gateway'))}
         <p class="scopebox">${esc(privacy.notes || '')}</p>
         <p class="muted" style="margin:8px 0 0;font-size:12px">Machine-readable: <a href="?format=json">?format=json</a></p>
@@ -1996,7 +2015,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
       </button>
     </div>
 
-    <h1>Task</h1>
+    <h1>${privacy?.label ? esc(privacy.label) : 'Task'}</h1>
     <div class="taskid">${esc(displayTaskId(receipt.task_id))}</div>
 
     <section class="card">
@@ -2014,6 +2033,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
         : row('Price', usdcCell(p.gross_amount))}
       ${p.basis ? row('Basis', `${esc(p.basis)}${p.floor_applied ? ' · floor applied' : ''}`) : ''}
       ${p.platform_fee != null ? row(`Platform fee (${esc((p.platform_fee_bps ?? 0) / 100)}%)`, usdcCell(p.platform_fee)) : ''}
+      ${p.tier2_proof ? row('Tier-2 proof (SP1)', usdcCell(p.tier2_proof)) : ''}
       ${row('Protocol fee', `${usdcCell(p.fee_amount)} <span class="muted">(${esc(p.protocol_fee_bps ?? p.fee_bps)} bps)</span>`)}
     </section>
 

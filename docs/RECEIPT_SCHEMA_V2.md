@@ -56,15 +56,19 @@ Impl: `services/gateway/src/provider-float.js` · ops: [PROVIDER_FLOAT_TREASURY.
 
 ## Privacy (Private Spend v0)
 
-When `PRIVATE_SPEND_ENABLED=true`, receipts may include:
+When Private Desk / Private Spend is active, receipts may include:
 
 ```json
 "privacy": {
   "mode": "vendor_blind",
+  "product": "private_desk",
+  "label": "Private Desk",
   "trust": "gateway",
   "notes": "…"
 }
 ```
+
+Private + Attest adds `"product": "private_attest"`, `"label": "Private + Attest"`, `"attest": "tier2"`, and itemized `payment.tier2_proof` ($0.10). See [ADR 0010](./adr/0010-private-desk-attest.md).
 
 This does **not** mean prompts are encrypted. See [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md).
 
