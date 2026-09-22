@@ -4,7 +4,7 @@ import { getApiV1 } from '../apiHost';
 export default function CloudflareDocs() {
   const apiV1 = getApiV1();
 
-  const directExample = `// Cloudflare Agent / Worker — point OpenAI client at Chit
+  const directExample = `// Cloudflare Agent / Worker — point chat client at Chit /v1 wire
 const res = await fetch('${apiV1}/chat/completions', {
   method: 'POST',
   headers: {
@@ -47,8 +47,8 @@ npm install chit402-sidecar`;
         <div className="docs-panel">
           <h2>Path A — Chit baseURL (recommended)</h2>
           <p>
-            Swap your OpenAI-compatible client to Chit. Pay USDC on Base via x402. Hold the receipt
-            — same beachhead as every other door.
+            Swap your Worker&apos;s compatible <code>baseURL</code> to Chit. Pay USDC on Base via
+            x402. Hold the receipt — same beachhead as every other install wire.
           </p>
           <pre className="docs-code">
             <code>{directExample}</code>

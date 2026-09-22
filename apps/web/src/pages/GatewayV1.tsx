@@ -41,8 +41,9 @@ export default function GatewayV1() {
           <span className="docs-kicker">/v1</span>
           <h1>Bot drop-in. Wallet pays. You hold the book.</h1>
           <p>
-            Exact product: baseURL <a href={apiV1}>{apiV1}</a>.
-            Steal engineers pointing at Agent402 / tx402 / qntx (llm.qntx.fun) by being the named host.
+            The possession book stamps spend from the public chat wire — compatible baseURL{' '}
+            <a href={apiV1}>{apiV1}</a>. Install peers and foreign ingest live on{' '}
+            <Link to="/docs/doors">/docs/doors</Link>.
           </p>
         </header>
 

@@ -13,10 +13,10 @@ Signed receipt is table stakes.
 
 Interview me once about my stack:
 1. What language/framework does your agent use? (Python, TypeScript, Rust, etc.)
-2. Do you use OpenAI SDK, LangChain, or raw HTTP?
+2. Do you use a chat client SDK (LangChain, Vercel AI SDK), or raw HTTP?
 3. Where does your agent run? (local, cloud, CI, etc.)
 
-Then give me the one-liner to point my OpenAI client's baseURL at ${apiHost}/v1.
+Then give me the one-liner to point my compatible chat client baseURL at ${apiHost}/v1.
 
 After that, every job I run should record:
 - agent_id (from POST /v1/agents/register)
@@ -53,7 +53,7 @@ export default function BookBot() {
           <p>
             Paste this prompt into Grok, ChatGPT, or any agent.
             It interviews your stack once, then every job you run records
-            agent / job / $Y / settled y/n by pointing your OpenAI baseURL at{' '}
+            agent / job / $Y / settled y/n by pointing your chat client&apos;s compatible baseURL at{' '}
             <code>{apiV1}</code>.
           </p>
         </header>

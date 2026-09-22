@@ -22,15 +22,15 @@ const chat = await client.chatCompletions({
 console.log(chat.choices[0].message.content);
 console.log(chat.xfuel?.verify_url); // signed receipt after settle`;
 
-const openAiExample = `import OpenAI from 'openai';
+const wireCompatJsExample = `import OpenAI from 'openai';
 
-// Wire-compat install: same paths as OpenAI, but you must satisfy HTTP 402 (x402 USDC).
+// Wire-compat install: familiar /v1 paths — you must satisfy HTTP 402 (x402 USDC).
 const client = new OpenAI({
   baseURL: 'https://api.chit402.com/v1',
-  apiKey: 'unused', // OpenAI SDK requires a string; payment is X-PAYMENT / wallet, not this field
+  apiKey: 'unused', // SDK requires a string; payment is X-PAYMENT / wallet, not this field
 });
 
-// Plain OpenAI SDK cannot pay 402 — use chit402-sdk, Eliza plugin, or x402-fetch.`;
+// This npm client alone cannot pay 402 — use chit402-sdk, Eliza plugin, or x402-fetch.`;
 
 const curlExample = (apiV1: string) => `curl -sS ${apiV1}/chat/completions \\
   -H "Content-Type: application/json" \\
@@ -47,12 +47,13 @@ export default function ChitIn15Lines() {
       <div className="container" style={{ maxWidth: 720 }}>
         <header className="page-header">
           <span className="docs-kicker">Install path</span>
-          <h1>Drop-in door (OpenAI-compatible)</h1>
+          <h1>Chat <code>/v1</code> wire</h1>
           <p>
             <strong>Chit is the possession book</strong> — after USDC settle you hold hub, model,
             amount, and <code>verify_url</code>; register to keep <code>/book</code>. This page is
-            only the wire-compat install: point a chat-completions client at{' '}
-            <code>{apiV1}</code>. Trials are live paid — no public demo key.
+            one install wire: point a chat-completions client at <code>{apiV1}</code> (peers:{' '}
+            <Link to="/docs/doors" style={{ color: '#00d4ff' }}>Eliza, ACP, MCP, frameworks</Link>
+            ). Trials are live paid — no public demo key.
           </p>
         </header>
 
@@ -92,16 +93,17 @@ export default function ChitIn15Lines() {
         </div>
 
         <div className="docs-panel">
-          <h2>OpenAI SDK (shape only)</h2>
+          <h2>Wire-compat JS client (shape only)</h2>
           <p>
-            Swap <code>baseURL</code> to <code>{apiV1}</code> if you already use the OpenAI client
-            — but you still need an x402-capable payer; this SDK alone will stop at 402.
+            Swap <code>baseURL</code> to <code>{apiV1}</code> if you already use a popular{' '}
+            <code>openai</code> npm client — but you still need an x402-capable payer; the client
+            alone will stop at 402.
           </p>
           <pre className="docs-code">
-            <code>{openAiExample}</code>
+            <code>{wireCompatJsExample}</code>
           </pre>
           <p style={styles.note}>
-            <strong>Honest caveat:</strong> the OpenAI SDK may strip unknown response fields. The
+            <strong>Honest caveat:</strong> some wire-compat clients may strip unknown response fields. The
             signed receipt (<code>verify_url</code>, hub, model, amount) lives in{' '}
             <code>x-xfuel-*</code> headers and the <code>xfuel</code> body field. Prefer{' '}
             <code>chit402-sdk</code> for a typed <code>verify_url</code>.

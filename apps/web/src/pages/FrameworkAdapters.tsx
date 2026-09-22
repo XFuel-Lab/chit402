@@ -69,8 +69,8 @@ export default function FrameworkAdapters() {
         <div className="docs-panel">
           <h2>LangChain</h2>
           <p>
-            Factory for <code>ChatOpenAI</code> pointed at Chit. Paid x402 calls
-            return a signed receipt.
+            LangChain helper pointed at Chit&apos;s <code>/v1</code> wire. Paid x402 calls return a
+            signed receipt.
           </p>
           <pre className="docs-code">
             <code>{langchainExample}</code>
@@ -80,9 +80,9 @@ export default function FrameworkAdapters() {
         <div className="docs-panel">
           <h2>Vercel AI SDK</h2>
           <p>
-            <code>createChit()</code> wraps <code>createOpenAI</code> with the Chit baseURL. Use{' '}
-            <code>generateText</code> or any AI SDK helper — extract the receipt from the raw
-            response.
+            <code>createChit()</code> wraps the AI SDK provider with Chit&apos;s compatible{' '}
+            <code>baseURL</code>. Use <code>generateText</code> or any AI SDK helper — extract the
+            receipt from the raw response.
           </p>
           <pre className="docs-code">
             <code>{aiSdkExample}</code>
