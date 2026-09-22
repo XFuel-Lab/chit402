@@ -31,9 +31,6 @@ export default function ChitHome() {
         <div className="container chit-hero-wrap">
           <div className="chit-hero-grid">
             <div className="chit-hero-copy">
-              <div style={styles.heroBadge}>
-                <span className="badge badge-cyan">By {config.parent}</span>
-              </div>
               <h1 style={styles.heroTitle}>Who paid which call — and you still hold it.</h1>
               <p style={styles.heroLead}>
                 Treasury desk and spend ledger for agent teams — not a router dashboard.
@@ -153,8 +150,6 @@ export default function ChitHome() {
       <section style={{ padding: '2rem 0 4rem' }}>
         <div className="container" style={{ maxWidth: 720, textAlign: 'center' }}>
           <p style={{ color: '#8a8a9a', fontSize: '0.95rem' }}>
-            Chit402 is the product. <strong style={{ color: '#f0f0f5' }}>{config.parent}</strong> is the parent.
-            {' '}
             <a
               href={config.githubUrl}
               target="_blank"
@@ -182,12 +177,6 @@ const styles: Record<string, CSSProperties> = {
   hero: {
     padding: '4rem 0 2.5rem',
     background: 'radial-gradient(ellipse at 50% 0%, rgba(0,212,255,0.08) 0%, transparent 60%)',
-  },
-  heroBadge: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.75rem',
-    marginBottom: '1.25rem',
   },
   heroTitle: {
     fontSize: 'clamp(2rem, 4vw, 2.75rem)',

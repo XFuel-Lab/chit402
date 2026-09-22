@@ -141,7 +141,7 @@ export default function IssuerTrust() {
             Verify algorithm (GitHub)
           </a>
           <span style={{ display: 'block', marginTop: '0.5rem' }}>
-            © XFuel Lab — Chit402 product
+            © Chit402
           </span>
         </p>
       </div>

@@ -98,7 +98,7 @@ export default function Layout() {
           <div style={styles.footerBrand}>
             <strong style={{ color: '#f0f0f5' }}>{config.name}</strong>
             <span style={{ color: '#55556a', fontSize: '0.85rem' }}>
-              {isChit ? 'Treasury desk for agent spend. By XFuel Lab.' : 'The book: hub, model, amount. Apache-2.0.'}
+              {isChit ? 'Treasury desk for agent spend.' : 'The book: hub, model, amount. Apache-2.0.'}
             </span>
           </div>
           <div style={styles.footerLinks}>

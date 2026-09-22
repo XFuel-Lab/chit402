@@ -209,7 +209,7 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(chitHome, /api\.chit402\.com\/v1/, 'ChitHome names wire in 90s drop-in');
   assert.match(chitHome, /\/docs\/chit-in-15-lines/, 'ChitHome links to drop-in door page');
   assert.match(chitHome, /\/docs\/eliza/, 'ChitHome links to Eliza stub');
-  assert.match(chitHome, /config\.parent/, 'ChitHome references parent dynamically');
+  assert.doesNotMatch(chitHome, /By XFuel Lab|config\.parent|is the parent/i, 'ChitHome must not show parent naming in chrome');
   assert.match(chitHome, /USDC on Base and Solana/, 'ChitHome names USDC rails');
   assert.match(chitHome, /Standard receipt \$0\.002 · routing cost \+ 1%/, 'ChitHome surfaces pricing chip');
   assert.match(chitHome, /to="\/pricing"/, 'ChitHome links to pricing page');
@@ -276,6 +276,7 @@ test('Layout supports dual branding for Chit and XFuel', () => {
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
   assert.match(layout, /isChitHost/, 'Layout checks for Chit host');
   assert.doesNotMatch(layout, /Chit is the product/, 'Layout must not show global parent banner on Chit');
+  assert.doesNotMatch(layout, /By XFuel Lab/i, 'Layout footer must not show parent byline on Chit');
   assert.match(layout, /config\.name/, 'Layout uses dynamic brand name');
 });
 
