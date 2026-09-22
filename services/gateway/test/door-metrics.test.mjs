@@ -8,6 +8,7 @@ import {
   networkBucketFromPaymentRef,
   doorMetricsAuthResult,
   extractDoorMetricsToken,
+  PUBLIC_DOOR_DEFINITION,
 } from '../src/door-metrics.js';
 
 const NOW = Date.UTC(2026, 8, 20, 12, 0, 0);
@@ -123,7 +124,8 @@ test('computePublicDoorAggregate: 7d/24h counts and unique payers only — no le
   assert.equal(pub.stamped_receipts_7d, 3);
   assert.equal(pub.stamped_receipts_24h, 3);
   assert.equal(pub.unique_payers_7d, 2);
-  assert.equal(typeof pub.definition, 'string');
+  assert.equal(pub.definition, PUBLIC_DOOR_DEFINITION);
+  assert.ok(!pub.definition.includes('openai-gateway'));
   assert.ok(Array.isArray(pub.series_30d), 'series_30d must be an array');
   assert.equal(pub.series_30d.length, 30, 'series_30d is ~30 daily buckets');
   assert.equal(typeof pub.series_30d[0].day, 'string');
