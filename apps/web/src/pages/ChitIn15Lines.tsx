@@ -22,15 +22,16 @@ const chat = await client.chatCompletions({
 console.log(chat.choices[0].message.content);
 console.log(chat.xfuel?.verify_url); // signed receipt after settle`;
 
-const wireCompatJsExample = `import OpenAI from 'openai';
-
-// Wire-compat install: familiar /v1 paths — you must satisfy HTTP 402 (x402 USDC).
-const client = new OpenAI({
-  baseURL: 'https://api.chit402.com/v1',
-  apiKey: 'unused', // SDK requires a string; payment is X-PAYMENT / wallet, not this field
+const wireFetchExample = (apiV1: string) => `const res = await fetch('${apiV1}/chat/completions', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    model: 'xfuel/auto',
+    messages: [{ role: 'user', content: 'Say hello.' }],
+    max_tokens: 32,
+  }),
 });
-
-// This npm client alone cannot pay 402 — use chit402-sdk, Eliza plugin, or x402-fetch.`;
+// → HTTP 402 until X-PAYMENT / partner key — use chit402-sdk, Eliza plugin, or x402-fetch.`;
 
 const curlExample = (apiV1: string) => `curl -sS ${apiV1}/chat/completions \\
   -H "Content-Type: application/json" \\
@@ -93,14 +94,14 @@ export default function ChitIn15Lines() {
         </div>
 
         <div className="docs-panel">
-          <h2>Wire-compat JS client (shape only)</h2>
+          <h2>HTTP wire (shape only)</h2>
           <p>
-            Swap <code>baseURL</code> to <code>{apiV1}</code> if you already use a popular{' '}
-            <code>openai</code> npm client — but you still need an x402-capable payer; the client
-            alone will stop at 402.
+            Any chat client that speaks <code>POST /v1/chat/completions</code> can point at{' '}
+            <code>{apiV1}</code> — you still need an x402-capable payer; raw HTTP alone stops at
+            402.
           </p>
           <pre className="docs-code">
-            <code>{wireCompatJsExample}</code>
+            <code>{wireFetchExample(apiV1)}</code>
           </pre>
           <p style={styles.note}>
             <strong>Honest caveat:</strong> some wire-compat clients may strip unknown response fields. The
