@@ -170,8 +170,14 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(chitHome, /Open the book/, 'ChitHome primary CTA opens book');
   assert.match(chitHome, /Verify live receipt/, 'ChitHome links live verify');
   assert.match(chitHome, /90-second drop-in/, 'ChitHome surfaces 90s drop-in above fold');
-  assert.match(chitHome, /possession book/, 'ChitHome names possession book in 90s section');
+  assert.match(chitHome, /Stamp a receipt onto the possession book/, 'ChitHome 90s block leads with stamp/book');
+  assert.match(chitHome, /signed receipt/, 'ChitHome 90s block names signed receipt before wire how');
   assert.match(chitHome, /\/docs\/doors/, 'ChitHome links install doors from 90s section');
+  assert.doesNotMatch(
+    chitHome,
+    /point an OpenAI-compatible client/i,
+    'ChitHome must not lead 90s copy with point-an-OpenAI-client',
+  );
   assert.match(chitHome, /baseURL/, 'ChitHome shows OpenAI baseURL install');
   assert.match(chitHome, /Also works/, 'ChitHome demotes adapters to Also works');
   assert.match(chitHome, /api\.chit402\.com\/v1/, 'ChitHome names wire in 90s drop-in');
