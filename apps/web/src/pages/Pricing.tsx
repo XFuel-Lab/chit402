@@ -132,13 +132,13 @@ export default function Pricing() {
         <div className="card" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
           <h2 style={{ fontSize: '1.1rem', marginBottom: '0.65rem' }}>How you enter</h2>
           <p style={styles.muted}>
-            The product is the possession book — who paid which call, holdable after settle. One
-            drop-in path is OpenAI-compatible <code>POST {apiV1}/chat/completions</code>: point your
-            client at <code>{apiV1}</code>, pay the quoted USDC, hold the row. After you register,{' '}
+            The product is the possession book — who paid which call, holdable after settle. Pay the
+            quoted USDC (HTTP 402 on Base or Solana, or a partner <code>X-API-Key</code>), hold the
+            signed receipt with <code>verify_url</code>. After you register,{' '}
             <Link to="/book" style={styles.link}>
               /book
             </Link>{' '}
-            keeps last-N spend. Other install doors (Eliza, ACP, MCP, peers) are on{' '}
+            keeps last-N spend. Install wires (chat clients, Eliza, ACP, MCP, peers):{' '}
             <Link to="/docs/doors" style={styles.link}>
               /docs/doors
             </Link>
