@@ -87,6 +87,8 @@ test('shared layout and homepage copy do not call paid /v1 unmetered, a free pat
   assert.doesNotMatch(pricing, /hop floor/i, 'Pricing must not frame receipt as hop floor');
   assert.doesNotMatch(pricing, /1000 bps|10%/, 'Pricing must not show legacy 10% routing');
   assert.doesNotMatch(pricing, /amount <code>10000<\/code>/, 'Pricing must not show legacy $0.01 floor');
+  assert.doesNotMatch(pricing, /OpenAI-compatible/i, 'Pricing must not frame product as OpenAI-compatible');
+  assert.doesNotMatch(pricing, /product surface/i, 'Pricing must not call /v1 the product surface');
 });
 
 test('homepage title and hero lead with treasury desk, not wallet-move', () => {
@@ -170,13 +172,19 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(chitHome, /Open the book/, 'ChitHome primary CTA opens book');
   assert.match(chitHome, /Verify live receipt/, 'ChitHome links live verify');
   assert.match(chitHome, /90-second drop-in/, 'ChitHome surfaces 90s drop-in above fold');
-  assert.match(chitHome, /Stamp a receipt onto the possession book/, 'ChitHome 90s block leads with stamp/book');
-  assert.match(chitHome, /signed receipt/, 'ChitHome 90s block names signed receipt before wire how');
-  assert.match(chitHome, /\/docs\/doors/, 'ChitHome links install doors from 90s section');
-  assert.doesNotMatch(
+  assert.match(
     chitHome,
-    /point an OpenAI-compatible client/i,
-    'ChitHome must not lead 90s copy with point-an-OpenAI-client',
+    /Stamp who paid which call onto the possession book/,
+    'ChitHome 90s block leads with stamp/book',
+  );
+  assert.match(chitHome, /signed receipt/, 'ChitHome 90s block names signed receipt');
+  assert.match(chitHome, /Install wires/, 'ChitHome 90s block points to install wires');
+  assert.match(chitHome, /\/docs\/doors/, 'ChitHome links install doors from 90s section');
+  const ninetyLead = chitHome.match(/styles\.ninetyLead[\s\S]*?<\/p>/)?.[0] ?? '';
+  assert.doesNotMatch(
+    ninetyLead,
+    /OpenAI-compatible/i,
+    'ChitHome 90s paragraph must not name OpenAI-compatible',
   );
   assert.match(chitHome, /baseURL/, 'ChitHome shows OpenAI baseURL install');
   assert.match(chitHome, /Also works/, 'ChitHome demotes adapters to Also works');

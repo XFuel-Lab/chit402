@@ -71,10 +71,10 @@ export default function ChitHome() {
           <div className="chit-ninety-door card">
             <h2 style={styles.ninetyTitle}>90-second drop-in</h2>
             <p style={styles.ninetyLead}>
-              Stamp a receipt onto the possession book: pay the HTTP 402 (USDC on Base or Solana) or
-              your partner <code>X-API-Key</code> → signed receipt →{' '}
+              Stamp who paid which call onto the possession book. Pay USDC (HTTP 402 on Base or
+              Solana) or your partner <code>X-API-Key</code> → signed receipt →{' '}
               <a href={LIVE_RECEIPT_VERIFY_URL} target="_blank" rel="noreferrer">public verify</a>.
-              Fastest wire is an OpenAI-compatible client at <code>{resolvedApiV1}</code>. Other paths:{' '}
+              Install wires (chat clients, Eliza, ACP, MCP, peers):{' '}
               <Link to="/docs/doors">/docs/doors</Link>.
             </p>
             <pre className="docs-code chit-ninety-code">
