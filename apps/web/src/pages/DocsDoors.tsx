@@ -13,7 +13,7 @@ const installDoors: DocLink[] = [
   },
   {
     title: 'Chat completions gateway',
-    description: 'Drop-in /v1 wire — same book, OpenAI-compatible request shape.',
+    description: 'Drop-in /v1 wire — wire-compat chat completions shape, same possession book.',
     href: `${GITHUB}/docs/CHAT_COMPLETIONS_GATEWAY.md`,
     meta: '/v1',
     external: true,
@@ -113,8 +113,9 @@ export default function DocsDoors() {
         <section className="docs-section">
           <h2 className="docs-section-title">Doors</h2>
           <p style={{ color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: 1.6 }}>
-            OpenAI-compatible <code>/v1</code> is one install path among Eliza, ACP, frameworks,
-            MCP, Cloudflare, swarms, and register/ingest — not the product identity.
+            Chat-completions <code>/v1</code> is one install wire among Eliza, ACP, MCP,
+            frameworks, Cloudflare, swarms, foreign ingest, and register/book — not the product
+            identity.
           </p>
           <DocDoorGrid items={installDoors} />
         </section>

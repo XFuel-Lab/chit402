@@ -7,19 +7,19 @@ import { LIVE_RECEIPT_VERIFY_URL } from '../lib/liveReceiptSpecimen';
 
 const apiV1 = 'https://api.chit402.com/v1';
 
-const dropInSnippet = `import OpenAI from 'openai';
-
-const client = new OpenAI({
-  baseURL: '${apiV1}',
-  apiKey: process.env.CHIT402_API_KEY ?? 'YOUR_KEY', // partner key, or pay HTTP 402 USDC
+const dropInSnippet = `const res = await fetch('${apiV1}/chat/completions', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': process.env.CHIT402_API_KEY ?? 'YOUR_KEY', // partner key, or pay HTTP 402 USDC
+  },
+  body: JSON.stringify({
+    model: 'xfuel/auto',
+    messages: [{ role: 'user', content: 'Say hello in five words.' }],
+    max_tokens: 32,
+  }),
 });
-
-const res = await client.chat.completions.create({
-  model: 'xfuel/auto',
-  messages: [{ role: 'user', content: 'Say hello in five words.' }],
-  max_tokens: 32,
-});
-// → signed receipt + verify_url (headers / xfuel field — see drop-in docs)`;
+// → signed receipt + verify_url (headers / xfuel field — see /docs/doors)`;
 
 export default function ChitHome() {
   const config = getHostConfig();

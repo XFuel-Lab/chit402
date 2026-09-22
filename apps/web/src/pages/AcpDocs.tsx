@@ -5,18 +5,21 @@ import { getApiV1 } from '../apiHost';
 const preferredPath = `// Preferred: keep ACP settle for agent commerce;
 // send inference spend through Chit for the signed receipt book.
 
-const client = new OpenAI({
-  baseURL: '${getApiV1()}',
-  apiKey: process.env.CHIT_API_KEY,
-});
-
-const chat = await client.chat.completions.create({
-  model: 'xfuel/auto',
-  messages: [{ role: 'user', content: taskPrompt }],
+const res = await fetch('${getApiV1()}/chat/completions', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': process.env.CHIT_API_KEY,
+  },
+  body: JSON.stringify({
+    model: 'xfuel/auto',
+    messages: [{ role: 'user', content: taskPrompt }],
+  }),
 });
 
 // Return verify_url to the principal — hub, model, amount on the receipt page
-console.log(chat.xfuel?.verify_url);`;
+const body = await res.json();
+console.log(body.xfuel?.verify_url);`;
 
 const ingestExample = `// Optional: foreign x402 already settled elsewhere
 // POST /v1/agents/:agent_id/book/ingest (possession-gated)
@@ -54,8 +57,9 @@ export default function AcpDocs() {
         <div className="docs-panel">
           <h2>Preferred path</h2>
           <p>
-            Swap the OpenAI-compatible completions client to Chit. ACP handles agent-to-agent
-            settlement; Chit handles the inference receipt the principal can audit.
+            Point your agent&apos;s chat-completions client at Chit&apos;s <code>/v1</code> wire. ACP
+            handles agent-to-agent settlement; Chit stamps the inference receipt the principal can
+            audit.
           </p>
           <pre className="docs-code">
             <code>{preferredPath}</code>

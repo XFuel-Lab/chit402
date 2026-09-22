@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { getApiV1 } from '../apiHost';
 
 const beachhead = `// Olas / Theoriq / any swarm runner — same beachhead:
-// OpenAI-compatible baseURL → Chit, USDC budget, hold verify_url.
+// Chat-completions baseURL → Chit /v1 wire, USDC budget, hold verify_url.
 
 const res = await fetch('${getApiV1()}/chat/completions', {
   method: 'POST',

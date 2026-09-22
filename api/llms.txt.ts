@@ -11,7 +11,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 
 - /trust    : Issuer trust — pin JWKS + kid, rotation policy, receipt verify steps. https://www.chit402.com/trust
 - /         : Treasury desk — who paid which call. Export, policy, evidence. https://chit402.com/book
-- /docs/chit-in-15-lines : OpenAI-compatible drop-in door at api.chit402.com/v1 (paid x402 only).
+- /docs/chit-in-15-lines : Chat /v1 install wire at api.chit402.com/v1 (paid x402 only).
 - /docs/eliza : Eliza plugin stub (coming: @xfuel/plugin-elizaos).
 - /v1       : Not the API — points you to api.chit402.com/v1.
 
@@ -137,7 +137,7 @@ const XFUEL_LLMS = `# XFuel Protocol
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
 - Partner key (when issued): "Authorization: Bearer <key>" or "X-API-Key: <key>". No public demo key.
-- Point any OpenAI client's baseURL at this host + /v1. Receipt in x-xfuel-*
+- Point any compatible chat client's baseURL at this host + /v1. Receipt in x-xfuel-*
   headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
 - proof_outcome may be pending on the chat body — poll GET /task-status.
 

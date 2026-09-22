@@ -15,16 +15,16 @@ const ROUTE_CONTENT = {
   '/agent-shop': {
     title: 'The till for an agent shop | Chit',
     h1: 'Your SEO bot spent it. You hold the book.',
-    lede: 'Chit is the till for an agent shop. Paste https://api.chit402.com/v1 as the OpenAI baseURL, pay the HTTP 402 in USDC on Base or Solana (cost-plus, quoted, receipted), and you hold the book. We are the till, not the Chief of SEO. Show the client the book, not a screenshot.',
+    lede: 'Chit is the till for an agent shop. Stamp receipts onto the possession book — pay HTTP 402 USDC on Base or Solana (cost-plus, quoted, receipted) via the /v1 wire or install doors. We are the till, not the Chief of SEO. Show the client the book, not a screenshot.',
   },
   '/docs': {
     title: 'Chit402 — treasury desk for agent spend',
     h1: 'Build on Chit402',
-    lede: 'Possession book first — who paid which call; hold verify_url; export, policy, evidence. Install doors (OpenAI /v1, Eliza, ACP, MCP, and peers) are equal-weight paths into the same book. Public beta at api.chit402.com. USDC on Base and Solana.',
+    lede: 'Possession book first — who paid which call; hold verify_url; export, policy, evidence. Install wires (/v1 chat, Eliza, ACP, MCP, frameworks, peers) are equal-weight paths into the same book. Public beta at api.chit402.com. USDC on Base and Solana.',
   },
   '/docs/chit-in-15-lines': {
-    title: 'Drop-in door (OpenAI-compatible) | Chit402',
-    h1: 'Drop-in door (OpenAI-compatible)',
+    title: 'Chat /v1 wire | Chit402',
+    h1: 'Chat /v1 wire',
     lede: 'Chit is the possession book after USDC settle. This page is the wire-compat install at https://api.chit402.com/v1 — paid x402 door only, no public demo key.',
   },
   '/docs/eliza': {
@@ -35,12 +35,12 @@ const ROUTE_CONTENT = {
   '/docs/framework-adapters': {
     title: 'LangChain + AI SDK | Chit402',
     h1: 'Framework adapters',
-    lede: 'Swap baseURL to api.chit402.com/v1, pay USDC on Base, hold verify_url. Thin helpers for LangChain ChatOpenAI and Vercel AI SDK createOpenAI.',
+    lede: 'Swap compatible baseURL to api.chit402.com/v1, pay USDC on Base, hold verify_url. Thin helpers for LangChain and Vercel AI SDK adapters.',
   },
   '/docs/langchain': {
     title: 'LangChain adapter | Chit402',
     h1: 'LangChain adapter',
-    lede: 'createChitChatOpenAI pointed at api.chit402.com/v1 with demo or paid key. Extract verify_url from xfuel extension or headers.',
+    lede: 'LangChain adapter pointed at api.chit402.com/v1 with partner or x402-paid key. Extract verify_url from xfuel extension or headers.',
   },
   '/docs/ai-sdk': {
     title: 'Vercel AI SDK adapter | Chit402',
@@ -70,7 +70,7 @@ const ROUTE_CONTENT = {
   '/docs/olas': {
     title: 'Olas | Chit402',
     h1: 'Olas',
-    lede: 'Point OpenAI-compatible clients at api.chit402.com/v1. Hold verify_url — no deep Olas fork.',
+    lede: 'Point chat-completions clients at api.chit402.com/v1. Hold verify_url — no deep Olas fork.',
   },
   '/docs/theoriq': {
     title: 'Theoriq | Chit402',
@@ -112,12 +112,12 @@ const ROUTE_CONTENT = {
   '/book-bot': {
     title: 'Paste this. The shop gets a till | Chit',
     h1: 'Paste this. The shop gets a till.',
-    lede: 'Paste this prompt into Grok, ChatGPT, or any agent. It interviews your stack once, then every job you run records agent / job / $Y / settled y/n by pointing your OpenAI baseURL at https://api.chit402.com/v1.',
+    lede: 'Paste this prompt into Grok, ChatGPT, or any agent. It interviews your stack once, then every job you run records agent / job / $Y / settled y/n by pointing a compatible chat baseURL at https://api.chit402.com/v1.',
   },
   '/v1': {
     title: 'Pay /v1/chat/completions | Chit',
     h1: 'Bot drop-in. Wallet pays. You hold the book.',
-    lede: 'Exact product: baseURL https://api.chit402.com/v1. POST /v1/chat/completions is cost-plus, quoted, receipted — USDC on Base and Solana. Without payment or a demo key, the gateway returns HTTP 402.',
+    lede: 'Possession book stamps spend from the public /v1 wire (baseURL https://api.chit402.com/v1). POST /v1/chat/completions is cost-plus, quoted, receipted — USDC on Base and Solana. Without payment or a partner key, the gateway returns HTTP 402.',
   },
 };
 

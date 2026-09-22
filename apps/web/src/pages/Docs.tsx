@@ -81,7 +81,7 @@ const builders: DocLink[] = [
   },
   {
     title: 'Install doors',
-    description: 'OpenAI /v1, Eliza, ACP, MCP, frameworks, Cloudflare, swarms — peers into the same book.',
+    description: 'Chat /v1 wire, Eliza, ACP, MCP, frameworks, Cloudflare, swarms — peers into the same book.',
     href: '/docs/doors',
     meta: 'doors',
     internal: true,

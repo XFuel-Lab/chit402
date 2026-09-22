@@ -87,8 +87,28 @@ test('shared layout and homepage copy do not call paid /v1 unmetered, a free pat
   assert.doesNotMatch(pricing, /hop floor/i, 'Pricing must not frame receipt as hop floor');
   assert.doesNotMatch(pricing, /1000 bps|10%/, 'Pricing must not show legacy 10% routing');
   assert.doesNotMatch(pricing, /amount <code>10000<\/code>/, 'Pricing must not show legacy $0.01 floor');
-  assert.doesNotMatch(pricing, /OpenAI-compatible/i, 'Pricing must not frame product as OpenAI-compatible');
+  assert.doesNotMatch(pricing, /OpenAI/i, 'Pricing must not mention OpenAI in user copy');
   assert.doesNotMatch(pricing, /product surface/i, 'Pricing must not call /v1 the product surface');
+});
+
+test('public marketing pages do not center OpenAI as product identity', () => {
+  const paths = [
+    'src/pages/ChitHome.tsx',
+    'src/pages/Pricing.tsx',
+    'src/pages/Docs.tsx',
+    'src/pages/DocsDoors.tsx',
+    'src/pages/GatewayV1.tsx',
+    'src/pages/BookBot.tsx',
+    'src/pages/CloudflareDocs.tsx',
+    'src/pages/AcpDocs.tsx',
+    'src/pages/SwarmPlatforms.tsx',
+    'src/hostConfig.ts',
+  ];
+  for (const rel of paths) {
+    const source = readFileSync(join(root, rel), 'utf8');
+    assert.doesNotMatch(source, /OpenAI-compatible/i, `${rel} must not say OpenAI-compatible`);
+    assert.doesNotMatch(source, /OpenAI \/v1/i, `${rel} must not lead with OpenAI /v1`);
+  }
 });
 
 test('homepage title and hero lead with treasury desk, not wallet-move', () => {
@@ -180,13 +200,9 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(chitHome, /signed receipt/, 'ChitHome 90s block names signed receipt');
   assert.match(chitHome, /Install wires/, 'ChitHome 90s block points to install wires');
   assert.match(chitHome, /\/docs\/doors/, 'ChitHome links install doors from 90s section');
-  const ninetyLead = chitHome.match(/styles\.ninetyLead[\s\S]*?<\/p>/)?.[0] ?? '';
-  assert.doesNotMatch(
-    ninetyLead,
-    /OpenAI-compatible/i,
-    'ChitHome 90s paragraph must not name OpenAI-compatible',
-  );
-  assert.match(chitHome, /baseURL/, 'ChitHome shows OpenAI baseURL install');
+  const ninetyBlock = chitHome.match(/chit-ninety-door[\s\S]*?<\/div>\s*<\/div>/)?.[0] ?? '';
+  assert.doesNotMatch(ninetyBlock, /OpenAI/i, 'ChitHome 90s lead block must not mention OpenAI');
+  assert.match(chitHome, /fetch\(/, 'ChitHome 90s sample uses neutral fetch wire');
   assert.match(chitHome, /Also works/, 'ChitHome demotes adapters to Also works');
   assert.match(chitHome, /api\.chit402\.com\/v1/, 'ChitHome names wire in 90s drop-in');
   assert.match(chitHome, /\/docs\/chit-in-15-lines/, 'ChitHome links to drop-in door page');
@@ -267,7 +283,8 @@ test('Drop-in door page documents paid install path (not whole product)', () => 
   assert.match(page, /api\.chit402\.com\/v1/, 'drop-in page names baseURL');
   assert.doesNotMatch(page, /chit402-demo/, 'drop-in page does not advertise demo key');
   assert.match(page, /possession book/i, 'drop-in page separates book from install');
-  assert.match(page, /OpenAI SDK may strip unknown/, 'drop-in page warns about SDK field stripping');
+  assert.match(page, /may strip unknown response fields/, 'drop-in page warns about SDK field stripping');
+  assert.doesNotMatch(page, /Drop-in door \(OpenAI-compatible\)/, 'drop-in page must not title with OpenAI-compatible');
   assert.match(page, /verify_url/, 'drop-in page mentions verify_url');
 });
 
