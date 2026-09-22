@@ -66,7 +66,7 @@ curl -sS https://api.chit402.com/stats/door | jq .
   "stamped_receipts_7d": 12,
   "stamped_receipts_24h": 3,
   "unique_payers_7d": 8,
-  "definition": "USDC x402 stamped receipts via openai-gateway (POST /v1, /v1/responses, POST /a2a-message)",
+  "definition": "Signed USDC x402 receipts on the public door (/v1/chat/completions, /v1/responses, /a2a-message). Not a chain explorer.",
   "window_anchor": "task.createdAt"
 }
 ```

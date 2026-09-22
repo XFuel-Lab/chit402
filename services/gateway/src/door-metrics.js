@@ -23,6 +23,10 @@ const FAILED_STATUSES = new Set(['failed']);
 
 const DOOR_SOURCES = new Set(['openai-gateway']);
 
+/** Public copy for /stats/door and Activity — no internal source labels. */
+export const PUBLIC_DOOR_DEFINITION =
+  'Signed USDC x402 receipts on the public door (/v1/chat/completions, /v1/responses, /a2a-message). Not a chain explorer.';
+
 /**
  * @param {object|null|undefined} task
  * @returns {boolean}
@@ -157,7 +161,7 @@ export function computeDoorMetrics(tasks = [], { now = Date.now() } = {}) {
     source: 'receipt_task_store',
     definition: {
       stamped: 'issuer_signature.jws present on durable task snapshot',
-      door: 'USDC x402 via openai-gateway (POST /v1, /v1/responses, POST /a2a-message)',
+      door: PUBLIC_DOOR_DEFINITION,
       window_anchor: 'task.createdAt',
     },
     windows: {
@@ -246,8 +250,7 @@ export function computePublicDoorAggregate(tasks = [], { now = Date.now() } = {}
     stamped_receipts_24h: stamped24h,
     unique_payers_7d: payers7d.size,
     series_30d: buildPublicDoorSeries(doorTasks, now),
-    definition:
-      'USDC x402 stamped receipts via openai-gateway (POST /v1, /v1/responses, POST /a2a-message)',
+    definition: PUBLIC_DOOR_DEFINITION,
     window_anchor: 'task.createdAt',
   };
 }

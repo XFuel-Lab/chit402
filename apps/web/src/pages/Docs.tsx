@@ -1,109 +1,28 @@
 import { Link } from 'react-router-dom';
 import { getApiHost, getApiV1 } from '../apiHost';
 import { getHostConfig } from '../hostConfig';
+import { DocSection, type DocLink } from './docsShared';
 
 const GITHUB = 'https://github.com/XFuel-Lab/chit402/blob/main';
 
-type DocLink = {
-  title: string;
-  description: string;
-  href: string;
-  meta: string;
-  external?: boolean;
-  internal?: boolean;
-};
-
-const doors: DocLink[] = [
-  {
-    title: 'Drop-in door',
-    description: 'OpenAI-compatible baseURL at api.chit402.com/v1. Paid x402 — hold verify_url.',
-    href: '/docs/chit-in-15-lines',
-    meta: 'OpenAI',
-    internal: true,
-  },
-  {
-    title: 'Eliza plugin',
-    description: '@xfuel/plugin-elizaos — USDC budget + verify_url for Eliza agents.',
-    href: '/docs/eliza',
-    meta: 'Eliza',
-    internal: true,
-  },
-  {
-    title: 'Framework adapters',
-    description: 'LangChain + Vercel AI SDK — swap baseURL, pay USDC, hold verify_url.',
-    href: '/docs/framework-adapters',
-    meta: 'npm',
-    internal: true,
-  },
-  {
-    title: 'Virtuals ACP',
-    description: 'Keep ACP settle; send inference spend through Chit for the receipt book.',
-    href: '/docs/acp',
-    meta: 'ACP',
-    internal: true,
-  },
-  {
-    title: 'OpenClaw skill',
-    description: 'Pasteable SKILL.md — baseURL swap + USDC caps + verify_url.',
-    href: '/docs/openclaw',
-    meta: 'skill',
-    internal: true,
-  },
-  {
-    title: 'Cloudflare Agents',
-    description: 'Chit baseURL or chit402-sidecar stamp for Workers and Agents.',
-    href: '/docs/cloudflare',
-    meta: 'worker',
-    internal: true,
-  },
-  {
-    title: 'Olas + Theoriq',
-    description: 'Swarm runners — same beachhead, no deep protocol fork.',
-    href: '/docs/swarm-platforms',
-    meta: 'swarm',
-    internal: true,
-  },
-  {
-    title: 'MCP server',
-    description: 'npx xfuel-mcp — chat_completions, register_agent, get_agent_book.',
-    href: `${GITHUB}/packages/mcp/README.md`,
-    meta: 'MCP',
-    external: true,
-  },
-  {
-    title: 'Register + book ingest',
-    description: 'Bind agent_id after a collected receipt; stamp or ingest foreign x402 rows.',
-    href: '/register',
-    meta: 'book',
-    internal: true,
-  },
-];
-
 const startHere: DocLink[] = [
   {
-    title: 'Principal book',
-    description: 'Possession-gated spend log — export, policy, evidence. Who paid which call.',
-    href: '/book',
-    meta: 'product',
-    internal: true,
-  },
-  {
-    title: 'Issuer trust',
-    description: 'Pin JWKS + kid, rotation policy, receipt verify steps.',
-    href: '/trust',
-    meta: 'trust',
+    title: 'Chit in 15 lines',
+    description: 'Fastest receipt path — pay USDC, collect verify_url, start the book.',
+    href: '/docs/chit-in-15-lines',
+    meta: 'start',
     internal: true,
   },
   {
     title: 'Runtime state',
-    description: 'As-deployed endpoints, real vs mock, current blockers.',
+    description: 'As-deployed endpoints, receipt surfaces, and current blockers.',
     href: `${GITHUB}/docs/RUNTIME_STATE.md`,
     meta: 'ops',
     external: true,
   },
   {
     title: 'Positioning',
-    description: 'Locked product story for site, deck, and agents.',
+    description: 'Possession book story — who paid which call, evidence, and policy.',
     href: `${GITHUB}/docs/POSITIONING.md`,
     meta: 'story',
     external: true,
@@ -147,32 +66,25 @@ const builders: DocLink[] = [
     external: true,
   },
   {
-    title: 'Chat completions gateway',
-    description: 'Drop-in /v1 — pay, then hold the receipt.',
-    href: `${GITHUB}/docs/CHAT_COMPLETIONS_GATEWAY.md`,
-    meta: '/v1',
-    external: true,
-  },
-  {
     title: 'USDC / x402',
-    description: 'Agent-side payments on Base — no server hot wallets.',
+    description: 'Payment rail for the book — agent-side USDC on Base or Solana.',
     href: `${GITHUB}/docs/X402_ADAPTER.md`,
-    meta: 'Base',
+    meta: 'x402',
     external: true,
   },
   {
-    title: 'TypeScript SDK',
-    description: 'chatCompletions is POST /v1/chat/completions. npm xfuel-sdk.',
-    href: `${GITHUB}/packages/sdk/README.md`,
-    meta: '0.5.5',
-    external: true,
+    title: 'Issuer trust',
+    description: 'Pin JWKS + kid, rotation policy, receipt verify steps.',
+    href: '/trust',
+    meta: 'trust',
+    internal: true,
   },
   {
-    title: 'Agent playbook',
-    description: 'End-to-end flows: infer, pay, verify, A2A, swarms.',
-    href: `${GITHUB}/packages/agent-skills/AGENT_PLAYBOOK.md`,
-    meta: 'skills',
-    external: true,
+    title: 'Install doors',
+    description: 'OpenAI /v1, Eliza, ACP, MCP, frameworks, Cloudflare, swarms — peers into the same book.',
+    href: '/docs/doors',
+    meta: 'doors',
+    internal: true,
   },
 ];
 
@@ -226,69 +138,6 @@ const auditors: DocLink[] = [
   },
 ];
 
-function DocDoorGrid({ items }: { items: DocLink[] }) {
-  return (
-    <div className="docs-door-grid">
-      {items.map((item) =>
-        item.internal ? (
-          <Link key={item.title} to={item.href} className="docs-door-card">
-            <div className="docs-door-card-title">{item.title}</div>
-            <p className="docs-door-card-desc">{item.description}</p>
-            <span className="docs-door-card-meta">{item.meta}</span>
-          </Link>
-        ) : (
-          <a
-            key={item.title}
-            href={item.href}
-            className="docs-door-card"
-            target={item.external ? '_blank' : undefined}
-            rel={item.external ? 'noreferrer' : undefined}
-          >
-            <div className="docs-door-card-title">{item.title}</div>
-            <p className="docs-door-card-desc">{item.description}</p>
-            <span className="docs-door-card-meta">{item.meta}</span>
-          </a>
-        ),
-      )}
-    </div>
-  );
-}
-
-function DocSection({ title, items }: { title: string; items: DocLink[] }) {
-  return (
-    <section className="docs-section">
-      <h2 className="docs-section-title">{title}</h2>
-      <div className="docs-list">
-        {items.map((item) =>
-          item.internal ? (
-            <Link key={item.title} to={item.href} className="docs-row">
-              <div>
-                <div className="docs-row-title">{item.title}</div>
-                <p className="docs-row-desc">{item.description}</p>
-              </div>
-              <span className="docs-row-meta">{item.meta}</span>
-            </Link>
-          ) : (
-            <a
-              key={item.title}
-              href={item.href}
-              className="docs-row"
-              target={item.external ? '_blank' : undefined}
-              rel={item.external ? 'noreferrer' : undefined}
-            >
-              <div>
-                <div className="docs-row-title">{item.title}</div>
-                <p className="docs-row-desc">{item.description}</p>
-              </div>
-              <span className="docs-row-meta">{item.meta}</span>
-            </a>
-          ),
-        )}
-      </div>
-    </section>
-  );
-}
-
 function getSnippet(apiV1: string) {
   return `curl -sS -D - ${apiV1}/chat/completions \\
   -H "Content-Type: application/json" \\
@@ -310,19 +159,20 @@ export default function Docs() {
       <div className="container">
         <header className="page-header">
           <span className="docs-kicker">Documentation</span>
-          <h1>Build on {productName}</h1>
+          <h1>{productName} possession book</h1>
           <p>
-            The product is the possession book — who paid which call; hold verify_url; export,
-            policy, and evidence. Install paths below are peers: same book, different entry.
-            No account. No API key. A wallet that can pay the 402 is enough. Register is only
-            to hold the book after a collected receipt. Apache-2.0. Public beta at{' '}
-            <code>{apiDomain}</code>. Paying it is mainnet USDC.
+            The product is the book — who paid which call; hold <code>verify_url</code>; export,
+            policy, and evidence. Install paths are how agents reach the same stamped receipts:{' '}
+            <Link to="/docs/doors">Install doors</Link>. No account. No API key. A wallet that can
+            pay the 402 is enough. Register is only to hold the book after a collected receipt.
+            Apache-2.0. Public beta at <code>{apiDomain}</code>. Paying it is mainnet USDC.
           </p>
         </header>
 
         <nav className="docs-rail" aria-label="Quick links">
           <Link to="/book">Principal book</Link>
           <Link to="/trust">Trust</Link>
+          <Link to="/docs/doors">Install doors</Link>
           <a href={`${apiHost}/health`} target="_blank" rel="noreferrer">
             API health
           </a>
@@ -338,15 +188,6 @@ export default function Docs() {
           <Link to="/pricing">Pricing</Link>
           <Link to="/security">Security</Link>
         </nav>
-
-        <section className="docs-section">
-          <h2 className="docs-section-title">Doors</h2>
-          <p style={{ color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: 1.6 }}>
-            Equal-weight install paths — OpenAI-compatible <code>/v1</code> is one door among Eliza,
-            ACP, frameworks, MCP, Cloudflare, swarms, and register/ingest.
-          </p>
-          <DocDoorGrid items={doors} />
-        </section>
 
         <DocSection title="Start here" items={startHere} />
         <DocSection title="Builders" items={builders} />
@@ -380,6 +221,9 @@ export default function Docs() {
             >
               SDK docs
             </a>
+            <Link to="/docs/doors" className="btn btn-secondary btn-sm">
+              Install doors
+            </Link>
             <a
               href={`${GITHUB}/docs/DEMO_COMMANDS.md`}
               target="_blank"

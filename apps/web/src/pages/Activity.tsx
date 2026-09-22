@@ -204,7 +204,7 @@ export default function Activity() {
 
         {door?.definition && (
           <p style={{ ...styles.muted, fontSize: '0.85rem', maxWidth: 640 }}>
-            {door.definition}. Window anchor: task createdAt (UTC day buckets for sparklines).
+            {door.definition}. Charts bucket by receipt create time (UTC day).
           </p>
         )}
       </div>
