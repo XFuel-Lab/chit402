@@ -62,7 +62,14 @@ test('homepage listing-visible branding uses Chit402 for x402scan', () => {
   assert.match(title, /^Chit402/, 'homepage title starts with Chit402 for x402scan listing');
   assert.match(ogTitle, /^Chit402/, 'og:title starts with Chit402 for x402scan listing');
   assert.match(twitterTitle, /^Chit402/, 'twitter:title starts with Chit402 for social cards');
-  assert.equal(favicon, '/chit402-icon.svg', 'favicon uses chit402-icon.svg for x402scan listing');
+  assert.equal(favicon, '/chit402-icon.png', 'favicon uses chit402 receipt stub icon for x402scan listing');
+});
+
+test('Layout nav uses host nav logo, not cyan check ring SVG', () => {
+  const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
+  assert.match(layout, /config\.navLogo/, 'Layout uses host-config nav logo');
+  assert.doesNotMatch(layout, /M10 16l4 4 8-8/, 'Layout must not inline the legacy check ring');
+  assert.doesNotMatch(layout, /<svg[^>]*viewBox="0 0 32 32"/, 'Layout must not inline nav SVG logo');
 });
 
 test('shared layout and homepage copy do not call paid /v1 unmetered, a free path, or lead with $0.01', () => {
@@ -285,6 +292,8 @@ test('host config has correct Chit SEO values', () => {
   assert.doesNotMatch(hostConfig, /By XFuel Lab/i, 'Chit SEO metadata must not mix parent branding');
   assert.doesNotMatch(hostConfig, /parent:\s*['"]XFuel Lab['"]/, 'hostConfig must not expose parent lab field');
   assert.match(hostConfig, /name: 'Chit402'/, 'Chit chrome uses Chit402 product name');
+  assert.match(hostConfig, /navLogo: '\/chit402-mark\.png'/, 'Chit nav uses receipt stub mark');
+  assert.match(hostConfig, /favicon: '\/chit402-icon\.png'/, 'Chit favicon uses receipt stub app icon');
   assert.match(hostConfig, /publicContactEmail: 'hello@chit402\.com'/, 'Chit public contact is hello@chit402.com');
 });
 
