@@ -169,10 +169,12 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(receiptCard, /Verify receipt/, 'Live receipt card links verify');
   assert.match(chitHome, /Open the book/, 'ChitHome primary CTA opens book');
   assert.match(chitHome, /Verify live receipt/, 'ChitHome links live verify');
-  assert.match(chitHome, /90-second door/, 'ChitHome surfaces 90s door above fold');
+  assert.match(chitHome, /90-second drop-in/, 'ChitHome surfaces 90s drop-in above fold');
+  assert.match(chitHome, /possession book/, 'ChitHome names possession book in 90s section');
+  assert.match(chitHome, /\/docs\/doors/, 'ChitHome links install doors from 90s section');
   assert.match(chitHome, /baseURL/, 'ChitHome shows OpenAI baseURL install');
   assert.match(chitHome, /Also works/, 'ChitHome demotes adapters to Also works');
-  assert.match(chitHome, /api\.chit402\.com\/v1/, 'ChitHome names wire in 90s door');
+  assert.match(chitHome, /api\.chit402\.com\/v1/, 'ChitHome names wire in 90s drop-in');
   assert.match(chitHome, /\/docs\/chit-in-15-lines/, 'ChitHome links to drop-in door page');
   assert.match(chitHome, /\/docs\/eliza/, 'ChitHome links to Eliza stub');
   assert.match(chitHome, /config\.parent/, 'ChitHome references parent dynamically');
@@ -205,17 +207,16 @@ test('Chit primary nav has Trust and no Drop-in door', () => {
   );
 });
 
-test('Docs hub leads with book and peer-equal Doors grid', () => {
+test('Docs hub leads with book; install doors on dedicated page', () => {
   const docs = readFileSync(join(root, 'src/pages/Docs.tsx'), 'utf8');
+  const docsDoors = readFileSync(join(root, 'src/pages/DocsDoors.tsx'), 'utf8');
   assert.match(docs, /possession book/i, 'Docs intro leads with possession book');
-  assert.match(docs, /docs-door-grid/, 'Docs has peer door grid');
-  assert.match(docs, /DocDoorGrid/, 'Docs renders door cards');
-  const doorsBlock = docs.match(/const doors[\s\S]*?];/)?.[0] ?? '';
-  assert.match(doorsBlock, /Drop-in door/, 'Doors grid includes drop-in');
-  assert.match(doorsBlock, /Eliza plugin/, 'Doors grid includes Eliza');
-  const dropInIdx = doorsBlock.indexOf('Drop-in door');
-  const elizaIdx = doorsBlock.indexOf('Eliza plugin');
-  assert.ok(dropInIdx >= 0 && elizaIdx >= 0, 'door entries exist');
+  assert.match(docs, /\/docs\/doors/, 'Docs hub links to install doors page');
+  assert.doesNotMatch(docs, /DocDoorGrid/, 'Docs hub does not list every door card');
+  assert.match(docsDoors, /DocDoorGrid/, 'Install doors page renders door cards');
+  const doorsBlock = docsDoors.match(/const installDoors[\s\S]*?];/)?.[0] ?? '';
+  assert.match(doorsBlock, /Chit in 15 lines/, 'Doors page includes drop-in');
+  assert.match(doorsBlock, /Eliza plugin/, 'Doors page includes Eliza');
 });
 
 test('llms.txt API route has no nested backticks in CHIT_LLMS template', () => {
