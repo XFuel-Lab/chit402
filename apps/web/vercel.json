@@ -40,6 +40,14 @@
       "headers": [{ "key": "Content-Type", "value": "image/svg+xml; charset=utf-8" }]
     },
     {
+      "source": "/chit402-icon.png",
+      "headers": [{ "key": "Content-Type", "value": "image/png" }]
+    },
+    {
+      "source": "/chit402-mark.png",
+      "headers": [{ "key": "Content-Type", "value": "image/png" }]
+    },
+    {
       "source": "/favicon.ico",
       "headers": [{ "key": "Content-Type", "value": "image/x-icon" }]
     },

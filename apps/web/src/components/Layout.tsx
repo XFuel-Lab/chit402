@@ -35,11 +35,13 @@ export default function Layout() {
       <header style={styles.header}>
         <div className="container" style={styles.headerInner}>
           <NavLink to="/" style={styles.logo}>
-            <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
-              <circle cx="16" cy="16" r="14" stroke="url(#g)" strokeWidth="2.5" />
-              <path d="M10 16l4 4 8-8" stroke="#00d4ff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-              <defs><linearGradient id="g" x1="0" y1="0" x2="32" y2="32"><stop stopColor="#00d4ff"/><stop offset="1" stopColor="#8b5cf6"/></linearGradient></defs>
-            </svg>
+            <img
+              src={config.navLogo}
+              alt=""
+              width={28}
+              height={28}
+              style={{ display: 'block', flexShrink: 0 }}
+            />
             <span>{config.name}</span>
           </NavLink>
 

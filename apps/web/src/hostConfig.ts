@@ -13,6 +13,10 @@ export interface HostConfig {
   domain: string;
   apiDomain: string;
   ogImage: string;
+  /** Nav header mark (~28px) */
+  navLogo: string;
+  /** Browser tab / listing favicon */
+  favicon: string;
   twitterHandle: string;
   githubUrl: string;
   /** Visitor-facing footer / contact mailto */
@@ -32,6 +36,8 @@ const CHIT_CONFIG: HostConfig = {
   domain: 'www.chit402.com',
   apiDomain: 'api.chit402.com',
   ogImage: 'https://www.chit402.com/og-image.png',
+  navLogo: '/chit402-mark.png',
+  favicon: '/chit402-icon.png',
   twitterHandle: '@chit402',
   githubUrl: 'https://github.com/XFuel-Lab/chit402',
   publicContactEmail: 'hello@chit402.com',
@@ -50,6 +56,8 @@ const XFUEL_CONFIG: HostConfig = {
   domain: 'xfuel.app',
   apiDomain: 'api.xfuel.app',
   ogImage: 'https://www.xfuel.app/og-image.png',
+  navLogo: '/xfuel-icon.svg',
+  favicon: '/xfuel-icon.svg',
   twitterHandle: '@XFuelLab',
   githubUrl: 'https://github.com/XFuel-Lab/xfuel-protocol',
   publicContactEmail: 'security@xfuel.app',
