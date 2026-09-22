@@ -15,6 +15,7 @@ const chitNavLinks = [
   { to: '/book', label: 'Book' },
   { to: '/register', label: 'Register' },
   { to: '/activity', label: 'Activity' },
+  { to: '/products', label: 'Products' },
   { to: '/doors', label: 'Doors' },
   { to: '/docs', label: 'Docs' },
   { to: '/pricing', label: 'Pricing' },

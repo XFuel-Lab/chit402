@@ -21,7 +21,11 @@ export default function Pricing() {
           <h1>Pay for a collected hop.</h1>
           <p>
             Chit is the book — not a router shop. The standard receipt and provider routing are priced
-            separately from hub COGS — quoted, receipted — USDC on Base and Solana.
+            separately from hub COGS — quoted, receipted — USDC on Base and Solana.{' '}
+            <Link to="/products" style={styles.link}>
+              See products → /products
+            </Link>
+            .
           </p>
         </header>
 

@@ -28,6 +28,12 @@ const ROUTE_CONTENT = {
     lede:
       'Equal-weight install paths into the possession book — chat /v1, Eliza, ACP, MCP, frameworks, Cloudflare, swarms, register, and foreign ingest. Who paid which call; hold verify_url; export, policy, evidence.',
   },
+  '/products': {
+    title: 'Products — Stamp, Private Desk, Attest | Chit402',
+    h1: 'Three seats on the possession book.',
+    lede:
+      'Book-first products: Stamp ($0.002 signed receipt every hop), Private Desk (vendor-blind routing cost + 1%), Private + Attest (Desk plus $0.10 mandatory Tier-2 SP1). Who paid which call; hold verify_url and book rows — not a router shop.',
+  },
   '/docs/chit-in-15-lines': {
     title: 'Chat /v1 wire | Chit402',
     h1: 'Chat /v1 wire',
