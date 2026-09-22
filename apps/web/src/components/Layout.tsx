@@ -70,21 +70,7 @@ export default function Layout() {
         </div>
       </header>
 
-      {isChit ? (
-        <div
-          style={{
-            textAlign: 'center',
-            fontSize: '0.8rem',
-            color: '#a5d6f7',
-            padding: '0.5rem 1rem',
-            background: 'rgba(0,150,200,0.08)',
-            borderBottom: '1px solid rgba(0,200,255,0.15)',
-          }}
-        >
-          Chit is the product. {config.parent} is the parent.
-          {' '}Possession book — who paid which call; hold <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>verify_url</code>.
-        </div>
-      ) : (
+      {!isChit && (
         <div
           style={{
             textAlign: 'center',
