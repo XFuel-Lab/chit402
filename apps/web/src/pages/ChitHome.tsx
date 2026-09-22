@@ -44,6 +44,10 @@ export default function ChitHome() {
                 <Link to="/pricing" style={styles.pricingChipLink}>
                   Standard receipt $0.002 · routing cost + 1%
                 </Link>
+                {' · '}
+                <Link to="/products" style={styles.pricingChipLink}>
+                  Stamp · Private Desk · Attest
+                </Link>
               </p>
               <div style={styles.heroCta}>
                 <Link to="/book" className="btn btn-primary">

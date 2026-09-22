@@ -103,6 +103,8 @@ test('public marketing pages keep book-first wire copy', () => {
     'src/pages/AcpDocs.tsx',
     'src/pages/SwarmPlatforms.tsx',
     'src/pages/ChitIn15Lines.tsx',
+    'src/pages/Products.tsx',
+    'src/pages/Doors.tsx',
     'src/hostConfig.ts',
   ];
   for (const rel of paths) {
@@ -215,6 +217,8 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(chitHome, /USDC on Base and Solana/, 'ChitHome names USDC rails');
   assert.match(chitHome, /Standard receipt \$0\.002 · routing cost \+ 1%/, 'ChitHome surfaces pricing chip');
   assert.match(chitHome, /to="\/pricing"/, 'ChitHome links to pricing page');
+  assert.match(chitHome, /to="\/products"/, 'ChitHome links to products page');
+  assert.match(chitHome, /Private Desk · Attest/, 'ChitHome surfaces products chip');
   assert.doesNotMatch(chitHome, /POST \/v1\/chat\/completions/, 'ChitHome hero must not lead with POST /v1');
   assert.doesNotMatch(chitHome, /\$0\.01/, 'ChitHome must not lead with $0.01');
   assert.doesNotMatch(chitHome, /wallet moves/i, 'ChitHome must not lead with wallet-move');
@@ -233,6 +237,7 @@ test('Book page shows specimen banner and rows before possession', () => {
 test('Chit primary nav has Trust and no Drop-in door', () => {
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
   assert.match(layout, /to: '\/pricing', label: 'Pricing'/, 'Chit nav includes Pricing');
+  assert.match(layout, /to: '\/products', label: 'Products'/, 'Chit nav includes Products top-level');
   assert.match(layout, /to: '\/doors', label: 'Doors'/, 'Chit nav includes Doors top-level');
   assert.match(layout, /to: '\/trust', label: 'Trust'/, 'Chit nav includes Trust');
   assert.doesNotMatch(
@@ -248,6 +253,7 @@ test('Docs hub leads with book; install doors on dedicated page', () => {
   const docsDoors = readFileSync(join(root, 'src/pages/DocsDoors.tsx'), 'utf8');
   assert.match(docs, /possession book/i, 'Docs intro leads with possession book');
   assert.match(docs, /to="\/doors"/, 'Docs hub links to /doors');
+  assert.match(docs, /href: '\/products'/, 'Docs hub lists Products in start here');
   assert.doesNotMatch(docs, /DocDoorGrid/, 'Docs hub does not list every door card');
   assert.match(doors, /DocDoorGrid/, 'Doors page renders door cards');
   assert.match(doors, /<h1>Doors<\/h1>/, 'Doors page has first-class title');
@@ -310,6 +316,21 @@ test('App routes docs subpages', () => {
   assert.match(app, /\/trust/, 'App routes issuer trust page');
   assert.match(app, /\/activity/, 'App routes Activity page');
   assert.match(app, /path="\/doors"/, 'App routes first-class Doors page');
+  assert.match(app, /path="\/products"/, 'App routes first-class Products page');
+});
+
+test('Products page surfaces three book-first seats', () => {
+  const products = readFileSync(join(root, 'src/pages/Products.tsx'), 'utf8');
+  const pricing = readFileSync(join(root, 'src/pages/Pricing.tsx'), 'utf8');
+  assert.match(products, /<h1>Three seats on the possession book\./, 'Products page title');
+  assert.match(products, /name: 'Stamp'/, 'Products includes Stamp seat');
+  assert.match(products, /\$0\.002/, 'Products states Stamp price');
+  assert.match(products, /name: 'Private Desk'/, 'Products includes Private Desk seat');
+  assert.match(products, /cost \+ 1%|100 bps/, 'Products states Desk routing fee');
+  assert.match(products, /name: 'Private \+ Attest'/, 'Products includes Private + Attest seat');
+  assert.match(products, /\$0\.10/, 'Products states Tier-2 add-on');
+  assert.doesNotMatch(products, /\bOpenAI\b/i, 'Products must not name OpenAI');
+  assert.match(pricing, /to="\/products"/, 'Pricing links to products');
 });
 
 test('Security page uses host-aware product naming', () => {

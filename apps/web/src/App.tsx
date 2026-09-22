@@ -13,6 +13,7 @@ import OpenClawDocs from './pages/OpenClawDocs';
 import AcpDocs from './pages/AcpDocs';
 import SwarmPlatforms from './pages/SwarmPlatforms';
 import Pricing from './pages/Pricing';
+import Products from './pages/Products';
 import GatewayV1 from './pages/GatewayV1';
 import NotFound from './pages/NotFound';
 import Security from './pages/Security';
@@ -50,6 +51,7 @@ export default function App() {
         <Route path="/docs/swarm-platforms" element={<SwarmPlatforms />} />
         <Route path="/docs/olas" element={<SwarmPlatforms />} />
         <Route path="/docs/theoriq" element={<SwarmPlatforms />} />
+        <Route path="/products" element={<Products />} />
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/security" element={<Security />} />
         <Route path="/trust" element={<IssuerTrust />} />

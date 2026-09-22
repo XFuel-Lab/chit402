@@ -60,6 +60,7 @@
     { "source": "/activity", "destination": "/activity/index.html" },
     { "source": "/book-bot", "destination": "/book-bot/index.html" },
     { "source": "/doors", "destination": "/doors/index.html" },
+    { "source": "/products", "destination": "/products/index.html" },
     { "source": "/docs", "destination": "/docs/index.html" },
     { "source": "/docs/chit-in-15-lines", "destination": "/docs/chit-in-15-lines/index.html" },
     { "source": "/docs/eliza", "destination": "/docs/eliza/index.html" },

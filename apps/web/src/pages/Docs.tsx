@@ -7,6 +7,13 @@ const GITHUB = 'https://github.com/XFuel-Lab/chit402/blob/main';
 
 const startHere: DocLink[] = [
   {
+    title: 'Products',
+    description: 'Stamp, Private Desk, and Private + Attest — book-first seats and what you hold after settle.',
+    href: '/products',
+    meta: 'seats',
+    internal: true,
+  },
+  {
     title: 'Chit in 15 lines',
     description: 'Fastest receipt path — pay USDC, collect verify_url, start the book.',
     href: '/docs/chit-in-15-lines',
@@ -185,6 +192,7 @@ export default function Docs() {
           <a href={`${GITHUB}/docs/bug-bounty.md`} target="_blank" rel="noreferrer">
             Disclosure
           </a>
+          <Link to="/products">Products</Link>
           <Link to="/pricing">Pricing</Link>
           <Link to="/security">Security</Link>
         </nav>
