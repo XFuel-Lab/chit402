@@ -130,21 +130,25 @@ export default function Pricing() {
         </section>
 
         <div className="card" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
-          <h2 style={{ fontSize: '1.1rem', marginBottom: '0.65rem' }}>Public door</h2>
+          <h2 style={{ fontSize: '1.1rem', marginBottom: '0.65rem' }}>How you enter</h2>
           <p style={styles.muted}>
-            OpenAI-compatible{' '}
-            <code>POST {apiV1}/chat/completions</code> is the product surface. Point your client at{' '}
-            <code>{apiV1}</code>, pay the quoted USDC, hold the row. The possession book (
+            The product is the possession book — who paid which call, holdable after settle. One
+            drop-in path is OpenAI-compatible <code>POST {apiV1}/chat/completions</code>: point your
+            client at <code>{apiV1}</code>, pay the quoted USDC, hold the row. After you register,{' '}
             <Link to="/book" style={styles.link}>
               /book
+            </Link>{' '}
+            keeps last-N spend. Other install doors (Eliza, ACP, MCP, peers) are on{' '}
+            <Link to="/docs/doors" style={styles.link}>
+              /docs/doors
             </Link>
-            ) keeps last-N spend after you register.
+            .
           </p>
         </div>
 
         <div style={styles.ctaRow}>
-          <Link to="/docs/chit-in-15-lines" className="btn btn-primary">
-            Drop-in docs
+          <Link to="/docs/doors" className="btn btn-primary">
+            Install doors
           </Link>
           <Link to="/book" className="btn btn-secondary">
             Open the book
