@@ -15,6 +15,8 @@ export interface HostConfig {
   ogImage: string;
   twitterHandle: string;
   githubUrl: string;
+  /** Visitor-facing footer / contact mailto */
+  publicContactEmail: string;
   seo: {
     title: string;
     description: string;
@@ -32,6 +34,7 @@ const CHIT_CONFIG: HostConfig = {
   ogImage: 'https://www.chit402.com/og-image.png',
   twitterHandle: '@chit402',
   githubUrl: 'https://github.com/XFuel-Lab/chit402',
+  publicContactEmail: 'hello@chit402.com',
   seo: {
     title: 'Chit402 — treasury desk for agent spend',
     description: 'Who paid which call — export, policy, evidence. Possession book for agent spend.',
@@ -49,6 +52,7 @@ const XFUEL_CONFIG: HostConfig = {
   ogImage: 'https://www.xfuel.app/og-image.png',
   twitterHandle: '@XFuelLab',
   githubUrl: 'https://github.com/XFuel-Lab/xfuel-protocol',
+  publicContactEmail: 'security@xfuel.app',
   seo: {
     title: 'XFuel — the book. Hub, model, amount.',
     description: 'XFuel is the book: hub, model, and amount. Signed receipt, verify_url, cost-plus. USDC on Base and Solana.',

@@ -62,7 +62,7 @@ export default function Security() {
         <div className="card" style={{ padding: '1.5rem', marginBottom: '1.25rem' }}>
           <h2 style={styles.h2}>Responsible disclosure</h2>
           <p style={styles.p}>
-            Report privately: <a href="mailto:security@xfuel.app" style={{ color: '#00d4ff' }}>security@xfuel.app</a> or a{' '}
+            Report privately: <a href={`mailto:${config.publicContactEmail}`} style={{ color: '#00d4ff' }}>{config.publicContactEmail}</a> or a{' '}
             <a href={`${repoBase}/security`} target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>
               GitHub Security Advisory
             </a>
