@@ -6,6 +6,7 @@ import SeoHead from './SeoHead';
 const xfuelNavLinks = [
   { to: '/', label: 'Home' },
   { to: '/docs', label: 'Docs' },
+  { to: '/doors', label: 'Doors' },
   { to: '/pricing', label: 'Pricing' },
   { to: '/security', label: 'Security' },
 ];
@@ -16,8 +17,8 @@ const chitNavLinks = [
   { to: '/register', label: 'Register' },
   { to: '/activity', label: 'Activity' },
   { to: '/products', label: 'Products' },
-  { to: '/doors', label: 'Doors' },
   { to: '/docs', label: 'Docs' },
+  { to: '/doors', label: 'Doors' },
   { to: '/pricing', label: 'Pricing' },
   { to: '/trust', label: 'Trust' },
 ];

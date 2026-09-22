@@ -172,6 +172,7 @@ test('prerendered money pages have unique crawler titles (after build)', { skip:
     'book': 'Principal book — spend dashboard | Chit',
     'book-bot': 'Paste this. The shop gets a till | Chit',
     'docs': 'Chit402 — treasury desk for agent spend',
+    'doors': 'Install doors — wires into the book | Chit402',
     'v1': 'Pay /v1/chat/completions | Chit',
   };
   
@@ -234,11 +235,11 @@ test('Book page shows specimen banner and rows before possession', () => {
   assert.doesNotMatch(book, /You get nothing without the session/, 'Book must not be lock-only on first visit');
 });
 
-test('Chit primary nav has Trust and no Drop-in door', () => {
+test('Chit primary nav has Trust, Doors, and no Drop-in door', () => {
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
   assert.match(layout, /to: '\/pricing', label: 'Pricing'/, 'Chit nav includes Pricing');
   assert.match(layout, /to: '\/products', label: 'Products'/, 'Chit nav includes Products top-level');
-  assert.match(layout, /to: '\/doors', label: 'Doors'/, 'Chit nav includes Doors top-level');
+  assert.match(layout, /to: '\/doors', label: 'Doors'/, 'Chit nav includes Doors');
   assert.match(layout, /to: '\/trust', label: 'Trust'/, 'Chit nav includes Trust');
   assert.doesNotMatch(
     layout,
@@ -311,11 +312,12 @@ test('App routes docs subpages', () => {
   const app = readFileSync(join(root, 'src/App.tsx'), 'utf8');
   assert.match(app, /import ChitHome/, 'App imports ChitHome');
   assert.match(app, /isChitHost\(\) \? <ChitHome/, 'App conditionally renders ChitHome');
+  assert.match(app, /path="\/doors" element={<Doors \/>}/, 'App routes first-class Doors page');
+  assert.match(app, /path="\/docs\/doors" element={<DocsDoors \/>}/, 'App routes legacy /docs/doors redirect');
   assert.match(app, /chit-in-15-lines/, 'App routes 15-lines page');
   assert.match(app, /\/docs\/eliza/, 'App routes Eliza stub');
   assert.match(app, /\/trust/, 'App routes issuer trust page');
   assert.match(app, /\/activity/, 'App routes Activity page');
-  assert.match(app, /path="\/doors"/, 'App routes first-class Doors page');
   assert.match(app, /path="\/products"/, 'App routes first-class Products page');
 });
 

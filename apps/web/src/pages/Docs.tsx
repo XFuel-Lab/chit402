@@ -169,7 +169,7 @@ export default function Docs() {
           <h1>{productName} possession book</h1>
           <p>
             The product is the book — who paid which call; hold <code>verify_url</code>; export,
-            policy, and evidence. Install paths are how agents reach the same stamped receipts:{' '}
+            policy, and evidence.             Install paths are how agents reach the same stamped receipts:{' '}
             <Link to="/doors">Install wires</Link>. No account. No API key. A wallet that can
             pay the 402 is enough. Register is only to hold the book after a collected receipt.
             Apache-2.0. Public beta at <code>{apiDomain}</code>. Paying it is mainnet USDC.
