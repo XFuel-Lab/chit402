@@ -10,7 +10,6 @@ export interface HostConfig {
   brand: HostBrand;
   name: string;
   tagline: string;
-  parent: string;
   domain: string;
   apiDomain: string;
   ogImage: string;
@@ -26,9 +25,8 @@ export interface HostConfig {
 
 const CHIT_CONFIG: HostConfig = {
   brand: 'chit',
-  name: 'Chit',
+  name: 'Chit402',
   tagline: 'The chit x402 doesn\'t leave you.',
-  parent: 'XFuel Lab',
   domain: 'www.chit402.com',
   apiDomain: 'api.chit402.com',
   ogImage: 'https://www.chit402.com/og-image.png',
@@ -46,7 +44,6 @@ const XFUEL_CONFIG: HostConfig = {
   brand: 'xfuel',
   name: 'XFuel',
   tagline: 'XFuel is the book.',
-  parent: 'XFuel Lab',
   domain: 'xfuel.app',
   apiDomain: 'api.xfuel.app',
   ogImage: 'https://www.xfuel.app/og-image.png',

@@ -30,7 +30,7 @@ export default function IssuerTrust() {
 
         <div className="docs-panel">
           <h2>JWKS (authoritative + alias)</h2>
-          <p>Same issuer key material on both hosts. Prefer the Chit402 hostname; the XFuel API alias tracks legacy integrators.</p>
+          <p>Same issuer key material on both hosts. Prefer the Chit402 hostname; the api.xfuel.app alias tracks legacy integrators.</p>
           <ul style={styles.list}>
             <li>
               <a href={JWKS_PRIMARY} target="_blank" rel="noreferrer">
