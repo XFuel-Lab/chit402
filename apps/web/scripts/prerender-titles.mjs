@@ -20,7 +20,13 @@ const ROUTE_CONTENT = {
   '/docs': {
     title: 'Chit402 — treasury desk for agent spend',
     h1: 'Build on Chit402',
-    lede: 'Possession book first — who paid which call; hold verify_url; export, policy, evidence. Install wires (/v1 chat, Eliza, ACP, MCP, frameworks, peers) are equal-weight paths into the same book. Public beta at api.chit402.com. USDC on Base and Solana.',
+    lede: 'Possession book first — who paid which call; hold verify_url; export, policy, evidence. Install wires live on /doors — /v1 chat, Eliza, ACP, MCP, frameworks, peers are equal-weight paths into the same book. Public beta at api.chit402.com. USDC on Base and Solana.',
+  },
+  '/doors': {
+    title: 'Install doors — wires into the book | Chit402',
+    h1: 'Doors',
+    lede:
+      'Equal-weight install paths into the possession book — chat /v1, Eliza, ACP, MCP, frameworks, Cloudflare, swarms, register, and foreign ingest. Who paid which call; hold verify_url; export, policy, evidence.',
   },
   '/docs/chit-in-15-lines': {
     title: 'Chat /v1 wire | Chit402',

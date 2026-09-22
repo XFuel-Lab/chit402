@@ -203,7 +203,7 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   );
   assert.match(chitHome, /signed receipt/, 'ChitHome 90s block names signed receipt');
   assert.match(chitHome, /Install wires/, 'ChitHome 90s block points to install wires');
-  assert.match(chitHome, /\/docs\/doors/, 'ChitHome links install doors from 90s section');
+  assert.match(chitHome, /to="\/doors"/, 'ChitHome links install doors from 90s section');
   const ninetyBlock = chitHome.match(/chit-ninety-door[\s\S]*?<\/div>\s*<\/div>/)?.[0] ?? '';
   assert.doesNotMatch(ninetyBlock, /OpenAI/i, 'ChitHome 90s lead block stays book-first (no vendor wire branding)');
   assert.match(chitHome, /fetch\(/, 'ChitHome 90s sample uses neutral fetch wire');
@@ -233,6 +233,7 @@ test('Book page shows specimen banner and rows before possession', () => {
 test('Chit primary nav has Trust and no Drop-in door', () => {
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
   assert.match(layout, /to: '\/pricing', label: 'Pricing'/, 'Chit nav includes Pricing');
+  assert.match(layout, /to: '\/doors', label: 'Doors'/, 'Chit nav includes Doors top-level');
   assert.match(layout, /to: '\/trust', label: 'Trust'/, 'Chit nav includes Trust');
   assert.doesNotMatch(
     layout,
@@ -243,12 +244,15 @@ test('Chit primary nav has Trust and no Drop-in door', () => {
 
 test('Docs hub leads with book; install doors on dedicated page', () => {
   const docs = readFileSync(join(root, 'src/pages/Docs.tsx'), 'utf8');
+  const doors = readFileSync(join(root, 'src/pages/Doors.tsx'), 'utf8');
   const docsDoors = readFileSync(join(root, 'src/pages/DocsDoors.tsx'), 'utf8');
   assert.match(docs, /possession book/i, 'Docs intro leads with possession book');
-  assert.match(docs, /\/docs\/doors/, 'Docs hub links to install doors page');
+  assert.match(docs, /to="\/doors"/, 'Docs hub links to /doors');
   assert.doesNotMatch(docs, /DocDoorGrid/, 'Docs hub does not list every door card');
-  assert.match(docsDoors, /DocDoorGrid/, 'Install doors page renders door cards');
-  const doorsBlock = docsDoors.match(/const installDoors[\s\S]*?];/)?.[0] ?? '';
+  assert.match(doors, /DocDoorGrid/, 'Doors page renders door cards');
+  assert.match(doors, /<h1>Doors<\/h1>/, 'Doors page has first-class title');
+  assert.match(docsDoors, /Navigate to="\/doors"/, 'Legacy /docs/doors redirects to /doors');
+  const doorsBlock = doors.match(/export const installDoors[\s\S]*?];/)?.[0] ?? '';
   assert.match(doorsBlock, /Chit in 15 lines/, 'Doors page includes drop-in');
   assert.match(doorsBlock, /Eliza plugin/, 'Doors page includes Eliza');
 });
@@ -305,6 +309,7 @@ test('App routes docs subpages', () => {
   assert.match(app, /\/docs\/eliza/, 'App routes Eliza stub');
   assert.match(app, /\/trust/, 'App routes issuer trust page');
   assert.match(app, /\/activity/, 'App routes Activity page');
+  assert.match(app, /path="\/doors"/, 'App routes first-class Doors page');
 });
 
 test('Security page uses host-aware product naming', () => {

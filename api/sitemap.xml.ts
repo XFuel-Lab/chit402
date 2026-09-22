@@ -48,6 +48,11 @@ const CHIT_SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://www.chit402.com/doors</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.85</priority>
+  </url>
+  <url>
     <loc>https://www.chit402.com/v1</loc>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>

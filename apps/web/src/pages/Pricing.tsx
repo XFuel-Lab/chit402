@@ -139,15 +139,15 @@ export default function Pricing() {
               /book
             </Link>{' '}
             keeps last-N spend. Install wires (chat clients, Eliza, ACP, MCP, peers):{' '}
-            <Link to="/docs/doors" style={styles.link}>
-              /docs/doors
+            <Link to="/doors" style={styles.link}>
+              /doors
             </Link>
             .
           </p>
         </div>
 
         <div style={styles.ctaRow}>
-          <Link to="/docs/doors" className="btn btn-primary">
+          <Link to="/doors" className="btn btn-primary">
             Install doors
           </Link>
           <Link to="/book" className="btn btn-secondary">

@@ -5,6 +5,7 @@ import ChitHome from './pages/ChitHome';
 import ChitIn15Lines from './pages/ChitIn15Lines';
 import Docs from './pages/Docs';
 import DocsDoors from './pages/DocsDoors';
+import Doors from './pages/Doors';
 import ElizaPlugin from './pages/ElizaPlugin';
 import FrameworkAdapters from './pages/FrameworkAdapters';
 import CloudflareDocs from './pages/CloudflareDocs';
@@ -35,6 +36,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<HomePage />} />
         <Route path="/docs" element={<Docs />} />
+        <Route path="/doors" element={<Doors />} />
         <Route path="/docs/doors" element={<DocsDoors />} />
         <Route path="/docs/chit-in-15-lines" element={<ChitIn15Lines />} />
         <Route path="/docs/eliza" element={<ElizaPlugin />} />
