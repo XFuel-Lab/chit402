@@ -275,8 +275,7 @@ test('host config has correct Chit SEO values', () => {
 test('Layout supports dual branding for Chit and XFuel', () => {
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
   assert.match(layout, /isChitHost/, 'Layout checks for Chit host');
-  assert.match(layout, /Chit is the product/, 'Layout has Chit banner copy');
-  assert.match(layout, /config\.parent/, 'Layout references parent dynamically');
+  assert.doesNotMatch(layout, /Chit is the product/, 'Layout must not show global parent banner on Chit');
   assert.match(layout, /config\.name/, 'Layout uses dynamic brand name');
 });
 
