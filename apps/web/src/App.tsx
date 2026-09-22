@@ -36,8 +36,8 @@ export default function App() {
       {/* Layout wrapper (no path) ensures all routes render within the shell. */}
       <Route element={<Layout />}>
         <Route path="/" element={<HomePage />} />
-        <Route path="/docs" element={<Docs />} />
         <Route path="/doors" element={<Doors />} />
+        <Route path="/docs" element={<Docs />} />
         <Route path="/docs/doors" element={<DocsDoors />} />
         <Route path="/docs/chit-in-15-lines" element={<ChitIn15Lines />} />
         <Route path="/docs/eliza" element={<ElizaPlugin />} />
