@@ -19,7 +19,7 @@ const dropInSnippet = `const res = await fetch('${apiV1}/chat/completions', {
     max_tokens: 32,
   }),
 });
-// → signed receipt + verify_url (headers / xfuel field — see /docs/doors)`;
+// → signed receipt + verify_url (headers / xfuel field — see /doors)`;
 
 export default function ChitHome() {
   const config = getHostConfig();
@@ -72,7 +72,7 @@ export default function ChitHome() {
               Solana) or your partner <code>X-API-Key</code> → signed receipt →{' '}
               <a href={LIVE_RECEIPT_VERIFY_URL} target="_blank" rel="noreferrer">public verify</a>.
               Install wires (chat clients, Eliza, ACP, MCP, peers):{' '}
-              <Link to="/docs/doors">/docs/doors</Link>.
+              <Link to="/doors">/doors</Link>.
             </p>
             <pre className="docs-code chit-ninety-code">
               <code>{dropInSnippet.replace(apiV1, resolvedApiV1)}</code>

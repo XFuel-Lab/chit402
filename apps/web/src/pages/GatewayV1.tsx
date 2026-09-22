@@ -43,7 +43,7 @@ export default function GatewayV1() {
           <p>
             The possession book stamps spend from the public chat wire — compatible baseURL{' '}
             <a href={apiV1}>{apiV1}</a>. Install peers and foreign ingest live on{' '}
-            <Link to="/docs/doors">/docs/doors</Link>.
+            <Link to="/doors">/doors</Link>.
           </p>
         </header>
 

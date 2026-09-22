@@ -82,7 +82,7 @@ const builders: DocLink[] = [
   {
     title: 'Install doors',
     description: 'Chat /v1 wire, Eliza, ACP, MCP, frameworks, Cloudflare, swarms — peers into the same book.',
-    href: '/docs/doors',
+    href: '/doors',
     meta: 'doors',
     internal: true,
   },
@@ -163,7 +163,7 @@ export default function Docs() {
           <p>
             The product is the book — who paid which call; hold <code>verify_url</code>; export,
             policy, and evidence. Install paths are how agents reach the same stamped receipts:{' '}
-            <Link to="/docs/doors">Install doors</Link>. No account. No API key. A wallet that can
+            <Link to="/doors">Install wires</Link>. No account. No API key. A wallet that can
             pay the 402 is enough. Register is only to hold the book after a collected receipt.
             Apache-2.0. Public beta at <code>{apiDomain}</code>. Paying it is mainnet USDC.
           </p>
@@ -172,7 +172,7 @@ export default function Docs() {
         <nav className="docs-rail" aria-label="Quick links">
           <Link to="/book">Principal book</Link>
           <Link to="/trust">Trust</Link>
-          <Link to="/docs/doors">Install doors</Link>
+          <Link to="/doors">Install wires → /doors</Link>
           <a href={`${apiHost}/health`} target="_blank" rel="noreferrer">
             API health
           </a>
@@ -221,7 +221,7 @@ export default function Docs() {
             >
               SDK docs
             </a>
-            <Link to="/docs/doors" className="btn btn-secondary btn-sm">
+            <Link to="/doors" className="btn btn-secondary btn-sm">
               Install doors
             </Link>
             <a

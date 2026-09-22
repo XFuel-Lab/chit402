@@ -53,7 +53,7 @@ export default function ChitIn15Lines() {
             <strong>Chit is the possession book</strong> — after USDC settle you hold hub, model,
             amount, and <code>verify_url</code>; register to keep <code>/book</code>. This page is
             one install wire: point a chat-completions client at <code>{apiV1}</code> (peers:{' '}
-            <Link to="/docs/doors" style={{ color: '#00d4ff' }}>Eliza, ACP, MCP, frameworks</Link>
+            <Link to="/doors" style={{ color: '#00d4ff' }}>Eliza, ACP, MCP, frameworks</Link>
             ). Trials are live paid — no public demo key.
           </p>
         </header>

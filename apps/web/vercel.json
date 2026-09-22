@@ -1,6 +1,11 @@
 {
   "redirects": [
     {
+      "source": "/docs/doors",
+      "destination": "/doors",
+      "statusCode": 308
+    },
+    {
       "source": "/:path*",
       "has": [{ "type": "host", "value": "xfuel.app" }],
       "destination": "https://www.chit402.com/:path*",
@@ -54,6 +59,7 @@
     { "source": "/book", "destination": "/book/index.html" },
     { "source": "/activity", "destination": "/activity/index.html" },
     { "source": "/book-bot", "destination": "/book-bot/index.html" },
+    { "source": "/doors", "destination": "/doors/index.html" },
     { "source": "/docs", "destination": "/docs/index.html" },
     { "source": "/docs/chit-in-15-lines", "destination": "/docs/chit-in-15-lines/index.html" },
     { "source": "/docs/eliza", "destination": "/docs/eliza/index.html" },
