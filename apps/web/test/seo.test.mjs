@@ -144,9 +144,11 @@ test('llms.txt API route documents foreign ingest on www', () => {
 
 test('llms.txt API route does not contain prohibited copy', () => {
   const llmsApi = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8');
+  const chitBlock = llmsApi.match(/const CHIT_LLMS = `([\s\S]*?)`;\s*\nconst XFUEL_LLMS/m)?.[1] ?? '';
   assert.doesNotMatch(llmsApi, /Not a smart router/);
   assert.doesNotMatch(llmsApi, /Not a model shop/);
   assert.match(llmsApi, /treasury desk|possession book/i, 'llms.txt API has treasury desk copy');
+  assert.doesNotMatch(chitBlock, /XFuel Lab|Chit is the product|is the parent/i, 'CHIT llms must not parent-brand');
 });
 
 test('README first paragraph leads with the book', () => {
@@ -209,7 +211,7 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(chitHome, /api\.chit402\.com\/v1/, 'ChitHome names wire in 90s drop-in');
   assert.match(chitHome, /\/docs\/chit-in-15-lines/, 'ChitHome links to drop-in door page');
   assert.match(chitHome, /\/docs\/eliza/, 'ChitHome links to Eliza stub');
-  assert.doesNotMatch(chitHome, /By XFuel Lab|config\.parent|is the parent/i, 'ChitHome must not show parent naming in chrome');
+  assert.doesNotMatch(chitHome, /By XFuel Lab|is the parent|XFuel Lab/i, 'ChitHome must not show parent naming in chrome');
   assert.match(chitHome, /USDC on Base and Solana/, 'ChitHome names USDC rails');
   assert.match(chitHome, /Standard receipt \$0\.002 · routing cost \+ 1%/, 'ChitHome surfaces pricing chip');
   assert.match(chitHome, /to="\/pricing"/, 'ChitHome links to pricing page');
@@ -270,6 +272,8 @@ test('host config has correct Chit SEO values', () => {
   assert.match(hostConfig, /githubUrl:.*chit402/i, 'Config has chit402 GitHub URL');
   assert.doesNotMatch(hostConfig, /OpenAI/i, 'Config must not use vendor-specific wire branding');
   assert.doesNotMatch(hostConfig, /By XFuel Lab/i, 'Chit SEO metadata must not mix parent branding');
+  assert.doesNotMatch(hostConfig, /parent:\s*['"]XFuel Lab['"]/, 'hostConfig must not expose parent lab field');
+  assert.match(hostConfig, /name: 'Chit402'/, 'Chit chrome uses Chit402 product name');
 });
 
 test('Layout supports dual branding for Chit and XFuel', () => {
@@ -300,10 +304,18 @@ test('App routes docs subpages', () => {
   assert.match(app, /\/activity/, 'App routes Activity page');
 });
 
+test('Security page uses host-aware product naming', () => {
+  const security = readFileSync(join(root, 'src/pages/Security.tsx'), 'utf8');
+  assert.match(security, /isChitHost/, 'Security page branches on Chit host');
+  assert.match(security, /config\.name/, 'Security uses dynamic product name');
+  assert.doesNotMatch(security, /XFuel is pre-audit/, 'Security must not hard-code XFuel pre-audit on Chit');
+});
+
 test('issuer trust page publishes JWKS URLs, kid, and rotation policy', () => {
   const page = readFileSync(join(root, 'src/pages/IssuerTrust.tsx'), 'utf8');
   assert.match(page, /api\.chit402\.com\/\.well-known\/jwks\.json/);
   assert.match(page, /api\.xfuel\.app\/\.well-known\/jwks\.json/);
+  assert.doesNotMatch(page, /XFuel API alias/i, 'Trust page must not brand legacy host as XFuel product');
   assert.match(page, /IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q/);
   assert.match(page, /RFC 7638/);
   assert.match(page, /issuer_jwk.*not an independent trust root/is);

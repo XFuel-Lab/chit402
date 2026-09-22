@@ -1,14 +1,9 @@
 import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
 import { ADDRESSES, isDeployed } from '../contracts';
+import { getHostConfig, isChitHost } from '../hostConfig';
 
 const BASESCAN = 'https://basescan.org';
-const BUG_BOUNTY =
-  'https://github.com/XFuel-Lab/xfuel-protocol/blob/main/docs/bug-bounty.md';
-const AUDIT_CHECKLIST =
-  'https://github.com/XFuel-Lab/xfuel-protocol/blob/main/docs/AUDIT_READINESS_CHECKLIST.md';
-const POSITIONING =
-  'https://github.com/XFuel-Lab/xfuel-protocol/blob/main/docs/POSITIONING.md';
 
 function row(label: string, value: string, mono = false) {
   return (
@@ -22,6 +17,15 @@ function row(label: string, value: string, mono = false) {
 }
 
 export default function Security() {
+  const config = getHostConfig();
+  const isChit = isChitHost();
+  const repoBase = isChit
+    ? 'https://github.com/XFuel-Lab/chit402'
+    : 'https://github.com/XFuel-Lab/xfuel-protocol';
+  const bugBounty = `${repoBase}/blob/main/docs/bug-bounty.md`;
+  const auditChecklist = `${repoBase}/blob/main/docs/AUDIT_READINESS_CHECKLIST.md`;
+  const positioning = `${repoBase}/blob/main/docs/POSITIONING.md`;
+
   const verifier = ADDRESSES.verifier;
   const baseVerifier = '0x9373499645292715a2275A78eD65B14215C41c06';
 
@@ -36,7 +40,7 @@ export default function Security() {
           <p style={styles.lead}>
             Money and proofs settle on <strong>Base</strong>. Trust is tiered: signed receipts by default, on-chain SP1
             settlement proofs on demand. See our{' '}
-            <a href={POSITIONING} target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>
+            <a href={positioning} target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>
               positioning
             </a>{' '}
             for honest proof-scope language.
@@ -50,7 +54,7 @@ export default function Security() {
             <code style={{ fontSize: '0.85em' }}>SP1ProofHooks</code>, the USDC fee sink, and the primary inference circuit.
             Status updates will be posted when a firm is engaged and reports are published.
           </p>
-          <a href={AUDIT_CHECKLIST} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ marginTop: '0.5rem', display: 'inline-flex' }}>
+          <a href={auditChecklist} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ marginTop: '0.5rem', display: 'inline-flex' }}>
             Audit readiness checklist (GitHub)
           </a>
         </div>
@@ -59,15 +63,15 @@ export default function Security() {
           <h2 style={styles.h2}>Responsible disclosure</h2>
           <p style={styles.p}>
             Report privately: <a href="mailto:security@xfuel.app" style={{ color: '#00d4ff' }}>security@xfuel.app</a> or a{' '}
-            <a href="https://github.com/XFuel-Lab/xfuel-protocol/security" target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>
+            <a href={`${repoBase}/security`} target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>
               GitHub Security Advisory
             </a>
-            . Safe harbour applies for good-faith research. XFuel is pre-audit, so
+            . Safe harbour applies for good-faith research. {config.name} is pre-audit, so
             there is <strong>no cash bounty today</strong> — valid findings get a
             coordinated fix and public credit, and a funded programme launches with
             the first external audit.
           </p>
-          <a href={BUG_BOUNTY} target="_blank" rel="noreferrer" className="btn btn-primary btn-sm" style={{ marginTop: '0.5rem', display: 'inline-flex' }}>
+          <a href={bugBounty} target="_blank" rel="noreferrer" className="btn btn-primary btn-sm" style={{ marginTop: '0.5rem', display: 'inline-flex' }}>
             Disclosure policy
           </a>
         </div>
@@ -88,7 +92,7 @@ export default function Security() {
         </div>
 
         <div style={{ textAlign: 'center', fontSize: '0.85rem', color: '#8a8a9a' }}>
-          <a href="https://github.com/XFuel-Lab/xfuel-protocol" target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>GitHub</a>
+          <a href={config.githubUrl} target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>GitHub</a>
           {' · '}
           <Link to="/docs" style={{ color: '#00d4ff' }}>Docs</Link>
         </div>

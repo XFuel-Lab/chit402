@@ -5,7 +5,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 > Who paid which call — export, policy, evidence. Possession book for agent spend.
 > POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url.
 > Cost-plus, quoted, receipted — pay x402 USDC on Base or Solana.
-> The wire is api.chit402.com/v1 (alias: api.xfuel.app/v1). Chit is the product. XFuel Lab is the parent.
+> The wire is api.chit402.com/v1 (alias: api.xfuel.app/v1).
 
 ## Money pages (chit402.com)
 
