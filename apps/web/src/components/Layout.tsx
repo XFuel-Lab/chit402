@@ -115,7 +115,7 @@ export default function Layout() {
                 <NavLink to="/security">Security</NavLink>
               </>
             )}
-            <a href="mailto:security@xfuel.app">security@xfuel.app</a>
+            <a href={`mailto:${config.publicContactEmail}`}>{config.publicContactEmail}</a>
           </div>
         </div>
       </footer>

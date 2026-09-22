@@ -274,6 +274,7 @@ test('host config has correct Chit SEO values', () => {
   assert.doesNotMatch(hostConfig, /By XFuel Lab/i, 'Chit SEO metadata must not mix parent branding');
   assert.doesNotMatch(hostConfig, /parent:\s*['"]XFuel Lab['"]/, 'hostConfig must not expose parent lab field');
   assert.match(hostConfig, /name: 'Chit402'/, 'Chit chrome uses Chit402 product name');
+  assert.match(hostConfig, /publicContactEmail: 'hello@chit402\.com'/, 'Chit public contact is hello@chit402.com');
 });
 
 test('Layout supports dual branding for Chit and XFuel', () => {
@@ -281,6 +282,8 @@ test('Layout supports dual branding for Chit and XFuel', () => {
   assert.match(layout, /isChitHost/, 'Layout checks for Chit host');
   assert.doesNotMatch(layout, /Chit is the product/, 'Layout must not show global parent banner on Chit');
   assert.doesNotMatch(layout, /By XFuel Lab/i, 'Layout footer must not show parent byline on Chit');
+  assert.match(layout, /config\.publicContactEmail/, 'Layout footer uses host public contact email');
+  assert.doesNotMatch(layout, /mailto:security@xfuel\.app/, 'Layout must not hard-code security@xfuel.app mailto');
   assert.match(layout, /config\.name/, 'Layout uses dynamic brand name');
 });
 
