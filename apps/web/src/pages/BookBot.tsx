@@ -26,7 +26,7 @@ After that, every job I run should record:
 
 Catalog: Theta + Akash + xfuel/auto only.
 Unmetered / demo traffic never writes the book.
-Do not claim we route to OpenAI, Groq, or Fireworks.
+Do not claim we route to Groq, Together, or Fireworks.
 Do not ask me to send USDC manually.
 The API handles payment via HTTP 402 (x402) automatically.
 
@@ -83,7 +83,7 @@ export default function BookBot() {
           <h2 style={{ fontSize: '1.1rem', marginBottom: '0.75rem' }}>Catalog</h2>
           <p style={{ color: '#8a8a9a' }}>
             Theta EdgeCloud + Akash Network + <code>xfuel/auto</code>.
-            We do not route to OpenAI, Groq, Together, or Fireworks on the public catalog.
+            We do not route to Groq, Together, or Fireworks on the public catalog.
             <code>{apiV1}/models</code> shows what's live.
           </p>
         </div>
