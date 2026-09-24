@@ -4,7 +4,7 @@ import { buildX402Manifest, buildOpenApiSpec } from '../src/x402-discovery.js';
 import { buildPaymentChallenge, BAZAAR_EXTENSION_KEY } from '../src/x402-adapter.js';
 
 test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () => {
-  const m = buildX402Manifest('https://api-testnet.xfuel.app');
+  const m = buildX402Manifest('https://api.xfuel.app');
 
   assert.equal(m.x402Version, 2);
   assert.equal(m.name, 'Chit402', 'manifest name is Chit402 (public/searchable name)');
@@ -18,7 +18,7 @@ test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () =>
   assert.ok(!m.tags.includes('inference'), 'manifest tags demotes inference-only story');
   assert.ok(!m.tags.includes('llm'), 'manifest tags demotes llm-only story');
   assert.equal(typeof m.x402_enabled, 'boolean');
-  assert.equal(m.iconUrl, 'https://api-testnet.xfuel.app/chit402-icon.svg', 'iconUrl uses Chit402 icon');
+  assert.equal(m.iconUrl, 'https://api.xfuel.app/chit402-icon.svg', 'iconUrl uses Chit402 icon');
   assert.ok(!m.iconUrl.includes('xfuel-icon'), 'iconUrl does not contain legacy xfuel-icon');
   assert.ok(['usdc', 'tfuel'].includes(m.default_rail));
 
@@ -35,7 +35,7 @@ test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () =>
   assert.ok(chatResource, 'chat completions resource exists');
   assert.equal(chatResource.type, 'http');
   assert.equal(chatResource.method, 'POST');
-  assert.equal(chatResource.resource, 'https://api-testnet.xfuel.app/v1/chat/completions');
+  assert.equal(chatResource.resource, 'https://api.xfuel.app/v1/chat/completions');
   assert.equal(chatResource.accepts[0].scheme, 'exact');
   assert.ok(chatResource.input.required.includes('messages'));
 
@@ -50,7 +50,7 @@ test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () =>
   assert.ok(taskResource, 'task-request resource exists');
   assert.equal(taskResource.type, 'http');
   assert.equal(taskResource.method, 'POST');
-  assert.equal(taskResource.resource, 'https://api-testnet.xfuel.app/task-request');
+  assert.equal(taskResource.resource, 'https://api.xfuel.app/task-request');
   assert.equal(taskResource.accepts[0].scheme, 'exact');
   assert.equal(typeof taskResource.accepts[0].amount, 'string');
   assert.match(taskResource.accepts[0].asset, /^0x[0-9a-fA-F]{40}$/);
@@ -118,9 +118,9 @@ test('buildX402Manifest: emits root-relative links when no base URL is known', (
 });
 
 test('buildX402Manifest: trims a trailing slash on the base URL', () => {
-  const m = buildX402Manifest('https://api-testnet.xfuel.app/');
+  const m = buildX402Manifest('https://api.xfuel.app/');
   const taskResource = m.resources.find((r) => r.resource.includes('/task-request'));
-  assert.equal(taskResource.resource, 'https://api-testnet.xfuel.app/task-request');
+  assert.equal(taskResource.resource, 'https://api.xfuel.app/task-request');
 });
 
 test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info', () => {

@@ -75,7 +75,7 @@ test('explorerUrlForRef: base-sepolia, base, solana, unknown', () => {
 });
 
 test('buildReceipt: USDC task is proven, priced, and independently binding-verified', () => {
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api-testnet.xfuel.app' });
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.xfuel.app' });
   const v = mergeReceiptView(r);
   assert.equal(r.task_id, TASK_ID);
   assert.equal(r.status, 'completed');
@@ -107,23 +107,23 @@ test('buildReceipt: USDC task is proven, priced, and independently binding-verif
   assert.equal(v.output.kind, 'committed');
   assert.equal(v.output.hash, '0x' + 'ab'.repeat(32));
 
-  assert.equal(r.verification.jwks_uri, 'https://api-testnet.xfuel.app/.well-known/jwks.json');
+  assert.equal(r.verification.jwks_uri, 'https://api.xfuel.app/.well-known/jwks.json');
   assert.equal(r.issuer_signature.jwks_uri, undefined, 'jwks_uri is canonical on verification only');
 
   const claims = decodeReceiptClaims(r);
   assert.equal(claims.iat, r.created_at, 'wrapper created_at matches JWS iat (seconds)');
 
   // Absolute links when a baseUrl is provided.
-  assert.equal(r.links.self, `https://api-testnet.xfuel.app/receipt/${TASK_ID}`);
-  assert.equal(r.links.json, `https://api-testnet.xfuel.app/receipt/${TASK_ID}?format=json`);
+  assert.equal(r.links.self, `https://api.xfuel.app/receipt/${TASK_ID}`);
+  assert.equal(r.links.json, `https://api.xfuel.app/receipt/${TASK_ID}?format=json`);
   // Canonical shareable verify_url is present and matches links.self.
-  assert.equal(r.verify_url, `https://api-testnet.xfuel.app/receipt/${TASK_ID}`);
+  assert.equal(r.verify_url, `https://api.xfuel.app/receipt/${TASK_ID}`);
   assert.equal(r.verify_url, r.links.self);
 });
 
 test('buildVerifyUrl: absolute with base, relative without, trims trailing slash', () => {
-  assert.equal(buildVerifyUrl('https://api-testnet.xfuel.app', TASK_ID), `https://api-testnet.xfuel.app/receipt/${TASK_ID}`);
-  assert.equal(buildVerifyUrl('https://api-testnet.xfuel.app/', TASK_ID), `https://api-testnet.xfuel.app/receipt/${TASK_ID}`);
+  assert.equal(buildVerifyUrl('https://api.xfuel.app', TASK_ID), `https://api.xfuel.app/receipt/${TASK_ID}`);
+  assert.equal(buildVerifyUrl('https://api.xfuel.app/', TASK_ID), `https://api.xfuel.app/receipt/${TASK_ID}`);
   assert.equal(buildVerifyUrl('', TASK_ID), `/receipt/${TASK_ID}`);
 });
 
@@ -143,7 +143,7 @@ test('preferredPathPrefix: chit- on api.chit402.com, xfuel- otherwise', () => {
   assert.equal(preferredPathPrefix('api.chit402.com:443'), 'chit-');
   assert.equal(preferredPathPrefix('API.CHIT402.COM'), 'chit-');
   assert.equal(preferredPathPrefix('api.xfuel.app'), 'xfuel-');
-  assert.equal(preferredPathPrefix('api-testnet.xfuel.app'), 'xfuel-');
+  assert.equal(preferredPathPrefix('api.xfuel.app'), 'xfuel-');
   assert.equal(preferredPathPrefix('localhost:3001'), 'xfuel-');
   assert.equal(preferredPathPrefix(null), 'xfuel-');
   assert.equal(preferredPathPrefix(''), 'xfuel-');
@@ -168,8 +168,8 @@ test('buildVerifyUrl: uses chit- prefix when reqHost is api.chit402.com', () => 
     'https://api.xfuel.app/receipt/xfuel-247049dd-0075-4372-b7f7-508c62b9b587'
   );
   assert.equal(
-    buildVerifyUrl('https://api-testnet.xfuel.app', xfuelTaskId, { reqHost: null }),
-    'https://api-testnet.xfuel.app/receipt/xfuel-247049dd-0075-4372-b7f7-508c62b9b587'
+    buildVerifyUrl('https://api.xfuel.app', xfuelTaskId, { reqHost: null }),
+    'https://api.xfuel.app/receipt/xfuel-247049dd-0075-4372-b7f7-508c62b9b587'
   );
   assert.equal(
     buildVerifyUrl('https://api.chit402.com', xfuelTaskId),
@@ -206,8 +206,8 @@ test('buildReceipt: keeps xfuel- prefix when reqHost is api.xfuel.app', () => {
 
 test('baseUrlFromReq: prefers configured base, else derives from request', () => {
   const req = { protocol: 'http', get: (h) => (h === 'host' ? 'localhost:3002' : null) };
-  assert.equal(baseUrlFromReq(req, 'https://api-testnet.xfuel.app'), 'https://api-testnet.xfuel.app');
-  assert.equal(baseUrlFromReq(req, 'https://api-testnet.xfuel.app/'), 'https://api-testnet.xfuel.app');
+  assert.equal(baseUrlFromReq(req, 'https://api.xfuel.app'), 'https://api.xfuel.app');
+  assert.equal(baseUrlFromReq(req, 'https://api.xfuel.app/'), 'https://api.xfuel.app');
   assert.equal(baseUrlFromReq(req, null), 'http://localhost:3002');
   assert.equal(baseUrlFromReq({}, null), '');
 });
@@ -216,7 +216,7 @@ test('baseUrlFromReq: uses request host when it matches allowedHosts', () => {
   const chitReq = { protocol: 'https', get: (h) => (h === 'host' ? 'api.chit402.com' : null) };
   const xfuelReq = { protocol: 'https', get: (h) => (h === 'host' ? 'api.xfuel.app' : null) };
   const unknownReq = { protocol: 'https', get: (h) => (h === 'host' ? 'unknown.example.com' : null) };
-  const allowedHosts = ['api.chit402.com', 'api.xfuel.app', 'api-testnet.xfuel.app'];
+  const allowedHosts = ['api.chit402.com', 'api.xfuel.app'];
 
   // Request host in allowed list → use request host
   assert.equal(baseUrlFromReq(chitReq, 'https://api.xfuel.app', allowedHosts), 'https://api.chit402.com');
@@ -663,7 +663,7 @@ test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compa
 });
 
 test('buildReceipt: omits inactive extension fields and documents provider_cogs units', () => {
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api-testnet.xfuel.app' });
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.xfuel.app' });
   assert.equal('verified_inference' in r, false);
   assert.equal('privacy' in r, false);
   assert.equal('lineage' in r, false);

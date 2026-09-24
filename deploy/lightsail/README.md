@@ -1,6 +1,6 @@
 # Lightsail gateway ops
 
-Canonical way to run `https://api.xfuel.app` (alias `api-testnet.xfuel.app`) — **not** PM2, **not** `/opt/.../theta-bridge`.
+Canonical way to run the public API at `https://api.xfuel.app` and `https://api.chit402.com` — **not** PM2, **not** `/opt/.../theta-bridge`. Do not provision `api-testnet.xfuel.app` (retired demo name; DNS intentionally NXDOMAIN).
 
 DNS for `*.xfuel.app` is at Namecheap. Extra API names are A records to this instance’s static IP. TLS is terminated on the box (Caddy or nginx + certbot), not on Vercel. Add a new name to the existing site block and cert; do not stand up a second proxy or instance.
 
@@ -13,16 +13,16 @@ sudo certbot certificates
 Caddy — all names on one site (add `api.chit402.com` for Chit branding):
 
 ```
-api.chit402.com, api.xfuel.app, api-testnet.xfuel.app {
+api.chit402.com, api.xfuel.app {
     reverse_proxy 127.0.0.1:3002
 }
 ```
 
 **Do not** point apex `chit402.com` at this API box — that belongs to the marketing site.
 
-certbot + nginx — expand the existing cert (`-d api-testnet.xfuel.app -d api.xfuel.app`), add `server_name`, reload.
+certbot + nginx — cert covers `api.chit402.com` and `api.xfuel.app`; add both to `server_name`, reload.
 
-Receipt links: Set `PUBLIC_HOSTS=api.chit402.com,api.xfuel.app,api-testnet.xfuel.app` in `.env` so receipts use the incoming Host header when it matches an allowed host (enables correct self-links from both `api.chit402.com` and `api.xfuel.app`). Optionally keep `PUBLIC_BASE_URL=https://api.xfuel.app` as a fallback for requests from unrecognized hosts. Then `sudo systemctl restart xfuel-api`. Do not rotate `RECEIPT_SIGNING_SECRET`.
+Receipt links: Set `PUBLIC_HOSTS=api.chit402.com,api.xfuel.app` in `.env` so receipts use the incoming Host header when it matches an allowed host (enables correct self-links from both canonical names). Optionally keep `PUBLIC_BASE_URL=https://api.xfuel.app` as a fallback for requests from unrecognized hosts. Then `sudo systemctl restart xfuel-api`. Do not rotate `RECEIPT_SIGNING_SECRET`.
 
 ## Layout
 

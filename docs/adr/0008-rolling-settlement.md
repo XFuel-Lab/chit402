@@ -1,6 +1,6 @@
 # ADR 0008 — Rolling Settlement: Charge the Previous Call
 
-Status: **Accepted — live on `api-testnet.xfuel.app` `/task-request` since 2026-08-16.** `/v1` stays free (ADR 0006). Date: 2026-08-13.
+Status: **Accepted — live on public gateway (`api.xfuel.app` / `api.chit402.com`) `/task-request` since 2026-08-16** (was briefly named `api-testnet.xfuel.app` in the demo era; that hostname is retired). `/v1` stays free (ADR 0006). Date: 2026-08-13.
 Related: [ADR 0002](./0002-base-settlement-home.md), [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [X402_SCHEME_MIGRATION.md](../X402_SCHEME_MIGRATION.md), [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
 
 ## Context

@@ -2,10 +2,11 @@
 
 As-deployed source of truth. When in-repo config disagrees with this file, this file wins.
 
-Last updated: 2026-09-21
+Last updated: 2026-09-24
 
-> **Live as of 2026-08-20.** Public host is `https://api.xfuel.app` (same Lightsail box as the
-> `api-testnet` alias). Site `/v1` explainer + catch-all shipped. npm defaults catch up in
+> **Live as of 2026-08-20.** Public hosts are `https://api.chit402.com` and `https://api.xfuel.app`
+> (same Lightsail box). The old demo name `api-testnet.xfuel.app` is retired — DNS intentionally
+> not provisioned; do not use it. Site `/v1` explainer + catch-all shipped. npm defaults catch up in
 > `xfuel-sdk@0.5.5` / `xfuel-mcp@0.3.1`. Re-verify:
 > `node scripts/dev/_verify_deploy.mjs https://api.xfuel.app`.
 > Theta EdgeCloud is unset (`THETA_EDGE_URL` missing); AkashML is the live inference path. **SP1
@@ -67,7 +68,7 @@ Demo gateway:
 - Host: Lightsail `35.180.10.142`
 - App: **systemd `xfuel-api`** → `/home/ubuntu/xfuel-protocol/services/gateway` → `node src/server.js` (port 3002)
 - Install / recover: [deploy/lightsail/README.md](../deploy/lightsail/README.md)
-- Public: https://api.xfuel.app (alias https://api-testnet.xfuel.app — same box)
+- Public: https://api.chit402.com and https://api.xfuel.app (same box). Retired demo hostname `api-testnet.xfuel.app` — NXDOMAIN; not an alias.
 - **Do not** use `/opt/xfuel-protocol/backend/theta-bridge` or PM2 `xfuel-m2m` (legacy)
 - Health fingerprint: `fee_config.revenue_split.model === "usdc-base-splits-v2"` (not the legacy `30% BBB` string)
 
