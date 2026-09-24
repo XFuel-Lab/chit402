@@ -236,10 +236,22 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
 
 test('Book page shows specimen banner and rows before possession', () => {
   const book = readFileSync(join(root, 'src/pages/Book.tsx'), 'utf8');
+  const specimenPanel = readFileSync(join(root, 'src/components/BookSpecimenPanel.tsx'), 'utf8');
   const specimen = readFileSync(join(root, 'src/lib/bookSpecimen.ts'), 'utf8');
   assert.match(book, /BookSpecimenPanel/, 'Book renders specimen panel');
   assert.match(specimen, /Specimen — not live money/, 'Specimen banner copy locked');
   assert.doesNotMatch(book, /You get nothing without the session/, 'Book must not be lock-only on first visit');
+  assert.match(specimenPanel, /computeBurnRate/, 'Specimen panel previews burn rate');
+  assert.match(specimenPanel, /computeModelMix/, 'Specimen panel previews model mix');
+});
+
+test('Book principal dashboard v1 wires live API beats', () => {
+  const book = readFileSync(join(root, 'src/pages/Book.tsx'), 'utf8');
+  assert.match(book, /fetchAgentBook/, 'Book loads possession-gated book API');
+  assert.match(book, /computeBurnRate/, 'Book derives burn rate from entries');
+  assert.match(book, /computeModelMix/, 'Book derives model mix from entries');
+  assert.match(book, /verifyUrlFor/, 'Book links verify_url per row');
+  assert.match(book, /Treasury advanced/, 'Policy/export/escrow tucked under advanced');
 });
 
 test('Chit primary nav has Trust, Doors, and no Drop-in door', () => {
