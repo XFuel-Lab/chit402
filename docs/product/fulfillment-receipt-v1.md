@@ -57,3 +57,7 @@ Evidence remains `foreign_ingest` when Chit did not execute the hop.
 ## Verification
 
 Issuer JWS (payload v7+) carries `fulfillment` claims alongside payment/route/output. Offline verify uses pinned `issuer_jwk` + JWKS as today.
+
+## Smoke
+
+House verification steps and public specimen: [fulfillment-receipt-smoke.md](./fulfillment-receipt-smoke.md) · `GET /public/specimens/fulfillment-foreign-research.json`.

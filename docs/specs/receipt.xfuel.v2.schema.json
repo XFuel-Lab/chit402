@@ -338,6 +338,71 @@
       "type": ["integer", "null"],
       "description": "Registered agent identity (when bound). Frozen field when present.",
       "x-frozen": true
+    },
+    "evidence": {
+      "type": ["string", "null"],
+      "description": "Book/export honesty label (collected, foreign_ingest, UNVERIFIED, …).",
+      "enum": [
+        "collected",
+        "foreign_ingest",
+        "RECORDED_BY_SETTLE",
+        "ARRIVAL_UNVERIFIED",
+        "inflow_claimed",
+        "UNVERIFIED",
+        "policy_blocked",
+        "a2a_escrow",
+        null
+      ]
+    },
+    "fulfillment": {
+      "type": ["object", "null"],
+      "description": "Paid job envelope: intent → authorization → payment.ref → output_commitment → verify_url.",
+      "properties": {
+        "intent": {
+          "type": "object",
+          "properties": {
+            "job_kind": {
+              "type": "string",
+              "enum": [
+                "completions",
+                "scrape",
+                "review",
+                "swap",
+                "research",
+                "acp_job",
+                "other"
+              ]
+            },
+            "resource": { "type": ["string", "null"] },
+            "intent_id": { "type": ["string", "null"] },
+            "attempt_index": { "type": ["integer", "null"] }
+          }
+        },
+        "authorization": {
+          "type": "object",
+          "properties": {
+            "payer_wallet": { "type": ["string", "null"] },
+            "delegation_hash": { "type": ["string", "null"] },
+            "payment_ref": { "type": ["string", "null"] },
+            "issuance_commitment": { "type": ["string", "null"] }
+          }
+        },
+        "output_commitment": {
+          "type": "object",
+          "properties": {
+            "status": { "type": "string", "enum": ["committed", "UNVERIFIED"] },
+            "hash": {
+              "type": ["string", "null"],
+              "description": "Deliverable digest when status is committed."
+            },
+            "kind": { "type": ["string", "null"] },
+            "omission_rule": {
+              "type": ["string", "null"],
+              "description": "Explicit omission when deliverable was not stamped."
+            }
+          }
+        }
+      }
     }
   },
   "additionalProperties": true,

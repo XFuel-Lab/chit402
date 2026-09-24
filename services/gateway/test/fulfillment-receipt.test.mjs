@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const {
   normalizeJobKind,
@@ -19,6 +22,9 @@ const {
 
 const { buildReceipt, RECEIPT_PAYLOAD_VERSION, mergeReceiptView, decodeReceiptClaims } = await import('../src/receipt.js');
 const { UsageSettledLedger } = await import('../src/usage-settled.js');
+const { buildBookAuditPack } = await import('../src/agent-book.js');
+
+const gatewayDir = dirname(fileURLToPath(import.meta.url));
 
 describe('fulfillment-receipt v1', () => {
   test('normalizeJobKind infers completions from resource', () => {
@@ -193,5 +199,42 @@ describe('fulfillment-receipt v1', () => {
     const row = bookFulfillmentRowOf({ fulfillment: env });
     assert.equal(row.job_kind, 'other');
     assert.equal(row.output_commitment.status, 'UNVERIFIED');
+  });
+
+  test('buildBookAuditPack includes fulfillment block on foreign ingest rows', () => {
+    const ledger = new UsageSettledLedger();
+    const receipt = buildForeignReceipt({
+      taskId: 'foreign-x402-audit',
+      paymentRequired: {
+        resource: 'https://scrape.example/page',
+        amount: '2000',
+        payTo: '0xpay',
+      },
+      paymentResponse: { tx: '0xbeef', payer: '0xpayer', network: 'base' },
+      rail: 'usdc',
+      fulfillmentMeta: { jobKind: 'scrape', omitDeliverable: true },
+    });
+    ledger.append(receipt, { payer: '0xpayer', agentId: 7 });
+    const pack = buildBookAuditPack(ledger.listByAgent(7), 7, 'https://api.chit402.com');
+    const row = pack.rows.find((r) => r.task_id === 'foreign-x402-audit');
+    assert.ok(row?.fulfillment);
+    assert.equal(row.fulfillment.job_kind, 'scrape');
+  });
+
+  test('public fulfillment specimen matches envelope shape', () => {
+    const raw = readFileSync(
+      join(gatewayDir, '../public/specimens/fulfillment-foreign-research.json'),
+      'utf8',
+    );
+    const specimen = JSON.parse(raw);
+    assert.equal(specimen.schema, 'chit402.fulfillment_receipt_specimen.v1');
+    const pub = specimen.public_receipt;
+    assert.equal(pub.fulfillment.intent.job_kind, 'research');
+    assert.equal(pub.evidence, 'foreign_ingest');
+    assert.match(pub.verify_url, /\/receipt\/xfuel-fulfillment-foreign-research-specimen$/);
+    assert.equal(
+      pub.fulfillment.output_commitment.hash,
+      hashDeliverablePayload('{"report":"fulfillment-specimen-v1"}'),
+    );
   });
 });

@@ -122,6 +122,24 @@ Most receipts are Tier-1 (HMAC) by default. Tier-2 SP1 proofs are opt-in ($0.10)
 
 ---
 
+## 3.1 Fulfillment envelope (v1)
+
+Beyond chat completions, receipts may include **`fulfillment`** — a paid job object strangers re-check at the same `verify_url`:
+
+`intent → authorization → payment.ref → output_commitment → verify_url`
+
+| Block | Fields |
+|-------|--------|
+| `intent` | `job_kind` (`completions` \| `scrape` \| `review` \| `swap` \| `research` \| `acp_job` \| `other`), optional `resource`, `intent_id`, `attempt_index` |
+| `authorization` | `payer_wallet`, `payment_ref` (binds payer ↔ settlement), optional `delegation_hash` |
+| `output_commitment` | `status: committed` + `hash`, or `status: UNVERIFIED` + explicit `omission_rule` |
+
+Native completions map existing `output.hash` into `output_commitment`. Foreign ingest uses evidence `foreign_ingest`. Issuer JWS payload **v7+** includes `fulfillment` in signed claims.
+
+Specimen: `GET /public/specimens/fulfillment-foreign-research.json` · [fulfillment-receipt-smoke.md](../product/fulfillment-receipt-smoke.md).
+
+---
+
 ## 4. x402 Settlement-Receipt Extension
 
 A `receipt.xfuel.v2` receipt can serve as an **x402 settlement-receipt extension**:
