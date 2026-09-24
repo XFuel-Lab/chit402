@@ -23,6 +23,8 @@ Public receipts now stamp `schema: "xfuel.receipt.v3"`. The filename stays V2 fo
 | `privacy` | Private Spend / confidential mode when set |
 | `lineage` | Multi-hop: `parent_task_id`, `a2a_message_id`, `receipt_chain` |
 | `provider_cogs` | Prepaid float burn (ADR 0005) — not a buyer rail |
+| `fulfillment` | Paid job envelope (`job_kind`, intent/attempt, `output_commitment`) — [fulfillment-receipt-v1.md](./product/fulfillment-receipt-v1.md) |
+| `evidence` | Book honesty (`collected`, `foreign_ingest`, `UNVERIFIED`, …) on public receipt views |
 | Optional HMAC `signature` | Gated by `RECEIPT_SIGNING_SECRET` |
 
 v1 fields keep their meaning. Missing Tier-3 fields are null/absent until produced.

@@ -170,6 +170,7 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
     '/public/specimens/hemei-stranger-export.json',
     '/public/specimens/hemei-path-rotate-observe.json',
     '/public/specimens/tier2-in-proof-binding.json',
+    '/public/specimens/fulfillment-foreign-research.json',
     '/public/export/{slug}',
   ], 'chat completions is the public door; responses is the same floor; a2a is same floor; task-request is M2M; register is identity; book is possession-gated; ingest is foreign x402; lineage/policy/assign/dispute/escrow/webhook/rotate are book extensions; receipt endpoints are public verification; specimens are stranger-auditable fixtures; pull-export is signed treasury pull');
   assert.equal(spec.paths['/v1/agents/register'].post['x-payment-info'], undefined,

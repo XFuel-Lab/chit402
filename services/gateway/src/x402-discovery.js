@@ -1858,6 +1858,21 @@ export function buildOpenApiSpec(baseUrl = '') {
           },
         },
       },
+      '/public/specimens/fulfillment-foreign-research.json': {
+        get: {
+          operationId: 'getFulfillmentForeignResearchSpecimen',
+          summary: 'Fulfillment receipt v1 — foreign research job specimen',
+          description:
+            'Public chit402.fulfillment_receipt_specimen.v1 with a non-completions paid job '
+            + '(foreign_ingest, job_kind research, output_commitment). '
+            + 'See docs/product/fulfillment-receipt-smoke.md.',
+          tags: ['Specimens'],
+          responses: {
+            200: { description: 'Fulfillment foreign research specimen.' },
+            404: { description: 'Unknown specimen.' },
+          },
+        },
+      },
       '/public/export/{slug}': {
         get: {
           operationId: 'getPublicPullExport',
