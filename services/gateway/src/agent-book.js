@@ -617,6 +617,7 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
       verify_url: buildVerifyUrl(baseUrl, row.task_id),
       auditor_url: `${buildVerifyUrl(baseUrl, row.task_id)}?format=auditor`,
       explorer_url: explorerUrlForRef(row.payment.ref),
+      ...(row.fulfillment ? { fulfillment: row.fulfillment } : {}),
     };
   });
   return {

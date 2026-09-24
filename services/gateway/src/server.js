@@ -134,6 +134,7 @@ const PUBLIC_SPECIMENS = {
   'hemei-stranger-export.json': { type: 'application/json; charset=utf-8' },
   'hemei-path-rotate-observe.json': { type: 'application/json; charset=utf-8' },
   'tier2-in-proof-binding.json': { type: 'application/json; charset=utf-8' },
+  'fulfillment-foreign-research.json': { type: 'application/json; charset=utf-8' },
 };
 const PUBLIC_SPECIMENS_DIR = path.join(GATEWAY_SRC_DIR, '../public/specimens');
 

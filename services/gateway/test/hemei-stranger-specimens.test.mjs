@@ -54,6 +54,11 @@ const SPECIMENS = [
     contentType: /application\/json/,
     schema: 'chit402.tier2_in_proof_binding.v1',
   },
+  {
+    path: '/public/specimens/fulfillment-foreign-research.json',
+    contentType: /application\/json/,
+    schema: 'chit402.fulfillment_receipt_specimen.v1',
+  },
 ];
 
 for (const specimen of SPECIMENS) {

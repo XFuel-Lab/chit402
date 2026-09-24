@@ -72,6 +72,7 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
     '/public/specimens/hemei-stranger-export.json',
     '/public/specimens/hemei-path-rotate-observe.json',
     '/public/specimens/tier2-in-proof-binding.json',
+    '/public/specimens/fulfillment-foreign-research.json',
     '/public/export/{slug}',
   ]);
   assert.equal(spec.paths['/v1/agents/register'].post['x-payment-info'], undefined);

@@ -1,0 +1,79 @@
+{
+  "schema": "chit402.fulfillment_receipt_specimen.v1",
+  "specimen": true,
+  "updated_at": "2026-09-24",
+  "product_note": "Non-completions paid job (foreign x402 ingest). Chit verified payment.ref on-chain; did not execute the research hop.",
+  "smoke_doc": "docs/product/fulfillment-receipt-smoke.md",
+  "public_receipt": {
+    "schema": "xfuel.receipt.v3",
+    "task_id": "xfuel-fulfillment-foreign-research-specimen",
+    "status": "completed",
+    "proof_outcome": "signed",
+    "foreign_x402": true,
+    "source": "foreign_ingest",
+    "evidence": "foreign_ingest",
+    "verify_url": "https://api.chit402.com/receipt/xfuel-fulfillment-foreign-research-specimen",
+    "links": {
+      "self": "https://api.chit402.com/receipt/xfuel-fulfillment-foreign-research-specimen",
+      "explorer": "https://basescan.org/tx/0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    "payment": {
+      "rail": "usdc",
+      "ref": "base:0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "collected": true,
+      "gross_amount": "3500",
+      "net_amount": "3500",
+      "fee_amount": "0",
+      "payer": "0xPayer0000000000000000000000000000000001",
+      "payTo": "0xPayTo0000000000000000000000000000000001",
+      "network": "base",
+      "explorer_url": "https://basescan.org/tx/0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    "route": {
+      "model": "/run",
+      "hub": "research.example",
+      "provider": "research.example",
+      "resource": "https://research.example/v1/run",
+      "job_kind": "research"
+    },
+    "fulfillment": {
+      "intent": {
+        "job_kind": "research",
+        "resource": "https://research.example/v1/run",
+        "intent_id": "intent-fulfill-specimen",
+        "attempt_index": 0
+      },
+      "authorization": {
+        "payer_wallet": "0xPayer0000000000000000000000000000000001",
+        "delegation_hash": null,
+        "payment_ref": "base:0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "issuance_commitment": null
+      },
+      "output_commitment": {
+        "status": "committed",
+        "hash": "0x8a484a9a811223716dbc21659ad63ecf28cb01f0199e927e75aad88d13d38097",
+        "kind": "keccak256",
+        "omission_rule": null
+      }
+    },
+    "attestation_note": "Foreign ingest: Chit402 verified and recorded this payment — we did not execute the inference hop."
+  },
+  "book_row": {
+    "task_id": "xfuel-fulfillment-foreign-research-specimen",
+    "evidence": "foreign_ingest",
+    "verify_url": "https://api.chit402.com/receipt/xfuel-fulfillment-foreign-research-specimen",
+    "fulfillment": {
+      "job_kind": "research",
+      "resource": "https://research.example/v1/run",
+      "intent_id": "intent-fulfill-specimen",
+      "attempt_index": 0,
+      "output_commitment": {
+        "status": "committed",
+        "hash": "0x8a484a9a811223716dbc21659ad63ecf28cb01f0199e927e75aad88d13d38097",
+        "kind": "keccak256",
+        "omission_rule": null
+      }
+    }
+  },
+  "deliverable_preimage_note": "SHA-256 of UTF-8 {\"report\":\"fulfillment-specimen-v1\"} with 0x prefix (see hashDeliverablePayload)."
+}
