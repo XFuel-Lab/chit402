@@ -233,6 +233,18 @@ test('unauth + PAYMENT-SIGNATURE → handshake runs and settles (CDP Bankr case)
 
   assert.equal(paidRes.status, 202, `v2 PAYMENT-SIGNATURE must settle, got ${JSON.stringify(paid)}`);
   assert.ok(paid.task_id, 'paid call returns a task_id');
+  const txRef = '0xmockpaymenttxref0000000000000000000000000000000000000000000000';
+  const settleHeader = paidRes.headers.get('payment-response');
+  assert.equal(settleHeader, paidRes.headers.get('x-payment-response'));
+  assert.match(settleHeader, /^[A-Za-z0-9+/]*={0,2}$/);
+  const settle = JSON.parse(Buffer.from(settleHeader, 'base64').toString('utf8'));
+  assert.deepEqual(settle, {
+    success: true,
+    transaction: txRef,
+    network: 'eip155:8453',
+    payer: null,
+  });
+  assert.equal(paid.payment_ref, `base:${txRef}`);
 
   const { status } = await waitComplete(paid.task_id);
   assert.ok(['completed', 'fee_collected'].includes(status.status), `task must complete after paid settlement, got ${status.status}`);
