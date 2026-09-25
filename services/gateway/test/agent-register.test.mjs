@@ -18,7 +18,8 @@ process.env.TASK_STORE_PERSIST = 'false';
 
 const { createApp } = await import('../src/server.js');
 const { buildReceipt, canonicalSignedPayload, mergeReceiptView, verifyReceiptHmac } = await import('../src/receipt.js');
-const { AgentRegistry, registerAgent } = await import('../src/agent-registry.js');
+const { AgentRegistry, registerAgent, canonicalRegisterRecoverMessage } = await import('../src/agent-registry.js');
+const { Wallet } = await import('ethers');
 const { UsageSettledLedger, receiptQualifiesForLedger } = await import('../src/usage-settled.js');
 const { buildAgentCard } = await import('../src/agent-card.js');
 const { inspectWalletShape, bindAgentWallet } = await import('../src/agent-wallet.js');
@@ -376,4 +377,87 @@ test('packages/mcp has no XFUEL_PAYER_PRIVATE_KEY', () => {
 
   walk(mcpRoot);
   assert.deepEqual(hits, [], `human payer-key path still present:\n${hits.join('\n')}`);
+});
+
+test('re-register of a bound task_id does not return the existing session', async () => {
+  const receipt = collectedReceipt({ task_id: 'task-rereg', ref: 'base:0xrereg' });
+  const d = deps({ [receipt.task_id]: receipt });
+  const first = await registerAgent({ agentWallet: WALLET, task_id: receipt.task_id }, d);
+  assert.equal(first.ok, true);
+  const secret = first.body.session;
+  assert.equal(typeof secret, 'string');
+
+  const second = await registerAgent({ agentWallet: WALLET, task_id: receipt.task_id }, d);
+  assert.equal(second.ok, true);
+  assert.equal(second.body.idempotent_replay, true);
+  assert.equal(second.body.agent_id, first.body.agent_id);
+  assert.equal(second.body.session, null);
+  assert.equal(second.body.session_withheld, true);
+  assert.equal(JSON.stringify(second.body).includes(secret), false);
+  assert.equal(d.ledger.entries.length, 1);
+});
+
+test('re-register returns the session when the caller already holds it', async () => {
+  const receipt = collectedReceipt({ task_id: 'task-rereg-key', ref: 'base:0xreregkey' });
+  const d = deps({ [receipt.task_id]: receipt });
+  const first = await registerAgent({ agentWallet: WALLET, task_id: receipt.task_id }, d);
+  const second = await registerAgent({
+    agentWallet: WALLET,
+    task_id: receipt.task_id,
+    session: first.body.session,
+  }, d);
+  assert.equal(second.ok, true);
+  assert.equal(second.body.session, first.body.session);
+  assert.equal(second.body.session_withheld, undefined);
+});
+
+test('re-register returns the session for a fresh wallet signature', async () => {
+  const signer = Wallet.createRandom();
+  const receipt = collectedReceipt({ task_id: 'task-rereg-sig', ref: 'base:0xreregsig' });
+  const d = deps({ [receipt.task_id]: receipt });
+  const first = await registerAgent({ agentWallet: signer.address, task_id: receipt.task_id }, d);
+  assert.equal(first.ok, true);
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = await signer.signMessage(
+    canonicalRegisterRecoverMessage(receipt.task_id, signer.address, timestamp),
+  );
+  const second = await registerAgent({
+    agentWallet: signer.address,
+    task_id: receipt.task_id,
+    wallet_signature: signature,
+    signature_timestamp: timestamp,
+  }, d);
+  assert.equal(second.ok, true);
+  assert.equal(second.body.session, first.body.session);
+
+  const wrong = Wallet.createRandom();
+  const badSig = await wrong.signMessage(
+    canonicalRegisterRecoverMessage(receipt.task_id, signer.address, timestamp),
+  );
+  const rejected = await registerAgent({
+    agentWallet: signer.address,
+    task_id: receipt.task_id,
+    wallet_signature: badSig,
+    signature_timestamp: timestamp,
+  }, d);
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.status, 401);
+  assert.equal(rejected.error, 'wallet_signature_invalid');
+  assert.equal(rejected.body, undefined);
+});
+
+test('re-register with a wrong session does not return the real one', async () => {
+  const receipt = collectedReceipt({ task_id: 'task-rereg-bad', ref: 'base:0xreregbad' });
+  const d = deps({ [receipt.task_id]: receipt });
+  const first = await registerAgent({ agentWallet: WALLET, task_id: receipt.task_id }, d);
+  const rejected = await registerAgent({
+    agentWallet: WALLET,
+    task_id: receipt.task_id,
+    session: '0'.repeat(first.body.session.length),
+  }, d);
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.status, 403);
+  assert.equal(rejected.error, 'session_mismatch');
+  assert.equal(JSON.stringify(rejected).includes(first.body.session), false);
 });

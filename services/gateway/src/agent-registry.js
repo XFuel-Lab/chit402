@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { keccak256, toUtf8Bytes } from 'ethers';
+import { getAddress, keccak256, toUtf8Bytes, verifyMessage } from 'ethers';
 import logger from './logger.js';
 import { bindAgentWallet } from './agent-wallet.js';
 import { readAndVerifyReceipt } from './receipt-oracle.js';
@@ -270,6 +270,88 @@ function requestHashOf({ requestHash, taskId, agentWallet }) {
   return keccak256(toUtf8Bytes(`xfuel-register:${taskId}:${agentWallet}`));
 }
 
+/** EIP-191 personal_sign window for recovering an already-issued session. */
+export const REGISTER_RECOVER_MAX_AGE_SEC = 300;
+
+/**
+ * Message a bound wallet signs to recover an existing possession session.
+ * `chit.register.recover|<taskId>|<checksumAddress>|<unixSeconds>`
+ */
+export function canonicalRegisterRecoverMessage(taskId, agentWallet, timestamp) {
+  return `chit.register.recover|${taskId}|${getAddress(agentWallet)}|${timestamp}`;
+}
+
+function sessionMatches(stored, presented) {
+  if (stored == null || presented == null || presented === '') return false;
+  const want = Buffer.from(String(presented));
+  const have = Buffer.from(String(stored));
+  if (want.length !== have.length) return false;
+  return crypto.timingSafeEqual(want, have);
+}
+
+/**
+ * Prove control of an already-bound wallet. A matching session is the existing
+ * key. A fresh personal_sign is wallet control. Either releases the session.
+ * @returns {{ ok: true, release: boolean } | { ok: false, status: number, error: string, message: string }}
+ */
+export function authorizeExistingSessionRelease(body, identity, taskId, agentWallet, nowSec = Math.floor(Date.now() / 1000)) {
+  const presented = body?.session ?? body?.possession_session ?? null;
+  if (presented != null && presented !== '') {
+    if (sessionMatches(identity?.session, presented)) return { ok: true, release: true };
+    return {
+      ok: false,
+      status: 403,
+      error: 'session_mismatch',
+      message: 'presented session does not match this agent',
+    };
+  }
+
+  const signature = body?.wallet_signature || body?.signature || null;
+  if (signature) {
+    const timestamp = body?.signature_timestamp ?? body?.sig_timestamp ?? body?.timestamp;
+    const ts = Number(timestamp);
+    if (!Number.isFinite(ts)) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'wallet_signature_invalid',
+        message: 'signature_timestamp is required',
+      };
+    }
+    const age = nowSec - ts;
+    if (age > REGISTER_RECOVER_MAX_AGE_SEC || age < -60) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'wallet_signature_invalid',
+        message: 'wallet signature timestamp is outside the recovery window',
+      };
+    }
+    try {
+      const message = canonicalRegisterRecoverMessage(taskId, agentWallet, ts);
+      const recovered = getAddress(verifyMessage(message, signature));
+      if (recovered.toLowerCase() !== getAddress(agentWallet).toLowerCase()) {
+        return {
+          ok: false,
+          status: 401,
+          error: 'wallet_signature_invalid',
+          message: 'wallet signature did not recover the bound agentWallet',
+        };
+      }
+      return { ok: true, release: true };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'wallet_signature_invalid',
+        message: err?.message || 'wallet signature did not prove control',
+      };
+    }
+  }
+
+  return { ok: true, release: false };
+}
+
 /**
  * Register an agent against a paid HMAC-valid receipt.
  *
@@ -341,9 +423,15 @@ export async function registerAgent(body = {}, {
 
   let identity;
   let creditedEntry;
+  let releaseSession = true;
 
   if (existingTask || existingRef) {
     const entry = existingTask || existingRef;
+    const prior = typeof registry.get === 'function' ? registry.get(entry.agent_id) : null;
+    const alreadyBound = !!(
+      prior?.agentWallet
+      && String(prior.agentWallet).toLowerCase() === String(bound.address).toLowerCase()
+    );
     noteIdempotentReplay(entry);
     if (typeof registry.bindWallet !== 'function') {
       return { ok: false, status: 503, error: 'service_unavailable', message: 'registry.bindWallet is not configured' };
@@ -360,6 +448,18 @@ export async function registerAgent(body = {}, {
     }
     identity = boundId.identity;
     creditedEntry = entry;
+    if (alreadyBound) {
+      const gate = authorizeExistingSessionRelease(
+        body,
+        identity,
+        oracle.receipt.task_id,
+        bound.address,
+      );
+      if (!gate.ok) {
+        return { ok: false, status: gate.status, error: gate.error, message: gate.message };
+      }
+      releaseSession = gate.release === true;
+    }
   } else {
     // Legacy / offline receipts that never hit the settle append path.
     const upserted = registry.upsert({
@@ -418,7 +518,8 @@ export async function registerAgent(body = {}, {
       agent_id: identity.agent_id,
       agentWallet: identity.agentWallet,
       wallet_kind: identity.wallet_kind,
-      session: identity.session,
+      session: releaseSession ? identity.session : null,
+      ...(releaseSession ? {} : { session_withheld: true }),
       task_id: oracle.receipt.task_id,
       payment: {
         ref: oracle.receipt.payment.ref,

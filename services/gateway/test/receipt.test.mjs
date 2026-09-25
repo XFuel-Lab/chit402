@@ -894,3 +894,96 @@ test('renderReceiptHtml: shows settle bind rows when present', () => {
   assert.match(html, /Asset/);
   assert.match(html, /pinned in receipt/);
 });
+
+test('renderReceiptHtml: foreign-ingest Nano receipt renders without a proof object', () => {
+  const hash = '324B1CED853848219956F60B43065ECF08F0AB0C35B54BA2516EBE39C4E5C19B';
+  const sender = 'nano_1senderxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const recipient = 'nano_1recipientxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const explorer = `https://nanexplorer.com/nano/block/${hash}`;
+  const html = renderReceiptHtml({
+    schema: 'xfuel.receipt.v3',
+    task_id: 'foreign-x402-nano-1',
+    status: 'completed',
+    proof_outcome: 'signed',
+    foreign_x402: true,
+    source: 'foreign_ingest',
+    evidence: 'foreign_ingest',
+    payment: {
+      rail: 'nano',
+      chain: 'nano',
+      ref: `nano:${hash}`,
+      collected: true,
+      gross_amount: '1000000000000000000000000000000',
+      fee_amount: '0',
+      payer: sender,
+      payTo: recipient,
+      amount_xno: '1',
+      amount_raw: '1000000000000000000000000000000',
+      usd_estimate: {
+        label: 'estimate',
+        available: true,
+        amount_usd: '0.82',
+        source: 'kraken',
+      },
+      explorer_url: explorer,
+    },
+    route: { model: 'smoke send', provider: 'nano', hub: 'nano' },
+    stamp: { fee_usd: '0.002', fee_units: '2000', waived: true, currency: 'USDC' },
+    links: { self: 'https://api.chit402.com/receipt/foreign-x402-nano-1', explorer },
+    verify_url: 'https://api.chit402.com/receipt/foreign-x402-nano-1',
+  });
+  assert.match(html, /<!doctype html>/);
+  assert.match(html, /Recorded/);
+  assert.match(html, /Nano \/ XNO/);
+  assert.match(html, /1 <span class="muted">XNO/);
+  assert.match(html, /\$0\.82/);
+  assert.match(html, /estimate/);
+  assert.match(html, new RegExp(sender));
+  assert.match(html, new RegExp(recipient));
+  assert.match(html, new RegExp(`href="${explorer}"`));
+  assert.match(html, new RegExp(`nano:${hash}`));
+  assert.match(html, /\$0\.002/);
+  assert.match(html, /waived/);
+  assert.doesNotMatch(html, /class="badge bad">Invalid/);
+});
+
+test('renderReceiptHtml: foreign-ingest USDC receipt renders without a proof object', () => {
+  const sender = '0x1111111111111111111111111111111111111111';
+  const recipient = '0x2222222222222222222222222222222222222222';
+  const explorer = 'https://basescan.org/tx/0xabc';
+  const html = renderReceiptHtml({
+    schema: 'xfuel.receipt.v3',
+    task_id: 'foreign-x402-usdc-1',
+    status: 'completed',
+    foreign_x402: true,
+    source: 'foreign_ingest',
+    evidence: 'foreign_ingest',
+    payment: {
+      rail: 'usdc',
+      network: 'base',
+      asset: 'USDC',
+      ref: 'base:0xabc',
+      collected: true,
+      gross_amount: '5000',
+      fee_amount: '0',
+      payer: sender,
+      payTo: recipient,
+      explorer_url: explorer,
+    },
+    route: { model: 'other', provider: 'foreign', hub: 'foreign' },
+    stamp: { fee_usd: '0.002', fee_units: '2000', waived: false, currency: 'USDC' },
+    links: { self: 'https://api.chit402.com/receipt/foreign-x402-usdc-1', explorer },
+  });
+  assert.match(html, /<!doctype html>/);
+  assert.match(html, /Recorded/);
+  assert.match(html, /base \/ USDC/);
+  assert.match(html, /\$0\.005/);
+  assert.match(html, new RegExp(sender));
+  assert.match(html, new RegExp(recipient));
+  assert.match(html, /base:0xabc/);
+  assert.match(html, new RegExp(`href="${explorer}"`));
+  assert.match(html, /\$0\.002/);
+  assert.match(html, /paid/);
+  assert.doesNotMatch(html, /waived/);
+  assert.doesNotMatch(html, /class="badge bad">Invalid/);
+});
