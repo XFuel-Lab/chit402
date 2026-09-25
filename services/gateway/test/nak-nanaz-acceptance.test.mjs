@@ -154,6 +154,8 @@ describe('A) Idempotent replay classification', () => {
     assert.equal(second.body.settlement_status, SETTLEMENT_STATUS.IDEMPOTENT_REPLAY);
     assert.equal(second.body.idempotent_replay, true);
     assert.equal(second.body.replay_of, 'task-reg-replay');
+    assert.equal(second.body.session, null);
+    assert.equal(second.body.session_withheld, true);
     assert.equal(deps.ledger.entries.length, 1);
   });
 

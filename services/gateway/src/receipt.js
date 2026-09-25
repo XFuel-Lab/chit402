@@ -1741,6 +1741,70 @@ function bindingCopy(view) {
   return 'Payment binding was not recorded on this task. Buyer settlement is still USDC on Base.';
 }
 
+function isForeignIngestReceipt(receipt) {
+  return !!(
+    receipt
+    && (
+      receipt.evidence === 'foreign_ingest'
+      || receipt.foreign_x402 === true
+      || receipt.source === 'foreign_ingest'
+    )
+  );
+}
+
+function formatUsdEstimateLabel(estimate) {
+  if (estimate == null || estimate === '') return null;
+  if (typeof estimate === 'string' || typeof estimate === 'number') {
+    const text = String(estimate);
+    return text.startsWith('$') ? text : `$${text}`;
+  }
+  if (estimate.available === false) return null;
+  if (estimate.amount_usd == null || estimate.amount_usd === '') return null;
+  const text = String(estimate.amount_usd);
+  return text.startsWith('$') ? text : `$${text}`;
+}
+
+function foreignIngestPaymentSection(receipt, view) {
+  const p = view.payment || {};
+  const stamp = receipt.stamp && typeof receipt.stamp === 'object' ? receipt.stamp : {};
+  const rail = String(p.rail || '').toLowerCase();
+  const isNano = rail === 'nano' || p.chain === 'nano';
+  const asset = String(p.asset || (isNano ? 'XNO' : 'USDC')).toUpperCase();
+  const network = p.network || (isNano ? 'nano' : '');
+  const railLabel = isNano
+    ? 'Nano / XNO'
+    : (network ? `${network} / ${asset}` : asset);
+  const amountHtml = isNano
+    ? `${esc(p.amount_xno ?? '—')} <span class="muted">XNO</span>`
+    : usdcCell(p.gross_amount);
+  const usd = formatUsdEstimateLabel(p.usd_estimate);
+  const sender = p.payer || null;
+  const recipient = p.payTo || p.payee || null;
+  const explorer = p.explorer_url || receipt.links?.explorer || null;
+  const feeLabel = stamp.fee_usd != null && stamp.fee_usd !== ''
+    ? `$${stamp.fee_usd}`
+    : formatUsdc(stamp.fee_units);
+  const waived = stamp.waived === true;
+  const stampHtml = `${esc(feeLabel || '$0.002')} <span class="muted">USDC</span> ${
+    waived
+      ? '<span class="badge pending">waived</span>'
+      : '<span class="badge ok">paid</span>'
+  }`;
+
+  return `<section class="card">
+      <h2>Foreign payment <span class="scope">recorded, not executed here</span></h2>
+      ${row('Rail', `<span class="badge ok">${esc(railLabel)}</span>`)}
+      ${row('Amount', amountHtml)}
+      ${usd != null ? row('USD estimate', `${esc(usd)} <span class="muted">estimate</span>`) : ''}
+      ${sender ? row('Sender', `<code>${esc(sender)}</code>`) : ''}
+      ${recipient ? row('Recipient', `<code>${esc(recipient)}</code>`) : ''}
+      ${p.ref ? row('Payment ref', `<code>${esc(p.ref)}</code>`) : ''}
+      ${explorer ? row('Explorer', `<a href="${esc(explorer)}" target="_blank" rel="noopener">${esc(explorer)} ↗</a>`) : ''}
+      ${row('Stamp fee', stampHtml)}
+      <p class="muted" style="margin:8px 0 0;font-size:12px">${esc(receipt.attestation_note || 'Chit402 verified and recorded this payment. It did not execute the spend.')}</p>
+    </section>`;
+}
+
 function proofWhyMissing(receipt) {
   const pr = receipt.proof;
   if (pr?.has_proof) return '';
@@ -1784,9 +1848,11 @@ function verifyIssuerForHtml(receipt) {
 /** Render a clean, standalone, shareable HTML receipt page. */
 export function renderReceiptHtml(receipt) {
   const view = mergeReceiptView(receipt);
-  const p = view.payment;
-  const pr = view.proof;
+  const p = view.payment || {};
+  const pr = view.proof || {};
+  const route = view.route || {};
   const b = view.binding;
+  const foreign = isForeignIngestReceipt(receipt);
   const og = buildReceiptOgMeta(receipt, view);
   const title = og.title;
   const desc = og.description;
@@ -1824,7 +1890,9 @@ export function renderReceiptHtml(receipt) {
       return jwksUri;
     })();
 
-  const bindingBlock = b
+  const bindingBlock = foreign
+    ? ''
+    : b
     ? `<section class="card">
         <h2>Payment binding <span class="scope">independent re-derivation</span></h2>
         ${row('In proof', b.in_proof ? '<span class="badge ok">yes</span>' : '<span class="badge pending">server-attested</span>')}
@@ -1845,9 +1913,9 @@ export function renderReceiptHtml(receipt) {
           </section>`);
 
   const cogs = view.provider_cogs;
-  const cogsProvider = displayRouteProvider(cogs?.provider || view.route?.provider);
-  const routeModelLabel = displayRouteModel(view.route.model);
-  const routeProviderLabel = displayRouteProvider(view.route.provider);
+  const cogsProvider = displayRouteProvider(cogs?.provider || route.provider);
+  const routeModelLabel = displayRouteModel(route.model);
+  const routeProviderLabel = displayRouteProvider(route.provider);
   const cogsBlock = cogs
     ? `<section class="card">
         <h2>Provider cost <span class="scope">what we paid to serve this</span></h2>
@@ -1943,7 +2011,7 @@ export function renderReceiptHtml(receipt) {
     ? row(view.output.kind === 'committed' ? 'Output commitment' : 'Output hash (SHA-256)', `<code>${esc(shortHash(view.output.hash, 12, 10))}</code>`)
     : '';
 
-  const mc = view.route.model_commitment;
+  const mc = route.model_commitment;
   const modelCommitmentRow = mc && mc.commitment
     ? row('Model commitment <span class="scope">PoMA</span>',
         `<code>${esc(shortHash(mc.commitment, 12, 10))}</code>${mc.version != null ? ` <span class="muted">v${esc(mc.version)}</span>` : ''}`)
@@ -2009,7 +2077,9 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
   <div class="wrap">
     <header>
       <div class="brand">Chit402</div>
-      <div>${badge(pr.outcome, b ? b.matches : undefined)}</div>
+      <div>${foreign
+        ? '<span class="badge ok">Recorded</span>'
+        : badge(pr.outcome, b ? b.matches : undefined)}</div>
     </header>
 
     <div class="share-row">
@@ -2023,9 +2093,9 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
     <h1>${privacy?.label ? esc(privacy.label) : 'Task'}</h1>
     <div class="taskid">${esc(displayTaskId(receipt.task_id))}</div>
 
-    <section class="card">
+    ${foreign ? foreignIngestPaymentSection(receipt, view) : `<section class="card">
       <h2>Payment</h2>
-      ${row('Rail', `<span class="badge ${p.rail === 'usdc' ? 'ok' : 'pending'}">${esc(p.rail.toUpperCase())}</span>`)}
+      ${row('Rail', `<span class="badge ${p.rail === 'usdc' ? 'ok' : 'pending'}">${esc((p.rail || '').toUpperCase())}</span>`)}
       ${row('Settlement', view.settlement?.kind === SETTLEMENT_KIND_INHERITED
         ? `<span class="badge pending">inherited</span> from <code>${esc(view.settlement.parent_receipt_id || view.parent_receipt_id || '')}</code>`
         : (p.collected ? '<span class="badge ok">collected</span>' : (p.collects_on === 'next_request' ? '<span class="badge pending">bill pending</span>' : '<span class="muted">not collected</span>')))}
@@ -2040,7 +2110,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
       ${p.platform_fee != null ? row(`Platform fee (${esc((p.platform_fee_bps ?? 0) / 100)}%)`, usdcCell(p.platform_fee)) : ''}
       ${p.tier2_proof ? row('Tier-2 proof (SP1)', usdcCell(p.tier2_proof)) : ''}
       ${row('Protocol fee', `${usdcCell(p.fee_amount)} <span class="muted">(${esc(p.protocol_fee_bps ?? p.fee_bps)} bps)</span>`)}
-    </section>
+    </section>`}
 
     <section class="card">
       <h2>Verification</h2>
@@ -2055,7 +2125,9 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
       ${row('On-chain SP1', pr.has_proof ? '<span class="badge ok">yes</span>' : '<span class="muted">not on this call</span>')}
       ${pr.nullifier ? row('Nullifier', `<code>${esc(shortHash(pr.nullifier, 12, 10))}</code>`) : ''}
       ${pr.proving_time_ms != null ? row('Proving time', `${esc(pr.proving_time_ms)} ms`) : ''}
-      ${pr.has_proof ? `<div class="scopebox">${esc(PROOF_SCOPE_NOTE)}</div>` : `<p class="muted" style="margin:8px 0 0;font-size:12px">${esc(proofWhyMissing(view))}</p>`}
+      ${foreign
+        ? '<p class="muted" style="margin:8px 0 0;font-size:12px">Foreign ingest has no on-chain SP1 proof. The recorded payment is the evidence.</p>'
+        : (pr.has_proof ? `<div class="scopebox">${esc(PROOF_SCOPE_NOTE)}</div>` : `<p class="muted" style="margin:8px 0 0;font-size:12px">${esc(proofWhyMissing(view))}</p>`)}
     </section>
 
     <section class="card secondary">
@@ -2066,8 +2138,8 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
       ${usageRows}
       ${outputRow}
       ${modelCommitmentRow}
-      ${view.route.chain_id ? row('Chain', esc(view.route.chain_id)) : ''}
-      ${view.route.message_type ? row('Type', esc(view.route.message_type)) : ''}
+      ${route.chain_id ? row('Chain', esc(route.chain_id)) : ''}
+      ${route.message_type ? row('Type', esc(route.message_type)) : ''}
     </section>
 
     ${bindingBlock}
@@ -2079,9 +2151,9 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
     ${fulfillmentBlock}
 
     <footer>
-      Machine-readable: <a href="${esc(receipt.links.json)}">JSON</a> ·
-      <a href="${esc(receipt.links.proof)}">proof</a> ·
-      <a href="${esc(receipt.links.status)}">status</a><br />
+      Machine-readable: <a href="${esc(receipt.links?.json || '?format=json')}">JSON</a> ·
+      <a href="${esc(receipt.links?.proof || '')}">proof</a> ·
+      <a href="${esc(receipt.links?.status || '')}">status</a><br />
       ES256 signed receipt · payload v${esc(receipt.issuer_signature?.payload_version || RECEIPT_PAYLOAD_VERSION)} · verify via pinned <code>issuer_signature.issuer_jwk</code> or <a href="${esc(jwksUrl || '/.well-known/jwks.json')}">JWKS</a><br />
       Chit402
     </footer>
