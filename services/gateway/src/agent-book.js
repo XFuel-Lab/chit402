@@ -87,6 +87,12 @@ function rowOf(entry) {
       ref: entry.payment_ref ?? null,
       rail: entry.rail ?? null,
       amount: hideAmount ? null : (entry.amount ?? null),
+      ...(entry.chain ? { chain: entry.chain } : {}),
+      ...(entry.amount_xno ? { amount_xno: entry.amount_xno } : {}),
+      ...(entry.amount_raw ? { amount_raw: entry.amount_raw } : {}),
+      ...(entry.block_hash ? { block_hash: entry.block_hash } : {}),
+      ...(entry.usd_estimate ? { usd_estimate: entry.usd_estimate } : {}),
+      ...(entry.explorer_url ? { explorer_url: entry.explorer_url } : {}),
     },
     collected_at: entry.collected_at || entry.recorded_at || null,
   };
@@ -170,7 +176,8 @@ export function totalsOf(entries) {
     if (!byRail[rail]) byRail[rail] = { count: 0, amount: 0n };
     byRail[rail].count += 1;
     byRail[rail].amount = addAmount(byRail[rail].amount, e.amount);
-    usdcSum = addAmount(usdcSum, e.amount);
+    // Nano raw is a different unit. It stays on by_rail and off the USDC sum.
+    if (rail !== 'nano') usdcSum = addAmount(usdcSum, e.amount);
   }
   const by_rail = {};
   for (const [rail, v] of Object.entries(byRail)) {

@@ -110,9 +110,11 @@ export function buildAgentCard(baseUrl = '') {
         name: 'Foreign x402 book stamp',
         description:
           'POST /v1/agents/:agent_id/book/ingest — spent elsewhere → stamp here. '
-          + 'Record x402 spend at another shop on the possession book. Possession-gated (401 without session; '
-          + 'not a public 402 settle). On-chain USDC verify (fail closed). evidence foreign_ingest. '
-          + 'Returns verify_url like native completions. See GET /openapi.json and llms.txt Foreign ingest.',
+          + 'Record x402 spend at another shop, or a cemented Nano send, on the possession book. '
+          + 'Possession-gated (401 without session). Submitter pays a $0.002 x402 stamp on Base or Solana '
+          + '(not debited from prepaid budget) unless a pilot waiver key applies. '
+          + 'evidence foreign_ingest. Returns verify_url like native completions. '
+          + 'See GET /openapi.json and llms.txt Foreign ingest.',
         tags: ['possession', 'ingest', 'treasury'],
         examples: [
           'POST /v1/agents/1/book/ingest with { session, foreign_invoice: { amount, payer, payTo, tx, hub } }',

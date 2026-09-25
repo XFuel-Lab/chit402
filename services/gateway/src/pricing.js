@@ -43,11 +43,12 @@ const PER_MILLION = 1_000_000;
 export const DEFAULT_FLOOR_UNITS = 2_000;
 
 /**
- * Ingest stamp fee: ~$0.0001–0.0002 volume stamp (100 atomic USDC default).
- * A nominal write fee for possession-gated book ingest, debited from prepaid
- * budget via HMAC — NOT an on-chain exact settle (that would cost more than it collects).
+ * Ingest stamp: $0.002 (2000 atomic USDC, 6 decimals).
+ * Paid by the submitter via x402 on Base or Solana. It is not debited from
+ * the agent's prepaid budget — that debit double-counted against the ingested
+ * spend (remaining fell by the stamp and by the recorded amount).
  */
-export const STAMP_FEE_UNITS = 100;
+export const STAMP_FEE_UNITS = 2000;
 
 /**
  * Retail rate card, base units per million tokens. Deliberately above COGS
@@ -553,6 +554,9 @@ export function describePricing(cfg = {}) {
     // Opt-in and flat: a Succinct request costs the same whatever it proves, so
     // a percentage would misprice it in both directions. See ADR 0009.
     tier2_proof_usd: usdNum(tier2ProofUnits(cfg)),
+    // Book ingest stamp. Same USDC scale as the hop floor (6 decimals).
+    stamp_fee_usd: usdNum(STAMP_FEE_UNITS),
+    stamp_fee_units: String(STAMP_FEE_UNITS),
     per_model_rates: '/v1/models',
     quote_endpoint: 'POST /task-quote',
     description: costPlus

@@ -8,6 +8,9 @@
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'true';
@@ -33,6 +36,39 @@ const {
   resetBaseProvider,
 } = await import('../src/foreign-x402-ingest.js');
 const { BOOK_EVIDENCE } = await import('../src/usage-settled.js');
+const { capViewOf } = await import('../src/agent-book.js');
+const { STAMP_FEE_UNITS } = await import('../src/pricing.js');
+const { resetStampWaiverStore } = await import('../src/stamp-waiver.js');
+
+const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'nano');
+const NANO_SEND = JSON.parse(readFileSync(join(fixtureDir, 'block_info_324B1CED.json'), 'utf8'));
+const NANO_PREV = JSON.parse(readFileSync(join(fixtureDir, 'block_info_prev_C0CEDE1E.json'), 'utf8'));
+const NANO_HASH = '324B1CED853848219956F60B43065ECF08F0AB0C35B54BA2516EBE39C4E5C19B';
+const NANO_RECIPIENT = 'nano_3kef5c3ahkwf3qcyw61qcnma668z8ez4ocnm55gkiaqeure3ghcfqunfynug';
+const NANO_RAW = '1000000000000000000000000000000';
+
+function jsonRes(obj, status = 200) {
+  return { ok: status < 400, status, json: async () => obj };
+}
+
+/** Fixture RPC + Kraken ticker. Optional mutator per hash. */
+function nanoFetch({ mutate } = {}) {
+  return async (url, opts = {}) => {
+    const u = String(url);
+    if (u.includes('kraken') || u.includes('Ticker') || opts.method === 'GET') {
+      return jsonRes({ error: [], result: { NANOUSD: { c: ['0.80', '1'] } } });
+    }
+    const body = JSON.parse(opts.body || '{}');
+    const hash = String(body.hash || '').toUpperCase();
+    let payload;
+    if (hash === NANO_HASH) payload = structuredClone(NANO_SEND);
+    else if (hash === String(NANO_PREV.contents ? NANO_SEND.contents.previous : '').toUpperCase()
+      || hash.startsWith('C0CEDE1E')) payload = structuredClone(NANO_PREV);
+    else return jsonRes({ error: 'Block not found' });
+    if (mutate) payload = mutate(payload, hash, u) || payload;
+    return jsonRes(payload);
+  };
+}
 
 const WALLET_A = '0x1111111111111111111111111111111111111111';
 
@@ -848,10 +884,9 @@ test('smoke fixture: ingest row verify_url resolves on GET /receipt', async () =
 
 // ─── Stamp Fee Tests ─────────────────────────────────────────────────────────
 
-test('ingest debits $0.0001 stamp fee from prepaid budget', async () => {
+test('ingest reports $0.002 stamp and does not debit prepaid budget', async () => {
   const { registry, ledger, identity } = setupDeps();
-  // Set a budget of 1000 atomic (more than the 100 stamp fee)
-  registry.setBudget(identity.agent_id, '1000');
+  registry.setBudget(identity.agent_id, '10000');
 
   const result = await ingestForeignX402({
     payment_required: {
@@ -875,16 +910,21 @@ test('ingest debits $0.0001 stamp fee from prepaid budget', async () => {
 
   assert.equal(result.ok, true);
   assert.equal(result.status, 201);
-  assert.equal(result.body.stamp_fee, '100');
+  assert.equal(result.body.stamp_fee, String(STAMP_FEE_UNITS));
+  assert.equal(result.body.stamp_fee, '2000');
+  assert.equal(result.body.stamp_fee_usd, '0.002');
 
-  // Budget should be reduced from 1000 to 900
+  // Cap is unchanged. Spend is the ingested USDC amount once — not also the stamp.
   const updated = registry.get(identity.agent_id);
-  assert.equal(updated.budget, '900');
+  assert.equal(updated.budget, '10000');
+  const spent = ledger.sumCollectedByAgent(identity.agent_id);
+  assert.equal(spent, 5000n);
+  const view = capViewOf(updated, spent);
+  assert.equal(view.remaining, '5000');
 });
 
-test('ingest with insufficient budget returns 402', async () => {
+test('a small prepaid budget does not block the stamp and is not mutated', async () => {
   const { registry, ledger, identity } = setupDeps();
-  // Set a budget of 50 atomic (less than the 100 stamp fee)
   registry.setBudget(identity.agent_id, '50');
 
   const result = await ingestForeignX402({
@@ -907,19 +947,14 @@ test('ingest with insufficient budget returns 402', async () => {
     verify: verifyOk,
   });
 
-  assert.equal(result.ok, false);
-  assert.equal(result.status, 402);
-  assert.equal(result.error, 'insufficient_budget');
-  assert.match(result.message, /stamp fee/i);
-
-  // Budget should be unchanged
-  const unchanged = registry.get(identity.agent_id);
-  assert.equal(unchanged.budget, '50');
+  assert.equal(result.ok, true);
+  assert.equal(result.body.stamp_fee, '2000');
+  assert.equal(registry.get(identity.agent_id).budget, '50');
+  assert.equal(ledger.sumCollectedByAgent(identity.agent_id), 5000n);
 });
 
-test('ingest without budget set (unlimited) does not debit stamp fee', async () => {
+test('ingest without budget set (unlimited) reports the stamp and leaves budget null', async () => {
   const { registry, ledger, identity } = setupDeps();
-  // Budget is null/unset by default — unlimited
 
   const result = await ingestForeignX402({
     payment_required: {
@@ -943,10 +978,243 @@ test('ingest without budget set (unlimited) does not debit stamp fee', async () 
 
   assert.equal(result.ok, true);
   assert.equal(result.status, 201);
-  // Still reports the stamp fee amount
-  assert.equal(result.body.stamp_fee, '100');
+  assert.equal(result.body.stamp_fee, '2000');
+  assert.equal(registry.get(identity.agent_id).budget, null);
+});
 
-  // Budget remains null (unlimited)
-  const unchanged = registry.get(identity.agent_id);
-  assert.equal(unchanged.budget, null);
+test('ensureStamp 402 writes nothing and does not touch budget', async () => {
+  const { registry, ledger, identity } = setupDeps();
+  registry.setBudget(identity.agent_id, '10000');
+  const result = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://api.shop.io/v1/infer',
+      amount: '5000',
+      payTo: '0xShopTreasury',
+    },
+    payment_response: {
+      tx: '0xstamp402',
+      payer: WALLET_A,
+      network: 'base',
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyOk,
+    ensureStamp: async () => ({
+      ok: false,
+      status: 402,
+      error: 'stamp_payment_required',
+      message: 'pay the stamp',
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 402);
+  assert.equal(ledger.entries.length, 0);
+  assert.equal(registry.get(identity.agent_id).budget, '10000');
+});
+
+function nanoBody(overrides = {}) {
+  return {
+    session: overrides.session,
+    nano: {
+      block: NANO_HASH,
+      recipient: NANO_RECIPIENT,
+      amount: NANO_RAW,
+      description: '1 XNO mainnet send',
+      ...overrides.nano,
+    },
+  };
+}
+
+test('cemented Nano fixture stamps a receipt with raw, XNO, estimate, and explorer', async () => {
+  assert.equal(NANO_SEND.subtype, 'send');
+  assert.equal(String(NANO_SEND.confirmed), 'true');
+  assert.equal(NANO_SEND.amount, NANO_RAW);
+  assert.equal(NANO_SEND.contents.link_as_account, NANO_RECIPIENT);
+  assert.equal(NANO_SEND.linked_account, NANO_RECIPIENT);
+  assert.equal(
+    (BigInt(NANO_PREV.balance) - BigInt(NANO_SEND.balance)).toString(),
+    NANO_SEND.amount,
+  );
+  const { registry, ledger, identity } = setupDeps();
+  registry.setBudget(identity.agent_id, '10000');
+  const result = await ingestForeignX402(nanoBody({ session: identity.session }), {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    fetchImpl: nanoFetch(),
+    rpcUrls: ['http://rpc-a.test', 'http://rpc-b.test'],
+  });
+  assert.equal(result.ok, true, result.message);
+  assert.equal(result.status, 201);
+  assert.equal(result.body.payment.chain, 'nano');
+  assert.equal(result.body.payment.rail, 'nano');
+  assert.equal(result.body.payment.block_hash, NANO_HASH);
+  assert.equal(result.body.payment.amount_raw, NANO_RAW);
+  assert.equal(result.body.payment.amount_xno, '1');
+  assert.equal(result.body.payment.usd_estimate.label, 'estimate');
+  assert.equal(result.body.payment.usd_estimate.source, 'kraken');
+  assert.equal(result.body.payment.usd_estimate.pair, 'NANOUSD');
+  assert.equal(result.body.payment.usd_estimate.price_usd, '0.80');
+  assert.equal(result.body.payment.usd_estimate.amount_usd, '0.8');
+  assert.equal(result.body.payment.explorer_url, `https://nanexplorer.com/nano/block/${NANO_HASH}`);
+  assert.equal(result.body.route.model, '1 XNO mainnet send');
+  assert.equal(result.body.stamp_fee, '2000');
+  assert.equal(registry.get(identity.agent_id).budget, '10000');
+  assert.equal(ledger.sumCollectedByAgent(identity.agent_id), 0n, 'nano raw is not USDC spend');
+
+  const row = ledger.findByRef(`nano:${NANO_HASH}`);
+  assert.ok(row);
+  assert.equal(row.receipt_snapshot.payment.chain, 'nano');
+  assert.equal(row.amount_xno, '1');
+
+  const again = await ingestForeignX402(nanoBody({ session: identity.session }), {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    fetchImpl: nanoFetch(),
+    rpcUrls: ['http://rpc-a.test', 'http://rpc-b.test'],
+  });
+  assert.equal(again.status, 409);
+  assert.equal(again.error, 'duplicate_ref');
+  assert.equal(ledger.entries.length, 1);
+});
+
+test('Nano ingest rejects unconfirmed, recipient mismatch, and amount mismatch', async () => {
+  const { registry, ledger, identity } = setupDeps();
+  const baseDeps = {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    rpcUrls: ['http://rpc-a.test', 'http://rpc-b.test'],
+  };
+
+  const unconfirmed = await ingestForeignX402(nanoBody({ session: identity.session }), {
+    ...baseDeps,
+    fetchImpl: nanoFetch({
+      mutate: (payload, hash) => {
+        if (hash === NANO_HASH) payload.confirmed = 'false';
+        return payload;
+      },
+    }),
+  });
+  assert.equal(unconfirmed.ok, false);
+  assert.match(unconfirmed.message, /not cemented/i);
+
+  const mismatchRecipient = await ingestForeignX402(nanoBody({
+    session: identity.session,
+    nano: { recipient: 'nano_3jwrszth46rk1mu7rmb4rhm54us8yg1gw3ipodftqtikf5yqdyr7471nsg1k' },
+  }), { ...baseDeps, fetchImpl: nanoFetch() });
+  assert.equal(mismatchRecipient.ok, false);
+  assert.match(mismatchRecipient.message, /recipient/i);
+
+  const mismatchAmount = await ingestForeignX402(nanoBody({
+    session: identity.session,
+    nano: { amount: '1' },
+  }), { ...baseDeps, fetchImpl: nanoFetch() });
+  assert.equal(mismatchAmount.ok, false);
+  assert.match(mismatchAmount.message, /amount/i);
+  assert.equal(ledger.entries.length, 0);
+});
+
+test('Nano ingest rejects when the two RPCs disagree', async () => {
+  const { registry, ledger, identity } = setupDeps();
+  const result = await ingestForeignX402(nanoBody({ session: identity.session }), {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    rpcUrls: ['http://rpc-a.test', 'http://rpc-b.test'],
+    fetchImpl: nanoFetch({
+      mutate: (payload, hash, url) => {
+        if (hash === NANO_HASH && String(url).includes('rpc-b')) payload.amount = '1';
+        return payload;
+      },
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.message, /disagree/i);
+  assert.equal(ledger.entries.length, 0);
+});
+
+test('POST book/ingest without a stamp payment is 402 for $0.002', async () => {
+  const hooks = httpApp.locals.__test;
+  const identity = hooks.agentRegistry.allocate({ taskId: 'stamp-402' });
+  hooks.agentRegistry.setBudget(identity.agent_id, '9000');
+  const beforeRows = hooks.usageSettled.entries.length;
+  const res = await fetch(`${base}/v1/agents/${identity.agent_id}/book/ingest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session: identity.session,
+      payment_required: {
+        resource: 'https://api.shop.io/v1/infer',
+        amount: '5000',
+        payTo: '0xShopTreasury',
+      },
+      payment_response: { tx: '0xhttpstamp', payer: WALLET_A, network: 'base' },
+    }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 402, JSON.stringify(body));
+  assert.equal(body.stamp_fee, '2000');
+  assert.equal(body.stamp_fee_usd, '0.002');
+  assert.equal(body.accepts?.[0]?.amount, '2000');
+  assert.ok(res.headers.get('payment-required'));
+  assert.equal(hooks.usageSettled.entries.length, beforeRows);
+  assert.equal(hooks.agentRegistry.get(identity.agent_id).budget, '9000');
+});
+
+test('pilot waiver key stamps free up to the cap, then 402; default is off', async () => {
+  const hooks = httpApp.locals.__test;
+  const identity = hooks.agentRegistry.allocate({ taskId: 'stamp-waiver' });
+  hooks.agentRegistry.setBudget(identity.agent_id, '9000');
+  const prevKeys = process.env.STAMP_WAIVER_KEYS;
+  const prevCap = process.env.STAMP_WAIVER_CAP;
+  process.env.STAMP_WAIVER_KEYS = 'partner-pilot-key';
+  process.env.STAMP_WAIVER_CAP = '1';
+  resetStampWaiverStore();
+  try {
+    const post = (tx, key) => fetch(`${base}/v1/agents/${identity.agent_id}/book/ingest`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(key ? { 'X-API-Key': key } : {}),
+      },
+      body: JSON.stringify({
+        session: identity.session,
+        payment_required: {
+          resource: 'https://api.shop.io/v1/infer',
+          amount: '1000',
+          payTo: '0xShopTreasury',
+        },
+        payment_response: { tx, payer: WALLET_A, network: 'base' },
+      }),
+    });
+
+    const denied = await post('0xwaiver-off', 'someone-else');
+    assert.equal(denied.status, 402);
+
+    const first = await post('0xwaiver-one', 'partner-pilot-key');
+    const firstBody = await first.json();
+    assert.equal(first.status, 201, JSON.stringify(firstBody));
+    assert.equal(firstBody.stamp_waived, true);
+    assert.equal(firstBody.stamp_fee, '2000');
+    assert.equal(hooks.agentRegistry.get(identity.agent_id).budget, '9000');
+
+    const second = await post('0xwaiver-two', 'partner-pilot-key');
+    assert.equal(second.status, 402);
+  } finally {
+    if (prevKeys == null) delete process.env.STAMP_WAIVER_KEYS;
+    else process.env.STAMP_WAIVER_KEYS = prevKeys;
+    if (prevCap == null) delete process.env.STAMP_WAIVER_CAP;
+    else process.env.STAMP_WAIVER_CAP = prevCap;
+    resetStampWaiverStore();
+  }
 });

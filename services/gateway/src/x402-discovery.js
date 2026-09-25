@@ -459,6 +459,17 @@ const AGENTS_BOOK_INGEST_INPUT_SCHEMA = {
       type: 'string',
       description: 'Possession secret issued by POST /v1/agents/register. Required.',
     },
+    nano: {
+      type: 'object',
+      description: 'Cemented Nano (XNO) send. Verified on two public RPCs. Amount is raw (10^30 per XNO).',
+      required: ['block', 'recipient', 'amount', 'description'],
+      properties: {
+        block: { type: 'string', description: '64-hex block hash.' },
+        recipient: { type: 'string', description: 'Expected nano_ account (link_as_account).' },
+        amount: { type: 'string', description: 'Expected amount in raw.' },
+        description: { type: 'string', description: 'Task or call this send paid for.' },
+      },
+    },
     payment_required: {
       type: 'object',
       required: ['resource', 'amount', 'payTo'],
@@ -1237,11 +1248,14 @@ export function buildOpenApiSpec(baseUrl = '') {
           operationId: 'ingestForeignX402',
           summary: 'Spent elsewhere → stamp here',
           description:
-            'Spent elsewhere → stamp here. Record PayBox, MoonPay, or other x402 shop spend on the possession book. '
-            + 'Possession-gated (401 without session — not a public 402 settle). Accepts full x402 envelopes '
-            + '(payment_required + payment_response) or minimal foreign_invoice '
-            + '(amount, payer, payTo, tx/payment_ref, resource or hub). Naked tx without payer is rejected. '
-            + 'On-chain USDC verify required (fail closed). Returns verify_url like native completions. '
+            'Spent elsewhere → stamp here. Record PayBox, MoonPay, or other x402 shop spend, or a cemented Nano (XNO) send, on the possession book. '
+            + 'Possession-gated (401 without session). After possession the submitter pays a $0.002 stamp '
+            + '(STAMP_FEE_UNITS 2000, USDC 6 decimals) via x402 on Base or Solana — HTTP 402 unless a pilot waiver key applies. '
+            + 'The stamp does not debit prepaid budget. Accepts full x402 envelopes '
+            + '(payment_required + payment_response), a minimal foreign_invoice '
+            + '(amount, payer, payTo, tx/payment_ref, resource or hub), or nano '
+            + '(block hash, recipient, raw amount, task description). Naked tx without payer is rejected. '
+            + 'On-chain USDC or cemented Nano verify required (fail closed). Returns verify_url like native completions. '
             + 'source/evidence foreign_ingest — Chit did not execute the hop. Demo keys never write.',
           tags: ['Book', 'Discovery'],
           parameters: [
@@ -1268,6 +1282,7 @@ export function buildOpenApiSpec(baseUrl = '') {
             400: { description: 'Invalid input, missing required fields, or naked tx hash rejected.' },
             401: { description: 'No possession proof (session required).' },
             403: { description: 'Demo key or session does not match agent_id.' },
+            402: { description: 'Stamp payment required ($0.002 USDC / 2000 atomic) unless a pilot waiver key applies.' },
             409: { description: 'Duplicate transaction (replay protection).' },
           },
         },

@@ -311,6 +311,7 @@ const EXPLORERS = {
   base: 'https://basescan.org/tx/',
   solana: 'https://solscan.io/tx/',
   'solana-devnet': 'https://solscan.io/tx/?cluster=devnet',
+  nano: 'https://nanexplorer.com/nano/block/',
 };
 
 /** Base58 alphabet (no 0, O, I, l) — Solana pubkeys/signatures. */
@@ -432,6 +433,10 @@ export function explorerUrlForRef(paymentRef) {
   if (network === 'solana' || network === 'solana-devnet') {
     if (!isValidSolanaAddress(tx) && !isValidSolanaSignature(tx)) return null;
     return base + tx;
+  }
+  if (network === 'nano') {
+    if (!/^[0-9a-fA-F]{64}$/.test(tx)) return null;
+    return base + tx.toUpperCase();
   }
   return null;
 }
