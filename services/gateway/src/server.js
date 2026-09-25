@@ -11,6 +11,7 @@ import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
+import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
@@ -1159,7 +1160,7 @@ export function createApp() {
     // v1 x402: X-PAYMENT, X-PAYMENT-NONCE; v2 x402: PAYMENT-SIGNATURE, PAYMENT-NONCE
     res.header('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, x-xfuel-verify-url, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset');
+    res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, x-xfuel-verify-url, PAYMENT-RESPONSE, X-PAYMENT-RESPONSE, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
   });
@@ -1409,6 +1410,10 @@ export function createApp() {
       let payerWallet = null;
       let payTo = null;
       let paymentAsset = null;
+      // The payment this HTTP response settled, even when rolling stamps the
+      // ref onto a previous task and leaves this call's paymentRef empty.
+      let settledResponseRef = null;
+      let settledResponsePayer = null;
       let rollingMeta = null;
       let ceilingQuote = null;
       {
@@ -1446,6 +1451,8 @@ export function createApp() {
                 return sendPaymentRequired(res, hs.body);
               }
               if (hs.kind === 'settled') {
+                settledResponseRef = hs.paymentRef || null;
+                settledResponsePayer = hs.payerWallet || null;
                 if (decision.pending) {
                   const listener = getAIListener();
                   const owed = listener?.activeTasks?.get(decision.pending.taskId);
@@ -1502,6 +1509,8 @@ export function createApp() {
               paymentRef = decision.paymentRef;
               settledAmount = decision.settledAmount || null;
               payerWallet = decision.payerWallet || null;
+              settledResponseRef = decision.paymentRef || null;
+              settledResponsePayer = decision.payerWallet || null;
               payTo = decision.payTo || null;
               paymentAsset = decision.asset || null;
             } else {
@@ -1773,6 +1782,11 @@ export function createApp() {
 
       const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
       const verifyUrl = buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts), effectiveTaskId, { reqHost });
+
+      setX402PaymentResponseHeaders(res, {
+        ref: settledResponseRef,
+        payer: settledResponsePayer,
+      });
 
       return res.status(202).json({
         task_id:       effectiveTaskId,
@@ -3618,6 +3632,10 @@ export function createApp() {
             message: `Stamp payment ${paid} is below ${STAMP_FEE_UNITS}`,
           };
         }
+        setX402PaymentResponseHeaders(res, {
+          ref: decision.paymentRef,
+          payer: decision.payerWallet || null,
+        });
         return {
           ok: true,
           waived: false,

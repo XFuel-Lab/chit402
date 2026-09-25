@@ -1470,7 +1470,11 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       model: routeModel,
       model_commitment: modelCommitment,
       provider: routeProvider,
-      chain_id: task.meta?.chain || task.intent?.chainId || null,
+      // Unsigned presentation field. A collected payment reports the settlement
+      // network (same prefix as payment.ref / payment_meta.network) so a Solana
+      // receipt is not labelled chain_id "base". The JWS does not cover chain_id
+      // and payment.ref stays "<network>:<tx>".
+      chain_id: networkFromPaymentRef(paymentRef) || task.meta?.chain || task.intent?.chainId || null,
     },
     payment: {
       rail: paymentRail,

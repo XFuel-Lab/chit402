@@ -425,6 +425,44 @@ export function encodePaymentRequiredHeader(body) {
 }
 
 /**
+ * Base64 JSON settle response that `@x402/fetch` `decodePaymentResponseHeader`
+ * accepts: `{ success, transaction, network, payer }`.
+ *
+ * `network` is CAIP-2 (`eip155:8453`, `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`),
+ * the same identifier the 402 `accepts[]` entry used. `ref` stays the gateway
+ * payment ref `<short-network>:<tx>` — this helper does not rewrite it.
+ *
+ * @param {{ ref?: string|null, network?: string|null, payer?: string|null, success?: boolean }} settle
+ * @returns {string|null} standard base64, or null when nothing was collected
+ */
+export function encodeX402PaymentResponseHeader({ ref, network = null, payer = null, success = true } = {}) {
+  if (!ref || typeof ref !== 'string') return null;
+  const idx = ref.indexOf(':');
+  const short = network || (idx > 0 ? ref.slice(0, idx) : null);
+  if (!short) return null;
+  const body = {
+    success: success !== false,
+    transaction: idx > 0 ? ref.slice(idx + 1) : '',
+    network: toCaip2Network(short),
+    payer: payer || null,
+  };
+  return Buffer.from(JSON.stringify(body), 'utf8').toString('base64');
+}
+
+/**
+ * Set `PAYMENT-RESPONSE` and `X-PAYMENT-RESPONSE` (v2 and v1 header names).
+ * No-op when `settle.ref` is missing — unpaid responses stay unset.
+ * @returns {boolean} true when the headers were written
+ */
+export function setX402PaymentResponseHeaders(res, settle) {
+  const encoded = encodeX402PaymentResponseHeader(settle);
+  if (!encoded || !res || typeof res.setHeader !== 'function') return false;
+  res.setHeader('PAYMENT-RESPONSE', encoded);
+  res.setHeader('X-PAYMENT-RESPONSE', encoded);
+  return true;
+}
+
+/**
  * Build a machine-parseable x402 v2 "Payment Required" challenge for a task and
  * record it in the store (bound to amount/asset/network/resource + a nonce) so
  * verify/settle can enforce it.

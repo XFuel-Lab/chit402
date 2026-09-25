@@ -30,6 +30,7 @@ import {
 import { inferAkashML, akashmlApiKey } from './akashml-infer.js';
 import { normalizeUsage, messagesToText } from './usage.js';
 import { runX402Handshake, extractPaymentHeader, priceUSDCResolved, quoteResolved } from './x402-server.js';
+import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
@@ -1124,6 +1125,16 @@ function setReceiptHeaders(res, receipt) {
   res.setHeader('x-xfuel-proof-url', receipt.proof.links.proof);
   if (receipt.verify_url) res.setHeader('x-xfuel-verify-url', receipt.verify_url);
   if (receipt.agent_id != null) res.setHeader('x-xfuel-agent-id', String(receipt.agent_id));
+  // x402 clients (and Agent402 seller-payability) treat a paid response as
+  // unsettled unless it carries the settlement receipt header. Both names:
+  // v2 PAYMENT-RESPONSE, v1 X-PAYMENT-RESPONSE.
+  if (view.payment?.ref && view.payment.collected !== false) {
+    setX402PaymentResponseHeaders(res, {
+      ref: view.payment.ref,
+      network: view.payment.network,
+      payer: view.caller_binding?.payer_wallet || null,
+    });
+  }
 }
 
 /**

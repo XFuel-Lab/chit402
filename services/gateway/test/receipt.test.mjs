@@ -774,6 +774,56 @@ test('buildReceipt: caller_binding.payer_wallet rejects non-address values', () 
   assert.equal(mergeReceiptView(r2).caller_binding.payer_wallet, null, 'invalid addresses must be rejected');
 });
 
+test('buildReceipt: Solana payment sets route_meta.chain_id without rewriting the signed ref', () => {
+  const solSig = '5'.repeat(87);
+  const paymentRef = `solana:${solSig}`;
+  const payer = 'E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh';
+  const task = usdcTask({
+    intent: {
+      ...usdcTask().intent,
+      paymentRef,
+      chainId: 'base',
+    },
+    meta: {
+      ...usdcTask().meta,
+      chain: 'base',
+      payerWallet: payer,
+    },
+  });
+  const r = buildReceipt(task, { payerWallet: payer, persistSignature: true });
+  assert.equal(r.route_meta.chain_id, 'solana');
+  assert.equal(r.payment_meta.network, 'solana');
+  const claims = decodeReceiptClaims(r);
+  assert.equal(claims.payment.ref, paymentRef, 'JWS payment ref stays network:tx');
+  const rebuilt = buildReceipt(task, { payerWallet: payer, persistSignature: true });
+  assert.equal(rebuilt.issuer_signature.jws, r.issuer_signature.jws, 'existing receipt JWS is kept');
+  assert.equal(rebuilt.route_meta.chain_id, 'solana');
+});
+
+test('buildReceipt: Base payment ref wins over a different routing chain', () => {
+  const tx = '0x' + 'cd'.repeat(32);
+  const paymentRef = `base:${tx}`;
+  const task = usdcTask({
+    intent: { ...usdcTask().intent, paymentRef, chainId: 'theta' },
+    meta: { ...usdcTask().meta, chain: 'theta' },
+  });
+  const r = buildReceipt(task);
+  assert.equal(r.route_meta.chain_id, 'base');
+  assert.equal(r.payment_meta.network, 'base');
+  assert.equal(decodeReceiptClaims(r).payment.ref, paymentRef);
+});
+
+test('buildReceipt: unpaid route_meta.chain_id stays the routing chain', () => {
+  const task = usdcTask({
+    intent: { ...usdcTask().intent, paymentRef: null, paymentRail: 'unmetered' },
+    meta: { ...usdcTask().meta, chain: 'base' },
+  });
+  const r = buildReceipt(task);
+  assert.equal(r.route_meta.chain_id, 'base');
+  assert.equal(r.payment_meta.network, null);
+  assert.equal(decodeReceiptClaims(r).payment.ref, null);
+});
+
 test('buildReceipt: caller_binding stamps Solana payer_wallet from settlement', () => {
   const solanaPayer = 'E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh';
   const solSig = '5'.repeat(87);

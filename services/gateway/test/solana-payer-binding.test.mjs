@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { runX402Handshake } from '../src/x402-server.js';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
-import { buildReceipt, mergeReceiptView, decodeReceiptClaims, callerBindingOf } from '../src/receipt.js';
+import { buildReceipt, mergeReceiptView, decodeReceiptClaims, callerBindingOf, verifyReceiptEcdsaWithJwks } from '../src/receipt.js';
 
 const SOLANA_PAYER = 'E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh';
 const SOLANA_TX = '5'.repeat(87);
@@ -152,7 +152,9 @@ test('Solana settle path stamps caller_binding.payer_wallet in signed JWS claims
         paymentRail: 'usdc',
         paymentRef: settled.paymentRef,
       },
-      meta: { payerWallet: settled.payerWallet, chain: 'solana' },
+      // Production /v1 stamps meta.chain as the routing chain ("base") even when
+      // the collected payment is Solana. route_meta must still say solana.
+      meta: { payerWallet: settled.payerWallet, chain: 'base' },
       feeAmount: '10',
       netAmount: '1990',
       feeBps: 50,
@@ -160,8 +162,16 @@ test('Solana settle path stamps caller_binding.payer_wallet in signed JWS claims
     const receipt = buildReceipt(task, { payerWallet: settled.payerWallet, persistSignature: true });
     const view = mergeReceiptView(receipt);
     assert.equal(view.caller_binding.payer_wallet, SOLANA_PAYER);
+    assert.equal(receipt.route_meta.chain_id, 'solana');
+    assert.equal(receipt.payment_meta.network, 'solana');
     const claims = decodeReceiptClaims(receipt);
     assert.equal(claims.caller_binding.payer_wallet, SOLANA_PAYER);
+    assert.equal(claims.payment.ref, `solana:${SOLANA_TX}`);
+    assert.equal(verifyReceiptEcdsaWithJwks(receipt, { keys: [] }).valid, true);
+    const rebuilt = buildReceipt(task, { payerWallet: settled.payerWallet, persistSignature: true });
+    assert.equal(rebuilt.issuer_signature.jws, receipt.issuer_signature.jws);
+    assert.equal(rebuilt.route_meta.chain_id, 'solana');
+    assert.equal(verifyReceiptEcdsaWithJwks(rebuilt, { keys: [] }).valid, true);
   } finally {
     await closeCdp();
     await solanaMock.close();
