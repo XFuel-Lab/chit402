@@ -790,10 +790,12 @@ export function buildX402Manifest(baseUrl = '') {
 
   // Description for Bazaar search discoverability.
   const description = solanaEnabled
-    ? 'Treasury desk and possession book for agent spend. Who paid which call — export, policy, evidence. '
+    ? 'Signed spend receipts for agent x402 payments — who paid which call, verifiable by a third party. '
+      + 'Treasury desk and possession book for agent spend — export, policy, evidence. '
       + 'POST /v1/chat/completions is the x402 USDC door on Base and Solana. Each call returns a signed receipt: '
       + 'hub, model, amount, verify_url. Cost-plus, quoted, receipted. Real mainnet USDC.'
-    : 'Treasury desk and possession book for agent spend. Who paid which call — export, policy, evidence. '
+    : 'Signed spend receipts for agent x402 payments — who paid which call, verifiable by a third party. '
+      + 'Treasury desk and possession book for agent spend — export, policy, evidence. '
       + 'POST /v1/chat/completions is the x402 USDC door on Base. Each call returns a signed receipt: '
       + 'hub, model, amount, verify_url. Cost-plus, quoted, receipted. Real mainnet USDC.';
 
@@ -875,9 +877,10 @@ export function buildX402Manifest(baseUrl = '') {
         tags,
         iconUrl,
         description:
-          'Signed spend receipt on every call — hub, model, amount, public verify_url (who paid which call). '
-          + 'OpenAI-compatible chat completions door. Cost-plus, quoted, receipted — pay USDC on Base or '
-          + 'Solana (x402 exact scheme). Returns completion + signed Chit receipt. You hold hub, model, and amount.',
+          'Signed spend receipt / x402 payment receipt on every call — hub, model, amount, public verify_url '
+          + '(who paid which call, verifiable by a third party). Chat completions door. Cost-plus, quoted, receipted — '
+          + 'pay USDC on Base or Solana (x402 exact scheme). Returns completion + signed Chit receipt. '
+          + 'You hold hub, model, and amount. OpenAI-compatible wire.',
         accepts,
         input: CHAT_COMPLETIONS_INPUT_SCHEMA,
         outputSchema: CHAT_COMPLETIONS_OUTPUT_SCHEMA,
@@ -891,7 +894,8 @@ export function buildX402Manifest(baseUrl = '') {
         tags,
         iconUrl,
         description:
-          'Signed spend receipt — hub, model, amount, verify_url — same treasury desk as /v1/chat/completions. '
+          'Signed spend receipt / x402 payment receipt on every call — hub, model, amount, verify_url — '
+          + 'same treasury desk as /v1/chat/completions. '
           + 'Responses API shape. Accepts input (string or message array), max_output_tokens. '
           + 'x402 USDC on Base or Solana. Stateless one-shot.',
         accepts,
@@ -907,8 +911,8 @@ export function buildX402Manifest(baseUrl = '') {
         tags,
         iconUrl,
         description:
-          'A2A card URL. Same signed receipt floor as /v1/chat/completions — hub, model, amount, verify_url. '
-          + 'x402 USDC. Collected rows land on the possession book. Unauthenticated POST {} returns HTTP 402.',
+          'Signed spend receipt / x402 payment receipt on every call — hub, model, amount, verify_url. '
+          + 'A2A card URL; same receipt floor as /v1/chat/completions. x402 USDC. Collected rows land on the possession book. Unauthenticated POST {} returns HTTP 402.',
         accepts,
         input: CHAT_COMPLETIONS_INPUT_SCHEMA,
         outputSchema: CHAT_COMPLETIONS_OUTPUT_SCHEMA,
@@ -922,7 +926,7 @@ export function buildX402Manifest(baseUrl = '') {
         tags,
         iconUrl,
         description:
-          'M2M paid task with signed receipt and public verify_url (who paid which job). '
+          'Signed spend receipt / x402 payment receipt for an M2M paid task — public verify_url (who paid which job). '
           + 'Cost-plus, quoted, receipted — pay USDC on Base or Solana (x402 exact scheme). '
           + 'Returns task_id + verify_url; poll /task-status and /prove-result for SP1 proof when requested.',
         accepts,
@@ -969,12 +973,14 @@ export function buildOpenApiSpec(baseUrl = '') {
 
   const chatPost = {
     operationId: 'chatCompletions',
-    summary: 'Chat completions (public x402 door)',
+    summary: 'Signed spend receipt / x402 payment receipt — chat completions (public x402 door)',
     description:
-      'No account. No API key. A wallet that can pay the 402 is enough. '
-        + 'Pay per request in USDC on Base or Solana (x402 exact scheme). '
-      + 'Returns a standard OpenAI chat.completion plus a signed Chit receipt with public '
-      + 'verify_url. Unauthenticated calls receive HTTP 402 before body validation.',
+      'Signed spend receipt / x402 payment receipt on every call: hub, model, amount and a public verify_url '
+      + '(who paid which call, verifiable by a third party). '
+      + 'No account. No API key. A wallet that can pay the 402 is enough. '
+      + 'Pay per request in USDC on Base or Solana (x402 exact scheme). '
+      + 'Returns a chat.completion (OpenAI-compatible wire) plus the signed Chit receipt. '
+      + 'Unauthenticated calls receive HTTP 402 before body validation.',
     tags: ['Chat'],
     'x-payment-info': paymentInfo,
     requestBody: {
@@ -996,9 +1002,10 @@ export function buildOpenApiSpec(baseUrl = '') {
 
   const a2aPost = {
     operationId: 'a2aMessage',
-    summary: 'A2A paid door (same x402 as /v1)',
+    summary: 'Signed spend receipt / x402 payment receipt — A2A paid door (same x402 as /v1)',
     description:
-      'A2A card URL. Same x402 floor and chat fulfillment as POST /v1/chat/completions. '
+      'Signed spend receipt / x402 payment receipt on every call: hub, model, amount, verify_url. '
+      + 'A2A card URL. Same x402 floor and chat fulfillment as POST /v1/chat/completions. '
       + 'No account. No API key. A wallet that can pay the 402 is enough. '
       + 'You hold hub, model, and amount. Unauthenticated POST {} returns HTTP 402. '
       + 'Collected rows are bookable via GET|POST /v1/agents/{agent_id}/book.',
@@ -1023,9 +1030,9 @@ export function buildOpenApiSpec(baseUrl = '') {
 
   const taskPost = {
     operationId: 'taskRequest',
-    summary: 'M2M verifiable inference task (lower-level)',
+    summary: 'Signed spend receipt / x402 payment receipt — M2M verifiable inference task (lower-level)',
     description:
-      'Submit a verifiable AI inference task. Returns task_id for polling. '
+      'Signed spend receipt / x402 payment receipt for a verifiable AI inference task. Returns task_id for polling. '
       + 'Agents should prefer POST /v1/chat/completions.',
     tags: ['Tasks'],
     'x-payment-info': paymentInfo,
@@ -1048,9 +1055,10 @@ export function buildOpenApiSpec(baseUrl = '') {
 
   const responsesPost = {
     operationId: 'responses',
-    summary: 'Responses API (public x402 door)',
+    summary: 'Signed spend receipt / x402 payment receipt — Responses API (public x402 door)',
     description:
-      'Responses API drop-in. Same x402 + signed receipt as /v1/chat/completions. '
+      'Signed spend receipt / x402 payment receipt on every call — same x402 + receipt as /v1/chat/completions. '
+        + 'Responses API drop-in. '
         + 'No account. No API key. A wallet that can pay the 402 is enough. '
         + 'Accepts input (string or message array), max_output_tokens. '
         + 'Returns Responses-shaped output + Chit receipt with verify_url. Stateless one-shot.',
@@ -1079,7 +1087,8 @@ export function buildOpenApiSpec(baseUrl = '') {
       title: 'Chit402',
       version: '1.0.0',
       description:
-      'Treasury desk for agent spend — who paid which call; export, policy, evidence. '
+      'Signed spend receipts for agent x402 payments — who paid which call, verifiable by a third party. '
+      + 'Treasury desk for agent spend — export, policy, evidence. '
       + 'Possession book for principals. POST /v1/chat/completions returns a signed receipt: '
       + 'hub, model, amount, verify_url. USDC on Base or Solana. POST /a2a-message is the same paid door. '
       + 'GET|POST /v1/agents/{agent_id}/book is possession-gated last-N collected spend '
@@ -1089,7 +1098,8 @@ export function buildOpenApiSpec(baseUrl = '') {
       + 'verify offline via docs/VERIFY_ALGORITHM.md. '
       + 'Issuer trust (pin JWKS + kid OOB): https://www.chit402.com/trust.',
       'x-guidance':
-        'Treasury desk for agent spend — who paid which call; export, policy, evidence. '
+        'Signed spend receipts for agent x402 payments — who paid which call, verifiable by a third party. '
+        + 'Treasury desk for agent spend — export, policy, evidence. '
         + 'Possession book for principals. No account. No API key. A wallet that can pay the 402 is enough. '
         + 'Register is only to hold the possession book after a collected receipt. '
         + 'Use POST /v1/chat/completions with a standard chat-completions JSON body '

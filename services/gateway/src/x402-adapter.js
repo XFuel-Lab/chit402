@@ -488,10 +488,12 @@ export function buildPaymentChallenge(p, opts = {}) {
   // Update description when both networks are available.
   const solanaEnabled = p.solana?.enabled && p.solana?.payTo;
   const description = p.description || (solanaEnabled
-    ? 'Treasury desk and possession book for agent spend. Who paid which call — export, policy, evidence. '
+    ? 'Signed spend receipts for agent x402 payments — who paid which call, verifiable by a third party. '
+      + 'Treasury desk and possession book for agent spend — export, policy, evidence. '
       + 'POST /v1/chat/completions is the x402 USDC door on Base and Solana. Returns signed receipt + public verify_url. '
       + 'Paying this host is real mainnet USDC.'
-    : 'Treasury desk and possession book for agent spend. Who paid which call — export, policy, evidence. '
+    : 'Signed spend receipts for agent x402 payments — who paid which call, verifiable by a third party. '
+      + 'Treasury desk and possession book for agent spend — export, policy, evidence. '
       + 'POST /v1/chat/completions is the x402 USDC door on Base. Returns signed receipt + public verify_url. '
       + 'Paying this host is real mainnet USDC.');
 
