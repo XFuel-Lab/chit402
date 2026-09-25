@@ -125,7 +125,7 @@ test('receipt names the model that served, not the xfuel/auto alias asked for', 
     intent: { type: 'inference_request', modelId: 'xfuel/auto', paymentRail: 'usdc', amount: '10000' },
     result: { model: 'meta-llama/Llama-3.3-70B-Instruct', provider: 'akash-network' },
     meta: { chain: 'base' },
-  }, { baseUrl: 'https://api-testnet.xfuel.app' });
+  }, { baseUrl: 'https://api.xfuel.app' });
 
   assert.equal(mergeReceiptView(r).route.model, 'meta-llama/Llama-3.3-70B-Instruct');
   assert.equal(mergeReceiptView(r).route.provider, 'akash-network');
@@ -139,7 +139,7 @@ test('a failed task attests no provider, even when a float default is set', () =
     status: 'failed',
     intent: { type: 'inference_request', modelId: 'acme/nope', paymentRail: 'usdc', amount: '10000' },
     meta: { chain: 'base', provider: 'theta-edgecloud' },
-  }, { baseUrl: 'https://api-testnet.xfuel.app' });
+  }, { baseUrl: 'https://api.xfuel.app' });
 
   assert.equal(mergeReceiptView(r).route.provider, null);
 });
@@ -154,7 +154,7 @@ test('a real COGS burn outranks the float default label', () => {
       provider: 'theta-edgecloud',
       providerCogs: { provider: 'akash-network', currency: 'USDC', estimated: '100', actual: '90' },
     },
-  }, { baseUrl: 'https://api-testnet.xfuel.app' });
+  }, { baseUrl: 'https://api.xfuel.app' });
 
   assert.equal(mergeReceiptView(r).route.provider, 'akash-network');
 });
@@ -166,7 +166,7 @@ test('a mock result is still reported as mock, never as a real provider', () => 
     intent: { type: 'inference_request', paymentRail: 'usdc', amount: '10000' },
     result: { mock: true, provider: 'theta-edge-mock' },
     meta: { chain: 'base', provider: 'theta-edgecloud' },
-  }, { baseUrl: 'https://api-testnet.xfuel.app' });
+  }, { baseUrl: 'https://api.xfuel.app' });
 
   assert.equal(mergeReceiptView(r).route.provider, 'theta-edge-mock');
 });

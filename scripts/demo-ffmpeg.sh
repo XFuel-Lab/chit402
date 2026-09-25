@@ -117,7 +117,7 @@ echo "Upload: YouTube (1080p) · X (under ~140s / keep file <512MB for in-app)"
 # ─── Sample captions.srt (lower-thirds style) ────────────────────────────────
 # 1
 # 00:00:08,000 --> 00:00:20,000
-# POST /v1/chat/completions · api-testnet.xfuel.app
+# POST /v1/chat/completions · api.chit402.com
 #
 # 2
 # 00:00:22,000 --> 00:00:36,000
@@ -133,4 +133,4 @@ echo "Upload: YouTube (1080p) · X (under ~140s / keep file <512MB for in-app)"
 #
 # 5
 # 00:01:10,000 --> 00:01:20,000
-# Try: api-testnet.xfuel.app · Design partners: DM
+# Try: api.chit402.com · Design partners: DM

@@ -379,7 +379,7 @@ const config = {
     // absolute links (verify_url, receipt self-links) instead of PUBLIC_BASE_URL.
     // This enables serving the same receipts from multiple domains (e.g. both
     // api.xfuel.app and api.chit402.com) with correct self-referential URLs.
-    // Example: PUBLIC_HOSTS=api.chit402.com,api.xfuel.app,api-testnet.xfuel.app
+    // Example: PUBLIC_HOSTS=api.chit402.com,api.xfuel.app
     publicHosts: (process.env.PUBLIC_HOSTS || '')
       .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
   },

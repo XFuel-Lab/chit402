@@ -101,5 +101,5 @@ echo "$quote" | head -c 400; echo
 echo "$quote" | grep -q '"network":"base"' || die "quote network is not base"
 
 grn "OK — xfuel-api active on new gateway tree (Base mainnet quote)."
-grn "Public check: curl -sS https://api-testnet.xfuel.app/health"
-grn "Then: cd packages/sdk && \$env:XFUEL_API_URL='https://api-testnet.xfuel.app'; npx tsx examples/flagship-demo.ts"
+grn "Public check: curl -sS https://api.xfuel.app/health"
+grn "Then: cd packages/sdk && \$env:XFUEL_API_URL='https://api.xfuel.app'; npx tsx examples/flagship-demo.ts"

@@ -1,6 +1,6 @@
 # ADR 0009 — Cost-Plus Pricing, and What It Does Not Cover
 
-Status: **Accepted — live on `api-testnet.xfuel.app` since 2026-08-15.** Date: 2026-08-14.
+Status: **Accepted — live on public gateway (`api.xfuel.app` / `api.chit402.com`) since 2026-08-15** (demo-era hostname `api-testnet.xfuel.app` retired). Date: 2026-08-14.
 
 **Amendment 2026-09-21 (signed):** Live platform fee **100 bps (1%)**, default `X402_PLATFORM_FEE_BPS=100`.
 Tier-2 opt-in flat **$0.10** (`X402_TIER2_PROOF_UNITS=100000`). Hop floor **$0.002** unchanged.

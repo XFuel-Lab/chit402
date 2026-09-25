@@ -139,7 +139,7 @@ test('buildReceipt emits provider_cogs from task.meta', () => {
   };
   const cogs = providerCogsOf(task);
   assert.equal(cogs.provider, 'theta-edgecloud');
-  const r = buildReceipt(task, { baseUrl: 'https://api-testnet.xfuel.app' });
+  const r = buildReceipt(task, { baseUrl: 'https://api.xfuel.app' });
   const v = mergeReceiptView(r);
   assert.equal(v.payment.rail, 'usdc');
   assert.equal(r.provider_cogs.currency, 'USDC');

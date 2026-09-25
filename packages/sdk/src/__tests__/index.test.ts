@@ -654,7 +654,7 @@ describe('XFuelClient', () => {
           id: 'chatcmpl-1',
           model: 'theta/glm_5_2',
           choices: [{ message: { role: 'assistant', content: 'Hello' } }],
-          xfuel: { task_id: 'openai-1', verify_url: 'https://api-testnet.xfuel.app/receipt/openai-1' },
+          xfuel: { task_id: 'openai-1', verify_url: 'https://api.xfuel.app/receipt/openai-1' },
         },
       });
       const client = makeClient();

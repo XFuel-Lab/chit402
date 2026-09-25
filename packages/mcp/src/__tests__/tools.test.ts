@@ -45,7 +45,7 @@ function captureTools(
     },
   };
   const fullConfig: McpConfig = {
-    apiUrl: 'https://api-testnet.xfuel.app',
+    apiUrl: 'https://api.xfuel.app',
     apiKey: 'chit402-demo',
     transport: 'stdio',
     port: 3033,
@@ -90,7 +90,7 @@ test('chat_completions forwards messages and surfaces the receipt', async () => 
           choices: [{ message: { role: 'assistant', content: 'Hello there friend today.' } }],
           xfuel: {
             task_id: 'openai-abc',
-            verify_url: 'https://api-testnet.xfuel.app/receipt/openai-abc',
+            verify_url: 'https://api.xfuel.app/receipt/openai-abc',
             payment: { rail: 'unmetered' },
           },
         }) as never,
@@ -104,10 +104,10 @@ test('chat_completions forwards messages and surfaces the receipt', async () => 
   assert.match(res.content[0].text, /Hello there friend today/);
   assert.match(res.content[0].text, /rail=unmetered/);
   assert.match(res.content[0].text, /task_id=openai-abc/);
-  assert.match(res.content[0].text, /Verify\/share: https:\/\/api-testnet\.xfuel\.app\/receipt\/openai-abc/);
+  assert.match(res.content[0].text, /Verify\/share: https:\/\/api\.xfuel\.app\/receipt\/openai-abc/);
   assert.equal(
     (res.structuredContent as { verify_url?: string }).verify_url,
-    'https://api-testnet.xfuel.app/receipt/openai-abc',
+    'https://api.xfuel.app/receipt/openai-abc',
   );
 });
 
@@ -175,7 +175,7 @@ test('verify_receipt loads receipt via task_id', async () => {
         ({
           task_id: 'paid-1',
           status: 'fee_collected',
-          verify_url: 'https://api-testnet.xfuel.app/receipt/paid-1',
+          verify_url: 'https://api.xfuel.app/receipt/paid-1',
         }) as never,
     },
   );
@@ -192,7 +192,7 @@ test('verify_receipt loads receipt via task_id', async () => {
     assert.match(res.content[0].text, /overall=/);
     assert.equal(
       (res.structuredContent as { verify_url?: string }).verify_url,
-      'https://api-testnet.xfuel.app/receipt/paid-1',
+      'https://api.xfuel.app/receipt/paid-1',
     );
   } finally {
     globalThis.fetch = originalFetch;
@@ -292,7 +292,7 @@ test('submit_inference surfaces the server-provided verify_url in the summary', 
           task_id: 'task-xyz',
           status: 'accepted',
           payment_rail: 'usdc',
-          verify_url: 'https://api-testnet.xfuel.app/receipt/task-xyz',
+          verify_url: 'https://api.xfuel.app/receipt/task-xyz',
         }) as never,
     },
   );
@@ -303,12 +303,12 @@ test('submit_inference surfaces the server-provided verify_url in the summary', 
     chain_id: 'theta',
   });
   assert.equal(res.isError, undefined);
-  assert.match(res.content[0].text, /Verify\/share: https:\/\/api-testnet\.xfuel\.app\/receipt\/task-xyz/);
+  assert.match(res.content[0].text, /Verify\/share: https:\/\/api\.xfuel\.app\/receipt\/task-xyz/);
 });
 
 test('get_task_status falls back to a client-side verify_url when the server omits it', async () => {
   const handlers = captureTools(
-    { apiUrl: 'https://api-testnet.xfuel.app/' },
+    { apiUrl: 'https://api.xfuel.app/' },
     {
       getTaskStatus: async () =>
         ({ task_id: 'task-777', status: 'fee_collected', proof_outcome: 'regenerable' }) as never,
@@ -316,5 +316,5 @@ test('get_task_status falls back to a client-side verify_url when the server omi
   );
   const res = await handlers.get('get_task_status')!({ task_id: 'task-777' });
   assert.equal(res.isError, undefined);
-  assert.match(res.content[0].text, /Verify\/share: https:\/\/api-testnet\.xfuel\.app\/receipt\/task-777/);
+  assert.match(res.content[0].text, /Verify\/share: https:\/\/api\.xfuel\.app\/receipt\/task-777/);
 });
