@@ -20,6 +20,7 @@ import { ethers } from 'ethers';
 import logger from './logger.js';
 import config from './config.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
+import { parseNanoIngest, verifyNanoSend } from './nano-rail.js';
 import { buildVerifyUrl, explorerUrlForRef, networkFromPaymentRef } from './receipt.js';
 import {
   buildFulfillmentEnvelope,
@@ -47,6 +48,7 @@ const SOLANA_NETWORKS = new Set(['solana', 'solana-devnet', 'solana-mainnet']);
  */
 export function railFromNetwork(network) {
   const n = String(network || '').toLowerCase();
+  if (n === 'nano' || n === 'xno') return 'nano';
   if (SOLANA_NETWORKS.has(n) || n.startsWith('solana')) return 'solana';
   return 'usdc';
 }
@@ -56,6 +58,7 @@ export function railFromNetwork(network) {
  */
 export function isEvmNetwork(network) {
   const n = String(network || '').toLowerCase();
+  if (n === 'nano' || n === 'xno') return false;
   return !SOLANA_NETWORKS.has(n) && !n.startsWith('solana');
 }
 
@@ -296,6 +299,17 @@ export function normalizeIngestInput(body = {}) {
     return { ok: false, reason: 'body required' };
   }
 
+  const nano = parseNanoIngest(body);
+  if (nano) {
+    if (!nano.ok) return { ok: false, reason: nano.reason };
+    return {
+      ok: true,
+      rail: 'nano',
+      nano: nano.value,
+      fulfillmentMeta: fulfillmentFieldsFromIngestBody(body),
+    };
+  }
+
   const existingRequired = body.payment_required || body.paymentRequired;
   const existingResponse = body.payment_response || body.paymentResponse;
   if (existingRequired && existingResponse) {
@@ -374,17 +388,19 @@ export function buildPublicForeignIngestReceipt(snapshot, { baseUrl = '', reqHos
   const verifyUrl = buildVerifyUrl(baseUrl, taskId, { reqHost });
   const payment = snapshot.payment || {};
   const ref = payment.ref || null;
+  const network = payment.network || networkFromPaymentRef(ref);
   return {
     ...snapshot,
     verify_url: verifyUrl,
     links: {
       self: verifyUrl,
-      explorer: explorerUrlForRef(ref),
+      explorer: payment.explorer_url || explorerUrlForRef(ref),
     },
     payment: {
       ...payment,
-      network: payment.network || networkFromPaymentRef(ref),
-      explorer_url: explorerUrlForRef(ref),
+      network,
+      chain: payment.chain || (network === 'nano' ? 'nano' : undefined),
+      explorer_url: payment.explorer_url || explorerUrlForRef(ref),
     },
     attestation_note:
       'Foreign ingest: Chit402 verified and recorded this payment — we did not execute the inference hop.',
@@ -402,6 +418,8 @@ export function buildPublicForeignIngestReceipt(snapshot, { baseUrl = '', reqHos
  * @param {object} params.paymentResponse - { tx, payer, network }
  * @param {string} params.rail - 'usdc' or 'solana'
  * @param {string} [params.signingSecret] - HMAC signing secret
+ * @param {object} [params.paymentExtra] - rail-specific payment fields (applied before HMAC)
+ * @param {object} [params.routeOverride] - replaces hub/model after resource parsing
  * @returns {object} Receipt-like object for ledger append
  */
 export function buildForeignReceipt({
@@ -411,6 +429,8 @@ export function buildForeignReceipt({
   rail,
   signingSecret = null,
   fulfillmentMeta = null,
+  paymentExtra = null,
+  routeOverride = null,
 }) {
   const route = extractRouteFromResource(paymentRequired.resource);
   const amount = String(paymentRequired.amount);
@@ -458,6 +478,13 @@ export function buildForeignReceipt({
     fulfillment,
   };
 
+  if (paymentExtra && typeof paymentExtra === 'object') {
+    Object.assign(receipt.payment, paymentExtra);
+  }
+  if (routeOverride && typeof routeOverride === 'object') {
+    Object.assign(receipt.route, routeOverride);
+  }
+
   if (signingSecret) {
     const payload = JSON.stringify([
       receipt.task_id,
@@ -504,6 +531,10 @@ export async function ingestForeignX402(body = {}, {
   isDemo = false,
   baseUrl = '',
   reqHost = null,
+  ensureStamp = null,
+  commitStampWaiver = null,
+  fetchImpl = null,
+  rpcUrls = null,
 } = {}) {
   // Demo keys never write to the book
   if (isDemo) {
@@ -563,6 +594,22 @@ export async function ingestForeignX402(body = {}, {
       error: 'invalid_ingest_payload',
       message: normalized.reason,
     };
+  }
+
+  if (normalized.rail === 'nano') {
+    return ingestNanoPayment({
+      nano: normalized.nano,
+      fulfillmentMeta: normalized.fulfillmentMeta || fulfillmentFieldsFromIngestBody(body),
+      ledger,
+      agentId: id,
+      signingSecret,
+      baseUrl,
+      reqHost,
+      ensureStamp,
+      commitStampWaiver,
+      fetchImpl,
+      rpcUrls,
+    });
   }
 
   const paymentRequired = normalized.paymentRequired;
@@ -647,39 +694,11 @@ export async function ingestForeignX402(body = {}, {
     };
   }
 
-  // ─── Stamp Fee Debit ───────────────────────────────────────────────────────
-  // Debit ~$0.0001 volume stamp (STAMP_FEE_UNITS=100; not an exact on-chain settle) from prepaid budget. This is a book-write
-  // fee via HMAC/prepaid, NOT an on-chain exact settle (which would cost more
-  // than the fee itself). If budget is set and insufficient, reject.
-  const stampFee = BigInt(STAMP_FEE_UNITS); // 100 atomic = $0.0001
-  if (identity.budget != null && identity.budget !== '') {
-    let budget;
-    try {
-      budget = BigInt(String(identity.budget).trim());
-    } catch {
-      return {
-        ok: false,
-        status: 400,
-        error: 'invalid_budget',
-        message: 'Agent budget is not a valid number',
-      };
-    }
-    if (budget < stampFee) {
-      return {
-        ok: false,
-        status: 402,
-        error: 'insufficient_budget',
-        message: `Insufficient prepaid budget for ingest stamp fee ($0.0001). Budget: ${budget}, required: ${stampFee}`,
-      };
-    }
-    // Debit stamp fee from budget
-    const newBudget = budget - stampFee;
-    if (typeof registry.setBudget === 'function') {
-      registry.setBudget(id, newBudget.toString());
-      logger.info({ agentId: id, stampFee: stampFee.toString(), newBudget: newBudget.toString() },
-        'foreign-x402: stamp fee debited from prepaid budget');
-    }
-  }
+  // Stamp is $0.002 USDC paid by the submitter (x402 Base/Solana), or waived.
+  // It must not call registry.setBudget — the ingested amount is already spend,
+  // and debiting the cap as well reduced remaining twice.
+  const stamp = await collectIngestStamp(ensureStamp);
+  if (!stamp.ok) return stamp;
 
   // Generate synthetic task id
   const taskId = generateForeignTaskId();
@@ -693,6 +712,7 @@ export async function ingestForeignX402(body = {}, {
     signingSecret,
     fulfillmentMeta,
   });
+  receipt.stamp = stampFields(stamp);
 
   // Append to ledger — this is the nullification; ledger dedupes by payment.ref
   if (!ledger || typeof ledger.append !== 'function') {
@@ -718,6 +738,10 @@ export async function ingestForeignX402(body = {}, {
       error: appended.code || 'append_failed',
       message: appended.reason,
     };
+  }
+
+  if (stamp.waived && typeof commitStampWaiver === 'function') {
+    try { commitStampWaiver(); } catch { /* cap file must not fail a written row */ }
   }
 
   logger.info({
@@ -757,7 +781,268 @@ export async function ingestForeignX402(body = {}, {
       fulfillment: receipt.fulfillment || null,
       recorded_at: appended.entry.recorded_at,
       signature: receipt.signature || null,
-      stamp_fee: stampFee.toString(),
+      stamp_fee: String(STAMP_FEE_UNITS),
+      stamp_fee_usd: '0.002',
+      stamp_waived: stamp.waived === true,
+      stamp_payment_ref: stamp.settlement?.paymentRef || null,
+    },
+  };
+}
+
+const STAMP_DUE_MESSAGE = 'Ingest stamp is $0.002 USDC (2000 atomic, 6 decimals) on Base or Solana, paid by the submitter. Prepaid budget is not debited.';
+
+/**
+ * Collect the stamp without touching prepaid budget.
+ * When `ensureStamp` is omitted (direct unit calls), the row still records
+ * the fee amount and does not debit budget. The HTTP door always passes
+ * `ensureStamp`, which 402s unless x402 settlement or a pilot waiver applies.
+ */
+async function collectIngestStamp(ensureStamp) {
+  if (typeof ensureStamp !== 'function') {
+    return { ok: true, waived: false, settlement: null };
+  }
+  let stamp;
+  try {
+    stamp = await ensureStamp();
+  } catch (err) {
+    return {
+      ok: false,
+      status: 502,
+      error: 'stamp_failed',
+      message: `Stamp collection failed: ${err.message}`,
+    };
+  }
+  if (!stamp || stamp.ok !== true) {
+    return {
+      ok: false,
+      status: stamp?.status || 402,
+      error: stamp?.error || 'stamp_payment_required',
+      message: stamp?.message || STAMP_DUE_MESSAGE,
+      challenge: stamp?.challenge || null,
+    };
+  }
+  return {
+    ok: true,
+    waived: stamp.waived === true,
+    settlement: stamp.settlement || null,
+  };
+}
+
+function stampFields(stamp) {
+  return {
+    fee_units: String(STAMP_FEE_UNITS),
+    fee_usd: '0.002',
+    currency: 'USDC',
+    decimals: 6,
+    paid_by: 'submitter',
+    waived: stamp.waived === true,
+    payment_ref: stamp.settlement?.paymentRef || null,
+    budget_debited: false,
+  };
+}
+
+function rejectDuplicate(existing) {
+  if (!existing) return null;
+  return {
+    ok: false,
+    status: 409,
+    error: 'duplicate_ref',
+    message: 'This payment reference is already in the book',
+  };
+}
+
+async function ingestNanoPayment({
+  nano,
+  fulfillmentMeta,
+  ledger,
+  agentId,
+  signingSecret,
+  baseUrl,
+  reqHost,
+  ensureStamp,
+  commitStampWaiver,
+  fetchImpl,
+  rpcUrls,
+}) {
+  const paymentRef = `nano:${nano.hash}`;
+  if (ledger && typeof ledger.findByRef === 'function') {
+    const dup = rejectDuplicate(ledger.findByRef(paymentRef));
+    if (dup) return dup;
+  }
+
+  const verified = await verifyNanoSend({
+    hash: nano.hash,
+    recipient: nano.recipient,
+    amountRaw: nano.amountRaw,
+  }, {
+    fetchImpl: fetchImpl || globalThis.fetch,
+    ...(rpcUrls ? { rpcUrls } : {}),
+  });
+  if (!verified.ok) {
+    return {
+      ok: false,
+      status: verified.status || 400,
+      error: verified.error || 'payment_invalid',
+      message: verified.message || 'Nano verification failed',
+    };
+  }
+
+  const stamp = await collectIngestStamp(ensureStamp);
+  if (!stamp.ok) return stamp;
+
+  const taskId = generateForeignTaskId();
+  const receipt = buildForeignReceipt({
+    taskId,
+    paymentRequired: {
+      resource: verified.explorer_url,
+      amount: verified.amountRaw,
+      payTo: verified.recipient,
+      network: 'nano',
+      asset: 'XNO',
+    },
+    paymentResponse: {
+      tx: verified.hash,
+      payer: verified.sender,
+      network: 'nano',
+    },
+    rail: 'nano',
+    signingSecret,
+    fulfillmentMeta,
+    paymentExtra: {
+      chain: 'nano',
+      block_hash: verified.hash,
+      amount_raw: verified.amountRaw,
+      amount_xno: verified.amountXno,
+      usd_estimate: verified.usd_estimate,
+      explorer_url: verified.explorer_url,
+      height: verified.height,
+      confirmed: true,
+      subtype: 'send',
+    },
+    routeOverride: {
+      hub: 'nano',
+      model: nano.description,
+      provider: 'nano',
+      resource: verified.explorer_url,
+      chain: 'nano',
+      description: nano.description,
+    },
+  });
+  receipt.stamp = stampFields(stamp);
+
+  return commitForeignRow({
+    receipt,
+    ledger,
+    agentId,
+    payer: verified.sender,
+    fulfillmentMeta,
+    paymentRef,
+    rail: 'nano',
+    amount: verified.amountRaw,
+    baseUrl,
+    reqHost,
+    stamp,
+    commitStampWaiver,
+    paymentView: {
+      ref: paymentRef,
+      rail: 'nano',
+      chain: 'nano',
+      amount: verified.amountRaw,
+      amount_raw: verified.amountRaw,
+      amount_xno: verified.amountXno,
+      block_hash: verified.hash,
+      usd_estimate: verified.usd_estimate,
+      explorer_url: verified.explorer_url,
+      collected: true,
+    },
+  });
+}
+
+async function commitForeignRow({
+  receipt,
+  ledger,
+  agentId,
+  payer,
+  fulfillmentMeta,
+  paymentRef,
+  rail,
+  amount,
+  baseUrl,
+  reqHost,
+  stamp,
+  commitStampWaiver,
+  paymentView,
+}) {
+  if (!ledger || typeof ledger.append !== 'function') {
+    return {
+      ok: false,
+      status: 503,
+      error: 'service_unavailable',
+      message: 'Ledger not configured',
+    };
+  }
+
+  const appended = ledger.append(receipt, {
+    payer,
+    agentId,
+    intentId: fulfillmentMeta?.intentId || null,
+    attemptIndex: fulfillmentMeta?.attemptIndex ?? null,
+  });
+  if (!appended.ok) {
+    return {
+      ok: false,
+      status: 409,
+      error: appended.code || 'append_failed',
+      message: appended.reason,
+    };
+  }
+
+  if (stamp?.waived && typeof commitStampWaiver === 'function') {
+    try { commitStampWaiver(); } catch { /* cap file must not fail a written row */ }
+  }
+
+  const taskId = receipt.task_id;
+  logger.info({
+    taskId,
+    agentId,
+    paymentRef,
+    rail,
+    amount,
+    hub: receipt.route.hub,
+    model: receipt.route.model,
+  }, 'foreign-x402: ingested');
+
+  const verifyUrl = buildVerifyUrl(baseUrl, taskId, { reqHost });
+  return {
+    ok: true,
+    status: 201,
+    body: {
+      task_id: taskId,
+      agent_id: agentId,
+      verify_url: verifyUrl,
+      payment: paymentView || {
+        ref: paymentRef,
+        rail,
+        amount,
+        collected: true,
+      },
+      route: {
+        hub: receipt.route.hub,
+        model: receipt.route.model,
+        resource: receipt.route.resource,
+        job_kind: receipt.fulfillment?.intent?.job_kind ?? null,
+        description: receipt.route.description || null,
+      },
+      foreign_x402: true,
+      source: 'foreign_ingest',
+      evidence: 'foreign_ingest',
+      fulfillment: receipt.fulfillment || null,
+      recorded_at: appended.entry.recorded_at,
+      signature: receipt.signature || null,
+      stamp_fee: String(STAMP_FEE_UNITS),
+      stamp_fee_usd: '0.002',
+      stamp_waived: stamp?.waived === true,
+      stamp_payment_ref: stamp?.settlement?.paymentRef || null,
     },
   };
 }

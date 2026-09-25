@@ -72,6 +72,11 @@ test('explorerUrlForRef: base-sepolia, base, solana, unknown', () => {
   assert.equal(explorerUrlForRef(null), null);
   assert.equal(explorerUrlForRef('base-sepolia:not-a-hash'), null);
   assert.equal(explorerUrlForRef(`solana:${tx}`), null, 'EVM hash is not a Solana signature');
+  const nanoHash = '324B1CED853848219956F60B43065ECF08F0AB0C35B54BA2516EBE39C4E5C19B';
+  assert.equal(
+    explorerUrlForRef(`nano:${nanoHash.toLowerCase()}`),
+    `https://nanexplorer.com/nano/block/${nanoHash}`,
+  );
 });
 
 test('buildReceipt: USDC task is proven, priced, and independently binding-verified', () => {

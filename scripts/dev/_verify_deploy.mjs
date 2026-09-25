@@ -122,6 +122,12 @@ console.log(`\nVerifying ${base}\n${'─'.repeat(60)}`);
     !!advertised && !!charged && agrees,
     `/.well-known/x402 says ${JSON.stringify(advertised)}, /task-quote priced as ${JSON.stringify(charged)}`,
   );
+  record(
+    'ingest stamp advertised at $0.002',
+    manifest?.pricing?.stamp_fee_usd === 0.002
+      && String(manifest?.pricing?.stamp_fee_units) === '2000',
+    `stamp_fee_usd=${manifest?.pricing?.stamp_fee_usd} units=${manifest?.pricing?.stamp_fee_units}`,
+  );
 }
 
 // ── 3. Is the receipt signed, and does it attest real compute? ───────────────

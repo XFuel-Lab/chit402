@@ -11,7 +11,7 @@ import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
-import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens } from './pricing.js';
+import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { resolvePrivateSpendContext } from './private-desk-attest.js';
@@ -78,6 +78,7 @@ import { BookDisputeStore, CLAIM_TYPES, OUTCOME_TYPES, fileAndAdjudicate } from 
 import { BookEscrowStore, handleEscrowAction } from './book-escrow.js';
 import { BookA2aJobStore, handleA2aJobAction } from './book-a2a-escrow.js';
 import { ingestForeignX402, getBaseProvider, buildPublicForeignIngestReceipt, resolveForeignIngestVerify } from './foreign-x402-ingest.js';
+import { peekStampWaiver, commitStampWaiver, configureStampWaiverPersistence } from './stamp-waiver.js';
 import { aawpReaders } from './agent-wallet.js';
 import { computeUsageStats, renderStatsHtml } from './telemetry.js';
 import {
@@ -357,11 +358,11 @@ POST /v1/chat/completions is bait. A holder can prove: lineage, policy, assignme
 - POST /v1/agents/:agent_id/book/rotate : rotate session. Old session invalid, book stays (tied to agent_id).
 - POST /v1/agents/:agent_id/book/inflow : unaffiliated inflow (signed bucket/allocation, no payment.ref). POST .../inflow/correct for append-only corrections.
 
-## Foreign ingest (possession-gated — not a public 402 door)
+## Foreign ingest (possession-gated)
 
-Spent elsewhere → stamp here. Record PayBox / other x402 shop spend on the possession book.
+Spent elsewhere → stamp here. Record PayBox / other x402 shop spend, or a cemented Nano send, on the possession book.
 
-- POST /v1/agents/:agent_id/book/ingest : foreign x402 ingest. Requires register session (401 without possession; not HTTP 402). On-chain USDC verify (fail closed). evidence foreign_ingest. Returns verify_url like native completions. Naked tx rejected.
+- POST /v1/agents/:agent_id/book/ingest : foreign ingest. Requires register session (401 without possession). After possession, the submitter pays a $0.002 stamp (2000 atomic USDC, 6 decimals) via x402 on Base or Solana — HTTP 402 unless a pilot waiver key applies. The stamp does not debit prepaid budget. USDC verify and cemented Nano sends fail closed. evidence foreign_ingest. Returns verify_url. Naked tx rejected.
 - MCP: ingest_foreign_x402 (= same path). OpenAPI: GET /openapi.json (Book · Discovery). Docs: docs/doors/foreign-paybox-ingest.md
 
 ## Private Spend (default for registered sessions)
@@ -696,6 +697,9 @@ export function createApp() {
     dir: agentsDir,
     persist: !!config.taskStore?.persist,
   });
+  if (config.taskStore?.persist && agentsDir) {
+    configureStampWaiverPersistence({ file: path.join(agentsDir, 'stamp-waiver.json') });
+  }
   setBookRowWrittenHook((entry) => {
     scheduleBookWebhook(entry, {
       registry: getBookWebhookRegistry(),
@@ -3545,17 +3549,18 @@ export function createApp() {
     }
   });
 
-  // POST /v1/agents/:agent_id/book/ingest — Foreign x402 book ingest
-  // Per Section 2: Record an agent's arbitrary x402 spend to a foreign endpoint.
-  // Requires possession (session), the 402 payment required, and payment response.
-  // Demo keys never write. HMAC on foreign row means "we recorded this."
-  // FAIL CLOSED: verify on-chain required — no row without verification.
-  // Uses Base provider (config.settlement.rpcUrl / BASE_RPC_URL) to read USDC Transfer.
+  // POST /v1/agents/:agent_id/book/ingest — Foreign book ingest
+  // Possession first (401/403). Then a $0.002 x402 stamp paid by the submitter,
+  // unless STAMP_WAIVER_KEYS grants a free stamp under STAMP_WAIVER_CAP.
+  // The stamp does not mutate prepaid budget. USDC via Base RPC; Nano via two RPCs.
+  // Demo keys never write. FAIL CLOSED: no row without verification.
   app.post('/v1/agents/:agent_id/book/ingest', async (req, res) => {
     try {
       const body = req.body || {};
       const session = body.session || req.headers['x-xfuel-session'] || null;
-      const apiKey = req.headers['x-api-key'] || null;
+      const apiKey = req.headers['x-api-key']
+        || (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim()
+        || null;
       const isDemo = isDemoKey(apiKey);
 
       // Build verify from Base provider (reads USDC Transfer events on-chain).
@@ -3563,6 +3568,62 @@ export function createApp() {
       const verify = resolveForeignIngestVerify();
       const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      const resourcePath = `/v1/agents/${req.params.agent_id}/book/ingest`;
+      const resource = `${String(baseUrl || '').replace(/\/$/, '')}${resourcePath}`;
+
+      // Stamp is collected only after the foreign payment verifies. Waiver keys
+      // (STAMP_WAIVER_KEYS, default empty) skip it up to STAMP_WAIVER_CAP.
+      const ensureStamp = async () => {
+        const waiver = peekStampWaiver(apiKey);
+        if (waiver.eligible) return { ok: true, waived: true };
+        if (!config.x402?.enabled) {
+          return {
+            ok: false,
+            status: 503,
+            error: 'stamp_unavailable',
+            message: 'x402 is disabled; the $0.002 ingest stamp cannot be collected',
+          };
+        }
+        const decision = await runX402Handshake(req, {
+          taskId: `stamp-${req.id || Date.now()}`,
+          amount: String(STAMP_FEE_UNITS),
+          baseUrl,
+          resource,
+          body: {},
+        });
+        if (decision.kind === 'challenge') {
+          return {
+            ok: false,
+            status: 402,
+            error: 'stamp_payment_required',
+            message: 'Ingest stamp is $0.002 USDC (2000 atomic) on Base or Solana, paid by the submitter. Prepaid budget is not debited.',
+            challenge: decision.body,
+          };
+        }
+        if (decision.kind !== 'settled') {
+          return {
+            ok: false,
+            status: 402,
+            error: 'stamp_payment_required',
+            message: decision.reason || 'stamp payment failed',
+          };
+        }
+        let paid = 0n;
+        try { paid = BigInt(String(decision.settledAmount)); } catch { paid = 0n; }
+        if (paid < BigInt(STAMP_FEE_UNITS)) {
+          return {
+            ok: false,
+            status: 402,
+            error: 'stamp_underpaid',
+            message: `Stamp payment ${paid} is below ${STAMP_FEE_UNITS}`,
+          };
+        }
+        return {
+          ok: true,
+          waived: false,
+          settlement: { paymentRef: decision.paymentRef, amount: String(decision.settledAmount) },
+        };
+      };
 
       const result = await ingestForeignX402(body, {
         ledger: usageSettled,
@@ -3574,9 +3635,27 @@ export function createApp() {
         verify,
         baseUrl,
         reqHost,
+        ensureStamp,
+        commitStampWaiver: apiKey ? () => commitStampWaiver(apiKey) : null,
       });
 
       if (!result.ok) {
+        if (result.challenge) {
+          const pr = Buffer.from(JSON.stringify(result.challenge), 'utf8').toString('base64');
+          res.set('PAYMENT-REQUIRED', pr);
+          const exposed = res.get('Access-Control-Expose-Headers') || '';
+          if (!/PAYMENT-REQUIRED/i.test(exposed)) {
+            res.set('Access-Control-Expose-Headers',
+              exposed ? `${exposed}, PAYMENT-REQUIRED` : 'PAYMENT-REQUIRED');
+          }
+          return res.status(402).json({
+            ...result.challenge,
+            error: result.error,
+            message: result.message,
+            stamp_fee: String(STAMP_FEE_UNITS),
+            stamp_fee_usd: '0.002',
+          });
+        }
         return res.status(result.status).json({
           error: result.error,
           message: result.message,

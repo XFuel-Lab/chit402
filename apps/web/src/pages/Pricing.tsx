@@ -48,9 +48,11 @@ export default function Pricing() {
             payment or a partner key, <code>POST {apiV1}/chat/completions</code> returns HTTP 402.
           </p>
           <p style={styles.clarityBody}>
-            Possession-gated book ingest uses a volume stamp of about{' '}
-            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>$0.0001–0.0002</strong> debited
-            from prepaid budget (not an on-chain exact settle).
+            Possession-gated book ingest costs a{' '}
+            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>$0.002</strong> stamp
+            (2000 atomic USDC, 6 decimals), paid by the submitter via x402 on Base or Solana.
+            The stamp is not debited from prepaid budget. A pilot waiver is off unless an operator
+            lists partner keys. Cemented Nano (XNO) sends can be stamped on the same door.
           </p>
           <p style={styles.clarityBody}>
             <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>Private Desk</strong> — vendor-blind

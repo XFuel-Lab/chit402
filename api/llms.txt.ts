@@ -55,11 +55,11 @@ POST /v1/chat/completions is bait. Wire: api.chit402.com (same paths as below).
 - GET|POST /v1/agents/:agent_id/book : last-N collected spend + budget Y / remaining. Possession-gated.
 - GET /v1/agents/:agent_id/book/lineage/:task_id : walk A→B→inference for disputes.
 
-## Foreign ingest (possession-gated — not a public 402 door)
+## Foreign ingest (possession-gated)
 
-Spent elsewhere → stamp here. Record PayBox / other x402 shop spend on the possession book.
+Spent elsewhere → stamp here. Record PayBox / other x402 shop spend, or a cemented Nano send, on the possession book.
 
-- POST /v1/agents/:agent_id/book/ingest : foreign x402 ingest. Requires register session (401 without possession; not HTTP 402). On-chain USDC verify (fail closed). evidence foreign_ingest. Returns verify_url like native completions. Naked tx rejected.
+- POST /v1/agents/:agent_id/book/ingest : foreign ingest. Requires register session (401 without possession). After possession, the submitter pays a $0.002 stamp (2000 atomic USDC) via x402 on Base or Solana — HTTP 402 unless a pilot waiver key applies. The stamp does not debit prepaid budget. USDC verify and cemented Nano sends fail closed. evidence foreign_ingest. Returns verify_url. Naked tx rejected.
 - MCP: ingest_foreign_x402 (= same path). OpenAPI on api.chit402.com/openapi.json (Book · Discovery). Docs: docs/doors/foreign-paybox-ingest.md
 
 ## MCP
@@ -68,7 +68,7 @@ Spent elsewhere → stamp here. Record PayBox / other x402 shop spend on the pos
 - submit_inference = POST /task-request (paid, 402 without a payer).
 - register_agent = POST /v1/agents/register (needs a collected receipt + agentWallet).
 - get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; budget Y + remaining; not a public scoreboard).
-- ingest_foreign_x402 = POST /v1/agents/:agent_id/book/ingest (spent elsewhere → stamp here; possession-gated; not a 402 settle).
+- ingest_foreign_x402 = POST /v1/agents/:agent_id/book/ingest (spent elsewhere → stamp here; possession-gated; $0.002 x402 stamp).
 
 ## Discovery (x402scan + Bazaar)
 
@@ -78,7 +78,7 @@ Spent elsewhere → stamp here. Record PayBox / other x402 shop spend on the pos
 - GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message.
 - POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
-- POST /v1/agents/:agent_id/book/ingest : foreign x402 ingest (spent elsewhere → stamp here). Possession + on-chain verify. Not a paid 402 door.
+- POST /v1/agents/:agent_id/book/ingest : foreign ingest (spent elsewhere → stamp here). Possession, then a $0.002 x402 stamp. USDC or cemented Nano.
 - POST /v1/chat/completions : paid (USDC on Base or Solana). Unauth GET or POST {} → 402.
 - POST /a2a-message       : same paid door as /v1 (A2A card URL). Unauth POST {} → 402.
 - POST /task-request      : lower-level M2M paid route (not the public door).

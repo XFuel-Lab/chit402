@@ -10,10 +10,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Nano (XNO) foreign ingest:** `POST /v1/agents/:agent_id/book/ingest` accepts a cemented mainnet send (block hash, recipient, raw amount, description). Two public RPCs must agree the block is a confirmed send and that `block_info.amount` matches the balance delta. Receipts carry `chain=nano`, raw and XNO amounts, a Kraken NANOUSD figure labeled `estimate`, and a block explorer link. Dedupe key is the block hash.
 - **ECDSA issuer signature on receipts:** Receipts now include an ES256 (P-256) public-key signature in `issuer_signature` that downstream agents can verify against the published JWKS at `GET /.well-known/jwks.json`. HMAC signatures remain for backward compatibility. SDK exports `verifyReceiptEcdsa()` and `verifyReceiptEcdsaWithJwks()` for verification. See `docs/VERIFY_ALGORITHM.md` §10.
 - **x402scan listing:** `GET /openapi.json` (OpenAPI 3.1 with `info.x-guidance`, `x-payment-info`, `responses.402`). Public door is `POST /v1/chat/completions`; `POST /task-request` is second. Unauth `POST /v1/chat/completions` with `{}` returns 402 before body validation. Demo key `xfuel-demo` still skips payment. Runtime 402 amounts stay `"10000"`.
 
 ### Changed
+- **Ingest stamp is $0.002:** `STAMP_FEE_UNITS` is 2000 (USDC, 6 decimals), paid by the submitter via x402 on Base or Solana. The stamp no longer debits prepaid budget (that debit plus the ingested spend reduced remaining twice). `GET /.well-known/x402` publishes `pricing.stamp_fee_usd`. Pilot waiver `STAMP_WAIVER_KEYS` / `STAMP_WAIVER_CAP` is off unless set.
 - **Docs merge lean:** `DEMO` → `HOSTED_TESTNET_ENDPOINT`; `BASE_CUTOVER` → `RUNTIME_STATE`; `ZKG5_BENCHMARK` → `VERIFIED_INFERENCE_HANDOFF` (thin redirect stubs left at old paths).
 - **Aggressive docs lean (single narrative):** archived phase kickoffs, engagement/treasury fluff, grant-audit duplicates, zkGPT research memos, pointer stubs, and phase JSON reports → `docs/_archive/legacy-narrative/`. `docs/README.md` is a clean hub only. Kept technical truth (RUNTIME_STATE, APIs, ADRs, VI, audit readiness).
 - **Repo docs → Theta-style GitHub README shape:** `README.md`, `WHITEPAPER.md`, and `docs/README.md` rewritten with opening prose, TOC, `---` section breaks, labeled `bash` fences, and human-readable link text (so GitHub render matches a modern protocol README — not raw editor view).

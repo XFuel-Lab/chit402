@@ -423,4 +423,6 @@ test('discovery points at the exact-quote endpoint, since per-token rates are no
   assert.equal(d.per_model_rates, '/v1/models');
   assert.match(d.quote_endpoint, /task-quote/);
   assert.equal(d.min_charge_usd, 0.002);
+  assert.equal(d.stamp_fee_usd, 0.002);
+  assert.equal(d.stamp_fee_units, '2000');
 });

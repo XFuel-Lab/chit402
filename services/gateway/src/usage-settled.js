@@ -140,8 +140,13 @@ export function entryQualifiesForTotals(entry) {
   return entry.collected === true;
 }
 
-/** True when a row counts toward prepaid_ceiling / daily / hourly caps. */
+/**
+ * True when a row counts toward prepaid_ceiling / daily / hourly caps.
+ * Nano raw is not USDC atomic — summing it would exhaust any ceiling — so
+ * a nano row is recorded on the book and omitted from the USDC spent total.
+ */
 export function entryQualifiesForCap(entry) {
+  if (String(entry?.rail || '').toLowerCase() === 'nano') return false;
   const evidence = deriveEvidence(entry);
   if (evidence === BOOK_EVIDENCE.POLICY_BLOCKED || evidence === BOOK_EVIDENCE.UNVERIFIED
     || evidence === BOOK_EVIDENCE.A2A_ESCROW) {
@@ -209,7 +214,7 @@ export function receiptQualifiesForLedger(receipt) {
   if (!receipt.task_id) {
     return { ok: false, reason: 'task_id required' };
   }
-  if (rail && rail !== 'usdc' && rail !== 'solana' && !rail.startsWith('solana')) {
+  if (rail && rail !== 'usdc' && rail !== 'solana' && !rail.startsWith('solana') && rail !== 'nano') {
     return { ok: false, reason: `rail ${rail} does not qualify` };
   }
   return { ok: true };
@@ -351,6 +356,12 @@ export class UsageSettledLedger {
       entry.foreign_x402 = true;
       entry.source = receipt.source || 'foreign_ingest';
       entry.evidence = BOOK_EVIDENCE.FOREIGN_INGEST;
+      if (payment.chain) entry.chain = payment.chain;
+      if (payment.amount_xno) entry.amount_xno = payment.amount_xno;
+      if (payment.amount_raw) entry.amount_raw = payment.amount_raw;
+      if (payment.usd_estimate) entry.usd_estimate = payment.usd_estimate;
+      if (payment.block_hash) entry.block_hash = payment.block_hash;
+      if (payment.explorer_url) entry.explorer_url = payment.explorer_url;
       entry.receipt_snapshot = {
         schema: receipt.schema,
         task_id: receipt.task_id,
@@ -362,6 +373,7 @@ export class UsageSettledLedger {
         route: receipt.route,
         fulfillment: receipt.fulfillment || null,
         signature: receipt.signature || null,
+        stamp: receipt.stamp || null,
       };
     }
     this._index(entry);
