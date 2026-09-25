@@ -2,7 +2,7 @@
 
 As-deployed source of truth. When in-repo config disagrees with this file, this file wins.
 
-Last updated: 2026-09-24
+Last updated: 2026-09-25
 
 > **Live as of 2026-08-20.** Public hosts are `https://api.chit402.com` and `https://api.xfuel.app`
 > (same Lightsail box). The old demo name `api-testnet.xfuel.app` is retired — DNS intentionally
@@ -65,7 +65,7 @@ SP1 prover (**live for onboarding**, ~$2/day — 2026-08-17):
 
 Demo gateway:
 
-- Host: Lightsail `35.180.10.142`
+- Host: Lightsail `13.36.215.199` (static IP; `api.chit402.com` + `api.xfuel.app` A records)
 - App: **systemd `xfuel-api`** → `/home/ubuntu/xfuel-protocol/services/gateway` → `node src/server.js` (port 3002)
 - Install / recover: [deploy/lightsail/README.md](../deploy/lightsail/README.md)
 - Public: https://api.chit402.com and https://api.xfuel.app (same box). Retired demo hostname `api-testnet.xfuel.app` — NXDOMAIN; not an alias.
