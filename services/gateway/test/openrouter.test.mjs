@@ -27,9 +27,10 @@ import {
   openrouterHouseResaleEnabled,
   redactSecrets,
   resolveOpenRouterAccess,
+  formatPlainDecimal,
 } from '../src/openrouter-infer.js';
 import logger from '../src/logger.js';
-import { providerCogsOf, buildReceipt } from '../src/receipt.js';
+import { providerCogsOf, buildReceipt, decodeReceiptClaims, renderReceiptHtml, storedReceiptJson, verifyReceiptEcdsaWithJwks } from '../src/receipt.js';
 
 /** Captured 2026-09-26 from GET https://openrouter.ai/api/v1/models (public list). */
 const GPT_4O_MINI = {
@@ -658,6 +659,101 @@ test('upstream errors redact the caller key from the detail and the log', async 
   } finally {
     logger.warn = original;
   }
+});
+
+test('reported USD cost is a plain decimal, never scientific notation', () => {
+  assert.equal(formatPlainDecimal(8.3e-7), '0.00000083');
+  assert.equal(formatPlainDecimal('8.3e-7'), '0.00000083');
+  assert.equal(formatPlainDecimal('0.0000042'), '0.0000042');
+  assert.equal(formatPlainDecimal(0), '0');
+  const cogs = providerCogsOf({
+    meta: { providerCogs: { provider: 'openrouter', reported_cost_usd: 8.3e-7, label: 'paid-by-caller-to-OpenRouter' } },
+  });
+  assert.equal(cogs.reported_cost_usd, '0.00000083');
+});
+
+test('signed JWS covers OpenRouter generation id, served model, tokens, cost, and label', () => {
+  const task = {
+    taskId: 'xfuel-or-facts',
+    status: 'completed',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    intent: {
+      type: 'inference_request',
+      amount: '2000',
+      paymentRail: 'usdc',
+      paymentRef: 'base:0x' + 'ab'.repeat(32),
+      requestedModel: 'openrouter/meta-llama/llama-3.1-8b-instruct',
+      modelId: 'meta-llama/llama-3.1-8b-instruct',
+    },
+    feeAmount: '10',
+    netAmount: '1990',
+    feeBps: 50,
+    outputHash: '0x' + 'cd'.repeat(32),
+    usage: { prompt_tokens: 19, completion_tokens: 9, total_tokens: 28, source: 'provider' },
+    result: { provider: 'openrouter', model: 'meta-llama/llama-3.1-8b-instruct' },
+    meta: {
+      requestedModel: 'openrouter/meta-llama/llama-3.1-8b-instruct',
+      openrouter: {
+        generation_id: 'gen-live-1',
+        served_model: 'meta-llama/llama-3.1-8b-instruct',
+      },
+      providerCogs: {
+        provider: 'openrouter',
+        basis: 'reported',
+        paid_by: 'caller-to-openrouter',
+        label: 'paid-by-caller-to-OpenRouter',
+        reported_cost_usd: '8.3e-7',
+        actual: null,
+      },
+      bookView: {
+        settlement_status: 'settled',
+        idempotent_replay: false,
+        replay_of: null,
+        usage_settled: {
+          agent_id: 1,
+          hub: 'openrouter',
+          model: 'meta-llama/llama-3.1-8b-instruct',
+          amount: '2000',
+          settlement_status: 'settled',
+          idempotent_replay: false,
+          replay_of: null,
+        },
+      },
+    },
+  };
+  const receipt = buildReceipt(task, { baseUrl: 'https://api.chit402.com' });
+  const stored = storedReceiptJson(receipt);
+  assert.equal(stored.openrouter.generation_id, 'gen-live-1');
+  assert.equal(stored.openrouter.reported_cost_usd, '0.00000083');
+  assert.equal(stored.route.model, 'meta-llama/llama-3.1-8b-instruct');
+  assert.equal(stored.route.resolved, 'meta-llama/llama-3.1-8b-instruct');
+  assert.equal(stored.route.requested_model, 'openrouter/meta-llama/llama-3.1-8b-instruct');
+  assert.notEqual(stored.route.model, stored.route.requested_model);
+  assert.equal(stored.settlement_status, 'settled');
+  assert.equal(stored.idempotent_replay, false);
+  assert.equal(stored.replay_of, null);
+  assert.equal(stored.payment.collected, true);
+  assert.equal(stored.payment.ref, 'base:0x' + 'ab'.repeat(32));
+  assert.equal(stored.usage_settled.amount, '2000');
+  assert.equal(stored.usage_settled.settlement_status, 'settled');
+  assert.equal(stored.session, undefined);
+  assert.equal(stored.agent_pubkey, undefined);
+  assert.equal(receipt.payment, undefined, 'slim envelope keeps payment inside the JWS');
+  assert.equal(verifyReceiptEcdsaWithJwks(stored, { keys: [] }).valid, true);
+  assert.equal(verifyReceiptEcdsaWithJwks(receipt, { keys: [] }).valid, true);
+  const claims = decodeReceiptClaims(receipt);
+  assert.equal(claims.route.model, 'meta-llama/llama-3.1-8b-instruct');
+  assert.equal(claims.openrouter.generation_id, 'gen-live-1');
+  assert.equal(claims.openrouter.served_model, 'meta-llama/llama-3.1-8b-instruct');
+  assert.equal(claims.openrouter.prompt_tokens, 19);
+  assert.equal(claims.openrouter.completion_tokens, 9);
+  assert.equal(claims.openrouter.reported_cost_usd, '0.00000083');
+  assert.equal(claims.openrouter.label, 'paid-by-caller-to-OpenRouter');
+  const html = renderReceiptHtml(receipt);
+  assert.match(html, /\$0\.00000083/);
+  assert.equal(html.includes('8.3e-7'), false);
+  assert.match(html, /gen-live-1/);
 });
 
 

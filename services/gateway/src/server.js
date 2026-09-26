@@ -30,7 +30,7 @@ import {
   applyPaymentToOwedTask,
   configureRollingLedger,
 } from './rolling-settlement.js';
-import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptMultiKey, verifyOriginHandoff, verifyDestAck, issueSessionHandoffReceipt, mergeReceiptView, decodeReceiptClaims } from './receipt.js';
+import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptMultiKey, verifyOriginHandoff, verifyDestAck, issueSessionHandoffReceipt, mergeReceiptView, decodeReceiptClaims, storedReceiptJson } from './receipt.js';
 import {
   configureOpenRouterBroadcast,
   findOpenRouterPublicReceipt,
@@ -2559,7 +2559,7 @@ export function createApp() {
         return res.json(exportDoc);
       }
 
-      if (wantsJson) return res.json(receipt);
+      if (wantsJson) return res.json(storedReceiptJson(receipt));
       return res.type('html').send(renderReceiptHtml(receipt));
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt error');

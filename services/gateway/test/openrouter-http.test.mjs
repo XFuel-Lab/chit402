@@ -60,6 +60,8 @@ let settles = 0;
 let keyStatus = 200;
 let chatStatus = 200;
 let chatErrorBody = { error: { message: 'upstream down' } };
+let chatServedModel = null;
+let chatUsageCost = 0.0000042;
 
 const facilitator = await startServer((req, res) => {
   let body = '';
@@ -112,8 +114,9 @@ const upstream = await startServer((req, res) => {
       if (chatStatus !== 200) return send(chatStatus, chatErrorBody);
       return send(200, {
         id: 'gen-http-1',
+        ...(chatServedModel ? { model: chatServedModel } : {}),
         choices: [{ message: { role: 'assistant', content: 'pong' }, finish_reason: 'stop' }],
-        usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16, cost: 0.0000042 },
+        usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16, cost: chatUsageCost },
       });
     }
     return send(500, { error: 'unexpected', url });
@@ -424,6 +427,8 @@ test('BYOK forwards the caller key, charges only the receipt, and redacts the ke
   assert.equal(challenge.accepts[0].maxAmountRequired, '2000');
   assert.equal(JSON.stringify(challenge).includes(callerKey), false);
 
+  chatServedModel = 'openai/gpt-4o-mini-2024-07-18';
+  chatUsageCost = 8.3e-7;
   upstreamHits.length = 0;
   const paid = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
@@ -437,14 +442,49 @@ test('BYOK forwards the caller key, charges only the receipt, and redacts the ke
   assert.equal(paidText.includes(callerKey), false);
   assert.equal(paidText.includes('test-or-key'), false);
   assert.equal(paidBody.model, 'openrouter/openai/gpt-4o-mini');
+  assert.ok(String(paidBody.id).startsWith('chatcmpl-'));
+  assert.equal(paid.headers.get('x-openrouter-generation-id'), 'gen-http-1');
   assert.equal(paidBody.usage.prompt_tokens, 12);
   assert.equal(paidBody.xfuel.route.provider, 'openrouter');
-  assert.equal(paidBody.xfuel.route.model, 'openrouter/openai/gpt-4o-mini');
+  assert.equal(paidBody.xfuel.route.model, 'openai/gpt-4o-mini-2024-07-18');
+  assert.equal(paidBody.xfuel.route.resolved, 'openai/gpt-4o-mini-2024-07-18');
+  assert.equal(paidBody.xfuel.route.requested_model, 'openrouter/openai/gpt-4o-mini');
+  assert.notEqual(paidBody.xfuel.route.model, paidBody.xfuel.route.requested_model);
+  assert.equal(paidBody.xfuel.openrouter.generation_id, 'gen-http-1');
+  assert.equal(paidBody.xfuel.openrouter.served_model, 'openai/gpt-4o-mini-2024-07-18');
+  assert.equal(paidBody.xfuel.openrouter.prompt_tokens, 12);
+  assert.equal(paidBody.xfuel.openrouter.completion_tokens, 4);
+  assert.equal(paidBody.xfuel.openrouter.reported_cost_usd, '0.00000083');
+  assert.equal(paidBody.xfuel.openrouter.label, 'paid-by-caller-to-OpenRouter');
   assert.equal(paidBody.xfuel.provider_cogs.basis, 'reported');
   assert.equal(paidBody.xfuel.provider_cogs.label, 'paid-by-caller-to-OpenRouter');
   assert.equal(paidBody.xfuel.provider_cogs.paid_by, 'caller-to-openrouter');
-  assert.equal(paidBody.xfuel.provider_cogs.reported_cost_usd, '0.0000042');
+  assert.equal(paidBody.xfuel.provider_cogs.reported_cost_usd, '0.00000083');
+  assert.equal(paidText.includes('8.3e-7'), false);
   assert.equal(paidBody.xfuel.provider_cogs.actual ?? null, null);
+  // The shared mock facilitator reuses one tx hash, so a later paid call in
+  // this file is an idempotent replay of the earlier house settlement.
+  assert.ok(paidBody.xfuel.settlement_status === 'settled' || paidBody.xfuel.settlement_status === 'idempotent_replay');
+  assert.equal(typeof paidBody.xfuel.idempotent_replay, 'boolean');
+  assert.equal(paidBody.xfuel.idempotent_replay, paidBody.xfuel.settlement_status === 'idempotent_replay');
+  if (paidBody.xfuel.idempotent_replay) {
+    assert.equal(typeof paidBody.xfuel.replay_of, 'string');
+    assert.match(paidBody.xfuel.replay_of, /^xfuel-/);
+  } else {
+    assert.equal(paidBody.xfuel.replay_of, null);
+  }
+  assert.ok(paidBody.xfuel.payment?.ref);
+  assert.equal(paidBody.xfuel.usage_settled.settlement_status, paidBody.xfuel.settlement_status);
+  assert.equal(paidBody.xfuel.usage_settled.idempotent_replay, paidBody.xfuel.idempotent_replay);
+  assert.equal(paidBody.xfuel.usage_settled.replay_of, paidBody.xfuel.replay_of);
+  const signed = JSON.parse(Buffer.from(paidBody.xfuel.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+  assert.equal(signed.route.model, 'openai/gpt-4o-mini-2024-07-18');
+  assert.equal(signed.openrouter.generation_id, 'gen-http-1');
+  assert.equal(signed.openrouter.served_model, 'openai/gpt-4o-mini-2024-07-18');
+  assert.equal(signed.openrouter.prompt_tokens, 12);
+  assert.equal(signed.openrouter.completion_tokens, 4);
+  assert.equal(signed.openrouter.reported_cost_usd, '0.00000083');
+  assert.equal(signed.openrouter.label, 'paid-by-caller-to-OpenRouter');
   const chatHit = upstreamHits.find((h) => h.url.endsWith('/chat/completions'));
   assert.equal(chatHit.authorization, `Bearer ${callerKey}`);
   assert.equal(chatHit.body.user, openrouterEndUser({ payerWallet: EVM_PAYER }));
@@ -455,10 +495,35 @@ test('BYOK forwards the caller key, charges only the receipt, and redacts the ke
   const receipt = await receiptRes.json();
   assert.equal(receipt.provider_cogs.label, 'paid-by-caller-to-OpenRouter');
   assert.equal(receipt.provider_cogs.actual ?? null, null);
+  assert.equal(receipt.provider_cogs.reported_cost_usd, '0.00000083');
+  assert.equal(JSON.stringify(receipt).includes('8.3e-7'), false);
   assert.equal(receipt.provider_cogs.openrouter_generation.total_cost, '0.0000042');
   assert.equal(receipt.provider_cogs.openrouter_generation.label, 'paid-by-caller-to-OpenRouter');
+  assert.equal(receipt.openrouter.generation_id, 'gen-http-1');
+  assert.equal(receipt.route.model, 'openai/gpt-4o-mini-2024-07-18');
+  assert.equal(receipt.route.requested_model, 'openrouter/openai/gpt-4o-mini');
+  assert.equal(receipt.settlement_status, paidBody.xfuel.settlement_status);
+  assert.equal(receipt.idempotent_replay, paidBody.xfuel.idempotent_replay);
+  assert.equal(receipt.replay_of, paidBody.xfuel.replay_of);
+  assert.equal(receipt.payment.ref, paidBody.xfuel.payment.ref);
+  assert.equal(receipt.payment.collected, true);
+  assert.equal(receipt.usage_settled.amount, paidBody.xfuel.usage_settled.amount);
+  assert.equal(receipt.usage_settled.settlement_status, paidBody.xfuel.usage_settled.settlement_status);
+  assert.equal(receipt.usage_settled.idempotent_replay, paidBody.xfuel.usage_settled.idempotent_replay);
+  assert.equal(receipt.usage_settled.replay_of, paidBody.xfuel.usage_settled.replay_of);
+  assert.equal(JSON.stringify(receipt).includes(callerKey), false);
+  const storedClaims = JSON.parse(Buffer.from(receipt.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+  assert.equal(storedClaims.openrouter.generation_id, 'gen-http-1');
+  assert.equal(storedClaims.openrouter.reported_cost_usd, '0.00000083');
+  const page = await fetch(`${base}/receipt/${paidBody.xfuel.task_id}`);
+  const html = await page.text();
+  assert.match(html, /\$0\.00000083/);
+  assert.equal(html.includes('8.3e-7'), false);
+  assert.match(html, /gen-http-1/);
   const generationHit = upstreamHits.find((h) => h.url.includes('/generation'));
   assert.equal(generationHit.authorization, `Bearer ${callerKey}`);
+  assert.match(generationHit.url, /[?&]id=gen-http-1(?:&|$)/);
+  assert.equal(generationHit.url.includes(paidBody.id), false);
 
   chatStatus = 500;
   chatErrorBody = { error: { message: `rejected ${callerKey}` } };

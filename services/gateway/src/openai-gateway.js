@@ -1238,11 +1238,50 @@ async function accountForCogs({ task, modelId, usage, provider }) {
  * and return. The chat response is not held for it. A later GET /receipt
  * reads the task once the figures land.
  */
+/** OpenRouter's generation id (`gen-…`). Never our `chatcmpl-` id — that 404s at /generation. */
+function openRouterGenerationIdOf(inference) {
+  const candidates = [inference?.generationId, inference?.raw?.id];
+  for (const value of candidates) {
+    if (typeof value !== 'string') continue;
+    const id = value.trim();
+    if (!id || id.startsWith('chatcmpl-')) continue;
+    return id;
+  }
+  return null;
+}
+
+/** Model string OpenRouter says it served. Distinct from the id the caller sent. */
+function openRouterServedModelOf(inference) {
+  if (inference?.provider !== 'openrouter') return null;
+  const model = inference?.raw?.model;
+  if (typeof model !== 'string') return null;
+  const trimmed = model.trim();
+  return trimmed || null;
+}
+
+function stampOpenRouterServe(task, inference) {
+  if (!task || inference?.provider !== 'openrouter') return;
+  const generationId = openRouterGenerationIdOf(inference);
+  const servedModel = openRouterServedModelOf(inference);
+  task.meta = task.meta || {};
+  task.meta.openrouter = {
+    ...(task.meta.openrouter || {}),
+    generation_id: generationId,
+    served_model: servedModel,
+  };
+  if (servedModel) {
+    task.result = { ...(task.result || {}), model: servedModel };
+    task.intent = task.intent || {};
+    task.intent.modelId = servedModel;
+  }
+}
+
 function stampReportedOpenRouterCost(task, inference) {
   if (!task) return;
   task.meta = task.meta || {};
   const reported = inference?.reportedCost ?? null;
   task.meta.openrouterBilling = 'byok';
+  const generationId = openRouterGenerationIdOf(inference);
   task.meta.providerCogs = {
     provider: 'openrouter',
     currency: 'USD',
@@ -1250,12 +1289,16 @@ function stampReportedOpenRouterCost(task, inference) {
     paid_by: 'caller-to-openrouter',
     label: OPENROUTER_CALLER_PAID_LABEL,
     ...(reported != null ? { reported_cost_usd: reported } : {}),
+    ...(generationId ? { openrouter_generation: { id: generationId } } : {}),
+  };
+  task.meta.openrouter = {
+    ...(task.meta.openrouter || {}),
+    label: OPENROUTER_CALLER_PAID_LABEL,
   };
 }
 
 function noteOpenRouterGeneration(task, inference, apiKey) {
-  const fromRaw = inference?.raw?.id;
-  const id = inference?.generationId || (typeof fromRaw === 'string' ? fromRaw : null);
+  const id = openRouterGenerationIdOf(inference);
   if (!id || inference?.provider !== 'openrouter' || !task || !apiKey) return;
   scheduleOpenRouterCostReconcile({ id, task, apiKey });
 }
@@ -1263,6 +1306,7 @@ function noteOpenRouterGeneration(task, inference, apiKey) {
 async function chargeServedInference({
   task, mock, modelId, usage, provider, inference, openrouterApiKey,
 }) {
+  stampOpenRouterServe(task, inference);
   if (!mock && inference?.openrouterBilling === 'byok') {
     stampReportedOpenRouterCost(task, inference);
     noteOpenRouterGeneration(task, inference, openrouterApiKey);
@@ -1401,6 +1445,9 @@ function setReceiptHeaders(res, receipt) {
   res.setHeader('x-xfuel-proof-url', receipt.proof.links.proof);
   if (receipt.verify_url) res.setHeader('x-xfuel-verify-url', receipt.verify_url);
   if (receipt.agent_id != null) res.setHeader('x-xfuel-agent-id', String(receipt.agent_id));
+  if (receipt.openrouter?.generation_id) {
+    res.setHeader('X-OpenRouter-Generation-Id', receipt.openrouter.generation_id);
+  }
   // x402 clients (and Agent402 seller-payability) treat a paid response as
   // unsettled unless it carries the settlement receipt header. Both names:
   // v2 PAYMENT-RESPONSE, v1 X-PAYMENT-RESPONSE.
@@ -1815,12 +1862,12 @@ export function registerOpenAIRoutes(app, {
   app.use('/v1/audio', ...authChain);
   app.use('/v1/chat', ...baseChain);
 
-  const bookSpend = (receipt, req = null, settleRecord = null) => {
+  const bookSpend = (receipt, req = null, settleRecord = null, task = null) => {
     const identity = resolveBookableAgent(req, registry);
     const agentId = identity?.agent_id ?? null;
     const intentMeta = req ? extractIntentMeta(req) : {};
     const intentFields = resolveIntentFields(intentMeta, ledger, agentId);
-    return withBookSpend(receipt, {
+    const recorded = withBookSpend(receipt, {
       ledger,
       registry,
       agentId,
@@ -1828,6 +1875,16 @@ export function registerOpenAIRoutes(app, {
       attemptIndex: intentFields.attempt_index,
       settleRecord,
     });
+    if (task && recorded?.settlement_status) {
+      task.meta = task.meta || {};
+      task.meta.bookView = {
+        settlement_status: recorded.settlement_status,
+        idempotent_replay: recorded.idempotent_replay === true,
+        replay_of: recorded.replay_of || null,
+        usage_settled: recorded.usage_settled || null,
+      };
+    }
+    return recorded;
   };
 
   // ── GET /v1/models ───────────────────────────────────────────────────────
@@ -2204,7 +2261,8 @@ export function registerOpenAIRoutes(app, {
       });
     }
 
-    const echoModel = inference.resolvedModel || model || 'xfuel/auto';
+    const catalogModel = inference.resolvedModel || model || 'xfuel/auto';
+    const echoModel = openRouterServedModelOf(inference) || catalogModel;
     const { content, provider, mock, toolCalls } = inference;
 
     // Prefer the provider's own usage. Estimating from visible text understates
@@ -2319,19 +2377,19 @@ export function registerOpenAIRoutes(app, {
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
       reqHost,
-    }), req, settleRecord);
+    }), req, settleRecord, task);
 
     setReceiptHeaders(res, receipt);
 
     if (stream) {
-      return streamCompletion(res, { id, created, model: echoModel, content, receipt });
+      return streamCompletion(res, { id, created, model: catalogModel, content, receipt });
     }
 
     return res.json({
       id,
       object: 'chat.completion',
       created,
-      model: echoModel,
+      model: catalogModel,
       choices: [
         {
           index: 0,
@@ -2689,7 +2747,8 @@ export function registerOpenAIRoutes(app, {
       });
     }
 
-    const echoModel = inference.resolvedModel || model || 'xfuel/auto';
+    const catalogModel = inference.resolvedModel || model || 'xfuel/auto';
+    const echoModel = openRouterServedModelOf(inference) || catalogModel;
     const { content, provider, mock, toolCalls } = inference;
 
     // Usage from provider
@@ -2766,7 +2825,7 @@ export function registerOpenAIRoutes(app, {
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
       reqHost,
-    }), req, settleRecord);
+    }), req, settleRecord, task);
 
     setReceiptHeaders(res, receipt);
 

@@ -42,13 +42,38 @@ export function openrouterAttributionHeaders() {
   };
 }
 
-/** OpenRouter publishes generation costs in USD. Keep the printed figure. */
-function usdCostString(value) {
+/**
+ * Plain decimal USD string. `String(8.3e-7)` is `"8.3e-7"`, which is not a
+ * cost a receipt page or a verifier should have to parse.
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+export function formatPlainDecimal(value) {
   if (value == null || value === '') return null;
-  const text = typeof value === 'string' ? value.trim() : null;
-  const n = text != null ? Number(text) : Number(value);
-  if (!Number.isFinite(n) || n < 0) return null;
-  return text != null ? text : String(n);
+  const text = typeof value === 'number'
+    ? (Number.isFinite(value) ? value.toString() : null)
+    : (typeof value === 'string' ? value.trim() : null);
+  if (text == null || text === '') return null;
+  const match = text.match(/^([+-]?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/);
+  if (!match) return null;
+  if (match[1] === '-') return null;
+  const intPart = match[2];
+  const frac = match[3] || '';
+  const exp = match[4] != null ? Number.parseInt(match[4], 10) : 0;
+  if (!Number.isFinite(exp)) return null;
+  const rawDigits = intPart + frac;
+  const leadingZeros = rawDigits.match(/^0*/)[0].length;
+  const digits = rawDigits.replace(/^0+/, '') || '0';
+  if (digits === '0') return '0';
+  const point = intPart.length + exp - leadingZeros;
+  if (point <= 0) return `0.${'0'.repeat(-point)}${digits}`;
+  if (point >= digits.length) return digits + '0'.repeat(point - digits.length);
+  return `${digits.slice(0, point)}.${digits.slice(point)}`;
+}
+
+/** OpenRouter publishes generation costs in USD. Keep a plain decimal. */
+function usdCostString(value) {
+  return formatPlainDecimal(value);
 }
 
 /** @returns {string} house key, or '' when unset. Not a license to resell. */
