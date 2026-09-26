@@ -729,6 +729,7 @@ test('signed JWS covers OpenRouter generation id, served model, tokens, cost, an
   assert.equal(stored.route.model, 'meta-llama/llama-3.1-8b-instruct');
   assert.equal(stored.route.resolved, 'meta-llama/llama-3.1-8b-instruct');
   assert.equal(stored.route.requested_model, 'openrouter/meta-llama/llama-3.1-8b-instruct');
+  assert.equal(stored.route.substituted, false);
   assert.notEqual(stored.route.model, stored.route.requested_model);
   assert.equal(stored.settlement_status, 'settled');
   assert.equal(stored.idempotent_replay, false);

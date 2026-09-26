@@ -220,7 +220,7 @@ export function mergeReceiptView(receipt) {
         message_type: routeMeta.message_type ?? null,
         chain_id: routeMeta.chain_id ?? null,
         model: null,
-        ...routeRequestedFields(routeMeta.requested_model),
+        ...routeRequestedFields(routeMeta.requested_model, routeMeta.substituted),
         provider: null,
         model_commitment: routeMeta.model_commitment ?? null,
         ...(routeMeta.requested_model ? { requested_model: routeMeta.requested_model } : {}),
@@ -270,7 +270,7 @@ export function mergeReceiptView(receipt) {
       message_type: routeMeta.message_type ?? null,
       chain_id: routeMeta.chain_id ?? null,
       model: claims.route?.model ?? null,
-      ...routeRequestedFields(routeMeta.requested_model),
+      ...routeRequestedFields(routeMeta.requested_model, routeMeta.substituted),
       provider: claims.route?.provider ?? null,
       model_commitment: routeMeta.model_commitment ?? (
         claims.route?.model_commitment
@@ -305,10 +305,17 @@ export function mergeReceiptView(receipt) {
   };
 }
 
-/** Unsigned "what the caller asked for" fields. Signed route.model stays the row that served. */
-function routeRequestedFields(requestedModel) {
+/**
+ * Unsigned "what the caller asked for" fields. Signed route.model stays the row that served.
+ * `substituted` is true when a MODEL_ALIAS_TABLE name was served as a different id.
+ */
+function routeRequestedFields(requestedModel, substituted) {
   if (!requestedModel) return {};
-  return { requested: requestedModel, requested_model: requestedModel };
+  return {
+    requested: requestedModel,
+    requested_model: requestedModel,
+    substituted: substituted === true,
+  };
 }
 
 /** Machine-readable proof scope flags (JSON). Prose lives on HTML only. */
@@ -870,7 +877,11 @@ function publicRouteBlock(route) {
     message_type: route.message_type ?? null,
     chain_id: route.chain_id ?? null,
     model: route.model ?? null,
-    ...(route.requested ? { requested: route.requested, requested_model: route.requested_model || route.requested } : {}),
+    ...(route.requested ? {
+      requested: route.requested,
+      requested_model: route.requested_model || route.requested,
+      substituted: route.substituted === true,
+    } : {}),
     provider: route.provider ?? null,
     model_commitment: route.model_commitment ?? null,
     ...(route.resolved ? { resolved: route.resolved } : {}),
@@ -1641,7 +1652,17 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
         payment_ref: task.meta.refund.payment_ref || paymentRef || null,
       }
     : null;
-  const requestedModel = task?.meta?.requestedModel || task?.intent?.requestedModel || null;
+  // Broadcast stamps the generation's reported model as the exact row.
+  // It is not an alias rewrite, so it never carries requested_model or substituted.
+  const broadcastReceipt = paymentRail === 'reported'
+    || task?.kind === 'openrouter_broadcast'
+    || task?.intent?.type === 'openrouter_broadcast';
+  const requestedModel = broadcastReceipt
+    ? null
+    : (task?.meta?.requestedModel || task?.intent?.requestedModel || null);
+  const modelSubstituted = broadcastReceipt
+    ? false
+    : (task?.meta?.modelSubstituted === true || task?.intent?.modelSubstituted === true);
 
   const reportedRail = paymentRail === 'reported';
 
@@ -1675,7 +1696,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     route: {
       message_type: task.intent?.type || null,
       model: routeModel,
-      ...routeRequestedFields(requestedModel),
+      ...routeRequestedFields(requestedModel, modelSubstituted),
       model_commitment: modelCommitment,
       provider: routeProvider,
       // Unsigned presentation field. A collected payment reports the settlement
@@ -1795,7 +1816,10 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       message_type: draft.route.message_type,
       chain_id: draft.route.chain_id,
       model_commitment: draft.route.model_commitment,
-      ...(draft.route.requested ? { requested_model: draft.route.requested } : {}),
+      ...(draft.route.requested ? {
+        requested_model: draft.route.requested,
+        substituted: draft.route.substituted === true,
+      } : {}),
     },
     payment_meta: {
       network: draft.payment.network,

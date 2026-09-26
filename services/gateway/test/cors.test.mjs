@@ -45,9 +45,14 @@ test('default allowlist reflects www.chit402.com and allows X-XFuel-Session', as
   const allowHeaders = res.headers.get('access-control-allow-headers') ?? '';
   assert.match(allowHeaders, /X-XFuel-Session/i);
   assert.match(allowHeaders, /x-xfuel-session/i);
+  assert.match(allowHeaders, /X-Chit-Strict-Model/);
+  assert.match(allowHeaders, /X-Chit-Ingest-Key/);
   const expose = res.headers.get('access-control-expose-headers') ?? '';
   assert.match(expose, /PAYMENT-RESPONSE/);
   assert.match(expose, /X-PAYMENT-RESPONSE/);
+  assert.match(expose, /X-Chit-Requested-Model/);
+  assert.match(expose, /X-Chit-Served-Model/);
+  assert.match(expose, /X-Chit-Model-Substituted/);
 });
 
 test('default allowlist rejects unknown origins', async () => {

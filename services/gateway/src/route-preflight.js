@@ -12,9 +12,11 @@ import { rateForModel } from './provider-rates.js';
 
 /**
  * @param {object} [body]
- * @param {{ access?: { mode: 'byok'|'house'|'missing', apiKey: string } }} [opts]
+ * @param {{ access?: { mode: 'byok'|'house'|'missing', apiKey: string }, strict?: boolean }} [opts]
  *   `access` is resolved by the gateway from the request. A missing key fails
  *   closed. This function does not read `OPENROUTER_API_KEY` on its own.
+ *   `strict` disables MODEL_ALIAS_TABLE the same way the early gate does, so
+ *   settle-time resolution cannot rewrite a name the caller refused.
  * @returns {Promise<{ ok: true, model: object, requested: string } | { ok: false, status: number, code: string, message: string }>}
  */
 export async function preflightBeforeSettle(body = {}, opts = {}) {
@@ -34,6 +36,7 @@ export async function preflightBeforeSettle(body = {}, opts = {}) {
   const resolved = resolveCatalogModel(requested, models, {
     modality: 'chat',
     shape: requestShape(body),
+    strict: opts.strict === true,
   });
   if (!resolved.ok) {
     return {

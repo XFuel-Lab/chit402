@@ -669,6 +669,64 @@ export function matchModelAlias(name) {
 }
 
 /**
+ * Alias-table disclosure. A hit counts only when MODEL_ALIAS_TABLE matched and
+ * the id that will serve is not the name the caller sent. `xfuel/auto`,
+ * typed family names (`deepseek`, `llama`), and exact `openrouter/*` catalog
+ * ids are not table hits — those ids are never flagged substituted.
+ *
+ * @param {string} requested
+ * @param {string} served
+ * @returns {{ requested_model: string|null, served_model: string|null, substituted: boolean }}
+ */
+export function modelSubstitution(requested, served) {
+  const requestedName = requested == null ? '' : String(requested).trim();
+  const servedName = served == null ? '' : String(served).trim();
+  // openrouter/<vendor>/<model> is the catalog id itself.
+  if (requestedName.toLowerCase().startsWith('openrouter/')) {
+    return {
+      requested_model: requestedName || null,
+      served_model: servedName || null,
+      substituted: false,
+    };
+  }
+  const hit = requestedName ? matchModelAlias(requestedName) : null;
+  const substituted = !!(
+    hit
+    && servedName
+    && servedName.toLowerCase() !== requestedName.toLowerCase()
+  );
+  return {
+    requested_model: requestedName || null,
+    served_model: servedName || null,
+    substituted,
+  };
+}
+
+/**
+ * Published on `GET /v1/models` as `substitution_policy`.
+ * Default is alias. Strict refuses the table before any charge.
+ */
+export const SUBSTITUTION_POLICY = Object.freeze({
+  default: 'alias',
+  strict_header: 'X-Chit-Strict-Model',
+  strict_body: 'chit_strict_model',
+  disclosure_headers: Object.freeze([
+    'X-Chit-Requested-Model',
+    'X-Chit-Served-Model',
+    'X-Chit-Model-Substituted',
+  ]),
+  body_field: 'chit',
+  note: 'Names in aliases and alias_patterns are served by the listed target. '
+    + 'When that id differs from the requested name, responses set '
+    + 'X-Chit-Requested-Model, X-Chit-Served-Model, and X-Chit-Model-Substituted: true. '
+    + 'Non-streaming completions also include a chit object '
+    + '(requested_model, served_model, substituted). '
+    + 'Send header X-Chit-Strict-Model: true or JSON chit_strict_model: true to disable '
+    + 'substitution: the aliased name returns 400 model_not_routable and no charge is made. '
+    + 'Exact openrouter/* catalog ids are never substitutions.',
+});
+
+/**
  * Map a table hit onto a live gpt-oss row. Auto targets are not resolved here
  * (`gpt` / `openai` join the xfuel/auto branch). No live gpt-oss row → null.
  * @param {string} name
@@ -801,11 +859,14 @@ export function pickAutoPreference(pref, live) {
  * Map a typed alias (deepseek, llama-3.3, …) onto one live row, or null.
  * @param {string} name
  * @param {CatalogModel[]} models
+ * @param {{ strict?: boolean }} [opts] `strict` skips MODEL_ALIAS_TABLE (OpenAI/Anthropic names).
  * @returns {CatalogModel|null}
  */
-export function resolveTypedAlias(name, models) {
-  const aliased = resolveModelAlias(name, models);
-  if (aliased) return aliased;
+export function resolveTypedAlias(name, models, { strict = false } = {}) {
+  if (!strict) {
+    const aliased = resolveModelAlias(name, models);
+    if (aliased) return aliased;
+  }
   const key = String(name || '').trim().toLowerCase();
   const rule = TYPED_ALIASES[key];
   if (!rule) return null;
@@ -864,17 +925,21 @@ export function isRoutable(m) {
  *
  * @param {string} modelId
  * @param {CatalogModel[]} models
- * @param {{ modality?: Modality, shape?: 'agent'|'simple' }} [opts]
+ * @param {{ modality?: Modality, shape?: 'agent'|'simple', strict?: boolean }} [opts]
  *   `shape` steers `xfuel/auto` only — 'agent' when the request carries tools or a
  *   tool-result turn. See `autoPreferenceFor`.
+ *   `strict` disables MODEL_ALIAS_TABLE (`gpt-4o`, `claude-sonnet-*`, bare `gpt`).
+ *   Exact catalog ids (including `openrouter/*`), `xfuel/auto`, typed family names,
+ *   and house-resale familiar names still resolve. `openrouter/*` is never a substitution.
  * @returns {{ ok: true, model: CatalogModel, requested: string } | { ok: false, reason: string, requested: string, hint?: string, available?: string[] }}
  */
 export function resolveCatalogModel(modelId, models, opts = {}) {
   const requested = String(modelId || '').trim() || 'xfuel/auto';
   const modality = opts.modality || null;
+  const strict = opts.strict === true;
   const lower = requested.toLowerCase();
 
-  const tableAlias = matchModelAlias(requested);
+  const tableAlias = strict ? null : matchModelAlias(requested);
   if (
     requested === 'xfuel/auto'
     || lower === 'chit/auto'
@@ -926,19 +991,28 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
   // Bare `qwen` / `qwen3` must not match theta alias=qwen3 before Akash preference.
   let hit = models.find((m) => m.id === requested);
   if (!hit && (lower === 'qwen' || lower === 'qwen3')) {
-    hit = resolveTypedAlias(requested, models);
+    hit = resolveTypedAlias(requested, models, { strict });
   } else if (!hit && !requested.includes('/')) {
     hit = models.find((m) => m.alias === requested && m.hub === 'theta')
       || models.find((m) => m.alias === requested);
   }
   // Bare Akash native id (contains slash) without hub prefix
-  if (!hit && requested.includes('/') && !requested.startsWith('theta/') && !requested.startsWith('akash/') && !requested.startsWith('xfuel/')) {
+  if (
+    !hit
+    && requested.includes('/')
+    && !lower.startsWith('theta/')
+    && !lower.startsWith('akash/')
+    && !lower.startsWith('xfuel/')
+    && !lower.startsWith('openrouter/')
+  ) {
     hit = models.find((m) => m.hub === 'akash' && m.alias === requested)
       || models.find((m) => m.id === `akash/${requested}`);
   }
 
   // Familiar closed-model names → OpenRouter only in house-resale mode.
-  // Flag off returns null even when rows are listed, so aliases stay off OpenRouter.
+  // Flag off returns null even when rows are listed, so gpt-oss aliases stay off OpenRouter.
+  // Strict does not skip this: house resale is its own flag. Exact openrouter/* ids
+  // already matched above and are never treated as substitutions.
   if (!hit) {
     hit = resolveOpenRouterFamiliar(requested, models);
   }
@@ -953,9 +1027,9 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
     }
   }
 
-  // Typed names people send → live rows only.
+  // Typed names people send → live rows only. Strict skips the OpenAI/Anthropic table.
   if (!hit) {
-    hit = resolveTypedAlias(requested, models);
+    hit = resolveTypedAlias(requested, models, { strict });
   }
 
   // Famous vendors we do not list: refuse, never bait-and-switch onto Llama.
@@ -998,6 +1072,10 @@ export function toOpenAIList(models, { modality = null, priceFor = null } = {}) 
     // Canonical name → target catalog id. Patterns live in alias_patterns.
     aliases: { ...ALIAS_DISCOVERY.aliases },
     alias_patterns: ALIAS_DISCOVERY.aliasPatterns.map((p) => ({ ...p })),
+    substitution_policy: {
+      ...SUBSTITUTION_POLICY,
+      disclosure_headers: [...SUBSTITUTION_POLICY.disclosure_headers],
+    },
     data: rows.map((m) => {
       const pricing = typeof priceFor === 'function' ? priceFor(m) : null;
       return {
