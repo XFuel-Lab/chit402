@@ -4,6 +4,7 @@ import { computePaymentCommitment, computeInferenceBinding } from './payment-bin
 import { resolveModelCommitment } from './model-commitment.js';
 import { selectTier } from './tier-policy.js';
 import { OPENROUTER_CALLER_PAID_LABEL } from './openrouter-pricing.js';
+import { formatPlainDecimal } from './openrouter-infer.js';
 import { verifyAttestation, attestationNonce } from './tee-attestation.js';
 import { buildSpotCheckRecord } from './spotcheck.js';
 import { signJws, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk } from './issuer-key.js';
@@ -841,6 +842,133 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     issuance_commitment: view.issuance_commitment ?? view.meta?.issuanceCommitment ?? null,
     dispute_window: view.dispute_window ?? view.meta?.disputeWindow ?? null,
     payload_version: RECEIPT_PAYLOAD_VERSION,
+    ...(openRouterSignedClaim(view) ? { openrouter: openRouterSignedClaim(view) } : {}),
+  };
+}
+
+/** Public payment block for ?format=json. No session secrets. */
+function publicPaymentBlock(payment) {
+  if (!payment || typeof payment !== 'object') return null;
+  return {
+    rail: payment.rail ?? null,
+    ref: payment.ref ?? null,
+    network: payment.network ?? null,
+    gross_amount: payment.gross_amount ?? null,
+    net_amount: payment.net_amount ?? null,
+    fee_amount: payment.fee_amount ?? null,
+    fee_bps: payment.fee_bps ?? null,
+    protocol_fee_bps: payment.protocol_fee_bps ?? null,
+    platform_fee: payment.platform_fee ?? null,
+    platform_fee_bps: payment.platform_fee_bps ?? null,
+    asset: payment.asset ?? null,
+    payee: payment.payee ?? null,
+    explorer_url: payment.explorer_url ?? null,
+    tier2_proof: payment.tier2_proof ?? null,
+    floor_applied: payment.floor_applied ?? null,
+    basis: payment.basis ?? null,
+    collected: payment.collected ?? false,
+    collects_on: payment.collects_on ?? null,
+  };
+}
+
+function publicRouteBlock(route) {
+  if (!route || typeof route !== 'object') return null;
+  return {
+    message_type: route.message_type ?? null,
+    chain_id: route.chain_id ?? null,
+    model: route.model ?? null,
+    ...(route.requested ? {
+      requested: route.requested,
+      requested_model: route.requested_model || route.requested,
+      substituted: route.substituted === true,
+    } : {}),
+    provider: route.provider ?? null,
+    model_commitment: route.model_commitment ?? null,
+    ...(route.resolved ? { resolved: route.resolved } : {}),
+  };
+}
+
+/**
+ * GET /receipt/:id?format=json.
+ * The stored envelope stays slim (payment and route live in the JWS) so HMAC
+ * and ES256 claim checks keep hydrating them. This view copies the public
+ * blocks a paid /v1 response already returns, plus book settlement. Session
+ * possession is not included.
+ */
+export function storedReceiptJson(receipt) {
+  if (!receipt || typeof receipt !== 'object') return receipt;
+  const view = mergeReceiptView(receipt);
+  const payment = publicPaymentBlock(view.payment);
+  const route = publicRouteBlock(view.route);
+  const out = { ...receipt };
+  if (payment) out.payment = payment;
+  if (route) {
+    out.route = {
+      ...route,
+      resolved: route.resolved || route.model || null,
+    };
+  }
+  if (view.caller_binding) out.caller_binding = view.caller_binding;
+  if (view.output?.hash) {
+    out.output = {
+      ...(typeof out.output === 'object' && out.output ? out.output : {}),
+      hash: view.output.hash,
+      kind: out.output?.kind || view.output.kind || 'committed',
+    };
+  }
+  if (view.binding && !out.binding) out.binding = view.binding;
+  if (view.settlement && !out.settlement) out.settlement = view.settlement;
+  if (view.kind && !out.kind) out.kind = view.kind;
+  if (view.action && !out.action) out.action = view.action;
+  if (view.fulfillment && !out.fulfillment) out.fulfillment = view.fulfillment;
+  delete out.session;
+  delete out.agent_pubkey;
+  delete out.session_act;
+  return out;
+}
+
+function openRouterPublicBlock({ task, providerCogs, usage, routeModel, routeProvider }) {
+  const meta = task?.meta?.openrouter && typeof task.meta.openrouter === 'object'
+    ? task.meta.openrouter
+    : null;
+  const generationId = meta?.generation_id || providerCogs?.openrouter_generation?.id || null;
+  const label = providerCogs?.label || meta?.label || null;
+  const provider = routeProvider || providerCogs?.provider || null;
+  const isOpenRouter = provider === 'openrouter'
+    || label === OPENROUTER_CALLER_PAID_LABEL
+    || providerCogs?.paid_by === 'caller-to-openrouter'
+    || !!generationId;
+  if (!isOpenRouter) return null;
+  const reported = providerCogs?.reported_cost_usd ?? null;
+  return {
+    generation_id: generationId || null,
+    served_model: meta?.served_model || routeModel || null,
+    prompt_tokens: usage?.prompt_tokens ?? null,
+    completion_tokens: usage?.completion_tokens ?? null,
+    reported_cost_usd: formatPlainDecimal(reported),
+    label: label || null,
+  };
+}
+
+function openRouterSignedClaim(view) {
+  const cogs = view?.provider_cogs;
+  const block = view?.openrouter;
+  const label = cogs?.label || block?.label || null;
+  const generationId = block?.generation_id || cogs?.openrouter_generation?.id || null;
+  const provider = view?.route?.provider || cogs?.provider || null;
+  const isOpenRouter = provider === 'openrouter'
+    || label === OPENROUTER_CALLER_PAID_LABEL
+    || cogs?.paid_by === 'caller-to-openrouter'
+    || !!generationId;
+  if (!isOpenRouter) return null;
+  const reported = cogs?.reported_cost_usd ?? block?.reported_cost_usd ?? null;
+  return {
+    generation_id: generationId || null,
+    served_model: block?.served_model || view?.route?.model || null,
+    prompt_tokens: view?.usage?.prompt_tokens ?? block?.prompt_tokens ?? null,
+    completion_tokens: view?.usage?.completion_tokens ?? block?.completion_tokens ?? null,
+    reported_cost_usd: formatPlainDecimal(reported),
+    label: label || null,
   };
 }
 
@@ -951,6 +1079,10 @@ function settlementIdentity(claims) {
     claims?.provider_cogs?.actual ?? null,
     claims?.route?.model ?? null,
     claims?.route?.provider ?? null,
+    claims?.openrouter?.generation_id ?? null,
+    claims?.openrouter?.served_model ?? null,
+    claims?.openrouter?.reported_cost_usd ?? null,
+    claims?.openrouter?.label ?? null,
     claims?.output?.hash ?? null,
     claims?.caller_binding?.payer_wallet ?? null,
   ]);
@@ -1232,7 +1364,9 @@ export function providerCogsOf(task) {
     below_low_water: !!c.below_low_water || !!c.belowLowWater,
     ...(c.paid_by ? { paid_by: String(c.paid_by) } : {}),
     ...(c.label ? { label: String(c.label) } : {}),
-    ...(c.reported_cost_usd != null ? { reported_cost_usd: String(c.reported_cost_usd) } : {}),
+    ...(formatPlainDecimal(c.reported_cost_usd) != null
+      ? { reported_cost_usd: formatPlainDecimal(c.reported_cost_usd) }
+      : {}),
     ...(generation ? { openrouter_generation: generation } : {}),
   };
 }
@@ -1244,8 +1378,8 @@ export function providerCogsOf(task) {
 function openRouterGenerationOf(cogs) {
   const gen = cogs?.openrouter_generation || cogs?.openrouterGeneration || null;
   if (!gen || typeof gen !== 'object') return null;
-  const total = gen.total_cost != null ? String(gen.total_cost) : null;
-  const upstream = gen.upstream_inference_cost != null ? String(gen.upstream_inference_cost) : null;
+  const total = formatPlainDecimal(gen.total_cost);
+  const upstream = formatPlainDecimal(gen.upstream_inference_cost);
   if (total == null && upstream == null) return null;
   const callerPaid = gen.label === OPENROUTER_CALLER_PAID_LABEL || gen.paid_by === 'caller-to-openrouter';
   return {
@@ -1540,7 +1674,15 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     return providerCogs?.provider || task.meta?.provider || null;
   })();
 
-  const routeModel = task.result?.model || task.intent?.model || task.intent?.modelId || null;
+  const routeModel = task.meta?.openrouter?.served_model
+    || task.result?.model
+    || task.intent?.model
+    || task.intent?.modelId
+    || null;
+
+  const openrouter = openRouterPublicBlock({
+    task, providerCogs, usage, routeModel, routeProvider,
+  });
 
   // Full draft used for signing — signed fields are stripped from the public JSON envelope.
   const draft = {
@@ -1585,6 +1727,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     },
     provider_cogs: providerCogs,
     usage,
+    openrouter,
     proof: proofScopeOf(task, vi, outcome),
     verified_inference: vi,
     binding: verifyBinding(task),
@@ -1700,6 +1843,26 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   }
   if (draft.provider_cogs) envelope.provider_cogs = draft.provider_cogs;
   if (draft.usage) envelope.usage = draft.usage;
+  if (draft.openrouter) envelope.openrouter = draft.openrouter;
+  // Book settlement is unsigned display. Payment and route stay in the JWS
+  // on this envelope; GET ?format=json copies them via storedReceiptJson.
+  const book = task.meta?.bookView;
+  if (book && typeof book === 'object') {
+    envelope.settlement_status = book.settlement_status || null;
+    envelope.idempotent_replay = book.idempotent_replay === true;
+    envelope.replay_of = book.replay_of || null;
+    if (book.usage_settled && typeof book.usage_settled === 'object') {
+      envelope.usage_settled = {
+        agent_id: book.usage_settled.agent_id ?? null,
+        hub: book.usage_settled.hub ?? null,
+        model: book.usage_settled.model ?? null,
+        amount: book.usage_settled.amount != null ? String(book.usage_settled.amount) : null,
+        settlement_status: book.usage_settled.settlement_status || book.settlement_status || null,
+        idempotent_replay: book.usage_settled.idempotent_replay === true,
+        replay_of: book.usage_settled.replay_of || null,
+      };
+    }
+  }
   if (draft.verified_inference) envelope.verified_inference = draft.verified_inference;
   if (draft.binding) envelope.binding = draft.binding;
   if (draft.privacy) envelope.privacy = draft.privacy;
@@ -2081,7 +2244,10 @@ export function renderReceiptHtml(receipt) {
         ${row('Provider', esc(cogsProvider) || '<span class="muted">—</span>')}
         ${cogs.float_id ? row('Float', esc(cogs.float_id)) : ''}
         ${callerPaidOpenRouter && cogs.reported_cost_usd != null
-          ? row('Reported cost', esc(`$${cogs.reported_cost_usd}`))
+          ? row('Reported cost', esc(`$${formatPlainDecimal(cogs.reported_cost_usd) || cogs.reported_cost_usd}`))
+          : ''}
+        ${receipt.openrouter?.generation_id
+          ? row('Generation', `<code>${esc(receipt.openrouter.generation_id)}</code>`)
           : ''}
         ${cogs.actual != null ? row('Measured cost', usdcCell(cogs.actual)) : ''}
         ${cogs.openrouter_generation?.total_cost != null
