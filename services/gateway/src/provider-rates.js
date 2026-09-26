@@ -38,6 +38,7 @@ export function rateForModel(catalogModel) {
   const cost = catalogModel?.cost;
   if (!cost || typeof cost !== 'object') return null;
   if (catalogModel.hub === 'theta') return thetaRate(cost);
+  if (catalogModel.hub === 'openrouter') return openrouterRate(cost);
 
   const input = numeric(cost.input ?? cost.input_per_token ?? cost.prompt);
   const output = numeric(cost.output ?? cost.output_per_token ?? cost.completion);
@@ -72,6 +73,28 @@ export function rateForModel(catalogModel) {
  * `costOfUsage` has to handle a zero token rate rather than treating it as
  * missing data.
  */
+/**
+ * OpenRouter `pricing` is USD per token as decimal strings: `prompt`,
+ * `completion`, optional `input_cache_read` and `request`.
+ *
+ * A cached-read price of 0 (or a missing field) is "not discounted", not free —
+ * cached tokens bill as fresh so we never under-report COGS.
+ * Reconciled against OpenAI's list price for gpt-4o-mini ($0.15 / $0.60 per 1M),
+ * which is `prompt: "0.00000015"` / `completion: "0.0000006"`.
+ */
+function openrouterRate(cost) {
+  const input = numeric(cost.prompt ?? cost.input);
+  const output = numeric(cost.completion ?? cost.output);
+  if (input === null || output === null) return null;
+  const cached = numeric(cost.input_cache_read ?? cost.cache_read);
+  return {
+    input,
+    output,
+    cachedInput: cached !== null && cached > 0 ? cached : null,
+    perRequest: numeric(cost.request ?? cost.per_request) ?? 0,
+  };
+}
+
 function thetaRate(cost) {
   const CENTS_PER_USD = 100;
   const divisor = numeric(cost.cost_divisor) || 1;
@@ -142,6 +165,7 @@ function findModel(models, modelId) {
   return models.find((m) => m.id === id)
     || models.find((m) => m.alias === id)
     || models.find((m) => m.id === `akash/${id}`)
+    || models.find((m) => m.id === `openrouter/${id}`)
     || null;
 }
 

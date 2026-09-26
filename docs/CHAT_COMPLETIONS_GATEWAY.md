@@ -40,7 +40,7 @@ Those names are on `Access-Control-Expose-Headers`. A non-streaming completion a
 
 The receipt carries `substituted: true` or `false` next to `requested_model`. Signed `route.model` stays the row that served.
 
-To refuse substitution, send `X-Chit-Strict-Model: true` or `"chit_strict_model": true`. An aliased name then returns `400` `model_not_routable` (`No charge was made`, plus the live model list) before verify or settle. Exact catalog ids and `xfuel/auto` still route.
+To refuse substitution, send `X-Chit-Strict-Model: true` or `"chit_strict_model": true`. An aliased name then returns `400` `model_not_routable` (`No charge was made`, plus the live model list) before verify or settle. Exact catalog ids and `xfuel/auto` still route. `openrouter/<vendor>/<model>` is an exact catalog id: it is never reported as substituted, and strict mode still routes it. A named `openrouter/*` call with no caller key is `400` `openrouter_key_required` before verify or settle. Strict mode is checked on that same pre-settle path, including route preflight.
 
 ## Receipts
 

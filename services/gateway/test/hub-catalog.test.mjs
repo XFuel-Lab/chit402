@@ -14,6 +14,7 @@ import {
 beforeEach(() => {
   resetHubCatalogCache();
   process.env.HUB_CATALOG_OFFLINE = 'true';
+  delete process.env.OPENROUTER_API_KEY;
 });
 
 test('classifyThetaService: chat / audio / image', () => {

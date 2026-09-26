@@ -270,3 +270,25 @@ test('strict mode disables the alias table and keeps exact ids', () => {
   assert.equal(typed.ok, true);
   assert.equal(typed.model.id, 'akash/meta-llama/Llama-3.3-70B-Instruct');
 });
+
+test('openrouter catalog ids stay exact under strict and are never substituted', () => {
+  const id = 'openrouter/openai/gpt-4o-mini';
+  const models = [
+    ...LIVE,
+    { id, hub: 'openrouter', alias: 'openai/gpt-4o-mini', modality: 'chat' },
+  ];
+  const resolved = resolveCatalogModel(id, models, { modality: 'chat', strict: true });
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.model.id, id);
+  assert.equal(resolved.model.hub, 'openrouter');
+
+  const same = modelSubstitution(id, id);
+  assert.equal(same.substituted, false);
+  assert.equal(same.requested_model, id);
+  assert.equal(same.served_model, id);
+  // A requested openrouter/* id is exact even if the served string differs.
+  assert.equal(modelSubstitution(id, SMALL).substituted, false);
+  assert.equal(modelSubstitution('OpenRouter/openai/gpt-4o', LARGE).substituted, false);
+  // The familiar name is still a table substitution when it is rewritten.
+  assert.equal(modelSubstitution('gpt-4o-mini', id).substituted, true);
+});
