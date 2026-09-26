@@ -45,7 +45,7 @@ import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
 import { freeTierBucket, checkFreeAllowance, recordFreeSpend, usd as cogsUsd } from './free-tier.js';
-import { recordCollectedSpend, recordSettleBookRow } from './usage-settled.js';
+import { recordCollectedSpend, recordSettleBookRow, markRefundOwed as markUsageRefundOwed } from './usage-settled.js';
 import {
   resolveBookableAgent,
   remainingBlocksDoor,
@@ -405,6 +405,127 @@ async function meterV1Request(req, res, {
     logger.error({ err, reqId: req.id }, 'openai-gateway: x402 metering error');
     return { halted: true, payment: null, meteringError: err };
   }
+}
+
+const EMPTY_OUTPUT_HASH = ethers.keccak256(ethers.toUtf8Bytes(''));
+
+function namedModel(model) {
+  if (model == null) return '';
+  return String(model).trim();
+}
+
+/** Body errors that must surface before model_not_routable. */
+function syntacticRejectBeforeRoute(body) {
+  const tools = body?.tools;
+  return body?.stream === true && Array.isArray(tools) && tools.length > 0;
+}
+
+/**
+ * Resolve a chat model before any x402 verify/settle. Unknown names fail closed.
+ * @returns {Promise<{ ok: true, model: object, requested: string } | { ok: false, requested: string, available: string[], message: string, reason: string }>}
+ */
+async function lookupChatRoute(body = {}) {
+  const { models } = await getHubCatalog();
+  const resolved = resolveCatalogModel(body?.model, models, {
+    modality: 'chat',
+    shape: requestShape(body || {}),
+  });
+  if (!resolved.ok) {
+    const available = Array.isArray(resolved.available) ? resolved.available : [];
+    const requested = resolved.requested || namedModel(body?.model) || 'xfuel/auto';
+    return {
+      ok: false,
+      requested,
+      available,
+      reason: resolved.reason || 'model_not_found',
+      message: resolved.hint
+        || `No provider can serve '${requested}'.`,
+    };
+  }
+  return { ok: true, model: resolved.model, requested: resolved.requested };
+}
+
+function sendModelNotRoutable(res, route) {
+  const available = route.available || [];
+  const listed = available.length ? ` Available models: ${available.join(', ')}.` : '';
+  return res.status(400).json({
+    error: {
+      message: `${route.message} No charge was made.${listed}`,
+      type: 'invalid_request_error',
+      code: route.reason === 'model_retired' ? 'model_retired' : 'model_not_routable',
+      param: 'model',
+    },
+    requested: route.requested || null,
+    available_models: available,
+    charged: false,
+  });
+}
+
+/**
+ * OpenRouter BYOK with no caller key, and house resale off (or no house key).
+ * A familiar name that did not resolve to OpenRouter never reaches this.
+ */
+function openRouterCallerKeyMissing(req, requestedModel, isAuthorised) {
+  const access = openRouterForRequest(req, requestedModel, isAuthorised);
+  if (access.mode === 'byok' && access.apiKey) return false;
+  if (access.mode === 'house' && access.apiKey && openrouterHouseResaleEnabled()) return false;
+  return true;
+}
+
+function sendOpenRouterKeyRequired(res) {
+  return res.status(400).json({
+    error: {
+      message: 'Bring your OpenRouter key on X-OpenRouter-Key (or Authorization on an openrouter/ route). '
+        + 'Chit charges the $0.002 receipt. Inference is paid by you to OpenRouter. No charge was made.',
+      type: 'invalid_request_error',
+      code: 'openrouter_key_required',
+      param: null,
+    },
+    charged: false,
+  });
+}
+
+/**
+ * Named models fail closed before the 402 challenge: unroutable names, and
+ * an OpenRouter row the caller cannot pay for. Returns true when `res` was sent.
+ */
+async function failClosedBeforeChallenge(req, res, isAuthorised) {
+  if (!namedModel(req.body?.model) || syntacticRejectBeforeRoute(req.body)) return false;
+  const namedRoute = await lookupChatRoute(req.body || {});
+  if (!namedRoute.ok) {
+    sendModelNotRoutable(res, namedRoute);
+    return true;
+  }
+  if (
+    namedRoute.model?.hub === 'openrouter'
+    && openRouterCallerKeyMissing(req, namedRoute.requested || req.body.model, isAuthorised)
+  ) {
+    sendOpenRouterKeyRequired(res);
+    return true;
+  }
+  return false;
+}
+
+function sendToolsUnsupported(res, modelId) {
+  return res.status(400).json({
+    error: {
+      message: `${modelId} does not support the tools parameter. `
+        + 'Use xfuel/auto or GET /v1/models to find a model that supports tool calling. No charge was made.',
+      type: 'invalid_request_error',
+      code: 'tools_unsupported_on_hub',
+      param: 'tools',
+    },
+    charged: false,
+  });
+}
+
+/** True when the task has no assistant output to stand behind a collected payment. */
+function servedNothing(task) {
+  if (!task) return true;
+  if (Array.isArray(task.result?.tool_calls) && task.result.tool_calls.length) return false;
+  const hash = task.outputHash || task.result?.outputHash || task.result?.content_hash || null;
+  if (hash && hash !== EMPTY_OUTPUT_HASH) return false;
+  return true;
 }
 
 function calcFee(grossAmount, feeBps = GATEWAY_FEE_BPS) {
@@ -1016,6 +1137,7 @@ function registerTaskAndProve({
       paymentRail: payment ? 'usdc' : 'unmetered',
       paymentRef: payment?.ref || null,
       proveAllowed, // cost gate: false → settle + signed receipt, skip SP1 proof
+      ...(requestedModel ? { requestedModel } : {}),
     },
     meta: {
       chain: 'base',
@@ -1036,6 +1158,7 @@ function registerTaskAndProve({
       privacyMode: privateSpend ? 'vendor_blind' : null,
       privacyProduct: privacyProduct || (privateSpend ? 'private_desk' : null),
       privacyAttest: privacyAttest || null,
+      ...(requestedModel ? { requestedModel } : {}),
       ...(failureReason ? { failureReason } : {}),
     },
     status,
@@ -1209,7 +1332,9 @@ function buildReceipt({
     },
     payment: {
       ...view.payment,
-      note: payment
+      note: task?.meta?.refund?.refund_status === 'owed'
+        ? 'USDC moved, but nothing was served. refund_status is owed — this is not a collected receipt.'
+        : payment
         ? 'Settled over x402 before the request was served.'
         : 'This call was not charged. /v1 is metered only when X402_METER_V1 is on, and '
           + 'the demo key and X402_METER_V1_EXEMPT_KEYS stay exempt. Unpaid calls draw on a '
@@ -1220,7 +1345,7 @@ function buildReceipt({
       ...view.route,
       // What the caller asked for vs what served. Signed model is in issuer_signature.jws.
       requested: requestedModel || 'xfuel/auto',
-      requested_model: requestedModel || view.route?.requested_model || null,
+      requested_model: requestedModel || view.route?.requested_model || 'xfuel/auto',
       resolved: resolvedModel || view.route?.model || null,
       model: resolvedModel || view.route?.model || null,
       provider: provider || view.route?.provider || null,
@@ -1279,7 +1404,10 @@ function setReceiptHeaders(res, receipt) {
   // x402 clients (and Agent402 seller-payability) treat a paid response as
   // unsettled unless it carries the settlement receipt header. Both names:
   // v2 PAYMENT-RESPONSE, v1 X-PAYMENT-RESPONSE.
-  if (view.payment?.ref && view.payment.collected !== false) {
+  const refundOwed = receipt.refund?.refund_status === 'owed';
+  // A refund-owed receipt is not collected spend, but the client must still see
+  // the settlement header or it will retry and charge the payer again.
+  if (view.payment?.ref && (view.payment.collected !== false || refundOwed)) {
     setX402PaymentResponseHeaders(res, {
       ref: view.payment.ref,
       network: view.payment.network,
@@ -1400,11 +1528,12 @@ function writeSettleBookRow({
  */
 function registerPaidV1Shell({
   taskId, payment, model, messages, apiKeyHash, privateSpend, privacyProduct = null,
-  privacyAttest = null, session = null,
+  privacyAttest = null, session = null, requestedModel = null,
 }) {
   return registerTaskAndProve({
     taskId,
     model: model || 'xfuel/auto',
+    requestedModel,
     messages,
     content: '',
     provider: null,
@@ -1469,6 +1598,15 @@ function respondPaidV1Failure(res, {
   if (task) {
     task.status = 'failed';
     task.updatedAt = Date.now();
+    if (resolvedModel) {
+      task.intent = task.intent || {};
+      task.intent.modelId = resolvedModel;
+    }
+    if (requestedModel) {
+      task.meta = { ...(task.meta || {}), requestedModel: task.meta?.requestedModel || requestedModel };
+      task.intent = task.intent || {};
+      task.intent.requestedModel = task.intent.requestedModel || requestedModel;
+    }
     if (message) task.meta = { ...(task.meta || {}), failureReason: message };
     if (requestedModel) task.meta = { ...(task.meta || {}), requestedModel };
     if (resolvedModel || provider) {
@@ -1480,6 +1618,25 @@ function respondPaidV1Failure(res, {
       if (provider) task.meta.provider = provider;
     }
     if (refundOwed) markRefundOwed(task, { reason: code, provider });
+  }
+  let refund = null;
+  if (payment?.ref && servedNothing(task)) {
+    refund = {
+      refund_status: 'owed',
+      amount: String(payment.amount || task?.intent?.amount || '0'),
+      payer: payment.payer || task?.meta?.payerWallet || null,
+      payment_ref: payment.ref,
+    };
+    if (task) {
+      const prev = task.meta?.refund && typeof task.meta.refund === 'object' ? task.meta.refund : {};
+      task.meta = { ...(task.meta || {}), refund: { ...prev, ...refund } };
+    }
+    markUsageRefundOwed(ledger, {
+      taskId,
+      amount: refund.amount,
+      payer: refund.payer,
+      paymentRef: refund.payment_ref,
+    });
   }
   const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
   let receipt = buildReceipt({
@@ -1753,6 +1910,10 @@ export function registerOpenAIRoutes(app, {
     // can list this route. A payment header still waits until after validation
     // so we never settle then 400 (Bankr 2026-08-21). GET uses the same helper
     // so probes match POST {}.
+    // A named model with no route, and an OpenRouter row with no key while
+    // house resale is off, fails closed before that 402. Syntactic rejects
+    // (streaming tools) still win so the caller sees that error first.
+    if (await failClosedBeforeChallenge(req, res, isAuthorised)) return undefined;
     let { halted, taskId, metering, paymentHeader } = await maybeMeterUnauthChat(req, res, resourcePath);
     if (halted) return undefined;
 
@@ -1851,6 +2012,20 @@ export function registerOpenAIRoutes(app, {
     let preflightModel = null;
     const orAccess = openRouterForRequest(req, model || 'xfuel/auto', isAuthorised);
 
+    // Resolve the route before verify/settle. An unroutable model — including
+    // the xfuel/auto default when the catalog has no chat row — must not collect.
+    const chatRoute = await lookupChatRoute({
+      ...(req.body || {}),
+      model: model || 'xfuel/auto',
+      messages,
+    });
+    if (!chatRoute.ok) return sendModelNotRoutable(res, chatRoute);
+    if (wantsTools && chatRoute.model.hub === 'theta') {
+      return sendToolsUnsupported(res, chatRoute.model.id);
+    }
+    const servedModel = chatRoute.model.id;
+    const requestedModel = namedModel(model) || 'xfuel/auto';
+
     // Payment present: settle only after the body is valid (Bankr: don't settle then 400).
     // Unknown models and an OpenRouter preflight error stop here, before settle.
     if (paymentHeader) {
@@ -1886,7 +2061,8 @@ export function registerOpenAIRoutes(app, {
         ({ task: paidTask } = registerPaidV1Shell({
           taskId,
           payment: metering.payment,
-          model: model || 'xfuel/auto',
+          model: servedModel,
+          requestedModel,
           messages,
           apiKeyHash,
           privateSpend,
@@ -1898,7 +2074,7 @@ export function registerOpenAIRoutes(app, {
         settleRecord = writeSettleBookRow({
           taskId,
           payment: metering.payment,
-          model: model || 'xfuel/auto',
+          model: servedModel,
           req,
           ledger,
           registry,
@@ -2068,7 +2244,7 @@ export function registerOpenAIRoutes(app, {
       ({ proverConfigured, task } = registerTaskAndProve({
         taskId,
         model: echoModel,
-        requestedModel: model || 'xfuel/auto',
+        requestedModel,
         messages,
         content,
         toolCalls,
@@ -2260,6 +2436,8 @@ export function registerOpenAIRoutes(app, {
 
   // POST /v1/responses — Responses API drop-in with x402 + signed receipt
   app.post('/v1/responses', async (req, res) => {
+    // Named unroutable models, and OpenRouter without a key, fail closed before the 402.
+    if (await failClosedBeforeChallenge(req, res, isAuthorised)) return undefined;
     // Unauth probes (no payment) must 402 before body validation
     let { halted, taskId, metering, paymentHeader } = await maybeMeterUnauthChat(req, res, '/v1/responses');
     if (halted) return undefined;
@@ -2333,6 +2511,18 @@ export function registerOpenAIRoutes(app, {
     let preflightModel = null;
     const orAccess = openRouterForRequest(req, model || 'xfuel/auto', isAuthorised);
 
+    const chatRoute = await lookupChatRoute({
+      ...(req.body || {}),
+      model: model || 'xfuel/auto',
+      messages,
+    });
+    if (!chatRoute.ok) return sendModelNotRoutable(res, chatRoute);
+    if (wantsTools && chatRoute.model.hub === 'theta') {
+      return sendToolsUnsupported(res, chatRoute.model.id);
+    }
+    const servedModel = chatRoute.model.id;
+    const requestedModel = namedModel(model) || 'xfuel/auto';
+
     // Payment present: settle only after the body is valid.
     // Unknown models and an OpenRouter preflight error stop here, before settle.
     if (paymentHeader) {
@@ -2373,7 +2563,8 @@ export function registerOpenAIRoutes(app, {
         ({ task: paidTask } = registerPaidV1Shell({
           taskId,
           payment: metering.payment,
-          model: model || 'xfuel/auto',
+          model: servedModel,
+          requestedModel,
           messages,
           apiKeyHash,
           privateSpend,
@@ -2384,7 +2575,7 @@ export function registerOpenAIRoutes(app, {
         settleRecord = writeSettleBookRow({
           taskId,
           payment: metering.payment,
-          model: model || 'xfuel/auto',
+          model: servedModel,
           req,
           ledger,
           registry,
@@ -2535,7 +2726,7 @@ export function registerOpenAIRoutes(app, {
       ({ proverConfigured, task } = registerTaskAndProve({
         taskId,
         model: echoModel,
-        requestedModel: model || 'xfuel/auto',
+        requestedModel,
         messages,
         content,
         toolCalls,

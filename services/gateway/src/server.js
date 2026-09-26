@@ -2313,6 +2313,7 @@ export function createApp() {
           fee_bps:        task.feeBps || AI_TASK_FEE_BPS,
           payment_rail:   task.intent?.paymentRail || 'usdc',
           payment_ref:    task.intent?.paymentRef || null,
+          refund:          task.meta?.refund || null,
           // Phase 2 (flag-gated): x402 payment commitment bound into the proof.
           payment_binding: task.sp1Proof?.paymentBinding || null,
           result:         task.result || null,

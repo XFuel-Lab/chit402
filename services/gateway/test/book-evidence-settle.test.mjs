@@ -14,6 +14,8 @@ import {
   SETTLEMENT_STATUS,
   entryQualifiesForTotals,
   markArrivalUnverified,
+  markRefundOwed,
+  entryQualifiesForCap,
 } from '../src/usage-settled.js';
 import {
   readAgentBook,
@@ -478,5 +480,56 @@ describe('unaffiliated inflow (hemei)', () => {
 
     const csv = buildBookExportCsv(ledger.listByAgent(collected.agent_id), collected.agent_id, 'https://api.chit402.com');
     assert.match(csv, /inflow-correct-1,inflow_claimed/);
+  });
+});
+
+describe('refund owed after a settle that served nothing', () => {
+  test('book lists the row and excludes it from spend totals', () => {
+    const ledger = new UsageSettledLedger();
+    const registry = new AgentRegistry();
+    const recorded = recordSettleBookRow({
+      taskId: 'chit-unserved',
+      paymentRef: 'base:0x91561d887821d7584247cd4d1273424c797e7ccaa24a3373cb7c6456eb061059',
+      amount: '2000',
+      payer: '0xpayer',
+      model: 'akash/openai/gpt-oss-120b',
+      hub: 'akash',
+      ledger,
+      registry,
+    });
+    assert.equal(recorded.ok, true);
+    assert.equal(entryQualifiesForCap(recorded.entry), true);
+
+    const marked = markRefundOwed(ledger, {
+      taskId: 'chit-unserved',
+      amount: '2000',
+      payer: '0xpayer',
+      paymentRef: 'base:0x91561d887821d7584247cd4d1273424c797e7ccaa24a3373cb7c6456eb061059',
+    });
+    assert.equal(marked.ok, true);
+    assert.equal(deriveEvidence(marked.entry), BOOK_EVIDENCE.REFUND_OWED);
+    assert.equal(marked.entry.collected, false);
+    assert.equal(marked.entry.refund.refund_status, 'owed');
+    assert.equal(marked.entry.refund.amount, '2000');
+    assert.equal(marked.entry.refund.payer, '0xpayer');
+    assert.equal(entryQualifiesForTotals(marked.entry), false);
+    assert.equal(entryQualifiesForCap(marked.entry), false);
+
+    const listed = ledger.listByAgent(recorded.agent_id);
+    const row = listed.find((e) => e.task_id === 'chit-unserved');
+    assert.ok(row, 'refund-owed settle stays on the book');
+
+    const book = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+      ledger,
+      registry,
+      verify: bindBookVerifier(registry),
+    });
+    assert.equal(book.status, 200);
+    const view = book.body.entries.find((r) => r.task_id === 'chit-unserved');
+    assert.equal(view.evidence, 'refund_owed');
+    assert.equal(view.refund_status, 'owed');
+    assert.equal(view.refund.amount, '2000');
+    assert.equal(view.refund.payment_ref, marked.entry.payment_ref);
+    assert.equal(view.collected, false);
   });
 });

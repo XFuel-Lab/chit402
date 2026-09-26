@@ -158,6 +158,25 @@ test('GET /v1/models lists live hub catalog in OpenAI shape', async () => {
   assert.equal(typeof first.hub, 'string');
   assert.ok(first.availability && typeof first.availability.status === 'string');
   assert.ok(first.modality);
+  assert.equal(body.aliases['gpt-4o'], 'akash/openai/gpt-oss-120b');
+  assert.equal(body.aliases['gpt-4o-mini'], 'akash/openai/gpt-oss-20b');
+  assert.equal(body.aliases.gpt, 'xfuel/auto');
+  assert.equal(body.aliases.openai, 'xfuel/auto');
+  assert.ok(Array.isArray(body.alias_patterns));
+  assert.ok(body.alias_patterns.some((p) => p.pattern === 'claude-haiku-*' && p.target === 'akash/openai/gpt-oss-20b'));
+  assert.ok(body.alias_patterns.some((p) => p.pattern === 'claude-sonnet-*' && p.target === 'akash/openai/gpt-oss-120b'));
+  assert.ok(body.data.every((m) => Array.isArray(m.aliases)));
+  const oss = body.data.find((m) => m.id === 'akash/openai/gpt-oss-120b');
+  assert.ok(oss.aliases.includes('gpt-4o'));
+  assert.ok(oss.aliases.includes('claude-sonnet-*'));
+  const auto = body.data.find((m) => m.id === 'xfuel/auto');
+  assert.deepEqual(auto.aliases, ['gpt', 'openai']);
+  const targets = [
+    ...Object.values(body.aliases),
+    ...body.alias_patterns.map((p) => p.target),
+    ...body.data.flatMap((m) => m.aliases),
+  ];
+  assert.ok(targets.every((t) => !/openrouter/i.test(String(t))));
 });
 
 test('GET /v1/models/:id → 200 known, 400 unknown / retired (with live ids)', async () => {

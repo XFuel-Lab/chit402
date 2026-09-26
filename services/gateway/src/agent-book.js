@@ -117,6 +117,16 @@ function rowOf(entry) {
   if (entry.payer) {
     row.payer_wallet = entry.payer;
   }
+  if (evidence === BOOK_EVIDENCE.REFUND_OWED || entry.refund_status === 'owed') {
+    row.refund_status = 'owed';
+    row.collected = false;
+    row.refund = entry.refund || {
+      refund_status: 'owed',
+      amount: entry.amount != null ? String(entry.amount) : null,
+      payer: entry.payer || null,
+      payment_ref: entry.payment_ref || null,
+    };
+  }
   if (entry.replay_events?.length) {
     row.replay_events = entry.replay_events;
     row.replay_count = entry.replay_events.length;
@@ -154,6 +164,8 @@ function rowOf(entry) {
   } else if (hideAmount) {
     row.collected = false;
   } else if (isRecordedBySettle) {
+    row.collected = false;
+  } else if (evidence === BOOK_EVIDENCE.REFUND_OWED || entry.refund_status === 'owed') {
     row.collected = false;
   } else {
     row.collected = true;

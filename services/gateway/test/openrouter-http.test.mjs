@@ -235,7 +235,8 @@ test('gateway quotes, fails closed before settle, and receipts a mocked OpenRout
   });
   assert.equal(unknown.status, 400);
   const unknownBody = await unknown.json();
-  assert.equal(unknownBody.error.code, 'model_not_found');
+  assert.equal(unknownBody.error.code, 'model_not_routable');
+  assert.equal(unknownBody.charged, false);
   assert.equal(settles, 0);
 
   keyStatus = 500;
@@ -376,7 +377,9 @@ test('BYOK forwards the caller key, charges only the receipt, and redacts the ke
     }),
   });
   assert.equal(alias.status, 400);
-  assert.equal((await alias.json()).error.code, 'model_not_found');
+  const aliasBody = await alias.json();
+  assert.equal(aliasBody.error.code, 'model_not_routable');
+  assert.equal(aliasBody.charged, false);
   assert.equal(settles, settlesBefore);
   assert.equal(
     upstreamHits.some((h) => h.url.endsWith('/chat/completions') && h.authorization === 'Bearer test-or-key'),
@@ -388,6 +391,17 @@ test('BYOK forwards the caller key, charges only the receipt, and redacts the ke
     messages: [{ role: 'user', content: 'hi' }],
     max_tokens: 32,
   };
+  const unpaidMissing = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(chatBody),
+  });
+  assert.equal(unpaidMissing.status, 400);
+  const unpaidMissingBody = await unpaidMissing.json();
+  assert.equal(unpaidMissingBody.error.code, 'openrouter_key_required');
+  assert.equal(unpaidMissingBody.charged, false);
+  assert.equal(settles, settlesBefore);
+
   const missing = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
     headers: pay('missing-key-nonce'),
@@ -396,6 +410,7 @@ test('BYOK forwards the caller key, charges only the receipt, and redacts the ke
   assert.equal(missing.status, 400);
   const missingBody = await missing.json();
   assert.equal(missingBody.error.code, 'openrouter_key_required');
+  assert.equal(missingBody.charged, false);
   assert.equal(JSON.stringify(missingBody).includes('test-or-key'), false);
   assert.equal(settles, settlesBefore);
 

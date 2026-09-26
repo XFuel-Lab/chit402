@@ -1,7 +1,8 @@
 /**
  * Post-settle /v1 failures must never return a bare HTTP 500 without a receipt.
- * USDC that moved must yield xfuel.receipt.v4 with payment.collected true and a
- * public GET /receipt/:taskId — even when inference or hub routing fails.
+ * When USDC moved and nothing was served, the receipt is failed with
+ * refund_status owed — not a normal collected receipt — and GET /receipt/:taskId
+ * still resolves.
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -81,7 +82,12 @@ test('settle then hub failure returns receipt, not 500', async () => {
   const body = await res.json();
   assert.ok(body.xfuel, 'response must include xfuel receipt block');
   assert.equal(body.xfuel.schema, 'xfuel.receipt.v4');
-  assert.equal(body.xfuel.payment.collected, true);
+  assert.equal(body.xfuel.status, 'failed');
+  assert.equal(body.xfuel.proof_outcome, 'invalid');
+  assert.equal(body.xfuel.payment.collected, false);
+  assert.equal(body.xfuel.refund.refund_status, 'owed');
+  assert.equal(body.xfuel.refund.payment_ref, body.xfuel.payment.ref);
+  assert.ok(body.xfuel.refund.amount, 'refund records the settled amount');
   assert.ok(body.xfuel.payment.ref, 'receipt must name payment ref');
   assert.ok(body.task_id || body.xfuel.task_id, 'response must name task_id');
   const taskId = body.task_id || body.xfuel.task_id;
@@ -91,8 +97,11 @@ test('settle then hub failure returns receipt, not 500', async () => {
   const publicReceipt = await receiptRes.json();
   const publicView = mergeReceiptView(publicReceipt);
   assert.equal(publicReceipt.schema, 'xfuel.receipt.v4');
-  assert.equal(publicView.payment.collected, true);
+  assert.equal(publicReceipt.status, 'failed');
+  assert.equal(publicView.payment.collected, false);
+  assert.equal(publicReceipt.refund.refund_status, 'owed');
   assert.equal(publicView.payment.ref, body.xfuel.payment.ref);
+  assert.equal(publicReceipt.refund.payment_ref, body.xfuel.payment.ref);
 });
 
 test('settle then hub failure does not use payment processing failed', async () => {
