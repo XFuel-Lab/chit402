@@ -199,7 +199,7 @@ export function mergeReceiptView(receipt) {
         message_type: routeMeta.message_type ?? null,
         chain_id: routeMeta.chain_id ?? null,
         model: null,
-        ...routeRequestedFields(routeMeta.requested_model),
+        ...routeRequestedFields(routeMeta.requested_model, routeMeta.substituted),
         provider: null,
         model_commitment: routeMeta.model_commitment ?? null,
       },
@@ -248,7 +248,7 @@ export function mergeReceiptView(receipt) {
       message_type: routeMeta.message_type ?? null,
       chain_id: routeMeta.chain_id ?? null,
       model: claims.route?.model ?? null,
-      ...routeRequestedFields(routeMeta.requested_model),
+      ...routeRequestedFields(routeMeta.requested_model, routeMeta.substituted),
       provider: claims.route?.provider ?? null,
       model_commitment: routeMeta.model_commitment ?? (
         claims.route?.model_commitment
@@ -282,10 +282,17 @@ export function mergeReceiptView(receipt) {
   };
 }
 
-/** Unsigned "what the caller asked for" fields. Signed route.model stays the row that served. */
-function routeRequestedFields(requestedModel) {
+/**
+ * Unsigned "what the caller asked for" fields. Signed route.model stays the row that served.
+ * `substituted` is true when a MODEL_ALIAS_TABLE name was served as a different id.
+ */
+function routeRequestedFields(requestedModel, substituted) {
   if (!requestedModel) return {};
-  return { requested: requestedModel, requested_model: requestedModel };
+  return {
+    requested: requestedModel,
+    requested_model: requestedModel,
+    substituted: substituted === true,
+  };
 }
 
 /** Machine-readable proof scope flags (JSON). Prose lives on HTML only. */
@@ -1465,6 +1472,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       }
     : null;
   const requestedModel = task?.meta?.requestedModel || task?.intent?.requestedModel || null;
+  const modelSubstituted = task?.meta?.modelSubstituted === true
+    || task?.intent?.modelSubstituted === true;
 
   const routeProvider = (() => {
     const fromResult = task.result?.provider || task.result?.routedTo || task.routedTo || null;
@@ -1488,7 +1497,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     route: {
       message_type: task.intent?.type || null,
       model: routeModel,
-      ...routeRequestedFields(requestedModel),
+      ...routeRequestedFields(requestedModel, modelSubstituted),
       model_commitment: modelCommitment,
       provider: routeProvider,
       // Unsigned presentation field. A collected payment reports the settlement
@@ -1607,7 +1616,10 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       message_type: draft.route.message_type,
       chain_id: draft.route.chain_id,
       model_commitment: draft.route.model_commitment,
-      ...(draft.route.requested ? { requested_model: draft.route.requested } : {}),
+      ...(draft.route.requested ? {
+        requested_model: draft.route.requested,
+        substituted: draft.route.substituted === true,
+      } : {}),
     },
     payment_meta: {
       network: draft.payment.network,

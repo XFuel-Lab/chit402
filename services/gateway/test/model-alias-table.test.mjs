@@ -8,7 +8,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MODEL_ALIAS_TABLE,
+  SUBSTITUTION_POLICY,
   matchModelAlias,
+  modelSubstitution,
   resolveCatalogModel,
   toOpenAIList,
 } from '../src/hub-catalog.js';
@@ -205,4 +207,66 @@ test('GET /v1/models shape exposes aliases, patterns, and per-model arrays', () 
     ...list.alias_patterns.map((p) => p.target),
   ];
   assert.ok(targets.every((t) => !/openrouter/i.test(t)));
+
+  assert.equal(list.substitution_policy.default, 'alias');
+  assert.equal(list.substitution_policy.strict_header, 'X-Chit-Strict-Model');
+  assert.equal(list.substitution_policy.strict_body, 'chit_strict_model');
+  assert.equal(list.substitution_policy.body_field, 'chit');
+  assert.deepEqual(
+    list.substitution_policy.disclosure_headers,
+    [...SUBSTITUTION_POLICY.disclosure_headers],
+  );
+  assert.match(list.substitution_policy.note, /model_not_routable/);
+  assert.match(list.substitution_policy.note, /No charge is made|no charge is made/);
+});
+
+test('modelSubstitution is true only when a table hit serves a different id', () => {
+  const hit = modelSubstitution('gpt-4o-mini', SMALL);
+  assert.equal(hit.substituted, true);
+  assert.equal(hit.requested_model, 'gpt-4o-mini');
+  assert.equal(hit.served_model, SMALL);
+
+  assert.equal(modelSubstitution('openai/gpt-4o', LARGE).substituted, true);
+  assert.equal(modelSubstitution('gpt', LARGE).substituted, true);
+  assert.equal(modelSubstitution('GPT-4o', LARGE).substituted, true);
+
+  assert.equal(modelSubstitution(LARGE, LARGE).substituted, false);
+  assert.equal(modelSubstitution('xfuel/auto', LARGE).substituted, false);
+  assert.equal(modelSubstitution('deepseek', 'akash/deepseek-ai/DeepSeek-V4-Flash').substituted, false);
+  assert.equal(modelSubstitution('gpt-5', LARGE).substituted, false);
+});
+
+test('strict mode disables the alias table and keeps exact ids', () => {
+  const refused = [
+    'gpt-4o-mini',
+    'gpt-4o',
+    'gpt-4o-2024-08-06',
+    'claude-sonnet-4',
+    'claude-3-5-haiku',
+    'openai/gpt-4o-mini',
+    'anthropic/claude-3-5-sonnet',
+    'gpt',
+    'openai',
+    'chatgpt-4o-latest',
+  ];
+  for (const name of refused) {
+    const r = resolveCatalogModel(name, LIVE, { modality: 'chat', strict: true });
+    assert.equal(r.ok, false, name);
+    assert.equal(r.reason, 'model_not_found', name);
+    assert.ok(r.available.includes(LARGE), name);
+    assert.ok(r.available.includes(SMALL), name);
+  }
+
+  assert.equal(resolvedId(LARGE, LIVE), LARGE);
+  const strictExact = resolveCatalogModel(LARGE, LIVE, { modality: 'chat', strict: true });
+  assert.equal(strictExact.ok, true);
+  assert.equal(strictExact.model.id, LARGE);
+
+  const strictAuto = resolveCatalogModel('xfuel/auto', LIVE, { modality: 'chat', strict: true });
+  assert.equal(strictAuto.ok, true);
+  assert.notEqual(strictAuto.model.id, 'xfuel/auto');
+
+  const typed = resolveCatalogModel('llama-3.3', LIVE, { modality: 'chat', strict: true });
+  assert.equal(typed.ok, true);
+  assert.equal(typed.model.id, 'akash/meta-llama/Llama-3.3-70B-Instruct');
 });

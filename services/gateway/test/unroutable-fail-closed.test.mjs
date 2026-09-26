@@ -151,6 +151,9 @@ test('gpt-4o-mini aliases to gpt-oss; a post-settle miss is refund owed', async 
     max_tokens: 16,
   });
   assert.equal(probe.status, 402, 'a routable alias still challenges when unpaid');
+  assert.equal(probe.headers.get('x-chit-requested-model'), 'gpt-4o-mini');
+  assert.equal(probe.headers.get('x-chit-served-model'), 'akash/openai/gpt-oss-120b');
+  assert.equal(probe.headers.get('x-chit-model-substituted'), 'true');
   const challenge = await probe.json();
   const nonce = challenge.accepts[0].extra.nonce;
 
@@ -176,7 +179,11 @@ test('gpt-4o-mini aliases to gpt-oss; a post-settle miss is refund owed', async 
   assert.equal(view.route.model, 'akash/openai/gpt-oss-120b');
   assert.equal(view.route.requested, 'gpt-4o-mini');
   assert.equal(view.route.requested_model, 'gpt-4o-mini');
+  assert.equal(view.route.substituted, true);
   assert.notEqual(view.route.model, 'gpt-4o-mini');
+  assert.equal(res.headers.get('x-chit-requested-model'), 'gpt-4o-mini');
+  assert.equal(res.headers.get('x-chit-served-model'), 'akash/openai/gpt-oss-120b');
+  assert.equal(res.headers.get('x-chit-model-substituted'), 'true');
 
   const taskId = body.task_id || body.xfuel.task_id;
   const receiptRes = await fetch(`${base}/receipt/${taskId}?format=json`);
@@ -189,6 +196,8 @@ test('gpt-4o-mini aliases to gpt-oss; a post-settle miss is refund owed', async 
   assert.equal(publicView.route.requested, 'gpt-4o-mini');
   assert.equal(publicView.route.requested_model, 'gpt-4o-mini');
   assert.equal(publicReceipt.route_meta.requested_model, 'gpt-4o-mini');
+  assert.equal(publicReceipt.route_meta.substituted, true);
+  assert.equal(publicView.route.substituted, true);
   assert.equal(publicReceipt.refund.refund_status, 'owed');
   assert.equal(publicView.payment.collected, false);
   assert.equal(publicReceipt.refund.payer, body.xfuel.refund.payer);
@@ -208,4 +217,80 @@ test('gpt-4o-mini aliases to gpt-oss; a post-settle miss is refund owed', async 
   assert.equal(doorRes.status, 200);
   const door = await doorRes.json();
   assert.ok(door.windows['24h'].refunds_owed >= 1);
+});
+
+test('alias 402 exposes substitution headers for a browser origin', async () => {
+  const res = await postChat(
+    {
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'show the swap' }],
+    },
+    { origin: 'https://www.chit402.com' },
+  );
+  assert.equal(res.status, 402);
+  assert.equal(res.headers.get('x-chit-requested-model'), 'gpt-4o');
+  assert.equal(res.headers.get('x-chit-served-model'), 'akash/openai/gpt-oss-120b');
+  assert.equal(res.headers.get('x-chit-model-substituted'), 'true');
+  const expose = res.headers.get('access-control-expose-headers') || '';
+  assert.match(expose, /X-Chit-Requested-Model/);
+  assert.match(expose, /X-Chit-Served-Model/);
+  assert.match(expose, /X-Chit-Model-Substituted/);
+});
+
+test('strict mode refuses an alias before verify/settle', async () => {
+  const cases = [
+    {
+      headers: {
+        'x-chit-strict-model': 'True',
+        'x-payment': 'PAYMENT-BLOB',
+        'x-payment-nonce': `0x${'11'.repeat(32)}`,
+      },
+      body: { model: 'gpt-4o-mini' },
+    },
+    {
+      headers: {
+        'x-payment': 'PAYMENT-BLOB',
+        'x-payment-nonce': `0x${'22'.repeat(32)}`,
+      },
+      body: { model: 'claude-sonnet-4', chit_strict_model: true },
+    },
+  ];
+  for (const c of cases) {
+    const settlesBefore = facServer.settleCount;
+    const verifiesBefore = facServer.verifyCount;
+    const res = await postChat(
+      {
+        ...c.body,
+        messages: [{ role: 'user', content: 'do not substitute' }],
+        max_tokens: 8,
+      },
+      c.headers,
+    );
+    assert.equal(res.status, 400, c.body.model);
+    const body = await res.json();
+    assert.equal(body.error.code, 'model_not_routable', c.body.model);
+    assert.equal(body.charged, false, c.body.model);
+    assert.match(body.error.message, /No charge was made/, c.body.model);
+    assert.ok(body.available_models.includes('akash/openai/gpt-oss-120b'), c.body.model);
+    assert.equal(res.headers.get('x-chit-model-substituted'), null, c.body.model);
+    assert.equal(facServer.settleCount, settlesBefore, c.body.model);
+    assert.equal(facServer.verifyCount, verifiesBefore, c.body.model);
+  }
+});
+
+test('strict mode still challenges an exact catalog id', async () => {
+  const settlesBefore = facServer.settleCount;
+  const verifiesBefore = facServer.verifyCount;
+  const res = await postChat(
+    {
+      model: 'akash/openai/gpt-oss-120b',
+      messages: [{ role: 'user', content: 'exact id' }],
+      chit_strict_model: true,
+    },
+    { 'x-chit-strict-model': 'true' },
+  );
+  assert.equal(res.status, 402);
+  assert.equal(res.headers.get('x-chit-model-substituted'), null);
+  assert.equal(facServer.settleCount, settlesBefore);
+  assert.equal(facServer.verifyCount, verifiesBefore);
 });

@@ -1142,7 +1142,7 @@ export function createApp() {
     'https://chit402.com',
     'http://localhost:5173',
   ]);
-  const CORS_ALLOW_HEADERS = 'Content-Type, Authorization, X-API-Key, X-PAYMENT, X-PAYMENT-NONCE, PAYMENT-SIGNATURE, PAYMENT-NONCE, X-XFuel-Session, x-xfuel-session';
+  const CORS_ALLOW_HEADERS = 'Content-Type, Authorization, X-API-Key, X-PAYMENT, X-PAYMENT-NONCE, PAYMENT-SIGNATURE, PAYMENT-NONCE, X-XFuel-Session, x-xfuel-session, X-Chit-Strict-Model';
 
   function resolveCorsAllowOrigin(req) {
     const origin = req.headers.origin;
@@ -1160,7 +1160,7 @@ export function createApp() {
     // v1 x402: X-PAYMENT, X-PAYMENT-NONCE; v2 x402: PAYMENT-SIGNATURE, PAYMENT-NONCE
     res.header('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, x-xfuel-verify-url, PAYMENT-RESPONSE, X-PAYMENT-RESPONSE, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset');
+    res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, x-xfuel-verify-url, PAYMENT-RESPONSE, X-PAYMENT-RESPONSE, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-Chit-Requested-Model, X-Chit-Served-Model, X-Chit-Model-Substituted');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
   });

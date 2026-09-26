@@ -17,7 +17,7 @@ import {
 } from './private-desk-attest.js';
 import { bindSessionFromRequest, sessionMatchesSettledPayer } from './session-delegation.js';
 import { apiKeyHashFromReq, cacheNamespace } from './buyer-attr.js';
-import { getHubCatalog, resolveCatalogModel, requestShape, toOpenAIList } from './hub-catalog.js';
+import { getHubCatalog, resolveCatalogModel, requestShape, toOpenAIList, modelSubstitution } from './hub-catalog.js';
 import { recordSuccess, recordFailure } from './provider-health.js';
 import {
   inferEdgeCloud,
@@ -374,6 +374,38 @@ function namedModel(model) {
   return String(model).trim();
 }
 
+/** Header `X-Chit-Strict-Model: true` or body `chit_strict_model: true`. */
+function strictModelRequested(req) {
+  const header = req?.headers?.['x-chit-strict-model'];
+  if (header != null && String(header).trim().toLowerCase() === 'true') return true;
+  const flag = req?.body?.chit_strict_model;
+  if (flag === true) return true;
+  if (typeof flag === 'string' && flag.trim().toLowerCase() === 'true') return true;
+  return false;
+}
+
+function headerSafe(value) {
+  return String(value ?? '').replace(/[\r\n]/g, '').slice(0, 512);
+}
+
+/** Set disclosure headers only when an alias table hit served a different id. */
+function applySubstitutionHeaders(res, sub) {
+  if (!sub?.substituted) return;
+  res.set('X-Chit-Requested-Model', headerSafe(sub.requested_model));
+  res.set('X-Chit-Served-Model', headerSafe(sub.served_model));
+  res.set('X-Chit-Model-Substituted', 'true');
+}
+
+function chitDisclosure(requested, served) {
+  const requestedName = namedModel(requested) || 'xfuel/auto';
+  const sub = modelSubstitution(requestedName, served);
+  return {
+    requested_model: sub.requested_model,
+    served_model: sub.served_model,
+    substituted: sub.substituted,
+  };
+}
+
 /** Body errors that must surface before model_not_routable. */
 function syntacticRejectBeforeRoute(body) {
   const tools = body?.tools;
@@ -384,11 +416,12 @@ function syntacticRejectBeforeRoute(body) {
  * Resolve a chat model before any x402 verify/settle. Unknown names fail closed.
  * @returns {Promise<{ ok: true, model: object, requested: string } | { ok: false, requested: string, available: string[], message: string, reason: string }>}
  */
-async function lookupChatRoute(body = {}) {
+async function lookupChatRoute(body = {}, { strict = false } = {}) {
   const { models } = await getHubCatalog();
   const resolved = resolveCatalogModel(body?.model, models, {
     modality: 'chat',
     shape: requestShape(body || {}),
+    strict,
   });
   if (!resolved.ok) {
     const available = Array.isArray(resolved.available) ? resolved.available : [];
@@ -419,6 +452,34 @@ function sendModelNotRoutable(res, route) {
     available_models: available,
     charged: false,
   });
+}
+
+/**
+ * Named models are resolved before any 402 or settle.
+ * Strict mode turns an alias-table name into the existing unroutable 400.
+ * A successful alias hit stamps disclosure headers so the challenge shows
+ * what would be served.
+ * @returns {Promise<{ strict: boolean, halted: boolean }>}
+ */
+async function gateNamedModel(req, res) {
+  const strict = strictModelRequested(req);
+  const named = namedModel(req.body?.model);
+  if (!named) return { strict, halted: false };
+  const syntactic = syntacticRejectBeforeRoute(req.body);
+  // Streaming+tools still skips the route check unless strict is on — that
+  // error is reported on the paid path, and an unpaid probe still 402s.
+  // Strict must refuse the alias before that challenge or a settle.
+  if (!syntactic || strict) {
+    const namedRoute = await lookupChatRoute(req.body || {}, { strict });
+    if (!namedRoute.ok) {
+      sendModelNotRoutable(res, namedRoute);
+      return { strict, halted: true };
+    }
+    if (!syntactic) {
+      applySubstitutionHeaders(res, modelSubstitution(namedRoute.requested, namedRoute.model.id));
+    }
+  }
+  return { strict, halted: false };
 }
 
 function sendToolsUnsupported(res, modelId) {
@@ -484,12 +545,13 @@ async function getRouterHandler() {
  */
 async function runChatInference({
   model, messages, max_tokens, temperature, allowFallback: fb, cacheNs = null,
-  tools = null, tool_choice = null,
+  tools = null, tool_choice = null, strict = false,
 }) {
   const { models } = await getHubCatalog();
   const resolved = resolveCatalogModel(model, models, {
     modality: 'chat',
     shape: requestShape({ tools, messages }),
+    strict,
   });
   if (!resolved.ok) {
     const detail = resolved.hint
@@ -960,6 +1022,9 @@ function registerTaskAndProve({
     // when a subsystem is absent is the failure mode this path already had.
   }
 
+  const modelSubstituted = requestedModel
+    ? modelSubstitution(requestedModel, model).substituted
+    : false;
   const inputHash = ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(messages)));
   // On a tool call the answer *is* the tool call and `content` is empty, so
   // hashing content alone would attest an empty output for the response the
@@ -985,7 +1050,7 @@ function registerTaskAndProve({
       paymentRail: payment ? 'usdc' : 'unmetered',
       paymentRef: payment?.ref || null,
       proveAllowed, // cost gate: false → settle + signed receipt, skip SP1 proof
-      ...(requestedModel ? { requestedModel } : {}),
+      ...(requestedModel ? { requestedModel, modelSubstituted } : {}),
     },
     meta: {
       chain: 'base',
@@ -1005,7 +1070,7 @@ function registerTaskAndProve({
       privacyMode: privateSpend ? 'vendor_blind' : null,
       privacyProduct: privacyProduct || (privateSpend ? 'private_desk' : null),
       privacyAttest: privacyAttest || null,
-      ...(requestedModel ? { requestedModel } : {}),
+      ...(requestedModel ? { requestedModel, modelSubstituted } : {}),
       ...(failureReason ? { failureReason } : {}),
     },
     status,
@@ -1103,6 +1168,12 @@ function buildReceipt({
   baseUrl = '', privateSpend = false, payment = null, requestedModel = null, resolvedModel = null,
   reqHost = null,
 }) {
+  const requestedForSub = requestedModel || 'xfuel/auto';
+  const sub = modelSubstitution(requestedForSub, resolvedModel);
+  if (task) {
+    task.meta = { ...(task.meta || {}), modelSubstituted: sub.substituted };
+    if (task.intent) task.intent.modelSubstituted = sub.substituted;
+  }
   // pending  → proof generating; unavailable → no prover; gated → cost-gated for
   // this key (signed receipt only); skipped → mock response (nothing to prove).
   const proofStatus = mock
@@ -1151,8 +1222,10 @@ function buildReceipt({
     route: {
       ...view.route,
       // What the caller asked for vs what served. Signed model is in issuer_signature.jws.
-      requested: requestedModel || 'xfuel/auto',
-      requested_model: requestedModel || 'xfuel/auto',
+      // substituted is unsigned, beside requested_model.
+      requested: requestedForSub,
+      requested_model: requestedForSub,
+      substituted: sub.substituted,
       resolved: resolvedModel || view.route?.model || null,
     },
     output: view.output,
@@ -1659,10 +1732,10 @@ export function registerOpenAIRoutes(app, {
     // A named model with no route fails closed before that 402, so a caller is
     // not invited to pay for a model no provider can serve. Syntactic rejects
     // (streaming tools) still win so the caller sees that error first.
-    if (namedModel(req.body?.model) && !syntacticRejectBeforeRoute(req.body)) {
-      const namedRoute = await lookupChatRoute(req.body || {});
-      if (!namedRoute.ok) return sendModelNotRoutable(res, namedRoute);
-    }
+    // Strict mode refuses alias-table names here, before the challenge or settle.
+    const gated = await gateNamedModel(req, res);
+    if (gated.halted) return undefined;
+    const strict = gated.strict;
     let { halted, taskId, metering, paymentHeader } = await maybeMeterUnauthChat(req, res, resourcePath);
     if (halted) return undefined;
 
@@ -1765,13 +1838,14 @@ export function registerOpenAIRoutes(app, {
       ...(req.body || {}),
       model: model || 'xfuel/auto',
       messages,
-    });
+    }, { strict });
     if (!chatRoute.ok) return sendModelNotRoutable(res, chatRoute);
     if (wantsTools && chatRoute.model.hub === 'theta') {
       return sendToolsUnsupported(res, chatRoute.model.id);
     }
     const servedModel = chatRoute.model.id;
     const requestedModel = namedModel(model) || 'xfuel/auto';
+    applySubstitutionHeaders(res, modelSubstitution(requestedModel, servedModel));
 
     // Payment present: settle only after the body is valid (Bankr: don't settle then 400).
     if (paymentHeader) {
@@ -1882,6 +1956,7 @@ export function registerOpenAIRoutes(app, {
         cacheNs: cacheNamespace(apiKeyHash),
         tools: wantsTools ? tools : null,
         tool_choice: wantsTools ? tool_choice : null,
+        strict,
       });
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /v1/chat/completions inference error');
@@ -2043,6 +2118,7 @@ export function registerOpenAIRoutes(app, {
     }), req, settleRecord);
 
     setReceiptHeaders(res, receipt);
+    applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
 
     if (stream) {
       return streamCompletion(res, { id, created, model: echoModel, content, receipt });
@@ -2065,6 +2141,7 @@ export function registerOpenAIRoutes(app, {
         },
       ],
       usage,
+      chit: chitDisclosure(requestedModel, echoModel),
       xfuel: receipt,
     });
   }
@@ -2158,10 +2235,10 @@ export function registerOpenAIRoutes(app, {
   // POST /v1/responses — Responses API drop-in with x402 + signed receipt
   app.post('/v1/responses', async (req, res) => {
     // Named unroutable models fail closed before the 402 challenge.
-    if (namedModel(req.body?.model) && !syntacticRejectBeforeRoute(req.body)) {
-      const namedRoute = await lookupChatRoute(req.body || {});
-      if (!namedRoute.ok) return sendModelNotRoutable(res, namedRoute);
-    }
+    // Strict mode refuses alias-table names here, before the challenge or settle.
+    const gated = await gateNamedModel(req, res);
+    if (gated.halted) return undefined;
+    const strict = gated.strict;
     // Unauth probes (no payment) must 402 before body validation
     let { halted, taskId, metering, paymentHeader } = await maybeMeterUnauthChat(req, res, '/v1/responses');
     if (halted) return undefined;
@@ -2237,13 +2314,14 @@ export function registerOpenAIRoutes(app, {
       ...(req.body || {}),
       model: model || 'xfuel/auto',
       messages,
-    });
+    }, { strict });
     if (!chatRoute.ok) return sendModelNotRoutable(res, chatRoute);
     if (wantsTools && chatRoute.model.hub === 'theta') {
       return sendToolsUnsupported(res, chatRoute.model.id);
     }
     const servedModel = chatRoute.model.id;
     const requestedModel = namedModel(model) || 'xfuel/auto';
+    applySubstitutionHeaders(res, modelSubstitution(requestedModel, servedModel));
 
     // Payment present: settle only after the body is valid
     if (paymentHeader) {
@@ -2337,6 +2415,7 @@ export function registerOpenAIRoutes(app, {
         cacheNs: cacheNamespace(apiKeyHash),
         tools: wantsTools ? tools : null,
         tool_choice: wantsTools ? tool_choice : null,
+        strict,
       });
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /v1/responses inference error');
@@ -2461,6 +2540,7 @@ export function registerOpenAIRoutes(app, {
     }), req, settleRecord);
 
     setReceiptHeaders(res, receipt);
+    applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
 
     // Build Responses-shaped output
     const { output, output_text } = toResponsesOutput(content, toolCalls);
@@ -2474,6 +2554,7 @@ export function registerOpenAIRoutes(app, {
       output,
       output_text,
       usage,
+      chit: chitDisclosure(requestedModel, echoModel),
       xfuel: receipt,
     });
   });
