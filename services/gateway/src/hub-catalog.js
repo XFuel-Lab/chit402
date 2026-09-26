@@ -466,11 +466,59 @@ const TYPED_ALIASES = Object.freeze({
 });
 
 /**
+ * OpenAI chat names people paste from other SDKs. They alias onto a live
+ * `gpt-oss` row when the catalog has one (mini/3.5 → 20b, else 120b; full
+ * gpt-4o → 120b, else 20b). No gpt-oss row → null, and the caller refuses.
+ * Never Llama. Receipts keep route.model as the row that serves and record
+ * the requested name separately.
+ */
+const OPENAI_MINI_NAMES = new Set([
+  'gpt-4o-mini',
+  'gpt-4o-mini-2024-07-18',
+  'gpt-3.5-turbo',
+  'gpt-3.5-turbo-0125',
+  'gpt-3.5-turbo-1106',
+  'gpt-3.5-turbo-16k',
+]);
+
+const OPENAI_CHAT_NAMES = new Set([
+  'gpt-4o',
+  'gpt-4o-2024-05-13',
+  'gpt-4o-2024-08-06',
+  'gpt-4',
+  'gpt-4-turbo',
+  'gpt-4-turbo-preview',
+  'gpt-4-0125-preview',
+  'gpt-4-1106-preview',
+  'chatgpt-4o-latest',
+]);
+
+function pickGptOss(models, preferMini) {
+  const chat = (models || []).filter(
+    (m) => m && m.hub !== 'xfuel' && (!m.modality || m.modality === 'chat'),
+  );
+  const is20 = (m) => /gpt-oss-20b/i.test(m.id) || /gpt-oss-20b/i.test(m.alias || '');
+  const is120 = (m) => /gpt-oss-120b/i.test(m.id) || /gpt-oss-120b/i.test(m.alias || '');
+  const oss20 = chat.find(is20) || null;
+  const oss120 = chat.find(is120) || null;
+  if (preferMini) return oss20 || oss120 || null;
+  return oss120 || oss20 || null;
+}
+
+function resolveOpenAIFamilyAlias(name, models) {
+  const key = String(name || '').trim().toLowerCase();
+  if (OPENAI_MINI_NAMES.has(key)) return pickGptOss(models, true);
+  if (OPENAI_CHAT_NAMES.has(key)) return pickGptOss(models, false);
+  return null;
+}
+
+/**
  * Famous model names we do not serve. Refuse loudly — never bait-and-switch onto Llama.
+ * OpenAI names in this set still alias to gpt-oss first when that row is live.
  * If a hub later lists one of these as a real row, exact/id match still wins first.
  */
 const NO_BAIT_SWITCH = Object.freeze(new Set([
-  'gpt-4o', 'gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo',
+  'gpt-4o', 'gpt-4o-mini', 'gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo',
   'grok', 'grok-2', 'grok-3',
   'kimi', 'kimi-k2', 'kimi-k2.5', 'kimi-k2.7', 'kimi-k3', 'moonshot',
   'claude', 'claude-3', 'claude-3.5', 'claude-4', 'claude-opus', 'claude-sonnet',
@@ -554,6 +602,8 @@ export function pickAutoPreference(pref, live) {
  * @returns {CatalogModel|null}
  */
 export function resolveTypedAlias(name, models) {
+  const openai = resolveOpenAIFamilyAlias(name, models);
+  if (openai) return openai;
   const key = String(name || '').trim().toLowerCase();
   const rule = TYPED_ALIASES[key];
   if (!rule) return null;

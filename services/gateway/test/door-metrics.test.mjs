@@ -80,7 +80,31 @@ test('computeDoorMetrics: 24h and 7d windows, status, payers, network split', ()
   assert.equal(m.windows['24h'].by_network.solana, 2);
   assert.equal(m.windows['24h'].by_network.evm, 1);
   assert.equal(m.windows['7d'].stamped_receipts, 3);
+  assert.equal(m.windows['24h'].refunds_owed, 0);
   assert.equal(m.totals.door_stamped_all_time, 4);
+});
+
+test('computeDoorMetrics counts refund-owed rows for ops', () => {
+  const tasks = [
+    doorTask({
+      taskId: 'owed',
+      status: 'failed',
+      meta: {
+        source: 'openai-gateway',
+        payerWallet: EVM_PAYER,
+        refund: {
+          refund_status: 'owed',
+          amount: '2000',
+          payer: EVM_PAYER,
+          payment_ref: 'base:0xrefund',
+        },
+      },
+    }),
+    doorTask({ taskId: 'ok' }),
+  ];
+  const m = computeDoorMetrics(tasks, { now: NOW });
+  assert.equal(m.windows['24h'].refunds_owed, 1);
+  assert.equal(m.windows['24h'].stamped_receipts, 2);
 });
 
 test('doorMetricsAuthResult fails closed when token unset', () => {

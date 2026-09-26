@@ -3,7 +3,8 @@
  *
  * Desktop agents send `deepseek`, `llama-3.3`, `auto` — not hub-prefixed ids.
  * Preferences must land on rows GET /v1/models actually lists; missing GLM-5.2
- * must not 409 auto; kimi/gpt-4o/grok must not silently become Llama.
+ * must not 409 auto; grok/kimi must not silently become Llama.
+ * gpt-4o aliases to live gpt-oss when that row exists, never to Llama.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -145,11 +146,31 @@ test('kimi-k3 with no hub row is model_not_found — not Llama', () => {
   assert.ok(!r.available.some((id) => /kimi/i.test(id)));
 });
 
-test('gpt-4o and grok refuse — no bait-and-switch onto Llama', () => {
-  for (const name of ['gpt-4o', 'grok', 'kimi']) {
+test('gpt-4o aliases to live gpt-oss, never Llama; grok and kimi still refuse', () => {
+  const full = resolveCatalogModel('gpt-4o', LIVE, { modality: 'chat' });
+  assert.equal(full.ok, true);
+  assert.equal(full.model.id, 'akash/openai/gpt-oss-120b');
+  assert.notEqual(full.model.id, 'akash/meta-llama/Llama-3.3-70B-Instruct');
+
+  const mini = resolveCatalogModel('gpt-4o-mini', LIVE, { modality: 'chat' });
+  assert.equal(mini.ok, true);
+  assert.equal(mini.model.id, 'akash/openai/gpt-oss-20b');
+  assert.equal(mini.model.hub, 'akash');
+
+  for (const name of ['grok', 'kimi']) {
     const r = resolveCatalogModel(name, LIVE, { modality: 'chat' });
     assert.equal(r.ok, false, name);
     assert.equal(r.reason, 'model_not_found', name);
+  }
+});
+
+test('openai names stay model_not_found when no gpt-oss row exists', () => {
+  const noOss = LIVE.filter((m) => !/gpt-oss/i.test(m.id));
+  for (const name of ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo']) {
+    const r = resolveCatalogModel(name, noOss, { modality: 'chat' });
+    assert.equal(r.ok, false, name);
+    assert.equal(r.reason, 'model_not_found', name);
+    assert.ok(!String(r.model?.id || '').includes('Llama'), name);
   }
 });
 

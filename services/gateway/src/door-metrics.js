@@ -120,6 +120,7 @@ function aggregateWindow(doorTasks, windowMs, now) {
   let completed = 0;
   let failed = 0;
   let inProgress = 0;
+  let refundsOwed = 0;
   const payers = new Set();
 
   for (const t of doorTasks) {
@@ -134,6 +135,8 @@ function aggregateWindow(doorTasks, windowMs, now) {
     else if (FAILED_STATUSES.has(status)) failed += 1;
     else inProgress += 1;
 
+    if (t.meta?.refund?.refund_status === 'owed') refundsOwed += 1;
+
     const payer = callerBindingOf(t).payer_wallet;
     if (payer) payers.add(String(payer).toLowerCase());
 
@@ -145,6 +148,7 @@ function aggregateWindow(doorTasks, windowMs, now) {
     stamped_receipts: stampedReceipts,
     by_status: byStatus,
     outcome: { completed, failed, in_progress: inProgress },
+    refunds_owed: refundsOwed,
     unique_payer_wallets: payers.size,
     by_network: byNetwork,
   };

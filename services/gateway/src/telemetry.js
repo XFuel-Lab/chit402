@@ -87,6 +87,7 @@ export function computeUsageStats(
   let usdcFees7d = 0n;
   let usdcPaidTasks7d = 0;
   let excludedFromMoney = 0;
+  let refundsOwed = 0;
 
   const wantHash = apiKeyHash ? String(apiKeyHash).toLowerCase() : null;
   const trustFrom = feeTrustFrom(trustOverride);
@@ -127,6 +128,7 @@ export function computeUsageStats(
 
     if (SETTLED_STATUSES.has(status)) settled += 1;
     if (t.meta?.privateSpend || t.meta?.privacyMode === 'vendor_blind') privateSpendTasks += 1;
+    if (t.meta?.refund?.refund_status === 'owed') refundsOwed += 1;
 
     const created = Number(t.createdAt) || 0;
     if (created) {
@@ -175,6 +177,7 @@ export function computeUsageStats(
       by_message_type: byMessageType,
       by_provider: byProvider,
       private_spend: privateSpendTasks,
+      refunds_owed: refundsOwed,
     },
     payments: {
       by_rail: railOut,
