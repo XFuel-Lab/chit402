@@ -19,6 +19,13 @@ On replay, the ledger appends audit evidence only (`replay_events[]` on the
 canonical row — each event has `replay_of` → `task_id`). Totals and caps use the
 single collected amount; replays never double-count.
 
+Paid `/v1` writes that canonical row at x402 settle, before inference, then
+records the same `task_id` and `payment.ref` again when the response is built.
+That second write closes the settle row. It is the first collect, so the inline
+body reports `settlement_status: settled`, `idempotent_replay: false`, and
+`replay_of: null`. A later request that presents the same payment is the replay,
+and `replay_of` is the first task id — not the replay's own id.
+
 Cross-task reuse of the same `payment.ref` still returns **409** `duplicate_ref`
 (not idempotent replay).
 

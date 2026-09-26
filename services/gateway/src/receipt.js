@@ -2236,9 +2236,44 @@ export function renderReceiptNotFound(taskId) {
 </html>`;
 }
 
+/** Check value when that rule does not apply to this receipt. Not a failure. */
+export const AUDITOR_NO_POLICY = 'no_policy';
+
+/**
+ * Roll up auditor checks. `false` is a real failure. `null` and `no_policy`
+ * mean there was nothing to evaluate. No applicable checks → `no_policy`.
+ * @param {Array<boolean|string|null>} values
+ * @returns {boolean|string}
+ */
+export function rollupInPolicy(values) {
+  const applicable = values.filter((v) => v != null && v !== AUDITOR_NO_POLICY);
+  if (applicable.length === 0) return AUDITOR_NO_POLICY;
+  return applicable.every((v) => v === true);
+}
+
+/**
+ * Vendor-blind is a constraint only when the policy requires or forbids it,
+ * or when this receipt actually used vendor-blind routing.
+ * A normal paid receipt has no privacy policy to fail.
+ */
+function privacyVendorBlindCheck(view, pol) {
+  const mode = view.privacy?.mode || null;
+  if (pol.require_vendor_blind === true) return mode === 'vendor_blind';
+  if (pol.private_spend_ok === false) {
+    if (!mode) return AUDITOR_NO_POLICY;
+    return mode !== 'vendor_blind';
+  }
+  if (mode === 'vendor_blind') return true;
+  return AUDITOR_NO_POLICY;
+}
+
 /**
  * Selective disclosure for auditors (Sprint 4).
  * Policy + totals + binding + privacy/lineage — never prompts, raw outputs, or proof bytes.
+ *
+ * `in_policy` is `true` when every applicable check passed, `false` when one
+ * failed, and `"no_policy"` when nothing applied. A missing principal binding
+ * is `checks.binding_ok: "no_policy"`, not a failed receipt.
  *
  * @param {object} receipt  full public receipt from buildReceipt
  * @param {{ policy?: object }} [opts]
@@ -2262,10 +2297,10 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
     rail_allowed: Array.isArray(pol.allowed_rails)
       ? pol.allowed_rails.map((r) => String(r).toLowerCase()).includes(rail)
       : true,
-    binding_ok: view.binding == null ? null : !!view.binding.matches,
-    privacy_vendor_blind: view.privacy?.mode === 'vendor_blind',
+    binding_ok: view.binding == null ? AUDITOR_NO_POLICY : view.binding.matches === true,
+    privacy_vendor_blind: privacyVendorBlindCheck(view, pol),
   };
-  const in_policy = Object.values(checks).every((v) => v === true || v === null);
+  const in_policy = rollupInPolicy(Object.values(checks));
 
   return {
     schema: 'xfuel.auditor_export.v1',
@@ -2327,10 +2362,16 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
   };
 }
 
+function auditorPolicyBadge(inPolicy) {
+  if (inPolicy === true) return { cls: 'ok', label: 'in policy' };
+  if (inPolicy === false) return { cls: 'bad', label: 'policy check failed' };
+  return { cls: 'na', label: 'no policy to check' };
+}
+
 /** Minimal HTML for auditor export (no prompt/content surfaces). */
 export function renderAuditorHtml(exportDoc) {
   const e = exportDoc;
-  const ok = e.in_policy;
+  const badge = auditorPolicyBadge(e.in_policy);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -2351,6 +2392,7 @@ export function renderAuditorHtml(exportDoc) {
   code { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; background: #0e1420; padding: 2px 6px; border-radius: 6px; }
   .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
   .ok { background: #10331f; color: #6ee7a8; } .bad { background: #331414; color: #f08c8c; }
+  .na { background: #1c2433; color: #c5d0e0; }
   .muted { color: #6b7488; font-size: 13px; }
   a { color: #6ea8fe; }
 </style>
@@ -2359,7 +2401,7 @@ export function renderAuditorHtml(exportDoc) {
   <div class="wrap">
     <div class="brand">Chit402<span>·</span>auditor export</div>
     <p class="muted">Selective disclosure — policy + totals only. No prompts or raw outputs.</p>
-    <p><span class="badge ${ok ? 'ok' : 'bad'}">${ok ? 'in policy' : 'policy check failed'}</span></p>
+    <p><span class="badge ${badge.cls}">${esc(badge.label)}</span></p>
     <section class="card">
       <h2>Task</h2>
       ${row('Task id', `<code>${esc(displayTaskId(e.task_id))}</code>`)}

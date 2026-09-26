@@ -11,6 +11,7 @@ import {
   deriveEvidence,
   BOOK_EVIDENCE,
   ARRIVAL_STATUS,
+  SETTLEMENT_STATUS,
   entryQualifiesForTotals,
   markArrivalUnverified,
 } from '../src/usage-settled.js';
@@ -286,8 +287,109 @@ describe('settle-time book row', () => {
     });
     assert.equal(afterReceipt.ok, true);
     assert.equal(afterReceipt.duplicate, true);
+    assert.equal(afterReceipt.settlement_status, SETTLEMENT_STATUS.IDEMPOTENT_REPLAY);
+    assert.equal(afterReceipt.replay_of, 'xfuel-post-1');
     assert.equal(ledger.entries.length, 1);
     assert.equal(ledger.entries[0].payer, '0xabcdef1234567890abcdef1234567890abcdef12');
+    assert.equal(ledger.entries[0].replay_events.length, 1);
+  });
+
+  test('closing the settle row of the same paid call is settled, not a self-replay', () => {
+    const ledger = new UsageSettledLedger();
+    const registry = new AgentRegistry();
+    const payer = '0xabcdef1234567890abcdef1234567890abcdef12';
+    const opened = recordSettleBookRow({
+      taskId: 'xfuel-fresh',
+      paymentRef: 'solana:4KZ9iXA43AnV4yqfDNuST3z2HcSjpDEuKZ1sjhUd6kmn',
+      amount: '2000',
+      payer,
+      model: 'xfuel/auto',
+      ledger,
+      registry,
+    });
+    assert.equal(opened.settlement_status, SETTLEMENT_STATUS.SETTLED);
+    assert.equal(opened.idempotent_replay, false);
+    assert.equal(opened.replay_of, null);
+
+    const closed = recordCollectedSpend(collectedReceipt({
+      task_id: 'xfuel-fresh',
+      ref: 'solana:4KZ9iXA43AnV4yqfDNuST3z2HcSjpDEuKZ1sjhUd6kmn',
+      amount: '2000',
+    }), {
+      ledger,
+      registry,
+      agentId: opened.agent_id,
+      payer,
+      closeSettle: true,
+    });
+    assert.equal(closed.ok, true);
+    assert.equal(closed.duplicate, true);
+    assert.equal(closed.settlement_status, SETTLEMENT_STATUS.SETTLED);
+    assert.equal(closed.idempotent_replay, false);
+    assert.equal(closed.replay_of, null);
+    assert.equal(ledger.entries.length, 1);
+    assert.equal(ledger.entries[0].replay_events, undefined);
+
+    const again = recordCollectedSpend(collectedReceipt({
+      task_id: 'xfuel-fresh',
+      ref: 'solana:4KZ9iXA43AnV4yqfDNuST3z2HcSjpDEuKZ1sjhUd6kmn',
+      amount: '2000',
+    }), {
+      ledger,
+      registry,
+      closeSettle: true,
+    });
+    assert.equal(again.settlement_status, SETTLEMENT_STATUS.IDEMPOTENT_REPLAY);
+    assert.equal(again.idempotent_replay, true);
+    assert.equal(again.replay_of, 'xfuel-fresh');
+    assert.equal(ledger.entries[0].replay_events.length, 1);
+  });
+
+  test('a later call with the same payment.ref replays the first task, not itself', () => {
+    const ledger = new UsageSettledLedger();
+    const registry = new AgentRegistry();
+    const ref = 'solana:sig-once';
+    const first = recordSettleBookRow({
+      taskId: 'xfuel-first',
+      paymentRef: ref,
+      amount: '2000',
+      ledger,
+      registry,
+    });
+    recordCollectedSpend(collectedReceipt({ task_id: 'xfuel-first', ref, amount: '2000' }), {
+      ledger,
+      registry,
+      agentId: first.agent_id,
+      closeSettle: true,
+    });
+
+    const replaySettle = recordSettleBookRow({
+      taskId: 'xfuel-second',
+      paymentRef: ref,
+      amount: '2000',
+      ledger,
+      registry,
+      agentId: first.agent_id,
+    });
+    assert.equal(replaySettle.settlement_status, SETTLEMENT_STATUS.IDEMPOTENT_REPLAY);
+    assert.equal(replaySettle.replay_of, 'xfuel-first');
+    assert.notEqual(replaySettle.replay_of, 'xfuel-second');
+
+    const replayClose = recordCollectedSpend(collectedReceipt({
+      task_id: 'xfuel-second',
+      ref,
+      amount: '2000',
+    }), {
+      ledger,
+      registry,
+      closeSettle: true,
+      noteReplay: false,
+    });
+    assert.equal(replayClose.idempotent_replay, true);
+    assert.equal(replayClose.settlement_status, SETTLEMENT_STATUS.IDEMPOTENT_REPLAY);
+    assert.equal(replayClose.replay_of, 'xfuel-first');
+    assert.equal(ledger.entries.length, 1);
+    assert.equal(ledger.entries[0].replay_events.length, 1);
   });
 });
 
