@@ -12,16 +12,35 @@
  *   THETA_EDGECLOUD_BASE=https://ondemand.thetaedgecloud.com
  *   AKASHML_BASE_URL=https://api.akashml.com/v1
  *   AKASHML_API_KEY=…          — optional; /v1/models may work without it
+ *   OPENROUTER_API_KEY=…       — house key. Unused unless OPENROUTER_HOUSE_RESALE_ENABLED=true
+ *   OPENROUTER_HOUSE_RESALE_ENABLED=true — house-key resale. Default off (BYOK)
+ *   OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+ *   OPENROUTER_REFERER / OPENROUTER_TITLE — attribution (also X-Title, categories cloud-agent)
  *   HUB_CATALOG_OFFLINE=true   — force seed (tests)
  */
 
 import logger from './logger.js';
 import { isDown, healthOf } from './provider-health.js';
 import { akashmlApiKey } from './akashml-infer.js';
+import { openrouterApiKey, openrouterAttributionHeaders, openrouterHouseResaleEnabled } from './openrouter-infer.js';
+import { resolveOpenRouterFamiliar } from './openrouter-aliases.js';
 
 const DEFAULT_TTL_MS = 60_000;
 const DEFAULT_THETA_BASE = 'https://ondemand.thetaedgecloud.com';
 const DEFAULT_AKASHML_BASE = 'https://api.akashml.com/v1';
+const DEFAULT_OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
+
+/**
+ * Optional alias table from another change (fail-closed routing / model aliases).
+ * Runs only after OpenRouter familiar names miss — including when that hub is off,
+ * so open-model aliases keep the request.
+ * @type {((name: string, models: CatalogModel[]) => CatalogModel|null)|null}
+ */
+let _externalAliasResolver = null;
+
+export function setModelAliasResolver(fn) {
+  _externalAliasResolver = typeof fn === 'function' ? fn : null;
+}
 
 /** @typedef {'chat'|'image'|'audio'|'vision'|'image_ops'|'other'} Modality */
 
@@ -270,11 +289,60 @@ export function mapAkashService(model) {
 }
 
 /**
+ * Chat when the row emits text. Image-only and audio-only rows stay off the chat path.
+ * @param {object} row OpenRouter `/api/v1/models` element
+ * @returns {Modality}
+ */
+export function classifyOpenRouterModel(row) {
+  const arch = row?.architecture || {};
+  const outputs = (arch.output_modalities || []).map((s) => String(s).toLowerCase());
+  const inputs = (arch.input_modalities || []).map((s) => String(s).toLowerCase());
+  if (outputs.includes('image') && !outputs.includes('text')) return 'image';
+  if (outputs.includes('audio') && !outputs.includes('text')) return 'audio';
+  if (inputs.includes('audio') && !outputs.includes('text')) return 'audio';
+  if (outputs.includes('text') || outputs.length === 0) return 'chat';
+  return 'other';
+}
+
+/**
+ * Map an OpenRouter `/api/v1/models` row → CatalogModel.
+ * Id is `openrouter/<native id>` (`openrouter/openai/gpt-4o-mini`).
+ * `pricing` is stored verbatim on `cost` (USD per token strings).
+ * OpenRouter publishes no worker count — `capacity` stays unset.
+ * @param {object} row
+ * @returns {CatalogModel|null}
+ */
+export function mapOpenRouterService(row) {
+  if (!row) return null;
+  const alias = String(row.id || '').trim();
+  if (!alias) return null;
+  const modality = classifyOpenRouterModel(row);
+  const created = Number.isFinite(row.created) ? row.created : 1_700_000_000;
+  return {
+    id: `openrouter/${alias}`,
+    object: 'model',
+    created,
+    owned_by: 'openrouter',
+    hub: 'openrouter',
+    alias,
+    name: row.name || alias,
+    modality,
+    default_prediction: 'completions',
+    input_vars: null,
+    cost: row.pricing && typeof row.pricing === 'object' ? row.pricing : null,
+    workload_type: null,
+    access: openrouterHouseResaleEnabled() ? 'house' : 'byok',
+  };
+}
+
+/**
  * @param {object} [opts]
  * @param {number} [opts.ttlMs]
  * @param {string} [opts.thetaBase]
  * @param {string} [opts.akashBase]
  * @param {string} [opts.akashApiKey]
+ * @param {string} [opts.openrouterBase]
+ * @param {string} [opts.openrouterApiKey]
  * @param {typeof fetch} [opts.fetchFn]
  * @param {boolean} [opts.forceRefresh]
  */
@@ -293,12 +361,19 @@ export async function getHubCatalog(opts = {}) {
 
   const thetaBase = (opts.thetaBase || process.env.THETA_EDGECLOUD_BASE || DEFAULT_THETA_BASE).replace(/\/$/, '');
   const akashBase = (opts.akashBase || process.env.AKASHML_BASE_URL || DEFAULT_AKASHML_BASE).replace(/\/$/, '');
+  const openrouterBase = (opts.openrouterBase || process.env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE).replace(/\/$/, '');
   const akashKey = opts.akashApiKey ?? akashmlApiKey();
+  // An explicit opt (tests) may authorize the stub. The env house key is sent
+  // only while resale is on — a set key must not authenticate the public poll.
+  const openrouterKey = Object.prototype.hasOwnProperty.call(opts, 'openrouterApiKey')
+    ? String(opts.openrouterApiKey || '').trim()
+    : (openrouterHouseResaleEnabled() ? openrouterApiKey() : '');
   const fetchFn = opts.fetchFn || globalThis.fetch;
 
-  const [thetaResult, akashResult] = await Promise.all([
+  const [thetaResult, akashResult, openrouterResult] = await Promise.all([
     fetchThetaModels(thetaBase, fetchFn),
     fetchAkashModels(akashBase, akashKey, fetchFn),
+    fetchOpenRouterModels(openrouterBase, openrouterKey, fetchFn),
   ]);
 
   const merged = [];
@@ -311,10 +386,14 @@ export async function getHubCatalog(opts = {}) {
     merged.push(...akashResult.models);
     sources.push(akashResult.source);
   }
+  if (openrouterResult.models.length) {
+    merged.push(...openrouterResult.models);
+    sources.push(openrouterResult.source);
+  }
 
   if (!merged.length) {
     logger.warn(
-      { theta: thetaResult.error, akash: akashResult.error },
+      { theta: thetaResult.error, akash: akashResult.error, openrouter: openrouterResult.error },
       'hub-catalog: all hub polls failed — using seed',
     );
     if (_cache) return { models: _cache.models, source: `${_cache.source}+stale`, cached: true };
@@ -327,7 +406,13 @@ export async function getHubCatalog(opts = {}) {
   const source = sources.join('+');
   _cache = { at: now, models, source };
   logger.info(
-    { count: merged.length, theta: thetaResult.models.length, akash: akashResult.models.length, source },
+    {
+      count: merged.length,
+      theta: thetaResult.models.length,
+      akash: akashResult.models.length,
+      openrouter: openrouterResult.models.length,
+      source,
+    },
     'hub-catalog: refreshed multi-hub',
   );
   return { models, source, cached: false };
@@ -349,6 +434,32 @@ async function fetchThetaModels(thetaBase, fetchFn) {
   } catch (err) {
     logger.warn({ err: err.message }, 'hub-catalog: Theta poll failed');
     return { models: [], source: 'theta-none', error: err.message };
+  }
+}
+
+async function fetchOpenRouterModels(base, apiKey, fetchFn) {
+  // The model list is public. BYOK advertising does not need a house key.
+  // Authorization is attached only when a key was deliberately supplied.
+  try {
+    const headers = {
+      Accept: 'application/json',
+      ...openrouterAttributionHeaders(),
+    };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    const res = await fetchFn(`${base}/models`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) throw new Error(`openrouter /models HTTP ${res.status}`);
+    const data = await res.json();
+    const rows = data?.data || (Array.isArray(data) ? data : []);
+    const mapped = rows.map(mapOpenRouterService).filter(Boolean);
+    if (!mapped.length) throw new Error('openrouter /models empty');
+    return { models: mapped, source: 'openrouter-live', error: null };
+  } catch (err) {
+    logger.warn({ err: err.message }, 'hub-catalog: OpenRouter poll failed');
+    return { models: [], source: 'openrouter-none', error: err.message };
   }
 }
 
@@ -826,6 +937,22 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
       || models.find((m) => m.id === `akash/${requested}`);
   }
 
+  // Familiar closed-model names → OpenRouter only in house-resale mode.
+  // Flag off returns null even when rows are listed, so aliases stay off OpenRouter.
+  if (!hit) {
+    hit = resolveOpenRouterFamiliar(requested, models);
+  }
+
+  // Hook for a separate alias table (fail-closed routing). Ignored when unset.
+  if (!hit && _externalAliasResolver) {
+    try {
+      hit = _externalAliasResolver(requested, models) || null;
+    } catch (err) {
+      logger.warn({ err: err.message }, 'hub-catalog: external alias resolver threw');
+      hit = null;
+    }
+  }
+
   // Typed names people send → live rows only.
   if (!hit) {
     hit = resolveTypedAlias(requested, models);
@@ -881,6 +1008,7 @@ export function toOpenAIList(models, { modality = null, priceFor = null } = {}) 
         // XFuel extensions (ignored by OpenAI SDKs)
         hub: m.hub,
         alias: m.alias,
+        ...(m.access ? { access: m.access } : {}),
         name: m.name,
         modality: m.modality,
         default_prediction: m.default_prediction,

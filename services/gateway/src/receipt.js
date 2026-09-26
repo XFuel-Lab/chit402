@@ -3,6 +3,7 @@ import { verifyMessage, getAddress, keccak256, toUtf8Bytes } from 'ethers';
 import { computePaymentCommitment, computeInferenceBinding } from './payment-binding.js';
 import { resolveModelCommitment } from './model-commitment.js';
 import { selectTier } from './tier-policy.js';
+import { OPENROUTER_CALLER_PAID_LABEL } from './openrouter-pricing.js';
 import { verifyAttestation, attestationNonce } from './tee-attestation.js';
 import { buildSpotCheckRecord } from './spotcheck.js';
 import { signJws, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk } from './issuer-key.js';
@@ -221,6 +222,7 @@ export function mergeReceiptView(receipt) {
         ...routeRequestedFields(routeMeta.requested_model),
         provider: null,
         model_commitment: routeMeta.model_commitment ?? null,
+        ...(routeMeta.requested_model ? { requested_model: routeMeta.requested_model } : {}),
       },
       output: receipt.output?.hash ? receipt.output : null,
       caller_binding: receipt.caller_binding ?? null,
@@ -274,6 +276,7 @@ export function mergeReceiptView(receipt) {
           ? { commitment: claims.route.model_commitment }
           : null
       ),
+      ...(routeMeta.requested_model ? { requested_model: routeMeta.requested_model } : {}),
     },
     output: claims.output?.hash
       ? { hash: claims.output.hash, kind: receipt.output?.kind ?? 'committed' }
@@ -1203,6 +1206,7 @@ export function lineageOf(task) {
 export function providerCogsOf(task) {
   const c = task?.meta?.providerCogs || task?.providerCogs || null;
   if (!c || typeof c !== 'object') return null;
+  const generation = openRouterGenerationOf(c);
   return {
     provider: c.provider || null,
     float_id: c.float_id || c.floatId || null,
@@ -1219,6 +1223,30 @@ export function providerCogsOf(task) {
     basis: c.basis || null,
     usd_mark: c.usd_mark != null ? String(c.usd_mark) : (c.usdMark != null ? String(c.usdMark) : null),
     below_low_water: !!c.below_low_water || !!c.belowLowWater,
+    ...(c.paid_by ? { paid_by: String(c.paid_by) } : {}),
+    ...(c.label ? { label: String(c.label) } : {}),
+    ...(c.reported_cost_usd != null ? { reported_cost_usd: String(c.reported_cost_usd) } : {}),
+    ...(generation ? { openrouter_generation: generation } : {}),
+  };
+}
+
+/**
+ * OpenRouter's own bill for this completion (USD), filled in after the response
+ * when GET /generation answers. Not part of the signed `actual` figure.
+ */
+function openRouterGenerationOf(cogs) {
+  const gen = cogs?.openrouter_generation || cogs?.openrouterGeneration || null;
+  if (!gen || typeof gen !== 'object') return null;
+  const total = gen.total_cost != null ? String(gen.total_cost) : null;
+  const upstream = gen.upstream_inference_cost != null ? String(gen.upstream_inference_cost) : null;
+  if (total == null && upstream == null) return null;
+  const callerPaid = gen.label === OPENROUTER_CALLER_PAID_LABEL || gen.paid_by === 'caller-to-openrouter';
+  return {
+    id: gen.id != null ? String(gen.id) : null,
+    total_cost: total,
+    upstream_inference_cost: upstream,
+    currency: 'USD',
+    ...(callerPaid ? { label: OPENROUTER_CALLER_PAID_LABEL, paid_by: 'caller-to-openrouter' } : {}),
   };
 }
 
@@ -1644,6 +1672,12 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     issuer_signature,
   };
 
+  if (task.meta?.refund?.status === 'refund_owed') {
+    envelope.refund = {
+      status: 'refund_owed',
+      reason: task.meta.refund.reason || 'upstream_failed',
+    };
+  }
   if (draft.provider_cogs) envelope.provider_cogs = draft.provider_cogs;
   if (draft.usage) envelope.usage = draft.usage;
   if (draft.verified_inference) envelope.verified_inference = draft.verified_inference;
@@ -1655,7 +1689,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   if (draft.fulfillment) envelope.fulfillment = draft.fulfillment;
   if (draft.issuance_commitment) envelope.issuance_commitment = draft.issuance_commitment;
   if (draft.dispute_window) envelope.dispute_window = draft.dispute_window;
-  if (draft.refund) envelope.refund = draft.refund;
+  if (draft.refund) envelope.refund = { ...(envelope.refund || {}), ...draft.refund };
   const sessionPointer = outerSessionPointer(draft.session, base);
   if (sessionPointer) {
     envelope.delegation_hash = sessionPointer.delegation_hash;
@@ -1731,6 +1765,9 @@ export function displayRouteModel(model) {
 export function displayRouteProvider(provider) {
   if (provider == null || provider === '') return provider;
   const s = String(provider);
+  // Hub id on the route is the provider that served. The same string is blocked
+  // as a payer identity (isSymbolicLabel) and must still show on the receipt.
+  if (s.toLowerCase() === 'openrouter') return 'openrouter';
   if (isSymbolicLabel(s)) return null;
   const lower = s.toLowerCase();
   if (lower === 'xfuel' || lower === 'xfuel-gateway') return null;
@@ -2014,16 +2051,32 @@ export function renderReceiptHtml(receipt) {
   const cogsProvider = displayRouteProvider(cogs?.provider || route.provider);
   const routeModelLabel = displayRouteModel(route.model);
   const routeProviderLabel = displayRouteProvider(route.provider);
+  const callerPaidOpenRouter = cogs?.label === OPENROUTER_CALLER_PAID_LABEL
+    || cogs?.paid_by === 'caller-to-openrouter';
   const cogsBlock = cogs
     ? `<section class="card">
-        <h2>Provider cost <span class="scope">what we paid to serve this</span></h2>
+        <h2>${callerPaidOpenRouter
+          ? `OpenRouter cost <span class="scope">${esc(OPENROUTER_CALLER_PAID_LABEL)}</span>`
+          : 'Provider cost <span class="scope">what we paid to serve this</span>'}</h2>
         ${row('Provider', esc(cogsProvider) || '<span class="muted">—</span>')}
         ${cogs.float_id ? row('Float', esc(cogs.float_id)) : ''}
-        ${row('Measured cost', usdcCell(cogs.actual))}
+        ${callerPaidOpenRouter && cogs.reported_cost_usd != null
+          ? row('Reported cost', esc(`$${cogs.reported_cost_usd}`))
+          : ''}
+        ${cogs.actual != null ? row('Measured cost', usdcCell(cogs.actual)) : ''}
+        ${cogs.openrouter_generation?.total_cost != null
+          ? row('OpenRouter total', esc(`$${cogs.openrouter_generation.total_cost}`))
+          : ''}
+        ${cogs.openrouter_generation?.upstream_inference_cost != null
+          ? row('Upstream inference', esc(`$${cogs.openrouter_generation.upstream_inference_cost}`))
+          : ''}
+        ${callerPaidOpenRouter ? row('Paid by', esc(OPENROUTER_CALLER_PAID_LABEL)) : ''}
         ${cogs.estimated != null && cogs.estimated !== cogs.actual ? row('Quoted estimate', usdcCell(cogs.estimated)) : ''}
         ${cogs.basis ? row('Basis', esc(cogs.basis)) : ''}
         ${cogs.below_low_water ? row('Float', '<span class="badge pending">at/below low water — refill</span>') : ''}
-        <p class="muted" style="margin:8px 0 0;font-size:12px">You pay USDC on Base. We burn a prepaid provider float — not a second buyer rail.</p>
+        <p class="muted" style="margin:8px 0 0;font-size:12px">${callerPaidOpenRouter
+          ? 'Inference was paid by the caller to OpenRouter. Chit charged the receipt.'
+          : 'You pay USDC on Base. We burn a prepaid provider float — not a second buyer rail.'}</p>
       </section>`
     : '';
 

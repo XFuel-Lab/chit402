@@ -15,6 +15,8 @@ import {
   fetchBaseL1Anchor,
 } from './issuance-commitment.js';
 import { quoteTask, quoteFromCogs, costPlusEnabled, promptTokensFor, quotedMaxOutputTokens } from './pricing.js';
+import { capOpenRouterOutputTokens, isOpenRouterCatalogId, quoteOpenRouterByok, quoteOpenRouterFromCogs } from './openrouter-pricing.js';
+import { openrouterHouseResaleEnabled } from './openrouter-infer.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { normalizeRequestedTier } from './tier-policy.js';
 import { getHubCatalog, resolveCatalogModel, requestShape } from './hub-catalog.js';
@@ -142,8 +144,8 @@ export function priceUSDC(body = {}, cfg = config.x402) {
  *
  * @returns {Promise<string>} amount in USDC base units
  */
-export async function priceUSDCResolved(body = {}, cfg = config.x402) {
-  return (await quoteResolved(body, cfg)).amount;
+export async function priceUSDCResolved(body = {}, cfg = config.x402, opts = {}) {
+  return (await quoteResolved(body, cfg, opts)).amount;
 }
 
 /**
@@ -159,7 +161,7 @@ export async function priceUSDCResolved(body = {}, cfg = config.x402) {
  * @returns {Promise<object>} a `quoteTask`/`quoteFromCogs` result, plus
  *   `requested_model` / `priced_model`
  */
-export async function quoteResolved(body = {}, cfg = config.x402) {
+export async function quoteResolved(body = {}, cfg = config.x402, opts = {}) {
   const { body: priced, model, requested } = await resolvePricingModel(body);
 
   // A hand-negotiated flat price wins even under cost-plus — otherwise
@@ -178,6 +180,23 @@ export async function quoteResolved(body = {}, cfg = config.x402) {
       requested_model: requested,
       priced_model: model,
     };
+  }
+
+  // OpenRouter default is BYOK: the $0.002 receipt, not a resale of tokens.
+  // House resale (cost-plus, never a rate card that could undercut upstream)
+  // applies only when the flag is on and this request did not bring a key.
+  if (isOpenRouterCatalogId(model)) {
+    const houseResale = openrouterHouseResaleEnabled() && opts.byok !== true;
+    if (!houseResale) {
+      return { ...quoteOpenRouterByok(), requested_model: requested, priced_model: model };
+    }
+    const orQuote = await costPlusQuote(priced, model, cfg);
+    if (!orQuote || orQuote.basis !== 'cost_plus') {
+      const err = new Error('openrouter_unpriced');
+      err.code = 'openrouter_unpriced';
+      throw err;
+    }
+    return { ...orQuote, requested_model: requested, priced_model: model };
   }
 
   const quote = (costPlusEnabled() ? await costPlusQuote(priced, model, cfg) : null)
@@ -237,7 +256,10 @@ async function costPlusQuote(body, resolvedModel, cfg) {
   if (!modelId) return null;
 
   const promptTokens = promptTokensFor(body);
-  const maxOutputTokens = quotedMaxOutputTokens(body);
+  const openrouter = isOpenRouterCatalogId(modelId);
+  const maxOutputTokens = openrouter
+    ? capOpenRouterOutputTokens(quotedMaxOutputTokens(body))
+    : quotedMaxOutputTokens(body);
   const { amount: cogs, basis, rate } = await estimateCogsFromRequest({
     modelId,
     promptTokens,
@@ -250,11 +272,15 @@ async function costPlusQuote(body, resolvedModel, cfg) {
   // $0.01. Better to overcharge against a card we own than to give work away.
   if (basis !== 'estimated') return null;
 
-  return {
-    ...quoteFromCogs(cogs, {
+  const priced = openrouter
+    ? quoteOpenRouterFromCogs(cogs, { tier2: wantsSettlementProof(body) })
+    : quoteFromCogs(cogs, {
       usdcFloor: cfg.usdcFloor ?? cfg.usdcPriceDefault,
       tier2: wantsSettlementProof(body),
-    }),
+    });
+
+  return {
+    ...priced,
     prompt_tokens: promptTokens,
     max_output_tokens: maxOutputTokens,
     // The provider's own rate, not ours — under cost-plus this is the input to
@@ -327,6 +353,7 @@ export async function runX402Handshake(req, {
   baseUrl = null,
   resource = null,
   l1Anchor = null,
+  quoteOpts = null,
 } = {}) {
   const priceBody = body || req.body;
   const bindParse = parseIssuanceBindFromBody(priceBody);
@@ -354,7 +381,7 @@ export async function runX402Handshake(req, {
   // The challenge includes the CDP Bazaar extension for discovery cataloging.
   // Dual-network (2026-08-22): include Solana accepts entry when cfg.solana.enabled.
   if (!paymentHeader) {
-    const charge = amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg);
+    const charge = amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg, quoteOpts || {});
     let issuance_bind = null;
     if (bindParse.requested && bindParse.ok) {
       issuance_bind = {
@@ -414,7 +441,7 @@ export async function runX402Handshake(req, {
   let boundAmount;
   try {
     boundAmount = challenge?.amount
-      ?? (amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg));
+      ?? (amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg, quoteOpts || {}));
   } catch (err) {
     // Never fail a request whose payment already verified — fall back to floor.
     boundAmount = String(cfg.usdcFloor ?? cfg.usdcPriceDefault ?? '2000');
