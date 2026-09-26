@@ -29,9 +29,11 @@ function railOf(task) {
 }
 
 /**
- * OpenRouter Broadcast rows are a book-holder report. They are not collected
- * USDC and not a verified settlement, so they never enter public /stats.
- * `reported` must not fall through railOf into the TFUEL bucket.
+ * OpenRouter Broadcast rows are not Chit settlements. They never enter the
+ * USDC/TFUEL totals on GET /stats, including after a generation-API match.
+ * The public book summary is the stat that counts a row, and only when
+ * verified_with is openrouter_generation_api. `reported` must not fall
+ * through railOf into the TFUEL bucket.
  */
 export function countsInPublicUsageStats(task) {
   if (!task?.taskId) return false;

@@ -7,7 +7,8 @@
  */
 import { test, before, after, beforeEach, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,6 +17,7 @@ process.env.TASK_STORE_PERSIST = 'false';
 process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret';
 process.env.OPENROUTER_BROADCAST_ENABLED = 'true';
 process.env.OPENROUTER_BROADCAST_PILOT_FREE = 'true';
+process.env.OPENROUTER_KEY_ENCRYPTION_SECRET = 'test-only-openrouter-key-secret';
 
 const { createApp } = await import('../src/server.js');
 const { UsageSettledLedger, entryQualifiesForCap, entryQualifiesForTotals } = await import('../src/usage-settled.js');
@@ -25,6 +27,12 @@ const {
   ingestOpenRouterBroadcast,
   parseOtlpGenerations,
   publicOpenRouterSummary,
+  setOpenRouterGenerationClientForTests,
+  setOpenRouterVerificationDelayForTests,
+  flushOpenRouterVerifications,
+  encryptOpenRouterApiKey,
+  decryptOpenRouterApiKey,
+  configureOpenRouterBroadcast,
 } = await import('../src/openrouter-broadcast.js');
 const { mergeReceiptView, verifyReceiptEcdsaWithJwks } = await import('../src/receipt.js');
 const { getJwks } = await import('../src/issuer-key.js');
@@ -231,13 +239,13 @@ test('fixture stamps reported receipts, drops content, and replays on generation
   const summary = await fetch(`${base}/v1/openrouter/books/${parent.json.book_id}/summary`);
   assert.equal(summary.status, 200);
   const summaryBody = await summary.json();
-  assert.equal(summaryBody.generations, 1);
-  assert.equal(summaryBody.reported_usd, '0.00046');
+  assert.equal(summaryBody.generations, 0);
+  assert.equal(summaryBody.reported_usd, '0');
   assert.equal(summaryBody.stamp_charged, false);
   assert.equal(summaryBody.collected, false);
   assert.equal(summaryBody.verified, false);
   assert.equal(summaryBody.verified_with, null);
-  assert.equal(summaryBody.stamp_fee_usd_recorded, '0.002');
+  assert.equal(summaryBody.stamp_fee_usd_recorded, '0');
   assert.equal(summaryBody.public, true);
   const summaryText = JSON.stringify(summaryBody);
   assert.equal(summaryText.includes('gen-fixture'), false);
@@ -481,11 +489,231 @@ test('a bound numeric agent sees the row and the USDC spent total stays put', ()
   assert.equal(ledger.sumCollectedByAgent(8), 0n);
 
   const summary = publicOpenRouterSummary(created.book);
-  assert.equal(summary.generations, 1);
+  assert.equal(summary.generations, 0);
   assert.equal(summary.collected, false);
   assert.equal(summary.verified, false);
   assert.equal(summary.verified_with, null);
   assert.equal(JSON.stringify(summary).includes(PROMPT), false);
   assert.equal(JSON.stringify(summary).includes('gen-fixture'), false);
+});
+
+const OR_KEY = 'sk-or-v1-fixture-redact-aaa';
+const OR_KEY_ROTATED = 'sk-or-v1-fixture-redact-bbb';
+
+function oneGeneration(id = 'gen-fixture-fabricated-001') {
+  const payload = structuredClone(FIXTURE);
+  const span = payload.resourceSpans[0].scopeSpans[0].spans[0];
+  span.attributes = span.attributes.map((attr) => (
+    attr.key === 'gen_ai.response.id'
+      ? { key: attr.key, value: { stringValue: id } }
+      : attr
+  ));
+  payload.resourceSpans[0].scopeSpans[0].spans = [span];
+  return payload;
+}
+
+function generationBody(over = {}) {
+  return {
+    data: {
+      id: 'gen-fixture-fabricated-001',
+      model: 'google/gemini-2.5-flash',
+      native_tokens_prompt: 120,
+      native_tokens_completion: 40,
+      total_cost: 0.00046,
+      ...over,
+    },
+  };
+}
+
+async function attachKey(bookId, ingestKey, apiKey) {
+  const res = await fetch(`${base}/v1/openrouter/books/${bookId}/openrouter-key`, {
+    method: 'PUT',
+    headers: authHeaders(ingestKey),
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+  const json = await res.json();
+  return { status: res.status, json };
+}
+
+test('an OpenRouter key is encrypted at rest and never returned', async () => {
+  const enc = encryptOpenRouterApiKey(OR_KEY);
+  assert.equal(enc.ok, true);
+  assert.equal(enc.enc.includes(OR_KEY), false);
+  assert.equal(decryptOpenRouterApiKey(enc.enc), OR_KEY);
+
+  const dir = mkdtempSync(join(tmpdir(), 'or-key-'));
+  try {
+    configureOpenRouterBroadcast({ dir, persist: true });
+    const created = await mintBook();
+    const put = await attachKey(created.json.book_id, created.json.ingest_key, OR_KEY);
+    assert.equal(put.status, 200);
+    assert.equal(put.json.openrouter_key_attached, true);
+    assert.equal(JSON.stringify(put.json).includes(OR_KEY), false);
+
+    const stored = readFileSync(join(dir, 'openrouter-books.json'), 'utf8');
+    assert.equal(stored.includes(OR_KEY), false);
+    assert.match(stored, /openrouter_key_enc/);
+
+    const status = await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/openrouter-key`, {
+      headers: { authorization: `Bearer ${created.json.ingest_key}` },
+    });
+    const statusBody = await status.json();
+    assert.equal(statusBody.openrouter_key_attached, true);
+    assert.equal(JSON.stringify(statusBody).includes(OR_KEY), false);
+
+    const removed = await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/openrouter-key`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${created.json.ingest_key}` },
+    });
+    const removedBody = await removed.json();
+    assert.equal(removed.status, 200);
+    assert.equal(removedBody.openrouter_key_attached, false);
+    const after = readFileSync(join(dir, 'openrouter-books.json'), 'utf8');
+    assert.equal(after.includes('openrouter_key_enc'), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a matching generation is verified with OpenRouter and counted in the public summary', async () => {
+  const seen = [];
+  setOpenRouterVerificationDelayForTests(async () => {});
+  setOpenRouterGenerationClientForTests(async (id, apiKey) => {
+    seen.push({ id, apiKey });
+    return { status: 200, body: generationBody({ id }) };
+  });
+  const created = await mintBook();
+  await attachKey(created.json.book_id, created.json.ingest_key, OR_KEY);
+  const posted = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(created.json.ingest_key),
+    body: JSON.stringify(oneGeneration()),
+  });
+  assert.equal(posted.status, 200);
+  await flushOpenRouterVerifications();
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].apiKey, OR_KEY);
+
+  const list = await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/receipts`, {
+    headers: authHeaders(created.json.ingest_key),
+  });
+  const rows = await list.json();
+  const receipt = rows.receipts[0];
+  assert.equal(receipt.verified_with, 'openrouter_generation_api');
+  assert.equal(receipt.verification.status, 'verified');
+  assert.equal(receipt.attestation_note, "Chit checked this generation against OpenRouter's own record. Chit did not settle the payment.");
+  assert.equal(JSON.stringify(rows).includes(OR_KEY), false);
+  const page = await (await fetch(receipt.verify_url.replace(/^https?:\/\/[^/]+/, base))).text();
+  assert.match(page, /Verified with OpenRouter/);
+  assert.match(page, /Chit checked this generation against OpenRouter/);
+  assert.equal(page.includes(OR_KEY), false);
+
+  const summary = await (await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/summary`)).json();
+  assert.equal(summary.generations, 1);
+  assert.equal(summary.reported_usd, '0.00046');
+  assert.equal(summary.verified, true);
+  assert.equal(summary.verified_with, 'openrouter_generation_api');
+  assert.equal(summary.collected, false);
+});
+
+test('a generation that disagrees with OpenRouter is a mismatch and is not counted', async () => {
+  setOpenRouterVerificationDelayForTests(async () => {});
+  setOpenRouterGenerationClientForTests(async () => ({
+    status: 200,
+    body: generationBody({ total_cost: 1.25, native_tokens_prompt: 999 }),
+  }));
+  const created = await mintBook();
+  await attachKey(created.json.book_id, created.json.ingest_key, OR_KEY);
+  await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(created.json.ingest_key),
+    body: JSON.stringify(oneGeneration('gen-fixture-mismatch')),
+  });
+  await flushOpenRouterVerifications();
+  const list = await (await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/receipts`, {
+    headers: authHeaders(created.json.ingest_key),
+  })).json();
+  const receipt = list.receipts[0];
+  assert.equal(receipt.verified_with, null);
+  assert.equal(receipt.verification.status, 'mismatch');
+  assert.ok(receipt.verification.fields.includes('total_cost'));
+  assert.ok(receipt.verification.fields.includes('native_tokens_prompt'));
+  assert.equal(receipt.verification.fields.includes('model'), false);
+  const page = await (await fetch(receipt.verify_url.replace(/^https?:\/\/[^/]+/, base))).text();
+  assert.match(page, /mismatch/);
+  assert.match(page, /Reported via OpenRouter Broadcast \(unverified\)/);
+  assert.equal(page.includes('Verified with OpenRouter'), false);
+  const summary = await (await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/summary`)).json();
+  assert.equal(summary.generations, 0);
+  assert.equal(summary.verified, false);
+});
+
+test('a lagged generation record is retried and then verified', async () => {
+  let calls = 0;
+  setOpenRouterVerificationDelayForTests(async () => {});
+  setOpenRouterGenerationClientForTests(async (id) => {
+    calls += 1;
+    if (calls === 1) return { status: 404, body: { error: { message: 'not found yet' } } };
+    return { status: 200, body: generationBody({ id }) };
+  });
+  const created = await mintBook();
+  await attachKey(created.json.book_id, created.json.ingest_key, OR_KEY);
+  await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(created.json.ingest_key),
+    body: JSON.stringify(oneGeneration()),
+  });
+  await flushOpenRouterVerifications();
+  assert.equal(calls, 2);
+  const list = await (await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/receipts`, {
+    headers: authHeaders(created.json.ingest_key),
+  })).json();
+  assert.equal(list.receipts[0].verified_with, 'openrouter_generation_api');
+  assert.equal(JSON.stringify(list).includes(OR_KEY), false);
+});
+
+test('with no OpenRouter key the receipt stays unverified and no lookup runs', async () => {
+  let calls = 0;
+  setOpenRouterGenerationClientForTests(async () => {
+    calls += 1;
+    return { status: 200, body: generationBody() };
+  });
+  const created = await mintBook();
+  await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(created.json.ingest_key),
+    body: JSON.stringify(oneGeneration()),
+  });
+  await flushOpenRouterVerifications();
+  assert.equal(calls, 0);
+  const list = await (await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/receipts`, {
+    headers: authHeaders(created.json.ingest_key),
+  })).json();
+  const receipt = list.receipts[0];
+  assert.equal(receipt.verified_with, null);
+  assert.equal(receipt.verification.status, 'unverified');
+  assert.equal(receipt.verification.reason, 'no_openrouter_key');
+  const page = await (await fetch(receipt.verify_url.replace(/^https?:\/\/[^/]+/, base))).text();
+  assert.match(page, /Reported via OpenRouter Broadcast \(unverified\)/);
+  assert.equal(page.includes('Verified with OpenRouter'), false);
+  const summary = await (await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/summary`)).json();
+  assert.equal(summary.generations, 0);
+
+  const rotated = await attachKey(created.json.book_id, created.json.ingest_key, OR_KEY_ROTATED);
+  assert.equal(rotated.json.openrouter_key_attached, true);
+  assert.equal(JSON.stringify(rotated.json).includes(OR_KEY_ROTATED), false);
+  let used = null;
+  setOpenRouterVerificationDelayForTests(async () => {});
+  setOpenRouterGenerationClientForTests(async (id, apiKey) => {
+    used = apiKey;
+    return { status: 200, body: generationBody({ id }) };
+  });
+  await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(created.json.ingest_key),
+    body: JSON.stringify(oneGeneration('gen-fixture-after-rotate')),
+  });
+  await flushOpenRouterVerifications();
+  assert.equal(used, OR_KEY_ROTATED);
 });
 });

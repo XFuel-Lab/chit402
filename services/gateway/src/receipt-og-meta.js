@@ -72,7 +72,7 @@ export function receiptOgEvidenceLabel(receipt) {
     return 'third-party';
   }
   if (receipt.source === 'openrouter_broadcast' || receipt.evidence === 'openrouter_reported' || receipt.kind === 'openrouter_broadcast') {
-    return 'unverified';
+    return receipt.verified_with === 'openrouter_generation_api' ? 'verified with openrouter' : 'unverified';
   }
   return null;
 }

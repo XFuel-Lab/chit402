@@ -89,6 +89,7 @@ test('computeUsageStats: OpenRouter Broadcast reports are not collected or verif
     feeAmount: '2000',
     netAmount: '999000000',
     meta: { provider: 'openrouter', job_kind: 'openrouter_broadcast' },
+    verified_with: 'openrouter_generation_api',
   });
   const s = computeUsageStats([reported], { now: NOW });
   assert.equal(s.tasks.total, 0);

@@ -25,6 +25,8 @@ import {
   mergeReceiptView,
   REPORTED_ATTESTED_BY,
   REPORTED_ATTESTATION_NOTE,
+  OPENROUTER_VERIFIED_WITH,
+  VERIFIED_OPENROUTER_NOTE,
 } from './receipt.js';
 
 export const SOURCE = 'openrouter_broadcast';
@@ -32,6 +34,12 @@ export const JOB_KIND = 'openrouter_broadcast';
 export const PAYMENT_RAIL = 'reported';
 export const ATTESTED_BY = REPORTED_ATTESTED_BY;
 export const ATTESTATION_NOTE = REPORTED_ATTESTATION_NOTE;
+export const VERIFIED_WITH = OPENROUTER_VERIFIED_WITH;
+export const VERIFIED_NOTE = VERIFIED_OPENROUTER_NOTE;
+
+const GENERATION_URL = 'https://openrouter.ai/api/v1/generation';
+const VERIFY_MAX_ATTEMPTS = 5;
+const KEY_MAX_LEN = 512;
 
 const DEFAULT_DAILY_CAP = 10_000;
 const DEFAULT_RATE_PER_MIN = 60;
@@ -77,8 +85,20 @@ const byFamilyGeneration = new Map();
 const byTask = new Map();
 /** @type {object[]} */
 const receipts = [];
+/** @type {{ taskId: string, attempt: number, epoch: number }[]} */
+const verifyQueue = [];
+/** @type {Set<string>} */
+const verifyQueued = new Set();
+let verifyEpoch = 0;
+/** @type {Promise<void>|null} */
+let verifyPump = null;
 
 let persistDir = null;
+
+/** @type {((generationId: string, apiKey: string) => Promise<{ status: number, body?: object|null }>)|null} */
+let generationClient = null;
+/** @type {((ms: number) => Promise<void>)|null} */
+let verificationDelay = null;
 
 class WindowLimiter {
   constructor(windowMs) {
@@ -173,6 +193,69 @@ function createPerHour(env = process.env) {
 
 export function hashIngestKey(key) {
   return crypto.createHash('sha256').update(String(key)).digest('hex');
+}
+
+function encryptionKey(env = process.env) {
+  const raw = env.OPENROUTER_KEY_ENCRYPTION_SECRET;
+  if (raw == null || String(raw).trim().length < 16) return null;
+  return crypto.createHash('sha256').update(String(raw)).digest();
+}
+
+/** AES-256-GCM. The plaintext API key is never written. */
+export function encryptOpenRouterApiKey(plain, env = process.env) {
+  const key = encryptionKey(env);
+  if (!key) return { ok: false, error: 'encryption_unconfigured' };
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ciphertext = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return { ok: true, enc: Buffer.concat([iv, tag, ciphertext]).toString('base64') };
+}
+
+export function decryptOpenRouterApiKey(enc, env = process.env) {
+  const key = encryptionKey(env);
+  if (!key || enc == null || enc === '') return null;
+  try {
+    const buf = Buffer.from(String(enc), 'base64');
+    if (buf.length < 29) return null;
+    const iv = buf.subarray(0, 12);
+    const tag = buf.subarray(12, 28);
+    const data = buf.subarray(28);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+function bookApiKey(book, env = process.env) {
+  if (!book?.openrouter_key_enc) return null;
+  return decryptOpenRouterApiKey(book.openrouter_key_enc, env);
+}
+
+export function compareOpenRouterGeneration(reported, apiData) {
+  const data = apiData && typeof apiData === 'object'
+    ? (apiData.data && typeof apiData.data === 'object' ? apiData.data : apiData)
+    : null;
+  const fields = [];
+  const reportedModel = reported?.model != null ? String(reported.model).trim() : '';
+  const apiModel = data?.model != null ? String(data.model).trim() : '';
+  if (!reportedModel || reportedModel !== apiModel) fields.push('model');
+
+  const reportedPrompt = reported?.native_tokens_prompt ?? reported?.nativePromptTokens ?? null;
+  const reportedCompletion = reported?.native_tokens_completion ?? reported?.nativeCompletionTokens ?? null;
+  const apiPrompt = data ? asInt(data.native_tokens_prompt) : null;
+  const apiCompletion = data ? asInt(data.native_tokens_completion) : null;
+  if (reportedPrompt == null || apiPrompt == null || reportedPrompt !== apiPrompt) fields.push('native_tokens_prompt');
+  if (reportedCompletion == null || apiCompletion == null || reportedCompletion !== apiCompletion) {
+    fields.push('native_tokens_completion');
+  }
+
+  const reportedCost = asUsd(reported?.total_cost ?? reported?.total_cost_usd ?? reported?.totalCostUsd);
+  const apiCost = data ? asUsd(data.total_cost) : null;
+  if (reportedCost == null || apiCost == null || Math.abs(reportedCost - apiCost) > 1e-9) fields.push('total_cost');
+  return { match: fields.length === 0, fields };
 }
 
 function isContentKey(key) {
@@ -404,6 +487,16 @@ export function parseOtlpGenerations(body) {
       'completionTokens',
       'openrouter.completion_tokens',
     ]));
+    const nativePromptTokens = asInt(firstAttr(map, [
+      'native_tokens_prompt',
+      'gen_ai.usage.native_tokens_prompt',
+      'openrouter.native_tokens_prompt',
+    ])) ?? promptTokens;
+    const nativeCompletionTokens = asInt(firstAttr(map, [
+      'native_tokens_completion',
+      'gen_ai.usage.native_tokens_completion',
+      'openrouter.native_tokens_completion',
+    ])) ?? completionTokens;
     const totalTokens = asInt(firstAttr(map, [
       'gen_ai.usage.total_tokens',
       'totalTokens',
@@ -445,6 +538,8 @@ export function parseOtlpGenerations(body) {
       providerSlug: providerSlug != null ? String(providerSlug).slice(0, 120) : null,
       promptTokens,
       completionTokens,
+      nativePromptTokens,
+      nativeCompletionTokens,
       totalTokens,
       inputCostUsd: usdString(inputCost),
       outputCostUsd: usdString(outputCost),
@@ -620,7 +715,14 @@ function persistReceipt(record) {
 }
 
 function indexReceipt(record, { persist = true } = {}) {
-  receipts.push(record);
+  const prev = record?.task_id ? byTask.get(record.task_id) : null;
+  if (prev) {
+    const at = receipts.indexOf(prev);
+    if (at >= 0) receipts[at] = record;
+    else receipts.push(record);
+  } else {
+    receipts.push(record);
+  }
   const familyId = record.family_id || record.book_id;
   if (familyId && record.generation_id) {
     byFamilyGeneration.set(familyGenerationKey(familyId, record.generation_id), record);
@@ -668,6 +770,12 @@ export function configureOpenRouterBroadcast({ dir = null, persist = false } = {
 }
 
 export function resetOpenRouterBroadcastForTests() {
+  verifyEpoch += 1;
+  verifyQueue.length = 0;
+  verifyQueued.clear();
+  verifyPump = null;
+  generationClient = null;
+  verificationDelay = null;
   books.clear();
   keys.clear();
   byFamilyGeneration.clear();
@@ -676,6 +784,23 @@ export function resetOpenRouterBroadcastForTests() {
   minuteLimiter.reset();
   hourLimiter.reset();
   persistDir = null;
+}
+
+/**
+ * Test hook. The client receives (generationId, apiKey) and returns
+ * { status, body }. It must not log the key.
+ */
+export function setOpenRouterGenerationClientForTests(fn) {
+  generationClient = typeof fn === 'function' ? fn : null;
+}
+
+/** Test hook. Replaces the retry delay. Default waits with backoff. */
+export function setOpenRouterVerificationDelayForTests(fn) {
+  verificationDelay = typeof fn === 'function' ? fn : null;
+}
+
+export function flushOpenRouterVerifications() {
+  return verifyPump || Promise.resolve();
 }
 
 function issueKey() {
@@ -719,9 +844,200 @@ export function publicBook(book) {
   };
 }
 
+function reportedSnapshot(record) {
+  const reported = record?.receipt?.reported || {};
+  return {
+    model: reported.model || null,
+    native_tokens_prompt: reported.native_tokens_prompt ?? null,
+    native_tokens_completion: reported.native_tokens_completion ?? null,
+    total_cost: reported.total_cost_usd ?? null,
+  };
+}
+
+function markUnverified(record, reason) {
+  if (!record?.receipt) return;
+  if (record.receipt.verified_with === VERIFIED_WITH) return;
+  if (record.receipt.verification?.status === 'mismatch') return;
+  record.receipt.verified_with = null;
+  record.receipt.verification = { status: 'unverified', reason };
+  record.receipt.attestation_note = ATTESTATION_NOTE;
+  if (record.receipt.reported) record.receipt.reported.verified_with = null;
+}
+
+function applyVerification(record, outcome) {
+  const receipt = record.receipt;
+  if (!receipt) return;
+  if (outcome.status === 'verified') {
+    receipt.verified_with = VERIFIED_WITH;
+    receipt.verification = {
+      status: 'verified',
+      verified_with: VERIFIED_WITH,
+      checked_at: new Date().toISOString(),
+    };
+    receipt.attestation_note = VERIFIED_NOTE;
+    if (receipt.reported) receipt.reported.verified_with = VERIFIED_WITH;
+  } else if (outcome.status === 'mismatch') {
+    receipt.verified_with = null;
+    receipt.verification = {
+      status: 'mismatch',
+      fields: outcome.fields || [],
+      checked_at: new Date().toISOString(),
+    };
+    receipt.attestation_note = ATTESTATION_NOTE;
+    if (receipt.reported) receipt.reported.verified_with = null;
+  } else {
+    receipt.verified_with = null;
+    receipt.verification = {
+      status: outcome.status,
+      reason: outcome.reason || null,
+      checked_at: new Date().toISOString(),
+    };
+    receipt.attestation_note = ATTESTATION_NOTE;
+    if (receipt.reported) receipt.reported.verified_with = null;
+  }
+  persistReceipt(record);
+}
+
+function verificationTerminal(record) {
+  const status = record?.receipt?.verification?.status;
+  return record?.receipt?.verified_with === VERIFIED_WITH
+    || status === 'mismatch'
+    || status === 'rejected';
+}
+
+function backoffMs(attempt) {
+  return Math.min(8000, 500 * (2 ** attempt));
+}
+
+async function waitVerification(ms) {
+  if (verificationDelay) return verificationDelay(ms);
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    if (typeof timer.unref === 'function') timer.unref();
+  });
+}
+
+function lagStatus(status) {
+  return status === 0 || status === 404 || status === 408 || status === 425
+    || status === 429 || status >= 500;
+}
+
+async function defaultGenerationClient(generationId, apiKey) {
+  const url = new URL(GENERATION_URL);
+  url.searchParams.set('id', generationId);
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      accept: 'application/json',
+      authorization: `Bearer ${apiKey}`,
+    },
+    signal: AbortSignal.timeout(8000),
+  });
+  const text = await res.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch { body = null; }
+  return { status: res.status, body };
+}
+
+function enqueueVerification(record, env = process.env) {
+  if (!record?.task_id || verificationTerminal(record)) return;
+  const book = books.get(record.book_id);
+  if (!bookApiKey(book, env)) {
+    markUnverified(record, 'no_openrouter_key');
+    return;
+  }
+  if (verifyQueued.has(record.task_id)) return;
+  if (record.receipt) {
+    record.receipt.verification = { status: 'pending' };
+    record.receipt.verified_with = null;
+    record.receipt.attestation_note = ATTESTATION_NOTE;
+  }
+  verifyQueued.add(record.task_id);
+  verifyQueue.push({ taskId: record.task_id, attempt: 0, epoch: verifyEpoch });
+  scheduleVerification(env);
+}
+
+function scheduleVerification(env) {
+  if (verifyPump) return verifyPump;
+  const epoch = verifyEpoch;
+  verifyPump = (async () => {
+    while (verifyQueue.length && epoch === verifyEpoch) {
+      const job = verifyQueue.shift();
+      await runVerification(job, env);
+    }
+  })().finally(() => {
+    verifyPump = null;
+    if (verifyQueue.length && epoch === verifyEpoch) scheduleVerification(env);
+  });
+  return verifyPump;
+}
+
+async function runVerification(job, env) {
+  if (!job || job.epoch !== verifyEpoch) return;
+  const record = byTask.get(job.taskId);
+  if (!record || verificationTerminal(record)) {
+    verifyQueued.delete(job.taskId);
+    return;
+  }
+  const book = books.get(record.book_id);
+  const apiKey = bookApiKey(book, env);
+  if (!apiKey) {
+    verifyQueued.delete(job.taskId);
+    markUnverified(record, 'no_openrouter_key');
+    return;
+  }
+  let result;
+  try {
+    const client = generationClient || defaultGenerationClient;
+    result = await client(record.generation_id, apiKey);
+  } catch (err) {
+    logger.warn({
+      bookId: record.book_id,
+      taskId: record.task_id,
+      generationId: record.generation_id,
+      attempt: job.attempt,
+      err: 'openrouter_generation_lookup_failed',
+    }, 'openrouter-broadcast: generation lookup failed');
+    result = { status: 0, body: null };
+  }
+  if (job.epoch !== verifyEpoch) return;
+  const status = Number(result?.status) || 0;
+  const data = result?.body?.data && typeof result.body.data === 'object' ? result.body.data : null;
+  const notReady = lagStatus(status) || (status === 200 && !data?.id && data?.model == null && data?.total_cost == null);
+  if (notReady && job.attempt + 1 < VERIFY_MAX_ATTEMPTS) {
+    await waitVerification(backoffMs(job.attempt));
+    if (job.epoch !== verifyEpoch) return;
+    verifyQueue.push({ taskId: job.taskId, attempt: job.attempt + 1, epoch: job.epoch });
+    return;
+  }
+  verifyQueued.delete(job.taskId);
+  if (status === 401 || status === 403) {
+    applyVerification(record, { status: 'rejected', reason: 'openrouter_unauthorized' });
+    return;
+  }
+  if (notReady) {
+    applyVerification(record, { status: 'unavailable', reason: status === 404 ? 'not_found' : 'lookup_failed' });
+    return;
+  }
+  if (status !== 200 || !data) {
+    applyVerification(record, { status: 'unavailable', reason: 'lookup_failed' });
+    return;
+  }
+  const compared = compareOpenRouterGeneration(reportedSnapshot(record), data);
+  if (compared.match) applyVerification(record, { status: 'verified' });
+  else applyVerification(record, { status: 'mismatch', fields: compared.fields });
+  logger.info({
+    bookId: record.book_id,
+    taskId: record.task_id,
+    generationId: record.generation_id,
+    verification: record.receipt?.verification?.status || null,
+  }, 'openrouter-broadcast: generation checked');
+}
+
 function stampGeneration(generation, book, routedBy, deps) {
   const existing = byFamilyGeneration.get(familyGenerationKey(book.family_id, generation.generationId));
   if (existing) {
+    enqueueVerification(existing, deps.env);
     return { ok: true, idempotent: true, record: existing };
   }
   const cap = dailyCap(deps.env);
@@ -813,8 +1129,18 @@ function stampGeneration(generation, book, routedBy, deps) {
     routed_by: routedBy,
     book_id: book.book_id,
     attested_by: ATTESTED_BY,
+    model: generation.model,
+    native_tokens_prompt: generation.nativePromptTokens,
+    native_tokens_completion: generation.nativeCompletionTokens,
     openrouter_generation: generation.openrouterGeneration,
   };
+  envelope.verified_with = null;
+  if (bookApiKey(book, deps.env)) {
+    envelope.verification = { status: 'pending' };
+  } else {
+    envelope.verification = { status: 'unverified', reason: 'no_openrouter_key' };
+    envelope.attestation_note = ATTESTATION_NOTE;
+  }
 
   const record = {
     generation_id: generation.generationId,
@@ -873,6 +1199,7 @@ function stampGeneration(generation, book, routedBy, deps) {
     model: generation.model,
   }, 'openrouter-broadcast: stamped');
 
+  enqueueVerification(record, deps.env);
   return { ok: true, idempotent: false, record };
 }
 
@@ -972,6 +1299,7 @@ export function publicOpenRouterSummary(book, { env = process.env } = {}) {
   let count = 0;
   for (const row of receipts) {
     if (row.book_id !== book.book_id) continue;
+    if (row.receipt?.verified_with !== VERIFIED_WITH) continue;
     count += 1;
     try { atomic += BigInt(row.reported_atomic || '0'); } catch { /* skip */ }
   }
@@ -985,10 +1313,10 @@ export function publicOpenRouterSummary(book, { env = process.env } = {}) {
     stamp_fee_usd_each: '0.002',
     stamp_charged: false,
     collected: false,
-    verified: false,
-    verified_with: null,
+    verified: count > 0,
+    verified_with: count > 0 ? VERIFIED_WITH : null,
     pilot_free: pilotFree(env),
-    note: 'Aggregate only. Figures were reported to this book via OpenRouter Broadcast. Chit did not verify them with OpenRouter and did not settle these payments. They are not collected or verified spend. Receipt rows are not listed here.',
+    note: 'Aggregate of generations Chit checked against OpenRouter\'s generation API. Unverified and mismatched reports are not included. Chit did not settle these payments. Receipt rows are not listed here.',
   };
 }
 
@@ -1127,6 +1455,100 @@ export function registerOpenRouterBroadcast(app, {
 
   app.post('/v1/openrouter/broadcast', handleBroadcast);
   app.put('/v1/openrouter/broadcast', handleBroadcast);
+
+  function bookFromFamily(req, res) {
+    const book = books.get(String(req.params.book_id || ''));
+    if (!book) {
+      res.status(404).json({ error: 'not_found', message: 'Book not found.' });
+      return null;
+    }
+    const presented = ingestKeyFromRequest(req);
+    const authBook = bookForKey(presented);
+    if (!authBook || authBook.family_id !== book.family_id) {
+      res.status(401).json({
+        error: 'unauthorized',
+        message: 'This OpenRouter book requires that family\'s ingest key.',
+      });
+      return null;
+    }
+    return book;
+  }
+
+  app.put('/v1/openrouter/books/:book_id/openrouter-key', (req, res) => {
+    try {
+      if (!broadcastEnabled()) return disabled(res);
+      const ip = clientIp(req);
+      if (!minuteLimiter.allow(`ip:${ip}`, ratePerMin())) {
+        return rateLimited(res, minuteLimiter.retryAfterSec(`ip:${ip}`));
+      }
+      const book = bookFromFamily(req, res);
+      if (!book) return undefined;
+      const raw = req.body && typeof req.body === 'object' ? req.body.api_key : null;
+      if (req.body && typeof req.body === 'object') delete req.body.api_key;
+      const apiKey = typeof raw === 'string' ? raw.trim() : '';
+      if (!apiKey || apiKey.length > KEY_MAX_LEN || /[\r\n]/.test(apiKey)) {
+        return res.status(400).json({ error: 'validation_error', message: 'api_key is required.' });
+      }
+      const enc = encryptOpenRouterApiKey(apiKey);
+      if (!enc.ok) {
+        return res.status(503).json({
+          error: 'encryption_unconfigured',
+          message: 'OpenRouter key storage is not configured.',
+        });
+      }
+      book.openrouter_key_enc = enc.enc;
+      book.openrouter_key_set_at = new Date().toISOString();
+      persistBooks();
+      return res.status(200).json({
+        book_id: book.book_id,
+        openrouter_key_attached: true,
+      });
+    } catch (err) {
+      logger.error({ err: 'openrouter_key_write_failed' }, 'PUT openrouter key error');
+      return res.status(500).json({ error: 'internal', message: 'Internal server error' });
+    }
+  });
+
+  app.delete('/v1/openrouter/books/:book_id/openrouter-key', (req, res) => {
+    try {
+      if (!broadcastEnabled()) return disabled(res);
+      const ip = clientIp(req);
+      if (!minuteLimiter.allow(`ip:${ip}`, ratePerMin())) {
+        return rateLimited(res, minuteLimiter.retryAfterSec(`ip:${ip}`));
+      }
+      const book = bookFromFamily(req, res);
+      if (!book) return undefined;
+      delete book.openrouter_key_enc;
+      book.openrouter_key_set_at = null;
+      persistBooks();
+      return res.status(200).json({
+        book_id: book.book_id,
+        openrouter_key_attached: false,
+      });
+    } catch (err) {
+      logger.error({ err: 'openrouter_key_delete_failed' }, 'DELETE openrouter key error');
+      return res.status(500).json({ error: 'internal', message: 'Internal server error' });
+    }
+  });
+
+  app.get('/v1/openrouter/books/:book_id/openrouter-key', (req, res) => {
+    try {
+      if (!broadcastEnabled()) return disabled(res);
+      const ip = clientIp(req);
+      if (!minuteLimiter.allow(`ip:${ip}`, ratePerMin())) {
+        return rateLimited(res, minuteLimiter.retryAfterSec(`ip:${ip}`));
+      }
+      const book = bookFromFamily(req, res);
+      if (!book) return undefined;
+      return res.json({
+        book_id: book.book_id,
+        openrouter_key_attached: Boolean(book.openrouter_key_enc),
+      });
+    } catch (err) {
+      logger.error({ err: 'openrouter_key_read_failed' }, 'GET openrouter key error');
+      return res.status(500).json({ error: 'internal', message: 'Internal server error' });
+    }
+  });
 
   app.get('/v1/openrouter/books/:book_id/receipts', (req, res) => {
     try {

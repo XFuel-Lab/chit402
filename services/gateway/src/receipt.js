@@ -37,6 +37,11 @@ export const REPORTED_ATTESTED_BY = 'book_holder_report';
 export const REPORTED_BADGE = 'Reported via OpenRouter Broadcast (unverified)';
 export const REPORTED_ATTESTATION_NOTE =
   'Reported to this book via OpenRouter Broadcast. Chit did not verify this payload with OpenRouter and did not settle the payment. The reference is the OpenRouter generation id.';
+/** Set only after model, native tokens, and total cost match OpenRouter's generation API. */
+export const OPENROUTER_VERIFIED_WITH = 'openrouter_generation_api';
+export const VERIFIED_OPENROUTER_BADGE = 'Verified with OpenRouter';
+export const VERIFIED_OPENROUTER_NOTE =
+  "Chit checked this generation against OpenRouter's own record. Chit did not settle the payment.";
 export const RECEIPT_KIND_SESSION_HANDOFF = 'session_handoff';
 
 export function isInheritedSettlement(view) {
@@ -1808,22 +1813,41 @@ function formatUsdEstimateLabel(estimate) {
   return text.startsWith('$') ? text : `$${text}`;
 }
 
+function openRouterVerified(receipt) {
+  return receipt?.verified_with === OPENROUTER_VERIFIED_WITH;
+}
+
+function openRouterStatusBadge(receipt) {
+  if (openRouterVerified(receipt)) {
+    return `<span class="badge ok">${esc(VERIFIED_OPENROUTER_BADGE)}</span>`;
+  }
+  return `<span class="badge pending">${esc(REPORTED_BADGE)}</span>`;
+}
+
 function reportedOpenRouterSection(receipt, view) {
   const p = view.payment || {};
   const reported = receipt.reported && typeof receipt.reported === 'object' ? receipt.reported : {};
   const stamp = receipt.stamp && typeof receipt.stamp === 'object' ? receipt.stamp : {};
+  const verified = openRouterVerified(receipt);
   const usd = (label, value) => (value != null && value !== ''
     ? row(label, `$${esc(value)} <span class="muted">USD reported</span>`)
     : '');
   const provider = reported.provider_name || reported.provider_slug || view.route?.provider || null;
   const generation = reported.generation_id || null;
+  const mismatchFields = receipt.verification?.status === 'mismatch' && Array.isArray(receipt.verification.fields)
+    ? receipt.verification.fields.map((field) => String(field)).join(', ')
+    : '';
   const stampHtml = stamp.waived === true
     ? '$0.002 <span class="muted">USDC recorded</span> <span class="badge pending">pilot, not charged</span>'
     : '$0.002 <span class="muted">USDC recorded</span> <span class="badge pending">not charged</span>';
+  const note = receipt.attestation_note || (verified ? VERIFIED_OPENROUTER_NOTE : REPORTED_ATTESTATION_NOTE);
   return `<section class="card">
-      <h2>Reported spend <span class="scope">unverified book-holder report, not a Chit settlement</span></h2>
+      <h2>Reported spend <span class="scope">${verified
+        ? 'checked with OpenRouter, not a Chit settlement'
+        : 'unverified book-holder report, not a Chit settlement'}</span></h2>
       ${row('Rail', '<span class="badge pending">REPORTED</span>')}
-      ${row('Status', `<span class="badge pending">${esc(REPORTED_BADGE)}</span>`)}
+      ${row('Status', openRouterStatusBadge(receipt))}
+      ${mismatchFields ? row('Verification', `<span class="badge bad">mismatch</span> ${esc(mismatchFields)}`) : ''}
       ${generation ? row('Generation', `<code>${esc(generation)}</code>`) : ''}
       ${p.ref ? row('Reference', `<code>${esc(p.ref)}</code>`) : ''}
       ${usd('Input cost', reported.input_cost_usd)}
@@ -1832,7 +1856,7 @@ function reportedOpenRouterSection(receipt, view) {
       ${row('Model', esc(view.route?.model || '—'))}
       ${provider ? row('Provider', esc(provider)) : ''}
       ${row('Stamp fee', stampHtml)}
-      <p class="muted" style="margin:8px 0 0;font-size:12px">${esc(receipt.attestation_note || REPORTED_ATTESTATION_NOTE)}</p>
+      <p class="muted" style="margin:8px 0 0;font-size:12px">${esc(note)}</p>
     </section>`;
 }
 
@@ -2152,7 +2176,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
     <header>
       <div class="brand">Chit402</div>
       <div>${reported
-        ? `<span class="badge pending">${esc(REPORTED_BADGE)}</span>`
+        ? openRouterStatusBadge(receipt)
         : (foreign
           ? '<span class="badge ok">Recorded</span>'
           : badge(pr.outcome, b ? b.matches : undefined))}</div>

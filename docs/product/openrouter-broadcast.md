@@ -68,8 +68,28 @@ The possession-gated principal book (`GET|POST /v1/agents/:agent_id/book`) stays
 
 Idempotency is `(book family, generation id)`. One family cannot claim another family's generation id or its `verify_url`. `payment.rail` is `reported`. `payment.ref` is `openrouter:<family_id>:<generation_id>`. The signed settlement kind is `reported` with `attested_by: book_holder_report`. `job_kind` and `source` are `openrouter_broadcast`.
 
-These rows stay out of public collected and verified stats (`GET /stats`, `GET /stats/door`, and an agent's USDC spent total). The public summary is counts and reported USD, with `collected: false` and `verified: false`.
+`GET /stats`, `GET /stats/door`, and an agent's USDC spent total do not include these rows. Chit did not collect them. The public summary counts a generation only after Chit has checked it against OpenRouter's generation API.
 
-## Verify later
+## Check the generation
 
-TODO: optional reconcile. If a book holder supplies an OpenRouter API key on one request (redacted in logs, never stored), Chit can `GET https://openrouter.ai/api/v1/generation?id=<generation_id>` and, only when model, token counts, and cost match that response, set `verified_with: openrouter_generation_api`. Until that check exists, do not describe these receipts as verified or collected.
+Attach the book holder's OpenRouter API key. Chit encrypts it with `OPENROUTER_KEY_ENCRYPTION_SECRET` and stores only the ciphertext. The key is never logged and never returned. Rotate by sending a new key. Delete clears it.
+
+```bash
+curl -sS -X PUT "https://api.chit402.com/v1/openrouter/books/$BOOK_ID/openrouter-key" \
+  -H "Authorization: Bearer $INGEST_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"api_key":"'"$OPENROUTER_API_KEY"'"}'
+```
+
+```bash
+curl -sS -X DELETE "https://api.chit402.com/v1/openrouter/books/$BOOK_ID/openrouter-key" \
+  -H "Authorization: Bearer $INGEST_KEY"
+```
+
+On each new generation, Chit calls `GET https://openrouter.ai/api/v1/generation?id=<generation_id>` with that key. The record can lag, so Chit retries with backoff. The webhook response does not wait.
+
+When model, native prompt tokens, native completion tokens, and total cost match, the receipt gets `verified_with: openrouter_generation_api`, the badge "Verified with OpenRouter", and the note "Chit checked this generation against OpenRouter's own record. Chit did not settle the payment."
+
+When those fields differ, the receipt gets `verification.status: mismatch` and `verification.fields` listing the differences. The badge stays unverified.
+
+With no key, the badge stays "Reported via OpenRouter Broadcast (unverified)".
