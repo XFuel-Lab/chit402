@@ -43,6 +43,15 @@ export const BOOK_EVIDENCE = {
   POLICY_BLOCKED: 'policy_blocked',
   /** A2A escrow / machine dispute phase row — exportable, non-spend. */
   A2A_ESCROW: 'a2a_escrow',
+  /**
+   * Board stamp ($0.002). On the book, not debited from prepaid budget.
+   * P1 reserves board_bid / board_pick / board_close; those writers are not here.
+   */
+  BOARD_STAMP: 'board_stamp',
+  /** Board publish / takedown audit. Non-spend. The note stays on the board store. */
+  BOARD_POST: 'board_post',
+  /** Ops hide (and later ops actions). Audit only. */
+  BOARD_OPS: 'board_ops',
   /** Settled USDC, nothing served. Visible on the book; excluded from spend totals. */
   REFUND_OWED: 'refund_owed',
   /** OpenRouter Broadcast report. Visible on the book; Chit did not settle it. */
@@ -108,6 +117,15 @@ export function deriveEvidence(entry) {
   if (entry.event === 'a2a_escrow' || entry.evidence === BOOK_EVIDENCE.A2A_ESCROW) {
     return BOOK_EVIDENCE.A2A_ESCROW;
   }
+  if (entry.event === 'board_stamp' || entry.evidence === BOOK_EVIDENCE.BOARD_STAMP) {
+    return BOOK_EVIDENCE.BOARD_STAMP;
+  }
+  if (entry.event === 'board_post' || entry.evidence === BOOK_EVIDENCE.BOARD_POST) {
+    return BOOK_EVIDENCE.BOARD_POST;
+  }
+  if (entry.event === 'board_ops' || entry.evidence === BOOK_EVIDENCE.BOARD_OPS) {
+    return BOOK_EVIDENCE.BOARD_OPS;
+  }
   if (entry.evidence === BOOK_EVIDENCE.UNVERIFIED) {
     return BOOK_EVIDENCE.UNVERIFIED;
   }
@@ -163,7 +181,10 @@ export function entryQualifiesForCap(entry) {
   const evidence = deriveEvidence(entry);
   if (evidence === BOOK_EVIDENCE.POLICY_BLOCKED || evidence === BOOK_EVIDENCE.UNVERIFIED
     || evidence === BOOK_EVIDENCE.A2A_ESCROW || evidence === BOOK_EVIDENCE.REFUND_OWED
-    || evidence === BOOK_EVIDENCE.OPENROUTER_REPORTED) {
+    || evidence === BOOK_EVIDENCE.OPENROUTER_REPORTED
+    || evidence === BOOK_EVIDENCE.BOARD_STAMP
+    || evidence === BOOK_EVIDENCE.BOARD_POST
+    || evidence === BOOK_EVIDENCE.BOARD_OPS) {
     return false;
   }
   if (evidence === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED) return false;
@@ -650,6 +671,71 @@ export class UsageSettledLedger {
     return { ok: true, entry, duplicate: false };
   }
 
+  /**
+   * Append a board audit row. Kinds: board_stamp, board_post, board_ops.
+   * board_bid / board_pick / board_close are reserved for the bid board and rejected here.
+   * The stamp does not debit prepaid budget (evidence is excluded from caps).
+   * @param {{
+   *   agentId: number,
+   *   kind: string,
+   *   taskId: string,
+   *   paymentRef?: string|null,
+   *   amount?: string|null,
+   *   collected?: boolean,
+   *   rail?: string|null,
+   *   parentRef?: string|null,
+   *   board?: object,
+   * }} row
+   */
+  recordBoardEvent({
+    agentId,
+    kind,
+    taskId,
+    paymentRef = null,
+    amount = null,
+    collected = false,
+    rail = null,
+    parentRef = null,
+    board = {},
+  }) {
+    const id = Number(agentId);
+    if (!Number.isInteger(id) || id < 1) {
+      return { ok: false, reason: 'invalid agent_id', code: 'invalid_agent' };
+    }
+    const event = String(kind || '');
+    if (event !== 'board_stamp' && event !== 'board_post' && event !== 'board_ops') {
+      return { ok: false, reason: 'unsupported board kind', code: 'invalid_kind' };
+    }
+    const tid = String(taskId || '').trim();
+    if (!tid) return { ok: false, reason: 'task_id required', code: 'task_required' };
+    if (this.byTask.has(tid)) {
+      return { ok: true, entry: this.byTask.get(tid), duplicate: true };
+    }
+    const ref = paymentRef != null && String(paymentRef).trim() ? String(paymentRef).trim() : null;
+    if (ref && this.byRef.has(ref)) {
+      return { ok: false, reason: 'duplicate payment.ref', code: 'duplicate_ref' };
+    }
+    const entry = {
+      task_id: tid,
+      payment_ref: ref,
+      payer: null,
+      agent_id: id,
+      collected: collected === true,
+      evidence: event,
+      event,
+      board: board && typeof board === 'object' ? board : {},
+      rail: rail || null,
+      amount: amount != null ? String(amount) : null,
+      collected_at: new Date().toISOString(),
+      recorded_at: new Date().toISOString(),
+      model: null,
+      hub: null,
+      parent_ref: parentRef || null,
+    };
+    this._index(entry);
+    return { ok: true, entry, duplicate: false };
+  }
+
   /** Count book rows (collected + policy_blocked) for one intent under an agent. */
   countAttemptsForIntent(intentId, agentId) {
     const id = Number(agentId);
@@ -701,6 +787,13 @@ export class UsageSettledLedger {
         continue;
       }
       if (e.event === 'a2a_escrow' || deriveEvidence(e) === BOOK_EVIDENCE.A2A_ESCROW) {
+        rows.push(e);
+        continue;
+      }
+      const boardEvidence = deriveEvidence(e);
+      if (boardEvidence === BOOK_EVIDENCE.BOARD_STAMP
+        || boardEvidence === BOOK_EVIDENCE.BOARD_POST
+        || boardEvidence === BOOK_EVIDENCE.BOARD_OPS) {
         rows.push(e);
         continue;
       }

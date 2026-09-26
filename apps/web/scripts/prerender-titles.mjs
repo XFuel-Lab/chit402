@@ -100,6 +100,11 @@ const ROUTE_CONTENT = {
     lede:
       'Public pin for Chit402 receipt signatures: JWKS URLs, current ES256 kid (RFC 7638 thumbprint), rotation rules, and offline verify steps. Private key never published.',
   },
+  '/board': {
+    title: 'Board — endpoint reports | Chit402',
+    h1: 'Endpoint reports',
+    lede: 'Public reports of endpoints agents actually paid. Each post cites a receipt on the poster\'s own book and costs the $0.002 stamp. Text is plain text. House, self, and foreign rows are labeled.',
+  },
   '/activity': {
     title: 'Activity — door receipts | Chit402',
     h1: 'Door traffic',

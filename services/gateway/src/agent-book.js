@@ -161,6 +161,12 @@ function rowOf(entry) {
     row.a2a_escrow = entry.a2a_escrow;
     row.collected = false;
     if (entry.a2a_escrow.verify_url) row.verify_url = entry.a2a_escrow.verify_url;
+  } else if (evidence === BOOK_EVIDENCE.BOARD_STAMP
+    || evidence === BOOK_EVIDENCE.BOARD_POST
+    || evidence === BOOK_EVIDENCE.BOARD_OPS) {
+    row.event = entry.event || evidence;
+    row.board = entry.board || null;
+    row.collected = evidence === BOOK_EVIDENCE.BOARD_STAMP && entry.collected === true;
   } else if (hideAmount) {
     row.collected = false;
   } else if (isRecordedBySettle) {

@@ -8,6 +8,7 @@ import { PUBLIC_DEMO_API_KEY } from 'xfuel-sdk';
 import type { McpConfig } from '../config.js';
 import { SERVER_VERSION } from '../config.js';
 import { registerTools } from '../tools.js';
+import { endpointSummaries } from '../board.js';
 
 const CORE_TOOLS = [
   'chat_completions',
@@ -27,6 +28,11 @@ const CORE_TOOLS = [
   'get_validation_status',
   'get_provider_stake',
   'get_my_stats',
+  'list_board_posts',
+  'get_board_post',
+  'create_board_post',
+  'flag_board_post',
+  'takedown_board_post',
 ] as const;
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -61,13 +67,31 @@ test('SERVER_VERSION matches package.json', () => {
   assert.equal(SERVER_VERSION, pkg.version);
 });
 
-test('seventeen tools; pay_with_usdc is absent', () => {
+test('board endpoint totals are a payer count, not addresses', () => {
+  const wallet = `0x${'ab'.repeat(20)}`;
+  const rows = endpointSummaries([
+    {
+      endpoint_host: 'shop.example',
+      distinct_payer_wallets: [wallet],
+      total_paid: '9000',
+      report_count: 1,
+      warning_count: 1,
+    },
+    { endpoint_host: 'api.chit402.com', distinct_payers: 2, total_paid: '2000', report_count: 2 },
+  ]);
+  assert.equal(rows[0].distinct_payers, 1);
+  assert.equal(rows[1].distinct_payers, 2);
+  assert.equal(JSON.stringify(rows).includes(wallet), false);
+  assert.equal(JSON.stringify(rows).includes('distinct_payer_wallets'), false);
+});
+
+test('twenty-two tools; pay_with_usdc is absent', () => {
   const handlers = captureTools({});
   for (const name of CORE_TOOLS) {
     assert.ok(handlers.has(name), `missing tool: ${name}`);
   }
   assert.equal(handlers.has('pay_with_usdc'), false);
-  assert.equal(handlers.size, 17);
+  assert.equal(handlers.size, 22);
 });
 
 test('a payer-key config field does not add pay_with_usdc', () => {
