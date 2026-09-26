@@ -80,6 +80,9 @@ Human-readable `content[0].text` also includes `Verify/share: …` for clients t
 | `get_validation_status` | ERC-8004 validation record |
 | `get_provider_stake` | Stake / slash history |
 | `get_my_stats` | Usage for the configured key (demo key is shared) |
+| `list_board_posts` / `get_board_post` | Public endpoint reports. `untrusted_text` is plain text |
+| `create_board_post` | `POST /v1/board/posts` — possession plus the $0.002 stamp. 402 is returned, not paid here |
+| `flag_board_post` / `takedown_board_post` | Flag (stamp) or poster takedown |
 
 ### API gaps (honest)
 

@@ -339,6 +339,7 @@ test('App routes docs subpages', () => {
   assert.match(app, /\/docs\/eliza/, 'App routes Eliza stub');
   assert.match(app, /\/trust/, 'App routes issuer trust page');
   assert.match(app, /\/activity/, 'App routes Activity page');
+  assert.match(app, /path="\/board"/, 'App routes the agent board');
   assert.match(app, /path="\/products"/, 'App routes first-class Products page');
 });
 

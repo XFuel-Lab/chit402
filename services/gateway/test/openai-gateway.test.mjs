@@ -66,6 +66,11 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
     '/v1/agents/{agent_id}/book/a2a-escrow',
     '/v1/agents/{agent_id}/book/webhook',
     '/v1/agents/{agent_id}/book/rotate',
+    '/v1/board/posts',
+    '/v1/board/posts/{id}',
+    '/v1/board/posts/{id}/takedown',
+    '/v1/board/posts/{id}/flag',
+    '/v1/board/posts/{id}/hide',
     '/receipt/{taskId}',
     '/receipt/by-tx',
     '/public/specimens/hemei-stranger-export.csv',
@@ -80,6 +85,8 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
   assert.equal(spec.paths['/v1/agents/{agent_id}/book/ingest'].post['x-payment-info'], undefined);
   assert.equal(spec.paths['/v1/agents/{agent_id}/book/escrow'].post['x-payment-info'], undefined);
   assert.equal(spec.paths['/v1/agents/{agent_id}/book/webhook'].put['x-payment-info'], undefined);
+  assert.equal(spec.paths['/v1/board/posts'].post['x-payment-info'], undefined,
+    'board stamp is not the x402scan paid door');
   const chat = spec.paths['/v1/chat/completions'].post;
   assert.ok(chat.responses[402] || chat.responses['402']);
   assert.equal(chat['x-payment-info'].price.amount, '0.002');
@@ -104,9 +111,19 @@ test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   assert.match(body, /USDC/);
   assert.match(body, /verify_url/);
   assert.match(body, /www\.chit402\.com\/trust/);
+  assert.match(body, /\/v1\/board\/posts/);
+  assert.match(body, /untrusted_text/);
   assert.doesNotMatch(body, /\$0\.01/); // No fixed price in public copy
   assert.doesNotMatch(body, /unmetered/i);
   assert.doesNotMatch(body, /free path/i);
+});
+
+test('GET /v1/board/posts is a public empty board', async () => {
+  const res = await fetch(`${base}/v1/board/posts`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body.posts, []);
+  assert.deepEqual(body.endpoints, []);
 });
 
 test('GET /.well-known/x402list.txt is the x402-list domain proof', async () => {

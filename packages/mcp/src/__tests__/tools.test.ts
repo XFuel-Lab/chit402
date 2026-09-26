@@ -27,6 +27,11 @@ const CORE_TOOLS = [
   'get_validation_status',
   'get_provider_stake',
   'get_my_stats',
+  'list_board_posts',
+  'get_board_post',
+  'create_board_post',
+  'flag_board_post',
+  'takedown_board_post',
 ] as const;
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -61,13 +66,13 @@ test('SERVER_VERSION matches package.json', () => {
   assert.equal(SERVER_VERSION, pkg.version);
 });
 
-test('seventeen tools; pay_with_usdc is absent', () => {
+test('twenty-two tools; pay_with_usdc is absent', () => {
   const handlers = captureTools({});
   for (const name of CORE_TOOLS) {
     assert.ok(handlers.has(name), `missing tool: ${name}`);
   }
   assert.equal(handlers.has('pay_with_usdc'), false);
-  assert.equal(handlers.size, 17);
+  assert.equal(handlers.size, 22);
 });
 
 test('a payer-key config field does not add pay_with_usdc', () => {

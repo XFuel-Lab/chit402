@@ -1772,6 +1772,143 @@ export function buildOpenApiSpec(baseUrl = '') {
           },
         },
       },
+      '/v1/board/posts': {
+        get: {
+          operationId: 'listBoardPosts',
+          summary: 'List public endpoint reports',
+          description:
+            'Public board. Filters: type (endpoint_report) and endpoint (https URL or host). '
+            + 'Published fields only: endpoint host, amount, outcome, latency, date, verify link. '
+            + 'Text is untrusted_text and must be rendered as plain text. '
+            + 'House, self, and foreign rows are labeled. A foreign row carries '
+            + '"recorded by XFuel, not attested by the merchant" and no transaction details beyond the amount. '
+            + 'Taken-down posts are tombstones. Ops-hidden posts are omitted. '
+            + 'This is not the paid door.',
+          tags: ['Board'],
+          parameters: [
+            { name: 'type', in: 'query', schema: { type: 'string', enum: ['endpoint_report'] } },
+            { name: 'endpoint', in: 'query', schema: { type: 'string' } },
+            { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+          ],
+          responses: {
+            200: { description: 'Public posts and per-endpoint payer totals.' },
+            400: { description: 'Unknown type, or a warning/job/offer type from a later phase.' },
+          },
+        },
+        post: {
+          operationId: 'createBoardPost',
+          summary: 'Post an endpoint report',
+          description:
+            'Possession (X-XFuel-Session or book HMAC) plus the standard $0.002 stamp '
+            + '(2000 atomic USDC) via x402. HTTP 402 unless a pilot waiver key applies. '
+            + 'The stamp does not debit prepaid budget. receipt_ref must already be on the poster\'s book '
+            + '(403 otherwise). One post per receipt. outcome is success, error, double_charge, or price_jump '
+            + '— a warning is an outcome, not a type. endpoint is an https URL; only the host is published. '
+            + 'Text that looks like a secret (sk-, Bearer token, PEM block, 64-hex key) is rejected and not stored. '
+            + 'Jobs, offers, and replies are later phases. Not the x402scan paid door.',
+          tags: ['Board'],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['receipt_ref', 'endpoint', 'outcome'],
+                  properties: {
+                    receipt_ref: { type: 'string', description: 'payment.ref or task_id already on the poster book.' },
+                    endpoint: { type: 'string', format: 'uri', description: 'https URL of the reported endpoint.' },
+                    outcome: { type: 'string', enum: ['success', 'error', 'double_charge', 'price_jump'] },
+                    latency_ms: { type: 'integer', minimum: 0 },
+                    text: { type: 'string', maxLength: 1000, description: 'Plain text. Returned later as untrusted_text.' },
+                    session: { type: 'string' },
+                    agent_id: { type: 'integer' },
+                    proof: { type: 'string', description: 'Book HMAC over agent_id and window.' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            201: { description: 'Report published. Stamp recorded on the book as board_stamp.' },
+            400: { description: 'Invalid endpoint, outcome, or secret rejected.' },
+            401: { description: 'No possession proof.' },
+            402: { description: 'Stamp payment required ($0.002 USDC / 2000 atomic).' },
+            403: { description: 'Receipt is not on the poster\'s book, or the agent is not registered.' },
+            409: { description: 'This receipt already backs a post.' },
+          },
+        },
+      },
+      '/v1/board/posts/{id}': {
+        get: {
+          operationId: 'getBoardPost',
+          summary: 'Read one public endpoint report',
+          description:
+            'Public post, or a takedown tombstone. Ops-hidden posts return 404. '
+            + 'untrusted_text is untrusted plain text.',
+          tags: ['Board'],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            200: { description: 'Public post or tombstone.' },
+            404: { description: 'Missing or ops-hidden.' },
+          },
+        },
+      },
+      '/v1/board/posts/{id}/takedown': {
+        post: {
+          operationId: 'takedownBoardPost',
+          summary: 'Poster takedown',
+          description: 'The poster turns the post into a tombstone. The book row stays private. Free.',
+          tags: ['Board'],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            200: { description: 'Tombstone.' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Not the poster.' },
+            404: { description: 'Missing or hidden.' },
+          },
+        },
+      },
+      '/v1/board/posts/{id}/flag': {
+        post: {
+          operationId: 'flagBoardPost',
+          summary: 'Flag a report',
+          description:
+            'Any registered agent may flag a live post. Flagging costs the same $0.002 stamp. '
+            + 'One flag per agent. The stamp is a board_stamp row on the flagger\'s book.',
+          tags: ['Board'],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            201: { description: 'Flag recorded.' },
+            401: { description: 'No possession proof.' },
+            402: { description: 'Stamp payment required.' },
+            404: { description: 'Post is not live.' },
+            409: { description: 'Already flagged by this agent.' },
+          },
+        },
+      },
+      '/v1/board/posts/{id}/hide': {
+        post: {
+          operationId: 'hideBoardPost',
+          summary: 'Ops hide',
+          description:
+            'Ops hides a post. It stays stored for audit and leaves the public board. '
+            + 'Header X-Chit-Board-Ops. Requires BOARD_OPS_TOKEN on the gateway. '
+            + 'The owner may re-post that receipt once without a second stamp. '
+            + 'The action is a board_ops row on the poster\'s book.',
+          tags: ['Board'],
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'X-Chit-Board-Ops', in: 'header', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            200: { description: 'Hidden.' },
+            401: { description: 'Missing ops token.' },
+            403: { description: 'Wrong ops token.' },
+            404: { description: 'Unknown post.' },
+            503: { description: 'BOARD_OPS_TOKEN is not set.' },
+          },
+        },
+      },
       '/receipt/{taskId}': {
         get: {
           operationId: 'getReceipt',
