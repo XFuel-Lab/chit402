@@ -28,7 +28,7 @@ import {
   extractImageUrl,
 } from './edgecloud-infer.js';
 import { inferAkashML, akashmlApiKey } from './akashml-infer.js';
-import { inferOpenRouter, openrouterApiKey } from './openrouter-infer.js';
+import { inferOpenRouter, openrouterApiKey, scheduleOpenRouterCostReconcile } from './openrouter-infer.js';
 import { capOpenRouterOutputTokens } from './openrouter-pricing.js';
 import { preflightBeforeSettle } from './route-preflight.js';
 import { markRefundOwed } from './refund-owed.js';
@@ -599,6 +599,7 @@ async function runChatInference({
         provider: 'openrouter',
         mock: false,
         resolvedModel,
+        generationId: result.generationId,
         raw: result.raw,
       };
     }
@@ -1062,6 +1063,18 @@ async function accountForCogs({ task, modelId, usage, provider }) {
   }
 
   return measured ?? 0n;
+}
+
+/**
+ * OpenRouter's generation bill arrives after the completion. Start the lookup
+ * and return. The chat response is not held for it. A later GET /receipt
+ * reads the task once the figures land.
+ */
+function noteOpenRouterGeneration(task, inference) {
+  const fromRaw = inference?.raw?.id;
+  const id = inference?.generationId || (typeof fromRaw === 'string' ? fromRaw : null);
+  if (!id || inference?.provider !== 'openrouter' || !task) return;
+  scheduleOpenRouterCostReconcile({ id, task });
 }
 
 // ─── Verification receipt ─────────────────────────────────────────────────────
@@ -1981,6 +1994,7 @@ export function registerOpenAIRoutes(app, {
     // Must precede buildReceipt — the receipt reads provider_cogs off task.meta.
     // A mock cost us nothing, so it neither burns float nor spends the allowance.
     const cogs = mock ? 0n : await accountForCogs({ task, modelId: echoModel, usage: counts, provider });
+    noteOpenRouterGeneration(task, inference);
     if (freeBucket) recordFreeSpend(freeBucket, cogs);
     const proveAllowed = privacyCtx.privateAttest || settlementProofAllowed({
       apiKey,
@@ -2428,6 +2442,7 @@ export function registerOpenAIRoutes(app, {
 
     // Account for COGS
     const cogs = mock ? 0n : await accountForCogs({ task, modelId: echoModel, usage: counts, provider });
+    noteOpenRouterGeneration(task, inference);
     if (freeBucket) recordFreeSpend(freeBucket, cogs);
     const proveAllowed = settlementProofAllowed({
       apiKey: req.headers['x-api-key'],

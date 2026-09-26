@@ -83,7 +83,10 @@ const upstream = await startServer((req, res) => {
   upstreamHits.push({
     url,
     referer: req.headers['http-referer'],
-    title: req.headers['x-title'],
+    title: req.headers['x-openrouter-title'],
+    titleCompat: req.headers['x-title'],
+    categories: req.headers['x-openrouter-categories'],
+    visibility: req.headers['x-openrouter-app-visibility'],
   });
   const send = (status, obj) => {
     res.statusCode = status;
@@ -92,13 +95,19 @@ const upstream = await startServer((req, res) => {
   };
   if (url.endsWith('/models')) return send(200, LIST);
   if (url.endsWith('/key')) return send(keyStatus, keyStatus === 200 ? { data: { label: 'test' } } : { error: 'down' });
-  if (url.endsWith('/chat/completions')) {
-    if (chatStatus !== 200) return send(chatStatus, { error: { message: 'upstream down' } });
-    return send(200, {
-      choices: [{ message: { role: 'assistant', content: 'pong' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
-    });
-  }
+    if (url.includes('/generation')) {
+      return send(200, {
+        data: { id: 'gen-http-1', total_cost: '0.0000042', upstream_inference_cost: '0.0000039' },
+      });
+    }
+    if (url.endsWith('/chat/completions')) {
+      if (chatStatus !== 200) return send(chatStatus, { error: { message: 'upstream down' } });
+      return send(200, {
+        id: 'gen-http-1',
+        choices: [{ message: { role: 'assistant', content: 'pong' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
+      });
+    }
   return send(500, { error: 'unexpected', url });
 });
 
@@ -126,7 +135,7 @@ const { createApp } = await import('../src/server.js');
 const { initAIListener } = await import('../src/ai-listener.js');
 const { resetFloatManagerForTests } = await import('../src/provider-float.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
-const { resetOpenRouterPreflightCache } = await import('../src/openrouter-infer.js');
+const { resetOpenRouterPreflightCache, openRouterReconcileSettled } = await import('../src/openrouter-infer.js');
 const { quoteResolved } = await import('../src/x402-server.js');
 
 let server;
@@ -255,7 +264,24 @@ test('gateway quotes, fails closed before settle, and receipts a mocked OpenRout
     assert.ok(hit, `missing upstream ${suffix}`);
     assert.equal(hit.referer, 'https://chit402.com');
     assert.equal(hit.title, 'Chit402');
+    assert.equal(hit.titleCompat, 'Chit402');
+    assert.equal(hit.categories, 'cloud-agent');
+    assert.equal(hit.visibility, undefined);
   }
+  assert.equal(paidBody.xfuel.provider_cogs.openrouter_generation, undefined);
+  await openRouterReconcileSettled();
+  const receiptRes = await fetch(`${base}/receipt/${paidBody.xfuel.task_id}?format=json`);
+  const receipt = await receiptRes.json();
+  assert.equal(receiptRes.status, 200, JSON.stringify(receipt));
+  assert.equal(receipt.provider_cogs.actual, '5');
+  assert.equal(receipt.provider_cogs.openrouter_generation.id, 'gen-http-1');
+  assert.equal(receipt.provider_cogs.openrouter_generation.total_cost, '0.0000042');
+  assert.equal(receipt.provider_cogs.openrouter_generation.upstream_inference_cost, '0.0000039');
+  assert.equal(receipt.provider_cogs.openrouter_generation.currency, 'USD');
+  const generationHit = upstreamHits.find((h) => h.url.includes('/generation'));
+  assert.ok(generationHit);
+  assert.equal(generationHit.categories, 'cloud-agent');
+  assert.equal(generationHit.visibility, undefined);
 
   const streamed = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',

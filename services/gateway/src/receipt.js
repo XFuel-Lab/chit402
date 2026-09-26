@@ -1178,6 +1178,7 @@ export function lineageOf(task) {
 export function providerCogsOf(task) {
   const c = task?.meta?.providerCogs || task?.providerCogs || null;
   if (!c || typeof c !== 'object') return null;
+  const generation = openRouterGenerationOf(c);
   return {
     provider: c.provider || null,
     float_id: c.float_id || c.floatId || null,
@@ -1194,6 +1195,25 @@ export function providerCogsOf(task) {
     basis: c.basis || null,
     usd_mark: c.usd_mark != null ? String(c.usd_mark) : (c.usdMark != null ? String(c.usdMark) : null),
     below_low_water: !!c.below_low_water || !!c.belowLowWater,
+    ...(generation ? { openrouter_generation: generation } : {}),
+  };
+}
+
+/**
+ * OpenRouter's own bill for this completion (USD), filled in after the response
+ * when GET /generation answers. Not part of the signed `actual` figure.
+ */
+function openRouterGenerationOf(cogs) {
+  const gen = cogs?.openrouter_generation || cogs?.openrouterGeneration || null;
+  if (!gen || typeof gen !== 'object') return null;
+  const total = gen.total_cost != null ? String(gen.total_cost) : null;
+  const upstream = gen.upstream_inference_cost != null ? String(gen.upstream_inference_cost) : null;
+  if (total == null && upstream == null) return null;
+  return {
+    id: gen.id != null ? String(gen.id) : null,
+    total_cost: total,
+    upstream_inference_cost: upstream,
+    currency: 'USD',
   };
 }
 
@@ -1938,6 +1958,12 @@ export function renderReceiptHtml(receipt) {
         ${row('Provider', esc(cogsProvider) || '<span class="muted">—</span>')}
         ${cogs.float_id ? row('Float', esc(cogs.float_id)) : ''}
         ${row('Measured cost', usdcCell(cogs.actual))}
+        ${cogs.openrouter_generation?.total_cost != null
+          ? row('OpenRouter total', esc(`$${cogs.openrouter_generation.total_cost}`))
+          : ''}
+        ${cogs.openrouter_generation?.upstream_inference_cost != null
+          ? row('Upstream inference', esc(`$${cogs.openrouter_generation.upstream_inference_cost}`))
+          : ''}
         ${cogs.estimated != null && cogs.estimated !== cogs.actual ? row('Quoted estimate', usdcCell(cogs.estimated)) : ''}
         ${cogs.basis ? row('Basis', esc(cogs.basis)) : ''}
         ${cogs.below_low_water ? row('Float', '<span class="badge pending">at/below low water — refill</span>') : ''}

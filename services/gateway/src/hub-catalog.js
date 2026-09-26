@@ -14,7 +14,7 @@
  *   AKASHML_API_KEY=…          — optional; /v1/models may work without it
  *   OPENROUTER_API_KEY=…       — required for the OpenRouter hub; absent = disabled
  *   OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
- *   OPENROUTER_REFERER / OPENROUTER_TITLE — attribution on every OpenRouter request
+ *   OPENROUTER_REFERER / OPENROUTER_TITLE — attribution (also X-Title, categories cloud-agent)
  *   HUB_CATALOG_OFFLINE=true   — force seed (tests)
  */
 

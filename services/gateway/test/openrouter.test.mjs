@@ -17,7 +17,14 @@ import { rateForModel, costOfUsage, estimateCogsFromRequest, measureCogs } from 
 import { quoteOpenRouterFromCogs, capOpenRouterOutputTokens, OPENROUTER_MAX_OUTPUT_TOKENS } from '../src/openrouter-pricing.js';
 import { quoteResolved } from '../src/x402-server.js';
 import { probeModels, resetHealth, healthOf } from '../src/provider-health.js';
-import { inferOpenRouter, preflightOpenRouter, resetOpenRouterPreflightCache } from '../src/openrouter-infer.js';
+import {
+  inferOpenRouter,
+  preflightOpenRouter,
+  resetOpenRouterPreflightCache,
+  scheduleOpenRouterCostReconcile,
+  openRouterReconcileSettled,
+} from '../src/openrouter-infer.js';
+import { providerCogsOf, buildReceipt } from '../src/receipt.js';
 
 /** Captured 2026-09-26 from GET https://openrouter.ai/api/v1/models (public list). */
 const GPT_4O_MINI = {
@@ -351,8 +358,7 @@ test('probeModels strips the openrouter prefix and sends attribution', async () 
     fetchFn,
   });
   assert.deepEqual(seen.map((s) => s.model), ['openai/gpt-4o-mini']);
-  assert.equal(seen[0].headers['HTTP-Referer'], 'https://chit402.com');
-  assert.equal(seen[0].headers['X-Title'], 'Chit402');
+  assertAttribution(seen[0].headers);
   assert.equal(healthOf('openrouter/openai/gpt-4o-mini').status, 'available');
 });
 
@@ -376,8 +382,7 @@ test('every OpenRouter request carries attribution headers, overridable by env',
     fetchFn,
   });
   assert.equal(completion.ok, true);
-  assert.equal(hits[0].headers['HTTP-Referer'], 'https://chit402.com');
-  assert.equal(hits[0].headers['X-Title'], 'Chit402');
+  assertAttribution(hits[0].headers);
 
   resetOpenRouterPreflightCache();
   const pre = await preflightOpenRouter({
@@ -387,8 +392,7 @@ test('every OpenRouter request carries attribution headers, overridable by env',
     force: true,
   });
   assert.equal(pre.ok, true);
-  assert.equal(hits[1].headers['HTTP-Referer'], 'https://chit402.com');
-  assert.equal(hits[1].headers['X-Title'], 'Chit402');
+  assertAttribution(hits[1].headers);
 
   await getHubCatalog({
     forceRefresh: true,
@@ -397,8 +401,7 @@ test('every OpenRouter request carries attribution headers, overridable by env',
     openrouterBase: 'http://openrouter.test/api/v1',
   });
   const modelsHit = hits.find((h) => h.url.includes('openrouter.test') && h.url.endsWith('/models'));
-  assert.equal(modelsHit.headers['HTTP-Referer'], 'https://chit402.com');
-  assert.equal(modelsHit.headers['X-Title'], 'Chit402');
+  assertAttribution(modelsHit.headers);
 
   process.env.OPENROUTER_REFERER = 'https://example.test';
   process.env.OPENROUTER_TITLE = 'Example';
@@ -411,7 +414,78 @@ test('every OpenRouter request carries attribution headers, overridable by env',
     fetchFn,
   });
   assert.equal(hits[0].headers['HTTP-Referer'], 'https://example.test');
+  assert.equal(hits[0].headers['X-OpenRouter-Title'], 'Example');
   assert.equal(hits[0].headers['X-Title'], 'Example');
+  assert.equal(hits[0].headers['X-OpenRouter-Categories'], 'cloud-agent');
+  assert.equal(hits[0].headers['X-OpenRouter-App-Visibility'], undefined);
+});
+
+function assertAttribution(headers) {
+  assert.equal(headers['HTTP-Referer'], 'https://chit402.com');
+  assert.equal(headers['X-OpenRouter-Title'], 'Chit402');
+  assert.equal(headers['X-Title'], 'Chit402');
+  assert.equal(headers['X-OpenRouter-Categories'], 'cloud-agent');
+  assert.equal(Object.hasOwn(headers, 'X-OpenRouter-App-Visibility'), false);
+}
+
+test('generation cost is recorded on the receipt after the response, without blocking it', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const fetchFn = async (url, init) => {
+    assert.match(String(url), /\/generation\?id=gen-1$/);
+    assertAttribution(init.headers);
+    await gate;
+    return jsonResponse(200, {
+      data: { id: 'gen-1', total_cost: '0.0015', upstream_inference_cost: '0.0012' },
+    });
+  };
+  const task = {
+    taskId: 'xfuel-gen-1',
+    status: 'completed',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    intent: { type: 'inference_request', modelId: 'openrouter/openai/gpt-4o-mini', paymentRail: 'usdc' },
+    result: { provider: 'openrouter', model: 'openrouter/openai/gpt-4o-mini' },
+    meta: { providerCogs: { provider: 'openrouter', actual: '5', basis: 'measured', currency: 'USDC' } },
+  };
+  const job = scheduleOpenRouterCostReconcile({
+    id: 'gen-1',
+    task,
+    apiKey: 'test-or-key',
+    baseUrl: 'http://openrouter.test/api/v1',
+    fetchFn,
+  });
+  assert.equal(task.meta.providerCogs.openrouter_generation, undefined);
+  const early = buildReceipt(task, { persistSignature: false });
+  assert.equal(early.provider_cogs.openrouter_generation, undefined);
+  assert.equal(early.provider_cogs.actual, '5');
+  release();
+  await job;
+  await openRouterReconcileSettled();
+  const cogs = providerCogsOf(task);
+  assert.equal(cogs.actual, '5');
+  assert.equal(cogs.basis, 'measured');
+  assert.deepEqual(cogs.openrouter_generation, {
+    id: 'gen-1',
+    total_cost: '0.0015',
+    upstream_inference_cost: '0.0012',
+    currency: 'USD',
+  });
+  const later = buildReceipt(task, { persistSignature: false });
+  assert.equal(later.provider_cogs.actual, '5');
+  assert.equal(later.provider_cogs.openrouter_generation.total_cost, '0.0015');
+  assert.equal(later.provider_cogs.openrouter_generation.upstream_inference_cost, '0.0012');
+
+  const missed = { meta: { providerCogs: { provider: 'openrouter', actual: '5', basis: 'measured' } } };
+  await scheduleOpenRouterCostReconcile({
+    id: 'gen-missing',
+    task: missed,
+    apiKey: 'test-or-key',
+    baseUrl: 'http://openrouter.test/api/v1',
+    fetchFn: async () => jsonResponse(404, { error: { message: 'not ready' } }),
+  });
+  assert.equal(missed.meta.providerCogs.openrouter_generation, undefined);
+  assert.equal(missed.meta.providerCogs.actual, '5');
 });
 
 

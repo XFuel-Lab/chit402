@@ -15,18 +15,35 @@ import { capOpenRouterOutputTokens } from './openrouter-pricing.js';
 const DEFAULT_BASE = 'https://openrouter.ai/api/v1';
 const DEFAULT_REFERER = 'https://chit402.com';
 const DEFAULT_TITLE = 'Chit402';
+/** Marketplace category from https://openrouter.ai/docs/app-attribution */
+const DEFAULT_CATEGORIES = 'cloud-agent';
 
 /**
  * Attribution OpenRouter asks routers to send on every request.
- * `OPENROUTER_REFERER` / `OPENROUTER_TITLE` override the defaults.
+ * `OPENROUTER_REFERER` / `OPENROUTER_TITLE` override the URL and display name.
+ *
+ * `X-OpenRouter-Title` is the current name header. `X-Title` stays for
+ * back-compat. `X-OpenRouter-App-Visibility` is never sent: omitting it is
+ * what lists the app. Sending `hidden` would keep Chit402 off the rankings.
  */
 export function openrouterAttributionHeaders() {
   const referer = String(process.env.OPENROUTER_REFERER || '').trim() || DEFAULT_REFERER;
   const title = String(process.env.OPENROUTER_TITLE || '').trim() || DEFAULT_TITLE;
   return {
     'HTTP-Referer': referer,
+    'X-OpenRouter-Title': title,
     'X-Title': title,
+    'X-OpenRouter-Categories': DEFAULT_CATEGORIES,
   };
+}
+
+/** OpenRouter publishes generation costs in USD. Keep the printed figure. */
+function usdCostString(value) {
+  if (value == null || value === '') return null;
+  const text = typeof value === 'string' ? value.trim() : null;
+  const n = text != null ? Number(text) : Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return text != null ? text : String(n);
 }
 
 /** @returns {string} key, or '' when the hub is disabled */
@@ -148,6 +165,7 @@ export async function inferOpenRouter({
       toolCalls,
       raw: data,
       usage: data?.usage ?? null,
+      generationId: typeof data?.id === 'string' && data.id ? data.id : null,
       finish_reason: choice?.finish_reason ?? null,
       provider: 'openrouter',
       elapsed_ms: elapsed,
@@ -211,6 +229,99 @@ export async function preflightOpenRouter({
   } catch (err) {
     return { ok: false, reason: 'network_error', detail: err.message };
   }
+}
+
+/**
+ * OpenRouter's billed cost for one completion.
+ * `GET /api/v1/generation?id=<id>` → `total_cost` and `upstream_inference_cost` (USD).
+ * A miss returns null. Callers must not fail the completion on that.
+ *
+ * @param {object} opts
+ * @param {string} opts.id generation id from the completion (`gen-…`)
+ */
+export async function fetchOpenRouterGeneration({
+  id,
+  apiKey = openrouterApiKey(),
+  baseUrl = openrouterBaseUrl(),
+  fetchFn = globalThis.fetch,
+} = {}) {
+  if (!id || !apiKey) return null;
+  const base = String(baseUrl).replace(/\/$/, '');
+  const url = `${base}/generation?id=${encodeURIComponent(id)}`;
+  const res = await fetchFn(url, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      ...openrouterAttributionHeaders(),
+    },
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!res.ok) return null;
+  const body = typeof res.json === 'function' ? await res.json() : null;
+  const data = body?.data && typeof body.data === 'object' ? body.data : body;
+  const total = usdCostString(data?.total_cost);
+  const upstream = usdCostString(data?.upstream_inference_cost);
+  if (total == null && upstream == null) return null;
+  return {
+    id: String(id),
+    total_cost: total,
+    upstream_inference_cost: upstream,
+  };
+}
+
+/**
+ * Attach a generation bill onto the task the receipt is built from.
+ * Does not replace `provider_cogs.actual` (the signed token measurement).
+ * @returns {boolean}
+ */
+export function applyOpenRouterGenerationCost(task, generation) {
+  if (!task || !generation) return false;
+  const total = usdCostString(generation.total_cost);
+  const upstream = usdCostString(generation.upstream_inference_cost);
+  if (total == null && upstream == null) return false;
+  task.meta = task.meta || {};
+  const prev = task.meta.providerCogs && typeof task.meta.providerCogs === 'object'
+    ? task.meta.providerCogs
+    : { provider: 'openrouter', currency: 'USDC' };
+  task.meta.providerCogs = {
+    ...prev,
+    openrouter_generation: {
+      id: generation.id ? String(generation.id) : null,
+      total_cost: total,
+      upstream_inference_cost: upstream,
+      currency: 'USD',
+    },
+  };
+  task.updatedAt = Date.now();
+  return true;
+}
+
+const _reconcileJobs = new Set();
+
+/** Tests wait for in-flight lookups. The request path does not. */
+export function openRouterReconcileSettled() {
+  return Promise.allSettled([..._reconcileJobs]);
+}
+
+/**
+ * Look up the generation bill and write it onto the task.
+ * Returns the job and does not need to be awaited — a failure is a log line.
+ */
+export function scheduleOpenRouterCostReconcile({
+  id, task, apiKey, baseUrl, fetchFn,
+} = {}) {
+  const job = (async () => {
+    try {
+      const cost = await fetchOpenRouterGeneration({ id, apiKey, baseUrl, fetchFn });
+      if (cost) applyOpenRouterGenerationCost(task, cost);
+    } catch (err) {
+      logger.warn({ err: err.message, id }, 'openrouter: generation cost reconcile skipped');
+    }
+  })();
+  _reconcileJobs.add(job);
+  job.finally(() => _reconcileJobs.delete(job));
+  return job;
 }
 
 export default inferOpenRouter;
