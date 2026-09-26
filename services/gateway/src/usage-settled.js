@@ -969,7 +969,13 @@ export function markArrivalUnverified(ledger, taskId, agentId) {
  *   parentRef?: string|null,
  *   intentId?: string|null,
  *   attemptIndex?: number|null,
+ *   closeSettle?: boolean,
+ *   noteReplay?: boolean,
  * }} deps
+ * `closeSettle` is the response-side write of the same paid call that already
+ * appended a settle-time row. That close is the first collect, not a replay.
+ * `noteReplay: false` skips another replay_events entry when this request's
+ * settle write already recorded one.
  */
 export function recordCollectedSpend(receipt, {
   ledger,
@@ -979,6 +985,8 @@ export function recordCollectedSpend(receipt, {
   parentRef = null,
   intentId = null,
   attemptIndex = null,
+  closeSettle = false,
+  noteReplay = true,
 } = {}) {
   if (!ledger || !registry || typeof registry.allocate !== 'function') {
     return { ok: false, reason: 'ledger and registry.allocate required', code: 'misconfigured' };
@@ -993,7 +1001,29 @@ export function recordCollectedSpend(receipt, {
     if (ingress) {
       ledger._applyArrival(existing, ingress);
     }
-    noteIdempotentReplay(existing);
+    // Paid /v1 writes the book row at x402 settle (before inference), then
+    // records the same task_id + payment.ref again when the response is built.
+    // That second write is this call finishing. It is not a client replay of
+    // its own payment — replay_of must not point at this task_id.
+    const closingOwnSettle = closeSettle === true
+      && String(existing.task_id) === String(receipt.task_id)
+      && existing.recorded_by === 'settle'
+      && existing.fulfillment_closed !== true;
+    if (closingOwnSettle) {
+      existing.fulfillment_closed = true;
+      const identity = typeof registry.get === 'function' ? registry.get(existing.agent_id) : null;
+      return {
+        ok: true,
+        entry: existing,
+        agent_id: existing.agent_id,
+        session: identity?.session || null,
+        duplicate: true,
+        idempotent_replay: false,
+        settlement_status: SETTLEMENT_STATUS.SETTLED,
+        replay_of: null,
+      };
+    }
+    if (noteReplay !== false) noteIdempotentReplay(existing);
     const identity = typeof registry.get === 'function' ? registry.get(existing.agent_id) : null;
     return {
       ok: true,

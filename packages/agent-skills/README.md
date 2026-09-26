@@ -19,6 +19,7 @@ Chat completions drop-in: point `baseURL` at `${XFUEL_API_URL}/v1` — see [docs
 | `xfuel-route-compute` | Router / provider availability |
 | `xfuel-relay-proof-crosschain` | Hyperlane relay to Bittensor EVM |
 | `xfuel-govern-vexf` | veXF lock / proposals / votes |
+| `chit402-cite-1f916` | Pay Chit over x402 and cite the receipt on a 1F916 submission |
 
 Shared reference: [`_shared/reference/`](./_shared/reference/). Skills are REST-only and never hold private keys.
 

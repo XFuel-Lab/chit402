@@ -85,6 +85,16 @@ Buyer-only usage: authenticated `GET /stats/me` (API key hash filter).
 - Optional HTML: `?format=auditor&view=html`
 - Override policy: `AUDITOR_POLICY_JSON` env
 
+`in_policy` is the rollup a third party should read:
+
+| value | meaning |
+|---|---|
+| `true` | Every applicable check passed |
+| `false` | At least one applicable check failed (fee over cap, rail not allowed, binding mismatch, or a privacy rule that applies) |
+| `"no_policy"` | No check applied |
+
+`checks.binding_ok` and `checks.privacy_vendor_blind` use the same three values. `"no_policy"` (not `false`) means there was nothing to evaluate — a normal paid receipt has no SP1 principal binding and no Private Desk mode. That is not a failed receipt. `false` is only a real miss: binding present and `matches !== true`, fee above `max_fee_bps`, rail outside `allowed_rails`, vendor-blind when `private_spend_ok` is false, or not vendor-blind when `require_vendor_blind` is true. HTML shows "in policy", "policy check failed", or "no policy to check" to match.
+
 SDK: `client.getAuditorExport(taskId)`.
 
 ## Trust honesty

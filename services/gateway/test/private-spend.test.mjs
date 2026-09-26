@@ -137,6 +137,8 @@ test('buildAuditorExport: redacts content; reports policy', async () => {
   const exp = buildAuditorExport(receipt);
   assert.equal(exp.schema, 'xfuel.auditor_export.v1');
   assert.equal(exp.in_policy, true);
+  assert.equal(exp.checks.privacy_vendor_blind, true);
+  assert.equal(exp.checks.binding_ok, 'no_policy');
   assert.equal(exp.totals.fee_bps, 50);
   assert.ok(exp.redacted.includes('prompts'));
   assert.ok(!JSON.stringify(exp).includes('should never appear'));

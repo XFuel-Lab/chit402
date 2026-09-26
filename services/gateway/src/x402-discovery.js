@@ -197,12 +197,16 @@ const SETTLEMENT_REPLAY_FIELDS = {
     type: 'string',
     enum: ['settled', 'idempotent_replay'],
     description:
-      'Treasury settlement outcome. idempotent_replay = same payment.ref / receipt resubmitted; '
-      + 'one canonical row, no second USDC charge.',
+      'Treasury settlement outcome. idempotent_replay = a later request resubmitted the same '
+      + 'payment.ref / receipt; one canonical row, no second USDC charge. The settle-time book '
+      + 'row written earlier in the same call is not a replay.',
   },
   idempotent_replay: {
     type: 'boolean',
-    description: 'True when this request matched an existing settled row (replay, not a new collect).',
+    description:
+      'True when this request matched an existing settled row (replay, not a new collect). '
+      + 'False on the call that first collected the payment, including when that call closes '
+      + 'its own settle-time book row.',
   },
   replay_of: {
     type: ['string', 'null'],

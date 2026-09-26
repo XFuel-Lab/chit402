@@ -1142,7 +1142,10 @@ function setReceiptHeaders(res, receipt) {
  * Session is possession for GET|POST book — returned once here, not on public GET /receipt.
  * Do not wait for POST /v1/agents/register. Reuse agent_id when session is presented.
  */
-function withBookSpend(receipt, { ledger, registry, agentId = null, intentId = null, attemptIndex = null, payer = null } = {}) {
+function withBookSpend(receipt, {
+  ledger, registry, agentId = null, intentId = null, attemptIndex = null, payer = null,
+  settleRecord = null,
+} = {}) {
   if (!ledger || !registry || !receipt?.payment?.collected || !receipt?.payment?.ref) {
     return receipt;
   }
@@ -1158,6 +1161,10 @@ function withBookSpend(receipt, { ledger, registry, agentId = null, intentId = n
       intentId,
       attemptIndex,
       payer: settledPayer,
+      // Settle already appended this task. Closing that row is the first
+      // collect. A replay event was already noted when settleRecord says so.
+      closeSettle: true,
+      noteReplay: settleRecord?.idempotent_replay !== true,
     });
     if (!recorded.ok) {
       logger.warn(
@@ -1272,6 +1279,7 @@ function respondPaidV1Failure(res, {
   statusCode = 503, message, code = 'inference_failed',
   requestedModel = null, resolvedModel = null,
   ledger = null, registry = null, agentId = null, req = null,
+  settleRecord = null,
 }) {
   if (task) {
     task.status = 'failed';
@@ -1303,6 +1311,7 @@ function respondPaidV1Failure(res, {
     agentId: reuseId,
     intentId: intentFields.intent_id,
     attemptIndex: intentFields.attempt_index,
+    settleRecord,
   });
   setReceiptHeaders(res, receipt);
   return res.status(statusCode).json({
@@ -1442,7 +1451,7 @@ export function registerOpenAIRoutes(app, {
   app.use('/v1/audio', ...authChain);
   app.use('/v1/chat', ...baseChain);
 
-  const bookSpend = (receipt, req = null) => {
+  const bookSpend = (receipt, req = null, settleRecord = null) => {
     const identity = resolveBookableAgent(req, registry);
     const agentId = identity?.agent_id ?? null;
     const intentMeta = req ? extractIntentMeta(req) : {};
@@ -1453,6 +1462,7 @@ export function registerOpenAIRoutes(app, {
       agentId,
       intentId: intentFields.intent_id,
       attemptIndex: intentFields.attempt_index,
+      settleRecord,
     });
   };
 
@@ -1598,6 +1608,7 @@ export function registerOpenAIRoutes(app, {
       || (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim()
       || null;
     let paidTask = null;
+    let settleRecord = null;
 
     const attestPreflight = attestPreflightError(privacyCtx, {
       proverConfigured: !!getSP1Prover(),
@@ -1671,7 +1682,7 @@ export function registerOpenAIRoutes(app, {
           session: boundSession,
         }));
         await attachQuotedPricing(paidTask, req, privacyCtx);
-        writeSettleBookRow({
+        settleRecord = writeSettleBookRow({
           taskId,
           payment: metering.payment,
           model: model || 'xfuel/auto',
@@ -1755,6 +1766,7 @@ export function registerOpenAIRoutes(app, {
           ledger,
           registry,
           req,
+          settleRecord,
         });
       }
       return res.status(500).json({
@@ -1778,6 +1790,7 @@ export function registerOpenAIRoutes(app, {
           ledger,
           registry,
           req,
+          settleRecord,
         });
       }
       return res.status(inference.error.status || 400).json({
@@ -1872,6 +1885,7 @@ export function registerOpenAIRoutes(app, {
             ledger,
             registry,
             req,
+            settleRecord,
           });
         }
         return res.status(attestErr.status).json({
@@ -1893,7 +1907,7 @@ export function registerOpenAIRoutes(app, {
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
       reqHost,
-    }), req);
+    }), req, settleRecord);
 
     setReceiptHeaders(res, receipt);
 
@@ -2063,6 +2077,7 @@ export function registerOpenAIRoutes(app, {
     const privateSpend = privacyCtx.privateSpend;
     const apiKeyHash = apiKeyHashFromReq(req);
     let paidTask = null;
+    let settleRecord = null;
 
     const sessionBind = bindSessionFromRequest(req, {
       issuerUri: baseUrl,
@@ -2119,7 +2134,7 @@ export function registerOpenAIRoutes(app, {
           privacyAttest: privacyCtx.privateAttest ? 'tier2' : null,
           session: boundSession,
         }));
-        writeSettleBookRow({
+        settleRecord = writeSettleBookRow({
           taskId,
           payment: metering.payment,
           model: model || 'xfuel/auto',
@@ -2187,6 +2202,7 @@ export function registerOpenAIRoutes(app, {
           ledger,
           registry,
           req,
+          settleRecord,
         });
       }
       return res.status(500).json({
@@ -2210,6 +2226,7 @@ export function registerOpenAIRoutes(app, {
           ledger,
           registry,
           req,
+          settleRecord,
         });
       }
       return res.status(inference.error.status || 400).json({
@@ -2289,7 +2306,7 @@ export function registerOpenAIRoutes(app, {
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
       reqHost,
-    }), req);
+    }), req, settleRecord);
 
     setReceiptHeaders(res, receipt);
 

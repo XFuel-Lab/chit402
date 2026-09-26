@@ -10,9 +10,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Agent skill `chit402-cite-1f916`:** pay Chit402 over x402 and cite `task_id`, `verify_url`, `payment_ref`, `output_hash`, and `receipt_sha256` on a 1F916 submission. The receipt proves spend, not acceptance. Canonical host is `api.chit402.com`.
 - **Nano (XNO) foreign ingest:** `POST /v1/agents/:agent_id/book/ingest` accepts a cemented mainnet send (block hash, recipient, raw amount, description). Two public RPCs must agree the block is a confirmed send and that `block_info.amount` matches the balance delta. Receipts carry `chain=nano`, raw and XNO amounts, a Kraken NANOUSD figure labeled `estimate`, and a block explorer link. Dedupe key is the block hash.
 - **ECDSA issuer signature on receipts:** Receipts now include an ES256 (P-256) public-key signature in `issuer_signature` that downstream agents can verify against the published JWKS at `GET /.well-known/jwks.json`. HMAC signatures remain for backward compatibility. SDK exports `verifyReceiptEcdsa()` and `verifyReceiptEcdsaWithJwks()` for verification. See `docs/VERIFY_ALGORITHM.md` §10.
 - **x402scan listing:** `GET /openapi.json` (OpenAPI 3.1 with `info.x-guidance`, `x-payment-info`, `responses.402`). Public door is `POST /v1/chat/completions`; `POST /task-request` is second. Unauth `POST /v1/chat/completions` with `{}` returns 402 before body validation. Demo key `xfuel-demo` still skips payment. Runtime 402 amounts stay `"10000"`.
+
+### Fixed
+- **First paid call settlement label:** `POST /v1/chat/completions` reports `settlement_status: settled` on the call that collected the payment. `idempotent_replay` / `replay_of` are only for a later resubmit of the same `payment.ref`. The settle-time book row is not a replay of itself.
+- **Auditor `in_policy`:** a normal paid receipt whose fee and rail checks pass is `in_policy: true`. Missing principal binding and missing privacy mode are `checks.*: "no_policy"`, not a policy failure. `in_policy: false` is a real miss only.
 
 ### Changed
 - **Ingest stamp is $0.002:** `STAMP_FEE_UNITS` is 2000 (USDC, 6 decimals), paid by the submitter via x402 on Base or Solana. The stamp no longer debits prepaid budget (that debit plus the ingested spend reduced remaining twice). `GET /.well-known/x402` publishes `pricing.stamp_fee_usd`. Pilot waiver `STAMP_WAIVER_KEYS` / `STAMP_WAIVER_CAP` is off unless set.
