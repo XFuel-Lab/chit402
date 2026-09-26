@@ -1152,6 +1152,7 @@ function buildReceipt({
       ...view.route,
       // What the caller asked for vs what served. Signed model is in issuer_signature.jws.
       requested: requestedModel || 'xfuel/auto',
+      requested_model: requestedModel || 'xfuel/auto',
       resolved: resolvedModel || view.route?.model || null,
     },
     output: view.output,

@@ -199,7 +199,7 @@ export function mergeReceiptView(receipt) {
         message_type: routeMeta.message_type ?? null,
         chain_id: routeMeta.chain_id ?? null,
         model: null,
-        ...(routeMeta.requested_model ? { requested: routeMeta.requested_model } : {}),
+        ...routeRequestedFields(routeMeta.requested_model),
         provider: null,
         model_commitment: routeMeta.model_commitment ?? null,
       },
@@ -248,7 +248,7 @@ export function mergeReceiptView(receipt) {
       message_type: routeMeta.message_type ?? null,
       chain_id: routeMeta.chain_id ?? null,
       model: claims.route?.model ?? null,
-      ...(routeMeta.requested_model ? { requested: routeMeta.requested_model } : {}),
+      ...routeRequestedFields(routeMeta.requested_model),
       provider: claims.route?.provider ?? null,
       model_commitment: routeMeta.model_commitment ?? (
         claims.route?.model_commitment
@@ -280,6 +280,12 @@ export function mergeReceiptView(receipt) {
       : receipt.provider_cogs ?? null,
     fulfillment: claims.fulfillment ?? receipt.fulfillment ?? null,
   };
+}
+
+/** Unsigned "what the caller asked for" fields. Signed route.model stays the row that served. */
+function routeRequestedFields(requestedModel) {
+  if (!requestedModel) return {};
+  return { requested: requestedModel, requested_model: requestedModel };
 }
 
 /** Machine-readable proof scope flags (JSON). Prose lives on HTML only. */
@@ -1482,7 +1488,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     route: {
       message_type: task.intent?.type || null,
       model: routeModel,
-      ...(requestedModel ? { requested: requestedModel } : {}),
+      ...routeRequestedFields(requestedModel),
       model_commitment: modelCommitment,
       provider: routeProvider,
       // Unsigned presentation field. A collected payment reports the settlement

@@ -80,6 +80,57 @@ test('unknown model is 400 model_not_routable and never settles', async () => {
   assert.equal(facServer.verifyCount, verifiesBefore);
 });
 
+test('specific models we do not serve 400 before verify/settle', async () => {
+  const names = [
+    'gpt-5',
+    'o1',
+    'o3',
+    'o1-mini',
+    'claude-opus-4',
+    'claude-opus-4-20250514',
+    'grok-4',
+    'kimi-k2',
+    'openai/gpt-5',
+    'anthropic/claude-opus-4',
+  ];
+  for (const model of names) {
+    const settlesBefore = facServer.settleCount;
+    const verifiesBefore = facServer.verifyCount;
+    const res = await postChat(
+      {
+        model,
+        messages: [{ role: 'user', content: 'do not charge' }],
+        max_tokens: 16,
+      },
+      { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': `0x${'cd'.repeat(32)}` },
+    );
+    assert.equal(res.status, 400, model);
+    const body = await res.json();
+    assert.equal(body.error.code, 'model_not_routable', model);
+    assert.equal(body.charged, false, model);
+    assert.ok(Array.isArray(body.available_models), model);
+    assert.ok(body.available_models.includes('akash/openai/gpt-oss-120b'), model);
+    assert.match(body.error.message, /No charge was made/, model);
+    assert.equal(facServer.settleCount, settlesBefore, model);
+    assert.equal(facServer.verifyCount, verifiesBefore, model);
+  }
+});
+
+test('bare gpt and a stripped anthropic alias challenge before settle', async () => {
+  const settlesBefore = facServer.settleCount;
+  const verifiesBefore = facServer.verifyCount;
+  for (const model of ['gpt', 'openai', 'anthropic/claude-3-5-sonnet']) {
+    const res = await postChat({
+      model,
+      messages: [{ role: 'user', content: 'route me' }],
+      max_tokens: 8,
+    });
+    assert.equal(res.status, 402, model);
+  }
+  assert.equal(facServer.settleCount, settlesBefore);
+  assert.equal(facServer.verifyCount, verifiesBefore);
+});
+
 test('unauth unknown model is 400, not a 402 that invites payment', async () => {
   const settlesBefore = facServer.settleCount;
   const res = await postChat({
@@ -124,6 +175,7 @@ test('gpt-4o-mini aliases to gpt-oss; a post-settle miss is refund owed', async 
   const view = mergeReceiptView(body.xfuel);
   assert.equal(view.route.model, 'akash/openai/gpt-oss-120b');
   assert.equal(view.route.requested, 'gpt-4o-mini');
+  assert.equal(view.route.requested_model, 'gpt-4o-mini');
   assert.notEqual(view.route.model, 'gpt-4o-mini');
 
   const taskId = body.task_id || body.xfuel.task_id;
@@ -135,6 +187,8 @@ test('gpt-4o-mini aliases to gpt-oss; a post-settle miss is refund owed', async 
   assert.equal(publicReceipt.proof_outcome, 'invalid');
   assert.equal(publicView.route.model, 'akash/openai/gpt-oss-120b');
   assert.equal(publicView.route.requested, 'gpt-4o-mini');
+  assert.equal(publicView.route.requested_model, 'gpt-4o-mini');
+  assert.equal(publicReceipt.route_meta.requested_model, 'gpt-4o-mini');
   assert.equal(publicReceipt.refund.refund_status, 'owed');
   assert.equal(publicView.payment.collected, false);
   assert.equal(publicReceipt.refund.payer, body.xfuel.refund.payer);
