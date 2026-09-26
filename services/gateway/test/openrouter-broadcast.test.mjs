@@ -201,6 +201,11 @@ test('fixture stamps reported receipts, drops content, and replays on generation
   assert.equal(receipt.task_id.includes('gen-fixture'), false);
   assert.match(receipt.task_id, /^openrouter-[0-9a-f]{32}$/);
   assert.equal(view.kind, 'openrouter_broadcast');
+  assert.equal(view.route.model, 'google/gemini-2.5-flash');
+  assert.equal(view.route.model, receipt.reported.model);
+  assert.equal(view.route.requested_model ?? null, null);
+  assert.notEqual(view.route.substituted, true);
+  assert.equal(receipt.route_meta?.substituted ?? null, null);
   assert.equal(view.fulfillment.intent.job_kind, 'openrouter_broadcast');
   assert.equal(receipt.source, 'openrouter_broadcast');
   assert.equal(receipt.stamp.fee_usd, '0.002');

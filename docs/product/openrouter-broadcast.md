@@ -66,7 +66,7 @@ Optional per-generation tags on the OpenRouter request:
 
 The possession-gated principal book (`GET|POST /v1/agents/:agent_id/book`) stays possession-gated. It is not a public index. The public summary follows that rule: aggregates only.
 
-Idempotency is `(book family, generation id)`. One family cannot claim another family's generation id or its `verify_url`. `payment.rail` is `reported`. `payment.ref` is `openrouter:<family_id>:<generation_id>`. The signed settlement kind is `reported` with `attested_by: book_holder_report`. `job_kind` and `source` are `openrouter_broadcast`.
+Idempotency is `(book family, generation id)`. One family cannot claim another family's generation id or its `verify_url`. `payment.rail` is `reported`. `payment.ref` is `openrouter:<family_id>:<generation_id>`. The signed settlement kind is `reported` with `attested_by: book_holder_report`. `job_kind` and `source` are `openrouter_broadcast`. The model on the receipt is the generation's reported model: an exact row, not an alias substitution.
 
 `GET /stats`, `GET /stats/door`, and an agent's USDC spent total do not include these rows. Chit did not collect them. The public summary counts a generation only after Chit has checked it against OpenRouter's generation API.
 

@@ -588,6 +588,21 @@ function durationMs(start, end) {
   }
 }
 
+function broadcastBookRoute(route, generation) {
+  const row = {
+    ...(route || {}),
+    hub: 'openrouter',
+    model: generation.model,
+    provider: generation.providerSlug || generation.providerName || null,
+    job_kind: JOB_KIND,
+  };
+  // Exact reported model. Alias disclosure does not apply to this row.
+  delete row.requested;
+  delete row.requested_model;
+  delete row.substituted;
+  return row;
+}
+
 function stampBlock(env) {
   const waived = pilotFree(env);
   return {
@@ -1172,13 +1187,7 @@ function stampGeneration(generation, book, routedBy, deps) {
         fee_amount: '0',
         asset: 'USD',
       },
-      route: {
-        ...(view.route || {}),
-        hub: 'openrouter',
-        model: generation.model,
-        provider: generation.providerSlug || generation.providerName || null,
-        job_kind: JOB_KIND,
-      },
+      route: broadcastBookRoute(view.route, generation),
       source: SOURCE,
       kind: SOURCE,
       public_receipt: envelope,

@@ -217,6 +217,9 @@ test('gateway quotes, fails closed before settle, and receipts a mocked OpenRout
     body: JSON.stringify(chatBody),
   });
   assert.equal(challengeRes.status, 402, await challengeRes.clone().text());
+  assert.equal(challengeRes.headers.get('x-chit-model-substituted'), 'true');
+  assert.equal(challengeRes.headers.get('x-chit-requested-model'), 'gpt-4o-mini');
+  assert.equal(challengeRes.headers.get('x-chit-served-model'), 'openrouter/openai/gpt-4o-mini');
   const challenge = await challengeRes.json();
   const quoted = challenge.accepts[0].maxAmountRequired;
   const expected = await quoteResolved(chatBody);
@@ -274,6 +277,10 @@ test('gateway quotes, fails closed before settle, and receipts a mocked OpenRout
   assert.equal(paidBody.xfuel.route.provider, 'openrouter');
   assert.equal(paidBody.xfuel.route.model, 'openrouter/openai/gpt-4o-mini');
   assert.equal(paidBody.xfuel.route.requested_model, 'gpt-4o-mini');
+  assert.equal(paidBody.xfuel.route.substituted, true);
+  assert.equal(paidBody.chit.requested_model, 'gpt-4o-mini');
+  assert.equal(paidBody.chit.served_model, 'openrouter/openai/gpt-4o-mini');
+  assert.equal(paidBody.chit.substituted, true);
   assert.equal(paidBody.xfuel.route_meta.requested_model, 'gpt-4o-mini');
   assert.equal(paidBody.xfuel.provider_cogs.actual, '5');
   assert.equal(paidBody.xfuel.provider_cogs.basis, 'measured');
@@ -420,9 +427,23 @@ test('BYOK forwards the caller key, charges only the receipt, and redacts the ke
     body: JSON.stringify(chatBody),
   });
   assert.equal(challengeRes.status, 402);
+  assert.equal(challengeRes.headers.get('x-chit-model-substituted'), null);
   const challenge = await challengeRes.json();
   assert.equal(challenge.accepts[0].maxAmountRequired, '2000');
   assert.equal(JSON.stringify(challenge).includes(callerKey), false);
+
+  const strictChallenge = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-openrouter-key': callerKey,
+      'x-chit-strict-model': 'true',
+    },
+    body: JSON.stringify(chatBody),
+  });
+  assert.equal(strictChallenge.status, 402, await strictChallenge.clone().text());
+  assert.equal(strictChallenge.headers.get('x-chit-model-substituted'), null);
+  assert.equal(settles, settlesBefore);
 
   upstreamHits.length = 0;
   const paid = await fetch(`${base}/v1/chat/completions`, {
@@ -437,9 +458,14 @@ test('BYOK forwards the caller key, charges only the receipt, and redacts the ke
   assert.equal(paidText.includes(callerKey), false);
   assert.equal(paidText.includes('test-or-key'), false);
   assert.equal(paidBody.model, 'openrouter/openai/gpt-4o-mini');
+  assert.equal(paidBody.chit.substituted, false);
+  assert.equal(paidBody.chit.requested_model, 'openrouter/openai/gpt-4o-mini');
+  assert.equal(paidBody.chit.served_model, 'openrouter/openai/gpt-4o-mini');
+  assert.equal(paid.headers.get('x-chit-model-substituted'), null);
   assert.equal(paidBody.usage.prompt_tokens, 12);
   assert.equal(paidBody.xfuel.route.provider, 'openrouter');
   assert.equal(paidBody.xfuel.route.model, 'openrouter/openai/gpt-4o-mini');
+  assert.equal(paidBody.xfuel.route.substituted, false);
   assert.equal(paidBody.xfuel.provider_cogs.basis, 'reported');
   assert.equal(paidBody.xfuel.provider_cogs.label, 'paid-by-caller-to-OpenRouter');
   assert.equal(paidBody.xfuel.provider_cogs.paid_by, 'caller-to-openrouter');

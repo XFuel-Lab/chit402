@@ -22,6 +22,26 @@ Local: `http://localhost:3002/v1`
 
 Rate limits match the M2M API. Open mode (no keys configured) skips auth for local dev.
 
+## Model names
+
+`GET /v1/models` lists live hub ids plus `aliases`, `alias_patterns`, and `substitution_policy`. Common OpenAI and Anthropic names (`gpt-4o-mini`, `gpt-4o`, `claude-sonnet-*`, dated snapshots, a leading `openai/` or `anthropic/`) are served by the listed target — usually a live `gpt-oss` row. Bare `gpt` and `openai` follow `xfuel/auto`. The receipt keeps `route.model` as the row that served and `route.requested_model` as the name that was sent.
+
+When that served id differs from the requested name, the 402 challenge and the paid response (streaming and non-streaming) set:
+
+- `X-Chit-Requested-Model`
+- `X-Chit-Served-Model`
+- `X-Chit-Model-Substituted: true`
+
+Those names are on `Access-Control-Expose-Headers`. A non-streaming completion also includes:
+
+```json
+"chit": { "requested_model": "gpt-4o-mini", "served_model": "akash/openai/gpt-oss-20b", "substituted": true }
+```
+
+The receipt carries `substituted: true` or `false` next to `requested_model`. Signed `route.model` stays the row that served.
+
+To refuse substitution, send `X-Chit-Strict-Model: true` or `"chit_strict_model": true`. An aliased name then returns `400` `model_not_routable` (`No charge was made`, plus the live model list) before verify or settle. Exact catalog ids and `xfuel/auto` still route. `openrouter/<vendor>/<model>` is an exact catalog id: it is never reported as substituted, and strict mode still routes it. A named `openrouter/*` call with no caller key is `400` `openrouter_key_required` before verify or settle. Strict mode is checked on that same pre-settle path, including route preflight.
+
 ## Receipts
 
 Responses include:
