@@ -18,7 +18,7 @@ process.env.OPENROUTER_BROADCAST_ENABLED = 'true';
 process.env.OPENROUTER_BROADCAST_PILOT_FREE = 'true';
 
 const { createApp } = await import('../src/server.js');
-const { UsageSettledLedger } = await import('../src/usage-settled.js');
+const { UsageSettledLedger, entryQualifiesForCap, entryQualifiesForTotals } = await import('../src/usage-settled.js');
 const {
   resetOpenRouterBroadcastForTests,
   createOpenRouterBook,
@@ -185,10 +185,13 @@ test('fixture stamps reported receipts, drops content, and replays on generation
   const view = mergeReceiptView(receipt);
   assert.equal(view.payment.rail, 'reported');
   assert.equal(view.payment.collected, false);
-  assert.equal(view.payment.ref, 'openrouter:gen-fixture-fabricated-001');
+  assert.equal(view.payment.ref, `openrouter:${parent.json.family_id}:gen-fixture-fabricated-001`);
   assert.equal(view.payment.asset, 'USD');
   assert.equal(view.settlement.kind, 'reported');
-  assert.equal(view.settlement.attested_by, 'openrouter_report');
+  assert.equal(view.settlement.attested_by, 'book_holder_report');
+  assert.equal(receipt.attestation_note.includes('did not verify this payload with OpenRouter'), true);
+  assert.equal(receipt.task_id.includes('gen-fixture'), false);
+  assert.match(receipt.task_id, /^openrouter-[0-9a-f]{32}$/);
   assert.equal(view.kind, 'openrouter_broadcast');
   assert.equal(view.fulfillment.intent.job_kind, 'openrouter_broadcast');
   assert.equal(receipt.source, 'openrouter_broadcast');
@@ -203,7 +206,8 @@ test('fixture stamps reported receipts, drops content, and replays on generation
   assert.equal(receipt.reported.content_dropped, true);
   assert.equal(receipt.usage.prompt_tokens, 120);
   assert.equal(receipt.usage.completion_tokens, 40);
-  assert.match(receipt.verify_url, /\/receipt\/openrouter-gen-fixture-fabricated-001$/);
+  assert.match(receipt.verify_url, /\/receipt\/openrouter-[0-9a-f]{32}$/);
+  assert.equal(receipt.verify_url.includes('gen-fixture'), false);
   const packed = JSON.stringify(parentRows);
   assert.equal(packed.includes(PROMPT), false);
   assert.equal(packed.includes(COMPLETION), false);
@@ -230,6 +234,9 @@ test('fixture stamps reported receipts, drops content, and replays on generation
   assert.equal(summaryBody.generations, 1);
   assert.equal(summaryBody.reported_usd, '0.00046');
   assert.equal(summaryBody.stamp_charged, false);
+  assert.equal(summaryBody.collected, false);
+  assert.equal(summaryBody.verified, false);
+  assert.equal(summaryBody.verified_with, null);
   assert.equal(summaryBody.stamp_fee_usd_recorded, '0.002');
   assert.equal(summaryBody.public, true);
   const summaryText = JSON.stringify(summaryBody);
@@ -246,11 +253,65 @@ test('fixture stamps reported receipts, drops content, and replays on generation
   assert.equal(JSON.stringify(verifyBody).includes(PROMPT), false);
   const html = await fetch(receipt.verify_url.replace(/^https?:\/\/[^/]+/, base));
   const page = await html.text();
-  assert.match(page, /OpenRouter report/);
+  assert.match(page, /Reported via OpenRouter Broadcast \(unverified\)/);
+  assert.match(page, /Chit did not verify this payload with OpenRouter/);
+  assert.equal(page.includes('Attested by'), false);
+  assert.equal(page.includes('OpenRouter report'), false);
   assert.match(page, /REPORTED/);
   assert.equal(page.includes(PROMPT), false);
   assert.equal(page.includes(COMPLETION), false);
   assert.equal(page.includes('Foreign ingest'), false);
+});
+
+test('the same generation id on another family is a new receipt, and the id is not guessable', async () => {
+  const a = await mintBook();
+  const b = await mintBook();
+  const one = structuredClone(FIXTURE);
+  one.resourceSpans[0].scopeSpans[0].spans = [one.resourceSpans[0].scopeSpans[0].spans[0]];
+
+  const post = (key) => fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(key),
+    body: JSON.stringify(one),
+  });
+
+  const first = await (await post(a.json.ingest_key)).json();
+  const second = await (await post(b.json.ingest_key)).json();
+  assert.equal(first.stamped, 1);
+  assert.equal(first.replayed, 0);
+  assert.equal(second.stamped, 1);
+  assert.equal(second.replayed, 0);
+  assert.notEqual(first.receipts[0].book_id, second.receipts[0].book_id);
+  assert.notEqual(first.receipts[0].task_id, second.receipts[0].task_id);
+  assert.notEqual(first.receipts[0].verify_url, second.receipts[0].verify_url);
+  for (const row of [first.receipts[0], second.receipts[0]]) {
+    assert.equal(row.task_id.includes('gen-fixture-fabricated-001'), false);
+    assert.match(row.task_id, /^openrouter-[0-9a-f]{32}$/);
+  }
+
+  const replay = await (await post(a.json.ingest_key)).json();
+  assert.equal(replay.stamped, 0);
+  assert.equal(replay.replayed, 1);
+  assert.equal(replay.receipts[0].verify_url, first.receipts[0].verify_url);
+  assert.equal(replay.receipts[0].book_id, a.json.book_id);
+
+  const sibling = await mintBook({ label: 'sibling' }, a.json.ingest_key);
+  assert.equal(sibling.json.family_id, a.json.family_id);
+  const sib = await (await post(sibling.json.ingest_key)).json();
+  assert.equal(sib.stamped, 0);
+  assert.equal(sib.replayed, 1);
+  assert.equal(sib.receipts[0].verify_url, first.receipts[0].verify_url);
+
+  const guessed = await fetch(`${base}/receipt/openrouter-gen-fixture-fabricated-001`, {
+    headers: { accept: 'application/json' },
+  });
+  assert.notEqual(guessed.status, 200);
+  const guessedBody = await guessed.json();
+  const guessedText = JSON.stringify(guessedBody);
+  assert.equal(guessedText.includes(first.receipts[0].task_id), false);
+  assert.equal(guessedText.includes(second.receipts[0].task_id), false);
+  assert.equal(guessedText.includes('gemini'), false);
+  assert.equal(guessedText.includes(PROMPT), false);
 });
 
 test('chit_book tag routes within the family and a foreign book id does not', async () => {
@@ -394,9 +455,37 @@ test('a bound numeric agent sees the row and the USDC spent total stays put', ()
   assert.equal(rows[0].evidence, 'openrouter_reported');
   assert.equal(rows[0].rail, 'reported');
   assert.equal(rows[0].collected, false);
+  assert.equal(entryQualifiesForCap(rows[0]), false);
+  assert.equal(entryQualifiesForTotals(rows[0]), false);
   assert.equal(ledger.sumCollectedByAgent(7), 0n);
+  assert.equal(ledger.sumCollectedByAgentToday(7), 0n);
+
+  const other = createOpenRouterBook({ agent_id: '8' });
+  const registryBoth = {
+    get(id) {
+      const n = Number(id);
+      return n === 7 || n === 8 ? { agent_id: n } : null;
+    },
+  };
+  const again = ingestOpenRouterBroadcast(one, {
+    book: other.book,
+    ledger,
+    registry: registryBoth,
+    baseUrl: 'https://api.chit402.com',
+    signingSecret: 'test-receipt-secret',
+  });
+  assert.equal(again.body.stamped, 1);
+  assert.notEqual(again.body.receipts[0].task_id, result.body.receipts[0].task_id);
+  assert.equal(ledger.listByAgent(8).length, 1);
+  assert.equal(ledger.listByAgent(8)[0].collected, false);
+  assert.equal(ledger.sumCollectedByAgent(8), 0n);
+
   const summary = publicOpenRouterSummary(created.book);
   assert.equal(summary.generations, 1);
+  assert.equal(summary.collected, false);
+  assert.equal(summary.verified, false);
+  assert.equal(summary.verified_with, null);
   assert.equal(JSON.stringify(summary).includes(PROMPT), false);
+  assert.equal(JSON.stringify(summary).includes('gen-fixture'), false);
 });
 });

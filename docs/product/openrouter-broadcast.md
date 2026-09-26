@@ -1,10 +1,10 @@
 # Chit receipts for OpenRouter (Broadcast)
 
-Chit is the book. OpenRouter reports each generation; Chit stamps one signed receipt per generation. The payment rail is `reported`: the spend figure is OpenRouter's report, and Chit did not settle it. The receipt says so. The reference is the OpenRouter generation id. Anyone can open the `verify_url`.
+Chit is the book. A book holder points OpenRouter Broadcast at Chit; Chit stamps one signed receipt per generation. The payment rail is `reported`. OpenRouter does not sign these payloads, and Chit does not check them with OpenRouter. Anyone who holds a book ingest key can POST a span. The receipt says that: `attested_by` is `book_holder_report`, and the badge is "Reported via OpenRouter Broadcast (unverified)". Chit did not settle the payment. The reference is the OpenRouter generation id. Anyone who has the `verify_url` can open that one receipt. The receipt id is random. It is not the generation id.
 
 Prompt and completion text is not required and is not stored. Turn on Privacy Mode for the destination. If a trace still carries prompt or completion text, the receiver drops it before the receipt is built.
 
-The stamp fee is recorded at $0.002 and is not charged during the free pilot (`OPENROUTER_BROADCAST_PILOT_FREE`, default on). A per-book daily cap limits how many new receipts one book can take (`OPENROUTER_BROADCAST_DAILY_CAP`, default 10000). Replays of the same generation id do not count again.
+The stamp fee is recorded at $0.002 and is not charged during the free pilot (`OPENROUTER_BROADCAST_PILOT_FREE`, default on). A per-book daily cap limits how many new receipts one book can take (`OPENROUTER_BROADCAST_DAILY_CAP`, default 10000). A replay of the same generation id inside the same book family does not count again. The same generation id on another family is a different receipt.
 
 ## 1. Mint a book
 
@@ -66,4 +66,10 @@ Optional per-generation tags on the OpenRouter request:
 
 The possession-gated principal book (`GET|POST /v1/agents/:agent_id/book`) stays possession-gated. It is not a public index. The public summary follows that rule: aggregates only.
 
-Each receipt is idempotent on generation id. `payment.rail` is `reported`, `payment.ref` is `openrouter:<generation_id>`, and the signed settlement kind is `reported` with `attested_by: openrouter_report`. `job_kind` and `source` are `openrouter_broadcast`.
+Idempotency is `(book family, generation id)`. One family cannot claim another family's generation id or its `verify_url`. `payment.rail` is `reported`. `payment.ref` is `openrouter:<family_id>:<generation_id>`. The signed settlement kind is `reported` with `attested_by: book_holder_report`. `job_kind` and `source` are `openrouter_broadcast`.
+
+These rows stay out of public collected and verified stats (`GET /stats`, `GET /stats/door`, and an agent's USDC spent total). The public summary is counts and reported USD, with `collected: false` and `verified: false`.
+
+## Verify later
+
+TODO: optional reconcile. If a book holder supplies an OpenRouter API key on one request (redacted in logs, never stored), Chit can `GET https://openrouter.ai/api/v1/generation?id=<generation_id>` and, only when model, token counts, and cost match that response, set `verified_with: openrouter_generation_api`. Until that check exists, do not describe these receipts as verified or collected.

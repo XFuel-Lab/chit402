@@ -3,8 +3,10 @@
  *
  * Any OpenRouter customer can point a Webhook destination at
  * POST /v1/openrouter/broadcast with a per-book ingest key. Each generation
- * span becomes one signed receipt. The payment rail is `reported`: OpenRouter
- * reported the spend, and Chit did not settle it.
+ * span becomes one signed receipt. The payment rail is `reported`: a book holder
+ * reported the spend via OpenRouter Broadcast. Chit did not verify the payload
+ * with OpenRouter and did not settle it. Idempotency is (book family, generation
+ * id). The receipt id is random and is not derived from the generation id.
  *
  * Prompt and completion text is never required and never stored. Privacy Mode
  * on the OpenRouter destination is the recommended setup; if content arrives
@@ -21,14 +23,15 @@ import {
   buildVerifyUrl,
   baseUrlFromReq,
   mergeReceiptView,
+  REPORTED_ATTESTED_BY,
+  REPORTED_ATTESTATION_NOTE,
 } from './receipt.js';
 
 export const SOURCE = 'openrouter_broadcast';
 export const JOB_KIND = 'openrouter_broadcast';
 export const PAYMENT_RAIL = 'reported';
-export const ATTESTED_BY = 'openrouter_report';
-export const ATTESTATION_NOTE =
-  'Attested by an OpenRouter report. Chit recorded this generation and did not settle the payment. The reference is the OpenRouter generation id.';
+export const ATTESTED_BY = REPORTED_ATTESTED_BY;
+export const ATTESTATION_NOTE = REPORTED_ATTESTATION_NOTE;
 
 const DEFAULT_DAILY_CAP = 10_000;
 const DEFAULT_RATE_PER_MIN = 60;
@@ -68,8 +71,8 @@ const SKIP_OBSERVATION_TYPES = new Set([
 const books = new Map();
 /** @type {Map<string, string>} */
 const keys = new Map();
-/** @type {Map<string, object>} */
-const byGeneration = new Map();
+/** Idempotency index keyed by book family and generation id. Not global on generation id. */
+const byFamilyGeneration = new Map();
 /** @type {Map<string, object>} */
 const byTask = new Map();
 /** @type {object[]} */
@@ -468,9 +471,17 @@ export function parseOtlpGenerations(body) {
   return generations;
 }
 
-function taskIdFor(generationId) {
-  const safe = String(generationId).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120);
-  return `openrouter-${safe || 'generation'}`;
+function familyGenerationKey(familyId, generationId) {
+  return `${familyId}\0${generationId}`;
+}
+
+/** Receipt id is random. Knowing the generation id does not yield the verify_url. */
+function freshTaskId() {
+  for (let i = 0; i < 5; i++) {
+    const id = `openrouter-${crypto.randomBytes(16).toString('hex')}`;
+    if (!byTask.has(id)) return id;
+  }
+  return `openrouter-${crypto.randomBytes(24).toString('hex')}`;
 }
 
 function durationMs(start, end) {
@@ -610,7 +621,10 @@ function persistReceipt(record) {
 
 function indexReceipt(record, { persist = true } = {}) {
   receipts.push(record);
-  byGeneration.set(record.generation_id, record);
+  const familyId = record.family_id || record.book_id;
+  if (familyId && record.generation_id) {
+    byFamilyGeneration.set(familyGenerationKey(familyId, record.generation_id), record);
+  }
   byTask.set(record.task_id, record);
   if (persist) persistReceipt(record);
 }
@@ -618,7 +632,7 @@ function indexReceipt(record, { persist = true } = {}) {
 function loadPersisted() {
   books.clear();
   keys.clear();
-  byGeneration.clear();
+  byFamilyGeneration.clear();
   byTask.clear();
   receipts.length = 0;
   if (!persistDir) return;
@@ -656,7 +670,7 @@ export function configureOpenRouterBroadcast({ dir = null, persist = false } = {
 export function resetOpenRouterBroadcastForTests() {
   books.clear();
   keys.clear();
-  byGeneration.clear();
+  byFamilyGeneration.clear();
   byTask.clear();
   receipts.length = 0;
   minuteLimiter.reset();
@@ -706,7 +720,7 @@ export function publicBook(book) {
 }
 
 function stampGeneration(generation, book, routedBy, deps) {
-  const existing = byGeneration.get(generation.generationId);
+  const existing = byFamilyGeneration.get(familyGenerationKey(book.family_id, generation.generationId));
   if (existing) {
     return { ok: true, idempotent: true, record: existing };
   }
@@ -715,11 +729,7 @@ function stampGeneration(generation, book, routedBy, deps) {
     return { ok: false, status: 429, error: 'daily_cap', generationId: generation.generationId };
   }
 
-  let taskId = taskIdFor(generation.generationId);
-  const occupied = byTask.get(taskId);
-  if (occupied && occupied.generation_id !== generation.generationId) {
-    taskId = `${taskId}-${hashIngestKey(generation.generationId).slice(0, 8)}`;
-  }
+  const taskId = freshTaskId();
   const atomic = usdToAtomic(generation.totalCostUsd) ?? '0';
   const startSec = generation.startTimeUnixNano
     ? Number(BigInt(generation.startTimeUnixNano) / 1_000_000_000n)
@@ -731,7 +741,7 @@ function stampGeneration(generation, book, routedBy, deps) {
   if (generation.promptTokens != null) usage.prompt_tokens = generation.promptTokens;
   if (generation.completionTokens != null) usage.completion_tokens = generation.completionTokens;
   if (generation.totalTokens != null) usage.total_tokens = generation.totalTokens;
-  usage.source = 'openrouter_report';
+  usage.source = ATTESTED_BY;
   const hasTokens = generation.promptTokens != null || generation.completionTokens != null;
 
   const task = {
@@ -743,7 +753,7 @@ function stampGeneration(generation, book, routedBy, deps) {
     intent: {
       type: SOURCE,
       paymentRail: PAYMENT_RAIL,
-      paymentRef: `openrouter:${generation.generationId}`,
+      paymentRef: `openrouter:${book.family_id}:${generation.generationId}`,
       amount: atomic,
       model: generation.model,
       proveAllowed: false,
@@ -829,7 +839,7 @@ function stampGeneration(generation, book, routedBy, deps) {
       ...envelope,
       payment: {
         rail: PAYMENT_RAIL,
-        ref: `openrouter:${generation.generationId}`,
+        ref: `openrouter:${book.family_id}:${generation.generationId}`,
         collected: false,
         gross_amount: atomic,
         net_amount: atomic,
@@ -867,7 +877,7 @@ function stampGeneration(generation, book, routedBy, deps) {
 }
 
 /**
- * Stamp one receipt per generation. Idempotent on generation id.
+ * Stamp one receipt per generation. Idempotent on (book family, generation id).
  */
 export function ingestOpenRouterBroadcast(body, {
   book,
@@ -974,8 +984,11 @@ export function publicOpenRouterSummary(book, { env = process.env } = {}) {
     stamp_fee_usd_recorded: atomicToUsd(feeAtomic),
     stamp_fee_usd_each: '0.002',
     stamp_charged: false,
+    collected: false,
+    verified: false,
+    verified_with: null,
     pilot_free: pilotFree(env),
-    note: 'Aggregate only. Spend was reported by OpenRouter. Chit did not settle these payments. Receipt rows are not listed here.',
+    note: 'Aggregate only. Figures were reported to this book via OpenRouter Broadcast. Chit did not verify them with OpenRouter and did not settle these payments. They are not collected or verified spend. Receipt rows are not listed here.',
   };
 }
 

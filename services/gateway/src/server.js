@@ -451,7 +451,7 @@ SDK: verifyReceiptEcdsaWithJwks(receipt, jwks) → { checked, valid, kid }
 - register_agent = POST /v1/agents/register (needs a collected receipt + agentWallet).
 - get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; budget Y + remaining; not a public scoreboard).
 - ingest_foreign_x402 = POST /v1/agents/:agent_id/book/ingest (record agent's arbitrary x402 spend to a foreign endpoint).
-- OpenRouter Broadcast: POST /v1/openrouter/books issues a book ingest key (shown once, stored hashed). POST /v1/openrouter/broadcast stamps one receipt per generation (rail reported — OpenRouter reported the spend; Chit did not settle it). GET /v1/openrouter/books/:book_id/receipts is ingest-key gated. GET /v1/openrouter/books/:book_id/summary is a public aggregate (counts and reported USD only). Docs: docs/product/openrouter-broadcast.md
+- OpenRouter Broadcast: POST /v1/openrouter/books issues a book ingest key (shown once, stored hashed). POST /v1/openrouter/broadcast stamps one receipt per generation (rail reported — a book holder reported the spend via Broadcast; Chit did not verify the payload and did not settle it). GET /v1/openrouter/books/:book_id/receipts is ingest-key gated. GET /v1/openrouter/books/:book_id/summary is a public aggregate (counts and reported USD only, not collected or verified spend). Docs: docs/product/openrouter-broadcast.md
 
 ## Discovery (x402scan + Bazaar)
 

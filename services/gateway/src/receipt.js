@@ -30,8 +30,13 @@ export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
 export const SETTLEMENT_KIND_INHERITED = 'inherited';
 export const SETTLEMENT_KIND_SETTLED = 'settled';
 export const SETTLEMENT_KIND_UNSETTLED = 'unsettled';
-/** Spend reported by an upstream (OpenRouter Broadcast). Chit did not settle it. */
+/** Spend a book holder reported via OpenRouter Broadcast. Chit did not verify or settle it. */
 export const SETTLEMENT_KIND_REPORTED = 'reported';
+/** Who filed the report. OpenRouter does not sign Broadcast payloads. */
+export const REPORTED_ATTESTED_BY = 'book_holder_report';
+export const REPORTED_BADGE = 'Reported via OpenRouter Broadcast (unverified)';
+export const REPORTED_ATTESTATION_NOTE =
+  'Reported to this book via OpenRouter Broadcast. Chit did not verify this payload with OpenRouter and did not settle the payment. The reference is the OpenRouter generation id.';
 export const RECEIPT_KIND_SESSION_HANDOFF = 'session_handoff';
 
 export function isInheritedSettlement(view) {
@@ -54,7 +59,7 @@ export function settlementOf(view) {
     return {
       kind: SETTLEMENT_KIND_REPORTED,
       parent_receipt_id: null,
-      attested_by: 'openrouter_report',
+      attested_by: REPORTED_ATTESTED_BY,
     };
   }
   if (view?.payment?.ref) {
@@ -1816,9 +1821,9 @@ function reportedOpenRouterSection(receipt, view) {
     ? '$0.002 <span class="muted">USDC recorded</span> <span class="badge pending">pilot, not charged</span>'
     : '$0.002 <span class="muted">USDC recorded</span> <span class="badge pending">not charged</span>';
   return `<section class="card">
-      <h2>Reported spend <span class="scope">OpenRouter report, not a Chit settlement</span></h2>
+      <h2>Reported spend <span class="scope">unverified book-holder report, not a Chit settlement</span></h2>
       ${row('Rail', '<span class="badge pending">REPORTED</span>')}
-      ${row('Attested by', '<span class="badge pending">OpenRouter report</span>')}
+      ${row('Status', `<span class="badge pending">${esc(REPORTED_BADGE)}</span>`)}
       ${generation ? row('Generation', `<code>${esc(generation)}</code>`) : ''}
       ${p.ref ? row('Reference', `<code>${esc(p.ref)}</code>`) : ''}
       ${usd('Input cost', reported.input_cost_usd)}
@@ -1827,7 +1832,7 @@ function reportedOpenRouterSection(receipt, view) {
       ${row('Model', esc(view.route?.model || '—'))}
       ${provider ? row('Provider', esc(provider)) : ''}
       ${row('Stamp fee', stampHtml)}
-      <p class="muted" style="margin:8px 0 0;font-size:12px">${esc(receipt.attestation_note || 'Attested by an OpenRouter report. Chit recorded this generation and did not settle the payment. The reference is the OpenRouter generation id.')}</p>
+      <p class="muted" style="margin:8px 0 0;font-size:12px">${esc(receipt.attestation_note || REPORTED_ATTESTATION_NOTE)}</p>
     </section>`;
 }
 
@@ -2147,7 +2152,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
     <header>
       <div class="brand">Chit402</div>
       <div>${reported
-        ? '<span class="badge pending">Reported</span>'
+        ? `<span class="badge pending">${esc(REPORTED_BADGE)}</span>`
         : (foreign
           ? '<span class="badge ok">Recorded</span>'
           : badge(pr.outcome, b ? b.matches : undefined))}</div>

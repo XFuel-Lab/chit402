@@ -165,7 +165,7 @@ Liveness, fee config, chains, message types. No auth.
 
 ### OpenRouter Broadcast
 
-`POST /v1/openrouter/books` issues a book and an ingest key (shown once, stored hashed). `POST /v1/openrouter/broadcast` accepts an OpenRouter Webhook (OTLP JSON) and stamps one receipt per generation. The rail is `reported`: OpenRouter reported the spend, and Chit did not settle it. `GET /v1/openrouter/books/:book_id/receipts` lists that book's receipts (ingest key). `GET /v1/openrouter/books/:book_id/summary` is a public aggregate, not a receipt index.
+`POST /v1/openrouter/books` issues a book and an ingest key (shown once, stored hashed). `POST /v1/openrouter/broadcast` accepts an OpenRouter Webhook (OTLP JSON) and stamps one receipt per generation. The rail is `reported`: a book holder reported the spend. Chit did not verify the payload with OpenRouter and did not settle it. These rows are not collected or verified spend. `GET /v1/openrouter/books/:book_id/receipts` lists that book's receipts (ingest key). `GET /v1/openrouter/books/:book_id/summary` is a public aggregate, not a receipt index.
 
 See [product/openrouter-broadcast.md](./product/openrouter-broadcast.md).
 

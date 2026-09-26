@@ -28,6 +28,20 @@ function railOf(task) {
   return r === 'usdc' ? 'usdc' : 'tfuel';
 }
 
+/**
+ * OpenRouter Broadcast rows are a book-holder report. They are not collected
+ * USDC and not a verified settlement, so they never enter public /stats.
+ * `reported` must not fall through railOf into the TFUEL bucket.
+ */
+export function countsInPublicUsageStats(task) {
+  if (!task?.taskId) return false;
+  const rail = String(task.intent?.paymentRail || task.payment?.rail || '').toLowerCase();
+  if (rail === 'reported') return false;
+  const kind = task.kind || task.intent?.type || task.meta?.job_kind || task.meta?.source;
+  if (kind === 'openrouter_broadcast') return false;
+  return true;
+}
+
 const SETTLED_STATUSES = new Set(['completed', 'fee_collected']);
 
 /**
@@ -93,7 +107,7 @@ export function computeUsageStats(
   const trustFrom = feeTrustFrom(trustOverride);
 
   for (const t of tasks) {
-    if (!t || !t.taskId) continue;
+    if (!countsInPublicUsageStats(t)) continue;
     if (wantHash) {
       const h = (t.meta?.apiKeyHash || '').toLowerCase();
       if (h !== wantHash) continue;
@@ -150,9 +164,9 @@ export function computeUsageStats(
     if (updated && (lastSeen == null || updated > lastSeen)) lastSeen = updated;
   }
 
-  const filtered = wantHash
-    ? tasks.filter((t) => t && t.taskId && (t.meta?.apiKeyHash || '').toLowerCase() === wantHash)
-    : tasks.filter((t) => t && t.taskId);
+  const filtered = (wantHash
+    ? tasks.filter((t) => countsInPublicUsageStats(t) && (t.meta?.apiKeyHash || '').toLowerCase() === wantHash)
+    : tasks.filter((t) => countsInPublicUsageStats(t)));
   const total = filtered.length;
   const provenPct = total ? Math.round((proofs.valid / total) * 1000) / 10 : 0;
 
