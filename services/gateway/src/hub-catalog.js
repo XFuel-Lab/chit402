@@ -465,33 +465,53 @@ const TYPED_ALIASES = Object.freeze({
   qwen3: { re: /qwen/i, preferHub: 'akash' },
 });
 
-/**
- * OpenAI chat names people paste from other SDKs. They alias onto a live
- * `gpt-oss` row when the catalog has one (mini/3.5 → 20b, else 120b; full
- * gpt-4o → 120b, else 20b). No gpt-oss row → null, and the caller refuses.
- * Never Llama. Receipts keep route.model as the row that serves and record
- * the requested name separately.
- */
-const OPENAI_MINI_NAMES = new Set([
-  'gpt-4o-mini',
-  'gpt-4o-mini-2024-07-18',
-  'gpt-3.5-turbo',
-  'gpt-3.5-turbo-0125',
-  'gpt-3.5-turbo-1106',
-  'gpt-3.5-turbo-16k',
-]);
+const GPT_OSS_20 = 'akash/openai/gpt-oss-20b';
+const GPT_OSS_120 = 'akash/openai/gpt-oss-120b';
+const AUTO_ALIAS_TARGET = 'xfuel/auto';
 
-const OPENAI_CHAT_NAMES = new Set([
-  'gpt-4o',
-  'gpt-4o-2024-05-13',
-  'gpt-4o-2024-08-06',
-  'gpt-4',
-  'gpt-4-turbo',
-  'gpt-4-turbo-preview',
-  'gpt-4-0125-preview',
-  'gpt-4-1106-preview',
-  'chatgpt-4o-latest',
-]);
+/**
+ * Dated snapshot tail after a canonical name: `-2024-07-18`, `-20241022`,
+ * `-0125`, and the snapshot suffixes already accepted (`-preview`, `-latest`,
+ * `-16k`). Chained, so `gpt-4-0125-preview` matches `gpt-4`.
+ */
+const DATED_SNAPSHOT_TAIL = /^(?:-(?:\d{4}-\d{2}-\d{2}|\d{8}|\d{4}|preview|latest|16k))+$/;
+
+/**
+ * Caller-facing names that are not hub ids. Longest matching id wins.
+ * A leading `openai/` or `anthropic/` is stripped before matching.
+ *
+ * `prefix` — the canonical name, plus a dated snapshot of that name.
+ * `pattern` — a wildcard stem (`claude-haiku-*`); the bare stem does not match.
+ * `exact` — the name alone. Bare `gpt` / `openai` stay exact so `gpt-5` does not
+ * collapse into auto.
+ *
+ * Small names prefer live gpt-oss-20b and fall back to gpt-oss-120b. Larger
+ * names prefer 120b and fall back to 20b. No row here points at OpenRouter.
+ * Names we do not serve (gpt-5, o1, o3, claude-opus-*, grok-*, kimi-*) are
+ * absent on purpose and stay model_not_found.
+ *
+ * @type {ReadonlyArray<{ id: string, target: string, kind: 'prefix'|'pattern'|'exact' }>}
+ */
+export const MODEL_ALIAS_TABLE = Object.freeze([
+  { id: 'gpt-4.1-nano', target: GPT_OSS_20, kind: 'prefix' },
+  { id: 'gpt-4.1-mini', target: GPT_OSS_20, kind: 'prefix' },
+  { id: 'gpt-4o-mini', target: GPT_OSS_20, kind: 'prefix' },
+  { id: 'gpt-3.5-turbo', target: GPT_OSS_20, kind: 'prefix' },
+  { id: 'claude-3-5-haiku', target: GPT_OSS_20, kind: 'prefix' },
+  { id: 'claude-haiku', target: GPT_OSS_20, kind: 'pattern' },
+
+  { id: 'gpt-4.1', target: GPT_OSS_120, kind: 'prefix' },
+  { id: 'gpt-4o', target: GPT_OSS_120, kind: 'prefix' },
+  { id: 'gpt-4-turbo', target: GPT_OSS_120, kind: 'prefix' },
+  { id: 'gpt-4', target: GPT_OSS_120, kind: 'prefix' },
+  { id: 'claude-3-5-sonnet', target: GPT_OSS_120, kind: 'prefix' },
+  { id: 'claude-sonnet', target: GPT_OSS_120, kind: 'pattern' },
+  // Kept from the pre-table OpenAI set so chatgpt-4o-latest still routes.
+  { id: 'chatgpt-4o-latest', target: GPT_OSS_120, kind: 'exact' },
+
+  { id: 'gpt', target: AUTO_ALIAS_TARGET, kind: 'exact' },
+  { id: 'openai', target: AUTO_ALIAS_TARGET, kind: 'exact' },
+].map((entry) => Object.freeze(entry)));
 
 function pickGptOss(models, preferMini) {
   const chat = (models || []).filter(
@@ -505,16 +525,87 @@ function pickGptOss(models, preferMini) {
   return oss120 || oss20 || null;
 }
 
-function resolveOpenAIFamilyAlias(name, models) {
-  const key = String(name || '').trim().toLowerCase();
-  if (OPENAI_MINI_NAMES.has(key)) return pickGptOss(models, true);
-  if (OPENAI_CHAT_NAMES.has(key)) return pickGptOss(models, false);
-  return null;
+/** Drop one leading `openai/` or `anthropic/` so vendor-prefixed SDK ids match. */
+export function stripModelAliasPrefix(name) {
+  const s = String(name || '').trim().toLowerCase();
+  if (s.startsWith('openai/')) return s.slice('openai/'.length);
+  if (s.startsWith('anthropic/')) return s.slice('anthropic/'.length);
+  return s;
+}
+
+function aliasEntryMatches(normalized, entry) {
+  if (normalized === entry.id) return entry.kind !== 'pattern';
+  if (entry.kind === 'exact') return false;
+  if (entry.kind === 'pattern') return normalized.startsWith(`${entry.id}-`);
+  if (!normalized.startsWith(`${entry.id}-`)) return false;
+  return DATED_SNAPSHOT_TAIL.test(normalized.slice(entry.id.length));
 }
 
 /**
+ * Longest MODEL_ALIAS_TABLE row that matches `name`, or null.
+ * Does not consult the live catalog — callers still have to find the target row.
+ * @param {string} name
+ * @returns {{ id: string, target: string, kind: string } | null}
+ */
+export function matchModelAlias(name) {
+  const normalized = stripModelAliasPrefix(name);
+  let best = null;
+  for (const entry of MODEL_ALIAS_TABLE) {
+    if (!aliasEntryMatches(normalized, entry)) continue;
+    if (!best || entry.id.length > best.id.length) best = entry;
+  }
+  return best;
+}
+
+/**
+ * Map a table hit onto a live gpt-oss row. Auto targets are not resolved here
+ * (`gpt` / `openai` join the xfuel/auto branch). No live gpt-oss row → null.
+ * @param {string} name
+ * @param {CatalogModel[]} models
+ * @returns {CatalogModel|null}
+ */
+function resolveModelAlias(name, models) {
+  const entry = matchModelAlias(name);
+  if (!entry || entry.target === AUTO_ALIAS_TARGET) return null;
+  return pickGptOss(models, entry.target === GPT_OSS_20);
+}
+
+const ALIAS_DISCOVERY = (() => {
+  /** @type {Record<string, string>} */
+  const aliases = {};
+  /** @type {{ pattern: string, target: string }[]} */
+  const aliasPatterns = [];
+  /** @type {Map<string, string[]>} */
+  const byTarget = new Map();
+  const push = (target, label) => {
+    const cur = byTarget.get(target);
+    if (cur) cur.push(label);
+    else byTarget.set(target, [label]);
+  };
+  for (const entry of MODEL_ALIAS_TABLE) {
+    if (entry.kind === 'pattern') {
+      const pattern = `${entry.id}-*`;
+      aliasPatterns.push({ pattern, target: entry.target });
+      push(entry.target, pattern);
+    } else {
+      aliases[entry.id] = entry.target;
+      push(entry.target, entry.id);
+      if (entry.kind === 'prefix') {
+        aliasPatterns.push({
+          pattern: `${entry.id}-<dated-snapshot>`,
+          target: entry.target,
+        });
+      }
+    }
+  }
+  return { aliases, aliasPatterns, byTarget };
+})();
+
+/**
  * Famous model names we do not serve. Refuse loudly — never bait-and-switch onto Llama.
- * OpenAI names in this set still alias to gpt-oss first when that row is live.
+ * Names in MODEL_ALIAS_TABLE still alias to a live gpt-oss row (or xfuel/auto)
+ * before this set is consulted. gpt-5, o1, o3, claude-opus-*, grok-*, and kimi-*
+ * are not in the table, so they stay model_not_found.
  * If a hub later lists one of these as a real row, exact/id match still wins first.
  */
 const NO_BAIT_SWITCH = Object.freeze(new Set([
@@ -602,8 +693,8 @@ export function pickAutoPreference(pref, live) {
  * @returns {CatalogModel|null}
  */
 export function resolveTypedAlias(name, models) {
-  const openai = resolveOpenAIFamilyAlias(name, models);
-  if (openai) return openai;
+  const aliased = resolveModelAlias(name, models);
+  if (aliased) return aliased;
   const key = String(name || '').trim().toLowerCase();
   const rule = TYPED_ALIASES[key];
   if (!rule) return null;
@@ -653,7 +744,8 @@ export function isRoutable(m) {
 /**
  * Resolve a client model id to a catalog row.
  * Accepts hub/alias, bare alias (theta preferred except qwen/qwen3 → Akash), typed names
- * people send (`deepseek`, `llama-3.3`, …), or xfuel/auto.
+ * people send (`deepseek`, `llama-3.3`, …), MODEL_ALIAS_TABLE names (`gpt-4o-mini`,
+ * `claude-sonnet-*`, bare `gpt` / `openai`), or xfuel/auto.
  *
  * A failed hub poll drops that hub's models from `models` entirely, so the
  * preference lists degrade to the other hub on an outage with no explicit
@@ -671,6 +763,7 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
   const modality = opts.modality || null;
   const lower = requested.toLowerCase();
 
+  const tableAlias = matchModelAlias(requested);
   if (
     requested === 'xfuel/auto'
     || lower === 'chit/auto'
@@ -678,6 +771,7 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
     || lower === 'auto'
     || lower === 'xfuel-auto'
     || lower === 'default'
+    || tableAlias?.target === AUTO_ALIAS_TARGET
   ) {
     // Never auto-route to a model the hub says has no workers. theta/qwen3 is
     // also omitted from autoPreferenceFor — it often reports workers yet 409s.
@@ -774,6 +868,9 @@ export function toOpenAIList(models, { modality = null, priceFor = null } = {}) 
   if (modality) rows = rows.filter((m) => m.modality === modality || m.id === 'xfuel/auto');
   return {
     object: 'list',
+    // Canonical name → target catalog id. Patterns live in alias_patterns.
+    aliases: { ...ALIAS_DISCOVERY.aliases },
+    alias_patterns: ALIAS_DISCOVERY.aliasPatterns.map((p) => ({ ...p })),
     data: rows.map((m) => {
       const pricing = typeof priceFor === 'function' ? priceFor(m) : null;
       return {
@@ -789,6 +886,7 @@ export function toOpenAIList(models, { modality = null, priceFor = null } = {}) 
         default_prediction: m.default_prediction,
         ...(pricing ? { pricing } : {}),
         availability: availabilityOf(m),
+        aliases: [...(ALIAS_DISCOVERY.byTarget.get(m.id) || [])],
       };
     }),
   };
