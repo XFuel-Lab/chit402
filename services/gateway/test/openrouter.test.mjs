@@ -17,7 +17,7 @@ import { rateForModel, costOfUsage, estimateCogsFromRequest, measureCogs } from 
 import { quoteOpenRouterFromCogs, capOpenRouterOutputTokens, OPENROUTER_MAX_OUTPUT_TOKENS } from '../src/openrouter-pricing.js';
 import { quoteResolved } from '../src/x402-server.js';
 import { probeModels, resetHealth, healthOf } from '../src/provider-health.js';
-import { resetOpenRouterPreflightCache } from '../src/openrouter-infer.js';
+import { inferOpenRouter, preflightOpenRouter, resetOpenRouterPreflightCache } from '../src/openrouter-infer.js';
 
 /** Captured 2026-09-26 from GET https://openrouter.ai/api/v1/models (public list). */
 const GPT_4O_MINI = {
@@ -88,6 +88,8 @@ beforeEach(() => {
   resetHealth();
   delete process.env.OPENROUTER_API_KEY;
   delete process.env.OPENROUTER_MAX_TOKENS_CAP;
+  delete process.env.OPENROUTER_REFERER;
+  delete process.env.OPENROUTER_TITLE;
   process.env.HUB_CATALOG_OFFLINE = 'false';
   setModelAliasResolver(null);
 });
@@ -95,6 +97,8 @@ beforeEach(() => {
 afterEach(() => {
   setModelAliasResolver(null);
   delete process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_REFERER;
+  delete process.env.OPENROUTER_TITLE;
 });
 
 test('mapOpenRouterService uses openrouter/<vendor>/<model> and keeps pricing verbatim', () => {
@@ -335,10 +339,10 @@ test('quoteResolved uses the capped OpenRouter cost-plus bill', async () => {
   assert.equal(q.amount, String(BigInt(q.provider_cogs) + BigInt(q.platform_fee) + 2000n));
 });
 
-test('probeModels strips the openrouter prefix', async () => {
+test('probeModels strips the openrouter prefix and sends attribution', async () => {
   const seen = [];
   const fetchFn = async (url, init) => {
-    seen.push(JSON.parse(init.body).model);
+    seen.push({ model: JSON.parse(init.body).model, headers: init.headers });
     return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 });
   };
   await probeModels(['openrouter/openai/gpt-4o-mini'], {
@@ -346,8 +350,68 @@ test('probeModels strips the openrouter prefix', async () => {
     apiKey: 'k',
     fetchFn,
   });
-  assert.deepEqual(seen, ['openai/gpt-4o-mini']);
+  assert.deepEqual(seen.map((s) => s.model), ['openai/gpt-4o-mini']);
+  assert.equal(seen[0].headers['HTTP-Referer'], 'https://chit402.com');
+  assert.equal(seen[0].headers['X-Title'], 'Chit402');
   assert.equal(healthOf('openrouter/openai/gpt-4o-mini').status, 'available');
+});
+
+test('every OpenRouter request carries attribution headers, overridable by env', async () => {
+  const hits = [];
+  const fetchFn = async (url, init) => {
+    hits.push({ url: String(url), headers: init.headers });
+    if (String(url).endsWith('/models')) return jsonResponse(200, LIST);
+    if (String(url).endsWith('/key')) return jsonResponse(200, { data: { label: 'test' } });
+    return jsonResponse(200, {
+      choices: [{ message: { role: 'assistant', content: 'pong' } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    });
+  };
+
+  const completion = await inferOpenRouter({
+    model: 'openai/gpt-4o-mini',
+    messages: [{ role: 'user', content: 'hi' }],
+    apiKey: 'test-or-key',
+    baseUrl: 'http://openrouter.test/api/v1',
+    fetchFn,
+  });
+  assert.equal(completion.ok, true);
+  assert.equal(hits[0].headers['HTTP-Referer'], 'https://chit402.com');
+  assert.equal(hits[0].headers['X-Title'], 'Chit402');
+
+  resetOpenRouterPreflightCache();
+  const pre = await preflightOpenRouter({
+    apiKey: 'test-or-key',
+    baseUrl: 'http://openrouter.test/api/v1',
+    fetchFn,
+    force: true,
+  });
+  assert.equal(pre.ok, true);
+  assert.equal(hits[1].headers['HTTP-Referer'], 'https://chit402.com');
+  assert.equal(hits[1].headers['X-Title'], 'Chit402');
+
+  await getHubCatalog({
+    forceRefresh: true,
+    openrouterApiKey: 'test-or-key',
+    fetchFn,
+    openrouterBase: 'http://openrouter.test/api/v1',
+  });
+  const modelsHit = hits.find((h) => h.url.includes('openrouter.test') && h.url.endsWith('/models'));
+  assert.equal(modelsHit.headers['HTTP-Referer'], 'https://chit402.com');
+  assert.equal(modelsHit.headers['X-Title'], 'Chit402');
+
+  process.env.OPENROUTER_REFERER = 'https://example.test';
+  process.env.OPENROUTER_TITLE = 'Example';
+  hits.length = 0;
+  await inferOpenRouter({
+    model: 'openai/gpt-4o-mini',
+    messages: [{ role: 'user', content: 'hi' }],
+    apiKey: 'test-or-key',
+    baseUrl: 'http://openrouter.test/api/v1',
+    fetchFn,
+  });
+  assert.equal(hits[0].headers['HTTP-Referer'], 'https://example.test');
+  assert.equal(hits[0].headers['X-Title'], 'Example');
 });
 
 

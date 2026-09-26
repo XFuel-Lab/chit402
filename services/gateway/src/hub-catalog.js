@@ -14,13 +14,14 @@
  *   AKASHML_API_KEY=…          — optional; /v1/models may work without it
  *   OPENROUTER_API_KEY=…       — required for the OpenRouter hub; absent = disabled
  *   OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+ *   OPENROUTER_REFERER / OPENROUTER_TITLE — attribution on every OpenRouter request
  *   HUB_CATALOG_OFFLINE=true   — force seed (tests)
  */
 
 import logger from './logger.js';
 import { isDown, healthOf } from './provider-health.js';
 import { akashmlApiKey } from './akashml-infer.js';
-import { openrouterApiKey } from './openrouter-infer.js';
+import { openrouterApiKey, openrouterAttributionHeaders } from './openrouter-infer.js';
 import { resolveOpenRouterFamiliar } from './openrouter-aliases.js';
 
 const DEFAULT_TTL_MS = 60_000;
@@ -436,7 +437,11 @@ async function fetchOpenRouterModels(base, apiKey, fetchFn) {
   try {
     const res = await fetchFn(`${base}/models`, {
       method: 'GET',
-      headers: { Accept: 'application/json', Authorization: `Bearer ${apiKey}` },
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        ...openrouterAttributionHeaders(),
+      },
       signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) throw new Error(`openrouter /models HTTP ${res.status}`);

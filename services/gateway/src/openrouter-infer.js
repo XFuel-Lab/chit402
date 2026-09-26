@@ -13,6 +13,21 @@ import logger from './logger.js';
 import { capOpenRouterOutputTokens } from './openrouter-pricing.js';
 
 const DEFAULT_BASE = 'https://openrouter.ai/api/v1';
+const DEFAULT_REFERER = 'https://chit402.com';
+const DEFAULT_TITLE = 'Chit402';
+
+/**
+ * Attribution OpenRouter asks routers to send on every request.
+ * `OPENROUTER_REFERER` / `OPENROUTER_TITLE` override the defaults.
+ */
+export function openrouterAttributionHeaders() {
+  const referer = String(process.env.OPENROUTER_REFERER || '').trim() || DEFAULT_REFERER;
+  const title = String(process.env.OPENROUTER_TITLE || '').trim() || DEFAULT_TITLE;
+  return {
+    'HTTP-Referer': referer,
+    'X-Title': title,
+  };
+}
 
 /** @returns {string} key, or '' when the hub is disabled */
 export function openrouterApiKey() {
@@ -82,8 +97,7 @@ export async function inferOpenRouter({
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://api.chit402.com',
-        'X-Title': 'Chit402',
+        ...openrouterAttributionHeaders(),
       },
       body: JSON.stringify(body),
       signal: controller.signal,
@@ -182,7 +196,11 @@ export async function preflightOpenRouter({
   try {
     const res = await fetchFn(`${base}/key`, {
       method: 'GET',
-      headers: { Accept: 'application/json', Authorization: `Bearer ${apiKey}` },
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        ...openrouterAttributionHeaders(),
+      },
       signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) {

@@ -77,8 +77,14 @@ const facilitator = await startServer((req, res) => {
   });
 });
 
+const upstreamHits = [];
 const upstream = await startServer((req, res) => {
   const url = req.url || '';
+  upstreamHits.push({
+    url,
+    referer: req.headers['http-referer'],
+    title: req.headers['x-title'],
+  });
   const send = (status, obj) => {
     res.statusCode = status;
     res.setHeader('Content-Type', 'application/json');
@@ -244,6 +250,12 @@ test('gateway quotes, fails closed before settle, and receipts a mocked OpenRout
   assert.equal(paidBody.xfuel.provider_cogs.actual, '5');
   assert.equal(paidBody.xfuel.provider_cogs.basis, 'measured');
   assert.equal(paidBody.xfuel.status, 'completed');
+  for (const suffix of ['/models', '/key', '/chat/completions']) {
+    const hit = upstreamHits.find((h) => h.url.includes('/openrouter/') && h.url.endsWith(suffix));
+    assert.ok(hit, `missing upstream ${suffix}`);
+    assert.equal(hit.referer, 'https://chit402.com');
+    assert.equal(hit.title, 'Chit402');
+  }
 
   const streamed = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',

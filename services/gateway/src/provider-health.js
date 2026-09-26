@@ -30,6 +30,7 @@
  */
 
 import logger from './logger.js';
+import { openrouterAttributionHeaders } from './openrouter-infer.js';
 
 /** Consecutive failures before a model is treated as down. */
 const DEFAULT_FAIL_THRESHOLD = 3;
@@ -203,12 +204,16 @@ export function resetHealth() {
  * thought and returns empty text is still up. Cheap enough to ignore: ~$0.00002
  * a probe, so eight models every five minutes is a few cents a month.
  */
-async function probeOnce(model, { baseUrl, apiKey, fetchFn = globalThis.fetch }) {
+async function probeOnce(model, { baseUrl, apiKey, fetchFn = globalThis.fetch, headers = null }) {
   const t0 = nowMs();
   try {
     const res = await fetchFn(`${baseUrl}/chat/completions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      headers: {
+        'content-type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        ...(headers || {}),
+      },
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: 'ping' }],
@@ -237,10 +242,16 @@ export async function probeModels(models, { baseUrl, apiKey, fetchFn } = {}) {
   if (!apiKey) return { probed: 0, skipped: 'no_api_key' };
   let probed = 0;
   for (const id of models) {
+    const openrouter = id.startsWith('openrouter/');
     const native = id.startsWith('akash/')
       ? id.slice('akash/'.length)
-      : (id.startsWith('openrouter/') ? id.slice('openrouter/'.length) : id);
-    const res = await probeOnce(native, { baseUrl, apiKey, fetchFn });
+      : (openrouter ? id.slice('openrouter/'.length) : id);
+    const res = await probeOnce(native, {
+      baseUrl,
+      apiKey,
+      fetchFn,
+      headers: openrouter ? openrouterAttributionHeaders() : null,
+    });
     if (res.ok) recordSuccess(id, { latencyMs: res.latencyMs, source: 'probe' });
     else recordFailure(id, { reason: res.reason, source: 'probe' });
     probed += 1;
