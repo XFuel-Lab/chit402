@@ -201,6 +201,7 @@ export function mergeReceiptView(receipt) {
         model: null,
         provider: null,
         model_commitment: routeMeta.model_commitment ?? null,
+        ...(routeMeta.requested_model ? { requested_model: routeMeta.requested_model } : {}),
       },
       output: receipt.output?.hash ? receipt.output : null,
       caller_binding: receipt.caller_binding ?? null,
@@ -253,6 +254,7 @@ export function mergeReceiptView(receipt) {
           ? { commitment: claims.route.model_commitment }
           : null
       ),
+      ...(routeMeta.requested_model ? { requested_model: routeMeta.requested_model } : {}),
     },
     output: claims.output?.hash
       ? { hash: claims.output.hash, kind: receipt.output?.kind ?? 'committed' }
@@ -1585,6 +1587,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       message_type: draft.route.message_type,
       chain_id: draft.route.chain_id,
       model_commitment: draft.route.model_commitment,
+      ...(task.meta?.requestedModel ? { requested_model: task.meta.requestedModel } : {}),
     },
     payment_meta: {
       network: draft.payment.network,
@@ -1600,6 +1603,12 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     issuer_signature,
   };
 
+  if (task.meta?.refund?.status === 'refund_owed') {
+    envelope.refund = {
+      status: 'refund_owed',
+      reason: task.meta.refund.reason || 'upstream_failed',
+    };
+  }
   if (draft.provider_cogs) envelope.provider_cogs = draft.provider_cogs;
   if (draft.usage) envelope.usage = draft.usage;
   if (draft.verified_inference) envelope.verified_inference = draft.verified_inference;
@@ -1686,6 +1695,9 @@ export function displayRouteModel(model) {
 export function displayRouteProvider(provider) {
   if (provider == null || provider === '') return provider;
   const s = String(provider);
+  // Hub id on the route is the provider that served. The same string is blocked
+  // as a payer identity (isSymbolicLabel) and must still show on the receipt.
+  if (s.toLowerCase() === 'openrouter') return 'openrouter';
   if (isSymbolicLabel(s)) return null;
   const lower = s.toLowerCase();
   if (lower === 'xfuel' || lower === 'xfuel-gateway') return null;

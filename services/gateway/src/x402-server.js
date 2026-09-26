@@ -15,6 +15,7 @@ import {
   fetchBaseL1Anchor,
 } from './issuance-commitment.js';
 import { quoteTask, quoteFromCogs, costPlusEnabled, promptTokensFor, quotedMaxOutputTokens } from './pricing.js';
+import { capOpenRouterOutputTokens, isOpenRouterCatalogId, quoteOpenRouterFromCogs } from './openrouter-pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { normalizeRequestedTier } from './tier-policy.js';
 import { getHubCatalog, resolveCatalogModel, requestShape } from './hub-catalog.js';
@@ -180,6 +181,18 @@ export async function quoteResolved(body = {}, cfg = config.x402) {
     };
   }
 
+  // OpenRouter is cost-plus even when the global flag is off: a rate-card
+  // fallback can price a closed model under its upstream token cost.
+  if (isOpenRouterCatalogId(model)) {
+    const orQuote = await costPlusQuote(priced, model, cfg);
+    if (!orQuote || orQuote.basis !== 'cost_plus') {
+      const err = new Error('openrouter_unpriced');
+      err.code = 'openrouter_unpriced';
+      throw err;
+    }
+    return { ...orQuote, requested_model: requested, priced_model: model };
+  }
+
   const quote = (costPlusEnabled() ? await costPlusQuote(priced, model, cfg) : null)
     ?? quoteTask(priced, {
       usdcPrices: cfg.usdcPrices,
@@ -237,7 +250,10 @@ async function costPlusQuote(body, resolvedModel, cfg) {
   if (!modelId) return null;
 
   const promptTokens = promptTokensFor(body);
-  const maxOutputTokens = quotedMaxOutputTokens(body);
+  const openrouter = isOpenRouterCatalogId(modelId);
+  const maxOutputTokens = openrouter
+    ? capOpenRouterOutputTokens(quotedMaxOutputTokens(body))
+    : quotedMaxOutputTokens(body);
   const { amount: cogs, basis, rate } = await estimateCogsFromRequest({
     modelId,
     promptTokens,
@@ -250,11 +266,15 @@ async function costPlusQuote(body, resolvedModel, cfg) {
   // $0.01. Better to overcharge against a card we own than to give work away.
   if (basis !== 'estimated') return null;
 
-  return {
-    ...quoteFromCogs(cogs, {
+  const priced = openrouter
+    ? quoteOpenRouterFromCogs(cogs, { tier2: wantsSettlementProof(body) })
+    : quoteFromCogs(cogs, {
       usdcFloor: cfg.usdcFloor ?? cfg.usdcPriceDefault,
       tier2: wantsSettlementProof(body),
-    }),
+    });
+
+  return {
+    ...priced,
     prompt_tokens: promptTokens,
     max_output_tokens: maxOutputTokens,
     // The provider's own rate, not ours — under cost-plus this is the input to

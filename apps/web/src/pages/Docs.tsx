@@ -207,6 +207,10 @@ export default function Docs() {
           <p>
             Unauthenticated <code>POST /v1/chat/completions</code> returns HTTP 402. Settle USDC,
             then retry with <code>X-PAYMENT</code> for a signed receipt with <code>verify_url</code>.
+            Familiar model names follow the book: with an upstream hub key set they resolve to
+            that hub and the receipt records the name you asked for plus the hub and model that
+            served. With the key unset, those names fall back to the open-model aliases and the
+            hub is not advertised.
           </p>
           <pre className="docs-code">
             <code>{SNIPPET}</code>

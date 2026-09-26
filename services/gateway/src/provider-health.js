@@ -237,7 +237,9 @@ export async function probeModels(models, { baseUrl, apiKey, fetchFn } = {}) {
   if (!apiKey) return { probed: 0, skipped: 'no_api_key' };
   let probed = 0;
   for (const id of models) {
-    const native = id.startsWith('akash/') ? id.slice('akash/'.length) : id;
+    const native = id.startsWith('akash/')
+      ? id.slice('akash/'.length)
+      : (id.startsWith('openrouter/') ? id.slice('openrouter/'.length) : id);
     const res = await probeOnce(native, { baseUrl, apiKey, fetchFn });
     if (res.ok) recordSuccess(id, { latencyMs: res.latencyMs, source: 'probe' });
     else recordFailure(id, { reason: res.reason, source: 'probe' });
@@ -249,8 +251,11 @@ export async function probeModels(models, { baseUrl, apiKey, fetchFn } = {}) {
 /**
  * Start the background sweep. No-op unless `PROVIDER_HEALTH_PROBE=true`.
  *
- * Only AkashML is probed. Theta publishes worker counts in the catalogue poll we
- * already make, so probing it would be paying for an answer we are given.
+ * Only AkashML is probed on the timer. Theta publishes worker counts in the
+ * catalogue poll we already make. OpenRouter publishes no capacity either, but
+ * its catalog is hundreds of models — a sweep would bill one completion each —
+ * so it gets passive health from real traffic (`recordSuccess` / `recordFailure`).
+ * `probeModels` still accepts an `openrouter/…` id and strips the prefix.
  *
  * @param {() => Promise<{models: object[]}>} getCatalog
  */

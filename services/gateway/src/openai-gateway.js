@@ -28,6 +28,10 @@ import {
   extractImageUrl,
 } from './edgecloud-infer.js';
 import { inferAkashML, akashmlApiKey } from './akashml-infer.js';
+import { inferOpenRouter, openrouterApiKey } from './openrouter-infer.js';
+import { capOpenRouterOutputTokens } from './openrouter-pricing.js';
+import { preflightBeforeSettle } from './route-preflight.js';
+import { markRefundOwed } from './refund-owed.js';
 import { normalizeUsage, messagesToText } from './usage.js';
 import { runX402Handshake, extractPaymentHeader, priceUSDCResolved, quoteResolved } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
@@ -562,6 +566,63 @@ async function runChatInference({
     }
   }
 
+  // OpenRouter — no mock fallthrough. An upstream error is the answer.
+  if (cat.hub === 'openrouter') {
+    if (!openrouterApiKey()) {
+      return {
+        content: '',
+        provider: 'openrouter',
+        mock: true,
+        resolvedModel,
+        raw: null,
+        error: {
+          status: 503,
+          code: 'provider_unavailable',
+          message: 'OpenRouter is not enabled.',
+          refundOwed: true,
+        },
+      };
+    }
+    const result = await inferOpenRouter({
+      model: cat.alias,
+      messages,
+      max_tokens: capOpenRouterOutputTokens(max_tokens),
+      temperature,
+      tools,
+      tool_choice,
+    });
+    if (result.ok) {
+      recordSuccess(cat.id);
+      return {
+        content: result.output,
+        toolCalls: result.toolCalls || null,
+        provider: 'openrouter',
+        mock: false,
+        resolvedModel,
+        raw: result.raw,
+      };
+    }
+    recordFailure(cat.id, { reason: result.reason });
+    const clientError = result.reason === 'http_400' || result.reason === 'http_404';
+    logger.warn(
+      { hub: 'openrouter', model: cat.alias, reason: result.reason },
+      'openai-gateway: OpenRouter upstream failed',
+    );
+    return {
+      content: '',
+      provider: 'openrouter',
+      mock: true,
+      resolvedModel,
+      raw: result,
+      error: {
+        status: clientError ? 400 : 502,
+        code: clientError ? 'model_not_found' : 'provider_unavailable',
+        message: `openrouter/${cat.alias} failed (${result.reason}).`,
+        refundOwed: true,
+      },
+    };
+  }
+
   // Optional multi-tier fallthrough (Web2 / other DePIN) when allowed.
   if (fb) {
     let providerConfigured = false;
@@ -867,7 +928,7 @@ async function ensureAttestProof(task, privacyCtx) {
 
 function registerTaskAndProve({
   taskId: providedTaskId,
-  model, messages, content, provider, toolCalls = null,
+  model, requestedModel = null, messages, content, provider, toolCalls = null,
   proveAllowed = true, apiKeyHash = null, privateSpend = false,
   privacyProduct = null, privacyAttest = null,
   usage = null, payment = null, deferProve = false,
@@ -916,6 +977,7 @@ function registerTaskAndProve({
       height: 0,
       source: 'openai-gateway',
       provider,
+      requestedModel: requestedModel || null,
       apiKeyHash: apiKeyHash || null,
       payerWallet: payment?.payer || session?.payer_wallet || null,
       payTo: payment?.payTo || null,
@@ -941,7 +1003,7 @@ function registerTaskAndProve({
     // aggregates from the durable snapshots, and /v1 is the busiest surface.
     usage,
     outputHash,
-    result: { provider, outputHash, content_hash: outputHash, usage },
+    result: { provider, model, outputHash, content_hash: outputHash, usage },
     callbackUrl: null,
     callbackSecret: null,
   };
@@ -1072,7 +1134,10 @@ function buildReceipt({
       ...view.route,
       // What the caller asked for vs what served. Signed model is in issuer_signature.jws.
       requested: requestedModel || 'xfuel/auto',
+      requested_model: requestedModel || view.route?.requested_model || null,
       resolved: resolvedModel || view.route?.model || null,
+      model: resolvedModel || view.route?.model || null,
+      provider: provider || view.route?.provider || null,
     },
     output: view.output,
     caller_binding: view.caller_binding,
@@ -1274,10 +1339,44 @@ function registerPaidV1Shell({
  * signed receipt and a non-500 status. Never swallow collected payment as
  * a generic server_error without task_id / payment.ref.
  */
+/**
+ * Unknown model, or an OpenRouter preflight error, before x402 settle.
+ * @returns {Promise<object|null>} resolved preflight, or null if the response was sent
+ */
+async function rejectIfUnroutable(res, body) {
+  const pre = await preflightBeforeSettle(body);
+  if (pre.ok) return pre;
+  res.status(pre.status).json({
+    error: {
+      message: pre.message,
+      type: pre.status >= 500 ? 'server_error' : 'invalid_request_error',
+      code: pre.code,
+    },
+  });
+  return null;
+}
+
+function stampServedRoute(task, { requested, served, provider }) {
+  if (!task) return;
+  task.meta = task.meta || {};
+  if (requested) task.meta.requestedModel = requested;
+  if (served) {
+    task.intent = task.intent || {};
+    task.intent.modelId = served;
+  }
+  task.result = {
+    ...(task.result || {}),
+    ...(provider ? { provider } : {}),
+    ...(served ? { model: served } : {}),
+  };
+  if (provider) task.meta.provider = provider;
+}
+
 function respondPaidV1Failure(res, {
   task, taskId, payment, baseUrl, privateSpend = false,
   statusCode = 503, message, code = 'inference_failed',
-  requestedModel = null, resolvedModel = null,
+  requestedModel = null, resolvedModel = null, provider = null,
+  refundOwed = false,
   ledger = null, registry = null, agentId = null, req = null,
   settleRecord = null,
 }) {
@@ -1285,12 +1384,22 @@ function respondPaidV1Failure(res, {
     task.status = 'failed';
     task.updatedAt = Date.now();
     if (message) task.meta = { ...(task.meta || {}), failureReason: message };
+    if (requestedModel) task.meta = { ...(task.meta || {}), requestedModel };
+    if (resolvedModel || provider) {
+      task.result = {
+        ...(task.result || {}),
+        ...(provider ? { provider } : {}),
+        ...(resolvedModel ? { model: resolvedModel } : {}),
+      };
+      if (provider) task.meta.provider = provider;
+    }
+    if (refundOwed) markRefundOwed(task, { reason: code, provider });
   }
   const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
   let receipt = buildReceipt({
     task,
     taskId,
-    provider: task?.meta?.provider || 'none',
+    provider: provider || task?.meta?.provider || 'none',
     mock: true,
     proverConfigured: !!getSP1Prover(),
     proveAllowed: false,
@@ -1641,9 +1750,14 @@ export function registerOpenAIRoutes(app, {
       });
     }
     let boundSession = sessionBind.session || null;
+    let preflightModel = null;
 
     // Payment present: settle only after the body is valid (Bankr: don't settle then 400).
+    // Unknown models and an OpenRouter preflight error stop here, before settle.
     if (paymentHeader) {
+      const pre = await rejectIfUnroutable(res, req.body || {});
+      if (!pre) return undefined;
+      preflightModel = pre.model;
       metering = await meterV1Request(req, res, {
         taskId, isAuthorised, resourcePath, ledger, registry, bookPolicy,
       });
@@ -1761,6 +1875,9 @@ export function registerOpenAIRoutes(app, {
           baseUrl,
           privateSpend,
           requestedModel: model,
+          resolvedModel: preflightModel?.id || null,
+          provider: preflightModel?.hub === 'openrouter' ? 'openrouter' : null,
+          refundOwed: preflightModel?.hub === 'openrouter',
           message: 'Inference failed after payment was collected.',
           code: 'inference_failed',
           ledger,
@@ -1787,6 +1904,8 @@ export function registerOpenAIRoutes(app, {
           code: inference.error.code || 'inference_failed',
           requestedModel: model,
           resolvedModel: inference.resolvedModel,
+          provider: inference.provider,
+          refundOwed: !!inference.error.refundOwed,
           ledger,
           registry,
           req,
@@ -1818,8 +1937,7 @@ export function registerOpenAIRoutes(app, {
       task = paidTask;
       task.status = 'completed';
       task.updatedAt = Date.now();
-      task.intent.modelId = echoModel;
-      task.meta.provider = provider;
+      stampServedRoute(task, { requested: model || 'xfuel/auto', served: echoModel, provider });
       if (boundSession) {
         task.meta.session = boundSession;
         task.meta.agentPubkey = boundSession.agent_pubkey;
@@ -1829,7 +1947,9 @@ export function registerOpenAIRoutes(app, {
         toolCalls ? JSON.stringify({ content: content || null, tool_calls: toolCalls }) : (content ?? ''),
       ));
       task.result = {
+        ...task.result,
         provider,
+        model: echoModel,
         outputHash: task.outputHash,
         content_hash: task.outputHash,
         usage,
@@ -1841,6 +1961,7 @@ export function registerOpenAIRoutes(app, {
       ({ proverConfigured, task } = registerTaskAndProve({
         taskId,
         model: echoModel,
+        requestedModel: model || 'xfuel/auto',
         messages,
         content,
         toolCalls,
@@ -2094,9 +2215,19 @@ export function registerOpenAIRoutes(app, {
       });
     }
     let boundSession = sessionBind.session || null;
+    let preflightModel = null;
 
-    // Payment present: settle only after the body is valid
+    // Payment present: settle only after the body is valid.
+    // Unknown models and an OpenRouter preflight error stop here, before settle.
     if (paymentHeader) {
+      const pre = await rejectIfUnroutable(res, {
+        ...(req.body || {}),
+        model: model || 'xfuel/auto',
+        messages,
+        max_tokens: max_output_tokens,
+      });
+      if (!pre) return undefined;
+      preflightModel = pre.model;
       metering = await meterV1Request(req, res, {
         taskId, isAuthorised, resourcePath: '/v1/responses', ledger, registry, bookPolicy,
       });
@@ -2197,6 +2328,9 @@ export function registerOpenAIRoutes(app, {
           baseUrl,
           privateSpend,
           requestedModel: model,
+          resolvedModel: preflightModel?.id || null,
+          provider: preflightModel?.hub === 'openrouter' ? 'openrouter' : null,
+          refundOwed: preflightModel?.hub === 'openrouter',
           message: 'Inference failed after payment was collected.',
           code: 'inference_failed',
           ledger,
@@ -2223,6 +2357,8 @@ export function registerOpenAIRoutes(app, {
           code: inference.error.code || 'inference_failed',
           requestedModel: model,
           resolvedModel: inference.resolvedModel,
+          provider: inference.provider,
+          refundOwed: !!inference.error.refundOwed,
           ledger,
           registry,
           req,
@@ -2251,8 +2387,7 @@ export function registerOpenAIRoutes(app, {
       task = paidTask;
       task.status = 'completed';
       task.updatedAt = Date.now();
-      task.intent.modelId = echoModel;
-      task.meta.provider = provider;
+      stampServedRoute(task, { requested: model || 'xfuel/auto', served: echoModel, provider });
       if (boundSession) {
         task.meta.session = boundSession;
         task.meta.agentPubkey = boundSession.agent_pubkey;
@@ -2262,7 +2397,9 @@ export function registerOpenAIRoutes(app, {
         toolCalls ? JSON.stringify({ content: content || null, tool_calls: toolCalls }) : (content ?? ''),
       ));
       task.result = {
+        ...task.result,
         provider,
+        model: echoModel,
         outputHash: task.outputHash,
         content_hash: task.outputHash,
         usage,
@@ -2274,6 +2411,7 @@ export function registerOpenAIRoutes(app, {
       ({ proverConfigured, task } = registerTaskAndProve({
         taskId,
         model: echoModel,
+        requestedModel: model || 'xfuel/auto',
         messages,
         content,
         toolCalls,

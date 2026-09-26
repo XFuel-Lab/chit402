@@ -10,6 +10,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **OpenRouter hub:** when `OPENROUTER_API_KEY` is set, the gateway advertises `openrouter/<vendor>/<model>`, quotes cost-plus (upstream per-token price + 1% + the $0.002 receipt, never below upstream, `max_tokens` capped), and records the requested model plus the served route. The hub stays off when the key is unset.
 - **Agent skill `chit402-cite-1f916`:** pay Chit402 over x402 and cite `task_id`, `verify_url`, `payment_ref`, `output_hash`, and `receipt_sha256` on a 1F916 submission. The receipt proves spend, not acceptance. Canonical host is `api.chit402.com`.
 - **Nano (XNO) foreign ingest:** `POST /v1/agents/:agent_id/book/ingest` accepts a cemented mainnet send (block hash, recipient, raw amount, description). Two public RPCs must agree the block is a confirmed send and that `block_info.amount` matches the balance delta. Receipts carry `chain=nano`, raw and XNO amounts, a Kraken NANOUSD figure labeled `estimate`, and a block explorer link. Dedupe key is the block hash.
 - **ECDSA issuer signature on receipts:** Receipts now include an ES256 (P-256) public-key signature in `issuer_signature` that downstream agents can verify against the published JWKS at `GET /.well-known/jwks.json`. HMAC signatures remain for backward compatibility. SDK exports `verifyReceiptEcdsa()` and `verifyReceiptEcdsaWithJwks()` for verification. See `docs/VERIFY_ALGORITHM.md` §10.
