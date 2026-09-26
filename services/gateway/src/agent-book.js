@@ -167,6 +167,9 @@ function rowOf(entry) {
     row.collected = false;
   } else if (evidence === BOOK_EVIDENCE.REFUND_OWED || entry.refund_status === 'owed') {
     row.collected = false;
+  } else if (evidence === BOOK_EVIDENCE.OPENROUTER_REPORTED) {
+    row.collected = false;
+    row.source = 'openrouter_broadcast';
   } else {
     row.collected = true;
   }

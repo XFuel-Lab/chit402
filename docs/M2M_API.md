@@ -163,6 +163,12 @@ See [CHAT_COMPLETIONS_GATEWAY.md](./CHAT_COMPLETIONS_GATEWAY.md).
 
 Liveness, fee config, chains, message types. No auth.
 
+### OpenRouter Broadcast
+
+`POST /v1/openrouter/books` issues a book and an ingest key (shown once, stored hashed). `PUT /v1/openrouter/books/:book_id/openrouter-key` stores that book's OpenRouter API key encrypted at rest; `DELETE` removes it. The key is never logged and never returned. `POST /v1/openrouter/broadcast` accepts an OpenRouter Webhook (OTLP JSON) and stamps one receipt per generation. The rail is `reported`. When a key is attached, Chit checks `GET https://openrouter.ai/api/v1/generation` and sets `verified_with: openrouter_generation_api` only if model, native tokens, and total cost match. With no key, the receipt stays unverified. Chit did not settle the payment. `GET /v1/openrouter/books/:book_id/summary` counts verified generations only.
+
+See [product/openrouter-broadcast.md](./product/openrouter-broadcast.md).
+
 ## Payments
 
 Default rail: USDC via x402 on Base. See [X402_ADAPTER.md](./X402_ADAPTER.md).
