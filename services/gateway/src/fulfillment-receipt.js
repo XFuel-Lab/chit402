@@ -14,6 +14,7 @@ export const FULFILLMENT_JOB_KINDS = Object.freeze([
   'swap',
   'research',
   'acp_job',
+  'openrouter_broadcast',
   'other',
 ]);
 

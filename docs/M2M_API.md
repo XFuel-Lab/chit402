@@ -163,6 +163,12 @@ See [CHAT_COMPLETIONS_GATEWAY.md](./CHAT_COMPLETIONS_GATEWAY.md).
 
 Liveness, fee config, chains, message types. No auth.
 
+### OpenRouter Broadcast
+
+`POST /v1/openrouter/books` issues a book and an ingest key (shown once, stored hashed). `POST /v1/openrouter/broadcast` accepts an OpenRouter Webhook (OTLP JSON) and stamps one receipt per generation. The rail is `reported`: OpenRouter reported the spend, and Chit did not settle it. `GET /v1/openrouter/books/:book_id/receipts` lists that book's receipts (ingest key). `GET /v1/openrouter/books/:book_id/summary` is a public aggregate, not a receipt index.
+
+See [product/openrouter-broadcast.md](./product/openrouter-broadcast.md).
+
 ## Payments
 
 Default rail: USDC via x402 on Base. See [X402_ADAPTER.md](./X402_ADAPTER.md).

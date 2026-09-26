@@ -45,6 +45,8 @@ export const BOOK_EVIDENCE = {
   A2A_ESCROW: 'a2a_escrow',
   /** Settled USDC, nothing served. Visible on the book; excluded from spend totals. */
   REFUND_OWED: 'refund_owed',
+  /** OpenRouter Broadcast report. Visible on the book; Chit did not settle it. */
+  OPENROUTER_REPORTED: 'openrouter_reported',
 };
 
 /** Arrival sub-state on settle-time rows (recorder ≠ arrival). */
@@ -109,6 +111,11 @@ export function deriveEvidence(entry) {
   if (entry.evidence === BOOK_EVIDENCE.UNVERIFIED) {
     return BOOK_EVIDENCE.UNVERIFIED;
   }
+  if (entry.evidence === BOOK_EVIDENCE.OPENROUTER_REPORTED
+    || entry.source === 'openrouter_broadcast'
+    || String(entry.rail || '').toLowerCase() === 'reported') {
+    return BOOK_EVIDENCE.OPENROUTER_REPORTED;
+  }
   if (entry.evidence === BOOK_EVIDENCE.FOREIGN_INGEST || entry.source === 'foreign_ingest') {
     return BOOK_EVIDENCE.FOREIGN_INGEST;
   }
@@ -151,10 +158,12 @@ export function entryQualifiesForTotals(entry) {
  * a nano row is recorded on the book and omitted from the USDC spent total.
  */
 export function entryQualifiesForCap(entry) {
-  if (String(entry?.rail || '').toLowerCase() === 'nano') return false;
+  const railEarly = String(entry?.rail || '').toLowerCase();
+  if (railEarly === 'nano' || railEarly === 'reported') return false;
   const evidence = deriveEvidence(entry);
   if (evidence === BOOK_EVIDENCE.POLICY_BLOCKED || evidence === BOOK_EVIDENCE.UNVERIFIED
-    || evidence === BOOK_EVIDENCE.A2A_ESCROW || evidence === BOOK_EVIDENCE.REFUND_OWED) {
+    || evidence === BOOK_EVIDENCE.A2A_ESCROW || evidence === BOOK_EVIDENCE.REFUND_OWED
+    || evidence === BOOK_EVIDENCE.OPENROUTER_REPORTED) {
     return false;
   }
   if (evidence === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED) return false;
@@ -207,10 +216,13 @@ export function receiptQualifiesForLedger(receipt) {
   }
   const payment = receipt.payment || {};
   const rail = String(payment.rail || '').toLowerCase();
+  const reported = rail === 'reported'
+    || receipt.source === 'openrouter_broadcast'
+    || receipt.kind === 'openrouter_broadcast';
   if (UNMETERED_RAILS.has(rail)) {
     return { ok: false, reason: 'demo/unmetered receipt does not qualify' };
   }
-  if (payment.collected !== true) {
+  if (!reported && payment.collected !== true) {
     return { ok: false, reason: 'receipt is not collected' };
   }
   if (!payment.ref) {
@@ -218,6 +230,12 @@ export function receiptQualifiesForLedger(receipt) {
   }
   if (!receipt.task_id) {
     return { ok: false, reason: 'task_id required' };
+  }
+  if (reported) {
+    if (rail !== 'reported') {
+      return { ok: false, reason: 'openrouter broadcast requires payment.rail reported' };
+    }
+    return { ok: true };
   }
   if (rail && rail !== 'usdc' && rail !== 'solana' && !rail.startsWith('solana') && rail !== 'nano') {
     return { ok: false, reason: `rail ${rail} does not qualify` };
@@ -356,6 +374,18 @@ export class UsageSettledLedger {
       entry.job_kind = receipt.fulfillment.intent?.job_kind ?? null;
     } else if (receipt.route?.job_kind) {
       entry.job_kind = receipt.route.job_kind;
+    }
+    const reportedRow = String(payment.rail || '').toLowerCase() === 'reported'
+      || receipt.source === 'openrouter_broadcast'
+      || receipt.kind === 'openrouter_broadcast';
+    if (reportedRow) {
+      entry.collected = false;
+      entry.evidence = BOOK_EVIDENCE.OPENROUTER_REPORTED;
+      entry.source = 'openrouter_broadcast';
+      entry.job_kind = entry.job_kind || 'openrouter_broadcast';
+      if (receipt.public_receipt && typeof receipt.public_receipt === 'object') {
+        entry.receipt_snapshot = receipt.public_receipt;
+      }
     }
     if (receipt.foreign_x402 === true) {
       entry.foreign_x402 = true;
@@ -681,7 +711,8 @@ export class UsageSettledLedger {
       if (deriveEvidence(e) === BOOK_EVIDENCE.RECORDED_BY_SETTLE
         || deriveEvidence(e) === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED
         || deriveEvidence(e) === BOOK_EVIDENCE.INFLOW_CLAIMED
-        || deriveEvidence(e) === BOOK_EVIDENCE.REFUND_OWED) {
+        || deriveEvidence(e) === BOOK_EVIDENCE.REFUND_OWED
+        || deriveEvidence(e) === BOOK_EVIDENCE.OPENROUTER_REPORTED) {
         rows.push(e);
         continue;
       }

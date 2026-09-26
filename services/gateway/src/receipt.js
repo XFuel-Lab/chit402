@@ -30,6 +30,8 @@ export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
 export const SETTLEMENT_KIND_INHERITED = 'inherited';
 export const SETTLEMENT_KIND_SETTLED = 'settled';
 export const SETTLEMENT_KIND_UNSETTLED = 'unsettled';
+/** Spend reported by an upstream (OpenRouter Broadcast). Chit did not settle it. */
+export const SETTLEMENT_KIND_REPORTED = 'reported';
 export const RECEIPT_KIND_SESSION_HANDOFF = 'session_handoff';
 
 export function isInheritedSettlement(view) {
@@ -46,6 +48,13 @@ export function settlementOf(view) {
     return {
       kind: SETTLEMENT_KIND_INHERITED,
       parent_receipt_id: parentId,
+    };
+  }
+  if (String(view?.payment?.rail || '').toLowerCase() === 'reported') {
+    return {
+      kind: SETTLEMENT_KIND_REPORTED,
+      parent_receipt_id: null,
+      attested_by: 'openrouter_report',
     };
   }
   if (view?.payment?.ref) {
@@ -1466,6 +1475,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     : null;
   const requestedModel = task?.meta?.requestedModel || task?.intent?.requestedModel || null;
 
+  const reportedRail = paymentRail === 'reported';
+
   const routeProvider = (() => {
     const fromResult = task.result?.provider || task.result?.routedTo || task.routedTo || null;
     if (task.result?.mock) return fromResult || 'mock';
@@ -1495,15 +1506,15 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       // network (same prefix as payment.ref / payment_meta.network) so a Solana
       // receipt is not labelled chain_id "base". The JWS does not cover chain_id
       // and payment.ref stays "<network>:<tx>".
-      chain_id: networkFromPaymentRef(paymentRef) || task.meta?.chain || task.intent?.chainId || null,
+      chain_id: reportedRail ? null : (networkFromPaymentRef(paymentRef) || task.meta?.chain || task.intent?.chainId || null),
     },
     payment: {
       rail: paymentRail,
       ref: paymentRef,
-      network: networkFromPaymentRef(paymentRef),
-      explorer_url: explorerUrlForRef(paymentRef),
+      network: reportedRail ? null : networkFromPaymentRef(paymentRef),
+      explorer_url: reportedRail ? null : explorerUrlForRef(paymentRef),
       asset: paymentRef ? paymentAssetOf(task) : null,
-      payee: paymentRef ? payeeOf(task, { payTo }) : null,
+      payee: reportedRail ? null : (paymentRef ? payeeOf(task, { payTo }) : null),
       gross_amount: task.intent?.amount || '0',
       fee_amount: task.feeAmount || '0',
       net_amount: task.netAmount || '0',
@@ -1514,8 +1525,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       tier2_proof: pricing?.tier2_proof && pricing.tier2_proof !== '0' ? String(pricing.tier2_proof) : null,
       floor_applied: pricing?.floor_applied ?? null,
       basis: pricing?.basis ?? null,
-      collected: !!paymentRef && !refund,
-      collects_on: rollingFronted ? 'next_request' : 'this_request',
+      collected: reportedRail ? false : (!!paymentRef && !refund),
+      collects_on: reportedRail ? 'reported' : (rollingFronted ? 'next_request' : 'this_request'),
     },
     provider_cogs: providerCogs,
     usage,
@@ -1792,6 +1803,34 @@ function formatUsdEstimateLabel(estimate) {
   return text.startsWith('$') ? text : `$${text}`;
 }
 
+function reportedOpenRouterSection(receipt, view) {
+  const p = view.payment || {};
+  const reported = receipt.reported && typeof receipt.reported === 'object' ? receipt.reported : {};
+  const stamp = receipt.stamp && typeof receipt.stamp === 'object' ? receipt.stamp : {};
+  const usd = (label, value) => (value != null && value !== ''
+    ? row(label, `$${esc(value)} <span class="muted">USD reported</span>`)
+    : '');
+  const provider = reported.provider_name || reported.provider_slug || view.route?.provider || null;
+  const generation = reported.generation_id || null;
+  const stampHtml = stamp.waived === true
+    ? '$0.002 <span class="muted">USDC recorded</span> <span class="badge pending">pilot, not charged</span>'
+    : '$0.002 <span class="muted">USDC recorded</span> <span class="badge pending">not charged</span>';
+  return `<section class="card">
+      <h2>Reported spend <span class="scope">OpenRouter report, not a Chit settlement</span></h2>
+      ${row('Rail', '<span class="badge pending">REPORTED</span>')}
+      ${row('Attested by', '<span class="badge pending">OpenRouter report</span>')}
+      ${generation ? row('Generation', `<code>${esc(generation)}</code>`) : ''}
+      ${p.ref ? row('Reference', `<code>${esc(p.ref)}</code>`) : ''}
+      ${usd('Input cost', reported.input_cost_usd)}
+      ${usd('Output cost', reported.output_cost_usd)}
+      ${usd('Total cost', reported.total_cost_usd)}
+      ${row('Model', esc(view.route?.model || '—'))}
+      ${provider ? row('Provider', esc(provider)) : ''}
+      ${row('Stamp fee', stampHtml)}
+      <p class="muted" style="margin:8px 0 0;font-size:12px">${esc(receipt.attestation_note || 'Attested by an OpenRouter report. Chit recorded this generation and did not settle the payment. The reference is the OpenRouter generation id.')}</p>
+    </section>`;
+}
+
 function foreignIngestPaymentSection(receipt, view) {
   const p = view.payment || {};
   const stamp = receipt.stamp && typeof receipt.stamp === 'object' ? receipt.stamp : {};
@@ -1882,6 +1921,7 @@ export function renderReceiptHtml(receipt) {
   const refund = receipt.refund || null;
   const b = view.binding;
   const foreign = isForeignIngestReceipt(receipt);
+  const reported = view.payment?.rail === 'reported' || receipt.source === 'openrouter_broadcast';
   const og = buildReceiptOgMeta(receipt, view);
   const title = og.title;
   const desc = og.description;
@@ -2106,9 +2146,11 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
   <div class="wrap">
     <header>
       <div class="brand">Chit402</div>
-      <div>${foreign
-        ? '<span class="badge ok">Recorded</span>'
-        : badge(pr.outcome, b ? b.matches : undefined)}</div>
+      <div>${reported
+        ? '<span class="badge pending">Reported</span>'
+        : (foreign
+          ? '<span class="badge ok">Recorded</span>'
+          : badge(pr.outcome, b ? b.matches : undefined))}</div>
     </header>
 
     <div class="share-row">
@@ -2122,7 +2164,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
     <h1>${privacy?.label ? esc(privacy.label) : 'Task'}</h1>
     <div class="taskid">${esc(displayTaskId(receipt.task_id))}</div>
 
-    ${foreign ? foreignIngestPaymentSection(receipt, view) : `<section class="card">
+    ${reported ? reportedOpenRouterSection(receipt, view) : (foreign ? foreignIngestPaymentSection(receipt, view) : `<section class="card">
       <h2>Payment</h2>
       ${row('Rail', `<span class="badge ${p.rail === 'usdc' ? 'ok' : 'pending'}">${esc((p.rail || '').toUpperCase())}</span>`)}
       ${row('Settlement', refund?.refund_status === 'owed'
@@ -2144,7 +2186,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
       ${p.platform_fee != null ? row(`Platform fee (${esc((p.platform_fee_bps ?? 0) / 100)}%)`, usdcCell(p.platform_fee)) : ''}
       ${p.tier2_proof ? row('Tier-2 proof (SP1)', usdcCell(p.tier2_proof)) : ''}
       ${row('Protocol fee', `${usdcCell(p.fee_amount)} <span class="muted">(${esc(p.protocol_fee_bps ?? p.fee_bps)} bps)</span>`)}
-    </section>`}
+    </section>`) }
 
     <section class="card">
       <h2>Verification</h2>

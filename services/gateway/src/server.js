@@ -31,6 +31,11 @@ import {
   configureRollingLedger,
 } from './rolling-settlement.js';
 import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptMultiKey, verifyOriginHandoff, verifyDestAck, issueSessionHandoffReceipt, mergeReceiptView, decodeReceiptClaims } from './receipt.js';
+import {
+  configureOpenRouterBroadcast,
+  findOpenRouterPublicReceipt,
+  registerOpenRouterBroadcast,
+} from './openrouter-broadcast.js';
 import { renderReceiptOgPng } from './receipt-og.js';
 import {
   getSessionStore,
@@ -446,6 +451,7 @@ SDK: verifyReceiptEcdsaWithJwks(receipt, jwks) → { checked, valid, kid }
 - register_agent = POST /v1/agents/register (needs a collected receipt + agentWallet).
 - get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; budget Y + remaining; not a public scoreboard).
 - ingest_foreign_x402 = POST /v1/agents/:agent_id/book/ingest (record agent's arbitrary x402 spend to a foreign endpoint).
+- OpenRouter Broadcast: POST /v1/openrouter/books issues a book ingest key (shown once, stored hashed). POST /v1/openrouter/broadcast stamps one receipt per generation (rail reported — OpenRouter reported the spend; Chit did not settle it). GET /v1/openrouter/books/:book_id/receipts is ingest-key gated. GET /v1/openrouter/books/:book_id/summary is a public aggregate (counts and reported USD only). Docs: docs/product/openrouter-broadcast.md
 
 ## Discovery (x402scan + Bazaar)
 
@@ -701,6 +707,10 @@ export function createApp() {
   if (config.taskStore?.persist && agentsDir) {
     configureStampWaiverPersistence({ file: path.join(agentsDir, 'stamp-waiver.json') });
   }
+  configureOpenRouterBroadcast({
+    dir: agentsDir,
+    persist: !!config.taskStore?.persist && !!agentsDir,
+  });
   setBookRowWrittenHook((entry) => {
     scheduleBookWebhook(entry, {
       registry: getBookWebhookRegistry(),
@@ -1142,7 +1152,7 @@ export function createApp() {
     'https://chit402.com',
     'http://localhost:5173',
   ]);
-  const CORS_ALLOW_HEADERS = 'Content-Type, Authorization, X-API-Key, X-PAYMENT, X-PAYMENT-NONCE, PAYMENT-SIGNATURE, PAYMENT-NONCE, X-XFuel-Session, x-xfuel-session';
+  const CORS_ALLOW_HEADERS = 'Content-Type, Authorization, X-API-Key, X-Chit-Ingest-Key, X-PAYMENT, X-PAYMENT-NONCE, PAYMENT-SIGNATURE, PAYMENT-NONCE, X-XFuel-Session, x-xfuel-session';
 
   function resolveCorsAllowOrigin(req) {
     const origin = req.headers.origin;
@@ -2428,11 +2438,13 @@ export function createApp() {
       const taskId = normalizeTaskIdForLookup(rawTaskId);
 
       const ledgerRow = usageSettled.findByTask(taskId) || usageSettled.findByTask(rawTaskId);
-      const foreignReceipt = ledgerRow?.receipt_snapshot
+      const openRouterReceipt = findOpenRouterPublicReceipt(taskId, { baseUrl, reqHost, ledgerRow })
+        || findOpenRouterPublicReceipt(rawTaskId, { baseUrl, reqHost, ledgerRow });
+      const foreignReceipt = !openRouterReceipt && ledgerRow?.receipt_snapshot && ledgerRow.source !== 'openrouter_broadcast'
         ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl, reqHost })
         : null;
 
-      let receipt = foreignReceipt;
+      let receipt = openRouterReceipt || foreignReceipt;
       if (!receipt) {
         const aiListener = getAIListener();
         const task = _findTask(aiListener, taskId);
@@ -2483,7 +2495,20 @@ export function createApp() {
       const taskId = normalizeTaskIdForLookup(rawTaskId);
 
       const ledgerRow = usageSettled.findByTask(taskId) || usageSettled.findByTask(rawTaskId);
-      const foreignReceipt = ledgerRow?.receipt_snapshot
+      const openRouterReceipt = findOpenRouterPublicReceipt(taskId, { baseUrl, reqHost, ledgerRow })
+        || findOpenRouterPublicReceipt(rawTaskId, { baseUrl, reqHost, ledgerRow });
+      if (openRouterReceipt) {
+        if (wantsAuditor) {
+          const exportDoc = buildAuditorExport(openRouterReceipt, { policy: null });
+          if (String(req.query.view || '') === 'html') {
+            return res.type('html').send(renderAuditorHtml(exportDoc));
+          }
+          return res.json(exportDoc);
+        }
+        if (wantsJson) return res.json(openRouterReceipt);
+        return res.type('html').send(renderReceiptHtml(openRouterReceipt));
+      }
+      const foreignReceipt = ledgerRow?.receipt_snapshot && ledgerRow.source !== 'openrouter_broadcast'
         ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl, reqHost })
         : null;
       if (foreignReceipt) {
@@ -4276,12 +4301,21 @@ export function createApp() {
     bookPolicy,
   });
 
+  registerOpenRouterBroadcast(app, {
+    ledger: usageSettled,
+    registry: agentRegistry,
+    signingSecret: config.receipts?.signingSecret,
+    coSignerSecret: config.receipts?.coSignerSecret,
+    publicBaseUrl: config.service.publicBaseUrl,
+    publicHosts: config.service.publicHosts,
+  });
+
   // ── 404 fallback ────────────────────────────────────────────────────────
 
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/export, PUT|POST|GET|DELETE /v1/agents/:agent_id/book/webhook, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/escrow, GET|POST /v1/agents/:agent_id/book/a2a-escrow, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/:delegation_hash/challenge, POST /v1/sessions/:delegation_hash/act, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/door, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/export, PUT|POST|GET|DELETE /v1/agents/:agent_id/book/webhook, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/escrow, GET|POST /v1/agents/:agent_id/book/a2a-escrow, POST /v1/agents/:agent_id/book/rotate, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/:delegation_hash/challenge, POST /v1/sessions/:delegation_hash/act, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/door, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, POST /v1/openrouter/books, POST|PUT /v1/openrouter/broadcast, GET /v1/openrouter/books/:book_id/receipts, GET /v1/openrouter/books/:book_id/summary, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 

@@ -1,0 +1,74 @@
+{
+  "_fixture": "FABRICATED — not a captured OpenRouter trace. Synthetic OTLP JSON for gateway tests only.",
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "openrouter" } }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "spans": [
+            {
+              "traceId": "tracefixturefabricated001",
+              "spanId": "spanfixturefabricated001",
+              "name": "generation",
+              "startTimeUnixNano": "1705312800000000000",
+              "endTimeUnixNano": "1705312801500000000",
+              "attributes": [
+                { "key": "openrouter.observation.type", "value": { "stringValue": "GENERATION" } },
+                { "key": "gen_ai.response.id", "value": { "stringValue": "gen-fixture-fabricated-001" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "google/gemini-2.5-flash" } },
+                { "key": "providerName", "value": { "stringValue": "Google" } },
+                { "key": "providerSlug", "value": { "stringValue": "google" } },
+                { "key": "gen_ai.usage.prompt_tokens", "value": { "intValue": "120" } },
+                { "key": "gen_ai.usage.completion_tokens", "value": { "intValue": "40" } },
+                { "key": "inputCost", "value": { "doubleValue": 0.00012 } },
+                { "key": "outputCost", "value": { "doubleValue": 0.00034 } },
+                { "key": "totalCost", "value": { "doubleValue": 0.00046 } },
+                { "key": "user.id", "value": { "stringValue": "user-fixture-1" } },
+                { "key": "session.id", "value": { "stringValue": "session-fixture-1" } },
+                { "key": "trace.metadata.environment", "value": { "stringValue": "fabricated" } },
+                { "key": "gen_ai.prompt", "value": { "stringValue": "FABRICATED_PROMPT_DO_NOT_STORE" } },
+                { "key": "gen_ai.completion", "value": { "stringValue": "FABRICATED_COMPLETION_DO_NOT_STORE" } }
+              ]
+            },
+            {
+              "traceId": "tracefixturefabricated001",
+              "spanId": "spanfixtureattempt001",
+              "name": "provider_attempt",
+              "startTimeUnixNano": "1705312800000000000",
+              "endTimeUnixNano": "1705312800200000000",
+              "attributes": [
+                { "key": "openrouter.observation.type", "value": { "stringValue": "SPAN" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "google/gemini-2.5-flash" } },
+                { "key": "gen_ai.prompt", "value": { "stringValue": "FABRICATED_PROMPT_DO_NOT_STORE" } }
+              ]
+            },
+            {
+              "traceId": "tracefixturefabricated002",
+              "spanId": "spanfixturefabricated002",
+              "name": "chat",
+              "startTimeUnixNano": "1705312900000000000",
+              "endTimeUnixNano": "1705312900800000000",
+              "attributes": [
+                { "key": "gen_ai.response.id", "value": { "stringValue": "gen-fixture-fabricated-002" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "anthropic/claude-3.5-haiku" } },
+                { "key": "providerName", "value": { "stringValue": "Anthropic" } },
+                { "key": "providerSlug", "value": { "stringValue": "anthropic" } },
+                { "key": "gen_ai.usage.prompt_tokens", "value": { "intValue": "10" } },
+                { "key": "gen_ai.usage.completion_tokens", "value": { "intValue": "4" } },
+                { "key": "totalCost", "value": { "doubleValue": 0.00002 } },
+                { "key": "user.id", "value": { "stringValue": "user-fixture-2" } },
+                { "key": "session.id", "value": { "stringValue": "session-fixture-2" } },
+                { "key": "trace.metadata.agent_id", "value": { "stringValue": "fixture-agent" } },
+                { "key": "gen_ai.input.messages", "value": { "stringValue": "FABRICATED_PROMPT_DO_NOT_STORE" } }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

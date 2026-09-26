@@ -1,0 +1,402 @@
+/**
+ * OpenRouter Broadcast webhook → Chit receipts.
+ *
+ * Fixtures are FABRICATED OTLP JSON (see test/fixtures/openrouter/). They are
+ * not captured customer traces. Prompt and completion strings in the fixture
+ * must never appear on a receipt.
+ */
+import { test, before, after, beforeEach, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+process.env.HUB_CATALOG_OFFLINE = 'true';
+process.env.TASK_STORE_PERSIST = 'false';
+process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret';
+process.env.OPENROUTER_BROADCAST_ENABLED = 'true';
+process.env.OPENROUTER_BROADCAST_PILOT_FREE = 'true';
+
+const { createApp } = await import('../src/server.js');
+const { UsageSettledLedger } = await import('../src/usage-settled.js');
+const {
+  resetOpenRouterBroadcastForTests,
+  createOpenRouterBook,
+  ingestOpenRouterBroadcast,
+  parseOtlpGenerations,
+  publicOpenRouterSummary,
+} = await import('../src/openrouter-broadcast.js');
+const { mergeReceiptView, verifyReceiptEcdsaWithJwks } = await import('../src/receipt.js');
+const { getJwks } = await import('../src/issuer-key.js');
+
+const fixturePath = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'openrouter', 'broadcast-generation.json');
+const FIXTURE = JSON.parse(readFileSync(fixturePath, 'utf8'));
+const PROMPT = 'FABRICATED_PROMPT_DO_NOT_STORE';
+const COMPLETION = 'FABRICATED_COMPLETION_DO_NOT_STORE';
+
+describe('OpenRouter Broadcast', { concurrency: 1 }, () => {
+
+let server;
+let base;
+
+before(async () => {
+  const app = createApp();
+  await new Promise((resolve) => {
+    server = app.listen(0, '127.0.0.1', () => {
+      base = `http://127.0.0.1:${server.address().port}`;
+      resolve();
+    });
+  });
+});
+
+after(async () => {
+  resetOpenRouterBroadcastForTests();
+  if (server) await new Promise((resolve) => server.close(resolve));
+});
+
+beforeEach(() => {
+  resetOpenRouterBroadcastForTests();
+  process.env.OPENROUTER_BROADCAST_ENABLED = 'true';
+  process.env.OPENROUTER_BROADCAST_PILOT_FREE = 'true';
+  delete process.env.OPENROUTER_BROADCAST_DAILY_CAP;
+  delete process.env.OPENROUTER_BROADCAST_RATE_PER_MIN;
+});
+
+function authHeaders(key, extra = {}) {
+  return {
+    'content-type': 'application/json',
+    authorization: `Bearer ${key}`,
+    ...extra,
+  };
+}
+
+async function mintBook(body = {}, key = null) {
+  const res = await fetch(`${base}/v1/openrouter/books`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(key ? { authorization: `Bearer ${key}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json();
+  return { status: res.status, json };
+}
+
+test('parser keeps generation spans and drops prompt text', () => {
+  assert.match(FIXTURE._fixture, /FABRICATED/);
+  const generations = parseOtlpGenerations(FIXTURE);
+  assert.equal(generations.length, 2);
+  assert.equal(generations[0].generationId, 'gen-fixture-fabricated-001');
+  assert.equal(generations[0].model, 'google/gemini-2.5-flash');
+  assert.equal(generations[0].providerName, 'Google');
+  assert.equal(generations[0].providerSlug, 'google');
+  assert.equal(generations[0].promptTokens, 120);
+  assert.equal(generations[0].completionTokens, 40);
+  assert.equal(generations[0].inputCostUsd, '0.00012');
+  assert.equal(generations[0].outputCostUsd, '0.00034');
+  assert.equal(generations[0].totalCostUsd, '0.00046');
+  assert.equal(generations[0].userId, 'user-fixture-1');
+  assert.equal(generations[0].sessionId, 'session-fixture-1');
+  assert.equal(generations[0].traceMetadata.environment, 'fabricated');
+  assert.equal(generations[0].contentDropped, true);
+  assert.equal(generations[1].agentId, 'fixture-agent');
+  assert.equal(JSON.stringify(generations).includes(PROMPT), false);
+  assert.equal(JSON.stringify(generations).includes(COMPLETION), false);
+});
+
+test('connection test returns 200 and a missing key is rejected', async () => {
+  const created = await mintBook({ label: 'broadcast' });
+  assert.equal(created.status, 201);
+  assert.equal(created.json.shown_once, true);
+  assert.match(created.json.ingest_key, /^chit_or_/);
+  assert.match(created.json.webhook.url, /\/v1\/openrouter\/broadcast$/);
+
+  const anon = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-test-connection': 'true' },
+    body: '{}',
+  });
+  assert.equal(anon.status, 401);
+
+  const testRes = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(created.json.ingest_key, { 'x-test-connection': 'true' }),
+    body: '{}',
+  });
+  assert.equal(testRes.status, 200);
+  const testBody = await testRes.json();
+  assert.equal(testBody.ok, true);
+  assert.equal(testBody.test, true);
+
+  const custom = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+      'x-chit-ingest-key': created.json.ingest_key,
+      'x-test-connection': 'true',
+    },
+    body: '{}',
+  });
+  assert.equal(custom.status, 200);
+});
+
+test('fixture stamps reported receipts, drops content, and replays on generation id', async () => {
+  const parent = await mintBook({ label: 'parent' });
+  const child = await mintBook({ agent_id: 'fixture-agent', label: 'agent' }, parent.json.ingest_key);
+  assert.equal(child.status, 201);
+  assert.equal(child.json.family_id, parent.json.family_id);
+  assert.notEqual(child.json.ingest_key, parent.json.ingest_key);
+
+  const posted = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(parent.json.ingest_key),
+    body: JSON.stringify(FIXTURE),
+  });
+  assert.equal(posted.status, 200);
+  const body = await posted.json();
+  assert.equal(body.stamped, 2);
+  assert.equal(body.replayed, 0);
+  assert.equal(body.skipped, 1);
+  assert.equal(body.capped, 0);
+  assert.equal(body.stamp_charged, false);
+  assert.equal(body.stamp_fee_usd, '0.002');
+  assert.equal(body.pilot_free, true);
+  assert.equal(JSON.stringify(body).includes(PROMPT), false);
+  assert.equal(JSON.stringify(body).includes(COMPLETION), false);
+
+  const again = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(parent.json.ingest_key),
+    body: JSON.stringify(FIXTURE),
+  });
+  const replay = await again.json();
+  assert.equal(replay.stamped, 0);
+  assert.equal(replay.replayed, 2);
+  assert.equal(replay.receipts[0].verify_url, body.receipts[0].verify_url);
+
+  const parentList = await fetch(`${base}/v1/openrouter/books/${parent.json.book_id}/receipts`, {
+    headers: { authorization: `Bearer ${parent.json.ingest_key}` },
+  });
+  assert.equal(parentList.status, 200);
+  const parentRows = await parentList.json();
+  assert.equal(parentRows.receipts.length, 1);
+  const receipt = parentRows.receipts[0];
+  const view = mergeReceiptView(receipt);
+  assert.equal(view.payment.rail, 'reported');
+  assert.equal(view.payment.collected, false);
+  assert.equal(view.payment.ref, 'openrouter:gen-fixture-fabricated-001');
+  assert.equal(view.payment.asset, 'USD');
+  assert.equal(view.settlement.kind, 'reported');
+  assert.equal(view.settlement.attested_by, 'openrouter_report');
+  assert.equal(view.kind, 'openrouter_broadcast');
+  assert.equal(view.fulfillment.intent.job_kind, 'openrouter_broadcast');
+  assert.equal(receipt.source, 'openrouter_broadcast');
+  assert.equal(receipt.stamp.fee_usd, '0.002');
+  assert.equal(receipt.stamp.charged, false);
+  assert.equal(receipt.stamp.waived, true);
+  assert.equal(receipt.reported.generation_id, 'gen-fixture-fabricated-001');
+  assert.equal(receipt.reported.total_cost_usd, '0.00046');
+  assert.equal(receipt.reported.user_id, 'user-fixture-1');
+  assert.equal(receipt.reported.session_id, 'session-fixture-1');
+  assert.equal(receipt.reported.trace_metadata.environment, 'fabricated');
+  assert.equal(receipt.reported.content_dropped, true);
+  assert.equal(receipt.usage.prompt_tokens, 120);
+  assert.equal(receipt.usage.completion_tokens, 40);
+  assert.match(receipt.verify_url, /\/receipt\/openrouter-gen-fixture-fabricated-001$/);
+  const packed = JSON.stringify(parentRows);
+  assert.equal(packed.includes(PROMPT), false);
+  assert.equal(packed.includes(COMPLETION), false);
+
+  const jwks = getJwks();
+  const verified = verifyReceiptEcdsaWithJwks(receipt, jwks);
+  assert.equal(verified.valid, true);
+
+  const childList = await fetch(`${base}/v1/openrouter/books/${child.json.book_id}/receipts`, {
+    headers: { 'x-chit-ingest-key': child.json.ingest_key },
+  });
+  const childRows = await childList.json();
+  assert.equal(childRows.receipts.length, 1);
+  assert.equal(childRows.receipts[0].reported.generation_id, 'gen-fixture-fabricated-002');
+  assert.equal(childRows.receipts[0].reported.agent_id, 'fixture-agent');
+  assert.equal(childRows.receipts[0].reported.routed_by, 'agent_id');
+
+  const locked = await fetch(`${base}/v1/openrouter/books/${parent.json.book_id}/receipts`);
+  assert.equal(locked.status, 401);
+
+  const summary = await fetch(`${base}/v1/openrouter/books/${parent.json.book_id}/summary`);
+  assert.equal(summary.status, 200);
+  const summaryBody = await summary.json();
+  assert.equal(summaryBody.generations, 1);
+  assert.equal(summaryBody.reported_usd, '0.00046');
+  assert.equal(summaryBody.stamp_charged, false);
+  assert.equal(summaryBody.stamp_fee_usd_recorded, '0.002');
+  assert.equal(summaryBody.public, true);
+  const summaryText = JSON.stringify(summaryBody);
+  assert.equal(summaryText.includes('gen-fixture'), false);
+  assert.equal(summaryText.includes(PROMPT), false);
+  assert.equal(summaryText.includes('user-fixture'), false);
+
+  const verify = await fetch(receipt.verify_url.replace(/^https?:\/\/[^/]+/, base), {
+    headers: { accept: 'application/json' },
+  });
+  assert.equal(verify.status, 200);
+  const verifyBody = await verify.json();
+  assert.equal(verifyBody.task_id, receipt.task_id);
+  assert.equal(JSON.stringify(verifyBody).includes(PROMPT), false);
+  const html = await fetch(receipt.verify_url.replace(/^https?:\/\/[^/]+/, base));
+  const page = await html.text();
+  assert.match(page, /OpenRouter report/);
+  assert.match(page, /REPORTED/);
+  assert.equal(page.includes(PROMPT), false);
+  assert.equal(page.includes(COMPLETION), false);
+  assert.equal(page.includes('Foreign ingest'), false);
+});
+
+test('chit_book tag routes within the family and a foreign book id does not', async () => {
+  const parent = await mintBook();
+  const child = await mintBook({ label: 'tagged' }, parent.json.ingest_key);
+  const payload = structuredClone(FIXTURE);
+  payload.resourceSpans[0].scopeSpans[0].spans[0].attributes.push({
+    key: 'trace.metadata.chit_book',
+    value: { stringValue: child.json.book_id },
+  });
+  payload.resourceSpans[0].scopeSpans[0].spans[2].attributes =
+    payload.resourceSpans[0].scopeSpans[0].spans[2].attributes.filter((attr) => attr.key !== 'trace.metadata.agent_id');
+
+  const posted = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(parent.json.ingest_key),
+    body: JSON.stringify(payload),
+  });
+  const body = await posted.json();
+  assert.equal(body.stamped, 2);
+  const first = body.receipts.find((row) => row.generation_id === 'gen-fixture-fabricated-001');
+  const second = body.receipts.find((row) => row.generation_id === 'gen-fixture-fabricated-002');
+  assert.equal(first.book_id, child.json.book_id);
+  assert.equal(second.book_id, parent.json.book_id);
+
+  const outsider = structuredClone(FIXTURE);
+  const only = outsider.resourceSpans[0].scopeSpans[0].spans[0];
+  only.attributes = only.attributes.map((attr) => (
+    attr.key === 'gen_ai.response.id'
+      ? { key: attr.key, value: { stringValue: 'gen-fixture-outsider' } }
+      : attr
+  ));
+  only.attributes.push({
+    key: 'trace.metadata.chit_book',
+    value: { stringValue: 'orb_not_in_this_family' },
+  });
+  outsider.resourceSpans[0].scopeSpans[0].spans = [only];
+  const missed = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(parent.json.ingest_key),
+    body: JSON.stringify(outsider),
+  });
+  const missedBody = await missed.json();
+  assert.equal(missedBody.stamped, 1);
+  assert.equal(missedBody.receipts[0].book_id, parent.json.book_id);
+});
+
+test('daily cap stops new generations and still replays the one already stamped', async () => {
+  process.env.OPENROUTER_BROADCAST_DAILY_CAP = '1';
+  const created = await mintBook();
+  const posted = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(created.json.ingest_key),
+    body: JSON.stringify(FIXTURE),
+  });
+  const body = await posted.json();
+  assert.equal(posted.status, 200);
+  assert.equal(body.stamped, 1);
+  assert.equal(body.capped, 1);
+  assert.equal(body.capped_generation_ids.length, 1);
+
+  const replay = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(created.json.ingest_key),
+    body: JSON.stringify(FIXTURE),
+  });
+  const again = await replay.json();
+  assert.equal(again.replayed, 1);
+  assert.equal(again.stamped, 0);
+  assert.equal(again.capped, 1);
+});
+
+test('rate limit applies per key', async () => {
+  process.env.OPENROUTER_BROADCAST_RATE_PER_MIN = '2';
+  const created = await mintBook();
+  const send = () => fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(created.json.ingest_key, { 'x-test-connection': 'true' }),
+    body: '{}',
+  });
+  assert.equal((await send()).status, 200);
+  assert.equal((await send()).status, 200);
+  const limited = await send();
+  assert.equal(limited.status, 429);
+  assert.ok(limited.headers.get('retry-after'));
+});
+
+test('feature flag hides the routes', async () => {
+  process.env.OPENROUTER_BROADCAST_ENABLED = 'false';
+  const created = await mintBook();
+  assert.equal(created.status, 404);
+  const posted = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+  assert.equal(posted.status, 404);
+});
+
+test('pilot off still records the fee and does not charge', async () => {
+  process.env.OPENROUTER_BROADCAST_PILOT_FREE = 'false';
+  const created = await mintBook();
+  const one = structuredClone(FIXTURE);
+  one.resourceSpans[0].scopeSpans[0].spans = [one.resourceSpans[0].scopeSpans[0].spans[0]];
+  const posted = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(created.json.ingest_key),
+    body: JSON.stringify(one),
+  });
+  const body = await posted.json();
+  assert.equal(body.pilot_free, false);
+  assert.equal(body.stamp_charged, false);
+  const list = await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/receipts`, {
+    headers: { authorization: `Bearer ${created.json.ingest_key}` },
+  });
+  const rows = await list.json();
+  assert.equal(rows.receipts[0].stamp.charged, false);
+  assert.equal(rows.receipts[0].stamp.waived, false);
+  assert.equal(rows.receipts[0].stamp.charge_status, 'unbilled');
+  assert.equal(rows.receipts[0].stamp.fee_usd, '0.002');
+});
+
+test('a bound numeric agent sees the row and the USDC spent total stays put', () => {
+  resetOpenRouterBroadcastForTests();
+  const ledger = new UsageSettledLedger();
+  const registry = { get(id) { return Number(id) === 7 ? { agent_id: 7 } : null; } };
+  const created = createOpenRouterBook({ agent_id: '7' });
+  assert.equal(created.ok, true);
+  const one = structuredClone(FIXTURE);
+  one.resourceSpans[0].scopeSpans[0].spans = [one.resourceSpans[0].scopeSpans[0].spans[0]];
+  const result = ingestOpenRouterBroadcast(one, {
+    book: created.book,
+    ledger,
+    registry,
+    baseUrl: 'https://api.chit402.com',
+    signingSecret: 'test-receipt-secret',
+  });
+  assert.equal(result.body.stamped, 1);
+  const rows = ledger.listByAgent(7);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].evidence, 'openrouter_reported');
+  assert.equal(rows[0].rail, 'reported');
+  assert.equal(rows[0].collected, false);
+  assert.equal(ledger.sumCollectedByAgent(7), 0n);
+  const summary = publicOpenRouterSummary(created.book);
+  assert.equal(summary.generations, 1);
+  assert.equal(JSON.stringify(summary).includes(PROMPT), false);
+});
+});

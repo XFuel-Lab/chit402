@@ -60,6 +60,7 @@ export function receiptOgCollectionLabel(view) {
   const p = view?.payment;
   if (!p) return null;
   if (p.rail === 'unmetered') return 'not charged';
+  if (p.rail === 'reported') return 'reported';
   if (p.collected) return 'collected';
   if (p.collects_on === 'next_request') return 'bill pending';
   return 'not collected';
@@ -69,6 +70,9 @@ export function receiptOgEvidenceLabel(receipt) {
   if (!receipt || typeof receipt !== 'object') return null;
   if (receipt.evidence === 'foreign_ingest' || receipt.foreign_x402 || receipt.source === 'foreign_ingest') {
     return 'third-party';
+  }
+  if (receipt.source === 'openrouter_broadcast' || receipt.evidence === 'openrouter_reported' || receipt.kind === 'openrouter_broadcast') {
+    return 'openrouter report';
   }
   return null;
 }
