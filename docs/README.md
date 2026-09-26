@@ -38,6 +38,7 @@ Everything else is reference. Do not send partners this index.
 | Doc | Purpose |
 |-----|---------|
 | [M2M_API.md](./M2M_API.md) | REST API |
+| [product/openrouter-broadcast.md](./product/openrouter-broadcast.md) | Chit receipts for OpenRouter Broadcast |
 | [CHAT_COMPLETIONS_GATEWAY.md](./CHAT_COMPLETIONS_GATEWAY.md) | Chat completions `/v1` |
 | [X402_ADAPTER.md](./X402_ADAPTER.md) | USDC payments |
 | [../packages/sdk/README.md](../packages/sdk/README.md) | TypeScript SDK |

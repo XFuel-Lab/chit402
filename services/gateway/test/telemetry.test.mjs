@@ -75,6 +75,32 @@ test('computeUsageStats: activity windows + first/last seen', () => {
   assert.equal(new Date(s.activity.last_seen).getTime(), hoursAgo(2));
 });
 
+test('computeUsageStats: OpenRouter Broadcast reports are not collected or verified spend', () => {
+  const reported = task({
+    taskId: 'openrouter-0123456789abcdef0123456789abcdef',
+    status: 'completed',
+    kind: 'openrouter_broadcast',
+    intent: {
+      type: 'openrouter_broadcast',
+      paymentRail: 'reported',
+      amount: '999000000',
+      paymentRef: 'openrouter:orb_family:gen-1',
+    },
+    feeAmount: '2000',
+    netAmount: '999000000',
+    meta: { provider: 'openrouter', job_kind: 'openrouter_broadcast' },
+    verified_with: 'openrouter_generation_api',
+  });
+  const s = computeUsageStats([reported], { now: NOW });
+  assert.equal(s.tasks.total, 0);
+  assert.equal(s.tasks.settled, 0);
+  assert.equal(s.payments.by_rail.usdc.count, 0);
+  assert.equal(s.payments.by_rail.usdc.gross_amount, '0');
+  assert.equal(s.payments.by_rail.tfuel.count, 0);
+  assert.equal(s.payments.by_rail.tfuel.gross_amount, '0');
+  assert.equal(s.proofs.valid, 0);
+});
+
 test('computeUsageStats: empty input yields safe zeros', () => {
   const s = computeUsageStats([], { now: NOW });
   assert.equal(s.tasks.total, 0);
