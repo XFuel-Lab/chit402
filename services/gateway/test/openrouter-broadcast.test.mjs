@@ -7,7 +7,7 @@
  */
 import { test, before, after, beforeEach, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -555,9 +555,14 @@ test('an OpenRouter key is encrypted at rest and never returned', async () => {
     assert.equal(put.json.openrouter_key_attached, true);
     assert.equal(JSON.stringify(put.json).includes(OR_KEY), false);
 
-    const stored = readFileSync(join(dir, 'openrouter-books.json'), 'utf8');
+    const storedPath = join(dir, 'openrouter-books.json');
+    const stored = readFileSync(storedPath, 'utf8');
     assert.equal(stored.includes(OR_KEY), false);
     assert.match(stored, /openrouter_key_enc/);
+    if (process.platform !== 'win32') {
+      assert.equal(statSync(storedPath).mode & 0o777, 0o600);
+      assert.equal(statSync(dir).mode & 0o777, 0o700);
+    }
 
     const status = await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/openrouter-key`, {
       headers: { authorization: `Bearer ${created.json.ingest_key}` },

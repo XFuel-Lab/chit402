@@ -704,15 +704,23 @@ function cleanAgentId(value) {
   return { tag: text, numeric };
 }
 
+function ensurePersistDir() {
+  fs.mkdirSync(persistDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(persistDir, 0o700);
+}
+
 function persistBooks() {
   if (!persistDir) return;
   try {
-    fs.mkdirSync(persistDir, { recursive: true });
+    ensurePersistDir();
     const file = path.join(persistDir, 'openrouter-books.json');
     const body = JSON.stringify({ books: [...books.values()] });
     const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, body);
+    fs.writeFileSync(tmp, body, { mode: 0o600 });
     fs.renameSync(tmp, file);
+    // rename replaces the inode, but a pre-existing file can keep a looser mode
+    // on some platforms. chmod the destination so stored key hashes stay owner-only.
+    fs.chmodSync(file, 0o600);
   } catch (err) {
     logger.warn({ err: err.message }, 'openrouter-broadcast: book persist failed');
   }
@@ -721,7 +729,7 @@ function persistBooks() {
 function persistReceipt(record) {
   if (!persistDir) return;
   try {
-    fs.mkdirSync(persistDir, { recursive: true });
+    ensurePersistDir();
     const file = path.join(persistDir, 'openrouter-receipts.jsonl');
     fs.appendFileSync(file, `${JSON.stringify(record)}\n`);
   } catch (err) {

@@ -72,7 +72,7 @@ Idempotency is `(book family, generation id)`. One family cannot claim another f
 
 ## Check the generation
 
-Attach the book holder's OpenRouter API key. Chit encrypts it with `OPENROUTER_KEY_ENCRYPTION_SECRET` and stores only the ciphertext. The key is never logged and never returned. Rotate by sending a new key. Delete clears it.
+Attach the book holder's OpenRouter API key. Chit encrypts it with `OPENROUTER_KEY_ENCRYPTION_SECRET` and stores only the ciphertext. The key is never logged and never returned. Rotate by sending a new key. Delete clears it. Use a key with a low credit limit, not the main OpenRouter key; rotating `OPENROUTER_KEY_ENCRYPTION_SECRET` invalidates stored keys, so holders must re-attach.
 
 ```bash
 curl -sS -X PUT "https://api.chit402.com/v1/openrouter/books/$BOOK_ID/openrouter-key" \
