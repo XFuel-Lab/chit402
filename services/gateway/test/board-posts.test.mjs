@@ -270,7 +270,8 @@ test('public rendering is plain text with only the published fields', async () =
   assert.equal(summary.house_report_count, 1);
   assert.equal(summary.self_report_count, 1);
   assert.equal(summary.total_paid, '0');
-  assert.deepEqual(summary.distinct_payer_wallets, []);
+  assert.equal(summary.distinct_payers, 0);
+  assert.equal(Object.hasOwn(summary, 'distinct_payer_wallets'), false);
   assert.equal(toPublicPost(ctx.posts.list()[0]).untrusted_text, html);
 });
 
@@ -297,7 +298,9 @@ test('a foreign report that is not self counts the payer; a Chit receipt cannot 
   assert.equal(mismatch.error, 'endpoint_mismatch');
   const summary = listBoardPosts({ endpoint: 'shop.example', type: 'endpoint_report' }, { posts: ctx.posts });
   assert.equal(summary.body.posts.length, 1);
-  assert.deepEqual(summary.body.endpoints[0].distinct_payer_wallets, [WALLET.toLowerCase()]);
+  assert.equal(summary.body.endpoints[0].distinct_payers, 1);
+  assert.equal(Object.hasOwn(summary.body.endpoints[0], 'distinct_payer_wallets'), false);
+  assert.equal(JSON.stringify(summary.body).toLowerCase().includes(WALLET.toLowerCase()), false);
   assert.equal(summary.body.endpoints[0].total_paid, '9000');
   assert.equal(summary.body.endpoints[0].warning_count, 1);
   const warning = listBoardPosts({ type: 'warning' }, { posts: ctx.posts });
@@ -355,8 +358,87 @@ test('takedown is the poster only and becomes a tombstone; flag costs one stamp'
   });
   assert.equal(again.status, 409);
   assert.equal(stamp.calls(), 1);
+  assert.equal(ctx2.ledger.entries.filter((e) => e.event === 'board_stamp' && e.board?.purpose === 'flag').length, 1);
   const publicPost = getBoardPost(live.body.post.id, { posts: ctx2.posts }).body.post;
   assert.equal(JSON.stringify(publicPost).includes('flag'), false);
+});
+
+test('takedown then ops hide keeps the receipt locked', async () => {
+  const ctx = world();
+  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  const created = await postReport(ctx, {
+    receipt_ref: 'chit-task-1',
+    endpoint: 'https://api.chit402.com/v1',
+    outcome: 'success',
+  });
+  const id = created.body.post.id;
+  const down = takedownBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, actor: ctx.agent });
+  assert.equal(down.status, 200);
+  const hidden = hideBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, ops: { ok: true } });
+  assert.equal(hidden.body.status, 'taken_down');
+  assert.equal(hidden.body.hidden, false);
+  assert.equal(ctx.posts.get(id).free_repost, false);
+  assert.equal(ctx.posts.findByReceipt('endpoint_report', ctx.posts.get(id).receipt_key).id, id);
+  const stamp = stampOk();
+  const again = await postReport(ctx, {
+    receipt_ref: 'chit-task-1',
+    endpoint: 'https://api.chit402.com/v1',
+    outcome: 'success',
+  }, { ensureStamp: stamp.ensure });
+  assert.equal(again.status, 409);
+  assert.equal(again.error, 'duplicate_receipt');
+  assert.equal(stamp.calls(), 0);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'board-tomb-'));
+  fs.writeFileSync(path.join(dir, 'board-posts.json'), JSON.stringify({
+    posts: [{
+      id: 'rpt_tomb',
+      type: 'endpoint_report',
+      status: 'taken_down',
+      receipt_key: 'base:locked',
+      free_repost: true,
+    }, {
+      id: 'rpt_hidden',
+      type: 'endpoint_report',
+      status: 'hidden',
+      receipt_key: 'base:freed',
+      free_repost: true,
+    }],
+  }));
+  const loaded = new BoardPostStore({ dir, persist: true });
+  assert.equal(loaded.findByReceipt('endpoint_report', 'base:locked').id, 'rpt_tomb');
+  assert.equal(loaded.findByReceipt('endpoint_report', 'base:freed'), null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a flag that loses the race still records the stamp', async () => {
+  const ctx = world();
+  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  const created = await postReport(ctx, {
+    receipt_ref: 'chit-task-1',
+    endpoint: 'https://api.chit402.com/v1',
+    outcome: 'success',
+  });
+  const id = created.body.post.id;
+  const stamp = stampOk();
+  const raced = await flagBoardPost(id, {
+    posts: ctx.posts,
+    ledger: ctx.ledger,
+    actor: ctx.other,
+    suspendedAgentIds: [],
+    ensureStamp: async () => {
+      ctx.posts.get(id).flags = [{ agent_id: ctx.other.agent_id, at: new Date().toISOString() }];
+      return stamp.ensure();
+    },
+  });
+  assert.equal(raced.status, 409);
+  assert.equal(raced.error, 'duplicate_flag');
+  assert.equal(stamp.calls(), 1);
+  const rows = ctx.ledger.entries.filter((e) => e.event === 'board_stamp' && e.board?.purpose === 'flag');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].amount, '2000');
+  assert.equal(rows[0].collected, true);
+  assert.equal(entryQualifiesForCap(rows[0]), false);
 });
 
 test('ops hide removes the post and allows one free re-post', async () => {

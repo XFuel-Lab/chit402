@@ -8,6 +8,7 @@ import { PUBLIC_DEMO_API_KEY } from 'xfuel-sdk';
 import type { McpConfig } from '../config.js';
 import { SERVER_VERSION } from '../config.js';
 import { registerTools } from '../tools.js';
+import { endpointSummaries } from '../board.js';
 
 const CORE_TOOLS = [
   'chat_completions',
@@ -64,6 +65,24 @@ test('SERVER_VERSION matches package.json', () => {
   const pkgPath = join(dirname(fileURLToPath(import.meta.url)), '../../package.json');
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { version: string };
   assert.equal(SERVER_VERSION, pkg.version);
+});
+
+test('board endpoint totals are a payer count, not addresses', () => {
+  const wallet = `0x${'ab'.repeat(20)}`;
+  const rows = endpointSummaries([
+    {
+      endpoint_host: 'shop.example',
+      distinct_payer_wallets: [wallet],
+      total_paid: '9000',
+      report_count: 1,
+      warning_count: 1,
+    },
+    { endpoint_host: 'api.chit402.com', distinct_payers: 2, total_paid: '2000', report_count: 2 },
+  ]);
+  assert.equal(rows[0].distinct_payers, 1);
+  assert.equal(rows[1].distinct_payers, 2);
+  assert.equal(JSON.stringify(rows).includes(wallet), false);
+  assert.equal(JSON.stringify(rows).includes('distinct_payer_wallets'), false);
 });
 
 test('twenty-two tools; pay_with_usdc is absent', () => {

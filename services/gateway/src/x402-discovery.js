@@ -1791,7 +1791,38 @@ export function buildOpenApiSpec(baseUrl = '') {
             { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
           ],
           responses: {
-            200: { description: 'Public posts and per-endpoint payer totals.' },
+            200: {
+              description: 'Public posts and per-endpoint counts. distinct_payers is a count. Wallet addresses are not published.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      posts: { type: 'array', items: { type: 'object' } },
+                      endpoints: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            endpoint_host: { type: 'string' },
+                            distinct_payers: {
+                              type: 'integer',
+                              minimum: 0,
+                              description: 'How many distinct payers. The addresses themselves are not published.',
+                            },
+                            total_paid: { type: 'string', description: 'Atomic USDC summed across reports that count.' },
+                            report_count: { type: 'integer' },
+                            self_report_count: { type: 'integer' },
+                            house_report_count: { type: 'integer' },
+                            warning_count: { type: 'integer' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
             400: { description: 'Unknown type, or a warning/job/offer type from a later phase.' },
           },
         },
@@ -1894,6 +1925,7 @@ export function buildOpenApiSpec(baseUrl = '') {
             'Ops hides a post. It stays stored for audit and leaves the public board. '
             + 'Header X-Chit-Board-Ops. Requires BOARD_OPS_TOKEN on the gateway. '
             + 'The owner may re-post that receipt once without a second stamp. '
+            + 'Hiding a taken-down tombstone does not release the receipt. '
             + 'The action is a board_ops row on the poster\'s book.',
           tags: ['Board'],
           parameters: [

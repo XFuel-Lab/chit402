@@ -139,11 +139,7 @@ export class BoardPostStore {
       const data = JSON.parse(fs.readFileSync(this._file(), 'utf8'));
       for (const post of data.posts || []) {
         this.byId.set(post.id, post);
-        if (post.receipt_key && post.type && post.status !== 'hidden') {
-          this.byReceipt.set(receiptIndexKey(post.type, post.receipt_key), post.id);
-        } else if (post.receipt_key && post.type && post.free_repost !== true) {
-          this.byReceipt.set(receiptIndexKey(post.type, post.receipt_key), post.id);
-        }
+        if (receiptStaysIndexed(post)) this.claimReceipt(post);
       }
     } catch (err) {
       if (err.code !== 'ENOENT') {
@@ -209,14 +205,29 @@ function receiptIndexKey(type, receiptKey) {
   return `${type}:${receiptKey}`;
 }
 
+/**
+ * A taken-down tombstone keeps its receipt forever.
+ * Ops hide of a live post sets free_repost and drops the index so the owner
+ * can publish that receipt once more. Any other stored row stays indexed.
+ */
+function receiptStaysIndexed(post) {
+  if (!post?.receipt_key || !post.type) return false;
+  if (post.status === 'taken_down') return true;
+  if (post.status === 'hidden' && post.free_repost === true) return false;
+  return true;
+}
+
 function newPostId() {
   return `rpt_${crypto.randomBytes(8).toString('hex')}`;
 }
 
 /**
- * Public projection. Receipt refs, payer wallets, tx ids, and notes that
- * were rejected never appear here. Text is returned as a string field
- * named untrusted_text — callers must render it as plain text.
+ * Public post. Callers get id, type, status, and — for a live report —
+ * endpoint host, amount, outcome, latency, date, verify link, labels,
+ * foreign notice, and untrusted_text. Render untrusted_text as plain text.
+ * Receipt refs, payer wallets, tx ids, and rejected notes are not included.
+ * A list's endpoint totals are separate and publish distinct_payers as a
+ * count, never the addresses.
  */
 export function toPublicPost(post) {
   if (!post) return null;
@@ -294,7 +305,7 @@ export function endpointSummaries(posts) {
   return [...byHost.values()]
     .map((row) => ({
       endpoint_host: row.endpoint_host,
-      distinct_payer_wallets: [...row.payers].sort(),
+      distinct_payers: row.payers.size,
       total_paid: row.total.toString(),
       report_count: row.report_count,
       self_report_count: row.self_report_count,
@@ -873,6 +884,17 @@ export async function flagBoardPost(id, deps = {}) {
   const stamp = await collectStamp(ensureStamp);
   if (!stamp.ok) return stamp;
   if ((post.flags || []).some((f) => f.agent_id === actor.agent_id)) {
+    writeStampRow(ledger, {
+      agentId: actor.agent_id,
+      taskId: `board-stamp-flag-race-${crypto.randomBytes(4).toString('hex')}`,
+      stamp,
+      parentRef: post.receipt_key,
+      purpose: 'flag',
+      postId: post.id,
+    });
+    if (stamp.waiverKey === true && typeof commitStampWaiver === 'function') {
+      try { commitStampWaiver(); } catch { /* cap file must not fail a written row */ }
+    }
     return fail(409, 'duplicate_flag', 'This agent already flagged this post');
   }
   const stampTaskId = `board-stamp-flag-${post.id}-${actor.agent_id}`;
@@ -915,6 +937,16 @@ export function hideBoardPost(id, deps = {}) {
   if (!ops?.ok) return ops || fail(401, 'unauthorized', 'Ops token rejected');
   const post = posts?.get(id);
   if (!post) return fail(404, 'not_found', 'Post not found');
+  if (post.status === 'taken_down') {
+    post.free_repost = false;
+    posts.claimReceipt(post);
+    posts.update(post);
+    return {
+      ok: true,
+      status: 200,
+      body: { id: post.id, hidden: false, status: 'taken_down' },
+    };
+  }
   if (post.status !== 'hidden') {
     post.status = 'hidden';
     post.hidden_at = new Date().toISOString();

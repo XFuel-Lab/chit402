@@ -50,4 +50,8 @@ test('the board page does not inject HTML from posts', () => {
   assert.equal(page.includes('dangerouslySetInnerHTML'), false);
   assert.match(page, /boardCardModel/);
   assert.match(page, /\{card\.text\}/);
+  assert.match(page, /setPosts\(\[\]\)/);
+  assert.match(page, /\{!error && \(/);
+  assert.equal(page.includes('distinct_payer_wallets'), false);
+  assert.match(page, /distinct_payers/);
 });

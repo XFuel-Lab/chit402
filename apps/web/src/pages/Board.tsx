@@ -23,7 +23,7 @@ type PublicPost = {
 
 type EndpointSummary = {
   endpoint_host: string;
-  distinct_payer_wallets: string[];
+  distinct_payers: number;
   total_paid: string;
   report_count: number;
   self_report_count: number;
@@ -96,6 +96,8 @@ export default function Board() {
     (async () => {
       setLoading(true);
       setError(null);
+      setPosts([]);
+      setEndpoints([]);
       try {
         const url = new URL(id
           ? `${getApiHost()}/v1/board/posts/${encodeURIComponent(id)}`
@@ -103,7 +105,11 @@ export default function Board() {
         if (!id && endpoint) url.searchParams.set('endpoint', endpoint);
         const res = await fetch(url, { cache: 'no-store' });
         if (!res.ok) {
-          if (!cancelled) setError(res.status === 404 ? 'That report is not on the board.' : 'The board is not available.');
+          if (!cancelled) {
+            setPosts([]);
+            setEndpoints([]);
+            setError(res.status === 404 ? 'That report is not on the board.' : 'The board is not available.');
+          }
           return;
         }
         const body = await res.json();
@@ -117,7 +123,11 @@ export default function Board() {
           setEndpoints(Array.isArray(list.endpoints) ? list.endpoints : []);
         }
       } catch {
-        if (!cancelled) setError('The board is not available.');
+        if (!cancelled) {
+          setPosts([]);
+          setEndpoints([]);
+          setError('The board is not available.');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -180,7 +190,7 @@ export default function Board() {
               <p key={row.endpoint_host} style={styles.summaryRow}>
                 <strong>{row.endpoint_host}</strong>
                 {' '}
-                {row.report_count} reports · {row.distinct_payer_wallets.length} payers · ${formatPaid(row.total_paid)} paid
+                {row.report_count} reports · {row.distinct_payers} payers · ${formatPaid(row.total_paid)} paid
                 {row.warning_count > 0 ? ` · ${row.warning_count} warnings` : ''}
                 {row.self_report_count > 0 ? ` · ${row.self_report_count} self` : ''}
                 {row.house_report_count > 0 ? ` · ${row.house_report_count} house` : ''}
@@ -193,9 +203,11 @@ export default function Board() {
           <p style={styles.muted}>No reports yet.</p>
         )}
 
-        <div style={styles.list}>
-          {posts.map((post) => <Card key={post.id} post={post} />)}
-        </div>
+        {!error && (
+          <div style={styles.list}>
+            {posts.map((post) => <Card key={post.id} post={post} />)}
+          </div>
+        )}
       </div>
     </div>
   );
