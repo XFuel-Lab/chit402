@@ -3,6 +3,7 @@ import { verifyMessage, getAddress, keccak256, toUtf8Bytes } from 'ethers';
 import { computePaymentCommitment, computeInferenceBinding } from './payment-binding.js';
 import { resolveModelCommitment } from './model-commitment.js';
 import { selectTier } from './tier-policy.js';
+import { OPENROUTER_CALLER_PAID_LABEL } from './openrouter-pricing.js';
 import { verifyAttestation, attestationNonce } from './tee-attestation.js';
 import { buildSpotCheckRecord } from './spotcheck.js';
 import { signJws, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk } from './issuer-key.js';
@@ -1195,6 +1196,9 @@ export function providerCogsOf(task) {
     basis: c.basis || null,
     usd_mark: c.usd_mark != null ? String(c.usd_mark) : (c.usdMark != null ? String(c.usdMark) : null),
     below_low_water: !!c.below_low_water || !!c.belowLowWater,
+    ...(c.paid_by ? { paid_by: String(c.paid_by) } : {}),
+    ...(c.label ? { label: String(c.label) } : {}),
+    ...(c.reported_cost_usd != null ? { reported_cost_usd: String(c.reported_cost_usd) } : {}),
     ...(generation ? { openrouter_generation: generation } : {}),
   };
 }
@@ -1209,11 +1213,13 @@ function openRouterGenerationOf(cogs) {
   const total = gen.total_cost != null ? String(gen.total_cost) : null;
   const upstream = gen.upstream_inference_cost != null ? String(gen.upstream_inference_cost) : null;
   if (total == null && upstream == null) return null;
+  const callerPaid = gen.label === OPENROUTER_CALLER_PAID_LABEL || gen.paid_by === 'caller-to-openrouter';
   return {
     id: gen.id != null ? String(gen.id) : null,
     total_cost: total,
     upstream_inference_cost: upstream,
     currency: 'USD',
+    ...(callerPaid ? { label: OPENROUTER_CALLER_PAID_LABEL, paid_by: 'caller-to-openrouter' } : {}),
   };
 }
 
@@ -1952,22 +1958,32 @@ export function renderReceiptHtml(receipt) {
   const cogsProvider = displayRouteProvider(cogs?.provider || route.provider);
   const routeModelLabel = displayRouteModel(route.model);
   const routeProviderLabel = displayRouteProvider(route.provider);
+  const callerPaidOpenRouter = cogs?.label === OPENROUTER_CALLER_PAID_LABEL
+    || cogs?.paid_by === 'caller-to-openrouter';
   const cogsBlock = cogs
     ? `<section class="card">
-        <h2>Provider cost <span class="scope">what we paid to serve this</span></h2>
+        <h2>${callerPaidOpenRouter
+          ? `OpenRouter cost <span class="scope">${esc(OPENROUTER_CALLER_PAID_LABEL)}</span>`
+          : 'Provider cost <span class="scope">what we paid to serve this</span>'}</h2>
         ${row('Provider', esc(cogsProvider) || '<span class="muted">—</span>')}
         ${cogs.float_id ? row('Float', esc(cogs.float_id)) : ''}
-        ${row('Measured cost', usdcCell(cogs.actual))}
+        ${callerPaidOpenRouter && cogs.reported_cost_usd != null
+          ? row('Reported cost', esc(`$${cogs.reported_cost_usd}`))
+          : ''}
+        ${cogs.actual != null ? row('Measured cost', usdcCell(cogs.actual)) : ''}
         ${cogs.openrouter_generation?.total_cost != null
           ? row('OpenRouter total', esc(`$${cogs.openrouter_generation.total_cost}`))
           : ''}
         ${cogs.openrouter_generation?.upstream_inference_cost != null
           ? row('Upstream inference', esc(`$${cogs.openrouter_generation.upstream_inference_cost}`))
           : ''}
+        ${callerPaidOpenRouter ? row('Paid by', esc(OPENROUTER_CALLER_PAID_LABEL)) : ''}
         ${cogs.estimated != null && cogs.estimated !== cogs.actual ? row('Quoted estimate', usdcCell(cogs.estimated)) : ''}
         ${cogs.basis ? row('Basis', esc(cogs.basis)) : ''}
         ${cogs.below_low_water ? row('Float', '<span class="badge pending">at/below low water — refill</span>') : ''}
-        <p class="muted" style="margin:8px 0 0;font-size:12px">You pay USDC on Base. We burn a prepaid provider float — not a second buyer rail.</p>
+        <p class="muted" style="margin:8px 0 0;font-size:12px">${callerPaidOpenRouter
+          ? 'Inference was paid by the caller to OpenRouter. Chit charged the receipt.'
+          : 'You pay USDC on Base. We burn a prepaid provider float — not a second buyer rail.'}</p>
       </section>`
     : '';
 

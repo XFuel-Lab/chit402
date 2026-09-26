@@ -2,15 +2,20 @@
  * OpenRouter inference (OpenAI-compatible).
  *
  *   POST https://openrouter.ai/api/v1/chat/completions
- *   Auth: OPENROUTER_API_KEY (Bearer).
  *
- * The hub is off when the key is absent: callers must not advertise routes or
- * throw. Model ids on the wire are OpenRouter's own (`openai/gpt-4o-mini`);
+ * Primary mode is bring-your-own-key: the caller sends `X-OpenRouter-Key`,
+ * or `Authorization: Bearer` on an `openrouter/*` route. That key is forwarded
+ * and never stored. House-key resale (`OPENROUTER_API_KEY`) runs only when
+ * `OPENROUTER_HOUSE_RESALE_ENABLED=true`.
+ *
+ * Model ids on the wire are OpenRouter's own (`openai/gpt-4o-mini`);
  * the catalog prefixes them as `openrouter/<vendor>/<model>`.
  */
 
+import crypto from 'crypto';
 import logger from './logger.js';
-import { capOpenRouterOutputTokens } from './openrouter-pricing.js';
+import { hashApiKey } from './buyer-attr.js';
+import { capOpenRouterOutputTokens, OPENROUTER_CALLER_PAID_LABEL } from './openrouter-pricing.js';
 
 const DEFAULT_BASE = 'https://openrouter.ai/api/v1';
 const DEFAULT_REFERER = 'https://chit402.com';
@@ -46,13 +51,125 @@ function usdCostString(value) {
   return text != null ? text : String(n);
 }
 
-/** @returns {string} key, or '' when the hub is disabled */
+/** @returns {string} house key, or '' when unset. Not a license to resell. */
 export function openrouterApiKey() {
   return String(process.env.OPENROUTER_API_KEY || '').trim();
 }
 
+/**
+ * House-key resale. Default off. Only the string `true` enables it.
+ * Read live so a process can flip it without a restart in tests.
+ */
+export function openrouterHouseResaleEnabled() {
+  return /^true$/i.test(String(process.env.OPENROUTER_HOUSE_RESALE_ENABLED || '').trim());
+}
+
+/**
+ * A key the gateway may spend. An omitted argument uses the house key only
+ * while resale is on. An explicit empty string never falls through to it.
+ * @param {string|undefined} explicit
+ */
+export function openrouterKeyFor(explicit) {
+  if (explicit !== undefined) return String(explicit || '').trim();
+  return openrouterHouseResaleEnabled() ? openrouterApiKey() : '';
+}
+
+/** @deprecated House key presence is not the advertising switch. */
 export function openrouterEnabled() {
-  return openrouterApiKey().length > 0;
+  return openrouterHouseResaleEnabled() && openrouterApiKey().length > 0;
+}
+
+function headerValue(headers, name) {
+  if (!headers) return '';
+  const raw = headers[name] ?? headers[name.toLowerCase()] ?? headers[name.toUpperCase()];
+  if (raw == null) return '';
+  return String(Array.isArray(raw) ? raw[0] : raw).trim();
+}
+
+function isGatewayDemoKey(token) {
+  if (!token) return false;
+  const demo = String(process.env.M2M_DEMO_API_KEY || 'chit402-demo');
+  if (token === demo || token === 'xfuel-demo' || token === 'chit402-demo') return true;
+  return token.startsWith('xfuel-demo') || token.startsWith('chit402-demo');
+}
+
+function bearerToken(req) {
+  const auth = headerValue(req?.headers, 'authorization');
+  const match = auth.match(/^Bearer\s+(\S+)/i);
+  return match ? match[1].trim() : '';
+}
+
+/**
+ * Who pays OpenRouter for this request.
+ *
+ * 1. `X-OpenRouter-Key` — the caller's key, on any route.
+ * 2. `Authorization: Bearer` on an `openrouter/*` route, unless that bearer
+ *    is a Chit credential (demo key, or the key that authorised the request
+ *    and no separate `X-API-Key`).
+ * 3. House key, only when resale is enabled.
+ *
+ * @param {object} req
+ * @param {string} requestedModel
+ * @param {{ authorizationIsChitCredential?: boolean }} [opts]
+ * @returns {{ mode: 'byok'|'house'|'missing', apiKey: string }}
+ */
+export function resolveOpenRouterAccess(req, requestedModel, opts = {}) {
+  const dedicated = headerValue(req?.headers, 'x-openrouter-key');
+  if (dedicated) return { mode: 'byok', apiKey: dedicated };
+
+  const model = String(requestedModel || '').trim().toLowerCase();
+  const bearer = bearerToken(req);
+  const separateChitKey = !!headerValue(req?.headers, 'x-api-key');
+  if (model.startsWith('openrouter/') && bearer && !isGatewayDemoKey(bearer)) {
+    if (separateChitKey || !opts.authorizationIsChitCredential) {
+      return { mode: 'byok', apiKey: bearer };
+    }
+  }
+
+  if (openrouterHouseResaleEnabled()) {
+    const house = openrouterApiKey();
+    if (house) return { mode: 'house', apiKey: house };
+  }
+  return { mode: 'missing', apiKey: '' };
+}
+
+/**
+ * Replace every copy of a secret with `[redacted]`. Short strings are left
+ * alone so a status code cannot wipe unrelated text.
+ * @param {unknown} text
+ * @param {Array<string|null|undefined>} secrets
+ */
+export function redactSecrets(text, secrets) {
+  if (text == null) return text;
+  let out = String(text);
+  const list = (Array.isArray(secrets) ? secrets : [secrets])
+    .filter((s) => typeof s === 'string' && s.length >= 6);
+  for (const secret of list) {
+    if (!out.includes(secret)) continue;
+    out = out.split(secret).join('[redacted]');
+  }
+  return out;
+}
+
+/**
+ * Stable end-user id for OpenRouter's `user` field.
+ * A second hash, so the provider does not receive a wallet, a raw key, or
+ * the buyer digest we store ourselves.
+ * @param {{ payerWallet?: string|null, apiKeyHash?: string|null, byokKey?: string|null }} src
+ * @returns {string|null}
+ */
+export function openrouterEndUser({ payerWallet = null, apiKeyHash = null, byokKey = null } = {}) {
+  let material = null;
+  const wallet = typeof payerWallet === 'string' ? payerWallet.trim().toLowerCase() : '';
+  if (/^0x[a-f0-9]{40}$/.test(wallet)) material = `wallet:${wallet}`;
+  else if (typeof apiKeyHash === 'string' && apiKeyHash.trim()) material = `keyhash:${apiKeyHash.trim()}`;
+  else if (byokKey) {
+    const hashed = hashApiKey(byokKey);
+    if (hashed) material = `byok:${hashed}`;
+  }
+  if (!material) return null;
+  const digest = crypto.createHash('sha256').update(`chit-or-user:${material}`, 'utf8').digest('hex');
+  return `chit:${digest}`;
 }
 
 export function openrouterBaseUrl() {
@@ -67,7 +184,8 @@ export function openrouterBaseUrl() {
  * @param {number} [opts.temperature]
  * @param {Array} [opts.tools]
  * @param {string|object} [opts.tool_choice]
- * @param {string} [opts.apiKey]
+ * @param {string|undefined} [opts.apiKey] omitted uses the house key only when resale is on
+ * @param {string|null} [opts.user] stable hashed end-user id
  * @param {string} [opts.baseUrl]
  * @param {number} [opts.timeoutMs]
  * @param {typeof fetch} [opts.fetchFn]
@@ -79,12 +197,14 @@ export async function inferOpenRouter({
   temperature = 0.7,
   tools = null,
   tool_choice = null,
-  apiKey = openrouterApiKey(),
+  apiKey,
+  user = null,
   baseUrl = openrouterBaseUrl(),
   timeoutMs = 60_000,
   fetchFn = globalThis.fetch,
 }) {
-  if (!apiKey) return { ok: false, reason: 'missing_api_key', model };
+  const key = openrouterKeyFor(apiKey);
+  if (!key) return { ok: false, reason: 'missing_api_key', model };
   if (!model) return { ok: false, reason: 'missing_model' };
   if (!Array.isArray(messages) || messages.length === 0) {
     return { ok: false, reason: 'missing_messages', model };
@@ -99,10 +219,12 @@ export async function inferOpenRouter({
     temperature,
     max_tokens: capped,
   };
+  if (typeof user === 'string' && user) body.user = user;
   if (Array.isArray(tools) && tools.length) {
     body.tools = tools;
     if (tool_choice) body.tool_choice = tool_choice;
   }
+  const safe = (text) => redactSecrets(text, [key]);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -113,7 +235,7 @@ export async function inferOpenRouter({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${key}`,
         ...openrouterAttributionHeaders(),
       },
       body: JSON.stringify(body),
@@ -122,15 +244,16 @@ export async function inferOpenRouter({
     const elapsed = Date.now() - t0;
     const rawText = await res.text();
     if (!res.ok) {
+      const redacted = safe(rawText);
       logger.warn(
-        { model, status: res.status, elapsed, body: rawText.slice(0, 200) },
+        { model, status: res.status, elapsed, body: redacted.slice(0, 200) },
         'openrouter-infer: HTTP error',
       );
       return {
         ok: false,
         reason: `http_${res.status}`,
         model,
-        detail: rawText.slice(0, 500),
+        detail: redacted.slice(0, 500),
         elapsed_ms: elapsed,
       };
     }
@@ -139,7 +262,7 @@ export async function inferOpenRouter({
     try {
       data = JSON.parse(rawText);
     } catch {
-      return { ok: false, reason: 'unparseable', model, detail: rawText.slice(0, 200), elapsed_ms: elapsed };
+      return { ok: false, reason: 'unparseable', model, detail: safe(rawText).slice(0, 200), elapsed_ms: elapsed };
     }
 
     const choice = data?.choices?.[0];
@@ -153,7 +276,7 @@ export async function inferOpenRouter({
         reason: 'empty_output',
         model,
         usage: data?.usage ?? null,
-        detail: rawText.slice(0, 200),
+        detail: safe(rawText).slice(0, 200),
         elapsed_ms: elapsed,
       };
     }
@@ -165,6 +288,7 @@ export async function inferOpenRouter({
       toolCalls,
       raw: data,
       usage: data?.usage ?? null,
+      reportedCost: usdCostString(data?.usage?.cost),
       generationId: typeof data?.id === 'string' && data.id ? data.id : null,
       finish_reason: choice?.finish_reason ?? null,
       provider: 'openrouter',
@@ -172,8 +296,9 @@ export async function inferOpenRouter({
       max_tokens: capped,
     };
   } catch (err) {
-    logger.warn({ model, err: err.message }, 'openrouter-infer: failed');
-    return { ok: false, reason: 'network_error', model, detail: err.message };
+    const detail = safe(err.message);
+    logger.warn({ model, err: detail }, 'openrouter-infer: failed');
+    return { ok: false, reason: 'network_error', model, detail };
   } finally {
     clearTimeout(timeout);
   }
@@ -184,30 +309,38 @@ export async function inferOpenRouter({
  * OpenRouter's `GET /key` returns account metadata. A non-2xx or a network error
  * is a preflight failure: do not settle.
  *
- * Success is cached for the catalog TTL so a paid call does not wait on this
- * twice a minute. Failures are not cached.
+ * Success is cached per key for the catalog TTL so a paid call does not wait
+ * on this twice a minute. One caller's success does not skip the next key.
+ * Failures are not cached. The cache key is a hash — the raw key is not stored.
  *
  * @param {object} [opts]
- * @param {string} [opts.apiKey]
+ * @param {string|undefined} [opts.apiKey]
  * @param {string} [opts.baseUrl]
  * @param {typeof fetch} [opts.fetchFn]
  * @param {boolean} [opts.force]
  */
-let _keyOkAt = 0;
+const _keyOkAt = new Map();
 
 export function resetOpenRouterPreflightCache() {
-  _keyOkAt = 0;
+  _keyOkAt.clear();
+}
+
+function preflightCacheId(apiKey) {
+  return crypto.createHash('sha256').update(String(apiKey), 'utf8').digest('hex');
 }
 
 export async function preflightOpenRouter({
-  apiKey = openrouterApiKey(),
+  apiKey,
   baseUrl = openrouterBaseUrl(),
   fetchFn = globalThis.fetch,
   force = false,
 } = {}) {
-  if (!apiKey) return { ok: false, reason: 'disabled' };
+  const key = openrouterKeyFor(apiKey);
+  if (!key) return { ok: false, reason: 'disabled' };
+  const cacheId = preflightCacheId(key);
   const ttl = parseInt(process.env.HUB_CATALOG_TTL_MS, 10) || 60_000;
-  if (!force && _keyOkAt && Date.now() - _keyOkAt < ttl) {
+  const seen = _keyOkAt.get(cacheId) || 0;
+  if (!force && seen && Date.now() - seen < ttl) {
     return { ok: true, cached: true };
   }
   const base = String(baseUrl).replace(/\/$/, '');
@@ -216,7 +349,7 @@ export async function preflightOpenRouter({
       method: 'GET',
       headers: {
         Accept: 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${key}`,
         ...openrouterAttributionHeaders(),
       },
       signal: AbortSignal.timeout(8_000),
@@ -224,10 +357,10 @@ export async function preflightOpenRouter({
     if (!res.ok) {
       return { ok: false, reason: `http_${res.status}` };
     }
-    _keyOkAt = Date.now();
+    _keyOkAt.set(cacheId, Date.now());
     return { ok: true, cached: false };
   } catch (err) {
-    return { ok: false, reason: 'network_error', detail: err.message };
+    return { ok: false, reason: 'network_error', detail: redactSecrets(err.message, [key]) };
   }
 }
 
@@ -241,18 +374,19 @@ export async function preflightOpenRouter({
  */
 export async function fetchOpenRouterGeneration({
   id,
-  apiKey = openrouterApiKey(),
+  apiKey,
   baseUrl = openrouterBaseUrl(),
   fetchFn = globalThis.fetch,
 } = {}) {
-  if (!id || !apiKey) return null;
+  const key = openrouterKeyFor(apiKey);
+  if (!id || !key) return null;
   const base = String(baseUrl).replace(/\/$/, '');
   const url = `${base}/generation?id=${encodeURIComponent(id)}`;
   const res = await fetchFn(url, {
     method: 'GET',
     headers: {
       Accept: 'application/json',
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${key}`,
       ...openrouterAttributionHeaders(),
     },
     signal: AbortSignal.timeout(8_000),
@@ -284,6 +418,8 @@ export function applyOpenRouterGenerationCost(task, generation) {
   const prev = task.meta.providerCogs && typeof task.meta.providerCogs === 'object'
     ? task.meta.providerCogs
     : { provider: 'openrouter', currency: 'USDC' };
+  const callerPaid = prev.label === OPENROUTER_CALLER_PAID_LABEL
+    || prev.paid_by === 'caller-to-openrouter';
   task.meta.providerCogs = {
     ...prev,
     openrouter_generation: {
@@ -291,6 +427,10 @@ export function applyOpenRouterGenerationCost(task, generation) {
       total_cost: total,
       upstream_inference_cost: upstream,
       currency: 'USD',
+      ...(callerPaid ? {
+        label: OPENROUTER_CALLER_PAID_LABEL,
+        paid_by: 'caller-to-openrouter',
+      } : {}),
     },
   };
   task.updatedAt = Date.now();
@@ -316,7 +456,10 @@ export function scheduleOpenRouterCostReconcile({
       const cost = await fetchOpenRouterGeneration({ id, apiKey, baseUrl, fetchFn });
       if (cost) applyOpenRouterGenerationCost(task, cost);
     } catch (err) {
-      logger.warn({ err: err.message, id }, 'openrouter: generation cost reconcile skipped');
+      logger.warn(
+        { err: redactSecrets(err.message, [apiKey]), id },
+        'openrouter: generation cost reconcile skipped',
+      );
     }
   })();
   _reconcileJobs.add(job);

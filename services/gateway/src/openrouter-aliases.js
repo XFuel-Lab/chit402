@@ -1,11 +1,14 @@
 /**
- * Familiar names → an OpenRouter catalog row, only when that hub is listed.
+ * Familiar names → an OpenRouter catalog row, only in house-key resale mode.
  *
- * When no `hub: 'openrouter'` row is present the function returns null and the
- * open-model alias table (and any resolver registered later) keeps the request.
- * A specific name that is not actually listed does not fall through onto a
- * different closed model.
+ * OpenRouter's terms prohibit reselling API access. With
+ * `OPENROUTER_HOUSE_RESALE_ENABLED` off (the default), `gpt-4o` and the other
+ * familiar names do not point here even when `openrouter/…` rows are listed.
+ * Callers use the catalog id and their own key. A specific name that is not
+ * actually listed does not fall through onto a different closed model.
  */
+
+import { openrouterHouseResaleEnabled } from './openrouter-infer.js';
 
 function normToken(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -49,6 +52,8 @@ function preferredFamily(rows, token) {
  * @returns {object|null} catalog row, or null to keep the open-model aliases
  */
 export function resolveOpenRouterFamiliar(name, models) {
+  // House resale is the only mode that may answer `gpt-4o` with our key.
+  if (!openrouterHouseResaleEnabled()) return null;
   const rows = openrouterRows(models);
   if (!rows.length) return null;
   const key = String(name || '').trim().toLowerCase();

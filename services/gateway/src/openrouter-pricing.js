@@ -1,11 +1,17 @@
 /**
- * OpenRouter quotes under locked cost-plus.
+ * OpenRouter quotes.
+ *
+ * Default is bring-your-own-key. The caller pays OpenRouter. Chit charges
+ * only the standard $0.002 receipt — no upstream COGS, no route margin.
+ *
+ * House-key resale (our key, cost-plus) is a separate quote, used only when
+ * `OPENROUTER_HOUSE_RESALE_ENABLED` is on and the caller did not bring a key:
  *
  *   quote = upstream per-token cost (output at max_tokens, capped)
  *         + 1% route margin (fee_bps = 100)
  *         + the standard $0.002 receipt
  *
- * The receipt is added. It is not a floor that can replace a larger upstream
+ * That receipt is added. It is not a floor that can replace a larger upstream
  * cost. The amount is never below upstream cost.
  */
 
@@ -16,6 +22,12 @@ export const OPENROUTER_MAX_OUTPUT_TOKENS = 8192;
 
 /** Standard receipt, USDC base units (6 decimals). $0.002. */
 export const OPENROUTER_RECEIPT_UNITS = BigInt(STAMP_FEE_UNITS);
+
+/**
+ * Receipt label for a cost the caller paid OpenRouter. Not a Chit COGS figure.
+ * The signed `provider_cogs.actual` stays empty on this path.
+ */
+export const OPENROUTER_CALLER_PAID_LABEL = 'paid-by-caller-to-OpenRouter';
 
 export function isOpenRouterCatalogId(id) {
   return typeof id === 'string' && id.startsWith('openrouter/');
@@ -61,5 +73,25 @@ export function quoteOpenRouterFromCogs(cogsBaseUnits, cfg = {}) {
     receipt_fee: String(receipt),
     floor_applied: false,
     basis: 'cost_plus',
+  };
+}
+
+/**
+ * BYOK quote: the $0.002 receipt only. Inference is not ours to sell.
+ * @returns {object}
+ */
+export function quoteOpenRouterByok() {
+  const receipt = OPENROUTER_RECEIPT_UNITS;
+  return {
+    amount: String(receipt),
+    basis: 'byok_receipt',
+    fee_bps: 0,
+    provider_cogs: '0',
+    platform_fee: '0',
+    tier2_proof: '0',
+    receipt_fee: String(receipt),
+    floor_applied: false,
+    paid_by: 'caller-to-openrouter',
+    label: OPENROUTER_CALLER_PAID_LABEL,
   };
 }

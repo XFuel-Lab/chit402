@@ -59,6 +59,7 @@ function startServer(handler) {
 let settles = 0;
 let keyStatus = 200;
 let chatStatus = 200;
+let chatErrorBody = { error: { message: 'upstream down' } };
 
 const facilitator = await startServer((req, res) => {
   let body = '';
@@ -79,40 +80,49 @@ const facilitator = await startServer((req, res) => {
 
 const upstreamHits = [];
 const upstream = await startServer((req, res) => {
-  const url = req.url || '';
-  upstreamHits.push({
-    url,
-    referer: req.headers['http-referer'],
-    title: req.headers['x-openrouter-title'],
-    titleCompat: req.headers['x-title'],
-    categories: req.headers['x-openrouter-categories'],
-    visibility: req.headers['x-openrouter-app-visibility'],
-  });
-  const send = (status, obj) => {
-    res.statusCode = status;
-    res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify(obj));
-  };
-  if (url.endsWith('/models')) return send(200, LIST);
-  if (url.endsWith('/key')) return send(keyStatus, keyStatus === 200 ? { data: { label: 'test' } } : { error: 'down' });
+  let raw = '';
+  req.on('data', (chunk) => { raw += chunk; });
+  req.on('end', () => {
+    const url = req.url || '';
+    let body = null;
+    try { body = raw ? JSON.parse(raw) : null; } catch { body = raw; }
+    upstreamHits.push({
+      url,
+      authorization: req.headers.authorization,
+      body,
+      referer: req.headers['http-referer'],
+      title: req.headers['x-openrouter-title'],
+      titleCompat: req.headers['x-title'],
+      categories: req.headers['x-openrouter-categories'],
+      visibility: req.headers['x-openrouter-app-visibility'],
+    });
+    const send = (status, obj) => {
+      res.statusCode = status;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(obj));
+    };
+    if (url.endsWith('/models')) return send(200, LIST);
+    if (url.endsWith('/key')) return send(keyStatus, keyStatus === 200 ? { data: { label: 'test' } } : { error: 'down' });
     if (url.includes('/generation')) {
       return send(200, {
         data: { id: 'gen-http-1', total_cost: '0.0000042', upstream_inference_cost: '0.0000039' },
       });
     }
     if (url.endsWith('/chat/completions')) {
-      if (chatStatus !== 200) return send(chatStatus, { error: { message: 'upstream down' } });
+      if (chatStatus !== 200) return send(chatStatus, chatErrorBody);
       return send(200, {
         id: 'gen-http-1',
         choices: [{ message: { role: 'assistant', content: 'pong' }, finish_reason: 'stop' }],
-        usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
+        usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16, cost: 0.0000042 },
       });
     }
-  return send(500, { error: 'unexpected', url });
+    return send(500, { error: 'unexpected', url });
+  });
 });
 
 process.env.HUB_CATALOG_OFFLINE = 'false';
 process.env.OPENROUTER_API_KEY = 'test-or-key';
+process.env.OPENROUTER_HOUSE_RESALE_ENABLED = 'true';
 process.env.OPENROUTER_BASE_URL = `${upstream.url}/openrouter/api/v1`;
 process.env.THETA_EDGECLOUD_BASE = `${upstream.url}/theta`;
 process.env.AKASHML_BASE_URL = `${upstream.url}/akash/v1`;
@@ -126,7 +136,9 @@ process.env.X402_FACILITATOR_API_KEY = 'testkey';
 process.env.ZAN_X402_GATEWAY_URL = facilitator.url;
 process.env.X402_COST_PLUS = 'true';
 process.env.X402_PLATFORM_FEE_BPS = '100';
-delete process.env.M2M_API_KEYS;
+// A configured partner key turns off open mode, so an OpenRouter bearer is not
+// treated as a Chit credential and the call still settles the receipt.
+process.env.M2M_API_KEYS = 'chit-partner-not-openrouter';
 delete process.env.THETA_EDGECLOUD_API_KEY;
 process.env.OPENAI_GATEWAY_ALLOW_FALLBACK = 'false';
 process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret';
@@ -135,7 +147,11 @@ const { createApp } = await import('../src/server.js');
 const { initAIListener } = await import('../src/ai-listener.js');
 const { resetFloatManagerForTests } = await import('../src/provider-float.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
-const { resetOpenRouterPreflightCache, openRouterReconcileSettled } = await import('../src/openrouter-infer.js');
+const {
+  resetOpenRouterPreflightCache,
+  openRouterReconcileSettled,
+  openrouterEndUser,
+} = await import('../src/openrouter-infer.js');
 const { quoteResolved } = await import('../src/x402-server.js');
 
 let server;
@@ -157,6 +173,7 @@ before(async () => {
 
 after(async () => {
   delete process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_HOUSE_RESALE_ENABLED;
   if (server) {
     server.closeAllConnections?.();
     await new Promise((r) => server.close(r));
@@ -184,6 +201,7 @@ test('gateway quotes, fails closed before settle, and receipts a mocked OpenRout
   assert.equal(listed.status, 200);
   assert.ok(models.data.some((m) => m.id === 'openrouter/openai/gpt-4o-mini'));
   const mini = models.data.find((m) => m.id === 'openrouter/openai/gpt-4o-mini');
+  assert.equal(mini.access, 'house');
   assert.equal(mini.pricing.basis, 'cost_plus');
   assert.equal(mini.pricing.fee_bps, 100);
   assert.equal(mini.pricing.provider_cost_per_million.input, 0.15);
@@ -278,8 +296,12 @@ test('gateway quotes, fails closed before settle, and receipts a mocked OpenRout
   assert.equal(receipt.provider_cogs.openrouter_generation.total_cost, '0.0000042');
   assert.equal(receipt.provider_cogs.openrouter_generation.upstream_inference_cost, '0.0000039');
   assert.equal(receipt.provider_cogs.openrouter_generation.currency, 'USD');
+  const chatHit = upstreamHits.find((h) => h.url.includes('/openrouter/') && h.url.endsWith('/chat/completions'));
+  assert.equal(chatHit.authorization, 'Bearer test-or-key');
+  assert.equal(chatHit.body.user, openrouterEndUser({ payerWallet: EVM_PAYER }));
   const generationHit = upstreamHits.find((h) => h.url.includes('/generation'));
   assert.ok(generationHit);
+  assert.equal(generationHit.authorization, 'Bearer test-or-key');
   assert.equal(generationHit.categories, 'cloud-agent');
   assert.equal(generationHit.visibility, undefined);
 
@@ -323,4 +345,144 @@ test('gateway quotes, fails closed before settle, and receipts a mocked OpenRout
   assert.equal(failedBody.xfuel.route.provider, 'openrouter');
   assert.equal(failedBody.xfuel.route.model, 'openrouter/openai/gpt-4o-mini');
   assert.equal(failedBody.xfuel.route_meta.requested_model, 'gpt-4o-mini');
+});
+
+test('BYOK forwards the caller key, charges only the receipt, and redacts the key', async () => {
+  const callerKey = 'sk-or-caller-secret-do-not-log';
+  process.env.OPENROUTER_HOUSE_RESALE_ENABLED = 'false';
+  resetHubCatalogCache();
+  resetOpenRouterPreflightCache();
+  keyStatus = 200;
+  chatStatus = 200;
+  chatErrorBody = { error: { message: 'upstream down' } };
+  upstreamHits.length = 0;
+  const settlesBefore = settles;
+
+  const listed = await fetch(`${base}/v1/models`);
+  const models = await listed.json();
+  const mini = models.data.find((m) => m.id === 'openrouter/openai/gpt-4o-mini');
+  assert.equal(mini.access, 'byok');
+  assert.equal(mini.pricing.basis, 'byok_receipt');
+  assert.equal(mini.pricing.fee_bps, 0);
+  const modelsHit = upstreamHits.find((h) => h.url.endsWith('/models'));
+  assert.equal(modelsHit.authorization, undefined);
+
+  const alias = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: pay('alias-nonce'),
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: 'hi' }],
+    }),
+  });
+  assert.equal(alias.status, 400);
+  assert.equal((await alias.json()).error.code, 'model_not_found');
+  assert.equal(settles, settlesBefore);
+  assert.equal(
+    upstreamHits.some((h) => h.url.endsWith('/chat/completions') && h.authorization === 'Bearer test-or-key'),
+    false,
+  );
+
+  const chatBody = {
+    model: 'openrouter/openai/gpt-4o-mini',
+    messages: [{ role: 'user', content: 'hi' }],
+    max_tokens: 32,
+  };
+  const missing = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: pay('missing-key-nonce'),
+    body: JSON.stringify(chatBody),
+  });
+  assert.equal(missing.status, 400);
+  const missingBody = await missing.json();
+  assert.equal(missingBody.error.code, 'openrouter_key_required');
+  assert.equal(JSON.stringify(missingBody).includes('test-or-key'), false);
+  assert.equal(settles, settlesBefore);
+
+  const challengeRes = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-openrouter-key': callerKey },
+    body: JSON.stringify(chatBody),
+  });
+  assert.equal(challengeRes.status, 402);
+  const challenge = await challengeRes.json();
+  assert.equal(challenge.accepts[0].maxAmountRequired, '2000');
+  assert.equal(JSON.stringify(challenge).includes(callerKey), false);
+
+  upstreamHits.length = 0;
+  const paid = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { ...pay(challenge.accepts[0].extra.nonce), 'x-openrouter-key': callerKey },
+    body: JSON.stringify(chatBody),
+  });
+  const paidText = await paid.text();
+  const paidBody = JSON.parse(paidText);
+  assert.equal(paid.status, 200, paidText);
+  assert.equal(settles, settlesBefore + 1);
+  assert.equal(paidText.includes(callerKey), false);
+  assert.equal(paidText.includes('test-or-key'), false);
+  assert.equal(paidBody.model, 'openrouter/openai/gpt-4o-mini');
+  assert.equal(paidBody.usage.prompt_tokens, 12);
+  assert.equal(paidBody.xfuel.route.provider, 'openrouter');
+  assert.equal(paidBody.xfuel.route.model, 'openrouter/openai/gpt-4o-mini');
+  assert.equal(paidBody.xfuel.provider_cogs.basis, 'reported');
+  assert.equal(paidBody.xfuel.provider_cogs.label, 'paid-by-caller-to-OpenRouter');
+  assert.equal(paidBody.xfuel.provider_cogs.paid_by, 'caller-to-openrouter');
+  assert.equal(paidBody.xfuel.provider_cogs.reported_cost_usd, '0.0000042');
+  assert.equal(paidBody.xfuel.provider_cogs.actual ?? null, null);
+  const chatHit = upstreamHits.find((h) => h.url.endsWith('/chat/completions'));
+  assert.equal(chatHit.authorization, `Bearer ${callerKey}`);
+  assert.equal(chatHit.body.user, openrouterEndUser({ payerWallet: EVM_PAYER }));
+  assert.equal(JSON.stringify(chatHit.body).includes(callerKey), false);
+
+  await openRouterReconcileSettled();
+  const receiptRes = await fetch(`${base}/receipt/${paidBody.xfuel.task_id}?format=json`);
+  const receipt = await receiptRes.json();
+  assert.equal(receipt.provider_cogs.label, 'paid-by-caller-to-OpenRouter');
+  assert.equal(receipt.provider_cogs.actual ?? null, null);
+  assert.equal(receipt.provider_cogs.openrouter_generation.total_cost, '0.0000042');
+  assert.equal(receipt.provider_cogs.openrouter_generation.label, 'paid-by-caller-to-OpenRouter');
+  const generationHit = upstreamHits.find((h) => h.url.includes('/generation'));
+  assert.equal(generationHit.authorization, `Bearer ${callerKey}`);
+
+  chatStatus = 500;
+  chatErrorBody = { error: { message: `rejected ${callerKey}` } };
+  resetOpenRouterPreflightCache();
+  const failChallenge = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-openrouter-key': callerKey },
+    body: JSON.stringify(chatBody),
+  });
+  const failNonce = (await failChallenge.json()).accepts[0].extra.nonce;
+  const failed = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { ...pay(failNonce), 'x-openrouter-key': callerKey },
+    body: JSON.stringify(chatBody),
+  });
+  const failedText = await failed.text();
+  assert.equal(failed.status, 502, failedText);
+  assert.equal(failedText.includes(callerKey), false);
+  const failedBody = JSON.parse(failedText);
+  assert.equal(failedBody.xfuel.refund.status, 'refund_owed');
+  chatStatus = 200;
+  chatErrorBody = { error: { message: 'upstream down' } };
+
+  upstreamHits.length = 0;
+  resetOpenRouterPreflightCache();
+  const passChallenge = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${callerKey}` },
+    body: JSON.stringify(chatBody),
+  });
+  assert.equal(passChallenge.status, 402);
+  const passNonce = (await passChallenge.json()).accepts[0].extra.nonce;
+  const passed = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { ...pay(passNonce), authorization: `Bearer ${callerKey}` },
+    body: JSON.stringify(chatBody),
+  });
+  assert.equal(passed.status, 200, await passed.clone().text());
+  const passHit = upstreamHits.find((h) => h.url.endsWith('/chat/completions'));
+  assert.equal(passHit.authorization, `Bearer ${callerKey}`);
+  assert.notEqual(passHit.authorization, 'Bearer test-or-key');
 });

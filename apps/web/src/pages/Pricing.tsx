@@ -46,11 +46,11 @@ export default function Pricing() {
             {' '}(platform fee 100 bps on provider COGS). Hub, model, and upstream USDC are
             pass-through plus that routing fee. Network fees on your chain are yours. Without
             payment or a partner key, <code>POST {apiV1}/chat/completions</code> returns HTTP 402.
-            When an upstream hub key is set, the 402 is that hub per-token price (output at a
-            capped <code>max_tokens</code>), plus the 1% route margin, plus this $0.002 receipt.
-            The quote is never below upstream cost. The receipt names the model you asked for
-            and the hub and model that served. OpenRouter is one such hub; with the key unset
-            it is not listed.
+            Bring your OpenRouter key, get a Chit receipt for every call. Send{' '}
+            <code>X-OpenRouter-Key</code> (or <code>Authorization</code> on an{' '}
+            <code>openrouter/</code> route). Chit charges this $0.002 receipt. Inference is
+            paid by you to OpenRouter, and the receipt labels that cost
+            paid-by-caller-to-OpenRouter. Familiar names stay on the open-model book.
           </p>
           <p style={styles.clarityBody}>
             Possession-gated book ingest costs a{' '}

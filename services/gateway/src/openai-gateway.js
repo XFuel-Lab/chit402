@@ -28,8 +28,14 @@ import {
   extractImageUrl,
 } from './edgecloud-infer.js';
 import { inferAkashML, akashmlApiKey } from './akashml-infer.js';
-import { inferOpenRouter, openrouterApiKey, scheduleOpenRouterCostReconcile } from './openrouter-infer.js';
-import { capOpenRouterOutputTokens } from './openrouter-pricing.js';
+import {
+  inferOpenRouter,
+  openrouterEndUser,
+  openrouterHouseResaleEnabled,
+  resolveOpenRouterAccess,
+  scheduleOpenRouterCostReconcile,
+} from './openrouter-infer.js';
+import { capOpenRouterOutputTokens, OPENROUTER_CALLER_PAID_LABEL } from './openrouter-pricing.js';
 import { preflightBeforeSettle } from './route-preflight.js';
 import { markRefundOwed } from './refund-owed.js';
 import { normalizeUsage, messagesToText } from './usage.js';
@@ -140,12 +146,37 @@ function privacyFromReq(req, registry) {
   });
 }
 
-async function attachQuotedPricing(task, req, privacyCtx) {
+function openRouterQuoteOpts(req, isAuthorised) {
+  const requested = req?.body?.model || req?.body?.model_id || '';
+  const access = resolveOpenRouterAccess(req, requested, {
+    authorizationIsChitCredential: authorizationIsChitCredential(req, isAuthorised),
+  });
+  return { byok: access.mode === 'byok', access };
+}
+
+function authorizationIsChitCredential(req, isAuthorised) {
+  const xApiKey = req?.headers?.['x-api-key'];
+  if (xApiKey && String(Array.isArray(xApiKey) ? xApiKey[0] : xApiKey).trim()) return false;
+  if (typeof isAuthorised !== 'function') return false;
+  try {
+    return !!isAuthorised(req);
+  } catch {
+    return false;
+  }
+}
+
+function openRouterForRequest(req, requestedModel, isAuthorised) {
+  return resolveOpenRouterAccess(req, requestedModel, {
+    authorizationIsChitCredential: authorizationIsChitCredential(req, isAuthorised),
+  });
+}
+
+async function attachQuotedPricing(task, req, privacyCtx, quoteOpts = null) {
   if (!task) return;
   try {
     const body = { ...(req.body || {}) };
     if (body.max_tokens != null || MAX_TOKENS_CAP > 0) body.max_tokens = clampMaxTokens(body.max_tokens);
-    const quote = await quoteResolved(bodyForPrivacyPricing(body, privacyCtx));
+    const quote = await quoteResolved(bodyForPrivacyPricing(body, privacyCtx), config.x402, quoteOpts || {});
     task.meta = task.meta || {};
     task.meta.pricing = {
       platform_fee: quote.platform_fee,
@@ -271,11 +302,14 @@ async function meterV1Request(req, res, {
     }
   }
 
+  // Server-side: a caller key prices OpenRouter at the receipt, even if resale is on.
+  const quoteOpts = openRouterQuoteOpts(req, isAuthorised);
+
   // Book policy rows (caps, kill switch, tier2_above) — beside the book, not the router.
   if (bookable && bookPolicy) {
     let quotedAmount = '0';
     try {
-      quotedAmount = await priceUSDCResolved(req.body || {});
+      quotedAmount = await priceUSDCResolved(req.body || {}, config.x402, quoteOpts);
     } catch {
       quotedAmount = String(config.x402?.usdcFloor ?? config.x402?.usdcPriceDefault ?? '2000');
     }
@@ -334,7 +368,9 @@ async function meterV1Request(req, res, {
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const path = resourcePath.startsWith('/') ? resourcePath : `/${resourcePath}`;
     const resource = `${baseUrl.replace(/\/$/, '')}${path}`;
-    const decision = await runX402Handshake(req, { taskId, body: pricedBody, baseUrl, resource });
+    const decision = await runX402Handshake(req, {
+      taskId, body: pricedBody, baseUrl, resource, quoteOpts,
+    });
 
     if (decision.kind === 'settled') {
       return {
@@ -413,6 +449,7 @@ async function getRouterHandler() {
 async function runChatInference({
   model, messages, max_tokens, temperature, allowFallback: fb, cacheNs = null,
   tools = null, tool_choice = null,
+  openrouterKey = '', openrouterMode = 'missing', openrouterUser = null,
 }) {
   const { models } = await getHubCatalog();
   const resolved = resolveCatalogModel(model, models, {
@@ -567,8 +604,11 @@ async function runChatInference({
   }
 
   // OpenRouter — no mock fallthrough. An upstream error is the answer.
+  // The key is the caller's, unless house resale is on and they did not bring one.
   if (cat.hub === 'openrouter') {
-    if (!openrouterApiKey()) {
+    const byok = openrouterMode === 'byok' && openrouterKey;
+    const house = openrouterMode === 'house' && openrouterKey && openrouterHouseResaleEnabled();
+    if (!byok && !house) {
       return {
         content: '',
         provider: 'openrouter',
@@ -576,10 +616,11 @@ async function runChatInference({
         resolvedModel,
         raw: null,
         error: {
-          status: 503,
-          code: 'provider_unavailable',
-          message: 'OpenRouter is not enabled.',
-          refundOwed: true,
+          status: 400,
+          code: 'openrouter_key_required',
+          message: 'Bring your OpenRouter key on X-OpenRouter-Key (or Authorization on an openrouter/ route). '
+            + 'Chit charges the $0.002 receipt. Inference is paid by you to OpenRouter.',
+          refundOwed: false,
         },
       };
     }
@@ -590,6 +631,8 @@ async function runChatInference({
       temperature,
       tools,
       tool_choice,
+      apiKey: openrouterKey,
+      user: openrouterUser,
     });
     if (result.ok) {
       recordSuccess(cat.id);
@@ -600,6 +643,8 @@ async function runChatInference({
         mock: false,
         resolvedModel,
         generationId: result.generationId,
+        reportedCost: result.reportedCost,
+        openrouterBilling: byok ? 'byok' : 'house',
         raw: result.raw,
       };
     }
@@ -1070,11 +1115,39 @@ async function accountForCogs({ task, modelId, usage, provider }) {
  * and return. The chat response is not held for it. A later GET /receipt
  * reads the task once the figures land.
  */
-function noteOpenRouterGeneration(task, inference) {
+function stampReportedOpenRouterCost(task, inference) {
+  if (!task) return;
+  task.meta = task.meta || {};
+  const reported = inference?.reportedCost ?? null;
+  task.meta.openrouterBilling = 'byok';
+  task.meta.providerCogs = {
+    provider: 'openrouter',
+    currency: 'USD',
+    basis: 'reported',
+    paid_by: 'caller-to-openrouter',
+    label: OPENROUTER_CALLER_PAID_LABEL,
+    ...(reported != null ? { reported_cost_usd: reported } : {}),
+  };
+}
+
+function noteOpenRouterGeneration(task, inference, apiKey) {
   const fromRaw = inference?.raw?.id;
   const id = inference?.generationId || (typeof fromRaw === 'string' ? fromRaw : null);
-  if (!id || inference?.provider !== 'openrouter' || !task) return;
-  scheduleOpenRouterCostReconcile({ id, task });
+  if (!id || inference?.provider !== 'openrouter' || !task || !apiKey) return;
+  scheduleOpenRouterCostReconcile({ id, task, apiKey });
+}
+
+async function chargeServedInference({
+  task, mock, modelId, usage, provider, inference, openrouterApiKey,
+}) {
+  if (!mock && inference?.openrouterBilling === 'byok') {
+    stampReportedOpenRouterCost(task, inference);
+    noteOpenRouterGeneration(task, inference, openrouterApiKey);
+    return 0n;
+  }
+  const cogs = mock ? 0n : await accountForCogs({ task, modelId, usage, provider });
+  noteOpenRouterGeneration(task, inference, openrouterApiKey);
+  return cogs;
 }
 
 // ─── Verification receipt ─────────────────────────────────────────────────────
@@ -1356,8 +1429,8 @@ function registerPaidV1Shell({
  * Unknown model, or an OpenRouter preflight error, before x402 settle.
  * @returns {Promise<object|null>} resolved preflight, or null if the response was sent
  */
-async function rejectIfUnroutable(res, body) {
-  const pre = await preflightBeforeSettle(body);
+async function rejectIfUnroutable(res, body, access) {
+  const pre = await preflightBeforeSettle(body, { access });
   if (pre.ok) return pre;
   res.status(pre.status).json({
     error: {
@@ -1544,6 +1617,18 @@ export function openAiErrorShape(_req, res, next) {
  */
 function priceForCatalogModel(m) {
   if (!m) return null;
+  if (m.hub === 'openrouter' && m.access !== 'house') {
+    return {
+      basis: 'byok_receipt',
+      currency: 'USDC',
+      min_charge_usd: 0.002,
+      fee_bps: 0,
+      price_per_million: null,
+      access: 'byok',
+      note: 'Bring your OpenRouter key, get a Chit receipt for every call. '
+        + 'Chit charges the $0.002 receipt. Inference is paid by the caller to OpenRouter.',
+    };
+  }
   if (m.hub === 'xfuel') {
     const { provider_cost_per_million: _cost, ...base } = publishedPrice(null, null) || {};
     return {
@@ -1764,11 +1849,12 @@ export function registerOpenAIRoutes(app, {
     }
     let boundSession = sessionBind.session || null;
     let preflightModel = null;
+    const orAccess = openRouterForRequest(req, model || 'xfuel/auto', isAuthorised);
 
     // Payment present: settle only after the body is valid (Bankr: don't settle then 400).
     // Unknown models and an OpenRouter preflight error stop here, before settle.
     if (paymentHeader) {
-      const pre = await rejectIfUnroutable(res, req.body || {});
+      const pre = await rejectIfUnroutable(res, req.body || {}, orAccess);
       if (!pre) return undefined;
       preflightModel = pre.model;
       metering = await meterV1Request(req, res, {
@@ -1808,7 +1894,7 @@ export function registerOpenAIRoutes(app, {
           privacyAttest: privacyCtx.privateAttest ? 'tier2' : null,
           session: boundSession,
         }));
-        await attachQuotedPricing(paidTask, req, privacyCtx);
+        await attachQuotedPricing(paidTask, req, privacyCtx, { byok: orAccess.mode === 'byok' });
         settleRecord = writeSettleBookRow({
           taskId,
           payment: metering.payment,
@@ -1868,6 +1954,11 @@ export function registerOpenAIRoutes(app, {
 
     let inference;
     try {
+      const orUser = openrouterEndUser({
+        payerWallet: metering.payment?.payer,
+        apiKeyHash,
+        byokKey: orAccess.mode === 'byok' ? orAccess.apiKey : null,
+      });
       inference = await runChatInference({
         model: model || 'xfuel/auto',
         messages,
@@ -1877,6 +1968,9 @@ export function registerOpenAIRoutes(app, {
         cacheNs: cacheNamespace(apiKeyHash),
         tools: wantsTools ? tools : null,
         tool_choice: wantsTools ? tool_choice : null,
+        openrouterKey: orAccess.apiKey,
+        openrouterMode: orAccess.mode,
+        openrouterUser: orUser,
       });
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /v1/chat/completions inference error');
@@ -1992,9 +2086,16 @@ export function registerOpenAIRoutes(app, {
     }
 
     // Must precede buildReceipt — the receipt reads provider_cogs off task.meta.
-    // A mock cost us nothing, so it neither burns float nor spends the allowance.
-    const cogs = mock ? 0n : await accountForCogs({ task, modelId: echoModel, usage: counts, provider });
-    noteOpenRouterGeneration(task, inference);
+    // BYOK does not burn the float: the caller paid OpenRouter.
+    const cogs = await chargeServedInference({
+      task,
+      mock,
+      modelId: echoModel,
+      usage: counts,
+      provider,
+      inference,
+      openrouterApiKey: orAccess.apiKey,
+    });
     if (freeBucket) recordFreeSpend(freeBucket, cogs);
     const proveAllowed = privacyCtx.privateAttest || settlementProofAllowed({
       apiKey,
@@ -2230,6 +2331,7 @@ export function registerOpenAIRoutes(app, {
     }
     let boundSession = sessionBind.session || null;
     let preflightModel = null;
+    const orAccess = openRouterForRequest(req, model || 'xfuel/auto', isAuthorised);
 
     // Payment present: settle only after the body is valid.
     // Unknown models and an OpenRouter preflight error stop here, before settle.
@@ -2239,7 +2341,7 @@ export function registerOpenAIRoutes(app, {
         model: model || 'xfuel/auto',
         messages,
         max_tokens: max_output_tokens,
-      });
+      }, orAccess);
       if (!pre) return undefined;
       preflightModel = pre.model;
       metering = await meterV1Request(req, res, {
@@ -2322,6 +2424,11 @@ export function registerOpenAIRoutes(app, {
 
     let inference;
     try {
+      const orUser = openrouterEndUser({
+        payerWallet: metering.payment?.payer,
+        apiKeyHash,
+        byokKey: orAccess.mode === 'byok' ? orAccess.apiKey : null,
+      });
       inference = await runChatInference({
         model: model || 'xfuel/auto',
         messages,
@@ -2331,6 +2438,9 @@ export function registerOpenAIRoutes(app, {
         cacheNs: cacheNamespace(apiKeyHash),
         tools: wantsTools ? tools : null,
         tool_choice: wantsTools ? tool_choice : null,
+        openrouterKey: orAccess.apiKey,
+        openrouterMode: orAccess.mode,
+        openrouterUser: orUser,
       });
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /v1/responses inference error');
@@ -2440,9 +2550,15 @@ export function registerOpenAIRoutes(app, {
       }));
     }
 
-    // Account for COGS
-    const cogs = mock ? 0n : await accountForCogs({ task, modelId: echoModel, usage: counts, provider });
-    noteOpenRouterGeneration(task, inference);
+    const cogs = await chargeServedInference({
+      task,
+      mock,
+      modelId: echoModel,
+      usage: counts,
+      provider,
+      inference,
+      openrouterApiKey: orAccess.apiKey,
+    });
     if (freeBucket) recordFreeSpend(freeBucket, cogs);
     const proveAllowed = settlementProofAllowed({
       apiKey: req.headers['x-api-key'],

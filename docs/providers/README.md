@@ -8,7 +8,7 @@ XFuel routes inference to pluggable providers. Settlement (USDC / proofs) is on 
 | **Confidential / TEE-class (Phala-compatible)** | Opt-in content privacy — `CONFIDENTIAL_PROVIDER_BASE_URL` + `CONFIDENTIAL_PROVIDER_API_KEY` |
 | EdgeCloud (Theta) | Optional GPU tier — prefer **USDC** prepaid billing; TFUEL optional ops — [edgecloud.md](./edgecloud.md) |
 | **AkashML** (`api.akashml.com`) | First-class DePIN chat provider (OpenAI-compatible, pay-per-token). Same GLM-5.2 as Theta default → clean provider comparison. Set `AKASHML_API_KEY`. Catalog ids: `akash/<nativeId>` (e.g. `akash/zai-org/GLM-5.2`). Float id: `akash-network`. |
-| **OpenRouter** (`openrouter.ai/api/v1`) | Optional upstream hub. Off when `OPENROUTER_API_KEY` is unset: no routes advertised, no startup error. Catalog ids: `openrouter/<vendor>/<model>`. Quote is that hub's per-token price (output at a capped `max_tokens`) + 1% + the $0.002 receipt, never below upstream. |
+| **OpenRouter** (`openrouter.ai/api/v1`) | Bring your own key. Catalog ids `openrouter/<vendor>/<model>` are advertised from the public model list. Send `X-OpenRouter-Key` (or `Authorization` on an `openrouter/*` route). Chit charges the $0.002 receipt over x402 and forwards the call with your key. The receipt labels OpenRouter's reported cost `paid-by-caller-to-OpenRouter`. House-key resale (`OPENROUTER_API_KEY`, cost-plus) stays off unless `OPENROUTER_HOUSE_RESALE_ENABLED=true`. Familiar names do not point at OpenRouter while that flag is off. |
 | Akash SDL / lease | **Not used** for inference — container leasing path deliberately rejected |
 
 ### Akash ships two credentials — don't cross them

@@ -12,7 +12,8 @@
  *   THETA_EDGECLOUD_BASE=https://ondemand.thetaedgecloud.com
  *   AKASHML_BASE_URL=https://api.akashml.com/v1
  *   AKASHML_API_KEY=…          — optional; /v1/models may work without it
- *   OPENROUTER_API_KEY=…       — required for the OpenRouter hub; absent = disabled
+ *   OPENROUTER_API_KEY=…       — house key. Unused unless OPENROUTER_HOUSE_RESALE_ENABLED=true
+ *   OPENROUTER_HOUSE_RESALE_ENABLED=true — house-key resale. Default off (BYOK)
  *   OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
  *   OPENROUTER_REFERER / OPENROUTER_TITLE — attribution (also X-Title, categories cloud-agent)
  *   HUB_CATALOG_OFFLINE=true   — force seed (tests)
@@ -21,7 +22,7 @@
 import logger from './logger.js';
 import { isDown, healthOf } from './provider-health.js';
 import { akashmlApiKey } from './akashml-infer.js';
-import { openrouterApiKey, openrouterAttributionHeaders } from './openrouter-infer.js';
+import { openrouterApiKey, openrouterAttributionHeaders, openrouterHouseResaleEnabled } from './openrouter-infer.js';
 import { resolveOpenRouterFamiliar } from './openrouter-aliases.js';
 
 const DEFAULT_TTL_MS = 60_000;
@@ -330,6 +331,7 @@ export function mapOpenRouterService(row) {
     input_vars: null,
     cost: row.pricing && typeof row.pricing === 'object' ? row.pricing : null,
     workload_type: null,
+    access: openrouterHouseResaleEnabled() ? 'house' : 'byok',
   };
 }
 
@@ -361,7 +363,11 @@ export async function getHubCatalog(opts = {}) {
   const akashBase = (opts.akashBase || process.env.AKASHML_BASE_URL || DEFAULT_AKASHML_BASE).replace(/\/$/, '');
   const openrouterBase = (opts.openrouterBase || process.env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE).replace(/\/$/, '');
   const akashKey = opts.akashApiKey ?? akashmlApiKey();
-  const openrouterKey = opts.openrouterApiKey ?? openrouterApiKey();
+  // An explicit opt (tests) may authorize the stub. The env house key is sent
+  // only while resale is on — a set key must not authenticate the public poll.
+  const openrouterKey = Object.prototype.hasOwnProperty.call(opts, 'openrouterApiKey')
+    ? String(opts.openrouterApiKey || '').trim()
+    : (openrouterHouseResaleEnabled() ? openrouterApiKey() : '');
   const fetchFn = opts.fetchFn || globalThis.fetch;
 
   const [thetaResult, akashResult, openrouterResult] = await Promise.all([
@@ -432,16 +438,17 @@ async function fetchThetaModels(thetaBase, fetchFn) {
 }
 
 async function fetchOpenRouterModels(base, apiKey, fetchFn) {
-  // Absent key is the disabled state: no poll, no error, no advertised rows.
-  if (!apiKey) return { models: [], source: 'openrouter-disabled', error: null };
+  // The model list is public. BYOK advertising does not need a house key.
+  // Authorization is attached only when a key was deliberately supplied.
   try {
+    const headers = {
+      Accept: 'application/json',
+      ...openrouterAttributionHeaders(),
+    };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     const res = await fetchFn(`${base}/models`, {
       method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-        ...openrouterAttributionHeaders(),
-      },
+      headers,
       signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) throw new Error(`openrouter /models HTTP ${res.status}`);
@@ -786,8 +793,8 @@ export function resolveCatalogModel(modelId, models, opts = {}) {
       || models.find((m) => m.id === `akash/${requested}`);
   }
 
-  // Familiar closed-model names → OpenRouter only while that hub is listed.
-  // Null when the key is off, so the open-model table below still runs.
+  // Familiar closed-model names → OpenRouter only in house-resale mode.
+  // Flag off returns null even when rows are listed, so aliases stay off OpenRouter.
   if (!hit) {
     hit = resolveOpenRouterFamiliar(requested, models);
   }
@@ -854,6 +861,7 @@ export function toOpenAIList(models, { modality = null, priceFor = null } = {}) 
         // XFuel extensions (ignored by OpenAI SDKs)
         hub: m.hub,
         alias: m.alias,
+        ...(m.access ? { access: m.access } : {}),
         name: m.name,
         modality: m.modality,
         default_prediction: m.default_prediction,

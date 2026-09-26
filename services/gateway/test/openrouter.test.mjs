@@ -14,7 +14,7 @@ import {
   setModelAliasResolver,
 } from '../src/hub-catalog.js';
 import { rateForModel, costOfUsage, estimateCogsFromRequest, measureCogs } from '../src/provider-rates.js';
-import { quoteOpenRouterFromCogs, capOpenRouterOutputTokens, OPENROUTER_MAX_OUTPUT_TOKENS } from '../src/openrouter-pricing.js';
+import { quoteOpenRouterFromCogs, quoteOpenRouterByok, capOpenRouterOutputTokens, OPENROUTER_MAX_OUTPUT_TOKENS } from '../src/openrouter-pricing.js';
 import { quoteResolved } from '../src/x402-server.js';
 import { probeModels, resetHealth, healthOf } from '../src/provider-health.js';
 import {
@@ -23,7 +23,12 @@ import {
   resetOpenRouterPreflightCache,
   scheduleOpenRouterCostReconcile,
   openRouterReconcileSettled,
+  openrouterEndUser,
+  openrouterHouseResaleEnabled,
+  redactSecrets,
+  resolveOpenRouterAccess,
 } from '../src/openrouter-infer.js';
+import logger from '../src/logger.js';
 import { providerCogsOf, buildReceipt } from '../src/receipt.js';
 
 /** Captured 2026-09-26 from GET https://openrouter.ai/api/v1/models (public list). */
@@ -94,6 +99,7 @@ beforeEach(() => {
   resetOpenRouterPreflightCache();
   resetHealth();
   delete process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_HOUSE_RESALE_ENABLED;
   delete process.env.OPENROUTER_MAX_TOKENS_CAP;
   delete process.env.OPENROUTER_REFERER;
   delete process.env.OPENROUTER_TITLE;
@@ -104,6 +110,7 @@ beforeEach(() => {
 afterEach(() => {
   setModelAliasResolver(null);
   delete process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENROUTER_HOUSE_RESALE_ENABLED;
   delete process.env.OPENROUTER_REFERER;
   delete process.env.OPENROUTER_TITLE;
 });
@@ -225,10 +232,15 @@ test('catalog TTL caches the OpenRouter list', async () => {
   assert.equal(calls, 2);
 });
 
-test('missing key advertises nothing and does not call OpenRouter', async () => {
-  const fetchFn = async (url) => {
-    if (String(url).includes('openrouter')) throw new Error('should not poll OpenRouter');
-    if (String(url).includes('/service/list')) {
+test('flag off advertises OpenRouter as BYOK and does not send the house key', async () => {
+  process.env.OPENROUTER_API_KEY = 'house-secret-not-sent';
+  const fetchFn = async (url, init) => {
+    const u = String(url);
+    if (u.includes('openrouter')) {
+      assert.equal(init?.headers?.Authorization, undefined);
+      return jsonResponse(200, LIST);
+    }
+    if (u.includes('/service/list')) {
       return jsonResponse(200, {
         body: { services: [{ alias: 'glm_5_2', name: 'GLM', default_prediction: 'completions', predictions: { completions: {} } }] },
       });
@@ -237,13 +249,26 @@ test('missing key advertises nothing and does not call OpenRouter', async () => 
   };
   const { models, source } = await getHubCatalog({
     forceRefresh: true,
-    openrouterApiKey: '',
     fetchFn,
     openrouterBase: 'http://openrouter.test/api/v1',
   });
-  assert.equal(models.some((m) => m.hub === 'openrouter'), false);
-  assert.doesNotMatch(source, /openrouter/);
+  assert.match(source, /openrouter/);
+  const mini = models.find((m) => m.id === 'openrouter/openai/gpt-4o-mini');
+  assert.equal(mini.access, 'byok');
+  assert.equal(openrouterHouseResaleEnabled(), false);
   assert.equal(resolveCatalogModel('gpt-4o-mini', models).ok, false);
+  assert.equal(resolveCatalogModel('gpt-4o', models).ok, false);
+  assert.equal(resolveCatalogModel('openrouter/openai/gpt-4o-mini', models).model.hub, 'openrouter');
+  const quoted = await quoteResolved({
+    model: 'openrouter/openai/gpt-4o-mini',
+    messages: [{ role: 'user', content: 'hi' }],
+    max_tokens: 32,
+  });
+  assert.equal(quoted.amount, '2000');
+  assert.equal(quoted.basis, 'byok_receipt');
+  assert.equal(quoted.fee_bps, 0);
+  assert.equal(quoted.platform_fee, '0');
+  assert.equal(quoted.provider_cogs, '0');
   assert.equal(resolveCatalogModel('llama-3.3', [
     ...models,
     { id: 'akash/meta-llama/Llama-3.3-70B-Instruct', hub: 'akash', alias: 'meta-llama/Llama-3.3-70B-Instruct', modality: 'chat' },
@@ -277,7 +302,8 @@ test('a dead OpenRouter poll leaves the other hubs and xfuel/auto', async () => 
   assert.equal(auto.ok, true);
 });
 
-test('familiar names resolve to OpenRouter when enabled and to open-model aliases when not', async () => {
+test('familiar names resolve to OpenRouter only when house resale is on', async () => {
+  process.env.OPENROUTER_HOUSE_RESALE_ENABLED = 'true';
   const fetchFn = async (url) => {
     if (String(url).includes('openrouter')) return jsonResponse(200, LIST);
     return jsonResponse(500, {});
@@ -318,7 +344,8 @@ test('familiar names resolve to OpenRouter when enabled and to open-model aliase
   assert.equal(resolveCatalogModel('gpt-4o', noOr).ok, false);
 });
 
-test('quoteResolved uses the capped OpenRouter cost-plus bill', async () => {
+test('quoteResolved uses the capped OpenRouter cost-plus bill when house resale is on', async () => {
+  process.env.OPENROUTER_HOUSE_RESALE_ENABLED = 'true';
   const fetchFn = async (url) => (
     String(url).includes('openrouter') ? jsonResponse(200, LIST) : jsonResponse(500, {})
   );
@@ -486,6 +513,151 @@ test('generation cost is recorded on the receipt after the response, without blo
   });
   assert.equal(missed.meta.providerCogs.openrouter_generation, undefined);
   assert.equal(missed.meta.providerCogs.actual, '5');
+});
+
+test('BYOK quote is the $0.002 receipt with no route margin', () => {
+  const q = quoteOpenRouterByok();
+  assert.equal(q.amount, '2000');
+  assert.equal(q.basis, 'byok_receipt');
+  assert.equal(q.fee_bps, 0);
+  assert.equal(q.platform_fee, '0');
+  assert.equal(q.provider_cogs, '0');
+  assert.equal(q.receipt_fee, '2000');
+  assert.equal(q.label, 'paid-by-caller-to-OpenRouter');
+});
+
+test('caller key wins over the house key, and aliases do not take a bearer', () => {
+  process.env.OPENROUTER_HOUSE_RESALE_ENABLED = 'true';
+  process.env.OPENROUTER_API_KEY = 'house-key-xyz';
+  assert.deepEqual(
+    resolveOpenRouterAccess({ headers: { 'x-openrouter-key': 'caller-key-xyz' } }, 'gpt-4o'),
+    { mode: 'byok', apiKey: 'caller-key-xyz' },
+  );
+  assert.equal(resolveOpenRouterAccess({ headers: {} }, 'gpt-4o').mode, 'house');
+  delete process.env.OPENROUTER_HOUSE_RESALE_ENABLED;
+  assert.equal(
+    resolveOpenRouterAccess(
+      { headers: { authorization: 'Bearer or-key-xyzxyz' } },
+      'openrouter/openai/gpt-4o-mini',
+    ).mode,
+    'byok',
+  );
+  assert.equal(
+    resolveOpenRouterAccess({ headers: { authorization: 'Bearer or-key-xyzxyz' } }, 'gpt-4o').mode,
+    'missing',
+  );
+  assert.equal(
+    resolveOpenRouterAccess(
+      { headers: { authorization: 'Bearer chit-partner-key' } },
+      'openrouter/openai/gpt-4o-mini',
+      { authorizationIsChitCredential: true },
+    ).mode,
+    'missing',
+  );
+  assert.equal(
+    resolveOpenRouterAccess(
+      { headers: { 'x-api-key': 'chit-partner-key', authorization: 'Bearer or-key-xyzxyz' } },
+      'openrouter/openai/gpt-4o-mini',
+      { authorizationIsChitCredential: true },
+    ).apiKey,
+    'or-key-xyzxyz',
+  );
+  assert.equal(
+    resolveOpenRouterAccess(
+      { headers: { authorization: 'Bearer chit402-demo' } },
+      'openrouter/openai/gpt-4o-mini',
+    ).mode,
+    'missing',
+  );
+});
+
+test('a stable hashed user does not contain the wallet or the key', () => {
+  const wallet = '0x1234567890123456789012345678901234567890';
+  const id = openrouterEndUser({ payerWallet: wallet });
+  assert.match(id, /^chit:[a-f0-9]{64}$/);
+  assert.equal(id.includes('1234567890'), false);
+  assert.equal(openrouterEndUser({ payerWallet: wallet.toUpperCase() }), id);
+  const fromKey = openrouterEndUser({ byokKey: 'caller-key-xyz' });
+  assert.match(fromKey, /^chit:[a-f0-9]{64}$/);
+  assert.notEqual(fromKey, id);
+  assert.equal(fromKey.includes('caller-key-xyz'), false);
+});
+
+test('chat completions send user and a flag-off process does not spend the house key', async () => {
+  let seen;
+  const completion = await inferOpenRouter({
+    model: 'openai/gpt-4o-mini',
+    messages: [{ role: 'user', content: 'hi' }],
+    apiKey: 'caller-key-abcdef',
+    user: 'chit:abc',
+    baseUrl: 'http://openrouter.test/api/v1',
+    fetchFn: async (_url, init) => {
+      seen = { auth: init.headers.Authorization, body: JSON.parse(init.body) };
+      return jsonResponse(200, {
+        id: 'gen-u',
+        choices: [{ message: { role: 'assistant', content: 'ok' } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, cost: 0.01 },
+      });
+    },
+  });
+  assert.equal(completion.ok, true);
+  assert.equal(completion.reportedCost, '0.01');
+  assert.equal(seen.auth, 'Bearer caller-key-abcdef');
+  assert.equal(seen.body.user, 'chit:abc');
+  assert.equal(JSON.stringify(seen.body).includes('caller-key-abcdef'), false);
+
+  process.env.OPENROUTER_API_KEY = 'house-secret-value';
+  delete process.env.OPENROUTER_HOUSE_RESALE_ENABLED;
+  let called = false;
+  const blocked = await inferOpenRouter({
+    model: 'openai/gpt-4o-mini',
+    messages: [{ role: 'user', content: 'hi' }],
+    fetchFn: async () => {
+      called = true;
+      return jsonResponse(200, {});
+    },
+  });
+  assert.equal(called, false);
+  assert.equal(blocked.reason, 'missing_api_key');
+});
+
+test('preflight success is cached per key', async () => {
+  let calls = 0;
+  const fetchFn = async () => {
+    calls += 1;
+    return jsonResponse(200, { data: { label: 'ok' } });
+  };
+  const baseUrl = 'http://openrouter.test/api/v1';
+  const first = await preflightOpenRouter({ apiKey: 'key-aaaa-1111', baseUrl, fetchFn });
+  const again = await preflightOpenRouter({ apiKey: 'key-aaaa-1111', baseUrl, fetchFn });
+  const other = await preflightOpenRouter({ apiKey: 'key-bbbb-2222', baseUrl, fetchFn });
+  assert.equal(first.cached, false);
+  assert.equal(again.cached, true);
+  assert.equal(other.cached, false);
+  assert.equal(calls, 2);
+});
+
+test('upstream errors redact the caller key from the detail and the log', async () => {
+  const secret = 'sk-or-caller-secret-do-not-log';
+  assert.equal(redactSecrets(`bad ${secret} token`, [secret]), 'bad [redacted] token');
+  const seen = [];
+  const original = logger.warn;
+  logger.warn = (obj, msg) => { seen.push({ obj, msg }); };
+  try {
+    const result = await inferOpenRouter({
+      model: 'openai/gpt-4o-mini',
+      messages: [{ role: 'user', content: 'hi' }],
+      apiKey: secret,
+      baseUrl: 'http://openrouter.test/api/v1',
+      fetchFn: async () => jsonResponse(500, { error: { message: `rejected ${secret}` } }),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(String(result.detail).includes(secret), false);
+    assert.match(result.detail, /\[redacted\]/);
+    assert.equal(JSON.stringify(seen).includes(secret), false);
+  } finally {
+    logger.warn = original;
+  }
 });
 
 

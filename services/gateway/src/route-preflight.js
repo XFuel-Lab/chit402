@@ -7,14 +7,17 @@
  */
 
 import { getHubCatalog, resolveCatalogModel, requestShape } from './hub-catalog.js';
-import { preflightOpenRouter } from './openrouter-infer.js';
+import { openrouterHouseResaleEnabled, preflightOpenRouter } from './openrouter-infer.js';
 import { rateForModel } from './provider-rates.js';
 
 /**
  * @param {object} [body]
+ * @param {{ access?: { mode: 'byok'|'house'|'missing', apiKey: string } }} [opts]
+ *   `access` is resolved by the gateway from the request. A missing key fails
+ *   closed. This function does not read `OPENROUTER_API_KEY` on its own.
  * @returns {Promise<{ ok: true, model: object, requested: string } | { ok: false, status: number, code: string, message: string }>}
  */
-export async function preflightBeforeSettle(body = {}) {
+export async function preflightBeforeSettle(body = {}, opts = {}) {
   const requested = String(body?.model || body?.model_id || '').trim() || 'xfuel/auto';
   let models = [];
   try {
@@ -45,7 +48,22 @@ export async function preflightBeforeSettle(body = {}) {
     return { ok: true, model: resolved.model, requested };
   }
 
-  if (!rateForModel(resolved.model)) {
+  const access = opts.access || { mode: 'missing', apiKey: '' };
+  const house = access.mode === 'house' && openrouterHouseResaleEnabled() && access.apiKey;
+  const byok = access.mode === 'byok' && access.apiKey;
+  if (!house && !byok) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'openrouter_key_required',
+      message: 'Bring your OpenRouter key on X-OpenRouter-Key (or Authorization on an openrouter/ route). '
+        + 'Chit charges the $0.002 receipt. Inference is paid by you to OpenRouter. The request was not settled.',
+    };
+  }
+
+  // House resale quotes upstream tokens, so an unpriced row cannot be sold.
+  // BYOK charges the flat receipt and does not need a rate.
+  if (house && !rateForModel(resolved.model)) {
     return {
       ok: false,
       status: 400,
@@ -54,7 +72,7 @@ export async function preflightBeforeSettle(body = {}) {
     };
   }
 
-  const pre = await preflightOpenRouter();
+  const pre = await preflightOpenRouter({ apiKey: access.apiKey });
   if (!pre.ok) {
     return {
       ok: false,
