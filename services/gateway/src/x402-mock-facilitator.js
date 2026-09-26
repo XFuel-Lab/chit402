@@ -58,6 +58,7 @@ export function createMockFacilitator(config = {}) {
       const network = parsed.paymentRequirements?.network || 'base-sepolia';
 
       if (url.endsWith('/verify')) {
+        server.verifyCount = (server.verifyCount || 0) + 1;
         if (isStandardX402) {
           return send(200, valid
             ? { isValid: true, payer }
@@ -72,6 +73,7 @@ export function createMockFacilitator(config = {}) {
       }
 
       if (url.endsWith('/settle')) {
+        server.settleCount = (server.settleCount || 0) + 1;
         if (isStandardX402) {
           return send(200, valid
             ? { success: true, transaction: txRef, network, payer }
@@ -86,6 +88,8 @@ export function createMockFacilitator(config = {}) {
     });
   });
 
+  server.verifyCount = 0;
+  server.settleCount = 0;
   return server;
 }
 

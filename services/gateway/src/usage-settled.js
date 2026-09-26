@@ -43,6 +43,8 @@ export const BOOK_EVIDENCE = {
   POLICY_BLOCKED: 'policy_blocked',
   /** A2A escrow / machine dispute phase row — exportable, non-spend. */
   A2A_ESCROW: 'a2a_escrow',
+  /** Settled USDC, nothing served. Visible on the book; excluded from spend totals. */
+  REFUND_OWED: 'refund_owed',
 };
 
 /** Arrival sub-state on settle-time rows (recorder ≠ arrival). */
@@ -95,6 +97,9 @@ export function hasArrivalEvidence(entry) {
  */
 export function deriveEvidence(entry) {
   if (!entry || typeof entry !== 'object') return BOOK_EVIDENCE.UNVERIFIED;
+  if (entry.refund_status === 'owed' || entry.evidence === BOOK_EVIDENCE.REFUND_OWED) {
+    return BOOK_EVIDENCE.REFUND_OWED;
+  }
   if (entry.event === 'policy_blocked' || entry.evidence === BOOK_EVIDENCE.POLICY_BLOCKED) {
     return BOOK_EVIDENCE.POLICY_BLOCKED;
   }
@@ -149,7 +154,7 @@ export function entryQualifiesForCap(entry) {
   if (String(entry?.rail || '').toLowerCase() === 'nano') return false;
   const evidence = deriveEvidence(entry);
   if (evidence === BOOK_EVIDENCE.POLICY_BLOCKED || evidence === BOOK_EVIDENCE.UNVERIFIED
-    || evidence === BOOK_EVIDENCE.A2A_ESCROW) {
+    || evidence === BOOK_EVIDENCE.A2A_ESCROW || evidence === BOOK_EVIDENCE.REFUND_OWED) {
     return false;
   }
   if (evidence === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED) return false;
@@ -675,7 +680,8 @@ export class UsageSettledLedger {
       }
       if (deriveEvidence(e) === BOOK_EVIDENCE.RECORDED_BY_SETTLE
         || deriveEvidence(e) === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED
-        || deriveEvidence(e) === BOOK_EVIDENCE.INFLOW_CLAIMED) {
+        || deriveEvidence(e) === BOOK_EVIDENCE.INFLOW_CLAIMED
+        || deriveEvidence(e) === BOOK_EVIDENCE.REFUND_OWED) {
         rows.push(e);
         continue;
       }
@@ -952,6 +958,33 @@ export function markArrivalUnverified(ledger, taskId, agentId) {
   }
   entry.arrival_status = ARRIVAL_STATUS.UNVERIFIED;
   entry.evidence = BOOK_EVIDENCE.ARRIVAL_UNVERIFIED;
+  return { ok: true, entry };
+}
+
+/**
+ * A settle-time row whose upstream served nothing. Stays on the book so ops can
+ * see the payer, amount, and payment ref, and drops out of spend totals.
+ * @param {UsageSettledLedger} ledger
+ * @param {{ taskId: string, amount?: string|null, payer?: string|null, paymentRef?: string|null }} row
+ */
+export function markRefundOwed(ledger, { taskId, amount = null, payer = null, paymentRef = null } = {}) {
+  if (!ledger || typeof ledger.findByTask !== 'function' || !taskId) {
+    return { ok: false, reason: 'ledger and taskId required', code: 'invalid_refund' };
+  }
+  const entry = ledger.findByTask(String(taskId));
+  if (!entry) return { ok: false, reason: 'row not found', code: 'not_found' };
+  entry.refund_status = 'owed';
+  entry.collected = false;
+  entry.evidence = BOOK_EVIDENCE.REFUND_OWED;
+  if (amount != null && String(amount) !== '') entry.amount = String(amount);
+  if (payer && !entry.payer) entry.payer = payer;
+  if (paymentRef && !entry.payment_ref) entry.payment_ref = String(paymentRef);
+  entry.refund = {
+    refund_status: 'owed',
+    amount: entry.amount ?? (amount != null ? String(amount) : null),
+    payer: payer || entry.payer || null,
+    payment_ref: entry.payment_ref || (paymentRef != null ? String(paymentRef) : null),
+  };
   return { ok: true, entry };
 }
 

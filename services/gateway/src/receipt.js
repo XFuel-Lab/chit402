@@ -199,6 +199,7 @@ export function mergeReceiptView(receipt) {
         message_type: routeMeta.message_type ?? null,
         chain_id: routeMeta.chain_id ?? null,
         model: null,
+        ...(routeMeta.requested_model ? { requested: routeMeta.requested_model } : {}),
         provider: null,
         model_commitment: routeMeta.model_commitment ?? null,
       },
@@ -247,6 +248,7 @@ export function mergeReceiptView(receipt) {
       message_type: routeMeta.message_type ?? null,
       chain_id: routeMeta.chain_id ?? null,
       model: claims.route?.model ?? null,
+      ...(routeMeta.requested_model ? { requested: routeMeta.requested_model } : {}),
       provider: claims.route?.provider ?? null,
       model_commitment: routeMeta.model_commitment ?? (
         claims.route?.model_commitment
@@ -1446,6 +1448,18 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   const createdAt = toUnixSeconds(task.createdAt);
   const updatedAt = toUnixSeconds(task.updatedAt);
 
+  const refund = task?.meta?.refund?.refund_status === 'owed'
+    ? {
+        refund_status: 'owed',
+        amount: task.meta.refund.amount != null
+          ? String(task.meta.refund.amount)
+          : (task.intent?.amount || null),
+        payer: task.meta.refund.payer ?? task.meta?.payerWallet ?? null,
+        payment_ref: task.meta.refund.payment_ref || paymentRef || null,
+      }
+    : null;
+  const requestedModel = task?.meta?.requestedModel || task?.intent?.requestedModel || null;
+
   const routeProvider = (() => {
     const fromResult = task.result?.provider || task.result?.routedTo || task.routedTo || null;
     if (task.result?.mock) return fromResult || 'mock';
@@ -1468,6 +1482,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     route: {
       message_type: task.intent?.type || null,
       model: routeModel,
+      ...(requestedModel ? { requested: requestedModel } : {}),
       model_commitment: modelCommitment,
       provider: routeProvider,
       // Unsigned presentation field. A collected payment reports the settlement
@@ -1493,7 +1508,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       tier2_proof: pricing?.tier2_proof && pricing.tier2_proof !== '0' ? String(pricing.tier2_proof) : null,
       floor_applied: pricing?.floor_applied ?? null,
       basis: pricing?.basis ?? null,
-      collected: !!paymentRef,
+      collected: !!paymentRef && !refund,
       collects_on: rollingFronted ? 'next_request' : 'this_request',
     },
     provider_cogs: providerCogs,
@@ -1514,6 +1529,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       payTo,
     }),
     session: sessionOf(task),
+    refund,
     parent_receipt_id: task.parentReceiptId || task.meta?.parentReceiptId || task.meta?.parent_receipt_id || null,
     kind: task.kind || task.meta?.kind || (task.parentReceiptId || task.meta?.parentReceiptId ? RECEIPT_KIND_SESSION_HANDOFF : null),
     action: task.action || task.meta?.action || ((task.kind || task.meta?.kind) === RECEIPT_KIND_SESSION_HANDOFF || task.parentReceiptId ? SESSION_ACT_ACTIONS.HANDOFF : null),
@@ -1585,6 +1601,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       message_type: draft.route.message_type,
       chain_id: draft.route.chain_id,
       model_commitment: draft.route.model_commitment,
+      ...(draft.route.requested ? { requested_model: draft.route.requested } : {}),
     },
     payment_meta: {
       network: draft.payment.network,
@@ -1611,6 +1628,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   if (draft.fulfillment) envelope.fulfillment = draft.fulfillment;
   if (draft.issuance_commitment) envelope.issuance_commitment = draft.issuance_commitment;
   if (draft.dispute_window) envelope.dispute_window = draft.dispute_window;
+  if (draft.refund) envelope.refund = draft.refund;
   const sessionPointer = outerSessionPointer(draft.session, base);
   if (sessionPointer) {
     envelope.delegation_hash = sessionPointer.delegation_hash;
@@ -1855,6 +1873,7 @@ export function renderReceiptHtml(receipt) {
   const p = view.payment || {};
   const pr = view.proof || {};
   const route = view.route || {};
+  const refund = receipt.refund || null;
   const b = view.binding;
   const foreign = isForeignIngestReceipt(receipt);
   const og = buildReceiptOgMeta(receipt, view);
@@ -2100,9 +2119,14 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
     ${foreign ? foreignIngestPaymentSection(receipt, view) : `<section class="card">
       <h2>Payment</h2>
       ${row('Rail', `<span class="badge ${p.rail === 'usdc' ? 'ok' : 'pending'}">${esc((p.rail || '').toUpperCase())}</span>`)}
-      ${row('Settlement', view.settlement?.kind === SETTLEMENT_KIND_INHERITED
-        ? `<span class="badge pending">inherited</span> from <code>${esc(view.settlement.parent_receipt_id || view.parent_receipt_id || '')}</code>`
-        : (p.collected ? '<span class="badge ok">collected</span>' : (p.collects_on === 'next_request' ? '<span class="badge pending">bill pending</span>' : '<span class="muted">not collected</span>')))}
+      ${row('Settlement', refund?.refund_status === 'owed'
+        ? '<span class="badge bad">refund owed</span>'
+        : (view.settlement?.kind === SETTLEMENT_KIND_INHERITED
+          ? `<span class="badge pending">inherited</span> from <code>${esc(view.settlement.parent_receipt_id || view.parent_receipt_id || '')}</code>`
+          : (p.collected ? '<span class="badge ok">collected</span>' : (p.collects_on === 'next_request' ? '<span class="badge pending">bill pending</span>' : '<span class="muted">not collected</span>'))))}
+      ${refund?.refund_status === 'owed' ? row('Refund', `<span class="badge bad">owed</span> ${usdcCell(refund.amount)}`) : ''}
+      ${refund?.payer ? row('Refund payer', `<code>${esc(shortHash(refund.payer, 10, 8))}</code>`) : ''}
+      ${refund?.payment_ref ? row('Refund payment ref', `<code>${esc(shortHash(refund.payment_ref, 16, 8))}</code>`) : ''}
       ${row('Settlement ref', refHtml)}
       ${p.asset ? row('Asset', `<code>${esc(p.asset)}</code>`) : ''}
       ${p.payee ? row('Payee', `<code>${esc(shortHash(p.payee, 10, 8))}</code>`) : ''}
@@ -2138,6 +2162,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
       <h2>Route details</h2>
       ${row('Status', esc(view.status))}
       ${row('Model', esc(routeModelLabel) || '<span class="muted">—</span>')}
+      ${route.requested && route.requested !== route.model ? row('Requested', `<code>${esc(route.requested)}</code>`) : ''}
       ${row('Provider', esc(routeProviderLabel) || '<span class="muted">—</span>')}
       ${usageRows}
       ${outputRow}
