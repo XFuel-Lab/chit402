@@ -33,9 +33,16 @@ if (files.length === 0) {
 // Node options have to precede the file list. A per-test timeout so one hung
 // file cannot pin CI the way a missing filename used to skip it; spawnSync
 // also gets a hard cap so a stuck worker is killed rather than left running.
+//
+// Files run one at a time. `--test-force-exit` is required because some files
+// leave the event loop busy, but combined with the default parallel scheduler
+// it can end the process before a file has run its remaining tests and still
+// exit 0. That under-counted receipt.test.mjs by a different amount on each
+// run (main reported 1144/1145; one merged run reported 1132). Serial
+// execution keeps the summary equal to every test() in the tree.
 const { status, error, signal } = spawnSync(
   process.execPath,
-  ['--test', '--test-timeout=120000', '--test-force-exit', ...process.argv.slice(2), ...files],
+  ['--test', '--test-concurrency=1', '--test-timeout=120000', '--test-force-exit', ...process.argv.slice(2), ...files],
   { stdio: 'inherit', cwd: gatewayDir, timeout: 10 * 60 * 1000, killSignal: 'SIGKILL' },
 );
 
