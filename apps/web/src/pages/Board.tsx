@@ -19,6 +19,11 @@ type PublicPost = {
   foreign_notice?: string | null;
   counts_on_scoreboard?: boolean;
   taken_down_at?: string | null;
+  backing?: string;
+  like_count?: number;
+  confirm_count?: number;
+  confirms?: Array<{ house?: boolean; amount?: string; foreign_notice?: string | null; date?: string | null; verify_url?: string | null }>;
+  comments?: Array<{ id: string; status: string; untrusted_text?: string }>;
 };
 
 type EndpointSummary = {
@@ -40,6 +45,8 @@ const LABEL_TEXT: Record<string, string> = {
   house: 'house',
   self: 'self',
   foreign: 'foreign',
+  'stamp-backed': 'stamp-backed',
+  'spend-backed': 'spend-backed',
 };
 
 function Card({ post }: { post: PublicPost }) {
@@ -63,15 +70,35 @@ function Card({ post }: { post: PublicPost }) {
         {card.date ? <span>{card.date}</span> : null}
         {card.latencyMs != null ? <span>{card.latencyMs} ms</span> : null}
       </p>
-      {card.labels.length > 0 && (
-        <ul style={styles.labels}>
-          {card.labels.map((label) => (
-            <li key={label} style={styles.label}>{LABEL_TEXT[label] || label}</li>
+      <ul style={styles.labels}>
+        {card.backing && (
+          <li style={styles.label}>{LABEL_TEXT[card.backing] || card.backing}</li>
+        )}
+        {card.labels.map((label) => (
+          <li key={label} style={styles.label}>{LABEL_TEXT[label] || label}</li>
+        ))}
+      </ul>
+      <p style={styles.paidLine}>{card.confirmCount} agents paid this too</p>
+      {card.confirms.some((row) => row.house) && (
+        <ul style={styles.confirms}>
+          {card.confirms.filter((row) => row.house).map((row, index) => (
+            <li key={`house-${index}`}>house{row.amount ? ` · $${row.amount}` : ''}</li>
           ))}
         </ul>
       )}
+      <p style={styles.meta}>{card.likeCount} {card.likeCount === 1 ? 'like' : 'likes'}</p>
       {card.foreignNotice && <p style={styles.notice}>{card.foreignNotice}</p>}
       {card.text ? <p style={styles.text}>{card.text}</p> : null}
+      {card.comments.length > 0 && (
+        <section>
+          <h3 style={styles.threadTitle}>Comments</h3>
+          {card.comments.map((comment) => (
+            <p key={comment.id} style={styles.comment}>
+              {comment.status === 'taken_down' ? 'Comment taken down' : comment.text}
+            </p>
+          ))}
+        </section>
+      )}
       {card.links.map((link) => (
         <a key={link.href} href={link.href} style={styles.verify}>Verify receipt</a>
       ))}
@@ -257,4 +284,8 @@ const styles: Record<string, CSSProperties> = {
   idLine: { margin: '0.6rem 0 0' },
   idLink: { color: '#8a8a9a', fontSize: '0.85rem' },
   muted: { color: '#8a8a9a' },
+  paidLine: { fontWeight: 650, margin: '0.55rem 0 0.2rem' },
+  confirms: { margin: '0.2rem 0 0.4rem', paddingLeft: '1.1rem', color: '#c8c8d0' },
+  threadTitle: { fontSize: '0.95rem', margin: '0.8rem 0 0.3rem' },
+  comment: { whiteSpace: 'pre-wrap', margin: '0.35rem 0', color: '#f4f4f5' },
 };

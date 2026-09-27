@@ -230,12 +230,81 @@ test('inspectWalletShape rejects a pasteable secret and API key', () => {
   assert.equal(inspectWalletShape(WALLET).ok, true);
 });
 
-test('bindAgentWallet rejects a detectable EOA', async () => {
-  const res = await bindAgentWallet(WALLET, {
+test('bindAgentWallet accepts a detectable EOA and still accepts smart accounts', async () => {
+  const eoa = await bindAgentWallet(WALLET, {
     inspect: async () => ({ kind: 'eoa', official: false, eoa: true, code: '0x' }),
   });
-  assert.equal(res.ok, false);
-  assert.match(res.reason, /EOA/i);
+  assert.equal(eoa.ok, true);
+  assert.equal(eoa.kind, 'eoa');
+  assert.equal(eoa.address, WALLET);
+
+  const smart = await bindAgentWallet(WALLET, {
+    inspect: async () => ({ kind: 'smart_account', official: false, eoa: false, code: '0x60016000' }),
+  });
+  assert.equal(smart.ok, true);
+  assert.equal(smart.kind, 'smart_account');
+
+  const official = await bindAgentWallet(WALLET, {
+    inspect: async () => ({ kind: 'aawp', official: true, eoa: false, code: '0x60016000' }),
+  });
+  assert.equal(official.ok, true);
+  assert.equal(official.kind, 'aawp');
+  assert.equal(official.official, true);
+});
+
+test('plain EOA register requires a wallet signature; smart accounts do not', async () => {
+  const signer = Wallet.createRandom();
+  const receipt = collectedReceipt({ task_id: 'task-eoa-1', ref: 'base:0xeoa1' });
+  const eoaBind = async (w) => bindAgentWallet(w, {
+    inspect: async () => ({ kind: 'eoa', official: false, eoa: true, code: '0x' }),
+  });
+  const bare = deps({ [receipt.task_id]: receipt }, { bindWallet: eoaBind });
+  const missing = await registerAgent(
+    { agentWallet: signer.address, task_id: receipt.task_id },
+    bare,
+  );
+  assert.equal(missing.ok, false);
+  assert.equal(missing.status, 401);
+  assert.equal(missing.error, 'wallet_signature_required');
+  assert.equal(bare.registry.byId.size, 0);
+  assert.equal(bare.ledger.entries.length, 0);
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = await signer.signMessage(
+    canonicalRegisterRecoverMessage(receipt.task_id, signer.address, timestamp),
+  );
+  const signed = await registerAgent({
+    agentWallet: signer.address,
+    task_id: receipt.task_id,
+    wallet_signature: signature,
+    signature_timestamp: timestamp,
+  }, bare);
+  assert.equal(signed.ok, true);
+  assert.equal(signed.body.wallet_kind, 'eoa');
+  assert.equal(signed.body.agentWallet, signer.address);
+  assert.equal(typeof signed.body.session, 'string');
+
+  const again = await registerAgent({
+    agentWallet: signer.address,
+    task_id: receipt.task_id,
+    session: signed.body.session,
+  }, bare);
+  assert.equal(again.ok, true);
+  assert.equal(again.body.session, signed.body.session);
+
+  const smartReceipt = collectedReceipt({ task_id: 'task-smart-1', ref: 'base:0xsmart1' });
+  const smart = deps({ [smartReceipt.task_id]: smartReceipt }, {
+    bindWallet: async (w) => bindAgentWallet(w, {
+      inspect: async () => ({ kind: 'smart_account', official: false, eoa: false, code: '0x60016000' }),
+    }),
+  });
+  const smartReg = await registerAgent(
+    { agentWallet: WALLET, task_id: smartReceipt.task_id },
+    smart,
+  );
+  assert.equal(smartReg.ok, true);
+  assert.equal(smartReg.body.wallet_kind, 'smart_account');
+  assert.equal(typeof smartReg.body.session, 'string');
 });
 
 test('register claims an already-ledgered settle without re-append', async () => {

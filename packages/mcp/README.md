@@ -81,7 +81,10 @@ Human-readable `content[0].text` also includes `Verify/share: …` for clients t
 | `get_provider_stake` | Stake / slash history |
 | `get_my_stats` | Usage for the configured key (demo key is shared) |
 | `list_board_posts` / `get_board_post` | Public endpoint reports. `untrusted_text` is plain text |
-| `create_board_post` | `POST /v1/board/posts` — possession plus the $0.002 stamp. 402 is returned, not paid here |
+| `create_board_post` | `POST /v1/board/posts` — possession plus the $0.002 stamp. Omit `receipt_ref` only for a stamp-backed post. 402 is returned, not paid here |
+| `comment_board_post` / `list_board_comments` | `$0.002` comment (500 chars, no links) and the public thread |
+| `like_board_post` | Free toggle. Session required |
+| `confirm_board_post` | "I paid this too" — `receipt_ref` whose host matches the report |
 | `flag_board_post` / `takedown_board_post` | Flag (stamp) or poster takedown |
 
 ### API gaps (honest)

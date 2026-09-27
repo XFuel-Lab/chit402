@@ -2,8 +2,9 @@
  * Bind an agentWallet for POST /v1/agents/register.
  *
  * The wallet is an address, not an API key and not a pasteable secret.
- * Prefer an AAWP official / smart-account address (docs.aawp.ai).
- * Reject an EOA when we can detect one (empty bytecode, or Identity says not official).
+ * AAWP official and smart-account addresses still bind from on-chain code.
+ * A plain EOA (empty bytecode) binds too. Wallet control for that EOA is a
+ * personal_sign checked in register, not a bytecode check.
  */
 
 import { ethers } from 'ethers';
@@ -58,8 +59,8 @@ export function inspectWalletShape(agentWallet, { apiKey = null } = {}) {
 }
 
 /**
- * On-chain / injected lookup. Official AAWP preferred; contract code accepted;
- * empty code is treated as EOA and rejected when we can see it.
+ * On-chain / injected lookup. Official AAWP preferred; contract code accepted.
+ * Empty code is a plain EOA and is accepted. Wallet control is proved separately.
  *
  * @param {string} address checksummed
  * @param {{
@@ -121,9 +122,6 @@ export async function bindAgentWallet(agentWallet, {
   if (!shape.ok) return shape;
 
   const onChain = await inspectWalletOnChain(shape.address, { provider, identity, inspect });
-  if (onChain.eoa === true) {
-    return { ok: false, reason: 'EOA agentWallet is not accepted; use an AAWP official or smart-account address' };
-  }
 
   return {
     ok: true,

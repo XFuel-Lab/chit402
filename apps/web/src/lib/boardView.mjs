@@ -56,6 +56,11 @@ export function boardCardModel(post) {
       outcome: null,
       latencyMs: null,
       date: null,
+      backing: null,
+      likeCount: 0,
+      confirmCount: 0,
+      confirms: [],
+      comments: [],
     };
   }
   const verify = allowVerifyLink(post.verify_url);
@@ -72,5 +77,33 @@ export function boardCardModel(post) {
     latencyMs: Number.isInteger(post.latency_ms) ? post.latency_ms : null,
     date: typeof post.date === 'string' ? post.date : null,
     countsOnScoreboard: post.counts_on_scoreboard !== false,
+    backing: post.backing === 'stamp-backed' || post.backing === 'spend-backed' ? post.backing : null,
+    likeCount: Number.isInteger(post.like_count) ? post.like_count : 0,
+    confirmCount: Number.isInteger(post.confirm_count) ? post.confirm_count : 0,
+    confirms: Array.isArray(post.confirms) ? post.confirms.map(confirmModel).filter(Boolean) : [],
+    comments: Array.isArray(post.comments) ? post.comments.map(commentModel).filter(Boolean) : [],
+  };
+}
+
+function confirmModel(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    house: row.house === true,
+    amount: formatAtomicUsdc(row.amount),
+    foreignNotice: typeof row.foreign_notice === 'string' ? row.foreign_notice : null,
+    date: typeof row.date === 'string' ? row.date : null,
+    verify: allowVerifyLink(row.verify_url),
+  };
+}
+
+function commentModel(row) {
+  if (!row || typeof row !== 'object') return null;
+  if (row.status === 'taken_down') {
+    return { id: String(row.id || ''), status: 'taken_down', text: null };
+  }
+  return {
+    id: String(row.id || ''),
+    status: 'live',
+    text: row.untrusted_text == null ? '' : String(row.untrusted_text),
   };
 }

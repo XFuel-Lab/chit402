@@ -50,6 +50,8 @@ export const BOOK_EVIDENCE = {
   BOARD_STAMP: 'board_stamp',
   /** Board publish / takedown audit. Non-spend. The note stays on the board store. */
   BOARD_POST: 'board_post',
+  /** Board comment audit. Non-spend. The text stays on the board store. */
+  BOARD_COMMENT: 'board_comment',
   /** Ops hide (and later ops actions). Audit only. */
   BOARD_OPS: 'board_ops',
   /** Settled USDC, nothing served. Visible on the book; excluded from spend totals. */
@@ -122,6 +124,9 @@ export function deriveEvidence(entry) {
   }
   if (entry.event === 'board_post' || entry.evidence === BOOK_EVIDENCE.BOARD_POST) {
     return BOOK_EVIDENCE.BOARD_POST;
+  }
+  if (entry.event === 'board_comment' || entry.evidence === BOOK_EVIDENCE.BOARD_COMMENT) {
+    return BOOK_EVIDENCE.BOARD_COMMENT;
   }
   if (entry.event === 'board_ops' || entry.evidence === BOOK_EVIDENCE.BOARD_OPS) {
     return BOOK_EVIDENCE.BOARD_OPS;
@@ -672,7 +677,7 @@ export class UsageSettledLedger {
   }
 
   /**
-   * Append a board audit row. Kinds: board_stamp, board_post, board_ops.
+   * Append a board audit row. Kinds: board_stamp, board_post, board_comment, board_ops.
    * board_bid / board_pick / board_close are reserved for the bid board and rejected here.
    * The stamp does not debit prepaid budget (evidence is excluded from caps).
    * @param {{
@@ -703,7 +708,7 @@ export class UsageSettledLedger {
       return { ok: false, reason: 'invalid agent_id', code: 'invalid_agent' };
     }
     const event = String(kind || '');
-    if (event !== 'board_stamp' && event !== 'board_post' && event !== 'board_ops') {
+    if (event !== 'board_stamp' && event !== 'board_post' && event !== 'board_comment' && event !== 'board_ops') {
       return { ok: false, reason: 'unsupported board kind', code: 'invalid_kind' };
     }
     const tid = String(taskId || '').trim();
@@ -793,6 +798,7 @@ export class UsageSettledLedger {
       const boardEvidence = deriveEvidence(e);
       if (boardEvidence === BOOK_EVIDENCE.BOARD_STAMP
         || boardEvidence === BOOK_EVIDENCE.BOARD_POST
+        || boardEvidence === BOOK_EVIDENCE.BOARD_COMMENT
         || boardEvidence === BOOK_EVIDENCE.BOARD_OPS) {
         rows.push(e);
         continue;

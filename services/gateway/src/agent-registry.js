@@ -290,6 +290,74 @@ function sessionMatches(stored, presented) {
 }
 
 /**
+ * personal_sign over canonicalRegisterRecoverMessage. Same proof for a first
+ * EOA bind and for releasing an already-issued session.
+ * @returns {{ ok: true } | { ok: false, status: number, error: string, message: string }}
+ */
+export function verifyWalletControlSignature(body, taskId, agentWallet, nowSec = Math.floor(Date.now() / 1000)) {
+  const signature = body?.wallet_signature || body?.signature || null;
+  if (!signature) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'wallet_signature_required',
+      message: 'Plain EOA registration requires wallet_signature (personal_sign) and signature_timestamp',
+    };
+  }
+  const timestamp = body?.signature_timestamp ?? body?.sig_timestamp ?? body?.timestamp;
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts)) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'wallet_signature_invalid',
+      message: 'signature_timestamp is required',
+    };
+  }
+  const age = nowSec - ts;
+  if (age > REGISTER_RECOVER_MAX_AGE_SEC || age < -60) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'wallet_signature_invalid',
+      message: 'wallet signature timestamp is outside the recovery window',
+    };
+  }
+  try {
+    const message = canonicalRegisterRecoverMessage(taskId, agentWallet, ts);
+    const recovered = getAddress(verifyMessage(message, signature));
+    if (recovered.toLowerCase() !== getAddress(agentWallet).toLowerCase()) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'wallet_signature_invalid',
+        message: 'wallet signature did not recover the agentWallet',
+      };
+    }
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'wallet_signature_invalid',
+      message: err?.message || 'wallet signature did not prove control',
+    };
+  }
+}
+
+/**
+ * A detectable EOA has no bytecode, so the first bind must personal_sign.
+ * AAWP official and smart-account binds stay as they are.
+ * Already-bound wallets use the session or the same signature at release time.
+ */
+function requireFreshEoaProof(body, bound, taskId, alreadyBound) {
+  if (alreadyBound || bound?.kind !== 'eoa') return null;
+  const proof = verifyWalletControlSignature(body, taskId, bound.address);
+  if (proof.ok) return null;
+  return proof;
+}
+
+/**
  * Prove control of an already-bound wallet. A matching session is the existing
  * key. A fresh personal_sign is wallet control. Either releases the session.
  * @returns {{ ok: true, release: boolean } | { ok: false, status: number, error: string, message: string }}
@@ -308,45 +376,9 @@ export function authorizeExistingSessionRelease(body, identity, taskId, agentWal
 
   const signature = body?.wallet_signature || body?.signature || null;
   if (signature) {
-    const timestamp = body?.signature_timestamp ?? body?.sig_timestamp ?? body?.timestamp;
-    const ts = Number(timestamp);
-    if (!Number.isFinite(ts)) {
-      return {
-        ok: false,
-        status: 401,
-        error: 'wallet_signature_invalid',
-        message: 'signature_timestamp is required',
-      };
-    }
-    const age = nowSec - ts;
-    if (age > REGISTER_RECOVER_MAX_AGE_SEC || age < -60) {
-      return {
-        ok: false,
-        status: 401,
-        error: 'wallet_signature_invalid',
-        message: 'wallet signature timestamp is outside the recovery window',
-      };
-    }
-    try {
-      const message = canonicalRegisterRecoverMessage(taskId, agentWallet, ts);
-      const recovered = getAddress(verifyMessage(message, signature));
-      if (recovered.toLowerCase() !== getAddress(agentWallet).toLowerCase()) {
-        return {
-          ok: false,
-          status: 401,
-          error: 'wallet_signature_invalid',
-          message: 'wallet signature did not recover the bound agentWallet',
-        };
-      }
-      return { ok: true, release: true };
-    } catch (err) {
-      return {
-        ok: false,
-        status: 401,
-        error: 'wallet_signature_invalid',
-        message: err?.message || 'wallet signature did not prove control',
-      };
-    }
+    const proof = verifyWalletControlSignature(body, taskId, agentWallet, nowSec);
+    if (!proof.ok) return proof;
+    return { ok: true, release: true };
   }
 
   return { ok: true, release: false };
@@ -436,6 +468,10 @@ export async function registerAgent(body = {}, {
     if (typeof registry.bindWallet !== 'function') {
       return { ok: false, status: 503, error: 'service_unavailable', message: 'registry.bindWallet is not configured' };
     }
+    const eoaProof = requireFreshEoaProof(body, bound, oracle.receipt.task_id, alreadyBound);
+    if (eoaProof) {
+      return { ok: false, status: eoaProof.status, error: eoaProof.error, message: eoaProof.message };
+    }
     const boundId = registry.bindWallet(entry.agent_id, {
       agentWallet: bound.address,
       kind: bound.kind,
@@ -462,6 +498,10 @@ export async function registerAgent(body = {}, {
     }
   } else {
     // Legacy / offline receipts that never hit the settle append path.
+    const eoaProof = requireFreshEoaProof(body, bound, oracle.receipt.task_id, false);
+    if (eoaProof) {
+      return { ok: false, status: eoaProof.status, error: eoaProof.error, message: eoaProof.message };
+    }
     const upserted = registry.upsert({
       agentWallet: bound.address,
       kind: bound.kind,

@@ -23,7 +23,7 @@ export function registerErrorCopy(error, message) {
   if (error === 'invalid_wallet') {
     return {
       title: 'Invalid agent wallet',
-      body: message || 'Use an AAWP official or smart-account address (0x…). EOAs, API keys, and secrets are rejected.',
+      body: message || 'Use a 0x address (plain EOA, AAWP official, or smart account). API keys and secrets are rejected. A detectable EOA also sends wallet_signature.',
     };
   }
   if (error === 'not_found') {

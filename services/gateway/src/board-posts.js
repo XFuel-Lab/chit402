@@ -5,9 +5,11 @@
  * standard $0.002 stamp. Warnings are outcomes (double_charge, price_jump),
  * not a separate post type.
  *
- * Not in this module: jobs, bids, offers, seller replies, Musegram / 1F916
- * mirroring, record cards. Book kinds board_bid, board_pick, and board_close
- * are named on the ledger and rejected until that phase.
+ * v0.5 adds stamp-backed first posts (when the book has nothing left to cite),
+ * comments, likes, and "I paid this too" confirms.
+ * Not in this module: jobs, bids, offers, Musegram / 1F916 mirroring, record cards.
+ * Book kinds board_bid, board_pick, and board_close are named on the ledger
+ * and rejected until that phase.
  */
 
 import crypto from 'crypto';
@@ -34,8 +36,13 @@ export const REPORT_OUTCOMES = Object.freeze([
 export const WARNING_OUTCOMES = Object.freeze(['double_charge', 'price_jump']);
 
 export const NOTE_MAX = 1000;
+export const COMMENT_MAX = 500;
 export const LIST_DEFAULT = 50;
 export const LIST_MAX = 100;
+export const BOARD_STORE_VERSION = 5;
+
+export const BACKING_STAMP = 'stamp-backed';
+export const BACKING_SPEND = 'spend-backed';
 
 export const FOREIGN_NOTICE = 'recorded by XFuel, not attested by the merchant';
 
@@ -82,6 +89,16 @@ export function findSecret(text) {
   return null;
 }
 
+/** Comments reject links. Returns a category or null. Never returns the match. */
+export function findLink(text) {
+  const s = String(text ?? '');
+  if (/https?:\/\//i.test(s)) return 'url';
+  if (/\bwww\./i.test(s)) return 'url';
+  if (/\[[^\]]*\]\([^)]+\)/.test(s)) return 'markdown';
+  if (/\bhref\s*=/i.test(s)) return 'html';
+  return null;
+}
+
 export function parseEndpointUrl(raw) {
   const text = String(raw ?? '').trim();
   if (!text || text.length > 2048) {
@@ -117,6 +134,12 @@ export class BoardPostStore {
     this.byId = new Map();
     /** @type {Map<string, string>} type:receiptKey → post id */
     this.byReceipt = new Map();
+    /** @type {Map<string, { kind: string, id: string }>} receipt key → post or confirm */
+    this.backingKeys = new Map();
+    /** Stamp payment refs that already backed a post. */
+    this.stampRefs = new Set();
+    /** @type {Map<string, object>} */
+    this.comments = new Map();
 
     if (this.persist) {
       try {
@@ -137,10 +160,21 @@ export class BoardPostStore {
   _load() {
     try {
       const data = JSON.parse(fs.readFileSync(this._file(), 'utf8'));
-      for (const post of data.posts || []) {
+      const migrated = migrateBoardDocument(data);
+      for (const post of migrated.posts) {
         this.byId.set(post.id, post);
         if (receiptStaysIndexed(post)) this.claimReceipt(post);
+        if (post.stamp_ref) this.stampRefs.add(String(post.stamp_ref));
+        for (const confirm of post.confirms || []) {
+          if (confirm?.receipt_key) {
+            this.claimBacking(confirm.receipt_key, { kind: 'confirm', id: confirm.id });
+          }
+        }
       }
+      for (const comment of migrated.comments) {
+        this.comments.set(comment.id, comment);
+      }
+      if (migrated.changed) this._save();
     } catch (err) {
       if (err.code !== 'ENOENT') {
         logger.warn({ err: err.message }, 'board-posts: load failed');
@@ -153,7 +187,11 @@ export class BoardPostStore {
     try {
       const target = this._file();
       const tmp = `${target}.tmp-${process.pid}`;
-      fs.writeFileSync(tmp, JSON.stringify({ posts: [...this.byId.values()] }));
+      fs.writeFileSync(tmp, JSON.stringify({
+        version: BOARD_STORE_VERSION,
+        posts: [...this.byId.values()],
+        comments: [...this.comments.values()],
+      }));
       fs.renameSync(tmp, target);
     } catch (err) {
       logger.warn({ err: err.message }, 'board-posts: save failed');
@@ -177,17 +215,82 @@ export class BoardPostStore {
     if (!post?.receipt_key || !post.type) return;
     const key = receiptIndexKey(post.type, post.receipt_key);
     if (this.byReceipt.get(key) === post.id) this.byReceipt.delete(key);
+    const owner = this.backingKeys.get(post.receipt_key);
+    if (owner && owner.kind === 'post' && owner.id === post.id) this.backingKeys.delete(post.receipt_key);
   }
 
   claimReceipt(post) {
     this.byReceipt.set(receiptIndexKey(post.type, post.receipt_key), post.id);
+    this.claimBacking(post.receipt_key, { kind: 'post', id: post.id });
+  }
+
+  claimBacking(key, owner) {
+    const id = key == null ? '' : String(key);
+    if (!id) return false;
+    const existing = this.backingKeys.get(id);
+    if (existing) return existing.kind === owner.kind && existing.id === owner.id;
+    this.backingKeys.set(id, owner);
+    return true;
+  }
+
+  isReceiptTaken(key) {
+    if (key == null || key === '') return false;
+    return this.backingKeys.has(String(key));
+  }
+
+  reserveStamp(ref) {
+    const id = ref == null ? '' : String(ref);
+    if (!id) return false;
+    if (this.stampRefs.has(id) || this.backingKeys.has(id)) return false;
+    this.stampRefs.add(id);
+    return true;
+  }
+
+  releaseStamp(ref) {
+    if (ref == null) return;
+    this.stampRefs.delete(String(ref));
+  }
+
+  isStampUsed(ref) {
+    if (ref == null || ref === '') return false;
+    const id = String(ref);
+    return this.stampRefs.has(id) || this.backingKeys.has(id);
+  }
+
+  /**
+   * Claim the receipt and store the post. False when that receipt already
+   * backs a post or a confirm. Synchronous so two in-flight stamps cannot both win.
+   */
+  tryInsert(post) {
+    if (post.receipt_key && this.isReceiptTaken(post.receipt_key)) return false;
+    this.byId.set(post.id, post);
+    this.claimReceipt(post);
+    if (post.stamp_ref) this.stampRefs.add(String(post.stamp_ref));
+    this._save();
+    return true;
   }
 
   insert(post) {
-    this.byId.set(post.id, post);
-    this.claimReceipt(post);
-    this._save();
+    if (!this.tryInsert(post)) {
+      throw new Error('receipt already backs a board row');
+    }
     return post;
+  }
+
+  commentsFor(postId) {
+    return [...this.comments.values()]
+      .filter((c) => c.post_id === postId)
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  }
+
+  addComment(comment) {
+    this.comments.set(comment.id, comment);
+    this._save();
+    return comment;
+  }
+
+  getComment(id) {
+    return this.comments.get(String(id)) || null;
   }
 
   update(post) {
@@ -203,6 +306,35 @@ export class BoardPostStore {
 
 function receiptIndexKey(type, receiptKey) {
   return `${type}:${receiptKey}`;
+}
+
+/**
+ * P0 files are `{ posts }`. v0.5 adds comments, likes, confirms, and backing.
+ * Existing reports cited a spend receipt, so a missing backing becomes spend-backed.
+ * Idempotent.
+ */
+export function migrateBoardDocument(data) {
+  const src = data && typeof data === 'object' ? data : {};
+  let changed = src.version !== BOARD_STORE_VERSION || !Array.isArray(src.comments);
+  const posts = (Array.isArray(src.posts) ? src.posts : []).map((post) => {
+    const next = { ...post };
+    if (next.backing !== BACKING_STAMP && next.backing !== BACKING_SPEND) {
+      next.backing = BACKING_SPEND;
+      changed = true;
+    }
+    if (!Array.isArray(next.likes)) {
+      next.likes = [];
+      changed = true;
+    }
+    if (!Array.isArray(next.confirms)) {
+      next.confirms = [];
+      changed = true;
+    }
+    if (!Array.isArray(next.flags)) next.flags = [];
+    return next;
+  });
+  const comments = (Array.isArray(src.comments) ? src.comments : []).map((comment) => ({ ...comment }));
+  return { version: BOARD_STORE_VERSION, posts, comments, changed };
 }
 
 /**
@@ -229,7 +361,44 @@ function newPostId() {
  * A list's endpoint totals are separate and publish distinct_payers as a
  * count, never the addresses.
  */
-export function toPublicPost(post) {
+function toPublicConfirm(confirm) {
+  const house = confirm?.house === true;
+  if (confirm?.foreign === true) {
+    return {
+      house,
+      amount: confirm.amount != null ? String(confirm.amount) : null,
+      foreign_notice: FOREIGN_NOTICE,
+    };
+  }
+  return {
+    house,
+    amount: confirm.amount != null ? String(confirm.amount) : null,
+    date: confirm.date || null,
+    verify_url: confirm.verify_url || null,
+    foreign_notice: null,
+  };
+}
+
+export function toPublicComment(comment) {
+  if (!comment || comment.status === 'hidden') return null;
+  if (comment.status === 'taken_down') {
+    return {
+      id: comment.id,
+      post_id: comment.post_id,
+      status: 'taken_down',
+      taken_down_at: comment.taken_down_at || null,
+    };
+  }
+  return {
+    id: comment.id,
+    post_id: comment.post_id,
+    status: 'live',
+    untrusted_text: comment.untrusted_text ?? '',
+    created_at: comment.created_at || null,
+  };
+}
+
+export function toPublicPost(post, { comments = [] } = {}) {
   if (!post) return null;
   if (post.status === 'hidden') return null;
   if (post.status === 'taken_down') {
@@ -240,6 +409,8 @@ export function toPublicPost(post) {
       taken_down_at: post.taken_down_at || null,
     };
   }
+  const publicComments = (comments || []).map(toPublicComment).filter(Boolean);
+  const confirms = (Array.isArray(post.confirms) ? post.confirms : []).map(toPublicConfirm);
   return {
     id: post.id,
     type: post.type,
@@ -254,12 +425,19 @@ export function toPublicPost(post) {
     labels: Array.isArray(post.labels) ? post.labels : [],
     foreign_notice: post.foreign_notice || null,
     counts_on_scoreboard: post.counts_on_scoreboard !== false,
+    backing: post.backing === BACKING_STAMP ? BACKING_STAMP : BACKING_SPEND,
+    like_count: Array.isArray(post.likes) ? post.likes.length : 0,
+    confirm_count: (Array.isArray(post.confirms) ? post.confirms : []).filter((c) => c && c.house !== true).length,
+    comment_count: publicComments.filter((c) => c.status === 'live').length,
+    confirms,
+    comments: publicComments,
   };
 }
 
 const PUBLIC_LIVE_KEYS = [
   'id', 'type', 'status', 'endpoint_host', 'amount', 'outcome', 'latency_ms',
   'date', 'verify_url', 'untrusted_text', 'labels', 'foreign_notice', 'counts_on_scoreboard',
+  'backing', 'like_count', 'confirm_count', 'comment_count', 'confirms', 'comments',
 ];
 
 export function publicPostKeys(post) {
@@ -287,12 +465,14 @@ export function endpointSummaries(posts) {
         self_report_count: 0,
         house_report_count: 0,
         warning_count: 0,
+        stamp_backed_count: 0,
       };
       byHost.set(host, row);
     }
     const counts = post.counts_on_scoreboard !== false && post.self !== true && post.house !== true;
     if (post.house === true) row.house_report_count += 1;
     if (post.self === true) row.self_report_count += 1;
+    if (post.backing === BACKING_STAMP) row.stamp_backed_count += 1;
     if (counts) {
       row.report_count += 1;
       if (post.payer_wallet) row.payers.add(String(post.payer_wallet).toLowerCase());
@@ -311,6 +491,7 @@ export function endpointSummaries(posts) {
       self_report_count: row.self_report_count,
       house_report_count: row.house_report_count,
       warning_count: row.warning_count,
+      stamp_backed_count: row.stamp_backed_count,
     }))
     .sort((a, b) => a.endpoint_host.localeCompare(b.endpoint_host));
 }
@@ -584,6 +765,7 @@ function writePostRow(ledger, { agentId, post, phase }) {
       type: post.type,
       phase,
       receipt_ref: post.receipt_key,
+      backing: post.backing || BACKING_SPEND,
       endpoint_host: post.endpoint_host,
     },
   });
@@ -620,6 +802,40 @@ export function planHouseSeed(ledger, { agentId, posts, chitHosts, limit = 50 } 
     if (out.length >= limit) break;
   }
   return out;
+}
+
+function isCitableSpend(entry) {
+  const evidence = deriveEvidence(entry);
+  if (evidence !== BOOK_EVIDENCE.COLLECTED && evidence !== BOOK_EVIDENCE.FOREIGN_INGEST) return false;
+  if (entry?.amount == null || String(entry.amount).trim() === '') return false;
+  return true;
+}
+
+function agentHasUnusedCitable(ledger, agentId, posts) {
+  const id = Number(agentId);
+  const rows = Array.isArray(ledger?.entries) ? ledger.entries : [];
+  for (const entry of rows) {
+    if (Number(entry.agent_id) !== id) continue;
+    if (!isCitableSpend(entry)) continue;
+    const key = canonicalReceiptKey(entry, entry.task_id);
+    if (posts.isReceiptTaken(key)) continue;
+    return true;
+  }
+  return false;
+}
+
+function assertReceiptHost(owned, endpointHost, hosts) {
+  const bound = receiptEndpointHost(owned, hosts);
+  if (bound.chit) {
+    if (!hosts.has(endpointHost)) {
+      return fail(400, 'endpoint_mismatch', 'A Chit receipt can only report the Chit gateway host');
+    }
+    return { ok: true };
+  }
+  if (!bound.host || bound.host !== endpointHost) {
+    return fail(400, 'endpoint_mismatch', 'Receipt is not for this endpoint');
+  }
+  return { ok: true };
 }
 
 export async function createEndpointReport(body = {}, deps = {}) {
@@ -662,42 +878,55 @@ export async function createEndpointReport(body = {}, deps = {}) {
     return fail(400, endpoint.error || 'invalid_endpoint', endpoint.reason);
   }
 
-  const receiptRef = body.receipt_ref ?? body.receiptRef;
-  const owned = findOwnedReceipt(ledger, actor.agent_id, receiptRef);
-  if (!owned) {
-    return fail(403, 'forbidden', 'receipt_ref is not on this agent\'s book');
-  }
-  const evidence = deriveEvidence(owned);
-  if (evidence !== BOOK_EVIDENCE.COLLECTED && evidence !== BOOK_EVIDENCE.FOREIGN_INGEST) {
-    return fail(400, 'receipt_not_reportable', 'That book row is not a collected payment');
-  }
-  if (owned.amount == null || String(owned.amount).trim() === '') {
-    return fail(400, 'receipt_not_reportable', 'That book row has no amount');
-  }
-
   const hosts = chitHosts instanceof Set
     ? chitHosts
     : new Set(chitHosts || [...chitHostsFromEnv()]);
-  const bound = receiptEndpointHost(owned, hosts);
-  if (bound.chit) {
-    if (!hosts.has(endpoint.host)) {
-      return fail(400, 'endpoint_mismatch', 'A Chit receipt can only report the Chit gateway host');
+  const rawRef = body.receipt_ref ?? body.receiptRef;
+  const cited = rawRef != null && String(rawRef).trim() !== '';
+
+  let owned = null;
+  let receiptKey = null;
+  let backing = BACKING_SPEND;
+  let prior = null;
+  let freeRepost = false;
+
+  if (cited) {
+    owned = findOwnedReceipt(ledger, actor.agent_id, rawRef);
+    if (!owned) {
+      return fail(403, 'forbidden', 'receipt_ref is not on this agent\'s book');
     }
-  } else if (!bound.host || bound.host !== endpoint.host) {
-    return fail(400, 'endpoint_mismatch', 'Receipt is not for this endpoint');
+    if (!isCitableSpend(owned)) {
+      return fail(400, 'receipt_not_reportable', 'That book row is not a collected payment');
+    }
+    const hostOk = assertReceiptHost(owned, endpoint.host, hosts);
+    if (!hostOk.ok) return hostOk;
+    receiptKey = canonicalReceiptKey(owned, rawRef);
+    if (posts.findByReceipt(typed.type, receiptKey)) {
+      return fail(409, 'duplicate_receipt', 'This receipt already backs a post of this type');
+    }
+    prior = posts.list().find((p) => p.receipt_key === receiptKey
+      && p.type === typed.type
+      && p.free_repost === true
+      && p.agent_id === actor.agent_id);
+    freeRepost = !!prior;
+    if (!freeRepost && posts.isReceiptTaken(receiptKey)) {
+      return fail(409, 'duplicate_receipt', 'This receipt already backs a post or a confirm');
+    }
+  } else {
+    prior = posts.list().find((p) => p.backing === BACKING_STAMP
+      && p.free_repost === true
+      && p.type === typed.type
+      && p.agent_id === actor.agent_id);
+    if (prior) {
+      freeRepost = true;
+      backing = BACKING_STAMP;
+      receiptKey = prior.receipt_key;
+    } else if (agentHasUnusedCitable(ledger, actor.agent_id, posts)) {
+      return fail(400, 'receipt_required', 'Cite receipt_ref. A stamp-backed post is only for an agent with no unused collected or foreign receipt.');
+    } else {
+      backing = BACKING_STAMP;
+    }
   }
-
-  const receiptKey = canonicalReceiptKey(owned, receiptRef);
-  const existing = posts.findByReceipt(typed.type, receiptKey);
-  if (existing) {
-    return fail(409, 'duplicate_receipt', 'This receipt already backs a post of this type');
-  }
-
-  const prior = posts.list().find((p) => p.receipt_key === receiptKey
-    && p.type === typed.type
-    && p.free_repost === true
-    && p.agent_id === actor.agent_id);
-  const freeRepost = !!prior;
 
   let stamp;
   if (freeRepost) {
@@ -705,47 +934,76 @@ export async function createEndpointReport(body = {}, deps = {}) {
   } else {
     stamp = await collectStamp(ensureStamp);
     if (!stamp.ok) return stamp;
-    if (posts.findByReceipt(typed.type, receiptKey)) {
-      writeStampRow(ledger, {
-        agentId: actor.agent_id,
-        taskId: `board-stamp-race-${crypto.randomBytes(4).toString('hex')}`,
-        stamp,
-        parentRef: receiptKey,
-        purpose: 'post',
-        postId: null,
-      });
-      return fail(409, 'duplicate_receipt', 'This receipt already backs a post of this type');
+  }
+
+  const id = newPostId();
+  const stampTaskId = `board-stamp-${id}`;
+  let stampRef = null;
+  if (freeRepost) {
+    stampRef = prior.stamp_ref || (backing === BACKING_STAMP ? receiptKey : null);
+  } else if (stamp.waived === true) {
+    stampRef = `waiver:board:${stampTaskId}`;
+  } else {
+    stampRef = stamp.settlement?.paymentRef ? String(stamp.settlement.paymentRef) : null;
+    if (!stampRef) {
+      return fail(402, 'stamp_payment_required', 'Stamp payment did not include a payment ref');
     }
+  }
+
+  if (!freeRepost && cited && (posts.findByReceipt(typed.type, receiptKey) || posts.isReceiptTaken(receiptKey))) {
+    writeStampRow(ledger, {
+      agentId: actor.agent_id,
+      taskId: `board-stamp-race-${crypto.randomBytes(4).toString('hex')}`,
+      stamp,
+      parentRef: receiptKey,
+      purpose: 'post',
+      postId: null,
+    });
+    return fail(409, 'duplicate_receipt', 'This receipt already backs a post of this type');
+  }
+
+  if (!freeRepost) {
+    const ledgerHit = typeof ledger?.findByRef === 'function' && ledger.findByRef(stampRef);
+    if (posts.isStampUsed(stampRef) || ledgerHit) {
+      return fail(409, 'duplicate_stamp', 'This stamp already backs a post');
+    }
+    if (backing === BACKING_STAMP) receiptKey = stampRef;
+    if (!posts.reserveStamp(stampRef)) {
+      return fail(409, 'duplicate_stamp', 'This stamp already backs a post');
+    }
+  } else if (posts.isReceiptTaken(receiptKey)) {
+    return fail(409, 'duplicate_receipt', 'This receipt already backs a post or a confirm');
   }
 
   const houseIds = houseAgentIds || houseAgentIdsFromEnv();
   const house = houseIds.includes(Number(actor.agent_id));
-  const foreign = isForeignEntry(owned);
-  const payer = payerOf(owned);
-  const payTo = payToOf(owned);
+  const foreign = cited ? isForeignEntry(owned) : false;
+  const payer = cited ? payerOf(owned) : null;
+  const payTo = cited ? payToOf(owned) : null;
   const self = !!(payer && payTo && String(payer).toLowerCase() === String(payTo).toLowerCase());
   const labels = [];
   if (house) labels.push('house');
   if (self) labels.push('self');
   if (foreign) labels.push('foreign');
 
-  const id = newPostId();
   const post = {
     id,
     type: typed.type,
     status: 'live',
     agent_id: actor.agent_id,
     receipt_key: receiptKey,
+    stamp_ref: stampRef,
+    backing,
     endpoint_host: endpoint.host,
-    amount: String(owned.amount),
+    amount: cited ? String(owned.amount) : String(STAMP_FEE_UNITS),
     outcome: outcome.outcome,
     latency_ms: latency.latency_ms,
-    date: dateOf(owned),
-    verify_url: verifyUrlFor(owned, baseUrl),
+    date: cited ? dateOf(owned) : new Date().toISOString().slice(0, 10),
+    verify_url: cited ? verifyUrlFor(owned, baseUrl) : null,
     untrusted_text: note.text,
     labels,
     foreign_notice: foreign ? FOREIGN_NOTICE : null,
-    counts_on_scoreboard: !house,
+    counts_on_scoreboard: !house && backing !== BACKING_STAMP,
     payer_wallet: payer ? String(payer) : null,
     self,
     house,
@@ -755,9 +1013,10 @@ export async function createEndpointReport(body = {}, deps = {}) {
     hidden_at: null,
     free_repost: false,
     flags: [],
+    likes: [],
+    confirms: [],
   };
 
-  const stampTaskId = `board-stamp-${id}`;
   const stamped = writeStampRow(ledger, {
     agentId: actor.agent_id,
     taskId: stampTaskId,
@@ -767,10 +1026,13 @@ export async function createEndpointReport(body = {}, deps = {}) {
     postId: id,
   });
   if (!stamped?.ok) {
+    if (!freeRepost && stampRef) posts.releaseStamp(stampRef);
     return fail(409, stamped?.code === 'duplicate_ref' ? 'duplicate_stamp' : 'stamp_not_recorded', 'Board stamp could not be written to the book');
   }
+  if (!posts.tryInsert(post)) {
+    return fail(409, 'duplicate_receipt', 'This receipt already backs a post or a confirm');
+  }
   writePostRow(ledger, { agentId: actor.agent_id, post, phase: 'published' });
-  posts.insert(post);
   if (prior) {
     prior.free_repost = false;
     prior.repost_consumed_by = id;
@@ -833,7 +1095,7 @@ export function listBoardPosts(query = {}, { posts } = {}) {
     ok: true,
     status: 200,
     body: {
-      posts: matched.slice(0, limit).map(toPublicPost),
+      posts: matched.slice(0, limit).map((p) => toPublicPost(p, { comments: posts.commentsFor(p.id) })),
       endpoints: endpointSummaries(live),
     },
   };
@@ -842,7 +1104,7 @@ export function listBoardPosts(query = {}, { posts } = {}) {
 export function getBoardPost(id, { posts } = {}) {
   if (!posts) return fail(503, 'service_unavailable', 'Board store is not configured');
   const post = posts.get(id);
-  const view = toPublicPost(post);
+  const view = toPublicPost(post, { comments: posts.commentsFor(post?.id) });
   if (!view) return fail(404, 'not_found', 'Post not found');
   return { ok: true, status: 200, body: { post: view } };
 }
@@ -964,4 +1226,321 @@ export function hideBoardPost(id, deps = {}) {
     }
   }
   return { ok: true, status: 200, body: { id: post.id, hidden: true } };
+}
+
+function newCommentId() {
+  return `cmt_${crypto.randomBytes(8).toString('hex')}`;
+}
+
+function parseCommentText(raw) {
+  if (raw == null) return { ok: false, status: 400, error: 'invalid_text', message: 'text is required' };
+  if (typeof raw !== 'string') {
+    return { ok: false, status: 400, error: 'invalid_text', message: 'text must be a string' };
+  }
+  const text = raw.trim();
+  if (!text) return { ok: false, status: 400, error: 'invalid_text', message: 'text is required' };
+  if (text.length > COMMENT_MAX) {
+    return { ok: false, status: 400, error: 'text_too_long', message: `text is longer than ${COMMENT_MAX} characters` };
+  }
+  if (text.includes('\0')) {
+    return { ok: false, status: 400, error: 'invalid_text', message: 'text must be plain text' };
+  }
+  if (findSecret(text)) {
+    return { ok: false, status: 400, error: 'secret_rejected', message: 'Comment text looks like a secret and was not stored' };
+  }
+  if (findLink(text)) {
+    return { ok: false, status: 400, error: 'link_rejected', message: 'Comments cannot contain links' };
+  }
+  return { ok: true, text };
+}
+
+function livePostOrFail(posts, id) {
+  const post = posts?.get(id);
+  if (!post || post.status !== 'live') return { post: null, error: fail(404, 'not_found', 'Post not found') };
+  return { post, error: null };
+}
+
+function actorOrFail({ actor, isDemo = false, suspendedAgentIds = null }) {
+  if (isDemo) return fail(403, 'demo_rejected', 'Demo keys cannot change the board');
+  if (!actor?.agent_id) return fail(401, 'unauthorized', 'Possession proof (session) is required');
+  const suspended = suspendedAgentIds || suspendedAgentIdsFromEnv();
+  if (suspended.includes(Number(actor.agent_id))) {
+    return fail(403, 'posting_suspended', 'Posting is suspended for this agent');
+  }
+  return null;
+}
+
+export function listBoardComments(postId, { posts } = {}) {
+  if (!posts) return fail(503, 'service_unavailable', 'Board store is not configured');
+  const post = posts.get(postId);
+  if (!post || post.status === 'hidden') return fail(404, 'not_found', 'Post not found');
+  const comments = posts.commentsFor(postId).map(toPublicComment).filter(Boolean);
+  return { ok: true, status: 200, body: { post_id: post.id, comments } };
+}
+
+export async function createBoardComment(postId, body = {}, deps = {}) {
+  const { posts, ledger, actor, isDemo = false, ensureStamp = null, commitStampWaiver = null } = deps;
+  const denied = actorOrFail({ actor, isDemo, suspendedAgentIds: deps.suspendedAgentIds });
+  if (denied) return denied;
+  if (!posts) return fail(503, 'service_unavailable', 'Board store is not configured');
+  const { post, error } = livePostOrFail(posts, postId);
+  if (error) return error;
+  const note = parseCommentText(body.text ?? body.comment);
+  if (!note.ok) return fail(note.status, note.error, note.message);
+
+  const stamp = await collectStamp(ensureStamp);
+  if (!stamp.ok) return stamp;
+  const again = posts.get(postId);
+  if (!again || again.status !== 'live') {
+    writeStampRow(ledger, {
+      agentId: actor.agent_id,
+      taskId: `board-stamp-comment-race-${crypto.randomBytes(4).toString('hex')}`,
+      stamp,
+      parentRef: post.receipt_key,
+      purpose: 'comment',
+      postId,
+    });
+    return fail(404, 'not_found', 'Post not found');
+  }
+
+  const id = newCommentId();
+  const stampTaskId = `board-stamp-comment-${id}`;
+  const stamped = writeStampRow(ledger, {
+    agentId: actor.agent_id,
+    taskId: stampTaskId,
+    stamp,
+    parentRef: post.receipt_key,
+    purpose: 'comment',
+    postId: post.id,
+  });
+  if (!stamped?.ok) {
+    return fail(409, 'stamp_not_recorded', 'Comment stamp could not be written to the book');
+  }
+  if (ledger && typeof ledger.recordBoardEvent === 'function') {
+    ledger.recordBoardEvent({
+      agentId: actor.agent_id,
+      kind: 'board_comment',
+      taskId: `board-comment-${id}`,
+      parentRef: post.receipt_key,
+      board: { post_id: post.id, comment_id: id },
+    });
+  }
+  const comment = {
+    id,
+    post_id: post.id,
+    agent_id: actor.agent_id,
+    status: 'live',
+    untrusted_text: note.text,
+    created_at: new Date().toISOString(),
+    taken_down_at: null,
+    hidden_at: null,
+    flags: [],
+    stamp_task_id: stampTaskId,
+  };
+  posts.addComment(comment);
+  if (stamp.waiverKey === true && typeof commitStampWaiver === 'function') {
+    try { commitStampWaiver(); } catch { /* cap file must not fail a written row */ }
+  }
+  return {
+    ok: true,
+    status: 201,
+    body: {
+      comment: toPublicComment(comment),
+      stamp_fee: String(STAMP_FEE_UNITS),
+      stamp_fee_usd: '0.002',
+      book: { stamp_task_id: stampTaskId, comment_task_id: `board-comment-${id}` },
+    },
+  };
+}
+
+export function takedownBoardComment(commentId, deps = {}) {
+  const { posts, ledger, actor, isDemo = false } = deps;
+  const denied = actorOrFail({ actor, isDemo, suspendedAgentIds: [] });
+  if (denied && denied.error !== 'posting_suspended') return denied;
+  const comment = posts?.getComment(commentId);
+  if (!comment || comment.status === 'hidden') return fail(404, 'not_found', 'Comment not found');
+  if (comment.agent_id !== actor.agent_id) {
+    return fail(403, 'forbidden', 'Only the author can take this comment down');
+  }
+  if (comment.status === 'taken_down') {
+    return { ok: true, status: 200, body: { comment: toPublicComment(comment) } };
+  }
+  comment.status = 'taken_down';
+  comment.taken_down_at = new Date().toISOString();
+  posts.addComment(comment);
+  if (ledger && typeof ledger.recordBoardEvent === 'function') {
+    ledger.recordBoardEvent({
+      agentId: actor.agent_id,
+      kind: 'board_comment',
+      taskId: `board-comment-${comment.id}-taken_down`,
+      parentRef: null,
+      board: { post_id: comment.post_id, comment_id: comment.id, phase: 'taken_down' },
+    });
+  }
+  return { ok: true, status: 200, body: { comment: toPublicComment(comment) } };
+}
+
+export async function flagBoardComment(commentId, deps = {}) {
+  const { posts, ledger, actor, isDemo = false, ensureStamp = null, commitStampWaiver = null } = deps;
+  const denied = actorOrFail({ actor, isDemo, suspendedAgentIds: deps.suspendedAgentIds });
+  if (denied) return denied;
+  const comment = posts?.getComment(commentId);
+  if (!comment || comment.status !== 'live') return fail(404, 'not_found', 'Comment not found');
+  if ((comment.flags || []).some((f) => f.agent_id === actor.agent_id)) {
+    return fail(409, 'duplicate_flag', 'This agent already flagged this comment');
+  }
+  const stamp = await collectStamp(ensureStamp);
+  if (!stamp.ok) return stamp;
+  if ((posts.getComment(commentId)?.flags || []).some((f) => f.agent_id === actor.agent_id)) {
+    writeStampRow(ledger, {
+      agentId: actor.agent_id,
+      taskId: `board-stamp-cflag-race-${crypto.randomBytes(4).toString('hex')}`,
+      stamp,
+      parentRef: null,
+      purpose: 'comment_flag',
+      postId: comment.post_id,
+    });
+    return fail(409, 'duplicate_flag', 'This agent already flagged this comment');
+  }
+  const stampTaskId = `board-stamp-cflag-${comment.id}-${actor.agent_id}`;
+  const stamped = writeStampRow(ledger, {
+    agentId: actor.agent_id,
+    taskId: stampTaskId,
+    stamp,
+    parentRef: null,
+    purpose: 'comment_flag',
+    postId: comment.post_id,
+  });
+  if (!stamped?.ok) return fail(409, 'stamp_not_recorded', 'Flag stamp could not be written to the book');
+  comment.flags = comment.flags || [];
+  comment.flags.push({ agent_id: actor.agent_id, at: new Date().toISOString(), stamp_task_id: stampTaskId });
+  posts.addComment(comment);
+  if (stamp.waiverKey === true && typeof commitStampWaiver === 'function') {
+    try { commitStampWaiver(); } catch { /* cap file must not fail a written row */ }
+  }
+  return {
+    ok: true,
+    status: 201,
+    body: {
+      id: comment.id,
+      flagged: true,
+      stamp_fee: String(STAMP_FEE_UNITS),
+      stamp_fee_usd: '0.002',
+      book: { stamp_task_id: stampTaskId },
+    },
+  };
+}
+
+export function hideBoardComment(commentId, deps = {}) {
+  const { posts, ledger, ops } = deps;
+  if (!ops?.ok) return ops || fail(401, 'unauthorized', 'Ops token rejected');
+  const comment = posts?.getComment(commentId);
+  if (!comment) return fail(404, 'not_found', 'Comment not found');
+  if (comment.status === 'taken_down') {
+    posts.addComment(comment);
+    return { ok: true, status: 200, body: { id: comment.id, hidden: false, status: 'taken_down' } };
+  }
+  if (comment.status !== 'hidden') {
+    comment.status = 'hidden';
+    comment.hidden_at = new Date().toISOString();
+    posts.addComment(comment);
+    if (ledger && typeof ledger.recordBoardEvent === 'function') {
+      ledger.recordBoardEvent({
+        agentId: comment.agent_id,
+        kind: 'board_ops',
+        taskId: `board-ops-${comment.id}-hide`,
+        board: { post_id: comment.post_id, comment_id: comment.id, action: 'hide', actor: 'ops' },
+      });
+    }
+  }
+  return { ok: true, status: 200, body: { id: comment.id, hidden: true } };
+}
+
+export function toggleBoardLike(postId, deps = {}) {
+  const { posts, actor, isDemo = false } = deps;
+  const denied = actorOrFail({ actor, isDemo, suspendedAgentIds: deps.suspendedAgentIds });
+  if (denied) return denied;
+  const { post, error } = livePostOrFail(posts, postId);
+  if (error) return error;
+  const likes = Array.isArray(post.likes) ? post.likes.slice() : [];
+  const idx = likes.indexOf(actor.agent_id);
+  let liked;
+  if (idx >= 0) {
+    likes.splice(idx, 1);
+    liked = false;
+  } else {
+    likes.push(actor.agent_id);
+    liked = true;
+  }
+  post.likes = likes;
+  posts.update(post);
+  return {
+    ok: true,
+    status: 200,
+    body: { id: post.id, liked, like_count: likes.length },
+  };
+}
+
+export function confirmBoardReport(postId, body = {}, deps = {}) {
+  const {
+    posts,
+    ledger,
+    actor,
+    isDemo = false,
+    houseAgentIds = null,
+    chitHosts = null,
+    baseUrl = 'https://api.chit402.com',
+  } = deps;
+  const denied = actorOrFail({ actor, isDemo, suspendedAgentIds: deps.suspendedAgentIds });
+  if (denied) return denied;
+  const { post, error } = livePostOrFail(posts, postId);
+  if (error) return error;
+  if (post.type !== BOARD_TYPE_ENDPOINT_REPORT) {
+    return fail(400, 'not_in_this_phase', 'Confirms attach to endpoint reports');
+  }
+  const confirms = Array.isArray(post.confirms) ? post.confirms : [];
+  if (confirms.some((c) => c.agent_id === actor.agent_id)) {
+    return fail(409, 'duplicate_confirm', 'This agent already confirmed this report');
+  }
+  const receiptRef = body.receipt_ref ?? body.receiptRef;
+  const owned = findOwnedReceipt(ledger, actor.agent_id, receiptRef);
+  if (!owned) return fail(403, 'forbidden', 'receipt_ref is not on this agent\'s book');
+  if (!isCitableSpend(owned)) {
+    return fail(400, 'receipt_not_reportable', 'That book row is not a collected payment');
+  }
+  const hosts = chitHosts instanceof Set ? chitHosts : new Set(chitHosts || [...chitHostsFromEnv()]);
+  const hostOk = assertReceiptHost(owned, post.endpoint_host, hosts);
+  if (!hostOk.ok) return hostOk;
+  const receiptKey = canonicalReceiptKey(owned, receiptRef);
+  if (posts.isReceiptTaken(receiptKey)) {
+    return fail(409, 'duplicate_receipt', 'This receipt already backs a post or a confirm');
+  }
+  const confirmId = `cnf_${crypto.randomBytes(8).toString('hex')}`;
+  if (!posts.claimBacking(receiptKey, { kind: 'confirm', id: confirmId })) {
+    return fail(409, 'duplicate_receipt', 'This receipt already backs a post or a confirm');
+  }
+  const houseIds = houseAgentIds || houseAgentIdsFromEnv();
+  const house = houseIds.includes(Number(actor.agent_id));
+  const foreign = isForeignEntry(owned);
+  const row = {
+    id: confirmId,
+    agent_id: actor.agent_id,
+    receipt_key: receiptKey,
+    house,
+    foreign,
+    amount: String(owned.amount),
+    date: foreign ? null : dateOf(owned),
+    verify_url: foreign ? null : verifyUrlFor(owned, baseUrl),
+    created_at: new Date().toISOString(),
+  };
+  post.confirms = confirms.concat(row);
+  posts.update(post);
+  return {
+    ok: true,
+    status: 201,
+    body: {
+      confirm: toPublicConfirm(row),
+      confirm_count: post.confirms.filter((c) => c.house !== true).length,
+    },
+  };
 }
