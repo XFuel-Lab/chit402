@@ -199,15 +199,39 @@ export interface A2AMessageParams {
 
 // ─── Response Types ─────────────────────────────────────────────────────────
 
+/** Internal cost-plus breakdown inside a USDC settled amount. Not an on-chain deduction. */
+export interface InternalSettlementAccounting {
+  kind?: string;
+  scope?: string;
+  note?: string;
+  internal_breakdown?: {
+    route_margin_bps?: number;
+    route_margin_amount?: string;
+    receipt_floor_amount?: string;
+    provider_cogs_amount?: string;
+    tier2_proof_amount?: string;
+  };
+}
+
 export interface TaskRequestResponse {
   task_id: string;
   status: string;
   message_type: string;
   chain_id: string;
   gross_amount: string;
-  fee_amount: string;
-  net_amount: string;
-  fee_bps: number;
+  /**
+   * USDC/x402: the on-chain transfer to the payee. Equals `gross_amount` once
+   * `payment_ref` exists; null while a rolling bill is unpaid. Absent on TFUEL.
+   */
+  settled_amount?: string | null;
+  /** USDC/x402 internal accounting. `route_margin_bps` is live pricing (default 100). */
+  accounting?: InternalSettlementAccounting | null;
+  /** Legacy TFUEL rail only. */
+  fee_amount?: string;
+  /** Legacy TFUEL rail only. */
+  net_amount?: string;
+  /** Legacy TFUEL protocol fee in bps. Absent on USDC/x402. */
+  fee_bps?: number;
   /** Resolved payment rail: 'usdc' (x402) | 'tfuel'. */
   payment_rail?: 'usdc' | 'tfuel';
   /** x402 settlement reference (network:txRef) or null for TFUEL. */
@@ -294,9 +318,16 @@ export interface TaskStatusResponse {
   message_type: string;
   chain_id: string;
   gross_amount: string;
-  fee_amount: string;
-  net_amount: string;
-  fee_bps: number;
+  /** USDC/x402 on-chain transfer. Null until `payment_ref` exists. Absent on TFUEL. */
+  settled_amount?: string | null;
+  /** USDC/x402 internal accounting. Route margin is live pricing (default 100 bps). */
+  accounting?: InternalSettlementAccounting | null;
+  /** Legacy TFUEL rail only. */
+  fee_amount?: string;
+  /** Legacy TFUEL rail only. */
+  net_amount?: string;
+  /** Legacy TFUEL protocol fee in bps. Absent on USDC/x402. */
+  fee_bps?: number;
   /** Resolved payment rail: 'usdc' (x402, default) | 'tfuel' (legacy secondary). */
   payment_rail?: 'usdc' | 'tfuel';
   /** x402 settlement reference (network:txRef), or null when unpaid / legacy TFUEL. */
@@ -359,9 +390,16 @@ export interface ProofResponse {
   } | null;
   fee: {
     gross_amount: string;
-    fee_amount: string;
-    net_amount: string;
-    fee_bps: number;
+    /** USDC/x402 on-chain transfer. Absent on the TFUEL rail. */
+    settled_amount?: string | null;
+    /** USDC/x402 internal accounting. Absent on the TFUEL rail. */
+    accounting?: InternalSettlementAccounting | null;
+    /** Legacy TFUEL rail only. */
+    fee_amount?: string;
+    /** Legacy TFUEL rail only. */
+    net_amount?: string;
+    /** Legacy TFUEL protocol fee in bps. Absent on USDC/x402. */
+    fee_bps?: number;
     fee_collector: string;
     /** Token-light describeSplit() payload from the gateway (ADR 0001). */
     revenue_split: RevenueSplitDescription;
@@ -487,7 +525,13 @@ export interface Receipt {
     rail?: string;
     ref?: string | null;
     gross_amount?: string;
+    /** On-chain USDC transfer to the payee (payload v8). Equals `gross_amount` once `ref` exists. */
+    settled_amount?: string | null;
+    /** Internal accounting inside the settled amount (payload v8). Not an on-chain deduction. */
+    accounting?: InternalSettlementAccounting | null;
+    /** Payload ≤ 7, and the legacy TFUEL split. Absent on v8 USDC receipts. */
     net_amount?: string;
+    /** Payload ≤ 7, and the legacy TFUEL split. Absent on v8 USDC receipts. */
     fee_amount?: string;
     collected?: boolean;
     collects_on?: string;

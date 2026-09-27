@@ -12,7 +12,7 @@ import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
-import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS } from './pricing.js';
+import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { resolvePrivateSpendContext } from './private-desk-attest.js';
@@ -684,6 +684,41 @@ function calculateTaskFee(grossAmount, feeBps = AI_TASK_FEE_BPS) {
     feeAmount: fee.toString(),
     netAmount: net.toString(),
     feeBps: Number(bps),
+  };
+}
+
+/**
+ * Public payment economics for one task.
+ * USDC/x402 publishes settled amount + internal accounting. TFUEL keeps the
+ * protocol split `calculateTaskFee` already stored. Does not recompute a charge.
+ */
+function paymentEconomicsForTask(task, legacy = null) {
+  const cogsRec = task?.meta?.providerCogs || task?.providerCogs || null;
+  return publishedPaymentEconomics({
+    rail: task?.intent?.paymentRail || 'usdc',
+    grossAmount: task?.intent?.amount || '0',
+    paymentRef: task?.intent?.paymentRef || null,
+    cogs: cogsRec?.actual ?? cogsRec?.estimated ?? null,
+    pricing: task?.meta?.pricing || null,
+    feeAmount: legacy?.feeAmount ?? task?.feeAmount,
+    netAmount: legacy?.netAmount ?? task?.netAmount,
+    feeBps: legacy?.feeBps ?? task?.feeBps ?? AI_TASK_FEE_BPS,
+  });
+}
+
+function feeInfoFor(rail, economics, appliedBps) {
+  const collector = process.env.X402_PAY_TO || 'X402_PAY_TO (protocol Safe / Splits v2)';
+  if (rail === 'tfuel') {
+    return {
+      description: `${(Number(appliedBps) / 100).toFixed(1)}% protocol fee on the legacy TFUEL rail`,
+      collector,
+    };
+  }
+  const bps = economics?.accounting?.internal_breakdown?.route_margin_bps;
+  const margin = bps != null ? ` (${bps} bps)` : '';
+  return {
+    description: `USDC/x402 pays the payee settled_amount in full. Route margin${margin} is internal accounting inside that amount, not an on-chain deduction.`,
+    collector,
   };
 }
 
@@ -1819,15 +1854,25 @@ export function createApp() {
         payer: settledResponsePayer,
       });
 
+      // Stored feeAmount/netAmount still feed the TFUEL prover path. The JSON
+      // below does not publish that split on USDC/x402.
+      const economics = publishedPaymentEconomics({
+        rail: paymentRail,
+        grossAmount,
+        paymentRef,
+        cogs: ceilingQuote?.provider_cogs ?? estimatedCogs ?? pendingCogs.estimated,
+        pricing: ceilingQuote,
+        feeAmount,
+        netAmount,
+        feeBps: appliedBps,
+      });
+
       return res.status(202).json({
         task_id:       effectiveTaskId,
         status:        'accepted',
         message_type,
         chain_id,
-        gross_amount:  grossAmount,
-        fee_amount:    feeAmount,
-        net_amount:    netAmount,
-        fee_bps:       appliedBps,
+        ...economics,
         payment_rail:  paymentRail,
         payment_ref:   paymentRef,
         ...(rollingMeta ? {
@@ -1838,10 +1883,7 @@ export function createApp() {
         } : {}),
         // Canonical shareable proof link (public, no-auth). Same value as _links.receipt.
         verify_url:    verifyUrl,
-        fee_info: {
-          description: `${(appliedBps / 100).toFixed(1)}% protocol fee → USDC on Base (X402_PAY_TO / Splits v2; token-light, ADR 0001)`,
-          collector:   process.env.X402_PAY_TO || 'X402_PAY_TO (protocol Safe / Splits v2)',
-        },
+        fee_info: feeInfoFor(paymentRail, economics, appliedBps),
         _links: {
           status:  `/task-status?task_id=${effectiveTaskId}`,
           proof:   `/prove-result?task_id=${effectiveTaskId}`,
@@ -2096,13 +2138,14 @@ export function createApp() {
         });
       }
 
-      // Fee breakdown (mirrors calculate_task_fee from main.rs)
-      const gross    = BigInt(task.intent?.amount || task.feeAmount || '0');
+      // TFUEL still publishes the protocol split. USDC publishes settled amount.
       const feeBps   = task.feeBps || AI_TASK_FEE_BPS;
-      const { feeAmount, netAmount } = calculateTaskFee(
-        task.intent?.amount || '0',
+      const legacyFee = calculateTaskFee(task.intent?.amount || '0', feeBps);
+      const economics = paymentEconomicsForTask(task, {
+        feeAmount: task.feeAmount || legacyFee.feeAmount,
+        netAmount: legacyFee.netAmount,
         feeBps,
-      );
+      });
 
       const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
       const proofPayload = {
@@ -2114,10 +2157,7 @@ export function createApp() {
         // Phase 2 (flag-gated): x402 payment commitment bound into the proof.
         payment_binding: task.sp1Proof?.paymentBinding || null,
         fee: {
-          gross_amount:  task.intent?.amount || '0',
-          fee_amount:    task.feeAmount || feeAmount,
-          net_amount:    netAmount,
-          fee_bps:       feeBps,
+          ...economics,
           fee_collector: process.env.X402_PAY_TO || config.osmosis?.feeCollectorContract || '(not configured)',
           revenue_split: describeSplit(resolveSplit()),
         },
@@ -2338,10 +2378,7 @@ export function createApp() {
           proof_system:   task.intent?.proofSystem || 'sp1', // 'sp1' | 'zkgpt' — which prover ran; proof data is in sp1_proof for both
           message_type:   task.intent?.type,
           chain_id:       task.meta?.chain,
-          gross_amount:   task.intent?.amount || '0',
-          fee_amount:     task.feeAmount || '0',
-          net_amount:     task.netAmount || '0',
-          fee_bps:        task.feeBps || AI_TASK_FEE_BPS,
+          ...paymentEconomicsForTask(task),
           payment_rail:   task.intent?.paymentRail || 'usdc',
           payment_ref:    task.intent?.paymentRef || null,
           refund:          task.meta?.refund || null,

@@ -101,7 +101,11 @@ components:
           type: integer
           minimum: 50
           maximum: 100
-          description: Optional fee override in basis points (default 50 = 0.5%).
+          description: >
+            Legacy TFUEL protocol-fee override in basis points (default 50 = 0.5%,
+            range 50–100). Ignored for the USDC/x402 charge. That rail's route
+            margin comes from live pricing (default 100 bps) and is accounting
+            inside the settled amount, not a deduction from the payee.
         sender: { type: string }
         model_id:
           type: string
@@ -135,9 +139,28 @@ components:
         task_id: { type: string }
         status: { type: string, example: accepted }
         gross_amount: { type: string }
-        fee_amount: { type: string }
-        net_amount: { type: string }
-        fee_bps: { type: integer }
+        settled_amount:
+          type: string
+          nullable: true
+          description: >
+            USDC/x402 only. Equals the on-chain Transfer to the payee once
+            payment_ref exists. Null while a rolling bill (collects_on
+            next_request) has not been paid. Absent on the TFUEL rail.
+        accounting:
+          type: object
+          description: >
+            USDC/x402 internal accounting inside the settled amount. Not an
+            on-chain deduction. internal_breakdown.route_margin_bps is live
+            pricing (default 100).
+        fee_amount:
+          type: string
+          description: Legacy TFUEL rail only. Absent on USDC/x402.
+        net_amount:
+          type: string
+          description: Legacy TFUEL rail only. Absent on USDC/x402.
+        fee_bps:
+          type: integer
+          description: Legacy TFUEL protocol fee in bps. Absent on USDC/x402.
         payment_rail: { type: string, enum: [usdc, tfuel] }
         payment_ref: { type: string, nullable: true, description: 'x402 settlement ref (network:txRef); null for TFUEL.' }
         _links:
@@ -159,9 +182,22 @@ components:
         message_type: { type: string }
         chain_id: { type: string }
         gross_amount: { type: string }
-        fee_amount: { type: string }
-        net_amount: { type: string }
-        fee_bps: { type: integer }
+        settled_amount:
+          type: string
+          nullable: true
+          description: USDC/x402 on-chain transfer to the payee. Null until payment_ref exists.
+        accounting:
+          type: object
+          description: USDC/x402 internal accounting. route_margin_bps is live pricing (default 100).
+        fee_amount:
+          type: string
+          description: Legacy TFUEL rail only.
+        net_amount:
+          type: string
+          description: Legacy TFUEL rail only.
+        fee_bps:
+          type: integer
+          description: Legacy TFUEL protocol fee in bps.
         payment_rail: { type: string, enum: [usdc, tfuel] }
         payment_ref: { type: string, nullable: true }
         result: { nullable: true }

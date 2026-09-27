@@ -5,7 +5,8 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { createPrivateKey, createPublicKey, sign } from 'node:crypto';
+import { createPrivateKey, createPublicKey, generateKeyPairSync, sign, createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 // Build the package first
 import { execSync } from 'node:child_process';
@@ -32,6 +33,9 @@ const {
   canonicalSignedPayload,
   computePaymentCommitment,
   computeInferenceBinding,
+  verifyIssuerJws,
+  reconcileSettledTransfer,
+  ERC20_TRANSFER_TOPIC,
 } = await import('../dist/index.js');
 
 // Test ES256 key pair (P-256/secp256r1) - generated for testing only
@@ -55,7 +59,6 @@ const TEST_PUBLIC_KEY_JWK = {
 };
 
 // Generate a different valid key for "wrong key" tests
-import { generateKeyPairSync } from 'node:crypto';
 const { publicKey: wrongPubKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
 const WRONG_PUBLIC_KEY_JWK = {
   ...wrongPubKey.export({ format: 'jwk' }),
@@ -883,3 +886,100 @@ async function buildPinnedJwsReceipt() {
     issuer_signature: { alg: 'ES256', jws, kid, issuer_jwk, payload_version: 6 },
   };
 }
+
+describe('payload v7 still verifies; v8 reconciles with the on-chain transfer', () => {
+  const fixture = JSON.parse(readFileSync(new URL('./fixtures/chit-5d775d12.v7.json', import.meta.url), 'utf8'));
+  const chain = JSON.parse(readFileSync(new URL('./fixtures/chit-5d775d12.base-logs.json', import.meta.url), 'utf8'));
+
+  test('listing-55 v7 JWS still verifies and is not rewritten', () => {
+    assert.equal(fixture.issuer_signature.payload_version, 7);
+    assert.equal(fixture.issuer_signature.kid, 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q');
+    const result = verifyIssuerJws(fixture.issuer_signature.jws, fixture.issuer_signature.issuer_jwk);
+    assert.equal(result.valid, true, result.reason);
+    assert.equal(result.payload.payment.net_amount, '1990');
+    assert.equal(result.payload.payment.gross_amount, '2000');
+    assert.equal(result.payload.payment.protocol_fee_bps, 50);
+    assert.equal(result.payload.payload_version, 7);
+  });
+
+  test('v7 net_amount 1990 does not match the 2000 USDC Transfer to the payee', () => {
+    const recon = reconcileSettledTransfer(fixture, chain.logs, { usdcAddress: chain.usdc });
+    assert.equal(recon.checked, true);
+    assert.equal(recon.matches, false);
+    assert.equal(recon.payload_version, 7);
+    assert.equal(recon.signed_field, 'net_amount');
+    assert.equal(recon.signed_amount, '1990');
+    assert.equal(recon.transfer_amount, '2000');
+    assert.match(recon.reason, /1990/);
+    assert.match(recon.reason, /2000/);
+  });
+
+  test('v8 settled_amount matches Transfer 2000 and does not sign a 50 bps fee', () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const jwkExport = publicKey.export({ format: 'jwk' });
+    const canonical = JSON.stringify({ crv: jwkExport.crv, kty: jwkExport.kty, x: jwkExport.x, y: jwkExport.y });
+    const kid = createHash('sha256').update(canonical).digest('base64url');
+    const issuer_jwk = { ...jwkExport, kid, alg: 'ES256', use: 'sig', kty: 'EC', crv: 'P-256' };
+    const payee = fixture.payment.payee;
+    const payload = {
+      task_id: 'chit-v8-settle',
+      iss: 'chit402',
+      iat: 1,
+      payload_version: 8,
+      payment: {
+        rail: 'usdc',
+        ref: fixture.payment.ref,
+        asset: fixture.payment.asset,
+        payee,
+        gross_amount: '2000',
+        settled_amount: '2000',
+        accounting: {
+          kind: 'internal',
+          scope: 'inside_settled_amount',
+          note: 'Internal accounting inside the settled amount. Not an on-chain deduction; the payee received settled_amount in full.',
+          internal_breakdown: {
+            route_margin_bps: 100,
+            route_margin_amount: '1',
+            receipt_floor_amount: '1993',
+            provider_cogs_amount: '6',
+            tier2_proof_amount: '0',
+          },
+        },
+      },
+    };
+    assert.equal('protocol_fee_bps' in payload.payment, false);
+    assert.equal('net_amount' in payload.payment, false);
+    const header = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid };
+    const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+    const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const signingInput = `${headerB64}.${payloadB64}`;
+    const signature = sign('sha256', Buffer.from(signingInput), {
+      key: privateKey,
+      dsaEncoding: 'ieee-p1363',
+    }).toString('base64url');
+    const receipt = {
+      task_id: payload.task_id,
+      status: 'completed',
+      payment: payload.payment,
+      issuer_signature: {
+        alg: 'ES256',
+        jws: `${signingInput}.${signature}`,
+        kid,
+        issuer_jwk,
+        payload_version: 8,
+      },
+    };
+    const verified = verifyIssuerJws(receipt.issuer_signature.jws, issuer_jwk);
+    assert.equal(verified.valid, true, verified.reason);
+    assert.equal(verified.payload.payload_version, 8);
+    assert.equal(verified.payload.payment.settled_amount, '2000');
+    assert.equal(verified.payload.payment.accounting.internal_breakdown.route_margin_bps, 100);
+
+    const recon = reconcileSettledTransfer(receipt, chain.logs, { usdcAddress: chain.usdc });
+    assert.equal(recon.matches, true, recon.reason);
+    assert.equal(recon.signed_field, 'settled_amount');
+    assert.equal(recon.signed_amount, '2000');
+    assert.equal(recon.transfer_amount, '2000');
+    assert.equal(chain.logs.some((log) => log.topics?.[0] === ERC20_TRANSFER_TOPIC), true);
+  });
+});

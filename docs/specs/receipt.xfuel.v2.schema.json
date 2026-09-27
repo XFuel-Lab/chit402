@@ -106,34 +106,79 @@
           "description": "Block explorer link for the settlement transaction."
         },
         "gross_amount": {
-          "type": "string",
+          "type": ["string", "null"],
           "pattern": "^[0-9]+$",
-          "description": "Total charged in USDC atomic units (6 decimals). Frozen field.",
+          "description": "Amount charged in USDC atomic units (6 decimals). When settled, equal to the on-chain Transfer to payee. Frozen field.",
           "x-frozen": true
+        },
+        "settled_amount": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9]+$",
+          "description": "Payload v8. On-chain USDC Transfer value to payee, in atomic units. Equal to gross_amount once payment.ref exists. Null when nothing has settled. Not present on payload <= 7."
+        },
+        "accounting": {
+          "type": ["object", "null"],
+          "description": "Payload v8. Internal accounting inside the settled amount. Not an on-chain deduction from the payee.",
+          "properties": {
+            "kind": { "type": "string", "const": "internal" },
+            "scope": { "type": "string", "const": "inside_settled_amount" },
+            "note": { "type": "string" },
+            "internal_breakdown": {
+              "type": "object",
+              "properties": {
+                "route_margin_bps": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000,
+                  "description": "Live route margin in basis points, from pricing.platformFeeBps (default 100). Not the stale protocol_fee_bps of 50."
+                },
+                "route_margin_amount": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$",
+                  "description": "Route margin in atomic USDC, inside the settled amount."
+                },
+                "receipt_floor_amount": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$",
+                  "description": "Residual that lifts COGS + margin to the receipt floor, inside the settled amount. Zero when the floor does not bind."
+                },
+                "provider_cogs_amount": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$",
+                  "description": "Provider COGS in atomic USDC, inside the settled amount."
+                },
+                "tier2_proof_amount": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$",
+                  "description": "Flat Tier-2 proof charge in atomic USDC, inside the settled amount."
+                }
+              }
+            }
+          }
         },
         "fee_amount": {
           "type": "string",
           "pattern": "^[0-9]+$",
-          "description": "Protocol fee in USDC atomic units."
+          "description": "Payload <= 7 only. Protocol fee in USDC atomic units. Not an on-chain transfer. Omitted on v8."
         },
         "net_amount": {
           "type": "string",
           "pattern": "^[0-9]+$",
-          "description": "Amount after protocol fee."
+          "description": "Payload <= 7 only. Signed as amount after fees. Not the on-chain transfer when no fee moved. Omitted on v8."
         },
         "protocol_fee_bps": {
           "type": "integer",
           "minimum": 0,
           "maximum": 10000,
-          "description": "Protocol fee in basis points (50 = 0.5%)."
+          "description": "Payload <= 7 only. Stale protocol fee in basis points (often 50). Omitted on v8; see accounting.internal_breakdown.route_margin_bps."
         },
         "platform_fee_bps": {
           "type": ["integer", "null"],
-          "description": "Cost-plus platform fee in basis points."
+          "description": "Payload <= 7 only. Cost-plus platform fee in basis points. v8 uses route_margin_bps."
         },
         "platform_fee": {
           "type": ["string", "null"],
-          "description": "Platform fee in USDC atomic units."
+          "description": "Payload <= 7 only. Platform fee in USDC atomic units. v8 uses route_margin_amount."
         },
         "basis": {
           "type": ["string", "null"],

@@ -24,7 +24,7 @@ import {
 } from './session-act.js';
 import { buildFulfillmentEnvelope, OUTPUT_COMMITMENT_STATUS } from './fulfillment-receipt.js';
 import { buildReceiptOgMeta, buildReceiptOgImageUrl } from './receipt-og-meta.js';
-import { tier2ProofUnits } from './pricing.js';
+import { tier2ProofUnits, internalSettlementAccounting } from './pricing.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -134,8 +134,26 @@ export function buildJwksUri(baseUrl = '') {
   return base ? `${base}${path}` : path;
 }
 
-/** Current JWS payload version for newly issued receipts. */
-export const RECEIPT_PAYLOAD_VERSION = 7;
+/**
+ * Current JWS payload version for newly issued receipts.
+ * v8 signs the on-chain settled amount and an internal accounting block.
+ * Payload versions <= 7 keep the historical net/fee split and still verify.
+ */
+export const RECEIPT_PAYLOAD_VERSION = 8;
+
+/** v8 canonical HMAC field order. Lockstep with packages/sdk and packages/verify. */
+const CANONICAL_V8_FIELDS = [
+  'task_id', 'payment.rail', 'payment.ref', 'payment.gross_amount', 'payment.settled_amount',
+  'payment.accounting.internal_breakdown.route_margin_bps',
+  'payment.accounting.internal_breakdown.route_margin_amount',
+  'payment.accounting.internal_breakdown.receipt_floor_amount',
+  'payment.accounting.internal_breakdown.provider_cogs_amount',
+  'payment.accounting.internal_breakdown.tier2_proof_amount',
+  'provider_cogs.actual',
+  'route.model', 'route.model_commitment.commitment', 'route.provider',
+  'output.hash', 'binding.expected_commitment',
+  'caller_binding.payer_wallet', 'caller_binding.agent_pubkey', 'caller_binding.api_key_hash',
+];
 
 /**
  * Public verifying key pinned at sign time (RFC 7638 kid + ES256 JWK).
@@ -205,10 +223,8 @@ export function mergeReceiptView(receipt) {
         ref: null,
         network: paymentMeta.network ?? null,
         gross_amount: '0',
-        net_amount: '0',
-        fee_amount: '0',
-        fee_bps: 50,
-        protocol_fee_bps: 50,
+        settled_amount: null,
+        accounting: null,
         explorer_url: paymentMeta.explorer_url ?? null,
         tier2_proof: paymentMeta.tier2_proof ?? null,
         floor_applied: paymentMeta.floor_applied ?? null,
@@ -251,9 +267,11 @@ export function mergeReceiptView(receipt) {
       ref: claims.payment?.ref ?? null,
       network: paymentMeta.network ?? claims.payment?.network ?? networkFromPaymentRef(claims.payment?.ref),
       gross_amount: claims.payment?.gross_amount ?? null,
+      settled_amount: claims.payment?.settled_amount ?? null,
+      accounting: claims.payment?.accounting ?? null,
       net_amount: claims.payment?.net_amount ?? null,
       fee_amount: claims.payment?.fee_amount ?? null,
-      fee_bps: claims.payment?.protocol_fee_bps ?? null,
+      fee_bps: claims.payment?.fee_bps ?? claims.payment?.protocol_fee_bps ?? null,
       protocol_fee_bps: claims.payment?.protocol_fee_bps ?? null,
       platform_fee: claims.payment?.platform_fee ?? null,
       platform_fee_bps: claims.payment?.platform_fee_bps ?? null,
@@ -741,6 +759,53 @@ export function fulfillmentEnvelopeOf(task, {
  * @param {{ iat?: number|null }} [opts]
  * @returns {object} JWT claims object
  */
+/**
+ * Payment object that goes into the JWS.
+ * v8: settled amount + internal accounting. No protocol_fee_bps / net / fee split.
+ * A hydrated payload <= 7 keeps the historical fee fields so a re-sign is not
+ * invented here; buildReceipt only constructs the v8 shape for new receipts.
+ */
+function paymentClaimsOf(view) {
+  if (isInheritedSettlement(view)) {
+    return {
+      rail: view.payment?.rail ?? null,
+      ref: null,
+      gross_amount: null,
+      settled_amount: null,
+      accounting: null,
+    };
+  }
+  const p = view.payment || {};
+  const legacy = !Object.prototype.hasOwnProperty.call(p, 'settled_amount')
+    && !p.accounting
+    && (p.net_amount != null || p.fee_amount != null || p.protocol_fee_bps != null || p.fee_bps != null);
+  if (legacy) {
+    return {
+      rail: p.rail ?? null,
+      ref: p.ref ?? null,
+      asset: p.asset ?? null,
+      payee: p.payee ?? null,
+      gross_amount: p.gross_amount ?? null,
+      net_amount: p.net_amount ?? null,
+      fee_amount: p.fee_amount ?? null,
+      protocol_fee_bps: p.protocol_fee_bps ?? p.fee_bps ?? null,
+      platform_fee: p.platform_fee ?? null,
+      platform_fee_bps: p.platform_fee_bps ?? null,
+    };
+  }
+  return {
+    rail: p.rail ?? null,
+    ref: p.ref ?? null,
+    asset: p.asset ?? null,
+    payee: p.payee ?? null,
+    gross_amount: p.gross_amount ?? null,
+    settled_amount: Object.prototype.hasOwnProperty.call(p, 'settled_amount')
+      ? (p.settled_amount ?? null)
+      : (p.gross_amount ?? null),
+    accounting: p.accounting ?? null,
+  };
+}
+
 export function canonicalSignedClaims(receipt, { iat = null } = {}) {
   const view = mergeReceiptView(receipt);
   const issuedAt = iat ?? toUnixSeconds(receipt.created_at) ?? Math.floor(Date.now() / 1000);
@@ -776,29 +841,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     task_id: view.task_id,
     iss: 'chit402',
     iat: issuedAt,
-    payment: inherited
-      ? {
-          rail: view.payment?.rail ?? null,
-          ref: null,
-          gross_amount: null,
-          net_amount: null,
-          fee_amount: null,
-          protocol_fee_bps: null,
-          platform_fee: null,
-          platform_fee_bps: null,
-        }
-      : {
-          rail: view.payment?.rail ?? null,
-          ref: view.payment?.ref ?? null,
-          asset: view.payment?.asset ?? null,
-          payee: view.payment?.payee ?? null,
-          gross_amount: view.payment?.gross_amount ?? null,
-          net_amount: view.payment?.net_amount ?? null,
-          fee_amount: view.payment?.fee_amount ?? null,
-          protocol_fee_bps: view.payment?.protocol_fee_bps ?? view.payment?.fee_bps ?? null,
-          platform_fee: view.payment?.platform_fee ?? null,
-          platform_fee_bps: view.payment?.platform_fee_bps ?? null,
-        },
+    payment: paymentClaimsOf(view),
     provider_cogs: {
       actual: inherited ? null : (view.provider_cogs?.actual ?? null),
       decimals: USDC_ATOMIC_DECIMALS,
@@ -849,17 +892,11 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
 /** Public payment block for ?format=json. No session secrets. */
 function publicPaymentBlock(payment) {
   if (!payment || typeof payment !== 'object') return null;
-  return {
+  const block = {
     rail: payment.rail ?? null,
     ref: payment.ref ?? null,
     network: payment.network ?? null,
     gross_amount: payment.gross_amount ?? null,
-    net_amount: payment.net_amount ?? null,
-    fee_amount: payment.fee_amount ?? null,
-    fee_bps: payment.fee_bps ?? null,
-    protocol_fee_bps: payment.protocol_fee_bps ?? null,
-    platform_fee: payment.platform_fee ?? null,
-    platform_fee_bps: payment.platform_fee_bps ?? null,
     asset: payment.asset ?? null,
     payee: payment.payee ?? null,
     explorer_url: payment.explorer_url ?? null,
@@ -869,6 +906,18 @@ function publicPaymentBlock(payment) {
     collected: payment.collected ?? false,
     collects_on: payment.collects_on ?? null,
   };
+  if (Object.prototype.hasOwnProperty.call(payment, 'settled_amount') || payment.accounting) {
+    block.settled_amount = payment.settled_amount ?? null;
+  }
+  if (payment.accounting) block.accounting = payment.accounting;
+  // Payload <= 7 fee split. Absent on v8 so the unsigned JSON matches the JWS.
+  if (payment.net_amount != null) block.net_amount = payment.net_amount;
+  if (payment.fee_amount != null) block.fee_amount = payment.fee_amount;
+  if (payment.fee_bps != null && !payment.accounting) block.fee_bps = payment.fee_bps;
+  if (payment.protocol_fee_bps != null) block.protocol_fee_bps = payment.protocol_fee_bps;
+  if (payment.platform_fee != null && !payment.accounting) block.platform_fee = payment.platform_fee;
+  if (payment.platform_fee_bps != null && !payment.accounting) block.platform_fee_bps = payment.platform_fee_bps;
+  return block;
 }
 
 function publicRouteBlock(route) {
@@ -980,9 +1029,41 @@ function openRouterSignedClaim(view) {
  * @deprecated Use canonicalSignedClaims() for standard JWT verification.
  * This legacy array format is kept only for HMAC backward compatibility.
  */
-export function canonicalSignedPayload(receipt) {
-  const view = mergeReceiptView(receipt);
-  return JSON.stringify([
+function firstStampedVersion(...values) {
+  for (const value of values) {
+    if (value != null && value !== '') return Number(value);
+  }
+  return null;
+}
+
+/**
+ * HMAC payload version. Stamped signatures win so a v5/v7 receipt still
+ * hashes the historical field list. New drafts carry `settled_amount`.
+ */
+export function canonicalPayloadVersion(receipt, view = null) {
+  const stamped = firstStampedVersion(
+    receipt?.hmac_attestation?.payload_version,
+    receipt?.signature?.payload_version,
+    receipt?.co_attestation?.payload_version,
+    receipt?.co_signature?.payload_version,
+    view?.hmac_attestation?.payload_version,
+    view?.signature?.payload_version,
+  );
+  if (stamped != null) return stamped;
+  const issuerV = receipt?.issuer_signature?.payload_version ?? view?.issuer_signature?.payload_version;
+  if (issuerV != null && issuerV !== '') return Number(issuerV);
+  const own = receipt?.payment;
+  if (own?.accounting || (own && Object.prototype.hasOwnProperty.call(own, 'settled_amount'))) {
+    return RECEIPT_PAYLOAD_VERSION;
+  }
+  const viewed = view?.payment;
+  if (viewed?.accounting) return RECEIPT_PAYLOAD_VERSION;
+  if (viewed?.settled_amount != null && viewed.settled_amount !== '') return RECEIPT_PAYLOAD_VERSION;
+  return 7;
+}
+
+function canonicalFieldsV7(view) {
+  return [
     view.task_id,
     view.payment?.rail ?? null,
     view.payment?.ref ?? null,
@@ -1001,7 +1082,39 @@ export function canonicalSignedPayload(receipt) {
     view.caller_binding?.payer_wallet ?? null,
     view.caller_binding?.agent_pubkey ?? null,
     view.caller_binding?.api_key_hash ?? null,
-  ]);
+  ];
+}
+
+function canonicalFieldsV8(view) {
+  const breakdown = view.payment?.accounting?.internal_breakdown;
+  return [
+    view.task_id ?? null,
+    view.payment?.rail ?? null,
+    view.payment?.ref ?? null,
+    view.payment?.gross_amount ?? null,
+    view.payment?.settled_amount ?? null,
+    breakdown?.route_margin_bps ?? null,
+    breakdown?.route_margin_amount ?? null,
+    breakdown?.receipt_floor_amount ?? null,
+    breakdown?.provider_cogs_amount ?? null,
+    breakdown?.tier2_proof_amount ?? null,
+    view.provider_cogs?.actual ?? null,
+    view.route?.model ?? null,
+    view.route?.model_commitment?.commitment ?? null,
+    view.route?.provider ?? null,
+    view.output?.hash ?? null,
+    view.binding?.expected_commitment ?? null,
+    view.caller_binding?.payer_wallet ?? null,
+    view.caller_binding?.agent_pubkey ?? null,
+    view.caller_binding?.api_key_hash ?? null,
+  ];
+}
+
+export function canonicalSignedPayload(receipt) {
+  const view = mergeReceiptView(receipt);
+  const version = canonicalPayloadVersion(receipt, view);
+  const fields = version >= 8 ? canonicalFieldsV8(view) : canonicalFieldsV7(view);
+  return JSON.stringify(fields);
 }
 
 /**
@@ -1015,20 +1128,22 @@ export function canonicalSignedPayload(receipt) {
  * @param {{ role?: string }} [opts] - role defaults to 'attestor' (not 'primary' — ES256 is primary)
  */
 function signReceiptPayload(receipt, secret, { role = 'attestor' } = {}) {
+  const version = canonicalPayloadVersion(receipt);
   const value = crypto.createHmac('sha256', secret).update(canonicalSignedPayload(receipt)).digest('hex');
+  const legacyFields = [
+    'task_id', 'payment.rail', 'payment.ref', 'payment.gross_amount',
+    'payment.net_amount', 'payment.fee_amount', 'payment.protocol_fee_bps',
+    'payment.platform_fee', 'payment.platform_fee_bps', 'provider_cogs.actual',
+    'route.model', 'route.model_commitment.commitment', 'route.provider',
+    'output.hash', 'binding.expected_commitment',
+    'caller_binding.payer_wallet', 'caller_binding.agent_pubkey', 'caller_binding.api_key_hash',
+  ];
   return {
     alg: 'HMAC-SHA256',
-    payload_version: 5,
+    payload_version: version >= 8 ? 8 : 5,
     value: `sha256=${value}`,
     role,
-    signed_fields: [
-      'task_id', 'payment.rail', 'payment.ref', 'payment.gross_amount',
-      'payment.net_amount', 'payment.fee_amount', 'payment.protocol_fee_bps',
-      'payment.platform_fee', 'payment.platform_fee_bps', 'provider_cogs.actual',
-      'route.model', 'route.model_commitment.commitment', 'route.provider',
-      'output.hash', 'binding.expected_commitment',
-      'caller_binding.payer_wallet', 'caller_binding.agent_pubkey', 'caller_binding.api_key_hash',
-    ],
+    signed_fields: version >= 8 ? CANONICAL_V8_FIELDS : legacyFields,
   };
 }
 
@@ -1072,8 +1187,7 @@ function sessionIdentity(claims) {
 function settlementIdentity(claims) {
   return JSON.stringify([
     claims?.payment?.ref ?? null,
-    claims?.payment?.gross_amount ?? null,
-    claims?.payment?.net_amount ?? null,
+    claims?.payment?.gross_amount ?? claims?.payment?.settled_amount ?? null,
     claims?.payment?.asset ?? null,
     claims?.payment?.payee ?? null,
     claims?.provider_cogs?.actual ?? null,
@@ -1616,7 +1730,6 @@ export function usageOf(task) {
  */
 export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null, reqHost = null, apiKeyHash = null, agentId = null, agentPubkey = null, payerWallet = null, payTo = null, persistSignature = false } = {}) {
   const outcome = proofOutcomeOf(task);
-  const feeBps = task.feeBps || 50;
   // Buyer default is USDC (ADR 0002). Legacy tfuel rail only when explicitly set.
   const paymentRail = task.intent?.paymentRail || 'usdc';
   const paymentRef = task.intent?.paymentRef || null;
@@ -1665,6 +1778,17 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     : (task?.meta?.modelSubstituted === true || task?.intent?.modelSubstituted === true);
 
   const reportedRail = paymentRail === 'reported';
+  const inheritedTask = isInheritedSettlementTask(task);
+  const chargedAmount = task.intent?.amount || '0';
+  const onChainSettlement = !inheritedTask && !reportedRail && paymentRail === 'usdc' && !!paymentRef;
+  const accounting = (inheritedTask || reportedRail || paymentRail === 'unmetered')
+    ? null
+    : internalSettlementAccounting({
+      settledAmount: chargedAmount,
+      cogs: providerCogs?.actual ?? pricing?.provider_cogs ?? null,
+      pricing,
+      onChain: onChainSettlement,
+    });
 
   const routeProvider = (() => {
     const fromResult = task.result?.provider || task.result?.routedTo || task.routedTo || null;
@@ -1705,26 +1829,41 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       // and payment.ref stays "<network>:<tx>".
       chain_id: reportedRail ? null : (networkFromPaymentRef(paymentRef) || task.meta?.chain || task.intent?.chainId || null),
     },
-    payment: {
-      rail: paymentRail,
-      ref: paymentRef,
-      network: reportedRail ? null : networkFromPaymentRef(paymentRef),
-      explorer_url: reportedRail ? null : explorerUrlForRef(paymentRef),
-      asset: paymentRef ? paymentAssetOf(task) : null,
-      payee: reportedRail ? null : (paymentRef ? payeeOf(task, { payTo }) : null),
-      gross_amount: task.intent?.amount || '0',
-      fee_amount: task.feeAmount || '0',
-      net_amount: task.netAmount || '0',
-      fee_bps: feeBps,
-      protocol_fee_bps: feeBps,
-      platform_fee_bps: pricing?.fee_bps ?? null,
-      platform_fee: pricing?.platform_fee != null ? String(pricing.platform_fee) : null,
-      tier2_proof: pricing?.tier2_proof && pricing.tier2_proof !== '0' ? String(pricing.tier2_proof) : null,
-      floor_applied: pricing?.floor_applied ?? null,
-      basis: pricing?.basis ?? null,
-      collected: reportedRail ? false : (!!paymentRef && !refund),
-      collects_on: reportedRail ? 'reported' : (rollingFronted ? 'next_request' : 'this_request'),
-    },
+    payment: inheritedTask
+      ? {
+          rail: paymentRail,
+          ref: null,
+          network: null,
+          explorer_url: null,
+          asset: null,
+          payee: null,
+          gross_amount: null,
+          settled_amount: null,
+          accounting: null,
+          tier2_proof: null,
+          floor_applied: null,
+          basis: null,
+          collected: false,
+          collects_on: 'this_request',
+        }
+      : {
+          rail: paymentRail,
+          ref: paymentRef,
+          network: reportedRail ? null : networkFromPaymentRef(paymentRef),
+          explorer_url: reportedRail ? null : explorerUrlForRef(paymentRef),
+          asset: paymentRef ? paymentAssetOf(task) : null,
+          payee: reportedRail ? null : (paymentRef ? payeeOf(task, { payTo }) : null),
+          gross_amount: chargedAmount,
+          settled_amount: onChainSettlement ? String(chargedAmount) : null,
+          accounting,
+          tier2_proof: pricing?.tier2_proof && pricing.tier2_proof !== '0' ? String(pricing.tier2_proof) : null,
+          floor_applied: pricing?.floor_applied ?? (accounting
+            ? accounting.internal_breakdown.receipt_floor_amount !== '0'
+            : null),
+          basis: pricing?.basis ?? null,
+          collected: reportedRail ? false : (!!paymentRef && !refund),
+          collects_on: reportedRail ? 'reported' : (rollingFronted ? 'next_request' : 'this_request'),
+        },
     provider_cogs: providerCogs,
     usage,
     openrouter,
@@ -1909,6 +2048,21 @@ function shortHash(h, head = 10, tail = 8) {
 
 function row(label, valueHtml) {
   return `<div class="row"><span class="k">${esc(label)}</span><span class="v">${valueHtml}</span></div>`;
+}
+
+/** v8 margin/floor/COGS are inside the settled amount, not a second on-chain fee. */
+function internalAccountingRows(p) {
+  const b = p?.accounting?.internal_breakdown;
+  if (!b || p?.rail === 'unmetered') return '';
+  const tier2 = b.tier2_proof_amount && b.tier2_proof_amount !== '0'
+    ? row('Tier-2 proof (inside settled)', usdcCell(b.tier2_proof_amount))
+    : '';
+  return [
+    row('Route margin', `${usdcCell(b.route_margin_amount)} <span class="muted">(${esc(b.route_margin_bps)} bps · inside settled amount, not an on-chain deduction)</span>`),
+    row('Receipt floor', `${usdcCell(b.receipt_floor_amount)} <span class="muted">inside settled amount</span>`),
+    row('Provider COGS', `${usdcCell(b.provider_cogs_amount)} <span class="muted">inside settled amount</span>`),
+    tier2,
+  ].join('');
 }
 
 /**
@@ -2450,10 +2604,14 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
       ${p.rail === 'unmetered'
         ? row('Price', '<span class="muted">not charged</span> <span class="muted">unmetered /v1</span>')
         : row('Price', usdcCell(p.gross_amount))}
+      ${p.settled_amount != null ? row('Settled on chain', usdcCell(p.settled_amount)) : ''}
       ${p.basis ? row('Basis', `${esc(p.basis)}${p.floor_applied ? ' · floor applied' : ''}`) : ''}
-      ${p.platform_fee != null ? row(`Platform fee (${esc((p.platform_fee_bps ?? 0) / 100)}%)`, usdcCell(p.platform_fee)) : ''}
-      ${p.tier2_proof ? row('Tier-2 proof (SP1)', usdcCell(p.tier2_proof)) : ''}
-      ${row('Protocol fee', `${usdcCell(p.fee_amount)} <span class="muted">(${esc(p.protocol_fee_bps ?? p.fee_bps)} bps)</span>`)}
+      ${internalAccountingRows(p)}
+      ${!p.accounting && p.platform_fee != null ? row(`Platform fee (${esc((p.platform_fee_bps ?? 0) / 100)}%)`, usdcCell(p.platform_fee)) : ''}
+      ${!p.accounting && p.tier2_proof ? row('Tier-2 proof (SP1)', usdcCell(p.tier2_proof)) : ''}
+      ${!p.accounting && (p.fee_amount != null || p.protocol_fee_bps != null || p.fee_bps != null)
+        ? row('Protocol fee', `${usdcCell(p.fee_amount)} <span class="muted">(${esc(p.protocol_fee_bps ?? p.fee_bps)} bps)</span>`)
+        : ''}
     </section>`) }
 
     <section class="card">
@@ -2631,7 +2789,13 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
     notes: 'Default XFuel audit policy — override via AUDITOR_POLICY_JSON on gateway',
   };
   const pol = policy || defaultPolicy;
-  const feeBps = Number(view.payment?.fee_bps ?? 0);
+  const breakdown = view.payment?.accounting?.internal_breakdown || null;
+  const feeBps = Number(
+    breakdown?.route_margin_bps
+    ?? view.payment?.protocol_fee_bps
+    ?? view.payment?.fee_bps
+    ?? 0,
+  );
   const rail = (view.payment?.rail || '').toLowerCase();
   const checks = {
     fee_bps_within_cap: feeBps <= Number(pol.max_fee_bps ?? 100),
@@ -2656,9 +2820,14 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
     totals: {
       rail: view.payment?.rail || null,
       gross_amount: view.payment?.gross_amount || null,
+      settled_amount: view.payment?.settled_amount || null,
       fee_amount: view.payment?.fee_amount || null,
       net_amount: view.payment?.net_amount || null,
-      fee_bps: view.payment?.fee_bps ?? null,
+      fee_bps: breakdown?.route_margin_bps ?? view.payment?.fee_bps ?? view.payment?.protocol_fee_bps ?? null,
+      route_margin_bps: breakdown?.route_margin_bps ?? null,
+      route_margin_amount: breakdown?.route_margin_amount ?? null,
+      receipt_floor_amount: breakdown?.receipt_floor_amount ?? null,
+      provider_cogs_amount: breakdown?.provider_cogs_amount ?? null,
       payment_ref: view.payment?.ref || null,
       explorer_url: view.payment?.explorer_url || null,
     },

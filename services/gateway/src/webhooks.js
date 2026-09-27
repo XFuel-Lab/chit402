@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import logger from './logger.js';
+import { publishedPaymentEconomics } from './pricing.js';
 
 /**
  * XFuel M2M — Webhook registry + dispatcher.
@@ -234,6 +235,18 @@ export class WebhookDispatcher {
 
   /** Build a TaskSettled payload from a task record. */
   buildPayload(task) {
+    const rail = task.intent?.paymentRail || 'tfuel';
+    const cogsRec = task.meta?.providerCogs || task.providerCogs || null;
+    const economics = publishedPaymentEconomics({
+      rail,
+      grossAmount: task.intent?.amount || '0',
+      paymentRef: task.intent?.paymentRef || null,
+      cogs: cogsRec?.actual ?? cogsRec?.estimated ?? null,
+      pricing: task.meta?.pricing || null,
+      feeAmount: task.feeAmount,
+      netAmount: task.netAmount,
+      feeBps: task.feeBps,
+    });
     return {
       event: WEBHOOK_EVENTS.TASK_SETTLED,
       task_id: task.taskId,
@@ -241,11 +254,8 @@ export class WebhookDispatcher {
       message_type: task.intent?.type || null,
       chain_id: task.meta?.chain || task.intent?.chain || null,
       proof_system: task.intent?.proofSystem || 'sp1',
-      gross_amount: task.intent?.amount || '0',
-      fee_amount: task.feeAmount || '0',
-      net_amount: task.netAmount || '0',
-      fee_bps: task.feeBps || null,
-      payment_rail: task.intent?.paymentRail || 'tfuel',
+      ...economics,
+      payment_rail: rail,
       payment_ref: task.intent?.paymentRef || null,
       sp1_proof: task.sp1Proof
         ? {

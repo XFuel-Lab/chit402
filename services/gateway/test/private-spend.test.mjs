@@ -139,7 +139,9 @@ test('buildAuditorExport: redacts content; reports policy', async () => {
   assert.equal(exp.in_policy, true);
   assert.equal(exp.checks.privacy_vendor_blind, true);
   assert.equal(exp.checks.binding_ok, 'no_policy');
-  assert.equal(exp.totals.fee_bps, 50);
+  assert.equal(exp.totals.fee_bps, 100);
+  assert.equal(exp.totals.route_margin_bps, 100);
+  assert.equal(exp.checks.fee_bps_within_cap, true);
   assert.ok(exp.redacted.includes('prompts'));
   assert.ok(!JSON.stringify(exp).includes('should never appear'));
   assert.equal(exp.privacy.mode, 'vendor_blind');

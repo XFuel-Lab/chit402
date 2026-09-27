@@ -19,31 +19,90 @@ export interface ReceiptSignatureCheck {
   recomputed?: string;
 }
 
+type ReceiptPayment = {
+  rail?: string;
+  ref?: string | null;
+  gross_amount?: string | null;
+  settled_amount?: string | null;
+  net_amount?: string | null;
+  fee_amount?: string | null;
+  protocol_fee_bps?: number | null;
+  fee_bps?: number | null;
+  platform_fee?: string | null;
+  platform_fee_bps?: number | null;
+  accounting?: {
+    internal_breakdown?: {
+      route_margin_bps?: number | null;
+      route_margin_amount?: string | null;
+      receipt_floor_amount?: string | null;
+      provider_cogs_amount?: string | null;
+      tier2_proof_amount?: string | null;
+    };
+  } | null;
+};
+
+type CanonicalReceipt = {
+  task_id?: string;
+  payload_version?: number;
+  payment?: ReceiptPayment;
+  provider_cogs?: { actual?: string };
+  route?: { model?: string; model_commitment?: { commitment?: string }; provider?: string };
+  output?: { hash?: string };
+  binding?: { expected_commitment?: string };
+  caller_binding?: { payer_wallet?: string | null; agent_pubkey?: string | null; api_key_hash?: string | null };
+  issuer_signature?: { payload_version?: number };
+  hmac_attestation?: { payload_version?: number };
+  signature?: { payload_version?: number; value?: string };
+};
+
 /**
- * Canonical, order-stable payload a receipt signature covers. MUST match
- * `canonicalSignedPayload` in services/gateway/src/receipt.js (same fields + order).
- * Payload version 3 signs gross, protocol fee, platform fee, and provider COGS
- * so a buyer can recompute `max(floor, cogs × 1.10)` against the USDC they sent.
+ * HMAC payload version. <= 7 keeps the historical fee-split field list.
+ * 8 matches the gateway: settled amount + internal accounting, not a 50 bps fee.
+ */
+export function canonicalPayloadVersion(receipt: Record<string, unknown>): number {
+  const r = receipt as CanonicalReceipt;
+  const stamped = r.hmac_attestation?.payload_version ?? r.signature?.payload_version;
+  if (stamped != null) return Number(stamped);
+  if (r.issuer_signature?.payload_version != null) return Number(r.issuer_signature.payload_version);
+  if (r.payload_version != null) return Number(r.payload_version);
+  const payment = r.payment;
+  if (payment?.accounting || (payment && Object.prototype.hasOwnProperty.call(payment, 'settled_amount'))) {
+    return 8;
+  }
+  return 7;
+}
+
+/**
+ * Canonical, order-stable payload a receipt signature covers.
+ * v8 matches `canonicalSignedPayload` in services/gateway/src/receipt.js.
+ * v7 and earlier stay on the historical field list so old HMAC signatures verify.
  */
 export function canonicalReceiptPayload(receipt: Record<string, unknown>): string {
-  const r = receipt as {
-    task_id?: string;
-    payment?: {
-      rail?: string;
-      ref?: string;
-      gross_amount?: string;
-      net_amount?: string;
-      fee_amount?: string;
-      protocol_fee_bps?: number;
-      fee_bps?: number;
-      platform_fee?: string;
-      platform_fee_bps?: number;
-    };
-    provider_cogs?: { actual?: string };
-    route?: { model?: string; model_commitment?: { commitment?: string }; provider?: string };
-    output?: { hash?: string };
-    binding?: { expected_commitment?: string };
-  };
+  const r = receipt as CanonicalReceipt;
+  if (canonicalPayloadVersion(receipt) >= 8) {
+    const breakdown = r.payment?.accounting?.internal_breakdown;
+    return JSON.stringify([
+      r.task_id ?? null,
+      r.payment?.rail ?? null,
+      r.payment?.ref ?? null,
+      r.payment?.gross_amount ?? null,
+      r.payment?.settled_amount ?? null,
+      breakdown?.route_margin_bps ?? null,
+      breakdown?.route_margin_amount ?? null,
+      breakdown?.receipt_floor_amount ?? null,
+      breakdown?.provider_cogs_amount ?? null,
+      breakdown?.tier2_proof_amount ?? null,
+      r.provider_cogs?.actual ?? null,
+      r.route?.model ?? null,
+      r.route?.model_commitment?.commitment ?? null,
+      r.route?.provider ?? null,
+      r.output?.hash ?? null,
+      r.binding?.expected_commitment ?? null,
+      r.caller_binding?.payer_wallet ?? null,
+      r.caller_binding?.agent_pubkey ?? null,
+      r.caller_binding?.api_key_hash ?? null,
+    ]);
+  }
   return JSON.stringify([
     r.task_id ?? null,
     r.payment?.rail ?? null,

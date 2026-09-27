@@ -3,6 +3,22 @@
 All notable changes to the Chit402 SDK are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased — receipt payload v8
+
+### Changed
+- **`canonicalReceiptPayload`** branches on payload version. Version 8 signs
+  `payment.settled_amount` and `payment.accounting.internal_breakdown`
+  (route margin from live pricing, receipt floor, provider COGS) instead of
+  `net_amount`, `fee_amount`, and `protocol_fee_bps`. The settled amount is the
+  on-chain USDC transfer to the payee. The breakdown is internal accounting
+  inside that amount, not a fee deducted on chain.
+- Versions **≤ 7** keep the previous HMAC field list, so existing signatures
+  still verify. Do not re-sign them.
+- **`Receipt`**, **`TaskRequestResponse`**, **`TaskStatusResponse`**, and
+  **`ProofResponse.fee`** include optional `settled_amount` and `accounting`.
+  `fee_amount`, `net_amount`, and `fee_bps` stay optional for the legacy TFUEL
+  rail and for payload ≤ 7 receipts.
+
 ## 0.6.0 — ES256/JWKS receipt verification + Chit402 public cutover
 
 ### Added

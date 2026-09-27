@@ -118,15 +118,28 @@ export interface XFuelReceipt {
   payment?: {
     rail?: string;
     ref?: string | null;
-    gross_amount?: string;
-    net_amount?: string;
-    fee_amount?: string;
-    fee_bps?: number;
-    protocol_fee_bps?: number;
-    platform_fee?: string;
-    platform_fee_bps?: number;
+    gross_amount?: string | null;
+    settled_amount?: string | null;
+    net_amount?: string | null;
+    fee_amount?: string | null;
+    fee_bps?: number | null;
+    protocol_fee_bps?: number | null;
+    platform_fee?: string | null;
+    platform_fee_bps?: number | null;
     asset?: string | null;
     payee?: string | null;
+    accounting?: {
+      kind?: string;
+      scope?: string;
+      note?: string;
+      internal_breakdown?: {
+        route_margin_bps?: number | null;
+        route_margin_amount?: string | null;
+        receipt_floor_amount?: string | null;
+        provider_cogs_amount?: string | null;
+        tier2_proof_amount?: string | null;
+      };
+    } | null;
   };
   payment_meta?: {
     network?: string;
@@ -156,6 +169,10 @@ export interface XFuelReceipt {
   signature?: {
     alg?: string;
     value?: string;
+    payload_version?: number;
+  };
+  hmac_attestation?: {
+    payload_version?: number;
   };
   issuer_signature?: {
     alg?: string;
@@ -245,28 +262,27 @@ export interface ReceiptVerification {
 }
 
 /**
- * Canonical, order-stable payload an issuer signature covers.
- * MUST match `canonicalSignedPayload` in services/gateway/src/receipt.js exactly.
- *
- * Signed fields (15 total):
- *   1. task_id
- *   2. payment.rail
- *   3. payment.ref
- *   4. payment.gross_amount
- *   5. payment.net_amount
- *   6. payment.fee_amount
- *   7. payment.protocol_fee_bps ?? payment.fee_bps
- *   8. payment.platform_fee
- *   9. payment.platform_fee_bps
- *  10. provider_cogs.actual
- *  11. route.model
- *  12. route.model_commitment.commitment
- *  13. route.provider
- *  14. output.hash
- *  15. binding.expected_commitment
+ * HMAC payload version.
+ * Versions <= 7 keep the historical net/fee field list.
+ * Version 8 signs settled_amount plus the internal accounting breakdown.
+ * Lockstep with `canonicalPayloadVersion` in services/gateway/src/receipt.js
+ * for the v8 list (the v7 list here is the historical 15-field public formula).
  */
-export function canonicalIssuerPayload(receipt: XFuelReceipt): string {
-  return JSON.stringify([
+export function canonicalPayloadVersion(receipt: XFuelReceipt): number {
+  const stamped = receipt.hmac_attestation?.payload_version
+    ?? receipt.signature?.payload_version;
+  if (stamped != null) return Number(stamped);
+  const issuerV = receipt.issuer_signature?.payload_version;
+  if (issuerV != null) return Number(issuerV);
+  const payment = receipt.payment;
+  if (payment?.accounting || (payment && Object.prototype.hasOwnProperty.call(payment, 'settled_amount'))) {
+    return 8;
+  }
+  return 7;
+}
+
+function canonicalFieldsV7(receipt: XFuelReceipt): unknown[] {
+  return [
     receipt.task_id ?? null,
     receipt.payment?.rail ?? null,
     receipt.payment?.ref ?? null,
@@ -282,7 +298,197 @@ export function canonicalIssuerPayload(receipt: XFuelReceipt): string {
     receipt.route?.provider ?? null,
     receipt.output?.hash ?? null,
     receipt.binding?.expected_commitment ?? null,
-  ]);
+  ];
+}
+
+function canonicalFieldsV8(receipt: XFuelReceipt): unknown[] {
+  const breakdown = receipt.payment?.accounting?.internal_breakdown;
+  const caller = receipt.caller_binding;
+  return [
+    receipt.task_id ?? null,
+    receipt.payment?.rail ?? null,
+    receipt.payment?.ref ?? null,
+    receipt.payment?.gross_amount ?? null,
+    receipt.payment?.settled_amount ?? null,
+    breakdown?.route_margin_bps ?? null,
+    breakdown?.route_margin_amount ?? null,
+    breakdown?.receipt_floor_amount ?? null,
+    breakdown?.provider_cogs_amount ?? null,
+    breakdown?.tier2_proof_amount ?? null,
+    receipt.provider_cogs?.actual ?? null,
+    receipt.route?.model ?? null,
+    receipt.route?.model_commitment?.commitment ?? null,
+    receipt.route?.provider ?? null,
+    receipt.output?.hash ?? null,
+    receipt.binding?.expected_commitment ?? null,
+    caller?.payer_wallet ?? null,
+    caller?.agent_pubkey ?? null,
+    caller?.api_key_hash ?? null,
+  ];
+}
+
+/**
+ * Canonical, order-stable payload an HMAC issuer signature covers.
+ * v8 matches `canonicalSignedPayload` in services/gateway/src/receipt.js.
+ * v7 and earlier stay on the historical 15-field list so old signatures verify.
+ */
+export function canonicalIssuerPayload(receipt: XFuelReceipt): string {
+  const fields = canonicalPayloadVersion(receipt) >= 8
+    ? canonicalFieldsV8(receipt)
+    : canonicalFieldsV7(receipt);
+  return JSON.stringify(fields);
+}
+
+export interface TransferLog {
+  address?: string;
+  topics?: string[];
+  data?: string;
+}
+
+export interface SettledAmountReconciliation {
+  checked: boolean;
+  /** True when the signed settled/net amount equals the USDC Transfer to payee. */
+  matches: boolean;
+  payload_version: number;
+  signed_field: 'settled_amount' | 'gross_amount' | 'net_amount' | null;
+  signed_amount: string | null;
+  transfer_amount: string | null;
+  payee: string | null;
+  reason?: string;
+}
+
+function topicAddress(topic: string): string {
+  const hex = topic.toLowerCase().replace(/^0x/, '');
+  return `0x${hex.slice(-40)}`;
+}
+
+/**
+ * Sum USDC Transfer values to `payee` in a transaction's logs.
+ * Non-Transfer logs are ignored. When `usdcAddress` is set, other contracts are ignored.
+ */
+export function sumUsdcTransfersToPayee(
+  logs: TransferLog[] | null | undefined,
+  payee: string,
+  usdcAddress?: string,
+): bigint | null {
+  if (!payee || !isEvmAddress(payee)) return null;
+  const payeeLower = payee.toLowerCase();
+  const usdcLower = usdcAddress?.toLowerCase();
+  let total = 0n;
+  let found = false;
+  for (const log of logs || []) {
+    if (usdcLower && log.address?.toLowerCase() !== usdcLower) continue;
+    const topics = log.topics || [];
+    if (topics[0]?.toLowerCase() !== ERC20_TRANSFER_TOPIC) continue;
+    if (topics.length < 3 || !topics[2]) continue;
+    if (topicAddress(topics[2]) !== payeeLower) continue;
+    found = true;
+    total += BigInt(log.data || '0x0');
+  }
+  return found ? total : null;
+}
+
+function signedPaymentForReconcile(receipt: XFuelReceipt): {
+  version: number;
+  payment: NonNullable<XFuelReceipt['payment']>;
+} {
+  const jws = receipt.issuer_signature?.jws;
+  const claims = jws ? decodeJwsPayload(jws) : null;
+  const claimPayment = (claims?.payment && typeof claims.payment === 'object')
+    ? claims.payment as NonNullable<XFuelReceipt['payment']>
+    : null;
+  const version = receipt.issuer_signature?.payload_version
+    ?? (typeof claims?.payload_version === 'number' ? claims.payload_version : null)
+    ?? canonicalPayloadVersion(receipt);
+  return {
+    version: Number(version),
+    payment: claimPayment || receipt.payment || {},
+  };
+}
+
+/**
+ * Optional on-chain reconciliation. Given a tx receipt's logs, the signed
+ * amount the payee was supposed to receive must equal the USDC Transfer to payee.
+ *
+ * v8 compares `settled_amount` (falling back to `gross_amount`): that is the
+ * on-chain transfer. v7 and earlier compare `net_amount`, which those receipts
+ * defined as "amount after fees". A single direct transfer of gross will not
+ * match a net that subtracts a fee that never moved on chain.
+ */
+export function reconcileSettledTransfer(
+  receipt: XFuelReceipt,
+  logs: TransferLog[] | null | undefined,
+  options: { usdcAddress?: string } = {},
+): SettledAmountReconciliation {
+  const { version, payment } = signedPaymentForReconcile(receipt);
+  const payee = payment.payee ?? null;
+  let signed_field: SettledAmountReconciliation['signed_field'] = null;
+  let signed_amount: string | null = null;
+  if (version >= 8) {
+    if (payment.settled_amount != null && payment.settled_amount !== '') {
+      signed_field = 'settled_amount';
+      signed_amount = String(payment.settled_amount);
+    } else if (payment.gross_amount != null && payment.gross_amount !== '') {
+      signed_field = 'gross_amount';
+      signed_amount = String(payment.gross_amount);
+    }
+  } else {
+    signed_field = 'net_amount';
+    signed_amount = payment.net_amount != null ? String(payment.net_amount) : null;
+  }
+
+  if (!payee || !isEvmAddress(payee)) {
+    return {
+      checked: false,
+      matches: false,
+      payload_version: version,
+      signed_field,
+      signed_amount,
+      transfer_amount: null,
+      payee,
+      reason: 'no_payee',
+    };
+  }
+  if (signed_amount == null) {
+    return {
+      checked: false,
+      matches: false,
+      payload_version: version,
+      signed_field,
+      signed_amount,
+      transfer_amount: null,
+      payee,
+      reason: 'no_signed_amount',
+    };
+  }
+
+  const transfer = sumUsdcTransfersToPayee(logs, payee, options.usdcAddress);
+  if (transfer == null) {
+    return {
+      checked: true,
+      matches: false,
+      payload_version: version,
+      signed_field,
+      signed_amount,
+      transfer_amount: null,
+      payee,
+      reason: 'no_transfer_to_payee',
+    };
+  }
+
+  const matches = BigInt(signed_amount) === transfer;
+  return {
+    checked: true,
+    matches,
+    payload_version: version,
+    signed_field,
+    signed_amount,
+    transfer_amount: transfer.toString(),
+    payee,
+    reason: matches
+      ? undefined
+      : `amount_mismatch: signed ${signed_field} ${signed_amount} !== transfer ${transfer.toString()}`,
+  };
 }
 
 /**
@@ -757,7 +963,10 @@ export default {
   computePaymentCommitment,
   computeInferenceBinding,
   canonicalIssuerPayload,
+  canonicalPayloadVersion,
   canonicalSignedPayload,
+  reconcileSettledTransfer,
+  sumUsdcTransfersToPayee,
   hashCanonicalPayload,
   ZK_VERIFIER_ADDRESS,
   BASE_RPC_URL,

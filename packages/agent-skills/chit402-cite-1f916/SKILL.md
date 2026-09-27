@@ -38,7 +38,7 @@ mode (requester / verifier / automatic) decides who gets paid. Chit has no part 
   "payment_ref":"solana:4KZ9iXA43AnV4yqfDNuST3z2HcSjpDEuKZ1sjhUd6kmn3WWN1wUTEAXGaQeYSd8ZPiZ43rXoVGZAjvZGif42t5P",
   "network":"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
   "asset":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-  "net_amount":"1990",
+  "settled_amount":"2000",
   "model":"akash/meta-llama/Llama-3.3-70B-Instruct",
   "output_hash":"0x188fcd5cf9ef16dcca9118fafa7971df7a86f5b5762c15c204d6a3d29f4e6e8d",
   "receipt_sha256":"c7102dd549a3959cdc164d29cffdd6a2488a4fa0304586ec61d8fd7e75315e46"
@@ -52,7 +52,7 @@ Where each field comes from (JWS payload = decoded `issuer_signature.jws`):
 | payment_ref | JWS `payment.ref` (= `fulfillment.authorization.payment_ref`) |
 | network | `PAYMENT-RESPONSE.network` (CAIP-2) |
 | asset | JWS `payment.asset` |
-| net_amount | JWS `payment.net_amount`, string, smallest units (USDC: 6 decimals, "1990" = $0.00199) |
+| settled_amount | JWS `payment.settled_amount`, or `payment.net_amount` on payload ≤ 7. String, smallest units (USDC: 6 decimals, "2000" = $0.002). This is the on-chain transfer to the payee. |
 | model | JWS `route.model` |
 | output_hash | JWS `output.hash` (keccak256) |
 | receipt_sha256 | sha256 hex of the UTF-8 bytes of the compact `issuer_signature.jws` string |
@@ -66,7 +66,7 @@ B=$(echo "$JWS" | cut -d. -f2 | tr '_-' '/+'); while [ $(( ${#B} % 4 )) -ne 0 ];
 P=$(echo "$B" | base64 -d)
 echo "$P" | jq -c --arg v "$VERIFY_URL" --arg n "$NETWORK" --arg h "$(printf %s "$JWS" | sha256sum | cut -d' ' -f1)" \
  '{compute:{vendor:"chit402",task_id,verify_url:$v,payment_ref:.payment.ref,network:$n,asset:.payment.asset,
-   net_amount:.payment.net_amount,model:.route.model,output_hash:.output.hash,receipt_sha256:$h}}'
+   settled_amount:(.payment.settled_amount // .payment.net_amount),model:.route.model,output_hash:.output.hash,receipt_sha256:$h}}'
 ```
 
 ## When payment_ref shows up (tested 2026-09-26, Solana USDC)

@@ -37,6 +37,16 @@ Tier-1 HMAC covers (order-stable; must match SDK `canonicalReceiptPayload`):
 
 Adding `route.provider` is a breaking change for verifiers that recompute the old field set — republish `xfuel-sdk` in lockstep. Old unsigned receipts are unaffected.
 
+## Signed payload v8
+
+Current issuer payload (`issuer_signature.payload_version: 8`). The canonical field list, the cost-plus identity, and the optional USDC Transfer reconciliation are in [VERIFY_ALGORITHM.md](./VERIFY_ALGORITHM.md) §3.2. Decision: [ADR 0011](./adr/0011-receipt-v8-onchain-amount.md).
+
+HMAC order (lockstep across gateway, SDK, `packages/verify`, and `scripts/verify-receipt.mjs`):
+
+`task_id`, `payment.rail`, `payment.ref`, `payment.gross_amount`, `payment.settled_amount`, `route_margin_bps`, `route_margin_amount`, `receipt_floor_amount`, `provider_cogs_amount`, `tier2_proof_amount`, `provider_cogs.actual`, `route.model`, `model_commitment`, `route.provider`, `output.hash`, `binding.expected_commitment`, `caller_binding.payer_wallet`, `agent_pubkey`, `api_key_hash`.
+
+`payment.settled_amount` is the USDC Transfer to the payee and equals `payment.gross_amount` once a payment ref exists. `route_margin_bps` is live pricing (default 100), inside that amount. `net_amount`, `fee_amount`, and `protocol_fee_bps` are payload ≤ 7 only and are not re-signed.
+
 ## Provider COGS (ADR 0005)
 
 Buyer `payment.rail` stays USDC / x402 (default). Provider inventory burn is separate and is reconciled **after** inference against the provider that actually served:
