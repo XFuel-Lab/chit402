@@ -394,7 +394,10 @@ Args:
   - task_id (string): from chat_completions (xfuel.task_id) or submit_inference
 
 Returns JSON: { task_id, status, proof_outcome, verify_url, message_type, chain_id, gross_amount,
-fee_amount, net_amount, fee_bps, payment_rail, payment_ref, result, sp1_proof, created_at, updated_at }.
+settled_amount, accounting, payment_rail, payment_ref, result, sp1_proof, created_at, updated_at }.
+On USDC/x402, settled_amount is the on-chain transfer to the payee (null until a rolling bill is paid)
+and accounting.internal_breakdown.route_margin_bps is the live route margin (default 100), inside that
+amount — not a deduction. fee_amount, net_amount, and fee_bps appear only on the legacy TFUEL rail.
 'verify_url' is a public, no-auth receipt page you can open or share to prove settlement.
 'status' reaches a terminal value ('completed' | 'fee_collected' | 'failed'); 'proof_outcome'
 is one of 'pending' | 'valid' | 'regenerable' | 'invalid'.`,

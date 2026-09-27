@@ -5,6 +5,7 @@ import {
   quoteTask,
   quoteFromCogs,
   internalSettlementAccounting,
+  publishedPaymentEconomics,
   costPlusEnabled,
   platformFeeBps,
   checkPricingConfig,
@@ -442,6 +443,40 @@ test('floor-priced 2000 atomic charge keeps the 100 bps margin inside the settle
   const sum = ['provider_cogs_amount', 'route_margin_amount', 'receipt_floor_amount', 'tier2_proof_amount']
     .reduce((acc, key) => acc + BigInt(a.internal_breakdown[key]), 0n);
   assert.equal(sum, 2000n);
+});
+
+test('published USDC economics are the settled amount, not a 50 bps net', () => {
+  const q = quoteFromCogs(6n);
+  const usdc = publishedPaymentEconomics({
+    rail: 'usdc',
+    grossAmount: q.amount,
+    paymentRef: 'base:0xabc',
+    cogs: q.provider_cogs,
+    pricing: q,
+  });
+  assert.equal(usdc.gross_amount, '2000');
+  assert.equal(usdc.settled_amount, '2000');
+  assert.equal(usdc.accounting.internal_breakdown.route_margin_bps, 100);
+  assert.equal(usdc.fee_amount, undefined);
+  assert.equal(usdc.net_amount, undefined);
+  assert.equal(usdc.fee_bps, undefined);
+
+  const unpaid = publishedPaymentEconomics({ rail: 'usdc', grossAmount: '0' });
+  assert.equal(unpaid.settled_amount, null);
+  assert.equal(unpaid.accounting.internal_breakdown.route_margin_bps, platformFeeBps());
+
+  const tfuel = publishedPaymentEconomics({
+    rail: 'tfuel',
+    grossAmount: '10000',
+    feeAmount: '50',
+    netAmount: '9950',
+    feeBps: 50,
+  });
+  assert.equal(tfuel.fee_amount, '50');
+  assert.equal(tfuel.net_amount, '9950');
+  assert.equal(tfuel.fee_bps, 50);
+  assert.equal(tfuel.settled_amount, undefined);
+  assert.equal(tfuel.accounting, undefined);
 });
 
 test('route margin bps follows the quote, not a hard-coded 50', () => {

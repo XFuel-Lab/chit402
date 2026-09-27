@@ -450,6 +450,61 @@ export function internalSettlementAccounting({
 }
 
 /**
+ * Payment fields a public task response may publish.
+ *
+ * USDC/x402 is one transfer of the charged amount. `settled_amount` equals
+ * that transfer once `paymentRef` exists, and is null while a rolling bill
+ * has not been collected. `accounting.route_margin_bps` comes from the quote
+ * or live `platformFeeBps`. The legacy net/fee split is not published.
+ *
+ * The TFUEL rail still computes a protocol fee. Those fields stay, and only
+ * on that rail.
+ *
+ * Display only. This does not price or charge.
+ *
+ * @param {object} [input]
+ * @param {string} [input.rail]
+ * @param {string|number|bigint} [input.grossAmount]
+ * @param {string|null} [input.paymentRef]
+ * @param {string|number|bigint|null} [input.cogs]
+ * @param {object|null} [input.pricing]
+ * @param {string|number|null} [input.feeAmount] TFUEL protocol fee, already computed
+ * @param {string|number|null} [input.netAmount]
+ * @param {number|null} [input.feeBps]
+ */
+export function publishedPaymentEconomics({
+  rail = 'usdc',
+  grossAmount = '0',
+  paymentRef = null,
+  cogs = null,
+  pricing = null,
+  feeAmount = null,
+  netAmount = null,
+  feeBps = null,
+} = {}) {
+  const gross = grossAmount == null || grossAmount === '' ? '0' : String(grossAmount);
+  if (rail === 'tfuel') {
+    return {
+      gross_amount: gross,
+      fee_amount: feeAmount == null || feeAmount === '' ? '0' : String(feeAmount),
+      net_amount: netAmount == null || netAmount === '' ? '0' : String(netAmount),
+      fee_bps: feeBps == null || feeBps === '' ? null : Number(feeBps),
+    };
+  }
+  const onChain = paymentRef != null && paymentRef !== '';
+  return {
+    gross_amount: gross,
+    settled_amount: onChain ? gross : null,
+    accounting: internalSettlementAccounting({
+      settledAmount: gross,
+      cogs,
+      pricing,
+      onChain,
+    }),
+  };
+}
+
+/**
  * Price a call as provider cost plus a stated percentage.
  *
  * Takes COGS as an argument rather than fetching it, because the measured figure
@@ -700,6 +755,7 @@ export default {
   quoteUsage,
   quoteFromCogs,
   internalSettlementAccounting,
+  publishedPaymentEconomics,
   costPlusEnabled,
   platformFeeBps,
   tier2ProofUnits,

@@ -39,9 +39,18 @@ const TASK_REQUEST_OUTPUT_SCHEMA = {
     payment_rail: { type: 'string', enum: ['usdc', 'tfuel'] },
     payment_ref: { type: ['string', 'null'], description: 'network:txHash settlement reference' },
     verify_url: { type: 'string', description: 'public, no-auth receipt page' },
-    net_amount: { type: 'string' },
-    fee_amount: { type: 'string' },
-    fee_bps: { type: 'integer' },
+    gross_amount: { type: 'string', description: 'Charged amount. On USDC/x402 this is the amount the payee receives.' },
+    settled_amount: {
+      type: ['string', 'null'],
+      description: 'USDC/x402: the on-chain Transfer to the payee. Equals gross_amount once payment_ref exists; null while a rolling bill is unpaid.',
+    },
+    accounting: {
+      type: 'object',
+      description: 'USDC/x402 internal accounting inside the settled amount. Not an on-chain deduction. route_margin_bps is live pricing (default 100).',
+    },
+    fee_amount: { type: 'string', description: 'Legacy TFUEL rail only. Absent on USDC/x402.' },
+    net_amount: { type: 'string', description: 'Legacy TFUEL rail only. Absent on USDC/x402.' },
+    fee_bps: { type: 'integer', description: 'Legacy TFUEL protocol fee in bps. Absent on USDC/x402.' },
   },
   required: ['task_id', 'status', 'verify_url'],
 };

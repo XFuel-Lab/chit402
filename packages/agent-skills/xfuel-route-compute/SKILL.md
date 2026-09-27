@@ -56,7 +56,7 @@ Tasks route first-available, lowest-cost (see repo `AGENTS.md` / `circuits/theta
    and read `routedTo` / `provider_tag` from the status/webhook.
 
 3. Return a routing preview: enabled tiers (from health/listener status), the
-   default chain, and the fee model (0.5% default).
+   default chain, and the fee model (USDC/x402: 100 bps route margin inside the settled amount; legacy TFUEL: 0.5%).
 
 ## Cost preview (payment rails)
 

@@ -52,7 +52,7 @@ Submit an AI task.
 | `tool_choice` | no | `auto` \| `none` \| `{type:"function",function:{name}}` |
 | `max_tokens` | no | Output budget. Default 500 (same as the adapters). `/task-quote` forecasts at this ceiling; under rolling settlement you pay measured usage on the next request. |
 | `temperature` | no | Sampling temperature; default 0.7 |
-| `fee_bps` | no | Default 50 (0.5%); range 50–100 |
+| `fee_bps` | no | Legacy TFUEL protocol-fee override only (default 50 = 0.5%; range 50–100). USDC/x402 ignores it. That rail publishes `settled_amount` and `accounting.internal_breakdown.route_margin_bps` from live pricing (default 100), inside the settled amount. |
 | `payment` | no | `{ "rail": "usdc", "network": "base" }` — default USDC/x402. Take `network` from `POST /task-quote` rather than hardcoding. |
 | `callback_url` | no | Per-task webhook |
 | `callback_secret` | no | HMAC secret for per-task webhook |

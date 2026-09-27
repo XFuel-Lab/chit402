@@ -14,6 +14,10 @@ All notable changes to the Chit402 SDK are documented here. This project adheres
   inside that amount, not a fee deducted on chain.
 - Versions **≤ 7** keep the previous HMAC field list, so existing signatures
   still verify. Do not re-sign them.
+- **`Receipt`**, **`TaskRequestResponse`**, **`TaskStatusResponse`**, and
+  **`ProofResponse.fee`** include optional `settled_amount` and `accounting`.
+  `fee_amount`, `net_amount`, and `fee_bps` stay optional for the legacy TFUEL
+  rail and for payload ≤ 7 receipts.
 
 ## 0.6.0 — ES256/JWKS receipt verification + Chit402 public cutover
 

@@ -42,7 +42,7 @@ The SDK defaults to `https://api.xfuel.app` + the public demo key, so
 
 - **Amounts** are USDC 6-decimal strings (`10000` = $0.01), not wei. Minimum task amount is `10000`.
 - **Settlement home**: `chain_id: "base"` is the default settlement/routing home (USDC via x402; ADR 0002). `theta`, `akash`, `bittensor`, etc. are routing hints.
-- **Fees**: 50–100 bps (default 50 = 0.5%). Token-light: the protocol USDC fee lands at **one Base address** (`X402_PAY_TO` / Splits; ADR 0001). The legacy `CoreRevenueSplitter` 30/30/25/15 split is **deprecated** from the fee path.
+- **Fees**: USDC/x402 charges cost-plus. The payee receives the settled amount in full; the route margin (live pricing, default 100 bps) is internal accounting inside that amount. The legacy TFUEL rail still uses 50–100 bps (default 50 = 0.5%). Token-light: buyer USDC lands at **one Base address** (`X402_PAY_TO` / Splits; ADR 0001). The legacy `CoreRevenueSplitter` 30/30/25/15 split is **deprecated** from the fee path.
 - **Proof systems**: `sp1` (default) or `zkgpt`. The `proof_system` in a status
   response is authoritative (the backend may fall back to SP1 if zkGPT is unset).
 - **Webhook signature**: `X-XFuel-Signature: sha256=<hmac>`, HMAC-SHA256 over the

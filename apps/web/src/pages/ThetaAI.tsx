@@ -577,7 +577,9 @@ function ROICalculator({ serviceType, gpuTier, effectivePrice }: {
 
       <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: '#55556a' }}>
         At {daily.toLocaleString()} calls/day x {effectivePrice.toFixed(4)} TFUEL/call.
-        Provider receives 99.5% after 0.5% protocol fee.
+        Legacy TFUEL rail only: the provider receives 99.5% after a 0.5% protocol fee.
+        USDC/x402 does not deduct that fee — the payee receives the settled amount in full,
+        and the 100 bps route margin is accounting inside it.
         GPU cost estimate: ${monthlyCost}/mo for {GPU_TIERS[gpuTier].name}.
         TFUEL price: ${tfuelPrice}.
       </div>
@@ -1261,7 +1263,7 @@ npx tsx examples/flagship-demo.ts
                   </div>
                 </div>
                 <div>
-                  <div style={{ color: '#55556a', fontSize: '0.7rem', marginBottom: '0.15rem' }}>Protocol Fee (0.5%)</div>
+                  <div style={{ color: '#55556a', fontSize: '0.7rem', marginBottom: '0.15rem' }}>Legacy TFUEL fee (0.5%)</div>
                   <div style={{ fontFamily: 'var(--font-mono)' }}>
                     {(effectivePrice * 0.005).toFixed(6)} TFUEL
                   </div>

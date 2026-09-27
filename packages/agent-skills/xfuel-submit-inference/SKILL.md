@@ -103,7 +103,8 @@ to sign real USDC on Base).
      // proof_system: 'sp1',
      // callback_url: 'https://your-agent/webhook',  // skip polling
    });
-   // task.task_id, task.fee_amount, task.net_amount, task.payment_rail, task.payment_ref
+   // task.task_id, task.settled_amount, task.accounting, task.payment_rail, task.payment_ref
+   // TFUEL only: task.fee_amount, task.net_amount, task.fee_bps
    ```
 
    The `payer` makes `submitInference` run the full 402→pay→retry handshake
@@ -132,8 +133,11 @@ to sign real USDC on Base).
 
 ## Notes
 
-- Fee is 0.5% by default (`fee_bps` 50–100). Fees settle as **USDC on Base** to
-  `X402_PAY_TO` / Splits v2 (token-light; ADR 0001) — no hardcoded per-fee split.
+- USDC/x402: the payee receives `settled_amount` in full. The route margin
+  (live pricing, default 100 bps) is `accounting` inside that amount, not a
+  deduction. The whole transfer settles as **USDC on Base** to `X402_PAY_TO` /
+  Splits v2 (token-light; ADR 0001). The legacy TFUEL rail still uses a 0.5%
+  protocol fee (`fee_bps` 50–100).
 - Payment rails: USDC/x402 on Base is the default. See
   `../_shared/reference/payments-x402.md`.
 - Full request/response schema: `../_shared/reference/m2m-openapi.yaml`.
