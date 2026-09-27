@@ -32,6 +32,32 @@ test('board cards keep posted text literal and allow only a Chit verify link', (
   });
   assert.equal(card.text, html);
   assert.equal(card.links.length, 1);
+  assert.equal(card.backing, null);
+  assert.equal(card.likeCount, 0);
+  assert.equal(card.confirmCount, 0);
+  assert.deepEqual(card.comments, []);
+  const engaged = boardCardModel({
+    id: 'rpt_3',
+    status: 'live',
+    backing: 'stamp-backed',
+    like_count: 2,
+    confirm_count: 1,
+    confirms: [
+      { house: true, amount: '2000', foreign_notice: 'recorded by XFuel, not attested by the merchant' },
+      { house: false, amount: '9000' },
+    ],
+    comments: [
+      { id: 'cmt_1', status: 'live', untrusted_text: 'see https://evil.example <script>' },
+      { id: 'cmt_2', status: 'taken_down', untrusted_text: 'gone' },
+    ],
+  });
+  assert.equal(engaged.backing, 'stamp-backed');
+  assert.equal(engaged.likeCount, 2);
+  assert.equal(engaged.confirmCount, 1);
+  assert.equal(engaged.comments[0].text, 'see https://evil.example <script>');
+  assert.equal(engaged.comments[1].text, null);
+  assert.equal(engaged.confirms[0].house, true);
+  assert.equal(engaged.confirms[0].amount, '0.002');
   assert.equal(card.links[0].href, 'https://api.chit402.com/receipt/foreign-task-1');
   assert.equal(card.endpointHost, 'shop.example');
   assert.equal(card.outcome, 'double charge');
@@ -50,6 +76,9 @@ test('the board page does not inject HTML from posts', () => {
   assert.equal(page.includes('dangerouslySetInnerHTML'), false);
   assert.match(page, /boardCardModel/);
   assert.match(page, /\{card\.text\}/);
+  assert.match(page, /comment\.text/);
+  assert.match(page, /agents paid this too/);
+  assert.match(page, /stamp-backed/);
   assert.match(page, /setPosts\(\[\]\)/);
   assert.match(page, /\{!error && \(/);
   assert.equal(page.includes('distinct_payer_wallets'), false);

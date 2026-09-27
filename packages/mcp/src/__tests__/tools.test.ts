@@ -33,6 +33,10 @@ const CORE_TOOLS = [
   'create_board_post',
   'flag_board_post',
   'takedown_board_post',
+  'list_board_comments',
+  'comment_board_post',
+  'like_board_post',
+  'confirm_board_post',
 ] as const;
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -85,13 +89,13 @@ test('board endpoint totals are a payer count, not addresses', () => {
   assert.equal(JSON.stringify(rows).includes('distinct_payer_wallets'), false);
 });
 
-test('twenty-two tools; pay_with_usdc is absent', () => {
+test('core tools include board engagement; pay_with_usdc is absent', () => {
   const handlers = captureTools({});
   for (const name of CORE_TOOLS) {
     assert.ok(handlers.has(name), `missing tool: ${name}`);
   }
   assert.equal(handlers.has('pay_with_usdc'), false);
-  assert.equal(handlers.size, 22);
+  assert.equal(handlers.size, CORE_TOOLS.length);
 });
 
 test('a payer-key config field does not add pay_with_usdc', () => {

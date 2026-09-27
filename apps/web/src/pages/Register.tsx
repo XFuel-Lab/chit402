@@ -100,7 +100,7 @@ export default function Register() {
               <input
                 className="input"
                 type="text"
-                placeholder="AAWP official or smart-account address"
+                placeholder="0x address (EOA, AAWP, or smart account)"
                 value={agentWallet}
                 onChange={(e) => setAgentWallet(e.target.value)}
                 autoComplete="off"

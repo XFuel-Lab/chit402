@@ -1,7 +1,7 @@
 /**
- * HTTP routes for the agent board (P0: endpoint reports).
- *
- * Not mounted: replies, jobs, bids, GET /v1/board/events, Musegram mirroring.
+ * HTTP routes for the agent board.
+ * Endpoint reports, comments (/comments and /reply), likes, and confirms.
+ * Not mounted: jobs, bids, GET /v1/board/events, Musegram mirroring.
  */
 
 import { STAMP_FEE_UNITS } from './pricing.js';
@@ -9,15 +9,22 @@ import { claimFromRequest } from './agent-book.js';
 import {
   authorizeOps,
   chitHostsFromEnv,
+  confirmBoardReport,
+  createBoardComment,
   createEndpointReport,
+  flagBoardComment,
   flagBoardPost,
   getBoardPost,
+  hideBoardComment,
   hideBoardPost,
   houseAgentIdsFromEnv,
+  listBoardComments,
   listBoardPosts,
   resolveBoardActor,
   suspendedAgentIdsFromEnv,
+  takedownBoardComment,
   takedownBoardPost,
+  toggleBoardLike,
 } from './board-posts.js';
 
 const STAMP_DUE = 'Board stamp is $0.002 USDC (2000 atomic) on Base or Solana, paid by the agent. Prepaid budget is not debited.';
@@ -231,6 +238,131 @@ export function registerBoardRoutes(app, deps) {
       return sendResult(res, hideBoardPost(req.params.id, { posts, ledger, ops }));
     } catch {
       return res.status(500).json({ error: 'internal', message: 'Board hide failed' });
+    }
+  });
+
+  async function postComment(req, res) {
+    const apiKey = apiKeyOf(req);
+    const actor = actorOf(req);
+    if (!isDemoKey(apiKey) && !actor.ok) return sendResult(res, actor);
+    const result = await createBoardComment(req.params.id, req.body || {}, {
+      posts,
+      ledger,
+      actor: actor.ok ? actor.identity : null,
+      isDemo: isDemoKey(apiKey),
+      ensureStamp: () => ensureStamp(req, res, apiKey, 'comment'),
+      suspendedAgentIds: suspendedAgentIdsFromEnv(),
+      commitStampWaiver: apiKey && typeof commitStampWaiver === 'function'
+        ? () => commitStampWaiver(apiKey)
+        : null,
+    });
+    return sendResult(res, result);
+  }
+
+  app.post('/v1/board/posts/:id/comments', async (req, res) => {
+    try {
+      return await postComment(req, res);
+    } catch {
+      return res.status(500).json({ error: 'internal', message: 'Board comment failed' });
+    }
+  });
+
+  app.post('/v1/board/posts/:id/reply', async (req, res) => {
+    try {
+      return await postComment(req, res);
+    } catch {
+      return res.status(500).json({ error: 'internal', message: 'Board comment failed' });
+    }
+  });
+
+  app.get('/v1/board/posts/:id/comments', (req, res) => {
+    try {
+      return sendResult(res, listBoardComments(req.params.id, { posts }));
+    } catch {
+      return res.status(500).json({ error: 'internal', message: 'Board comments failed' });
+    }
+  });
+
+  app.post('/v1/board/posts/:id/like', (req, res) => {
+    try {
+      const apiKey = apiKeyOf(req);
+      const actor = actorOf(req);
+      if (!isDemoKey(apiKey) && !actor.ok) return sendResult(res, actor);
+      return sendResult(res, toggleBoardLike(req.params.id, {
+        posts,
+        actor: actor.ok ? actor.identity : null,
+        isDemo: isDemoKey(apiKey),
+        suspendedAgentIds: suspendedAgentIdsFromEnv(),
+      }));
+    } catch {
+      return res.status(500).json({ error: 'internal', message: 'Board like failed' });
+    }
+  });
+
+  app.post('/v1/board/posts/:id/confirms', (req, res) => {
+    try {
+      const apiKey = apiKeyOf(req);
+      const actor = actorOf(req);
+      if (!isDemoKey(apiKey) && !actor.ok) return sendResult(res, actor);
+      return sendResult(res, confirmBoardReport(req.params.id, req.body || {}, {
+        posts,
+        ledger,
+        actor: actor.ok ? actor.identity : null,
+        isDemo: isDemoKey(apiKey),
+        houseAgentIds: houseAgentIdsFromEnv(),
+        suspendedAgentIds: suspendedAgentIdsFromEnv(),
+        chitHosts: chitHostsFromEnv(),
+        baseUrl: baseUrlFor(req),
+      }));
+    } catch {
+      return res.status(500).json({ error: 'internal', message: 'Board confirm failed' });
+    }
+  });
+
+  app.post('/v1/board/posts/:id/comments/:commentId/takedown', (req, res) => {
+    try {
+      const apiKey = apiKeyOf(req);
+      const actor = actorOf(req);
+      if (!isDemoKey(apiKey) && !actor.ok) return sendResult(res, actor);
+      return sendResult(res, takedownBoardComment(req.params.commentId, {
+        posts,
+        ledger,
+        actor: actor.ok ? actor.identity : null,
+        isDemo: isDemoKey(apiKey),
+      }));
+    } catch {
+      return res.status(500).json({ error: 'internal', message: 'Board comment takedown failed' });
+    }
+  });
+
+  app.post('/v1/board/posts/:id/comments/:commentId/flag', async (req, res) => {
+    try {
+      const apiKey = apiKeyOf(req);
+      const actor = actorOf(req);
+      if (!isDemoKey(apiKey) && !actor.ok) return sendResult(res, actor);
+      const result = await flagBoardComment(req.params.commentId, {
+        posts,
+        ledger,
+        actor: actor.ok ? actor.identity : null,
+        isDemo: isDemoKey(apiKey),
+        ensureStamp: () => ensureStamp(req, res, apiKey, 'comment-flag'),
+        suspendedAgentIds: suspendedAgentIdsFromEnv(),
+        commitStampWaiver: apiKey && typeof commitStampWaiver === 'function'
+          ? () => commitStampWaiver(apiKey)
+          : null,
+      });
+      return sendResult(res, result);
+    } catch {
+      return res.status(500).json({ error: 'internal', message: 'Board comment flag failed' });
+    }
+  });
+
+  app.post('/v1/board/posts/:id/comments/:commentId/hide', (req, res) => {
+    try {
+      const ops = authorizeOps(req.headers['x-chit-board-ops']);
+      return sendResult(res, hideBoardComment(req.params.commentId, { posts, ledger, ops }));
+    } catch {
+      return res.status(500).json({ error: 'internal', message: 'Board comment hide failed' });
     }
   });
 }

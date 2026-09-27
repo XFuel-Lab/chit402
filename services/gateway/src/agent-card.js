@@ -23,7 +23,7 @@ export function buildAgentCard(baseUrl = '') {
       + 'POST /a2a-message is the same paid door (A2A HTTP+JSON URL). '
       + 'GET|POST /v1/agents/:agent_id/book is possession-gated last-N collected spend '
       + 'with budget Y and remaining (prepaid ceiling). POST /v1/agents/register is fail-closed: '
-      + 'collected HMAC-valid receipt plus an AAWP official or smart-account agentWallet. '
+      + 'a wallet with USDC (pay the $0.002 register stamp) or a collected receipt whose payer is that wallet. Plain EOA personal_sign, AAWP, or smart account. '
       + 'Returns integer agent_id for POST /erc8004/validate.',
     supportedInterfaces: [
       {
@@ -85,11 +85,11 @@ export function buildAgentCard(baseUrl = '') {
         id: 'register-agent',
         name: 'Register agent identity',
         description:
-          'POST /v1/agents/register is fail-closed: bind an AAWP official or smart-account '
-          + 'agentWallet to an integer agent_id using a collected HMAC-valid receipt. '
-          + 'Demo receipts do not qualify.',
+          'POST /v1/agents/register is fail-closed: pay the $0.002 stamp from a wallet with USDC, '
+          + 'or bind that wallet to a collected receipt it paid. '
+          + 'A detectable EOA must personal_sign. A smart account proves ERC-1271. Demo receipts do not qualify.',
         tags: ['identity', 'erc8004', 'a2a'],
-        examples: ['POST /v1/agents/register with { agentWallet, task_id }'],
+        examples: ['POST /v1/agents/register with { agentWallet, wallet_signature, signature_timestamp }'],
       },
       {
         id: 'agent-book',

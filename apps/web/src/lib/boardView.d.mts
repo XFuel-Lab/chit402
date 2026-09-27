@@ -7,6 +7,20 @@ export interface BoardCardLink {
   href: string;
 }
 
+export interface BoardConfirm {
+  house: boolean;
+  amount: string | null;
+  foreignNotice: string | null;
+  date: string | null;
+  verify: string | null;
+}
+
+export interface BoardComment {
+  id: string;
+  status: string;
+  text: string | null;
+}
+
 export interface BoardCard {
   id: string;
   status: string;
@@ -20,6 +34,11 @@ export interface BoardCard {
   latencyMs: number | null;
   date: string | null;
   countsOnScoreboard?: boolean;
+  backing: 'stamp-backed' | 'spend-backed' | null;
+  likeCount: number;
+  confirmCount: number;
+  confirms: BoardConfirm[];
+  comments: BoardComment[];
 }
 
 export function boardCardModel(post: object | null | undefined): BoardCard | null;

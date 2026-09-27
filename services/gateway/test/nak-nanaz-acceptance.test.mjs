@@ -133,7 +133,11 @@ describe('A) Idempotent replay classification', () => {
   });
 
   test('register re-submit classifies idempotent_replay with replay_of link', async () => {
-    const receipt = sign(collectedReceipt({ task_id: 'task-reg-replay', ref: 'base:0xregreplay' }));
+    const receipt = sign(collectedReceipt({
+      task_id: 'task-reg-replay',
+      ref: 'base:0xregreplay',
+      caller_binding: { payer_wallet: WALLET },
+    }));
     const store = new Map([[receipt.task_id, receipt]]);
     const deps = {
       registry: new AgentRegistry(),
@@ -141,6 +145,7 @@ describe('A) Idempotent replay classification', () => {
       loadReceipt: async (id) => store.get(id) || null,
       verify: (r) => verifyReceiptHmac(r, VERIFY_KEY, { sigField: 'hmac_attestation' }),
       bindWallet: async (w) => ({ ok: true, address: w, kind: 'aawp', official: true }),
+      proveSmartControl: async () => ({ ok: true }),
       postA2A: async (fields) => ({ message_id: 'a2a', status: 'accepted', ...fields }),
     };
 
@@ -243,6 +248,7 @@ describe('B) Path-rotation prove', () => {
     const receipt = sign(collectedReceipt({
       task_id: 'task-reg-rotate',
       ref: 'base:0xregrotate',
+      caller_binding: { payer_wallet: WALLET },
     }));
     const store = new Map([[receipt.task_id, receipt]]);
     const registry = new AgentRegistry();
@@ -253,6 +259,7 @@ describe('B) Path-rotation prove', () => {
       loadReceipt: async (id) => store.get(id) || null,
       verify: (r) => verifyReceiptHmac(r, VERIFY_KEY, { sigField: 'hmac_attestation' }),
       bindWallet: async (w) => ({ ok: true, address: w, kind: 'aawp', official: true }),
+      proveSmartControl: async () => ({ ok: true }),
       postA2A: async () => ({ status: 'accepted' }),
     };
 

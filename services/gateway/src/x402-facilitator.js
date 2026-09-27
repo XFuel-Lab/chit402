@@ -380,6 +380,23 @@ export function payerFromPaymentHeader(header) {
 }
 
 /**
+ * Network the client claims to be paying on, before verify/settle.
+ * EIP-3009 payloads carry `accepted.network`. A missing field is null.
+ * @param {string|null|undefined} header
+ * @returns {string|null}
+ */
+export function paymentHeaderNetwork(header) {
+  const decoded = decodePaymentHeader(header);
+  if (!decoded) return null;
+  const raw = decoded.accepted?.network
+    ?? decoded.network
+    ?? decoded.payload?.network
+    ?? null;
+  if (raw == null || raw === '') return null;
+  return String(raw);
+}
+
+/**
  * Absolute catalog URL for CDP Bazaar. Relative paths are not catalogable
  * (`paymentPayload.resource` must name the paid endpoint).
  * @param {string|{url?:string}|undefined} resource
