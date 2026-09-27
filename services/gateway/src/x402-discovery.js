@@ -1163,7 +1163,8 @@ export function buildOpenApiSpec(baseUrl = '') {
           summary: 'Register an agent identity',
           description:
             'Fail-closed identity. Start from a wallet that holds USDC on Base. '
-            + 'Omit task_id and pay the $0.002 stamp (2000 atomic USDC) on this route: the first call is HTTP 402 with PAYMENT-REQUIRED, then retry with PAYMENT-SIGNATURE. '
+            +             'Omit task_id and pay the $0.002 stamp (2000 atomic USDC) on this route: the first call is HTTP 402 with PAYMENT-REQUIRED. The accepts entry is Base (eip155) only; Solana is not accepted. '
+            + 'Retry with PAYMENT-SIGNATURE from that same wallet. A different authorization.from is rejected before settle. '
             + 'The paying wallet becomes agentWallet and that stamp is the collected receipt. A real settled payment is required; a waiver does not register. '
             + 'A plain EOA personal_signs chit.register.pay|checksum address|unix seconds (300 second window). '
             + 'Alternatively pass task_id of an existing collected receipt. The wallet must be that receipt\'s on-chain payer. '

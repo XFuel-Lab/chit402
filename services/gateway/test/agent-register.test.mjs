@@ -483,21 +483,33 @@ test('paid register is a $0.002 stamp from the signing wallet', async () => {
   assert.equal(waived.error, 'stamp_payment_required');
   assert.equal(d.registry.byId.size, 0);
 
+  const otherPayer = Wallet.createRandom().address;
+  const mismatchDeps = deps({}, {
+    bindWallet: eoaBind,
+    proveSmartControl: null,
+    ensureRegisterStamp: async () => ({
+      ok: true,
+      waived: false,
+      settlement: { paymentRef: 'base:0xnotme', amount: '2000', payerWallet: otherPayer },
+    }),
+  });
   const mismatch = await registerAgent({
     agentWallet: signer.address,
     wallet_signature: signature,
     signature_timestamp: timestamp,
-  }, {
-    ...d,
-    ensureRegisterStamp: async () => ({
-      ok: true,
-      waived: false,
-      settlement: { paymentRef: 'base:0xnotme', amount: '2000', payerWallet: Wallet.createRandom().address },
-    }),
-  });
+  }, mismatchDeps);
   assert.equal(mismatch.status, 403);
   assert.equal(mismatch.error, 'payer_mismatch');
+  assert.equal(mismatch.body, undefined);
   assert.equal(d.ledger.entries.length, 0);
+  assert.equal(mismatchDeps.ledger.entries.length, 1);
+  const owed = mismatchDeps.ledger.entries[0];
+  assert.equal(owed.evidence, 'refund_owed');
+  assert.equal(owed.collected, false);
+  assert.equal(owed.refund_status, 'owed');
+  assert.equal(owed.payment_ref, 'base:0xnotme');
+  assert.equal(owed.payer, otherPayer);
+  assert.equal(mismatchDeps.registry.get(owed.agent_id).agentWallet, null);
 
   const challenge = await registerAgent({
     agentWallet: signer.address,

@@ -14,7 +14,7 @@ import { getAddress, hashMessage, Interface, keccak256, toUtf8Bytes, verifyMessa
 import logger from './logger.js';
 import { bindAgentWallet } from './agent-wallet.js';
 import { readAndVerifyReceipt } from './receipt-oracle.js';
-import { receiptQualifiesForLedger, noteIdempotentReplay, SETTLEMENT_STATUS } from './usage-settled.js';
+import { receiptQualifiesForLedger, noteIdempotentReplay, markRefundOwed, SETTLEMENT_STATUS } from './usage-settled.js';
 import { buildValidationRecord } from './erc8004.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
 
@@ -555,6 +555,57 @@ function payerGateFailure(payer, bound) {
 }
 
 /**
+ * A settled register payment we will not turn into an agent. The row stays on
+ * the book as refund_owed so the USDC is not dropped. The wallet is not bound.
+ */
+function recordRegisterRefundOwed(ledger, registry, { paymentRef, amount, payer }) {
+  if (!ledger || typeof ledger.append !== 'function' || !registry || typeof registry.allocate !== 'function') {
+    return null;
+  }
+  if (!paymentRef) return null;
+  const ref = String(paymentRef);
+  const taskId = `register-refund-${crypto.createHash('sha256').update(ref).digest('hex').slice(0, 32)}`;
+  const existing = typeof ledger.findByRef === 'function' ? ledger.findByRef(ref) : null;
+  if (existing) {
+    const marked = markRefundOwed(ledger, {
+      taskId: existing.task_id,
+      amount: amount != null ? String(amount) : existing.amount,
+      payer: payer || existing.payer,
+      paymentRef: ref,
+    });
+    return marked.ok ? marked.entry : existing;
+  }
+  const identity = registry.allocate({ taskId, paymentRef: ref });
+  const receipt = {
+    schema: 'xfuel.receipt.v4',
+    task_id: taskId,
+    status: 'failed',
+    payment: {
+      rail: 'usdc',
+      ref,
+      collected: true,
+      gross_amount: String(amount || STAMP_FEE_UNITS),
+      payer: payer || null,
+    },
+    route: {
+      model: 'chit402/register',
+      hub: 'chit',
+      provider: 'chit402',
+      resource: 'https://api.chit402.com/v1/agents/register',
+    },
+  };
+  const appended = ledger.append(receipt, { payer: payer || null, agentId: identity.agent_id });
+  if (!appended.ok) return null;
+  const marked = markRefundOwed(ledger, {
+    taskId,
+    amount: String(amount || STAMP_FEE_UNITS),
+    payer: payer || null,
+    paymentRef: ref,
+  });
+  return marked.ok ? marked.entry : appended.entry;
+}
+
+/**
  * Wallet-only register: pay the $0.002 stamp on this route. The paying wallet
  * is the agent wallet, and that stamp is the collected receipt on the book.
  * A waiver is not a payment and cannot register.
@@ -620,25 +671,36 @@ async function registerPaidStamp(body, deps) {
   }
   const paymentRef = stamp.settlement?.paymentRef ? String(stamp.settlement.paymentRef) : null;
   const paidPayer = evmPayer(stamp.settlement?.payerWallet);
-  if (!paymentRef || !paidPayer) {
-    return { ok: false, status: 402, error: 'stamp_payment_required', message: 'Register stamp did not include a payer and payment ref' };
+  const rawPayer = stamp.settlement?.payerWallet ? String(stamp.settlement.payerWallet) : null;
+  if (!paymentRef) {
+    return { ok: false, status: 402, error: 'stamp_payment_required', message: 'Register stamp did not include a payment ref' };
   }
-  if (paidPayer !== getAddress(bound.address)) {
+  if (!paidPayer || paidPayer !== getAddress(bound.address)) {
+    recordRegisterRefundOwed(ledger, registry, {
+      paymentRef,
+      amount: stamp.settlement?.amount,
+      payer: rawPayer,
+    });
     return {
       ok: false,
       status: 403,
       error: 'payer_mismatch',
-      message: 'The stamp must be paid by agentWallet',
+      message: 'The stamp settled from a wallet other than agentWallet. The payment is on the book as refund_owed. This wallet is not registered.',
     };
   }
   let paid = 0n;
   try { paid = BigInt(String(stamp.settlement.amount)); } catch { paid = 0n; }
   if (paid < BigInt(STAMP_FEE_UNITS)) {
+    recordRegisterRefundOwed(ledger, registry, {
+      paymentRef,
+      amount: stamp.settlement?.amount,
+      payer: paidPayer,
+    });
     return {
       ok: false,
       status: 402,
       error: 'stamp_underpaid',
-      message: `Register stamp ${paid} is below ${STAMP_FEE_UNITS}`,
+      message: `Register stamp ${paid} is below ${STAMP_FEE_UNITS}. The payment is on the book as refund_owed.`,
     };
   }
 

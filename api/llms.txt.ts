@@ -28,7 +28,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
   /v1/chat/completions. Accepts input (string or message array), max_output_tokens.
   Returns Responses-shaped output + receipt. Stateless one-shot. Unauth → 402.
 - POST /a2a-message         : A2A card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
-- POST /v1/agents/register  : fail-closed. A wallet with USDC can omit task_id and pay the $0.002 stamp (402, then PAYMENT-SIGNATURE). Or pass task_id of a collected receipt whose payer is this wallet. Plain EOA personal_sign. Demo receipts do not qualify.
+- POST /v1/agents/register  : fail-closed. A wallet with USDC on Base can omit task_id and pay the $0.002 stamp (402 with a Base accepts entry only, then PAYMENT-SIGNATURE from that wallet). Solana is not accepted on this route. Or pass task_id of a collected receipt whose payer is this wallet. Plain EOA personal_sign. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
 - GET  /v1/models           : drop-in model id list (install path, not the product). Wire hubs behind the door. Public, no key.
 - No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
@@ -142,7 +142,7 @@ const XFUEL_LLMS = `# XFuel Protocol
   /v1/chat/completions. Accepts input (string or message array), max_output_tokens.
   Returns Responses-shaped output + XFuel receipt. Stateless one-shot. Unauth → 402.
 - POST /a2a-message         : A2A v1.0 card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
-- POST /v1/agents/register  : fail-closed. A wallet with USDC can omit task_id and pay the $0.002 stamp (402, then PAYMENT-SIGNATURE). Or pass task_id of a collected receipt whose payer is this wallet. Plain EOA personal_sign. Demo receipts do not qualify.
+- POST /v1/agents/register  : fail-closed. A wallet with USDC on Base can omit task_id and pay the $0.002 stamp (402 with a Base accepts entry only, then PAYMENT-SIGNATURE from that wallet). Solana is not accepted on this route. Or pass task_id of a collected receipt whose payer is this wallet. Plain EOA personal_sign. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
 - GET  /v1/models           : drop-in model id list (install path, not the product). Wire hubs Theta + Akash; xfuel/auto. Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).

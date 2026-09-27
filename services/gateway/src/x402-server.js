@@ -20,7 +20,8 @@ import { openrouterHouseResaleEnabled } from './openrouter-infer.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { normalizeRequestedTier } from './tier-policy.js';
 import { getHubCatalog, resolveCatalogModel, requestShape } from './hub-catalog.js';
-import { payerFromPaymentHeader } from './x402-facilitator.js';
+import { getAddress } from 'ethers';
+import { isSolanaNetwork, payerFromPaymentHeader, paymentHeaderNetwork } from './x402-facilitator.js';
 import { parsePrivacyProduct, PRIVACY_PRODUCT_ATTEST } from './private-desk-attest.js';
 
 /**
@@ -354,6 +355,8 @@ export async function runX402Handshake(req, {
   resource = null,
   l1Anchor = null,
   quoteOpts = null,
+  evmOnly = false,
+  expectedPayer = null,
 } = {}) {
   const priceBody = body || req.body;
   const bindParse = parseIssuanceBindFromBody(priceBody);
@@ -399,12 +402,12 @@ export async function runX402Handshake(req, {
         baseUrl,  // Required for absolute resource URL (CDP Bazaar cataloging)
         resource,
         issuance_bind,
-        // Solana as second payment network (optional)
-        solana: cfg.solana?.enabled ? {
+        // Solana as second payment network (optional). Register is Base-only.
+        solana: evmOnly || !cfg.solana?.enabled ? undefined : {
           enabled: true,
           payTo: cfg.solana.payTo,
           network: cfg.solana.network,
-        } : undefined,
+        },
       },
       { store: challengeStore },
     );
@@ -426,7 +429,26 @@ export async function runX402Handshake(req, {
     return { kind: 'challenge', body: challengeBody };
   }
 
-  // Step 2 — payment present: verify (binding) then settle (marks nonce spent).
+  // Step 2 — payment present. A route that names expectedPayer (register) must
+  // match EIP-3009 authorization.from before verify or settle. A Solana
+  // payload on an EVM-only route is refused the same way. Neither path
+  // calls the facilitator.
+  if (evmOnly || expectedPayer) {
+    const claimedNetwork = paymentHeaderNetwork(paymentHeader);
+    if (evmOnly && isSolanaNetwork(claimedNetwork)) {
+      return { kind: 'failed', reason: 'register_base_only', preSettle: true };
+    }
+    if (expectedPayer) {
+      const declared = payerFromPaymentHeader(paymentHeader);
+      let want = null;
+      try { want = getAddress(expectedPayer); } catch { want = null; }
+      if (!declared || declared !== want) {
+        return { kind: 'failed', reason: 'payer_mismatch', preSettle: true };
+      }
+    }
+  }
+
+  // Verify (binding) then settle (marks nonce spent).
   // The challenge network determines the facilitator route (CDP for Base, PayAI for Solana).
   const nonce = extractPaymentNonce(req);
   // Pass the client x402 version so the facilitator client sends the right protocol.

@@ -252,7 +252,7 @@ from the agent's wallet — MCP does not take a human private key.`,
     {
       title: 'Register agent identity',
       description: `POST /v1/agents/register. Start from a wallet with USDC.
-Omit task_id to pay the $0.002 stamp on this route (402, then PAYMENT-SIGNATURE). The paying wallet is the agent.
+Omit task_id to pay the $0.002 stamp on this route (402 on Base only, then PAYMENT-SIGNATURE from that wallet). Solana is not accepted. The paying wallet is the agent.
 Or pass task_id of a collected receipt whose on-chain payer is this wallet.
 A plain EOA personal_signs chit.register.pay|<checksum address>|<unix seconds> for the stamp path,
 or chit.register.recover|<task_id>|<checksum address>|<unix seconds> for an existing receipt.
