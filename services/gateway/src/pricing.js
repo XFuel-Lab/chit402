@@ -354,6 +354,101 @@ function toBaseUnits(v) {
   }
 }
 
+/** Non-negative atomic integer. Decimal strings stay exact (no Number()). */
+function atomicUnits(v) {
+  if (typeof v === 'bigint') return v > 0n ? v : 0n;
+  if (v == null || v === '') return 0n;
+  const s = String(v).trim();
+  if (/^\d+$/.test(s)) return BigInt(s);
+  return toBaseUnits(v);
+}
+
+/**
+ * Route-margin bps for a receipt. A quote's `fee_bps` wins — it was read from
+ * `platformFeeBps` when the price was computed. Otherwise read live pricing.
+ * Never a hard-coded 50.
+ */
+function quotedRouteMarginBps(pricing, cfg) {
+  if (pricing && pricing.fee_bps != null && pricing.fee_bps !== '') {
+    const n = Number(pricing.fee_bps);
+    if (Number.isFinite(n) && n >= 0) return Math.round(n);
+  }
+  return platformFeeBps(cfg);
+}
+
+/**
+ * Internal accounting inside a charged amount.
+ *
+ * x402 settlement is one USDC transfer of `settledAmount` to the payee. The
+ * route margin, receipt floor, and provider COGS are components of that
+ * figure, not a second transfer and not a deduction from what the payee got.
+ *
+ * For a cost-plus quote the identity is:
+ *   provider_cogs_amount + route_margin_amount + receipt_floor_amount + tier2_proof_amount
+ *     === settledAmount
+ *
+ * `route_margin_amount` is the live percentage of COGS (`platformFeeBps`,
+ * default 100). When the floor binds, that margin is still inside the floor;
+ * `receipt_floor_amount` is the residual that lifts COGS + margin up to the floor.
+ *
+ * @param {object} [input]
+ * @param {string|number|bigint} [input.settledAmount] charged / on-chain amount
+ * @param {string|number|bigint|null} [input.cogs]
+ * @param {object|null} [input.pricing] `quoteFromCogs` result
+ * @param {object} [input.cfg] forwarded to `platformFeeBps`
+ * @param {boolean} [input.onChain] true when a settlement tx already paid the payee
+ */
+export function internalSettlementAccounting({
+  settledAmount = '0',
+  cogs = null,
+  pricing = null,
+  cfg = {},
+  onChain = false,
+} = {}) {
+  const settled = atomicUnits(settledAmount);
+  const cogsUnits = atomicUnits(cogs ?? pricing?.provider_cogs ?? 0);
+  const bps = quotedRouteMarginBps(pricing, cfg);
+  const margin = pricing?.platform_fee != null && pricing.platform_fee !== ''
+    ? atomicUnits(pricing.platform_fee)
+    : (cogsUnits * BigInt(bps) + 9_999n) / 10_000n;
+  const tier2 = pricing?.tier2_proof != null && pricing.tier2_proof !== ''
+    ? atomicUnits(pricing.tier2_proof)
+    : 0n;
+
+  const floorCfg = BigInt(Math.trunc(Math.max(
+    0,
+    Number(cfg.usdcFloor ?? process.env.X402_USDC_FLOOR ?? DEFAULT_FLOOR_UNITS) || 0,
+  )));
+  const metered = cogsUnits + margin;
+  const floorBound = pricing?.floor_applied === true
+    || (
+      pricing?.floor_applied == null
+      && floorCfg > 0n
+      && metered < floorCfg
+      && (settled === floorCfg || settled === floorCfg + tier2)
+    );
+  let floorAmount = 0n;
+  if (floorBound) {
+    const residual = settled - cogsUnits - margin - tier2;
+    floorAmount = residual > 0n ? residual : 0n;
+  }
+
+  return {
+    kind: 'internal',
+    scope: 'inside_settled_amount',
+    note: onChain
+      ? 'Internal accounting inside the settled amount. Not an on-chain deduction; the payee received settled_amount in full.'
+      : 'Internal accounting inside the quoted amount. Not an on-chain deduction.',
+    internal_breakdown: {
+      route_margin_bps: bps,
+      route_margin_amount: margin.toString(),
+      receipt_floor_amount: floorAmount.toString(),
+      provider_cogs_amount: cogsUnits.toString(),
+      tier2_proof_amount: tier2.toString(),
+    },
+  };
+}
+
 /**
  * Price a call as provider cost plus a stated percentage.
  *
@@ -604,6 +699,7 @@ export default {
   quoteTask,
   quoteUsage,
   quoteFromCogs,
+  internalSettlementAccounting,
   costPlusEnabled,
   platformFeeBps,
   tier2ProofUnits,

@@ -1,0 +1,62 @@
+{
+  "schema": "xfuel.receipt.v4",
+  "task_id": "xfuel-5d775d12-f43a-460f-8b4a-9299b4eedf20",
+  "status": "completed",
+  "verify_url": "https://api.chit402.com/receipt/chit-5d775d12-f43a-460f-8b4a-9299b4eedf20",
+  "issuer_signature": {
+    "alg": "ES256",
+    "payload_version": 7,
+    "jws": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImNoaXQ0MDItcmVjZWlwdCtqd3QiLCJraWQiOiJJdkZwbUMtdlBoa1lfdjB2aWRzcldWVDl1emxFNVhXS1pnQUVPZUpUcTFRIiwiamt1IjoiaHR0cHM6Ly9hcGkuY2hpdDQwMi5jb20vLndlbGwta25vd24vandrcy5qc29uIn0.eyJ0YXNrX2lkIjoieGZ1ZWwtNWQ3NzVkMTItZjQzYS00NjBmLThiNGEtOTI5OWI0ZWVkZjIwIiwiaXNzIjoiY2hpdDQwMiIsImlhdCI6MTc5MDQ0MzY1MiwicGF5bWVudCI6eyJyYWlsIjoidXNkYyIsInJlZiI6ImJhc2U6MHhiYzQxYTExYWI2YWZhZDBjOTM1YWQ5NGNjMDhjYjEyMjg5NWZkZmI3NjQ5MTFjODkwMzVlODFkYzYzOTcxMDMyIiwiYXNzZXQiOiIweDgzMzU4OWZDRDZlRGI2RTA4ZjRjN0MzMkQ0ZjcxYjU0YmRBMDI5MTMiLCJwYXllZSI6IjB4MjNmNzEzNDExYzMwQkJkOUE5ODljOWNiQzIyRUIwYjU1RjdmNzMzNCIsImdyb3NzX2Ftb3VudCI6IjIwMDAiLCJuZXRfYW1vdW50IjoiMTk5MCIsImZlZV9hbW91bnQiOiIxMCIsInByb3RvY29sX2ZlZV9icHMiOjUwLCJwbGF0Zm9ybV9mZWUiOiIxIiwicGxhdGZvcm1fZmVlX2JwcyI6MTAwfSwicHJvdmlkZXJfY29ncyI6eyJhY3R1YWwiOiI2IiwiZGVjaW1hbHMiOjYsInVuaXQiOiJhdG9taWNfdXNkYyJ9LCJyb3V0ZSI6eyJtb2RlbCI6ImFrYXNoL21ldGEtbGxhbWEvTGxhbWEtMy4zLTcwQi1JbnN0cnVjdCIsIm1vZGVsX2NvbW1pdG1lbnQiOm51bGwsInByb3ZpZGVyIjoiYWthc2gtbmV0d29yayJ9LCJvdXRwdXQiOnsiaGFzaCI6IjB4MTQ1MDJkM2FiMzRhZTI4ZDQwNGRhOGY2ZWMwNTAxYzZmMjk1ZjY2Y2FhNDFlMTIyY2ZhOWIxMjkxYmMwZjllOCJ9LCJiaW5kaW5nIjp7ImV4cGVjdGVkX2NvbW1pdG1lbnQiOm51bGx9LCJjYWxsZXJfYmluZGluZyI6eyJwYXllcl93YWxsZXQiOiIweEQ3ODA2MDY3OUFFYjQwM0JCNTIyM2RmZTFhYzYwOTMyM0VmMWZCZjYiLCJhZ2VudF9wdWJrZXkiOm51bGwsImFwaV9rZXlfaGFzaCI6bnVsbH0sImFnZW50X3B1YmtleSI6bnVsbCwidGFyZ2V0X2FnZW50IjpudWxsLCJkZWxlZ2F0aW9uX2hhc2giOm51bGwsInNlc3Npb25fZXhwaXJ5IjpudWxsLCJzZXNzaW9uIjpudWxsLCJwYXJlbnRfcmVjZWlwdF9pZCI6bnVsbCwia2luZCI6bnVsbCwiYWN0aW9uIjpudWxsLCJzZXR0bGVtZW50Ijp7ImtpbmQiOiJzZXR0bGVkIiwicGFyZW50X3JlY2VpcHRfaWQiOm51bGx9LCJzZXNzaW9uX2FjdCI6bnVsbCwiZnVsZmlsbG1lbnQiOnsiaW50ZW50Ijp7ImpvYl9raW5kIjoiY29tcGxldGlvbnMiLCJyZXNvdXJjZSI6bnVsbCwiaW50ZW50X2lkIjpudWxsLCJhdHRlbXB0X2luZGV4IjpudWxsfSwiYXV0aG9yaXphdGlvbiI6eyJwYXllcl93YWxsZXQiOiIweEQ3ODA2MDY3OUFFYjQwM0JCNTIyM2RmZTFhYzYwOTMyM0VmMWZCZjYiLCJkZWxlZ2F0aW9uX2hhc2giOm51bGwsInBheW1lbnRfcmVmIjoiYmFzZToweGJjNDFhMTFhYjZhZmFkMGM5MzVhZDk0Y2MwOGNiMTIyODk1ZmRmYjc2NDkxMWM4OTAzNWU4MWRjNjM5NzEwMzIiLCJpc3N1YW5jZV9jb21taXRtZW50IjpudWxsfSwib3V0cHV0X2NvbW1pdG1lbnQiOnsic3RhdHVzIjoiY29tbWl0dGVkIiwiaGFzaCI6IjB4MTQ1MDJkM2FiMzRhZTI4ZDQwNGRhOGY2ZWMwNTAxYzZmMjk1ZjY2Y2FhNDFlMTIyY2ZhOWIxMjkxYmMwZjllOCIsImtpbmQiOiJrZWNjYWsyNTYiLCJvbWlzc2lvbl9ydWxlIjpudWxsfX0sImlzc3VhbmNlX2NvbW1pdG1lbnQiOm51bGwsImRpc3B1dGVfd2luZG93IjpudWxsLCJwYXlsb2FkX3ZlcnNpb24iOjd9.ftksDMy7vGa2DjS8FPlipdDxwMXJFuAzwfC4JC3dutanJJg3sAkeCQk9MBlb5RkwNS2LOru-ybgDSJ7KHkpbzg",
+    "kid": "IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q",
+    "issuer_jwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "_H7J9niXF2tez_MnF25pnrDN7iJ_VC9gBzYYW9gzSPk",
+      "y": "jiorfRc9wtNaRmaFHsQaXNzcWteUA0RnpvD4SWdVl34",
+      "kid": "IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q",
+      "alg": "ES256",
+      "use": "sig"
+    }
+  },
+  "payment": {
+    "rail": "usdc",
+    "ref": "base:0xbc41a11ab6afad0c935ad94cc08cb122895fdfb764911c89035e81dc63971032",
+    "network": "base",
+    "gross_amount": "2000",
+    "net_amount": "1990",
+    "fee_amount": "10",
+    "fee_bps": 50,
+    "protocol_fee_bps": 50,
+    "platform_fee": "1",
+    "platform_fee_bps": 100,
+    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "payee": "0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334",
+    "explorer_url": "https://basescan.org/tx/0xbc41a11ab6afad0c935ad94cc08cb122895fdfb764911c89035e81dc63971032",
+    "tier2_proof": null,
+    "floor_applied": true,
+    "basis": "cost_plus",
+    "collected": true,
+    "collects_on": "this_request"
+  },
+  "provider_cogs": {
+    "provider": "akash-network",
+    "float_id": "akash-network",
+    "currency": "USDC",
+    "decimals": 6,
+    "unit": "atomic_usdc",
+    "estimated": "0",
+    "actual": "6",
+    "basis": "measured",
+    "usd_mark": "6",
+    "below_low_water": false
+  },
+  "caller_binding": {
+    "payer_wallet": "0xD78060679AEb403BB5223dfe1ac609323Ef1fBf6",
+    "agent_pubkey": null,
+    "api_key_hash": null
+  },
+  "output": {
+    "kind": "committed",
+    "hash": "0x14502d3ab34ae28d404da8f6ec0501c6f295f66caa41e122cfa9b1291bc0f9e8"
+  }
+}

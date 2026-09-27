@@ -936,6 +936,42 @@ describe('ECDSA Receipt Verification', () => {
       ]);
     });
 
+    it('v8 signs settled amount and internal margin, not a 50 bps protocol fee', () => {
+      const receipt = {
+        task_id: 'chit-v8',
+        issuer_signature: { payload_version: 8 },
+        payment: {
+          rail: 'usdc',
+          ref: 'base:0xabc',
+          gross_amount: '2000',
+          settled_amount: '2000',
+          accounting: {
+            kind: 'internal',
+            scope: 'inside_settled_amount',
+            internal_breakdown: {
+              route_margin_bps: 100,
+              route_margin_amount: '1',
+              receipt_floor_amount: '1993',
+              provider_cogs_amount: '6',
+              tier2_proof_amount: '0',
+            },
+          },
+        },
+        provider_cogs: { actual: '6' },
+        route: { model: 'm', provider: 'p' },
+        caller_binding: { payer_wallet: '0xabc', agent_pubkey: null, api_key_hash: null },
+      };
+      const parsed = JSON.parse(canonicalReceiptPayload(receipt));
+      expect(parsed[3]).toBe('2000');
+      expect(parsed[4]).toBe('2000');
+      expect(parsed[5]).toBe(100);
+      expect(parsed[6]).toBe('1');
+      expect(parsed[7]).toBe('1993');
+      expect(parsed[8]).toBe('6');
+      expect(parsed).not.toContain(50);
+      expect(parsed).not.toContain('1990');
+    });
+
     it('uses null for missing fields', () => {
       const receipt = { task_id: 'minimal' };
       const payload = canonicalReceiptPayload(receipt);

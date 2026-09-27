@@ -17,7 +17,7 @@ Frozen fields are immutable once set. A verifier checks these against on-chain d
 | **task_id** | `task_id` | Unique task identifier, bound in the payment commitment |
 | **hub** | `route.provider` | Compute provider that served the request (theta-edgecloud, akash-network) |
 | **model_id** | `route.model` | Model identifier that ran (e.g., `theta/glm-5.2-9b-chat`) |
-| **amount_usdc** | `payment.gross_amount` | Total charged in USDC atomic units (6 decimals; `10000` = $0.01) |
+| **amount_usdc** | `payment.settled_amount` (v8) or `payment.gross_amount` | USDC atomic units the payee received when the receipt is settled (6 decimals; `2000` = $0.002). v8 `settled_amount` is that on-chain Transfer. `gross_amount` is the amount charged and, once settled, the same integer |
 | **tx** | `payment.ref` | Settlement reference (`network:txHash`), e.g. `base:0xabc...` |
 | **output_hash** | `output.hash` | Commitment to the model output (keccak256 or SHA-256) |
 | **nullifier** | `proof.nullifier` | Single-use nullifier anchored on-chain (when SP1 proof present) |
@@ -42,11 +42,11 @@ The `signature.value` is an HMAC-SHA256 over the **canonical signed payload** �
   payment.rail,
   payment.ref,
   payment.gross_amount,
-  payment.net_amount,
-  payment.fee_amount,
-  payment.protocol_fee_bps,
-  payment.platform_fee,
-  payment.platform_fee_bps,
+  payment.net_amount,            // payload_version <= 7 only
+  payment.fee_amount,            // payload_version <= 7 only
+  payment.protocol_fee_bps,      // payload_version <= 7 only; not signed on v8
+  payment.platform_fee,          // payload_version <= 7 only
+  payment.platform_fee_bps,      // payload_version <= 7 only
   provider_cogs.actual,
   route.model,
   route.model_commitment.commitment,
@@ -99,7 +99,11 @@ This mirrors `SP1ProofHooks.computePaymentCommitment` on-chain — byte-for-byte
 For `payment.rail === 'usdc'` with a `payment.ref`:
 1. Parse the ref: `base:0x<txHash>` → network `base`, tx `0x...`.
 2. Query the network (or use `payment.explorer_url`).
-3. Confirm the transaction exists, succeeded, and transferred `payment.gross_amount` USDC to the expected payTo address.
+3. Confirm the transaction exists, succeeded, and transferred USDC to the payee.
+   - **Payload v8:** the Transfer value to `payment.payee` equals `payment.settled_amount` (the same integer as `payment.gross_amount`). `payment.accounting` is internal accounting inside that amount. It is not a second transfer and not a fee taken from the payee.
+   - **Payload ≤ 7:** these receipts signed `net_amount` as "amount after fees" and a `protocol_fee_bps` (often the stale 50). The on-chain Transfer is `gross_amount`. A reconciliation check that compares `net_amount` to the Transfer will flag them when no fee actually moved. Do not re-sign those receipts; verify the JWS as issued.
+
+`route_margin_bps` on v8 comes from live pricing (`platformFeeBps` in `services/gateway/src/pricing.js`, 100 bps unless the quote stamped another rate). It replaces `protocol_fee_bps`.
 
 ### 2.4 Verify Nullifier (SP1 Proof)
 

@@ -21,11 +21,56 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 /**
- * Build the canonical signed payload — identical to receipt.js canonicalSignedPayload.
+ * HMAC payload version. <= 7 uses the historical fee-split list.
+ * 8 matches services/gateway/src/receipt.js canonicalFieldsV8.
+ * @param {object} r
+ * @returns {number}
+ */
+function canonicalPayloadVersion(r) {
+  const stamped = r?.hmac_attestation?.payload_version
+    ?? r?.signature?.payload_version
+    ?? r?.co_attestation?.payload_version
+    ?? r?.co_signature?.payload_version;
+  if (stamped != null && stamped !== '') return Number(stamped);
+  if (r?.issuer_signature?.payload_version != null) return Number(r.issuer_signature.payload_version);
+  if (r?.payment?.accounting || (r?.payment && Object.prototype.hasOwnProperty.call(r.payment, 'settled_amount'))) {
+    return 8;
+  }
+  return 7;
+}
+
+/**
+ * Build the canonical signed payload.
+ * v8 is identical to receipt.js. v7 stays on the historical public field list
+ * so receipts already signed at payload_version <= 7 still verify.
  * @param {object} r - receipt object
  * @returns {string}
  */
 function canonicalPayload(r) {
+  if (canonicalPayloadVersion(r) >= 8) {
+    const b = r.payment?.accounting?.internal_breakdown;
+    return JSON.stringify([
+      r.task_id ?? null,
+      r.payment?.rail ?? null,
+      r.payment?.ref ?? null,
+      r.payment?.gross_amount ?? null,
+      r.payment?.settled_amount ?? null,
+      b?.route_margin_bps ?? null,
+      b?.route_margin_amount ?? null,
+      b?.receipt_floor_amount ?? null,
+      b?.provider_cogs_amount ?? null,
+      b?.tier2_proof_amount ?? null,
+      r.provider_cogs?.actual ?? null,
+      r.route?.model ?? null,
+      r.route?.model_commitment?.commitment ?? null,
+      r.route?.provider ?? null,
+      r.output?.hash ?? null,
+      r.binding?.expected_commitment ?? null,
+      r.caller_binding?.payer_wallet ?? null,
+      r.caller_binding?.agent_pubkey ?? null,
+      r.caller_binding?.api_key_hash ?? null,
+    ]);
+  }
   return JSON.stringify([
     r.task_id,
     r.payment?.rail ?? null,

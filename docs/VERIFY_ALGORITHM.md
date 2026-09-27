@@ -16,9 +16,11 @@ A signed Chit402 receipt attests:
 | `task_id` | Unique identifier for the inference job |
 | `payment.rail` | Settlement rail (`usdc`, `tfuel`) |
 | `payment.ref` | On-chain settlement reference (`network:txHash`) |
-| `payment.gross_amount` | Total paid (USDC smallest units, 6dp) |
-| `payment.net_amount` | Amount after fees |
-| `payment.fee_amount` | Protocol fee charged |
+| `payment.gross_amount` | Amount charged (USDC smallest units, 6dp) |
+| `payment.settled_amount` | **v8.** On-chain USDC Transfer to the payee. Equal to `gross_amount` once a settlement ref exists. Absent on v7 |
+| `payment.net_amount` | **v7 and earlier only.** Was documented as "amount after fees". It is not the on-chain transfer when a fee was subtracted only on the receipt |
+| `payment.fee_amount` | **v7 and earlier only.** Protocol fee the receipt claimed. Not an on-chain deduction |
+| `payment.accounting` | **v8.** Internal breakdown inside the settled amount (route margin, receipt floor, provider COGS). Not a deduction from the payee |
 | `route.model` | Model that served the request |
 | `route.provider` | Compute provider |
 | `provider_cogs.actual` | Measured cost to serve (if present) |
@@ -52,6 +54,13 @@ Chit has disappeared, verify against `co_signature`.
 
 ## 3. Canonical payload
 
+Branch on payload version. Receipts at version **≤ 7** keep the historical array
+below and verify unchanged. Do not re-sign them. Version **8** replaces
+`net_amount` / `fee_amount` / `protocol_fee_bps` / `platform_fee` with the settled
+amount and the internal accounting breakdown. See [ADR 0011](./adr/0011-receipt-v8-onchain-amount.md).
+
+### 3.1 Payload version ≤ 7
+
 The signed payload is a JSON array of values in this exact order:
 
 ```javascript
@@ -77,6 +86,47 @@ The signed payload is a JSON array of values in this exact order:
 Serialize to JSON with `JSON.stringify()` — no pretty-printing, no trailing
 newline.
 
+### 3.2 Payload version 8
+
+`gross_amount` is the amount charged. `settled_amount` is that same integer once
+the USDC transfer to `payee` exists. `accounting.internal_breakdown` is internal
+accounting **inside** that amount (`route_margin_bps` from live pricing,
+default 100, plus route margin, receipt floor, provider COGS, and any Tier-2
+proof). There is no `protocol_fee_bps` and no `net_amount`.
+
+```javascript
+[
+  receipt.task_id ?? null,
+  receipt.payment?.rail ?? null,
+  receipt.payment?.ref ?? null,
+  receipt.payment?.gross_amount ?? null,
+  receipt.payment?.settled_amount ?? null,
+  receipt.payment?.accounting?.internal_breakdown?.route_margin_bps ?? null,
+  receipt.payment?.accounting?.internal_breakdown?.route_margin_amount ?? null,
+  receipt.payment?.accounting?.internal_breakdown?.receipt_floor_amount ?? null,
+  receipt.payment?.accounting?.internal_breakdown?.provider_cogs_amount ?? null,
+  receipt.payment?.accounting?.internal_breakdown?.tier2_proof_amount ?? null,
+  receipt.provider_cogs?.actual ?? null,
+  receipt.route?.model ?? null,
+  receipt.route?.model_commitment?.commitment ?? null,
+  receipt.route?.provider ?? null,
+  receipt.output?.hash ?? null,
+  receipt.binding?.expected_commitment ?? null,
+  receipt.caller_binding?.payer_wallet ?? null,
+  receipt.caller_binding?.agent_pubkey ?? null,
+  receipt.caller_binding?.api_key_hash ?? null,
+]
+```
+
+For a cost-plus quote the breakdown sums to the settled amount:
+
+`provider_cogs_amount + route_margin_amount + receipt_floor_amount + tier2_proof_amount`.
+
+On-chain check (optional, `reconcileSettledTransfer`): given the tx logs, v8's
+`settled_amount` must equal the USDC `Transfer` value to `payee`. v7 compares
+`net_amount` instead, which flags a receipt whose net subtracted a fee that
+never moved on chain.
+
 ## 4. Verification algorithm (plain language)
 
 1. Extract the signature value from `receipt.signature.value` or
@@ -93,6 +143,10 @@ newline.
 5. If they match, the receipt is authentic for that key.
 
 ## 5. Runnable code (Node.js)
+
+The sample verifies **payload version ≤ 7**. Version 8 uses the field list in
+§3.2. `services/gateway/scripts/verify-receipt.mjs` branches on
+`issuer_signature.payload_version` / `hmac_attestation.payload_version`.
 
 ```javascript
 #!/usr/bin/env node
@@ -263,6 +317,10 @@ shared secret required.
 5. Verify: `ES256(publicKey, canonicalPayload) == issuer_signature.value`
 
 ### Runnable code (Node.js)
+
+Detached ES256 over the canonical array is the legacy path. Current receipts
+carry a compact JWS (`issuer_signature.jws`); verify those bytes with the pinned
+`issuer_jwk`. The array below is payload version ≤ 7. Version 8 uses §3.2.
 
 ```javascript
 #!/usr/bin/env node

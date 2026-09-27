@@ -186,8 +186,13 @@ test('second 402 equals measured cost-plus, not the rate card', async () => {
 
   const recomputed = quoteFromCogs(owed.provider_cogs.actual);
   assert.equal(recomputed.amount, owedView.payment.gross_amount);
-  assert.equal(owedView.payment.platform_fee_bps, 100);
-  assert.equal(owed.issuer_signature.payload_version, 7);
+  assert.equal(owedView.payment.settled_amount, owedView.payment.gross_amount);
+  assert.equal(owedView.payment.accounting.internal_breakdown.route_margin_bps, 100);
+  // Published JSON omits the legacy fee keys; they are not signed as null.
+  assert.equal(owedView.payment.protocol_fee_bps, undefined);
+  assert.equal(owedView.payment.net_amount, undefined);
+  assert.equal(owedView.payment.fee_amount, undefined);
+  assert.equal(owed.issuer_signature.payload_version, 8);
 });
 
 test('a first call whose ceiling exceeds $1 still prepays', async () => {

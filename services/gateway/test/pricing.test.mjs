@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   quoteTask,
   quoteFromCogs,
+  internalSettlementAccounting,
   costPlusEnabled,
   platformFeeBps,
   checkPricingConfig,
@@ -416,6 +417,42 @@ test('the manifest describes the basis in force, not the one we prefer', () => {
   const card = describePricing({ costPlus: false });
   assert.equal(card.basis, 'rate_card');
   assert.equal(card.platform_fee_bps, undefined, 'no fee percentage exists under the card');
+});
+
+test('floor-priced 2000 atomic charge keeps the 100 bps margin inside the settled amount', () => {
+  const q = quoteFromCogs(6n);
+  assert.equal(q.amount, '2000');
+  assert.equal(q.platform_fee, '1');
+  assert.equal(q.fee_bps, 100);
+  assert.equal(q.floor_applied, true);
+  const a = internalSettlementAccounting({
+    settledAmount: q.amount,
+    cogs: q.provider_cogs,
+    pricing: q,
+    onChain: true,
+  });
+  assert.equal(a.kind, 'internal');
+  assert.equal(a.scope, 'inside_settled_amount');
+  assert.equal(a.internal_breakdown.route_margin_bps, platformFeeBps());
+  assert.equal(a.internal_breakdown.route_margin_bps, DEFAULT_PLATFORM_FEE_BPS);
+  assert.equal(a.internal_breakdown.route_margin_amount, '1');
+  assert.equal(a.internal_breakdown.provider_cogs_amount, '6');
+  assert.equal(a.internal_breakdown.receipt_floor_amount, '1993');
+  assert.equal(a.internal_breakdown.tier2_proof_amount, '0');
+  const sum = ['provider_cogs_amount', 'route_margin_amount', 'receipt_floor_amount', 'tier2_proof_amount']
+    .reduce((acc, key) => acc + BigInt(a.internal_breakdown[key]), 0n);
+  assert.equal(sum, 2000n);
+});
+
+test('route margin bps follows the quote, not a hard-coded 50', () => {
+  const q = quoteFromCogs(10_000n, { usdcFloor: '0', platformFeeBps: 250 });
+  const a = internalSettlementAccounting({ settledAmount: q.amount, pricing: q });
+  assert.equal(a.internal_breakdown.route_margin_bps, 250);
+  assert.notEqual(a.internal_breakdown.route_margin_bps, 50);
+  assert.equal(a.internal_breakdown.receipt_floor_amount, '0');
+  const sum = BigInt(a.internal_breakdown.provider_cogs_amount)
+    + BigInt(a.internal_breakdown.route_margin_amount);
+  assert.equal(sum, BigInt(q.amount));
 });
 
 test('discovery points at the exact-quote endpoint, since per-token rates are not a price', () => {

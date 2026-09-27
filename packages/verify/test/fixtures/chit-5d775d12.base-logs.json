@@ -1,0 +1,25 @@
+{
+  "tx": "0xbc41a11ab6afad0c935ad94cc08cb122895fdfb764911c89035e81dc63971032",
+  "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "note": "Base mainnet logs for chit-5d775d12. Exactly one USDC Transfer, value 2000 (0x7d0), to the receipt payee.",
+  "logs": [
+    {
+      "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "topics": [
+        "0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5",
+        "0x000000000000000000000000d78060679aeb403bb5223dfe1ac609323ef1fbf6",
+        "0xcf5c3e2708ceadc26bd124c1f15a720511d434ef35d991751db4de7344d83c1a"
+      ],
+      "data": "0x"
+    },
+    {
+      "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "topics": [
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+        "0x000000000000000000000000d78060679aeb403bb5223dfe1ac609323ef1fbf6",
+        "0x00000000000000000000000023f713411c30bbd9a989c9cbc22eb0b55f7f7334"
+      ],
+      "data": "0x00000000000000000000000000000000000000000000000000000000000007d0"
+    }
+  ]
+}

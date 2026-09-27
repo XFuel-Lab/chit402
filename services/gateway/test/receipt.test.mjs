@@ -14,6 +14,7 @@ import {
   decodeReceiptClaims,
   toUnixSeconds,
   canonicalSignedPayload,
+  storedReceiptJson,
   displayRouteModel,
   isAutoRouteAlias,
 } from '../src/receipt.js';
@@ -93,8 +94,12 @@ test('buildReceipt: USDC task is proven, priced, and independently binding-verif
 
   assert.equal(v.payment.rail, 'usdc');
   assert.match(v.payment.explorer_url, /^https:\/\/sepolia\.basescan\.org\/tx\/0x/);
-  assert.equal(v.payment.net_amount, '995000');
-  assert.equal(v.payment.fee_bps, 50);
+  assert.equal(v.payment.gross_amount, '1000000');
+  assert.equal(v.payment.settled_amount, '1000000');
+  assert.equal(v.payment.net_amount, null);
+  assert.equal(v.payment.protocol_fee_bps, null);
+  assert.equal(v.payment.fee_bps, null);
+  assert.equal(v.payment.accounting.internal_breakdown.route_margin_bps, 100);
 
   assert.equal(r.proof.system, 'sp1');
   assert.equal(r.proof.has_proof, true);
@@ -445,7 +450,7 @@ test('buildReceipt: hmac_attestation is absent by default and valid HMAC when a 
   const r = buildReceipt(usdcTask(), { signingSecret: secret });
   assert.ok(r.hmac_attestation);
   assert.equal(r.hmac_attestation.alg, 'HMAC-SHA256');
-  assert.equal(r.hmac_attestation.payload_version, 5);
+  assert.equal(r.hmac_attestation.payload_version, 8);
   assert.equal(r.schema, 'xfuel.receipt.v4');
   assert.equal(r.hmac_attestation.signed_fields, undefined, 'public HMAC omits signed_fields');
   assert.equal(r.hmac_attestation.role, 'attestor');
@@ -469,13 +474,81 @@ test('signed cost-plus fields recompute to gross', async () => {
   }), { signingSecret: 'test-receipt-secret' });
   const v = mergeReceiptView(r);
 
-  assert.equal(v.payment.protocol_fee_bps, 50);
-  assert.equal(v.payment.platform_fee_bps, 100);
-  assert.equal(v.payment.platform_fee, quote.platform_fee);
+  assert.equal(v.payment.protocol_fee_bps, null);
+  assert.equal(v.payment.fee_bps, null);
+  assert.equal(v.payment.net_amount, null);
+  assert.equal(v.payment.accounting.internal_breakdown.route_margin_bps, quote.fee_bps);
+  assert.equal(v.payment.accounting.internal_breakdown.route_margin_amount, quote.platform_fee);
+  assert.equal(v.payment.accounting.scope, 'inside_settled_amount');
   assert.equal(r.provider_cogs.actual, '10000');
 
   const recomputed = quoteFromCogs(r.provider_cogs.actual, { usdcFloor: '0' });
   assert.equal(recomputed.amount, v.payment.gross_amount);
+});
+
+test('v8 x402 settle signs the on-chain amount and live 100 bps margin, not a 50 bps fee', async () => {
+  const { quoteFromCogs, platformFeeBps } = await import('../src/pricing.js');
+  // Listing-55 shape: COGS 6 atomic, 100 bps rounds to 1, floor lifts the charge to 2000.
+  const quote = quoteFromCogs(6n);
+  assert.equal(quote.amount, '2000');
+  assert.equal(quote.floor_applied, true);
+  assert.equal(quote.fee_bps, platformFeeBps());
+  assert.equal(quote.fee_bps, 100);
+
+  const base = usdcTask();
+  const payee = '0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334';
+  const ref = 'base:0x' + 'bc'.repeat(32);
+  const r = buildReceipt(usdcTask({
+    intent: { ...base.intent, amount: quote.amount, paymentRef: ref },
+    // Stale protocol split must not be signed.
+    feeAmount: '10',
+    netAmount: '1990',
+    feeBps: 50,
+    meta: {
+      ...base.meta,
+      pricing: quote,
+      payTo: payee,
+      providerCogs: { actual: quote.provider_cogs, basis: 'measured', provider: 'akash-network' },
+    },
+  }), { payTo: payee, signingSecret: 'test-receipt-secret' });
+
+  const claims = decodeReceiptClaims(r);
+  assert.equal(claims.payload_version, 8);
+  assert.equal(claims.payment.gross_amount, '2000');
+  assert.equal(claims.payment.settled_amount, '2000');
+  assert.equal(claims.payment.payee, payee);
+  assert.equal('net_amount' in claims.payment, false);
+  assert.equal('fee_amount' in claims.payment, false);
+  assert.equal('protocol_fee_bps' in claims.payment, false);
+  assert.equal('fee_bps' in claims.payment, false);
+  assert.equal('platform_fee_bps' in claims.payment, false);
+
+  const b = claims.payment.accounting.internal_breakdown;
+  assert.equal(claims.payment.accounting.kind, 'internal');
+  assert.equal(claims.payment.accounting.scope, 'inside_settled_amount');
+  assert.match(claims.payment.accounting.note, /not an on-chain deduction/i);
+  assert.equal(b.route_margin_bps, 100);
+  assert.equal(b.route_margin_amount, '1');
+  assert.equal(b.provider_cogs_amount, '6');
+  assert.equal(b.receipt_floor_amount, '1993');
+  assert.equal(b.tier2_proof_amount, '0');
+  assert.equal(
+    BigInt(b.provider_cogs_amount) + BigInt(b.route_margin_amount)
+      + BigInt(b.receipt_floor_amount) + BigInt(b.tier2_proof_amount),
+    2000n,
+  );
+
+  const published = storedReceiptJson(r);
+  assert.equal(published.payment.gross_amount, claims.payment.gross_amount);
+  assert.equal(published.payment.settled_amount, claims.payment.settled_amount);
+  assert.deepEqual(published.payment.accounting, claims.payment.accounting);
+  assert.equal(published.payment.protocol_fee_bps, undefined);
+  assert.equal(published.payment.net_amount, undefined);
+
+  const html = renderReceiptHtml(r);
+  assert.match(html, /inside settled amount, not an on-chain deduction/);
+  assert.doesNotMatch(html, /Protocol fee/);
+  assert.doesNotMatch(html, /50 bps/);
 });
 
 test('proofOutcomeOf: skipped or gated tasks are not_applicable; in-flight stays pending', async () => {
@@ -644,7 +717,7 @@ test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compa
   assert.equal(r.issuer_signature.jwks_uri, undefined);
   assert.ok(r.issuer_signature.kid, 'kid present');
   assert.ok(r.issuer_signature.jws, 'compact JWS present');
-  assert.equal(r.issuer_signature.payload_version, 7);
+  assert.equal(r.issuer_signature.payload_version, 8);
   
   // JWS should have 3 parts (header.payload.signature)
   const parts = r.issuer_signature.jws.split('.');
@@ -664,7 +737,7 @@ test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compa
   assert.equal(payload.task_id, r.task_id);
   assert.equal(payload.iss, 'chit402');
   assert.ok(payload.iat, 'iat claim present');
-  assert.equal(payload.payload_version, 7);
+  assert.equal(payload.payload_version, 8);
 });
 
 test('buildReceipt: omits inactive extension fields and documents provider_cogs units', () => {
