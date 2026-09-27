@@ -150,6 +150,11 @@ export function deriveEvidence(entry) {
   const amount = entry.amount;
   if (amount == null || String(amount).trim() === '') return BOOK_EVIDENCE.UNVERIFIED;
   if (hasArrivalEvidence(entry)) return BOOK_EVIDENCE.COLLECTED;
+  // A paid call that already finished is collected even when the row was
+  // left as arrival-pending. Chit never writes a separate ingress receipt.
+  if (entry.recorded_by === 'settle' && entry.fulfillment_closed === true) {
+    return BOOK_EVIDENCE.COLLECTED;
+  }
   if (entry.arrival_status === ARRIVAL_STATUS.UNVERIFIED) {
     return BOOK_EVIDENCE.ARRIVAL_UNVERIFIED;
   }
@@ -1136,7 +1141,8 @@ export function markRefundOwed(ledger, { taskId, amount = null, payer = null, pa
  *   noteReplay?: boolean,
  * }} deps
  * `closeSettle` is the response-side write of the same paid call that already
- * appended a settle-time row. That close is the first collect, not a replay.
+ * appended a settle-time row. That close is the first collect, not a replay,
+ * and it promotes the row to collected so a finished Chit payment can be cited.
  * `noteReplay: false` skips another replay_events entry when this request's
  * settle write already recorded one.
  */
@@ -1174,6 +1180,13 @@ export function recordCollectedSpend(receipt, {
       && existing.fulfillment_closed !== true;
     if (closingOwnSettle) {
       existing.fulfillment_closed = true;
+      // The paid call finished. A Chit settle never grows a separate ingress
+      // receipt, so this close is what makes the row citable. A refund-owed
+      // row stays unusable for posts and confirms.
+      if (existing.refund_status !== 'owed' && existing.evidence !== BOOK_EVIDENCE.REFUND_OWED) {
+        existing.arrival_status = ARRIVAL_STATUS.CONFIRMED;
+        existing.evidence = BOOK_EVIDENCE.COLLECTED;
+      }
       const identity = typeof registry.get === 'function' ? registry.get(existing.agent_id) : null;
       return {
         ok: true,

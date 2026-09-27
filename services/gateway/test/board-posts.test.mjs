@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 
 import { AgentRegistry } from '../src/agent-registry.js';
-import { UsageSettledLedger, entryQualifiesForCap, BOOK_EVIDENCE } from '../src/usage-settled.js';
+import { UsageSettledLedger, entryQualifiesForCap, BOOK_EVIDENCE, recordSettleBookRow, recordCollectedSpend, deriveEvidence } from '../src/usage-settled.js';
 import { bindBookVerifier, bookHmacPayload } from '../src/agent-book.js';
 import { BoardPostStore, PUBLIC_LIVE_KEYS, BACKING_STAMP, BACKING_SPEND, confirmBoardReport, createBoardComment, createEndpointReport, findLink, findSecret, flagBoardComment, flagBoardPost, getBoardPost, hideBoardComment, hideBoardPost, listBoardComments, listBoardPosts, planHouseSeed, takedownBoardComment, takedownBoardPost, toggleBoardLike, toPublicPost } from '../src/board-posts.js';
 import { registerBoardRoutes } from '../src/board-routes.js';
@@ -1113,6 +1113,159 @@ test('post text rejects bare and defanged domains', async () => {
     text: 'e.g. version 1.2.3 worked',
   });
   assert.equal(ok.status, 201);
+  const named = await postReport(ctx, {
+    endpoint: 'https://shop.example/v1',
+    outcome: 'success',
+    text: 'shop.example/v1 and https://api.chit402.com and docs.xfuel.app were fine',
+  });
+  assert.equal(named.status, 201, named.message);
+  const otherHost = await postReport(ctx, {
+    endpoint: 'https://shop.example/v1',
+    outcome: 'success',
+    text: 'see https://evil.example/path',
+  });
+  assert.equal(otherHost.status, 400);
+  assert.equal(otherHost.error, 'link_rejected');
+});
+
+test('a comment may name the post host and Chit hosts', async () => {
+  const ctx = world();
+  const post = await postReport(ctx, {
+    endpoint: 'https://shop.example/v1',
+    outcome: 'success',
+    text: 'root',
+  });
+  const stamp = stampOk();
+  const allowed = await createBoardComment(post.body.post.id, {
+    text: 'same at shop.example/status via api.xfuel.app',
+  }, {
+    posts: ctx.posts,
+    ledger: ctx.ledger,
+    actor: ctx.other,
+    ensureStamp: stamp.ensure,
+  });
+  assert.equal(allowed.status, 201, allowed.message);
+  const blocked = await createBoardComment(post.body.post.id, {
+    text: 'go to evil.com/claim',
+  }, {
+    posts: ctx.posts,
+    ledger: ctx.ledger,
+    actor: ctx.other,
+    ensureStamp: stamp.ensure,
+  });
+  assert.equal(blocked.status, 400);
+  assert.equal(blocked.error, 'link_rejected');
+  assert.equal(stamp.calls(), 1);
+});
+
+test('ops-hidden stamp repost keeps the host check', async () => {
+  const ctx = world();
+  const created = await postReport(ctx, {
+    endpoint: 'https://shop.example/v1',
+    outcome: 'success',
+    text: 'stamp first',
+  });
+  assert.equal(created.body.post.backing, BACKING_STAMP);
+  hideBoardPost(created.body.post.id, { posts: ctx.posts, ledger: ctx.ledger, ops: { ok: true } });
+  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  const stamp = stampOk();
+  const retarget = await postReport(ctx, {
+    endpoint: 'https://api.chit402.com/v1',
+    outcome: 'success',
+    text: 'different host',
+  }, { ensureStamp: stamp.ensure });
+  assert.equal(retarget.status, 400);
+  assert.equal(retarget.error, 'receipt_required');
+  assert.equal(stamp.calls(), 0);
+  const sameHost = await postReport(ctx, {
+    endpoint: 'https://shop.example/v1',
+    outcome: 'success',
+    text: 'same shop again',
+  }, { ensureStamp: stamp.ensure });
+  assert.equal(sameHost.status, 201);
+  assert.equal(sameHost.body.stamp_waived, true);
+  assert.equal(sameHost.body.post.endpoint_host, 'shop.example');
+  assert.equal(stamp.calls(), 0);
+});
+
+test('a closed Chit settle can back a post and a confirm', async () => {
+  const ctx = world();
+  const opened = recordSettleBookRow({
+    taskId: 'xfuel-chit-1',
+    paymentRef: 'base:0xchitsettle',
+    amount: '2000',
+    payer: WALLET,
+    model: 'chit/auto',
+    hub: 'chit',
+    ledger: ctx.ledger,
+    registry: ctx.registry,
+    agentId: ctx.agent.agent_id,
+  });
+  assert.equal(deriveEvidence(opened.entry), BOOK_EVIDENCE.RECORDED_BY_SETTLE);
+  const pending = await postReport(ctx, {
+    receipt_ref: 'base:0xchitsettle',
+    endpoint: 'https://api.chit402.com/v1',
+    outcome: 'success',
+  });
+  assert.equal(pending.status, 400);
+  assert.equal(pending.error, 'receipt_not_reportable');
+  recordCollectedSpend({
+    task_id: 'xfuel-chit-1',
+    payment: { rail: 'usdc', ref: 'base:0xchitsettle', collected: true, gross_amount: '2000' },
+    route: { model: 'chit/auto', hub: 'chit' },
+  }, {
+    ledger: ctx.ledger,
+    registry: ctx.registry,
+    agentId: ctx.agent.agent_id,
+    payer: WALLET,
+    closeSettle: true,
+  });
+  const posted = await postReport(ctx, {
+    receipt_ref: 'base:0xchitsettle',
+    endpoint: 'https://api.chit402.com/v1',
+    outcome: 'success',
+    text: 'paid api.chit402.com',
+  });
+  assert.equal(posted.status, 201, posted.message);
+  assert.match(posted.body.post.verify_url, /\/receipt\/xfuel-chit-1$/);
+
+  recordSettleBookRow({
+    taskId: 'xfuel-chit-2',
+    paymentRef: 'base:0xchitsettle2',
+    amount: '2000',
+    payer: OTHER_WALLET,
+    ledger: ctx.ledger,
+    registry: ctx.registry,
+    agentId: ctx.other.agent_id,
+  });
+  const early = confirmBoardReport(posted.body.post.id, { receipt_ref: 'base:0xchitsettle2' }, {
+    posts: ctx.posts,
+    ledger: ctx.ledger,
+    actor: ctx.other,
+    chitHosts: CHIT,
+  });
+  assert.equal(early.status, 400);
+  assert.equal(early.error, 'receipt_not_reportable');
+  recordCollectedSpend({
+    task_id: 'xfuel-chit-2',
+    payment: { rail: 'usdc', ref: 'base:0xchitsettle2', collected: true, gross_amount: '2000' },
+    route: { model: 'chit/auto', hub: 'chit' },
+  }, {
+    ledger: ctx.ledger,
+    registry: ctx.registry,
+    agentId: ctx.other.agent_id,
+    payer: OTHER_WALLET,
+    closeSettle: true,
+  });
+  const confirmed = confirmBoardReport(posted.body.post.id, { receipt_ref: 'base:0xchitsettle2' }, {
+    posts: ctx.posts,
+    ledger: ctx.ledger,
+    actor: ctx.other,
+    chitHosts: CHIT,
+  });
+  assert.equal(confirmed.status, 201);
+  assert.equal(confirmed.body.confirm_count, 1);
+  assert.match(confirmed.body.confirm.verify_url, /\/receipt\/xfuel-chit-2$/);
 });
 
 test('taken-down posts return an empty comment thread', async () => {

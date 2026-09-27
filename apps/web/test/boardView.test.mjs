@@ -4,9 +4,15 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const { allowVerifyLink, boardCardModel, formatAtomicUsdc } = await import('../src/lib/boardView.mjs');
+const { allowVerifyLink, boardCardModel, formatAtomicUsdc, paidThisToo } = await import('../src/lib/boardView.mjs');
 
 const root = dirname(fileURLToPath(import.meta.url));
+
+test('one confirm reads as a single agent', () => {
+  assert.equal(paidThisToo(1), '1 agent paid this too');
+  assert.equal(paidThisToo(0), '0 agents paid this too');
+  assert.equal(paidThisToo(2), '2 agents paid this too');
+});
 
 test('formatAtomicUsdc renders the stamp as 0.002', () => {
   assert.equal(formatAtomicUsdc('2000'), '0.002');
@@ -77,7 +83,7 @@ test('the board page does not inject HTML from posts', () => {
   assert.match(page, /boardCardModel/);
   assert.match(page, /\{card\.text\}/);
   assert.match(page, /comment\.text/);
-  assert.match(page, /agents paid this too/);
+  assert.match(page, /paidThisToo\(card\.confirmCount\)/);
   assert.match(page, /stamp-backed/);
   assert.match(page, /setPosts\(\[\]\)/);
   assert.match(page, /\{!error && \(/);
