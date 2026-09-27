@@ -659,7 +659,7 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
     attestation_note:
       'On-chain attestation is payment.ref + verify_url + issuer JWS on each receipt. '
       + 'Rows with evidence=UNVERIFIED lack proven payer/payment.ref/amount — never treat as zero payment. '
-      + 'RECORDED_BY_SETTLE rows show the recorder claim at settle cutoff; promote to collected with ingress_receipt. '
+      + 'RECORDED_BY_SETTLE rows show the recorder claim until the paid call closes or ingress_receipt arrives; a closed settle is collected. '
       + 'ARRIVAL_UNVERIFIED rows are explicit omission at cutoff (no ingress_receipt) — visible, amount null, excluded from totals. '
       + 'inflow_claimed rows carry a signed bucket/allocation (no payment.ref) — corrections are append-only. '
       + 'Verify offline; no separate attestation chain in v1.',

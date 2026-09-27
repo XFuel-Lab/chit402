@@ -29,6 +29,11 @@ export function allowVerifyLink(url) {
   return parsed.toString();
 }
 
+export function paidThisToo(count) {
+  const n = Number.isInteger(count) ? count : 0;
+  return `${n} ${n === 1 ? 'agent' : 'agents'} paid this too`;
+}
+
 export function outcomeLabel(outcome) {
   if (outcome === 'double_charge') return 'double charge';
   if (outcome === 'price_jump') return 'price jump';

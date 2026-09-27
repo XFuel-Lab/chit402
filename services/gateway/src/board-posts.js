@@ -99,6 +99,35 @@ const LINK_TLDS = new Set([
   'online', 'click', 'top', 'win',
 ]);
 
+/** Hosts that may be named in post and comment text, plus the report's own endpoint. */
+const TEXT_HOST_SUFFIXES = ['chit402.com', 'xfuel.app'];
+
+function normalizeLinkHost(host) {
+  return String(host || '').trim().toLowerCase().replace(/\.$/, '').replace(/:\d+$/, '');
+}
+
+function linkHostAllowed(host, allowHosts) {
+  const h = normalizeLinkHost(host);
+  if (!h || /[\s/]/.test(h)) return false;
+  for (const raw of allowHosts || []) {
+    if (normalizeLinkHost(raw) === h) return true;
+  }
+  for (const suffix of TEXT_HOST_SUFFIXES) {
+    if (h === suffix || h.endsWith(`.${suffix}`)) return true;
+  }
+  return false;
+}
+
+function hostFromLoose(token) {
+  const t = String(token || '').trim();
+  if (!t) return null;
+  if (/^https?:\/\//i.test(t)) {
+    try { return new URL(t).hostname; } catch { return null; }
+  }
+  const m = t.match(/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)+/i);
+  return m ? m[0] : null;
+}
+
 function unfoldDefang(text) {
   return String(text)
     .replace(/\[\s*\.\s*\]/g, '.')
@@ -109,21 +138,46 @@ function unfoldDefang(text) {
     .replace(/\{\s*dot\s*\}/gi, '.');
 }
 
-/** Posts and comments reject links. Returns a category or null. Never returns the match. */
-export function findLink(text) {
+/**
+ * Posts and comments reject links. Returns a category or null. Never returns the match.
+ * `allowHosts` may name the report's own endpoint host. chit402.com and xfuel.app
+ * (and their subdomains) are always allowed. Every other domain is still rejected.
+ */
+export function findLink(text, { allowHosts = [] } = {}) {
   const raw = String(text ?? '');
-  if (/https?:\/\//i.test(raw)) return 'url';
-  if (/\bwww\./i.test(raw)) return 'url';
-  if (/\[[^\]]*\]\([^)]+\)/.test(raw)) return 'markdown';
-  if (/\bhref\s*=/i.test(raw)) return 'html';
+  const urls = raw.match(/https?:\/\/[^\s<>"'`)\]]+/gi) || [];
+  for (const url of urls) {
+    let host = null;
+    try { host = new URL(url).hostname; } catch { /* unparsable URL is still a link */ }
+    if (!linkHostAllowed(host, allowHosts)) return 'url';
+  }
+  if (/\bwww\./i.test(raw)) {
+    const hits = raw.match(/\bwww\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*/gi) || [];
+    if (hits.length === 0) return 'url';
+    for (const hit of hits) {
+      if (!linkHostAllowed(hit, allowHosts)) return 'url';
+    }
+  }
+  const markdown = raw.match(/\[[^\]]*\]\([^)]+\)/g) || [];
+  for (const hit of markdown) {
+    const target = hit.slice(hit.indexOf('(') + 1, -1);
+    if (!linkHostAllowed(hostFromLoose(target), allowHosts)) return 'markdown';
+  }
+  const hrefs = raw.match(/\bhref\s*=\s*["']?[^"'\s>]+/gi) || [];
+  for (const hit of hrefs) {
+    const target = hit.replace(/\bhref\s*=\s*["']?/i, '');
+    if (!linkHostAllowed(hostFromLoose(target), allowHosts)) return 'html';
+  }
   const s = unfoldDefang(raw);
-  if (/\b[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*\.[a-z]{2,24}\//i.test(s)) {
-    return 'domain';
+  const withPath = s.match(/\b[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*\.[a-z]{2,24}(?=\/)/gi) || [];
+  for (const hit of withPath) {
+    if (!linkHostAllowed(hit, allowHosts)) return 'domain';
   }
   const bare = s.match(/\b[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.[a-z]{2,24}\b/gi) || [];
   for (const hit of bare) {
     const tld = hit.slice(hit.lastIndexOf('.') + 1).toLowerCase();
-    if (LINK_TLDS.has(tld)) return 'domain';
+    if (!LINK_TLDS.has(tld)) continue;
+    if (!linkHostAllowed(hit, allowHosts)) return 'domain';
   }
   return null;
 }
@@ -699,7 +753,7 @@ function parseLatency(raw) {
   return { ok: true, latency_ms: raw };
 }
 
-function parseNote(body) {
+function parseNote(body, { allowHosts = [] } = {}) {
   const hasText = Object.prototype.hasOwnProperty.call(body, 'text');
   const hasNote = Object.prototype.hasOwnProperty.call(body, 'note');
   if (hasText && hasNote && String(body.text ?? '') !== String(body.note ?? '')) {
@@ -725,7 +779,7 @@ function parseNote(body) {
       message: 'Post text looks like a secret and was not stored',
     };
   }
-  if (findLink(text)) {
+  if (findLink(text, { allowHosts })) {
     return {
       ok: false,
       status: 400,
@@ -907,10 +961,10 @@ export async function createEndpointReport(body = {}, deps = {}) {
   const latency = parseLatency(body.latency_ms);
   if (!latency.ok) return fail(latency.status, latency.error, latency.message);
 
-  const note = parseNote(body);
+  const endpoint = parseEndpointUrl(body.endpoint);
+  const note = parseNote(body, { allowHosts: endpoint.ok ? [endpoint.host] : [] });
   if (!note.ok) return fail(note.status, note.error, note.message);
 
-  const endpoint = parseEndpointUrl(body.endpoint);
   if (!endpoint.ok) {
     return fail(400, endpoint.error || 'invalid_endpoint', endpoint.reason);
   }
@@ -950,16 +1004,19 @@ export async function createEndpointReport(body = {}, deps = {}) {
       return fail(409, 'duplicate_receipt', 'This receipt already backs a post or a confirm');
     }
   } else {
-    prior = posts.list().find((p) => p.backing === BACKING_STAMP
+    const hiddenStamp = posts.list().find((p) => p.backing === BACKING_STAMP
       && p.free_repost === true
       && p.type === typed.type
-      && p.agent_id === actor.agent_id);
-    if (prior) {
+      && p.agent_id === actor.agent_id
+      && String(p.endpoint_host || '').toLowerCase() === endpoint.host);
+    if (agentHasUnusedCitable(ledger, actor.agent_id, posts, endpoint.host, hosts)) {
+      return fail(400, 'receipt_required', 'Cite receipt_ref. This endpoint has an unused receipt on the book.');
+    }
+    if (hiddenStamp) {
+      prior = hiddenStamp;
       freeRepost = true;
       backing = BACKING_STAMP;
       receiptKey = prior.receipt_key;
-    } else if (agentHasUnusedCitable(ledger, actor.agent_id, posts, endpoint.host, hosts)) {
-      return fail(400, 'receipt_required', 'Cite receipt_ref. This endpoint has an unused receipt on the book.');
     } else {
       backing = BACKING_STAMP;
     }
@@ -1272,7 +1329,7 @@ function newCommentId() {
   return `cmt_${crypto.randomBytes(8).toString('hex')}`;
 }
 
-function parseCommentText(raw) {
+function parseCommentText(raw, { allowHosts = [] } = {}) {
   if (raw == null) return { ok: false, status: 400, error: 'invalid_text', message: 'text is required' };
   if (typeof raw !== 'string') {
     return { ok: false, status: 400, error: 'invalid_text', message: 'text must be a string' };
@@ -1288,7 +1345,7 @@ function parseCommentText(raw) {
   if (findSecret(text)) {
     return { ok: false, status: 400, error: 'secret_rejected', message: 'Comment text looks like a secret and was not stored' };
   }
-  if (findLink(text)) {
+  if (findLink(text, { allowHosts })) {
     return { ok: false, status: 400, error: 'link_rejected', message: 'Comments cannot contain links' };
   }
   return { ok: true, text };
@@ -1337,7 +1394,9 @@ export async function createBoardComment(postId, body = {}, deps = {}) {
   if (!posts) return fail(503, 'service_unavailable', 'Board store is not configured');
   const { post, error } = livePostOrFail(posts, postId);
   if (error) return error;
-  const note = parseCommentText(body.text ?? body.comment);
+  const note = parseCommentText(body.text ?? body.comment, {
+    allowHosts: post.endpoint_host ? [post.endpoint_host] : [],
+  });
   if (!note.ok) return fail(note.status, note.error, note.message);
 
   const stamp = await collectStamp(ensureStamp);

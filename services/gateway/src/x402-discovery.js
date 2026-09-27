@@ -288,7 +288,7 @@ const AGENTS_BOOK_OUTPUT_SCHEMA = {
             type: 'string',
             enum: ['collected', 'foreign_ingest', 'RECORDED_BY_SETTLE', 'ARRIVAL_UNVERIFIED', 'inflow_claimed', 'UNVERIFIED', 'policy_blocked', 'a2a_escrow'],
             description:
-              'Possession/settlement evidence. RECORDED_BY_SETTLE = recorder accepted at settle cutoff; '
+              'Possession/settlement evidence. RECORDED_BY_SETTLE = recorder accepted at settle, not yet closed; a finished call is collected. '
               + 'ARRIVAL_UNVERIFIED = explicit omission when ingress_receipt missing at cutoff; '
               + 'inflow_claimed = signed bucket/allocation without payment.ref; '
               + 'UNVERIFIED when payer/payment.ref/amount cannot be proven — never treated as zero payment.',

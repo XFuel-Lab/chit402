@@ -453,9 +453,11 @@ test('paid register is a $0.002 stamp from the signing wallet', async () => {
     inspect: async () => ({ kind: 'eoa', official: false, eoa: true, code: '0x' }),
   });
   let calls = 0;
+  const stored = [];
   const d = deps({}, {
     bindWallet: eoaBind,
     proveSmartControl: null,
+    persistTask: (task) => stored.push(task),
     ensureRegisterStamp: async () => {
       calls += 1;
       return {
@@ -539,6 +541,50 @@ test('paid register is a $0.002 stamp from the signing wallet', async () => {
   assert.equal(result.body.usage_settled.amount, '2000');
   assert.equal(calls, 1);
   assert.equal(d.ledger.entries.length, 1);
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].taskId, result.body.task_id);
+  assert.equal(stored[0].intent.paymentRef, 'base:0xregstamp');
+  assert.equal(stored[0].intent.amount, '2000');
+  assert.equal(stored[0].meta.payerWallet, signer.address);
+  const built = mergeReceiptView(buildReceipt(stored[0], { baseUrl: 'https://api.chit402.com' }));
+  assert.equal(built.task_id, result.body.task_id);
+  assert.equal(built.payment.collected, true);
+  assert.equal(built.payment.ref, 'base:0xregstamp');
+  assert.equal(built.payment.gross_amount, '2000');
+  assert.match(built.verify_url, /\/receipt\//);
+});
+
+test('a rejected bind does not write a replay onto another agent row', async () => {
+  const victim = Wallet.createRandom();
+  const attacker = Wallet.createRandom();
+  const receipt = collectedReceipt({
+    task_id: 'task-replay-victim',
+    ref: 'base:0xreplayvictim',
+    payer: victim.address,
+  });
+  const eoaBind = async (w) => bindAgentWallet(w, {
+    inspect: async () => ({ kind: 'eoa', official: false, eoa: true, code: '0x' }),
+  });
+  const d = deps({ [receipt.task_id]: receipt }, { bindWallet: eoaBind, proveSmartControl: null });
+  const identity = d.registry.allocate({ taskId: receipt.task_id, paymentRef: receipt.payment.ref });
+  const appended = d.ledger.append(receipt, { payer: victim.address, agentId: identity.agent_id });
+  assert.equal(appended.ok, true);
+  const timestamp = Math.floor(Date.now() / 1000);
+  const attackerSig = await attacker.signMessage(
+    canonicalRegisterRecoverMessage(receipt.task_id, attacker.address, timestamp),
+  );
+  const stolen = await registerAgent({
+    agentWallet: attacker.address,
+    task_id: receipt.task_id,
+    wallet_signature: attackerSig,
+    signature_timestamp: timestamp,
+  }, d);
+  assert.equal(stolen.ok, false);
+  assert.equal(stolen.status, 403);
+  assert.equal(stolen.error, 'payer_mismatch');
+  const row = d.ledger.findByTask(receipt.task_id);
+  assert.equal(row.replay_events, undefined);
+  assert.equal(d.registry.get(identity.agent_id).agentWallet, null);
 });
 
 let server;

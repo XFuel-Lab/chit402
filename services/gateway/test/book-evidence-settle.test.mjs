@@ -331,6 +331,9 @@ describe('settle-time book row', () => {
     assert.equal(closed.replay_of, null);
     assert.equal(ledger.entries.length, 1);
     assert.equal(ledger.entries[0].replay_events, undefined);
+    assert.equal(deriveEvidence(closed.entry), BOOK_EVIDENCE.COLLECTED);
+    assert.equal(closed.entry.arrival_status, ARRIVAL_STATUS.CONFIRMED);
+    assert.equal(entryQualifiesForTotals(closed.entry), true);
 
     const again = recordCollectedSpend(collectedReceipt({
       task_id: 'xfuel-fresh',
@@ -345,6 +348,54 @@ describe('settle-time book row', () => {
     assert.equal(again.idempotent_replay, true);
     assert.equal(again.replay_of, 'xfuel-fresh');
     assert.equal(ledger.entries[0].replay_events.length, 1);
+    assert.equal(deriveEvidence(again.entry), BOOK_EVIDENCE.COLLECTED);
+  });
+
+  test('an already-closed settle row is collected without a new ingress receipt', () => {
+    const ledger = new UsageSettledLedger();
+    const registry = new AgentRegistry();
+    const opened = recordSettleBookRow({
+      taskId: 'xfuel-already-closed',
+      paymentRef: 'base:0xalready',
+      amount: '2000',
+      ledger,
+      registry,
+    });
+    opened.entry.fulfillment_closed = true;
+    opened.entry.evidence = BOOK_EVIDENCE.RECORDED_BY_SETTLE;
+    opened.entry.arrival_status = ARRIVAL_STATUS.PENDING;
+    assert.equal(deriveEvidence(opened.entry), BOOK_EVIDENCE.COLLECTED);
+    assert.equal(entryQualifiesForTotals(opened.entry), true);
+  });
+
+  test('closing a refund-owed settle does not make the row citable', () => {
+    const ledger = new UsageSettledLedger();
+    const registry = new AgentRegistry();
+    const opened = recordSettleBookRow({
+      taskId: 'xfuel-refund-close',
+      paymentRef: 'base:0xrefundclose',
+      amount: '2000',
+      ledger,
+      registry,
+    });
+    markRefundOwed(ledger, {
+      taskId: 'xfuel-refund-close',
+      amount: '2000',
+      paymentRef: 'base:0xrefundclose',
+    });
+    const closed = recordCollectedSpend(collectedReceipt({
+      task_id: 'xfuel-refund-close',
+      ref: 'base:0xrefundclose',
+      amount: '2000',
+    }), {
+      ledger,
+      registry,
+      agentId: opened.agent_id,
+      closeSettle: true,
+    });
+    assert.equal(closed.ok, true);
+    assert.equal(deriveEvidence(closed.entry), BOOK_EVIDENCE.REFUND_OWED);
+    assert.equal(entryQualifiesForTotals(closed.entry), false);
   });
 
   test('a later call with the same payment.ref replays the first task, not itself', () => {

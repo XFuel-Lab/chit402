@@ -1,5 +1,6 @@
 export function formatAtomicUsdc(amount: string | number | bigint | null | undefined): string | null;
 export function allowVerifyLink(url: string | null | undefined): string | null;
+export function paidThisToo(count: number): string;
 export function outcomeLabel(outcome: string | null | undefined): string | null;
 
 export interface BoardCardLink {

@@ -621,6 +621,7 @@ async function registerPaidStamp(body, deps) {
     provider = null,
     proveSmartControl = null,
     ensureRegisterStamp,
+    persistTask = null,
   } = deps;
   const agentWallet = body.agentWallet || body.agent_wallet;
   if (typeof ensureRegisterStamp !== 'function') {
@@ -771,6 +772,13 @@ async function registerPaidStamp(body, deps) {
     creditedEntry = credited.entry;
   }
 
+  await storePaidRegisterTask(paidRegisterTask({
+    taskId,
+    paymentRef,
+    payer: paidPayer,
+    amount: String(STAMP_FEE_UNITS),
+  }), persistTask);
+
   return finishRegistration({
     identity,
     bound,
@@ -781,6 +789,55 @@ async function registerPaidStamp(body, deps) {
     postA2A,
     requestHash: body.request_hash || body.requestHash,
   });
+}
+
+/** Task the public receipt route can load for a paid register. */
+export function paidRegisterTask({ taskId, paymentRef, payer, amount = STAMP_FEE_UNITS }) {
+  const now = Date.now();
+  return {
+    taskId: String(taskId),
+    intent: {
+      type: 'agent_register',
+      sender: 'agent-registry',
+      amount: String(amount),
+      modelId: 'chit402/register',
+      chain: 'base',
+      paymentRail: 'usdc',
+      paymentRef: String(paymentRef),
+    },
+    meta: {
+      chain: 'base',
+      source: 'agent-register',
+      provider: 'chit402',
+      payerWallet: payer || null,
+      resource: 'https://api.chit402.com/v1/agents/register',
+    },
+    status: 'completed',
+    createdAt: now,
+    updatedAt: now,
+    result: { provider: 'chit402', model: 'chit402/register' },
+  };
+}
+
+async function storePaidRegisterTask(task, persistTask) {
+  if (typeof persistTask === 'function') {
+    try {
+      persistTask(task);
+    } catch (err) {
+      logger.warn({ err: err.message, taskId: task?.taskId }, 'register: receipt store write failed');
+    }
+  }
+  try {
+    const { getAIListener } = await import('./ai-listener.js');
+    const listener = getAIListener();
+    if (listener?.activeTasks && typeof listener.activeTasks.set === 'function') {
+      listener.activeTasks.set(task.taskId, task);
+    }
+  } catch (err) {
+    if (typeof persistTask !== 'function') {
+      logger.warn({ err: err.message, taskId: task?.taskId }, 'register: receipt store unavailable');
+    }
+  }
 }
 
 async function finishRegistration({
@@ -863,6 +920,7 @@ export async function registerAgent(body = {}, {
   provider = null,
   proveSmartControl = null,
   ensureRegisterStamp = null,
+  persistTask = null,
 } = {}) {
   const taskId = body.task_id || body.taskId || body.receipt_id;
   const agentWallet = body.agentWallet || body.agent_wallet;
@@ -882,6 +940,7 @@ export async function registerAgent(body = {}, {
       provider,
       proveSmartControl,
       ensureRegisterStamp,
+      persistTask,
     });
   }
   if (typeof verify !== 'function' || typeof loadReceipt !== 'function') {
@@ -937,7 +996,6 @@ export async function registerAgent(body = {}, {
       prior?.agentWallet
       && String(prior.agentWallet).toLowerCase() === String(bound.address).toLowerCase()
     );
-    noteIdempotentReplay(entry);
     if (typeof registry.bindWallet !== 'function') {
       return { ok: false, status: 503, error: 'service_unavailable', message: 'registry.bindWallet is not configured' };
     }
@@ -980,6 +1038,7 @@ export async function registerAgent(body = {}, {
       }
       releaseSession = gate.release === true;
     }
+    noteIdempotentReplay(entry);
   } else {
     const onChainPayer = receiptOnChainPayer(oracle.receipt, null);
     const control = await assertRegistererIsPayer({

@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { getApiHost } from '../apiHost';
 import SeoHead from '../components/SeoHead';
-import { boardCardModel } from '../lib/boardView.mjs';
+import { boardCardModel, paidThisToo } from '../lib/boardView.mjs';
 
 type PublicPost = {
   id: string;
@@ -78,7 +78,7 @@ function Card({ post }: { post: PublicPost }) {
           <li key={label} style={styles.label}>{LABEL_TEXT[label] || label}</li>
         ))}
       </ul>
-      <p style={styles.paidLine}>{card.confirmCount} agents paid this too</p>
+      <p style={styles.paidLine}>{paidThisToo(card.confirmCount)}</p>
       {card.confirms.some((row) => row.house) && (
         <ul style={styles.confirms}>
           {card.confirms.filter((row) => row.house).map((row, index) => (
