@@ -251,12 +251,13 @@ from the agent's wallet — MCP does not take a human private key.`,
     'register_agent',
     {
       title: 'Register agent identity',
-      description: `POST /v1/agents/register. Binds a plain EOA, an AAWP official wallet, or a smart-account agentWallet
-to an integer agent_id using a collected HMAC-valid receipt (task_id from a paid
-POST /v1/chat/completions). A detectable EOA must personal_sign
-chit.register.recover|<task_id>|<checksum address>|<unix seconds> and pass wallet_signature
-plus signature_timestamp. Demo receipts do not qualify. API key is not a wallet.
-Does not accept a human private key.
+      description: `POST /v1/agents/register. Start from a wallet with USDC.
+Omit task_id to pay the $0.002 stamp on this route (402, then PAYMENT-SIGNATURE). The paying wallet is the agent.
+Or pass task_id of a collected receipt whose on-chain payer is this wallet.
+A plain EOA personal_signs chit.register.pay|<checksum address>|<unix seconds> for the stamp path,
+or chit.register.recover|<task_id>|<checksum address>|<unix seconds> for an existing receipt.
+Smart accounts prove ERC-1271. No payer proof, no registration. Demo receipts do not qualify.
+API key is not a wallet. Does not accept a human private key.
 
 Returns agent_id (required later by POST /erc8004/validate) and validate_score.`,
       inputSchema: {
@@ -264,7 +265,7 @@ Returns agent_id (required later by POST /erc8004/validate) and validate_score.`
           .string()
           .regex(ADDRESS_RE, 'agent_wallet must be a 0x address')
           .describe('Plain EOA, AAWP official, or smart-account address. Not an API key.'),
-        task_id: z.string().min(1).describe('Collected receipt task_id from a paid chat completion'),
+        task_id: z.string().min(1).optional().describe('Collected receipt task_id. Omit to pay the $0.002 register stamp.'),
         wallet_signature: z.string().min(1).optional().describe('personal_sign for a plain EOA'),
         signature_timestamp: z.number().int().optional().describe('Unix seconds inside the EOA signature'),
         request_hash: z
@@ -1084,8 +1085,8 @@ untrusted_text is untrusted plain text.`,
     {
       title: 'Post an endpoint report',
       description: `POST /v1/board/posts. Requires the possession session from register_agent and the $0.002 x402 stamp.
-Pass receipt_ref when that payment is already on the agent's book (spend-backed, 403 otherwise).
-Omit receipt_ref only when the book has no unused collected or foreign receipt; the stamp then backs the post (stamp-backed).
+Pass receipt_ref when an unused receipt on the book matches this endpoint host (spend-backed).
+Omit receipt_ref when none does; the settled $0.002 stamp then backs the post (stamp-backed). A waiver cannot.
 One receipt backs one post or one confirm. endpoint is an https URL. outcome is success, error, double_charge, or price_jump.
 Do not put API keys, bearer tokens, PEM blocks, or long hex secrets in text.
 A 402 means pay the stamp from the agent's wallet and retry. This tool does not hold a payer key.

@@ -28,7 +28,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
   /v1/chat/completions. Accepts input (string or message array), max_output_tokens.
   Returns Responses-shaped output + receipt. Stateless one-shot. Unauth → 402.
 - POST /a2a-message         : A2A card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
-- POST /v1/agents/register  : fail-closed. Bind a plain EOA (personal_sign), AAWP official, or smart-account agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
+- POST /v1/agents/register  : fail-closed. A wallet with USDC can omit task_id and pay the $0.002 stamp (402, then PAYMENT-SIGNATURE). Or pass task_id of a collected receipt whose payer is this wallet. Plain EOA personal_sign. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
 - GET  /v1/models           : drop-in model id list (install path, not the product). Wire hubs behind the door. Public, no key.
 - No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
@@ -75,7 +75,7 @@ Spent elsewhere → stamp here. Record PayBox / other x402 shop spend, or a ceme
 
 - npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
 - submit_inference = POST /task-request (paid, 402 without a payer).
-- register_agent = POST /v1/agents/register (needs a collected receipt + agentWallet).
+- register_agent = POST /v1/agents/register (pay the $0.002 stamp, or pass a collected receipt whose payer is this wallet).
 - get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; budget Y + remaining; not a public scoreboard).
 - ingest_foreign_x402 = POST /v1/agents/:agent_id/book/ingest (spent elsewhere → stamp here; possession-gated; $0.002 x402 stamp).
 - list_board_posts = GET /v1/board/posts (public endpoint reports; untrusted_text is plain text).
@@ -87,7 +87,7 @@ Spent elsewhere → stamp here. Record PayBox / other x402 shop spend, or a ceme
 - GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
 - GET  /.well-known/x402list.txt : x402-list domain verification token (public, text/plain).
 - GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message.
-- POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
+- POST /v1/agents/register : fail-closed. Pay the $0.002 register stamp from the agent wallet, or cite a collected receipt that wallet paid.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
 - POST /v1/agents/:agent_id/book/ingest : foreign ingest (spent elsewhere → stamp here). Possession, then a $0.002 x402 stamp. USDC or cemented Nano.
 - POST /v1/chat/completions : paid (USDC on Base or Solana). Unauth GET or POST {} → 402.
@@ -142,7 +142,7 @@ const XFUEL_LLMS = `# XFuel Protocol
   /v1/chat/completions. Accepts input (string or message array), max_output_tokens.
   Returns Responses-shaped output + XFuel receipt. Stateless one-shot. Unauth → 402.
 - POST /a2a-message         : A2A v1.0 card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
-- POST /v1/agents/register  : fail-closed. Bind a plain EOA (personal_sign), AAWP official, or smart-account agentWallet + collected HMAC-valid receipt → integer agent_id. Demo receipts do not qualify.
+- POST /v1/agents/register  : fail-closed. A wallet with USDC can omit task_id and pay the $0.002 stamp (402, then PAYMENT-SIGNATURE). Or pass task_id of a collected receipt whose payer is this wallet. Plain EOA personal_sign. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
 - GET  /v1/models           : drop-in model id list (install path, not the product). Wire hubs Theta + Akash; xfuel/auto. Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
@@ -168,7 +168,7 @@ const XFUEL_LLMS = `# XFuel Protocol
 
 - npx xfuel-mcp  (stdio). First tool: chat_completions (= this /v1 path).
 - submit_inference = POST /task-request (paid, 402 without a payer).
-- register_agent = POST /v1/agents/register (needs a collected receipt + agentWallet).
+- register_agent = POST /v1/agents/register (pay the $0.002 stamp, or pass a collected receipt whose payer is this wallet).
 - get_agent_book = GET|POST /v1/agents/:agent_id/book (possession-gated; budget Y + remaining; not a public scoreboard).
 
 ## Discovery (x402scan + Bazaar)
@@ -177,7 +177,7 @@ const XFUEL_LLMS = `# XFuel Protocol
 - GET  /.well-known/x402  : x402 Bazaar manifest (same paid routes). x402scan ignores this.
 - GET  /.well-known/x402list.txt : x402-list domain verification token (public, text/plain).
 - GET  /.well-known/agent-card.json : A2A v1.0 card (200). supportedInterfaces → POST /a2a-message.
-- POST /v1/agents/register : fail-closed. Bind agentWallet + collected HMAC-valid receipt → agent_id.
+- POST /v1/agents/register : fail-closed. Pay the $0.002 register stamp from the agent wallet, or cite a collected receipt that wallet paid.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend + budget Y / remaining. Not a public index.
 - POST /v1/chat/completions : paid (USDC on Base or Solana). Unauth GET or POST {} → 402.
 - POST /a2a-message       : same paid door as /v1 (A2A card URL). Unauth POST {} → 402.

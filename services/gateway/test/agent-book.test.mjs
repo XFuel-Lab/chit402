@@ -23,6 +23,7 @@ process.env.TASK_STORE_PERSIST = 'false';
 const { createApp } = await import('../src/server.js');
 const { canonicalSignedPayload, verifyReceiptHmac } = await import('../src/receipt.js');
 const { AgentRegistry, registerAgent } = await import('../src/agent-registry.js');
+const { getAddress } = await import('ethers');
 const { UsageSettledLedger } = await import('../src/usage-settled.js');
 const {
   readAgentBook,
@@ -42,6 +43,7 @@ function sign(receipt, secret = VERIFY_KEY) {
 }
 
 function collectedReceipt(over = {}) {
+  const payer = over.payer || WALLET_A;
   return sign({
     schema: 'xfuel.receipt.v4',
     task_id: over.task_id || 'task-paid-1',
@@ -55,7 +57,9 @@ function collectedReceipt(over = {}) {
       net_amount: '9950',
       fee_amount: '50',
       gross_amount: over.amount || '10000',
+      payer,
     },
+    caller_binding: { payer_wallet: payer },
     route: { model: over.model || 'xfuel/auto', provider: over.hub || 'mock' },
     output: { hash: '0x' + 'ab'.repeat(32) },
     verify_url: 'https://api.xfuel.app/receipt/task-paid-1',
@@ -73,6 +77,11 @@ function deps(receipts, extra = {}) {
     loadReceipt: async (id) => store.get(id) || null,
     verify: (r) => verifyReceiptHmac(r, VERIFY_KEY, { sigField: 'hmac_attestation' }),
     bindWallet: async (w) => ({ ok: true, address: w, kind: 'aawp', official: true }),
+    proveSmartControl: async ({ bound, payer }) => (
+      getAddress(bound.address) === getAddress(payer)
+        ? { ok: true }
+        : { ok: false, status: 403, error: 'payer_mismatch', message: 'agentWallet must be the receipt on-chain payer' }
+    ),
     postA2A: async (fields) => ({ message_id: 'a2a-test', status: 'accepted', ...fields }),
     ...extra,
   };
@@ -220,7 +229,7 @@ test('demo / unmetered / collected:false rows never appear', async () => {
 
 test('only the requested agent_id appears', async () => {
   const a = collectedReceipt({ task_id: 'task-1', ref: 'base:0x1' });
-  const b = collectedReceipt({ task_id: 'task-2', ref: 'base:0x2' });
+  const b = collectedReceipt({ task_id: 'task-2', ref: 'base:0x2', payer: WALLET_B });
   const d = deps({ 'task-1': a, 'task-2': b });
   const first = await registerAgent({ agentWallet: WALLET_A, task_id: 'task-1' }, d);
   const second = await registerAgent({ agentWallet: WALLET_B, task_id: 'task-2' }, d);

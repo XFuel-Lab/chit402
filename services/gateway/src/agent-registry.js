@@ -10,12 +10,13 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { getAddress, keccak256, toUtf8Bytes, verifyMessage } from 'ethers';
+import { getAddress, hashMessage, Interface, keccak256, toUtf8Bytes, verifyMessage } from 'ethers';
 import logger from './logger.js';
 import { bindAgentWallet } from './agent-wallet.js';
 import { readAndVerifyReceipt } from './receipt-oracle.js';
 import { receiptQualifiesForLedger, noteIdempotentReplay, SETTLEMENT_STATUS } from './usage-settled.js';
 import { buildValidationRecord } from './erc8004.js';
+import { STAMP_FEE_UNITS } from './pricing.js';
 
 /** Per-identity possession secret. Issued at register; used to HMAC the book. */
 function issueSession() {
@@ -281,6 +282,42 @@ export function canonicalRegisterRecoverMessage(taskId, agentWallet, timestamp) 
   return `chit.register.recover|${taskId}|${getAddress(agentWallet)}|${timestamp}`;
 }
 
+/**
+ * Message for a wallet-only register that pays the $0.002 stamp on this route.
+ * `chit.register.pay|<checksumAddress>|<unixSeconds>`
+ */
+export function canonicalRegisterPayMessage(agentWallet, timestamp) {
+  return `chit.register.pay|${getAddress(agentWallet)}|${timestamp}`;
+}
+
+const ERC1271_ABI = ['function isValidSignature(bytes32 hash, bytes signature) view returns (bytes4)'];
+const ERC1271_MAGIC = '0x1626ba7e';
+
+function evmPayer(value) {
+  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value.trim())) return null;
+  try { return getAddress(value.trim()); } catch { return null; }
+}
+
+/**
+ * On-chain payer of a collected receipt. Body-supplied payer is ignored.
+ * @param {object|null} receipt
+ * @param {object|null} [ledgerEntry]
+ */
+export function receiptOnChainPayer(receipt, ledgerEntry = null) {
+  const candidates = [
+    receipt?.caller_binding?.payer_wallet,
+    receipt?.authorization?.payer_wallet,
+    receipt?.payment?.payer,
+    receipt?.payment?.payer_wallet,
+    ledgerEntry?.payer,
+  ];
+  for (const candidate of candidates) {
+    const addr = evmPayer(candidate);
+    if (addr) return addr;
+  }
+  return null;
+}
+
 function sessionMatches(stored, presented) {
   if (stored == null || presented == null || presented === '') return false;
   const want = Buffer.from(String(presented));
@@ -294,7 +331,7 @@ function sessionMatches(stored, presented) {
  * EOA bind and for releasing an already-issued session.
  * @returns {{ ok: true } | { ok: false, status: number, error: string, message: string }}
  */
-export function verifyWalletControlSignature(body, taskId, agentWallet, nowSec = Math.floor(Date.now() / 1000)) {
+export function verifyWalletControlSignature(body, taskId, agentWallet, nowSec = Math.floor(Date.now() / 1000), messageOverride = null) {
   const signature = body?.wallet_signature || body?.signature || null;
   if (!signature) {
     return {
@@ -324,7 +361,7 @@ export function verifyWalletControlSignature(body, taskId, agentWallet, nowSec =
     };
   }
   try {
-    const message = canonicalRegisterRecoverMessage(taskId, agentWallet, ts);
+    const message = messageOverride || canonicalRegisterRecoverMessage(taskId, agentWallet, ts);
     const recovered = getAddress(verifyMessage(message, signature));
     if (recovered.toLowerCase() !== getAddress(agentWallet).toLowerCase()) {
       return {
@@ -346,15 +383,122 @@ export function verifyWalletControlSignature(body, taskId, agentWallet, nowSec =
 }
 
 /**
- * A detectable EOA has no bytecode, so the first bind must personal_sign.
- * AAWP official and smart-account binds stay as they are.
- * Already-bound wallets use the session or the same signature at release time.
+ * ERC-1271 isValidSignature on the payer contract. Magic value 0x1626ba7e.
+ * The hash is the EIP-191 digest of the same personal_sign message.
  */
-function requireFreshEoaProof(body, bound, taskId, alreadyBound) {
-  if (alreadyBound || bound?.kind !== 'eoa') return null;
-  const proof = verifyWalletControlSignature(body, taskId, bound.address);
-  if (proof.ok) return null;
-  return proof;
+export async function verifyErc1271({ provider, payer, message, signature }) {
+  if (!signature) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'wallet_signature_required',
+      message: 'Smart-account registration requires wallet_signature for ERC-1271 isValidSignature',
+    };
+  }
+  if (!provider || typeof provider.call !== 'function') {
+    return {
+      ok: false,
+      status: 401,
+      error: 'wallet_control_unverified',
+      message: 'Smart-account registration needs an RPC to check ERC-1271 isValidSignature',
+    };
+  }
+  try {
+    const iface = new Interface(ERC1271_ABI);
+    const data = iface.encodeFunctionData('isValidSignature', [hashMessage(message), signature]);
+    const raw = await provider.call({ to: payer, data });
+    const decoded = iface.decodeFunctionResult('isValidSignature', raw);
+    if (String(decoded[0]).toLowerCase() !== ERC1271_MAGIC) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'wallet_signature_invalid',
+        message: 'ERC-1271 isValidSignature did not accept this wallet',
+      };
+    }
+    return { ok: true };
+  } catch {
+    return {
+      ok: false,
+      status: 401,
+      error: 'wallet_signature_invalid',
+      message: 'ERC-1271 isValidSignature did not prove control of the payer',
+    };
+  }
+}
+
+/**
+ * The registering wallet must be the receipt's on-chain payer, and must prove control.
+ * EOA and unknown bytecode: personal_sign recovering to that payer.
+ * AAWP / smart account: ERC-1271, unless a test injects proveSmartControl.
+ */
+async function assertRegistererIsPayer({
+  body,
+  bound,
+  taskId,
+  payer,
+  provider = null,
+  proveSmartControl = null,
+  message = null,
+}) {
+  if (!payer) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'payer_unknown',
+      message: 'Receipt has no on-chain payer; registration requires that proof',
+    };
+  }
+  let wallet;
+  try { wallet = getAddress(bound.address); } catch {
+    return { ok: false, status: 400, error: 'invalid_wallet', message: 'agentWallet is not an EVM address' };
+  }
+  if (wallet !== payer) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'payer_mismatch',
+      message: 'agentWallet must be the receipt on-chain payer',
+    };
+  }
+  const contractWallet = bound.kind === 'aawp' || bound.kind === 'smart_account';
+  if (!contractWallet) {
+    return verifyWalletControlSignature(body, taskId, wallet, undefined, message);
+  }
+  if (typeof proveSmartControl === 'function') {
+    return proveSmartControl({
+      body,
+      bound,
+      taskId,
+      payer,
+      message: message || null,
+    });
+  }
+  const ts = Number(body?.signature_timestamp ?? body?.sig_timestamp ?? body?.timestamp);
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (!Number.isFinite(ts) || (nowSec - ts) > REGISTER_RECOVER_MAX_AGE_SEC || (nowSec - ts) < -60) {
+    if (!(body?.wallet_signature || body?.signature)) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'wallet_signature_required',
+        message: 'Smart-account registration requires wallet_signature for ERC-1271 isValidSignature',
+      };
+    }
+    return {
+      ok: false,
+      status: 401,
+      error: 'wallet_signature_invalid',
+      message: 'signature_timestamp is outside the recovery window',
+    };
+  }
+  const signedMessage = message || canonicalRegisterRecoverMessage(taskId, wallet, ts);
+  return verifyErc1271({
+    provider,
+    payer,
+    message: signedMessage,
+    signature: body?.wallet_signature || body?.signature || null,
+  });
 }
 
 /**
@@ -390,6 +534,261 @@ export function authorizeExistingSessionRelease(body, identity, taskId, agentWal
  * @param {object} body
  * @param {object} deps
  */
+function payerGateFailure(payer, bound) {
+  if (!payer) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'payer_unknown',
+      message: 'Receipt has no on-chain payer; registration requires that proof',
+    };
+  }
+  if (getAddress(bound.address) !== payer) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'payer_mismatch',
+      message: 'agentWallet must be the receipt on-chain payer',
+    };
+  }
+  return null;
+}
+
+/**
+ * Wallet-only register: pay the $0.002 stamp on this route. The paying wallet
+ * is the agent wallet, and that stamp is the collected receipt on the book.
+ * A waiver is not a payment and cannot register.
+ */
+async function registerPaidStamp(body, deps) {
+  const {
+    registry,
+    ledger,
+    bindWallet,
+    postA2A,
+    apiKey = null,
+    walletOpts = {},
+    provider = null,
+    proveSmartControl = null,
+    ensureRegisterStamp,
+  } = deps;
+  const agentWallet = body.agentWallet || body.agent_wallet;
+  if (typeof ensureRegisterStamp !== 'function') {
+    return { ok: false, status: 400, error: 'validation_error', message: 'task_id is required' };
+  }
+  if (!registry || !ledger) {
+    return { ok: false, status: 503, error: 'service_unavailable', message: 'registry is not configured' };
+  }
+  const bound = await (bindWallet || bindAgentWallet)(agentWallet, { apiKey, ...walletOpts });
+  if (!bound.ok) {
+    return { ok: false, status: 400, error: 'invalid_wallet', message: bound.reason };
+  }
+  const ts = Number(body?.signature_timestamp ?? body?.sig_timestamp ?? body?.timestamp);
+  const payMessage = Number.isFinite(ts) ? canonicalRegisterPayMessage(bound.address, ts) : null;
+  const control = await assertRegistererIsPayer({
+    body,
+    bound,
+    taskId: 'register-pay',
+    payer: getAddress(bound.address),
+    provider,
+    proveSmartControl,
+    message: payMessage,
+  });
+  if (!control.ok) return control;
+
+  let stamp;
+  try {
+    stamp = await ensureRegisterStamp();
+  } catch (err) {
+    return { ok: false, status: 402, error: 'stamp_payment_required', message: err?.message || 'Register stamp payment failed' };
+  }
+  if (!stamp || stamp.ok !== true) {
+    return {
+      ok: false,
+      status: stamp?.status || 402,
+      error: stamp?.error || 'stamp_payment_required',
+      message: stamp?.message || 'Register stamp is $0.002 USDC (2000 atomic), paid by this wallet',
+      challenge: stamp?.challenge || null,
+    };
+  }
+  if (stamp.waived === true) {
+    return {
+      ok: false,
+      status: 402,
+      error: 'stamp_payment_required',
+      message: 'Paid registration requires a settled x402 payment of 2000 atomic USDC',
+    };
+  }
+  const paymentRef = stamp.settlement?.paymentRef ? String(stamp.settlement.paymentRef) : null;
+  const paidPayer = evmPayer(stamp.settlement?.payerWallet);
+  if (!paymentRef || !paidPayer) {
+    return { ok: false, status: 402, error: 'stamp_payment_required', message: 'Register stamp did not include a payer and payment ref' };
+  }
+  if (paidPayer !== getAddress(bound.address)) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'payer_mismatch',
+      message: 'The stamp must be paid by agentWallet',
+    };
+  }
+  let paid = 0n;
+  try { paid = BigInt(String(stamp.settlement.amount)); } catch { paid = 0n; }
+  if (paid < BigInt(STAMP_FEE_UNITS)) {
+    return {
+      ok: false,
+      status: 402,
+      error: 'stamp_underpaid',
+      message: `Register stamp ${paid} is below ${STAMP_FEE_UNITS}`,
+    };
+  }
+
+  const taskId = `register-${crypto.createHash('sha256').update(paymentRef).digest('hex').slice(0, 32)}`;
+  const existing = typeof ledger.findByRef === 'function' ? ledger.findByRef(paymentRef) : null;
+  if (existing && existing.task_id !== taskId) {
+    return { ok: false, status: 409, error: 'duplicate_ref', message: 'duplicate payment.ref' };
+  }
+
+  const receipt = {
+    schema: 'xfuel.receipt.v4',
+    task_id: taskId,
+    status: 'completed',
+    payment: {
+      rail: 'usdc',
+      ref: paymentRef,
+      collected: true,
+      gross_amount: String(STAMP_FEE_UNITS),
+      payer: paidPayer,
+    },
+    caller_binding: { payer_wallet: paidPayer },
+    route: {
+      model: 'chit402/register',
+      hub: 'chit',
+      provider: 'chit402',
+      resource: 'https://api.chit402.com/v1/agents/register',
+    },
+  };
+
+  let identity;
+  let creditedEntry;
+  let replay = false;
+  if (existing) {
+    const prior = typeof registry.get === 'function' ? registry.get(existing.agent_id) : null;
+    const alreadyBound = !!(
+      prior?.agentWallet
+      && String(prior.agentWallet).toLowerCase() === String(bound.address).toLowerCase()
+    );
+    if (!alreadyBound && prior?.agentWallet) {
+      return { ok: false, status: 409, error: 'bind_failed', message: 'agent_id already bound to another wallet' };
+    }
+    const boundId = registry.bindWallet(existing.agent_id, {
+      agentWallet: bound.address,
+      kind: bound.kind,
+      official: bound.official,
+      taskId,
+      paymentRef,
+    });
+    if (!boundId.ok) {
+      return { ok: false, status: 409, error: 'bind_failed', message: boundId.reason };
+    }
+    identity = boundId.identity;
+    creditedEntry = existing;
+    replay = true;
+  } else {
+    const upserted = registry.upsert({
+      agentWallet: bound.address,
+      kind: bound.kind,
+      official: bound.official,
+      taskId,
+      paymentRef,
+    });
+    identity = upserted.identity;
+    const credited = ledger.append(receipt, { payer: paidPayer, agentId: identity.agent_id });
+    if (!credited.ok) {
+      return { ok: false, status: 409, error: credited.code, message: credited.reason };
+    }
+    creditedEntry = credited.entry;
+  }
+
+  return finishRegistration({
+    identity,
+    bound,
+    receipt,
+    creditedEntry,
+    replay,
+    releaseSession: true,
+    postA2A,
+    requestHash: body.request_hash || body.requestHash,
+  });
+}
+
+async function finishRegistration({
+  identity,
+  bound,
+  receipt,
+  creditedEntry,
+  replay,
+  releaseSession,
+  postA2A,
+  requestHash,
+}) {
+  const hash = requestHashOf({
+    requestHash,
+    taskId: receipt.task_id,
+    agentWallet: bound.address,
+  });
+  let validation = null;
+  try {
+    validation = buildValidationRecord(receipt, { requestHash: hash, agentId: identity.agent_id });
+  } catch (err) {
+    validation = { eligible: false, reason: err.message, response: 0 };
+  }
+  let a2a = null;
+  if (typeof postA2A === 'function') {
+    const senderIdentity = keccak256(toUtf8Bytes(`agent:${identity.agent_id}:${bound.address}`));
+    a2a = await postA2A({
+      message_type: 'capability_query',
+      sender_chain: 'base',
+      recipient_chain: 'base',
+      payload_hash: hash,
+      escrow_amount: '0',
+      ttl: 3600,
+      sender_address: bound.address,
+      sender_identity: senderIdentity,
+    });
+  }
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      agent_id: identity.agent_id,
+      agentWallet: identity.agentWallet,
+      wallet_kind: identity.wallet_kind,
+      session: releaseSession ? identity.session : null,
+      ...(releaseSession ? {} : { session_withheld: true }),
+      task_id: receipt.task_id,
+      payment: {
+        ref: receipt.payment.ref,
+        rail: receipt.payment.rail,
+        collected: true,
+      },
+      settlement_status: replay ? SETTLEMENT_STATUS.IDEMPOTENT_REPLAY : SETTLEMENT_STATUS.SETTLED,
+      idempotent_replay: !!replay,
+      replay_of: replay ? creditedEntry.task_id : null,
+      usage_settled: creditedEntry,
+      validation,
+      validate_score: validation?.response ?? null,
+      a2a,
+    },
+  };
+}
+
+/**
+ * Register an agent against a paid HMAC-valid receipt, or pay the $0.002
+ * register stamp when task_id is omitted.
+ *
+ * @param {object} body
+ * @param {object} deps
+ */
 export async function registerAgent(body = {}, {
   registry,
   ledger,
@@ -399,17 +798,29 @@ export async function registerAgent(body = {}, {
   postA2A,
   apiKey = null,
   walletOpts = {},
+  provider = null,
+  proveSmartControl = null,
+  ensureRegisterStamp = null,
 } = {}) {
   const taskId = body.task_id || body.taskId || body.receipt_id;
   const agentWallet = body.agentWallet || body.agent_wallet;
   const requestHash = body.request_hash || body.requestHash;
-  const payer = body.payer || null;
 
-  if (!taskId) {
-    return { ok: false, status: 400, error: 'validation_error', message: 'task_id is required' };
-  }
   if (!agentWallet) {
     return { ok: false, status: 400, error: 'validation_error', message: 'agentWallet is required' };
+  }
+  if (!taskId) {
+    return registerPaidStamp(body, {
+      registry,
+      ledger,
+      bindWallet,
+      postA2A,
+      apiKey,
+      walletOpts,
+      provider,
+      proveSmartControl,
+      ensureRegisterStamp,
+    });
   }
   if (typeof verify !== 'function' || typeof loadReceipt !== 'function') {
     return { ok: false, status: 503, error: 'service_unavailable', message: 'receipt oracle is not configured' };
@@ -468,9 +879,20 @@ export async function registerAgent(body = {}, {
     if (typeof registry.bindWallet !== 'function') {
       return { ok: false, status: 503, error: 'service_unavailable', message: 'registry.bindWallet is not configured' };
     }
-    const eoaProof = requireFreshEoaProof(body, bound, oracle.receipt.task_id, alreadyBound);
-    if (eoaProof) {
-      return { ok: false, status: eoaProof.status, error: eoaProof.error, message: eoaProof.message };
+    const onChainPayer = receiptOnChainPayer(oracle.receipt, entry);
+    if (alreadyBound) {
+      const mismatch = payerGateFailure(onChainPayer, bound);
+      if (mismatch) return mismatch;
+    } else {
+      const control = await assertRegistererIsPayer({
+        body,
+        bound,
+        taskId: oracle.receipt.task_id,
+        payer: onChainPayer,
+        provider,
+        proveSmartControl,
+      });
+      if (!control.ok) return control;
     }
     const boundId = registry.bindWallet(entry.agent_id, {
       agentWallet: bound.address,
@@ -497,11 +919,16 @@ export async function registerAgent(body = {}, {
       releaseSession = gate.release === true;
     }
   } else {
-    // Legacy / offline receipts that never hit the settle append path.
-    const eoaProof = requireFreshEoaProof(body, bound, oracle.receipt.task_id, false);
-    if (eoaProof) {
-      return { ok: false, status: eoaProof.status, error: eoaProof.error, message: eoaProof.message };
-    }
+    const onChainPayer = receiptOnChainPayer(oracle.receipt, null);
+    const control = await assertRegistererIsPayer({
+      body,
+      bound,
+      taskId: oracle.receipt.task_id,
+      payer: onChainPayer,
+      provider,
+      proveSmartControl,
+    });
+    if (!control.ok) return control;
     const upserted = registry.upsert({
       agentWallet: bound.address,
       kind: bound.kind,
@@ -511,7 +938,7 @@ export async function registerAgent(body = {}, {
     });
     identity = upserted.identity;
     const credited = ledger.append(oracle.receipt, {
-      payer: payer || bound.address,
+      payer: onChainPayer,
       agentId: identity.agent_id,
     });
     if (!credited.ok) {
@@ -520,61 +947,14 @@ export async function registerAgent(body = {}, {
     creditedEntry = credited.entry;
   }
 
-  const hash = requestHashOf({
+  return finishRegistration({
+    identity,
+    bound,
+    receipt: oracle.receipt,
+    creditedEntry,
+    replay: !!(existingTask || existingRef),
+    releaseSession,
+    postA2A,
     requestHash,
-    taskId: oracle.receipt.task_id,
-    agentWallet: bound.address,
   });
-
-  let validation = null;
-  try {
-    validation = buildValidationRecord(oracle.receipt, {
-      requestHash: hash,
-      agentId: identity.agent_id,
-    });
-  } catch (err) {
-    validation = { eligible: false, reason: err.message, response: 0 };
-  }
-
-  let a2a = null;
-  if (typeof postA2A === 'function') {
-    const senderIdentity = keccak256(toUtf8Bytes(`agent:${identity.agent_id}:${bound.address}`));
-    a2a = await postA2A({
-      message_type: 'capability_query',
-      sender_chain: 'base',
-      recipient_chain: 'base',
-      payload_hash: hash,
-      escrow_amount: '0',
-      ttl: 3600,
-      sender_address: bound.address,
-      sender_identity: senderIdentity,
-    });
-  }
-
-  return {
-    ok: true,
-    status: 200,
-    body: {
-      agent_id: identity.agent_id,
-      agentWallet: identity.agentWallet,
-      wallet_kind: identity.wallet_kind,
-      session: releaseSession ? identity.session : null,
-      ...(releaseSession ? {} : { session_withheld: true }),
-      task_id: oracle.receipt.task_id,
-      payment: {
-        ref: oracle.receipt.payment.ref,
-        rail: oracle.receipt.payment.rail,
-        collected: true,
-      },
-      settlement_status: existingTask || existingRef
-        ? SETTLEMENT_STATUS.IDEMPOTENT_REPLAY
-        : SETTLEMENT_STATUS.SETTLED,
-      idempotent_replay: !!(existingTask || existingRef),
-      replay_of: existingTask || existingRef ? creditedEntry.task_id : null,
-      usage_settled: creditedEntry,
-      validation,
-      validate_score: validation?.response ?? null,
-      a2a,
-    },
-  };
 }

@@ -83,19 +83,48 @@ export function chitHostsFromEnv(env = process.env) {
 export function findSecret(text) {
   const s = String(text ?? '');
   if (/sk-[A-Za-z0-9]/.test(s)) return 'api_key';
+  if (/\bghp_[A-Za-z0-9]{8,}/.test(s)) return 'api_key';
+  if (/\bgithub_pat_[A-Za-z0-9_]{8,}/.test(s)) return 'api_key';
+  if (/\bxox[bp]-[A-Za-z0-9-]{8,}/.test(s)) return 'api_key';
+  if (/\bAKIA[0-9A-Z]{16}\b/.test(s)) return 'api_key';
   if (/Bearer\s+[A-Za-z0-9\-._~+/]{8,}/i.test(s)) return 'bearer';
   if (/-----BEGIN [A-Z0-9 ]+-----/.test(s)) return 'pem';
   if (/(?:^|[^A-Fa-f0-9])(?:0x)?[A-Fa-f0-9]{64}(?![A-Fa-f0-9])/.test(s)) return 'hex_key';
   return null;
 }
 
-/** Comments reject links. Returns a category or null. Never returns the match. */
+const LINK_TLDS = new Set([
+  'com', 'net', 'org', 'io', 'ai', 'app', 'dev', 'xyz', 'co', 'gg', 'link', 'ly',
+  'me', 'info', 'biz', 'cc', 'tv', 'finance', 'cash', 'shop', 'pro', 'site',
+  'online', 'click', 'top', 'win',
+]);
+
+function unfoldDefang(text) {
+  return String(text)
+    .replace(/\[\s*\.\s*\]/g, '.')
+    .replace(/\(\s*\.\s*\)/g, '.')
+    .replace(/\{\s*\.\s*\}/g, '.')
+    .replace(/\[\s*dot\s*\]/gi, '.')
+    .replace(/\(\s*dot\s*\)/gi, '.')
+    .replace(/\{\s*dot\s*\}/gi, '.');
+}
+
+/** Posts and comments reject links. Returns a category or null. Never returns the match. */
 export function findLink(text) {
-  const s = String(text ?? '');
-  if (/https?:\/\//i.test(s)) return 'url';
-  if (/\bwww\./i.test(s)) return 'url';
-  if (/\[[^\]]*\]\([^)]+\)/.test(s)) return 'markdown';
-  if (/\bhref\s*=/i.test(s)) return 'html';
+  const raw = String(text ?? '');
+  if (/https?:\/\//i.test(raw)) return 'url';
+  if (/\bwww\./i.test(raw)) return 'url';
+  if (/\[[^\]]*\]\([^)]+\)/.test(raw)) return 'markdown';
+  if (/\bhref\s*=/i.test(raw)) return 'html';
+  const s = unfoldDefang(raw);
+  if (/\b[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*\.[a-z]{2,24}\//i.test(s)) {
+    return 'domain';
+  }
+  const bare = s.match(/\b[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.[a-z]{2,24}\b/gi) || [];
+  for (const hit of bare) {
+    const tld = hit.slice(hit.lastIndexOf('.') + 1).toLowerCase();
+    if (LINK_TLDS.has(tld)) return 'domain';
+  }
   return null;
 }
 
@@ -696,6 +725,14 @@ function parseNote(body) {
       message: 'Post text looks like a secret and was not stored',
     };
   }
+  if (findLink(text)) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'link_rejected',
+      message: 'Post text cannot contain links',
+    };
+  }
   return { ok: true, text };
 }
 
@@ -811,7 +848,7 @@ function isCitableSpend(entry) {
   return true;
 }
 
-function agentHasUnusedCitable(ledger, agentId, posts) {
+function agentHasUnusedCitable(ledger, agentId, posts, endpointHost, hosts) {
   const id = Number(agentId);
   const rows = Array.isArray(ledger?.entries) ? ledger.entries : [];
   for (const entry of rows) {
@@ -819,7 +856,7 @@ function agentHasUnusedCitable(ledger, agentId, posts) {
     if (!isCitableSpend(entry)) continue;
     const key = canonicalReceiptKey(entry, entry.task_id);
     if (posts.isReceiptTaken(key)) continue;
-    return true;
+    if (assertReceiptHost(entry, endpointHost, hosts).ok) return true;
   }
   return false;
 }
@@ -921,8 +958,8 @@ export async function createEndpointReport(body = {}, deps = {}) {
       freeRepost = true;
       backing = BACKING_STAMP;
       receiptKey = prior.receipt_key;
-    } else if (agentHasUnusedCitable(ledger, actor.agent_id, posts)) {
-      return fail(400, 'receipt_required', 'Cite receipt_ref. A stamp-backed post is only for an agent with no unused collected or foreign receipt.');
+    } else if (agentHasUnusedCitable(ledger, actor.agent_id, posts, endpoint.host, hosts)) {
+      return fail(400, 'receipt_required', 'Cite receipt_ref. This endpoint has an unused receipt on the book.');
     } else {
       backing = BACKING_STAMP;
     }
@@ -942,6 +979,9 @@ export async function createEndpointReport(body = {}, deps = {}) {
   if (freeRepost) {
     stampRef = prior.stamp_ref || (backing === BACKING_STAMP ? receiptKey : null);
   } else if (stamp.waived === true) {
+    if (backing === BACKING_STAMP) {
+      return fail(402, 'stamp_payment_required', 'A stamp-backed post requires a settled x402 payment of 2000 atomic USDC');
+    }
     stampRef = `waiver:board:${stampTaskId}`;
   } else {
     stampRef = stamp.settlement?.paymentRef ? String(stamp.settlement.paymentRef) : null;
@@ -1274,6 +1314,18 @@ export function listBoardComments(postId, { posts } = {}) {
   if (!posts) return fail(503, 'service_unavailable', 'Board store is not configured');
   const post = posts.get(postId);
   if (!post || post.status === 'hidden') return fail(404, 'not_found', 'Post not found');
+  if (post.status === 'taken_down') {
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        post_id: post.id,
+        status: 'taken_down',
+        taken_down_at: post.taken_down_at || null,
+        comments: [],
+      },
+    };
+  }
   const comments = posts.commentsFor(postId).map(toPublicComment).filter(Boolean);
   return { ok: true, status: 200, body: { post_id: post.id, comments } };
 }
@@ -1498,6 +1550,9 @@ export function confirmBoardReport(postId, body = {}, deps = {}) {
   if (post.type !== BOARD_TYPE_ENDPOINT_REPORT) {
     return fail(400, 'not_in_this_phase', 'Confirms attach to endpoint reports');
   }
+  if (Number(actor.agent_id) === Number(post.agent_id)) {
+    return fail(409, 'self_confirm', 'The author cannot confirm their own report');
+  }
   const confirms = Array.isArray(post.confirms) ? post.confirms : [];
   if (confirms.some((c) => c.agent_id === actor.agent_id)) {
     return fail(409, 'duplicate_confirm', 'This agent already confirmed this report');
@@ -1511,6 +1566,11 @@ export function confirmBoardReport(postId, body = {}, deps = {}) {
   const hosts = chitHosts instanceof Set ? chitHosts : new Set(chitHosts || [...chitHostsFromEnv()]);
   const hostOk = assertReceiptHost(owned, post.endpoint_host, hosts);
   if (!hostOk.ok) return hostOk;
+  const citedPayer = payerOf(owned);
+  if (citedPayer && post.payer_wallet
+    && String(citedPayer).toLowerCase() === String(post.payer_wallet).toLowerCase()) {
+    return fail(409, 'related_confirm', 'A confirm from the same payer as the report does not count');
+  }
   const receiptKey = canonicalReceiptKey(owned, receiptRef);
   if (posts.isReceiptTaken(receiptKey)) {
     return fail(409, 'duplicate_receipt', 'This receipt already backs a post or a confirm');

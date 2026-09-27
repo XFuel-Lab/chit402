@@ -27,6 +27,7 @@ const {
   resetSessionActApprovalStore,
 } = await import('../src/book-policy.js');
 const { buildReceipt } = await import('../src/receipt.js');
+const { canonicalRegisterRecoverMessage } = await import('../src/agent-registry.js');
 const { createApp } = await import('../src/server.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
@@ -118,14 +119,26 @@ describe('SessionAct approval_ttl HTTP', () => {
     });
 
     const listener = getAIListener();
-    const regTask = usdcTask({ taskId: 'xfuel-ttl-register' });
+    const regTask = usdcTask({
+      taskId: 'xfuel-ttl-register',
+      meta: { chain: 'base', provider: 'theta-edgecloud', payerWallet: AGENT.address },
+    });
     listener.activeTasks.set(regTask.taskId, regTask);
-    buildReceipt(regTask, { persistSignature: true, payerWallet: PAYER.address });
+    buildReceipt(regTask, { persistSignature: true, payerWallet: AGENT.address });
 
+    const signatureTimestamp = nowSec();
+    const walletSignature = await AGENT.signMessage(
+      canonicalRegisterRecoverMessage(regTask.taskId, AGENT.address, signatureTimestamp),
+    );
     const regRes = await fetch(`${base}/v1/agents/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ task_id: regTask.taskId, agent_wallet: AGENT.address }),
+      body: JSON.stringify({
+        task_id: regTask.taskId,
+        agent_wallet: AGENT.address,
+        wallet_signature: walletSignature,
+        signature_timestamp: signatureTimestamp,
+      }),
     });
     assert.equal(regRes.status, 200);
     const regBody = await regRes.json();

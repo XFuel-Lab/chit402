@@ -17,7 +17,7 @@ export const SERVER_INSTRUCTIONS = `Chit402: call list_models, then chat_complet
 
 submit_inference is the paid M2M door (POST /task-request). It requires model + sender + amount, forwards messages/input when provided, and returns HTTP 402 without a payer.
 
-register_agent is POST /v1/agents/register. It binds a plain EOA, AAWP official, or smart-account agentWallet to an integer agent_id using a collected HMAC-valid receipt. A detectable EOA must personal_sign. Demo receipts do not qualify. Do not paste a human private key.
+register_agent is POST /v1/agents/register. A wallet with USDC can pay the $0.002 stamp on that route, or pass a collected receipt whose payer is that wallet. A detectable EOA must personal_sign. Demo receipts do not qualify. Do not paste a human private key.
 
 get_book / get_agent_book is GET|POST /v1/agents/:agent_id/book. Possession-gated last-N collected spend for that agent_id. Not a public index. Do not paste a human private key.
 

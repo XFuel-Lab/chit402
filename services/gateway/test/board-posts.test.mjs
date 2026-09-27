@@ -237,7 +237,7 @@ test('public rendering is plain text with only the published fields', async () =
   const payer = WALLET;
   const payTo = WALLET;
   addForeignReceipt(ctx.ledger, ctx.agent.agent_id, { payer, payTo, amount: '5000' });
-  const html = '<script>alert(1)</script> [click](https://evil.example)';
+  const html = '<script>alert(1)</script> click here';
   const created = await postReport(ctx, {
     receipt_ref: 'foreign-task-1',
     endpoint: 'https://shop.example/v1/chat?x=1',
@@ -783,11 +783,16 @@ test('a receipt that backs a post cannot back a confirm, and the reverse', async
     chitHosts: CHIT,
   });
   assert.equal(reuse.status, 409);
-  assert.equal(reuse.error, 'duplicate_receipt');
-  const wrongHost = confirmBoardReport(post.body.post.id, { receipt_ref: 'chit-host' }, {
+  assert.equal(reuse.error, 'self_confirm');
+  addChitReceipt(ctx.ledger, ctx.other.agent_id, {
+    taskId: 'chit-other',
+    ref: `base:0x${'66'.repeat(32)}`,
+    payer: OTHER_WALLET,
+  });
+  const wrongHost = confirmBoardReport(post.body.post.id, { receipt_ref: 'chit-other' }, {
     posts: ctx.posts,
     ledger: ctx.ledger,
-    actor: ctx.agent,
+    actor: ctx.other,
     chitHosts: CHIT,
   });
   assert.equal(wrongHost.status, 400);
@@ -836,7 +841,15 @@ test('house confirms are labeled and do not count toward N', async () => {
     text: 'stamp only',
   });
   assert.equal(post.body.post.backing, BACKING_STAMP);
-  addForeignReceipt(ctx.ledger, ctx.agent.agent_id);
+  const thirdWallet = `0x${'ef'.repeat(20)}`;
+  const third = ctx.registry.allocate();
+  ctx.registry.bindWallet(third.agent_id, { agentWallet: thirdWallet });
+  addForeignReceipt(ctx.ledger, third.agent_id, {
+    taskId: 'foreign-third',
+    ref: `base:0x${'77'.repeat(32)}`,
+    payer: thirdWallet,
+    resource: 'https://shop.example/v1',
+  });
   const house = confirmBoardReport(post.body.post.id, { receipt_ref: 'foreign-other' }, {
     posts: ctx.posts,
     ledger: ctx.ledger,
@@ -847,10 +860,10 @@ test('house confirms are labeled and do not count toward N', async () => {
   assert.equal(house.status, 201);
   assert.equal(house.body.confirm.house, true);
   assert.equal(house.body.confirm_count, 0);
-  const payer = confirmBoardReport(post.body.post.id, { receipt_ref: 'foreign-task-1' }, {
+  const payer = confirmBoardReport(post.body.post.id, { receipt_ref: 'foreign-third' }, {
     posts: ctx.posts,
     ledger: ctx.ledger,
-    actor: ctx.agent,
+    actor: third,
     houseAgentIds: [ctx.other.agent_id],
     chitHosts: CHIT,
   });
@@ -872,7 +885,16 @@ test('comments reject secrets and links, cost a stamp, and follow flag hide take
   });
   const id = post.body.post.id;
   const stamp = stampOk();
-  for (const text of ['sk-live-abcdef', 'see https://evil.example', 'www.evil.example/a', '[x](https://evil.example)']) {
+  for (const text of [
+    'sk-live-abcdef',
+    'see https://evil.example',
+    'www.evil.example/a',
+    '[x](https://evil.example)',
+    'claim at evil.com/claim',
+    'defanged evil[.]com',
+    'ping t.me/x',
+    'ghp_abcdefghijklmnopqrstuvwxyz',
+  ]) {
     const rejected = await createBoardComment(id, { text }, {
       posts: ctx.posts,
       ledger: ctx.ledger,
@@ -886,6 +908,9 @@ test('comments reject secrets and links, cost a stamp, and follow flag hide take
   }
   assert.equal(stamp.calls(), 0);
   assert.equal(findLink('plain words'), null);
+  assert.equal(findLink('e.g. a note'), null);
+  assert.equal(findLink('version 1.2.3'), null);
+  assert.equal(findLink('node.js'), null);
   const tooLong = await createBoardComment(id, { text: 'a'.repeat(501) }, {
     posts: ctx.posts,
     ledger: ctx.ledger,
@@ -1011,4 +1036,138 @@ test('likes toggle for a registered agent and reject anonymous', async () => {
   assert.equal(view.like_count, 2);
   assert.equal(JSON.stringify(view).includes('"likes"'), false);
   assert.equal(JSON.stringify(on.body).includes('agent_id'), false);
+});
+
+test('a Chit register receipt does not block a stamp-backed report on another host', async () => {
+  const ctx = world();
+  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  const foreign = await postReport(ctx, {
+    endpoint: 'https://example-x402.com/v1',
+    outcome: 'success',
+    text: 'no receipt for this shop',
+  });
+  assert.equal(foreign.status, 201);
+  assert.equal(foreign.body.post.backing, BACKING_STAMP);
+  const chit = await postReport(ctx, {
+    endpoint: 'https://api.chit402.com/v1',
+    outcome: 'success',
+  });
+  assert.equal(chit.status, 400);
+  assert.equal(chit.error, 'receipt_required');
+  const cited = await postReport(ctx, {
+    receipt_ref: 'chit-task-1',
+    endpoint: 'https://api.chit402.com/v1',
+    outcome: 'success',
+  });
+  assert.equal(cited.status, 201);
+  assert.equal(cited.body.post.backing, BACKING_SPEND);
+});
+
+test('a waived stamp cannot back a stamp-backed post', async () => {
+  const ctx = world();
+  const waived = await postReport(ctx, {
+    endpoint: 'https://example-x402.com/v1',
+    outcome: 'success',
+    text: 'waiver',
+  }, {
+    ensureStamp: async () => ({ ok: true, waived: true, waiverKey: true }),
+  });
+  assert.equal(waived.status, 402);
+  assert.equal(waived.error, 'stamp_payment_required');
+  assert.equal(ctx.posts.list().length, 0);
+  const spend = await postReport(ctx, {
+    receipt_ref: 'chit-task-1',
+    endpoint: 'https://api.chit402.com/v1',
+    outcome: 'success',
+  }, {
+    ensureStamp: async () => ({ ok: true, waived: true, waiverKey: true }),
+  });
+  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  const spendAfter = await postReport(ctx, {
+    receipt_ref: 'chit-task-1',
+    endpoint: 'https://api.chit402.com/v1',
+    outcome: 'success',
+  }, {
+    ensureStamp: async () => ({ ok: true, waived: true, waiverKey: true }),
+  });
+  assert.equal(spend.status, 403);
+  assert.equal(spendAfter.status, 201);
+  assert.equal(spendAfter.body.post.backing, BACKING_SPEND);
+  assert.equal(spendAfter.body.stamp_waived, true);
+});
+
+test('post text rejects bare and defanged domains', async () => {
+  const ctx = world();
+  for (const text of ['see evil.com/claim', 'evil[.]com', 't.me/x']) {
+    const rejected = await postReport(ctx, {
+      endpoint: 'https://shop.example/v1',
+      outcome: 'success',
+      text,
+    });
+    assert.equal(rejected.status, 400, text);
+    assert.equal(rejected.error, 'link_rejected');
+  }
+  const ok = await postReport(ctx, {
+    endpoint: 'https://shop.example/v1',
+    outcome: 'success',
+    text: 'e.g. version 1.2.3 worked',
+  });
+  assert.equal(ok.status, 201);
+});
+
+test('taken-down posts return an empty comment thread', async () => {
+  const ctx = world();
+  const post = await postReport(ctx, {
+    endpoint: 'https://shop.example/v1',
+    outcome: 'success',
+    text: 'root',
+  });
+  const id = post.body.post.id;
+  const comment = await createBoardComment(id, { text: 'noted' }, {
+    posts: ctx.posts,
+    ledger: ctx.ledger,
+    actor: ctx.other,
+    ensureStamp: stampOk().ensure,
+  });
+  assert.equal(comment.status, 201);
+  const down = takedownBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, actor: ctx.agent });
+  assert.equal(down.body.post.status, 'taken_down');
+  const thread = listBoardComments(id, { posts: ctx.posts });
+  assert.equal(thread.status, 200);
+  assert.equal(thread.body.status, 'taken_down');
+  assert.deepEqual(thread.body.comments, []);
+  assert.equal(JSON.stringify(thread.body).includes('noted'), false);
+});
+
+test('the author cannot confirm their own report, nor the same payer', async () => {
+  const ctx = world();
+  addForeignReceipt(ctx.ledger, ctx.agent.agent_id);
+  const post = await postReport(ctx, {
+    receipt_ref: 'foreign-task-1',
+    endpoint: 'https://shop.example/v1/chat',
+    outcome: 'success',
+  });
+  const self = confirmBoardReport(post.body.post.id, { receipt_ref: 'foreign-task-1' }, {
+    posts: ctx.posts,
+    ledger: ctx.ledger,
+    actor: ctx.agent,
+    chitHosts: CHIT,
+  });
+  assert.equal(self.status, 409);
+  assert.equal(self.error, 'self_confirm');
+  addForeignReceipt(ctx.ledger, ctx.other.agent_id, {
+    taskId: 'same-payer',
+    ref: `base:0x${'88'.repeat(32)}`,
+    payer: WALLET,
+    resource: 'https://shop.example/v1/chat',
+  });
+  const related = confirmBoardReport(post.body.post.id, { receipt_ref: 'same-payer' }, {
+    posts: ctx.posts,
+    ledger: ctx.ledger,
+    actor: ctx.other,
+    chitHosts: CHIT,
+  });
+  assert.equal(related.status, 409);
+  assert.equal(related.error, 'related_confirm');
+  assert.equal(ctx.posts.get(post.body.post.id).confirms.length, 0);
 });

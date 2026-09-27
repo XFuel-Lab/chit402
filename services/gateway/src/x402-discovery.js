@@ -191,11 +191,11 @@ const AGENTS_REGISTER_INPUT_SCHEMA = {
     },
     task_id: {
       type: 'string',
-      description: 'Collected HMAC-valid receipt id from POST /v1/chat/completions (or GET /receipt/:id).',
+      description: 'Optional. Collected HMAC-valid receipt id whose on-chain payer is agentWallet. Omit to pay the $0.002 register stamp on this route instead.',
     },
     wallet_signature: {
       type: 'string',
-      description: 'personal_sign of chit.register.recover|task_id|checksum address|unix seconds. Required when the wallet is a detectable EOA.',
+      description: 'personal_sign. Paid register: chit.register.pay|checksum address|unix seconds. Existing receipt: chit.register.recover|task_id|checksum address|unix seconds. Required for a detectable EOA. Smart accounts use the same message with ERC-1271.',
     },
     signature_timestamp: {
       type: 'integer',
@@ -206,7 +206,7 @@ const AGENTS_REGISTER_INPUT_SCHEMA = {
       description: 'Optional 0x 32-byte hash for POST /erc8004/validate. Derived when omitted.',
     },
   },
-  required: ['agentWallet', 'task_id'],
+  required: ['agentWallet'],
 };
 
 const SETTLEMENT_REPLAY_FIELDS = {
@@ -1139,7 +1139,8 @@ export function buildOpenApiSpec(baseUrl = '') {
         + 'Unauthenticated callers get HTTP 402 with x402 '
         + 'payment requirements (USDC; Base and Solana when enabled). '
         + 'Retry with X-PAYMENT or PAYMENT-SIGNATURE. POST /v1/agents/register is fail-closed: '
-        + 'it binds an agentWallet to an integer agent_id using a collected HMAC-valid receipt. '
+        + 'omit task_id and pay the $0.002 stamp on that route (the paying wallet is the agent), '
+        + 'or bind agentWallet to a collected receipt whose on-chain payer is that wallet. '
         + 'GET|POST /v1/agents/{agent_id}/book is a possession-gated last-N collected '
         + 'spend pack with budget Y / remaining for that agent_id — not a public index. '
         + 'Private Spend is default for registered sessions (X-XFuel-Session header). '
@@ -1161,10 +1162,16 @@ export function buildOpenApiSpec(baseUrl = '') {
           operationId: 'registerAgent',
           summary: 'Register an agent identity',
           description:
-            'Fail-closed. Bind a plain EOA, an AAWP official wallet, or a smart-account agentWallet to an integer agent_id. '
-            + 'A detectable EOA must send wallet_signature (personal_sign) and signature_timestamp. '
-            + 'Requires a collected HMAC-valid receipt (task_id). Demo receipts do not qualify. '
-            + 'This route is not the paid door — that stays POST /v1/chat/completions.',
+            'Fail-closed identity. Start from a wallet that holds USDC on Base. '
+            + 'Omit task_id and pay the $0.002 stamp (2000 atomic USDC) on this route: the first call is HTTP 402 with PAYMENT-REQUIRED, then retry with PAYMENT-SIGNATURE. '
+            + 'The paying wallet becomes agentWallet and that stamp is the collected receipt. A real settled payment is required; a waiver does not register. '
+            + 'A plain EOA personal_signs chit.register.pay|checksum address|unix seconds (300 second window). '
+            + 'Alternatively pass task_id of an existing collected receipt. The wallet must be that receipt\'s on-chain payer. '
+            + 'An EOA signs chit.register.recover|task_id|checksum address|unix seconds. '
+            + 'A smart account or AAWP wallet proves ERC-1271 isValidSignature over the same message, and the address must be the payer. '
+            + 'No payer proof, no registration. Demo receipts do not qualify. '
+            + 'POST /v1/chat/completions remains the inference paid door. Citing that receipt still works when task_id is set. '
+            + 'A chat call is a real paid call at the quoted price. There are no free credits.',
           tags: ['Agents'],
           requestBody: {
             required: true,
@@ -1179,8 +1186,10 @@ export function buildOpenApiSpec(baseUrl = '') {
                 'application/json': { schema: AGENTS_REGISTER_OUTPUT_SCHEMA },
               },
             },
-            400: { description: 'Invalid wallet, missing task_id, or HMAC failed' },
-            403: { description: 'Receipt does not qualify (demo / not collected)' },
+            400: { description: 'Invalid wallet, missing agentWallet, or HMAC failed' },
+            401: { description: 'Wallet control proof missing or invalid (personal_sign or ERC-1271)' },
+            402: { description: 'Register stamp required when task_id is omitted. $0.002 USDC / 2000 atomic. PAYMENT-REQUIRED, then retry with PAYMENT-SIGNATURE. A waiver does not register.' },
+            403: { description: 'Payer mismatch, payer unknown, or receipt does not qualify (demo / not collected)' },
             409: { description: 'Duplicate payment.ref or task_id' },
           },
         },
