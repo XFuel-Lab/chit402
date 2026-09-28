@@ -40,7 +40,7 @@ npx xfuel-verify receipt.json --check-nullifier
 npx xfuel-verify receipt.json --json
 
 # From stdin
-curl -s https://api.xfuel.app/receipt/task-123?format=json | npx xfuel-verify -
+curl -s https://api.chit402.com/receipt/task-123?format=json | npx xfuel-verify -
 ```
 
 ## What This Verifies
@@ -48,42 +48,60 @@ curl -s https://api.xfuel.app/receipt/task-123?format=json | npx xfuel-verify -
 | Check | Requires Network? | Description |
 |-------|-------------------|-------------|
 | Payment binding | No | Recompute commitment from receipt fields |
-| Issuer signature | No | ES256 verification — pinned `issuer_jwk` on receipt, or JWKS file |
+| Issuer signature | No, unless `--fetch-jwks` | ES256. Trusted only via JWKS (by kid) or a pinned RFC 7638 kid |
 | Output hash | No | Hash is on the receipt |
 | On-chain settlement | Yes | Query Base RPC for tx |
 | Nullifier anchor | Yes | Query ZKVerifierSP1 contract |
 
 ## Issuer Signature Verification (ES256)
 
-Receipts include an `issuer_signature` signed with ES256 (P-256). Verify offline:
+Receipts include `issuer_signature.jws` (compact ES256 / P-256). The signature
+counts only when the verifying key is trusted:
 
-### Pin-first (receipts with `issuer_signature.issuer_jwk`)
+1. **JWKS by kid** — a key in `--jwks-file`, `--jwks-url`, or `--fetch-jwks`
+   (allowlisted host, default `api.chit402.com`) whose `kid` matches the JWS.
+2. **Pinned thumbprint** — the embedded `issuer_jwk` is used only when its
+   RFC 7638 thumbprint equals a trusted kid. The default offline pin is the
+   production kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`. Override with
+   `--trusted-kid`, or disable with `--no-trusted-kid`.
 
-Newer receipts pin the issuer public key directly in the receipt. No JWKS file needed:
+`issuer_jwk` on the receipt is not a trust root. A copy re-signed with an
+arbitrary P-256 key reports `key untrusted` (`issuer_signature.valid === false`),
+including when `--jwks-file` points at the real JWKS.
 
 ```bash
-# Offline verify — uses pinned issuer_jwk from the receipt
+# Offline: default production pin, no network
 npx xfuel-verify receipt.json
+
+# Trust the published JWKS instead of (or in addition to) the pin
+curl -o issuer-jwks.json https://api.chit402.com/.well-known/jwks.json
+npx xfuel-verify receipt.json --jwks-file issuer-jwks.json --no-trusted-kid
+
+# Fetch the issuer JWKS (https://api.chit402.com/.well-known/jwks.json)
+npx xfuel-verify receipt.json --fetch-jwks
 ```
 
 ```typescript
 import { verifyReceipt } from '@xfuel/verify';
 
-const result = await verifyReceipt(receipt); // no jwks option required
-console.log(result.issuer_signature.valid); // true when signature intact
+const result = await verifyReceipt(receipt);
+console.log(result.issuer_signature.valid);      // true only for a trusted key
+console.log(result.issuer_signature.key_trusted);
+console.log(result.amount_usdc);                 // from verified claims, not the outer copy
+console.log(result.claim_mismatches);            // outer payment / caller_binding vs JWS
 ```
 
-### Legacy JWKS file (older receipts without pin)
+Amount, payer, payee, asset, and tx are read from the verified JWS claims.
+If the unsigned outer `payment` or `caller_binding` disagrees, verification
+fails. `--check-payer` on Base confirms payer, payee, asset, and amount in the
+USDC `Transfer` log.
 
-```bash
-# Download JWKS once (or obtain from trusted source)
-curl -o issuer-jwks.json https://api.chit402.com/.well-known/jwks.json
+A paid USDC receipt whose signed `binding.expected_commitment` is null is
+reported as “No payment-binding commitment”, not as an unmetered or TFUEL receipt.
 
-# Verify receipt with JWKS file (no network during verification)
-npx xfuel-verify receipt.json --jwks-file issuer-jwks.json
-```
-
-The CLI does **not** automatically fetch JWKS to ensure offline verification. For pinned receipts, `--jwks-file` is optional. Exit code 1 (failed) is returned if the signature is invalid or tampered.
+The CLI does **not** fetch JWKS unless `--fetch-jwks` or `--jwks-url` is set.
+Exit code 1 is returned when the key is untrusted, the signature is invalid, or
+a signed claim disagrees with the outer copy.
 
 ## Frozen Fields
 

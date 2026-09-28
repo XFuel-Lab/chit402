@@ -27,6 +27,8 @@ export interface BasePayerVerification {
   valid: boolean;
   txHash?: string;
   payerWallet?: string;
+  payee?: string;
+  asset?: string;
   expectedAmount?: string;
   transferredAmount?: string;
   network?: string;
@@ -86,23 +88,30 @@ export function parseBasePaymentRef(
 
 /**
  * Sum USDC Transfer amounts from payer in a transaction receipt.
+ * When `payee` is set, only transfers to that address are counted.
  */
 export function sumUsdcTransfersFromPayer(
   receipt: TransactionReceipt,
   payerWallet: string,
   usdcAddress: string,
+  payee?: string,
 ): bigint {
   const expectedFrom = getAddress(payerWallet).toLowerCase();
+  const expectedTo = payee ? getAddress(payee).toLowerCase() : null;
   const usdcLower = usdcAddress.toLowerCase();
   let total = 0n;
 
   for (const log of receipt.logs || []) {
     if (log.address?.toLowerCase() !== usdcLower) continue;
-    if (log.topics?.[0] !== ERC20_TRANSFER_TOPIC) continue;
+    if (log.topics?.[0]?.toLowerCase() !== ERC20_TRANSFER_TOPIC) continue;
     if ((log.topics?.length || 0) < 3) continue;
 
     const from = ('0x' + log.topics[1].slice(26)).toLowerCase();
     if (from !== expectedFrom) continue;
+    if (expectedTo) {
+      const to = ('0x' + log.topics[2].slice(26)).toLowerCase();
+      if (to !== expectedTo) continue;
+    }
     total += BigInt(log.data || '0');
   }
 
@@ -127,6 +136,10 @@ export interface VerifyBasePayerInput {
   paymentRef: string;
   payerWallet: string;
   grossAmount: string | number | bigint;
+  /** Settlement payee. When set, the USDC Transfer `to` must equal this address. */
+  payee?: string;
+  /** Token contract. When set, it must be the network USDC and the Transfer log address. */
+  asset?: string;
   network?: string;
   rpcUrl?: string;
   fetchReceipt?: BaseReceiptFetcher;
@@ -151,10 +164,38 @@ export async function verifyBasePayer(input: VerifyBasePayerInput): Promise<Base
     return { checked: false, valid: false, reason: 'invalid_gross_amount' };
   }
 
+  let payee: string | undefined;
+  if (input.payee != null && input.payee !== '') {
+    if (!isEvmAddress(input.payee)) {
+      return { checked: false, valid: false, reason: 'invalid_payee' };
+    }
+    payee = getAddress(input.payee);
+  }
+
   const network = (input.network || parsed.network).toLowerCase();
   const usdcAddress = USDC_ADDRESSES[network];
   if (!usdcAddress) {
     return { checked: false, valid: false, reason: `unknown_network: ${network}` };
+  }
+
+  let asset: string | undefined;
+  if (input.asset != null && input.asset !== '') {
+    if (!isEvmAddress(input.asset)) {
+      return { checked: true, valid: false, reason: `asset_mismatch: ${input.asset} is not an EVM token address` };
+    }
+    asset = getAddress(input.asset);
+    if (asset !== getAddress(usdcAddress)) {
+      return {
+        checked: true,
+        valid: false,
+        payerWallet: getAddress(payerWallet),
+        payee,
+        asset,
+        expectedAmount: expectedAmount.toString(),
+        network,
+        reason: `asset_mismatch: ${asset} !== ${getAddress(usdcAddress)}`,
+      };
+    }
   }
 
   const fetcher = input.fetchReceipt || fetchBaseTransactionReceipt;
@@ -175,14 +216,20 @@ export async function verifyBasePayer(input: VerifyBasePayerInput): Promise<Base
     };
   }
 
+  const baseFields = {
+    txHash: parsed.txHash,
+    payerWallet: getAddress(payerWallet),
+    payee,
+    asset: asset || getAddress(usdcAddress),
+    expectedAmount: expectedAmount.toString(),
+    network,
+  };
+
   if (!receipt) {
     return {
       checked: true,
       valid: false,
-      txHash: parsed.txHash,
-      payerWallet: getAddress(payerWallet),
-      expectedAmount: expectedAmount.toString(),
-      network,
+      ...baseFields,
       reason: 'transaction_not_found',
     };
   }
@@ -191,29 +238,34 @@ export async function verifyBasePayer(input: VerifyBasePayerInput): Promise<Base
     return {
       checked: true,
       valid: false,
-      txHash: parsed.txHash,
-      payerWallet: getAddress(payerWallet),
-      expectedAmount: expectedAmount.toString(),
-      network,
+      ...baseFields,
       reason: 'transaction_reverted',
     };
   }
 
-  const transferred = sumUsdcTransfersFromPayer(receipt, payerWallet, usdcAddress);
+  const token = asset || usdcAddress;
+  const transferred = sumUsdcTransfersFromPayer(receipt, payerWallet, token, payee);
+  const fromPayer = payee
+    ? sumUsdcTransfersFromPayer(receipt, payerWallet, token)
+    : transferred;
   const valid = transferred >= expectedAmount;
+
+  let reason: string | undefined;
+  if (!valid) {
+    if (payee && fromPayer > 0n && transferred === 0n) {
+      reason = `payee_mismatch: no USDC transfer from ${getAddress(payerWallet)} to ${payee}`;
+    } else if (transferred > 0n) {
+      reason = `transferred_${transferred}_lt_expected_${expectedAmount}`;
+    } else {
+      reason = `no_usdc_transfer_from_${getAddress(payerWallet)}`;
+    }
+  }
 
   return {
     checked: true,
     valid,
-    txHash: parsed.txHash,
-    payerWallet: getAddress(payerWallet),
-    expectedAmount: expectedAmount.toString(),
+    ...baseFields,
     transferredAmount: transferred.toString(),
-    network,
-    reason: valid
-      ? undefined
-      : transferred > 0n
-        ? `transferred_${transferred}_lt_expected_${expectedAmount}`
-        : `no_usdc_transfer_from_${getAddress(payerWallet)}`,
+    reason,
   };
 }

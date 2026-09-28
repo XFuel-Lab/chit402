@@ -8,6 +8,8 @@ import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
+// Resolve via the package exports map. Deep imports of dist/cli.js throw
+// ERR_PACKAGE_PATH_NOT_EXPORTED unless @xfuel/verify lists that subpath.
 const verifyCliPath = require.resolve('@xfuel/verify/dist/cli.js');
 
 const child = spawn(process.execPath, [verifyCliPath, ...process.argv.slice(2)], {

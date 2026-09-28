@@ -27,6 +27,9 @@ export interface ReceiptPayerClaims {
   payment?: {
     ref?: string | null;
     gross_amount?: string | null;
+    payee?: string | null;
+    asset?: string | null;
+    rail?: string | null;
   } | null;
   caller_binding?: {
     payer_wallet?: string | null;
@@ -51,49 +54,58 @@ export function decodeJwsPayload(jws: string): Record<string, unknown> | null {
   }
 }
 
+interface PaymentClaim {
+  ref?: string | null;
+  gross_amount?: string | null;
+  payee?: string | null;
+  asset?: string | null;
+  rail?: string | null;
+}
+
+function paymentClaims(payment: PaymentClaim | null | undefined): ReceiptPayerClaims['payment'] {
+  return {
+    ref: payment?.ref ?? null,
+    gross_amount: payment?.gross_amount != null ? String(payment.gross_amount) : null,
+    payee: payment?.payee ?? null,
+    asset: payment?.asset ?? null,
+    rail: payment?.rail ?? null,
+  };
+}
+
 /**
- * Extract payer claims from a receipt envelope (top-level or JWS payload).
+ * Payer facts from the JWS payload when one is present.
+ * The outer `payment` / `caller_binding` copies are unsigned and are used only
+ * when the receipt has no JWS. Callers that need verified facts must check the
+ * issuer signature first; this decode does not itself prove the signature.
  */
 export function receiptPayerClaimsFromEnvelope(receipt: {
-  payment?: { ref?: string | null; gross_amount?: string | null } | null;
+  payment?: PaymentClaim | null;
   caller_binding?: { payer_wallet?: string | null } | null;
   issuer_signature?: { jws?: string } | null;
 }): ReceiptPayerClaims {
+  const jws = receipt.issuer_signature?.jws;
+  if (jws) {
+    const claims = decodeJwsPayload(jws);
+    if (claims) {
+      const payment = claims.payment as PaymentClaim | undefined;
+      const callerBinding = claims.caller_binding as { payer_wallet?: string } | undefined;
+      return {
+        payment: paymentClaims(payment),
+        caller_binding: callerBinding ?? null,
+      };
+    }
+  }
+
   if (receipt.payment?.ref || receipt.caller_binding?.payer_wallet) {
     return {
-      payment: {
-        ref: receipt.payment?.ref ?? null,
-        gross_amount: receipt.payment?.gross_amount ?? null,
-      },
+      payment: paymentClaims(receipt.payment),
       caller_binding: receipt.caller_binding ?? null,
     };
   }
 
-  const jws = receipt.issuer_signature?.jws;
-  if (!jws) {
-    return {
-      payment: { ref: null, gross_amount: null },
-      caller_binding: null,
-    };
-  }
-
-  const claims = decodeJwsPayload(jws);
-  if (!claims) {
-    return {
-      payment: { ref: null, gross_amount: null },
-      caller_binding: null,
-    };
-  }
-
-  const payment = claims.payment as { ref?: string; gross_amount?: string } | undefined;
-  const callerBinding = claims.caller_binding as { payer_wallet?: string } | undefined;
-
   return {
-    payment: {
-      ref: payment?.ref ?? null,
-      gross_amount: payment?.gross_amount ?? null,
-    },
-    caller_binding: callerBinding ?? null,
+    payment: { ref: null, gross_amount: null, payee: null, asset: null, rail: null },
+    caller_binding: null,
   };
 }
 
@@ -117,6 +129,8 @@ export async function verifyPayerBinding(
   const paymentRef = claims.payment?.ref ?? null;
   const payerWallet = claims.caller_binding?.payer_wallet ?? null;
   const grossAmount = claims.payment?.gross_amount ?? null;
+  const payee = claims.payment?.payee ?? null;
+  const asset = claims.payment?.asset ?? null;
   const rail = detectRail(paymentRef);
 
   if (!paymentRef) {
@@ -150,10 +164,18 @@ export async function verifyPayerBinding(
   }
 
   if (rail === 'base') {
+    if (!payee) {
+      return { checked: false, valid: false, rail, paymentRef, payerWallet, expectedAmount: grossAmount, reason: 'no_payee' };
+    }
+    if (!asset) {
+      return { checked: false, valid: false, rail, paymentRef, payerWallet, expectedAmount: grossAmount, reason: 'no_asset' };
+    }
     const base = await verifyBasePayer({
       paymentRef,
       payerWallet,
       grossAmount,
+      payee,
+      asset,
       rpcUrl: options.rpcUrl,
       fetchReceipt: options.fetchBaseReceipt,
     });

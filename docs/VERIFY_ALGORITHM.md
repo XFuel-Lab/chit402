@@ -27,15 +27,29 @@ A signed Chit402 receipt attests:
 | `output.hash` | Commitment to the model output |
 | `binding.expected_commitment` | Payment binding commitment |
 
-The HMAC signature covers all of the above in a canonical order. Tampering
-with any field invalidates the signature.
+Live receipts carry two different signatures. They do **not** cover the same bytes:
+
+- `issuer_signature.jws` — primary public attestation. Compact ES256 JWS over a
+  JSON object (`canonicalSignedClaims`). Verify with a **trusted** key. This is
+  what `https://api.chit402.com/receipt/:id?format=json` returns today.
+- `hmac_attestation` — HMAC-SHA256 over the canonical array in section 3
+  (`canonicalSignedPayload`). Shared-secret path for an attestor who holds the
+  secret. Older receipts used `signature` / `co_signature` for this same HMAC.
+
+Tampering with a covered field invalidates the signature that covers it. The
+unsigned outer `payment` and `caller_binding` copies are a display mirror.
+Quote facts from the verified JWS claims, and flag any mismatch with the outer copy.
 
 ## 2. Signature structure
 
-A receipt may carry one or both:
+A receipt may carry:
 
-- `signature` — primary Chit attestation
-- `co_signature` — second attestor (partner/auditor key)
+- `issuer_signature.jws` — primary ES256 compact JWS (see section 10)
+- `hmac_attestation` — HMAC attestor (`alg: HMAC-SHA256`, `value: sha256=<hex>`)
+- `co_attestation` — second HMAC attestor, when configured
+
+Legacy names `signature` and `co_signature` are the same HMAC construction on
+older receipts.
 
 Each signature block:
 
@@ -127,11 +141,14 @@ On-chain check (optional, `reconcileSettledTransfer`): given the tx logs, v8's
 `net_amount` instead, which flags a receipt whose net subtracted a fee that
 never moved on chain.
 
-## 4. Verification algorithm (plain language)
+## 4. HMAC verification algorithm (plain language)
 
-1. Extract the signature value from `receipt.signature.value` or
-   `receipt.co_signature.value`. Strip the `sha256=` prefix to get the
-   64-character hex digest.
+This checks `hmac_attestation` (or legacy `signature` / `co_signature`). It does
+not check `issuer_signature.jws`. For the public path, use section 10.
+
+1. Extract the signature value from `receipt.hmac_attestation.value` (legacy:
+   `receipt.signature.value` or `receipt.co_signature.value`). Strip the
+   `sha256=` prefix to get the 64-character hex digest.
 
 2. Build the canonical payload array (section 3).
 
@@ -176,7 +193,7 @@ function canonicalPayload(r) {
   ]);
 }
 
-function verify(receipt, secret, sigField = 'signature') {
+function verify(receipt, secret, sigField = 'hmac_attestation') {
   const sig = receipt?.[sigField]?.value;
   if (!sig) return { valid: false, reason: 'no_signature' };
   
@@ -201,13 +218,13 @@ if (!receiptPath || !secret) {
 
 const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
 
-// Try primary signature first, then co_signature
-let result = verify(receipt, secret, 'signature');
-if (!result.valid && receipt.co_signature) {
-  result = verify(receipt, secret, 'co_signature');
-  result.checked = 'co_signature';
+// Try hmac_attestation first, then co_attestation. Legacy field names still work.
+let result = verify(receipt, secret, receipt.hmac_attestation ? 'hmac_attestation' : 'signature');
+if (!result.valid && (receipt.co_attestation || receipt.co_signature)) {
+  result = verify(receipt, secret, receipt.co_attestation ? 'co_attestation' : 'co_signature');
+  result.checked = receipt.co_attestation ? 'co_attestation' : 'co_signature';
 } else {
-  result.checked = 'signature';
+  result.checked = receipt.hmac_attestation ? 'hmac_attestation' : 'signature';
 }
 
 console.log(JSON.stringify(result, null, 2));
@@ -297,30 +314,63 @@ shared secret required.
 
 ### Signature structure
 
+Live receipts:
+
 ```json
 {
   "alg": "ES256",
-  "payload_version": 3,
-  "value": "<base64url-encoded signature>",
-  "kid": "<key id from JWKS>",
-  "jwks_uri": "/.well-known/jwks.json",
-  "signed_fields": [ ... ]
+  "payload_version": 8,
+  "kid": "<RFC 7638 thumbprint>",
+  "jws": "<compact JWS header.payload.signature>",
+  "issuer_jwk": { "kty": "EC", "crv": "P-256", "x": "…", "y": "…", "kid": "…", "alg": "ES256", "use": "sig" }
 }
 ```
 
+`verification.jwks_uri` is `https://api.chit402.com/.well-known/jwks.json`.
+The JWS header is `{ alg, typ: "chit402-receipt+jwt", kid, jku }`. The payload
+is the claims object (payment, caller_binding, route, output, binding, …), not
+the HMAC array from section 3.
+
+`issuer_jwk` is a convenience copy of the public key. It is **not** a trust
+root. A signature is valid only when the verifying key is trusted:
+
+1. It is the JWKS entry with the same `kid` (a JWKS file you supply, or a JWKS
+   fetched from the issuer `jwks_uri` on an allowlisted host such as
+   `api.chit402.com`), or
+2. Its RFC 7638 thumbprint equals a pinned trusted kid. The default offline pin
+   is the current production kid
+   `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q` (overridable).
+
+Otherwise the verifier reports `key untrusted`, even if the bytes verify under
+the embedded key. Re-signing a receipt with an arbitrary P-256 key and embedding
+that key as `issuer_jwk` must not verify.
+
+Legacy detached signatures (`issuer_signature.value` over the section 3 array)
+still verify against a JWKS entry matched by `kid`.
+
 ### Verification steps
 
-1. Fetch the receipt: `GET /receipt/:taskId?format=json`
-2. Fetch the JWKS: `GET /.well-known/jwks.json`
-3. Find the key in `jwks.keys` where `kid` matches `receipt.issuer_signature.kid`
-4. Build the canonical payload (same as section 3)
-5. Verify: `ES256(publicKey, canonicalPayload) == issuer_signature.value`
+1. Fetch the receipt: `GET https://api.chit402.com/receipt/:taskId?format=json`
+2. Read `issuer_signature.jws`.
+3. Choose a trusted key:
+   - JWKS file or `GET https://api.chit402.com/.well-known/jwks.json`, entry whose
+     `kid` equals the JWS header `kid`, or
+   - embedded `issuer_jwk` only when `thumbprint(jwk)` equals a pinned trusted kid.
+4. ES256-verify the compact JWS (signing input is `header.payload`, raw R||S).
+5. Read amount, payer, payee, asset, and tx from the verified claims. If the
+   unsigned outer `payment` / `caller_binding` disagree, the receipt fails.
+6. Optional Base check: the tx's USDC `Transfer` must be from
+   `caller_binding.payer_wallet`, to `payment.payee`, of token `payment.asset`
+   (Base USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`), for at least
+   `payment.gross_amount`.
 
 ### Runnable code (Node.js)
 
-Detached ES256 over the canonical array is the legacy path. Current receipts
-carry a compact JWS (`issuer_signature.jws`); verify those bytes with the pinned
-`issuer_jwk`. The array below is payload version ≤ 7. Version 8 uses §3.2.
+The sample below is the legacy detached ES256 path (`issuer_signature.value`
+over the section 3 array, payload version ≤ 7). Current receipts use
+`issuer_signature.jws`. Verify that compact JWS with a trusted JWKS key or a
+pinned thumbprint — not with an untrusted embedded `issuer_jwk`. Version 8 HMAC
+arrays use §3.2; the JWS payload is the claims object, not that array.
 
 ```javascript
 #!/usr/bin/env node
@@ -398,12 +448,16 @@ const result = verifyReceiptEcdsaWithJwks(receipt, jwks);
 
 ### Why both HMAC and ECDSA?
 
-- **HMAC** (shared secret) is for treasury/auditor verification where the
-  verifier holds the secret. It's the "replaceable signer" escape hatch.
-- **ECDSA** (public key) is for any downstream agent that wants to verify
-  without needing an HMAC secret. Fetch the JWKS, verify the signature.
+- **HMAC** (`hmac_attestation`, shared secret) is for an attestor who holds the
+  secret. It covers the canonical array in section 3.
+- **ECDSA** (`issuer_signature.jws`, public key) is the primary check for any
+  downstream agent. The JWS payload is a JSON object of named claims, not the
+  HMAC array. Trust the key (JWKS by kid, or pinned thumbprint) before treating
+  those claims as facts.
 
-Both cover the same canonical payload, so both attest the same fields.
+They attest the same economic story when the gateway is honest. They are not
+the same signed bytes, and a valid HMAC does not make an untrusted ES256 key
+acceptable.
 
 ## 11. Session delegation (agent_pubkey v1)
 
@@ -414,14 +468,20 @@ never re-signed.
 
 Agent verify steps:
 
-1. `GET /.well-known/jwks.json` → verify `issuer_signature.jws` (ES256).
-2. Decode claims. Confirm `caller_binding.payer_wallet` against `payment.ref`
-   on-chain (USDC). Rail-specific steps:
+1. Verify `issuer_signature.jws` (ES256) with a trusted key: JWKS entry matched
+   by `kid` (`GET https://api.chit402.com/.well-known/jwks.json` or a local
+   file), or an embedded key whose RFC 7638 thumbprint equals a pinned kid
+   (default `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`). Embedded `issuer_jwk`
+   alone is not enough.
+2. Read claims from that verified payload (not the unsigned outer copy). Confirm
+   `caller_binding.payer_wallet` against `payment.ref` on-chain (USDC).
+   Rail-specific steps:
 
    **Base** (`base:0x…` or `eip155:8453:0x…`): fetch the tx receipt on Base
-   RPC. Parse the USDC `Transfer` event (`0x833589…` on mainnet). The `from`
-   address must equal `caller_binding.payer_wallet` and the amount must be ≥
-   `payment.gross_amount` (atomic, 6 dp). EIP-3009
+   RPC. Parse the USDC `Transfer` event (`0x833589…` on mainnet). `from` must
+   equal `caller_binding.payer_wallet`, `to` must equal `payment.payee`, the
+   log address must equal `payment.asset` (the network USDC contract), and the
+   amount must be ≥ `payment.gross_amount` (atomic, 6 dp). EIP-3009
    `transferWithAuthorization` records the authorizing wallet as `from`.
 
    **Solana** (`solana:<sig>`): fetch the settled tx via Solana RPC (or
