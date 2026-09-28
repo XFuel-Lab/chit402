@@ -7,7 +7,7 @@ import { OPENROUTER_CALLER_PAID_LABEL } from './openrouter-pricing.js';
 import { formatPlainDecimal } from './openrouter-infer.js';
 import { verifyAttestation, attestationNonce } from './tee-attestation.js';
 import { buildSpotCheckRecord } from './spotcheck.js';
-import { signJws, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk } from './issuer-key.js';
+import { signJws, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwks, computeJwkThumbprint } from './issuer-key.js';
 import {
   sessionOf,
   publicSessionBlock,
@@ -2304,30 +2304,86 @@ function proofWhyMissing(receipt) {
 }
 
 /**
- * Server-side verification of issuer signature for honest HTML display.
- * Uses module-scope ESM imports (verifyJws, getIssuerPublicKeyJwk).
- * Returns verification result; never throws.
+ * Production api.chit402.com issuer kid (RFC 7638 thumbprint).
+ * An embedded `issuer_jwk` is a trust root for HTML only when its thumbprint
+ * equals this kid or the process's published JWKS kid — not merely because
+ * the receipt carries a key.
  */
-function verifyIssuerForHtml(receipt) {
+const PRODUCTION_TRUSTED_ISSUER_KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
+
+function trustedHtmlIssuerKids() {
+  const kids = new Set([PRODUCTION_TRUSTED_ISSUER_KID]);
+  try {
+    const kid = getIssuerKid();
+    if (kid) kids.add(kid);
+  } catch {
+    // Published key unavailable; the production pin still applies.
+  }
+  return kids;
+}
+
+/**
+ * True only when the embedded key's RFC 7638 thumbprint is a pinned kid.
+ * Presence of `issuer_jwk` is not itself a pin.
+ */
+export function embeddedIssuerKeyIsPinned(receipt) {
+  const jwk = resolvePinnedIssuerJwk(receipt);
+  if (!jwk?.x || !jwk?.y || !jwk?.kty || !jwk?.crv) return false;
+  try {
+    return trustedHtmlIssuerKids().has(computeJwkThumbprint(jwk));
+  } catch {
+    return false;
+  }
+}
+
+function htmlTaskIdMatches(receipt, payload) {
+  return payload?.task_id === mergeReceiptView(receipt).task_id;
+}
+
+/**
+ * Server-side verification of the issuer signature for honest HTML display.
+ * Trust order: the process JWKS (matched by kid), then an embedded key whose
+ * thumbprint is pinned. An embedded key that merely verifies the bytes is
+ * `key untrusted`. Never throws.
+ */
+export function verifyIssuerForHtml(receipt) {
   const sig = receipt?.issuer_signature;
+  const pinned = embeddedIssuerKeyIsPinned(receipt);
   if (!sig || !sig.jws || sig.alg !== 'ES256') {
-    return { verified: false, reason: 'no_issuer_signature' };
+    return { verified: false, reason: 'no_issuer_signature', pinned };
   }
   try {
-    const jwk = resolvePinnedIssuerJwk(receipt) || getIssuerPublicKeyJwk();
-    if (!jwk || (sig.kid && jwk.kid !== sig.kid)) {
-      return { verified: false, reason: 'kid_mismatch' };
+    const jwksResult = verifyJwsWithJwks(sig.jws, getJwks());
+    if (jwksResult.valid) {
+      if (!htmlTaskIdMatches(receipt, jwksResult.payload)) {
+        return { verified: false, reason: 'task_id_mismatch', pinned, trust: 'jwks' };
+      }
+      return { verified: true, reason: 'verified', pinned, trust: 'jwks' };
     }
-    const result = verifyJws(sig.jws, jwk);
-    if (!result.valid) {
-      return { verified: false, reason: result.reason || 'signature_invalid' };
+
+    if (pinned) {
+      const jwk = resolvePinnedIssuerJwk(receipt);
+      const pinResult = verifyJws(sig.jws, jwk);
+      if (!pinResult.valid) {
+        return { verified: false, reason: pinResult.reason || 'signature_invalid', pinned: true };
+      }
+      if (!htmlTaskIdMatches(receipt, pinResult.payload)) {
+        return { verified: false, reason: 'task_id_mismatch', pinned: true, trust: 'pinned_kid' };
+      }
+      return { verified: true, reason: 'verified', pinned: true, trust: 'pinned_kid' };
     }
-    if (result.payload?.task_id !== mergeReceiptView(receipt).task_id) {
-      return { verified: false, reason: 'task_id_mismatch' };
+
+    const embedded = resolvePinnedIssuerJwk(receipt);
+    if (embedded && verifyJws(sig.jws, embedded).valid) {
+      return { verified: false, reason: 'key untrusted', pinned: false };
     }
-    return { verified: true, reason: 'verified' };
+    return {
+      verified: false,
+      reason: jwksResult.reason === 'signature_invalid' ? 'signature_invalid' : 'key untrusted',
+      pinned: false,
+    };
   } catch {
-    return { verified: false, reason: 'verification_error' };
+    return { verified: false, reason: 'verification_error', pinned: false };
   }
 }
 
@@ -2637,7 +2693,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
         : (issuerSig?.jws ? '<span class="badge bad">not verified</span>' : '<span class="muted">unsigned</span>'))}
       ${issuerSig?.alg ? row('Algorithm', `<code>${esc(issuerSig.alg)}</code>`) : ''}
       ${issuerSig?.kid ? row('Key ID', `<code>${esc(shortHash(issuerSig.kid, 8, 6))}</code>`) : ''}
-      ${issuerSig?.issuer_jwk ? row('Offline key', '<span class="badge ok">pinned in receipt</span>') : ''}
+      ${embeddedIssuerKeyIsPinned(receipt) ? row('Offline key', '<span class="badge ok">pinned in receipt</span>') : ''}
       ${jwksUrl ? row('JWKS', `<a href="${esc(jwksUrl)}" target="_blank" rel="noopener">${esc(jwksUri)} ↗</a> <span class="muted">live convenience</span>`) : ''}
       ${receipt.hmac_attestation?.value ? row('HMAC attestation', `<span class="badge pending">${esc(receipt.hmac_attestation.alg || 'HMAC-SHA256')}</span> <span class="muted">secondary</span>`) : ''}
       ${row('On-chain SP1', pr.has_proof ? '<span class="badge ok">yes</span>' : '<span class="muted">not on this call</span>')}
@@ -2673,7 +2729,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
       Machine-readable: <a href="${esc(receipt.links?.json || '?format=json')}">JSON</a> ·
       <a href="${esc(receipt.links?.proof || '')}">proof</a> ·
       <a href="${esc(receipt.links?.status || '')}">status</a><br />
-      ES256 signed receipt · payload v${esc(receipt.issuer_signature?.payload_version || RECEIPT_PAYLOAD_VERSION)} · verify via pinned <code>issuer_signature.issuer_jwk</code> or <a href="${esc(jwksUrl || '/.well-known/jwks.json')}">JWKS</a><br />
+      ES256 signed receipt · payload v${esc(receipt.issuer_signature?.payload_version || RECEIPT_PAYLOAD_VERSION)} · verify against the published <a href="${esc(jwksUrl || '/.well-known/jwks.json')}">JWKS</a> or a pinned issuer kid<br />
       Chit402
     </footer>
   </div>

@@ -139,7 +139,9 @@ For a cost-plus quote the breakdown sums to the settled amount:
 On-chain check (optional, `reconcileSettledTransfer`): given the tx logs, v8's
 `settled_amount` must equal the USDC `Transfer` value to `payee`. v7 compares
 `net_amount` instead, which flags a receipt whose net subtracted a fee that
-never moved on chain.
+never moved on chain. Those amounts and the payee are taken from the JWS only
+after the key-trust check in section 10. An untrusted signature is not reconciled
+against the outer payment copy.
 
 ## 4. HMAC verification algorithm (plain language)
 

@@ -420,27 +420,68 @@ export function sumUsdcTransfersToPayee(
   return found ? total : null;
 }
 
-function signedPaymentForReconcile(receipt: XFuelReceipt): {
-  version: number;
-  payment: NonNullable<XFuelReceipt['payment']>;
-} {
+export interface ReconcileSettledTransferOptions {
+  usdcAddress?: string;
+  /** JWKS treated as a trust root. Keys are matched by `kid`. */
+  jwks?: Jwks;
+  /**
+   * RFC 7638 thumbprints allowed as an offline pin.
+   * Omit to use the default production pin. Pass `[]` to disable the pin.
+   */
+  trustedKids?: readonly string[];
+}
+
+/**
+ * Payment facts for on-chain reconciliation.
+ * A JWS is used only after `verifyIssuerSignatureWithJwks` accepts the key.
+ * An untrusted or invalid JWS is not decoded into the comparison, and the
+ * unsigned outer `payment` copy is not a fallback for those claims.
+ * Receipts with no JWS still use the outer payment (legacy envelopes).
+ */
+function trustedPaymentForReconcile(
+  receipt: XFuelReceipt,
+  options: ReconcileSettledTransferOptions,
+): { ok: true; version: number; payment: NonNullable<XFuelReceipt['payment']> }
+  | { ok: false; version: number; reason: string } {
+  const outerVersion = Number(
+    receipt.issuer_signature?.payload_version ?? canonicalPayloadVersion(receipt),
+  );
   const jws = receipt.issuer_signature?.jws;
-  const claims = jws ? decodeJwsPayload(jws) : null;
+  if (!jws) {
+    return { ok: true, version: outerVersion, payment: receipt.payment || {} };
+  }
+
+  const verification = verifyIssuerSignatureWithJwks(receipt, options.jwks, {
+    trustedKids: options.trustedKids,
+  });
+  if (!verification.valid || verification.key_trusted === false) {
+    return {
+      ok: false,
+      version: outerVersion,
+      reason: verification.reason || KEY_UNTRUSTED,
+    };
+  }
+
+  const claims = verification.payload;
   const claimPayment = (claims?.payment && typeof claims.payment === 'object')
     ? claims.payment as NonNullable<XFuelReceipt['payment']>
     : null;
-  const version = receipt.issuer_signature?.payload_version
-    ?? (typeof claims?.payload_version === 'number' ? claims.payload_version : null)
-    ?? canonicalPayloadVersion(receipt);
-  return {
-    version: Number(version),
-    payment: claimPayment || receipt.payment || {},
-  };
+  if (!claimPayment) {
+    return { ok: false, version: outerVersion, reason: 'no_signed_amount' };
+  }
+  const version = typeof claims?.payload_version === 'number'
+    ? claims.payload_version
+    : outerVersion;
+  return { ok: true, version: Number(version), payment: claimPayment };
 }
 
 /**
  * Optional on-chain reconciliation. Given a tx receipt's logs, the signed
  * amount the payee was supposed to receive must equal the USDC Transfer to payee.
+ *
+ * The amount and payee come from JWS claims only after a key-trust check
+ * (JWKS by kid, or an embedded key whose thumbprint is a pinned kid). An
+ * untrusted signature does not contribute those facts.
  *
  * v8 compares `settled_amount` (falling back to `gross_amount`): that is the
  * on-chain transfer. v7 and earlier compare `net_amount`, which those receipts
@@ -450,9 +491,22 @@ function signedPaymentForReconcile(receipt: XFuelReceipt): {
 export function reconcileSettledTransfer(
   receipt: XFuelReceipt,
   logs: TransferLog[] | null | undefined,
-  options: { usdcAddress?: string } = {},
+  options: ReconcileSettledTransferOptions = {},
 ): SettledAmountReconciliation {
-  const { version, payment } = signedPaymentForReconcile(receipt);
+  const trusted = trustedPaymentForReconcile(receipt, options);
+  if (!trusted.ok) {
+    return {
+      checked: false,
+      matches: false,
+      payload_version: trusted.version,
+      signed_field: null,
+      signed_amount: null,
+      transfer_amount: null,
+      payee: null,
+      reason: trusted.reason,
+    };
+  }
+  const { version, payment } = trusted;
   const payee = payment.payee ?? null;
   let signed_field: SettledAmountReconciliation['signed_field'] = null;
   let signed_amount: string | null = null;
