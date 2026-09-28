@@ -53,7 +53,18 @@ import {
   type ReceiptPayerClaims,
   type PayerRail,
 } from './payer.js';
-import { resolvePinnedIssuerJwk, verifyIssuerJws } from './jws.js';
+import {
+  resolvePinnedIssuerJwk,
+  verifyIssuerJws,
+  DEFAULT_TRUSTED_ISSUER_KIDS,
+  DEFAULT_TRUSTED_JWKS_HOSTS,
+  KEY_UNTRUSTED,
+  jwkThumbprint,
+  isEs256PublicJwk,
+  isPinnedTrustedJwk,
+  readJwsHeader,
+  jwksHostAllowed,
+} from './jws.js';
 
 export {
   computePaymentCommitment,
@@ -215,12 +226,25 @@ export interface Jwks {
 export interface IssuerSignatureVerification {
   /** Whether an issuer signature was present to check. */
   checked: boolean;
-  /** True if the ECDSA signature is valid. */
+  /** True only when the signature verifies under a trusted key. */
   valid: boolean;
   /** Key ID from the signature. */
   kid?: string;
-  /** Reason for failure when valid=false. */
+  /** Reason for failure when valid=false. `key untrusted` means the verifying key is not in the trust set. */
   reason?: string;
+  /** True when the key used (or the only candidate key) is in the trust set. */
+  key_trusted?: boolean;
+  /** How the verifying key was trusted, when valid. */
+  trust?: 'jwks' | 'pinned_kid';
+  /** Verified JWS claims. Present only when valid is true. */
+  payload?: Record<string, unknown>;
+}
+
+/** Outer unsigned field disagrees with the JWS payload. */
+export interface ClaimMismatch {
+  field: string;
+  outer: string | null;
+  signed: string | null;
 }
 
 export interface BindingVerification {
@@ -244,6 +268,10 @@ export interface PayerVerification {
   valid: boolean;
   rail?: PayerRail;
   reason?: string;
+  payer_wallet?: string | null;
+  payee?: string | null;
+  asset?: string | null;
+  amount?: string | null;
 }
 
 export interface ReceiptVerification {
@@ -255,8 +283,12 @@ export interface ReceiptVerification {
   output_hash: string | null;
   hub: string | null;
   model: string | null;
+  /** Gross amount from verified signed claims, in atomic USDC. Null when the signature is not trusted. */
   amount_usdc: string | null;
+  /** Settlement ref from verified signed claims. Null when the signature is not trusted. */
   tx: string | null;
+  /** Unsigned outer fields that disagree with the JWS payload. */
+  claim_mismatches: ClaimMismatch[];
   overall: 'verified' | 'partial' | 'failed';
   errors: string[];
 }
@@ -543,50 +575,118 @@ export function verifyIssuerSignature(
  * @param receipt - Receipt JSON with issuer_signature
  * @param jwks - JWKS with keys array
  */
+function jwksCandidates(jwks: Jwks | undefined, kid: string | undefined): Es256Jwk[] {
+  const keys = jwks?.keys || [];
+  const es256 = keys.filter((k) => isEs256PublicJwk(k) && (k.alg == null || k.alg === 'ES256'));
+  if (!kid) return es256;
+  return es256.filter((k) => k.kid === kid);
+}
+
+/**
+ * Verify an issuer signature against trusted keys only.
+ *
+ * Trust, in order:
+ *   1. A JWKS entry matched by `kid` (supplied file or fetched issuer JWKS).
+ *   2. An embedded `issuer_jwk` whose RFC 7638 thumbprint equals a pinned trusted kid.
+ *
+ * An embedded key that merely verifies the bytes is `key untrusted`.
+ */
 export function verifyIssuerSignatureWithJwks(
   receipt: XFuelReceipt,
-  jwks: Jwks,
+  jwks?: Jwks,
+  options: { trustedKids?: readonly string[] } = {},
 ): IssuerSignatureVerification {
   const sig = receipt.issuer_signature;
   if (!sig) {
-    return { checked: false, valid: false, reason: 'no_issuer_signature' };
+    return { checked: false, valid: false, key_trusted: false, reason: 'no_issuer_signature' };
   }
 
-  const pinned = resolvePinnedIssuerJwk(receipt);
-  if (pinned && sig.jws) {
-    const jwsResult = verifyIssuerJws(sig.jws, pinned);
+  const trustedKids = options.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
+  const header = sig.jws ? readJwsHeader(sig.jws) : null;
+  const kid = header?.kid || sig.kid;
+  const embedded = resolvePinnedIssuerJwk(receipt);
+  const pinned = !!(embedded && isPinnedTrustedJwk(embedded, trustedKids));
+
+  if (sig.jws) {
+    const fromJwks = jwksCandidates(jwks, kid);
+    for (const jwk of fromJwks) {
+      const jwsResult = verifyIssuerJws(sig.jws, jwk);
+      if (jwsResult.valid) {
+        return {
+          checked: true,
+          valid: true,
+          key_trusted: true,
+          trust: 'jwks',
+          kid: jwk.kid || kid,
+          payload: jwsResult.payload,
+        };
+      }
+    }
+
+    if (pinned && embedded) {
+      const pinResult = verifyIssuerJws(sig.jws, embedded);
+      if (pinResult.valid) {
+        return {
+          checked: true,
+          valid: true,
+          key_trusted: true,
+          trust: 'pinned_kid',
+          kid: embedded.kid || jwkThumbprint(embedded),
+          payload: pinResult.payload,
+        };
+      }
+      return {
+        checked: true,
+        valid: false,
+        key_trusted: true,
+        kid: kid || embedded.kid,
+        reason: pinResult.reason || 'signature_invalid',
+      };
+    }
+
+    if (embedded && verifyIssuerJws(sig.jws, embedded).valid) {
+      return {
+        checked: true,
+        valid: false,
+        key_trusted: false,
+        kid: embedded.kid || kid,
+        reason: KEY_UNTRUSTED,
+      };
+    }
+
+    if (fromJwks.length === 0 && !pinned) {
+      return {
+        checked: true,
+        valid: false,
+        key_trusted: false,
+        kid,
+        reason: KEY_UNTRUSTED,
+      };
+    }
+
     return {
       checked: true,
-      valid: jwsResult.valid,
-      kid: pinned.kid || sig.kid,
-      reason: jwsResult.reason,
+      valid: false,
+      key_trusted: fromJwks.length > 0 || pinned,
+      kid,
+      reason: 'signature_invalid',
     };
   }
 
-  if (sig.jws) {
-    if (!jwks || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
-      return { checked: false, valid: false, reason: 'empty_jwks' };
-    }
-    const candidates = sig.kid
-      ? jwks.keys.filter(k => k.kid === sig.kid && k.alg === 'ES256')
-      : jwks.keys.filter(k => k.alg === 'ES256');
-    if (candidates.length === 0) {
-      return { checked: false, valid: false, reason: 'no_matching_key' };
-    }
-    for (const jwk of candidates) {
-      const jwsResult = verifyIssuerJws(sig.jws, jwk);
-      if (jwsResult.valid) {
-        return { checked: true, valid: true, kid: jwk.kid || sig.kid };
-      }
-    }
-    return { checked: true, valid: false, reason: 'signature_invalid' };
-  }
-
   if (!sig.value) {
-    return { checked: false, valid: false, reason: 'no_issuer_signature' };
+    return { checked: false, valid: false, key_trusted: false, reason: 'no_issuer_signature' };
   }
-  if (!jwks || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
-    return { checked: false, valid: false, reason: 'empty_jwks' };
+  if (!jwks || !Array.isArray(jwks.keys)) {
+    return {
+      checked: false,
+      valid: false,
+      key_trusted: false,
+      kid: sig.kid,
+      reason: 'JWKS not provided — pass jwks option to verify issuer signature',
+    };
+  }
+  if (jwks.keys.length === 0) {
+    return { checked: false, valid: false, key_trusted: false, kid: sig.kid, reason: 'empty_jwks' };
   }
 
   // Find matching key by kid, or try all ES256 keys if no kid on signature
@@ -595,16 +695,16 @@ export function verifyIssuerSignatureWithJwks(
     : jwks.keys.filter(k => k.alg === 'ES256');
 
   if (candidates.length === 0) {
-    return { checked: false, valid: false, reason: 'no_matching_key' };
+    return { checked: false, valid: false, key_trusted: false, kid: sig.kid, reason: 'no_matching_key' };
   }
 
   for (const jwk of candidates) {
     const result = verifyIssuerSignature(receipt, jwk);
     if (result.valid) {
-      return result;
+      return { ...result, key_trusted: true, trust: 'jwks', kid: jwk.kid || sig.kid };
     }
   }
-  return { checked: true, valid: false, reason: 'signature_invalid' };
+  return { checked: true, valid: false, key_trusted: true, kid: sig.kid, reason: 'signature_invalid' };
 }
 
 /**
@@ -613,8 +713,19 @@ export function verifyIssuerSignatureWithJwks(
  * This recomputes the commitment from the receipt's fields and compares
  * it to the stored `binding.expected_commitment`.
  */
+function noCommitmentReason(rail: string | null | undefined): string {
+  if (rail === 'unmetered' || rail === 'tfuel') {
+    return 'No binding present on receipt (unmetered or TFUEL rail)';
+  }
+  if (rail === 'usdc' || rail === 'reported') {
+    return 'No payment-binding commitment (expected_commitment is null)';
+  }
+  return 'No binding present on receipt (may be unmetered or TFUEL rail)';
+}
+
 export function verifyBinding(receipt: XFuelReceipt): BindingVerification {
   const binding = receipt.binding;
+  const railHint = binding?.rail || receipt.payment?.rail || null;
   if (!binding) {
     return {
       verified: false,
@@ -622,7 +733,18 @@ export function verifyBinding(receipt: XFuelReceipt): BindingVerification {
       recomputed: null,
       matches: false,
       covers: [],
-      reason: 'No binding present on receipt (may be unmetered or TFUEL rail)',
+      reason: noCommitmentReason(railHint),
+    };
+  }
+
+  if (binding.expected_commitment == null || binding.expected_commitment === '') {
+    return {
+      verified: false,
+      expected: null,
+      recomputed: null,
+      matches: false,
+      covers: binding.covers || [],
+      reason: noCommitmentReason(railHint),
     };
   }
 
@@ -751,99 +873,376 @@ export function hashCanonicalPayload(receipt: XFuelReceipt): string {
   return keccak256(toUtf8Bytes(canonicalSignedPayload(receipt)));
 }
 
+function claimString(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  return String(value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function normFact(value: unknown, address = false): string | null {
+  const text = claimString(value);
+  if (text == null) return null;
+  return address ? text.toLowerCase() : text;
+}
+
 /**
- * Full receipt verification — binding + issuer signature + optional nullifier check.
- *
- * @param receipt The Chit402 receipt JSON
- * @param options.jwks JWKS for issuer signature verification (no network fetch)
- * @param options.checkNullifier Whether to verify nullifier on-chain (requires network)
- * @param options.rpcUrl RPC URL for on-chain checks
+ * Fields a verifier may quote. Compared only when both the unsigned outer
+ * copy and the JWS payload carry a value.
  */
-/** Extract JWS claims for payer binding when present. */
+const CLAIM_COMPARE: Array<{
+  field: string;
+  outer: (receipt: XFuelReceipt) => unknown;
+  signed: (claims: Record<string, unknown>) => unknown;
+  address?: boolean;
+}> = [
+  { field: 'task_id', outer: (r) => r.task_id, signed: (c) => c.task_id },
+  { field: 'payment.rail', outer: (r) => r.payment?.rail, signed: (c) => asRecord(c.payment)?.rail },
+  { field: 'payment.ref', outer: (r) => r.payment?.ref, signed: (c) => asRecord(c.payment)?.ref },
+  { field: 'payment.gross_amount', outer: (r) => r.payment?.gross_amount, signed: (c) => asRecord(c.payment)?.gross_amount },
+  { field: 'payment.settled_amount', outer: (r) => r.payment?.settled_amount, signed: (c) => asRecord(c.payment)?.settled_amount },
+  { field: 'payment.net_amount', outer: (r) => r.payment?.net_amount, signed: (c) => asRecord(c.payment)?.net_amount },
+  { field: 'payment.asset', outer: (r) => r.payment?.asset, signed: (c) => asRecord(c.payment)?.asset, address: true },
+  { field: 'payment.payee', outer: (r) => r.payment?.payee, signed: (c) => asRecord(c.payment)?.payee, address: true },
+  { field: 'caller_binding.payer_wallet', outer: (r) => r.caller_binding?.payer_wallet, signed: (c) => asRecord(c.caller_binding)?.payer_wallet, address: true },
+  { field: 'caller_binding.agent_pubkey', outer: (r) => r.caller_binding?.agent_pubkey, signed: (c) => asRecord(c.caller_binding)?.agent_pubkey },
+  { field: 'caller_binding.api_key_hash', outer: (r) => r.caller_binding?.api_key_hash, signed: (c) => asRecord(c.caller_binding)?.api_key_hash },
+  { field: 'route.model', outer: (r) => r.route?.model, signed: (c) => asRecord(c.route)?.model },
+  { field: 'route.provider', outer: (r) => r.route?.provider, signed: (c) => asRecord(c.route)?.provider },
+  { field: 'output.hash', outer: (r) => r.output?.hash, signed: (c) => asRecord(c.output)?.hash },
+  { field: 'binding.expected_commitment', outer: (r) => r.binding?.expected_commitment, signed: (c) => asRecord(c.binding)?.expected_commitment },
+  { field: 'provider_cogs.actual', outer: (r) => r.provider_cogs?.actual, signed: (c) => asRecord(c.provider_cogs)?.actual },
+];
+
+/** Flag unsigned outer copies that disagree with the JWS payload. */
+export function diffOuterClaims(receipt: XFuelReceipt, claims: Record<string, unknown> | null): ClaimMismatch[] {
+  if (!claims) return [];
+  const mismatches: ClaimMismatch[] = [];
+  for (const spec of CLAIM_COMPARE) {
+    const outer = normFact(spec.outer(receipt), spec.address);
+    const signed = normFact(spec.signed(claims), spec.address);
+    if (outer == null || signed == null || outer === signed) continue;
+    mismatches.push({
+      field: spec.field,
+      outer: claimString(spec.outer(receipt)),
+      signed: claimString(spec.signed(claims)),
+    });
+  }
+  return mismatches;
+}
+
+function receiptViewFromClaims(receipt: XFuelReceipt, claims: Record<string, unknown>): XFuelReceipt {
+  const payment = asRecord(claims.payment);
+  const binding = asRecord(claims.binding);
+  const route = asRecord(claims.route);
+  const output = asRecord(claims.output);
+  const caller = asRecord(claims.caller_binding);
+  const modelCommitment = claimString(route?.model_commitment);
+  return {
+    ...receipt,
+    task_id: claimString(claims.task_id) || receipt.task_id,
+    payment: {
+      rail: claimString(payment?.rail) ?? undefined,
+      ref: claimString(payment?.ref),
+      gross_amount: claimString(payment?.gross_amount),
+      settled_amount: claimString(payment?.settled_amount),
+      net_amount: claimString(payment?.net_amount),
+      asset: claimString(payment?.asset),
+      payee: claimString(payment?.payee),
+      fee_amount: claimString(payment?.fee_amount),
+      protocol_fee_bps: typeof payment?.protocol_fee_bps === 'number' ? payment.protocol_fee_bps : null,
+      platform_fee: claimString(payment?.platform_fee),
+      platform_fee_bps: typeof payment?.platform_fee_bps === 'number' ? payment.platform_fee_bps : null,
+    },
+    route: {
+      model: claimString(route?.model) ?? undefined,
+      provider: claimString(route?.provider) ?? undefined,
+      model_commitment: modelCommitment ? { commitment: modelCommitment } : null,
+    },
+    output: output?.hash ? { hash: claimString(output.hash) ?? undefined } : null,
+    caller_binding: caller
+      ? {
+          payer_wallet: claimString(caller.payer_wallet),
+          agent_pubkey: claimString(caller.agent_pubkey),
+          api_key_hash: claimString(caller.api_key_hash),
+        }
+      : null,
+    provider_cogs: asRecord(claims.provider_cogs)?.actual != null
+      ? { actual: claimString(asRecord(claims.provider_cogs)?.actual) ?? undefined }
+      : receipt.provider_cogs,
+    binding: {
+      expected_commitment: binding && 'expected_commitment' in binding
+        ? (claimString(binding.expected_commitment) ?? undefined)
+        : undefined,
+      amount: claimString(binding?.amount)
+        || claimString(payment?.net_amount)
+        || claimString(payment?.gross_amount)
+        || '0',
+      rail: claimString(binding?.rail) || claimString(payment?.rail) || undefined,
+      covers: Array.isArray(binding?.covers) ? binding.covers as string[] : ['payment', 'settlement'],
+      model_commitment: claimString(binding?.model_commitment) || modelCommitment,
+      output_hash: claimString(binding?.output_hash) || claimString(output?.hash),
+    },
+  };
+}
+
+function payerClaimsFromPayload(payload: Record<string, unknown>): ReceiptPayerClaims {
+  const payment = asRecord(payload.payment);
+  const caller = asRecord(payload.caller_binding);
+  return {
+    payment: {
+      ref: claimString(payment?.ref),
+      gross_amount: claimString(payment?.gross_amount),
+      payee: claimString(payment?.payee),
+      asset: claimString(payment?.asset),
+      rail: claimString(payment?.rail),
+    },
+    caller_binding: caller ? { payer_wallet: claimString(caller.payer_wallet) } : null,
+  };
+}
+
+function factsFromClaims(claims: Record<string, unknown> | undefined): {
+  hub: string | null;
+  model: string | null;
+  amount_usdc: string | null;
+  tx: string | null;
+  output_hash: string | null;
+} {
+  if (!claims) {
+    return { hub: null, model: null, amount_usdc: null, tx: null, output_hash: null };
+  }
+  const payment = asRecord(claims.payment);
+  const route = asRecord(claims.route);
+  const output = asRecord(claims.output);
+  return {
+    hub: claimString(route?.provider),
+    model: claimString(route?.model),
+    amount_usdc: claimString(payment?.gross_amount),
+    tx: claimString(payment?.ref),
+    output_hash: claimString(output?.hash),
+  };
+}
+
+function issuerJwksUri(receipt: XFuelReceipt): string | null {
+  const fromVerification = receipt.verification?.jwks_uri;
+  if (typeof fromVerification === 'string' && fromVerification.startsWith('https://')) return fromVerification;
+  const jws = receipt.issuer_signature?.jws;
+  const header = jws ? readJwsHeader(jws) : null;
+  if (header?.jku && header.jku.startsWith('https://')) return header.jku;
+  return null;
+}
+
+function httpsUrl(uri: string): boolean {
+  try {
+    return new URL(uri).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function mergeJwks(primary?: Jwks, extra?: Jwks): Jwks | undefined {
+  const keys = [...(primary?.keys || []), ...(extra?.keys || [])];
+  if (keys.length === 0) return undefined;
+  const seen = new Set<string>();
+  const deduped: Es256Jwk[] = [];
+  for (const key of keys) {
+    const id = `${key.kid || ''}:${key.x || ''}:${key.y || ''}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    deduped.push(key);
+  }
+  return { keys: deduped };
+}
+
+/** Fetch a JWKS document. Caller decides whether the URL is a trust root. */
+export async function fetchIssuerJwks(
+  uri: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<Jwks> {
+  if (!httpsUrl(uri)) throw new Error('jwks_uri must be https');
+  const res = await fetchImpl(uri);
+  if (!res.ok) throw new Error(`jwks_fetch_failed: ${res.status}`);
+  const body = await res.json() as Jwks;
+  if (!body || !Array.isArray(body.keys)) throw new Error('jwks_malformed');
+  return body;
+}
+
+/**
+ * Full receipt verification — trusted issuer signature, signed-claim facts,
+ * optional on-chain payer and nullifier checks.
+ *
+ * Facts (amount, payer, payee, asset, tx, model) are taken only from a JWS
+ * that verified under a trusted key. The embedded `issuer_jwk` is not trusted
+ * unless its RFC 7638 thumbprint is a pinned kid, or the same key is in a JWKS.
+ */
+/** Extract JWS claims for payer binding. Prefers the JWS payload over the outer copy. */
 export function receiptPayerClaims(receipt: XFuelReceipt): ReceiptPayerClaims {
   return receiptPayerClaimsFromEnvelope(receipt);
 }
 
+export interface VerifyReceiptOptions {
+  /** Caller-supplied JWKS. Every key in it is a trust root, matched by kid. */
+  jwks?: Jwks;
+  /**
+   * Pinned trusted kids (RFC 7638 thumbprints). Defaults to the production
+   * api.chit402.com issuer kid. Pass `[]` to disable the offline pin.
+   */
+  trustedKids?: readonly string[];
+  /** Fetch JWKS from the receipt `jwks_uri` when its host is allowlisted. */
+  fetchJwks?: boolean;
+  /** Explicit JWKS URL. Any https URL is fetched; this is user-supplied trust. */
+  jwksUri?: string;
+  /** Hosts allowed for `fetchJwks`. Defaults to api.chit402.com. */
+  trustedJwksHosts?: readonly string[];
+  fetchImpl?: typeof fetch;
+  checkNullifier?: boolean;
+  checkPayer?: boolean;
+  rpcUrl?: string;
+  solanaRpcUrl?: string;
+  verifierAddress?: string;
+  fetchSolanaTransaction?: SolanaRpcFetcher;
+  fetchBaseReceipt?: BaseReceiptFetcher;
+}
+
 export async function verifyReceipt(
   receipt: XFuelReceipt,
-  options: {
-    jwks?: Jwks;
-    checkNullifier?: boolean;
-    checkPayer?: boolean;
-    rpcUrl?: string;
-    solanaRpcUrl?: string;
-    verifierAddress?: string;
-    fetchSolanaTransaction?: SolanaRpcFetcher;
-    fetchBaseReceipt?: BaseReceiptFetcher;
-  } = {},
+  options: VerifyReceiptOptions = {},
 ): Promise<ReceiptVerification> {
   const errors: string[] = [];
+  const trustedKids = options.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
+  const trustedHosts = options.trustedJwksHosts ?? DEFAULT_TRUSTED_JWKS_HOSTS;
 
-  // Verify binding locally
-  const binding = verifyBinding(receipt);
-  if (!binding.matches && binding.expected) {
-    errors.push('Payment binding mismatch');
+  let jwks = options.jwks;
+  if (options.jwksUri || options.fetchJwks) {
+    const uri = options.jwksUri || issuerJwksUri(receipt);
+    const allowed = !!uri && (options.jwksUri ? httpsUrl(uri) : jwksHostAllowed(uri, trustedHosts));
+    if (uri && allowed) {
+      try {
+        const fetched = await fetchIssuerJwks(uri, options.fetchImpl);
+        jwks = mergeJwks(jwks, fetched);
+      } catch (err) {
+        errors.push(`JWKS fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else if (options.jwksUri) {
+      errors.push('JWKS URI rejected — only https URLs are fetched');
+    } else if (options.fetchJwks && uri) {
+      errors.push(`JWKS host untrusted: ${uri}`);
+    }
   }
 
-  // Verify issuer signature — pinned JWK in receipt, optional JWKS file, or legacy detached sig
   let issuer_signature: IssuerSignatureVerification;
-  const pinned = resolvePinnedIssuerJwk(receipt);
-  if (pinned && receipt.issuer_signature?.jws) {
-    const jwsResult = verifyIssuerJws(receipt.issuer_signature.jws, pinned);
-    issuer_signature = {
-      checked: true,
-      valid: jwsResult.valid,
-      kid: pinned.kid || receipt.issuer_signature.kid,
-      reason: jwsResult.reason,
-    };
-    if (!jwsResult.valid) {
-      errors.push(`Issuer signature invalid: ${jwsResult.reason}`);
-    }
-  } else if (options.jwks) {
-    issuer_signature = verifyIssuerSignatureWithJwks(receipt, options.jwks);
+  if (receipt.issuer_signature?.jws || receipt.issuer_signature?.value) {
+    issuer_signature = verifyIssuerSignatureWithJwks(receipt, jwks, { trustedKids });
     if (issuer_signature.checked && !issuer_signature.valid) {
-      errors.push(`Issuer signature invalid: ${issuer_signature.reason}`);
+      errors.push(issuer_signature.reason === KEY_UNTRUSTED
+        ? KEY_UNTRUSTED
+        : `Issuer signature invalid: ${issuer_signature.reason}`);
     }
   } else if (receipt.issuer_signature) {
     issuer_signature = {
       checked: false,
       valid: false,
+      key_trusted: false,
       kid: receipt.issuer_signature.kid,
-      reason: receipt.issuer_signature.jws
-        ? 'No pinned issuer_jwk and JWKS not provided — pass jwks option or use a receipt with issuer_signature.issuer_jwk'
-        : 'JWKS not provided — pass jwks option to verify issuer signature',
+      reason: 'JWKS not provided — pass jwks option to verify issuer signature',
     };
   } else {
     issuer_signature = {
       checked: false,
       valid: false,
+      key_trusted: false,
       reason: 'No issuer signature present on receipt',
     };
   }
 
-  // Verify payer on-chain when requested (Base USDC or Solana USDC)
+  const decoded = receipt.issuer_signature?.jws
+    ? decodeJwsPayload(receipt.issuer_signature.jws)
+    : null;
+  const claim_mismatches = diffOuterClaims(receipt, decoded);
+  for (const mismatch of claim_mismatches) {
+    errors.push(`outer/signed mismatch: ${mismatch.field} (outer ${mismatch.outer}, signed ${mismatch.signed})`);
+  }
+
+  const verifiedClaims = issuer_signature.valid ? issuer_signature.payload : undefined;
+
+  let binding: BindingVerification;
+  if (receipt.issuer_signature?.jws) {
+    if (verifiedClaims) {
+      binding = verifyBinding(receiptViewFromClaims(receipt, verifiedClaims));
+    } else {
+      binding = {
+        verified: false,
+        expected: null,
+        recomputed: null,
+        matches: false,
+        covers: [],
+        reason: issuer_signature.reason === KEY_UNTRUSTED
+          ? 'Binding not checked — issuer key untrusted'
+          : 'Binding not checked — issuer signature not verified',
+      };
+    }
+  } else {
+    binding = verifyBinding(receipt);
+  }
+  if (!binding.matches && binding.expected) {
+    errors.push('Payment binding mismatch');
+  }
+
+  const signedPayerClaims = verifiedClaims ? payerClaimsFromPayload(verifiedClaims) : null;
+
   let payer: PayerVerification;
   if (options.checkPayer) {
-    const payerResult = await verifyPayerBinding(receiptPayerClaims(receipt), {
-      rpcUrl: options.rpcUrl,
-      solanaRpcUrl: options.solanaRpcUrl,
-      fetchSolanaTransaction: options.fetchSolanaTransaction,
-      fetchBaseReceipt: options.fetchBaseReceipt,
-    });
-    payer = {
-      checked: payerResult.checked,
-      valid: payerResult.valid,
-      rail: payerResult.rail,
-      reason: payerResult.reason,
-    };
-    if (payerResult.checked && !payerResult.valid) {
-      errors.push(`Payer binding mismatch: ${payerResult.reason}`);
+    if (!signedPayerClaims) {
+      payer = {
+        checked: false,
+        valid: false,
+        reason: 'Payer facts come from verified signed claims — issuer signature is not trusted',
+      };
+    } else {
+      const payerResult = await verifyPayerBinding(signedPayerClaims, {
+        rpcUrl: options.rpcUrl,
+        solanaRpcUrl: options.solanaRpcUrl,
+        fetchSolanaTransaction: options.fetchSolanaTransaction,
+        fetchBaseReceipt: options.fetchBaseReceipt,
+      });
+      payer = {
+        checked: payerResult.checked,
+        valid: payerResult.valid,
+        rail: payerResult.rail,
+        reason: payerResult.reason,
+        payer_wallet: payerResult.payerWallet ?? signedPayerClaims.caller_binding?.payer_wallet ?? null,
+        payee: signedPayerClaims.payment?.payee ?? null,
+        asset: signedPayerClaims.payment?.asset ?? null,
+        amount: payerResult.expectedAmount ?? signedPayerClaims.payment?.gross_amount ?? null,
+      };
+      if (payerResult.checked && !payerResult.valid) {
+        errors.push(`Payer binding mismatch: ${payerResult.reason}`);
+      }
     }
-  } else if (receipt.caller_binding?.payer_wallet && receipt.payment?.ref) {
+  } else if (signedPayerClaims?.caller_binding?.payer_wallet && signedPayerClaims.payment?.ref) {
+    payer = {
+      checked: false,
+      valid: false,
+      payer_wallet: signedPayerClaims.caller_binding.payer_wallet,
+      payee: signedPayerClaims.payment.payee ?? null,
+      asset: signedPayerClaims.payment.asset ?? null,
+      amount: signedPayerClaims.payment.gross_amount ?? null,
+      reason: 'On-chain payer check not requested — pass checkPayer: true',
+    };
+  } else if (!receipt.issuer_signature?.jws && receipt.caller_binding?.payer_wallet && receipt.payment?.ref) {
     payer = {
       checked: false,
       valid: false,
       reason: 'On-chain payer check not requested — pass checkPayer: true',
+    };
+  } else if (receipt.issuer_signature?.jws && !issuer_signature.valid) {
+    payer = {
+      checked: false,
+      valid: false,
+      reason: 'Payer facts come from verified signed claims — issuer signature is not trusted',
     };
   } else {
     payer = {
@@ -853,7 +1252,6 @@ export async function verifyReceipt(
     };
   }
 
-  // Verify nullifier on-chain if requested
   let nullifier: NullifierVerification;
   if (options.checkNullifier && receipt.proof?.nullifier) {
     nullifier = await verifyNullifier(receipt, {
@@ -874,55 +1272,42 @@ export async function verifyReceipt(
     };
   }
 
-  // Extract frozen fields
-  const hub = receipt.route?.provider ?? null;
-  const model = receipt.route?.model ?? null;
-  const amount_usdc = receipt.payment?.gross_amount ?? null;
-  const tx = receipt.payment?.ref ?? null;
-  const output_hash = receipt.output?.hash ?? null;
-
-  // Determine overall status with strict signature semantics:
-  // - If JWKS provided and signature invalid/kid mismatch/no matching key → 'failed'
-  // - If receipt has issuer_signature but no JWKS provided → 'partial' (cannot verify)
-  // - Unsigned receipts can be 'partial' or 'verified' based on binding
-  let overall: 'verified' | 'partial' | 'failed';
-
-  // Check for signature verification failure (JWKS provided but signature invalid)
-  const jwksProvided = !!options.jwks;
+  const facts = factsFromClaims(verifiedClaims);
   const hasIssuerSig = !!receipt.issuer_signature;
-  const hasPinnedJwk = !!pinned && !!receipt.issuer_signature?.jws;
-  const issuerSigInvalid = (jwksProvided || hasPinnedJwk) && hasIssuerSig && !issuer_signature.valid;
+  const jwksWasSupplied = !!(options.jwks || options.jwksUri || (options.fetchJwks && jwks));
+  const signatureFailed = hasIssuerSig && !issuer_signature.valid && (
+    !!issuer_signature.checked
+    || jwksWasSupplied
+    || issuer_signature.reason === KEY_UNTRUSTED
+    || issuer_signature.reason === 'no_matching_key'
+    || issuer_signature.reason === 'empty_jwks'
+  );
+  const mismatchFailed = claim_mismatches.length > 0;
+  const bindingFailed = !!(binding.expected && !binding.matches);
+  const payerFailed = !!(options.checkPayer && payer.checked && !payer.valid);
+  const nullifierFailed = !!(
+    options.checkNullifier
+    && receipt.proof?.nullifier
+    && nullifier.anchored === false
+  );
+  const signatureUnchecked = hasIssuerSig && !issuer_signature.checked;
 
-  // Binding failure
-  const bindingFailed = binding.expected && !binding.matches;
-  const payerFailed = options.checkPayer && payer.checked && !payer.valid;
-
-  if (issuerSigInvalid || bindingFailed || payerFailed) {
-    // JWKS provided but signature invalid, OR binding mismatch → failed
+  let overall: 'verified' | 'partial' | 'failed';
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed) {
     overall = 'failed';
-  } else if (hasIssuerSig && !jwksProvided && !hasPinnedJwk) {
-    // Receipt has signature but no offline key material → partial
+  } else if (signatureUnchecked) {
+    overall = 'partial';
+  } else if (!binding.expected && !hasIssuerSig && !options.checkPayer) {
     overall = 'partial';
   } else if (
-    binding.matches
+    (binding.matches || !binding.expected)
     && (!options.checkPayer || payer.valid)
-    && (!options.checkNullifier || nullifier.anchored)
+    && (!options.checkNullifier || !receipt.proof?.nullifier || nullifier.anchored === true)
+    && (issuer_signature.valid || !hasIssuerSig)
   ) {
-    // Binding matches, signature OK (or no signature), nullifier OK → verified
     overall = 'verified';
-  } else if (
-    binding.matches
-    || issuer_signature.valid
-    || (options.checkPayer && payer.valid)
-    || (nullifier.verified && nullifier.anchored)
-  ) {
-    // At least one check passed → partial
-    overall = 'partial';
-  } else if (!binding.expected && !receipt.proof?.nullifier && !hasIssuerSig) {
-    // No binding/sig/nullifier to verify (unmetered/demo) → partial
-    overall = 'partial';
   } else {
-    overall = 'failed';
+    overall = 'partial';
   }
 
   return {
@@ -931,11 +1316,12 @@ export async function verifyReceipt(
     issuer_signature,
     payer,
     nullifier,
-    output_hash,
-    hub,
-    model,
-    amount_usdc,
-    tx,
+    output_hash: facts.output_hash,
+    hub: facts.hub,
+    model: facts.model,
+    amount_usdc: facts.amount_usdc,
+    tx: facts.tx,
+    claim_mismatches,
     overall,
     errors,
   };
@@ -944,6 +1330,12 @@ export async function verifyReceipt(
 export {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
+  DEFAULT_TRUSTED_ISSUER_KIDS,
+  DEFAULT_TRUSTED_JWKS_HOSTS,
+  KEY_UNTRUSTED,
+  jwkThumbprint,
+  isPinnedTrustedJwk,
+  jwksHostAllowed,
 } from './jws.js';
 
 export default {

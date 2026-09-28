@@ -115,6 +115,11 @@ const PROOF_SCOPE_NOTE =
   'nullifier. It does NOT attest that the provider computed the model correctly ' +
   '(that is Tier-2 proof-of-inference, roadmap).';
 
+const PROOF_SCOPE_NOTE_NO_BINDING =
+  'The SP1 proof attests settlement metadata and a commitment to the output hash — ' +
+  'anchored on-chain with a single-use nullifier. It does not include a payment-binding ' +
+  'commitment. It does NOT attest that the provider computed the model correctly.';
+
 /** Normalize task timestamps to Unix seconds (JSON + JWS `iat`). */
 export function toUnixSeconds(ts) {
   if (ts == null || ts === '') return null;
@@ -336,7 +341,18 @@ function routeRequestedFields(requestedModel, substituted) {
   };
 }
 
-/** Machine-readable proof scope flags (JSON). Prose lives on HTML only. */
+/**
+ * True only when this task carries a payment-binding commitment.
+ * A paid USDC receipt with `binding.expected_commitment: null` is not in scope.
+ */
+function paymentBindingInScope(task) {
+  const binding = task?.sp1Proof?.paymentBinding;
+  if (!binding || typeof binding !== 'object') return false;
+  const commitment = binding.commitment || binding.expected_commitment || null;
+  return typeof commitment === 'string' && /^0x[0-9a-fA-F]{64}$/.test(commitment);
+}
+
+/** Machine-readable proof scope flags (JSON). Prose lives on HTML only. Unsigned. */
 export function proofScopeOf(task, vi, outcome) {
   const tier = vi?.tier || proofTierOf(task);
   const hasProof = !!task.sp1Proof?.proof;
@@ -354,7 +370,7 @@ export function proofScopeOf(task, vi, outcome) {
     attestation_scope: {
       settlement_metadata: hasProof || tier === 'settlement',
       output_hash_commitment: true,
-      payment_binding: true,
+      payment_binding: paymentBindingInScope(task),
       model_computation: tier === 'inference',
       on_chain_nullifier: !!(nullifier && settlementProof),
     },
@@ -2629,7 +2645,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
       ${pr.proving_time_ms != null ? row('Proving time', `${esc(pr.proving_time_ms)} ms`) : ''}
       ${foreign
         ? '<p class="muted" style="margin:8px 0 0;font-size:12px">Foreign ingest has no on-chain SP1 proof. The recorded payment is the evidence.</p>'
-        : (pr.has_proof ? `<div class="scopebox">${esc(PROOF_SCOPE_NOTE)}</div>` : `<p class="muted" style="margin:8px 0 0;font-size:12px">${esc(proofWhyMissing(view))}</p>`)}
+        : (pr.has_proof ? `<div class="scopebox">${esc(pr.attestation_scope?.payment_binding ? PROOF_SCOPE_NOTE : PROOF_SCOPE_NOTE_NO_BINDING)}</div>` : `<p class="muted" style="margin:8px 0 0;font-size:12px">${esc(proofWhyMissing(view))}</p>`)}
     </section>
 
     <section class="card secondary">

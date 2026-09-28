@@ -36,6 +36,11 @@ const {
   verifyIssuerJws,
   reconcileSettledTransfer,
   ERC20_TRANSFER_TOPIC,
+  verifyBasePayer,
+  jwkThumbprint,
+  DEFAULT_TRUSTED_ISSUER_KIDS,
+  diffOuterClaims,
+  USDC_ADDRESSES,
 } = await import('../dist/index.js');
 
 // Test ES256 key pair (P-256/secp256r1) - generated for testing only
@@ -782,12 +787,23 @@ describe('verifyReceipt overall status semantics', () => {
     assert.equal(result.overall, 'partial');
   });
 
-  test('verifyReceipt verifies JWS with pinned issuer_jwk and no JWKS file', async () => {
+  test('embedded issuer_jwk is not a trust root without a pin or JWKS', async () => {
     const receipt = await buildPinnedJwsReceipt();
-    const result = await verifyReceipt(receipt, {});
+    const result = await verifyReceipt(receipt, { trustedKids: [] });
+    assert.equal(result.issuer_signature.valid, false);
+    assert.equal(result.issuer_signature.key_trusted, false);
+    assert.equal(result.issuer_signature.reason, 'key untrusted');
+    assert.equal(result.amount_usdc, null);
+    assert.equal(result.overall, 'failed');
+  });
+
+  test('JWS verifies when the embedded key thumbprint is an explicit trusted kid', async () => {
+    const receipt = await buildPinnedJwsReceipt();
+    const result = await verifyReceipt(receipt, { trustedKids: [receipt.issuer_signature.kid] });
     assert.equal(result.issuer_signature.valid, true);
-    assert.equal(result.issuer_signature.checked, true);
-    assert.equal(result.overall, 'partial');
+    assert.equal(result.issuer_signature.trust, 'pinned_kid');
+    assert.equal(result.amount_usdc, '1000');
+    assert.equal(result.overall, 'verified');
   });
 
   test('pinned receipt fails when JWS is tampered', async () => {
@@ -798,8 +814,9 @@ describe('verifyReceipt overall status semantics', () => {
     parts[2] = parts[2].slice(0, mid) + (parts[2][mid] === 'A' ? 'B' : 'A') + parts[2].slice(mid + 1);
     receipt.issuer_signature.jws = parts.join('.');
 
-    const result = await verifyReceipt(receipt, {});
+    const result = await verifyReceipt(receipt, { trustedKids: [receipt.issuer_signature.kid] });
     assert.equal(result.issuer_signature.valid, false);
+    assert.equal(result.issuer_signature.reason, 'signature_invalid');
     assert.equal(result.overall, 'failed');
   });
 
@@ -823,7 +840,8 @@ describe('verifyReceipt overall status semantics', () => {
 
     assert.equal(result.issuer_signature.valid, true);
     assert.equal(result.issuer_signature.checked, true);
-    assert.equal(result.overall, 'partial');
+    assert.equal(result.issuer_signature.trust, 'jwks');
+    assert.equal(result.overall, 'verified');
   });
 });
 
@@ -983,3 +1001,182 @@ describe('payload v7 still verifies; v8 reconciles with the on-chain transfer', 
     assert.equal(chain.logs.some((log) => log.topics?.[0] === ERC20_TRANSFER_TOPIC), true);
   });
 });
+
+describe('issuer key trust', () => {
+  const live = JSON.parse(readFileSync(new URL('./fixtures/chit-4d6e8331.json', import.meta.url), 'utf8'));
+  const liveJwks = JSON.parse(readFileSync(new URL('./fixtures/chit402-jwks.json', import.meta.url), 'utf8'));
+
+  test('production kid is the RFC 7638 thumbprint of the published key', () => {
+    const jwk = live.issuer_signature.issuer_jwk;
+    assert.equal(jwkThumbprint(jwk), DEFAULT_TRUSTED_ISSUER_KIDS[0]);
+    assert.equal(jwk.kid, DEFAULT_TRUSTED_ISSUER_KIDS[0]);
+    assert.equal(liveJwks.keys[0].kid, jwk.kid);
+    assert.equal(liveJwks.keys[0].x, jwk.x);
+  });
+
+  test('live receipt verifies under the default offline pin', async () => {
+    const result = await verifyReceipt(live, {});
+    assert.equal(result.issuer_signature.valid, true);
+    assert.equal(result.issuer_signature.key_trusted, true);
+    assert.equal(result.issuer_signature.trust, 'pinned_kid');
+    assert.equal(result.issuer_signature.kid, DEFAULT_TRUSTED_ISSUER_KIDS[0]);
+    assert.equal(result.amount_usdc, '2000');
+    assert.equal(result.tx, live.payment.ref);
+    assert.equal(result.hub, 'akash-network');
+    assert.deepEqual(result.claim_mismatches, []);
+    assert.match(result.binding.reason, /expected_commitment is null/);
+    assert.doesNotMatch(result.binding.reason, /unmetered|TFUEL/);
+    assert.equal(result.overall, 'verified');
+  });
+
+  test('live receipt still verifies when a real JWKS file is supplied', async () => {
+    const result = await verifyReceipt(live, { jwks: liveJwks, trustedKids: [] });
+    assert.equal(result.issuer_signature.valid, true);
+    assert.equal(result.issuer_signature.trust, 'jwks');
+    assert.equal(result.amount_usdc, '2000');
+  });
+
+  test('forged re-sign with an arbitrary P-256 key is key untrusted, with and without JWKS', async () => {
+    const forged = forgeReceipt(live, '2000000');
+    assert.notEqual(forged.issuer_signature.kid, live.issuer_signature.kid);
+    assert.equal(forged.payment.gross_amount, '2000');
+
+    const offline = await verifyReceipt(forged, {});
+    assert.equal(offline.issuer_signature.valid, false);
+    assert.equal(offline.issuer_signature.reason, 'key untrusted');
+    assert.equal(offline.amount_usdc, null, 'unsigned outer amount is not a fact');
+    assert.equal(offline.overall, 'failed');
+    assert.ok(offline.claim_mismatches.some((m) => m.field === 'payment.gross_amount' && m.signed === '2000000' && m.outer === '2000'));
+
+    const withJwks = await verifyReceipt(forged, { jwks: liveJwks });
+    assert.equal(withJwks.issuer_signature.valid, false);
+    assert.equal(withJwks.issuer_signature.reason, 'key untrusted');
+    assert.equal(withJwks.amount_usdc, null);
+    assert.equal(withJwks.overall, 'failed');
+
+    const mismatches = diffOuterClaims(forged, JSON.parse(Buffer.from(forged.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8')));
+    assert.ok(mismatches.some((m) => m.field === 'payment.gross_amount'));
+  });
+
+  test('spoofing the production kid on a different key is still untrusted', async () => {
+    const forged = forgeReceipt(live, '2000000', { headerKid: DEFAULT_TRUSTED_ISSUER_KIDS[0] });
+    assert.equal(forged.issuer_signature.kid, DEFAULT_TRUSTED_ISSUER_KIDS[0]);
+    assert.notEqual(jwkThumbprint(forged.issuer_signature.issuer_jwk), DEFAULT_TRUSTED_ISSUER_KIDS[0]);
+    const result = await verifyReceipt(forged, { jwks: liveJwks });
+    assert.equal(result.issuer_signature.valid, false);
+    assert.equal(result.issuer_signature.reason, 'key untrusted');
+  });
+});
+
+describe('Base payer confirms payee and asset', () => {
+  const payer = '0x9F8951CB8b060f52fdf87297b3c5B00f7aa18f52';
+  const payee = '0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334';
+  const asset = USDC_ADDRESSES.base;
+  const other = '0x1111111111111111111111111111111111111111';
+
+  function transferLog(from, to, token = asset, amount = 2000n) {
+    const pad = (addr) => '0x' + addr.slice(2).toLowerCase().padStart(64, '0');
+    return {
+      address: token,
+      topics: [
+        ERC20_TRANSFER_TOPIC,
+        pad(from),
+        pad(to),
+      ],
+      data: '0x' + amount.toString(16).padStart(64, '0'),
+    };
+  }
+
+  function fetcher(logs) {
+    return async () => ({ status: 1, logs });
+  }
+
+  test('accepts a USDC transfer from payer to payee of the claimed asset', async () => {
+    const result = await verifyBasePayer({
+      paymentRef: 'base:0x' + 'ab'.repeat(32),
+      payerWallet: payer,
+      payee,
+      asset,
+      grossAmount: '2000',
+      fetchReceipt: fetcher([transferLog(payer, payee)]),
+    });
+    assert.equal(result.valid, true, result.reason);
+    assert.equal(result.transferredAmount, '2000');
+    assert.equal(result.payee, payee);
+  });
+
+  test('rejects a transfer to a different payee', async () => {
+    const result = await verifyBasePayer({
+      paymentRef: 'base:0x' + 'ab'.repeat(32),
+      payerWallet: payer,
+      payee,
+      asset,
+      grossAmount: '2000',
+      fetchReceipt: fetcher([transferLog(payer, other)]),
+    });
+    assert.equal(result.valid, false);
+    assert.match(result.reason, /payee_mismatch/);
+  });
+
+  test('rejects a claimed asset that is not network USDC', async () => {
+    const result = await verifyBasePayer({
+      paymentRef: 'base:0x' + 'ab'.repeat(32),
+      payerWallet: payer,
+      payee,
+      asset: other,
+      grossAmount: '2000',
+      fetchReceipt: fetcher([transferLog(payer, payee, other)]),
+    });
+    assert.equal(result.valid, false);
+    assert.match(result.reason, /asset_mismatch/);
+  });
+});
+
+describe('package exports', () => {
+  test('dist/cli.js is an exported subpath so chit402-verify can resolve it', async () => {
+    const { createRequire } = await import('node:module');
+    const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(path.join(tmpdir(), 'xfuel-verify-export-'));
+    const scope = path.join(dir, 'node_modules', '@xfuel');
+    mkdirSync(scope, { recursive: true });
+    symlinkSync(pkgDir, path.join(scope, 'verify'));
+    writeFileSync(path.join(dir, 'probe.cjs'), '');
+    const require = createRequire(path.join(dir, 'probe.cjs'));
+    const resolved = require.resolve('@xfuel/verify/dist/cli.js');
+    assert.match(resolved, /cli\.js$/);
+    const viaAlias = require.resolve('@xfuel/verify/cli');
+    assert.equal(viaAlias, resolved);
+  });
+});
+
+/**
+ * Copy a live receipt, replace the signed gross_amount, and re-sign with a fresh P-256 key
+ * embedded as issuer_jwk. Outer payment.gross_amount stays at the original value.
+ */
+function forgeReceipt(source, forgedAmount, { headerKid } = {}) {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwkExport = publicKey.export({ format: 'jwk' });
+  const canonical = JSON.stringify({ crv: jwkExport.crv, kty: jwkExport.kty, x: jwkExport.x, y: jwkExport.y });
+  const thumbprint = createHash('sha256').update(canonical).digest('base64url');
+  const kid = headerKid || thumbprint;
+  const issuer_jwk = { ...jwkExport, kid, alg: 'ES256', use: 'sig', kty: 'EC', crv: 'P-256' };
+  const payload = JSON.parse(Buffer.from(source.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+  payload.payment = { ...payload.payment, gross_amount: forgedAmount, settled_amount: forgedAmount };
+  const header = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid };
+  const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = sign('sha256', Buffer.from(`${headerB64}.${payloadB64}`), {
+    key: privateKey,
+    dsaEncoding: 'ieee-p1363',
+  }).toString('base64url');
+  return {
+    ...source,
+    issuer_signature: {
+      ...source.issuer_signature,
+      jws: `${headerB64}.${payloadB64}.${signature}`,
+      kid,
+      issuer_jwk,
+    },
+  };
+}

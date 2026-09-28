@@ -16,7 +16,12 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { verifyReceipt, verifyBinding, type XFuelReceipt, type Jwks } from './index.js';
+import {
+  verifyReceipt,
+  DEFAULT_TRUSTED_ISSUER_KIDS,
+  type XFuelReceipt,
+  type Jwks,
+} from './index.js';
 
 const HELP = `
 xfuel-verify — Offline verification for Chit402 receipts
@@ -24,16 +29,24 @@ xfuel-verify — Offline verification for Chit402 receipts
 Usage:
   xfuel-verify <receipt.json>           Verify binding locally
   xfuel-verify <receipt.json> --jwks-file <jwks.json>
-                                        Verify issuer signature with JWKS
-  xfuel-verify <receipt.json> --check-nullifier
-                                        Also verify nullifier on-chain
+                                        Verify issuer signature with a JWKS file
+  xfuel-verify <receipt.json> --fetch-jwks
+                                        Fetch JWKS from an allowlisted issuer jwks_uri
+  xfuel-verify <receipt.json> --check-payer
+                                        Confirm payer, payee, asset, and amount on-chain
   xfuel-verify - < receipt.json         Read from stdin
   xfuel-verify --help                   Show this help
 
 Options:
-  --jwks-file <path>  JWKS file for issuer signature verification (no network)
+  --jwks-file <path>  JWKS file. Keys are trusted and matched by kid (no network)
+  --jwks-url <url>    Fetch this https JWKS and trust it (explicit; any host)
+  --fetch-jwks        Fetch receipt verification.jwks_uri when the host is allowlisted
+                      (default allowlist: api.chit402.com)
+  --trusted-kid <kid> Replace the default offline pin with this RFC 7638 kid
+                      (repeatable). Default pin: ${DEFAULT_TRUSTED_ISSUER_KIDS[0]}
+  --no-trusted-kid    Do not use the default offline pin (JWKS only)
   --check-nullifier   Query Base RPC for nullifier anchor (requires network)
-  --check-payer       Query Base or Solana RPC to confirm payer_wallet on-chain
+  --check-payer       Query Base or Solana RPC. Base confirms payer, payee, asset, amount
   --solana-rpc <url>  Solana RPC URL (default: https://api.mainnet-beta.solana.com or SOLANA_RPC_URL)
   --rpc <url>         Custom RPC URL (default: https://mainnet.base.org)
   --json              Output JSON instead of human-readable
@@ -42,17 +55,23 @@ Options:
 Exit codes:
   0 = verified
   1 = verification failed
-  2 = partial verification (binding ok, nullifier not checked)
+  2 = partial verification
   3 = input error
+
+Trust:
+  A signature counts only when the verifying key is trusted. Trust is a JWKS
+  entry matched by kid (file, --jwks-url, or --fetch-jwks), or an embedded
+  issuer_jwk whose RFC 7638 thumbprint equals a pinned trusted kid. The
+  embedded key alone is not a trust root. Untrusted keys report "key untrusted".
+
+  Amount, payer, payee, and tx are read from verified signed claims. A mismatch
+  with the unsigned outer payment / caller_binding copy is a failure.
 
 Network behavior:
   By default, no network requests are made. Network is only used when:
+  - --fetch-jwks or --jwks-url is passed
   - --check-nullifier is passed (queries Base RPC for on-chain anchor)
   - --check-payer is passed (queries Base or Solana RPC for USDC settlement)
-
-  JWKS must be provided as a local file (--jwks-file) for legacy receipts without
-  issuer_signature.issuer_jwk. The CLI does not automatically fetch JWKS from a URL.
-  Pinned receipts (issuer_jwk present) verify offline without --jwks-file.
 
   Solana payer verify uses SOLANA_RPC_URL when set, else the public mainnet RPC.
 
@@ -73,6 +92,10 @@ Examples:
 function parseArgs(args: string[]): {
   file: string | null;
   jwksFile: string | null;
+  jwksUrl: string | null;
+  fetchJwks: boolean;
+  trustedKids: string[] | null;
+  noTrustedKid: boolean;
   checkNullifier: boolean;
   checkPayer: boolean;
   rpcUrl: string | null;
@@ -84,6 +107,10 @@ function parseArgs(args: string[]): {
   const result = {
     file: null as string | null,
     jwksFile: null as string | null,
+    jwksUrl: null as string | null,
+    fetchJwks: false,
+    trustedKids: null as string[] | null,
+    noTrustedKid: false,
     checkNullifier: false,
     checkPayer: false,
     rpcUrl: null as string | null,
@@ -103,6 +130,15 @@ function parseArgs(args: string[]): {
       result.checkPayer = true;
     } else if (arg === '--jwks-file' && args[i + 1]) {
       result.jwksFile = args[++i];
+    } else if (arg === '--jwks-url' && args[i + 1]) {
+      result.jwksUrl = args[++i];
+    } else if (arg === '--fetch-jwks') {
+      result.fetchJwks = true;
+    } else if (arg === '--trusted-kid' && args[i + 1]) {
+      result.trustedKids = result.trustedKids || [];
+      result.trustedKids.push(args[++i]);
+    } else if (arg === '--no-trusted-kid') {
+      result.noTrustedKid = true;
     } else if (arg === '--rpc' && args[i + 1]) {
       result.rpcUrl = args[++i];
     } else if (arg === '--solana-rpc' && args[i + 1]) {
@@ -170,8 +206,15 @@ async function main(): Promise<number> {
     }
   }
 
+  const trustedKids = args.noTrustedKid
+    ? []
+    : (args.trustedKids ?? undefined);
+
   const result = await verifyReceipt(receipt, {
     jwks,
+    jwksUri: args.jwksUrl || undefined,
+    fetchJwks: args.fetchJwks,
+    trustedKids,
     checkNullifier: args.checkNullifier,
     checkPayer: args.checkPayer,
     rpcUrl: args.rpcUrl || undefined,
@@ -187,7 +230,7 @@ async function main(): Promise<number> {
     console.log(`  Receipt ID:    ${result.receipt_id}`);
     console.log(`  Hub:           ${result.hub || '—'}`);
     console.log(`  Model:         ${result.model || '—'}`);
-    console.log(`  Amount:        ${formatAmount(result.amount_usdc)}`);
+    console.log(`  Amount:        ${result.issuer_signature.valid ? formatAmount(result.amount_usdc) : '— (not verified)'}`);
     console.log(`  TX:            ${result.tx || '—'}`);
     console.log(`  Output Hash:   ${result.output_hash ? result.output_hash.slice(0, 18) + '…' : '—'}`);
     console.log('');
@@ -199,7 +242,7 @@ async function main(): Promise<number> {
       console.log(`  Match:         ${result.binding.matches ? '✓ YES' : '✗ NO'}`);
       console.log(`  Covers:        ${result.binding.covers.join(', ')}`);
     } else {
-      console.log(`  Status:        No binding (${result.binding.reason})`);
+      console.log(`  Status:        ${result.binding.reason || 'No payment-binding commitment'}`);
     }
     console.log('');
     console.log(`  Issuer Signature`);
@@ -207,16 +250,14 @@ async function main(): Promise<number> {
     if (result.issuer_signature.checked) {
       console.log(`  Kid:           ${result.issuer_signature.kid || '—'}`);
       console.log(`  Valid:         ${result.issuer_signature.valid ? '✓ YES' : '✗ NO'}`);
+      console.log(`  Key trusted:   ${result.issuer_signature.key_trusted ? '✓ YES' : '✗ NO'}${result.issuer_signature.trust ? ` (${result.issuer_signature.trust})` : ''}`);
       if (!result.issuer_signature.valid && result.issuer_signature.reason) {
         console.log(`  Reason:        ${result.issuer_signature.reason}`);
       }
     } else {
       console.log(`  Status:        ${result.issuer_signature.reason || 'Not checked'}`);
-      if (receipt.issuer_signature && !args.jwksFile) {
-        const hasPin = receipt.issuer_signature.issuer_jwk && receipt.issuer_signature.jws;
-        console.log(hasPin
-          ? `                 (pinned issuer_jwk on receipt — signature verified offline)`
-          : `                 (receipt has signature — pass --jwks-file to verify)`);
+      if (receipt.issuer_signature && !args.jwksFile && !args.fetchJwks && !args.jwksUrl) {
+        console.log(`                 (pass --jwks-file, --fetch-jwks, or rely on the default trusted kid)`);
       }
     }
     console.log('');
@@ -224,14 +265,26 @@ async function main(): Promise<number> {
     console.log(`  ─────────────────────────────────────────────────`);
     if (result.payer.checked) {
       console.log(`  Rail:          ${result.payer.rail || '—'}`);
+      console.log(`  Payer:         ${result.payer.payer_wallet || '—'}`);
+      console.log(`  Payee:         ${result.payer.payee || '—'}`);
+      console.log(`  Asset:         ${result.payer.asset || '—'}`);
+      console.log(`  Amount:        ${formatAmount(result.payer.amount || null)}`);
       console.log(`  Valid:         ${result.payer.valid ? '✓ YES' : '✗ NO'}`);
       if (!result.payer.valid && result.payer.reason) {
         console.log(`  Reason:        ${result.payer.reason}`);
       }
     } else {
       console.log(`  Status:        ${result.payer.reason || 'Not checked'}`);
-      if (receipt.caller_binding?.payer_wallet && receipt.payment?.ref && !args.checkPayer) {
-        console.log(`                 (pass --check-payer to verify on-chain)`);
+      if (result.issuer_signature.valid && result.payer.payer_wallet && result.tx && !args.checkPayer) {
+        console.log(`                 (pass --check-payer to verify payer, payee, asset, and amount on-chain)`);
+      }
+    }
+    if (result.claim_mismatches.length > 0) {
+      console.log('');
+      console.log(`  Outer / signed mismatches`);
+      console.log(`  ─────────────────────────────────────────────────`);
+      for (const mismatch of result.claim_mismatches) {
+        console.log(`  ${mismatch.field}: outer ${mismatch.outer} ≠ signed ${mismatch.signed}`);
       }
     }
     console.log('');

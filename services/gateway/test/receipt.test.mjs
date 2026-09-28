@@ -104,6 +104,7 @@ test('buildReceipt: USDC task is proven, priced, and independently binding-verif
   assert.equal(r.proof.system, 'sp1');
   assert.equal(r.proof.has_proof, true);
   assert.equal(r.proof.attestation_scope.model_computation, false);
+  assert.equal(r.proof.attestation_scope.payment_binding, true, 'commitment present → payment_binding');
   assert.equal(r.proof.nullifier_enforced, true);
   assert.equal(!('attests' in r.proof), true, 'JSON proof omits prose attests');
 
@@ -129,6 +130,17 @@ test('buildReceipt: USDC task is proven, priced, and independently binding-verif
   // Canonical shareable verify_url is present and matches links.self.
   assert.equal(r.verify_url, `https://api.xfuel.app/receipt/${TASK_ID}`);
   assert.equal(r.verify_url, r.links.self);
+});
+
+test('paid USDC without a binding commitment does not claim payment_binding', () => {
+  const task = usdcTask();
+  delete task.sp1Proof.paymentBinding;
+  const r = buildReceipt(task, { baseUrl: 'https://api.chit402.com' });
+  assert.equal(r.proof.attestation_scope.payment_binding, false);
+  assert.equal(r.binding, undefined);
+  const claims = decodeReceiptClaims(r);
+  assert.equal(claims.binding.expected_commitment, null);
+  assert.equal(claims.payment.gross_amount, '1000000');
 });
 
 test('buildVerifyUrl: absolute with base, relative without, trims trailing slash', () => {
