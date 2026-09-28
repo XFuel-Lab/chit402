@@ -1030,6 +1030,62 @@ test('renderReceiptHtml: shows settle bind rows when present', () => {
   assert.match(html, /pinned in receipt/);
 });
 
+test('verifyIssuerForHtml: published JWKS verifies; embedded key is pinned only on a thumbprint match', async () => {
+  const { verifyIssuerForHtml, embeddedIssuerKeyIsPinned } = await import('../src/receipt.js');
+  const receipt = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  const honest = verifyIssuerForHtml(receipt);
+  assert.equal(honest.verified, true, honest.reason);
+  assert.equal(honest.trust, 'jwks');
+  assert.equal(honest.pinned, true);
+  assert.equal(embeddedIssuerKeyIsPinned(receipt), true);
+
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const exported = publicKey.export({ format: 'jwk' });
+  const canonical = JSON.stringify({ crv: exported.crv, kty: exported.kty, x: exported.x, y: exported.y });
+  const attackerKid = crypto.createHash('sha256').update(canonical).digest('base64url');
+  const attackerJwk = {
+    kty: 'EC', crv: 'P-256', x: exported.x, y: exported.y, kid: attackerKid, alg: 'ES256', use: 'sig',
+  };
+
+  const swapped = {
+    ...receipt,
+    issuer_signature: { ...receipt.issuer_signature, issuer_jwk: attackerJwk },
+  };
+  const swappedCheck = verifyIssuerForHtml(swapped);
+  assert.equal(swappedCheck.verified, true, 'the real JWS still verifies against the published JWKS');
+  assert.equal(swappedCheck.trust, 'jwks');
+  assert.equal(swappedCheck.pinned, false);
+  const swappedHtml = renderReceiptHtml(swapped);
+  assert.match(swappedHtml, /badge ok">verified/);
+  assert.doesNotMatch(swappedHtml, /pinned in receipt/);
+
+  const claims = decodeReceiptClaims(receipt);
+  claims.payment.gross_amount = '2000000';
+  const header = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid: receipt.issuer_signature.kid };
+  const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const payloadB64 = Buffer.from(JSON.stringify(claims)).toString('base64url');
+  const signature = crypto.sign('sha256', Buffer.from(`${headerB64}.${payloadB64}`), {
+    key: privateKey,
+    dsaEncoding: 'ieee-p1363',
+  }).toString('base64url');
+  const spoofed = {
+    ...receipt,
+    issuer_signature: {
+      ...receipt.issuer_signature,
+      jws: `${headerB64}.${payloadB64}.${signature}`,
+      issuer_jwk: { ...attackerJwk, kid: receipt.issuer_signature.kid },
+    },
+  };
+  const spoofedCheck = verifyIssuerForHtml(spoofed);
+  assert.equal(spoofedCheck.verified, false);
+  assert.equal(spoofedCheck.reason, 'key untrusted');
+  assert.equal(spoofedCheck.pinned, false);
+  const spoofedHtml = renderReceiptHtml(spoofed);
+  assert.match(spoofedHtml, /not verified/);
+  assert.doesNotMatch(spoofedHtml, /pinned in receipt/);
+  assert.match(spoofedHtml, /pinned issuer kid/);
+});
+
 test('renderReceiptHtml: foreign-ingest Nano receipt renders without a proof object', () => {
   const hash = '324B1CED853848219956F60B43065ECF08F0AB0C35B54BA2516EBE39C4E5C19B';
   const sender = 'nano_1senderxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';

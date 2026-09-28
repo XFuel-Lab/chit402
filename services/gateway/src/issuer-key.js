@@ -76,7 +76,7 @@ export function initIssuerKey() {
  * RFC 7638 JWK thumbprint (SHA-256, base64url).
  * For EC keys: {"crv","kty","x","y"} in lexicographic order.
  */
-function computeJwkThumbprint(jwk) {
+export function computeJwkThumbprint(jwk) {
   const canonical = JSON.stringify({
     crv: jwk.crv,
     kty: jwk.kty,

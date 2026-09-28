@@ -993,12 +993,46 @@ describe('payload v7 still verifies; v8 reconciles with the on-chain transfer', 
     assert.equal(verified.payload.payment.settled_amount, '2000');
     assert.equal(verified.payload.payment.accounting.internal_breakdown.route_margin_bps, 100);
 
-    const recon = reconcileSettledTransfer(receipt, chain.logs, { usdcAddress: chain.usdc });
+    const recon = reconcileSettledTransfer(receipt, chain.logs, {
+      usdcAddress: chain.usdc,
+      trustedKids: [kid],
+    });
     assert.equal(recon.matches, true, recon.reason);
     assert.equal(recon.signed_field, 'settled_amount');
     assert.equal(recon.signed_amount, '2000');
     assert.equal(recon.transfer_amount, '2000');
     assert.equal(chain.logs.some((log) => log.topics?.[0] === ERC20_TRANSFER_TOPIC), true);
+  });
+
+  test('an untrusted JWS is not reconciled and does not fall back to the outer payment', () => {
+    const forged = forgeReceipt(fixture, '2000000');
+    const recon = reconcileSettledTransfer(forged, chain.logs, { usdcAddress: chain.usdc });
+    assert.equal(recon.checked, false);
+    assert.equal(recon.matches, false);
+    assert.equal(recon.reason, 'key untrusted');
+    assert.equal(recon.signed_amount, null);
+    assert.equal(recon.signed_field, null);
+    assert.equal(recon.transfer_amount, null);
+    assert.equal(recon.payee, null);
+  });
+
+  test('a pinned key with a broken signature does not fall back to the outer payment', () => {
+    const parts = fixture.issuer_signature.jws.split('.');
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    payload.payment.net_amount = '1';
+    const tampered = {
+      ...fixture,
+      issuer_signature: {
+        ...fixture.issuer_signature,
+        jws: `${parts[0]}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.${parts[2]}`,
+      },
+    };
+    const recon = reconcileSettledTransfer(tampered, chain.logs, { usdcAddress: chain.usdc });
+    assert.equal(recon.checked, false);
+    assert.equal(recon.matches, false);
+    assert.equal(recon.reason, 'signature_invalid');
+    assert.equal(recon.signed_amount, null);
+    assert.equal(recon.transfer_amount, null);
   });
 });
 
