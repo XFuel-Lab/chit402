@@ -4,6 +4,7 @@ import {
   SURPLUS_CAP_ATOMIC,
   SURPLUS_CAP_USD,
   affordableExactAccepts,
+  bookNetwork,
 } from './caps.js';
 import { decodeSettlementHeader, settlementHeaderFrom } from './payment-response.js';
 import {
@@ -39,8 +40,10 @@ const PAYMENT_HEADERS = ['payment-signature', 'x-payment', 'payment-nonce', 'x-p
 export async function chitSurplusFetch(url, opts = {}) {
   if (!url || typeof url !== 'string') throw new Error('url is required');
   const fetchImpl = opts.fetch ?? globalThis.fetch;
-  const signal = opts.signal ?? AbortSignal.timeout(opts.timeoutMs ?? 30_000);
-  const unpaid = unpaidInit(opts, signal);
+  // Surplus and the book stamp do not share one timer. A slow settlement must
+  // not abort ingest after USDC has already moved.
+  const surplusSignal = opts.signal ?? AbortSignal.timeout(opts.timeoutMs ?? 30_000);
+  const unpaid = unpaidInit(opts, surplusSignal);
 
   const probe = await fetchImpl(url, unpaid);
   const probeBody = await readBody(probe);
@@ -79,6 +82,8 @@ export async function chitSurplusFetch(url, opts = {}) {
   const amount = settlement.amount && /^[0-9]+$/.test(settlement.amount)
     ? settlement.amount
     : String(accepted.amount ?? accepted.maxAmountRequired);
+  const network = bookNetwork(settlement.network || accepted.network);
+  const ingestSignal = opts.ingestSignal ?? AbortSignal.timeout(opts.ingestTimeoutMs ?? 30_000);
 
   const verify_url = await ingestSettledPayment({
     fetchImpl,
@@ -87,18 +92,18 @@ export async function chitSurplusFetch(url, opts = {}) {
     session: creds.session,
     apiKey: creds.apiKey,
     stampAccount: creds.stampAccount,
-    signal,
+    signal: ingestSignal,
     paymentRequired: {
       resource: resourceOf(priced, url),
       amount,
       payTo: accepted.payTo,
-      network: settlement.network || accepted.network,
+      network,
       asset: 'USDC',
     },
     paymentResponse: {
       tx: settlement.tx,
       payer: settlement.payer,
-      network: settlement.network,
+      network,
     },
   });
 

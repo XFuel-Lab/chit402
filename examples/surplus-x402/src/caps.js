@@ -73,6 +73,31 @@ export function affordableExactAccepts(challenge, { cap, usd, label }) {
   return under.map((row) => row.accept);
 }
 
+/**
+ * Short network name the book ingest door puts in `payment.ref`.
+ * `eip155:8453:0x…` is parsed as tx `8453:0x…` and on-chain verify rejects it.
+ * `base:0x…` keeps the hash intact.
+ */
+const BOOK_NETWORKS = {
+  'eip155:8453': 'base',
+  'eip155:84532': 'base-sepolia',
+  'solana:5eykt4usfv8p8njdtrepy1vzqkqzkvdp': 'solana',
+  'solana:etwtrabzayq6imfeykouru166vu2xqa1': 'solana-devnet',
+};
+
+export function bookNetwork(network) {
+  const raw = String(network || '').trim();
+  if (!raw) return 'base';
+  const mapped = BOOK_NETWORKS[raw.toLowerCase()];
+  if (mapped) return mapped;
+  if (raw.includes(':')) {
+    throw new Error(
+      `book ingest cannot use network "${raw}" — a colon makes the tx hash unreadable`,
+    );
+  }
+  return raw;
+}
+
 export function formatAtomicUsd(amount) {
   const value = BigInt(amount);
   const negative = value < 0n;

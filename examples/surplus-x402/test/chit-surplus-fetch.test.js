@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { affordableExactAccepts, STAMP_CAP_ATOMIC, SURPLUS_CAP_ATOMIC } from '../src/caps.js';
+import { affordableExactAccepts, bookNetwork, STAMP_CAP_ATOMIC, SURPLUS_CAP_ATOMIC } from '../src/caps.js';
 import { chitSurplusFetch, CHIT_API_URL, ENV } from '../src/chit-surplus-fetch.js';
 import { formatPaidEndpoints, listPaidEndpoints } from '../src/list-endpoints.js';
 
@@ -150,6 +150,18 @@ describe('affordableExactAccepts', () => {
   });
 });
 
+describe('bookNetwork', () => {
+  it('stores Base as the short name so the book can split network:tx', () => {
+    assert.equal(bookNetwork('eip155:8453'), 'base');
+    assert.equal(bookNetwork('base'), 'base');
+    const tx = `0x${'ab'.repeat(32)}`;
+    const ref = `${bookNetwork('eip155:8453')}:${tx}`;
+    const parts = ref.split(':');
+    const parsed = parts.length > 1 ? parts.slice(1).join(':') : ref;
+    assert.equal(parsed, tx);
+  });
+});
+
 describe('chitSurplusFetch', () => {
   it('pays Surplus, stamps the book, and returns data plus verify_url', async () => {
     const surplus = spyAccount(privateKeyToAccount(generatePrivateKey()));
@@ -223,14 +235,52 @@ describe('chitSurplusFetch', () => {
       resource: SURPLUS_URL,
       amount: '3301',
       payTo: PAY_TO,
-      network: 'eip155:8453',
+      network: 'base',
       asset: 'USDC',
     });
     assert.deepEqual(body.payment_response, {
       tx: TX,
       payer: surplus.account.address,
-      network: 'eip155:8453',
+      network: 'base',
     });
+  });
+
+  it('gives book ingest its own timer after Surplus has been paid', async () => {
+    const surplus = spyAccount(privateKeyToAccount(generatePrivateKey()));
+    const stamp = spyAccount(privateKeyToAccount(generatePrivateKey()));
+    const surplusAbort = new AbortController();
+    let ingestSignal;
+    const fetchImpl = async (url, init) => {
+      const headers = new Headers(init?.headers);
+      if (String(url) === SURPLUS_URL) {
+        if (!headers.get('payment-signature')) {
+          const challenge = surplusChallenge('3301');
+          return jsonResponse(402, challenge, { 'payment-required': b64(challenge) });
+        }
+        surplusAbort.abort();
+        return jsonResponse(200, { id: 'chatcmpl-1' }, {
+          'payment-response': b64(settlement(surplus.account.address)),
+        });
+      }
+      ingestSignal = init?.signal;
+      return jsonResponse(201, { verify_url: VERIFY });
+    };
+
+    const result = await chitSurplusFetch(SURPLUS_URL, {
+      fetch: fetchImpl,
+      body: '{}',
+      signal: surplusAbort.signal,
+      agentId: '7',
+      session: 'sess-1',
+      surplusSigner: surplus.account,
+      stampSigner: stamp.account,
+    });
+
+    assert.equal(result.verify_url, VERIFY);
+    assert.equal(surplusAbort.signal.aborted, true);
+    assert.ok(ingestSignal);
+    assert.equal(ingestSignal.aborted, false);
+    assert.notEqual(ingestSignal, surplusAbort.signal);
   });
 
   it('refuses a Surplus price above 0.05 USDC before any signature', async () => {
