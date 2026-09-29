@@ -1,0 +1,64 @@
+{
+  "name": "chit402-emdash",
+  "version": "0.1.0",
+  "description": "Stamp a Chit402 book receipt for each paid EmDash agent read. Who read the page, who funded it, verify_url.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "chit402",
+    "emdash",
+    "x402",
+    "usdc",
+    "receipts",
+    "astro",
+    "verify_url"
+  ],
+  "author": "XFuel Lab",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/XFuel-Lab/chit402/tree/main/packages/emdash-chit402#readme",
+  "bugs": {
+    "url": "https://github.com/XFuel-Lab/chit402/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XFuel-Lab/chit402.git",
+    "directory": "packages/emdash-chit402"
+  },
+  "peerDependencies": {
+    "@emdash-cms/x402": ">=0.21.0"
+  },
+  "peerDependenciesMeta": {
+    "@emdash-cms/x402": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
