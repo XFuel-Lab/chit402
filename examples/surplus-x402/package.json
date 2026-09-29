@@ -1,0 +1,20 @@
+{
+  "name": "surplus-x402-demo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pay a Surplus Intelligence x402 endpoint and stamp the settlement on a Chit402 book.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/run.js",
+    "list-endpoints": "node src/list-endpoints.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@x402/evm": "^2.25.0",
+    "@x402/fetch": "^2.25.0",
+    "viem": "^2.37.0"
+  }
+}
