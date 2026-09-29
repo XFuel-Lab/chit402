@@ -56,6 +56,9 @@
       "optional": true
     }
   },
+  "dependencies": {
+    "viem": "^2.37.0"
+  },
   "devDependencies": {
     "@types/node": "^22.19.0",
     "typescript": "^5.9.3",

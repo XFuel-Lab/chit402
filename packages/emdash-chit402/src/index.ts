@@ -1,4 +1,5 @@
 import { stampSettledRead } from './stamp.js';
+import { hasStampSigner, warnMissingStampSigner } from './stamp-payer.js';
 import type {
   ChitEmDashConfig,
   EmDashEnforcer,
@@ -23,6 +24,16 @@ export {
 
 export { priceToAtomicUsdc, usdDecimalToAtomic } from './price.js';
 
+export {
+  MISSING_STAMP_SIGNER_WARNING,
+  payerFromPrivateKey,
+  payerFromViemAccount,
+  type StampChallenge,
+  type StampPayer,
+  type StampPayment,
+  type StampSigner,
+} from './stamp-payer.js';
+
 export type {
   ChitEmDashConfig,
   ContentHashInput,
@@ -42,6 +53,7 @@ export type {
  * A 402 response and a skipped (human, botOnly) result are returned unchanged.
  */
 export function withReceipts(enforcer: EmDashEnforcer, config: ChitEmDashConfig = {}): EmDashEnforcer {
+  noteMissingSigner(config);
   return {
     async enforce(request: Request, options?: EmDashEnforceOptions): Promise<Response | EmDashEnforceResult> {
       const out = await enforcer.enforce(request, options);
@@ -79,7 +91,19 @@ export const stampedEnforce = withReceipts;
  * One line once upstream calls `(ctx) => void | Promise<void>` after settle.
  */
 export function chit402OnSettled(config: ChitEmDashConfig = {}): OnSettled {
+  noteMissingSigner(config);
   return (ctx: OnSettledContext) => stampSettledRead(ctx, config);
+}
+
+function noteMissingSigner(config: ChitEmDashConfig): void {
+  const log = config.log ?? ((message: string) => console.warn(`[chit402-emdash] ${message}`));
+  let envKey: string | undefined;
+  try {
+    envKey = process.env.CHIT_STAMP_PRIVATE_KEY;
+  } catch {
+    envKey = undefined;
+  }
+  warnMissingStampSigner(config, hasStampSigner(config.signer, envKey), log);
 }
 
 function pageResource(request: Request): string {

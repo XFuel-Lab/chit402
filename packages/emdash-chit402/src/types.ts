@@ -18,6 +18,8 @@ export interface EmDashEnforceOptions {
   mimeType?: string;
 }
 
+import type { StampSigner } from './stamp-payer.js';
+
 /** Subset of @x402/core SettleResponse this stamp reads. */
 export interface EmDashSettlement {
   success?: boolean;
@@ -105,6 +107,14 @@ export interface ChitEmDashConfig {
    * read, in addition to the stamp. Errors are logged.
    */
   onSettled?: OnSettled;
+  /**
+   * Pays the $0.002 ingest stamp after a 402.
+   * A function matches xfuel-sdk `X402Payer` (`createEip3009Payer`).
+   * A viem local account (`privateKeyToAccount`) signs EIP-3009 in this package.
+   * A string is a hex private key. When omitted, `CHIT_STAMP_PRIVATE_KEY` is used.
+   * With no signer, ingest 402 is logged once at startup and the page still renders.
+   */
+  signer?: StampSigner;
   /** Override console.warn. */
   log?: (message: string) => void;
   /** Override global fetch (tests). */

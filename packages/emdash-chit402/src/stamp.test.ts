@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CHIT_RECEIPT_HEADER,
+  MISSING_STAMP_SIGNER_WARNING,
   STAMP_FEE_UNITS,
   STAMP_FEE_USD,
   chit402OnSettled,
   normalizeContentHash,
+  payerFromPrivateKey,
   priceToAtomicUsdc,
   withReceipts,
 } from './index.js';
+import type { StampChallenge } from './index.js';
 import type { EmDashEnforcer, EmDashEnforceResult } from './types.js';
 
 const API = 'https://api.chit402.com';
@@ -23,7 +26,30 @@ const baseConfig = {
   payTo: PAY_TO,
   apiUrl: API,
   timeoutMs: 1500,
+  log: () => {},
 };
+
+const CHALLENGE_NONCE = `0x${'11'.repeat(32)}`;
+const STAMP_CHALLENGE: StampChallenge = {
+  x402Version: 2,
+  accepts: [{
+    scheme: 'exact',
+    network: 'eip155:8453',
+    amount: STAMP_FEE_UNITS,
+    maxAmountRequired: STAMP_FEE_UNITS,
+    asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    payTo: '0x3333333333333333333333333333333333333333',
+    extra: { nonce: CHALLENGE_NONCE, name: 'USD Coin', version: '2' },
+  }],
+};
+
+function stamp402(): Response {
+  return jsonResponse(402, {
+    ...STAMP_CHALLENGE,
+    error: 'stamp_payment_required',
+    stamp_fee_usd: STAMP_FEE_USD,
+  });
+}
 
 function paidResult(over: Partial<EmDashEnforceResult> = {}): EmDashEnforceResult {
   return {
@@ -211,22 +237,111 @@ describe('withReceipts', () => {
     expect(out.paid).toBe(true);
     expect(out.responseHeaders[CHIT_RECEIPT_HEADER]).toBeUndefined();
     expect(out.responseHeaders['PAYMENT-RESPONSE']).toBe('cGF5bWVudA==');
-    expect(log).toHaveBeenCalled();
-    expect(String(log.mock.calls[0]?.[0])).toMatch(/network down/);
+    const lines = log.mock.calls.map((call) => String(call[0])).join('\n');
+    expect(lines).toMatch(/network down/);
   });
 
-  it('logs the $0.002 stamp challenge and does not throw', async () => {
+  it('warns once at startup when no signer is configured and does not retry', async () => {
     const log = vi.fn();
-    const fetchMock = vi.fn(async () => jsonResponse(402, {
-      error: 'stamp_payment_required',
-      stamp_fee_usd: '0.002',
-    }));
+    const fetchMock = vi.fn(async () => stamp402());
     const wrapped = withReceipts(enforcer(paidResult()), { ...baseConfig, fetch: fetchMock, log });
+    expect(log).toHaveBeenCalledOnce();
+    expect(log.mock.calls[0]?.[0]).toBe(MISSING_STAMP_SIGNER_WARNING);
+
+    await wrapped.enforce(requestFor(), { price: '$0.05' });
+    await wrapped.enforce(requestFor('/posts/again'), { price: '$0.05' });
+    expect(log).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondHeaders = new Headers((fetchMock.mock.calls[1] as [string, RequestInit])[1].headers);
+    expect(secondHeaders.get('x-payment')).toBeNull();
+  });
+
+  it('pays the $0.002 stamp after 402 and retries once', async () => {
+    const payer = vi.fn(async () => ({ header: 'c3RhbXA=', nonce: CHALLENGE_NONCE }));
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (!headers.get('x-payment')) return stamp402();
+      return jsonResponse(201, { verify_url: VERIFY, stamp_fee_usd: STAMP_FEE_USD });
+    });
+    const wrapped = withReceipts(enforcer(paidResult()), {
+      ...baseConfig,
+      fetch: fetchMock,
+      signer: payer,
+    });
+    const out = await wrapped.enforce(requestFor(), { price: '$0.05' });
+    if (out instanceof Response) throw new Error('expected a result');
+    expect(out.responseHeaders[CHIT_RECEIPT_HEADER]).toBe(VERIFY);
+    expect(payer).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const paidHeaders = new Headers((fetchMock.mock.calls[1] as [string, RequestInit])[1].headers);
+    expect(paidHeaders.get('x-payment')).toBe('c3RhbXA=');
+    expect(paidHeaders.get('x-payment-nonce')).toBe(CHALLENGE_NONCE);
+    expect(paidHeaders.get('x-api-key')).toBe('book-key');
+  });
+
+  it('moves a slow stamp payment to waitUntil and sets the header only after verify_url', async () => {
+    const payer = vi.fn(() => new Promise<{ header: string; nonce: string }>((resolve) => {
+      setTimeout(() => resolve({ header: 'late-payment', nonce: CHALLENGE_NONCE }), 60);
+    }));
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (!headers.get('x-payment')) return stamp402();
+      return jsonResponse(201, { verify_url: VERIFY });
+    });
+    const waitUntil = vi.fn();
+    const wrapped = withReceipts(enforcer(paidResult()), {
+      ...baseConfig,
+      fetch: fetchMock,
+      signer: payer,
+      timeoutMs: 25,
+      hardTimeoutMs: 5000,
+      waitUntil,
+    });
     const out = await wrapped.enforce(requestFor(), { price: '$0.05' });
     if (out instanceof Response) throw new Error('expected a result');
     expect(out.responseHeaders[CHIT_RECEIPT_HEADER]).toBeUndefined();
-    expect(String(log.mock.calls[0]?.[0])).toContain(STAMP_FEE_USD);
-    expect(String(log.mock.calls[0]?.[0])).toContain(STAMP_FEE_UNITS);
+    expect(waitUntil).toHaveBeenCalledOnce();
+    await waitUntil.mock.calls[0]?.[0];
+    expect(out.responseHeaders[CHIT_RECEIPT_HEADER]).toBe(VERIFY);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('logs a failed stamp payment and does not throw', async () => {
+    const log = vi.fn();
+    const payer = vi.fn(async () => {
+      throw new Error('user rejected');
+    });
+    const fetchMock = vi.fn(async () => stamp402());
+    const wrapped = withReceipts(enforcer(paidResult()), {
+      ...baseConfig,
+      fetch: fetchMock,
+      signer: payer,
+      log,
+    });
+    expect(log).not.toHaveBeenCalled();
+    const out = await wrapped.enforce(requestFor(), { price: '$0.05' });
+    if (out instanceof Response) throw new Error('expected a result');
+    expect(out.responseHeaders[CHIT_RECEIPT_HEADER]).toBeUndefined();
+    expect(out.responseHeaders['PAYMENT-RESPONSE']).toBe('cGF5bWVudA==');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(log.mock.calls[0]?.[0])).toMatch(/user rejected/);
+  });
+
+  it('logs when the paid retry is still 402', async () => {
+    const log = vi.fn();
+    const payer = vi.fn(async () => ({ header: 'c3RhbXA=', nonce: CHALLENGE_NONCE }));
+    const fetchMock = vi.fn(async () => stamp402());
+    const wrapped = withReceipts(enforcer(paidResult()), {
+      ...baseConfig,
+      fetch: fetchMock,
+      signer: payer,
+      log,
+    });
+    const out = await wrapped.enforce(requestFor(), { price: '$0.05' });
+    if (out instanceof Response) throw new Error('expected a result');
+    expect(out.responseHeaders[CHIT_RECEIPT_HEADER]).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(log.mock.calls[0]?.[0])).toMatch(/stamp_payment_required/);
   });
 
   it('points X-Chit-Receipt at the by-tx lookup when the row already exists', async () => {
@@ -341,6 +456,73 @@ describe('chit402OnSettled', () => {
     const result: EmDashEnforceResult = { paid: false, skipped: true, responseHeaders: {} };
     await hook({ request: requestFor(), result });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('payerFromPrivateKey', () => {
+  it('signs the standard stamp and recovers to the key', async () => {
+    const { generatePrivateKey, privateKeyToAccount } = await import('viem/accounts');
+    const { recoverTypedDataAddress } = await import('viem');
+    const privateKey = generatePrivateKey();
+    const account = privateKeyToAccount(privateKey);
+    const payer = payerFromPrivateKey(privateKey);
+    const { header, nonce } = await payer(STAMP_CHALLENGE);
+    expect(nonce).toBe(CHALLENGE_NONCE);
+
+    const decoded = JSON.parse(Buffer.from(header, 'base64').toString('utf8')) as {
+      amount: string;
+      authorization: {
+        type: string;
+        domain: { name: string; version: string; chainId: number; verifyingContract: `0x${string}` };
+        message: {
+          from: `0x${string}`;
+          to: `0x${string}`;
+          value: string;
+          validAfter: number;
+          validBefore: number;
+          nonce: `0x${string}`;
+        };
+        signature: `0x${string}`;
+      };
+    };
+    expect(decoded.amount).toBe(STAMP_FEE_UNITS);
+    expect(decoded.authorization.type).toBe('eip3009-transferWithAuthorization');
+    expect(decoded.authorization.message.value).toBe(STAMP_FEE_UNITS);
+    const message = decoded.authorization.message;
+    const recovered = await recoverTypedDataAddress({
+      domain: decoded.authorization.domain,
+      types: {
+        TransferWithAuthorization: [
+          { name: 'from', type: 'address' },
+          { name: 'to', type: 'address' },
+          { name: 'value', type: 'uint256' },
+          { name: 'validAfter', type: 'uint256' },
+          { name: 'validBefore', type: 'uint256' },
+          { name: 'nonce', type: 'bytes32' },
+        ],
+      },
+      primaryType: 'TransferWithAuthorization',
+      message: {
+        from: message.from,
+        to: message.to,
+        value: BigInt(message.value),
+        validAfter: BigInt(message.validAfter),
+        validBefore: BigInt(message.validBefore),
+        nonce: message.nonce,
+      },
+      signature: decoded.authorization.signature,
+    });
+    expect(recovered.toLowerCase()).toBe(account.address.toLowerCase());
+  });
+
+  it('refuses a challenge above the $0.002 stamp', async () => {
+    const { generatePrivateKey } = await import('viem/accounts');
+    const payer = payerFromPrivateKey(generatePrivateKey());
+    const over: StampChallenge = {
+      ...STAMP_CHALLENGE,
+      accepts: [{ ...STAMP_CHALLENGE.accepts[0], amount: '2001', maxAmountRequired: '2001' }],
+    };
+    await expect(payer(over)).rejects.toThrow(/2000/);
   });
 });
 

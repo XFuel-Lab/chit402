@@ -10,7 +10,7 @@ The stamp is the existing book door, `POST /v1/agents/:agent_id/book/ingest`, at
 npm install chit402-emdash @emdash-cms/x402
 ```
 
-`astro.config.mjs` keeps the EmDash payment integration. The page wraps `Astro.locals.x402`:
+`astro.config.mjs` keeps the EmDash payment integration. The page wraps `Astro.locals.x402`. `CHIT_STAMP_PRIVATE_KEY` is the publisher key that pays the $0.002 stamp. A viem account, or `createEip3009Payer` from `xfuel-sdk/onchain`, can be passed as `signer` instead of the raw key.
 
 ```js
 import { x402 } from "@emdash-cms/x402";
@@ -22,7 +22,8 @@ export default { integrations: [x402({ payTo: "0xPublisher", network: "eip155:84
 import { withReceipts } from "chit402-emdash";
 const x402 = withReceipts(Astro.locals.x402, {
   agentId: "7", session: import.meta.env.CHIT_BOOK_SESSION, apiKey: import.meta.env.CHIT_API_KEY,
-  payTo: "0xPublisher", waitUntil: (p) => Astro.locals.runtime?.ctx?.waitUntil?.(p),
+  payTo: "0xPublisher", signer: import.meta.env.CHIT_STAMP_PRIVATE_KEY,
+  waitUntil: (p) => Astro.locals.runtime?.ctx?.waitUntil?.(p),
 });
 const result = await x402.enforce(Astro.request, { price: "$0.05" });
 if (result instanceof Response) return result;
@@ -54,7 +55,7 @@ The publisher holds a registered agent (`POST /v1/agents/register`) and sends:
 
 The body is `payment_required` (page URL, atomic USDC price, payTo, network) and `payment_response` (settlement tx, payer, network), plus `deliverable_hash` when you pass `contentHash`. Gateway origin defaults to `https://api.chit402.com`.
 
-The ingest door itself answers **402** until the submitter pays the $0.002 stamp, unless that API key is on the gateway waiver list (`STAMP_WAIVER_KEYS`). This package does not sign that second payment. It logs `stamp_payment_required` and serves the page. Demo keys cannot write the book.
+The ingest door answers **402** until the submitter pays the $0.002 stamp, unless that API key is on the gateway waiver list (`STAMP_WAIVER_KEYS`). With `signer` set, this package signs that fee (SDK `X-PAYMENT` header) and retries the ingest once. The page is not held past 1.5s: a slower payment continues on `waitUntil`, and `X-Chit-Receipt` is set only when `verify_url` arrives in time. With no signer, the wrapper logs one warning when it is created and still serves the page. Demo keys cannot write the book.
 
 ## Later hook
 
@@ -62,5 +63,8 @@ If EmDash adds `onSettled(ctx)` with `{ request, result, resource }`, drop the w
 
 ```js
 import { chit402OnSettled } from "chit402-emdash";
-onSettled: chit402OnSettled({ agentId: "7", session, apiKey, payTo: "0xPublisher" })
+onSettled: chit402OnSettled({
+  agentId: "7", session, apiKey, payTo: "0xPublisher",
+  signer: import.meta.env.CHIT_STAMP_PRIVATE_KEY,
+})
 ```

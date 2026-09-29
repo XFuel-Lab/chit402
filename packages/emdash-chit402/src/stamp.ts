@@ -1,4 +1,11 @@
 import { priceToAtomicUsdc } from './price.js';
+import {
+  challengeFromResponse,
+  hasStampSigner,
+  stampPayerFrom,
+  warnMissingStampSigner,
+} from './stamp-payer.js';
+import type { StampPayer } from './stamp-payer.js';
 import type {
   ChitEmDashConfig,
   ContentHashInput,
@@ -37,6 +44,8 @@ interface ResolvedConfig {
   hardTimeoutMs: number;
   waitUntil?: WaitUntil;
   contentHash?: ChitEmDashConfig['contentHash'];
+  signer?: ChitEmDashConfig['signer'];
+  hasSigner: boolean;
   log: (message: string) => void;
   fetch: typeof fetch;
 }
@@ -55,7 +64,8 @@ export async function stampSettledRead(
   if (!result.responseHeaders || typeof result.responseHeaders !== 'object') return;
 
   const resolved = resolveConfig(config);
-  const work = runStamp(ctx, resolved).catch((err: unknown) => {
+  warnMissingStampSigner(config, resolved.hasSigner, resolved.log);
+  const work = runStamp(ctx, resolved, config).catch((err: unknown) => {
     resolved.log(`stamp failed: ${messageOf(err)}`);
     return undefined;
   });
@@ -97,6 +107,7 @@ export async function stampSettledRead(
 async function runStamp(
   ctx: OnSettledContext,
   config: ResolvedConfig,
+  source: ChitEmDashConfig,
 ): Promise<string | undefined> {
   if (!config.agentId || !/^[1-9][0-9]*$/.test(config.agentId)) {
     config.log('stamp skipped: agentId must be the registered book id');
@@ -167,47 +178,107 @@ async function runStamp(
   if (deliverable) body.deliverable_hash = deliverable;
 
   const url = ingestUrl(config.apiUrl, config.agentId);
+  const payload = JSON.stringify(body);
+  const baseHeaders: Record<string, string> = {
+    'content-type': 'application/json',
+    accept: 'application/json',
+    'x-api-key': config.apiKey,
+    'x-xfuel-session': config.session,
+  };
+
+  const post = (extra?: Record<string, string>) => config.fetch(url, {
+    method: 'POST',
+    headers: extra ? { ...baseHeaders, ...extra } : baseHeaders,
+    body: payload,
+    signal: AbortSignal.timeout(config.hardTimeoutMs),
+  });
+
   let res: Response;
   try {
-    res = await config.fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json',
-        'x-api-key': config.apiKey,
-        'x-xfuel-session': config.session,
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(config.hardTimeoutMs),
-    });
+    res = await post();
   } catch (err) {
     config.log(`stamp request failed: ${messageOf(err)}`);
     return undefined;
   }
 
   const parsed = await readJson(res);
-
-  if (res.status === 201 || res.ok) {
-    const verifyUrl = verifyUrlFrom(parsed, config.apiUrl);
-    if (!verifyUrl) config.log('stamp wrote a row but verify_url was missing');
-    return verifyUrl;
-  }
-
+  if (res.status === 201 || res.ok) return receiptUrl(parsed, config);
   if (res.status === 409) {
     config.log('stamp already recorded for this settlement tx');
     return byTxUrl(config.apiUrl, tx);
   }
-
-  if (res.status === 402) {
-    config.log(
-      `stamp not written: book ingest charges ${STAMP_FEE_USD} USDC (${STAMP_FEE_UNITS} atomic) via x402 unless this API key is waiver-listed`,
-    );
+  if (res.status !== 402) {
+    const error = typeof parsed?.error === 'string' ? parsed.error : `HTTP ${res.status}`;
+    config.log(`stamp not written: ${error}`);
     return undefined;
   }
 
-  const error = typeof parsed?.error === 'string' ? parsed.error : `HTTP ${res.status}`;
-  config.log(`stamp not written: ${error}`);
+  const stampPayer = payerFor(source, config);
+  if (!stampPayer) return undefined;
+
+  const challenge = challengeFromResponse(parsed, res.headers.get('payment-required'));
+  if (!challenge) {
+    config.log('stamp payment failed: 402 response had no x402 challenge');
+    return undefined;
+  }
+
+  let paymentHeader: string;
+  let paymentNonce: string | undefined;
+  try {
+    const auth = await stampPayer(challenge);
+    if (!auth?.header) throw new Error('signer returned an empty payment header');
+    paymentHeader = auth.header;
+    paymentNonce = auth.nonce;
+  } catch (err) {
+    config.log(`stamp payment failed: ${messageOf(err)}`);
+    return undefined;
+  }
+
+  let paid: Response;
+  try {
+    paid = await post({
+      'X-PAYMENT': paymentHeader,
+      ...(paymentNonce ? { 'X-PAYMENT-NONCE': paymentNonce } : {}),
+    });
+  } catch (err) {
+    config.log(`stamp payment failed: ${messageOf(err)}`);
+    return undefined;
+  }
+
+  const paidBody = await readJson(paid);
+  if (paid.status === 201 || paid.ok) return receiptUrl(paidBody, config);
+  if (paid.status === 409) {
+    config.log('stamp already recorded for this settlement tx');
+    return byTxUrl(config.apiUrl, tx);
+  }
+  const error = typeof paidBody?.error === 'string' ? paidBody.error : `HTTP ${paid.status}`;
+  config.log(`stamp payment failed: ${error}`);
   return undefined;
+}
+
+function receiptUrl(body: Record<string, unknown> | undefined, config: ResolvedConfig): string | undefined {
+  const verifyUrl = verifyUrlFrom(body, config.apiUrl);
+  if (!verifyUrl) config.log('stamp wrote a row but verify_url was missing');
+  return verifyUrl;
+}
+
+const payerCache = new WeakMap<ChitEmDashConfig, StampPayer | null>();
+
+function payerFor(source: ChitEmDashConfig, config: ResolvedConfig): StampPayer | undefined {
+  if (payerCache.has(source)) return payerCache.get(source) ?? undefined;
+  if (!config.hasSigner || !config.signer) {
+    payerCache.set(source, null);
+    return undefined;
+  }
+  try {
+    const payer = stampPayerFrom(config.signer);
+    payerCache.set(source, payer);
+    return payer;
+  } catch (err) {
+    payerCache.set(source, null);
+    config.log(`stamp payment failed: ${messageOf(err)}`);
+    return undefined;
+  }
 }
 
 export function ingestUrl(apiUrl: string, agentId: string | number): string {
@@ -219,6 +290,8 @@ function resolveConfig(config: ChitEmDashConfig): ResolvedConfig {
   const timeoutMs = positiveMs(config.timeoutMs, DEFAULT_TIMEOUT_MS);
   const hardTimeoutMs = Math.max(positiveMs(config.hardTimeoutMs, DEFAULT_HARD_TIMEOUT_MS), timeoutMs);
   const apiUrl = (firstText(config.apiUrl, ...ENV_API_URL) || DEFAULT_API_URL).replace(/\/$/, '');
+  const envKey = readEnv('CHIT_STAMP_PRIVATE_KEY');
+  const signer = config.signer ?? (envKey || undefined);
   return {
     agentId: String(config.agentId ?? firstText(undefined, ...ENV_AGENT) ?? '').trim(),
     session: firstText(config.session, ...ENV_SESSION) || '',
@@ -231,6 +304,8 @@ function resolveConfig(config: ChitEmDashConfig): ResolvedConfig {
     hardTimeoutMs,
     waitUntil: config.waitUntil,
     contentHash: config.contentHash,
+    signer,
+    hasSigner: hasStampSigner(config.signer, envKey),
     log: config.log ?? ((message) => console.warn(`[chit402-emdash] ${message}`)),
     fetch: config.fetch ?? fetch,
   };

@@ -47,4 +47,4 @@ See [later-adapters.md](./later-adapters.md) for Cloudflare, OpenClaw, ACP, and 
 npm install chit402-emdash @emdash-cms/x402
 ```
 
-A paid agent read stamps `POST /v1/agents/:agent_id/book/ingest` ($0.002 USDC) and sets `X-Chit-Receipt` to `verify_url`. Install: [packages/emdash-chit402/README.md](../../packages/emdash-chit402/README.md).
+A paid agent read stamps `POST /v1/agents/:agent_id/book/ingest` ($0.002 USDC) and sets `X-Chit-Receipt` to `verify_url`. `CHIT_STAMP_PRIVATE_KEY` pays that stamp when the book key is not waiver-listed. Install: [packages/emdash-chit402/README.md](../../packages/emdash-chit402/README.md).
