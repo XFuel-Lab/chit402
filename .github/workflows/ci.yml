@@ -83,6 +83,21 @@ jobs:
           echo "║ Remove this job after updating branch protection rules.      ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
 
+  # ── EmDash paid-read receipt package (vitest) ───────────────
+  emdash-chit402:
+    name: EmDash receipt package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.x'
+
+      - name: Test chit402-emdash
+        working-directory: packages/emdash-chit402
+        run: npm install --no-audit --no-fund && npm test && npm run build
+
   # ── Solidity compile + core contract tests ──────────────────
   # Always creates a check. Runs real tests only when contracts/core-layer/test paths change.
   contracts-core:
