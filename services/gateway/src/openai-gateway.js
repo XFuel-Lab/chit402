@@ -1507,7 +1507,14 @@ function buildReceipt({
   };
 }
 
-function setReceiptHeaders(res, receipt) {
+function paidResourceUrl(baseUrl, resourcePath) {
+  if (!baseUrl || !resourcePath) return null;
+  const path = String(resourcePath).split('?')[0];
+  const absPath = path.startsWith('/') ? path : `/${path}`;
+  return `${String(baseUrl).replace(/\/$/, '')}${absPath}`;
+}
+
+function setReceiptHeaders(res, receipt, resourceUrl = null) {
   const view = mergeReceiptView(receipt);
   res.setHeader('x-xfuel-task-id', receipt.task_id);
   if (receipt.compute?.provider) res.setHeader('x-xfuel-provider', receipt.compute.provider);
@@ -1531,6 +1538,7 @@ function setReceiptHeaders(res, receipt) {
       ref: view.payment.ref,
       network: view.payment.network,
       payer: view.caller_binding?.payer_wallet || null,
+      resourceUrl,
     });
   }
 }
@@ -1788,7 +1796,7 @@ function respondPaidV1Failure(res, {
     attemptIndex: intentFields.attempt_index,
     settleRecord,
   });
-  setReceiptHeaders(res, receipt);
+  setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, req?.path));
   return res.status(statusCode).json({
     error: {
       message: message || 'Inference could not be completed after payment was collected.',
@@ -2459,7 +2467,7 @@ export function registerOpenAIRoutes(app, {
       reqHost,
     }), req, settleRecord, task);
 
-    setReceiptHeaders(res, receipt);
+    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, resourcePath));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
 
     if (stream) {
@@ -2914,7 +2922,7 @@ export function registerOpenAIRoutes(app, {
       reqHost,
     }), req, settleRecord, task);
 
-    setReceiptHeaders(res, receipt);
+    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/responses'));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
 
     // Build Responses-shaped output
@@ -2985,7 +2993,7 @@ export function registerOpenAIRoutes(app, {
       resolvedModel: inference.resolvedModel,
       reqHost,
     });
-    setReceiptHeaders(res, receipt);
+    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/images/generations'));
 
     const count = Math.min(Math.max(Number(n) || 1, 1), 4);
     const data = [];
@@ -3050,7 +3058,7 @@ export function registerOpenAIRoutes(app, {
       resolvedModel: inference.resolvedModel,
       reqHost,
     });
-    setReceiptHeaders(res, receipt);
+    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/audio/transcriptions'));
     return res.json({
       text: inference.text || '',
       model: inference.resolvedModel,

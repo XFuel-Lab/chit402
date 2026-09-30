@@ -119,17 +119,20 @@ function b64urlJson(obj) {
  * Payload: object with named claims
  * 
  * @param {object} payload - Object payload (will be JSON serialized)
- * @param {{ jku?: string|null, typ?: string|null }} [opts] - Optional JWKS URL (jku) and JWT typ
+ * @param {{ jku?: string|null, typ?: string|null, kid?: string|null }} [opts]
+ *   Optional JWKS URL (jku), JWT typ, and key id override.
+ *   `typ: null` omits the typ header (x402 offer-receipt artifacts are not chit402 receipts).
+ *   `kid` overrides the thumbprint kid (did:web URL for offer-receipt).
  * @returns {{ jws: string, kid: string }} - Compact JWS and key ID
  */
-export function signJws(payload, { jku = null, typ = 'chit402-receipt+jwt' } = {}) {
-  const { privateKey, kid } = initIssuerKey();
-  
-  const header = {
-    alg: 'ES256',
-    typ: typ || 'chit402-receipt+jwt',
-    kid,
-  };
+export function signJws(payload, { jku = null, typ = 'chit402-receipt+jwt', kid: kidOverride = null } = {}) {
+  const { privateKey, kid: thumbKid } = initIssuerKey();
+  const kid = kidOverride || thumbKid;
+
+  // typ: null omits the header. Any other falsy typ keeps the chit402 receipt default.
+  const header = { alg: 'ES256' };
+  if (typ !== null) header.typ = typ || 'chit402-receipt+jwt';
+  header.kid = kid;
   if (jku && typeof jku === 'string' && jku.startsWith('http')) {
     header.jku = jku;
   }

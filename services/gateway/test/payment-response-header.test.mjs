@@ -179,7 +179,14 @@ function assertSettleHeader(res, expected) {
   const legacy = res.headers.get('x-payment-response');
   assert.ok(header, 'PAYMENT-RESPONSE is set on a paid response');
   assert.equal(legacy, header, 'X-PAYMENT-RESPONSE matches PAYMENT-RESPONSE');
-  assert.deepEqual(decodePaymentResponseHeader(header), expected);
+  const decoded = decodePaymentResponseHeader(header);
+  // Legacy settle fields stay exactly these four. The offer-receipt extension
+  // is added alongside them and must not rename or drop any of them.
+  assert.equal(decoded.success, expected.success);
+  assert.equal(decoded.transaction, expected.transaction);
+  assert.equal(decoded.network, expected.network);
+  assert.equal(decoded.payer, expected.payer);
+  assert.equal(decoded.extensions?.['offer-receipt']?.info?.receipt?.format, 'jws');
   const expose = res.headers.get('access-control-expose-headers') || '';
   assert.match(expose, /PAYMENT-RESPONSE/);
   assert.match(expose, /X-PAYMENT-RESPONSE/);

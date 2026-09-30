@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import logger from './logger.js';
 import { buildIconUrl } from './xfuel-icon.js';
+import { OFFER_RECEIPT_KEY, buildOfferExtension, buildReceiptExtension } from './offer-receipt.js';
 import {
   verifyViaFacilitator,
   settleViaFacilitator,
@@ -432,10 +433,15 @@ export function encodePaymentRequiredHeader(body) {
  * the same identifier the 402 `accepts[]` entry used. `ref` stays the gateway
  * payment ref `<short-network>:<tx>` — this helper does not rewrite it.
  *
- * @param {{ ref?: string|null, network?: string|null, payer?: string|null, success?: boolean }} settle
+ * @param {{ ref?: string|null, network?: string|null, payer?: string|null, success?: boolean, resourceUrl?: string|null }} settle
+ *   `resourceUrl` is the absolute paid resource. When set on a successful settle,
+ *   the header also carries extensions["offer-receipt"].info.receipt (JWS).
+ *   success, transaction, network, and payer are unchanged.
  * @returns {string|null} standard base64, or null when nothing was collected
  */
-export function encodeX402PaymentResponseHeader({ ref, network = null, payer = null, success = true } = {}) {
+export function encodeX402PaymentResponseHeader({
+  ref, network = null, payer = null, success = true, resourceUrl = null,
+} = {}) {
   if (!ref || typeof ref !== 'string') return null;
   const idx = ref.indexOf(':');
   const short = network || (idx > 0 ? ref.slice(0, idx) : null);
@@ -446,6 +452,17 @@ export function encodeX402PaymentResponseHeader({ ref, network = null, payer = n
     network: toCaip2Network(short),
     payer: payer || null,
   };
+  // x402 offer-receipt §5.1: extensions["offer-receipt"].info.receipt on success.
+  // Omitted when resourceUrl or payer is missing — the four legacy fields still go out.
+  const receiptExt = body.success && resourceUrl
+    ? buildReceiptExtension({
+      network: body.network,
+      resourceUrl,
+      payer: body.payer,
+      transaction: body.transaction,
+    })
+    : null;
+  if (receiptExt) body.extensions = { [OFFER_RECEIPT_KEY]: receiptExt };
   return Buffer.from(JSON.stringify(body), 'utf8').toString('base64');
 }
 
@@ -663,8 +680,18 @@ export function buildPaymentChallenge(p, opts = {}) {
       iconUrl,
     },
     accepts,
-    ...(extensions ? { extensions } : {}),
   };
+
+  // x402 offer-receipt §4.1: one signed offer per accepts[] entry.
+  // Stored challenge extensions stay bazaar-only so settle still echoes bazaar,
+  // not a fresh signature the client was not shown as the catalog extension.
+  // validUntil is unix seconds; accepts[].extra.expiresAt stays milliseconds.
+  const offerReceipt = buildOfferExtension(accepts, resourceUrl, { expiresAtMs: expiresAt });
+  const bodyExtensions = {
+    ...(extensions || {}),
+    ...(offerReceipt ? { [OFFER_RECEIPT_KEY]: offerReceipt } : {}),
+  };
+  if (Object.keys(bodyExtensions).length) body.extensions = bodyExtensions;
 
   return {
     status: 402,
