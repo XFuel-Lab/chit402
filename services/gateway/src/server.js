@@ -69,6 +69,7 @@ import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger, setBookRowWrittenHook } from './usage-settled.js';
 import { peekRefusalAnchor } from './refusal-anchor.js';
+import { getReceiptMerkleTree } from './receipt-merkle.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
 import { coverageForLedger } from './export-coverage.js';
 import { getBookWebhookRegistry, scheduleBookWebhook, manageBookWebhook } from './book-webhook.js';
@@ -780,6 +781,11 @@ export function createApp() {
     persist: !!config.taskStore?.persist && !!agentsDir,
   });
   setBookRowWrittenHook((entry) => {
+    try {
+      if (entry?.task_id) getReceiptMerkleTree().appendReceipt(entry.task_id, entry.row_hash || '');
+    } catch (err) {
+      logger.warn({ err: err.message, taskId: entry?.task_id }, 'receipt merkle append failed');
+    }
     scheduleBookWebhook(entry, {
       registry: getBookWebhookRegistry(),
       baseUrl: config.service.publicBaseUrl || 'https://api.chit402.com',
@@ -2545,6 +2551,34 @@ export function createApp() {
     }
   });
 
+  app.get('/v1/receipts/tree/head', async (_req, res) => {
+    try {
+      const tree = getReceiptMerkleTree();
+      let head = tree.latestHead();
+      if (!head) head = await tree.publishHead();
+      return res.json(head);
+    } catch (err) {
+      logger.error({ err }, 'tree head error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  app.get('/v1/receipts/tree/consistency', (req, res) => {
+    try {
+      const first = Number(req.query.first);
+      const second = Number(req.query.second);
+      return res.json(getReceiptMerkleTree().consistency(first, second));
+    } catch (err) {
+      return res.status(400).json({ error: 'bad_tree_size', message: err.message });
+    }
+  });
+
+  app.get('/v1/receipts/:task_id/inclusion', (req, res) => {
+    const found = getReceiptMerkleTree().inclusion(req.params.task_id);
+    if (!found) return res.status(404).json({ error: 'not_in_tree', task_id: req.params.task_id });
+    return res.json(found);
+  });
+
   app.get('/receipt/:taskId', rateLimit, (req, res) => {
     try {
       let { taskId: rawTaskId } = req.params;
@@ -2583,6 +2617,9 @@ export function createApp() {
             coverage,
             ...(ledgerRow.book_chain ? { book_chain: ledgerRow.book_chain } : {}),
             ...(ledgerRow.seq != null ? { book_seq: ledgerRow.seq } : {}),
+            ...(getReceiptMerkleTree().inclusion(ledgerRow.task_id)
+              ? { inclusion: getReceiptMerkleTree().inclusion(ledgerRow.task_id) }
+              : {}),
           };
         } catch (err) {
           logger.warn({ err: err.message, taskId }, 'receipt coverage omitted');

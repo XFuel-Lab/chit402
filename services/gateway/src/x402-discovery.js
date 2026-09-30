@@ -2101,6 +2101,41 @@ export function buildOpenApiSpec(baseUrl = '') {
           },
         },
       },
+      '/v1/receipts/tree/head': {
+        get: {
+          operationId: 'receiptTreeHead',
+          summary: 'Latest signed receipt Merkle tree head',
+          description: 'Public. RFC 6962-style root over receipt leaves. anchor_status is pending until a Base transaction carries the root.',
+          tags: ['Receipts'],
+          responses: { 200: { description: 'chit402.tree_head.v1' } },
+        },
+      },
+      '/v1/receipts/tree/consistency': {
+        get: {
+          operationId: 'receiptTreeConsistency',
+          summary: 'Consistency proof between two tree sizes',
+          description: 'Public. Query first and second are tree sizes, first <= second.',
+          tags: ['Receipts'],
+          parameters: [
+            { name: 'first', in: 'query', required: true, schema: { type: 'integer' } },
+            { name: 'second', in: 'query', required: true, schema: { type: 'integer' } },
+          ],
+          responses: { 200: { description: 'chit402.consistency.v1' } },
+        },
+      },
+      '/v1/receipts/{task_id}/inclusion': {
+        get: {
+          operationId: 'receiptInclusion',
+          summary: 'Inclusion proof for one receipt',
+          description: 'Public. leaf_index, tree_size, root, and the proof path.',
+          tags: ['Receipts'],
+          parameters: [{ name: 'task_id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            200: { description: 'chit402.inclusion.v1' },
+            404: { description: 'Receipt is not in the tree yet.' },
+          },
+        },
+      },
       '/receipt/{taskId}': {
         get: {
           operationId: 'getReceipt',
