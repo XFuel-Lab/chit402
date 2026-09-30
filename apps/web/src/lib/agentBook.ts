@@ -82,6 +82,12 @@ export interface BookInflowCorrection {
 export interface BookEntry {
   task_id: string;
   act?: 'open' | 'spend' | 'transfer' | 'refund' | 'correction' | 'refusal' | string;
+  authority?: {
+    subject_wallet?: string | null;
+    subject_handle?: string | null;
+    writer?: string;
+    issuer?: string;
+  };
   seq?: number;
   evidence?: BookEvidence;
   payment: BookPayment;

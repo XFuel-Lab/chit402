@@ -92,6 +92,7 @@ function rowOf(entry) {
     ...(entry.row_hash ? { row_hash: entry.row_hash } : {}),
     ...(entry.book_chain ? { book_chain: entry.book_chain } : {}),
     ...(entry.act ? { act: entry.act } : {}),
+    ...(entry.authority ? { authority: entry.authority } : {}),
     evidence,
     payment: {
       ref: entry.payment_ref ?? null,

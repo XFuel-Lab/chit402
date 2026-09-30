@@ -102,6 +102,8 @@ A `policy_blocked` row also signs `anchor` (Base chain id, block number, block h
 
 `book_chain.act` is `open`, `spend`, `transfer`, `refund`, `correction`, or `refusal`. Payload version 2 of `chit402.book_seq` includes it. See [book-act.md](./product/book-act.md).
 
+A correction or successor row adds `authority` at payload version 3: `subject_handle` or `subject_wallet`, `writer: gateway`, `issuer: chit402`. Those are different fields. See [correction-authority.md](./product/correction-authority.md).
+
 ## Outside witness
 
 `inclusion` on the verify page is the RFC 6962-style proof: `leaf_index`, `tree_size`, `root`, `proof`. The page says the receipt is included in that root and either names the Base anchor transaction or says `pending anchor`. See [receipt-merkle.md](./product/receipt-merkle.md).

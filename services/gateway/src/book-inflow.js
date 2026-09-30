@@ -291,6 +291,14 @@ export function correctBookInflow(agentId, body = {}, { ledger, registry, verify
     }
   }
 
+  correction.subject_handle = body.subject_handle
+    || body.authority?.subject_handle
+    || body.authority?.handle
+    || null;
+  correction.subject_wallet = body.subject_wallet
+    || body.authority?.subject_wallet
+    || body.authority?.wallet
+    || null;
   const result = ledger.appendInflowCorrection(taskId, id, correction);
   if (!result.ok) {
     return {

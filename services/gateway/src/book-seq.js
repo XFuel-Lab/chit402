@@ -134,6 +134,7 @@ export function renderBookSeqSection(chain) {
       <h2>Book position <span class="scope">${esc(chain.schema || BOOK_SEQ_SCHEMA)}</span></h2>
       <div class="row"><span class="k">seq</span><span class="v"><code>${esc(chain.seq)}</code></span></div>
       ${chain.act ? `<div class="row"><span class="k">Act</span><span class="v"><code>${esc(chain.act)}</code></span></div>` : ''}
+      ${chain.authority ? `<div class="row"><span class="k">Subject</span><span class="v"><code>${esc(chain.authority.subject_handle || chain.authority.subject_wallet || '—')}</code> <span class="muted">writer ${esc(chain.authority.writer)} · issuer ${esc(chain.authority.issuer)}</span></span></div>` : ''}
       <div class="row"><span class="k">Previous hash</span><span class="v"><code>${esc(chain.prev_hash || '—')}</code></span></div>
       <div class="row"><span class="k">Row hash</span><span class="v"><code>${esc(chain.row_hash || '—')}</code></span></div>
       ${chain.anchor ? `<div class="row"><span class="k">Chain anchor</span><span class="v">${chain.anchor.status === 'observed'
