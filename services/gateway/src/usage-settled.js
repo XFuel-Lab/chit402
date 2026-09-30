@@ -13,6 +13,7 @@ import path from 'path';
 import logger from './logger.js';
 import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
 import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
+import { refusalAnchorOrUnavailable } from './refusal-anchor.js';
 
 /** Optional async hook when a new book row is indexed (not on load/replay). */
 let bookRowWrittenHook = null;
@@ -670,6 +671,7 @@ export class UsageSettledLedger {
     spentAtomic = null,
     capAtomic = null,
     periodStart = null,
+    anchor = null,
   }) {
     const id = Number(agentId);
     if (!Number.isInteger(id) || id < 1) {
@@ -709,6 +711,7 @@ export class UsageSettledLedger {
       spent_atomic: spentAtomic != null ? String(spentAtomic) : null,
       cap_atomic: capAtomic != null ? String(capAtomic) : null,
       period_start: periodStart || null,
+      anchor: refusalAnchorOrUnavailable(anchor),
     };
     this._index(entry);
     return { ok: true, entry, duplicate: false };

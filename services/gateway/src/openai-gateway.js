@@ -327,6 +327,13 @@ async function meterV1Request(req, res, {
       const intentMeta = extractIntentMeta(req);
       const intentFields = resolveIntentFields(intentMeta, ledger, bookable.agent_id);
       if (ledger && typeof ledger.recordPolicyBlocked === 'function') {
+        let anchor = null;
+        try {
+          const { observeBaseAnchor } = await import('./refusal-anchor.js');
+          anchor = await observeBaseAnchor();
+        } catch {
+          anchor = null;
+        }
         ledger.recordPolicyBlocked({
           agentId: bookable.agent_id,
           taskId,
@@ -340,6 +347,7 @@ async function meterV1Request(req, res, {
           spentAtomic: policyCheck.spent_atomic ?? null,
           capAtomic: policyCheck.cap_atomic ?? null,
           periodStart: policyCheck.period_start || null,
+          anchor,
         });
       }
       res.status(403).json({

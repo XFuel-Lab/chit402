@@ -96,6 +96,8 @@ The verify page shows that object when the row sits on a book. `empty_by_policy`
 
 `book_chain` (`chit402.book_seq.v1`) is the signed append position: `seq`, `prev_hash`, `row_hash`. A replay does not take a new seq. A correction does. The payment JWS stays on its own payload version. See [book-seq.md](./product/book-seq.md).
 
+A `policy_blocked` row also signs `anchor` (Base chain id, block number, block hash, or `UNAVAILABLE` when the RPC cannot be read). The refusal is still recorded. See [refusal-anchor.md](./product/refusal-anchor.md).
+
 ## Auditor export (Sprint 4)
 
 `GET /receipt/:taskId?format=auditor` → selective disclosure (`xfuel.auditor_export.v1`):

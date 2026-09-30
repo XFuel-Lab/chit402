@@ -716,6 +716,13 @@ export default function Book() {
                             <td data-label="Evidence">
                               <div className="book-evidence-cell">
                                 <BookEvidenceChip row={row} />
+                                {isBlocked && row.anchor && (
+                                  <span className="badge badge-secondary book-policy-cap-badge" title={row.anchor.block_hash || row.anchor.reason || ''}>
+                                    {row.anchor.status === 'observed'
+                                      ? `Base #${row.anchor.block_number}`
+                                      : 'anchor UNAVAILABLE'}
+                                  </span>
+                                )}
                                 {isBlocked && row.policy_key && row.spent_atomic != null && row.cap_atomic != null && (
                                   <span
                                     className="badge badge-secondary book-policy-cap-badge"
