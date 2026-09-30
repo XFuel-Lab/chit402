@@ -76,6 +76,33 @@ test('signed tree head stays pending anchor without a house key', async () => {
   }
 });
 
+test('a sender hash is stored on the head, and a failed send stays pending', async () => {
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  try {
+    const tree = new ReceiptMerkleTree();
+    tree.appendReceipt('anchored-row', 'hh');
+    process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+    const head = await tree.publishHead({
+      force: true,
+      send: async () => '0x' + 'cd'.repeat(32),
+    });
+    assert.equal(head.anchor_status, 'anchored');
+    assert.equal(head.anchor.tx, '0x' + 'cd'.repeat(32));
+    assert.match(renderInclusionSection(tree.inclusion('anchored-row')), /anchored in Base tx/);
+    const failed = await tree.publishHead({
+      force: true,
+      send: async () => { throw new Error('rpc down'); },
+    });
+    assert.equal(failed.anchor_status, 'pending');
+    assert.match(failed.anchor.reason, /rpc down/);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+    resetReceiptMerkleTree();
+  }
+});
+
 test('the same task is not appended twice', () => {
   const tree = new ReceiptMerkleTree();
   tree.appendReceipt('once', 'z');

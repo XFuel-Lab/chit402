@@ -175,32 +175,42 @@ export function anchorCalldata(rootHex) {
  * Describe the Base anchor. Sends a zero-value self-transfer only when
  * RECEIPT_ANCHOR_PRIVATE_KEY is set. Otherwise the head stays pending.
  */
+async function sendBaseAnchorTx({ from, calldata, privateKey }) {
+  const rpc = process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || null;
+  if (!rpc) throw new Error('no_rpc');
+  const { Wallet, JsonRpcProvider } = await import('ethers');
+  const provider = new JsonRpcProvider(rpc);
+  const wallet = new Wallet(privateKey, provider);
+  const tx = await wallet.sendTransaction({
+    to: from || wallet.address,
+    value: 0n,
+    data: calldata,
+  });
+  return tx.hash;
+}
+
 export async function describeAnchor(rootHex, { send = null } = {}) {
   const from = process.env.RECEIPT_ANCHOR_FROM || null;
   const key = process.env.RECEIPT_ANCHOR_PRIVATE_KEY || null;
   const calldata = anchorCalldata(rootHex);
-  if (!key) {
-    return {
-      status: 'pending',
-      chain: 'base',
-      from,
-      tx: null,
-      calldata,
-      reason: 'no_key',
-    };
-  }
-  if (typeof send === 'function') {
-    const tx = await send({ from, calldata, value: '0' });
-    return { status: 'anchored', chain: 'base', from, tx: tx || null, calldata, reason: null };
-  }
-  return {
+  const pending = (reason) => ({
     status: 'pending',
     chain: 'base',
     from,
     tx: null,
     calldata,
-    reason: 'sender_not_configured',
-  };
+    reason,
+  });
+  if (!key) return pending('no_key');
+  try {
+    const sender = typeof send === 'function'
+      ? send
+      : (args) => sendBaseAnchorTx({ ...args, privateKey: key });
+    const tx = await sender({ from, calldata, value: '0' });
+    return { status: 'anchored', chain: 'base', from, tx: tx || null, calldata, reason: null };
+  } catch (err) {
+    return pending(err.message || 'send_failed');
+  }
 }
 
 let _tree = null;
