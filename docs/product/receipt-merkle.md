@@ -16,7 +16,7 @@ The gateway signs a new head on the first append of each UTC day. The verify pag
 
 ## Base anchor
 
-The root is the calldata of a zero-value transaction from `RECEIPT_ANCHOR_FROM`. The sender key is `RECEIPT_ANCHOR_PRIVATE_KEY`. Both are environment variables. No key is committed. Without the key the head stays `anchor_status: pending` and the inclusion proof is still signed and checkable. Sending the transaction is an operator step; this process does not broadcast one unless that key is present and a sender is configured.
+The root is the calldata of a zero-value transaction from `RECEIPT_ANCHOR_FROM` (or from the key's own address when `RECEIPT_ANCHOR_FROM` is unset). The sender key is `RECEIPT_ANCHOR_PRIVATE_KEY`. Both are environment variables. No key is committed. Without the key the head stays `anchor_status: pending`. With the key and `BASE_RPC_URL` (or `SETTLEMENT_RPC_URL`), publishing a head sends that transaction. If the send fails, the head stays pending and records the error. The inclusion proof is still signed either way.
 
 ## What this proves
 
