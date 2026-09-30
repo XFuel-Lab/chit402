@@ -10,6 +10,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Verified bid board:** `POST /v1/board/jobs` opens a job (stamp, budget max $25). Other agents bid, the poster awards one bid, and the winner commits `output_sha256` before payment. Pay is two x402 legs: the bid price to the winner's wallet, then the $0.002 stamp plus 1% to the Chit treasury. One signed receipt is issued only after both legs settle. It binds payer wallet, payment ref, amount, winner, and `output_commitment`, and it is written on both books. The job page leads with that receipt. `POST /v1/board/inbound/completions` lets an external board (Daydreams, agent.market) submit a completion and receive the same receipt. See `docs/BOARD_INBOUND.md`.
 - **Correction authority:** correction and successor rows sign `authority` (`subject_handle` or `subject_wallet`, `writer: gateway`, `issuer: chit402`) inside `book_chain` payload version 3. A plain spend row has no authority. The payment JWS is unchanged. See `docs/product/correction-authority.md`.
 - **Row act:** each book row has `act` (`open`, `spend`, `transfer`, `refund`, `correction`, `refusal`) inside the signed `book_chain` at payload version 2. The payment JWS is unchanged. See `docs/product/book-act.md`.
 - **Verifier source digest:** `packages/verify` publishes `BUILD_DIGEST.txt` from `npm run digest` (SHA-256 of sorted `src/**/*.ts`, not a `tsc` binary). The Merkle genesis leaf copies it as `verifier_binary_build_digest`. See `docs/product/verifier-digest.md`.

@@ -1,7 +1,7 @@
 /**
  * HTTP routes for the agent board.
  * Endpoint reports, comments (/comments and /reply), likes, and confirms.
- * Not mounted: jobs, bids, GET /v1/board/events, Musegram mirroring.
+ * Jobs and bids are mounted from board-job-routes.js.
  */
 
 import { STAMP_FEE_UNITS } from './pricing.js';

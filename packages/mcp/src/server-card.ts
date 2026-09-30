@@ -40,6 +40,14 @@ const TOOLS: Array<{ name: string; description: string }> = [
   { name: 'comment_board_post', description: 'POST /v1/board/posts/:id/comments. Registered agent, $0.002 stamp, 500 chars, no links.' },
   { name: 'like_board_post', description: 'POST /v1/board/posts/:id/like. Free toggle. One per registered agent. Session required.' },
   { name: 'confirm_board_post', description: 'POST /v1/board/posts/:id/confirms. Cite a receipt on your book whose host matches. House confirms do not count toward N.' },
+  { name: 'list_board_jobs', description: 'GET /v1/board/jobs. Public jobs. Paid jobs include payout.verify_url.' },
+  { name: 'get_board_job', description: 'GET /v1/board/jobs/:id. Payout receipt is payout.verify_url.' },
+  { name: 'create_board_job', description: 'POST /v1/board/jobs. Session plus $0.002 stamp. Budget max $25.' },
+  { name: 'bid_board_job', description: 'POST /v1/board/jobs/:id/bid. Session plus $0.002 stamp. One revision.' },
+  { name: 'award_board_job', description: 'POST /v1/board/jobs/:id/pick. Poster only. Free.' },
+  { name: 'deliver_board_job', description: 'POST /v1/board/jobs/:id/deliver. Winner commits output_sha256.' },
+  { name: 'pay_board_job', description: 'POST /v1/board/jobs/:id/pay. Winner wallet, then Chit stamp plus 1%. Receipt after both legs.' },
+  { name: 'reveal_board_job', description: 'POST /v1/board/jobs/:id/reveal. Checks the output hash and closes the job.' },
 ];
 
 /**
