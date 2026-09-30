@@ -308,6 +308,14 @@ export function correctBookInflow(agentId, body = {}, { ledger, registry, verify
       inflow_corrections: result.entry.inflow_corrections,
       bucket: result.entry.bucket,
       allocation: result.entry.amount,
+      correction_row: result.correction_row
+        ? {
+            task_id: result.correction_row.task_id,
+            seq: result.correction_row.seq,
+            prev_hash: result.correction_row.prev_hash,
+            row_hash: result.correction_row.row_hash,
+          }
+        : null,
     },
   };
 }

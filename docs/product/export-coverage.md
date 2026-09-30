@@ -51,6 +51,8 @@ Query or body fields `from`, `to`, `evidence`, and `intent_id` narrow the scope.
 
 The issuer scanned this book id, time range, and filters, and signed the ordered row set named by `universe_hash`. A holder who has every row can recompute that hash. A holder who has a shorter file can see that their `enumerated_hash` does not match, so the file is not the set.
 
+Book rows also carry an append position. See [book-seq.md](./book-seq.md).
+
 ## What this does not prove
 
 It does not prove a row was paid. Payment is still `payment.ref` plus the receipt JWS. It does not prove that a row outside this book never happened. It does not cover a row appended after the signature. Re-export to cover a later set.

@@ -2576,7 +2576,12 @@ export function createApp() {
           const coverage = coverageForLedger(usageSettled, ledgerRow.agent_id, {
             subjectTaskId: ledgerRow.task_id || receipt.task_id,
           });
-          return { ...receipt, coverage };
+          return {
+            ...receipt,
+            coverage,
+            ...(ledgerRow.book_chain ? { book_chain: ledgerRow.book_chain } : {}),
+            ...(ledgerRow.seq != null ? { book_seq: ledgerRow.seq } : {}),
+          };
         } catch (err) {
           logger.warn({ err: err.message, taskId }, 'receipt coverage omitted');
           return receipt;
@@ -4065,6 +4070,37 @@ export function createApp() {
       return res.send(result.body);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'book export post error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // GET /v1/agents/:agent_id/book/gaps — monotonic seq gap check
+  app.get('/v1/agents/:agent_id/book/gaps', (req, res) => {
+    try {
+      const claim = claimFromRequest(req);
+      const session = claim.session;
+      const proof = claim.proof;
+      if (!session && !proof) return res.status(401).end();
+      const id = Number(req.params.agent_id);
+      const checked = verifyBook({ agentId: id, window: 50, session, proof });
+      if (!checked || checked.checked !== true || checked.valid !== true) {
+        return res.status(403).end();
+      }
+      if (!usageSettled || typeof usageSettled.seqReport !== 'function') {
+        return res.status(200).json({
+          schema: 'chit402.book_seq_report.v1',
+          book_id: id,
+          gapless: false,
+          gaps: [],
+          next_seq: null,
+          count: null,
+          max_seq: null,
+          empty_reason: 'empty_by_drain',
+        });
+      }
+      return res.json(usageSettled.seqReport(id));
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'book gaps error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
   });

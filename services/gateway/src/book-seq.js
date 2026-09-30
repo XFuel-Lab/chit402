@@ -1,0 +1,135 @@
+/**
+ * Per-book append position.
+ *
+ * Every indexed row in a book gets a monotonic seq (1, 2, 3, …) and the
+ * previous row's hash. Idempotent replays do not pass through _index, so
+ * they do not take a new seq. A correction is a new row and does.
+ *
+ * The position is signed as chit402.book_seq.v1. It is not mixed into the
+ * payment JWS, so a v8 receipt still verifies.
+ */
+import crypto from 'crypto';
+import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
+
+export const BOOK_SEQ_SCHEMA = 'chit402.book_seq.v1';
+export const BOOK_SEQ_VERSION = 1;
+export const BOOK_SEQ_JWT_TYP = 'chit402-book-seq+jwt';
+
+/**
+ * Identity hash. Amount is omitted: a later correction row carries the new
+ * figure, and the original row's hash stays the hash it had at append.
+ * @param {object} row
+ */
+export function bookRowHash(row) {
+  const line = [
+    row?.agent_id ?? '',
+    row?.seq ?? '',
+    row?.task_id ?? '',
+    row?.prev_hash || '',
+    row?.event || row?.evidence || '',
+  ].join('|');
+  return crypto.createHash('sha256').update(String(line)).digest('hex');
+}
+
+/**
+ * @param {object[]} rows rows that carry seq
+ * @returns {{ gapless: boolean, gaps: number[], next_seq: number, count: number, max_seq: number }}
+ */
+export function analyzeSeq(rows) {
+  const seqs = [];
+  for (const row of rows || []) {
+    const n = Number(row?.seq);
+    if (Number.isInteger(n) && n > 0) seqs.push(n);
+  }
+  seqs.sort((a, b) => a - b);
+  const gaps = [];
+  let expected = 1;
+  let prev = 0;
+  for (const seq of seqs) {
+    if (seq === prev) continue;
+    while (expected < seq) {
+      gaps.push(expected);
+      expected += 1;
+    }
+    if (seq === expected) expected += 1;
+    prev = seq;
+  }
+  const max = seqs.length ? seqs[seqs.length - 1] : 0;
+  return {
+    gapless: gaps.length === 0,
+    gaps,
+    next_seq: max + 1,
+    count: seqs.length,
+    max_seq: max,
+  };
+}
+
+export function bookSeqClaims(row) {
+  return {
+    schema: BOOK_SEQ_SCHEMA,
+    payload_version: BOOK_SEQ_VERSION,
+    book_id: Number(row.agent_id),
+    task_id: String(row.task_id),
+    seq: Number(row.seq),
+    prev_hash: row.prev_hash || null,
+    row_hash: row.row_hash,
+    event: row.event || row.evidence || null,
+    replay_of: row.replay_of || null,
+  };
+}
+
+/**
+ * Sign the append position. Claims have no iat, so the same row signs to
+ * the same JWS for a stable issuer key.
+ * @param {object} row
+ */
+export function signBookSeq(row) {
+  if (row?.seq == null || !row?.task_id || !row?.agent_id) return null;
+  const claims = bookSeqClaims(row);
+  const { jws, kid } = signJws(claims, { typ: BOOK_SEQ_JWT_TYP });
+  return {
+    ...claims,
+    issuer_signature: {
+      alg: 'ES256',
+      typ: BOOK_SEQ_JWT_TYP,
+      payload_version: BOOK_SEQ_VERSION,
+      jws,
+      kid,
+      issuer_jwk: getIssuerPublicKeyJwk(),
+    },
+  };
+}
+
+export function verifyBookSeq(signed, jwks = null) {
+  const sig = signed?.issuer_signature;
+  if (!sig?.jws) return { checked: false, valid: false, reason: 'no_signature' };
+  const result = verifyJwsWithJwks(sig.jws, jwks || getJwks());
+  if (!result.valid) return { checked: true, valid: false, reason: result.reason || 'signature_invalid' };
+  const payload = result.payload || {};
+  if (Number(payload.seq) !== Number(signed.seq)) {
+    return { checked: true, valid: false, reason: 'seq_mismatch' };
+  }
+  if (String(payload.task_id) !== String(signed.task_id)) {
+    return { checked: true, valid: false, reason: 'task_mismatch' };
+  }
+  if ((payload.prev_hash || null) !== (signed.prev_hash || null)) {
+    return { checked: true, valid: false, reason: 'prev_hash_mismatch' };
+  }
+  if (payload.row_hash !== signed.row_hash) {
+    return { checked: true, valid: false, reason: 'row_hash_mismatch' };
+  }
+  return { checked: true, valid: true, payload };
+}
+
+/** HTML rows for the verify page. */
+export function renderBookSeqSection(chain) {
+  if (!chain || chain.seq == null) return '';
+  const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<section class="card">
+      <h2>Book position <span class="scope">${esc(chain.schema || BOOK_SEQ_SCHEMA)}</span></h2>
+      <div class="row"><span class="k">seq</span><span class="v"><code>${esc(chain.seq)}</code></span></div>
+      <div class="row"><span class="k">Previous hash</span><span class="v"><code>${esc(chain.prev_hash || '—')}</code></span></div>
+      <div class="row"><span class="k">Row hash</span><span class="v"><code>${esc(chain.row_hash || '—')}</code></span></div>
+      <p class="muted" style="margin:8px 0 0;font-size:12px">Proves this row's append position in the book and the previous row's hash. Does not prove the payment, and a replay of the same payment does not take a new seq.</p>
+    </section>`;
+}

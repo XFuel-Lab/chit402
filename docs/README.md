@@ -65,6 +65,7 @@ Everything else is reference. Do not send partners this index.
 | [POMA_SPEC.md](./POMA_SPEC.md) | Model authenticity |
 | [RECEIPT_SCHEMA_V2.md](./RECEIPT_SCHEMA_V2.md) | Payment-bound receipt |
 | [product/export-coverage.md](./product/export-coverage.md) | Signed set commitment on book exports |
+| [product/book-seq.md](./product/book-seq.md) | Per-book append position and gap check |
 | [ERC8004_INTEGRATION.md](./ERC8004_INTEGRATION.md) | Validation registry |
 | [security-design.md](./security-design.md) | Security model |
 | [bug-bounty.md](./bug-bounty.md) | Responsible disclosure |

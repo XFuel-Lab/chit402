@@ -1433,6 +1433,23 @@ export function buildOpenApiSpec(baseUrl = '') {
           },
         },
       },
+      '/v1/agents/{agent_id}/book/gaps': {
+        get: {
+          operationId: 'bookSeqGaps',
+          summary: 'Check a book for missing seq numbers',
+          description:
+            'Possession-gated. seq is the append position of each row in the book. '
+            + 'gapless is true when the numbers are 1..N with nothing missing. '
+            + 'An idempotent replay does not consume a seq. A correction is a new row and does.',
+          tags: ['Agents'],
+          parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
+          responses: {
+            200: { description: 'chit402.book_seq_report.v1' },
+            401: { description: 'No possession proof.' },
+            403: { description: 'Wrong proof or unknown agent_id.' },
+          },
+        },
+      },
       '/v1/agents/{agent_id}/book/assign': {
         get: {
           operationId: 'listBookAssignments',

@@ -12,6 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
 import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
+import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
 
 /** Optional async hook when a new book row is indexed (not on load/replay). */
 let bookRowWrittenHook = null;
@@ -112,6 +113,9 @@ export function deriveEvidence(entry) {
   if (!entry || typeof entry !== 'object') return BOOK_EVIDENCE.UNVERIFIED;
   if (entry.refund_status === 'owed' || entry.evidence === BOOK_EVIDENCE.REFUND_OWED) {
     return BOOK_EVIDENCE.REFUND_OWED;
+  }
+  if (entry.event === 'inflow_correction' || entry.evidence === 'inflow_correction') {
+    return 'inflow_correction';
   }
   if (entry.event === 'policy_blocked' || entry.evidence === BOOK_EVIDENCE.POLICY_BLOCKED) {
     return BOOK_EVIDENCE.POLICY_BLOCKED;
@@ -236,6 +240,7 @@ function amountOf(payment) {
  */
 export function entryVisibleOnBook(entry) {
   if (!entry || typeof entry !== 'object') return false;
+  if (entry.event === 'inflow_correction' || deriveEvidence(entry) === 'inflow_correction') return true;
   if (entry.event === 'policy_blocked' || deriveEvidence(entry) === BOOK_EVIDENCE.POLICY_BLOCKED) return true;
   if (entry.event === 'a2a_escrow' || deriveEvidence(entry) === BOOK_EVIDENCE.A2A_ESCROW) return true;
   const boardEvidence = deriveEvidence(entry);
@@ -312,6 +317,10 @@ export class UsageSettledLedger {
     this.entries = [];
     this.byRef = new Map();
     this.byTask = new Map();
+    /** Next seq to assign, per agent_id. */
+    this._nextSeq = new Map();
+    /** Last row hash per agent_id. */
+    this._lastRowHash = new Map();
 
     if (this.persist) {
       try {
@@ -344,7 +353,44 @@ export class UsageSettledLedger {
     }
   }
 
+  _stampSeq(row) {
+    const id = Number(row?.agent_id);
+    if (!Number.isInteger(id) || id < 1) return;
+    if (row.seq != null && row.seq !== '') {
+      const seq = Number(row.seq);
+      const next = this._nextSeq.get(id) || 1;
+      if (!row.prev_hash) row.prev_hash = this._lastRowHash.get(id) || null;
+      if (!row.row_hash) row.row_hash = bookRowHash(row);
+      if (Number.isInteger(seq) && seq >= next) this._nextSeq.set(id, seq + 1);
+      if (row.row_hash) this._lastRowHash.set(id, row.row_hash);
+      if (!row.book_chain) row.book_chain = signBookSeq(row);
+      return;
+    }
+    const seq = this._nextSeq.get(id) || 1;
+    row.seq = seq;
+    row.prev_hash = this._lastRowHash.get(id) || null;
+    row.row_hash = bookRowHash(row);
+    row.book_chain = signBookSeq(row);
+    this._nextSeq.set(id, seq + 1);
+    this._lastRowHash.set(id, row.row_hash);
+  }
+
+  /**
+   * Gap check for one book. Includes every indexed row, not only the visible window.
+   * @param {number|string} agentId
+   */
+  seqReport(agentId) {
+    const id = Number(agentId);
+    const rows = this.entries.filter((e) => Number(e.agent_id) === id && e.seq != null);
+    return {
+      schema: 'chit402.book_seq_report.v1',
+      book_id: id,
+      ...analyzeSeq(rows),
+    };
+  }
+
   _index(row, { persist = true, notify = true } = {}) {
+    this._stampSeq(row);
     this.entries.push(row);
     if (row.payment_ref) this.byRef.set(String(row.payment_ref), row);
     if (row.task_id) this.byTask.set(String(row.task_id), row);
@@ -569,7 +615,29 @@ export class UsageSettledLedger {
     entry.inflow_corrections.push(correction);
     if (correction.bucket) entry.bucket = String(correction.bucket);
     if (correction.allocation) entry.amount = String(correction.allocation);
-    return { ok: true, entry, correction };
+    const n = entry.inflow_corrections.length;
+    const correctionRow = {
+      task_id: `${entry.task_id}:correction:${n}`,
+      payment_ref: null,
+      payer: null,
+      agent_id: id,
+      collected: false,
+      evidence: 'inflow_correction',
+      event: 'inflow_correction',
+      corrects: entry.task_id,
+      parent_ref: entry.task_id,
+      bucket: correction.bucket ? String(correction.bucket) : (entry.bucket || null),
+      amount: correction.allocation != null ? String(correction.allocation) : (entry.amount || null),
+      reason: correction.reason || null,
+      inflow_correction: correction,
+      rail: null,
+      collected_at: correction.as_of || new Date().toISOString(),
+      recorded_at: new Date().toISOString(),
+      model: entry.model || null,
+      hub: entry.hub || null,
+    };
+    this._index(correctionRow);
+    return { ok: true, entry, correction, correction_row: correctionRow };
   }
 
   /**
