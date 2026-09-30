@@ -13,6 +13,7 @@ import path from 'path';
 import logger from './logger.js';
 import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
 import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
+import { actOf } from './book-act.js';
 import { refusalAnchorOrUnavailable } from './refusal-anchor.js';
 
 /** Optional async hook when a new book row is indexed (not on load/replay). */
@@ -357,6 +358,7 @@ export class UsageSettledLedger {
   _stampSeq(row) {
     const id = Number(row?.agent_id);
     if (!Number.isInteger(id) || id < 1) return;
+    if (!row.act) row.act = actOf(row);
     if (row.seq != null && row.seq !== '') {
       const seq = Number(row.seq);
       const next = this._nextSeq.get(id) || 1;

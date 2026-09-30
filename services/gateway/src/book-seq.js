@@ -10,9 +10,10 @@
  */
 import crypto from 'crypto';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
+import { actOf } from './book-act.js';
 
 export const BOOK_SEQ_SCHEMA = 'chit402.book_seq.v1';
-export const BOOK_SEQ_VERSION = 1;
+export const BOOK_SEQ_VERSION = 2;
 export const BOOK_SEQ_JWT_TYP = 'chit402-book-seq+jwt';
 
 /**
@@ -65,17 +66,20 @@ export function analyzeSeq(rows) {
 }
 
 export function bookSeqClaims(row) {
+  const act = actOf(row);
   return {
     schema: BOOK_SEQ_SCHEMA,
-    payload_version: BOOK_SEQ_VERSION,
+    payload_version: row.authority ? 3 : BOOK_SEQ_VERSION,
     book_id: Number(row.agent_id),
     task_id: String(row.task_id),
     seq: Number(row.seq),
     prev_hash: row.prev_hash || null,
     row_hash: row.row_hash,
     event: row.event || row.evidence || null,
+    act,
     replay_of: row.replay_of || null,
     ...(row.anchor ? { anchor: row.anchor } : {}),
+    ...(row.authority ? { authority: row.authority } : {}),
   };
 }
 
@@ -129,6 +133,7 @@ export function renderBookSeqSection(chain) {
   return `<section class="card">
       <h2>Book position <span class="scope">${esc(chain.schema || BOOK_SEQ_SCHEMA)}</span></h2>
       <div class="row"><span class="k">seq</span><span class="v"><code>${esc(chain.seq)}</code></span></div>
+      ${chain.act ? `<div class="row"><span class="k">Act</span><span class="v"><code>${esc(chain.act)}</code></span></div>` : ''}
       <div class="row"><span class="k">Previous hash</span><span class="v"><code>${esc(chain.prev_hash || '—')}</code></span></div>
       <div class="row"><span class="k">Row hash</span><span class="v"><code>${esc(chain.row_hash || '—')}</code></span></div>
       ${chain.anchor ? `<div class="row"><span class="k">Chain anchor</span><span class="v">${chain.anchor.status === 'observed'
