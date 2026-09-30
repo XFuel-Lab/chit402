@@ -540,6 +540,49 @@ export default function Book() {
               </div>
             </section>
 
+            {book.coverage && (
+              <section className="card" style={{ marginBottom: '1.5rem' }}>
+                <h3 style={{ marginBottom: '0.5rem' }}>Export coverage</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', maxWidth: '40rem' }}>
+                  This view commits to the set it covers. A complete set and an empty-by-policy
+                  result both carry a universe hash. An empty-by-drain result does not — the scan
+                  did not finish.
+                </p>
+                <div className="book-budget-strip" style={{ marginTop: '0.75rem' }}>
+                  <div>
+                    <div className="stat-label">Enumerated</div>
+                    <div className="book-stat-value" style={{ fontSize: '1.25rem' }}>{book.coverage.enumerated_count}</div>
+                  </div>
+                  <div>
+                    <div className="stat-label">Universe</div>
+                    <div className="book-stat-value" style={{ fontSize: '1.25rem' }}>
+                      {book.coverage.universe_count ?? '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="stat-label">Set</div>
+                    <div className="book-stat-value" style={{ fontSize: '1.05rem' }}>
+                      {book.coverage.empty_reason === 'empty_by_policy'
+                        ? 'Empty by policy'
+                        : book.coverage.empty_reason === 'empty_by_drain'
+                          ? 'Empty by drain'
+                          : book.coverage.complete
+                            ? 'Complete'
+                            : 'Truncated'}
+                    </div>
+                  </div>
+                </div>
+                <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', marginTop: '0.75rem', wordBreak: 'break-all' }}>
+                  universe_hash {book.coverage.universe_hash || '—'}
+                </p>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.5rem', maxWidth: '40rem' }}>
+                  Proves the issuer scanned this book, time range, and filters and signed the ordered
+                  row set. Does not prove each row was paid, and does not include rows appended after
+                  this response.
+                </p>
+              </section>
+            )}
+
             {book.cap != null && (
               <div className="card" style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.5rem' }}>

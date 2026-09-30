@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { signJws, getIssuerPublicKeyJwk, verifyJwsWithJwks } from './issuer-key.js';
 import { buildJwksUri } from './receipt.js';
+import { coverageFromDocument, signExportCoverage } from './export-coverage.js';
 
 /** Signed pull-export envelope schema. */
 export const PUBLIC_PULL_EXPORT_SCHEMA = 'chit402.book_pull_export.v1';
@@ -85,6 +86,7 @@ export function canonicalPullExportClaims(input) {
     document_sha256: input.document_sha256,
     specimen: input.specimen === true,
     iat: Math.floor(Date.now() / 1000),
+    ...(input.coverage ? { coverage: input.coverage } : {}),
   };
 }
 
@@ -116,6 +118,10 @@ export function buildPublicPullExport(slug, { format = 'json', baseUrl = '' } = 
   const document = loadPublishedExportDocument(filename, fmt);
   const exported_at = new Date().toISOString();
   const document_sha256 = documentDigest(document, fmt);
+  const coverage = signExportCoverage(coverageFromDocument(document, {
+    bookId: meta.agent_id,
+    format: fmt,
+  }), { baseUrl });
   const claims = canonicalPullExportClaims({
     slug,
     agent_id: meta.agent_id,
@@ -123,6 +129,20 @@ export function buildPublicPullExport(slug, { format = 'json', baseUrl = '' } = 
     exported_at,
     document_sha256,
     specimen: meta.specimen,
+    coverage: {
+      schema: coverage.schema,
+      payload_version: coverage.payload_version,
+      book_id: coverage.book_id,
+      enumerated_count: coverage.enumerated_count,
+      universe_count: coverage.universe_count,
+      enumerated_hash: coverage.enumerated_hash,
+      universe_hash: coverage.universe_hash,
+      complete: coverage.complete,
+      truncated: coverage.truncated,
+      empty_reason: coverage.empty_reason,
+      hash_covers: coverage.hash_covers,
+      scope: coverage.scope,
+    },
   });
   const jwksUri = buildJwksUri(baseUrl);
   const { jws, kid } = signJws(claims, {
@@ -141,6 +161,7 @@ export function buildPublicPullExport(slug, { format = 'json', baseUrl = '' } = 
     document_sha256_rule: documentSha256Rule(fmt),
     document_media_type: fmt === 'csv' ? 'text/csv; charset=utf-8' : 'application/json',
     document,
+    coverage,
     issuer_signature: {
       alg: 'ES256',
       typ: PULL_EXPORT_JWT_TYP,

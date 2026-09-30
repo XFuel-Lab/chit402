@@ -228,6 +228,33 @@ function amountOf(payment) {
   return null;
 }
 
+/**
+ * True when a ledger row is shown on the possession book and on exports.
+ * Demo, unmetered, and collected:false spend rows stay off the book.
+ * Policy blocks, inflow, refunds, board, and A2A rows stay on.
+ * @param {object} entry
+ */
+export function entryVisibleOnBook(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  if (entry.event === 'policy_blocked' || deriveEvidence(entry) === BOOK_EVIDENCE.POLICY_BLOCKED) return true;
+  if (entry.event === 'a2a_escrow' || deriveEvidence(entry) === BOOK_EVIDENCE.A2A_ESCROW) return true;
+  const boardEvidence = deriveEvidence(entry);
+  if (boardEvidence === BOOK_EVIDENCE.BOARD_STAMP
+    || boardEvidence === BOOK_EVIDENCE.BOARD_POST
+    || boardEvidence === BOOK_EVIDENCE.BOARD_COMMENT
+    || boardEvidence === BOOK_EVIDENCE.BOARD_OPS) return true;
+  if (deriveEvidence(entry) === BOOK_EVIDENCE.UNVERIFIED) return true;
+  if (deriveEvidence(entry) === BOOK_EVIDENCE.RECORDED_BY_SETTLE
+    || deriveEvidence(entry) === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED
+    || deriveEvidence(entry) === BOOK_EVIDENCE.INFLOW_CLAIMED
+    || deriveEvidence(entry) === BOOK_EVIDENCE.REFUND_OWED
+    || deriveEvidence(entry) === BOOK_EVIDENCE.OPENROUTER_REPORTED) return true;
+  if (entry.collected !== true) return false;
+  const rail = String(entry.rail || '').toLowerCase();
+  if (UNMETERED_RAILS.has(rail)) return false;
+  return true;
+}
+
 /** Hub for the book: explicit route.hub, else model prefix, else provider. */
 export function hubOf(route = {}) {
   if (route.hub) return String(route.hub);
@@ -779,53 +806,41 @@ export class UsageSettledLedger {
   }
 
   /**
+   * Every row for one agent, newest first, split into book-visible rows
+   * and rows the book policy omits. No limit. scanComplete is false when
+   * the agent id is not a real book.
+   * @param {number|string} agentId
+   */
+  collectVisible(agentId) {
+    const id = Number(agentId);
+    const rows = [];
+    let omittedByPolicy = 0;
+    let agentRowCount = 0;
+    if (!Number.isInteger(id) || id < 1) {
+      return { rows, omittedByPolicy, agentRowCount, scanComplete: false };
+    }
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const e = this.entries[i];
+      if (Number(e.agent_id) !== id) continue;
+      agentRowCount += 1;
+      if (!entryVisibleOnBook(e)) {
+        omittedByPolicy += 1;
+        continue;
+      }
+      rows.push(e);
+    }
+    return { rows, omittedByPolicy, agentRowCount, scanComplete: true };
+  }
+
+  /**
    * Last-N collected rows for one agent_id. Newest first.
    * Demo / unmetered / collected:false never qualify.
    * @param {number|string} agentId
    * @param {{ limit?: number }} [opts]
    */
   listByAgent(agentId, { limit = 50 } = {}) {
-    const id = Number(agentId);
     const n = clampBookLimit(limit);
-    const rows = [];
-    if (!Number.isInteger(id) || id < 1) return rows;
-    for (let i = this.entries.length - 1; i >= 0 && rows.length < n; i--) {
-      const e = this.entries[i];
-      if (Number(e.agent_id) !== id) continue;
-      if (e.event === 'policy_blocked' || deriveEvidence(e) === BOOK_EVIDENCE.POLICY_BLOCKED) {
-        rows.push(e);
-        continue;
-      }
-      if (e.event === 'a2a_escrow' || deriveEvidence(e) === BOOK_EVIDENCE.A2A_ESCROW) {
-        rows.push(e);
-        continue;
-      }
-      const boardEvidence = deriveEvidence(e);
-      if (boardEvidence === BOOK_EVIDENCE.BOARD_STAMP
-        || boardEvidence === BOOK_EVIDENCE.BOARD_POST
-        || boardEvidence === BOOK_EVIDENCE.BOARD_COMMENT
-        || boardEvidence === BOOK_EVIDENCE.BOARD_OPS) {
-        rows.push(e);
-        continue;
-      }
-      if (deriveEvidence(e) === BOOK_EVIDENCE.UNVERIFIED) {
-        rows.push(e);
-        continue;
-      }
-      if (deriveEvidence(e) === BOOK_EVIDENCE.RECORDED_BY_SETTLE
-        || deriveEvidence(e) === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED
-        || deriveEvidence(e) === BOOK_EVIDENCE.INFLOW_CLAIMED
-        || deriveEvidence(e) === BOOK_EVIDENCE.REFUND_OWED
-        || deriveEvidence(e) === BOOK_EVIDENCE.OPENROUTER_REPORTED) {
-        rows.push(e);
-        continue;
-      }
-      if (e.collected !== true) continue;
-      const rail = String(e.rail || '').toLowerCase();
-      if (UNMETERED_RAILS.has(rail)) continue;
-      rows.push(e);
-    }
-    return rows;
+    return this.collectVisible(agentId).rows.slice(0, n);
   }
 
   /**
