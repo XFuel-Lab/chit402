@@ -2105,7 +2105,7 @@ export function buildOpenApiSpec(baseUrl = '') {
         get: {
           operationId: 'receiptTreeHead',
           summary: 'Latest signed receipt Merkle tree head',
-          description: 'Public. RFC 6962-style root over receipt leaves. anchor_status is pending until a Base transaction carries the root.',
+          description: 'Public. RFC 6962-style root over receipt leaves. anchors.base is a Base calldata transaction. anchors.solana is an SPL Memo. Each side stays pending until its key and RPC are set.',
           tags: ['Receipts'],
           responses: { 200: { description: 'chit402.tree_head.v1' } },
         },

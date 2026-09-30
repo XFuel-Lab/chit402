@@ -49,7 +49,11 @@ test('consistency proof binds the old root and the new root', () => {
 test('signed tree head stays pending anchor without a house key', async () => {
   const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
   const prevFrom = process.env.RECEIPT_ANCHOR_FROM;
+  const prevSol = process.env.SOLANA_ANCHOR_SECRET_KEY;
+  const prevSolRpc = process.env.SOLANA_RPC_URL;
   delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  delete process.env.SOLANA_ANCHOR_SECRET_KEY;
+  delete process.env.SOLANA_RPC_URL;
   process.env.RECEIPT_ANCHOR_FROM = '0x1111111111111111111111111111111111111111';
   try {
     const tree = new ReceiptMerkleTree();
@@ -72,13 +76,21 @@ test('signed tree head stays pending anchor without a house key', async () => {
     else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
     if (prevFrom == null) delete process.env.RECEIPT_ANCHOR_FROM;
     else process.env.RECEIPT_ANCHOR_FROM = prevFrom;
+    if (prevSol == null) delete process.env.SOLANA_ANCHOR_SECRET_KEY;
+    else process.env.SOLANA_ANCHOR_SECRET_KEY = prevSol;
+    if (prevSolRpc == null) delete process.env.SOLANA_RPC_URL;
+    else process.env.SOLANA_RPC_URL = prevSolRpc;
     resetReceiptMerkleTree();
   }
 });
 
 test('a sender hash is stored on the head, and a failed send stays pending', async () => {
   const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevSol = process.env.SOLANA_ANCHOR_SECRET_KEY;
+  const prevSolRpc = process.env.SOLANA_RPC_URL;
   delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  delete process.env.SOLANA_ANCHOR_SECRET_KEY;
+  delete process.env.SOLANA_RPC_URL;
   try {
     const tree = new ReceiptMerkleTree();
     tree.appendReceipt('anchored-row', 'hh');
@@ -99,6 +111,10 @@ test('a sender hash is stored on the head, and a failed send stays pending', asy
   } finally {
     if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
     else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+    if (prevSol == null) delete process.env.SOLANA_ANCHOR_SECRET_KEY;
+    else process.env.SOLANA_ANCHOR_SECRET_KEY = prevSol;
+    if (prevSolRpc == null) delete process.env.SOLANA_RPC_URL;
+    else process.env.SOLANA_RPC_URL = prevSolRpc;
     resetReceiptMerkleTree();
   }
 });
