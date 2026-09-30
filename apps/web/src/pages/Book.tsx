@@ -719,6 +719,11 @@ export default function Book() {
                                 {row.act && (
                                   <span className="badge badge-secondary book-policy-cap-badge">{row.act}</span>
                                 )}
+                                {row.authority?.subject_handle && (
+                                  <span className="badge badge-secondary book-policy-cap-badge" title={`writer ${row.authority.writer || ''} · issuer ${row.authority.issuer || ''}`}>
+                                    {row.authority.subject_handle}
+                                  </span>
+                                )}
                                 {isBlocked && row.anchor && (
                                   <span className="badge badge-secondary book-policy-cap-badge" title={row.anchor.block_hash || row.anchor.reason || ''}>
                                     {row.anchor.status === 'observed'

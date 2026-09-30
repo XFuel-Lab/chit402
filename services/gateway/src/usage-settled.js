@@ -359,6 +359,15 @@ export class UsageSettledLedger {
     const id = Number(row?.agent_id);
     if (!Number.isInteger(id) || id < 1) return;
     if (!row.act) row.act = actOf(row);
+    const successor = row.event === 'inflow_correction' || row.corrects || row.parent_ref;
+    if (!row.authority && successor) {
+      row.authority = {
+        subject_wallet: row.subject_wallet || row.payer || null,
+        subject_handle: row.subject_handle || (Number.isInteger(id) ? `agent:${id}` : null),
+        writer: 'gateway',
+        issuer: 'chit402',
+      };
+    }
     if (row.seq != null && row.seq !== '') {
       const seq = Number(row.seq);
       const next = this._nextSeq.get(id) || 1;
@@ -632,6 +641,9 @@ export class UsageSettledLedger {
       bucket: correction.bucket ? String(correction.bucket) : (entry.bucket || null),
       amount: correction.allocation != null ? String(correction.allocation) : (entry.amount || null),
       reason: correction.reason || null,
+      subject_handle: correction.subject_handle || null,
+      subject_wallet: correction.subject_wallet || entry.payer || null,
+      payer: correction.subject_wallet || entry.payer || null,
       inflow_correction: correction,
       rail: null,
       collected_at: correction.as_of || new Date().toISOString(),
