@@ -161,6 +161,7 @@ function rowOf(entry) {
     row.policy_code = entry.policy_code || 'policy_blocked';
     row.reason = entry.reason || null;
     row.collected = false;
+    if (entry.anchor) row.anchor = entry.anchor;
     if (entry.policy_key) row.policy_key = entry.policy_key;
     if (entry.spent_atomic != null) row.spent_atomic = String(entry.spent_atomic);
     if (entry.cap_atomic != null) row.cap_atomic = String(entry.cap_atomic);
@@ -680,6 +681,7 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
       inflow_claim: row.inflow_claim || null,
       inflow_corrections: row.inflow_corrections || null,
       policy_code: row.policy_code || null,
+      anchor: row.anchor || null,
       reason: row.reason || null,
       policy_key: row.policy_key || null,
       spent_atomic: row.spent_atomic ?? null,

@@ -90,6 +90,14 @@ export interface BookEntry {
   attempt_index?: number;
   event?: 'policy_blocked';
   policy_code?: string;
+  anchor?: {
+    status: 'observed' | 'UNAVAILABLE' | string;
+    rail?: string | null;
+    chain_id?: number | null;
+    block_number?: string | null;
+    block_hash?: string | null;
+    reason?: string | null;
+  };
   reason?: string;
   policy_key?: string;
   spent_atomic?: string;

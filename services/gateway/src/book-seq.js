@@ -75,6 +75,7 @@ export function bookSeqClaims(row) {
     row_hash: row.row_hash,
     event: row.event || row.evidence || null,
     replay_of: row.replay_of || null,
+    ...(row.anchor ? { anchor: row.anchor } : {}),
   };
 }
 
@@ -130,6 +131,9 @@ export function renderBookSeqSection(chain) {
       <div class="row"><span class="k">seq</span><span class="v"><code>${esc(chain.seq)}</code></span></div>
       <div class="row"><span class="k">Previous hash</span><span class="v"><code>${esc(chain.prev_hash || '—')}</code></span></div>
       <div class="row"><span class="k">Row hash</span><span class="v"><code>${esc(chain.row_hash || '—')}</code></span></div>
+      ${chain.anchor ? `<div class="row"><span class="k">Chain anchor</span><span class="v">${chain.anchor.status === 'observed'
+        ? `<code>${esc(chain.anchor.rail)} ${esc(chain.anchor.chain_id)} #${esc(chain.anchor.block_number)}</code> <code>${esc(chain.anchor.block_hash)}</code>`
+        : `<span class="badge pending">${esc(chain.anchor.status || 'UNAVAILABLE')}</span>`}</span></div>` : ''}
       <p class="muted" style="margin:8px 0 0;font-size:12px">Proves this row's append position in the book and the previous row's hash. Does not prove the payment, and a replay of the same payment does not take a new seq.</p>
     </section>`;
 }

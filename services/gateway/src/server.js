@@ -68,6 +68,7 @@ import { CHIT402_ICON_SVG, XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger, setBookRowWrittenHook } from './usage-settled.js';
+import { peekRefusalAnchor } from './refusal-anchor.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
 import { coverageForLedger } from './export-coverage.js';
 import { getBookWebhookRegistry, scheduleBookWebhook, manageBookWebhook } from './book-webhook.js';
@@ -946,6 +947,7 @@ export function createApp() {
         taskId,
         policyCode: check.code || 'approval_ttl_expired',
         reason: check.reason || 'SessionAct approval expired',
+        anchor: peekRefusalAnchor(),
       });
     }
     return { ...check, allowed: false, agent_id: identity.agent_id, task_id: taskId };
