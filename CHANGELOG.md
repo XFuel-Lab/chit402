@@ -10,6 +10,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Solana receipt-root anchor:** the daily Merkle root is also posted to Solana mainnet-beta as an SPL Memo (`chit402:root:v1:<scope>:<yyyy-mm-dd>:<root>:<prev>`), signed by `SOLANA_ANCHOR_SECRET_KEY` from the host environment. The tree head records `anchors.solana` (`signature`, `slot`, `cluster`, `memo`) next to `anchors.base`. Unset env or a failed send stays pending. A day already anchored is not sent again. `chit402-verify --rpc` checks inclusion, the memo, and the Base calldata. See `docs/product/receipt-merkle.md`.
 - **Correction authority:** correction and successor rows sign `authority` (`subject_handle` or `subject_wallet`, `writer: gateway`, `issuer: chit402`) inside `book_chain` payload version 3. A plain spend row has no authority. The payment JWS is unchanged. See `docs/product/correction-authority.md`.
 - **Row act:** each book row has `act` (`open`, `spend`, `transfer`, `refund`, `correction`, `refusal`) inside the signed `book_chain` at payload version 2. The payment JWS is unchanged. See `docs/product/book-act.md`.
 - **Verifier source digest:** `packages/verify` publishes `BUILD_DIGEST.txt` from `npm run digest` (SHA-256 of sorted `src/**/*.ts`, not a `tsc` binary). The Merkle genesis leaf copies it as `verifier_binary_build_digest`. See `docs/product/verifier-digest.md`.

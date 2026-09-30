@@ -106,7 +106,7 @@ A correction or successor row adds `authority` at payload version 3: `subject_ha
 
 ## Outside witness
 
-`inclusion` on the verify page is the RFC 6962-style proof: `leaf_index`, `tree_size`, `root`, `proof`. The page says the receipt is included in that root and either names the Base anchor transaction or says `pending anchor`. See [receipt-merkle.md](./product/receipt-merkle.md).
+`inclusion` on the verify page is the RFC 6962-style proof: `leaf_index`, `tree_size`, `root`, `proof`. The page says the receipt is included in that root and names the Base calldata anchor, the Solana memo anchor, both, or `pending anchor`. See [receipt-merkle.md](./product/receipt-merkle.md).
 
 ## Auditor export (Sprint 4)
 
