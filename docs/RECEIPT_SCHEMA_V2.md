@@ -98,6 +98,10 @@ The verify page shows that object when the row sits on a book. `empty_by_policy`
 
 A `policy_blocked` row also signs `anchor` (Base chain id, block number, block hash, or `UNAVAILABLE` when the RPC cannot be read). The refusal is still recorded. See [refusal-anchor.md](./product/refusal-anchor.md).
 
+## Outside witness
+
+`inclusion` on the verify page is the RFC 6962-style proof: `leaf_index`, `tree_size`, `root`, `proof`. The page says the receipt is included in that root and either names the Base anchor transaction or says `pending anchor`. See [receipt-merkle.md](./product/receipt-merkle.md).
+
 ## Auditor export (Sprint 4)
 
 `GET /receipt/:taskId?format=auditor` → selective disclosure (`xfuel.auditor_export.v1`):
