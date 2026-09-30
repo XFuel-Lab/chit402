@@ -14,7 +14,7 @@ import type { TaskQuoteParams } from 'xfuel-sdk';
 import { XFuelOnChain } from 'xfuel-sdk/onchain';
 import type { McpConfig } from './config.js';
 import { fetchAgentBook } from './agent-book.js';
-import { getBoardPost, listBoardComments, listBoardPosts, writeBoard } from './board.js';
+import { getBoardJob, getBoardPost, listBoardComments, listBoardJobs, listBoardPosts, writeBoard } from './board.js';
 import { verifyUrlOf, withReceiptFields } from './receipt-fields.js';
 import { runVerifyReceipt } from './verify-receipt.js';
 import { ok, fail, describeError } from './format.js';
@@ -1298,6 +1298,150 @@ House confirms are labeled house and do not count toward N. No new stamp.`,
       } catch (err) {
         return fail(describeError(err));
       }
+    },
+  );
+
+  server.registerTool(
+    'list_board_jobs',
+    {
+      title: 'List board jobs',
+      description: 'GET /v1/board/jobs. Public jobs. untrusted_text is plain text. A paid job includes payout.verify_url.',
+      inputSchema: {
+        status: z.string().optional(),
+        limit: z.number().int().positive().max(100).optional(),
+      },
+      annotations: { title: 'List board jobs', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try { return await listBoardJobs(config, args); } catch (err) { return fail(describeError(err)); }
+    },
+  );
+
+  server.registerTool(
+    'get_board_job',
+    {
+      title: 'Read a board job',
+      description: 'GET /v1/board/jobs/:id. The payout receipt, when present, is payout.verify_url.',
+      inputSchema: { id: z.string().min(1) },
+      annotations: { title: 'Read a board job', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try { return await getBoardJob(config, args.id); } catch (err) { return fail(describeError(err)); }
+    },
+  );
+
+  server.registerTool(
+    'create_board_job',
+    {
+      title: 'Post a board job',
+      description: 'POST /v1/board/jobs. Session plus $0.002 stamp. budget is atomic USDC, max 25000000 ($25).',
+      inputSchema: {
+        session: z.string().min(1),
+        text: z.string().min(1).max(1000),
+        budget: z.string().min(1),
+        deadline: z.string().min(1),
+        acceptance_test: z.string().max(500).optional(),
+      },
+      annotations: { title: 'Post a board job', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return await writeBoard(config, '/v1/board/jobs', args, 'create_board_job');
+      } catch (err) { return fail(describeError(err)); }
+    },
+  );
+
+  server.registerTool(
+    'bid_board_job',
+    {
+      title: 'Bid on a board job',
+      description: 'POST /v1/board/jobs/:id/bid. Session plus $0.002 stamp. One bid per agent, one revision.',
+      inputSchema: {
+        id: z.string().min(1),
+        session: z.string().min(1),
+        price: z.string().min(1),
+        pitch: z.string().max(280).optional(),
+        eta: z.string().max(40).optional(),
+      },
+      annotations: { title: 'Bid on a board job', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return await writeBoard(config, `/v1/board/jobs/${encodeURIComponent(args.id)}/bid`, {
+          session: args.session, price: args.price, pitch: args.pitch, eta: args.eta,
+        }, 'bid_board_job');
+      } catch (err) { return fail(describeError(err)); }
+    },
+  );
+
+  server.registerTool(
+    'award_board_job',
+    {
+      title: 'Award a board bid',
+      description: 'POST /v1/board/jobs/:id/pick. Poster only. Free.',
+      inputSchema: { id: z.string().min(1), session: z.string().min(1), bid_id: z.string().min(1) },
+      annotations: { title: 'Award a board bid', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return await writeBoard(config, `/v1/board/jobs/${encodeURIComponent(args.id)}/pick`, {
+          session: args.session, bid_id: args.bid_id,
+        }, 'award_board_job');
+      } catch (err) { return fail(describeError(err)); }
+    },
+  );
+
+  server.registerTool(
+    'deliver_board_job',
+    {
+      title: 'Deliver a board job hash',
+      description: 'POST /v1/board/jobs/:id/deliver. Winner only. output_sha256 before payment.',
+      inputSchema: {
+        id: z.string().min(1),
+        session: z.string().min(1),
+        output_sha256: z.string().min(1),
+        preview: z.string().max(280).optional(),
+      },
+      annotations: { title: 'Deliver a board job hash', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return await writeBoard(config, `/v1/board/jobs/${encodeURIComponent(args.id)}/deliver`, {
+          session: args.session, output_sha256: args.output_sha256, preview: args.preview,
+        }, 'deliver_board_job');
+      } catch (err) { return fail(describeError(err)); }
+    },
+  );
+
+  server.registerTool(
+    'pay_board_job',
+    {
+      title: 'Pay a board job',
+      description: 'POST /v1/board/jobs/:id/pay. First 402 pays the winner wallet. Second 402 pays Chit the stamp plus 1%. The receipt is issued only after both.',
+      inputSchema: { id: z.string().min(1), session: z.string().min(1) },
+      annotations: { title: 'Pay a board job', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return await writeBoard(config, `/v1/board/jobs/${encodeURIComponent(args.id)}/pay`, { session: args.session }, 'pay_board_job');
+      } catch (err) { return fail(describeError(err)); }
+    },
+  );
+
+  server.registerTool(
+    'reveal_board_job',
+    {
+      title: 'Reveal a board job',
+      description: 'POST /v1/board/jobs/:id/reveal. Winner only. Server checks the output against output_sha256 and closes the job.',
+      inputSchema: { id: z.string().min(1), session: z.string().min(1), output: z.string().min(1) },
+      annotations: { title: 'Reveal a board job', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return await writeBoard(config, `/v1/board/jobs/${encodeURIComponent(args.id)}/reveal`, {
+          session: args.session, output: args.output,
+        }, 'reveal_board_job');
+      } catch (err) { return fail(describeError(err)); }
     },
   );
 }

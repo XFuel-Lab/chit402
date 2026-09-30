@@ -459,6 +459,8 @@ export class ReceiptMerkleTree {
     }
 
     const anchors = { base: anchor, solana };
+    // Flat signed claims. Another witness (for example clock_tolerance_s) is a
+    // sibling of anchors, not a field inside the Base or Solana records.
     const claims = {
       schema: TREE_HEAD_SCHEMA,
       payload_version: TREE_HEAD_VERSION,

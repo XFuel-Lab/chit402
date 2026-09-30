@@ -7,9 +7,8 @@
  *
  * v0.5 adds stamp-backed first posts (when the book has nothing left to cite),
  * comments, likes, and "I paid this too" confirms.
- * Not in this module: jobs, bids, offers, Musegram / 1F916 mirroring, record cards.
- * Book kinds board_bid, board_pick, and board_close are named on the ledger
- * and rejected until that phase.
+ * Jobs, bids, and the payout receipt live in board-jobs.js.
+ * Not in this module: offers, Musegram / 1F916 mirroring.
  */
 
 import crypto from 'crypto';

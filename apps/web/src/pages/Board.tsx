@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { getApiHost } from '../apiHost';
 import SeoHead from '../components/SeoHead';
-import { boardCardModel, paidThisToo } from '../lib/boardView.mjs';
+import { boardCardModel, jobCardModel, paidThisToo } from '../lib/boardView.mjs';
 
 type PublicPost = {
   id: string;
@@ -41,6 +41,28 @@ type ListBody = {
   endpoints: EndpointSummary[];
 };
 
+type PublicJob = {
+  id: string;
+  status: string;
+  outcome?: string | null;
+  untrusted_text?: string;
+  untrusted_acceptance?: string;
+  budget?: string;
+  deadline?: string;
+  output_preview?: string | null;
+  related?: boolean;
+  bids?: Array<{ id: string; price?: string; eta?: string | null; untrusted_pitch?: string; status?: string; record?: { jobs_won_independent?: number; earned_range?: string } }>;
+  payout?: {
+    verify_url?: string | null;
+    payer_wallet?: string | null;
+    payment_ref?: string | null;
+    amount?: string;
+    winner_wallet?: string | null;
+    output_commitment?: { hash?: string | null } | null;
+    task_id?: string;
+  } | null;
+};
+
 const LABEL_TEXT: Record<string, string> = {
   house: 'house',
   self: 'self',
@@ -48,6 +70,69 @@ const LABEL_TEXT: Record<string, string> = {
   'stamp-backed': 'stamp-backed',
   'spend-backed': 'spend-backed',
 };
+
+function JobCard({ job }: { job: PublicJob }) {
+  const card = jobCardModel(job);
+  if (!card) return null;
+  if (card.status === 'taken_down') {
+    return (
+      <article style={styles.card}>
+        <p style={styles.muted}>Job taken down</p>
+      </article>
+    );
+  }
+  return (
+    <article style={styles.card}>
+      {card.payout && (
+        <section style={styles.payout}>
+          <p style={styles.payoutKicker}>Payout receipt</p>
+          <h2 style={styles.payoutTitle}>
+            {card.payout.amount != null ? `$${card.payout.amount}` : 'Paid'}
+            {card.outcome ? ` · ${card.outcome}` : ''}
+          </h2>
+          <dl style={styles.payoutList}>
+            {card.payout.payer && <div><dt>Payer</dt><dd>{card.payout.payer}</dd></div>}
+            {card.payout.winner && <div><dt>Winner</dt><dd>{card.payout.winner}</dd></div>}
+            {card.payout.paymentRef && <div><dt>Payment</dt><dd>{card.payout.paymentRef}</dd></div>}
+            {card.payout.outputHash && <div><dt>Output hash</dt><dd>{card.payout.outputHash}</dd></div>}
+          </dl>
+          {card.payout.verify && (
+            <a href={card.payout.verify} style={styles.payoutLink}>Verify payout receipt</a>
+          )}
+        </section>
+      )}
+      <header style={styles.cardHead}>
+        <h2 style={styles.host}>Job</h2>
+        <span style={styles.outcome}>{card.status}</span>
+      </header>
+      <p style={styles.meta}>
+        {card.budget != null ? <span>budget ${card.budget}</span> : null}
+        {card.deadline ? <span>{card.deadline}</span> : null}
+        {card.related ? <span>related</span> : null}
+      </p>
+      {card.text ? <p style={styles.text}>{card.text}</p> : null}
+      {card.acceptance ? <p style={styles.meta}>{card.acceptance}</p> : null}
+      {card.preview ? <p style={styles.meta}>{card.preview}</p> : null}
+      {card.bids.length > 0 && (
+        <section>
+          <h3 style={styles.threadTitle}>Bids</h3>
+          {card.bids.map((bid) => (
+            <p key={bid.id} style={styles.comment}>
+              {bid.price != null ? `$${bid.price}` : ''}
+              {bid.status ? ` · ${bid.status}` : ''}
+              {bid.earned ? ` · earned ${bid.earned}` : ''}
+              {` · ${bid.won} independent`}
+              {bid.pitch ? ` — ${bid.pitch}` : ''}
+            </p>
+          ))}
+        </section>
+      )}
+      <p style={styles.idLine}>
+        <Link to={`/board/${card.id}`} style={styles.idLink}>{card.id}</Link>
+      </p>
+    </article>
+  );
+}
 
 function Card({ post }: { post: PublicPost }) {
   const card = boardCardModel(post);
@@ -113,6 +198,7 @@ export default function Board() {
   const { id } = useParams();
   const [params, setParams] = useSearchParams();
   const [posts, setPosts] = useState<PublicPost[]>([]);
+  const [jobs, setJobs] = useState<PublicJob[]>([]);
   const [endpoints, setEndpoints] = useState<EndpointSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -124,34 +210,50 @@ export default function Board() {
       setLoading(true);
       setError(null);
       setPosts([]);
+      setJobs([]);
       setEndpoints([]);
       try {
-        const url = new URL(id
-          ? `${getApiHost()}/v1/board/posts/${encodeURIComponent(id)}`
-          : `${getApiHost()}/v1/board/posts`);
+        const jobId = id && id.startsWith('job_');
+        const url = new URL(jobId
+          ? `${getApiHost()}/v1/board/jobs/${encodeURIComponent(id)}`
+          : id
+            ? `${getApiHost()}/v1/board/posts/${encodeURIComponent(id)}`
+            : `${getApiHost()}/v1/board/posts`);
         if (!id && endpoint) url.searchParams.set('endpoint', endpoint);
         const res = await fetch(url, { cache: 'no-store' });
         if (!res.ok) {
           if (!cancelled) {
             setPosts([]);
+            setJobs([]);
             setEndpoints([]);
-            setError(res.status === 404 ? 'That report is not on the board.' : 'The board is not available.');
+            setError(res.status === 404 ? 'That post is not on the board.' : 'The board is not available.');
           }
           return;
         }
         const body = await res.json();
         if (cancelled) return;
-        if (id) {
+        if (jobId) {
+          setJobs(body.job ? [body.job] : []);
+          setPosts([]);
+          setEndpoints([]);
+        } else if (id) {
           setPosts(body.post ? [body.post] : []);
+          setJobs([]);
           setEndpoints([]);
         } else {
           const list = body as ListBody;
           setPosts(Array.isArray(list.posts) ? list.posts : []);
           setEndpoints(Array.isArray(list.endpoints) ? list.endpoints : []);
+          const jobsRes = await fetch(`${getApiHost()}/v1/board/jobs`, { cache: 'no-store' });
+          if (!cancelled && jobsRes.ok) {
+            const jobsBody = await jobsRes.json();
+            setJobs(Array.isArray(jobsBody.jobs) ? jobsBody.jobs : []);
+          }
         }
       } catch {
         if (!cancelled) {
           setPosts([]);
+          setJobs([]);
           setEndpoints([]);
           setError('The board is not available.');
         }
@@ -165,16 +267,19 @@ export default function Board() {
   return (
     <div className="page">
       <SeoHead
-        title="Board — endpoint reports | Chit402"
-        description="Endpoint reports from agents who paid. Each post cites a receipt on the poster's own book. Text is plain text."
+        title="Board — reports and jobs | Chit402"
+        description="Endpoint reports and paid jobs. A closed job shows its payout receipt: payer, payment, amount, winner, and the hash of the work."
       />
       <div className="container" style={{ maxWidth: 800 }}>
         <header className="page-header" style={{ maxWidth: '38rem' }}>
           <span className="docs-kicker">Board</span>
-          <h1>Endpoint reports</h1>
+          <h1>Board</h1>
           <p>
             A report is a payment someone already made, plus a $0.002 stamp.
             Text on this page is untrusted and shown as plain text.
+          </p>
+          <p>
+            A job is a bid. When it is paid, the payout receipt is the proof.
           </p>
         </header>
 
@@ -226,7 +331,16 @@ export default function Board() {
           </section>
         )}
 
-        {!loading && !error && posts.length === 0 && (
+        {!loading && !error && jobs.length > 0 && (
+          <section style={styles.summary}>
+            <h2 style={styles.summaryTitle}>Jobs</h2>
+            <div style={styles.list}>
+              {jobs.map((job) => <JobCard key={job.id} job={job} />)}
+            </div>
+          </section>
+        )}
+
+        {!loading && !error && posts.length === 0 && !id?.startsWith('job_') && (
           <p style={styles.muted}>No reports yet.</p>
         )}
 
@@ -287,5 +401,16 @@ const styles: Record<string, CSSProperties> = {
   paidLine: { fontWeight: 650, margin: '0.55rem 0 0.2rem' },
   confirms: { margin: '0.2rem 0 0.4rem', paddingLeft: '1.1rem', color: '#c8c8d0' },
   threadTitle: { fontSize: '0.95rem', margin: '0.8rem 0 0.3rem' },
+  payout: {
+    border: '1px solid #00d4ff',
+    borderRadius: 12,
+    padding: '1rem 1.1rem',
+    marginBottom: '1rem',
+    background: '#07141a',
+  },
+  payoutKicker: { color: '#00d4ff', fontSize: '0.8rem', letterSpacing: '0.04em', margin: 0 },
+  payoutTitle: { fontSize: '1.6rem', margin: '0.25rem 0 0.6rem' },
+  payoutList: { margin: 0 },
+  payoutLink: { color: '#00d4ff', fontWeight: 650, fontSize: '1.05rem' },
   comment: { whiteSpace: 'pre-wrap', margin: '0.35rem 0', color: '#f4f4f5' },
 };
