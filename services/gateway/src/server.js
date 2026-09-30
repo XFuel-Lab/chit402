@@ -12,6 +12,7 @@ import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
+import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
@@ -1870,11 +1871,16 @@ export function createApp() {
       }, 'Task request accepted');
 
       const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-      const verifyUrl = buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts), effectiveTaskId, { reqHost });
+      const taskBaseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      const verifyUrl = buildVerifyUrl(taskBaseUrl, effectiveTaskId, { reqHost });
+      const taskResourceUrl = taskBaseUrl
+        ? `${String(taskBaseUrl).replace(/\/$/, '')}/task-request`
+        : null;
 
       setX402PaymentResponseHeaders(res, {
         ref: settledResponseRef,
         payer: settledResponsePayer,
+        resourceUrl: taskResourceUrl,
       });
 
       // Stored feeAmount/netAmount still feed the TFUEL prover path. The JSON
@@ -3351,6 +3357,13 @@ export function createApp() {
     res.json(getJwks());
   });
 
+  // x402 offer-receipt §4.5.1: did:web for this request host, same ES256 key as jwks.json.
+  // Host is URL-normalized so api.chit402.com and api.xfuel.app each publish their own DID.
+  app.get('/.well-known/did.json', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.json(buildDidDocument(didHostFromRequest(req)));
+  });
+
   app.get('/.well-known/revocations', rateLimit, (_req, res) => {
     res.set('Cache-Control', 'no-store');
     res.json({
@@ -3677,6 +3690,7 @@ export function createApp() {
           setX402PaymentResponseHeaders(res, {
             ref: decision.paymentRef,
             payer: decision.payerWallet || null,
+            resourceUrl: resource,
           });
         }
         return {
@@ -3872,6 +3886,7 @@ export function createApp() {
         setX402PaymentResponseHeaders(res, {
           ref: decision.paymentRef,
           payer: decision.payerWallet || null,
+          resourceUrl: resource,
         });
         return {
           ok: true,
@@ -4589,7 +4604,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/export, PUT|POST|GET|DELETE /v1/agents/:agent_id/book/webhook, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/escrow, GET|POST /v1/agents/:agent_id/book/a2a-escrow, POST /v1/agents/:agent_id/book/rotate, GET|POST /v1/board/posts, GET /v1/board/posts/:id, GET /v1/board/posts/:id/comments, POST /v1/board/posts/:id/comments, POST /v1/board/posts/:id/reply, POST /v1/board/posts/:id/like, POST /v1/board/posts/:id/confirms, POST /v1/board/posts/:id/takedown, POST /v1/board/posts/:id/flag, POST /v1/board/posts/:id/hide, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/:delegation_hash/challenge, POST /v1/sessions/:delegation_hash/act, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/door, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, POST /v1/openrouter/books, POST|PUT /v1/openrouter/broadcast, GET /v1/openrouter/books/:book_id/receipts, GET /v1/openrouter/books/:book_id/summary, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/export, PUT|POST|GET|DELETE /v1/agents/:agent_id/book/webhook, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/escrow, GET|POST /v1/agents/:agent_id/book/a2a-escrow, POST /v1/agents/:agent_id/book/rotate, GET|POST /v1/board/posts, GET /v1/board/posts/:id, GET /v1/board/posts/:id/comments, POST /v1/board/posts/:id/comments, POST /v1/board/posts/:id/reply, POST /v1/board/posts/:id/like, POST /v1/board/posts/:id/confirms, POST /v1/board/posts/:id/takedown, POST /v1/board/posts/:id/flag, POST /v1/board/posts/:id/hide, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/:delegation_hash/challenge, POST /v1/sessions/:delegation_hash/act, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/door, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/did.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, POST /v1/openrouter/books, POST|PUT /v1/openrouter/broadcast, GET /v1/openrouter/books/:book_id/receipts, GET /v1/openrouter/books/:book_id/summary, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 
