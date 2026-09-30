@@ -716,6 +716,9 @@ export default function Book() {
                             <td data-label="Evidence">
                               <div className="book-evidence-cell">
                                 <BookEvidenceChip row={row} />
+                                {row.act && (
+                                  <span className="badge badge-secondary book-policy-cap-badge">{row.act}</span>
+                                )}
                                 {isBlocked && row.anchor && (
                                   <span className="badge badge-secondary book-policy-cap-badge" title={row.anchor.block_hash || row.anchor.reason || ''}>
                                     {row.anchor.status === 'observed'

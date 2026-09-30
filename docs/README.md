@@ -69,6 +69,7 @@ Everything else is reference. Do not send partners this index.
 | [product/refusal-anchor.md](./product/refusal-anchor.md) | Base block hash on a policy refusal |
 | [product/receipt-merkle.md](./product/receipt-merkle.md) | Merkle inclusion, tree head, Base anchor |
 | [product/verifier-digest.md](./product/verifier-digest.md) | Verifier source digest in the tree genesis |
+| [product/book-act.md](./product/book-act.md) | Act type on each book row |
 | [ERC8004_INTEGRATION.md](./ERC8004_INTEGRATION.md) | Validation registry |
 | [security-design.md](./security-design.md) | Security model |
 | [bug-bounty.md](./bug-bounty.md) | Responsible disclosure |

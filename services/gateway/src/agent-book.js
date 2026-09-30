@@ -91,6 +91,7 @@ function rowOf(entry) {
     ...(entry.prev_hash ? { prev_hash: entry.prev_hash } : {}),
     ...(entry.row_hash ? { row_hash: entry.row_hash } : {}),
     ...(entry.book_chain ? { book_chain: entry.book_chain } : {}),
+    ...(entry.act ? { act: entry.act } : {}),
     evidence,
     payment: {
       ref: entry.payment_ref ?? null,
@@ -602,7 +603,7 @@ export function bindBookVerifier(registry) {
  * @param {string} baseUrl — gateway public base for verify_url
  */
 export function buildBookExportCsv(entries, agentId, baseUrl, coverage = null) {
-  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,policy_code,reason,policy_key,spent_atomic,cap_atomic,period_start,replay_count,verify_url,explorer_url,seq,prev_hash,row_hash';
+  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,policy_code,reason,policy_key,spent_atomic,cap_atomic,period_start,replay_count,verify_url,explorer_url,seq,prev_hash,row_hash,act';
   const lines = [header];
   for (const e of entries) {
     const row = rowOf(e);
@@ -633,6 +634,7 @@ export function buildBookExportCsv(entries, agentId, baseUrl, coverage = null) {
       row.seq ?? '',
       row.prev_hash || '',
       row.row_hash || '',
+      row.act || '',
     ].map(csvEscape);
     lines.push(cols.join(','));
   }
@@ -660,6 +662,7 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
     return {
       task_id: row.task_id,
       seq: row.seq ?? null,
+      act: row.act || null,
       prev_hash: row.prev_hash || null,
       row_hash: row.row_hash || null,
       evidence: row.evidence,

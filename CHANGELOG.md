@@ -10,6 +10,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Row act:** each book row has `act` (`open`, `spend`, `transfer`, `refund`, `correction`, `refusal`) inside the signed `book_chain` at payload version 2. The payment JWS is unchanged. See `docs/product/book-act.md`.
 - **Verifier source digest:** `packages/verify` publishes `BUILD_DIGEST.txt` from `npm run digest` (SHA-256 of sorted `src/**/*.ts`, not a `tsc` binary). The Merkle genesis leaf copies it as `verifier_binary_build_digest`. See `docs/product/verifier-digest.md`.
 - **Receipt Merkle tree:** append-only RFC 6962-style tree over receipt leaves. `GET /v1/receipts/tree/head`, `GET /v1/receipts/:task_id/inclusion`, and `GET /v1/receipts/tree/consistency` are public. A signed head is published on the first append of each UTC day. The Base anchor stays `pending` until `RECEIPT_ANCHOR_PRIVATE_KEY` is set. The verify page says `pending anchor` or names the Base tx. See `docs/product/receipt-merkle.md`.
 - **Refusal anchor:** a `policy_blocked` row signs the Base chain id, block number, and block hash observed at clamp time (`anchor` inside `book_chain`). If the RPC is missing or fails, `anchor.status` is `UNAVAILABLE` and the refusal is still recorded. See `docs/product/refusal-anchor.md`.
