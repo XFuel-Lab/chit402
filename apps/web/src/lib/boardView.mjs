@@ -112,6 +112,12 @@ export function jobCardModel(job) {
       id: String(job.id || ''),
       status: 'taken_down',
       text: null,
+      outcome: null,
+      acceptance: '',
+      budget: null,
+      deadline: null,
+      preview: null,
+      related: false,
       payout: null,
       bids: [],
     };
