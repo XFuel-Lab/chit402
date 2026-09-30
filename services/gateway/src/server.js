@@ -12,6 +12,7 @@ import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
+import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
@@ -68,7 +69,10 @@ import { CHIT402_ICON_SVG, XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger, setBookRowWrittenHook } from './usage-settled.js';
+import { peekRefusalAnchor } from './refusal-anchor.js';
+import { getReceiptMerkleTree } from './receipt-merkle.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
+import { coverageForLedger } from './export-coverage.js';
 import { getBookWebhookRegistry, scheduleBookWebhook, manageBookWebhook } from './book-webhook.js';
 import { recordBookInflow, correctBookInflow } from './book-inflow.js';
 import {
@@ -797,6 +801,11 @@ export function createApp() {
     persist: !!config.taskStore?.persist && !!agentsDir,
   });
   setBookRowWrittenHook((entry) => {
+    try {
+      if (entry?.task_id) getReceiptMerkleTree().appendReceipt(entry.task_id, entry.row_hash || '');
+    } catch (err) {
+      logger.warn({ err: err.message, taskId: entry?.task_id }, 'receipt merkle append failed');
+    }
     scheduleBookWebhook(entry, {
       registry: getBookWebhookRegistry(),
       baseUrl: config.service.publicBaseUrl || 'https://api.chit402.com',
@@ -968,6 +977,7 @@ export function createApp() {
         taskId,
         policyCode: check.code || 'approval_ttl_expired',
         reason: check.reason || 'SessionAct approval expired',
+        anchor: peekRefusalAnchor(),
       });
     }
     return { ...check, allowed: false, agent_id: identity.agent_id, task_id: taskId };
@@ -1884,11 +1894,16 @@ export function createApp() {
       }, 'Task request accepted');
 
       const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-      const verifyUrl = buildVerifyUrl(baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts), effectiveTaskId, { reqHost });
+      const taskBaseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      const verifyUrl = buildVerifyUrl(taskBaseUrl, effectiveTaskId, { reqHost });
+      const taskResourceUrl = taskBaseUrl
+        ? `${String(taskBaseUrl).replace(/\/$/, '')}/task-request`
+        : null;
 
       setX402PaymentResponseHeaders(res, {
         ref: settledResponseRef,
         payer: settledResponsePayer,
+        resourceUrl: taskResourceUrl,
       });
 
       // Stored feeAmount/netAmount still feed the TFUEL prover path. The JSON
@@ -2565,6 +2580,34 @@ export function createApp() {
     }
   });
 
+  app.get('/v1/receipts/tree/head', async (_req, res) => {
+    try {
+      const tree = getReceiptMerkleTree();
+      let head = tree.latestHead();
+      if (!head) head = await tree.publishHead();
+      return res.json(head);
+    } catch (err) {
+      logger.error({ err }, 'tree head error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  app.get('/v1/receipts/tree/consistency', (req, res) => {
+    try {
+      const first = Number(req.query.first);
+      const second = Number(req.query.second);
+      return res.json(getReceiptMerkleTree().consistency(first, second));
+    } catch (err) {
+      return res.status(400).json({ error: 'bad_tree_size', message: err.message });
+    }
+  });
+
+  app.get('/v1/receipts/:task_id/inclusion', (req, res) => {
+    const found = getReceiptMerkleTree().inclusion(req.params.task_id);
+    if (!found) return res.status(404).json({ error: 'not_in_tree', task_id: req.params.task_id });
+    return res.json(found);
+  });
+
   app.get('/receipt/:taskId', rateLimit, (req, res) => {
     try {
       let { taskId: rawTaskId } = req.params;
@@ -2592,30 +2635,53 @@ export function createApp() {
       const ledgerRow = usageSettled.findByTask(taskId) || usageSettled.findByTask(rawTaskId);
       const openRouterReceipt = findOpenRouterPublicReceipt(taskId, { baseUrl, reqHost, ledgerRow })
         || findOpenRouterPublicReceipt(rawTaskId, { baseUrl, reqHost, ledgerRow });
+      const withBookCoverage = (receipt) => {
+        if (!receipt || !ledgerRow?.agent_id) return receipt;
+        try {
+          const coverage = coverageForLedger(usageSettled, ledgerRow.agent_id, {
+            subjectTaskId: ledgerRow.task_id || receipt.task_id,
+          });
+          return {
+            ...receipt,
+            coverage,
+            ...(ledgerRow.book_chain ? { book_chain: ledgerRow.book_chain } : {}),
+            ...(ledgerRow.seq != null ? { book_seq: ledgerRow.seq } : {}),
+            ...(getReceiptMerkleTree().inclusion(ledgerRow.task_id)
+              ? { inclusion: getReceiptMerkleTree().inclusion(ledgerRow.task_id) }
+              : {}),
+          };
+        } catch (err) {
+          logger.warn({ err: err.message, taskId }, 'receipt coverage omitted');
+          return receipt;
+        }
+      };
+
       if (openRouterReceipt) {
+        const covered = withBookCoverage(openRouterReceipt);
         if (wantsAuditor) {
-          const exportDoc = buildAuditorExport(openRouterReceipt, { policy: null });
+          const exportDoc = buildAuditorExport(covered, { policy: null });
           if (String(req.query.view || '') === 'html') {
             return res.type('html').send(renderAuditorHtml(exportDoc));
           }
           return res.json(exportDoc);
         }
-        if (wantsJson) return res.json(openRouterReceipt);
-        return res.type('html').send(renderReceiptHtml(openRouterReceipt));
+        if (wantsJson) return res.json(covered);
+        return res.type('html').send(renderReceiptHtml(covered));
       }
       const foreignReceipt = ledgerRow?.receipt_snapshot && ledgerRow.source !== 'openrouter_broadcast'
         ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl, reqHost })
         : null;
       if (foreignReceipt) {
+        const covered = withBookCoverage(foreignReceipt);
         if (wantsAuditor) {
-          const exportDoc = buildAuditorExport(foreignReceipt, { policy: null });
+          const exportDoc = buildAuditorExport(covered, { policy: null });
           if (String(req.query.view || '') === 'html') {
             return res.type('html').send(renderAuditorHtml(exportDoc));
           }
           return res.json(exportDoc);
         }
-        if (wantsJson) return res.json(foreignReceipt);
-        return res.type('html').send(renderReceiptHtml(foreignReceipt));
+        if (wantsJson) return res.json(covered);
+        return res.type('html').send(renderReceiptHtml(covered));
       }
 
       const aiListener = getAIListener();
@@ -2654,8 +2720,9 @@ export function createApp() {
         return res.json(exportDoc);
       }
 
-      if (wantsJson) return res.json(storedReceiptJson(receipt));
-      return res.type('html').send(renderReceiptHtml(receipt));
+      const covered = withBookCoverage(receipt);
+      if (wantsJson) return res.json(storedReceiptJson(covered));
+      return res.type('html').send(renderReceiptHtml(covered));
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt error');
       return res.status(500).json({ error: 'internal', message: err.message });
@@ -3313,6 +3380,13 @@ export function createApp() {
     res.json(getJwks());
   });
 
+  // x402 offer-receipt §4.5.1: did:web for this request host, same ES256 key as jwks.json.
+  // Host is URL-normalized so api.chit402.com and api.xfuel.app each publish their own DID.
+  app.get('/.well-known/did.json', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.json(buildDidDocument(didHostFromRequest(req)));
+  });
+
   app.get('/.well-known/revocations', rateLimit, (_req, res) => {
     res.set('Cache-Control', 'no-store');
     res.json({
@@ -3639,6 +3713,7 @@ export function createApp() {
           setX402PaymentResponseHeaders(res, {
             ref: decision.paymentRef,
             payer: decision.payerWallet || null,
+            resourceUrl: resource,
           });
         }
         return {
@@ -3834,6 +3909,7 @@ export function createApp() {
         setX402PaymentResponseHeaders(res, {
           ref: decision.paymentRef,
           payer: decision.payerWallet || null,
+          resourceUrl: resource,
         });
         return {
           ok: true,
@@ -3990,7 +4066,16 @@ export function createApp() {
       const format = req.query.format || 'csv';
       const limit = req.query.limit;
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-      const result = exportAgentBook(id, { session, proof, limit, format }, {
+      const result = exportAgentBook(id, {
+        session,
+        proof,
+        limit,
+        format,
+        from: req.query.from,
+        to: req.query.to,
+        evidence: req.query.evidence,
+        intent_id: req.query.intent_id,
+      }, {
         ledger: usageSettled,
         verify: verifyBook,
         registry: agentRegistry,
@@ -4033,7 +4118,16 @@ export function createApp() {
       const format = body.format || req.query.format || 'csv';
       const limit = body.limit ?? req.query.limit;
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-      const result = exportAgentBook(id, { session, proof, limit, format }, {
+      const result = exportAgentBook(id, {
+        session,
+        proof,
+        limit,
+        format,
+        from: body.from ?? req.query.from,
+        to: body.to ?? req.query.to,
+        evidence: body.evidence ?? req.query.evidence,
+        intent_id: body.intent_id ?? req.query.intent_id,
+      }, {
         ledger: usageSettled,
         verify: verifyBook,
         registry: agentRegistry,
@@ -4053,6 +4147,37 @@ export function createApp() {
       return res.send(result.body);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'book export post error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // GET /v1/agents/:agent_id/book/gaps — monotonic seq gap check
+  app.get('/v1/agents/:agent_id/book/gaps', (req, res) => {
+    try {
+      const claim = claimFromRequest(req);
+      const session = claim.session;
+      const proof = claim.proof;
+      if (!session && !proof) return res.status(401).end();
+      const id = Number(req.params.agent_id);
+      const checked = verifyBook({ agentId: id, window: 50, session, proof });
+      if (!checked || checked.checked !== true || checked.valid !== true) {
+        return res.status(403).end();
+      }
+      if (!usageSettled || typeof usageSettled.seqReport !== 'function') {
+        return res.status(200).json({
+          schema: 'chit402.book_seq_report.v1',
+          book_id: id,
+          gapless: false,
+          gaps: [],
+          next_seq: null,
+          count: null,
+          max_seq: null,
+          empty_reason: 'empty_by_drain',
+        });
+      }
+      return res.json(usageSettled.seqReport(id));
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'book gaps error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
   });
@@ -4529,7 +4654,7 @@ export function createApp() {
   app.use((_req, res) => {
     res.status(404).json({
       error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/export, PUT|POST|GET|DELETE /v1/agents/:agent_id/book/webhook, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/escrow, GET|POST /v1/agents/:agent_id/book/a2a-escrow, POST /v1/agents/:agent_id/book/rotate, GET|POST /v1/board/posts, GET /v1/board/posts/:id, GET /v1/board/posts/:id/comments, POST /v1/board/posts/:id/comments, POST /v1/board/posts/:id/reply, POST /v1/board/posts/:id/like, POST /v1/board/posts/:id/confirms, POST /v1/board/posts/:id/takedown, POST /v1/board/posts/:id/flag, POST /v1/board/posts/:id/hide, GET|POST /v1/board/jobs, GET /v1/board/jobs/:id, POST /v1/board/jobs/:id/bid, POST /v1/board/jobs/:id/pick, POST /v1/board/jobs/:id/deliver, POST /v1/board/jobs/:id/pay, POST /v1/board/jobs/:id/reveal, POST /v1/board/jobs/:id/challenge, GET /v1/agents/:agent_id/record, POST /v1/board/inbound/completions, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/:delegation_hash/challenge, POST /v1/sessions/:delegation_hash/act, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/door, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, POST /v1/openrouter/books, POST|PUT /v1/openrouter/broadcast, GET /v1/openrouter/books/:book_id/receipts, GET /v1/openrouter/books/:book_id/summary, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
+      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/export, PUT|POST|GET|DELETE /v1/agents/:agent_id/book/webhook, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/escrow, GET|POST /v1/agents/:agent_id/book/a2a-escrow, POST /v1/agents/:agent_id/book/rotate, GET|POST /v1/board/posts, GET /v1/board/posts/:id, GET /v1/board/posts/:id/comments, POST /v1/board/posts/:id/comments, POST /v1/board/posts/:id/reply, POST /v1/board/posts/:id/like, POST /v1/board/posts/:id/confirms, POST /v1/board/posts/:id/takedown, POST /v1/board/posts/:id/flag, POST /v1/board/posts/:id/hide, GET|POST /v1/board/jobs, GET /v1/board/jobs/:id, POST /v1/board/jobs/:id/bid, POST /v1/board/jobs/:id/pick, POST /v1/board/jobs/:id/deliver, POST /v1/board/jobs/:id/pay, POST /v1/board/jobs/:id/reveal, POST /v1/board/jobs/:id/challenge, GET /v1/agents/:agent_id/record, POST /v1/board/inbound/completions, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/:delegation_hash/challenge, POST /v1/sessions/:delegation_hash/act, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/door, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/did.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, POST /v1/openrouter/books, POST|PUT /v1/openrouter/broadcast, GET /v1/openrouter/books/:book_id/receipts, GET /v1/openrouter/books/:book_id/summary, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
     });
   });
 

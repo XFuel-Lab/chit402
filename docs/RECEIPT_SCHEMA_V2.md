@@ -86,6 +86,28 @@ This does **not** mean prompts are encrypted. See [PRIVATE_SPEND_THESIS.md](./PR
 
 Buyer-only usage: authenticated `GET /stats/me` (API key hash filter).
 
+## Export coverage (book set)
+
+Book views and exports carry a separate signed object, `chit402.export_coverage.v1` (`payload_version: 1`). It binds `enumerated_count`, the query `scope` (book id, time range, filters), and `universe_hash` over the ordered row commitments. The spend receipt JWS is not rewritten. See [export-coverage.md](./product/export-coverage.md).
+
+The verify page shows that object when the row sits on a book. `empty_by_policy` is a finished scan of an empty set (empty-set hash). `empty_by_drain` is an unfinished scan (`universe_hash: null`).
+
+## Book sequence
+
+`book_chain` (`chit402.book_seq.v1`) is the signed append position: `seq`, `prev_hash`, `row_hash`. A replay does not take a new seq. A correction does. The payment JWS stays on its own payload version. See [book-seq.md](./product/book-seq.md).
+
+A `policy_blocked` row also signs `anchor` (Base chain id, block number, block hash, or `UNAVAILABLE` when the RPC cannot be read). The refusal is still recorded. See [refusal-anchor.md](./product/refusal-anchor.md).
+
+## Row act
+
+`book_chain.act` is `open`, `spend`, `transfer`, `refund`, `correction`, or `refusal`. Payload version 2 of `chit402.book_seq` includes it. See [book-act.md](./product/book-act.md).
+
+A correction or successor row adds `authority` at payload version 3: `subject_handle` or `subject_wallet`, `writer: gateway`, `issuer: chit402`. Those are different fields. See [correction-authority.md](./product/correction-authority.md).
+
+## Outside witness
+
+`inclusion` on the verify page is the RFC 6962-style proof: `leaf_index`, `tree_size`, `root`, `proof`. The page says the receipt is included in that root and either names the Base anchor transaction or says `pending anchor`. See [receipt-merkle.md](./product/receipt-merkle.md).
+
 ## Auditor export (Sprint 4)
 
 `GET /receipt/:taskId?format=auditor` → selective disclosure (`xfuel.auditor_export.v1`):

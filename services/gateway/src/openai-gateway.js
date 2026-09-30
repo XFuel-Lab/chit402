@@ -327,6 +327,13 @@ async function meterV1Request(req, res, {
       const intentMeta = extractIntentMeta(req);
       const intentFields = resolveIntentFields(intentMeta, ledger, bookable.agent_id);
       if (ledger && typeof ledger.recordPolicyBlocked === 'function') {
+        let anchor = null;
+        try {
+          const { observeBaseAnchor } = await import('./refusal-anchor.js');
+          anchor = await observeBaseAnchor();
+        } catch {
+          anchor = null;
+        }
         ledger.recordPolicyBlocked({
           agentId: bookable.agent_id,
           taskId,
@@ -340,6 +347,7 @@ async function meterV1Request(req, res, {
           spentAtomic: policyCheck.spent_atomic ?? null,
           capAtomic: policyCheck.cap_atomic ?? null,
           periodStart: policyCheck.period_start || null,
+          anchor,
         });
       }
       res.status(403).json({
@@ -1499,7 +1507,14 @@ function buildReceipt({
   };
 }
 
-function setReceiptHeaders(res, receipt) {
+function paidResourceUrl(baseUrl, resourcePath) {
+  if (!baseUrl || !resourcePath) return null;
+  const path = String(resourcePath).split('?')[0];
+  const absPath = path.startsWith('/') ? path : `/${path}`;
+  return `${String(baseUrl).replace(/\/$/, '')}${absPath}`;
+}
+
+function setReceiptHeaders(res, receipt, resourceUrl = null) {
   const view = mergeReceiptView(receipt);
   res.setHeader('x-xfuel-task-id', receipt.task_id);
   if (receipt.compute?.provider) res.setHeader('x-xfuel-provider', receipt.compute.provider);
@@ -1523,6 +1538,7 @@ function setReceiptHeaders(res, receipt) {
       ref: view.payment.ref,
       network: view.payment.network,
       payer: view.caller_binding?.payer_wallet || null,
+      resourceUrl,
     });
   }
 }
@@ -1567,6 +1583,10 @@ function withBookSpend(receipt, {
       ...receipt,
       agent_id: recorded.agent_id,
       session: recorded.session,
+      book_seq: recorded.entry?.seq ?? null,
+      prev_row_hash: recorded.entry?.prev_hash ?? null,
+      row_hash: recorded.entry?.row_hash ?? null,
+      book_chain: recorded.entry?.book_chain || null,
       settlement_status: recorded.settlement_status || 'settled',
       idempotent_replay: recorded.idempotent_replay === true,
       replay_of: recorded.replay_of || null,
@@ -1776,7 +1796,7 @@ function respondPaidV1Failure(res, {
     attemptIndex: intentFields.attempt_index,
     settleRecord,
   });
-  setReceiptHeaders(res, receipt);
+  setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, req?.path));
   return res.status(statusCode).json({
     error: {
       message: message || 'Inference could not be completed after payment was collected.',
@@ -2447,7 +2467,7 @@ export function registerOpenAIRoutes(app, {
       reqHost,
     }), req, settleRecord, task);
 
-    setReceiptHeaders(res, receipt);
+    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, resourcePath));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
 
     if (stream) {
@@ -2902,7 +2922,7 @@ export function registerOpenAIRoutes(app, {
       reqHost,
     }), req, settleRecord, task);
 
-    setReceiptHeaders(res, receipt);
+    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/responses'));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
 
     // Build Responses-shaped output
@@ -2973,7 +2993,7 @@ export function registerOpenAIRoutes(app, {
       resolvedModel: inference.resolvedModel,
       reqHost,
     });
-    setReceiptHeaders(res, receipt);
+    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/images/generations'));
 
     const count = Math.min(Math.max(Number(n) || 1, 1), 4);
     const data = [];
@@ -3038,7 +3058,7 @@ export function registerOpenAIRoutes(app, {
       resolvedModel: inference.resolvedModel,
       reqHost,
     });
-    setReceiptHeaders(res, receipt);
+    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/audio/transcriptions'));
     return res.json({
       text: inference.text || '',
       model: inference.resolvedModel,

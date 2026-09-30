@@ -34,6 +34,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "digest": "node scripts/build-digest.mjs",
     "test": "node --test test/*.test.mjs",
     "prepublishOnly": "npm run build && npm test"
   },

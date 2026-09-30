@@ -144,6 +144,7 @@ export function registerBoardRoutes(app, deps) {
       setPaymentHeaders(res, {
         ref: decision.paymentRef,
         payer: decision.payerWallet || null,
+        resourceUrl: resource,
       });
     }
     return {

@@ -109,7 +109,11 @@ export function registerBoardJobRoutes(app, deps) {
       return { ok: false, status: 402, error: 'stamp_underpaid', message: `Stamp payment ${paid} is below ${STAMP_FEE_UNITS}` };
     }
     if (typeof setPaymentHeaders === 'function') {
-      setPaymentHeaders(res, { ref: decision.paymentRef, payer: decision.payerWallet || null });
+      setPaymentHeaders(res, {
+        ref: decision.paymentRef,
+        payer: decision.payerWallet || null,
+        resourceUrl: resource,
+      });
     }
     return { ok: true, waived: false, settlement: { paymentRef: decision.paymentRef, amount: String(decision.settledAmount), payer: decision.payerWallet || null } };
   }
@@ -188,7 +192,11 @@ export function registerBoardJobRoutes(app, deps) {
       return { ok: false, status: 402, error: 'job_payment_required', message: decision.reason || 'job payment failed' };
     }
     if (req.res && typeof setPaymentHeaders === 'function') {
-      setPaymentHeaders(req.res, { ref: decision.paymentRef, payer: decision.payerWallet || null });
+      setPaymentHeaders(req.res, {
+        ref: decision.paymentRef,
+        payer: decision.payerWallet || null,
+        resourceUrl: resource,
+      });
     }
     return {
       ok: true,

@@ -12,6 +12,9 @@ import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
 import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
+import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
+import { actOf } from './book-act.js';
+import { refusalAnchorOrUnavailable } from './refusal-anchor.js';
 
 /** Optional async hook when a new book row is indexed (not on load/replay). */
 let bookRowWrittenHook = null;
@@ -118,6 +121,9 @@ export function deriveEvidence(entry) {
   if (!entry || typeof entry !== 'object') return BOOK_EVIDENCE.UNVERIFIED;
   if (entry.refund_status === 'owed' || entry.evidence === BOOK_EVIDENCE.REFUND_OWED) {
     return BOOK_EVIDENCE.REFUND_OWED;
+  }
+  if (entry.event === 'inflow_correction' || entry.evidence === 'inflow_correction') {
+    return 'inflow_correction';
   }
   if (entry.event === 'policy_blocked' || entry.evidence === BOOK_EVIDENCE.POLICY_BLOCKED) {
     return BOOK_EVIDENCE.POLICY_BLOCKED;
@@ -247,6 +253,37 @@ function amountOf(payment) {
   return null;
 }
 
+/**
+ * True when a ledger row is shown on the possession book and on exports.
+ * Demo, unmetered, and collected:false spend rows stay off the book.
+ * Policy blocks, inflow, refunds, board, and A2A rows stay on.
+ * @param {object} entry
+ */
+export function entryVisibleOnBook(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  if (entry.event === 'inflow_correction' || deriveEvidence(entry) === 'inflow_correction') return true;
+  if (entry.event === 'policy_blocked' || deriveEvidence(entry) === BOOK_EVIDENCE.POLICY_BLOCKED) return true;
+  if (entry.event === 'a2a_escrow' || deriveEvidence(entry) === BOOK_EVIDENCE.A2A_ESCROW) return true;
+  const boardEvidence = deriveEvidence(entry);
+  if (boardEvidence === BOOK_EVIDENCE.BOARD_STAMP
+    || boardEvidence === BOOK_EVIDENCE.BOARD_POST
+    || boardEvidence === BOOK_EVIDENCE.BOARD_COMMENT
+    || boardEvidence === BOOK_EVIDENCE.BOARD_OPS
+    || boardEvidence === BOOK_EVIDENCE.BOARD_BID
+    || boardEvidence === BOOK_EVIDENCE.BOARD_PICK
+    || boardEvidence === BOOK_EVIDENCE.BOARD_CLOSE) return true;
+  if (deriveEvidence(entry) === BOOK_EVIDENCE.UNVERIFIED) return true;
+  if (deriveEvidence(entry) === BOOK_EVIDENCE.RECORDED_BY_SETTLE
+    || deriveEvidence(entry) === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED
+    || deriveEvidence(entry) === BOOK_EVIDENCE.INFLOW_CLAIMED
+    || deriveEvidence(entry) === BOOK_EVIDENCE.REFUND_OWED
+    || deriveEvidence(entry) === BOOK_EVIDENCE.OPENROUTER_REPORTED) return true;
+  if (entry.collected !== true) return false;
+  const rail = String(entry.rail || '').toLowerCase();
+  if (UNMETERED_RAILS.has(rail)) return false;
+  return true;
+}
+
 /** Hub for the book: explicit route.hub, else model prefix, else provider. */
 export function hubOf(route = {}) {
   if (route.hub) return String(route.hub);
@@ -304,6 +341,10 @@ export class UsageSettledLedger {
     this.entries = [];
     this.byRef = new Map();
     this.byTask = new Map();
+    /** Next seq to assign, per agent_id. */
+    this._nextSeq = new Map();
+    /** Last row hash per agent_id. */
+    this._lastRowHash = new Map();
 
     if (this.persist) {
       try {
@@ -336,7 +377,54 @@ export class UsageSettledLedger {
     }
   }
 
+  _stampSeq(row) {
+    const id = Number(row?.agent_id);
+    if (!Number.isInteger(id) || id < 1) return;
+    if (!row.act) row.act = actOf(row);
+    const successor = row.event === 'inflow_correction' || row.corrects || row.parent_ref;
+    if (!row.authority && successor) {
+      row.authority = {
+        subject_wallet: row.subject_wallet || row.payer || null,
+        subject_handle: row.subject_handle || (Number.isInteger(id) ? `agent:${id}` : null),
+        writer: 'gateway',
+        issuer: 'chit402',
+      };
+    }
+    if (row.seq != null && row.seq !== '') {
+      const seq = Number(row.seq);
+      const next = this._nextSeq.get(id) || 1;
+      if (!row.prev_hash) row.prev_hash = this._lastRowHash.get(id) || null;
+      if (!row.row_hash) row.row_hash = bookRowHash(row);
+      if (Number.isInteger(seq) && seq >= next) this._nextSeq.set(id, seq + 1);
+      if (row.row_hash) this._lastRowHash.set(id, row.row_hash);
+      if (!row.book_chain) row.book_chain = signBookSeq(row);
+      return;
+    }
+    const seq = this._nextSeq.get(id) || 1;
+    row.seq = seq;
+    row.prev_hash = this._lastRowHash.get(id) || null;
+    row.row_hash = bookRowHash(row);
+    row.book_chain = signBookSeq(row);
+    this._nextSeq.set(id, seq + 1);
+    this._lastRowHash.set(id, row.row_hash);
+  }
+
+  /**
+   * Gap check for one book. Includes every indexed row, not only the visible window.
+   * @param {number|string} agentId
+   */
+  seqReport(agentId) {
+    const id = Number(agentId);
+    const rows = this.entries.filter((e) => Number(e.agent_id) === id && e.seq != null);
+    return {
+      schema: 'chit402.book_seq_report.v1',
+      book_id: id,
+      ...analyzeSeq(rows),
+    };
+  }
+
   _index(row, { persist = true, notify = true } = {}) {
+    this._stampSeq(row);
     this.entries.push(row);
     if (row.payment_ref) this.byRef.set(String(row.payment_ref), row);
     if (row.task_id) this.byTask.set(String(row.task_id), row);
@@ -561,7 +649,32 @@ export class UsageSettledLedger {
     entry.inflow_corrections.push(correction);
     if (correction.bucket) entry.bucket = String(correction.bucket);
     if (correction.allocation) entry.amount = String(correction.allocation);
-    return { ok: true, entry, correction };
+    const n = entry.inflow_corrections.length;
+    const correctionRow = {
+      task_id: `${entry.task_id}:correction:${n}`,
+      payment_ref: null,
+      payer: null,
+      agent_id: id,
+      collected: false,
+      evidence: 'inflow_correction',
+      event: 'inflow_correction',
+      corrects: entry.task_id,
+      parent_ref: entry.task_id,
+      bucket: correction.bucket ? String(correction.bucket) : (entry.bucket || null),
+      amount: correction.allocation != null ? String(correction.allocation) : (entry.amount || null),
+      reason: correction.reason || null,
+      subject_handle: correction.subject_handle || null,
+      subject_wallet: correction.subject_wallet || entry.payer || null,
+      payer: correction.subject_wallet || entry.payer || null,
+      inflow_correction: correction,
+      rail: null,
+      collected_at: correction.as_of || new Date().toISOString(),
+      recorded_at: new Date().toISOString(),
+      model: entry.model || null,
+      hub: entry.hub || null,
+    };
+    this._index(correctionRow);
+    return { ok: true, entry, correction, correction_row: correctionRow };
   }
 
   /**
@@ -594,6 +707,7 @@ export class UsageSettledLedger {
     spentAtomic = null,
     capAtomic = null,
     periodStart = null,
+    anchor = null,
   }) {
     const id = Number(agentId);
     if (!Number.isInteger(id) || id < 1) {
@@ -633,6 +747,7 @@ export class UsageSettledLedger {
       spent_atomic: spentAtomic != null ? String(spentAtomic) : null,
       cap_atomic: capAtomic != null ? String(capAtomic) : null,
       period_start: periodStart || null,
+      anchor: refusalAnchorOrUnavailable(anchor),
     };
     this._index(entry);
     return { ok: true, entry, duplicate: false };
@@ -807,56 +922,41 @@ export class UsageSettledLedger {
   }
 
   /**
+   * Every row for one agent, newest first, split into book-visible rows
+   * and rows the book policy omits. No limit. scanComplete is false when
+   * the agent id is not a real book.
+   * @param {number|string} agentId
+   */
+  collectVisible(agentId) {
+    const id = Number(agentId);
+    const rows = [];
+    let omittedByPolicy = 0;
+    let agentRowCount = 0;
+    if (!Number.isInteger(id) || id < 1) {
+      return { rows, omittedByPolicy, agentRowCount, scanComplete: false };
+    }
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const e = this.entries[i];
+      if (Number(e.agent_id) !== id) continue;
+      agentRowCount += 1;
+      if (!entryVisibleOnBook(e)) {
+        omittedByPolicy += 1;
+        continue;
+      }
+      rows.push(e);
+    }
+    return { rows, omittedByPolicy, agentRowCount, scanComplete: true };
+  }
+
+  /**
    * Last-N collected rows for one agent_id. Newest first.
    * Demo / unmetered / collected:false never qualify.
    * @param {number|string} agentId
    * @param {{ limit?: number }} [opts]
    */
   listByAgent(agentId, { limit = 50 } = {}) {
-    const id = Number(agentId);
     const n = clampBookLimit(limit);
-    const rows = [];
-    if (!Number.isInteger(id) || id < 1) return rows;
-    for (let i = this.entries.length - 1; i >= 0 && rows.length < n; i--) {
-      const e = this.entries[i];
-      if (Number(e.agent_id) !== id) continue;
-      if (e.event === 'policy_blocked' || deriveEvidence(e) === BOOK_EVIDENCE.POLICY_BLOCKED) {
-        rows.push(e);
-        continue;
-      }
-      if (e.event === 'a2a_escrow' || deriveEvidence(e) === BOOK_EVIDENCE.A2A_ESCROW) {
-        rows.push(e);
-        continue;
-      }
-      const boardEvidence = deriveEvidence(e);
-      if (boardEvidence === BOOK_EVIDENCE.BOARD_STAMP
-        || boardEvidence === BOOK_EVIDENCE.BOARD_POST
-        || boardEvidence === BOOK_EVIDENCE.BOARD_COMMENT
-        || boardEvidence === BOOK_EVIDENCE.BOARD_OPS
-        || boardEvidence === BOOK_EVIDENCE.BOARD_BID
-        || boardEvidence === BOOK_EVIDENCE.BOARD_PICK
-        || boardEvidence === BOOK_EVIDENCE.BOARD_CLOSE) {
-        rows.push(e);
-        continue;
-      }
-      if (deriveEvidence(e) === BOOK_EVIDENCE.UNVERIFIED) {
-        rows.push(e);
-        continue;
-      }
-      if (deriveEvidence(e) === BOOK_EVIDENCE.RECORDED_BY_SETTLE
-        || deriveEvidence(e) === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED
-        || deriveEvidence(e) === BOOK_EVIDENCE.INFLOW_CLAIMED
-        || deriveEvidence(e) === BOOK_EVIDENCE.REFUND_OWED
-        || deriveEvidence(e) === BOOK_EVIDENCE.OPENROUTER_REPORTED) {
-        rows.push(e);
-        continue;
-      }
-      if (e.collected !== true) continue;
-      const rail = String(e.rail || '').toLowerCase();
-      if (UNMETERED_RAILS.has(rail)) continue;
-      rows.push(e);
-    }
-    return rows;
+    return this.collectVisible(agentId).rows.slice(0, n);
   }
 
   /**
