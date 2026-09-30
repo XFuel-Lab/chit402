@@ -41,6 +41,9 @@ npx xfuel-verify receipt.json --json
 
 # From stdin
 curl -s https://api.chit402.com/receipt/task-123?format=json | npx xfuel-verify -
+
+# Dual anchor: inclusion, Solana memo, Base calldata
+npx xfuel-verify receipt.json inclusion.json head.json --rpc
 ```
 
 ## What This Verifies
@@ -52,6 +55,7 @@ curl -s https://api.chit402.com/receipt/task-123?format=json | npx xfuel-verify 
 | Output hash | No | Hash is on the receipt |
 | On-chain settlement | Yes | Query Base RPC for tx |
 | Nullifier anchor | Yes | Query ZKVerifierSP1 contract |
+| Anchored receipt root | Yes, with `--rpc` | Inclusion proof, then Solana memo and Base calldata for that root |
 
 ## Issuer Signature Verification (ES256)
 

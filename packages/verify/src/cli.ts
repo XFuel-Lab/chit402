@@ -6,6 +6,7 @@
  *   xfuel-verify receipt.json
  *   xfuel-verify receipt.json --check-nullifier
  *   xfuel-verify receipt.json --rpc https://mainnet.base.org
+ *   xfuel-verify receipt.json inclusion.json head.json --rpc
  *   cat receipt.json | xfuel-verify -
  *
  * Exit codes:
@@ -22,6 +23,13 @@ import {
   type XFuelReceipt,
   type Jwks,
 } from './index.js';
+import {
+  verifyAnchoredRoot,
+  type AnchorHead,
+  type AnchorInclusion,
+  type AnchorReceipt,
+  type AnchorWitnessResult,
+} from './anchor-witness.js';
 
 const HELP = `
 xfuel-verify — Offline verification for Chit402 receipts
@@ -48,7 +56,11 @@ Options:
   --check-nullifier   Query Base RPC for nullifier anchor (requires network)
   --check-payer       Query Base or Solana RPC. Base confirms payer, payee, asset, amount
   --solana-rpc <url>  Solana RPC URL (default: https://api.mainnet-beta.solana.com or SOLANA_RPC_URL)
-  --rpc <url>         Custom RPC URL (default: https://mainnet.base.org)
+  --rpc <url>         Base RPC URL (default: https://mainnet.base.org)
+  --rpc               With a receipt, an inclusion proof, and a tree head: check the
+                      leaf, then the Solana memo and the Base calldata for that root
+  --inclusion <file>  Inclusion proof JSON (chit402.inclusion.v1)
+  --head <file>       Signed tree head JSON (chit402.tree_head.v1)
   --json              Output JSON instead of human-readable
   --quiet             Only output errors
 
@@ -72,8 +84,19 @@ Network behavior:
   - --fetch-jwks or --jwks-url is passed
   - --check-nullifier is passed (queries Base RPC for on-chain anchor)
   - --check-payer is passed (queries Base or Solana RPC for USDC settlement)
+  - --rpc is passed with a receipt, an inclusion proof, and a tree head
 
   Solana payer verify uses SOLANA_RPC_URL when set, else the public mainnet RPC.
+
+Anchored root:
+  xfuel-verify receipt.json inclusion.json head.json --rpc
+  xfuel-verify receipt.json --inclusion inclusion.json --head head.json --rpc https://mainnet.base.org
+
+  Checks the Merkle inclusion, fetches the Solana transaction and requires the
+  SPL Memo to contain the root, and checks the Base calldata the same way.
+  Prints what this proves and what it does not prove. Exit 0 when both chains
+  match, 2 when the leaf is included but an anchor is still pending, 1 when a
+  check fails.
 
 Examples:
   # Local binding verification (no network)
@@ -100,6 +123,11 @@ function parseArgs(args: string[]): {
   checkPayer: boolean;
   rpcUrl: string | null;
   solanaRpcUrl: string | null;
+  sawRpc: boolean;
+  anchorFlag: boolean;
+  inclusionFile: string | null;
+  headFile: string | null;
+  positionals: string[];
   json: boolean;
   quiet: boolean;
   help: boolean;
@@ -115,6 +143,11 @@ function parseArgs(args: string[]): {
     checkPayer: false,
     rpcUrl: null as string | null,
     solanaRpcUrl: null as string | null,
+    sawRpc: false,
+    anchorFlag: false,
+    inclusionFile: null as string | null,
+    headFile: null as string | null,
+    positionals: [] as string[],
     json: false,
     quiet: false,
     help: false,
@@ -139,8 +172,15 @@ function parseArgs(args: string[]): {
       result.trustedKids.push(args[++i]);
     } else if (arg === '--no-trusted-kid') {
       result.noTrustedKid = true;
-    } else if (arg === '--rpc' && args[i + 1]) {
-      result.rpcUrl = args[++i];
+    } else if (arg === '--rpc') {
+      result.sawRpc = true;
+      const next = args[i + 1];
+      if (next && /^https?:\/\//i.test(next)) result.rpcUrl = args[++i];
+      else result.anchorFlag = true;
+    } else if (arg === '--inclusion' && args[i + 1]) {
+      result.inclusionFile = args[++i];
+    } else if (arg === '--head' && args[i + 1]) {
+      result.headFile = args[++i];
     } else if (arg === '--solana-rpc' && args[i + 1]) {
       result.solanaRpcUrl = args[++i];
     } else if (arg === '--json') {
@@ -148,7 +188,8 @@ function parseArgs(args: string[]): {
     } else if (arg === '--quiet' || arg === '-q') {
       result.quiet = true;
     } else if (!arg.startsWith('-')) {
-      result.file = arg;
+      result.positionals.push(arg);
+      if (!result.file) result.file = arg;
     }
   }
 
@@ -173,12 +214,96 @@ function formatAmount(units: string | null): string {
   return `$${usd.toFixed(usd >= 0.01 ? 2 : 6)} (${units} units)`;
 }
 
+function readJson(file: string): unknown {
+  const content = file === '-' ? readFileSync(0, 'utf8') : readFileSync(file, 'utf8');
+  return JSON.parse(content) as unknown;
+}
+
+function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  if (quiet && result.overall !== 'failed') return;
+  const mark = (ok: boolean) => (ok ? '✓ YES' : '✗ NO');
+  console.log('');
+  console.log('  Anchored receipt root');
+  console.log('  ─────────────────────────────────────────────────');
+  console.log(`  Root:          ${result.root || '—'}`);
+  console.log(`  Inclusion:     ${mark(result.inclusion.valid)}${result.inclusion.reason ? ` (${result.inclusion.reason})` : ''}`);
+  console.log(`  Leaf source:   ${result.inclusion.leaf_source}`);
+  console.log(`  Solana:        ${result.solana.checked ? mark(result.solana.valid) : (result.solana.reason || 'not checked')}`);
+  if (result.solana.signature) console.log(`  Signature:     ${result.solana.signature}`);
+  if (result.solana.slot != null) console.log(`  Slot:          ${result.solana.slot}`);
+  if (result.solana.cluster) console.log(`  Cluster:       ${result.solana.cluster}`);
+  if (result.solana.memo) console.log(`  Memo:          ${result.solana.memo}`);
+  if (result.solana.reason && !result.solana.valid) console.log(`  Solana reason: ${result.solana.reason}`);
+  console.log(`  Base:          ${result.base.checked ? mark(result.base.valid) : (result.base.reason || 'not checked')}`);
+  if (result.base.tx) console.log(`  Base tx:       ${result.base.tx}`);
+  if (result.base.chain_id != null) console.log(`  Chain id:      ${result.base.chain_id}`);
+  if (result.base.reason && !result.base.valid) console.log(`  Base reason:   ${result.base.reason}`);
+  console.log('');
+  console.log('  What this proves');
+  console.log('  ─────────────────────────────────────────────────');
+  for (const line of result.proves) console.log(`  ${line}`);
+  console.log('');
+  console.log('  What this does not prove');
+  console.log('  ─────────────────────────────────────────────────');
+  for (const line of result.does_not_prove) console.log(`  ${line}`);
+  console.log('');
+  console.log(`  Overall: ${result.overall.toUpperCase()}`);
+  if (result.errors.length > 0) console.log(`  Errors:  ${result.errors.join(', ')}`);
+  console.log('');
+}
+
+async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
+  const receiptPath = args.file;
+  const inclusionPath = args.inclusionFile || args.positionals[1] || null;
+  const headPath = args.headFile || (args.inclusionFile ? null : args.positionals[2]) || null;
+  if (!receiptPath || !inclusionPath || !headPath) {
+    console.error('Anchor check needs a receipt, an inclusion proof, and a tree head.');
+    console.error('  xfuel-verify receipt.json inclusion.json head.json --rpc');
+    return 3;
+  }
+  let receipt: AnchorReceipt;
+  let inclusion: AnchorInclusion;
+  let head: AnchorHead;
+  try {
+    receipt = readJson(receiptPath) as AnchorReceipt;
+    inclusion = readJson(inclusionPath) as AnchorInclusion;
+    head = readJson(headPath) as AnchorHead;
+  } catch (err) {
+    console.error(`Error reading anchor inputs: ${err instanceof Error ? err.message : String(err)}`);
+    return 3;
+  }
+  const result = await verifyAnchoredRoot({
+    receipt,
+    inclusion,
+    head,
+    baseRpcUrl: args.rpcUrl || undefined,
+    solanaRpcUrl: args.solanaRpcUrl || undefined,
+  });
+  printAnchor(result, args.json, args.quiet);
+  if (result.overall === 'verified') return 0;
+  if (result.overall === 'partial') return 2;
+  return 1;
+}
+
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
+  const anchorMode = args.anchorFlag
+    || Boolean(args.inclusionFile || args.headFile)
+    || (args.positionals.length >= 3 && args.sawRpc);
 
-  if (args.help || !args.file) {
+  if (args.help) {
     console.log(HELP);
-    return args.help ? 0 : 3;
+    return 0;
+  }
+  if (anchorMode) return runAnchor(args);
+
+  if (!args.file) {
+    console.log(HELP);
+    return 3;
   }
 
   let receipt: XFuelReceipt;

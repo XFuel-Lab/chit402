@@ -68,7 +68,7 @@ Everything else is reference. Do not send partners this index.
 | [product/export-coverage.md](./product/export-coverage.md) | Signed set commitment on book exports |
 | [product/book-seq.md](./product/book-seq.md) | Per-book append position and gap check |
 | [product/refusal-anchor.md](./product/refusal-anchor.md) | Base block hash on a policy refusal |
-| [product/receipt-merkle.md](./product/receipt-merkle.md) | Merkle inclusion, tree head, Base anchor |
+| [product/receipt-merkle.md](./product/receipt-merkle.md) | Merkle inclusion, tree head, Base and Solana anchors |
 | [product/verifier-digest.md](./product/verifier-digest.md) | Verifier source digest in the tree genesis |
 | [product/book-act.md](./product/book-act.md) | Act type on each book row |
 | [product/correction-authority.md](./product/correction-authority.md) | Subject vs writer on corrections |
