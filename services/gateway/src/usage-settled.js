@@ -45,7 +45,7 @@ export const BOOK_EVIDENCE = {
   A2A_ESCROW: 'a2a_escrow',
   /**
    * Board stamp ($0.002). On the book, not debited from prepaid budget.
-   * P1 reserves board_bid / board_pick / board_close; those writers are not here.
+   * board_bid, board_pick, and board_close are the bid-board book rows.
    */
   BOARD_STAMP: 'board_stamp',
   /** Board publish / takedown audit. Non-spend. The note stays on the board store. */
@@ -54,6 +54,12 @@ export const BOOK_EVIDENCE = {
   BOARD_COMMENT: 'board_comment',
   /** Ops hide (and later ops actions). Audit only. */
   BOARD_OPS: 'board_ops',
+  /** Bid stamp's sibling audit row. Non-spend. */
+  BOARD_BID: 'board_bid',
+  /** Poster awarded a bid. Free. Non-spend. */
+  BOARD_PICK: 'board_pick',
+  /** Payout receipt landed on a book. The USDC moved payee-direct, so it is not prepaid spend. */
+  BOARD_CLOSE: 'board_close',
   /** Settled USDC, nothing served. Visible on the book; excluded from spend totals. */
   REFUND_OWED: 'refund_owed',
   /** OpenRouter Broadcast report. Visible on the book; Chit did not settle it. */
@@ -131,6 +137,15 @@ export function deriveEvidence(entry) {
   if (entry.event === 'board_ops' || entry.evidence === BOOK_EVIDENCE.BOARD_OPS) {
     return BOOK_EVIDENCE.BOARD_OPS;
   }
+  if (entry.event === 'board_bid' || entry.evidence === BOOK_EVIDENCE.BOARD_BID) {
+    return BOOK_EVIDENCE.BOARD_BID;
+  }
+  if (entry.event === 'board_pick' || entry.evidence === BOOK_EVIDENCE.BOARD_PICK) {
+    return BOOK_EVIDENCE.BOARD_PICK;
+  }
+  if (entry.event === 'board_close' || entry.evidence === BOOK_EVIDENCE.BOARD_CLOSE) {
+    return BOOK_EVIDENCE.BOARD_CLOSE;
+  }
   if (entry.evidence === BOOK_EVIDENCE.UNVERIFIED) {
     return BOOK_EVIDENCE.UNVERIFIED;
   }
@@ -194,7 +209,11 @@ export function entryQualifiesForCap(entry) {
     || evidence === BOOK_EVIDENCE.OPENROUTER_REPORTED
     || evidence === BOOK_EVIDENCE.BOARD_STAMP
     || evidence === BOOK_EVIDENCE.BOARD_POST
-    || evidence === BOOK_EVIDENCE.BOARD_OPS) {
+    || evidence === BOOK_EVIDENCE.BOARD_COMMENT
+    || evidence === BOOK_EVIDENCE.BOARD_OPS
+    || evidence === BOOK_EVIDENCE.BOARD_BID
+    || evidence === BOOK_EVIDENCE.BOARD_PICK
+    || evidence === BOOK_EVIDENCE.BOARD_CLOSE) {
     return false;
   }
   if (evidence === BOOK_EVIDENCE.ARRIVAL_UNVERIFIED) return false;
@@ -682,9 +701,9 @@ export class UsageSettledLedger {
   }
 
   /**
-   * Append a board audit row. Kinds: board_stamp, board_post, board_comment, board_ops.
-   * board_bid / board_pick / board_close are reserved for the bid board and rejected here.
-   * The stamp does not debit prepaid budget (evidence is excluded from caps).
+   * Append a board audit row. Kinds: board_stamp, board_post, board_comment, board_ops,
+   * board_bid, board_pick, board_close.
+   * None of these debit prepaid budget (evidence is excluded from caps).
    * @param {{
    *   agentId: number,
    *   kind: string,
@@ -695,6 +714,8 @@ export class UsageSettledLedger {
    *   rail?: string|null,
    *   parentRef?: string|null,
    *   board?: object,
+   *   payer?: string|null,
+   *   fulfillment?: object|null,
    * }} row
    */
   recordBoardEvent({
@@ -707,13 +728,16 @@ export class UsageSettledLedger {
     rail = null,
     parentRef = null,
     board = {},
+    payer = null,
+    fulfillment = null,
   }) {
     const id = Number(agentId);
     if (!Number.isInteger(id) || id < 1) {
       return { ok: false, reason: 'invalid agent_id', code: 'invalid_agent' };
     }
     const event = String(kind || '');
-    if (event !== 'board_stamp' && event !== 'board_post' && event !== 'board_comment' && event !== 'board_ops') {
+    if (event !== 'board_stamp' && event !== 'board_post' && event !== 'board_comment' && event !== 'board_ops'
+      && event !== 'board_bid' && event !== 'board_pick' && event !== 'board_close') {
       return { ok: false, reason: 'unsupported board kind', code: 'invalid_kind' };
     }
     const tid = String(taskId || '').trim();
@@ -728,7 +752,7 @@ export class UsageSettledLedger {
     const entry = {
       task_id: tid,
       payment_ref: ref,
-      payer: null,
+      payer: payer || null,
       agent_id: id,
       collected: collected === true,
       evidence: event,
@@ -742,6 +766,10 @@ export class UsageSettledLedger {
       hub: null,
       parent_ref: parentRef || null,
     };
+    if (fulfillment && typeof fulfillment === 'object') {
+      entry.fulfillment = fulfillment;
+      entry.job_kind = fulfillment.intent?.job_kind || null;
+    }
     this._index(entry);
     return { ok: true, entry, duplicate: false };
   }
@@ -804,7 +832,10 @@ export class UsageSettledLedger {
       if (boardEvidence === BOOK_EVIDENCE.BOARD_STAMP
         || boardEvidence === BOOK_EVIDENCE.BOARD_POST
         || boardEvidence === BOOK_EVIDENCE.BOARD_COMMENT
-        || boardEvidence === BOOK_EVIDENCE.BOARD_OPS) {
+        || boardEvidence === BOOK_EVIDENCE.BOARD_OPS
+        || boardEvidence === BOOK_EVIDENCE.BOARD_BID
+        || boardEvidence === BOOK_EVIDENCE.BOARD_PICK
+        || boardEvidence === BOOK_EVIDENCE.BOARD_CLOSE) {
         rows.push(e);
         continue;
       }

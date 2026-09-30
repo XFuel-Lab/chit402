@@ -163,10 +163,15 @@ function rowOf(entry) {
     if (entry.a2a_escrow.verify_url) row.verify_url = entry.a2a_escrow.verify_url;
   } else if (evidence === BOOK_EVIDENCE.BOARD_STAMP
     || evidence === BOOK_EVIDENCE.BOARD_POST
-    || evidence === BOOK_EVIDENCE.BOARD_OPS) {
+    || evidence === BOOK_EVIDENCE.BOARD_COMMENT
+    || evidence === BOOK_EVIDENCE.BOARD_OPS
+    || evidence === BOOK_EVIDENCE.BOARD_BID
+    || evidence === BOOK_EVIDENCE.BOARD_PICK
+    || evidence === BOOK_EVIDENCE.BOARD_CLOSE) {
     row.event = entry.event || evidence;
     row.board = entry.board || null;
-    row.collected = evidence === BOOK_EVIDENCE.BOARD_STAMP && entry.collected === true;
+    row.collected = (evidence === BOOK_EVIDENCE.BOARD_STAMP || evidence === BOOK_EVIDENCE.BOARD_CLOSE) && entry.collected === true;
+    if (entry.board?.verify_url) row.verify_url = entry.board.verify_url;
   } else if (hideAmount) {
     row.collected = false;
   } else if (isRecordedBySettle) {
@@ -642,8 +647,8 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
       spent_atomic: row.spent_atomic ?? null,
       cap_atomic: row.cap_atomic ?? null,
       period_start: row.period_start || null,
-      verify_url: buildVerifyUrl(baseUrl, row.task_id),
-      auditor_url: `${buildVerifyUrl(baseUrl, row.task_id)}?format=auditor`,
+      verify_url: row.verify_url || buildVerifyUrl(baseUrl, row.task_id),
+      auditor_url: `${row.verify_url || buildVerifyUrl(baseUrl, row.task_id)}${String(row.verify_url || '').includes('?') ? '&' : '?'}format=auditor`,
       explorer_url: explorerUrlForRef(row.payment.ref),
       ...(row.fulfillment ? { fulfillment: row.fulfillment } : {}),
     };

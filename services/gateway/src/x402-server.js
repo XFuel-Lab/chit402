@@ -357,6 +357,7 @@ export async function runX402Handshake(req, {
   quoteOpts = null,
   evmOnly = false,
   expectedPayer = null,
+  payTo = null,
 } = {}) {
   const priceBody = body || req.body;
   const bindParse = parseIssuanceBindFromBody(priceBody);
@@ -398,7 +399,7 @@ export async function runX402Handshake(req, {
         maxAmountRequired: charge,
         network: cfg.network,
         asset: cfg.asset,
-        payTo: cfg.payTo,
+        payTo: payTo || cfg.payTo,
         baseUrl,  // Required for absolute resource URL (CDP Bazaar cataloging)
         resource,
         issuance_bind,
