@@ -15,8 +15,11 @@ import fs from 'fs';
 import path from 'path';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 import { verifierBuildDigest } from './verifier-digest.js';
+import { clockToleranceClaim, gatePublishedAnchor } from './receipt-anchor-clock.js';
 
 export const TREE_HEAD_SCHEMA = 'chit402.tree_head.v1';
+// clock_tolerance_s and published_at are optional signed claims. Version stays
+// 1 so a head signed before those claims still verifies.
 export const TREE_HEAD_VERSION = 1;
 export const TREE_HEAD_JWT_TYP = 'chit402-tree-head+jwt';
 export const GENESIS_SCHEMA = 'chit402.tree_genesis.v1';
@@ -265,7 +268,10 @@ export class ReceiptMerkleTree {
     const proof = inclusionProof(this.leaves, index);
     const root = hex(rootOf(this.leaves));
     const head = this.heads[this.heads.length - 1] || null;
-    const anchored = head && head.tree_size === this.leaves.length && head.anchor?.tx;
+    const anchored = head
+      && head.tree_size === this.leaves.length
+      && head.anchor?.status === 'anchored'
+      && head.anchor?.tx;
     return {
       schema: 'chit402.inclusion.v1',
       payload_version: 1,
@@ -295,10 +301,14 @@ export class ReceiptMerkleTree {
     };
   }
 
-  async publishHead({ send = null, force = false } = {}) {
+  async publishHead({ send = null, force = false, blockTimestamp, readBlockTs } = {}) {
     if (this.leaves.length === 0) this.ensureGenesis();
     const root = hex(rootOf(this.leaves));
-    const anchor = await describeAnchor(root, { send });
+    const publishedAt = new Date().toISOString();
+    // Clock gate sits on the object describeAnchor already returned.
+    // A Solana side uses the same applyAnchorClock({ chain: 'solana' }).
+    const rawAnchor = await describeAnchor(root, { send });
+    const anchor = await gatePublishedAnchor(rawAnchor, publishedAt, { blockTimestamp, readBlockTs });
     const claims = {
       schema: TREE_HEAD_SCHEMA,
       payload_version: TREE_HEAD_VERSION,
@@ -307,11 +317,12 @@ export class ReceiptMerkleTree {
       anchor_status: anchor.status,
       anchor_tx: anchor.tx,
       anchor_from: anchor.from,
+      published_at: publishedAt,
+      clock_tolerance_s: clockToleranceClaim(),
     };
     const { jws, kid } = signJws(claims, { typ: TREE_HEAD_JWT_TYP });
     const head = {
       ...claims,
-      published_at: new Date().toISOString(),
       anchor,
       issuer_signature: {
         alg: 'ES256',
@@ -407,6 +418,14 @@ export function verifyTreeHead(head, jwks = null) {
   if (!result.valid) return { valid: false, reason: result.reason || 'signature_invalid' };
   const payload = result.payload || {};
   if (payload.root !== head.root || Number(payload.tree_size) !== Number(head.tree_size)) {
+    return { valid: false, reason: 'head_mismatch' };
+  }
+  // Absent on heads signed before the clock claim. Present claims must match.
+  if (payload.published_at != null && payload.published_at !== head.published_at) {
+    return { valid: false, reason: 'head_mismatch' };
+  }
+  if (payload.clock_tolerance_s != null
+    && JSON.stringify(payload.clock_tolerance_s) !== JSON.stringify(head.clock_tolerance_s)) {
     return { valid: false, reason: 'head_mismatch' };
   }
   return { valid: true, payload };

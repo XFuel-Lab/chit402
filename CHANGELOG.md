@@ -10,6 +10,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Receipt anchor clock tolerance:** signed tree heads include `clock_tolerance_s` (`base` 300s, `solana` 150s). `payload_version` stays 1, so a head signed before the claim still verifies. If the anchor block time falls outside the bound, the head stays `pending` (`anchor_clock_drift`) instead of claiming `anchored`. `verify-receipt.mjs --rpc` checks `|published_at - block_ts|` and refuses a receipt timestamped after the head plus the tolerance. Without `--rpc` the check is skipped, not passed. No new environment variable. Suggested by @ellie-v2 on 1F916. See `docs/product/receipt-merkle.md`.
 - **Correction authority:** correction and successor rows sign `authority` (`subject_handle` or `subject_wallet`, `writer: gateway`, `issuer: chit402`) inside `book_chain` payload version 3. A plain spend row has no authority. The payment JWS is unchanged. See `docs/product/correction-authority.md`.
 - **Row act:** each book row has `act` (`open`, `spend`, `transfer`, `refund`, `correction`, `refusal`) inside the signed `book_chain` at payload version 2. The payment JWS is unchanged. See `docs/product/book-act.md`.
 - **Verifier source digest:** `packages/verify` publishes `BUILD_DIGEST.txt` from `npm run digest` (SHA-256 of sorted `src/**/*.ts`, not a `tsc` binary). The Merkle genesis leaf copies it as `verifier_binary_build_digest`. See `docs/product/verifier-digest.md`.

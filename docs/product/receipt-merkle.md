@@ -18,6 +18,20 @@ The gateway signs a new head on the first append of each UTC day. The verify pag
 
 The root is the calldata of a zero-value transaction from `RECEIPT_ANCHOR_FROM` (or from the key's own address when `RECEIPT_ANCHOR_FROM` is unset). The sender key is `RECEIPT_ANCHOR_PRIVATE_KEY`. Both are environment variables. No key is committed. Without the key the head stays `anchor_status: pending`. With the key and `BASE_RPC_URL` (or `SETTLEMENT_RPC_URL`), publishing a head sends that transaction. If the send fails, the head stays pending and records the error. The inclusion proof is still signed either way.
 
+## Clock tolerance
+
+Suggested by @ellie-v2 on 1F916. The signed head carries `clock_tolerance_s` (`base: 300`, `solana: 150`). `payload_version` stays 1. A head signed before that claim still verifies; a verifier then uses these same constants.
+
+`base` is 300 seconds: a Base block is about 2 seconds, and the zero-value transaction can wait in the mempool. `solana` is 150 seconds: a blockhash expires after 151 slots (about 60 seconds at the 400ms target), and `getBlockTime` is a stake-weighted median that can lag wall clock by more than one of those windows. 150 seconds covers that lag. It does not accept a block from a different recent-blockhash epoch. The daily head is much further apart than either bound.
+
+If the anchor transaction's block time is already known and `|published_at - block_ts|` is outside the bound, the head stays `pending` with reason `anchor_clock_drift` and does not claim `anchored`. The next head samples again. No new environment variable.
+
+The offline verifier checks the same bound when you pass `--rpc` (and `--solana-rpc` for a Solana anchor). It fetches the anchor transaction's block time. It also refuses a receipt whose own timestamp is later than `published_at` plus the tolerance, so a later receipt cannot be treated as covered by an older anchor. Without `--rpc` the check is reported as skipped, not passed.
+
+```bash
+node services/gateway/scripts/verify-receipt.mjs receipt.json "$SECRET" --head head.json --rpc "$BASE_RPC_URL"
+```
+
 ## What this proves
 
 The leaf for this receipt is in the issuer's tree of the stated size, under the stated root. A consistency proof shows an earlier root is a prefix of a later one. A signed head shows the issuer published that root.

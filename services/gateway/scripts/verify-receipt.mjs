@@ -8,10 +8,16 @@
  * Usage:
  *   node verify-receipt.mjs <receipt.json> <secret>
  *   node verify-receipt.mjs <receipt.json> <primary-secret> <co-signer-secret>
+ *   node verify-receipt.mjs <receipt.json> <secret> --head head.json --rpc <base-rpc>
+ *
+ * The anchor clock check reads the anchor transaction's block time and
+ * compares it with the head's published_at. Without --rpc that check is
+ * skipped, not passed. --solana-rpc checks anchors.solana the same way.
  *
  * Exit codes:
- *   0 — receipt is valid (verified by at least one key)
- *   1 — receipt is invalid or no signature found
+ *   0 — receipt is valid (verified by at least one key) and the clock check
+ *       passed or was skipped
+ *   1 — receipt is invalid, no signature found, or anchor_clock_drift
  *
  * See docs/VERIFY_ALGORITHM.md for the full specification.
  * For on-chain payer match (Base/Solana): scripts/verify-receipt-payer.mjs
@@ -19,6 +25,15 @@
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import {
+  assessInclusion,
+  formatAnchorClock,
+  verifyAnchorClock,
+  receiptTimestampSeconds,
+} from '../src/receipt-anchor-clock.js';
+import { leafHash, verifyInclusion, verifyTreeHead } from '../src/receipt-merkle.js';
 
 /**
  * HMAC payload version. <= 7 uses the historical fee-split list.
@@ -144,53 +159,145 @@ function verifyMulti(receipt, secrets) {
 
 // ─── CLI entry point ─────────────────────────────────────────────────────────
 
-const args = process.argv.slice(2);
-if (args.length < 2) {
-  console.error(`
+const HELP = `
 XFuel Receipt Verifier — offline HMAC verification
 
 Usage:
   node verify-receipt.mjs <receipt.json> <secret>
   node verify-receipt.mjs <receipt.json> <primary> <co-signer>
+  node verify-receipt.mjs <receipt.json> <secret> --head head.json --rpc <base-rpc>
 
 Arguments:
   receipt.json   Path to a JSON file containing the receipt
   secret(s)      One or more HMAC secrets to try
 
+Options:
+  --head <file>       Signed tree head (chit402.tree_head.v1). Also read from
+                      receipt.tree_head or receipt.head when present.
+  --rpc <url>         Base RPC. Fetches the anchor tx block time. Without this
+                      flag the clock check is skipped, not passed.
+  --solana-rpc <url>  Solana RPC for anchors.solana. Same skip rule.
+
 Exit codes:
-  0  Valid (verified by at least one key)
-  1  Invalid or no signature found
+  0  Valid (verified by at least one key) and the clock check passed or was skipped
+  1  Invalid, no signature found, or anchor_clock_drift
 
 See docs/VERIFY_ALGORITHM.md for the full specification.
-`);
-  process.exit(1);
-}
+`;
 
-const [receiptPath, ...secrets] = args;
-
-let receipt;
-try {
-  receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
-} catch (err) {
-  console.error(`Error reading receipt: ${err.message}`);
-  process.exit(1);
-}
-
-console.log(`Task ID: ${receipt.task_id}`);
-console.log(`Payment: ${receipt.payment?.rail} ${receipt.payment?.gross_amount} → ${receipt.payment?.ref || 'none'}`);
-console.log(`Model:   ${receipt.route?.model || 'unknown'}`);
-console.log(`Output:  ${receipt.output?.hash?.slice(0, 20) || 'none'}...`);
-console.log();
-
-const result = verifyMulti(receipt, secrets);
-
-if (result.valid) {
-  console.log(`✓ VALID — verified by ${result.validatedBy} (${result.role})`);
-  process.exit(0);
-} else {
-  console.log(`✗ INVALID — ${result.reason}`);
-  if (result.reason === 'all_keys_failed') {
-    console.log('  None of the provided secrets matched any signature.');
+export function parseVerifierArgs(argv) {
+  const out = {
+    positionals: [],
+    headPath: null,
+    sawRpc: false,
+    rpcUrl: null,
+    solanaRpcUrl: null,
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--head' && argv[i + 1]) {
+      out.headPath = argv[++i];
+    } else if (arg === '--rpc') {
+      out.sawRpc = true;
+      const next = argv[i + 1];
+      if (next && !next.startsWith('-')) out.rpcUrl = argv[++i];
+      else out.rpcUrl = process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || null;
+    } else if (arg === '--solana-rpc') {
+      out.sawRpc = true;
+      const next = argv[i + 1];
+      if (next && !next.startsWith('-')) out.solanaRpcUrl = argv[++i];
+      else out.solanaRpcUrl = process.env.SOLANA_RPC_URL || null;
+    } else if (!arg.startsWith('-')) {
+      out.positionals.push(arg);
+    }
   }
-  process.exit(1);
+  return out;
+}
+
+function readJson(file) {
+  return JSON.parse(readFileSync(file, 'utf8'));
+}
+
+function jwksFor(head) {
+  const jwk = head?.issuer_signature?.issuer_jwk;
+  if (jwk) return { keys: [jwk] };
+  return null;
+}
+
+async function runCli(argv) {
+  const args = parseVerifierArgs(argv);
+  if (args.positionals.length < 2) {
+    console.error(HELP);
+    return 1;
+  }
+  const [receiptPath, ...secrets] = args.positionals;
+
+  let receipt;
+  try {
+    receipt = readJson(receiptPath);
+  } catch (err) {
+    console.error(`Error reading receipt: ${err.message}`);
+    return 1;
+  }
+
+  let head = receipt.tree_head || receipt.head || null;
+  if (args.headPath) {
+    try {
+      head = readJson(args.headPath);
+    } catch (err) {
+      console.error(`Error reading tree head: ${err.message}`);
+      return 1;
+    }
+  }
+
+  console.log(`Task ID: ${receipt.task_id}`);
+  console.log(`Payment: ${receipt.payment?.rail} ${receipt.payment?.gross_amount} → ${receipt.payment?.ref || 'none'}`);
+  console.log(`Model:   ${receipt.route?.model || 'unknown'}`);
+  console.log(`Output:  ${receipt.output?.hash?.slice(0, 20) || 'none'}...`);
+  console.log();
+
+  const result = verifyMulti(receipt, secrets);
+  if (result.valid) {
+    console.log(`✓ VALID — verified by ${result.validatedBy} (${result.role})`);
+  } else {
+    console.log(`✗ INVALID — ${result.reason}`);
+    if (result.reason === 'all_keys_failed') {
+      console.log('  None of the provided secrets matched any signature.');
+    }
+  }
+
+  let clockFailed = false;
+  if (head || args.sawRpc) {
+    const verified = head ? verifyTreeHead(head, jwksFor(head)) : null;
+    const inclusion = receipt.inclusion || null;
+    const proof = assessInclusion({
+      receipt,
+      inclusion,
+      head,
+      verifyInclusion,
+      leafHash,
+    });
+    const clock = await verifyAnchorClock({
+      head,
+      signedPayload: verified?.valid ? verified.payload : null,
+      signatureValid: head ? Boolean(verified?.valid) : true,
+      signatureReason: verified?.reason || null,
+      enabled: args.sawRpc,
+      rpcUrl: args.rpcUrl,
+      solanaRpcUrl: args.solanaRpcUrl,
+      receiptTs: receiptTimestampSeconds(receipt),
+      proven: args.sawRpc ? proof.proven : null,
+    });
+    console.log(formatAnchorClock(clock));
+    clockFailed = clock.status === 'failed';
+  }
+
+  if (!result.valid || clockFailed) return 1;
+  return 0;
+}
+
+const isMain = process.argv[1]
+  && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+if (isMain) {
+  runCli(process.argv.slice(2)).then((code) => process.exit(code));
 }
