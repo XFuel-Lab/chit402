@@ -128,11 +128,40 @@ export interface BookTotals {
   by_rail: Record<string, { count: number; amount: string }>;
 }
 
+export interface BookCoverageScope {
+  book_id: number;
+  from: string | null;
+  to: string | null;
+  filters: { evidence: string | null; intent_id: string | null };
+  limit: number | null;
+}
+
+/** Signed commitment to the book window. Schema chit402.export_coverage.v1. */
+export interface BookCoverage {
+  schema: string;
+  payload_version: number;
+  book_id: number;
+  scope: BookCoverageScope;
+  enumerated_count: number;
+  universe_count: number | null;
+  enumerated_hash: string | null;
+  universe_hash: string | null;
+  complete: boolean;
+  truncated: boolean;
+  empty_reason: 'empty_by_policy' | 'empty_by_drain' | null;
+  omitted_by_policy_count: number | null;
+  filtered_out_count: number | null;
+  proves?: string;
+  does_not_prove?: string;
+  issuer_signature?: { alg?: string; jws?: string; kid?: string; payload_version?: number };
+}
+
 export interface AgentBookResponse {
   agent_id: number;
   limit: number;
   entries: BookEntry[];
   totals: BookTotals;
+  coverage?: BookCoverage;
   intents?: Record<string, IntentGroup>;
   window: string;
   cap: string | null;

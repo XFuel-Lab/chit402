@@ -69,6 +69,7 @@ import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger, setBookRowWrittenHook } from './usage-settled.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
+import { coverageForLedger } from './export-coverage.js';
 import { getBookWebhookRegistry, scheduleBookWebhook, manageBookWebhook } from './book-webhook.js';
 import { recordBookInflow, correctBookInflow } from './book-inflow.js';
 import {
@@ -2569,30 +2570,45 @@ export function createApp() {
       const ledgerRow = usageSettled.findByTask(taskId) || usageSettled.findByTask(rawTaskId);
       const openRouterReceipt = findOpenRouterPublicReceipt(taskId, { baseUrl, reqHost, ledgerRow })
         || findOpenRouterPublicReceipt(rawTaskId, { baseUrl, reqHost, ledgerRow });
+      const withBookCoverage = (receipt) => {
+        if (!receipt || !ledgerRow?.agent_id) return receipt;
+        try {
+          const coverage = coverageForLedger(usageSettled, ledgerRow.agent_id, {
+            subjectTaskId: ledgerRow.task_id || receipt.task_id,
+          });
+          return { ...receipt, coverage };
+        } catch (err) {
+          logger.warn({ err: err.message, taskId }, 'receipt coverage omitted');
+          return receipt;
+        }
+      };
+
       if (openRouterReceipt) {
+        const covered = withBookCoverage(openRouterReceipt);
         if (wantsAuditor) {
-          const exportDoc = buildAuditorExport(openRouterReceipt, { policy: null });
+          const exportDoc = buildAuditorExport(covered, { policy: null });
           if (String(req.query.view || '') === 'html') {
             return res.type('html').send(renderAuditorHtml(exportDoc));
           }
           return res.json(exportDoc);
         }
-        if (wantsJson) return res.json(openRouterReceipt);
-        return res.type('html').send(renderReceiptHtml(openRouterReceipt));
+        if (wantsJson) return res.json(covered);
+        return res.type('html').send(renderReceiptHtml(covered));
       }
       const foreignReceipt = ledgerRow?.receipt_snapshot && ledgerRow.source !== 'openrouter_broadcast'
         ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl, reqHost })
         : null;
       if (foreignReceipt) {
+        const covered = withBookCoverage(foreignReceipt);
         if (wantsAuditor) {
-          const exportDoc = buildAuditorExport(foreignReceipt, { policy: null });
+          const exportDoc = buildAuditorExport(covered, { policy: null });
           if (String(req.query.view || '') === 'html') {
             return res.type('html').send(renderAuditorHtml(exportDoc));
           }
           return res.json(exportDoc);
         }
-        if (wantsJson) return res.json(foreignReceipt);
-        return res.type('html').send(renderReceiptHtml(foreignReceipt));
+        if (wantsJson) return res.json(covered);
+        return res.type('html').send(renderReceiptHtml(covered));
       }
 
       const aiListener = getAIListener();
@@ -2631,8 +2647,9 @@ export function createApp() {
         return res.json(exportDoc);
       }
 
-      if (wantsJson) return res.json(storedReceiptJson(receipt));
-      return res.type('html').send(renderReceiptHtml(receipt));
+      const covered = withBookCoverage(receipt);
+      if (wantsJson) return res.json(storedReceiptJson(covered));
+      return res.type('html').send(renderReceiptHtml(covered));
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt error');
       return res.status(500).json({ error: 'internal', message: err.message });
@@ -3967,7 +3984,16 @@ export function createApp() {
       const format = req.query.format || 'csv';
       const limit = req.query.limit;
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-      const result = exportAgentBook(id, { session, proof, limit, format }, {
+      const result = exportAgentBook(id, {
+        session,
+        proof,
+        limit,
+        format,
+        from: req.query.from,
+        to: req.query.to,
+        evidence: req.query.evidence,
+        intent_id: req.query.intent_id,
+      }, {
         ledger: usageSettled,
         verify: verifyBook,
         registry: agentRegistry,
@@ -4010,7 +4036,16 @@ export function createApp() {
       const format = body.format || req.query.format || 'csv';
       const limit = body.limit ?? req.query.limit;
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-      const result = exportAgentBook(id, { session, proof, limit, format }, {
+      const result = exportAgentBook(id, {
+        session,
+        proof,
+        limit,
+        format,
+        from: body.from ?? req.query.from,
+        to: body.to ?? req.query.to,
+        evidence: body.evidence ?? req.query.evidence,
+        intent_id: body.intent_id ?? req.query.intent_id,
+      }, {
         ledger: usageSettled,
         verify: verifyBook,
         registry: agentRegistry,

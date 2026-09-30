@@ -33,6 +33,8 @@ Possession-gated. Query/body: `format=csv|json|html`, optional `limit` (max 200)
 - **json** — `chit402.book_audit.v1` pack with per-row `evidence` (`collected` | `RECORDED_BY_SETTLE` | `ARRIVAL_UNVERIFIED` | `inflow_claimed` | `UNVERIFIED` | `policy_blocked`) and `auditor_url` (`?format=auditor`)
 - **html** — print-friendly page; use browser Print to PDF
 
+JSON, CSV, and HTML all carry a signed [export coverage](./export-coverage.md) object (`enumerated_count`, `scope`, `universe_hash`). A truncated file and an empty scan are different signed statements. CSV puts the commitment in a `#` preamble, including `coverage_jws`.
+
 ### Evidence status (greenspan + ellie-v2)
 
 Book and export never treat missing possession evidence as zero payment. Each row carries `evidence`:

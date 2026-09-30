@@ -25,6 +25,7 @@ import {
 import { buildFulfillmentEnvelope, OUTPUT_COMMITMENT_STATUS } from './fulfillment-receipt.js';
 import { buildReceiptOgMeta, buildReceiptOgImageUrl } from './receipt-og-meta.js';
 import { tier2ProofUnits, internalSettlementAccounting } from './pricing.js';
+import { renderCoverageSection } from './export-coverage.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -2685,6 +2686,8 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
         ? row('Protocol fee', `${usdcCell(p.fee_amount)} <span class="muted">(${esc(p.protocol_fee_bps ?? p.fee_bps)} bps)</span>`)
         : ''}
     </section>`) }
+
+    ${renderCoverageSection(receipt.coverage)}
 
     <section class="card">
       <h2>Verification</h2>

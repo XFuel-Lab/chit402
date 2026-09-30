@@ -86,6 +86,12 @@ This does **not** mean prompts are encrypted. See [PRIVATE_SPEND_THESIS.md](./PR
 
 Buyer-only usage: authenticated `GET /stats/me` (API key hash filter).
 
+## Export coverage (book set)
+
+Book views and exports carry a separate signed object, `chit402.export_coverage.v1` (`payload_version: 1`). It binds `enumerated_count`, the query `scope` (book id, time range, filters), and `universe_hash` over the ordered row commitments. The spend receipt JWS is not rewritten. See [export-coverage.md](./product/export-coverage.md).
+
+The verify page shows that object when the row sits on a book. `empty_by_policy` is a finished scan of an empty set (empty-set hash). `empty_by_drain` is an unfinished scan (`universe_hash: null`).
+
 ## Auditor export (Sprint 4)
 
 `GET /receipt/:taskId?format=auditor` → selective disclosure (`xfuel.auditor_export.v1`):

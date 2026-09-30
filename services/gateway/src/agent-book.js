@@ -15,6 +15,11 @@ import { clampBookLimit, BOOK_MAX_LIMIT, deriveEvidence, BOOK_EVIDENCE, entryQua
 import { DEFAULT_FLOOR_UNITS } from './pricing.js';
 import { buildVerifyUrl, explorerUrlForRef } from './receipt.js';
 import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
+import {
+  selectBookWindow,
+  coverageCsvPreamble,
+  renderCoverageSection,
+} from './export-coverage.js';
 
 export { clampBookLimit, BOOK_DEFAULT_LIMIT, BOOK_MAX_LIMIT } from './usage-settled.js';
 export { deriveEvidence, BOOK_EVIDENCE } from './usage-settled.js';
@@ -332,7 +337,18 @@ export function packBook(entries, agentId, limit, extra = {}) {
       note: 'Gateway-trusted vendor blind — not prompt confidentiality.',
     };
   }
+  if (extra.coverage) body.coverage = extra.coverage;
   return body;
+}
+
+function scopeFromClaim(claim, limit) {
+  return {
+    limit,
+    from: claim.from || null,
+    to: claim.to || null,
+    evidence: claim.evidence || null,
+    intentId: claim.intent_id || claim.intentId || null,
+  };
 }
 
 /**
@@ -345,6 +361,10 @@ export function claimFromRequest(req) {
   const session = body.session || headers['x-xfuel-session'] || null;
   const proof = body.proof || body.hmac || headers['x-xfuel-book-proof'] || null;
   const limit = body.limit ?? req.query?.limit;
+  const from = body.from ?? req.query?.from ?? null;
+  const to = body.to ?? req.query?.to ?? null;
+  const evidence = body.evidence ?? req.query?.evidence ?? null;
+  const intentId = body.intent_id ?? req.query?.intent_id ?? null;
   const hasBudget = Object.prototype.hasOwnProperty.call(body, 'budget')
     || Object.prototype.hasOwnProperty.call(body, 'cap')
     || Object.prototype.hasOwnProperty.call(body, 'Y');
@@ -358,6 +378,10 @@ export function claimFromRequest(req) {
     proof: proof ? String(proof) : null,
     limit,
     budget: hasBudget ? budget : undefined,
+    from: from ? String(from) : null,
+    to: to ? String(to) : null,
+    evidence: evidence ? String(evidence) : null,
+    intent_id: intentId ? String(intentId) : null,
   };
 }
 
@@ -423,7 +447,9 @@ export function readAgentBook(agentId, claim = {}, { ledger, verify, registry } 
     return { status: 403, body: null };
   }
 
-  const entries = ledger.listByAgent(id, { limit: window });
+  const scope = scopeFromClaim(claim, window);
+  const selected = selectBookWindow(ledger, id, scope);
+  const entries = selected.entries;
   const identity = typeof registry?.get === 'function' ? registry.get(id) : null;
   const spent = typeof ledger.sumCollectedByAgent === 'function'
     ? ledger.sumCollectedByAgent(id)
@@ -431,7 +457,12 @@ export function readAgentBook(agentId, claim = {}, { ledger, verify, registry } 
   const sessionKey = session || identity?.session || null;
   return {
     status: 200,
-    body: packBook(entries, id, window, { identity, spent, session: sessionKey }),
+    body: packBook(entries, id, window, {
+      identity,
+      spent,
+      session: sessionKey,
+      coverage: selected.coverage,
+    }),
   };
 }
 
@@ -563,7 +594,7 @@ export function bindBookVerifier(registry) {
  * @param {number} agentId
  * @param {string} baseUrl — gateway public base for verify_url
  */
-export function buildBookExportCsv(entries, agentId, baseUrl) {
+export function buildBookExportCsv(entries, agentId, baseUrl, coverage = null) {
   const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,policy_code,reason,policy_key,spent_atomic,cap_atomic,period_start,replay_count,verify_url,explorer_url';
   const lines = [header];
   for (const e of entries) {
@@ -595,7 +626,7 @@ export function buildBookExportCsv(entries, agentId, baseUrl) {
     ].map(csvEscape);
     lines.push(cols.join(','));
   }
-  return lines.join('\n');
+  return `${coverageCsvPreamble(coverage)}${lines.join('\n')}`;
 }
 
 function csvEscape(v) {
@@ -613,7 +644,7 @@ function csvEscape(v) {
  * @param {string} baseUrl
  * @param {{ policy?: object|null, totals?: object }} [opts]
  */
-export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, totals = null } = {}) {
+export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, totals = null, coverage = null } = {}) {
   const rows = entries.map((e) => {
     const row = rowOf(e);
     return {
@@ -653,6 +684,7 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
     agent_id: Number(agentId),
     exported_at: new Date().toISOString(),
     row_count: rows.length,
+    coverage: coverage || null,
     totals: totals || totalsOf(entries),
     policy: policy || null,
     rows,
@@ -699,6 +731,7 @@ export function renderBookAuditHtml(pack) {
 </head><body>
 <h1>Chit402 book audit — agent ${esc(pack.agent_id)}</h1>
 <p class="meta">Exported ${esc(pack.exported_at)} · ${esc(pack.row_count)} rows · schema ${esc(pack.schema)}</p>
+${pack.coverage ? renderCoverageSection(pack.coverage) : ''}
 <table>
   <thead><tr><th>Evidence</th><th>Time</th><th>Hub</th><th>Model</th><th>Amount (µUSDC)</th><th>Payment</th><th>Links</th></tr></thead>
   <tbody>${rows}</tbody>
@@ -736,19 +769,22 @@ export function exportAgentBook(agentId, claim = {}, { ledger, verify, registry,
   }
 
   const format = String(claim.format || 'csv').toLowerCase();
-  const entries = ledger.listByAgent(id, { limit: window });
+  const scope = scopeFromClaim(claim, window);
+  const selected = selectBookWindow(ledger, id, scope);
+  const entries = selected.entries;
   const policy = typeof policyStore?.get === 'function' ? policyStore.get(id) : null;
   const pubBase = baseUrl || '';
+  const coverage = selected.coverage;
 
   if (format === 'json') {
     return {
       status: 200,
       contentType: 'application/json',
-      body: buildBookAuditPack(entries, id, pubBase, { policy, totals: totalsOf(entries) }),
+      body: buildBookAuditPack(entries, id, pubBase, { policy, totals: totalsOf(entries), coverage }),
     };
   }
   if (format === 'html') {
-    const pack = buildBookAuditPack(entries, id, pubBase, { policy, totals: totalsOf(entries) });
+    const pack = buildBookAuditPack(entries, id, pubBase, { policy, totals: totalsOf(entries), coverage });
     return {
       status: 200,
       contentType: 'text/html; charset=utf-8',
@@ -760,6 +796,6 @@ export function exportAgentBook(agentId, claim = {}, { ledger, verify, registry,
     status: 200,
     contentType: 'text/csv; charset=utf-8',
     filename: `chit402-book-${id}.csv`,
-    body: buildBookExportCsv(entries, id, pubBase),
+    body: buildBookExportCsv(entries, id, pubBase, coverage),
   };
 }
