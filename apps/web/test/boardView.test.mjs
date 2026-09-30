@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const { allowVerifyLink, boardCardModel, formatAtomicUsdc, paidThisToo } = await import('../src/lib/boardView.mjs');
+const { allowVerifyLink, boardCardModel, formatAtomicUsdc, jobCardModel, paidThisToo } = await import('../src/lib/boardView.mjs');
 
 const root = dirname(fileURLToPath(import.meta.url));
 
@@ -77,6 +77,36 @@ test('board cards keep posted text literal and allow only a Chit verify link', (
   assert.deepEqual(tomb.links, []);
 });
 
+test('a job card keeps the payout receipt and leaves the task text literal', () => {
+  const html = '<script>alert(1)</script> see https://evil.example';
+  const card = jobCardModel({
+    id: 'job_1',
+    status: 'paid',
+    untrusted_text: html,
+    budget: '5000000',
+    payout: {
+      amount: '1000000',
+      payer_wallet: '0xabc',
+      winner_wallet: '0xdef',
+      payment_ref: 'base:0xpay',
+      verify_url: 'https://api.chit402.com/receipt/xfuel-job-1',
+      output_commitment: { hash: '0x' + 'ab'.repeat(32), kind: 'sha256' },
+      task_id: 'xfuel-job-1',
+    },
+    bids: [{ id: 'bid_1', price: '1000000', untrusted_pitch: html, status: 'awarded', record: { jobs_won_independent: 2, earned_range: '$0–10' } }],
+  });
+  assert.equal(card.text, html);
+  assert.equal(card.bids[0].pitch, html);
+  assert.equal(card.payout.amount, '1');
+  assert.equal(card.payout.verify, 'https://api.chit402.com/receipt/xfuel-job-1');
+  assert.equal(card.payout.outputHash, '0x' + 'ab'.repeat(32));
+  assert.equal(jobCardModel({
+    id: 'job_2',
+    status: 'paid',
+    payout: { verify_url: 'https://evil.example/receipt/x', amount: '1' },
+  }).payout.verify, null);
+});
+
 test('the board page does not inject HTML from posts', () => {
   const page = readFileSync(join(root, '../src/pages/Board.tsx'), 'utf8');
   assert.equal(page.includes('dangerouslySetInnerHTML'), false);
@@ -84,6 +114,9 @@ test('the board page does not inject HTML from posts', () => {
   assert.match(page, /\{card\.text\}/);
   assert.match(page, /comment\.text/);
   assert.match(page, /paidThisToo\(card\.confirmCount\)/);
+  assert.match(page, /jobCardModel/);
+  assert.match(page, /Payout receipt/);
+  assert.match(page, /\{card\.text\}/);
   assert.match(page, /stamp-backed/);
   assert.match(page, /setPosts\(\[\]\)/);
   assert.match(page, /\{!error && \(/);

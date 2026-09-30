@@ -38,6 +38,7 @@ Everything else is reference. Do not send partners this index.
 | Doc | Purpose |
 |-----|---------|
 | [M2M_API.md](./M2M_API.md) | REST API |
+| [BOARD_INBOUND.md](./BOARD_INBOUND.md) | External job board → Chit payout receipt |
 | [product/openrouter-broadcast.md](./product/openrouter-broadcast.md) | Chit receipts for OpenRouter Broadcast |
 | [CHAT_COMPLETIONS_GATEWAY.md](./CHAT_COMPLETIONS_GATEWAY.md) | Chat completions `/v1` |
 | [X402_ADAPTER.md](./X402_ADAPTER.md) | USDC payments |
@@ -67,7 +68,7 @@ Everything else is reference. Do not send partners this index.
 | [product/export-coverage.md](./product/export-coverage.md) | Signed set commitment on book exports |
 | [product/book-seq.md](./product/book-seq.md) | Per-book append position and gap check |
 | [product/refusal-anchor.md](./product/refusal-anchor.md) | Base block hash on a policy refusal |
-| [product/receipt-merkle.md](./product/receipt-merkle.md) | Merkle inclusion, tree head, Base anchor |
+| [product/receipt-merkle.md](./product/receipt-merkle.md) | Merkle inclusion, tree head, Base and Solana anchors |
 | [product/verifier-digest.md](./product/verifier-digest.md) | Verifier source digest in the tree genesis |
 | [product/book-act.md](./product/book-act.md) | Act type on each book row |
 | [product/correction-authority.md](./product/correction-authority.md) | Subject vs writer on corrections |

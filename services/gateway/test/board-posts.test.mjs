@@ -172,11 +172,16 @@ test('stamp is 402 until paid, then the book records board_stamp without debitin
   const listed = ctx.ledger.listByAgent(ctx.agent.agent_id);
   assert.ok(listed.some((e) => e.event === 'board_stamp'));
   assert.ok(listed.some((e) => e.event === 'board_post'));
-  assert.equal(ctx.ledger.recordBoardEvent({
+  const bidRow = ctx.ledger.recordBoardEvent({
     agentId: ctx.agent.agent_id,
     kind: 'board_bid',
-    taskId: 'nope',
-  }).ok, false);
+    taskId: 'board-bid-reserved',
+    amount: '1000000',
+    board: { job_id: 'job_test' },
+  });
+  assert.equal(bidRow.ok, true);
+  assert.equal(entryQualifiesForCap(bidRow.entry), false);
+  assert.equal(deriveEvidence(bidRow.entry), BOOK_EVIDENCE.BOARD_BID);
 });
 
 test('one receipt backs one post', async () => {

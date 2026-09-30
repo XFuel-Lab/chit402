@@ -1,0 +1,65 @@
+#!/usr/bin/env node
+/**
+ * Post one test receipt root to Solana through the SPL Memo program.
+ *
+ * Devnet by default. Reads the process environment only — it does not load
+ * an env file and it does not print the secret.
+ *
+ *   export SOLANA_ANCHOR_SECRET_KEY=...   # base58 or JSON array
+ *   export SOLANA_ANCHOR_CLUSTER=devnet   # optional; default devnet
+ *   export SOLANA_RPC_URL=https://api.devnet.solana.com   # optional on devnet
+ *   node scripts/solana-anchor-smoke
+ *
+ * mainnet-beta is refused unless --mainnet is passed.
+ * Fee: 5,000 lamports (0.000005 SOL) per signature. No rent. No priority fee.
+ */
+import crypto from 'crypto';
+import { sendSolanaMemoAnchor, solanaAnchorMemo, ZERO_ROOT } from '../services/gateway/src/solana-receipt-anchor.js';
+
+const allowMainnet = process.argv.includes('--mainnet');
+const cluster = (process.env.SOLANA_ANCHOR_CLUSTER || 'devnet').trim();
+if (cluster !== 'mainnet-beta' && cluster !== 'devnet' && cluster !== 'testnet') {
+  console.error(`Unsupported SOLANA_ANCHOR_CLUSTER: ${cluster}`);
+  process.exit(2);
+}
+if (!allowMainnet && cluster === 'mainnet-beta') {
+  console.error('This smoke script targets devnet. Pass --mainnet to post on mainnet-beta.');
+  process.exit(2);
+}
+if (!process.env.SOLANA_ANCHOR_SECRET_KEY) {
+  console.error('Set SOLANA_ANCHOR_SECRET_KEY in the environment (base58 or a JSON byte array).');
+  process.exit(1);
+}
+
+const defaultRpc = {
+  devnet: 'https://api.devnet.solana.com',
+  testnet: 'https://api.testnet.solana.com',
+  'mainnet-beta': '',
+};
+if (!process.env.SOLANA_RPC_URL) process.env.SOLANA_RPC_URL = defaultRpc[cluster] || '';
+if (!process.env.SOLANA_RPC_URL) {
+  console.error('Set SOLANA_RPC_URL.');
+  process.exit(1);
+}
+process.env.SOLANA_ANCHOR_CLUSTER = cluster;
+
+const root = crypto.randomBytes(32).toString('hex');
+const day = new Date().toISOString().slice(0, 10);
+const memo = solanaAnchorMemo({ scope: 'smoke', day, rootHex: root, prevRootHex: ZERO_ROOT });
+console.log(`cluster: ${cluster}`);
+console.log(`memo: ${memo}`);
+
+try {
+  const result = await sendSolanaMemoAnchor({
+    memo,
+    secretKey: process.env.SOLANA_ANCHOR_SECRET_KEY,
+    rpc: process.env.SOLANA_RPC_URL,
+  });
+  const query = cluster === 'mainnet-beta' ? '' : `?cluster=${cluster}`;
+  console.log(`signature: ${result.signature}`);
+  console.log(`slot: ${result.slot ?? '—'}`);
+  console.log(`explorer: https://explorer.solana.com/tx/${result.signature}${query}`);
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}

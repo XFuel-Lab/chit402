@@ -6,16 +6,25 @@
  *
  * The first leaf is genesis (verifier build digest, when one is published).
  * Receipt leaves follow. A signed tree head is published on the first append
- * of each UTC day. Anchoring the root on Base is pending until a house wallet
- * key is configured; the address is RECEIPT_ANCHOR_FROM and the key is
- * RECEIPT_ANCHOR_PRIVATE_KEY. Neither is committed.
+ * of each UTC day. The root is anchored on Base (calldata) and on Solana
+ * (SPL Memo). Each side stays pending until its own key and RPC are set.
+ * Base: RECEIPT_ANCHOR_FROM, RECEIPT_ANCHOR_PRIVATE_KEY. Solana:
+ * SOLANA_ANCHOR_SECRET_KEY, SOLANA_RPC_URL, optional SOLANA_ANCHOR_CLUSTER.
+ * None of those are committed.
  */
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 import { verifierBuildDigest } from './verifier-digest.js';
-import { clockToleranceClaim, gatePublishedAnchor } from './receipt-anchor-clock.js';
+import { clockToleranceClaim, gatePublishedAnchor, gatePublishedSolana } from './receipt-anchor-clock.js';
+import {
+  describeSolanaAnchor,
+  parseAnchorMemo,
+  solanaAnchorCluster,
+  solanaAnchorMemo,
+  ZERO_ROOT,
+} from './solana-receipt-anchor.js';
 
 export const TREE_HEAD_SCHEMA = 'chit402.tree_head.v1';
 // clock_tolerance_s and published_at are optional signed claims. Version stays
@@ -199,6 +208,7 @@ export async function describeAnchor(rootHex, { send = null } = {}) {
   const pending = (reason) => ({
     status: 'pending',
     chain: 'base',
+    chain_id: 8453,
     from,
     tx: null,
     calldata,
@@ -210,10 +220,94 @@ export async function describeAnchor(rootHex, { send = null } = {}) {
       ? send
       : (args) => sendBaseAnchorTx({ ...args, privateKey: key });
     const tx = await sender({ from, calldata, value: '0' });
-    return { status: 'anchored', chain: 'base', from, tx: tx || null, calldata, reason: null };
+    return {
+      status: 'anchored',
+      chain: 'base',
+      chain_id: 8453,
+      from,
+      tx: tx || null,
+      calldata,
+      reason: null,
+    };
   } catch (err) {
     return pending(err.message || 'send_failed');
   }
+}
+
+function dayOf(iso) {
+  return String(iso || '').slice(0, 10);
+}
+
+function previousRoot(heads, day) {
+  for (let i = heads.length - 1; i >= 0; i -= 1) {
+    if (dayOf(heads[i].published_at) < day && heads[i].root) return heads[i].root;
+  }
+  return ZERO_ROOT;
+}
+
+function solanaAnchoredForDay(heads, day, scope) {
+  for (let i = heads.length - 1; i >= 0; i -= 1) {
+    if (dayOf(heads[i].published_at) !== day) continue;
+    const sol = heads[i].anchors?.solana;
+    const parsed = parseAnchorMemo(sol?.memo);
+    if (sol?.status === 'anchored' && sol.signature && parsed?.scope === scope) return sol;
+  }
+  return null;
+}
+
+function baseAnchoredForRoot(heads, root) {
+  for (let i = heads.length - 1; i >= 0; i -= 1) {
+    if (heads[i].root !== root) continue;
+    const base = heads[i].anchors?.base || heads[i].anchor;
+    if (base?.status === 'anchored' && base.tx) return base;
+  }
+  return null;
+}
+
+function sideNeedsRetry(side, envReady) {
+  if (!side) return envReady;
+  if (side.status === 'anchored' && (side.tx || side.signature)) return false;
+  if (side.reason === 'day_already_anchored') return false;
+  if (side.reason === 'no_key' || side.reason === 'no_rpc' || side.reason === 'bad_key' || side.reason === 'bad_cluster') {
+    return envReady;
+  }
+  return true;
+}
+
+const QUIET_REASONS = new Set(['no_key', 'no_rpc', 'bad_key', 'bad_cluster', 'day_already_anchored']);
+
+function anchorNeedsRetry(head) {
+  if (!head) return true;
+  const base = head.anchors?.base || head.anchor;
+  const sol = head.anchors?.solana;
+  const baseReady = Boolean(process.env.RECEIPT_ANCHOR_PRIVATE_KEY);
+  const solReady = Boolean(process.env.SOLANA_ANCHOR_SECRET_KEY && process.env.SOLANA_RPC_URL);
+  return sideNeedsRetry(base, baseReady) || sideNeedsRetry(sol, solReady);
+}
+
+function transportFailure(side) {
+  return Boolean(side && side.status !== 'anchored' && side.reason && !QUIET_REASONS.has(side.reason));
+}
+
+/** Minimum gap between failed anchor retries on the daily path. */
+export const ANCHOR_RETRY_MS = 60_000;
+
+/**
+ * True when the daily publisher should try again.
+ * A day that is already anchored is not due. A failed send is due once
+ * ANCHOR_RETRY_MS has passed. A missing key stays quiet until the env appears,
+ * and that transition is not debounced: the next append anchors.
+ */
+export function dailyAnchorDue(head, now = new Date()) {
+  const today = now.toISOString().slice(0, 10);
+  if (!head || dayOf(head.published_at) !== today) return true;
+  if (!anchorNeedsRetry(head)) return false;
+  const base = head.anchors?.base || head.anchor;
+  const sol = head.anchors?.solana;
+  if (!transportFailure(base) && !transportFailure(sol)) return true;
+  const age = now.getTime() - Date.parse(head.published_at);
+  if (Number.isFinite(age) && age >= 0 && age < ANCHOR_RETRY_MS) return false;
+  return true;
 }
 
 let _tree = null;
@@ -268,20 +362,24 @@ export class ReceiptMerkleTree {
     const proof = inclusionProof(this.leaves, index);
     const root = hex(rootOf(this.leaves));
     const head = this.heads[this.heads.length - 1] || null;
-    const anchored = head
-      && head.tree_size === this.leaves.length
-      && head.anchor?.status === 'anchored'
-      && head.anchor?.tx;
+    const covers = head && head.tree_size === this.leaves.length;
+    const baseSide = covers ? (head.anchors?.base || head.anchor || null) : null;
+    const baseTx = baseSide?.status === 'anchored' ? (baseSide.tx || null) : null;
+    const solana = covers ? (head.anchors?.solana || null) : null;
+    const solanaSig = solana?.status === 'anchored' ? solana.signature : null;
     return {
       schema: 'chit402.inclusion.v1',
       payload_version: 1,
       task_id: String(taskId),
       leaf_index: index,
+      leaf: this.leaves[index].toString('hex'),
       tree_size: this.leaves.length,
       root,
       proof: proof.map((step) => ({ hash: step.hash, position: step.position })),
-      anchor_status: anchored ? 'anchored' : (head ? 'pending' : 'pending'),
-      anchor_tx: anchored ? head.anchor.tx : null,
+      anchor_status: baseTx ? 'anchored' : 'pending',
+      anchor_tx: baseTx,
+      solana_signature: solanaSig,
+      anchors: covers ? (head.anchors || null) : null,
       verified_at: new Date().toISOString(),
     };
   }
@@ -301,14 +399,88 @@ export class ReceiptMerkleTree {
     };
   }
 
-  async publishHead({ send = null, force = false, blockTimestamp, readBlockTs } = {}) {
+  async publishHead(opts = {}) {
+    const prev = this._publishChain || Promise.resolve();
+    const run = prev.then(() => this._publishHeadUnlocked(opts));
+    this._publishChain = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  async _publishHeadUnlocked({
+    send = null,
+    force = false,
+    scope = 'global',
+    now = null,
+    solanaConnection = null,
+    blockTimestamp,
+    readBlockTs,
+    solanaBlockTime,
+    readSolanaBlockTs,
+  } = {}) {
     if (this.leaves.length === 0) this.ensureGenesis();
+    const publishedAt = (now ? new Date(now) : new Date()).toISOString();
+    const day = dayOf(publishedAt);
     const root = hex(rootOf(this.leaves));
-    const publishedAt = new Date().toISOString();
-    // Clock gate sits on the object describeAnchor already returned.
-    // A Solana side uses the same applyAnchorClock({ chain: 'solana' }).
-    const rawAnchor = await describeAnchor(root, { send });
-    const anchor = await gatePublishedAnchor(rawAnchor, publishedAt, { blockTimestamp, readBlockTs });
+    const prevRoot = previousRoot(this.heads, day);
+    const last = this.heads[this.heads.length - 1] || null;
+    if (!force && last && last.root === root && last.tree_size === this.leaves.length && !anchorNeedsRetry(last)) {
+      return last;
+    }
+
+    const priorBase = !send ? baseAnchoredForRoot(this.heads, root) : null;
+    let anchor = priorBase || await describeAnchor(root, { send });
+    const priorSolana = solanaAnchoredForDay(this.heads, day, scope);
+    let solana;
+    if (priorSolana) {
+      const parsed = parseAnchorMemo(priorSolana.memo);
+      const sameMemo = parsed?.root === root && parsed?.prev === prevRoot;
+      if (sameMemo) {
+        solana = { ...priorSolana };
+      } else {
+        // This UTC day already has a memo for a different root. Do not send another.
+        let memo = null;
+        let cluster = priorSolana.cluster || null;
+        try {
+          cluster = solanaAnchorCluster();
+          memo = solanaAnchorMemo({ scope, day, rootHex: root, prevRootHex: prevRoot });
+        } catch {
+          memo = null;
+        }
+        solana = {
+          status: 'pending',
+          signature: null,
+          slot: null,
+          cluster,
+          memo,
+          reason: 'day_already_anchored',
+          prior_signature: priorSolana.signature,
+        };
+      }
+    } else {
+      solana = await describeSolanaAnchor({
+        rootHex: root,
+        prevRootHex: prevRoot,
+        day,
+        scope,
+        connection: solanaConnection,
+      });
+    }
+
+    // Clock gate sits on the objects the anchor describers already returned.
+    // A reused prior anchor keeps the block it was signed against.
+    if (!priorBase) {
+      anchor = await gatePublishedAnchor(anchor, publishedAt, { blockTimestamp, readBlockTs });
+    }
+    if (!priorSolana) {
+      solana = await gatePublishedSolana(solana, publishedAt, {
+        blockTimestamp: solanaBlockTime,
+        readBlockTs: readSolanaBlockTs,
+      });
+    }
+
+    const anchors = { base: anchor, solana };
+    // Flat signed claims. clock_tolerance_s is a sibling of anchors, not a
+    // field inside the Base or Solana records.
     const claims = {
       schema: TREE_HEAD_SCHEMA,
       payload_version: TREE_HEAD_VERSION,
@@ -319,10 +491,12 @@ export class ReceiptMerkleTree {
       anchor_from: anchor.from,
       published_at: publishedAt,
       clock_tolerance_s: clockToleranceClaim(),
+      anchors,
     };
     const { jws, kid } = signJws(claims, { typ: TREE_HEAD_JWT_TYP });
     const head = {
       ...claims,
+      published_at: publishedAt,
       anchor,
       issuer_signature: {
         alg: 'ES256',
@@ -333,21 +507,22 @@ export class ReceiptMerkleTree {
         issuer_jwk: getIssuerPublicKeyJwk(),
       },
     };
-    if (!force && this.heads.length && this.heads[this.heads.length - 1].root === root
-      && this.heads[this.heads.length - 1].tree_size === head.tree_size) {
-      return this.heads[this.heads.length - 1];
-    }
-    this.heads.push(head);
+    const sameSlot = last
+      && dayOf(last.published_at) === day
+      && last.root === root
+      && last.tree_size === head.tree_size;
+    const baseWorse = (last?.anchors?.base || last?.anchor)?.status === 'anchored' && anchor.status !== 'anchored';
+    const solWorse = last?.anchors?.solana?.status === 'anchored' && solana.status !== 'anchored';
+    if (sameSlot && !baseWorse && !solWorse) this.heads[this.heads.length - 1] = head;
+    else this.heads.push(head);
     this._persist();
     return head;
   }
 
   _maybePublishDaily() {
-    const today = new Date().toISOString().slice(0, 10);
     const last = this.heads[this.heads.length - 1];
-    const lastDay = last?.published_at ? String(last.published_at).slice(0, 10) : null;
-    if (lastDay === today) return;
-    this.publishHead({ force: true }).catch(() => {});
+    if (!dailyAnchorDue(last)) return null;
+    return this.publishHead({ force: true }).catch(() => {});
   }
 
   latestHead() {
@@ -428,19 +603,30 @@ export function verifyTreeHead(head, jwks = null) {
     && JSON.stringify(payload.clock_tolerance_s) !== JSON.stringify(head.clock_tolerance_s)) {
     return { valid: false, reason: 'head_mismatch' };
   }
+  if (JSON.stringify(payload.anchors ?? null) !== JSON.stringify(head.anchors ?? null)) {
+    return { valid: false, reason: 'anchor_mismatch' };
+  }
   return { valid: true, payload };
+}
+
+function inclusionAnchorLine(inclusion) {
+  const root = inclusion.root;
+  const base = inclusion.anchor_tx;
+  const sol = inclusion.solana_signature || null;
+  if (base && sol) return `included in root ${root}, anchored in Base tx ${base} and Solana tx ${sol}`;
+  if (base) return `included in root ${root}, anchored in Base tx ${base}`;
+  if (sol) return `included in root ${root}, anchored in Solana tx ${sol}`;
+  return `included in root ${root}, pending anchor`;
 }
 
 export function renderInclusionSection(inclusion) {
   if (!inclusion || inclusion.root == null) return '';
   const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const line = inclusion.anchor_tx
-    ? `included in root ${inclusion.root}, anchored in Base tx ${inclusion.anchor_tx}`
-    : `included in root ${inclusion.root}, pending anchor`;
+  const line = inclusionAnchorLine(inclusion);
   return `<section class="card">
       <h2>Outside witness <span class="scope">chit402.inclusion.v1</span></h2>
       <div class="row"><span class="k">Inclusion</span><span class="v">${esc(line)}</span></div>
       <div class="row"><span class="k">Leaf</span><span class="v"><code>${esc(inclusion.leaf_index)}</code> of <code>${esc(inclusion.tree_size)}</code></span></div>
-      <p class="muted" style="margin:8px 0 0;font-size:12px">Proves this receipt's leaf is in the issuer's append-only tree at this size. Pending anchor means the root is signed but not yet in a Base transaction. It does not prove the payment.</p>
+      <p class="muted" style="margin:8px 0 0;font-size:12px">Proves this receipt's leaf is in the issuer's append-only tree at this size. The root is published as Base calldata and as a Solana memo. Pending anchor means that chain has not recorded it yet. It does not prove the payment.</p>
     </section>`;
 }

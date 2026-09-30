@@ -101,6 +101,67 @@ function confirmModel(row) {
   };
 }
 
+/**
+ * Job page model. Posted text stays literal.
+ * The payout receipt is a structured block: amount, payer, winner, payment ref, output hash, verify link.
+ */
+export function jobCardModel(job) {
+  if (!job || typeof job !== 'object') return null;
+  if (job.status === 'taken_down') {
+    return {
+      id: String(job.id || ''),
+      status: 'taken_down',
+      text: null,
+      outcome: null,
+      acceptance: '',
+      budget: null,
+      deadline: null,
+      preview: null,
+      related: false,
+      payout: null,
+      bids: [],
+    };
+  }
+  const commitment = job.payout?.output_commitment;
+  const hash = commitment && typeof commitment.hash === 'string' ? commitment.hash : null;
+  return {
+    id: String(job.id || ''),
+    status: String(job.status || ''),
+    outcome: typeof job.outcome === 'string' ? job.outcome : null,
+    text: job.untrusted_text == null ? '' : String(job.untrusted_text),
+    acceptance: job.untrusted_acceptance == null ? '' : String(job.untrusted_acceptance),
+    budget: formatAtomicUsdc(job.budget),
+    deadline: typeof job.deadline === 'string' ? job.deadline : null,
+    preview: typeof job.output_preview === 'string' ? job.output_preview : null,
+    related: job.related === true,
+    bids: Array.isArray(job.bids) ? job.bids.map(bidModel).filter(Boolean) : [],
+    payout: job.payout && typeof job.payout === 'object'
+      ? {
+        amount: formatAtomicUsdc(job.payout.amount),
+        payer: typeof job.payout.payer_wallet === 'string' ? job.payout.payer_wallet : null,
+        winner: typeof job.payout.winner_wallet === 'string' ? job.payout.winner_wallet : null,
+        paymentRef: typeof job.payout.payment_ref === 'string' ? job.payout.payment_ref : null,
+        outputHash: hash,
+        verify: allowVerifyLink(job.payout.verify_url),
+        taskId: typeof job.payout.task_id === 'string' ? job.payout.task_id : null,
+      }
+      : null,
+  };
+}
+
+function bidModel(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    id: String(row.id || ''),
+    price: formatAtomicUsdc(row.price),
+    eta: typeof row.eta === 'string' ? row.eta : null,
+    pitch: row.untrusted_pitch == null ? '' : String(row.untrusted_pitch),
+    status: typeof row.status === 'string' ? row.status : null,
+    won: row.record && typeof row.record.jobs_won_independent === 'number' ? row.record.jobs_won_independent : 0,
+    earned: typeof row.record?.earned_range === 'string' ? row.record.earned_range : null,
+  };
+}
+
 function commentModel(row) {
   if (!row || typeof row !== 'object') return null;
   if (row.status === 'taken_down') {

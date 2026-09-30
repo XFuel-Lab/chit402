@@ -1392,6 +1392,23 @@ export {
   jwksHostAllowed,
 } from './jws.js';
 
+export {
+  verifyAnchoredRoot,
+  verifyMerkleInclusion,
+  extractMemos,
+  parseAnchorMemo,
+  leafHash,
+  ANCHOR_PROVES,
+  ANCHOR_DOES_NOT_PROVE,
+  SOLANA_GENESIS,
+  BASE_MAINNET_CHAIN_ID,
+  type AnchorWitnessResult,
+  type AnchorReceipt,
+  type AnchorInclusion,
+  type AnchorHead,
+  type VerifyAnchoredRootInput,
+} from './anchor-witness.js';
+
 export default {
   verifyBinding,
   verifyIssuerSignature,

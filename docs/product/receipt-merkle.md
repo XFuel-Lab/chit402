@@ -12,11 +12,30 @@ Leaf 0 is genesis (`chit402.tree_genesis.v1`). It names `verifier_binary_build_d
 | `GET /v1/receipts/:task_id/inclusion` | `leaf_index`, `tree_size`, `root`, `proof` |
 | `GET /v1/receipts/tree/consistency?first=&second=` | Proof that the tree of size `first` is a prefix of size `second` |
 
-The gateway signs a new head on the first append of each UTC day. The verify page says `included in root X, anchored in Base tx Y` once a transaction hash is recorded, and `included in root X, pending anchor` before that.
+The gateway signs a new head on the first append of each UTC day. The verify page names a Base transaction, a Solana transaction, both, or `pending anchor`.
 
-## Base anchor
+## Dual anchor
 
-The root is the calldata of a zero-value transaction from `RECEIPT_ANCHOR_FROM` (or from the key's own address when `RECEIPT_ANCHOR_FROM` is unset). The sender key is `RECEIPT_ANCHOR_PRIVATE_KEY`. Both are environment variables. No key is committed. Without the key the head stays `anchor_status: pending`. With the key and `BASE_RPC_URL` (or `SETTLEMENT_RPC_URL`), publishing a head sends that transaction. If the send fails, the head stays pending and records the error. The inclusion proof is still signed either way.
+The same daily root is published on Base and on Solana. `GET /v1/receipts/tree/head` records both under `anchors`:
+
+| Side | What is posted | Recorded on the head |
+|------|----------------|----------------------|
+| `anchors.base` | Zero-value transaction whose calldata is the 32-byte root | `tx`, `calldata`, `from`, `chain_id` |
+| `anchors.solana` | SPL Memo (`MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`) | `signature`, `slot`, `cluster`, `memo` |
+
+The memo text is `chit402:root:v1:<book_or_global>:<yyyy-mm-dd>:<root_hex>:<prev_root_hex>`. The live tree uses scope `global`. `prev_root_hex` is the previous UTC day's root, or 64 zero bytes on the first head.
+
+Each side stays `pending` until its own key and RPC are set. A failed send stays `pending` and is retried on a later append, with a one-minute gap so a dead RPC is not hit on every receipt. A day that already has a Solana signature is not sent again. The inclusion proof is still signed either way.
+
+### Base
+
+Calldata is the root. The sender is `RECEIPT_ANCHOR_FROM`, or the key's own address when that is unset. The key is `RECEIPT_ANCHOR_PRIVATE_KEY`. The RPC is `BASE_RPC_URL` or `SETTLEMENT_RPC_URL`.
+
+### Solana
+
+The signer is `SOLANA_ANCHOR_SECRET_KEY` (base58 or a JSON byte array, the `solana-keygen` file shape). The RPC is `SOLANA_RPC_URL`. `SOLANA_ANCHOR_CLUSTER` defaults to `mainnet-beta`; `devnet` is for tests and `scripts/solana-anchor-smoke`. The gateway reads those from the process environment only. It does not load an env file and it does not log the secret.
+
+A memo transaction pays the protocol base fee of 5,000 lamports (0.000005 SOL) for one signature. No account is created, so there is no rent, and this sender does not set a priority fee. At about $120 per SOL that is well under a tenth of a cent.
 
 ## Clock tolerance
 
@@ -24,7 +43,7 @@ Suggested by @ellie-v2 on 1F916. The signed head carries `clock_tolerance_s` (`b
 
 `base` is 300 seconds: a Base block is about 2 seconds, and the zero-value transaction can wait in the mempool. `solana` is 150 seconds: a blockhash expires after 151 slots (about 60 seconds at the 400ms target), and `getBlockTime` is a stake-weighted median that can lag wall clock by more than one of those windows. 150 seconds covers that lag. It does not accept a block from a different recent-blockhash epoch. The daily head is much further apart than either bound.
 
-If the anchor transaction's block time is already known and `|published_at - block_ts|` is outside the bound, the head stays `pending` with reason `anchor_clock_drift` and does not claim `anchored`. The next head samples again. No new environment variable.
+If that side's transaction is already confirmed and `|published_at - block_ts|` is outside the bound for that chain, the side stays `pending` with reason `anchor_clock_drift` and the head does not claim it is anchored. The next head samples that side again. No new environment variable. The Base and Solana keys already in the environment are unchanged.
 
 The offline verifier checks the same bound when you pass `--rpc` (and `--solana-rpc` for a Solana anchor). It fetches the anchor transaction's block time. It also refuses a receipt whose own timestamp is later than `published_at` plus the tolerance, so a later receipt cannot be treated as covered by an older anchor. Without `--rpc` the check is reported as skipped, not passed.
 
@@ -34,8 +53,10 @@ node services/gateway/scripts/verify-receipt.mjs receipt.json "$SECRET" --head h
 
 ## What this proves
 
-The leaf for this receipt is in the issuer's tree of the stated size, under the stated root. A consistency proof shows an earlier root is a prefix of a later one. A signed head shows the issuer published that root.
+The leaf for this receipt is in the issuer's tree of the stated size, under the stated root. A consistency proof shows an earlier root is a prefix of a later one. A signed head shows the issuer published that root. A Base transaction whose calldata is the root, and a Solana memo that contains the root, show that root was published on those chains.
+
+`chit402-verify receipt.json inclusion.json head.json --rpc` checks the inclusion, fetches the Solana transaction, and checks the Base calldata. It prints the same boundary.
 
 ## What this does not prove
 
-It does not prove the payment. Pending anchor means the root is not in a Base transaction yet. An anchor transaction proves the issuer published the root on Base at that time. It does not prove every receipt that will ever exist is in that root — only the tree of that size.
+It does not prove the payment. Pending anchor means that chain has not recorded the root yet. An anchor proves the issuer published the root at that time. It does not prove every receipt that will ever exist is in that root — only the tree of that size. It does not prove the RPC you queried is honest; it checks the transaction that RPC returned.

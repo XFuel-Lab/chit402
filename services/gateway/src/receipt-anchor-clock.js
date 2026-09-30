@@ -205,10 +205,31 @@ export async function fetchSolanaBlockTimestamp(signature, rpcUrl, { call = json
 }
 
 /**
- * Read the Base block time when an RPC is already configured.
- * A missing RPC, a not-yet-mined tx, or a transport error leaves the anchor
- * as describeAnchor returned it. A mined block outside the bound becomes pending.
+ * Same gate for a Solana memo side. `signature` is the transaction id.
+ * A missing block time leaves the side as describeSolanaAnchor returned it.
  */
+export async function gatePublishedSolana(side, publishedAt, {
+  blockTimestamp,
+  readBlockTs,
+  rpcUrl,
+  fetchBlockTs = fetchSolanaBlockTimestamp,
+} = {}) {
+  if (!side || side.status !== 'anchored' || !side.signature) return side;
+  let blockTs = blockTimestamp;
+  if (blockTs === undefined) {
+    try {
+      if (typeof readBlockTs === 'function') blockTs = await readBlockTs(side.signature);
+      else {
+        const rpc = rpcUrl || process.env.SOLANA_RPC_URL || null;
+        blockTs = rpc ? await fetchBlockTs(side.signature, rpc) : null;
+      }
+    } catch {
+      blockTs = null;
+    }
+  }
+  return applyAnchorClock(side, { publishedAt, blockTs, chain: 'solana' });
+}
+
 export async function gatePublishedAnchor(anchor, publishedAt, {
   blockTimestamp,
   readBlockTs,

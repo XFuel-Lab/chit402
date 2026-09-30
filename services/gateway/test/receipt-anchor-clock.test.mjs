@@ -52,8 +52,12 @@ function withAnchorKey(fn) {
   const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
   const prevBase = process.env.BASE_RPC_URL;
   const prevSettlement = process.env.SETTLEMENT_RPC_URL;
+  const prevSol = process.env.SOLANA_ANCHOR_SECRET_KEY;
+  const prevSolRpc = process.env.SOLANA_RPC_URL;
   delete process.env.BASE_RPC_URL;
   delete process.env.SETTLEMENT_RPC_URL;
+  delete process.env.SOLANA_ANCHOR_SECRET_KEY;
+  delete process.env.SOLANA_RPC_URL;
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   return Promise.resolve()
     .then(fn)
@@ -64,6 +68,10 @@ function withAnchorKey(fn) {
       else process.env.BASE_RPC_URL = prevBase;
       if (prevSettlement == null) delete process.env.SETTLEMENT_RPC_URL;
       else process.env.SETTLEMENT_RPC_URL = prevSettlement;
+      if (prevSol == null) delete process.env.SOLANA_ANCHOR_SECRET_KEY;
+      else process.env.SOLANA_ANCHOR_SECRET_KEY = prevSol;
+      if (prevSolRpc == null) delete process.env.SOLANA_RPC_URL;
+      else process.env.SOLANA_RPC_URL = prevSolRpc;
       resetReceiptMerkleTree();
     });
 }
@@ -93,6 +101,8 @@ test('a block outside the bound is not published as anchored', async () => {
     assert.equal(head.anchor.tx, null);
     assert.equal(head.anchor_tx, null);
     assert.equal(head.anchor.rejected_tx, `0x${'cd'.repeat(32)}`);
+    assert.equal(head.anchors.base.reason, 'anchor_clock_drift');
+    assert.equal(head.anchors.base.status, 'pending');
     assert.deepEqual(head.clock_tolerance_s, { base: 300, solana: 150 });
     const payload = JSON.parse(Buffer.from(head.issuer_signature.jws.split('.')[1], 'base64url').toString());
     assert.equal(payload.payload_version, 1);

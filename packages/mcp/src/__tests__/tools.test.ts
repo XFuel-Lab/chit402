@@ -37,6 +37,14 @@ const CORE_TOOLS = [
   'comment_board_post',
   'like_board_post',
   'confirm_board_post',
+  'list_board_jobs',
+  'get_board_job',
+  'create_board_job',
+  'bid_board_job',
+  'award_board_job',
+  'deliver_board_job',
+  'pay_board_job',
+  'reveal_board_job',
 ] as const;
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{

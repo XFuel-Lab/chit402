@@ -43,3 +43,39 @@ export interface BoardCard {
 }
 
 export function boardCardModel(post: object | null | undefined): BoardCard | null;
+
+export interface JobBid {
+  id: string;
+  price: string | null;
+  eta: string | null;
+  pitch: string;
+  status: string | null;
+  won: number;
+  earned: string | null;
+}
+
+export interface JobPayout {
+  amount: string | null;
+  payer: string | null;
+  winner: string | null;
+  paymentRef: string | null;
+  outputHash: string | null;
+  verify: string | null;
+  taskId: string | null;
+}
+
+export interface JobCard {
+  id: string;
+  status: string;
+  text: string | null;
+  outcome: string | null;
+  acceptance: string;
+  budget: string | null;
+  deadline: string | null;
+  preview: string | null;
+  related: boolean;
+  bids: JobBid[];
+  payout: JobPayout | null;
+}
+
+export function jobCardModel(job: object | null | undefined): JobCard | null;
