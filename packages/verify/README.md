@@ -199,6 +199,10 @@ Full verification combining binding and optional nullifier check.
 }
 ```
 
+## Build digest
+
+`npm run digest` writes `BUILD_DIGEST.txt`. That file is the SHA-256 of the sorted `src/**/*.ts` listing, not a bit-reproducible `tsc` binary. The same sources produce the same digest. The receipt-tree genesis leaf copies this digest so a holder can see which verifier source the issuer vouches for. It does not prove the process that served the receipt ran that exact binary.
+
 ## License
 
 Apache-2.0

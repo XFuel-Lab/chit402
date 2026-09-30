@@ -2,7 +2,7 @@
 
 Receipts are leaves in an append-only Merkle tree. The hash is RFC 6962-style: a leaf is SHA-256 of `0x00` plus the leaf bytes, and an internal node is SHA-256 of `0x01` plus the left child plus the right child. A trailing odd node is promoted, not hashed with itself.
 
-Leaf 0 is genesis (`chit402.tree_genesis.v1`). It names `verifier_binary_build_digest` when that digest has been published. Later leaves are `task_id|row_hash`.
+Leaf 0 is genesis (`chit402.tree_genesis.v1`). It names `verifier_binary_build_digest` from [verifier-digest.md](./verifier-digest.md) when that file has been published. Later leaves are `task_id|row_hash`. The digest is a hash of the verifier sources, not a bit-reproducible compiler binary.
 
 ## What a holder gets
 
