@@ -17,6 +17,7 @@ import fs from 'fs';
 import path from 'path';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 import { verifierBuildDigest } from './verifier-digest.js';
+import { clockToleranceClaim, gatePublishedAnchor, gatePublishedSolana } from './receipt-anchor-clock.js';
 import {
   describeSolanaAnchor,
   parseAnchorMemo,
@@ -26,6 +27,8 @@ import {
 } from './solana-receipt-anchor.js';
 
 export const TREE_HEAD_SCHEMA = 'chit402.tree_head.v1';
+// clock_tolerance_s and published_at are optional signed claims. Version stays
+// 1 so a head signed before those claims still verifies.
 export const TREE_HEAD_VERSION = 1;
 export const TREE_HEAD_JWT_TYP = 'chit402-tree-head+jwt';
 export const GENESIS_SCHEMA = 'chit402.tree_genesis.v1';
@@ -360,7 +363,8 @@ export class ReceiptMerkleTree {
     const root = hex(rootOf(this.leaves));
     const head = this.heads[this.heads.length - 1] || null;
     const covers = head && head.tree_size === this.leaves.length;
-    const baseTx = covers ? (head.anchors?.base?.tx || head.anchor?.tx || null) : null;
+    const baseSide = covers ? (head.anchors?.base || head.anchor || null) : null;
+    const baseTx = baseSide?.status === 'anchored' ? (baseSide.tx || null) : null;
     const solana = covers ? (head.anchors?.solana || null) : null;
     const solanaSig = solana?.status === 'anchored' ? solana.signature : null;
     return {
@@ -408,6 +412,10 @@ export class ReceiptMerkleTree {
     scope = 'global',
     now = null,
     solanaConnection = null,
+    blockTimestamp,
+    readBlockTs,
+    solanaBlockTime,
+    readSolanaBlockTs,
   } = {}) {
     if (this.leaves.length === 0) this.ensureGenesis();
     const publishedAt = (now ? new Date(now) : new Date()).toISOString();
@@ -420,7 +428,7 @@ export class ReceiptMerkleTree {
     }
 
     const priorBase = !send ? baseAnchoredForRoot(this.heads, root) : null;
-    const anchor = priorBase || await describeAnchor(root, { send });
+    let anchor = priorBase || await describeAnchor(root, { send });
     const priorSolana = solanaAnchoredForDay(this.heads, day, scope);
     let solana;
     if (priorSolana) {
@@ -458,9 +466,21 @@ export class ReceiptMerkleTree {
       });
     }
 
+    // Clock gate sits on the objects the anchor describers already returned.
+    // A reused prior anchor keeps the block it was signed against.
+    if (!priorBase) {
+      anchor = await gatePublishedAnchor(anchor, publishedAt, { blockTimestamp, readBlockTs });
+    }
+    if (!priorSolana) {
+      solana = await gatePublishedSolana(solana, publishedAt, {
+        blockTimestamp: solanaBlockTime,
+        readBlockTs: readSolanaBlockTs,
+      });
+    }
+
     const anchors = { base: anchor, solana };
-    // Flat signed claims. Another witness (for example clock_tolerance_s) is a
-    // sibling of anchors, not a field inside the Base or Solana records.
+    // Flat signed claims. clock_tolerance_s is a sibling of anchors, not a
+    // field inside the Base or Solana records.
     const claims = {
       schema: TREE_HEAD_SCHEMA,
       payload_version: TREE_HEAD_VERSION,
@@ -469,6 +489,8 @@ export class ReceiptMerkleTree {
       anchor_status: anchor.status,
       anchor_tx: anchor.tx,
       anchor_from: anchor.from,
+      published_at: publishedAt,
+      clock_tolerance_s: clockToleranceClaim(),
       anchors,
     };
     const { jws, kid } = signJws(claims, { typ: TREE_HEAD_JWT_TYP });
@@ -571,6 +593,14 @@ export function verifyTreeHead(head, jwks = null) {
   if (!result.valid) return { valid: false, reason: result.reason || 'signature_invalid' };
   const payload = result.payload || {};
   if (payload.root !== head.root || Number(payload.tree_size) !== Number(head.tree_size)) {
+    return { valid: false, reason: 'head_mismatch' };
+  }
+  // Absent on heads signed before the clock claim. Present claims must match.
+  if (payload.published_at != null && payload.published_at !== head.published_at) {
+    return { valid: false, reason: 'head_mismatch' };
+  }
+  if (payload.clock_tolerance_s != null
+    && JSON.stringify(payload.clock_tolerance_s) !== JSON.stringify(head.clock_tolerance_s)) {
     return { valid: false, reason: 'head_mismatch' };
   }
   if (JSON.stringify(payload.anchors ?? null) !== JSON.stringify(head.anchors ?? null)) {

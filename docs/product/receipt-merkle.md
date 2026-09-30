@@ -37,6 +37,20 @@ The signer is `SOLANA_ANCHOR_SECRET_KEY` (base58 or a JSON byte array, the `sola
 
 A memo transaction pays the protocol base fee of 5,000 lamports (0.000005 SOL) for one signature. No account is created, so there is no rent, and this sender does not set a priority fee. At about $120 per SOL that is well under a tenth of a cent.
 
+## Clock tolerance
+
+Suggested by @ellie-v2 on 1F916. The signed head carries `clock_tolerance_s` (`base: 300`, `solana: 150`). `payload_version` stays 1. A head signed before that claim still verifies; a verifier then uses these same constants.
+
+`base` is 300 seconds: a Base block is about 2 seconds, and the zero-value transaction can wait in the mempool. `solana` is 150 seconds: a blockhash expires after 151 slots (about 60 seconds at the 400ms target), and `getBlockTime` is a stake-weighted median that can lag wall clock by more than one of those windows. 150 seconds covers that lag. It does not accept a block from a different recent-blockhash epoch. The daily head is much further apart than either bound.
+
+If that side's transaction is already confirmed and `|published_at - block_ts|` is outside the bound for that chain, the side stays `pending` with reason `anchor_clock_drift` and the head does not claim it is anchored. The next head samples that side again. No new environment variable. The Base and Solana keys already in the environment are unchanged.
+
+The offline verifier checks the same bound when you pass `--rpc` (and `--solana-rpc` for a Solana anchor). It fetches the anchor transaction's block time. It also refuses a receipt whose own timestamp is later than `published_at` plus the tolerance, so a later receipt cannot be treated as covered by an older anchor. Without `--rpc` the check is reported as skipped, not passed.
+
+```bash
+node services/gateway/scripts/verify-receipt.mjs receipt.json "$SECRET" --head head.json --rpc "$BASE_RPC_URL"
+```
+
 ## What this proves
 
 The leaf for this receipt is in the issuer's tree of the stated size, under the stated root. A consistency proof shows an earlier root is a prefix of a later one. A signed head shows the issuer published that root. A Base transaction whose calldata is the root, and a Solana memo that contains the root, show that root was published on those chains.
