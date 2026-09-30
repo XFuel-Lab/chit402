@@ -540,6 +540,20 @@ export default function Book() {
               </div>
             </section>
 
+            {book.sequence && (
+              <section className="card" style={{ marginBottom: '1.5rem' }}>
+                <h3 style={{ marginBottom: '0.5rem' }}>Append position</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                  {book.sequence.gapless
+                    ? `seq is gapless through ${book.sequence.max_seq || 0}. Next append is ${book.sequence.next_seq}.`
+                    : `Missing seq: ${book.sequence.gaps.join(', ') || 'unknown'}.`}
+                </p>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.5rem', maxWidth: '40rem' }}>
+                  Proves each row's append position and the previous row's hash. A replay of the same payment does not take a new seq. A correction does. It does not prove the payment itself.
+                </p>
+              </section>
+            )}
+
             {book.coverage && (
               <section className="card" style={{ marginBottom: '1.5rem' }}>
                 <h3 style={{ marginBottom: '0.5rem' }}>Export coverage</h3>

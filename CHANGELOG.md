@@ -10,6 +10,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Book seq:** each book row gets a monotonic `seq`, `prev_hash`, and `row_hash`, signed as `chit402.book_seq.v1` (`book_chain`). Idempotent replays do not take a seq. `POST .../book/inflow/correct` appends a new correction row that does. `GET /v1/agents/:agent_id/book/gaps` reports missing numbers. The payment JWS is unchanged. See `docs/product/book-seq.md`.
 - **Export coverage:** book views and CSV, JSON, and HTML exports carry a signed `chit402.export_coverage.v1` object (`enumerated_count`, query `scope`, `universe_hash`). A finished empty scan is `empty_by_policy` (empty-set hash). An unfinished scan is `empty_by_drain` (`universe_hash` null). A short limit is `truncated`. The spend receipt JWS is unchanged. The verify page and `/book` show the commitment. See `docs/product/export-coverage.md`.
 - **Surplus x402 receipt demo:** `examples/surplus-x402` pays a Surplus Intelligence endpoint with `@x402/fetch`, decodes `PAYMENT-RESPONSE`, and stamps `POST /v1/agents/:agent_id/book/ingest`. Caps refuse before any signature: 0.05 USDC on the Surplus payment, 2000 atomic USDC on the Chit stamp. `npm run list-endpoints` prints `/.well-known/x402` with prices. Keys stay in the environment.
 - **EmDash stamp fee:** `chit402-emdash` signs the $0.002 ingest stamp and retries once when `signer` is a viem account, an `xfuel-sdk` payer, or `CHIT_STAMP_PRIVATE_KEY`. No signer still serves the page and logs one startup warning.

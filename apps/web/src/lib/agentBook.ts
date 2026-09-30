@@ -164,6 +164,15 @@ export interface AgentBookResponse {
   coverage?: BookCoverage;
   intents?: Record<string, IntentGroup>;
   window: string;
+  sequence?: {
+    schema: string;
+    book_id: number;
+    gapless: boolean;
+    gaps: number[];
+    next_seq: number;
+    count: number;
+    max_seq: number;
+  };
   cap: string | null;
   spent: string;
   remaining: string | null;

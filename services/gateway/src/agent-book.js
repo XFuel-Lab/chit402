@@ -87,6 +87,10 @@ function rowOf(entry) {
   const hideAmount = isUnverified || isArrivalUnverified;
   const row = {
     task_id: entry.task_id,
+    ...(entry.seq != null ? { seq: entry.seq } : {}),
+    ...(entry.prev_hash ? { prev_hash: entry.prev_hash } : {}),
+    ...(entry.row_hash ? { row_hash: entry.row_hash } : {}),
+    ...(entry.book_chain ? { book_chain: entry.book_chain } : {}),
     evidence,
     payment: {
       ref: entry.payment_ref ?? null,
@@ -338,6 +342,7 @@ export function packBook(entries, agentId, limit, extra = {}) {
     };
   }
   if (extra.coverage) body.coverage = extra.coverage;
+  if (extra.sequence) body.sequence = extra.sequence;
   return body;
 }
 
@@ -462,6 +467,7 @@ export function readAgentBook(agentId, claim = {}, { ledger, verify, registry } 
       spent,
       session: sessionKey,
       coverage: selected.coverage,
+      sequence: typeof ledger.seqReport === 'function' ? ledger.seqReport(id) : null,
     }),
   };
 }
@@ -595,7 +601,7 @@ export function bindBookVerifier(registry) {
  * @param {string} baseUrl — gateway public base for verify_url
  */
 export function buildBookExportCsv(entries, agentId, baseUrl, coverage = null) {
-  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,policy_code,reason,policy_key,spent_atomic,cap_atomic,period_start,replay_count,verify_url,explorer_url';
+  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,policy_code,reason,policy_key,spent_atomic,cap_atomic,period_start,replay_count,verify_url,explorer_url,seq,prev_hash,row_hash';
   const lines = [header];
   for (const e of entries) {
     const row = rowOf(e);
@@ -623,6 +629,9 @@ export function buildBookExportCsv(entries, agentId, baseUrl, coverage = null) {
       row.replay_count ?? '',
       verifyUrl,
       explorerUrl,
+      row.seq ?? '',
+      row.prev_hash || '',
+      row.row_hash || '',
     ].map(csvEscape);
     lines.push(cols.join(','));
   }
@@ -649,6 +658,9 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
     const row = rowOf(e);
     return {
       task_id: row.task_id,
+      seq: row.seq ?? null,
+      prev_hash: row.prev_hash || null,
+      row_hash: row.row_hash || null,
       evidence: row.evidence,
       collected_at: row.collected_at,
       hub: row.route?.hub || null,
