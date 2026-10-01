@@ -90,7 +90,16 @@ test('pending specimens fail the receipt step and still check the entry hash', a
   assert.equal(result.verdict, 'FAIL');
 });
 
-test('a filled receipt id is verified even while status is still pending_first_stamp', async () => {
+function signEs256(privateKey, kid, payload) {
+  const header = Buffer.from(JSON.stringify({ alg: 'ES256', kid, typ: 'chit402-receipt+jwt' })).toString('base64url');
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signer = createSign('SHA256');
+  signer.update(`${header}.${body}`);
+  const sig = signer.sign({ key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+  return `${header}.${body}.${sig}`;
+}
+
+function foreignPayoutHarness() {
   const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const jwk = publicKey.export({ format: 'jwk' });
   const kid = createHash('sha256').update(JSON.stringify({
@@ -116,34 +125,84 @@ test('a filled receipt id is verified even while status is still pending_first_s
     replay_of: null,
     payment_ref: `base:${tx}`,
   };
-  const header = Buffer.from(JSON.stringify({ alg: 'ES256', kid })).toString('base64url');
-  const body = Buffer.from(JSON.stringify(chainClaims)).toString('base64url');
-  const signer = createSign('SHA256');
-  signer.update(`${header}.${body}`);
-  const sig = signer.sign({ key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+  const payoutClaims = {
+    iss: 'chit402',
+    schema: 'chit402.foreign_payout.v1',
+    task_id: taskId,
+    chain: 'base',
+    tx,
+    payment_ref: `base:${tx}`,
+    payer,
+    payee: payTo,
+    amount: '1000000',
+    asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    agent_record_entry: {
+      schema: 'chit402.agent_record_entry.v0',
+      signed: false,
+      registry: '1f916',
+      fingerprint: FINGERPRINT,
+      fingerprint_alg: '1f916-entry-hash',
+    },
+  };
   const receipt = {
     task_id: taskId,
     verify_url: `https://api.chit402.com/receipt/${taskId}`,
     foreign_x402: true,
     evidence: 'foreign_ingest',
     source: 'foreign_ingest',
+    verification: { jwks_uri: 'https://api.chit402.com/.well-known/jwks.json', source_of_truth: 'issuer_signature.jws' },
+    issuer_signature: { alg: 'ES256', kid, jws: signEs256(privateKey, kid, payoutClaims) },
     book_seq: 1,
     book_chain: {
       ...chainClaims,
-      issuer_signature: { alg: 'ES256', kid, jws: `${header}.${body}.${sig}` },
+      issuer_signature: { alg: 'ES256', kid, jws: signEs256(privateKey, kid, chainClaims) },
     },
     payment: {
       rail: 'usdc',
+      network: 'base',
       ref: `base:${tx}`,
       gross_amount: '1000000',
       payer,
       payTo,
+      payee: payTo,
     },
     signature: { alg: 'HMAC-SHA256', scope: 'recorded', value: 'sha256=abc' },
   };
   const topic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
   const pad = (addr) => `0x${addr.slice(2).toLowerCase().padStart(64, '0')}`;
-  const result = await verifyLink({
+  const fetchImpl = async (url, init) => {
+    const target = String(url);
+    if (target.endsWith('/.well-known/jwks.json')) {
+      return { ok: true, json: async () => ({ keys: [jwk] }) };
+    }
+    if (target.includes('/receipt/')) return { ok: true, json: async () => receipt };
+    if (target.includes('1f916.ai')) {
+      return {
+        ok: true,
+        json: async () => ({
+          events: [{ id: 20498, kind: 'listing', hash: FINGERPRINT }],
+          events_has_more: false,
+        }),
+      };
+    }
+    if (init?.method === 'POST') {
+      return {
+        ok: true,
+        json: async () => ({
+          result: {
+            status: '0x1',
+            logs: [{
+              address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+              topics: [topic, pad(payer), pad(payTo)],
+              data: `0x${(1000000n).toString(16).padStart(64, '0')}`,
+            }],
+          },
+        }),
+      };
+    }
+    throw new Error(`unexpected fetch ${target}`);
+  };
+  const specimen = (fingerprint) => ({
     status: 'pending_first_stamp',
     chit_receipt_id: taskId,
     chit_verify_url: `https://api.chit402.com/receipt/${taskId}?format=json`,
@@ -152,47 +211,33 @@ test('a filled receipt id is verified even while status is still pending_first_s
       registry: '1f916', handle: 'chit402', log: 'identity_events', event_id: 20498, kind: 'listing',
     },
     agent_record_entry: {
-      signed: false, registry: '1f916', fingerprint: FINGERPRINT, fingerprint_alg: '1f916-entry-hash',
-    },
-  }, {
-    rpcUrl: 'https://rpc.test/base',
-    fetchImpl: async (url, init) => {
-      const target = String(url);
-      if (target.endsWith('/.well-known/jwks.json')) {
-        return { ok: true, json: async () => ({ keys: [jwk] }) };
-      }
-      if (target.includes('/receipt/')) {
-        return { ok: true, json: async () => receipt };
-      }
-      if (target.includes('1f916.ai')) {
-        return {
-          ok: true,
-          json: async () => ({
-            events: [{ id: 20498, kind: 'listing', hash: FINGERPRINT }],
-            events_has_more: false,
-          }),
-        };
-      }
-      if (init?.method === 'POST') {
-        return {
-          ok: true,
-          json: async () => ({
-            result: {
-              status: '0x1',
-              logs: [{
-                address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-                topics: [topic, pad(payer), pad(payTo)],
-                data: `0x${(1000000n).toString(16).padStart(64, '0')}`,
-              }],
-            },
-          }),
-        };
-      }
-      throw new Error(`unexpected fetch ${target}`);
+      signed: false, registry: '1f916', fingerprint, fingerprint_alg: '1f916-entry-hash',
     },
   });
+  return { fetchImpl, specimen };
+}
+
+test('a foreign-ingest payout receipt with an issuer JWS passes while status is still pending_first_stamp', async () => {
+  const { fetchImpl, specimen } = foreignPayoutHarness();
+  const result = await verifyLink(specimen(FINGERPRINT), {
+    rpcUrl: 'https://rpc.test/base',
+    fetchImpl,
+  });
   assert.equal(result.verdict, 'PASS', formatReport(result));
-  assert.match(result.steps.issuer_signature.detail, /foreign_ingest/);
+});
+
+test('a tampered entry fingerprint fails only that step on a foreign-ingest payout', async () => {
+  const { fetchImpl, specimen } = foreignPayoutHarness();
+  const result = await verifyLink(specimen(TAMPERED), {
+    rpcUrl: 'https://rpc.test/base',
+    fetchImpl,
+  });
+  for (const name of ['fetch_receipt', 'issuer_signature', 'receipt_chain', 'on_chain_tx']) {
+    assert.equal(result.steps[name].status, 'PASS', `${name}: ${result.steps[name].detail}`);
+  }
+  assert.equal(result.steps.entry_fingerprint.status, 'FAIL');
+  assert.match(result.steps.entry_fingerprint.detail, /fingerprint_mismatch/);
+  assert.equal(result.verdict, 'FAIL');
 });
 
 describe('verifier fixture, not a public specimen', () => {

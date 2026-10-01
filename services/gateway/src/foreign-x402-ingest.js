@@ -22,6 +22,7 @@ import config from './config.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
 import { parseNanoIngest, verifyNanoSend } from './nano-rail.js';
 import { buildVerifyUrl, explorerUrlForRef, networkFromPaymentRef } from './receipt.js';
+import { getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
 import {
   buildFulfillmentEnvelope,
   fulfillmentFieldsFromIngestBody,
@@ -40,6 +41,58 @@ const USDC_ADDRESSES = {
 
 /** Base mainnet USDC. The per-tx Transfer check uses this contract. */
 export const BASE_MAINNET_USDC = USDC_ADDRESSES.base;
+
+export const FOREIGN_PAYOUT_SCHEMA = 'chit402.foreign_payout.v1';
+export const ISSUER_JWKS_URI = 'https://api.chit402.com/.well-known/jwks.json';
+
+/**
+ * Claims the issuer JWS binds for a foreign payout. Old rows omit this object.
+ * `fingerprint` is included only when the caller supplies a 1F916 entry hash.
+ * @param {object} p
+ */
+export function foreignPayoutClaims({
+  taskId, paymentRequired, paymentResponse, fingerprint = null,
+}) {
+  const chain = String(paymentResponse.network || paymentRequired.network || 'base');
+  const tx = String(paymentResponse.tx);
+  const claims = {
+    iss: 'chit402',
+    schema: FOREIGN_PAYOUT_SCHEMA,
+    task_id: String(taskId),
+    chain,
+    tx,
+    payment_ref: `${chain}:${tx}`,
+    payer: String(paymentResponse.payer),
+    payee: String(paymentRequired.payTo),
+    amount: String(paymentRequired.amount),
+    asset: USDC_ADDRESSES[chain] || paymentRequired.asset || null,
+  };
+  if (typeof fingerprint === 'string' && /^[0-9a-fA-F]{64}$/.test(fingerprint)) {
+    claims.agent_record_entry = {
+      schema: 'chit402.agent_record_entry.v0',
+      signed: false,
+      registry: '1f916',
+      fingerprint: fingerprint.toLowerCase(),
+      fingerprint_alg: '1f916-entry-hash',
+    };
+  }
+  return claims;
+}
+
+/**
+ * @param {object} body
+ * @returns {string|null}
+ */
+export function entryFingerprintFromBody(body = {}) {
+  const invoice = body.foreign_invoice || body.fulfillment_invoice || body.invoice || {};
+  const raw = body.agent_record_entry?.fingerprint
+    || invoice.agent_record_entry?.fingerprint
+    || body.entry_fingerprint
+    || invoice.entry_fingerprint
+    || null;
+  if (typeof raw !== 'string' || !/^[0-9a-fA-F]{64}$/.test(raw)) return null;
+  return raw.toLowerCase();
+}
 
 /** Networks that use Solana rail (not EVM). */
 const SOLANA_NETWORKS = new Set(['solana', 'solana-devnet', 'solana-mainnet']);
@@ -434,6 +487,7 @@ export function buildForeignReceipt({
   fulfillmentMeta = null,
   paymentExtra = null,
   routeOverride = null,
+  fingerprint = null,
 }) {
   const route = extractRouteFromResource(paymentRequired.resource);
   const amount = String(paymentRequired.amount);
@@ -469,6 +523,7 @@ export function buildForeignReceipt({
       fee_amount: '0',
       payer: paymentResponse.payer,
       payTo: paymentRequired.payTo,
+      payee: paymentRequired.payTo,
       collected_at: new Date().toISOString(),
     },
     route: {
@@ -503,6 +558,21 @@ export function buildForeignReceipt({
       value: `sha256=${value}`,
     };
   }
+
+  const claims = foreignPayoutClaims({
+    taskId, paymentRequired, paymentResponse, fingerprint,
+  });
+  const { jws, kid } = signJws(claims, { jku: ISSUER_JWKS_URI });
+  receipt.issuer_signature = {
+    alg: 'ES256',
+    kid,
+    jws,
+    issuer_jwk: getIssuerPublicKeyJwk(),
+  };
+  receipt.verification = {
+    source_of_truth: 'issuer_signature.jws',
+    jwks_uri: ISSUER_JWKS_URI,
+  };
 
   return receipt;
 }
@@ -714,6 +784,7 @@ export async function ingestForeignX402(body = {}, {
     rail,
     signingSecret,
     fulfillmentMeta,
+    fingerprint: entryFingerprintFromBody(body),
   });
   receipt.stamp = stampFields(stamp);
 

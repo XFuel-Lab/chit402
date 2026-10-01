@@ -279,10 +279,12 @@ export default function OneF916Link() {
             <li>
               The seal is on <a href={ENTRY_RECORD_URL} target="_blank" rel="noreferrer">{ENTRY_RECORD_URL}</a>.
               The house stamp command is <code>{STAMP_SCRIPT}</code>. After it prints a{' '}
-              <code>verify_url</code>, that id fills <code>chit_receipt_id</code>. A filled id
-              is what the verifier fetches. The foreign-ingest row is checked by its signed{' '}
-              <code>book_chain</code> and the Base transfer (<code>payment.payer</code>,{' '}
-              <code>payment.payTo</code>), which is the settlement shape that stamp writes.
+              <code>verify_url</code>, that id fills <code>chit_receipt_id</code>. Pending means
+              that id is absent. A filled id is fetched even if <code>status</code> still says{' '}
+              <code>pending_first_stamp</code>. The stamp&apos;s issuer JWS binds the tx, chain,
+              payer, payee, amount, and the entry fingerprint. The verifier checks that JWS
+              against the Chit JWKS, then <code>book_chain</code>, the Base transfer, and the
+              1F916 entry hash.
             </li>
           </ul>
           <pre className="docs-code">

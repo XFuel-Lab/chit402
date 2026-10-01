@@ -32,6 +32,7 @@ const {
   railFromNetwork,
   buildOnChainVerify,
   buildPublicForeignIngestReceipt,
+  buildForeignReceipt,
   setForeignIngestVerifyForTests,
   resetBaseProvider,
 } = await import('../src/foreign-x402-ingest.js');
@@ -1270,4 +1271,42 @@ test('pilot waiver key stamps free up to the cap, then 402; default is off', asy
     else process.env.STAMP_WAIVER_CAP = prevCap;
     resetStampWaiverStore();
   }
+});
+
+test('a new foreign payout signs an issuer JWS and leaves older rows without one', async () => {
+  const { verifyJws, getJwks } = await import('../src/issuer-key.js');
+  const fingerprint = 'a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2';
+  const tx = `0x${'cd'.repeat(32)}`;
+  const payer = '0x9f8951cb8b060f52fdf87297b3c5b00f7aa18f52';
+  const payee = '0x1111111111111111111111111111111111111111';
+  const receipt = buildForeignReceipt({
+    taskId: 'foreign-x402-jws',
+    paymentRequired: {
+      resource: `https://basescan.org/tx/${tx}`,
+      amount: '1000000',
+      payTo: payee,
+      network: 'base',
+    },
+    paymentResponse: { tx, payer, network: 'base' },
+    rail: 'usdc',
+    fingerprint,
+  });
+  const key = getJwks().keys[0];
+  const checked = verifyJws(receipt.issuer_signature.jws, key);
+  assert.equal(checked.valid, true);
+  assert.equal(checked.payload.schema, 'chit402.foreign_payout.v1');
+  assert.equal(checked.payload.chain, 'base');
+  assert.equal(checked.payload.tx, tx);
+  assert.equal(checked.payload.payer, payer);
+  assert.equal(checked.payload.payee, payee);
+  assert.equal(checked.payload.amount, '1000000');
+  assert.equal(checked.payload.agent_record_entry.fingerprint, fingerprint);
+  assert.equal(receipt.verification.jwks_uri, 'https://api.chit402.com/.well-known/jwks.json');
+  assert.equal(receipt.signature, undefined);
+
+  const unsigned = { ...receipt };
+  delete unsigned.issuer_signature;
+  delete unsigned.verification;
+  const pub = buildPublicForeignIngestReceipt(unsigned, { baseUrl: 'https://api.chit402.com' });
+  assert.equal(pub.issuer_signature, undefined);
 });

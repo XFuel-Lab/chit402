@@ -150,10 +150,60 @@ function pendingSpecimen(specimen) {
   return specimen?.chit_receipt_id == null || specimen?.chit_receipt_id === '';
 }
 
-function isForeignIngest(receipt) {
-  return receipt?.foreign_x402 === true
-    || receipt?.evidence === 'foreign_ingest'
-    || receipt?.source === 'foreign_ingest';
+/**
+ * Read payer, payee, amount, and tx from an issuer JWS.
+ * Native chat receipts use payment.* and caller_binding.
+ * Foreign payout stamps use chit402.foreign_payout.v1.
+ * @param {object} claims
+ * @param {object} receipt
+ */
+function settlementFromIssuerClaims(claims, receipt) {
+  const outer = receipt.payment || {};
+  if (claims?.schema === 'chit402.foreign_payout.v1') {
+    const payee = outer.payee || outer.payTo;
+    const payer = outer.payer || receipt.caller_binding?.payer_wallet;
+    const txOk = same(claims.payment_ref, outer.ref)
+      && same(claims.tx, String(outer.ref || '').replace(/^base:/, ''))
+      && same(claims.amount, outer.gross_amount)
+      && addr(claims.payer) === addr(payer)
+      && addr(claims.payee) === addr(payee)
+      && same(claims.task_id, receipt.task_id);
+    if (!txOk) return { ok: false, reason: 'signed claims differ from the outer receipt' };
+    if (!String(claims.payment_ref || '').startsWith(`${claims.chain}:`)) {
+      return { ok: false, reason: 'chain_mismatch' };
+    }
+    return {
+      ok: true,
+      fingerprint: claims.agent_record_entry?.fingerprint || null,
+      settlement: {
+        ref: claims.payment_ref,
+        gross_amount: claims.amount,
+        payee: claims.payee,
+        asset: claims.asset || USDC_BASE,
+        payer: claims.payer,
+      },
+    };
+  }
+  const payerOk = same(claims?.caller_binding?.payer_wallet, receipt.caller_binding?.payer_wallet);
+  const paymentOk = same(claims?.payment?.ref, outer.ref)
+    && same(claims?.payment?.gross_amount, outer.gross_amount)
+    && addr(claims?.payment?.asset) === addr(outer.asset)
+    && addr(claims?.payment?.payee) === addr(outer.payee)
+    && same(claims?.task_id, receipt.task_id);
+  if (!payerOk || !paymentOk) {
+    return { ok: false, reason: 'signed claims differ from the outer receipt' };
+  }
+  return {
+    ok: true,
+    fingerprint: claims?.agent_record_entry?.fingerprint || null,
+    settlement: {
+      ref: claims.payment.ref,
+      gross_amount: claims.payment.gross_amount,
+      payee: claims.payment.payee,
+      asset: claims.payment.asset,
+      payer: claims.caller_binding?.payer_wallet,
+    },
+  };
 }
 
 function canonicalReceiptUrl(specimen) {
@@ -213,18 +263,19 @@ export async function verifyLink(specimen, opts = {}) {
   let jwks = null;
   /** Signed settlement the on-chain step checks. */
   let settlement = null;
-  const foreign = receipt && isForeignIngest(receipt);
+  /** Fingerprint bound inside the issuer JWS, when the stamp included one. */
+  let signedFingerprint = null;
   const jwksUri = receipt?.verification?.jwks_uri;
   if (!receipt || steps.fetch_receipt.status !== 'PASS') {
     steps.issuer_signature = fail('receipt_unavailable');
     steps.receipt_chain = fail('receipt_unavailable');
     steps.on_chain_tx = fail('receipt_unavailable');
-  } else if (jwksUri != null && jwksUri !== JWKS_URL) {
-    steps.issuer_signature = fail(`jwks_uri must be ${JWKS_URL}`);
+  } else if (!receipt.issuer_signature?.jws) {
+    steps.issuer_signature = fail('issuer_signature_missing');
     steps.receipt_chain = fail('issuer_signature_failed');
     steps.on_chain_tx = fail('issuer_signature_failed');
-  } else if (!receipt.issuer_signature?.jws && !foreign) {
-    steps.issuer_signature = fail('issuer_signature_missing');
+  } else if (jwksUri != null && jwksUri !== JWKS_URL) {
+    steps.issuer_signature = fail(`jwks_uri must be ${JWKS_URL}`);
     steps.receipt_chain = fail('issuer_signature_failed');
     steps.on_chain_tx = fail('issuer_signature_failed');
   } else {
@@ -238,7 +289,7 @@ export async function verifyLink(specimen, opts = {}) {
     }
   }
 
-  if (jwks && !steps.issuer_signature && receipt.issuer_signature?.jws) {
+  if (jwks && !steps.issuer_signature) {
     const kid = receipt.issuer_signature?.kid;
     const found = keyForKid(jwks, kid);
     if (found.error) {
@@ -248,53 +299,14 @@ export async function verifyLink(specimen, opts = {}) {
       if (!checked.valid) {
         steps.issuer_signature = fail(checked.reason);
       } else {
-        const claims = checked.payload;
-        const outer = receipt.payment || {};
-        const payerOk = same(claims?.caller_binding?.payer_wallet, receipt.caller_binding?.payer_wallet);
-        const paymentOk = same(claims?.payment?.ref, outer.ref)
-          && same(claims?.payment?.gross_amount, outer.gross_amount)
-          && addr(claims?.payment?.asset) === addr(outer.asset)
-          && addr(claims?.payment?.payee) === addr(outer.payee)
-          && same(claims?.task_id, receipt.task_id);
-        if (!payerOk || !paymentOk) {
-          steps.issuer_signature = fail('signed claims differ from the outer receipt');
+        const bound = settlementFromIssuerClaims(checked.payload, receipt);
+        if (!bound.ok) {
+          steps.issuer_signature = fail(bound.reason);
         } else {
-          settlement = {
-            ref: claims.payment.ref,
-            gross_amount: claims.payment.gross_amount,
-            payee: claims.payment.payee,
-            asset: claims.payment.asset,
-            payer: claims.caller_binding?.payer_wallet,
-          };
-          steps.issuer_signature = pass(`kid ${kid} iss ${claims.iss}`);
+          settlement = bound.settlement;
+          signedFingerprint = bound.fingerprint;
+          steps.issuer_signature = pass(`kid ${kid} iss ${checked.payload.iss || 'chit402'}`);
         }
-      }
-    }
-  }
-
-  if (jwks && !steps.issuer_signature && foreign) {
-    const chain = receipt.book_chain;
-    const kid = chain?.issuer_signature?.kid;
-    const found = keyForKid(jwks, kid);
-    if (!chain?.issuer_signature?.jws || found.error) {
-      steps.issuer_signature = fail(found.error || 'book_chain_signature_missing');
-    } else {
-      const checked = verifyEs256(chain.issuer_signature.jws, found.jwk);
-      if (!checked.valid) {
-        steps.issuer_signature = fail(checked.reason);
-      } else if (!same(checked.payload?.payment_ref, receipt.payment?.ref)) {
-        steps.issuer_signature = fail('payment_ref_mismatch');
-      } else {
-        const payee = receipt.payment?.payee || receipt.payment?.payTo;
-        const payer = receipt.caller_binding?.payer_wallet || receipt.payment?.payer;
-        settlement = {
-          ref: receipt.payment?.ref,
-          gross_amount: receipt.payment?.gross_amount,
-          payee,
-          asset: receipt.payment?.asset || USDC_BASE,
-          payer,
-        };
-        steps.issuer_signature = pass(`book_chain kid ${kid} foreign_ingest`);
       }
     }
   }
@@ -345,7 +357,7 @@ export async function verifyLink(specimen, opts = {}) {
     }
   }
 
-  steps.entry_fingerprint = await checkFingerprint(specimen, fetchImpl);
+  steps.entry_fingerprint = await checkFingerprint(specimen, fetchImpl, signedFingerprint);
 
   const verdict = STEPS.every((name) => steps[name]?.status === 'PASS') ? 'PASS' : 'FAIL';
   return { steps, verdict };
@@ -425,7 +437,7 @@ async function checkBaseTransfer(settlement, rpcUrl, fetchImpl) {
  * @param {object} specimen
  * @param {typeof fetch} fetchImpl
  */
-async function checkFingerprint(specimen, fetchImpl) {
+async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null) {
   const link = specimen?.agent_record_entry;
   const entry = specimen?.entry;
   if (!link || typeof link !== 'object') return fail('fingerprint_absent');
@@ -473,6 +485,9 @@ async function checkFingerprint(specimen, fetchImpl) {
   const published = String(found.hash || '').toLowerCase();
   if (published !== fingerprint) {
     return fail(`fingerprint_mismatch event ${eventId} published ${published} claimed ${fingerprint}`);
+  }
+  if (signedFingerprint && String(signedFingerprint).toLowerCase() !== published) {
+    return fail(`fingerprint_mismatch event ${eventId} jws ${signedFingerprint} published ${published}`);
   }
   return pass(`event ${eventId} ${fingerprint}`);
 }

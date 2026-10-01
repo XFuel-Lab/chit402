@@ -133,10 +133,10 @@ The instruction and the money are bound when steps 2, 3, and 4 succeed. A receip
 Both awards have `receipt_id` null. `chit_receipt_id` in each file stays null until the house book has a receipt for that payout tx.
 
 ```bash
-cd services/gateway && node scripts/stamp-foreign-payout.mjs --chain base --tx 0x909d738d79ff4c9885cd9ed0755636565ee3ddf0406ef6f454e7fbf797990ce9 --tx 0x233acdcf3d78436d63a0dba00092fb9a8fe806a3ecd1b415a4d364144baffebd
+cd services/gateway && node scripts/stamp-foreign-payout.mjs --chain base --tx 0x909d738d79ff4c9885cd9ed0755636565ee3ddf0406ef6f454e7fbf797990ce9 --fingerprint a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2 --tx 0x233acdcf3d78436d63a0dba00092fb9a8fe806a3ecd1b415a4d364144baffebd --fingerprint b4874aa36c769b41b7566cee64c601e4074ff9b57349bfb5f1eb704bfddc1447
 ```
 
-The command reads each tx, checks the USDC transfer with the foreign-ingest verifier, and appends a row only when `STAMP_WAIVER_KEYS` still has a free stamp. It does not broadcast a transaction. Restart the gateway afterward so `GET /receipt` reloads the book.
+The command reads each tx, checks the USDC transfer with the foreign-ingest verifier, and appends a row only when `STAMP_WAIVER_KEYS` still has a free stamp. The new row keeps the HMAC and `book_chain` v4, and adds an issuer JWS over the tx, chain, payer, payee, amount, and the `--fingerprint` when one is passed. It does not broadcast a transaction. Restart the gateway afterward so `GET /receipt` reloads the book. A filled `chit_receipt_id` is what the verifier fetches.
 
 ```bash
 node scripts/verify-1f916-link.mjs https://www.chit402.com/specimens/1f916-link-1.json

@@ -59,13 +59,15 @@ export function soleBaseUsdcTransfer(txReceipt) {
  *   readTransfer: (tx: string) => Promise<{ok: boolean, payer?: string, payTo?: string, amount?: string, reason?: string}>,
  *   verify: (input: object) => Promise<{valid?: boolean, reason?: string}>,
  *   waiver: () => { eligible: boolean, reason?: string },
- *   ingest: (input: {tx: string, payer: string, payTo: string, amount: string}) => Promise<{ok: boolean, code?: string, error?: string, receipt_id?: string, verify_url?: string}>,
+ *   ingest: (input: {tx: string, payer: string, payTo: string, amount: string, fingerprint?: string|null}) => Promise<{ok: boolean, code?: string, error?: string, receipt_id?: string, verify_url?: string}>,
  *   commitWaiver?: () => void,
  * }} deps
  */
 export async function stampForeignPayouts(txs, deps) {
   const results = [];
-  for (const tx of txs) {
+  for (const item of txs) {
+    const tx = typeof item === 'string' ? item : item.tx;
+    const fingerprint = typeof item === 'string' ? null : (item.fingerprint || null);
     const existing = await deps.findExisting(tx);
     if (existing?.receipt_id && existing?.verify_url) {
       results.push({ tx, status: 'existing', receipt_id: existing.receipt_id, verify_url: existing.verify_url });
@@ -97,6 +99,7 @@ export async function stampForeignPayouts(txs, deps) {
       payer: transfer.payer,
       payTo: transfer.payTo,
       amount: transfer.amount,
+      fingerprint,
     });
     if (!ingested?.ok && ingested?.code === 'duplicate_ref') {
       const again = await deps.findExisting(tx);
@@ -127,6 +130,7 @@ export function formatStampLine(row) {
 
 function parseArgs(argv) {
   let chain = null;
+  /** @type {{tx: string, fingerprint: string|null}[]} */
   const txs = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -134,7 +138,11 @@ function parseArgs(argv) {
       chain = argv[i + 1];
       i += 1;
     } else if (arg === '--tx') {
-      txs.push(argv[i + 1]);
+      txs.push({ tx: argv[i + 1], fingerprint: null });
+      i += 1;
+    } else if (arg === '--fingerprint') {
+      if (txs.length === 0) throw new Error('--fingerprint follows a --tx');
+      txs[txs.length - 1].fingerprint = String(argv[i + 1] || '').toLowerCase();
       i += 1;
     } else {
       throw new Error(`unknown argument ${arg}`);
@@ -142,8 +150,11 @@ function parseArgs(argv) {
   }
   if (chain !== 'base') throw new Error('--chain base is required');
   if (txs.length === 0) throw new Error('at least one --tx is required');
-  for (const tx of txs) {
-    if (!/^0x[0-9a-fA-F]{64}$/.test(tx || '')) throw new Error(`tx is not a 32-byte hash: ${tx}`);
+  for (const item of txs) {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(item.tx || '')) throw new Error(`tx is not a 32-byte hash: ${item.tx}`);
+    if (item.fingerprint && !/^[0-9a-f]{64}$/.test(item.fingerprint)) {
+      throw new Error(`fingerprint is not 64 hex chars: ${item.fingerprint}`);
+    }
   }
   return { txs };
 }
@@ -162,6 +173,7 @@ async function main() {
   const gatewayDir = join(dirname(fileURLToPath(import.meta.url)), '..');
   dotenv.config({ path: join(gatewayDir, '.env') });
   const { txs } = parseArgs(process.argv.slice(2));
+  const fingerprintByTx = new Map(txs.map((item) => [item.tx, item.fingerprint]));
   const [
     { AgentRegistry },
     { UsageSettledLedger },
@@ -235,10 +247,18 @@ async function main() {
       waiverKey = null;
       return { eligible: false, reason: 'stamp_waiver_required' };
     },
-    ingest: async ({ tx, payer, payTo, amount }) => {
+    ingest: async ({ tx, payer, payTo, amount, fingerprint }) => {
       const key = waiverKey;
+      const boundFingerprint = fingerprint || fingerprintByTx.get(tx) || null;
       const result = await ingestForeignX402({
         session: identity.session,
+        ...(boundFingerprint ? {
+          agent_record_entry: {
+            registry: '1f916',
+            fingerprint: boundFingerprint,
+            fingerprint_alg: '1f916-entry-hash',
+          },
+        } : {}),
         foreign_invoice: {
           amount,
           payer,

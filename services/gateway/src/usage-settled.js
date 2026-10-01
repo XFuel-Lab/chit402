@@ -576,6 +576,8 @@ export class UsageSettledLedger {
         fulfillment: receipt.fulfillment || null,
         signature: receipt.signature || null,
         stamp: receipt.stamp || null,
+        ...(receipt.issuer_signature ? { issuer_signature: receipt.issuer_signature } : {}),
+        ...(receipt.verification ? { verification: receipt.verification } : {}),
       };
     }
     this._index(entry);
