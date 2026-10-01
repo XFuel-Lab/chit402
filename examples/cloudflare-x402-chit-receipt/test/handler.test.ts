@@ -95,6 +95,8 @@ test('handler pays the fixture challenge, posts v2 PAYMENT-RESPONSE, and sets X-
         status: 200,
         headers: {
           'content-type': 'application/json',
+          'content-encoding': 'gzip',
+          'content-length': '4',
           'payment-response': b64(settlement()),
         },
       });
@@ -137,6 +139,9 @@ test('handler pays the fixture challenge, posts v2 PAYMENT-RESPONSE, and sets X-
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('X-Chit-Receipt'), fixture.verify_url);
+  assert.equal(response.headers.get('content-encoding'), null);
+  assert.equal(response.headers.get('content-length'), null);
+  assert.equal(response.headers.get('content-type'), 'application/json');
   assert.deepEqual(await response.json(), fixture.upstreamBody);
   assert.equal(signed.length, 2, 'upstream payment and stamp are both signed');
 
@@ -229,7 +234,11 @@ test('a paid upstream response without PAYMENT-RESPONSE does not call ingest', a
     }
     return new Response(JSON.stringify(fixture.upstreamBody), {
       status: 200,
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'content-encoding': 'gzip',
+        'content-length': '4',
+      },
     });
   };
   const response = await handleProxy(
@@ -240,6 +249,8 @@ test('a paid upstream response without PAYMENT-RESPONSE does not call ingest', a
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('X-Chit-Receipt'), null);
   assert.match(response.headers.get('X-Chit-Receipt-Error') || '', /PAYMENT-RESPONSE/);
+  assert.equal(response.headers.get('content-encoding'), null);
+  assert.equal(response.headers.get('content-length'), null);
   assert.equal(urls.some((url) => url.includes('chit402')), false);
   assert.deepEqual(await response.json(), fixture.upstreamBody);
 });

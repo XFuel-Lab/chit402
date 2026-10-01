@@ -343,16 +343,32 @@ function forwardedHeaders(input: Headers): Record<string, string> {
 }
 
 function withReceipt(upstream: Response, verifyUrl: string): Response {
-  const headers = new Headers(upstream.headers);
-  headers.set('X-Chit-Receipt', verifyUrl);
-  headers.delete('content-encoding');
-  return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers });
+  return passUpstream(upstream, (headers) => {
+    headers.set('X-Chit-Receipt', verifyUrl);
+  });
 }
 
 function withReceiptError(upstream: Response, message: string): Response {
+  return passUpstream(upstream, (headers) => {
+    headers.set('X-Chit-Receipt-Error', message);
+  });
+}
+
+/**
+ * fetch() already decoded the body. content-encoding and content-length still
+ * describe the compressed payload. Drop both so the client reads the decoded
+ * bytes in full instead of gunzipping plaintext or stopping at the old length.
+ */
+function passUpstream(upstream: Response, stamp: (headers: Headers) => void): Response {
   const headers = new Headers(upstream.headers);
-  headers.set('X-Chit-Receipt-Error', message);
-  return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers });
+  stamp(headers);
+  headers.delete('content-encoding');
+  headers.delete('content-length');
+  return new Response(upstream.body, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers,
+  });
 }
 
 function jsonError(status: number, error: string, message: string): Response {
