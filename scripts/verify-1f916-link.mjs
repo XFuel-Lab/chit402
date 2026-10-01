@@ -211,11 +211,12 @@ function canonicalReceiptUrl(specimen) {
   if (typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/.test(id)) {
     return null;
   }
-  const canonical = receiptUrl(id);
-  if (specimen.chit_verify_url != null && specimen.chit_verify_url !== canonical) {
-    return null;
-  }
-  return canonical;
+  const jsonUrl = receiptUrl(id);
+  const bareUrl = `${RECEIPT_ORIGIN}/receipt/${id}`;
+  const given = specimen.chit_verify_url;
+  // The stamp prints verify_url with no query. Fetch still asks for JSON.
+  if (given != null && given !== jsonUrl && given !== bareUrl) return null;
+  return jsonUrl;
 }
 
 /**

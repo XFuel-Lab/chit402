@@ -117,7 +117,7 @@ The instruction and the money are bound when steps 2, 3, and 4 succeed. A receip
 
 ## Specimens
 
-**pending first stamp.**
+**Stamped.**
 
 | | Specimen 1 | Specimen 2 |
 |--|--|--|
@@ -129,8 +129,9 @@ The instruction and the money are bound when steps 2, 3, and 4 succeed. A receip
 | Sealed event | identity_events `20498` | identity_events `17514` |
 | Fingerprint | `a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2` | `b4874aa36c769b41b7566cee64c601e4074ff9b57349bfb5f1eb704bfddc1447` |
 | File | https://www.chit402.com/specimens/1f916-link-1.json | https://www.chit402.com/specimens/1f916-link-2.json |
+| Receipt | [foreign-x402-muq262x0-1467b076fc62](https://api.chit402.com/receipt/foreign-x402-muq262x0-1467b076fc62) | [foreign-x402-muq264r9-69896464bb19](https://api.chit402.com/receipt/foreign-x402-muq264r9-69896464bb19) |
 
-Both awards have `receipt_id` null. `chit_receipt_id` in each file stays null until the house book has a receipt for that payout tx.
+Each file sets `chit_receipt_id` and `chit_verify_url` to that house-book receipt. `chit_verify_url` is the receipt path with no query. The verifier also accepts the same URL with `?format=json`.
 
 ```bash
 cd services/gateway && node scripts/stamp-foreign-payout.mjs --chain base --tx 0x909d738d79ff4c9885cd9ed0755636565ee3ddf0406ef6f454e7fbf797990ce9 --fingerprint a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2 --tx 0x233acdcf3d78436d63a0dba00092fb9a8fe806a3ecd1b415a4d364144baffebd --fingerprint b4874aa36c769b41b7566cee64c601e4074ff9b57349bfb5f1eb704bfddc1447
@@ -142,7 +143,7 @@ The command reads each tx, checks the USDC transfer with the foreign-ingest veri
 node scripts/verify-1f916-link.mjs https://www.chit402.com/specimens/1f916-link-1.json
 ```
 
-Until the stamp, `fetch_receipt` prints `pending_first_stamp`.
+A specimen whose `chit_receipt_id` is absent still prints `pending_first_stamp` on `fetch_receipt`. These two files are stamped, so that step fetches the receipt.
 
 ## What issuance will do later
 

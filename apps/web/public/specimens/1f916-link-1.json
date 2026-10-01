@@ -1,9 +1,9 @@
 {
   "schema": "chit402.1f916_link_specimen.v0",
   "label": "Specimen 1",
-  "status": "pending_first_stamp",
-  "chit_receipt_id": null,
-  "chit_verify_url": null,
+  "status": "stamped",
+  "chit_receipt_id": "foreign-x402-muq262x0-1467b076fc62",
+  "chit_verify_url": "https://api.chit402.com/receipt/foreign-x402-muq262x0-1467b076fc62",
   "chain": "base",
   "payout_tx": "0x909d738d79ff4c9885cd9ed0755636565ee3ddf0406ef6f454e7fbf797990ce9",
   "listing_id": 55,
@@ -30,5 +30,5 @@
     "fingerprint": "a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2",
     "fingerprint_alg": "1f916-entry-hash"
   },
-  "boundary": "pending first stamp. Award 17 receipt_id is null. chit_receipt_id stays null until the house book has a receipt whose payment.ref is this payout tx."
+  "boundary": "Stamped. The house book receipt for this payout tx is foreign-x402-muq262x0-1467b076fc62. payment.ref is base:0x909d738d79ff4c9885cd9ed0755636565ee3ddf0406ef6f454e7fbf797990ce9."
 }
