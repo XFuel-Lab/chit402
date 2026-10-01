@@ -9,6 +9,7 @@ const {
   computeBookSummary,
   bookWindowQuery,
   bookExportBounds,
+  sameBookWindow,
   entriesInWindow,
   computeModelMix,
   summarizePaymentRef,
@@ -116,6 +117,13 @@ test('computeBookSummary is zeroed when there are no receipts', () => {
     verified_percent: 0,
   });
   assert.equal(formatUsd(summary.spend_atomic), '$0.00');
+});
+
+test('sameBookWindow is false until the loaded bounds match the selected window', () => {
+  const loaded = { from: '2026-09-24T00:00:00.000Z', to: null };
+  assert.equal(sameBookWindow(loaded, { from: '2026-09-24T00:00:00.000Z', to: null }), true);
+  assert.equal(sameBookWindow(loaded, { from: '2026-09-01T00:00:00.000Z', to: null }), false);
+  assert.equal(sameBookWindow(null, loaded), false);
 });
 
 test('bookExportBounds leaves audit packs unfiltered and windows the list export', () => {

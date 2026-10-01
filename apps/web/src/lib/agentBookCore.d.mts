@@ -13,6 +13,10 @@ export interface BookWindowQuery {
 }
 
 export function bookWindowQuery(preset: string, now?: number): BookWindowQuery;
+export function sameBookWindow(
+  loaded: { from?: string | null; to?: string | null } | null | undefined,
+  requested: { from?: string | null; to?: string | null } | null | undefined,
+): boolean;
 export function bookExportBounds(
   windowed: boolean,
   preset: string,

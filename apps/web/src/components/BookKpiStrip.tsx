@@ -27,11 +27,13 @@ export default function BookKpiStrip({
   windowLabel,
   preset = null,
   onPreset,
+  pending = false,
 }: {
   summary?: BookSummary | null;
   windowLabel: string;
   preset?: BookWindowPreset | null;
   onPreset?: (preset: BookWindowPreset) => void;
+  pending?: boolean;
 }) {
   const tiles = summary ?? EMPTY_SUMMARY;
   const spend = formatUsd(tiles.spend_atomic);
@@ -64,23 +66,23 @@ export default function BookKpiStrip({
       <div className="book-kpi-strip">
         <div className="card book-stat-card book-kpi-card">
           <div className="stat-label">Spend</div>
-          <div className="book-stat-value">{spend}</div>
-          <div className="book-kpi-caption">Collected USDC</div>
+          <div className="book-stat-value">{pending ? '…' : spend}</div>
+          <div className="book-kpi-caption">{pending ? 'Updating' : 'Collected USDC'}</div>
         </div>
         <div className="card book-stat-card book-kpi-card">
           <div className="stat-label">Payments</div>
-          <div className="book-stat-value">{payments}</div>
+          <div className="book-stat-value">{pending ? '…' : payments}</div>
           <div className="book-kpi-caption">Collected rows</div>
         </div>
         <div className="card book-stat-card book-kpi-card">
           <div className="stat-label">Vendors paid</div>
-          <div className="book-stat-value">{vendors}</div>
+          <div className="book-stat-value">{pending ? '…' : vendors}</div>
           <div className="book-kpi-caption">Distinct payees</div>
         </div>
         <div className="card book-stat-card book-kpi-card">
           <div className="stat-label">Receipts verified</div>
-          <div className="book-stat-value">{verified}</div>
-          <div className="book-kpi-caption">{percent} of {receipts}</div>
+          <div className="book-stat-value">{pending ? '…' : verified}</div>
+          <div className="book-kpi-caption">{pending ? 'Updating' : `${percent} of ${receipts}`}</div>
         </div>
       </div>
     </section>

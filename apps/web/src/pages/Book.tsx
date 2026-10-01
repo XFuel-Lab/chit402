@@ -9,6 +9,7 @@ import {
   type BookWindowPreset,
   bookExportBounds,
   bookWindowQuery,
+  sameBookWindow,
   computeBookSummary,
   computeBurnRate,
   computeModelMix,
@@ -131,6 +132,8 @@ export default function Book() {
   const [approvalTtlDraft, setApprovalTtlDraft] = useState('');
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [windowPreset, setWindowPreset] = useState<BookWindowPreset>('7d');
+  const [loadedWindow, setLoadedWindow] = useState<{ from: string | null; to: string | null } | null>(null);
+  const [windowError, setWindowError] = useState<string | null>(null);
   const windowPresetRef = useRef(windowPreset);
   windowPresetRef.current = windowPreset;
 
@@ -196,6 +199,7 @@ export default function Book() {
           return;
         }
         setBook(result.data);
+        setLoadedWindow({ from: range.from, to: range.to });
         setLoadState('ready');
         if (result.data.cap != null) {
           setBudgetDraft(formatUsdc(result.data.cap));
@@ -243,6 +247,10 @@ export default function Book() {
     if (gen !== loadGen.current) return;
 
     if (!result.ok) {
+      if (opts?.quiet) {
+        setWindowError(errorCopy(result.error).body);
+        return;
+      }
       setBook(null);
       setFetchError(result.error);
       setLoadState('error');
@@ -250,7 +258,10 @@ export default function Book() {
     }
 
     setBook(result.data);
+    setLoadedWindow({ from: range.from, to: range.to });
+    setWindowError(null);
     setLoadState('ready');
+    if (opts?.quiet) return;
     if (result.data.cap != null) {
       setBudgetDraft(formatUsdc(result.data.cap));
     } else {
@@ -284,7 +295,8 @@ export default function Book() {
   );
   const spentPct = book ? budgetPct(book.spent, book.cap) : 0;
   const windowRange = bookWindowQuery(windowPreset);
-  const kpiSummary = book
+  const summaryCurrent = sameBookWindow(loadedWindow, windowRange);
+  const kpiSummary = book && summaryCurrent
     ? (book.summary ?? computeBookSummary(entriesInWindow(book.entries, windowRange.from, windowRange.to)))
     : null;
 
@@ -333,6 +345,7 @@ export default function Book() {
       return;
     }
     setBook(result.data);
+    setLoadedWindow({ from: range.from, to: range.to });
     setBudgetMessage(clear ? 'Budget cleared — unlimited ceiling.' : 'Budget updated.');
     if (result.data.cap != null) {
       setBudgetDraft(formatUsdc(result.data.cap));
@@ -570,10 +583,14 @@ export default function Book() {
           <>
             <BookKpiStrip
               summary={kpiSummary}
+              pending={!summaryCurrent}
               windowLabel={windowRange.label}
               preset={windowPreset}
               onPreset={setWindowPreset}
             />
+            {windowError && (
+              <p className="book-empty-teach" role="alert">{windowError}</p>
+            )}
 
             <section className="book-budget-strip" style={{ alignItems: 'center' }}>
               {book.private_spend?.enabled && (
