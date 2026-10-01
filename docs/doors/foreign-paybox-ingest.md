@@ -49,6 +49,28 @@ Cemented mainnet sends only. Two public RPCs (`NANO_RPC_URLS`) must agree: `subt
 }
 ```
 
+**x402 v2 `PAYMENT-RESPONSE`** (Cloudflare Monetization Gateway and other Coinbase-facilitator sellers). `transaction` is the tx hash. `network: "eip155:8453"` is stored as `base` so the book ref stays `base:0x…`. The header value itself (base64 JSON) is accepted as `payment_response`. `success: false` is rejected.
+
+```json
+{
+  "session": "<possession>",
+  "payment_required": {
+    "resource": "https://seller.example/v1/resource",
+    "amount": "10000",
+    "payTo": "0x…",
+    "network": "eip155:8453"
+  },
+  "payment_response": {
+    "success": true,
+    "transaction": "0x…",
+    "network": "eip155:8453",
+    "payer": "0x…"
+  }
+}
+```
+
+For an `exact` challenge, `amount` is the settled atomic USDC. For `upto`, post the amount that moved on-chain. A ceiling above the Transfer fails verify.
+
 **Minimal foreign invoice** (PayBox receipt, wallet tx):
 
 ```json

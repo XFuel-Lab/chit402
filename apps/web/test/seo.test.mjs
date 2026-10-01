@@ -392,6 +392,7 @@ test('App routes docs subpages', () => {
   assert.match(app, /path="\/docs\/doors" element={<DocsDoors \/>}/, 'App routes legacy /docs/doors redirect');
   assert.match(app, /chit-in-15-lines/, 'App routes 15-lines page');
   assert.match(app, /\/docs\/eliza/, 'App routes Eliza stub');
+  assert.match(app, /\/docs\/cloudflare-x402/, 'App routes Cloudflare Monetization Gateway docs');
   assert.match(app, /\/trust/, 'App routes issuer trust page');
   assert.match(app, /\/activity/, 'App routes Activity page');
   assert.match(app, /path="\/board"/, 'App routes the agent board');

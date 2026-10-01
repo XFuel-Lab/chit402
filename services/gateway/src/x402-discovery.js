@@ -504,14 +504,21 @@ const AGENTS_BOOK_INGEST_INPUT_SCHEMA = {
       },
     },
     payment_response: {
-      type: 'object',
-      required: ['tx', 'payer'],
-      description: 'The PAYMENT-RESPONSE (or equivalent) proving the payment.',
-      properties: {
-        tx: { type: 'string', description: 'Transaction hash / settlement ref.' },
-        payer: { type: 'string', description: 'Payer address.' },
-        network: { type: 'string', description: 'Network the payment was made on.' },
-      },
+      description:
+        'Settlement proof. Object { tx, payer, network }, x402 v2 { success, transaction, network, payer }, or the base64 PAYMENT-RESPONSE header. transaction is an alias of tx.',
+      oneOf: [
+        { type: 'string', description: 'Base64 (or JSON) x402 v2 PAYMENT-RESPONSE header.' },
+        {
+          type: 'object',
+          properties: {
+            tx: { type: 'string', description: 'Transaction hash / settlement ref.' },
+            transaction: { type: 'string', description: 'x402 v2 settlement hash. Alias of tx.' },
+            payer: { type: 'string', description: 'Payer address.' },
+            network: { type: 'string', description: 'Network. eip155:8453 is stored as base.' },
+            success: { type: 'boolean', description: 'v2 settlement flag. false is rejected.' },
+          },
+        },
+      ],
     },
     foreign_invoice: {
       type: 'object',
@@ -1287,6 +1294,8 @@ export function buildOpenApiSpec(baseUrl = '') {
             + '(payment_required + payment_response), a minimal foreign_invoice '
             + '(amount, payer, payTo, tx/payment_ref, resource or hub), or nano '
             + '(block hash, recipient, raw amount, task description). Naked tx without payer is rejected. '
+            + 'x402 v2 PAYMENT-RESPONSE ({ success, transaction, network, payer }, or the base64 header) '
+            + 'is accepted: transaction maps to tx, and eip155:8453 is stored as base. '
             + 'On-chain USDC or cemented Nano verify required (fail closed). Returns verify_url like native completions. '
             + 'source/evidence foreign_ingest — Chit did not execute the hop. Demo keys never write.',
           tags: ['Book', 'Discovery'],

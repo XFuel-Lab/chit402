@@ -1,0 +1,34 @@
+{
+  "name": "cloudflare-x402-chit-receipt",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cloudflare Worker that pays an x402 endpoint and stamps a Chit402 foreign_ingest receipt.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "cloudflare": {
+    "label": "x402 proxy with Chit receipt",
+    "products": ["Workers"],
+    "categories": ["starter"],
+    "publish": false,
+    "healthCheckPath": "/__chit/health"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@x402/evm": "^2.25.0",
+    "@x402/fetch": "^2.25.0",
+    "viem": "^2.37.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^4.45.0"
+  }
+}

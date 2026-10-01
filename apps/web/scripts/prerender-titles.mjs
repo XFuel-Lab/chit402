@@ -69,6 +69,11 @@ const ROUTE_CONTENT = {
     h1: 'Cloudflare Agents',
     lede: 'Point Workers at api.chit402.com/v1 or run chit402-sidecar to stamp receipts from any upstream.',
   },
+  '/docs/cloudflare-x402': {
+    title: 'Cloudflare Monetization Gateway receipts | Chit402',
+    h1: 'Cloudflare Monetization Gateway',
+    lede: 'Pay an x402 v2 API settled by Coinbase on Base, POST PAYMENT-RESPONSE to Chit, and keep verify_url. Evidence is foreign_ingest. US-only closed beta. Base USDC only.',
+  },
   '/docs/openclaw': {
     title: 'OpenClaw skill | Chit402',
     h1: 'OpenClaw',
