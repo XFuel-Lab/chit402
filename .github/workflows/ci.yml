@@ -113,6 +113,21 @@ jobs:
         working-directory: examples/surplus-x402
         run: npm install --no-audit --no-fund && npm test
 
+  # ── Cloudflare x402 buyer proxy → Chit receipt (mocked fetch) ─
+  cloudflare-x402-chit-receipt:
+    name: Cloudflare x402 Chit receipt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.x'
+
+      - name: Test examples/cloudflare-x402-chit-receipt
+        working-directory: examples/cloudflare-x402-chit-receipt
+        run: npm install --no-audit --no-fund && npm test
+
   # ── Solidity compile + core contract tests ──────────────────
   # Always creates a check. Runs real tests only when contracts/core-layer/test paths change.
   contracts-core:

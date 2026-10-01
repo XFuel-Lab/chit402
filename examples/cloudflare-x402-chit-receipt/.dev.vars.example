@@ -1,0 +1,7 @@
+# Copy to .dev.vars for `wrangler dev`. Never commit .dev.vars.
+# Hex private keys, 32 bytes, with or without 0x. Leave blank in git.
+
+X402_PAYER_PRIVATE_KEY=
+CHIT_STAMP_PRIVATE_KEY=
+CHIT_BOOK_SESSION=
+CHIT_AGENT_ID=

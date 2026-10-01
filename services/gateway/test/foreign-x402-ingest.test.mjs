@@ -26,6 +26,8 @@ const { UsageSettledLedger } = await import('../src/usage-settled.js');
 const {
   ingestForeignX402,
   normalizeIngestInput,
+  parseX402V2PaymentResponse,
+  txHashFromPaymentRef,
   validatePaymentRequired,
   validatePaymentResponse,
   extractRouteFromResource,
@@ -148,6 +150,102 @@ test('normalizeIngestInput: minimal foreign_invoice coalesces to x402 shape', ()
   assert.equal(n.paymentResponse.network, 'base');
 });
 
+const V2_TX = `0x${'ab'.repeat(32)}`;
+const V2_PAY_TO = '0x2222222222222222222222222222222222222222';
+
+function paymentResponseHeader(settlement) {
+  return Buffer.from(JSON.stringify(settlement), 'utf8').toString('base64');
+}
+
+test('parseX402V2PaymentResponse maps a v2 PAYMENT-RESPONSE header into the ingest payload', () => {
+  const header = paymentResponseHeader({
+    success: true,
+    transaction: V2_TX,
+    network: 'eip155:8453',
+    payer: WALLET_A,
+  });
+  const parsed = parseX402V2PaymentResponse(header);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.paymentResponse.tx, V2_TX);
+  assert.equal(parsed.paymentResponse.payer, WALLET_A);
+  assert.equal(parsed.paymentResponse.network, 'base', 'eip155:8453 is stored as base so the ref keeps the hash');
+
+  const urlSafe = header.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  const fromUrlSafe = parseX402V2PaymentResponse(urlSafe);
+  assert.equal(fromUrlSafe.ok, true);
+  assert.equal(fromUrlSafe.paymentResponse.tx, V2_TX);
+});
+
+test('parseX402V2PaymentResponse accepts the decoded v2 object and rejects a failed settlement', () => {
+  const ok = parseX402V2PaymentResponse({
+    success: true,
+    transaction: V2_TX,
+    network: 'eip155:8453',
+    payer: WALLET_A,
+  });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.paymentResponse.tx, V2_TX);
+
+  const legacy = parseX402V2PaymentResponse({ tx: '0xabc', payer: WALLET_A, network: 'base' });
+  assert.equal(legacy.ok, true);
+  assert.equal(legacy.paymentResponse.tx, '0xabc');
+  assert.equal(legacy.paymentResponse.network, 'base');
+
+  const failed = parseX402V2PaymentResponse({
+    success: false,
+    errorReason: 'facilitator rejected',
+    transaction: V2_TX,
+    network: 'eip155:8453',
+    payer: WALLET_A,
+  });
+  assert.equal(failed.ok, false);
+  assert.match(failed.reason, /facilitator rejected/);
+
+  const naked = parseX402V2PaymentResponse({ transaction: V2_TX, network: 'eip155:8453' });
+  assert.equal(naked.ok, false);
+  assert.match(naked.reason, /payer/i);
+
+  const garbage = parseX402V2PaymentResponse('not-base64-json');
+  assert.equal(garbage.ok, false);
+  assert.match(garbage.reason, /base64/);
+});
+
+test('normalizeIngestInput: v2 PAYMENT-RESPONSE header plus v2 challenge becomes the book payload', () => {
+  const n = normalizeIngestInput({
+    payment_required: {
+      x402Version: 2,
+      resource: { url: 'https://v2.api2pdf.com/chrome/pdf/html', description: 'pdf', mimeType: 'application/json' },
+      accepts: [{
+        scheme: 'exact',
+        network: 'eip155:8453',
+        amount: '10000',
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        payTo: V2_PAY_TO,
+      }],
+    },
+    payment_response: paymentResponseHeader({
+      success: true,
+      transaction: V2_TX,
+      network: 'eip155:8453',
+      payer: WALLET_A,
+    }),
+  });
+  assert.equal(n.ok, true);
+  assert.equal(n.paymentRequired.resource, 'https://v2.api2pdf.com/chrome/pdf/html');
+  assert.equal(n.paymentRequired.amount, '10000');
+  assert.equal(n.paymentRequired.payTo, V2_PAY_TO);
+  assert.equal(n.paymentRequired.network, 'base');
+  assert.equal(n.paymentResponse.tx, V2_TX);
+  assert.equal(n.paymentResponse.payer, WALLET_A);
+  assert.equal(n.paymentResponse.network, 'base');
+});
+
+test('txHashFromPaymentRef keeps the 0x hash when the ref uses eip155', () => {
+  assert.equal(txHashFromPaymentRef(`eip155:8453:${V2_TX}`), V2_TX);
+  assert.equal(txHashFromPaymentRef(`base:${V2_TX}`), V2_TX);
+  assert.equal(txHashFromPaymentRef('solana:3vZ9sig'), '3vZ9sig');
+});
+
 test('validatePaymentResponse requires tx and payer (no naked tx)', () => {
   assert.equal(validatePaymentResponse(null).ok, false);
   assert.equal(validatePaymentResponse({}).ok, false);
@@ -221,6 +319,41 @@ test('happy path: foreign x402 → book row (with valid verify)', async () => {
   assert.equal(entry.book_chain.book_id, identity.agent_id);
   assert.equal(entry.book_chain.payment_ref, 'base:0xabc123def456');
   assert.equal(entry.issuer_signature, undefined);
+});
+
+test('v2 PAYMENT-RESPONSE ingests as foreign_ingest with a base ref', async () => {
+  const { registry, ledger, identity } = setupDeps();
+  const result = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://v2.api2pdf.com/chrome/pdf/html',
+      amount: '10000',
+      payTo: V2_PAY_TO,
+      network: 'eip155:8453',
+    },
+    payment_response: {
+      success: true,
+      transaction: V2_TX,
+      network: 'eip155:8453',
+      payer: WALLET_A,
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyOk,
+    baseUrl: 'https://api.chit402.com',
+  });
+
+  assert.equal(result.ok, true, result.message);
+  assert.equal(result.status, 201);
+  assert.equal(result.body.evidence, 'foreign_ingest');
+  assert.equal(result.body.source, 'foreign_ingest');
+  assert.equal(result.body.payment.ref, `base:${V2_TX}`);
+  assert.equal(result.body.payment.rail, 'usdc');
+  assert.equal(result.body.route.hub, 'v2.api2pdf.com');
+  assert.match(result.body.verify_url, /^https:\/\/api\.chit402\.com\/receipt\/foreign-x402-/);
 });
 
 test('a paid ingest stamp is its own book row, signed to the same seat', async () => {
@@ -734,6 +867,41 @@ test('FAIL CLOSED: chain unreadable (network error) → 502, no book row', async
   assert.equal(result.error, 'verify_failed');
   assert.match(result.message, /failed to fetch/i);
   assert.equal(ledger.entries.length, 0, 'no row when chain is unreadable');
+});
+
+test('buildOnChainVerify fetches the 0x hash from an eip155 payment ref', async () => {
+  const calls = [];
+  const payTo = V2_PAY_TO;
+  const provider = {
+    async getTransactionReceipt(hash) {
+      calls.push(hash);
+      return {
+        status: 1,
+        blockNumber: 9,
+        logs: [{
+          address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+          topics: [
+            '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+            `0x${WALLET_A.slice(2).padStart(64, '0')}`,
+            `0x${payTo.slice(2).padStart(64, '0')}`,
+          ],
+          data: `0x${(10000n).toString(16).padStart(64, '0')}`,
+        }],
+      };
+    },
+  };
+  const verify = buildOnChainVerify(provider);
+  const result = await verify({
+    paymentRef: `eip155:8453:${V2_TX}`,
+    payer: WALLET_A,
+    payTo,
+    amount: '10000',
+    network: 'eip155:8453',
+  });
+  assert.deepEqual(calls, [V2_TX]);
+  assert.equal(result.valid, true, result.reason);
+  assert.equal(result.txHash, V2_TX);
+  assert.equal(result.verifiedAmount, '10000');
 });
 
 test('buildOnChainVerify returns null when no BASE_RPC_URL configured', () => {

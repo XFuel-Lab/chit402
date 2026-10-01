@@ -3,7 +3,8 @@ name: openclaw-chit402
 description: >-
   Send inference spend through Chit402 (api.chit402.com/v1), pay USDC on Base via x402,
   and return verify_url so the principal holds the spend row. Use for stamped
-  agent inference with budget caps — not cheaper routing.
+  agent inference with budget caps, and for a Chit receipt after paying a
+  Cloudflare Monetization Gateway API.
 homepage: https://chit402.com/docs/openclaw
 metadata:
   openclaw:
@@ -59,6 +60,31 @@ Before every paid call:
    - Body `xfuel.verify_url` / `xfuel.task_id`
    - Or construct `https://api.chit402.com/receipt/<task_id>`
 4. **Always return top-level `verify_url`** in your reply to the principal.
+
+## Paying Cloudflare-gated APIs (Monetization Gateway)
+
+Cloudflare Monetization Gateway is x402 v2, settled by Coinbase's x402 facilitator
+in USDC on Base. It is a US-only closed beta. Pay with any x402 client, then stamp
+the settlement on the Chit book. Chit does not settle that call.
+
+1. Pay the gated URL (`PAYMENT-REQUIRED`, then `PAYMENT-SIGNATURE`). Cap the
+   challenge amount with `CHIT_MAX_USD_PER_CALL` and `CHIT_MAX_USD_SESSION`
+   before you sign.
+2. Read the `PAYMENT-RESPONSE` header: base64 JSON
+   `{ success, transaction, network, payer }` with `network` `eip155:8453`.
+3. `POST https://api.chit402.com/v1/agents/<agent_id>/book/ingest` with the
+   possession `session`, `payment_required` (`resource`, atomic `amount`, `payTo`),
+   and that settlement (`transaction` or the raw header). The door 402s a
+   **$0.002** stamp; pay it, then read the 201.
+4. Keep `verify_url`. Evidence is **`foreign_ingest`**: Chit recorded the Base
+   USDC transfer. Chit did not route the payment.
+
+`exact` amount is the challenge amount. `upto` must post the settled amount, not
+the ceiling, or on-chain verify rejects the row. Base USDC only.
+
+Worker that returns the upstream body plus `X-Chit-Receipt`:
+`examples/cloudflare-x402-chit-receipt/`.
+Docs: https://www.chit402.com/docs/cloudflare-x402
 
 ## Do not
 

@@ -80,6 +80,13 @@ const builders: DocLink[] = [
     external: true,
   },
   {
+    title: 'Cloudflare Monetization Gateway',
+    description: 'Receipt for an x402 v2 call settled by Coinbase on Base. Evidence is foreign_ingest.',
+    href: '/docs/cloudflare-x402',
+    meta: 'x402',
+    internal: true,
+  },
+  {
     title: 'Issuer trust',
     description: 'Pin JWKS + kid, rotation policy, receipt verify steps.',
     href: '/trust',

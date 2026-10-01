@@ -9,6 +9,7 @@ import Doors from './pages/Doors';
 import ElizaPlugin from './pages/ElizaPlugin';
 import FrameworkAdapters from './pages/FrameworkAdapters';
 import CloudflareDocs from './pages/CloudflareDocs';
+import CloudflareX402Docs from './pages/CloudflareX402Docs';
 import OpenClawDocs from './pages/OpenClawDocs';
 import AcpDocs from './pages/AcpDocs';
 import SwarmPlatforms from './pages/SwarmPlatforms';
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="/docs/langchain" element={<FrameworkAdapters />} />
         <Route path="/docs/ai-sdk" element={<FrameworkAdapters />} />
         <Route path="/docs/cloudflare" element={<CloudflareDocs />} />
+        <Route path="/docs/cloudflare-x402" element={<CloudflareX402Docs />} />
         <Route path="/docs/openclaw" element={<OpenClawDocs />} />
         <Route path="/docs/acp" element={<AcpDocs />} />
         <Route path="/docs/private-spend" element={<PrivateSpendDocs />} />

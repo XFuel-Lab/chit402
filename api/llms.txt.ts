@@ -61,7 +61,8 @@ POST /v1/chat/completions is bait. Wire: api.chit402.com (same paths as below).
 
 Spent elsewhere → stamp here. Record PayBox / other x402 shop spend, or a cemented Nano send, on the possession book.
 
-- POST /v1/agents/:agent_id/book/ingest : foreign ingest. Requires register session (401 without possession). After possession, the submitter pays a $0.002 stamp (2000 atomic USDC) via x402 on Base or Solana — HTTP 402 unless a pilot waiver key applies. The stamp does not debit prepaid budget. USDC verify and cemented Nano sends fail closed. evidence foreign_ingest. Returns verify_url. Naked tx rejected.
+- POST /v1/agents/:agent_id/book/ingest : foreign ingest. Requires register session (401 without possession). After possession, the submitter pays a $0.002 stamp (2000 atomic USDC) via x402 on Base or Solana — HTTP 402 unless a pilot waiver key applies. The stamp does not debit prepaid budget. USDC verify and cemented Nano sends fail closed. evidence foreign_ingest. Returns verify_url. Naked tx rejected. x402 v2 PAYMENT-RESPONSE (transaction, network eip155:8453, payer, or the base64 header) is accepted and stored as base:0x….
+- /docs/cloudflare-x402 : Receipts for Cloudflare Monetization Gateway (x402 v2, Coinbase facilitator, USDC on Base, US-only closed beta). Buyer posts PAYMENT-RESPONSE. Evidence foreign_ingest. https://www.chit402.com/docs/cloudflare-x402
 - MCP: ingest_foreign_x402 (= same path). OpenAPI on api.chit402.com/openapi.json (Book · Discovery). Docs: docs/doors/foreign-paybox-ingest.md
 
 ## Agent board
