@@ -152,7 +152,9 @@ export function renderBookSeqSection(chain, lane = null) {
       <div class="row"><span class="k">freeze</span><span class="v">${lane.freeze
         ? `<span class="badge pending">freeze</span> <code>${esc(lane.reason || '')}</code>`
         : '<code>false</code>'}</span></div>
-      <p class="muted" style="margin:8px 0 0;font-size:12px">Unsigned. Freeze only when seq is set, settled_by is receipt, the anchor changed after binding, and the row is not settled. An anchor change alone does not freeze. Not part of the payment signature.</p>` : '';
+      <div class="row"><span class="k">classification</span><span class="v"><code>${esc(lane.classification || '')}</code></span></div>
+      ${lane.local_check ? `<div class="row"><span class="k">local_check</span><span class="v"><code>${esc(lane.local_check.payee)}</code> <code>${esc(lane.local_check.amount_atomic)}</code> <span class="muted">not a payment</span></span></div>` : ''}
+      <p class="muted" style="margin:8px 0 0;font-size:12px">Unsigned. Ordering is seq + settled_by + (anchor_changed AND not settled). Boundary: complete over registry marks, blind to payments the registry never joined. Freeze only when seq is set, settled_by is receipt, the anchor changed after binding, and the row is not settled. An anchor change alone does not freeze. classification unverifiable_from_registry means past expiry with no registry marks, not unpaid. Not part of the payment signature.</p>` : '';
   return `<section class="card">
       <h2>Book position <span class="scope">${esc(chain?.schema || (lane ? 'chit402.receipt_lane.v1' : BOOK_SEQ_SCHEMA))}</span></h2>
       <div class="row"><span class="k">seq</span><span class="v"><code>${esc(seq ?? '—')}</code></span></div>

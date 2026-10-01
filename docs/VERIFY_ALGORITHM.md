@@ -612,9 +612,14 @@ read it, and do not fail a signature because it is present or absent.
 | `settled_by` | `observed_transfer` when `--check-payer` confirms the USDC transfer (or the receipt carries arrival / foreign-ingest observation). `receipt` when a **verified** issuer signature asserts `payment.ref` and no observation fired. `null` when unknown, including a reported OpenRouter row and an unsigned `payment.ref` |
 | `anchor_changed_since_binding` | true when `anchor_at_binding` and the current head (or `anchor_current`) differ in root, Base tx, or Solana signature. Null if either identity is missing |
 | `freeze` | true only when `book_seq` is set, `settled_by` is `receipt`, the anchor changed, and `settled` is false |
+| `ordering` | `seq + settled_by + (anchor_changed AND not settled)` |
+| `boundary` | complete over registry marks, blind to payments the registry never joined |
+| `classification` | `unverifiable_from_registry` when the row is past expiry and `settled_by`, `receipt_id`, `observed_tx_hash`, and `observed_transfer_id` are all null. A joined `settled_by` stays `receipt` or `observed_transfer` |
+| `local_check` | payee and amount for the existing Base USDC transfer check when the class is `unverifiable_from_registry` and the asset is Base USDC. `claims_paid` is false. No chain read |
 
-An anchor change on a settled row does not freeze. Design by Turbo on 1F916
-(post 6579, comments 88201 and 88403). See [receipt-lane.md](./product/receipt-lane.md).
+An anchor change on a settled row does not freeze. An expired unmarked binding
+is not unpaid. Design by Turbo on 1F916 (post 6579, comments 88201, 88403, and
+88596). See [receipt-lane.md](./product/receipt-lane.md).
 
 Gateway copy (no npm install):
 

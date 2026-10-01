@@ -118,8 +118,16 @@ A correction or successor row adds `authority` at payload version 3: `subject_ha
 | `anchor_changed_since_binding` | true when a later signed tree head has a different root or anchor than the head that first covered this leaf. Null when unknown. Not a refusal by itself |
 | `freeze` | true only when `book_seq` is set, `settled_by` is `receipt`, the anchor changed, and `settled` is false |
 | `reason` | `unsettled_anchor_changed` when `freeze` is true |
+| `ordering` | `seq + settled_by + (anchor_changed AND not settled)` |
+| `boundary` | `complete over registry marks, blind to payments the registry never joined` |
+| `classification` | `receipt`, `observed_transfer`, `anchor_changed_unsettled`, `unsettled`, or `unverifiable_from_registry` |
+| `local_check` | Base USDC payee and amount when `classification` is `unverifiable_from_registry`. `claims_paid` is false. Null otherwise |
 
-Design by Turbo on 1F916 (post 6579, comments 88201 and 88403). An ungated `anchor_changed_since_binding` falsely refused 158 of 632 rows on that walk. See [receipt-lane.md](./product/receipt-lane.md).
+Design by Turbo on 1F916 (post 6579, comments 88201, 88403, and 88596). An ungated `anchor_changed_since_binding` falsely refused 158 of 632 rows on that walk. `unverifiable_from_registry` is a binding past expiry whose `settled_by`, `receipt_id`, `observed_tx_hash`, and `observed_transfer_id` are all null. That is not unpaid. See [receipt-lane.md](./product/receipt-lane.md).
+
+## Agent Record link (draft, not issued)
+
+`agent_record_entry` (`chit402.agent_record_entry.v0`) is a draft unsigned object beside `book_seq`, same posture as `receipt_lane`: `signed: false`, outside the payment JWS, payment `payload_version` unchanged. It carries `registry: 1f916` and `fingerprint` (the Agent Record entry hash). Issuance does not stamp it yet. Field rules, issuer, and the verify path: [integrations/1f916-link-v0.md](./integrations/1f916-link-v0.md) and https://www.chit402.com/docs/1f916-link.
 
 ## Outside witness
 

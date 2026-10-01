@@ -247,11 +247,41 @@ test('Book page shows specimen banner and rows before possession', () => {
 
 test('Book principal dashboard v1 wires live API beats', () => {
   const book = readFileSync(join(root, 'src/pages/Book.tsx'), 'utf8');
+  const strip = readFileSync(join(root, 'src/components/BookKpiStrip.tsx'), 'utf8');
+  const client = readFileSync(join(root, 'src/lib/agentBook.ts'), 'utf8');
   assert.match(book, /fetchAgentBook/, 'Book loads possession-gated book API');
   assert.match(book, /computeBurnRate/, 'Book derives burn rate from entries');
   assert.match(book, /computeModelMix/, 'Book derives model mix from entries');
   assert.match(book, /verifyUrlFor/, 'Book links verify_url per row');
   assert.match(book, /Treasury advanced/, 'Policy/export/escrow tucked under advanced');
+  assert.match(book, /BookKpiStrip/, 'Book renders the KPI strip');
+  assert.match(book, /useState<BookWindowPreset>\('7d'\)/, 'Default window is last 7 days');
+  assert.match(strip, /Spend/, 'KPI tile: Spend');
+  assert.match(strip, /Payments/, 'KPI tile: Payments');
+  assert.match(strip, /Vendors paid/, 'KPI tile: Vendors paid');
+  assert.match(strip, /Receipts verified/, 'KPI tile: Receipts verified');
+  assert.match(book, /Export CSV/, 'Receipts list surfaces Export CSV');
+  assert.match(book, /handleExport\('csv', true\)/, 'Receipts list Export CSV is windowed');
+  assert.match(book, /handleExport\('csv'\)/, 'Audit pack CSV is not windowed');
+  assert.match(book, /handleExport\('json'\)/, 'Audit pack JSON is not windowed');
+  assert.match(book, /handleExport\('html'\)/, 'Audit pack HTML is not windowed');
+  assert.match(book, /bookExportBounds\(windowed, windowPreset\)/, 'Export bounds follow the windowed flag');
+  assert.equal(
+    (book.match(/const gen = \+\+loadGen\.current/g) || []).length,
+    2,
+    'Budget save and book load share the generation guard',
+  );
+  assert.match(book, /loadedPreset === windowPreset/, 'KPI totals follow the loaded preset, not a fresh timestamp');
+  assert.match(book, /pending=\{!summaryCurrent\}/, 'KPI strip waits for the selected window');
+  assert.match(book, /if \(opts\?\.quiet\) \{\s*setWindowError/, 'A failed window refetch keeps the loaded book');
+  assert.match(book, /if \(opts\?\.quiet\) return;/, 'A window refetch does not reload policy or the budget draft');
+  assert.match(client, /qs\.set\('from', params\.from\)/, 'Export client forwards from');
+  assert.match(
+    book,
+    /Your first paid call shows up here with its receipt and a verify link\./,
+    'Empty receipts teach the first paid call',
+  );
+  assert.match(book, /to="\/docs\/chit-in-15-lines"/, 'Empty state links the quickstart');
 });
 
 test('Chit primary nav has Trust, Doors, and no Drop-in door', () => {
@@ -327,6 +357,31 @@ test('Drop-in door page documents paid install path (not whole product)', () => 
   assert.match(page, /may strip unknown response fields/, 'drop-in page warns about SDK field stripping');
   assert.match(page, /<h1>Chat <code>\/v1<\/code> wire<\/h1>/, 'drop-in page titles the chat /v1 install wire');
   assert.match(page, /verify_url/, 'drop-in page mentions verify_url');
+});
+
+test('1F916 link draft is a public docs page', () => {
+  const app = readFileSync(join(root, 'src/App.tsx'), 'utf8');
+  const page = readFileSync(join(root, 'src/pages/OneF916Link.tsx'), 'utf8');
+  const docs = readFileSync(join(root, 'src/pages/Docs.tsx'), 'utf8');
+  const sitemap = readFileSync(join(root, '../../api/sitemap.xml.ts'), 'utf8');
+  const llms = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8');
+  const vercel = readFileSync(join(root, '../../vercel.json'), 'utf8');
+  const prerender = readFileSync(join(root, 'scripts/prerender-titles.mjs'), 'utf8');
+  assert.match(app, /path="\/docs\/1f916-link"/, 'App routes /docs/1f916-link');
+  assert.match(page, /Draft v0, feedback welcome/);
+  assert.match(page, /https:\/\/1f916\.ai\/post\/7404/);
+  assert.match(page, /unverified payment claim/);
+  assert.match(page, /Issuance support is coming/);
+  assert.match(page, /api\.chit402\.com\/\.well-known\/jwks\.json/);
+  assert.match(page, /LIVE_RECEIPT_TASK_ID/);
+  assert.match(page, /xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96/);
+  assert.match(page, /PLACEHOLDER/);
+  assert.match(page, /xfuel-verify/);
+  assert.match(docs, /href: '\/docs\/1f916-link'/, 'Docs index lists the draft');
+  assert.match(sitemap, /https:\/\/www\.chit402\.com\/docs\/1f916-link/);
+  assert.match(llms, /\/docs\/1f916-link/);
+  assert.match(vercel, /\/docs\/1f916-link/);
+  assert.match(prerender, /\/docs\/1f916-link/);
 });
 
 test('App routes docs subpages', () => {

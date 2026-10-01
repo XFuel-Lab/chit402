@@ -234,6 +234,63 @@ export function totalsOf(entries) {
 }
 
 /**
+ * Payee for a ledger row: explicit counterparty, otherwise the hub
+ * (inference vendor or foreign endpoint host).
+ * @param {object} entry
+ * @returns {string|null}
+ */
+export function payeeOfEntry(entry) {
+  const explicit = entry?.payee || entry?.pay_to || entry?.endpoint;
+  if (explicit != null && String(explicit).trim()) return String(explicit).trim().toLowerCase();
+  const hub = entry?.hub;
+  if (hub != null && String(hub).trim()) return String(hub).trim().toLowerCase();
+  return null;
+}
+
+/**
+ * Window aggregate for the principal dashboard. Counts the full scoped
+ * set (not the last-N page). Spend matches totalsOf: proven collected
+ * USDC, nano excluded from the USD sum. A receipt verifies when evidence
+ * is collected or foreign_ingest.
+ *
+ * @param {object[]} entries — raw ledger rows already inside the window
+ * @param {{ from?: string|null, to?: string|null }} [meta]
+ */
+export function summarizeBookWindow(entries, { from = null, to = null } = {}) {
+  const rows = Array.isArray(entries) ? entries : [];
+  let spend = 0n;
+  let payments = 0;
+  const payees = new Set();
+  let verified = 0;
+  for (const entry of rows) {
+    const evidence = deriveEvidence(entry);
+    if (evidence === BOOK_EVIDENCE.COLLECTED || evidence === BOOK_EVIDENCE.FOREIGN_INGEST) {
+      verified += 1;
+    }
+    if (!entryQualifiesForTotals(entry)) continue;
+    payments += 1;
+    const rail = String(entry.rail || 'usdc').toLowerCase();
+    if (rail !== 'nano') spend = addAmount(spend, entry.amount);
+    const payee = payeeOfEntry(entry);
+    if (payee) payees.add(payee);
+  }
+  const receipts = rows.length;
+  const verified_percent = receipts === 0
+    ? 0
+    : Math.round((verified * 1000) / receipts) / 10;
+  return {
+    from: from || null,
+    to: to || null,
+    spend_atomic: spend.toString(),
+    payments,
+    vendors_paid: payees.size,
+    receipts,
+    receipts_verified: verified,
+    verified_percent,
+  };
+}
+
+/**
  * Group book rows by intent_id for treasury view.
  * @param {object[]} entries — raw ledger entries
  */
@@ -491,6 +548,10 @@ export function readAgentBook(agentId, claim = {}, { ledger, verify, registry } 
     coverage: selected.coverage,
     sequence: typeof ledger.seqReport === 'function' ? ledger.seqReport(id) : null,
   });
+  body.summary = summarizeBookWindow(selected.universe || entries, {
+    from: claim.from || null,
+    to: claim.to || null,
+  });
   return {
     status: 200,
     body: annotateBookSupersession(body, ledger),
@@ -633,7 +694,7 @@ export function bindBookVerifier(registry) {
  * @param {string} baseUrl — gateway public base for verify_url
  */
 export function buildBookExportCsv(entries, agentId, baseUrl, coverage = null) {
-  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,policy_code,reason,policy_key,spent_atomic,cap_atomic,period_start,replay_count,verify_url,explorer_url,seq,prev_hash,row_hash,act,settled_by,settled,anchor_changed_since_binding,freeze';
+  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,policy_code,reason,policy_key,spent_atomic,cap_atomic,period_start,replay_count,verify_url,explorer_url,seq,prev_hash,row_hash,act,settled_by,settled,anchor_changed_since_binding,freeze,classification';
   const lines = [header];
   for (const e of entries) {
     const row = rowOf(e);
@@ -669,6 +730,7 @@ export function buildBookExportCsv(entries, agentId, baseUrl, coverage = null) {
       row.receipt_lane?.settled == null ? '' : row.receipt_lane.settled,
       row.receipt_lane?.anchor_changed_since_binding == null ? '' : row.receipt_lane.anchor_changed_since_binding,
       row.receipt_lane?.freeze === true,
+      row.receipt_lane?.classification || '',
     ].map(csvEscape);
     lines.push(cols.join(','));
   }
@@ -746,7 +808,10 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
       + 'RECORDED_BY_SETTLE rows show the recorder claim until the paid call closes or ingress_receipt arrives; a closed settle is collected. '
       + 'ARRIVAL_UNVERIFIED rows are explicit omission at cutoff (no ingress_receipt) — visible, amount null, excluded from totals. '
       + 'inflow_claimed rows carry a signed bucket/allocation (no payment.ref) — corrections are append-only. '
-      + 'receipt_lane is unsigned and sits beside seq. freeze is true only when settled_by is receipt, the anchor changed after binding, and the row is not settled. '
+      + 'receipt_lane is unsigned and sits beside seq. Ordering is seq + settled_by + (anchor_changed AND not settled). '
+      + 'Boundary: complete over registry marks, blind to payments the registry never joined. '
+      + 'freeze is true only when settled_by is receipt, the anchor changed after binding, and the row is not settled. '
+      + 'classification unverifiable_from_registry means past expiry with settled_by, receipt_id, observed_tx_hash, and observed_transfer_id all null. That is not unpaid. '
       + 'Verify offline; no separate attestation chain in v1.',
   };
 }

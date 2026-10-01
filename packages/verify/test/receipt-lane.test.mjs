@@ -151,4 +151,66 @@ test('a v8 receipt still verifies when the unsigned lane is attached', async () 
   assert.equal(after.receipt_lane.anchor_changed_since_binding, true);
   assert.equal(after.receipt_lane.freeze, false);
   assert.equal(after.receipt_lane.book_seq, 12);
+  assert.equal(after.receipt_lane.classification, 'receipt');
+  assert.equal(after.receipt_lane.local_check, null);
+  assert.equal(after.receipt_lane.ordering, 'seq + settled_by + (anchor_changed AND not settled)');
+  assert.equal(after.receipt_lane.boundary, 'complete over registry marks, blind to payments the registry never joined');
+});
+
+const WALK_NOW = Date.parse('2026-10-01T17:07:50.562Z');
+
+function binding209() {
+  return {
+    id: 209,
+    docket_id: 'listing-24',
+    expiry: 1790035549,
+    settled_by: null,
+    receipt_id: null,
+    observed_tx_hash: null,
+    observed_transfer_id: null,
+    anchor_changed_since_binding: false,
+    amount_atomic: '100000',
+    payout_address: '0xfeb9100559124e26307bf0c27502976880d85337',
+    chain_id: 8453,
+    token: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+  };
+}
+
+function binding468() {
+  return {
+    id: 468,
+    docket_id: 'listing-38',
+    expiry: 1790553600,
+    settled_by: 'observed_transfer',
+    receipt_id: null,
+    observed_tx_hash: '0x5fd67460440f44235d62edfe53a7f38ca26d993ca515ce77af5807a14687ba6b',
+    observed_transfer_id: 135,
+    anchor_changed_since_binding: false,
+    amount_atomic: '3000000',
+    payout_address: '0x6f8c5b02e08d357650225fa6ca41e0f4c10f09c8',
+    chain_id: 8453,
+    token: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+  };
+}
+
+test('binding 209 is expired and unmarked, so unverifiable_from_registry', () => {
+  const lane = buildReceiptLane({ entry: binding209(), now: WALK_NOW });
+  assert.equal(lane.classification, 'unverifiable_from_registry');
+  assert.equal(lane.settled_by, null);
+  assert.equal(lane.settled, null);
+  assert.equal(lane.freeze, false);
+  assert.equal(lane.local_check.claims_paid, false);
+  assert.equal(lane.local_check.payee, '0xfeb9100559124e26307bf0c27502976880d85337');
+  assert.equal(lane.local_check.amount_atomic, '100000');
+  assert.equal(lane.ordering, 'seq + settled_by + (anchor_changed AND not settled)');
+  assert.equal(lane.boundary, 'complete over registry marks, blind to payments the registry never joined');
+});
+
+test('binding 468 is expired and settled_by observed_transfer, so settled', () => {
+  const lane = buildReceiptLane({ entry: binding468(), now: WALK_NOW });
+  assert.equal(lane.classification, 'observed_transfer');
+  assert.equal(lane.settled_by, 'observed_transfer');
+  assert.equal(lane.settled, true);
+  assert.equal(lane.freeze, false);
+  assert.equal(lane.local_check, null);
 });

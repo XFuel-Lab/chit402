@@ -38,6 +38,9 @@ const USDC_ADDRESSES = {
   'eip155:84532': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
 };
 
+/** Base mainnet USDC. The per-tx Transfer check uses this contract. */
+export const BASE_MAINNET_USDC = USDC_ADDRESSES.base;
+
 /** Networks that use Solana rail (not EVM). */
 const SOLANA_NETWORKS = new Set(['solana', 'solana-devnet', 'solana-mainnet']);
 

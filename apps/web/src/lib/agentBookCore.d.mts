@@ -1,6 +1,49 @@
 export const USDC_DECIMALS: number;
 
 export function formatUsdc(units: string | number | bigint | null | undefined): string;
+export function formatUsd(units: string | number | bigint | null | undefined): string;
+
+export type BookWindowPreset = '24h' | '7d' | '30d' | 'all';
+
+export interface BookWindowQuery {
+  preset: BookWindowPreset;
+  from: string | null;
+  to: string | null;
+  label: string;
+}
+
+export function bookWindowQuery(preset: string, now?: number): BookWindowQuery;
+export function bookExportBounds(
+  windowed: boolean,
+  preset: string,
+  now?: number,
+): { from: string | null; to: string | null };
+export function entriesInWindow<T extends { collected_at?: string | null }>(
+  entries: T[],
+  from: string | null,
+  to: string | null,
+): T[];
+
+export interface BookSummary {
+  spend_atomic: string;
+  payments: number;
+  vendors_paid: number;
+  receipts: number;
+  receipts_verified: number;
+  verified_percent: number;
+  from?: string | null;
+  to?: string | null;
+}
+
+export function payeeOfRow(row: {
+  payee?: string | null;
+  pay_to?: string | null;
+  endpoint?: string | null;
+  hub?: string | null;
+  route?: { hub?: string };
+  payment?: { payTo?: string | null; pay_to?: string | null };
+}): string | null;
+export function computeBookSummary(entries: BookEntryLike[]): BookSummary;
 export function parseUsdcInput(input: string): string | null;
 export function verifyUrlFor(taskId: string, apiHost: string): string;
 export function auditorVerifyUrlFor(taskId: string, apiHost: string): string;
