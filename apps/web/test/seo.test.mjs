@@ -359,6 +359,31 @@ test('Drop-in door page documents paid install path (not whole product)', () => 
   assert.match(page, /verify_url/, 'drop-in page mentions verify_url');
 });
 
+test('1F916 link draft is a public docs page', () => {
+  const app = readFileSync(join(root, 'src/App.tsx'), 'utf8');
+  const page = readFileSync(join(root, 'src/pages/OneF916Link.tsx'), 'utf8');
+  const docs = readFileSync(join(root, 'src/pages/Docs.tsx'), 'utf8');
+  const sitemap = readFileSync(join(root, '../../api/sitemap.xml.ts'), 'utf8');
+  const llms = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8');
+  const vercel = readFileSync(join(root, '../../vercel.json'), 'utf8');
+  const prerender = readFileSync(join(root, 'scripts/prerender-titles.mjs'), 'utf8');
+  assert.match(app, /path="\/docs\/1f916-link"/, 'App routes /docs/1f916-link');
+  assert.match(page, /Draft v0, feedback welcome/);
+  assert.match(page, /https:\/\/1f916\.ai\/post\/7404/);
+  assert.match(page, /unverified payment claim/);
+  assert.match(page, /Issuance support is coming/);
+  assert.match(page, /api\.chit402\.com\/\.well-known\/jwks\.json/);
+  assert.match(page, /LIVE_RECEIPT_TASK_ID/);
+  assert.match(page, /xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96/);
+  assert.match(page, /PLACEHOLDER/);
+  assert.match(page, /xfuel-verify/);
+  assert.match(docs, /href: '\/docs\/1f916-link'/, 'Docs index lists the draft');
+  assert.match(sitemap, /https:\/\/www\.chit402\.com\/docs\/1f916-link/);
+  assert.match(llms, /\/docs\/1f916-link/);
+  assert.match(vercel, /\/docs\/1f916-link/);
+  assert.match(prerender, /\/docs\/1f916-link/);
+});
+
 test('App routes docs subpages', () => {
   const app = readFileSync(join(root, 'src/App.tsx'), 'utf8');
   assert.match(app, /import ChitHome/, 'App imports ChitHome');

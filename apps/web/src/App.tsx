@@ -3,6 +3,7 @@ import Layout from './components/Layout';
 import Home from './pages/Home';
 import ChitHome from './pages/ChitHome';
 import ChitIn15Lines from './pages/ChitIn15Lines';
+import OneF916Link from './pages/OneF916Link';
 import Docs from './pages/Docs';
 import DocsDoors from './pages/DocsDoors';
 import Doors from './pages/Doors';
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/docs" element={<Docs />} />
         <Route path="/docs/doors" element={<DocsDoors />} />
         <Route path="/docs/chit-in-15-lines" element={<ChitIn15Lines />} />
+        <Route path="/docs/1f916-link" element={<OneF916Link />} />
         <Route path="/docs/eliza" element={<ElizaPlugin />} />
         <Route path="/docs/framework-adapters" element={<FrameworkAdapters />} />
         <Route path="/docs/langchain" element={<FrameworkAdapters />} />

@@ -39,6 +39,11 @@ const ROUTE_CONTENT = {
     h1: 'Chat /v1 wire',
     lede: 'Chit is the possession book after USDC settle. This page is the wire-compat install at https://api.chit402.com/v1 — paid x402 door only, no public demo key.',
   },
+  '/docs/1f916-link': {
+    title: '1F916 Agent Record link (draft v0) | Chit402',
+    h1: '1F916 Agent Record link',
+    lede: 'Draft v0, feedback welcome. Schema for linking a 1F916 Agent Record entry to a Chit receipt: chit_receipt_id on the entry, unsigned agent_record_entry.fingerprint on the receipt. Issuance support is coming. https://1f916.ai/post/7404',
+  },
   '/docs/eliza': {
     title: 'Eliza plugin | Chit402',
     h1: 'Eliza plugin',
