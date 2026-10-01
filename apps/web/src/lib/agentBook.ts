@@ -3,6 +3,11 @@ import {
   BOOK_EVIDENCE,
   USDC_DECIMALS,
   computeBurnRate,
+  computeBookSummary,
+  bookWindowQuery,
+  entriesInWindow,
+  formatUsd,
+  payeeOfRow,
   computeModelMix,
   evidenceBadgeTone,
   evidenceHint,
@@ -17,6 +22,9 @@ import {
   auditorVerifyUrlFor,
   formatPayerWallet,
   type BurnRate,
+  type BookSummary,
+  type BookWindowPreset,
+  type BookWindowQuery,
   type ModelMixItem,
 } from './agentBookCore.mjs';
 
@@ -24,6 +32,11 @@ export {
   BOOK_EVIDENCE,
   USDC_DECIMALS,
   computeBurnRate,
+  computeBookSummary,
+  bookWindowQuery,
+  entriesInWindow,
+  formatUsd,
+  payeeOfRow,
   computeModelMix,
   evidenceBadgeTone,
   evidenceHint,
@@ -177,6 +190,8 @@ export interface AgentBookResponse {
   limit: number;
   entries: BookEntry[];
   totals: BookTotals;
+  /** Window aggregate. Absent on gateways that predate the KPI strip. */
+  summary?: BookSummary;
   coverage?: BookCoverage;
   intents?: Record<string, IntentGroup>;
   window: string;
@@ -213,13 +228,15 @@ export interface FetchBookParams {
   session: string;
   limit?: number;
   budget?: string | null;
+  from?: string | null;
+  to?: string | null;
 }
 
 export type FetchBookResult =
   | { ok: true; data: AgentBookResponse }
   | { ok: false; error: BookFetchError; status?: number };
 
-export type { BurnRate, ModelMixItem };
+export type { BurnRate, BookSummary, BookWindowPreset, BookWindowQuery, ModelMixItem };
 
 export interface BookPolicy {
   agent_id?: number;
@@ -316,11 +333,20 @@ export async function setBookPolicy(
 /** GET /v1/agents/:agent_id/book/export */
 export async function fetchBookExport(
   apiV1: string,
-  params: { agentId: number; session: string; format?: 'csv' | 'json' | 'html'; limit?: number },
+  params: {
+    agentId: number;
+    session: string;
+    format?: 'csv' | 'json' | 'html';
+    limit?: number;
+    from?: string | null;
+    to?: string | null;
+  },
 ): Promise<{ ok: true; blob: Blob; filename?: string } | { ok: false; error: BookFetchError; status?: number }> {
   const fmt = params.format || 'csv';
   const qs = new URLSearchParams({ format: fmt });
   if (params.limit != null) qs.set('limit', String(params.limit));
+  if (params.from) qs.set('from', params.from);
+  if (params.to) qs.set('to', params.to);
   const url = `${apiV1.replace(/\/$/, '')}/agents/${params.agentId}/book/export?${qs}`;
   let res: Response;
   try {
@@ -348,6 +374,8 @@ export async function fetchAgentBook(
   const url = `${apiV1.replace(/\/$/, '')}/agents/${params.agentId}/book`;
   const body: Record<string, unknown> = { session: params.session };
   if (params.limit != null) body.limit = params.limit;
+  if (params.from) body.from = params.from;
+  if (params.to) body.to = params.to;
   if (Object.prototype.hasOwnProperty.call(params, 'budget')) {
     body.budget = params.budget;
   }

@@ -25,6 +25,25 @@ Thin web on [chit402.com/book](https://www.chit402.com/book) — extend `/book`,
 | Burn rate | derive from `entries` + `collected_at` | spend over 24h window |
 | Model mix | derive from `entries` | share by hub/model |
 | Verify | `verify_url` pattern `/receipt/:task_id` | link + offline `?format=auditor` |
+| KPI strip | `summary` on the book response | Spend, Payments, Vendors paid, Receipts verified for the selected window (default last 7 days) |
+| Export CSV | existing `GET /v1/agents/:agent_id/book/export?format=csv` | button on the receipts list; same `from` / `to` as the window |
+
+## KPI summary
+
+`summary` is additive on `GET|POST /v1/agents/:agent_id/book`. It counts the full scoped set, not only the last-N page.
+
+| Field | Meaning |
+|-------|---------|
+| `spend_atomic` | USDC atomic in the window (same rules as `totals.usdc_sum`; nano excluded) |
+| `payments` | Rows that qualify for that sum |
+| `vendors_paid` | Distinct payees (`pay_to` / `payee` / `endpoint`, otherwise hub) |
+| `receipts` | Visible rows in the window |
+| `receipts_verified` | Rows whose evidence is `collected` or `foreign_ingest` |
+| `verified_percent` | `receipts_verified / receipts`, `0` when the window is empty |
+
+An empty window is zeros (`spend_atomic: "0"`), not a missing object. The page shows `$0.00` and `0`. With no receipts, the list says: “Your first paid call shows up here with its receipt and a verify link.” and links `/docs/chit-in-15-lines`.
+
+CSV export already existed (`format=csv|json|html`, including `from` / `to`). The receipts list surfaces it as **Export CSV** for the current window. The audit-pack buttons under Treasury advanced stay.
 
 ## Out of v1
 

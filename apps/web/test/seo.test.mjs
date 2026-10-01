@@ -247,11 +247,28 @@ test('Book page shows specimen banner and rows before possession', () => {
 
 test('Book principal dashboard v1 wires live API beats', () => {
   const book = readFileSync(join(root, 'src/pages/Book.tsx'), 'utf8');
+  const strip = readFileSync(join(root, 'src/components/BookKpiStrip.tsx'), 'utf8');
+  const client = readFileSync(join(root, 'src/lib/agentBook.ts'), 'utf8');
   assert.match(book, /fetchAgentBook/, 'Book loads possession-gated book API');
   assert.match(book, /computeBurnRate/, 'Book derives burn rate from entries');
   assert.match(book, /computeModelMix/, 'Book derives model mix from entries');
   assert.match(book, /verifyUrlFor/, 'Book links verify_url per row');
   assert.match(book, /Treasury advanced/, 'Policy/export/escrow tucked under advanced');
+  assert.match(book, /BookKpiStrip/, 'Book renders the KPI strip');
+  assert.match(book, /useState<BookWindowPreset>\('7d'\)/, 'Default window is last 7 days');
+  assert.match(strip, /Spend/, 'KPI tile: Spend');
+  assert.match(strip, /Payments/, 'KPI tile: Payments');
+  assert.match(strip, /Vendors paid/, 'KPI tile: Vendors paid');
+  assert.match(strip, /Receipts verified/, 'KPI tile: Receipts verified');
+  assert.match(book, /Export CSV/, 'Receipts list surfaces Export CSV');
+  assert.match(book, /fetchBookExport\([\s\S]*from: range\.from/, 'Export CSV sends the selected window');
+  assert.match(client, /qs\.set\('from', params\.from\)/, 'Export client forwards from');
+  assert.match(
+    book,
+    /Your first paid call shows up here with its receipt and a verify link\./,
+    'Empty receipts teach the first paid call',
+  );
+  assert.match(book, /to="\/docs\/chit-in-15-lines"/, 'Empty state links the quickstart');
 });
 
 test('Chit primary nav has Trust, Doors, and no Drop-in door', () => {

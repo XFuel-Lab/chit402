@@ -60,6 +60,125 @@ export function summarizePaymentRef(ref, rail) {
   return `${raw.slice(0, 12)}…${raw.slice(-10)}`;
 }
 
+const UNMETERED_RAILS = new Set(['unmetered', 'demo', 'free']);
+const VERIFIED_EVIDENCE = new Set(['collected', 'foreign_ingest']);
+
+/**
+ * USD display for a KPI tile. Zero is always `$0.00`. A non-zero amount
+ * keeps significant USDC decimals (`$0.002`) instead of rounding to cents.
+ */
+export function formatUsd(units) {
+  if (units == null || units === '') return '$0.00';
+  try {
+    const n = BigInt(String(units).trim() || '0');
+    if (n === 0n) return '$0.00';
+    const neg = n < 0n;
+    const body = formatUsdc((neg ? -n : n).toString());
+    return neg ? `-$${body}` : `$${body}`;
+  } catch {
+    return '$0.00';
+  }
+}
+
+/** @typedef {'24h' | '7d' | '30d' | 'all'} BookWindowPreset */
+
+/**
+ * Selected spend window. Default for the principal dashboard is 7 days.
+ * `all` omits from/to so the book stays unfiltered.
+ * @param {string} preset
+ * @param {number} [now]
+ */
+export function bookWindowQuery(preset, now = Date.now()) {
+  if (preset === 'all') {
+    return { preset: 'all', from: null, to: null, label: 'All time' };
+  }
+  const ms = preset === '24h'
+    ? 24 * 60 * 60 * 1000
+    : preset === '30d'
+      ? 30 * 24 * 60 * 60 * 1000
+      : 7 * 24 * 60 * 60 * 1000;
+  const label = preset === '24h' ? 'Last 24 hours' : preset === '30d' ? 'Last 30 days' : 'Last 7 days';
+  return {
+    preset: preset === '24h' || preset === '30d' ? preset : '7d',
+    from: new Date(now - ms).toISOString(),
+    to: null,
+    label,
+  };
+}
+
+/**
+ * Keep rows whose collected_at falls inside from/to. Rows with no
+ * timestamp drop out once a bound is set. No bounds returns the input.
+ */
+export function entriesInWindow(entries, from, to) {
+  const rows = Array.isArray(entries) ? entries : [];
+  const fromMs = from ? Date.parse(from) : null;
+  const toMs = to ? Date.parse(to) : null;
+  if (fromMs == null && toMs == null) return rows;
+  return rows.filter((row) => {
+    const ts = Date.parse(row?.collected_at || '');
+    if (!Number.isFinite(ts)) return false;
+    if (fromMs != null && !Number.isNaN(fromMs) && ts < fromMs) return false;
+    if (toMs != null && !Number.isNaN(toMs) && ts > toMs) return false;
+    return true;
+  });
+}
+
+/** Distinct payee: explicit counterparty, otherwise hub / endpoint host. */
+export function payeeOfRow(row) {
+  const explicit = row?.payee || row?.pay_to || row?.endpoint
+    || row?.payment?.payTo || row?.payment?.pay_to;
+  if (explicit != null && String(explicit).trim()) return String(explicit).trim().toLowerCase();
+  const hub = row?.hub || row?.route?.hub;
+  if (hub != null && String(hub).trim() && hub !== '—') return String(hub).trim().toLowerCase();
+  return null;
+}
+
+/**
+ * KPI aggregate over packed book rows (or a client fallback when the
+ * gateway response has no `summary`). Spend counts collected, foreign
+ * ingest, and inflow rows. A receipt verifies only for collected or
+ * foreign_ingest evidence.
+ */
+export function computeBookSummary(entries) {
+  const rows = Array.isArray(entries) ? entries : [];
+  let spend = 0n;
+  let payments = 0;
+  const payees = new Set();
+  let verified = 0;
+  for (const row of rows) {
+    const evidence = resolveRowEvidence(row);
+    if (VERIFIED_EVIDENCE.has(evidence)) verified += 1;
+    const rail = String(row?.payment?.rail || row?.rail || 'usdc').toLowerCase();
+    const amount = row?.payment?.amount ?? row?.amount ?? null;
+    const payable = (evidence === 'collected' || evidence === 'foreign_ingest' || evidence === 'inflow_claimed')
+      && row?.collected !== false
+      && !UNMETERED_RAILS.has(rail)
+      && amount != null
+      && String(amount).trim() !== '';
+    if (!payable) continue;
+    payments += 1;
+    if (rail !== 'nano') {
+      try {
+        spend += BigInt(String(amount).trim());
+      } catch {
+        /* skip malformed */
+      }
+    }
+    const payee = payeeOfRow(row);
+    if (payee) payees.add(payee);
+  }
+  const receipts = rows.length;
+  return {
+    spend_atomic: spend.toString(),
+    payments,
+    vendors_paid: payees.size,
+    receipts,
+    receipts_verified: verified,
+    verified_percent: receipts === 0 ? 0 : Math.round((verified * 1000) / receipts) / 10,
+  };
+}
+
 /** Sum spend in the last N hours from collected_at timestamps. */
 export function computeBurnRate(entries, windowHours = 24) {
   const cutoff = Date.now() - windowHours * 60 * 60 * 1000;
