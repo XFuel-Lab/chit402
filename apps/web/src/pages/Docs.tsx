@@ -22,7 +22,7 @@ const startHere: DocLink[] = [
   },
   {
     title: '1F916 link (draft)',
-    description: 'Draft v0. Specimen 1 pairs a real 1F916 entry hash with a settled Base receipt. Issuance does not stamp the field yet.',
+    description: 'Draft v0. Specimen 1 and Specimen 2 are listing payouts, pending first stamp.',
     href: '/docs/1f916-link',
     meta: 'draft',
     internal: true,

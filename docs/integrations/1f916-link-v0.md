@@ -115,57 +115,34 @@ npx xfuel-verify receipt.json --jwks-url "https://<issuer-origin>/.well-known/jw
 
 The instruction and the money are bound when steps 2, 3, and 4 succeed. A receipt with no `agent_record_entry` can still verify as a payment. It does not bind an Agent Record entry.
 
-## Specimen 1
+## Specimens
 
-Public file: https://www.chit402.com/specimens/1f916-link-1.json
+**pending first stamp.**
 
-Falsifier (fingerprint one nibble off): https://www.chit402.com/specimens/1f916-link-1-tampered.json
+| | Specimen 1 | Specimen 2 |
+|--|--|--|
+| Listing | [55](https://1f916.ai/api/listings/55) | [45](https://1f916.ai/api/listings/45) |
+| Award | 17, submission 839, observed transfer 171 | 16, submission 802, observed transfer 161 |
+| Amount | 1000000 atomic USDC | 500000 atomic USDC |
+| Our payout tx | `0x909d738d79ff4c9885cd9ed0755636565ee3ddf0406ef6f454e7fbf797990ce9` | `0x233acdcf3d78436d63a0dba00092fb9a8fe806a3ecd1b415a4d364144baffebd` |
+| Funder | `0x9f8951cb8b060f52fdf87297b3c5b00f7aa18f52` | `0xe3aa1174f773cb266c69e6be909e9e777b50c87d` |
+| Sealed event | identity_events `20498` | identity_events `17514` |
+| Fingerprint | `a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2` | `b4874aa36c769b41b7566cee64c601e4074ff9b57349bfb5f1eb704bfddc1447` |
+| File | https://www.chit402.com/specimens/1f916-link-1.json | https://www.chit402.com/specimens/1f916-link-2.json |
 
-Handle `chit402` has no mandate rows (`GET /api/mandates?citizen=chit402` is empty) and no memory seals. The entry below is identity-log event `20498` (`listing`), read from `GET /api/record/chit402`. `fingerprint_alg` is `1f916-entry-hash`: the hash the registry publishes on that row. The row does not carry `chit_receipt_id`. Specimen 1 is the published link. The listing and the receipt are different acts; the file does not claim the listing text names this payment.
+Both awards have `receipt_id` null. `chit_receipt_id` in each file stays null until the house book has a receipt for that payout tx.
 
-Live receipt (still no `agent_record_entry` on the wire):
-
-`GET https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96?format=json`
-
-| Field | Value |
-|-------|--------|
-| Entry | identity_events `20498`, handle `chit402`, kind `listing` |
-| `fingerprint` | `a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2` |
-| `task_id` | `xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96` |
-| `verify_url` path id | `chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96` |
-| `payment.ref` | `base:0xf63ed6a83106d84a04b18a53ebbd73ff4c1fce280ec1a6035c5bdc2bed283f6f` |
-| `payment.gross_amount` | `2000` |
-| `caller_binding.payer_wallet` | `0x253695Ff2DAa549980D9181B962d042B73A5e499` |
-| `payment.payee` | `0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334` |
-| `book_seq` | `1` (`prev_hash` null, the book head) |
-
-```json
-{
-  "chit_receipt_id": "chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96",
-  "chit_verify_url": "https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96?format=json",
-  "agent_record_entry": {
-    "schema": "chit402.agent_record_entry.v0",
-    "signed": false,
-    "registry": "1f916",
-    "fingerprint": "a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2",
-    "fingerprint_alg": "1f916-entry-hash"
-  }
-}
+```bash
+cd services/gateway && node scripts/stamp-foreign-payout.mjs --chain base --tx 0x909d738d79ff4c9885cd9ed0755636565ee3ddf0406ef6f454e7fbf797990ce9 --tx 0x233acdcf3d78436d63a0dba00092fb9a8fe806a3ecd1b415a4d364144baffebd
 ```
+
+The command reads each tx, checks the USDC transfer with the foreign-ingest verifier, and appends a row only when `STAMP_WAIVER_KEYS` still has a free stamp. It does not broadcast a transaction. Restart the gateway afterward so `GET /receipt` reloads the book.
 
 ```bash
 node scripts/verify-1f916-link.mjs https://www.chit402.com/specimens/1f916-link-1.json
-node scripts/verify-1f916-link.mjs https://www.chit402.com/specimens/1f916-link-1-tampered.json
 ```
 
-The first command exits 0. The second passes the receipt steps and fails `entry_fingerprint`.
-
-Receipt-only check, signature and chain, without the fingerprint:
-
-```bash
-curl -sS "https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96?format=json" -o receipt.json
-npx xfuel-verify receipt.json --fetch-jwks --check-payer
-```
+Until the stamp, `fetch_receipt` prints `pending_first_stamp`.
 
 ## What issuance will do later
 

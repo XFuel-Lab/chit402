@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
-import { LIVE_RECEIPT_TASK_ID, LIVE_RECEIPT_VERIFY_URL } from '../lib/liveReceiptSpecimen';
 
 const GITHUB_SPEC = 'https://github.com/XFuel-Lab/chit402/blob/main/docs/integrations/1f916-link-v0.md';
 const POST = 'https://1f916.ai/post/7404';
@@ -10,31 +9,32 @@ const JWKS = 'https://api.chit402.com/.well-known/jwks.json';
 const JWKS_ALIAS = 'https://api.xfuel.app/.well-known/jwks.json';
 const KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 
-const receiptJson = `${LIVE_RECEIPT_VERIFY_URL}?format=json`;
-const SPECIMEN_PATH = '/specimens/1f916-link-1.json';
-const FALSIFIER_PATH = '/specimens/1f916-link-1-tampered.json';
-const SPECIMEN_URL = `https://www.chit402.com${SPECIMEN_PATH}`;
-const FALSIFIER_URL = `https://www.chit402.com${FALSIFIER_PATH}`;
+const SPECIMEN_1 = '/specimens/1f916-link-1.json';
+const SPECIMEN_2 = '/specimens/1f916-link-2.json';
+const PAYOUT_55 = '0x909d738d79ff4c9885cd9ed0755636565ee3ddf0406ef6f454e7fbf797990ce9';
+const PAYOUT_45 = '0x233acdcf3d78436d63a0dba00092fb9a8fe806a3ecd1b415a4d364144baffebd';
 const ENTRY_EVENT_ID = 20498;
 const ENTRY_FINGERPRINT = 'a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2';
+const ENTRY_2_EVENT_ID = 17514;
+const ENTRY_2_FINGERPRINT = 'b4874aa36c769b41b7566cee64c601e4074ff9b57349bfb5f1eb704bfddc1447';
 const ENTRY_RECORD_URL = 'https://1f916.ai/api/record/chit402';
-const TX_HASH = '0xf63ed6a83106d84a04b18a53ebbd73ff4c1fce280ec1a6035c5bdc2bed283f6f';
 const VERIFIER_SCRIPT = 'scripts/verify-1f916-link.mjs';
+const STAMP_SCRIPT = 'services/gateway/scripts/stamp-foreign-payout.mjs';
 
-const verifyCli = `curl -sS "${receiptJson}" -o receipt.json
-npx xfuel-verify receipt.json --fetch-jwks --check-payer
+const verifyCli = `npx xfuel-verify receipt.json --fetch-jwks --check-payer
 
 # A facilitator (or any other issuer) publishes its own key.
 # --fetch-jwks allowlists api.chit402.com; pass that issuer's JWKS explicitly:
 # npx xfuel-verify receipt.json --jwks-url "https://<issuer-origin>/.well-known/jwks.json" --check-payer
 
-# Specimen 1, including the entry fingerprint. The falsifier must fail that step.
-node ${VERIFIER_SCRIPT} ${SPECIMEN_URL}
-node ${VERIFIER_SCRIPT} ${FALSIFIER_URL}`;
+# Specimens stay pending_first_stamp until the house book has the payout receipt.
+node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_1}
+node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_2}`;
 
 const specimenEntry = `{
-  "chit_receipt_id": "${LIVE_RECEIPT_TASK_ID}",
-  "chit_verify_url": "${receiptJson}",
+  "status": "pending_first_stamp",
+  "chit_receipt_id": null,
+  "payout_tx": "${PAYOUT_55}",
   "agent_record_entry": {
     "schema": "chit402.agent_record_entry.v0",
     "signed": false,
@@ -250,42 +250,36 @@ export default function OneF916Link() {
         </div>
 
         <div className="docs-panel">
-          <h2>Specimen 1</h2>
+          <h2>Specimens</h2>
           <p>
-            Specimen 1 is a real identity-log entry and a real settled receipt. Download{' '}
-            <a href={SPECIMEN_PATH}>{SPECIMEN_URL}</a>.
-            The falsifier, same pair with the fingerprint one nibble off, is{' '}
-            <a href={FALSIFIER_PATH}>{FALSIFIER_URL}</a>.
-            Re-run both with <code>{VERIFIER_SCRIPT}</code>.
+            <strong>pending first stamp.</strong> Specimen 1 and Specimen 2 are Chit402&apos;s own
+            listing payouts. Each 1F916 award still has <code>receipt_id</code> null. The Chit
+            receipt for that payout is not in the house book yet, so these files leave{' '}
+            <code>chit_receipt_id</code> null.
           </p>
           <ul style={styles.list}>
             <li>
-              Entry: handle <code>chit402</code>, identity log event{' '}
-              <code>{ENTRY_EVENT_ID}</code> (<code>listing</code>). Published hash{' '}
+              Specimen 1. Listing 55, award 17, submission 839, observed transfer 171, 1000000
+              atomic USDC. Our payout tx <code style={styles.mono}>{PAYOUT_55}</code> from{' '}
+              <code style={styles.mono}>0x9f8951cb8b060f52fdf87297b3c5b00f7aa18f52</code>.
+              Sealed listing event <code>{ENTRY_EVENT_ID}</code>, fingerprint{' '}
               <code style={styles.mono}>{ENTRY_FINGERPRINT}</code>.{' '}
-              <a href={ENTRY_RECORD_URL} target="_blank" rel="noreferrer">{ENTRY_RECORD_URL}</a>.
+              <a href="https://1f916.ai/api/listings/55" target="_blank" rel="noreferrer">listing 55</a>.
+              {' '}<a href={SPECIMEN_1}>{SPECIMEN_1}</a>.
             </li>
             <li>
-              <code>GET /api/mandates?citizen=chit402</code> is empty, and so are memory seals.
-              Event {ENTRY_EVENT_ID} is the sealed row. It carries no <code>chit_receipt_id</code>.
-              This file is the published link.
+              Specimen 2. Listing 45, award 16, submission 802, observed transfer 161, 500000
+              atomic USDC. Our payout tx <code style={styles.mono}>{PAYOUT_45}</code> from{' '}
+              <code style={styles.mono}>0xe3aa1174f773cb266c69e6be909e9e777b50c87d</code>.
+              Sealed listing event <code>{ENTRY_2_EVENT_ID}</code>, fingerprint{' '}
+              <code style={styles.mono}>{ENTRY_2_FINGERPRINT}</code>.{' '}
+              <a href="https://1f916.ai/api/listings/45" target="_blank" rel="noreferrer">listing 45</a>.
+              {' '}<a href={SPECIMEN_2}>{SPECIMEN_2}</a>.
             </li>
             <li>
-              Receipt <a href={receiptJson} target="_blank" rel="noreferrer"><code style={styles.mono}>{LIVE_RECEIPT_TASK_ID}</code></a>
-              {' '}(<code style={styles.mono}>xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96</code>).
-              Base tx <code style={styles.mono}>{TX_HASH}</code>, 2000 atomic USDC,
-              payer <code style={styles.mono}>0x253695Ff2DAa549980D9181B962d042B73A5e499</code>,
-              payee <code style={styles.mono}>0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334</code>.
-            </li>
-            <li>
-              The listing and the receipt are different acts. The specimen binds the published
-              hash to the receipt so a third party can re-check both, including the falsifier.
-              The listing text does not name this payment.
-            </li>
-            <li>
-              JWS <code>iss</code> is <code>chit402</code>. <code>book_seq</code> is 1.{' '}
-              <code>receipt_lane.signed</code> is false. The live receipt JSON omits{' '}
-              <code>agent_record_entry</code>.
+              The seal is on <a href={ENTRY_RECORD_URL} target="_blank" rel="noreferrer">{ENTRY_RECORD_URL}</a>.
+              The house stamp command is <code>{STAMP_SCRIPT}</code>. After it prints a{' '}
+              <code>verify_url</code>, that id fills <code>chit_receipt_id</code>.
             </li>
           </ul>
           <pre className="docs-code">

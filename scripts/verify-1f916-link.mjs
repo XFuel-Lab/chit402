@@ -146,9 +146,14 @@ function receiptUrl(id) {
 /**
  * @param {object} specimen
  */
+function pendingSpecimen(specimen) {
+  if (specimen?.status === 'pending_first_stamp') return true;
+  return specimen?.chit_receipt_id == null || specimen?.chit_receipt_id === '';
+}
+
 function canonicalReceiptUrl(specimen) {
   const id = specimen?.chit_receipt_id;
-  if (typeof id !== 'string' || !/^chit-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/.test(id)) {
     return null;
   }
   const canonical = receiptUrl(id);
@@ -182,7 +187,9 @@ export async function verifyLink(specimen, opts = {}) {
 
   const url = canonicalReceiptUrl(specimen);
   let receipt = null;
-  if (!url) {
+  if (pendingSpecimen(specimen)) {
+    steps.fetch_receipt = fail('pending_first_stamp');
+  } else if (!url) {
     steps.fetch_receipt = fail('chit_receipt_id or chit_verify_url is not the public receipt URL');
   } else {
     try {

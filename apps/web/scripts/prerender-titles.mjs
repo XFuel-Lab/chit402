@@ -42,7 +42,7 @@ const ROUTE_CONTENT = {
   '/docs/1f916-link': {
     title: '1F916 Agent Record link (draft v0) | Chit402',
     h1: '1F916 Agent Record link',
-    lede: 'Draft v0, feedback welcome. Specimen 1 pairs 1F916 identity-log event 20498 (handle chit402) with settled Base receipt chit-1ebc5616. Download /specimens/1f916-link-1.json and re-check it with scripts/verify-1f916-link.mjs. The tampered fingerprint must fail. https://1f916.ai/post/7404',
+    lede: 'Draft v0, feedback welcome. Specimen 1 and Specimen 2 are Chit402 listing payouts, pending first stamp. Listing 55 tx 0x909d738d… and listing 45 tx 0x233acdcf… have no Chit receipt yet. https://1f916.ai/post/7404',
   },
   '/docs/eliza': {
     title: 'Eliza plugin | Chit402',

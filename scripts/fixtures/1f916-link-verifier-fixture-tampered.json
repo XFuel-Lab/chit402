@@ -1,7 +1,8 @@
 {
   "schema": "chit402.1f916_link_specimen.v0",
-  "label": "Specimen 1 falsifier",
-  "role": "falsifier",
+  "label": "Verifier fixture falsifier",
+  "role": "verifier_test_fixture",
+  "note": "Not a public specimen. Same verifier fixture receipt with the entry fingerprint one nibble off. The fingerprint step must fail. The receipt steps must still pass.",
   "chit_receipt_id": "chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96",
   "chit_verify_url": "https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96?format=json",
   "entry": {
@@ -12,8 +13,7 @@
     "kind": "listing",
     "hash": "a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2",
     "record_url": "https://1f916.ai/api/record/chit402",
-    "proof_url": "https://1f916.ai/api/proof?log=identity_events&event=20498",
-    "detail": "listing payload sha256=3aa28b67a1025c4d4cd145f7f51db10c08173c24a4c60cfde61bd3df3c298c60, amount_atomic=1000000"
+    "proof_url": "https://1f916.ai/api/proof?log=identity_events&event=20498"
   },
   "agent_record_entry": {
     "schema": "chit402.agent_record_entry.v0",
@@ -21,6 +21,5 @@
     "registry": "1f916",
     "fingerprint": "a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc3",
     "fingerprint_alg": "1f916-entry-hash"
-  },
-  "boundary": "Same receipt and same identity-log event as Specimen 1. agent_record_entry.fingerprint is one nibble off the published hash. Receipt signature, book chain, and the Base transfer still verify. The fingerprint step must fail."
+  }
 }

@@ -73,7 +73,7 @@
       "headers": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }]
     },
     {
-      "source": "/specimens/1f916-link-1-tampered.json",
+      "source": "/specimens/1f916-link-2.json",
       "headers": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }]
     }
   ],
