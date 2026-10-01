@@ -83,14 +83,22 @@ Today Chit402 issues. Live receipts carry `iss` `chit402` and kid `IvFpmC-vPhkY_
 
 The schema is issuer-agnostic. A facilitator, or any other party, is the issuer when it signs this same receipt format with a key published at `https://<issuer-origin>/.well-known/jwks.json`. Verification matches `issuer_signature.kid` to that published key. It uses the signature plus the chain check. The `iss` string is a label. Embedded `issuer_jwk` is a convenience copy, not a trust root, unless its thumbprint equals a key the verifier already pinned.
 
+### Who issues the receipt
+
+Chit issues the receipt in production. `issuer_signature` binds to the facilitator's settlement, not to the agent's word. After settle, the facilitator response carries the transaction hash, the network, and the payer. Those are the values `PAYMENT-RESPONSE` and `X-PAYMENT-RESPONSE` expose, and they are what the signed claims store: `payment.ref` is `<network>:<tx hash>`, and `caller_binding.payer_wallet` is that payer.
+
+Facilitator JSON shapes differ. Coinbase CDP returns `transaction`. Other settle bodies use `txHash` for the same field. PayAI settles Solana. A self-hosted facilitator returns `{ success, transaction, network, payer }`. The gateway reads `transaction` or `txHash`, and `payer`, and emits one receipt and one `PAYMENT-RESPONSE` body: `success`, `transaction`, a CAIP-2 `network`, and `payer`.
+
 ## Verify path
 
 1. **Fetch the receipt by id.** `GET /receipt/:id?format=json`, or `chit_verify_url` when the entry sets it. Chit402: `GET https://api.chit402.com/receipt/<chit_receipt_id>?format=json`.
 2. **Verify the signature against the published key.** ES256-verify `issuer_signature.jws`. The key is the JWKS entry whose `kid` equals `issuer_signature.kid`, fetched from the issuer's `/.well-known/jwks.json`. For Chit402 that URL is https://api.chit402.com/.well-known/jwks.json.
 3. **Check payer, payee, and amount against the on-chain transaction.** Read `caller_binding.payer_wallet`, `payment.payee`, `payment.asset`, `payment.gross_amount`, and `payment.ref` from the verified JWS claims. On Base, the USDC `Transfer` log in that transaction, from the payer to the payee, of that asset, must sum to at least `gross_amount`. A mismatch between the verified claims and the unsigned outer `payment` / `caller_binding` fails the receipt.
-4. **Compare fingerprints.** Hash the Agent Record entry with `fingerprint_alg` and compare to `agent_record_entry.fingerprint`. `registry` is `1f916`.
+4. **Compare fingerprints.** For `fingerprint_alg` `1f916-entry-hash`, compare `agent_record_entry.fingerprint` to the hash the registry publishes on that log entry. For `provisional-sha256-jcs`, hash the JCS form of the entry and compare. `registry` is `1f916`.
 
 `xfuel-verify` covers steps 2 and 3 for a receipt JSON file. It does not compare `agent_record_entry.fingerprint`.
+
+`scripts/verify-1f916-link.mjs` fetches the receipt, checks the signature against the Chit JWKS, checks the signed book chain, checks the Base transaction on a public RPC, and compares `agent_record_entry.fingerprint` to the hash 1F916 publishes for the claimed identity-log event. It prints PASS or FAIL per step. Node built-ins only.
 
 ```bash
 curl -sS "https://api.chit402.com/receipt/<chit_receipt_id>?format=json" -o receipt.json
@@ -103,64 +111,56 @@ npx xfuel-verify receipt.json --fetch-jwks --check-payer
 npx xfuel-verify receipt.json --jwks-url "https://<issuer-origin>/.well-known/jwks.json" --check-payer
 ```
 
-`--check-payer` queries Base or Solana and checks payer, payee, asset, and amount. Step 4 stays a separate comparison until issuance stamps the field and the CLI grows a check for it.
+`--check-payer` queries Base or Solana and checks payer, payee, asset, and amount. `xfuel-verify` does not run step 4. `scripts/verify-1f916-link.mjs` does, against the specimen file. Issuance still does not stamp `agent_record_entry` on the receipt.
 
 The instruction and the money are bound when steps 2, 3, and 4 succeed. A receipt with no `agent_record_entry` can still verify as a payment. It does not bind an Agent Record entry.
 
-## Worked example
+## Specimen 1
 
-No linked pair exists yet. The block below copies fields from a live receipt and marks the link fields as a placeholder. Do not treat the placeholder as a hash, and do not look for a 1F916 entry that carries this id.
+Public file: https://www.chit402.com/specimens/1f916-link-1.json
 
-Live receipt (no `agent_record_entry` on the wire today):
+Falsifier (fingerprint one nibble off): https://www.chit402.com/specimens/1f916-link-1-tampered.json
+
+Handle `chit402` has no mandate rows (`GET /api/mandates?citizen=chit402` is empty) and no memory seals. The entry below is identity-log event `20498` (`listing`), read from `GET /api/record/chit402`. `fingerprint_alg` is `1f916-entry-hash`: the hash the registry publishes on that row. The row does not carry `chit_receipt_id`. Specimen 1 is the published link. The listing and the receipt are different acts; the file does not claim the listing text names this payment.
+
+Live receipt (still no `agent_record_entry` on the wire):
 
 `GET https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96?format=json`
 
-Fetched 2026-10-01. Values below are from that response.
-
 | Field | Value |
 |-------|--------|
-| `schema` | `xfuel.receipt.v4` |
+| Entry | identity_events `20498`, handle `chit402`, kind `listing` |
+| `fingerprint` | `a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2` |
 | `task_id` | `xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96` |
 | `verify_url` path id | `chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96` |
-| `payment.rail` | `usdc` |
 | `payment.ref` | `base:0xf63ed6a83106d84a04b18a53ebbd73ff4c1fce280ec1a6035c5bdc2bed283f6f` |
 | `payment.gross_amount` | `2000` |
-| `payment.asset` | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
-| `payment.payee` | `0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334` |
 | `caller_binding.payer_wallet` | `0x253695Ff2DAa549980D9181B962d042B73A5e499` |
-| `route.provider` | `akash-network` |
-| `route.model` | `akash/meta-llama/Llama-3.3-70B-Instruct` |
-| `issuer_signature.alg` | `ES256` |
-| `issuer_signature.kid` | `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q` |
-| `issuer_signature.payload_version` | `6` |
-| `verification.jwks_uri` | `https://api.chit402.com/.well-known/jwks.json` |
-| `book_seq` | `1` |
-| `receipt_lane.signed` | `false` |
-
-The JWS `iss` claim on this receipt is `chit402`.
-
-Placeholder entry fields, using that live id. No Agent Record entry publishes them today:
+| `payment.payee` | `0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334` |
+| `book_seq` | `1` (`prev_hash` null, the book head) |
 
 ```json
 {
   "chit_receipt_id": "chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96",
-  "chit_verify_url": "https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96?format=json"
+  "chit_verify_url": "https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96?format=json",
+  "agent_record_entry": {
+    "schema": "chit402.agent_record_entry.v0",
+    "signed": false,
+    "registry": "1f916",
+    "fingerprint": "a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2",
+    "fingerprint_alg": "1f916-entry-hash"
+  }
 }
 ```
 
-Placeholder receipt object. **Not present** on the live JSON. `fingerprint` is the sentinel `PLACEHOLDER`, not a hash:
-
-```json
-"agent_record_entry": {
-  "schema": "chit402.agent_record_entry.v0",
-  "signed": false,
-  "registry": "1f916",
-  "fingerprint": "PLACEHOLDER",
-  "fingerprint_alg": "provisional-sha256-jcs"
-}
+```bash
+node scripts/verify-1f916-link.mjs https://www.chit402.com/specimens/1f916-link-1.json
+node scripts/verify-1f916-link.mjs https://www.chit402.com/specimens/1f916-link-1-tampered.json
 ```
 
-Verify the live receipt as it exists today (signature and chain only):
+The first command exits 0. The second passes the receipt steps and fails `entry_fingerprint`.
+
+Receipt-only check, signature and chain, without the fingerprint:
 
 ```bash
 curl -sS "https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96?format=json" -o receipt.json

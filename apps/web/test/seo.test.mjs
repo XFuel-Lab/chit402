@@ -375,7 +375,14 @@ test('1F916 link draft is a public docs page', () => {
   assert.match(page, /api\.chit402\.com\/\.well-known\/jwks\.json/);
   assert.match(page, /LIVE_RECEIPT_TASK_ID/);
   assert.match(page, /xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96/);
-  assert.match(page, /PLACEHOLDER/);
+  assert.match(page, /Who issues the receipt/);
+  assert.match(page, /Specimen 1/);
+  assert.match(page, /a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2/);
+  assert.match(page, /20498/);
+  assert.match(page, /scripts\/verify-1f916-link\.mjs/);
+  assert.match(page, /1f916-link-1-tampered\.json/);
+  assert.match(page, /PAYMENT-RESPONSE/);
+  assert.doesNotMatch(page, /PLACEHOLDER/);
   assert.match(page, /xfuel-verify/);
   assert.match(docs, /href: '\/docs\/1f916-link'/, 'Docs index lists the draft');
   assert.match(sitemap, /https:\/\/www\.chit402\.com\/docs\/1f916-link/);

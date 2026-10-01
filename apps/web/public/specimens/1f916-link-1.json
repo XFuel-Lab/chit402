@@ -1,0 +1,25 @@
+{
+  "schema": "chit402.1f916_link_specimen.v0",
+  "label": "Specimen 1",
+  "chit_receipt_id": "chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96",
+  "chit_verify_url": "https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96?format=json",
+  "entry": {
+    "registry": "1f916",
+    "handle": "chit402",
+    "log": "identity_events",
+    "event_id": 20498,
+    "kind": "listing",
+    "hash": "a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2",
+    "record_url": "https://1f916.ai/api/record/chit402",
+    "proof_url": "https://1f916.ai/api/proof?log=identity_events&event=20498",
+    "detail": "listing payload sha256=3aa28b67a1025c4d4cd145f7f51db10c08173c24a4c60cfde61bd3df3c298c60, amount_atomic=1000000"
+  },
+  "agent_record_entry": {
+    "schema": "chit402.agent_record_entry.v0",
+    "signed": false,
+    "registry": "1f916",
+    "fingerprint": "a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2",
+    "fingerprint_alg": "1f916-entry-hash"
+  },
+  "boundary": "Handle chit402 has no mandate rows (GET /api/mandates?citizen=chit402 is empty) and no memory seals. This entry is identity-log event 20498, the hash the registry publishes for that row. The row does not carry chit_receipt_id. This file is the published link. The listing and receipt chit-1ebc5616 are different acts; the specimen does not claim the listing text names that payment. Issuance does not stamp agent_record_entry on the receipt JSON."
+}

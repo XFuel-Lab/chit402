@@ -127,7 +127,7 @@ Design by Turbo on 1F916 (post 6579, comments 88201, 88403, and 88596). An ungat
 
 ## Agent Record link (draft, not issued)
 
-`agent_record_entry` (`chit402.agent_record_entry.v0`) is a draft unsigned object beside `book_seq`, same posture as `receipt_lane`: `signed: false`, outside the payment JWS, payment `payload_version` unchanged. It carries `registry: 1f916` and `fingerprint` (the Agent Record entry hash). Issuance does not stamp it yet. Field rules, issuer, and the verify path: [integrations/1f916-link-v0.md](./integrations/1f916-link-v0.md) and https://www.chit402.com/docs/1f916-link.
+`agent_record_entry` (`chit402.agent_record_entry.v0`) is a draft unsigned object beside `book_seq`, same posture as `receipt_lane`: `signed: false`, outside the payment JWS, payment `payload_version` unchanged. It carries `registry: 1f916` and `fingerprint` (the Agent Record entry hash). Issuance does not stamp it yet. Specimen 1 publishes the link beside the receipt: https://www.chit402.com/specimens/1f916-link-1.json. Field rules, issuer, and the verify path: [integrations/1f916-link-v0.md](./integrations/1f916-link-v0.md) and https://www.chit402.com/docs/1f916-link.
 
 ## Outside witness
 

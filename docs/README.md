@@ -65,7 +65,7 @@ Everything else is reference. Do not send partners this index.
 | [TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md](./TIER3_VERIFIABLE_INFERENCE_BUILD_SPEC.md) | zkLLM plan |
 | [POMA_SPEC.md](./POMA_SPEC.md) | Model authenticity |
 | [RECEIPT_SCHEMA_V2.md](./RECEIPT_SCHEMA_V2.md) | Payment-bound receipt |
-| [integrations/1f916-link-v0.md](./integrations/1f916-link-v0.md) | Draft v0: Agent Record entry ↔ receipt link (not issued yet) |
+| [integrations/1f916-link-v0.md](./integrations/1f916-link-v0.md) | Draft v0: Agent Record entry ↔ receipt link. Specimen 1 is a real entry hash plus a settled receipt. Issuance does not stamp the field yet. |
 | [product/export-coverage.md](./product/export-coverage.md) | Signed set commitment on book exports |
 | [product/book-seq.md](./product/book-seq.md) | Per-book append position and gap check |
 | [product/refusal-anchor.md](./product/refusal-anchor.md) | Base block hash on a policy refusal |

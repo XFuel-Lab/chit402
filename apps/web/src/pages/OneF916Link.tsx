@@ -11,25 +11,45 @@ const JWKS_ALIAS = 'https://api.xfuel.app/.well-known/jwks.json';
 const KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 
 const receiptJson = `${LIVE_RECEIPT_VERIFY_URL}?format=json`;
+const SPECIMEN_PATH = '/specimens/1f916-link-1.json';
+const FALSIFIER_PATH = '/specimens/1f916-link-1-tampered.json';
+const SPECIMEN_URL = `https://www.chit402.com${SPECIMEN_PATH}`;
+const FALSIFIER_URL = `https://www.chit402.com${FALSIFIER_PATH}`;
+const ENTRY_EVENT_ID = 20498;
+const ENTRY_FINGERPRINT = 'a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2';
+const ENTRY_RECORD_URL = 'https://1f916.ai/api/record/chit402';
+const TX_HASH = '0xf63ed6a83106d84a04b18a53ebbd73ff4c1fce280ec1a6035c5bdc2bed283f6f';
+const VERIFIER_SCRIPT = 'scripts/verify-1f916-link.mjs';
 
 const verifyCli = `curl -sS "${receiptJson}" -o receipt.json
 npx xfuel-verify receipt.json --fetch-jwks --check-payer
 
 # A facilitator (or any other issuer) publishes its own key.
 # --fetch-jwks allowlists api.chit402.com; pass that issuer's JWKS explicitly:
-# npx xfuel-verify receipt.json --jwks-url "https://<issuer-origin>/.well-known/jwks.json" --check-payer`;
+# npx xfuel-verify receipt.json --jwks-url "https://<issuer-origin>/.well-known/jwks.json" --check-payer
 
-const entryPlaceholder = `{
+# Specimen 1, including the entry fingerprint. The falsifier must fail that step.
+node ${VERIFIER_SCRIPT} ${SPECIMEN_URL}
+node ${VERIFIER_SCRIPT} ${FALSIFIER_URL}`;
+
+const specimenEntry = `{
   "chit_receipt_id": "${LIVE_RECEIPT_TASK_ID}",
-  "chit_verify_url": "${receiptJson}"
+  "chit_verify_url": "${receiptJson}",
+  "agent_record_entry": {
+    "schema": "chit402.agent_record_entry.v0",
+    "signed": false,
+    "registry": "1f916",
+    "fingerprint": "${ENTRY_FINGERPRINT}",
+    "fingerprint_alg": "1f916-entry-hash"
+  }
 }`;
 
 const receiptPlaceholder = `"agent_record_entry": {
   "schema": "chit402.agent_record_entry.v0",
   "signed": false,
   "registry": "1f916",
-  "fingerprint": "PLACEHOLDER",
-  "fingerprint_alg": "provisional-sha256-jcs"
+  "fingerprint": "${ENTRY_FINGERPRINT}",
+  "fingerprint_alg": "1f916-entry-hash"
 }`;
 
 export default function OneF916Link() {
@@ -160,6 +180,35 @@ export default function OneF916Link() {
         </div>
 
         <div className="docs-panel">
+          <h2>Who issues the receipt</h2>
+          <p>
+            Chit issues the receipt. <code>issuer_signature</code> is Chit&apos;s ES256 signature
+            over the settlement the facilitator returned after it broadcast the transfer. The
+            agent does not sign that object.
+          </p>
+          <p>
+            The facilitator response supplies the transaction hash, the network, and the payer.
+            Chit writes those into the signed claims: <code>payment.ref</code> is{' '}
+            <code>&lt;network&gt;:&lt;tx hash&gt;</code>, and <code>caller_binding.payer_wallet</code>{' '}
+            is that payer. <code>PAYMENT-RESPONSE</code> and <code>X-PAYMENT-RESPONSE</code> carry
+            the same three facts.
+          </p>
+          <p>
+            Facilitator bodies differ. Coinbase CDP returns <code>transaction</code>. Other settle
+            bodies use <code>txHash</code> for the same field. PayAI settles Solana. A self-hosted
+            facilitator returns <code>{'{ success, transaction, network, payer }'}</code>. Chit
+            reads <code>transaction</code> or <code>txHash</code>, and <code>payer</code>, and
+            writes one receipt plus one <code>PAYMENT-RESPONSE</code>:{' '}
+            <code>success</code>, <code>transaction</code>, a CAIP-2 <code>network</code>, and{' '}
+            <code>payer</code>.
+          </p>
+          <p style={styles.note}>
+            A third party checks the signature against the JWKS, then checks that transaction
+            on the chain named in the receipt.
+          </p>
+        </div>
+
+        <div className="docs-panel">
           <h2>Verify path</h2>
           <ol style={styles.list}>
             <li>
@@ -182,14 +231,18 @@ export default function OneF916Link() {
               verified claims.
             </li>
             <li>
-              Hash the Agent Record entry with <code>fingerprint_alg</code> and compare it to{' '}
-              <code>agent_record_entry.fingerprint</code>. <code>registry</code> is{' '}
-              <code>1f916</code>.
+              For <code>1f916-entry-hash</code>, compare{' '}
+              <code>agent_record_entry.fingerprint</code> to the hash the registry publishes on
+              that log entry. For <code>provisional-sha256-jcs</code>, hash the JCS form of the
+              entry and compare. <code>registry</code> is <code>1f916</code>.
             </li>
           </ol>
           <p>
-            <code>xfuel-verify</code> runs steps 2 and 3. It does not compare the fingerprint.
-            That comparison waits on issuance.
+            <code>xfuel-verify</code> runs the signature and the chain check on a receipt file.
+            It does not compare the fingerprint. <code>{VERIFIER_SCRIPT}</code> prints PASS or
+            FAIL for the receipt fetch, the signature, the book chain, the Base transfer, and
+            the entry fingerprint. The receipt JSON still omits <code>agent_record_entry</code>;
+            the specimen file carries it.
           </p>
           <pre className="docs-code">
             <code>{verifyCli}</code>
@@ -197,39 +250,46 @@ export default function OneF916Link() {
         </div>
 
         <div className="docs-panel">
-          <h2>Worked example</h2>
+          <h2>Specimen 1</h2>
           <p>
-            No linked entry exists yet. The ids, payer, payee, amount, and key below are copied
-            from a live receipt. The link fields are a placeholder.
-          </p>
-          <p>
-            Live receipt, fetched without <code>agent_record_entry</code>:{' '}
-            <a href={receiptJson} target="_blank" rel="noreferrer">{receiptJson}</a>
+            Specimen 1 is a real identity-log entry and a real settled receipt. Download{' '}
+            <a href={SPECIMEN_PATH}>{SPECIMEN_URL}</a>.
+            The falsifier, same pair with the fingerprint one nibble off, is{' '}
+            <a href={FALSIFIER_PATH}>{FALSIFIER_URL}</a>.
+            Re-run both with <code>{VERIFIER_SCRIPT}</code>.
           </p>
           <ul style={styles.list}>
-            <li><code>task_id</code> <code style={styles.mono}>xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96</code></li>
-            <li><code>verify_url</code> path id <code style={styles.mono}>{LIVE_RECEIPT_TASK_ID}</code></li>
-            <li><code>payment.ref</code> <code style={styles.mono}>base:0xf63ed6a83106d84a04b18a53ebbd73ff4c1fce280ec1a6035c5bdc2bed283f6f</code></li>
-            <li><code>payment.gross_amount</code> <code>2000</code> · asset <code style={styles.mono}>0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913</code></li>
-            <li><code>payment.payee</code> <code style={styles.mono}>0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334</code></li>
-            <li><code>caller_binding.payer_wallet</code> <code style={styles.mono}>0x253695Ff2DAa549980D9181B962d042B73A5e499</code></li>
-            <li><code>issuer_signature</code> ES256 · payload version 6 · kid <code style={styles.mono}>{KID}</code></li>
-            <li><code>verification.jwks_uri</code> <code style={styles.mono}>{JWKS}</code></li>
-            <li>JWS <code>iss</code> is <code>chit402</code>. <code>book_seq</code> is 1. <code>receipt_lane.signed</code> is false.</li>
+            <li>
+              Entry: handle <code>chit402</code>, identity log event{' '}
+              <code>{ENTRY_EVENT_ID}</code> (<code>listing</code>). Published hash{' '}
+              <code style={styles.mono}>{ENTRY_FINGERPRINT}</code>.{' '}
+              <a href={ENTRY_RECORD_URL} target="_blank" rel="noreferrer">{ENTRY_RECORD_URL}</a>.
+            </li>
+            <li>
+              <code>GET /api/mandates?citizen=chit402</code> is empty, and so are memory seals.
+              Event {ENTRY_EVENT_ID} is the sealed row. It carries no <code>chit_receipt_id</code>.
+              This file is the published link.
+            </li>
+            <li>
+              Receipt <a href={receiptJson} target="_blank" rel="noreferrer"><code style={styles.mono}>{LIVE_RECEIPT_TASK_ID}</code></a>
+              {' '}(<code style={styles.mono}>xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96</code>).
+              Base tx <code style={styles.mono}>{TX_HASH}</code>, 2000 atomic USDC,
+              payer <code style={styles.mono}>0x253695Ff2DAa549980D9181B962d042B73A5e499</code>,
+              payee <code style={styles.mono}>0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334</code>.
+            </li>
+            <li>
+              The listing and the receipt are different acts. The specimen binds the published
+              hash to the receipt so a third party can re-check both, including the falsifier.
+              The listing text does not name this payment.
+            </li>
+            <li>
+              JWS <code>iss</code> is <code>chit402</code>. <code>book_seq</code> is 1.{' '}
+              <code>receipt_lane.signed</code> is false. The live receipt JSON omits{' '}
+              <code>agent_record_entry</code>.
+            </li>
           </ul>
-          <p style={styles.note}>
-            Placeholder entry. These two fields are the link. No 1F916 entry publishes them
-            today. The receipt id is the live one above.
-          </p>
           <pre className="docs-code">
-            <code>{entryPlaceholder}</code>
-          </pre>
-          <p style={styles.note}>
-            Placeholder <code>agent_record_entry</code>. It is not on the live JSON.{' '}
-            <code>PLACEHOLDER</code> is a sentinel, not a hash. Issuance support is coming.
-          </p>
-          <pre className="docs-code">
-            <code>{receiptPlaceholder}</code>
+            <code>{specimenEntry}</code>
           </pre>
         </div>
 
