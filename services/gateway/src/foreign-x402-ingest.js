@@ -929,6 +929,14 @@ export async function ingestForeignX402(body = {}, {
         message: 'upto settlement had no amount on PAYMENT-RESPONSE and the USDC Transfer amount was not read',
       };
     }
+    if (paymentRequired.max_amount && BigInt(derived) > BigInt(paymentRequired.max_amount)) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'payment_invalid',
+        message: `transferred ${derived} exceeds upto max_amount ${paymentRequired.max_amount}`,
+      };
+    }
     paymentRequired.amount = derived;
   }
 

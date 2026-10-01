@@ -499,6 +499,32 @@ test('upto below the cap ingests the PAYMENT-RESPONSE amount, and otherwise the 
   assert.equal(fromChain.body.payment.amount, '8000');
   assert.equal(fromChain.body.payment.max_amount, '50000');
   assert.notEqual(fromChain.body.payment.amount, '50000');
+
+  const { registry: registry3, ledger: ledger3, identity: identity3 } = setupDeps();
+  const overCeiling = await ingestForeignX402({
+    payment_required: {
+      resource: { url: 'https://v2.api2pdf.com/chrome/pdf/html' },
+      accepts: [{ scheme: 'upto', network: 'eip155:8453', amount: '50000', payTo: V2_PAY_TO }],
+    },
+    payment_response: {
+      success: true,
+      transaction: `0x${'ef'.repeat(32)}`,
+      network: 'eip155:8453',
+      payer: WALLET_A,
+    },
+    session: identity3.session,
+  }, {
+    ledger: ledger3,
+    registry: registry3,
+    agentId: identity3.agent_id,
+    session: identity3.session,
+    verify: async () => ({ valid: true, verifiedAmount: '60000' }),
+  });
+  assert.equal(overCeiling.ok, false);
+  assert.equal(overCeiling.status, 400);
+  assert.equal(overCeiling.error, 'payment_invalid');
+  assert.match(overCeiling.message, /exceeds upto max_amount 50000/);
+  assert.equal(ledger3.entries.length, 0);
 });
 
 test('a paid ingest stamp is its own book row, signed to the same seat', async () => {
