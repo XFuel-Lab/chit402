@@ -102,10 +102,17 @@ Anchored root:
 Receipt lane (unsigned, beside book_seq):
   settled_by is observed_transfer when the USDC transfer was checked on Base
   or Solana, and receipt when only the issuer asserts settlement. Unknown is
-  null. freeze is true only when book_seq is set, settled_by is receipt, the
-  anchor changed after binding, and the row is not settled. An anchor change
-  alone does not freeze, and freeze does not change the signature exit code.
-  Design by Turbo on 1F916 (post 6579, comments 88201 and 88403).
+  null. Ordering is seq + settled_by + (anchor_changed AND not settled).
+  Boundary: complete over registry marks, blind to payments the registry
+  never joined. freeze is true only when book_seq is set, settled_by is
+  receipt, the anchor changed after binding, and the row is not settled. An
+  anchor change alone does not freeze, and freeze does not change the
+  signature exit code. classification unverifiable_from_registry means the
+  binding is past expiry and settled_by, receipt_id, observed_tx_hash, and
+  observed_transfer_id are all null. That is not unpaid. local_check, when
+  set, is a Base USDC payee and amount a stranger can check. It does not
+  claim the row was paid. Design by Turbo on 1F916 (post 6579, comments
+  88201, 88403, and 88596).
 
 Examples:
   # Local binding verification (no network)
@@ -238,6 +245,12 @@ function printLane(lane: ReceiptLane): void {
   console.log(`  anchor_changed_since_binding: ${bit(lane.anchor_changed_since_binding)}`);
   console.log(`  freeze:        ${lane.freeze ? 'YES' : 'no'}`);
   if (lane.reason) console.log(`  reason:        ${lane.reason}`);
+  console.log(`  classification:${lane.classification}`);
+  console.log(`  ordering:      ${lane.ordering}`);
+  console.log(`  boundary:      ${lane.boundary}`);
+  if (lane.local_check) {
+    console.log(`  local_check:   payee ${lane.local_check.payee} amount ${lane.local_check.amount_atomic} (not a payment)`);
+  }
   console.log(`  ${lane.rule}`);
   console.log('');
 }

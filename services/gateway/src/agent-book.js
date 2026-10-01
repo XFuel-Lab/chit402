@@ -694,7 +694,7 @@ export function bindBookVerifier(registry) {
  * @param {string} baseUrl — gateway public base for verify_url
  */
 export function buildBookExportCsv(entries, agentId, baseUrl, coverage = null) {
-  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,policy_code,reason,policy_key,spent_atomic,cap_atomic,period_start,replay_count,verify_url,explorer_url,seq,prev_hash,row_hash,act,settled_by,settled,anchor_changed_since_binding,freeze';
+  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,policy_code,reason,policy_key,spent_atomic,cap_atomic,period_start,replay_count,verify_url,explorer_url,seq,prev_hash,row_hash,act,settled_by,settled,anchor_changed_since_binding,freeze,classification';
   const lines = [header];
   for (const e of entries) {
     const row = rowOf(e);
@@ -730,6 +730,7 @@ export function buildBookExportCsv(entries, agentId, baseUrl, coverage = null) {
       row.receipt_lane?.settled == null ? '' : row.receipt_lane.settled,
       row.receipt_lane?.anchor_changed_since_binding == null ? '' : row.receipt_lane.anchor_changed_since_binding,
       row.receipt_lane?.freeze === true,
+      row.receipt_lane?.classification || '',
     ].map(csvEscape);
     lines.push(cols.join(','));
   }
@@ -807,7 +808,10 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
       + 'RECORDED_BY_SETTLE rows show the recorder claim until the paid call closes or ingress_receipt arrives; a closed settle is collected. '
       + 'ARRIVAL_UNVERIFIED rows are explicit omission at cutoff (no ingress_receipt) — visible, amount null, excluded from totals. '
       + 'inflow_claimed rows carry a signed bucket/allocation (no payment.ref) — corrections are append-only. '
-      + 'receipt_lane is unsigned and sits beside seq. freeze is true only when settled_by is receipt, the anchor changed after binding, and the row is not settled. '
+      + 'receipt_lane is unsigned and sits beside seq. Ordering is seq + settled_by + (anchor_changed AND not settled). '
+      + 'Boundary: complete over registry marks, blind to payments the registry never joined. '
+      + 'freeze is true only when settled_by is receipt, the anchor changed after binding, and the row is not settled. '
+      + 'classification unverifiable_from_registry means past expiry with settled_by, receipt_id, observed_tx_hash, and observed_transfer_id all null. That is not unpaid. '
       + 'Verify offline; no separate attestation chain in v1.',
   };
 }
