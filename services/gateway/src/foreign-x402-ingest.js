@@ -22,6 +22,7 @@ import config from './config.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
 import { parseNanoIngest, verifyNanoSend } from './nano-rail.js';
 import { buildVerifyUrl, canonicalSignedClaims, explorerUrlForRef, networkFromPaymentRef } from './receipt.js';
+import { claimIdOf } from './claim-id.js';
 import { getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
 import { fromCaip2Network } from './x402-facilitator.js';
 import {
@@ -697,6 +698,7 @@ export function buildForeignReceipt({
   paymentExtra = null,
   routeOverride = null,
   fingerprint = null,
+  agentId = null,
 }) {
   const route = extractRouteFromResource(paymentRequired.resource);
   const amount = String(paymentRequired.amount);
@@ -774,6 +776,11 @@ export function buildForeignReceipt({
       value: `sha256=${value}`,
     };
   }
+
+  // The book seat is the ingest agent. Sign it now: append uses the same id,
+  // and a paid JWS with claim_id null is refused by xfuel-verify.
+  const seat = claimIdOf(agentId);
+  if (seat) receipt.claim_id = seat;
 
   const payout = foreignPayoutClaims({
     taskId, paymentRequired, paymentResponse, fingerprint,
@@ -1048,6 +1055,7 @@ export async function ingestForeignX402(body = {}, {
     signingSecret,
     fulfillmentMeta,
     fingerprint,
+    agentId: id,
   });
   receipt.stamp = stampFields(stamp);
 
@@ -1294,6 +1302,7 @@ async function ingestNanoPayment({
       chain: 'nano',
       description: nano.description,
     },
+    agentId,
   });
   receipt.stamp = stampFields(stamp);
 

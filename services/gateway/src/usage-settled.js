@@ -574,6 +574,7 @@ export class UsageSettledLedger {
         payment: receipt.payment,
         route: receipt.route,
         ...(receipt.caller_binding ? { caller_binding: receipt.caller_binding } : {}),
+        ...(receipt.claim_id ? { claim_id: String(receipt.claim_id) } : {}),
         fulfillment: receipt.fulfillment || null,
         signature: receipt.signature || null,
         stamp: receipt.stamp || null,

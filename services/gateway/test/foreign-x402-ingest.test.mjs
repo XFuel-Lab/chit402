@@ -1614,11 +1614,13 @@ test('pilot waiver key stamps free up to the cap, then 402; default is off', asy
 
 test('a new foreign payout signs an issuer JWS the standard verifier accepts', async () => {
   const { getJwks } = await import('../src/issuer-key.js');
-  const { verifyReceiptEcdsa } = await import('../src/receipt.js');
+  const { verifyReceiptEcdsa, verifyIssuerForHtml } = await import('../src/receipt.js');
   const fingerprint = 'a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2';
   const tx = `0x${'cd'.repeat(32)}`;
   const payer = '0x9f8951cb8b060f52fdf87297b3c5b00f7aa18f52';
   const payee = '0x1111111111111111111111111111111111111111';
+  const { ledger, identity } = setupDeps();
+  const seat = String(identity.agent_id);
   const receipt = buildForeignReceipt({
     taskId: 'foreign-x402-jws',
     paymentRequired: {
@@ -1630,6 +1632,7 @@ test('a new foreign payout signs an issuer JWS the standard verifier accepts', a
     paymentResponse: { tx, payer, network: 'base' },
     rail: 'usdc',
     fingerprint,
+    agentId: identity.agent_id,
   });
   const key = getJwks().keys[0];
   const checked = verifyReceiptEcdsa(receipt, key);
@@ -1641,7 +1644,10 @@ test('a new foreign payout signs an issuer JWS the standard verifier accepts', a
   assert.equal(checked.payload.chain, 'base');
   assert.equal(checked.payload.tx, tx);
   assert.equal(checked.payload.agent_record_entry.fingerprint, fingerprint);
+  assert.equal(checked.payload.claim_id, seat);
   assert.equal(receipt.verification.jwks_uri, 'https://api.chit402.com/.well-known/jwks.json');
+  const html = verifyIssuerForHtml(receipt);
+  assert.equal(html.verified, true, html.reason);
 
   const plain = buildForeignReceipt({
     taskId: 'foreign-x402-plain',
@@ -1653,12 +1659,12 @@ test('a new foreign payout signs an issuer JWS the standard verifier accepts', a
     },
     paymentResponse: { tx: `0x${'ef'.repeat(32)}`, payer, network: 'base' },
     rail: 'usdc',
+    agentId: identity.agent_id,
   });
   const plainCheck = verifyReceiptEcdsa(plain, key);
   assert.equal(plainCheck.valid, true, plainCheck.reason);
   assert.equal(plainCheck.payload.agent_record_entry, undefined);
 
-  const { ledger, identity } = setupDeps();
   const appended = ledger.append(receipt, { payer, agentId: identity.agent_id });
   assert.equal(appended.ok, true, appended.reason);
   const published = buildPublicForeignIngestReceipt(appended.entry.receipt_snapshot, {
@@ -1669,6 +1675,9 @@ test('a new foreign payout signs an issuer JWS the standard verifier accepts', a
   assert.equal(published.caller_binding.payer_wallet, payer);
   assert.equal(published.payment.payee, payee);
   assert.equal(published.payment.asset, receipt.payment.asset);
+  assert.equal(published.claim_id, seat);
+  const publishedHtml = verifyIssuerForHtml(published);
+  assert.equal(publishedHtml.verified, true, publishedHtml.reason);
 
   const unsigned = { ...receipt };
   delete unsigned.issuer_signature;
@@ -1706,5 +1715,6 @@ test('public ingest ignores a caller-supplied entry fingerprint', async () => {
   const checked = verifyJws(jws, getJwks().keys[0]);
   assert.equal(checked.valid, true);
   assert.equal(checked.payload.agent_record_entry, undefined);
+  assert.equal(checked.payload.claim_id, String(identity.agent_id));
   assert.equal(ledger.entries[0].issuer_signature, undefined);
 });
