@@ -21,6 +21,13 @@ const startHere: DocLink[] = [
     internal: true,
   },
   {
+    title: '1F916 link (draft)',
+    description: 'Draft v0, feedback welcome — bind an Agent Record entry to a Chit receipt. Issuance is not live yet.',
+    href: '/docs/1f916-link',
+    meta: 'draft',
+    internal: true,
+  },
+  {
     title: 'Runtime state',
     description: 'As-deployed endpoints, receipt surfaces, and current blockers.',
     href: `${GITHUB}/docs/RUNTIME_STATE.md`,

@@ -45,14 +45,14 @@ Do not paste private keys into skills or chat. Prefer Bankr submit/sign APIs ove
 Before every paid call:
 
 1. Parse the 402 `accepts[]` entry you will pay against. Amount is **atomic USDC**
-   (6 decimals): `"10000"` = $0.01.
+   (6 decimals): `"2000"` = $0.002.
 2. Compare to `CHIT_MAX_USD_PER_CALL` (default **$0.10** if unset).
 3. Add to your session running total; compare to `CHIT_MAX_USD_SESSION` (default **$1.00**
    if unset).
 4. If either cap would be exceeded, **stop** and tell the principal the quoted amount
    and your limits. Do not settle.
 
-Floor on the public door is ~**$0.01** per call unless the quote says otherwise.
+Floor on the public door is **$0.002** (atomic USDC `"2000"`, `min_charge_usd` on `GET /.well-known/x402`) per call unless the quote says otherwise.
 
 ## Primary flow — `POST /v1/chat/completions` (x402 on Base)
 
@@ -107,12 +107,41 @@ Best for Bankr and chat-native agents. Same door as OpenAI-compatible clients.
 
    - **`verify_url`** (full HTTPS URL)
    - One short human line, e.g.  
-     `Paid $0.01 USDC on Base for xfuel/auto — receipt: <verify_url>`
+     `Paid $0.002 USDC on Base for xfuel/auto — receipt: <verify_url>`
 
 ### Alternate paid door — `POST /task-request`
 
 Use for M2M / agent loops that need `task-status` polling or rolling settlement.
 Same x402 handshake; see [references/api.md](references/api.md).
+
+## Paying with a Sponge wallet
+
+An agent that already has a Sponge wallet API key can buy this same receipt through Sponge's x402 fetch (their skill v0.2.2). Sponge signs with its wallet. You still return `verify_url`.
+
+```bash
+curl -sS -X POST "https://api.wallet.paysponge.com/api/x402/fetch" \
+  -H "Authorization: Bearer $SPONGE_API_KEY" \
+  -H "Sponge-Version: 0.2.2" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://api.chit402.com/v1/chat/completions",
+    "method": "POST",
+    "body": {
+      "model": "xfuel/auto",
+      "messages": [{ "role": "user", "content": "Say hello in five words." }]
+    },
+    "preferred_chain": "base"
+  }'
+```
+
+`url` is the public door above. Floor on that door is $0.002 (atomic USDC `"2000"`) unless the 402 quotes otherwise. Enforce the same spend caps before you send the fetch.
+
+Sponge returns the paid Chit response. Read `verify_url` from `xfuel.verify_url` or `x-xfuel-verify-url`, then check the receipt offline:
+
+```bash
+curl -sS "https://api.chit402.com/receipt/<task_id>?format=json" -o receipt.json
+npx xfuel-verify receipt.json --json
+```
 
 ## What the receipt binds (new upgrades)
 

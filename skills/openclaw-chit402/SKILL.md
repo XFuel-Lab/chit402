@@ -3,8 +3,8 @@ name: openclaw-chit402
 description: >-
   Send inference spend through Chit402 (api.chit402.com/v1), pay USDC on Base via x402,
   and return verify_url so the principal holds the spend row. Use for stamped
-  agent inference with budget caps, and for a Chit receipt after paying a
-  Cloudflare Monetization Gateway API.
+  agent inference with budget caps, a Sponge wallet payment, and a Chit receipt
+  after paying a Cloudflare Monetization Gateway API.
 homepage: https://chit402.com/docs/openclaw
 metadata:
   openclaw:
@@ -60,6 +60,35 @@ Before every paid call:
    - Body `xfuel.verify_url` / `xfuel.task_id`
    - Or construct `https://api.chit402.com/receipt/<task_id>`
 4. **Always return top-level `verify_url`** in your reply to the principal.
+
+## Paying with a Sponge wallet
+
+An agent that already has a Sponge wallet API key can buy this same receipt through Sponge's x402 fetch (their skill v0.2.2). Sponge signs with its wallet. You still return `verify_url`.
+
+```bash
+curl -sS -X POST "https://api.wallet.paysponge.com/api/x402/fetch" \
+  -H "Authorization: Bearer $SPONGE_API_KEY" \
+  -H "Sponge-Version: 0.2.2" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://api.chit402.com/v1/chat/completions",
+    "method": "POST",
+    "body": {
+      "model": "xfuel/auto",
+      "messages": [{ "role": "user", "content": "Say hello in five words." }]
+    },
+    "preferred_chain": "base"
+  }'
+```
+
+`url` is `POST /v1/chat/completions` on `https://api.chit402.com`. Pay the 402 amount. Refuse if it exceeds `CHIT_MAX_USD_PER_CALL` or `CHIT_MAX_USD_SESSION`.
+
+Sponge returns the paid Chit response. Read `verify_url` from `xfuel.verify_url` or `x-xfuel-verify-url`, then check the receipt offline:
+
+```bash
+curl -sS "https://api.chit402.com/receipt/<task_id>?format=json" -o receipt.json
+npx xfuel-verify receipt.json --json
+```
 
 ## Paying Cloudflare-gated APIs (Monetization Gateway)
 

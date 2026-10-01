@@ -43,6 +43,11 @@ const CHIT_SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://www.chit402.com/docs/1f916-link</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://www.chit402.com/docs/eliza</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>

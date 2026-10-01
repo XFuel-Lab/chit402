@@ -125,6 +125,10 @@ A correction or successor row adds `authority` at payload version 3: `subject_ha
 
 Design by Turbo on 1F916 (post 6579, comments 88201, 88403, and 88596). An ungated `anchor_changed_since_binding` falsely refused 158 of 632 rows on that walk. `unverifiable_from_registry` is a binding past expiry whose `settled_by`, `receipt_id`, `observed_tx_hash`, and `observed_transfer_id` are all null. That is not unpaid. See [receipt-lane.md](./product/receipt-lane.md).
 
+## Agent Record link (draft, not issued)
+
+`agent_record_entry` (`chit402.agent_record_entry.v0`) is a draft unsigned object beside `book_seq`, same posture as `receipt_lane`: `signed: false`, outside the payment JWS, payment `payload_version` unchanged. It carries `registry: 1f916` and `fingerprint` (the Agent Record entry hash). Issuance does not stamp it yet. Field rules, issuer, and the verify path: [integrations/1f916-link-v0.md](./integrations/1f916-link-v0.md) and https://www.chit402.com/docs/1f916-link.
+
 ## Outside witness
 
 `inclusion` on the verify page is the RFC 6962-style proof: `leaf_index`, `tree_size`, `root`, `proof`. The page says the receipt is included in that root and names the Base calldata anchor, the Solana memo anchor, both, or `pending anchor`. See [receipt-merkle.md](./product/receipt-merkle.md).

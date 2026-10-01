@@ -4,6 +4,9 @@ on:
   push:
     branches: [main, develop]
   pull_request:
+    # ready_for_review is not in the default set. A draft open that does not
+    # start Actions would otherwise never run when the PR is marked ready.
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main, develop]
 
 jobs:
@@ -14,6 +17,7 @@ jobs:
     outputs:
       contracts: ${{ steps.filter.outputs.contracts }}
       gateway: ${{ steps.filter.outputs.gateway }}
+      web: ${{ steps.filter.outputs.web }}
       theta-inference: ${{ steps.filter.outputs.theta-inference }}
       skills: ${{ steps.filter.outputs.skills }}
       zkllm: ${{ steps.filter.outputs.zkllm }}
@@ -32,6 +36,8 @@ jobs:
               - '.solcover.cjs'
             gateway:
               - 'services/gateway/**'
+            web:
+              - 'apps/web/**'
             theta-inference:
               - 'packages/circuit-runtime/theta-inference/**'
             skills:
@@ -88,6 +94,26 @@ jobs:
       - name: Gateway tests (receipts + x402 adapter)
         working-directory: services/gateway
         run: npm test
+
+  # ── www unit tests (path-filtered) ─────────────────────────
+  # apps/web is not covered by Gateway Tests or Jest (Jest is packages/sdk).
+  web:
+    name: Web Tests
+    runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.web == 'true'
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Install and test www
+        working-directory: apps/web
+        run: npm install --no-audit --no-fund && npm test
 
   # ════════════════════════════════════════════════════════════
   # TEMPORARY COMPATIBILITY ALIASES (remove after branch protection update)

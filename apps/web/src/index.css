@@ -358,6 +358,54 @@ select.input {
 .book-session-row .input { flex: 1; min-width: 0; }
 .book-access-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .book-state-card { margin-bottom: 1.5rem; }
+.book-kpi { margin-bottom: 1.5rem; }
+.book-kpi-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.book-kpi-head h3 { margin: 0; }
+.book-window-pills { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.book-window-pill {
+  appearance: none;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.book-window-pill:hover { border-color: rgba(0, 212, 255, 0.35); color: var(--text-primary); }
+.book-window-pill[aria-pressed="true"] {
+  color: var(--text-primary);
+  border-color: rgba(0, 212, 255, 0.5);
+  background: rgba(0, 212, 255, 0.1);
+}
+.book-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+.book-kpi-card { text-align: center; }
+.book-kpi-caption {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin-top: 0.3rem;
+}
+.book-empty-teach {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  max-width: 36rem;
+  margin: 0;
+}
 .book-budget-strip {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -549,6 +597,7 @@ select.input {
   .container { padding: 0 1rem; }
   .header-burger { display: flex !important; }
   .book-budget-strip { grid-template-columns: 1fr; }
+  .book-kpi-strip { grid-template-columns: repeat(2, 1fr); }
   .book-session-row { flex-direction: column; }
   .book-inflow-grid { grid-template-columns: 1fr; }
   .book-table thead { display: none; }
@@ -576,4 +625,5 @@ select.input {
 @media (max-width: 480px) {
   h1 { font-size: 1.5rem; }
   .btn { padding: 0.6rem 1.2rem; font-size: 0.9rem; }
+  .book-kpi-strip { grid-template-columns: 1fr; }
 }

@@ -6,6 +6,7 @@ import {
   BOOK_SPECIMEN_STATS,
 } from '../lib/bookSpecimen';
 import {
+  computeBookSummary,
   computeBurnRate,
   computeModelMix,
   formatCollectedAt,
@@ -14,6 +15,7 @@ import {
   type ModelMixItem,
 } from '../lib/agentBook';
 import BookEvidenceChip from './BookEvidenceChip';
+import BookKpiStrip from './BookKpiStrip';
 
 const MODEL_COLORS = ['#00d4ff', '#8b5cf6', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6'];
 
@@ -25,6 +27,7 @@ export default function BookSpecimenPanel() {
   const remainingDisplay = formatUsdc(BOOK_SPECIMEN_STATS.remaining);
   const burnRate = computeBurnRate(BOOK_SPECIMEN_ENTRIES, 24);
   const modelMix = computeModelMix(BOOK_SPECIMEN_ENTRIES);
+  const specimenSummary = computeBookSummary(BOOK_SPECIMEN_ENTRIES);
 
   return (
     <section className="card book-specimen-panel" aria-label="Specimen principal book">
@@ -37,7 +40,11 @@ export default function BookSpecimenPanel() {
         </p>
       </div>
 
-      <div className="book-budget-strip" style={{ marginTop: '1.25rem' }}>
+      <div style={{ marginTop: '1.25rem' }}>
+        <BookKpiStrip summary={specimenSummary} windowLabel="Specimen rows" />
+      </div>
+
+      <div className="book-budget-strip">
         <div className="card book-stat-card">
           <div className="stat-label">Budget Y (cap)</div>
           <div className="book-stat-value">${capDisplay}</div>
