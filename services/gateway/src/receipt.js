@@ -1214,8 +1214,18 @@ function sessionIdentity(claims) {
   ]);
 }
 
-function settlementIdentity(claims) {
-  return JSON.stringify([
+function claimIdKeyPresent(claims) {
+  return !!claims && Object.prototype.hasOwnProperty.call(claims, 'claim_id');
+}
+
+/** Seat on a JWS payload or on a draft that has not been signed yet. */
+function claimIdSlot(claims) {
+  if (claimIdKeyPresent(claims)) return claims.claim_id ?? null;
+  return claimIdFromView(claims);
+}
+
+function settlementIdentity(claims, { claimEra = false, claimId = undefined } = {}) {
+  const fields = [
     claims?.payment?.ref ?? null,
     claims?.payment?.gross_amount ?? claims?.payment?.settled_amount ?? null,
     claims?.payment?.asset ?? null,
@@ -1229,13 +1239,45 @@ function settlementIdentity(claims) {
     claims?.openrouter?.label ?? null,
     claims?.output?.hash ?? null,
     claims?.caller_binding?.payer_wallet ?? null,
-  ]);
+  ];
+  // Only claim_id-era payloads. A legacy JWS that omits the key stays comparable
+  // without it, so a later book id does not rewrite that signature.
+  if (claimEra) fields.push(claimId !== undefined ? claimId : claimIdSlot(claims));
+  return JSON.stringify(fields);
+}
+
+/**
+ * Cached claim_id is null and the draft now has a book seat.
+ * That signature is not frozen: it would fail verification.
+ */
+function nullClaimBinds(cachedClaims, draft) {
+  if (!claimIdKeyPresent(cachedClaims)) return false;
+  if (cachedClaims.claim_id != null && cachedClaims.claim_id !== '') return false;
+  return claimIdSlot(draft) != null;
 }
 
 /** Keep genesis JWS when session fields would change; allow re-sign for rolling payment. */
 function sessionClaimsFrozen(cachedClaims, draft) {
+  if (nullClaimBinds(cachedClaims, draft)) return false;
   if (sessionIdentity(cachedClaims) !== sessionIdentity(draft)) return true;
-  return settlementIdentity(cachedClaims) === settlementIdentity(draft);
+  if (!claimIdKeyPresent(cachedClaims)) {
+    return settlementIdentity(cachedClaims) === settlementIdentity(draft);
+  }
+  const cachedSeat = cachedClaims.claim_id ?? null;
+  const draftSeat = claimIdSlot(draft);
+  // A build that does not know the book id must not wipe a seat already signed.
+  const comparedDraftSeat = (cachedSeat && !draftSeat) ? cachedSeat : draftSeat;
+  return settlementIdentity(cachedClaims, { claimEra: true, claimId: cachedSeat })
+    === settlementIdentity(draft, { claimEra: true, claimId: comparedDraftSeat });
+}
+
+/** Paid claim_id-era signature with no seat. Do not store it. */
+function paidNullClaim(signature) {
+  const claims = decodeReceiptClaims({ issuer_signature: signature });
+  if (!claimIdKeyPresent(claims)) return false;
+  const ref = claims.payment?.ref;
+  if (ref == null || ref === '') return false;
+  return claims.claim_id == null || claims.claim_id === '';
 }
 
 function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
@@ -1949,6 +1991,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   // Session/parent fields are frozen on the first JWS for this task_id.
   // Payment/route may still re-sign (rolling settlement attaches the ref later).
   // Late session assign is a child receipt — never mutate genesis session claims.
+  // A paid signature with claim_id null is not stored. If one is already on
+  // the task, it is not frozen once the book id exists.
   let issuer_signature = task.issuerSignature || task.issuer_signature || null;
   if (issuer_signature?.jws) {
     const cachedClaims = decodeReceiptClaims({ issuer_signature });
@@ -1960,7 +2004,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   }
   if (!issuer_signature?.jws) {
     issuer_signature = signReceiptEcdsa(draft, { baseUrl: base, iat: createdAt });
-    if (persistSignature && task && typeof task === 'object') {
+    if (persistSignature && task && typeof task === 'object' && !paidNullClaim(issuer_signature)) {
       task.issuerSignature = issuer_signature;
     }
   }

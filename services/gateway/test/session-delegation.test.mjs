@@ -342,7 +342,7 @@ describe('Session window verify', () => {
     };
     const task = usdcTask({
       createdAt: Date.now(),
-      meta: { payerWallet: PAYER.address, session },
+      meta: { payerWallet: PAYER.address, session, agentId: 7 },
     });
     const receipt = buildReceipt(task);
     const claims = decodeReceiptClaims(receipt);
@@ -360,7 +360,7 @@ describe('Session window verify', () => {
     const { typed, signature } = await signAuthorize();
     const accepted = acceptDelegationProof({ signature, typed_data: typed });
     const receipt = buildReceipt(usdcTask({
-      meta: { payerWallet: PAYER.address, session: accepted.session },
+      meta: { payerWallet: PAYER.address, session: accepted.session, agentId: 7 },
     }));
     const claims = decodeReceiptClaims(receipt);
     assert.equal(verifySessionWindow(claims).valid, true);
@@ -374,7 +374,7 @@ describe('Genesis immutability + child handoff', () => {
     const accepted = acceptDelegationProof({ signature, typed_data: typed });
     const task = usdcTask({
       taskId: 'xfuel-genesis-immutable',
-      meta: { payerWallet: PAYER.address, session: accepted.session },
+      meta: { payerWallet: PAYER.address, session: accepted.session, agentId: 7 },
     });
     const first = buildReceipt(task, { persistSignature: true });
     const firstJws = first.issuer_signature.jws;
@@ -393,7 +393,7 @@ describe('Genesis immutability + child handoff', () => {
     const accepted = acceptDelegationProof({ signature, typed_data: typed });
     const parent = usdcTask({
       taskId: 'xfuel-parent-genesis',
-      meta: { payerWallet: PAYER.address },
+      meta: { payerWallet: PAYER.address, agentId: 7 },
     });
     const genesis = buildReceipt(parent, { persistSignature: true });
     const genesisJws = genesis.issuer_signature.jws;
@@ -442,7 +442,7 @@ describe('Revoke status store', () => {
 
     const receipt = buildReceipt(usdcTask({
       taskId: 'xfuel-revoke-genesis',
-      meta: { payerWallet: PAYER.address, session: accepted.session },
+      meta: { payerWallet: PAYER.address, session: accepted.session, agentId: 7 },
     }), { persistSignature: true });
     const jws = receipt.issuer_signature.jws;
 
@@ -470,7 +470,7 @@ describe('Revoke status store', () => {
 
     const after = buildReceipt(usdcTask({
       taskId: 'xfuel-revoke-genesis',
-      meta: { payerWallet: PAYER.address, session: accepted.session },
+      meta: { payerWallet: PAYER.address, session: accepted.session, agentId: 7 },
       issuerSignature: receipt.issuer_signature,
     }), { persistSignature: true });
     assert.equal(after.issuer_signature.jws, jws, 'revoke must not re-sign or amend genesis');
@@ -566,7 +566,7 @@ describe('HTTP session status + revoke + child handoff', () => {
     const listener = getAIListener();
     const task = usdcTask({
       taskId: 'xfuel-http-session',
-      meta: { payerWallet: PAYER.address, session: accepted.session },
+      meta: { payerWallet: PAYER.address, session: accepted.session, agentId: 7 },
     });
     listener.activeTasks.set(task.taskId, task);
 
@@ -613,7 +613,7 @@ describe('HTTP session status + revoke + child handoff', () => {
     const listener = getAIListener();
     const parent = usdcTask({
       taskId: 'xfuel-http-parent',
-      meta: { payerWallet: PAYER.address },
+      meta: { payerWallet: PAYER.address, agentId: 7 },
     });
     listener.activeTasks.set(parent.taskId, parent);
 

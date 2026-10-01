@@ -2577,7 +2577,7 @@ export function createApp() {
           coSignerSecret: config.receipts?.coSignerSecret,
           viPolicy: config.verifiedInference,
           reqHost,
-          agentId: ledgerRow?.agent_id ?? null,
+          agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
           persistSignature: true,
         });
       }
@@ -2721,7 +2721,8 @@ export function createApp() {
         coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
         reqHost,
-        agentId: ledgerRow?.agent_id ?? null,
+        // Ledger seat wins. A paid signature with claim_id null is not stored.
+        agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
         persistSignature: true,
       });
 
@@ -3666,7 +3667,7 @@ export function createApp() {
         signingSecret: config.receipts?.signingSecret,
         coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
-        agentId: usageSettled.findByTask(taskId)?.agent_id ?? null,
+        agentId: usageSettled.findByTask(taskId)?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
         persistSignature: true,
       });
       // Slim envelope stores payment in issuer_signature.jws; register/dispute need hydrated payment.

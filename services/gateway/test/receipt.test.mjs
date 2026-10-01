@@ -875,11 +875,12 @@ test('buildReceipt: Solana payment sets route_meta.chain_id without rewriting th
       payerWallet: payer,
     },
   });
-  const r = buildReceipt(task, { payerWallet: payer, persistSignature: true });
+  const r = buildReceipt(task, { payerWallet: payer, persistSignature: true, agentId: 7 });
   assert.equal(r.route_meta.chain_id, 'solana');
   assert.equal(r.payment_meta.network, 'solana');
   const claims = decodeReceiptClaims(r);
   assert.equal(claims.payment.ref, paymentRef, 'JWS payment ref stays network:tx');
+  assert.equal(claims.claim_id, '7');
   const rebuilt = buildReceipt(task, { payerWallet: payer, persistSignature: true });
   assert.equal(rebuilt.issuer_signature.jws, r.issuer_signature.jws, 'existing receipt JWS is kept');
   assert.equal(rebuilt.route_meta.chain_id, 'solana');
