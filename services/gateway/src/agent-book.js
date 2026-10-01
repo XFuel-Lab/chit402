@@ -93,6 +93,8 @@ function rowOf(entry) {
     ...(entry.book_chain ? { book_chain: entry.book_chain } : {}),
     ...(entry.act ? { act: entry.act } : {}),
     ...(entry.authority ? { authority: entry.authority } : {}),
+    ...(entry.supersedes ? { supersedes: entry.supersedes } : {}),
+    ...(entry.corrects ? { corrects: entry.corrects } : {}),
     evidence,
     payment: {
       ref: entry.payment_ref ?? null,
@@ -298,6 +300,17 @@ export function capViewOf(identity, spent) {
   };
 }
 
+function annotateBookSupersession(body, ledger) {
+  if (!body || typeof ledger?.supersessionOf !== 'function' || !Array.isArray(body.entries)) {
+    return body;
+  }
+  body.entries = body.entries.map((row) => ({
+    ...row,
+    supersession: ledger.supersessionOf(row.task_id),
+  }));
+  return body;
+}
+
 function packAllowance(agentId, remaining, session) {
   const as_of = new Date().toISOString();
   const digest = crypto
@@ -468,15 +481,16 @@ export function readAgentBook(agentId, claim = {}, { ledger, verify, registry } 
     ? ledger.sumCollectedByAgent(id)
     : 0n;
   const sessionKey = session || identity?.session || null;
+  const body = packBook(entries, id, window, {
+    identity,
+    spent,
+    session: sessionKey,
+    coverage: selected.coverage,
+    sequence: typeof ledger.seqReport === 'function' ? ledger.seqReport(id) : null,
+  });
   return {
     status: 200,
-    body: packBook(entries, id, window, {
-      identity,
-      spent,
-      session: sessionKey,
-      coverage: selected.coverage,
-      sequence: typeof ledger.seqReport === 'function' ? ledger.seqReport(id) : null,
-    }),
+    body: annotateBookSupersession(body, ledger),
   };
 }
 
@@ -554,20 +568,27 @@ export function queryLineage(agentId, taskId, claim = {}, { ledger, verify } = {
   }
 
   const lineage = ledger.lineageOf(String(taskId));
-  return {
-    status: 200,
-    body: {
-      agent_id: id,
-      task_id: String(taskId),
-      self: lineage.self ? rowOf(lineage.self) : null,
-      ancestors: lineage.ancestors.map(rowOf),
-      descendants: lineage.descendants.map(rowOf),
-      root: lineage.root ? rowOf(lineage.root) : null,
-      depth: lineage.ancestors.length,
-      intent_id: lineage.intent_id || null,
-      intent_attempts: (lineage.intent_attempts || []).map(rowOf),
-    },
+  const body = {
+    agent_id: id,
+    task_id: String(taskId),
+    self: lineage.self ? rowOf(lineage.self) : null,
+    ancestors: lineage.ancestors.map(rowOf),
+    descendants: lineage.descendants.map(rowOf),
+    root: lineage.root ? rowOf(lineage.root) : null,
+    depth: lineage.ancestors.length,
+    intent_id: lineage.intent_id || null,
+    intent_attempts: (lineage.intent_attempts || []).map(rowOf),
   };
+  if (typeof ledger.supersessionOf === 'function') {
+    const stamp = (row) => (row ? { ...row, supersession: ledger.supersessionOf(row.task_id) } : row);
+    body.self = stamp(body.self);
+    body.root = stamp(body.root);
+    body.ancestors = body.ancestors.map(stamp);
+    body.descendants = body.descendants.map(stamp);
+    body.intent_attempts = body.intent_attempts.map(stamp);
+    body.supersession = ledger.supersessionOf(String(taskId));
+  }
+  return { status: 200, body };
 }
 
 /**

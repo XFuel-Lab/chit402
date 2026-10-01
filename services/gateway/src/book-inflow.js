@@ -322,7 +322,11 @@ export function correctBookInflow(agentId, body = {}, { ledger, registry, verify
             seq: result.correction_row.seq,
             prev_hash: result.correction_row.prev_hash,
             row_hash: result.correction_row.row_hash,
+            supersedes: result.correction_row.supersedes || entry?.task_id || null,
           }
+        : null,
+      supersession: typeof ledger.supersessionOf === 'function'
+        ? ledger.supersessionOf(taskId)
         : null,
     },
   };

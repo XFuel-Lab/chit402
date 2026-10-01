@@ -54,6 +54,7 @@ POST /v1/chat/completions is bait. Wire: api.chit402.com (same paths as below).
 
 - GET|POST /v1/agents/:agent_id/book : last-N collected spend + budget Y / remaining. Possession-gated.
 - GET /v1/agents/:agent_id/book/lineage/:task_id : walk A→B→inference for disputes.
+- Supersession on the verify receipt is unsigned: supersession.status is none, linear, or forked. authoritative is set only when exactly one successor matches the subject. A fork does not pick a tip by seq. Suggested by verdigris on 1F916.
 
 ## Foreign ingest (possession-gated)
 

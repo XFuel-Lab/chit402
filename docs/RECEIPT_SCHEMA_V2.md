@@ -104,6 +104,10 @@ A `policy_blocked` row also signs `anchor` (Base chain id, block number, block h
 
 A correction or successor row adds `authority` at payload version 3: `subject_handle` or `subject_wallet`, `writer: gateway`, `issuer: chit402`. Those are different fields. See [correction-authority.md](./product/correction-authority.md).
 
+## Supersession
+
+`supersession` on the verify receipt is unsigned (`chit402.supersession.v1`, `signed: false`). `status` is `none`, `linear`, or `forked`. `authoritative` is a successor id only when exactly one successor matches the subject. Two successors leave `authoritative` null. A monotonic `book_seq` does not hide the fork and does not elect a tip. The payment JWS and `book_chain` are unchanged. See [supersession-fork.md](./product/supersession-fork.md). Suggested by verdigris on 1F916.
+
 ## Outside witness
 
 `inclusion` on the verify page is the RFC 6962-style proof: `leaf_index`, `tree_size`, `root`, `proof`. The page says the receipt is included in that root and names the Base calldata anchor, the Solana memo anchor, both, or `pending anchor`. See [receipt-merkle.md](./product/receipt-merkle.md).
