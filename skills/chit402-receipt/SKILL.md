@@ -44,14 +44,14 @@ Do not paste private keys into skills or chat. Prefer Bankr submit/sign APIs ove
 Before every paid call:
 
 1. Parse the 402 `accepts[]` entry you will pay against. Amount is **atomic USDC**
-   (6 decimals): `"10000"` = $0.01.
+   (6 decimals): `"2000"` = $0.002.
 2. Compare to `CHIT_MAX_USD_PER_CALL` (default **$0.10** if unset).
 3. Add to your session running total; compare to `CHIT_MAX_USD_SESSION` (default **$1.00**
    if unset).
 4. If either cap would be exceeded, **stop** and tell the principal the quoted amount
    and your limits. Do not settle.
 
-Floor on the public door is ~**$0.01** per call unless the quote says otherwise.
+Floor on the public door is **$0.002** (atomic USDC `"2000"`, `min_charge_usd` on `GET /.well-known/x402`) per call unless the quote says otherwise.
 
 ## Primary flow — `POST /v1/chat/completions` (x402 on Base)
 
@@ -106,7 +106,7 @@ Best for Bankr and chat-native agents. Same door as OpenAI-compatible clients.
 
    - **`verify_url`** (full HTTPS URL)
    - One short human line, e.g.  
-     `Paid $0.01 USDC on Base for xfuel/auto — receipt: <verify_url>`
+     `Paid $0.002 USDC on Base for xfuel/auto — receipt: <verify_url>`
 
 ### Alternate paid door — `POST /task-request`
 
@@ -133,7 +133,7 @@ curl -sS -X POST "https://api.wallet.paysponge.com/api/x402/fetch" \
   }'
 ```
 
-`url` is the public door above. Floor on that door is ~$0.01 (atomic USDC `"10000"`) unless the 402 quotes otherwise. Enforce the same spend caps before you send the fetch.
+`url` is the public door above. Floor on that door is $0.002 (atomic USDC `"2000"`) unless the 402 quotes otherwise. Enforce the same spend caps before you send the fetch.
 
 Sponge returns the paid Chit response. Read `verify_url` from `xfuel.verify_url` or `x-xfuel-verify-url`, then check the receipt offline:
 

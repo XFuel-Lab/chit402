@@ -26,7 +26,7 @@ Partner keys + wallet: collected USDC row with `payment.ref`.
     "scheme": "exact",
     "network": "eip155:8453",
     "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    "amount": "10000",
+    "amount": "2000",
     "payTo": "0x…",
     "maxTimeoutSeconds": 300,
     "extra": { "name": "USD Coin", "version": "2" }
@@ -34,7 +34,7 @@ Partner keys + wallet: collected USDC row with `payment.ref`.
 }
 ```
 
-`amount` is atomic USDC (6 dp). `10000` = $0.01.
+`amount` is atomic USDC (6 dp). `2000` = $0.002.
 
 ### 200 response (receipt fields)
 
@@ -51,7 +51,7 @@ Body (`xfuel` extension):
   "xfuel": {
     "task_id": "openai-abc123",
     "verify_url": "https://api.chit402.com/receipt/openai-abc123",
-    "payment": { "rail": "usdc", "ref": "base:0x…", "gross_amount": "10000" }
+    "payment": { "rail": "usdc", "ref": "base:0x…", "gross_amount": "2000" }
   }
 }
 ```
