@@ -298,6 +298,7 @@ export function selectBookWindow(ledger, agentId, opts = {}) {
   if (!ledger || typeof ledger.collectVisible !== 'function') {
     return {
       entries: [],
+      universe: [],
       coverage: signExportCoverage(buildExportCoverage({
         bookId: agentId,
         universe: [],
@@ -320,6 +321,7 @@ export function selectBookWindow(ledger, agentId, opts = {}) {
   const enumerated = Number.isFinite(limit) && limit >= 0 ? matched.slice(0, limit) : matched;
   return {
     entries: enumerated,
+    universe: matched,
     coverage: signExportCoverage(buildExportCoverage({
       bookId: agentId,
       universe: matched,

@@ -6,8 +6,13 @@ import {
   type AgentBookResponse,
   type BookFetchError,
   type BookPolicy,
+  type BookWindowPreset,
+  bookExportBounds,
+  bookWindowQuery,
+  computeBookSummary,
   computeBurnRate,
   computeModelMix,
+  entriesInWindow,
   fetchAgentBook,
   fetchBookExport,
   fetchBookPolicy,
@@ -25,6 +30,7 @@ import {
   type ModelMixItem,
   type PolicyType,
 } from '../lib/agentBook';
+import BookKpiStrip from '../components/BookKpiStrip';
 import BookEscrowPanel from '../components/BookEscrowPanel';
 import BookA2AEscrowPanel from '../components/BookA2AEscrowPanel';
 import BookInflowPanel from '../components/BookInflowPanel';
@@ -124,6 +130,11 @@ export default function Book() {
   const [requirePaymentRef, setRequirePaymentRef] = useState(false);
   const [approvalTtlDraft, setApprovalTtlDraft] = useState('');
   const [exportMessage, setExportMessage] = useState<string | null>(null);
+  const [windowPreset, setWindowPreset] = useState<BookWindowPreset>('7d');
+  const [loadedPreset, setLoadedPreset] = useState<BookWindowPreset | null>(null);
+  const [windowError, setWindowError] = useState<string | null>(null);
+  const windowPresetRef = useRef(windowPreset);
+  windowPresetRef.current = windowPreset;
 
   useEffect(() => {
     document.title = `Principal book — spend dashboard | ${productName}`;
@@ -172,7 +183,14 @@ export default function Book() {
         setLoadState('loading');
         setFetchError(null);
         setCredentialHint(null);
-        const result = await fetchAgentBook(apiV1, { agentId: id, session, limit: 50 });
+        const range = bookWindowQuery(windowPresetRef.current);
+        const result = await fetchAgentBook(apiV1, {
+          agentId: id,
+          session,
+          limit: 50,
+          from: range.from,
+          to: range.to,
+        });
         if (!result.ok) {
           setBook(null);
           setFetchError(result.error);
@@ -180,6 +198,7 @@ export default function Book() {
           return;
         }
         setBook(result.data);
+        setLoadedPreset(windowPresetRef.current);
         setLoadState('ready');
         if (result.data.cap != null) {
           setBudgetDraft(formatUsdc(result.data.cap));
@@ -189,7 +208,8 @@ export default function Book() {
     }
   }, [apiV1, loadPolicy, searchParams, setSearchParams]);
 
-  const loadBook = useCallback(async (opts?: { budget?: string | null }) => {
+  const loadGen = useRef(0);
+  const loadBook = useCallback(async (opts?: { budget?: string | null; quiet?: boolean }) => {
     const agentId = Number(agentIdInput.trim());
     const session = sessionInput.trim();
     if (!Number.isInteger(agentId) || agentId < 1 || !session) {
@@ -208,18 +228,28 @@ export default function Book() {
 
     setCredentialHint(null);
     saveBookCredentials({ agentId: String(agentId), session });
-    setLoadState('loading');
+    const gen = ++loadGen.current;
+    if (!opts?.quiet) setLoadState('loading');
     setFetchError(null);
-    setBudgetMessage(null);
+    if (!opts?.quiet) setBudgetMessage(null);
 
+    const range = bookWindowQuery(windowPreset);
     const result = await fetchAgentBook(apiV1, {
       agentId,
       session,
       limit: 50,
+      from: range.from,
+      to: range.to,
       ...(opts && Object.prototype.hasOwnProperty.call(opts, 'budget') ? { budget: opts.budget } : {}),
     });
 
+    if (gen !== loadGen.current) return;
+
     if (!result.ok) {
+      if (opts?.quiet) {
+        setWindowError(errorCopy(result.error).body);
+        return;
+      }
       setBook(null);
       setFetchError(result.error);
       setLoadState('error');
@@ -227,18 +257,32 @@ export default function Book() {
     }
 
     setBook(result.data);
+    setLoadedPreset(windowPreset);
+    setWindowError(null);
     setLoadState('ready');
+    if (opts?.quiet) return;
     if (result.data.cap != null) {
       setBudgetDraft(formatUsdc(result.data.cap));
     } else {
       setBudgetDraft('');
     }
     void loadPolicy(agentId, session);
-  }, [agentIdInput, apiV1, loadPolicy, sessionInput]);
+  }, [agentIdInput, apiV1, loadPolicy, sessionInput, windowPreset]);
 
   const reloadBook = useCallback(() => {
     void loadBook();
   }, [loadBook]);
+
+  const loadBookRef = useRef(loadBook);
+  loadBookRef.current = loadBook;
+  const skipWindowFetch = useRef(true);
+  useEffect(() => {
+    if (skipWindowFetch.current) {
+      skipWindowFetch.current = false;
+      return;
+    }
+    void loadBookRef.current({ quiet: true });
+  }, [windowPreset]);
 
   const burnRate = useMemo(
     () => (book ? computeBurnRate(book.entries, 24) : null),
@@ -249,6 +293,11 @@ export default function Book() {
     [book],
   );
   const spentPct = book ? budgetPct(book.spent, book.cap) : 0;
+  const windowRange = bookWindowQuery(windowPreset);
+  const summaryCurrent = loadedPreset === windowPreset;
+  const kpiSummary = book && summaryCurrent
+    ? (book.summary ?? computeBookSummary(entriesInWindow(book.entries, windowRange.from, windowRange.to)))
+    : null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -272,9 +321,22 @@ export default function Book() {
       budget = parsed;
     }
 
+    const gen = ++loadGen.current;
     setBudgetSaving(true);
     setBudgetMessage(null);
-    const result = await fetchAgentBook(apiV1, { agentId, session, limit: 50, budget });
+    const range = bookWindowQuery(windowPreset);
+    const result = await fetchAgentBook(apiV1, {
+      agentId,
+      session,
+      limit: 50,
+      budget,
+      from: range.from,
+      to: range.to,
+    });
+    if (gen !== loadGen.current) {
+      setBudgetSaving(false);
+      return;
+    }
     setBudgetSaving(false);
 
     if (!result.ok) {
@@ -282,6 +344,7 @@ export default function Book() {
       return;
     }
     setBook(result.data);
+    setLoadedPreset(windowPreset);
     setBudgetMessage(clear ? 'Budget cleared — unlimited ceiling.' : 'Budget updated.');
     if (result.data.cap != null) {
       setBudgetDraft(formatUsdc(result.data.cap));
@@ -359,13 +422,21 @@ export default function Book() {
     setPolicyMessage('Policy saved.');
   };
 
-  const handleExport = async (format: 'csv' | 'json' | 'html') => {
+  const handleExport = async (format: 'csv' | 'json' | 'html', windowed = false) => {
     const agentId = Number(agentIdInput.trim());
     const session = sessionInput.trim();
     if (!Number.isInteger(agentId) || agentId < 1 || !session) return;
 
     setExportMessage(null);
-    const result = await fetchBookExport(apiV1, { agentId, session, format, limit: 200 });
+    const bounds = bookExportBounds(windowed, windowPreset);
+    const result = await fetchBookExport(apiV1, {
+      agentId,
+      session,
+      format,
+      limit: 200,
+      from: bounds.from,
+      to: bounds.to,
+    });
     if (!result.ok) {
       setExportMessage(errorCopy(result.error).body);
       return;
@@ -509,6 +580,17 @@ export default function Book() {
 
         {loadState === 'ready' && book && (
           <>
+            <BookKpiStrip
+              summary={kpiSummary}
+              pending={!summaryCurrent}
+              windowLabel={windowRange.label}
+              preset={windowPreset}
+              onPreset={setWindowPreset}
+            />
+            {windowError && (
+              <p className="book-empty-teach" role="alert">{windowError}</p>
+            )}
+
             <section className="book-budget-strip" style={{ alignItems: 'center' }}>
               {book.private_spend?.enabled && (
                 <div style={{ gridColumn: '1 / -1', marginBottom: '0.25rem' }}>
@@ -664,8 +746,16 @@ export default function Book() {
             <section className="card" style={{ marginBottom: '1.5rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
                 <h3>Last {book.entries.length} book rows</h3>
-                <span className="badge badge-cyan">agent {book.agent_id}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleExport('csv', true)}>
+                    Export CSV
+                  </button>
+                  <span className="badge badge-cyan">agent {book.agent_id}</span>
+                </div>
               </div>
+              {exportMessage && (
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>{exportMessage}</p>
+              )}
 
               {book.intents && Object.keys(book.intents).length > 0 && (
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
@@ -674,9 +764,17 @@ export default function Book() {
               )}
 
               {book.entries.length === 0 ? (
-                <p style={{ color: 'var(--text-secondary)' }}>
-                  Possession verified, but no spend rows yet. Paid calls (USDC via 402) and policy blocks appear here; demo never writes.
-                </p>
+                (book.coverage?.filtered_out_count ?? 0) > 0 ? (
+                  <p className="book-empty-teach">
+                    No receipts in {windowRange.label.toLowerCase()}. Widen the window, or make a paid call — it shows up here with its receipt and a verify link.{' '}
+                    <Link to="/docs/chit-in-15-lines">Quickstart</Link>
+                  </p>
+                ) : (
+                  <p className="book-empty-teach">
+                    Your first paid call shows up here with its receipt and a verify link.{' '}
+                    <Link to="/docs/chit-in-15-lines">Quickstart</Link>
+                  </p>
+                )
               ) : (
                 <div className="book-table-wrap">
                   <table className="book-table">
