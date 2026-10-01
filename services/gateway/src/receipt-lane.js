@@ -7,6 +7,12 @@
  * the row is not settled. anchor_changed_since_binding alone does not freeze.
  * Turbo measured that ungated bit on 158 of 632 rows.
  *
+ * Comment 88596 freezes that ordering — seq + settled_by + (anchor_changed
+ * AND not settled) — and states the boundary: complete over registry marks,
+ * blind to payments the registry never joined. A binding past expiry with
+ * settled_by, receipt_id, observed_tx_hash, and observed_transfer_id all
+ * null is unverifiable_from_registry, not unpaid.
+ *
  * The fields are derived. They are not claims in the payment JWS and not
  * claims in chit402.book_seq, so those payload versions stay put and an
  * older signature still verifies.
@@ -20,6 +26,20 @@ export const RECEIPT_LANE_SCHEMA = 'chit402.receipt_lane.v1';
 export const RECEIPT_LANE_RULE =
   'Freeze when book_seq is present, settled_by is receipt, anchor_changed_since_binding is true, and settled is false. '
   + 'anchor_changed_since_binding alone does not freeze. observed_transfer is outside the receipt lane.';
+
+/** Frozen partition order. `settled_by` here is the receipt-lane conjunct (value `receipt`). */
+export const RECEIPT_LANE_ORDERING = 'seq + settled_by + (anchor_changed AND not settled)';
+
+/** The ordering reads registry marks only. A transfer the registry never joined is outside it. */
+export const RECEIPT_LANE_BOUNDARY =
+  'complete over registry marks, blind to payments the registry never joined';
+
+/**
+ * Base mainnet USDC. Same contract as USDC_ADDRESSES.base in foreign-x402-ingest.js,
+ * which checks one known transaction. This hint does not call RPC.
+ */
+export const BASE_USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const BASE_CHAIN_ID = 8453;
 
 const SETTLED_STATUS = new Set(['settled', 'idempotent_replay']);
 
@@ -135,6 +155,51 @@ function isReported(input) {
   return rail === 'reported';
 }
 
+const PAYOUT_BINDING_KEYS = [
+  'payout_address',
+  'address',
+  'docket_id',
+  'receipt_id',
+  'observed_tx_hash',
+  'observed_transfer_id',
+  'settled_by',
+];
+
+/** A 1F916 payout binding carries expiry plus a registry mark key. A book row does not. */
+export function isPayoutBinding(input) {
+  if (!input || typeof input !== 'object') return false;
+  if (!Object.prototype.hasOwnProperty.call(input, 'expiry')) return false;
+  return PAYOUT_BINDING_KEYS.some((key) => Object.prototype.hasOwnProperty.call(input, key));
+}
+
+function explicitSettledBy(input) {
+  const value = input?.settled_by;
+  if (value === 'observed_transfer' || value === 'receipt') return value;
+  return null;
+}
+
+function blankMark(value) {
+  return value == null || String(value).trim() === '';
+}
+
+/** Unix seconds, unix ms, or an ISO timestamp. Null when the field is absent or not a time. */
+export function expiryMillis(expiry) {
+  if (blankMark(expiry)) return null;
+  if (typeof expiry === 'string' && /[T-]/.test(expiry)) {
+    const parsed = Date.parse(expiry);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  const n = Number(expiry);
+  if (!Number.isFinite(n)) return null;
+  return n < 1e12 ? n * 1000 : n;
+}
+
+export function isPastExpiry(expiry, nowMs = Date.now()) {
+  const at = expiryMillis(expiry);
+  if (at == null) return false;
+  return nowMs >= at;
+}
+
 /**
  * @param {object|null} input
  * @param {{ payer?: { checked?: boolean, valid?: boolean }|null, issuerAssertsSettlement?: boolean|null }} [opts]
@@ -142,6 +207,7 @@ function isReported(input) {
  */
 export function deriveSettledBy(input, { payer = null, issuerAssertsSettlement = null } = {}) {
   if (!input || typeof input !== 'object') return null;
+  if (isPayoutBinding(input)) return explicitSettledBy(input);
   if (payer?.checked === true && payer.valid === true) return 'observed_transfer';
   if (isReported(input)) return null;
   const ref = paymentRefOf(input);
@@ -165,6 +231,7 @@ export function deriveSettledBy(input, { payer = null, issuerAssertsSettlement =
  */
 export function deriveSettled(input, { payer = null } = {}) {
   if (!input || typeof input !== 'object') return null;
+  if (isPayoutBinding(input)) return explicitSettledBy(input) ? true : null;
   if (payer?.checked === true && payer.valid === true) return true;
   if (payer?.checked === true && payer.valid === false) return false;
   if (isReported(input)) return false;
@@ -211,6 +278,64 @@ function changedFromIdentities(at, current) {
   };
 }
 
+function registryUnmarked(input, settledBy) {
+  return settledBy == null
+    && blankMark(input?.receipt_id)
+    && blankMark(input?.observed_tx_hash)
+    && blankMark(input?.observed_transfer_id);
+}
+
+/**
+ * Partition a row. Expired and unmarked is unverifiable_from_registry, ahead
+ * of the clean-unsettled and anchor-changed buckets, and behind a joined
+ * settled_by (receipt or observed_transfer).
+ * @returns {'receipt'|'observed_transfer'|'anchor_changed_unsettled'|'unsettled'|'unverifiable_from_registry'}
+ */
+export function classifyReceiptLane({
+  entry = null,
+  settled_by = null,
+  settled = null,
+  anchor_changed_since_binding = null,
+  now = Date.now(),
+} = {}) {
+  if (settled_by === 'receipt') return 'receipt';
+  if (settled_by === 'observed_transfer') return 'observed_transfer';
+  if (isPastExpiry(entry?.expiry, now) && registryUnmarked(entry, settled_by)) {
+    return 'unverifiable_from_registry';
+  }
+  if (anchor_changed_since_binding === true && settled !== true) return 'anchor_changed_unsettled';
+  return 'unsettled';
+}
+
+/**
+ * Payee and amount a stranger can feed to the existing per-tx Base USDC check.
+ * Null unless this row is Base mainnet USDC. Does not claim the transfer happened
+ * and does not read the chain.
+ */
+export function baseUsdcLocalCheckHint(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const chain = entry.chain_id ?? entry.chainId ?? null;
+  const chainName = String(chain ?? '').toLowerCase();
+  const chainOk = chain === BASE_CHAIN_ID
+    || chainName === String(BASE_CHAIN_ID)
+    || chainName === 'base'
+    || chainName === 'eip155:8453';
+  if (!chainOk) return null;
+  const token = entry.token ?? entry.asset ?? null;
+  if (token == null || String(token).toLowerCase() !== BASE_USDC_ADDRESS.toLowerCase()) return null;
+  const payee = entry.payout_address || entry.address || entry.payee || null;
+  const amount = entry.amount_atomic ?? null;
+  if (blankMark(payee) || blankMark(amount)) return null;
+  return {
+    method: 'base_usdc_transfer',
+    chain_id: BASE_CHAIN_ID,
+    token: BASE_USDC_ADDRESS,
+    payee: String(payee),
+    amount_atomic: String(amount),
+    claims_paid: false,
+  };
+}
+
 /**
  * @param {object} [args]
  */
@@ -222,6 +347,7 @@ export function buildReceiptLane({
   issuerAssertsSettlement = null,
   anchorAtBinding = null,
   anchorCurrent = null,
+  now = Date.now(),
 } = {}) {
   const book_seq = bookSeqOf(entry);
   const settled_by = deriveSettledBy(entry, { payer, issuerAssertsSettlement });
@@ -229,6 +355,10 @@ export function buildReceiptLane({
   let anchor;
   if (Array.isArray(heads) && heads.length > 0 && leafIndex != null) {
     anchor = anchorChangedSinceBinding(heads, leafIndex);
+  } else if (anchorAtBinding || anchorCurrent) {
+    anchor = changedFromIdentities(anchorAtBinding, anchorCurrent);
+  } else if (typeof entry?.anchor_changed_since_binding === 'boolean') {
+    anchor = { changed: entry.anchor_changed_since_binding, at: null, current: null };
   } else {
     anchor = changedFromIdentities(anchorAtBinding, anchorCurrent);
   }
@@ -237,6 +367,13 @@ export function buildReceiptLane({
     settled_by,
     settled,
     anchor_changed_since_binding: anchor.changed,
+  });
+  const classification = classifyReceiptLane({
+    entry,
+    settled_by,
+    settled,
+    anchor_changed_since_binding: anchor.changed,
+    now,
   });
   return {
     schema: RECEIPT_LANE_SCHEMA,
@@ -250,6 +387,10 @@ export function buildReceiptLane({
     freeze: decision.freeze,
     reason: decision.reason,
     rule: RECEIPT_LANE_RULE,
+    ordering: RECEIPT_LANE_ORDERING,
+    boundary: RECEIPT_LANE_BOUNDARY,
+    classification,
+    local_check: classification === 'unverifiable_from_registry' ? baseUsdcLocalCheckHint(entry) : null,
   };
 }
 
@@ -259,7 +400,7 @@ export function buildReceiptLane({
  * @param {object} entry
  * @param {{ tree?: object|null, payer?: object|null }} [opts]
  */
-export function receiptLaneForEntry(entry, { tree = null, payer = null } = {}) {
+export function receiptLaneForEntry(entry, { tree = null, payer = null, now = Date.now() } = {}) {
   if (!entry || typeof entry !== 'object') {
     return buildReceiptLane({ entry: null });
   }
@@ -277,5 +418,6 @@ export function receiptLaneForEntry(entry, { tree = null, payer = null } = {}) {
     payer,
     leafIndex,
     heads,
+    now,
   });
 }
