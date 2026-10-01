@@ -271,6 +271,7 @@ test('Book principal dashboard v1 wires live API beats', () => {
     2,
     'Budget save and book load share the generation guard',
   );
+  assert.match(book, /loadedPreset === windowPreset/, 'KPI totals follow the loaded preset, not a fresh timestamp');
   assert.match(book, /pending=\{!summaryCurrent\}/, 'KPI strip waits for the selected window');
   assert.match(book, /if \(opts\?\.quiet\) \{\s*setWindowError/, 'A failed window refetch keeps the loaded book');
   assert.match(book, /if \(opts\?\.quiet\) return;/, 'A window refetch does not reload policy or the budget draft');

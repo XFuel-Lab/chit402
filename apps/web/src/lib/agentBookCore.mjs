@@ -91,17 +91,6 @@ export function formatUsd(units) {
  * @param {string} preset
  * @param {number} [now]
  */
-/**
- * True when a loaded book was fetched for the same from/to the UI is showing.
- * A pill change updates the label before the refetch returns; those totals
- * must not be treated as the new window.
- */
-export function sameBookWindow(loaded, requested) {
-  if (!loaded || !requested) return false;
-  return (loaded.from || null) === (requested.from || null)
-    && (loaded.to || null) === (requested.to || null);
-}
-
 export function bookExportBounds(windowed, preset, now = Date.now()) {
   if (!windowed) return { from: null, to: null };
   const range = bookWindowQuery(preset, now);

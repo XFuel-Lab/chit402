@@ -9,7 +9,6 @@ import {
   type BookWindowPreset,
   bookExportBounds,
   bookWindowQuery,
-  sameBookWindow,
   computeBookSummary,
   computeBurnRate,
   computeModelMix,
@@ -132,7 +131,7 @@ export default function Book() {
   const [approvalTtlDraft, setApprovalTtlDraft] = useState('');
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [windowPreset, setWindowPreset] = useState<BookWindowPreset>('7d');
-  const [loadedWindow, setLoadedWindow] = useState<{ from: string | null; to: string | null } | null>(null);
+  const [loadedPreset, setLoadedPreset] = useState<BookWindowPreset | null>(null);
   const [windowError, setWindowError] = useState<string | null>(null);
   const windowPresetRef = useRef(windowPreset);
   windowPresetRef.current = windowPreset;
@@ -199,7 +198,7 @@ export default function Book() {
           return;
         }
         setBook(result.data);
-        setLoadedWindow({ from: range.from, to: range.to });
+        setLoadedPreset(windowPresetRef.current);
         setLoadState('ready');
         if (result.data.cap != null) {
           setBudgetDraft(formatUsdc(result.data.cap));
@@ -258,7 +257,7 @@ export default function Book() {
     }
 
     setBook(result.data);
-    setLoadedWindow({ from: range.from, to: range.to });
+    setLoadedPreset(windowPreset);
     setWindowError(null);
     setLoadState('ready');
     if (opts?.quiet) return;
@@ -295,7 +294,7 @@ export default function Book() {
   );
   const spentPct = book ? budgetPct(book.spent, book.cap) : 0;
   const windowRange = bookWindowQuery(windowPreset);
-  const summaryCurrent = sameBookWindow(loadedWindow, windowRange);
+  const summaryCurrent = loadedPreset === windowPreset;
   const kpiSummary = book && summaryCurrent
     ? (book.summary ?? computeBookSummary(entriesInWindow(book.entries, windowRange.from, windowRange.to)))
     : null;
@@ -345,7 +344,7 @@ export default function Book() {
       return;
     }
     setBook(result.data);
-    setLoadedWindow({ from: range.from, to: range.to });
+    setLoadedPreset(windowPreset);
     setBudgetMessage(clear ? 'Budget cleared — unlimited ceiling.' : 'Budget updated.');
     if (result.data.cap != null) {
       setBudgetDraft(formatUsdc(result.data.cap));
