@@ -67,6 +67,14 @@
     {
       "source": "/llms.txt",
       "headers": [{ "key": "Content-Type", "value": "text/plain; charset=utf-8" }]
+    },
+    {
+      "source": "/specimens/1f916-link-1.json",
+      "headers": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }]
+    },
+    {
+      "source": "/specimens/1f916-link-2.json",
+      "headers": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }]
     }
   ],
   "rewrites": [

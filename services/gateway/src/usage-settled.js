@@ -573,9 +573,13 @@ export class UsageSettledLedger {
         source: entry.source,
         payment: receipt.payment,
         route: receipt.route,
+        ...(receipt.caller_binding ? { caller_binding: receipt.caller_binding } : {}),
+        ...(receipt.claim_id ? { claim_id: String(receipt.claim_id) } : {}),
         fulfillment: receipt.fulfillment || null,
         signature: receipt.signature || null,
         stamp: receipt.stamp || null,
+        ...(receipt.issuer_signature ? { issuer_signature: receipt.issuer_signature } : {}),
+        ...(receipt.verification ? { verification: receipt.verification } : {}),
       };
     }
     this._index(entry);

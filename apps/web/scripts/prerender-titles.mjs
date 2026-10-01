@@ -42,7 +42,7 @@ const ROUTE_CONTENT = {
   '/docs/1f916-link': {
     title: '1F916 Agent Record link (draft v0) | Chit402',
     h1: '1F916 Agent Record link',
-    lede: 'Draft v0, feedback welcome. Schema for linking a 1F916 Agent Record entry to a Chit receipt: chit_receipt_id on the entry, unsigned agent_record_entry.fingerprint on the receipt. Issuance support is coming. https://1f916.ai/post/7404',
+    lede: 'Draft v0, feedback welcome. Specimen 1 and Specimen 2 are Chit402 listing payouts, pending first stamp. Listing 55 tx 0x909d738d… and listing 45 tx 0x233acdcf… have no Chit receipt yet. https://1f916.ai/post/7404',
   },
   '/docs/eliza': {
     title: 'Eliza plugin | Chit402',

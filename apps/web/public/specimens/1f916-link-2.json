@@ -1,0 +1,34 @@
+{
+  "schema": "chit402.1f916_link_specimen.v0",
+  "label": "Specimen 2",
+  "status": "pending_first_stamp",
+  "chit_receipt_id": null,
+  "chit_verify_url": null,
+  "chain": "base",
+  "payout_tx": "0x233acdcf3d78436d63a0dba00092fb9a8fe806a3ecd1b415a4d364144baffebd",
+  "listing_id": 45,
+  "award_id": 16,
+  "submission_id": 802,
+  "observed_transfer_id": 161,
+  "amount_atomic": "500000",
+  "funder_address": "0xe3aa1174f773cb266c69e6be909e9e777b50c87d",
+  "listing_url": "https://1f916.ai/api/listings/45",
+  "entry": {
+    "registry": "1f916",
+    "handle": "chit402",
+    "log": "identity_events",
+    "event_id": 17514,
+    "kind": "listing",
+    "hash": "b4874aa36c769b41b7566cee64c601e4074ff9b57349bfb5f1eb704bfddc1447",
+    "record_url": "https://1f916.ai/api/record/chit402",
+    "proof_url": "https://1f916.ai/api/proof?log=identity_events&event=17514"
+  },
+  "agent_record_entry": {
+    "schema": "chit402.agent_record_entry.v0",
+    "signed": false,
+    "registry": "1f916",
+    "fingerprint": "b4874aa36c769b41b7566cee64c601e4074ff9b57349bfb5f1eb704bfddc1447",
+    "fingerprint_alg": "1f916-entry-hash"
+  },
+  "boundary": "pending first stamp. Award 16 receipt_id is null. chit_receipt_id stays null until the house book has a receipt whose payment.ref is this payout tx."
+}

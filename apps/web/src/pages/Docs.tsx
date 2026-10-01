@@ -22,7 +22,7 @@ const startHere: DocLink[] = [
   },
   {
     title: '1F916 link (draft)',
-    description: 'Draft v0, feedback welcome — bind an Agent Record entry to a Chit receipt. Issuance is not live yet.',
+    description: 'Draft v0. Specimen 1 and Specimen 2 are listing payouts, pending first stamp.',
     href: '/docs/1f916-link',
     meta: 'draft',
     internal: true,
