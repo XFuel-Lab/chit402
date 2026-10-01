@@ -15,6 +15,7 @@ import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
 import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
 import { actOf } from './book-act.js';
 import { refusalAnchorOrUnavailable } from './refusal-anchor.js';
+import { summarizeSupersession, supersessionForRow } from './supersession-fork.js';
 
 /** Optional async hook when a new book row is indexed (not on load/replay). */
 let bookRowWrittenHook = null;
@@ -413,14 +414,32 @@ export class UsageSettledLedger {
    * Gap check for one book. Includes every indexed row, not only the visible window.
    * @param {number|string} agentId
    */
+  _rowsForAgent(agentId) {
+    const id = Number(agentId);
+    if (!Number.isInteger(id)) return [];
+    return this.entries.filter((e) => Number(e.agent_id) === id);
+  }
+
   seqReport(agentId) {
     const id = Number(agentId);
-    const rows = this.entries.filter((e) => Number(e.agent_id) === id && e.seq != null);
+    const rows = this._rowsForAgent(id).filter((e) => e.seq != null);
     return {
       schema: 'chit402.book_seq_report.v1',
       book_id: id,
       ...analyzeSeq(rows),
+      supersession: summarizeSupersession(this._rowsForAgent(id)),
     };
+  }
+
+  /**
+   * Unsigned supersession report for one row. Scans the whole book so a
+   * short page cannot hide a second successor. Null when the task is absent.
+   * @param {string} taskId
+   */
+  supersessionOf(taskId) {
+    const row = this.findByTask(String(taskId));
+    if (!row) return null;
+    return supersessionForRow(row, this._rowsForAgent(row.agent_id));
   }
 
   _index(row, { persist = true, notify = true } = {}) {
@@ -659,6 +678,7 @@ export class UsageSettledLedger {
       evidence: 'inflow_correction',
       event: 'inflow_correction',
       corrects: entry.task_id,
+      supersedes: entry.task_id,
       parent_ref: entry.task_id,
       bucket: correction.bucket ? String(correction.bucket) : (entry.bucket || null),
       amount: correction.allocation != null ? String(correction.allocation) : (entry.amount || null),

@@ -36,3 +36,5 @@ This row was appended at this position, and the issuer links it to the previous 
 ## What this does not prove
 
 It does not prove the payment. It does not prove that a row was never deleted from a copy you made yourself. A replay is not a second append. Rows that were stored before seq existed receive a seq when the process loads them; that assignment follows file order and is not a new on-disk history for those old lines until the process writes a later row.
+
+A gapless seq is not a single tip. Two correction rows can both name the same predecessor while the numbers stay 1..N and each `prev_hash` points at the previous append. That book is `forked`. See [supersession-fork.md](./supersession-fork.md).

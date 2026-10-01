@@ -1440,7 +1440,9 @@ export function buildOpenApiSpec(baseUrl = '') {
           description:
             'Possession-gated. seq is the append position of each row in the book. '
             + 'gapless is true when the numbers are 1..N with nothing missing. '
-            + 'An idempotent replay does not consume a seq. A correction is a new row and does.',
+            + 'An idempotent replay does not consume a seq. A correction is a new row and does. '
+            + 'supersession.status is forked when two successors claim the same predecessor. '
+            + 'gapless does not elect a tip. authoritative is null on a fork.',
           tags: ['Agents'],
           parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
           responses: {

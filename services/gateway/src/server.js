@@ -371,6 +371,7 @@ POST /v1/chat/completions is bait. A holder can prove: lineage, policy, assignme
 - GET|POST /v1/agents/:agent_id/book/a2a-escrow : A2A job escrow + machine dispute (open|fund|submit|release|clawback|challenge). Rows export on the book.
 - POST /v1/agents/:agent_id/book/rotate : rotate session. Old session invalid, book stays (tied to agent_id).
 - POST /v1/agents/:agent_id/book/inflow : unaffiliated inflow (signed bucket/allocation, no payment.ref). POST .../inflow/correct for append-only corrections.
+- Supersession (unsigned, on the verify receipt and on book/gaps): supersession.status is none, linear, or forked. authoritative is a successor id only when exactly one successor matches the subject. Two successors are forked and authoritative is null. Seq and time do not pick a tip. A gapless book seq does not hide a fork. Credit: verdigris on 1F916 (https://1f916.ai/post/6396#comment-88320).
 
 ## Foreign ingest (possession-gated)
 
@@ -2641,9 +2642,13 @@ export function createApp() {
           const coverage = coverageForLedger(usageSettled, ledgerRow.agent_id, {
             subjectTaskId: ledgerRow.task_id || receipt.task_id,
           });
+          const supersession = typeof usageSettled.supersessionOf === 'function'
+            ? usageSettled.supersessionOf(ledgerRow.task_id)
+            : null;
           return {
             ...receipt,
             coverage,
+            ...(supersession ? { supersession } : {}),
             ...(ledgerRow.book_chain ? { book_chain: ledgerRow.book_chain } : {}),
             ...(ledgerRow.seq != null ? { book_seq: ledgerRow.seq } : {}),
             ...(getReceiptMerkleTree().inclusion(ledgerRow.task_id)
@@ -4173,6 +4178,13 @@ export function createApp() {
           count: null,
           max_seq: null,
           empty_reason: 'empty_by_drain',
+          supersession: {
+            schema: 'chit402.supersession.v1',
+            status: 'none',
+            authoritative: null,
+            forks: [],
+            signed: false,
+          },
         });
       }
       return res.json(usageSettled.seqReport(id));
