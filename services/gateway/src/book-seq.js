@@ -126,20 +126,33 @@ export function verifyBookSeq(signed, jwks = null) {
   return { checked: true, valid: true, payload };
 }
 
-/** HTML rows for the verify page. */
-export function renderBookSeqSection(chain) {
-  if (!chain || chain.seq == null) return '';
+/** HTML rows for the verify page. `lane` is the unsigned receipt-lane decision. */
+export function renderBookSeqSection(chain, lane = null) {
+  if ((!chain || chain.seq == null) && !lane) return '';
   const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const seq = chain?.seq ?? lane?.book_seq;
+  if (seq == null && !lane) return '';
+  const changed = lane?.anchor_changed_since_binding;
+  const changedLabel = changed == null ? 'unknown' : (changed ? 'true' : 'false');
+  const laneRows = lane ? `
+      <div class="row"><span class="k">settled_by</span><span class="v"><code>${esc(lane.settled_by ?? 'null')}</code></span></div>
+      <div class="row"><span class="k">settled</span><span class="v"><code>${esc(lane.settled == null ? 'null' : lane.settled)}</code></span></div>
+      <div class="row"><span class="k">anchor_changed_since_binding</span><span class="v"><code>${esc(changedLabel)}</code></span></div>
+      <div class="row"><span class="k">freeze</span><span class="v">${lane.freeze
+        ? `<span class="badge pending">freeze</span> <code>${esc(lane.reason || '')}</code>`
+        : '<code>false</code>'}</span></div>
+      <p class="muted" style="margin:8px 0 0;font-size:12px">Unsigned. Freeze only when seq is set, settled_by is receipt, the anchor changed after binding, and the row is not settled. An anchor change alone does not freeze. Not part of the payment signature.</p>` : '';
   return `<section class="card">
-      <h2>Book position <span class="scope">${esc(chain.schema || BOOK_SEQ_SCHEMA)}</span></h2>
-      <div class="row"><span class="k">seq</span><span class="v"><code>${esc(chain.seq)}</code></span></div>
-      ${chain.act ? `<div class="row"><span class="k">Act</span><span class="v"><code>${esc(chain.act)}</code></span></div>` : ''}
-      ${chain.authority ? `<div class="row"><span class="k">Subject</span><span class="v"><code>${esc(chain.authority.subject_handle || chain.authority.subject_wallet || '—')}</code> <span class="muted">writer ${esc(chain.authority.writer)} · issuer ${esc(chain.authority.issuer)}</span></span></div>` : ''}
-      <div class="row"><span class="k">Previous hash</span><span class="v"><code>${esc(chain.prev_hash || '—')}</code></span></div>
-      <div class="row"><span class="k">Row hash</span><span class="v"><code>${esc(chain.row_hash || '—')}</code></span></div>
-      ${chain.anchor ? `<div class="row"><span class="k">Chain anchor</span><span class="v">${chain.anchor.status === 'observed'
+      <h2>Book position <span class="scope">${esc(chain?.schema || (lane ? 'chit402.receipt_lane.v1' : BOOK_SEQ_SCHEMA))}</span></h2>
+      <div class="row"><span class="k">seq</span><span class="v"><code>${esc(seq ?? '—')}</code></span></div>
+      ${chain?.act ? `<div class="row"><span class="k">Act</span><span class="v"><code>${esc(chain.act)}</code></span></div>` : ''}
+      ${chain?.authority ? `<div class="row"><span class="k">Subject</span><span class="v"><code>${esc(chain.authority.subject_handle || chain.authority.subject_wallet || '—')}</code> <span class="muted">writer ${esc(chain.authority.writer)} · issuer ${esc(chain.authority.issuer)}</span></span></div>` : ''}
+      <div class="row"><span class="k">Previous hash</span><span class="v"><code>${esc(chain?.prev_hash || '—')}</code></span></div>
+      <div class="row"><span class="k">Row hash</span><span class="v"><code>${esc(chain?.row_hash || '—')}</code></span></div>
+      ${chain?.anchor ? `<div class="row"><span class="k">Chain anchor</span><span class="v">${chain.anchor.status === 'observed'
         ? `<code>${esc(chain.anchor.rail)} ${esc(chain.anchor.chain_id)} #${esc(chain.anchor.block_number)}</code> <code>${esc(chain.anchor.block_hash)}</code>`
         : `<span class="badge pending">${esc(chain.anchor.status || 'UNAVAILABLE')}</span>`}</span></div>` : ''}
       <p class="muted" style="margin:8px 0 0;font-size:12px">Proves this row's append position in the book and the previous row's hash. Does not prove the payment, and a replay of the same payment does not take a new seq.</p>
+      ${laneRows}
     </section>`;
 }

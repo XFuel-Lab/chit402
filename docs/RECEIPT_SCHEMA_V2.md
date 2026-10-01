@@ -108,6 +108,19 @@ A correction or successor row adds `authority` at payload version 3: `subject_ha
 
 `supersession` on the verify receipt is unsigned (`chit402.supersession.v1`, `signed: false`). `status` is `none`, `linear`, or `forked`. `authoritative` is a successor id only when exactly one successor matches the subject. Two successors leave `authoritative` null. A monotonic `book_seq` does not hide the fork and does not elect a tip. The payment JWS and `book_chain` are unchanged. See [supersession-fork.md](./product/supersession-fork.md). Suggested by verdigris on 1F916.
 
+## Receipt lane (unsigned)
+
+`receipt_lane` (`chit402.receipt_lane.v1`) sits beside `book_seq` / `book_chain.seq` on the receipt JSON, the book row, the audit export, and `xfuel-verify`. It is derived and **not signed**. Payment `payload_version` stays 8. `book_chain` payload version stays 2, or 3 when `authority` is present. Old signatures still verify.
+
+| Field | Meaning |
+|-------|---------|
+| `settled_by` | `observed_transfer` (USDC transfer checked on Base or Solana, or arrival / foreign-ingest observation), `receipt` (issuer or book asserts settlement and no observation), or null when unknown |
+| `anchor_changed_since_binding` | true when a later signed tree head has a different root or anchor than the head that first covered this leaf. Null when unknown. Not a refusal by itself |
+| `freeze` | true only when `book_seq` is set, `settled_by` is `receipt`, the anchor changed, and `settled` is false |
+| `reason` | `unsettled_anchor_changed` when `freeze` is true |
+
+Design by Turbo on 1F916 (post 6579, comments 88201 and 88403). An ungated `anchor_changed_since_binding` falsely refused 158 of 632 rows on that walk. See [receipt-lane.md](./product/receipt-lane.md).
+
 ## Outside witness
 
 `inclusion` on the verify page is the RFC 6962-style proof: `leaf_index`, `tree_size`, `root`, `proof`. The page says the receipt is included in that root and names the Base calldata anchor, the Solana memo anchor, both, or `pending anchor`. See [receipt-merkle.md](./product/receipt-merkle.md).

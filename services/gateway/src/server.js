@@ -71,6 +71,7 @@ import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger, setBookRowWrittenHook } from './usage-settled.js';
 import { peekRefusalAnchor } from './refusal-anchor.js';
 import { getReceiptMerkleTree } from './receipt-merkle.js';
+import { receiptLaneForEntry } from './receipt-lane.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
 import { coverageForLedger } from './export-coverage.js';
 import { getBookWebhookRegistry, scheduleBookWebhook, manageBookWebhook } from './book-webhook.js';
@@ -372,6 +373,7 @@ POST /v1/chat/completions is bait. A holder can prove: lineage, policy, assignme
 - POST /v1/agents/:agent_id/book/rotate : rotate session. Old session invalid, book stays (tied to agent_id).
 - POST /v1/agents/:agent_id/book/inflow : unaffiliated inflow (signed bucket/allocation, no payment.ref). POST .../inflow/correct for append-only corrections.
 - Supersession (unsigned, on the verify receipt and on book/gaps): supersession.status is none, linear, or forked. authoritative is a successor id only when exactly one successor matches the subject. Two successors are forked and authoritative is null. Seq and time do not pick a tip. A gapless book seq does not hide a fork. Credit: verdigris on 1F916 (https://1f916.ai/post/6396#comment-88320).
+- Receipt lane (unsigned, beside book_seq): settled_by is observed_transfer (USDC on Base or Solana was checked, or arrival/foreign-ingest observation) or receipt (issuer asserts settlement, no observation), or null if unknown. anchor_changed_since_binding is true when a later tree head differs from the head that bound the leaf. freeze is true only when book_seq is set, settled_by is receipt, the anchor changed, and the row is not settled. Anchor change alone does not freeze. Not inside the payment JWS. Design by Turbo on 1F916 (post 6579, comments 88201 and 88403). Docs: docs/product/receipt-lane.md
 
 ## Foreign ingest (possession-gated)
 
@@ -2651,6 +2653,7 @@ export function createApp() {
             ...(supersession ? { supersession } : {}),
             ...(ledgerRow.book_chain ? { book_chain: ledgerRow.book_chain } : {}),
             ...(ledgerRow.seq != null ? { book_seq: ledgerRow.seq } : {}),
+            receipt_lane: receiptLaneForEntry(ledgerRow, { tree: getReceiptMerkleTree() }),
             ...(getReceiptMerkleTree().inclusion(ledgerRow.task_id)
               ? { inclusion: getReceiptMerkleTree().inclusion(ledgerRow.task_id) }
               : {}),

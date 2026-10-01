@@ -20,6 +20,8 @@ import {
   coverageCsvPreamble,
   renderCoverageSection,
 } from './export-coverage.js';
+import { receiptLaneForEntry } from './receipt-lane.js';
+import { getReceiptMerkleTree } from './receipt-merkle.js';
 
 export { clampBookLimit, BOOK_DEFAULT_LIMIT, BOOK_MAX_LIMIT } from './usage-settled.js';
 export { deriveEvidence, BOOK_EVIDENCE } from './usage-settled.js';
@@ -198,6 +200,7 @@ function rowOf(entry) {
   } else {
     row.collected = true;
   }
+  row.receipt_lane = receiptLaneForEntry(entry, { tree: getReceiptMerkleTree() });
   return row;
 }
 
@@ -630,7 +633,7 @@ export function bindBookVerifier(registry) {
  * @param {string} baseUrl — gateway public base for verify_url
  */
 export function buildBookExportCsv(entries, agentId, baseUrl, coverage = null) {
-  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,policy_code,reason,policy_key,spent_atomic,cap_atomic,period_start,replay_count,verify_url,explorer_url,seq,prev_hash,row_hash,act';
+  const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,policy_code,reason,policy_key,spent_atomic,cap_atomic,period_start,replay_count,verify_url,explorer_url,seq,prev_hash,row_hash,act,settled_by,settled,anchor_changed_since_binding,freeze';
   const lines = [header];
   for (const e of entries) {
     const row = rowOf(e);
@@ -662,6 +665,10 @@ export function buildBookExportCsv(entries, agentId, baseUrl, coverage = null) {
       row.prev_hash || '',
       row.row_hash || '',
       row.act || '',
+      row.receipt_lane?.settled_by ?? '',
+      row.receipt_lane?.settled == null ? '' : row.receipt_lane.settled,
+      row.receipt_lane?.anchor_changed_since_binding == null ? '' : row.receipt_lane.anchor_changed_since_binding,
+      row.receipt_lane?.freeze === true,
     ].map(csvEscape);
     lines.push(cols.join(','));
   }
@@ -717,6 +724,7 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
       spent_atomic: row.spent_atomic ?? null,
       cap_atomic: row.cap_atomic ?? null,
       period_start: row.period_start || null,
+      receipt_lane: row.receipt_lane || null,
       verify_url: row.verify_url || buildVerifyUrl(baseUrl, row.task_id),
       auditor_url: `${row.verify_url || buildVerifyUrl(baseUrl, row.task_id)}${String(row.verify_url || '').includes('?') ? '&' : '?'}format=auditor`,
       explorer_url: explorerUrlForRef(row.payment.ref),
@@ -738,6 +746,7 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
       + 'RECORDED_BY_SETTLE rows show the recorder claim until the paid call closes or ingress_receipt arrives; a closed settle is collected. '
       + 'ARRIVAL_UNVERIFIED rows are explicit omission at cutoff (no ingress_receipt) — visible, amount null, excluded from totals. '
       + 'inflow_claimed rows carry a signed bucket/allocation (no payment.ref) — corrections are append-only. '
+      + 'receipt_lane is unsigned and sits beside seq. freeze is true only when settled_by is receipt, the anchor changed after binding, and the row is not settled. '
       + 'Verify offline; no separate attestation chain in v1.',
   };
 }

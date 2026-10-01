@@ -584,6 +584,23 @@ console.log(JSON.stringify(result, null, 2));
 process.exit(result.valid ? 0 : 1);
 ```
 
+## 12. Receipt lane (unsigned refusal)
+
+`receipt_lane` sits beside `book_seq` / `book_chain.seq`. It is not covered by
+`issuer_signature` or by `chit402.book_seq`. Do not bump `payload_version` to
+read it, and do not fail a signature because it is present or absent.
+
+`xfuel-verify` recomputes it:
+
+| Field | Rule |
+|-------|------|
+| `settled_by` | `observed_transfer` when `--check-payer` confirms the USDC transfer (or the receipt carries arrival / foreign-ingest observation). `receipt` when a **verified** issuer signature asserts `payment.ref` and no observation fired. `null` when unknown, including a reported OpenRouter row and an unsigned `payment.ref` |
+| `anchor_changed_since_binding` | true when `anchor_at_binding` and the current head (or `anchor_current`) differ in root, Base tx, or Solana signature. Null if either identity is missing |
+| `freeze` | true only when `book_seq` is set, `settled_by` is `receipt`, the anchor changed, and `settled` is false |
+
+An anchor change on a settled row does not freeze. Design by Turbo on 1F916
+(post 6579, comments 88201 and 88403). See [receipt-lane.md](./product/receipt-lane.md).
+
 Gateway copy (no npm install):
 
 ```bash

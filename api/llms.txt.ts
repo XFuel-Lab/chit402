@@ -30,6 +30,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 - POST /a2a-message         : A2A card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
 - POST /v1/agents/register  : fail-closed. A wallet with USDC on Base can omit task_id and pay the $0.002 stamp (402 with a Base accepts entry only, then PAYMENT-SIGNATURE from that wallet). Solana is not accepted on this route. Or pass task_id of a collected receipt whose payer is this wallet. Plain EOA personal_sign. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
+- Receipt lane (unsigned, beside book_seq): settled_by is observed_transfer or receipt, or null if unknown. freeze only when book_seq is set, settled_by is receipt, anchor_changed_since_binding is true, and the row is not settled. Anchor change alone does not freeze. Payment payload_version is unchanged. Design by Turbo on 1F916 (post 6579, comments 88201 and 88403).
 - GET  /v1/models           : drop-in model id list (install path, not the product). Wire hubs behind the door. Public, no key.
 - No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
 - Partner key (when issued): "Authorization: Bearer <key>" or "X-API-Key: <key>". No public demo key.
@@ -149,6 +150,7 @@ const XFUEL_LLMS = `# XFuel Protocol
 - POST /a2a-message         : A2A v1.0 card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
 - POST /v1/agents/register  : fail-closed. A wallet with USDC on Base can omit task_id and pay the $0.002 stamp (402 with a Base accepts entry only, then PAYMENT-SIGNATURE from that wallet). Solana is not accepted on this route. Or pass task_id of a collected receipt whose payer is this wallet. Plain EOA personal_sign. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
+- Receipt lane (unsigned, beside book_seq): settled_by is observed_transfer or receipt, or null if unknown. freeze only when book_seq is set, settled_by is receipt, anchor_changed_since_binding is true, and the row is not settled. Anchor change alone does not freeze. Payment payload_version is unchanged. Design by Turbo on 1F916 (post 6579, comments 88201 and 88403).
 - GET  /v1/models           : drop-in model id list (install path, not the product). Wire hubs Theta + Akash; xfuel/auto. Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.

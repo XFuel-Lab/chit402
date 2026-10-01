@@ -46,6 +46,8 @@ import { publishedPrice } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
 import { freeTierBucket, checkFreeAllowance, recordFreeSpend, usd as cogsUsd } from './free-tier.js';
 import { recordCollectedSpend, recordSettleBookRow, markRefundOwed as markUsageRefundOwed } from './usage-settled.js';
+import { receiptLaneForEntry } from './receipt-lane.js';
+import { getReceiptMerkleTree } from './receipt-merkle.js';
 import {
   resolveBookableAgent,
   remainingBlocksDoor,
@@ -1587,6 +1589,9 @@ function withBookSpend(receipt, {
       prev_row_hash: recorded.entry?.prev_hash ?? null,
       row_hash: recorded.entry?.row_hash ?? null,
       book_chain: recorded.entry?.book_chain || null,
+      receipt_lane: recorded.entry
+        ? receiptLaneForEntry(recorded.entry, { tree: getReceiptMerkleTree() })
+        : null,
       settlement_status: recorded.settlement_status || 'settled',
       idempotent_replay: recorded.idempotent_replay === true,
       replay_of: recorded.replay_of || null,
