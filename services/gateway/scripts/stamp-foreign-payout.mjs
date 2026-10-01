@@ -89,6 +89,13 @@ export async function stampForeignPayouts(txs, deps) {
       results.push({ tx, status: 'error', error: verified?.reason || 'verify_failed' });
       continue;
     }
+    if (fingerprint && typeof deps.confirmFingerprint === 'function') {
+      const confirmed = await deps.confirmFingerprint(fingerprint);
+      if (!confirmed) {
+        results.push({ tx, status: 'error', error: 'fingerprint_not_on_record' });
+        continue;
+      }
+    }
     const waiver = deps.waiver();
     if (!waiver?.eligible) {
       results.push({ tx, status: 'error', error: waiver?.reason || 'stamp_waiver_required' });
@@ -121,6 +128,41 @@ export async function stampForeignPayouts(txs, deps) {
     });
   }
   return results;
+}
+
+/**
+ * True when the published identity-log rows include this hash.
+ * @param {object[]} events
+ * @param {string} fingerprint
+ */
+export function recordHasFingerprint(events, fingerprint) {
+  const want = String(fingerprint || '').toLowerCase();
+  return (events || []).some((row) => String(row?.hash || '').toLowerCase() === want);
+}
+
+/**
+ * @param {string} handle
+ * @param {string} fingerprint
+ * @param {typeof fetch} [fetchImpl]
+ */
+export async function fingerprintIsOnRecord(handle, fingerprint, fetchImpl = fetch) {
+  let since = null;
+  const seen = new Set();
+  for (let page = 0; page < 20; page += 1) {
+    const url = new URL(`https://1f916.ai/api/record/${encodeURIComponent(handle)}`);
+    if (since != null) url.searchParams.set('events_since', String(since));
+    const res = await fetchImpl(url, { redirect: 'error', headers: { accept: 'application/json' } });
+    if (!res.ok) return false;
+    const body = await res.json();
+    const events = Array.isArray(body?.events) ? body.events : [];
+    if (recordHasFingerprint(events, fingerprint)) return true;
+    if (!body?.events_has_more) return false;
+    const cursor = body.next_events_since ?? events[events.length - 1]?.id ?? null;
+    if (cursor == null || seen.has(String(cursor))) return false;
+    seen.add(String(cursor));
+    since = cursor;
+  }
+  return false;
 }
 
 export function formatStampLine(row) {
@@ -174,6 +216,7 @@ async function main() {
   dotenv.config({ path: join(gatewayDir, '.env') });
   const { txs } = parseArgs(process.argv.slice(2));
   const fingerprintByTx = new Map(txs.map((item) => [item.tx, item.fingerprint]));
+  const recordHandle = process.env.FINGERPRINT_HANDLE || 'chit402';
   const [
     { AgentRegistry },
     { UsageSettledLedger },
@@ -236,6 +279,7 @@ async function main() {
       return soleBaseUsdcTransfer(receipt);
     },
     verify,
+    confirmFingerprint: (fingerprint) => fingerprintIsOnRecord(recordHandle, fingerprint),
     waiver: () => {
       for (const key of stampWaiverKeys(process.env)) {
         const peek = peekStampWaiver(key, process.env);
@@ -252,13 +296,6 @@ async function main() {
       const boundFingerprint = fingerprint || fingerprintByTx.get(tx) || null;
       const result = await ingestForeignX402({
         session: identity.session,
-        ...(boundFingerprint ? {
-          agent_record_entry: {
-            registry: '1f916',
-            fingerprint: boundFingerprint,
-            fingerprint_alg: '1f916-entry-hash',
-          },
-        } : {}),
         foreign_invoice: {
           amount,
           payer,
@@ -289,6 +326,7 @@ async function main() {
           return { ok: true, waived: true };
         },
         commitStampWaiver: key ? () => commitStampWaiver(key) : null,
+        fingerprint: boundFingerprint,
       });
       if (!result.ok) {
         return { ok: false, code: result.error, error: result.error || result.message };

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { buildOnChainVerify } from '../src/foreign-x402-ingest.js';
 import {
   formatStampLine,
+  recordHasFingerprint,
   soleBaseUsdcTransfer,
   stampForeignPayouts,
 } from '../scripts/stamp-foreign-payout.mjs';
@@ -138,6 +139,17 @@ test('a failed on-chain check does not ingest', async () => {
   }));
   assert.equal(results[0].error, 'no USDC Transfer');
   assert.equal(ingested, 0);
+});
+
+test('a fingerprint that is not on the public record is not signed', async () => {
+  let ingested = 0;
+  const results = await stampForeignPayouts([{ tx: TX, fingerprint: 'ab'.repeat(32) }], deps({
+    confirmFingerprint: async () => false,
+    ingest: async () => { ingested += 1; return { ok: true }; },
+  }));
+  assert.equal(results[0].error, 'fingerprint_not_on_record');
+  assert.equal(ingested, 0);
+  assert.equal(recordHasFingerprint([{ hash: 'ab'.repeat(32) }], 'AB'.repeat(32)), true);
 });
 
 test('a verified transfer stamps once under the waiver', async () => {

@@ -1273,8 +1273,9 @@ test('pilot waiver key stamps free up to the cap, then 402; default is off', asy
   }
 });
 
-test('a new foreign payout signs an issuer JWS and leaves older rows without one', async () => {
-  const { verifyJws, getJwks } = await import('../src/issuer-key.js');
+test('a new foreign payout signs an issuer JWS the standard verifier accepts', async () => {
+  const { getJwks } = await import('../src/issuer-key.js');
+  const { verifyReceiptEcdsa } = await import('../src/receipt.js');
   const fingerprint = 'a09e1e0b0aed6a7826b55281ef1e8af19fb164034a662d122adaa503b54f7dc2';
   const tx = `0x${'cd'.repeat(32)}`;
   const payer = '0x9f8951cb8b060f52fdf87297b3c5b00f7aa18f52';
@@ -1291,22 +1292,67 @@ test('a new foreign payout signs an issuer JWS and leaves older rows without one
     rail: 'usdc',
     fingerprint,
   });
-  const key = getJwks().keys[0];
-  const checked = verifyJws(receipt.issuer_signature.jws, key);
-  assert.equal(checked.valid, true);
+  const checked = verifyReceiptEcdsa(receipt, getJwks().keys[0]);
+  assert.equal(checked.valid, true, checked.reason);
   assert.equal(checked.payload.schema, 'chit402.foreign_payout.v1');
+  assert.equal(checked.payload.payment.payee, payee);
+  assert.equal(checked.payload.payment.asset, receipt.payment.asset);
+  assert.equal(checked.payload.caller_binding.payer_wallet, payer);
   assert.equal(checked.payload.chain, 'base');
   assert.equal(checked.payload.tx, tx);
-  assert.equal(checked.payload.payer, payer);
-  assert.equal(checked.payload.payee, payee);
-  assert.equal(checked.payload.amount, '1000000');
   assert.equal(checked.payload.agent_record_entry.fingerprint, fingerprint);
   assert.equal(receipt.verification.jwks_uri, 'https://api.chit402.com/.well-known/jwks.json');
-  assert.equal(receipt.signature, undefined);
+
+  const plain = buildForeignReceipt({
+    taskId: 'foreign-x402-plain',
+    paymentRequired: {
+      resource: `https://basescan.org/tx/${tx}`,
+      amount: '1000000',
+      payTo: payee,
+      network: 'base',
+    },
+    paymentResponse: { tx: `0x${'ef'.repeat(32)}`, payer, network: 'base' },
+    rail: 'usdc',
+  });
+  const plainCheck = verifyReceiptEcdsa(plain, getJwks().keys[0]);
+  assert.equal(plainCheck.valid, true, plainCheck.reason);
+  assert.equal(plainCheck.payload.agent_record_entry, undefined);
 
   const unsigned = { ...receipt };
   delete unsigned.issuer_signature;
   delete unsigned.verification;
   const pub = buildPublicForeignIngestReceipt(unsigned, { baseUrl: 'https://api.chit402.com' });
   assert.equal(pub.issuer_signature, undefined);
+});
+
+test('public ingest ignores a caller-supplied entry fingerprint', async () => {
+  const { verifyJws, getJwks } = await import('../src/issuer-key.js');
+  const { registry, ledger, identity } = setupDeps();
+  const supplied = 'ab'.repeat(32);
+  const result = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://api.grokbot.app/v1/chat/completions',
+      amount: '10000',
+      payTo: '0xGrokBotTreasury',
+    },
+    payment_response: {
+      tx: '0xfingerprintignored',
+      payer: WALLET_A,
+      network: 'base',
+    },
+    agent_record_entry: { fingerprint: supplied, registry: '1f916' },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyOk,
+  });
+  assert.equal(result.ok, true);
+  const jws = ledger.entries[0].receipt_snapshot.issuer_signature.jws;
+  const checked = verifyJws(jws, getJwks().keys[0]);
+  assert.equal(checked.valid, true);
+  assert.equal(checked.payload.agent_record_entry, undefined);
+  assert.equal(ledger.entries[0].issuer_signature, undefined);
 });

@@ -21,7 +21,7 @@ import logger from './logger.js';
 import config from './config.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
 import { parseNanoIngest, verifyNanoSend } from './nano-rail.js';
-import { buildVerifyUrl, explorerUrlForRef, networkFromPaymentRef } from './receipt.js';
+import { buildVerifyUrl, canonicalSignedClaims, explorerUrlForRef, networkFromPaymentRef } from './receipt.js';
 import { getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
 import {
   buildFulfillmentEnvelope,
@@ -55,6 +55,10 @@ export function foreignPayoutClaims({
 }) {
   const chain = String(paymentResponse.network || paymentRequired.network || 'base');
   const tx = String(paymentResponse.tx);
+  const asset = USDC_ADDRESSES[chain] || paymentRequired.asset || null;
+  const amount = String(paymentRequired.amount);
+  const payer = String(paymentResponse.payer);
+  const payee = String(paymentRequired.payTo);
   const claims = {
     iss: 'chit402',
     schema: FOREIGN_PAYOUT_SCHEMA,
@@ -62,10 +66,22 @@ export function foreignPayoutClaims({
     chain,
     tx,
     payment_ref: `${chain}:${tx}`,
-    payer: String(paymentResponse.payer),
-    payee: String(paymentRequired.payTo),
-    amount: String(paymentRequired.amount),
-    asset: USDC_ADDRESSES[chain] || paymentRequired.asset || null,
+    payer,
+    payee,
+    amount,
+    asset,
+    payment: {
+      rail: 'usdc',
+      ref: `${chain}:${tx}`,
+      asset,
+      payee,
+      gross_amount: amount,
+    },
+    caller_binding: {
+      payer_wallet: payer,
+      agent_pubkey: null,
+      api_key_hash: null,
+    },
   };
   if (typeof fingerprint === 'string' && /^[0-9a-fA-F]{64}$/.test(fingerprint)) {
     claims.agent_record_entry = {
@@ -79,20 +95,6 @@ export function foreignPayoutClaims({
   return claims;
 }
 
-/**
- * @param {object} body
- * @returns {string|null}
- */
-export function entryFingerprintFromBody(body = {}) {
-  const invoice = body.foreign_invoice || body.fulfillment_invoice || body.invoice || {};
-  const raw = body.agent_record_entry?.fingerprint
-    || invoice.agent_record_entry?.fingerprint
-    || body.entry_fingerprint
-    || invoice.entry_fingerprint
-    || null;
-  if (typeof raw !== 'string' || !/^[0-9a-fA-F]{64}$/.test(raw)) return null;
-  return raw.toLowerCase();
-}
 
 /** Networks that use Solana rail (not EVM). */
 const SOLANA_NETWORKS = new Set(['solana', 'solana-devnet', 'solana-mainnet']);
@@ -524,7 +526,13 @@ export function buildForeignReceipt({
       payer: paymentResponse.payer,
       payTo: paymentRequired.payTo,
       payee: paymentRequired.payTo,
+      asset: USDC_ADDRESSES[network] || paymentRequired.asset || null,
       collected_at: new Date().toISOString(),
+    },
+    caller_binding: {
+      payer_wallet: paymentResponse.payer,
+      agent_pubkey: null,
+      api_key_hash: null,
     },
     route: {
       model: route.model,
@@ -559,9 +567,20 @@ export function buildForeignReceipt({
     };
   }
 
-  const claims = foreignPayoutClaims({
+  const payout = foreignPayoutClaims({
     taskId, paymentRequired, paymentResponse, fingerprint,
   });
+  const claims = {
+    ...canonicalSignedClaims(receipt),
+    schema: payout.schema,
+    chain: payout.chain,
+    tx: payout.tx,
+    payment_ref: payout.payment_ref,
+    payer: payout.payer,
+    payee: payout.payee,
+    amount: payout.amount,
+    ...(payout.agent_record_entry ? { agent_record_entry: payout.agent_record_entry } : {}),
+  };
   const { jws, kid } = signJws(claims, { jku: ISSUER_JWKS_URI });
   receipt.issuer_signature = {
     alg: 'ES256',
@@ -608,6 +627,7 @@ export async function ingestForeignX402(body = {}, {
   commitStampWaiver = null,
   fetchImpl = null,
   rpcUrls = null,
+  fingerprint = null,
 } = {}) {
   // Demo keys never write to the book
   if (isDemo) {
@@ -784,7 +804,7 @@ export async function ingestForeignX402(body = {}, {
     rail,
     signingSecret,
     fulfillmentMeta,
-    fingerprint: entryFingerprintFromBody(body),
+    fingerprint,
   });
   receipt.stamp = stampFields(stamp);
 
