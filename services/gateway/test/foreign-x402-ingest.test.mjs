@@ -240,6 +240,51 @@ test('normalizeIngestInput: v2 PAYMENT-RESPONSE header plus v2 challenge becomes
   assert.equal(n.paymentResponse.network, 'base');
 });
 
+test('normalizeIngestInput uses the settled upto amount instead of the ceiling', () => {
+  const n = normalizeIngestInput({
+    payment_required: {
+      x402Version: 2,
+      resource: { url: 'https://v2.api2pdf.com/chrome/pdf/html' },
+      accepts: [{
+        scheme: 'upto',
+        network: 'eip155:8453',
+        amount: '50000',
+        maxAmountRequired: '50000',
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        payTo: V2_PAY_TO,
+      }],
+    },
+    payment_response: {
+      success: true,
+      transaction: V2_TX,
+      network: 'eip155:8453',
+      payer: WALLET_A,
+      amount: '10000',
+    },
+  });
+  assert.equal(n.ok, true);
+  assert.equal(n.paymentRequired.amount, '10000');
+  assert.equal(n.paymentRequired.payTo, V2_PAY_TO);
+  assert.equal(n.paymentResponse.tx, V2_TX);
+  assert.equal(n.paymentResponse.amount, undefined);
+
+  const ceiling = normalizeIngestInput({
+    payment_required: {
+      resource: { url: 'https://v2.api2pdf.com/chrome/pdf/html' },
+      accepts: [{ scheme: 'upto', network: 'eip155:8453', amount: '50000', payTo: V2_PAY_TO }],
+    },
+    payment_response: {
+      success: true,
+      transaction: V2_TX,
+      network: 'eip155:8453',
+      payer: WALLET_A,
+    },
+  });
+  assert.equal(ceiling.ok, false);
+  assert.equal(ceiling.error, 'invalid_payment_response');
+  assert.match(ceiling.reason, /settled transfer/);
+});
+
 test('txHashFromPaymentRef keeps the 0x hash when the ref uses eip155', () => {
   assert.equal(txHashFromPaymentRef(`eip155:8453:${V2_TX}`), V2_TX);
   assert.equal(txHashFromPaymentRef(`base:${V2_TX}`), V2_TX);

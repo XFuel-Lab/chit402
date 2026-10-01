@@ -354,7 +354,24 @@ export function parseX402V2PaymentResponse(input) {
 
   const paymentResponse = { tx, payer };
   if (networkRaw) paymentResponse.network = bookNetwork(networkRaw);
+  const settled = atomicAmountField(obj.amount);
+  if (settled) paymentResponse.amount = settled;
   return { ok: true, paymentResponse };
+}
+
+function atomicAmountField(value) {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return String(value);
+  if (typeof value === 'string' && /^[1-9][0-9]*$/.test(value.trim())) return value.trim();
+  return '';
+}
+
+/** True when the body would record an `upto` ceiling because no settled amount was given. */
+function uptoCeilingWithoutSettlement(paymentRequired) {
+  if (!paymentRequired || typeof paymentRequired !== 'object') return false;
+  if (paymentRequired.amount != null && paymentRequired.amount !== '') return false;
+  const accepts = Array.isArray(paymentRequired.accepts) ? paymentRequired.accepts : [];
+  if (accepts.some((entry) => entry && entry.scheme === 'exact')) return false;
+  return accepts.some((entry) => entry && entry.scheme === 'upto');
 }
 
 /**
@@ -456,10 +473,27 @@ export function normalizeIngestInput(body = {}) {
   if (existingRequired && existingResponse) {
     const parsed = parseX402V2PaymentResponse(existingResponse);
     if (!parsed.ok) return { ok: false, reason: parsed.reason, error: 'invalid_payment_response' };
+    const settledAmount = parsed.paymentResponse.amount;
+    const paymentResponse = { ...parsed.paymentResponse };
+    delete paymentResponse.amount;
+    if (!settledAmount && uptoCeilingWithoutSettlement(existingRequired)) {
+      return {
+        ok: false,
+        reason: 'upto PAYMENT-REQUIRED needs payment_response.amount for the settled transfer, not the authorized ceiling',
+        error: 'invalid_payment_response',
+      };
+    }
+    const normalizedRequired = normalizePaymentRequired(existingRequired);
+    const paymentRequired = normalizedRequired && typeof normalizedRequired === 'object'
+      ? { ...normalizedRequired }
+      : normalizedRequired;
+    if (settledAmount && paymentRequired && typeof paymentRequired === 'object') {
+      paymentRequired.amount = settledAmount;
+    }
     return {
       ok: true,
-      paymentRequired: normalizePaymentRequired(existingRequired),
-      paymentResponse: parsed.paymentResponse,
+      paymentRequired,
+      paymentResponse,
       fulfillmentMeta: fulfillmentFieldsFromIngestBody(body),
     };
   }
