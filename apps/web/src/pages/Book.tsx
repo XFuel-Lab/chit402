@@ -7,6 +7,7 @@ import {
   type BookFetchError,
   type BookPolicy,
   type BookWindowPreset,
+  bookExportBounds,
   bookWindowQuery,
   computeBookSummary,
   computeBurnRate,
@@ -309,6 +310,7 @@ export default function Book() {
       budget = parsed;
     }
 
+    const gen = ++loadGen.current;
     setBudgetSaving(true);
     setBudgetMessage(null);
     const range = bookWindowQuery(windowPreset);
@@ -320,6 +322,10 @@ export default function Book() {
       from: range.from,
       to: range.to,
     });
+    if (gen !== loadGen.current) {
+      setBudgetSaving(false);
+      return;
+    }
     setBudgetSaving(false);
 
     if (!result.ok) {
@@ -404,20 +410,20 @@ export default function Book() {
     setPolicyMessage('Policy saved.');
   };
 
-  const handleExport = async (format: 'csv' | 'json' | 'html') => {
+  const handleExport = async (format: 'csv' | 'json' | 'html', windowed = false) => {
     const agentId = Number(agentIdInput.trim());
     const session = sessionInput.trim();
     if (!Number.isInteger(agentId) || agentId < 1 || !session) return;
 
     setExportMessage(null);
-    const range = bookWindowQuery(windowPreset);
+    const bounds = bookExportBounds(windowed, windowPreset);
     const result = await fetchBookExport(apiV1, {
       agentId,
       session,
       format,
       limit: 200,
-      from: range.from,
-      to: range.to,
+      from: bounds.from,
+      to: bounds.to,
     });
     if (!result.ok) {
       setExportMessage(errorCopy(result.error).body);
@@ -725,7 +731,7 @@ export default function Book() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
                 <h3>Last {book.entries.length} book rows</h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleExport('csv')}>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleExport('csv', true)}>
                     Export CSV
                   </button>
                   <span className="badge badge-cyan">agent {book.agent_id}</span>

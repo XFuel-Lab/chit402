@@ -10,6 +10,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **Principal book export windows.** The receipts-list Export CSV follows the selected window. Treasury advanced audit packs (CSV, JSON, HTML) stay the full history and do not send `from` / `to`. A budget save shares the book load generation, so a stale window refetch cannot overwrite it.
 - **Null claim_id re-signs only when a book seat arrives.** A cached payment JWS with `payment.ref` and `claim_id: null` is re-signed once a book id exists, so `GET /receipt` before `writeSettleBookRow` cannot lock a signature that fails after `bookSpend`. A receipt with no book seat keeps its genesis JWS, including session acts. A JWS that already has `claim_id`, or that omits the key, is not rewritten. A seated signature is not replaced by a later build that has no seat.
 
 ### Added

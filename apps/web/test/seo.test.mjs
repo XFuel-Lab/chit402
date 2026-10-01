@@ -261,7 +261,16 @@ test('Book principal dashboard v1 wires live API beats', () => {
   assert.match(strip, /Vendors paid/, 'KPI tile: Vendors paid');
   assert.match(strip, /Receipts verified/, 'KPI tile: Receipts verified');
   assert.match(book, /Export CSV/, 'Receipts list surfaces Export CSV');
-  assert.match(book, /fetchBookExport\([\s\S]*from: range\.from/, 'Export CSV sends the selected window');
+  assert.match(book, /handleExport\('csv', true\)/, 'Receipts list Export CSV is windowed');
+  assert.match(book, /handleExport\('csv'\)/, 'Audit pack CSV is not windowed');
+  assert.match(book, /handleExport\('json'\)/, 'Audit pack JSON is not windowed');
+  assert.match(book, /handleExport\('html'\)/, 'Audit pack HTML is not windowed');
+  assert.match(book, /bookExportBounds\(windowed, windowPreset\)/, 'Export bounds follow the windowed flag');
+  assert.equal(
+    (book.match(/const gen = \+\+loadGen\.current/g) || []).length,
+    2,
+    'Budget save and book load share the generation guard',
+  );
   assert.match(client, /qs\.set\('from', params\.from\)/, 'Export client forwards from');
   assert.match(
     book,

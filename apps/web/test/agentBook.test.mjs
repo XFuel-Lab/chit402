@@ -8,6 +8,7 @@ const {
   computeBurnRate,
   computeBookSummary,
   bookWindowQuery,
+  bookExportBounds,
   entriesInWindow,
   computeModelMix,
   summarizePaymentRef,
@@ -115,6 +116,16 @@ test('computeBookSummary is zeroed when there are no receipts', () => {
     verified_percent: 0,
   });
   assert.equal(formatUsd(summary.spend_atomic), '$0.00');
+});
+
+test('bookExportBounds leaves audit packs unfiltered and windows the list export', () => {
+  const now = Date.parse('2026-10-01T00:00:00.000Z');
+  assert.deepEqual(bookExportBounds(false, '7d', now), { from: null, to: null });
+  assert.deepEqual(bookExportBounds(true, '7d', now), {
+    from: '2026-09-24T00:00:00.000Z',
+    to: null,
+  });
+  assert.deepEqual(bookExportBounds(true, 'all', now), { from: null, to: null });
 });
 
 test('entriesInWindow drops rows outside the selected bounds', () => {

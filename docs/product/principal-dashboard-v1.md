@@ -43,7 +43,7 @@ Thin web on [chit402.com/book](https://www.chit402.com/book) — extend `/book`,
 
 An empty window is zeros (`spend_atomic: "0"`), not a missing object. The page shows `$0.00` and `0`. With no receipts, the list says: “Your first paid call shows up here with its receipt and a verify link.” and links `/docs/chit-in-15-lines`.
 
-CSV export already existed (`format=csv|json|html`, including `from` / `to`). The receipts list surfaces it as **Export CSV** for the current window. The audit-pack buttons under Treasury advanced stay.
+CSV export already existed (`format=csv|json|html`, including `from` / `to`). The receipts list surfaces it as **Export CSV** for the current window. The audit-pack buttons under Treasury advanced stay on the full history: they do not send `from` / `to`.
 
 ## Out of v1
 

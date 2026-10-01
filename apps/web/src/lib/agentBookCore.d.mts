@@ -13,6 +13,11 @@ export interface BookWindowQuery {
 }
 
 export function bookWindowQuery(preset: string, now?: number): BookWindowQuery;
+export function bookExportBounds(
+  windowed: boolean,
+  preset: string,
+  now?: number,
+): { from: string | null; to: string | null };
 export function entriesInWindow<T extends { collected_at?: string | null }>(
   entries: T[],
   from: string | null,

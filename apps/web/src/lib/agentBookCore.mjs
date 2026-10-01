@@ -83,6 +83,21 @@ export function formatUsd(units) {
 /** @typedef {'24h' | '7d' | '30d' | 'all'} BookWindowPreset */
 
 /**
+ * Bounds for a book export.
+ * The receipts-list button is windowed and uses the dashboard preset.
+ * Treasury audit packs pass windowed=false and send no from/to, so they
+ * stay the full history even when the KPI window is last 7 days.
+ * @param {boolean} windowed
+ * @param {string} preset
+ * @param {number} [now]
+ */
+export function bookExportBounds(windowed, preset, now = Date.now()) {
+  if (!windowed) return { from: null, to: null };
+  const range = bookWindowQuery(preset, now);
+  return { from: range.from, to: range.to };
+}
+
+/**
  * Selected spend window. Default for the principal dashboard is 7 days.
  * `all` omits from/to so the book stays unfiltered.
  * @param {string} preset
