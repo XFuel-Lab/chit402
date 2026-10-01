@@ -2513,8 +2513,9 @@ export function createApp() {
   //   4. Decode JWS payload → canonical signed fields array (same fields as HMAC)
   //   5. caller_binding (when present) proves payer wallet / agent entitlement binding
 
-  // GET /receipt/by-tx?tx=<signature> — lookup by payment ref (Solana tx signature)
-  // This enables receipt lookup when the caller has the tx but not the task ID.
+  // GET /receipt/by-tx?tx=<signature> — lookup by payment ref.
+  // Task store first (native receipts). Foreign-ingest and stamped payouts
+  // live only on the usage ledger, keyed `base:<tx>` or a bare hash.
   app.get('/receipt/by-tx', rateLimit, (req, res) => {
     try {
       const tx = req.query.tx;
@@ -2524,12 +2525,21 @@ export function createApp() {
           message: 'tx query parameter is required',
         });
       }
-      const aiListener = getAIListener();
-      const task = _findTaskByPaymentRef(aiListener, tx);
+      let task = null;
+      try {
+        task = _findTaskByPaymentRef(getAIListener(), tx);
+      } catch (err) {
+        // The book still answers when the listener has not started.
+        if (!String(err?.message || '').includes('not initialized')) throw err;
+      }
+      const ledgerRow = task
+        ? null
+        : usageSettled.findByPaymentQuery(tx, { chain: req.query.chain });
+      const taskId = task?.taskId || ledgerRow?.task_id || null;
       const fmt = String(req.query.format || '').toLowerCase();
       const wantsJson = fmt === 'json' || req.accepts(['html', 'json']) === 'json';
 
-      if (!task) {
+      if (!taskId) {
         if (wantsJson) {
           return res.status(404).json({
             error: 'not_found',
@@ -2540,9 +2550,10 @@ export function createApp() {
         return res.status(404).type('html').send(renderReceiptNotFound(tx));
       }
 
-      // Redirect to canonical verify_url so the URL shape is consistent
+      // Redirect to canonical verify_url so the URL shape is consistent.
+      // GET /receipt/:id rebuilds a foreign row from its snapshot, including the issuer JWS.
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-      const canonicalUrl = `${baseUrl}/receipt/${task.taskId}${fmt ? `?format=${fmt}` : ''}`;
+      const canonicalUrl = `${baseUrl}/receipt/${taskId}${fmt ? `?format=${fmt}` : ''}`;
       return res.redirect(302, canonicalUrl);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt/by-tx error');

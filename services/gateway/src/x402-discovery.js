@@ -2295,8 +2295,9 @@ export function buildOpenApiSpec(baseUrl = '') {
           summary: 'Lookup receipt by transaction signature',
           description:
             'Redirect to the canonical /receipt/{taskId} URL given a payment transaction signature. '
-            + 'Supports Solana tx signatures and Base transaction hashes. Enables receipt lookup '
-            + 'when the caller has the tx but not the task ID.',
+            + 'Looks up the task store, then stamped foreign-ingest rows on the book. '
+            + 'Accepts base:<tx> or a bare hash (hex is case-insensitive) and optional chain '
+            + '(base or eip155:8453). The redirect target serves the issuer JWS.',
           tags: ['Receipts'],
           parameters: [
             {
@@ -2304,7 +2305,14 @@ export function buildOpenApiSpec(baseUrl = '') {
               in: 'query',
               required: true,
               schema: { type: 'string' },
-              description: 'Transaction signature (Solana) or transaction hash (Base)',
+              description: 'Transaction signature (Solana), 0x hash, or chain:tx ref such as base:0x…',
+            },
+            {
+              name: 'chain',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Chain prefix when tx is a bare hash. base and eip155:8453 both mean base.',
             },
             {
               name: 'format',
