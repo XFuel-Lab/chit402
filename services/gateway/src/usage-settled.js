@@ -341,6 +341,38 @@ export function receiptQualifiesForLedger(receipt) {
   return { ok: true };
 }
 
+function receiptLookupChain(chain) {
+  if (chain == null || chain === '') return null;
+  const raw = Array.isArray(chain) ? chain[0] : chain;
+  const n = String(raw ?? '').trim().toLowerCase();
+  if (!n) return null;
+  if (n === 'eip155:8453' || n === 'base') return 'base';
+  if (n === 'eip155:84532' || n === 'base-sepolia') return 'base-sepolia';
+  return n;
+}
+
+function hexPaymentId(id) {
+  if (typeof id !== 'string' || !/^0x[0-9a-fA-F]+$/i.test(id)) return null;
+  return `0x${id.slice(2).toLowerCase()}`;
+}
+
+function splitPaymentRef(ref) {
+  const raw = String(ref ?? '').trim();
+  if (!raw) return null;
+  const colon = raw.indexOf(':');
+  const hasPrefix = colon > 0 && colon < raw.length - 1;
+  const chain = hasPrefix ? raw.slice(0, colon).toLowerCase() : null;
+  const id = hasPrefix ? raw.slice(colon + 1) : raw;
+  return { chain, id, idLower: hexPaymentId(id), raw };
+}
+
+function samePaymentId(a, b) {
+  if (a === b) return true;
+  const left = hexPaymentId(a);
+  const right = hexPaymentId(b);
+  return left != null && left === right;
+}
+
 export class UsageSettledLedger {
   /**
    * @param {{ dir?: string|null, persist?: boolean }} [opts]
@@ -471,6 +503,56 @@ export class UsageSettledLedger {
 
   findByRef(paymentRef) {
     return this.byRef.get(String(paymentRef)) || null;
+  }
+
+  /**
+   * Find a book row from a tx the caller has, not a task id.
+   * Matches `base:<tx>` and a bare hash. Hex is case-insensitive.
+   * `chain` (short name or `eip155:8453`) limits the prefix. A bare query
+   * with no chain also matches `base:<tx>`.
+   * @param {string} tx
+   * @param {{ chain?: string|null }} [opts]
+   * @returns {object|null}
+   */
+  findByPaymentQuery(tx, { chain = null } = {}) {
+    const query = splitPaymentRef(tx);
+    if (!query) return null;
+    const chainFilter = receiptLookupChain(chain);
+    if (chainFilter && query.chain && chainFilter !== query.chain) return null;
+    const wantedChain = chainFilter || query.chain || null;
+
+    const exact = [];
+    const push = (ref) => {
+      if (ref && !exact.includes(ref)) exact.push(ref);
+    };
+    if (wantedChain) {
+      push(`${wantedChain}:${query.id}`);
+      if (query.idLower) push(`${wantedChain}:${query.idLower}`);
+    }
+    push(query.id);
+    if (query.idLower) push(query.idLower);
+    if (!wantedChain && query.idLower) push(`base:${query.idLower}`);
+    if (!wantedChain) push(`base:${query.id}`);
+    push(query.raw);
+
+    for (const ref of exact) {
+      const hit = this.findByRef(ref);
+      if (!hit) continue;
+      if (wantedChain) {
+        const parts = splitPaymentRef(hit.payment_ref);
+        if (parts?.chain && parts.chain !== wantedChain) continue;
+      }
+      return hit;
+    }
+
+    for (const row of this.entries) {
+      const parts = splitPaymentRef(row?.payment_ref);
+      if (!parts) continue;
+      if (wantedChain && parts.chain && parts.chain !== wantedChain) continue;
+      if (!samePaymentId(parts.id, query.id)) continue;
+      return row;
+    }
+    return null;
   }
 
   findByTask(taskId) {

@@ -1268,6 +1268,73 @@ test('smoke fixture: ingest row verify_url resolves on GET /receipt', async () =
   assert.equal(receipt.evidence, 'foreign_ingest');
   assert.equal(receipt.payment.ref, 'base:0xsmokeverifytx');
   assert.equal(receipt.verify_url, `${base}/receipt/${seeded.body.task_id}`);
+  assert.match(receipt.issuer_signature?.jws || '', /^[^.]+\.[^.]+\.[^.]+$/);
+});
+
+test('GET /receipt/by-tx redirects a stamped ledger row and /receipt/:id serves the issuer JWS', async () => {
+  const { initAIListener } = await import('../src/ai-listener.js');
+  await initAIListener();
+  const hooks = httpApp.locals.__test;
+  const tx = `0x${'cD'.repeat(32)}`;
+  const payer = '0x9f8951cb8b060f52fdf87297b3c5b00f7aa18f52';
+  const payee = '0x1111111111111111111111111111111111111111';
+  const built = buildForeignReceipt({
+    taskId: 'foreign-x402-by-tx',
+    paymentRequired: {
+      resource: `https://basescan.org/tx/${tx}`,
+      amount: '1000000',
+      payTo: payee,
+      network: 'base',
+    },
+    paymentResponse: { tx, payer, network: 'base' },
+    rail: 'usdc',
+    agentId: 7,
+  });
+  const appended = hooks.usageSettled.append(built, { payer, agentId: 7 });
+  assert.equal(appended.ok, true, appended.reason);
+
+  const canonical = `${base}/receipt/${built.task_id}`;
+  const expectRedirect = async (query) => {
+    const res = await fetch(`${base}/receipt/by-tx?${query}`, { redirect: 'manual' });
+    assert.equal(res.status, 302, query);
+    assert.equal(res.headers.get('location'), canonical, query);
+  };
+  await expectRedirect(`tx=${tx.toLowerCase()}`);
+  await expectRedirect(`tx=${encodeURIComponent(`base:${tx.toLowerCase()}`)}`);
+  await expectRedirect(`tx=${tx.toUpperCase()}&chain=eip155:8453`);
+
+  const jsonRedirect = await fetch(
+    `${base}/receipt/by-tx?tx=${encodeURIComponent(`BASE:${tx}`)}&format=json`,
+    { redirect: 'manual' },
+  );
+  assert.equal(jsonRedirect.headers.get('location'), `${canonical}?format=json`);
+
+  const wrongChain = await fetch(
+    `${base}/receipt/by-tx?tx=${tx.toLowerCase()}&chain=solana`,
+    { redirect: 'manual', headers: { Accept: 'application/json' } },
+  );
+  assert.equal(wrongChain.status, 404);
+
+  const missing = await fetch(
+    `${base}/receipt/by-tx?tx=0x${'11'.repeat(32)}`,
+    { redirect: 'manual', headers: { Accept: 'application/json' } },
+  );
+  assert.equal(missing.status, 404);
+
+  const publishedRes = await fetch(`${canonical}?format=json`, {
+    headers: { Accept: 'application/json' },
+  });
+  const published = await publishedRes.json();
+  assert.equal(publishedRes.status, 200, JSON.stringify(published));
+  assert.equal(published.task_id, built.task_id);
+  assert.equal(published.payment.ref, `base:${tx}`);
+  assert.equal(published.caller_binding.payer_wallet, payer);
+  assert.match(published.issuer_signature.jws, /^[^.]+\.[^.]+\.[^.]+$/);
+  const { verifyReceiptEcdsa } = await import('../src/receipt.js');
+  const { getJwks } = await import('../src/issuer-key.js');
+  const checked = verifyReceiptEcdsa(published, getJwks().keys[0]);
+  assert.equal(checked.valid, true, checked.reason);
+  assert.equal(checked.payload.claim_id, '7');
 });
 
 // ─── Stamp Fee Tests ─────────────────────────────────────────────────────────
