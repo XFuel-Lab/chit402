@@ -65,9 +65,10 @@ test('GET /receipt before writeSettleBookRow does not freeze a null claim_id', a
   assert.equal(earlyClaims.payment.ref, paymentRef);
   assert.equal(earlyClaims.claim_id, null);
   assert.equal(verifyIssuerForHtml(early).reason, 'claim_id_missing');
-  assert.equal(task.issuerSignature, undefined, 'a paid null claim_id is not persisted');
-  // An older process may already have stored that signature. It must not stay frozen.
-  task.issuerSignature = early.issuer_signature;
+  assert.equal(task.issuerSignature?.jws, early.issuer_signature.jws);
+
+  const stillEarly = await (await fetch(`${base}/receipt/${taskId}?format=json`)).json();
+  assert.equal(stillEarly.issuer_signature.jws, early.issuer_signature.jws, 'no seat yet: genesis JWS stays');
 
   const { usageSettled, agentRegistry } = app.locals.__test;
   const settled = recordSettleBookRow({

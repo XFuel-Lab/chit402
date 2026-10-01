@@ -2721,7 +2721,7 @@ export function createApp() {
         coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
         reqHost,
-        // Ledger seat wins. A paid signature with claim_id null is not stored.
+        // Ledger seat wins. A cached null claim_id is re-signed only when this id exists.
         agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
         persistSignature: true,
       });

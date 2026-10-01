@@ -10,7 +10,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
-- **Null claim_id no longer freezes.** A paid receipt (`payment.ref` set) whose `claim_id` is null is not persisted. A cached signature that already has `claim_id: null` is not treated as frozen once the book id exists, so `GET /receipt` before `writeSettleBookRow` cannot lock a signature that fails verification after `bookSpend`. A legacy JWS that omits `claim_id` is not rewritten. A seated signature is not replaced by a later build that has no seat.
+- **Null claim_id re-signs only when a book seat arrives.** A cached payment JWS with `payment.ref` and `claim_id: null` is re-signed once a book id exists, so `GET /receipt` before `writeSettleBookRow` cannot lock a signature that fails after `bookSpend`. A receipt with no book seat keeps its genesis JWS, including session acts. A JWS that already has `claim_id`, or that omits the key, is not rewritten. A seated signature is not replaced by a later build that has no seat.
 
 ### Added
 - **Settlement claim_id:** the payment JWS (payload version stays 8) signs `claim_id`, the book `agent_id`. The v8 HMAC array is unchanged. A receipt that includes the key, has `payment.ref`, and has `claim_id` null fails verification. Older v8 receipts that omit the key still verify (`claim_id: not_present_legacy`). The receipt is signed after the book id exists. Book-seq payload version 4 signs `payment_ref` with `book_id` for foreign ingest, Nano, and board stamp rows, which have no payment JWS. Versions 2 and 3 still verify. The ingest stamp tx is its own book row (`ingest_stamp`), not prepaid spend. Suggested by @ellie-v2 on 1F916 (https://1f916.ai/post/7347#comment-88218).
