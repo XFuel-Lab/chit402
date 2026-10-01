@@ -4,7 +4,8 @@ description: >-
   Pay for Chit402 inference via x402 USDC on Base, collect a signed receipt, and
   return verify_url so the principal holds the row. Use when an agent needs to
   stamp spend through Chit402, print a shareable receipt, verify payer/payee/asset/
-  amount/tx binds offline, or budget capped USDC calls without defaulting to SP1.
+  amount/tx binds offline, budget capped USDC calls without defaulting to SP1,
+  or stamp a Chit receipt after paying a Cloudflare Monetization Gateway API.
 ---
 
 # Chit402 Receipt — pay, stamp, return verify_url
@@ -207,6 +208,99 @@ this **skill file** for instructions; MCP is optional and not required for Bankr
 - **No SP1 by default** — do not poll `/prove-result` unless asked.
 - **Never exfiltrate** private keys; use Bankr wallet signing.
 - Point principals at **`https://api.chit402.com`** (not legacy hostnames) for live traffic.
+
+## Paying Cloudflare-gated APIs (Monetization Gateway)
+
+Cloudflare Monetization Gateway (closed beta, launched 30 Sep 2026) is **x402 v2**.
+It verifies the payment and settles it through **Coinbase's x402 facilitator** in
+**USDC on Base** (`eip155:8453`). Cloudflare does not run the facilitator. Buyers
+and sellers must be **US-based**. There is no partner directory, and settlement
+logs are not available yet.
+
+Chit does not touch that settlement. After the paid call, read `PAYMENT-RESPONSE`
+and POST it to the existing foreign-ingest door. Chit checks the USDC Transfer
+on Base and writes a book row. The receipt evidence is **`foreign_ingest`**: Chit
+recorded the payment. Chit did not route it and did not settle it.
+
+**Base USDC only** on this path. The USDC contract is
+`0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`.
+
+### Buyer-side recipe
+
+1. **Pay with any x402 client** (`@x402/fetch`, Agents SDK `withX402Client`, or
+   the Worker in `examples/cloudflare-x402-chit-receipt/`). The first response is
+   HTTP 402 with `PAYMENT-REQUIRED` (base64 JSON). Retry with `PAYMENT-SIGNATURE`.
+   Enforce `CHIT_MAX_USD_PER_CALL` and `CHIT_MAX_USD_SESSION` on the challenge
+   amount before you sign. Atomic USDC, 6 decimals: `"10000"` = $0.01. The
+   gateway minimum is $0.001 (`1000`).
+
+2. **Read `PAYMENT-RESPONSE`** on the paid response. It is base64 JSON:
+
+   ```json
+   { "success": true, "transaction": "0x…", "network": "eip155:8453", "payer": "0x…" }
+   ```
+
+   `transaction` is the Base tx hash. Keep the resource URL, atomic amount, and
+   `payTo` from the 402 challenge you already paid.
+
+3. **POST the ingest.** Possession session required
+   (`X-Xfuel-Session` and JSON `session`). A registered book comes from
+   `POST /v1/agents/register`.
+
+   ```http
+   POST /v1/agents/<agent_id>/book/ingest
+   Content-Type: application/json
+   X-Xfuel-Session: <session>
+
+   {
+     "session": "<session>",
+     "payment_required": {
+       "resource": "https://seller.example/v1/resource",
+       "amount": "10000",
+       "payTo": "0x…",
+       "network": "eip155:8453",
+       "asset": "USDC"
+     },
+     "payment_response": {
+       "success": true,
+       "transaction": "0x…",
+       "network": "eip155:8453",
+       "payer": "0x…"
+     }
+   }
+   ```
+
+   `payment_response` may instead be the raw base64 `PAYMENT-RESPONSE` header.
+   `transaction` is stored as `tx`. `eip155:8453` is stored as `base`, so the
+   book ref is `base:0x…` and on-chain verify can read the hash.
+
+   The ingest door then returns **HTTP 402** for its own **$0.002** stamp
+   (2000 atomic USDC) paid by the submitter. Settle that stamp with
+   `PAYMENT-SIGNATURE` or `X-PAYMENT`. The stamp is separate from the seller
+   payment and does not debit prepaid budget.
+
+   For an **`exact`** challenge, `amount` is the settled figure. For **`upto`**,
+   the challenge `amount` is only the authorization ceiling (`max_amount`).
+   Spend is `PAYMENT-RESPONSE.amount` when that field is present. Otherwise
+   ingest reads the USDC Transfer and records that. A posted amount above the
+   Transfer, or above the ceiling, is rejected (`payment_invalid`).
+
+4. **Keep `verify_url`** from the 201 body
+   (`https://api.chit402.com/receipt/<task_id>`). Return it to the principal.
+   `GET /receipt/<task_id>?format=json` shows `"evidence": "foreign_ingest"`.
+
+A Worker that does steps 1–4 for an **exact** Base USDC price and sets
+`X-Chit-Receipt` to the verify URL: `examples/cloudflare-x402-chit-receipt/`.
+It refuses an `upto`-only challenge before signing. Docs:
+https://www.chit402.com/docs/cloudflare-x402
+
+### Honest limits
+
+- Evidence is `foreign_ingest`. The HMAC scope is `recorded`. That is Chit's
+  record of a payment settled elsewhere, not a merchant attestation and not a
+  Chit-routed hop.
+- Base USDC only. Monetization Gateway settles on Base through Coinbase's facilitator.
+- The gateway is a **US-only closed beta**. Buyers and sellers must be US-based.
 
 ## References
 

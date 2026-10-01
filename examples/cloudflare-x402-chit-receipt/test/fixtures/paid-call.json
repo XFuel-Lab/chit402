@@ -1,0 +1,17 @@
+{
+  "upstreamPath": "/chrome/pdf/html",
+  "resource": "https://v2.api2pdf.com/chrome/pdf/html",
+  "amount": "10000",
+  "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "payTo": "0x2222222222222222222222222222222222222222",
+  "payer": "0x1111111111111111111111111111111111111111",
+  "transaction": "0xabababababababababababababababababababababababababababababababab",
+  "network": "eip155:8453",
+  "upstreamBody": {
+    "pdf": "https://v2.api2pdf.com/file/example.pdf",
+    "mbOut": 0.1
+  },
+  "verify_url": "https://api.chit402.com/receipt/foreign-x402-fixture",
+  "stampPayTo": "0x3333333333333333333333333333333333333333",
+  "stampAmount": "2000"
+}

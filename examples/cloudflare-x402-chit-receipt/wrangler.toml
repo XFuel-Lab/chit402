@@ -1,0 +1,25 @@
+# Buyer-side proxy: pay an x402 URL, then stamp a Chit receipt.
+# Secrets stay out of this file. Set them with `wrangler secret put`
+# or a local `.dev.vars` copied from `.dev.vars.example`.
+#
+#   X402_PAYER_PRIVATE_KEY   wallet that pays the upstream x402 endpoint
+#   CHIT_STAMP_PRIVATE_KEY   wallet that pays the $0.002 Chit ingest stamp
+#   CHIT_BOOK_SESSION        possession session for CHIT_AGENT_ID
+#   CHIT_AGENT_ID            registered book id (not secret, but unset here)
+#
+# https://developers.cloudflare.com/workers/wrangler/configuration/
+
+name = "cloudflare-x402-chit-receipt"
+main = "src/index.ts"
+compatibility_date = "2025-10-08"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[vars]
+CHIT_API_URL = "https://api.chit402.com"
+# Origin this worker pays. The incoming path and query string are appended.
+UPSTREAM_ORIGIN = "https://example.com"
+# Atomic USDC (6 decimals) checked before any signature. 100000 = $0.10.
+MAX_ATOMIC_USDC = "100000"

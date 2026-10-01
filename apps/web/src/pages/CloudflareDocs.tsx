@@ -78,8 +78,20 @@ npm install chit402-sidecar`;
           </pre>
         </div>
 
+        <div className="docs-panel">
+          <h2>Monetization Gateway</h2>
+          <p>
+            Paying someone else&apos;s Cloudflare-gated API is a different door. Read{' '}
+            <code>PAYMENT-RESPONSE</code> and stamp a <code>foreign_ingest</code> receipt.
+            Chit does not settle that call.
+          </p>
+        </div>
+
         <div className="docs-actions">
-          <Link to="/docs/framework-adapters" className="btn btn-primary btn-sm">
+          <Link to="/docs/cloudflare-x402" className="btn btn-primary btn-sm">
+            Monetization Gateway receipts
+          </Link>
+          <Link to="/docs/framework-adapters" className="btn btn-secondary btn-sm">
             Framework adapters
           </Link>
           <a
