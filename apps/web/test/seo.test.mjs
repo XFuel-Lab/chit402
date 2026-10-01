@@ -374,7 +374,10 @@ test('1F916 link draft is a public docs page', () => {
   assert.match(page, /Issuance support is coming/);
   assert.match(page, /api\.chit402\.com\/\.well-known\/jwks\.json/);
   assert.match(page, /Who issues the receipt/);
-  assert.match(page, /pending first stamp/);
+  assert.match(page, /are stamped/);
+  assert.match(page, /foreign-x402-muq262x0-1467b076fc62/);
+  assert.match(page, /foreign-x402-muq264r9-69896464bb19/);
+  assert.doesNotMatch(page, /pending first stamp/);
   assert.match(page, /Specimen 1/);
   assert.match(page, /Specimen 2/);
   assert.match(page, /0x909d738d79ff4c9885cd9ed0755636565ee3ddf0406ef6f454e7fbf797990ce9/);

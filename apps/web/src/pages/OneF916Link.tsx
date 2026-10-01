@@ -11,6 +11,10 @@ const KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 
 const SPECIMEN_1 = '/specimens/1f916-link-1.json';
 const SPECIMEN_2 = '/specimens/1f916-link-2.json';
+const RECEIPT_1 = 'foreign-x402-muq262x0-1467b076fc62';
+const RECEIPT_2 = 'foreign-x402-muq264r9-69896464bb19';
+const VERIFY_1 = `https://api.chit402.com/receipt/${RECEIPT_1}`;
+const VERIFY_2 = `https://api.chit402.com/receipt/${RECEIPT_2}`;
 const PAYOUT_55 = '0x909d738d79ff4c9885cd9ed0755636565ee3ddf0406ef6f454e7fbf797990ce9';
 const PAYOUT_45 = '0x233acdcf3d78436d63a0dba00092fb9a8fe806a3ecd1b415a4d364144baffebd';
 const ENTRY_EVENT_ID = 20498;
@@ -27,13 +31,13 @@ const verifyCli = `npx xfuel-verify receipt.json --fetch-jwks --check-payer
 # --fetch-jwks allowlists api.chit402.com; pass that issuer's JWKS explicitly:
 # npx xfuel-verify receipt.json --jwks-url "https://<issuer-origin>/.well-known/jwks.json" --check-payer
 
-# Specimens stay pending_first_stamp until the house book has the payout receipt.
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_1}
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_2}`;
 
 const specimenEntry = `{
-  "status": "pending_first_stamp",
-  "chit_receipt_id": null,
+  "status": "stamped",
+  "chit_receipt_id": "${RECEIPT_1}",
+  "chit_verify_url": "${VERIFY_1}",
   "payout_tx": "${PAYOUT_55}",
   "agent_record_entry": {
     "schema": "chit402.agent_record_entry.v0",
@@ -252,10 +256,8 @@ export default function OneF916Link() {
         <div className="docs-panel">
           <h2>Specimens</h2>
           <p>
-            <strong>pending first stamp.</strong> Specimen 1 and Specimen 2 are Chit402&apos;s own
-            listing payouts. Each 1F916 award still has <code>receipt_id</code> null. The Chit
-            receipt for that payout is not in the house book yet, so these files leave{' '}
-            <code>chit_receipt_id</code> null.
+            Specimen 1 and Specimen 2 are stamped. Each file names the house-book receipt for
+            that payout, and the verify link is the receipt <code>verify_url</code>.
           </p>
           <ul style={styles.list}>
             <li>
@@ -265,6 +267,7 @@ export default function OneF916Link() {
               Sealed listing event <code>{ENTRY_EVENT_ID}</code>, fingerprint{' '}
               <code style={styles.mono}>{ENTRY_FINGERPRINT}</code>.{' '}
               <a href="https://1f916.ai/api/listings/55" target="_blank" rel="noreferrer">listing 55</a>.
+              {' '}Receipt <a href={VERIFY_1} target="_blank" rel="noreferrer">{RECEIPT_1}</a>.
               {' '}<a href={SPECIMEN_1}>{SPECIMEN_1}</a>.
             </li>
             <li>
@@ -274,17 +277,16 @@ export default function OneF916Link() {
               Sealed listing event <code>{ENTRY_2_EVENT_ID}</code>, fingerprint{' '}
               <code style={styles.mono}>{ENTRY_2_FINGERPRINT}</code>.{' '}
               <a href="https://1f916.ai/api/listings/45" target="_blank" rel="noreferrer">listing 45</a>.
+              {' '}Receipt <a href={VERIFY_2} target="_blank" rel="noreferrer">{RECEIPT_2}</a>.
               {' '}<a href={SPECIMEN_2}>{SPECIMEN_2}</a>.
             </li>
             <li>
               The seal is on <a href={ENTRY_RECORD_URL} target="_blank" rel="noreferrer">{ENTRY_RECORD_URL}</a>.
-              The house stamp command is <code>{STAMP_SCRIPT}</code>. After it prints a{' '}
-              <code>verify_url</code>, that id fills <code>chit_receipt_id</code>. Pending means
-              that id is absent. A filled id is fetched even if <code>status</code> still says{' '}
-              <code>pending_first_stamp</code>. The stamp&apos;s issuer JWS binds the tx, chain,
-              payer, payee, amount, and the entry fingerprint. The verifier checks that JWS
-              against the Chit JWKS, then <code>book_chain</code>, the Base transfer, and the
-              1F916 entry hash.
+              The house stamp command is <code>{STAMP_SCRIPT}</code>. The stamp&apos;s issuer JWS
+              binds the tx, chain, payer, payee, amount, and the entry fingerprint. The verifier
+              checks that JWS against the Chit JWKS, then <code>book_chain</code>, the Base
+              transfer, and the 1F916 entry hash. <code>chit_verify_url</code> may be the receipt
+              path alone or the same path with <code>?format=json</code>.
             </li>
           </ul>
           <pre className="docs-code">

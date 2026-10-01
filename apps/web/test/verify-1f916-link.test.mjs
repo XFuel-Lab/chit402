@@ -19,21 +19,32 @@ function load(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
-test('public payout specimens are pending and the verifier fixture is not one of them', () => {
+test('public payout specimens are stamped and the verifier fixture is not one of them', () => {
   const first = load(specimen1Path);
   const second = load(specimen2Path);
   assert.equal(first.label, 'Specimen 1');
-  assert.equal(first.status, 'pending_first_stamp');
-  assert.equal(first.chit_receipt_id, null);
+  assert.equal(first.status, 'stamped');
+  assert.equal(first.chit_receipt_id, 'foreign-x402-muq262x0-1467b076fc62');
+  assert.equal(first.chit_verify_url, 'https://api.chit402.com/receipt/foreign-x402-muq262x0-1467b076fc62');
+  assert.equal(first.boundary.includes('pending'), false);
   assert.equal(first.payout_tx, '0x909d738d79ff4c9885cd9ed0755636565ee3ddf0406ef6f454e7fbf797990ce9');
   assert.equal(first.listing_id, 55);
   assert.equal(second.label, 'Specimen 2');
-  assert.equal(second.status, 'pending_first_stamp');
-  assert.equal(second.chit_receipt_id, null);
+  assert.equal(second.status, 'stamped');
+  assert.equal(second.chit_receipt_id, 'foreign-x402-muq264r9-69896464bb19');
+  assert.equal(second.chit_verify_url, 'https://api.chit402.com/receipt/foreign-x402-muq264r9-69896464bb19');
+  assert.equal(second.boundary.includes('pending'), false);
   assert.equal(second.payout_tx, '0x233acdcf3d78436d63a0dba00092fb9a8fe806a3ecd1b415a4d364144baffebd');
   assert.equal(second.listing_id, 45);
   const page = readFileSync(join(root, 'apps/web/src/pages/OneF916Link.tsx'), 'utf8');
-  assert.match(page, /pending first stamp/);
+  assert.match(page, /are stamped/);
+  assert.match(page, /foreign-x402-muq262x0-1467b076fc62/);
+  assert.match(page, /foreign-x402-muq264r9-69896464bb19/);
+  assert.match(page, /href=\{VERIFY_1\}/);
+  assert.match(page, /href=\{VERIFY_2\}/);
+  assert.match(page, /api\.chit402\.com\/receipt\/\$\{RECEIPT_1\}/);
+  assert.match(page, /api\.chit402\.com\/receipt\/\$\{RECEIPT_2\}/);
+  assert.doesNotMatch(page, /pending first stamp/);
   assert.doesNotMatch(page, /1ebc5616/);
 });
 
@@ -69,8 +80,12 @@ test('book row hash matches the Specimen 1 receipt head', () => {
   }), '43651fc3fbc8c678bd41c40c6158be0878896c213e9b6809cbd4f4851c2c1835');
 });
 
-test('pending specimens fail the receipt step and still check the entry hash', async () => {
-  const result = await verifyLink(load(specimen1Path), {
+test('a specimen with no receipt id fails fetch and still checks the entry hash', async () => {
+  const specimen = load(specimen1Path);
+  specimen.chit_receipt_id = null;
+  specimen.chit_verify_url = null;
+  specimen.status = 'pending_first_stamp';
+  const result = await verifyLink(specimen, {
     fetchImpl: async (url) => {
       const target = String(url);
       if (target.includes('api.chit402.com')) throw new Error(`unexpected receipt fetch ${target}`);
@@ -88,6 +103,48 @@ test('pending specimens fail the receipt step and still check the entry hash', a
   assert.equal(result.steps.fetch_receipt.detail, 'pending_first_stamp');
   assert.equal(result.steps.entry_fingerprint.status, 'PASS');
   assert.equal(result.verdict, 'FAIL');
+});
+
+test('stamp verify_url is accepted with or without format=json and other hosts are rejected', async () => {
+  const id = 'foreign-x402-muq262x0-1467b076fc62';
+  const bare = `https://api.chit402.com/receipt/${id}`;
+  const jsonUrl = `${bare}?format=json`;
+  const receipt = { task_id: id, verify_url: bare };
+
+  for (const given of [bare, jsonUrl, null]) {
+    const seen = [];
+    const result = await verifyLink({
+      chit_receipt_id: id,
+      chit_verify_url: given,
+    }, {
+      fetchImpl: async (url) => {
+        seen.push(String(url));
+        if (String(url) !== jsonUrl) throw new Error(`unexpected fetch ${url}`);
+        return { ok: true, json: async () => receipt };
+      },
+    });
+    assert.equal(result.steps.fetch_receipt.status, 'PASS', `${given}: ${result.steps.fetch_receipt.detail}`);
+    assert.deepEqual(seen, [jsonUrl]);
+  }
+
+  for (const given of [
+    `https://evil.example/receipt/${id}`,
+    'https://api.chit402.com/receipt/other-id',
+    `${bare}?format=html`,
+    `${bare}?format=json&extra=1`,
+    `${bare}/`,
+  ]) {
+    const result = await verifyLink({
+      chit_receipt_id: id,
+      chit_verify_url: given,
+    }, {
+      fetchImpl: async () => {
+        throw new Error('should not fetch');
+      },
+    });
+    assert.equal(result.steps.fetch_receipt.status, 'FAIL', given);
+    assert.match(result.steps.fetch_receipt.detail, /not the public receipt URL/);
+  }
 });
 
 function signEs256(privateKey, kid, payload) {

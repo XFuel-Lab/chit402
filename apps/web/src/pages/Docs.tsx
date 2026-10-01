@@ -22,7 +22,7 @@ const startHere: DocLink[] = [
   },
   {
     title: '1F916 link (draft)',
-    description: 'Draft v0. Specimen 1 and Specimen 2 are listing payouts, pending first stamp.',
+    description: 'Draft v0. Specimen 1 and Specimen 2 are stamped listing payouts, with verify links.',
     href: '/docs/1f916-link',
     meta: 'draft',
     internal: true,

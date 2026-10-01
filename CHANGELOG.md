@@ -10,6 +10,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **1F916 specimens stamped.** Specimen 1 is `foreign-x402-muq262x0-1467b076fc62` and Specimen 2 is `foreign-x402-muq264r9-69896464bb19`. `chit_verify_url` is `https://api.chit402.com/receipt/<id>`. The link verifier accepts that URL with or without `?format=json` and still rejects a different host or id.
 - **Receipt lookup by tx.** `GET /receipt/by-tx` finds a stamped foreign-ingest row on the book when the task store has no match. The query accepts `base:<tx>`, a bare hash, case-insensitive hex, and optional `?chain=` (`base` or `eip155:8453`). It redirects to `/receipt/:id`, which serves that row's issuer JWS.
 - **Principal book window refetch.** Changing the spend window does not show the previous window's KPI totals, and a failed or in-flight refetch does not clear the loaded book, budget draft, or policy form.
 - **Principal book export windows.** The receipts-list Export CSV follows the selected window. Treasury advanced audit packs (CSV, JSON, HTML) stay the full history and do not send `from` / `to`. A budget save shares the book load generation, so a stale window refetch cannot overwrite it.
