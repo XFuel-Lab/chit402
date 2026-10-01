@@ -215,6 +215,108 @@ test('book_seq signature stays verifiable; receipt_lane is not inside the JWS', 
   assert.equal(lane.anchor_changed_since_binding, null);
 
   const csv = buildBookExportCsv(ledger.listByAgent(recorded.agent_id), recorded.agent_id, 'https://api.chit402.com');
-  assert.match(csv.split('\n')[0], /settled_by,settled,anchor_changed_since_binding,freeze/);
+  assert.match(csv.split('\n')[0], /settled_by,settled,anchor_changed_since_binding,freeze,classification/);
   assert.match(csv, /receipt,/);
+  assert.equal(payload.classification, undefined);
+  assert.equal(payload.ordering, undefined);
+  assert.equal(row.receipt_lane.classification, 'receipt');
+  assert.equal(row.receipt_lane.local_check, null);
+  assert.equal(row.receipt_lane.ordering, 'seq + settled_by + (anchor_changed AND not settled)');
+  assert.equal(row.receipt_lane.boundary, 'complete over registry marks, blind to payments the registry never joined');
+});
+
+const WALK_NOW = Date.parse('2026-10-01T17:07:50.562Z');
+
+function binding209() {
+  return {
+    id: 209,
+    docket_id: 'listing-24',
+    expiry: 1790035549,
+    settled_by: null,
+    receipt_id: null,
+    observed_tx_hash: null,
+    observed_transfer_id: null,
+    tx_hash: null,
+    anchor_changed_since_binding: false,
+    amount_atomic: '100000',
+    payout_address: '0xfeb9100559124e26307bf0c27502976880d85337',
+    chain_id: 8453,
+    token: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+  };
+}
+
+function binding468() {
+  return {
+    id: 468,
+    docket_id: 'listing-38',
+    expiry: 1790553600,
+    settled_by: 'observed_transfer',
+    receipt_id: null,
+    observed_tx_hash: '0x5fd67460440f44235d62edfe53a7f38ca26d993ca515ce77af5807a14687ba6b',
+    observed_transfer_id: 135,
+    anchor_changed_since_binding: false,
+    amount_atomic: '3000000',
+    payout_address: '0x6f8c5b02e08d357650225fa6ca41e0f4c10f09c8',
+    chain_id: 8453,
+    token: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+  };
+}
+
+test('binding 209 is expired and unmarked, so unverifiable_from_registry', async () => {
+  const { BASE_MAINNET_USDC } = await import('../src/foreign-x402-ingest.js');
+  const lane = buildReceiptLane({ entry: binding209(), now: WALK_NOW });
+  assert.equal(lane.classification, 'unverifiable_from_registry');
+  assert.equal(lane.settled_by, null);
+  assert.equal(lane.settled, null);
+  assert.equal(lane.freeze, false);
+  assert.equal(lane.reason, null);
+  assert.equal(lane.anchor_changed_since_binding, false);
+  assert.equal(lane.ordering, 'seq + settled_by + (anchor_changed AND not settled)');
+  assert.equal(lane.boundary, 'complete over registry marks, blind to payments the registry never joined');
+  assert.equal(lane.local_check.claims_paid, false);
+  assert.equal(lane.local_check.method, 'base_usdc_transfer');
+  assert.equal(lane.local_check.payee, '0xfeb9100559124e26307bf0c27502976880d85337');
+  assert.equal(lane.local_check.amount_atomic, '100000');
+  assert.equal(lane.local_check.chain_id, 8453);
+  assert.equal(lane.local_check.token.toLowerCase(), BASE_MAINNET_USDC.toLowerCase());
+  for (const banned of ['unpaid', 'lapsed', 'noise']) {
+    assert.equal(lane.classification === banned, false);
+  }
+
+  const anchorMoved = buildReceiptLane({
+    entry: { ...binding209(), anchor_changed_since_binding: true },
+    now: WALK_NOW,
+  });
+  assert.equal(anchorMoved.classification, 'unverifiable_from_registry');
+
+  const stillOpen = buildReceiptLane({
+    entry: { ...binding209(), expiry: Math.floor(WALK_NOW / 1000) + 86400 },
+    now: WALK_NOW,
+  });
+  assert.equal(stillOpen.classification, 'unsettled');
+  assert.equal(stillOpen.local_check, null);
+
+  const otherToken = buildReceiptLane({
+    entry: { ...binding209(), token: '0x' + '11'.repeat(20) },
+    now: WALK_NOW,
+  });
+  assert.equal(otherToken.classification, 'unverifiable_from_registry');
+  assert.equal(otherToken.local_check, null);
+
+  const partialMark = buildReceiptLane({
+    entry: { ...binding209(), observed_tx_hash: '0x' + 'ab'.repeat(32) },
+    now: WALK_NOW,
+  });
+  assert.equal(partialMark.classification, 'unsettled');
+  assert.equal(partialMark.local_check, null);
+});
+
+test('binding 468 is expired and settled_by observed_transfer, so settled', () => {
+  const lane = buildReceiptLane({ entry: binding468(), now: WALK_NOW });
+  assert.equal(lane.classification, 'observed_transfer');
+  assert.equal(lane.settled_by, 'observed_transfer');
+  assert.equal(lane.settled, true);
+  assert.equal(lane.freeze, false);
+  assert.equal(lane.local_check, null);
+  assert.equal(lane.classification === 'unverifiable_from_registry', false);
 });

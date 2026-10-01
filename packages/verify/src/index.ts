@@ -1495,8 +1495,12 @@ export {
   anchorChangedSinceBinding,
   RECEIPT_LANE_SCHEMA,
   RECEIPT_LANE_RULE,
+  RECEIPT_LANE_ORDERING,
+  RECEIPT_LANE_BOUNDARY,
   type ReceiptLane,
   type SettledBy,
+  type RegistryClassification,
+  type LocalCheckHint,
   type AnchorIdentity,
   type ReceiptTreeHead,
 } from './receipt-lane.js';
