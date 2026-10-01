@@ -113,6 +113,35 @@ Best for Bankr and chat-native agents. Same door as OpenAI-compatible clients.
 Use for M2M / agent loops that need `task-status` polling or rolling settlement.
 Same x402 handshake; see [references/api.md](references/api.md).
 
+## Paying with a Sponge wallet
+
+An agent that already has a Sponge wallet API key can buy this same receipt through Sponge's x402 fetch (their skill v0.2.2). Sponge signs with its wallet. You still return `verify_url`.
+
+```bash
+curl -sS -X POST "https://api.wallet.paysponge.com/api/x402/fetch" \
+  -H "Authorization: Bearer $SPONGE_API_KEY" \
+  -H "Sponge-Version: 0.2.2" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://api.chit402.com/v1/chat/completions",
+    "method": "POST",
+    "body": {
+      "model": "xfuel/auto",
+      "messages": [{ "role": "user", "content": "Say hello in five words." }]
+    },
+    "preferred_chain": "base"
+  }'
+```
+
+`url` is the public door above. Floor on that door is ~$0.01 (atomic USDC `"10000"`) unless the 402 quotes otherwise. Enforce the same spend caps before you send the fetch.
+
+Sponge returns the paid Chit response. Read `verify_url` from `xfuel.verify_url` or `x-xfuel-verify-url`, then check the receipt offline:
+
+```bash
+curl -sS "https://api.chit402.com/receipt/<task_id>?format=json" -o receipt.json
+npx xfuel-verify receipt.json --json
+```
+
 ## What the receipt binds (new upgrades)
 
 Collected USDC receipts stamp these in the **issuer-signed JWS** (`issuer_signature.jws`):
