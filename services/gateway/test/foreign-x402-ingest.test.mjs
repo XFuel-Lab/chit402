@@ -217,6 +217,54 @@ test('happy path: foreign x402 → book row (with valid verify)', async () => {
   assert.equal(entry.model, '/v1/chat/completions');
   assert.equal(entry.evidence, BOOK_EVIDENCE.FOREIGN_INGEST);
   assert.ok(entry.receipt_snapshot?.foreign_x402);
+  assert.equal(entry.book_chain.payload_version, 4);
+  assert.equal(entry.book_chain.book_id, identity.agent_id);
+  assert.equal(entry.book_chain.payment_ref, 'base:0xabc123def456');
+  assert.equal(entry.issuer_signature, undefined);
+});
+
+test('a paid ingest stamp is its own book row, signed to the same seat', async () => {
+  const { registry, ledger, identity } = setupDeps();
+  const { verifyBookSeq } = await import('../src/book-seq.js');
+  const result = await ingestForeignX402({
+    payment_required: {
+      resource: 'https://api.grokbot.app/v1/chat/completions',
+      amount: '10000',
+      payTo: '0xGrokBotTreasury',
+    },
+    payment_response: {
+      tx: '0xforeign',
+      payer: WALLET_A,
+      network: 'base',
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifyOk,
+    ensureStamp: async () => ({
+      ok: true,
+      waived: false,
+      settlement: { paymentRef: 'base:0xstamp', amount: '2000', payer: WALLET_A },
+    }),
+  });
+  assert.equal(result.ok, true, result.message);
+  assert.equal(result.body.stamp_payment_ref, 'base:0xstamp');
+  assert.match(result.body.stamp_task_id, /^ingest-stamp-/);
+  const foreign = ledger.findByRef('base:0xforeign');
+  const stamp = ledger.findByRef('base:0xstamp');
+  assert.equal(foreign.book_chain.payment_ref, 'base:0xforeign');
+  assert.equal(foreign.book_chain.book_id, identity.agent_id);
+  assert.equal(stamp.event, 'ingest_stamp');
+  assert.equal(stamp.evidence, 'ingest_stamp');
+  assert.equal(stamp.book_chain.payment_ref, 'base:0xstamp');
+  assert.equal(stamp.book_chain.book_id, identity.agent_id);
+  assert.equal(stamp.book_chain.payload_version, 4);
+  assert.equal(verifyBookSeq(stamp.book_chain).valid, true);
+  assert.equal(verifyBookSeq(foreign.book_chain).valid, true);
+  assert.equal(ledger.sumCollectedByAgent(identity.agent_id), 10000n);
 });
 
 test('minimal foreign_invoice ingest → book row with verify_url', async () => {
@@ -1071,6 +1119,11 @@ test('cemented Nano fixture stamps a receipt with raw, XNO, estimate, and explor
   assert.ok(row);
   assert.equal(row.receipt_snapshot.payment.chain, 'nano');
   assert.equal(row.amount_xno, '1');
+  assert.equal(row.book_chain.payload_version, 4);
+  assert.equal(row.book_chain.payment_ref, `nano:${NANO_HASH}`);
+  assert.equal(row.book_chain.book_id, identity.agent_id);
+  const { verifyBookSeq } = await import('../src/book-seq.js');
+  assert.equal(verifyBookSeq(row.book_chain).valid, true);
 
   const again = await ingestForeignX402(nanoBody({ session: identity.session }), {
     ledger,

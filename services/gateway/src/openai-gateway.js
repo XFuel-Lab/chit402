@@ -55,6 +55,7 @@ import {
 } from './agent-book.js';
 import { enforcePolicy } from './book-policy.js';
 import { extractIntentMeta, resolveIntentFields } from './intent-meta.js';
+import { resolvePaidClaimAgent } from './claim-id.js';
 
 /**
  * XFuel OpenAI-compatible gateway.
@@ -1427,6 +1428,7 @@ function buildReceipt({
         coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
         reqHost,
+        agentId: task?.meta?.agentId ?? task?.meta?.agent_id ?? null,
         persistSignature: true,
       })
     : { task_id: taskId, verify_url: verifyUrl, proof: {} };
@@ -1775,6 +1777,19 @@ function respondPaidV1Failure(res, {
     });
   }
   const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
+  const reuseId = resolvePaidClaimAgent({
+    settleAgentId: settleRecord?.agent_id ?? agentId,
+    sessionAgentId: resolveBookableAgent(req, registry)?.agent_id ?? null,
+    taskAgentId: task?.meta?.agentId ?? null,
+    paymentRef: payment?.ref || task?.intent?.paymentRef || null,
+    taskId,
+    ledger,
+    registry,
+  });
+  if (reuseId != null && task) {
+    task.meta = task.meta || {};
+    task.meta.agentId = reuseId;
+  }
   let receipt = buildReceipt({
     task,
     taskId,
@@ -1790,7 +1805,6 @@ function respondPaidV1Failure(res, {
     resolvedModel,
     reqHost,
   });
-  const reuseId = agentId ?? resolveBookableAgent(req, registry)?.agent_id ?? null;
   const intentMeta = req ? extractIntentMeta(req) : {};
   const intentFields = resolveIntentFields(intentMeta, ledger, reuseId);
   receipt = withBookSpend(receipt, {
@@ -1951,9 +1965,22 @@ export function registerOpenAIRoutes(app, {
   app.use('/v1/audio', ...authChain);
   app.use('/v1/chat', ...baseChain);
 
-  const bookSpend = (receipt, req = null, settleRecord = null, task = null) => {
-    const identity = resolveBookableAgent(req, registry);
-    const agentId = identity?.agent_id ?? null;
+  const bookSpend = (req, settleRecord, task, build) => {
+    const sessionAgent = resolveBookableAgent(req, registry);
+    const agentId = resolvePaidClaimAgent({
+      settleAgentId: settleRecord?.agent_id ?? null,
+      sessionAgentId: sessionAgent?.agent_id ?? null,
+      taskAgentId: task?.meta?.agentId ?? task?.meta?.agent_id ?? null,
+      paymentRef: task?.intent?.paymentRef || null,
+      taskId: task?.taskId || null,
+      ledger,
+      registry,
+    });
+    if (agentId != null && task) {
+      task.meta = task.meta || {};
+      task.meta.agentId = agentId;
+    }
+    const receipt = typeof build === 'function' ? build() : build;
     const intentMeta = req ? extractIntentMeta(req) : {};
     const intentFields = resolveIntentFields(intentMeta, ledger, agentId);
     const recorded = withBookSpend(receipt, {
@@ -2464,13 +2491,13 @@ export function registerOpenAIRoutes(app, {
     }
 
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = bookSpend(buildReceipt({
+    const receipt = bookSpend(req, settleRecord, task, () => buildReceipt({
       task, taskId, provider, mock, proverConfigured, proveAllowed,
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
       reqHost,
-    }), req, settleRecord, task);
+    }));
 
     setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, resourcePath));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
@@ -2919,13 +2946,13 @@ export function registerOpenAIRoutes(app, {
     startTaskProof(task, proveAllowed);
 
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = bookSpend(buildReceipt({
+    const receipt = bookSpend(req, settleRecord, task, () => buildReceipt({
       task, taskId, provider, mock, proverConfigured, proveAllowed,
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
       reqHost,
-    }), req, settleRecord, task);
+    }));
 
     setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/responses'));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));

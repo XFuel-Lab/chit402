@@ -191,8 +191,9 @@ test('book_seq signature stays verifiable; receipt_lane is not inside the JWS', 
     route: { model: 'xfuel/auto', hub: 'mock' },
   }, { ledger, registry });
   assert.equal(verifyBookSeq(recorded.entry.book_chain).valid, true);
-  assert.equal(recorded.entry.book_chain.payload_version, 2);
+  assert.equal(recorded.entry.book_chain.payload_version, 4);
   const payload = JSON.parse(Buffer.from(recorded.entry.book_chain.issuer_signature.jws.split('.')[1], 'base64url').toString());
+  assert.equal(payload.payment_ref, 'base:0xlane');
   assert.equal(payload.settled_by, undefined);
   assert.equal(payload.anchor_changed_since_binding, undefined);
   assert.equal(payload.freeze, undefined);

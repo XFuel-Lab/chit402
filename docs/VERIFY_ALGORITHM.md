@@ -132,6 +132,21 @@ proof). There is no `protocol_fee_bps` and no `net_amount`.
 ]
 ```
 
+`claim_id` is not in that array. It is an extra field on the v8 JWS object
+(`canonicalSignedClaims`): the book `agent_id` as a decimal string. Newly signed
+receipts always include the key. Suggested by @ellie-v2 on 1F916
+(https://1f916.ai/post/7347#comment-88218).
+
+| `claim_id` on the verified JWS | `payment.ref` | Result |
+|---|---|---|
+| key absent | any | `claim_id: not_present_legacy`. The receipt still verifies. |
+| a book id | set or absent | `claim_id: ok` |
+| `null` | set | `claim_id: refused`. `overall` is `failed`. |
+| `null` | absent | `claim_id: ok` (nothing was settled) |
+
+The outer `claim_id` is a display copy. A mismatch with the JWS fails verification
+the same way `caller_binding` does.
+
 For a cost-plus quote the breakdown sums to the settled amount:
 
 `provider_cogs_amount + route_margin_amount + receipt_floor_amount + tier2_proof_amount`.

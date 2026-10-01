@@ -94,7 +94,7 @@ The verify page shows that object when the row sits on a book. `empty_by_policy`
 
 ## Book sequence
 
-`book_chain` (`chit402.book_seq.v1`) is the signed append position: `seq`, `prev_hash`, `row_hash`. A replay does not take a new seq. A correction does. The payment JWS stays on its own payload version. See [book-seq.md](./product/book-seq.md).
+`book_chain` (`chit402.book_seq.v1`) is the signed append position: `seq`, `prev_hash`, `row_hash`, and, at payload version 4, `payment_ref` beside `book_id`. A replay does not take a new seq. A correction does. The payment JWS stays on payload version 8 and adds `claim_id` (the same book id) without changing the HMAC array. See [book-seq.md](./product/book-seq.md).
 
 A `policy_blocked` row also signs `anchor` (Base chain id, block number, block hash, or `UNAVAILABLE` when the RPC cannot be read). The refusal is still recorded. See [refusal-anchor.md](./product/refusal-anchor.md).
 

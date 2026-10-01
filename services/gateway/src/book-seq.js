@@ -5,15 +5,17 @@
  * previous row's hash. Idempotent replays do not pass through _index, so
  * they do not take a new seq. A correction is a new row and does.
  *
- * The position is signed as chit402.book_seq.v1. It is not mixed into the
- * payment JWS, so a v8 receipt still verifies.
+ * The position is signed as chit402.book_seq.v1. Payload version 4 also signs
+ * payment_ref with book_id. It is not mixed into the payment JWS, so a v8
+ * receipt still verifies. Versions 2 and 3 still verify.
  */
 import crypto from 'crypto';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 import { actOf } from './book-act.js';
 
 export const BOOK_SEQ_SCHEMA = 'chit402.book_seq.v1';
-export const BOOK_SEQ_VERSION = 2;
+/** v4 signs payment_ref next to book_id. v2 (act) and v3 (authority) still verify. */
+export const BOOK_SEQ_VERSION = 4;
 export const BOOK_SEQ_JWT_TYP = 'chit402-book-seq+jwt';
 
 /**
@@ -69,7 +71,7 @@ export function bookSeqClaims(row) {
   const act = actOf(row);
   return {
     schema: BOOK_SEQ_SCHEMA,
-    payload_version: row.authority ? 3 : BOOK_SEQ_VERSION,
+    payload_version: BOOK_SEQ_VERSION,
     book_id: Number(row.agent_id),
     task_id: String(row.task_id),
     seq: Number(row.seq),
@@ -78,6 +80,7 @@ export function bookSeqClaims(row) {
     event: row.event || row.evidence || null,
     act,
     replay_of: row.replay_of || null,
+    payment_ref: row.payment_ref ? String(row.payment_ref) : null,
     ...(row.anchor ? { anchor: row.anchor } : {}),
     ...(row.authority ? { authority: row.authority } : {}),
   };
@@ -97,7 +100,7 @@ export function signBookSeq(row) {
     issuer_signature: {
       alg: 'ES256',
       typ: BOOK_SEQ_JWT_TYP,
-      payload_version: BOOK_SEQ_VERSION,
+      payload_version: claims.payload_version,
       jws,
       kid,
       issuer_jwk: getIssuerPublicKeyJwk(),
@@ -123,6 +126,14 @@ export function verifyBookSeq(signed, jwks = null) {
   if (payload.row_hash !== signed.row_hash) {
     return { checked: true, valid: false, reason: 'row_hash_mismatch' };
   }
+  const version = Number(payload.payload_version);
+  if (version >= 4 || Object.prototype.hasOwnProperty.call(payload, 'payment_ref')) {
+    const signedRef = payload.payment_ref || null;
+    const outerRef = signed.payment_ref || null;
+    if (signedRef !== outerRef) {
+      return { checked: true, valid: false, reason: 'payment_ref_mismatch' };
+    }
+  }
   return { checked: true, valid: true, payload };
 }
 
@@ -145,6 +156,7 @@ export function renderBookSeqSection(chain, lane = null) {
   return `<section class="card">
       <h2>Book position <span class="scope">${esc(chain?.schema || (lane ? 'chit402.receipt_lane.v1' : BOOK_SEQ_SCHEMA))}</span></h2>
       <div class="row"><span class="k">seq</span><span class="v"><code>${esc(seq ?? '—')}</code></span></div>
+      ${chain && Object.prototype.hasOwnProperty.call(chain, 'payment_ref') ? `<div class="row"><span class="k">Payment ref</span><span class="v"><code>${esc(chain.payment_ref || '—')}</code></span></div>` : ''}
       ${chain?.act ? `<div class="row"><span class="k">Act</span><span class="v"><code>${esc(chain.act)}</code></span></div>` : ''}
       ${chain?.authority ? `<div class="row"><span class="k">Subject</span><span class="v"><code>${esc(chain.authority.subject_handle || chain.authority.subject_wallet || '—')}</code> <span class="muted">writer ${esc(chain.authority.writer)} · issuer ${esc(chain.authority.issuer)}</span></span></div>` : ''}
       <div class="row"><span class="k">Previous hash</span><span class="v"><code>${esc(chain?.prev_hash || '—')}</code></span></div>
@@ -152,7 +164,7 @@ export function renderBookSeqSection(chain, lane = null) {
       ${chain?.anchor ? `<div class="row"><span class="k">Chain anchor</span><span class="v">${chain.anchor.status === 'observed'
         ? `<code>${esc(chain.anchor.rail)} ${esc(chain.anchor.chain_id)} #${esc(chain.anchor.block_number)}</code> <code>${esc(chain.anchor.block_hash)}</code>`
         : `<span class="badge pending">${esc(chain.anchor.status || 'UNAVAILABLE')}</span>`}</span></div>` : ''}
-      <p class="muted" style="margin:8px 0 0;font-size:12px">Proves this row's append position in the book and the previous row's hash. Does not prove the payment, and a replay of the same payment does not take a new seq.</p>
+      <p class="muted" style="margin:8px 0 0;font-size:12px">Proves this row's append position in the book and the previous row's hash. Payload version 4 also names payment_ref. It does not prove the transfer succeeded, and a replay of the same payment does not take a new seq.</p>
       ${laneRows}
     </section>`;
 }

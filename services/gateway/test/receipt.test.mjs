@@ -782,7 +782,7 @@ test('buildReceipt: omits inactive extension fields and documents provider_cogs 
 // ── Issuer signature verification correctness tests ─────────────────────────
 
 test('renderReceiptHtml: valid issuer signature shows "verified" badge', () => {
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com', agentId: 7 });
   assert.ok(r.issuer_signature?.jws, 'issuer_signature.jws must be present');
   const html = renderReceiptHtml(r);
   assert.match(html, /<span class="badge ok">verified<\/span>/, 'verified badge must appear for valid signature');
@@ -790,7 +790,7 @@ test('renderReceiptHtml: valid issuer signature shows "verified" badge', () => {
 });
 
 test('renderReceiptHtml: tampered receipt shows "not verified" badge (truthful)', () => {
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com', agentId: 7 });
   assert.ok(r.issuer_signature?.jws, 'issuer_signature.jws must be present before tampering');
   
   // Tamper with a canonically signed field AFTER the signature was computed
@@ -973,7 +973,7 @@ test('buildReceipt: pins issuer_jwk for offline verify (no live JWKS)', () => {
 
 test('verifyReceiptEcdsaWithJwks: verifies with pin only (empty JWKS rejected after pin path)', async () => {
   const { verifyReceiptEcdsaWithJwks } = await import('../src/receipt.js');
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com', agentId: 7 });
   const ok = verifyReceiptEcdsaWithJwks(r, { keys: [] });
   assert.equal(ok.valid, true, 'pinned issuer_jwk verifies without live JWKS');
 });
@@ -1032,9 +1032,14 @@ test('renderReceiptHtml: shows settle bind rows when present', () => {
 
 test('verifyIssuerForHtml: published JWKS verifies; embedded key is pinned only on a thumbprint match', async () => {
   const { verifyIssuerForHtml, embeddedIssuerKeyIsPinned } = await import('../src/receipt.js');
-  const receipt = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  const receipt = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com', agentId: 7 });
   const honest = verifyIssuerForHtml(receipt);
   assert.equal(honest.verified, true, honest.reason);
+  assert.equal(honest.reason, 'verified');
+  const unsignedSeat = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  const refused = verifyIssuerForHtml(unsignedSeat);
+  assert.equal(refused.verified, false);
+  assert.equal(refused.reason, 'claim_id_missing');
   assert.equal(honest.trust, 'jwks');
   assert.equal(honest.pinned, true);
   assert.equal(embeddedIssuerKeyIsPinned(receipt), true);

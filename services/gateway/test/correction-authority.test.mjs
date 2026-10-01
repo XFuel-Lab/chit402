@@ -55,11 +55,13 @@ test('a correction names the subject and does not call the writer the subject', 
   assert.notEqual(row.authority.subject_handle, row.authority.writer);
   assert.notEqual(row.authority.subject_handle, row.authority.issuer);
   const claims = decode(row.book_chain.issuer_signature.jws);
-  assert.equal(claims.payload_version, 3);
+  assert.equal(claims.payload_version, 4);
+  assert.equal(claims.payment_ref, null);
   assert.equal(claims.authority.subject_handle, 'verdigris');
   assert.equal(claims.authority.writer, 'gateway');
   assert.equal(verifyBookSeq(row.book_chain).valid, true);
-  assert.equal(collected.entry.book_chain.payload_version, 2);
+  assert.equal(collected.entry.book_chain.payload_version, 4);
+  assert.equal(collected.entry.book_chain.payment_ref, 'base:0xauth');
 });
 
 test('a successor row with parent_ref gets an authority distinct from the issuer', () => {

@@ -26,5 +26,6 @@ export function actOf(entry) {
   if (event === 'refund_owed' || entry?.refund_status === 'owed') return 'refund';
   if (event === 'a2a_escrow' || event === 'inflow_claimed' || entry?.inflow_claim) return 'transfer';
   if (event.startsWith('board_')) return 'open';
+  if (event === 'ingest_stamp') return 'open';
   return 'spend';
 }

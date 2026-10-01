@@ -608,6 +608,7 @@ function legSettlement(raw, expectedAmount) {
  *   baseUrl?: string,
  *   reqHost?: string|null,
  *   signingSecret?: string|null,
+ *   agentId?: number|string|null,
  * }} input
  */
 export function buildJobPayoutReceipt(input) {
@@ -644,6 +645,7 @@ export function buildJobPayoutReceipt(input) {
       payTo: input.winnerWallet,
       job_kind: 'acp_job',
       resource,
+      agentId: input.agentId ?? null,
     },
     outputHash,
     fulfillment: { output_commitment: commitment },
@@ -655,6 +657,7 @@ export function buildJobPayoutReceipt(input) {
     signingSecret: input.signingSecret || null,
     payerWallet: input.payerWallet,
     payTo: input.winnerWallet,
+    agentId: input.agentId ?? null,
     persistSignature: true,
   });
   return { task, receipt, fulfillment, commitment };
@@ -827,6 +830,7 @@ export async function payBoardJob(jobId, deps = {}) {
     baseUrl: deps.baseUrl || '',
     reqHost: deps.reqHost || null,
     signingSecret: deps.signingSecret || null,
+    agentId: job.poster_agent_id,
   });
   const payout = rememberReceipt(deps, built, {
     payerWallet: posterWallet,
@@ -1109,6 +1113,7 @@ export function ingestExternalCompletion(body = {}, deps = {}) {
     baseUrl: deps.baseUrl || '',
     reqHost: deps.reqHost || null,
     signingSecret: deps.signingSecret || null,
+    agentId: payerAgent?.agent_id || null,
   });
   const payout = rememberReceipt(deps, built, {
     payerWallet: payer,

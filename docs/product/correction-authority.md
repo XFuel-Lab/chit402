@@ -9,7 +9,7 @@ A correction row and a successor row (one with `parent_ref`) carry `authority`. 
 | `writer` | `gateway`. The process that appended the row |
 | `issuer` | `chit402`. The key that signed `book_chain` |
 
-`authority` is inside the signed `book_chain` at payload version 3. The payment JWS is unchanged.
+`authority` was introduced at book-seq payload version 3. New rows sign it at payload version 4, next to `payment_ref`. A version 3 signature still verifies. The payment JWS is unchanged.
 
 ## What this proves
 

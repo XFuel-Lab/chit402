@@ -66,6 +66,11 @@ export const BOOK_EVIDENCE = {
   BOARD_CLOSE: 'board_close',
   /** Settled USDC, nothing served. Visible on the book; excluded from spend totals. */
   REFUND_OWED: 'refund_owed',
+  /**
+   * The $0.002 ingest stamp. Its own row so the stamp tx is signed with the
+   * book id. Not prepaid spend.
+   */
+  INGEST_STAMP: 'ingest_stamp',
   /** OpenRouter Broadcast report. Visible on the book; Chit did not settle it. */
   OPENROUTER_REPORTED: 'openrouter_reported',
 };
@@ -131,6 +136,9 @@ export function deriveEvidence(entry) {
   }
   if (entry.event === 'a2a_escrow' || entry.evidence === BOOK_EVIDENCE.A2A_ESCROW) {
     return BOOK_EVIDENCE.A2A_ESCROW;
+  }
+  if (entry.event === 'ingest_stamp' || entry.evidence === BOOK_EVIDENCE.INGEST_STAMP) {
+    return BOOK_EVIDENCE.INGEST_STAMP;
   }
   if (entry.event === 'board_stamp' || entry.evidence === BOOK_EVIDENCE.BOARD_STAMP) {
     return BOOK_EVIDENCE.BOARD_STAMP;
@@ -214,6 +222,7 @@ export function entryQualifiesForCap(entry) {
   if (evidence === BOOK_EVIDENCE.POLICY_BLOCKED || evidence === BOOK_EVIDENCE.UNVERIFIED
     || evidence === BOOK_EVIDENCE.A2A_ESCROW || evidence === BOOK_EVIDENCE.REFUND_OWED
     || evidence === BOOK_EVIDENCE.OPENROUTER_REPORTED
+    || evidence === BOOK_EVIDENCE.INGEST_STAMP
     || evidence === BOOK_EVIDENCE.BOARD_STAMP
     || evidence === BOOK_EVIDENCE.BOARD_POST
     || evidence === BOOK_EVIDENCE.BOARD_COMMENT
@@ -266,6 +275,7 @@ export function entryVisibleOnBook(entry) {
   if (entry.event === 'policy_blocked' || deriveEvidence(entry) === BOOK_EVIDENCE.POLICY_BLOCKED) return true;
   if (entry.event === 'a2a_escrow' || deriveEvidence(entry) === BOOK_EVIDENCE.A2A_ESCROW) return true;
   const boardEvidence = deriveEvidence(entry);
+  if (boardEvidence === BOOK_EVIDENCE.INGEST_STAMP) return true;
   if (boardEvidence === BOOK_EVIDENCE.BOARD_STAMP
     || boardEvidence === BOOK_EVIDENCE.BOARD_POST
     || boardEvidence === BOOK_EVIDENCE.BOARD_COMMENT
@@ -830,6 +840,60 @@ export class UsageSettledLedger {
       model: null,
       hub: null,
       parent_ref: job?.task_id || null,
+    };
+    this._index(entry);
+    return { ok: true, entry, duplicate: false };
+  }
+
+  /**
+   * The ingest stamp tx as its own book row. book_chain signs book_id and payment_ref.
+   * Does not debit prepaid budget.
+   * @param {{
+   *   agentId: number,
+   *   taskId: string,
+   *   paymentRef: string,
+   *   amount?: string|null,
+   *   payer?: string|null,
+   *   parentRef?: string|null,
+   * }} row
+   */
+  recordIngestStamp({
+    agentId,
+    taskId,
+    paymentRef,
+    amount = null,
+    payer = null,
+    parentRef = null,
+  }) {
+    const id = Number(agentId);
+    if (!Number.isInteger(id) || id < 1) {
+      return { ok: false, reason: 'invalid agent_id', code: 'invalid_agent' };
+    }
+    const tid = String(taskId || '').trim();
+    if (!tid) return { ok: false, reason: 'task_id required', code: 'task_required' };
+    const ref = paymentRef != null && String(paymentRef).trim() ? String(paymentRef).trim() : null;
+    if (!ref) return { ok: false, reason: 'payment_ref required', code: 'ref_required' };
+    if (this.byTask.has(tid)) {
+      return { ok: true, entry: this.byTask.get(tid), duplicate: true };
+    }
+    if (this.byRef.has(ref)) {
+      return { ok: false, reason: 'duplicate payment.ref', code: 'duplicate_ref' };
+    }
+    const entry = {
+      task_id: tid,
+      payment_ref: ref,
+      payer: payer || null,
+      agent_id: id,
+      collected: false,
+      evidence: BOOK_EVIDENCE.INGEST_STAMP,
+      event: 'ingest_stamp',
+      rail: 'usdc',
+      amount: amount != null ? String(amount) : null,
+      collected_at: new Date().toISOString(),
+      recorded_at: new Date().toISOString(),
+      model: null,
+      hub: null,
+      parent_ref: parentRef || null,
     };
     this._index(entry);
     return { ok: true, entry, duplicate: false };
