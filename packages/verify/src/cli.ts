@@ -30,6 +30,7 @@ import {
   type AnchorReceipt,
   type AnchorWitnessResult,
 } from './anchor-witness.js';
+import { type ReceiptLane } from './receipt-lane.js';
 
 const HELP = `
 xfuel-verify — Offline verification for Chit402 receipts
@@ -97,6 +98,14 @@ Anchored root:
   Prints what this proves and what it does not prove. Exit 0 when both chains
   match, 2 when the leaf is included but an anchor is still pending, 1 when a
   check fails.
+
+Receipt lane (unsigned, beside book_seq):
+  settled_by is observed_transfer when the USDC transfer was checked on Base
+  or Solana, and receipt when only the issuer asserts settlement. Unknown is
+  null. freeze is true only when book_seq is set, settled_by is receipt, the
+  anchor changed after binding, and the row is not settled. An anchor change
+  alone does not freeze, and freeze does not change the signature exit code.
+  Design by Turbo on 1F916 (post 6579, comments 88201 and 88403).
 
 Examples:
   # Local binding verification (no network)
@@ -219,6 +228,20 @@ function readJson(file: string): unknown {
   return JSON.parse(content) as unknown;
 }
 
+function printLane(lane: ReceiptLane): void {
+  const bit = (value: boolean | null) => (value == null ? 'unknown' : (value ? 'true' : 'false'));
+  console.log(`  Receipt lane (unsigned)`);
+  console.log(`  ─────────────────────────────────────────────────`);
+  console.log(`  book_seq:      ${lane.book_seq ?? '—'}`);
+  console.log(`  settled_by:    ${lane.settled_by ?? 'null'}`);
+  console.log(`  settled:       ${bit(lane.settled)}`);
+  console.log(`  anchor_changed_since_binding: ${bit(lane.anchor_changed_since_binding)}`);
+  console.log(`  freeze:        ${lane.freeze ? 'YES' : 'no'}`);
+  if (lane.reason) console.log(`  reason:        ${lane.reason}`);
+  console.log(`  ${lane.rule}`);
+  console.log('');
+}
+
 function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean): void {
   if (json) {
     console.log(JSON.stringify(result, null, 2));
@@ -283,7 +306,14 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     baseRpcUrl: args.rpcUrl || undefined,
     solanaRpcUrl: args.solanaRpcUrl || undefined,
   });
-  printAnchor(result, args.json, args.quiet);
+  const verified = await verifyReceipt(receipt as unknown as XFuelReceipt, { head });
+  const lane = verified.receipt_lane;
+  if (args.json) {
+    console.log(JSON.stringify({ ...result, receipt_lane: lane }, null, 2));
+  } else {
+    printAnchor(result, false, args.quiet);
+    if (!args.quiet) printLane(lane);
+  }
   if (result.overall === 'verified') return 0;
   if (result.overall === 'partial') return 2;
   return 1;
@@ -426,6 +456,7 @@ async function main(): Promise<number> {
       console.log(`  Status:        No nullifier (Tier-1 receipt)`);
     }
     console.log('');
+    printLane(result.receipt_lane);
     console.log(`  Overall: ${result.overall.toUpperCase()}`);
     if (result.errors.length > 0) {
       console.log(`  Errors:  ${result.errors.join(', ')}`);

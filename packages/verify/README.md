@@ -25,6 +25,7 @@ console.log(result.matches); // true if binding verified
 // Full verification including on-chain nullifier check
 const fullResult = await verifyReceipt(receipt, { checkNullifier: true });
 console.log(fullResult.overall); // 'verified' | 'partial' | 'failed'
+console.log(fullResult.receipt_lane.freeze); // unsigned; does not change overall
 ```
 
 ### CLI

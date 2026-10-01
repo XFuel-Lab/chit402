@@ -65,6 +65,11 @@ import {
   readJwsHeader,
   jwksHostAllowed,
 } from './jws.js';
+import {
+  receiptLaneFromVerification,
+  type ReceiptLane,
+  type ReceiptTreeHead,
+} from './receipt-lane.js';
 
 export {
   computePaymentCommitment,
@@ -204,6 +209,28 @@ export interface XFuelReceipt {
     agent_pubkey?: string | null;
     api_key_hash?: string | null;
   } | null;
+  /** Append position. Unsigned relative to the payment JWS; signed inside book_chain. */
+  book_seq?: number | null;
+  book_chain?: { seq?: number | null; row_hash?: string | null } | null;
+  /** Unsigned derived refusal section. Ignored by signature verification. */
+  receipt_lane?: {
+    anchor_at_binding?: {
+      root: string | null;
+      tree_size: number | null;
+      anchor_tx: string | null;
+      solana_signature: string | null;
+    } | null;
+    anchor_current?: {
+      root: string | null;
+      tree_size: number | null;
+      anchor_tx: string | null;
+      solana_signature: string | null;
+    } | null;
+    freeze?: boolean;
+    anchor_changed_since_binding?: boolean | null;
+  } | null;
+  tree_head?: ReceiptTreeHead | null;
+  head?: ReceiptTreeHead | null;
 }
 
 /** JWK public key for ES256 verification. */
@@ -289,6 +316,12 @@ export interface ReceiptVerification {
   tx: string | null;
   /** Unsigned outer fields that disagree with the JWS payload. */
   claim_mismatches: ClaimMismatch[];
+  /**
+   * Unsigned refusal decision beside book_seq. Not part of the payment JWS.
+   * freeze is true only for an unsettled receipt-lane row whose anchor changed
+   * after binding. It does not change `overall`.
+   */
+  receipt_lane: ReceiptLane;
   overall: 'verified' | 'partial' | 'failed';
   errors: string[];
 }
@@ -1159,6 +1192,12 @@ export interface VerifyReceiptOptions {
   verifierAddress?: string;
   fetchSolanaTransaction?: SolanaRpcFetcher;
   fetchBaseReceipt?: BaseReceiptFetcher;
+  /**
+   * Current signed tree head. When set, it is the anchor to compare with
+   * receipt.receipt_lane.anchor_at_binding. Unsigned; does not affect the
+   * signature result.
+   */
+  head?: ReceiptTreeHead | null;
 }
 
 export async function verifyReceipt(
@@ -1364,6 +1403,25 @@ export async function verifyReceipt(
     overall = 'partial';
   }
 
+  const signedPayment = asRecord(verifiedClaims?.payment);
+  const signedSettlement = asRecord(verifiedClaims?.settlement);
+  const receipt_lane = receiptLaneFromVerification({
+    receipt,
+    claims: {
+      payment: signedPayment ? {
+        ref: typeof signedPayment.ref === 'string' ? signedPayment.ref : null,
+        rail: typeof signedPayment.rail === 'string' ? signedPayment.rail : null,
+        collected: typeof signedPayment.collected === 'boolean' ? signedPayment.collected : null,
+      } : null,
+      settlement: signedSettlement ? {
+        kind: typeof signedSettlement.kind === 'string' ? signedSettlement.kind : null,
+      } : null,
+    },
+    issuerValid: issuer_signature.valid === true,
+    payer: { checked: payer.checked, valid: payer.valid },
+    head: options.head ?? null,
+  });
+
   return {
     receipt_id: receipt.task_id,
     binding,
@@ -1376,6 +1434,7 @@ export async function verifyReceipt(
     amount_usdc: facts.amount_usdc,
     tx: facts.tx,
     claim_mismatches,
+    receipt_lane,
     overall,
     errors,
   };
@@ -1391,6 +1450,21 @@ export {
   isPinnedTrustedJwk,
   jwksHostAllowed,
 } from './jws.js';
+
+export {
+  buildReceiptLane,
+  receiptLaneFromVerification,
+  receiptLaneDecision,
+  deriveSettledBy,
+  deriveSettled,
+  anchorChangedSinceBinding,
+  RECEIPT_LANE_SCHEMA,
+  RECEIPT_LANE_RULE,
+  type ReceiptLane,
+  type SettledBy,
+  type AnchorIdentity,
+  type ReceiptTreeHead,
+} from './receipt-lane.js';
 
 export {
   verifyAnchoredRoot,
