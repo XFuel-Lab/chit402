@@ -279,7 +279,10 @@ export default function OneF916Link() {
             <li>
               The seal is on <a href={ENTRY_RECORD_URL} target="_blank" rel="noreferrer">{ENTRY_RECORD_URL}</a>.
               The house stamp command is <code>{STAMP_SCRIPT}</code>. After it prints a{' '}
-              <code>verify_url</code>, that id fills <code>chit_receipt_id</code>.
+              <code>verify_url</code>, that id fills <code>chit_receipt_id</code>. A filled id
+              is what the verifier fetches. The foreign-ingest row is checked by its signed{' '}
+              <code>book_chain</code> and the Base transfer (<code>payment.payer</code>,{' '}
+              <code>payment.payTo</code>), which is the settlement shape that stamp writes.
             </li>
           </ul>
           <pre className="docs-code">

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash, createSign, generateKeyPairSync } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -87,6 +88,111 @@ test('pending specimens fail the receipt step and still check the entry hash', a
   assert.equal(result.steps.fetch_receipt.detail, 'pending_first_stamp');
   assert.equal(result.steps.entry_fingerprint.status, 'PASS');
   assert.equal(result.verdict, 'FAIL');
+});
+
+test('a filled receipt id is verified even while status is still pending_first_stamp', async () => {
+  const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const jwk = publicKey.export({ format: 'jwk' });
+  const kid = createHash('sha256').update(JSON.stringify({
+    crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y,
+  })).digest('base64url');
+  jwk.kid = kid;
+  const tx = `0x${'cd'.repeat(32)}`;
+  const payer = '0x9f8951cb8b060f52fdf87297b3c5b00f7aa18f52';
+  const payTo = '0x1111111111111111111111111111111111111111';
+  const taskId = 'foreign-x402-specimen';
+  const chainClaims = {
+    schema: 'chit402.book_seq.v1',
+    payload_version: 4,
+    book_id: 7,
+    task_id: taskId,
+    seq: 1,
+    prev_hash: null,
+    row_hash: bookRowHash({
+      book_id: 7, seq: 1, task_id: taskId, prev_hash: null, event: null,
+    }),
+    event: null,
+    act: 'spend',
+    replay_of: null,
+    payment_ref: `base:${tx}`,
+  };
+  const header = Buffer.from(JSON.stringify({ alg: 'ES256', kid })).toString('base64url');
+  const body = Buffer.from(JSON.stringify(chainClaims)).toString('base64url');
+  const signer = createSign('SHA256');
+  signer.update(`${header}.${body}`);
+  const sig = signer.sign({ key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+  const receipt = {
+    task_id: taskId,
+    verify_url: `https://api.chit402.com/receipt/${taskId}`,
+    foreign_x402: true,
+    evidence: 'foreign_ingest',
+    source: 'foreign_ingest',
+    book_seq: 1,
+    book_chain: {
+      ...chainClaims,
+      issuer_signature: { alg: 'ES256', kid, jws: `${header}.${body}.${sig}` },
+    },
+    payment: {
+      rail: 'usdc',
+      ref: `base:${tx}`,
+      gross_amount: '1000000',
+      payer,
+      payTo,
+    },
+    signature: { alg: 'HMAC-SHA256', scope: 'recorded', value: 'sha256=abc' },
+  };
+  const topic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+  const pad = (addr) => `0x${addr.slice(2).toLowerCase().padStart(64, '0')}`;
+  const result = await verifyLink({
+    status: 'pending_first_stamp',
+    chit_receipt_id: taskId,
+    chit_verify_url: `https://api.chit402.com/receipt/${taskId}?format=json`,
+    payout_tx: tx,
+    entry: {
+      registry: '1f916', handle: 'chit402', log: 'identity_events', event_id: 20498, kind: 'listing',
+    },
+    agent_record_entry: {
+      signed: false, registry: '1f916', fingerprint: FINGERPRINT, fingerprint_alg: '1f916-entry-hash',
+    },
+  }, {
+    rpcUrl: 'https://rpc.test/base',
+    fetchImpl: async (url, init) => {
+      const target = String(url);
+      if (target.endsWith('/.well-known/jwks.json')) {
+        return { ok: true, json: async () => ({ keys: [jwk] }) };
+      }
+      if (target.includes('/receipt/')) {
+        return { ok: true, json: async () => receipt };
+      }
+      if (target.includes('1f916.ai')) {
+        return {
+          ok: true,
+          json: async () => ({
+            events: [{ id: 20498, kind: 'listing', hash: FINGERPRINT }],
+            events_has_more: false,
+          }),
+        };
+      }
+      if (init?.method === 'POST') {
+        return {
+          ok: true,
+          json: async () => ({
+            result: {
+              status: '0x1',
+              logs: [{
+                address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+                topics: [topic, pad(payer), pad(payTo)],
+                data: `0x${(1000000n).toString(16).padStart(64, '0')}`,
+              }],
+            },
+          }),
+        };
+      }
+      throw new Error(`unexpected fetch ${target}`);
+    },
+  });
+  assert.equal(result.verdict, 'PASS', formatReport(result));
+  assert.match(result.steps.issuer_signature.detail, /foreign_ingest/);
 });
 
 describe('verifier fixture, not a public specimen', () => {

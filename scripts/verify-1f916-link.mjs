@@ -147,8 +147,13 @@ function receiptUrl(id) {
  * @param {object} specimen
  */
 function pendingSpecimen(specimen) {
-  if (specimen?.status === 'pending_first_stamp') return true;
   return specimen?.chit_receipt_id == null || specimen?.chit_receipt_id === '';
+}
+
+function isForeignIngest(receipt) {
+  return receipt?.foreign_x402 === true
+    || receipt?.evidence === 'foreign_ingest'
+    || receipt?.source === 'foreign_ingest';
 }
 
 function canonicalReceiptUrl(specimen) {
@@ -206,13 +211,20 @@ export async function verifyLink(specimen, opts = {}) {
   }
 
   let jwks = null;
-  let payment = null;
+  /** Signed settlement the on-chain step checks. */
+  let settlement = null;
+  const foreign = receipt && isForeignIngest(receipt);
+  const jwksUri = receipt?.verification?.jwks_uri;
   if (!receipt || steps.fetch_receipt.status !== 'PASS') {
     steps.issuer_signature = fail('receipt_unavailable');
     steps.receipt_chain = fail('receipt_unavailable');
     steps.on_chain_tx = fail('receipt_unavailable');
-  } else if (receipt?.verification?.jwks_uri !== JWKS_URL) {
+  } else if (jwksUri != null && jwksUri !== JWKS_URL) {
     steps.issuer_signature = fail(`jwks_uri must be ${JWKS_URL}`);
+    steps.receipt_chain = fail('issuer_signature_failed');
+    steps.on_chain_tx = fail('issuer_signature_failed');
+  } else if (!receipt.issuer_signature?.jws && !foreign) {
+    steps.issuer_signature = fail('issuer_signature_missing');
     steps.receipt_chain = fail('issuer_signature_failed');
     steps.on_chain_tx = fail('issuer_signature_failed');
   } else {
@@ -226,7 +238,7 @@ export async function verifyLink(specimen, opts = {}) {
     }
   }
 
-  if (jwks && !steps.issuer_signature) {
+  if (jwks && !steps.issuer_signature && receipt.issuer_signature?.jws) {
     const kid = receipt.issuer_signature?.kid;
     const found = keyForKid(jwks, kid);
     if (found.error) {
@@ -247,9 +259,42 @@ export async function verifyLink(specimen, opts = {}) {
         if (!payerOk || !paymentOk) {
           steps.issuer_signature = fail('signed claims differ from the outer receipt');
         } else {
-          payment = claims;
+          settlement = {
+            ref: claims.payment.ref,
+            gross_amount: claims.payment.gross_amount,
+            payee: claims.payment.payee,
+            asset: claims.payment.asset,
+            payer: claims.caller_binding?.payer_wallet,
+          };
           steps.issuer_signature = pass(`kid ${kid} iss ${claims.iss}`);
         }
+      }
+    }
+  }
+
+  if (jwks && !steps.issuer_signature && foreign) {
+    const chain = receipt.book_chain;
+    const kid = chain?.issuer_signature?.kid;
+    const found = keyForKid(jwks, kid);
+    if (!chain?.issuer_signature?.jws || found.error) {
+      steps.issuer_signature = fail(found.error || 'book_chain_signature_missing');
+    } else {
+      const checked = verifyEs256(chain.issuer_signature.jws, found.jwk);
+      if (!checked.valid) {
+        steps.issuer_signature = fail(checked.reason);
+      } else if (!same(checked.payload?.payment_ref, receipt.payment?.ref)) {
+        steps.issuer_signature = fail('payment_ref_mismatch');
+      } else {
+        const payee = receipt.payment?.payee || receipt.payment?.payTo;
+        const payer = receipt.caller_binding?.payer_wallet || receipt.payment?.payer;
+        settlement = {
+          ref: receipt.payment?.ref,
+          gross_amount: receipt.payment?.gross_amount,
+          payee,
+          asset: receipt.payment?.asset || USDC_BASE,
+          payer,
+        };
+        steps.issuer_signature = pass(`book_chain kid ${kid} foreign_ingest`);
       }
     }
   }
@@ -271,17 +316,17 @@ export async function verifyLink(specimen, opts = {}) {
         const recomputed = bookRowHash(chain);
         const seq = Number(chain.seq);
         const headOk = seq === 1 ? chain.prev_hash == null : /^[0-9a-f]{64}$/.test(String(chain.prev_hash || ''));
-        const refOk = payment && same(claims.payment_ref, payment.payment?.ref);
+        const refOk = settlement && same(claims.payment_ref, settlement.ref);
         if (mismatch) {
           steps.receipt_chain = fail(`claim_mismatch:${mismatch}`);
         } else if (recomputed !== claims.row_hash) {
           steps.receipt_chain = fail('row_hash_mismatch');
         } else if (!headOk) {
           steps.receipt_chain = fail('prev_hash_not_a_chain_link');
-        } else if (!same(receipt.book_seq, chain.seq)) {
+        } else if (receipt.book_seq != null && !same(receipt.book_seq, chain.seq)) {
           steps.receipt_chain = fail('book_seq_mismatch');
         } else if (!refOk) {
-          steps.receipt_chain = fail(payment ? 'payment_ref_mismatch' : 'issuer_signature_failed');
+          steps.receipt_chain = fail(settlement ? 'payment_ref_mismatch' : 'issuer_signature_failed');
         } else {
           const prev = chain.prev_hash == null ? 'null' : chain.prev_hash;
           steps.receipt_chain = pass(`seq ${chain.seq} prev_hash ${prev} row_hash ${chain.row_hash}`);
@@ -291,10 +336,12 @@ export async function verifyLink(specimen, opts = {}) {
   }
 
   if (receipt && !steps.on_chain_tx) {
-    if (!payment) {
+    if (!settlement) {
       steps.on_chain_tx = fail('issuer_signature_failed');
+    } else if (specimen?.payout_tx && !same(`base:${specimen.payout_tx}`, settlement.ref)) {
+      steps.on_chain_tx = fail('payout_tx_mismatch');
     } else {
-      steps.on_chain_tx = await checkBaseTransfer(payment, rpcUrl, fetchImpl);
+      steps.on_chain_tx = await checkBaseTransfer(settlement, rpcUrl, fetchImpl);
     }
   }
 
@@ -309,8 +356,8 @@ export async function verifyLink(specimen, opts = {}) {
  * @param {string} rpcUrl
  * @param {typeof fetch} fetchImpl
  */
-async function checkBaseTransfer(payment, rpcUrl, fetchImpl) {
-  const ref = String(payment?.payment?.ref || '');
+async function checkBaseTransfer(settlement, rpcUrl, fetchImpl) {
+  const ref = String(settlement?.ref || '');
   const match = /^base:(0x[0-9a-fA-F]{64})$/.exec(ref);
   if (!match) return fail(`payment.ref is not a Base tx: ${ref}`);
   const txHash = match[1];
@@ -346,13 +393,13 @@ async function checkBaseTransfer(payment, rpcUrl, fetchImpl) {
   if (!tx) return fail('tx_not_found');
   if (tx.status !== '0x1') return fail(`tx_status:${tx.status}`);
 
-  const payer = addr(payment.caller_binding?.payer_wallet);
-  const payee = addr(payment.payment?.payee);
-  const asset = addr(payment.payment?.asset);
-  if (asset !== USDC_BASE) return fail(`asset_mismatch:${payment.payment?.asset}`);
+  const payer = addr(settlement.payer);
+  const payee = addr(settlement.payee);
+  const asset = addr(settlement.asset);
+  if (asset !== USDC_BASE) return fail(`asset_mismatch:${settlement.asset}`);
   let expected;
   try {
-    expected = BigInt(String(payment.payment?.gross_amount));
+    expected = BigInt(String(settlement.gross_amount));
   } catch {
     return fail('gross_amount_invalid');
   }
@@ -371,7 +418,7 @@ async function checkBaseTransfer(payment, rpcUrl, fetchImpl) {
   if (moved < expected) {
     return fail(`transfer ${moved} < gross_amount ${expected}`);
   }
-  return pass(`${txHash} USDC ${expected} payer ${payment.caller_binding.payer_wallet} payee ${payment.payment.payee}`);
+  return pass(`${txHash} USDC ${expected} payer ${settlement.payer} payee ${settlement.payee}`);
 }
 
 /**
