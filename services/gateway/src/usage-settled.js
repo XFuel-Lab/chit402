@@ -573,6 +573,7 @@ export class UsageSettledLedger {
         source: entry.source,
         payment: receipt.payment,
         route: receipt.route,
+        ...(receipt.caller_binding ? { caller_binding: receipt.caller_binding } : {}),
         fulfillment: receipt.fulfillment || null,
         signature: receipt.signature || null,
         stamp: receipt.stamp || null,

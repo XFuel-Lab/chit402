@@ -1631,7 +1631,8 @@ test('a new foreign payout signs an issuer JWS the standard verifier accepts', a
     rail: 'usdc',
     fingerprint,
   });
-  const checked = verifyReceiptEcdsa(receipt, getJwks().keys[0]);
+  const key = getJwks().keys[0];
+  const checked = verifyReceiptEcdsa(receipt, key);
   assert.equal(checked.valid, true, checked.reason);
   assert.equal(checked.payload.schema, 'chit402.foreign_payout.v1');
   assert.equal(checked.payload.payment.payee, payee);
@@ -1653,15 +1654,27 @@ test('a new foreign payout signs an issuer JWS the standard verifier accepts', a
     paymentResponse: { tx: `0x${'ef'.repeat(32)}`, payer, network: 'base' },
     rail: 'usdc',
   });
-  const plainCheck = verifyReceiptEcdsa(plain, getJwks().keys[0]);
+  const plainCheck = verifyReceiptEcdsa(plain, key);
   assert.equal(plainCheck.valid, true, plainCheck.reason);
   assert.equal(plainCheck.payload.agent_record_entry, undefined);
+
+  const { ledger, identity } = setupDeps();
+  const appended = ledger.append(receipt, { payer, agentId: identity.agent_id });
+  assert.equal(appended.ok, true, appended.reason);
+  const published = buildPublicForeignIngestReceipt(appended.entry.receipt_snapshot, {
+    baseUrl: 'https://api.chit402.com',
+  });
+  const publishedCheck = verifyReceiptEcdsa(published, key);
+  assert.equal(publishedCheck.valid, true, publishedCheck.reason);
+  assert.equal(published.caller_binding.payer_wallet, payer);
+  assert.equal(published.payment.payee, payee);
+  assert.equal(published.payment.asset, receipt.payment.asset);
 
   const unsigned = { ...receipt };
   delete unsigned.issuer_signature;
   delete unsigned.verification;
-  const pub = buildPublicForeignIngestReceipt(unsigned, { baseUrl: 'https://api.chit402.com' });
-  assert.equal(pub.issuer_signature, undefined);
+  const legacy = buildPublicForeignIngestReceipt(unsigned, { baseUrl: 'https://api.chit402.com' });
+  assert.equal(legacy.issuer_signature, undefined);
 });
 
 test('public ingest ignores a caller-supplied entry fingerprint', async () => {
