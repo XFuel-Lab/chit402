@@ -238,9 +238,43 @@ test('normalizeIngestInput: v2 PAYMENT-RESPONSE header plus v2 challenge becomes
   assert.equal(n.paymentResponse.tx, V2_TX);
   assert.equal(n.paymentResponse.payer, WALLET_A);
   assert.equal(n.paymentResponse.network, 'base');
+  assert.equal(n.paymentRequired.scheme, 'exact');
+  assert.equal(n.paymentRequired.amount, '10000');
+  assert.equal(n.paymentRequired.max_amount, undefined);
 });
 
-test('normalizeIngestInput uses the settled upto amount instead of the ceiling', () => {
+test('exact scheme records the challenge amount, not a separate ceiling', () => {
+  const parsed = parseX402V2PaymentResponse({
+    success: true,
+    transaction: V2_TX,
+    network: 'eip155:8453',
+    payer: WALLET_A,
+    amount: '10000',
+  });
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.paymentResponse.amount, '10000');
+
+  const n = normalizeIngestInput({
+    payment_required: {
+      resource: { url: 'https://seller.example/v1/resource' },
+      accepts: [{
+        scheme: 'exact',
+        network: 'eip155:8453',
+        amount: '10000',
+        maxAmountRequired: '10000',
+        payTo: V2_PAY_TO,
+      }],
+    },
+    payment_response: parsed.paymentResponse,
+  });
+  assert.equal(n.ok, true);
+  assert.equal(n.paymentRequired.scheme, 'exact');
+  assert.equal(n.paymentRequired.amount, '10000');
+  assert.equal(n.paymentRequired.max_amount, undefined);
+  assert.equal(n.paymentResponse.amount, '10000');
+});
+
+test('upto records the settled amount below the cap and keeps the ceiling as max_amount', () => {
   const n = normalizeIngestInput({
     payment_required: {
       x402Version: 2,
@@ -263,12 +297,13 @@ test('normalizeIngestInput uses the settled upto amount instead of the ceiling',
     },
   });
   assert.equal(n.ok, true);
+  assert.equal(n.paymentRequired.scheme, 'upto');
   assert.equal(n.paymentRequired.amount, '10000');
-  assert.equal(n.paymentRequired.payTo, V2_PAY_TO);
-  assert.equal(n.paymentResponse.tx, V2_TX);
-  assert.equal(n.paymentResponse.amount, undefined);
+  assert.equal(n.paymentRequired.max_amount, '50000');
+  assert.notEqual(n.paymentRequired.amount, n.paymentRequired.max_amount);
+  assert.equal(n.paymentResponse.amount, '10000');
 
-  const ceiling = normalizeIngestInput({
+  const ceilingOnly = normalizeIngestInput({
     payment_required: {
       resource: { url: 'https://v2.api2pdf.com/chrome/pdf/html' },
       accepts: [{ scheme: 'upto', network: 'eip155:8453', amount: '50000', payTo: V2_PAY_TO }],
@@ -280,9 +315,9 @@ test('normalizeIngestInput uses the settled upto amount instead of the ceiling',
       payer: WALLET_A,
     },
   });
-  assert.equal(ceiling.ok, false);
-  assert.equal(ceiling.error, 'invalid_payment_response');
-  assert.match(ceiling.reason, /settled transfer/);
+  assert.equal(ceilingOnly.ok, true);
+  assert.equal(ceilingOnly.paymentRequired.amount, undefined);
+  assert.equal(ceilingOnly.paymentRequired.max_amount, '50000');
 });
 
 test('txHashFromPaymentRef keeps the 0x hash when the ref uses eip155', () => {
@@ -399,6 +434,71 @@ test('v2 PAYMENT-RESPONSE ingests as foreign_ingest with a base ref', async () =
   assert.equal(result.body.payment.rail, 'usdc');
   assert.equal(result.body.route.hub, 'v2.api2pdf.com');
   assert.match(result.body.verify_url, /^https:\/\/api\.chit402\.com\/receipt\/foreign-x402-/);
+});
+
+test('upto below the cap ingests the PAYMENT-RESPONSE amount, and otherwise the Transfer', async () => {
+  const { registry, ledger, identity } = setupDeps();
+  let verifiedAgainst;
+  const verifySettled = async (args) => {
+    verifiedAgainst = args.amount;
+    return { valid: true, verifiedAmount: '10000', txHash: V2_TX };
+  };
+  const settled = await ingestForeignX402({
+    payment_required: {
+      resource: { url: 'https://v2.api2pdf.com/chrome/pdf/html' },
+      accepts: [{ scheme: 'upto', network: 'eip155:8453', amount: '50000', payTo: V2_PAY_TO }],
+    },
+    payment_response: {
+      success: true,
+      transaction: V2_TX,
+      network: 'eip155:8453',
+      payer: WALLET_A,
+      amount: '10000',
+    },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: verifySettled,
+  });
+  assert.equal(settled.ok, true, settled.message);
+  assert.equal(verifiedAgainst, '10000');
+  assert.equal(settled.body.payment.amount, '10000');
+  assert.equal(settled.body.payment.max_amount, '50000');
+  assert.equal(ledger.entries[0].receipt_snapshot.payment.gross_amount, '10000');
+  assert.equal(ledger.entries[0].receipt_snapshot.payment.max_amount, '50000');
+
+  const { registry: registry2, ledger: ledger2, identity: identity2 } = setupDeps();
+  let chainProbe;
+  const fromChain = await ingestForeignX402({
+    payment_required: {
+      resource: { url: 'https://v2.api2pdf.com/chrome/pdf/html' },
+      accepts: [{ scheme: 'upto', network: 'eip155:8453', amount: '50000', payTo: V2_PAY_TO }],
+    },
+    payment_response: {
+      success: true,
+      transaction: `0x${'cd'.repeat(32)}`,
+      network: 'eip155:8453',
+      payer: WALLET_A,
+    },
+    session: identity2.session,
+  }, {
+    ledger: ledger2,
+    registry: registry2,
+    agentId: identity2.agent_id,
+    session: identity2.session,
+    verify: async (args) => {
+      chainProbe = args.amount;
+      return { valid: true, verifiedAmount: '8000' };
+    },
+  });
+  assert.equal(fromChain.ok, true, fromChain.message);
+  assert.equal(chainProbe, '1');
+  assert.equal(fromChain.body.payment.amount, '8000');
+  assert.equal(fromChain.body.payment.max_amount, '50000');
+  assert.notEqual(fromChain.body.payment.amount, '50000');
 });
 
 test('a paid ingest stamp is its own book row, signed to the same seat', async () => {

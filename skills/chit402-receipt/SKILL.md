@@ -279,10 +279,11 @@ recorded the payment. Chit did not route it and did not settle it.
    `PAYMENT-SIGNATURE` or `X-PAYMENT`. The stamp is separate from the seller
    payment and does not debit prepaid budget.
 
-   For an **`exact`** challenge, `amount` is the settled figure. For **`upto`**
-   (the seller authorizes a ceiling and settles less), post the amount that
-   moved. If `PAYMENT-RESPONSE` includes `amount`, use it. A posted amount above
-   the on-chain Transfer is rejected (`payment_invalid`).
+   For an **`exact`** challenge, `amount` is the settled figure. For **`upto`**,
+   the challenge `amount` is only the authorization ceiling (`max_amount`).
+   Spend is `PAYMENT-RESPONSE.amount` when that field is present. Otherwise
+   ingest reads the USDC Transfer and records that. A posted amount above the
+   Transfer, or above the ceiling, is rejected (`payment_invalid`).
 
 4. **Keep `verify_url`** from the 201 body
    (`https://api.chit402.com/receipt/<task_id>`). Return it to the principal.

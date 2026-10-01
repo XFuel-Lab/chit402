@@ -321,12 +321,14 @@ export function bookNetwork(network) {
 /**
  * Parse an x402 v2 PAYMENT-RESPONSE into the foreign-ingest payment_response.
  * Accepts the header value (standard or url-safe base64 JSON), a JSON string,
- * or the decoded object `{ success, transaction, network, payer }`.
+ * or the decoded object `{ success, transaction, network, payer, amount? }`.
  * `tx` is an alias for `transaction`. `success: false` is rejected.
+ * A positive `amount` is the settled figure and is kept. It is not the
+ * `upto` authorization ceiling.
  * Legacy `{ tx, payer, network? }` is unchanged aside from CAIP-2 → short network.
  *
  * @param {string|object} input
- * @returns {{ ok: true, paymentResponse: { tx: string, payer: string, network?: string } } | { ok: false, reason: string }}
+ * @returns {{ ok: true, paymentResponse: { tx: string, payer: string, network?: string, amount?: string } } | { ok: false, reason: string }}
  */
 export function parseX402V2PaymentResponse(input) {
   const decoded = decodePaymentResponseInput(input);
@@ -365,42 +367,66 @@ function atomicAmountField(value) {
   return '';
 }
 
-/** True when the body would record an `upto` ceiling because no settled amount was given. */
-function uptoCeilingWithoutSettlement(paymentRequired) {
-  if (!paymentRequired || typeof paymentRequired !== 'object') return false;
-  if (paymentRequired.amount != null && paymentRequired.amount !== '') return false;
-  const accepts = Array.isArray(paymentRequired.accepts) ? paymentRequired.accepts : [];
-  if (accepts.some((entry) => entry && entry.scheme === 'exact')) return false;
-  return accepts.some((entry) => entry && entry.scheme === 'upto');
-}
-
 /**
  * Flatten an x402 v2 PAYMENT-REQUIRED object into `{ resource, amount, payTo }`.
- * A challenge whose `resource` is already a URL string is returned as-is.
+ * `exact` uses the challenge amount: that figure is what settles.
+ * `upto` stores the authorization as `max_amount` and does not copy it into
+ * `amount`. Spend is `settledAmount` from PAYMENT-RESPONSE, or it is left
+ * empty so ingest can read the USDC Transfer.
+ *
+ * A challenge that is already `{ resource, amount, payTo }` with no accepts
+ * array is returned as-is.
  *
  * @param {object} input
+ * @param {{ settledAmount?: string }} [opts]
  * @returns {object}
  */
-export function normalizePaymentRequired(input) {
+export function normalizePaymentRequired(input, { settledAmount } = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+  const accepts = Array.isArray(input.accepts) ? input.accepts : [];
+  const exact = accepts.find((entry) => entry && entry.scheme === 'exact') || null;
+  const upto = accepts.find((entry) => entry && entry.scheme === 'upto') || null;
   const resourceIsObject = input.resource && typeof input.resource === 'object';
-  const accept = Array.isArray(input.accepts)
-    ? (input.accepts.find((entry) => entry && entry.scheme === 'exact') || input.accepts[0])
-    : null;
-  if (!resourceIsObject && !accept) return input;
-  if (!resourceIsObject && input.resource && input.amount != null && input.payTo) return input;
+  const scheme = (upto && !exact) || input.scheme === 'upto'
+    ? 'upto'
+    : (exact || input.scheme === 'exact' ? 'exact' : undefined);
 
+  if (!resourceIsObject && !exact && !upto && scheme !== 'upto') return input;
+
+  const accept = scheme === 'upto' ? (upto || accepts[0]) : (exact || accepts[0] || null);
   let resource = input.resource;
   if (resourceIsObject) resource = typeof input.resource.url === 'string' ? input.resource.url : '';
-  const amount = input.amount ?? accept?.amount ?? accept?.maxAmountRequired;
   const payTo = input.payTo || accept?.payTo;
   const network = input.network || accept?.network;
-  return {
+  const asset = input.asset || accept?.asset || 'USDC';
+  const ceiling = atomicAmountField(accept?.maxAmountRequired)
+    || atomicAmountField(accept?.amount)
+    || atomicAmountField(input.max_amount)
+    || atomicAmountField(input.maxAmountRequired);
+  const settled = atomicAmountField(settledAmount);
+  const base = {
     resource,
-    amount: amount == null ? amount : String(amount),
     payTo,
     ...(network ? { network: bookNetwork(String(network)) } : {}),
-    asset: input.asset || accept?.asset || 'USDC',
+    asset,
+    ...(scheme ? { scheme } : {}),
+  };
+
+  if (scheme === 'upto') {
+    return {
+      ...base,
+      ...(ceiling ? { max_amount: ceiling } : {}),
+      ...(settled ? { amount: settled } : {}),
+    };
+  }
+
+  const exactAmount = settled
+    || atomicAmountField(input.amount)
+    || atomicAmountField(accept?.amount)
+    || atomicAmountField(accept?.maxAmountRequired);
+  return {
+    ...base,
+    amount: exactAmount || (input.amount == null ? undefined : String(input.amount)),
   };
 }
 
@@ -473,27 +499,26 @@ export function normalizeIngestInput(body = {}) {
   if (existingRequired && existingResponse) {
     const parsed = parseX402V2PaymentResponse(existingResponse);
     if (!parsed.ok) return { ok: false, reason: parsed.reason, error: 'invalid_payment_response' };
-    const settledAmount = parsed.paymentResponse.amount;
-    const paymentResponse = { ...parsed.paymentResponse };
-    delete paymentResponse.amount;
-    if (!settledAmount && uptoCeilingWithoutSettlement(existingRequired)) {
+    const paymentRequired = normalizePaymentRequired(existingRequired, {
+      settledAmount: parsed.paymentResponse.amount,
+    });
+    if (
+      paymentRequired
+      && paymentRequired.scheme === 'upto'
+      && paymentRequired.max_amount
+      && parsed.paymentResponse.amount
+      && BigInt(parsed.paymentResponse.amount) > BigInt(paymentRequired.max_amount)
+    ) {
       return {
         ok: false,
-        reason: 'upto PAYMENT-REQUIRED needs payment_response.amount for the settled transfer, not the authorized ceiling',
+        reason: `payment_response.amount ${parsed.paymentResponse.amount} exceeds upto max_amount ${paymentRequired.max_amount}`,
         error: 'invalid_payment_response',
       };
-    }
-    const normalizedRequired = normalizePaymentRequired(existingRequired);
-    const paymentRequired = normalizedRequired && typeof normalizedRequired === 'object'
-      ? { ...normalizedRequired }
-      : normalizedRequired;
-    if (settledAmount && paymentRequired && typeof paymentRequired === 'object') {
-      paymentRequired.amount = settledAmount;
     }
     return {
       ok: true,
       paymentRequired,
-      paymentResponse,
+      paymentResponse: parsed.paymentResponse,
       fulfillmentMeta: fulfillmentFieldsFromIngestBody(body),
     };
   }
@@ -651,6 +676,7 @@ export function buildForeignReceipt({
       fee_amount: '0',
       payer: paymentResponse.payer,
       payTo: paymentRequired.payTo,
+      ...(paymentRequired.max_amount ? { max_amount: String(paymentRequired.max_amount) } : {}),
       collected_at: new Date().toISOString(),
     },
     route: {
@@ -799,13 +825,24 @@ export async function ingestForeignX402(body = {}, {
 
   const paymentRequired = normalized.paymentRequired;
   const fulfillmentMeta = normalized.fulfillmentMeta || fulfillmentFieldsFromIngestBody(body);
-  const reqValid = validatePaymentRequired(paymentRequired);
-  if (!reqValid.ok) {
+  const needsChainAmount = paymentRequired?.scheme === 'upto'
+    && (paymentRequired.amount == null || paymentRequired.amount === '');
+  if (!needsChainAmount) {
+    const reqValid = validatePaymentRequired(paymentRequired);
+    if (!reqValid.ok) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'invalid_payment_required',
+        message: reqValid.reason,
+      };
+    }
+  } else if (!paymentRequired.resource || !paymentRequired.payTo) {
     return {
       ok: false,
       status: 400,
       error: 'invalid_payment_required',
-      message: reqValid.reason,
+      message: 'upto settlement still requires resource and payTo',
     };
   }
 
@@ -857,7 +894,9 @@ export async function ingestForeignX402(body = {}, {
       paymentHeader: null,
       paymentRef,
       payer: paymentResponse.payer,
-      amount: paymentRequired.amount,
+      // upto without a settled amount: any matching Transfer qualifies.
+      // The recorded spend is verification.verifiedAmount, never the ceiling.
+      amount: needsChainAmount ? '1' : paymentRequired.amount,
       payTo: paymentRequired.payTo,
       network,
     });
@@ -878,6 +917,19 @@ export async function ingestForeignX402(body = {}, {
       error: 'payment_invalid',
       message: verification?.reason || 'Payment verification did not confirm valid',
     };
+  }
+
+  if (needsChainAmount) {
+    const derived = atomicAmountField(verification.verifiedAmount);
+    if (!derived) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'payment_invalid',
+        message: 'upto settlement had no amount on PAYMENT-RESPONSE and the USDC Transfer amount was not read',
+      };
+    }
+    paymentRequired.amount = derived;
   }
 
   // Stamp is $0.002 USDC paid by the submitter (x402 Base/Solana), or waived.
@@ -954,6 +1006,7 @@ export async function ingestForeignX402(body = {}, {
         ref: paymentRef,
         rail,
         amount: paymentRequired.amount,
+        ...(paymentRequired.max_amount ? { max_amount: String(paymentRequired.max_amount) } : {}),
         collected: true,
       },
       route: {

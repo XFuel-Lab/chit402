@@ -108,8 +108,9 @@ the settlement on the Chit book. Chit does not settle that call.
 4. Keep `verify_url`. Evidence is **`foreign_ingest`**: Chit recorded the Base
    USDC transfer. Chit did not route the payment.
 
-`exact` amount is the challenge amount. `upto` must post the settled amount, not
-the ceiling, or on-chain verify rejects the row. Base USDC only.
+`exact` amount is the challenge amount. For `upto`, the challenge amount is
+`max_amount`. Spend is `PAYMENT-RESPONSE.amount` when present, otherwise the
+USDC Transfer. The ceiling is not the receipt amount. Base USDC only.
 
 Worker that returns the upstream body plus `X-Chit-Receipt`:
 `examples/cloudflare-x402-chit-receipt/`.
