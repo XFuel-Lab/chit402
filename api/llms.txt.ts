@@ -12,6 +12,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 - /trust    : Issuer trust — pin JWKS + kid, rotation policy, receipt verify steps. https://www.chit402.com/trust
 - /         : Treasury desk — who paid which call. Export, policy, evidence. https://chit402.com/book
 - /docs/chit-in-15-lines : Chat /v1 install wire at api.chit402.com/v1 (paid x402 only).
+- /docs/1f916-link : Draft v0, feedback welcome. Link a 1F916 Agent Record entry (chit_receipt_id, optional chit_verify_url) to a Chit receipt (unsigned agent_record_entry.fingerprint, registry 1f916). Money-moving entries require the receipt id; without it the claim is unverified payment claim. Issuer is whoever signs; verify the signature at the issuer JWKS plus the chain. Issuance support is coming. https://www.chit402.com/docs/1f916-link
 - /docs/eliza : Eliza plugin stub (coming: @xfuel/plugin-elizaos).
 - /v1       : Not the API — points you to api.chit402.com/v1.
 
@@ -111,6 +112,7 @@ Spent elsewhere → stamp here. Record PayBox / other x402 shop spend, or a ceme
 ## Docs
 
 - Drop-in door: https://www.chit402.com/docs/chit-in-15-lines
+- 1F916 link (draft v0): https://www.chit402.com/docs/1f916-link
 - Protocol map: AGENTS.md
 - Agent Playbook: skills/AGENT_PLAYBOOK.md
 - Chat completions gateway: docs/CHAT_COMPLETIONS_GATEWAY.md
