@@ -208,7 +208,10 @@ export interface XFuelReceipt {
     payer_wallet?: string | null;
     agent_pubkey?: string | null;
     api_key_hash?: string | null;
+    agent_id?: string | number | null;
   } | null;
+  /** Book agent_id. Present on claim_id-era JWS payloads. Absent on older v8 receipts. */
+  claim_id?: string | null;
   /** Append position. Unsigned relative to the payment JWS; signed inside book_chain. */
   book_seq?: number | null;
   book_chain?: { seq?: number | null; row_hash?: string | null } | null;
@@ -316,6 +319,12 @@ export interface ReceiptVerification {
   tx: string | null;
   /** Unsigned outer fields that disagree with the JWS payload. */
   claim_mismatches: ClaimMismatch[];
+  /**
+   * `not_present_legacy` — v8 (or older) payload with no claim_id key. Still verifies.
+   * `ok` — claim_id-era payload, and a payment.ref is paired with a seat.
+   * `refused` — claim_id-era payload, payment.ref set, claim_id null.
+   */
+  claim_id: 'not_present_legacy' | 'ok' | 'refused';
   /**
    * Unsigned refusal decision beside book_seq. Not part of the payment JWS.
    * freeze is true only for an unsettled receipt-lane row whose anchor changed
@@ -960,6 +969,25 @@ export function hashCanonicalPayload(receipt: XFuelReceipt): string {
   return keccak256(toUtf8Bytes(canonicalSignedPayload(receipt)));
 }
 
+/**
+ * claim_id-era receipts include the key even when the value is null.
+ * Older payloads omit the key and stay valid.
+ */
+export function claimIdVerdict(
+  claims: Record<string, unknown> | null | undefined,
+): 'not_present_legacy' | 'ok' | 'refused' {
+  if (!claims || !Object.prototype.hasOwnProperty.call(claims, 'claim_id')) {
+    return 'not_present_legacy';
+  }
+  const payment = asRecord(claims.payment);
+  const ref = payment?.ref;
+  const hasRef = ref != null && String(ref) !== '';
+  const id = claims.claim_id;
+  const missing = id == null || id === '';
+  if (hasRef && missing) return 'refused';
+  return 'ok';
+}
+
 function claimString(value: unknown): string | null {
   if (value == null || value === '') return null;
   return String(value);
@@ -997,6 +1025,7 @@ const CLAIM_COMPARE: Array<{
   { field: 'caller_binding.payer_wallet', outer: (r) => r.caller_binding?.payer_wallet, signed: (c) => asRecord(c.caller_binding)?.payer_wallet, address: true },
   { field: 'caller_binding.agent_pubkey', outer: (r) => r.caller_binding?.agent_pubkey, signed: (c) => asRecord(c.caller_binding)?.agent_pubkey },
   { field: 'caller_binding.api_key_hash', outer: (r) => r.caller_binding?.api_key_hash, signed: (c) => asRecord(c.caller_binding)?.api_key_hash },
+  { field: 'claim_id', outer: (r) => r.claim_id, signed: (c) => c.claim_id },
   { field: 'route.model', outer: (r) => r.route?.model, signed: (c) => asRecord(c.route)?.model },
   { field: 'route.provider', outer: (r) => r.route?.provider, signed: (c) => asRecord(c.route)?.provider },
   { field: 'output.hash', outer: (r) => r.output?.hash, signed: (c) => asRecord(c.output)?.hash },
@@ -1260,6 +1289,10 @@ export async function verifyReceipt(
   }
 
   const verifiedClaims = issuer_signature.valid ? issuer_signature.payload : undefined;
+  const claim_id = claimIdVerdict(issuer_signature.valid ? verifiedClaims : decoded);
+  if (issuer_signature.valid && claim_id === 'refused') {
+    errors.push('payment.ref is set and claim_id is null');
+  }
 
   let binding: BindingVerification;
   if (receipt.issuer_signature?.jws) {
@@ -1368,6 +1401,7 @@ export async function verifyReceipt(
   const facts = factsFromClaims(verifiedClaims);
   const hasIssuerSig = !!receipt.issuer_signature;
   const jwksWasSupplied = !!(options.jwks || options.jwksUri || (options.fetchJwks && jwks));
+  const claimRefused = issuer_signature.valid && claim_id === 'refused';
   const signatureFailed = hasIssuerSig && !issuer_signature.valid && (
     !!issuer_signature.checked
     || jwksWasSupplied
@@ -1386,7 +1420,7 @@ export async function verifyReceipt(
   const signatureUnchecked = hasIssuerSig && !issuer_signature.checked;
 
   let overall: 'verified' | 'partial' | 'failed';
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed) {
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
@@ -1434,6 +1468,7 @@ export async function verifyReceipt(
     amount_usdc: facts.amount_usdc,
     tx: facts.tx,
     claim_mismatches,
+    claim_id,
     receipt_lane,
     overall,
     errors,

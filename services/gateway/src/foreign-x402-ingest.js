@@ -755,6 +755,7 @@ export async function ingestForeignX402(body = {}, {
   }, 'foreign-x402: ingested');
 
   const verifyUrl = buildVerifyUrl(baseUrl, taskId, { reqHost });
+  const stampBook = bookIngestStamp(ledger, { agentId: id, foreignTaskId: taskId, stamp });
 
   return {
     ok: true,
@@ -785,6 +786,7 @@ export async function ingestForeignX402(body = {}, {
       stamp_fee_usd: '0.002',
       stamp_waived: stamp.waived === true,
       stamp_payment_ref: stamp.settlement?.paymentRef || null,
+      stamp_task_id: stampBook.task_id,
     },
   };
 }
@@ -826,6 +828,33 @@ async function collectIngestStamp(ensureStamp) {
     waived: stamp.waived === true,
     settlement: stamp.settlement || null,
   };
+}
+
+function bookIngestStamp(ledger, { agentId, foreignTaskId, stamp }) {
+  const paymentRef = stamp?.settlement?.paymentRef ? String(stamp.settlement.paymentRef) : null;
+  if (!paymentRef || !ledger || typeof ledger.recordIngestStamp !== 'function') {
+    return { booked: false, task_id: null };
+  }
+  const taskId = `ingest-stamp-${foreignTaskId}`;
+  const recorded = ledger.recordIngestStamp({
+    agentId,
+    taskId,
+    paymentRef,
+    amount: stamp.settlement?.amount != null ? String(stamp.settlement.amount) : String(STAMP_FEE_UNITS),
+    payer: stamp.settlement?.payer || stamp.settlement?.payerWallet || null,
+    parentRef: foreignTaskId,
+  });
+  if (!recorded?.ok) {
+    logger.warn({
+      taskId,
+      agentId,
+      paymentRef,
+      code: recorded?.code,
+      reason: recorded?.reason,
+    }, 'foreign-x402: ingest stamp row was not written');
+    return { booked: false, task_id: null };
+  }
+  return { booked: true, task_id: taskId };
 }
 
 function stampFields(stamp) {
@@ -1002,6 +1031,7 @@ async function commitForeignRow({
   }
 
   const taskId = receipt.task_id;
+  const stampBook = bookIngestStamp(ledger, { agentId, foreignTaskId: taskId, stamp });
   logger.info({
     taskId,
     agentId,
@@ -1043,6 +1073,7 @@ async function commitForeignRow({
       stamp_fee_usd: '0.002',
       stamp_waived: stamp?.waived === true,
       stamp_payment_ref: stamp?.settlement?.paymentRef || null,
+      stamp_task_id: stampBook.task_id,
     },
   };
 }

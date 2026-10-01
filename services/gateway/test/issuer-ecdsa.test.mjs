@@ -50,7 +50,7 @@ const mockTask = {
   feeAmount: '500',
   netAmount: '99500',
   feeBps: 50,
-  meta: { provider: 'test-provider' },
+  meta: { provider: 'test-provider', agentId: 7 },
   result: { model: 'test-model', provider: 'test-provider' },
   outputHash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
 };

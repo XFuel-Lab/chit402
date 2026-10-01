@@ -23,6 +23,7 @@ import {
   resolveSessionActTarget,
 } from './session-act.js';
 import { buildFulfillmentEnvelope, OUTPUT_COMMITMENT_STATUS } from './fulfillment-receipt.js';
+import { claimIdFromView } from './claim-id.js';
 import { buildReceiptOgMeta, buildReceiptOgImageUrl } from './receipt-og-meta.js';
 import { tier2ProofUnits, internalSettlementAccounting } from './pricing.js';
 import { renderCoverageSection } from './export-coverage.js';
@@ -217,6 +218,9 @@ export function mergeReceiptView(receipt) {
       target_agent: claims.target_agent ?? receipt.target_agent ?? null,
       session_act: claims.session_act ?? receipt.session_act ?? null,
       caller_binding: receipt.caller_binding ?? claims.caller_binding ?? null,
+      ...(Object.prototype.hasOwnProperty.call(claims, 'claim_id')
+        ? { claim_id: claims.claim_id ?? null }
+        : {}),
       fulfillment: claims.fulfillment ?? receipt.fulfillment ?? null,
     };
   }
@@ -310,6 +314,9 @@ export function mergeReceiptView(receipt) {
       ? { hash: claims.output.hash, kind: receipt.output?.kind ?? 'committed' }
       : null,
     caller_binding: claims.caller_binding ?? null,
+    ...(Object.prototype.hasOwnProperty.call(claims, 'claim_id')
+      ? { claim_id: claims.claim_id ?? null }
+      : {}),
     session: claims.session ?? receipt.session ?? null,
     agent_pubkey: claims.agent_pubkey ?? claims.session?.agent_pubkey ?? receipt.agent_pubkey ?? null,
     delegation_hash: claims.delegation_hash ?? claims.session?.delegation_hash ?? null,
@@ -887,6 +894,9 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
         || null,
       api_key_hash: view.caller_binding?.api_key_hash ?? null,
     },
+    // Book seat. The key is always present on a newly signed receipt.
+    // HMAC v8 does not cover it. A missing key is a legacy v8 payload.
+    claim_id: claimIdFromView(view),
     agent_pubkey: targetAgent
       || view.agent_pubkey
       || view.session?.agent_pubkey
@@ -1749,6 +1759,12 @@ export function usageOf(task) {
  *                          entitlement verification (who is entitled to this receipt).
  */
 export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null, reqHost = null, apiKeyHash = null, agentId = null, agentPubkey = null, payerWallet = null, payTo = null, persistSignature = false } = {}) {
+  if (agentId != null && task && typeof task === 'object') {
+    task.meta = task.meta || {};
+    if (task.meta.agentId == null && task.meta.agent_id == null) {
+      task.meta.agentId = agentId;
+    }
+  }
   const outcome = proofOutcomeOf(task);
   // Buyer default is USDC (ADR 0002). Legacy tfuel rail only when explicitly set.
   const paymentRail = task.intent?.paymentRail || 'usdc';
@@ -2044,6 +2060,10 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   }
   if (hmacRaw) envelope.hmac_attestation = publicHmacAttestation(hmacRaw);
   if (coRaw) envelope.co_attestation = publicHmacAttestation(coRaw);
+  const signedClaims = decodeReceiptClaims({ issuer_signature });
+  if (signedClaims && Object.prototype.hasOwnProperty.call(signedClaims, 'claim_id')) {
+    envelope.claim_id = signedClaims.claim_id ?? null;
+  }
 
   return envelope;
 }
@@ -2350,6 +2370,16 @@ function htmlTaskIdMatches(receipt, payload) {
  * thumbprint is pinned. An embedded key that merely verifies the bytes is
  * `key untrusted`. Never throws.
  */
+/** claim_id-era payloads with a tx and no seat fail. A missing key is legacy. */
+function claimIdRefusal(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  if (!Object.prototype.hasOwnProperty.call(payload, 'claim_id')) return null;
+  const ref = payload.payment?.ref;
+  if (ref == null || ref === '') return null;
+  if (payload.claim_id == null || payload.claim_id === '') return 'claim_id_missing';
+  return null;
+}
+
 export function verifyIssuerForHtml(receipt) {
   const sig = receipt?.issuer_signature;
   const pinned = embeddedIssuerKeyIsPinned(receipt);
@@ -2362,6 +2392,8 @@ export function verifyIssuerForHtml(receipt) {
       if (!htmlTaskIdMatches(receipt, jwksResult.payload)) {
         return { verified: false, reason: 'task_id_mismatch', pinned, trust: 'jwks' };
       }
+      const refused = claimIdRefusal(jwksResult.payload);
+      if (refused) return { verified: false, reason: refused, pinned, trust: 'jwks' };
       return { verified: true, reason: 'verified', pinned, trust: 'jwks' };
     }
 
@@ -2374,6 +2406,8 @@ export function verifyIssuerForHtml(receipt) {
       if (!htmlTaskIdMatches(receipt, pinResult.payload)) {
         return { verified: false, reason: 'task_id_mismatch', pinned: true, trust: 'pinned_kid' };
       }
+      const refused = claimIdRefusal(pinResult.payload);
+      if (refused) return { verified: false, reason: refused, pinned: true, trust: 'pinned_kid' };
       return { verified: true, reason: 'verified', pinned: true, trust: 'pinned_kid' };
     }
 
@@ -2677,6 +2711,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
       ${p.asset ? row('Asset', `<code>${esc(p.asset)}</code>`) : ''}
       ${p.payee ? row('Payee', `<code>${esc(shortHash(p.payee, 10, 8))}</code>`) : ''}
       ${view.caller_binding?.payer_wallet ? row('Payer', `<code>${esc(shortHash(view.caller_binding.payer_wallet, 10, 8))}</code>`) : ''}
+      ${Object.prototype.hasOwnProperty.call(view, 'claim_id') ? row('Claim', view.claim_id ? `<code>${esc(view.claim_id)}</code>` : '<span class="badge bad">missing</span>') : ''}
       ${p.rail === 'unmetered'
         ? row('Price', '<span class="muted">not charged</span> <span class="muted">unmetered /v1</span>')
         : row('Price', usdcCell(p.gross_amount))}

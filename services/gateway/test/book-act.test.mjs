@@ -27,7 +27,8 @@ test('spend, refusal, and correction rows carry signed acts', () => {
   assert.equal(spent.entry.act, 'spend');
   const spendClaims = decode(spent.entry.book_chain.issuer_signature.jws);
   assert.equal(spendClaims.act, 'spend');
-  assert.equal(spendClaims.payload_version, 2);
+  assert.equal(spendClaims.payload_version, 4);
+  assert.equal(spendClaims.payment_ref, 'base:0xact');
   assert.equal(verifyBookSeq(spent.entry.book_chain).valid, true);
 
   const blocked = ledger.recordPolicyBlocked({

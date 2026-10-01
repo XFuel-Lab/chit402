@@ -1166,6 +1166,93 @@ describe('Base payer confirms payee and asset', () => {
   });
 });
 
+function signClaims(payload) {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwkExport = publicKey.export({ format: 'jwk' });
+  const canonical = JSON.stringify({ crv: jwkExport.crv, kty: jwkExport.kty, x: jwkExport.x, y: jwkExport.y });
+  const kid = createHash('sha256').update(canonical).digest('base64url');
+  const issuer_jwk = { ...jwkExport, kid, alg: 'ES256', use: 'sig', kty: 'EC', crv: 'P-256' };
+  const header = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid };
+  const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signingInput = `${headerB64}.${payloadB64}`;
+  const signature = sign('sha256', Buffer.from(signingInput), {
+    key: privateKey,
+    dsaEncoding: 'ieee-p1363',
+  }).toString('base64url');
+  return {
+    kid,
+    issuer_jwk,
+    jws: `${signingInput}.${signature}`,
+  };
+}
+
+describe('claim_id stranger rule', () => {
+  const basePayment = { rail: 'usdc', ref: 'base:0x' + 'ab'.repeat(32), gross_amount: '2000', settled_amount: '2000' };
+
+  test('a v8 payload without the claim_id key still verifies', async () => {
+    const payload = { task_id: 'legacy-v8', payload_version: 8, payment: basePayment };
+    assert.equal(Object.prototype.hasOwnProperty.call(payload, 'claim_id'), false);
+    const signed = signClaims(payload);
+    const result = await verifyReceipt({
+      task_id: payload.task_id,
+      payment: basePayment,
+      issuer_signature: {
+        alg: 'ES256',
+        jws: signed.jws,
+        kid: signed.kid,
+        issuer_jwk: signed.issuer_jwk,
+        payload_version: 8,
+      },
+    }, { trustedKids: [signed.kid], jwks: { keys: [signed.issuer_jwk] } });
+    assert.equal(result.claim_id, 'not_present_legacy');
+    assert.equal(result.errors.some((e) => String(e).includes('claim_id')), false);
+    assert.notEqual(result.overall, 'failed');
+  });
+
+  test('claim_id null with a payment ref fails', async () => {
+    const payload = { task_id: 'era-missing', payload_version: 8, payment: basePayment, claim_id: null };
+    const signed = signClaims(payload);
+    const result = await verifyReceipt({
+      task_id: payload.task_id,
+      payment: basePayment,
+      claim_id: null,
+      issuer_signature: {
+        alg: 'ES256',
+        jws: signed.jws,
+        kid: signed.kid,
+        issuer_jwk: signed.issuer_jwk,
+        payload_version: 8,
+      },
+    }, { trustedKids: [signed.kid], jwks: { keys: [signed.issuer_jwk] } });
+    assert.equal(result.claim_id, 'refused');
+    assert.equal(result.overall, 'failed');
+    assert.equal(result.errors.some((e) => String(e).includes('claim_id')), true);
+  });
+
+  test('claim_id bound to the book is ok, and an outer mismatch fails', async () => {
+    const payload = { task_id: 'era-bound', payload_version: 8, payment: basePayment, claim_id: '15' };
+    const signed = signClaims(payload);
+    const receipt = {
+      task_id: payload.task_id,
+      payment: basePayment,
+      claim_id: '15',
+      issuer_signature: {
+        alg: 'ES256',
+        jws: signed.jws,
+        kid: signed.kid,
+        issuer_jwk: signed.issuer_jwk,
+        payload_version: 8,
+      },
+    };
+    const ok = await verifyReceipt(receipt, { trustedKids: [signed.kid], jwks: { keys: [signed.issuer_jwk] } });
+    assert.equal(ok.claim_id, 'ok');
+    assert.notEqual(ok.overall, 'failed');
+    const mismatches = diffOuterClaims({ ...receipt, claim_id: '99' }, payload);
+    assert.equal(mismatches.some((m) => m.field === 'claim_id'), true);
+  });
+});
+
 describe('package exports', () => {
   test('dist/cli.js is an exported subpath so chit402-verify can resolve it', async () => {
     const { createRequire } = await import('node:module');
