@@ -27,8 +27,11 @@ export {
   verifyReceiptSignature,
   verifyReceiptEcdsa,
   verifyReceiptEcdsaWithJwks,
+  readSignedHeadBinding,
+  HEAD_BINDING_PAYLOAD_VERSION,
   type ReceiptSignatureCheck,
   type ReceiptEcdsaCheck,
+  type SignedHeadBindingRead,
   type Es256Jwk,
   type Jwks,
 } from './receipt.js';

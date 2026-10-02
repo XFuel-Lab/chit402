@@ -305,6 +305,12 @@ export async function verifyAnchorClock({
   receiptTs = null,
   proven = null,
   call = jsonRpc,
+  /**
+   * v9 receipt binding from verified JWS claims: `{ verdict, tree_head_hash, tolerance }`.
+   * The clock bound and the head hash are taken from this object. An unsigned
+   * outer copy is not an argument.
+   */
+  receiptBinding = null,
 } = {}) {
   const skipped = (reason, extra = {}) => ({
     status: 'skipped',
@@ -316,6 +322,34 @@ export async function verifyAnchorClock({
     ...extra,
   });
 
+  if (receiptBinding && receiptBinding.verdict !== 'ok' && receiptBinding.reason
+    && receiptBinding.reason !== 'head_binding_missing') {
+    const detail = receiptBinding.reason === 'head_binding_mismatch' && receiptBinding.field
+      ? `unsigned ${receiptBinding.field} disagrees with signed claims`
+      : 'head binding was not taken from a trusted signature';
+    return {
+      status: 'failed',
+      reason: receiptBinding.reason,
+      detail,
+      published_at: head?.published_at ?? null,
+      chains: [],
+      receipt: { status: 'failed', reason: receiptBinding.reason, detail: null },
+    };
+  }
+  if (receiptBinding?.verdict === 'missing' || receiptBinding?.reason === 'head_binding_missing') {
+    return {
+      status: 'failed',
+      reason: 'head_binding_missing',
+      detail: 'payload v9 requires tree_head_hash and tolerance inside signed claims',
+      published_at: head?.published_at ?? null,
+      chains: [],
+      receipt: { status: 'failed', reason: 'head_binding_missing', detail: null },
+    };
+  }
+
+  // tree_head_hash is the prefix that includes this leaf. --head is often the
+  // published daily root, which is a different hash once the log has grown.
+  // That is not a clock failure. The signed tolerance still applies.
   if (!head) return skipped('no_head');
   if (!enabled) return skipped('no_rpc');
   if (signatureValid === false) {
@@ -330,7 +364,10 @@ export async function verifyAnchorClock({
   }
 
   const publishedAt = signedPayload?.published_at ?? head.published_at ?? null;
-  const signedMap = signedPayload?.clock_tolerance_s ?? null;
+  // v9: the receipt's verified tolerance. Older receipts keep the head's claim.
+  const signedMap = receiptBinding?.verdict === 'ok'
+    ? (receiptBinding.tolerance ?? null)
+    : (signedPayload?.clock_tolerance_s ?? null);
   const sides = anchorSides(head);
   const chains = [];
 

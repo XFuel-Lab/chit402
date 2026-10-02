@@ -39,13 +39,17 @@ Adding `route.provider` is a breaking change for verifiers that recompute the ol
 
 ## Signed payload v8
 
-Current issuer payload (`issuer_signature.payload_version: 8`). The canonical field list, the cost-plus identity, and the optional USDC Transfer reconciliation are in [VERIFY_ALGORITHM.md](./VERIFY_ALGORITHM.md) §3.2. Decision: [ADR 0011](./adr/0011-receipt-v8-onchain-amount.md).
+Issuer payload `issuer_signature.payload_version: 8`. The canonical field list, the cost-plus identity, and the optional USDC Transfer reconciliation are in [VERIFY_ALGORITHM.md](./VERIFY_ALGORITHM.md) §3.2. Decision: [ADR 0011](./adr/0011-receipt-v8-onchain-amount.md). v8 receipts still verify. New receipts are payload version 9.
 
 HMAC order (lockstep across gateway, SDK, `packages/verify`, and `scripts/verify-receipt.mjs`):
 
 `task_id`, `payment.rail`, `payment.ref`, `payment.gross_amount`, `payment.settled_amount`, `route_margin_bps`, `route_margin_amount`, `receipt_floor_amount`, `provider_cogs_amount`, `tier2_proof_amount`, `provider_cogs.actual`, `route.model`, `model_commitment`, `route.provider`, `output.hash`, `binding.expected_commitment`, `caller_binding.payer_wallet`, `agent_pubkey`, `api_key_hash`.
 
 `payment.settled_amount` is the USDC Transfer to the payee and equals `payment.gross_amount` once a payment ref exists. `route_margin_bps` is live pricing (default 100), inside that amount. `net_amount`, `fee_amount`, and `protocol_fee_bps` are payload ≤ 7 only and are not re-signed.
+
+## Signed payload v9
+
+Current issuer payload (`issuer_signature.payload_version: 9`). The HMAC array stays the v8 list above (`hmac_attestation.payload_version` stays 8). The JWS adds `tree_head_hash` and `tolerance` (`base` 300, `solana` 150). Verifiers read that pair from the verified claims. An unsigned outer copy that disagrees fails verification. v8 receipts that omit the pair still verify. See [VERIFY_ALGORITHM.md](./VERIFY_ALGORITHM.md) §3.3.
 
 ## Provider COGS (ADR 0005)
 
@@ -94,7 +98,7 @@ The verify page shows that object when the row sits on a book. `empty_by_policy`
 
 ## Book sequence
 
-`book_chain` (`chit402.book_seq.v1`) is the signed append position: `seq`, `prev_hash`, `row_hash`, and, at payload version 4, `payment_ref` beside `book_id`. A replay does not take a new seq. A correction does. The payment JWS stays on payload version 8 and adds `claim_id` (the same book id) without changing the HMAC array. See [book-seq.md](./product/book-seq.md).
+`book_chain` (`chit402.book_seq.v1`) is the signed append position: `seq`, `prev_hash`, `row_hash`, and, at payload version 4, `payment_ref` beside `book_id`. A replay does not take a new seq. A correction does. The payment JWS is payload version 9 and still adds `claim_id` (the same book id) without changing the HMAC array. An existing v8 receipt still verifies. See [book-seq.md](./product/book-seq.md).
 
 A `policy_blocked` row also signs `anchor` (Base chain id, block number, block hash, or `UNAVAILABLE` when the RPC cannot be read). The refusal is still recorded. See [refusal-anchor.md](./product/refusal-anchor.md).
 
@@ -110,7 +114,7 @@ A correction or successor row adds `authority` at payload version 3: `subject_ha
 
 ## Receipt lane (unsigned)
 
-`receipt_lane` (`chit402.receipt_lane.v1`) sits beside `book_seq` / `book_chain.seq` on the receipt JSON, the book row, the audit export, and `xfuel-verify`. It is derived and **not signed**. Payment `payload_version` stays 8. `book_chain` payload version stays 2, or 3 when `authority` is present. Old signatures still verify.
+`receipt_lane` (`chit402.receipt_lane.v1`) sits beside `book_seq` / `book_chain.seq` on the receipt JSON, the book row, the audit export, and `xfuel-verify`. It is derived and **not signed**. The lane does not change the payment payload version (current receipts are v9; v8 still verifies). `book_chain` payload version stays 2, or 3 when `authority` is present. Old signatures still verify.
 
 | Field | Meaning |
 |-------|---------|

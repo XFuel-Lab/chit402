@@ -16,11 +16,28 @@ import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
 import { actOf } from './book-act.js';
 import { refusalAnchorOrUnavailable } from './refusal-anchor.js';
 import { summarizeSupersession, supersessionForRow } from './supersession-fork.js';
+import {
+  ClaimSettlementStore,
+  shouldCloseClaim,
+  CLAIM_ALREADY_SETTLED,
+} from './claim-settlement.js';
+
+export { CLAIM_ALREADY_SETTLED };
 
 /** Optional async hook when a new book row is indexed (not on load/replay). */
 let bookRowWrittenHook = null;
 export function setBookRowWrittenHook(fn) {
   bookRowWrittenHook = typeof fn === 'function' ? fn : null;
+}
+
+/**
+ * After a new book row is indexed (and the merkle hook has appended the leaf).
+ * Receives the receipt object that was appended, so a v9 signature can bind
+ * the prefix root that now includes that leaf.
+ */
+let receiptBoundHook = null;
+export function setReceiptBoundHook(fn) {
+  receiptBoundHook = typeof fn === 'function' ? fn : null;
 }
 
 function emitBookRowWritten(entry) {
@@ -30,6 +47,15 @@ function emitBookRowWritten(entry) {
     } catch (err) {
       logger.warn({ err: err.message, taskId: entry?.task_id }, 'book row written hook failed');
     }
+  }
+}
+
+function emitReceiptBound(receipt, entry) {
+  if (!receiptBoundHook) return;
+  try {
+    receiptBoundHook(receipt, entry);
+  } catch (err) {
+    logger.warn({ err: err.message, taskId: entry?.task_id }, 'receipt bound hook failed');
   }
 }
 
@@ -384,6 +410,9 @@ export class UsageSettledLedger {
     this.entries = [];
     this.byRef = new Map();
     this.byTask = new Map();
+    this.claims = new ClaimSettlementStore({
+      file: this.dir ? path.join(this.dir, 'claim-settlements.json') : null,
+    });
     /** Next seq to assign, per agent_id. */
     this._nextSeq = new Map();
     /** Last row hash per agent_id. */
@@ -411,7 +440,7 @@ export class UsageSettledLedger {
       for (const line of text.split('\n')) {
         if (!line.trim()) continue;
         const row = JSON.parse(line);
-        this._index(row, { persist: false });
+        this._index(row, { persist: false, notify: false });
       }
     } catch (err) {
       if (err.code !== 'ENOENT') {
@@ -489,15 +518,16 @@ export class UsageSettledLedger {
     this.entries.push(row);
     if (row.payment_ref) this.byRef.set(String(row.payment_ref), row);
     if (row.task_id) this.byTask.set(String(row.task_id), row);
-    if (persist && this.persist) {
-      try {
-        fs.appendFileSync(this._file(), `${JSON.stringify(row)}\n`);
-      } catch (err) {
-        logger.warn({ err: err.message }, 'usage-settled: append failed');
-      }
-    }
-    if (notify && persist) {
-      emitBookRowWritten(row);
+    if (notify) emitBookRowWritten(row);
+    if (persist && this.persist) this._persistRow(row);
+  }
+
+  _persistRow(row) {
+    if (!this.persist) return;
+    try {
+      fs.appendFileSync(this._file(), `${JSON.stringify(row)}\n`);
+    } catch (err) {
+      logger.warn({ err: err.message }, 'usage-settled: append failed');
     }
   }
 
@@ -664,7 +694,11 @@ export class UsageSettledLedger {
         ...(receipt.verification ? { verification: receipt.verification } : {}),
       };
     }
-    this._index(entry);
+    // Append the leaf before persisting so the covering prefix can be signed
+    // into the snapshot that is written.
+    this._index(entry, { persist: false, notify: true });
+    emitReceiptBound(receipt, entry);
+    this._persistRow(entry);
     return { ok: true, entry };
   }
 
@@ -1446,7 +1480,29 @@ export function markRefundOwed(ledger, { taskId, amount = null, payer = null, pa
  * and it promotes the row to collected so a finished Chit payment can be cited.
  * `noteReplay: false` skips another replay_events entry when this request's
  * settle write already recorded one.
+ * `singleUseClaim: true` closes `receipt.claim_id` once. A different receipt
+ * for that id returns `claim_already_settled`. The same task and payment ref
+ * stays on the idempotent path above and returns the existing row.
  */
+/**
+ * Undo a close this call just wrote. A persist failure puts the row back so
+ * memory and disk stay settled together.
+ * @returns {{ ok: false, reason: string, code: string }|null}
+ */
+function rollbackClaimClose(ledger, closed, receipt) {
+  if (!closed?.ok || closed.idempotent || !ledger?.claims) return null;
+  const released = ledger.claims.release(receipt.claim_id, {
+    taskId: receipt.task_id,
+    paymentRef: receipt.payment.ref,
+  });
+  if (released) return null;
+  return {
+    ok: false,
+    reason: 'claim close could not be rolled back',
+    code: 'claim_persist_failed',
+  };
+}
+
 export function recordCollectedSpend(receipt, {
   ledger,
   registry,
@@ -1457,6 +1513,7 @@ export function recordCollectedSpend(receipt, {
   attemptIndex = null,
   closeSettle = false,
   noteReplay = true,
+  singleUseClaim = undefined,
 } = {}) {
   if (!ledger || !registry || typeof registry.allocate !== 'function') {
     return { ok: false, reason: 'ledger and registry.allocate required', code: 'misconfigured' };
@@ -1526,14 +1583,40 @@ export function recordCollectedSpend(receipt, {
       paymentRef: receipt.payment.ref,
     });
   }
-  const credited = ledger.append(receipt, {
-    payer,
-    agentId: identity.agent_id,
-    parentRef,
-    intentId,
-    attemptIndex,
-  });
+  let closed = null;
+  if (shouldCloseClaim(receipt, identity.agent_id, singleUseClaim) && ledger.claims) {
+    closed = ledger.claims.settleSync({
+      claimId: receipt.claim_id,
+      taskId: receipt.task_id,
+      paymentRef: receipt.payment.ref,
+      receipt,
+    });
+    if (!closed.ok) {
+      return {
+        ok: false,
+        reason: closed.reason,
+        code: closed.code,
+        receipt: closed.receipt ?? null,
+      };
+    }
+  }
+  let credited;
+  try {
+    credited = ledger.append(receipt, {
+      payer,
+      agentId: identity.agent_id,
+      parentRef,
+      intentId,
+      attemptIndex,
+    });
+  } catch (err) {
+    const stuck = rollbackClaimClose(ledger, closed, receipt);
+    if (stuck) throw Object.assign(new Error(stuck.reason), { code: stuck.code, cause: err });
+    throw err;
+  }
   if (!credited.ok) {
+    const stuck = rollbackClaimClose(ledger, closed, receipt);
+    if (stuck) return stuck;
     return { ok: false, reason: credited.reason, code: credited.code };
   }
   return {

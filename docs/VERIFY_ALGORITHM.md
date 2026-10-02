@@ -147,6 +147,32 @@ receipts always include the key. Suggested by @ellie-v2 on 1F916
 The outer `claim_id` is a display copy. A mismatch with the JWS fails verification
 the same way `caller_binding` does.
 
+### 3.3 Payload version 9
+
+Version **9** keeps the version 8 HMAC field list and adds two claims on the
+issuer JWS object (`canonicalSignedClaims`):
+
+| Claim | Meaning |
+|-------|---------|
+| `tree_head_hash` | Merkle root of the log prefix that ends at this receipt's leaf (`leaf_index + 1`). That root includes the leaf, so an inclusion proof of that size verifies against it. Null when the receipt is not a leaf yet. It is not the published head from before the append. A later head with a different root verifies only when an inclusion proof shows this leaf is in that head |
+| `tolerance` | Clock bound copied into the signature, `{ "base": 300, "solana": 150 }` |
+
+The pair is part of the signed preimage. Verifiers read it only from claims
+whose issuer signature has already verified. The outer `tree_head_hash` and
+`tolerance` fields are a display copy. If either outer key is present and
+disagrees with the verified claims, verification fails (`head_binding_mismatch`).
+A version 9 payload that omits either key fails (`head_binding_missing`). The embedded `issuer_jwk` is used for this pair only when its thumbprint is a pinned kid. An unpinned key is `key untrusted` and does not supply the tolerance or the head hash. A published head whose root differs from `tree_head_hash` is not a signature failure; `verify-receipt.mjs --head` still checks that head's clock. An inclusion proof, when one is supplied, must be for this receipt's `task_id|row_hash` leaf. A proof for some other leaf fails (`tree_head_mismatch`).
+
+Version **8 and earlier** omit the pair and verify as before. Do not re-sign
+them. The HMAC array is unchanged at version 8, so `hmac_attestation.payload_version`
+on a new receipt stays 8 while `issuer_signature.payload_version` is 9.
+
+A settlement claim closes once. The book seat (`claim_id` equal to the agent
+id) is shared by every receipt in that book. Closing a different `claim_id`,
+or closing with `singleUseClaim`, moves that id from open to settled. A second
+receipt gets `claim_already_settled`. The same `task_id` and `payment.ref`
+returns the existing receipt.
+
 For a cost-plus quote the breakdown sums to the settled amount:
 
 `provider_cogs_amount + route_margin_amount + receipt_floor_amount + tier2_proof_amount`.

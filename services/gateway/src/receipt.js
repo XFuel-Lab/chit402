@@ -29,7 +29,12 @@ import { tier2ProofUnits, internalSettlementAccounting } from './pricing.js';
 import { renderCoverageSection } from './export-coverage.js';
 import { renderBookSeqSection } from './book-seq.js';
 import { renderSupersessionSection } from './supersession-fork.js';
-import { renderInclusionSection } from './receipt-merkle.js';
+import { renderInclusionSection, getReceiptMerkleTree } from './receipt-merkle.js';
+import {
+  headBindingClaims,
+  headBindingVerdict,
+  outerHeadDisagrees,
+} from './receipt-head-binding.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -147,9 +152,14 @@ export function buildJwksUri(baseUrl = '') {
 /**
  * Current JWS payload version for newly issued receipts.
  * v8 signs the on-chain settled amount and an internal accounting block.
- * Payload versions <= 7 keep the historical net/fee split and still verify.
+ * v9 adds `tree_head_hash` and `tolerance` inside the same JWS.
+ * `tree_head_hash` is the log prefix that ends at this receipt's leaf, so that
+ * root proves inclusion. It is not the published head from before the append.
+ * The HMAC array stays the v8 field list. Payload versions <= 7 keep the historical
+ * net/fee split and still verify. v8 receipts that omit the head pair still
+ * verify.
  */
-export const RECEIPT_PAYLOAD_VERSION = 8;
+export const RECEIPT_PAYLOAD_VERSION = 9;
 
 /** v8 canonical HMAC field order. Lockstep with packages/sdk and packages/verify. */
 const CANONICAL_V8_FIELDS = [
@@ -914,6 +924,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     fulfillment,
     issuance_commitment: view.issuance_commitment ?? view.meta?.issuanceCommitment ?? null,
     dispute_window: view.dispute_window ?? view.meta?.disputeWindow ?? null,
+    ...headBindingClaims(treeHeadHashForClaims(view)),
     payload_version: RECEIPT_PAYLOAD_VERSION,
     ...(openRouterSignedClaim(view) ? { openrouter: openRouterSignedClaim(view) } : {}),
   };
@@ -1092,6 +1103,55 @@ export function canonicalPayloadVersion(receipt, view = null) {
   return 7;
 }
 
+/**
+ * Root of the log prefix that ends at this receipt's leaf. That root includes
+ * the leaf, so an inclusion proof of size leaf_index+1 verifies against it.
+ * A later published head has a different root and still proves inclusion when
+ * its own proof checks. Null when this task is not a leaf yet. Never the
+ * published head from before the append: that root cannot include this receipt.
+ */
+function treeHeadHashForClaims(view) {
+  const taskId = view?.task_id;
+  if (taskId) {
+    const covering = getReceiptMerkleTree().prefixRoot(taskId);
+    if (covering) return covering;
+  }
+  if (view && Object.prototype.hasOwnProperty.call(view, 'tree_head_hash')) {
+    return view.tree_head_hash ?? null;
+  }
+  return null;
+}
+
+/** Cached v9 signature whose tree_head_hash is not the prefix that includes this leaf. */
+function coveringHeadStale(cachedClaims, taskId) {
+  if (!cachedClaims || Number(cachedClaims.payload_version) < RECEIPT_PAYLOAD_VERSION) return false;
+  if (!Object.prototype.hasOwnProperty.call(cachedClaims, 'tree_head_hash')) return false;
+  const root = taskId ? getReceiptMerkleTree().prefixRoot(taskId) : null;
+  if (!root) return false;
+  return (cachedClaims.tree_head_hash ?? null) !== root;
+}
+
+/**
+ * After the leaf is appended, put that prefix root into an already signed v9 JWS.
+ * A signature taken before the append bound the previous head, which cannot
+ * prove inclusion. Legacy payloads are left alone.
+ * @param {object} receipt
+ */
+export function stampCoveringTreeHead(receipt) {
+  if (!receipt || typeof receipt !== 'object' || !receipt.issuer_signature?.jws) return receipt;
+  const claims = decodeReceiptClaims(receipt);
+  if (!claims || Number(claims.payload_version) < RECEIPT_PAYLOAD_VERSION) return receipt;
+  if (!Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash')) return receipt;
+  const root = getReceiptMerkleTree().prefixRoot(receipt.task_id);
+  if (!root || claims.tree_head_hash === root) return receipt;
+  const { jws, kid } = signJws({ ...claims, tree_head_hash: root });
+  receipt.issuer_signature.jws = jws;
+  if (kid) receipt.issuer_signature.kid = kid;
+  receipt.tree_head_hash = root;
+  if (claims.tolerance != null) receipt.tolerance = claims.tolerance;
+  return receipt;
+}
+
 function canonicalFieldsV7(view) {
   return [
     view.task_id,
@@ -1170,6 +1230,7 @@ function signReceiptPayload(receipt, secret, { role = 'attestor' } = {}) {
   ];
   return {
     alg: 'HMAC-SHA256',
+    // JWS payload version can be 9. The HMAC array is still the v8 list.
     payload_version: version >= 8 ? 8 : 5,
     value: `sha256=${value}`,
     role,
@@ -1996,6 +2057,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       issuer_signature = null;
     } else if (cachedClaims && !sessionClaimsFrozen(cachedClaims, draft)) {
       issuer_signature = null;
+    } else if (cachedClaims && coveringHeadStale(cachedClaims, draft.task_id)) {
+      issuer_signature = null;
     }
   }
   if (!issuer_signature?.jws) {
@@ -2103,6 +2166,13 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   const signedClaims = decodeReceiptClaims({ issuer_signature });
   if (signedClaims && Object.prototype.hasOwnProperty.call(signedClaims, 'claim_id')) {
     envelope.claim_id = signedClaims.claim_id ?? null;
+  }
+  // Display copies of the v9 head binding. Verifiers read the JWS, not these.
+  if (signedClaims && Object.prototype.hasOwnProperty.call(signedClaims, 'tree_head_hash')) {
+    envelope.tree_head_hash = signedClaims.tree_head_hash ?? null;
+  }
+  if (signedClaims && Object.prototype.hasOwnProperty.call(signedClaims, 'tolerance')) {
+    envelope.tolerance = signedClaims.tolerance ?? null;
   }
 
   return envelope;
@@ -2410,6 +2480,14 @@ function htmlTaskIdMatches(receipt, payload) {
  * thumbprint is pinned. An embedded key that merely verifies the bytes is
  * `key untrusted`. Never throws.
  */
+/** v9 payloads must carry the head pair, and the outer copy must match. */
+function headBindingRefusal(receipt, payload) {
+  const verdict = headBindingVerdict(payload);
+  if (verdict === 'missing') return 'head_binding_missing';
+  if (verdict === 'ok' && outerHeadDisagrees(receipt, payload)) return 'head_binding_mismatch';
+  return null;
+}
+
 /** claim_id-era payloads with a tx and no seat fail. A missing key is legacy. */
 function claimIdRefusal(payload) {
   if (!payload || typeof payload !== 'object') return null;
@@ -2434,6 +2512,8 @@ export function verifyIssuerForHtml(receipt) {
       }
       const refused = claimIdRefusal(jwksResult.payload);
       if (refused) return { verified: false, reason: refused, pinned, trust: 'jwks' };
+      const unbound = headBindingRefusal(receipt, jwksResult.payload);
+      if (unbound) return { verified: false, reason: unbound, pinned, trust: 'jwks' };
       return { verified: true, reason: 'verified', pinned, trust: 'jwks' };
     }
 
@@ -2448,6 +2528,8 @@ export function verifyIssuerForHtml(receipt) {
       }
       const refused = claimIdRefusal(pinResult.payload);
       if (refused) return { verified: false, reason: refused, pinned: true, trust: 'pinned_kid' };
+      const unbound = headBindingRefusal(receipt, pinResult.payload);
+      if (unbound) return { verified: false, reason: unbound, pinned: true, trust: 'pinned_kid' };
       return { verified: true, reason: 'verified', pinned: true, trust: 'pinned_kid' };
     }
 

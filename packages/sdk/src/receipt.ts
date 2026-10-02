@@ -252,3 +252,83 @@ export function verifyReceiptEcdsaWithJwks(
   }
   return { checked: true, valid: false, reason: 'signature_invalid' };
 }
+
+/** Payload version that signs tree_head_hash and tolerance inside the JWS. */
+export const HEAD_BINDING_PAYLOAD_VERSION = 9;
+
+export interface SignedHeadBindingRead {
+  /** True only when the pair came from verified claims, or the payload is pre-v9. */
+  ok: boolean;
+  /** v8 and earlier. The pair is not required and was not read from the outer receipt. */
+  legacy: boolean;
+  reason?: string;
+  field?: 'tree_head_hash' | 'tolerance';
+  tree_head_hash: string | null;
+  tolerance: unknown;
+}
+
+/**
+ * Read `(tree_head_hash, tolerance)` from issuer claims that have already
+ * verified. `claims` null means the signature was not trusted: the unsigned
+ * outer copy is not used. A v9 payload missing either key fails. An outer
+ * copy that disagrees fails, and the returned pair is still the signed one.
+ */
+export function readSignedHeadBinding(
+  receipt: Record<string, unknown> | null | undefined,
+  claims: Record<string, unknown> | null | undefined,
+): SignedHeadBindingRead {
+  const empty = {
+    ok: false,
+    legacy: false,
+    tree_head_hash: null as string | null,
+    tolerance: null as unknown,
+  };
+  if (!claims) {
+    return { ...empty, reason: 'unverified' };
+  }
+  const version = Number(claims.payload_version);
+  if (!Number.isFinite(version) || version < HEAD_BINDING_PAYLOAD_VERSION) {
+    return { ok: true, legacy: true, tree_head_hash: null, tolerance: null };
+  }
+  if (!Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash')
+    || !Object.prototype.hasOwnProperty.call(claims, 'tolerance')) {
+    return { ...empty, reason: 'head_binding_missing' };
+  }
+  const hash = claims.tree_head_hash;
+  const signedHash = hash == null || hash === '' ? null : String(hash);
+  const signedTolerance = claims.tolerance ?? null;
+  const outer = receipt && typeof receipt === 'object' ? receipt : null;
+  if (outer && Object.prototype.hasOwnProperty.call(outer, 'tree_head_hash')) {
+    const outerHash = outer.tree_head_hash == null || outer.tree_head_hash === ''
+      ? null
+      : String(outer.tree_head_hash);
+    if (outerHash !== signedHash) {
+      return {
+        ok: false,
+        legacy: false,
+        reason: 'head_binding_mismatch',
+        field: 'tree_head_hash',
+        tree_head_hash: signedHash,
+        tolerance: signedTolerance,
+      };
+    }
+  }
+  if (outer && Object.prototype.hasOwnProperty.call(outer, 'tolerance')) {
+    if (JSON.stringify(outer.tolerance ?? null) !== JSON.stringify(signedTolerance)) {
+      return {
+        ok: false,
+        legacy: false,
+        reason: 'head_binding_mismatch',
+        field: 'tolerance',
+        tree_head_hash: signedHash,
+        tolerance: signedTolerance,
+      };
+    }
+  }
+  return {
+    ok: true,
+    legacy: false,
+    tree_head_hash: signedHash,
+    tolerance: signedTolerance,
+  };
+}

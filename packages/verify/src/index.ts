@@ -12,6 +12,7 @@
  */
 
 import { JsonRpcProvider, Contract, keccak256, toUtf8Bytes } from 'ethers';
+import { leafHash, verifyMerkleInclusion, type InclusionStep } from './anchor-witness.js';
 import { createPublicKey, verify, type KeyObject } from 'node:crypto';
 import {
   computePaymentCommitment,
@@ -65,6 +66,11 @@ import {
   readJwsHeader,
   jwksHostAllowed,
 } from './jws.js';
+import {
+  headBindingVerdict,
+  outerHeadDisagrees,
+  signedHeadBinding,
+} from './head-binding.js';
 import {
   receiptLaneFromVerification,
   type ReceiptLane,
@@ -212,6 +218,13 @@ export interface XFuelReceipt {
   } | null;
   /** Book agent_id. Present on claim_id-era JWS payloads. Absent on older v8 receipts. */
   claim_id?: string | null;
+  /**
+   * v9. Transparency-log head hash inside the issuer JWS. The outer copy is
+   * display only. Absent on v8 and earlier.
+   */
+  tree_head_hash?: string | null;
+  /** v9. Clock tolerance bound inside the issuer JWS. Absent on v8 and earlier. */
+  tolerance?: { base?: number; solana?: number } | null;
   /** Append position. Unsigned relative to the payment JWS; signed inside book_chain. */
   book_seq?: number | null;
   book_chain?: { seq?: number | null; row_hash?: string | null } | null;
@@ -325,6 +338,15 @@ export interface ReceiptVerification {
    * `refused` — claim_id-era payload, payment.ref set, claim_id null.
    */
   claim_id: 'not_present_legacy' | 'ok' | 'refused';
+  /**
+   * v9 head binding from verified claims only. Null when the signature is not
+   * trusted, when the payload is v8 or earlier, or when the pair is missing.
+   * Never copied from the unsigned outer fields.
+   */
+  head_binding: {
+    tree_head_hash: string | null;
+    tolerance: unknown;
+  } | null;
   /**
    * Unsigned refusal decision beside book_seq. Not part of the payment JWS.
    * freeze is true only for an unsettled receipt-lane row whose anchor changed
@@ -1047,6 +1069,20 @@ export function diffOuterClaims(receipt: XFuelReceipt, claims: Record<string, un
       signed: claimString(spec.signed(claims)),
     });
   }
+  // v9 head pair. Compared when the outer key is present, including a null
+  // signed hash against a filled-in outer copy. v8 claims skip this.
+  if (headBindingVerdict(claims) === 'ok') {
+    const disagree = outerHeadDisagrees(receipt, claims);
+    if (disagree) {
+      const outerValue = disagree === 'tree_head_hash' ? receipt.tree_head_hash : receipt.tolerance;
+      const signedValue = disagree === 'tree_head_hash' ? claims.tree_head_hash : claims.tolerance;
+      mismatches.push({
+        field: disagree,
+        outer: outerValue == null ? null : JSON.stringify(outerValue),
+        signed: signedValue == null ? null : JSON.stringify(signedValue),
+      });
+    }
+  }
   return mismatches;
 }
 
@@ -1222,11 +1258,62 @@ export interface VerifyReceiptOptions {
   fetchSolanaTransaction?: SolanaRpcFetcher;
   fetchBaseReceipt?: BaseReceiptFetcher;
   /**
-   * Current signed tree head. When set, it is the anchor to compare with
-   * receipt.receipt_lane.anchor_at_binding. Unsigned; does not affect the
-   * signature result.
+   * Tree head to check against the signed `tree_head_hash`. An equal root is
+   * the issuance prefix and proves inclusion of this receipt. A different root
+   * verifies only when `inclusion` proves the leaf is in that head.
    */
   head?: ReceiptTreeHead | null;
+  /**
+   * Inclusion witness for `head` when its root is not the signed prefix.
+   * `leaf` is the 32-byte leaf hash hex. Without it the leaf is
+   * SHA-256(0x00 || `${task_id}|${row_hash}`).
+   */
+  inclusion?: {
+    leaf?: string | null;
+    leaf_index?: number | null;
+    tree_size?: number | null;
+    row_hash?: string | null;
+    proof?: InclusionStep[] | null;
+  } | null;
+}
+
+function normalizeBoundRoot(root: unknown): string | null {
+  if (root == null || root === '') return null;
+  const hex = String(root).replace(/^0x/i, '').toLowerCase();
+  return /^[0-9a-f]{64}$/.test(hex) ? hex : null;
+}
+
+/**
+ * True when the supplied head is the signed prefix, or a later head whose
+ * inclusion proof contains this receipt's leaf.
+ */
+function suppliedHeadCovers(
+  receipt: XFuelReceipt,
+  signedRoot: string,
+  head: ReceiptTreeHead,
+  inclusion: VerifyReceiptOptions['inclusion'],
+): boolean {
+  const signed = normalizeBoundRoot(signedRoot);
+  const supplied = normalizeBoundRoot(head?.root);
+  if (!signed || !supplied) return false;
+  if (signed === supplied) return true;
+  if (!inclusion || !Array.isArray(inclusion.proof) || inclusion.leaf_index == null) return true;
+  if (receipt.task_id == null) return false;
+  const row = inclusion.row_hash ?? receipt.book_chain?.row_hash ?? '';
+  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${row}`));
+  if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)
+    && inclusion.leaf.toLowerCase() !== leaf.toString('hex')) {
+    return false;
+  }
+  const size = inclusion.tree_size ?? head.tree_size;
+  if (size == null || !Number.isInteger(Number(size))) return false;
+  return verifyMerkleInclusion(
+    leaf,
+    Number(inclusion.leaf_index),
+    Number(size),
+    supplied,
+    inclusion.proof,
+  );
 }
 
 export async function verifyReceipt(
@@ -1292,6 +1379,23 @@ export async function verifyReceipt(
   const claim_id = claimIdVerdict(issuer_signature.valid ? verifiedClaims : decoded);
   if (issuer_signature.valid && claim_id === 'refused') {
     errors.push('payment.ref is set and claim_id is null');
+  }
+
+  const headVerdict = headBindingVerdict(issuer_signature.valid ? verifiedClaims : null);
+  const headMissing = headVerdict === 'missing';
+  if (headMissing) {
+    errors.push('payload v9 requires tree_head_hash and tolerance inside signed claims');
+  }
+  const signedBinding = headVerdict === 'ok' ? signedHeadBinding(verifiedClaims) : null;
+  // A published head may differ from the signed prefix. That is not a failure.
+  // An inclusion proof, when one is supplied, must be for this receipt's leaf
+  // (`task_id|row_hash`), not an arbitrary hash already in the tree.
+  let headMismatch = false;
+  if (signedBinding?.tree_head_hash && options.head?.root && options.inclusion) {
+    if (!suppliedHeadCovers(receipt, signedBinding.tree_head_hash, options.head, options.inclusion)) {
+      headMismatch = true;
+      errors.push('tree_head_mismatch');
+    }
   }
 
   let binding: BindingVerification;
@@ -1420,7 +1524,7 @@ export async function verifyReceipt(
   const signatureUnchecked = hasIssuerSig && !issuer_signature.checked;
 
   let overall: 'verified' | 'partial' | 'failed';
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused) {
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
@@ -1469,6 +1573,9 @@ export async function verifyReceipt(
     tx: facts.tx,
     claim_mismatches,
     claim_id,
+    head_binding: signedBinding
+      ? { tree_head_hash: signedBinding.tree_head_hash, tolerance: signedBinding.tolerance }
+      : null,
     receipt_lane,
     overall,
     errors,
@@ -1504,6 +1611,15 @@ export {
   type AnchorIdentity,
   type ReceiptTreeHead,
 } from './receipt-lane.js';
+
+export {
+  headBindingVerdict,
+  signedHeadBinding,
+  outerHeadDisagrees,
+  HEAD_BINDING_PAYLOAD_VERSION,
+  type HeadBindingVerdict,
+  type SignedHeadBinding,
+} from './head-binding.js';
 
 export {
   verifyAnchoredRoot,
