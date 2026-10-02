@@ -9,8 +9,9 @@ import {
   decodeReceiptClaims,
   verifyIssuerForHtml,
 } from '../src/receipt.js';
+import { generateKeyPairSync } from 'node:crypto';
 import { verifyAnchorClock } from '../src/receipt-anchor-clock.js';
-import { clockToleranceBinding } from '../src/receipt-head-binding.js';
+import { clockToleranceBinding, trustedHeadBindingJwk } from '../src/receipt-head-binding.js';
 
 function paidTask(over = {}) {
   return {
@@ -71,8 +72,7 @@ test('tampered outer tolerance or head hash fails, and the check does not adopt 
   assert.equal(decodeReceiptClaims(swapped).tree_head_hash, claims.tree_head_hash);
 });
 
-test('clock check uses the signed head hash and ignores an unsigned tolerance', async () => {
-  const signedRoot = 'ab'.repeat(32);
+test('a later covering head is not a tree_head_mismatch', async () => {
   const head = {
     root: 'cd'.repeat(32),
     published_at: '2026-01-01T00:00:00.000Z',
@@ -84,10 +84,21 @@ test('clock check uses the signed head hash and ignores an unsigned tolerance', 
     enabled: false,
     receiptBinding: {
       verdict: 'ok',
-      tree_head_hash: signedRoot,
-      tolerance: { base: 999999, solana: 999999 },
+      tree_head_hash: 'ab'.repeat(32),
+      tolerance: clockToleranceBinding(),
     },
   });
-  assert.equal(result.status, 'failed');
-  assert.equal(result.reason, 'tree_head_mismatch');
+  assert.equal(result.status, 'skipped');
+  assert.equal(result.reason, 'no_rpc');
+});
+
+test('an unpinned embedded issuer key is not a head-binding trust root', () => {
+  const { publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = publicKey.export({ format: 'jwk' });
+  const receipt = {
+    issuer_signature: {
+      issuer_jwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, alg: 'ES256' },
+    },
+  };
+  assert.equal(trustedHeadBindingJwk(receipt), null);
 });

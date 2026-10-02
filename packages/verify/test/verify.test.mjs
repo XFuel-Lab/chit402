@@ -1402,14 +1402,13 @@ describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
     assert.ok(result.errors.some((line) => /tree_head_hash and tolerance/.test(line)));
   });
 
-  test('a signed head hash that does not match the supplied head fails', async () => {
+  test('a later covering head with a different root still verifies', async () => {
     const receipt = envelope();
     const result = await verifyReceipt(receipt, {
       trustedKids: [receipt.issuer_signature.kid],
       head: { root: 'cd'.repeat(32) },
     });
-    assert.equal(result.overall, 'failed');
-    assert.ok(result.errors.some((line) => /tree_head_hash/.test(line)));
+    assert.equal(result.overall, 'verified', result.errors.join('; '));
     assert.equal(result.head_binding.tree_head_hash, tree_head_hash);
   });
 

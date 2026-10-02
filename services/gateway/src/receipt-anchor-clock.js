@@ -332,31 +332,16 @@ export async function verifyAnchorClock({
       receipt: { status: 'failed', reason: 'head_binding_missing', detail: null },
     };
   }
-  if (receiptBinding?.reason === 'head_binding_mismatch') {
+  if (receiptBinding?.reason === 'head_binding_mismatch' || receiptBinding?.reason === 'key untrusted') {
     return {
       status: 'failed',
-      reason: 'head_binding_mismatch',
+      reason: receiptBinding.reason,
       detail: receiptBinding.field
         ? `unsigned ${receiptBinding.field} disagrees with signed claims`
-        : 'unsigned head binding disagrees with signed claims',
+        : 'head binding was not taken from a trusted signature',
       published_at: head?.published_at ?? null,
       chains: [],
-      receipt: { status: 'failed', reason: 'head_binding_mismatch', detail: null },
-    };
-  }
-  if (
-    receiptBinding?.verdict === 'ok'
-    && receiptBinding.tree_head_hash
-    && head?.root
-    && String(receiptBinding.tree_head_hash) !== String(head.root)
-  ) {
-    return {
-      status: 'failed',
-      reason: 'tree_head_mismatch',
-      detail: 'signed tree_head_hash does not match this head',
-      published_at: head?.published_at ?? null,
-      chains: [],
-      receipt: { status: 'failed', reason: 'tree_head_mismatch', detail: null },
+      receipt: { status: 'failed', reason: receiptBinding.reason, detail: null },
     };
   }
 

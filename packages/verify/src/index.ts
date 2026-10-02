@@ -1335,13 +1335,8 @@ export async function verifyReceipt(
     errors.push('payload v9 requires tree_head_hash and tolerance inside signed claims');
   }
   const signedBinding = headVerdict === 'ok' ? signedHeadBinding(verifiedClaims) : null;
-  let headMismatch = false;
-  if (signedBinding && options.head?.root && signedBinding.tree_head_hash) {
-    if (String(signedBinding.tree_head_hash) !== String(options.head.root)) {
-      headMismatch = true;
-      errors.push('tree_head_hash does not match the tree head');
-    }
-  }
+  // tree_head_hash is the log head at issuance. A later head that covers this
+  // leaf has a different root. That head still proves inclusion.
 
   let binding: BindingVerification;
   if (receipt.issuer_signature?.jws) {
@@ -1469,7 +1464,7 @@ export async function verifyReceipt(
   const signatureUnchecked = hasIssuerSig && !issuer_signature.checked;
 
   let overall: 'verified' | 'partial' | 'failed';
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch) {
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';

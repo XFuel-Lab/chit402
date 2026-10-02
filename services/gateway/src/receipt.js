@@ -1101,6 +1101,11 @@ export function canonicalPayloadVersion(receipt, view = null) {
   return 7;
 }
 
+/**
+ * Head current at sign time. This leaf is not in that root yet: the daily head
+ * is published before later receipts are appended. A later covering head is a
+ * different root and still proves inclusion. Null when no head has been published.
+ */
 function treeHeadHashForClaims(view) {
   if (view && Object.prototype.hasOwnProperty.call(view, 'tree_head_hash')) {
     return view.tree_head_hash ?? null;

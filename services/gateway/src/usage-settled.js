@@ -1540,8 +1540,9 @@ export function recordCollectedSpend(receipt, {
       paymentRef: receipt.payment.ref,
     });
   }
+  let closed = null;
   if (shouldCloseClaim(receipt, identity.agent_id, singleUseClaim) && ledger.claims) {
-    const closed = ledger.claims.settleSync({
+    closed = ledger.claims.settleSync({
       claimId: receipt.claim_id,
       taskId: receipt.task_id,
       paymentRef: receipt.payment.ref,
@@ -1556,14 +1557,31 @@ export function recordCollectedSpend(receipt, {
       };
     }
   }
-  const credited = ledger.append(receipt, {
-    payer,
-    agentId: identity.agent_id,
-    parentRef,
-    intentId,
-    attemptIndex,
-  });
+  let credited;
+  try {
+    credited = ledger.append(receipt, {
+      payer,
+      agentId: identity.agent_id,
+      parentRef,
+      intentId,
+      attemptIndex,
+    });
+  } catch (err) {
+    if (closed?.ok && !closed.idempotent && ledger.claims) {
+      ledger.claims.release(receipt.claim_id, {
+        taskId: receipt.task_id,
+        paymentRef: receipt.payment.ref,
+      });
+    }
+    throw err;
+  }
   if (!credited.ok) {
+    if (closed?.ok && !closed.idempotent && ledger.claims) {
+      ledger.claims.release(receipt.claim_id, {
+        taskId: receipt.task_id,
+        paymentRef: receipt.payment.ref,
+      });
+    }
     return { ok: false, reason: credited.reason, code: credited.code };
   }
   return {

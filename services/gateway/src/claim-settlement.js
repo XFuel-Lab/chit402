@@ -116,6 +116,25 @@ export class ClaimSettlementStore {
     return { ok: true, idempotent: false, state: 'settled', receipt: row.receipt, row };
   }
 
+  /**
+   * Drop a close that this task just wrote, when the book append did not stick.
+   * Does not reopen a claim closed by a different receipt.
+   * @param {unknown} claimId
+   * @param {{ taskId?: unknown, paymentRef?: unknown }} [match]
+   * @returns {boolean}
+   */
+  release(claimId, { taskId, paymentRef } = {}) {
+    const id = settlementClaimId(claimId);
+    const row = id ? this.rows.get(id) : null;
+    if (!row) return false;
+    if (String(row.task_id) !== String(taskId) || String(row.payment_ref) !== String(paymentRef)) {
+      return false;
+    }
+    this.rows.delete(id);
+    this._persist();
+    return true;
+  }
+
   _persist() {
     if (!this.file) return;
     const dir = path.dirname(this.file);

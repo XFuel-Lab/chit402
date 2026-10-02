@@ -113,6 +113,31 @@ test('two spends on the same book seat both record', () => {
   assert.equal(ledger.claims.rows.size, 0);
 });
 
+test('a failed book append does not leave the claim closed', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claim-rollback-'));
+  const ledger = new UsageSettledLedger({ dir, persist: true });
+  const registry = new AgentRegistry();
+  const body = receipt({ task_id: 'roll-1', claim_id: 'claim-roll', ref: 'base:0xroll' });
+  ledger.append = () => ({ ok: false, reason: 'duplicate task_id', code: 'duplicate_task' });
+  const failed = recordCollectedSpend(body, {
+    ledger,
+    registry,
+    singleUseClaim: true,
+  });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.code, 'duplicate_task');
+  assert.equal(ledger.claims.rows.size, 0);
+
+  const reloaded = new UsageSettledLedger({ dir, persist: true });
+  assert.equal(reloaded.claims.rows.size, 0);
+  const again = recordCollectedSpend(
+    receipt({ task_id: 'roll-2', claim_id: 'claim-roll', ref: 'base:0xroll2' }),
+    { ledger: reloaded, registry, singleUseClaim: true },
+  );
+  assert.equal(again.ok, true, again.reason);
+  assert.equal(reloaded.claims.rows.get('claim-roll').task_id, 'roll-2');
+});
+
 test('a persisted close survives a reload and does not reopen', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claim-close-'));
   const file = path.join(dir, 'claim-settlements.json');

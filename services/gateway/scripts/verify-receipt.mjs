@@ -35,7 +35,11 @@ import {
 } from '../src/receipt-anchor-clock.js';
 import { leafHash, verifyInclusion, verifyTreeHead } from '../src/receipt-merkle.js';
 import { verifyJws } from '../src/issuer-key.js';
-import { verifyReceiptHeadBinding, HEAD_BINDING_PAYLOAD_VERSION } from '../src/receipt-head-binding.js';
+import {
+  verifyReceiptHeadBinding,
+  trustedHeadBindingJwk,
+  HEAD_BINDING_PAYLOAD_VERSION,
+} from '../src/receipt-head-binding.js';
 
 /**
  * HMAC payload version. <= 7 uses the historical fee-split list.
@@ -280,8 +284,8 @@ async function runCli(argv) {
     || outerHasBinding
   ) {
     const binding = verifyReceiptHeadBinding(receipt, (jws) => {
-      const jwk = receipt?.issuer_signature?.issuer_jwk;
-      if (!jwk) return { valid: false, reason: 'no_issuer_jwk' };
+      const jwk = trustedHeadBindingJwk(receipt);
+      if (!jwk) return { valid: false, reason: 'key untrusted' };
       return verifyJws(jws, jwk);
     });
     if (!binding.ok) {

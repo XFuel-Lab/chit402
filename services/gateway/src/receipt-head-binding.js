@@ -13,8 +13,37 @@
  */
 
 import { clockToleranceClaim } from './receipt-anchor-clock.js';
+import { computeJwkThumbprint, getIssuerKid } from './issuer-key.js';
+
+/** Production api.chit402.com issuer kid. An embedded key is not a trust root by itself. */
+const PRODUCTION_TRUSTED_ISSUER_KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 
 export const HEAD_BINDING_PAYLOAD_VERSION = 9;
+
+/**
+ * Embedded issuer key, only when its thumbprint is a pinned kid.
+ * A receipt that carries its own key does not get to choose the head binding.
+ * @param {object|null|undefined} receipt
+ * @returns {object|null}
+ */
+export function trustedHeadBindingJwk(receipt) {
+  const jwk = receipt?.issuer_signature?.issuer_jwk;
+  if (!jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256' || !jwk.x || !jwk.y) return null;
+  let thumb;
+  try {
+    thumb = computeJwkThumbprint(jwk);
+  } catch {
+    return null;
+  }
+  const kids = new Set([PRODUCTION_TRUSTED_ISSUER_KID]);
+  try {
+    const kid = getIssuerKid();
+    if (kid) kids.add(kid);
+  } catch {
+    // Process key unavailable. The production pin still applies.
+  }
+  return kids.has(thumb) ? jwk : null;
+}
 
 export function clockToleranceBinding() {
   return clockToleranceClaim();
