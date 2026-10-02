@@ -282,12 +282,6 @@ export function anchorSides(head) {
   return sides;
 }
 
-function normalizeClockRoot(root) {
-  if (root == null || root === '') return null;
-  const hex = String(root).replace(/^0x/i, '').toLowerCase();
-  return /^[0-9a-f]{64}$/.test(hex) ? hex : null;
-}
-
 function receiptBound(sides, signedMap) {
   const anchored = sides.filter((side) => side.status === 'anchored' && side.tx);
   const source = anchored.length ? anchored : sides;
@@ -353,22 +347,9 @@ export async function verifyAnchorClock({
     };
   }
 
-  // The signed root is the prefix that includes this leaf. A later head has a
-  // different root and is accepted only when inclusion in that head is proven.
-  // The head published before the leaf was appended cannot prove inclusion.
-  const signedRoot = receiptBinding?.verdict === 'ok' ? normalizeClockRoot(receiptBinding.tree_head_hash) : null;
-  const suppliedRoot = normalizeClockRoot(head?.root);
-  if (signedRoot && suppliedRoot && signedRoot !== suppliedRoot && proven !== true) {
-    return {
-      status: 'failed',
-      reason: 'tree_head_mismatch',
-      detail: 'supplied head does not cover this receipt',
-      published_at: head?.published_at ?? null,
-      chains: [],
-      receipt: { status: 'failed', reason: 'tree_head_mismatch', detail: 'supplied head does not cover this receipt' },
-    };
-  }
-
+  // tree_head_hash is the prefix that includes this leaf. --head is often the
+  // published daily root, which is a different hash once the log has grown.
+  // That is not a clock failure. The signed tolerance still applies.
   if (!head) return skipped('no_head');
   if (!enabled) return skipped('no_rpc');
   if (signatureValid === false) {

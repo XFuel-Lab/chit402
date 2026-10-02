@@ -440,7 +440,7 @@ export class UsageSettledLedger {
       for (const line of text.split('\n')) {
         if (!line.trim()) continue;
         const row = JSON.parse(line);
-        this._index(row, { persist: false });
+        this._index(row, { persist: false, notify: false });
       }
     } catch (err) {
       if (err.code !== 'ENOENT') {
@@ -518,15 +518,16 @@ export class UsageSettledLedger {
     this.entries.push(row);
     if (row.payment_ref) this.byRef.set(String(row.payment_ref), row);
     if (row.task_id) this.byTask.set(String(row.task_id), row);
-    if (persist && this.persist) {
-      try {
-        fs.appendFileSync(this._file(), `${JSON.stringify(row)}\n`);
-      } catch (err) {
-        logger.warn({ err: err.message }, 'usage-settled: append failed');
-      }
-    }
-    if (notify && persist) {
-      emitBookRowWritten(row);
+    if (notify) emitBookRowWritten(row);
+    if (persist && this.persist) this._persistRow(row);
+  }
+
+  _persistRow(row) {
+    if (!this.persist) return;
+    try {
+      fs.appendFileSync(this._file(), `${JSON.stringify(row)}\n`);
+    } catch (err) {
+      logger.warn({ err: err.message }, 'usage-settled: append failed');
     }
   }
 
@@ -693,8 +694,11 @@ export class UsageSettledLedger {
         ...(receipt.verification ? { verification: receipt.verification } : {}),
       };
     }
-    this._index(entry);
+    // Append the leaf before persisting so the covering prefix can be signed
+    // into the snapshot that is written.
+    this._index(entry, { persist: false, notify: true });
     emitReceiptBound(receipt, entry);
+    this._persistRow(entry);
     return { ok: true, entry };
   }
 

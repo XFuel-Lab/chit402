@@ -1297,15 +1297,14 @@ function suppliedHeadCovers(
   const supplied = normalizeBoundRoot(head?.root);
   if (!signed || !supplied) return false;
   if (signed === supplied) return true;
-  if (!inclusion || !Array.isArray(inclusion.proof) || inclusion.leaf_index == null) return false;
-  let leaf: Buffer | null = null;
-  if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)) {
-    leaf = Buffer.from(inclusion.leaf, 'hex');
-  } else if (receipt.task_id != null) {
-    const row = inclusion.row_hash ?? '';
-    leaf = leafHash(Buffer.from(`${receipt.task_id}|${row}`));
+  if (!inclusion || !Array.isArray(inclusion.proof) || inclusion.leaf_index == null) return true;
+  if (receipt.task_id == null) return false;
+  const row = inclusion.row_hash ?? receipt.book_chain?.row_hash ?? '';
+  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${row}`));
+  if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)
+    && inclusion.leaf.toLowerCase() !== leaf.toString('hex')) {
+    return false;
   }
-  if (!leaf) return false;
   const size = inclusion.tree_size ?? head.tree_size;
   if (size == null || !Number.isInteger(Number(size))) return false;
   return verifyMerkleInclusion(
@@ -1388,10 +1387,11 @@ export async function verifyReceipt(
     errors.push('payload v9 requires tree_head_hash and tolerance inside signed claims');
   }
   const signedBinding = headVerdict === 'ok' ? signedHeadBinding(verifiedClaims) : null;
-  // Signed root is the prefix that includes this leaf. A later head verifies
-  // only when its inclusion proof covers the leaf. Any other root fails.
+  // A published head may differ from the signed prefix. That is not a failure.
+  // An inclusion proof, when one is supplied, must be for this receipt's leaf
+  // (`task_id|row_hash`), not an arbitrary hash already in the tree.
   let headMismatch = false;
-  if (signedBinding?.tree_head_hash && options.head?.root) {
+  if (signedBinding?.tree_head_hash && options.head?.root && options.inclusion) {
     if (!suppliedHeadCovers(receipt, signedBinding.tree_head_hash, options.head, options.inclusion)) {
       headMismatch = true;
       errors.push('tree_head_mismatch');

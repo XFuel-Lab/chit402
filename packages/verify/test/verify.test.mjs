@@ -1404,14 +1404,13 @@ describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
     assert.ok(result.errors.some((line) => /tree_head_hash and tolerance/.test(line)));
   });
 
-  test('a supplied head that does not cover the receipt fails', async () => {
+  test('a published head with a different root still verifies', async () => {
     const receipt = envelope();
     const result = await verifyReceipt(receipt, {
       trustedKids: [receipt.issuer_signature.kid],
       head: { root: 'cd'.repeat(32) },
     });
-    assert.equal(result.overall, 'failed');
-    assert.ok(result.errors.includes('tree_head_mismatch'));
+    assert.equal(result.overall, 'verified', result.errors.join('; '));
     assert.equal(result.head_binding.tree_head_hash, tree_head_hash);
   });
 
@@ -1424,7 +1423,7 @@ describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
       .digest();
     const issued = node(leafA, leafB).toString('hex');
     const laterRoot = node(node(leafA, leafB), leafC).toString('hex');
-    const receipt = envelope({}, { ...payload, tree_head_hash: issued });
+    const receipt = envelope({}, { ...payload, task_id: 'b', tree_head_hash: issued });
     const inclusion = {
       leaf: leafB.toString('hex'),
       leaf_index: 1,
@@ -1445,6 +1444,14 @@ describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
     });
     assert.equal(covered.overall, 'verified', covered.errors.join('; '));
     assert.equal(covered.head_binding.tree_head_hash, issued);
+
+    const stolen = await verifyReceipt(receipt, {
+      trustedKids: [receipt.issuer_signature.kid],
+      head: { root: laterRoot, tree_size: 3 },
+      inclusion: { ...inclusion, leaf: leafA.toString('hex') },
+    });
+    assert.equal(stolen.overall, 'failed');
+    assert.ok(stolen.errors.includes('tree_head_mismatch'));
 
     const same = await verifyReceipt(receipt, {
       trustedKids: [receipt.issuer_signature.kid],

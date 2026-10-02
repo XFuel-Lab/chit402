@@ -161,7 +161,7 @@ The pair is part of the signed preimage. Verifiers read it only from claims
 whose issuer signature has already verified. The outer `tree_head_hash` and
 `tolerance` fields are a display copy. If either outer key is present and
 disagrees with the verified claims, verification fails (`head_binding_mismatch`).
-A version 9 payload that omits either key fails (`head_binding_missing`). The embedded `issuer_jwk` is used for this pair only when its thumbprint is a pinned kid. An unpinned key is `key untrusted` and does not supply the tolerance or the head hash. A supplied head whose root equals `tree_head_hash` is the issuance prefix. A later head verifies when its inclusion proof covers the leaf. Any other root fails (`tree_head_mismatch`).
+A version 9 payload that omits either key fails (`head_binding_missing`). The embedded `issuer_jwk` is used for this pair only when its thumbprint is a pinned kid. An unpinned key is `key untrusted` and does not supply the tolerance or the head hash. A published head whose root differs from `tree_head_hash` is not a signature failure; `verify-receipt.mjs --head` still checks that head's clock. An inclusion proof, when one is supplied, must be for this receipt's `task_id|row_hash` leaf. A proof for some other leaf fails (`tree_head_mismatch`).
 
 Version **8 and earlier** omit the pair and verify as before. Do not re-sign
 them. The HMAC array is unchanged at version 8, so `hmac_attestation.payload_version`

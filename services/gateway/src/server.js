@@ -834,7 +834,9 @@ export function createApp() {
     if (receipt.issuer_signature) snap.issuer_signature = receipt.issuer_signature;
     if (Object.prototype.hasOwnProperty.call(receipt, 'tree_head_hash')) {
       snap.tree_head_hash = receipt.tree_head_hash ?? null;
-      snap.tolerance = receipt.tolerance ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(receipt, 'tolerance')) {
+      snap.tolerance = receipt.tolerance;
     }
   });
   const bookPolicy = new BookPolicyStore({

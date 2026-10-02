@@ -101,7 +101,7 @@ test('a later covering head is not a tree_head_mismatch', async () => {
   assert.equal(result.reason, 'no_rpc');
 });
 
-test('a head that does not prove inclusion is a tree_head_mismatch', async () => {
+test('a published head that is not the signed prefix is not a tree_head_mismatch', async () => {
   const result = await verifyAnchorClock({
     head: { root: 'cd'.repeat(32), published_at: '2026-01-01T00:00:00.000Z' },
     enabled: false,
@@ -112,8 +112,8 @@ test('a head that does not prove inclusion is a tree_head_mismatch', async () =>
       tolerance: clockToleranceBinding(),
     },
   });
-  assert.equal(result.status, 'failed');
-  assert.equal(result.reason, 'tree_head_mismatch');
+  assert.equal(result.status, 'skipped');
+  assert.equal(result.reason, 'no_rpc');
 });
 
 function prefixThrough(tree, taskId) {

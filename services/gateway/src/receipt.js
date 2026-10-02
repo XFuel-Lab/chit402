@@ -1148,6 +1148,7 @@ export function stampCoveringTreeHead(receipt) {
   receipt.issuer_signature.jws = jws;
   if (kid) receipt.issuer_signature.kid = kid;
   receipt.tree_head_hash = root;
+  if (claims.tolerance != null) receipt.tolerance = claims.tolerance;
   return receipt;
 }
 
