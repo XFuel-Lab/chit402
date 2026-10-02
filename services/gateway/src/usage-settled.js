@@ -1460,6 +1460,25 @@ export function markRefundOwed(ledger, { taskId, amount = null, payer = null, pa
  * for that id returns `claim_already_settled`. The same task and payment ref
  * stays on the idempotent path above and returns the existing row.
  */
+/**
+ * Undo a close this call just wrote. A persist failure puts the row back so
+ * memory and disk stay settled together.
+ * @returns {{ ok: false, reason: string, code: string }|null}
+ */
+function rollbackClaimClose(ledger, closed, receipt) {
+  if (!closed?.ok || closed.idempotent || !ledger?.claims) return null;
+  const released = ledger.claims.release(receipt.claim_id, {
+    taskId: receipt.task_id,
+    paymentRef: receipt.payment.ref,
+  });
+  if (released) return null;
+  return {
+    ok: false,
+    reason: 'claim close could not be rolled back',
+    code: 'claim_persist_failed',
+  };
+}
+
 export function recordCollectedSpend(receipt, {
   ledger,
   registry,
@@ -1567,21 +1586,13 @@ export function recordCollectedSpend(receipt, {
       attemptIndex,
     });
   } catch (err) {
-    if (closed?.ok && !closed.idempotent && ledger.claims) {
-      ledger.claims.release(receipt.claim_id, {
-        taskId: receipt.task_id,
-        paymentRef: receipt.payment.ref,
-      });
-    }
+    const stuck = rollbackClaimClose(ledger, closed, receipt);
+    if (stuck) throw Object.assign(new Error(stuck.reason), { code: stuck.code, cause: err });
     throw err;
   }
   if (!credited.ok) {
-    if (closed?.ok && !closed.idempotent && ledger.claims) {
-      ledger.claims.release(receipt.claim_id, {
-        taskId: receipt.task_id,
-        paymentRef: receipt.payment.ref,
-      });
-    }
+    const stuck = rollbackClaimClose(ledger, closed, receipt);
+    if (stuck) return stuck;
     return { ok: false, reason: credited.reason, code: credited.code };
   }
   return {

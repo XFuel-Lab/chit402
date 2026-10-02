@@ -92,6 +92,19 @@ test('a later covering head is not a tree_head_mismatch', async () => {
   assert.equal(result.reason, 'no_rpc');
 });
 
+test('an unpinned key is reported as key untrusted, not a missing pair', async () => {
+  const result = await verifyAnchorClock({
+    head: { root: 'ab'.repeat(32), published_at: '2026-01-01T00:00:00.000Z' },
+    enabled: true,
+    receiptBinding: {
+      verdict: 'missing',
+      reason: 'key untrusted',
+    },
+  });
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, 'key untrusted');
+});
+
 test('an unpinned embedded issuer key is not a head-binding trust root', () => {
   const { publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const jwk = publicKey.export({ format: 'jwk' });

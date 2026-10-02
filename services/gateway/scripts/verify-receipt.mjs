@@ -292,7 +292,7 @@ async function runCli(argv) {
       bindingFailed = true;
       console.log(`✗ HEAD BINDING — ${binding.reason}${binding.field ? ` (${binding.field})` : ''}`);
       receiptBinding = {
-        verdict: 'missing',
+        verdict: binding.reason === 'head_binding_missing' ? 'missing' : 'rejected',
         reason: binding.reason,
         field: binding.field || null,
       };

@@ -138,6 +138,28 @@ test('a failed book append does not leave the claim closed', () => {
   assert.equal(reloaded.claims.rows.get('claim-roll').task_id, 'roll-2');
 });
 
+test('release keeps the close when the rollback cannot be written', () => {
+  const store = new ClaimSettlementStore();
+  const body = receipt({ task_id: 'keep-1', claim_id: 'claim-keep', ref: 'base:0xkeep' });
+  const closed = store.settleSync({
+    claimId: 'claim-keep',
+    taskId: body.task_id,
+    paymentRef: body.payment.ref,
+    receipt: body,
+  });
+  assert.equal(closed.ok, true);
+  store._persist = () => {
+    throw new Error('disk full');
+  };
+  const released = store.release('claim-keep', {
+    taskId: 'keep-1',
+    paymentRef: 'base:0xkeep',
+  });
+  assert.equal(released, false);
+  assert.equal(store.rows.get('claim-keep').state, 'settled');
+  assert.equal(store.rows.get('claim-keep').task_id, 'keep-1');
+});
+
 test('a persisted close survives a reload and does not reopen', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claim-close-'));
   const file = path.join(dir, 'claim-settlements.json');

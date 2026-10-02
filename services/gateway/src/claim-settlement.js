@@ -131,7 +131,12 @@ export class ClaimSettlementStore {
       return false;
     }
     this.rows.delete(id);
-    this._persist();
+    try {
+      this._persist();
+    } catch (err) {
+      this.rows.set(id, row);
+      return false;
+    }
     return true;
   }
 
