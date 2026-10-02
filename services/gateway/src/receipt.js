@@ -152,8 +152,10 @@ export function buildJwksUri(baseUrl = '') {
 /**
  * Current JWS payload version for newly issued receipts.
  * v8 signs the on-chain settled amount and an internal accounting block.
- * v9 adds `tree_head_hash` and `tolerance` inside the same JWS. The HMAC
- * array stays the v8 field list. Payload versions <= 7 keep the historical
+ * v9 adds `tree_head_hash` and `tolerance` inside the same JWS.
+ * `tree_head_hash` is the log prefix that ends at this receipt's leaf, so that
+ * root proves inclusion. It is not the published head from before the append.
+ * The HMAC array stays the v8 field list. Payload versions <= 7 keep the historical
  * net/fee split and still verify. v8 receipts that omit the head pair still
  * verify.
  */
@@ -1102,16 +1104,51 @@ export function canonicalPayloadVersion(receipt, view = null) {
 }
 
 /**
- * Head current at sign time. This leaf is not in that root yet: the daily head
- * is published before later receipts are appended. A later covering head is a
- * different root and still proves inclusion. Null when no head has been published.
+ * Root of the log prefix that ends at this receipt's leaf. That root includes
+ * the leaf, so an inclusion proof of size leaf_index+1 verifies against it.
+ * A later published head has a different root and still proves inclusion when
+ * its own proof checks. Null when this task is not a leaf yet. Never the
+ * published head from before the append: that root cannot include this receipt.
  */
 function treeHeadHashForClaims(view) {
+  const taskId = view?.task_id;
+  if (taskId) {
+    const covering = getReceiptMerkleTree().prefixRoot(taskId);
+    if (covering) return covering;
+  }
   if (view && Object.prototype.hasOwnProperty.call(view, 'tree_head_hash')) {
     return view.tree_head_hash ?? null;
   }
-  const head = getReceiptMerkleTree().latestHead();
-  return head?.root ?? null;
+  return null;
+}
+
+/** Cached v9 signature whose tree_head_hash is not the prefix that includes this leaf. */
+function coveringHeadStale(cachedClaims, taskId) {
+  if (!cachedClaims || Number(cachedClaims.payload_version) < RECEIPT_PAYLOAD_VERSION) return false;
+  if (!Object.prototype.hasOwnProperty.call(cachedClaims, 'tree_head_hash')) return false;
+  const root = taskId ? getReceiptMerkleTree().prefixRoot(taskId) : null;
+  if (!root) return false;
+  return (cachedClaims.tree_head_hash ?? null) !== root;
+}
+
+/**
+ * After the leaf is appended, put that prefix root into an already signed v9 JWS.
+ * A signature taken before the append bound the previous head, which cannot
+ * prove inclusion. Legacy payloads are left alone.
+ * @param {object} receipt
+ */
+export function stampCoveringTreeHead(receipt) {
+  if (!receipt || typeof receipt !== 'object' || !receipt.issuer_signature?.jws) return receipt;
+  const claims = decodeReceiptClaims(receipt);
+  if (!claims || Number(claims.payload_version) < RECEIPT_PAYLOAD_VERSION) return receipt;
+  if (!Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash')) return receipt;
+  const root = getReceiptMerkleTree().prefixRoot(receipt.task_id);
+  if (!root || claims.tree_head_hash === root) return receipt;
+  const { jws, kid } = signJws({ ...claims, tree_head_hash: root });
+  receipt.issuer_signature.jws = jws;
+  if (kid) receipt.issuer_signature.kid = kid;
+  receipt.tree_head_hash = root;
+  return receipt;
 }
 
 function canonicalFieldsV7(view) {
@@ -2018,6 +2055,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     if (cachedClaims?.task_id && cachedClaims.task_id !== draft.task_id) {
       issuer_signature = null;
     } else if (cachedClaims && !sessionClaimsFrozen(cachedClaims, draft)) {
+      issuer_signature = null;
+    } else if (cachedClaims && coveringHeadStale(cachedClaims, draft.task_id)) {
       issuer_signature = null;
     }
   }

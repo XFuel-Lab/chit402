@@ -12,6 +12,7 @@
  */
 
 import { JsonRpcProvider, Contract, keccak256, toUtf8Bytes } from 'ethers';
+import { leafHash, verifyMerkleInclusion, type InclusionStep } from './anchor-witness.js';
 import { createPublicKey, verify, type KeyObject } from 'node:crypto';
 import {
   computePaymentCommitment,
@@ -1257,11 +1258,63 @@ export interface VerifyReceiptOptions {
   fetchSolanaTransaction?: SolanaRpcFetcher;
   fetchBaseReceipt?: BaseReceiptFetcher;
   /**
-   * Current signed tree head. When set, it is the anchor to compare with
-   * receipt.receipt_lane.anchor_at_binding. Unsigned; does not affect the
-   * signature result.
+   * Tree head to check against the signed `tree_head_hash`. An equal root is
+   * the issuance prefix and proves inclusion of this receipt. A different root
+   * verifies only when `inclusion` proves the leaf is in that head.
    */
   head?: ReceiptTreeHead | null;
+  /**
+   * Inclusion witness for `head` when its root is not the signed prefix.
+   * `leaf` is the 32-byte leaf hash hex. Without it the leaf is
+   * SHA-256(0x00 || `${task_id}|${row_hash}`).
+   */
+  inclusion?: {
+    leaf?: string | null;
+    leaf_index?: number | null;
+    tree_size?: number | null;
+    row_hash?: string | null;
+    proof?: InclusionStep[] | null;
+  } | null;
+}
+
+function normalizeBoundRoot(root: unknown): string | null {
+  if (root == null || root === '') return null;
+  const hex = String(root).replace(/^0x/i, '').toLowerCase();
+  return /^[0-9a-f]{64}$/.test(hex) ? hex : null;
+}
+
+/**
+ * True when the supplied head is the signed prefix, or a later head whose
+ * inclusion proof contains this receipt's leaf.
+ */
+function suppliedHeadCovers(
+  receipt: XFuelReceipt,
+  signedRoot: string,
+  head: ReceiptTreeHead,
+  inclusion: VerifyReceiptOptions['inclusion'],
+): boolean {
+  const signed = normalizeBoundRoot(signedRoot);
+  const supplied = normalizeBoundRoot(head?.root);
+  if (!signed || !supplied) return false;
+  if (signed === supplied) return true;
+  if (!inclusion || !Array.isArray(inclusion.proof) || inclusion.leaf_index == null) return false;
+  let leaf: Buffer | null = null;
+  if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)) {
+    leaf = Buffer.from(inclusion.leaf, 'hex');
+  } else if (receipt.task_id != null) {
+    const row = inclusion.row_hash ?? '';
+    leaf = leafHash(Buffer.from(`${receipt.task_id}|${row}`));
+  }
+  if (!leaf) return false;
+  const size = inclusion.tree_size ?? head.tree_size;
+  if (size == null || !Number.isInteger(Number(size))) return false;
+  return verifyMerkleInclusion(
+    leaf,
+    Number(inclusion.leaf_index),
+    Number(size),
+    supplied,
+    inclusion.proof,
+  );
 }
 
 export async function verifyReceipt(
@@ -1335,8 +1388,15 @@ export async function verifyReceipt(
     errors.push('payload v9 requires tree_head_hash and tolerance inside signed claims');
   }
   const signedBinding = headVerdict === 'ok' ? signedHeadBinding(verifiedClaims) : null;
-  // tree_head_hash is the log head at issuance. A later head that covers this
-  // leaf has a different root. That head still proves inclusion.
+  // Signed root is the prefix that includes this leaf. A later head verifies
+  // only when its inclusion proof covers the leaf. Any other root fails.
+  let headMismatch = false;
+  if (signedBinding?.tree_head_hash && options.head?.root) {
+    if (!suppliedHeadCovers(receipt, signedBinding.tree_head_hash, options.head, options.inclusion)) {
+      headMismatch = true;
+      errors.push('tree_head_mismatch');
+    }
+  }
 
   let binding: BindingVerification;
   if (receipt.issuer_signature?.jws) {
@@ -1464,7 +1524,7 @@ export async function verifyReceipt(
   const signatureUnchecked = hasIssuerSig && !issuer_signature.checked;
 
   let overall: 'verified' | 'partial' | 'failed';
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing) {
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';

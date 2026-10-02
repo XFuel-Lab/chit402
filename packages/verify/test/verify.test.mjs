@@ -27,6 +27,8 @@ try {
 const {
   verifyBinding,
   verifyReceipt,
+  leafHash,
+  verifyMerkleInclusion,
   verifyIssuerSignature,
   verifyIssuerSignatureWithJwks,
   canonicalIssuerPayload,
@@ -1402,14 +1404,53 @@ describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
     assert.ok(result.errors.some((line) => /tree_head_hash and tolerance/.test(line)));
   });
 
-  test('a later covering head with a different root still verifies', async () => {
+  test('a supplied head that does not cover the receipt fails', async () => {
     const receipt = envelope();
     const result = await verifyReceipt(receipt, {
       trustedKids: [receipt.issuer_signature.kid],
       head: { root: 'cd'.repeat(32) },
     });
-    assert.equal(result.overall, 'verified', result.errors.join('; '));
+    assert.equal(result.overall, 'failed');
+    assert.ok(result.errors.includes('tree_head_mismatch'));
     assert.equal(result.head_binding.tree_head_hash, tree_head_hash);
+  });
+
+  test('a later head verifies when its inclusion proof covers the leaf', async () => {
+    const leafA = leafHash(Buffer.from('a|'));
+    const leafB = leafHash(Buffer.from('b|'));
+    const leafC = leafHash(Buffer.from('c|'));
+    const node = (left, right) => createHash('sha256')
+      .update(Buffer.concat([Buffer.from([0x01]), Buffer.from(left), Buffer.from(right)]))
+      .digest();
+    const issued = node(leafA, leafB).toString('hex');
+    const laterRoot = node(node(leafA, leafB), leafC).toString('hex');
+    const receipt = envelope({}, { ...payload, tree_head_hash: issued });
+    const inclusion = {
+      leaf: leafB.toString('hex'),
+      leaf_index: 1,
+      tree_size: 3,
+      proof: [
+        { hash: leafA.toString('hex'), position: 'left' },
+        { hash: leafC.toString('hex'), position: 'right' },
+      ],
+    };
+    assert.equal(
+      verifyMerkleInclusion(leafB, 1, 3, laterRoot, inclusion.proof),
+      true,
+    );
+    const covered = await verifyReceipt(receipt, {
+      trustedKids: [receipt.issuer_signature.kid],
+      head: { root: laterRoot, tree_size: 3 },
+      inclusion,
+    });
+    assert.equal(covered.overall, 'verified', covered.errors.join('; '));
+    assert.equal(covered.head_binding.tree_head_hash, issued);
+
+    const same = await verifyReceipt(receipt, {
+      trustedKids: [receipt.issuer_signature.kid],
+      head: { root: issued },
+    });
+    assert.equal(same.overall, 'verified', same.errors.join('; '));
   });
 
   test('a v8 receipt without the pair still verifies', async () => {

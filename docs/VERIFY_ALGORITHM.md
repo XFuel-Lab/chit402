@@ -154,14 +154,14 @@ issuer JWS object (`canonicalSignedClaims`):
 
 | Claim | Meaning |
 |-------|---------|
-| `tree_head_hash` | Root of the transparency log head current at issuance. Null when no head had been published yet. This leaf is not in that root yet. A later head that covers the leaf has a different root and still proves inclusion |
+| `tree_head_hash` | Merkle root of the log prefix that ends at this receipt's leaf (`leaf_index + 1`). That root includes the leaf, so an inclusion proof of that size verifies against it. Null when the receipt is not a leaf yet. It is not the published head from before the append. A later head with a different root verifies only when an inclusion proof shows this leaf is in that head |
 | `tolerance` | Clock bound copied into the signature, `{ "base": 300, "solana": 150 }` |
 
 The pair is part of the signed preimage. Verifiers read it only from claims
 whose issuer signature has already verified. The outer `tree_head_hash` and
 `tolerance` fields are a display copy. If either outer key is present and
 disagrees with the verified claims, verification fails (`head_binding_mismatch`).
-A version 9 payload that omits either key fails (`head_binding_missing`). The embedded `issuer_jwk` is used for this pair only when its thumbprint is a pinned kid. An unpinned key is `key untrusted` and does not supply the tolerance or the head hash. A later covering head whose root differs from `tree_head_hash` is not a signature failure.
+A version 9 payload that omits either key fails (`head_binding_missing`). The embedded `issuer_jwk` is used for this pair only when its thumbprint is a pinned kid. An unpinned key is `key untrusted` and does not supply the tolerance or the head hash. A supplied head whose root equals `tree_head_hash` is the issuance prefix. A later head verifies when its inclusion proof covers the leaf. Any other root fails (`tree_head_mismatch`).
 
 Version **8 and earlier** omit the pair and verify as before. Do not re-sign
 them. The HMAC array is unchanged at version 8, so `hmac_attestation.payload_version`

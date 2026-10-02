@@ -322,7 +322,7 @@ async function runCli(argv) {
       rpcUrl: args.rpcUrl,
       solanaRpcUrl: args.solanaRpcUrl,
       receiptTs: receiptTimestampSeconds(receipt),
-      proven: args.sawRpc ? proof.proven : null,
+      proven: proof.proven,
       receiptBinding,
     });
     console.log(formatAnchorClock(clock));

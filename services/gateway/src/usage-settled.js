@@ -30,6 +30,16 @@ export function setBookRowWrittenHook(fn) {
   bookRowWrittenHook = typeof fn === 'function' ? fn : null;
 }
 
+/**
+ * After a new book row is indexed (and the merkle hook has appended the leaf).
+ * Receives the receipt object that was appended, so a v9 signature can bind
+ * the prefix root that now includes that leaf.
+ */
+let receiptBoundHook = null;
+export function setReceiptBoundHook(fn) {
+  receiptBoundHook = typeof fn === 'function' ? fn : null;
+}
+
 function emitBookRowWritten(entry) {
   if (bookRowWrittenHook) {
     try {
@@ -37,6 +47,15 @@ function emitBookRowWritten(entry) {
     } catch (err) {
       logger.warn({ err: err.message, taskId: entry?.task_id }, 'book row written hook failed');
     }
+  }
+}
+
+function emitReceiptBound(receipt, entry) {
+  if (!receiptBoundHook) return;
+  try {
+    receiptBoundHook(receipt, entry);
+  } catch (err) {
+    logger.warn({ err: err.message, taskId: entry?.task_id }, 'receipt bound hook failed');
   }
 }
 
@@ -675,6 +694,7 @@ export class UsageSettledLedger {
       };
     }
     this._index(entry);
+    emitReceiptBound(receipt, entry);
     return { ok: true, entry };
   }
 

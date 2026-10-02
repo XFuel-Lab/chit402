@@ -31,7 +31,7 @@ import {
   applyPaymentToOwedTask,
   configureRollingLedger,
 } from './rolling-settlement.js';
-import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptMultiKey, verifyOriginHandoff, verifyDestAck, issueSessionHandoffReceipt, mergeReceiptView, decodeReceiptClaims, storedReceiptJson } from './receipt.js';
+import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptMultiKey, verifyOriginHandoff, verifyDestAck, issueSessionHandoffReceipt, mergeReceiptView, decodeReceiptClaims, storedReceiptJson, stampCoveringTreeHead } from './receipt.js';
 import {
   configureOpenRouterBroadcast,
   findOpenRouterPublicReceipt,
@@ -68,7 +68,7 @@ import { buildPaymentChallenge } from './x402-adapter.js';
 import { CHIT402_ICON_SVG, XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
-import { UsageSettledLedger, setBookRowWrittenHook } from './usage-settled.js';
+import { UsageSettledLedger, setBookRowWrittenHook, setReceiptBoundHook } from './usage-settled.js';
 import { peekRefusalAnchor } from './refusal-anchor.js';
 import { getReceiptMerkleTree } from './receipt-merkle.js';
 import { receiptLaneForEntry } from './receipt-lane.js';
@@ -447,7 +447,9 @@ payment.ref with claim_id null fails verification. Older v8 receipts that omit
 the key still verify (claim_id: not_present_legacy). The book seat is shared
 across receipts. A one-shot settlement claim closes once (claim_already_settled).
 **Head binding**: payload version 9 signs tree_head_hash and tolerance inside
-the JWS. v8 receipts omit that pair and still verify. Verifiers read the pair
+the JWS. tree_head_hash is the log prefix that ends at this receipt, so that
+root proves inclusion. A later head verifies when its inclusion proof covers
+the leaf. v8 receipts omit the pair and still verify. Verifiers read the pair
 from the verified claims. An unsigned outer copy that disagrees fails.
 Lanes without a payment JWS (foreign ingest, Nano, board stamp, ingest stamp)
 sign book_id and payment_ref together on book_chain payload version 4. The
@@ -824,6 +826,16 @@ export function createApp() {
       registry: getBookWebhookRegistry(),
       baseUrl: config.service.publicBaseUrl || 'https://api.chit402.com',
     });
+  });
+  setReceiptBoundHook((receipt, entry) => {
+    stampCoveringTreeHead(receipt);
+    const snap = entry?.receipt_snapshot;
+    if (!snap || !receipt) return;
+    if (receipt.issuer_signature) snap.issuer_signature = receipt.issuer_signature;
+    if (Object.prototype.hasOwnProperty.call(receipt, 'tree_head_hash')) {
+      snap.tree_head_hash = receipt.tree_head_hash ?? null;
+      snap.tolerance = receipt.tolerance ?? null;
+    }
   });
   const bookPolicy = new BookPolicyStore({
     dir: agentsDir,

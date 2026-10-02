@@ -7,11 +7,19 @@ import assert from 'node:assert/strict';
 import {
   buildReceipt,
   decodeReceiptClaims,
+  stampCoveringTreeHead,
   verifyIssuerForHtml,
 } from '../src/receipt.js';
 import { generateKeyPairSync } from 'node:crypto';
 import { verifyAnchorClock } from '../src/receipt-anchor-clock.js';
 import { clockToleranceBinding, trustedHeadBindingJwk } from '../src/receipt-head-binding.js';
+import {
+  getReceiptMerkleTree,
+  inclusionProof,
+  resetReceiptMerkleTree,
+  rootOf,
+  verifyInclusion,
+} from '../src/receipt-merkle.js';
 
 function paidTask(over = {}) {
   return {
@@ -82,6 +90,7 @@ test('a later covering head is not a tree_head_mismatch', async () => {
     head,
     signedPayload: { published_at: head.published_at, clock_tolerance_s: { base: 300, solana: 150 } },
     enabled: false,
+    proven: true,
     receiptBinding: {
       verdict: 'ok',
       tree_head_hash: 'ab'.repeat(32),
@@ -90,6 +99,110 @@ test('a later covering head is not a tree_head_mismatch', async () => {
   });
   assert.equal(result.status, 'skipped');
   assert.equal(result.reason, 'no_rpc');
+});
+
+test('a head that does not prove inclusion is a tree_head_mismatch', async () => {
+  const result = await verifyAnchorClock({
+    head: { root: 'cd'.repeat(32), published_at: '2026-01-01T00:00:00.000Z' },
+    enabled: false,
+    proven: null,
+    receiptBinding: {
+      verdict: 'ok',
+      tree_head_hash: 'ab'.repeat(32),
+      tolerance: clockToleranceBinding(),
+    },
+  });
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, 'tree_head_mismatch');
+});
+
+function prefixThrough(tree, taskId) {
+  const index = tree.byTask.get(String(taskId));
+  const slice = tree.leaves.slice(0, index + 1);
+  return {
+    index,
+    leaf: tree.leaves[index],
+    tree_size: index + 1,
+    root: rootOf(slice).toString('hex'),
+    proof: inclusionProof(slice, index),
+  };
+}
+
+test('v9 signs the prefix root that includes this receipt, not the prior head', async () => {
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevSol = process.env.SOLANA_ANCHOR_SECRET_KEY;
+  const prevSolRpc = process.env.SOLANA_RPC_URL;
+  delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  delete process.env.SOLANA_ANCHOR_SECRET_KEY;
+  delete process.env.SOLANA_RPC_URL;
+  resetReceiptMerkleTree();
+  try {
+    const tree = getReceiptMerkleTree();
+    tree.appendReceipt('earlier-than-receipt', 'h0');
+    const prior = await tree.publishHead({ force: true });
+    const taskId = 'xfuel-covering-head';
+    tree.appendReceipt(taskId, 'row-1');
+    assert.equal(tree.latestHead().root, prior.root);
+    assert.notEqual(tree.prefixRoot(taskId), prior.root);
+
+    const receipt = buildReceipt(paidTask({ taskId }), { signingSecret: 'head-bind-secret' });
+    const claims = decodeReceiptClaims(receipt);
+    const prefix = prefixThrough(tree, taskId);
+    assert.equal(claims.tree_head_hash, prefix.root);
+    assert.notEqual(claims.tree_head_hash, prior.root);
+    assert.equal(
+      verifyInclusion(prefix.leaf, prefix.index, prefix.tree_size, claims.tree_head_hash, prefix.proof),
+      true,
+    );
+    const priorProof = inclusionProof(tree.leaves.slice(0, prior.tree_size), prefix.index);
+    assert.equal(priorProof, null);
+    assert.equal(
+      verifyInclusion(prefix.leaf, prefix.index, prior.tree_size, prior.root, prefix.proof),
+      false,
+    );
+
+    tree.appendReceipt('after-receipt', 'h2');
+    const later = await tree.publishHead({ force: true });
+    assert.notEqual(later.root, claims.tree_head_hash);
+    const laterSlice = tree.leaves.slice(0, later.tree_size);
+    const laterProof = inclusionProof(laterSlice, prefix.index);
+    assert.equal(
+      verifyInclusion(prefix.leaf, prefix.index, later.tree_size, later.root, laterProof),
+      true,
+    );
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+    if (prevSol == null) delete process.env.SOLANA_ANCHOR_SECRET_KEY;
+    else process.env.SOLANA_ANCHOR_SECRET_KEY = prevSol;
+    if (prevSolRpc == null) delete process.env.SOLANA_RPC_URL;
+    else process.env.SOLANA_RPC_URL = prevSolRpc;
+    resetReceiptMerkleTree();
+  }
+});
+
+test('a signature taken before the append is restamped onto the covering prefix', () => {
+  resetReceiptMerkleTree();
+  try {
+    const tree = getReceiptMerkleTree();
+    tree.appendReceipt('prior-leaf', 'h0');
+    const taskId = 'xfuel-restamp-head';
+    const early = buildReceipt(paidTask({ taskId }), { signingSecret: 'head-bind-secret' });
+    assert.equal(decodeReceiptClaims(early).tree_head_hash, null);
+    tree.appendReceipt(taskId, 'row-restamp');
+    stampCoveringTreeHead(early);
+    const claims = decodeReceiptClaims(early);
+    const prefix = prefixThrough(tree, taskId);
+    assert.equal(claims.tree_head_hash, prefix.root);
+    assert.equal(early.tree_head_hash, prefix.root);
+    assert.equal(verifyIssuerForHtml(early).verified, true);
+    assert.equal(
+      verifyInclusion(prefix.leaf, prefix.index, prefix.tree_size, claims.tree_head_hash, prefix.proof),
+      true,
+    );
+  } finally {
+    resetReceiptMerkleTree();
+  }
 });
 
 test('an unpinned key is reported as key untrusted, not a missing pair', async () => {

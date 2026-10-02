@@ -356,6 +356,19 @@ export class ReceiptMerkleTree {
     return this.inclusion(taskId);
   }
 
+  /**
+   * Root of the prefix that ends at this receipt. Stable after later appends.
+   * An inclusion proof of size `leaf_index + 1` verifies against it, so the
+   * bound head can prove this leaf. Null when the task is not in the log.
+   * @param {unknown} taskId
+   * @returns {string|null}
+   */
+  prefixRoot(taskId) {
+    const index = this.byTask.get(String(taskId));
+    if (index == null) return null;
+    return hex(rootOf(this.leaves.slice(0, index + 1)));
+  }
+
   inclusion(taskId) {
     const index = this.byTask.get(String(taskId));
     if (index == null) return null;
