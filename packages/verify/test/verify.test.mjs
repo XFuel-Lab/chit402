@@ -1301,3 +1301,132 @@ function forgeReceipt(source, forgedAmount, { headerKid } = {}) {
     },
   };
 }
+
+function signHeadClaims(payload) {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwkExport = publicKey.export({ format: 'jwk' });
+  const canonical = JSON.stringify({ crv: jwkExport.crv, kty: jwkExport.kty, x: jwkExport.x, y: jwkExport.y });
+  const kid = createHash('sha256').update(canonical).digest('base64url');
+  const issuer_jwk = { ...jwkExport, kid, alg: 'ES256', use: 'sig', kty: 'EC', crv: 'P-256' };
+  const header = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid };
+  const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = sign('sha256', Buffer.from(`${headerB64}.${payloadB64}`), {
+    key: privateKey,
+    dsaEncoding: 'ieee-p1363',
+  }).toString('base64url');
+  return {
+    kid,
+    issuer_jwk,
+    jws: `${headerB64}.${payloadB64}.${signature}`,
+  };
+}
+
+describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
+  const tolerance = { base: 300, solana: 150 };
+  const tree_head_hash = 'ab'.repeat(32);
+  const payload = {
+    task_id: 'chit-v9-head',
+    iss: 'chit402',
+    iat: 1,
+    payload_version: 9,
+    tree_head_hash,
+    tolerance,
+    payment: {
+      rail: 'usdc',
+      ref: 'base:0x' + '11'.repeat(32),
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      payee: '0x2222222222222222222222222222222222222222',
+      gross_amount: '2000',
+      settled_amount: '2000',
+    },
+    caller_binding: { payer_wallet: '0x1111111111111111111111111111111111111111' },
+  };
+
+  function envelope(extra = {}, claims = payload) {
+    const signed = signHeadClaims(claims);
+    return {
+      task_id: claims.task_id,
+      status: 'completed',
+      payment: claims.payment,
+      caller_binding: claims.caller_binding,
+      tree_head_hash: claims.tree_head_hash,
+      tolerance: claims.tolerance,
+      issuer_signature: {
+        alg: 'ES256',
+        jws: signed.jws,
+        kid: signed.kid,
+        issuer_jwk: signed.issuer_jwk,
+        payload_version: claims.payload_version,
+      },
+      ...extra,
+    };
+  }
+
+  test('a v9 receipt verifies and the pair comes from the signed claims', async () => {
+    const receipt = envelope();
+    const result = await verifyReceipt(receipt, { trustedKids: [receipt.issuer_signature.kid] });
+    assert.equal(result.overall, 'verified', result.errors.join('; '));
+    assert.equal(result.issuer_signature.valid, true);
+    assert.equal(result.head_binding.tree_head_hash, tree_head_hash);
+    assert.deepEqual(result.head_binding.tolerance, tolerance);
+  });
+
+  test('a tampered outer tolerance fails and is not the value that was read', async () => {
+    const receipt = envelope();
+    receipt.tolerance = { base: 999999, solana: 999999 };
+    const result = await verifyReceipt(receipt, { trustedKids: [receipt.issuer_signature.kid] });
+    assert.equal(result.overall, 'failed');
+    assert.ok(result.claim_mismatches.some((row) => row.field === 'tolerance'));
+    assert.deepEqual(result.head_binding.tolerance, tolerance);
+    assert.notDeepEqual(result.head_binding.tolerance, receipt.tolerance);
+  });
+
+  test('a tampered outer head hash fails', async () => {
+    const receipt = envelope();
+    receipt.tree_head_hash = 'ff'.repeat(32);
+    const result = await verifyReceipt(receipt, { trustedKids: [receipt.issuer_signature.kid] });
+    assert.equal(result.overall, 'failed');
+    assert.ok(result.claim_mismatches.some((row) => row.field === 'tree_head_hash'));
+    assert.equal(result.head_binding.tree_head_hash, tree_head_hash);
+  });
+
+  test('a v9 payload missing the pair fails', async () => {
+    const { tree_head_hash: _hash, tolerance: _tol, ...bare } = payload;
+    const receipt = envelope({}, bare);
+    delete receipt.tree_head_hash;
+    delete receipt.tolerance;
+    const result = await verifyReceipt(receipt, { trustedKids: [receipt.issuer_signature.kid] });
+    assert.equal(result.overall, 'failed');
+    assert.equal(result.head_binding, null);
+    assert.ok(result.errors.some((line) => /tree_head_hash and tolerance/.test(line)));
+  });
+
+  test('a signed head hash that does not match the supplied head fails', async () => {
+    const receipt = envelope();
+    const result = await verifyReceipt(receipt, {
+      trustedKids: [receipt.issuer_signature.kid],
+      head: { root: 'cd'.repeat(32) },
+    });
+    assert.equal(result.overall, 'failed');
+    assert.ok(result.errors.some((line) => /tree_head_hash/.test(line)));
+    assert.equal(result.head_binding.tree_head_hash, tree_head_hash);
+  });
+
+  test('a v8 receipt without the pair still verifies', async () => {
+    const legacy = {
+      ...payload,
+      payload_version: 8,
+      task_id: 'chit-v8-still',
+    };
+    delete legacy.tree_head_hash;
+    delete legacy.tolerance;
+    const receipt = envelope({}, legacy);
+    delete receipt.tree_head_hash;
+    delete receipt.tolerance;
+    const result = await verifyReceipt(receipt, { trustedKids: [receipt.issuer_signature.kid] });
+    assert.equal(result.overall, 'verified', result.errors.join('; '));
+    assert.equal(result.issuer_signature.payload.payload_version, 8);
+    assert.equal(result.head_binding, null);
+  });
+});

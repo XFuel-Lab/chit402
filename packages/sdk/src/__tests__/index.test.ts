@@ -12,6 +12,7 @@ import {
   verifyReceiptEcdsa,
   verifyReceiptEcdsaWithJwks,
   canonicalReceiptPayload,
+  readSignedHeadBinding,
   type TaskRequestResponse,
   type TaskStatusResponse,
   type ProofResponse,
@@ -970,6 +971,53 @@ describe('ECDSA Receipt Verification', () => {
       expect(parsed[8]).toBe('6');
       expect(parsed).not.toContain(50);
       expect(parsed).not.toContain('1990');
+    });
+
+    it('reads v9 head binding from verified claims and rejects a tampered outer copy', () => {
+      const claims = {
+        payload_version: 9,
+        tree_head_hash: 'ab'.repeat(32),
+        tolerance: { base: 300, solana: 150 },
+      };
+      const receipt = {
+        tree_head_hash: claims.tree_head_hash,
+        tolerance: claims.tolerance,
+      };
+      const ok = readSignedHeadBinding(receipt, claims);
+      expect(ok.ok).toBe(true);
+      expect(ok.tree_head_hash).toBe(claims.tree_head_hash);
+      expect(ok.tolerance).toEqual(claims.tolerance);
+
+      const tamperedTol = readSignedHeadBinding(
+        { ...receipt, tolerance: { base: 1, solana: 1 } },
+        claims,
+      );
+      expect(tamperedTol.ok).toBe(false);
+      expect(tamperedTol.reason).toBe('head_binding_mismatch');
+      expect(tamperedTol.field).toBe('tolerance');
+      expect(tamperedTol.tolerance).toEqual(claims.tolerance);
+
+      const tamperedHash = readSignedHeadBinding(
+        { ...receipt, tree_head_hash: 'ff'.repeat(32) },
+        claims,
+      );
+      expect(tamperedHash.ok).toBe(false);
+      expect(tamperedHash.field).toBe('tree_head_hash');
+      expect(tamperedHash.tree_head_hash).toBe(claims.tree_head_hash);
+
+      const unverified = readSignedHeadBinding(
+        { tree_head_hash: 'ff'.repeat(32), tolerance: { base: 1, solana: 1 } },
+        null,
+      );
+      expect(unverified.ok).toBe(false);
+      expect(unverified.reason).toBe('unverified');
+      expect(unverified.tree_head_hash).toBeNull();
+      expect(unverified.tolerance).toBeNull();
+
+      const legacy = readSignedHeadBinding(receipt, { payload_version: 8 });
+      expect(legacy.ok).toBe(true);
+      expect(legacy.legacy).toBe(true);
+      expect(legacy.tree_head_hash).toBeNull();
     });
 
     it('uses null for missing fields', () => {

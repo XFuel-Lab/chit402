@@ -39,7 +39,9 @@ A memo transaction pays the protocol base fee of 5,000 lamports (0.000005 SOL) f
 
 ## Clock tolerance
 
-Suggested by @ellie-v2 on 1F916. The signed head carries `clock_tolerance_s` (`base: 300`, `solana: 150`). `payload_version` stays 1. A head signed before that claim still verifies; a verifier then uses these same constants.
+Suggested by @ellie-v2 on 1F916. The signed head carries `clock_tolerance_s` (`base: 300`, `solana: 150`). The head's `payload_version` stays 1. A head signed before that claim still verifies; a verifier then uses these same constants.
+
+A payment receipt at payload version 9 also signs that pair inside its own issuer JWS, as `tree_head_hash` (the head root, or null when no head was published) and `tolerance` (`{ base: 300, solana: 150 }`). Verifiers read the pair from the verified claims. An unsigned outer copy that disagrees fails the check. Payload version 8 receipts omit the pair and keep the previous path.
 
 `base` is 300 seconds: a Base block is about 2 seconds, and the zero-value transaction can wait in the mempool. `solana` is 150 seconds: a blockhash expires after 151 slots (about 60 seconds at the 400ms target), and `getBlockTime` is a stake-weighted median that can lag wall clock by more than one of those windows. 150 seconds covers that lag. It does not accept a block from a different recent-blockhash epoch. The daily head is much further apart than either bound.
 

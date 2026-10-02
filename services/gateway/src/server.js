@@ -442,9 +442,13 @@ against the JWKS. No need to reconstruct the canonical payload.
 **Caller binding**: When payer_wallet, agent_pubkey, or api_key_hash are known,
 they are included in caller_binding and signed. Tampering fails verification.
 **claim_id**: new receipts sign the book agent_id as claim_id inside the same
-JWS (payload version stays 8; the HMAC array does not include it). A receipt
-that carries claim_id and a payment.ref with claim_id null fails verification.
-Older v8 receipts that omit the key still verify (claim_id: not_present_legacy).
+JWS. The HMAC array does not include it. A receipt that carries claim_id and a
+payment.ref with claim_id null fails verification. Older v8 receipts that omit
+the key still verify (claim_id: not_present_legacy). The book seat is shared
+across receipts. A one-shot settlement claim closes once (claim_already_settled).
+**Head binding**: payload version 9 signs tree_head_hash and tolerance inside
+the JWS. v8 receipts omit that pair and still verify. Verifiers read the pair
+from the verified claims. An unsigned outer copy that disagrees fails.
 Lanes without a payment JWS (foreign ingest, Nano, board stamp, ingest stamp)
 sign book_id and payment_ref together on book_chain payload version 4. The
 ingest stamp tx is its own book row.

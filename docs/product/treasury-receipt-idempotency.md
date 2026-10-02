@@ -29,6 +29,19 @@ and `replay_of` is the first task id — not the replay's own id.
 Cross-task reuse of the same `payment.ref` still returns **409** `duplicate_ref`
 (not idempotent replay).
 
+## Single-use claim close
+
+A settlement `claim_id` moves from open to settled once. The commit is a single
+critical section (in-process queue, plus an atomic file rename when the ledger
+is persisted). A second receipt with a different task or payment returns
+`claim_already_settled` and does not append. Replaying the same `task_id` and
+`payment.ref` returns the existing row.
+
+The book seat signed as `claim_id` is the agent id. Every receipt in that book
+names the same seat, so a second spend is not a second close. Pass
+`singleUseClaim: true` to close a claim id even when it equals the seat.
+`singleUseClaim: false` never closes.
+
 ## Path rotation
 
 `POST /v1/agents/:agent_id/book/rotate` issues a new possession `session`. The

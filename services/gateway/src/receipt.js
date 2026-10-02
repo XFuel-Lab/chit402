@@ -29,7 +29,12 @@ import { tier2ProofUnits, internalSettlementAccounting } from './pricing.js';
 import { renderCoverageSection } from './export-coverage.js';
 import { renderBookSeqSection } from './book-seq.js';
 import { renderSupersessionSection } from './supersession-fork.js';
-import { renderInclusionSection } from './receipt-merkle.js';
+import { renderInclusionSection, getReceiptMerkleTree } from './receipt-merkle.js';
+import {
+  headBindingClaims,
+  headBindingVerdict,
+  outerHeadDisagrees,
+} from './receipt-head-binding.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -147,9 +152,12 @@ export function buildJwksUri(baseUrl = '') {
 /**
  * Current JWS payload version for newly issued receipts.
  * v8 signs the on-chain settled amount and an internal accounting block.
- * Payload versions <= 7 keep the historical net/fee split and still verify.
+ * v9 adds `tree_head_hash` and `tolerance` inside the same JWS. The HMAC
+ * array stays the v8 field list. Payload versions <= 7 keep the historical
+ * net/fee split and still verify. v8 receipts that omit the head pair still
+ * verify.
  */
-export const RECEIPT_PAYLOAD_VERSION = 8;
+export const RECEIPT_PAYLOAD_VERSION = 9;
 
 /** v8 canonical HMAC field order. Lockstep with packages/sdk and packages/verify. */
 const CANONICAL_V8_FIELDS = [
@@ -914,6 +922,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     fulfillment,
     issuance_commitment: view.issuance_commitment ?? view.meta?.issuanceCommitment ?? null,
     dispute_window: view.dispute_window ?? view.meta?.disputeWindow ?? null,
+    ...headBindingClaims(treeHeadHashForClaims(view)),
     payload_version: RECEIPT_PAYLOAD_VERSION,
     ...(openRouterSignedClaim(view) ? { openrouter: openRouterSignedClaim(view) } : {}),
   };
@@ -1092,6 +1101,14 @@ export function canonicalPayloadVersion(receipt, view = null) {
   return 7;
 }
 
+function treeHeadHashForClaims(view) {
+  if (view && Object.prototype.hasOwnProperty.call(view, 'tree_head_hash')) {
+    return view.tree_head_hash ?? null;
+  }
+  const head = getReceiptMerkleTree().latestHead();
+  return head?.root ?? null;
+}
+
 function canonicalFieldsV7(view) {
   return [
     view.task_id,
@@ -1170,6 +1187,7 @@ function signReceiptPayload(receipt, secret, { role = 'attestor' } = {}) {
   ];
   return {
     alg: 'HMAC-SHA256',
+    // JWS payload version can be 9. The HMAC array is still the v8 list.
     payload_version: version >= 8 ? 8 : 5,
     value: `sha256=${value}`,
     role,
@@ -2104,6 +2122,13 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   if (signedClaims && Object.prototype.hasOwnProperty.call(signedClaims, 'claim_id')) {
     envelope.claim_id = signedClaims.claim_id ?? null;
   }
+  // Display copies of the v9 head binding. Verifiers read the JWS, not these.
+  if (signedClaims && Object.prototype.hasOwnProperty.call(signedClaims, 'tree_head_hash')) {
+    envelope.tree_head_hash = signedClaims.tree_head_hash ?? null;
+  }
+  if (signedClaims && Object.prototype.hasOwnProperty.call(signedClaims, 'tolerance')) {
+    envelope.tolerance = signedClaims.tolerance ?? null;
+  }
 
   return envelope;
 }
@@ -2410,6 +2435,14 @@ function htmlTaskIdMatches(receipt, payload) {
  * thumbprint is pinned. An embedded key that merely verifies the bytes is
  * `key untrusted`. Never throws.
  */
+/** v9 payloads must carry the head pair, and the outer copy must match. */
+function headBindingRefusal(receipt, payload) {
+  const verdict = headBindingVerdict(payload);
+  if (verdict === 'missing') return 'head_binding_missing';
+  if (verdict === 'ok' && outerHeadDisagrees(receipt, payload)) return 'head_binding_mismatch';
+  return null;
+}
+
 /** claim_id-era payloads with a tx and no seat fail. A missing key is legacy. */
 function claimIdRefusal(payload) {
   if (!payload || typeof payload !== 'object') return null;
@@ -2434,6 +2467,8 @@ export function verifyIssuerForHtml(receipt) {
       }
       const refused = claimIdRefusal(jwksResult.payload);
       if (refused) return { verified: false, reason: refused, pinned, trust: 'jwks' };
+      const unbound = headBindingRefusal(receipt, jwksResult.payload);
+      if (unbound) return { verified: false, reason: unbound, pinned, trust: 'jwks' };
       return { verified: true, reason: 'verified', pinned, trust: 'jwks' };
     }
 
@@ -2448,6 +2483,8 @@ export function verifyIssuerForHtml(receipt) {
       }
       const refused = claimIdRefusal(pinResult.payload);
       if (refused) return { verified: false, reason: refused, pinned: true, trust: 'pinned_kid' };
+      const unbound = headBindingRefusal(receipt, pinResult.payload);
+      if (unbound) return { verified: false, reason: unbound, pinned: true, trust: 'pinned_kid' };
       return { verified: true, reason: 'verified', pinned: true, trust: 'pinned_kid' };
     }
 

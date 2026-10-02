@@ -66,6 +66,11 @@ import {
   jwksHostAllowed,
 } from './jws.js';
 import {
+  headBindingVerdict,
+  outerHeadDisagrees,
+  signedHeadBinding,
+} from './head-binding.js';
+import {
   receiptLaneFromVerification,
   type ReceiptLane,
   type ReceiptTreeHead,
@@ -212,6 +217,13 @@ export interface XFuelReceipt {
   } | null;
   /** Book agent_id. Present on claim_id-era JWS payloads. Absent on older v8 receipts. */
   claim_id?: string | null;
+  /**
+   * v9. Transparency-log head hash inside the issuer JWS. The outer copy is
+   * display only. Absent on v8 and earlier.
+   */
+  tree_head_hash?: string | null;
+  /** v9. Clock tolerance bound inside the issuer JWS. Absent on v8 and earlier. */
+  tolerance?: { base?: number; solana?: number } | null;
   /** Append position. Unsigned relative to the payment JWS; signed inside book_chain. */
   book_seq?: number | null;
   book_chain?: { seq?: number | null; row_hash?: string | null } | null;
@@ -325,6 +337,15 @@ export interface ReceiptVerification {
    * `refused` — claim_id-era payload, payment.ref set, claim_id null.
    */
   claim_id: 'not_present_legacy' | 'ok' | 'refused';
+  /**
+   * v9 head binding from verified claims only. Null when the signature is not
+   * trusted, when the payload is v8 or earlier, or when the pair is missing.
+   * Never copied from the unsigned outer fields.
+   */
+  head_binding: {
+    tree_head_hash: string | null;
+    tolerance: unknown;
+  } | null;
   /**
    * Unsigned refusal decision beside book_seq. Not part of the payment JWS.
    * freeze is true only for an unsettled receipt-lane row whose anchor changed
@@ -1047,6 +1068,20 @@ export function diffOuterClaims(receipt: XFuelReceipt, claims: Record<string, un
       signed: claimString(spec.signed(claims)),
     });
   }
+  // v9 head pair. Compared when the outer key is present, including a null
+  // signed hash against a filled-in outer copy. v8 claims skip this.
+  if (headBindingVerdict(claims) === 'ok') {
+    const disagree = outerHeadDisagrees(receipt, claims);
+    if (disagree) {
+      const outerValue = disagree === 'tree_head_hash' ? receipt.tree_head_hash : receipt.tolerance;
+      const signedValue = disagree === 'tree_head_hash' ? claims.tree_head_hash : claims.tolerance;
+      mismatches.push({
+        field: disagree,
+        outer: outerValue == null ? null : JSON.stringify(outerValue),
+        signed: signedValue == null ? null : JSON.stringify(signedValue),
+      });
+    }
+  }
   return mismatches;
 }
 
@@ -1294,6 +1329,20 @@ export async function verifyReceipt(
     errors.push('payment.ref is set and claim_id is null');
   }
 
+  const headVerdict = headBindingVerdict(issuer_signature.valid ? verifiedClaims : null);
+  const headMissing = headVerdict === 'missing';
+  if (headMissing) {
+    errors.push('payload v9 requires tree_head_hash and tolerance inside signed claims');
+  }
+  const signedBinding = headVerdict === 'ok' ? signedHeadBinding(verifiedClaims) : null;
+  let headMismatch = false;
+  if (signedBinding && options.head?.root && signedBinding.tree_head_hash) {
+    if (String(signedBinding.tree_head_hash) !== String(options.head.root)) {
+      headMismatch = true;
+      errors.push('tree_head_hash does not match the tree head');
+    }
+  }
+
   let binding: BindingVerification;
   if (receipt.issuer_signature?.jws) {
     if (verifiedClaims) {
@@ -1420,7 +1469,7 @@ export async function verifyReceipt(
   const signatureUnchecked = hasIssuerSig && !issuer_signature.checked;
 
   let overall: 'verified' | 'partial' | 'failed';
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused) {
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
@@ -1469,6 +1518,9 @@ export async function verifyReceipt(
     tx: facts.tx,
     claim_mismatches,
     claim_id,
+    head_binding: signedBinding
+      ? { tree_head_hash: signedBinding.tree_head_hash, tolerance: signedBinding.tolerance }
+      : null,
     receipt_lane,
     overall,
     errors,
@@ -1504,6 +1556,15 @@ export {
   type AnchorIdentity,
   type ReceiptTreeHead,
 } from './receipt-lane.js';
+
+export {
+  headBindingVerdict,
+  signedHeadBinding,
+  outerHeadDisagrees,
+  HEAD_BINDING_PAYLOAD_VERSION,
+  type HeadBindingVerdict,
+  type SignedHeadBinding,
+} from './head-binding.js';
 
 export {
   verifyAnchoredRoot,

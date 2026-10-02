@@ -34,6 +34,8 @@ import {
   receiptTimestampSeconds,
 } from '../src/receipt-anchor-clock.js';
 import { leafHash, verifyInclusion, verifyTreeHead } from '../src/receipt-merkle.js';
+import { verifyJws } from '../src/issuer-key.js';
+import { verifyReceiptHeadBinding, HEAD_BINDING_PAYLOAD_VERSION } from '../src/receipt-head-binding.js';
 
 /**
  * HMAC payload version. <= 7 uses the historical fee-split list.
@@ -266,6 +268,36 @@ async function runCli(argv) {
     }
   }
 
+  const stampedVersion = Number(receipt?.issuer_signature?.payload_version);
+  const outerHasBinding = !!receipt && (
+    Object.prototype.hasOwnProperty.call(receipt, 'tree_head_hash')
+    || Object.prototype.hasOwnProperty.call(receipt, 'tolerance')
+  );
+  let bindingFailed = false;
+  let receiptBinding = null;
+  if (
+    (Number.isFinite(stampedVersion) && stampedVersion >= HEAD_BINDING_PAYLOAD_VERSION)
+    || outerHasBinding
+  ) {
+    const binding = verifyReceiptHeadBinding(receipt, (jws) => {
+      const jwk = receipt?.issuer_signature?.issuer_jwk;
+      if (!jwk) return { valid: false, reason: 'no_issuer_jwk' };
+      return verifyJws(jws, jwk);
+    });
+    if (!binding.ok) {
+      bindingFailed = true;
+      console.log(`✗ HEAD BINDING — ${binding.reason}${binding.field ? ` (${binding.field})` : ''}`);
+      receiptBinding = {
+        verdict: 'missing',
+        reason: binding.reason,
+        field: binding.field || null,
+      };
+    } else if (binding.binding) {
+      receiptBinding = binding.binding;
+      console.log(`✓ HEAD BINDING — tree_head_hash ${receiptBinding.tree_head_hash || 'none'} from signed claims`);
+    }
+  }
+
   let clockFailed = false;
   if (head || args.sawRpc) {
     const verified = head ? verifyTreeHead(head, jwksFor(head)) : null;
@@ -287,12 +319,13 @@ async function runCli(argv) {
       solanaRpcUrl: args.solanaRpcUrl,
       receiptTs: receiptTimestampSeconds(receipt),
       proven: args.sawRpc ? proof.proven : null,
+      receiptBinding,
     });
     console.log(formatAnchorClock(clock));
     clockFailed = clock.status === 'failed';
   }
 
-  if (!result.valid || clockFailed) return 1;
+  if (!result.valid || clockFailed || bindingFailed) return 1;
   return 0;
 }
 

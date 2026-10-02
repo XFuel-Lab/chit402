@@ -305,6 +305,12 @@ export async function verifyAnchorClock({
   receiptTs = null,
   proven = null,
   call = jsonRpc,
+  /**
+   * v9 receipt binding from verified JWS claims: `{ verdict, tree_head_hash, tolerance }`.
+   * The clock bound and the head hash are taken from this object. An unsigned
+   * outer copy is not an argument.
+   */
+  receiptBinding = null,
 } = {}) {
   const skipped = (reason, extra = {}) => ({
     status: 'skipped',
@@ -315,6 +321,44 @@ export async function verifyAnchorClock({
     receipt: { status: 'skipped', reason, detail: null },
     ...extra,
   });
+
+  if (receiptBinding?.verdict === 'missing' || receiptBinding?.reason === 'head_binding_missing') {
+    return {
+      status: 'failed',
+      reason: 'head_binding_missing',
+      detail: 'payload v9 requires tree_head_hash and tolerance inside signed claims',
+      published_at: head?.published_at ?? null,
+      chains: [],
+      receipt: { status: 'failed', reason: 'head_binding_missing', detail: null },
+    };
+  }
+  if (receiptBinding?.reason === 'head_binding_mismatch') {
+    return {
+      status: 'failed',
+      reason: 'head_binding_mismatch',
+      detail: receiptBinding.field
+        ? `unsigned ${receiptBinding.field} disagrees with signed claims`
+        : 'unsigned head binding disagrees with signed claims',
+      published_at: head?.published_at ?? null,
+      chains: [],
+      receipt: { status: 'failed', reason: 'head_binding_mismatch', detail: null },
+    };
+  }
+  if (
+    receiptBinding?.verdict === 'ok'
+    && receiptBinding.tree_head_hash
+    && head?.root
+    && String(receiptBinding.tree_head_hash) !== String(head.root)
+  ) {
+    return {
+      status: 'failed',
+      reason: 'tree_head_mismatch',
+      detail: 'signed tree_head_hash does not match this head',
+      published_at: head?.published_at ?? null,
+      chains: [],
+      receipt: { status: 'failed', reason: 'tree_head_mismatch', detail: null },
+    };
+  }
 
   if (!head) return skipped('no_head');
   if (!enabled) return skipped('no_rpc');
@@ -330,7 +374,10 @@ export async function verifyAnchorClock({
   }
 
   const publishedAt = signedPayload?.published_at ?? head.published_at ?? null;
-  const signedMap = signedPayload?.clock_tolerance_s ?? null;
+  // v9: the receipt's verified tolerance. Older receipts keep the head's claim.
+  const signedMap = receiptBinding?.verdict === 'ok'
+    ? (receiptBinding.tolerance ?? null)
+    : (signedPayload?.clock_tolerance_s ?? null);
   const sides = anchorSides(head);
   const chains = [];
 

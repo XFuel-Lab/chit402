@@ -16,6 +16,13 @@ import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
 import { actOf } from './book-act.js';
 import { refusalAnchorOrUnavailable } from './refusal-anchor.js';
 import { summarizeSupersession, supersessionForRow } from './supersession-fork.js';
+import {
+  ClaimSettlementStore,
+  shouldCloseClaim,
+  CLAIM_ALREADY_SETTLED,
+} from './claim-settlement.js';
+
+export { CLAIM_ALREADY_SETTLED };
 
 /** Optional async hook when a new book row is indexed (not on load/replay). */
 let bookRowWrittenHook = null;
@@ -384,6 +391,9 @@ export class UsageSettledLedger {
     this.entries = [];
     this.byRef = new Map();
     this.byTask = new Map();
+    this.claims = new ClaimSettlementStore({
+      file: this.dir ? path.join(this.dir, 'claim-settlements.json') : null,
+    });
     /** Next seq to assign, per agent_id. */
     this._nextSeq = new Map();
     /** Last row hash per agent_id. */
@@ -1446,6 +1456,9 @@ export function markRefundOwed(ledger, { taskId, amount = null, payer = null, pa
  * and it promotes the row to collected so a finished Chit payment can be cited.
  * `noteReplay: false` skips another replay_events entry when this request's
  * settle write already recorded one.
+ * `singleUseClaim: true` closes `receipt.claim_id` once. A different receipt
+ * for that id returns `claim_already_settled`. The same task and payment ref
+ * stays on the idempotent path above and returns the existing row.
  */
 export function recordCollectedSpend(receipt, {
   ledger,
@@ -1457,6 +1470,7 @@ export function recordCollectedSpend(receipt, {
   attemptIndex = null,
   closeSettle = false,
   noteReplay = true,
+  singleUseClaim = undefined,
 } = {}) {
   if (!ledger || !registry || typeof registry.allocate !== 'function') {
     return { ok: false, reason: 'ledger and registry.allocate required', code: 'misconfigured' };
@@ -1525,6 +1539,22 @@ export function recordCollectedSpend(receipt, {
       taskId: receipt.task_id,
       paymentRef: receipt.payment.ref,
     });
+  }
+  if (shouldCloseClaim(receipt, identity.agent_id, singleUseClaim) && ledger.claims) {
+    const closed = ledger.claims.settleSync({
+      claimId: receipt.claim_id,
+      taskId: receipt.task_id,
+      paymentRef: receipt.payment.ref,
+      receipt,
+    });
+    if (!closed.ok) {
+      return {
+        ok: false,
+        reason: closed.reason,
+        code: closed.code,
+        receipt: closed.receipt ?? null,
+      };
+    }
   }
   const credited = ledger.append(receipt, {
     payer,

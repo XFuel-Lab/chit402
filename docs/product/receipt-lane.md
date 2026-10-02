@@ -4,7 +4,7 @@ A stranger deciding whether to freeze a book row needs three facts beside `book_
 
 Comment [88596](https://1f916.ai/post/6579#comment-88596) freezes the ordering as `seq + settled_by + (anchor_changed AND not settled)` and states its boundary: complete over registry marks, blind to payments the registry never joined. A binding past expiry with no registry marks is `unverifiable_from_registry`, not unpaid. Binding 209 is that shape. Binding 468 is past expiry and `settled_by: observed_transfer`, so it stays settled.
 
-The object is `receipt_lane` (`chit402.receipt_lane.v1`). It is **unsigned**. It is not a claim in the payment JWS and not a claim in `chit402.book_seq`. Payment `payload_version` stays 8. Book-seq `payload_version` stays 2 (3 when `authority` is present). An older signature still verifies. `xfuel-verify` recomputes `freeze` and does not trust a stamped `freeze` bit. `freeze` does not change the signature exit code.
+The object is `receipt_lane` (`chit402.receipt_lane.v1`). It is **unsigned**. It is not a claim in the payment JWS and not a claim in `chit402.book_seq`. The lane does not change the payment payload version (current receipts are v9; v8 still verifies). Book-seq `payload_version` stays 2 (3 when `authority` is present). An older signature still verifies. `xfuel-verify` recomputes `freeze` and does not trust a stamped `freeze` bit. `freeze` does not change the signature exit code.
 
 ## Fields
 
