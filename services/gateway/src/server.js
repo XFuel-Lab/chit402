@@ -70,6 +70,7 @@ import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger, setBookRowWrittenHook, setReceiptBoundHook } from './usage-settled.js';
 import { peekRefusalAnchor } from './refusal-anchor.js';
+import { withRefusal, presentRefusal, renderRefusalHtml, renderRefusalNotFound } from './refusal-receipt.js';
 import { getReceiptMerkleTree } from './receipt-merkle.js';
 import { receiptLaneForEntry } from './receipt-lane.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
@@ -324,6 +325,7 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 
 - Issuer trust (pin JWKS + kid): https://www.chit402.com/trust
 - Live receipt: https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e
+- Signed refusal (schema chit402.refusal.v1): GET /refusal/:refusal_id — public, no auth, ?format=json. Same issuer ES256 key as receipts. Verify against /.well-known/jwks.json or xfuel-verify.
 - Thread: https://x.com/chit402/status/2096153417588588555
 - Chit in 15 lines: https://www.chit402.com/docs/chit-in-15-lines
 
@@ -363,6 +365,7 @@ POST /v1/chat/completions is bait. A holder can prove: lineage, policy, assignme
 - GET|POST /v1/agents/:agent_id/book : last-N collected spend + budget Y / remaining. Possession-gated.
 - GET /v1/agents/:agent_id/book/lineage/:task_id : walk A→B→inference. A2A disputes need this.
 - GET|POST /v1/agents/:agent_id/book/policy : caps as rows. daily_cap, hourly_cap, model_allowlist, kill_switch, require_payment_ref, tier2_above, approval_ttl, risk_tiers. Live policy_blocked rows appear on the book when a cap trips mid-burn (no USDC charge).
+- Signed refusal: a policy or cap refusal (policy_blocked, budget_exhausted, approval_ttl_expired) returns schema chit402.refusal.v1 in the response and at GET /refusal/:refusal_id (public, no auth, ?format=json). ES256 JWS from the same issuer key as a receipt. It signs chain_id, the Base anchor (block number, block hash, and state_root when the RPC returned one, or status UNAVAILABLE), refusal_code, nonce, timestamp, agent/book id, requested amount when known, and the policy_blocked row seq. charged is false. It proves the issuer refused, at that anchor, for that code. It does not prove a payment, that the block still stands, or that the rule was the correct one. It is not a payment receipt. xfuel-verify accepts this schema and does not treat it as spend. Docs: docs/product/refusal-receipt.md
 - Intent grouping: pass X-XFuel-Intent (or body intent_id) + X-XFuel-Attempt on chat/completions so retries share one intent bill.
 - GET|POST /v1/agents/:agent_id/book/export : possession-gated CSV / JSON audit pack / print HTML. format=csv|json|html.
 - GET|POST /v1/agents/:agent_id/book/assign : grant read/collect of a slice to another owner.
@@ -999,16 +1002,24 @@ export function createApp() {
     if (check.allowed) return check;
 
     const taskId = `policy-sa-${crypto.randomBytes(8).toString('hex')}`;
+    let refusalEntry = null;
     if (usageSettled && typeof usageSettled.recordPolicyBlocked === 'function') {
-      usageSettled.recordPolicyBlocked({
+      const recorded = usageSettled.recordPolicyBlocked({
         agentId: identity.agent_id,
         taskId,
         policyCode: check.code || 'approval_ttl_expired',
         reason: check.reason || 'SessionAct approval expired',
         anchor: peekRefusalAnchor(),
       });
+      if (recorded?.ok) refusalEntry = recorded.entry;
     }
-    return { ...check, allowed: false, agent_id: identity.agent_id, task_id: taskId };
+    return {
+      ...check,
+      allowed: false,
+      agent_id: identity.agent_id,
+      task_id: taskId,
+      refusal_entry: refusalEntry,
+    };
   }
 
   function recordSessionActApproval(accepted) {
@@ -2516,6 +2527,43 @@ export function createApp() {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  // GET /refusal/:refusalId — PUBLIC signed refusal (chit402.refusal.v1).
+  // No auth. No charge. JSON via ?format=json, .json, or Accept: application/json.
+  app.get('/refusal/:refusalId', rateLimit, (req, res) => {
+    // HTML and JSON share this URL. Append Accept to Vary so a cache
+    // cannot serve one representation to a client that asked for the other.
+    // res.vary keeps the CORS middleware's Vary: Origin.
+    res.vary('Accept');
+    try {
+      let raw = req.params.refusalId;
+      const jsonSuffix = raw && raw.endsWith('.json');
+      if (jsonSuffix) raw = raw.slice(0, -5);
+      const fmt = String(req.query.format || '').toLowerCase();
+      const wantsJson = jsonSuffix
+        || fmt === 'json'
+        || req.accepts(['html', 'json']) === 'json';
+      const row = usageSettled.findByRefusal(raw);
+      if (!row?.refusal) {
+        if (wantsJson) {
+          return res.status(404).json({
+            error: 'not_found',
+            message: `No refusal found for ${raw}`,
+            refusal_id: raw,
+          });
+        }
+        return res.status(404).type('html').send(renderRefusalNotFound(raw));
+      }
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      const doc = presentRefusal(row.refusal, baseUrl);
+      res.set('Cache-Control', 'public, max-age=300');
+      if (wantsJson) return res.json(doc);
+      return res.type('html').send(renderRefusalHtml(doc));
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /refusal/:refusalId error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
   // GET /receipt/:taskId — PUBLIC, no-auth verifiable receipt.
   //   • HTML by default (clean, shareable page for a browser / link unfurl)
   //   • JSON via `?format=json`, `.json` suffix, or `Accept: application/json` (for agents)
@@ -3004,7 +3052,7 @@ export function createApp() {
           delegationHash: hash,
         });
         if (!approvalGate.allowed) {
-          return res.status(403).json({
+          return res.status(403).json(withRefusal({
             error: 'policy_blocked',
             type: 'policy_blocked',
             code: approvalGate.code || 'approval_ttl_expired',
@@ -3012,7 +3060,7 @@ export function createApp() {
             message: approvalGate.reason,
             agent_id: approvalGate.agent_id,
             task_id: approvalGate.task_id,
-          });
+          }, approvalGate.refusal_entry, sessionIssuerUri(req)));
         }
         const accepted = proveKeyFromRequest(req, hash, {
           action: SESSION_ACT_ACTIONS.HANDOFF,
@@ -3179,7 +3227,7 @@ export function createApp() {
       const actionHint = action || req.body?.action;
       const approvalGate = gateSessionActApproval(req, { action: actionHint, delegationHash: hash });
       if (!approvalGate.allowed) {
-        return res.status(403).json({
+        return res.status(403).json(withRefusal({
           error: 'policy_blocked',
           type: 'policy_blocked',
           code: approvalGate.code || 'approval_ttl_expired',
@@ -3188,7 +3236,7 @@ export function createApp() {
           agent_id: approvalGate.agent_id,
           task_id: approvalGate.task_id,
           ...sessionActTypesHint(req),
-        });
+        }, approvalGate.refusal_entry, sessionIssuerUri(req)));
       }
       const accepted = proveKeyFromRequest(req, hash);
       if (!accepted.ok) {

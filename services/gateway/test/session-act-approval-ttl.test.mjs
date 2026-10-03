@@ -6,10 +6,16 @@
  */
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Wallet } from 'ethers';
 
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xfuel-ttl-'));
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret';
+process.env.TASK_STORE_PERSIST = 'false';
+process.env.TASK_STORE_DIR = path.join(tmp, 'tasks');
 
 const {
   buildAuthorizeTypedData,
@@ -275,6 +281,9 @@ describe('SessionAct approval_ttl HTTP', () => {
     assert.equal(body.error, 'policy_blocked');
     assert.equal(body.code, 'approval_ttl_expired');
     assert.ok(body.task_id);
+    assert.equal(body.refusal?.schema, 'chit402.refusal.v1');
+    assert.equal(body.refusal?.refusal_code, 'approval_ttl_expired');
+    assert.equal(body.refusal?.charged, false);
 
     const bookRes = await fetch(`${base}/v1/agents/${agentId}/book`, {
       method: 'POST',

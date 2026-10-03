@@ -2,8 +2,10 @@
  * Chain anchor for a policy refusal.
  *
  * At clamp time we record the latest observed Base block (chain id, number,
- * hash). If the RPC is missing or fails, the refusal still appends and the
- * anchor status is UNAVAILABLE. A refusal must not depend on the chain.
+ * hash, and state root when the RPC returns one). If the RPC is missing or
+ * fails, the refusal still appends and the anchor status is UNAVAILABLE.
+ * A refusal must not depend on the chain. state_root is null when it was
+ * not on the block; it is never invented.
  */
 import logger from './logger.js';
 
@@ -12,6 +14,12 @@ const DEFAULT_TIMEOUT_MS = 800;
 
 let cached = null;
 
+function stateRootOf(block) {
+  const root = block?.stateRoot || block?.state_root || null;
+  if (typeof root !== 'string') return null;
+  return /^0x[0-9a-fA-F]{64}$/.test(root) ? root : null;
+}
+
 function unavailable(reason) {
   return {
     status: ANCHOR_UNAVAILABLE,
@@ -19,6 +27,7 @@ function unavailable(reason) {
     chain_id: null,
     block_number: null,
     block_hash: null,
+    state_root: null,
     observed_at: new Date().toISOString(),
     reason: reason || 'rpc_error',
   };
@@ -65,6 +74,7 @@ export async function observeBaseAnchor({ timeoutMs = DEFAULT_TIMEOUT_MS } = {})
       chain_id: chainHex != null ? Number(BigInt(chainHex)) : null,
       block_number: hexToDec(block.number),
       block_hash: String(block.hash),
+      state_root: stateRootOf(block),
       observed_at: new Date().toISOString(),
       reason: null,
     };

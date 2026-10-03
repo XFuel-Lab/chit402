@@ -238,6 +238,12 @@ export function buildBookWebhookEnvelope(entry, baseUrl, { deliveryId = null } =
     envelope.policy_code = entry.policy_code || 'policy_blocked';
     envelope.reason = entry.reason || null;
     envelope.collected = false;
+    if (entry.amount_requested != null) envelope.amount_requested = String(entry.amount_requested);
+    if (entry.refusal?.refusal_id) {
+      envelope.refusal_id = entry.refusal.refusal_id;
+      const root = baseUrl ? String(baseUrl).replace(/\/$/, '') : '';
+      envelope.refusal_verify_url = `${root}/refusal/${encodeURIComponent(entry.refusal.refusal_id)}`;
+    }
     if (entry.policy_key) envelope.policy_key = entry.policy_key;
     if (entry.spent_atomic != null) envelope.spent_atomic = String(entry.spent_atomic);
     if (entry.cap_atomic != null) envelope.cap_atomic = String(entry.cap_atomic);

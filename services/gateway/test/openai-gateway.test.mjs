@@ -88,6 +88,7 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
     '/v1/receipts/tree/head',
     '/v1/receipts/tree/consistency',
     '/v1/receipts/{task_id}/inclusion',
+    '/refusal/{refusalId}',
     '/receipt/{taskId}',
     '/receipt/by-tx',
     '/public/specimens/hemei-stranger-export.csv',
@@ -115,6 +116,25 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
   assert.match(a2a.description, /hub, model, and amount/);
 });
 
+test('GET /refusal varies on Accept and keeps CORS Origin', async () => {
+  const res = await fetch(`${base}/refusal/rfs-missing`, {
+    headers: { accept: 'application/json', origin: 'https://www.chit402.com' },
+  });
+  assert.equal(res.status, 404);
+  assert.equal(res.headers.get('access-control-allow-origin'), 'https://www.chit402.com');
+  const vary = res.headers.get('vary') ?? '';
+  assert.match(vary, /accept/i);
+  assert.match(vary, /origin/i);
+  const html = await fetch(`${base}/refusal/rfs-missing`, {
+    headers: { accept: 'text/html', origin: 'https://www.chit402.com' },
+  });
+  assert.equal(html.status, 404);
+  assert.match(html.headers.get('content-type') ?? '', /html/);
+  const htmlVary = html.headers.get('vary') ?? '';
+  assert.match(htmlVary, /accept/i);
+  assert.match(htmlVary, /origin/i);
+});
+
 test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   const res = await fetch(`${base}/llms.txt`);
   assert.equal(res.status, 200);
@@ -127,6 +147,8 @@ test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   assert.match(body, /Base mainnet/);
   assert.match(body, /USDC/);
   assert.match(body, /verify_url/);
+  assert.match(body, /chit402\.refusal\.v1/);
+  assert.match(body, /\/refusal\/:refusal_id/);
   assert.match(body, /www\.chit402\.com\/trust/);
   assert.match(body, /\/v1\/board\/posts/);
   assert.match(body, /untrusted_text/);

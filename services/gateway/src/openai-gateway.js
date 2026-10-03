@@ -55,6 +55,7 @@ import {
 } from './agent-book.js';
 import { enforcePolicy } from './book-policy.js';
 import { extractIntentMeta, resolveIntentFields } from './intent-meta.js';
+import { withRefusal } from './refusal-receipt.js';
 import { resolvePaidClaimAgent } from './claim-id.js';
 
 /**
@@ -210,6 +211,28 @@ function isPrivateSpendSession(req, registry) {
  * Shapes the body for both x402 clients (reads `accepts`) and OpenAI clients
  * (reads `error.message`).
  */
+/**
+ * Append a policy_blocked row and its signed refusal. Never throws.
+ * The paid path is not involved: this runs only after a deliberate refusal.
+ */
+async function recordSpendRefusal(ledger, fields) {
+  if (!ledger || typeof ledger.recordPolicyBlocked !== 'function') return null;
+  let anchor = null;
+  try {
+    const { observeBaseAnchor } = await import('./refusal-anchor.js');
+    anchor = await observeBaseAnchor();
+  } catch {
+    anchor = null;
+  }
+  try {
+    const recorded = ledger.recordPolicyBlocked({ ...fields, anchor });
+    return recorded?.ok ? recorded.entry : null;
+  } catch (err) {
+    logger.warn({ err: err.message }, 'refusal receipt not issued');
+    return null;
+  }
+}
+
 function sendV1PaymentRequired(res, body, headers = {}) {
   const pr = headers['PAYMENT-REQUIRED']
     || Buffer.from(JSON.stringify(body), 'utf8').toString('base64');
@@ -289,7 +312,18 @@ async function meterV1Request(req, res, {
     const spent = ledger.sumCollectedByAgent(bookable.agent_id);
     const caps = capViewOf(bookable, spent);
     if (remainingBlocksDoor(caps.remaining)) {
-      res.status(403).json({
+      const entry = await recordSpendRefusal(ledger, {
+        agentId: bookable.agent_id,
+        taskId,
+        policyCode: 'budget_exhausted',
+        reason: 'Agent budget remaining is below the hop floor',
+        model: req.body?.model || null,
+        hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
+        spentAtomic: caps.spent ?? null,
+        capAtomic: caps.cap ?? null,
+      });
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      res.status(403).json(withRefusal({
         error: {
           message: 'Agent budget remaining is below the hop floor',
           type: 'budget_exhausted',
@@ -300,7 +334,7 @@ async function meterV1Request(req, res, {
           spent: caps.spent,
           remaining: caps.remaining,
         },
-      });
+      }, entry, baseUrl));
       return { halted: true };
     }
   }
@@ -329,31 +363,23 @@ async function meterV1Request(req, res, {
     if (!policyCheck.allowed) {
       const intentMeta = extractIntentMeta(req);
       const intentFields = resolveIntentFields(intentMeta, ledger, bookable.agent_id);
-      if (ledger && typeof ledger.recordPolicyBlocked === 'function') {
-        let anchor = null;
-        try {
-          const { observeBaseAnchor } = await import('./refusal-anchor.js');
-          anchor = await observeBaseAnchor();
-        } catch {
-          anchor = null;
-        }
-        ledger.recordPolicyBlocked({
-          agentId: bookable.agent_id,
-          taskId,
-          policyCode: policyCheck.code || 'policy_blocked',
-          reason: policyCheck.reason || 'policy blocked',
-          model: req.body?.model || null,
-          hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
-          intentId: intentFields.intent_id,
-          attemptIndex: intentFields.attempt_index,
-          policyKey: policyCheck.policy_key || null,
-          spentAtomic: policyCheck.spent_atomic ?? null,
-          capAtomic: policyCheck.cap_atomic ?? null,
-          periodStart: policyCheck.period_start || null,
-          anchor,
-        });
-      }
-      res.status(403).json({
+      const entry = await recordSpendRefusal(ledger, {
+        agentId: bookable.agent_id,
+        taskId,
+        policyCode: policyCheck.code || 'policy_blocked',
+        reason: policyCheck.reason || 'policy blocked',
+        model: req.body?.model || null,
+        hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
+        intentId: intentFields.intent_id,
+        attemptIndex: intentFields.attempt_index,
+        policyKey: policyCheck.policy_key || null,
+        spentAtomic: policyCheck.spent_atomic ?? null,
+        capAtomic: policyCheck.cap_atomic ?? null,
+        periodStart: policyCheck.period_start || null,
+        amountRequested: quotedAmount,
+      });
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      res.status(403).json(withRefusal({
         error: {
           message: policyCheck.reason,
           type: 'policy_blocked',
@@ -362,7 +388,7 @@ async function meterV1Request(req, res, {
           intent_id: intentFields.intent_id,
           ...policyCheck,
         },
-      });
+      }, entry, baseUrl));
       return { halted: true };
     }
   }

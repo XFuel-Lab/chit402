@@ -307,6 +307,16 @@ describe('policy_blocked mid-burn', () => {
     assert.equal(err.error?.type, 'policy_blocked');
     assert.equal(err.error?.code, 'kill_switch');
     assert.equal(settleCount() - beforeSettle, 0, 'must not settle');
+    assert.equal(err.refusal?.schema, 'chit402.refusal.v1');
+    assert.equal(err.refusal?.refusal_code, 'kill_switch');
+    assert.equal(err.refusal?.charged, false);
+    assert.equal(err.refusal?.amount_charged, '0');
+    const refusalPath = err.refusal.verify_url.startsWith('http')
+      ? new URL(err.refusal.verify_url).pathname
+      : err.refusal.verify_url;
+    const fetched = await (await fetch(`${base}${refusalPath}?format=json`)).json();
+    assert.equal(fetched.nonce, err.refusal.nonce);
+    assert.equal(fetched.book_row.task_id, err.refusal.task_id);
 
     const book = await (await fetch(`${base}/v1/agents/${agentId}/book`, {
       method: 'POST',

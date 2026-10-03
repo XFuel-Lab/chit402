@@ -102,6 +102,8 @@ The verify page shows that object when the row sits on a book. `empty_by_policy`
 
 A `policy_blocked` row also signs `anchor` (Base chain id, block number, block hash, or `UNAVAILABLE` when the RPC cannot be read). The refusal is still recorded. See [refusal-anchor.md](./product/refusal-anchor.md).
 
+A refused spend also issues a separate document, `chit402.refusal.v1` (payload version 1). It is not a payment receipt and does not change receipt payload versions. See [refusal-receipt.md](./product/refusal-receipt.md).
+
 ## Row act
 
 `book_chain.act` is `open`, `spend`, `transfer`, `refund`, `correction`, or `refusal`. Payload version 2 of `chit402.book_seq` includes it. See [book-act.md](./product/book-act.md).
