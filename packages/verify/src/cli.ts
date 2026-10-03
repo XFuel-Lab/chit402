@@ -19,9 +19,12 @@
 import { readFileSync } from 'node:fs';
 import {
   verifyReceipt,
+  verifyRefusal,
+  isRefusalDocument,
   DEFAULT_TRUSTED_ISSUER_KIDS,
   type XFuelReceipt,
   type Jwks,
+  type RefusalDocument,
 } from './index.js';
 import {
   verifyAnchoredRoot,
@@ -37,6 +40,8 @@ xfuel-verify — Offline verification for Chit402 receipts
 
 Usage:
   xfuel-verify <receipt.json>           Verify binding locally
+  xfuel-verify <refusal.json>           Verify a chit402.refusal.v1 document
+                                        (issuer refused; not a payment)
   xfuel-verify <receipt.json> --jwks-file <jwks.json>
                                         Verify issuer signature with a JWKS file
   xfuel-verify <receipt.json> --fetch-jwks
@@ -332,6 +337,47 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   return 1;
 }
 
+function runRefusal(
+  doc: RefusalDocument,
+  args: { jwks?: Jwks; trustedKids?: readonly string[]; json: boolean; quiet: boolean },
+): number {
+  const result = verifyRefusal(doc, {
+    jwks: args.jwks,
+    trustedKids: args.trustedKids,
+  });
+  if (args.json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else if (!args.quiet || !result.valid) {
+    console.log('');
+    console.log('  Chit402 Refusal Verification');
+    console.log('  ─────────────────────────────────────────────────');
+    console.log(`  Schema:        ${result.schema}`);
+    console.log(`  Refusal ID:    ${result.refusal_id || doc.refusal_id || '—'}`);
+    console.log(`  Code:          ${result.refusal_code || doc.refusal_code || '—'}`);
+    console.log(`  Nonce:         ${result.nonce || '—'}`);
+    console.log(`  Chain:         ${result.chain_id ?? 'null'}`);
+    console.log(`  Charged:       false`);
+    console.log('');
+    console.log('  Issuer Signature');
+    console.log('  ─────────────────────────────────────────────────');
+    console.log(`  Valid:         ${result.valid ? '✓ YES' : '✗ NO'}`);
+    if (result.kid) console.log(`  Kid:           ${result.kid}`);
+    if (!result.valid && result.reason) console.log(`  Reason:        ${result.reason}`);
+    console.log('');
+    console.log('  What this proves');
+    console.log('  ─────────────────────────────────────────────────');
+    for (const line of result.proves) console.log(`  ${line}`);
+    console.log('');
+    console.log('  What this does not prove');
+    console.log('  ─────────────────────────────────────────────────');
+    for (const line of result.does_not_prove) console.log(`  ${line}`);
+    console.log('');
+    console.log(`  Overall: ${result.valid ? 'VERIFIED' : 'FAILED'}`);
+    console.log('');
+  }
+  return result.valid ? 0 : 1;
+}
+
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
   const anchorMode = args.anchorFlag
@@ -377,6 +423,10 @@ async function main(): Promise<number> {
   const trustedKids = args.noTrustedKid
     ? []
     : (args.trustedKids ?? undefined);
+
+  if (isRefusalDocument(receipt as unknown)) {
+    return runRefusal(receipt as unknown as RefusalDocument, { jwks, trustedKids, json: args.json, quiet: args.quiet });
+  }
 
   const result = await verifyReceipt(receipt, {
     jwks,

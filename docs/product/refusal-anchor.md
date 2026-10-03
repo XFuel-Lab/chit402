@@ -18,6 +18,8 @@ A synchronous caller that has not observed a block yet records `UNAVAILABLE` wit
 
 The book and the verify page show the anchor on the refusal.
 
+The same observation is copied into a standalone signed refusal, schema `chit402.refusal.v1`. That document is what a caller holds, and what `GET /refusal/:refusal_id` serves. See [refusal-receipt.md](./refusal-receipt.md). `state_root` is included when the RPC returned one.
+
 ## What this proves
 
 When `status` is `observed`, the issuer saw this block hash on this chain id at clamp time and signed that observation into the refusal row.

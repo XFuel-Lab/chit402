@@ -88,6 +88,7 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
     '/v1/receipts/tree/head',
     '/v1/receipts/tree/consistency',
     '/v1/receipts/{task_id}/inclusion',
+    '/refusal/{refusalId}',
     '/receipt/{taskId}',
     '/receipt/by-tx',
     '/public/specimens/hemei-stranger-export.csv',
@@ -127,6 +128,8 @@ test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   assert.match(body, /Base mainnet/);
   assert.match(body, /USDC/);
   assert.match(body, /verify_url/);
+  assert.match(body, /chit402\.refusal\.v1/);
+  assert.match(body, /\/refusal\/:refusal_id/);
   assert.match(body, /www\.chit402\.com\/trust/);
   assert.match(body, /\/v1\/board\/posts/);
   assert.match(body, /untrusted_text/);

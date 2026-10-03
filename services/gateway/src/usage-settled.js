@@ -15,6 +15,7 @@ import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
 import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
 import { actOf } from './book-act.js';
 import { refusalAnchorOrUnavailable } from './refusal-anchor.js';
+import { issueRefusalReceipt } from './refusal-receipt.js';
 import { summarizeSupersession, supersessionForRow } from './supersession-fork.js';
 import {
   ClaimSettlementStore,
@@ -410,6 +411,8 @@ export class UsageSettledLedger {
     this.entries = [];
     this.byRef = new Map();
     this.byTask = new Map();
+    /** refusal_id → ledger row. Public GET /refusal/:id. */
+    this.byRefusal = new Map();
     this.claims = new ClaimSettlementStore({
       file: this.dir ? path.join(this.dir, 'claim-settlements.json') : null,
     });
@@ -479,6 +482,22 @@ export class UsageSettledLedger {
     row.book_chain = signBookSeq(row);
     this._nextSeq.set(id, seq + 1);
     this._lastRowHash.set(id, row.row_hash);
+    this._issueRefusal(row);
+  }
+
+  /**
+   * Fresh policy_blocked rows get one signed refusal. A reload already has
+   * seq, so it does not mint a new nonce. Signing failure still keeps the row.
+   * @param {object} row
+   */
+  _issueRefusal(row) {
+    const blocked = row?.event === 'policy_blocked' || row?.evidence === 'policy_blocked';
+    if (!blocked || row.refusal) return;
+    try {
+      row.refusal = issueRefusalReceipt(row);
+    } catch (err) {
+      logger.warn({ err: err.message, task_id: row.task_id }, 'refusal receipt not signed');
+    }
   }
 
   /**
@@ -518,6 +537,7 @@ export class UsageSettledLedger {
     this.entries.push(row);
     if (row.payment_ref) this.byRef.set(String(row.payment_ref), row);
     if (row.task_id) this.byTask.set(String(row.task_id), row);
+    if (row.refusal?.refusal_id) this.byRefusal.set(String(row.refusal.refusal_id), row);
     if (notify) emitBookRowWritten(row);
     if (persist && this.persist) this._persistRow(row);
   }
@@ -587,6 +607,20 @@ export class UsageSettledLedger {
 
   findByTask(taskId) {
     return this.byTask.get(String(taskId)) || null;
+  }
+
+  /**
+   * Policy refusal by refusal_id, or by the policy_blocked task_id.
+   * @param {string} id
+   */
+  findByRefusal(id) {
+    const key = String(id || '').trim();
+    if (!key) return null;
+    const byId = this.byRefusal.get(key);
+    if (byId?.refusal) return byId;
+    const byTask = this.byTask.get(key);
+    if (byTask?.refusal) return byTask;
+    return null;
   }
 
   /**
@@ -842,6 +876,7 @@ export class UsageSettledLedger {
    *   spentAtomic?: string|null,
    *   capAtomic?: string|null,
    *   periodStart?: string|null,
+   *   amountRequested?: string|null,
    * }} row
    */
   recordPolicyBlocked({
@@ -858,6 +893,7 @@ export class UsageSettledLedger {
     capAtomic = null,
     periodStart = null,
     anchor = null,
+    amountRequested = null,
   }) {
     const id = Number(agentId);
     if (!Number.isInteger(id) || id < 1) {
@@ -886,6 +922,9 @@ export class UsageSettledLedger {
       reason: String(reason || 'policy blocked'),
       rail: null,
       amount: null,
+      amount_requested: amountRequested != null && String(amountRequested).trim() !== ''
+        ? String(amountRequested)
+        : null,
       collected_at: new Date().toISOString(),
       recorded_at: new Date().toISOString(),
       model: model || null,

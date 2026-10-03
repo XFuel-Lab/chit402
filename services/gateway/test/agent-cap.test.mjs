@@ -246,7 +246,7 @@ test('prepaid_ceiling: Y=2000, one $0.002 → remaining 0', () => {
   assert.equal(view.remaining, '0');
 });
 
-test('Y=2000 spent: next paid call fails closed — no second ledger row, no second payment', async () => {
+test('Y=2000 spent: next paid call fails closed — no second payment, refusal is not a charge', async () => {
   const first = await settlePaid('/v1/chat/completions');
   assert.ok(first.res.status < 500, `first settle status ${first.res.status}`);
   assert.equal(first.settles, 1);
@@ -284,13 +284,28 @@ test('Y=2000 spent: next paid call fails closed — no second ledger row, no sec
   assert.equal(err.error?.code, 'budget_exhausted');
   assert.equal(err.error?.remaining, '0');
   assert.equal(settleCount() - beforeSettle, 0, 'must not settle a second payment');
+  assert.equal(err.refusal?.schema, 'chit402.refusal.v1');
+  assert.equal(err.refusal?.charged, false);
+  assert.equal(err.refusal?.amount_charged, '0');
+  assert.equal(err.refusal?.refusal_code, 'budget_exhausted');
+  assert.equal(err.error?.verify_url, err.refusal?.verify_url);
+  const refusalPath = err.refusal.verify_url.startsWith('http')
+    ? new URL(err.refusal.verify_url).pathname
+    : err.refusal.verify_url;
+  const fetched = await (await fetch(`${base}${refusalPath}?format=json`)).json();
+  assert.equal(fetched.nonce, err.refusal.nonce);
+  assert.equal(fetched.book_row.event, 'policy_blocked');
 
   const bookAgain = await (await fetch(`${base}/v1/agents/${agentId}/book`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session }),
   })).json();
-  assert.equal(bookAgain.entries.length, entriesBefore, 'no second ledger row');
+  const refusalRow = bookAgain.entries.find((e) => e.event === 'policy_blocked');
+  assert.ok(refusalRow, 'cap refusal joins the book as policy_blocked');
+  assert.equal(refusalRow.collected, false);
+  assert.equal(refusalRow.refusal_id, err.refusal.refusal_id);
+  assert.equal(bookAgain.entries.length, entriesBefore + 1);
   assert.equal(bookAgain.spent, '2000');
 });
 

@@ -34,6 +34,11 @@ console.log(fullResult.receipt_lane.freeze); // unsigned; does not change overal
 # Local binding verification (no network required)
 npx xfuel-verify receipt.json
 
+# A signed refusal (schema chit402.refusal.v1) is not a payment.
+# The check proves the issuer refused, at the signed anchor, for that code.
+# It does not prove a payment or that the block still stands.
+npx xfuel-verify refusal.json
+
 # With on-chain nullifier check (requires network)
 npx xfuel-verify receipt.json --check-nullifier
 

@@ -2263,6 +2263,34 @@ export function buildOpenApiSpec(baseUrl = '') {
           },
         },
       },
+      '/refusal/{refusalId}': {
+        get: {
+          operationId: 'getRefusal',
+          summary: 'Public signed refusal (no auth, no charge)',
+          description:
+            'Public refusal document, schema chit402.refusal.v1. Returned when a spend is refused '
+            + 'for a policy or cap reason, and fetchable later at this URL. ES256 JWS from the same '
+            + 'issuer key as a payment receipt; verify against /.well-known/jwks.json. '
+            + 'It proves the issuer refused, at the signed anchor, for refusal_code. '
+            + 'It does not prove a payment, that the block still stands, or that the rule was the correct one. '
+            + 'charged is false. HTML by default; JSON via ?format=json or Accept: application/json.',
+          tags: ['Receipts'],
+          parameters: [
+            { name: 'refusalId', in: 'path', required: true, schema: { type: 'string' } },
+            {
+              name: 'format',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', enum: ['json'] },
+              description: 'json for the signed document. HTML is the default.',
+            },
+          ],
+          responses: {
+            200: { description: 'chit402.refusal.v1 (HTML or JSON)' },
+            404: { description: 'No refusal stored for this id' },
+          },
+        },
+      },
       '/receipt/{taskId}': {
         get: {
           operationId: 'getReceipt',

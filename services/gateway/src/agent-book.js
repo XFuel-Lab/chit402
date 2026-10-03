@@ -168,6 +168,11 @@ function rowOf(entry) {
     row.reason = entry.reason || null;
     row.collected = false;
     if (entry.anchor) row.anchor = entry.anchor;
+    if (entry.amount_requested != null) row.amount_requested = String(entry.amount_requested);
+    if (entry.refusal?.refusal_id) {
+      row.refusal_id = entry.refusal.refusal_id;
+      row.refusal_verify_path = `/refusal/${entry.refusal.refusal_id}`;
+    }
     if (entry.policy_key) row.policy_key = entry.policy_key;
     if (entry.spent_atomic != null) row.spent_atomic = String(entry.spent_atomic);
     if (entry.cap_atomic != null) row.cap_atomic = String(entry.cap_atomic);
