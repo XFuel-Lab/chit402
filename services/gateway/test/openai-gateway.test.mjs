@@ -116,6 +116,20 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
   assert.match(a2a.description, /hub, model, and amount/);
 });
 
+test('GET /refusal varies on Accept so HTML and JSON do not share a cache entry', async () => {
+  const res = await fetch(`${base}/refusal/rfs-missing`, {
+    headers: { accept: 'application/json' },
+  });
+  assert.equal(res.status, 404);
+  assert.match(res.headers.get('vary') ?? '', /accept/i);
+  const html = await fetch(`${base}/refusal/rfs-missing`, {
+    headers: { accept: 'text/html' },
+  });
+  assert.equal(html.status, 404);
+  assert.match(html.headers.get('content-type') ?? '', /html/);
+  assert.match(html.headers.get('vary') ?? '', /accept/i);
+});
+
 test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   const res = await fetch(`${base}/llms.txt`);
   assert.equal(res.status, 200);

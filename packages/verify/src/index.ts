@@ -76,7 +76,7 @@ import {
   type ReceiptLane,
   type ReceiptTreeHead,
 } from './receipt-lane.js';
-import { isRefusalDocument } from './refusal.js';
+import { isRefusalDocument, REFUSAL_SCHEMA } from './refusal.js';
 
 export {
   computePaymentCommitment,
@@ -1542,9 +1542,11 @@ export async function verifyReceipt(
     overall = 'partial';
   }
 
-  // A refusal is a different document. A valid issuer signature here must
-  // not be reported as a verified payment.
-  if (isRefusalDocument(receipt as unknown)) {
+  // A refusal is a different document. Recognition uses the signed JWS
+  // schema, not only the unsigned outer schema. A valid issuer signature
+  // here must not be reported as a verified payment.
+  const verifiedSchema = typeof verifiedClaims?.schema === 'string' ? verifiedClaims.schema : null;
+  if (verifiedSchema === REFUSAL_SCHEMA || isRefusalDocument(receipt as unknown)) {
     errors.push('refusal document is not a payment receipt');
     overall = 'failed';
   }

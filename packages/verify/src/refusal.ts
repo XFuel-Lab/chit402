@@ -99,9 +99,25 @@ export interface RefusalVerification {
   errors: string[];
 }
 
+/** Schema inside the JWS payload. Unverified; callers still check the signature. */
+export function jwsPayloadSchema(doc: unknown): string | null {
+  if (!doc || typeof doc !== 'object') return null;
+  const jws = (doc as RefusalDocument).issuer_signature?.jws;
+  if (!jws || typeof jws !== 'string') return null;
+  const payloadB64 = jws.split('.')[1];
+  if (!payloadB64) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')) as { schema?: unknown };
+    return typeof payload.schema === 'string' ? payload.schema : null;
+  } catch {
+    return null;
+  }
+}
+
 export function isRefusalDocument(doc: unknown): doc is RefusalDocument {
   if (!doc || typeof doc !== 'object') return false;
-  return (doc as { schema?: unknown }).schema === REFUSAL_SCHEMA;
+  if ((doc as { schema?: unknown }).schema === REFUSAL_SCHEMA) return true;
+  return jwsPayloadSchema(doc) === REFUSAL_SCHEMA;
 }
 
 function jwksCandidates(jwks: RefusalJwks | undefined, kid: string | undefined): Es256Jwk[] {
@@ -202,6 +218,9 @@ export function verifyRefusal(
 
   const signed = payload as unknown as RefusalDocument;
   if (signed.schema !== REFUSAL_SCHEMA) return failed('schema_mismatch', { kid });
+  // The outer schema is unsigned. A present value that disagrees with the
+  // signed schema fails. An omitted outer schema still follows the JWS.
+  if (doc.schema != null && doc.schema !== signed.schema) return failed('schema_mismatch', { kid });
   if (Number(signed.payload_version) !== REFUSAL_PAYLOAD_VERSION) {
     return failed('payload_version_mismatch', { kid });
   }

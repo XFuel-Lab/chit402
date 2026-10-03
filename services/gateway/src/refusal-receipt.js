@@ -187,6 +187,18 @@ function anchorSame(outer, signed) {
     && same(outer.state_root, signed.state_root);
 }
 
+function jwsPayloadSchema(jws) {
+  if (!jws || typeof jws !== 'string') return null;
+  const payloadB64 = jws.split('.')[1];
+  if (!payloadB64) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    return typeof payload?.schema === 'string' ? payload.schema : null;
+  } catch {
+    return null;
+  }
+}
+
 function bookRowSame(outer, signed) {
   if (!outer || !signed || typeof outer !== 'object' || typeof signed !== 'object') return false;
   return same(outer.task_id, signed.task_id)
@@ -204,17 +216,21 @@ function bookRowSame(outer, signed) {
  * @param {{ keys: object[] }|null} [jwks]
  */
 export function verifyRefusalReceipt(doc, jwks = null) {
-  if (!doc || doc.schema !== REFUSAL_SCHEMA) {
+  if (!doc || typeof doc !== 'object') {
     return { checked: false, valid: false, reason: 'not_a_refusal' };
   }
   const sig = doc.issuer_signature;
   if (!sig?.jws) return { checked: false, valid: false, reason: 'no_signature' };
+  const peeked = jwsPayloadSchema(sig.jws);
+  if (doc.schema !== REFUSAL_SCHEMA && peeked !== REFUSAL_SCHEMA) {
+    return { checked: false, valid: false, reason: 'not_a_refusal' };
+  }
   const result = verifyJwsWithJwks(sig.jws, jwks || getJwks());
   if (!result.valid) {
     return { checked: true, valid: false, reason: result.reason || 'signature_invalid', kid: sig.kid || null };
   }
   const payload = result.payload || {};
-  if (payload.schema !== REFUSAL_SCHEMA || doc.schema !== REFUSAL_SCHEMA) {
+  if (payload.schema !== REFUSAL_SCHEMA || (doc.schema != null && doc.schema !== payload.schema)) {
     return { checked: true, valid: false, reason: 'schema_mismatch', payload };
   }
   if (Number(payload.payload_version) !== REFUSAL_PAYLOAD_VERSION

@@ -193,6 +193,24 @@ test('changing refusal_code or nonce fails verification', () => {
   assert.equal(nonceSig.reason, 'signature_invalid');
 });
 
+test('dropping the outer schema still verifies the signed refusal', () => {
+  const ledger = new UsageSettledLedger();
+  const doc = {
+    ...ledger.recordPolicyBlocked({
+      agentId: 2,
+      taskId: 'blocked-outer-schema',
+      policyCode: 'kill_switch',
+      reason: 'killed',
+    }).entry.refusal,
+  };
+  delete doc.schema;
+  const result = verifyRefusalReceipt(doc);
+  assert.equal(result.valid, true);
+  assert.equal(result.refusal_code, 'kill_switch');
+  const rewritten = { ...doc, schema: 'xfuel.receipt.v4' };
+  assert.equal(verifyRefusalReceipt(rewritten).reason, 'schema_mismatch');
+});
+
 test('a refusal that claims a charge does not verify', () => {
   const ledger = new UsageSettledLedger();
   const doc = ledger.recordPolicyBlocked({

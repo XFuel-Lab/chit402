@@ -129,6 +129,26 @@ test('verifyReceipt does not accept a refusal as a payment', async () => {
   assert.ok(payment.errors.some((line) => line.includes('not a payment receipt')));
 });
 
+test('a refusal with the outer schema removed is still not a payment', async () => {
+  const doc = document();
+  delete doc.schema;
+  const payment = await verifyReceipt(doc, { jwks, trustedKids: [] });
+  assert.equal(payment.overall, 'failed');
+  assert.ok(payment.errors.some((line) => line.includes('not a payment receipt')));
+  const refusal = verifyRefusal(doc, { jwks });
+  assert.equal(refusal.valid, true);
+  assert.equal(refusal.refusal_code, 'daily_cap_exceeded');
+});
+
+test('rewriting the outer schema to a receipt schema is not a verified payment', async () => {
+  const doc = document();
+  doc.schema = 'xfuel.receipt.v4';
+  const payment = await verifyReceipt(doc, { jwks, trustedKids: [] });
+  assert.equal(payment.overall, 'failed');
+  assert.ok(payment.errors.some((line) => line.includes('not a payment receipt')));
+  assert.equal(verifyRefusal(doc, { jwks }).reason, 'schema_mismatch');
+});
+
 test('UNAVAILABLE is a signed anchor, not a missing document', () => {
   const doc = document({
     chain_id: null,
