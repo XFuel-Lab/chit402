@@ -116,18 +116,23 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
   assert.match(a2a.description, /hub, model, and amount/);
 });
 
-test('GET /refusal varies on Accept so HTML and JSON do not share a cache entry', async () => {
+test('GET /refusal varies on Accept and keeps CORS Origin', async () => {
   const res = await fetch(`${base}/refusal/rfs-missing`, {
-    headers: { accept: 'application/json' },
+    headers: { accept: 'application/json', origin: 'https://www.chit402.com' },
   });
   assert.equal(res.status, 404);
-  assert.match(res.headers.get('vary') ?? '', /accept/i);
+  assert.equal(res.headers.get('access-control-allow-origin'), 'https://www.chit402.com');
+  const vary = res.headers.get('vary') ?? '';
+  assert.match(vary, /accept/i);
+  assert.match(vary, /origin/i);
   const html = await fetch(`${base}/refusal/rfs-missing`, {
-    headers: { accept: 'text/html' },
+    headers: { accept: 'text/html', origin: 'https://www.chit402.com' },
   });
   assert.equal(html.status, 404);
   assert.match(html.headers.get('content-type') ?? '', /html/);
-  assert.match(html.headers.get('vary') ?? '', /accept/i);
+  const htmlVary = html.headers.get('vary') ?? '';
+  assert.match(htmlVary, /accept/i);
+  assert.match(htmlVary, /origin/i);
 });
 
 test('GET /llms.txt serves a public agent manifest (no auth)', async () => {

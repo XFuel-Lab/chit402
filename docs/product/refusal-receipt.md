@@ -7,7 +7,7 @@ GET /refusal/:refusal_id
 GET /refusal/:refusal_id?format=json
 ```
 
-Public. No auth. No charge. HTML by default. JSON for agents (`?format=json`, a `.json` suffix, or `Accept: application/json`). The response sends `Vary: Accept`, so a shared cache does not reuse an HTML body for a JSON request.
+Public. No auth. No charge. HTML by default. JSON for agents (`?format=json`, a `.json` suffix, or `Accept: application/json`). The response appends `Accept` to `Vary` and keeps the CORS `Origin` entry, so a shared cache does not reuse an HTML body for a JSON request or one origin's CORS headers for another.
 
 The signature is an ES256 compact JWS (`typ: chit402-refusal+jwt`) from the same issuer key as a payment receipt. Verify it against `GET /.well-known/jwks.json`, or with `xfuel-verify refusal.json`. `xfuel-verify` treats this schema as a refusal, reading `schema` from the signed JWS. Omitting the unsigned outer `schema` still verifies as a refusal. Rewriting that outer field to another schema fails. It does not report the document as a verified payment.
 

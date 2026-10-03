@@ -2530,9 +2530,10 @@ export function createApp() {
   // GET /refusal/:refusalId — PUBLIC signed refusal (chit402.refusal.v1).
   // No auth. No charge. JSON via ?format=json, .json, or Accept: application/json.
   app.get('/refusal/:refusalId', rateLimit, (req, res) => {
-    // HTML and JSON share this URL. Vary on Accept so a cache cannot
-    // serve one representation to a client that asked for the other.
-    res.set('Vary', 'Accept');
+    // HTML and JSON share this URL. Append Accept to Vary so a cache
+    // cannot serve one representation to a client that asked for the other.
+    // res.vary keeps the CORS middleware's Vary: Origin.
+    res.vary('Accept');
     try {
       let raw = req.params.refusalId;
       const jsonSuffix = raw && raw.endsWith('.json');
