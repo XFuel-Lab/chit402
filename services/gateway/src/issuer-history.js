@@ -96,13 +96,31 @@ function readExtraEntries() {
   return list.filter((entry) => entry && typeof entry.kid === 'string' && entry.jwk);
 }
 
+/**
+ * Production kid keeps the first ES256 deployment date. Any other live kid
+ * uses an explicit not_before (history entry or ISSUER_KEY_NOT_BEFORE).
+ * Missing means unknown: the window check fails closed, and the key is not
+ * treated as valid back to the production date.
+ * @param {string} kid
+ * @param {string|null|undefined} override
+ */
+export function notBeforeForKid(kid, override) {
+  if (override) return override;
+  if (kid === PRODUCTION_ISSUER_KID) return PRODUCTION_KEY_NOT_BEFORE;
+  const configured = process.env.ISSUER_KEY_NOT_BEFORE;
+  if (typeof configured === 'string' && configured.trim() && !Number.isNaN(Date.parse(configured))) {
+    return new Date(Date.parse(configured)).toISOString();
+  }
+  return null;
+}
+
 function liveEntry(overrides = {}) {
   const jwk = publicJwk(getIssuerPublicKeyJwk());
   return {
     kid: jwk.kid,
     jwk,
     alg: 'ES256',
-    not_before: overrides.not_before || PRODUCTION_KEY_NOT_BEFORE,
+    not_before: notBeforeForKid(jwk.kid, overrides.not_before || null),
     not_after: overrides.not_after ?? null,
     status: overrides.status || 'active',
     revoked_at: overrides.revoked_at ?? null,
@@ -126,9 +144,6 @@ export function buildIssuerHistory({ entries = null } = {}) {
     else prior.push(extra);
   }
   const tail = liveEntry(currentOverride || {});
-  if (current.kid === PRODUCTION_ISSUER_KID && !currentOverride?.not_before) {
-    tail.not_before = PRODUCTION_KEY_NOT_BEFORE;
-  }
   const chained = chainEntries([...prior, tail]);
   const head = chained[chained.length - 1];
   const claims = {
@@ -142,7 +157,7 @@ export function buildIssuerHistory({ entries = null } = {}) {
     schema: ISSUER_HISTORY_SCHEMA,
     payload_version: ISSUER_HISTORY_VERSION,
     canonicalization: 'Each entry_hash is SHA-256 of the JCS (RFC 8785) UTF-8 bytes of the entry without entry_hash. prev_hash is the previous entry_hash, or null on the first entry. The current issuer key signs head_hash and entry_count.',
-    not_before_note: `The production kid ${PRODUCTION_ISSUER_KID} uses not_before ${PRODUCTION_KEY_NOT_BEFORE}, the first deployment of this ES256 issuer path. The earliest receipt in the repo signed by that kid is 2026-09-26T17:27:32Z (fixture chit-5d775d12).`,
+    not_before_note: `Only kid ${PRODUCTION_ISSUER_KID} defaults not_before to ${PRODUCTION_KEY_NOT_BEFORE}, the first deployment of this ES256 issuer path. The earliest receipt in the repo signed by that kid is 2026-09-26T17:27:32Z (fixture chit-5d775d12). Any other kid uses its history entry or ISSUER_KEY_NOT_BEFORE. A null not_before is unknown and the window check fails closed.`,
     entries: chained,
     head_hash: head.entry_hash,
     issuer_signature: {

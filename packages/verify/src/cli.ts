@@ -374,9 +374,10 @@ async function runRefusal(
     strictIssuerHistory: boolean;
   },
 ): Promise<number> {
+  const trustedKids = args.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
   const result = verifyRefusal(doc, {
     jwks: args.jwks,
-    trustedKids: args.trustedKids,
+    trustedKids,
   });
   const preimages = await verifyPublishedPreimages(doc as unknown as Record<string, unknown>, {
     requirePreimages: args.requirePreimages,
@@ -386,7 +387,7 @@ async function runRefusal(
     fetchHistory: args.fetchIssuerHistory,
     strict: args.strictIssuerHistory,
     jwks: args.jwks,
-    trustedKids: args.trustedKids,
+    trustedKids,
     issuedAt: (doc as { issued_at?: string }).issued_at ?? null,
     kid: result.kid ?? doc.issuer_signature?.kid ?? null,
   });
@@ -472,7 +473,7 @@ async function main(): Promise<number> {
 
   const trustedKids = args.noTrustedKid
     ? []
-    : (args.trustedKids ?? undefined);
+    : (args.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS);
 
   if (isRefusalDocument(receipt as unknown)) {
     let issuerHistory: IssuerHistoryDocument | null = null;

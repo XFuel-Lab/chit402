@@ -23,7 +23,9 @@ const {
   buildIssuerHistory,
   verifyIssuerHistory,
   issuerKeyWindow,
+  notBeforeForKid,
   PRODUCTION_KEY_NOT_BEFORE,
+  PRODUCTION_ISSUER_KID,
   CUSTODY_STATEMENT,
 } = await import('../src/issuer-history.js');
 const { getIssuerKid, getJwks } = await import('../src/issuer-key.js');
@@ -56,6 +58,7 @@ test('book row preimage is the exact string that row_hash covers', () => {
   const field = published.preimages.fields['book_chain.row_hash'];
   assert.equal(field.preimage_utf8, line);
   assert.equal(field.hash, receipt.book_chain.row_hash);
+  assert.equal(published.preimages.links.preimage, `/receipt/${receipt.task_id}/preimage`);
   assert.equal(field.alg, 'sha256');
   const withheld = published.preimages.not_recomputable.find((row) => row.field === 'output.hash');
   assert.match(withheld.reason, /private/);
@@ -150,6 +153,11 @@ test('a refusal publishes the book row preimage and not the output', () => {
   const field = doc.preimages.fields['book_row.row_hash'];
   assert.equal(field.preimage_utf8, bookRowPreimage(row));
   assert.equal(field.hash, row.row_hash);
+  assert.equal(
+    doc.preimages.links.preimage,
+    `https://api.chit402.com/refusal/${doc.refusal_id}/preimage`,
+  );
+  assert.equal(JSON.stringify(doc.preimages).includes('/receipt/'), false);
   assert.equal(JSON.stringify(doc.preimages).includes('secret prompt'), false);
 });
 
@@ -161,6 +169,8 @@ test('job spec preimage is the JSON the board hash covers', () => {
 });
 
 test('issuer history chains, signs, and rejects a rewritten entry', () => {
+  const prevNotBefore = process.env.ISSUER_KEY_NOT_BEFORE;
+  delete process.env.ISSUER_KEY_NOT_BEFORE;
   const doc = buildIssuerHistory();
   assert.equal(verifyIssuerHistory(doc).valid, true);
   assert.equal(doc.entries[0].prev_hash, null);
@@ -173,9 +183,13 @@ test('issuer history chains, signs, and rejects a rewritten entry', () => {
   const kid = getIssuerKid();
   if (kid === 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q') {
     assert.equal(doc.entries.at(-1).not_before, PRODUCTION_KEY_NOT_BEFORE);
+    assert.equal(issuerKeyWindow(doc, kid, '2026-10-02T17:30:01.000Z').ok, true);
+  } else {
+    assert.equal(doc.entries.at(-1).not_before, null);
+    const unknown = issuerKeyWindow(doc, kid, '2026-10-02T17:30:01.000Z');
+    assert.equal(unknown.ok, false);
+    assert.equal(unknown.reason, 'not_before_missing');
   }
-  const window = issuerKeyWindow(doc, kid, '2026-10-02T17:30:01.000Z');
-  assert.equal(window.ok, true);
 
   const tampered = structuredClone(doc);
   tampered.entries[0].custody = 'rewritten';
@@ -200,6 +214,33 @@ test('issuer history chains, signs, and rejects a rewritten entry', () => {
   assert.equal(late.reason, 'kid_revoked_before_issuance');
   const early = issuerKeyWindow(revoked, kid, '2026-08-01T00:00:00.000Z');
   assert.equal(early.ok, true);
+  if (prevNotBefore == null) delete process.env.ISSUER_KEY_NOT_BEFORE;
+  else process.env.ISSUER_KEY_NOT_BEFORE = prevNotBefore;
+});
+
+test('a rotated kid does not inherit the production not_before', () => {
+  const prev = process.env.ISSUER_KEY_NOT_BEFORE;
+  delete process.env.ISSUER_KEY_NOT_BEFORE;
+  try {
+    const other = 'not-the-production-kid';
+    assert.equal(notBeforeForKid(PRODUCTION_ISSUER_KID, null), PRODUCTION_KEY_NOT_BEFORE);
+    assert.equal(notBeforeForKid(other, null), null);
+    assert.equal(notBeforeForKid(other, '2026-10-01T00:00:00.000Z'), '2026-10-01T00:00:00.000Z');
+    process.env.ISSUER_KEY_NOT_BEFORE = '2026-10-01T00:00:00.000Z';
+    assert.equal(notBeforeForKid(other, null), '2026-10-01T00:00:00.000Z');
+    assert.equal(notBeforeForKid(PRODUCTION_ISSUER_KID, null), PRODUCTION_KEY_NOT_BEFORE);
+    const liveKid = getIssuerKid();
+    if (liveKid !== PRODUCTION_ISSUER_KID) {
+      const dated = buildIssuerHistory();
+      assert.equal(dated.entries.at(-1).not_before, '2026-10-01T00:00:00.000Z');
+      const early = issuerKeyWindow(dated, liveKid, '2026-09-04T08:52:05.000Z');
+      assert.equal(early.ok, false);
+      assert.equal(early.reason, 'issued_before_not_before');
+    }
+  } finally {
+    if (prev == null) delete process.env.ISSUER_KEY_NOT_BEFORE;
+    else process.env.ISSUER_KEY_NOT_BEFORE = prev;
+  }
 });
 
 test('not_recomputable reasons name output and coverage', () => {

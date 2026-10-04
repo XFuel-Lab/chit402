@@ -22,7 +22,9 @@ Custody, as the process is written: the ES256 private key is the base64 PEM in t
 
 ## The current key
 
-The production kid is `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`. Its `not_before` is `2026-09-04T08:52:05Z`, the first deployment of this ES256 receipt path (`fix(receipt): standard JWT/JWS mechanics`). The earliest receipt in this repo signed by that kid is fixture `chit-5d775d12`, `iat` `2026-09-26T17:27:32Z`. The host ledger is not in the repo, so `not_before` is the earlier deployment date. Every captured receipt falls inside the window.
+The production kid is `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`. Its `not_before` is `2026-09-04T08:52:05Z`, the first deployment of this ES256 receipt path (`fix(receipt): standard JWT/JWS mechanics`). The earliest receipt in this repo signed by that kid is fixture `chit-5d775d12`, `iat` `2026-09-26T17:27:32Z`. The host ledger is not in the repo, so that kid's `not_before` is the earlier deployment date. Every captured receipt for that kid falls inside the window.
+
+That date belongs to that kid only. A rotated key does not inherit it. Set `not_before` on the key's history entry, or set `ISSUER_KEY_NOT_BEFORE` for the live non-production key. If neither is set, `not_before` is null and a receipt check fails closed (`not_before_missing`).
 
 A later key is appended. Set `ISSUER_HISTORY_EXTRA` to a JSON array of earlier entries (retired or revoked) when rotating. The live process key stays the tail. A retired thumbprint is not reused.
 

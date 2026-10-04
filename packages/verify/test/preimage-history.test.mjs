@@ -16,7 +16,7 @@ const {
   issuerHistoryEntryHash,
   checkReceiptIssuerHistory,
 } = await import('../dist/issuer-history.js');
-const { jwkThumbprint } = await import('../dist/jws.js');
+const { jwkThumbprint, DEFAULT_TRUSTED_ISSUER_KIDS } = await import('../dist/jws.js');
 const { verifyReceipt } = await import('../dist/index.js');
 
 function sha256Hex(text) {
@@ -209,4 +209,47 @@ test('issuer history rejects a kid revoked before issuance and warns when unreac
   assert.equal(verified.issuer_history.ok, false);
   assert.equal(verified.overall, 'failed');
   assert.match(verified.errors.join(' '), /kid_revoked_before_issuance/);
+});
+
+test('omitted trustedKids uses the production pin, same as a refusal', () => {
+  const kid = DEFAULT_TRUSTED_ISSUER_KIDS[0];
+  const publicJwk = {
+    kty: 'EC',
+    crv: 'P-256',
+    x: '_H7J9niXF2tez_MnF25pnrDN7iJ_VC9gBzYYW9gzSPk',
+    y: 'jiorfRc9wtNaRmaFHsQaXNzcWteUA0RnpvD4SWdVl34',
+    kid,
+    alg: 'ES256',
+    use: 'sig',
+  };
+  const entry = {
+    kid,
+    jwk: publicJwk,
+    alg: 'ES256',
+    not_before: '2026-09-04T08:52:05Z',
+    not_after: null,
+    status: 'active',
+    revoked_at: null,
+    reason: null,
+    custody: 'The ES256 private key is the base64 PEM in ISSUER_PRIVATE_KEY.',
+    prev_hash: null,
+  };
+  entry.entry_hash = issuerHistoryEntryHash(entry);
+  const header = Buffer.from(JSON.stringify({ alg: 'ES256', kid })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ schema: 'chit402.issuer_history.v1' })).toString('base64url');
+  const doc = {
+    schema: 'chit402.issuer_history.v1',
+    entries: [entry],
+    head_hash: entry.entry_hash,
+    issuer_signature: {
+      jws: `${header}.${payload}.${'aa'.repeat(32)}`,
+      kid,
+      issuer_jwk: publicJwk,
+    },
+  };
+  const omitted = verifyIssuerHistoryDocument(doc);
+  assert.notEqual(omitted.reason, 'key untrusted');
+  assert.match(omitted.reason || '', /signature_invalid|verification_error/);
+  const disabled = verifyIssuerHistoryDocument(doc, { trustedKids: [] });
+  assert.equal(disabled.reason, 'key untrusted');
 });

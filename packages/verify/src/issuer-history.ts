@@ -9,6 +9,7 @@ import {
   verifyIssuerJws,
   jwkThumbprint,
   isPinnedTrustedJwk,
+  DEFAULT_TRUSTED_ISSUER_KIDS,
   type Es256Jwk,
 } from './jws.js';
 
@@ -105,6 +106,9 @@ export function verifyIssuerHistoryDocument(
   const jws = doc.issuer_signature?.jws;
   if (!jws) return { valid: false, reason: 'no_signature' };
   const headerKid = doc.issuer_signature?.kid || null;
+  // Undefined matches verifyReceipt / verifyRefusal: the production pin.
+  // An explicit empty list (--no-trusted-kid) does not.
+  const pins = trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
   const candidates: Es256Jwk[] = [];
   if (jwks?.keys) {
     for (const key of jwks.keys) {
@@ -112,8 +116,8 @@ export function verifyIssuerHistoryDocument(
     }
   }
   const embedded = doc.issuer_signature?.issuer_jwk;
-  if (embedded && isPinnedTrustedJwk(embedded, trustedKids ?? [])) candidates.push(embedded);
-  if (!candidates.length && embedded && headerKid && trustedKids?.includes(headerKid)) {
+  if (embedded && isPinnedTrustedJwk(embedded, pins)) candidates.push(embedded);
+  if (!candidates.length && embedded && headerKid && pins.includes(headerKid)) {
     if (jwkThumbprint(embedded) === headerKid) candidates.push(embedded);
   }
   if (!candidates.length) return { valid: false, reason: 'key untrusted' };

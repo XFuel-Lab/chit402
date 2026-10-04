@@ -381,12 +381,19 @@ export function buildPublicPreimages(receipt, { baseUrl = '', taskId = null, pre
     });
   }
 
-  const id = taskId || receipt.task_id || null;
   const base = baseUrl ? String(baseUrl).replace(/\/$/, '') : '';
   const links = {};
-  if (id) {
-    const path = `/receipt/${encodeURIComponent(String(id))}/preimage`;
+  const refusalId = receipt.refusal_id;
+  const isRefusal = receipt.schema === 'chit402.refusal.v1' || receipt.kind === 'refusal';
+  if (isRefusal && refusalId) {
+    const path = `/refusal/${encodeURIComponent(String(refusalId))}/preimage`;
     links.preimage = base ? `${base}${path}` : path;
+  } else {
+    const id = taskId || receipt.task_id || null;
+    if (id) {
+      const path = `/receipt/${encodeURIComponent(String(id))}/preimage`;
+      links.preimage = base ? `${base}${path}` : path;
+    }
   }
 
   return {
