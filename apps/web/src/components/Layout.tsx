@@ -9,6 +9,7 @@ const xfuelNavLinks = [
   { to: '/doors', label: 'Doors' },
   { to: '/pricing', label: 'Pricing' },
   { to: '/security', label: 'Security' },
+  { to: '/audit', label: 'Audit' },
 ];
 
 const chitNavLinks = [
@@ -16,6 +17,7 @@ const chitNavLinks = [
   { to: '/book', label: 'Book' },
   { to: '/register', label: 'Register' },
   { to: '/activity', label: 'Activity' },
+  { to: '/audit', label: 'Audit' },
   { to: '/board', label: 'Board' },
   { to: '/products', label: 'Products' },
   { to: '/docs', label: 'Docs' },

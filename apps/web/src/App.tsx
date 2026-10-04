@@ -26,6 +26,7 @@ import BookBot from './pages/BookBot';
 import Register from './pages/Register';
 import PrivateSpendDocs from './pages/PrivateSpendDocs';
 import Activity from './pages/Activity';
+import Audit from './pages/Audit';
 import Board from './pages/Board';
 import { isChitHost } from './hostConfig';
 
@@ -67,6 +68,7 @@ export default function App() {
         <Route path="/register" element={<Register />} />
         <Route path="/book-bot" element={<BookBot />} />
         <Route path="/activity" element={<Activity />} />
+        <Route path="/audit" element={<Audit />} />
         <Route path="/board" element={<Board />} />
         <Route path="/board/:id" element={<Board />} />
         {/* Catch-all: branded 404 for ALL unknown paths including gated legacy pages. */}

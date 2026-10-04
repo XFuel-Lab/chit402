@@ -170,6 +170,10 @@ export default function ChitHome() {
             <Link to="/activity" style={{ color: '#00d4ff' }}>
               Activity
             </Link>
+            {' · '}
+            <Link to="/audit" style={{ color: '#00d4ff' }}>
+              Audit
+            </Link>
           </p>
         </div>
       </section>

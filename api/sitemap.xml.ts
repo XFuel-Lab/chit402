@@ -28,6 +28,11 @@ const CHIT_SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
     <priority>0.75</priority>
   </url>
   <url>
+    <loc>https://www.chit402.com/audit</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.75</priority>
+  </url>
+  <url>
     <loc>https://www.chit402.com/board</loc>
     <changefreq>daily</changefreq>
     <priority>0.75</priority>

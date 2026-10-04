@@ -21,6 +21,13 @@ const startHere: DocLink[] = [
     internal: true,
   },
   {
+    title: 'Spend audit',
+    description: 'Paste a Base wallet. USDC out by counterparty, public receipt match, no signup. Incomplete scans show no total.',
+    href: '/audit',
+    meta: 'public',
+    internal: true,
+  },
+  {
     title: '1F916 link (draft)',
     description: 'Draft v0. Specimen 1 and Specimen 2 are stamped listing payouts, with verify links.',
     href: '/docs/1f916-link',
