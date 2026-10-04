@@ -99,6 +99,11 @@ const ROUTE_CONTENT = {
     h1: 'Theoriq',
     lede: 'Swarm orchestration stays yours; Chit402 is the inference receipt book.',
   },
+  '/docs/receipt-check': {
+    title: 'Receipt check | Chit402',
+    h1: 'Receipt check',
+    lede: 'Recompute public receipt hashes from published preimages, and check the signed issuer key history.',
+  },
   '/docs/private-spend': {
     title: 'Private Spend | Chit402',
     h1: 'Private Spend',

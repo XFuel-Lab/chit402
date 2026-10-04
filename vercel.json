@@ -92,6 +92,7 @@
     { "source": "/docs", "destination": "/docs/index.html" },
     { "source": "/docs/chit-in-15-lines", "destination": "/docs/chit-in-15-lines/index.html" },
     { "source": "/docs/1f916-link", "destination": "/docs/1f916-link/index.html" },
+    { "source": "/docs/receipt-check", "destination": "/docs/receipt-check/index.html" },
     { "source": "/docs/eliza", "destination": "/docs/eliza/index.html" },
     { "source": "/docs/cloudflare-x402", "destination": "/docs/cloudflare-x402/index.html" },
     { "source": "/v1", "destination": "/v1/index.html" },

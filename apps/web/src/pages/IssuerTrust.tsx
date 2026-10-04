@@ -69,6 +69,20 @@ export default function IssuerTrust() {
         </div>
 
         <div className="docs-panel">
+          <h2>Key history</h2>
+          <p>
+            <a href="https://api.chit402.com/.well-known/issuer-history.json">
+              https://api.chit402.com/.well-known/issuer-history.json
+            </a>{' '}
+            is the signed, append-only record: <code>kid</code>, public JWK, <code>not_before</code>,{' '}
+            <code>not_after</code>, and <code>status</code>. Entries chain by hash. The current kid&apos;s{' '}
+            <code>not_before</code> is <code>2026-09-04T08:52:05Z</code>. The private key stays in{' '}
+            <code>ISSUER_PRIVATE_KEY</code> on the gateway. How to check:{' '}
+            <Link to="/docs/receipt-check">Receipt check</Link>.
+          </p>
+        </div>
+
+        <div className="docs-panel">
           <h2>Rotation policy</h2>
           <ol style={styles.list}>
             <li>

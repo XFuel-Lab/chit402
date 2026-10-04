@@ -18,6 +18,7 @@ import logger from './logger.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
 import { findLink, findSecret } from './board-posts.js';
 import { buildReceipt, buildVerifyUrl } from './receipt.js';
+import { jobSpecPreimage, buildPublicPreimages } from './receipt-preimage.js';
 import { buildFulfillmentEnvelope, outputCommitmentOf } from './fulfillment-receipt.js';
 
 export const JOB_TEXT_MAX = 1000;
@@ -283,7 +284,13 @@ export function toPublicJob(job, { comments = false } = {}) {
       fee: job.payout_receipt.fee || null,
     }
     : null;
-  return {
+  const specPreimage = jobSpecPreimage(
+    job.untrusted_text || '',
+    job.budget_atomic,
+    job.deadline,
+    job.acceptance_test || '',
+  );
+  const pub = {
     id: job.id,
     type: 'job',
     status: job.status,
@@ -294,6 +301,7 @@ export function toPublicJob(job, { comments = false } = {}) {
     budget: String(job.budget_atomic),
     deadline: job.deadline,
     job_spec_hash: job.job_spec_hash,
+    job_spec_preimage: specPreimage,
     created_at: job.created_at,
     bids,
     awarded_bid_id: job.awarded_bid_id || null,
@@ -310,6 +318,12 @@ export function toPublicJob(job, { comments = false } = {}) {
     challenge: job.challenge ? { at: job.challenge.at, outcome: 'paid_not_delivered' } : null,
     ...(comments ? {} : {}),
   };
+  pub.preimages = buildPublicPreimages({
+    job_spec_hash: job.job_spec_hash,
+    job_spec_preimage: specPreimage,
+    ...(job.output_sha256 ? { output: { hash: job.output_sha256 } } : {}),
+  });
+  return pub;
 }
 
 export function jobOutcome(job) {
@@ -324,12 +338,7 @@ export function jobOutcome(job) {
 }
 
 function specHash(text, budget, deadline, acceptance) {
-  return sha256Prefixed(JSON.stringify({
-    text: String(text),
-    budget: String(budget),
-    deadline: String(deadline),
-    acceptance: String(acceptance || ''),
-  }));
+  return sha256Prefixed(jobSpecPreimage(text, budget, deadline, acceptance));
 }
 
 export async function createBoardJob(body = {}, deps = {}) {

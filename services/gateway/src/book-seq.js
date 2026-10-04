@@ -23,15 +23,23 @@ export const BOOK_SEQ_JWT_TYP = 'chit402-book-seq+jwt';
  * figure, and the original row's hash stays the hash it had at append.
  * @param {object} row
  */
-export function bookRowHash(row) {
-  const line = [
+/**
+ * Exact UTF-8 preimage of `row_hash`. Null and missing fields are empty.
+ * `agent_id` is the book id. Amount and payment ref are not in this string.
+ * @param {object} row
+ */
+export function bookRowPreimage(row) {
+  return [
     row?.agent_id ?? '',
     row?.seq ?? '',
     row?.task_id ?? '',
     row?.prev_hash || '',
     row?.event || row?.evidence || '',
   ].join('|');
-  return crypto.createHash('sha256').update(String(line)).digest('hex');
+}
+
+export function bookRowHash(row) {
+  return crypto.createHash('sha256').update(bookRowPreimage(row)).digest('hex');
 }
 
 /**

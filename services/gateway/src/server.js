@@ -72,6 +72,8 @@ import { UsageSettledLedger, setBookRowWrittenHook, setReceiptBoundHook } from '
 import { peekRefusalAnchor } from './refusal-anchor.js';
 import { withRefusal, presentRefusal, renderRefusalHtml, renderRefusalNotFound } from './refusal-receipt.js';
 import { getReceiptMerkleTree } from './receipt-merkle.js';
+import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
+import { buildIssuerHistory } from './issuer-history.js';
 import { receiptLaneForEntry } from './receipt-lane.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
 import { coverageForLedger } from './export-coverage.js';
@@ -324,6 +326,8 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 ## Proof objects
 
 - Issuer trust (pin JWKS + kid): https://www.chit402.com/trust
+- Issuer key history: GET /.well-known/issuer-history.json — signed, append-only, kid window. https://www.chit402.com/docs/receipt-check
+- Receipt hash preimages: GET /receipt/:id?format=json field preimages, and GET /receipt/:id/preimage/:field. output.hash stays private.
 - Live receipt: https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e
 - Signed refusal (schema chit402.refusal.v1): GET /refusal/:refusal_id — public, no auth, ?format=json. Same issuer ES256 key as receipts. Verify against /.well-known/jwks.json or xfuel-verify.
 - Thread: https://x.com/chit402/status/2096153417588588555
@@ -2564,6 +2568,54 @@ export function createApp() {
     }
   });
 
+  app.get('/refusal/:refusalId/preimage/:field', rateLimit, (req, res) => {
+    try {
+      const row = usageSettled.findByRefusal(req.params.refusalId);
+      if (!row?.refusal) {
+        return res.status(404).json({ error: 'not_found', refusal_id: req.params.refusalId });
+      }
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      const doc = presentRefusal(row.refusal, baseUrl);
+      return sendPreimage(res, doc?.preimages, req.params.field, req.query.raw);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /refusal preimage error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  function publishReceipt(receipt, req) {
+    if (!receipt || typeof receipt !== 'object') return receipt;
+    const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+    let prefix = null;
+    if (receipt.task_id && receipt.tree_head_hash) {
+      prefix = getReceiptMerkleTree().prefixLeafPreimages(receipt.task_id, (id) => {
+        const row = usageSettled.findByTask(id);
+        return row?.row_hash ?? null;
+      });
+    }
+    return withPublicPreimages(receipt, { baseUrl, prefix });
+  }
+
+  function sendPreimage(res, preimages, field, raw) {
+    const entry = preimageField(preimages, field);
+    if (!entry) {
+      const withheld = (preimages?.not_recomputable || []).find((row) => row.field === field);
+      return res.status(404).json({
+        error: 'preimage_unavailable',
+        field,
+        reason: withheld?.reason || 'This field has no public preimage.',
+      });
+    }
+    if (String(raw || '') === '1' && !entry.leaves) {
+      const bytes = preimageBytes(entry);
+      if (!bytes) return res.status(404).json({ error: 'preimage_unavailable', field });
+      res.set('Cache-Control', 'public, max-age=300');
+      return res.type('application/octet-stream').send(bytes);
+    }
+    res.set('Cache-Control', 'public, max-age=300');
+    return res.json(entry);
+  }
+
   // GET /receipt/:taskId — PUBLIC, no-auth verifiable receipt.
   //   • HTML by default (clean, shareable page for a browser / link unfurl)
   //   • JSON via `?format=json`, `.json` suffix, or `Accept: application/json` (for agents)
@@ -2758,7 +2810,7 @@ export function createApp() {
           }
           return res.json(exportDoc);
         }
-        if (wantsJson) return res.json(covered);
+        if (wantsJson) return res.json(publishReceipt(covered, req));
         return res.type('html').send(renderReceiptHtml(covered));
       }
       const foreignReceipt = ledgerRow?.receipt_snapshot && ledgerRow.source !== 'openrouter_broadcast'
@@ -2773,7 +2825,7 @@ export function createApp() {
           }
           return res.json(exportDoc);
         }
-        if (wantsJson) return res.json(covered);
+        if (wantsJson) return res.json(publishReceipt(covered, req));
         return res.type('html').send(renderReceiptHtml(covered));
       }
 
@@ -2816,10 +2868,68 @@ export function createApp() {
       }
 
       const covered = withBookCoverage(receipt);
-      if (wantsJson) return res.json(storedReceiptJson(covered));
+      if (wantsJson) return res.json(publishReceipt(storedReceiptJson(covered), req));
       return res.type('html').send(renderReceiptHtml(covered));
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  app.get('/receipt/:taskId/preimage/:field', rateLimit, (req, res) => {
+    try {
+      let rawTaskId = req.params.taskId;
+      if (rawTaskId && rawTaskId.endsWith('.json')) rawTaskId = rawTaskId.slice(0, -5);
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
+      const taskId = normalizeTaskIdForLookup(rawTaskId);
+      const ledgerRow = usageSettled.findByTask(taskId) || usageSettled.findByTask(rawTaskId);
+      const openRouterReceipt = findOpenRouterPublicReceipt(taskId, { baseUrl, reqHost, ledgerRow })
+        || findOpenRouterPublicReceipt(rawTaskId, { baseUrl, reqHost, ledgerRow });
+      const foreignReceipt = !openRouterReceipt && ledgerRow?.receipt_snapshot && ledgerRow.source !== 'openrouter_broadcast'
+        ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl, reqHost })
+        : null;
+      let receipt = openRouterReceipt || foreignReceipt;
+      if (!receipt) {
+        let task = null;
+        try {
+          task = _findTask(getAIListener(), taskId);
+        } catch (err) {
+          if (!String(err?.message || '').includes('not initialized')) throw err;
+        }
+        if (!task) return res.status(404).json({ error: 'not_found', task_id: rawTaskId });
+        receipt = buildReceipt(task, {
+          baseUrl,
+          signingSecret: config.receipts?.signingSecret,
+          coSignerSecret: config.receipts?.coSignerSecret,
+          viPolicy: config.verifiedInference,
+          reqHost,
+          agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
+          persistSignature: true,
+        });
+        receipt = storedReceiptJson(receipt);
+      }
+      if (ledgerRow?.agent_id) {
+        try {
+          const coverage = coverageForLedger(usageSettled, ledgerRow.agent_id, {
+            subjectTaskId: ledgerRow.task_id || receipt.task_id,
+          });
+          receipt = {
+            ...receipt,
+            coverage,
+            ...(ledgerRow.book_chain ? { book_chain: ledgerRow.book_chain } : {}),
+            ...(getReceiptMerkleTree().inclusion(ledgerRow.task_id)
+              ? { inclusion: getReceiptMerkleTree().inclusion(ledgerRow.task_id) }
+              : {}),
+          };
+        } catch {
+          /* coverage is optional for the preimage route */
+        }
+      }
+      const published = publishReceipt(receipt, req);
+      return sendPreimage(res, published?.preimages, req.params.field, req.query.raw);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /receipt preimage error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
   });
@@ -3473,6 +3583,13 @@ export function createApp() {
   app.get('/.well-known/jwks.json', (_req, res) => {
     res.set('Cache-Control', 'public, max-age=3600');
     res.json(getJwks());
+  });
+
+  // Append-only issuer key history. Signed by the current issuer key.
+  // Entries chain by prev_hash. Custody names ISSUER_PRIVATE_KEY, not the secret.
+  app.get('/.well-known/issuer-history.json', (_req, res) => {
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json(buildIssuerHistory());
   });
 
   // x402 offer-receipt §4.5.1: did:web for this request host, same ES256 key as jwks.json.
