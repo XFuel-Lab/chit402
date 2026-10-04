@@ -656,3 +656,11 @@ node services/gateway/scripts/verify-receipt-payer.mjs receipt.json
 Full agent path: JWKS → JWS → payer on-chain (Base or Solana) → session window
 → optional revocation lookup → SessionAct for privileged acts (Base only; no
 Solana SessionAct in v1).
+
+## 13. Public preimages and issuer key history
+
+`GET /receipt/:id?format=json` adds an unsigned `preimages` block. Each recomputable hash names the exact bytes, the encoding, and the algorithm. `GET /receipt/:id/preimage/:field` returns that one field. `xfuel-verify` hashes those bytes and fails if a preimage is missing or does not match. `output.hash` stays a private commitment. Coverage hashes over book rows stay off the public preimage. HMAC stays a keyed tag.
+
+`GET /.well-known/issuer-history.json` is the signed key history. `xfuel-verify` checks that `iat` falls inside that kid's window and that the kid was not revoked before issuance. If the history cannot be fetched, the command warns. `--strict-issuer-history` fails closed instead.
+
+See [receipt-preimage.md](./product/receipt-preimage.md) and [issuer-key-history.md](./product/issuer-key-history.md).

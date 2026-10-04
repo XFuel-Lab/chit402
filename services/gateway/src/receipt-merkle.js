@@ -339,10 +339,61 @@ export class ReceiptMerkleTree {
   _push(taskId, bytes, kind) {
     const hash = leafHash(bytes);
     const index = this.leaves.length;
+    const buf = Buffer.from(bytes);
     this.leaves.push(hash);
-    this.meta.push({ task_id: taskId, index, kind, leaf: hash.toString('hex') });
+    this.meta.push({
+      task_id: taskId,
+      index,
+      kind,
+      leaf: hash.toString('hex'),
+      preimage_b64: buf.toString('base64'),
+    });
     if (taskId) this.byTask.set(String(taskId), index);
     return index;
+  }
+
+  /**
+   * Exact leaf inputs for the prefix that ends at this receipt.
+   * Each preimage is the UTF-8 leaf body. The leaf hash is SHA-256(0x00 || body).
+   * A stored leaf whose body is not retained, or whose bytes do not match the
+   * stored hash, is not returned.
+   * @param {unknown} taskId
+   * @param {(taskId: string) => string|null|undefined} [rowHashOf]
+   */
+  prefixLeafPreimages(taskId, rowHashOf = null) {
+    const index = this.byTask.get(String(taskId));
+    if (index == null) return { ok: false, reason: 'not_in_tree' };
+    const leaves = [];
+    for (let i = 0; i <= index; i += 1) {
+      const meta = this.meta[i] || {};
+      let body = null;
+      if (meta.preimage_b64) {
+        body = Buffer.from(meta.preimage_b64, 'base64');
+      } else if (meta.kind === 'genesis' || meta.task_id === 'genesis') {
+        body = this.genesisLeaf().bytes;
+      } else if (typeof rowHashOf === 'function' && meta.task_id) {
+        const rowHash = rowHashOf(meta.task_id);
+        if (rowHash != null) body = Buffer.from(`${meta.task_id}|${rowHash}`);
+      }
+      if (!body) return { ok: false, reason: 'leaf_preimage_unavailable', index: i };
+      const hashed = leafHash(body);
+      const stored = this.leaves[i];
+      if (!stored || hashed.toString('hex') !== Buffer.from(stored).toString('hex')) {
+        return { ok: false, reason: 'leaf_preimage_mismatch', index: i };
+      }
+      leaves.push({
+        index: i,
+        kind: meta.kind || (meta.task_id === 'genesis' ? 'genesis' : 'receipt'),
+        task_id: meta.task_id || null,
+        preimage_utf8: body.toString('utf8'),
+      });
+    }
+    return {
+      ok: true,
+      leaves,
+      root: hex(rootOf(this.leaves.slice(0, index + 1))),
+      leaf_index: index,
+    };
   }
 
   appendReceipt(taskId, rowHash) {

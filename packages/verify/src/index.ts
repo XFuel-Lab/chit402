@@ -77,6 +77,12 @@ import {
   type ReceiptTreeHead,
 } from './receipt-lane.js';
 import { isRefusalDocument, REFUSAL_SCHEMA } from './refusal.js';
+import { verifyPublishedPreimages, type PreimageCheck } from './preimage.js';
+import {
+  checkReceiptIssuerHistory,
+  type IssuerHistoryCheck,
+  type IssuerHistoryDocument,
+} from './issuer-history.js';
 
 export {
   computePaymentCommitment,
@@ -128,6 +134,7 @@ const ZK_VERIFIER_ABI = [
 export interface XFuelReceipt {
   schema?: string;
   task_id: string;
+  created_at?: number | string;
   status: string;
   proof_outcome?: string;
   verify_url?: string;
@@ -354,6 +361,11 @@ export interface ReceiptVerification {
    * after binding. It does not change `overall`.
    */
   receipt_lane: ReceiptLane;
+  /** Recompute of published preimages. Absent block is skipped unless requirePreimages. */
+  preimages: PreimageCheck;
+  /** Kid window against the signed issuer history. Unreachable is a warning unless strict. */
+  issuer_history: IssuerHistoryCheck;
+  warnings: string[];
   overall: 'verified' | 'partial' | 'failed';
   errors: string[];
 }
@@ -1276,6 +1288,19 @@ export interface VerifyReceiptOptions {
     row_hash?: string | null;
     proof?: InclusionStep[] | null;
   } | null;
+  /**
+   * Fail when a recomputable hash has no preimage. A present `preimages`
+   * block is always checked, even when this is false.
+   */
+  requirePreimages?: boolean;
+  /** Signed issuer history document. Skips the network when set. */
+  issuerHistory?: IssuerHistoryDocument | null;
+  /** Fetch /.well-known/issuer-history.json. Unreachable warns unless strict. */
+  fetchIssuerHistory?: boolean;
+  /** Fail closed when the history cannot be loaded. */
+  strictIssuerHistory?: boolean;
+  /** Explicit history URL. Any https URL. */
+  issuerHistoryUrl?: string | null;
 }
 
 function normalizeBoundRoot(root: unknown): string | null {
@@ -1504,6 +1529,51 @@ export async function verifyReceipt(
   }
 
   const facts = factsFromClaims(verifiedClaims);
+
+  const warnings: string[] = [];
+  const preimages = await verifyPublishedPreimages(receipt as unknown as Record<string, unknown>, {
+    requirePreimages: options.requirePreimages === true,
+    fetchImpl: options.fetchImpl,
+    trustedHosts,
+  });
+  if (!preimages.ok) errors.push(...preimages.errors);
+
+  const issuedAt = (verifiedClaims && 'iat' in verifiedClaims ? verifiedClaims.iat : null)
+    ?? decoded?.iat
+    ?? receipt.created_at
+    ?? null;
+  const historyAsked = !!(
+    options.issuerHistory
+    || options.fetchIssuerHistory
+    || options.strictIssuerHistory
+    || options.issuerHistoryUrl
+  );
+  const issuer_history = historyAsked
+    ? await checkReceiptIssuerHistory(receipt, {
+      document: options.issuerHistory ?? null,
+      fetchHistory: options.fetchIssuerHistory === true || options.strictIssuerHistory === true,
+      strict: options.strictIssuerHistory === true,
+      historyUrl: options.issuerHistoryUrl ?? null,
+      jwks,
+      trustedKids,
+      fetchImpl: options.fetchImpl,
+      trustedHosts,
+      issuedAt,
+      kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
+    })
+    : {
+      checked: false,
+      ok: true,
+      unreachable: false,
+      warning: null,
+      reason: null,
+      kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
+    };
+  if (issuer_history.warning) warnings.push(issuer_history.warning);
+  if (issuer_history.checked && !issuer_history.ok && issuer_history.reason) {
+    errors.push(`issuer history: ${issuer_history.reason}`);
+  }
+
   const hasIssuerSig = !!receipt.issuer_signature;
   const jwksWasSupplied = !!(options.jwks || options.jwksUri || (options.fetchJwks && jwks));
   const claimRefused = issuer_signature.valid && claim_id === 'refused';
@@ -1525,7 +1595,9 @@ export async function verifyReceipt(
   const signatureUnchecked = hasIssuerSig && !issuer_signature.checked;
 
   let overall: 'verified' | 'partial' | 'failed';
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch) {
+  const preimageFailed = !preimages.ok;
+  const historyFailed = issuer_history.checked && !issuer_history.ok;
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
@@ -1587,6 +1659,9 @@ export async function verifyReceipt(
       ? { tree_head_hash: signedBinding.tree_head_hash, tolerance: signedBinding.tolerance }
       : null,
     receipt_lane,
+    preimages,
+    issuer_history,
+    warnings,
     overall,
     errors,
   };

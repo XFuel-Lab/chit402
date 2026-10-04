@@ -15,6 +15,7 @@
  */
 import { keccak256, toUtf8Bytes } from 'ethers';
 import { canonicalSignedPayload } from './receipt.js';
+import { PREIMAGE_SCHEMA } from './receipt-preimage.js';
 
 const REQUEST_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
 
@@ -63,6 +64,29 @@ export function buildValidationRecord(receipt, { requestHash, agentId } = {}) {
     response_uri: receipt?.verify_url || receipt?.links?.self || null,
     // Commitment to the evidence: the canonical payment-bound tuple (stable, third-party recomputable).
     response_hash: keccak256(toUtf8Bytes(canonicalSignedPayload(receipt || {}))),
+  };
+  const payload = canonicalSignedPayload(receipt || {});
+  base.response_hash = keccak256(toUtf8Bytes(payload));
+  base.preimages = {
+    schema: PREIMAGE_SCHEMA,
+    fields: {
+      response_hash: {
+        field: 'response_hash',
+        recomputable: true,
+        alg: 'keccak256',
+        encoding: 'utf8',
+        rule: 'keccak256(utf8(canonical HMAC payload array, JSON.stringify, no extra space)). This is the verdict object hash. It does not cover prompt or output text.',
+        preimage_utf8: payload,
+        hash: base.response_hash,
+      },
+    },
+    not_recomputable: receipt?.output?.hash
+      ? [{
+        field: 'output.hash',
+        hash: receipt.output.hash,
+        reason: 'output.hash is a commitment to the model output. The output is private and is not part of the public preimage.',
+      }]
+      : [],
   };
 
   if (!isReceiptValidatable(receipt)) {

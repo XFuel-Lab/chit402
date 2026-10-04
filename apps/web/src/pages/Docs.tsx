@@ -108,6 +108,13 @@ const builders: DocLink[] = [
     internal: true,
   },
   {
+    title: 'Receipt check',
+    description: 'Recompute public receipt hashes and check the signed issuer key history.',
+    href: '/docs/receipt-check',
+    meta: 'verify',
+    internal: true,
+  },
+  {
     title: 'Install doors',
     description: 'Chat /v1 wire, Eliza, ACP, MCP, frameworks, Cloudflare, swarms — peers into the same book.',
     href: '/doors',

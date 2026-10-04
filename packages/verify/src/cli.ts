@@ -34,6 +34,8 @@ import {
   type AnchorWitnessResult,
 } from './anchor-witness.js';
 import { type ReceiptLane } from './receipt-lane.js';
+import { verifyPublishedPreimages } from './preimage.js';
+import { checkReceiptIssuerHistory, type IssuerHistoryDocument } from './issuer-history.js';
 
 const HELP = `
 xfuel-verify — Offline verification for Chit402 receipts
@@ -69,6 +71,12 @@ Options:
   --head <file>       Signed tree head JSON (chit402.tree_head.v1)
   --json              Output JSON instead of human-readable
   --quiet             Only output errors
+  --strict-issuer-history
+                      Fail if the issuer key history cannot be fetched
+  --issuer-history-file <path>
+                      Read issuer history JSON instead of fetching it
+  --no-issuer-history Do not check the kid's not_before / not_after window
+  --no-preimage       Do not require published hash preimages
 
 Exit codes:
   0 = verified
@@ -152,6 +160,10 @@ function parseArgs(args: string[]): {
   json: boolean;
   quiet: boolean;
   help: boolean;
+  strictIssuerHistory: boolean;
+  issuerHistoryFile: string | null;
+  noIssuerHistory: boolean;
+  noPreimage: boolean;
 } {
   const result = {
     file: null as string | null,
@@ -172,6 +184,10 @@ function parseArgs(args: string[]): {
     json: false,
     quiet: false,
     help: false,
+    strictIssuerHistory: false,
+    issuerHistoryFile: null as string | null,
+    noIssuerHistory: false,
+    noPreimage: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -204,6 +220,14 @@ function parseArgs(args: string[]): {
       result.headFile = args[++i];
     } else if (arg === '--solana-rpc' && args[i + 1]) {
       result.solanaRpcUrl = args[++i];
+    } else if (arg === '--strict-issuer-history') {
+      result.strictIssuerHistory = true;
+    } else if (arg === '--issuer-history-file' && args[i + 1]) {
+      result.issuerHistoryFile = args[++i];
+    } else if (arg === '--no-issuer-history') {
+      result.noIssuerHistory = true;
+    } else if (arg === '--no-preimage') {
+      result.noPreimage = true;
     } else if (arg === '--json') {
       result.json = true;
     } else if (arg === '--quiet' || arg === '-q') {
@@ -337,17 +361,40 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   return 1;
 }
 
-function runRefusal(
+async function runRefusal(
   doc: RefusalDocument,
-  args: { jwks?: Jwks; trustedKids?: readonly string[]; json: boolean; quiet: boolean },
-): number {
+  args: {
+    jwks?: Jwks;
+    trustedKids?: readonly string[];
+    json: boolean;
+    quiet: boolean;
+    requirePreimages: boolean;
+    issuerHistory: IssuerHistoryDocument | null;
+    fetchIssuerHistory: boolean;
+    strictIssuerHistory: boolean;
+  },
+): Promise<number> {
   const result = verifyRefusal(doc, {
     jwks: args.jwks,
     trustedKids: args.trustedKids,
   });
+  const preimages = await verifyPublishedPreimages(doc as unknown as Record<string, unknown>, {
+    requirePreimages: args.requirePreimages,
+  });
+  const history = await checkReceiptIssuerHistory(doc as unknown as { verification?: { jwks_uri?: string }; verify_url?: string; created_at?: unknown }, {
+    document: args.issuerHistory,
+    fetchHistory: args.fetchIssuerHistory,
+    strict: args.strictIssuerHistory,
+    jwks: args.jwks,
+    trustedKids: args.trustedKids,
+    issuedAt: (doc as { issued_at?: string }).issued_at ?? null,
+    kid: result.kid ?? doc.issuer_signature?.kid ?? null,
+  });
+  const historyFailed = history.checked && !history.ok;
+  const failed = !result.valid || !preimages.ok || historyFailed;
   if (args.json) {
-    console.log(JSON.stringify(result, null, 2));
-  } else if (!args.quiet || !result.valid) {
+    console.log(JSON.stringify({ ...result, preimages, issuer_history: history }, null, 2));
+  } else if (!args.quiet || failed) {
     console.log('');
     console.log('  Chit402 Refusal Verification');
     console.log('  ─────────────────────────────────────────────────');
@@ -372,10 +419,13 @@ function runRefusal(
     console.log('  ─────────────────────────────────────────────────');
     for (const line of result.does_not_prove) console.log(`  ${line}`);
     console.log('');
-    console.log(`  Overall: ${result.valid ? 'VERIFIED' : 'FAILED'}`);
+    console.log(`  Overall: ${failed ? 'FAILED' : 'VERIFIED'}`);
+    if (!preimages.ok) console.log(`  Preimages:     ${preimages.errors.join('; ')}`);
+    if (history.warning) console.log(`  Issuer history: ${history.warning}`);
+    if (historyFailed && history.reason) console.log(`  Issuer history: ${history.reason}`);
     console.log('');
   }
-  return result.valid ? 0 : 1;
+  return failed ? 1 : 0;
 }
 
 async function main(): Promise<number> {
@@ -425,7 +475,30 @@ async function main(): Promise<number> {
     : (args.trustedKids ?? undefined);
 
   if (isRefusalDocument(receipt as unknown)) {
-    return runRefusal(receipt as unknown as RefusalDocument, { jwks, trustedKids, json: args.json, quiet: args.quiet });
+    let issuerHistory: IssuerHistoryDocument | null = null;
+    if (args.issuerHistoryFile) {
+      issuerHistory = JSON.parse(readFileSync(args.issuerHistoryFile, 'utf8')) as IssuerHistoryDocument;
+    }
+    return runRefusal(receipt as unknown as RefusalDocument, {
+      jwks,
+      trustedKids,
+      json: args.json,
+      quiet: args.quiet,
+      requirePreimages: !args.noPreimage,
+      issuerHistory,
+      fetchIssuerHistory: !args.noIssuerHistory && !issuerHistory,
+      strictIssuerHistory: args.strictIssuerHistory,
+    });
+  }
+
+  let issuerHistory: IssuerHistoryDocument | null = null;
+  if (args.issuerHistoryFile) {
+    try {
+      issuerHistory = JSON.parse(readFileSync(args.issuerHistoryFile, 'utf8')) as IssuerHistoryDocument;
+    } catch (err) {
+      console.error(`Error reading issuer history: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
   }
 
   const result = await verifyReceipt(receipt, {
@@ -437,6 +510,10 @@ async function main(): Promise<number> {
     checkPayer: args.checkPayer,
     rpcUrl: args.rpcUrl || undefined,
     solanaRpcUrl: args.solanaRpcUrl || undefined,
+    requirePreimages: !args.noPreimage,
+    issuerHistory,
+    fetchIssuerHistory: !args.noIssuerHistory && !issuerHistory,
+    strictIssuerHistory: args.strictIssuerHistory,
   });
 
   if (args.json) {
@@ -520,6 +597,14 @@ async function main(): Promise<number> {
     }
     console.log('');
     printLane(result.receipt_lane);
+    if (result.preimages.checked) {
+      console.log(`  Preimages:     ${result.preimages.ok ? '✓ MATCH' : '✗ ' + result.preimages.errors.join('; ')}`);
+    }
+    if (result.issuer_history.checked) {
+      console.log(`  Issuer history: ${result.issuer_history.ok ? '✓ kid in window' : '✗ ' + (result.issuer_history.reason || 'failed')}`);
+    } else if (result.issuer_history.warning) {
+      console.log(`  Issuer history: ${result.issuer_history.warning}`);
+    }
     console.log(`  Overall: ${result.overall.toUpperCase()}`);
     if (result.errors.length > 0) {
       console.log(`  Errors:  ${result.errors.join(', ')}`);

@@ -17,6 +17,7 @@
  */
 import crypto from 'crypto';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
+import { withPublicPreimages } from './receipt-preimage.js';
 
 export const REFUSAL_SCHEMA = 'chit402.refusal.v1';
 export const REFUSAL_PAYLOAD_VERSION = 1;
@@ -142,10 +143,10 @@ export function refusalVerifyUrl(baseUrl, refusalId) {
 /** Copy with an absolute verify_url. The URL is not part of the signature. */
 export function presentRefusal(doc, baseUrl) {
   if (!doc || typeof doc !== 'object' || !doc.refusal_id) return null;
-  return {
+  return withPublicPreimages({
     ...doc,
     verify_url: refusalVerifyUrl(baseUrl, doc.refusal_id),
-  };
+  }, { baseUrl });
 }
 
 /**

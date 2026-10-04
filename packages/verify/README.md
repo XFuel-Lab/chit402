@@ -83,6 +83,11 @@ including when `--jwks-file` points at the real JWKS.
 # Offline: default production pin, no network
 npx xfuel-verify receipt.json
 
+# Recompute published preimages and check the kid window.
+# History fetch warns if the URL is down. --strict-issuer-history fails closed.
+curl -sS "https://api.chit402.com/receipt/chit-39af100b-23dd-4d86-a16b-4556ca6796af?format=json" -o receipt.json
+npx xfuel-verify receipt.json --strict-issuer-history
+
 # Trust the published JWKS instead of (or in addition to) the pin
 curl -o issuer-jwks.json https://api.chit402.com/.well-known/jwks.json
 npx xfuel-verify receipt.json --jwks-file issuer-jwks.json --no-trusted-kid
