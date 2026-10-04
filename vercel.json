@@ -86,6 +86,7 @@
     { "source": "/llms.txt", "destination": "/api/llms.txt" },
     { "source": "/agent-shop", "destination": "/agent-shop/index.html" },
     { "source": "/book", "destination": "/book/index.html" },
+    { "source": "/audit", "destination": "/audit/index.html" },
     { "source": "/board", "destination": "/board/index.html" },
     { "source": "/book-bot", "destination": "/book-bot/index.html" },
     { "source": "/docs", "destination": "/docs/index.html" },

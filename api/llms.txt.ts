@@ -14,6 +14,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 - /docs/chit-in-15-lines : Chat /v1 install wire at api.chit402.com/v1 (paid x402 only).
 - /docs/1f916-link : Draft v0, feedback welcome. Link a 1F916 Agent Record entry (chit_receipt_id, optional chit_verify_url) to a Chit receipt (unsigned agent_record_entry.fingerprint, registry 1f916). Money-moving entries require the receipt id; without it the claim is unverified payment claim. Chit issues the receipt from the facilitator settlement (tx hash, network, payer on PAYMENT-RESPONSE). Specimen 1 and Specimen 2 are stamped: listing 55 payout 0x909d738d79ff4c9885cd9ed0755636565ee3ddf0406ef6f454e7fbf797990ce9 is https://api.chit402.com/receipt/foreign-x402-muq262x0-1467b076fc62 and listing 45 payout 0x233acdcf3d78436d63a0dba00092fb9a8fe806a3ecd1b415a4d364144baffebd is https://api.chit402.com/receipt/foreign-x402-muq264r9-69896464bb19. https://www.chit402.com/docs/1f916-link
 - /docs/eliza : Eliza plugin stub (coming: @xfuel/plugin-elizaos).
+- /audit    : Public Base USDC spend audit. Paste a wallet, no signup. Totals are withheld when the scan is incomplete. https://www.chit402.com/audit
 - /v1       : Not the API — points you to api.chit402.com/v1.
 
 ## Proof objects

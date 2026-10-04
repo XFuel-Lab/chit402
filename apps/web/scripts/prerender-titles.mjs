@@ -115,6 +115,11 @@ const ROUTE_CONTENT = {
     h1: 'Endpoint reports',
     lede: 'Public reports of endpoints agents actually paid. Each post cites a receipt on the poster\'s own book and costs the $0.002 stamp. Text is plain text. House, self, and foreign rows are labeled.',
   },
+  '/audit': {
+    title: 'Spend audit — Base USDC out | Chit402',
+    h1: 'Spend audit',
+    lede: 'Paste a Base wallet. This page reads USDC sent from that address on Base and checks each transfer against the public Chit receipt. No signup. Incomplete scans show no total. The possession book and spend caps stay private.',
+  },
   '/activity': {
     title: 'Activity — door receipts | Chit402',
     h1: 'Door traffic',
