@@ -6,7 +6,9 @@
  * signature that complements the HMAC (host-trust) signatures.
  *
  * Key format: ES256 (ECDSA with P-256/secp256r1 and SHA-256)
- *   - Private key: PEM format, base64-encoded in ISSUER_PRIVATE_KEY env var
+ *   - Private key: PEM format, base64-encoded in ISSUER_PRIVATE_KEY env var.
+ *     AWS Secrets Manager injection that lands in that env var is the
+ *     supported production path. There is no separate key file.
  *   - Public key: JWK format in /.well-known/jwks.json
  *   - Key ID (kid): SHA-256 thumbprint of the JWK (RFC 7638)
  *
@@ -40,7 +42,15 @@ function generateKeyPair() {
 export function initIssuerKey() {
   if (_privateKey) return { privateKey: _privateKey, publicKeyJwk: _publicKeyJwk, kid: _kid };
 
-  const envKey = process.env.ISSUER_PRIVATE_KEY || null;
+  const envKey = process.env.ISSUER_PRIVATE_KEY && String(process.env.ISSUER_PRIVATE_KEY).trim()
+    ? String(process.env.ISSUER_PRIVATE_KEY).trim()
+    : null;
+  // v11 refuses an ephemeral key. The flag-off path still generates one for local runs.
+  if (String(process.env.ISSUER_ROOT_ENABLED || '').trim() === 'true' && !envKey) {
+    throw new Error(
+      'ISSUER_ROOT_ENABLED=true refuses to start when ISSUER_PRIVATE_KEY is unset. An ephemeral issuer key cannot sign v11 receipts.',
+    );
+  }
   let privateKey;
   let publicKey;
 

@@ -1,0 +1,129 @@
+# Issuer root on receipts (v11)
+
+Off unless `ISSUER_ROOT_ENABLED=true`. With the flag unset, payment receipts stay payload v10, refusals stay `chit402.refusal.v1` at payload version 2, and `GET /.well-known/issuer-history.json` is unchanged. `GET /freeze/:universeId` and `GET /receipt/:id/legacy-proof` return 404.
+
+The issuer private key is still the base64 PEM in `ISSUER_PRIVATE_KEY`. That is the same variable AWS Secrets Manager injects into the process environment. There is no second key loader. The Safe that writes `ChitIssuerRoot` is not this key.
+
+Restart the process after changing these variables. The key check and the finalized-commit check run at startup, not on a later request.
+
+## Config
+
+| Variable | Meaning |
+|---|---|
+| `ISSUER_ROOT_ENABLED` | `true` turns on v11. Anything else is off. |
+| `ISSUER_ROOT_CHAIN_ID` | CAIP-2. Default `eip155:84532` (Base Sepolia). `eip155:8453` only when this variable is set to that value. |
+| `ISSUER_ROOT_REGISTRY` | Registry address. The gateway checksums it (EIP-55) before signing. |
+| `ISSUER_ROOT_SEQ` | `rootSeq` of a commit that has already finalized. Integer ≥ 1. |
+| `ISSUER_ROOT_HASH` | `rootHash` from that commit's `RootCommitted` log. 32 bytes. Stored lowercase with a `0x` prefix. |
+| `ISSUER_ROOT_STARTUP_CHECK` | `strict` (default when the flag is on) or `skip`. |
+| `ISSUER_ROOT_RPC_URL` | Used only by the strict startup check. Falls back to `BASE_RPC_URL`, then `SETTLEMENT_RPC_URL`. |
+| `ISSUER_ROOT_CUTOVER` | `pause` stops issuance. `off` (default) does not. |
+| `ISSUER_ROOT_FREEZE_FILE` | JSON file of freeze facts. See below. |
+| `ISSUER_ROOT_LEGACY_SET` | JSON artifact from the legacy Merkle builder. |
+
+Signing never reads the chain. `strict` calls `eth_chainId` and `eth_getLogs` once, at startup, with `toBlock: finalized`. The log must be the single `RootCommitted` for `ISSUER_ROOT_SEQ`, and its `rootHash` must equal `ISSUER_ROOT_HASH`. A miss, a mismatch, or an unreachable RPC refuses to start. `skip` does not call the RPC. `skip` does not allow an unset `ISSUER_PRIVATE_KEY`.
+
+If the flag is on and `ISSUER_PRIVATE_KEY` is unset, the process refuses to start. It does not generate an ephemeral key. With the flag off, an unset key still generates an ephemeral key for local runs.
+
+## What v11 adds
+
+The signed object, inside the JWS and the canonical preimage:
+
+```json
+{
+  "v": 1,
+  "chain_id": "eip155:84532",
+  "registry": "0xREGISTRY",
+  "root_seq": 1,
+  "root_hash": "0xROOTHASH",
+  "kid": "<rfc7638-thumbprint>"
+}
+```
+
+`issuer_root.kid`, the JWS `kid`, and the thumbprint of `issuer_jwk` are the same value. The canonical allowlist includes `issuer_root`. Payment payload version is 11. Refusal schema is `chit402.refusal.v2` and its payload version is 3 (payload version 2 is already the history pin on `chit402.refusal.v1`). The issuer-history JWS payload carries the same object, which seals a new history version. Older history bytes stay fetchable.
+
+A receipt that already has a JWS is not re-signed into v11. A tree-head restamp of a pre-v11 receipt is skipped once v11 is on, so its `payload_hash` stays the one in the legacy freeze.
+
+## Cutover pause
+
+Genesis needs every pre-v11 `payload_hash` in the freeze, and v11 needs that commit's `root_seq`. A receipt signed between the snapshot and v11 would be in neither set.
+
+The pause is config, then a restart:
+
+1. Set `ISSUER_ROOT_CUTOVER=pause`. Leave `ISSUER_ROOT_ENABLED` unset. Restart. New payment receipts, refusals, and foreign-ingest JWS signatures throw `issuer_root_cutover_pause`. Tree-head restamps are skipped. Receipts that already have a JWS still serve.
+2. Run the read-only builder (below) against the book. It does not sign.
+3. The genesis Safe commit freezes that root. Wait until the commit is finalized.
+4. Set `ISSUER_ROOT_ENABLED=true`, `ISSUER_ROOT_REGISTRY`, `ISSUER_ROOT_HASH`, `ISSUER_ROOT_SEQ`, and a stable `ISSUER_PRIVATE_KEY`. Restart. The strict startup check reads the finalized log once. Issuance resumes as v11.
+
+The pause stays in force until that full v11 config is set. `ISSUER_ROOT_SEQ` alone does not resume, and it does not issue another v10 receipt. That is the gap test: every hash from before the pause is in the legacy set, nothing is signed during the pause, and every hash after resume is v11 and outside the set.
+
+## Legacy Merkle set
+
+`node services/gateway/scripts/build-legacy-receipt-set.mjs --ledger <usage-settled.jsonl | directory> --out <artifact.json>`
+
+The script reads stored `payload_hash` values. It does not rebuild a canonical object, re-sign, mint, or broadcast. `--broadcast`, `--send`, and `--deploy` exit 2. A pre-v11 receipt with no stored `payload_hash` exits 1 and writes nothing.
+
+Tree, for the verify package:
+
+| Rule | Value |
+|---|---|
+| Leaf | `SHA-256(0x00 \|\| payload_hash bytes)` |
+| Node | `SHA-256(0x01 \|\| left \|\| right)` |
+| Order | payload_hash bytes ascending. Equal hashes keep input order. Duplicates stay, so the leaf count is the receipt count. |
+| Odd level | If a level has more than one node and an odd count, the last node is duplicated and hashed with itself. A single leaf is the root. |
+| Empty set | `SHA-256(0x00)`, hex `6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d` |
+
+The contract branch `cursor/chit-issuer-root-contract` was not on origin when this was written. Vectors: `services/gateway/test/fixtures/legacy-merkle-vectors.json`.
+
+`GET /receipt/:id/legacy-proof` serves an inclusion proof from `ISSUER_ROOT_LEGACY_SET`. 404 when the flag is off or the id is not a leaf. `chit-` and `xfuel-` ids match.
+
+## Universe id for `legacy_receipts_pre_v11`
+
+`universe_id = SHA-256(JCS({schema, book_id, window_id, predicate_hash}))`.
+
+| Field | Value |
+|---|---|
+| `schema` | `chit402.universe.v1` |
+| `book_id` | `chit402:global` |
+| `window_id` | `legacy_receipts_pre_v11` |
+| predicate `schema` | `chit402.universe_predicate.v1` |
+| predicate `name` | `legacy_receipts_pre_v11` |
+| predicate `subject` | `book receipt` |
+| predicate `include` | book row with a stored issuer signature, payload_version below 11, and no issuer_root claim in the JWS payload |
+| predicate `exclude` | rows with no issuer signature; payload_version 11 or greater; any issuer_root claim |
+| predicate `leaf` | `stored payload_hash bytes` |
+| predicate `re_sign` | `false` |
+
+`predicate_hash` is SHA-256 of the JCS predicate: `a45aaf907ba425c1474bc96187b73b5b5e42f6696b6e8dbc34d3acb047fd37d1`.
+
+JCS of the universe body:
+
+```json
+{"book_id":"chit402:global","predicate_hash":"a45aaf907ba425c1474bc96187b73b5b5e42f6696b6e8dbc34d3acb047fd37d1","schema":"chit402.universe.v1","window_id":"legacy_receipts_pre_v11"}
+```
+
+`universe_id`: `b623c1816e895dd967c4e51f0e066dafda546195a909e9b51283be4b5109caf4`.
+
+## `universe_hash` is not one construction
+
+On the legacy freeze, `universe_hash` is this Merkle root (`0x` plus 32 bytes).
+
+On an export-coverage snapshot, a bid-board window, or any other universe, `universe_hash` is the hash that universe already signs (for export coverage, SHA-256 over the ordered row commitments). The freeze file stores the value the commit wrote. The gateway does not recompute it.
+
+## Freeze document
+
+`GET /freeze/:universeId` returns `chit402.freeze.v1`, signed by the issuer key. 404 when the flag is off or the id is unknown.
+
+`ISSUER_ROOT_FREEZE_FILE` is a JSON object `{ "freezes": [ ... ] }` or a bare array. Each entry:
+
+| Field | Rule |
+|---|---|
+| `universe_id` | 32-byte hex |
+| `universe_hash` | `0x` plus 32 bytes |
+| `enumerated_count` | integer ≥ 0 |
+| `freeze_head.chain_id` | CAIP-2 string |
+| `freeze_head.frozenBlock` | block number of the commit |
+| `freeze_head.blockhash` | `0x` plus 32 bytes |
+| `tx_hash` | Safe transaction hash, `0x` plus 32 bytes |
+
+The gateway adds `issuer_root` from its own config and signs. It does not read the chain on this route. A stranger checks the document against the `Frozen` log field by field (decoded ABI values), not by comparing JSON bytes to the log.

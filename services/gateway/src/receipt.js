@@ -9,6 +9,14 @@ import { verifyAttestation, attestationNonce } from './tee-attestation.js';
 import { buildSpotCheckRecord } from './spotcheck.js';
 import { signJws, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwks, computeJwkThumbprint } from './issuer-key.js';
 import {
+  assertIssuanceOpen,
+  bindIssuerRoot,
+  isCutoverPaused,
+  issuerRootActive,
+  issuerRootClaim,
+  ISSUER_ROOT_PAYLOAD_VERSION,
+} from './issuer-root.js';
+import {
   sessionOf,
   publicSessionBlock,
   outerSessionPointer,
@@ -165,9 +173,16 @@ export function buildJwksUri(baseUrl = '') {
  * The HMAC array stays the v8 field list. Payload versions <= 7 keep the historical
  * net/fee split and still verify. v8 receipts that omit the head pair still
  * verify. v9 receipts keep the head pair they were signed with. A read never
- * re-signs or upgrades them. Only a receipt issued by this build is v10.
+ * re-signs or upgrades them. A receipt issued while the issuer root is off
+ * is v10. v11 is the same claims plus issuer_root, and only when that flag
+ * is on. This constant stays 10.
  */
 export const RECEIPT_PAYLOAD_VERSION = CANONICAL_PAYLOAD_VERSION;
+
+/** Payload version written into a newly signed receipt. */
+export function activeReceiptPayloadVersion() {
+  return issuerRootActive() ? ISSUER_ROOT_PAYLOAD_VERSION : RECEIPT_PAYLOAD_VERSION;
+}
 
 /** v8 canonical HMAC field order. Lockstep with packages/sdk and packages/verify. */
 const CANONICAL_V8_FIELDS = [
@@ -934,7 +949,8 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     dispute_window: view.dispute_window ?? view.meta?.disputeWindow ?? null,
     ...headBindingClaims(treeHeadHashForClaims(view)),
     issuer_history: currentHistoryPin(),
-    payload_version: RECEIPT_PAYLOAD_VERSION,
+    ...(issuerRootActive() ? { issuer_root: issuerRootClaim(getIssuerKid()) } : {}),
+    payload_version: activeReceiptPayloadVersion(),
     ...(openRouterSignedClaim(view) ? { openrouter: openRouterSignedClaim(view) } : {}),
   };
 }
@@ -1151,8 +1167,24 @@ function coveringHeadStale(cachedClaims, taskId) {
  * v9 and older are returned unchanged. A read must not upgrade them.
  * @param {object} receipt
  */
+/**
+ * A tree-head restamp re-signs the stored claims with a new payload_hash.
+ * During the cutover pause that would put a receipt in neither set, so it
+ * is skipped. Once v11 is on, a pre-v11 receipt is not restamped either:
+ * its payload_hash stays the one in the legacy freeze.
+ */
+export function treeHeadRestampAllowed(receipt) {
+  if (isCutoverPaused()) return false;
+  if (!issuerRootActive()) return true;
+  const claims = decodeReceiptClaims(receipt);
+  const version = Number(claims?.payload_version);
+  if (Number.isFinite(version) && version < ISSUER_ROOT_PAYLOAD_VERSION) return false;
+  return true;
+}
+
 export function stampCoveringTreeHead(receipt) {
   if (!receipt || typeof receipt !== 'object' || !receipt.issuer_signature?.jws) return receipt;
+  if (!treeHeadRestampAllowed(receipt)) return receipt;
   const claims = decodeReceiptClaims(receipt);
   if (!claims || Number(claims.payload_version) < CANONICAL_PAYLOAD_VERSION) return receipt;
   if (!Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash')) return receipt;
@@ -1361,6 +1393,7 @@ function sessionClaimsFrozen(cachedClaims, draft) {
 }
 
 function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
+  assertIssuanceOpen();
   const draft = canonicalSignedClaims(receipt, { iat });
   const sealed = sealCanonicalObject(draft, RECEIPT_CANONICAL_FIELDS);
   const jwksUri = buildJwksUri(baseUrl);
@@ -1368,9 +1401,10 @@ function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
     jku: jwksUri.startsWith('http') ? jwksUri : null,
   });
   const issuer_jwk = getIssuerPublicKeyJwk();
+  bindIssuerRoot(sealed.claims, kid, issuer_jwk);
   return {
     alg: 'ES256',
-    payload_version: RECEIPT_PAYLOAD_VERSION,
+    payload_version: sealed.claims.payload_version,
     jws,
     kid,
     issuer_jwk,

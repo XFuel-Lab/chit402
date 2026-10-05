@@ -21,7 +21,8 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { jcsCanonicalize } from './offer-receipt.js';
-import { getIssuerPublicKeyJwk, getJwks, signJws, verifyJwsWithJwks } from './issuer-key.js';
+import { getIssuerKid, getIssuerPublicKeyJwk, getJwks, signJws, verifyJwsWithJwks } from './issuer-key.js';
+import { bindIssuerRoot, issuerRootActive, issuerRootClaim } from './issuer-root.js';
 
 export const ISSUER_HISTORY_SCHEMA = 'chit402.issuer_history.v1';
 export const ISSUER_HISTORY_VERSION = 1;
@@ -166,7 +167,9 @@ export function buildIssuerHistory({ entries = null, version = null, seq = null 
     claims.version = version;
     claims.seq = seq == null ? version : seq;
   }
+  if (issuerRootActive()) claims.issuer_root = issuerRootClaim(getIssuerKid());
   const { jws, kid } = signJws(claims, { typ: ISSUER_HISTORY_JWT_TYP });
+  bindIssuerRoot(claims, kid, current);
   return {
     schema: ISSUER_HISTORY_SCHEMA,
     payload_version: ISSUER_HISTORY_VERSION,
@@ -222,6 +225,12 @@ export function verifyIssuerHistory(doc, jwks = null) {
   if (payload.schema !== ISSUER_HISTORY_SCHEMA) return { valid: false, reason: 'schema_mismatch' };
   if (Number(payload.entry_count) !== doc.entries.length) return { valid: false, reason: 'entry_count_mismatch' };
   if (payload.head_hash !== head) return { valid: false, reason: 'signed_head_mismatch' };
+  if (payload.issuer_root) {
+    const signedKid = result.kid || sig.kid || null;
+    if (!payload.issuer_root.kid || payload.issuer_root.kid !== signedKid) {
+      return { valid: false, reason: 'issuer_root_kid_mismatch' };
+    }
+  }
   if (payload.version != null && Number(payload.version) !== Number(doc.version)) {
     return { valid: false, reason: 'version_mismatch' };
   }
@@ -272,6 +281,17 @@ function historySha256(text) {
 
 function entryFingerprint(entries) {
   return (entries || []).map((entry) => entry.entry_hash).join(',');
+}
+
+/**
+ * Flag-off fingerprint is the entry chain only, so a sealed snapshot still
+ * matches. When the issuer root is on, the signed claims changed, so the
+ * fingerprint includes that object and a new version is sealed.
+ */
+function sealFingerprint(preview) {
+  const base = entryFingerprint(preview.entries);
+  if (!issuerRootActive()) return base;
+  return `${base}|${jcsCanonicalize(issuerRootClaim(getIssuerKid()))}`;
 }
 
 /** In-process append-only snapshots. Disk is optional. */
@@ -333,7 +353,7 @@ function persistHistoryRecord(record) {
  */
 export function currentIssuerHistory() {
   const preview = buildIssuerHistory();
-  const fingerprint = entryFingerprint(preview.entries);
+  const fingerprint = sealFingerprint(preview);
   const latest = historyStore.versions[historyStore.versions.length - 1] || null;
   if (latest && latest.fingerprint === fingerprint) return latest;
   const version = (latest?.version || 0) + 1;

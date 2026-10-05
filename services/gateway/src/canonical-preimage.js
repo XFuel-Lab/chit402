@@ -17,7 +17,11 @@
 import crypto from 'crypto';
 import { jcsCanonicalize } from './offer-receipt.js';
 
-/** New payment receipts. v9 head binding still verifies. */
+/**
+ * New payment receipts while ISSUER_ROOT_ENABLED is off. v9 head binding
+ * still verifies. v11 is selected at sign time when the issuer root is on;
+ * this constant stays 10 so a disabled process keeps today's payload.
+ */
 export const CANONICAL_PAYLOAD_VERSION = 10;
 
 export const CANONICAL_HASH_ALG = 'sha256';
@@ -41,6 +45,7 @@ export const RECEIPT_CANONICAL_FIELDS = Object.freeze([
   'iss',
   'issuance_commitment',
   'issuer_history',
+  'issuer_root',
   'kind',
   'openrouter',
   'output',
@@ -76,6 +81,7 @@ export const REFUSAL_CANONICAL_FIELDS = Object.freeze([
   'intent_id',
   'issued_at',
   'issuer_history',
+  'issuer_root',
   'kind',
   'model',
   'nonce',

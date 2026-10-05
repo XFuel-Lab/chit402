@@ -110,6 +110,13 @@ import { resolveSplit, describeSplit } from './revenue-split.js';
 import { apiKeyHashFromReq } from './buyer-attr.js';
 import { getFloatManager } from './provider-float.js';
 import { getJwks, initIssuerKey } from './issuer-key.js';
+import {
+  assertIssuerRootStartup,
+  freezeDocumentFor,
+  isCutoverPaused,
+  issuerRootActive,
+  legacyProofForReceipt,
+} from './issuer-root.js';
 import { buildPublicPullExport, isKnownPullExportSlug } from './public-pull-export.js';
 
 /**
@@ -2537,6 +2544,32 @@ export function createApp() {
     }
   });
 
+  // GET /freeze/:universeId — signed freeze document. 404 when the flag is off.
+  app.get('/freeze/:universeId', rateLimit, (req, res) => {
+    try {
+      const doc = freezeDocumentFor(req.params.universeId);
+      if (!doc) return res.status(404).json({ error: 'not_found' });
+      res.set('Cache-Control', 'public, max-age=300');
+      return res.json(doc);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /freeze error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // GET /receipt/:taskId/legacy-proof — frozen pre-v11 inclusion. 404 when off.
+  app.get('/receipt/:taskId/legacy-proof', rateLimit, (req, res) => {
+    try {
+      const proof = legacyProofForReceipt(req.params.taskId);
+      if (!proof) return res.status(404).json({ error: 'not_found' });
+      res.set('Cache-Control', 'public, max-age=300');
+      return res.json(proof);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /receipt legacy-proof error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
   // ═══════════════════════════════════════════════════════════════════════
   // GET /refusal/:refusalId — PUBLIC signed refusal (chit402.refusal.v1).
   // No auth. No charge. JSON via ?format=json, .json, or Accept: application/json.
@@ -3552,7 +3585,11 @@ export function createApp() {
   // ═══════════════════════════════════════════════════════════════════════
 
   app.get('/llms.txt', (_req, res) => {
-    res.type('text/plain; charset=utf-8').send(LLMS_TXT);
+    let body = LLMS_TXT;
+    if (issuerRootActive()) {
+      body += '\n- Freeze document: GET /freeze/:universeId — chit402.freeze.v1, signed by the issuer key.\n- Legacy receipt proof: GET /receipt/:id/legacy-proof — inclusion against the frozen legacy_receipts_pre_v11 root.\n';
+    }
+    res.type('text/plain; charset=utf-8').send(body);
   });
 
   // GET /public/specimens/:name — redacted stranger-auditable fixtures (no auth).
@@ -3674,7 +3711,36 @@ export function createApp() {
   app.get('/openapi.json', rateLimit, (req, res) => {
     try {
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-      res.json(buildOpenApiSpec(baseUrl));
+      const spec = buildOpenApiSpec(baseUrl);
+      if (issuerRootActive() && spec.paths) {
+        spec.paths['/freeze/{universeId}'] = {
+          get: {
+            operationId: 'getFreeze',
+            summary: 'Signed freeze document',
+            description: 'chit402.freeze.v1. Facts come from the gateway freeze file. 404 when the universe is unknown.',
+            tags: ['Receipts'],
+            parameters: [{ name: 'universeId', in: 'path', required: true, schema: { type: 'string' } }],
+            responses: {
+              200: { description: 'chit402.freeze.v1' },
+              404: { description: 'Unknown universe, or issuer root is off.' },
+            },
+          },
+        };
+        spec.paths['/receipt/{taskId}/legacy-proof'] = {
+          get: {
+            operationId: 'getLegacyReceiptProof',
+            summary: 'Legacy pre-v11 Merkle inclusion proof',
+            description: 'Inclusion of a frozen payload_hash in legacy_receipts_pre_v11. 404 when the receipt is not in the set.',
+            tags: ['Receipts'],
+            parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+            responses: {
+              200: { description: 'chit402.legacy_proof.v1' },
+              404: { description: 'Not in the frozen set, or issuer root is off.' },
+            },
+          },
+        };
+      }
+      res.json(spec);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /openapi.json error');
       return res.status(500).json({ error: 'internal', message: err.message });
@@ -5070,6 +5136,21 @@ export async function startServer() {
     } catch (err) {
       logger.warn({ err }, 'SP1 prover init skipped (proofs disabled for M2M tasks)');
     }
+  }
+
+  // Issuer root, when enabled, checks the finalized commit once here.
+  // Signing does not read the chain. An unset ISSUER_PRIVATE_KEY refuses
+  // to start while the flag is on (no ephemeral v11 key).
+  try {
+    const rootStartup = await assertIssuerRootStartup();
+    if (rootStartup.checked) {
+      logger.info({ seq: rootStartup.seq }, 'Issuer root commit is finalized');
+    } else if (isCutoverPaused()) {
+      logger.warn('ISSUER_ROOT_CUTOVER=pause: receipt and refusal issuance is stopped until the v11 root config is set');
+    }
+  } catch (err) {
+    logger.error({ err }, 'Issuer root startup check failed');
+    throw err;
   }
 
   // Initialize the issuer ECDSA key for receipt signing.
