@@ -397,7 +397,10 @@ const config = {
     dir: process.env.TASK_STORE_DIR || join(__dirname, '..', '.data', 'tasks'),
     // How often to flush in-place task mutations (status/proof) to disk.
     autoFlushMs: parseInt(process.env.TASK_STORE_FLUSH_MS, 10) || 10000,
-    // Retain a settled receipt this long before pruning (default 30 days).
+    // How long to keep non-receipt scratch (no payment ref, no issuer signature,
+    // not a published terminal status) before the hourly prune. Public receipt
+    // snapshots are not subject to this window — a shared verify_url must keep
+    // resolving. Default 30 days.
     retentionMs: parseInt(process.env.TASK_STORE_RETENTION_MS, 10) || 30 * 24 * 3600 * 1000,
   },
 
