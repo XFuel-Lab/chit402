@@ -85,6 +85,19 @@ import {
   type IssuerHistoryDocument,
 } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes, CANONICAL_PAYLOAD_VERSION } from './canonical-preimage.js';
+import {
+  verifyIssuerRoot,
+  resolvePinnedRoot,
+  rpcsForPin,
+  type IssuerRootVerdict,
+  type IssuerRootClaim,
+  type PinnedRoot,
+  type IssuerRootRpc,
+  type CallerLogCache,
+  type LegacyProofInput,
+  type HistoryWindow,
+  type DnsLookupResult,
+} from './issuer-root.js';
 
 export {
   computePaymentCommitment,
@@ -369,6 +382,11 @@ export interface ReceiptVerification {
   preimages: PreimageCheck;
   /** Kid window against the signed issuer history. Unreachable is a warning unless strict. */
   issuer_history: IssuerHistoryCheck;
+  /**
+   * Set only when an issuer-root pin is configured. Absent means 0.3.0
+   * behavior: root, DNS, and registry checks were not run.
+   */
+  issuer_root?: IssuerRootVerdict;
   warnings: string[];
   overall: 'verified' | 'partial' | 'failed';
   errors: string[];
@@ -1314,6 +1332,27 @@ export interface VerifyReceiptOptions {
    * the signed payload_hash. Absent bytes are not rebuilt.
    */
   canonicalPreimage?: string | null;
+  /**
+   * Opt-in issuer root. Omit this and leave CHIT_PINNED_CHAIN /
+   * CHIT_PINNED_REGISTRY unset to keep 0.3.0 behavior. `pin: null` forces
+   * the checks off even when the environment has a pin.
+   */
+  issuerRoot?: {
+    pin?: PinnedRoot | null;
+    rpcs?: IssuerRootRpc[];
+    primaryRpc?: string | null;
+    secondaryRpc?: string | null;
+    dns?: DnsLookupResult | (() => Promise<DnsLookupResult>);
+    domain?: string;
+    cache?: CallerLogCache | null;
+    offline?: boolean;
+    requireDns?: boolean;
+    requireDnssec?: boolean;
+    /** Unix seconds. */
+    now?: number;
+    history?: HistoryWindow | null;
+    legacyProof?: LegacyProofInput | null;
+  };
 }
 
 function normalizeBoundRoot(root: unknown): string | null {
@@ -1620,6 +1659,25 @@ export async function verifyReceipt(
   if (issuer_history.checked && !issuer_history.ok && issuer_history.reason) {
     errors.push(`issuer history: ${issuer_history.reason}`);
   }
+  const historyDocument = issuer_history.document ?? options.issuerHistory ?? null;
+  delete issuer_history.document;
+
+  const issuer_root = await issuerRootForReceipt(receipt, options, {
+    signatureValid: issuer_signature.valid === true,
+    signatureReason: issuer_signature.reason ?? null,
+    jwsKid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
+    verifiedClaims: verifiedClaims as Record<string, unknown> | undefined,
+    iat: unixSeconds(issuedAt),
+    payloadVersion: Number.isFinite(payloadVersion) ? payloadVersion : null,
+    payloadHash: typeof signedPayloadHash === 'string' ? signedPayloadHash : null,
+    historyDocument,
+  });
+  if (issuer_root) {
+    for (const warning of issuer_root.warnings) warnings.push(`issuer root: ${warning}`);
+    if (issuer_root.verdict.startsWith('fail_') && issuer_root.reason) {
+      errors.push(`issuer root: ${issuer_root.reason}`);
+    }
+  }
 
   const hasIssuerSig = !!receipt.issuer_signature;
   const jwksWasSupplied = !!(options.jwks || options.jwksUri || (options.fetchJwks && jwks));
@@ -1644,7 +1702,11 @@ export async function verifyReceipt(
   let overall: 'verified' | 'partial' | 'failed';
   const preimageFailed = !preimages.ok;
   const historyFailed = issuer_history.checked && !issuer_history.ok;
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed) {
+  const rootFailed = !!issuer_root && issuer_root.verdict.startsWith('fail_');
+  const rootSoft = !!issuer_root && (
+    issuer_root.verdict === 'unverified_root' || issuer_root.verdict === 'pin_only'
+  );
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed || rootFailed) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
@@ -1660,6 +1722,7 @@ export async function verifyReceipt(
   } else {
     overall = 'partial';
   }
+  if (overall === 'verified' && rootSoft) overall = 'partial';
 
   // A refusal is a different document. Recognition uses the signed JWS
   // schema, not only the unsigned outer schema. A valid issuer signature
@@ -1708,10 +1771,113 @@ export async function verifyReceipt(
     receipt_lane,
     preimages,
     issuer_history,
+    ...(issuer_root ? { issuer_root } : {}),
     warnings,
     overall,
     errors,
   };
+}
+
+function unixSeconds(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 1e12 ? Math.floor(value / 1000) : Math.floor(value);
+  }
+  if (typeof value === 'string' && value) {
+    const ms = Date.parse(value);
+    if (Number.isFinite(ms)) return Math.floor(ms / 1000);
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed > 1e12 ? Math.floor(parsed / 1000) : Math.floor(parsed);
+  }
+  return null;
+}
+
+function historyWindowFromDocument(
+  doc: IssuerHistoryDocument | null,
+  kid: string | null,
+): HistoryWindow {
+  if (!doc || !kid || !Array.isArray(doc.entries)) return { found: false };
+  const entry = doc.entries.find((row) => row.kid === kid);
+  if (!entry) return { found: false };
+  const notAfter = entry.not_after == null || entry.not_after === ''
+    ? 0
+    : unixSeconds(entry.not_after);
+  const revokedAt = entry.revoked_at == null || entry.revoked_at === ''
+    ? 0
+    : unixSeconds(entry.revoked_at);
+  return {
+    found: true,
+    notBefore: unixSeconds(entry.not_before),
+    notAfter,
+    revokedAt,
+    status: entry.status,
+  };
+}
+
+function readIssuerRootClaim(claims: Record<string, unknown> | undefined): IssuerRootClaim | null {
+  const raw = claims?.issuer_root;
+  if (!raw || typeof raw !== 'object') return null;
+  return raw as IssuerRootClaim;
+}
+
+async function issuerRootForReceipt(
+  receipt: XFuelReceipt,
+  options: VerifyReceiptOptions,
+  facts: {
+    signatureValid: boolean;
+    signatureReason: string | null;
+    jwsKid: string | null;
+    verifiedClaims: Record<string, unknown> | undefined;
+    iat: number | null;
+    payloadVersion: number | null;
+    payloadHash: string | null;
+    historyDocument: IssuerHistoryDocument | null;
+  },
+): Promise<IssuerRootVerdict | undefined> {
+  const requested = options.issuerRoot;
+  const pinInput = requested && 'pin' in requested ? requested.pin : undefined;
+  const resolved = resolvePinnedRoot(pinInput, process.env);
+  if (resolved.mode === 'off') return undefined;
+  if (resolved.mode === 'reject') {
+    return {
+      verdict: 'fail_registry_unpinned',
+      reason: 'registry_unpinned',
+      warnings: [],
+      display: 'normal',
+      note: null,
+      compared_block: null,
+      dnssec: 'unchecked',
+    };
+  }
+  const embedded = resolvePinnedIssuerJwk(receipt);
+  const thumbprint = embedded ? jwkThumbprint(embedded) : null;
+  const rpcs = requested?.rpcs ?? rpcsForPin(resolved.pin, {
+    primaryUrl: requested?.primaryRpc,
+    secondaryUrl: requested?.secondaryRpc,
+    env: process.env,
+  });
+  const history = requested?.history
+    ?? historyWindowFromDocument(facts.historyDocument, facts.jwsKid);
+  return verifyIssuerRoot({
+    signatureValid: facts.signatureValid,
+    signatureReason: facts.signatureReason,
+    jwsKid: facts.jwsKid,
+    thumbprint,
+    issuerRoot: readIssuerRootClaim(facts.verifiedClaims),
+    payloadVersion: facts.payloadVersion,
+    iat: facts.iat,
+    payloadHash: facts.payloadHash,
+    pin: resolved.pin,
+    offline: requested?.offline,
+    requireDns: requested?.requireDns,
+    requireDnssec: requested?.requireDnssec,
+    rpcs,
+    dns: requested?.dns,
+    domain: requested?.domain,
+    cache: requested?.cache,
+    now: requested?.now,
+    history,
+    legacyProof: requested?.legacyProof,
+  });
 }
 
 export {
@@ -1792,6 +1958,53 @@ export {
   issuerHistoryDocumentHash,
   type IssuerHistoryPin,
 } from './issuer-history.js';
+
+export {
+  verifyIssuerRoot,
+  resolvePinnedRoot,
+  rpcsForPin,
+  registryRpcUrls,
+  connectIssuerRootRpc,
+  parseRegistryLog,
+  activeKidsAtSeq,
+  keyVerdictAt,
+  supersessionConfirmed,
+  legacyFreezeRoot,
+  PINNED_ROOT,
+  PINNED_ROOT_CHAINS,
+  BASE_SEPOLIA_REGISTRY_RPC,
+  BASE_MAINNET_REGISTRY_RPC,
+  ZERO_ADDRESS,
+  REGISTRY_ABI,
+  type IssuerRootVerdict,
+  type IssuerRootRpc,
+  type ChainView,
+  type PinnedRoot,
+  type ResolvedPin,
+  type CallerLogCache,
+  type RegistryLog,
+  type PinResolution,
+} from './issuer-root.js';
+
+export {
+  parseIssuerTxt,
+  resolveIssuerTxt,
+  ISSUER_TXT_VERSION,
+  type IssuerTxt,
+  type DnsLookupResult,
+} from './issuer-dns.js';
+
+export {
+  legacyMerkleRoot,
+  legacyMerkleRootHex,
+  legacyInclusion,
+  verifyLegacyInclusion,
+  legacyLeaf,
+  legacyNode,
+  LEGACY_MERKLE_RECONCILE,
+  type LegacyInclusion,
+  type LegacyProofStep,
+} from './legacy-merkle.js';
 
 export default {
   verifyBinding,

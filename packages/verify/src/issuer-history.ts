@@ -55,6 +55,11 @@ export interface IssuerHistoryCheck {
   warning: string | null;
   reason: string | null;
   kid: string | null;
+  /**
+   * Loaded snapshot, for the issuer-root window check. Stripped before
+   * `verifyReceipt` returns so the public result stays the 0.3.0 shape.
+   */
+  document?: IssuerHistoryDocument | null;
 }
 
 function sha256Hex(text: string): string {
@@ -299,27 +304,27 @@ export async function checkReceiptIssuerHistory(
   }
   if (pinned && pin) {
     if (raw != null && sha256Hex(raw) !== pin.hash) {
-      return { ...base, checked: true, ok: false, reason: 'issuer_history_pin_mismatch' };
+      return { ...base, checked: true, ok: false, reason: 'issuer_history_pin_mismatch', document: doc };
     }
     if (issuerHistoryDocumentHash(doc) !== pin.hash) {
-      return { ...base, checked: true, ok: false, reason: 'issuer_history_pin_mismatch' };
+      return { ...base, checked: true, ok: false, reason: 'issuer_history_pin_mismatch', document: doc };
     }
     if (Number(doc.version) !== pin.version) {
-      return { ...base, checked: true, ok: false, reason: 'issuer_history_version_mismatch' };
+      return { ...base, checked: true, ok: false, reason: 'issuer_history_version_mismatch', document: doc };
     }
     if (Number(doc.seq) !== pin.seq) {
-      return { ...base, checked: true, ok: false, reason: 'issuer_history_seq_mismatch' };
+      return { ...base, checked: true, ok: false, reason: 'issuer_history_seq_mismatch', document: doc };
     }
   }
   const signed = verifyIssuerHistoryDocument(doc, { jwks, trustedKids });
   if (!signed.valid) {
-    return { ...base, checked: true, ok: false, reason: signed.reason || 'issuer_history_invalid' };
+    return { ...base, checked: true, ok: false, reason: signed.reason || 'issuer_history_invalid', document: doc };
   }
   const window = issuerKeyWindow(doc, kid, issuedAt);
   if (!window.ok) {
-    return { ...base, checked: true, ok: false, reason: window.reason };
+    return { ...base, checked: true, ok: false, reason: window.reason, document: doc };
   }
-  return { ...base, checked: true, ok: true };
+  return { ...base, checked: true, ok: true, document: doc };
 }
 
 export function historyUrlFromReceipt(receipt: { verification?: { jwks_uri?: string }; verify_url?: string }): string | null {

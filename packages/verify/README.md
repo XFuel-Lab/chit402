@@ -68,6 +68,24 @@ npx xfuel-verify receipt.json inclusion.json head.json --rpc
 | Anchored receipt root | Yes, with `--rpc` | Inclusion proof, then Solana memo and Base calldata for that root |
 | Canonical preimage | No | SHA-256 of `--canonical-preimage`, or the stored canonical object, matches signed `payload_hash` |
 | Issuer history | No, with `--issuer-history-file` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match the snapshot hash |
+| Issuer root | Only when a pin is set | Opt-in. Two finalized Base RPCs, `_issuer` TXT, and the legacy freeze. No pin keeps the 0.3.0 result |
+
+## Issuer root (0.4.0)
+
+Root checks stay off until you pass a pin. Nothing in this package is a trusted mainnet registry address.
+
+```bash
+# Base Sepolia. The registry address comes from the deploy, not from npm.
+npx xfuel-verify receipt.json \
+  --pinned-chain eip155:84532 \
+  --pinned-registry 0xYourSepoliaRegistry \
+  --registry-rpc https://your-second-rpc.example
+
+# Airgapped: package trust only, and only for the genesis kid.
+npx xfuel-verify receipt.json --pinned-chain eip155:84532 --pinned-registry 0xYourSepoliaRegistry --offline
+```
+
+`CHIT_PINNED_CHAIN` and `CHIT_PINNED_REGISTRY` are the same pin. `pass_dns_unavailable` is a pass printed in yellow. `unverified_root` and `pin_only` are not passes. An unsigned `--root-cache` is reported as `as of block N, caller cache` and does not upgrade the verdict.
 
 ## Issuer Signature Verification (ES256)
 

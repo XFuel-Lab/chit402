@@ -3,6 +3,22 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.0 — Issuer root checks (opt-in)
+
+### Added
+- **Opt-in issuer root.** `verifyIssuerRoot` runs spec steps 1–5 when a pin is configured (`issuerRoot.pin`, or `CHIT_PINNED_CHAIN` plus `CHIT_PINNED_REGISTRY`). With no pin, `verifyReceipt` does not add `issuer_root` and keeps the 0.3.0 result for v7–v10 receipts. The package does not ship a registry address. `eip155:84532` is accepted when the caller supplies the Sepolia registry. `eip155:8453` is accepted only with a caller-supplied address. `https://mainnet.base.org` is a read-only RPC default, not a trusted registry. The zero address and a non-address are rejected.
+- **Verdicts.** `pass`, `pass_dns_unavailable` (yellow), `unverified_root`, `pin_only`, `pass_legacy_root`, and `fail_*` for `signature_invalid`, `kid_mismatch`, `registry_unpinned`, `rpc_disagree`, `root_from_future`, `root_hash_mismatch`, `key_revoked_at_iat`, `key_outside_window`, `key_unknown`, `superseded_unconfirmed`, `dns_registry_mismatch`, `dns_ahead_of_chain`, `dns_chain_disagree`, `dns_ambiguous`, `dns_missing`, `dns_malformed`, `dns_unavailable`, `dnssec_required`, `history_chain_disagree`, `legacy_not_in_freeze`. `dns_lagging` is a warning.
+- **Two finalized RPCs.** Defaults are `https://sepolia.base.org` for Base Sepolia and `https://mainnet.base.org` (read-only) for Base mainnet, plus `CHIT_REGISTRY_RPC` or `--registry-rpc`. The two views are compared at the minimum finalized block. A single URL used twice does not count as two RPCs.
+- **DNS TXT.** `_issuer.<domain>` parser: multi-string concat, `v` first, unknown `v` ignored, duplicate `chit-issuer1` is `dns_ambiguous`, repeatable `kid` and `standby`. Resolution is injectable. NXDOMAIN is missing and fails when root checks are on. SERVFAIL and timeout are `pass_dns_unavailable` unless `--require-dns`. `--require-dnssec` is a stub and fails unless the resolver reports `validated`.
+- **Legacy freeze.** A receipt with no `issuer_root` checks `keyValidAt` and a Merkle inclusion proof. Leaf is `SHA-256(0x00 || payload_hash)`, node is `SHA-256(0x01 || left || right)`, leaves are sorted ascending, and an odd level duplicates its last node. Reconcile this with the contract and gateway branches before mainnet; those branches were not in the tree.
+- **CLI.** `--offline`, `--require-dns`, `--require-dnssec`, `--pinned-chain`, `--pinned-registry`, `--genesis-kid`, `--registry-rpc`, `--root-cache`, `--legacy-proof`, `--issuer-domain`.
+
+### Security
+- A revoked key still verifies when it was ever active and `iat` is strictly before `revokedAt`. `iat >= revokedAt` is `key_revoked_at_iat`. A key that was never active does not pass.
+- The active kid set at a DNS `seq` is rebuilt from `KeyStandby`, `KeyActivated`, `KeyRetired`, and `KeyRevoked`, with the pinned genesis kid seeded active.
+- An unsigned caller cache of `RootCommitted` logs is labeled `as of block N, caller cache` and never upgrades a verdict to `pass`.
+- Chain revocation fails the receipt whatever DNS says. A DNS record that drops the receipt's still-active kid fails `dns_chain_disagree` immediately. Other kid-set lag is `dns_lagging` inside TTL+1h and `dns_chain_disagree` after that.
+
 ## 0.3.0 — Canonical preimage, issuer-history pin, refusals
 
 ### Added
