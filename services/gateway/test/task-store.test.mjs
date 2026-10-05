@@ -104,21 +104,38 @@ test('flushAll persists in-place mutations made without re-set', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('gcPersisted prunes receipts older than retention, keeps fresh ones', () => {
+test('gcPersisted prunes expired scratch and keeps a public receipt of any age', () => {
   const dir = tmpDir();
   const a = new PersistentTaskStore({ dir, autoFlushMs: 0 });
   const old = Date.now() - 40 * 24 * 3600 * 1000; // 40 days old
   a.set('task-old', sampleTask('task-old', { updatedAt: old, createdAt: old }));
   a.set('task-new', sampleTask('task-new'));
+  // Pre-v9 house receipt: numeric timestamps, payment ref, payload_version 7.
+  // This is the shape gc used to unlink after 30 days (chit-1e57cdd7, 2026-09-01).
+  a.set('xfuel-old-receipt', sampleTask('xfuel-old-receipt', {
+    updatedAt: old,
+    createdAt: old,
+    status: 'completed',
+    intent: { paymentRef: 'base:0x' + 'ab'.repeat(32), paymentRail: 'usdc' },
+    issuerSignature: { alg: 'ES256', payload_version: 7, jws: 'header.payload.sig' },
+  }));
   a.destroy();
 
   // GC operates on the durable snapshots; simulate a restart so neither task is in
-  // the hot map (matching how evicted/old receipts actually get pruned).
+  // the hot map (matching how evicted/old tasks actually get pruned).
   const store = new PersistentTaskStore({ dir, autoFlushMs: 0 });
-  const removed = store.gcPersisted(30 * 24 * 3600 * 1000); // 30-day retention
+  const removed = store.gcPersisted(30 * 24 * 3600 * 1000); // 30-day scratch retention
   assert.equal(removed, 1);
-  assert.equal(store.get('task-old'), undefined, 'expired receipt pruned');
-  assert.ok(store.get('task-new'), 'fresh receipt retained');
+  assert.equal(store.get('task-old'), undefined, 'expired scratch task pruned');
+  assert.ok(store.get('task-new'), 'fresh scratch task retained');
+  const kept = store.get('xfuel-old-receipt');
+  assert.ok(kept, 'public receipt survives retention');
+  assert.equal(kept.issuerSignature.payload_version, 7);
+  assert.equal(
+    store.getByPaymentRef('0x' + 'ab'.repeat(32))?.taskId,
+    'xfuel-old-receipt',
+    'payment-ref index still resolves the kept receipt',
+  );
   store.destroy();
   fs.rmSync(dir, { recursive: true, force: true });
 });

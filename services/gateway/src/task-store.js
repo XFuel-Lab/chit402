@@ -23,8 +23,27 @@ import logger from './logger.js';
  *
  * Durability model: single-node, one JSON file per task. Matches the Phase-1
  * single-process model; point `dir` at a shared volume or swap for Redis/Postgres
- * to scale horizontally. A long-TTL GC prunes old receipts.
+ * to scale horizontally. Scratch tasks (no payment, no signature, not a published
+ * terminal status) are pruned after `retentionMs`. A public receipt snapshot is
+ * never deleted: the verify_url was already shared, and unlinking the file is a
+ * silent 404.
  */
+
+/**
+ * A snapshot that backs a public verify_url. Retention must not unlink these.
+ * Paid rows, already-signed rows, and published terminal statuses all qualify.
+ * @param {object} snap
+ * @returns {boolean}
+ */
+export function isDurableReceiptSnapshot(snap) {
+  if (!snap || typeof snap !== 'object') return false;
+  const ref = snap.intent?.paymentRef;
+  if (typeof ref === 'string' && ref.trim()) return true;
+  const sig = snap.issuerSignature || snap.issuer_signature;
+  if (sig && typeof sig === 'object' && (sig.jws || sig.payload_version != null)) return true;
+  const status = String(snap.status || '');
+  return status === 'completed' || status === 'fee_collected' || status === 'settled';
+}
 
 /** JSON.stringify that won't throw on BigInt task fields (serialized as strings). */
 function safeStringify(obj) {
@@ -37,7 +56,8 @@ export class PersistentTaskStore extends Map {
    * @param {string}  [opts.dir]          durable snapshot directory
    * @param {boolean} [opts.persist=true] false → behave as a plain in-memory Map
    * @param {number}  [opts.autoFlushMs]  periodic flush interval (0 → disabled)
-   * @param {number}  [opts.retentionMs]  prune persisted receipts older than this
+   * @param {number}  [opts.retentionMs]  prune non-receipt scratch older than this.
+   *   Public receipt snapshots are kept regardless of age.
    */
   constructor({ dir, persist = true, autoFlushMs = 10000, retentionMs = 30 * 24 * 3600 * 1000 } = {}) {
     super();
@@ -61,8 +81,8 @@ export class PersistentTaskStore extends Map {
         this._flushTimer = setInterval(() => this.flushAll(), autoFlushMs);
         this._flushTimer.unref?.();
       }
-      // Hourly prune of receipts past retention. Cheap; unref'd so it never holds
-      // the process open on its own.
+      // Hourly prune of non-receipt scratch past retention. Receipt snapshots
+      // are kept. Unref'd so the timer never holds the process open on its own.
       this._gcTimer = setInterval(() => this.gcPersisted(), 3600_000);
       this._gcTimer.unref?.();
       // Rebuild the payment ref index from persisted snapshots on startup.
@@ -253,7 +273,9 @@ export class PersistentTaskStore extends Map {
   }
 
   /**
-   * Prune persisted receipts older than `maxAgeMs` (by updatedAt/createdAt).
+   * Prune non-receipt scratch older than `maxAgeMs` (by updatedAt/createdAt).
+   * Public receipt snapshots are kept at any age. `TASK_STORE_RETENTION_MS`
+   * does not apply to them.
    * @returns {number} files removed
    */
   gcPersisted(maxAgeMs = this.retentionMs) {
@@ -271,6 +293,7 @@ export class PersistentTaskStore extends Map {
       const fp = path.join(this.dir, f);
       try {
         const snap = JSON.parse(fs.readFileSync(fp, 'utf8'));
+        if (isDurableReceiptSnapshot(snap)) continue;
         const ts = snap.updatedAt || snap.createdAt || 0;
         if (now - ts > maxAgeMs) {
           fs.unlinkSync(fp);
@@ -280,7 +303,7 @@ export class PersistentTaskStore extends Map {
         // Unreadable/partial file — leave it; a later flush may repair it.
       }
     }
-    if (removed) logger.info({ removed, dir: this.dir }, 'task-store: pruned expired receipts');
+    if (removed) logger.info({ removed, dir: this.dir }, 'task-store: pruned expired non-receipt tasks');
     return removed;
   }
 
