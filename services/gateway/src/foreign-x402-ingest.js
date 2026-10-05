@@ -24,6 +24,7 @@ import { parseNanoIngest, verifyNanoSend } from './nano-rail.js';
 import { buildVerifyUrl, canonicalSignedClaims, explorerUrlForRef, networkFromPaymentRef } from './receipt.js';
 import { claimIdOf } from './claim-id.js';
 import { getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
+import { FOREIGN_CANONICAL_FIELDS, sealCanonicalObject } from './canonical-preimage.js';
 import { fromCaip2Network } from './x402-facilitator.js';
 import {
   buildFulfillmentEnvelope,
@@ -796,12 +797,17 @@ export function buildForeignReceipt({
     amount: payout.amount,
     ...(payout.agent_record_entry ? { agent_record_entry: payout.agent_record_entry } : {}),
   };
-  const { jws, kid } = signJws(claims, { jku: ISSUER_JWKS_URI });
+  const sealed = sealCanonicalObject(claims, FOREIGN_CANONICAL_FIELDS);
+  const { jws, kid } = signJws(sealed.claims, { jku: ISSUER_JWKS_URI });
   receipt.issuer_signature = {
     alg: 'ES256',
+    payload_version: sealed.claims.payload_version,
     kid,
     jws,
     issuer_jwk: getIssuerPublicKeyJwk(),
+    hash_alg: sealed.hash_alg,
+    payload_hash: sealed.payload_hash,
+    canonical_preimage: sealed.preimage,
   };
   receipt.verification = {
     source_of_truth: 'issuer_signature.jws',

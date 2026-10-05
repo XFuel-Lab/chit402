@@ -35,7 +35,8 @@ import {
 } from './anchor-witness.js';
 import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
-import { checkReceiptIssuerHistory, type IssuerHistoryDocument } from './issuer-history.js';
+import { checkReceiptIssuerHistory, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
+import { verifyCanonicalPreimageBytes } from './canonical-preimage.js';
 
 const HELP = `
 xfuel-verify — Offline verification for Chit402 receipts
@@ -75,6 +76,8 @@ Options:
                       Fail if the issuer key history cannot be fetched
   --issuer-history-file <path>
                       Read issuer history JSON instead of fetching it
+  --canonical-preimage <path>
+                      SHA-256 this file and match the signed payload_hash
   --no-issuer-history Do not check the kid's not_before / not_after window
   --no-preimage       Do not require published hash preimages
 
@@ -162,6 +165,7 @@ function parseArgs(args: string[]): {
   help: boolean;
   strictIssuerHistory: boolean;
   issuerHistoryFile: string | null;
+  canonicalPreimageFile: string | null;
   noIssuerHistory: boolean;
   noPreimage: boolean;
 } {
@@ -186,6 +190,7 @@ function parseArgs(args: string[]): {
     help: false,
     strictIssuerHistory: false,
     issuerHistoryFile: null as string | null,
+    canonicalPreimageFile: null as string | null,
     noIssuerHistory: false,
     noPreimage: false,
   };
@@ -224,6 +229,8 @@ function parseArgs(args: string[]): {
       result.strictIssuerHistory = true;
     } else if (arg === '--issuer-history-file' && args[i + 1]) {
       result.issuerHistoryFile = args[++i];
+    } else if (arg === '--canonical-preimage' && args[i + 1]) {
+      result.canonicalPreimageFile = args[++i];
     } else if (arg === '--no-issuer-history') {
       result.noIssuerHistory = true;
     } else if (arg === '--no-preimage') {
@@ -370,8 +377,11 @@ async function runRefusal(
     quiet: boolean;
     requirePreimages: boolean;
     issuerHistory: IssuerHistoryDocument | null;
+    issuerHistoryBytes: string | null;
     fetchIssuerHistory: boolean;
     strictIssuerHistory: boolean;
+    skipIssuerHistory: boolean;
+    canonicalPreimage: string | null;
   },
 ): Promise<number> {
   const trustedKids = args.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
@@ -382,17 +392,32 @@ async function runRefusal(
   const preimages = await verifyPublishedPreimages(doc as unknown as Record<string, unknown>, {
     requirePreimages: args.requirePreimages,
   });
-  const history = await checkReceiptIssuerHistory(doc as unknown as { verification?: { jwks_uri?: string }; verify_url?: string; created_at?: unknown }, {
-    document: args.issuerHistory,
-    fetchHistory: args.fetchIssuerHistory,
-    strict: args.strictIssuerHistory,
-    jwks: args.jwks,
-    trustedKids,
-    issuedAt: (doc as { issued_at?: string }).issued_at ?? null,
-    kid: result.kid ?? doc.issuer_signature?.kid ?? null,
-  });
+  let canonicalFailed = false;
+  if (args.canonicalPreimage != null) {
+    const canonical = verifyCanonicalPreimageBytes(args.canonicalPreimage, result.payload_hash);
+    canonicalFailed = !canonical.ok;
+    if (canonicalFailed) preimages.errors.push(`canonical preimage: ${canonical.reason}`);
+    if (canonicalFailed) preimages.ok = false;
+  }
+  const pin = result.valid ? readIssuerHistoryPin({
+    issuer_history: result.issuer_history,
+  } as Record<string, unknown>) : null;
+  const history = args.skipIssuerHistory
+    ? { checked: false, ok: true, unreachable: false, warning: null, reason: null, kid: result.kid ?? null }
+    : await checkReceiptIssuerHistory(doc as unknown as { verification?: { jwks_uri?: string }; verify_url?: string; created_at?: unknown }, {
+      document: args.issuerHistory,
+      documentBytes: args.issuerHistoryBytes,
+      fetchHistory: args.fetchIssuerHistory,
+      strict: args.strictIssuerHistory,
+      jwks: args.jwks,
+      trustedKids,
+      issuedAt: (doc as { issued_at?: string }).issued_at ?? null,
+      kid: result.kid ?? doc.issuer_signature?.kid ?? null,
+      pin,
+      requirePin: result.valid && Number(result.payload_version) >= 2,
+    });
   const historyFailed = history.checked && !history.ok;
-  const failed = !result.valid || !preimages.ok || historyFailed;
+  const failed = !result.valid || !preimages.ok || historyFailed || canonicalFailed;
   if (args.json) {
     console.log(JSON.stringify({ ...result, preimages, issuer_history: history }, null, 2));
   } else if (!args.quiet || failed) {
@@ -477,8 +502,14 @@ async function main(): Promise<number> {
 
   if (isRefusalDocument(receipt as unknown)) {
     let issuerHistory: IssuerHistoryDocument | null = null;
+    let issuerHistoryBytes: string | null = null;
     if (args.issuerHistoryFile) {
-      issuerHistory = JSON.parse(readFileSync(args.issuerHistoryFile, 'utf8')) as IssuerHistoryDocument;
+      issuerHistoryBytes = readFileSync(args.issuerHistoryFile, 'utf8');
+      issuerHistory = JSON.parse(issuerHistoryBytes) as IssuerHistoryDocument;
+    }
+    let canonicalPreimage: string | null = null;
+    if (args.canonicalPreimageFile) {
+      canonicalPreimage = readFileSync(args.canonicalPreimageFile, 'utf8');
     }
     return runRefusal(receipt as unknown as RefusalDocument, {
       jwks,
@@ -487,17 +518,31 @@ async function main(): Promise<number> {
       quiet: args.quiet,
       requirePreimages: !args.noPreimage,
       issuerHistory,
+      issuerHistoryBytes,
       fetchIssuerHistory: !args.noIssuerHistory && !issuerHistory,
       strictIssuerHistory: args.strictIssuerHistory,
+      skipIssuerHistory: args.noIssuerHistory,
+      canonicalPreimage,
     });
   }
 
   let issuerHistory: IssuerHistoryDocument | null = null;
+  let issuerHistoryBytes: string | null = null;
   if (args.issuerHistoryFile) {
     try {
-      issuerHistory = JSON.parse(readFileSync(args.issuerHistoryFile, 'utf8')) as IssuerHistoryDocument;
+      issuerHistoryBytes = readFileSync(args.issuerHistoryFile, 'utf8');
+      issuerHistory = JSON.parse(issuerHistoryBytes) as IssuerHistoryDocument;
     } catch (err) {
       console.error(`Error reading issuer history: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+  }
+  let canonicalPreimage: string | null = null;
+  if (args.canonicalPreimageFile) {
+    try {
+      canonicalPreimage = readFileSync(args.canonicalPreimageFile, 'utf8');
+    } catch (err) {
+      console.error(`Error reading canonical preimage: ${err instanceof Error ? err.message : String(err)}`);
       return 3;
     }
   }
@@ -513,8 +558,11 @@ async function main(): Promise<number> {
     solanaRpcUrl: args.solanaRpcUrl || undefined,
     requirePreimages: !args.noPreimage,
     issuerHistory,
+    issuerHistoryBytes,
     fetchIssuerHistory: !args.noIssuerHistory && !issuerHistory,
     strictIssuerHistory: args.strictIssuerHistory,
+    skipIssuerHistory: args.noIssuerHistory,
+    canonicalPreimage,
   });
 
   if (args.json) {

@@ -84,9 +84,11 @@ including when `--jwks-file` points at the real JWKS.
 npx xfuel-verify receipt.json
 
 # Recompute published preimages and check the kid window.
-# History fetch warns if the URL is down. --strict-issuer-history fails closed.
-curl -sS "https://api.chit402.com/receipt/chit-39af100b-23dd-4d86-a16b-4556ca6796af?format=json" -o receipt.json
-npx xfuel-verify receipt.json --strict-issuer-history
+# A payload v10 receipt pins issuer_history. Hash the stored canonical object:
+curl -sS "https://api.chit402.com/receipt/RECEIPT_ID?format=json" -o receipt.json
+curl -sS "https://api.chit402.com/receipt/RECEIPT_ID/preimage" -o preimage.json
+curl -sS "https://api.chit402.com/.well-known/issuer-history.json?version=1" -o issuer-history.json
+npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
 
 # Trust the published JWKS instead of (or in addition to) the pin
 curl -o issuer-jwks.json https://api.chit402.com/.well-known/jwks.json

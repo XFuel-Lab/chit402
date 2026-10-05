@@ -2,16 +2,24 @@
  * Signed, append-only issuer key history.
  *
  * GET /.well-known/issuer-history.json
+ * GET /.well-known/issuer-history.json?version=N
+ * GET /.well-known/issuer-history.json?hash=<sha256>
  *
  * Each entry names a kid, its public JWK, the window it may sign, and where
  * the private key is held. Entries chain by prev_hash (JCS / RFC 8785, then
  * SHA-256). The current issuer key signs the head hash, so a rewritten entry
  * breaks the chain or the signature.
  *
+ * A published snapshot is sealed once. A later key, retirement, or not_after
+ * appends a new version. Old version bytes stay fetchable. The receipt pins
+ * the version that was current at issuance.
+ *
  * The private key stays in the process environment. This document publishes
  * the public key and a custody sentence, not the secret.
  */
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { jcsCanonicalize } from './offer-receipt.js';
 import { getIssuerPublicKeyJwk, getJwks, signJws, verifyJwsWithJwks } from './issuer-key.js';
 
@@ -132,9 +140,11 @@ function liveEntry(overrides = {}) {
 /**
  * Build the public history. The live process key is the tail. Extra entries
  * from ISSUER_HISTORY_EXTRA are earlier keys (retired or revoked).
- * @param {{ entries?: object[] }} [opts]
+ * `version` and `seq` stamp a sealed snapshot. Omit them for an unsigned
+ * preview of the entry chain.
+ * @param {{ entries?: object[]|null, version?: number|null, seq?: number|null }} [opts]
  */
-export function buildIssuerHistory({ entries = null } = {}) {
+export function buildIssuerHistory({ entries = null, version = null, seq = null } = {}) {
   const extras = entries || readExtraEntries();
   const current = getIssuerPublicKeyJwk();
   const prior = [];
@@ -152,11 +162,16 @@ export function buildIssuerHistory({ entries = null } = {}) {
     entry_count: chained.length,
     head_hash: head.entry_hash,
   };
+  if (version != null) {
+    claims.version = version;
+    claims.seq = seq == null ? version : seq;
+  }
   const { jws, kid } = signJws(claims, { typ: ISSUER_HISTORY_JWT_TYP });
   return {
     schema: ISSUER_HISTORY_SCHEMA,
     payload_version: ISSUER_HISTORY_VERSION,
-    canonicalization: 'Each entry_hash is SHA-256 of the JCS (RFC 8785) UTF-8 bytes of the entry without entry_hash. prev_hash is the previous entry_hash, or null on the first entry. The current issuer key signs head_hash and entry_count.',
+    ...(version != null ? { version, seq: seq == null ? version : seq } : {}),
+    canonicalization: 'Each entry_hash is SHA-256 of the JCS (RFC 8785) UTF-8 bytes of the entry without entry_hash. prev_hash is the previous entry_hash, or null on the first entry. The current issuer key signs head_hash and entry_count. A sealed snapshot also signs version and seq. SHA-256 of the JCS bytes of the whole document is the snapshot hash a receipt pins.',
     not_before_note: `Only kid ${PRODUCTION_ISSUER_KID} defaults not_before to ${PRODUCTION_KEY_NOT_BEFORE}, the first deployment of this ES256 issuer path. The earliest receipt in the repo signed by that kid is 2026-09-26T17:27:32Z (fixture chit-5d775d12). Any other kid uses its history entry or ISSUER_KEY_NOT_BEFORE. A null not_before is unknown and the window check fails closed.`,
     entries: chained,
     head_hash: head.entry_hash,
@@ -207,6 +222,12 @@ export function verifyIssuerHistory(doc, jwks = null) {
   if (payload.schema !== ISSUER_HISTORY_SCHEMA) return { valid: false, reason: 'schema_mismatch' };
   if (Number(payload.entry_count) !== doc.entries.length) return { valid: false, reason: 'entry_count_mismatch' };
   if (payload.head_hash !== head) return { valid: false, reason: 'signed_head_mismatch' };
+  if (payload.version != null && Number(payload.version) !== Number(doc.version)) {
+    return { valid: false, reason: 'version_mismatch' };
+  }
+  if (payload.seq != null && Number(payload.seq) !== Number(doc.seq)) {
+    return { valid: false, reason: 'seq_mismatch' };
+  }
   return { valid: true, payload, kid: result.kid || sig.kid };
 }
 
@@ -242,5 +263,143 @@ export function issuerKeyWindow(doc, kid, issuedAt) {
     if (revoked == null) return { ok: false, reason: 'revoked_at_missing', kid };
     if (issued >= revoked) return { ok: false, reason: 'kid_revoked_before_issuance', kid };
   }
-  return { ok: true, kid, status: entry.status };
+  return { ok: true, kid, status: entry.status, not_after: entry.not_after ?? null };
+}
+
+function historySha256(text) {
+  return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function entryFingerprint(entries) {
+  return (entries || []).map((entry) => entry.entry_hash).join(',');
+}
+
+/** In-process append-only snapshots. Disk is optional. */
+const historyStore = {
+  dir: null,
+  persist: false,
+  versions: [],
+};
+
+function historyFile() {
+  return historyStore.dir ? path.join(historyStore.dir, 'issuer-history-versions.jsonl') : null;
+}
+
+function loadHistoryStore() {
+  const file = historyFile();
+  if (!file || !fs.existsSync(file)) return;
+  const text = fs.readFileSync(file, 'utf8');
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line);
+      if (row && row.version && typeof row.body === 'string' && row.hash) {
+        historyStore.versions.push(row);
+      }
+    } catch {
+      /* a torn last line is ignored; earlier versions stay */
+    }
+  }
+}
+
+/**
+ * @param {{ dir?: string|null, persist?: boolean }} [opts]
+ */
+export function configureIssuerHistoryStore({ dir = null, persist = false } = {}) {
+  historyStore.dir = persist && dir ? String(dir) : null;
+  historyStore.persist = !!historyStore.dir;
+  historyStore.versions = [];
+  if (historyStore.persist) {
+    fs.mkdirSync(historyStore.dir, { recursive: true });
+    loadHistoryStore();
+  }
+}
+
+/** Test helper. Does not delete a configured directory's file. */
+export function resetIssuerHistoryStore() {
+  historyStore.versions = [];
+}
+
+function persistHistoryRecord(record) {
+  const file = historyFile();
+  if (!historyStore.persist || !file) return;
+  fs.appendFileSync(file, `${JSON.stringify(record)}\n`);
+}
+
+/**
+ * The snapshot in effect now. A matching entry chain reuses the sealed
+ * bytes. A different chain appends the next version.
+ * @returns {{ version: number, seq: number, hash: string, fingerprint: string, head_hash: string, body: string }}
+ */
+export function currentIssuerHistory() {
+  const preview = buildIssuerHistory();
+  const fingerprint = entryFingerprint(preview.entries);
+  const latest = historyStore.versions[historyStore.versions.length - 1] || null;
+  if (latest && latest.fingerprint === fingerprint) return latest;
+  const version = (latest?.version || 0) + 1;
+  const seq = version;
+  const doc = buildIssuerHistory({ version, seq });
+  const body = jcsCanonicalize(doc);
+  const record = {
+    version,
+    seq,
+    hash: historySha256(body),
+    fingerprint: entryFingerprint(doc.entries),
+    head_hash: doc.head_hash,
+    body,
+  };
+  historyStore.versions.push(record);
+  persistHistoryRecord(record);
+  return record;
+}
+
+/**
+ * Pin written into a new receipt or refusal JWS.
+ * @returns {{ hash: string, version: number, seq: number }}
+ */
+export function currentHistoryPin() {
+  const record = currentIssuerHistory();
+  return { hash: record.hash, version: record.version, seq: record.seq };
+}
+
+/**
+ * Latest snapshot, or a sealed older one by version or hash.
+ * @param {{ version?: unknown, hash?: unknown }} [query]
+ */
+export function issuerHistoryRecord({ version = null, hash = null } = {}) {
+  const wantsVersion = version != null && version !== '';
+  const wantsHash = hash != null && hash !== '';
+  if (!wantsVersion && !wantsHash) return currentIssuerHistory();
+  currentIssuerHistory();
+  if (wantsVersion) {
+    const n = Number(version);
+    if (!Number.isInteger(n) || n < 1) return null;
+    return historyStore.versions.find((row) => row.version === n) || null;
+  }
+  const needle = String(hash).replace(/^0x/, '').toLowerCase();
+  return historyStore.versions.find((row) => row.hash === needle) || null;
+}
+
+/**
+ * Serve stored snapshot bytes. The body is not rebuilt.
+ * @param {import('express').Response} res
+ * @param {{ version?: unknown, hash?: unknown }} [query]
+ */
+export function writeIssuerHistory(res, query = {}) {
+  const record = issuerHistoryRecord(query);
+  if (!record) {
+    return res.status(404).json({
+      error: 'not_found',
+      message: 'No issuer history with that version or hash.',
+    });
+  }
+  const pinned = (query.version != null && query.version !== '')
+    || (query.hash != null && query.hash !== '');
+  res.set('Cache-Control', pinned ? 'public, max-age=31536000, immutable' : 'public, max-age=300');
+  res.set('X-Chit-Hash-Alg', 'sha256');
+  res.set('X-Chit-History-Hash', record.hash);
+  res.set('X-Chit-History-Version', String(record.version));
+  res.set('X-Chit-History-Seq', String(record.seq));
+  res.type('application/json; charset=utf-8');
+  return res.send(Buffer.from(record.body, 'utf8'));
 }

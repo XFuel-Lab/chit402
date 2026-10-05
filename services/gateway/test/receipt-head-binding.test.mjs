@@ -49,8 +49,8 @@ function paidTask(over = {}) {
 test('a new receipt verifies with the head pair inside the signed claims', () => {
   const receipt = buildReceipt(paidTask(), { signingSecret: 'head-bind-secret' });
   const claims = decodeReceiptClaims(receipt);
-  assert.equal(claims.payload_version, 9);
-  assert.equal(receipt.issuer_signature.payload_version, 9);
+  assert.equal(claims.payload_version, 10);
+  assert.equal(receipt.issuer_signature.payload_version, 10);
   assert.equal(receipt.hmac_attestation.payload_version, 8);
   assert.equal(Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash'), true);
   assert.deepEqual(claims.tolerance, clockToleranceBinding());

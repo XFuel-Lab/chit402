@@ -1,7 +1,8 @@
 /**
  * RFC 8785 JSON Canonicalization.
  * Same rules as `jcsCanonicalize` in services/gateway/src/offer-receipt.js.
- * Issuer-history entry hashes use this form. Receipt hashes do not.
+ * Issuer-history entry hashes and the receipt canonical object use this form.
+ * Per-field receipt hashes keep the encoding they were signed with.
  */
 
 export function jcsCanonicalize(value: unknown): string {
