@@ -34,6 +34,10 @@ console.log(fullResult.receipt_lane.freeze); // unsigned; does not change overal
 # Local binding verification (no network required)
 npx xfuel-verify receipt.json
 
+# Hash the canonical object (must match signed payload_hash) and read not_after
+# from a pinned issuer-history snapshot. Both flags are offline.
+npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
+
 # A signed refusal (schema chit402.refusal.v1) is not a payment.
 # The check proves the issuer refused, at the signed anchor, for that code.
 # It does not prove a payment or that the block still stands.
@@ -62,6 +66,8 @@ npx xfuel-verify receipt.json inclusion.json head.json --rpc
 | On-chain settlement | Yes | Query Base RPC for tx |
 | Nullifier anchor | Yes | Query ZKVerifierSP1 contract |
 | Anchored receipt root | Yes, with `--rpc` | Inclusion proof, then Solana memo and Base calldata for that root |
+| Canonical preimage | No | SHA-256 of `--canonical-preimage`, or the stored canonical object, matches signed `payload_hash` |
+| Issuer history | No, with `--issuer-history-file` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match the snapshot hash |
 
 ## Issuer Signature Verification (ES256)
 
