@@ -173,6 +173,43 @@ test('allSnapshots unions disk + live tasks (live wins) and survives restart', (
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('a signature sealed on a rehydrated snapshot is written immediately and stays out of the hot map', () => {
+  const dir = tmpDir();
+  const store = new PersistentTaskStore({ dir, autoFlushMs: 0 });
+  const task = sampleTask('xfuel-seal', {
+    status: 'completed',
+    intent: { paymentRef: `base:0x${'ab'.repeat(32)}`, paymentRail: 'usdc' },
+  });
+  store.set(task.taskId, task);
+  assert.equal(store.delete(task.taskId), true);
+  assert.equal(store.size, 0, 'evicted from the hot map');
+
+  const snap = store.get(task.taskId);
+  assert.equal(typeof snap.persistSignatureSnapshot, 'function');
+  assert.equal(
+    Object.prototype.propertyIsEnumerable.call(snap, 'persistSignatureSnapshot'),
+    false,
+    'persist hook must not be written into the snapshot file',
+  );
+  snap.issuerSignature = { alg: 'ES256', jws: 'header.payload.sig', payload_version: 10 };
+  snap.persistSignatureSnapshot();
+  // flushAll only walks the hot map. The seal has to have landed already.
+  store.flushAll();
+  assert.equal(store.size, 0, 'pinning a read does not re-insert into the hot map');
+
+  const file = JSON.parse(fs.readFileSync(store._fileFor(task.taskId), 'utf8'));
+  assert.equal(file.issuerSignature.jws, 'header.payload.sig');
+  assert.equal(file.persistSignatureSnapshot, undefined);
+  assert.equal(store.get(task.taskId), snap, 'the next get reuses the pinned snapshot');
+  store.destroy();
+
+  const restarted = new PersistentTaskStore({ dir, autoFlushMs: 0 });
+  assert.equal(restarted.size, 0);
+  assert.equal(restarted.get(task.taskId).issuerSignature.jws, 'header.payload.sig');
+  restarted.destroy();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('persist=false behaves as a plain in-memory Map (no disk, no rehydrate)', () => {
   const dir = tmpDir();
   const store = createTaskStore({ dir, persist: false, autoFlushMs: 0 });
