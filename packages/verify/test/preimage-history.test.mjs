@@ -4,10 +4,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { keccak256, solidityPacked, toUtf8Bytes } from 'ethers';
 
 const {
@@ -453,7 +454,10 @@ test('a tampered canonical preimage fails the receipt and the CLI', async () => 
 
   const dir = mkdtempSync(join(tmpdir(), 'chit-preimage-'));
   writeFileSync(join(dir, 'receipt.json'), JSON.stringify(receipt));
-  const cli = join(new URL('.', import.meta.url).pathname, '..', 'dist', 'cli.js');
+  // fileURLToPath, not URL.pathname. On Windows pathname is "/C:/..." and
+  // path.join turns that into "\C:\...", so node never starts and stdout is empty.
+  const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+  assert.equal(existsSync(cli), true, cli);
   const run = spawnSync(process.execPath, [
     cli,
     join(dir, 'receipt.json'),
@@ -463,7 +467,8 @@ test('a tampered canonical preimage fails the receipt and the CLI', async () => 
     '--trusted-kid',
     receipt.issuer_signature.kid,
   ], { encoding: 'utf8' });
-  assert.notEqual(run.status, 0);
+  assert.equal(run.error, undefined, run.error ? `${run.error.code} ${cli}` : '');
+  assert.notEqual(run.status, 0, run.stderr || run.stdout);
   const parsed = JSON.parse(run.stdout);
   assert.equal(parsed.overall, 'failed');
   assert.match(parsed.errors.join(' '), /canonical preimage: payload_hash_mismatch/);
