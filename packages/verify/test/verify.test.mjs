@@ -1256,22 +1256,79 @@ describe('claim_id stranger rule', () => {
 });
 
 describe('package exports', () => {
-  test('dist/cli.js is an exported subpath so chit402-verify can resolve it', async () => {
+  test('dist/cli.js is an exported subpath so chit402-verify can resolve it', async (t) => {
     const { createRequire } = await import('node:module');
-    const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } = await import('node:fs');
+    const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const dir = mkdtempSync(path.join(tmpdir(), 'xfuel-verify-export-'));
-    const scope = path.join(dir, 'node_modules', '@xfuel');
-    mkdirSync(scope, { recursive: true });
-    symlinkSync(pkgDir, path.join(scope, 'verify'));
-    writeFileSync(path.join(dir, 'probe.cjs'), '');
-    const require = createRequire(path.join(dir, 'probe.cjs'));
-    const resolved = require.resolve('@xfuel/verify/dist/cli.js');
-    assert.match(resolved, /cli\.js$/);
-    const viaAlias = require.resolve('@xfuel/verify/cli');
-    assert.equal(viaAlias, resolved);
+    try {
+      const scope = path.join(dir, 'node_modules', '@xfuel');
+      mkdirSync(scope, { recursive: true });
+      const link = path.join(scope, 'verify');
+      if (!linkInstalledPackage(symlinkSync, link)) {
+        // Windows without Developer Mode returns EPERM for a symlink. A directory
+        // junction usually works. If that is denied too, skip so `npm test`
+        // (prepublishOnly) exits 0 and `npm publish` does not need --ignore-scripts.
+        // Linux CI never takes this branch: a failed symlink still fails the test.
+        t.skip('Windows denied a package symlink and a directory junction (EPERM)');
+        return;
+      }
+      writeFileSync(path.join(dir, 'probe.cjs'), '');
+      const require = createRequire(path.join(dir, 'probe.cjs'));
+      const resolved = require.resolve('@xfuel/verify/dist/cli.js');
+      assert.match(resolved, /cli\.js$/);
+      const viaAlias = require.resolve('@xfuel/verify/cli');
+      assert.equal(viaAlias, resolved);
+    } finally {
+      // rm does not follow the symlink or junction, so pkgDir stays intact.
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a Windows symlink EPERM falls back to a junction and a second denial skips', () => {
+    assert.equal(symlinkDenialAction('win32', 'EPERM'), 'junction');
+    assert.equal(symlinkDenialAction('win32', 'EACCES'), 'junction');
+    assert.equal(symlinkDenialAction('linux', 'EPERM'), 'throw');
+    assert.equal(symlinkDenialAction('darwin', 'EPERM'), 'throw');
+    assert.equal(junctionDenialAction('EPERM'), 'skip');
+    assert.equal(junctionDenialAction('EACCES'), 'skip');
+    assert.equal(junctionDenialAction('EEXIST'), 'throw');
   });
 });
+
+/** What to do when the first symlink attempt throws. Linux must still fail the test. */
+function symlinkDenialAction(platform, code) {
+  if (platform === 'win32' && (code === 'EPERM' || code === 'EACCES')) return 'junction';
+  return 'throw';
+}
+
+/** What to do when the Windows junction fallback throws. */
+function junctionDenialAction(code) {
+  if (code === 'EPERM' || code === 'EACCES') return 'skip';
+  return 'throw';
+}
+
+/**
+ * Point node_modules/@xfuel/verify at this package.
+ * Returns false only when Windows refuses both a symlink and a junction.
+ */
+function linkInstalledPackage(symlinkSync, link) {
+  try {
+    symlinkSync(pkgDir, link);
+    return true;
+  } catch (err) {
+    const code = err && typeof err === 'object' && 'code' in err ? err.code : undefined;
+    if (symlinkDenialAction(process.platform, code) !== 'junction') throw err;
+  }
+  try {
+    symlinkSync(pkgDir, link, 'junction');
+    return true;
+  } catch (err) {
+    const code = err && typeof err === 'object' && 'code' in err ? err.code : undefined;
+    if (junctionDenialAction(code) === 'skip') return false;
+    throw err;
+  }
+}
 
 /**
  * Copy a live receipt, replace the signed gross_amount, and re-sign with a fresh P-256 key

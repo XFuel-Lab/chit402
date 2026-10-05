@@ -33,6 +33,10 @@ console.log(fullResult.overall); // 'verified' | 'partial' | 'failed'
 # Local binding verification (no network required)
 npx chit402-verify receipt.json
 
+# Hash the canonical object (must match signed payload_hash) and read not_after
+# from a pinned issuer-history snapshot. Both flags are offline.
+npx chit402-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
+
 # With on-chain nullifier check (requires network)
 npx chit402-verify receipt.json --check-nullifier
 
@@ -52,6 +56,8 @@ curl -s https://api.chit402.com/receipt/task-123?format=json | npx chit402-verif
 | Output hash | No | Hash is on the receipt |
 | On-chain settlement | Yes | Query Base RPC for tx |
 | Nullifier anchor | Yes | Query ZKVerifierSP1 contract |
+| Canonical preimage | No | `--canonical-preimage` is SHA-256'd and matched to signed `payload_hash` |
+| Issuer history | No, with `--issuer-history-file` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match |
 
 ## Exit Codes (CLI)
 
