@@ -74,6 +74,7 @@ import { withRefusal, presentRefusal, renderRefusalHtml, renderRefusalNotFound }
 import { getReceiptMerkleTree } from './receipt-merkle.js';
 import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
+import { emptyLookupBody } from './empty-lookup.js';
 import { configureIssuerHistoryStore, writeIssuerHistory } from './issuer-history.js';
 import { receiptLaneForEntry } from './receipt-lane.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
@@ -328,7 +329,7 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 
 - Issuer trust (pin JWKS + kid): https://www.chit402.com/trust
 - Issuer key history: GET /.well-known/issuer-history.json — signed, append-only, kid window. Old snapshots stay at ?version=N or ?hash=. https://www.chit402.com/docs/receipt-check
-- Receipt hash preimages: GET /receipt/:id/preimage is the stored canonical object (SHA-256 is payload_hash). GET /receipt/:id/preimage/:field stays the per-field convenience. output.hash stays private.
+- Receipt hash preimages: GET /receipt/:id/preimage is the stored canonical object. SHA-256 of that response body is payload_hash inside the JWS. The bytes are not rebuilt on read. GET /receipt/:id/preimage/:field stays the per-field convenience. output.hash stays private. A JSON lookup that finds nothing returns asked, at, served none, and bound only when a correcting row names the id.
 - Live receipt: https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e
 - Signed refusal (schema chit402.refusal.v1): GET /refusal/:refusal_id — public, no auth, ?format=json. Same issuer ES256 key as receipts. Verify against /.well-known/jwks.json or xfuel-verify.
 - Thread: https://x.com/chit402/status/2096153417588588555
@@ -2679,11 +2680,7 @@ export function createApp() {
 
       if (!taskId) {
         if (wantsJson) {
-          return res.status(404).json({
-            error: 'not_found',
-            message: `No receipt found for tx ${tx}`,
-            tx,
-          });
+          return res.status(404).json(emptyLookupBody(String(tx), usageSettled.entries));
         }
         return res.status(404).type('html').send(renderReceiptNotFound(tx));
       }
@@ -2859,7 +2856,7 @@ export function createApp() {
 
       if (!task) {
         if (wantsJson) {
-          return res.status(404).json({ error: 'not_found', message: `Task ${rawTaskId} not found`, task_id: rawTaskId });
+          return res.status(404).json(emptyLookupBody(String(rawTaskId), usageSettled.entries));
         }
         return res.status(404).type('html').send(renderReceiptNotFound(rawTaskId));
       }

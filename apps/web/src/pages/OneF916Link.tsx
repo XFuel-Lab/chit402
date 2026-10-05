@@ -73,11 +73,13 @@ export default function OneF916Link() {
         </header>
 
         <div className="docs-panel">
-          <h2>Issuance support is coming</h2>
+          <h2>New receipts stamp the fingerprint</h2>
           <p>
-            This page is the field contract. Chit402 does not stamp{' '}
-            <code>agent_record_entry</code> on receipts yet. A receipt fetched today will not
-            contain the field. Payment signatures stay as they are.
+            This page is the field contract. A new receipt stamps{' '}
+            <code>agent_record_entry</code> into the issuer JWS when the caller sends{' '}
+            <code>X-Chit-Agent-Record-Fingerprint</code>. A receipt that was not asked omits
+            the field. Receipts already issued are not re-signed. Payment{' '}
+            <code>payload_version</code> stays 10.
           </p>
           <p style={styles.note}>
             Spec: <a href={GITHUB_SPEC} target="_blank" rel="noreferrer">docs/integrations/1f916-link-v0.md</a>.
@@ -122,11 +124,11 @@ export default function OneF916Link() {
         <div className="docs-panel">
           <h2>Receipt side (Chit)</h2>
           <p>
-            <code>agent_record_entry</code> sits beside <code>book_seq</code>. It is unsigned, the
-            same posture as <code>receipt_lane</code> (<code>signed: false</code>). The payment
-            JWS has a fixed claim set. <code>book_chain</code> (<code>chit402.book_seq.v1</code>)
-            is its own signed object. This draft adds an unsigned sibling and leaves payment{' '}
-            <code>payload_version</code> unchanged.
+            <code>agent_record_entry</code> is not a second signature (<code>signed: false</code>).
+            On a new receipt that was asked to bind an entry, the object is a claim inside the
+            payment issuer JWS, and the receipt JSON serves the same object.{' '}
+            <code>book_chain</code> (<code>chit402.book_seq.v1</code>) stays its own signed
+            object. Payment <code>payload_version</code> is unchanged.
           </p>
           <pre className="docs-code">
             <code>{receiptPlaceholder}</code>

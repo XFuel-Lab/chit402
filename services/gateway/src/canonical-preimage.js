@@ -31,6 +31,7 @@ export const CANONICAL_ENCODING = 'jcs-rfc8785';
 export const RECEIPT_CANONICAL_FIELDS = Object.freeze([
   'action',
   'agent_pubkey',
+  'agent_record_entry',
   'binding',
   'caller_binding',
   'claim_id',
@@ -93,7 +94,6 @@ export const REFUSAL_CANONICAL_FIELDS = Object.freeze([
 /** Extra keys a foreign-payout JWS adds on top of the receipt allowlist. */
 export const FOREIGN_CANONICAL_FIELDS = Object.freeze([
   ...RECEIPT_CANONICAL_FIELDS,
-  'agent_record_entry',
   'amount',
   'chain',
   'payee',

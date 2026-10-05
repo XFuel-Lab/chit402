@@ -57,6 +57,7 @@ import { enforcePolicy } from './book-policy.js';
 import { extractIntentMeta, resolveIntentFields } from './intent-meta.js';
 import { withRefusal } from './refusal-receipt.js';
 import { resolvePaidClaimAgent } from './claim-id.js';
+import { agentRecordEntryFromRequest } from './agent-record-entry.js';
 
 /**
  * XFuel OpenAI-compatible gateway.
@@ -1185,6 +1186,7 @@ function registerTaskAndProve({
   usage = null, payment = null, deferProve = false,
   status = 'completed', failureReason = null,
   session = null,
+  agentRecordEntry = null,
 }) {
   const taskId = providedTaskId || `xfuel-${crypto.randomUUID()}`;
   let aiListener = null;
@@ -1247,6 +1249,7 @@ function registerTaskAndProve({
       privacyAttest: privacyAttest || null,
       ...(requestedModel ? { requestedModel, modelSubstituted } : {}),
       ...(failureReason ? { failureReason } : {}),
+      ...(agentRecordEntry ? { agent_record_entry: agentRecordEntry } : {}),
     },
     status,
     createdAt: Date.now(),
@@ -1693,6 +1696,7 @@ function writeSettleBookRow({
 function registerPaidV1Shell({
   taskId, payment, model, messages, apiKeyHash, privateSpend, privacyProduct = null,
   privacyAttest = null, session = null, requestedModel = null,
+  agentRecordEntry = null,
 }) {
   return registerTaskAndProve({
     taskId,
@@ -1710,7 +1714,27 @@ function registerPaidV1Shell({
     payment,
     session,
     status: 'processing',
+    agentRecordEntry,
   });
+}
+
+/**
+ * Reject a malformed agent-record fingerprint before settle. Absent is fine.
+ * @returns {{ halt: boolean, entry: object|null }}
+ */
+function takeAgentRecordAsk(req, res) {
+  const asked = agentRecordEntryFromRequest(req);
+  if (asked.error) {
+    res.status(400).json({
+      error: {
+        message: asked.error,
+        type: 'invalid_request_error',
+        code: 'agent_record_entry_invalid',
+      },
+    });
+    return { halt: true, entry: null };
+  }
+  return { halt: false, entry: asked.entry };
 }
 
 /**
@@ -2165,6 +2189,8 @@ export function registerOpenAIRoutes(app, {
         },
       });
     }
+    const askedRecord = takeAgentRecordAsk(req, res);
+    if (askedRecord.halt) return undefined;
 
     const id = `chatcmpl-${crypto.randomUUID()}`;
     const created = Math.floor(Date.now() / 1000);
@@ -2271,6 +2297,7 @@ export function registerOpenAIRoutes(app, {
           privacyProduct: privacyCtx.product,
           privacyAttest: privacyCtx.privateAttest ? 'tier2' : null,
           session: boundSession,
+          agentRecordEntry: askedRecord.entry,
         }));
         await attachQuotedPricing(paidTask, req, privacyCtx, { byok: orAccess.mode === 'byok' });
         settleRecord = writeSettleBookRow({
@@ -2462,6 +2489,7 @@ export function registerOpenAIRoutes(app, {
         usage: { ...counts, source },
         payment: metering.payment,
         session: boundSession,
+        agentRecordEntry: askedRecord.entry,
       }));
     }
 
@@ -2691,6 +2719,8 @@ export function registerOpenAIRoutes(app, {
       });
     }
     const wantsTools = Array.isArray(tools) && tools.length > 0;
+    const askedRecord = takeAgentRecordAsk(req, res);
+    if (askedRecord.halt) return undefined;
 
     const id = `resp_${crypto.randomUUID()}`;
     const created = Math.floor(Date.now() / 1000);
@@ -2781,6 +2811,7 @@ export function registerOpenAIRoutes(app, {
           privacyProduct: privacyCtx.product,
           privacyAttest: privacyCtx.privateAttest ? 'tier2' : null,
           session: boundSession,
+          agentRecordEntry: askedRecord.entry,
         }));
         settleRecord = writeSettleBookRow({
           taskId,
@@ -2950,6 +2981,7 @@ export function registerOpenAIRoutes(app, {
         usage: { ...counts, source },
         payment: metering.payment,
         session: boundSession,
+        agentRecordEntry: askedRecord.entry,
       }));
     }
 
@@ -3008,6 +3040,8 @@ export function registerOpenAIRoutes(app, {
         error: { message: '`prompt` is required', type: 'invalid_request_error', param: 'prompt', code: null },
       });
     }
+    const askedRecord = takeAgentRecordAsk(req, res);
+    if (askedRecord.halt) return undefined;
     const fb = allowFallback(req);
     const inference = await runImageInference({ model, prompt, allowFallback: fb });
     if (inference.error) {
@@ -3035,6 +3069,7 @@ export function registerOpenAIRoutes(app, {
       proveAllowed,
       apiKeyHash: apiKeyHashFromReq(req),
       privateSpend,
+      agentRecordEntry: askedRecord.entry,
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
@@ -3071,6 +3106,8 @@ export function registerOpenAIRoutes(app, {
   // ── POST /v1/audio/transcriptions ──────────────────────────────────────────
   // JSON body (v0): { model, audio_url } — multipart file upload can follow.
   app.post('/v1/audio/transcriptions', async (req, res) => {
+    const askedRecord = takeAgentRecordAsk(req, res);
+    if (askedRecord.halt) return undefined;
     const body = req.body || {};
     const model = body.model;
     const audioUrl = body.audio_url || body.file || body.audio_filename;
@@ -3100,6 +3137,7 @@ export function registerOpenAIRoutes(app, {
       proveAllowed,
       apiKeyHash: apiKeyHashFromReq(req),
       privateSpend,
+      agentRecordEntry: askedRecord.entry,
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;

@@ -12,6 +12,7 @@
 import crypto from 'crypto';
 import { deriveEvidence } from './usage-settled.js';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
+import { COVERAGE_ROW_FIELDS } from './hash-recipes.js';
 
 function jwksUri(baseUrl = '') {
   const path = '/.well-known/jwks.json';
@@ -28,7 +29,7 @@ export const COVERAGE_ORDER = 'collected_at,task_id';
  * SHA-256 over `task_id|evidence|amount|payment_ref|collected_at`.
  * Amount and ref are the ledger fields, not a second encoding.
  */
-export const ROW_COMMITMENT_RULE = 'sha256(task_id|evidence|amount|payment_ref|collected_at)';
+export const ROW_COMMITMENT_RULE = `sha256(${COVERAGE_ROW_FIELDS.join('|')})`;
 
 const EMPTY_HASH = crypto.createHash('sha256').update('').digest('hex');
 
@@ -40,12 +41,14 @@ function esc(s) {
  * @param {object} entry ledger row or export row
  */
 export function rowCommitment(entry) {
-  const taskId = String(entry?.task_id || '');
-  const evidence = String(entry?.evidence || deriveEvidence(entry) || '');
-  const amount = entry?.amount ?? entry?.payment?.amount ?? '';
-  const ref = entry?.payment_ref ?? entry?.payment?.ref ?? '';
-  const at = entry?.collected_at || entry?.recorded_at || '';
-  const line = [taskId, evidence, String(amount ?? ''), String(ref ?? ''), String(at ?? '')].join('|');
+  const values = {
+    task_id: String(entry?.task_id || ''),
+    evidence: String(entry?.evidence || deriveEvidence(entry) || ''),
+    amount: String(entry?.amount ?? entry?.payment?.amount ?? ''),
+    payment_ref: String(entry?.payment_ref ?? entry?.payment?.ref ?? ''),
+    collected_at: String(entry?.collected_at || entry?.recorded_at || ''),
+  };
+  const line = COVERAGE_ROW_FIELDS.map((name) => values[name] ?? '').join('|');
   return crypto.createHash('sha256').update(line).digest('hex');
 }
 

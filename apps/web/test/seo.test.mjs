@@ -371,7 +371,9 @@ test('1F916 link draft is a public docs page', () => {
   assert.match(page, /Draft v0, feedback welcome/);
   assert.match(page, /https:\/\/1f916\.ai\/post\/7404/);
   assert.match(page, /unverified payment claim/);
-  assert.match(page, /Issuance support is coming/);
+  assert.match(page, /New receipts stamp the fingerprint/);
+  assert.match(page, /X-Chit-Agent-Record-Fingerprint/);
+  assert.match(page, /not re-signed/);
   assert.match(page, /api\.chit402\.com\/\.well-known\/jwks\.json/);
   assert.match(page, /Who issues the receipt/);
   assert.match(page, /are stamped/);

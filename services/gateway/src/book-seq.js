@@ -12,6 +12,7 @@
 import crypto from 'crypto';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 import { actOf } from './book-act.js';
+import { BOOK_ROW_HASH_FIELDS } from './hash-recipes.js';
 
 export const BOOK_SEQ_SCHEMA = 'chit402.book_seq.v1';
 /** v4 signs payment_ref next to book_id. v2 (act) and v3 (authority) still verify. */
@@ -29,13 +30,14 @@ export const BOOK_SEQ_JWT_TYP = 'chit402-book-seq+jwt';
  * @param {object} row
  */
 export function bookRowPreimage(row) {
-  return [
-    row?.agent_id ?? '',
-    row?.seq ?? '',
-    row?.task_id ?? '',
-    row?.prev_hash || '',
-    row?.event || row?.evidence || '',
-  ].join('|');
+  const values = {
+    agent_id: row?.agent_id ?? '',
+    seq: row?.seq ?? '',
+    task_id: row?.task_id ?? '',
+    prev_hash: row?.prev_hash || '',
+    event: row?.event || row?.evidence || '',
+  };
+  return BOOK_ROW_HASH_FIELDS.map((name) => values[name] ?? '').join('|');
 }
 
 export function bookRowHash(row) {

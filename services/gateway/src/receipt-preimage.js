@@ -16,6 +16,11 @@ import { emptyUniverseHash } from './export-coverage.js';
 import { canonicalSignedPayload } from './receipt.js';
 import { jcsCanonicalize } from './offer-receipt.js';
 import { canonicalObjectDescriptor } from './canonical-preimage.js';
+import {
+  BOOK_ROW_HASH_FIELDS,
+  INCLUSION_LEAF_FIELDS,
+  JOB_SPEC_FIELDS,
+} from './hash-recipes.js';
 
 export const PREIMAGE_SCHEMA = 'chit402.preimage.v1';
 
@@ -110,7 +115,7 @@ export function inclusionLeafPreimage(taskId, rowHash) {
   return {
     alg: 'sha256',
     encoding: 'binary',
-    rule: 'sha256(0x00 || utf8(task_id|row_hash))',
+    rule: `sha256(0x00 || utf8(${INCLUSION_LEAF_FIELDS.join('|')}))`,
     preimage_hex: bytes.toString('hex'),
     preimage_utf8_body: body.toString('utf8'),
     hash: sha256Hex(bytes),
@@ -138,7 +143,7 @@ function rowHashField(chain, fieldName) {
     field: fieldName,
     alg: 'sha256',
     encoding: 'utf8',
-    rule: 'sha256(utf8(agent_id|seq|task_id|prev_hash|event))',
+    rule: `sha256(utf8(${BOOK_ROW_HASH_FIELDS.join('|')}))`,
     preimage_utf8: line,
     hash,
   });
@@ -227,7 +232,7 @@ function jobSpecField(receipt) {
       field: 'job_spec_hash',
       alg: 'sha256',
       encoding: 'utf8',
-      rule: 'sha256(utf8(JSON.stringify({text,budget,deadline,acceptance}))) with 0x prefix. Key order is text, budget, deadline, acceptance.',
+      rule: `sha256(utf8(JSON.stringify({${JOB_SPEC_FIELDS.join(',')}}))) with 0x prefix. Key order is ${JOB_SPEC_FIELDS.join(', ')}.`,
       preimage_utf8: preimage,
       hash: digest,
     }),
