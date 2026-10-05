@@ -1557,13 +1557,20 @@ export async function verifyReceipt(
   const storedPreimage = typeof receipt.issuer_signature?.canonical_preimage === 'string'
     ? receipt.issuer_signature.canonical_preimage
     : null;
+  let canonicalPreimageFailed = false;
   if (storedPreimage != null) {
     const storedCheck = verifyCanonicalPreimageBytes(storedPreimage, signedPayloadHash);
-    if (!storedCheck.ok && storedCheck.reason) errors.push(`canonical preimage: ${storedCheck.reason}`);
+    if (!storedCheck.ok) {
+      canonicalPreimageFailed = true;
+      if (storedCheck.reason) errors.push(`canonical preimage: ${storedCheck.reason}`);
+    }
   }
   if (typeof options.canonicalPreimage === 'string') {
     const fileCheck = verifyCanonicalPreimageBytes(options.canonicalPreimage, signedPayloadHash);
-    if (!fileCheck.ok && fileCheck.reason) errors.push(`canonical preimage: ${fileCheck.reason}`);
+    if (!fileCheck.ok) {
+      canonicalPreimageFailed = true;
+      if (fileCheck.reason) errors.push(`canonical preimage: ${fileCheck.reason}`);
+    }
   }
 
   const issuedAt = (verifiedClaims && 'iat' in verifiedClaims ? verifiedClaims.iat : null)
@@ -1572,14 +1579,19 @@ export async function verifyReceipt(
     ?? null;
   const historyPin = readIssuerHistoryPin(verifiedClaims as Record<string, unknown> | null);
   const payloadVersion = Number(verifiedClaims?.payload_version);
-  const historyAsked = !options.skipIssuerHistory && !!(
+  // Payload v10 signs the history pin. A missing pin fails even when the
+  // caller did not pass a history file or ask for a fetch.
+  const pinRequired = !options.skipIssuerHistory
+    && Number.isFinite(payloadVersion)
+    && payloadVersion >= CANONICAL_PAYLOAD_VERSION;
+  const historyAsked = pinRequired || (!options.skipIssuerHistory && !!(
     options.issuerHistory
     || options.issuerHistoryBytes
     || options.fetchIssuerHistory
     || options.strictIssuerHistory
     || options.issuerHistoryUrl
     || historyPin
-  );
+  ));
   const issuer_history = historyAsked
     ? await checkReceiptIssuerHistory(receipt, {
       document: options.issuerHistory ?? null,
@@ -1594,7 +1606,7 @@ export async function verifyReceipt(
       issuedAt,
       kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
       pin: historyPin,
-      requirePin: Number.isFinite(payloadVersion) && payloadVersion >= CANONICAL_PAYLOAD_VERSION,
+      requirePin: pinRequired,
     })
     : {
       checked: false,
@@ -1632,7 +1644,7 @@ export async function verifyReceipt(
   let overall: 'verified' | 'partial' | 'failed';
   const preimageFailed = !preimages.ok;
   const historyFailed = issuer_history.checked && !issuer_history.ok;
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed) {
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
