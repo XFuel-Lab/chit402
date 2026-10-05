@@ -4,15 +4,23 @@
  *
  *   node scripts/verify-1f916-link.mjs <specimen.json>
  *   node scripts/verify-1f916-link.mjs https://www.chit402.com/specimens/1f916-link-1.json
- *   node scripts/verify-1f916-link.mjs --strict <specimen.json>
+ *   node scripts/verify-1f916-link.mjs --allow-unsigned <specimen.json>
+ *   node scripts/verify-1f916-link.mjs --json <specimen.json>
  *
- * Prints one line per step, then VERDICT. Exit 0 when every step passes.
- * Node built-ins only.
+ * Prints one line per step, then VERDICT. Node built-ins only.
  *
- * entry_fingerprint is a plain PASS only when the issuer JWS stamps
- * agent_record_entry and that fingerprint matches the registry. When the
- * stamp is absent the step prints PASS (unsigned: registry-only) and the
- * process still exits 0. --strict fails that case.
+ * entry_fingerprint is PASS only when the issuer JWS stamps agent_record_entry
+ * and that fingerprint matches the registry. When the stamp is absent the
+ * step is UNSIGNED (registry-only): the registry hash matched, and the signed
+ * compare could not run. That is not a PASS and not a FAIL.
+ *
+ * Exit codes:
+ *   0  every step PASS (signed fingerprint)
+ *   1  a real check failed
+ *   2  UNSIGNED (registry-only), no real failure
+ *   3  usage error
+ * --allow-unsigned maps exit 2 to 0. The verdict stays UNSIGNED.
+ * --json sets overall to "unsigned" for that case.
  *
  * Steps:
  *   fetch_receipt       GET the receipt JSON
@@ -53,9 +61,9 @@ function pass(detail) {
   return step('PASS', detail);
 }
 
-/** Registry hash matched, and the issuer JWS did not stamp agent_record_entry. */
-function passUnsigned(detail) {
-  return { status: 'PASS', detail, unsigned: true };
+/** Registry hash matched. The issuer JWS did not stamp agent_record_entry. */
+function unsigned(detail) {
+  return { status: 'UNSIGNED', detail };
 }
 
 function fail(detail) {
@@ -244,7 +252,7 @@ function keyForKid(jwks, kid) {
 
 /**
  * @param {object} specimen
- * @param {{ fetchImpl?: typeof fetch, rpcUrl?: string, strict?: boolean }} [opts]
+ * @param {{ fetchImpl?: typeof fetch, rpcUrl?: string }} [opts]
  */
 export async function verifyLink(specimen, opts = {}) {
   const fetchImpl = opts.fetchImpl || fetch;
@@ -369,11 +377,12 @@ export async function verifyLink(specimen, opts = {}) {
     }
   }
 
-  steps.entry_fingerprint = await checkFingerprint(specimen, fetchImpl, signedFingerprint, {
-    strict: opts.strict === true,
-  });
+  steps.entry_fingerprint = await checkFingerprint(specimen, fetchImpl, signedFingerprint);
 
-  const verdict = STEPS.every((name) => steps[name]?.status === 'PASS') ? 'PASS' : 'FAIL';
+  const statuses = STEPS.map((name) => steps[name]?.status);
+  let verdict = 'PASS';
+  if (statuses.some((status) => status !== 'PASS' && status !== 'UNSIGNED')) verdict = 'FAIL';
+  else if (statuses.some((status) => status === 'UNSIGNED')) verdict = 'UNSIGNED';
   return { steps, verdict };
 }
 
@@ -451,9 +460,8 @@ async function checkBaseTransfer(settlement, rpcUrl, fetchImpl) {
  * @param {object} specimen
  * @param {typeof fetch} fetchImpl
  * @param {string|null} [signedFingerprint] fingerprint inside the issuer JWS
- * @param {{ strict?: boolean }} [opts]
  */
-async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null, opts = {}) {
+async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null) {
   const link = specimen?.agent_record_entry;
   const entry = specimen?.entry;
   if (!link || typeof link !== 'object') return fail('fingerprint_absent');
@@ -502,17 +510,49 @@ async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null, o
   if (published !== fingerprint) {
     return fail(`fingerprint_mismatch event ${eventId} published ${published} claimed ${fingerprint}`);
   }
-  // A plain PASS means the issuer JWS stamped this fingerprint. Issuance does
-  // not write agent_record_entry yet, so a missing stamp is registry-only:
-  // a swapped entry that the registry still publishes would otherwise look signed.
-  if (!signedFingerprint) {
-    if (opts.strict) return fail(`unsigned_stamp_missing event ${eventId} ${fingerprint}`);
-    return passUnsigned(`event ${eventId} ${fingerprint}`);
-  }
+  // PASS means the issuer JWS stamped this fingerprint. A missing stamp matched
+  // the registry only, so a swapped entry would otherwise look signed.
+  if (!signedFingerprint) return unsigned(`event ${eventId} ${fingerprint}`);
   if (String(signedFingerprint).toLowerCase() !== published) {
     return fail(`fingerprint_mismatch event ${eventId} jws ${signedFingerprint} published ${published}`);
   }
   return pass(`event ${eventId} ${fingerprint}`);
+}
+
+/**
+ * @param {string} verdict
+ */
+export function verdictLabel(verdict) {
+  if (verdict === 'UNSIGNED') return 'UNSIGNED (registry-only)';
+  return verdict;
+}
+
+/**
+ * @param {{ verdict: string }} result
+ * @param {{ allowUnsigned?: boolean }} [opts]
+ */
+export function exitCode(result, opts = {}) {
+  if (result.verdict === 'PASS') return 0;
+  if (result.verdict === 'UNSIGNED') return opts.allowUnsigned ? 0 : 2;
+  return 1;
+}
+
+/**
+ * @param {{ steps: Record<string, {status: string, detail: string}>, verdict: string }} result
+ * @param {{ allowUnsigned?: boolean }} [opts]
+ */
+export function formatJson(result, opts = {}) {
+  const code = exitCode(result, opts);
+  const overall = result.verdict === 'PASS' ? 'pass'
+    : result.verdict === 'UNSIGNED' ? 'unsigned'
+      : 'fail';
+  return JSON.stringify({
+    overall,
+    verdict: verdictLabel(result.verdict),
+    exit_code: code,
+    allow_unsigned: opts.allowUnsigned === true,
+    steps: result.steps,
+  }, null, 2);
 }
 
 /**
@@ -521,10 +561,10 @@ async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null, o
 export function formatReport(result) {
   const lines = STEPS.map((name) => {
     const row = result.steps[name] || { status: 'FAIL', detail: 'missing' };
-    const status = row.unsigned ? 'PASS (unsigned: registry-only)' : row.status;
+    const status = row.status === 'UNSIGNED' ? 'UNSIGNED (registry-only)' : row.status;
     return `${status} ${name.padEnd(20)} ${row.detail}`;
   });
-  lines.push(`VERDICT ${result.verdict}`);
+  lines.push(`VERDICT ${verdictLabel(result.verdict)}`);
   return lines.join('\n');
 }
 
@@ -543,37 +583,58 @@ export async function loadSpecimen(target, fetchImpl = fetch) {
   return JSON.parse(readFileSync(target, 'utf8'));
 }
 
+const USAGE = 'usage: node scripts/verify-1f916-link.mjs [--allow-unsigned] [--json] <specimen.json | https://www.chit402.com/specimens/1f916-link-1.json>';
+
 /**
  * @param {string[]} argv
  */
 export function parseArgs(argv) {
-  let strict = false;
+  let allowUnsigned = false;
+  let json = false;
   /** @type {string[]} */
   const positionals = [];
   for (const arg of argv) {
-    if (arg === '--strict') strict = true;
-    else positionals.push(arg);
+    if (arg === '--allow-unsigned') allowUnsigned = true;
+    else if (arg === '--json') json = true;
+    else if (arg === '--strict') {
+      return {
+        allowUnsigned: false,
+        json: false,
+        target: '',
+        error: '--strict was removed. A missing agent_record_entry stamp is UNSIGNED (registry-only) and exits 2. Pass --allow-unsigned to exit 0 for that case.',
+      };
+    } else if (arg.startsWith('--')) {
+      return { allowUnsigned: false, json: false, target: '', error: `unknown flag ${arg}` };
+    } else positionals.push(arg);
   }
-  return { strict, target: positionals[0] || '' };
+  return { allowUnsigned, json, target: positionals[0] || '', error: '' };
 }
 
 async function main() {
-  const { strict, target } = parseArgs(process.argv.slice(2));
-  if (!target) {
-    console.error('usage: node scripts/verify-1f916-link.mjs [--strict] <specimen.json | https://www.chit402.com/specimens/1f916-link-1.json>');
-    process.exit(2);
+  const parsed = parseArgs(process.argv.slice(2));
+  if (parsed.error || !parsed.target) {
+    console.error(parsed.error || USAGE);
+    if (parsed.error) console.error(USAGE);
+    process.exit(3);
   }
   let specimen;
   try {
-    specimen = await loadSpecimen(target);
+    specimen = await loadSpecimen(parsed.target);
   } catch (err) {
-    console.log(`FAIL specimen            ${err.message || 'unreadable'}`);
-    console.log('VERDICT FAIL');
+    const detail = err.message || 'unreadable';
+    if (parsed.json) {
+      console.log(JSON.stringify({ overall: 'fail', verdict: 'FAIL', exit_code: 1, error: detail }, null, 2));
+    } else {
+      console.log(`FAIL specimen            ${detail}`);
+      console.log('VERDICT FAIL');
+    }
     process.exit(1);
   }
-  const result = await verifyLink(specimen, { strict });
-  console.log(formatReport(result));
-  process.exit(result.verdict === 'PASS' ? 0 : 1);
+  const result = await verifyLink(specimen);
+  const code = exitCode(result, { allowUnsigned: parsed.allowUnsigned });
+  if (parsed.json) console.log(formatJson(result, { allowUnsigned: parsed.allowUnsigned }));
+  else console.log(formatReport(result));
+  process.exit(code);
 }
 
 const invoked = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;

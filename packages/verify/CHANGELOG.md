@@ -3,6 +3,13 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+- **1F916 link checker.** `scripts/verify-1f916-link.mjs` (repo script, not shipped in this npm package) reports a third result, `UNSIGNED (registry-only)`, when the issuer JWS has no `agent_record_entry` stamp. The registry hash can still match. That result is not a PASS. Exit codes: 0 signed PASS, 1 a real check failed, 2 UNSIGNED, 3 usage. `--allow-unsigned` maps exit 2 to 0 and leaves `overall` as `unsigned`. `--json` sets `overall` to `unsigned`, `pass`, or `fail`. A fingerprint mismatch stays exit 1. A stamped fingerprint stays exit 0. Version stays 0.3.0.
+
+`xfuel-verify` exit codes are unchanged: 0 verified, 1 failed, 2 partial, 3 input error. It still does not compare `agent_record_entry.fingerprint`.
+
 ## 0.3.0 — Canonical preimage, issuer-history pin, refusals
 
 ### Added

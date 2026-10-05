@@ -173,6 +173,28 @@ This matches `SP1ProofHooks.computePaymentCommitment` on-chain.
 | 2 | Partial (binding ok, nullifier not checked) |
 | 3 | Input error |
 
+## 1F916 link checker
+
+`xfuel-verify` checks the payment receipt. It does not compare an Agent Record fingerprint. That check is `scripts/verify-1f916-link.mjs` in the chit402 repo. It is not part of this npm package, and this package version stays 0.3.0.
+
+A plain PASS requires the issuer JWS to stamp `agent_record_entry` and that fingerprint to match the hash 1F916 publishes. When the stamp is missing, the checker prints `UNSIGNED (registry-only)`. The registry hash matched, and the signed compare did not run. That is a third result, distinct from PASS and FAIL.
+
+```bash
+node scripts/verify-1f916-link.mjs specimen.json
+node scripts/verify-1f916-link.mjs --allow-unsigned specimen.json
+node scripts/verify-1f916-link.mjs --json specimen.json
+```
+
+| Outcome | Label | Exit |
+|---------|-------|------|
+| Signed fingerprint matches | `PASS` | 0 |
+| Stamp missing, registry matches | `UNSIGNED (registry-only)` | 2 |
+| Same, with `--allow-unsigned` | `UNSIGNED (registry-only)` | 0 |
+| A check failed (including a fingerprint mismatch) | `FAIL` | 1 |
+| Usage error | stderr | 3 |
+
+`--json` sets `overall` to `pass`, `unsigned`, or `fail`. `--allow-unsigned` changes the process exit from 2 to 0 and leaves `overall` as `unsigned`.
+
 ## API Reference
 
 ### `verifyBinding(receipt)`
