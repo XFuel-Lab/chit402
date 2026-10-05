@@ -34,7 +34,6 @@ import {
   headBindingClaims,
   headBindingVerdict,
   outerHeadDisagrees,
-  HEAD_BINDING_PAYLOAD_VERSION,
 } from './receipt-head-binding.js';
 import {
   CANONICAL_PAYLOAD_VERSION,
@@ -165,7 +164,8 @@ export function buildJwksUri(baseUrl = '') {
  * root proves inclusion. It is not the published head from before the append.
  * The HMAC array stays the v8 field list. Payload versions <= 7 keep the historical
  * net/fee split and still verify. v8 receipts that omit the head pair still
- * verify.
+ * verify. v9 receipts keep the head pair they were signed with. A read never
+ * re-signs or upgrades them. Only a receipt issued by this build is v10.
  */
 export const RECEIPT_PAYLOAD_VERSION = CANONICAL_PAYLOAD_VERSION;
 
@@ -1131,9 +1131,13 @@ function treeHeadHashForClaims(view) {
   return null;
 }
 
-/** Cached head-binding signature whose tree_head_hash is not the prefix that includes this leaf. */
+/**
+ * Current-version signature whose tree_head_hash is not the prefix that
+ * includes this leaf. v9 and older are never stale: a read must not discard
+ * them and sign a new payload.
+ */
 function coveringHeadStale(cachedClaims, taskId) {
-  if (!cachedClaims || Number(cachedClaims.payload_version) < HEAD_BINDING_PAYLOAD_VERSION) return false;
+  if (!cachedClaims || Number(cachedClaims.payload_version) < CANONICAL_PAYLOAD_VERSION) return false;
   if (!Object.prototype.hasOwnProperty.call(cachedClaims, 'tree_head_hash')) return false;
   const root = taskId ? getReceiptMerkleTree().prefixRoot(taskId) : null;
   if (!root) return false;
@@ -1142,16 +1146,15 @@ function coveringHeadStale(cachedClaims, taskId) {
 
 /**
  * After the leaf is appended, put that prefix root into an already signed
- * head-binding JWS (payload version 9 or later). A signature taken before
- * the append bound the previous head, which cannot prove inclusion. Older
- * payloads are left alone. Version 10 reseals the stored canonical object
- * so payload_hash still matches those bytes.
+ * v10 JWS. The claim set stays the one that was signed; only tree_head_hash
+ * changes, and the canonical object is resealed so payload_hash still matches.
+ * v9 and older are returned unchanged. A read must not upgrade them.
  * @param {object} receipt
  */
 export function stampCoveringTreeHead(receipt) {
   if (!receipt || typeof receipt !== 'object' || !receipt.issuer_signature?.jws) return receipt;
   const claims = decodeReceiptClaims(receipt);
-  if (!claims || Number(claims.payload_version) < HEAD_BINDING_PAYLOAD_VERSION) return receipt;
+  if (!claims || Number(claims.payload_version) < CANONICAL_PAYLOAD_VERSION) return receipt;
   if (!Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash')) return receipt;
   const root = getReceiptMerkleTree().prefixRoot(receipt.task_id);
   if (!root || claims.tree_head_hash === root) return receipt;
@@ -2082,7 +2085,16 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     } else if (cachedClaims && !sessionClaimsFrozen(cachedClaims, draft)) {
       issuer_signature = null;
     } else if (cachedClaims && coveringHeadStale(cachedClaims, draft.task_id)) {
-      issuer_signature = null;
+      // Refresh the covering head inside the stored claim set. Do not drop
+      // the JWS and call signReceiptEcdsa: that would issue a new payload.
+      const refreshed = stampCoveringTreeHead({
+        task_id: draft.task_id,
+        issuer_signature,
+      });
+      issuer_signature = refreshed.issuer_signature;
+      if (persistSignature && task && typeof task === 'object') {
+        task.issuerSignature = issuer_signature;
+      }
     }
   }
   if (!issuer_signature?.jws) {
