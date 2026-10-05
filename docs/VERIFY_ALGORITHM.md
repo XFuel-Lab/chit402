@@ -165,7 +165,18 @@ A version 9 payload that omits either key fails (`head_binding_missing`). The em
 
 Version **8 and earlier** omit the pair and verify as before. Do not re-sign
 them. The HMAC array is unchanged at version 8, so `hmac_attestation.payload_version`
-on a new receipt stays 8 while `issuer_signature.payload_version` is 9.
+on a new receipt stays 8 while `issuer_signature.payload_version` is 10.
+
+### 3.4 Payload version 10
+
+Version **10** keeps the version 9 head binding and adds two claims:
+
+| Claim | Meaning |
+|-------|---------|
+| `issuer_history` | `{ hash, version, seq }` of the issuer-history snapshot in effect at issuance. `hash` is SHA-256 of that snapshot's stored JCS bytes. Fetch it at `/.well-known/issuer-history.json?version=N` |
+| `payload_hash` | SHA-256 of the stored canonical object. The object is the public claims without `payload_hash`, JCS (RFC 8785), UTF-8, no trailing newline |
+
+`GET /receipt/:id/preimage` returns those stored bytes. `X-Chit-Hash-Alg` is `sha256`. SHA-256 of the body equals `payload_hash`. The object is not rebuilt on read. Version 9 receipts omit both claims and still verify. A version 10 receipt fails closed when the pinned snapshot is missing or its hash does not match, and when `iat` is outside `not_before` / `not_after` on the pinned entry.
 
 A settlement claim closes once. The book seat (`claim_id` equal to the agent
 id) is shared by every receipt in that book. Closing a different `claim_id`,

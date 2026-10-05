@@ -35,6 +35,13 @@ import {
   headBindingVerdict,
   outerHeadDisagrees,
 } from './receipt-head-binding.js';
+import {
+  CANONICAL_PAYLOAD_VERSION,
+  RECEIPT_CANONICAL_FIELDS,
+  sealCanonicalObject,
+  resealSignedClaims,
+} from './canonical-preimage.js';
+import { currentHistoryPin } from './issuer-history.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -157,9 +164,10 @@ export function buildJwksUri(baseUrl = '') {
  * root proves inclusion. It is not the published head from before the append.
  * The HMAC array stays the v8 field list. Payload versions <= 7 keep the historical
  * net/fee split and still verify. v8 receipts that omit the head pair still
- * verify.
+ * verify. v9 receipts keep the head pair they were signed with. A read never
+ * re-signs or upgrades them. Only a receipt issued by this build is v10.
  */
-export const RECEIPT_PAYLOAD_VERSION = 9;
+export const RECEIPT_PAYLOAD_VERSION = CANONICAL_PAYLOAD_VERSION;
 
 /** v8 canonical HMAC field order. Lockstep with packages/sdk and packages/verify. */
 const CANONICAL_V8_FIELDS = [
@@ -925,6 +933,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     issuance_commitment: view.issuance_commitment ?? view.meta?.issuanceCommitment ?? null,
     dispute_window: view.dispute_window ?? view.meta?.disputeWindow ?? null,
     ...headBindingClaims(treeHeadHashForClaims(view)),
+    issuer_history: currentHistoryPin(),
     payload_version: RECEIPT_PAYLOAD_VERSION,
     ...(openRouterSignedClaim(view) ? { openrouter: openRouterSignedClaim(view) } : {}),
   };
@@ -1122,9 +1131,13 @@ function treeHeadHashForClaims(view) {
   return null;
 }
 
-/** Cached v9 signature whose tree_head_hash is not the prefix that includes this leaf. */
+/**
+ * Current-version signature whose tree_head_hash is not the prefix that
+ * includes this leaf. v9 and older are never stale: a read must not discard
+ * them and sign a new payload.
+ */
 function coveringHeadStale(cachedClaims, taskId) {
-  if (!cachedClaims || Number(cachedClaims.payload_version) < RECEIPT_PAYLOAD_VERSION) return false;
+  if (!cachedClaims || Number(cachedClaims.payload_version) < CANONICAL_PAYLOAD_VERSION) return false;
   if (!Object.prototype.hasOwnProperty.call(cachedClaims, 'tree_head_hash')) return false;
   const root = taskId ? getReceiptMerkleTree().prefixRoot(taskId) : null;
   if (!root) return false;
@@ -1132,19 +1145,29 @@ function coveringHeadStale(cachedClaims, taskId) {
 }
 
 /**
- * After the leaf is appended, put that prefix root into an already signed v9 JWS.
- * A signature taken before the append bound the previous head, which cannot
- * prove inclusion. Legacy payloads are left alone.
+ * After the leaf is appended, put that prefix root into an already signed
+ * v10 JWS. The claim set stays the one that was signed; only tree_head_hash
+ * changes, and the canonical object is resealed so payload_hash still matches.
+ * v9 and older are returned unchanged. A read must not upgrade them.
  * @param {object} receipt
  */
 export function stampCoveringTreeHead(receipt) {
   if (!receipt || typeof receipt !== 'object' || !receipt.issuer_signature?.jws) return receipt;
   const claims = decodeReceiptClaims(receipt);
-  if (!claims || Number(claims.payload_version) < RECEIPT_PAYLOAD_VERSION) return receipt;
+  if (!claims || Number(claims.payload_version) < CANONICAL_PAYLOAD_VERSION) return receipt;
   if (!Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash')) return receipt;
   const root = getReceiptMerkleTree().prefixRoot(receipt.task_id);
   if (!root || claims.tree_head_hash === root) return receipt;
-  const { jws, kid } = signJws({ ...claims, tree_head_hash: root });
+  const next = { ...claims, tree_head_hash: root };
+  let toSign = next;
+  if (Number(claims.payload_version) >= CANONICAL_PAYLOAD_VERSION && claims.payload_hash) {
+    const sealed = resealSignedClaims(next);
+    toSign = sealed.claims;
+    receipt.issuer_signature.canonical_preimage = sealed.preimage;
+    receipt.issuer_signature.payload_hash = sealed.payload_hash;
+    receipt.issuer_signature.hash_alg = sealed.hash_alg;
+  }
+  const { jws, kid } = signJws(toSign);
   receipt.issuer_signature.jws = jws;
   if (kid) receipt.issuer_signature.kid = kid;
   receipt.tree_head_hash = root;
@@ -1230,7 +1253,7 @@ function signReceiptPayload(receipt, secret, { role = 'attestor' } = {}) {
   ];
   return {
     alg: 'HMAC-SHA256',
-    // JWS payload version can be 9. The HMAC array is still the v8 list.
+    // JWS payload version can be 10. The HMAC array is still the v8 list.
     payload_version: version >= 8 ? 8 : 5,
     value: `sha256=${value}`,
     role,
@@ -1338,9 +1361,10 @@ function sessionClaimsFrozen(cachedClaims, draft) {
 }
 
 function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
-  const claims = canonicalSignedClaims(receipt, { iat });
+  const draft = canonicalSignedClaims(receipt, { iat });
+  const sealed = sealCanonicalObject(draft, RECEIPT_CANONICAL_FIELDS);
   const jwksUri = buildJwksUri(baseUrl);
-  const { jws, kid } = signJws(claims, {
+  const { jws, kid } = signJws(sealed.claims, {
     jku: jwksUri.startsWith('http') ? jwksUri : null,
   });
   const issuer_jwk = getIssuerPublicKeyJwk();
@@ -1350,6 +1374,9 @@ function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
     jws,
     kid,
     issuer_jwk,
+    hash_alg: sealed.hash_alg,
+    payload_hash: sealed.payload_hash,
+    canonical_preimage: sealed.preimage,
   };
 }
 
@@ -2058,7 +2085,16 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     } else if (cachedClaims && !sessionClaimsFrozen(cachedClaims, draft)) {
       issuer_signature = null;
     } else if (cachedClaims && coveringHeadStale(cachedClaims, draft.task_id)) {
-      issuer_signature = null;
+      // Refresh the covering head inside the stored claim set. Do not drop
+      // the JWS and call signReceiptEcdsa: that would issue a new payload.
+      const refreshed = stampCoveringTreeHead({
+        task_id: draft.task_id,
+        issuer_signature,
+      });
+      issuer_signature = refreshed.issuer_signature;
+      if (persistSignature && task && typeof task === 'object') {
+        task.issuerSignature = issuer_signature;
+      }
     }
   }
   if (!issuer_signature?.jws) {

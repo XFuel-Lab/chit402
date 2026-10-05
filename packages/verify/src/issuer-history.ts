@@ -33,8 +33,16 @@ export interface IssuerHistoryEntry {
   entry_hash?: string;
 }
 
+export interface IssuerHistoryPin {
+  hash: string;
+  version: number;
+  seq: number;
+}
+
 export interface IssuerHistoryDocument {
   schema?: string;
+  version?: number;
+  seq?: number;
   entries?: IssuerHistoryEntry[];
   head_hash?: string;
   issuer_signature?: { jws?: string; kid?: string; issuer_jwk?: Es256Jwk };
@@ -128,6 +136,12 @@ export function verifyIssuerHistoryDocument(
     if (payload.schema !== ISSUER_HISTORY_SCHEMA) return { valid: false, reason: 'schema_mismatch' };
     if (Number(payload.entry_count) !== doc.entries.length) return { valid: false, reason: 'entry_count_mismatch' };
     if (payload.head_hash !== head) return { valid: false, reason: 'signed_head_mismatch' };
+    if (payload.version != null && Number(payload.version) !== Number(doc.version)) {
+      return { valid: false, reason: 'version_mismatch' };
+    }
+    if (payload.seq != null && Number(payload.seq) !== Number(doc.seq)) {
+      return { valid: false, reason: 'seq_mismatch' };
+    }
     return { valid: true };
   }
   return { valid: false, reason: 'signature_invalid' };
@@ -156,6 +170,30 @@ export function issuerKeyWindow(
   return { ok: true, reason: null };
 }
 
+export function issuerHistoryDocumentHash(doc: unknown): string {
+  return sha256Hex(jcsCanonicalize(doc));
+}
+
+/** Pin from verified JWS claims. An unsigned outer copy is not a pin. */
+export function readIssuerHistoryPin(claims: Record<string, unknown> | null | undefined): IssuerHistoryPin | null {
+  const pin = claims?.issuer_history;
+  if (!pin || typeof pin !== 'object') return null;
+  const row = pin as { hash?: unknown; version?: unknown; seq?: unknown };
+  if (typeof row.hash !== 'string' || !/^[0-9a-f]{64}$/.test(row.hash)) return null;
+  const version = Number(row.version);
+  const seq = Number(row.seq);
+  if (!Number.isInteger(version) || version < 1) return null;
+  if (!Number.isInteger(seq) || seq < 1) return null;
+  return { hash: row.hash, version, seq };
+}
+
+function historyUrlWithPin(url: string, pin: IssuerHistoryPin | null): string {
+  if (!pin) return url;
+  const parsed = new URL(url);
+  parsed.searchParams.set('version', String(pin.version));
+  return parsed.toString();
+}
+
 export async function checkReceiptIssuerHistory(
   receipt: { verification?: { jwks_uri?: string }; verify_url?: string; created_at?: unknown },
   {
@@ -169,6 +207,9 @@ export async function checkReceiptIssuerHistory(
     trustedHosts = ['api.chit402.com'],
     issuedAt = null,
     kid = null,
+    pin = null,
+    requirePin = false,
+    documentBytes = null,
   }: {
     document?: IssuerHistoryDocument | null;
     fetchHistory?: boolean;
@@ -180,6 +221,12 @@ export async function checkReceiptIssuerHistory(
     trustedHosts?: readonly string[];
     issuedAt?: unknown;
     kid?: string | null;
+    /** From verified claims. When set, the fetched snapshot must match. */
+    pin?: IssuerHistoryPin | null;
+    /** Payload versions that sign a pin fail when the pin is absent. */
+    requirePin?: boolean;
+    /** Exact response or file bytes. SHA-256 of these must equal the pin. */
+    documentBytes?: string | null;
   } = {},
 ): Promise<IssuerHistoryCheck> {
   const base: IssuerHistoryCheck = {
@@ -190,17 +237,31 @@ export async function checkReceiptIssuerHistory(
     reason: null,
     kid,
   };
+  const pinned = !!(pin && pin.hash);
+  const failClosed = strict || pinned || requirePin;
+  if (requirePin && !pinned) {
+    return { ...base, checked: true, ok: false, reason: 'issuer_history_pin_missing' };
+  }
   if (!kid) {
     const warning = 'issuer history not checked: receipt has no kid';
-    if (strict) return { ...base, checked: true, ok: false, reason: warning };
+    if (failClosed) return { ...base, checked: true, ok: false, reason: warning };
     return { ...base, warning };
   }
   let doc = document;
-  if (!doc && (fetchHistory || historyUrl || strict)) {
-    const url = historyUrl || historyUrlFromReceipt(receipt);
-    if (!url) {
+  let raw = documentBytes;
+  if (!doc && (fetchHistory || historyUrl || strict || pinned)) {
+    const baseUrl = historyUrl || historyUrlFromReceipt(receipt);
+    if (!baseUrl) {
       const warning = 'issuer history unreachable: no history url on the receipt';
-      if (strict) return { ...base, checked: true, ok: false, unreachable: true, reason: warning, warning };
+      if (failClosed) return { ...base, checked: true, ok: false, unreachable: true, reason: warning, warning };
+      return { ...base, unreachable: true, warning };
+    }
+    let url = baseUrl;
+    try {
+      url = historyUrlWithPin(baseUrl, pin);
+    } catch {
+      const warning = 'issuer history unreachable: bad history url';
+      if (failClosed) return { ...base, checked: true, ok: false, unreachable: true, reason: warning, warning };
       return { ...base, unreachable: true, warning };
     }
     let parsed: URL;
@@ -208,7 +269,7 @@ export async function checkReceiptIssuerHistory(
       parsed = new URL(url);
     } catch {
       const warning = 'issuer history unreachable: bad history url';
-      if (strict) return { ...base, checked: true, ok: false, unreachable: true, reason: warning, warning };
+      if (failClosed) return { ...base, checked: true, ok: false, unreachable: true, reason: warning, warning };
       return { ...base, unreachable: true, warning };
     }
     const explicit = !!historyUrl;
@@ -217,23 +278,38 @@ export async function checkReceiptIssuerHistory(
       : parsed.protocol === 'https:' && trustedHosts.some((host) => host.toLowerCase() === parsed.hostname.toLowerCase());
     if (!hostOk) {
       const warning = 'issuer history unreachable: history host is not allowed';
-      if (strict) return { ...base, checked: true, ok: false, unreachable: true, reason: warning, warning };
+      if (failClosed) return { ...base, checked: true, ok: false, unreachable: true, reason: warning, warning };
       return { ...base, unreachable: true, warning };
     }
     try {
       const res = await fetchImpl(url, { signal: AbortSignal.timeout(4000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      doc = await res.json() as IssuerHistoryDocument;
+      raw = await res.text();
+      doc = JSON.parse(raw) as IssuerHistoryDocument;
     } catch (err) {
       const warning = `issuer history unreachable: ${err instanceof Error ? err.message : String(err)}`;
-      if (strict) return { ...base, checked: true, ok: false, unreachable: true, reason: warning, warning };
+      if (failClosed) return { ...base, checked: true, ok: false, unreachable: true, reason: warning, warning };
       return { ...base, unreachable: true, warning };
     }
   }
   if (!doc) {
     const warning = 'issuer history not checked';
-    if (strict) return { ...base, checked: true, ok: false, unreachable: true, reason: warning, warning };
+    if (failClosed) return { ...base, checked: true, ok: false, unreachable: true, reason: warning, warning };
     return { ...base, warning };
+  }
+  if (pinned && pin) {
+    if (raw != null && sha256Hex(raw) !== pin.hash) {
+      return { ...base, checked: true, ok: false, reason: 'issuer_history_pin_mismatch' };
+    }
+    if (issuerHistoryDocumentHash(doc) !== pin.hash) {
+      return { ...base, checked: true, ok: false, reason: 'issuer_history_pin_mismatch' };
+    }
+    if (Number(doc.version) !== pin.version) {
+      return { ...base, checked: true, ok: false, reason: 'issuer_history_version_mismatch' };
+    }
+    if (Number(doc.seq) !== pin.seq) {
+      return { ...base, checked: true, ok: false, reason: 'issuer_history_seq_mismatch' };
+    }
   }
   const signed = verifyIssuerHistoryDocument(doc, { jwks, trustedKids });
   if (!signed.valid) {

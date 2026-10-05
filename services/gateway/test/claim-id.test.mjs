@@ -40,7 +40,7 @@ test('a paid receipt signs claim_id and leaves the v8 HMAC array unchanged', () 
   const withoutSeat = buildReceipt(paidTask(), { signingSecret: secret });
   const seated = decodeReceiptClaims(withSeat);
   const bare = decodeReceiptClaims(withoutSeat);
-  assert.equal(seated.payload_version, 9);
+  assert.equal(seated.payload_version, 10);
   assert.equal(seated.claim_id, '42');
   assert.equal(withSeat.claim_id, '42');
   assert.equal(bare.claim_id, null);
@@ -56,7 +56,7 @@ test('private desk uses the same claim_id as a native paid call', () => {
   }), { agentId: 9 });
   const claims = decodeReceiptClaims(receipt);
   assert.equal(claims.claim_id, '9');
-  assert.equal(claims.payload_version, 9);
+  assert.equal(claims.payload_version, 10);
   assert.equal(receipt.privacy.product, 'private_desk');
   assert.equal(verifyIssuerForHtml(receipt).verified, true);
 });

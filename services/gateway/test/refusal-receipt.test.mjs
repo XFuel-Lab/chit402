@@ -30,7 +30,7 @@ function rewritePayload(jws, mutate) {
   return parts.join('.');
 }
 
-test('a policy refusal signs a v1 document and does not charge', async () => {
+test('a policy refusal signs a document and does not charge', async () => {
   const prev = process.env.BASE_RPC_URL;
   const prevSettle = process.env.SETTLEMENT_RPC_URL;
   delete process.env.BASE_RPC_URL;
@@ -78,7 +78,7 @@ test('a policy refusal signs a v1 document and does not charge', async () => {
     assert.equal(doc.issuer_signature.alg, 'ES256');
     assert.equal(doc.issuer_signature.typ, 'chit402-refusal+jwt');
     assert.equal(verifyRefusalReceipt(doc).valid, true);
-    assert.equal(RECEIPT_PAYLOAD_VERSION, 9);
+    assert.equal(RECEIPT_PAYLOAD_VERSION, 10);
     const found = ledger.findByRefusal(doc.refusal_id);
     assert.equal(found.task_id, 'blocked-signed');
     const again = ledger.recordPolicyBlocked({

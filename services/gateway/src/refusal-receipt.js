@@ -18,9 +18,14 @@
 import crypto from 'crypto';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 import { withPublicPreimages } from './receipt-preimage.js';
+import { REFUSAL_CANONICAL_FIELDS, sealCanonicalObject } from './canonical-preimage.js';
+import { currentHistoryPin } from './issuer-history.js';
 
 export const REFUSAL_SCHEMA = 'chit402.refusal.v1';
-export const REFUSAL_PAYLOAD_VERSION = 1;
+/** Versions a verifier accepts. Version 1 has no history pin. */
+export const REFUSAL_PAYLOAD_VERSIONS = Object.freeze([1, 2]);
+/** New refusals. Version 1 still verifies. */
+export const REFUSAL_PAYLOAD_VERSION = 2;
 export const REFUSAL_JWT_TYP = 'chit402-refusal+jwt';
 
 export const REFUSAL_PROVES = [
@@ -119,10 +124,12 @@ export function issueRefusalReceipt(row) {
     },
     charged: false,
     amount_charged: '0',
+    issuer_history: currentHistoryPin(),
   };
-  const { jws, kid } = signJws(claims, { typ: REFUSAL_JWT_TYP });
+  const sealed = sealCanonicalObject(claims, REFUSAL_CANONICAL_FIELDS);
+  const { jws, kid } = signJws(sealed.claims, { typ: REFUSAL_JWT_TYP });
   return {
-    ...claims,
+    ...sealed.claims,
     issuer_signature: {
       alg: 'ES256',
       typ: REFUSAL_JWT_TYP,
@@ -130,7 +137,11 @@ export function issueRefusalReceipt(row) {
       jws,
       kid,
       issuer_jwk: getIssuerPublicKeyJwk(),
+      hash_alg: sealed.hash_alg,
+      payload_hash: sealed.payload_hash,
+      canonical_preimage: sealed.preimage,
     },
+    canonical_preimage: sealed.preimage,
     verify_url: null,
   };
 }
@@ -234,9 +245,24 @@ export function verifyRefusalReceipt(doc, jwks = null) {
   if (payload.schema !== REFUSAL_SCHEMA || (doc.schema != null && doc.schema !== payload.schema)) {
     return { checked: true, valid: false, reason: 'schema_mismatch', payload };
   }
-  if (Number(payload.payload_version) !== REFUSAL_PAYLOAD_VERSION
-    || Number(doc.payload_version) !== REFUSAL_PAYLOAD_VERSION) {
+  const version = Number(payload.payload_version);
+  if (!REFUSAL_PAYLOAD_VERSIONS.includes(version) || Number(doc.payload_version) !== version) {
     return { checked: true, valid: false, reason: 'payload_version_mismatch', payload };
+  }
+  if (version >= 2) {
+    const pin = payload.issuer_history;
+    if (!pin || typeof pin.hash !== 'string' || pin.version == null || pin.seq == null) {
+      return { checked: true, valid: false, reason: 'issuer_history_pin_missing', payload };
+    }
+    if (typeof payload.payload_hash !== 'string' || !/^[0-9a-f]{64}$/.test(payload.payload_hash)) {
+      return { checked: true, valid: false, reason: 'payload_hash_missing', payload };
+    }
+    if (typeof doc.canonical_preimage === 'string') {
+      const digest = crypto.createHash('sha256').update(doc.canonical_preimage, 'utf8').digest('hex');
+      if (digest !== payload.payload_hash) {
+        return { checked: true, valid: false, reason: 'payload_hash_mismatch', payload };
+      }
+    }
   }
   if (payload.kind !== 'refusal') {
     return { checked: true, valid: false, reason: 'kind_mismatch', payload };
@@ -311,7 +337,7 @@ export function renderRefusalHtml(doc) {
   </style>
 </head>
 <body>
-  <p class="muted">chit402.refusal.v1 · payload version 1 · no USDC charged</p>
+  <p class="muted">chit402.refusal.v1 · payload version ${esc(doc?.payload_version ?? REFUSAL_PAYLOAD_VERSION)} · no USDC charged</p>
   <h1>Refusal ${esc(doc?.refusal_code || '')}</h1>
   <p>The issuer signed that it refused this spend. This is not a payment receipt.</p>
   <dl>

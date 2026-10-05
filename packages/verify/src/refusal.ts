@@ -15,7 +15,10 @@ import {
 } from './jws.js';
 
 export const REFUSAL_SCHEMA = 'chit402.refusal.v1';
-export const REFUSAL_PAYLOAD_VERSION = 1;
+/** Versions a verifier accepts. Version 1 has no history pin. */
+export const REFUSAL_PAYLOAD_VERSIONS = [1, 2] as const;
+/** Current issuance version. Version 1 still verifies. */
+export const REFUSAL_PAYLOAD_VERSION = 2;
 
 export const REFUSAL_PROVES = [
   'The issuer signed that it refused this spend.',
@@ -97,6 +100,9 @@ export interface RefusalVerification {
   proves: string[];
   does_not_prove: string[];
   errors: string[];
+  payload_version?: number;
+  issuer_history?: { hash?: string; version?: number; seq?: number } | null;
+  payload_hash?: string | null;
 }
 
 /** Schema inside the JWS payload. Unverified; callers still check the signature. */
@@ -221,8 +227,22 @@ export function verifyRefusal(
   // The outer schema is unsigned. A present value that disagrees with the
   // signed schema fails. An omitted outer schema still follows the JWS.
   if (doc.schema != null && doc.schema !== signed.schema) return failed('schema_mismatch', { kid });
-  if (Number(signed.payload_version) !== REFUSAL_PAYLOAD_VERSION) {
+  const version = Number(signed.payload_version);
+  if (!REFUSAL_PAYLOAD_VERSIONS.includes(version as 1 | 2)) {
     return failed('payload_version_mismatch', { kid });
+  }
+  if (doc.payload_version != null && Number(doc.payload_version) !== version) {
+    return failed('payload_version_mismatch', { kid });
+  }
+  if (version >= 2) {
+    const pin = (signed as { issuer_history?: { hash?: unknown; version?: unknown; seq?: unknown } }).issuer_history;
+    if (!pin || typeof pin.hash !== 'string' || pin.version == null || pin.seq == null) {
+      return failed('issuer_history_pin_missing', { kid });
+    }
+    const payloadHash = (signed as { payload_hash?: unknown }).payload_hash;
+    if (typeof payloadHash !== 'string' || !/^[0-9a-f]{64}$/.test(payloadHash)) {
+      return failed('payload_hash_missing', { kid });
+    }
   }
   if (signed.kind !== 'refusal') return failed('kind_mismatch', { kid });
   if (signed.charged !== false || signed.amount_charged !== '0'
@@ -258,5 +278,8 @@ export function verifyRefusal(
     proves: REFUSAL_PROVES,
     does_not_prove: REFUSAL_DOES_NOT_PROVE,
     errors: [],
+    payload_version: version,
+    issuer_history: (signed as { issuer_history?: RefusalVerification['issuer_history'] }).issuer_history ?? null,
+    payload_hash: (signed as { payload_hash?: string | null }).payload_hash ?? null,
   };
 }

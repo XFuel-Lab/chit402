@@ -1,6 +1,6 @@
 # Signed refusal receipt
 
-A spend the gateway refuses for a policy or cap reason comes back as a signed document, schema `chit402.refusal.v1`, payload version 1. The caller holds it in the refusal response. An async pipeline can fetch the same document later.
+A spend the gateway refuses for a policy or cap reason comes back as a signed document, schema `chit402.refusal.v1`. New refusals are payload version 2. Payload version 1 still verifies. The caller holds the document in the refusal response. An async pipeline can fetch the same document later.
 
 ```
 GET /refusal/:refusal_id
@@ -26,7 +26,7 @@ A second record of the same task id returns the original document and the origin
 | Field | Meaning |
 |-------|---------|
 | `schema` | `chit402.refusal.v1` |
-| `payload_version` | `1` |
+| `payload_version` | `2` on a new refusal. `1` still verifies. Version 2 also signs `issuer_history` and `payload_hash` |
 | `refusal_code` | Stable code (`daily_cap_exceeded`, `kill_switch`, `budget_exhausted`, …) |
 | `nonce` | Unique to this document |
 | `issued_at` | When the row was recorded |

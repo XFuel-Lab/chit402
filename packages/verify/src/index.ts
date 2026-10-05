@@ -80,9 +80,11 @@ import { isRefusalDocument, REFUSAL_SCHEMA } from './refusal.js';
 import { verifyPublishedPreimages, type PreimageCheck } from './preimage.js';
 import {
   checkReceiptIssuerHistory,
+  readIssuerHistoryPin,
   type IssuerHistoryCheck,
   type IssuerHistoryDocument,
 } from './issuer-history.js';
+import { verifyCanonicalPreimageBytes, CANONICAL_PAYLOAD_VERSION } from './canonical-preimage.js';
 
 export {
   computePaymentCommitment,
@@ -209,8 +211,10 @@ export interface XFuelReceipt {
     value?: string;
     kid?: string;
     jws?: string;
-    issuer_jwk?: Es256Jwk;
     payload_version?: number;
+    payload_hash?: string;
+    canonical_preimage?: string;
+    issuer_jwk?: Es256Jwk;
   };
   verification?: {
     source_of_truth?: string;
@@ -1301,6 +1305,15 @@ export interface VerifyReceiptOptions {
   strictIssuerHistory?: boolean;
   /** Explicit history URL. Any https URL. */
   issuerHistoryUrl?: string | null;
+  /** Exact issuer-history response bytes. SHA-256 must match a signed pin. */
+  issuerHistoryBytes?: string | null;
+  /** `--no-issuer-history`. A signed pin is not checked. */
+  skipIssuerHistory?: boolean;
+  /**
+   * Stored canonical object (the GET /preimage body). SHA-256 must match
+   * the signed payload_hash. Absent bytes are not rebuilt.
+   */
+  canonicalPreimage?: string | null;
 }
 
 function normalizeBoundRoot(root: unknown): string | null {
@@ -1538,19 +1551,51 @@ export async function verifyReceipt(
   });
   if (!preimages.ok) errors.push(...preimages.errors);
 
+  const signedPayloadHash = verifiedClaims && 'payload_hash' in verifiedClaims
+    ? verifiedClaims.payload_hash
+    : null;
+  const storedPreimage = typeof receipt.issuer_signature?.canonical_preimage === 'string'
+    ? receipt.issuer_signature.canonical_preimage
+    : null;
+  let canonicalPreimageFailed = false;
+  if (storedPreimage != null) {
+    const storedCheck = verifyCanonicalPreimageBytes(storedPreimage, signedPayloadHash);
+    if (!storedCheck.ok) {
+      canonicalPreimageFailed = true;
+      if (storedCheck.reason) errors.push(`canonical preimage: ${storedCheck.reason}`);
+    }
+  }
+  if (typeof options.canonicalPreimage === 'string') {
+    const fileCheck = verifyCanonicalPreimageBytes(options.canonicalPreimage, signedPayloadHash);
+    if (!fileCheck.ok) {
+      canonicalPreimageFailed = true;
+      if (fileCheck.reason) errors.push(`canonical preimage: ${fileCheck.reason}`);
+    }
+  }
+
   const issuedAt = (verifiedClaims && 'iat' in verifiedClaims ? verifiedClaims.iat : null)
     ?? decoded?.iat
     ?? receipt.created_at
     ?? null;
-  const historyAsked = !!(
+  const historyPin = readIssuerHistoryPin(verifiedClaims as Record<string, unknown> | null);
+  const payloadVersion = Number(verifiedClaims?.payload_version);
+  // Payload v10 signs the history pin. A missing pin fails even when the
+  // caller did not pass a history file or ask for a fetch.
+  const pinRequired = !options.skipIssuerHistory
+    && Number.isFinite(payloadVersion)
+    && payloadVersion >= CANONICAL_PAYLOAD_VERSION;
+  const historyAsked = pinRequired || (!options.skipIssuerHistory && !!(
     options.issuerHistory
+    || options.issuerHistoryBytes
     || options.fetchIssuerHistory
     || options.strictIssuerHistory
     || options.issuerHistoryUrl
-  );
+    || historyPin
+  ));
   const issuer_history = historyAsked
     ? await checkReceiptIssuerHistory(receipt, {
       document: options.issuerHistory ?? null,
+      documentBytes: options.issuerHistoryBytes ?? null,
       fetchHistory: options.fetchIssuerHistory === true || options.strictIssuerHistory === true,
       strict: options.strictIssuerHistory === true,
       historyUrl: options.issuerHistoryUrl ?? null,
@@ -1560,6 +1605,8 @@ export async function verifyReceipt(
       trustedHosts,
       issuedAt,
       kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
+      pin: historyPin,
+      requirePin: pinRequired,
     })
     : {
       checked: false,
@@ -1597,7 +1644,7 @@ export async function verifyReceipt(
   let overall: 'verified' | 'partial' | 'failed';
   const preimageFailed = !preimages.ok;
   const historyFailed = issuer_history.checked && !issuer_history.ok;
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed) {
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
@@ -1734,6 +1781,17 @@ export {
   type AnchorHead,
   type VerifyAnchoredRootInput,
 } from './anchor-witness.js';
+
+export {
+  verifyCanonicalPreimageBytes,
+  CANONICAL_PAYLOAD_VERSION,
+} from './canonical-preimage.js';
+
+export {
+  readIssuerHistoryPin,
+  issuerHistoryDocumentHash,
+  type IssuerHistoryPin,
+} from './issuer-history.js';
 
 export default {
   verifyBinding,

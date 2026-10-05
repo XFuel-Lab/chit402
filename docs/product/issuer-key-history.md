@@ -2,7 +2,13 @@
 
 `GET /.well-known/jwks.json` publishes the key that signs receipts now. `GET /.well-known/issuer-history.json` publishes every key that has signed, including retired and revoked ones, so a stranger can check that a receipt's `kid` was allowed to sign at `iat`.
 
-The document is schema `chit402.issuer_history.v1`. The current issuer key signs `head_hash` and `entry_count` (ES256, `typ: chit402-issuer-history+jwt`). Each entry's `entry_hash` is SHA-256 of the JCS (RFC 8785) UTF-8 bytes of the entry without `entry_hash`. `prev_hash` is the previous entry's `entry_hash`, or null on the first entry. Changing an old entry breaks the chain or the signature.
+The document is schema `chit402.issuer_history.v1`. The current issuer key signs `head_hash`, `entry_count`, and, on a sealed snapshot, `version` and `seq` (ES256, `typ: chit402-issuer-history+jwt`). Each entry's `entry_hash` is SHA-256 of the JCS (RFC 8785) UTF-8 bytes of the entry without `entry_hash`. `prev_hash` is the previous entry's `entry_hash`, or null on the first entry. Changing an old entry breaks the chain or the signature.
+
+## Snapshots
+
+A published document is sealed once. The response body is those stored JCS bytes. SHA-256 of the body is the snapshot hash. `X-Chit-Hash-Alg` is `sha256`. `X-Chit-History-Version` and `X-Chit-History-Seq` are the snapshot number (they match).
+
+`GET /.well-known/issuer-history.json` is the snapshot in effect now. `GET /.well-known/issuer-history.json?version=N` and `?hash=<sha256>` return an older snapshot. Old bytes are not rewritten when a key is appended or `not_after` is set. Sealed snapshots are appended to `issuer-history-versions.jsonl` next to the book ledger when the gateway persists tasks. A restart serves those bytes again. A new receipt pins `{ hash, version, seq }` inside the JWS (`issuer_history`). `xfuel-verify` fetches that version, checks the hash, and reads `not_after` from the pinned entry. A later snapshot's `not_after` does not replace the one the receipt pinned.
 
 ## Entry
 
@@ -35,11 +41,14 @@ A later key is appended. Set `ISSUER_HISTORY_EXTRA` to a JSON array of earlier e
 If the history URL cannot be fetched, the command warns and still verifies the signature. `--strict-issuer-history` fails closed instead. `--issuer-history-file` uses a saved document and does not fetch. `--no-issuer-history` skips the window.
 
 ```bash
-curl -sS "https://api.chit402.com/receipt/chit-39af100b-23dd-4d86-a16b-4556ca6796af?format=json" -o receipt.json
-curl -sS "https://api.chit402.com/.well-known/issuer-history.json" -o issuer-history.json
-npx -p @xfuel/verify xfuel-verify receipt.json --issuer-history-file issuer-history.json
+curl -sS "https://api.chit402.com/receipt/RECEIPT_ID?format=json" -o receipt.json
+curl -sS -D - "https://api.chit402.com/receipt/RECEIPT_ID/preimage" -o preimage.json
+# X-Chit-Hash-Alg: sha256
+# sha256(preimage.json) matches payload_hash in the receipt JWS
+curl -sS "https://api.chit402.com/.well-known/issuer-history.json?version=1" -o issuer-history.json
+npx -p @xfuel/verify xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
 ```
 
-That check works once the gateway serving `api.chit402.com` is running this build. Until then the history URL is absent and `xfuel-verify` warns unless `--strict-issuer-history` is set.
+Use the `version` from the receipt's signed `issuer_history`, not always `1`. A receipt issued before payload version 10 has no stored canonical object: `/preimage` is 404, and `xfuel-verify` still checks the signature. A pinned receipt fails closed when that snapshot cannot be fetched. An unpinned receipt warns unless `--strict-issuer-history` is set. This works once the gateway serving `api.chit402.com` is running this build.
 
 Page: https://www.chit402.com/docs/receipt-check

@@ -15,6 +15,7 @@ import { PAYMENT_RAIL } from './payment-binding.js';
 import { emptyUniverseHash } from './export-coverage.js';
 import { canonicalSignedPayload } from './receipt.js';
 import { jcsCanonicalize } from './offer-receipt.js';
+import { canonicalObjectDescriptor } from './canonical-preimage.js';
 
 export const PREIMAGE_SCHEMA = 'chit402.preimage.v1';
 
@@ -398,11 +399,12 @@ export function buildPublicPreimages(receipt, { baseUrl = '', taskId = null, pre
 
   return {
     schema: PREIMAGE_SCHEMA,
+    canonical: canonicalObjectDescriptor(receipt),
     canonicalization: {
       utf8: 'Pipe-joined and JSON preimages are UTF-8 with no trailing newline. Null and missing pipe fields are empty strings.',
       sha256: 'SHA-256. Hex is lowercase. A 0x prefix is present only when the published hash uses one.',
       keccak256: 'keccak256 of the hex preimage bytes (abi.encodePacked).',
-      jcs: 'Issuer-history entry hashes use JCS (RFC 8785), the same canonical form as offer receipts. Receipt hashes keep the encoding they were signed with.',
+      jcs: 'JCS (RFC 8785) is the form for issuer-history entries, the sealed history document, and the whole receipt or refusal canonical object. Per-field receipt hashes keep the encoding they were signed with.',
       merkle: 'RFC 6962. Leaf = SHA-256(0x00 || body). Node = SHA-256(0x01 || left || right). A trailing odd node is promoted.',
     },
     fields,

@@ -8,7 +8,7 @@ agent_id|seq|task_id|prev_hash|event
 
 The hash binds the position. It does not bind the amount or the payment ref. A correction that changes an inflow allocation is a new row; the original row keeps the hash it had when it was appended.
 
-The signed object is `chit402.book_seq.v1`, field `book_chain` on the row and on the receipt. Current rows use `payload_version` 4. That version signs `payment_ref` next to `book_id`, so a lane with no payment JWS still ties the tx to the seat. `payment_ref` is null when the row has no tx. Versions 2 (act) and 3 (authority) still verify; they do not carry `payment_ref`. Authority on a new correction row stays inside version 4. The payment JWS is not rewritten. An existing v8 receipt still verifies. New payment receipts are payload version 9.
+The signed object is `chit402.book_seq.v1`, field `book_chain` on the row and on the receipt. Current rows use `payload_version` 4. That version signs `payment_ref` next to `book_id`, so a lane with no payment JWS still ties the tx to the seat. `payment_ref` is null when the row has no tx. Versions 2 (act) and 3 (authority) still verify; they do not carry `payment_ref`. Authority on a new correction row stays inside version 4. The payment JWS is not rewritten. An existing v8 receipt still verifies. New payment receipts are payload version 10.
 
 ## Replays and corrections
 

@@ -4,6 +4,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { keccak256, solidityPacked, toUtf8Bytes } from 'ethers';
 
 const {
@@ -17,7 +21,9 @@ const {
   checkReceiptIssuerHistory,
 } = await import('../dist/issuer-history.js');
 const { jwkThumbprint, DEFAULT_TRUSTED_ISSUER_KIDS } = await import('../dist/jws.js');
-const { verifyReceipt } = await import('../dist/index.js');
+const { verifyReceipt, verifyCanonicalPreimageBytes } = await import('../dist/index.js');
+const { jcsCanonicalize } = await import('../dist/jcs.js');
+const { issuerHistoryDocumentHash } = await import('../dist/issuer-history.js');
 
 function sha256Hex(text) {
   return createHash('sha256').update(text, 'utf8').digest('hex');
@@ -252,4 +258,226 @@ test('omitted trustedKids uses the production pin, same as a refusal', () => {
   assert.match(omitted.reason || '', /signature_invalid|verification_error/);
   const disabled = verifyIssuerHistoryDocument(doc, { trustedKids: [] });
   assert.equal(disabled.reason, 'key untrusted');
+});
+
+function signedHistory({ kid, publicJwk, privateKey, notAfter, version, seq }) {
+  const entry = {
+    kid,
+    jwk: publicJwk,
+    alg: 'ES256',
+    not_before: '2026-09-04T08:52:05Z',
+    not_after: notAfter,
+    status: 'active',
+    revoked_at: null,
+    reason: null,
+    custody: 'The ES256 private key is the base64 PEM in ISSUER_PRIVATE_KEY.',
+    prev_hash: null,
+  };
+  entry.entry_hash = issuerHistoryEntryHash(entry);
+  const claims = {
+    schema: 'chit402.issuer_history.v1',
+    payload_version: 1,
+    version,
+    seq,
+    entry_count: 1,
+    head_hash: entry.entry_hash,
+  };
+  const header = { alg: 'ES256', typ: 'chit402-issuer-history+jwt', kid };
+  const signingInput = `${b64url(header)}.${b64url(claims)}`;
+  const signature = sign('sha256', Buffer.from(signingInput), { key: privateKey, dsaEncoding: 'ieee-p1363' });
+  const doc = {
+    schema: 'chit402.issuer_history.v1',
+    version,
+    seq,
+    entries: [entry],
+    head_hash: entry.entry_hash,
+    issuer_signature: {
+      jws: `${signingInput}.${signature.toString('base64url')}`,
+      kid,
+      issuer_jwk: publicJwk,
+    },
+  };
+  const body = jcsCanonicalize(doc);
+  return { doc, body, hash: sha256Hex(body) };
+}
+
+test('a pinned history hash is checked, and not_after comes from that snapshot', async () => {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = publicKey.export({ format: 'jwk' });
+  const kid = jwkThumbprint(jwk);
+  const publicJwk = { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, kid, alg: 'ES256', use: 'sig' };
+  const open = signedHistory({
+    kid, publicJwk, privateKey, notAfter: null, version: 1, seq: 1,
+  });
+  const closed = signedHistory({
+    kid, publicJwk, privateKey, notAfter: '2026-09-01T00:00:00Z', version: 2, seq: 2,
+  });
+  assert.equal(issuerHistoryDocumentHash(open.doc), open.hash);
+  assert.equal(jcsCanonicalize(JSON.parse(open.body)), open.body);
+
+  const issuedAt = '2026-09-26T17:27:32Z';
+  const openWindow = await checkReceiptIssuerHistory(
+    { verification: { jwks_uri: 'https://api.chit402.com/.well-known/jwks.json' } },
+    {
+      document: open.doc,
+      documentBytes: open.body,
+      pin: { hash: open.hash, version: 1, seq: 1 },
+      kid,
+      issuedAt,
+      trustedKids: [kid],
+    },
+  );
+  assert.equal(openWindow.ok, true, openWindow.reason);
+
+  const after = await checkReceiptIssuerHistory(
+    { verification: { jwks_uri: 'https://api.chit402.com/.well-known/jwks.json' } },
+    {
+      document: closed.doc,
+      documentBytes: closed.body,
+      pin: { hash: closed.hash, version: 2, seq: 2 },
+      kid,
+      issuedAt,
+      trustedKids: [kid],
+    },
+  );
+  assert.equal(after.ok, false);
+  assert.equal(after.reason, 'issued_after_not_after');
+
+  const swapped = await checkReceiptIssuerHistory(
+    { verification: { jwks_uri: 'https://api.chit402.com/.well-known/jwks.json' } },
+    {
+      document: closed.doc,
+      documentBytes: closed.body,
+      pin: { hash: open.hash, version: 1, seq: 1 },
+      kid,
+      issuedAt,
+      trustedKids: [kid],
+    },
+  );
+  assert.equal(swapped.reason, 'issuer_history_pin_mismatch');
+
+  let fetched = '';
+  const missed = await checkReceiptIssuerHistory(
+    { verify_url: 'https://api.chit402.com/receipt/example' },
+    {
+      fetchHistory: true,
+      pin: { hash: open.hash, version: 1, seq: 1 },
+      kid,
+      issuedAt,
+      fetchImpl: async (url) => {
+        fetched = String(url);
+        throw new Error('offline');
+      },
+    },
+  );
+  assert.match(fetched, /version=1/);
+  assert.equal(missed.ok, false);
+  assert.match(missed.reason, /unreachable/);
+
+  const preimage = '{"task_id":"t"}';
+  const digest = sha256Hex(preimage);
+  assert.equal(verifyCanonicalPreimageBytes(preimage, digest).ok, true);
+  assert.equal(verifyCanonicalPreimageBytes(`${preimage}\n`, digest).reason, 'payload_hash_mismatch');
+});
+
+function signReceiptClaims(payload) {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwkExport = publicKey.export({ format: 'jwk' });
+  const thumb = createHash('sha256').update(JSON.stringify({
+    crv: jwkExport.crv, kty: jwkExport.kty, x: jwkExport.x, y: jwkExport.y,
+  })).digest('base64url');
+  const issuer_jwk = { ...jwkExport, kid: thumb, alg: 'ES256', use: 'sig', kty: 'EC', crv: 'P-256' };
+  const header = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid: thumb };
+  const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = sign('sha256', Buffer.from(`${headerB64}.${payloadB64}`), {
+    key: privateKey,
+    dsaEncoding: 'ieee-p1363',
+  }).toString('base64url');
+  return {
+    kid: thumb,
+    issuer_jwk,
+    jws: `${headerB64}.${payloadB64}.${signature}`,
+  };
+}
+
+function headReceipt(claims) {
+  const signed = signReceiptClaims(claims);
+  return {
+    task_id: claims.task_id,
+    status: 'completed',
+    payment: claims.payment,
+    caller_binding: claims.caller_binding,
+    tree_head_hash: claims.tree_head_hash,
+    tolerance: claims.tolerance,
+    issuer_signature: {
+      alg: 'ES256',
+      jws: signed.jws,
+      kid: signed.kid,
+      issuer_jwk: signed.issuer_jwk,
+      payload_version: claims.payload_version,
+    },
+  };
+}
+
+const headClaims = {
+  task_id: 'chit-canonical-fail',
+  iss: 'chit402',
+  iat: 1,
+  payload_version: 9,
+  tree_head_hash: 'ab'.repeat(32),
+  tolerance: { base: 300, solana: 150 },
+  payment: {
+    rail: 'usdc',
+    ref: 'base:0x' + '11'.repeat(32),
+    asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    payee: '0x2222222222222222222222222222222222222222',
+    gross_amount: '2000',
+    settled_amount: '2000',
+  },
+  caller_binding: { payer_wallet: '0x1111111111111111111111111111111111111111' },
+};
+
+test('a tampered canonical preimage fails the receipt and the CLI', async () => {
+  const preimage = '{"task_id":"chit-canonical-fail"}';
+  const payload_hash = sha256Hex(preimage);
+  const receipt = headReceipt({ ...headClaims, payload_hash });
+  receipt.issuer_signature.canonical_preimage = `${preimage}tampered`;
+  const result = await verifyReceipt(receipt, {
+    trustedKids: [receipt.issuer_signature.kid],
+    skipIssuerHistory: true,
+    requirePreimages: false,
+  });
+  assert.equal(result.overall, 'failed');
+  assert.match(result.errors.join(' '), /canonical preimage: payload_hash_mismatch/);
+
+  const dir = mkdtempSync(join(tmpdir(), 'chit-preimage-'));
+  writeFileSync(join(dir, 'receipt.json'), JSON.stringify(receipt));
+  const cli = join(new URL('.', import.meta.url).pathname, '..', 'dist', 'cli.js');
+  const run = spawnSync(process.execPath, [
+    cli,
+    join(dir, 'receipt.json'),
+    '--json',
+    '--no-preimage',
+    '--no-issuer-history',
+    '--trusted-kid',
+    receipt.issuer_signature.kid,
+  ], { encoding: 'utf8' });
+  assert.notEqual(run.status, 0);
+  const parsed = JSON.parse(run.stdout);
+  assert.equal(parsed.overall, 'failed');
+  assert.match(parsed.errors.join(' '), /canonical preimage: payload_hash_mismatch/);
+});
+
+test('payload v10 without an issuer_history pin fails closed', async () => {
+  const receipt = headReceipt({ ...headClaims, task_id: 'chit-v10-unpinned', payload_version: 10 });
+  const result = await verifyReceipt(receipt, {
+    trustedKids: [receipt.issuer_signature.kid],
+  });
+  assert.equal(result.issuer_signature.valid, true);
+  assert.equal(result.issuer_history.checked, true);
+  assert.equal(result.issuer_history.ok, false);
+  assert.equal(result.issuer_history.reason, 'issuer_history_pin_missing');
+  assert.equal(result.overall, 'failed');
+  assert.match(result.errors.join(' '), /issuer_history_pin_missing/);
 });

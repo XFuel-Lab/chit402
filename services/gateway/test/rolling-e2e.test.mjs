@@ -192,7 +192,7 @@ test('second 402 equals measured cost-plus, not the rate card', async () => {
   assert.equal(owedView.payment.protocol_fee_bps, undefined);
   assert.equal(owedView.payment.net_amount, undefined);
   assert.equal(owedView.payment.fee_amount, undefined);
-  assert.equal(owed.issuer_signature.payload_version, 9);
+  assert.equal(owed.issuer_signature.payload_version, 10);
 });
 
 test('a first call whose ceiling exceeds $1 still prepays', async () => {
