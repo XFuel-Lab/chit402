@@ -502,7 +502,7 @@ test('an anchor intent is fsynced before broadcast and a crash does not send twi
     },
   });
   assert.equal(sawIntent, true);
-  assert.equal(head.anchor_status, 'pending');
+  assert.equal(head.anchor_status, 'blocked');
   const restored = new ReceiptMerkleTree();
   restored.load(dir);
   const found = '0x' + 'ab'.repeat(32);
@@ -510,7 +510,7 @@ test('an anchor intent is fsynced before broadcast and a crash does not send twi
     lookup: async (intent) => {
       assert.equal(intent.nonce, 4);
       assert.equal(intent.root, root);
-      assert.equal(intent.status, 'signed');
+      assert.equal(intent.status === 'signed' || intent.status === 'blocked', true);
       assert.match(intent.raw, /^0x/);
       return { tx: found, root, nonce: 4, receiptOk: true, from: intent.from, to: intent.to };
     },
@@ -745,7 +745,7 @@ test('crash after the signed raw tx is persisted and before send rebroadcasts th
         throw new Error('crash_before_send');
       },
     });
-    assert.equal(head.anchor_status, 'pending');
+    assert.equal(head.anchor_status, 'blocked');
     assert.ok(persisted.raw);
     assert.match(persisted.tx, /^0x[0-9a-f]{64}$/);
     const { keccak256 } = await import('ethers');
@@ -867,7 +867,7 @@ test('an RPC error leaves the signed nonce blocked and does not sign a new trans
       },
     });
     assert.equal(sent, false);
-    assert.equal(head.anchor_status, 'pending');
+    assert.equal(head.anchor_status, 'blocked');
     const raws = new Set(anchorIntentRows(dir).map((row) => row.raw).filter(Boolean));
     assert.deepEqual([...raws], [raw]);
     assert.equal(anchorIntentRows(dir).filter((row) => row.status === 'signed').length, 1);
@@ -1092,6 +1092,266 @@ test('a nonce that landed as something else is replaced and is not sent again', 
   } finally {
     if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
     else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('a rejected broadcast is replaced at the same nonce for the next root', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  try {
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      send: async () => { throw new Error('broadcast_rejected'); },
+    });
+    const first = anchorIntentRows(dir).find((row) => row.status === 'signed' && row.raw);
+    assert.equal(first.nonce, 4);
+    assert.equal(tree.bundleStatus().blocked_intents >= 1, true);
+    assert.equal(tree.bundleStatus().pending_intents, 0);
+    assert.match(tree.bundleStatus().last_error, /broadcast_rejected/);
+    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    const nonces = [];
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:05:00.000Z',
+      nonce: 4,
+      lookup: async (intent) => ({ rebroadcast: true, missing: true, tx: intent.tx, nonce: intent.nonce }),
+      send: async (args) => {
+        nonces.push(args.nonce);
+        if (args.raw === first.raw) throw new Error('broadcast_rejected');
+        const rows = anchorIntentRows(dir);
+        assert.ok(rows.some((row) => row.status === 'superseded' && row.superseded_by));
+        assert.ok(rows.some((row) => row.raw === args.raw && row.nonce === 4 && row.status === 'signed'));
+        return args.hash;
+      },
+    });
+    assert.deepEqual(nonces, [4, 4]);
+    const { Transaction } = await import('ethers');
+    const oldTx = Transaction.from(first.raw);
+    const replacement = anchorIntentRows(dir).find((row) => row.raw && row.raw !== first.raw && row.nonce === 4);
+    const newTx = Transaction.from(replacement.raw);
+    assert.ok(newTx.maxFeePerGas > oldTx.maxFeePerGas);
+    assert.ok(newTx.maxPriorityFeePerGas > oldTx.maxPriorityFeePerGas);
+    assert.equal(anchorIntentRows(dir).some((row) => row.nonce === 5), false);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('a transient anchor error stays on its nonce across a new root', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  try {
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      send: async () => { throw new Error('connection refused'); },
+    });
+    const first = anchorIntentRows(dir).find((row) => row.raw);
+    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    let sent = false;
+    const held = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:01.000Z',
+      nonce: 4,
+      lookup: async () => ({ rebroadcast: true, missing: true }),
+      send: async () => { sent = true; return `0x${'11'.repeat(32)}`; },
+    });
+    assert.equal(sent, false);
+    assert.equal(held.anchor_status, 'blocked');
+    assert.equal(anchorIntentRows(dir).some((row) => row.nonce === 5), false);
+    let resent = null;
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:02:00.000Z',
+      nonce: 4,
+      lookup: async () => ({ rebroadcast: true, missing: true }),
+      send: async (args) => {
+        resent = args;
+        return args.hash;
+      },
+    });
+    assert.equal(resent.raw, first.raw);
+    assert.equal(resent.nonce, 4);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('a replacement crash does not rebroadcast the superseded raw', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  try {
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      send: async () => { throw new Error('broadcast_rejected'); },
+    });
+    const first = anchorIntentRows(dir).find((row) => row.raw);
+    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:05:00.000Z',
+      nonce: 4,
+      lookup: async () => ({ rebroadcast: true, missing: true }),
+      send: async (args) => {
+        if (args.raw === first.raw) throw new Error('broadcast_rejected');
+        assert.ok(anchorIntentRows(dir).some((row) => row.status === 'superseded' && row.superseded_by));
+        throw new Error('crash_after_replace_persist');
+      },
+    });
+    const replacement = anchorIntentRows(dir).find((row) => row.raw && row.raw !== first.raw);
+    assert.equal(replacement.nonce, 4);
+    const restored = new ReceiptMerkleTree();
+    restored.load(dir);
+    const seen = [];
+    await restored.publishHead({
+      force: true,
+      now: '2026-10-06T12:10:00.000Z',
+      nonce: 4,
+      lookup: async (intent) => {
+        assert.notEqual(intent.raw, first.raw);
+        return { rebroadcast: true, missing: true, tx: intent.tx, nonce: intent.nonce };
+      },
+      send: async (args) => {
+        seen.push(args.raw);
+        return args.hash;
+      },
+    });
+    assert.deepEqual(seen, [replacement.raw]);
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'superseded' && row.raw === first.raw), true);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('a node that already has the signed raw is not replaced', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  try {
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      send: async () => { throw new Error('broadcast_rejected'); },
+    });
+    let sent = false;
+    const head = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:05:00.000Z',
+      nonce: 4,
+      lookup: async (intent) => ({
+        visible: true,
+        tx: intent.tx,
+        root: intent.root,
+        from: intent.from,
+        to: intent.to,
+        nonce: intent.nonce,
+      }),
+      send: async () => { sent = true; return `0x${'11'.repeat(32)}`; },
+    });
+    assert.equal(sent, false);
+    assert.equal(head.anchor_status, 'anchored');
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'superseded'), false);
+    assert.equal(anchorIntentRows(dir).some((row) => row.nonce === 5), false);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('a BASE_RPC_URL that is not Base mainnet never receives signed bytes', async () => {
+  const { finishReceiptLogBoot } = await import('../src/receipt-merkle.js');
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevRpc = process.env.BASE_RPC_URL;
+  const prevBoot = process.env.RECEIPT_LOG_BOOT;
+  const prevDir = process.env.RECEIPT_LOG_DIR;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  process.env.BASE_RPC_URL = 'http://127.0.0.1/not-base';
+  delete process.env.RECEIPT_LOG_BOOT;
+  delete process.env.RECEIPT_LOG_DIR;
+  resetReceiptMerkleTree();
+  const fresh = new ReceiptMerkleTree();
+  fresh.allowFreshGenesis = true;
+  await assert.rejects(
+    () => finishReceiptLogBoot(fresh, {
+      allowFreshGenesis: true,
+      baseRpc: 'http://127.0.0.1/not-base',
+      request: async (_url, method) => (method === 'eth_chainId' ? '0x89' : null),
+    }),
+    (err) => err.code === 'anchor_chain_mismatch',
+  );
+  assert.equal(fresh.bundleStatus().last_error, 'anchor_chain_mismatch');
+  const tree = getReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  let sent = false;
+  let chainCalls = 0;
+  try {
+    const head = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      request: async (_url, method) => {
+        if (method === 'eth_chainId') {
+          chainCalls += 1;
+          return '0x1';
+        }
+        throw new Error(`unexpected ${method}`);
+      },
+      send: async () => { sent = true; return `0x${'11'.repeat(32)}`; },
+    });
+    assert.equal(sent, false);
+    assert.equal(chainCalls >= 1, true);
+    assert.equal(head.anchor_status, 'blocked');
+    assert.equal(head.anchor.reason, 'anchor_chain_mismatch');
+    assert.equal(anchorIntentRows(dir).some((row) => row.raw), false);
+    assert.equal(tree.bundleStatus().last_error, 'anchor_chain_mismatch');
+    const { createApp } = await import('../src/server.js');
+    const app = createApp();
+    const server = await new Promise((resolve) => {
+      const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+    });
+    try {
+      const health = await fetch(`http://127.0.0.1:${server.address().port}/health`);
+      const body = await health.json();
+      assert.equal(body.receipt_log.last_error, 'anchor_chain_mismatch');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+    if (prevRpc == null) delete process.env.BASE_RPC_URL;
+    else process.env.BASE_RPC_URL = prevRpc;
+    if (prevBoot == null) delete process.env.RECEIPT_LOG_BOOT;
+    else process.env.RECEIPT_LOG_BOOT = prevBoot;
+    if (prevDir == null) delete process.env.RECEIPT_LOG_DIR;
+    else process.env.RECEIPT_LOG_DIR = prevDir;
+    resetReceiptMerkleTree();
   }
 });
 
@@ -1498,6 +1758,14 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
     blockTimestamp: null,
     solanaBlockTime: null,
     solanaConnection: mockConnection(),
+    lookup: async (intent) => ({
+      receiptOk: true,
+      tx: intent.tx,
+      root: intent.root,
+      from: intent.from,
+      to: intent.to,
+      nonce: intent.nonce,
+    }),
     send: async () => baseTx,
   });
   assert.equal(head.schema, 'chit402.tree_head.v2');

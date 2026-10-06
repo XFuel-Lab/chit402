@@ -298,6 +298,42 @@ export function anchorWalletAddress(env = process.env) {
   return resolveAnchorSender(env);
 }
 
+/** Production Base mainnet. Signed anchors use this chain id. */
+export const BASE_ANCHOR_CHAIN_ID = 8453;
+export const BASE_ANCHOR_CHAIN_ID_HEX = '0x2105';
+
+function chainIdIsBaseMainnet(chainId) {
+  if (chainId == null || chainId === '') return false;
+  if (Number(chainId) === BASE_ANCHOR_CHAIN_ID) return true;
+  const hex = String(chainId).toLowerCase();
+  if (!hex.startsWith('0x')) return false;
+  const body = hex.slice(2).replace(/^0+/, '') || '0';
+  return `0x${body}` === BASE_ANCHOR_CHAIN_ID_HEX;
+}
+
+/**
+ * Refuse unless BASE_RPC_URL is Base mainnet. No URL and no injected
+ * request means there is no RPC to send to. A wrong or failed eth_chainId
+ * throws anchor_chain_mismatch before any signed bytes are broadcast.
+ */
+export async function assertBaseChainId({ rpcUrl, request } = {}) {
+  const url = rpcUrl || process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || '';
+  if (!url && typeof request !== 'function') return null;
+  let chainId;
+  try {
+    chainId = await rpc(url, 'eth_chainId', [], request);
+  } catch (err) {
+    throw new ReceiptLogRefused('anchor_chain_mismatch', `eth_chainId failed: ${err.message}`);
+  }
+  if (!chainIdIsBaseMainnet(chainId)) {
+    throw new ReceiptLogRefused(
+      'anchor_chain_mismatch',
+      `BASE_RPC_URL chain id is ${chainId || 'empty'}, want ${BASE_ANCHOR_CHAIN_ID_HEX}`,
+    );
+  }
+  return chainId;
+}
+
 /**
  * Adopt only a mined self-transfer whose calldata is exactly the intent
  * root, whose sender is ours, and whose receipt status is 1.
@@ -343,14 +379,17 @@ export async function lookupBaseTxByNonceOrHash({
     } catch {
       return { pending: true, blocked: true, reason: 'rpc_error', tx: hash };
     }
-    if (!receipt) {
-      return { pending: true, blocked: true, tx: hash, reason: 'receipt_pending' };
-    }
-    const ok = receiptSucceeded(receipt.status);
     const rootOk = Boolean(want && got && got === want);
     const fromOk = txFrom === sender;
     const toOk = txTo === anchorTo;
     const nonceOk = nonce == null || txNonce == null || txNonce === Number(nonce);
+    if (!receipt) {
+      if (rootOk && fromOk && toOk && nonceOk) {
+        return { visible: true, tx: hash, nonce: txNonce, root: got, from: txFrom, to: txTo };
+      }
+      return { pending: true, blocked: true, tx: hash, reason: 'receipt_pending' };
+    }
+    const ok = receiptSucceeded(receipt.status);
     if (ok && rootOk && fromOk && toOk && nonceOk) {
       return {
         tx: hash,
