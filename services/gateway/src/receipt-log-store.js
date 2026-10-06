@@ -48,7 +48,7 @@ export function receiptLogStrict(env = process.env) {
 export function receiptLogBootRequested(env = process.env) {
   if (env.RECEIPT_LOG_BOOT === '0') return false;
   if (env.RECEIPT_LOG_DIR) return true;
-  return env.TASK_STORE_PERSIST !== 'false';
+  return env.RECEIPT_LOG_BOOT === '1';
 }
 
 function fsyncDir(dir) {
@@ -189,7 +189,7 @@ function assertHeadMatches(bucket, head) {
  * Replay the journal. Throws ReceiptLogRefused on a bad file or a root that
  * does not match a stored head. An empty directory is `{ empty: true }`.
  */
-export function readReceiptLog(dir, { strict = true } = {}) {
+export function readReceiptLog(dir, { strict = true, allowFresh = false } = {}) {
   const journalPath = path.join(dir, JOURNAL_NAME);
   const checkpointPath = path.join(dir, CHECKPOINT_NAME);
   const anchorPath = path.join(dir, ANCHOR_STATE_NAME);
@@ -216,7 +216,7 @@ export function readReceiptLog(dir, { strict = true } = {}) {
 
   if (!journalExists) {
     const anchored = anchoredStatePresent(anchorState);
-    if (anchored && strict) {
+    if (anchored && strict && !allowFresh) {
       throw new ReceiptLogRefused(
         'missing_log',
         'receipt log journal is missing while anchored heads exist on disk',
@@ -246,6 +246,7 @@ export function readReceiptLog(dir, { strict = true } = {}) {
   let foldedAnchors = emptyAnchorState();
   let epochRecord = null;
   let bundleIndex = null;
+  const intents = [];
 
   const lines = text.split('\n');
   for (let lineNo = 0; lineNo < lines.length; lineNo += 1) {
@@ -296,6 +297,8 @@ export function readReceiptLog(dir, { strict = true } = {}) {
       current = null;
     } else if (row.op === 'anchor') {
       foldAnchorRecord(foldedAnchors, row);
+    } else if (row.op === 'anchor_intent') {
+      intents.push(row);
     } else if (row.op === 'epoch_record') {
       epochRecord = row.record || null;
     } else if (row.op === 'bundle_index') {
@@ -375,6 +378,7 @@ export function readReceiptLog(dir, { strict = true } = {}) {
     anchorState: mergeAnchor(foldedAnchors, anchorState),
     epochRecord,
     bundleIndex,
+    intents,
   };
 }
 

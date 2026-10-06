@@ -1,0 +1,6 @@
+{
+  "schema": "chit402.receipt_log_pin.v1",
+  "epoch": 2,
+  "root": "f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286",
+  "note": "Last anchored head before the durable journal. Epoch 2 opening root, anchored Oct 5 2026. An empty journal must not boot while this pin is present."
+}

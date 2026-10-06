@@ -71,7 +71,12 @@ import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger, setBookRowWrittenHook, setReceiptBoundHook } from './usage-settled.js';
 import { peekRefusalAnchor } from './refusal-anchor.js';
 import { withRefusal, presentRefusal, renderRefusalHtml, renderRefusalNotFound } from './refusal-receipt.js';
-import { getReceiptMerkleTree, bootReceiptLog, receiptLogBootRequested } from './receipt-merkle.js';
+import {
+  getReceiptMerkleTree,
+  bootReceiptLog,
+  receiptLogBootRequested,
+  finishReceiptLogBoot,
+} from './receipt-merkle.js';
 import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
 import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
@@ -2763,8 +2768,9 @@ export function createApp() {
     try {
       const tree = getReceiptMerkleTree();
       const head = tree.latestSignedHead();
-      if (!head) return res.json(tree.unpublishedHead());
-      return res.json(head);
+      const receiptLog = tree.bundleStatus();
+      if (!head) return res.json({ ...tree.unpublishedHead(), receipt_log: receiptLog });
+      return res.json({ ...head, receipt_log: receiptLog });
     } catch (err) {
       logger.error({ err }, 'tree head error');
       return res.status(500).json({ error: 'internal', message: err.message });
@@ -3752,6 +3758,7 @@ export function createApp() {
             warning: 'RECEIPT_SIGNING_SECRET is not set — receipts are UNSIGNED and cannot be verified.',
           }),
         },
+        receipt_log: getReceiptMerkleTree().bundleStatus(),
         // What the unmetered surface is costing us today. Receipts are free by
         // policy (ADR 0006); the compute behind them is not, and that subsidy was
         // previously neither capped nor measured anywhere.
@@ -5082,6 +5089,11 @@ async function _generateA2AProof(msg) {
  */
 export async function startServer() {
   const port = parseInt(process.env.M2M_API_PORT) || 3002;
+  // The durable receipt log is part of serving. Unit tests call createApp
+  // without this, so they do not have to carry the production pin.
+  if (process.env.RECEIPT_LOG_BOOT == null || process.env.RECEIPT_LOG_BOOT === '') {
+    process.env.RECEIPT_LOG_BOOT = '1';
+  }
 
   // Ensure AIListener is initialised
   try {
@@ -5110,6 +5122,7 @@ export async function startServer() {
   logger.info({ kid }, 'Issuer ECDSA key initialized (JWKS at /.well-known/jwks.json)');
 
   const app = createApp();
+  await finishReceiptLogBoot(getReceiptMerkleTree());
 
   // Start the webhook dispatcher: watches activeTasks for terminal states
   // and delivers signed TaskSettled events to subscribers + per-task callbacks.

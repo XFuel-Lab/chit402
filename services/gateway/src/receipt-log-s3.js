@@ -6,6 +6,7 @@
  */
 import crypto from 'crypto';
 import zlib from 'zlib';
+import logger from './logger.js';
 import { epochLeafHash, epochRootOf } from './receipt-log-epoch.js';
 
 export const BUNDLE_SCHEMA = 'chit402.receipt_log_bundle.v1';
@@ -29,8 +30,31 @@ export function sha256Hex(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
+/**
+ * Hash the committed index only. Health counters are not part of the anchor.
+ */
 export function bundleIndexHash(index) {
-  return sha256Hex(Buffer.from(canonicalJson(index || emptyBundleIndex())));
+  const src = index || emptyBundleIndex();
+  const body = {
+    schema: src.schema || BUNDLE_INDEX_SCHEMA,
+    bundles: src.bundles || [],
+  };
+  if (src.retention_policy) body.retention_policy = src.retention_policy;
+  return sha256Hex(Buffer.from(canonicalJson(body)));
+}
+
+export function retentionPolicyFrom(config = {}, env = process.env) {
+  const id = config.retentionPolicyId || env.RECEIPT_LOG_RETENTION_POLICY_ID || '';
+  const sha = config.retentionPolicySha256 || env.RECEIPT_LOG_RETENTION_POLICY_SHA256 || '';
+  if (!id && !sha) return null;
+  if (!id || !/^[0-9a-f]{64}$/i.test(String(sha))) {
+    logger.error(
+      { id: id || null },
+      'receipt log retention policy config is incomplete; the bundle index will omit retention_policy',
+    );
+    return null;
+  }
+  return { id: String(id), sha256: String(sha).toLowerCase() };
 }
 
 export function bundleHour(date) {
@@ -144,11 +168,16 @@ export async function getObjectBytes({ client, bucket, key }) {
  */
 export function startHourlyBundleTimer({ tree, config, receipts, onError, intervalMs = 60 * 60 * 1000 } = {}) {
   const tick = async () => {
+    const live = typeof tree === 'function' ? tree() : tree;
     try {
-      const live = typeof tree === 'function' ? tree() : tree;
       const rows = typeof receipts === 'function' ? receipts() : (receipts || []);
       await publishTreeBundle(live, { ...config, receipts: rows });
     } catch (err) {
+      try {
+        if (live && typeof live.noteBundleFailure === 'function') live.noteBundleFailure();
+      } catch {
+        /* a status write must not take the process down */
+      }
       if (onError) onError(err);
     }
   };
@@ -181,7 +210,10 @@ export async function publishTreeBundle(tree, config) {
     retentionDays: config.retentionDays,
     bundle,
     index: tree.bundleIndex || emptyBundleIndex(),
+    retentionPolicy: retentionPolicyFrom(config),
   });
+  uploaded.index.last_bundle_ok_at = new Date(config.now || Date.now()).toISOString();
+  uploaded.index.consecutive_failures = 0;
   tree.noteBundle(uploaded.index, view.tree_size);
   return uploaded;
 }
@@ -193,6 +225,7 @@ export async function uploadHourlyBundle({
   retentionDays,
   bundle,
   index,
+  retentionPolicy = null,
 }) {
   const body = compressBundle(bundle);
   const digest = sha256Hex(body);
@@ -221,6 +254,8 @@ export async function uploadHourlyBundle({
       },
     ],
   };
+  if (retentionPolicy) next.retention_policy = retentionPolicy;
+  if (index?.last_bundle_ok_at) next.last_bundle_ok_at = index.last_bundle_ok_at;
   const indexKey = `${String(prefix || '').replace(/\/$/, '')}/bundle-index.json`.replace(/^\//, '');
   const indexBody = Buffer.from(JSON.stringify(next));
   await putLockedObject({

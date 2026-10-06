@@ -32,11 +32,13 @@ const {
   publishTreeBundle,
   restoreFromS3,
   bundleIndexHash,
+  retentionPolicyFrom,
 } = await import('../src/receipt-log-s3.js');
 const { analyzeSeq } = await import('../src/book-seq.js');
 const { UsageSettledLedger } = await import('../src/usage-settled.js');
 const { signJws, getIssuerPublicKeyJwk } = await import('../src/issuer-key.js');
 const { base58Encode } = await import('../src/solana-receipt-anchor.js');
+const { assertLatestBaseAnchor, planReceiptBackfill } = await import('../src/receipt-log-anchor.js');
 
 function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-log-'));
@@ -123,32 +125,59 @@ test('missing journal beside an anchored head refuses to start', () => {
   resetReceiptMerkleTree();
 });
 
-test('a public head read on an empty log does not publish', async () => {
+test('an empty directory with the pin refuses to start', async () => {
   const dir = tmp();
+  assert.throws(() => bootReceiptLog(dir), (err) => err.code === 'pin_unmet');
   const prev = process.env.RECEIPT_LOG_DIR;
   process.env.RECEIPT_LOG_DIR = dir;
-  const { createApp } = await import('../src/server.js');
-  const app = createApp();
-  const server = await new Promise((resolve) => {
-    const listening = app.listen(0, () => resolve(listening));
-  });
   try {
-    const base = `http://127.0.0.1:${server.address().port}`;
-    const res = await fetch(`${base}/v1/receipts/tree/head`);
-    const body = await res.json();
-    assert.equal(res.status, 200);
-    assert.equal(body.published, false);
-    assert.equal(body.status, 'not_yet_published');
-    assert.equal(body.issuer_signature, undefined);
-    assert.equal(fs.existsSync(path.join(dir, 'journal.jsonl')), false);
-    const inclusion = await fetch(`${base}/v1/receipts/not-a-leaf/inclusion`);
-    assert.equal(inclusion.status, 404);
-    const consistency = await fetch(`${base}/v1/receipts/tree/consistency?first=1&second=1`);
-    assert.equal(consistency.status, 400);
+    const { createApp } = await import('../src/server.js');
+    assert.throws(() => createApp(), (err) => err.code === 'pin_unmet');
   } finally {
-    await new Promise((resolve) => server.close(resolve));
     if (prev == null) delete process.env.RECEIPT_LOG_DIR;
     else process.env.RECEIPT_LOG_DIR = prev;
+    resetReceiptMerkleTree();
+  }
+});
+
+test('an empty directory with the fresh-genesis flag boots and logs loudly', async () => {
+  const dir = tmp();
+  const prevFlag = process.env.RECEIPT_LOG_ACCEPT_FRESH_GENESIS;
+  const prevDir = process.env.RECEIPT_LOG_DIR;
+  process.env.RECEIPT_LOG_ACCEPT_FRESH_GENESIS = 'YES_I_ACCEPT_A_NEW_PUBLIC_RECEIPT_LOG';
+  process.env.RECEIPT_LOG_DIR = dir;
+  try {
+    const { createApp } = await import('../src/server.js');
+    const app = createApp();
+    const tree = (await import('../src/receipt-merkle.js')).getReceiptMerkleTree();
+    assert.equal(tree.allowFreshGenesis, true);
+    assert.ok(tree.bootWarnings.some((line) => /FRESH GENESIS/.test(line)));
+    assert.ok(tree.bootWarnings.some((line) => line.includes('YES_I_ACCEPT_A_NEW_PUBLIC_RECEIPT_LOG')));
+    const server = await new Promise((resolve) => {
+      const listening = app.listen(0, () => resolve(listening));
+    });
+    try {
+      const base = `http://127.0.0.1:${server.address().port}`;
+      const res = await fetch(`${base}/v1/receipts/tree/head`);
+      const body = await res.json();
+      assert.equal(body.published, false);
+      assert.equal(body.status, 'not_yet_published');
+      assert.equal(body.issuer_signature, undefined);
+      assert.equal(body.receipt_log.consecutive_failures, 0);
+      assert.equal(body.receipt_log.last_bundle_ok_at, null);
+      assert.equal(fs.existsSync(path.join(dir, 'journal.jsonl')), false);
+      const health = await fetch(`${base}/health`);
+      const healthBody = await health.json();
+      assert.equal(healthBody.receipt_log.consecutive_failures, 0);
+      assert.equal(healthBody.receipt_log.last_bundle_ok_at, null);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  } finally {
+    if (prevFlag == null) delete process.env.RECEIPT_LOG_ACCEPT_FRESH_GENESIS;
+    else process.env.RECEIPT_LOG_ACCEPT_FRESH_GENESIS = prevFlag;
+    if (prevDir == null) delete process.env.RECEIPT_LOG_DIR;
+    else process.env.RECEIPT_LOG_DIR = prevDir;
     resetReceiptMerkleTree();
   }
 });
@@ -335,4 +364,149 @@ test('duplicate seq and a prev_hash mismatch mark the book FORKED', () => {
   const report = ledger.seqReport(7);
   assert.equal(report.status, 'FORKED');
   assert.ok(report.duplicate_rows.some((row) => row.kind === 'duplicate_seq' || row.kind === 'duplicate_task_id'));
+});
+
+test('an on-chain root missing from the journal refuses boot', async () => {
+  const tree = new ReceiptMerkleTree();
+  tree.heads.push({ root: 'aa'.repeat(32), tree_size: 1, epoch: 2 });
+  await assert.rejects(
+    () => assertLatestBaseAnchor(tree, { readLatest: async () => ({ root: 'bb'.repeat(32), tx: '0x' + '11'.repeat(32) }) }),
+    (err) => err.code === 'anchor_not_in_journal',
+  );
+  await assertLatestBaseAnchor(tree, { readLatest: async () => ({ root: 'aa'.repeat(32), tx: '0x' + '22'.repeat(32) }) });
+  tree.allowFreshGenesis = true;
+  const { finishReceiptLogBoot } = await import('../src/receipt-merkle.js');
+  await finishReceiptLogBoot(tree, { readLatest: async () => ({ root: 'cc'.repeat(32) }) });
+});
+
+test('an anchor intent is fsynced before broadcast and a crash does not send twice', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  const root = hex(rootOf(tree.leaves));
+  let sawIntent = false;
+  try {
+  const head = await tree.publishHead({
+    force: true,
+    now: '2026-10-06T12:00:00.000Z',
+    nonce: 4,
+    send: async (args) => {
+      const journal = fs.readFileSync(path.join(dir, 'journal.jsonl'), 'utf8');
+      sawIntent = journal.includes('"op":"anchor_intent"') && journal.includes('"nonce":4');
+      assert.equal(args.nonce, 4);
+      throw new Error('crash_before_hash');
+    },
+  });
+  assert.equal(sawIntent, true);
+  assert.equal(head.anchor_status, 'pending');
+  const restored = new ReceiptMerkleTree();
+  restored.load(dir);
+  const found = '0x' + 'ab'.repeat(32);
+  await restored.reconcileAnchorIntents({
+    lookup: async (intent) => {
+      assert.equal(intent.nonce, 4);
+      assert.equal(intent.root, root);
+      return { tx: found, root, nonce: 4 };
+    },
+  });
+  const again = await restored.publishHead({
+    force: true,
+    now: '2026-10-06T12:30:00.000Z',
+  });
+  assert.equal(again.anchor.tx, found);
+  const intents = fs.readFileSync(path.join(dir, 'journal.jsonl'), 'utf8')
+    .split('\n')
+    .filter((line) => line.includes('"op":"anchor_intent"') && line.includes('"status":"intent"'));
+  assert.equal(intents.length, 1);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('backfill lists rows after epoch 1 and --apply writes them without publishing', () => {
+  const dir = tmp();
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('epoch1-leaf', 'h1', { publish: false });
+  tree.closedEpochs.push({
+    epoch: 1,
+    status: 'closed',
+    meta: tree.meta.map((row) => ({ ...row })),
+    leaves: tree.leaves.slice(),
+    heads: [],
+    byTask: new Map(tree.byTask),
+  });
+  tree.epoch = 2;
+  tree.leaves = [];
+  tree.meta = [];
+  tree.byTask = new Map();
+  tree._epochOpened = false;
+  const rows = [
+    { task_id: 'before', row_hash: 'old' },
+    { task_id: 'epoch1-leaf', row_hash: 'h1' },
+    { task_id: 'after-1', row_hash: 'n1' },
+    { task_id: 'after-2', row_hash: 'n2' },
+  ];
+  const plan = planReceiptBackfill(tree, rows);
+  assert.deepEqual(plan.append.map((row) => row.task_id), ['after-1', 'after-2']);
+  const headsBefore = tree.heads.length;
+  for (const row of plan.append) tree.appendReceipt(row.task_id, row.row_hash, { publish: false });
+  assert.equal(tree.heads.length, headsBefore);
+  assert.equal(tree.inclusion('after-2').epoch, 2);
+  assert.equal(tree.inclusion('after-1').leaf_index > 0, true);
+});
+
+test('a bundle upload failure is counted and a retention policy is hashed into the index', async () => {
+  const tree = new ReceiptMerkleTree();
+  tree.appendReceipt('bundled-fail', 'hh', { publish: false });
+  await assert.rejects(
+    () => publishTreeBundle(tree, {
+      client: { send: async () => { throw new Error('s3 down'); } },
+      bucket: 'receipt-log-test',
+      prefix: 'receipt-log/',
+      retentionDays: 30,
+      now: new Date('2026-10-06T16:00:00.000Z'),
+    }),
+    /s3 down/,
+  );
+  tree.noteBundleFailure();
+  assert.equal(tree.bundleStatus().consecutive_failures, 1);
+  assert.equal(tree.bundleStatus().last_bundle_ok_at, null);
+  const policy = retentionPolicyFrom({
+    retentionPolicyId: 'retention-2026',
+    retentionPolicySha256: 'ab'.repeat(32),
+  });
+  assert.equal(policy.id, 'retention-2026');
+  const objects = new Map();
+  const client = {
+    async send(command) {
+      const input = command.input;
+      if (input.Body) {
+        objects.set(input.Key, Buffer.from(input.Body));
+        return {};
+      }
+      return { Body: { transformToByteArray: async () => objects.get(input.Key) } };
+    },
+  };
+  const ok = new ReceiptMerkleTree();
+  ok.appendReceipt('bundled-ok', 'hh', { publish: false });
+  const uploaded = await publishTreeBundle(ok, {
+    client,
+    bucket: 'receipt-log-test',
+    prefix: 'receipt-log/',
+    retentionDays: 30,
+    now: new Date('2026-10-06T16:10:00.000Z'),
+    retentionPolicyId: 'retention-2026',
+    retentionPolicySha256: 'ab'.repeat(32),
+  });
+  assert.equal(uploaded.index.retention_policy.sha256, 'ab'.repeat(32));
+  assert.equal(bundleIndexHash(uploaded.index), uploaded.index_hash);
+  assert.equal(typeof uploaded.index.last_bundle_ok_at, 'string');
+  assert.equal(ok.bundleStatus().consecutive_failures, 0);
+  const bare = { schema: uploaded.index.schema, bundles: uploaded.index.bundles };
+  assert.notEqual(bundleIndexHash(bare), uploaded.index_hash);
 });

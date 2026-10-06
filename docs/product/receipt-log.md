@@ -35,12 +35,16 @@ The process refuses to start in these cases. It does not open an empty log and i
 | Journal line does not parse, or a preimage does not match its stored leaf hash | Refuse. Code `corrupt_journal` or `leaf_hash`. |
 | Recomputed root does not match a stored head, the checkpoint at the same size, or the epoch record | Refuse. Code `root_mismatch`. |
 | Checkpoint is ahead of the journal | Refuse. Code `checkpoint_ahead`. |
-| Anchor state or an epoch record exists and the journal does not | Refuse when `RECEIPT_LOG_STRICT` is not `false` (the default). Code `missing_log`. |
+| Anchor state or an epoch record exists and the journal does not | Refuse. Code `missing_log`. |
+| Journal is empty or missing while the pin is set | Refuse. Code `pin_unmet`. |
+| Base RPC is configured and the anchor wallet's latest root transaction is not in the journal head history | Refuse. Code `anchor_not_in_journal`. |
 | Epoch record signature does not match the epochs or the orphan list | Refuse. Code `epoch_signature`. |
 
-An empty data directory, with no journal and no anchor state, starts with nothing published. `GET /v1/receipts/tree/head` returns `status: not_yet_published` and does not sign a head, send a Base transaction, or send a Solana memo. The same is true of inclusion and consistency reads.
+The pin is `services/gateway/receipt-log-pin.json` (epoch 2, root `f2043ee9…`, the last anchored head before this journal existed). `RECEIPT_LOG_EXPECTED_EPOCH` and `RECEIPT_LOG_EXPECTED_ROOT` override that file when both are set. `startServer` sets `RECEIPT_LOG_BOOT=1`, which loads this pin. An empty or missing journal with that pin does not boot. That is the failure that restarted the log six times: a process came up with no leaves and a later read published a new genesis. `RECEIPT_LOG_BOOT=0` skips the load. Leave that unset on the public gateway.
 
-A new genesis is created only when `RECEIPT_LOG_ACCEPT_FRESH_GENESIS` is exactly `YES_I_ACCEPT_A_NEW_PUBLIC_RECEIPT_LOG`. The process logs that at error level. The flag does not extend epoch 1 or epoch 2. Leave it unset on the public gateway.
+`GET /v1/receipts/tree/head` still does not sign a head or send a transaction. It is only reached when boot succeeded.
+
+The only way past the pin and the on-chain check is `RECEIPT_LOG_ACCEPT_FRESH_GENESIS` set to exactly `YES_I_ACCEPT_A_NEW_PUBLIC_RECEIPT_LOG`. Boot logs that at error level, including the words `FRESH GENESIS`. The flag does not extend epoch 1 or epoch 2. Leave it unset on the public gateway.
 
 `RECEIPT_LOG_STRICT=false` logs and continues when the journal is missing but an anchor snapshot exists. It still does not mint a genesis. Production should leave strict mode on.
 
@@ -72,6 +76,8 @@ chit402:root:v2:<scope>:<yyyy-mm-dd>:<root>:<prev_root>:<epoch>:<prev_epoch_root
 Base calldata remains the 32-byte root. The previous root is inside the signed head and on `anchors.base.prev_root`. The offline check that calldata equals the root is unchanged.
 
 The one-anchor-per-day guard is `anchor-state.json`. A restart does not forget a signature that was fsynced. Publishing happens on the daily append path. A public GET does not publish.
+
+Before a Base broadcast, the gateway fsyncs an `anchor_intent` record: root, UTC day, chain, and the wallet nonce. On boot it looks that intent up by nonce (`ots_getTransactionBySenderAndNonce` when the RPC supports it, otherwise a bounded block scan) or by transaction hash if one was stored after send. A matching calldata root is recorded and is not sent again. A nonce that landed as a different root refuses to start (`anchor_intent_mismatch`). `RECEIPT_LOG_ANCHOR_LOOKBACK` is the scan window in blocks (default 2048).
 
 Inclusion proofs include `epoch`, `prev_epoch_root`, and `prev_epoch_size`. An epoch 1 proof verifies against the epoch 1 root. It does not have to verify against epoch 2.
 
@@ -107,6 +113,20 @@ node scripts/rebuild-receipt-epoch1.mjs \
 
 The script reads `usage-settled.jsonl` in file order, skips rows before `xfuel-39af100b-23dd-4d86-a16b-4556ca6796af`, and takes that row plus the next two rows that have a `task_id`. Leaf 0 is the pinned genesis bytes. If `.data/receipt-log/journal.jsonl` already exists, the script refuses to overwrite it.
 
+Then backfill every later book row that is not already a leaf. Dry-run is the default. `--apply` writes the leaves and does not publish or broadcast.
+
+```bash
+node scripts/backfill-receipt-log.mjs \
+  --jsonl .data/agents/usage-settled.jsonl \
+  --dir .data/receipt-log
+node scripts/backfill-receipt-log.mjs \
+  --jsonl .data/agents/usage-settled.jsonl \
+  --dir .data/receipt-log \
+  --apply
+```
+
+The dry-run prints `would append <task_id>` for each row. `--apply` prints `appended <task_id>`. Rows before epoch 1's last receipt leaf stay out of the tree.
+
 ## S3 bundles
 
 Hourly bundles are off until `RECEIPT_LOG_S3_BUCKET` is set. Credentials use the AWS SDK default chain (environment, shared config, or the instance role). No key is committed.
@@ -119,6 +139,10 @@ Hourly bundles are off until `RECEIPT_LOG_S3_BUCKET` is set. Credentials use the
 | `RECEIPT_LOG_S3_RETENTION_DAYS` | Object Lock retain-until, in days from upload. Default 365. |
 | `RECEIPT_LOG_S3_ENDPOINT` | Optional endpoint for MinIO. |
 | `RECEIPT_LOG_S3_FORCE_PATH_STYLE` | Set `true` for path-style endpoints. |
+| `RECEIPT_LOG_RETENTION_POLICY_ID` | Optional id of a retention policy document. |
+| `RECEIPT_LOG_RETENTION_POLICY_SHA256` | SHA-256 of that document. Both must be set or the field is omitted. |
+
+The bundle index may carry `retention_policy: { id, sha256 }`. That pair is inside the hash the daily anchor commits to. Receipts do not sign it yet. `/health` and `GET /v1/receipts/tree/head` include `receipt_log.last_bundle_ok_at` and `receipt_log.consecutive_failures`. An upload error increments the count and does not stop the process. A later success sets `last_bundle_ok_at` and clears the count.
 
 Each hour the gateway gzips one JSON document (`chit402.receipt_log_bundle.v1`): the open epoch's leaf preimages, heads, the book rows those new leaves came from, and the closed epochs. It uploads that gzip with `ObjectLockMode: COMPLIANCE` and records the SHA-256 of the gzip bytes in `bundle-index.json`. The next daily anchor's `bundle_index_hash` is the SHA-256 of the canonical index (object keys sorted).
 
@@ -188,16 +212,15 @@ Do this before `systemctl restart xfuel-api` on the build that contains this log
 1. Pull the commit. Do not restart yet.
 2. Confirm `.data/agents/usage-settled.jsonl` is the live book.
 3. Run `rebuild-receipt-epoch1.mjs` as above. It must print the epoch 1 root and `epoch record signed: true`. If it prints `REFUSED`, do not restart.
-4. Create the S3 bucket with Object Lock (compliance) and the lifecycle rule above. Attach the instance role. Set `RECEIPT_LOG_S3_BUCKET` and `RECEIPT_LOG_S3_REGION` in `.env` when you want hourly bundles. Leaving the bucket unset keeps bundles off.
-5. Leave `RECEIPT_LOG_STRICT` unset and leave `RECEIPT_LOG_ACCEPT_FRESH_GENESIS` unset.
-6. Restart `xfuel-api` only after the script has written the journal. An empty `.data/receipt-log` boots and serves `not_yet_published`. It does not anchor. It also does not copy existing book rows into the tree, because book reload does not append leaves. If you restart before the script, stop the service, run the script, then start again.
-7. `GET /v1/receipts/tree/head` may say `not_yet_published` until the next book append publishes the day's head. That GET must not create a Base or Solana transaction. The recomputed epoch 2 root is still in that response as `root`.
-8. `GET /v1/receipts/tree/epoch` returns the signed record, including the orphan list.
-
-Book rows written after epoch 1's last leaf are not backfilled by the rebuild. Epoch 2 opens at the single genesis leaf `f2043ee9`. A row appended after this process is running becomes the next leaf. A row that was written while the old in-memory tree was empty stays in the book and is not a leaf until an operator appends it on purpose.
+4. Run the backfill dry-run, read the `would append` task ids, then run it again with `--apply`. Do this before restart. The script does not broadcast.
+5. Create the S3 bucket with Object Lock (compliance) and the lifecycle rule above. Attach the instance role. Set `RECEIPT_LOG_S3_BUCKET` and `RECEIPT_LOG_S3_REGION` in `.env` when you want hourly bundles. Leaving the bucket unset keeps bundles off. Set `RECEIPT_LOG_RETENTION_POLICY_ID` and `RECEIPT_LOG_RETENTION_POLICY_SHA256` together when a policy document should be named on the bundle index.
+6. Leave `RECEIPT_LOG_STRICT` unset and leave `RECEIPT_LOG_ACCEPT_FRESH_GENESIS` unset. The committed pin file is what makes an empty journal refuse to start.
+7. Restart `xfuel-api` only after the rebuild and the backfill `--apply` have written the journal. An empty `.data/receipt-log` now refuses to start (`pin_unmet`) instead of serving a fresh log. If you restarted too early, stop the service, run the two scripts, then start.
+8. `GET /v1/receipts/tree/head` may say `not_yet_published` until the next book append publishes the day's head. That GET must not create a Base or Solana transaction. The recomputed epoch 2 root is still in that response as `root`. `receipt_log.consecutive_failures` on `/health` is what the smoke check should alert on.
+9. `GET /v1/receipts/tree/epoch` returns the signed record, including the orphan list.
 
 ## Principal notice (draft)
 
 Receipt log notice (Oct 6). On Oct 5 at about 7:18 AM ET the public receipt log restarted from memory. A new root, f2043ee9, was anchored at 7:22 AM ET without a link to the Oct 3 root dd20e39a (4 leaves, Base and Solana). Signed receipts were not changed. They still verify, and none were re-signed.
 
-This release stores the log on disk and refuses to start if that copy does not match its last signed head. A public read no longer publishes a head. Epoch 1 is the four-leaf log that ends at dd20e39a. Epoch 2 starts at f2043ee9 and records the link back to epoch 1, including the leaf count 4. Earlier Base anchors from Sep 30 and Oct 1, including the lost populated root whose prefix is d7f6c548, are listed as orphans in the signed epoch record. Inclusion proofs for epoch 1 stay valid against dd20e39a once that epoch is rebuilt on the server from the book. A new log is not opened unless an operator sets an explicit flag for that purpose.
+This release stores the log on disk and refuses to start if that copy is missing, does not match its last signed head, or does not contain the latest Base anchor root. A public read no longer publishes a head. Epoch 1 is the four-leaf log that ends at dd20e39a. Epoch 2 starts at f2043ee9 and records the link back to epoch 1, including the leaf count 4. Earlier Base anchors from Sep 30 and Oct 1, including the lost populated root whose prefix is d7f6c548, are listed as orphans in the signed epoch record. Inclusion proofs for epoch 1 stay valid against dd20e39a once that epoch is rebuilt on the server from the book. Book rows after that epoch are appended by an operator script before the process starts. A new log is not opened unless an operator sets an explicit flag for that purpose.
