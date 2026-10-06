@@ -489,3 +489,119 @@ test('payload v10 without an issuer_history pin fails closed', async () => {
   assert.equal(result.overall, 'failed');
   assert.match(result.errors.join(' '), /issuer_history_pin_missing/);
 });
+
+test('v11 and issuer_root require a signed iat and ignore created_at', async () => {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = publicKey.export({ format: 'jwk' });
+  const kid = jwkThumbprint(jwk);
+  const publicJwk = { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, kid, alg: 'ES256', use: 'sig' };
+  const history = signedHistory({
+    kid, publicJwk, privateKey, notAfter: null, version: 1, seq: 1,
+  });
+  const inside = '2026-09-10T00:00:00.000Z';
+  const pin = { hash: history.hash, version: 1, seq: 1 };
+  const signPayload = (payload) => {
+    const header = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid };
+    const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+    const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const signature = sign('sha256', Buffer.from(`${headerB64}.${payloadB64}`), {
+      key: privateKey,
+      dsaEncoding: 'ieee-p1363',
+    }).toString('base64url');
+    return {
+      task_id: payload.task_id,
+      status: 'completed',
+      schema: payload.schema,
+      issuer_signature: {
+        alg: 'ES256',
+        jws: `${headerB64}.${payloadB64}.${signature}`,
+        kid,
+        issuer_jwk: publicJwk,
+        payload_version: payload.payload_version,
+      },
+    };
+  };
+
+  const slipped = await verifyReceipt({
+    ...signPayload({
+      task_id: 'v11-no-iat',
+      iss: 'chit402',
+      payload_version: 11,
+      schema: 'xfuel.receipt.v4',
+      issuer_history: pin,
+    }),
+    created_at: inside,
+  }, {
+    trustedKids: [kid],
+    issuerHistory: history.doc,
+    issuerHistoryBytes: history.body,
+    requirePreimages: false,
+  });
+  assert.equal(slipped.overall, 'failed');
+  assert.match(slipped.errors.join(' '), /missing_signed_iat/);
+  assert.equal(slipped.issuer_history.ok, false);
+  assert.doesNotMatch(slipped.errors.join(' '), /issued_before_not_before|issued_after_not_after/);
+
+  const withRoot = await verifyReceipt({
+    ...signPayload({
+      task_id: 'v10-root-no-iat',
+      iss: 'chit402',
+      payload_version: 10,
+      schema: 'xfuel.receipt.v4',
+      issuer_history: pin,
+      issuer_root: {
+        v: 1,
+        chain_id: 'eip155:84532',
+        registry: '0x1111111111111111111111111111111111111111',
+        root_seq: 1,
+        root_hash: `0x${'ab'.repeat(32)}`,
+        kid,
+      },
+    }),
+    created_at: inside,
+  }, {
+    trustedKids: [kid],
+    issuerHistory: history.doc,
+    issuerHistoryBytes: history.body,
+    requirePreimages: false,
+  });
+  assert.match(withRoot.errors.join(' '), /missing_signed_iat/);
+  assert.equal(withRoot.overall, 'failed');
+
+  const legacy = await verifyReceipt({
+    ...signPayload({
+      task_id: 'v9-no-iat',
+      iss: 'chit402',
+      payload_version: 9,
+      schema: 'xfuel.receipt.v4',
+      tree_head_hash: 'ab'.repeat(32),
+      tolerance: { base: 300, solana: 150 },
+    }),
+    created_at: inside,
+  }, {
+    trustedKids: [kid],
+    issuerHistory: history.doc,
+    requirePreimages: false,
+  });
+  assert.equal(legacy.issuer_history.ok, true);
+  assert.doesNotMatch(legacy.errors.join(' '), /missing_signed_iat/);
+
+  const signedEarly = await verifyReceipt({
+    ...signPayload({
+      task_id: 'v11-early-iat',
+      iss: 'chit402',
+      iat: '2020-01-01T00:00:00.000Z',
+      payload_version: 11,
+      schema: 'xfuel.receipt.v4',
+      issuer_history: pin,
+    }),
+    created_at: inside,
+  }, {
+    trustedKids: [kid],
+    issuerHistory: history.doc,
+    issuerHistoryBytes: history.body,
+    requirePreimages: false,
+  });
+  assert.equal(signedEarly.issuer_history.reason, 'issued_before_not_before');
+  assert.doesNotMatch(signedEarly.errors.join(' '), /missing_signed_iat/);
+});

@@ -13,12 +13,27 @@ import {
   readJwsHeader,
   type Es256Jwk,
 } from './jws.js';
+import { v11CanonicalizationVerdict, recomputeV11PayloadHash } from './canonical-preimage.js';
+import { readIssuerHistoryPin, verifyIssuerHistorySnapshot } from './issuer-history.js';
 
 export const REFUSAL_SCHEMA = 'chit402.refusal.v1';
-/** Versions a verifier accepts. Version 1 has no history pin. */
-export const REFUSAL_PAYLOAD_VERSIONS = [1, 2] as const;
-/** Current issuance version. Version 1 still verifies. */
+export const REFUSAL_SCHEMA_V2 = 'chit402.refusal.v2';
+/** v1 is payload 1 or 2. v2 (issuer root) is payload 3. */
+export const REFUSAL_PAYLOAD_VERSIONS = [1, 2, 3] as const;
+/** Current issuance version while the issuer root is off. Version 1 still verifies. */
 export const REFUSAL_PAYLOAD_VERSION = 2;
+export const REFUSAL_PAYLOAD_VERSION_V2 = 3;
+
+/** Any refusal schema, including a version this package does not accept yet. */
+export function isRefusalSchema(schema: string | null | undefined): boolean {
+  return typeof schema === 'string' && schema.startsWith('chit402.refusal.');
+}
+
+/** Payment receipts use this shape. A missing schema is a legacy receipt. */
+export function isKnownPaymentSchema(schema: string | null | undefined): boolean {
+  if (schema == null || schema === '') return true;
+  return /^xfuel\.receipt\.v\d+$/.test(schema);
+}
 
 export const REFUSAL_PROVES = [
   'The issuer signed that it refused this spend.',
@@ -87,7 +102,7 @@ export interface RefusalDocument {
 }
 
 export interface RefusalVerification {
-  schema: typeof REFUSAL_SCHEMA;
+  schema: string;
   valid: boolean;
   checked: boolean;
   reason?: string;
@@ -122,8 +137,11 @@ export function jwsPayloadSchema(doc: unknown): string | null {
 
 export function isRefusalDocument(doc: unknown): doc is RefusalDocument {
   if (!doc || typeof doc !== 'object') return false;
-  if ((doc as { schema?: unknown }).schema === REFUSAL_SCHEMA) return true;
-  return jwsPayloadSchema(doc) === REFUSAL_SCHEMA;
+  const outer = (doc as { schema?: unknown }).schema;
+  if (typeof outer === 'string' && isRefusalSchema(outer)) return true;
+  const kind = (doc as { kind?: unknown }).kind;
+  if (kind === 'refusal') return true;
+  return isRefusalSchema(jwsPayloadSchema(doc));
 }
 
 function jwksCandidates(jwks: RefusalJwks | undefined, kid: string | undefined): Es256Jwk[] {
@@ -222,14 +240,51 @@ export function verifyRefusal(
   }
   if (!trusted) return failed(KEY_UNTRUSTED, { kid: kid || null });
 
-  const signed = payload as unknown as RefusalDocument;
-  if (signed.schema !== REFUSAL_SCHEMA) return failed('schema_mismatch', { kid });
+  const signed = payload as unknown as RefusalDocument & {
+    issuer_root?: { kid?: unknown };
+    canonicalization?: unknown;
+    issuer_history_snapshot?: unknown;
+    payload_hash?: unknown;
+    issued_at?: unknown;
+  };
+  if (!isRefusalSchema(signed.schema)) return failed('unknown_document_type', { kid });
+  if (signed.schema !== REFUSAL_SCHEMA && signed.schema !== REFUSAL_SCHEMA_V2) {
+    return failed('unknown_refusal_schema', { kid });
+  }
   // The outer schema is unsigned. A present value that disagrees with the
   // signed schema fails. An omitted outer schema still follows the JWS.
   if (doc.schema != null && doc.schema !== signed.schema) return failed('schema_mismatch', { kid });
   const version = Number(signed.payload_version);
-  if (!REFUSAL_PAYLOAD_VERSIONS.includes(version as 1 | 2)) {
+  const allowed = signed.schema === REFUSAL_SCHEMA_V2 ? [REFUSAL_PAYLOAD_VERSION_V2] : [1, 2];
+  if (!allowed.includes(version)) {
     return failed('payload_version_mismatch', { kid });
+  }
+  if (signed.schema === REFUSAL_SCHEMA_V2) {
+    const root = signed.issuer_root;
+    if (!root || typeof root.kid !== 'string' || root.kid.length === 0) {
+      return failed('issuer_root_missing', { kid });
+    }
+    if (kid && root.kid !== kid) return failed('issuer_root_kid_mismatch', { kid });
+  }
+  const carriesEmbed = signed.schema === REFUSAL_SCHEMA_V2
+    || signed.canonicalization != null
+    || signed.issuer_history_snapshot != null;
+  if (carriesEmbed) {
+    const canon = v11CanonicalizationVerdict(signed.canonicalization);
+    if (!canon.ok) return failed(canon.reason || 'canonicalization_missing', { kid });
+    const recomputed = recomputeV11PayloadHash(signed as unknown as Record<string, unknown>);
+    const signedHash = typeof signed.payload_hash === 'string'
+      ? signed.payload_hash.replace(/^0x/i, '').toLowerCase()
+      : '';
+    if (!recomputed || recomputed !== signedHash) return failed('payload_hash_mismatch', { kid });
+    const rootKid = signed.issuer_root && typeof signed.issuer_root.kid === 'string'
+      ? signed.issuer_root.kid
+      : null;
+    const snap = verifyIssuerHistorySnapshot(signed.issuer_history_snapshot, readIssuerHistoryPin(signed as unknown as Record<string, unknown>), {
+      kid: rootKid,
+      issuedAt: signed.issued_at,
+    });
+    if (!snap.ok) return failed(snap.reason || 'issuer_history_snapshot_missing', { kid });
   }
   if (doc.payload_version != null && Number(doc.payload_version) !== version) {
     return failed('payload_version_mismatch', { kid });
@@ -266,7 +321,7 @@ export function verifyRefusal(
   if (!bookRowSame(doc.book_row, signed.book_row as RefusalBookRow)) return failed('book_row_mismatch', { kid });
 
   return {
-    schema: REFUSAL_SCHEMA,
+    schema: signed.schema || REFUSAL_SCHEMA,
     valid: true,
     checked: true,
     kid: kid || null,

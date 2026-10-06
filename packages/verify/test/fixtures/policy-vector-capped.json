@@ -1,0 +1,12 @@
+{
+  "preimage": "{\"dispute_window_seconds\":86400,\"max_cumulative_spend\":\"2000\",\"policy_id\":\"chit402.receipt-policy\",\"policy_version\":\"1\",\"retention_days\":365,\"retention_mode\":\"compliance\"}",
+  "policy_hash": "ecf4cdabe9b755e4776167429dcffb73e1f275994cda68f0e32d776cac925601",
+  "terms": {
+    "dispute_window_seconds": 86400,
+    "max_cumulative_spend": "2000",
+    "policy_id": "chit402.receipt-policy",
+    "policy_version": "1",
+    "retention_days": 365,
+    "retention_mode": "compliance"
+  }
+}

@@ -76,15 +76,42 @@ import {
   type ReceiptLane,
   type ReceiptTreeHead,
 } from './receipt-lane.js';
-import { isRefusalDocument, REFUSAL_SCHEMA } from './refusal.js';
+import { isKnownPaymentSchema, isRefusalDocument, isRefusalSchema } from './refusal.js';
 import { verifyPublishedPreimages, type PreimageCheck } from './preimage.js';
 import {
   checkReceiptIssuerHistory,
   readIssuerHistoryPin,
+  verifyIssuerHistorySnapshot,
   type IssuerHistoryCheck,
   type IssuerHistoryDocument,
+  type IssuerHistorySnapshot,
 } from './issuer-history.js';
-import { verifyCanonicalPreimageBytes, CANONICAL_PAYLOAD_VERSION } from './canonical-preimage.js';
+import {
+  verifyCanonicalPreimageBytes,
+  CANONICAL_PAYLOAD_VERSION,
+  v11CanonicalizationVerdict,
+  recomputeV11PayloadHash,
+} from './canonical-preimage.js';
+import {
+  verifyReceiptPolicyClaim,
+  matchPolicyHistory,
+  policyHistoryUrlFromReceipt,
+  uncheckedPolicy,
+  type PolicyCheck,
+} from './receipt-policy.js';
+import {
+  verifyIssuerRoot,
+  resolvePinnedRoot,
+  rpcsForPin,
+  type IssuerRootVerdict,
+  type IssuerRootClaim,
+  type PinnedRoot,
+  type IssuerRootRpc,
+  type CallerLogCache,
+  type LegacyProofInput,
+  type HistoryWindow,
+  type DnsLookupResult,
+} from './issuer-root.js';
 
 export {
   computePaymentCommitment,
@@ -369,6 +396,18 @@ export interface ReceiptVerification {
   preimages: PreimageCheck;
   /** Kid window against the signed issuer history. Unreachable is a warning unless strict. */
   issuer_history: IssuerHistoryCheck;
+  /**
+   * v11 signed policy terms. `history` is informational. A missing
+   * announcement is not a failure; `overall` becomes `partial`.
+   */
+  policy: PolicyCheck;
+  /**
+   * False when no pin is configured, or the chain could not be read.
+   * A false value is never a root pass. Other 0.3.0 checks are unchanged.
+   */
+  root_checked: boolean;
+  /** `unpinned` when root_checked is false. */
+  issuer_root: IssuerRootVerdict;
   warnings: string[];
   overall: 'verified' | 'partial' | 'failed';
   errors: string[];
@@ -1309,11 +1348,38 @@ export interface VerifyReceiptOptions {
   issuerHistoryBytes?: string | null;
   /** `--no-issuer-history`. A signed pin is not checked. */
   skipIssuerHistory?: boolean;
+  /** Announced receipt-policy history. Skips the network when set. */
+  policyHistory?: unknown;
+  /** Fetch /.well-known/receipt-policy-history.json. A miss is partial, not a failure. */
+  fetchPolicyHistory?: boolean;
+  /** Explicit policy-history URL. Any https URL. */
+  policyHistoryUrl?: string | null;
   /**
    * Stored canonical object (the GET /preimage body). SHA-256 must match
    * the signed payload_hash. Absent bytes are not rebuilt.
    */
   canonicalPreimage?: string | null;
+  /**
+   * Opt-in issuer root. Omit this and leave CHIT_PINNED_CHAIN /
+   * CHIT_PINNED_REGISTRY unset to keep 0.3.0 behavior. `pin: null` forces
+   * the checks off even when the environment has a pin.
+   */
+  issuerRoot?: {
+    pin?: PinnedRoot | null;
+    rpcs?: IssuerRootRpc[];
+    primaryRpc?: string | null;
+    secondaryRpc?: string | null;
+    dns?: DnsLookupResult | (() => Promise<DnsLookupResult>);
+    domain?: string;
+    cache?: CallerLogCache | null;
+    offline?: boolean;
+    requireDns?: boolean;
+    requireDnssec?: boolean;
+    /** Unix seconds. */
+    now?: number;
+    history?: HistoryWindow | null;
+    legacyProof?: LegacyProofInput | null;
+  };
 }
 
 function normalizeBoundRoot(root: unknown): string | null {
@@ -1573,12 +1639,132 @@ export async function verifyReceipt(
     }
   }
 
-  const issuedAt = (verifiedClaims && 'iat' in verifiedClaims ? verifiedClaims.iat : null)
-    ?? decoded?.iat
-    ?? receipt.created_at
-    ?? null;
   const historyPin = readIssuerHistoryPin(verifiedClaims as Record<string, unknown> | null);
   const payloadVersion = Number(verifiedClaims?.payload_version);
+  // A verified `iat` is the only clock for the key window. Payload v11 and any
+  // receipt that carries `issuer_root` fail `missing_signed_iat` when it is
+  // absent. v7–v10 receipts that predate a signed `iat` still fall back to the
+  // unverified decode and then the unsigned `created_at`. That fallback is not
+  // used once `issuer_root` is present, even on an older payload version.
+  const signedIat = readSignedIat(issuer_signature.valid ? verifiedClaims as Record<string, unknown> | undefined : undefined);
+  const hasIssuerRoot = !!(
+    verifiedClaims
+    && verifiedClaims.issuer_root
+    && typeof verifiedClaims.issuer_root === 'object'
+  );
+  const signedIatRequired = issuer_signature.valid && (
+    (Number.isFinite(payloadVersion) && payloadVersion >= 11) || hasIssuerRoot
+  );
+  const missingSignedIat = signedIatRequired && signedIat === undefined;
+  const issuedAt = missingSignedIat
+    ? null
+    : (signedIat !== undefined
+      ? signedIat
+      : (decoded?.iat ?? receipt.created_at ?? null));
+  let canonicalizationFailed = false;
+  let snapshotFailed = false;
+  let embedOk = false;
+  let historySnapshot: IssuerHistorySnapshot | null = null;
+  if (issuer_signature.valid && Number.isFinite(payloadVersion) && payloadVersion >= 11 && verifiedClaims) {
+    const canon = v11CanonicalizationVerdict(verifiedClaims.canonicalization);
+    if (!canon.ok && canon.reason) {
+      canonicalizationFailed = true;
+      errors.push(canon.reason);
+    } else {
+      const recomputed = recomputeV11PayloadHash(verifiedClaims as Record<string, unknown>);
+      const signedHash = typeof verifiedClaims.payload_hash === 'string'
+        ? verifiedClaims.payload_hash.replace(/^0x/i, '').toLowerCase()
+        : '';
+      if (recomputed !== signedHash) {
+        canonicalizationFailed = true;
+        errors.push('payload_hash_mismatch');
+      }
+    }
+    const rootClaim = verifiedClaims.issuer_root;
+    const rootKid = rootClaim && typeof rootClaim === 'object' && typeof (rootClaim as { kid?: unknown }).kid === 'string'
+      ? (rootClaim as { kid: string }).kid
+      : null;
+    const snap = verifyIssuerHistorySnapshot(verifiedClaims.issuer_history_snapshot, historyPin, {
+      kid: rootKid,
+      issuedAt: signedIat,
+    });
+    if (!snap.ok && snap.reason) {
+      const windowWithoutIat = missingSignedIat && snap.reason.startsWith('issuer_history_snapshot_window');
+      if (!windowWithoutIat) {
+        snapshotFailed = true;
+        errors.push(snap.reason);
+      }
+    } else if (snap.ok) {
+      embedOk = true;
+      historySnapshot = verifiedClaims.issuer_history_snapshot as IssuerHistorySnapshot;
+    }
+  }
+  let policyFailed = false;
+  let policyHistoryMissing = false;
+  let policyAbsent = false;
+  let policy: PolicyCheck = uncheckedPolicy();
+  if (issuer_signature.valid && Number.isFinite(payloadVersion) && payloadVersion >= 11 && verifiedClaims) {
+    if (verifiedClaims.policy == null) {
+      policyAbsent = true;
+      warnings.push('POLICY_ABSENT');
+      policy = {
+        checked: true,
+        ok: false,
+        reason: 'POLICY_ABSENT',
+        terms: null,
+        policy_hash: null,
+        history: 'not_checked',
+      };
+    } else {
+      const verdict = verifyReceiptPolicyClaim(verifiedClaims.policy);
+      if (!verdict.ok && verdict.reason) {
+        policyFailed = true;
+        errors.push(verdict.reason);
+        policy = {
+          checked: true,
+          ok: false,
+          reason: verdict.reason,
+          terms: verdict.terms,
+          policy_hash: verdict.policy_hash,
+          history: 'not_checked',
+        };
+      } else {
+        const asked = options.policyHistory != null || options.fetchPolicyHistory === true;
+        if (!asked) {
+          policy = {
+            checked: true,
+            ok: true,
+            reason: null,
+            terms: verdict.terms,
+            policy_hash: verdict.policy_hash,
+            history: 'not_checked',
+          };
+        } else {
+          const history = await resolvePolicyHistory(
+            receipt,
+            verdict.policy_hash || '',
+            signedIat,
+            options,
+            trustedHosts,
+          );
+          if (history.warning) warnings.push(history.warning);
+          if (history.status === 'missing') policyHistoryMissing = true;
+          if (!history.ok && history.reason && history.status !== 'missing') {
+            policyFailed = true;
+            errors.push(history.reason);
+          }
+          policy = {
+            checked: true,
+            ok: history.ok || history.status === 'missing',
+            reason: history.ok ? null : history.reason,
+            terms: verdict.terms,
+            policy_hash: verdict.policy_hash,
+            history: history.status,
+          };
+        }
+      }
+    }
+  }
   // Payload v10 signs the history pin. A missing pin fails even when the
   // caller did not pass a history file or ask for a fetch.
   const pinRequired = !options.skipIssuerHistory
@@ -1592,6 +1778,8 @@ export async function verifyReceipt(
     || options.issuerHistoryUrl
     || historyPin
   ));
+  const rootPinInput = options.issuerRoot && 'pin' in options.issuerRoot ? options.issuerRoot.pin : undefined;
+  const registryPinned = resolvePinnedRoot(rootPinInput, process.env).mode === 'on';
   const issuer_history = historyAsked
     ? await checkReceiptIssuerHistory(receipt, {
       document: options.issuerHistory ?? null,
@@ -1607,6 +1795,9 @@ export async function verifyReceipt(
       kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
       pin: historyPin,
       requirePin: pinRequired,
+      snapshot: historySnapshot,
+      offlineEmbed: embedOk,
+      registryPinned,
     })
     : {
       checked: false,
@@ -1617,8 +1808,30 @@ export async function verifyReceipt(
       kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
     };
   if (issuer_history.warning) warnings.push(issuer_history.warning);
+  if (missingSignedIat) errors.push('missing_signed_iat');
   if (issuer_history.checked && !issuer_history.ok && issuer_history.reason) {
-    errors.push(`issuer history: ${issuer_history.reason}`);
+    const historyUsedUnsignedClock = missingSignedIat && issuer_history.reason === 'issued_at_missing';
+    const selfAsserted = issuer_history.reason === 'self_asserted';
+    if (!historyUsedUnsignedClock && !selfAsserted) errors.push(`issuer history: ${issuer_history.reason}`);
+  }
+  const historyDocument = issuer_history.document ?? options.issuerHistory ?? null;
+  delete issuer_history.document;
+
+  const issuer_root = await issuerRootForReceipt(receipt, options, {
+    signatureValid: issuer_signature.valid === true,
+    signatureReason: issuer_signature.reason ?? null,
+    jwsKid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
+    verifiedClaims: verifiedClaims as Record<string, unknown> | undefined,
+    iat: signedIat === undefined ? null : unixSeconds(signedIat),
+    payloadVersion: Number.isFinite(payloadVersion) ? payloadVersion : null,
+    payloadHash: typeof signedPayloadHash === 'string' ? signedPayloadHash : null,
+    historyDocument,
+  });
+  if (issuer_root) {
+    for (const warning of issuer_root.warnings) warnings.push(`issuer root: ${warning}`);
+    if (issuer_root.verdict.startsWith('fail_') && issuer_root.reason) {
+      errors.push(`issuer root: ${issuer_root.reason}`);
+    }
   }
 
   const hasIssuerSig = !!receipt.issuer_signature;
@@ -1643,8 +1856,15 @@ export async function verifyReceipt(
 
   let overall: 'verified' | 'partial' | 'failed';
   const preimageFailed = !preimages.ok;
-  const historyFailed = issuer_history.checked && !issuer_history.ok;
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed) {
+  const historySelfAsserted = issuer_history.reason === 'self_asserted';
+  const historyFailed = issuer_history.checked && !issuer_history.ok && !historySelfAsserted;
+  const rootFailed = !!issuer_root && issuer_root.verdict.startsWith('fail_');
+  const signedIatFailed = missingSignedIat;
+  const v11ClaimFailed = canonicalizationFailed || snapshotFailed || policyFailed;
+  const rootSoft = !!issuer_root && (
+    issuer_root.verdict === 'unverified_root' || issuer_root.verdict === 'pin_only'
+  );
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed || rootFailed || signedIatFailed || v11ClaimFailed) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
@@ -1660,13 +1880,22 @@ export async function verifyReceipt(
   } else {
     overall = 'partial';
   }
+  if (overall === 'verified' && (rootSoft || historySelfAsserted || policyHistoryMissing || policyAbsent)) overall = 'partial';
 
   // A refusal is a different document. Recognition uses the signed JWS
   // schema, not only the unsigned outer schema. A valid issuer signature
   // here must not be reported as a verified payment.
   const verifiedSchema = typeof verifiedClaims?.schema === 'string' ? verifiedClaims.schema : null;
-  if (verifiedSchema === REFUSAL_SCHEMA || isRefusalDocument(receipt as unknown)) {
+  const signedKind = typeof verifiedClaims?.kind === 'string' ? verifiedClaims.kind : null;
+  if (
+    isRefusalSchema(verifiedSchema)
+    || isRefusalDocument(receipt as unknown)
+    || signedKind === 'refusal'
+  ) {
     errors.push('refusal document is not a payment receipt');
+    overall = 'failed';
+  } else if (verifiedSchema && !isKnownPaymentSchema(verifiedSchema)) {
+    errors.push('unknown document type');
     overall = 'failed';
   }
 
@@ -1708,10 +1937,184 @@ export async function verifyReceipt(
     receipt_lane,
     preimages,
     issuer_history,
+    policy,
+    root_checked: issuer_root?.root_checked === true,
+    issuer_root: issuer_root ?? {
+      verdict: 'unpinned',
+      reason: null,
+      warnings: [],
+      display: 'normal',
+      note: 'not root-checked',
+      compared_block: null,
+      dnssec: 'unchecked',
+      root_checked: false,
+    },
     warnings,
     overall,
     errors,
   };
+}
+
+/**
+ * `iat` from a verified JWS payload. Null and a missing key are both absent.
+ * An unsigned `created_at` is not a substitute.
+ */
+async function resolvePolicyHistory(
+  receipt: XFuelReceipt,
+  policyHash: string,
+  issuedAt: unknown,
+  options: VerifyReceiptOptions,
+  trustedHosts: readonly string[],
+): Promise<{ status: PolicyCheck['history']; ok: boolean; reason: string | null; warning: string | null }> {
+  if (options.policyHistory != null) {
+    const matched = matchPolicyHistory(options.policyHistory, policyHash, issuedAt);
+    return { ...matched, warning: matched.ok ? null : matched.reason };
+  }
+  const missing = {
+    status: 'missing' as const,
+    ok: false,
+    reason: 'policy_history_missing',
+    warning: 'receipt policy history was not available. This is not a pass.',
+  };
+  const explicit = options.policyHistoryUrl || null;
+  const url = explicit || policyHistoryUrlFromReceipt(receipt);
+  if (!url) return missing;
+  try {
+    const parsed = new URL(url);
+    const hostOk = explicit
+      ? parsed.protocol === 'https:'
+      : parsed.protocol === 'https:' && trustedHosts.some((host) => host.toLowerCase() === parsed.hostname.toLowerCase());
+    if (!hostOk) return missing;
+    const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    const res = await fetchImpl(parsed.toString(), { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const doc = await res.json();
+    const matched = matchPolicyHistory(doc, policyHash, issuedAt);
+    return { ...matched, warning: matched.ok ? null : matched.reason };
+  } catch {
+    return missing;
+  }
+}
+
+function readSignedIat(claims: Record<string, unknown> | null | undefined): unknown {
+  if (!claims || !Object.prototype.hasOwnProperty.call(claims, 'iat')) return undefined;
+  const value = claims.iat;
+  if (value == null || value === '') return undefined;
+  return value;
+}
+
+function unixSeconds(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 1e12 ? Math.floor(value / 1000) : Math.floor(value);
+  }
+  if (typeof value === 'string' && value) {
+    const ms = Date.parse(value);
+    if (Number.isFinite(ms)) return Math.floor(ms / 1000);
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed > 1e12 ? Math.floor(parsed / 1000) : Math.floor(parsed);
+  }
+  return null;
+}
+
+function historyWindowFromDocument(
+  doc: IssuerHistoryDocument | null,
+  kid: string | null,
+): HistoryWindow {
+  if (!doc || !kid || !Array.isArray(doc.entries)) return { found: false };
+  const entry = doc.entries.find((row) => row.kid === kid);
+  if (!entry) return { found: false };
+  const notAfter = entry.not_after == null || entry.not_after === ''
+    ? 0
+    : unixSeconds(entry.not_after);
+  const revokedAt = entry.revoked_at == null || entry.revoked_at === ''
+    ? 0
+    : unixSeconds(entry.revoked_at);
+  return {
+    found: true,
+    notBefore: unixSeconds(entry.not_before),
+    notAfter,
+    revokedAt,
+    status: entry.status,
+  };
+}
+
+function readIssuerRootClaim(claims: Record<string, unknown> | undefined): IssuerRootClaim | null {
+  const raw = claims?.issuer_root;
+  if (!raw || typeof raw !== 'object') return null;
+  return raw as IssuerRootClaim;
+}
+
+async function issuerRootForReceipt(
+  receipt: XFuelReceipt,
+  options: VerifyReceiptOptions,
+  facts: {
+    signatureValid: boolean;
+    signatureReason: string | null;
+    jwsKid: string | null;
+    verifiedClaims: Record<string, unknown> | undefined;
+    iat: number | null;
+    payloadVersion: number | null;
+    payloadHash: string | null;
+    historyDocument: IssuerHistoryDocument | null;
+  },
+): Promise<IssuerRootVerdict | undefined> {
+  const requested = options.issuerRoot;
+  const pinInput = requested && 'pin' in requested ? requested.pin : undefined;
+  const resolved = resolvePinnedRoot(pinInput, process.env);
+  if (resolved.mode === 'off') {
+    return {
+      verdict: 'unpinned',
+      reason: null,
+      warnings: [],
+      display: 'normal',
+      note: 'not root-checked',
+      compared_block: null,
+      dnssec: 'unchecked',
+      root_checked: false,
+    };
+  }
+  if (resolved.mode === 'reject') {
+    return {
+      verdict: 'fail_registry_unpinned',
+      reason: 'registry_unpinned',
+      warnings: [],
+      display: 'normal',
+      note: null,
+      compared_block: null,
+      dnssec: 'unchecked',
+      root_checked: true,
+    };
+  }
+  const embedded = resolvePinnedIssuerJwk(receipt);
+  const thumbprint = embedded ? jwkThumbprint(embedded) : null;
+  const rpcs = requested?.rpcs ?? rpcsForPin(resolved.pin, {
+    primaryUrl: requested?.primaryRpc,
+    secondaryUrl: requested?.secondaryRpc,
+    env: process.env,
+  });
+  const history = requested?.history
+    ?? historyWindowFromDocument(facts.historyDocument, facts.jwsKid);
+  return verifyIssuerRoot({
+    signatureValid: facts.signatureValid,
+    signatureReason: facts.signatureReason,
+    jwsKid: facts.jwsKid,
+    thumbprint,
+    issuerRoot: readIssuerRootClaim(facts.verifiedClaims),
+    payloadVersion: facts.payloadVersion,
+    iat: facts.iat,
+    payloadHash: facts.payloadHash,
+    pin: resolved.pin,
+    offline: requested?.offline,
+    requireDns: requested?.requireDns,
+    requireDnssec: requested?.requireDnssec,
+    rpcs,
+    dns: requested?.dns,
+    domain: requested?.domain,
+    cache: requested?.cache,
+    now: requested?.now,
+    history,
+    legacyProof: requested?.legacyProof,
+  });
 }
 
 export {
@@ -1792,6 +2195,60 @@ export {
   issuerHistoryDocumentHash,
   type IssuerHistoryPin,
 } from './issuer-history.js';
+
+export {
+  verifyIssuerRoot,
+  resolvePinnedRoot,
+  rpcsForPin,
+  registryRpcUrls,
+  connectIssuerRootRpc,
+  parseRegistryLog,
+  activeKidsAtSeq,
+  keyVerdictAt,
+  supersessionConfirmed,
+  legacyFreezeRoot,
+  decodeKeyReturn,
+  kidToBytes32,
+  hashGenesis,
+  hashCommitment,
+  recomputeRootHashes,
+  GENESIS_DOMAIN,
+  COMMIT_DOMAIN,
+  PINNED_ROOT,
+  PINNED_ROOT_CHAINS,
+  BASE_SEPOLIA_REGISTRY_RPC,
+  BASE_MAINNET_REGISTRY_RPC,
+  ZERO_ADDRESS,
+  REGISTRY_ABI,
+  type IssuerRootVerdict,
+  type IssuerRootRpc,
+  type ChainView,
+  type PinnedRoot,
+  type ResolvedPin,
+  type CallerLogCache,
+  type RegistryLog,
+  type PinResolution,
+} from './issuer-root.js';
+
+export {
+  parseIssuerTxt,
+  resolveIssuerTxt,
+  ISSUER_TXT_VERSION,
+  type IssuerTxt,
+  type DnsLookupResult,
+} from './issuer-dns.js';
+
+export {
+  legacyMerkleRoot,
+  legacyMerkleRootHex,
+  legacyInclusion,
+  verifyLegacyInclusion,
+  legacyLeaf,
+  legacyNode,
+  LEGACY_MERKLE_RECONCILE,
+  type LegacyInclusion,
+  type LegacyProofStep,
+} from './legacy-merkle.js';
 
 export default {
   verifyBinding,

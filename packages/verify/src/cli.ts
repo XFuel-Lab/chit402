@@ -37,6 +37,7 @@ import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
 import { checkReceiptIssuerHistory, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes } from './canonical-preimage.js';
+import type { CallerLogCache, LegacyProofInput } from './issuer-root.js';
 
 const HELP = `
 xfuel-verify — Offline verification for Chit402 receipts
@@ -79,7 +80,33 @@ Options:
   --canonical-preimage <path>
                       SHA-256 this file and match the signed payload_hash
   --no-issuer-history Do not check the kid's not_before / not_after window
+  --policy-history-file <path>
+                      Check policy_hash against this receipt-policy history file.
+                      effective_from must be at or before the receipt's issued time.
+  --fetch             Fetch /.well-known/receipt-policy-history.json. Also done
+                      when --rpc or --fetch-jwks opts into the network.
+  --no-policy-history Do not check receipt-policy history. The output says
+                      the history was not checked.
   --no-preimage       Do not require published hash preimages
+  --pinned-chain <caip2>
+                      Opt in to issuer-root checks. eip155:8453 or eip155:84532.
+                      No registry address is pinned in the package.
+  --pinned-registry <0x>
+                      Registry address for --pinned-chain. Also read from
+                      CHIT_PINNED_CHAIN and CHIT_PINNED_REGISTRY.
+  --genesis-kid <kid> Genesis kid for --offline. Default is the 0.3.0 pin.
+  --registry-rpc <url>
+                      Second Base RPC. Sepolia's first RPC is https://sepolia.base.org.
+                      mainnet.base.org is a read-only default for eip155:8453.
+  --offline           Package trust only, when the kid is the genesis kid.
+  --require-dns       DNS timeout or SERVFAIL fails instead of pass_dns_unavailable.
+  --require-dnssec    Stub. Fails unless the resolver reports DNSSEC validated.
+  --root-cache <file> Unsigned RootCommitted cache. Never upgrades a verdict to pass.
+                      The note is "as of block N, caller cache".
+  --legacy-proof <file>
+                      Inclusion proof for a pre-v11 receipt against the legacy freeze.
+  --issuer-domain <domain>
+                      DNS name whose _issuer TXT is read. Default chit402.com.
 
 Exit codes:
   0 = verified
@@ -102,6 +129,9 @@ Network behavior:
   - --check-nullifier is passed (queries Base RPC for on-chain anchor)
   - --check-payer is passed (queries Base or Solana RPC for USDC settlement)
   - --rpc is passed with a receipt, an inclusion proof, and a tree head
+  - --fetch, --fetch-jwks, or --rpc is passed on a v11 receipt
+    (GET /.well-known/receipt-policy-history.json). Without one of those,
+    or without --policy-history-file, policy history is reported as not checked.
 
   Solana payer verify uses SOLANA_RPC_URL when set, else the public mainnet RPC.
 
@@ -168,6 +198,20 @@ function parseArgs(args: string[]): {
   canonicalPreimageFile: string | null;
   noIssuerHistory: boolean;
   noPreimage: boolean;
+  pinnedChain: string | null;
+  pinnedRegistry: string | null;
+  genesisKid: string | null;
+  registryRpc: string | null;
+  registryRpcPrimary: string | null;
+  offline: boolean;
+  requireDns: boolean;
+  requireDnssec: boolean;
+  rootCacheFile: string | null;
+  legacyProofFile: string | null;
+  issuerDomain: string | null;
+  policyHistoryFile: string | null;
+  noPolicyHistory: boolean;
+  fetchPolicy: boolean;
 } {
   const result = {
     file: null as string | null,
@@ -193,6 +237,20 @@ function parseArgs(args: string[]): {
     canonicalPreimageFile: null as string | null,
     noIssuerHistory: false,
     noPreimage: false,
+    pinnedChain: null as string | null,
+    pinnedRegistry: null as string | null,
+    genesisKid: null as string | null,
+    registryRpc: null as string | null,
+    registryRpcPrimary: null as string | null,
+    offline: false,
+    requireDns: false,
+    requireDnssec: false,
+    rootCacheFile: null as string | null,
+    legacyProofFile: null as string | null,
+    issuerDomain: null as string | null,
+    policyHistoryFile: null as string | null,
+    noPolicyHistory: false,
+    fetchPolicy: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -233,8 +291,36 @@ function parseArgs(args: string[]): {
       result.canonicalPreimageFile = args[++i];
     } else if (arg === '--no-issuer-history') {
       result.noIssuerHistory = true;
+    } else if (arg === '--policy-history-file' && args[i + 1]) {
+      result.policyHistoryFile = args[++i];
+    } else if (arg === '--no-policy-history') {
+      result.noPolicyHistory = true;
+    } else if (arg === '--fetch') {
+      result.fetchPolicy = true;
     } else if (arg === '--no-preimage') {
       result.noPreimage = true;
+    } else if (arg === '--pinned-chain' && args[i + 1]) {
+      result.pinnedChain = args[++i];
+    } else if (arg === '--pinned-registry' && args[i + 1]) {
+      result.pinnedRegistry = args[++i];
+    } else if (arg === '--genesis-kid' && args[i + 1]) {
+      result.genesisKid = args[++i];
+    } else if (arg === '--registry-rpc' && args[i + 1]) {
+      result.registryRpc = args[++i];
+    } else if (arg === '--registry-rpc-primary' && args[i + 1]) {
+      result.registryRpcPrimary = args[++i];
+    } else if (arg === '--offline') {
+      result.offline = true;
+    } else if (arg === '--require-dns') {
+      result.requireDns = true;
+    } else if (arg === '--require-dnssec') {
+      result.requireDnssec = true;
+    } else if (arg === '--root-cache' && args[i + 1]) {
+      result.rootCacheFile = args[++i];
+    } else if (arg === '--legacy-proof' && args[i + 1]) {
+      result.legacyProofFile = args[++i];
+    } else if (arg === '--issuer-domain' && args[i + 1]) {
+      result.issuerDomain = args[++i];
     } else if (arg === '--json') {
       result.json = true;
     } else if (arg === '--quiet' || arg === '-q') {
@@ -537,6 +623,15 @@ async function main(): Promise<number> {
       return 3;
     }
   }
+  let policyHistory: unknown = null;
+  if (args.policyHistoryFile) {
+    try {
+      policyHistory = JSON.parse(readFileSync(args.policyHistoryFile, 'utf8'));
+    } catch (err) {
+      console.error(`Error reading receipt policy history: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+  }
   let canonicalPreimage: string | null = null;
   if (args.canonicalPreimageFile) {
     try {
@@ -546,6 +641,29 @@ async function main(): Promise<number> {
       return 3;
     }
   }
+  let rootCache: CallerLogCache | null = null;
+  if (args.rootCacheFile) {
+    try {
+      rootCache = JSON.parse(readFileSync(args.rootCacheFile, 'utf8')) as CallerLogCache;
+    } catch (err) {
+      console.error(`Error reading root cache: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+  }
+  let legacyProof: LegacyProofInput | null = null;
+  if (args.legacyProofFile) {
+    try {
+      legacyProof = JSON.parse(readFileSync(args.legacyProofFile, 'utf8')) as LegacyProofInput;
+    } catch (err) {
+      console.error(`Error reading legacy proof: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+  }
+  const rootRequested = args.offline || args.requireDns || args.requireDnssec
+    || !!args.pinnedChain || !!args.pinnedRegistry || !!args.registryRpc
+    || !!args.registryRpcPrimary || !!args.rootCacheFile || !!args.legacyProofFile
+    || !!args.genesisKid || !!args.issuerDomain
+    || !!process.env.CHIT_PINNED_CHAIN || !!process.env.CHIT_PINNED_REGISTRY;
 
   const result = await verifyReceipt(receipt, {
     jwks,
@@ -562,7 +680,26 @@ async function main(): Promise<number> {
     fetchIssuerHistory: !args.noIssuerHistory && !issuerHistory,
     strictIssuerHistory: args.strictIssuerHistory,
     skipIssuerHistory: args.noIssuerHistory,
+    policyHistory,
+    fetchPolicyHistory: !args.noPolicyHistory && !policyHistory && (args.fetchPolicy || args.fetchJwks || args.sawRpc),
     canonicalPreimage,
+    issuerRoot: rootRequested ? {
+      pin: args.pinnedChain || args.pinnedRegistry
+        ? {
+          chain: args.pinnedChain || '',
+          registry: args.pinnedRegistry || '',
+          genesis_kid: args.genesisKid || undefined,
+        }
+        : undefined,
+      offline: args.offline,
+      requireDns: args.requireDns,
+      requireDnssec: args.requireDnssec,
+      primaryRpc: args.registryRpcPrimary,
+      secondaryRpc: args.registryRpc,
+      cache: rootCache,
+      legacyProof,
+      domain: args.issuerDomain || undefined,
+    } : undefined,
   });
 
   if (args.json) {
@@ -653,6 +790,34 @@ async function main(): Promise<number> {
       console.log(`  Issuer history: ${result.issuer_history.ok ? '✓ kid in window' : '✗ ' + (result.issuer_history.reason || 'failed')}`);
     } else if (result.issuer_history.warning) {
       console.log(`  Issuer history: ${result.issuer_history.warning}`);
+    }
+    if (result.policy?.checked) {
+      const terms = result.policy.terms;
+      console.log(`  Policy:        ${result.policy.ok ? terms?.policy_id || 'signed' : '✗ ' + (result.policy.reason || 'failed')}`);
+      if (terms) {
+        console.log(`  Policy version: ${terms.policy_version}`);
+        console.log(`  Dispute window: ${terms.dispute_window_seconds}s`);
+        console.log(`  Retention:     ${terms.retention_days} days, ${terms.retention_mode}`);
+        console.log(`  Spend cap:     ${terms.max_cumulative_spend == null ? 'none' : terms.max_cumulative_spend}`);
+        console.log(`  Policy hash:   ${result.policy.policy_hash}`);
+      }
+      if (result.policy.history === 'listed') console.log('  Policy history: listed');
+      else if (result.policy.history === 'not_listed') console.log('  Policy history: not listed');
+      else if (result.policy.history === 'not_effective') console.log('  Policy history: effective_from is after issuance');
+      else if (result.policy.history === 'missing') console.log('  Policy history: missing (not a pass)');
+      else console.log('  Policy history: not checked');
+    }
+    if (result.root_checked === false) {
+      console.log('  Issuer root:   not checked (root_checked: false). This is not a root pass.');
+    } else if (result.issuer_root) {
+      const yellow = result.issuer_root.display === 'yellow';
+      const label = `Issuer root:    ${result.issuer_root.verdict}${yellow ? ' (yellow)' : ''}`;
+      console.log(yellow && process.stdout.isTTY ? `\x1b[33m  ${label}\x1b[0m` : `  ${label}`);
+      if (result.issuer_root.reason) console.log(`  Root reason:   ${result.issuer_root.reason}`);
+      if (result.issuer_root.note) console.log(`  Root note:     ${result.issuer_root.note}`);
+      if (result.issuer_root.warnings.length) {
+        console.log(`  Root warnings: ${result.issuer_root.warnings.join(', ')}`);
+      }
     }
     console.log(`  Overall: ${result.overall.toUpperCase()}`);
     if (result.errors.length > 0) {

@@ -68,6 +68,32 @@ npx xfuel-verify receipt.json inclusion.json head.json --rpc
 | Anchored receipt root | Yes, with `--rpc` | Inclusion proof, then Solana memo and Base calldata for that root |
 | Canonical preimage | No | SHA-256 of `--canonical-preimage`, or the stored canonical object, matches signed `payload_hash` |
 | Issuer history | No, with `--issuer-history-file` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match the snapshot hash |
+| Issuer root | Only when a pin is set | Opt-in. Two finalized Base RPCs, `_issuer` TXT, and the legacy freeze. No pin keeps the 0.3.0 result |
+
+## Issuer root (0.4.0)
+
+Root checks stay off until you pass a pin. Nothing in this package is a trusted mainnet registry address.
+
+```bash
+# Base Sepolia. The registry address comes from the deploy, not from npm.
+npx xfuel-verify receipt.json \
+  --pinned-chain eip155:84532 \
+  --pinned-registry 0xYourSepoliaRegistry \
+  --registry-rpc https://your-second-rpc.example
+
+# Airgapped: package trust only, and only for the genesis kid.
+npx xfuel-verify receipt.json --pinned-chain eip155:84532 --pinned-registry 0xYourSepoliaRegistry --offline
+```
+
+`CHIT_PINNED_CHAIN` and `CHIT_PINNED_REGISTRY` are the same pin. `pass_dns_unavailable` is a pass printed in yellow. `unverified_root` and `pin_only` are not passes. An unsigned `--root-cache` is reported as `as of block N, caller cache` and does not upgrade the verdict.
+
+With no pin, `root_checked` is false. That is not a root pass. Payload v11 and any receipt with `issuer_root` still require a signed `iat`. A missing one fails `missing_signed_iat`. The unsigned `created_at` is not the key-window clock. v7–v10 receipts that never signed `iat` still use `created_at` for the issuer-history window.
+
+Payload v11 and refusal v2 require `canonicalization` `{ hash_alg: "sha-256", jcs: "RFC8785" }` with no `string_escaping` field. The verifier recomputes `payload_hash` with RFC 8785. `snapshot_hash` is SHA-256 of the RFC 8785 bytes of the embed `entries` array, and `issuer_history.hash` must equal that digest. `entry_hash` and flag-off history pins stay on `chit402-jcs-v1`. With no registry pin and no fetched history document, the embed is `self_asserted` (`ok: false`) and `overall` is `partial`. That is not a history proof, in the same way `root_checked: false` is not a root pass.
+
+A v11 receipt may sign `policy`. The object is exactly `policy_id`, `policy_version`, `dispute_window_seconds`, `retention_days`, `retention_mode` (`compliance`), `max_cumulative_spend` (an atomic-USDC string, or null), and `policy_hash`. `policy_hash` is lowercase hex SHA-256 of the RFC 8785 bytes of those six fields. An extra or missing field, a wrong type, a retention mode other than `compliance`, or a hash mismatch fails the receipt. A session grant's spend cap stays on `session.max_cumulative_spend` and is not part of `policy`. Flag-off and pre-v11 receipts omit `policy`. A v11 receipt with no `policy` is `POLICY_ABSENT`: the other checks still run, and `overall` is not a clean pass.
+
+`xfuel-verify --json` includes a `policy` section with those terms. Policy history (`--policy-history-file`, or `GET /.well-known/receipt-policy-history.json` when `--fetch`, `--fetch-jwks`, or `--rpc` opts into the network) must contain `policy_hash` with `effective_from` at or before the receipt's issued time. Without that opt-in the history is `not_checked`. It is not reported as a pass.
 
 ## Issuer Signature Verification (ES256)
 
