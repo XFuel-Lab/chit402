@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -24,7 +24,18 @@ import { resetIssuerHistoryStore } from '../src/issuer-history.js';
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.TASK_STORE_PERSIST = 'false';
-process.env.PATH = `/home/ubuntu/.foundry/bin:${process.env.PATH || ''}`;
+
+function anvilPath() {
+  const home = process.env.HOME || '';
+  const prefixes = ['/home/ubuntu/.foundry/bin', home ? `${home}/.foundry/bin` : ''].filter(Boolean);
+  const path = [...prefixes, ...(process.env.PATH || '').split(':')].filter(Boolean).join(':');
+  const probe = spawnSync('anvil', ['--version'], { encoding: 'utf8', env: { ...process.env, PATH: path } });
+  if (probe.status === 0) return path;
+  return null;
+}
+
+const ANVIL_PATH = anvilPath();
+if (ANVIL_PATH) process.env.PATH = ANVIL_PATH;
 
 const abi = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../abi/ChitIssuerRoot.json', import.meta.url)), 'utf8')).abi;
 const bytecode = fs.readFileSync(fileURLToPath(new URL('./fixtures/ChitIssuerRoot.creation.hex', import.meta.url)), 'utf8').trim();
@@ -79,7 +90,9 @@ function proxyTo(port, targetPort) {
   });
 }
 
-test('strict startup accepts two RPCs serving Anvil chain 84532 bytecode', async () => {
+test('strict startup accepts two RPCs serving Anvil chain 84532 bytecode', {
+  skip: ANVIL_PATH ? false : 'anvil is not installed (Foundry). This strict startup check is skipped until anvil is on PATH.',
+}, async () => {
   const port = 18621;
   const proxyPort = 18622;
   const anvil = await startAnvil(port);

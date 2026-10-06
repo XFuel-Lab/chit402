@@ -75,6 +75,7 @@ import { getReceiptMerkleTree } from './receipt-merkle.js';
 import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
 import { configureIssuerHistoryStore, writeIssuerHistory } from './issuer-history.js';
+import { assertReceiptPolicyBoot, writeReceiptPolicyHistory } from './receipt-policy.js';
 import { receiptLaneForEntry } from './receipt-lane.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
 import { coverageForLedger } from './export-coverage.js';
@@ -335,6 +336,7 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 
 - Issuer trust (pin JWKS + kid): https://www.chit402.com/trust
 - Issuer key history: GET /.well-known/issuer-history.json — signed, append-only, kid window. Old snapshots stay at ?version=N or ?hash=. https://www.chit402.com/docs/receipt-check
+- Receipt policy history: GET /.well-known/receipt-policy-history.json — append-only announced terms. A v11 receipt's signed policy governs that receipt.
 - Receipt hash preimages: GET /receipt/:id/preimage is the stored canonical object (SHA-256 is payload_hash). GET /receipt/:id/preimage/:field stays the per-field convenience. output.hash stays private.
 - Live receipt: https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e
 - Signed refusal (schema chit402.refusal.v1): GET /refusal/:refusal_id — public, no auth, ?format=json. Same issuer ES256 key as receipts. Verify against /.well-known/jwks.json or xfuel-verify.
@@ -3679,6 +3681,17 @@ export function createApp() {
     }
   });
 
+  // Announced receipt-policy versions. The signed policy on a v11 receipt
+  // governs that receipt even after a later row is appended here.
+  app.get('/.well-known/receipt-policy-history.json', (req, res) => {
+    try {
+      return writeReceiptPolicyHistory(res);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET receipt-policy-history error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
   // x402 offer-receipt §4.5.1: did:web for this request host, same ES256 key as jwks.json.
   // Host is URL-normalized so api.chit402.com and api.xfuel.app each publish their own DID.
   app.get('/.well-known/did.json', (req, res) => {
@@ -5160,6 +5173,16 @@ export async function startServer() {
     }
   } catch (err) {
     logger.error({ err }, 'Issuer root startup check failed');
+    throw err;
+  }
+
+  // Production refuses to boot without receipt-policy terms. A v11 receipt
+  // signs those terms. The #486 retention_policy env pair must match them.
+  try {
+    const policy = assertReceiptPolicyBoot();
+    logger.info({ policy_id: policy.id, policy_hash: policy.sha256 }, 'Receipt policy terms loaded');
+  } catch (err) {
+    logger.error({ err }, 'Receipt policy startup check failed');
     throw err;
   }
 

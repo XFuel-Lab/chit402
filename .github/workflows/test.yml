@@ -87,6 +87,9 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
       - name: Install gateway deps
         working-directory: services/gateway
         run: npm install --no-audit --no-fund

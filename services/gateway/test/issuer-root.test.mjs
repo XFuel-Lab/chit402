@@ -537,6 +537,14 @@ test('v11 signs canonicalization and a history snapshot that checks offline', as
     assert.equal(claims.canonicalization.hash_alg, 'sha-256');
     assert.equal(claims.canonicalization.jcs, 'RFC8785');
     assert.equal(Object.hasOwn(claims.canonicalization, 'string_escaping'), false);
+    assert.equal(claims.policy.policy_id, 'chit402.receipt-policy');
+    assert.equal(claims.policy.policy_version, '1');
+    assert.equal(claims.policy.dispute_window_seconds, 86400);
+    assert.equal(claims.policy.retention_days, 365);
+    assert.equal(claims.policy.retention_mode, 'compliance');
+    assert.equal(claims.policy.max_cumulative_spend, null);
+    assert.equal(claims.policy.policy_hash, '48a69e8a154e670ad67663feead6a6b7d9e0de6a8f733c49b108bf5d124502a8');
+    assert.equal(verifyReceiptEcdsa(receipt, getIssuerPublicKeyJwk()).valid, true);
     const preimageText = receipt.issuer_signature.canonical_preimage;
     const preimage = JSON.parse(preimageText);
     assert.equal(preimageText, jcsRfc8785(preimage));

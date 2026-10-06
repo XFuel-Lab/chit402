@@ -56,6 +56,7 @@ import {
   publishedHistoryEntries,
   verifyHistorySnapshotClaims,
 } from './issuer-history.js';
+import { signedReceiptPolicy, verifyReceiptPolicyClaim } from './receipt-policy.js';
 import { jcsRfc8785 } from './offer-receipt.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
@@ -960,6 +961,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
       canonicalization: V11_CANONICALIZATION,
       issuer_history_snapshot: issuerHistorySnapshotClaim(),
       issuer_root: issuerRootClaim(getIssuerKid()),
+      policy: signedReceiptPolicy(),
     } : {}),
     payload_version: activeReceiptPayloadVersion(),
     ...(openRouterSignedClaim(view) ? { openrouter: openRouterSignedClaim(view) } : {}),
@@ -1589,6 +1591,12 @@ export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {})
     if (snapshot.checked && !snapshot.ok) {
       return { checked: true, valid: false, reason: snapshot.reason, payload: result.payload };
     }
+    if (Number(result.payload.payload_version) >= 11) {
+      const policy = verifyReceiptPolicyClaim(result.payload.policy);
+      if (!policy.ok) {
+        return { checked: true, valid: false, reason: policy.reason, payload: result.payload };
+      }
+    }
   }
 
   return { checked: true, valid: true, kid: sig.kid, payload: result.payload };
@@ -1650,6 +1658,12 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
     });
     if (snapshot.checked && !snapshot.ok) {
       return { checked: true, valid: false, reason: snapshot.reason, payload: jwsResult.payload };
+    }
+    if (Number(jwsResult.payload.payload_version) >= 11) {
+      const policy = verifyReceiptPolicyClaim(jwsResult.payload.policy);
+      if (!policy.ok) {
+        return { checked: true, valid: false, reason: policy.reason, payload: jwsResult.payload };
+      }
     }
   }
 

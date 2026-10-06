@@ -68,6 +68,7 @@ export const RECEIPT_CANONICAL_FIELDS = Object.freeze([
   'parent_receipt_id',
   'payload_version',
   'payment',
+  'policy',
   'provider_cogs',
   'route',
   'session',

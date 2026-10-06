@@ -61,6 +61,38 @@ Vector `{ "s": "<TAB><LF><U+0001><U+1F600>" }` under this canonicalizer is the 2
 
 SHA-256 of those UTF-8 bytes, with no trailing newline, is `payload_hash` for a v11 receipt and a v2 refusal.
 
+### `policy`
+
+Inside a v11 payment receipt. Flag-off v10 omits it. Refusal v2 does not carry it. A stored receipt is not re-signed to add it.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `policy_id` | string | Stable id. Dev default `chit402.receipt-policy`. |
+| `policy_version` | string | Version of these terms. Dev default `1`. |
+| `dispute_window_seconds` | integer | Dispute window the receipt was issued under. Dev default `86400`. |
+| `retention_days` | integer | S3 Object Lock compliance retention, in days. Dev default `365`. |
+| `retention_mode` | string | `compliance`. Any other mode fails closed. |
+| `max_cumulative_spend` | string or null | Policy spend cap in atomic USDC, or null when the policy sets none. A session grant stays on `session.max_cumulative_spend`. |
+| `policy_hash` | string | Lowercase hex SHA-256 of the RFC 8785 bytes of the other six fields. `policy_hash` is not part of that preimage. |
+
+`policy_hash` uses the same RFC 8785 canonicalizer as `snapshot_hash`. The receipt's signed object is what governs that receipt.
+
+Vector. Terms:
+
+```
+{"dispute_window_seconds":86400,"max_cumulative_spend":null,"policy_id":"chit402.receipt-policy","policy_version":"1","retention_days":365,"retention_mode":"compliance"}
+```
+
+`policy_hash` is `48a69e8a154e670ad67663feead6a6b7d9e0de6a8f733c49b108bf5d124502a8`.
+
+The same cap set to the decimal string `2000` hashes to `ecf4cdabe9b755e4776167429dcffb73e1f275994cda68f0e32d776cac925601`.
+
+Production boot (`NODE_ENV=production`) refuses to start unless `RECEIPT_POLICY_ID`, `RECEIPT_POLICY_VERSION`, `RECEIPT_POLICY_DISPUTE_WINDOW_SECONDS`, `RECEIPT_POLICY_RETENTION_DAYS`, and `RECEIPT_POLICY_RETENTION_MODE=compliance` are set. `RECEIPT_POLICY_MAX_CUMULATIVE_SPEND` is optional. Outside production, an empty config uses the dev defaults above. A partial config fails closed in every environment.
+
+`GET /.well-known/receipt-policy-history.json` is `chit402.receipt_policy_history.v1`: an append-only `entries` list of `{ policy_version, policy_hash, terms, effective_from }`. `terms` is the six fields without `policy_hash`. A new `policy_version` or `policy_hash` appends a row. Older rows stay. The history announces the change. It does not replace the terms inside an already signed receipt.
+
+PR #486 puts `retention_policy: { id, sha256 }` on the receipt-log bundle index from `RECEIPT_LOG_RETENTION_POLICY_ID` and `RECEIPT_LOG_RETENTION_POLICY_SHA256`. Those two values are this object's `policy_id` and `policy_hash`. This gateway is the source (`receiptPolicyRetentionClaim`). If either env var is set, boot requires both and requires them to equal that claim. #486 does not import this module, so it needs a follow-up to read `{ id, sha256 }` from here instead of a separately typed hash. Until that lands, an operator can point the log at a different digest only by skipping this check.
+
 ### Which canonicalizer covers which hash
 
 | Hash | Canonicalizer |
@@ -69,6 +101,7 @@ SHA-256 of those UTF-8 bytes, with no trailing newline, is `payload_hash` for a 
 | v2 refusal `payload_hash` | RFC 8785 |
 | `issuer_root` fingerprint suffix on a new issuer-history version | RFC 8785 |
 | `issuer_history_snapshot.snapshot_hash`, and the v11 / refusal-v2 `issuer_history.hash` pin | RFC 8785 of the embed `entries` array only. SHA-256 of those UTF-8 bytes |
+| v11 `policy.policy_hash` | RFC 8785 of the policy terms, excluding `policy_hash` itself |
 | well-known document hash (`?hash=` of the full issuer-history document, and the flag-off `issuer_history.hash` pin) | chit402-jcs-v1 (`jcsCanonicalize`) of the whole document |
 | `entry_hash` | chit402-jcs-v1. SHA-256 of the entry without `entry_hash` |
 | v7–v10 receipt `payload_hash`, flag-off refusal `payload_hash`, and every flag-off path | chit402-jcs-v1. Those bytes are not recomputed |
